@@ -1,0 +1,50 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Zitter — persistence check</title>
+<style>
+  :root { color-scheme: dark; font: 16px system-ui; background:#151619; color:#eee; }
+  body { max-width:760px; margin:70px auto; padding:24px; }
+  pre { padding:24px; background:#24252b; border-radius:12px; white-space:pre-wrap; }
+</style>
+<h1>Profile persistence</h1>
+<p>Same origin in two Chromium profiles. Only Zitter's diagnostic keys are used.</p>
+<pre id="result">Reading storage…</pre>
+<script type="module">
+  const request = indexedDB.open('zitter-restart-probe', 1);
+  request.onupgradeneeded = () => request.result.createObjectStore('markers');
+  const db = await new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  const params = new URL(location.href).searchParams;
+  const write = params.get('write');
+  const before = localStorage.getItem('zitter-restart-probe');
+  if (write) {
+    localStorage.setItem('zitter-restart-probe', write);
+    document.cookie = `zitter_restart_probe=${encodeURIComponent(write)}; Path=/; Max-Age=31536000; SameSite=Lax`;
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('markers', 'readwrite');
+      tx.objectStore('markers').put(write, 'profile');
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+  const marker = await new Promise((resolve, reject) => {
+    const read = db.transaction('markers').objectStore('markers').get('profile');
+    read.onsuccess = () => resolve(read.result ?? null);
+    read.onerror = () => reject(read.error);
+  });
+  const cookie = document.cookie.split('; ').find(x => x.startsWith('zitter_restart_probe='));
+  const result = {
+    phase: write ? 'write' : 'read', label: params.get('label'), before,
+    localStorage: localStorage.getItem('zitter-restart-probe'),
+    cookie: cookie ? decodeURIComponent(cookie.split('=')[1]) : null,
+    indexedDB: marker,
+  };
+  document.querySelector('#result').textContent = JSON.stringify(result, null, 2);
+  // The optional local verification server records only these diagnostic keys.
+  if (params.has('report')) await fetch('/result', {
+    method: 'POST', body: JSON.stringify(result), headers: {'Content-Type':'application/json'},
+  });
+  db.close();
+</script>

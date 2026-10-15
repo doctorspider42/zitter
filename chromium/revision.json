@@ -1,0 +1,8 @@
+{
+  "repository": "https://chromium.googlesource.com/chromium/src.git",
+  "revision": "1a732fcc23b20dd0bcf38f35d72c1fe1ec799d35",
+  "integration": "chrome/test:browser_tests",
+  "status": "Compiled and linked on macOS ARM64; storage isolation, page keyboard routing and native macOS keyboard tests passed",
+  "verified_on": "2026-10-15",
+  "interactive_verification": "Native window and rendered page visually verified; Cmd+Alt+1/2 passed native AppKit event tests in both directions with page text-input focus and preserved text"
+}

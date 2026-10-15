@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Zitter profile isolation probe</title>
+<style>
+  :root { color-scheme: dark; font: 17px system-ui; background: #151621; color: #eee; }
+  body { max-width: 760px; margin: 64px auto; padding: 0 24px; }
+  button, input { font: inherit; padding: 12px; border-radius: 8px; }
+  pre { white-space: pre-wrap; padding: 24px; background: #222434; border-radius: 12px; }
+</style>
+<h1>Zitter — two profiles, one window</h1>
+<p>Use the same URL in both workspaces. Save different markers, then switch back.
+Cookies, localStorage and IndexedDB must stay isolated. Session storage survives
+switching, but should disappear when the page host is destroyed.</p>
+<input id="marker" aria-label="Profile marker" placeholder="work or personal">
+<button id="save">Save marker</button>
+<button id="read">Read storage</button>
+<pre id="result" role="status">Ready</pre>
+<script>
+async function openDatabase() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open('zitter-probe', 1);
+    request.onupgradeneeded = () => request.result.createObjectStore('markers');
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+async function writeMarker(value) {
+  document.cookie = `zitter=${encodeURIComponent(value)}; Path=/; SameSite=Lax; Max-Age=86400`;
+  localStorage.setItem('zitter', value);
+  sessionStorage.setItem('zitter', value);
+  const db = await openDatabase();
+  try {
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('markers', 'readwrite');
+      tx.objectStore('markers').put(value, 'zitter');
+      tx.oncomplete = resolve;
+      tx.onabort = () => reject(tx.error);
+      tx.onerror = () => reject(tx.error);
+    });
+  } finally { db.close(); }
+  return value;
+}
+async function readMarker() {
+  const cookie = document.cookie.split('; ').find(item => item.startsWith('zitter='));
+  const db = await openDatabase();
+  let stored;
+  try {
+    stored = await new Promise((resolve, reject) => {
+      const request = db.transaction('markers').objectStore('markers').get('zitter');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  } finally { db.close(); }
+  return [cookie ? decodeURIComponent(cookie.slice(7)) : '',
+          localStorage.getItem('zitter') || '', stored || '',
+          sessionStorage.getItem('zitter') || ''].join('|');
+}
+async function show(action) {
+  try { document.querySelector('#result').textContent = await action(); }
+  catch (error) { document.querySelector('#result').textContent = String(error); }
+}
+document.querySelector('#save').onclick = () => show(async () => {
+  await writeMarker(document.querySelector('#marker').value);
+  return readMarker();
+});
+document.querySelector('#read').onclick = () => show(readMarker);
+</script>
+</html>

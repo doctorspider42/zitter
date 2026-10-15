@@ -1,0 +1,162 @@
+# Installed at //zitter/BUILD.gn in a Chromium src checkout.
+import("//testing/test.gni")
+
+# Keep the upstream browser_tests hook, but build just Zitter's probe locally.
+test("zitter_prototype") {
+  testonly = true
+  deps = [
+    ":profile_workspace_browser_tests",
+    "//chrome:packed_resources",
+    "//chrome:resources",
+    "//chrome:strings",
+    "//chrome/test:test_support",
+    "//chrome/test:test_support_ui",
+    "//chrome/test/base:browser_tests_runner",
+  ]
+  data = [ "testdata/" ]
+  if (is_mac) {
+    data_deps = [
+      "//chrome",
+      "//chrome:chrome_framework",
+    ]
+  } else {
+    data_deps = [ "//chrome:packed_resources" ]
+  }
+}
+
+source_set("core") {
+  sources = [
+    "zitter/application/workspace_controller.cc",
+    "zitter/application/workspace_controller.h",
+    "zitter/core/workspace_model.cc",
+    "zitter/core/workspace_model.h",
+    "zitter/ports/workspace_runtime.h",
+  ]
+  include_dirs = [ "." ]
+}
+
+source_set("shell") {
+  public_configs = [ ":shell_includes" ]
+  sources = [
+    "chromium/prototype/workspace_window.cc",
+    "chromium/prototype/workspace_window.h",
+    "chromium/prototype/workspace_shell.cc",
+    "chromium/prototype/workspace_shell.h",
+  ]
+  include_dirs = [ "." ]
+  public_deps = [
+    ":core",
+    "//base",
+    "//build:buildflag_header_h",
+    "//chrome/browser:browser_process",
+    "//chrome/browser/profiles:profile",
+    "//chrome/browser/profiles:profile_manager",
+    "//chrome/browser/profiles/keep_alive",
+    "//chrome/browser/ui/browser_window",
+    "//components/input",
+    "//components/vector_icons",
+    "//components/url_formatter",
+    "//content/public/browser",
+    "//skia",
+    "//ui/color",
+    "//ui/display",
+    "//ui/base",
+    "//ui/content_accelerators",
+    "//ui/events",
+    "//ui/gfx",
+    "//ui/views",
+    "//ui/views/controls/webview",
+    "//url",
+  ]
+  if (is_mac) {
+    sources += [
+      "chromium/prototype/workspace_keyboard_mac.h",
+      "chromium/prototype/workspace_keyboard_mac.mm",
+    ]
+    public_deps += [
+      "//components/remote_cocoa/app_shim",
+      "//components/remote_cocoa/common:mojo",
+    ]
+  }
+}
+
+source_set("profile_workspace_browser_tests") {
+  testonly = true
+  defines = [ "HAS_OUT_OF_PROC_TEST_RUNNER" ]
+  sources = [ "chromium/prototype/profile_workspace_browsertest.cc" ]
+  include_dirs = [ "." ]
+  deps = [
+    ":shell",
+    "//base/test:test_support",
+    "//chrome/test:test_support",
+    "//chrome/test:test_support_ui",
+    "//content/test:test_support",
+    "//net:test_support",
+    "//testing/gtest",
+    "//ui/base:test_support",
+  ]
+}
+
+# Real browser bootstrap, with no browser-test runner or test-only dependencies.
+if (is_mac || is_linux) {
+  executable("zitter") {
+    sources = [
+      "chromium/app/main.cc",
+      "chromium/app/browser_client.cc",
+      "chromium/app/browser_client.h",
+      "chromium/app/runtime.cc",
+      "chromium/app/runtime.h",
+      "//chrome/app/chrome_crash_reporter_client.cc",
+      "//chrome/app/chrome_crash_reporter_client.h",
+      "//chrome/app/chrome_main_delegate.cc",
+      "//chrome/app/chrome_main_delegate.h",
+      "//chrome/app/startup_timestamps.h",
+    ]
+    include_dirs = [ "." ]
+    deps = [
+      ":shell",
+      "//base",
+      "//build:chromeos_buildflags",
+      "//chrome:dependencies",
+      "//chrome/app:chrome_crash_reporter_client",
+      "//chrome/app:command_ids",
+      "//chrome/browser:chrome_content_browser_client",
+      "//chrome/browser:chrome_browser_main",
+      "//chrome/browser:chrome_process_singleton",
+      "//chrome/browser:process_singleton",
+      "//chrome/browser:startup_data",
+      "//chrome/browser:main_extra_parts",
+      "//chrome/browser/lifetime",
+      "//chrome/common:version_header",
+      "//chrome/common/profiler",
+      "//components/keep_alive_registry",
+      "//components/webapps/isolated_web_apps:scheme",
+      "//components/memory_system",
+      "//content/public/app",
+      "//services/network/public/mojom",
+      "//ui/lottie",
+    ]
+    data_deps = [ "//chrome:packed_resources" ]
+    if (is_mac) {
+      sources += [
+        "//chrome/app/chrome_crash_reporter_client_mac.mm",
+        "//chrome/app/chrome_main_mac.h",
+        "//chrome/app/chrome_main_mac.mm",
+      ]
+      deps += [
+        "//base/allocator:early_zone_registration_apple",
+        "//chrome/browser:chrome_browser_application_mac",
+        "//chrome/browser/mac",
+      ]
+      data_deps += [ "//chrome:chrome_framework" ]
+      ldflags = [ "-Wl,-ObjC" ]
+    }
+    if (is_linux) {
+      sources += [ "//chrome/app/chrome_main_linux.cc", "//chrome/app/chrome_main_linux.h" ]
+    }
+  }
+}
+
+config("shell_includes") {
+  include_dirs = [ "." ]
+}

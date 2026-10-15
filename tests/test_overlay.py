@@ -1,0 +1,70 @@
+import importlib.util
+from pathlib import Path
+import tempfile
+import unittest
+from unittest import mock
+
+spec = importlib.util.spec_from_file_location(
+    "overlay", Path(__file__).resolve().parents[1] / "tools/install_chromium_overlay.py")
+overlay = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(overlay)
+
+
+class OverlayTests(unittest.TestCase):
+    def test_keychain_identity_is_separate_and_patch_is_guarded(self):
+        source = ('const char kDefaultServiceName[] = "Chromium Safe Storage";\n'
+                  'const char kDefaultAccountName[] = "Chromium";\n')
+        patched = overlay.patch_keychain(source)
+        self.assertIn('"Zitter Safe Storage"', patched)
+        self.assertIn('"Zitter"', patched)
+        self.assertEqual(patched, overlay.patch_keychain(patched))
+        with self.assertRaises(ValueError):
+            overlay.patch_keychain('unknown upstream layout')
+
+    def test_only_desktop_target_is_modified_and_reinstall_is_idempotent(self):
+        source = ('test("android_browsertests") {\n    deps = [\n    ]\n}\n'
+                  'if (!is_android) {\n  test("browser_tests") {\n'
+                  '    deps = [\n      ":existing",\n    ]\n  }\n}\n')
+        patched = overlay.patch_build(source)
+        self.assertEqual(source, patched.replace(overlay.DEPENDENCY, ""))
+        self.assertEqual(patched, overlay.patch_build(patched))
+        self.assertEqual(patched.count(overlay.DEPENDENCY), 1)
+
+    def test_rejects_unexpected_chromium_layout(self):
+        with self.assertRaises(ValueError):
+            overlay.patch_build('test("different_tests") {}')
+
+    def test_rejects_unowned_destination(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(ValueError):
+                overlay.check_existing(Path(directory))
+
+    def test_install_preserves_existing_build_edits_and_rejects_modified_overlay(self):
+        import json
+        revision = json.loads((overlay.ROOT / "chromium/revision.json").read_text())["revision"]
+        with tempfile.TemporaryDirectory() as directory:
+            checkout = Path(directory)
+            build = checkout / "chrome/test/BUILD.gn"
+            build.parent.mkdir(parents=True)
+            original = ('# Existing local build configuration\n'
+                        '  test("browser_tests") {\n    deps = [\n    ]\n  }\n')
+            build.write_text(original)
+            keychain = checkout / "components/os_crypt/common/keychain_password_mac.mm"
+            keychain.parent.mkdir(parents=True)
+            keychain.write_text('"Chromium Safe Storage"\n"Chromium";\n')
+            with mock.patch.object(overlay.subprocess, "check_output", return_value=revision):
+                overlay.install(checkout, dry_run=True)
+                self.assertFalse((checkout / "zitter").exists())
+                self.assertEqual(build.read_text(), original)
+                overlay.install(checkout)
+                overlay.install(checkout)
+                self.assertEqual(build.read_text().replace(overlay.DEPENDENCY, ""), original)
+                source = checkout / "zitter/zitter/core/workspace_model.cc"
+                source.write_text(source.read_text() + "\n// Local changes\n")
+                with self.assertRaisesRegex(ValueError, "local modifications"):
+                    overlay.install(checkout)
+                self.assertIn("Local changes", source.read_text())
+
+
+if __name__ == "__main__":
+    unittest.main()
