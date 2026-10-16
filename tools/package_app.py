@@ -80,7 +80,10 @@ def package(out, destination):
             link_file(library, target)
     resources = contents / "Resources"
     resources.mkdir(exist_ok=True)
-    icon = out / "Chromium.app/Contents/Resources/app.icns"
+    # Zitter's own icon (tools/build_icon.py); Chromium's only as a fallback.
+    icon = ROOT / "assets/icon/Zitter.icns"
+    if not icon.exists():
+        icon = out / "Chromium.app/Contents/Resources/app.icns"
     if icon.exists():
         symlink(icon, resources / "app.icns")
     info = {

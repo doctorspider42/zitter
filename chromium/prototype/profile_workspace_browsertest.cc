@@ -293,15 +293,18 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeShellAndAppearance) {
   EXPECT_EQ(original, window_->contents("work"));
   shell->ShowSidebar();
   ASSERT_TRUE(shell->sidebar_visible());
-  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->sidebar_widget()->GetNativeWindow()));
+  // Workspace color is edited in the workspace settings panel.
+  shell->OpenWorkspaceSettings();
+  ASSERT_TRUE(shell->settings_visible());
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));
   shell->color_input()->RequestFocus();
   const auto original_color = shell->workspace_color("work");
   shell->color_input()->SetText(u"invalid");
-  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->sidebar_widget()->GetNativeWindow(),
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->settings_widget()->GetNativeWindow(),
       ui::VKEY_RETURN, false, false, false, false));
   EXPECT_EQ(original_color, shell->workspace_color("work"));
   shell->color_input()->SetText(u"#D49771");
-  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->sidebar_widget()->GetNativeWindow(),
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->settings_widget()->GetNativeWindow(),
       ui::VKEY_RETURN, false, false, false, false));
   EXPECT_EQ(0xFFD49771u, shell->workspace_color("work"));
   shell->SetWorkspaceColor("personal", 0xFF73A4C2);

@@ -10,6 +10,7 @@
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "ui/base/accelerators/accelerator.h"
+#include "chromium/prototype/workspace_shell.h"
 #include "zitter/application/workspace_controller.h"
 
 class Profile;
@@ -28,7 +29,6 @@ class WidgetDelegate;
 }  // namespace views
 
 namespace zitter::prototype {
-class WorkspaceShell;
 
 // Intentionally a substrate probe, not a replacement BrowserWindowInterface.
 // Profiles are owned/kept alive by the caller; WebViews own their WebContents.
@@ -49,6 +49,9 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   WorkspaceShell* shell() const { return shell_.get(); }
   bool NavigateFromBar(const GURL& url, bool new_tab);
   void SelectTab(size_t index);
+  void CloseTab(size_t index);
+  void CloseActiveTab();
+  void RunPageCommand(PageCommand command);
   size_t tab_count(std::string_view id) const;
   void SetCloseCallback(base::OnceClosure callback);
 
@@ -59,6 +62,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   bool CanHandleAccelerators() const override;
   views::WebView* CreatePage(Profile* profile);
   void UpdateShell();
+  void ShowPage(views::WebView* view);
   content::KeyboardEventProcessingResult PreHandlePageKeyEvent(
       content::WebContents* source,
       const input::NativeWebKeyboardEvent& event);

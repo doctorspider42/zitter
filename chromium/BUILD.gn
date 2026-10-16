@@ -47,7 +47,9 @@ source_set("shell") {
   public_deps = [
     ":core",
     "//base",
+    "//base:i18n",
     "//build:buildflag_header_h",
+    "//cc/paint",
     "//chrome/browser:browser_process",
     "//chrome/browser/profiles:profile",
     "//chrome/browser/profiles:profile_manager",
@@ -70,6 +72,8 @@ source_set("shell") {
   ]
   if (is_mac) {
     sources += [
+      "chromium/prototype/workspace_frame_mac.h",
+      "chromium/prototype/workspace_frame_mac.mm",
       "chromium/prototype/workspace_keyboard_mac.h",
       "chromium/prototype/workspace_keyboard_mac.mm",
     ]
@@ -127,6 +131,7 @@ if (is_mac || is_linux) {
       "//chrome/browser:startup_data",
       "//chrome/browser:main_extra_parts",
       "//chrome/browser/lifetime",
+      "//chrome/browser/ui/browser_window",
       "//chrome/common:version_header",
       "//chrome/common/profiler",
       "//components/keep_alive_registry",
@@ -139,6 +144,8 @@ if (is_mac || is_linux) {
     data_deps = [ "//chrome:packed_resources" ]
     if (is_mac) {
       sources += [
+        "chromium/app/app_shell_mac.h",
+        "chromium/app/app_shell_mac.mm",
         "//chrome/app/chrome_crash_reporter_client_mac.mm",
         "//chrome/app/chrome_main_mac.h",
         "//chrome/app/chrome_main_mac.mm",

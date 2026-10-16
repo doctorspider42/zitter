@@ -1,5 +1,4 @@
 #include "chromium/prototype/workspace_window.h"
-#include "chromium/prototype/workspace_shell.h"
 
 #include <utility>
 
@@ -9,7 +8,9 @@
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/input/native_web_keyboard_event.h"
+#include "content/public/browser/invalidate_type.h"
 #include "content/public/browser/keyboard_event_processing_result.h"
+#include "content/public/browser/reload_type.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
@@ -23,9 +24,11 @@
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/textfield/textfield.h"
+#include "ui/views/controls/native/native_view_host.h"
 #include "ui/views/controls/webview/webview.h"
 #include "ui/views/focus/focus_manager.h"
 #include "ui/views/layout/box_layout.h"
@@ -36,6 +39,7 @@
 #include "url/gurl.h"
 
 #if BUILDFLAG(IS_MAC)
+#include "chromium/prototype/workspace_frame_mac.h"
 #include "chromium/prototype/workspace_keyboard_mac.h"
 #endif
 
@@ -82,6 +86,12 @@ class WorkspaceWebView final : public views::WebView {
 
   KeyHandler handler_;
   void TitleWasSet(content::NavigationEntry*) override { changed_.Run(); }
+  // URL and back/forward availability feed the sidebar's address pill.
+  void NavigationStateChanged(content::WebContents* source,
+                              content::InvalidateTypes flags) override {
+    views::WebView::NavigationStateChanged(source, flags);
+    changed_.Run();
+  }
   base::RepeatingClosure changed_;
 };
 
@@ -100,11 +110,15 @@ WorkspaceWindow::WorkspaceWindow(Profile* work, Profile* personal)
   CHECK(!personal->IsOffTheRecord());
   CHECK(model_.Add({"work", "work-profile", "Praca"}));
   CHECK(model_.Add({"personal", "personal-profile", "Prywatne"}));
+  WorkspaceShell::Callbacks callbacks;
+  callbacks.select_workspace = base::BindRepeating(
+      [](WorkspaceWindow* window, std::string id) { window->Select(id); }, base::Unretained(this));
+  callbacks.navigate = base::BindRepeating(&WorkspaceWindow::NavigateFromBar, base::Unretained(this));
+  callbacks.select_tab = base::BindRepeating(&WorkspaceWindow::SelectTab, base::Unretained(this));
+  callbacks.close_tab = base::BindRepeating(&WorkspaceWindow::CloseTab, base::Unretained(this));
+  callbacks.page_command = base::BindRepeating(&WorkspaceWindow::RunPageCommand, base::Unretained(this));
   shell_ = std::make_unique<WorkspaceShell>(
-      work->GetPath().DirName().AppendASCII("ZitterAppearance.json"),
-      base::BindRepeating([](WorkspaceWindow* window, std::string id) { window->Select(id); }, base::Unretained(this)),
-      base::BindRepeating(&WorkspaceWindow::NavigateFromBar, base::Unretained(this)),
-      base::BindRepeating(&WorkspaceWindow::SelectTab, base::Unretained(this)));
+      work->GetPath().DirName().AppendASCII("ZitterAppearance.json"), std::move(callbacks));
   auto root = shell_->Build();
   const std::array<Profile*, 2> profiles = {work, personal};
   for (size_t i = 0; i < hosts_.size(); ++i) {
@@ -120,12 +134,16 @@ WorkspaceWindow::WorkspaceWindow(Profile* work, Profile* personal)
   delegate_->SetTitle(u"Zitter");
   delegate_->SetHasWindowSizeControls(true);
   delegate_->SetContentsView(std::move(root));
+  delegate_->SetClientViewFactory(WorkspaceShell::ClientViewFactory());
   views::Widget::InitParams params(
       views::Widget::InitParams::CLIENT_OWNS_WIDGET,
       views::Widget::InitParams::TYPE_WINDOW);
   params.delegate = delegate_.get();
-  params.bounds = gfx::Rect(80, 80, 1200, 800);
+  params.bounds = gfx::Rect(80, 80, 1280, 820);
   widget_ = std::make_unique<views::Widget>();
+#if BUILDFLAG(IS_MAC)
+  params.native_widget = CreateWorkspaceNativeWidget(widget_.get());
+#endif
   widget_->Init(std::move(params));
   shell_->Attach(widget_.get(), this);
   widget_->Show();
@@ -175,16 +193,31 @@ void WorkspaceWindow::UpdateShell() {
   if (closing_ || !widget_) return;
   for (const auto& host : hosts_) {
     if (host.workspace_id != active_id()) continue;
-    std::vector<std::u16string> titles;
+    ShellState state;
     for (const auto& view : host.tabs) {
       auto* page = view->GetWebContents();
       auto title = page->GetTitle();
       if (title.empty()) title = base::UTF8ToUTF16(page->GetVisibleURL().host());
-      titles.push_back(title.empty() ? u"Nowa karta" : title);
+      state.tabs.push_back({title.empty() ? u"Nowa karta" : title, page->GetVisibleURL()});
     }
-    shell_->Update(host.workspace_id, base::UTF8ToUTF16(model_.Find(host.workspace_id)->name),
-        host.workspace_id == "work" ? u"Profil firmowy" : u"Profil osobisty",
-        host.view->GetWebContents()->GetVisibleURL(), std::move(titles), host.active_tab);
+    auto& controller = host.view->GetWebContents()->GetController();
+    state.workspace_id = host.workspace_id;
+    state.workspace_name = base::UTF8ToUTF16(model_.Find(host.workspace_id)->name);
+    state.profile_name = host.workspace_id == "work" ? u"Profil firmowy" : u"Profil osobisty";
+    state.url = host.view->GetWebContents()->GetVisibleURL();
+    state.active_tab = host.active_tab;
+    state.can_go_back = controller.CanGoBack();
+    state.can_go_forward = controller.CanGoForward();
+    shell_->Update(std::move(state));
+  }
+}
+
+void WorkspaceWindow::ShowPage(views::WebView* view) {
+  view->SetVisible(true);
+  view->GetWebContents()->UpdateWebContentsVisibility(content::Visibility::VISIBLE);
+  // The page is a rounded card inside the tinted frame.
+  if (view->holder()->native_view()) {
+    view->holder()->SetNativeViewCornerRadii(gfx::RoundedCornersF(10));
   }
 }
 
@@ -208,9 +241,7 @@ bool WorkspaceWindow::Activate(std::string_view id,
       }
     }
   }
-  selected->view->SetVisible(true);
-  auto* page = selected->view->GetWebContents();
-  page->UpdateWebContentsVisibility(content::Visibility::VISIBLE);
+  ShowPage(selected->view);
   selected->view->RequestFocus();
   return true;
 }
@@ -245,14 +276,60 @@ void WorkspaceWindow::SelectTab(size_t index) {
     host.view->SetVisible(false);
     host.active_tab = index;
     host.view = host.tabs[index];
-    host.view->SetVisible(true);
-    host.view->GetWebContents()->UpdateWebContentsVisibility(content::Visibility::VISIBLE);
+    ShowPage(host.view);
     shell_->CloseOverlays();
     UpdateShell();
     widget_->Activate();
     host.view->RequestFocus();
     return;
   }
+}
+
+void WorkspaceWindow::CloseTab(size_t index) {
+  for (auto& host : hosts_) {
+    if (host.workspace_id != active_id() || index >= host.tabs.size() || host.tabs.size() < 2) {
+      continue;
+    }
+    views::WebView* closing = host.tabs[index];
+    const bool was_active = closing == host.view;
+    host.tabs.erase(host.tabs.begin() + index);
+    if (host.active_tab > index || host.active_tab >= host.tabs.size()) --host.active_tab;
+    if (was_active) {
+      host.view = host.tabs[host.active_tab];
+      ShowPage(host.view);
+    }
+    shell_->content_host()->RemoveChildViewT(closing);
+    UpdateShell();
+    if (was_active) host.view->RequestFocus();
+    return;
+  }
+}
+
+void WorkspaceWindow::CloseActiveTab() {
+  for (const auto& host : hosts_) {
+    if (host.workspace_id == active_id()) {
+      CloseTab(host.active_tab);
+      return;
+    }
+  }
+}
+
+void WorkspaceWindow::RunPageCommand(PageCommand command) {
+  auto* page = contents(active_id());
+  if (!page) return;
+  auto& controller = page->GetController();
+  switch (command) {
+    case PageCommand::kBack:
+      if (controller.CanGoBack()) controller.GoBack();
+      break;
+    case PageCommand::kForward:
+      if (controller.CanGoForward()) controller.GoForward();
+      break;
+    case PageCommand::kReload:
+      controller.Reload(content::ReloadType::NORMAL, true);
+      break;
+  }
+  page->Focus();
 }
 
 bool WorkspaceWindow::NavigateFromBar(const GURL& url, bool new_tab) {

@@ -68,21 +68,28 @@ keyboard layouts still require manual platform QA.
 
 ## Window design direction
 
-The selected visual direction is a dark, minimal window with an auto-hiding
-vertical sidebar. The native Views sidebar overlays content, opens from the left
-edge or an explicit button, and can be pinned. Workspace and profile names appear
-only inside this sidebar. The compact window frame does not repeat them or the
-"New tab" title. Cmd+L / Cmd+T opens a slim floating address/search bar in the
-Arc/Spotlight style, replacing a full-page welcome screen.
+The selected direction (design canvas "Zitter Browser") is a light, slim
+Arc/Zen-style window: a frame tinted by the active workspace's color, with the
+page as a rounded white card. On macOS the window keeps its native traffic
+lights in a transparent, full-size titlebar (`workspace_frame_mac.mm`); the
+44 px header row next to them holds sidebar, back, forward and reload commands,
+and empty frame space drags the window.
 
-Each workspace has its own custom accent color and subtle surface tint. These
+Tabs live in a vertical sidebar on the left, visible (pinned) by default. It
+holds the address pill, the workspace name, "New tab", the tab list (monogram
+favicon stand-ins, close on hover), the workspace color and the workspace dots.
+Unpinned, it auto-hides and peeks over the page as a floating card from the left
+edge. Cmd+L / Cmd+T opens a command palette: typed text resolves to an address
+or a DuckDuckGo search, and matching open tabs can be switched to; arrow keys
+select, Enter opens.
+
+Each workspace has its own custom accent color, which tints the frame. These
 belong to workspace appearance settings, independently of the assigned Chromium
 profile; two workspaces sharing a profile can still have different colors.
-Names and selection states must remain legible regardless of the chosen accent.
 `WorkspaceShell` implements this layout in Views. The main window owns its page
-hosts; transient owned child widgets place the sidebar and address palette above
-native WebContents without reparenting or recreating them. Pinning deliberately
-reserves content width. Workspace metadata stays inside the sidebar.
+hosts; transient owned child widgets place the sidebar and palette above native
+WebContents without reparenting or recreating them. Pinning reserves the
+sidebar column. Workspace metadata stays inside the sidebar.
 
 Cmd+L edits the current address; Cmd+T opens a new page in the active profile only
 after Enter. Escape returns focus to the page. Both overlay focus managers share
@@ -90,11 +97,23 @@ the browser shortcut registry. Bare addresses use Chromium URL fixup; text queri
 use DuckDuckGo. The prototype accepts HTTP(S) navigation only.
 
 Preset colors and custom #RRGGBB values update the selected workspace immediately.
-`ZitterAppearance.json` under the harness user-data directory stores both colors
-and sidebar pinning. A sequenced blocking task runner loads and atomically patches
-settings off the UI thread. The browser-test harness uses temporary profiles, so
-this proves persistence across window recreation within a session, not a stable
-installed application's user-data path. The manual launcher remains a test harness.
+`ZitterAppearance.json` under the user-data directory stores both colors and
+sidebar pinning (pinned unless saved otherwise). A sequenced blocking task runner
+loads and atomically patches settings off the UI thread.
+
+On macOS Zitter owns the app-level entry points that would otherwise open stock
+Chrome Browser windows (`chromium/app/app_shell_mac.mm`): Dock reopen raises the
+Zitter window, the Dock menu offers "Nowa karta", links and Handoff from other
+apps open as tabs (queued until the window exists), and Zitter's own main menu
+replaces Chrome's (no New Window / Incognito / History items). AppController
+stays `NSApp.delegate`, as Chrome CHECKs; only those methods are replaced, and a
+CHECK flags them if an upstream update renames one. As a last resort `Runtime`
+closes any stock normal Browser window that still appears and logs an error.
+
+The app icon is the Dirac ket |z⟩ ("E1 Klasyczny"), sourced from
+`assets/icon/zitter.svg`; `tools/build_icon.py` renders `Zitter.icns`, which the
+packager installs. Onboarding (welcome, import, setup), Chromium settings and the
+DMG installer from the design canvas are not implemented yet.
 
 ## Remaining architecture risk
 

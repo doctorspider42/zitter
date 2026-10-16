@@ -21,7 +21,9 @@ open build/Zitter.app
 network service, sandboxed helpers and profile services, with Zitter's Views
 window. It has no browser-test runner or one-hour test timeout. Cmd+L opens the
 address/search palette, Cmd+T adds a tab, and Cmd+Alt+1/2 switches workspaces.
-The sidebar holds workspace names, tabs, pinning and editable accent colors.
+The light window keeps native traffic lights; a pinned left sidebar holds the
+address pill, tabs, workspace switching and editable accent colors, and the header
+has back/forward/reload. Rebuild the icon with `python3 tools/build_icon.py`.
 
 The default data directory is `~/Library/Application Support/Zitter`:
 
