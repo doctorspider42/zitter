@@ -31,8 +31,14 @@ def mac_app(executable):
     framework = frameworks / "Chromium Framework.framework"
     if not framework.exists() and not framework.is_symlink():
         framework.symlink_to(out / framework.name)
+    resources = contents / "Resources"
+    resources.mkdir(exist_ok=True)
+    icon = Path(__file__).resolve().parents[1] / "assets/icon/Zitter.icns"
+    if icon.exists() and not (resources / "app.icns").is_symlink():
+        (resources / "app.icns").symlink_to(icon)
     with (contents / "Info.plist").open("wb") as stream:
         plistlib.dump({"CFBundleExecutable": executable.name,
+                       "CFBundleIconFile": "app.icns",
                        "CFBundleIdentifier": "dev.zitter.prototype",
                        "CFBundleName": "Zitter Prototype",
                        "CFBundleDisplayName": "Zitter Prototype",

@@ -56,5 +56,19 @@ int main() {
     Expect(controller.Activate("work"), "switch work");
     Expect(runtime.profile_id == "work-profile", "work profile stays bound");
   }
+  Expect(!model.Remove("missing"), "reject removal of unknown workspace");
+  Expect(!model.Remove("work"), "active workspace must be switched before removal");
+  Expect(!model.Update("project", "", "work-profile"), "reject empty name");
+  Expect(!model.Update("project", "Project", ""), "reject empty profile");
+  Expect(!model.Update("missing", "Project", "work-profile"), "reject unknown edit");
+  Expect(model.Update("project", "Client", "personal-profile"), "edit workspace");
+  Expect(model.Find("project")->name == "Client", "rename workspace");
+  Expect(controller.Activate("project"), "activate reassigned workspace");
+  Expect(runtime.profile_id == "personal-profile", "use assigned profile");
+  Expect(model.Remove("work"), "remove inactive workspace");
+  Expect(!model.Find("work"), "removed workspace is absent");
+  Expect(model.Remove("personal"), "remove second workspace");
+  Expect(!model.Remove("project"), "keep final workspace");
+  Expect(model.active()->id == "project", "preserve active selection after erase");
   std::cout << "Workspace contracts passed\n";
 }

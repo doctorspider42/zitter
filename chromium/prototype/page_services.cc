@@ -1,0 +1,282 @@
+#include "chromium/prototype/page_services.h"
+#include "chromium/prototype/browser_data.h"
+
+#include <utility>
+#include <algorithm>
+#include "ui/display/screen.h"
+#include "ui/display/display.h"
+
+#include "base/functional/bind.h"
+#include "base/strings/utf_string_conversions.h"
+#include "base/functional/callback_helpers.h"
+#include "chrome/browser/history/history_service_factory.h"
+#include "chrome/browser/content_settings/host_content_settings_map_factory.h"
+#include "chrome/browser/content_settings/page_specific_content_settings_delegate.h"
+#include "chrome/browser/ui/prefs/prefs_tab_helper.h"
+#include "components/content_settings/browser/page_specific_content_settings.h"
+#include "chrome/browser/history/history_tab_helper.h"
+#include "chrome/browser/password_manager/chrome_password_manager_client.h"
+#include "chrome/browser/password_manager/factories/profile_password_store_factory.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/browser_process.h"
+#include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/profiles/profile_attributes_storage.h"
+#include "chrome/browser/profiles/profile_attributes_entry.h"
+#include "chrome/common/pref_names.h"
+#include "components/prefs/pref_service.h"
+#include "chrome/browser/ui/autofill/chrome_autofill_client.h"
+#include "chrome/browser/ui/autofill/payments/chrome_payments_autofill_client.h"
+#include "components/history/content/browser/history_context_helper.h"
+#include "components/history/core/browser/history_service.h"
+#include "components/password_manager/core/browser/password_form_manager_for_ui.h"
+#include "components/sessions/content/session_tab_helper.h"
+#include "content/public/browser/navigation_controller.h"
+#include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/navigation_handle.h"
+#include "content/public/browser/web_contents.h"
+#include "ui/base/mojom/ui_base_types.mojom.h"
+#include "ui/views/widget/widget.h"
+#include "ui/views/controls/label.h"
+#include "ui/views/controls/combobox/combobox.h"
+#include "ui/views/layout/box_layout.h"
+#include "ui/views/accessibility/view_accessibility.h"
+#include "ui/views/window/dialog_delegate.h"
+#include "ui/views/bubble/bubble_dialog_model_host.h"
+#include "ui/base/models/dialog_model.h"
+#include "ui/base/models/simple_combobox_model.h"
+#include "url/origin.h"
+
+namespace zitter::prototype {
+std::u16string BrowsingProfileName(Profile* profile) {
+  if (auto* manager = g_browser_process->profile_manager())
+    if (auto* entry = manager->GetProfileAttributesStorage().GetProfileAttributesWithPath(profile->GetPath()))
+      return entry->GetLocalProfileName();
+  return base::UTF8ToUTF16(profile->GetPrefs()->GetString(prefs::kProfileName));
+}
+namespace {
+using FormManager = password_manager::PasswordFormManagerForUI;
+
+void PrepareDialogText(views::View* view) {
+  if (auto* label = views::AsViewClass<views::Label>(view)) label->SetSubpixelRenderingEnabled(false);
+  for (const auto& child : view->children()) PrepareDialogText(child);
+}
+
+class ZitterPasswordClient final : public ChromePasswordManagerClient {
+ public:
+  using Offer = base::RepeatingCallback<bool(std::unique_ptr<FormManager>, bool)>;
+  using Manual = base::RepeatingCallback<void(std::unique_ptr<FormManager>, bool)>;
+  ZitterPasswordClient(content::WebContents* contents, Offer offer, Manual manual, base::RepeatingClosure manage)
+      : ChromePasswordManagerClient(contents), offer_(std::move(offer)), manual_(std::move(manual)), manage_(std::move(manage)) {}
+  bool PromptUserToSaveOrUpdatePassword(std::unique_ptr<FormManager> form, bool update) override {
+    return offer_.Run(std::move(form), update);
+  }
+  void ShowManualFallbackForSaving(std::unique_ptr<FormManager> form, bool generated, bool update) override {
+    manual_.Run(std::move(form), update);
+  }
+  void HideManualFallbackForSaving() override { manual_.Run(nullptr, false); }
+  void NavigateToManagePasswordsPage(password_manager::ManagePasswordsReferrer) override { manage_.Run(); }
+ private:
+  Offer offer_;
+  Manual manual_;
+  base::RepeatingClosure manage_;
+};
+
+}  // namespace
+
+// Owned by the page, never by the async native dialog. Its metrics reference
+// the profile, so it must be released before that profile can shut down.
+struct PageServices::PendingPassword {
+  explicit PendingPassword(std::unique_ptr<FormManager> value, bool is_update)
+      : form(std::move(value)), update(is_update) {}
+  ~PendingPassword() { Ignore(); }
+  void Save() { if (form) { form->Save(); form.reset(); } }
+  void Decline() {
+    if (!form) return;
+    if (update) form->OnNopeUpdateClicked(); else form->OnNoInteraction(false);
+    form.reset();
+  }
+  void Ignore() { if (form) { form->OnNoInteraction(update); form.reset(); } }
+  std::unique_ptr<FormManager> form;
+  bool update;
+};
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(PageServices);
+
+void PageServices::Attach(content::WebContents* contents) {
+  CreateForWebContents(contents);
+}
+PageServices::PageServices(content::WebContents* contents)
+    : content::WebContentsObserver(contents), content::WebContentsUserData<PageServices>(*contents) {
+  PrefsTabHelper::CreateForWebContents(contents);
+  if (!content_settings::PageSpecificContentSettings::GetDelegateForWebContents(contents))
+    content_settings::PageSpecificContentSettings::CreateForWebContents(contents,
+        std::make_unique<PageSpecificContentSettingsDelegate>(contents));
+  sound_observation_.Observe(HostContentSettingsMapFactory::GetForProfile(
+      Profile::FromBrowserContext(contents->GetBrowserContext())));
+  ApplySoundSetting();
+  sessions::SessionTabHelper::CreateForWebContents(contents, base::BindRepeating(
+      [](content::WebContents*) -> sessions::SessionTabHelperDelegate* { return nullptr; }));
+  HistoryTabHelper::CreateForWebContents(contents);
+  autofill::ChromeAutofillClient::CreateForWebContents(contents);
+  // Payment-save/reauth UI depends on Chrome's BrowserWindow. This is a
+  // per-page capability switch, not a modification of the profile's settings.
+  static_cast<autofill::ChromeAutofillClient*>(autofill::ContentAutofillClient::FromWebContents(contents))
+      ->GetPaymentsAutofillClient()->DisablePaymentsAutofill();
+  if (!ChromePasswordManagerClient::FromWebContents(contents)) {
+    contents->SetUserData(ChromePasswordManagerClient::UserDataKey(),
+        std::make_unique<ZitterPasswordClient>(contents,
+            base::BindRepeating([](base::WeakPtr<PageServices> services, std::unique_ptr<FormManager> form, bool update) {
+              return services && services->OfferPassword(std::move(form), update);
+            }, weak_factory_.GetWeakPtr()),
+            base::BindRepeating(&PageServices::SetManualPassword, weak_factory_.GetWeakPtr()),
+            base::BindRepeating(&PageServices::ShowPasswords, weak_factory_.GetWeakPtr())));
+  }
+}
+PageServices::~PageServices() { DismissPassword(); }
+views::Widget* PageServices::password_prompt() const { return prompt_.get(); }
+
+bool PageServices::OfferPassword(std::unique_ptr<FormManager> form, bool update) {
+  if (!form || !web_contents() || web_contents()->GetVisibility() != content::Visibility::VISIBLE ||
+      !web_contents()->GetLastCommittedURL().SchemeIsHTTPOrHTTPS() || form->IsBlocklisted()) return false;
+  DismissPassword();
+  auto* profile = Profile::FromBrowserContext(web_contents()->GetBrowserContext());
+  const auto origin = base::UTF8ToUTF16(url::Origin::Create(form->GetURL()).Serialize());
+  const auto username = form->GetPendingCredentials().username_value;
+  pending_password_ = std::make_shared<PendingPassword>(std::move(form), update);
+  std::weak_ptr<PendingPassword> pending = pending_password_;
+  auto model = ui::DialogModel::Builder()
+      .SetTitle(update ? u"Zaktualizować hasło?" : u"Zapisać hasło?")
+      .AddParagraph(ui::DialogModelLabel(origin))
+      .AddParagraph(ui::DialogModelLabel(u"Użytkownik: " + username))
+      .AddParagraph(ui::DialogModelLabel(u"Profil: " + BrowsingProfileName(profile)))
+      .AddParagraph(ui::DialogModelLabel(u"Hasło będzie chronione w magazynie tego profilu."))
+      .AddOkButton(base::BindOnce([](std::weak_ptr<PendingPassword> weak) { if (auto value = weak.lock()) value->Save(); }, pending),
+          ui::DialogModel::Button::Params().SetLabel(update ? u"Zaktualizuj" : u"Zapisz hasło"))
+      .AddCancelButton(base::BindOnce([](std::weak_ptr<PendingPassword> weak) { if (auto value = weak.lock()) value->Decline(); }, pending),
+          ui::DialogModel::Button::Params().SetLabel(u"Nie teraz"))
+      .SetDialogDestroyingCallback(base::BindOnce([](std::weak_ptr<PendingPassword> weak) { if (auto value = weak.lock()) value->Ignore(); }, pending))
+      .Build();
+  auto dialog = views::BubbleDialogModelHost::CreateModal(std::move(model), ui::mojom::ModalType::kWindow);
+  auto* parent = views::Widget::GetWidgetForNativeWindow(web_contents()->GetTopLevelNativeWindow());
+  auto* widget = views::DialogDelegate::CreateDialogWidget(std::move(dialog), web_contents()->GetTopLevelNativeWindow(), parent ? parent->GetNativeView() : gfx::NativeView());
+  if (parent) widget->SetColorModeOverride(parent->color_mode_override());
+  PrepareDialogText(widget->GetRootView());
+  prompt_ = widget->GetWeakPtr();
+  widget->Show();
+  return true;
+}
+void PageServices::SetManualPassword(std::unique_ptr<FormManager> form, bool update) {
+  manual_password_ = std::move(form); manual_update_ = update;
+}
+void PageServices::ShowPasswords() {
+  if (manual_password_) OfferPassword(std::move(manual_password_), manual_update_);
+  else if (password_prompt()) password_prompt()->Activate();
+  else if (web_contents()) {
+    auto* profile = Profile::FromBrowserContext(web_contents()->GetBrowserContext());
+    auto store = ProfilePasswordStoreFactory::GetForProfile(profile, ServiceAccessType::EXPLICIT_ACCESS);
+    if (!store) return;
+    manage_requested_ = true;
+    store->GetAutofillableLogins(weak_factory_.GetWeakPtr());
+  }
+}
+void PageServices::OnGetPasswordStoreResultsOrErrorFrom(password_manager::PasswordStoreInterface* store,
+    base::expected<std::vector<password_manager::StoredCredential>, password_manager::PasswordStoreBackendError> results) {
+  if (!manage_requested_ || !web_contents() || web_contents()->GetVisibility() != content::Visibility::VISIBLE) return;
+  manage_requested_ = false;
+  auto* profile = Profile::FromBrowserContext(web_contents()->GetBrowserContext());
+  auto dialog = std::make_unique<views::DialogDelegate>();
+  dialog->SetTitle(u"Zapisane logowania");
+  dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk));
+  dialog->SetButtonLabel(ui::mojom::DialogButton::kOk, u"Zamknij");
+  dialog->set_use_custom_frame(false);
+  dialog->set_draggable(true);
+  dialog->SetCanResize(true);
+  auto content = std::make_unique<views::View>();
+  content->SetLayoutManager(std::make_unique<views::BoxLayout>(
+      views::BoxLayout::Orientation::kVertical, gfx::Insets(16), 12));
+  auto paragraph = [&](std::u16string text) {
+    auto* label = content->AddChildView(std::make_unique<views::Label>(text));
+    label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
+    label->SetMultiLine(true);
+  };
+  paragraph(u"Profil: " + BrowsingProfileName(profile));
+  if (!results.has_value()) {
+    paragraph(u"Magazyn haseł jest niedostępny. Spróbuj ponownie później.");
+  } else if (results->empty()) {
+    paragraph(u"Brak zapisanych logowań. Po zalogowaniu na stronie zaproponujemy zapis hasła.");
+  } else {
+    std::vector<ui::SimpleComboboxModel::Item> accounts;
+    for (const auto& credential : *results)
+      accounts.emplace_back(base::UTF8ToUTF16(url::Origin::Create(credential.url).Serialize()) + u" · " + credential.username_value);
+    auto* picker = content->AddChildView(std::make_unique<views::Combobox>(
+        std::make_unique<ui::SimpleComboboxModel>(std::move(accounts))));
+    picker->GetViewAccessibility().SetName(u"Zapisane konta");
+    paragraph(u"Kliknij pole logowania na stronie, aby wybrać zapisane konto. Hasła nie są tu ujawniane.");
+  }
+  content->SetPreferredSize(gfx::Size(460, 180));
+  dialog->SetContentsView(std::move(content));
+  auto* parent = views::Widget::GetWidgetForNativeWindow(web_contents()->GetTopLevelNativeWindow());
+  auto* widget = views::DialogDelegate::CreateDialogWidget(std::move(dialog), web_contents()->GetTopLevelNativeWindow(), parent ? parent->GetNativeView() : gfx::NativeView());
+  if (parent) widget->SetColorModeOverride(parent->color_mode_override());
+  PrepareDialogText(widget->GetRootView());
+  const auto area = display::Screen::Get()->GetDisplayNearestWindow(web_contents()->GetTopLevelNativeWindow()).work_area();
+  gfx::Rect bounds(0, 0, std::min(520, area.width()), std::min(300, area.height()));
+  const auto anchor = parent ? parent->GetWindowBoundsInScreen().CenterPoint() : area.CenterPoint();
+  bounds.set_origin(gfx::Point(anchor.x() - bounds.width()/2, anchor.y() - bounds.height()/2));
+  bounds.AdjustToFit(area);
+  widget->SetBoundsConstrained(bounds);
+  prompt_ = widget->GetWeakPtr(); widget->Show();
+
+}
+void PageServices::DismissPassword() {
+  manage_requested_ = false;
+  if (pending_password_) pending_password_->Ignore();
+  pending_password_.reset();
+  if (auto* widget = password_prompt()) widget->Close();
+  prompt_.reset();
+}
+void PageServices::DidStartNavigation(content::NavigationHandle* navigation) {
+  if (navigation->IsInPrimaryMainFrame() && !navigation->IsSameDocument()) { DismissPassword(); manual_password_.reset(); }
+}
+void PageServices::OnVisibilityChanged(content::Visibility visibility) {
+  if (visibility == content::Visibility::HIDDEN) DismissPassword();
+}
+void PageServices::EndVisit() {
+  if (!last_entry_id_ || !web_contents()) return;
+  auto* profile = Profile::FromBrowserContext(web_contents()->GetBrowserContext());
+  if (auto* history = HistoryServiceFactory::GetForProfile(profile, ServiceAccessType::IMPLICIT_ACCESS))
+    history->UpdateWithPageEndTime(history::ContextIDForWebContents(web_contents()), *last_entry_id_, last_url_, base::Time::Now());
+  last_entry_id_.reset();
+}
+void PageServices::ApplySoundSetting() {
+  if (!web_contents()) return;
+  auto* settings = sound_observation_.GetSource();
+  const auto& url = web_contents()->GetLastCommittedURL();
+  web_contents()->SetAudioMuted(settings->GetContentSetting(url, url, ContentSettingsType::SOUND) == CONTENT_SETTING_BLOCK);
+}
+void PageServices::OnContentSettingChanged(const ContentSettingsPattern&,
+    const ContentSettingsPattern&, ContentSettingsTypeSet types) {
+  if (types.Contains(ContentSettingsType::SOUND)) ApplySoundSetting();
+}
+void PageServices::DidFinishNavigation(content::NavigationHandle* navigation) {
+  if (navigation->HasCommitted() && navigation->IsInPrimaryMainFrame()) ApplySoundSetting();
+  if (!navigation->HasCommitted() || !navigation->IsInPrimaryMainFrame() || navigation->IsErrorPage() ||
+      !navigation->ShouldUpdateHistory() || !navigation->GetURL().SchemeIsHTTPOrHTTPS()) return;
+  auto* profile = Profile::FromBrowserContext(web_contents()->GetBrowserContext());
+  if (profile->IsOffTheRecord()) return;
+  auto* service = HistoryServiceFactory::GetForProfile(profile, ServiceAccessType::IMPLICIT_ACCESS);
+  if (!service) return;
+  EndVisit();
+  auto* entry = web_contents()->GetController().GetLastCommittedEntry();
+  // Reuse Chromium's redirect/referrer/transition handling. Its standard
+  // observer excludes pages outside BrowserWindow, so only this adapter adds
+  // the visit for our standalone Views pages.
+  service->AddPage(HistoryTabHelper::FromWebContents(web_contents())->CreateHistoryAddPageArgs(
+      web_contents()->GetLastCommittedURL(), entry->GetTimestamp(), entry->GetUniqueID(), navigation));
+  last_entry_id_ = entry->GetUniqueID(); last_url_ = web_contents()->GetLastCommittedURL();
+}
+void PageServices::WebContentsDestroyed() {
+  sound_observation_.Reset();
+  EndVisit(); DismissPassword(); manual_password_.reset(); weak_factory_.InvalidateWeakPtrs();
+}
+}  // namespace zitter::prototype

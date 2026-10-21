@@ -7,6 +7,7 @@
 
 #include "base/check.h"
 #include "base/logging.h"
+#include "chrome/browser/download/download_core_service.h"
 #include "base/no_destructor.h"
 #include "base/strings/sys_string_conversions.h"
 #include "url/gurl.h"
@@ -96,7 +97,7 @@ NSMenu* BuildMainMenu() {
   Submenu(bar, @"Zitter", @[
     Item(@"O Zitter", @selector(orderFrontStandardAboutPanel:), @""),
     NSMenuItem.separatorItem,
-    Command(@"Ustawienia przestrzeni…", AppCommand::kSettings, @",", kCmd),
+    Command(@"Ustawienia…", AppCommand::kSettings, @",", kCmd),
     NSMenuItem.separatorItem,
     Item(@"Ukryj Zitter", @selector(hide:), @"h"),
     Item(@"Ukryj pozostałe", @selector(hideOtherApplications:), @"h", kCmdOption),
@@ -107,6 +108,9 @@ NSMenu* BuildMainMenu() {
   Submenu(bar, @"Plik", @[
     Command(@"Nowa karta", AppCommand::kNewTab, @"t", kCmd),
     Command(@"Otwórz adres…", AppCommand::kOpenAddress, @"l", kCmd),
+    Command(@"Command Center…", AppCommand::kCommandPalette, @"k", kCmd),
+    Command(@"Pobrania…", AppCommand::kDownloads, @"", 0),
+    Command(@"Hasła tego profilu…", AppCommand::kPasswords, @"", 0),
     NSMenuItem.separatorItem,
     Command(@"Zamknij kartę", AppCommand::kCloseTab, @"w", kCmd),
   ]);
@@ -127,8 +131,8 @@ NSMenu* BuildMainMenu() {
     Item(@"Minimalizuj", @selector(performMiniaturize:), @"m"),
     Item(@"Powiększ", @selector(performZoom:), @"", 0),
     NSMenuItem.separatorItem,
-    Command(@"Przestrzeń: Praca", AppCommand::kWorkspaceWork, @"1", kCmdOption),
-    Command(@"Przestrzeń: Prywatne", AppCommand::kWorkspacePersonal, @"2", kCmdOption),
+    Command(@"Pierwsza przestrzeń", AppCommand::kWorkspaceWork, @"1", kCmdOption),
+    Command(@"Druga przestrzeń", AppCommand::kWorkspacePersonal, @"2", kCmdOption),
   ]);
   NSApp.windowsMenu = window.submenu;
   return bar;
@@ -146,12 +150,29 @@ NSMenu* DockMenu() {
 
 namespace zitter {
 
+bool ConfirmDownloadShutdown() {
+  const int count = DownloadCoreService::BlockingShutdownCountAllProfiles();
+  if (!count) return true;
+  id controller = NSApp.delegate;
+  const SEL selector = @selector(userWillWaitForInProgressDownloads:);
+  CHECK([controller respondsToSelector:selector]);
+  auto ask = reinterpret_cast<BOOL (*)(id, SEL, int)>([controller methodForSelector:selector]);
+  return !ask(controller, selector, count);
+}
+
 void InstallAppShell() {
   static bool installed = false;
   if (installed) return;
   installed = true;
   Class controller = NSClassFromString(@"AppController");
   CHECK(controller);
+  Method quit_method = class_getInstanceMethod(controller, @selector(tryToTerminateApplication));
+  CHECK(quit_method);
+  auto original_quit = reinterpret_cast<void (*)(id, SEL)>(method_getImplementation(quit_method));
+  Replace(controller, @selector(tryToTerminateApplication), ^(id self) {
+    if (g_delegate) g_delegate->RequestQuit();
+    else original_quit(self, @selector(tryToTerminateApplication));
+  });
   Replace(controller, @selector(applicationShouldHandleReopen:hasVisibleWindows:),
           ^BOOL(id, NSApplication*, BOOL) {
             if (g_delegate) g_delegate->RaiseWindow();
@@ -176,6 +197,11 @@ void SetAppShellDelegate(AppShellDelegate* delegate) {
   g_delegate = delegate;
   if (!delegate) return;
   NSApp.mainMenu = BuildMainMenu();
+  // Chrome's dock tile redraws NSImageNameApplicationIcon; pin it to the
+  // bundle's own Zitter icon so the Dock never falls back to Chromium's.
+  if (NSString* icon = [NSBundle.mainBundle pathForResource:@"app" ofType:@"icns"]) {
+    if (NSImage* image = [[NSImage alloc] initWithContentsOfFile:icon]) NSApp.applicationIconImage = image;
+  }
   auto pending = std::move(PendingUrls());
   PendingUrls().clear();
   for (const auto& url : pending) delegate->OpenUrl(url);

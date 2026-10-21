@@ -4,6 +4,9 @@ import("//testing/test.gni")
 # Keep the upstream browser_tests hook, but build just Zitter's probe locally.
 test("zitter_prototype") {
   testonly = true
+  # Verify native behavior with the same LTO backend level as the regular app.
+  configs -= [ "//build/config/compiler:thinlto_optimize_default" ]
+  configs += [ "//build/config/compiler:thinlto_optimize_max" ]
   deps = [
     ":profile_workspace_browser_tests",
     "//chrome:packed_resources",
@@ -40,6 +43,30 @@ source_set("shell") {
   sources = [
     "chromium/prototype/workspace_window.cc",
     "chromium/prototype/workspace_window.h",
+    "chromium/prototype/browser_data.h",
+    "chromium/prototype/browser_tools.h",
+    "chromium/prototype/browser_tools.cc",
+    "chromium/prototype/workspace_time_machine.cc",
+    "chromium/prototype/workspace_commands.cc",
+    "chromium/prototype/workspace_preconnect.cc",
+    "chromium/prototype/browser_preferences.h",
+    "chromium/prototype/browser_preferences.cc",
+    "chromium/prototype/workspace_browser_settings.cc",
+    "chromium/prototype/link_navigation.h",
+    "chromium/prototype/link_navigation.cc",
+    "chromium/prototype/page_dialogs.h",
+    "chromium/prototype/page_dialogs.cc",
+    "chromium/prototype/workspace_lifecycle.cc",
+    "chromium/prototype/page_media_access.h",
+    "chromium/prototype/page_media_access.cc",
+    "chromium/prototype/page_file_access.h",
+    "chromium/prototype/page_file_access.cc",
+    "chromium/prototype/download_panel.h",
+    "chromium/prototype/download_panel.cc",
+    "chromium/prototype/page_services.h",
+    "chromium/prototype/page_services.cc",
+    "chromium/prototype/arc_importer.h",
+    "chromium/prototype/arc_importer.cc",
     "chromium/prototype/workspace_shell.cc",
     "chromium/prototype/workspace_shell.h",
   ]
@@ -51,8 +78,45 @@ source_set("shell") {
     "//build:buildflag_header_h",
     "//cc/paint",
     "//chrome/browser:browser_process",
+    "//chrome/browser/history",
+    "//chrome/browser/predictors",
+    "//chrome/browser/predictors:config",
+    "//chrome/browser/preloading:prefs",
+    "//services/network/public/cpp",
+    "//chrome/browser/download",
+    "//chrome/browser/media/webrtc",
+    "//chrome/browser/enterprise",
+    "//components/permissions",
+    "//chrome/browser/permissions",
+    "//chrome/browser:file_select_helper",
+    "//chrome/browser/ui/select_file_policy",
+    "//chrome/browser/content_settings:content_settings_factory",
+    "//chrome/browser/content_settings",
+    "//chrome/browser/ui/prefs",
+    "//components/content_settings/browser",
+    "//chrome/browser/ui/zoom",
+    "//chrome/common:constants",
+    "//components/content_settings/core/browser",
+    "//components/content_settings/core/common",
+    "//components/password_manager/core/common",
+    "//components/prefs",
+    "//base/i18n:language_tag",
+    "//components/language/core/browser",
+    "//components/spellcheck/browser",
+    "//chrome/browser/browsing_data",
+    "//chrome/browser/ui/webui/settings",
+    "//net",
+    "//third_party/blink/public/common",
+    "//chrome/browser/password_manager",
+    "//chrome/browser/ui/autofill",
+    "//components/history/content/browser",
+    "//components/history/core/browser",
+    "//components/history/core/common",
+    "//components/sessions",
+    "//components/password_manager/core/browser",
     "//chrome/browser/profiles:profile",
     "//chrome/browser/profiles:profile_manager",
+    "//chrome/browser/profiles:profile_util",
     "//chrome/browser/profiles/keep_alive",
     "//chrome/browser/ui/browser_window",
     "//components/input",
@@ -61,12 +125,17 @@ source_set("shell") {
     "//content/public/browser",
     "//skia",
     "//ui/color",
+    "//ui/compositor",
+    "//ui/native_theme",
+    "//ui/gfx/animation",
     "//ui/display",
     "//ui/base",
     "//ui/content_accelerators",
     "//ui/events",
     "//ui/gfx",
     "//ui/views",
+    "//ui/menus",
+    "//ui/shell_dialogs",
     "//ui/views/controls/webview",
     "//url",
   ]
@@ -87,28 +156,50 @@ source_set("shell") {
 source_set("profile_workspace_browser_tests") {
   testonly = true
   defines = [ "HAS_OUT_OF_PROC_TEST_RUNNER" ]
-  sources = [ "chromium/prototype/profile_workspace_browsertest.cc" ]
+  sources = [
+    "chromium/prototype/profile_workspace_browsertest.cc",
+    "chromium/prototype/workspace_preconnect_browsertest.cc",
+    "chromium/prototype/page_file_access_browsertest.cc",
+    "chromium/prototype/page_media_access_browsertest.cc",
+  ]
   include_dirs = [ "." ]
   deps = [
     ":shell",
     "//base/test:test_support",
+    "//chrome/browser/preloading:prefs",
+    "//chrome/browser/permissions:test_support",
+    "//ui/shell_dialogs:test_support",
+    "//components/prefs:test_support",
+    "//chrome/browser:chrome_content_browser_client",
     "//chrome/test:test_support",
     "//chrome/test:test_support_ui",
     "//content/test:test_support",
+    "//media",
+    "//media:test_support",
+    "//mojo/public/cpp/bindings",
+    "//services/audio",
+    "//services/audio/public/mojom",
     "//net:test_support",
     "//testing/gtest",
     "//ui/base:test_support",
+    "//ui/views:test_support",
   ]
 }
 
 # Real browser bootstrap, with no browser-test runner or test-only dependencies.
 if (is_mac || is_linux) {
   executable("zitter") {
+    # Match Chromium's main browser link: ThinLTO defaults to LTO O0 even
+    # when thin_lto_enable_optimizations is true, unless opted in per target.
+    configs -= [ "//build/config/compiler:thinlto_optimize_default" ]
+    configs += [ "//build/config/compiler:thinlto_optimize_max" ]
     sources = [
       "chromium/app/main.cc",
       "chromium/app/browser_client.cc",
       "chromium/app/browser_client.h",
       "chromium/app/runtime.cc",
+      "chromium/app/performance_probe.cc",
+      "chromium/app/performance_probe.h",
       "chromium/app/runtime.h",
       "//chrome/app/chrome_crash_reporter_client.cc",
       "//chrome/app/chrome_crash_reporter_client.h",
@@ -151,7 +242,6 @@ if (is_mac || is_linux) {
         "//chrome/app/chrome_main_mac.mm",
       ]
       deps += [
-        "//base/allocator:early_zone_registration_apple",
         "//chrome/browser:chrome_browser_application_mac",
         "//chrome/browser/mac",
       ]

@@ -1,0 +1,15 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Zitter — test logowania</title>
+<style>
+body{font:16px system-ui;max-width:440px;margin:64px auto;color:#242136;background:#f6f5fb}
+form{display:grid;gap:16px;background:white;padding:28px;border-radius:16px}
+label{display:grid;gap:6px}input,button{font:inherit;padding:10px}button{cursor:pointer}
+</style>
+<h1>Test logowania</h1>
+<p>Strona testowa. Nie używaj prawdziwego hasła.</p>
+<form id="login" action="/login-success" method="post">
+<label>Konto<input id="username" name="username" autocomplete="username"></label>
+<label>Hasło<input id="password" name="password" type="password" autocomplete="current-password"></label>
+<button id="submit" type="submit">Zaloguj testowo</button>
+</form>

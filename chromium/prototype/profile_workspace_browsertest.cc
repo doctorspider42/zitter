@@ -1,10 +1,79 @@
 #include "chromium/prototype/workspace_window.h"
+#include "content/public/browser/render_process_host.h"
+#include "content/public/browser/spare_render_process_host_manager.h"
 #include "chromium/prototype/workspace_shell.h"
+#include "chromium/prototype/browser_preferences.h"
+#include "components/prefs/testing_pref_service.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "url/origin.h"
+#include "chromium/prototype/arc_importer.h"
+#include "chromium/prototype/page_services.h"
+#include "chromium/prototype/download_panel.h"
+#include "chrome/browser/download/download_prefs.h"
+#include "content/public/browser/download_manager_delegate.h"
+#include "content/public/browser/download_request_utils.h"
+#include "net/test/embedded_test_server/controllable_http_response.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
+#include "ui/display/screen.h"
+#include "ui/display/display.h"
+#include "base/uuid.h"
+#include "content/public/browser/storage_partition_config.h"
+#include "chromium/prototype/page_dialogs.h"
+#include "chromium/prototype/link_navigation.h"
+#include "content/public/test/url_loader_interceptor.h"
+#include "base/functional/callback_helpers.h"
+#include "ui/native_theme/native_theme.h"
+#include "ui/gfx/animation/animation.h"
+#include "ui/gfx/scoped_animation_duration_scale_mode.h"
+#include "chrome/browser/chrome_content_browser_client.h"
+#include "content/public/common/content_client.h"
+#include "content/public/browser/navigation_throttle_registry.h"
+#include "net/dns/mock_host_resolver.h"
+#include "base/synchronization/lock.h"
+#include "chrome/browser/history/history_service_factory.h"
+#include "chrome/browser/password_manager/factories/profile_password_store_factory.h"
+#include "components/password_manager/core/browser/password_store/password_store_consumer.h"
+#include "components/password_manager/core/browser/password_store/password_store_interface.h"
+#include "components/history/core/browser/history_service.h"
+#include "components/history/core/browser/history_types.h"
+#include "components/history/core/common/pref_names.h"
+#include "components/prefs/pref_service.h"
+#include "components/autofill/content/browser/content_autofill_client.h"
+#include "components/autofill/core/browser/payments/payments_autofill_client.h"
+#include "components/autofill/core/browser/suggestions/suggestion.h"
+#include "components/password_manager/core/common/password_manager_pref_names.h"
+#include "chrome/common/pref_names.h"
+#include "chrome/browser/content_settings/host_content_settings_map_factory.h"
+#include "chrome/browser/ui/zoom/chrome_zoom_level_prefs.h"
+#include "components/content_settings/core/browser/host_content_settings_map.h"
+#include "ui/views/controls/button/toggle_button.h"
+#include "net/test/embedded_test_server/http_response.h"
+#include "ui/views/window/dialog_delegate.h"
 
 #include <memory>
+#include <algorithm>
+#include "base/timer/elapsed_timer.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/logging.h"
+#include "base/task/thread_pool/thread_pool_instance.h"
+#include "ui/views/view_tracker.h"
+#include "ui/views/controls/webview/webview.h"
+#include "base/json/json_reader.h"
+#include "base/json/json_writer.h"
+#include "base/process/process_metrics.h"
+#include "base/scoped_observation.h"
+#include "chrome/browser/profiles/profile_manager_observer.h"
 
 #include "base/command_line.h"
 #include "base/location.h"
+#include "base/base_paths.h"
+#include "base/files/file_util.h"
+#include "base/files/scoped_temp_dir.h"
+#include "base/path_service.h"
+#include "base/strings/string_util.h"
+#include "base/threading/thread_restrictions.h"
+#include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
@@ -24,6 +93,7 @@
 #include "components/input/native_web_keyboard_event.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_widget_host.h"
+#include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
@@ -36,12 +106,42 @@
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/controls/textfield/textfield.h"
+#include "ui/views/controls/resize_area.h"
+#include "ui/views/controls/button/md_text_button.h"
+#include "ui/views/controls/combobox/combobox.h"
+#include "ui/views/test/button_test_api.h"
+#include "ui/views/accessibility/view_accessibility.h"
+#include "ui/accessibility/ax_node_data.h"
+#include "ui/views/view.h"
+#include "ui/gfx/geometry/point_conversions.h"
 
 namespace zitter::prototype {
+namespace {
+class RoutingTestBrowserClient : public ChromeContentBrowserClient {
+ public:
+  void CreateThrottlesForNavigation(content::NavigationThrottleRegistry& registry) override {
+    LinkNavigation::CreateThrottle(registry);
+    ChromeContentBrowserClient::CreateThrottlesForNavigation(registry);
+  }
+};
+views::Button* FindButton(views::View* root, std::u16string_view text) {
+  if (auto* button = views::AsViewClass<views::MdTextButton>(root)) {
+    if (button->GetText() == text) return button;
+  }
+  for (const auto& child : root->children()) {
+    if (auto* button = FindButton(child.get(), text)) return button;
+  }
+  return nullptr;
+}
+}  // namespace
+
 class ZitterProfilesBrowserTest : public InProcessBrowserTest {
  public:
   void SetUpOnMainThread() override {
     InProcessBrowserTest::SetUpOnMainThread();
+    routing_client_ = std::make_unique<RoutingTestBrowserClient>();
+    old_client_ = content::SetBrowserClientForTesting(routing_client_.get());
+    host_resolver()->AddRule("*.test", "127.0.0.1");
     // Persistent regular profiles inside the harness's isolated user-data-dir.
     auto* manager = g_browser_process->profile_manager();
     base::test::TestFuture<Profile*> work_ready;
@@ -61,22 +161,64 @@ class ZitterProfilesBrowserTest : public InProcessBrowserTest {
         personal_, ProfileKeepAliveOrigin::kBrowserWindow);
     browser()->GetWindow()->Hide();  // Only the Zitter window is visible.
     window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+    ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
     embedded_test_server()->ServeFilesFromSourceDirectory("zitter/testdata");
+    embedded_test_server()->RegisterRequestMonitor(base::BindRepeating([](ZitterProfilesBrowserTest* self, const net::test_server::HttpRequest& request) {
+      if (request.relative_url != "/storage_probe.html?routed") return;
+      base::AutoLock guard(self->routing_lock_);
+      const auto cookie = request.headers.find("Cookie");
+      self->routing_cookies_.push_back(cookie == request.headers.end() ? "" : cookie->second);
+    }, base::Unretained(this)));
+    embedded_test_server()->RegisterRequestHandler(base::BindRepeating([](ZitterProfilesBrowserTest* self, const net::test_server::HttpRequest& request)
+        -> std::unique_ptr<net::test_server::HttpResponse> {
+      if (request.relative_url == "/route-redirect") {
+        auto response = std::make_unique<net::test_server::BasicHttpResponse>();
+        response->set_code(net::HTTP_FOUND);
+        response->AddCustomHeader("Location", self->embedded_test_server()->GetURL("client.test", "/storage_probe.html?redirect").spec());
+        return response;
+      }
+      if (request.relative_url != "/login-success") return nullptr;
+      auto response = std::make_unique<net::test_server::BasicHttpResponse>();
+      response->set_code(net::HTTP_OK);
+      response->set_content_type("text/html");
+      response->set_content("<!doctype html><title>Zalogowano testowo</title><h1>Zalogowano testowo</h1>");
+      return response;
+    }, base::Unretained(this)));
     ASSERT_TRUE(embedded_test_server()->Start());
   }
 
   void TearDownOnMainThread() override {
     window_.reset();
+    EXPECT_TRUE(embedded_test_server()->ShutdownAndWaitUntilComplete());
     personal_ = nullptr;
     work_ = nullptr;
     personal_lease_.reset();
     work_lease_.reset();
+    content::SetBrowserClientForTesting(old_client_);
+    routing_client_.reset();
     InProcessBrowserTest::TearDownOnMainThread();
   }
 
  protected:
+  void SetPaletteQuery(std::u16string query) {
+    auto* shell = window_->shell();
+    shell->address_input()->SetText(query);
+    static_cast<views::TextfieldController*>(shell)->ContentsChanged(shell->address_input(), query);
+  }
+  void ArmUnsaved(content::WebContents* page) {
+    ASSERT_TRUE(content::ExecJs(page, "window.unsaved='draft'; window.onbeforeunload = e => { e.preventDefault(); e.returnValue=''; };"));
+    content::SimulateMouseClickAt(page, 0, blink::WebMouseEvent::Button::kLeft, gfx::Point(12, 12));
+    ASSERT_TRUE(base::test::RunUntil([&] { return page->NeedToFireBeforeUnload(); }));
+  }
+  void AnswerUnload(content::WebContents* page, bool accept) {
+    auto* dialogs = PageDialogs::FromWebContents(page);
+    ASSERT_TRUE(dialogs);
+    ASSERT_TRUE(base::test::RunUntil([&] { return dialogs->dialog() != nullptr; }));
+    ASSERT_TRUE(dialogs->HandleJavaScriptDialog(page, accept, nullptr));
+  }
   void NavigateBoth(std::string_view path = "/storage_probe.html") {
     const auto url = embedded_test_server()->GetURL(path);
+    ASSERT_TRUE(window_->Select("work"));
     ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), url));
     ASSERT_TRUE(window_->Select("personal"));
     ASSERT_TRUE(content::NavigateToURL(window_->contents("personal"), url));
@@ -115,12 +257,2016 @@ class ZitterProfilesBrowserTest : public InProcessBrowserTest {
     ack.Wait();
   }
 
+  base::Lock routing_lock_;
+  std::vector<std::string> routing_cookies_ GUARDED_BY(routing_lock_);
+  std::unique_ptr<RoutingTestBrowserClient> routing_client_;
+  raw_ptr<content::ContentBrowserClient> old_client_ = nullptr;
   raw_ptr<Profile> work_ = nullptr;
   raw_ptr<Profile> personal_ = nullptr;
   std::unique_ptr<ScopedProfileKeepAlive> work_lease_;
   std::unique_ptr<ScopedProfileKeepAlive> personal_lease_;
   std::unique_ptr<WorkspaceWindow> window_;
 };
+
+namespace {
+class PasswordReader final : public password_manager::PasswordStoreConsumer {
+ public:
+  using Result = base::expected<std::vector<password_manager::StoredCredential>, password_manager::PasswordStoreBackendError>;
+  void OnGetPasswordStoreResultsOrErrorFrom(password_manager::PasswordStoreInterface*, Result result) override {
+    ready.SetValue(std::move(result));
+  }
+  base::test::TestFuture<Result> ready;
+  base::WeakPtrFactory<PasswordReader> weak_factory{this};
+};
+}
+
+// Opt in: timing runs must not silently turn functional verification into a
+// benchmark or use real browsing profiles. The Python runner preserves samples.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PerformanceBaseline) {
+  const auto* command = base::CommandLine::ForCurrentProcess();
+  if (!command->HasSwitch("zitter-benchmark")) GTEST_SKIP();
+  int iterations = 30, tabs = 25;
+  if (command->HasSwitch("zitter-perf-iterations"))
+    ASSERT_TRUE(base::StringToInt(command->GetSwitchValueASCII("zitter-perf-iterations"), &iterations));
+  if (command->HasSwitch("zitter-perf-tabs"))
+    ASSERT_TRUE(base::StringToInt(command->GetSwitchValueASCII("zitter-perf-tabs"), &tabs));
+  ASSERT_GE(iterations, 1); ASSERT_LE(iterations, 200);
+  ASSERT_GE(tabs, 2); ASSERT_LE(tabs, 200);
+  base::test::ScopedRunLoopTimeout timeout(FROM_HERE, base::Seconds(30));
+  ASSERT_TRUE(window_->Select("work"));
+  const auto url = embedded_test_server()->GetURL("/performance_probe.html");
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), url));
+  for (int i = 1; i < tabs; ++i) {
+    ASSERT_TRUE(window_->NavigateFromBar(url, true));
+    ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  }
+
+  class FirstPaint final : public content::WebContentsObserver {
+   public:
+    FirstPaint(content::WebContents* page, base::TimeTicks start)
+        : content::WebContentsObserver(page), start_(start) {}
+    void DidFirstVisuallyNonEmptyPaint() override {
+      if (!elapsed) elapsed = base::TimeTicks::Now() - start_;
+    }
+    std::optional<base::TimeDelta> elapsed;
+   private:
+    const base::TimeTicks start_;
+  };
+  auto sample = [](const char* metric, int trial, double milliseconds) {
+    LOG(INFO) << "ZITTER_PERF {\"metric\":\"" << metric << "\",\"trial\":"
+              << trial << ",\"ms\":" << milliseconds << "}";
+  };
+  // Two warmups are explicitly excluded; these are warm-profile measurements,
+  // not cold application startup or internet/DNS/TLS measurements.
+  for (int trial = -2; trial < iterations; ++trial) {
+    auto& spare_manager = content::SpareRenderProcessHostManager::Get();
+    const auto spare_ids = spare_manager.GetSpareIds();
+    size_t ready_matching_spares = 0;
+    auto* context = window_->contents("work")->GetBrowserContext();
+    for (const auto& spare : spare_manager.GetSpares())
+      if (spare->GetBrowserContext() == context && spare->IsReady()) ++ready_matching_spares;
+    const auto start = base::TimeTicks::Now();
+    ASSERT_TRUE(window_->NavigateFromBar(url, true));
+    const auto dispatched = base::TimeTicks::Now();
+    FirstPaint paint(window_->contents("work"), start);
+    ASSERT_TRUE(base::test::RunUntil([&] { return paint.elapsed.has_value(); }));
+    ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+    if (trial >= 0) {
+      sample("new_tab_dispatch_ms", trial, (dispatched - start).InMillisecondsF());
+      sample("new_tab_first_visual_paint_ms", trial, paint.elapsed->InMillisecondsF());
+      const auto process_id = window_->contents("work")->GetPrimaryMainFrame()->GetProcess()->GetID();
+      LOG(INFO) << "ZITTER_RENDERER {\"trial\":" << trial << ",\"spares_before\":" << spare_ids.size()
+                << ",\"ready_matching_spares_before\":" << ready_matching_spares
+                << ",\"used_spare\":" << (std::find(spare_ids.begin(), spare_ids.end(), process_id) != spare_ids.end() ? "true" : "false") << "}";
+    }
+    window_->CloseTab(tabs);
+  }
+  window_->SelectTab(1);
+  auto* right_page = window_->contents("work");
+  ASSERT_EQ(true, content::EvalJs(right_page,
+      "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))"));
+  for (int trial = -2; trial < iterations; ++trial) {
+    window_->SelectTab(0);
+    ASSERT_EQ(true, content::EvalJs(window_->contents("work"),
+        "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))"));
+    // Arm both before changing bounds/visibility, so sequential waits cannot
+    // accidentally miss a frame that arrived while waiting for the other pane.
+    content::RenderFrameSubmissionObserver left(window_->contents("work"));
+    content::RenderFrameSubmissionObserver right(right_page);
+    left.SetWaitForNextFrame(); right.SetWaitForNextFrame();
+    const auto start = base::TimeTicks::Now();
+    ASSERT_TRUE(window_->SplitTab(1));
+    const auto dispatched = base::TimeTicks::Now();
+    left.WaitForNextFrameSubmission(); right.WaitForNextFrameSubmission();
+    const auto frames_ready = base::TimeTicks::Now();
+    if (trial >= 0) {
+      sample("split_dispatch_ms", trial, (dispatched - start).InMillisecondsF());
+      sample("split_both_renderer_frames_ms", trial, (frames_ready - start).InMillisecondsF());
+    }
+    window_->Unsplit(0);
+    // Let the full-width state reach the renderer before the next resize.
+    ASSERT_EQ(true, content::EvalJs(window_->contents("work"),
+        "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))"));
+  }
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PerformanceRestoration) {
+  const auto* command = base::CommandLine::ForCurrentProcess();
+  if (!command->HasSwitch("zitter-benchmark")) GTEST_SKIP();
+  int iterations = 30, tabs = 25;
+  if (command->HasSwitch("zitter-perf-iterations"))
+    ASSERT_TRUE(base::StringToInt(command->GetSwitchValueASCII("zitter-perf-iterations"), &iterations));
+  if (command->HasSwitch("zitter-perf-tabs"))
+    ASSERT_TRUE(base::StringToInt(command->GetSwitchValueASCII("zitter-perf-tabs"), &tabs));
+  ASSERT_GE(iterations, 1); ASSERT_LE(iterations, 200);
+  ASSERT_GE(tabs, 2); ASSERT_LE(tabs, 200);
+  base::test::ScopedRunLoopTimeout timeout(FROM_HERE, base::Seconds(30));
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
+  base::DictValue session;
+  for (const std::string id : {"work", "personal"}) {
+    base::DictValue host;
+    host.Set("profile_id", id + "-profile"); host.Set("active", 0);
+    host.Set("left", 0); host.Set("right", id == "work" ? 1 : -1); host.Set("ratio", 0.5);
+    base::ListValue pages;
+    for (int i = 0; i < tabs; ++i) {
+      base::DictValue page;
+      page.Set("url", embedded_test_server()->GetURL(
+          "/performance_probe.html?restore=" + id + std::to_string(i)).spec());
+      page.Set("title", "Saved " + id + std::to_string(i)); pages.Append(std::move(page));
+    }
+    host.Set("tabs", std::move(pages)); session.Set(id, std::move(host));
+  }
+  std::string json;
+  ASSERT_TRUE(base::JSONWriter::Write(session, &json));
+  const auto directory = g_browser_process->profile_manager()->user_data_dir();
+  for (int trial = -2; trial < iterations; ++trial) {
+    window_.reset();
+    base::ThreadPoolInstance::Get()->FlushForTesting();
+    {
+      base::ScopedAllowBlockingForTesting allow;
+      ASSERT_TRUE(base::WriteFile(directory.AppendASCII("ZitterSession.json"), json));
+      ASSERT_TRUE(base::WriteFile(directory.AppendASCII("ZitterTimeMachine.json"), "{}"));
+    }
+    const auto start = base::TimeTicks::Now();
+    window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+    ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+    const auto ready = base::TimeTicks::Now();
+    ASSERT_TRUE(window_->split());
+    auto* left = window_->pane_contents(false);
+    auto* right = window_->pane_contents(true);
+    ASSERT_TRUE(left); ASSERT_TRUE(right);
+    ASSERT_TRUE(base::test::RunUntil([&] {
+      return left->CompletedFirstVisuallyNonEmptyPaint() && right->CompletedFirstVisuallyNonEmptyPaint();
+    }));
+    const auto painted = base::TimeTicks::Now();
+    size_t live = 0;
+    for (const auto& child : window_->shell()->content_host()->children()) {
+      auto* view = views::AsViewClass<views::WebView>(child.get());
+      if (view && view->web_contents()) ++live;
+    }
+    if (trial >= 0) {
+      LOG(INFO) << "ZITTER_PERF {\"metric\":\"restore_ready_ms\",\"trial\":" << trial
+                << ",\"ms\":" << (ready - start).InMillisecondsF() << "}";
+      LOG(INFO) << "ZITTER_PERF {\"metric\":\"restore_both_first_paints_ms\",\"trial\":" << trial
+                << ",\"ms\":" << (painted - start).InMillisecondsF() << "}";
+    }
+    ASSERT_TRUE(content::WaitForLoadStop(left));
+    ASSERT_TRUE(content::WaitForLoadStop(right));
+    ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
+    if (trial >= 0) {
+      auto memory = base::ProcessMetrics::CreateCurrentProcessMetrics()->GetMemoryInfo();
+      ASSERT_TRUE(memory.has_value());
+      uint64_t footprint = 0;
+#if BUILDFLAG(IS_APPLE)
+      footprint = memory->physical_footprint_bytes;
+#endif
+      LOG(INFO) << "ZITTER_RESOURCE {\"trial\":" << trial << ",\"realized_pages\":" << live
+                << ",\"saved_tabs\":" << tabs * 2
+                << ",\"browser_resident_bytes\":" << memory->resident_set_bytes
+                << ",\"browser_physical_footprint_bytes\":" << footprint << "}";
+    }
+  }
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PerformanceProfileStartup) {
+  const auto* command = base::CommandLine::ForCurrentProcess();
+  if (!command->HasSwitch("zitter-benchmark")) GTEST_SKIP();
+  const bool with_page = command->HasSwitch("zitter-perf-profile-page");
+  int iterations = 30, count = 4;
+  if (command->HasSwitch("zitter-perf-iterations"))
+    ASSERT_TRUE(base::StringToInt(command->GetSwitchValueASCII("zitter-perf-iterations"), &iterations));
+  if (command->HasSwitch("zitter-perf-profiles"))
+    ASSERT_TRUE(base::StringToInt(command->GetSwitchValueASCII("zitter-perf-profiles"), &count));
+  ASSERT_GE(iterations, 1); ASSERT_LE(iterations, 200);
+  ASSERT_GE(count, 2); ASSERT_LE(count, 16);
+  base::test::ScopedRunLoopTimeout timeout(FROM_HERE, base::Seconds(30));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
+  auto* manager = g_browser_process->profile_manager();
+  class Timings final : public ProfileManagerObserver {
+   public:
+    explicit Timings(const std::vector<base::FilePath>& paths) : paths_(paths) {}
+    void OnProfileCreationStarted(Profile* profile) override {
+      if (std::find(paths_.begin(), paths_.end(), profile->GetPath()) == paths_.end()) return;
+      const auto now = base::TimeTicks::Now();
+      if (first_start.is_null()) first_start = now;
+      if (profile->GetPath() == paths_.back()) active_start = now;
+    }
+    void OnProfileAdded(Profile* profile) override {
+      if (std::find(paths_.begin(), paths_.end(), profile->GetPath()) == paths_.end()) return;
+      ++added; last_added = base::TimeTicks::Now();
+    }
+    base::TimeTicks first_start, active_start, last_added;
+    size_t added = 0;
+   private:
+    const std::vector<base::FilePath> paths_;
+  };
+  for (int trial = -2; trial < iterations; ++trial) {
+    window_.reset();
+    base::ThreadPoolInstance::Get()->FlushForTesting();
+    base::ListValue profiles, spaces;
+    std::vector<base::FilePath> paths;
+    for (int i = 0; i < count; ++i) {
+      const auto directory = "ZitterProfile-" + base::Uuid::GenerateRandomV4().AsLowercaseString();
+      const auto id = "cold-profile-" + std::to_string(i);
+      paths.push_back(manager->user_data_dir().AppendASCII(directory));
+      base::DictValue profile;
+      profile.Set("id", id); profile.Set("name", "Cold " + std::to_string(i));
+      profile.Set("directory", directory); profiles.Append(std::move(profile));
+      base::DictValue space;
+      space.Set("id", "cold-space-" + std::to_string(i)); space.Set("profile_id", id);
+      space.Set("name", "Space " + std::to_string(i)); spaces.Append(std::move(space));
+    }
+    base::DictValue catalogue;
+    catalogue.Set("profiles", std::move(profiles)); catalogue.Set("workspaces", std::move(spaces));
+    catalogue.Set("active", "cold-space-" + std::to_string(count - 1));
+    catalogue.Set("onboarding_complete", true);
+    std::string json, session_json = "{}";
+    ASSERT_TRUE(base::JSONWriter::Write(catalogue, &json));
+    if (with_page) {
+      base::DictValue session, host, tab;
+      host.Set("profile_id", "cold-profile-" + std::to_string(count - 1));
+      host.Set("active", 0); host.Set("left", 0); host.Set("right", -1);
+      tab.Set("url", embedded_test_server()->GetURL("/performance_probe.html").spec());
+      tab.Set("title", "Restored cold-profile page");
+      base::ListValue tabs; tabs.Append(std::move(tab)); host.Set("tabs", std::move(tabs));
+      session.Set("cold-space-" + std::to_string(count - 1), std::move(host));
+      ASSERT_TRUE(base::JSONWriter::Write(session, &session_json));
+    }
+    {
+      base::ScopedAllowBlockingForTesting allow;
+      ASSERT_TRUE(base::WriteFile(manager->user_data_dir().AppendASCII("ZitterWorkspaces.json"), json));
+      ASSERT_TRUE(base::WriteFile(manager->user_data_dir().AppendASCII("ZitterSession.json"), session_json));
+      ASSERT_TRUE(base::WriteFile(manager->user_data_dir().AppendASCII("ZitterTimeMachine.json"), "{}"));
+    }
+    Timings timings(paths);
+    base::ScopedObservation<ProfileManager, ProfileManagerObserver> observation(&timings);
+    observation.Observe(manager);
+    const auto start = base::TimeTicks::Now();
+    window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+    ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+    const auto ready = base::TimeTicks::Now();
+    base::TimeTicks painted;
+    if (with_page) {
+      auto* page = window_->contents(window_->active_id());
+      ASSERT_TRUE(page);
+      ASSERT_TRUE(base::test::RunUntil([&] { return page->CompletedFirstVisuallyNonEmptyPaint(); }));
+      painted = base::TimeTicks::Now();
+      ASSERT_TRUE(content::WaitForLoadStop(page));
+    }
+    ASSERT_TRUE(base::test::RunUntil([&] { return timings.added == static_cast<size_t>(count) && !window_->profiles_busy(); }));
+    ASSERT_FALSE(timings.first_start.is_null()); ASSERT_FALSE(timings.active_start.is_null());
+    if (trial >= 0) {
+      if (with_page)
+        LOG(INFO) << "ZITTER_PERF {\"metric\":\"profiles_first_visual_paint_ms\",\"trial\":" << trial
+                  << ",\"ms\":" << (painted - start).InMillisecondsF() << "}";
+      LOG(INFO) << "ZITTER_PERF {\"metric\":\"profiles_ready_ms\",\"trial\":" << trial
+                << ",\"ms\":" << (ready - start).InMillisecondsF() << "}";
+      LOG(INFO) << "ZITTER_PERF {\"metric\":\"profile_batch_ms\",\"trial\":" << trial
+                << ",\"ms\":" << (timings.last_added - timings.first_start).InMillisecondsF() << "}";
+      LOG(INFO) << "ZITTER_PERF {\"metric\":\"active_profile_delay_ms\",\"trial\":" << trial
+                << ",\"ms\":" << (timings.active_start - timings.first_start).InMillisecondsF() << "}";
+    }
+    ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
+    if (trial >= 0) {
+      auto memory = base::ProcessMetrics::CreateCurrentProcessMetrics()->GetMemoryInfo();
+      ASSERT_TRUE(memory.has_value());
+      uint64_t footprint = 0;
+#if BUILDFLAG(IS_APPLE)
+      footprint = memory->physical_footprint_bytes;
+#endif
+      size_t live = 0;
+      for (const auto& child : window_->shell()->content_host()->children()) {
+        auto* view = views::AsViewClass<views::WebView>(child.get());
+        if (view && view->web_contents()) ++live;
+      }
+      LOG(INFO) << "ZITTER_RESOURCE {\"trial\":" << trial << ",\"realized_pages\":" << live
+                << ",\"saved_tabs\":" << count
+                << ",\"browser_resident_bytes\":" << memory->resident_set_bytes
+                << ",\"browser_physical_footprint_bytes\":" << footprint << "}";
+    }
+  }
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarMetadataUpdatesPreserveRows) {
+  ASSERT_TRUE(window_->Select("work"));
+  const auto url = embedded_test_server()->GetURL("/performance_probe.html");
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), url));
+  ASSERT_TRUE(window_->NavigateFromBar(url, true));
+  auto* right = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(right));
+  window_->SelectTab(0);
+  auto* shell = window_->shell();
+  views::ViewTracker first(shell->tab_button(0)), second(shell->tab_button(1));
+  ASSERT_TRUE(first); ASSERT_TRUE(second);
+  ASSERT_TRUE(content::ExecJs(right, "document.title='Background title'; history.pushState({}, '', '/updated-path');"));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return second && second.view()->GetTooltipText() == u"Background title";
+  }));
+  ASSERT_TRUE(first); ASSERT_TRUE(second);
+  EXPECT_EQ(first.view(), shell->tab_button(0));
+  EXPECT_EQ(second.view(), shell->tab_button(1));
+  ASSERT_TRUE(window_->SplitTab(1));
+  views::ViewTracker split_left(shell->tab_button(0)), split_right(shell->tab_button(1));
+  ASSERT_TRUE(content::ExecJs(right, "document.title='Split title';"));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return split_right && split_right.view()->GetTooltipText() == u"Split title";
+  }));
+  ASSERT_TRUE(split_left); ASSERT_TRUE(split_right);
+  EXPECT_EQ(split_left.view(), shell->tab_button(0));
+  EXPECT_EQ(split_right.view(), shell->tab_button(1));
+  // The retained callbacks must still select the original pages.
+  views::test::ButtonTestApi(shell->tab_button(0)).NotifyDefaultMouseClick();
+  EXPECT_NE(right, window_->contents("work"));
+  views::test::ButtonTestApi(shell->tab_button(1)).NotifyDefaultMouseClick();
+  EXPECT_EQ(right, window_->contents("work"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, TimeMachineFlushesPendingHistoryOnClose) {
+  ASSERT_TRUE(window_->SaveSnapshot("Pending close snapshot"));
+  EXPECT_FALSE(window_->configuration_saved());
+  window_.reset();
+  // Wait for the old window's BLOCK_SHUTDOWN writer, including the payload
+  // explicitly flushed from its pending timer, before reopening the profile.
+  base::ThreadPoolInstance::Get()->FlushForTesting();
+  window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+  const auto history = window_->TimeMachine();
+  EXPECT_TRUE(std::any_of(history.snapshots.begin(), history.snapshots.end(),
+      [](const TimeMachineItem& item) { return item.title == u"Pending close snapshot"; }));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, RestoredTabsStayUnrealizedUntilShown) {
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
+  window_.reset();
+  base::ThreadPoolInstance::Get()->FlushForTesting();
+  auto make_host = [&](std::string profile, std::string label, int count, bool split) {
+    base::DictValue host;
+    host.Set("profile_id", profile); host.Set("active", 0); host.Set("left", 0);
+    host.Set("right", split ? 1 : -1); host.Set("ratio", 0.55);
+    base::ListValue tabs;
+    for (int i = 0; i < count; ++i) {
+      base::DictValue tab;
+      tab.Set("url", embedded_test_server()->GetURL(
+          "/performance_probe.html?lazy=" + label + std::to_string(i)).spec());
+      tab.Set("title", "Saved " + label + std::to_string(i));
+      tabs.Append(std::move(tab));
+    }
+    host.Set("tabs", std::move(tabs));
+    return host;
+  };
+  base::DictValue session;
+  session.Set("work", make_host("work-profile", "work", 6, true));
+  session.Set("personal", make_host("personal-profile", "personal", 2, false));
+  std::string json;
+  ASSERT_TRUE(base::JSONWriter::Write(session, &json));
+  {
+    base::ScopedAllowBlockingForTesting allow;
+    ASSERT_TRUE(base::WriteFile(g_browser_process->profile_manager()->user_data_dir()
+        .AppendASCII("ZitterSession.json"), json));
+  }
+  window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+  auto live_pages = [&] {
+    size_t count = 0;
+    for (const auto& child : window_->shell()->content_host()->children()) {
+      auto* view = views::AsViewClass<views::WebView>(child.get());
+      if (view && view->web_contents()) ++count;
+    }
+    return count;
+  };
+  ASSERT_TRUE(window_->split());
+  EXPECT_EQ(6u, window_->tab_count("work"));
+  EXPECT_EQ(2u, window_->tab_count("personal"));
+  EXPECT_EQ(2u, live_pages());  // Only the selected split has WebContents/clients.
+  EXPECT_EQ(nullptr, window_->contents("personal"));
+  ASSERT_TRUE(window_->SaveSnapshot("Unopened tabs retained"));
+  const auto snapshot = window_->TimeMachine().snapshots.front().id;
+  window_->SearchPalette(u"Saved");
+  window_->CloseTab(5);  // Closing a dormant tab must not realize it.
+  EXPECT_EQ(2u, live_pages());
+  ASSERT_FALSE(window_->TimeMachine().closed.empty());
+  EXPECT_EQ(u"Saved work5", window_->TimeMachine().closed.front().title);
+  const auto closed = window_->TimeMachine().closed.front().id;
+  window_->SelectTab(3);
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  EXPECT_EQ(3u, live_pages());
+  EXPECT_EQ(work_, window_->contents("work")->GetBrowserContext());
+  EXPECT_EQ(embedded_test_server()->GetURL("/performance_probe.html?lazy=work3"),
+            window_->contents("work")->GetLastCommittedURL());
+  EXPECT_NE(nullptr, PageServices::FromWebContents(window_->contents("work")));
+  ASSERT_TRUE(window_->Select("personal"));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("personal")));
+  EXPECT_EQ(4u, live_pages());
+  EXPECT_EQ(personal_, window_->contents("personal")->GetBrowserContext());
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(window_->RestoreSnapshot(snapshot));
+  EXPECT_EQ(6u, window_->tab_count("work"));
+  EXPECT_TRUE(window_->split());
+  EXPECT_DOUBLE_EQ(0.55, window_->split_ratio());
+  EXPECT_EQ(3u, live_pages());  // Personal page plus two new split pages.
+  ASSERT_TRUE(window_->ReopenClosedTab(closed));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  EXPECT_EQ(4u, live_pages());
+  EXPECT_EQ(embedded_test_server()->GetURL("/performance_probe.html?lazy=work5"),
+            window_->contents("work")->GetLastCommittedURL());
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
+  window_.reset();
+  base::ThreadPoolInstance::Get()->FlushForTesting();
+  window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+  EXPECT_EQ(7u, window_->tab_count("work"));
+  EXPECT_EQ(1u, live_pages());  // The restored selection is outside its saved pair.
+  EXPECT_EQ(nullptr, window_->contents("personal"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, StartupPrioritizesActiveProfileWithoutReorderingCatalogue) {
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
+  window_.reset();
+  base::ThreadPoolInstance::Get()->FlushForTesting();
+  auto* manager = g_browser_process->profile_manager();
+  std::vector<base::FilePath> paths;
+  base::ListValue profiles, spaces;
+  for (int i = 0; i < 4; ++i) {
+    const auto directory = "ZitterProfile-" + base::Uuid::GenerateRandomV4().AsLowercaseString();
+    const auto id = "cold-profile-" + std::to_string(i);
+    paths.push_back(manager->user_data_dir().AppendASCII(directory));
+    base::DictValue profile;
+    profile.Set("id", id); profile.Set("name", "Cold " + std::to_string(i));
+    profile.Set("directory", directory); profiles.Append(std::move(profile));
+    base::DictValue space;
+    space.Set("id", "cold-space-" + std::to_string(i));
+    space.Set("profile_id", id); space.Set("name", "Space " + std::to_string(i));
+    spaces.Append(std::move(space));
+  }
+  base::DictValue catalogue;
+  catalogue.Set("profiles", std::move(profiles)); catalogue.Set("workspaces", std::move(spaces));
+  catalogue.Set("active", "cold-space-3"); catalogue.Set("onboarding_complete", true);
+  std::string json;
+  ASSERT_TRUE(base::JSONWriter::Write(catalogue, &json));
+  {
+    base::ScopedAllowBlockingForTesting allow;
+    ASSERT_TRUE(base::WriteFile(manager->user_data_dir().AppendASCII("ZitterWorkspaces.json"), json));
+  }
+  class CreationOrder final : public ProfileManagerObserver {
+   public:
+    explicit CreationOrder(const std::vector<base::FilePath>& expected) : expected_(expected) {}
+    void OnProfileCreationStarted(Profile* profile) override {
+      if (std::find(expected_.begin(), expected_.end(), profile->GetPath()) != expected_.end())
+        started.push_back(profile->GetPath());
+    }
+    std::vector<base::FilePath> started;
+   private:
+    const std::vector<base::FilePath> expected_;
+  } order(paths);
+  base::ScopedObservation<ProfileManager, ProfileManagerObserver> observation(&order);
+  observation.Observe(manager);
+  window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+  EXPECT_FALSE(window_->configuration_ready());
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+  ASSERT_EQ(1u, order.started.size());
+  EXPECT_TRUE(window_->profiles_busy());
+  EXPECT_EQ(paths[3], order.started.front());
+  EXPECT_EQ("cold-space-3", window_->active_id());
+  EXPECT_EQ(paths[3], window_->contents(window_->active_id())->GetBrowserContext()->GetPath());
+  // Management cannot invalidate pending profile assignments. Ordinary active
+  // browsing and queued cross-profile intents remain available.
+  EXPECT_FALSE(window_->RenameProfile("cold-profile-0", "Changed during startup"));
+  EXPECT_FALSE(window_->AssignProfile("cold-space-0", "cold-profile-3"));
+  EXPECT_FALSE(window_->RemoveWorkspace());
+  const auto cancelled = embedded_test_server()->GetURL("/performance_probe.html?cancelled");
+  const auto superseded = embedded_test_server()->GetURL("/performance_probe.html?superseded");
+  const auto final_url = embedded_test_server()->GetURL("/performance_probe.html?final");
+  EXPECT_FALSE(window_->Select("cold-space-0"));
+  EXPECT_EQ("cold-space-3", window_->active_id());
+  EXPECT_TRUE(window_->OpenLink(cancelled, "cold-space-0", true));
+  EXPECT_TRUE(window_->Select("cold-space-3"));  // cancels pending navigation
+  EXPECT_TRUE(window_->OpenLink(superseded, "cold-space-1", true));
+  EXPECT_TRUE(window_->OpenLink(final_url, "cold-space-2", true));
+  EXPECT_EQ("cold-space-3", window_->active_id());
+  EXPECT_FALSE(window_->contents("cold-space-0"));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return window_->active_id() == "cold-space-2" &&
+        window_->contents("cold-space-2")->GetLastCommittedURL() == final_url;
+  }));
+  EXPECT_EQ(paths[2], window_->contents("cold-space-2")->GetBrowserContext()->GetPath());
+  EXPECT_TRUE(PageServices::FromWebContents(window_->contents("cold-space-2")));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  EXPECT_FALSE(window_->contents("cold-space-0"));
+  EXPECT_FALSE(window_->contents("cold-space-1"));
+  EXPECT_TRUE(window_->contents("cold-space-3")->GetLastCommittedURL().is_empty());
+  ASSERT_EQ(4u, order.started.size());
+  const auto restored_profiles = window_->profiles();
+  ASSERT_EQ(4u, restored_profiles.size());
+  for (size_t i = 0; i < restored_profiles.size(); ++i) {
+    EXPECT_EQ("cold-profile-" + std::to_string(i), restored_profiles[i].id);
+    ASSERT_TRUE(window_->Select("cold-space-" + std::to_string(i)));
+    EXPECT_EQ(paths[i], window_->contents(window_->active_id())->GetBrowserContext()->GetPath());
+  }
+  // Closing with a pending profile/navigation must invalidate both callbacks.
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
+  window_.reset();
+  base::ThreadPoolInstance::Get()->FlushForTesting();
+  auto closing_catalogue = base::JSONReader::ReadDict(json, base::JSON_PARSE_RFC);
+  ASSERT_TRUE(closing_catalogue);
+  const auto closing_directory = "ZitterProfile-" + base::Uuid::GenerateRandomV4().AsLowercaseString();
+  closing_catalogue->FindList("profiles")->front().GetDict().Set("directory", closing_directory);
+  ASSERT_TRUE(base::JSONWriter::Write(*closing_catalogue, &json));
+  {
+    base::ScopedAllowBlockingForTesting allow;
+    ASSERT_TRUE(base::WriteFile(manager->user_data_dir().AppendASCII("ZitterWorkspaces.json"), json));
+  }
+  window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+  EXPECT_TRUE(window_->OpenLink(cancelled, "cold-space-0", true));
+  base::test::TestFuture<Profile*> completed;
+  manager->CreateProfileAsync(manager->user_data_dir().AppendASCII(closing_directory), completed.GetCallback());
+  window_.reset();
+  ASSERT_TRUE(completed.Wait());
+  ASSERT_NE(nullptr, completed.Get());
+  base::ThreadPoolInstance::Get()->FlushForTesting();
+  window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+  EXPECT_EQ("cold-space-3", window_->active_id());
+  EXPECT_EQ(nullptr, window_->contents("cold-space-0"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, StartupProfileFailureKeepsActiveProfileUsable) {
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
+  window_.reset();
+  base::ThreadPoolInstance::Get()->FlushForTesting();
+  auto* manager = g_browser_process->profile_manager();
+  const auto directory = "ZitterProfile-" + base::Uuid::GenerateRandomV4().AsLowercaseString();
+  base::ListValue profiles, spaces;
+  for (int i = 0; i < 2; ++i) {
+    base::DictValue profile;
+    profile.Set("id", i == 0 ? "work-profile" : "broken-profile");
+    profile.Set("name", i == 0 ? "Work" : "Broken");
+    profile.Set("directory", i == 0 ? "ZitterWork" : directory);
+    profiles.Append(std::move(profile));
+    base::DictValue space;
+    space.Set("id", i == 0 ? "work" : "broken");
+    space.Set("profile_id", i == 0 ? "work-profile" : "broken-profile");
+    space.Set("name", i == 0 ? "Work" : "Broken");
+    spaces.Append(std::move(space));
+  }
+  base::DictValue catalogue;
+  catalogue.Set("profiles", std::move(profiles)); catalogue.Set("workspaces", std::move(spaces));
+  catalogue.Set("active", "work"); catalogue.Set("onboarding_complete", true);
+  std::string json;
+  ASSERT_TRUE(base::JSONWriter::Write(catalogue, &json));
+  {
+    base::ScopedAllowBlockingForTesting allow;
+    ASSERT_TRUE(base::WriteFile(manager->user_data_dir().AppendASCII(directory), "not a directory"));
+    ASSERT_TRUE(base::WriteFile(manager->user_data_dir().AppendASCII("ZitterWorkspaces.json"), json));
+    ASSERT_TRUE(base::WriteFile(manager->user_data_dir().AppendASCII("ZitterSession.json"), "{}"));
+  }
+  window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+  const auto url = embedded_test_server()->GetURL("/performance_probe.html?failed-profile");
+  EXPECT_TRUE(window_->OpenLink(url, "broken", true));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->shell()->profiles_widget()->IsVisible(); }));
+  EXPECT_EQ("work", window_->active_id());
+  EXPECT_EQ(nullptr, window_->contents("broken"));
+  EXPECT_EQ(work_, window_->contents("work")->GetBrowserContext());
+  EXPECT_TRUE(window_->contents("work")->GetLastCommittedURL().is_empty());
+  EXPECT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/performance_probe.html"), true));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  EXPECT_EQ(work_, window_->contents("work")->GetBrowserContext());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, KeywordSearchProvidersAndPersistence) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->tools_ready(); }));
+  EXPECT_EQ("https://www.google.com/search?q=hello+world", shell->ResolveInput("g hello world").spec());
+  EXPECT_EQ("pl.wikipedia.org", shell->ResolveInput("w Warszawa").host());
+  EXPECT_EQ("www.youtube.com", shell->ResolveInput("yt ambient").host());
+  EXPECT_EQ("https://example.com/path", shell->ResolveInput("https://example.com/path").spec());
+  EXPECT_EQ("http://example.com:8080/path", shell->ResolveInput("example.com:8080/path").spec());
+  EXPECT_EQ("http://127.0.0.1:8080/path", shell->ResolveInput("127.0.0.1:8080/path").spec());
+  EXPECT_FALSE(shell->ResolveInput("javascript:alert(1)").is_valid());
+  EXPECT_FALSE(shell->ResolveInput("custom.scheme://example.com/path").is_valid());
+  EXPECT_EQ("https://example.com/search/a%20b%2Fc", SearchDestination({"Path", "path", "https://example.com/search/{query}"}, "a b/c").spec());
+  EXPECT_FALSE(shell->UpsertSearchProvider({"Unsafe", "x", "javascript:alert('{query}')"}));
+  EXPECT_FALSE(shell->UpsertSearchProvider({"Host substitution", "x", "https://{query}.example.com/"}));
+  EXPECT_FALSE(shell->UpsertSearchProvider({"Duplicate", "g", "https://example.com/?q={query}"}));
+  EXPECT_FALSE(shell->UpsertSearchProvider({"Twice", "x", "https://example.com/?q={query}&a={query}"}));
+  const std::string pattern = embedded_test_server()->GetURL("/").spec() + "storage_probe.html?q={query}";
+  ASSERT_TRUE(shell->UpsertSearchProvider({"Local probe", "p", pattern}));
+  ASSERT_TRUE(shell->SetDefaultSearchProvider("p"));
+  shell->OpenAddress(true); SetPaletteQuery(u"p zażółć & a/b");
+  ui::KeyEvent enter(ui::EventType::kKeyPressed, ui::VKEY_RETURN, ui::EF_NONE);
+  ASSERT_TRUE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(shell->address_input(), enter));
+  const auto expected = SearchDestination({"Local probe", "p", pattern}, "zażółć & a/b");
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->contents("work")->GetLastCommittedURL() == expected; }));
+  EXPECT_EQ(expected, shell->ResolveInput("zażółć & a/b"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_saved() && window_->configuration_saved(); }));
+  window_.reset(); window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+  shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready() && shell->tools_ready(); }));
+  EXPECT_EQ(expected, shell->ResolveInput("p zażółć & a/b"));
+  EXPECT_EQ(expected, shell->ResolveInput("zażółć & a/b"));
+  ASSERT_TRUE(shell->UpsertSearchProvider({"Renamed probe", "probe", pattern}, "p"));
+  EXPECT_EQ("probe", shell->browser_tools().default_keyword);
+  ASSERT_TRUE(shell->RemoveSearchProvider("probe"));
+  EXPECT_NE("probe", shell->browser_tools().default_keyword);
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ConfigurableNativeKeyboardShortcuts) {
+  base::DictValue older;
+  base::ListValue bindings;
+  bindings.Append(base::DictValue().Set("id", "space2").Set("chord", "Cmd+J"));
+  older.Set("shortcuts", std::move(bindings));
+  const auto migrated = BrowserTools::FromValue(older);
+  for (const auto& shortcut : migrated.shortcuts) {
+    if (shortcut.id == "space2") EXPECT_EQ(*ParseShortcut("Cmd+J"), shortcut.accelerator);
+    if (shortcut.id == "downloads") EXPECT_EQ(ui::VKEY_UNKNOWN, shortcut.accelerator.key_code());
+  }
+  ASSERT_NO_FATAL_FAILURE(NavigateBoth());
+  ASSERT_TRUE(window_->Select("work"));
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->tools_ready(); }));
+  EXPECT_FALSE(shell->SetShortcut("space2", "Cmd+C"));
+  EXPECT_FALSE(shell->SetShortcut("space2", "Cmd+L"));
+  EXPECT_FALSE(shell->SetShortcut("space2", "J"));
+  ASSERT_TRUE(shell->SetShortcut("space2", "Cmd+Shift+J"));
+  EXPECT_EQ("space2", shell->ShortcutFor(*ParseShortcut("Cmd+Shift+J")));
+  EXPECT_TRUE(shell->ShortcutFor(ui::Accelerator(ui::VKEY_2, ui::EF_COMMAND_DOWN | ui::EF_ALT_DOWN)).empty());
+  ui_controls::EnableUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(window_->widget()->GetNativeWindow(), ui::VKEY_J, false, true, false, true));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->active_id() == "personal"; }));
+  shell->OpenTools(1);
+  ASSERT_TRUE(shell->tools_widget()->IsVisible());
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));
+  const bool sidebar_before = shell->sidebar_visible();
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->tools_widget()->GetNativeWindow(), ui::VKEY_S, false, false, false, true));
+  ASSERT_TRUE(base::test::RunUntil([&] { return sidebar_before != shell->sidebar_visible(); }));
+  auto* record = FindButton(shell->tools_widget()->GetContentsView(), u"Nagraj kombinację…");
+  ASSERT_TRUE(record);
+  views::test::ButtonTestApi(record).NotifyDefaultMouseClick();
+  base::RunLoop().RunUntilIdle();
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->tools_widget()->GetNativeWindow(), ui::VKEY_U, false, true, false, true));
+  EXPECT_EQ(u"Cmd+Shift+U", shell->shortcut_input()->GetText());
+  auto* save_key = FindButton(shell->tools_widget()->GetContentsView(), u"Zapisz skrót");
+  ASSERT_TRUE(save_key);
+  views::test::ButtonTestApi(save_key).NotifyDefaultMouseClick();
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ("address", shell->ShortcutFor(*ParseShortcut("Cmd+Shift+U")));
+  ASSERT_TRUE(shell->SetShortcut("sidebar", ""));
+  EXPECT_TRUE(shell->ShortcutFor(*ParseShortcut("Cmd+S")).empty());
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_saved() && window_->configuration_saved(); }));
+  window_.reset(); window_ = std::make_unique<WorkspaceWindow>(work_, personal_); shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready() && shell->tools_ready(); }));
+  EXPECT_EQ("space2", shell->ShortcutFor(*ParseShortcut("Cmd+Shift+J")));
+  EXPECT_TRUE(shell->ShortcutFor(*ParseShortcut("Cmd+S")).empty());
+  const auto original = BrowserTools::FromValue(shell->browser_tools().ToValue());
+  EXPECT_EQ(shell->browser_tools().shortcuts.size(), original.shortcuts.size());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, TimeMachineSnapshotsClosedTabsAndSleep) {
+  ASSERT_TRUE(window_->Select("work"));
+  const auto left = embedded_test_server()->GetURL("/storage_probe.html?left");
+  const auto right = embedded_test_server()->GetURL("/storage_probe.html?right");
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), left));
+  ASSERT_TRUE(window_->NavigateFromBar(right, true));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  window_->SelectTab(0); ASSERT_TRUE(window_->SplitTab(1)); window_->SetSplitRatio(0.63);
+  ASSERT_TRUE(window_->SaveSnapshot("Research"));
+  const auto snapshot = window_->TimeMachine().snapshots.front().id;
+  window_->CloseTab(0);
+  EXPECT_FALSE(window_->split());
+  EXPECT_FALSE(window_->TimeMachine().closed.empty());
+  ASSERT_TRUE(window_->ReopenClosedTab());
+  EXPECT_EQ(2u, window_->tab_count("work"));
+  ASSERT_TRUE(window_->RestoreSnapshot(snapshot));
+  EXPECT_TRUE(window_->split()); EXPECT_DOUBLE_EQ(0.63, window_->split_ratio());
+  ASSERT_TRUE(content::WaitForLoadStop(window_->pane_contents(false)));
+  EXPECT_EQ(left, window_->pane_contents(false)->GetLastCommittedURL());
+  ASSERT_TRUE(content::WaitForLoadStop(window_->pane_contents(true)));
+  EXPECT_EQ(right, window_->pane_contents(true)->GetLastCommittedURL());
+  EXPECT_GE(window_->TimeMachine().snapshots.size(), 2u);  // Undo point before restore.
+  ASSERT_TRUE(window_->SleepWorkspace("work"));
+  EXPECT_EQ("personal", window_->active_id());
+  EXPECT_TRUE(window_->workspace_sleeping("work"));
+  EXPECT_EQ(nullptr, window_->contents("work"));  // WebContents actually released.
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
+  window_.reset(); window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+  EXPECT_TRUE(window_->workspace_sleeping("work"));
+  EXPECT_EQ(nullptr, window_->contents("work"));
+  ASSERT_TRUE(window_->Select("work"));
+  EXPECT_FALSE(window_->workspace_sleeping("work")); EXPECT_TRUE(window_->split());
+  EXPECT_DOUBLE_EQ(0.63, window_->split_ratio());
+  ASSERT_TRUE(content::WaitForLoadStop(window_->pane_contents(false)));
+  EXPECT_EQ(left, window_->pane_contents(false)->GetLastCommittedURL());
+  EXPECT_EQ(work_, window_->pane_contents(false)->GetBrowserContext());
+  ASSERT_TRUE(window_->RestoreSnapshot(snapshot));
+  ASSERT_TRUE(window_->DeleteSnapshot(snapshot));
+  EXPECT_FALSE(window_->RestoreSnapshot(snapshot));
+  window_->shell()->OpenTools(0);
+  EXPECT_TRUE(window_->shell()->tools_widget()->IsVisible());
+  auto* selection = window_->shell()->tools_selection();
+  ui::AXNodeData node;
+  selection->GetViewAccessibility().GetAccessibleNodeData(&node);
+  EXPECT_EQ(base::UTF16ToUTF8(selection->GetModel()->GetItemAt(selection->GetSelectedIndex().value_or(0))),
+      node.GetStringAttribute(ax::mojom::StringAttribute::kValue));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AdvancedChromiumPreferences) {
+  ASSERT_NO_FATAL_FAILURE(NavigateBoth("/preferences_probe.html"));
+  ASSERT_TRUE(window_->Select("work"));
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->OpenGeneralSettings();
+  shell->preferences_search()->SetText(u"języki");
+  static_cast<views::TextfieldController*>(shell)->ContentsChanged(shell->preferences_search(), u"języki");
+  shell->general_widget()->LayoutRootViewIfNecessary();
+  ASSERT_TRUE(shell->preference_textfield("accept_languages")->IsDrawn());
+  auto* field = shell->preference_textfield("accept_languages");
+  field->SetText(u"pl, EN-us, pl");
+  static_cast<views::TextfieldController*>(shell)->ContentsChanged(field, std::u16string(field->GetText()));
+  shell->SetWorkspaceAnimations(false);
+  EXPECT_EQ(u"pl, EN-us, pl", field->GetText());  // A refresh preserves an unsaved edit.
+  ui::KeyEvent enter(ui::EventType::kKeyPressed, ui::VKEY_RETURN, ui::EF_NONE);
+  ASSERT_TRUE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(field, enter));
+  EXPECT_EQ("pl,en-US", window_->ReadPreferences().at("accept_languages").text);
+  EXPECT_EQ(u"pl,en-US", field->GetText());
+  EXPECT_FALSE(window_->WriteTextPreference("accept_languages", "pl,,en"));
+  EXPECT_FALSE(window_->WriteTextPreference("accept_languages", "pl\r\nX-Injected: yes"));
+  EXPECT_FALSE(window_->WriteTextPreference("accept_languages", ""));
+  EXPECT_FALSE(window_->WriteTextPreference("font_standard", std::string(129, 'x')));
+  EXPECT_FALSE(window_->WriteTextPreference("unknown", "value"));
+  ASSERT_TRUE(window_->WriteTextPreference("font_sans", "Arial"));
+  EXPECT_EQ("Arial", work_->GetPrefs()->GetString(prefs::kWebKitSansSerifFontFamily));
+  ASSERT_TRUE(window_->WritePreference("fixed_font_size", 3));
+  EXPECT_EQ(18, work_->GetPrefs()->GetInteger(prefs::kWebKitDefaultFixedFontSize));
+  ASSERT_TRUE(window_->WritePreference("spellcheck", 0));
+  EXPECT_EQ(0, window_->ReadPreferences().at("spellcheck").value);
+  ASSERT_TRUE(window_->WritePreference("caret_browsing", 1));
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), embedded_test_server()->GetURL("/preferences_probe.html?language")));
+  EXPECT_EQ("pl", content::EvalJs(window_->contents("work"), "navigator.language"));
+  ASSERT_TRUE(window_->Select("personal"));
+  EXPECT_NE("pl,en-US", window_->ReadPreferences().at("accept_languages").text);
+  ASSERT_TRUE(window_->Select("work"));
+  EXPECT_EQ("pl,en-US", window_->ReadPreferences().at("accept_languages").text);
+  // Resolver validation and managed preferences use an isolated pref store;
+  // the test never changes the running browser's DNS configuration.
+  TestingPrefServiceSimple local;
+  local.registry()->RegisterStringPref(prefs::kDnsOverHttpsMode, "automatic");
+  local.registry()->RegisterStringPref(prefs::kDnsOverHttpsTemplates, "");
+  local.registry()->RegisterBooleanPref(prefs::kHardwareAccelerationModeEnabled, true);
+  EXPECT_EQ(false, WriteChromiumPreference(work_, &local, "dns_mode", 2));
+  EXPECT_FALSE(WriteChromiumTextPreference(work_, &local, "dns_templates", "http://resolver.test/dns-query"));
+  EXPECT_FALSE(WriteChromiumTextPreference(work_, &local, "dns_templates", "not a URL"));
+  ASSERT_TRUE(WriteChromiumTextPreference(work_, &local, "dns_templates", "https://resolver.test/dns-query{?dns}"));
+  EXPECT_EQ(true, WriteChromiumPreference(work_, &local, "dns_mode", 2));
+  EXPECT_EQ("secure", local.GetString(prefs::kDnsOverHttpsMode));
+  EXPECT_FALSE(WriteChromiumTextPreference(work_, &local, "dns_templates", ""));
+  EXPECT_EQ(false, WriteChromiumPreference(work_, &local, "dns_mode", 9));
+  local.SetManagedPref(prefs::kDnsOverHttpsMode, base::Value("off"));
+  EXPECT_EQ(false, WriteChromiumPreference(work_, &local, "dns_mode", 1));
+  EXPECT_EQ("off", local.GetString(prefs::kDnsOverHttpsMode));
+  EXPECT_EQ(true, WriteChromiumPreference(work_, &local, "hardware_acceleration", 0));
+  EXPECT_FALSE(local.GetBoolean(prefs::kHardwareAccelerationModeEnabled));
+  BrowserPreferences snapshot;
+  AppendChromiumPreferences(work_, &local, snapshot);
+  EXPECT_FALSE(snapshot.at("dns_mode").editable);
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SitePreferenceExceptionsAndIsolation) {
+  ASSERT_NO_FATAL_FAILURE(NavigateBoth("/preferences_probe.html"));
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(window_->WritePreference("javascript", 0));
+  const auto allowed = embedded_test_server()->GetURL("allowed.test", "/preferences_probe.html");
+  const auto origin = url::Origin::Create(allowed).Serialize();
+  EXPECT_FALSE(window_->WriteSitePreference("file:///tmp/probe", "javascript", 1));
+  EXPECT_FALSE(window_->WriteSitePreference("https://user:secret@example.com", "javascript", 1));
+  EXPECT_FALSE(window_->WriteSitePreference("https://example.com/path", "javascript", 1));
+  EXPECT_FALSE(window_->WriteSitePreference(origin, "javascript", 3));
+  EXPECT_FALSE(window_->WriteSitePreference(origin, "unknown", 1));
+  ASSERT_TRUE(window_->WriteSitePreference(origin, "javascript", 1));
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), allowed));
+  EXPECT_EQ(u"Scripts enabled", window_->contents("work")->GetTitle());
+  EXPECT_EQ(0, window_->ReadPreferences().at("javascript").value);
+  auto rules = window_->ReadSitePreferences();
+  auto rule = std::find_if(rules.begin(), rules.end(), [](const auto& value) { return value.key == "javascript" && value.primary.find("allowed.test") != std::string::npos; });
+  ASSERT_NE(rule, rules.end());
+  EXPECT_TRUE(rule->editable);
+  const SitePreferenceRule saved = *rule;
+  EXPECT_FALSE(window_->RemoveSitePreference({"javascript", "*", "*", 1, true}));
+  ASSERT_TRUE(window_->Select("personal"));
+  EXPECT_TRUE(window_->ReadSitePreferences().empty());
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(window_->RemoveSitePreference(saved));
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), embedded_test_server()->GetURL("allowed.test", "/preferences_probe.html?default")));
+  EXPECT_EQ(u"Scripts blocked", window_->contents("work")->GetTitle());
+  ASSERT_TRUE(window_->WriteSitePreference(origin, "sound", 2));
+  EXPECT_TRUE(window_->contents("work")->IsAudioMuted());
+  ASSERT_TRUE(window_->WriteSitePreference(origin, "sound", 0));
+  EXPECT_FALSE(window_->contents("work")->IsAudioMuted());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ClearBrowsingDataConfirmationAndScope) {
+  ASSERT_NO_FATAL_FAILURE(NavigateBoth());
+  EXPECT_EQ("work", content::EvalJs(window_->contents("work"), "writeMarker('work')"));
+  EXPECT_EQ("personal", content::EvalJs(window_->contents("personal"), "writeMarker('personal')"));
+  ASSERT_TRUE(window_->Select("work"));
+  const std::string profile_id = window_->workspaces().front().profile_id;
+  auto* shell = window_->shell();
+  shell->OpenGeneralSettings();
+  BrowsingDataSelection selection{3, false, true, false};
+  window_->RequestClearBrowsingData(selection);
+  ASSERT_TRUE(window_->clear_data_dialog());
+  EXPECT_FALSE(window_->clearing_browsing_data());
+  window_->clear_data_dialog()->widget_delegate()->AsDialogDelegate()->CancelDialog();
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->clear_data_dialog(); }));
+  EXPECT_EQ("work|work|work|work", content::EvalJs(window_->contents("work"), "readMarker()"));
+  EXPECT_FALSE(window_->ClearBrowsingData("no-profile", selection));
+  EXPECT_FALSE(window_->ClearBrowsingData(profile_id, {9, false, true, false}));
+  EXPECT_FALSE(window_->ClearBrowsingData(profile_id, {3, false, false, false}));
+  window_->RequestClearBrowsingData(selection);
+  ASSERT_TRUE(window_->clear_data_dialog());
+  // A confirmation always applies to the profile named in the dialog.
+  ASSERT_TRUE(window_->Select("personal"));
+  window_->clear_data_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->clearing_browsing_data(); }));
+  EXPECT_EQ("personal|personal|personal|personal", content::EvalJs(window_->contents("personal"), "readMarker()"));
+  // The still-open work page may retain handles/sessionStorage; reload to
+  // inspect the durable cookie, localStorage and IndexedDB state.
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), embedded_test_server()->GetURL("/storage_probe.html?after-clear")));
+  EXPECT_EQ("", content::EvalJs(window_->contents("work"), "document.cookie"));
+  EXPECT_EQ("", content::EvalJs(window_->contents("work"), "localStorage.getItem('zitter') || ''"));
+  EXPECT_EQ("", content::EvalJs(window_->contents("work"), "readMarker().then(value => value.split('|')[2])"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ProfilePreferencesAndSearch) {
+  ASSERT_NO_FATAL_FAILURE(NavigateBoth("/preferences_probe.html"));
+  ASSERT_TRUE(window_->Select("work"));
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->OpenGeneralSettings();
+  auto search = [&](std::u16string text) {
+    shell->preferences_search()->SetText(text);
+    static_cast<views::TextfieldController*>(shell)->ContentsChanged(shell->preferences_search(), text);
+    shell->general_widget()->LayoutRootViewIfNecessary();
+  };
+  search(u"  KAMERA  ");
+  ui::KeyEvent enter_preferences(ui::EventType::kKeyPressed, ui::VKEY_RETURN, ui::EF_NONE);
+  EXPECT_FALSE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(shell->preferences_search(), enter_preferences));
+  EXPECT_TRUE(shell->preference_toggle("camera")->IsDrawn());
+  EXPECT_FALSE(shell->theme_picker()->IsDrawn());
+  views::test::ButtonTestApi(shell->preference_toggle("camera")).NotifyDefaultMouseClick();
+  EXPECT_EQ(0, window_->ReadPreferences().at("camera").value);
+  EXPECT_EQ(CONTENT_SETTING_BLOCK, HostContentSettingsMapFactory::GetForProfile(work_)
+      ->GetDefaultContentSetting(ContentSettingsType::MEDIASTREAM_CAMERA));
+  search(u"no-such-preference-123");
+  EXPECT_FALSE(shell->preference_toggle("camera")->IsDrawn());
+  search(u"");
+  EXPECT_TRUE(shell->theme_picker()->IsDrawn());
+  EXPECT_FALSE(window_->WritePreference("arbitrary.pref", 1));
+  EXPECT_FALSE(window_->WritePreference("javascript", 7));
+  EXPECT_FALSE(window_->WritePreference("zoom", -1));
+  EXPECT_FALSE(window_->WritePreference("font_size", 42));
+  EXPECT_FALSE(window_->WritePreference("minimum_font_size", -1));
+  ASSERT_TRUE(window_->WritePreference("javascript", 0));
+  ASSERT_TRUE(window_->WritePreference("do_not_track", 1));
+  ASSERT_TRUE(window_->WritePreference("sound", 0));
+  EXPECT_TRUE(window_->contents("work")->IsAudioMuted());
+  ASSERT_TRUE(window_->WritePreference("font_size", 3));
+  EXPECT_EQ(18, work_->GetPrefs()->GetInteger(prefs::kWebKitDefaultFontSize));
+  ASSERT_TRUE(window_->WritePreference("zoom", 4));
+  EXPECT_NEAR(1.25, work_->GetZoomLevelPrefs()->GetDefaultZoomFactor(), 0.001);
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), embedded_test_server()->GetURL("/preferences_probe.html?blocked")));
+  EXPECT_EQ(u"Scripts blocked", window_->contents("work")->GetTitle());
+  ASSERT_TRUE(window_->Select("personal"));
+  EXPECT_EQ(1, window_->ReadPreferences().at("javascript").value);
+  EXPECT_EQ(1, window_->ReadPreferences().at("camera").value);
+  EXPECT_FALSE(window_->contents("personal")->IsAudioMuted());
+  EXPECT_EQ(u"Scripts enabled", window_->contents("personal")->GetTitle());
+  ASSERT_TRUE(window_->Select("work"));
+  EXPECT_EQ(0, window_->ReadPreferences().at("camera").value);
+  // Recreating the native window must not reset persisted profile preferences.
+  window_.reset(); window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+  ASSERT_TRUE(window_->Select("work"));
+  EXPECT_EQ(0, window_->ReadPreferences().at("javascript").value);
+  EXPECT_EQ(1, window_->ReadPreferences().at("do_not_track").value);
+  EXPECT_EQ(4, window_->ReadPreferences().at("zoom").value);
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, GeneralSettingsThemeAndPersistence) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  const auto url = embedded_test_server()->GetURL("/links_probe.html");
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), url));
+  ui_controls::EnableUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(window_->widget()->GetNativeWindow(),
+      ui::VKEY_OEM_COMMA, false, false, false, true));
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->general_widget()->IsVisible(); }));
+  shell->SetThemeMode(ThemeMode::kDark);
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return content::EvalJs(window_->contents("work"), "matchMedia('(prefers-color-scheme: dark)').matches").ExtractBool();
+  }));
+  EXPECT_EQ(ui::ColorProviderKey::ColorMode::kDark, window_->widget()->GetColorMode());
+  EXPECT_EQ(ui::ColorProviderKey::ColorMode::kDark, shell->general_widget()->GetColorMode());
+  EXPECT_EQ(ui::ColorProviderKey::ColorMode::kDark, shell->sidebar_widget()->GetColorMode());
+  shell->SetThemeMode(ThemeMode::kLight);
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return !content::EvalJs(window_->contents("work"), "matchMedia('(prefers-color-scheme: dark)').matches").ExtractBool();
+  }));
+  // System mode follows changes without recreating pages or changing OS prefs.
+  auto* native = ui::NativeTheme::GetInstanceForNativeUi();
+  const auto original_scheme = native->preferred_color_scheme();
+  base::ScopedClosureRunner restore_theme(base::BindOnce([](ui::NativeTheme* native,
+      ui::NativeTheme::PreferredColorScheme scheme) {
+    native->set_preferred_color_scheme(scheme); native->NotifyOnNativeThemeUpdated();
+  }, base::Unretained(native), original_scheme));
+  shell->SetThemeMode(ThemeMode::kSystem);
+  native->set_preferred_color_scheme(ui::NativeTheme::PreferredColorScheme::kDark);
+  native->NotifyOnNativeThemeUpdated();
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return content::EvalJs(window_->contents("work"), "matchMedia('(prefers-color-scheme: dark)').matches").ExtractBool();
+  }));
+  native->set_preferred_color_scheme(ui::NativeTheme::PreferredColorScheme::kLight);
+  native->NotifyOnNativeThemeUpdated();
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return !content::EvalJs(window_->contents("work"), "matchMedia('(prefers-color-scheme: dark)').matches").ExtractBool();
+  }));
+  shell->SetThemeMode(ThemeMode::kDark);
+  shell->SetSearchEngine(SearchEngine::kGoogle);
+  shell->SetWorkspaceAnimations(false);
+  shell->SetPinned(false);
+  shell->SetWorkspaceColor("work", 0xFF123456);
+  // Typing more than one grapheme keeps only the first emoji.
+  shell->emoji_input()->SetText(u"🚀abc");
+  static_cast<views::TextfieldController*>(shell)->ContentsChanged(shell->emoji_input(), u"🚀abc");
+  EXPECT_EQ(u"🚀", shell->workspace_emoji("work"));
+  EXPECT_EQ(u"🚀", shell->emoji_input()->GetText());
+  shell->SetWorkspaceEmoji("personal", u"🏠");
+  shell->SetWorkspaceEmoji("personal", u"");
+  EXPECT_EQ(u"", shell->workspace_emoji("personal"));
+  // Exercise the actual typed-search action; serve a synthetic response locally.
+  content::URLLoaderInterceptor search_interceptor(base::BindRepeating(
+      [](content::URLLoaderInterceptor::RequestParams* params) {
+        if (params->url_request.url.host() != "www.google.com") return false;
+        content::URLLoaderInterceptor::WriteResponse("HTTP/1.1 200 OK\nContent-Type: text/html\n\n",
+            "<!doctype html><title>Search probe</title>", params->client.get());
+        return true;
+      }));
+  shell->CloseOverlays(); shell->OpenAddress(true); SetPaletteQuery(u"zitter theme test");
+  ui::KeyEvent enter(ui::EventType::kKeyPressed, ui::VKEY_RETURN, ui::EF_NONE);
+  ASSERT_TRUE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(shell->address_input(), enter));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->contents("work")->GetLastCommittedURL().host() == "www.google.com"; }));
+  EXPECT_EQ("q=zitter+theme+test", window_->contents("work")->GetLastCommittedURL().query());
+  ASSERT_TRUE(window_->OpenPeek(url));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->peek_contents()));
+  EXPECT_EQ(ui::ColorProviderKey::ColorMode::kDark, shell->peek_widget()->GetColorMode());
+  EXPECT_EQ(true, content::EvalJs(window_->peek_contents(), "matchMedia('(prefers-color-scheme: dark)').matches"));
+  window_->ClosePeek();
+  window_->ShowPasswords();
+  auto* services = PageServices::FromWebContents(window_->contents("work"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return services->password_prompt() && services->password_prompt()->IsVisible(); }));
+  EXPECT_EQ(ui::ColorProviderKey::ColorMode::kDark, services->password_prompt()->GetColorMode());
+  services->password_prompt()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_saved() && window_->configuration_saved(); }));
+  window_.reset(); window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready() && window_->shell()->appearance_ready(); }));
+  shell = window_->shell();
+  EXPECT_EQ(ThemeMode::kDark, shell->theme_mode());
+  EXPECT_EQ(SearchEngine::kGoogle, shell->search_engine());
+  EXPECT_FALSE(shell->workspace_animations());
+  EXPECT_FALSE(shell->pinned());
+  EXPECT_EQ(0xFF123456u, shell->workspace_color("work"));
+  EXPECT_EQ(u"🚀", shell->workspace_emoji("work"));
+  EXPECT_EQ(u"", shell->workspace_emoji("personal"));
+  EXPECT_EQ(ui::ColorProviderKey::ColorMode::kDark, window_->widget()->GetColorMode());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarRemainsOpenWhileSpacesSlide) {
+  ASSERT_NO_FATAL_FAILURE(NavigateBoth());
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  gfx::ScopedAnimationDurationScaleMode duration(gfx::ScopedAnimationDurationScaleMode::NORMAL_DURATION);
+  const bool original_motion = gfx::Animation::PrefersReducedMotion();
+  base::ScopedClosureRunner restore_motion(base::BindOnce(&gfx::Animation::SetPrefersReducedMotionForTesting, original_motion));
+  gfx::Animation::SetPrefersReducedMotionForTesting(false);
+  shell->SetPinned(false); shell->ShowSidebar();
+  ASSERT_TRUE(shell->sidebar_visible());
+  const size_t pin_builds = shell->pinned_list_build_count();
+  ASSERT_TRUE(window_->Select("work"));
+  EXPECT_TRUE(shell->sidebar_visible());
+  EXPECT_FALSE(shell->pinned());
+  EXPECT_TRUE(shell->workspace_animation_running());
+  ASSERT_TRUE(base::test::RunUntil([&] { return !shell->workspace_animation_running(); }));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return window_->contents("work")->GetContainerBounds().x() == shell->content_host()->GetBoundsInScreen().x();
+  }));
+  for (int i = 0; i < 8; ++i) {
+    ASSERT_TRUE(window_->Select(i % 2 ? "work" : "personal"));
+    EXPECT_TRUE(shell->sidebar_visible());
+  }
+  ASSERT_TRUE(base::test::RunUntil([&] { return !shell->workspace_animation_running(); }));
+  EXPECT_EQ("work", window_->active_id());
+  EXPECT_EQ(pin_builds, shell->pinned_list_build_count());
+  shell->SetWorkspaceAnimations(false);
+  ASSERT_TRUE(window_->Select("personal"));
+  EXPECT_FALSE(shell->workspace_animation_running());
+  EXPECT_TRUE(shell->sidebar_visible());
+  shell->SetWorkspaceAnimations(true);
+  gfx::Animation::SetPrefersReducedMotionForTesting(true);
+  ASSERT_TRUE(window_->Select("work"));
+  EXPECT_FALSE(shell->workspace_animation_running());
+  EXPECT_TRUE(shell->sidebar_visible());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PeekLifecycleAndPromotion) {
+  const auto source_url = embedded_test_server()->GetURL("/links_probe.html");
+  const auto target = embedded_test_server()->GetURL("/storage_probe.html?peek");
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), source_url));
+  auto* source = window_->contents("work");
+  ASSERT_TRUE(content::ExecJs(source, "document.getElementById('marker').value = 'source kept'"));
+  content::SimulateEndOfPaintHoldingOnPrimaryMainFrame(source);
+#if BUILDFLAG(IS_MAC)
+  constexpr int modifier = blink::WebInputEvent::kMetaKey;
+#else
+  constexpr int modifier = blink::WebInputEvent::kControlKey;
+#endif
+  content::SimulateMouseClickAt(source, modifier, blink::WebMouseEvent::Button::kLeft,
+      gfx::ToRoundedPoint(content::GetCenterCoordinatesOfElementWithId(source, "peek")));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->peek_contents() != nullptr; }));
+  auto* peek = window_->peek_contents();
+  ASSERT_TRUE(content::WaitForLoadStop(peek));
+  EXPECT_EQ(target, peek->GetLastCommittedURL());
+  EXPECT_EQ(work_.get(), peek->GetBrowserContext());
+  EXPECT_EQ(1u, window_->tab_count("work"));
+  EXPECT_EQ(source_url, source->GetLastCommittedURL());
+  EXPECT_EQ("source kept", content::EvalJs(source, "document.getElementById('marker').value"));
+  ASSERT_TRUE(content::ExecJs(peek, "document.getElementById('marker').value = 'peek kept'"));
+  ASSERT_TRUE(window_->PromotePeek(false));
+  EXPECT_EQ(nullptr, window_->peek_contents());
+  EXPECT_FALSE(window_->shell()->peek_widget()->IsVisible());
+  EXPECT_EQ(peek, window_->contents("work"));
+  EXPECT_EQ(2u, window_->tab_count("work"));
+  EXPECT_EQ("peek kept", content::EvalJs(peek, "document.getElementById('marker').value"));
+  ASSERT_TRUE(window_->OpenPeek(target));
+  auto* second = window_->peek_contents();
+  ASSERT_TRUE(content::WaitForLoadStop(second));
+  ASSERT_TRUE(window_->PromotePeek(true));
+  EXPECT_TRUE(window_->split());
+  EXPECT_EQ(peek, window_->pane_contents(false));
+  EXPECT_EQ(second, window_->pane_contents(true));
+  ASSERT_TRUE(window_->OpenPeek(target));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->peek_contents()));
+  ui_controls::EnableUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->shell()->peek_widget()->GetNativeWindow()));
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(window_->shell()->peek_widget()->GetNativeWindow(),
+      ui::VKEY_ESCAPE, false, false, false, false));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->peek_contents(); }));
+  EXPECT_EQ(3u, window_->tab_count("work"));
+  ASSERT_TRUE(window_->OpenPeek(target));
+  ASSERT_TRUE(window_->Select("personal"));
+  EXPECT_EQ(nullptr, window_->peek_contents());
+  EXPECT_EQ(1u, window_->tab_count("personal"));
+  // A real target=_blank link is hosted as a Zitter tab.
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("personal"), source_url));
+  ASSERT_TRUE(content::ExecJs(window_->contents("personal"), "document.getElementById('blank').click()"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->tab_count("personal") == 2; }));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return window_->contents("personal")->GetLastCommittedURL() == embedded_test_server()->GetURL("/storage_probe.html?blank");
+  }));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DomainRoutingAndPersistence) {
+  const auto source_url = embedded_test_server()->GetURL("/links_probe.html");
+  const auto target = embedded_test_server()->GetURL("client.test", "/storage_probe.html?routed");
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), target));
+  ASSERT_EQ("work", content::EvalJs(window_->contents("work"), "writeMarker('work')"));
+  ASSERT_TRUE(window_->Select("personal"));
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("personal"), target));
+  ASSERT_EQ("personal", content::EvalJs(window_->contents("personal"), "writeMarker('personal')"));
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), source_url));
+  auto* source = window_->contents("work");
+  { base::AutoLock guard(routing_lock_); routing_cookies_.clear(); }
+  auto* shell = window_->shell();
+  shell->BuildLinkMenu(target, "work");
+  auto* rules = shell->link_menu()->GetSubmenuModelAt(5);
+  ASSERT_TRUE(rules); rules->ActivatedAt(1, 0);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->WorkspaceForUrl(target) == "personal"; }));
+  EXPECT_FALSE(window_->SetLinkRule(GURL("file:///tmp/x"), "personal"));
+  EXPECT_FALSE(window_->SetLinkRule(target, "missing"));
+  EXPECT_TRUE(window_->WorkspaceForUrl(GURL("https://sub.client.test/")).empty());
+  shell->BuildLinkMenu(target, "work");
+  EXPECT_TRUE(shell->link_menu()->GetSubmenuModelAt(5)->IsItemCheckedAt(1));
+  shell->link_menu()->ActivatedAt(6, 0);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->WorkspaceForUrl(target).empty(); }));
+  ASSERT_TRUE(window_->SetLinkRule(target, "personal"));
+  ASSERT_TRUE(content::ExecJs(source, content::JsReplace("document.getElementById('route').href = $1; document.getElementById('route').click()", target)));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->active_id() == "personal" && window_->contents("personal")->GetLastCommittedURL() == target; }));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("personal")));
+  EXPECT_EQ("personal|personal|personal|", content::EvalJs(window_->contents("personal"), "readMarker()"));
+  EXPECT_EQ(source_url, source->GetLastCommittedURL());
+  {
+    base::AutoLock guard(routing_lock_);
+    ASSERT_EQ(1u, routing_cookies_.size());
+    EXPECT_NE(std::string::npos, routing_cookies_[0].find("zitter=personal"));
+    EXPECT_EQ(std::string::npos, routing_cookies_[0].find("zitter=work"));
+  }
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(content::ExecJs(source, content::JsReplace("document.getElementById('blank').href = $1; document.getElementById('blank').click()", target)));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->active_id() == "personal" && window_->tab_count("work") == 1; }));
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(window_->OpenPeek(target));
+  EXPECT_EQ("work", window_->active_id());
+  ASSERT_TRUE(content::WaitForLoadStop(window_->peek_contents()));
+  EXPECT_EQ(personal_.get(), window_->peek_contents()->GetBrowserContext());
+  EXPECT_EQ("personal|personal|personal|", content::EvalJs(window_->peek_contents(), "readMarker()"));
+  ASSERT_TRUE(window_->PromotePeek(false));
+  EXPECT_EQ("personal", window_->active_id());
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
+  window_.reset(); window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+  EXPECT_EQ("personal", window_->WorkspaceForUrl(target));
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(window_->OpenExternalUrl(target));
+  EXPECT_EQ("personal", window_->active_id());
+  EXPECT_EQ(personal_.get(), window_->contents("personal")->GetBrowserContext());
+  ASSERT_TRUE(window_->AssignProfile("personal", "work-profile"));
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(window_->OpenExternalUrl(target));
+  EXPECT_EQ("personal", window_->active_id());
+  EXPECT_EQ(work_.get(), window_->contents("personal")->GetBrowserContext());
+  // Removing a target also removes its routing rule, never a dangling profile.
+  ASSERT_TRUE(window_->RemoveWorkspace());
+  EXPECT_TRUE(window_->WorkspaceForUrl(target).empty());
+  EXPECT_TRUE(window_->link_rules().empty());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, RoutingLeavesFormsFramesAndRedirects) {
+  const auto source_url = embedded_test_server()->GetURL("/links_probe.html");
+  const auto frame_url = embedded_test_server()->GetURL("client.test", "/storage_probe.html?frame");
+  const auto post_url = embedded_test_server()->GetURL("client.test", "/login-success");
+  ASSERT_TRUE(window_->SetLinkRule(frame_url, "personal"));
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), source_url));
+  auto* source = window_->contents("work");
+  ASSERT_TRUE(content::ExecJs(source, content::JsReplace(
+      "const frame = document.createElement('iframe'); frame.src = $1; document.body.append(frame)", frame_url)));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    auto* frame = content::ChildFrameAt(source->GetPrimaryMainFrame(), 0);
+    return frame && frame->GetLastCommittedURL() == frame_url;
+  }));
+  EXPECT_EQ("work", window_->active_id());
+  ASSERT_TRUE(content::ExecJs(source, content::JsReplace(
+      "const form = document.createElement('form'); form.action = $1; form.method = 'post'; document.body.append(form); form.requestSubmit()", post_url)));
+  ASSERT_TRUE(base::test::RunUntil([&] { return source->GetLastCommittedURL() == post_url; }));
+  EXPECT_EQ("work", window_->active_id());
+  EXPECT_EQ(work_.get(), source->GetBrowserContext());
+  EXPECT_EQ(1u, window_->tab_count("personal"));
+  ASSERT_TRUE(content::NavigateToURL(source, source_url));
+  ASSERT_TRUE(content::ExecJs(source, "document.getElementById('route').href = '/route-redirect'; document.getElementById('route').click()"));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return source->GetLastCommittedURL() == embedded_test_server()->GetURL("client.test", "/storage_probe.html?redirect");
+  }));
+  EXPECT_EQ("work", window_->active_id());
+  EXPECT_EQ(work_.get(), source->GetBrowserContext());
+  EXPECT_EQ(1u, window_->tab_count("personal"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DownloadsTransferControlsAndProfileIsolation) {
+  base::ScopedAllowBlockingForTesting test_files;
+  base::test::ScopedRunLoopTimeout timeout(FROM_HERE, base::Seconds(30));
+  NavigateBoth();
+  ASSERT_TRUE(window_->Select("work"));
+  base::ScopedTempDir directory;
+  ASSERT_TRUE(directory.CreateUniqueTempDir());
+  DownloadPrefs::FromBrowserContext(work_)->SetDownloadPath(directory.GetPath());
+  work_->GetPrefs()->SetBoolean(prefs::kPromptForDownload, false);
+  auto* manager = work_->GetDownloadManager();
+  net::EmbeddedTestServer server;
+  net::test_server::ControllableHttpResponse stream(&server, "/transfer.txt");
+  net::test_server::ControllableHttpResponse cancelled(&server, "/cancel.txt");
+  ASSERT_TRUE(server.Start());
+  window_->ShowDownloads();
+  auto* panel = window_->downloads();
+  ASSERT_TRUE(panel && panel->widget() && panel->widget()->IsVisible());
+  EXPECT_EQ(ui::mojom::ModalType::kNone, panel->widget()->widget_delegate()->GetModalType());
+  const auto area = display::Screen::Get()->GetDisplayNearestWindow(window_->widget()->GetNativeWindow()).work_area();
+  EXPECT_TRUE(area.Contains(panel->widget()->GetWindowBoundsInScreen()));
+  auto start = [&](std::string path) {
+    manager->DownloadUrl(content::DownloadRequestUtils::CreateDownloadForWebContentsMainFrame(
+        window_->contents("work"), server.GetURL(path), TRAFFIC_ANNOTATION_FOR_TESTS));
+  };
+  start("/transfer.txt");
+  stream.WaitForRequest();
+  stream.Send("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; filename=transfer.txt\r\nContent-Length: 262144\r\n\r\n");
+  stream.Send(std::string(32768, 'x'));
+  download::DownloadItem* item = nullptr;
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    content::DownloadManager::DownloadVector items;
+    manager->GetAllDownloads(&items);
+    if (items.size() != 1) return false;
+    item = items[0];
+    return item->GetReceivedBytes() > 0 && !item->GetTargetFilePath().empty();
+  }));
+  const auto guid = item->GetGuid();
+  ASSERT_TRUE(base::test::RunUntil([&] { return FindButton(panel->widget()->GetContentsView(), u"Wstrzymaj"); }));
+  views::test::ButtonTestApi(FindButton(panel->widget()->GetContentsView(), u"Wstrzymaj")).NotifyDefaultMouseClick();
+  ASSERT_TRUE(base::test::RunUntil([&] { return item->IsPaused(); }));
+  EXPECT_FALSE(panel->Act(guid, DownloadPanel::Action::kReveal));
+  ASSERT_TRUE(window_->Select("personal"));
+  window_->ShowDownloads();
+  EXPECT_TRUE(panel->visible_guids().empty());
+  EXPECT_FALSE(panel->Act(guid, DownloadPanel::Action::kCancel));
+  EXPECT_EQ(download::DownloadItem::IN_PROGRESS, item->GetState());
+  EXPECT_TRUE(item->IsPaused());
+  ASSERT_TRUE(window_->Select("work"));
+  window_->ShowDownloads();
+  ASSERT_TRUE(base::test::RunUntil([&] { return FindButton(panel->widget()->GetContentsView(), u"Wznów"); }));
+  views::test::ButtonTestApi(FindButton(panel->widget()->GetContentsView(), u"Wznów")).NotifyDefaultMouseClick();
+  ASSERT_TRUE(base::test::RunUntil([&] { return !item->IsPaused(); }));
+  stream.Send(std::string(262144 - 32768, 'x')); stream.Done();
+  ASSERT_TRUE(base::test::RunUntil([&] { return item->GetState() == download::DownloadItem::COMPLETE; }));
+  {
+    base::ScopedAllowBlockingForTesting allow;
+    std::string bytes;
+    ASSERT_TRUE(base::ReadFileToString(item->GetTargetFilePath(), &bytes));
+    EXPECT_EQ(std::string(262144, 'x'), bytes);
+  }
+  // Check Finder dispatch without opening a real OS window during automation.
+  class RevealDelegate final : public content::DownloadManagerDelegate {
+   public:
+    void ShowDownloadInShell(download::DownloadItem* item) override { revealed = item; }
+    raw_ptr<download::DownloadItem> revealed = nullptr;
+  } reveal;
+  auto* original_delegate = manager->GetDelegate();
+  manager->SetDelegate(&reveal);
+  EXPECT_TRUE(panel->Act(guid, DownloadPanel::Action::kReveal));
+  EXPECT_EQ(item, reveal.revealed);
+  manager->SetDelegate(original_delegate);
+  start("/cancel.txt"); cancelled.WaitForRequest();
+  cancelled.Send("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; filename=cancel.txt\r\nContent-Length: 262144\r\n\r\n");
+  cancelled.Send(std::string(32768, 'y'));
+  download::DownloadItem* second = nullptr;
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    content::DownloadManager::DownloadVector items; manager->GetAllDownloads(&items);
+    for (auto candidate : items) if (candidate->GetGuid() != guid) second = candidate;
+    return second && second->GetReceivedBytes() > 0;
+  }));
+  ASSERT_TRUE(base::test::RunUntil([&] { return FindButton(panel->widget()->GetContentsView(), u"Anuluj"); }));
+  views::test::ButtonTestApi(FindButton(panel->widget()->GetContentsView(), u"Anuluj")).NotifyDefaultMouseClick();
+  ASSERT_TRUE(base::test::RunUntil([&] { return second->GetState() == download::DownloadItem::CANCELLED; }));
+  EXPECT_FALSE(panel->Act(second->GetGuid(), DownloadPanel::Action::kPauseResume));
+  EXPECT_FALSE(panel->Act(second->GetGuid(), DownloadPanel::Action::kReveal));
+  cancelled.Done();
+  panel->widget()->Close();
+  ASSERT_TRUE(base::test::RunUntil([&] { return !panel->widget(); }));
+  window_->ShowDownloads();
+  EXPECT_EQ(2u, panel->visible_guids().size());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DownloadsDangerousHistoryCannotRevealOrResume) {
+  base::test::ScopedRunLoopTimeout timeout(FROM_HERE, base::Seconds(30));
+  window_->ShowDownloads();
+  auto* panel = window_->downloads();
+  auto* manager = work_->GetDownloadManager();
+  ASSERT_TRUE(base::test::RunUntil([&] { return manager->IsManagerInitialized(); }));
+  auto path = work_->GetPath().AppendASCII("blocked-test.txt");
+  auto* blocked = manager->CreateDownloadItem(base::Uuid::GenerateRandomV4().AsLowercaseString(), 777,
+      path, path, {embedded_test_server()->GetURL("/blocked-test.txt")}, GURL(),
+      content::StoragePartitionConfig::CreateDefault(work_), GURL(), GURL(), std::nullopt,
+      "text/plain", "text/plain", base::Time::Now(), base::Time::Now(), "", "", 4, 4, "",
+      download::DownloadItem::COMPLETE, download::DOWNLOAD_DANGER_TYPE_DANGEROUS_CONTENT,
+      download::DOWNLOAD_INTERRUPT_REASON_NONE, false, base::Time::Now(), false, {}, base::FilePath());
+  ASSERT_TRUE(blocked);
+  ASSERT_TRUE(blocked->IsDangerous());
+  ASSERT_TRUE(base::test::RunUntil([&] { return panel->visible_guids().size() == 1; }));
+  EXPECT_FALSE(panel->Act(blocked->GetGuid(), DownloadPanel::Action::kReveal));
+  EXPECT_FALSE(panel->Act(blocked->GetGuid(), DownloadPanel::Action::kPauseResume));
+  window_->Select("personal"); window_->ShowDownloads();
+  EXPECT_TRUE(panel->visible_guids().empty());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PasswordOverviewVisibleAndDraggable) {
+  NavigateBoth();
+  ASSERT_TRUE(window_->Select("work"));
+  const auto area = display::Screen::Get()->GetDisplayNearestWindow(window_->widget()->GetNativeWindow()).work_area();
+  window_->widget()->SetBounds(gfx::Rect(area.right() - 400, area.y(), 400, 500));
+  auto* services = PageServices::FromWebContents(window_->contents("work"));
+  window_->ShowPasswords();
+  ASSERT_TRUE(base::test::RunUntil([&] { return services->password_prompt() && services->password_prompt()->IsVisible(); }));
+  auto* dialog = services->password_prompt();
+  const auto actual_area = display::Screen::Get()->GetDisplayNearestWindow(window_->widget()->GetNativeWindow()).work_area();
+  EXPECT_TRUE(actual_area.Contains(dialog->GetWindowBoundsInScreen())) << actual_area.ToString() << " / " << dialog->GetWindowBoundsInScreen().ToString();
+  EXPECT_TRUE(dialog->widget_delegate()->AsDialogDelegate()->draggable());
+  EXPECT_EQ(ui::mojom::ModalType::kNone, dialog->widget_delegate()->GetModalType());
+  dialog->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeJavaScriptDialogs) {
+  auto* page = window_->contents("work");
+  ASSERT_TRUE(content::NavigateToURL(page, embedded_test_server()->GetURL("/storage_probe.html?dialogs")));
+  auto* dialogs = PageDialogs::FromWebContents(page);
+  ASSERT_TRUE(dialogs);
+  content::ExecuteScriptAsync(page, "window.answer = prompt('Podaj nazwę', 'szkic');");
+  ASSERT_TRUE(base::test::RunUntil([&] { return dialogs->dialog() != nullptr; }));
+  std::u16string response = u"zażółć";
+  EXPECT_TRUE(dialogs->HandleJavaScriptDialog(page, true, &response));
+  EXPECT_EQ("zażółć", content::EvalJs(page, "answer"));
+  content::ExecuteScriptAsync(page, "window.answer = confirm('Potwierdź?');");
+  ASSERT_TRUE(base::test::RunUntil([&] { return dialogs->dialog() != nullptr; }));
+  dialogs->dialog()->widget_delegate()->AsDialogDelegate()->CancelDialog();
+  EXPECT_EQ(false, content::EvalJs(page, "answer"));
+  content::ExecuteScriptAsync(page, "alert('Wiadomość'); window.alertDone=true;");
+  ASSERT_TRUE(base::test::RunUntil([&] { return dialogs->dialog() != nullptr; }));
+  dialogs->dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+  EXPECT_EQ(true, content::EvalJs(page, "alertDone"));
+  content::ExecuteScriptAsync(page, "window.answer = prompt('Anuluj przy nawigacji');");
+  ASSERT_TRUE(base::test::RunUntil([&] { return dialogs->dialog() != nullptr; }));
+  ASSERT_TRUE(content::NavigateToURL(page, embedded_test_server()->GetURL("/storage_probe.html?after-dialog")));
+  EXPECT_FALSE(dialogs->dialog());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, BeforeUnloadCloseAndAtomicRestore) {
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html?unsaved");
+  auto* first = window_->contents("work");
+  ASSERT_TRUE(content::NavigateToURL(first, url));
+  ASSERT_TRUE(window_->SaveSnapshot("Before dirty pages"));
+  const auto snapshot = window_->TimeMachine().snapshots.front().id;
+  ASSERT_TRUE(window_->NavigateFromBar(url, true));
+  auto* second = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(second));
+  ArmUnsaved(second);
+  window_->CloseTab(1);
+  EXPECT_TRUE(window_->lifecycle_pending());
+  AnswerUnload(second, false);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->lifecycle_pending(); }));
+  EXPECT_EQ(2u, window_->tab_count("work"));
+  EXPECT_EQ("draft", content::EvalJs(second, "unsaved"));
+  window_->SelectTab(0); ArmUnsaved(first); window_->SelectTab(1);
+  EXPECT_TRUE(window_->RestoreSnapshot(snapshot));
+  AnswerUnload(first, true);
+  AnswerUnload(second, false);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->lifecycle_pending(); }));
+  EXPECT_EQ(2u, window_->tab_count("work"));
+  EXPECT_EQ(second, window_->contents("work"));
+  EXPECT_EQ("draft", content::EvalJs(first, "unsaved"));
+  EXPECT_EQ("draft", content::EvalJs(second, "unsaved"));
+  window_->CloseTab(1); AnswerUnload(second, true);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->tab_count("work") == 1; }));
+  EXPECT_FALSE(window_->lifecycle_pending());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, BeforeUnloadRechecksNewDirtyPages) {
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html?new-handler");
+  auto* first = window_->contents("work");
+  ASSERT_TRUE(content::NavigateToURL(first, url));
+  content::SimulateMouseClickAt(first, 0, blink::WebMouseEvent::Button::kLeft, gfx::Point(12, 12));
+  ASSERT_TRUE(window_->SaveSnapshot("Clean original"));
+  const auto snapshot = window_->TimeMachine().snapshots.front().id;
+  ASSERT_TRUE(window_->NavigateFromBar(url, true));
+  auto* second = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(second)); ArmUnsaved(second);
+  EXPECT_TRUE(window_->RestoreSnapshot(snapshot));
+  auto* second_dialogs = PageDialogs::FromWebContents(second);
+  ASSERT_TRUE(base::test::RunUntil([&] { return second_dialogs->dialog() != nullptr; }));
+  // First page was clean when preflight skipped it. Its script now becomes dirty.
+  ASSERT_TRUE(content::ExecJs(first, "window.onbeforeunload=e=>{ e.preventDefault(); e.returnValue=''; };"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return first->NeedToFireBeforeUnload(); }));
+  AnswerUnload(second, true); AnswerUnload(first, false);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->lifecycle_pending(); }));
+  EXPECT_EQ(2u, window_->tab_count("work"));
+  EXPECT_EQ(second, window_->contents("work"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, BeforeUnloadProfileSleepAndWindowClose) {
+  auto* page = window_->contents("work");
+  ASSERT_TRUE(content::NavigateToURL(page, embedded_test_server()->GetURL("/storage_probe.html?guard")));
+  ArmUnsaved(page);
+  EXPECT_TRUE(window_->AssignProfile("work", "personal-profile"));
+  AnswerUnload(page, false);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->lifecycle_pending(); }));
+  EXPECT_EQ(work_.get(), window_->contents("work")->GetBrowserContext());
+  EXPECT_TRUE(window_->SleepWorkspace("work"));
+  AnswerUnload(page, false);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->lifecycle_pending(); }));
+  EXPECT_EQ("work", window_->active_id()); EXPECT_FALSE(window_->workspace_sleeping("work"));
+  int closed = 0;
+  window_->SetCloseCallback(base::BindOnce([](int* count) { ++*count; }, &closed));
+  window_->widget()->Close(); AnswerUnload(page, false);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->lifecycle_pending(); }));
+  EXPECT_EQ(0, closed); EXPECT_TRUE(window_->widget()->IsVisible());
+  window_->widget()->Close(); AnswerUnload(page, true);
+  ASSERT_TRUE(base::test::RunUntil([&] { return closed == 1; }));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, BeforeUnloadPeekAndBackgroundBatch) {
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html?peek-draft");
+  ASSERT_TRUE(window_->OpenPeek(url));
+  auto* peek = window_->peek_contents();
+  ASSERT_TRUE(content::WaitForLoadStop(peek)); ArmUnsaved(peek);
+  EXPECT_FALSE(window_->Select("personal"));
+  AnswerUnload(peek, false);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->lifecycle_pending(); }));
+  EXPECT_EQ("work", window_->active_id()); EXPECT_EQ(peek, window_->peek_contents());
+  window_->ClosePeek(); AnswerUnload(peek, true);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->peek_contents(); }));
+  auto* work = window_->contents("work");
+  ASSERT_TRUE(content::NavigateToURL(work, url)); ArmUnsaved(work);
+  ASSERT_TRUE(window_->AddWorkspace("Second draft", "work-profile"));
+  const auto extra = window_->active_id(); auto* other = window_->contents(extra);
+  ASSERT_TRUE(content::NavigateToURL(other, url)); ArmUnsaved(other);
+  ASSERT_TRUE(window_->Select("personal"));
+  const auto commands = window_->CommandResults(u"> sleep other");
+  auto sleep = std::find_if(commands.begin(), commands.end(), [](const auto& result) { return result.command_id == "sleep_others"; });
+  ASSERT_NE(sleep, commands.end()); EXPECT_TRUE(window_->ExecuteCommand(*sleep));
+  AnswerUnload(work, true); AnswerUnload(other, false);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->lifecycle_pending(); }));
+  EXPECT_FALSE(window_->workspace_sleeping("work")); EXPECT_FALSE(window_->workspace_sleeping(extra));
+  EXPECT_EQ(work, window_->contents("work")); EXPECT_EQ(other, window_->contents(extra));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, BeforeUnloadRoutedPeekIsPartOfDiscardPlan) {
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html?routed-preview");
+  ASSERT_TRUE(window_->SaveSnapshot("Original workspace"));
+  const auto snapshot = window_->TimeMachine().snapshots.front().id;
+  ASSERT_TRUE(window_->SetLinkRule(url, "personal"));
+  ASSERT_TRUE(window_->OpenPeek(url));
+  auto* peek = window_->peek_contents();
+  ASSERT_TRUE(content::WaitForLoadStop(peek));
+  EXPECT_EQ(personal_.get(), peek->GetBrowserContext());
+  ArmUnsaved(peek);
+  EXPECT_TRUE(window_->RestoreSnapshot(snapshot)); AnswerUnload(peek, false);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->lifecycle_pending(); }));
+  EXPECT_EQ(peek, window_->peek_contents()); EXPECT_EQ("work", window_->active_id());
+  EXPECT_TRUE(window_->SleepWorkspace("work")); AnswerUnload(peek, false);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->lifecycle_pending(); }));
+  EXPECT_FALSE(window_->workspace_sleeping("work")); EXPECT_EQ(peek, window_->peek_contents());
+  EXPECT_TRUE(window_->RemoveWorkspace()); AnswerUnload(peek, false);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->lifecycle_pending(); }));
+  EXPECT_EQ(2u, window_->workspaces().size()); EXPECT_EQ(peek, window_->peek_contents());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CommandCenterSearchAndDispatch) {
+  auto* shell = window_->shell();
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html?command-center");
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), url));
+  window_->OpenCommandPalette();
+  EXPECT_FALSE(shell->suggestions().empty());
+  SetPaletteQuery(u"> skroty");  // Polish accents are optional.
+  ASSERT_EQ(1u, shell->suggestions().size());
+  EXPECT_EQ("shortcuts", shell->suggestions().front().command_id);
+  ui::KeyEvent enter(ui::EventType::kKeyPressed, ui::VKEY_RETURN, 0);
+  EXPECT_TRUE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(shell->address_input(), enter));
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->tools_widget()->IsVisible(); }));
+  EXPECT_FALSE(shell->address_visible());
+  shell->CloseOverlays();
+  window_->OpenCommandPalette(); SetPaletteQuery(u"> zapisz snapshot");
+  ASSERT_EQ(1u, shell->suggestions().size());
+  const auto before = window_->TimeMachine().snapshots.size();
+  EXPECT_TRUE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(shell->address_input(), enter));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->TimeMachine().snapshots.size() > before; }));
+  EXPECT_EQ(u"Command Center", window_->TimeMachine().snapshots.front().title);
+  shell->CloseOverlays(); window_->OpenCommandPalette(); SetPaletteQuery(u"> no-such-command-xyz");
+  EXPECT_TRUE(shell->suggestions().empty());
+  EXPECT_TRUE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(shell->address_input(), enter));
+  EXPECT_TRUE(shell->address_visible());
+  EXPECT_EQ(url, window_->contents("work")->GetVisibleURL());
+  SetPaletteQuery(u"g ustawienia");
+  ASSERT_FALSE(shell->suggestions().empty());
+  EXPECT_TRUE(shell->suggestions().front().command_id.empty());
+  EXPECT_EQ("www.google.com", shell->suggestions().front().url.host());
+  shell->OpenAddress(false); SetPaletteQuery(u"skroty");
+  for (const auto& item : shell->suggestions()) EXPECT_TRUE(item.command_id.empty());
+  shell->CloseOverlays();
+  const auto stale = window_->CommandResults(u"> reload");
+  ASSERT_EQ(1u, stale.size());
+  ASSERT_TRUE(window_->NavigateFromBar(url, true));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  EXPECT_FALSE(window_->ExecuteCommand(stale.front()));
+  window_->CloseTab(0);  // Replacement now has the same index and URL, but a different page identity.
+  ASSERT_EQ(1u, window_->tab_count("work"));
+  EXPECT_FALSE(window_->ExecuteCommand(stale.front()));
+  const auto actions = window_->CommandResults(u">");
+  auto settings = std::find_if(actions.begin(), actions.end(), [](const auto& item) { return item.command_id == "settings"; });
+  ASSERT_NE(settings, actions.end());
+  ASSERT_TRUE(window_->Select("personal"));
+  EXPECT_FALSE(window_->ExecuteCommand(*settings));  // Queued action cannot cross workspaces.
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CommandCenterMoveCopyAndSleep) {
+  ASSERT_TRUE(window_->AddWorkspace("Projekt", "work-profile"));
+  const auto target = window_->active_id();
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html?moving"), true));
+  auto* moving = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(moving));
+  ASSERT_TRUE(content::ExecJs(moving, "window.commandCenterSentinel = 'live'; document.body.innerHTML += '<input id=cc value=unfinished>';"));
+  ASSERT_TRUE(window_->SleepWorkspace(target));
+  auto find = [&](const std::string& id, const std::string& destination) {
+    const auto actions = window_->CommandResults(u">");
+    auto match = std::find_if(actions.begin(), actions.end(), [&](const auto& item) {
+      return item.command_id == id && item.target_workspace_id == destination;
+    });
+    EXPECT_NE(match, actions.end());
+    return match == actions.end() ? PaletteResult() : *match;
+  };
+  const auto move = find("move_tab", target);
+  EXPECT_TRUE(window_->ExecuteCommand(move));
+  EXPECT_EQ(target, window_->active_id());
+  EXPECT_EQ(moving, window_->contents(target));
+  EXPECT_EQ("live", content::EvalJs(moving, "window.commandCenterSentinel"));
+  EXPECT_EQ("unfinished", content::EvalJs(moving, "document.querySelector('#cc').value"));
+  EXPECT_EQ(1u, window_->tab_count("work"));
+  EXPECT_FALSE(window_->workspace_sleeping(target));
+  EXPECT_FALSE(window_->MoveActiveTab("personal"));  // Immutable BrowserContext.
+  const auto copy = find("copy_tab", "personal");
+  const auto original_url = moving->GetVisibleURL();
+  EXPECT_TRUE(window_->ExecuteCommand(copy));
+  EXPECT_EQ("personal", window_->active_id());
+  auto* copied = window_->contents("personal");
+  EXPECT_NE(moving, copied);
+  EXPECT_EQ(personal_.get(), copied->GetBrowserContext());
+  ASSERT_TRUE(content::WaitForLoadStop(copied));
+  EXPECT_EQ(original_url, copied->GetVisibleURL());
+  EXPECT_EQ("undefined", content::EvalJs(copied, "typeof window.commandCenterSentinel"));
+  const auto sleep = find("sleep_others", "");
+  EXPECT_TRUE(window_->ExecuteCommand(sleep));
+  EXPECT_EQ("personal", window_->active_id());
+  EXPECT_TRUE(window_->workspace_sleeping(target));
+  EXPECT_TRUE(window_->workspace_sleeping("work"));
+  const auto wake = find("select_space", target);
+  EXPECT_TRUE(window_->ExecuteCommand(wake));
+  EXPECT_EQ(target, window_->active_id());
+  EXPECT_FALSE(window_->workspace_sleeping(target));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents(target)));
+  EXPECT_EQ(original_url, window_->contents(target)->GetVisibleURL());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CommandCenterMoveSplitAndLastPage) {
+  ASSERT_TRUE(window_->AddWorkspace("Split destination", "work-profile"));
+  const auto target = window_->active_id();
+  window_->ToggleSplit();
+  ASSERT_TRUE(window_->split());
+  auto* target_left = window_->pane_contents(false);
+  ASSERT_TRUE(window_->Select("work"));
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html?split-move");
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), url));
+  auto* original = window_->contents("work");
+  window_->ToggleSplit();
+  ASSERT_TRUE(window_->split());
+  auto* survivor = window_->pane_contents(true);
+  window_->FocusPane(false);
+  ASSERT_TRUE(window_->MoveActiveTab(target));
+  EXPECT_TRUE(window_->split());
+  EXPECT_EQ(original, window_->pane_contents(true));
+  EXPECT_EQ(target_left, window_->pane_contents(false));
+  EXPECT_EQ(survivor, window_->contents("work"));
+  ASSERT_TRUE(window_->Select("work"));
+  EXPECT_FALSE(window_->split());
+  ASSERT_EQ(1u, window_->tab_count("work"));
+  ASSERT_TRUE(window_->MoveActiveTab(target));
+  EXPECT_EQ(survivor, window_->contents(target));
+  EXPECT_EQ(1u, window_->tab_count("work"));
+  EXPECT_NE(survivor, window_->contents("work"));
+  EXPECT_EQ(work_.get(), window_->contents("work")->GetBrowserContext());
+  EXPECT_TRUE(window_->contents("work")->GetVisibleURL().is_empty());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ChromiumHistoryAndCommandPalette) {
+  const auto work_url = embedded_test_server()->GetURL("/storage_probe.html?orion-history");
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), work_url));
+  ASSERT_TRUE(content::ExecJs(window_->contents("work"), "document.title = 'Orion firmowy projekt'"));
+  // Close the visited tab's URL so that it can only return as a history result.
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), embedded_test_server()->GetURL("/storage_probe.html?current")));
+  auto* service = HistoryServiceFactory::GetForProfile(work_, ServiceAccessType::EXPLICIT_ACCESS);
+  ASSERT_TRUE(service);
+  base::CancelableTaskTracker tasks;
+  history::QueryOptions options; options.max_count = 20;
+  base::test::TestFuture<history::QueryResults> queried;
+  service->QueryHistory(u"orion", options, queried.GetCallback(), &tasks);
+  const auto rows = queried.Take();
+  ASSERT_EQ(1u, rows.size());
+  EXPECT_EQ(work_url, rows[0].url());
+  EXPECT_EQ(u"Orion firmowy projekt", rows[0].title());
+  window_->OpenCommandPalette();
+  SetPaletteQuery(u"orion");
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    const auto& results = window_->shell()->search_results();
+    return std::any_of(results.begin(), results.end(), [&](const auto& result) {
+      return result.url == work_url && result.detail.starts_with(u"Historia");
+    });
+  }));
+  ui::KeyEvent enter(ui::EventType::kKeyPressed, ui::VKEY_RETURN, 0);
+  static_cast<views::TextfieldController*>(window_->shell())->HandleKeyEvent(window_->shell()->address_input(), enter);
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  EXPECT_EQ(work_url, window_->contents("work")->GetLastCommittedURL());
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), embedded_test_server()->GetURL("/storage_probe.html?current")));
+  ASSERT_TRUE(window_->Select("personal"));
+  window_->OpenCommandPalette();
+  SetPaletteQuery(u"orion");
+  auto* private_service = HistoryServiceFactory::GetForProfile(personal_, ServiceAccessType::EXPLICIT_ACCESS);
+  ASSERT_TRUE(private_service);
+  base::test::TestFuture<history::QueryResults> private_queried;
+  private_service->QueryHistory(u"orion", options, private_queried.GetCallback(), &tasks);
+  EXPECT_TRUE(private_queried.Take().empty());
+  base::RunLoop().RunUntilIdle();
+  for (const auto& result : window_->shell()->search_results()) EXPECT_FALSE(result.detail.starts_with(u"Historia"));
+  // Profile policy also applies to the adapter, without special test flags.
+  work_->GetPrefs()->SetBoolean(prefs::kSavingBrowserHistoryDisabled, true);
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), embedded_test_server()->GetURL("/storage_probe.html?blocked-recording")));
+  base::test::TestFuture<history::QueryResults> blocked;
+  service->QueryHistory(u"blocked-recording", options, blocked.GetCallback(), &tasks);
+  EXPECT_TRUE(blocked.Take().empty());
+  work_->GetPrefs()->SetBoolean(prefs::kSavingBrowserHistoryDisabled, false);
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), work_url));
+  ASSERT_TRUE(content::ExecJs(window_->contents("work"), "document.title = 'Otwarta karta Orion'"));
+  ASSERT_TRUE(window_->Select("personal"));
+  window_->OpenCommandPalette(); SetPaletteQuery(u"Orion");
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    const auto& results = window_->shell()->search_results();
+    return std::any_of(results.begin(), results.end(), [](const auto& result) { return result.tab && result.workspace_id == "work"; });
+  }));
+  const auto results = window_->shell()->search_results();
+  auto target = std::find_if(results.begin(), results.end(), [](const auto& result) { return result.tab && result.workspace_id == "work"; });
+  ASSERT_NE(target, results.end());
+  window_->ActivatePaletteResult(*target);
+  EXPECT_EQ("work", window_->active_id());
+  EXPECT_EQ(work_url, window_->contents("work")->GetVisibleURL());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ChromiumPasswordSaveAndFill) {
+  auto store = ProfilePasswordStoreFactory::GetForProfile(work_, ServiceAccessType::EXPLICIT_ACCESS);
+  ASSERT_TRUE(store);
+  const auto url = embedded_test_server()->GetURL("/login_probe.html");
+  bool has_saved_account = false;
+  auto first_gesture = [&](content::WebContents* page) {
+    content::SimulateEndOfPaintHoldingOnPrimaryMainFrame(page);
+    content::InputEventAckWaiter ack(page->GetPrimaryMainFrame()->GetRenderWidgetHost(),
+        blink::WebInputEvent::Type::kMouseUp);
+    content::SimulateMouseClickAt(page, 0, blink::WebMouseEvent::Button::kLeft, gfx::Point(12, 12));
+    ack.Wait();
+  };
+  auto submit = [&](std::u16string username = u"alice", std::u16string password = u"synthetic-47") {
+    auto* page = window_->contents("work");
+    if (has_saved_account) {
+      ASSERT_TRUE(base::test::RunUntil([&] {
+        return !content::EvalJs(page, "document.getElementById('username').value").ExtractString().empty();
+      }));
+    }
+    // Commit Chromium's suggested values before replacing fields. Otherwise
+    // the first typed character can accept an outstanding autofill suggestion.
+    first_gesture(page);
+    EXPECT_TRUE(content::ExecJs(page, "document.getElementById('username').value = ''; document.getElementById('username').focus()"));
+    for (char16_t letter : username) TypePageCharacter(page, letter);
+    EXPECT_TRUE(content::ExecJs(page, "document.getElementById('password').value = ''; document.getElementById('password').focus()"));
+    for (char16_t letter : password) TypePageCharacter(page, letter);
+    ASSERT_EQ(base::UTF16ToUTF8(username), content::EvalJs(page, "document.getElementById('username').value"));
+    ASSERT_EQ(base::UTF16ToUTF8(password), content::EvalJs(page, "document.getElementById('password').value"));
+    EXPECT_TRUE(content::ExecJs(page, "document.getElementById('login').requestSubmit()"));
+  };
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), url));
+  auto* services = PageServices::FromWebContents(window_->contents("work"));
+  ASSERT_TRUE(services);
+  submit();
+  ASSERT_TRUE(base::test::RunUntil([&] { return services->password_prompt() && services->password_prompt()->IsVisible(); }));
+  services->password_prompt()->widget_delegate()->AsDialogDelegate()->CancelDialog();
+  PasswordReader declined;
+  store->GetAllLogins(declined.weak_factory.GetWeakPtr());
+  auto declined_rows = declined.ready.Take();
+  ASSERT_TRUE(declined_rows.has_value()); EXPECT_TRUE(declined_rows->empty());
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), url));
+  submit();
+  ASSERT_TRUE(base::test::RunUntil([&] { return services->password_prompt() && services->password_prompt()->IsVisible(); }));
+  services->password_prompt()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+  PasswordReader saved;
+  store->GetAllLogins(saved.weak_factory.GetWeakPtr());
+  auto rows = saved.ready.Take();
+  ASSERT_TRUE(rows.has_value()); ASSERT_EQ(1u, rows->size());
+  EXPECT_EQ(u"alice", (*rows)[0].username_value);
+  has_saved_account = true;
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), url));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return content::EvalJs(window_->contents("work"), "document.getElementById('username').value").ExtractString() == "alice";
+  }));
+  content::SimulateMouseClickAt(window_->contents("work"), 0, blink::WebMouseEvent::Button::kLeft, gfx::Point(12, 12));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return content::EvalJs(window_->contents("work"), "document.getElementById('password').value").ExtractString() == "synthetic-47";
+  }));
+  // Native account overview exposes metadata, never the password value.
+  services->ShowPasswords();
+  ASSERT_TRUE(base::test::RunUntil([&] { return services->password_prompt() && services->password_prompt()->IsVisible(); }));
+  EXPECT_EQ(u"Zapisane logowania", services->password_prompt()->widget_delegate()->GetWindowTitle());
+  services->password_prompt()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+  submit(u"alice", u"updated-synthetic-89");
+  ASSERT_TRUE(base::test::RunUntil([&] { return services->password_prompt() && services->password_prompt()->IsVisible(); }));
+  EXPECT_EQ(u"Zaktualizować hasło?", services->password_prompt()->widget_delegate()->GetWindowTitle());
+  services->password_prompt()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+  PasswordReader updated;
+  store->GetAllLogins(updated.weak_factory.GetWeakPtr());
+  auto updated_rows = updated.ready.Take();
+  ASSERT_TRUE(updated_rows.has_value()); ASSERT_EQ(1u, updated_rows->size());
+  EXPECT_EQ(u"updated-synthetic-89", (*updated_rows)[0].password_value.value());
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), url));
+  submit(u"bob", u"different-synthetic-03");
+  ASSERT_TRUE(base::test::RunUntil([&] { return services->password_prompt() && services->password_prompt()->IsVisible(); }));
+  ASSERT_TRUE(window_->Select("personal"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !services->password_prompt(); }));
+  PasswordReader hidden;
+  store->GetAllLogins(hidden.weak_factory.GetWeakPtr());
+  auto hidden_rows = hidden.ready.Take();
+  ASSERT_TRUE(hidden_rows.has_value()); EXPECT_EQ(1u, hidden_rows->size());
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("personal"), url));
+  EXPECT_EQ("", content::EvalJs(window_->contents("personal"), "document.getElementById('username').value"));
+  auto* autofill_client = autofill::ContentAutofillClient::FromWebContents(window_->contents("personal"));
+  ASSERT_TRUE(autofill_client);
+  EXPECT_TRUE(autofill_client->IsAutocompleteEnabled());
+  EXPECT_FALSE(autofill_client->IsAutofillProfileEnabled());
+  EXPECT_FALSE(autofill_client->GetPaymentsAutofillClient()->IsAutofillPaymentMethodsEnabled());
+  PasswordReader isolated;
+  auto private_store = ProfilePasswordStoreFactory::GetForProfile(personal_, ServiceAccessType::EXPLICIT_ACCESS);
+  ASSERT_TRUE(private_store);
+  private_store->GetAllLogins(isolated.weak_factory.GetWeakPtr());
+  auto private_rows = isolated.ready.Take(); ASSERT_TRUE(private_rows.has_value()); EXPECT_TRUE(private_rows->empty());
+  // Two saved accounts must reach Chromium's actual suggestion UI in our host.
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), url));
+  submit(u"bob", u"different-synthetic-03");
+  ASSERT_TRUE(base::test::RunUntil([&] { return services->password_prompt() && services->password_prompt()->IsVisible(); }));
+  services->password_prompt()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+  PasswordReader both;
+  store->GetAllLogins(both.weak_factory.GetWeakPtr());
+  auto both_rows = both.ready.Take(); ASSERT_TRUE(both_rows.has_value()); ASSERT_EQ(2u, both_rows->size());
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), url));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return !content::EvalJs(window_->contents("work"), "document.getElementById('username').value").ExtractString().empty();
+  }));
+  base::test::ScopedRunLoopTimeout suggestion_timeout(FROM_HERE, base::Seconds(15));
+  ui_controls::EnableUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  window_->contents("work")->Focus();
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->contents("work")->GetRenderWidgetHostView()->HasFocus(); }));
+  first_gesture(window_->contents("work"));
+  ASSERT_TRUE(content::ExecJs(window_->contents("work"), "document.getElementById('username').value = ''"));
+  content::InputEventAckWaiter clicked(window_->contents("work")->GetPrimaryMainFrame()->GetRenderWidgetHost(),
+      blink::WebInputEvent::Type::kMouseUp);
+  content::SimulateMouseClickAt(window_->contents("work"), 0, blink::WebMouseEvent::Button::kLeft,
+      gfx::ToRoundedPoint(content::GetCenterCoordinatesOfElementWithId(window_->contents("work"), "username")));
+  clicked.Wait();
+  EXPECT_EQ("username", content::EvalJs(window_->contents("work"), "document.activeElement.id"));
+  EXPECT_EQ("", content::EvalJs(window_->contents("work"), "document.getElementById('username').value"));
+  content::SimulateKeyPressWithoutChar(window_->contents("work"), ui::DomKey::ARROW_DOWN,
+      ui::DomCode::ARROW_DOWN, ui::VKEY_DOWN, false, false, false, false);
+  auto* work_autofill = autofill::ContentAutofillClient::FromWebContents(window_->contents("work"));
+  std::u16string shown_accounts;
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    const auto suggestions = work_autofill->GetAutofillSuggestions();
+    shown_accounts.clear();
+    bool alice = false, bob = false;
+    for (const auto& suggestion : suggestions) {
+      shown_accounts += suggestion.main_text.value + u" | ";
+      alice |= suggestion.main_text.value == u"alice";
+      bob |= suggestion.main_text.value == u"bob";
+    }
+    return alice && bob;
+  })) << "Suggestion titles: " << base::UTF16ToUTF8(shown_accounts)
+      << "; field: " << content::EvalJs(window_->contents("work"), "document.getElementById('username').value");
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitPairPersistsWhileAnotherTabIsShown) {
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), embedded_test_server()->GetURL("/storage_probe.html?a")));
+  auto* a = window_->contents("work");
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html?b"), true));
+  auto* b = window_->contents("work");
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html?c"), true));
+  auto* c = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(c));
+  window_->SelectTab(0);
+  ASSERT_TRUE(window_->SplitTab(1));
+  ASSERT_TRUE(window_->split());
+  auto* shell = window_->shell();
+  // Another tab is shown alone; the pair stays one sidebar item.
+  window_->SelectTab(2);
+  EXPECT_FALSE(window_->split());
+  EXPECT_EQ(c, window_->pane_contents(false));
+  EXPECT_EQ(nullptr, window_->pane_contents(true));
+  base::RunLoop().RunUntilIdle();
+  ASSERT_TRUE(shell->tab_button(0) && shell->tab_button(1));
+  EXPECT_EQ(shell->tab_button(0)->parent(), shell->tab_button(1)->parent());
+  EXPECT_NE(shell->tab_button(0)->parent(), shell->tab_button(2)->parent());
+  // Selecting either half brings the whole pair back.
+  window_->SelectTab(1);
+  EXPECT_TRUE(window_->split());
+  EXPECT_EQ(a, window_->pane_contents(false));
+  EXPECT_EQ(b, window_->pane_contents(true));
+  EXPECT_EQ(b, window_->contents("work"));
+  // Move left/right swaps the halves; vertical stacks them.
+  window_->SwapSplit();
+  EXPECT_EQ(b, window_->pane_contents(false));
+  EXPECT_EQ(a, window_->pane_contents(true));
+  window_->SetSplitVertical(true);
+  EXPECT_TRUE(window_->split_vertical());
+  window_->widget()->LayoutRootViewIfNecessary();
+  const auto top = b->GetContainerBounds(), bottom = a->GetContainerBounds();
+  EXPECT_EQ(top.x(), bottom.x());
+  EXPECT_LT(top.bottom(), bottom.y() + 1);
+  EXPECT_GT(top.height(), 100);
+  // Closing half of a hidden pair keeps the solo tab on screen.
+  window_->SelectTab(2);
+  window_->CloseTab(0);
+  EXPECT_EQ(c, window_->contents("work"));
+  EXPECT_FALSE(window_->split());
+  EXPECT_EQ(2u, window_->tab_count("work"));
+  window_->SelectTab(0);
+  EXPECT_FALSE(window_->split());
+  EXPECT_EQ(b, window_->contents("work"));
+  // Each visible half has its own header with a close button.
+  ASSERT_TRUE(window_->SplitTab(1));
+  window_->widget()->LayoutRootViewIfNecessary();
+  auto* close = shell->split_pane_button(true, true);
+  ASSERT_TRUE(close->IsDrawn());
+  // The header sits above the right page, not over it.
+  EXPECT_LE(close->GetBoundsInScreen().bottom(), c->GetContainerBounds().y());
+  EXPECT_GT(close->GetBoundsInScreen().x(), shell->split_pane_button(false, true)->GetBoundsInScreen().x());
+  views::test::ButtonTestApi(close).NotifyDefaultMouseClick();
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->tab_count("work") == 1; }));
+  EXPECT_EQ(b, window_->contents("work"));
+  EXPECT_FALSE(window_->split());
+  EXPECT_FALSE(shell->split_pane_button(false, true)->IsDrawn());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitViewLifecycleAndIsolation) {
+  const auto first = embedded_test_server()->GetURL("/storage_probe.html");
+  const auto second = embedded_test_server()->GetURL("/storage_probe.html?right");
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), first));
+  auto* left = window_->contents("work");
+  ASSERT_TRUE(window_->NavigateFromBar(second, true));
+  auto* right = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(right));
+  window_->SelectTab(0);
+  ASSERT_TRUE(window_->SplitTab(1));
+  EXPECT_TRUE(window_->split());
+  EXPECT_EQ(left, window_->pane_contents(false));
+  EXPECT_EQ(right, window_->pane_contents(true));
+  EXPECT_EQ(work_, right->GetBrowserContext());
+  EXPECT_EQ(work_, left->GetBrowserContext());
+  auto* shell = window_->shell();
+  shell->ShowSidebar();
+  base::RunLoop().RunUntilIdle();
+  auto* left_row = shell->tab_button(0);
+  auto* right_row = shell->tab_button(1);
+  ASSERT_TRUE(left_row);
+  ASSERT_TRUE(right_row);
+  EXPECT_EQ(left_row->parent(), right_row->parent());
+  EXPECT_LE(left_row->parent()->width(), shell->sidebar_widget()->GetContentsView()->width());
+  EXPECT_TRUE(left_row->parent()->GetLocalBounds().Contains(right_row->bounds()));
+  EXPECT_EQ(left_row->y(), right_row->y());
+  EXPECT_LT(left_row->x(), right_row->x());
+  EXPECT_EQ(left_row->width(), right_row->width());
+  views::test::ButtonTestApi(left_row).NotifyDefaultMouseClick();
+  EXPECT_EQ(left, window_->contents("work"));
+  EXPECT_TRUE(shell->sidebar_widget()->IsVisible());
+  views::test::ButtonTestApi(right_row).NotifyDefaultMouseClick();
+  EXPECT_EQ(right, window_->contents("work"));
+  EXPECT_TRUE(shell->sidebar_widget()->IsVisible());
+  base::RunLoop().RunUntilIdle();
+  EXPECT_FALSE(left->GetContainerBounds().Intersects(right->GetContainerBounds()));
+  EXPECT_GT(left->GetContainerBounds().width(), 100);
+  EXPECT_GT(right->GetContainerBounds().width(), 100);
+  auto* pane_host = window_->shell()->content_host();
+  auto* divider = views::AsViewClass<views::ResizeArea>(pane_host->children().front().get());
+  ASSERT_TRUE(divider);
+  EXPECT_EQ(divider, pane_host->GetEventHandlerForPoint(divider->bounds().CenterPoint()));
+  ui::MouseEvent press(ui::EventType::kMousePressed, gfx::Point(4, 10), gfx::Point(4, 10),
+      base::TimeTicks::Now(), ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON);
+  ASSERT_TRUE(divider->OnMousePressed(press));
+  ui::MouseEvent drag(ui::EventType::kMouseDragged, gfx::Point(104, 10), gfx::Point(104, 10),
+      base::TimeTicks::Now(), ui::EF_LEFT_MOUSE_BUTTON, 0);
+  ASSERT_TRUE(divider->OnMouseDragged(drag));
+  ui::MouseEvent release(ui::EventType::kMouseReleased, gfx::Point(104, 10), gfx::Point(104, 10),
+      base::TimeTicks::Now(), 0, ui::EF_LEFT_MOUSE_BUTTON);
+  divider->OnMouseReleased(release);
+  EXPECT_GT(window_->split_ratio(), 0.5);
+  window_->FocusPane(false);
+  EXPECT_EQ(left, window_->contents("work"));
+  window_->FocusPane(true);
+  EXPECT_EQ(right, window_->contents("work"));
+  // The tab context menu separates the pair, keeping the clicked tab visible.
+  window_->Unsplit(0);
+  EXPECT_FALSE(window_->split());
+  EXPECT_EQ(left, window_->contents("work"));
+  EXPECT_EQ(2u, window_->tab_count("work"));
+  ASSERT_TRUE(window_->SplitTab(1));
+  EXPECT_EQ(right, window_->contents("work"));
+  // The sidebar's right-edge handle resizes the pinned column and the page.
+  const int sidebar_before = shell->sidebar_widget()->GetWindowBoundsInScreen().width();
+  const int page_before = shell->content_host()->GetBoundsInScreen().x();
+  const int width_before = shell->sidebar_width();
+  shell->ResizeSidebar(30, false);
+  shell->ResizeSidebar(40, true);
+  EXPECT_EQ(width_before + 40, shell->sidebar_width());
+  window_->widget()->LayoutRootViewIfNecessary();
+  EXPECT_GT(shell->sidebar_widget()->GetWindowBoundsInScreen().width(), sidebar_before);
+  EXPECT_GT(shell->content_host()->GetBoundsInScreen().x(), page_before);
+  shell->ResizeSidebar(-1000, true);
+  EXPECT_EQ(200, shell->sidebar_width());
+  window_->SetSplitRatio(0.65);
+  EXPECT_DOUBLE_EQ(0.65, window_->split_ratio());
+  ASSERT_TRUE(window_->Select("personal"));
+  EXPECT_FALSE(window_->split());
+  EXPECT_EQ(personal_, window_->contents("personal")->GetBrowserContext());
+  ASSERT_TRUE(window_->Select("work"));
+  EXPECT_TRUE(window_->split());
+  EXPECT_EQ(right, window_->contents("work"));
+  EXPECT_DOUBLE_EQ(0.65, window_->split_ratio());
+  // Closing either pane leaves a single, focused surviving page.
+  window_->CloseTab(0);
+  EXPECT_FALSE(window_->split());
+  EXPECT_EQ(right, window_->contents("work"));
+  EXPECT_EQ(1u, window_->tab_count("work"));
+  ASSERT_TRUE(window_->SplitTab(0));
+  EXPECT_TRUE(window_->split());
+  ASSERT_TRUE(content::WaitForLoadStop(window_->pane_contents(true)));
+  EXPECT_EQ(second, window_->pane_contents(true)->GetLastCommittedURL());
+  EXPECT_NE(window_->pane_contents(false), window_->pane_contents(true));
+  window_->shell()->CloseOverlays();
+  window_->ToggleSplit();
+  EXPECT_FALSE(window_->split());
+  EXPECT_EQ(2u, window_->tab_count("work"));
+  base::RunLoop().RunUntilIdle();
+  ASSERT_TRUE(shell->tab_button(0));
+  ASSERT_TRUE(shell->tab_button(1));
+  EXPECT_EQ(shell->tab_button(0)->parent(), shell->tab_button(1)->parent());
+  EXPECT_NE(shell->tab_button(0)->y(), shell->tab_button(1)->y());
+  // Reassigning a profile drops the old live session and both old contexts.
+  ASSERT_TRUE(window_->AssignProfile("work", "personal-profile"));
+  EXPECT_FALSE(window_->split());
+  EXPECT_EQ(1u, window_->tab_count("work"));
+  EXPECT_EQ(personal_, window_->contents("work")->GetBrowserContext());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitViewSessionRestore) {
+  const auto first = embedded_test_server()->GetURL("/storage_probe.html?left");
+  const auto second = embedded_test_server()->GetURL("/storage_probe.html?right");
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), first));
+  ASSERT_TRUE(window_->NavigateFromBar(second, true));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  window_->SelectTab(0);
+  ASSERT_TRUE(window_->SplitTab(1));
+  window_->FocusPane(false);
+  window_->SetSplitRatio(0.62);
+  ASSERT_TRUE(window_->Select("personal"));
+  const auto personal_url = embedded_test_server()->GetURL("/storage_probe.html?personal");
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("personal"), personal_url));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
+  window_.reset();
+  window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+  EXPECT_EQ("personal", window_->active_id());
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("personal")));
+  EXPECT_EQ(personal_url, window_->contents("personal")->GetLastCommittedURL());
+  ASSERT_TRUE(window_->Select("work"));
+  EXPECT_TRUE(window_->split());
+  EXPECT_DOUBLE_EQ(0.62, window_->split_ratio());
+  ASSERT_EQ(2u, window_->tab_count("work"));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->pane_contents(false)));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->pane_contents(true)));
+  EXPECT_EQ(first, window_->pane_contents(false)->GetLastCommittedURL());
+  EXPECT_EQ(second, window_->pane_contents(true)->GetLastCommittedURL());
+  EXPECT_EQ(window_->pane_contents(false), window_->contents("work"));
+  // Collapsing keeps both tabs; subsequent restore must not resurrect a split.
+  window_->ToggleSplit();
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
+  window_.reset();
+  window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+  EXPECT_FALSE(window_->split());
+  EXPECT_EQ(2u, window_->tab_count("work"));
+}
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, StorageIsolationAndSwitching) {
   ASSERT_NO_FATAL_FAILURE(NavigateBoth());
@@ -155,10 +2301,402 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, StorageIsolationAndSwitching) 
   // teardown/recreation, not durability across a browser restart.
   window_.reset();
   window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
   ASSERT_NO_FATAL_FAILURE(NavigateBoth());
   EXPECT_EQ("work|work|work|", content::EvalJs(window_->contents("work"), "readMarker()"));
   EXPECT_EQ("personal|personal|personal|",
             content::EvalJs(window_->contents("personal"), "readMarker()"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DynamicWorkspacesAndProfiles) {
+  ASSERT_NO_FATAL_FAILURE(NavigateBoth());
+  ASSERT_EQ("work", content::EvalJs(window_->contents("work"), "writeMarker('work')"));
+  ASSERT_EQ("personal", content::EvalJs(window_->contents("personal"), "writeMarker('personal')"));
+  EXPECT_FALSE(window_->AddWorkspace("", "work-profile"));
+  EXPECT_FALSE(window_->AddWorkspace("Invalid", "missing-profile"));
+  auto* shell = window_->shell();
+  shell->OpenWorkspaceSettings();
+  auto* add = FindButton(shell->settings_widget()->GetContentsView(), u"Dodaj przestrzeń");
+  ASSERT_TRUE(add);
+  shell->workspace_input()->SetText(u"   ");
+  views::test::ButtonTestApi(add).NotifyDefaultMouseClick();
+  EXPECT_EQ(2u, window_->workspaces().size());
+  shell->workspace_input()->SetText(u"Projekt Łódź");
+  shell->profile_picker()->SetSelectedIndex(0);
+  views::test::ButtonTestApi(add).NotifyDefaultMouseClick();
+  const auto project = window_->active_id();
+  ASSERT_EQ(3u, window_->workspaces().size());
+  EXPECT_EQ(work_.get(), window_->contents(project)->GetBrowserContext());
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html");
+  ASSERT_TRUE(content::NavigateToURL(window_->contents(project), url));
+  EXPECT_EQ("work|work|work|", content::EvalJs(window_->contents(project), "readMarker()"));
+  ASSERT_TRUE(window_->NavigateFromBar(url, true));
+  EXPECT_EQ(2u, window_->tab_count(project));
+  EXPECT_FALSE(window_->EditWorkspace("Invalid", "missing-profile"));
+  EXPECT_EQ(2u, window_->tab_count(project));
+  shell->OpenWorkspaceSettings();
+  shell->workspace_input()->SetText(u"Klient");
+  shell->profile_picker()->SetSelectedIndex(1);
+  auto* edit = FindButton(shell->settings_widget()->GetContentsView(), u"Zapisz zmiany");
+  ASSERT_TRUE(edit);
+  views::test::ButtonTestApi(edit).NotifyDefaultMouseClick();
+  EXPECT_EQ(1u, window_->tab_count(project));
+  EXPECT_EQ(personal_.get(), window_->contents(project)->GetBrowserContext());
+  ASSERT_TRUE(content::NavigateToURL(window_->contents(project), url));
+  EXPECT_EQ("personal|personal|personal|", content::EvalJs(window_->contents(project), "readMarker()"));
+  window_->shell()->SetWorkspaceColor(project, 0xFF123456);
+  views::test::ButtonTestApi(shell->workspace_button("work")).NotifyDefaultMouseClick();
+  EXPECT_EQ("work", window_->active_id());
+  shell->OpenWorkspaceSettings();
+  auto* remove = FindButton(shell->settings_widget()->GetContentsView(), u"Usuń przestrzeń i jej karty");
+  ASSERT_TRUE(remove);
+  views::test::ButtonTestApi(remove).NotifyDefaultMouseClick();
+  EXPECT_EQ(nullptr, window_->contents("work"));
+  ASSERT_TRUE(window_->Select(project));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return window_->configuration_saved() && window_->shell()->appearance_saved();
+  }));
+  window_.reset();
+  window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return window_->configuration_ready() && window_->shell()->appearance_ready();
+  }));
+  EXPECT_EQ(2u, window_->workspaces().size());
+  EXPECT_EQ(project, window_->active_id());
+  EXPECT_EQ(nullptr, window_->contents("work"));
+  EXPECT_EQ("Klient", window_->workspaces()[1].name);
+  EXPECT_EQ(personal_.get(), window_->contents(project)->GetBrowserContext());
+  EXPECT_EQ(0xFF123456u, window_->shell()->workspace_color(project));
+  ASSERT_TRUE(window_->RemoveWorkspace());
+  EXPECT_FALSE(window_->RemoveWorkspace());
+  EXPECT_EQ(1u, window_->workspaces().size());
+  // Removing workspaces never removes the shared profile's storage.
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("personal"), url));
+  EXPECT_EQ("personal|personal|personal|", content::EvalJs(window_->contents("personal"), "readMarker()"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceDotProfileMenu) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(shell->workspace_button("work"));
+  ASSERT_TRUE(shell->workspace_button("personal"));
+  shell->BuildWorkspaceMenu("personal");
+  ASSERT_EQ(u"Set profile", shell->workspace_menu()->GetLabelAt(0));
+  auto* profiles = shell->workspace_menu()->GetSubmenuModelAt(0);
+  ASSERT_TRUE(profiles);
+  EXPECT_FALSE(profiles->IsItemCheckedAt(0));
+  EXPECT_TRUE(profiles->IsItemCheckedAt(1));
+  profiles->ActivatedAt(0, 0);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->workspaces()[1].profile_id == "work-profile"; }));
+  EXPECT_EQ("work", window_->active_id());
+  EXPECT_EQ(work_.get(), window_->contents("personal")->GetBrowserContext());
+  // Editing the profile from an inactive dot retains the target's identity.
+  shell->BuildWorkspaceMenu("personal");
+  profiles = shell->workspace_menu()->GetSubmenuModelAt(0);
+  profiles->ActivatedAt(3, 0);  // Two profiles, separator, Edit.
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->profiles_widget()->IsVisible(); }));
+  EXPECT_EQ(u"Profil firmowy", shell->profile_name_input()->GetText());
+  shell->profile_name_input()->SetText(u"Profil zespołu");
+  auto* rename = FindButton(shell->profiles_widget()->GetContentsView(), u"Zapisz nazwę profilu");
+  ASSERT_TRUE(rename);
+  views::test::ButtonTestApi(rename).NotifyDefaultMouseClick();
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  EXPECT_EQ("Profil zespołu", window_->profiles()[0].name);
+  EXPECT_EQ(0u, shell->managed_profile_picker()->GetSelectedIndex());
+  EXPECT_EQ(work_.get(), window_->contents("work")->GetBrowserContext());
+  shell->BuildWorkspaceMenu("personal");
+  profiles = shell->workspace_menu()->GetSubmenuModelAt(0);
+  profiles->ActivatedAt(4, 0);  // New profile, assigned to this dot.
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->profile_name_input()->GetText().empty(); }));
+  shell->profile_name_input()->SetText(u"Klient nowy");
+  auto* create = FindButton(shell->profiles_widget()->GetContentsView(), u"Utwórz profil");
+  ASSERT_TRUE(create);
+  views::test::ButtonTestApi(create).NotifyDefaultMouseClick();
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  ASSERT_EQ(3u, window_->profiles().size());
+  const auto created = window_->profiles().back();
+  EXPECT_EQ(created.id, window_->workspaces()[1].profile_id);
+  EXPECT_EQ("work", window_->active_id());
+  EXPECT_NE(work_.get(), window_->contents("personal")->GetBrowserContext());
+  views::test::ButtonTestApi(shell->workspace_button("personal")).NotifyDefaultMouseClick();
+  EXPECT_EQ("personal", window_->active_id());
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
+  window_.reset();
+  window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+  EXPECT_EQ("Profil zespołu", window_->profiles()[0].name);
+  EXPECT_EQ(created.id, window_->workspaces()[1].profile_id);
+  EXPECT_EQ("personal", window_->active_id());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DynamicProfiles) {
+  auto* shell = window_->shell();
+  shell->OpenProfiles();
+  auto* create = FindButton(shell->profiles_widget()->GetContentsView(), u"Utwórz profil");
+  ASSERT_TRUE(create);
+  shell->profile_name_input()->SetText(u"Klient Łódź");
+  views::test::ButtonTestApi(create).NotifyDefaultMouseClick();
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  ASSERT_EQ(3u, window_->profiles().size());
+  const auto added = window_->profiles().back();
+  EXPECT_EQ("Klient Łódź", added.name);
+  EXPECT_FALSE(window_->CreateProfile("  "));
+  EXPECT_FALSE(window_->CreateProfile("Klient Łódź"));
+  shell->OpenWorkspaceSettings();
+  ASSERT_EQ(3u, shell->profile_picker()->GetModel()->GetItemCount());
+  ASSERT_TRUE(window_->EditWorkspace("Praca", added.id));
+  EXPECT_FALSE(window_->RemoveProfile(added.id));
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html");
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), url));
+  EXPECT_EQ("client", content::EvalJs(window_->contents("work"), "writeMarker('client')"));
+  EXPECT_NE(work_.get(), window_->contents("work")->GetBrowserContext());
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
+  window_.reset();
+  const auto directory = g_browser_process->profile_manager()->user_data_dir();
+  window_ = std::make_unique<WorkspaceWindow>(directory, false);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+  ASSERT_EQ(3u, window_->profiles().size());
+  EXPECT_EQ(added.id, window_->workspaces()[0].profile_id);
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), url));
+  EXPECT_EQ("client|client|client|", content::EvalJs(window_->contents("work"), "readMarker()"));
+  ASSERT_TRUE(window_->EditWorkspace("Praca", "work-profile"));
+  shell = window_->shell();
+  shell->OpenProfiles();
+  shell->managed_profile_picker()->SetSelectedIndex(2);
+  auto* remove = FindButton(shell->profiles_widget()->GetContentsView(), u"Usuń profil i jego dane");
+  ASSERT_TRUE(remove);
+  views::test::ButtonTestApi(remove).NotifyDefaultMouseClick();
+  EXPECT_EQ(3u, window_->profiles().size());
+  auto* confirm = FindButton(shell->profiles_widget()->GetContentsView(), u"Potwierdź usunięcie profilu i danych");
+  ASSERT_TRUE(confirm);
+  views::test::ButtonTestApi(confirm).NotifyDefaultMouseClick();
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  ASSERT_EQ(2u, window_->profiles().size());
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return !g_browser_process->profile_manager()->GetProfileAttributesStorage().GetProfileAttributesWithPath(directory.AppendASCII(added.directory));
+  }));
+  // The original defaults are ordinary deletable profiles too.
+  ASSERT_TRUE(window_->Select("personal"));
+  ASSERT_TRUE(window_->EditWorkspace("Prywatne", "work-profile"));
+  ASSERT_TRUE(window_->RemoveProfile("personal-profile"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  window_.reset();
+  window_ = std::make_unique<WorkspaceWindow>(directory, false);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+  ASSERT_EQ(1u, window_->profiles().size());
+  EXPECT_EQ("work-profile", window_->profiles()[0].id);
+  EXPECT_FALSE(window_->RemoveProfile("work-profile"));
+  for (const auto& workspace : window_->workspaces()) EXPECT_EQ("work-profile", workspace.profile_id);
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ArcImportStructureAndPersistence) {
+  base::FilePath root;
+  ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &root));
+  const auto source = root.AppendASCII("zitter/testdata/arc");
+  window_->PreviewArcImport(source);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->import_preview() != nullptr; }));
+  const auto preview = *window_->import_preview();
+  ASSERT_TRUE(preview.error.empty()) << preview.error;
+  EXPECT_EQ(3u, preview.profiles.size());
+  ASSERT_EQ(3u, preview.spaces.size());
+  EXPECT_EQ(7u, preview.tab_count);
+  EXPECT_EQ(5u, preview.folder_count);
+  EXPECT_EQ(1u, preview.skipped_count);
+  EXPECT_EQ("arc-space-space-b", preview.spaces[0].id);
+  EXPECT_EQ(preview.spaces[0].profile_id, preview.spaces[1].profile_id);
+  EXPECT_NE(preview.spaces[0].profile_id, preview.spaces[2].profile_id);
+  auto* shell = window_->shell();
+  shell->OpenImport();
+  auto* import = FindButton(shell->import_widget()->GetContentsView(), u"Importuj");
+  ASSERT_TRUE(import);
+  views::test::ButtonTestApi(import).NotifyDefaultMouseClick();
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  ASSERT_EQ(5u, window_->profiles().size());
+  ASSERT_EQ(5u, window_->workspaces().size());
+  const auto& pins = window_->pinned_items("arc-space-space-a");
+  ASSERT_FALSE(pins.empty());
+  bool nested = false;
+  for (const auto& pin : pins) {
+    if (pin.id == "tab-b") nested = pin.parent_id == "nested";
+    EXPECT_NE("https://example.test/not-pinned", pin.url.spec());
+    EXPECT_NE("javascript:alert(1)", pin.url.spec());
+  }
+  EXPECT_TRUE(nested);
+  EXPECT_EQ(1u, window_->tab_count("arc-space-space-a"));
+  // A long pinned list must leave the workspace picker inside the viewport.
+  ASSERT_TRUE(window_->Select("arc-space-space-a"));
+  shell->ShowSidebar();
+  base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(window_->widget()->GetWindowBoundsInScreen().Contains(
+      shell->workspace_button(window_->active_id())->GetBoundsInScreen()));
+  // Opening a pin lazily uses its imported profile, and reuses the same tab.
+  ASSERT_TRUE(window_->Select("arc-space-space-a"));
+  window_->OpenPinnedItem("tab-a");
+  EXPECT_EQ(2u, window_->tab_count("arc-space-space-a"));
+  auto* page = window_->contents("arc-space-space-a");
+  window_->OpenPinnedItem("tab-a");
+  EXPECT_EQ(page, window_->contents("arc-space-space-a"));
+  EXPECT_EQ(2u, window_->tab_count("arc-space-space-a"));
+  // A pinned pane joins the pair, then returns to its original pin row.
+  EXPECT_FALSE(shell->tab_button(1));
+  ASSERT_TRUE(window_->SplitTab(0));
+  ASSERT_TRUE(shell->tab_button(1));
+  ASSERT_TRUE(shell->tab_button(0));
+  EXPECT_EQ(shell->tab_button(1)->parent(), shell->tab_button(0)->parent());
+  window_->FocusPane(false);
+  EXPECT_EQ(page, window_->contents("arc-space-space-a"));
+  const auto original_pins = window_->pinned_items("arc-space-space-a");
+  ASSERT_TRUE(window_->SaveSnapshot("Imported folders and split"));
+  const auto arc_snapshot = window_->TimeMachine().snapshots.front().id;
+  window_->ToggleSplit();
+  ASSERT_TRUE(window_->RestoreSnapshot(arc_snapshot));
+  EXPECT_EQ(original_pins, window_->pinned_items("arc-space-space-a"));
+  EXPECT_TRUE(window_->split());
+  EXPECT_EQ(shell->tab_button(1)->parent(), shell->tab_button(0)->parent());
+  page = window_->contents("arc-space-space-a");
+  window_->ToggleSplit();
+  EXPECT_FALSE(shell->tab_button(1));
+  ASSERT_TRUE(window_->Select("arc-space-space-b"));
+  EXPECT_EQ(page->GetBrowserContext(), window_->contents("arc-space-space-b")->GetBrowserContext());
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
+  window_.reset();
+  window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+  EXPECT_EQ(5u, window_->profiles().size());
+  EXPECT_EQ(5u, window_->workspaces().size());
+  EXPECT_EQ(preview.spaces[1].pins.size(), window_->pinned_items("arc-space-space-a").size());
+  EXPECT_EQ(2u, window_->tab_count("arc-space-space-a"));
+  window_->PreviewArcImport(source);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->import_ready(); }));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  ASSERT_TRUE(window_->ApplyArcImport());
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  EXPECT_EQ(5u, window_->profiles().size());
+  EXPECT_EQ(5u, window_->workspaces().size());
+  // Malformed/missing source data never mutates the existing catalogue.
+  window_->PreviewArcImport(root.AppendASCII("missing-arc-directory"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->import_preview() != nullptr; }));
+  EXPECT_FALSE(window_->import_ready());
+  EXPECT_FALSE(window_->ApplyArcImport());
+  EXPECT_EQ(5u, window_->workspaces().size());
+  EXPECT_FALSE(ParseArcImport("{}", "{}").error.empty());
+  EXPECT_FALSE(ParseArcImport("not json", "{}").error.empty());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FailedConfigurationWritePreservesProfiles) {
+  ASSERT_TRUE(window_->CreateProfile("Do zachowania"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  ASSERT_EQ(3u, window_->profiles().size());
+  const auto profile = window_->profiles().back();
+  ASSERT_TRUE(window_->EditWorkspace("Praca", profile.id));
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html");
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), url));
+  ASSERT_EQ("keep", content::EvalJs(window_->contents("work"), "writeMarker('keep')"));
+  ASSERT_TRUE(window_->EditWorkspace("Praca", "work-profile"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
+  auto* manager = g_browser_process->profile_manager();
+  const auto file = manager->user_data_dir().AppendASCII("ZitterWorkspaces.json");
+  const auto backup = file.AddExtensionASCII("backup");
+  {
+    base::ScopedAllowBlockingForTesting allow;
+    ASSERT_TRUE(base::Move(file, backup));
+    ASSERT_TRUE(base::CreateDirectory(file));  // Atomic replacement must fail.
+  }
+  ASSERT_TRUE(window_->RemoveProfile(profile.id));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  EXPECT_EQ(3u, window_->profiles().size());
+  EXPECT_TRUE(manager->GetProfileAttributesStorage().GetProfileAttributesWithPath(manager->user_data_dir().AppendASCII(profile.directory)));
+  ASSERT_TRUE(window_->CreateProfile("Błąd zapisu"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  EXPECT_EQ(3u, window_->profiles().size());
+  base::FilePath root;
+  ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &root));
+  window_->PreviewArcImport(root.AppendASCII("zitter/testdata/arc"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->import_ready(); }));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  ASSERT_TRUE(window_->ApplyArcImport());
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  EXPECT_EQ(3u, window_->profiles().size());
+  EXPECT_EQ(2u, window_->workspaces().size());
+  {
+    base::ScopedAllowBlockingForTesting allow;
+    ASSERT_TRUE(base::DeletePathRecursively(file));
+    ASSERT_TRUE(base::Move(backup, file));
+  }
+  ASSERT_TRUE(window_->EditWorkspace("Praca", profile.id));
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), url));
+  EXPECT_EQ("keep|keep|keep|", content::EvalJs(window_->contents("work"), "readMarker()"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FirstRunImportOffer) {
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
+  window_.reset();
+  const auto directory = g_browser_process->profile_manager()->user_data_dir();
+  {
+    base::ScopedAllowBlockingForTesting allow;
+    ASSERT_TRUE(base::DeleteFile(directory.AppendASCII("ZitterWorkspaces.json")));
+  }
+  window_ = std::make_unique<WorkspaceWindow>(directory);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+  EXPECT_TRUE(window_->shell()->import_visible());
+  auto* skip = FindButton(window_->shell()->import_widget()->GetContentsView(), u"Pomiń / Zamknij");
+  ASSERT_TRUE(skip);
+  views::test::ButtonTestApi(skip).NotifyDefaultMouseClick();
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
+  window_.reset();
+  window_ = std::make_unique<WorkspaceWindow>(directory);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+  EXPECT_FALSE(window_->shell()->import_visible());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, LiveArcImport) {
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch("zitter-test-arc-import")) {
+    GTEST_SKIP() << "Explicit local Arc import test only";
+  }
+  window_->PreviewArcImport(DefaultArcDirectory());
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->import_preview() != nullptr; }));
+  const auto preview = *window_->import_preview();
+  ASSERT_TRUE(preview.error.empty()) << preview.error;
+  ASSERT_FALSE(preview.spaces.empty());
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  ASSERT_TRUE(window_->ApplyArcImport());
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  ASSERT_EQ(2u + preview.spaces.size(), window_->workspaces().size());
+  for (const auto& space : preview.spaces) {
+    ASSERT_TRUE(window_->Select(space.id));
+    window_->shell()->ShowSidebar();
+    base::RunLoop().RunUntilIdle();
+    EXPECT_TRUE(window_->widget()->GetWindowBoundsInScreen().Contains(
+        window_->shell()->workspace_button(window_->active_id())->GetBoundsInScreen()));
+  }
+  const auto builds = window_->shell()->pinned_list_build_count();
+  base::TimeDelta maximum_switch;
+  for (int iteration = 0; iteration < 10; ++iteration) {
+    for (const auto& space : preview.spaces) {
+      base::ElapsedTimer timer;
+      ASSERT_TRUE(window_->Select(space.id));
+      maximum_switch = std::max(maximum_switch, timer.Elapsed());
+    }
+  }
+  EXPECT_EQ(builds, window_->shell()->pinned_list_build_count());
+  EXPECT_LT(maximum_switch, base::Milliseconds(500));
+  LOG(INFO) << "Cached Arc workspace switching: maximum " << maximum_switch.InMillisecondsF()
+            << " ms; pinned list builds unchanged at " << builds;
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
+  window_.reset();
+  window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+  EXPECT_EQ(2u + preview.profiles.size(), window_->profiles().size());
+  for (const auto& space : preview.spaces) {
+    const auto& restored = window_->pinned_items(space.id);
+    ASSERT_EQ(space.pins.size(), restored.size());
+    for (size_t i = 0; i < restored.size(); ++i) {
+      EXPECT_TRUE(restored[i].id == space.pins[i].id && restored[i].parent_id == space.pins[i].parent_id &&
+          restored[i].title == space.pins[i].title && restored[i].url == space.pins[i].url);
+    }
+  }
+  LOG(INFO) << "Arc import verified: " << preview.profiles.size() << " profiles, " << preview.spaces.size()
+            << " spaces, " << preview.folder_count << " folders, " << preview.tab_count
+            << " pins; skipped " << preview.skipped_count;
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, KeyboardWorkspaceSwitching) {
@@ -186,16 +2724,21 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, KeyboardWorkspaceSwitching) {
   TypePageCharacter(work, u'x');
   ASSERT_EQ("x", content::EvalJs(work, "document.querySelector('#marker').value"));
   SendPageShortcut(ui::VKEY_2, ui::DomCode::DIGIT2);
-  ASSERT_EQ("personal", window_->active_id());
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->active_id() == "personal"; }));
   auto* personal = window_->contents("personal");
   ASSERT_EQ("marker", content::EvalJs(personal, "document.activeElement.id"));
   TypePageCharacter(personal, u'y');
   ASSERT_EQ("y", content::EvalJs(personal, "document.querySelector('#marker').value"));
   SendPageShortcut(ui::VKEY_1, ui::DomCode::DIGIT1);
-  ASSERT_EQ("work", window_->active_id());
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->active_id() == "work"; }));
   EXPECT_EQ("x", content::EvalJs(work, "document.querySelector('#marker').value"));
   EXPECT_EQ(false, content::EvalJs(work, "keyEvents.includes('2')"));
   EXPECT_EQ(false, content::EvalJs(personal, "keyEvents.includes('1')"));
+  // A plain press of the same digit after a chord must retain its keyup too.
+  ASSERT_TRUE(content::ExecJs(work, "window.released = []; document.addEventListener('keyup', e => released.push(e.key));"));
+  ui_controls::EnableUIControls();
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(window_->widget()->GetNativeWindow(), ui::VKEY_1, false, false, false, false));
+  EXPECT_EQ(true, content::EvalJs(work, "released.includes('1')"));
 }
 
 #if BUILDFLAG(IS_MAC)
@@ -272,6 +2815,14 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeShellAndAppearance) {
       false, false, false, false));
   ASSERT_TRUE(base::test::RunUntil([&] { return !window_->shell()->address_visible(); }));
   ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(
+      window_->widget()->GetNativeWindow(), ui::VKEY_K, false, false, false, true));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->shell()->address_visible(); }));
+  EXPECT_TRUE(window_->shell()->address_input()->GetText().empty());
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(
+      window_->shell()->address_widget()->GetNativeWindow(), ui::VKEY_ESCAPE,
+      false, false, false, false));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->shell()->address_visible(); }));
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(
       window_->widget()->GetNativeWindow(), ui::VKEY_T, false, false, false, true));
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->shell()->address_visible(); }));
   auto* shell = window_->shell();
@@ -312,7 +2863,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeShellAndAppearance) {
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_saved(); }));
   window_.reset();
   window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
-  ASSERT_TRUE(base::test::RunUntil([&] { return window_->shell()->appearance_ready(); }));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return window_->configuration_ready() && window_->shell()->appearance_ready();
+  }));
   EXPECT_EQ(0xFFD49771u, window_->shell()->workspace_color("work"));
   EXPECT_EQ(0xFF73A4C2u, window_->shell()->workspace_color("personal"));
   EXPECT_TRUE(window_->shell()->pinned());

@@ -14,6 +14,7 @@ class MainDelegate final : public ChromeMainDelegate {
 
 class BrowserClient final : public ChromeContentBrowserClient {
  public:
+  void CreateThrottlesForNavigation(content::NavigationThrottleRegistry& registry) override;
   std::unique_ptr<content::BrowserMainParts> CreateBrowserMainParts(
       bool is_integration_test) override;
 };

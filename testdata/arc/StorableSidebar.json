@@ -1,0 +1,264 @@
+{
+  "version": 1,
+  "sidebar": {
+    "containers": [
+      {
+        "global": {}
+      },
+      {
+        "items": [
+          "root-a",
+          {
+            "data": {
+              "itemContainer": {}
+            },
+            "childrenIds": [
+              "docs",
+              "direct",
+              "invalid",
+              "split"
+            ],
+            "id": "root-a"
+          },
+          "docs",
+          {
+            "title": "Dokumenty",
+            "data": {
+              "list": {}
+            },
+            "childrenIds": [
+              "nested",
+              "tab-a"
+            ],
+            "id": "docs"
+          },
+          "nested",
+          {
+            "title": "Projekt",
+            "data": {
+              "list": {}
+            },
+            "childrenIds": [
+              "tab-b"
+            ],
+            "id": "nested"
+          },
+          "tab-a",
+          {
+            "title": "Przypięta A",
+            "data": {
+              "tab": {
+                "savedURL": "https://example.test/a",
+                "savedTitle": "A"
+              }
+            },
+            "childrenIds": [],
+            "id": "tab-a"
+          },
+          "tab-b",
+          {
+            "title": "Przypięta B",
+            "data": {
+              "tab": {
+                "savedURL": "https://example.test/b"
+              }
+            },
+            "childrenIds": [],
+            "id": "tab-b"
+          },
+          "direct",
+          {
+            "data": {
+              "tab": {
+                "savedURL": "https://example.test/direct",
+                "savedTitle": "Bez folderu"
+              }
+            },
+            "childrenIds": [],
+            "id": "direct"
+          },
+          "invalid",
+          {
+            "data": {
+              "tab": {
+                "savedURL": "javascript:alert(1)"
+              }
+            },
+            "childrenIds": [],
+            "id": "invalid"
+          },
+          "split",
+          {
+            "data": {
+              "splitView": {}
+            },
+            "childrenIds": [
+              "split-a"
+            ],
+            "id": "split"
+          },
+          "split-a",
+          {
+            "data": {
+              "tab": {
+                "savedURL": "https://example.test/split"
+              }
+            },
+            "childrenIds": [],
+            "id": "split-a"
+          },
+          "root-b",
+          {
+            "data": {
+              "itemContainer": {}
+            },
+            "childrenIds": [
+              "tab-c"
+            ],
+            "id": "root-b"
+          },
+          "tab-c",
+          {
+            "title": "Inny Space",
+            "data": {
+              "tab": {
+                "savedURL": "https://example.test/c"
+              }
+            },
+            "childrenIds": [],
+            "id": "tab-c"
+          },
+          "root-c",
+          {
+            "data": {
+              "itemContainer": {}
+            },
+            "childrenIds": [],
+            "id": "root-c"
+          },
+          "favorite-root",
+          {
+            "data": {
+              "itemContainer": {}
+            },
+            "childrenIds": [
+              "favorite"
+            ],
+            "id": "favorite-root"
+          },
+          "favorite",
+          {
+            "title": "Ulubiona",
+            "data": {
+              "tab": {
+                "savedURL": "https://example.test/favorite"
+              }
+            },
+            "childrenIds": [],
+            "id": "favorite"
+          },
+          "unpinned",
+          {
+            "data": {
+              "itemContainer": {}
+            },
+            "childrenIds": [
+              "today"
+            ],
+            "id": "unpinned"
+          },
+          "today",
+          {
+            "data": {
+              "tab": {
+                "savedURL": "https://example.test/not-pinned"
+              }
+            },
+            "childrenIds": [],
+            "id": "today"
+          }
+        ],
+        "spaces": [
+          "space-a",
+          {
+            "id": "space-a",
+            "title": "Praca Arc",
+            "profile": {
+              "custom": {
+                "_0": {
+                  "directoryBasename": "Profile 1",
+                  "machineID": "test-machine"
+                }
+              }
+            },
+            "newContainerIDs": [
+              {
+                "pinned": {}
+              },
+              "root-a",
+              {
+                "unpinned": {}
+              },
+              "unpinned"
+            ]
+          },
+          "space-b",
+          {
+            "id": "space-b",
+            "title": "Projekt Arc",
+            "profile": {
+              "custom": {
+                "_0": {
+                  "directoryBasename": "Profile 1",
+                  "machineID": "test-machine"
+                }
+              }
+            },
+            "newContainerIDs": [
+              {
+                "pinned": {}
+              },
+              "root-b"
+            ]
+          },
+          "space-c",
+          {
+            "id": "space-c",
+            "title": "Osobiste Arc",
+            "profile": {
+              "default": true
+            },
+            "newContainerIDs": [
+              {
+                "pinned": {}
+              },
+              "root-c"
+            ]
+          }
+        ],
+        "topAppsContainerIDs": [
+          {
+            "custom": {
+              "_0": {
+                "directoryBasename": "Profile 1",
+                "machineID": "test-machine"
+              }
+            }
+          },
+          "favorite-root"
+        ]
+      }
+    ]
+  },
+  "firebaseSyncState": {
+    "syncData": {
+      "orderedSpaceIDs": {
+        "value": [
+          "space-b",
+          "space-a",
+          "space-c"
+        ]
+      }
+    }
+  }
+}

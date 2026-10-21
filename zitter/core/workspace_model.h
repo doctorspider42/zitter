@@ -19,6 +19,8 @@ class WorkspaceModel {
   WorkspaceModel();
   ~WorkspaceModel();
   bool Add(Workspace workspace);
+  bool Remove(std::string_view id);
+  bool Update(std::string_view id, std::string name, std::string profile_id);
   const Workspace* Find(std::string_view id) const;
   const Workspace* active() const;
   bool SetActive(std::string_view id);

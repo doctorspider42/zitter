@@ -8,6 +8,9 @@ namespace zitter {
 enum class AppCommand {
   kNewTab = 1,
   kOpenAddress,
+  kCommandPalette,
+  kPasswords,
+  kDownloads,
   kCloseTab,
   kReload,
   kToggleSidebar,
@@ -19,6 +22,7 @@ enum class AppCommand {
 class AppShellDelegate {
  public:
   virtual void RaiseWindow() = 0;
+  virtual void RequestQuit() = 0;
   virtual void OpenUrl(const GURL& url) = 0;
   virtual void RunCommand(AppCommand command) = 0;
 
@@ -31,6 +35,8 @@ class AppShellDelegate {
 // of them can open a stock Chrome Browser window. Call once, before the main
 // message loop runs; URLs that arrive before a delegate is set are queued.
 void InstallAppShell();
+// Reuse upstream native in-progress download consent before destroying Zitter.
+bool ConfirmDownloadShutdown();
 // Sets (or, with nullptr, clears) the receiver. Setting one flushes queued
 // URLs and installs Zitter's main menu.
 void SetAppShellDelegate(AppShellDelegate* delegate);

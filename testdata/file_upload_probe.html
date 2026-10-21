@@ -1,0 +1,12 @@
+<!doctype html><meta charset="utf-8"><title>File upload probe</title>
+<label>Single <input id="single" type="file" accept=".txt"></label>
+<label>Multiple <input id="multiple" type="file" multiple></label>
+<label>Folder <input id="folder" type="file" webkitdirectory></label>
+<script>
+window.events = [];
+for (const input of document.querySelectorAll('input')) {
+  input.addEventListener('change', () => events.push(input.id + ':change'));
+  input.addEventListener('cancel', () => events.push(input.id + ':cancel'));
+}
+window.files = id => Array.from(document.getElementById(id).files, f => ({name:f.name, path:f.webkitRelativePath}));
+</script>

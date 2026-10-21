@@ -27,6 +27,13 @@ class WorkspaceNativeWidgetMac final : public views::NativeWidgetMac {
 };
 }  // namespace
 
+void SetWorkspaceNativeAppearance(views::Widget* widget, std::optional<bool> dark) {
+  NSWindow* window = widget->GetNativeWindow().GetNativeNSWindow();
+  if (!dark) { if (window.appearance) window.appearance = nil; return; }
+  NSString* name = *dark ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua;
+  if (![window.appearance.name isEqualToString:name]) window.appearance = [NSAppearance appearanceNamed:name];
+}
+
 views::NativeWidget* CreateWorkspaceNativeWidget(views::Widget* widget) {
   return new WorkspaceNativeWidgetMac(widget);
 }

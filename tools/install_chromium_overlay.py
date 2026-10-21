@@ -52,6 +52,46 @@ def patch_keychain(text):
     return text
 
 
+
+def patch_embedded_autofill(text):
+    # Standalone WebContents have no Chrome address-save bubble. Keep profile
+    # preferences intact, but advertise only capabilities the host provides.
+    anchor = "bool ChromeAutofillClient::IsAutofillProfileEnabled() const {\n"
+    guard = ('#if !BUILDFLAG(IS_ANDROID)\n'
+             '  // Zitter: standalone hosts do not provide Chrome address-save UI.\n'
+             '  if (!tabs::TabInterface::MaybeGetFromContents(web_contents())) {\n'
+             '    return false;\n'
+             '  }\n'
+             '#endif\n')
+    if text.count(anchor + guard) == 1:
+        return text
+    if text.count(anchor) != 1 or 'Zitter: standalone hosts' in text:
+        raise ValueError("Unexpected upstream Autofill capability layout; review the patch")
+    return text.replace(anchor, anchor + guard, 1)
+
+def patch_media_dispatcher(text, header=False):
+    # Keep all capture policy, request-state and output-protection handling in
+    # Chromium's dispatcher; expose only registration of our tab-source adapter.
+    if header:
+        anchor = "  void ProcessMediaAccessRequest(content::WebContents* web_contents,\n"
+        addition = ("  // Zitter: register capture handlers through the policy dispatcher.\n"
+                    "  void AddMediaAccessHandler(std::unique_ptr<MediaAccessHandler> handler);\n\n")
+    else:
+        anchor = "void MediaCaptureDevicesDispatcher::ProcessMediaAccessRequest(\n"
+        addition = ("// Zitter: register capture handlers through the policy dispatcher.\n"
+                    "void MediaCaptureDevicesDispatcher::AddMediaAccessHandler(\n"
+                    "    std::unique_ptr<MediaAccessHandler> handler) {\n"
+                    "  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);\n"
+                    "  CHECK(handler);\n"
+                    "  media_access_handlers_.insert(media_access_handlers_.begin(), std::move(handler));\n"
+                    "}\n\n")
+    if text.count(addition + anchor) == 1 and text.count(anchor) == 1:
+        return text
+    if text.count(anchor) != 1 or "Zitter: register capture handlers" in text:
+        raise ValueError("Unexpected upstream media dispatcher layout; review the registration hook")
+    return text.replace(anchor, addition + anchor, 1)
+
+
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -88,6 +128,14 @@ def install(checkout, dry_run=False):
     keychain = checkout / "components/os_crypt/common/keychain_password_mac.mm"
     keychain_original = keychain.read_text()
     keychain_patched = patch_keychain(keychain_original)
+    autofill = checkout / "chrome/browser/ui/autofill/chrome_autofill_client.cc"
+    autofill_original = autofill.read_text()
+    autofill_patched = patch_embedded_autofill(autofill_original)
+    media_header = checkout / "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
+    media_source = media_header.with_suffix(".cc")
+    media_header_original, media_source_original = media_header.read_text(), media_source.read_text()
+    media_header_patched = patch_media_dispatcher(media_header_original, header=True)
+    media_source_patched = patch_media_dispatcher(media_source_original)
     destination = checkout / "zitter"
     check_existing(destination)
     files = overlay_files()
@@ -119,6 +167,12 @@ def install(checkout, dry_run=False):
                 build.write_text(patched)
             if keychain_patched != keychain_original:
                 keychain.write_text(keychain_patched)
+            if autofill_patched != autofill_original:
+                autofill.write_text(autofill_patched)
+            if media_header_patched != media_header_original:
+                media_header.write_text(media_header_patched)
+            if media_source_patched != media_source_original:
+                media_source.write_text(media_source_patched)
         except Exception:
             if destination.exists():
                 shutil.rmtree(destination)
@@ -126,6 +180,9 @@ def install(checkout, dry_run=False):
                 backup.rename(destination)
             build.write_text(original)
             keychain.write_text(keychain_original)
+            autofill.write_text(autofill_original)
+            media_header.write_text(media_header_original)
+            media_source.write_text(media_source_original)
             raise
     print("Installed. Run gn gen/check and build zitter or zitter_prototype; see README.md.")
 

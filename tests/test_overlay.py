@@ -21,6 +21,29 @@ class OverlayTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             overlay.patch_keychain('unknown upstream layout')
 
+    def test_embedded_autofill_guard_is_narrow_and_idempotent(self):
+        original = 'bool ChromeAutofillClient::IsAutofillProfileEnabled() const {\n  return true;\n}\n'
+        patched = overlay.patch_embedded_autofill(original)
+        self.assertIn('MaybeGetFromContents(web_contents())', patched)
+        self.assertTrue(patched.endswith('  return true;\n}\n'))
+        self.assertEqual(patched, overlay.patch_embedded_autofill(patched))
+        with self.assertRaises(ValueError):
+            overlay.patch_embedded_autofill('unknown upstream layout')
+
+    def test_media_registration_keeps_dispatcher_and_is_guarded(self):
+        for header, original in ((True, "  void ProcessMediaAccessRequest(content::WebContents* web_contents,\n"),
+                                 (False, "void MediaCaptureDevicesDispatcher::ProcessMediaAccessRequest(\n")):
+            patched = overlay.patch_media_dispatcher(original, header=header)
+            self.assertTrue(patched.endswith(original))
+            self.assertIn("AddMediaAccessHandler", patched)
+            self.assertEqual(patched, overlay.patch_media_dispatcher(patched, header=header))
+            with self.assertRaises(ValueError):
+                overlay.patch_media_dispatcher(patched + original, header=header)
+            with self.assertRaises(ValueError):
+                overlay.patch_media_dispatcher("unexpected layout", header=header)
+            with self.assertRaises(ValueError):
+                overlay.patch_media_dispatcher(original + original, header=header)
+
     def test_only_desktop_target_is_modified_and_reinstall_is_idempotent(self):
         source = ('test("android_browsertests") {\n    deps = [\n    ]\n}\n'
                   'if (!is_android) {\n  test("browser_tests") {\n'
@@ -52,6 +75,13 @@ class OverlayTests(unittest.TestCase):
             keychain = checkout / "components/os_crypt/common/keychain_password_mac.mm"
             keychain.parent.mkdir(parents=True)
             keychain.write_text('"Chromium Safe Storage"\n"Chromium";\n')
+            autofill = checkout / "chrome/browser/ui/autofill/chrome_autofill_client.cc"
+            autofill.parent.mkdir(parents=True)
+            autofill.write_text('bool ChromeAutofillClient::IsAutofillProfileEnabled() const {\n  return true;\n}\n')
+            media_header = checkout / "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
+            media_header.parent.mkdir(parents=True)
+            media_header.write_text("  void ProcessMediaAccessRequest(content::WebContents* web_contents,\n")
+            media_header.with_suffix(".cc").write_text("void MediaCaptureDevicesDispatcher::ProcessMediaAccessRequest(\n")
             with mock.patch.object(overlay.subprocess, "check_output", return_value=revision):
                 overlay.install(checkout, dry_run=True)
                 self.assertFalse((checkout / "zitter").exists())

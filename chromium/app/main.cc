@@ -20,7 +20,6 @@
 #include "content/public/common/content_switches.h"
 
 #if BUILDFLAG(IS_MAC)
-#include "base/allocator/early_zone_registration_apple.h"
 #include "chrome/app/chrome_main_mac.h"
 #include "chrome/common/mac/detect_inappropriate_exit.h"
 #elif BUILDFLAG(IS_LINUX)
@@ -54,9 +53,9 @@ const base::CommandLine& GetInitialBrowserCommandLine() {
 }
 
 int main(int argc, const char** argv) {
-#if BUILDFLAG(IS_MAC)
-  partition_alloc::EarlyMallocZoneRegistration();
-#endif
+  // Unlike Chrome's small macOS launcher, this executable links Chromium
+  // directly. PartitionAlloc initializes before main; registering its early
+  // delegating zone here would register the allocator twice in static builds.
   base::CommandLine::Init(argc, argv);
   auto* command = base::CommandLine::ForCurrentProcess();
   if (!command->HasSwitch(switches::kProcessType)) {

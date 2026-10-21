@@ -1,0 +1,14 @@
+# Selected local macOS ARM64 build; validated with matched app measurements.
+# Requires the mac-arm profile pinned by Chromium's chrome/build/mac-arm.pgo.txt.
+is_debug = false
+is_component_build = false
+use_thin_lto = true
+thin_lto_enable_optimizations = true
+chrome_pgo_phase = 2
+dcheck_always_on = false
+symbol_level = 0
+blink_symbol_level = 0
+v8_symbol_level = 0
+target_cpu = "arm64"
+use_remoteexec = false
+use_siso = false

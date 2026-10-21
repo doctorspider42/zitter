@@ -1,0 +1,16 @@
+<!doctype html><meta charset="utf-8"><title>Media probe</title>
+<h1>Controlled media fixture</h1>
+<script>
+let captureResult = 'idle';
+let captureStream;
+function startCapture(constraints) {
+  captureResult = 'pending';
+  navigator.mediaDevices.getUserMedia(constraints).then(stream => {
+    captureStream = stream;
+    captureResult = 'running';
+    stream.getTracks().forEach(track => track.addEventListener('ended', () => {
+      if (stream.getTracks().every(item => item.readyState === 'ended')) captureResult = 'ended';
+    }));
+  }, error => { captureResult = error.name; });
+}
+</script>

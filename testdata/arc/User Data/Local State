@@ -1,0 +1,15 @@
+{
+  "profile": {
+    "info_cache": {
+      "Default": {
+        "name": "Osobisty Arc"
+      },
+      "Profile 1": {
+        "name": "Firma Arc"
+      },
+      "Profile 2": {
+        "name": "Bez Space"
+      }
+    }
+  }
+}

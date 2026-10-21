@@ -1,4 +1,5 @@
 #include "chromium/app/runtime.h"
+#include "chromium/app/performance_probe.h"
 
 #include "base/check.h"
 #include "base/command_line.h"
@@ -17,6 +18,7 @@
 #include "components/keep_alive_registry/keep_alive_types.h"
 #include "components/keep_alive_registry/scoped_keep_alive.h"
 #include "content/public/browser/storage_partition.h"
+#include "content/public/browser/web_contents.h"
 #include "ui/base/base_window.h"
 #include "ui/views/widget/widget.h"
 #include "url/gurl.h"
@@ -36,35 +38,32 @@ void Runtime::PreMainMessageLoopRun() {
 #endif
   browsers_.Observe(GlobalBrowserCollection::GetInstance());
   auto* manager = g_browser_process->profile_manager();
-  manager->CreateProfileAsync(manager->user_data_dir().AppendASCII("ZitterWork"),
-      base::BindOnce(&Runtime::WorkReady, weak_factory_.GetWeakPtr()));
-}
-
-void Runtime::WorkReady(Profile* profile) {
-  if (!profile) { LOG(ERROR) << "Cannot load ZitterWork"; RequestClose(); return; }
-  work_ = ScopedProfileKeepAlive::TryAcquire(profile, ProfileKeepAliveOrigin::kBrowserWindow);
-  CHECK(work_);
-  auto* manager = g_browser_process->profile_manager();
-  manager->CreateProfileAsync(manager->user_data_dir().AppendASCII("ZitterPersonal"),
-      base::BindOnce(&Runtime::PersonalReady, weak_factory_.GetWeakPtr()));
-}
-
-void Runtime::PersonalReady(Profile* profile) {
-  if (!profile) { LOG(ERROR) << "Cannot load ZitterPersonal"; RequestClose(); return; }
-  personal_ = ScopedProfileKeepAlive::TryAcquire(profile, ProfileKeepAliveOrigin::kBrowserWindow);
-  CHECK(personal_);
-  window_ = std::make_unique<prototype::WorkspaceWindow>(work_->profile(), personal_->profile());
+  window_ = std::make_unique<prototype::WorkspaceWindow>(manager->user_data_dir());
   window_->SetCloseCallback(base::BindOnce(&Runtime::RequestClose, weak_factory_.GetWeakPtr()));
+  window_->SetReadyCallback(base::BindOnce(&Runtime::WindowReady, weak_factory_.GetWeakPtr()));
+}
+
+void Runtime::WindowReady() {
   for (const auto& arg : base::CommandLine::ForCurrentProcess()->GetArgs()) {
     GURL url(arg);
-    if (url.SchemeIsHTTPOrHTTPS()) { window_->Navigate(url); break; }
+    if (url.SchemeIsHTTPOrHTTPS()) { window_->OpenExternalUrl(url); break; }
   }
   window_->widget()->Activate();
-  window_->FocusAddressBar();
+  // A restored workspace should reopen as its saved layout. Offer the palette
+  // only for an empty page, rather than covering the restored panes on launch.
+  auto* page = window_->contents(window_->active_id());
+  if (!page || !page->GetVisibleURL().SchemeIsHTTPOrHTTPS()) window_->FocusAddressBar();
+  else page->Focus();
 #if BUILDFLAG(IS_MAC)
   SetAppShellDelegate(this);
+  window_->shell()->SyncShortcuts();
 #endif
   LOG(INFO) << "Zitter ready; persistent data: " << g_browser_process->profile_manager()->user_data_dir();
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch("zitter-app-benchmark")) {
+    performance_probe_ = std::make_unique<AppPerformanceProbe>(window_.get(),
+        base::BindOnce(&Runtime::RequestClose, weak_factory_.GetWeakPtr()));
+    performance_probe_->Start();
+  }
 }
 
 void Runtime::OnBrowserCreated(BrowserWindowInterface* browser) {
@@ -90,13 +89,17 @@ void Runtime::ReplaceStockWindow(BrowserWindowInterface* browser) {
 }
 
 #if BUILDFLAG(IS_MAC)
+void Runtime::RequestQuit() {
+  if (window_ && !closing_) window_->RequestClose();
+}
+
 void Runtime::RaiseWindow() {
   if (window_ && !closing_) window_->widget()->Activate();
 }
 
 void Runtime::OpenUrl(const GURL& url) {
   if (!window_ || closing_) return;
-  window_->NavigateFromBar(url, /*new_tab=*/true);
+  window_->OpenExternalUrl(url);
   window_->widget()->Activate();
 }
 
@@ -105,14 +108,21 @@ void Runtime::RunCommand(AppCommand command) {
   auto* shell = window_->shell();
   window_->widget()->Activate();
   switch (command) {
-    case AppCommand::kNewTab: shell->OpenAddress(true); break;
+    case AppCommand::kNewTab: window_->ClosePeek(); shell->OpenAddress(true); break;
     case AppCommand::kOpenAddress: window_->FocusAddressBar(); break;
+    case AppCommand::kCommandPalette: window_->OpenCommandPalette(); break;
+    case AppCommand::kDownloads: window_->ShowDownloads(); break;
+    case AppCommand::kPasswords: window_->ShowPasswords(); break;
     case AppCommand::kCloseTab: window_->CloseActiveTab(); break;
     case AppCommand::kReload: window_->RunPageCommand(prototype::PageCommand::kReload); break;
     case AppCommand::kToggleSidebar: shell->ToggleSidebar(); break;
-    case AppCommand::kSettings: shell->OpenWorkspaceSettings(); break;
-    case AppCommand::kWorkspaceWork: window_->Select("work"); break;
-    case AppCommand::kWorkspacePersonal: window_->Select("personal"); break;
+    case AppCommand::kSettings: shell->OpenGeneralSettings(); break;
+    case AppCommand::kWorkspaceWork:
+      if (!window_->workspaces().empty()) window_->Select(window_->workspaces()[0].id);
+      break;
+    case AppCommand::kWorkspacePersonal:
+      if (window_->workspaces().size() > 1) window_->Select(window_->workspaces()[1].id);
+      break;
   }
 }
 #endif
@@ -126,6 +136,13 @@ void Runtime::RequestClose() {
 }
 
 void Runtime::Close() {
+#if BUILDFLAG(IS_MAC)
+  if (!ConfirmDownloadShutdown()) {
+    closing_ = false;
+    if (window_) window_->SetCloseCallback(base::BindOnce(&Runtime::RequestClose, weak_factory_.GetWeakPtr()));
+    return;
+  }
+#endif
   ReleaseProfiles();
   keep_alive_.reset();
   chrome::ExitIgnoreUnloadHandlers();
@@ -135,13 +152,9 @@ void Runtime::ReleaseProfiles() {
 #if BUILDFLAG(IS_MAC)
   SetAppShellDelegate(nullptr);
 #endif
+  performance_probe_.reset();
   window_.reset();
-  // Ask storage backends to flush before their normal BrowserContext shutdown.
-  for (auto* lease : {work_.get(), personal_.get()}) {
-    if (lease) lease->profile()->GetDefaultStoragePartition()->Flush();
-  }
-  personal_.reset();
-  work_.reset();
+
 }
 
 void Runtime::PostMainMessageLoopRun() {

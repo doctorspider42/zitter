@@ -15,6 +15,25 @@ bool WorkspaceModel::Add(Workspace workspace) {
   return true;
 }
 
+bool WorkspaceModel::Remove(std::string_view id) {
+  if (workspaces_.size() <= 1 || !Find(id) || active_id_ == id) return false;
+  for (auto it = workspaces_.begin(); it != workspaces_.end(); ++it) {
+    if (it->id == id) { workspaces_.erase(it); break; }
+  }
+  return true;
+}
+
+bool WorkspaceModel::Update(std::string_view id, std::string name, std::string profile_id) {
+  if (name.empty() || profile_id.empty()) return false;
+  for (auto& workspace : workspaces_) {
+    if (workspace.id != id) continue;
+    workspace.name = std::move(name);
+    workspace.profile_id = std::move(profile_id);
+    return true;
+  }
+  return false;
+}
+
 const Workspace* WorkspaceModel::Find(std::string_view id) const {
   for (const auto& workspace : workspaces_) {
     if (workspace.id == id) {

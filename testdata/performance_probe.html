@@ -1,0 +1,18 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Zitter performance probe</title>
+<style>
+  body { margin: 24px; background: #edf2f7; color: #152238; font: 18px system-ui; }
+  main { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+  article { padding: 20px; background: white; border-radius: 12px; }
+</style>
+<h1>Zitter performance probe</h1>
+<p>A local page with no external resources, fonts or animations.</p>
+<main></main>
+<script>
+  for (let i = 0; i < 60; ++i) {
+    const card = document.createElement('article');
+    card.textContent = `Card ${i + 1}: a deterministic layout and paint workload.`;
+    document.querySelector('main').append(card);
+  }
+</script>

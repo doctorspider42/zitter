@@ -4,6 +4,7 @@
 #include "chrome/browser/chrome_browser_main.h"
 #include "chrome/common/profiler/main_thread_stack_sampling_profiler.h"
 #include "chromium/app/runtime.h"
+#include "chromium/prototype/link_navigation.h"
 
 namespace zitter {
 content::ContentBrowserClient* MainDelegate::CreateContentBrowserClient() {
@@ -11,6 +12,11 @@ content::ContentBrowserClient* MainDelegate::CreateContentBrowserClient() {
   CHECK(sampling_profiler_);
   chrome_content_browser_client_->SetSamplingProfiler(std::move(sampling_profiler_));
   return chrome_content_browser_client_.get();
+}
+
+void BrowserClient::CreateThrottlesForNavigation(content::NavigationThrottleRegistry& registry) {
+  prototype::LinkNavigation::CreateThrottle(registry);
+  ChromeContentBrowserClient::CreateThrottlesForNavigation(registry);
 }
 
 std::unique_ptr<content::BrowserMainParts> BrowserClient::CreateBrowserMainParts(
