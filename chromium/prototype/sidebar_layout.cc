@@ -9,6 +9,7 @@
 #include "ui/views/layout/layout_manager.h"
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/view.h"
+#include "ui/views/controls/scroll_view.h"
 #include "ui/views/view_class_properties.h"
 #if BUILDFLAG(IS_MAC)
 #include "chromium/prototype/sidebar_scene.rs.h"
@@ -19,6 +20,51 @@ namespace {
 bool RustLayoutEnabled() {
   return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar") == "rust-metal";
 }
+class RustFooterLayout final : public views::LayoutManager {
+ public:
+  void ViewAdded(views::View* host,views::View*) override {host->InvalidateLayout();}
+  void ViewRemoved(views::View* host,views::View*) override {host->InvalidateLayout();}
+  void Layout(views::View* host) override {
+    if (host->children().size()!=5) return;
+    const auto g=Measure(host,host->width());
+    for (size_t i=0;i<g.children.size();++i) {const auto& r=g.children[i];host->children()[i]->SetBounds(r.x,r.y,r.width,r.height);}
+  }
+  gfx::Size GetPreferredSize(const views::View* host) const override {
+    const auto g=Measure(host,host->width()>0 ? host->width() : 200);return gfx::Size(200,g.height);
+  }
+  gfx::Size GetPreferredSize(const views::View* host,const views::SizeBounds& available) const override {
+    const auto g=Measure(host,available.width().is_bounded() ? available.width().value() : 200);return gfx::Size(200,g.height);
+  }
+  int GetPreferredHeightForWidth(const views::View* host,int width) const override {return Measure(host,width).height;}
+ private:
+  sidebar::ColumnLayout Measure(const views::View* host,int width) const {
+    int content=0;
+    if (host->children().size()==5) {
+      auto* scroll=static_cast<const views::ScrollView*>(host->children()[2].get());
+      if (scroll->contents()) content=scroll->contents()->GetPreferredSize().width();
+    }
+    return sidebar::footer_layout(width,content);
+  }
+};
+class RustDotsLayout final : public views::LayoutManager {
+ public:
+  void ViewAdded(views::View* host,views::View*) override {host->InvalidateLayout();}
+  void ViewRemoved(views::View* host,views::View*) override {host->InvalidateLayout();}
+  void Layout(views::View* host) override {
+    const auto g=Measure(host,host->width(),host->height());size_t i=0;
+    for (const auto& child : host->children()) {const auto& r=g.children[i++];child->SetBounds(r.x,r.y,r.width,r.height);}
+  }
+  gfx::Size GetPreferredSize(const views::View* host) const override {
+    const auto g=Measure(host,-1,-1);return gfx::Size(g.width,g.height);
+  }
+  gfx::Size GetPreferredSize(const views::View* host,const views::SizeBounds&) const override {return GetPreferredSize(host);}
+ private:
+  sidebar::ColumnLayout Measure(const views::View* host,int width,int height) const {
+    std::vector<sidebar::ColumnChild> children;
+    for (const auto& child : host->children()) {const auto size=child->GetPreferredSize();children.push_back({size.width(),size.height(),0,0,0,0});}
+    return sidebar::strip_layout(width,height,rust::Slice<const sidebar::ColumnChild>(children.data(),children.size()));
+  }
+};
 class RustSplitLayout final : public views::LayoutManager {
  public:
   void ViewAdded(views::View* host, views::View*) override { host->InvalidateLayout(); }
@@ -132,6 +178,21 @@ int SidebarFolderIndent(int depth) {
   if (RustLayoutEnabled()) return sidebar::folder_indent(depth);
 #endif
   return std::clamp(depth, 0, 8) * 12;
+}
+
+std::unique_ptr<views::LayoutManager> CreateSidebarFooterLayout() {
+#if BUILDFLAG(IS_MAC)
+  return std::make_unique<RustFooterLayout>();
+#else
+  return std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal);
+#endif
+}
+std::unique_ptr<views::LayoutManager> CreateSidebarDotsLayout() {
+#if BUILDFLAG(IS_MAC)
+  return std::make_unique<RustDotsLayout>();
+#else
+  return std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal);
+#endif
 }
 
 }

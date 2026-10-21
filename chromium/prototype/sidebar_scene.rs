@@ -10,8 +10,8 @@ mod ffi {
     struct ViewportProjection { x: f32, y: f32, nodes: Vec<ProjectedNode> }
     struct Item {
         x: f32, y: f32, width: f32, height: f32,
-        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb.
-        kind: u32,
+        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: footer glyph.
+        kind: u32, glyph: u32,
         title: String, monogram: String, detail: String,
         title_width: f32, detail_ink: u32, detail_font_size: f32,
         ink: u32, fill: u32, badge: u32,
@@ -36,7 +36,7 @@ mod ffi {
     struct Primitive {
         x: f32, y: f32, width: f32, height: f32,
         radius: f32, color: u32, stroke: f32,
-        text: String, font_size: f32, bold: bool, middle: bool, clip: FloatRect,
+        text: String, font_size: f32, bold: bool, middle: bool, center: bool, clip: FloatRect,
     }
     extern "Rust" {
         type ScrollThumb;
@@ -78,6 +78,8 @@ mod ffi {
         fn split_layout(width: i32, height: i32, count: usize) -> ColumnLayout;
         fn folder_indent(depth: i32) -> i32;
         fn close_visible(active: bool, tile: bool, hovered: bool) -> bool;
+        fn footer_layout(width: i32, content_width: i32) -> ColumnLayout;
+        fn strip_layout(width: i32, height: i32, children: &[ColumnChild]) -> ColumnLayout;
         fn action_frame(row: Rect, viewport: Rect) -> Rect;
         fn address_layout(width: i32, height: i32, host_width: i32) -> RowLayout;
         fn row_layout(width: i32, height: i32, title_width: i32,
@@ -409,6 +411,28 @@ fn row_layout(width: i32, height: i32, title_width: i32,
     }
 }
 
+fn footer_layout(width: i32, content_width: i32) -> ffi::ColumnLayout {
+    let width=width.max(0); let middle=(width-66).max(0);
+    let height=if content_width>middle {47} else {32};
+    ffi::ColumnLayout {width,height,children:vec![
+        ffi::Rect{x:0,y:0,width:32.min(width),height:32},
+        ffi::Rect{x:32,y:0,width:1,height:1},
+        ffi::Rect{x:33,y:0,width:middle,height},
+        ffi::Rect{x:(width-33).max(0),y:0,width:1,height:1},
+        ffi::Rect{x:(width-32).max(0),y:0,width:32.min(width),height:32},
+    ]}
+}
+fn strip_layout(width: i32, height: i32, children: &[ffi::ColumnChild]) -> ffi::ColumnLayout {
+    let natural=children.iter().fold(0i32,|sum,c|sum.saturating_add(c.width.max(0)));
+    let natural_height=children.iter().map(|c|c.height.max(0)).max().unwrap_or(0);
+    let height=if height<0 {natural_height} else {height}; let mut x=0i32;
+    let rects=children.iter().map(|c| {
+        let r=ffi::Rect{x,y:(height-c.height.max(0)).max(0)/2,width:c.width.max(0),height:c.height.max(0)};
+        x=x.saturating_add(r.width); r
+    }).collect();
+    ffi::ColumnLayout {width:if width<0 {natural} else {width},height,children:rects}
+}
+
 fn address_layout(width: i32, height: i32, host_width: i32) -> ffi::RowLayout {
     let width = width.max(0); let height = height.max(0);
     let available = (width - 46).max(0);
@@ -438,12 +462,43 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
         let mut emit = |x, y, w: f32, h: f32, radius, color, text: &str, size, bold| {
             if w > 0.0 && h > 0.0 {
                 out.push(ffi::Primitive { x, y, width: w, height: h, radius,
-                    color, stroke: 0.0, text: text.into(), font_size: size, bold, middle: false,
+                    color, stroke: 0.0, text: text.into(), font_size: size, bold, middle: false, center: false,
                     clip: ffi::FloatRect {x: i.clip.x, y: i.clip.y, width: i.clip.width, height: i.clip.height} });
             }
         };
+        if i.kind == 7 {
+            let cx=i.x+i.width/2.0; let cy=i.y+i.height/2.0;
+            if i.glyph==1 {
+                if i.monogram.is_empty() {
+                    emit(cx-4.0,cy-4.0,8.0,8.0,4.0,i.ink,"",0.0,false);
+                } else {
+                    if i.fill>>24!=0 {emit(cx-13.0,cy-13.0,26.0,26.0,7.0,i.fill,"",0.0,false);}
+                    emit(cx-13.0,cy-13.0,26.0,26.0,0.0,i.ink,&i.monogram,i.font_size,false);
+                }
+            } else {
+                if i.fill>>24!=0 {emit(i.x,i.y,i.width,i.height,8.0,i.fill,"",0.0,false);}
+                if i.glyph==0 {
+                    emit(cx-8.0,cy-7.0,16.0,14.0,3.0,i.ink,"",0.0,false);
+                    emit(cx-3.0,cy-7.0,1.0,14.0,0.0,i.ink,"",0.0,false);
+                    if i.active {emit(cx-7.0,cy-6.0,4.0,12.0,0.0,(i.ink&0xffffff)|0x55000000,"",0.0,false);}
+                } else {
+                    for (dy,knob) in [(-5.0,-3.0),(0.0,3.0),(5.0,-1.0)] {
+                        emit(cx-7.0,cy+dy-0.5,14.0,1.0,0.5,i.ink,"",0.0,false);
+                        emit(cx+knob-1.5,cy+dy-1.5,3.0,3.0,1.5,i.ink,"",0.0,false);
+                    }
+                }
+            }
+            if i.focused {emit(i.x+2.0,i.y+i.height-3.0,(i.width-4.0).max(0.0),2.0,1.0,i.ink,"",0.0,false);}
+            for p in out[first_primitive..].iter_mut() {
+                if !p.text.is_empty() {p.center=true;}
+                if i.glyph==0 && p.width==16.0 && p.height==14.0 {p.stroke=1.0;}
+                if i.glyph==1 && i.monogram.is_empty() && p.width==8.0 && p.height==8.0 && !i.active {p.stroke=1.0;}
+            }
+            continue;
+        }
         if i.kind == 6 {
-            emit(i.x + 4.0, i.y + 2.0, (i.width - 8.0).max(0.0), (i.height - 4.0).max(0.0),
+            emit(i.x + if i.tile {2.0} else {4.0}, i.y + if i.tile {4.0} else {2.0},
+                (i.width-if i.tile {4.0} else {8.0}).max(0.0), (i.height-if i.tile {8.0} else {4.0}).max(0.0),
                 3.5, i.fill, "", 0.0, false);
             continue;
         }
@@ -543,7 +598,7 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
 mod tests {
     use super::*;
     fn row(width: f32) -> ffi::Item { ffi::Item {
-        x:0.0, y:0.0, width, height:34.0, kind:0,
+        x:0.0, y:0.0, width, height:34.0, kind:0, glyph:0,
         title:"Zażółć 日本語 🦀".into(), monogram:"Z".into(), detail:String::new(),
         title_width:0.0, detail_ink:0, detail_font_size:12.0, ink:0xff101010,
         fill:0xffffffff, badge:0xff556677, active:true, hovered:false,
@@ -668,6 +723,22 @@ mod tests {
         let ops = layout(&[item]); assert_eq!(ops.len(), 1);
         assert_eq!((ops[0].x, ops[0].y, ops[0].width, ops[0].height), (4.0, 2.0, 7.0, 76.0));
         assert!(ops[0].text.is_empty()); assert_eq!(ops[0].clip.width, 15.0);
+    }
+    #[test] fn footer_reserves_a_horizontal_scroll_gutter_only_for_overflow() {
+        let normal=footer_layout(240,60); assert_eq!(normal.height,32);
+        let overflow=footer_layout(200,300); assert_eq!(overflow.height,47);
+        assert_eq!(overflow.children[2].width,134); assert_eq!(overflow.children[2].height,47);
+        assert_eq!(overflow.children[4].x,168); assert_eq!(overflow.children[0].y,0);
+        let dots=strip_layout(-1,32,&[child(24,28),child(30,28),child(24,28)]);
+        assert_eq!((dots.width,dots.children[1].x,dots.children[1].y),(78,24,2));
+    }
+    #[test] fn footer_scene_keeps_selected_plain_and_centered_emoji_variants() {
+        let mut item=row(30.0);item.kind=7;item.glyph=1;item.monogram="🚀".into();
+        let ops=layout(&[item]);let text=ops.iter().find(|p|p.text=="🚀").unwrap();assert!(text.center);
+        let mut plain=row(24.0);plain.kind=7;plain.glyph=1;plain.monogram.clear();plain.active=false;
+        let ops=layout(&[plain]);assert_eq!(ops.len(),1);assert_eq!(ops[0].stroke,1.0);
+        let mut horizontal=row(80.0);horizontal.kind=6;horizontal.tile=true;horizontal.height=15.0;
+        let ops=layout(&[horizontal]);assert_eq!((ops[0].width,ops[0].height),(76.0,7.0));
     }
     fn viewport_node(parent: usize, x: f32, y: f32, width: f32, height: f32, visible: bool) -> ffi::ViewportNode {
         ffi::ViewportNode {parent, bounds: ffi::FloatRect {x, y, width, height}, visible}

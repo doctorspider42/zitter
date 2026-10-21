@@ -316,7 +316,7 @@ std::u16string HostLabel(const GURL& url) {
 }
 
 // 32×32 icon button with a soft hover wash, used for chrome-level commands.
-class GlyphButton final : public views::Button {
+class GlyphButton : public views::Button {
   METADATA_HEADER(GlyphButton, views::Button)
  public:
   enum class Glyph { kVector, kSidebar, kDot, kSwatch, kMore };
@@ -326,6 +326,9 @@ class GlyphButton final : public views::Button {
     SetTooltipText(name);
     GetViewAccessibility().SetName(name);
   }
+  Glyph glyph() const { return glyph_; }
+  bool on() const { return on_; }
+  const std::u16string& label() const { return label_; }
   void set_color(SkColor color) { color_ = color; SchedulePaint(); }
   void set_on(bool on) { on_ = on; SchedulePaint(); }
   // A workspace emoji replaces the plain dot.
@@ -388,6 +391,131 @@ class GlyphButton final : public views::Button {
   std::u16string label_;
 };
 BEGIN_METADATA(GlyphButton)
+END_METADATA
+
+// Footer controls retain one native event/focus/AX node, while Rust owns
+// their pointer/key state and Metal owns their steady-state painting.
+class SceneGlyphButton final : public GlyphButton {
+  METADATA_HEADER(SceneGlyphButton,GlyphButton)
+ public:
+  SceneGlyphButton(PressedCallback callback, std::u16string name, Glyph glyph,
+      const gfx::VectorIcon* icon, base::RepeatingCallback<bool()> scene_visible)
+      : GlyphButton(std::move(callback),std::move(name),glyph,icon),scene_visible_(std::move(scene_visible)) {
+#if BUILDFLAG(IS_MAC)
+    if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal")
+      rust_pointer_.emplace(sidebar::new_row_pointer());
+#endif
+  }
+  bool OnMousePressed(const ui::MouseEvent& event) override {
+#if BUILDFLAG(IS_MAC)
+    if (rust_pointer_) {
+      const auto result = RustPointerEvent(sidebar::PointerPhase::Press, event);
+      if (GetEnabledInViewsSubtree()) RequestFocusFromEvent();
+      return ApplyRustInput(result, event);
+    }
+#endif
+    return views::Button::OnMousePressed(event);
+  }
+  bool OnMouseDragged(const ui::MouseEvent& event) override {
+#if BUILDFLAG(IS_MAC)
+    if (rust_pointer_) return ApplyRustInput(RustPointerEvent(sidebar::PointerPhase::Drag, event), event);
+#endif
+    return views::Button::OnMouseDragged(event);
+  }
+  void OnMouseReleased(const ui::MouseEvent& event) override {
+#if BUILDFLAG(IS_MAC)
+    if (rust_pointer_) { ApplyRustInput(RustPointerEvent(sidebar::PointerPhase::Release, event), event); return; }
+#endif
+    views::Button::OnMouseReleased(event);
+  }
+  void OnMouseEntered(const ui::MouseEvent& event) override {
+#if BUILDFLAG(IS_MAC)
+    if (rust_pointer_) { ApplyRustInput(RustPointerEvent(sidebar::PointerPhase::Enter, event), event); return; }
+#endif
+    views::Button::OnMouseEntered(event);
+  }
+  void OnMouseExited(const ui::MouseEvent& event) override {
+#if BUILDFLAG(IS_MAC)
+    if (rust_pointer_) { ApplyRustInput(RustPointerEvent(sidebar::PointerPhase::Exit, event), event); return; }
+#endif
+    views::Button::OnMouseExited(event);
+  }
+  void OnMouseMoved(const ui::MouseEvent& event) override {
+#if BUILDFLAG(IS_MAC)
+    if (rust_pointer_) { ApplyRustInput(RustPointerEvent(sidebar::PointerPhase::Move, event), event); return; }
+#endif
+    views::Button::OnMouseMoved(event);
+  }
+  bool OnKeyPressed(const ui::KeyEvent& event) override {
+#if BUILDFLAG(IS_MAC)
+    if (rust_pointer_) return ApplyRustInput((*rust_pointer_)->key_event(true, RustKeyPolicy(event), GetEnabledInViewsSubtree()), event);
+#endif
+    return views::Button::OnKeyPressed(event);
+  }
+  bool OnKeyReleased(const ui::KeyEvent& event) override {
+#if BUILDFLAG(IS_MAC)
+    if (rust_pointer_) return ApplyRustInput((*rust_pointer_)->key_event(false, RustKeyPolicy(event), GetEnabledInViewsSubtree()), event);
+#endif
+    return views::Button::OnKeyReleased(event);
+  }
+  void OnBlur() override {
+#if BUILDFLAG(IS_MAC)
+    if (rust_pointer_) (*rust_pointer_)->cancel();
+#endif
+    views::Button::OnBlur();
+  }
+  void OnMouseCaptureLost() override {
+#if BUILDFLAG(IS_MAC)
+    if (rust_pointer_) (*rust_pointer_)->cancel();
+#endif
+    views::Button::OnMouseCaptureLost();
+  }
+  void StateChanged(ButtonState state) override {
+#if BUILDFLAG(IS_MAC)
+    if (rust_pointer_ && GetState()==STATE_DISABLED) (*rust_pointer_)->cancel();
+#endif
+    GlyphButton::StateChanged(state);
+  }
+  void PaintButtonContents(gfx::Canvas* canvas) override {
+    if (scene_visible_ && scene_visible_.Run()) return;
+    GlyphButton::PaintButtonContents(canvas);
+  }
+ private:
+#if BUILDFLAG(IS_MAC)
+  sidebar::RowInputResult RustPointerEvent(sidebar::PointerPhase phase, const ui::MouseEvent& event) {
+    return (*rust_pointer_)->pointer_event(phase, event.x(), event.y(),
+        phase != sidebar::PointerPhase::Exit && HitTestPoint(event.location()),
+        GetEnabledInViewsSubtree(), event.IsLeftMouseButton(), false);
+  }
+  uint32_t RustKeyPolicy(const ui::KeyEvent& event) {
+    const uint32_t key = event.key_code() == ui::VKEY_SPACE ? 1 :
+        event.key_code() == ui::VKEY_RETURN ? 2 : 0;
+    return sidebar::key_policy(key, true);  // This adapter is macOS-only.
+  }
+  bool ApplyRustInput(const sidebar::RowInputResult& result, const ui::Event& event) {
+    switch (result.visual) {
+      case sidebar::RowVisual::Normal: SetState(STATE_NORMAL); break;
+      case sidebar::RowVisual::Hovered: SetState(STATE_HOVERED); break;
+      case sidebar::RowVisual::Pressed: SetState(STATE_PRESSED); break;
+      case sidebar::RowVisual::Disabled: SetState(STATE_DISABLED); break;
+    }
+    const bool handled = result.handled;
+    // Actions may delete this row or its owning palette. Do not touch members
+    // after calling a controller, including the native accessibility action.
+    switch (result.action) {
+      case sidebar::RowAction::Activate: NotifyClick(event); return handled;
+      case sidebar::RowAction::Drop: return handled;
+      case sidebar::RowAction::Cancel: OnClickCanceled(event); return handled;
+      case sidebar::RowAction::None: return handled;
+    }
+    return handled;
+  }
+  std::optional<rust::Box<sidebar::RowPointer>> rust_pointer_;
+#endif
+  base::RepeatingCallback<bool()> scene_visible_;
+};
+
+BEGIN_METADATA(SceneGlyphButton)
 END_METADATA
 
 // A sidebar tab, a "New tab" action or a palette suggestion.
@@ -1501,15 +1629,20 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   static_cast<views::MdTextButton*>(remove_workspace_.get())->SetStyle(ui::ButtonStyle::kText);
 
   auto* footer = sidebar->AddChildView(std::make_unique<views::View>());
+  sidebar_footer_=footer;
+  auto footer_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+    return shell && shell->metal_sidebar_visible();
+  },weak);
   auto* footer_layout = footer->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 0));
   footer_layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
-  pin_button_ = footer->AddChildView(std::make_unique<GlyphButton>(
+  pin_button_ = footer->AddChildView(std::make_unique<SceneGlyphButton>(
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
         if (shell) shell->SetPinned(!shell->pinned_);
-      }, weak), u"Przypnij panel", GlyphButton::Glyph::kSidebar));
+      }, weak), u"Przypnij panel", GlyphButton::Glyph::kSidebar,nullptr,footer_visible));
   Spacer(footer, 1);
   auto* dot_scroll = footer->AddChildView(std::make_unique<views::ScrollView>());
+  workspace_scroll_=dot_scroll;
   dot_scroll->SetPreferredSize(gfx::Size(0, 32));
   dot_scroll->SetBackgroundColor(std::nullopt);
   dot_scroll->SetDrawOverflowIndicator(false);
@@ -1518,11 +1651,24 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   dots->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 0));
   workspace_dots_ = dot_scroll->SetContents(std::move(dots));
+#if BUILDFLAG(IS_MAC)
+  if (metal_sidebar_) {
+    workspace_dots_->SetLayoutManager(CreateSidebarDotsLayout());
+    dot_scroll->SetUseContentsPreferredSize(true);
+    dot_scroll->SetHorizontalScrollBar(CreateSidebarScrollBar(footer_visible,true));
+    metal_workspace_scroll_synchronizer_=dot_scroll->EnableScrollSynchronization();
+    metal_workspace_scroll_subscription_=dot_scroll->AddContentsScrolledCallback(
+        base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak));
+  }
+#endif
   footer_layout->SetFlexForView(dot_scroll, 1);
   Spacer(footer, 1);
-  footer->AddChildView(std::make_unique<GlyphButton>(
+  workspace_settings_button_=footer->AddChildView(std::make_unique<SceneGlyphButton>(
       base::BindRepeating(&WorkspaceShell::OpenWorkspaceSettings, weak),
-      u"Ustawienia przestrzeni", GlyphButton::Glyph::kVector, &vector_icons::kTuneIcon));
+      u"Ustawienia przestrzeni", GlyphButton::Glyph::kVector, &vector_icons::kTuneIcon,footer_visible));
+#if BUILDFLAG(IS_MAC)
+  if (metal_sidebar_) footer->SetLayoutManager(CreateSidebarFooterLayout());
+#endif
 
   // Command palette: input, suggestions, keyboard hints.
   auto palette = std::make_unique<views::View>();
@@ -2056,6 +2202,8 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 }
 
 void WorkspaceShell::Detach() {
+  metal_workspace_scroll_subscription_={};
+  metal_workspace_scroll_synchronizer_.reset();
   metal_scroll_synchronizer_.reset();
   metal_scroll_subscription_ = {};
   metal_sidebar_.reset();
@@ -2118,7 +2266,7 @@ void WorkspaceShell::Detach() {
   pin_button_ = nullptr;
   nav_buttons_.fill(nullptr);
   workspace_buttons_.clear();
-  workspace_dots_ = nullptr;
+  workspace_dots_ = nullptr; sidebar_footer_=nullptr; workspace_scroll_=nullptr; workspace_settings_button_=nullptr;
   tab_lists_.clear();
   profile_picker_ = nullptr;
   workspace_input_ = nullptr;
@@ -2435,7 +2583,7 @@ void WorkspaceShell::UpdateMetalSidebar() {
   const bool was_visible = metal_sidebar_->visible();
   if (!sidebar_visible() || swipe_overlay_ || workspace_animation_running()) {
     metal_sidebar_->Hide();
-    if (was_visible) { tab_list_->SchedulePaint(); new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint(); }
+    if (was_visible) { tab_list_->SchedulePaint(); new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint(); sidebar_footer_->SchedulePaint(); }
     return;
   }
   // Invalidations can reach Metal before the next native compositor paint.
@@ -2455,6 +2603,7 @@ void WorkspaceShell::UpdateMetalSidebar() {
   const auto scroller=GetSidebarScrollBarSnapshot(tab_scroll_->vertical_scroll_bar());
   auto bounds = list_bounds;
   if (scroller.visible) bounds.Union(scroller.bounds);
+  if (sidebar_footer_->IsDrawn()) bounds.Union(sidebar_footer_->GetBoundsInScreen());
   if (url_pill_->IsDrawn()) bounds.Union(url_pill_->GetBoundsInScreen());
   if (new_tab_button_->IsDrawn()) bounds.Union(new_tab_button_->GetBoundsInScreen());
   const gfx::Vector2dF list_origin(list_bounds.x() - bounds.x(), list_bounds.y() - bounds.y());
@@ -2540,6 +2689,44 @@ void WorkspaceShell::UpdateMetalSidebar() {
     item.ink=Tone(workspace_name_,kSubtle); item.font_size=Font(-1).GetFontSize();
     items.push_back(std::move(item));
   }
+  auto append_glyph=[&](GlyphButton* button,gfx::RectF rect,gfx::RectF clip) {
+    sidebar::Item item{}; item.kind=7;
+    item.x=rect.x(); item.y=rect.y(); item.width=rect.width(); item.height=rect.height();
+    item.clip={clip.x(),clip.y(),clip.width(),clip.height()};
+    item.glyph=button->glyph()==GlyphButton::Glyph::kSidebar ? 0 : button->glyph()==GlyphButton::Glyph::kDot ? 1 : 2;
+    item.active=button->on(); item.focused=button->HasFocus();
+    item.hovered=button->GetState()==views::Button::STATE_HOVERED || button->GetState()==views::Button::STATE_PRESSED;
+    item.ink=Tone(button,!button->GetEnabledInViewsSubtree() ? kDisabled : item.glyph==1 ? item.active || item.hovered ? kInk : kMuted : kSubtle);
+    item.monogram=base::UTF16ToUTF8(button->label()); item.font_size=Font(3).GetFontSize();
+    item.fill=item.glyph==1 ? item.active && !item.monogram.empty() ? SkColorSetA(Tone(button,kInk),0x1f) : item.hovered ? HoverWash(button) : SK_ColorTRANSPARENT
+        : item.hovered ? HoverWash(button) : SK_ColorTRANSPARENT;
+    items.push_back(std::move(item));
+  };
+  auto local_rect=[&](views::View* view) {
+    auto rect=gfx::RectF(view->GetBoundsInScreen()); rect.Offset(-bounds.x(),-bounds.y()); return rect;
+  };
+  for (auto* button : {pin_button_.get(),workspace_settings_button_.get()}) {
+    const auto rect=local_rect(button); append_glyph(static_cast<GlyphButton*>(button),rect,rect);
+  }
+  auto* dot_viewport=workspace_dots_->parent();
+  std::vector<SidebarViewportNode> dot_nodes{{SidebarTree::kRoot,gfx::Rect(workspace_dots_->size()),true}};
+  for (const auto& child : workspace_dots_->children()) dot_nodes.push_back({0,child->GetMirroredBounds(),child->GetVisible()});
+  const auto dot_projection=metal_sidebar_->Project(workspace_dots_->size(),dot_viewport->size(),workspace_scroll_->CurrentOffset(),dot_nodes);
+  if (dot_projection.offset!=workspace_scroll_->CurrentOffset()) {
+    workspace_scroll_->ScrollToOffset(dot_projection.offset); ScheduleMetalSidebar(); return;
+  }
+  const auto dot_origin=local_rect(dot_viewport).OffsetFromOrigin();
+  for (const auto& node : dot_projection.nodes) if (node.index>0) {
+    auto rect=node.bounds;rect.Offset(dot_origin);auto clip=node.clip;clip.Offset(dot_origin);
+    append_glyph(static_cast<GlyphButton*>(workspace_dots_->children()[node.index-1].get()),rect,clip);
+  }
+  const auto horizontal=GetSidebarScrollBarSnapshot(workspace_scroll_->horizontal_scroll_bar());
+  if (horizontal.visible) {
+    auto rect=horizontal.thumb;rect.Offset(-bounds.x(),-bounds.y());auto clip=horizontal.bounds;clip.Offset(-bounds.x(),-bounds.y());
+    sidebar::Item item{};item.kind=6;item.tile=true;item.fill=horizontal.color;
+    item.x=rect.x();item.y=rect.y();item.width=rect.width();item.height=rect.height();
+    item.clip={float(clip.x()),float(clip.y()),float(clip.width()),float(clip.height())};items.push_back(std::move(item));
+  }
   if (scroller.visible) {
     auto rect=scroller.thumb; rect.Offset(-bounds.x(),-bounds.y());
     auto clip=scroller.bounds; clip.Offset(-bounds.x(),-bounds.y());
@@ -2553,10 +2740,10 @@ void WorkspaceShell::UpdateMetalSidebar() {
   // The initial native paint record can contain fallback text. Re-record it
   // once when GPU presentation takes ownership, then the control paint gate
   // keeps it empty until fallback is needed again.
-  if (!was_visible && metal_sidebar_->visible()) { new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint(); }
+  if (!was_visible && metal_sidebar_->visible()) { new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint(); sidebar_footer_->SchedulePaint(); }
   // A failed drawable must expose freshly painted fallback content, even if
   // the last native paint was skipped while Metal still had a visible frame.
-  if (was_visible && !metal_sidebar_->visible()) { tab_list_->SchedulePaint(); new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint(); }
+  if (was_visible && !metal_sidebar_->visible()) { tab_list_->SchedulePaint(); new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint(); sidebar_footer_->SchedulePaint(); }
 #endif
 }
 
@@ -2624,7 +2811,7 @@ size_t WorkspaceShell::workspace_swipe_preview_count() const {
 void WorkspaceShell::UpdateWorkspaceSwipePreview() {
   if (metal_sidebar_ && metal_sidebar_->visible()) {
     metal_sidebar_->Hide();
-    new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint();
+    new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint(); sidebar_footer_->SchedulePaint();
   }
   if (!swipe_overlay_) {
     StopWorkspaceAnimation();
@@ -2895,14 +3082,16 @@ void WorkspaceShell::RebuildWorkspaceDots() {
   workspace_buttons_.clear();
   workspace_dots_->RemoveAllChildViews();
   for (const auto& workspace : state_.workspaces) {
-    auto* button = workspace_dots_->AddChildView(std::make_unique<GlyphButton>(
+    auto* button = workspace_dots_->AddChildView(std::make_unique<SceneGlyphButton>(
         base::BindRepeating(callbacks_.select_workspace, workspace.id),
-        u"Przestrzeń: " + base::UTF8ToUTF16(workspace.name) + (state_.sleeping_workspaces.contains(workspace.id) ? u" · uśpiona" : u""), GlyphButton::Glyph::kDot));
+        u"Przestrzeń: " + base::UTF8ToUTF16(workspace.name) + (state_.sleeping_workspaces.contains(workspace.id) ? u" · uśpiona" : u""), GlyphButton::Glyph::kDot,nullptr,
+        base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {return shell && shell->metal_sidebar_visible();},weak_factory_.GetWeakPtr())));
     button->set_label(workspace_emoji(workspace.id));
     button->set_on(workspace.id == state_.workspace_id);
     button->set_context_menu_controller(this);
     workspace_buttons_[workspace.id] = button;
   }
+  ScheduleMetalSidebar();
 }
 
 namespace {
@@ -3389,7 +3578,7 @@ void WorkspaceShell::AnimateWorkspaceSwitch(std::string_view previous) {
   if (metal_sidebar_) {
     metal_sidebar_->Hide();
     tab_list_->SchedulePaint();  // Refresh cached native contents before animating.
-    new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint();
+    new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint(); sidebar_footer_->SchedulePaint();
   }
   tab_scroll_->SetPaintToLayer();
   tab_scroll_->layer()->SetFillsBoundsOpaquely(false);

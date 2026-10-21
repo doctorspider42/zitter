@@ -36,9 +36,9 @@ class SidebarMetal {
   virtual bool contains_rect_for_testing(gfx::RectF bounds, gfx::RectF clip) const = 0;
 };
 std::unique_ptr<SidebarMetal> CreateSidebarMetal();
-struct SidebarScrollBarSnapshot { gfx::Rect bounds, thumb; unsigned color = 0; bool visible = false; };
+struct SidebarScrollBarSnapshot { gfx::Rect bounds, thumb; unsigned color = 0; bool visible = false; bool horizontal = false; };
 // Native event/scroll-service/menu/AX adapter; Rust owns thumb geometry and drag.
-std::unique_ptr<views::ScrollBar> CreateSidebarScrollBar(base::RepeatingCallback<bool()> scene_visible);
+std::unique_ptr<views::ScrollBar> CreateSidebarScrollBar(base::RepeatingCallback<bool()> scene_visible, bool horizontal = false);
 SidebarScrollBarSnapshot GetSidebarScrollBarSnapshot(views::ScrollBar* bar);
 }
 #endif

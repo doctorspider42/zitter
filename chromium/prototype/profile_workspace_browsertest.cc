@@ -3936,7 +3936,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NewTabActionUsesSceneTextA
   const auto scrollbar_bounds = shell->tab_scroll_view()->vertical_scroll_bar()->GetBoundsInScreen();
   EXPECT_EQ(std::max(viewport.right(), scrollbar_bounds.right()), canvas.right());
   EXPECT_TRUE(canvas.Contains(scrollbar_bounds));
-  EXPECT_EQ(viewport.bottom(), canvas.bottom());
+  EXPECT_EQ(SidebarNamedButton(shell->sidebar_view(),u"Ustawienia przestrzeni")->parent()->GetBoundsInScreen().bottom(),canvas.bottom());
   auto paint_action = [&] {
     // The helper paints a root at (0,0); a sidebar child's parent-relative
     // origin would clip its entire recording outside the small test bitmap.
@@ -4134,6 +4134,59 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, RustScrollThumbDragTrackKe
   ASSERT_TRUE(base::test::RunUntil([&] { return scroll->GetVisibleRect().y()>0; }));
   ui::KeyEvent last(ui::EventType::kKeyPressed,ui::VKEY_END,ui::EF_NONE);
   EXPECT_TRUE(bar->OnKeyPressed(last)); EXPECT_EQ(max_offset,scroll->GetVisibleRect().y());
+}
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, FooterSpacesScrollSelectPinAndSettings) {
+  auto* shell=window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] {return shell->appearance_ready();}));
+  shell->SetWorkspaceAnimations(false);
+  for (int i=0;i<10;++i) {
+    ASSERT_TRUE(window_->AddWorkspace("Footer "+std::to_string(i),"work-profile"));
+    ASSERT_TRUE(base::test::RunUntil([&] {return !window_->profiles_busy();}));
+  }
+  const auto last=window_->workspaces().back().id;
+  shell->SetWorkspaceEmoji("work",u"🦀");shell->SetWorkspaceEmoji(last,u"🚀");
+  ASSERT_TRUE(window_->Select("work"));shell->CloseOverlays(true);shell->SetPinned(true);shell->ShowSidebar();
+  auto* settings=SidebarNamedButton(shell->sidebar_view(),u"Ustawienia przestrzeni");ASSERT_TRUE(settings);
+  auto* footer=settings->parent();auto* pin=static_cast<views::Button*>(footer->children()[0].get());
+  auto* scroll=static_cast<views::ScrollView*>(footer->children()[2].get());auto* bar=scroll->horizontal_scroll_bar();
+  ASSERT_TRUE(base::test::RunUntil([&] {return shell->metal_sidebar_visible() && bar->IsDrawn();}));
+  EXPECT_EQ(47,footer->height());EXPECT_GE(scroll->contents()->parent()->height(),28);
+  EXPECT_TRUE(shell->metal_sidebar_screen_bounds_for_testing().Contains(footer->GetBoundsInScreen()));
+  EXPECT_TRUE(shell->metal_sidebar_contains_text_for_testing("🦀"));
+  ui_controls::EnableUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  auto move=[&](gfx::Point point) {
+    base::test::TestFuture<void> done;return ui_controls::SendMouseMoveNotifyWhenDone(point.x(),point.y(),done.GetCallback(),shell->sidebar_widget()->GetNativeWindow()) && done.Wait();
+  };
+  auto mouse=[&](int state) {
+    base::test::TestFuture<void> done;return ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT,state,done.GetCallback(),ui_controls::kNoAccelerator,shell->sidebar_widget()->GetNativeWindow()) && done.Wait();
+  };
+  ASSERT_TRUE(move(bar->children().front()->GetBoundsInScreen().CenterPoint()));ASSERT_TRUE(mouse(ui_controls::DOWN));
+  base::ScopedClosureRunner release_mouse(base::BindOnce([]{ui_controls::SendMouseEvents(ui_controls::LEFT,ui_controls::UP);}));
+  const auto track=bar->GetBoundsInScreen();ASSERT_TRUE(move(gfx::Point(track.right()-1,track.CenterPoint().y())));
+  ASSERT_TRUE(mouse(ui_controls::UP));static_cast<void>(release_mouse.Release());
+  ASSERT_TRUE(base::test::RunUntil([&] {return scroll->CurrentOffset().x()>0 && shell->metal_sidebar_contains_text_for_testing("🚀");}));
+  auto* last_button=shell->workspace_button(last);ASSERT_TRUE(last_button);
+  EXPECT_TRUE(scroll->contents()->parent()->GetBoundsInScreen().Contains(last_button->GetBoundsInScreen()));
+  ASSERT_TRUE(move(last_button->GetBoundsInScreen().CenterPoint()));ASSERT_TRUE(mouse(ui_controls::DOWN|ui_controls::UP));
+  ASSERT_TRUE(base::test::RunUntil([&] {return window_->active_id()==last;}));
+  ASSERT_TRUE(move(settings->GetBoundsInScreen().CenterPoint()));ASSERT_TRUE(mouse(ui_controls::DOWN|ui_controls::UP));
+  ASSERT_TRUE(base::test::RunUntil([&] {return shell->settings_visible();}));
+  shell->emoji_input()->RequestFocus();shell->emoji_input()->SelectAll(false);
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->settings_widget()->GetNativeWindow(),ui::VKEY_BACK,false,false,false,false));
+  ASSERT_TRUE(base::test::RunUntil([&] {return shell->workspace_emoji(last).empty();}));
+  EXPECT_TRUE(shell->settings_visible());shell->CloseOverlays(true);
+  pin->SetEnabled(false);ASSERT_TRUE(move(pin->GetBoundsInScreen().CenterPoint()));ASSERT_TRUE(mouse(ui_controls::DOWN|ui_controls::UP));EXPECT_TRUE(shell->pinned());
+  pin->SetEnabled(true);ASSERT_TRUE(mouse(ui_controls::DOWN|ui_controls::UP));EXPECT_FALSE(shell->pinned());
+  shell->SetPinned(true);shell->ShowSidebar();
+  auto native_ink=[&] {
+    const auto saved=pin->bounds();pin->SetBoundsRect(gfx::Rect(pin->size()));pin->SchedulePaint();
+    const auto bitmap=views::test::PaintViewToBitmap(pin);pin->SetBoundsRect(saved);
+    for(int y=0;y<bitmap.height();++y)for(int x=0;x<bitmap.width();++x)if(bitmap.getColor(x,y)!=SK_ColorRED)return true;
+    return false;
+  };
+  ASSERT_TRUE(base::test::RunUntil([&] {return shell->metal_sidebar_visible();}));EXPECT_FALSE(native_ink());
+  shell->sidebar_widget()->Hide();EXPECT_TRUE(native_ink());
 }
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, RealTabViewportScrolls) {
   auto* shell = window_->shell();

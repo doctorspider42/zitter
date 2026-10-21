@@ -652,7 +652,9 @@ and pinned-pair placement, split tile/folder geometry, viewport projection/
 clipping, and vertical scrollbar geometry/drag/snap state. The overflow thumb
 is drawn on the shared GPU canvas and remains visible. The same Metal surface draws New Tab and its configurable shortcut
 hint, the address host/path with GPU icons and the workspace heading without
-native text Labels. Model updates refresh the scene independently of
+native text Labels. Rust also lays out and draws the pin/settings footer and
+workspace dots/emoji, including horizontal overflow and scrollbar dragging.
+Model updates refresh the scene independently of
 native painting. Rust also owns row
 click/drag/cancellation and platform key activation through native event, focus
 and accessibility adapters. See

@@ -268,3 +268,27 @@ timestamped app passed AX value, scroll-to-tab-24, selection and restore checks.
 Scrollbar context-menu input and full VoiceOver/trackpad/RTL/scale coverage remain
 unproven. These are functional results, not presentation timing measurements. See
 [scrollbar validation](benchmarks/rust-scrollbar-functional-2026-10-22.json).
+
+The footer now shares the same Metal canvas. Rust lays out pin/settings slots and
+workspace strips, draws their icons, selected/plain dots and centered emoji, and
+uses the existing input reducer for footer pointer/key state. Native controls
+retain focus, default AX actions, tooltips, menus and application callbacks. Native
+steady-state button drawing is gated; fallback paint is refreshed on ownership,
+visibility, animation, swipe and drawable-failure changes.
+
+Workspace overflow now measures the full preferred content width. Rust reserves
+an additional 15-pixel horizontal scrollbar gutter only when needed, preserving
+emoji height. The shared Rust scrollbar works in both axes, with synchronized
+native hit testing and Rust viewport clipping/offset normalization. CoreText
+centering is included in texture cache keys and frame fingerprints. No additional
+Metal surface, queue or third-party dependency was introduced.
+
+Validated on 2026-10-22: **38/38 Metal browser regressions, 14/14 Views controls,
+37/37 Rust tests and 59/59 Python tests passed**. The new native regression covers
+12 spaces, horizontal thumb drag, selecting the final workspace, settings access,
+native Backspace emoji clearing, disabled pin input and unpinning. Manual signed
+app inspection covered workspace/settings controls and centered emoji, followed
+by restoring the original empty emoji and split pair. Navigation, native node
+removal and the broader input/accessibility/scale matrix remain. These are
+functional results, not CPU/GPU/presentation timings. See
+[footer validation](benchmarks/rust-footer-functional-2026-10-22.json).

@@ -42,7 +42,7 @@ class SidebarThumb final : public views::BaseScrollBarThumb {
  public:
   SidebarThumb(views::ScrollBar* bar, base::RepeatingCallback<bool()> scene_visible)
       : BaseScrollBarThumb(bar), scene_visible_(std::move(scene_visible)) {}
-  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override { return gfx::Size(15, 20); }
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override { return IsHorizontal() ? gfx::Size(20,15) : gfx::Size(15,20); }
   unsigned color() const {
     const auto state = GetState();
     return GetColorProvider()->GetColor(state == views::Button::STATE_PRESSED
@@ -51,7 +51,7 @@ class SidebarThumb final : public views::BaseScrollBarThumb {
   }
   void OnPaint(gfx::Canvas* canvas) override {
     if (scene_visible_ && scene_visible_.Run()) return;
-    sidebar::Item item{}; item.kind=6; item.width=width(); item.height=height(); item.fill=color();
+    sidebar::Item item{}; item.kind=6; item.tile=IsHorizontal(); item.width=width(); item.height=height(); item.fill=color();
     item.clip={0,0,float(width()),float(height())};
     const auto ops=sidebar::layout(rust::Slice<const sidebar::Item>(&item,1));
     for (const auto& op : ops) {
@@ -69,10 +69,10 @@ class SidebarThumb final : public views::BaseScrollBarThumb {
 };
 class SidebarScrollBar final : public views::ScrollBar {
  public:
-  explicit SidebarScrollBar(base::RepeatingCallback<bool()> scene_visible)
-      : ScrollBar(Orientation::kVertical) {
+  SidebarScrollBar(base::RepeatingCallback<bool()> scene_visible, bool horizontal)
+      : ScrollBar(horizontal ? Orientation::kHorizontal : Orientation::kVertical) {
     SetThumb(new SidebarThumb(this,std::move(scene_visible)));
-    GetViewAccessibility().SetName(u"Przewijanie kart");
+    GetViewAccessibility().SetName(horizontal ? u"Przewijanie przestrzeni" : u"Przewijanie kart");
     GetViewAccessibility().AddAction(ax::mojom::Action::kIncrement);
     GetViewAccessibility().AddAction(ax::mojom::Action::kDecrement);
   }
@@ -89,36 +89,39 @@ class SidebarScrollBar final : public views::ScrollBar {
     return ScrollBar::HandleAccessibleAction(action);
   }
   void Begin(sidebar::ScrollThumb& drag, float pointer) {
-    drag.begin(height(),viewport_,content_,offset_,pointer);
+    drag.begin(Length(),viewport_,content_,offset_,pointer);
   }
   void Drag(const sidebar::ScrollThumb& drag, float pointer, float cross, bool snap) {
-    ScrollToPosition(drag.drag(height(),viewport_,content_,offset_,pointer,cross,width(),snap));
+    ScrollToPosition(drag.drag(Length(),viewport_,content_,offset_,pointer,cross,GetThickness(),snap));
   }
   SidebarScrollBarSnapshot Snapshot() const {
     return {GetBoundsInScreen(),GetThumb()->GetBoundsInScreen(),
-        static_cast<SidebarThumb*>(GetThumb())->color(),IsDrawn()};
+        static_cast<SidebarThumb*>(GetThumb())->color(),IsDrawn(),GetOrientation()==Orientation::kHorizontal};
   }
  protected:
   void ScrollToPosition(int position) override {
-    offset_=sidebar::scroll_metrics(height(),viewport_,content_,position).offset;
+    offset_=sidebar::scroll_metrics(Length(),viewport_,content_,position).offset;
     ScrollBar::ScrollToPosition(offset_);
   }
  private:
   void SyncThumb() {
-    const auto g=sidebar::scroll_metrics(height(),viewport_,content_,offset_);
-    offset_=g.offset; GetThumb()->SetBounds(0,g.position,width(),g.length);
+    const auto g=sidebar::scroll_metrics(Length(),viewport_,content_,offset_);
+    offset_=g.offset;
+    if (GetOrientation()==Orientation::kHorizontal) GetThumb()->SetBounds(g.position,0,g.length,height());
+    else GetThumb()->SetBounds(0,g.position,width(),g.length);
     auto& ax=GetViewAccessibility(); ax.SetMinValueForRange(0); ax.SetMaxValueForRange(g.max_offset); ax.SetValueForRange(g.offset);
   }
+  int Length() const { return GetOrientation()==Orientation::kHorizontal ? width() : height(); }
   int viewport_=0,content_=0,offset_=0;
 };
 bool SidebarThumb::OnMousePressed(const ui::MouseEvent& event) {
   if (!event.IsOnlyLeftMouseButton() || !GetEnabledInViewsSubtree()) return false;
-  static_cast<SidebarScrollBar*>(scroll_bar())->Begin(*drag_,y()+event.y());
+  static_cast<SidebarScrollBar*>(scroll_bar())->Begin(*drag_,IsHorizontal() ? x()+event.x() : y()+event.y());
   SetState(views::Button::STATE_PRESSED); return true;
 }
 bool SidebarThumb::OnMouseDragged(const ui::MouseEvent& event) {
   if (!GetEnabledInViewsSubtree()) { drag_->end(); return false; }
-  static_cast<SidebarScrollBar*>(scroll_bar())->Drag(*drag_,y()+event.y(),event.x(),GetSnapBackOnDragOutside());
+  static_cast<SidebarScrollBar*>(scroll_bar())->Drag(*drag_,IsHorizontal() ? x()+event.x() : y()+event.y(),IsHorizontal() ? event.y() : event.x(),GetSnapBackOnDragOutside());
   return true;
 }
 struct Quad { float x, y, width, height, radius; uint32_t color, textured; float stroke; };
@@ -204,7 +207,7 @@ class Surface final : public SidebarMetal {
     for (const auto& op : ops) signature << '|' << op.x << ',' << op.y << ',' << op.width << ','
         << op.height << ',' << op.clip.x << ',' << op.clip.y << ',' << op.clip.width << ',' << op.clip.height
         << ',' << op.radius << ',' << op.color << ',' << op.font_size << ','
-        << op.stroke << ',' << op.bold << ',' << op.middle << ':' << op.text.size() << ':' << std::string(op.text);
+        << op.stroke << ',' << op.bold << ',' << op.middle << ',' << op.center << ':' << op.text.size() << ':' << std::string(op.text);
     std::string fingerprint = signature.str();
     if (fingerprint == last_frame_ && !view_.hidden) return;
     [CATransaction begin]; [CATransaction setDisableActions:YES];
@@ -258,7 +261,7 @@ class Surface final : public SidebarMetal {
   id<MTLTexture> Text(const sidebar::Primitive& op, double scale) {
     std::ostringstream key;
     key << op.width << ',' << op.height << ',' << op.font_size << ',' << scale << ','
-        << op.color << ',' << op.stroke << ',' << op.bold << ',' << op.middle << ':' << std::string(op.text);
+        << op.color << ',' << op.stroke << ',' << op.bold << ',' << op.middle << ',' << op.center << ':' << std::string(op.text);
     auto found = text_.find(key.str());
     if (found != text_.end()) return found->second.texture;
     const size_t width = std::min(size_t{4096}, size_t(std::ceil(op.width * scale)));
@@ -289,7 +292,7 @@ class Surface final : public SidebarMetal {
     CGFloat ascent = 0, descent = 0;
     CTLineRef draw = truncated ? truncated.get() : line.get();
     CTLineGetTypographicBounds(draw, &ascent, &descent, nullptr);
-    CGContextSetTextPosition(context.get(), 0, (op.height - ascent - descent) / 2 + descent);
+    CGContextSetTextPosition(context.get(), op.center ? std::max(0.0, (op.width-CTLineGetTypographicBounds(draw,nullptr,nullptr,nullptr))/2.0) : 0, (op.height - ascent - descent) / 2 + descent);
     CTLineDraw(draw, context.get());
     MTLTextureDescriptor* descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
         width:width height:height mipmapped:NO];
@@ -313,8 +316,8 @@ class Surface final : public SidebarMetal {
   id<MTLRenderPipelineState> __strong pipeline_;
 };
 }
-std::unique_ptr<views::ScrollBar> CreateSidebarScrollBar(base::RepeatingCallback<bool()> scene_visible) {
-  return std::make_unique<SidebarScrollBar>(std::move(scene_visible));
+std::unique_ptr<views::ScrollBar> CreateSidebarScrollBar(base::RepeatingCallback<bool()> scene_visible, bool horizontal) {
+  return std::make_unique<SidebarScrollBar>(std::move(scene_visible),horizontal);
 }
 SidebarScrollBarSnapshot GetSidebarScrollBarSnapshot(views::ScrollBar* bar) {
   return static_cast<SidebarScrollBar*>(bar)->Snapshot();

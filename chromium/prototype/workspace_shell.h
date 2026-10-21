@@ -322,6 +322,8 @@ class WorkspaceShell final : public ui::EventHandler,
   void UpdateMetalSidebar();
   std::unique_ptr<SidebarMetal> metal_sidebar_;
   bool metal_sidebar_pending_ = false;
+  base::CallbackListSubscription metal_workspace_scroll_subscription_;
+  std::unique_ptr<views::ScrollView::ScopedScrollSynchronizer> metal_workspace_scroll_synchronizer_;
   base::CallbackListSubscription metal_scroll_subscription_;
   std::unique_ptr<views::ScrollView::ScopedScrollSynchronizer> metal_scroll_synchronizer_;
   void RefreshTools();
@@ -511,6 +513,9 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::Label> profile_name_ = nullptr;
   raw_ptr<views::Button> pin_button_ = nullptr;
   std::array<raw_ptr<views::Button>, 3> nav_buttons_ = {};
+  raw_ptr<views::View> sidebar_footer_=nullptr;
+  raw_ptr<views::ScrollView> workspace_scroll_=nullptr;
+  raw_ptr<views::Button> workspace_settings_button_=nullptr;
   raw_ptr<views::View> workspace_dots_ = nullptr;
   std::map<std::string, raw_ptr<views::Button>> workspace_buttons_;
   std::string context_workspace_id_;

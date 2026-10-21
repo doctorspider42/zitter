@@ -22,14 +22,15 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Vertical list/folder columns and full content extent | Rust via native View measurement/bounds adapter | Verify collapse/resize against Views; replace the native hierarchy with stable Rust item identities |
 | Folder hierarchy, collapse state, indentation wrappers and split tile geometry/placement | Rust tree/tab plans keyed by workspace/item IDs; native View/measurement/AX adapters | Replace native node containers and viewport/clipping adapters |
 | Scroll offset normalization, viewport projection and clipping | Rust logical viewport; native ScrollView input/scroll-service adapters | Replace native scroll containers; expand real trackpad/scale coverage |
-| Vertical scrollbar geometry, range normalization, thumb drag/snap/cancellation and drawing | Rust + shared Metal canvas; native ScrollBar/View, key/menu/AX and platform color adapters | Replace native nodes and track-repeat/menu dispatch; horizontal scrollbar, dedicated menu/VoiceOver/scale coverage |
+| Vertical/horizontal scrollbar geometry, range normalization, thumb drag/snap/cancellation and drawing | Rust + shared Metal canvas; native ScrollBar/View, key/menu/AX and platform color adapters | Replace native nodes and track-repeat/menu dispatch; dedicated menu/VoiceOver/scale coverage |
 | Selection, close/reopen, title changes, pinned navigation | Rust row actions into existing application callbacks; native close child and AX action | Migrate close child and remaining command routing; preserve persistence and last-tab rules |
 | Folder expand/collapse and tree visibility; create/rename/delete and nested pins | Rust tree state/layout; application persistence and native menu/editing adapters | Rust editing forms; preserve failed writes and validation rollback |
 | Tab/pin context menus and drag to split | Views event routing + application commands | Rust target/action routing; retain native menus and drop policy |
 | New Tab action and configurable shortcut hint | Rust text/icon/hint layout, width alignment and input; shared Metal surface; native outer placement/focus/AX adapter | Replace the native Button container; expand keyboard/appearance coverage |
 | Address pill | Rust host/path layout, GPU icon/outline/text and shared input reducer; native outer placement/focus/AX adapter | Replace native Button container; retain address/search/IME service |
 | Workspace heading and emoji text | Rust display list + Metal; native static-text accessibility adapter | Replace outer native View placement; expand VoiceOver/scale coverage |
-| Navigation controls, workspace dots/emoji and footer | Views | Rust layout/drawing/events; enabled, selected, hover and keyboard focus states |
+| Footer pin/settings, workspace dots/emoji and horizontal overflow | Rust layout, input reducer and shared Metal canvas; native focus/AX/menu adapters | Replace native containers; expand focus, trackpad, RTL and scale coverage |
+| Navigation/header controls | Views | Rust layout/drawing/events; enabled, selected, hover and keyboard focus states |
 | Sidebar resizing, pinning, auto-hide, edge reveal | Views | Rust interaction state; preserve content bounds and pointer behavior |
 | Workspace swipe/animation/cancellation | Views layers + existing workspace controller | Rust scene transitions without native-painted row snapshots |
 | Split headers/divider, focus, orientation, swap/close | Views + application commands | Rust controls/layout; preserve independent WebContents and pane focus |
@@ -132,6 +133,15 @@ Views-specific layout and control behavior must have an explicit replacement.
   signed app scrolling, selection and AX value updates were inspected. Footer
   and navigation migration remain next. See
   [scrollbar validation](benchmarks/rust-scrollbar-functional-2026-10-22.json).
+
+- Rust now owns footer slot/strip layout, control input, pin/settings icon and
+  workspace dot/emoji drawing. Horizontal overflow uses the shared Rust scrollbar
+  and viewport projection, reserving a separate gutter to preserve emoji height.
+  **38 Metal browser tests, 14 Views controls, 37 Rust tests and 59 Python tests
+  passed**. Signed app workspace/settings/emoji controls were inspected, and the
+  demo state was restored. Native nodes/services remain; navigation is still
+  awaiting migration. See
+  [footer validation](benchmarks/rust-footer-functional-2026-10-22.json).
 
 ## Completion gates
 
