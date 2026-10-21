@@ -391,7 +391,7 @@ BEGIN_METADATA(GlyphButton)
 END_METADATA
 
 // A sidebar tab, a "New tab" action or a palette suggestion.
-class RowButton final : public views::Button {
+class RowButton : public views::Button {
   METADATA_HEADER(RowButton, views::Button)
  public:
   struct Spec {
@@ -405,6 +405,9 @@ class RowButton final : public views::Button {
     bool chip = false;
     bool sidebar_row = false;  // Migrated control: text belongs to the scene.
     base::RepeatingCallback<bool()> scene_visible;  // Chrome control paint gate.
+    bool address = false;
+    bool secure = false;
+    bool blank = false;
     bool tile = false;  // One half of a Split View pair: always a filled card.
     int height = 34;
     PressedCallback close;
@@ -423,14 +426,14 @@ class RowButton final : public views::Button {
     SetTooltipText(spec_.title);
     if (!scene_text_) {
       title_ = Label(this, spec_.title, kInk,
-                     Font(0, spec_.active || spec_.chip ? gfx::Font::Weight::MEDIUM
+                     Font(0, spec_.active || spec_.chip || spec_.address ? gfx::Font::Weight::MEDIUM
                                                         : gfx::Font::Weight::NORMAL));
       title_->SetElideBehavior(gfx::ELIDE_TAIL);
       title_->SetCanProcessEventsWithinSubtree(false);
     }
-    if (!scene_text_ && !spec_.detail.empty()) {
-      detail_ = Label(this, spec_.detail, kMuted, Font(-1));
-      detail_->SetElideBehavior(gfx::ELIDE_MIDDLE);
+    if (!scene_text_ && (spec_.address || !spec_.detail.empty())) {
+      detail_ = Label(this, spec_.detail, kMuted, Font(spec_.address ? 0 : -1));
+      detail_->SetElideBehavior(spec_.address ? gfx::ELIDE_TAIL : gfx::ELIDE_MIDDLE);
       detail_->SetCanProcessEventsWithinSubtree(false);
     }
     if (spec_.close) {
@@ -527,8 +530,8 @@ class RowButton final : public views::Button {
     InvalidateLayout(); SchedulePaint();
   }
   int scene_title_width() const {
-    return spec_.detail.empty() ? 0 : gfx::GetStringWidth(spec_.title,
-        Font(0, spec_.active || spec_.chip ? gfx::Font::Weight::MEDIUM : gfx::Font::Weight::NORMAL));
+    return !spec_.address && spec_.detail.empty() ? 0 : gfx::GetStringWidth(spec_.title,
+        Font(0, spec_.active || spec_.chip || spec_.address ? gfx::Font::Weight::MEDIUM : gfx::Font::Weight::NORMAL));
   }
   void SetTitle(std::u16string title) {
     if (spec_.title == title) return;
@@ -558,9 +561,7 @@ class RowButton final : public views::Button {
   void Layout(PassKey) override {
 #if BUILDFLAG(IS_MAC)
     if (rust_pointer_) {
-      const auto geometry = sidebar::row_layout(width(), height(),
-          title_ ? title_->GetPreferredSize().width() : scene_title_width(),
-          !spec_.detail.empty(), spec_.chip, close_ != nullptr);
+      const auto geometry = SceneGeometry();
       auto rect = [](const sidebar::Rect& r) { return gfx::Rect(r.x, r.y, r.width, r.height); };
       if (title_) title_->SetBoundsRect(rect(geometry.title));
       if (detail_) detail_->SetBoundsRect(rect(geometry.detail));
@@ -568,6 +569,13 @@ class RowButton final : public views::Button {
       return;
     }
 #endif
+    if (spec_.address) {
+      const int available = std::max(0, width() - 46);
+      const int host_width = std::min(title_->GetPreferredSize().width(), available);
+      title_->SetBounds(34, 0, host_width, height());
+      if (detail_) detail_->SetBounds(34 + host_width, 0, available - host_width, height());
+      return;
+    }
     const int lead = spec_.chip ? 52 : 36;
     const int trail = close_ ? 32 : 10;
     const int width = std::max(0, this->width() - lead - trail);
@@ -581,6 +589,23 @@ class RowButton final : public views::Button {
     }
     if (close_) close_->SetBounds(this->width() - 30, (height() - 24) / 2, 24, 24);
   }
+  void SetAddress(std::u16string host, std::u16string path, bool blank, bool secure) {
+    SetTitle(std::move(host)); SetDetail(std::move(path));
+    spec_.blank = blank; spec_.secure = secure;
+    GetViewAccessibility().SetDescription(spec_.title + spec_.detail);
+    if (title_) static_cast<ThemedLabel*>(title_.get())->SetTone(blank ? kMuted : kInk);
+    GetViewAccessibility().SetName(u"Adres strony");
+    SetTooltipText(u"Szukaj lub wpisz adres");
+    InvalidateLayout(); SchedulePaint();
+  }
+#if BUILDFLAG(IS_MAC)
+  sidebar::RowLayout SceneGeometry() const {
+    if (spec_.address) return sidebar::address_layout(width(), height(), scene_title_width());
+    return sidebar::row_layout(width(), height(),
+        title_ ? title_->GetPreferredSize().width() : scene_title_width(),
+        !spec_.detail.empty(), spec_.chip, close_ != nullptr);
+  }
+#endif
   bool has_close_button() const { return close_ != nullptr; }
   bool close_button_visible() const { return close_ && close_->GetVisible(); }
   const Spec& preview_spec() const { return spec_; }
@@ -603,22 +628,28 @@ class RowButton final : public views::Button {
     if (scene_text_) {
       // Used only for GPU fallback and native animation snapshots. Steady Metal
       // frames skip this subtree entirely; no hidden Label measures the title.
-      const auto geometry = sidebar::row_layout(width(), height(), scene_title_width(),
-          !spec_.detail.empty(), spec_.chip, close_ != nullptr);
+      const auto geometry = SceneGeometry();
       const auto& r = geometry.title;
       canvas->DrawStringRectWithFlags(spec_.title,
-          Font(0, spec_.active ? gfx::Font::Weight::MEDIUM : gfx::Font::Weight::NORMAL),
-          Tone(this, kInk), gfx::Rect(r.x, r.y, r.width, r.height), gfx::Canvas::TEXT_ALIGN_LEFT);
+          Font(0, spec_.active || spec_.address ? gfx::Font::Weight::MEDIUM : gfx::Font::Weight::NORMAL),
+          Tone(this, spec_.blank ? kMuted : kInk), gfx::Rect(r.x, r.y, r.width, r.height), gfx::Canvas::TEXT_ALIGN_LEFT);
       if (!spec_.detail.empty()) {
         const auto& d = geometry.detail;
-        canvas->DrawStringRectWithFlags(gfx::ElideText(spec_.detail, Font(-1), d.width, gfx::ELIDE_MIDDLE),
-            Font(-1), Tone(this, kMuted), gfx::Rect(d.x, d.y, d.width, d.height), gfx::Canvas::TEXT_ALIGN_LEFT);
+        canvas->DrawStringRectWithFlags(gfx::ElideText(spec_.detail, Font(spec_.address ? 0 : -1), d.width, spec_.address ? gfx::ELIDE_TAIL : gfx::ELIDE_MIDDLE),
+            Font(spec_.address ? 0 : -1), Tone(this, kMuted), gfx::Rect(d.x, d.y, d.width, d.height), gfx::Canvas::TEXT_ALIGN_LEFT);
       }
     }
 #endif
   }
   static void PaintDecorations(gfx::Canvas* canvas, const gfx::Rect& bounds, const Spec& spec,
                                const views::View* theme, bool hovered) {
+    if (spec.address) {
+      FillRound(canvas, bounds, 10, SkColorSetA(Tone(theme, kCard), hovered ? 0xD9 : 0x99));
+      StrokeRound(canvas, bounds, 10, SkColorSetA(Tone(theme, kInk), 0x0D));
+      PaintIcon(canvas, spec.secure ? vector_icons::kLockIcon : vector_icons::kSearchIcon,
+          gfx::Rect(10, 0, 16, bounds.height()), 14, Tone(theme, kMuted));
+      return;
+    }
     if (spec.tile) {
       FillRound(canvas, bounds, 9, SkColorSetA(Tone(theme, kCard), spec.active ? 0xFF : hovered ? 0x8C : 0x59));
       if (spec.active) StrokeRound(canvas, bounds, 9, SkColorSetA(Tone(theme, kInk), 0x0F));
@@ -724,43 +755,62 @@ BEGIN_METADATA(SplitPair)
 END_METADATA
 
 // The address "pill" at the top of the sidebar; opens the command palette.
-class UrlPill final : public views::Button {
-  METADATA_HEADER(UrlPill, views::Button)
+class UrlPill final : public RowButton {
+  METADATA_HEADER(UrlPill, RowButton)
  public:
-  explicit UrlPill(PressedCallback callback) : views::Button(std::move(callback)) {
+  UrlPill(PressedCallback callback, base::RepeatingCallback<bool()> scene_visible)
+      : RowButton(std::move(callback), MakeSpec(std::move(scene_visible))) {
     GetViewAccessibility().SetName(u"Adres strony");
     SetTooltipText(u"Szukaj lub wpisz adres");
-    host_ = Label(this, u"", kInk, Font(0, gfx::Font::Weight::MEDIUM));
-    path_ = Label(this, u"", kMuted);
-    path_->SetElideBehavior(gfx::ELIDE_TAIL);
-    host_->SetCanProcessEventsWithinSubtree(false);
-    path_->SetCanProcessEventsWithinSubtree(false);
   }
-  views::Label* host() const { return host_; }
-  views::Label* path() const { return path_; }
-  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {
-    return gfx::Size(200, 40);
-  }
-  void StateChanged(ButtonState) override { SchedulePaint(); }
-  void Layout(PassKey) override {
-    const int lead = 34, available = std::max(0, width() - lead - 12);
-    const int host_width = std::min(host_->GetPreferredSize().width(), available);
-    host_->SetBounds(lead, 0, host_width, height());
-    path_->SetBounds(lead + host_width, 0, available - host_width, height());
-  }
-  void PaintButtonContents(gfx::Canvas* canvas) override {
-    const auto bounds = GetLocalBounds();
-    FillRound(canvas, bounds, 10, SkColorSetA(Tone(this, kCard), GetState() == STATE_HOVERED ? 0xD9 : 0x99));
-    StrokeRound(canvas, bounds, 10, SkColorSetA(Tone(this, kInk), 0x0D));
-    PaintIcon(canvas, secure ? vector_icons::kLockIcon : vector_icons::kSearchIcon,
-              gfx::Rect(10, 0, 16, height()), 14, Tone(this, kMuted));
-  }
-  bool secure = false;
  private:
-  raw_ptr<views::Label> host_ = nullptr;
-  raw_ptr<views::Label> path_ = nullptr;
+  static Spec MakeSpec(base::RepeatingCallback<bool()> scene_visible) {
+    Spec spec; spec.address = true; spec.sidebar_row = true; spec.height = 40;
+    spec.scene_visible = std::move(scene_visible); return spec;
+  }
 };
 BEGIN_METADATA(UrlPill)
+END_METADATA
+
+// Scene-owned text with one native static-text accessibility node. The Views
+// backend retains its ordinary Label; Metal never constructs a hidden Label.
+class WorkspaceHeading final : public views::View {
+  METADATA_HEADER(WorkspaceHeading, views::View)
+ public:
+  explicit WorkspaceHeading(base::RepeatingCallback<bool()> visible) : visible_(std::move(visible)) {
+    SetPreferredSize(gfx::Size(200, 24));
+#if BUILDFLAG(IS_MAC)
+    scene_ = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar") == "rust-metal";
+#endif
+    if (scene_) GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);
+    else {
+      SetLayoutManager(std::make_unique<views::FillLayout>());
+      SetBorder(views::CreateEmptyBorder(gfx::Insets::VH(0, 8)));
+      label_ = Label(this, u"", kSubtle, Font(-1, gfx::Font::Weight::SEMIBOLD));
+    }
+    SetText(u"Praca");
+  }
+  void SetText(std::u16string text) {
+    if (text_ == text) return;
+    text_ = std::move(text);
+    if (label_) label_->SetText(text_);
+    else GetViewAccessibility().SetName(text_);
+    SchedulePaint();
+  }
+  const std::u16string& text() const { return text_; }
+  void OnPaint(gfx::Canvas* canvas) override {
+    if (!scene_ || (visible_ && visible_.Run())) return;
+    auto bounds = GetLocalBounds(); bounds.Inset(gfx::Insets::VH(0, 8));
+    canvas->DrawStringRectWithFlags(text_, Font(-1, gfx::Font::Weight::SEMIBOLD),
+        Tone(this, kSubtle), bounds, gfx::Canvas::TEXT_ALIGN_LEFT);
+  }
+ private:
+  bool scene_ = false;
+  std::u16string text_;
+  base::RepeatingCallback<bool()> visible_;
+  raw_ptr<views::Label> label_ = nullptr;
+};
+BEGIN_METADATA(WorkspaceHeading)
 END_METADATA
 
 class EdgeView final : public views::View {
@@ -1272,17 +1322,17 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto* layout = sidebar->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kVertical, gfx::Insets::TLBR(2, 4, 8, 4), 2));
   auto* pill = sidebar->AddChildView(std::make_unique<UrlPill>(
-      base::BindRepeating(&WorkspaceShell::OpenAddress, weak, false)));
+      base::BindRepeating(&WorkspaceShell::OpenAddress, weak, false),
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+        return shell && shell->metal_sidebar_visible();
+      }, weak)));
   url_pill_ = pill;
   pill->set_context_menu_controller(this);
-  url_host_ = pill->host();
-  url_path_ = pill->path();
   Spacer(sidebar.get(), 12);
-  auto* heading = sidebar->AddChildView(std::make_unique<views::View>());
-  heading->SetLayoutManager(std::make_unique<views::FillLayout>());
-  heading->SetBorder(views::CreateEmptyBorder(gfx::Insets::VH(0, 8)));
-  heading->SetPreferredSize(gfx::Size(200, 24));
-  workspace_name_ = Label(heading, u"Praca", kSubtle, Font(-1, gfx::Font::Weight::SEMIBOLD));
+  workspace_name_ = sidebar->AddChildView(std::make_unique<WorkspaceHeading>(
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+        return shell && shell->metal_sidebar_visible();
+      }, weak)));
 #if BUILDFLAG(IS_MAC)
   const auto* new_tab_hint = u"⌘T";
 #else
@@ -2057,8 +2107,6 @@ void WorkspaceShell::Detach() {
   suggestion_list_ = nullptr;
   suggestion_scroll_ = nullptr;
   url_pill_ = nullptr;
-  url_host_ = nullptr;
-  url_path_ = nullptr;
   workspace_name_ = nullptr;
   profile_name_ = nullptr;
   settings_title_ = nullptr;
@@ -2172,13 +2220,10 @@ void WorkspaceShell::Update(ShellState state) {
   settings_title_->SetText(creating_workspace_ ? u"Nowa przestrzeń" : state_.workspace_name);
   profile_name_->SetText(u"Chromium: " + state_.profile_name);
   const bool blank = !state_.url.is_valid() || state_.url.path() == "/start.html";
-  url_host_->SetText(blank ? u"Szukaj lub wpisz adres" : HostLabel(state_.url));
-  static_cast<ThemedLabel*>(url_host_.get())->SetTone(blank ? kMuted : kInk);
   const std::string path = state_.url.path() == "/" ? std::string() : std::string(state_.url.path());
-  url_path_->SetText(blank ? u"" : base::UTF8ToUTF16(path));
-  static_cast<UrlPill*>(url_pill_.get())->secure = !blank && state_.url.SchemeIs("https");
-  url_pill_->InvalidateLayout();
-  url_pill_->SchedulePaint();
+  static_cast<UrlPill*>(url_pill_.get())->SetAddress(
+      blank ? u"Szukaj lub wpisz adres" : HostLabel(state_.url),
+      blank ? u"" : base::UTF8ToUTF16(path), blank, !blank && state_.url.SchemeIs("https"));
   for (bool right : {false, true}) {
     std::u16string title;
     for (const auto& tab : state_.tabs) if (state_.split_tabs[right] == tab.index) title = tab.title;
@@ -2387,7 +2432,7 @@ void WorkspaceShell::UpdateMetalSidebar() {
   const bool was_visible = metal_sidebar_->visible();
   if (!sidebar_visible() || swipe_overlay_ || workspace_animation_running()) {
     metal_sidebar_->Hide();
-    if (was_visible) { tab_list_->SchedulePaint(); new_tab_button_->SchedulePaint(); }
+    if (was_visible) { tab_list_->SchedulePaint(); new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); }
     return;
   }
   // Invalidations can reach Metal before the next native compositor paint.
@@ -2395,13 +2440,17 @@ void WorkspaceShell::UpdateMetalSidebar() {
   sidebar_widget_->LayoutRootViewIfNecessary();
   auto* viewport = tab_list_->parent();
   const auto list_bounds = viewport->GetBoundsInScreen();
-  const auto row_frame = new_tab_button_->GetMirroredBounds();
   const auto viewport_frame = views::View::ConvertRectToTarget(viewport, sidebar_root_, viewport->GetLocalBounds());
-  const auto aligned = sidebar::action_frame(
-      {row_frame.x(), row_frame.y(), row_frame.width(), row_frame.height()},
-      {viewport_frame.x(), viewport_frame.y(), viewport_frame.width(), viewport_frame.height()});
-  new_tab_button_->SetBoundsRect(sidebar_root_->GetMirroredRect(gfx::Rect(aligned.x, aligned.y, aligned.width, aligned.height)));
+  for (auto* control : {url_pill_.get(), static_cast<views::Button*>(new_tab_button_.get())}) {
+    const auto r = control->GetMirroredBounds();
+    const auto a = sidebar::action_frame({r.x(), r.y(), r.width(), r.height()},
+        {viewport_frame.x(), viewport_frame.y(), viewport_frame.width(), viewport_frame.height()});
+    control->SetBoundsRect(sidebar_root_->GetMirroredRect(gfx::Rect(a.x, a.y, a.width, a.height)));
+  }
+  workspace_name_->SetBoundsRect(sidebar_root_->GetMirroredRect(gfx::Rect(
+      viewport_frame.x(), workspace_name_->y(), viewport_frame.width(), workspace_name_->height())));
   auto bounds = list_bounds;
+  if (url_pill_->IsDrawn()) bounds.Union(url_pill_->GetBoundsInScreen());
   if (new_tab_button_->IsDrawn()) bounds.Union(new_tab_button_->GetBoundsInScreen());
   const gfx::Vector2dF list_origin(list_bounds.x() - bounds.x(), list_bounds.y() - bounds.y());
   std::vector<SidebarViewportNode> nodes;
@@ -2460,19 +2509,30 @@ void WorkspaceShell::UpdateMetalSidebar() {
       items.push_back(std::move(item));
     }
   }
-  if (new_tab_button_->IsDrawn()) {
-    auto* row = static_cast<RowButton*>(new_tab_button_.get());
+  for (auto* control : {url_pill_.get(), static_cast<views::Button*>(new_tab_button_.get())}) {
+    if (!control->IsDrawn()) continue;
+    auto* row = static_cast<RowButton*>(control);
     const auto& spec = row->preview_spec();
     auto rect = row->GetBoundsInScreen(); rect.Offset(-bounds.x(), -bounds.y());
     sidebar::Item item{};
     item.x=rect.x(); item.y=rect.y(); item.width=rect.width(); item.height=rect.height();
     item.clip={float(rect.x()), float(rect.y()), float(rect.width()), float(rect.height())};
-    item.kind=3; item.title=base::UTF16ToUTF8(spec.title); item.detail=base::UTF16ToUTF8(spec.detail);
+    item.kind=spec.address ? 4 : 3; item.title=base::UTF16ToUTF8(spec.title); item.detail=base::UTF16ToUTF8(spec.detail);
     item.title_width=row->scene_title_width(); item.font_size=Font(0).GetFontSize();
-    item.detail_font_size=Font(-1).GetFontSize(); item.detail_ink=Tone(row,kMuted);
-    item.ink=Tone(row,row->GetEnabledInViewsSubtree() ? kInk : kMuted); item.badge=Tone(row,kSubtle);
+    item.detail_font_size=Font(spec.address ? 0 : -1).GetFontSize(); item.detail_ink=Tone(row,kMuted);
+    item.ink=Tone(row,row->GetEnabledInViewsSubtree() && !spec.blank ? kInk : kMuted); item.badge=Tone(row,spec.address ? kMuted : kSubtle);
+    item.active=spec.secure;
     item.hovered=row->GetState()==views::Button::STATE_HOVERED || row->GetState()==views::Button::STATE_PRESSED;
-    item.fill=item.hovered ? HoverWash(row) : SK_ColorTRANSPARENT; item.focused=row->HasFocus();
+    item.fill=spec.address ? SkColorSetA(Tone(row,kCard), item.hovered ? 0xD9 : 0x99) : item.hovered ? HoverWash(row) : SK_ColorTRANSPARENT; item.focused=row->HasFocus();
+    items.push_back(std::move(item));
+  }
+  if (workspace_name_->IsDrawn()) {
+    auto rect = workspace_name_->GetBoundsInScreen(); rect.Offset(-bounds.x(), -bounds.y());
+    sidebar::Item item{}; item.kind=5;
+    item.x=rect.x(); item.y=rect.y(); item.width=rect.width(); item.height=rect.height();
+    item.clip={float(rect.x()),float(rect.y()),float(rect.width()),float(rect.height())};
+    item.title=base::UTF16ToUTF8(static_cast<WorkspaceHeading*>(workspace_name_.get())->text());
+    item.ink=Tone(workspace_name_,kSubtle); item.font_size=Font(-1).GetFontSize();
     items.push_back(std::move(item));
   }
   const SkColor tint = FrameTint(workspace_color(state_.workspace_id), root_);
@@ -2480,10 +2540,10 @@ void WorkspaceShell::UpdateMetalSidebar() {
   // The initial native paint record can contain fallback text. Re-record it
   // once when GPU presentation takes ownership, then the control paint gate
   // keeps it empty until fallback is needed again.
-  if (!was_visible && metal_sidebar_->visible()) new_tab_button_->SchedulePaint();
+  if (!was_visible && metal_sidebar_->visible()) { new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); }
   // A failed drawable must expose freshly painted fallback content, even if
   // the last native paint was skipped while Metal still had a visible frame.
-  if (was_visible && !metal_sidebar_->visible()) { tab_list_->SchedulePaint(); new_tab_button_->SchedulePaint(); }
+  if (was_visible && !metal_sidebar_->visible()) { tab_list_->SchedulePaint(); new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); }
 #endif
 }
 
@@ -2549,7 +2609,10 @@ size_t WorkspaceShell::workspace_swipe_preview_count() const {
   return swipe_overlay_ ? static_cast<WorkspaceSwipePreview*>(swipe_overlay_.get())->page_count() : 0;
 }
 void WorkspaceShell::UpdateWorkspaceSwipePreview() {
-  if (metal_sidebar_) metal_sidebar_->Hide();
+  if (metal_sidebar_ && metal_sidebar_->visible()) {
+    metal_sidebar_->Hide();
+    new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint();
+  }
   if (!swipe_overlay_) {
     StopWorkspaceAnimation();
     auto capture = base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, int index) -> cc::PaintRecord {
@@ -2659,7 +2722,7 @@ void WorkspaceShell::UpdateWorkspaceSwipePreview() {
   if (previous_center == nearest) return;
   const auto& workspace = state_.workspaces[nearest];
   const auto emoji = workspace_emoji(workspace.id);
-  workspace_name_->SetText((emoji.empty() ? u"" : emoji + u"  ") + base::UTF8ToUTF16(workspace.name));
+  static_cast<WorkspaceHeading*>(workspace_name_.get())->SetText((emoji.empty() ? u"" : emoji + u"  ") + base::UTF8ToUTF16(workspace.name));
   for (const auto& [id, button] : workspace_buttons_)
     static_cast<GlyphButton*>(button.get())->set_on(id == workspace.id);
 }
@@ -3313,7 +3376,7 @@ void WorkspaceShell::AnimateWorkspaceSwitch(std::string_view previous) {
   if (metal_sidebar_) {
     metal_sidebar_->Hide();
     tab_list_->SchedulePaint();  // Refresh cached native contents before animating.
-    new_tab_button_->SchedulePaint();
+    new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint();
   }
   tab_scroll_->SetPaintToLayer();
   tab_scroll_->layer()->SetFillsBoundsOpaquely(false);
@@ -4189,11 +4252,11 @@ void WorkspaceShell::RefreshWorkspaceHeading() {
     const auto index = std::clamp(static_cast<int>(std::round(swipe_position_)), 0, static_cast<int>(state_.workspaces.size()) - 1);
     const auto& workspace = state_.workspaces[index];
     const auto emoji = workspace_emoji(workspace.id);
-    workspace_name_->SetText((emoji.empty() ? u"" : emoji + u"  ") + base::UTF8ToUTF16(workspace.name));
+    static_cast<WorkspaceHeading*>(workspace_name_.get())->SetText((emoji.empty() ? u"" : emoji + u"  ") + base::UTF8ToUTF16(workspace.name));
     return;
   }
   const auto emoji = workspace_emoji(state_.workspace_id);
-  workspace_name_->SetText(emoji.empty() ? state_.workspace_name : emoji + u"  " + state_.workspace_name);
+  static_cast<WorkspaceHeading*>(workspace_name_.get())->SetText(emoji.empty() ? state_.workspace_name : emoji + u"  " + state_.workspace_name);
 }
 void WorkspaceShell::SetWorkspaceEmoji(std::string_view id, std::u16string text) {
   // Keep a single grapheme: a typed "🚀abc" or a pasted sentence stores 🚀.

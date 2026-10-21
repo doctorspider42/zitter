@@ -507,9 +507,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> suggestion_list_ = nullptr;
   raw_ptr<views::ScrollView> suggestion_scroll_ = nullptr;
   raw_ptr<views::Button> url_pill_ = nullptr;
-  raw_ptr<views::Label> url_host_ = nullptr;
-  raw_ptr<views::Label> url_path_ = nullptr;
-  raw_ptr<views::Label> workspace_name_ = nullptr;
+  raw_ptr<views::View> workspace_name_ = nullptr;
   raw_ptr<views::Label> profile_name_ = nullptr;
   raw_ptr<views::Button> pin_button_ = nullptr;
   std::array<raw_ptr<views::Button>, 3> nav_buttons_ = {};

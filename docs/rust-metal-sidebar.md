@@ -210,8 +210,8 @@ Labels, so changed key bindings reach the GPU scene. Native painting is gated
 while Metal is visible; the initial fallback record is invalidated when GPU
 ownership begins, and hide/animation/drawable failure requests a fresh native
 fallback with title and shortcut. Outer paint invalidations coalesce scene
-updates without depending on native rasterization. Other outer controls remain
-native, including the address pill, workspace heading and footer.
+updates without depending on native rasterization. At that milestone the address
+pill, workspace heading and footer still used native rendering.
 
 Validated for New Tab on 2026-10-22: **35/35 Metal browser regressions, 10/10 Views
 controls, 29/29 Rust tests and 59/59 Python tests passed**. The local package was
@@ -219,3 +219,28 @@ verified and exercised with create/close/scroll. It used the configured permanen
 certificate without a trusted timestamp after the Apple timestamp service failed;
 default packaging remains unchanged. This is a development artifact. See
 [New Tab validation](benchmarks/rust-new-tab-functional-2026-10-22.json).
+
+The address/heading migration extends the same canvas to the address pill. Rust
+aligns fixed control widths with the list viewport, keeping the scrollbar gutter
+outside the opaque layer. The address button now inherits the shared Rust input
+reducer. It creates no host/path Labels in Metal mode: native font metrics feed
+Rust adjacent host/path layout, CoreText shapes the bold host and tail-elided
+path, and analytic GPU strokes draw the pill outline and search/lock icon. Stroke
+width uses the existing 32-byte quad ABI and participates in frame fingerprints.
+
+The heading stores text directly and exposes one native static-text accessibility
+node; its inset bold Unicode/emoji text belongs to the scene. The address button
+retains its accessible name/action and explicitly describes the displayed host
+and path. The Views backend retains native Labels. Fixed fallback records are
+refreshed when Metal yields to animations, swipe previews or drawable failure.
+Native outer placement, Button/View containers, panel focus policy and address
+editing/search/IME remain adapters, with no new third-party dependency.
+
+Validated on 2026-10-22: **36/36 Metal browser regressions, 14/14 Views controls,
+32/32 Rust tests and 59/59 Python tests passed**. Tests cover actual pointer
+activation, native main-window Cmd+L, HTTPS content, accessibility description,
+width limits, dark/light scene updates and workspace/emoji round trips. Manual
+inspection used the matching signed, timestamped prototype; normal packaging
+succeeded after Apple's timestamp service recovered. These are functional
+results, not a CPU/GPU/presentation performance comparison. See
+[address/heading validation](benchmarks/rust-address-heading-functional-2026-10-22.json).

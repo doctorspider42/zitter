@@ -35,7 +35,7 @@ class SidebarScrollBar final : public views::CocoaScrollBar {
   SidebarScrollBar() : views::CocoaScrollBar(views::ScrollBar::Orientation::kVertical) {}
   bool OverlapsContent() const override { return false; }
 };
-struct Quad { float x, y, width, height, radius; uint32_t color, textured, pad; };
+struct Quad { float x, y, width, height, radius; uint32_t color, textured; float stroke; };
 static_assert(sizeof(Quad) == 32);
 struct TextTile { id<MTLTexture> __strong texture; size_t bytes; };
 class Surface final : public SidebarMetal {
@@ -118,7 +118,7 @@ class Surface final : public SidebarMetal {
     for (const auto& op : ops) signature << '|' << op.x << ',' << op.y << ',' << op.width << ','
         << op.height << ',' << op.clip.x << ',' << op.clip.y << ',' << op.clip.width << ',' << op.clip.height
         << ',' << op.radius << ',' << op.color << ',' << op.font_size << ','
-        << op.bold << ',' << op.middle << ':' << op.text.size() << ':' << std::string(op.text);
+        << op.stroke << ',' << op.bold << ',' << op.middle << ':' << op.text.size() << ':' << std::string(op.text);
     std::string fingerprint = signature.str();
     if (fingerprint == last_frame_ && !view_.hidden) return;
     [CATransaction begin]; [CATransaction setDisableActions:YES];
@@ -159,7 +159,7 @@ class Surface final : public SidebarMetal {
         if (!texture) continue;
         [encoder setFragmentTexture:texture atIndex:0];
       }
-      Quad q{op.x, op.y, op.width, op.height, op.radius, op.color, text ? 1u : 0u, 0};
+      Quad q{op.x, op.y, op.width, op.height, op.radius, op.color, text ? 1u : 0u, op.stroke};
       [encoder setVertexBytes:&q length:sizeof(q) atIndex:0];
       [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:6];
     }
@@ -172,7 +172,7 @@ class Surface final : public SidebarMetal {
   id<MTLTexture> Text(const sidebar::Primitive& op, double scale) {
     std::ostringstream key;
     key << op.width << ',' << op.height << ',' << op.font_size << ',' << scale << ','
-        << op.color << ',' << op.bold << ',' << op.middle << ':' << std::string(op.text);
+        << op.color << ',' << op.stroke << ',' << op.bold << ',' << op.middle << ':' << std::string(op.text);
     auto found = text_.find(key.str());
     if (found != text_.end()) return found->second.texture;
     const size_t width = std::min(size_t{4096}, size_t(std::ceil(op.width * scale)));

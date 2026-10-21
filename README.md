@@ -650,7 +650,8 @@ use scene text without hidden Views Labels, and skip native subtree painting
 while Metal is visible. Rust owns folder hierarchy/collapse state, tab grouping
 and pinned-pair placement, split tile/folder geometry and viewport projection/
 clipping. The same Metal surface draws New Tab and its configurable shortcut
-hint without native Labels. Model updates refresh the scene independently of
+hint, the address host/path with GPU icons and the workspace heading without
+native text Labels. Model updates refresh the scene independently of
 native painting. Rust also owns row
 click/drag/cancellation and platform key activation through native event, focus
 and accessibility adapters. See

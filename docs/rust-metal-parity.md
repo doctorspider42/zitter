@@ -26,7 +26,8 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Folder expand/collapse and tree visibility; create/rename/delete and nested pins | Rust tree state/layout; application persistence and native menu/editing adapters | Rust editing forms; preserve failed writes and validation rollback |
 | Tab/pin context menus and drag to split | Views event routing + application commands | Rust target/action routing; retain native menus and drop policy |
 | New Tab action and configurable shortcut hint | Rust text/icon/hint layout, width alignment and input; shared Metal surface; native outer placement/focus/AX adapter | Replace the native Button container; expand keyboard/appearance coverage |
-| Address pill | Views | Rust layout/drawing/events; retain the existing address/search/IME service |
+| Address pill | Rust host/path layout, GPU icon/outline/text and shared input reducer; native outer placement/focus/AX adapter | Replace native Button container; retain address/search/IME service |
+| Workspace heading and emoji text | Rust display list + Metal; native static-text accessibility adapter | Replace outer native View placement; expand VoiceOver/scale coverage |
 | Navigation controls, workspace dots/emoji and footer | Views | Rust layout/drawing/events; enabled, selected, hover and keyboard focus states |
 | Sidebar resizing, pinning, auto-hide, edge reveal | Views | Rust interaction state; preserve content bounds and pointer behavior |
 | Workspace swipe/animation/cancellation | Views layers + existing workspace controller | Rust scene transitions without native-painted row snapshots |
@@ -112,6 +113,15 @@ Views-specific layout and control behavior must have an explicit replacement.
   timestamp was omitted after a remote service outage, with the same certificate
   and unchanged default packaging. See
   [New Tab validation](benchmarks/rust-new-tab-functional-2026-10-22.json).
+
+- Address host/path, analytic search/lock icon and workspace heading now belong
+  to Rust on the existing Metal canvas, without hidden text Labels. The address
+  action uses the shared Rust reducer and exposes its displayed text through a
+  native accessibility description. Native outer placement, system adapters and
+  editing remain. **36 Metal browser tests, 14 Views controls, 32 Rust tests and
+  59 Python tests passed**. The signed, timestamped app passed address/keyboard
+  and workspace round-trip inspection. See
+  [address/heading validation](benchmarks/rust-address-heading-functional-2026-10-22.json).
 
 ## Completion gates
 

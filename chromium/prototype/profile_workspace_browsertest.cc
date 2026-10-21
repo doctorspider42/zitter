@@ -3928,7 +3928,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NewTabActionUsesSceneTextA
   }));
   const auto canvas = shell->metal_sidebar_screen_bounds_for_testing();
   const auto viewport = shell->tab_list_view()->parent()->GetBoundsInScreen();
-  EXPECT_EQ(action->GetBoundsInScreen().origin(), canvas.origin());
+  EXPECT_EQ(SidebarNamedButton(shell->sidebar_view(), u"Adres strony")->GetBoundsInScreen().origin(), canvas.origin());
   EXPECT_EQ(viewport.width(), action->width()); EXPECT_EQ(viewport.width(), canvas.width());
   EXPECT_EQ(viewport.bottom(), canvas.bottom());
   auto paint_action = [&] {
@@ -3976,6 +3976,91 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NewTabActionUsesSceneTextA
   ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(window_->widget()->GetNativeWindow(), ui::VKEY_U, false, true, false, true));
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->address_visible(); }));
   EXPECT_TRUE(shell->address_input()->GetText().empty()); EXPECT_EQ(30u, window_->tab_count("work"));
+}
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, AddressAndWorkspaceHeadingOwnSceneText) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->SetWorkspaceAnimations(false); shell->SetWorkspaceEmoji("work", u"🚀");
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html?address-scene");
+  ASSERT_TRUE(window_->NavigateFromBar(url, false));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  shell->CloseOverlays(true); shell->SetPinned(true); shell->ShowSidebar();
+  auto* pill = SidebarNamedButton(shell->sidebar_view(), u"Adres strony");
+  ASSERT_TRUE(pill);
+  auto no_labels = [&](auto&& self, views::View* view) -> void {
+    EXPECT_FALSE(views::AsViewClass<views::Label>(view));
+    for (const auto& child : view->children()) self(self, child.get());
+  };
+  no_labels(no_labels, pill);  // Button may install a native focus-ring child.
+  ui::AXNodeData accessible; pill->GetViewAccessibility().GetAccessibleNodeData(&accessible);
+  EXPECT_EQ(u"127.0.0.1/storage_probe.html", accessible.GetString16Attribute(ax::mojom::StringAttribute::kDescription));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return shell->metal_sidebar_visible() &&
+        shell->metal_sidebar_contains_text_for_testing("/storage_probe.html") &&
+        shell->metal_sidebar_contains_text_for_testing("🚀  Praca");
+  }));
+  for (int width : {200, 480}) {
+    shell->ResizeSidebar(width - shell->sidebar_width(), true);
+    ASSERT_TRUE(base::test::RunUntil([&] {
+      return shell->metal_sidebar_screen_bounds_for_testing().width() == pill->width();
+    }));
+    EXPECT_EQ(pill->GetBoundsInScreen().origin(), shell->metal_sidebar_screen_bounds_for_testing().origin());
+    EXPECT_EQ(shell->tab_list_view()->parent()->width(), pill->width());
+  }
+  for (auto theme : {ThemeMode::kDark, ThemeMode::kLight}) {
+    const auto before = shell->metal_sidebar_frame_count();
+    shell->SetThemeMode(theme);
+    ASSERT_TRUE(base::test::RunUntil([&] {
+      return shell->metal_sidebar_frame_count() > before &&
+          shell->metal_sidebar_contains_text_for_testing("/storage_probe.html");
+    }));
+  }
+  auto native_ink = [&] {
+    const auto saved = pill->bounds(); pill->SetBoundsRect(gfx::Rect(pill->size())); pill->SchedulePaint();
+    const auto bitmap = views::test::PaintViewToBitmap(pill); pill->SetBoundsRect(saved);
+    for (int y=0; y<bitmap.height(); ++y) for (int x=0; x<bitmap.width(); ++x)
+      if (bitmap.getColor(x,y) != SK_ColorRED) return true;
+    return false;
+  };
+  EXPECT_FALSE(native_ink()); shell->sidebar_widget()->Hide();
+  EXPECT_FALSE(shell->metal_sidebar_visible()); EXPECT_TRUE(native_ink());
+  shell->ShowSidebar();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible(); }));
+  ui_controls::EnableUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  const auto point = pill->GetBoundsInScreen().CenterPoint();
+  base::test::TestFuture<void> moved;
+  ASSERT_TRUE(ui_controls::SendMouseMoveNotifyWhenDone(point.x(), point.y(), moved.GetCallback(), shell->sidebar_widget()->GetNativeWindow()));
+  ASSERT_TRUE(moved.Wait()); base::test::TestFuture<void> clicked;
+  ASSERT_TRUE(ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT, ui_controls::DOWN | ui_controls::UP,
+      clicked.GetCallback(), ui_controls::kNoAccelerator, shell->sidebar_widget()->GetNativeWindow()));
+  ASSERT_TRUE(clicked.Wait()); ASSERT_TRUE(base::test::RunUntil([&] { return shell->address_visible(); }));
+  EXPECT_EQ(base::UTF8ToUTF16(url.spec()), shell->address_input()->GetText());
+  shell->CloseOverlays(true);
+  // The sidebar is intentionally a nonactivating native panel, as in Views.
+  // Keyboard entry uses the existing main-window shortcut, not panel focus.
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(window_->widget()->GetNativeWindow(), ui::VKEY_L, false, false, false, true));
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->address_visible(); }));
+  EXPECT_EQ(base::UTF8ToUTF16(url.spec()), shell->address_input()->GetText());
+  shell->CloseOverlays(true);
+  content::URLLoaderInterceptor secure_interceptor(base::BindRepeating(
+      [](content::URLLoaderInterceptor::RequestParams* params) {
+        if (params->url_request.url.host() != "address-scene.test") return false;
+        content::URLLoaderInterceptor::WriteResponse("HTTP/1.1 200 OK\nContent-Type: text/html\n\n",
+            "<!doctype html><title>Secure scene</title>", params->client.get());
+        return true;
+      }));
+  ASSERT_TRUE(window_->NavigateFromBar(GURL("https://address-scene.test/secure/path"), false));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return shell->metal_sidebar_contains_text_for_testing("address-scene.test") &&
+        shell->metal_sidebar_contains_text_for_testing("/secure/path");
+  }));
+  // Changing both the workspace and its emoji must update the fixed heading.
+  ASSERT_TRUE(window_->Select("personal")); shell->SetWorkspaceEmoji("personal", u"🏠"); shell->ShowSidebar();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_contains_text_for_testing("🏠  Prywatne"); }));
+  ASSERT_TRUE(window_->Select("work")); shell->ShowSidebar();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_contains_text_for_testing("🚀  Praca"); }));
 }
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, RealTabViewportScrolls) {
   auto* shell = window_->shell();

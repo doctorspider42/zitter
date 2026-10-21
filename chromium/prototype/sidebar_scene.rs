@@ -9,7 +9,7 @@ mod ffi {
     struct ViewportProjection { x: f32, y: f32, nodes: Vec<ProjectedNode> }
     struct Item {
         x: f32, y: f32, width: f32, height: f32,
-        // 0: row, 1: section label, 2: split group background, 3: New Tab action.
+        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading.
         kind: u32,
         title: String, monogram: String, detail: String,
         title_width: f32, detail_ink: u32, detail_font_size: f32,
@@ -34,7 +34,7 @@ mod ffi {
     struct ColumnLayout { width: i32, height: i32, children: Vec<Rect> }
     struct Primitive {
         x: f32, y: f32, width: f32, height: f32,
-        radius: f32, color: u32,
+        radius: f32, color: u32, stroke: f32,
         text: String, font_size: f32, bold: bool, middle: bool, clip: FloatRect,
     }
     extern "Rust" {
@@ -70,6 +70,7 @@ mod ffi {
         fn folder_indent(depth: i32) -> i32;
         fn close_visible(active: bool, tile: bool, hovered: bool) -> bool;
         fn action_frame(row: Rect, viewport: Rect) -> Rect;
+        fn address_layout(width: i32, height: i32, host_width: i32) -> RowLayout;
         fn row_layout(width: i32, height: i32, title_width: i32,
                       detail: bool, chip: bool, close: bool) -> RowLayout;
         fn layout(items: &[Item]) -> Vec<Primitive>;
@@ -354,6 +355,18 @@ fn row_layout(width: i32, height: i32, title_width: i32,
     }
 }
 
+fn address_layout(width: i32, height: i32, host_width: i32) -> ffi::RowLayout {
+    let width = width.max(0); let height = height.max(0);
+    let available = (width - 46).max(0);
+    let host = host_width.clamp(0, available);
+    ffi::RowLayout {
+        title: ffi::Rect {x: 34, y: 0, width: host, height},
+        detail: ffi::Rect {x: 34 + host, y: 0, width: available - host, height},
+        close: ffi::Rect {x: 0, y: 0, width: 0, height: 0},
+    }
+}
+
+
 fn cycle_tab(current: usize, count: usize, backwards: bool) -> usize {
     if count == 0 { return 0; }
     let current = current.min(count - 1);
@@ -367,15 +380,61 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
             || i.width <= 0.0 || i.height <= 0.0
             || ![i.clip.x, i.clip.y, i.clip.width, i.clip.height].iter().all(|v| v.is_finite())
             || i.clip.width <= 0.0 || i.clip.height <= 0.0 { continue; }
+        let first_primitive = out.len();
         let mut emit = |x, y, w: f32, h: f32, radius, color, text: &str, size, bold| {
             if w > 0.0 && h > 0.0 {
                 out.push(ffi::Primitive { x, y, width: w, height: h, radius,
-                    color, text: text.into(), font_size: size, bold, middle: false,
+                    color, stroke: 0.0, text: text.into(), font_size: size, bold, middle: false,
                     clip: ffi::FloatRect {x: i.clip.x, y: i.clip.y, width: i.clip.width, height: i.clip.height} });
             }
         };
         if i.kind == 1 {
             emit(i.x, i.y, i.width, i.height, 0.0, i.ink, &i.title, i.font_size, false);
+            continue;
+        }
+        if i.kind == 5 {
+            emit(i.x + 8.0, i.y, (i.width - 16.0).max(0.0), i.height,
+                0.0, i.ink, &i.title, i.font_size, true);
+            continue;
+        }
+        if i.kind == 4 {
+            // A filled rounded pill and inset outline. Ring and lock strokes
+            // remain analytic GPU geometry; they need no icon/font dependency.
+            emit(i.x, i.y, i.width, i.height, 10.0, i.fill, "", 0.0, false);
+            let g = address_layout(i.width as i32, i.height as i32, i.title_width as i32);
+            let cy = i.y + i.height / 2.0;
+            let rings = [(i.x + 0.5, 1.0), (i.x + if i.active {14.0} else {12.0}, 1.5)];
+            emit(i.x + 0.5, i.y + 0.5, i.width - 1.0, i.height - 1.0,
+                9.5, (i.ink & 0x00ffffff) | 0x0d000000, "", 0.0, false);
+            if i.active {
+                emit(i.x + 14.0, cy - 7.0, 8.0, 10.0, 4.0, i.badge, "", 0.0, false);
+                emit(i.x + 12.0, cy - 1.0, 12.0, 8.0, 1.5, i.badge, "", 0.0, false);
+            } else {
+                emit(i.x + 12.0, cy - 6.0, 10.0, 10.0, 5.0, i.badge, "", 0.0, false);
+                for n in 0..4 {
+                    emit(i.x + 20.0 + n as f32, cy + 2.0 + n as f32, 2.0, 2.0,
+                        1.0, i.badge, "", 0.0, false);
+                }
+            }
+            if i.focused {
+                emit(i.x + 2.0, i.y + i.height - 3.0, (i.width - 4.0).max(0.0), 2.0,
+                    1.0, i.ink, "", 0.0, false);
+            }
+            emit(i.x + g.title.x as f32, i.y, g.title.width as f32, i.height,
+                0.0, i.ink, &i.title, i.font_size, true);
+            if !i.detail.is_empty() {
+                emit(i.x + g.detail.x as f32, i.y, g.detail.width as f32, i.height,
+                    0.0, i.detail_ink, &i.detail, i.detail_font_size, false);
+            }
+            // No more emissions borrow out: attach analytic inset strokes.
+            // Only the outline and icon ring are stroked; body/text stay filled.
+            for p in out[first_primitive..].iter_mut() {
+                if p.text.is_empty() {
+                    if let Some((_, stroke)) = rings.iter().find(|(x, _)| *x == p.x) {
+                        p.stroke = *stroke;
+                    }
+                }
+            }
             continue;
         }
         if i.fill >> 24 != 0 {
@@ -488,6 +547,37 @@ mod tests {
             assert!(!ops.iter().any(|p| p.middle));
             assert!(ops.iter().all(|p| p.width > 0.0 && p.height > 0.0));
         }
+    }
+    #[test] fn address_preserves_host_before_path_and_clamps_narrow_widths() {
+        for width in [0, 30, 46, 200, 480] {
+            let g = address_layout(width, 40, 85);
+            assert_eq!(g.title.x, 34);
+            assert_eq!(g.detail.x, g.title.x + g.title.width);
+            assert_eq!(g.title.width + g.detail.width, (width - 46).max(0));
+            assert_eq!(g.close.width, 0);
+        }
+    }
+    #[test] fn address_keeps_secure_and_search_icons_and_tail_elision() {
+        for secure in [false, true] {
+            let mut item = row(240.0); item.kind = 4; item.active = secure;
+            item.title = "example.org".into(); item.detail = "/日本語/path".into();
+            item.title_width = 85.0; item.focused = true;
+            let ops = layout(&[item]);
+            let host = ops.iter().find(|p| p.text == "example.org").unwrap();
+            let path = ops.iter().find(|p| p.text == "/日本語/path").unwrap();
+            assert_eq!(host.x + host.width, path.x);
+            assert!(host.bold && !path.bold && !path.middle);
+            assert!(ops.iter().filter(|p| p.stroke > 0.0).count() == 2);
+            assert_eq!(ops.iter().any(|p| p.width == 12.0 && p.height == 8.0), secure);
+            assert!(ops.iter().all(|p| p.clip.width == 240.0));
+            assert!(!ops.iter().any(|p| p.text == "×" || p.text == "Z"));
+        }
+    }
+    #[test] fn workspace_heading_uses_inset_bold_unicode_without_badge() {
+        let mut item = row(200.0); item.kind = 5; item.title = "🚀 Praca 日本語".into();
+        let ops = layout(&[item]); assert_eq!(ops.len(), 1);
+        assert_eq!((ops[0].x, ops[0].width), (8.0, 184.0));
+        assert!(ops[0].bold); assert_eq!(ops[0].text, "🚀 Praca 日本語");
     }
     fn viewport_node(parent: usize, x: f32, y: f32, width: f32, height: f32, visible: bool) -> ffi::ViewportNode {
         ffi::ViewportNode {parent, bounds: ffi::FloatRect {x, y, width, height}, visible}
