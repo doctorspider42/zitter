@@ -104,13 +104,21 @@ class Sidebar final : public views::View {
       } else {
         // Invalidate both old and new bounds. Unchanged rows keep their raster
         // tiles; removed/moved primitives are cleared by the scene background.
+        gfx::Rect header_damage, body_damage;
+        const auto damage = [&](const gfx::Rect& bounds) {
+          (bounds.y() < 64 ? header_damage : body_damage).Union(bounds);
+        };
         for (size_t i = 0; i < std::max(scene.size(), scene_.size()); ++i) {
           const auto bounds = [](const Rect& r) { return gfx::Rect(r.x, r.y, r.width, r.height); };
           if (i < scene.size() && i < scene_.size() &&
               bounds(scene[i]) == bounds(scene_[i]) && scene[i].color == scene_[i].color) continue;
-          if (i < scene_.size()) SchedulePaintInRect(bounds(scene_[i]));
-          if (i < scene.size()) SchedulePaintInRect(bounds(scene[i]));
+          if (i < scene_.size()) damage(bounds(scene_[i]));
+          if (i < scene.size()) damage(bounds(scene[i]));
         }
+        // Scheduling is not free: submit at most two disjoint dirty bands,
+        // and only one when geometry changes invalidate the full background.
+        if (!header_damage.IsEmpty()) SchedulePaintInRect(header_damage);
+        if (!body_damage.IsEmpty() && !header_damage.Contains(body_damage)) SchedulePaintInRect(body_damage);
       }
     }
     scene_.assign(scene.begin(), scene.end());
