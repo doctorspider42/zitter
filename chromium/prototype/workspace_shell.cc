@@ -34,6 +34,8 @@
 #include "components/url_formatter/url_fixer.h"
 #include "components/vector_icons/vector_icons.h"
 #include "ui/base/hit_test.h"
+#include "ui/gfx/text_utils.h"
+#include "ui/gfx/text_elider.h"
 #include "ui/base/models/simple_combobox_model.h"
 #include "ui/views/controls/combobox/combobox.h"
 #include "ui/views/controls/scroll_view.h"
@@ -401,7 +403,8 @@ class RowButton final : public views::Button {
     bool active = false;
     bool highlighted = false;
     bool chip = false;
-    bool sidebar_row = false;  // Live list: text belongs to the scene, not Labels.
+    bool sidebar_row = false;  // Migrated control: text belongs to the scene.
+    base::RepeatingCallback<bool()> scene_visible;  // Chrome control paint gate.
     bool tile = false;  // One half of a Split View pair: always a filled card.
     int height = 34;
     PressedCallback close;
@@ -414,7 +417,7 @@ class RowButton final : public views::Button {
 #if BUILDFLAG(IS_MAC)
     if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar") == "rust-metal")
       rust_pointer_.emplace(sidebar::new_row_pointer());
-    scene_text_ = rust_pointer_.has_value() && spec_.sidebar_row && spec_.detail.empty();
+    scene_text_ = rust_pointer_.has_value() && spec_.sidebar_row;
 #endif
     GetViewAccessibility().SetName(spec_.title);
     SetTooltipText(spec_.title);
@@ -425,7 +428,7 @@ class RowButton final : public views::Button {
       title_->SetElideBehavior(gfx::ELIDE_TAIL);
       title_->SetCanProcessEventsWithinSubtree(false);
     }
-    if (!spec_.detail.empty()) {
+    if (!scene_text_ && !spec_.detail.empty()) {
       detail_ = Label(this, spec_.detail, kMuted, Font(-1));
       detail_->SetElideBehavior(gfx::ELIDE_MIDDLE);
       detail_->SetCanProcessEventsWithinSubtree(false);
@@ -518,7 +521,14 @@ class RowButton final : public views::Button {
     SchedulePaint();
   }
   void SetDetail(std::u16string detail) {
-    if (detail_) { detail_->SetText(detail); InvalidateLayout(); }
+    if (spec_.detail == detail) return;
+    spec_.detail = std::move(detail);
+    if (detail_) detail_->SetText(spec_.detail);
+    InvalidateLayout(); SchedulePaint();
+  }
+  int scene_title_width() const {
+    return spec_.detail.empty() ? 0 : gfx::GetStringWidth(spec_.title,
+        Font(0, spec_.active || spec_.chip ? gfx::Font::Weight::MEDIUM : gfx::Font::Weight::NORMAL));
   }
   void SetTitle(std::u16string title) {
     if (spec_.title == title) return;
@@ -549,7 +559,8 @@ class RowButton final : public views::Button {
 #if BUILDFLAG(IS_MAC)
     if (rust_pointer_) {
       const auto geometry = sidebar::row_layout(width(), height(),
-          title_ ? title_->GetPreferredSize().width() : 0, detail_ != nullptr, spec_.chip, close_ != nullptr);
+          title_ ? title_->GetPreferredSize().width() : scene_title_width(),
+          !spec_.detail.empty(), spec_.chip, close_ != nullptr);
       auto rect = [](const sidebar::Rect& r) { return gfx::Rect(r.x, r.y, r.width, r.height); };
       if (title_) title_->SetBoundsRect(rect(geometry.title));
       if (detail_) detail_->SetBoundsRect(rect(geometry.detail));
@@ -586,16 +597,23 @@ class RowButton final : public views::Button {
       PaintIcon(canvas, vector_icons::kCloseSmallIcon, gfx::Rect(rect.width() - 30, 0, 24, rect.height()), 14, Tone(theme, kSubtle));
   }
   void PaintButtonContents(gfx::Canvas* canvas) override {
+    if (scene_text_ && spec_.scene_visible && spec_.scene_visible.Run()) return;
     PaintDecorations(canvas, GetLocalBounds(), spec_, this, GetState() == STATE_HOVERED || GetState() == STATE_PRESSED);
 #if BUILDFLAG(IS_MAC)
     if (scene_text_) {
       // Used only for GPU fallback and native animation snapshots. Steady Metal
       // frames skip this subtree entirely; no hidden Label measures the title.
-      const auto geometry = sidebar::row_layout(width(), height(), 0, false, false, close_ != nullptr);
+      const auto geometry = sidebar::row_layout(width(), height(), scene_title_width(),
+          !spec_.detail.empty(), spec_.chip, close_ != nullptr);
       const auto& r = geometry.title;
       canvas->DrawStringRectWithFlags(spec_.title,
           Font(0, spec_.active ? gfx::Font::Weight::MEDIUM : gfx::Font::Weight::NORMAL),
           Tone(this, kInk), gfx::Rect(r.x, r.y, r.width, r.height), gfx::Canvas::TEXT_ALIGN_LEFT);
+      if (!spec_.detail.empty()) {
+        const auto& d = geometry.detail;
+        canvas->DrawStringRectWithFlags(gfx::ElideText(spec_.detail, Font(-1), d.width, gfx::ELIDE_MIDDLE),
+            Font(-1), Tone(this, kMuted), gfx::Rect(d.x, d.y, d.width, d.height), gfx::Canvas::TEXT_ALIGN_LEFT);
+      }
     }
 #endif
   }
@@ -834,6 +852,10 @@ class SidebarView final : public views::View {
   }
   void OnPaint(gfx::Canvas* canvas) override {
     views::View::OnPaint(canvas);
+    if (painted) painted.Run();
+  }
+  void OnDidSchedulePaint(const gfx::Rect& rect) override {
+    views::View::OnDidSchedulePaint(rect);
     if (painted) painted.Run();
   }
   base::RepeatingClosure painted;
@@ -1269,6 +1291,10 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   RowButton::Spec new_tab;
   new_tab.title = u"Nowa karta";
   new_tab.detail = new_tab_hint;
+  new_tab.sidebar_row = true;
+  new_tab.scene_visible = base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+    return shell && shell->metal_sidebar_visible();
+  }, weak);
   new_tab.icon = &vector_icons::kAdd2Icon;
   new_tab_button_ = sidebar->AddChildView(std::make_unique<RowButton>(
       base::BindRepeating(&WorkspaceShell::OpenAddress, weak, true), std::move(new_tab)));
@@ -2336,6 +2362,9 @@ size_t WorkspaceShell::metal_sidebar_frame_count() const {
 bool WorkspaceShell::metal_sidebar_contains_text_for_testing(std::string_view text) const {
   return metal_sidebar_ && metal_sidebar_->contains_text_for_testing(text);
 }
+gfx::Rect WorkspaceShell::metal_sidebar_screen_bounds_for_testing() const {
+  return metal_sidebar_ ? metal_sidebar_->screen_bounds_for_testing() : gfx::Rect();
+}
 bool WorkspaceShell::metal_sidebar_contains_rect_for_testing(gfx::RectF bounds, gfx::RectF clip) const {
   return metal_sidebar_ && metal_sidebar_->contains_rect_for_testing(bounds, clip);
 }
@@ -2358,14 +2387,23 @@ void WorkspaceShell::UpdateMetalSidebar() {
   const bool was_visible = metal_sidebar_->visible();
   if (!sidebar_visible() || swipe_overlay_ || workspace_animation_running()) {
     metal_sidebar_->Hide();
-    if (was_visible) tab_list_->SchedulePaint();
+    if (was_visible) { tab_list_->SchedulePaint(); new_tab_button_->SchedulePaint(); }
     return;
   }
   // Invalidations can reach Metal before the next native compositor paint.
   // Apply the Rust column/row layouts now, rather than publish zero/stale bounds.
   sidebar_widget_->LayoutRootViewIfNecessary();
   auto* viewport = tab_list_->parent();
-  const auto bounds = viewport->GetBoundsInScreen();
+  const auto list_bounds = viewport->GetBoundsInScreen();
+  const auto row_frame = new_tab_button_->GetMirroredBounds();
+  const auto viewport_frame = views::View::ConvertRectToTarget(viewport, sidebar_root_, viewport->GetLocalBounds());
+  const auto aligned = sidebar::action_frame(
+      {row_frame.x(), row_frame.y(), row_frame.width(), row_frame.height()},
+      {viewport_frame.x(), viewport_frame.y(), viewport_frame.width(), viewport_frame.height()});
+  new_tab_button_->SetBoundsRect(sidebar_root_->GetMirroredRect(gfx::Rect(aligned.x, aligned.y, aligned.width, aligned.height)));
+  auto bounds = list_bounds;
+  if (new_tab_button_->IsDrawn()) bounds.Union(new_tab_button_->GetBoundsInScreen());
+  const gfx::Vector2dF list_origin(list_bounds.x() - bounds.x(), list_bounds.y() - bounds.y());
   std::vector<SidebarViewportNode> nodes;
   std::vector<views::View*> native_views;
   // Native adapters deliver parent-local mirrored geometry and visibility only.
@@ -2379,7 +2417,7 @@ void WorkspaceShell::UpdateMetalSidebar() {
   };
   gather(gather, tab_list_, SidebarTree::kRoot);
   const auto requested = tab_scroll_->CurrentOffset();
-  const auto projection = metal_sidebar_->Project(tab_list_->size(), bounds.size(), requested, nodes);
+  const auto projection = metal_sidebar_->Project(tab_list_->size(), list_bounds.size(), requested, nodes);
   if (projection.offset != requested) {
     // Direct programmatic offsets and resized content can exceed the new
     // extent. Apply Rust's normalized offset to the native input adapter too.
@@ -2391,10 +2429,11 @@ void WorkspaceShell::UpdateMetalSidebar() {
   items.reserve(projection.nodes.size());
   for (const auto& projected : projection.nodes) {
     auto* view = native_views[projected.index];
-    const auto& rect = projected.bounds;
+    auto rect = projected.bounds; rect.Offset(list_origin);
+    auto clip = projected.clip; clip.Offset(list_origin);
     sidebar::Item item{};
     item.x = rect.x(); item.y = rect.y(); item.width = rect.width(); item.height = rect.height();
-    item.clip = {projected.clip.x(), projected.clip.y(), projected.clip.width(), projected.clip.height()};
+    item.clip = {clip.x(), clip.y(), clip.width(), clip.height()};
     if (auto* row = views::AsViewClass<RowButton>(view)) {
       const auto& spec = row->preview_spec();
       const bool hovered = row->GetState() == views::Button::STATE_HOVERED ||
@@ -2421,11 +2460,30 @@ void WorkspaceShell::UpdateMetalSidebar() {
       items.push_back(std::move(item));
     }
   }
+  if (new_tab_button_->IsDrawn()) {
+    auto* row = static_cast<RowButton*>(new_tab_button_.get());
+    const auto& spec = row->preview_spec();
+    auto rect = row->GetBoundsInScreen(); rect.Offset(-bounds.x(), -bounds.y());
+    sidebar::Item item{};
+    item.x=rect.x(); item.y=rect.y(); item.width=rect.width(); item.height=rect.height();
+    item.clip={float(rect.x()), float(rect.y()), float(rect.width()), float(rect.height())};
+    item.kind=3; item.title=base::UTF16ToUTF8(spec.title); item.detail=base::UTF16ToUTF8(spec.detail);
+    item.title_width=row->scene_title_width(); item.font_size=Font(0).GetFontSize();
+    item.detail_font_size=Font(-1).GetFontSize(); item.detail_ink=Tone(row,kMuted);
+    item.ink=Tone(row,row->GetEnabledInViewsSubtree() ? kInk : kMuted); item.badge=Tone(row,kSubtle);
+    item.hovered=row->GetState()==views::Button::STATE_HOVERED || row->GetState()==views::Button::STATE_PRESSED;
+    item.fill=item.hovered ? HoverWash(row) : SK_ColorTRANSPARENT; item.focused=row->HasFocus();
+    items.push_back(std::move(item));
+  }
   const SkColor tint = FrameTint(workspace_color(state_.workspace_id), root_);
   metal_sidebar_->Update(sidebar_widget_->GetNativeWindow(), bounds, items, pinned_ ? tint : Mix(tint, Tone(root_, kCard), 70));
+  // The initial native paint record can contain fallback text. Re-record it
+  // once when GPU presentation takes ownership, then the control paint gate
+  // keeps it empty until fallback is needed again.
+  if (!was_visible && metal_sidebar_->visible()) new_tab_button_->SchedulePaint();
   // A failed drawable must expose freshly painted fallback content, even if
   // the last native paint was skipped while Metal still had a visible frame.
-  if (was_visible && !metal_sidebar_->visible()) tab_list_->SchedulePaint();
+  if (was_visible && !metal_sidebar_->visible()) { tab_list_->SchedulePaint(); new_tab_button_->SchedulePaint(); }
 #endif
 }
 
@@ -3255,6 +3313,7 @@ void WorkspaceShell::AnimateWorkspaceSwitch(std::string_view previous) {
   if (metal_sidebar_) {
     metal_sidebar_->Hide();
     tab_list_->SchedulePaint();  // Refresh cached native contents before animating.
+    new_tab_button_->SchedulePaint();
   }
   tab_scroll_->SetPaintToLayer();
   tab_scroll_->layer()->SetFillsBoundsOpaquely(false);

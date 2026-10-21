@@ -25,7 +25,8 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Selection, close/reopen, title changes, pinned navigation | Rust row actions into existing application callbacks; native close child and AX action | Migrate close child and remaining command routing; preserve persistence and last-tab rules |
 | Folder expand/collapse and tree visibility; create/rename/delete and nested pins | Rust tree state/layout; application persistence and native menu/editing adapters | Rust editing forms; preserve failed writes and validation rollback |
 | Tab/pin context menus and drag to split | Views event routing + application commands | Rust target/action routing; retain native menus and drop policy |
-| Address pill and New Tab action | Views rendering/layout; Rust New Tab RowButton mouse/key policy | Rust layout/drawing; address events and configurable shortcut hints |
+| New Tab action and configurable shortcut hint | Rust text/icon/hint layout, width alignment and input; shared Metal surface; native outer placement/focus/AX adapter | Replace the native Button container; expand keyboard/appearance coverage |
+| Address pill | Views | Rust layout/drawing/events; retain the existing address/search/IME service |
 | Navigation controls, workspace dots/emoji and footer | Views | Rust layout/drawing/events; enabled, selected, hover and keyboard focus states |
 | Sidebar resizing, pinning, auto-hide, edge reveal | Views | Rust interaction state; preserve content bounds and pointer behavior |
 | Workspace swipe/animation/cancellation | Views layers + existing workspace controller | Rust scene transitions without native-painted row snapshots |
@@ -102,6 +103,15 @@ Views-specific layout and control behavior must have an explicit replacement.
   normalizes an out-of-range physical offset. Signed app scrolling/selection was
   inspected and restored. See
   [viewport validation](benchmarks/rust-viewport-functional-2026-10-21.json).
+
+- New Tab title/icon/hint drawing and layout now belong to Rust on the existing
+  Metal surface, with no native text Labels. Configured hints update the scene;
+  native fallback is gated and refreshed across ownership changes. 35 Metal
+  browser tests, 10 Views controls, 29 Rust tests and 59 Python tests passed.
+  The signed local package passed create/close/scroll checks; its trusted
+  timestamp was omitted after a remote service outage, with the same certificate
+  and unchanged default packaging. See
+  [New Tab validation](benchmarks/rust-new-tab-functional-2026-10-22.json).
 
 ## Completion gates
 

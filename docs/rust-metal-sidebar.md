@@ -1,6 +1,6 @@
 # Real workspace sidebar: Rust + Metal prototype
 
-The optional `--zitter-sidebar=rust-metal` backend renders the **live tab/pin list** in the normal workspace window. It does not start the synthetic `--zitter-ui-lab` scene. It uses the same `ShellState`, native interaction nodes, controller callbacks, profiles and session persistence as the existing application.
+The optional `--zitter-sidebar=rust-metal` backend renders the **live tab/pin list and New Tab action** in the normal workspace window. It does not start the synthetic `--zitter-ui-lab` scene. It uses the same `ShellState`, native interaction nodes, controller callbacks, profiles and session persistence as the existing application.
 
 ## What moved
 
@@ -8,7 +8,7 @@ The optional `--zitter-sidebar=rust-metal` backend renders the **live tab/pin li
 - A visual-only AppKit view presents directly through an asynchronous `CAMetalLayer`. Rounded geometry is drawn by Metal; CoreText shapes/truncates real Unicode text, including system font fallback. Text tiles are cached, bounded to 256 entries / 16 MiB, and uploaded on cache misses. Live tab/pin/folder rows no longer create hidden Views title Labels; their titles come directly from the row model and the Rust display list. No web page pixels are copied into the sidebar.
 - Rust also lays out the vertical columns of the live tab/pin/folder tree, with native adapters supplying preferred sizes and installing the returned rectangles. Hidden children are omitted from spacing; margins and full scroll extent are preserved. Rust also sets folder indentation (12 logical pixels per level, capped at eight) and lays out indented pin wrappers and split tiles. Split tiles share a four-pixel frame/gap, including odd-width remainder distribution; compact preferred size is 200 × 46 logical pixels. Rust projects and clips the viewport from native local bounds and floating-point scroll offsets, normalizing offsets back into the physical input adapter. The native tree retains node identity and receives the Rust layout rectangles. Paint invalidation and scroll notifications coalesce updates onto the UI task queue, independently of whether the native compositor rasterizes a frame. Pending layouts are applied before collecting scene geometry; identical frames skip GPU submission. There is no polling/redraw timer. The shared tab ScrollView now sizes its contents to their full preferred height, fixing overflow scrolling in both backends. In Metal mode, the native fading scrollbar occupies a gutter outside the GPU canvas so it stays visible and draggable. Its list offset stays on the UI thread to keep native hit testing synchronized with the separately presented Metal surface.
 
-This is an incremental renderer prototype, **not a complete removal of Views**. Views still owns outer/container layout, address pill, New Tab rendering, workspace controls, event delivery, focus, accessibility/default action, context menus, drag-to-split target policy, dialogs, palette editing and IME. RowButton mouse/key decisions use Rust, including palette and New Tab rows, while application callbacks still own browser commands. Its tab interaction nodes remain in place; the Metal overlay returns `nil` from hit testing, cannot become first responder and adds no accessibility element. The fallback painter remains available for startup, missing drawables and workspace animation snapshots. While Metal is visible, the list paint root skips native child traversal instead of painting those rows underneath it. Hiding Metal for an animation explicitly invalidates native contents; losing a previously visible drawable also requests one fresh fallback paint. Views still supplies hierarchy, interaction nodes and some layout, so this does not establish the performance of a future entirely Rust-owned sidebar.
+This is an incremental renderer prototype, **not a complete removal of Views**. Views still owns outer/container layout, address pill, workspace controls, event delivery, focus, accessibility/default action, context menus, drag-to-split target policy, dialogs, palette editing and IME. RowButton mouse/key decisions use Rust, including palette and New Tab rows, while application callbacks still own browser commands. Its tab interaction nodes remain in place; the Metal overlay returns `nil` from hit testing, cannot become first responder and adds no accessibility element. The fallback painter remains available for startup, missing drawables and workspace animation snapshots. While Metal is visible, the list paint root skips native child traversal instead of painting those rows underneath it. Hiding Metal for an animation explicitly invalidates native contents; losing a previously visible drawable also requests one fresh fallback paint. Views still supplies hierarchy, interaction nodes and some layout, so this does not establish the performance of a future entirely Rust-owned sidebar.
 
 Existing browser shortcuts continue to use the normal configurable bindings: Ctrl+Tab / Ctrl+Shift+Tab, Cmd+1…9, Cmd+T/W/L/K, workspace switching and split commands. Folder and tab menus, folder collapse/rename/delete, tab close, profile isolation, downloads, preferences, Peek and session restore retain their current controllers. A single pinned site still uses the existing monogram representation; this change does not add network favicon fetching. Folder rows use a system folder glyph in the Metal list.
 
@@ -195,3 +195,27 @@ Fractional native geometry and the submitted GPU bounds/clip agree, including
 partial-row hit testing and normalized programmatic overscroll. The signed app
 was scrolled to tab 24, selected and restored to its original split pair. See
 [viewport validation](benchmarks/rust-viewport-functional-2026-10-21.json).
+
+The New Tab migration extends the same opaque Metal canvas upward to include
+the New Tab action. It adds no second CAMetalLayer or renderer. Rust aligns the
+action width with the list viewport, leaving the native scrollbar gutter outside
+the canvas, and emits its plus icon, title and configurable shortcut hint.
+The action no longer creates native title/detail Labels in the Metal backend.
+The platform supplies title font metrics; Rust lays out both strings. Shortcut
+hints use middle truncation in CoreText, included in the texture cache key.
+
+Native RowButton input, focus, AX and the existing OpenAddress(new_tab=true)
+callback remain adapters. SetDetail now updates the row model as well as native
+Labels, so changed key bindings reach the GPU scene. Native painting is gated
+while Metal is visible; the initial fallback record is invalidated when GPU
+ownership begins, and hide/animation/drawable failure requests a fresh native
+fallback with title and shortcut. Outer paint invalidations coalesce scene
+updates without depending on native rasterization. Other outer controls remain
+native, including the address pill, workspace heading and footer.
+
+Validated for New Tab on 2026-10-22: **35/35 Metal browser regressions, 10/10 Views
+controls, 29/29 Rust tests and 59/59 Python tests passed**. The local package was
+verified and exercised with create/close/scroll. It used the configured permanent
+certificate without a trusted timestamp after the Apple timestamp service failed;
+default packaging remains unchanged. This is a development artifact. See
+[New Tab validation](benchmarks/rust-new-tab-functional-2026-10-22.json).

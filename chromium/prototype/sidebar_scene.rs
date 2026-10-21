@@ -9,9 +9,10 @@ mod ffi {
     struct ViewportProjection { x: f32, y: f32, nodes: Vec<ProjectedNode> }
     struct Item {
         x: f32, y: f32, width: f32, height: f32,
-        // 0: row, 1: section label, 2: split group background.
+        // 0: row, 1: section label, 2: split group background, 3: New Tab action.
         kind: u32,
-        title: String, monogram: String,
+        title: String, monogram: String, detail: String,
+        title_width: f32, detail_ink: u32, detail_font_size: f32,
         ink: u32, fill: u32, badge: u32,
         active: bool, hovered: bool, tile: bool, close: bool, close_visible: bool, focused: bool,
         font_size: f32,
@@ -34,7 +35,7 @@ mod ffi {
     struct Primitive {
         x: f32, y: f32, width: f32, height: f32,
         radius: f32, color: u32,
-        text: String, font_size: f32, bold: bool, clip: FloatRect,
+        text: String, font_size: f32, bold: bool, middle: bool, clip: FloatRect,
     }
     extern "Rust" {
         type Viewport;
@@ -68,6 +69,7 @@ mod ffi {
         fn split_layout(width: i32, height: i32, count: usize) -> ColumnLayout;
         fn folder_indent(depth: i32) -> i32;
         fn close_visible(active: bool, tile: bool, hovered: bool) -> bool;
+        fn action_frame(row: Rect, viewport: Rect) -> Rect;
         fn row_layout(width: i32, height: i32, title_width: i32,
                       detail: bool, chip: bool, close: bool) -> RowLayout;
         fn layout(items: &[Item]) -> Vec<Primitive>;
@@ -330,6 +332,12 @@ fn close_visible(active: bool, tile: bool, hovered: bool) -> bool {
     (active && !tile) || hovered
 }
 
+// Chrome action and list share one opaque Metal surface, leaving the native
+// scrollbar gutter outside it. Adapter mirroring happens outside this policy.
+fn action_frame(row: ffi::Rect, viewport: ffi::Rect) -> ffi::Rect {
+    ffi::Rect {x: viewport.x, y: row.y, width: viewport.width.max(0), height: row.height.max(0)}
+}
+
 fn row_layout(width: i32, height: i32, title_width: i32,
               detail: bool, chip: bool, close: bool) -> ffi::RowLayout {
     let width = width.max(0); let height = height.max(0);
@@ -362,7 +370,7 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
         let mut emit = |x, y, w: f32, h: f32, radius, color, text: &str, size, bold| {
             if w > 0.0 && h > 0.0 {
                 out.push(ffi::Primitive { x, y, width: w, height: h, radius,
-                    color, text: text.into(), font_size: size, bold,
+                    color, text: text.into(), font_size: size, bold, middle: false,
                     clip: ffi::FloatRect {x: i.clip.x, y: i.clip.y, width: i.clip.width, height: i.clip.height} });
             }
         };
@@ -379,6 +387,21 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
             // Inset focus indicator; event/focus ownership stays with the node.
             emit(i.x + 2.0, i.y + i.height - 3.0, (i.width - 4.0).max(0.0), 2.0,
                  1.0, i.ink, "", 0.0, false);
+        }
+        if i.kind == 3 {
+            let g = row_layout(i.width as i32, i.height as i32, i.title_width as i32,
+                !i.detail.is_empty(), false, false);
+            let cy = i.y + i.height / 2.0;
+            emit(i.x + 11.0, cy - 0.75, 14.0, 1.5, 0.75, i.badge, "", 0.0, false);
+            emit(i.x + 17.25, cy - 7.0, 1.5, 14.0, 0.75, i.badge, "", 0.0, false);
+            emit(i.x + g.title.x as f32, i.y, g.title.width as f32, i.height,
+                0.0, i.ink, &i.title, i.font_size, false);
+            if !i.detail.is_empty() && g.detail.width > 0 {
+                emit(i.x + g.detail.x as f32, i.y, g.detail.width as f32, i.height,
+                    0.0, i.detail_ink, &i.detail, i.detail_font_size, false);
+                out.last_mut().unwrap().middle = true;
+            }
+            continue;
         }
         emit(i.x + 10.0, i.y + (i.height - 16.0) / 2.0, 16.0, 16.0,
              4.0, i.badge, "", 0.0, false);
@@ -403,7 +426,8 @@ mod tests {
     use super::*;
     fn row(width: f32) -> ffi::Item { ffi::Item {
         x:0.0, y:0.0, width, height:34.0, kind:0,
-        title:"Zażółć 日本語 🦀".into(), monogram:"Z".into(), ink:0xff101010,
+        title:"Zażółć 日本語 🦀".into(), monogram:"Z".into(), detail:String::new(),
+        title_width:0.0, detail_ink:0, detail_font_size:12.0, ink:0xff101010,
         fill:0xffffffff, badge:0xff556677, active:true, hovered:false,
         tile:false, close:true, close_visible:true, focused:false, font_size:13.0,
         clip:ffi::FloatRect {x:0.0, y:0.0, width:width.max(0.0), height:34.0},
@@ -433,6 +457,37 @@ mod tests {
         assert_eq!(huge.height, i32::MAX);
         assert_eq!(huge.children[1].y, i32::MAX);
         assert_eq!(huge.children[1].height, 0);
+    }
+    #[test] fn action_frame_aligns_with_viewport_without_changing_vertical_layout() {
+        let r = action_frame(ffi::Rect {x: 4, y: 70, width: 240, height: 34},
+            ffi::Rect {x: 4, y: 106, width: 225, height: 500});
+        assert_eq!((r.x, r.y, r.width, r.height), (4, 70, 225, 34));
+        let narrow = action_frame(r, ffi::Rect {x: 19, y: 106, width: -1, height: 0});
+        assert_eq!((narrow.x, narrow.width, narrow.height), (19, 0, 34));
+    }
+    #[test] fn new_tab_action_keeps_title_hint_icon_and_clip() {
+        let mut item = row(177.0); item.kind = 3; item.close = false;
+        item.title = "Nowa karta".into(); item.title_width = 75.0;
+        item.detail = "Cmd+Shift+T".into(); item.detail_font_size = 12.0;
+        let ops = layout(&[item]);
+        let title = ops.iter().find(|p| p.text == "Nowa karta").unwrap();
+        let detail = ops.iter().find(|p| p.text == "Cmd+Shift+T").unwrap();
+        assert_eq!(title.x, 36.0); assert_eq!(title.width, 75.0);
+        assert!(title.x + title.width < detail.x);
+        assert!(detail.x + detail.width <= 167.0);
+        assert!(detail.middle && !title.middle); assert_eq!(detail.font_size, 12.0);
+        assert!(ops.iter().any(|p| p.width == 14.0 && p.height == 1.5));
+        assert!(!ops.iter().any(|p| p.text == "×" || p.text == "Z"));
+        assert!(ops.iter().all(|p| p.clip.width == 177.0));
+    }
+    #[test] fn new_tab_action_handles_empty_hint_and_narrow_widths() {
+        for width in [10.0, 30.0, 100.0, 480.0] {
+            let mut item = row(width); item.kind = 3; item.close = false;
+            item.title = "Nowa karta".into(); item.detail = String::new();
+            let ops = layout(&[item]);
+            assert!(!ops.iter().any(|p| p.middle));
+            assert!(ops.iter().all(|p| p.width > 0.0 && p.height > 0.0));
+        }
     }
     fn viewport_node(parent: usize, x: f32, y: f32, width: f32, height: f32, visible: bool) -> ffi::ViewportNode {
         ffi::ViewportNode {parent, bounds: ffi::FloatRect {x, y, width, height}, visible}

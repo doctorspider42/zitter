@@ -72,13 +72,14 @@ class Surface final : public SidebarMetal {
     return true;
   }
   ~Surface() override { [view_ removeFromSuperview]; }
-  void Hide() override { view_.hidden = YES; last_frame_.clear(); }
+  void Hide() override { view_.hidden = YES; last_frame_.clear(); last_bounds_ = {}; }
   bool visible() const override { return view_.superview && view_.window.isVisible && !view_.isHiddenOrHasHiddenAncestor; }
   size_t frame_count() const override { return frame_count_; }
   bool contains_text_for_testing(std::string_view text) const override {
     // Reuse the existing frame signature; no per-frame diagnostic text copies.
     return last_frame_.find(":" + std::to_string(text.size()) + ":" + std::string(text)) != std::string::npos;
   }
+  gfx::Rect screen_bounds_for_testing() const override { return last_bounds_; }
   bool contains_rect_for_testing(gfx::RectF bounds, gfx::RectF clip) const override {
     std::ostringstream prefix;
     prefix << '|' << bounds.x() << ',' << bounds.y() << ',' << bounds.width() << ',' << bounds.height()
@@ -117,7 +118,7 @@ class Surface final : public SidebarMetal {
     for (const auto& op : ops) signature << '|' << op.x << ',' << op.y << ',' << op.width << ','
         << op.height << ',' << op.clip.x << ',' << op.clip.y << ',' << op.clip.width << ',' << op.clip.height
         << ',' << op.radius << ',' << op.color << ',' << op.font_size << ','
-        << op.bold << ':' << op.text.size() << ':' << std::string(op.text);
+        << op.bold << ',' << op.middle << ':' << op.text.size() << ':' << std::string(op.text);
     std::string fingerprint = signature.str();
     if (fingerprint == last_frame_ && !view_.hidden) return;
     [CATransaction begin]; [CATransaction setDisableActions:YES];
@@ -165,13 +166,13 @@ class Surface final : public SidebarMetal {
     [encoder endEncoding];
     [command presentDrawable:drawable]; [command commit];
     ++frame_count_;
-    view_.hidden = NO; last_frame_ = std::move(fingerprint);
+    view_.hidden = NO; last_frame_ = std::move(fingerprint); last_bounds_ = bounds;
   }
  private:
   id<MTLTexture> Text(const sidebar::Primitive& op, double scale) {
     std::ostringstream key;
     key << op.width << ',' << op.height << ',' << op.font_size << ',' << scale << ','
-        << op.color << ',' << op.bold << ':' << std::string(op.text);
+        << op.color << ',' << op.bold << ',' << op.middle << ':' << std::string(op.text);
     auto found = text_.find(key.str());
     if (found != text_.end()) return found->second.texture;
     const size_t width = std::min(size_t{4096}, size_t(std::ceil(op.width * scale)));
@@ -198,7 +199,7 @@ class Surface final : public SidebarMetal {
     base::apple::ScopedCFTypeRef<CTLineRef> token(CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)ellipsis));
     base::apple::ScopedCFTypeRef<CTLineRef> truncated;
     if (CTLineGetTypographicBounds(line.get(), nullptr, nullptr, nullptr) > op.width)
-      truncated.reset(CTLineCreateTruncatedLine(line.get(), op.width, kCTLineTruncationEnd, token.get()));
+      truncated.reset(CTLineCreateTruncatedLine(line.get(), op.width, op.middle ? kCTLineTruncationMiddle : kCTLineTruncationEnd, token.get()));
     CGFloat ascent = 0, descent = 0;
     CTLineRef draw = truncated ? truncated.get() : line.get();
     CTLineGetTypographicBounds(draw, &ascent, &descent, nullptr);
@@ -218,6 +219,7 @@ class Surface final : public SidebarMetal {
   rust::Box<sidebar::Viewport> viewport_ = sidebar::new_viewport();
   size_t frame_count_ = 0;
   std::string last_frame_;
+  gfx::Rect last_bounds_;
   ZitterSidebarMetalView* __strong view_;
   CAMetalLayer* __strong layer_;
   id<MTLDevice> __strong device_;

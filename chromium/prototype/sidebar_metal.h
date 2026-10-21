@@ -31,6 +31,7 @@ class SidebarMetal {
   virtual size_t frame_count() const = 0;
   // Last submitted display-list text, not proof of physical presentation.
   virtual bool contains_text_for_testing(std::string_view text) const = 0;
+  virtual gfx::Rect screen_bounds_for_testing() const = 0;
   virtual bool contains_rect_for_testing(gfx::RectF bounds, gfx::RectF clip) const = 0;
 };
 std::unique_ptr<SidebarMetal> CreateSidebarMetal();

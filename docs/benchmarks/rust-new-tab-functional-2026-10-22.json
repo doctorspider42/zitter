@@ -1,0 +1,288 @@
+{
+  "date": "2026-10-22",
+  "platform": "macOS arm64",
+  "build": "Release, ThinLTO, Chromium PGO",
+  "purpose": "Functional verification of scene-owned New Tab action and configurable hint on one Metal surface; not a performance benchmark",
+  "base_commit": "bcaf0bdddff4e14aae3ffc32eff7e697601c91c8",
+  "chromium_base_revision": "1a732fcc23b20dd0bcf38f35d72c1fe1ec799d35",
+  "app_uuid": "4C4C440B-5555-3144-A18A-53B3AE350AD4",
+  "test_binary_uuid": "4C4C4427-5555-3144-A1DC-4865239721BB",
+  "bundle_signature": {
+    "verification": "codesign --verify --deep --strict passed; packaged/build UUIDs match",
+    "identity": "same configured permanent certificate; no identity data recorded",
+    "timestamp": false,
+    "scope": "local development prototype",
+    "reason": "Two normal packaging attempts failed because the Apple timestamp service was unavailable. The verified local package used a one-shot --timestamp=none codesign invocation; repository/default packaging behavior is unchanged."
+  },
+  "source_sha256": {
+    "chromium/prototype/profile_workspace_browsertest.cc": "c5bbce3a98f9f30e6dec224fb45bd6bd24397b0ae1f39746f39b3f71549e5871",
+    "chromium/prototype/sidebar_scene.rs": "666553c13df87fbe2a50c33ccc6e373adc123989c2cc1edd4b71e3d3a88d6db2",
+    "chromium/prototype/sidebar_metal.h": "eb941e8b7f42361f448da01f7673dd010a8418df7b27638526060fa5c7a3bddd",
+    "chromium/prototype/sidebar_metal.mm": "23b22c844e94957c7856f8236effeecc6382a56b2f658d73d92bcd2520a3d7a2",
+    "chromium/prototype/workspace_shell.cc": "bb536a21c98e39f6e2ce160cbbdd45483f8b25b384c3d64014db4253b6d9eca1",
+    "chromium/prototype/workspace_shell.h": "20fa5d97beee4cb0c831f9bd939c10d24b955c29ea236595e6d7f6f0384c8193"
+  },
+  "rust_metal": {
+    "metal_api_validation": true,
+    "tests": [
+      {
+        "name": "ZitterMetalSidebarBrowserTest.LiveTabsKeyboardFoldersAndSplit",
+        "status": "SUCCESS",
+        "elapsed_ms": 1628
+      },
+      {
+        "name": "ZitterMetalSidebarBrowserTest.MetalOwnsRowTextAndSkipsNativePainting",
+        "status": "SUCCESS",
+        "elapsed_ms": 1893
+      },
+      {
+        "name": "ZitterMetalSidebarBrowserTest.MetalReturnsAfterWorkspaceAnimation",
+        "status": "SUCCESS",
+        "elapsed_ms": 1663
+      },
+      {
+        "name": "ZitterMetalSidebarBrowserTest.NewTabActionUsesSceneTextAndConfiguredShortcut",
+        "status": "SUCCESS",
+        "elapsed_ms": 1911
+      },
+      {
+        "name": "ZitterMetalSidebarBrowserTest.RealTabViewportScrolls",
+        "status": "SUCCESS",
+        "elapsed_ms": 1642
+      },
+      {
+        "name": "ZitterMetalSidebarBrowserTest.RustRowInputCancellationAndPlatformKeys",
+        "status": "SUCCESS",
+        "elapsed_ms": 1380
+      },
+      {
+        "name": "ZitterMetalSidebarBrowserTest.SplitTitleUpdatesWithoutNativePaint",
+        "status": "SUCCESS",
+        "elapsed_ms": 1382
+      },
+      {
+        "name": "ZitterMetalSidebarBrowserTest.ViewportProjectionTracksFractionalScrollAndClipping",
+        "status": "SUCCESS",
+        "elapsed_ms": 1660
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.ChromiumHistoryAndCommandPalette",
+        "status": "SUCCESS",
+        "elapsed_ms": 1642
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.CocoaSwipesRepeatWithoutMouseMovement",
+        "status": "SUCCESS",
+        "elapsed_ms": 1655
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.CommandCenterMoveCopyAndSleep",
+        "status": "SUCCESS",
+        "elapsed_ms": 1366
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.CommandCenterMoveSplitAndLastPage",
+        "status": "SUCCESS",
+        "elapsed_ms": 1374
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.CommandCenterSearchAndDispatch",
+        "status": "SUCCESS",
+        "elapsed_ms": 1378
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.ConfigurableNativeKeyboardShortcuts",
+        "status": "SUCCESS",
+        "elapsed_ms": 2171
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.FolderRemovalKeepsOpenedPinsAsTabs",
+        "status": "SUCCESS",
+        "elapsed_ms": 1385
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.GeneralSettingsThemeAndPersistence",
+        "status": "SUCCESS",
+        "elapsed_ms": 2448
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.NativeDragAndCloseAtWidthLimits",
+        "status": "SUCCESS",
+        "elapsed_ms": 1386
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.NativeKeyboardWorkspaceSwitching",
+        "status": "SUCCESS",
+        "elapsed_ms": 1637
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.NativeShellAndAppearance",
+        "status": "SUCCESS",
+        "elapsed_ms": 1954
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarColumnLayoutTracksCollapsedFolders",
+        "status": "SUCCESS",
+        "elapsed_ms": 1634
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarFolderFailedWriteRollsBack",
+        "status": "SUCCESS",
+        "elapsed_ms": 3760
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarFolderRenameAndDeleteContents",
+        "status": "SUCCESS",
+        "elapsed_ms": 4312
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarFoldersCreateNestAndPersist",
+        "status": "SUCCESS",
+        "elapsed_ms": 3495
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarMetadataUpdatesPreserveRows",
+        "status": "SUCCESS",
+        "elapsed_ms": 1643
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarPinnedPairFollowsPaneOrderAndFolders",
+        "status": "SUCCESS",
+        "elapsed_ms": 1366
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarRemainsOpenWhileSpacesSlide",
+        "status": "SUCCESS",
+        "elapsed_ms": 1921
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarSplitAndDeepFolderGeometry",
+        "status": "SUCCESS",
+        "elapsed_ms": 1373
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarSwipeTracksCancelsAndSkipsSpaces",
+        "status": "SUCCESS",
+        "elapsed_ms": 2440
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarTreeStateSurvivesRebuildsAndSpaces",
+        "status": "SUCCESS",
+        "elapsed_ms": 1910
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SplitPairPersistsWhileAnotherTabIsShown",
+        "status": "SUCCESS",
+        "elapsed_ms": 1378
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation",
+        "status": "SUCCESS",
+        "elapsed_ms": 1386
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SplitViewSessionRestore",
+        "status": "SUCCESS",
+        "elapsed_ms": 2436
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.WorkspaceContextAppearanceAndDeletion",
+        "status": "SUCCESS",
+        "elapsed_ms": 2435
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.WorkspaceSwitchCostWithImportedSidebar",
+        "status": "SUCCESS",
+        "elapsed_ms": 2439
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.WorkspaceSwitchCostWithTwoLargeSidebars",
+        "status": "SUCCESS",
+        "elapsed_ms": 2699
+      }
+    ]
+  },
+  "views": {
+    "tests": [
+      {
+        "name": "ZitterProfilesBrowserTest.NativeDragAndCloseAtWidthLimits",
+        "status": "SUCCESS",
+        "elapsed_ms": 1377
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.NativeShellAndAppearance",
+        "status": "SUCCESS",
+        "elapsed_ms": 1632
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarColumnLayoutTracksCollapsedFolders",
+        "status": "SUCCESS",
+        "elapsed_ms": 1645
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarMetadataUpdatesPreserveRows",
+        "status": "SUCCESS",
+        "elapsed_ms": 1388
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarPinnedPairFollowsPaneOrderAndFolders",
+        "status": "SUCCESS",
+        "elapsed_ms": 1370
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarSplitAndDeepFolderGeometry",
+        "status": "SUCCESS",
+        "elapsed_ms": 1376
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarTreeStateSurvivesRebuildsAndSpaces",
+        "status": "SUCCESS",
+        "elapsed_ms": 1906
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation",
+        "status": "SUCCESS",
+        "elapsed_ms": 1372
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.WorkspaceSwitchCostWithImportedSidebar",
+        "status": "SUCCESS",
+        "elapsed_ms": 2420
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.WorkspaceSwitchCostWithTwoLargeSidebars",
+        "status": "SUCCESS",
+        "elapsed_ms": 2700
+      }
+    ]
+  },
+  "rust_unit_tests_passed": 29,
+  "python_unit_tests_passed": 59,
+  "gn_dependency_check": "passed for //zitter_ui_lab:*",
+  "product_boundaries": "passed",
+  "verified_mechanisms": [
+    "The existing opaque Metal surface expands upward to include New Tab; no second surface, command queue or renderer is introduced. Rust aligns the action width with the list viewport, keeping the native scrollbar gutter outside the canvas.",
+    "New Tab creates no native title/detail Labels in the Metal backend. Rust emits its plus icon, title, focus/hover appearance and configured shortcut hint, using native title font metrics as input.",
+    "Shortcut hints use middle truncation in CoreText; truncation mode participates in the frame fingerprint and bounded text texture cache key.",
+    "SetDetail updates the Spec model as well as native Labels, preserving configured shortcut text in the GPU scene. Outer paint invalidations schedule coalesced updates before native rasterization.",
+    "A pixel test paints the action at a local origin: native control ink is absent while Metal is visible and present after the native window is hidden. Initial GPU ownership invalidates the previous native fallback record; hide/animation/drawable-failure paths request fresh native fallback paint.",
+    "The native regression changes New Tab to Cmd+Shift+U, observes that hint in the submitted scene, physically clicks the action, enters a local URL and verifies exactly one new real tab in the Work profile. The configured shortcut then opens the same blank address workflow without creating a premature tab.",
+    "Fractional viewport bounds/clip validation now explicitly translates native list coordinates into the expanded canvas using its submitted screen bounds.",
+    "The full matrix retains native input, drag/close, scroll, split/pin/folder state, large-list cache invariants, native fallback animation, sessions, palettes and settings."
+  ],
+  "measurement_correction": "An initial bitmap assertion used the parent-relative child position as the tiny bitmap origin and clipped away its drawing. The helper now temporarily paints the action at (0,0) and restores its bounds; both unchanged paint-state assertions pass.",
+  "manual_observations": [
+    "The verified matching local package displayed the GPU New Tab plus icon, title and Cmd+T hint with the original Unicode split pair.",
+    "Clicking New Tab opened the existing blank address palette. A loopback URL created a real Nowa karta GPU page and a new visible row at the end of the scrollable list.",
+    "The new row remained visible while the New Tab action stayed fixed above the scrolling list. The native scrollbar remained visible outside the canvas.",
+    "The test page was closed; scrolling to the top and selecting the original first pair member restored the 24-tab demo and original split pair. The prototype was closed.",
+    "The normal application/profile was not used."
+  ],
+  "limitations": [
+    "The local package is signed without a trusted timestamp because the remote service was unavailable; it is a development verification artifact, not a notarized release installer.",
+    "Native outer vertical placement, Button/focus/accessibility/action adapters, address palette editing/IME and actual browser commands remain. Rust owns the action interior and width alignment; this is not complete native container removal.",
+    "Address pill, workspace heading/footer, split headers/divider and native animation snapshots still require migration.",
+    "Bitmap and submitted-scene assertions establish paint routing and content, not a controlled CPU/GPU/physical-presentation speedup or a complete VoiceOver/scale matrix.",
+    "No new third-party crate, library or binary framework was added."
+  ]
+}

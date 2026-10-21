@@ -3906,6 +3906,77 @@ class ZitterMetalSidebarBrowserTest : public ZitterProfilesBrowserTest {
     command_line->AppendSwitchASCII("zitter-sidebar", "rust-metal");
   }
 };
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NewTabActionUsesSceneTextAndConfiguredShortcut) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready() && shell->tools_ready(); }));
+  shell->SetWorkspaceAnimations(false);
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html");
+  for (int i = 0; i < 28; ++i) ASSERT_TRUE(window_->NavigateFromBar(url, true));
+  shell->CloseOverlays(true); shell->SetPinned(true); shell->ShowSidebar();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible(); }));
+  auto* action = SidebarNamedButton(shell->sidebar_view(), u"Nowa karta");
+  ASSERT_TRUE(action);
+  auto no_labels = [&](auto&& self, views::View* view) -> void {
+    EXPECT_FALSE(views::AsViewClass<views::Label>(view));
+    for (const auto& child : view->children()) self(self, child.get());
+  };
+  no_labels(no_labels, action);
+  ASSERT_TRUE(shell->SetShortcut("new_tab", "Cmd+Shift+U"));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return shell->metal_sidebar_contains_text_for_testing("Nowa karta") &&
+        shell->metal_sidebar_contains_text_for_testing("Cmd+Shift+U");
+  }));
+  const auto canvas = shell->metal_sidebar_screen_bounds_for_testing();
+  const auto viewport = shell->tab_list_view()->parent()->GetBoundsInScreen();
+  EXPECT_EQ(action->GetBoundsInScreen().origin(), canvas.origin());
+  EXPECT_EQ(viewport.width(), action->width()); EXPECT_EQ(viewport.width(), canvas.width());
+  EXPECT_EQ(viewport.bottom(), canvas.bottom());
+  auto paint_action = [&] {
+    // The helper paints a root at (0,0); a sidebar child's parent-relative
+    // origin would clip its entire recording outside the small test bitmap.
+    const auto saved = action->bounds();
+    action->SetBoundsRect(gfx::Rect(action->size())); action->SchedulePaint();
+    auto bitmap = views::test::PaintViewToBitmap(action);
+    action->SetBoundsRect(saved);
+    return bitmap;
+  };
+  auto has_native_ink = [](const SkBitmap& bitmap) {
+    // PaintViewToBitmap uses a red placeholder; any control ink changes it.
+    for (int y = 0; y < bitmap.height(); ++y) for (int x = 0; x < bitmap.width(); ++x)
+      if (bitmap.getColor(x, y) != SK_ColorRED) return true;
+    return false;
+  };
+  action->SchedulePaint();
+  EXPECT_FALSE(has_native_ink(paint_action()));
+  shell->sidebar_widget()->Hide();
+  EXPECT_FALSE(shell->metal_sidebar_visible());
+  action->SchedulePaint();
+  EXPECT_TRUE(has_native_ink(paint_action()));
+  shell->ShowSidebar();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible(); }));
+  ui_controls::EnableUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  const auto point = action->GetBoundsInScreen().CenterPoint();
+  base::test::TestFuture<void> moved;
+  ASSERT_TRUE(ui_controls::SendMouseMoveNotifyWhenDone(point.x(), point.y(), moved.GetCallback(), shell->sidebar_widget()->GetNativeWindow()));
+  ASSERT_TRUE(moved.Wait());
+  base::test::TestFuture<void> clicked;
+  ASSERT_TRUE(ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT, ui_controls::DOWN | ui_controls::UP,
+      clicked.GetCallback(), ui_controls::kNoAccelerator, shell->sidebar_widget()->GetNativeWindow()));
+  ASSERT_TRUE(clicked.Wait());
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->address_visible(); }));
+  EXPECT_TRUE(shell->address_input()->GetText().empty()); EXPECT_EQ(29u, window_->tab_count("work"));
+  const auto next = embedded_test_server()->GetURL("/storage_probe.html?new-tab-action");
+  shell->address_input()->SetText(base::UTF8ToUTF16(next.spec()));
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->address_widget()->GetNativeWindow(), ui::VKEY_RETURN, false, false, false, false));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->tab_count("work") == 30; }));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  EXPECT_EQ(next, window_->contents("work")->GetLastCommittedURL());
+  EXPECT_EQ(work_.get(), window_->contents("work")->GetBrowserContext());
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(window_->widget()->GetNativeWindow(), ui::VKEY_U, false, true, false, true));
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->address_visible(); }));
+  EXPECT_TRUE(shell->address_input()->GetText().empty()); EXPECT_EQ(30u, window_->tab_count("work"));
+}
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, RealTabViewportScrolls) {
   auto* shell = window_->shell();
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
@@ -3961,6 +4032,13 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ViewportProjectionTracksFr
   }));
   auto* scroll = shell->tab_scroll_view(); auto* row = shell->tab_button(1);
   auto* viewport = shell->tab_list_view()->parent();
+  auto submitted = [&](gfx::RectF rect, gfx::RectF clip) {
+    const auto frame = shell->metal_sidebar_screen_bounds_for_testing();
+    const auto native = viewport->GetBoundsInScreen();
+    const gfx::Vector2dF origin(native.x() - frame.x(), native.y() - frame.y());
+    rect.Offset(origin); clip.Offset(origin);
+    return shell->metal_sidebar_contains_rect_for_testing(rect, clip);
+  };
   auto local = views::View::ConvertRectToTarget(row, shell->tab_list_view(), gfx::RectF(row->GetLocalBounds()));
   const float max_offset = shell->tab_list_view()->height() - viewport->height();
   ASSERT_GT(max_offset, local.y() + 10);
@@ -3969,7 +4047,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ViewportProjectionTracksFr
   auto clipped = expected; clipped.Intersect(gfx::RectF(viewport->GetLocalBounds()));
   EXPECT_FLOAT_EQ(-9.25f, expected.y()); EXPECT_FLOAT_EQ(24.75f, clipped.height());
   ASSERT_TRUE(base::test::RunUntil([&] {
-    return shell->metal_sidebar_contains_rect_for_testing(expected, clipped);
+    return submitted(expected, clipped);
   })) << "Native bounds/clip: " << expected.ToString() << " / " << clipped.ToString();
   const auto hit_point = views::View::ConvertPointToTarget(viewport,
       shell->sidebar_widget()->GetRootView(), gfx::ToRoundedPoint(clipped.CenterPoint()));
@@ -3982,7 +4060,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ViewportProjectionTracksFr
   window_->SelectTab(28); row = shell->tab_button(28);
   expected = views::View::ConvertRectToTarget(row, viewport, gfx::RectF(row->GetLocalBounds()));
   clipped = expected; clipped.Intersect(gfx::RectF(viewport->GetLocalBounds()));
-  ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_contains_rect_for_testing(expected, clipped); }));
+  ASSERT_TRUE(base::test::RunUntil([&] { return submitted(expected, clipped); }));
   EXPECT_FALSE(clipped.IsEmpty());
 }
 // This geometry/controller regression does not synthesize OS input. It can

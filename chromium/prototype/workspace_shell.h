@@ -251,6 +251,7 @@ class WorkspaceShell final : public ui::EventHandler,
   // GPU submissions are separate from native subtree paint passes skipped/run.
   size_t metal_sidebar_frame_count() const;
   bool metal_sidebar_contains_text_for_testing(std::string_view text) const;
+  gfx::Rect metal_sidebar_screen_bounds_for_testing() const;
   bool metal_sidebar_contains_rect_for_testing(gfx::RectF bounds, gfx::RectF clip) const;
   size_t native_sidebar_paint_count() const;
   size_t metal_sidebar_paint_count() const;
