@@ -28,7 +28,18 @@ def phase_window(log, toc, iterations):
     start = datetime.fromisoformat(toc.findtext('.//start-date'))
     offset = start.hour * 3600 + start.minute * 60 + start.second + start.microsecond / 1e6
     # Profiles crossing midnight retain a positive relative time.
-    return tuple((time - offset) % 86400 for time in times)
+    window = [(time - offset) % 86400 for time in times]
+    # New logs retain callback latency, allowing the GPU window to begin at
+    # update start rather than after the first frame has already rendered.
+    first = re.search(r'ZITTER_UI_SAMPLE (\{[^\n]+\})', text)
+    if first:
+        try:
+            sample = json.loads(first[1])
+            if sample.get('trial') == 0 and sample.get('callback_ms', -1) >= 0:
+                window[0] -= sample['callback_ms'] / 1000
+        except (ValueError, TypeError):
+            pass
+    return tuple(window)
 
 
 def summarize(directory, kind, iterations=240, bundle='ZitterUiProfile.app'):
@@ -47,8 +58,11 @@ def summarize(directory, kind, iterations=240, bundle='ZitterUiProfile.app'):
     lo, hi = phase_window(directory / (kind + '-skia.log'), toc, iterations)
     if hi <= lo:
         raise ValueError('Invalid measurement window')
+    recording_duration = toc.findtext('.//summary/duration')
+    if recording_duration is not None and (lo < 0 or hi > float(recording_duration)):
+        raise ValueError('Recording does not cover the complete measurement window')
     processes, threads, leaf, stacks, channels = [collections.Counter() for _ in range(5)]
-    missing, intervals, packets, latency = 0, [], [], []
+    missing, intervals, packets, latency, raw_gpu = 0, [], [], [], []
     for row in tree.findall('.//row'):
         process = resolve(row.find('process'))
         if process is None:
@@ -83,11 +97,13 @@ def summarize(directory, kind, iterations=240, bundle='ZitterUiProfile.app'):
             start = int(timestamp.text) / 1e6
             packets.append(duration)
             intervals.append((start, start + duration))
-            channels[resolve(row.find('gpu-channel-name')).text] += 1
+            channel = resolve(row.find('gpu-channel-name')).text
+            channels[channel] += 1
+            raw_gpu.append({'start_ns': int(timestamp.text), 'duration_ns': int(durations[0].text), 'pid': pid, 'channel': channel})
             if len(durations) > 1:
                 latency.append(int(durations[1].text) / 1e6)
     if kind == 'cpu':
-        return {'window_seconds': [lo, hi], 'owned_pids': sorted(owned),
+        return {'recording_duration_seconds': float(recording_duration) if recording_duration is not None else None, 'window_seconds': [lo, hi], 'owned_pids': sorted(owned),
                 'sampled_cpu_ms': sum(processes.values()), 'process_cpu_ms': dict(processes),
                 'thread_cpu_ms': threads.most_common(20), 'leaf_cpu_ms': leaf.most_common(30),
                 'inclusive_stack_cpu_ms': stacks.most_common(40), 'missing_backtraces': missing,
@@ -106,12 +122,12 @@ def summarize(directory, kind, iterations=240, bundle='ZitterUiProfile.app'):
         return {'median': statistics.median(values),
                 'p95': sorted(values)[math.ceil(.95 * len(values)) - 1], 'max': max(values)}
 
-    return {'window_seconds': [lo, hi], 'gpu_packets': len(packets),
+    return {'recording_duration_seconds': float(recording_duration) if recording_duration is not None else None, 'raw_gpu_intervals': raw_gpu, 'window_seconds': [lo, hi], 'gpu_packets': len(packets),
             'packet_duration_ms': stats(packets), 'cpu_to_gpu_latency_ms': stats(latency),
             'gpu_busy_union_ms': busy, 'gpu_busy_ms_per_update': busy / iterations,
             'gpu_busy_percent_of_window': busy / ((hi - lo) * 1000) * 100,
             'channels': dict(channels),
-            'note': 'Metal System Trace hardware GPU intervals, depth 0, active packets owned by this bundle, measured Rust/Skia resize phase. Union avoids vertex/fragment overlap. Includes page and UI, not isolated sidebar. Per-packet duration is not per-frame duration. Instrumentation changes timings; not backend ranking.'}
+            'note': 'Metal System Trace hardware GPU intervals, depth 0, active packets owned by this bundle, measured Rust/Skia update phase. Union avoids vertex/fragment overlap. Includes page and UI, not isolated sidebar. Per-packet duration is not per-frame duration. Instrumentation changes timings; not backend ranking.'}
 
 
 def main():

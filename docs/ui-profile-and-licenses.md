@@ -1,3 +1,5 @@
+> Historical snapshot before the Apache/libarchive migration. The [current implementation and audit](open-source-ui-optimization.md) replaces UnRAR, applies Apache-2.0 to original Zitter code and uses a verified WindowServer frame measurement. The archives linked below preserve the earlier build.
+
 # Profil UI i audyt dystrybucji — 2026-10-21
 
 **18 ms to przede wszystkim droga do raportowanej prezentacji, nie czas pracy GPU.**

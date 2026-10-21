@@ -1,3 +1,5 @@
+> Latest: [implemented optimizations and A/B measurements](open-source-ui-optimization.md) use frame IDs, viewport verification and WindowServer displayTime. Earlier timings below use different presentation APIs and are not a physical-latency ranking.
+
 > Update 2026-10-21: [CPU/GPU profiling](ui-profile-and-licenses.md) confirms that macOS Chromium reports a future DisplayLink target; callbacks can precede it. Presentation latency below is the API-reported value, not a hardware-confirmed input-to-photon measurement, and differs from Metal drawable timing.
 
 # Rust UI / GPU prototype

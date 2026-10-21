@@ -1,0 +1,702 @@
+{
+  "source_commit": "22a0589",
+  "chromium_revision": "1a732fcc23b20dd0bcf38f35d72c1fe1ec799d35",
+  "files": 325,
+  "unique_binaries": 20,
+  "matched_link_rules": 20,
+  "unmatched_binaries": [],
+  "components": 326,
+  "unrar_present": false,
+  "libarchive": [
+    {
+      "Name": "libarchive",
+      "URL": "https://github.com/libarchive/libarchive",
+      "License": "Apache-2.0, BSD-2-Clause, BSD-3-Clause, CC0-1.0",
+      "License File": [
+        "third_party/zitter_libarchive/COPYING",
+        "third_party/zitter_libarchive/THIRD_PARTY_NOTICES.txt",
+        "third_party/zitter_libarchive/LICENSE-APACHE"
+      ],
+      "Shipped": "yes",
+      "dir": "third_party/zitter_libarchive",
+      "reachable_from": [
+        "//chrome/browser/web_applications/os_integration/mac:web_app_shortcut_copier",
+        "//chrome:chrome_framework",
+        "//chrome:chrome_framework_shared_library",
+        "//chrome:chrome_helper_app_aperitif_alerts_executable",
+        "//chrome:chrome_helper_app_aperitif_executable",
+        "//chrome:chrome_helper_app_aperitif_gpu_executable",
+        "//chrome:chrome_helper_app_aperitif_renderer_executable",
+        "//zitter_optimized:zitter_optimized"
+      ],
+      "link_evidence": [
+        "obj/third_party/zitter_libarchive/rar_reader/rar_reader.o"
+      ],
+      "notice_files": [],
+      "license_files": [
+        {
+          "path": "third_party/zitter_libarchive/COPYING",
+          "sha256": "30e556b3959e3985d66efefec5eaac51d4995053caa1d3cffe6eb916f146f229"
+        },
+        {
+          "path": "third_party/zitter_libarchive/THIRD_PARTY_NOTICES.txt",
+          "sha256": "fccf72017f960473d55fba583b3cca15e68d1785113af0b8ce09aca40fb3e07b"
+        },
+        {
+          "path": "third_party/zitter_libarchive/LICENSE-APACHE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ]
+    }
+  ],
+  "artifact_sha256": {
+    "manifest.json": "94cdd11a9a63b04be67436f1126a5627d04cda6a38c4a2bf8d92cb30b8f74c90",
+    "THIRD_PARTY_LICENSES.txt": "3ed5d5a1fe0f9f749eedc4f57d754cc70d5c52cc29396618d954b21a3fdcd9b8"
+  },
+  "binaries": [
+    {
+      "path": "Contents/Frameworks/Chromium Framework.framework/Versions/158.0.8106.0/Chromium Framework",
+      "bytes": 466266608,
+      "sha256": "ac135167f99ff2f48ad0c8b87f7cb175cd565c0d211fd3ee803ad82478c11641",
+      "uuid": [
+        "4C4C4401-5555-3144-A1B7-1FC0F4C85A95"
+      ],
+      "load_commands": [
+        "@executable_path/../Frameworks/Chromium Framework.framework/Versions/158.0.8106.0/Chromium Framework (compatibility version 8106.0.0, current version 8106.0.0)",
+        "/System/Library/Frameworks/Carbon.framework/Versions/A/Carbon (compatibility version 2.0.0, current version 170.0.0)",
+        "/System/Library/Frameworks/ApplicationServices.framework/Versions/A/ApplicationServices (compatibility version 1.0.0, current version 66.0.0)",
+        "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics (compatibility version 64.0.0, current version 2050.0.0)",
+        "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices (compatibility version 1.0.0, current version 1226.0.0)",
+        "/System/Library/Frameworks/CFNetwork.framework/Versions/A/CFNetwork (compatibility version 1.0.0, current version 3896.100.1)",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5027.0.69)",
+        "/usr/lib/libobjc.A.dylib (compatibility version 1.0.0, current version 228.0.0)",
+        "/System/Library/Frameworks/CoreText.framework/Versions/A/CoreText (compatibility version 1.0.0, current version 904.0.0)",
+        "/System/Library/Frameworks/Quartz.framework/Versions/A/Quartz (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore (compatibility version 1.2.0, current version 1223.2.2)",
+        "/System/Library/Frameworks/CoreImage.framework/Versions/A/CoreImage (compatibility version 1.0.1, current version 7.0.0)",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo (compatibility version 1.2.0, current version 758.27.0)",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation (compatibility version 300.0.0, current version 5027.0.69)",
+        "/System/Library/Frameworks/Security.framework/Versions/A/Security (compatibility version 1.0.0, current version 62460.1.2)",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit (compatibility version 45.0.0, current version 2775.10.103)",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit (compatibility version 1.0.0, current version 275.0.0)",
+        "/System/Library/Frameworks/OpenDirectory.framework/Versions/A/OpenDirectory (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/Accelerate.framework/Versions/A/Accelerate (compatibility version 1.0.0, current version 4.0.0)",
+        "/System/Library/Frameworks/AudioUnit.framework/Versions/A/AudioUnit (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/AVFAudio.framework/Versions/A/AVFAudio (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/ScreenCaptureKit.framework/Versions/A/ScreenCaptureKit (compatibility version 1.0.0, current version 1.0.0, weak)",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers (compatibility version 1.0.0, current version 709.0.0)",
+        "/System/Library/Frameworks/Network.framework/Versions/A/Network (compatibility version 1.0.0, current version 6681.1.1)",
+        "/System/Library/Frameworks/SystemConfiguration.framework/Versions/A/SystemConfiguration (compatibility version 1.0.0, current version 1446.0.0)",
+        "/System/Library/Frameworks/CryptoTokenKit.framework/Versions/A/CryptoTokenKit (compatibility version 0.0.0, current version 878.0.13)",
+        "/System/Library/Frameworks/LocalAuthentication.framework/Versions/A/LocalAuthentication (compatibility version 1.0.0, current version 2319.0.63)",
+        "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia (compatibility version 1.0.0, current version 3350.77.5)",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal (compatibility version 1.0.0, current version 382.5.3)",
+        "/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/SkyLight (compatibility version 64.0.0, current version 600.0.0, weak)",
+        "/System/Library/Frameworks/AudioToolbox.framework/Versions/A/AudioToolbox (compatibility version 1.0.0, current version 1000.0.0)",
+        "/System/Library/Frameworks/CoreAudio.framework/Versions/A/CoreAudio (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/Cocoa.framework/Versions/A/Cocoa (compatibility version 1.0.0, current version 24.0.0)",
+        "/System/Library/Frameworks/AVFoundation.framework/Versions/A/AVFoundation (compatibility version 1.0.0, current version 2.0.0)",
+        "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/VideoToolbox (compatibility version 1.0.0, current version 3350.77.5)",
+        "/System/Library/Frameworks/CoreMediaIO.framework/Versions/A/CoreMediaIO (compatibility version 0.0.0, current version 0.0.0)",
+        "/System/Library/Frameworks/Accessibility.framework/Versions/A/Accessibility (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/MetalKit.framework/Versions/A/MetalKit (compatibility version 1.0.0, current version 174.4.0)",
+        "/System/Library/Frameworks/CoreBluetooth.framework/Versions/A/CoreBluetooth (compatibility version 1.0.0, current version 2700.51.0)",
+        "/System/Library/Frameworks/IOBluetooth.framework/Versions/A/IOBluetooth (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/CoreMIDI.framework/Versions/A/CoreMIDI (compatibility version 1.0.0, current version 69.0.0)",
+        "/System/Library/Frameworks/MediaAccessibility.framework/Versions/A/MediaAccessibility (compatibility version 1.0.0, current version 62.0.0)",
+        "/System/Library/Frameworks/SecurityInterface.framework/Versions/A/SecurityInterface (compatibility version 1.0.0, current version 55222.0.4)",
+        "/System/Library/Frameworks/MediaPlayer.framework/Versions/A/MediaPlayer (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/AuthenticationServices.framework/Versions/A/AuthenticationServices (compatibility version 1.0.0, current version 625.1.29)",
+        "/System/Library/Frameworks/CoreHaptics.framework/Versions/A/CoreHaptics (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/GameController.framework/Versions/A/GameController (compatibility version 1.0.0, current version 14.0.24)",
+        "/System/Library/Frameworks/ForceFeedback.framework/Versions/A/ForceFeedback (compatibility version 1.0.0, current version 1.0.2)",
+        "/System/Library/Frameworks/CoreWLAN.framework/Versions/A/CoreWLAN (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/CoreLocation.framework/Versions/A/CoreLocation (compatibility version 1.0.0, current version 3185.0.6)",
+        "/System/Library/Frameworks/Vision.framework/Versions/A/Vision (compatibility version 1.0.0, current version 10.0.44)",
+        "/System/Library/Frameworks/CoreML.framework/Versions/A/CoreML (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/ServiceManagement.framework/Versions/A/ServiceManagement (compatibility version 1.0.0, current version 3298.1.1)",
+        "/System/Library/Frameworks/SafariServices.framework/Versions/A/SafariServices (compatibility version 535.0.0, current version 625.1.29)",
+        "/System/Library/Frameworks/UserNotifications.framework/Versions/A/UserNotifications (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/LocalAuthenticationEmbeddedUI.framework/Versions/A/LocalAuthenticationEmbeddedUI (compatibility version 1.0.0, current version 2319.0.63)",
+        "/usr/lib/libcups.2.dylib (compatibility version 2.0.0, current version 2.14.0)",
+        "/usr/lib/libbsm.0.dylib (compatibility version 1.0.0, current version 1.0.0)",
+        "/usr/lib/libpmenergy.dylib (compatibility version 1.0.0, current version 2.0.0)",
+        "/usr/lib/libpmsample.dylib (compatibility version 1.0.0, current version 2.0.0)",
+        "/usr/lib/libresolv.9.dylib (compatibility version 1.0.0, current version 1.0.0)",
+        "/usr/lib/libsandbox.1.dylib (compatibility version 1.0.0, current version 1.0.0)",
+        "/usr/lib/libiconv.2.dylib (compatibility version 7.0.0, current version 7.0.0)",
+        "/usr/lib/libbz2.1.0.dylib (compatibility version 1.0.0, current version 1.0.8)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/Chromium Framework.framework/Versions/158.0.8106.0/Helpers/Chromium Helper (Alerts).app/Contents/MacOS/Chromium Helper (Alerts)",
+      "bytes": 102000,
+      "sha256": "a8cd3ce32605b5cf6a96aa618c8c680a7ac2109cfbaa39d1135e3d7559d12932",
+      "uuid": [
+        "4C4C44C9-5555-3144-A1AE-EA128D021934"
+      ],
+      "load_commands": [
+        "/usr/lib/libsandbox.1.dylib (compatibility version 1.0.0, current version 1.0.0)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/Chromium Framework.framework/Versions/158.0.8106.0/Helpers/Chromium Helper (Aperitif Alerts).app/Contents/MacOS/Chromium Helper (Aperitif Alerts)",
+      "bytes": 51808,
+      "sha256": "ea4895049d112086dedc997825c1e771458537c764ff6067dc02f11561c895a6",
+      "uuid": [
+        "4C4C448D-5555-3144-A157-FD5017443C7E"
+      ],
+      "load_commands": [
+        "@executable_path/../../../../Libraries/libaperitif.dylib (compatibility version 8106.0.0, current version 8106.0.0)",
+        "@executable_path/../../../../Chromium Framework (compatibility version 8106.0.0, current version 8106.0.0)",
+        "/usr/lib/libsandbox.1.dylib (compatibility version 1.0.0, current version 1.0.0)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/Chromium Framework.framework/Versions/158.0.8106.0/Helpers/Chromium Helper (Aperitif GPU).app/Contents/MacOS/Chromium Helper (Aperitif GPU)",
+      "bytes": 51760,
+      "sha256": "9841c426d60cd11c2298fdf3d62a8ca4f155b86c1142e2a87c756501974f3f05",
+      "uuid": [
+        "4C4C4497-5555-3144-A1DD-6659325A538A"
+      ],
+      "load_commands": [
+        "@executable_path/../../../../Libraries/libaperitif.dylib (compatibility version 8106.0.0, current version 8106.0.0)",
+        "@executable_path/../../../../Chromium Framework (compatibility version 8106.0.0, current version 8106.0.0)",
+        "/usr/lib/libsandbox.1.dylib (compatibility version 1.0.0, current version 1.0.0)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/Chromium Framework.framework/Versions/158.0.8106.0/Helpers/Chromium Helper (Aperitif Renderer).app/Contents/MacOS/Chromium Helper (Aperitif Renderer)",
+      "bytes": 51776,
+      "sha256": "2852c6da9c31f06a191bde31779481619727e04e319045864bcf36dcfe894bdc",
+      "uuid": [
+        "4C4C4493-5555-3144-A1B2-FFD38EB3DC19"
+      ],
+      "load_commands": [
+        "@executable_path/../../../../Libraries/libaperitif.dylib (compatibility version 8106.0.0, current version 8106.0.0)",
+        "@executable_path/../../../../Chromium Framework (compatibility version 8106.0.0, current version 8106.0.0)",
+        "/usr/lib/libsandbox.1.dylib (compatibility version 1.0.0, current version 1.0.0)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/Chromium Framework.framework/Versions/158.0.8106.0/Helpers/Chromium Helper (Aperitif).app/Contents/MacOS/Chromium Helper (Aperitif)",
+      "bytes": 51760,
+      "sha256": "18bd3eddb225df1257f04f765ee018aa0a8f6629b61a606294ba133231cfd5e3",
+      "uuid": [
+        "4C4C4429-5555-3144-A135-9B9AF24D1547"
+      ],
+      "load_commands": [
+        "@executable_path/../../../../Libraries/libaperitif.dylib (compatibility version 8106.0.0, current version 8106.0.0)",
+        "@executable_path/../../../../Chromium Framework (compatibility version 8106.0.0, current version 8106.0.0)",
+        "/usr/lib/libsandbox.1.dylib (compatibility version 1.0.0, current version 1.0.0)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/Chromium Framework.framework/Versions/158.0.8106.0/Helpers/Chromium Helper (GPU).app/Contents/MacOS/Chromium Helper (GPU)",
+      "bytes": 101952,
+      "sha256": "b1209c549dc0545f8442206fe61dcf80800d490839906c5e418f5cb1ab825ba1",
+      "uuid": [
+        "4C4C4440-5555-3144-A1F2-CC4BF8621FE8"
+      ],
+      "load_commands": [
+        "/usr/lib/libsandbox.1.dylib (compatibility version 1.0.0, current version 1.0.0)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/Chromium Framework.framework/Versions/158.0.8106.0/Helpers/Chromium Helper (Renderer).app/Contents/MacOS/Chromium Helper (Renderer)",
+      "bytes": 101968,
+      "sha256": "ee980bacbb1d1eb47516e72ca46e37d6939ac360047622c89dd1450d8dd2dcd4",
+      "uuid": [
+        "4C4C4494-5555-3144-A1C5-B53B786C8080"
+      ],
+      "load_commands": [
+        "/usr/lib/libsandbox.1.dylib (compatibility version 1.0.0, current version 1.0.0)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/Chromium Framework.framework/Versions/158.0.8106.0/Helpers/Chromium Helper.app/Contents/MacOS/Chromium Helper",
+      "bytes": 101952,
+      "sha256": "b3eebd7db8985d49feac3e8b929ba5bf62e4acc96959e75a7c90ad262db36797",
+      "uuid": [
+        "4C4C44B9-5555-3144-A1B7-0E83D414E133"
+      ],
+      "load_commands": [
+        "/usr/lib/libsandbox.1.dylib (compatibility version 1.0.0, current version 1.0.0)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/Chromium Framework.framework/Versions/158.0.8106.0/Helpers/app_mode_loader",
+      "bytes": 1445376,
+      "sha256": "92b1639fc5c552ee64542fe75c3eefa99f7e47efb25559d1aaadf99c9f3204a3",
+      "uuid": [
+        "4C4C44B7-5555-3144-A1CF-DB02C55217A8"
+      ],
+      "load_commands": [
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit (compatibility version 45.0.0, current version 2775.10.103)",
+        "/System/Library/Frameworks/ApplicationServices.framework/Versions/A/ApplicationServices (compatibility version 1.0.0, current version 66.0.0)",
+        "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics (compatibility version 64.0.0, current version 2050.0.0)",
+        "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices (compatibility version 1.0.0, current version 1226.0.0)",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5027.0.69)",
+        "/usr/lib/libobjc.A.dylib (compatibility version 1.0.0, current version 228.0.0)",
+        "/System/Library/Frameworks/CoreText.framework/Versions/A/CoreText (compatibility version 1.0.0, current version 904.0.0)",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation (compatibility version 300.0.0, current version 5027.0.69)",
+        "/System/Library/Frameworks/Security.framework/Versions/A/Security (compatibility version 1.0.0, current version 62460.1.2)",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit (compatibility version 1.0.0, current version 275.0.0)",
+        "/System/Library/Frameworks/OpenDirectory.framework/Versions/A/OpenDirectory (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/CryptoTokenKit.framework/Versions/A/CryptoTokenKit (compatibility version 0.0.0, current version 878.0.13)",
+        "/System/Library/Frameworks/LocalAuthentication.framework/Versions/A/LocalAuthentication (compatibility version 1.0.0, current version 2319.0.63)",
+        "/usr/lib/libbsm.0.dylib (compatibility version 1.0.0, current version 1.0.0)",
+        "/usr/lib/libpmenergy.dylib (compatibility version 1.0.0, current version 2.0.0)",
+        "/usr/lib/libpmsample.dylib (compatibility version 1.0.0, current version 2.0.0)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/Chromium Framework.framework/Versions/158.0.8106.0/Helpers/chrome_crashpad_handler",
+      "bytes": 2727104,
+      "sha256": "c2553803b34b9930cd034bcc86b6c11e2e05f159589d81e9cf1231d8fb9cc7f1",
+      "uuid": [
+        "4C4C4461-5555-3144-A150-34444DE1E18B"
+      ],
+      "load_commands": [
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5027.0.69)",
+        "/usr/lib/libobjc.A.dylib (compatibility version 1.0.0, current version 228.0.0)",
+        "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics (compatibility version 64.0.0, current version 2050.0.0)",
+        "/System/Library/Frameworks/CoreText.framework/Versions/A/CoreText (compatibility version 1.0.0, current version 904.0.0)",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation (compatibility version 300.0.0, current version 5027.0.69)",
+        "/System/Library/Frameworks/Security.framework/Versions/A/Security (compatibility version 1.0.0, current version 62460.1.2)",
+        "/System/Library/Frameworks/ApplicationServices.framework/Versions/A/ApplicationServices (compatibility version 1.0.0, current version 66.0.0)",
+        "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices (compatibility version 1.0.0, current version 1226.0.0)",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit (compatibility version 45.0.0, current version 2775.10.103)",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit (compatibility version 1.0.0, current version 275.0.0)",
+        "/System/Library/Frameworks/OpenDirectory.framework/Versions/A/OpenDirectory (compatibility version 1.0.0, current version 1.0.0)",
+        "/usr/lib/libbsm.0.dylib (compatibility version 1.0.0, current version 1.0.0)",
+        "/usr/lib/libpmenergy.dylib (compatibility version 1.0.0, current version 2.0.0)",
+        "/usr/lib/libpmsample.dylib (compatibility version 1.0.0, current version 2.0.0)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/Chromium Framework.framework/Versions/158.0.8106.0/Helpers/web_app_shortcut_copier",
+      "bytes": 51600,
+      "sha256": "0285cdbab08a6f0df156f2ddc168b997f9d72165e846c43829ed914a9d91e2c3",
+      "uuid": [
+        "4C4C4436-5555-3144-A1AA-DBA1841E791A"
+      ],
+      "load_commands": [
+        "@executable_path/../Chromium Framework (compatibility version 8106.0.0, current version 8106.0.0)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/Chromium Framework.framework/Versions/158.0.8106.0/Libraries/libaperitif.dylib",
+      "bytes": 101952,
+      "sha256": "52e489915b7e259845141ccba257b2ba3ba8ef27c606280fb76577a660df1f61",
+      "uuid": [
+        "4C4C44C8-5555-3144-A1EC-36463BAB80D3"
+      ],
+      "load_commands": [
+        "@executable_path/../Frameworks/Chromium Framework.framework/Versions/158.0.8106.0/Libraries/libaperitif.dylib (compatibility version 8106.0.0, current version 8106.0.0)",
+        "/usr/lib/libsandbox.1.dylib (compatibility version 1.0.0, current version 1.0.0)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/Chromium Framework.framework/Versions/158.0.8106.0/Libraries/libvk_swiftshader.dylib",
+      "bytes": 21701344,
+      "sha256": "887e2322147427c941adef338505f65c0f923017c74349f0bf14346a8f9c08d2",
+      "uuid": [
+        "4C4C448B-5555-3144-A1D0-A27BE43010AC"
+      ],
+      "load_commands": [
+        "@rpath/libvk_swiftshader.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal (compatibility version 1.0.0, current version 382.5.3, weak)",
+        "/System/Library/Frameworks/Cocoa.framework/Versions/A/Cocoa (compatibility version 1.0.0, current version 24.0.0)",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit (compatibility version 45.0.0, current version 2775.10.103)",
+        "/usr/lib/libobjc.A.dylib (compatibility version 1.0.0, current version 228.0.0)",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation (compatibility version 300.0.0, current version 5027.0.69)",
+        "/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore (compatibility version 1.2.0, current version 1223.2.2)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/Chromium Framework.framework/Versions/158.0.8106.0/Libraries/libvulkan.dylib",
+      "bytes": 557120,
+      "sha256": "eb971c3577deabe353d0f986c9ea2ae5330c95931e76574c35ac30fda9195ae9",
+      "uuid": [
+        "4C4C44A7-5555-3144-A15D-7558637EC72C"
+      ],
+      "load_commands": [
+        "./libvulkan.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5027.0.69)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/Chromium Framework.framework/Versions/158.0.8106.0/libEGL.dylib",
+      "bytes": 16768,
+      "sha256": "5e15e6be4edd8bae62ce70ceb8330760444ea20baa959ffc2d55f887aa23e53d",
+      "uuid": [
+        "4C4C44BE-5555-3144-A1F1-5E9EDDA2524E"
+      ],
+      "load_commands": [
+        "./libEGL.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/Chromium Framework.framework/Versions/158.0.8106.0/libGLESv2.dylib",
+      "bytes": 16768,
+      "sha256": "a6e3fd0160727aeb271c26f85f09b252b9c7fd69931ac0cb7b36c744c322b03d",
+      "uuid": [
+        "4C4C4492-5555-3144-A192-0EF0369ADF08"
+      ],
+      "load_commands": [
+        "./libGLESv2.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/Chromium Framework.framework/Versions/158.0.8106.0/libVkICD_mock_icd.dylib",
+      "bytes": 358112,
+      "sha256": "c009478ea8b2413fba6083b7e37909952900a60471963fead2d4e4fcd0ce8f1b",
+      "uuid": [
+        "4C4C4449-5555-3144-A16C-C26B458871D0"
+      ],
+      "load_commands": [
+        "./libVkICD_mock_icd.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/Chromium Framework.framework/Versions/158.0.8106.0/libVkLayer_khronos_validation.dylib",
+      "bytes": 22742672,
+      "sha256": "74ee1451bc63e0f68e425f1751ef7b5984b3f95dfbbccdeb9f64c0b55d3533c1",
+      "uuid": [
+        "4C4C4449-5555-3144-A1AE-B9CEE1836511"
+      ],
+      "load_commands": [
+        "./libVkLayer_khronos_validation.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/Chromium Framework.framework/Versions/158.0.8106.0/libaperitif.dylib",
+      "bytes": 84176,
+      "sha256": "e99bbe411866c052e271f665cfac7f7bfad5e03b85acc4bd41454060b2f2c9f7",
+      "uuid": [
+        "4C4C44C8-5555-3144-A1EC-36463BAB80D3"
+      ],
+      "load_commands": [
+        "@executable_path/../Frameworks/Chromium Framework.framework/Versions/158.0.8106.0/Libraries/libaperitif.dylib (compatibility version 8106.0.0, current version 8106.0.0)",
+        "/usr/lib/libsandbox.1.dylib (compatibility version 1.0.0, current version 1.0.0)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/Chromium Framework.framework/Versions/158.0.8106.0/libvk_swiftshader.dylib",
+      "bytes": 21809888,
+      "sha256": "e4f6ae52fa01283297505ad460008c1d0cb3e034c9dc9012d81003c68e396063",
+      "uuid": [
+        "4C4C448B-5555-3144-A1D0-A27BE43010AC"
+      ],
+      "load_commands": [
+        "@rpath/libvk_swiftshader.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal (compatibility version 1.0.0, current version 382.5.3, weak)",
+        "/System/Library/Frameworks/Cocoa.framework/Versions/A/Cocoa (compatibility version 1.0.0, current version 24.0.0)",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit (compatibility version 45.0.0, current version 2775.10.103)",
+        "/usr/lib/libobjc.A.dylib (compatibility version 1.0.0, current version 228.0.0)",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation (compatibility version 300.0.0, current version 5027.0.69)",
+        "/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore (compatibility version 1.2.0, current version 1223.2.2)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/Chromium Framework.framework/Versions/158.0.8106.0/libvulkan.dylib",
+      "bytes": 542016,
+      "sha256": "b6818f4c2be855d51acad1a4d8fc85ef9309b3286959c4c022d34aa9ca9d81b2",
+      "uuid": [
+        "4C4C44A7-5555-3144-A15D-7558637EC72C"
+      ],
+      "load_commands": [
+        "./libvulkan.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5027.0.69)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/libEGL.dylib",
+      "bytes": 16768,
+      "sha256": "5e15e6be4edd8bae62ce70ceb8330760444ea20baa959ffc2d55f887aa23e53d",
+      "uuid": [
+        "4C4C44BE-5555-3144-A1F1-5E9EDDA2524E"
+      ],
+      "load_commands": [
+        "./libEGL.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/libGLESv2.dylib",
+      "bytes": 16768,
+      "sha256": "a6e3fd0160727aeb271c26f85f09b252b9c7fd69931ac0cb7b36c744c322b03d",
+      "uuid": [
+        "4C4C4492-5555-3144-A192-0EF0369ADF08"
+      ],
+      "load_commands": [
+        "./libGLESv2.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/libVkICD_mock_icd.dylib",
+      "bytes": 358112,
+      "sha256": "c009478ea8b2413fba6083b7e37909952900a60471963fead2d4e4fcd0ce8f1b",
+      "uuid": [
+        "4C4C4449-5555-3144-A16C-C26B458871D0"
+      ],
+      "load_commands": [
+        "./libVkICD_mock_icd.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/libVkLayer_khronos_validation.dylib",
+      "bytes": 22742672,
+      "sha256": "74ee1451bc63e0f68e425f1751ef7b5984b3f95dfbbccdeb9f64c0b55d3533c1",
+      "uuid": [
+        "4C4C4449-5555-3144-A1AE-B9CEE1836511"
+      ],
+      "load_commands": [
+        "./libVkLayer_khronos_validation.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/libaperitif.dylib",
+      "bytes": 84176,
+      "sha256": "e99bbe411866c052e271f665cfac7f7bfad5e03b85acc4bd41454060b2f2c9f7",
+      "uuid": [
+        "4C4C44C8-5555-3144-A1EC-36463BAB80D3"
+      ],
+      "load_commands": [
+        "@executable_path/../Frameworks/Chromium Framework.framework/Versions/158.0.8106.0/Libraries/libaperitif.dylib (compatibility version 8106.0.0, current version 8106.0.0)",
+        "/usr/lib/libsandbox.1.dylib (compatibility version 1.0.0, current version 1.0.0)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/libvk_swiftshader.dylib",
+      "bytes": 21809888,
+      "sha256": "e4f6ae52fa01283297505ad460008c1d0cb3e034c9dc9012d81003c68e396063",
+      "uuid": [
+        "4C4C448B-5555-3144-A1D0-A27BE43010AC"
+      ],
+      "load_commands": [
+        "@rpath/libvk_swiftshader.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal (compatibility version 1.0.0, current version 382.5.3, weak)",
+        "/System/Library/Frameworks/Cocoa.framework/Versions/A/Cocoa (compatibility version 1.0.0, current version 24.0.0)",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit (compatibility version 45.0.0, current version 2775.10.103)",
+        "/usr/lib/libobjc.A.dylib (compatibility version 1.0.0, current version 228.0.0)",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation (compatibility version 300.0.0, current version 5027.0.69)",
+        "/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore (compatibility version 1.2.0, current version 1223.2.2)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/Frameworks/libvulkan.dylib",
+      "bytes": 542016,
+      "sha256": "b6818f4c2be855d51acad1a4d8fc85ef9309b3286959c4c022d34aa9ca9d81b2",
+      "uuid": [
+        "4C4C44A7-5555-3144-A15D-7558637EC72C"
+      ],
+      "load_commands": [
+        "./libvulkan.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5027.0.69)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/MacOS/Chromium",
+      "bytes": 466928896,
+      "sha256": "9b7a3e217c3c31fb64b17f87c13ed83f8d548377e6ff40bd7aa974b7fdc3b630",
+      "uuid": [
+        "4C4C44DC-5555-3144-A178-59158AFA10AE"
+      ],
+      "load_commands": [
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5027.0.69)",
+        "/usr/lib/libobjc.A.dylib (compatibility version 1.0.0, current version 228.0.0)",
+        "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics (compatibility version 64.0.0, current version 2050.0.0)",
+        "/System/Library/Frameworks/CoreText.framework/Versions/A/CoreText (compatibility version 1.0.0, current version 904.0.0)",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation (compatibility version 300.0.0, current version 5027.0.69)",
+        "/System/Library/Frameworks/Security.framework/Versions/A/Security (compatibility version 1.0.0, current version 62460.1.2)",
+        "/System/Library/Frameworks/ApplicationServices.framework/Versions/A/ApplicationServices (compatibility version 1.0.0, current version 66.0.0)",
+        "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices (compatibility version 1.0.0, current version 1226.0.0)",
+        "/System/Library/Frameworks/CFNetwork.framework/Versions/A/CFNetwork (compatibility version 1.0.0, current version 3896.100.1)",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit (compatibility version 45.0.0, current version 2775.10.103)",
+        "/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit (compatibility version 1.0.0, current version 275.0.0)",
+        "/System/Library/Frameworks/OpenDirectory.framework/Versions/A/OpenDirectory (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia (compatibility version 1.0.0, current version 3350.77.5)",
+        "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo (compatibility version 1.2.0, current version 758.27.0)",
+        "/System/Library/Frameworks/CryptoTokenKit.framework/Versions/A/CryptoTokenKit (compatibility version 0.0.0, current version 878.0.13)",
+        "/System/Library/Frameworks/LocalAuthentication.framework/Versions/A/LocalAuthentication (compatibility version 1.0.0, current version 2319.0.63)",
+        "/System/Library/Frameworks/Accelerate.framework/Versions/A/Accelerate (compatibility version 1.0.0, current version 4.0.0)",
+        "/System/Library/Frameworks/AudioUnit.framework/Versions/A/AudioUnit (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/AVFAudio.framework/Versions/A/AVFAudio (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/Carbon.framework/Versions/A/Carbon (compatibility version 2.0.0, current version 170.0.0)",
+        "/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore (compatibility version 1.2.0, current version 1223.2.2)",
+        "/System/Library/Frameworks/CoreImage.framework/Versions/A/CoreImage (compatibility version 1.0.1, current version 7.0.0)",
+        "/System/Library/Frameworks/ScreenCaptureKit.framework/Versions/A/ScreenCaptureKit (compatibility version 1.0.0, current version 1.0.0, weak)",
+        "/System/Library/Frameworks/UniformTypeIdentifiers.framework/Versions/A/UniformTypeIdentifiers (compatibility version 1.0.0, current version 709.0.0)",
+        "/System/Library/Frameworks/Network.framework/Versions/A/Network (compatibility version 1.0.0, current version 6681.1.1)",
+        "/System/Library/Frameworks/SystemConfiguration.framework/Versions/A/SystemConfiguration (compatibility version 1.0.0, current version 1446.0.0)",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal (compatibility version 1.0.0, current version 382.5.3)",
+        "/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/SkyLight (compatibility version 64.0.0, current version 600.0.0, weak)",
+        "/System/Library/Frameworks/AudioToolbox.framework/Versions/A/AudioToolbox (compatibility version 1.0.0, current version 1000.0.0)",
+        "/System/Library/Frameworks/CoreAudio.framework/Versions/A/CoreAudio (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/Quartz.framework/Versions/A/Quartz (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/Cocoa.framework/Versions/A/Cocoa (compatibility version 1.0.0, current version 24.0.0)",
+        "/System/Library/Frameworks/AVFoundation.framework/Versions/A/AVFoundation (compatibility version 1.0.0, current version 2.0.0)",
+        "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/VideoToolbox (compatibility version 1.0.0, current version 3350.77.5)",
+        "/System/Library/Frameworks/CoreMediaIO.framework/Versions/A/CoreMediaIO (compatibility version 0.0.0, current version 0.0.0)",
+        "/System/Library/Frameworks/Accessibility.framework/Versions/A/Accessibility (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/MetalKit.framework/Versions/A/MetalKit (compatibility version 1.0.0, current version 174.4.0)",
+        "/System/Library/Frameworks/CoreBluetooth.framework/Versions/A/CoreBluetooth (compatibility version 1.0.0, current version 2700.51.0)",
+        "/System/Library/Frameworks/IOBluetooth.framework/Versions/A/IOBluetooth (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/CoreMIDI.framework/Versions/A/CoreMIDI (compatibility version 1.0.0, current version 69.0.0)",
+        "/System/Library/Frameworks/MediaAccessibility.framework/Versions/A/MediaAccessibility (compatibility version 1.0.0, current version 62.0.0)",
+        "/System/Library/Frameworks/SecurityInterface.framework/Versions/A/SecurityInterface (compatibility version 1.0.0, current version 55222.0.4)",
+        "/System/Library/Frameworks/MediaPlayer.framework/Versions/A/MediaPlayer (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/AuthenticationServices.framework/Versions/A/AuthenticationServices (compatibility version 1.0.0, current version 625.1.29)",
+        "/System/Library/Frameworks/CoreHaptics.framework/Versions/A/CoreHaptics (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/GameController.framework/Versions/A/GameController (compatibility version 1.0.0, current version 14.0.24)",
+        "/System/Library/Frameworks/ForceFeedback.framework/Versions/A/ForceFeedback (compatibility version 1.0.0, current version 1.0.2)",
+        "/System/Library/Frameworks/CoreWLAN.framework/Versions/A/CoreWLAN (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/CoreLocation.framework/Versions/A/CoreLocation (compatibility version 1.0.0, current version 3185.0.6)",
+        "/System/Library/Frameworks/Vision.framework/Versions/A/Vision (compatibility version 1.0.0, current version 10.0.44)",
+        "/System/Library/Frameworks/CoreML.framework/Versions/A/CoreML (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/ServiceManagement.framework/Versions/A/ServiceManagement (compatibility version 1.0.0, current version 3298.1.1)",
+        "/System/Library/Frameworks/SafariServices.framework/Versions/A/SafariServices (compatibility version 535.0.0, current version 625.1.29)",
+        "/System/Library/Frameworks/UserNotifications.framework/Versions/A/UserNotifications (compatibility version 1.0.0, current version 1.0.0)",
+        "/System/Library/Frameworks/LocalAuthenticationEmbeddedUI.framework/Versions/A/LocalAuthenticationEmbeddedUI (compatibility version 1.0.0, current version 2319.0.63)",
+        "/usr/lib/libcups.2.dylib (compatibility version 2.0.0, current version 2.14.0)",
+        "/usr/lib/libbsm.0.dylib (compatibility version 1.0.0, current version 1.0.0)",
+        "/usr/lib/libpmenergy.dylib (compatibility version 1.0.0, current version 2.0.0)",
+        "/usr/lib/libpmsample.dylib (compatibility version 1.0.0, current version 2.0.0)",
+        "/usr/lib/libresolv.9.dylib (compatibility version 1.0.0, current version 1.0.0)",
+        "/usr/lib/libsandbox.1.dylib (compatibility version 1.0.0, current version 1.0.0)",
+        "/usr/lib/libiconv.2.dylib (compatibility version 7.0.0, current version 7.0.0)",
+        "/usr/lib/libbz2.1.0.dylib (compatibility version 1.0.0, current version 1.0.8)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/MacOS/libEGL.dylib",
+      "bytes": 34928,
+      "sha256": "c3bc77da594f06834244c45104095b877cfed1f2ab0899e6c0f0be86b90c8785",
+      "uuid": [
+        "4C4C44BE-5555-3144-A1F1-5E9EDDA2524E"
+      ],
+      "load_commands": [
+        "./libEGL.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/MacOS/libGLESv2.dylib",
+      "bytes": 34944,
+      "sha256": "05198a7dc0c1ced77fb2f0ec30db87a856fa7196a5f3aa8ea6b13605d43840e5",
+      "uuid": [
+        "4C4C4492-5555-3144-A192-0EF0369ADF08"
+      ],
+      "load_commands": [
+        "./libGLESv2.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/MacOS/libVkICD_mock_icd.dylib",
+      "bytes": 374304,
+      "sha256": "c90842658e225c408bb2f3afa9600f47b07c4e42e180d16b058128c09b919812",
+      "uuid": [
+        "4C4C4449-5555-3144-A16C-C26B458871D0"
+      ],
+      "load_commands": [
+        "./libVkICD_mock_icd.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/MacOS/libVkLayer_khronos_validation.dylib",
+      "bytes": 22628720,
+      "sha256": "2d4c49f8ea37c8cacfc410d3e980f1b013076f25522c4738b5fa00d4d7c69c5b",
+      "uuid": [
+        "4C4C4449-5555-3144-A1AE-B9CEE1836511"
+      ],
+      "load_commands": [
+        "./libVkLayer_khronos_validation.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/MacOS/libaperitif.dylib",
+      "bytes": 101952,
+      "sha256": "38808f9565b89627a8f644de14b341a55bcb4516398f4fcfe865a87704167fca",
+      "uuid": [
+        "4C4C44C8-5555-3144-A1EC-36463BAB80D3"
+      ],
+      "load_commands": [
+        "@executable_path/../Frameworks/Chromium Framework.framework/Versions/158.0.8106.0/Libraries/libaperitif.dylib (compatibility version 8106.0.0, current version 8106.0.0)",
+        "/usr/lib/libsandbox.1.dylib (compatibility version 1.0.0, current version 1.0.0)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/MacOS/libvk_swiftshader.dylib",
+      "bytes": 21701344,
+      "sha256": "63297c7b5441e61d1f1badf1f5db2c22eb25148e7172a1a036c1da23a2aca8db",
+      "uuid": [
+        "4C4C448B-5555-3144-A1D0-A27BE43010AC"
+      ],
+      "load_commands": [
+        "@rpath/libvk_swiftshader.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "/System/Library/Frameworks/Metal.framework/Versions/A/Metal (compatibility version 1.0.0, current version 382.5.3, weak)",
+        "/System/Library/Frameworks/Cocoa.framework/Versions/A/Cocoa (compatibility version 1.0.0, current version 24.0.0)",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit (compatibility version 45.0.0, current version 2775.10.103)",
+        "/usr/lib/libobjc.A.dylib (compatibility version 1.0.0, current version 228.0.0)",
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation (compatibility version 300.0.0, current version 5027.0.69)",
+        "/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore (compatibility version 1.2.0, current version 1223.2.2)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "path": "Contents/MacOS/libvulkan.dylib",
+      "bytes": 557120,
+      "sha256": "867ca9ab6b1204dd4b23ee29e6e895bdfc1dfd0b861fa5a0b77b07019540ca08",
+      "uuid": [
+        "4C4C44A7-5555-3144-A15D-7558637EC72C"
+      ],
+      "load_commands": [
+        "./libvulkan.dylib (compatibility version 0.0.0, current version 0.0.0)",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5027.0.69)",
+        "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    }
+  ],
+  "scope": "Packaged files and UUID-matched linker inputs; conservative GN shipped metadata includes build tools. Link inputs do not establish which sections survive ThinLTO/dead stripping. Diagnostics and unmatched binaries prevent treating this as a complete release compliance certificate."
+}

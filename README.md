@@ -17,7 +17,9 @@ and open `build/Zitter.app`. The measured results and test coverage are in
 The separate [Rust UI / GPU prototype](docs/rust-ui-prototype.md) compares Views,
 Rust/Skia and Rust/Metal with the current Chromium fork and isolated test profiles.
 The [CPU/GPU profile and binary license audit](docs/ui-profile-and-licenses.md)
-explains presentation timing, optimization priorities and Apache-2.0 distribution requirements.
+explains presentation timing and distribution requirements.
+The [implemented Apache/libarchive migration and UI A/B benchmark](docs/open-source-ui-optimization.md)
+records the current source license, UnRAR replacement and verified WindowServer frame measurement.
 
 For incremental development, keep the separate Debug/component output. After
 preparing the pinned Chromium checkout and installing the overlay below:

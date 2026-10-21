@@ -70,6 +70,17 @@ class InstrumentsTests(unittest.TestCase):
             self.assertEqual(result['gpu_packets'], 2)
             self.assertEqual(result['gpu_busy_union_ms'], 4)
             self.assertEqual(result['gpu_busy_ms_per_update'], 2)
+            # An otherwise valid export must not silently undercount a run
+            # whose final measured updates happened after recording stopped.
+            toc = ET.parse(directory / 'gpu-toc.xml')
+            summary = ET.SubElement(toc.getroot(), 'summary')
+            ET.SubElement(summary, 'duration').text = '10.5'
+            toc.write(directory / 'gpu-toc.xml')
+            with self.assertRaisesRegex(ValueError, 'complete measurement window'):
+                analyze_ui_instruments.summarize(directory, 'gpu', iterations=2)
+            summary.find('duration').text = '12'
+            toc.write(directory / 'gpu-toc.xml')
+            self.assertEqual(analyze_ui_instruments.summarize(directory, 'gpu', iterations=2)['recording_duration_seconds'], 12)
 
 
 if __name__ == '__main__':
