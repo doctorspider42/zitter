@@ -58,10 +58,10 @@ at both sidebar width limits (200 and 480 logical pixels). Palette, history,
 settings and folder regressions also passed with the Rust row adapter enabled.
 See the [row control validation artifact](benchmarks/rust-row-controls-functional-2026-10-21.json).
 
-The subsequent vertical-column migration passed **9/9 controller/geometry browser
-regressions, 1/1 Views geometry comparison, 9/9 Rust tests and 59/59 Python tests**.
-These controller tests do not inject OS input. Physical mouse/keyboard/trackpad
-and visual verification of this newer layout are pending manual Mac unlock;
-the earlier 24-test pointer/keyboard matrix above describes the row-control
-milestone, not a fresh full matrix for this column migration. See the
+The subsequent vertical-column migration passed **25/25 Rust/Metal browser
+regressions, 4/4 Views controls, 9/9 Rust tests and 59/59 Python tests**. This
+includes the native pointer/keyboard matrix, animated workspace transitions and
+the new real-tab/folder geometry case. The refreshed signed app was inspected
+with Unicode text, Split View, folder collapse/expand and scrolling to tab 24;
+its executable UUID matches the build. See the
 [column validation artifact](benchmarks/rust-column-layout-functional-2026-10-21.json).

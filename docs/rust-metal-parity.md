@@ -50,9 +50,9 @@ Views-specific layout and control behavior must have an explicit replacement.
   See [validation](benchmarks/rust-row-controls-functional-2026-10-21.json).
   This is a control migration step, not full Views removal.
 - Rust-owned vertical list/folder columns, including cached workspace trees,
-  visible-child spacing, margins and full scroll extent: 9 controller/geometry
-  browser regressions, 1 Views geometry comparison, 9 Rust tests and 59 Python
-  tests passed. Native pointer and visual verification awaits manual Mac unlock.
+  visible-child spacing, margins and full scroll extent: 25 native Metal browser
+  regressions, 4 Views controls, 9 Rust tests and 59 Python tests passed. Signed
+  app inspected with Unicode, Split View, folder collapse/expand and scrolling.
   See [column validation](benchmarks/rust-column-layout-functional-2026-10-21.json).
 
 ## Completion gates
