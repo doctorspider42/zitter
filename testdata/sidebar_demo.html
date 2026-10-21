@@ -1,0 +1,21 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Zitter · Rust + Metal</title>
+<style>
+html { color-scheme: light dark; font: 18px system-ui; background: light-dark(#f4f3f7,#17171d); }
+body { max-width: 680px; margin: 64px auto; padding: 24px; }
+h1 { font-size: 36px; letter-spacing: -1px; }
+p { line-height: 1.7; } button { font: inherit; padding: 10px 16px; border-radius: 8px; cursor:pointer; }
+</style>
+<h1 id="heading"></h1>
+<p>To prawdziwa karta Chromium w prototypie Zitter. Lista kart jest rysowana przez Rust + Metal.
+Foldery, menu kontekstowe i Split View korzystają ze wspólnego modelu przeglądarki.</p>
+<p><kbd>Ctrl+Tab</kbd> / <kbd>Ctrl+Shift+Tab</kbd> — zmiana karty.<br>
+<kbd>⌘L</kbd> — adres. <kbd>⌘K</kbd> — Command Center. <kbd>⌘T</kbd> — nowa karta.<br>
+<kbd>⌘W</kbd> — zamknięcie. <kbd>⌘⌥1</kbd> / <kbd>⌘⌥2</kbd> — przestrzenie.</p>
+<button onclick="document.title = 'Zmieniony tytuł 🦀 · ' + new Date().toLocaleTimeString(); heading.textContent = document.title;">Zmień tytuł karty</button>
+<p>Przewiń listę, zmień szerokość panelu i kliknij obie połowy Split View. Kliknięcie prawym przyciskiem otwiera istniejące menu karty.</p>
+<script>
+document.title = new URLSearchParams(location.search).get('title') || document.title;
+heading.textContent = document.title;
+</script>

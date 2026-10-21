@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "base/files/file_path.h"
+#include "base/callback_list.h"
 #include "base/functional/callback.h"
 #include "base/timer/timer.h"
 #include "base/memory/raw_ptr.h"
@@ -21,6 +22,7 @@
 #include "base/task/sequenced_task_runner.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/views/controls/textfield/textfield_controller.h"
+#include "ui/views/controls/scroll_view.h"
 #include "ui/events/event_handler.h"
 #include "ui/views/context_menu_controller.h"
 #include "ui/menus/simple_menu_model.h"
@@ -88,7 +90,10 @@ struct ShellState {
   bool can_go_forward = false;
 };
 
-// Native Views only. No Profile, BrowserContext or WebContents dependencies.
+class SidebarMetal;
+
+// Native interaction tree with optional Rust/Metal card rendering.
+// No Profile, BrowserContext or WebContents dependencies.
 class WorkspaceShell final : public ui::EventHandler,
                              public views::TextfieldController,
                              public views::WidgetObserver,
@@ -240,6 +245,9 @@ class WorkspaceShell final : public ui::EventHandler,
   views::Combobox* search_engine_picker() const { return search_engine_picker_; }
   bool address_visible() const;
   bool sidebar_visible() const;
+  bool metal_sidebar_visible() const;
+  size_t CycleSidebarTab(size_t current, size_t count, bool backwards) const;
+
   void OpenWorkspaceSettings();
   bool settings_visible() const;
   void SetConfigurationError(bool error);
@@ -301,6 +309,12 @@ class WorkspaceShell final : public ui::EventHandler,
   using Suggestion = PaletteResult;
 
   void PositionPanels();
+  void ScheduleMetalSidebar();
+  void UpdateMetalSidebar();
+  std::unique_ptr<SidebarMetal> metal_sidebar_;
+  bool metal_sidebar_pending_ = false;
+  base::CallbackListSubscription metal_scroll_subscription_;
+  std::unique_ptr<views::ScrollView::ScopedScrollSynchronizer> metal_scroll_synchronizer_;
   void RefreshTools();
   void RefreshTimelineItems();
   void RefreshKeyRegistrations();

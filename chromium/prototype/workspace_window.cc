@@ -1355,7 +1355,7 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
   if (id == "sleep") return SleepWorkspace(active_id());
   if (id == "next_tab" || id == "previous_tab") {
     for (const auto& host : hosts_) if (host.workspace_id == active_id() && !host.tabs.empty()) {
-      SelectTab((host.active_tab + (id == "next_tab" ? 1 : host.tabs.size() - 1)) % host.tabs.size()); return true;
+      SelectTab(shell_->CycleSidebarTab(host.active_tab, host.tabs.size(), id == "previous_tab")); return true;
     }
   }
   if (id.starts_with("tab") && id.size() == 4 && id.back() >= '1' && id.back() <= '9') {

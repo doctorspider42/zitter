@@ -642,6 +642,12 @@ python3 tools/check_boundaries.py
 python3 -m unittest discover -s tests -p 'test_*.py'
 ```
 
+## Live Rust + Metal sidebar prototype
+
+The real workspace now has an optional Rust + Metal tab-list renderer, with live
+titles, folders, Split View and existing keyboard/controller routing. See
+[build, isolated demo and validation](docs/rust-metal-sidebar.md).
+
 ## Prepare Chromium
 
 Use a dedicated Chromium checkout. Follow the official prerequisites for your OS:

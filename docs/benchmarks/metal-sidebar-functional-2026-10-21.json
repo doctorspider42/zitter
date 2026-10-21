@@ -1,0 +1,135 @@
+{
+  "date": "2026-10-21",
+  "platform": "macOS arm64",
+  "build": "Release, ThinLTO, Chromium PGO",
+  "purpose": "Functional validation of the real workspace sidebar; not a performance benchmark",
+  "base_commit": "b0e1c5c170e263ba9b2cfa1567f9bccdf469d6a1",
+  "app_uuid": "4C4C44D6-5555-3144-A1AD-3F829301D8F9",
+  "source_sha256": {
+    "chromium/BUILD.gn": "c31a832696d57317c1d79ca2ec82df6f6f0bff1a963d1ec457164b5c600aff02",
+    "chromium/app/compile_ui_lab_metal.py": "a71330b61f044f659898654fec0ec05d61e01ac0cf9aa921c8c9cd4c3b4a21c6",
+    "chromium/prototype/profile_workspace_browsertest.cc": "3cbf361fe39a0a6aec8821006e7180186d1beab544f0373ee91b3dc63491baa4",
+    "chromium/prototype/sidebar.metal": "ce4c90387dd8dcb0c5ed4bde219f289c04523c9fff500a12b05d5f4c5e59ddf6",
+    "chromium/prototype/sidebar_metal.h": "32d5bd6827f5239e8e34c999b1aaa3156dbd71cab25dee267ce22eb356c42ddd",
+    "chromium/prototype/sidebar_metal.mm": "4490c34a9514ae5accfb020ab31eae1b702f198128e9af904fe765aa0e0f193f",
+    "chromium/prototype/sidebar_scene.rs": "d1d42c40b92d53a4cb61ff622870038ea22068b0ace16bed666d24ee9d8f72f3",
+    "chromium/prototype/workspace_shell.cc": "df5600f0220f68e12e80c231531cd652029da3672ec34e877de2b44df26399a9",
+    "chromium/prototype/workspace_shell.h": "7bb7296e85a26dc5bf401f8e18f3985476a0bcb176d71b24a5f0212f04cbed9b",
+    "chromium/prototype/workspace_window.cc": "2f041ddb4ea37200fd7e84a6f3634661707203594fac1f2d8a8eb3658dea1918",
+    "testdata/sidebar_demo.html": "43002c99ea4f037421aa7e5126cf914983a3b39a8edc33c02e2c96d422aaaa3c",
+    "tests/test_metal_sidebar_launcher.py": "e1c9e336b6c3c5191955a62a71b0f7ab5b18787ff4d0cb6813ee31f8d8d9f48b",
+    "tools/run_metal_sidebar.py": "c44f3c161c67566ab40c4e96a8628950b8e27aa55df0b79ab4987b664587ae5d"
+  },
+  "rust_metal": {
+    "metal_api_validation": true,
+    "tests": [
+      {
+        "name": "ZitterMetalSidebarBrowserTest.LiveTabsKeyboardFoldersAndSplit",
+        "status": "SUCCESS",
+        "elapsed_ms": 1909
+      },
+      {
+        "name": "ZitterMetalSidebarBrowserTest.MetalReturnsAfterWorkspaceAnimation",
+        "status": "SUCCESS",
+        "elapsed_ms": 1903
+      },
+      {
+        "name": "ZitterMetalSidebarBrowserTest.RealTabViewportScrolls",
+        "status": "SUCCESS",
+        "elapsed_ms": 2172
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.CocoaSwipesRepeatWithoutMouseMovement",
+        "status": "SUCCESS",
+        "elapsed_ms": 1933
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.ConfigurableNativeKeyboardShortcuts",
+        "status": "SUCCESS",
+        "elapsed_ms": 2446
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.NativeKeyboardWorkspaceSwitching",
+        "status": "SUCCESS",
+        "elapsed_ms": 2188
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.NativeShellAndAppearance",
+        "status": "SUCCESS",
+        "elapsed_ms": 2425
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarFolderFailedWriteRollsBack",
+        "status": "SUCCESS",
+        "elapsed_ms": 4040
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarFolderRenameAndDeleteContents",
+        "status": "SUCCESS",
+        "elapsed_ms": 4579
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarFoldersCreateNestAndPersist",
+        "status": "SUCCESS",
+        "elapsed_ms": 3767
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarMetadataUpdatesPreserveRows",
+        "status": "SUCCESS",
+        "elapsed_ms": 1909
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarRemainsOpenWhileSpacesSlide",
+        "status": "SUCCESS",
+        "elapsed_ms": 2167
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarSwipeTracksCancelsAndSkipsSpaces",
+        "status": "SUCCESS",
+        "elapsed_ms": 2691
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SplitPairPersistsWhileAnotherTabIsShown",
+        "status": "SUCCESS",
+        "elapsed_ms": 1641
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation",
+        "status": "SUCCESS",
+        "elapsed_ms": 1636
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SplitViewSessionRestore",
+        "status": "SUCCESS",
+        "elapsed_ms": 2702
+      }
+    ]
+  },
+  "views": {
+    "tests": [
+      {
+        "name": "ZitterProfilesBrowserTest.NativeShellAndAppearance",
+        "status": "SUCCESS",
+        "elapsed_ms": 2428
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarMetadataUpdatesPreserveRows",
+        "status": "SUCCESS",
+        "elapsed_ms": 1642
+      }
+    ]
+  },
+  "rust_unit_tests_passed": 4,
+  "python_unit_tests_passed": 59,
+  "gn_dependency_check": "passed",
+  "product_boundaries": "passed",
+  "manual_observations": [
+    "Readable Polish, Japanese and Arabic titles with system font fallback",
+    "The live list scrolls to tab 24 and retains a visible native scrollbar",
+    "Activating real tabs retains the persistent Split View pair"
+  ],
+  "limitations": [
+    "Views retains outer layout, native interaction nodes, IME, accessibility and menus",
+    "Native paint remains available under the Metal overlay; no new performance improvement is claimed"
+  ]
+}

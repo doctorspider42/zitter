@@ -9,6 +9,19 @@ if (is_mac) {
     outputs = [ "$target_gen_dir/chromium/app/ui_lab_shader.h" ]
     args = [ rebase_path(sources[0], root_build_dir), rebase_path(outputs[0], root_build_dir) ]
   }
+  action("sidebar_shader") {
+    script = "chromium/app/compile_ui_lab_metal.py"
+    sources = [ "chromium/prototype/sidebar.metal" ]
+    outputs = [ "$target_gen_dir/chromium/prototype/sidebar_shader.h" ]
+    args = [ rebase_path(sources[0], root_build_dir), rebase_path(outputs[0], root_build_dir), "--namespace", "zitter::sidebar" ]
+  }
+  rust_static_library("sidebar_scene") {
+    crate_root = "chromium/prototype/sidebar_scene.rs"
+    sources = [ crate_root ]
+    cxx_bindings = [ crate_root ]
+    allow_unsafe = true
+    build_native_rust_unit_tests = true
+  }
   rust_static_library("ui_lab_scene") {
     crate_root = "chromium/app/ui_lab_scene.rs"
     sources = [ crate_root ]
@@ -174,13 +187,17 @@ source_set("shell") {
   ]
   if (is_mac) {
     sources += [
+      "chromium/prototype/sidebar_metal.h",
+      "chromium/prototype/sidebar_metal.mm",
       "chromium/prototype/browser_import_key_mac.mm",
       "chromium/prototype/workspace_frame_mac.h",
       "chromium/prototype/workspace_frame_mac.mm",
       "chromium/prototype/workspace_keyboard_mac.h",
       "chromium/prototype/workspace_keyboard_mac.mm",
     ]
-    public_deps += [
+    include_dirs += [ target_gen_dir ]
+    frameworks = [ "Metal.framework", "QuartzCore.framework", "AppKit.framework", "CoreText.framework" ]
+    public_deps += [ ":sidebar_scene", ":sidebar_shader",
       "//components/remote_cocoa/app_shim",
       "//components/remote_cocoa/common:mojo",
     ]

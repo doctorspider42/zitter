@@ -3890,6 +3890,145 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeShellAndAppearance) {
 }
 #endif
 
+#if BUILDFLAG(IS_MAC)
+class ZitterMetalSidebarBrowserTest : public ZitterProfilesBrowserTest {
+ public:
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    ZitterProfilesBrowserTest::SetUpCommandLine(command_line);
+    command_line->AppendSwitchASCII("zitter-sidebar", "rust-metal");
+  }
+};
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, RealTabViewportScrolls) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->SetWorkspaceAnimations(false);
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html");
+  for (int i = 0; i < 28; ++i) ASSERT_TRUE(window_->NavigateFromBar(url, true));
+  shell->CloseOverlays(true); shell->ShowSidebar();
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  auto* scroll = shell->tab_scroll_view();
+  EXPECT_GT(shell->tab_list_view()->height(), scroll->GetVisibleRect().height());
+  const int before = scroll->GetVisibleRect().y();
+  const ui::MouseEvent mouse(ui::EventType::kMousewheel, gfx::Point(20, 20),
+      gfx::Point(20, 20), base::TimeTicks::Now(), 0, 0);
+  const ui::MouseWheelEvent wheel(mouse, 0, -500);
+  ASSERT_TRUE(static_cast<views::View*>(scroll)->OnMouseWheel(wheel));
+  ASSERT_TRUE(base::test::RunUntil([&] { return scroll->GetVisibleRect().y() > before; }));
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible(); }));
+  auto* row = shell->tab_button(28);
+  ASSERT_TRUE(row);
+  const auto screen_point = row->GetBoundsInScreen().CenterPoint();
+  auto* root = shell->sidebar_widget()->GetRootView();
+  auto point = screen_point;
+  views::View::ConvertPointFromScreen(root, &point);
+  auto* hit = root->GetEventHandlerForPoint(point);
+  ASSERT_TRUE(hit == row || row->Contains(hit)) << hit->GetClassName();
+  window_->SelectTab(0);
+  auto* first = window_->contents("work");
+  ui_controls::EnableUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  base::test::TestFuture<void> moved;
+  ASSERT_TRUE(ui_controls::SendMouseMoveNotifyWhenDone(screen_point.x(), screen_point.y(),
+      moved.GetCallback(), shell->sidebar_widget()->GetNativeWindow()));
+  ASSERT_TRUE(moved.Wait());
+  base::test::TestFuture<void> clicked;
+  ASSERT_TRUE(ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT,
+      ui_controls::DOWN | ui_controls::UP, clicked.GetCallback(), ui_controls::kNoAccelerator,
+      shell->sidebar_widget()->GetNativeWindow()));
+  ASSERT_TRUE(clicked.Wait());
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->contents("work") != first; }));
+}
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, MetalReturnsAfterWorkspaceAnimation) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->SetWorkspaceAnimations(true);
+  shell->ShowSidebar();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible(); }));
+  ASSERT_TRUE(window_->Select("personal"));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return !shell->workspace_animation_running() && shell->metal_sidebar_visible();
+  }));
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return !shell->workspace_animation_running() && shell->metal_sidebar_visible();
+  }));
+}
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, LiveTabsKeyboardFoldersAndSplit) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->SetWorkspaceAnimations(false);
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), embedded_test_server()->GetURL("/storage_probe.html")));
+  auto* first = window_->contents("work");
+  ASSERT_TRUE(content::ExecJs(first, "document.title = 'Zażółć 日本語 🦀';"));
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html?metal"), true));
+  auto* second = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(second));
+  shell->CloseOverlays(true); shell->ShowSidebar();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible(); }));
+  shell->ToggleSidebar();
+  ASSERT_TRUE(base::test::RunUntil([&] { return !shell->metal_sidebar_visible(); }));
+  shell->ShowSidebar();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible(); }));
+  shell->SetPinned(true);
+  ASSERT_TRUE(shell->tab_button(0));
+  EXPECT_EQ(u"Zażółć 日本語 🦀", shell->tab_button(0)->GetTooltipText());
+  ui_controls::EnableUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  // Physical key dispatch traverses the existing page/accelerator path and the
+  // Rust tab-cycle reducer, rather than directly calling select_tab callbacks.
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(window_->widget()->GetNativeWindow(),
+      ui::VKEY_TAB, true, false, false, false));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->contents("work") == first; }));
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(window_->widget()->GetNativeWindow(),
+      ui::VKEY_TAB, true, true, false, false));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->contents("work") == second; }));
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(window_->widget()->GetNativeWindow(),
+      ui::VKEY_L, false, false, false, true));
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->address_visible(); }));
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->address_widget()->GetNativeWindow(),
+      ui::VKEY_ESCAPE, false, false, false, false));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !shell->address_visible(); }));
+  const auto point = shell->tab_button(0)->GetBoundsInScreen().CenterPoint();
+  base::test::TestFuture<void> moved;
+  ASSERT_TRUE(ui_controls::SendMouseMoveNotifyWhenDone(point.x(), point.y(), moved.GetCallback(),
+      shell->sidebar_widget()->GetNativeWindow()));
+  ASSERT_TRUE(moved.Wait());
+  base::test::TestFuture<void> clicked;
+  ASSERT_TRUE(ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT,
+      ui_controls::DOWN | ui_controls::UP, clicked.GetCallback(), ui_controls::kNoAccelerator,
+      shell->sidebar_widget()->GetNativeWindow()));
+  ASSERT_TRUE(clicked.Wait());
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->contents("work") == first; }));
+  ASSERT_TRUE(window_->CreatePinnedFolder("work", {}, "Projekty 🦀"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  auto* folder = SidebarNamedButton(shell->sidebar_view(), u"▾ Projekty 🦀");
+  ASSERT_TRUE(folder);
+  EXPECT_EQ(shell, folder->context_menu_controller());
+  views::test::ButtonTestApi(folder).NotifyDefaultMouseClick();
+  EXPECT_EQ(u"▸ Projekty 🦀", folder->GetTooltipText());
+  views::test::ButtonTestApi(folder).NotifyDefaultMouseClick();
+  window_->SelectTab(0);
+  ASSERT_TRUE(window_->SplitTab(1));
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible(); }));
+  EXPECT_EQ(shell->tab_button(0)->parent(), shell->tab_button(1)->parent());
+  views::test::ButtonTestApi(shell->tab_button(1)).NotifyDefaultMouseClick();
+  EXPECT_EQ(second, window_->contents("work"));
+  EXPECT_TRUE(window_->split());
+  shell->ResizeSidebar(90, true);
+  window_->SwapSplit(); window_->SetSplitVertical(true);
+  EXPECT_TRUE(window_->split_vertical());
+  ASSERT_TRUE(window_->Select("personal"));
+  ASSERT_TRUE(window_->Select("work"));
+  EXPECT_TRUE(window_->split());
+  EXPECT_EQ(second, window_->contents("work"));
+  window_->RunShortcut("close_tab");
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->tab_count("work") == 1; }));
+  EXPECT_EQ(first, window_->contents("work"));
+  EXPECT_FALSE(window_->split());
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible(); }));
+}
+#endif
+
 // Explicitly opt in: no unattended infinite wait in the normal test suite.
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ManualWindow) {
   if (!base::CommandLine::ForCurrentProcess()->HasSwitch("zitter-interactive")) {

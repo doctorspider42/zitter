@@ -3,10 +3,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <optional>
 #include <utility>
 
 #include "base/check.h"
+#include "base/command_line.h"
+#include "chromium/prototype/sidebar_metal.h"
 #include "base/files/file_util.h"
 #include "base/files/important_file_writer.h"
 #include "base/functional/bind.h"
@@ -33,6 +36,7 @@
 #include "ui/base/models/simple_combobox_model.h"
 #include "ui/views/controls/combobox/combobox.h"
 #include "ui/views/controls/scroll_view.h"
+#include "ui/views/controls/scrollbar/scroll_bar.h"
 #include "ui/views/controls/resize_area.h"
 #include "ui/views/controls/resize_area_delegate.h"
 #include "ui/views/view_class_properties.h"
@@ -47,6 +51,7 @@
 #include "ui/compositor/layer.h"
 #include "ui/compositor/layer_delegate.h"
 #include "ui/compositor/layer_animator.h"
+#include "ui/compositor/closure_animation_observer.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
 #include "ui/gfx/animation/animation.h"
 #include "ui/gfx/geometry/transform.h"
@@ -82,6 +87,7 @@
 
 #if BUILDFLAG(IS_MAC)
 #include "chromium/prototype/workspace_keyboard_mac.h"
+#include "chromium/prototype/sidebar_scene.rs.h"
 #include "chromium/prototype/workspace_frame_mac.h"
 #endif
 
@@ -483,6 +489,8 @@ class RowButton final : public views::Button {
     }
     if (close_) close_->SetBounds(this->width() - 30, (height() - 24) / 2, 24, 24);
   }
+  bool has_close_button() const { return close_ != nullptr; }
+  bool close_button_visible() const { return close_ && close_->GetVisible(); }
   const Spec& preview_spec() const { return spec_; }
   static void PaintPreview(gfx::Canvas* canvas, const gfx::Rect& rect, const Spec& spec, const views::View* theme) {
     gfx::ScopedCanvas scoped(canvas); canvas->Translate(rect.OffsetFromOrigin());
@@ -641,6 +649,19 @@ class SidebarGrip final : public views::ResizeArea, public views::ResizeAreaDele
 BEGIN_METADATA(SidebarGrip)
 END_METADATA
 
+// A ScrollView may paint on a separate layer from the outer sidebar. Observe
+// that layer's paint too; no polling timer or redraw while the UI is idle.
+class SidebarListView final : public views::View {
+ public:
+  explicit SidebarListView(base::RepeatingClosure painted) : painted_(std::move(painted)) {}
+  void OnPaint(gfx::Canvas* canvas) override {
+    views::View::OnPaint(canvas);
+    painted_.Run();
+  }
+ private:
+  base::RepeatingClosure painted_;
+};
+
 class SidebarView final : public views::View {
   METADATA_HEADER(SidebarView, views::View)
  public:
@@ -655,6 +676,11 @@ class SidebarView final : public views::View {
     LayoutSuperclass<views::View>(this);
     if (grip) grip->SetBounds(width() - 6, 0, 6, height());
   }
+  void OnPaint(gfx::Canvas* canvas) override {
+    views::View::OnPaint(canvas);
+    if (painted) painted.Run();
+  }
+  base::RepeatingClosure painted;
   raw_ptr<views::View> grip = nullptr;
  private:
   base::RepeatingClosure leave_;
@@ -1054,6 +1080,12 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
           shell->RestorePageFocus();
         }
       }, weak));
+#if BUILDFLAG(IS_MAC)
+  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar") == "rust-metal") {
+    metal_sidebar_ = CreateSidebarMetal();
+    sidebar->painted = base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar, weak);
+  }
+#endif
   sidebar_root_ = sidebar.get();
   sidebar->AddPreTargetHandler(this);
   sidebar->set_context_menu_controller(this);
@@ -1086,15 +1118,26 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       base::BindRepeating(&WorkspaceShell::OpenAddress, weak, true), std::move(new_tab)));
   auto* scroll = sidebar->AddChildView(std::make_unique<views::ScrollView>());
   tab_scroll_ = scroll;
+  // Bound the viewport while sizing contents to their full preferred height.
+  // An unbounded generic View otherwise stays viewport-sized and cannot scroll.
+  scroll->ClipHeightTo(0, std::numeric_limits<int>::max());
   scroll->set_context_menu_controller(this);
   scroll->SetPreferredSize(gfx::Size(200, 0));
+#if BUILDFLAG(IS_MAC)
+  if (metal_sidebar_) scroll->SetVerticalScrollBar(CreateSidebarScrollBar());
+#endif
   scroll->SetBackgroundColor(std::nullopt);
   scroll->SetDrawOverflowIndicator(false);
   scroll->SetHorizontalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);
-  auto list = std::make_unique<views::View>();
+  auto list = std::make_unique<SidebarListView>(base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar, weak));
+  metal_scroll_subscription_ = scroll->AddContentsScrolledCallback(
+      base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar, weak));
   list->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kVertical, gfx::Insets(), 2));
   tab_list_ = scroll->SetContents(std::move(list));
+  // Keep layer scrolling enabled (required by Chromium's scroll event handler),
+  // but synchronize its offset with native hit testing and Metal submission.
+  if (metal_sidebar_) metal_scroll_synchronizer_ = scroll->EnableScrollSynchronization();
   tab_list_->set_context_menu_controller(this);
   layout->SetFlexForView(scroll, 1);
 
@@ -1775,6 +1818,10 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 }
 
 void WorkspaceShell::Detach() {
+  metal_scroll_synchronizer_.reset();
+  metal_scroll_subscription_ = {};
+  metal_sidebar_.reset();
+  metal_sidebar_pending_ = false;
   CancelWorkspaceSwipe();
   StopWorkspaceAnimation();
   sidebar_warm_timer_.Stop();
@@ -2121,6 +2168,84 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
   else if (!same_structure) ConfigureSidebarContextMenus(cache.root);
 }
 
+size_t WorkspaceShell::CycleSidebarTab(size_t current, size_t count, bool backwards) const {
+#if BUILDFLAG(IS_MAC)
+  if (metal_sidebar_) return sidebar::cycle_tab(current, count, backwards);
+#endif
+  if (!count) return 0;
+  current = std::min(current, count - 1);
+  return backwards ? (current ? current - 1 : count - 1) : (current + 1 == count ? 0 : current + 1);
+}
+bool WorkspaceShell::metal_sidebar_visible() const {
+  return metal_sidebar_ && metal_sidebar_->visible();
+}
+void WorkspaceShell::ScheduleMetalSidebar() {
+  if (!metal_sidebar_ || metal_sidebar_pending_) return;
+  metal_sidebar_pending_ = true;
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
+      base::BindOnce(&WorkspaceShell::UpdateMetalSidebar, weak_factory_.GetWeakPtr()));
+}
+void WorkspaceShell::UpdateMetalSidebar() {
+  metal_sidebar_pending_ = false;
+#if BUILDFLAG(IS_MAC)
+  if (!metal_sidebar_) return;
+  if (!sidebar_visible() || swipe_overlay_ || workspace_animation_running()) {
+    metal_sidebar_->Hide(); return;
+  }
+  // The viewport is shared with native hit testing, including folder indentation,
+  // scroll offset and the two independent tiles of a split pair. Never invent a
+  // second tab model: title, selection, callbacks and close targets stay live.
+  auto* viewport = tab_list_->parent();
+  const auto bounds = viewport->GetBoundsInScreen();
+  std::vector<sidebar::Item> items;
+  auto collect = [&](auto&& self, views::View* view) -> void {
+    if (!view->IsDrawn()) return;
+    auto rect = view->GetBoundsInScreen();
+    if (!rect.Intersects(bounds)) return;
+    rect.Offset(-bounds.x(), -bounds.y());
+    if (auto* row = views::AsViewClass<RowButton>(view)) {
+      const auto& spec = row->preview_spec();
+      const bool hovered = row->GetState() == views::Button::STATE_HOVERED ||
+                           row->GetState() == views::Button::STATE_PRESSED;
+      SkColor fill = SK_ColorTRANSPARENT;
+      if (spec.tile) fill = SkColorSetA(Tone(row, kCard), spec.active ? 0xFF : hovered ? 0x8C : 0x59);
+      else if (spec.active) fill = Tone(row, kCard);
+      else if (spec.highlighted) fill = Tone(row, kAccentWash);
+      else if (hovered) fill = HoverWash(row);
+      sidebar::Item item{};
+      item.x = rect.x(); item.y = rect.y(); item.width = rect.width(); item.height = rect.height();
+      item.kind = 0; item.title = base::UTF16ToUTF8(spec.title);
+      item.monogram = base::UTF16ToUTF8(spec.icon ? u"📁" : spec.monogram);
+      item.ink = Tone(row, kInk); item.fill = fill;
+      item.badge = spec.icon ? SK_ColorTRANSPARENT : spec.monogram_color;
+      item.active = spec.active; item.hovered = hovered; item.tile = spec.tile;
+      item.close = row->has_close_button(); item.close_visible = row->close_button_visible();
+      item.focused = row->HasFocus();
+      item.font_size = Font(0).GetFontSize();
+      items.push_back(std::move(item));
+      return;  // Rust renders title, badge and close affordance together.
+    }
+    if (auto* label = views::AsViewClass<views::Label>(view)) {
+      sidebar::Item item{};
+      item.x=rect.x(); item.y=rect.y(); item.width=rect.width(); item.height=rect.height();
+      item.kind=1; item.title=base::UTF16ToUTF8(label->GetText());
+      item.ink=label->GetEnabledColor(); item.font_size=label->font_list().GetFontSize();
+      items.push_back(std::move(item)); return;
+    }
+    if (views::AsViewClass<SplitPair>(view)) {
+      sidebar::Item item{};
+      item.x=rect.x(); item.y=rect.y(); item.width=rect.width(); item.height=rect.height();
+      item.kind=2; item.fill=SkColorSetA(Tone(view,kCard),0x33);
+      items.push_back(std::move(item));
+    }
+    for (const auto& child : view->children()) self(self, child.get());
+  };
+  collect(collect, tab_list_);
+  const SkColor tint = FrameTint(workspace_color(state_.workspace_id), root_);
+  metal_sidebar_->Update(sidebar_widget_->GetNativeWindow(), bounds, items, pinned_ ? tint : Mix(tint, Tone(root_, kCard), 70));
+#endif
+}
+
 void WorkspaceShell::ConfigureSidebarContextMenus(views::View* view) {
   ++sidebar_context_visit_count_;
   if (!view->context_menu_controller()) view->set_context_menu_controller(this);
@@ -2170,6 +2295,7 @@ void WorkspaceShell::WarmNextSidebar() {
 }
 
 void WorkspaceShell::CancelWorkspaceSwipe() {
+  ScheduleMetalSidebar();
   swipe_idle_timer_.Stop(); swipe_settle_timer_.Stop();
   swipe_tracking_ = swipe_committing_ = false; swipe_closed_ = true;
   if (swipe_overlay_) {
@@ -2184,6 +2310,7 @@ size_t WorkspaceShell::workspace_swipe_preview_count() const {
   return swipe_overlay_ ? static_cast<WorkspaceSwipePreview*>(swipe_overlay_.get())->page_count() : 0;
 }
 void WorkspaceShell::UpdateWorkspaceSwipePreview() {
+  if (metal_sidebar_) metal_sidebar_->Hide();
   if (!swipe_overlay_) {
     StopWorkspaceAnimation();
     auto capture = base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, int index) -> cc::PaintRecord {
@@ -2908,6 +3035,7 @@ void WorkspaceShell::RebuildSuggestions() {
 }
 
 void WorkspaceShell::StopWorkspaceAnimation() {
+  ScheduleMetalSidebar();
   ++workspace_animation_generation_;
   workspace_animation_pending_ = false;
   if (tab_scroll_ && tab_scroll_->layer()) {
@@ -2932,6 +3060,7 @@ void WorkspaceShell::AnimateWorkspaceSwitch(std::string_view previous) {
   // Prepare the new viewport before starting the clock. Otherwise its first
   // layout/raster can consume much of a short animation and skip its opening.
   sidebar_widget_->LayoutRootViewIfNecessary();
+  if (metal_sidebar_) metal_sidebar_->Hide();
   tab_scroll_->SetPaintToLayer();
   tab_scroll_->layer()->SetFillsBoundsOpaquely(false);
   gfx::Transform offset; offset.Translate(new_index > old_index ? 32 : -32, 0);
@@ -2950,6 +3079,12 @@ void WorkspaceShell::AnimateWorkspaceSwitch(std::string_view previous) {
         settings.SetTransitionDuration(base::Milliseconds(180));
         settings.SetTweenType(gfx::Tween::EASE_OUT);
         settings.CacheRenderSurface();
+        if (shell->metal_sidebar_) {
+          // Scoped settings detach and activate this self-owned observer after
+          // all implicit sequences are registered, including zero-duration ones.
+          settings.AddObserver(new ui::ClosureAnimationObserver(base::BindOnce(
+              &WorkspaceShell::ScheduleMetalSidebar, shell)));
+        }
         layer->SetTransform(gfx::Transform());
       }, weak_factory_.GetWeakPtr(), workspace_animation_generation_));
   compositor->ScheduleDraw();
@@ -3700,6 +3835,7 @@ void WorkspaceShell::ShowSidebar() {
   PositionPanels();
   sidebar_widget_->ShowInactive();
   sidebar_widget_->StackAboveWidget(widget_);
+  ScheduleMetalSidebar();
 }
 void WorkspaceShell::ToggleSidebar() {
   if (sidebar_visible()) {
