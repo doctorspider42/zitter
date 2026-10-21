@@ -248,6 +248,9 @@ class WorkspaceShell final : public ui::EventHandler,
   bool address_visible() const;
   bool sidebar_visible() const;
   bool metal_sidebar_visible() const;
+  bool metal_header_visible() const;
+  size_t metal_header_frame_count() const;
+  gfx::Rect metal_header_screen_bounds_for_testing() const;
   // GPU submissions are separate from native subtree paint passes skipped/run.
   size_t metal_sidebar_frame_count() const;
   bool metal_sidebar_contains_text_for_testing(std::string_view text) const;
@@ -318,8 +321,14 @@ class WorkspaceShell final : public ui::EventHandler,
   using Suggestion = PaletteResult;
 
   void PositionPanels();
+  void ScheduleMetalHeader();
+  void UpdateMetalHeader();
   void ScheduleMetalSidebar();
   void UpdateMetalSidebar();
+  std::unique_ptr<SidebarMetal> metal_header_;
+  bool metal_header_pending_=false;
+  raw_ptr<views::View> header_view_=nullptr;
+  raw_ptr<views::Button> header_sidebar_button_=nullptr;
   std::unique_ptr<SidebarMetal> metal_sidebar_;
   bool metal_sidebar_pending_ = false;
   base::CallbackListSubscription metal_workspace_scroll_subscription_;

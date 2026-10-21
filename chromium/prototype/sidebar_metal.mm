@@ -15,6 +15,7 @@
 #include <vector>
 #include "base/apple/scoped_cftyperef.h"
 #include "base/logging.h"
+#include "base/no_destructor.h"
 #include "base/strings/sys_string_conversions.h"
 #include "ui/views/controls/scrollbar/scroll_bar.h"
 #include "ui/views/controls/scrollbar/base_scroll_bar_thumb.h"
@@ -127,8 +128,10 @@ bool SidebarThumb::OnMouseDragged(const ui::MouseEvent& event) {
 struct Quad { float x, y, width, height, radius; uint32_t color, textured; float stroke; };
 static_assert(sizeof(Quad) == 32);
 struct TextTile { id<MTLTexture> __strong texture; size_t bytes; };
-class Surface final : public SidebarMetal {
- public:
+struct SharedMetalContext {
+  id<MTLDevice> __strong device_;
+  id<MTLCommandQueue> __strong queue_;
+  id<MTLRenderPipelineState> __strong pipeline_;
   bool Init() {
     device_ = MTLCreateSystemDefaultDevice();
     if (!device_) return false;
@@ -149,6 +152,24 @@ class Surface final : public SidebarMetal {
     color.destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
     pipeline_ = library ? [device_ newRenderPipelineStateWithDescriptor:descriptor error:&error] : nil;
     if (!queue_ || !pipeline_) { LOG(ERROR) << "Sidebar Metal initialization failed"; return false; }
+    return true;
+  }
+};
+std::shared_ptr<SharedMetalContext> AcquireMetalContext() {
+  // Surface creation and updates run on the UI thread. Resources live until
+  // the last native-window canvas is detached; no process-lifetime GPU cache.
+  static base::NoDestructor<std::weak_ptr<SharedMetalContext>> cached;
+  if (auto existing=cached->lock()) return existing;
+  auto context=std::make_shared<SharedMetalContext>();
+  if (!context->Init()) return nullptr;
+  *cached=context; return context;
+}
+class Surface final : public SidebarMetal {
+ public:
+  bool Init() {
+    context_=AcquireMetalContext();
+    if (!context_) return false;
+    device_=context_->device_; queue_=context_->queue_; pipeline_=context_->pipeline_;
     view_ = [[ZitterSidebarMetalView alloc] initWithFrame:NSZeroRect];
     layer_ = [CAMetalLayer layer];
     layer_.device = device_; layer_.pixelFormat = MTLPixelFormatBGRA8Unorm;
@@ -207,7 +228,7 @@ class Surface final : public SidebarMetal {
     for (const auto& op : ops) signature << '|' << op.x << ',' << op.y << ',' << op.width << ','
         << op.height << ',' << op.clip.x << ',' << op.clip.y << ',' << op.clip.width << ',' << op.clip.height
         << ',' << op.radius << ',' << op.color << ',' << op.font_size << ','
-        << op.stroke << ',' << op.bold << ',' << op.middle << ',' << op.center << ':' << op.text.size() << ':' << std::string(op.text);
+        << op.shape << ',' << op.stroke << ',' << op.bold << ',' << op.middle << ',' << op.center << ':' << op.text.size() << ':' << std::string(op.text);
     std::string fingerprint = signature.str();
     if (fingerprint == last_frame_ && !view_.hidden) return;
     [CATransaction begin]; [CATransaction setDisableActions:YES];
@@ -248,7 +269,7 @@ class Surface final : public SidebarMetal {
         if (!texture) continue;
         [encoder setFragmentTexture:texture atIndex:0];
       }
-      Quad q{op.x, op.y, op.width, op.height, op.radius, op.color, text ? 1u : 0u, op.stroke};
+      Quad q{op.x, op.y, op.width, op.height, op.radius, op.color, text ? 1u : op.shape, op.stroke};
       [encoder setVertexBytes:&q length:sizeof(q) atIndex:0];
       [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:6];
     }
@@ -261,7 +282,7 @@ class Surface final : public SidebarMetal {
   id<MTLTexture> Text(const sidebar::Primitive& op, double scale) {
     std::ostringstream key;
     key << op.width << ',' << op.height << ',' << op.font_size << ',' << scale << ','
-        << op.color << ',' << op.stroke << ',' << op.bold << ',' << op.middle << ',' << op.center << ':' << std::string(op.text);
+        << op.color << ',' << op.shape << ',' << op.stroke << ',' << op.bold << ',' << op.middle << ',' << op.center << ':' << std::string(op.text);
     auto found = text_.find(key.str());
     if (found != text_.end()) return found->second.texture;
     const size_t width = std::min(size_t{4096}, size_t(std::ceil(op.width * scale)));
@@ -306,6 +327,7 @@ class Surface final : public SidebarMetal {
   std::map<std::string, TextTile> text_;
   size_t text_bytes_ = 0;
   rust::Box<sidebar::Viewport> viewport_ = sidebar::new_viewport();
+  std::shared_ptr<SharedMetalContext> context_;
   size_t frame_count_ = 0;
   std::string last_frame_;
   gfx::Rect last_bounds_;

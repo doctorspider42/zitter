@@ -35,7 +35,7 @@ mod ffi {
     struct ColumnLayout { width: i32, height: i32, children: Vec<Rect> }
     struct Primitive {
         x: f32, y: f32, width: f32, height: f32,
-        radius: f32, color: u32, stroke: f32,
+        radius: f32, color: u32, stroke: f32, shape: u32,
         text: String, font_size: f32, bold: bool, middle: bool, center: bool, clip: FloatRect,
     }
     extern "Rust" {
@@ -79,7 +79,7 @@ mod ffi {
         fn folder_indent(depth: i32) -> i32;
         fn close_visible(active: bool, tile: bool, hovered: bool) -> bool;
         fn footer_layout(width: i32, content_width: i32) -> ColumnLayout;
-        fn strip_layout(width: i32, height: i32, children: &[ColumnChild]) -> ColumnLayout;
+        fn strip_layout(width: i32, height: i32, spacing: i32, children: &[ColumnChild]) -> ColumnLayout;
         fn action_frame(row: Rect, viewport: Rect) -> Rect;
         fn address_layout(width: i32, height: i32, host_width: i32) -> RowLayout;
         fn row_layout(width: i32, height: i32, title_width: i32,
@@ -422,13 +422,15 @@ fn footer_layout(width: i32, content_width: i32) -> ffi::ColumnLayout {
         ffi::Rect{x:(width-32).max(0),y:0,width:32.min(width),height:32},
     ]}
 }
-fn strip_layout(width: i32, height: i32, children: &[ffi::ColumnChild]) -> ffi::ColumnLayout {
-    let natural=children.iter().fold(0i32,|sum,c|sum.saturating_add(c.width.max(0)));
+fn strip_layout(width: i32, height: i32, spacing: i32, children: &[ffi::ColumnChild]) -> ffi::ColumnLayout {
+    let spacing=spacing.max(0);
+    let natural=children.iter().fold(0i32,|sum,c|sum.saturating_add(c.width.max(0)))
+        .saturating_add(spacing.saturating_mul(children.len().saturating_sub(1).min(i32::MAX as usize) as i32));
     let natural_height=children.iter().map(|c|c.height.max(0)).max().unwrap_or(0);
     let height=if height<0 {natural_height} else {height}; let mut x=0i32;
     let rects=children.iter().map(|c| {
         let r=ffi::Rect{x,y:(height-c.height.max(0)).max(0)/2,width:c.width.max(0),height:c.height.max(0)};
-        x=x.saturating_add(r.width); r
+        x=x.saturating_add(r.width).saturating_add(spacing); r
     }).collect();
     ffi::ColumnLayout {width:if width<0 {natural} else {width},height,children:rects}
 }
@@ -462,7 +464,7 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
         let mut emit = |x, y, w: f32, h: f32, radius, color, text: &str, size, bold| {
             if w > 0.0 && h > 0.0 {
                 out.push(ffi::Primitive { x, y, width: w, height: h, radius,
-                    color, stroke: 0.0, text: text.into(), font_size: size, bold, middle: false, center: false,
+                    color, stroke: 0.0, shape: 0, text: text.into(), font_size: size, bold, middle: false, center: false,
                     clip: ffi::FloatRect {x: i.clip.x, y: i.clip.y, width: i.clip.width, height: i.clip.height} });
             }
         };
@@ -481,16 +483,19 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
                     emit(cx-8.0,cy-7.0,16.0,14.0,3.0,i.ink,"",0.0,false);
                     emit(cx-3.0,cy-7.0,1.0,14.0,0.0,i.ink,"",0.0,false);
                     if i.active {emit(cx-7.0,cy-6.0,4.0,12.0,0.0,(i.ink&0xffffff)|0x55000000,"",0.0,false);}
-                } else {
+                } else if i.glyph==2 {
                     for (dy,knob) in [(-5.0,-3.0),(0.0,3.0),(5.0,-1.0)] {
                         emit(cx-7.0,cy+dy-0.5,14.0,1.0,0.5,i.ink,"",0.0,false);
                         emit(cx+knob-1.5,cy+dy-1.5,3.0,3.0,1.5,i.ink,"",0.0,false);
                     }
+                } else {
+                    emit(cx-8.0,cy-8.0,16.0,16.0,0.0,i.ink,"",0.0,false);
                 }
             }
             if i.focused {emit(i.x+2.0,i.y+i.height-3.0,(i.width-4.0).max(0.0),2.0,1.0,i.ink,"",0.0,false);}
             for p in out[first_primitive..].iter_mut() {
                 if !p.text.is_empty() {p.center=true;}
+                if i.glyph>=3 && p.width==16.0 && p.height==16.0 {p.shape=i.glyph-1;}
                 if i.glyph==0 && p.width==16.0 && p.height==14.0 {p.stroke=1.0;}
                 if i.glyph==1 && i.monogram.is_empty() && p.width==8.0 && p.height==8.0 && !i.active {p.stroke=1.0;}
             }
@@ -729,7 +734,7 @@ mod tests {
         let overflow=footer_layout(200,300); assert_eq!(overflow.height,47);
         assert_eq!(overflow.children[2].width,134); assert_eq!(overflow.children[2].height,47);
         assert_eq!(overflow.children[4].x,168); assert_eq!(overflow.children[0].y,0);
-        let dots=strip_layout(-1,32,&[child(24,28),child(30,28),child(24,28)]);
+        let dots=strip_layout(-1,32,0,&[child(24,28),child(30,28),child(24,28)]);
         assert_eq!((dots.width,dots.children[1].x,dots.children[1].y),(78,24,2));
     }
     #[test] fn footer_scene_keeps_selected_plain_and_centered_emoji_variants() {
@@ -739,6 +744,16 @@ mod tests {
         let ops=layout(&[plain]);assert_eq!(ops.len(),1);assert_eq!(ops[0].stroke,1.0);
         let mut horizontal=row(80.0);horizontal.kind=6;horizontal.tile=true;horizontal.height=15.0;
         let ops=layout(&[horizontal]);assert_eq!((ops[0].width,ops[0].height),(76.0,7.0));
+    }
+    #[test] fn navigation_strip_preserves_gaps_and_arrow_reload_shapes() {
+        let g=strip_layout(-1,32,2,&[child(32,32),child(32,32),child(32,32),child(32,32)]);
+        assert_eq!(g.width,134);assert_eq!(g.children[3].x,102);
+        for glyph in 3..=5 {
+            let mut item=row(32.0);item.kind=7;item.glyph=glyph;item.height=32.0;item.focused=true;
+            let ops=layout(&[item]);let icon=ops.iter().find(|p|p.shape>0).unwrap();
+            assert_eq!(icon.shape,glyph-1);assert_eq!((icon.x,icon.y,icon.width,icon.height),(8.0,8.0,16.0,16.0));
+            assert!(ops.iter().all(|p|p.text.is_empty()));
+        }
     }
     fn viewport_node(parent: usize, x: f32, y: f32, width: f32, height: f32, visible: bool) -> ffi::ViewportNode {
         ffi::ViewportNode {parent, bounds: ffi::FloatRect {x, y, width, height}, visible}

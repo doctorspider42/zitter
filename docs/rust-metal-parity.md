@@ -30,7 +30,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Address pill | Rust host/path layout, GPU icon/outline/text and shared input reducer; native outer placement/focus/AX adapter | Replace native Button container; retain address/search/IME service |
 | Workspace heading and emoji text | Rust display list + Metal; native static-text accessibility adapter | Replace outer native View placement; expand VoiceOver/scale coverage |
 | Footer pin/settings, workspace dots/emoji and horizontal overflow | Rust layout, input reducer and shared Metal canvas; native focus/AX/menu adapters | Replace native containers; expand focus, trackpad, RTL and scale coverage |
-| Navigation/header controls | Views | Rust layout/drawing/events; enabled, selected, hover and keyboard focus states |
+| Navigation/header controls | Rust strip layout/input and analytic GPU icons; main-window Metal canvas sharing sidebar GPU resources | Replace native Button/outer frame adapters; expand peek, accessibility, RTL and scale coverage |
 | Sidebar resizing, pinning, auto-hide, edge reveal | Views | Rust interaction state; preserve content bounds and pointer behavior |
 | Workspace swipe/animation/cancellation | Views layers + existing workspace controller | Rust scene transitions without native-painted row snapshots |
 | Split headers/divider, focus, orientation, swap/close | Views + application commands | Rust controls/layout; preserve independent WebContents and pane focus |
@@ -142,6 +142,14 @@ Views-specific layout and control behavior must have an explicit replacement.
   demo state was restored. Native nodes/services remain; navigation is still
   awaiting migration. See
   [footer validation](benchmarks/rust-footer-functional-2026-10-22.json).
+
+- Navigation now uses Rust strip layout/input and analytic GPU back/forward/reload
+  icons. Its main-window canvas stays visible independently of the sidebar panel;
+  the two surfaces share their device, queue and pipeline. Native frame/drag,
+  Button/AX and application command adapters remain. **39 Metal browser tests,
+  14 Views controls, 38 Rust tests and 59 Python tests passed**. Signed app history,
+  actual reload and sidebar-toggle behavior were inspected and restored. See
+  [navigation validation](benchmarks/rust-navigation-functional-2026-10-22.json).
 
 ## Completion gates
 

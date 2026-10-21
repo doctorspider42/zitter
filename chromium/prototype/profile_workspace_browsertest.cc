@@ -38,6 +38,7 @@
 #include "chromium/prototype/page_dialogs.h"
 #include "chromium/prototype/link_navigation.h"
 #include "content/public/test/url_loader_interceptor.h"
+#include "content/public/test/test_navigation_observer.h"
 #include "base/functional/callback_helpers.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/gfx/animation/animation.h"
@@ -4187,6 +4188,60 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, FooterSpacesScrollSelectPi
   };
   ASSERT_TRUE(base::test::RunUntil([&] {return shell->metal_sidebar_visible();}));EXPECT_FALSE(native_ink());
   shell->sidebar_widget()->Hide();EXPECT_TRUE(native_ink());
+}
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NavigationHeaderHistoryReloadAndIndependentVisibility) {
+  auto* shell=window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] {return shell->appearance_ready();}));
+  shell->SetWorkspaceAnimations(false);shell->SetPinned(true);shell->ShowSidebar();
+  const auto first=embedded_test_server()->GetURL("/storage_probe.html?header-first");
+  const auto second=embedded_test_server()->GetURL("/storage_probe.html?header-second");
+  ASSERT_TRUE(window_->NavigateFromBar(first,false));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  ASSERT_TRUE(window_->NavigateFromBar(second,false));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  auto* root=window_->widget()->GetContentsView();
+  auto* back=SidebarNamedButton(root,u"Wstecz");auto* forward=SidebarNamedButton(root,u"Dalej");
+  auto* reload=SidebarNamedButton(root,u"Odśwież");auto* toggle=SidebarNamedButton(root,u"Pokaż lub ukryj karty");
+  ASSERT_TRUE(back);ASSERT_TRUE(forward);ASSERT_TRUE(reload);ASSERT_TRUE(toggle);
+  auto* header=back->parent();EXPECT_EQ(134,header->width());EXPECT_EQ(102,reload->x());
+  ASSERT_TRUE(base::test::RunUntil([&] {return shell->metal_header_visible() && back->GetEnabled() && !forward->GetEnabled();}));
+  EXPECT_TRUE(shell->metal_header_screen_bounds_for_testing().Contains(reload->GetBoundsInScreen().CenterPoint()));
+  auto native_ink=[&] {
+    const auto saved=reload->bounds();reload->SetBoundsRect(gfx::Rect(reload->size()));reload->SchedulePaint();
+    const auto bitmap=views::test::PaintViewToBitmap(reload);reload->SetBoundsRect(saved);
+    for(int y=0;y<bitmap.height();++y)for(int x=0;x<bitmap.width();++x)if(bitmap.getColor(x,y)!=SK_ColorRED)return true;
+    return false;
+  };
+  const auto before_focus=shell->metal_header_frame_count();
+  reload->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);reload->RequestFocus();
+  ASSERT_TRUE(base::test::RunUntil([&] {return reload->HasFocus() && shell->metal_header_frame_count()>before_focus;}));
+  EXPECT_FALSE(native_ink()); // Includes the native focus-ring child.
+  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  auto click=[&](views::Button* button) {
+    const auto point=button->GetBoundsInScreen().CenterPoint();base::test::TestFuture<void> moved,pressed;
+    return ui_controls::SendMouseMoveNotifyWhenDone(point.x(),point.y(),moved.GetCallback(),window_->widget()->GetNativeWindow()) && moved.Wait() &&
+        ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT,ui_controls::DOWN|ui_controls::UP,pressed.GetCallback(),ui_controls::kNoAccelerator,window_->widget()->GetNativeWindow()) && pressed.Wait();
+  };
+  const int index=window_->contents("work")->GetController().GetLastCommittedEntryIndex();
+  ASSERT_TRUE(click(forward));base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(index,window_->contents("work")->GetController().GetLastCommittedEntryIndex());
+  {content::TestNavigationObserver loaded(window_->contents("work"));ASSERT_TRUE(click(back));loaded.Wait();}
+  EXPECT_EQ(first,window_->contents("work")->GetLastCommittedURL());
+  ASSERT_TRUE(base::test::RunUntil([&] {return forward->GetEnabled();}));
+  {content::TestNavigationObserver loaded(window_->contents("work"));ASSERT_TRUE(click(forward));loaded.Wait();}
+  EXPECT_EQ(second,window_->contents("work")->GetLastCommittedURL());
+  ASSERT_TRUE(click(toggle));ASSERT_TRUE(base::test::RunUntil([&] {return !shell->sidebar_visible() && shell->metal_header_visible();}));
+  ASSERT_TRUE(content::ExecJs(window_->contents("work"),"window.header_reload_marker=42"));
+  {content::TestNavigationObserver loaded(window_->contents("work"));ASSERT_TRUE(click(reload));loaded.Wait();}
+  EXPECT_EQ("undefined",content::EvalJs(window_->contents("work"),"typeof window.header_reload_marker"));
+  EXPECT_EQ(second,window_->contents("work")->GetLastCommittedURL());
+  EXPECT_EQ(work_.get(),window_->contents("work")->GetBrowserContext());
+  ASSERT_TRUE(click(toggle));ASSERT_TRUE(base::test::RunUntil([&] {return shell->sidebar_visible() && shell->metal_header_visible();}));
+  const auto old_bounds=window_->widget()->GetWindowBoundsInScreen();const auto old_frame=shell->metal_header_screen_bounds_for_testing();
+  auto moved_bounds=old_bounds;moved_bounds.Offset(16,12);window_->widget()->SetBounds(moved_bounds);
+  ASSERT_TRUE(base::test::RunUntil([&] {return shell->metal_header_screen_bounds_for_testing().origin()==old_frame.origin()+gfx::Vector2d(16,12);}));
+  window_->widget()->Hide();EXPECT_FALSE(shell->metal_header_visible());EXPECT_TRUE(native_ink());
+  window_->widget()->Show();ASSERT_TRUE(base::test::RunUntil([&] {return shell->metal_header_visible();}));
+  base::RunLoop().RunUntilIdle();const auto idle=shell->metal_header_frame_count();base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(idle,shell->metal_header_frame_count());
 }
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, RealTabViewportScrolls) {
   auto* shell = window_->shell();

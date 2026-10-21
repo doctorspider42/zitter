@@ -644,7 +644,7 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 
 ## Live Rust + Metal sidebar prototype
 
-The real workspace now has an optional Rust + Metal tab-list renderer, with live
+The real workspace now has an optional Rust + Metal navigation/sidebar renderer, with live
 titles, folders, Split View and existing keyboard/controller routing. Live rows
 use scene text without hidden Views Labels, and skip native subtree painting
 while Metal is visible. Rust owns folder hierarchy/collapse state, tab grouping
@@ -654,6 +654,8 @@ is drawn on the shared GPU canvas and remains visible. The same Metal surface dr
 hint, the address host/path with GPU icons and the workspace heading without
 native text Labels. Rust also lays out and draws the pin/settings footer and
 workspace dots/emoji, including horizontal overflow and scrollbar dragging.
+The main-window navigation strip has its own Metal canvas and analytic icons;
+it shares GPU resources with the sidebar and stays usable when the panel hides.
 Model updates refresh the scene independently of
 native painting. Rust also owns row
 click/drag/cancellation and platform key activation through native event, focus

@@ -48,6 +48,7 @@ class RustFooterLayout final : public views::LayoutManager {
 };
 class RustDotsLayout final : public views::LayoutManager {
  public:
+  explicit RustDotsLayout(int spacing) : spacing_(spacing) {}
   void ViewAdded(views::View* host,views::View*) override {host->InvalidateLayout();}
   void ViewRemoved(views::View* host,views::View*) override {host->InvalidateLayout();}
   void Layout(views::View* host) override {
@@ -62,8 +63,9 @@ class RustDotsLayout final : public views::LayoutManager {
   sidebar::ColumnLayout Measure(const views::View* host,int width,int height) const {
     std::vector<sidebar::ColumnChild> children;
     for (const auto& child : host->children()) {const auto size=child->GetPreferredSize();children.push_back({size.width(),size.height(),0,0,0,0});}
-    return sidebar::strip_layout(width,height,rust::Slice<const sidebar::ColumnChild>(children.data(),children.size()));
+    return sidebar::strip_layout(width,height,spacing_,rust::Slice<const sidebar::ColumnChild>(children.data(),children.size()));
   }
+  int spacing_;
 };
 class RustSplitLayout final : public views::LayoutManager {
  public:
@@ -187,11 +189,11 @@ std::unique_ptr<views::LayoutManager> CreateSidebarFooterLayout() {
   return std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal);
 #endif
 }
-std::unique_ptr<views::LayoutManager> CreateSidebarDotsLayout() {
+std::unique_ptr<views::LayoutManager> CreateSidebarDotsLayout(int spacing) {
 #if BUILDFLAG(IS_MAC)
-  return std::make_unique<RustDotsLayout>();
+  return std::make_unique<RustDotsLayout>(spacing);
 #else
-  return std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal);
+  return std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal,gfx::Insets(),spacing);
 #endif
 }
 

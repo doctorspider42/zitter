@@ -326,11 +326,12 @@ class GlyphButton : public views::Button {
     SetTooltipText(name);
     GetViewAccessibility().SetName(name);
   }
+  const gfx::VectorIcon* icon() const { return icon_; }
   Glyph glyph() const { return glyph_; }
   bool on() const { return on_; }
   const std::u16string& label() const { return label_; }
   void set_color(SkColor color) { color_ = color; SchedulePaint(); }
-  void set_on(bool on) { on_ = on; SchedulePaint(); }
+  void set_on(bool on) { if (on_==on) return; on_ = on; SchedulePaint(); }
   // A workspace emoji replaces the plain dot.
   void set_label(std::u16string label) { label_ = std::move(label); PreferredSizeChanged(); }
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {
@@ -476,6 +477,10 @@ class SceneGlyphButton final : public GlyphButton {
 #endif
     GlyphButton::StateChanged(state);
   }
+  void PaintChildren(const views::PaintInfo& info) override {
+    if (scene_visible_ && scene_visible_.Run()) return;
+    views::Button::PaintChildren(info);
+  }
   void PaintButtonContents(gfx::Canvas* canvas) override {
     if (scene_visible_ && scene_visible_.Run()) return;
     GlyphButton::PaintButtonContents(canvas);
@@ -516,6 +521,36 @@ class SceneGlyphButton final : public GlyphButton {
 };
 
 BEGIN_METADATA(SceneGlyphButton)
+END_METADATA
+
+#if BUILDFLAG(IS_MAC)
+sidebar::Item GlyphSceneItem(GlyphButton* button,gfx::RectF rect,gfx::RectF clip) {
+  sidebar::Item item{}; item.kind=7;
+  item.x=rect.x(); item.y=rect.y(); item.width=rect.width(); item.height=rect.height();
+  item.clip={clip.x(),clip.y(),clip.width(),clip.height()};
+  item.glyph=button->glyph()==GlyphButton::Glyph::kSidebar ? 0 : button->glyph()==GlyphButton::Glyph::kDot ? 1
+      : button->icon()==&vector_icons::kArrowBackIcon ? 3 : button->icon()==&vector_icons::kArrowForwardIcon ? 4
+      : button->icon()==&vector_icons::kReloadCustomIcon ? 5 : 2;
+  item.active=button->on(); item.focused=button->HasFocus();
+  item.hovered=button->GetEnabledInViewsSubtree() && (button->GetState()==views::Button::STATE_HOVERED || button->GetState()==views::Button::STATE_PRESSED);
+  item.ink=Tone(button,!button->GetEnabledInViewsSubtree() ? kDisabled : item.glyph==1 ? item.active || item.hovered ? kInk : kMuted : kSubtle);
+  item.monogram=base::UTF16ToUTF8(button->label()); item.font_size=Font(3).GetFontSize();
+  item.fill=item.glyph==1 ? item.active && !item.monogram.empty() ? SkColorSetA(Tone(button,kInk),0x1f) : item.hovered ? HoverWash(button) : SK_ColorTRANSPARENT
+      : item.hovered ? HoverWash(button) : SK_ColorTRANSPARENT;
+  return item;
+}
+#endif
+
+class ChromeHeaderView final : public views::View {
+  METADATA_HEADER(ChromeHeaderView,views::View)
+ public:
+  explicit ChromeHeaderView(base::RepeatingClosure painted) : painted_(std::move(painted)) {}
+  void OnDidSchedulePaint(const gfx::Rect& rect) override { views::View::OnDidSchedulePaint(rect); painted_.Run(); }
+  void OnPaint(gfx::Canvas* canvas) override { views::View::OnPaint(canvas); painted_.Run(); }
+ private:
+  base::RepeatingClosure painted_;
+};
+BEGIN_METADATA(ChromeHeaderView)
 END_METADATA
 
 // A sidebar tab, a "New tab" action or a palette suggestion.
@@ -1377,22 +1412,31 @@ std::unique_ptr<views::View> WorkspaceShell::Build() {
   auto root = std::make_unique<ShellRoot>();
   root_ = root.get();
   root->SetBackground(views::CreateSolidBackground(FrameTint(workspace_color("work"), root_)));
-  auto* header = root->AddChildView(std::make_unique<views::View>());
-  header->SetLayoutManager(std::make_unique<views::BoxLayout>(
-      views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 2))
-      ->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
   auto weak = weak_factory_.GetWeakPtr();
-  header->AddChildView(std::make_unique<GlyphButton>(
-      base::BindRepeating(&WorkspaceShell::ToggleSidebar, weak), u"Pokaż lub ukryj karty",
-      GlyphButton::Glyph::kSidebar));
+#if BUILDFLAG(IS_MAC)
+  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal") metal_header_=CreateSidebarMetal();
+#endif
+  auto* header = root->AddChildView(std::make_unique<ChromeHeaderView>(
+      base::BindRepeating(&WorkspaceShell::ScheduleMetalHeader,weak)));
+  header_view_=header;
+  header->SetLayoutManager(std::make_unique<views::BoxLayout>(
+      views::BoxLayout::Orientation::kHorizontal,gfx::Insets(),2))
+      ->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
+  if (metal_header_) header->SetLayoutManager(CreateSidebarDotsLayout(2));
+  auto header_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+    return shell && shell->metal_header_visible();
+  },weak);
+  header_sidebar_button_=header->AddChildView(std::make_unique<SceneGlyphButton>(
+      base::BindRepeating(&WorkspaceShell::ToggleSidebar,weak),u"Pokaż lub ukryj karty",
+      GlyphButton::Glyph::kSidebar,nullptr,header_visible));
   const std::array<std::pair<const gfx::VectorIcon*, std::u16string>, 3> commands = {{
       {&vector_icons::kArrowBackIcon, u"Wstecz"},
       {&vector_icons::kArrowForwardIcon, u"Dalej"},
       {&vector_icons::kReloadCustomIcon, u"Odśwież"}}};
   for (size_t i = 0; i < commands.size(); ++i) {
-    nav_buttons_[i] = header->AddChildView(std::make_unique<GlyphButton>(
+    nav_buttons_[i] = header->AddChildView(std::make_unique<SceneGlyphButton>(
         base::BindRepeating(callbacks_.page_command, static_cast<PageCommand>(i)),
-        commands[i].second, GlyphButton::Glyph::kVector, commands[i].first));
+        commands[i].second, GlyphButton::Glyph::kVector, commands[i].first,header_visible));
   }
   content_host_ = root->AddChildView(std::make_unique<PaneHost>(callbacks_.split_ratio,
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, bool right, views::View* anchor) {
@@ -2202,6 +2246,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 }
 
 void WorkspaceShell::Detach() {
+  metal_header_.reset();metal_header_pending_=false;header_view_=nullptr;header_sidebar_button_=nullptr;
   metal_workspace_scroll_subscription_={};
   metal_workspace_scroll_synchronizer_.reset();
   metal_scroll_synchronizer_.reset();
@@ -2570,7 +2615,37 @@ size_t WorkspaceShell::native_sidebar_paint_count() const {
 size_t WorkspaceShell::metal_sidebar_paint_count() const {
   return tab_list_ ? static_cast<SidebarListView*>(tab_list_.get())->metal_paints() : 0;
 }
+bool WorkspaceShell::metal_header_visible() const {return metal_header_ && metal_header_->visible();}
+size_t WorkspaceShell::metal_header_frame_count() const {return metal_header_ ? metal_header_->frame_count() : 0;}
+gfx::Rect WorkspaceShell::metal_header_screen_bounds_for_testing() const {return metal_header_ ? metal_header_->screen_bounds_for_testing() : gfx::Rect();}
+void WorkspaceShell::ScheduleMetalHeader() {
+  if (!metal_header_ || metal_header_pending_) return;
+  metal_header_pending_=true;
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
+      base::BindOnce(&WorkspaceShell::UpdateMetalHeader,weak_factory_.GetWeakPtr()));
+}
+void WorkspaceShell::UpdateMetalHeader() {
+  metal_header_pending_=false;
+#if BUILDFLAG(IS_MAC)
+  if (!metal_header_ || !header_view_ || !widget_) return;
+  const bool was_visible=metal_header_->visible();
+  if (!widget_->IsVisible()) {metal_header_->Hide();if(was_visible)header_view_->SchedulePaint();return;}
+  widget_->LayoutRootViewIfNecessary();
+  const auto visible=header_view_->GetVisibleBounds();
+  if (visible.IsEmpty()) {metal_header_->Hide();if(was_visible)header_view_->SchedulePaint();return;}
+  auto bounds=header_view_->GetBoundsInScreen();bounds.Offset(visible.x(),visible.y());bounds.set_size(visible.size());
+  static_cast<GlyphButton*>(header_sidebar_button_.get())->set_on(sidebar_visible());
+  std::vector<sidebar::Item> items;items.reserve(header_view_->children().size());
+  for (const auto& child : header_view_->children()) {
+    auto rect=gfx::RectF(child->GetBoundsInScreen());rect.Offset(-bounds.x(),-bounds.y());
+    items.push_back(GlyphSceneItem(static_cast<GlyphButton*>(child.get()),rect,gfx::RectF(gfx::Rect(bounds.size()))));
+  }
+  metal_header_->Update(widget_->GetNativeWindow(),bounds,items,FrameTint(workspace_color(state_.workspace_id),root_));
+  if (was_visible!=metal_header_->visible()) header_view_->SchedulePaint();
+#endif
+}
 void WorkspaceShell::ScheduleMetalSidebar() {
+  ScheduleMetalHeader();
   if (!metal_sidebar_ || metal_sidebar_pending_) return;
   metal_sidebar_pending_ = true;
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
@@ -2690,17 +2765,7 @@ void WorkspaceShell::UpdateMetalSidebar() {
     items.push_back(std::move(item));
   }
   auto append_glyph=[&](GlyphButton* button,gfx::RectF rect,gfx::RectF clip) {
-    sidebar::Item item{}; item.kind=7;
-    item.x=rect.x(); item.y=rect.y(); item.width=rect.width(); item.height=rect.height();
-    item.clip={clip.x(),clip.y(),clip.width(),clip.height()};
-    item.glyph=button->glyph()==GlyphButton::Glyph::kSidebar ? 0 : button->glyph()==GlyphButton::Glyph::kDot ? 1 : 2;
-    item.active=button->on(); item.focused=button->HasFocus();
-    item.hovered=button->GetState()==views::Button::STATE_HOVERED || button->GetState()==views::Button::STATE_PRESSED;
-    item.ink=Tone(button,!button->GetEnabledInViewsSubtree() ? kDisabled : item.glyph==1 ? item.active || item.hovered ? kInk : kMuted : kSubtle);
-    item.monogram=base::UTF16ToUTF8(button->label()); item.font_size=Font(3).GetFontSize();
-    item.fill=item.glyph==1 ? item.active && !item.monogram.empty() ? SkColorSetA(Tone(button,kInk),0x1f) : item.hovered ? HoverWash(button) : SK_ColorTRANSPARENT
-        : item.hovered ? HoverWash(button) : SK_ColorTRANSPARENT;
-    items.push_back(std::move(item));
+    items.push_back(GlyphSceneItem(button,rect,clip));
   };
   auto local_rect=[&](views::View* view) {
     auto rect=gfx::RectF(view->GetBoundsInScreen()); rect.Offset(-bounds.x(),-bounds.y()); return rect;
@@ -3883,6 +3948,7 @@ void WorkspaceShell::SaveGeneralPatch(std::optional<ThemeMode> theme, std::optio
 }
 
 void WorkspaceShell::ApplyAppearance(bool refresh_theme) {
+  ScheduleMetalHeader();
   if (!widget_) return;
   const auto color = workspace_color(state_.workspace_id);
   if (refresh_theme) ApplyTheme();
@@ -4789,7 +4855,7 @@ bool WorkspaceShell::HandleKeyEvent(views::Textfield* sender, const ui::KeyEvent
   return true;
 }
 void WorkspaceShell::OnWidgetBoundsChanged(views::Widget* widget, const gfx::Rect&) {
-  if (widget == widget_) PositionPanels();
+  if (widget == widget_) {PositionPanels();ScheduleMetalHeader();}
 }
 void WorkspaceShell::OnWidgetActivationChanged(views::Widget* widget, bool active) {
   if (active) return;
@@ -4798,6 +4864,7 @@ void WorkspaceShell::OnWidgetActivationChanged(views::Widget* widget, bool activ
   if (widget == sidebar_widget_.get() && !pinned_ && !settings_visible()) sidebar_widget_->Hide();
 }
 void WorkspaceShell::OnWidgetVisibilityChanged(views::Widget* widget, bool visible) {
+  if (widget==widget_) ScheduleMetalHeader();
   if (widget == sidebar_widget_.get() && !visible) { CancelWorkspaceSwipe(); StopWorkspaceAnimation(); }
   if (widget == widget_ && !visible) {
     HidePeek();

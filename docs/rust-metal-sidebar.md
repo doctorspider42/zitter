@@ -292,3 +292,28 @@ by restoring the original empty emoji and split pair. Navigation, native node
 removal and the broader input/accessibility/scale matrix remain. These are
 functional results, not CPU/GPU/presentation timings. See
 [footer validation](benchmarks/rust-footer-functional-2026-10-22.json).
+
+The main-window navigation strip now uses Rust layout/input and analytic GPU
+back/forward/reload icons. Native outer placement and empty-header window dragging
+remain intact. The main window and sidebar are separate native windows, so each
+has its own small opaque canvas. A shared weak context cache reuses their device,
+command queue and pipeline, releasing strong GPU ownership with the last surface.
+Header rendering coalesces native invalidations before rasterization and tracks
+visible bounds, theme, window movement and hide/show independently of the sidebar.
+
+Rust preserves four 32-point controls with 2-point gaps. The shader evaluates line
+and arc signed distances without changing the 32-byte quad ABI or adding icon
+assets/dependencies. Native nodes retain names, disabled state, focus/AX actions
+and the existing browser commands. Native glyph children, including focus rings,
+are gated under Metal; fallback painting returns on ownership loss. Identical
+scenes skip GPU submission, with no redraw timer.
+
+Validated on 2026-10-22: **39/39 Metal browser regressions, 14/14 Views controls,
+38/38 Rust tests and 59/59 Python tests passed**. Native input tests cover disabled
+Forward, history Back/Forward, actual document reload, focus paint routing, sidebar
+hide/show, window movement and main-window restore. Signed app inspection confirmed
+history and title-reset reload while the sidebar was hidden, then restored the
+original page, split pair and pinning. Native frame/control removal, peek-specific
+coverage, the broader accessibility/input/scale matrix and controlled performance
+comparison remain. See
+[navigation validation](benchmarks/rust-navigation-functional-2026-10-22.json).
