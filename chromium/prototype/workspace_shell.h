@@ -248,6 +248,7 @@ class WorkspaceShell final : public ui::EventHandler,
   bool metal_sidebar_visible() const;
   // GPU submissions are separate from native subtree paint passes skipped/run.
   size_t metal_sidebar_frame_count() const;
+  bool metal_sidebar_contains_text_for_testing(std::string_view text) const;
   size_t native_sidebar_paint_count() const;
   size_t metal_sidebar_paint_count() const;
   size_t CycleSidebarTab(size_t current, size_t count, bool backwards) const;

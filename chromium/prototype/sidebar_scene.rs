@@ -40,6 +40,8 @@ mod ffi {
                      enabled: bool) -> RowInputResult;
         fn column_layout(width: i32, spacing: i32, top: i32, left: i32,
                          bottom: i32, right: i32, children: &[ColumnChild]) -> ColumnLayout;
+        fn split_layout(width: i32, height: i32, count: usize) -> ColumnLayout;
+        fn folder_indent(depth: i32) -> i32;
         fn close_visible(active: bool, tile: bool, hovered: bool) -> bool;
         fn row_layout(width: i32, height: i32, title_width: i32,
                       detail: bool, chip: bool, close: bool) -> RowLayout;
@@ -135,6 +137,31 @@ fn column_layout(width: i32, spacing: i32, top: i32, left: i32,
     }
     ffi::ColumnLayout { width, height: bounded(y.saturating_add(positive(bottom))), children: rects }
 }
+
+// Equal flex tiles with a four-pixel frame and gap. Distribute the remainder
+// deterministically so odd widths fill the frame without a cumulative gap.
+// Negative extents request the compact pair's natural size.
+fn split_layout(width: i32, height: i32, count: usize) -> ffi::ColumnLayout {
+    let width = if width < 0 {200} else {width};
+    let height = if height < 0 {46} else {height};
+    let left = 4.min(width); let top = 4.min(height);
+    let inner = (width - 8).max(0);
+    let inner_height = (height - 8).max(0);
+    let gaps = (count.saturating_sub(1) as u128 * 4).min(inner as u128) as i32;
+    let available = inner - gaps;
+    let mut children = Vec::with_capacity(count);
+    let mut x = left;
+    for index in 0..count {
+        let before = (available as u128 * index as u128 / count as u128) as i32;
+        let after = (available as u128 * (index + 1) as u128 / count as u128) as i32;
+        let tile_width = after - before;
+        children.push(ffi::Rect {x, y: top, width: tile_width, height: inner_height});
+        x = x.saturating_add(tile_width).saturating_add(4).min(width);
+    }
+    ffi::ColumnLayout {width, height, children}
+}
+
+fn folder_indent(depth: i32) -> i32 { depth.clamp(0, 8) * 12 }
 
 fn close_visible(active: bool, tile: bool, hovered: bool) -> bool {
     (active && !tile) || hovered
@@ -239,6 +266,43 @@ mod tests {
         assert_eq!(huge.height, i32::MAX);
         assert_eq!(huge.children[1].y, i32::MAX);
         assert_eq!(huge.children[1].height, 0);
+    }
+    #[test] fn split_tiles_fill_odd_widths_and_respect_frame_and_order() {
+        let natural = split_layout(-1, -1, 2);
+        assert_eq!((natural.width, natural.height), (200, 46));
+        for width in [200, 201, 247, 248, 479, 480, i32::MAX] {
+            let r = split_layout(width, 46, 2);
+            let a = &r.children[0]; let b = &r.children[1];
+            assert_eq!((a.x, a.y, a.height), (4, 4, 38));
+            assert_eq!(b.x, a.x + a.width + 4);
+            assert_eq!(b.x + b.width, width - 4);
+            assert!((a.width - b.width).abs() <= 1);
+            assert_eq!((b.y, b.height), (4, 38));
+        }
+    }
+    #[test] fn split_layout_handles_empty_single_and_tiny_containers() {
+        assert!(split_layout(200, 46, 0).children.is_empty());
+        let single = split_layout(201, 46, 1);
+        assert_eq!((single.children[0].x, single.children[0].width), (4, 193));
+        for width in 0..16 {
+            for height in 0..10 {
+                for count in 0..4 {
+                    let r = split_layout(width, height, count);
+                    assert_eq!(r.children.len(), count);
+                    for tile in r.children {
+                        assert!(tile.x >= 0 && tile.y >= 0);
+                        assert!(tile.width >= 0 && tile.height >= 0);
+                        assert!(tile.x + tile.width <= width);
+                        assert!(tile.y + tile.height <= height);
+                    }
+                }
+            }
+        }
+    }
+    #[test] fn folder_indentation_is_bounded_even_for_invalid_depths() {
+        assert_eq!(folder_indent(i32::MIN), 0);
+        for depth in 0..=8 {assert_eq!(folder_indent(depth), depth * 12);}
+        assert_eq!(folder_indent(9), 96); assert_eq!(folder_indent(i32::MAX), 96);
     }
     #[test] fn pointer_activation_requires_a_valid_press_and_cancels_outside() {
         use ffi::{PointerPhase as P, RowAction as A, RowVisual as V};

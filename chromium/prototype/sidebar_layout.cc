@@ -7,6 +7,7 @@
 #include "build/build_config.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/layout/layout_manager.h"
+#include "ui/views/layout/fill_layout.h"
 #include "ui/views/view.h"
 #include "ui/views/view_class_properties.h"
 #if BUILDFLAG(IS_MAC)
@@ -15,6 +16,33 @@
 namespace zitter::prototype {
 namespace {
 #if BUILDFLAG(IS_MAC)
+bool RustLayoutEnabled() {
+  return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar") == "rust-metal";
+}
+class RustSplitLayout final : public views::LayoutManager {
+ public:
+  void ViewAdded(views::View* host, views::View*) override { host->InvalidateLayout(); }
+  void ViewRemoved(views::View* host, views::View*) override { host->InvalidateLayout(); }
+  void Layout(views::View* host) override {
+    size_t count = 0;
+    for (const auto& child : host->children()) if (Included(child.get())) ++count;
+    const auto result = sidebar::split_layout(host->width(), host->height(), count);
+    size_t index = 0;
+    for (const auto& child : host->children()) {
+      if (!Included(child.get())) continue;
+      const auto& r = result.children[index++];
+      child->SetBounds(r.x, r.y, r.width, r.height);
+    }
+  }
+  gfx::Size GetPreferredSize(const views::View*) const override { return SidebarSplitPreferredSize(); }
+  gfx::Size GetPreferredSize(const views::View*, const views::SizeBounds&) const override {
+    return SidebarSplitPreferredSize();
+  }
+ private:
+  static bool Included(const views::View* view) {
+    return view->GetVisible() && !view->GetProperty(views::kViewIgnoredByLayoutKey);
+  }
+};
 class RustColumnLayout final : public views::LayoutManager {
  public:
   explicit RustColumnLayout(int spacing) : spacing_(spacing) {}
@@ -69,10 +97,41 @@ class RustColumnLayout final : public views::LayoutManager {
 }
 std::unique_ptr<views::LayoutManager> CreateSidebarColumnLayout(int spacing) {
 #if BUILDFLAG(IS_MAC)
-  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar") == "rust-metal")
+  if (RustLayoutEnabled())
     return std::make_unique<RustColumnLayout>(spacing);
 #endif
   return std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical,
                                           gfx::Insets(), spacing);
 }
+std::unique_ptr<views::LayoutManager> CreateSidebarSplitLayout() {
+#if BUILDFLAG(IS_MAC)
+  if (RustLayoutEnabled()) return std::make_unique<RustSplitLayout>();
+#endif
+  auto layout = std::make_unique<views::BoxLayout>(
+      views::BoxLayout::Orientation::kHorizontal, gfx::Insets(4), 4);
+  layout->SetDefaultFlex(1);
+  return layout;
+}
+gfx::Size SidebarSplitPreferredSize() {
+#if BUILDFLAG(IS_MAC)
+  if (RustLayoutEnabled()) {
+    const auto result = sidebar::split_layout(-1, -1, 0);
+    return gfx::Size(result.width, result.height);
+  }
+#endif
+  return gfx::Size(200, 46);
+}
+std::unique_ptr<views::LayoutManager> CreateSidebarPinnedRowLayout() {
+#if BUILDFLAG(IS_MAC)
+  if (RustLayoutEnabled()) return std::make_unique<RustColumnLayout>(0);
+#endif
+  return std::make_unique<views::FillLayout>();
+}
+int SidebarFolderIndent(int depth) {
+#if BUILDFLAG(IS_MAC)
+  if (RustLayoutEnabled()) return sidebar::folder_indent(depth);
+#endif
+  return std::clamp(depth, 0, 8) * 12;
+}
+
 }

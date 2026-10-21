@@ -71,6 +71,7 @@
 #include "base/logging.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "ui/views/view_tracker.h"
+#include "ui/views/scoped_paint_lock.h"
 #include "ui/views/controls/webview/webview.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
@@ -3994,6 +3995,89 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarColumnLayoutTracksColla
     EXPECT_EQ(first, shell->tab_button(0));
   }
 }
+// Shared contract for the Views baseline and the Rust container adapters.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarSplitAndDeepFolderGeometry) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->SetWorkspaceAnimations(false);
+  std::string parent;
+  for (int depth = 0; depth <= 10; ++depth) {
+    ASSERT_TRUE(window_->CreatePinnedFolder("work", parent, "Depth " + base::NumberToString(depth)));
+    ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+    parent = window_->pinned_items("work").back().id;
+  }
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html"), true));
+  ASSERT_TRUE(window_->SplitTab(0));
+  shell->CloseOverlays(true); shell->SetPinned(true); shell->ShowSidebar();
+  auto check_pair = [&](int width) {
+    SCOPED_TRACE(width);
+    shell->ResizeSidebar(width - shell->sidebar_width(), true);
+    shell->sidebar_widget()->LayoutRootViewIfNecessary();
+    auto* first = shell->tab_button(0); auto* second = shell->tab_button(1);
+    ASSERT_TRUE(first); ASSERT_TRUE(second);
+    auto* pair = first->parent();
+    ASSERT_EQ(pair, second->parent());
+    EXPECT_EQ(gfx::Size(200, 46), pair->GetPreferredSize());
+    EXPECT_EQ(46, pair->height());
+    auto* left = first->x() < second->x() ? first : second;
+    auto* right = left == first ? second : first;
+    EXPECT_EQ(4, left->x()); EXPECT_EQ(4, left->y());
+    EXPECT_EQ(38, left->height()); EXPECT_EQ(38, right->height());
+    EXPECT_EQ(left->bounds().right() + 4, right->x());
+    EXPECT_EQ(pair->width() - 4, right->bounds().right());
+    EXPECT_LE(std::abs(left->width() - right->width()), 1);
+    EXPECT_TRUE(pair->GetLocalBounds().Contains(left->bounds()));
+    EXPECT_TRUE(pair->GetLocalBounds().Contains(right->bounds()));
+    EXPECT_EQ(left, pair->GetEventHandlerForPoint(left->bounds().CenterPoint()));
+    EXPECT_EQ(right, pair->GetEventHandlerForPoint(right->bounds().CenterPoint()));
+  };
+  for (int width : {200, 201, 247, 480}) {
+    check_pair(width);
+    auto* root = SidebarNamedButton(shell->sidebar_view(), u"▾ Depth 0");
+    ASSERT_TRUE(root);
+    for (int depth = 0; depth <= 10; ++depth) {
+      auto* folder = SidebarNamedButton(shell->sidebar_view(), u"▾ Depth " + base::NumberToString16(depth));
+      ASSERT_TRUE(folder);
+      EXPECT_EQ(root->GetBoundsInScreen().x() + std::min(depth, 8) * 12, folder->GetBoundsInScreen().x());
+      EXPECT_EQ(34, folder->height());
+      EXPECT_EQ(folder->parent()->width() - std::min(depth, 8) * 12, folder->width());
+    }
+  }
+  // A pinned half replaces its indented pin row rather than jumping to the
+  // ordinary tab list. Collapsing its folder hides the entire pair.
+  base::FilePath source;
+  ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &source));
+  window_->PreviewArcImport(source.AppendASCII("zitter/testdata/arc"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->import_ready(); }));
+  ASSERT_TRUE(window_->ApplyArcImport());
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  ASSERT_TRUE(window_->Select("arc-space-space-a"));
+  window_->OpenPinnedItem("tab-a");
+  shell->CloseOverlays(true); shell->ShowSidebar();
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  auto* pin = SidebarNamedButton(shell->sidebar_view(), u"Przypięta A");
+  ASSERT_TRUE(pin);
+  const int pin_x = pin->GetBoundsInScreen().x();
+  ASSERT_TRUE(window_->SplitTab(0));
+  check_pair(480);
+  auto* pair = shell->tab_button(1)->parent();
+  EXPECT_EQ(pin_x, pair->GetBoundsInScreen().x());
+  EXPECT_FALSE(pin->IsDrawn());
+  auto* folder = SidebarNamedButton(shell->sidebar_view(), u"▾ Dokumenty");
+  ASSERT_TRUE(folder);
+  views::test::ButtonTestApi(folder).NotifyDefaultMouseClick();
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  EXPECT_FALSE(pair->IsDrawn());
+  views::test::ButtonTestApi(folder).NotifyDefaultMouseClick();
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  EXPECT_TRUE(pair->IsDrawn());
+  for (int width : {200, 201, 247, 480}) check_pair(width);
+  window_->ToggleSplit();
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  EXPECT_FALSE(shell->tab_button(1));
+  EXPECT_TRUE(pin->IsDrawn());
+  EXPECT_EQ(pin_x, pin->GetBoundsInScreen().x());
+}
 // Exercise Rust-owned gesture state and row geometry through native events,
 // rather than invoking the command callbacks or asserting implementation data.
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeDragAndCloseAtWidthLimits) {
@@ -4100,6 +4184,38 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, RustRowInputCancellationAn
   EXPECT_EQ(second, window_->contents("work"));
   ASSERT_TRUE(row->OnMousePressed(press)); row->OnMouseReleased(release);
   EXPECT_EQ(first, window_->contents("work"));
+}
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, SplitTitleUpdatesWithoutNativePaint) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->SetWorkspaceAnimations(false);
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html"), true));
+  auto* page = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(page));
+  ASSERT_TRUE(content::ExecJs(page, "document.title = 'Split initial 日本語';"));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return shell->tab_button(1)->GetTooltipText() == u"Split initial 日本語";
+  }));
+  ASSERT_TRUE(window_->SplitTab(0));
+  shell->CloseOverlays(true); shell->SetPinned(true); shell->ShowSidebar();
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return shell->metal_sidebar_visible() &&
+        shell->metal_sidebar_contains_text_for_testing("Split initial 日本語");
+  }));
+  auto* row = shell->tab_button(1);
+  const auto gpu_before = shell->metal_sidebar_frame_count();
+  // A paint lock deliberately stops descendant invalidations before they reach
+  // the native list paint observer. Model-to-scene invalidation must still work.
+  views::ScopedPaintLock paint_lock(shell->sidebar_view());
+  ASSERT_TRUE(content::ExecJs(page, "document.title = 'Split updated Żółć 🦀';"));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return row->GetTooltipText() == u"Split updated Żółć 🦀";
+  }));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return shell->metal_sidebar_contains_text_for_testing("Split updated Żółć 🦀");
+  }));
+  EXPECT_FALSE(shell->metal_sidebar_contains_text_for_testing("Split initial 日本語"));
+  EXPECT_GT(shell->metal_sidebar_frame_count(), gpu_before);
 }
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, MetalOwnsRowTextAndSkipsNativePainting) {
   gfx::ScopedAnimationDurationScaleMode duration(gfx::ScopedAnimationDurationScaleMode::NORMAL_DURATION);

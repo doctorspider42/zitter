@@ -3,6 +3,7 @@
 #define ZITTER_CHROMIUM_PROTOTYPE_SIDEBAR_METAL_H_
 #include <cstddef>
 #include <memory>
+#include <string_view>
 #include "base/containers/span.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/native_ui_types.h"
@@ -20,6 +21,8 @@ class SidebarMetal {
   virtual bool visible() const = 0;
   // Submitted command buffers, not presentation timestamps. UI thread only.
   virtual size_t frame_count() const = 0;
+  // Last submitted display-list text, not proof of physical presentation.
+  virtual bool contains_text_for_testing(std::string_view text) const = 0;
 };
 std::unique_ptr<SidebarMetal> CreateSidebarMetal();
 // Keep the native fading scroller outside the Metal canvas.

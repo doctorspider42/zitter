@@ -20,7 +20,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Row mouse/key activation, drag threshold, latched drag, cancellation and close visibility | Rust input reducer in opt-in backend; native event/focus/AX adapter | Preserve native default action; migrate drop target policy and replace Button containers |
 | Next/previous tab wrapping | Rust; existing configurable key dispatch | Preserve page shortcut precedence and editing/IME behavior |
 | Vertical list/folder columns and full content extent | Rust via native View measurement/bounds adapter | Verify collapse/resize against Views; replace the native hierarchy with stable Rust item identities |
-| Folder hierarchy, indentation wrappers and split tile placement | Views | Rust tree and split layout, retaining scroll and AX correctness |
+| Folder indentation wrappers and split tile placement | Rust in opt-in backend; native tree/measurement/AX adapters | Migrate tree construction, grouping/collapse state and stable Rust item identities |
 | Scroll, viewport, scrollbar | Native ScrollView/Cocoa scrollbar | Native input adapter + Rust offset/clipping; native wheel and trackpad coverage |
 | Selection, close/reopen, title changes, pinned navigation | Rust row actions into existing application callbacks; native close child and AX action | Migrate close child and remaining command routing; preserve persistence and last-tab rules |
 | Folder expand/create/rename/delete; nested pins | Existing application + Views | Rust interaction state and layout; native menu/editing adapters; rollback tests |
@@ -69,6 +69,14 @@ Views-specific layout and control behavior must have an explicit replacement.
   5 repeated runs after explicit test layout synchronization. Signed app checked
   with mouse selection, Ctrl+Tab, folder collapse and Command Center text/Enter.
   See [row input validation](benchmarks/rust-row-input-functional-2026-10-21.json).
+
+- Rust now lays out split tiles and indented pin wrappers, including odd-width
+  remainder distribution and the eight-level indentation cap. Native hierarchy
+  construction and folder collapse state remain. Model updates also invalidate
+  the scene directly, preserving split title updates while native paints are
+  locked. 29 Metal browser regressions, 6 Views controls, 16 Rust tests and 59
+  Python tests passed. Signed app startup titles were rechecked after the fix.
+  See [split/folder validation](benchmarks/rust-split-folder-layout-functional-2026-10-21.json).
 
 ## Completion gates
 

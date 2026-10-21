@@ -73,6 +73,10 @@ class Surface final : public SidebarMetal {
   void Hide() override { view_.hidden = YES; last_frame_.clear(); }
   bool visible() const override { return view_.superview && view_.window.isVisible && !view_.isHiddenOrHasHiddenAncestor; }
   size_t frame_count() const override { return frame_count_; }
+  bool contains_text_for_testing(std::string_view text) const override {
+    // Reuse the existing frame signature; no per-frame diagnostic text copies.
+    return last_frame_.find(":" + std::to_string(text.size()) + ":" + std::string(text)) != std::string::npos;
+  }
   void Update(gfx::NativeWindow native_window, gfx::Rect bounds,
               base::span<const sidebar::Item> items, unsigned background) override {
     NSWindow* window = native_window.GetNativeNSWindow();

@@ -692,12 +692,11 @@ class SplitPair final : public views::View {
   SplitPair() {
     GetViewAccessibility().SetRole(ax::mojom::Role::kGroup);
     GetViewAccessibility().SetName(u"Split View — para kart");
-    SetLayoutManager(std::make_unique<views::BoxLayout>(
-        views::BoxLayout::Orientation::kHorizontal, gfx::Insets(4), 4));
+    SetLayoutManager(CreateSidebarSplitLayout());
   }
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {
     // Two ordinary rows must share the sidebar width, not request two widths.
-    return gfx::Size(200, 46);
+    return SidebarSplitPreferredSize();
   }
   void OnPaint(gfx::Canvas* canvas) override {
     FillRound(canvas, GetLocalBounds(), 12, SkColorSetA(Tone(this, kCard), 0x33));
@@ -2276,11 +2275,10 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
       } else {
         pair = contents->AddChildView(std::make_unique<SplitPair>());
       }
-      auto* layout = static_cast<views::BoxLayout*>(pair->GetLayoutManager());
       for (const auto& index : state_.split_tabs) {
         auto partner = std::find_if(state_.tabs.begin(), state_.tabs.end(),
             [&](const ShellTab& item) { return index == item.index; });
-        if (partner != state_.tabs.end()) layout->SetFlexForView(add_tab(pair, *partner, true), 1);
+        if (partner != state_.tabs.end()) add_tab(pair, *partner, true);
       }
     }
     cache.tabs_root->AddChildView(std::move(contents));
@@ -2327,6 +2325,9 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
   // cached workspaces and their label/layout descendants again.
   if (catalogue_changed) ConfigureSidebarContextMenus(sidebar_root_);
   else if (!same_structure) ConfigureSidebarContextMenus(cache.root);
+  // Model metadata can change while native paints are locked, clipped or
+  // suppressed. The Rust scene must not depend on a subsequent native paint.
+  ScheduleMetalSidebar();
 }
 
 size_t WorkspaceShell::CycleSidebarTab(size_t current, size_t count, bool backwards) const {
@@ -2342,6 +2343,9 @@ bool WorkspaceShell::metal_sidebar_visible() const {
 }
 size_t WorkspaceShell::metal_sidebar_frame_count() const {
   return metal_sidebar_ ? metal_sidebar_->frame_count() : 0;
+}
+bool WorkspaceShell::metal_sidebar_contains_text_for_testing(std::string_view text) const {
+  return metal_sidebar_ && metal_sidebar_->contains_text_for_testing(text);
 }
 size_t WorkspaceShell::native_sidebar_paint_count() const {
   return tab_list_ ? static_cast<SidebarListView*>(tab_list_.get())->native_paints() : 0;
@@ -2543,7 +2547,7 @@ void WorkspaceShell::UpdateWorkspaceSwipePreview() {
             if (depth > 64) return;
             auto group = children.find(parent); if (group == children.end()) return;
             for (const auto* pin : group->second) {
-              const int indent = std::min(depth, 8) * 12;
+              const int indent = SidebarFolderIndent(depth);
               auto button = cache ? cache->pin_buttons.find(pin->id) : std::map<std::string, raw_ptr<views::Button>>::const_iterator();
               if (cache && button != cache->pin_buttons.end()) {
                 if (button->second->parent()->GetVisible())
@@ -2711,8 +2715,8 @@ void WorkspaceShell::AppendPinnedItems(views::View* parent, const std::string& p
       spec.monogram_color = kMonogramColors[base::FastHash(pin->url.host()) % kMonogramColors.size()];
     }
     auto* row = parent->AddChildView(std::make_unique<views::View>());
-    row->SetLayoutManager(std::make_unique<views::FillLayout>());
-    row->SetBorder(views::CreateEmptyBorder(gfx::Insets::TLBR(0, std::min(depth, 8) * 12, 0, 0)));
+    row->SetLayoutManager(CreateSidebarPinnedRowLayout());
+    row->SetBorder(views::CreateEmptyBorder(gfx::Insets::TLBR(0, SidebarFolderIndent(depth), 0, 0)));
     auto* button = row->AddChildView(std::make_unique<RowButton>(views::Button::PressedCallback(), std::move(spec)));
     if (pin->folder) {
       auto* group = parent->AddChildView(std::make_unique<views::View>());
