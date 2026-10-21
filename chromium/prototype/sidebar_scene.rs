@@ -1,5 +1,5 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
-// Geometry and presentation policy only; browser state and command ownership
+// Control layout, presentation and input policy; browser state and command ownership
 // remain in WorkspaceShell. No URLs, profiles or WebContents cross this ABI.
 #[cxx::bridge(namespace = "zitter::sidebar")]
 mod ffi {
@@ -12,6 +12,10 @@ mod ffi {
         active: bool, hovered: bool, tile: bool, close: bool, close_visible: bool, focused: bool,
         font_size: f32,
     }
+    enum PointerPhase { Enter, Exit, Move, Press, Drag, Release }
+    enum RowVisual { Normal, Hovered, Pressed, Disabled }
+    enum RowAction { None, Activate, Drop, Cancel }
+    struct RowInputResult { visual: RowVisual, action: RowAction, handled: bool }
     struct Rect { x: i32, y: i32, width: i32, height: i32 }
     struct RowLayout { title: Rect, detail: Rect, close: Rect }
     struct ColumnChild { width: i32, height: i32, top: i32, left: i32, bottom: i32, right: i32 }
@@ -28,6 +32,12 @@ mod ffi {
         fn drag(self: &mut RowPointer, x: i32, y: i32, enabled: bool);
         fn release(self: &mut RowPointer) -> bool;
         fn cancel(self: &mut RowPointer);
+        fn pointer_event(self: &mut RowPointer, phase: PointerPhase, x: i32, y: i32,
+                         inside: bool, enabled: bool, trigger: bool, drop: bool) -> RowInputResult;
+        fn key_policy(key: u32, mac: bool) -> u32;
+        // Platform policy: 0 none, 1 activate on key press, 2 on release.
+        fn key_event(self: &mut RowPointer, pressed: bool, policy: u32,
+                     enabled: bool) -> RowInputResult;
         fn column_layout(width: i32, spacing: i32, top: i32, left: i32,
                          bottom: i32, right: i32, children: &[ColumnChild]) -> ColumnLayout;
         fn close_visible(active: bool, tile: bool, hovered: bool) -> bool;
@@ -37,10 +47,16 @@ mod ffi {
         fn cycle_tab(current: usize, count: usize, backwards: bool) -> usize;
     }
 }
+// Semantic keys supplied by the event adapter: 1 Space, 2 Return, 0 other.
+// Mac Space acts on key-down; Return remains available to the default action.
+fn key_policy(key: u32, mac: bool) -> u32 {
+    match key {1 => if mac {1} else {2}, 2 if !mac => 1, _ => 0}
+}
+
 // A row's gesture state is independent of its platform event adapter. Once the
 // threshold is crossed, returning to the press point still completes a drag.
 #[derive(Default)]
-struct RowPointer { origin: Option<(i32, i32)>, dragging: bool }
+struct RowPointer { origin: Option<(i32, i32)>, dragging: bool, hovered: bool, key_armed: bool }
 fn new_row_pointer() -> Box<RowPointer> { Box::new(RowPointer::default()) }
 impl RowPointer {
     fn press(&mut self, x: i32, y: i32) {
@@ -57,7 +73,43 @@ impl RowPointer {
         let result = self.origin.is_some() && self.dragging;
         self.cancel(); result
     }
-    fn cancel(&mut self) { self.origin = None; self.dragging = false; }
+    fn cancel(&mut self) {
+        self.origin = None; self.dragging = false; self.hovered = false; self.key_armed = false;
+    }
+    fn pointer_event(&mut self, phase: ffi::PointerPhase, x: i32, y: i32,
+                     inside: bool, enabled: bool, trigger: bool, drop: bool) -> ffi::RowInputResult {
+        use ffi::{PointerPhase as P, RowAction as A, RowVisual as V};
+        if !enabled { self.cancel(); return ffi::RowInputResult {visual: V::Disabled, action: A::None, handled: true}; }
+        self.hovered = inside;
+        let mut action = A::None;
+        match phase {
+            P::Press => { self.key_armed = false; if trigger && inside {self.press(x, y);} }
+            P::Drag => self.drag(x, y, drop),
+            P::Release => {
+                let armed = self.origin.is_some();
+                let dragged = self.release(); self.hovered = inside;
+                action = if dragged && drop {A::Drop}
+                    else if armed && inside && trigger {A::Activate}
+                    else {A::Cancel};
+            }
+            P::Enter | P::Exit | P::Move => {self.key_armed = false;}
+            _ => {self.cancel();}
+        }
+        let visual = if !inside {V::Normal}
+            else if self.origin.is_some() && trigger {V::Pressed} else {V::Hovered};
+        ffi::RowInputResult {visual, action, handled: true}
+    }
+    fn key_event(&mut self, pressed: bool, policy: u32, enabled: bool) -> ffi::RowInputResult {
+        use ffi::{RowAction as A, RowVisual as V};
+        if !enabled {self.cancel(); return ffi::RowInputResult {visual: V::Disabled, action: A::None, handled: false};}
+        let mut action = A::None;
+        let mut handled = false;
+        if pressed && policy == 1 {self.cancel(); action = A::Activate; handled = true;}
+        else if pressed && policy == 2 {self.key_armed = true; handled = true;}
+        else if !pressed && policy == 2 && self.key_armed {self.cancel(); action = A::Activate; handled = true;}
+        let visual = if self.key_armed {V::Pressed} else if self.hovered {V::Hovered} else {V::Normal};
+        ffi::RowInputResult {visual, action, handled}
+    }
 }
 // Shared by the native input/accessibility adapter and the GPU display list.
 // Widths are logical pixels; CoreText still owns font shaping and measurement.
@@ -187,6 +239,46 @@ mod tests {
         assert_eq!(huge.height, i32::MAX);
         assert_eq!(huge.children[1].y, i32::MAX);
         assert_eq!(huge.children[1].height, 0);
+    }
+    #[test] fn pointer_activation_requires_a_valid_press_and_cancels_outside() {
+        use ffi::{PointerPhase as P, RowAction as A, RowVisual as V};
+        let mut p = new_row_pointer();
+        assert!(p.pointer_event(P::Release, 0, 0, true, true, true, false).action == A::Cancel);
+        assert!(p.pointer_event(P::Press, 0, 0, true, true, true, false).visual == V::Pressed);
+        assert!(p.pointer_event(P::Release, 0, 0, false, true, true, false).action == A::Cancel);
+        p.pointer_event(P::Press, 0, 0, true, true, true, false);
+        assert!(p.pointer_event(P::Release, 0, 0, true, true, true, false).action == A::Activate);
+        p.pointer_event(P::Press, 0, 0, true, true, false, false);
+        assert!(p.pointer_event(P::Release, 0, 0, true, true, false, false).action == A::Cancel);
+    }
+    #[test] fn drag_and_disable_never_leak_clicks() {
+        use ffi::{PointerPhase as P, RowAction as A, RowVisual as V};
+        let mut p = new_row_pointer();
+        p.pointer_event(P::Press, 0, 0, true, true, true, true);
+        p.pointer_event(P::Drag, 10, 0, false, true, true, true);
+        assert!(p.pointer_event(P::Release, 0, 0, true, true, true, true).action == A::Drop);
+        p.pointer_event(P::Press, 0, 0, true, true, true, true);
+        assert!(p.pointer_event(P::Move, 0, 0, true, false, false, false).visual == V::Disabled);
+        assert!(p.pointer_event(P::Release, 0, 0, true, true, true, false).action == A::Cancel);
+        p.pointer_event(P::Press, 0, 0, true, true, true, true); p.cancel();
+        assert!(p.pointer_event(P::Release, 0, 0, true, true, true, false).action == A::Cancel);
+    }
+    #[test] fn semantic_keys_follow_platform_conventions() {
+        assert_eq!(key_policy(1, true), 1); assert_eq!(key_policy(2, true), 0);
+        assert_eq!(key_policy(0, true), 0); assert_eq!(key_policy(1, false), 2);
+        assert_eq!(key_policy(2, false), 1); assert_eq!(key_policy(u32::MAX, false), 0);
+    }
+    #[test] fn platform_key_policies_and_focus_loss_are_respected() {
+        use ffi::{RowAction as A, RowVisual as V};
+        let mut p = new_row_pointer();
+        assert!(!p.key_event(true, 0, true).handled);
+        assert!(p.key_event(true, 1, true).action == A::Activate);
+        assert!(p.key_event(false, 1, true).action == A::None);
+        assert!(p.key_event(true, 2, true).visual == V::Pressed);
+        assert!(p.key_event(false, 2, true).action == A::Activate);
+        p.key_event(true, 2, true); p.cancel();
+        assert!(!p.key_event(false, 2, true).handled);
+        assert!(!p.key_event(true, 1, false).handled);
     }
     #[test] fn row_geometry_reserves_close_and_detail_without_overlap() {
         for width in [90, 200, 248, 480] {

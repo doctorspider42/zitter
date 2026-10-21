@@ -17,15 +17,15 @@ Views-specific layout and control behavior must have an explicit replacement.
 | --- | --- | --- |
 | Live tab/pin/folder/split text and card drawing | Rust display list + Metal; CoreText text shaping | Expand focus/disabled/theme/scale coverage; replace native animation snapshots |
 | Row title/detail/close geometry | Rust in opt-in backend, shared with display list | Replace native interaction containers; keep explicit platform font/accessibility adapters |
-| Row drag threshold, latched drag, cancellation and close visibility | Rust in opt-in backend; native event delivery | Native drag-to-split verified; capture-loss unit coverage; migrate target policy |
+| Row mouse/key activation, drag threshold, latched drag, cancellation and close visibility | Rust input reducer in opt-in backend; native event/focus/AX adapter | Preserve native default action; migrate drop target policy and replace Button containers |
 | Next/previous tab wrapping | Rust; existing configurable key dispatch | Preserve page shortcut precedence and editing/IME behavior |
 | Vertical list/folder columns and full content extent | Rust via native View measurement/bounds adapter | Verify collapse/resize against Views; replace the native hierarchy with stable Rust item identities |
 | Folder hierarchy, indentation wrappers and split tile placement | Views | Rust tree and split layout, retaining scroll and AX correctness |
 | Scroll, viewport, scrollbar | Native ScrollView/Cocoa scrollbar | Native input adapter + Rust offset/clipping; native wheel and trackpad coverage |
-| Selection, close/reopen, title changes, pinned navigation | Existing application callbacks; native interaction nodes | Rust control actions into the same callbacks; persistence and last-tab rules |
+| Selection, close/reopen, title changes, pinned navigation | Rust row actions into existing application callbacks; native close child and AX action | Migrate close child and remaining command routing; preserve persistence and last-tab rules |
 | Folder expand/create/rename/delete; nested pins | Existing application + Views | Rust interaction state and layout; native menu/editing adapters; rollback tests |
 | Tab/pin context menus and drag to split | Views event routing + application commands | Rust target/action routing; retain native menus and drop policy |
-| Address pill and New Tab action | Views | Rust layout/drawing/events; configurable shortcut hints |
+| Address pill and New Tab action | Views rendering/layout; Rust New Tab RowButton mouse/key policy | Rust layout/drawing; address events and configurable shortcut hints |
 | Navigation controls, workspace dots/emoji and footer | Views | Rust layout/drawing/events; enabled, selected, hover and keyboard focus states |
 | Sidebar resizing, pinning, auto-hide, edge reveal | Views | Rust interaction state; preserve content bounds and pointer behavior |
 | Workspace swipe/animation/cancellation | Views layers + existing workspace controller | Rust scene transitions without native-painted row snapshots |
@@ -62,6 +62,13 @@ Views-specific layout and control behavior must have an explicit replacement.
   26 Metal browser regressions, 4 Views controls, 9 Rust tests and 59 Python tests
   passed; signed app checked with title updates and adding/closing a real tab.
   See [text ownership validation](benchmarks/rust-owned-row-text-functional-2026-10-21.json).
+- Rust now owns RowButton mouse/key activation, visual input state, cancellation
+  and platform key policy. Native event/focus/AX/default-action/menu adapters and
+  application callbacks remain. 27 Metal browser regressions, 5 Views controls,
+  13 Rust tests and 59 Python tests passed; the split lifecycle case also passed
+  5 repeated runs after explicit test layout synchronization. Signed app checked
+  with mouse selection, Ctrl+Tab, folder collapse and Command Center text/Enter.
+  See [row input validation](benchmarks/rust-row-input-functional-2026-10-21.json).
 
 ## Completion gates
 

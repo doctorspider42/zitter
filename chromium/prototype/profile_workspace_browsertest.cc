@@ -2279,6 +2279,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitViewLifecycleAndIsolation
   auto* shell = window_->shell();
   shell->ShowSidebar();
   base::RunLoop().RunUntilIdle();
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
   auto* left_row = shell->tab_button(0);
   auto* right_row = shell->tab_button(1);
   ASSERT_TRUE(left_row);
@@ -2360,6 +2361,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitViewLifecycleAndIsolation
   EXPECT_FALSE(window_->split());
   EXPECT_EQ(2u, window_->tab_count("work"));
   base::RunLoop().RunUntilIdle();
+  // RunUntilIdle does not promise a compositor layout, especially after the
+  // sidebar was hidden. Apply the pending layout before inspecting geometry.
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
   ASSERT_TRUE(shell->tab_button(0));
   ASSERT_TRUE(shell->tab_button(1));
   EXPECT_EQ(shell->tab_button(0)->parent(), shell->tab_button(1)->parent());
@@ -4054,6 +4058,48 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeDragAndCloseAtWidthLimit
   }
   EXPECT_EQ(original, window_->contents("work"));
   EXPECT_FALSE(SidebarNamedButton(shell->tab_button(0), u"Zamknij kartę"));
+}
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, RustRowInputCancellationAndPlatformKeys) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->SetWorkspaceAnimations(false);
+  auto* first = window_->contents("work");
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html"), true));
+  auto* second = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(second));
+  shell->CloseOverlays(true); shell->SetPinned(true); shell->ShowSidebar();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->tab_button(0) && !shell->tab_button(0)->size().IsEmpty(); }));
+  auto* row = shell->tab_button(0);
+  const auto point = row->GetLocalBounds().CenterPoint();
+  ui::MouseEvent press(ui::EventType::kMousePressed, point, point, base::TimeTicks::Now(),
+      ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON);
+  ui::MouseEvent release(ui::EventType::kMouseReleased, point, point, base::TimeTicks::Now(),
+      ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON);
+  ASSERT_TRUE(row->OnMousePressed(press)); row->OnMouseCaptureLost(); row->OnMouseReleased(release);
+  EXPECT_EQ(second, window_->contents("work"));
+  ASSERT_TRUE(row->OnMousePressed(press));
+  const gfx::Point outside(-10, -10);
+  ui::MouseEvent outside_release(ui::EventType::kMouseReleased, outside, outside,
+      base::TimeTicks::Now(), ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON);
+  row->OnMouseReleased(outside_release);
+  EXPECT_EQ(second, window_->contents("work"));
+  row->SetEnabled(false);
+  row->OnMousePressed(press); row->OnMouseReleased(release);
+  EXPECT_EQ(second, window_->contents("work"));
+  ui::KeyEvent space_down(ui::EventType::kKeyPressed, ui::VKEY_SPACE, 0);
+  EXPECT_FALSE(row->OnKeyPressed(space_down));
+  row->SetEnabled(true);
+  ui::KeyEvent enter(ui::EventType::kKeyPressed, ui::VKEY_RETURN, 0);
+  EXPECT_FALSE(row->OnKeyPressed(enter));  // Mac Return activates the default action, not this row.
+  EXPECT_EQ(second, window_->contents("work"));
+  EXPECT_TRUE(row->OnKeyPressed(space_down));
+  EXPECT_EQ(first, window_->contents("work"));
+  window_->SelectTab(1);
+  ui::KeyEvent space_up(ui::EventType::kKeyReleased, ui::VKEY_SPACE, 0);
+  EXPECT_FALSE(row->OnKeyReleased(space_up));  // Mac Space already activated on key-down.
+  EXPECT_EQ(second, window_->contents("work"));
+  ASSERT_TRUE(row->OnMousePressed(press)); row->OnMouseReleased(release);
+  EXPECT_EQ(first, window_->contents("work"));
 }
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, MetalOwnsRowTextAndSkipsNativePainting) {
   gfx::ScopedAnimationDurationScaleMode duration(gfx::ScopedAnimationDurationScaleMode::NORMAL_DURATION);

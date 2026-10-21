@@ -439,32 +439,69 @@ class RowButton final : public views::Button {
   }
   bool OnMousePressed(const ui::MouseEvent& event) override {
 #if BUILDFLAG(IS_MAC)
-    if (rust_pointer_) (*rust_pointer_)->press(event.x(), event.y());
+    if (rust_pointer_) {
+      const auto result = RustPointerEvent(sidebar::PointerPhase::Press, event);
+      if (GetEnabledInViewsSubtree()) RequestFocusFromEvent();
+      return ApplyRustInput(result, event);
+    }
 #endif
-    drag_start_ = event.location();
-    dragging_ = false;
+    drag_start_ = event.location(); dragging_ = false;
     return views::Button::OnMousePressed(event);
   }
   bool OnMouseDragged(const ui::MouseEvent& event) override {
 #if BUILDFLAG(IS_MAC)
-    if (rust_pointer_) (*rust_pointer_)->drag(event.x(), event.y(), !spec_.drop.is_null());
-    else
+    if (rust_pointer_) return ApplyRustInput(RustPointerEvent(sidebar::PointerPhase::Drag, event), event);
 #endif
     if (spec_.drop && (event.location() - drag_start_).LengthSquared() > 64) dragging_ = true;
     return views::Button::OnMouseDragged(event);
   }
   void OnMouseReleased(const ui::MouseEvent& event) override {
-    bool dragged = dragging_;
 #if BUILDFLAG(IS_MAC)
-    if (rust_pointer_) dragged = (*rust_pointer_)->release();
+    if (rust_pointer_) { ApplyRustInput(RustPointerEvent(sidebar::PointerPhase::Release, event), event); return; }
 #endif
-    if (dragged && spec_.drop) {
+    if (dragging_ && spec_.drop) {
       SetState(STATE_NORMAL);
       auto callback = spec_.drop;
       callback.Run(display::Screen::Get()->GetCursorScreenPoint());
       return;
     }
     views::Button::OnMouseReleased(event);
+  }
+  void OnMouseEntered(const ui::MouseEvent& event) override {
+#if BUILDFLAG(IS_MAC)
+    if (rust_pointer_) { ApplyRustInput(RustPointerEvent(sidebar::PointerPhase::Enter, event), event); return; }
+#endif
+    views::Button::OnMouseEntered(event);
+  }
+  void OnMouseExited(const ui::MouseEvent& event) override {
+#if BUILDFLAG(IS_MAC)
+    if (rust_pointer_) { ApplyRustInput(RustPointerEvent(sidebar::PointerPhase::Exit, event), event); return; }
+#endif
+    views::Button::OnMouseExited(event);
+  }
+  void OnMouseMoved(const ui::MouseEvent& event) override {
+#if BUILDFLAG(IS_MAC)
+    if (rust_pointer_) { ApplyRustInput(RustPointerEvent(sidebar::PointerPhase::Move, event), event); return; }
+#endif
+    views::Button::OnMouseMoved(event);
+  }
+  bool OnKeyPressed(const ui::KeyEvent& event) override {
+#if BUILDFLAG(IS_MAC)
+    if (rust_pointer_) return ApplyRustInput((*rust_pointer_)->key_event(true, RustKeyPolicy(event), GetEnabledInViewsSubtree()), event);
+#endif
+    return views::Button::OnKeyPressed(event);
+  }
+  bool OnKeyReleased(const ui::KeyEvent& event) override {
+#if BUILDFLAG(IS_MAC)
+    if (rust_pointer_) return ApplyRustInput((*rust_pointer_)->key_event(false, RustKeyPolicy(event), GetEnabledInViewsSubtree()), event);
+#endif
+    return views::Button::OnKeyReleased(event);
+  }
+  void OnBlur() override {
+#if BUILDFLAG(IS_MAC)
+    if (rust_pointer_) (*rust_pointer_)->cancel();
+#endif
+    views::Button::OnBlur();
   }
   void OnMouseCaptureLost() override {
 #if BUILDFLAG(IS_MAC)
@@ -501,6 +538,9 @@ class RowButton final : public views::Button {
     return gfx::Size(200, spec_.height);
   }
   void StateChanged(ButtonState) override {
+#if BUILDFLAG(IS_MAC)
+    if (rust_pointer_ && GetState() == STATE_DISABLED) (*rust_pointer_)->cancel();
+#endif
     // Half-width split tiles keep their title room; close appears on hover.
     UpdateCloseVisibility();
     SchedulePaint();
@@ -586,6 +626,40 @@ class RowButton final : public views::Button {
     }
   }
  private:
+#if BUILDFLAG(IS_MAC)
+  sidebar::RowInputResult RustPointerEvent(sidebar::PointerPhase phase, const ui::MouseEvent& event) {
+    return (*rust_pointer_)->pointer_event(phase, event.x(), event.y(),
+        phase != sidebar::PointerPhase::Exit && HitTestPoint(event.location()),
+        GetEnabledInViewsSubtree(), event.IsLeftMouseButton(), !spec_.drop.is_null());
+  }
+  uint32_t RustKeyPolicy(const ui::KeyEvent& event) {
+    const uint32_t key = event.key_code() == ui::VKEY_SPACE ? 1 :
+        event.key_code() == ui::VKEY_RETURN ? 2 : 0;
+    return sidebar::key_policy(key, true);  // This adapter is macOS-only.
+  }
+  bool ApplyRustInput(const sidebar::RowInputResult& result, const ui::Event& event) {
+    switch (result.visual) {
+      case sidebar::RowVisual::Normal: SetState(STATE_NORMAL); break;
+      case sidebar::RowVisual::Hovered: SetState(STATE_HOVERED); break;
+      case sidebar::RowVisual::Pressed: SetState(STATE_PRESSED); break;
+      case sidebar::RowVisual::Disabled: SetState(STATE_DISABLED); break;
+    }
+    const bool handled = result.handled;
+    // Actions may delete this row or its owning palette. Do not touch members
+    // after calling a controller, including the native accessibility action.
+    switch (result.action) {
+      case sidebar::RowAction::Activate: NotifyClick(event); return handled;
+      case sidebar::RowAction::Drop: {
+        auto callback = spec_.drop;
+        if (callback) callback.Run(display::Screen::Get()->GetCursorScreenPoint());
+        return handled;
+      }
+      case sidebar::RowAction::Cancel: OnClickCanceled(event); return handled;
+      case sidebar::RowAction::None: return handled;
+    }
+    return handled;
+  }
+#endif
   void UpdateCloseVisibility() {
     if (!close_) return;
     const bool hovered = GetState() == STATE_HOVERED || GetState() == STATE_PRESSED;

@@ -1,0 +1,243 @@
+{
+  "date": "2026-10-21",
+  "platform": "macOS arm64",
+  "build": "Release, ThinLTO, Chromium PGO",
+  "purpose": "Functional verification of Rust row input policy and native adapters; not a performance benchmark",
+  "base_commit": "47c48b8ebf7a5b800a2b389f31900ba6507a5470",
+  "chromium_base_revision": "1a732fcc23b20dd0bcf38f35d72c1fe1ec799d35",
+  "app_uuid": "4C4C44A8-5555-3144-A17F-8D2AB939BCDA",
+  "test_binary_uuid": "4C4C440D-5555-3144-A1FF-3ADE64413499",
+  "bundle_signature": "codesign --verify --deep --strict passed before launch; packaged and build UUIDs match",
+  "source_sha256": {
+    "chromium/prototype/profile_workspace_browsertest.cc": "7c0db0faaec80449bdc4ce6e1b2240e4abe9ce51f7f8c4f2f88378db4fc6c33e",
+    "chromium/prototype/sidebar_scene.rs": "04f3305d2d8555e61c8ebbd996837c5486ce2d9582463ae4b30906bc4a4a4384",
+    "chromium/prototype/workspace_shell.cc": "5d7310a45ea028b89ad4f5d2d578e5472512155d7a0625b0ee2075c5013fc517"
+  },
+  "rust_metal": {
+    "metal_api_validation": true,
+    "tests": [
+      {
+        "name": "ZitterMetalSidebarBrowserTest.LiveTabsKeyboardFoldersAndSplit",
+        "status": "SUCCESS",
+        "elapsed_ms": 1637
+      },
+      {
+        "name": "ZitterMetalSidebarBrowserTest.MetalOwnsRowTextAndSkipsNativePainting",
+        "status": "SUCCESS",
+        "elapsed_ms": 1895
+      },
+      {
+        "name": "ZitterMetalSidebarBrowserTest.MetalReturnsAfterWorkspaceAnimation",
+        "status": "SUCCESS",
+        "elapsed_ms": 1632
+      },
+      {
+        "name": "ZitterMetalSidebarBrowserTest.RealTabViewportScrolls",
+        "status": "SUCCESS",
+        "elapsed_ms": 1638
+      },
+      {
+        "name": "ZitterMetalSidebarBrowserTest.RustRowInputCancellationAndPlatformKeys",
+        "status": "SUCCESS",
+        "elapsed_ms": 1374
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.ChromiumHistoryAndCommandPalette",
+        "status": "SUCCESS",
+        "elapsed_ms": 1640
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.CocoaSwipesRepeatWithoutMouseMovement",
+        "status": "SUCCESS",
+        "elapsed_ms": 1640
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.CommandCenterMoveCopyAndSleep",
+        "status": "SUCCESS",
+        "elapsed_ms": 1380
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.CommandCenterMoveSplitAndLastPage",
+        "status": "SUCCESS",
+        "elapsed_ms": 1373
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.CommandCenterSearchAndDispatch",
+        "status": "SUCCESS",
+        "elapsed_ms": 1379
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.ConfigurableNativeKeyboardShortcuts",
+        "status": "SUCCESS",
+        "elapsed_ms": 2437
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.FolderRemovalKeepsOpenedPinsAsTabs",
+        "status": "SUCCESS",
+        "elapsed_ms": 1384
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.GeneralSettingsThemeAndPersistence",
+        "status": "SUCCESS",
+        "elapsed_ms": 2444
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.NativeDragAndCloseAtWidthLimits",
+        "status": "SUCCESS",
+        "elapsed_ms": 1371
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.NativeKeyboardWorkspaceSwitching",
+        "status": "SUCCESS",
+        "elapsed_ms": 1632
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.NativeShellAndAppearance",
+        "status": "SUCCESS",
+        "elapsed_ms": 1904
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarColumnLayoutTracksCollapsedFolders",
+        "status": "SUCCESS",
+        "elapsed_ms": 1390
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarFolderFailedWriteRollsBack",
+        "status": "SUCCESS",
+        "elapsed_ms": 3765
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarFolderRenameAndDeleteContents",
+        "status": "SUCCESS",
+        "elapsed_ms": 4310
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarFoldersCreateNestAndPersist",
+        "status": "SUCCESS",
+        "elapsed_ms": 3517
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarMetadataUpdatesPreserveRows",
+        "status": "SUCCESS",
+        "elapsed_ms": 1655
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarRemainsOpenWhileSpacesSlide",
+        "status": "SUCCESS",
+        "elapsed_ms": 1904
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarSwipeTracksCancelsAndSkipsSpaces",
+        "status": "SUCCESS",
+        "elapsed_ms": 2447
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SplitPairPersistsWhileAnotherTabIsShown",
+        "status": "SUCCESS",
+        "elapsed_ms": 1368
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation",
+        "status": "SUCCESS",
+        "elapsed_ms": 1383
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SplitViewSessionRestore",
+        "status": "SUCCESS",
+        "elapsed_ms": 2429
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.WorkspaceContextAppearanceAndDeletion",
+        "status": "SUCCESS",
+        "elapsed_ms": 2435
+      }
+    ]
+  },
+  "views": {
+    "tests": [
+      {
+        "name": "ZitterProfilesBrowserTest.NativeDragAndCloseAtWidthLimits",
+        "status": "SUCCESS",
+        "elapsed_ms": 1373
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.NativeShellAndAppearance",
+        "status": "SUCCESS",
+        "elapsed_ms": 1894
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarColumnLayoutTracksCollapsedFolders",
+        "status": "SUCCESS",
+        "elapsed_ms": 1671
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarMetadataUpdatesPreserveRows",
+        "status": "SUCCESS",
+        "elapsed_ms": 1370
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation",
+        "status": "SUCCESS",
+        "elapsed_ms": 1355
+      }
+    ]
+  },
+  "split_layout_repetitions": [
+    {
+      "name": "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation",
+      "status": "SUCCESS",
+      "elapsed_ms": 1369
+    },
+    {
+      "name": "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation",
+      "status": "SUCCESS",
+      "elapsed_ms": 1384
+    },
+    {
+      "name": "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation",
+      "status": "SUCCESS",
+      "elapsed_ms": 1366
+    },
+    {
+      "name": "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation",
+      "status": "SUCCESS",
+      "elapsed_ms": 1382
+    },
+    {
+      "name": "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation",
+      "status": "SUCCESS",
+      "elapsed_ms": 1365
+    }
+  ],
+  "rust_unit_tests_passed": 13,
+  "python_unit_tests_passed": 59,
+  "gn_dependency_check": "passed for //zitter_ui_lab:*",
+  "product_boundaries": "passed",
+  "verified_mechanisms": [
+    "Rust owns row pointer hover/pressed state, click eligibility, latched drag, cancellation, disabled gating and platform Space/Return activation policy.",
+    "A browser regression dispatches virtual row mouse/key events through the native adapter: capture loss, release outside, disabled rows, Return pass-through, Space down/up and successful click.",
+    "Existing native event tests still select a real row after scrolling, drag tabs into Split View and click close children at both sidebar width limits.",
+    "The full matrix retains folders, rollback, sessions, palettes, history, settings, workspace swipes and text/paint ownership regressions.",
+    "Application callbacks can destroy rows or palettes; the adapter captures its return value before dispatch and does not access members afterward."
+  ],
+  "test_synchronization": {
+    "initial_result": "26/27; SplitViewLifecycleAndIsolation observed both new row y positions as zero after unsplitting.",
+    "diagnostic_repetitions": "The same geometry assertion failed in 1 of 5 repetitions before synchronization.",
+    "change": "The geometry test now explicitly applies pending sidebar layout before inspecting bounds. RunUntilIdle does not guarantee a compositor layout, particularly for a hidden sidebar; geometry assertions are unchanged.",
+    "final_result": "27/27 Rust/Metal, 5/5 Views, and 5/5 repeated Rust/Metal split lifecycle runs passed."
+  },
+  "manual_observations": [
+    "The signed app ran on the marked isolated demo profile after the Mac was unlocked.",
+    "A coordinate mouse click selected a real Arabic-title tab; Ctrl+Tab advanced to the next page.",
+    "The folder collapsed and expanded through its native accessibility action.",
+    "Cmd+K, pasting a Japanese title and Return selected the matching real tab.",
+    "The original split pair and expanded folder were restored; the demo app was closed. The normal browser profile was not used."
+  ],
+  "limitations": [
+    "Native Views event delivery, focus, accessibility/default action, context menus and gesture adapters remain. Close glyph children and drop target policy remain native.",
+    "Palette and New Tab RowButton mouse/key policy is Rust-owned, but their rendering, text editing and IME remain native.",
+    "Unit tests cover platform key policies; this matrix does not establish full VoiceOver, IME or non-macOS integration parity.",
+    "Elapsed test times and submitted GPU command-buffer counters are not actual presentation timings or a performance comparison.",
+    "No new dependency or binary framework was added; remaining sidebar surfaces, palettes and forms still require migration."
+  ]
+}
