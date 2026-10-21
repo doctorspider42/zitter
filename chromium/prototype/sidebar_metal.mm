@@ -72,6 +72,7 @@ class Surface final : public SidebarMetal {
   ~Surface() override { [view_ removeFromSuperview]; }
   void Hide() override { view_.hidden = YES; last_frame_.clear(); }
   bool visible() const override { return view_.superview && view_.window.isVisible && !view_.isHiddenOrHasHiddenAncestor; }
+  size_t frame_count() const override { return frame_count_; }
   void Update(gfx::NativeWindow native_window, gfx::Rect bounds,
               base::span<const sidebar::Item> items, unsigned background) override {
     NSWindow* window = native_window.GetNativeNSWindow();
@@ -124,6 +125,7 @@ class Surface final : public SidebarMetal {
     }
     [encoder endEncoding];
     [command presentDrawable:drawable]; [command commit];
+    ++frame_count_;
     view_.hidden = NO; last_frame_ = std::move(fingerprint);
   }
  private:
@@ -174,6 +176,7 @@ class Surface final : public SidebarMetal {
   }
   std::map<std::string, TextTile> text_;
   size_t text_bytes_ = 0;
+  size_t frame_count_ = 0;
   std::string last_frame_;
   ZitterSidebarMetalView* __strong view_;
   CAMetalLayer* __strong layer_;

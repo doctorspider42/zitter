@@ -1,6 +1,7 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 #ifndef ZITTER_CHROMIUM_PROTOTYPE_SIDEBAR_METAL_H_
 #define ZITTER_CHROMIUM_PROTOTYPE_SIDEBAR_METAL_H_
+#include <cstddef>
 #include <memory>
 #include "base/containers/span.h"
 #include "ui/gfx/geometry/rect.h"
@@ -17,6 +18,8 @@ class SidebarMetal {
                       base::span<const sidebar::Item> items, unsigned background) = 0;
   virtual void Hide() = 0;
   virtual bool visible() const = 0;
+  // Submitted command buffers, not presentation timestamps. UI thread only.
+  virtual size_t frame_count() const = 0;
 };
 std::unique_ptr<SidebarMetal> CreateSidebarMetal();
 // Keep the native fading scroller outside the Metal canvas.

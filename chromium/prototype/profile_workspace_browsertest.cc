@@ -119,6 +119,9 @@
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/controls/textfield/textfield.h"
+#include "ui/views/controls/label.h"
+#include "ui/views/test/views_drawing_test_utils.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/views/controls/resize_area.h"
 #include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/controls/combobox/combobox.h"
@@ -4051,6 +4054,83 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeDragAndCloseAtWidthLimit
   }
   EXPECT_EQ(original, window_->contents("work"));
   EXPECT_FALSE(SidebarNamedButton(shell->tab_button(0), u"Zamknij kartę"));
+}
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, MetalOwnsRowTextAndSkipsNativePainting) {
+  gfx::ScopedAnimationDurationScaleMode duration(gfx::ScopedAnimationDurationScaleMode::NORMAL_DURATION);
+  const bool original_motion = gfx::Animation::PrefersReducedMotion();
+  base::ScopedClosureRunner restore_motion(base::BindOnce(
+      &gfx::Animation::SetPrefersReducedMotionForTesting, original_motion));
+  gfx::Animation::SetPrefersReducedMotionForTesting(false);
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->SetWorkspaceAnimations(false);
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html"), true));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  shell->CloseOverlays(true); shell->SetPinned(true); shell->ShowSidebar();
+  ui_controls::EnableUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible(); }));
+  // Newly added rows must lay out without a window resize or a Label's
+  // incidental preferred-size notification.
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return !shell->tab_button(0)->size().IsEmpty() && !shell->tab_button(1)->size().IsEmpty();
+  }));
+  auto no_native_text = [&](auto&& self, views::View* view) -> void {
+    EXPECT_FALSE(views::AsViewClass<views::Label>(view));
+    for (const auto& child : view->children()) self(self, child.get());
+  };
+  no_native_text(no_native_text, shell->tab_button(0));
+  no_native_text(no_native_text, shell->tab_button(1));
+  const auto native_before = shell->native_sidebar_paint_count();
+  const auto metal_before = shell->metal_sidebar_paint_count();
+  // Deterministically request a native paint pass even if the compositor has
+  // culled the now-empty native display list. It must skip every child.
+  const auto bitmap = views::test::PaintViewToBitmap(shell->tab_list_view());
+  EXPECT_FALSE(bitmap.drawsNothing());
+  EXPECT_GT(shell->metal_sidebar_paint_count(), metal_before);
+  EXPECT_EQ(native_before, shell->native_sidebar_paint_count());
+  const auto gpu_before = shell->metal_sidebar_frame_count();
+  ASSERT_TRUE(content::ExecJs(window_->contents("work"), "document.title = 'GPU · Zażółć 日本語 🦀';"));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return shell->tab_button(1)->GetTooltipText() == u"GPU · Zażółć 日本語 🦀";
+  }));
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_frame_count() > gpu_before; }))
+      << "GPU submissions: " << shell->metal_sidebar_frame_count() << "/" << gpu_before
+      << "; native/skipped paints: " << shell->native_sidebar_paint_count() << "/"
+      << shell->metal_sidebar_paint_count() << "; visible: " << shell->metal_sidebar_visible()
+      << "; drawn: " << shell->tab_button(1)->IsDrawn()
+      << "; row: " << shell->tab_button(1)->GetBoundsInScreen().ToString()
+      << "; viewport: " << shell->tab_list_view()->parent()->GetBoundsInScreen().ToString();
+  ui::AXNodeData accessible;
+  shell->tab_button(1)->GetViewAccessibility().GetAccessibleNodeData(&accessible);
+  EXPECT_EQ(u"GPU · Zażółć 日本語 🦀",
+      accessible.GetString16Attribute(ax::mojom::StringAttribute::kName));
+  EXPECT_EQ(native_before, shell->native_sidebar_paint_count());
+  // Animations temporarily use freshly painted native snapshots. Completion
+  // must restore the GPU-only paint path, without retaining stale text pixels.
+  shell->SetWorkspaceAnimations(true);
+  ASSERT_TRUE(window_->Select("personal"));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return shell->native_sidebar_paint_count() > native_before;
+  }));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return !shell->workspace_animation_running() && shell->metal_sidebar_visible();
+  }));
+  const auto metal_after_animation = shell->metal_sidebar_paint_count();
+  views::test::PaintViewToBitmap(shell->tab_list_view());
+  EXPECT_GT(shell->metal_sidebar_paint_count(), metal_after_animation);
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return !shell->workspace_animation_running() && shell->metal_sidebar_visible();
+  }));
+  EXPECT_EQ(u"GPU · Zażółć 日本語 🦀", shell->tab_button(1)->GetTooltipText());
+  const auto gpu_before_close = shell->metal_sidebar_frame_count();
+  window_->RunShortcut("close_tab");
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return window_->tab_count("work") == 1 && shell->tab_button(0) &&
+        !shell->tab_button(0)->size().IsEmpty() &&
+        shell->metal_sidebar_frame_count() > gpu_before_close;
+  }));
 }
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, MetalReturnsAfterWorkspaceAnimation) {
   auto* shell = window_->shell();

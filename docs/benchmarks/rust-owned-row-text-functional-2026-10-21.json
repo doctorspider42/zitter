@@ -1,0 +1,204 @@
+{
+  "date": "2026-10-21",
+  "platform": "macOS arm64",
+  "build": "Release, ThinLTO, Chromium PGO",
+  "purpose": "Functional verification of scene-owned row text and native subtree paint suppression; not a performance benchmark",
+  "base_commit": "6d0c4b7396dccd29ed2180fb44440601d8bb6546",
+  "chromium_base_revision": "1a732fcc23b20dd0bcf38f35d72c1fe1ec799d35",
+  "app_uuid": "4C4C442C-5555-3144-A158-90BACC806193",
+  "test_binary_uuid": "4C4C44EC-5555-3144-A14B-5D27C9625CBC",
+  "bundle_signature": "codesign --verify --deep --strict passed before final launch",
+  "source_sha256": {
+    "chromium/prototype/profile_workspace_browsertest.cc": "50c01cc0192d14dc98fd6937660f026f1ffef5695f4a3bcbaea7c6ff47da9bec",
+    "chromium/prototype/sidebar_layout.cc": "c12ababb57cc79823675c0c5d1a438fca74b8ea1c2edc99d0f8553f883f11e26",
+    "chromium/prototype/sidebar_layout.h": "485dbd6ecd976c8de68ba5de28756dbcbef07e8dde5d4fbc9f26918b8e294ea2",
+    "chromium/prototype/sidebar_metal.h": "7ad8297d5b46216940ada72f98d7dfd3253c7315fcd5105d84903f628f4d2f92",
+    "chromium/prototype/sidebar_metal.mm": "c064fb0817b2725f9b6dd283792a64afad6586cd0bafa940e202e663005afb83",
+    "chromium/prototype/sidebar_scene.rs": "7a7d9c49470e41ab12744195aac6dbaad212926adc45483091cea73c729887b4",
+    "chromium/prototype/sidebar.metal": "ce4c90387dd8dcb0c5ed4bde219f289c04523c9fff500a12b05d5f4c5e59ddf6",
+    "chromium/prototype/workspace_shell.cc": "d93fc76bc1b7c875a6fdf3e609d26c057eb0c43af71ea8ac5fe59328da3715b5",
+    "chromium/prototype/workspace_shell.h": "971418b14019281070a9e60f5ed5ea3b2408f36bc5db4bf2e85b1a56dd67972f"
+  },
+  "rust_metal": {
+    "metal_api_validation": true,
+    "tests": [
+      {
+        "name": "ZitterMetalSidebarBrowserTest.LiveTabsKeyboardFoldersAndSplit",
+        "status": "SUCCESS",
+        "elapsed_ms": 1627
+      },
+      {
+        "name": "ZitterMetalSidebarBrowserTest.MetalOwnsRowTextAndSkipsNativePainting",
+        "status": "SUCCESS",
+        "elapsed_ms": 1902
+      },
+      {
+        "name": "ZitterMetalSidebarBrowserTest.MetalReturnsAfterWorkspaceAnimation",
+        "status": "SUCCESS",
+        "elapsed_ms": 1637
+      },
+      {
+        "name": "ZitterMetalSidebarBrowserTest.RealTabViewportScrolls",
+        "status": "SUCCESS",
+        "elapsed_ms": 1625
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.ChromiumHistoryAndCommandPalette",
+        "status": "SUCCESS",
+        "elapsed_ms": 1637
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.CocoaSwipesRepeatWithoutMouseMovement",
+        "status": "SUCCESS",
+        "elapsed_ms": 1646
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.CommandCenterMoveCopyAndSleep",
+        "status": "SUCCESS",
+        "elapsed_ms": 1377
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.CommandCenterMoveSplitAndLastPage",
+        "status": "SUCCESS",
+        "elapsed_ms": 1379
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.CommandCenterSearchAndDispatch",
+        "status": "SUCCESS",
+        "elapsed_ms": 1373
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.ConfigurableNativeKeyboardShortcuts",
+        "status": "SUCCESS",
+        "elapsed_ms": 2451
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.FolderRemovalKeepsOpenedPinsAsTabs",
+        "status": "SUCCESS",
+        "elapsed_ms": 1374
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.GeneralSettingsThemeAndPersistence",
+        "status": "SUCCESS",
+        "elapsed_ms": 2435
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.NativeDragAndCloseAtWidthLimits",
+        "status": "SUCCESS",
+        "elapsed_ms": 1360
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.NativeKeyboardWorkspaceSwitching",
+        "status": "SUCCESS",
+        "elapsed_ms": 1649
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.NativeShellAndAppearance",
+        "status": "SUCCESS",
+        "elapsed_ms": 1906
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarColumnLayoutTracksCollapsedFolders",
+        "status": "SUCCESS",
+        "elapsed_ms": 1376
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarFolderFailedWriteRollsBack",
+        "status": "SUCCESS",
+        "elapsed_ms": 3776
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarFolderRenameAndDeleteContents",
+        "status": "SUCCESS",
+        "elapsed_ms": 4315
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarFoldersCreateNestAndPersist",
+        "status": "SUCCESS",
+        "elapsed_ms": 3508
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarMetadataUpdatesPreserveRows",
+        "status": "SUCCESS",
+        "elapsed_ms": 1378
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarRemainsOpenWhileSpacesSlide",
+        "status": "SUCCESS",
+        "elapsed_ms": 1909
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarSwipeTracksCancelsAndSkipsSpaces",
+        "status": "SUCCESS",
+        "elapsed_ms": 2439
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SplitPairPersistsWhileAnotherTabIsShown",
+        "status": "SUCCESS",
+        "elapsed_ms": 1375
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation",
+        "status": "SUCCESS",
+        "elapsed_ms": 1379
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SplitViewSessionRestore",
+        "status": "SUCCESS",
+        "elapsed_ms": 2435
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.WorkspaceContextAppearanceAndDeletion",
+        "status": "SUCCESS",
+        "elapsed_ms": 2435
+      }
+    ]
+  },
+  "views": {
+    "tests": [
+      {
+        "name": "ZitterProfilesBrowserTest.NativeDragAndCloseAtWidthLimits",
+        "status": "SUCCESS",
+        "elapsed_ms": 1374
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.NativeShellAndAppearance",
+        "status": "SUCCESS",
+        "elapsed_ms": 1621
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarColumnLayoutTracksCollapsedFolders",
+        "status": "SUCCESS",
+        "elapsed_ms": 1646
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarMetadataUpdatesPreserveRows",
+        "status": "SUCCESS",
+        "elapsed_ms": 1378
+      }
+    ]
+  },
+  "rust_unit_tests_passed": 9,
+  "python_unit_tests_passed": 59,
+  "gn_dependency_check": "passed for //zitter_ui_lab:*",
+  "product_boundaries": "passed",
+  "verified_mechanisms": [
+    "Live tab/pin/folder rows create no native title Labels; a recursive assertion checks both real tab rows, including their close children.",
+    "A forced native paint pass skips the list children while Metal is visible.",
+    "A live Unicode title change preserves the explicit accessibility name and tooltip, increases GPU submissions and leaves the native subtree-paint counter unchanged.",
+    "Workspace animations request fresh native fallback paint, then resume skipping native child paint.",
+    "New rows and replacement rows after closing a tab acquire non-empty bounds without a resize or incidental Label notification."
+  ],
+  "manual_observations": [
+    "The signed isolated-profile app displays Polish/Japanese/Arabic titles, folders and the persistent split pair.",
+    "Changing a real page title updates both the native pane header and the Metal tab title.",
+    "Cmd+T and the existing address palette create a new local page; its new GPU row is visible at the end of the scrollable list without resizing.",
+    "Closing that new row and selecting the original split pair restores the demo; the normal user profile was not used."
+  ],
+  "limitations": [
+    "GPU counters count command buffers submitted, not completed GPU work or actual presentation timestamps.",
+    "The regression measures paint-path selection, not an end-to-end speedup; CPU/GPU/presentation benchmarks of the real UI remain required.",
+    "Native hierarchy/input/accessibility adapters, outer sidebar controls, palettes and forms still require migration.",
+    "GPU drawable-loss handling requests fallback repaint in source; this matrix exercises fallback via animation, not injected hardware/device failure."
+  ]
+}

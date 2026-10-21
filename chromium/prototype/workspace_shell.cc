@@ -401,6 +401,7 @@ class RowButton final : public views::Button {
     bool active = false;
     bool highlighted = false;
     bool chip = false;
+    bool sidebar_row = false;  // Live list: text belongs to the scene, not Labels.
     bool tile = false;  // One half of a Split View pair: always a filled card.
     int height = 34;
     PressedCallback close;
@@ -413,14 +414,17 @@ class RowButton final : public views::Button {
 #if BUILDFLAG(IS_MAC)
     if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar") == "rust-metal")
       rust_pointer_.emplace(sidebar::new_row_pointer());
+    scene_text_ = rust_pointer_.has_value() && spec_.sidebar_row && spec_.detail.empty();
 #endif
     GetViewAccessibility().SetName(spec_.title);
     SetTooltipText(spec_.title);
-    title_ = Label(this, spec_.title, kInk,
-                   Font(0, spec_.active || spec_.chip ? gfx::Font::Weight::MEDIUM
-                                                      : gfx::Font::Weight::NORMAL));
-    title_->SetElideBehavior(gfx::ELIDE_TAIL);
-    title_->SetCanProcessEventsWithinSubtree(false);
+    if (!scene_text_) {
+      title_ = Label(this, spec_.title, kInk,
+                     Font(0, spec_.active || spec_.chip ? gfx::Font::Weight::MEDIUM
+                                                        : gfx::Font::Weight::NORMAL));
+      title_->SetElideBehavior(gfx::ELIDE_TAIL);
+      title_->SetCanProcessEventsWithinSubtree(false);
+    }
     if (!spec_.detail.empty()) {
       detail_ = Label(this, spec_.detail, kMuted, Font(-1));
       detail_->SetElideBehavior(gfx::ELIDE_MIDDLE);
@@ -472,7 +476,7 @@ class RowButton final : public views::Button {
   void SetActive(bool active) {
     if (spec_.active == active) return;
     spec_.active = active;
-    title_->SetFontList(Font(0, active ? gfx::Font::Weight::MEDIUM : gfx::Font::Weight::NORMAL));
+    if (title_) title_->SetFontList(Font(0, active ? gfx::Font::Weight::MEDIUM : gfx::Font::Weight::NORMAL));
     UpdateCloseVisibility();
     SchedulePaint();
   }
@@ -482,7 +486,8 @@ class RowButton final : public views::Button {
   void SetTitle(std::u16string title) {
     if (spec_.title == title) return;
     spec_.title = std::move(title);
-    title_->SetText(spec_.title);
+    if (title_) title_->SetText(spec_.title);
+    else SchedulePaint();
     GetViewAccessibility().SetName(spec_.title);
     SetTooltipText(spec_.title);
   }
@@ -504,9 +509,9 @@ class RowButton final : public views::Button {
 #if BUILDFLAG(IS_MAC)
     if (rust_pointer_) {
       const auto geometry = sidebar::row_layout(width(), height(),
-          title_->GetPreferredSize().width(), detail_ != nullptr, spec_.chip, close_ != nullptr);
+          title_ ? title_->GetPreferredSize().width() : 0, detail_ != nullptr, spec_.chip, close_ != nullptr);
       auto rect = [](const sidebar::Rect& r) { return gfx::Rect(r.x, r.y, r.width, r.height); };
-      title_->SetBoundsRect(rect(geometry.title));
+      if (title_) title_->SetBoundsRect(rect(geometry.title));
       if (detail_) detail_->SetBoundsRect(rect(geometry.detail));
       if (close_) close_->SetBoundsRect(rect(geometry.close));
       return;
@@ -542,6 +547,17 @@ class RowButton final : public views::Button {
   }
   void PaintButtonContents(gfx::Canvas* canvas) override {
     PaintDecorations(canvas, GetLocalBounds(), spec_, this, GetState() == STATE_HOVERED || GetState() == STATE_PRESSED);
+#if BUILDFLAG(IS_MAC)
+    if (scene_text_) {
+      // Used only for GPU fallback and native animation snapshots. Steady Metal
+      // frames skip this subtree entirely; no hidden Label measures the title.
+      const auto geometry = sidebar::row_layout(width(), height(), 0, false, false, close_ != nullptr);
+      const auto& r = geometry.title;
+      canvas->DrawStringRectWithFlags(spec_.title,
+          Font(0, spec_.active ? gfx::Font::Weight::MEDIUM : gfx::Font::Weight::NORMAL),
+          Tone(this, kInk), gfx::Rect(r.x, r.y, r.width, r.height), gfx::Canvas::TEXT_ALIGN_LEFT);
+    }
+#endif
   }
   static void PaintDecorations(gfx::Canvas* canvas, const gfx::Rect& bounds, const Spec& spec,
                                const views::View* theme, bool hovered) {
@@ -584,6 +600,7 @@ class RowButton final : public views::Button {
 #if BUILDFLAG(IS_MAC)
   std::optional<rust::Box<sidebar::RowPointer>> rust_pointer_;
 #endif
+  bool scene_text_ = false;
   gfx::Point drag_start_;
   bool dragging_ = false;
   Spec spec_;
@@ -699,17 +716,33 @@ class SidebarGrip final : public views::ResizeArea, public views::ResizeAreaDele
 BEGIN_METADATA(SidebarGrip)
 END_METADATA
 
-// A ScrollView may paint on a separate layer from the outer sidebar. Observe
-// that layer's paint too; no polling timer or redraw while the UI is idle.
+// A ScrollView may paint on a separate layer from the outer sidebar. Forward
+// invalidations before rasterization: Metal must update even if the compositor
+// drops an empty native paint record. No polling timer or idle redraw.
 class SidebarListView final : public views::View {
  public:
-  explicit SidebarListView(base::RepeatingClosure painted) : painted_(std::move(painted)) {}
+  SidebarListView(base::RepeatingClosure painted, base::RepeatingCallback<bool()> metal_visible)
+      : painted_(std::move(painted)), metal_visible_(std::move(metal_visible)) {}
   void OnPaint(gfx::Canvas* canvas) override {
     views::View::OnPaint(canvas);
     painted_.Run();
   }
+  void OnDidSchedulePaint(const gfx::Rect& rect) override {
+    views::View::OnDidSchedulePaint(rect);
+    painted_.Run();
+  }
+  void PaintChildren(const views::PaintInfo& info) override {
+    if (metal_visible_.Run()) { ++metal_paints_; return; }
+    ++native_paints_;
+    views::View::PaintChildren(info);
+  }
+  size_t native_paints() const { return native_paints_; }
+  size_t metal_paints() const { return metal_paints_; }
  private:
   base::RepeatingClosure painted_;
+  base::RepeatingCallback<bool()> metal_visible_;
+  size_t native_paints_ = 0;
+  size_t metal_paints_ = 0;
 };
 
 class SidebarView final : public views::View {
@@ -1179,7 +1212,11 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   scroll->SetBackgroundColor(std::nullopt);
   scroll->SetDrawOverflowIndicator(false);
   scroll->SetHorizontalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);
-  auto list = std::make_unique<SidebarListView>(base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar, weak));
+  auto list = std::make_unique<SidebarListView>(
+      base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar, weak),
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+        return shell && shell->metal_sidebar_visible();
+      }, weak));
   metal_scroll_subscription_ = scroll->AddContentsScrolledCallback(
       base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar, weak));
   list->SetLayoutManager(CreateSidebarColumnLayout(2));
@@ -2121,6 +2158,7 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
     auto add_tab = [&](views::View* parent, const ShellTab& tab, bool tile = false) {
       RowButton::Spec spec;
       spec.title = tab.title;
+      spec.sidebar_row = true;
       spec.tile = tile;
       if (tile) spec.height = 38;
       auto host = HostLabel(tab.url);
@@ -2228,6 +2266,15 @@ size_t WorkspaceShell::CycleSidebarTab(size_t current, size_t count, bool backwa
 bool WorkspaceShell::metal_sidebar_visible() const {
   return metal_sidebar_ && metal_sidebar_->visible();
 }
+size_t WorkspaceShell::metal_sidebar_frame_count() const {
+  return metal_sidebar_ ? metal_sidebar_->frame_count() : 0;
+}
+size_t WorkspaceShell::native_sidebar_paint_count() const {
+  return tab_list_ ? static_cast<SidebarListView*>(tab_list_.get())->native_paints() : 0;
+}
+size_t WorkspaceShell::metal_sidebar_paint_count() const {
+  return tab_list_ ? static_cast<SidebarListView*>(tab_list_.get())->metal_paints() : 0;
+}
 void WorkspaceShell::ScheduleMetalSidebar() {
   if (!metal_sidebar_ || metal_sidebar_pending_) return;
   metal_sidebar_pending_ = true;
@@ -2238,9 +2285,15 @@ void WorkspaceShell::UpdateMetalSidebar() {
   metal_sidebar_pending_ = false;
 #if BUILDFLAG(IS_MAC)
   if (!metal_sidebar_) return;
+  const bool was_visible = metal_sidebar_->visible();
   if (!sidebar_visible() || swipe_overlay_ || workspace_animation_running()) {
-    metal_sidebar_->Hide(); return;
+    metal_sidebar_->Hide();
+    if (was_visible) tab_list_->SchedulePaint();
+    return;
   }
+  // Invalidations can reach Metal before the next native compositor paint.
+  // Apply the Rust column/row layouts now, rather than publish zero/stale bounds.
+  sidebar_widget_->LayoutRootViewIfNecessary();
   // The viewport is shared with native hit testing, including folder indentation,
   // scroll offset and the two independent tiles of a split pair. Never invent a
   // second tab model: title, selection, callbacks and close targets stay live.
@@ -2292,6 +2345,9 @@ void WorkspaceShell::UpdateMetalSidebar() {
   collect(collect, tab_list_);
   const SkColor tint = FrameTint(workspace_color(state_.workspace_id), root_);
   metal_sidebar_->Update(sidebar_widget_->GetNativeWindow(), bounds, items, pinned_ ? tint : Mix(tint, Tone(root_, kCard), 70));
+  // A failed drawable must expose freshly painted fallback content, even if
+  // the last native paint was skipped while Metal still had a visible frame.
+  if (was_visible && !metal_sidebar_->visible()) tab_list_->SchedulePaint();
 #endif
 }
 
@@ -2565,6 +2621,7 @@ void WorkspaceShell::AppendPinnedItems(views::View* parent, const std::string& p
   for (const auto* pin : found->second) {
     RowButton::Spec spec;
     spec.title = base::UTF8ToUTF16(pin->title);
+    spec.sidebar_row = true;
     const auto key = workspace + ":" + pin->id;
     if (pin->folder) {
       spec.icon = &vector_icons::kFolderFilledIcon;
@@ -3109,7 +3166,10 @@ void WorkspaceShell::AnimateWorkspaceSwitch(std::string_view previous) {
   // Prepare the new viewport before starting the clock. Otherwise its first
   // layout/raster can consume much of a short animation and skip its opening.
   sidebar_widget_->LayoutRootViewIfNecessary();
-  if (metal_sidebar_) metal_sidebar_->Hide();
+  if (metal_sidebar_) {
+    metal_sidebar_->Hide();
+    tab_list_->SchedulePaint();  // Refresh cached native contents before animating.
+  }
   tab_scroll_->SetPaintToLayer();
   tab_scroll_->layer()->SetFillsBoundsOpaquely(false);
   gfx::Transform offset; offset.Translate(new_index > old_index ? 32 : -32, 0);

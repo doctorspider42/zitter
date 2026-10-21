@@ -15,8 +15,8 @@ Views-specific layout and control behavior must have an explicit replacement.
 
 | Surface / behavior | Current owner | Remaining migration / acceptance |
 | --- | --- | --- |
-| Live tab/pin/folder/split text and card drawing | Rust display list + Metal; CoreText text shaping | Match focus, hover, disabled and theme states; remove duplicate native painting safely |
-| Row title/detail/close geometry | Rust in opt-in backend, shared with display list | Replace remaining native row containers and typography measurement adapter |
+| Live tab/pin/folder/split text and card drawing | Rust display list + Metal; CoreText text shaping | Expand focus/disabled/theme/scale coverage; replace native animation snapshots |
+| Row title/detail/close geometry | Rust in opt-in backend, shared with display list | Replace native interaction containers; keep explicit platform font/accessibility adapters |
 | Row drag threshold, latched drag, cancellation and close visibility | Rust in opt-in backend; native event delivery | Native drag-to-split verified; capture-loss unit coverage; migrate target policy |
 | Next/previous tab wrapping | Rust; existing configurable key dispatch | Preserve page shortcut precedence and editing/IME behavior |
 | Vertical list/folder columns and full content extent | Rust via native View measurement/bounds adapter | Verify collapse/resize against Views; replace the native hierarchy with stable Rust item identities |
@@ -54,6 +54,14 @@ Views-specific layout and control behavior must have an explicit replacement.
   regressions, 4 Views controls, 9 Rust tests and 59 Python tests passed. Signed
   app inspected with Unicode, Split View, folder collapse/expand and scrolling.
   See [column validation](benchmarks/rust-column-layout-functional-2026-10-21.json).
+- Row text now belongs to the scene, with no hidden Views title Labels. The
+  native list skips child painting while Metal is visible, and restores fresh
+  native fallback content for animations. Invalidation is forwarded before
+  rasterization; new/removed rows explicitly invalidate layout and scene
+  collection applies pending layouts. Native event/accessibility nodes remain.
+  26 Metal browser regressions, 4 Views controls, 9 Rust tests and 59 Python tests
+  passed; signed app checked with title updates and adding/closing a real tab.
+  See [text ownership validation](benchmarks/rust-owned-row-text-functional-2026-10-21.json).
 
 ## Completion gates
 

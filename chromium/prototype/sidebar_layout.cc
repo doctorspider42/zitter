@@ -18,6 +18,8 @@ namespace {
 class RustColumnLayout final : public views::LayoutManager {
  public:
   explicit RustColumnLayout(int spacing) : spacing_(spacing) {}
+  void ViewAdded(views::View* host, views::View*) override { host->InvalidateLayout(); }
+  void ViewRemoved(views::View* host, views::View*) override { host->InvalidateLayout(); }
   void Layout(views::View* host) override {
     const auto result = Measure(host, host->width());
     size_t index = 0;

@@ -246,6 +246,10 @@ class WorkspaceShell final : public ui::EventHandler,
   bool address_visible() const;
   bool sidebar_visible() const;
   bool metal_sidebar_visible() const;
+  // GPU submissions are separate from native subtree paint passes skipped/run.
+  size_t metal_sidebar_frame_count() const;
+  size_t native_sidebar_paint_count() const;
+  size_t metal_sidebar_paint_count() const;
   size_t CycleSidebarTab(size_t current, size_t count, bool backwards) const;
 
   void OpenWorkspaceSettings();
