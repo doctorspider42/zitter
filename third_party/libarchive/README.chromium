@@ -1,0 +1,17 @@
+Name: libarchive
+URL: https://github.com/libarchive/libarchive
+Version: 3.8.9
+License: Apache-2.0, BSD-2-Clause, BSD-3-Clause, CC0-1.0
+License File: COPYING, THIRD_PARTY_NOTICES.txt, LICENSE-APACHE
+Shipped: yes
+Security Critical: yes
+
+Pinned upstream release archive, unmodified. Build-time local change: validate
+stored RAR3 data CRC before libarchive's generic EOF shortcut (build_archive.py).
+Regression test corrupts stored data while retaining the declared CRC. SHA-256 of libarchive-3.8.9.tar.xz:
+888c934f9d95648ecb9163dc8e23ab80a476ecb81a8f1154704a227b5b676dde
+Only the RAR and RAR5 readers are registered. Optional external libraries,
+external filter programs, disk extraction, tools and tests are not enabled by
+our build/adapter. BLAKE2 is used under its CC0 alternative. Source file headers
+remain controlling. Build scripts inside the source distribution retain their
+own (open source) terms and are not linked into the product.

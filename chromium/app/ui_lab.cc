@@ -84,8 +84,8 @@ bool EquivalentScenes() {
 class Sidebar final : public views::View {
   METADATA_HEADER(Sidebar, views::View)
  public:
-  Sidebar(bool retained, base::RepeatingCallback<void(float)> clicked)
-      : retained_(retained), clicked_(std::move(clicked)) {}
+  Sidebar(bool retained, bool optimized, base::RepeatingCallback<void(float)> clicked)
+      : retained_(retained), optimized_(optimized), clicked_(std::move(clicked)) {}
   void Update(base::span<const Rect> scene) {
     if (retained_) {
       while (children().size() > scene.size()) RemoveChildViewT(children().back());
@@ -98,21 +98,40 @@ class Sidebar final : public views::View {
         }
       }
     }
+    if (!retained_) {
+      if (!optimized_) {
+        SchedulePaint();
+      } else {
+        // Invalidate both old and new bounds. Unchanged rows keep their raster
+        // tiles; removed/moved primitives are cleared by the scene background.
+        for (size_t i = 0; i < std::max(scene.size(), scene_.size()); ++i) {
+          const auto bounds = [](const Rect& r) { return gfx::Rect(r.x, r.y, r.width, r.height); };
+          if (i < scene.size() && i < scene_.size() &&
+              bounds(scene[i]) == bounds(scene_[i]) && scene[i].color == scene_[i].color) continue;
+          if (i < scene_.size()) SchedulePaintInRect(bounds(scene_[i]));
+          if (i < scene.size()) SchedulePaintInRect(bounds(scene[i]));
+        }
+      }
+    }
     scene_.assign(scene.begin(), scene.end());
-    if (!retained_) SchedulePaint();
   }
   void OnPaint(gfx::Canvas* canvas) override {
     TRACE_EVENT("benchmark", "Zitter.UiLab.SidebarPaint", "retained", retained_);
     views::View::OnPaint(canvas);
     if (!retained_) {
-      for (const auto& r : scene_) canvas->FillRect(gfx::Rect(r.x, r.y, r.width, r.height), r.color);
+      gfx::Rect clip;
+      const bool cull = optimized_ && canvas->GetClipBounds(&clip);
+      for (const auto& r : scene_) {
+        const gfx::Rect bounds(r.x, r.y, r.width, r.height);
+        if (!cull || bounds.Intersects(clip)) canvas->FillRect(bounds, r.color);
+      }
     }
   }
   bool OnMousePressed(const ui::MouseEvent& event) override {
     clicked_.Run(event.y()); return true;
   }
  private:
-  bool retained_;
+  bool retained_, optimized_;
   base::RepeatingCallback<void(float)> clicked_;
   std::vector<Rect> scene_;
 };
@@ -133,12 +152,16 @@ class Lab final : public UiLab, public content::WebContentsObserver {
     const auto* cmd = base::CommandLine::ForCurrentProcess();
     backend_ = cmd->GetSwitchValueASCII("zitter-ui-lab");
     scenario_ = cmd->GetSwitchValueASCII("zitter-ui-scenario");
+    variant_ = cmd->GetSwitchValueASCII("zitter-ui-variant");
+    if (variant_.empty()) variant_ = "optimized";
+    optimized_ = variant_ == "optimized";
     if (scenario_.empty()) scenario_ = "selection";
     url_ = GURL(cmd->GetSwitchValueASCII("zitter-performance-url"));
     const auto directory = cmd->GetSwitchValuePath("user-data-dir");
     std::string marker;
     if ((backend_ != "views" && backend_ != "rust-skia" && backend_ != "rust-metal") ||
         (scenario_ != "selection" && scenario_ != "resize") ||
+        (variant_ != "baseline" && variant_ != "optimized") ||
         directory.empty() || !directory.IsAbsolute() ||
         directory != g_browser_process->profile_manager()->user_data_dir() ||
         !base::ReadFileToString(directory.AppendASCII(".zitter-ui-lab"), &marker) ||
@@ -149,6 +172,7 @@ class Lab final : public UiLab, public content::WebContentsObserver {
       Finish(false); return;
     }
     interactive_ = cmd->HasSwitch("zitter-ui-interactive");
+    capture_ = cmd->HasSwitch("zitter-ui-capture");
     deadline_.Start(FROM_HERE, base::Seconds(45),
                     base::BindOnce(&Lab::Finish, weak_.GetWeakPtr(), false));
     g_browser_process->profile_manager()->CreateProfileAsync(directory.AppendASCII("UiLab"),
@@ -165,12 +189,12 @@ class Lab final : public UiLab, public content::WebContentsObserver {
         views::BoxLayout::Orientation::kHorizontal));
     auto clicked = base::BindRepeating(&Lab::Click, weak_.GetWeakPtr());
     if (backend_ == "rust-metal") {
-      metal_ = ui_lab::CreateMetalSurface(clicked);
+      metal_ = ui_lab::CreateMetalSurface(clicked, optimized_);
       if (!metal_) { Finish(false); return; }
       native_host_ = root->AddChildView(std::make_unique<views::NativeViewHost>());
       sidebar_view_ = native_host_;
     } else {
-      sidebar_ = root->AddChildView(std::make_unique<Sidebar>(backend_ == "views", clicked));
+      sidebar_ = root->AddChildView(std::make_unique<Sidebar>(backend_ == "views", optimized_, clicked));
       sidebar_view_ = sidebar_;
     }
     sidebar_view_->SetPreferredSize(gfx::Size(280, 780));
@@ -249,6 +273,16 @@ class Lab final : public UiLab, public content::WebContentsObserver {
     const float width = sidebar_view_->width(), height = sidebar_view_->height();
     auto cpp_scene = backend_ == "views" ? ReferenceScene(width, height, 25, selected_) : std::vector<Rect>();
     auto rust_scene = backend_ == "views" ? rust::Vec<Rect>() : ui_lab::scene(width, height, 25, selected_);
+    if (capture_) {
+      // A frame identity rendered by the SAME surface as the scene, so a
+      // capture cannot acknowledge a newer marker over older sidebar pixels.
+      const uint32_t id = timed ? trial_ + kWarmups + 1 : 0;
+      const uint32_t code = (0xa55au << 10) | id;
+      for (int bit = 0; bit < 26; ++bit) {
+        Rect r{float(4 + bit * 4), 4, 4, 4, (code & (1u << (25 - bit))) ? 0xffeeeeeeu : 0xff111111u};
+        if (backend_ == "views") cpp_scene.push_back(r); else rust_scene.push_back(r);
+      }
+    }
     // SAFETY: CXX Vec owns this contiguous allocation and outlives the span.
     // Consumers synchronously copy it before returning; no borrowed data escapes.
     const auto scene = backend_ == "views" ? base::span<const Rect>(cpp_scene)
@@ -276,6 +310,8 @@ class Lab final : public UiLab, public content::WebContentsObserver {
         "callback_delay_ms", (base::TimeTicks::Now() - feedback.timestamp).InMillisecondsF(),
         "vsync_interval_ms", feedback.interval.InMillisecondsF());
     if (feedback.failed() || feedback.timestamp < started_) { Finish(false); return; }
+    reported_presentation_ = feedback.timestamp;
+    callback_ms_ = (base::TimeTicks::Now() - started_).InMillisecondsF();
     Presented((feedback.timestamp - started_).InMillisecondsF(), -1, feedback.flags);
   }
   void ProfileFrame(int trial, base::TimeTicks started, const viz::FrameTimingDetails& frame) {
@@ -298,6 +334,8 @@ class Lab final : public UiLab, public content::WebContentsObserver {
       return;
     }
     if (!ok) { Finish(false); return; }
+    reported_presentation_ = started_ + base::Milliseconds(before_draw_ms + latency);
+    callback_ms_ = (base::TimeTicks::Now() - started_).InMillisecondsF();
     Presented(before_draw_ms + latency, gpu, 0);
   }
   void Presented(double latency, double gpu, uint32_t flags) {
@@ -306,13 +344,24 @@ class Lab final : public UiLab, public content::WebContentsObserver {
       LOG(INFO) << "ZITTER_UI_SAMPLE {\"trial\":" << trial_
                 << ",\"scene_ms\":" << scene_ms_ << ",\"submit_ms\":" << submit_ms_
                 << ",\"update_to_present_ms\":" << latency << ",\"metal_gpu_ms\":" << gpu
-                << ",\"feedback_flags\":" << flags << "}";
+                << ",\"feedback_flags\":" << flags
+                << ",\"start_us\":" << started_.since_origin().InMicroseconds()
+                << ",\"marker_id\":" << trial_ + kWarmups + 1
+                << ",\"callback_ms\":" << callback_ms_
+                << ",\"presentation_kind\":\"" << (metal_ ? "metal-drawable" : "chromium-displaylink-target") << "\"}";
     }
-    if (++trial_ == iterations_) { ActiveFinished(); return; }
+    const auto remaining = std::max(base::TimeDelta(), reported_presentation_ - base::TimeTicks::Now());
+    if (++trial_ == iterations_) {
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+          FROM_HERE, base::BindOnce(&Lab::ActiveFinished, weak_.GetWeakPtr()), remaining);
+      return;
+    }
     deadline_.Start(FROM_HERE, base::Seconds(10),
                     base::BindOnce(&Lab::Finish, weak_.GetWeakPtr(), false));
-    // Vary the vsync phase deterministically. One measured update in flight.
-    PostStep(base::Milliseconds(3 + ((trial_ + kWarmups) * 17) % 13));
+    // Identical update-start cadence for every backend/variant, independent
+    // of callback latency. Keep one update in flight and vary the vsync phase.
+    const auto next_start = started_ + base::Milliseconds(40 + 3 + ((trial_ + kWarmups) * 17) % 13);
+    PostStep(std::max(remaining, next_start - base::TimeTicks::Now()));
   }
   void ActiveFinished() {
     const auto cpu = process_metrics_->GetCumulativeCPUUsage();
@@ -345,7 +394,7 @@ class Lab final : public UiLab, public content::WebContentsObserver {
   }
   void WindowClosing() { Finish(interactive_ && loaded_); }
   static constexpr int kWarmups = 10;
-  std::string backend_, scenario_;
+  std::string backend_, scenario_, variant_;
   GURL url_;
   base::OnceClosure done_;
   std::unique_ptr<ScopedProfileKeepAlive> profile_;
@@ -359,8 +408,9 @@ class Lab final : public UiLab, public content::WebContentsObserver {
   int iterations_ = 120, trial_ = -kWarmups;
   int warmup_skipped_ = 0;
   uint32_t selected_ = 0;
-  bool loaded_ = false, finished_ = false, interactive_ = false;
-  double scene_ms_ = 0, submit_ms_ = 0;
+  bool loaded_ = false, finished_ = false, interactive_ = false, optimized_ = true, capture_ = false;
+  double scene_ms_ = 0, submit_ms_ = 0, callback_ms_ = 0;
+  base::TimeTicks reported_presentation_;
   base::TimeTicks started_;
   base::TimeTicks measured_start_;
   std::unique_ptr<base::ProcessMetrics> process_metrics_ = base::ProcessMetrics::CreateCurrentProcessMetrics();

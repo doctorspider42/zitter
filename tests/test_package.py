@@ -122,6 +122,25 @@ class PackageTests(unittest.TestCase):
             self.assertTrue(packager.bundle_marker(app).is_file())
             self.assertFalse((app / 'Contents/zitter-development-bundle').exists())
 
+    def test_license_collection_is_bundled_before_signing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            out = root / 'out'
+            framework = out / 'Chromium Framework.framework/Versions/1.0'
+            framework.mkdir(parents=True)
+            (framework / 'Chromium Framework').write_bytes(b'framework')
+            (out / 'zitter').write_bytes(b'app')
+            notices = root / 'notices.txt'
+            notices.write_text('reviewed third-party notices')
+            app = root / 'Zitter.app'
+            def verify_at_signing(*_):
+                resources = app / 'Contents/Resources'
+                self.assertEqual((resources / 'THIRD_PARTY_LICENSES.txt').read_text(), notices.read_text())
+                self.assertTrue((resources / 'LICENSE').is_file())
+                self.assertTrue((resources / 'NOTICE').is_file())
+            with mock.patch.object(packager, 'sign_bundle', side_effect=verify_at_signing):
+                packager.package(out, app, register=False, identity='test', third_party_licenses=notices)
+
     def test_signing_identity_is_pinned_and_never_falls_back_to_adhoc(self):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / 'signing.json'

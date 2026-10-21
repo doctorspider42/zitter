@@ -1,0 +1,20 @@
+# Zitter's build integration is Apache-2.0; upstream library retains COPYING.
+assert(is_mac && current_cpu == "arm64", "Validated libarchive backend: macOS ARM64")
+action("build_archive") {
+  script = "build_archive.py"
+  sources = [ "libarchive-3.8.9.tar.xz" ]
+  outputs = [ "$target_gen_dir/libarchive.a" ]
+  args = [ rebase_path(outputs[0], root_build_dir) ]
+}
+config("archive_link") {
+  libs = [ "$target_gen_dir/libarchive.a", "iconv" ]
+}
+source_set("rar_reader") {
+  sources = [ "rar_reader.cc", "rar_reader.h", "rar_delegates.h" ]
+  deps = [ "//base", ":build_archive" ]
+  public_configs = [ ":archive_link" ]
+}
+executable("rar_reader_tests") {
+  sources = [ "rar_reader_test.cc" ]
+  deps = [ "//base", ":rar_reader" ]
+}

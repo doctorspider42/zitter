@@ -1,0 +1,12 @@
+Zitter
+Copyright 2026 the Zitter contributors
+
+Original Zitter code is licensed under the Apache License, Version 2.0.
+Third-party software and files retaining upstream copyright/license headers
+remain under their respective licenses. This grant does not relicense Chromium,
+its dependencies, or other third-party material.
+
+Chromium: Copyright The Chromium Authors, BSD-style license.
+See docs/licenses and the generated THIRD_PARTY_LICENSES.txt for the component
+inventory and applicable notices. LGPL/MPL source and relinking obligations
+continue to apply to distributions containing those components.

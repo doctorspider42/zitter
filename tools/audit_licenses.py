@@ -52,6 +52,9 @@ def link_records(out):
             outputs = ninja_tokens(match[1])
             inputs = ninja_tokens(match[2].split(' |')[0])
             inputs += re.findall(r'^  rlibs = (.*)$', text[match.end():], re.M)[0].split() if re.search(r'^  rlibs = ', text[match.end():], re.M) else []
+            libraries = re.search(r'^  libs = (.*)$', text[match.end():], re.M)
+            if libraries:
+                inputs += [p for p in ninja_tokens(libraries[1]) if p.endswith(('.a', '.rlib', '.dylib'))]
             records.append({'ninja': str(path.relative_to(out)), 'outputs': outputs, 'inputs': inputs})
     return records
 

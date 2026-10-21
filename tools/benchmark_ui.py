@@ -72,7 +72,8 @@ def aggregate(runs):
         if not selected:
             continue
         result[backend] = {}
-        for metric in METRICS:
+        metrics = METRICS + (("windowserver_present_ms", "capture_delivery_ms", "callback_ms") if all('windowserver_present_ms' in s for r in selected for s in r['samples']) else ())
+        for metric in metrics:
             # Each process is a repetition; retain its median to show run variance.
             medians = [statistics.median(s[metric] for s in run["samples"]) for run in selected]
             result[backend][metric] = {**stats([s[metric] for run in selected for s in run["samples"]]),
@@ -86,7 +87,7 @@ def aggregate(runs):
     return result
 
 
-def launch(executable, directory, url, backend, scenario, iterations, log, interactive=False, extra_args=()):
+def launch(executable, directory, url, backend, scenario, iterations, log, interactive=False, extra_args=(), capture_executable=None):
     directory.mkdir()
     (directory / ".zitter-ui-lab").write_text("isolated-ui-lab\n")
     command = [str(executable), "--user-data-dir=" + str(directory), "--no-first-run",
@@ -95,11 +96,18 @@ def launch(executable, directory, url, backend, scenario, iterations, log, inter
                "--zitter-ui-lab=" + backend, "--zitter-ui-scenario=" + scenario,
                "--zitter-performance-url=" + url, "--zitter-perf-iterations=" + str(iterations)]
     command.extend(extra_args)
+    if capture_executable:
+        command.append("--zitter-ui-capture")
     if interactive:
         command.append("--zitter-ui-interactive")
-    with log.open("w") as stream, subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT,
+    observer = None
+    capture_file = log.with_suffix('.capture.jsonl')
+    with log.open("w") as stream, capture_file.open('w') as capture_stream, log.with_suffix('.capture.stderr').open('w') as capture_stderr, subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT,
                                                    start_new_session=True) as process:
         try:
+            if capture_executable:
+                observer = subprocess.Popen([str(capture_executable), str(process.pid), scenario],
+                                            stdout=capture_stream, stderr=capture_stderr)
             status = process.wait(timeout=None if interactive else max(90, iterations * .2))
         except BaseException:
             try:
@@ -108,6 +116,15 @@ def launch(executable, directory, url, backend, scenario, iterations, log, inter
                 pass
             process.wait()
             raise
+        finally:
+            if observer:
+                try:
+                    observer.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    observer.kill()
+                    observer.wait()
+    if capture_executable and observer.returncode:
+        raise ValueError(f'Capture failed ({observer.returncode}); see {capture_file}')
     if interactive:
         if status or records(log.read_text(errors="replace"), "ZITTER_UI_STATUS") != [{"ok": True}]:
             raise ValueError(f"Interactive UI lab failed; see {log}")
@@ -115,18 +132,47 @@ def launch(executable, directory, url, backend, scenario, iterations, log, inter
     if status:
         raise ValueError(f"UI lab exited {status}; see {log}")
     try:
-        return parse_run(log.read_text(errors="replace"), backend, iterations)
+        parsed = parse_run(log.read_text(errors="replace"), backend, iterations)
+        if capture_executable:
+            correlate_capture(parsed['samples'], capture_file.read_text())
+        return parsed
     except (ValueError, KeyError) as error:
         raise ValueError(f"{error}; see {log}") from error
 
+
+
+def correlate_capture(samples, output):
+    events = [json.loads(line) for line in output.splitlines() if line.strip()]
+    if any('error' in event for event in events) or len([e for e in events if e.get('ready')]) != 1:
+        raise ValueError('Capture stream did not start successfully')
+    by_id = {}
+    for event in events:
+        if 'marker_id' in event:
+            by_id.setdefault(event['marker_id'], []).append(event)
+    for sample in samples:
+        matches = by_id.get(sample['marker_id'], [])
+        if not matches:
+            raise ValueError(f"No displayed frame for trial {sample['trial']}")
+        if any(not e.get('scene_verified') for e in matches):
+            raise ValueError('Unverified captured scene')
+        # A marker may recur if a stale layer is presented again; use its first
+        # verified display, never substitute a later trial or drop a sample.
+        event = min(matches, key=lambda e: e['display_ns'])
+        latency = event['display_ns'] / 1e6 - sample['start_us'] / 1000
+        if not math.isfinite(latency) or latency < 0 or event['callback_ns'] < sample['start_us'] * 1000:
+            raise ValueError('Invalid display clock / frame association')
+        sample['windowserver_present_ms'] = latency
+        sample['capture_delivery_ms'] = (event['callback_ns'] - event['display_ns']) / 1e6
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app", type=Path, required=True)
     parser.add_argument("--iterations", type=int, default=120)
     parser.add_argument("--rounds", type=int, default=6)
+    parser.add_argument("--variants", nargs="+", choices=("baseline", "optimized"), default=["optimized"])
     parser.add_argument("--scenario", choices=("selection", "resize", "both"), default="both")
     parser.add_argument("--interactive", choices=BACKENDS)
+    parser.add_argument("--capture", type=Path, help="Compiled tools/ui_capture.swift observer (requires existing Screen Recording permission)")
     parser.add_argument("--backends", nargs="+", choices=BACKENDS, default=list(BACKENDS))
     parser.add_argument("--results", type=Path, default=ROOT / "build/ui-performance")
     args = parser.parse_args()
@@ -158,9 +204,16 @@ def main():
               "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
               "cpu_model": subprocess.check_output(["sysctl", "-n", "machdep.cpu.brand_string"], text=True).strip(),
               "physical_memory_bytes": int(subprocess.check_output(["sysctl", "-n", "hw.memsize"], text=True)),
-              "executable_sha256": digest, "chromium_revision": json.loads((ROOT / "chromium/revision.json").read_text())["revision"],
+              "source_files_sha256": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
+                                      for p in (ROOT / 'chromium/app').glob('ui_lab*') if p.is_file()},
+              "capture_source_sha256": hashlib.sha256((ROOT / 'tools/ui_capture.swift').read_bytes()).hexdigest(),
+              "capture_executable_sha256": hashlib.sha256(args.capture.resolve().read_bytes()).hexdigest() if args.capture else None,
+              "capture_scope": "Only the benchmark window; frame ID, selected row and page viewport width verified. WindowServer displayTime can lie in the callback's future; not physical input-to-photon. No images retained.",
+              "executable_sha256": digest, "page_sha256": hashlib.sha256((ROOT / "testdata/performance_probe.html").read_bytes()).hexdigest(), "chromium_revision": json.loads((ROOT / "chromium/revision.json").read_text())["revision"],
               "gn_args": (out / "args.gn").read_text(), "iterations": args.iterations,
-              "warmups_per_process": 10, "settling_seconds": 3, "rounds": args.rounds, "runs": runs,
+              "variants": args.variants, "pacing": "fixed update-start target 40ms + deterministic 3..15ms, never before prior callback/reported presentation target",
+              "capture": str(args.capture.resolve()) if args.capture else None,
+              "component_updates_disabled": True, "warmups_per_process": 10, "settling_seconds": 3, "rounds": args.rounds, "runs": runs,
               "scope": "Controlled opaque-rectangle sidebar with one visible native WebContents and a minimal shared Views window/page host. No production UI, text shaping, IME, accessibility, DnD, overlays or scrolling. Views retains primitive children; rust-skia paints a Rust display list through Chromium; rust-metal submits that list to a sibling CAMetalLayer, composed by macOS. No web-pixel readback. Sequential update-to-reported-presentation feedback, not physical input-to-photon latency. On macOS Chromium reports a DisplayLink-derived future target time; its callback can arrive before that time. Metal uses drawable.presentedTime, so cross-backend latency APIs are not equivalent. Backend presentation APIs differ; feedback flags retained. CPU and footprint cover browser only, excluding GPU/renderer processes; no energy measurements. Samples in a process are correlated; compare run medians."}
     with http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -177,20 +230,33 @@ def main():
             for scenario in scenarios:
                 for repetition in range(args.rounds):
                     for backend in orders[repetition % len(orders)]:
-                        name = f"{scenario}-{repetition}-{backend}"
-                        print(f"Measuring {name}", flush=True)
-                        measured = launch(executable, destination / (name + ".profile"), url,
-                                          backend, scenario, args.iterations, destination / (name + ".log"))
-                        runs.append({"backend": backend, "scenario": scenario, "round": repetition, **measured})
-                        (destination / "partial.json").write_text(json.dumps(result, indent=2) + "\n")
-            result["summary"] = {scenario: aggregate([r for r in runs if r["scenario"] == scenario])
-                                 for scenario in scenarios}
+                        variants = args.variants if repetition % 2 == 0 else list(reversed(args.variants))
+                        for variant in variants:
+                            name = f"{scenario}-{repetition}-{backend}-{variant}"
+                            print(f"Measuring {name}", flush=True)
+                            measured = launch(executable, destination / (name + ".profile"), url,
+                                              backend, scenario, args.iterations, destination / (name + ".log"),
+                                              extra_args=["--zitter-ui-variant=" + variant],
+                                              capture_executable=args.capture.resolve() if args.capture else None)
+                            for sample in measured['samples']:
+                                expected = 'metal-drawable' if backend == 'rust-metal' else 'chromium-displaylink-target'
+                                if sample.get('presentation_kind') != expected or not math.isfinite(sample.get('callback_ms', float('nan'))) or sample['callback_ms'] < 0:
+                                    raise ValueError('Missing explicit presentation semantics / callback timing')
+                            runs.append({"backend": backend, "variant": variant, "scenario": scenario,
+                                         "round": repetition, **measured})
+                            (destination / "partial.json").write_text(json.dumps(result, indent=2) + "\n")
+            result["summary"] = {variant: {scenario: aggregate([r for r in runs if r["scenario"] == scenario and r['variant'] == variant])
+                                          for scenario in scenarios} for variant in args.variants}
             (destination / "results.json").write_text(json.dumps(result, indent=2) + "\n")
-            for scenario, backends in result["summary"].items():
-                for backend, metrics in backends.items():
-                    print(f"{scenario} {backend}: present median {metrics['update_to_present_ms']['median']:.3f} ms, "
-                          f"p95 {metrics['update_to_present_ms']['p95']:.3f} ms; "
-                          f"submit {metrics['submit_ms']['median']:.3f} ms")
+            for variant, scenarios_summary in result["summary"].items():
+                for scenario, backends in scenarios_summary.items():
+                    for backend, metrics in backends.items():
+                        if 'windowserver_present_ms' in metrics:
+                            observed = metrics['windowserver_present_ms']
+                            print(f"{variant} {scenario} {backend}: WindowServer median {observed['median']:.3f} ms; p95 {observed['p95']:.3f} ms")
+                        print(f"{variant} {scenario} {backend}: reported presentation median {metrics['update_to_present_ms']['median']:.3f} ms, "
+                              f"p95 {metrics['update_to_present_ms']['p95']:.3f} ms; "
+                              f"submit {metrics['submit_ms']['median']:.3f} ms")
             print(f"Results: {destination / 'results.json'}")
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             print(str(error))

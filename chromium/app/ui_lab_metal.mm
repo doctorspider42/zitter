@@ -6,6 +6,12 @@
 #import <QuartzCore/CAMetalLayer.h>
 #import <QuartzCore/CATransaction.h>
 
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cstring>
+
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/task/single_thread_task_runner.h"
@@ -34,7 +40,8 @@ namespace {
 
 class Surface final : public MetalSurface {
  public:
-  bool Init(base::RepeatingCallback<void(float)> clicked) {
+  bool Init(base::RepeatingCallback<void(float)> clicked, bool optimized) {
+    optimized_ = optimized;
     device_ = MTLCreateSystemDefaultDevice();
     if (!device_) return false;
     queue_ = [device_ newCommandQueue];
@@ -59,7 +66,7 @@ class Surface final : public MetalSurface {
     layer_.framebufferOnly = YES;
     layer_.opaque = YES;
     layer_.displaySyncEnabled = YES;
-    layer_.presentsWithTransaction = YES;
+    layer_.presentsWithTransaction = !optimized_;
     layer_.maximumDrawableCount = 3;
     view_.layer = layer_;
     view_.wantsLayer = YES;
@@ -91,8 +98,27 @@ class Surface final : public MetalSurface {
       std::move(presented).Run(false, 0, 0); return;
     }
     // A small immutable UI display list, not a copy of the web page pixels.
-    id<MTLBuffer> buffer = [device_ newBufferWithBytes:scene.data()
-        length:scene.size() * sizeof(Rect) options:MTLResourceStorageModeShared];
+    id<MTLBuffer> buffer;
+    if (optimized_) {
+      // Each slot stays immutable until its command buffer completes. Never
+      // block the UI thread waiting for a busy slot; retain a spill buffer.
+      slot_ = (slot_ + 1) % buffers_.size();
+      const size_t bytes = scene.size() * sizeof(Rect);
+      if (*busy_[slot_]) {
+        buffers_[slot_] = nil;
+        busy_[slot_] = std::make_shared<std::atomic_bool>(false);
+      }
+      if (!buffers_[slot_] || buffers_[slot_].length < bytes) {
+        buffers_[slot_] = [device_ newBufferWithLength:std::max(size_t{4096}, bytes)
+                                             options:MTLResourceStorageModeShared];
+      }
+      buffer = buffers_[slot_];
+      // SAFETY: MTLBuffer length is at least bytes and scene owns bytes of Rect data.
+      UNSAFE_BUFFERS(memcpy(buffer.contents, scene.data(), bytes));
+    } else {
+      buffer = [device_ newBufferWithBytes:scene.data() length:scene.size() * sizeof(Rect)
+                                  options:MTLResourceStorageModeShared];
+    }
     id<MTLCommandBuffer> command = [queue_ commandBuffer];
     MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
     pass.colorAttachments[0].texture = drawable.texture;
@@ -119,12 +145,28 @@ class Surface final : public MetalSurface {
             if (*cb) std::move(*cb).Run(ok, ms, gpu_ms);
           }, callback, shown.presentedTime >= started, latency, gpu));
     }];
-    [command commit];
-    [command waitUntilScheduled];
-    [drawable present];
-    [CATransaction flush];
+    if (optimized_) {
+      auto busy = busy_[slot_];
+      *busy = true;
+      [command addCompletedHandler:^(id<MTLCommandBuffer>) { *busy = false; }];
+      // Present on the command queue after rendering, without transaction-mode
+      // waitUntilScheduled. Metal retains the drawable and referenced buffer.
+      [command presentDrawable:drawable];
+      [command commit];
+    } else {
+      [command commit];
+      [command waitUntilScheduled];
+      [drawable present];
+      [CATransaction flush];
+    }
   }
  private:
+  bool optimized_ = false;
+  size_t slot_ = 0;
+  std::array<id<MTLBuffer>, 3> buffers_{};
+  std::array<std::shared_ptr<std::atomic_bool>, 3> busy_{
+      std::make_shared<std::atomic_bool>(false), std::make_shared<std::atomic_bool>(false),
+      std::make_shared<std::atomic_bool>(false)};
   ZitterLabMetalView* __strong view_;
   CAMetalLayer* __strong layer_;
   id<MTLDevice> __strong device_;
@@ -132,9 +174,9 @@ class Surface final : public MetalSurface {
   id<MTLRenderPipelineState> __strong pipeline_;
 };
 }  // namespace
-std::unique_ptr<MetalSurface> CreateMetalSurface(base::RepeatingCallback<void(float)> clicked) {
+std::unique_ptr<MetalSurface> CreateMetalSurface(base::RepeatingCallback<void(float)> clicked, bool optimized) {
   auto result = std::make_unique<Surface>();
-  if (!result->Init(std::move(clicked))) return nullptr;
+  if (!result->Init(std::move(clicked), optimized)) return nullptr;
   return result;
 }
 }  // namespace zitter::ui_lab

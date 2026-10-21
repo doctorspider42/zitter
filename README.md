@@ -1,5 +1,8 @@
 # Zitter
 
+Original Zitter code is licensed under [Apache-2.0](LICENSE). Third-party code
+retains its own licenses; see [NOTICE](NOTICE) and the binary license audit.
+
 C++ + Chromium fork + Views. This repository contains a native browser development app and a separate
 workspace/profile test harness. The selected macOS ARM64 bundle is a local
 non-component Release build with ThinLTO/PGO, signed locally with Developer ID.
@@ -509,6 +512,7 @@ to isolate the effect of optimization before changing the linking strategy:
 mkdir -p .chromium/src/out/ZitterRelease
 cp chromium/release.args.gn .chromium/src/out/ZitterRelease/args.gn
 python3 tools/install_chromium_overlay.py .chromium/src
+python3 tools/install_archive_backend.py .chromium/src
 cd .chromium/src
 buildtools/mac/gn gen out/ZitterRelease
 buildtools/mac/gn check out/ZitterRelease '//zitter:*'
@@ -678,6 +682,7 @@ It does not stage or commit changes.
 ```sh
 python3 tools/install_chromium_overlay.py .chromium/src --dry-run
 python3 tools/install_chromium_overlay.py .chromium/src
+python3 tools/install_archive_backend.py .chromium/src
 ```
 
 From Chromium's `src` directory:

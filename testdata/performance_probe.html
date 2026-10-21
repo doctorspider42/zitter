@@ -16,3 +16,20 @@
     document.querySelector('main').append(card);
   }
 </script>
+<script>
+  // Benchmark-only viewport witness: lets the external observer reject a new
+  // sidebar frame paired with a stale WebContents size during native resize.
+  const witness = document.createElement('div');
+  witness.style.cssText = 'position:fixed;left:4px;top:4px;height:4px;display:flex;z-index:2147483647;pointer-events:none';
+  const bits = Array.from({length:27}, () => {
+    const bit = document.createElement('i'); bit.style.cssText = 'width:4px;height:4px;flex:none';
+    witness.appendChild(bit); return bit;
+  });
+  document.body.appendChild(witness);
+  function viewportWitness() {
+    const code = (0x5aa5 << 11) | innerWidth;
+    bits.forEach((bit, i) => bit.style.background = (code & (1 << (26-i))) ? '#eee' : '#111');
+  }
+  addEventListener('resize', viewportWitness);
+  viewportWitness();
+</script>

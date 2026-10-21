@@ -67,5 +67,33 @@ class UiResultsTest(unittest.TestCase):
             benchmark.parse_run(self.output() + '\nZITTER_UI_WARMUP_DROP 1', "views", 1)
 
 
+class CaptureResultsTest(unittest.TestCase):
+    def sample(self):
+        return {'trial': 0, 'marker_id': 11, 'start_us': 1000000}
+
+    def capture(self, **changes):
+        return json.dumps({'ready': True}) + '\n' + json.dumps({
+            'marker_id': 11, 'scene_verified': True, 'display_ns': 1010000000,
+            'callback_ns': 1020000000, **changes})
+
+    def test_windowserver_timestamp_is_distinct_from_delivery(self):
+        sample = self.sample()
+        benchmark.correlate_capture([sample], self.capture())
+        self.assertEqual(sample['windowserver_present_ms'], 10)
+        self.assertEqual(sample['capture_delivery_ms'], 10)
+
+    def test_windowserver_can_deliver_a_frame_before_its_display_deadline(self):
+        sample = self.sample()
+        benchmark.correlate_capture([sample], self.capture(callback_ns=1005000000))
+        self.assertEqual(sample['capture_delivery_ms'], -5)
+
+    def test_missing_stale_unverified_and_invalid_clock_frames_fail(self):
+        for text in (json.dumps({'ready': True}), self.capture(marker_id=12),
+                     self.capture(scene_verified=False), self.capture(display_ns=999000000),
+                     self.capture(callback_ns=999000000), self.capture() + '\n' + json.dumps({'error': 'stopped'})):
+            with self.assertRaises(ValueError):
+                benchmark.correlate_capture([self.sample()], text)
+
+
 if __name__ == "__main__":
     unittest.main()

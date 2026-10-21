@@ -125,7 +125,7 @@ def brand_notification_helpers(framework, icon):
             plistlib.dump(info, stream)
 
 
-def package(out, destination, binary="zitter", register=True, identity=None):
+def package(out, destination, binary="zitter", register=True, identity=None, third_party_licenses=None):
     out = out.resolve()
     destination = destination.absolute()
     if not re.fullmatch(r"zitter(?:_[a-z0-9]+)*", binary):
@@ -209,6 +209,11 @@ def package(out, destination, binary="zitter", register=True, identity=None):
             link_file(library, target)
     resources = contents / "Resources"
     resources.mkdir(exist_ok=True)
+    for name in ('LICENSE', 'NOTICE'):
+        if (ROOT / name).is_file():
+            clone_file(ROOT / name, resources / name)
+    if third_party_licenses:
+        clone_file(Path(third_party_licenses), resources / 'THIRD_PARTY_LICENSES.txt')
     # Zitter's own icon (tools/build_icon.py); Chromium's only as a fallback.
     icon = ROOT / "assets/icon/Zitter.icns"
     if not icon.exists():
@@ -261,6 +266,7 @@ def main():
     parser.add_argument("--out", type=Path, default=ROOT / ".chromium/src/out/Zitter")
     parser.add_argument("--destination", type=Path, default=ROOT / "build/Zitter.app")
     parser.add_argument("--binary", default="zitter", help="Regular application target basename")
+    parser.add_argument("--third-party-licenses", type=Path, help="Target-audited license collection to include before signing")
     parser.add_argument("--no-register", action="store_true", help="Skip LaunchServices registration for benchmark bundles")
     signing = parser.add_mutually_exclusive_group()
     signing.add_argument("--sign-identity", help="Permanent certificate name or SHA-1; saved locally after success")
@@ -277,7 +283,7 @@ def main():
         # Do not replace the installed bundle until signing and verification pass.
         with tempfile.TemporaryDirectory(prefix=".zitter-package-", dir=destination.parent) as stage:
             staged_app = Path(stage) / destination.name
-            package(args.out, staged_app, args.binary, register=False, identity=identity)
+            package(args.out, staged_app, args.binary, register=False, identity=identity, third_party_licenses=args.third_party_licenses)
             previous = Path(stage) / "previous.app"
             if destination.exists():
                 destination.rename(previous)

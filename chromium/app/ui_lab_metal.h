@@ -20,7 +20,7 @@ class MetalSurface {
   virtual void Draw(base::span<const Rect> scene, Presented presented) = 0;
 };
 std::unique_ptr<MetalSurface> CreateMetalSurface(
-    base::RepeatingCallback<void(float)> clicked);
+    base::RepeatingCallback<void(float)> clicked, bool optimized);
 // All backends must have an actually visible window for presentation timings.
 void ShowLabWindow(gfx::NativeWindow window);
 }  // namespace zitter::ui_lab
