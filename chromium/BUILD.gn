@@ -1,5 +1,33 @@
 # Installed at //zitter/BUILD.gn in a Chromium src checkout.
 import("//testing/test.gni")
+import("//build/rust/rust_static_library.gni")
+
+if (is_mac) {
+  action("ui_lab_shader") {
+    script = "chromium/app/compile_ui_lab_metal.py"
+    sources = [ "chromium/app/ui_lab.metal" ]
+    outputs = [ "$target_gen_dir/chromium/app/ui_lab_shader.h" ]
+    args = [ rebase_path(sources[0], root_build_dir), rebase_path(outputs[0], root_build_dir) ]
+  }
+  rust_static_library("ui_lab_scene") {
+    crate_root = "chromium/app/ui_lab_scene.rs"
+    sources = [ crate_root ]
+    cxx_bindings = [ crate_root ]
+    allow_unsafe = true
+    build_native_rust_unit_tests = true
+  }
+  source_set("ui_lab") {
+    sources = [
+      "chromium/app/ui_lab.h",
+      "chromium/app/ui_lab.cc",
+      "chromium/app/ui_lab_metal.h",
+      "chromium/app/ui_lab_metal.mm",
+    ]
+    include_dirs = [ ".", target_gen_dir ]
+    deps = [ ":shell", ":ui_lab_scene", ":ui_lab_shader" ]
+    frameworks = [ "Metal.framework", "QuartzCore.framework", "AppKit.framework" ]
+  }
+}
 
 # Keep the upstream browser_tests hook, but build just Zitter's probe locally.
 test("zitter_prototype") {
@@ -240,6 +268,7 @@ if (is_mac || is_linux) {
     ]
     data_deps = [ "//chrome:packed_resources" ]
     if (is_mac) {
+      deps += [ ":ui_lab" ]
       sources += [
         "chromium/app/app_shell_mac.h",
         "chromium/app/app_shell_mac.mm",

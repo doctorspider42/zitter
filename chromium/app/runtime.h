@@ -21,6 +21,7 @@ namespace zitter::prototype { class WorkspaceWindow; }
 
 namespace zitter {
 class AppPerformanceProbe;
+class UiLab;
 // Lives inside Chromium's regular browser startup/shutdown, never a test runner.
 // On macOS the app shell keeps Chrome's app-level entry points (Dock, menu,
 // links from other apps) away from stock Browser windows. Should an unknown
@@ -53,6 +54,9 @@ class Runtime final : public ChromeBrowserMainExtraParts,
   std::unique_ptr<ScopedKeepAlive> keep_alive_;
   std::unique_ptr<prototype::WorkspaceWindow> window_;
   std::unique_ptr<AppPerformanceProbe> performance_probe_;
+#if BUILDFLAG(IS_MAC)
+  std::unique_ptr<UiLab> ui_lab_;
+#endif
   base::ScopedObservation<BrowserCollection, BrowserCollectionObserver> browsers_{this};
   // Stock windows awaiting closure; dropped if they close first.
   base::flat_set<BrowserWindowInterface*> stock_windows_;

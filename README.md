@@ -11,6 +11,9 @@ For daily browsing, use the [optimized local build](#optimized-local-build-macos
 and open `build/Zitter.app`. The measured results and test coverage are in
 [the performance report](docs/performance.md).
 
+The separate [Rust UI / GPU prototype](docs/rust-ui-prototype.md) compares Views,
+Rust/Skia and Rust/Metal with the current Chromium fork and isolated test profiles.
+
 For incremental development, keep the separate Debug/component output. After
 preparing the pinned Chromium checkout and installing the overlay below:
 

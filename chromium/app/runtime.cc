@@ -22,6 +22,9 @@
 #include "ui/base/base_window.h"
 #include "ui/views/widget/widget.h"
 #include "url/gurl.h"
+#if BUILDFLAG(IS_MAC)
+#include "chromium/app/ui_lab.h"
+#endif
 
 namespace zitter {
 Runtime::Runtime() = default;
@@ -37,6 +40,13 @@ void Runtime::PreMainMessageLoopRun() {
   InstallAppShell();
 #endif
   browsers_.Observe(GlobalBrowserCollection::GetInstance());
+#if BUILDFLAG(IS_MAC)
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch("zitter-ui-lab")) {
+    SetAppShellDelegate(this);
+    ui_lab_ = UiLab::Create(base::BindOnce(&Runtime::RequestClose, weak_factory_.GetWeakPtr()));
+    return;
+  }
+#endif
   auto* manager = g_browser_process->profile_manager();
   window_ = std::make_unique<prototype::WorkspaceWindow>(manager->user_data_dir());
   window_->SetCloseCallback(base::BindOnce(&Runtime::RequestClose, weak_factory_.GetWeakPtr()));
@@ -90,14 +100,17 @@ void Runtime::ReplaceStockWindow(BrowserWindowInterface* browser) {
 
 #if BUILDFLAG(IS_MAC)
 void Runtime::RequestQuit() {
+  if (ui_lab_) { RequestClose(); return; }
   if (window_ && !closing_) window_->RequestClose();
 }
 
 void Runtime::RaiseWindow() {
+  if (ui_lab_) { ui_lab_->Raise(); return; }
   if (window_ && !closing_) window_->widget()->Activate();
 }
 
 void Runtime::OpenUrl(const GURL& url) {
+  if (ui_lab_) { ui_lab_->Navigate(url); ui_lab_->Raise(); return; }
   if (!window_ || closing_) return;
   window_->OpenExternalUrl(url);
   window_->widget()->Activate();
@@ -153,6 +166,7 @@ void Runtime::Close() {
 void Runtime::ReleaseProfiles() {
 #if BUILDFLAG(IS_MAC)
   SetAppShellDelegate(nullptr);
+  ui_lab_.reset();
 #endif
   performance_probe_.reset();
   window_.reset();
