@@ -12,6 +12,8 @@ mod ffi {
         active: bool, hovered: bool, tile: bool, close: bool, close_visible: bool, focused: bool,
         font_size: f32,
     }
+    struct TreeNode { id: String, parent: String, folder: bool }
+    struct TreeEntry { index: usize, parent: usize, depth: i32, collapsed: bool, visible: bool }
     enum PointerPhase { Enter, Exit, Move, Press, Drag, Release }
     enum RowVisual { Normal, Hovered, Pressed, Disabled }
     enum RowAction { None, Activate, Drop, Cancel }
@@ -26,6 +28,13 @@ mod ffi {
         text: String, font_size: f32, bold: bool,
     }
     extern "Rust" {
+        type SidebarTree;
+        fn new_sidebar_tree() -> Box<SidebarTree>;
+        fn tree_plan(self: &SidebarTree, workspace: &str, nodes: &[TreeNode]) -> Vec<TreeEntry>;
+        fn collapsed(self: &SidebarTree, workspace: &str, id: &str) -> bool;
+        fn set_collapsed(self: &mut SidebarTree, workspace: &str, id: &str, value: bool);
+        fn toggle(self: &mut SidebarTree, workspace: &str, id: &str) -> bool;
+        fn forget_workspace(self: &mut SidebarTree, workspace: &str);
         type RowPointer;
         fn new_row_pointer() -> Box<RowPointer>;
         fn press(self: &mut RowPointer, x: i32, y: i32);
@@ -49,6 +58,61 @@ mod ffi {
         fn cycle_tab(current: usize, count: usize, backwards: bool) -> usize;
     }
 }
+// UI identity and expansion state only. Browser URLs, titles, profiles and
+// commands stay in the application. State survives reconstruction and rename
+// because it is keyed by workspace and item IDs, never by native View pointers.
+use std::collections::{BTreeMap, BTreeSet};
+#[derive(Default)]
+struct SidebarTree { collapsed: BTreeMap<String, BTreeSet<String>> }
+fn new_sidebar_tree() -> Box<SidebarTree> { Box::new(SidebarTree::default()) }
+impl SidebarTree {
+    fn collapsed(&self, workspace: &str, id: &str) -> bool {
+        self.collapsed.get(workspace).is_some_and(|ids| ids.contains(id))
+    }
+    fn set_collapsed(&mut self, workspace: &str, id: &str, value: bool) {
+        if value {self.collapsed.entry(workspace.into()).or_default().insert(id.into());}
+        else if let Some(ids) = self.collapsed.get_mut(workspace) {
+            ids.remove(id);
+            if ids.is_empty() {self.collapsed.remove(workspace);}
+        }
+    }
+    fn toggle(&mut self, workspace: &str, id: &str) -> bool {
+        let collapsed = !self.collapsed(workspace, id);
+        self.set_collapsed(workspace, id, collapsed); collapsed
+    }
+    fn forget_workspace(&mut self, workspace: &str) {self.collapsed.remove(workspace);}
+    fn tree_plan(&self, workspace: &str, nodes: &[ffi::TreeNode]) -> Vec<ffi::TreeEntry> {
+        let mut children: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+        let mut ids = BTreeSet::new();
+        for (index, node) in nodes.iter().enumerate() {
+            // First occurrence owns an ID. Orphans, cycles and children of a
+            // leaf are unreachable; they never create native interaction nodes.
+            if !node.id.is_empty() && ids.insert(node.id.as_str()) {
+                children.entry(node.parent.as_str()).or_default().push(index);
+            }
+        }
+        let mut pending = Vec::new();
+        if let Some(roots) = children.get("") {
+            for &index in roots.iter().rev() {pending.push((index, usize::MAX, 0, true));}
+        }
+        let mut seen = BTreeSet::new(); let mut out = Vec::with_capacity(nodes.len());
+        while let Some((index, parent, depth, visible)) = pending.pop() {
+            if depth > 64 || !seen.insert(index) {continue;}
+            let node = &nodes[index];
+            let collapsed = node.folder && self.collapsed(workspace, &node.id);
+            out.push(ffi::TreeEntry {index, parent, depth, collapsed, visible});
+            if node.folder {
+                if let Some(descendants) = children.get(node.id.as_str()) {
+                    for &child in descendants.iter().rev() {
+                        pending.push((child, index, depth + 1, visible && !collapsed));
+                    }
+                }
+            }
+        }
+        out
+    }
+}
+
 // Semantic keys supplied by the event adapter: 1 Space, 2 Return, 0 other.
 // Mac Space acts on key-down; Return remains available to the default action.
 fn key_policy(key: u32, mac: bool) -> u32 {
@@ -266,6 +330,47 @@ mod tests {
         assert_eq!(huge.height, i32::MAX);
         assert_eq!(huge.children[1].y, i32::MAX);
         assert_eq!(huge.children[1].height, 0);
+    }
+    fn node(id: &str, parent: &str, folder: bool) -> ffi::TreeNode {
+        ffi::TreeNode {id: id.into(), parent: parent.into(), folder}
+    }
+    #[test] fn tree_orders_siblings_and_retains_hidden_descendants() {
+        let mut tree = new_sidebar_tree();
+        let nodes = [node("child", "root", true), node("leaf", "child", false),
+            node("root", "", true), node("sibling", "root", false), node("other", "", false)];
+        let plan = tree.tree_plan("work", &nodes);
+        assert_eq!(plan.iter().map(|e| e.index).collect::<Vec<_>>(), [2, 0, 1, 3, 4]);
+        assert_eq!(plan.iter().map(|e| e.depth).collect::<Vec<_>>(), [0, 1, 2, 1, 0]);
+        assert_eq!(plan[0].parent, usize::MAX); assert_eq!(plan[1].parent, 2);
+        assert!(plan.iter().all(|e| e.visible));
+        assert!(tree.toggle("work", "child")); assert!(tree.toggle("work", "root"));
+        let hidden = tree.tree_plan("work", &nodes);
+        assert_eq!(hidden.len(), nodes.len());
+        assert!(hidden[0].collapsed && hidden[1].collapsed);
+        assert!(hidden[0].visible && !hidden[1].visible && !hidden[2].visible && !hidden[3].visible && hidden[4].visible);
+        assert!(!tree.toggle("work", "root"));
+        let expanded = tree.tree_plan("work", &nodes);
+        assert!(expanded[1].visible && !expanded[2].visible && expanded[3].visible);
+    }
+    #[test] fn tree_state_survives_rebuilds_and_isolates_workspace_ids() {
+        let mut tree = new_sidebar_tree(); tree.set_collapsed("a:b", "c", true);
+        assert!(!tree.collapsed("a", "b:c"));
+        let nodes = [node("c", "", true)];
+        for _ in 0..3 {assert!(tree.tree_plan("a:b", &nodes)[0].collapsed);}
+        assert!(!tree.tree_plan("other", &nodes)[0].collapsed);
+        tree.forget_workspace("other"); assert!(tree.collapsed("a:b", "c"));
+        tree.forget_workspace("a:b"); assert!(!tree.collapsed("a:b", "c"));
+    }
+    #[test] fn tree_rejects_unreachable_and_duplicate_nodes_and_bounds_depth() {
+        let tree = new_sidebar_tree();
+        let nodes = [node("", "", true), node("root", "", true), node("root", "root", true),
+            node("orphan", "missing", false), node("cycle-a", "cycle-b", true),
+            node("cycle-b", "cycle-a", true), node("leaf", "", false), node("bad-child", "leaf", false)];
+        assert_eq!(tree.tree_plan("work", &nodes).iter().map(|e| e.index).collect::<Vec<_>>(), [1, 6]);
+        let mut chain = Vec::new();
+        for index in 0..70 {chain.push(node(&index.to_string(), if index == 0 {"".into()} else {(index - 1).to_string()}.as_str(), true));}
+        let plan = tree.tree_plan("work", &chain);
+        assert_eq!(plan.len(), 65); assert_eq!(plan.last().unwrap().depth, 64);
     }
     #[test] fn split_tiles_fill_odd_widths_and_respect_frame_and_order() {
         let natural = split_layout(-1, -1, 2);

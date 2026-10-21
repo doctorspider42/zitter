@@ -647,7 +647,8 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 The real workspace now has an optional Rust + Metal tab-list renderer, with live
 titles, folders, Split View and existing keyboard/controller routing. Live rows
 use scene text without hidden Views Labels, and skip native subtree painting
-while Metal is visible. Rust lays out split tiles and folder indentation; model
+while Metal is visible. Rust owns folder hierarchy/collapse state and lays out
+split tiles and folder indentation; model
 updates refresh the scene independently of native painting. Rust also owns row
 click/drag/cancellation and platform key activation through native event, focus
 and accessibility adapters. See

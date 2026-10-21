@@ -20,10 +20,10 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Row mouse/key activation, drag threshold, latched drag, cancellation and close visibility | Rust input reducer in opt-in backend; native event/focus/AX adapter | Preserve native default action; migrate drop target policy and replace Button containers |
 | Next/previous tab wrapping | Rust; existing configurable key dispatch | Preserve page shortcut precedence and editing/IME behavior |
 | Vertical list/folder columns and full content extent | Rust via native View measurement/bounds adapter | Verify collapse/resize against Views; replace the native hierarchy with stable Rust item identities |
-| Folder indentation wrappers and split tile placement | Rust in opt-in backend; native tree/measurement/AX adapters | Migrate tree construction, grouping/collapse state and stable Rust item identities |
+| Folder hierarchy, collapse state, indentation wrappers and split tile geometry | Rust plan keyed by workspace/item IDs; native View/measurement/AX adapters | Replace native node containers; migrate placement policy for pinned split pairs |
 | Scroll, viewport, scrollbar | Native ScrollView/Cocoa scrollbar | Native input adapter + Rust offset/clipping; native wheel and trackpad coverage |
 | Selection, close/reopen, title changes, pinned navigation | Rust row actions into existing application callbacks; native close child and AX action | Migrate close child and remaining command routing; preserve persistence and last-tab rules |
-| Folder expand/create/rename/delete; nested pins | Existing application + Views | Rust interaction state and layout; native menu/editing adapters; rollback tests |
+| Folder expand/collapse and tree visibility; create/rename/delete and nested pins | Rust tree state/layout; application persistence and native menu/editing adapters | Rust editing forms; preserve failed writes and validation rollback |
 | Tab/pin context menus and drag to split | Views event routing + application commands | Rust target/action routing; retain native menus and drop policy |
 | Address pill and New Tab action | Views rendering/layout; Rust New Tab RowButton mouse/key policy | Rust layout/drawing; address events and configurable shortcut hints |
 | Navigation controls, workspace dots/emoji and footer | Views | Rust layout/drawing/events; enabled, selected, hover and keyboard focus states |
@@ -77,6 +77,14 @@ Views-specific layout and control behavior must have an explicit replacement.
   locked. 29 Metal browser regressions, 6 Views controls, 16 Rust tests and 59
   Python tests passed. Signed app startup titles were rechecked after the fix.
   See [split/folder validation](benchmarks/rust-split-folder-layout-functional-2026-10-21.json).
+
+- Rust now owns the folder hierarchy plan and collapse state, keyed by workspace
+  and item IDs. The live native tree and swipe preview consume the same ordered
+  plan; native containers, folder editing/persistence and pin/split replacement
+  policy remain. 32 Metal browser regressions, 9 Views controls, 19 Rust tests
+  and 59 Python tests passed, including hidden-folder rename/rebuild and large
+  warmed sidebars. Signed app collapse state survived workspace switching.
+  See [tree validation](benchmarks/rust-sidebar-tree-functional-2026-10-21.json).
 
 ## Completion gates
 

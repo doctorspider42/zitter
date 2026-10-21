@@ -7,6 +7,7 @@
 #include <set>
 #include "zitter/core/workspace_model.h"
 #include "chromium/prototype/browser_data.h"
+#include "chromium/prototype/sidebar_tree.h"
 #include "chromium/prototype/browser_tools.h"
 #include <optional>
 #include <string>
@@ -383,8 +384,8 @@ class WorkspaceShell final : public ui::EventHandler,
     raw_ptr<views::View> pin_pair = nullptr;  // A split placed among the pins.
     std::string active_pin;
   };
-  void AppendPinnedItems(views::View* parent, const std::string& parent_id, int depth,
-      const std::map<std::string, std::vector<const PinnedItem*>>& children, TabListCache& cache, const std::string& workspace);
+  void AppendPinnedItems(views::View* root, const std::vector<PinnedItem>& pins,
+                         TabListCache& cache, const std::string& workspace);
   void RebuildWorkspaceDots();
   void ShowContextMenuForViewImpl(views::View*, const gfx::Point&, ui::mojom::MenuSourceType) override;
   bool IsCommandIdChecked(int command_id) const override;
@@ -563,7 +564,7 @@ class WorkspaceShell final : public ui::EventHandler,
   bool import_can_apply_ = false;
   bool import_busy_ = false;
   bool import_applying_ = false;
-  std::set<std::string> collapsed_folders_;
+  SidebarTree sidebar_tree_;
   raw_ptr<views::View> profiles_root_ = nullptr;
   raw_ptr<views::Combobox> managed_profile_picker_ = nullptr;
   raw_ptr<views::Textfield> profile_name_input_ = nullptr;

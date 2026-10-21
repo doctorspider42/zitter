@@ -112,6 +112,8 @@ source_set("shell") {
     "chromium/prototype/browser_import_data.cc",
     "chromium/prototype/sidebar_layout.cc",
     "chromium/prototype/sidebar_layout.h",
+    "chromium/prototype/sidebar_tree.cc",
+    "chromium/prototype/sidebar_tree.h",
     "chromium/prototype/workspace_shell.cc",
     "chromium/prototype/workspace_shell.h",
   ]

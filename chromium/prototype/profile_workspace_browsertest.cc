@@ -3995,6 +3995,64 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarColumnLayoutTracksColla
     EXPECT_EQ(first, shell->tab_button(0));
   }
 }
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarTreeStateSurvivesRebuildsAndSpaces) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->SetWorkspaceAnimations(false);
+  auto add = [&](const std::string& parent, const std::string& title) {
+    EXPECT_TRUE(window_->CreatePinnedFolder("work", parent, title));
+    EXPECT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+    return window_->pinned_items("work").back().id;
+  };
+  const auto root_id = add({}, "Tree root");
+  const auto child_id = add(root_id, "Tree child");
+  add(child_id, "Tree grandchild");
+  shell->CloseOverlays(true); shell->SetPinned(true); shell->ShowSidebar();
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  auto* root = SidebarNamedButton(shell->sidebar_view(), u"▾ Tree root");
+  auto* child = SidebarNamedButton(shell->sidebar_view(), u"▾ Tree child");
+  ASSERT_TRUE(root); ASSERT_TRUE(child);
+  views::test::ButtonTestApi(child).NotifyDefaultMouseClick();
+  views::test::ButtonTestApi(root).NotifyDefaultMouseClick();
+  ASSERT_TRUE(window_->RenamePinnedFolder("work", child_id, "Tree renamed"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  // Reconstruction preserves both nested collapse states by item ID, not by
+  // the old native group pointers or the folder's previous title.
+  root = SidebarNamedButton(shell->sidebar_view(), u"▸ Tree root");
+  child = SidebarNamedButton(shell->sidebar_view(), u"▸ Tree renamed");
+  auto* grandchild = SidebarNamedButton(shell->sidebar_view(), u"▾ Tree grandchild");
+  ASSERT_TRUE(root); ASSERT_TRUE(child); ASSERT_TRUE(grandchild);
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  EXPECT_TRUE(root->IsDrawn()); EXPECT_FALSE(child->IsDrawn()); EXPECT_FALSE(grandchild->IsDrawn());
+  ASSERT_TRUE(window_->Select("personal"));
+  ASSERT_TRUE(window_->CreatePinnedFolder("personal", {}, "Tree root"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  EXPECT_TRUE(SidebarNamedButton(shell->sidebar_view(), u"▾ Tree root"));
+  ASSERT_TRUE(window_->Select("work"));
+  shell->CloseOverlays(true); shell->ShowSidebar();
+  root = SidebarNamedButton(shell->sidebar_view(), u"▸ Tree root");
+  ASSERT_TRUE(root);
+  views::test::ButtonTestApi(root).NotifyDefaultMouseClick();
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  EXPECT_TRUE(child->IsDrawn()); EXPECT_FALSE(grandchild->IsDrawn());
+  views::test::ButtonTestApi(child).NotifyDefaultMouseClick();
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  EXPECT_TRUE(grandchild->IsDrawn());
+  views::test::ButtonTestApi(root).NotifyDefaultMouseClick();
+  // Adding a child through the existing dialog explicitly expands its parent
+  // in the Rust state before the application reconstructs the native adapter.
+  shell->RequestNewFolder("work", root_id);
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->folder_dialog(); }));
+  auto* field = FolderNameInput(shell->folder_dialog()->GetContentsView());
+  ASSERT_TRUE(field); field->SelectAll(false); field->InsertOrReplaceText(u"Tree new child");
+  shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+  ASSERT_TRUE(base::test::RunUntil([&] { return !shell->folder_dialog() && !window_->profiles_busy(); }));
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  root = SidebarNamedButton(shell->sidebar_view(), u"▾ Tree root");
+  auto* added = SidebarNamedButton(shell->sidebar_view(), u"▾ Tree new child");
+  ASSERT_TRUE(root); ASSERT_TRUE(added); EXPECT_TRUE(added->IsDrawn());
+  EXPECT_EQ(root->GetBoundsInScreen().x() + 12, added->GetBoundsInScreen().x());
+}
 // Shared contract for the Views baseline and the Rust container adapters.
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarSplitAndDeepFolderGeometry) {
   auto* shell = window_->shell();

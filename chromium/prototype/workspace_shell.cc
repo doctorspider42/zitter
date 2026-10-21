@@ -2172,6 +2172,7 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
     for (const auto& workspace : state_.workspaces) if (workspace.id == it->first) exists = true;
     if (exists) { ++it; continue; }
     auto* root = it->second.root.get();
+    sidebar_tree_.ForgetWorkspace(it->first);
     it = tab_lists_.erase(it);
     tab_list_->RemoveChildViewT(root);
   }
@@ -2196,11 +2197,9 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
     cache.pins_root->RemoveAllChildViews();
     auto contents = std::make_unique<views::View>();
     contents->SetLayoutManager(CreateSidebarColumnLayout(2));
-    std::map<std::string, std::vector<const PinnedItem*>> children;
-    for (const auto& pin : state_.pins) children[pin.parent_id].push_back(&pin);
     if (!state_.pins.empty()) {
       Label(contents.get(), u"PRZYPIĘTE", kMuted, Font(-2));
-      AppendPinnedItems(contents.get(), "", 0, children, cache, state_.workspace_id);
+      AppendPinnedItems(contents.get(), state_.pins, cache, state_.workspace_id);
       Spacer(contents.get(), 8);
     }
     cache.pins_root->AddChildView(std::move(contents));
@@ -2464,9 +2463,7 @@ void WorkspaceShell::WarmNextSidebar() {
     auto contents = std::make_unique<views::View>();
     contents->SetLayoutManager(CreateSidebarColumnLayout(2));
     Label(contents.get(), u"PRZYPIĘTE", kMuted, Font(-2));
-    std::map<std::string, std::vector<const PinnedItem*>> children;
-    for (const auto& pin : pins) children[pin.parent_id].push_back(&pin);
-    AppendPinnedItems(contents.get(), "", 0, children, cache, workspace);
+    AppendPinnedItems(contents.get(), pins, cache, workspace);
     Spacer(contents.get(), 8);
     cache.pins_root->AddChildView(std::move(contents));
     cache.pins = std::move(pins); ++pinned_list_build_count_;
@@ -2541,35 +2538,38 @@ void WorkspaceShell::UpdateWorkspaceSwipePreview() {
           canvas->DrawStringRectWithFlags(u"PRZYPIĘTE", Font(-2), Tone(shell->root_, kMuted),
               gfx::Rect(0, y, size.width(), label_height), gfx::Canvas::TEXT_ALIGN_LEFT);
           y += label_height + 2;
-          std::map<std::string, std::vector<const PinnedItem*>> children;
-          for (const auto& pin : *pins) children[pin.parent_id].push_back(&pin);
-          auto paint_pins = [&](auto&& self, const std::string& parent, int depth) -> void {
-            if (depth > 64) return;
-            auto group = children.find(parent); if (group == children.end()) return;
-            for (const auto* pin : group->second) {
-              const int indent = SidebarFolderIndent(depth);
-              auto button = cache ? cache->pin_buttons.find(pin->id) : std::map<std::string, raw_ptr<views::Button>>::const_iterator();
-              if (cache && button != cache->pin_buttons.end()) {
-                if (button->second->parent()->GetVisible())
-                  row(static_cast<RowButton*>(button->second.get())->preview_spec(), indent, 34);
-                else if (cache->pin_pair && !pair_drawn) pair(indent);
-              } else {
-                RowButton::Spec spec; spec.title = base::UTF8ToUTF16(pin->title);
-                if (pin->folder) {
-                  spec.icon = &vector_icons::kFolderFilledIcon;
-                  spec.title = (shell->collapsed_folders_.contains(id + ":" + pin->id) ? u"▸ " : u"▾ ") + spec.title;
-                } else {
-                  spec.monogram = base::i18n::ToUpper(spec.title.substr(0, 1));
-                  spec.monogram_color = kMonogramColors[base::FastHash(pin->url.host()) % kMonogramColors.size()];
-                }
-                row(spec, indent, 34);
-              }
-              if (pin->folder && !shell->collapsed_folders_.contains(id + ":" + pin->id)) {
-                self(self, pin->id, depth + 1); y += 2;
-              }
+          std::vector<SidebarTreeNode> nodes;
+          nodes.reserve(pins->size());
+          for (const auto& pin : *pins) nodes.push_back({pin.id, pin.parent_id, pin.folder});
+          const auto plan = shell->sidebar_tree_.Plan(id, nodes);
+          std::vector<int> open_groups;
+          for (const auto& entry : plan) {
+            if (!entry.visible) continue;
+            while (!open_groups.empty() && open_groups.back() >= entry.depth) {
+              y += 2; open_groups.pop_back();
             }
-          };
-          paint_pins(paint_pins, "", 0); y += 8;
+            const auto* pin = &(*pins)[entry.index];
+            const int indent = SidebarFolderIndent(entry.depth);
+            auto button = cache ? cache->pin_buttons.find(pin->id) : std::map<std::string, raw_ptr<views::Button>>::const_iterator();
+            if (cache && button != cache->pin_buttons.end()) {
+              if (button->second->parent()->GetVisible())
+                row(static_cast<RowButton*>(button->second.get())->preview_spec(), indent, 34);
+              else if (cache->pin_pair && !pair_drawn) pair(indent);
+            } else {
+              RowButton::Spec spec; spec.title = base::UTF8ToUTF16(pin->title);
+              if (pin->folder) {
+                spec.icon = &vector_icons::kFolderFilledIcon;
+                spec.title = (entry.collapsed ? u"▸ " : u"▾ ") + spec.title;
+              } else {
+                spec.monogram = base::i18n::ToUpper(spec.title.substr(0, 1));
+                spec.monogram_color = kMonogramColors[base::FastHash(pin->url.host()) % kMonogramColors.size()];
+              }
+              row(spec, indent, 34);
+            }
+            if (pin->folder && !entry.collapsed) open_groups.push_back(entry.depth);
+          }
+          y += static_cast<int>(open_groups.size()) * 2 + 8;
+          if (cache && cache->pin_pair) pair_drawn = true;
         }
         if (cache) for (const auto& tab : cache->tabs) {
           const bool paired = cache->split_tabs[0] == tab.index || cache->split_tabs[1] == tab.index;
@@ -2691,19 +2691,22 @@ void WorkspaceShell::OnMouseEvent(ui::MouseEvent* input) {
   if (HandleWorkspaceScroll(x, y, false, false, false, event->time_stamp(), true)) event->StopPropagation();
 }
 
-void WorkspaceShell::AppendPinnedItems(views::View* parent, const std::string& parent_id, int depth,
-    const std::map<std::string, std::vector<const PinnedItem*>>& children, TabListCache& cache, const std::string& workspace) {
-  if (depth > 64) return;
-  auto found = children.find(parent_id);
-  if (found == children.end()) return;
-  for (const auto* pin : found->second) {
+void WorkspaceShell::AppendPinnedItems(views::View* root, const std::vector<PinnedItem>& pins,
+    TabListCache& cache, const std::string& workspace) {
+  std::vector<SidebarTreeNode> nodes;
+  nodes.reserve(pins.size());
+  for (const auto& pin : pins) nodes.push_back({pin.id, pin.parent_id, pin.folder});
+  const auto plan = sidebar_tree_.Plan(workspace, nodes);
+  std::map<size_t, views::View*> groups;
+  for (const auto& entry : plan) {
+    const auto* pin = &pins[entry.index];
+    auto* parent = entry.parent == SidebarTree::kRoot ? root : groups.at(entry.parent);
     RowButton::Spec spec;
     spec.title = base::UTF8ToUTF16(pin->title);
     spec.sidebar_row = true;
-    const auto key = workspace + ":" + pin->id;
     if (pin->folder) {
       spec.icon = &vector_icons::kFolderFilledIcon;
-      spec.title = (collapsed_folders_.contains(key) ? u"▸ " : u"▾ ") + spec.title;
+      spec.title = (entry.collapsed ? u"▸ " : u"▾ ") + spec.title;
     } else {
       spec.drop = base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, std::string id, gfx::Point point) {
         if (!shell) return;
@@ -2716,21 +2719,21 @@ void WorkspaceShell::AppendPinnedItems(views::View* parent, const std::string& p
     }
     auto* row = parent->AddChildView(std::make_unique<views::View>());
     row->SetLayoutManager(CreateSidebarPinnedRowLayout());
-    row->SetBorder(views::CreateEmptyBorder(gfx::Insets::TLBR(0, SidebarFolderIndent(depth), 0, 0)));
+    row->SetBorder(views::CreateEmptyBorder(gfx::Insets::TLBR(0, SidebarFolderIndent(entry.depth), 0, 0)));
     auto* button = row->AddChildView(std::make_unique<RowButton>(views::Button::PressedCallback(), std::move(spec)));
     if (pin->folder) {
       auto* group = parent->AddChildView(std::make_unique<views::View>());
       group->SetLayoutManager(CreateSidebarColumnLayout(2));
-      AppendPinnedItems(group, pin->id, depth + 1, children, cache, workspace);
-      group->SetVisible(!collapsed_folders_.contains(key));
+      groups[entry.index] = group;
+      group->SetVisible(!entry.collapsed);
       button->SetCallback(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, views::View* group,
-                                               RowButton* button, std::string key, std::u16string title) {
+                                               RowButton* button, std::string workspace, std::string id, std::u16string title) {
         if (!shell) return;
-        const bool collapsed = group->GetVisible();
+        const bool collapsed = shell->sidebar_tree_.Toggle(workspace, id);
         group->SetVisible(!collapsed);
-        if (collapsed) shell->collapsed_folders_.insert(key); else shell->collapsed_folders_.erase(key);
         button->SetTitle((collapsed ? u"▸ " : u"▾ ") + title);
-      }, weak_factory_.GetWeakPtr(), base::Unretained(group), base::Unretained(button), key, base::UTF8ToUTF16(pin->title)));
+        shell->ScheduleMetalSidebar();
+      }, weak_factory_.GetWeakPtr(), base::Unretained(group), base::Unretained(button), workspace, pin->id, base::UTF8ToUTF16(pin->title)));
     } else {
       button->SetCallback(base::BindRepeating(callbacks_.open_pin, pin->id));
     }
@@ -2907,9 +2910,11 @@ void WorkspaceShell::RequestFolderName(std::string workspace, std::string parent
         if (!shell) return true;
         const auto name = std::u16string(base::TrimWhitespace(model->GetTextfieldByUniqueId(kFolderNameField)->text(), base::TRIM_ALL));
         if (name.empty()) return false;
-        if (!parent.empty()) shell->collapsed_folders_.erase(workspace + ":" + parent);
+        const bool was_collapsed = !parent.empty() && shell->sidebar_tree_.Collapsed(workspace, parent);
+        if (!parent.empty()) shell->sidebar_tree_.SetCollapsed(workspace, parent, false);
         const bool ok = renamed.empty() ? shell->callbacks_.create_folder.Run(workspace, parent, base::UTF16ToUTF8(name))
             : shell->callbacks_.rename_folder.Run(workspace, renamed, base::UTF16ToUTF8(name));
+        if (!ok && !parent.empty()) shell->sidebar_tree_.SetCollapsed(workspace, parent, was_collapsed);
         if (ok) shell->folder_dialog_.reset();
         return ok;
       }, weak, base::Unretained(model), workspace, parent, renamed), ui::DialogModel::Button::Params().SetLabel(renamed.empty() ? u"Dodaj folder" : u"Zapisz nazwę"))

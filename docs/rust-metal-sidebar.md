@@ -123,3 +123,28 @@ split titles without an unrelated list action. Exact width/indent/hit-target
 checks are in the native browser regression; a CUA drag did not establish a
 manual resize and is not counted as one. See
 [split/folder validation](benchmarks/rust-split-folder-layout-functional-2026-10-21.json).
+
+The tree migration moves pre-order traversal, parent/depth resolution, inherited
+visibility and collapse state to Rust for the Metal backend. The ABI carries
+workspace/item IDs and folder flags; URLs, titles, profiles and commands remain
+in the application. State uses separate workspace and item keys, survives row
+reconstruction/rename and is cleared when a workspace is removed. Empty or
+duplicate IDs, orphans and unreachable cycles do not create interaction nodes;
+the existing depth limit remains 64. Hidden descendants retain their native
+nodes, preserving nested collapse state and accessibility identity during a
+simple expand/collapse.
+
+The native adapter builds its groups from the Rust plan and forwards folder
+activation to Rust. It no longer reads native group visibility to decide the
+next state. The swipe preview consumes the same plan, with native painting and
+spacing retained. Adding a child expands its parent before reconstruction; an
+immediately rejected command restores the prior UI state. Default Views uses a
+C++ implementation of the plan/state contract for baseline comparison. Native
+node containers, pin/split replacement policy, menus, editing and persistence
+still remain; this is not full Views removal.
+
+Validated for Rust tree/state ownership on 2026-10-21: **32/32 Metal browser
+regressions, 9/9 Views controls, 19/19 Rust tests and 59/59 Python tests passed**.
+The signed isolated app retained folder collapse across a profile/workspace
+round trip, restored its pin on expansion and preserved the Unicode split pair.
+See [tree validation](benchmarks/rust-sidebar-tree-functional-2026-10-21.json).
