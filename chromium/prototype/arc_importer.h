@@ -11,5 +11,10 @@ namespace zitter::prototype {
 ArcImport ReadArcImport(const base::FilePath& arc_directory);
 ArcImport ParseArcImport(std::string_view sidebar, std::string_view local_state);
 base::FilePath DefaultArcDirectory();
+base::FilePath DefaultBrowserDirectory(ImportBrowser browser);
+std::u16string ImportBrowserName(ImportBrowser browser);
+// All source reads stay on the sequenced IO runner; selections are immutable.
+ArcImport ReadBrowserImport(BrowserImportOptions options, const base::FilePath& directory);
+ArcImport ApplyImportOptions(ArcImport result, BrowserImportOptions options);
 }  // namespace zitter::prototype
 #endif

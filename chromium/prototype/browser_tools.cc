@@ -45,6 +45,7 @@ std::vector<Shortcut> ArcShortcuts() {
   add("reopen", u"Przywróć zamkniętą kartę", ui::VKEY_T, p | ui::EF_SHIFT_DOWN);
   add("sidebar", u"Pokaż / ukryj panel", ui::VKEY_S, p);
   add("reload", u"Odśwież stronę", ui::VKEY_R, p);
+  add("history", u"Historia przeglądania", ui::VKEY_Y, p);
   add("downloads", u"Pobrania", ui::VKEY_J, p);
   add("settings", u"Preferencje", ui::VKEY_OEM_COMMA, p);
   add("next_space", u"Następna przestrzeń", ui::VKEY_RIGHT, p | ui::EF_ALT_DOWN);

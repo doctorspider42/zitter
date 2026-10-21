@@ -3,6 +3,7 @@ from pathlib import Path
 import plistlib
 import tempfile
 import unittest
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location(
     'package_app', Path(__file__).resolve().parents[1] / 'tools/package_app.py')
@@ -95,6 +96,95 @@ class PackageTests(unittest.TestCase):
             self.assertTrue((alerts / 'Resources/Assets.car').exists())
             with (alerts / 'Info.plist').open('rb') as stream:
                 self.assertEqual(plistlib.load(stream)['CFBundleName'], 'Chromium Helper (Alerts)')
+
+    def test_signed_package_does_not_modify_hardlinked_build_outputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            out = root / 'out'
+            version = out / 'Chromium Framework.framework/Versions/1.0'
+            version.mkdir(parents=True)
+            (version / 'Chromium Framework').write_bytes(b'framework')
+            (out / 'zitter').write_bytes(b'browser')
+            (out / 'libcurrent.dylib').write_bytes(b'library')
+            app = root / 'Zitter.app'
+            # Migrate a legacy hard-linked package as well as a fresh one.
+            packager.package(out, app, register=False)
+            with mock.patch.object(packager, 'sign_bundle') as sign:
+                packager.package(out, app, register=False, identity='permanent-certificate')
+            sign.assert_called_once_with(app.absolute(), 'permanent-certificate')
+            binary = app / 'Contents/MacOS/Chromium'
+            self.assertFalse(binary.samefile(out / 'zitter'))
+            self.assertFalse((app / 'Contents/MacOS/libcurrent.dylib').samefile(out / 'libcurrent.dylib'))
+            self.assertFalse((app / 'Contents/Frameworks' / version.relative_to(out) /
+                              'Chromium Framework').samefile(version / 'Chromium Framework'))
+            binary.write_bytes(b'signed-browser')
+            self.assertEqual(b'browser', (out / 'zitter').read_bytes())
+            self.assertTrue(packager.bundle_marker(app).is_file())
+            self.assertFalse((app / 'Contents/zitter-development-bundle').exists())
+
+    def test_signing_identity_is_pinned_and_never_falls_back_to_adhoc(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / 'signing.json'
+            with mock.patch.object(packager, 'SIGNING_CONFIG', config), mock.patch.dict(
+                    packager.os.environ, {}, clear=True):
+                with self.assertRaisesRegex(ValueError, 'permanent certificate'):
+                    packager.signing_identity()
+                config.write_text('{"identity": "saved-certificate"}')
+                self.assertEqual('saved-certificate', packager.signing_identity())
+                self.assertEqual('explicit-certificate', packager.signing_identity('explicit-certificate'))
+                with self.assertRaises(ValueError):
+                    packager.signing_identity('-')
+
+    def test_nested_code_is_signed_before_its_parent_and_verified_strictly(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory) / 'Zitter.app'
+            helper = app / 'Contents/Frameworks/Helper.app'
+            for bundle, name in ((app, 'Chromium'), (helper, 'Helper')):
+                binary = bundle / 'Contents/MacOS' / name
+                binary.parent.mkdir(parents=True)
+                binary.write_bytes(b'\xcf\xfa\xed\xfe' + b'code')
+                with (bundle / 'Contents/Info.plist').open('wb') as stream:
+                    plistlib.dump({'CFBundleExecutable': name}, stream)
+            library = app / 'Contents/Frameworks/libexample.dylib'
+            library.write_bytes(b'\xcf\xfa\xed\xfe' + b'library')
+            with mock.patch.object(packager.subprocess, 'run') as run:
+                packager.sign_bundle(app, 'permanent-certificate')
+            calls = [call.args[0] for call in run.call_args_list]
+            self.assertEqual([str(library), str(helper), str(app)], [cmd[-1] for cmd in calls[:-1]])
+            self.assertIn('--identifier', calls[-2])
+            self.assertIn('dev.zitter.browser', calls[-2])
+            self.assertIn('--strict', calls[-1])
+            self.assertIn('--deep', calls[-1])
+            for command in calls[:-1]:
+                self.assertNotIn('--deep', command)
+
+    def test_failed_signing_preserves_installed_bundle_and_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            out = root / 'out'
+            version = out / 'Chromium Framework.framework/Versions/1.0'
+            version.mkdir(parents=True)
+            (version / 'Chromium Framework').write_bytes(b'framework')
+            (out / 'zitter').write_bytes(b'new-browser')
+            app = root / 'Zitter.app'
+            marker = app / 'Contents/zitter-development-bundle'
+            marker.parent.mkdir(parents=True)
+            marker.write_text('old-build')
+            installed = app / 'Contents/old-browser'
+            installed.write_bytes(b'working-browser')
+            config = root / 'signing.json'
+            config.write_text('{"identity": "existing-certificate"}')
+            argv = ['package_app.py', '--out', str(out), '--destination', str(app),
+                    '--sign-identity', 'new-certificate', '--no-register']
+            with mock.patch.object(packager.sys, 'argv', argv), mock.patch.object(
+                    packager, 'SIGNING_CONFIG', config), mock.patch.object(
+                    packager, 'sign_bundle', side_effect=ValueError('signing failed')):
+                with self.assertRaises(SystemExit):
+                    packager.main()
+            self.assertEqual(b'working-browser', installed.read_bytes())
+            self.assertEqual('old-build', marker.read_text())
+            self.assertEqual('{"identity": "existing-certificate"}', config.read_text())
+            self.assertEqual([], list(root.glob('.zitter-package-*')))
 
     def test_unowned_bundle_is_preserved(self):
         with tempfile.TemporaryDirectory() as directory:

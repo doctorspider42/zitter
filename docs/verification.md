@@ -851,3 +851,392 @@ and a final real-profile download preview were blocked by a renewed native
 Keychain consent after rebuilding: the sampled production worker again waits in
 GetKeyTask/KeychainPassword/SecItemCopyMatching/SecurityServer decrypt. The user
 was asked to handle that system prompt locally; no Keychain settings were changed.
+
+## Workspace settings, context actions and Arc emoji — 2026-10-21
+
+Workspace dots now expose checked color and emoji presets, a plain-dot reset,
+custom appearance fields, settings and deletion. Presets work on inactive spaces
+without selecting them. Settings use grouped appearance/management sections,
+scroll within the window, and distinguish saving a name/profile from automatic
+appearance saves. Creating a workspace has a separate Create/Cancel mode.
+Deletion opens a named native confirmation with Cancel as the default and binds
+the original workspace ID, including across before-unload continuation. Deleting
+an inactive workspace preserves the active workspace; the last cannot be deleted.
+
+Arc import reads `customInfo.iconType.emoji_v2` sequences and legacy numeric
+`emoji` scalars. Appearance is applied after the catalogue commit succeeds and
+only for newly imported spaces, preserving local changes on repeat imports.
+
+Built and linked `zitter` and `zitter_prototype` in `out/Zitter`; header dependency
+check and the standalone CTest contract passed. Browser tests passed:
+`DynamicWorkspacesAndProfiles`, `WorkspaceContextAppearanceAndDeletion`,
+`WorkspaceDotProfileMenu`, and `ArcImportStructureAndPersistence`. Coverage
+includes cancel/accept, default Cancel, target identity after selection changes,
+inactive color/icon changes, final-space protection, composite emoji persistence
+and repeat-import preservation. The packaged `build/ZitterDebug.app` was also
+inspected with isolated temporary browsing data for settings and creation mode.
+
+Additional browser regressions passed: `NativeShellAndAppearance` (native
+keyboard input and appearance persistence) and
+`FailedConfigurationWritePreservesProfiles` (including failed Arc import
+rollback). All six targeted browser tests passed.
+
+## Stable macOS signing — 2026-10-21
+
+The normal packager now requires the locally pinned signing identity (or an
+explicit identity override); ad hoc packaging requires `--unsigned`. On this
+machine, both `build/Zitter.app` (optimized) and `build/ZitterDebug.app`
+(component) were packaged and signed with the existing Developer ID Application
+certificate for team `7L5KF39DAR`. Nested Mach-O libraries are signed before
+helper/framework/application bundles, followed by strict deep verification.
+The installed app is replaced only after that verification succeeds.
+
+Both packages passed verification and have identical designated requirements:
+stable `dev.zitter.browser` identifier, Apple Developer ID certificate chain and
+team identity, with no per-build cdhash requirement. Each package also satisfies
+the other's requirement despite different browser executables. Original compiler
+outputs retain their ad hoc signatures; private clones and package-internal
+hardlinks prevent signing from mutating build output. Legacy root development
+markers migrate to sealed Resources, with benchmark compatibility retained.
+
+All 37 Python tool tests passed, including signed-copy isolation, nested signing
+order/strict verification, pinned identity without ad hoc fallback, and retention
+of the installed app/configuration after signing failure. Keychain item contents
+and access controls were not changed. An initial user approval can still be
+needed when moving from the previous ad hoc identity to Developer ID; testing
+that approval across real launches requires the user to answer macOS's prompt.
+
+## Browser import choices and first-run workspaces — 2026-10-21
+
+A fresh catalogue now has one personal profile and one `Moja przestrzeń` starter.
+Skipping import persists that single workspace. A successful first-run import
+replaces the untouched starter workspace/profile; the committed catalogue
+already excludes them. Failed import commits leave the starter and its live
+page intact for retry. Existing/customized workspaces are preserved. Existing
+integration fixtures explicitly seed their legacy two-workspace installation.
+
+The native import panel supports Arc, Chrome, Edge and Brave. Checkboxes select
+separate destination profiles, bookmarks/pins/folders and Arc workspace emoji.
+When separate profiles are disabled, spaces from a browser share one new
+profile. Browser/options changes invalidate the preview before Apply is allowed.
+Chrome/Edge/Brave read regular local profile names and nested Bookmarks trees;
+source data is not modified. Unsupported URL schemes are skipped, malformed
+bookmark files abort the preview, and profiles-only imports do not read them.
+The panel scrolls vertically with its contents constrained to the viewport width.
+
+Workspace deletion confirmations now receive the actual native parent view,
+allowing macOS to attach and position the window-modal sheet correctly rather
+than displaying an unparented dialog near the screen origin. The regression
+checks settings and context-menu entry points at all four display corners.
+
+Eight targeted browser scenarios passed: `WorkspaceContextAppearanceAndDeletion`,
+`WorkspaceDeletionConfirmationStaysOnScreen`, `ArcImportStructureAndPersistence`,
+`FailedConfigurationWritePreservesProfiles`,
+`ChromiumBrowserImportSelectionAndPersistence`, `ImportOptionsInvalidatePreview`,
+`FirstRunImportReplacesStarterAndRollsBackOnFailure`, and `FirstRunImportOffer`.
+The toolchain header dependency check also passed. The final signed
+`build/ZitterDebug.app` passed strict deep signature verification and was
+restarted with the existing browsing data. Visual inspection confirmed wrapped
+import descriptions, controls within the panel width, and a fully visible native
+confirmation sheet; the deletion was cancelled. The new importer was left open.
+
+## Automatic import preparation — 2026-10-21
+
+The importer now always retains Arc workspace emoji. Its emoji checkbox and the
+manual `Sprawdź dane` action were removed, along with the explanatory footer
+about excluded data and profile sharing. Opening the panel or changing a browser
+or data checkbox schedules preparation after a short debounce. Only the latest
+scan can publish results or enable Import; older replies leave current loading
+state untouched. Source/options remain editable while reading. Applying an
+import locks those controls and Skip; reopening the panel cannot invalidate the
+in-flight commit. Closing the panel cancels pending debounce work.
+
+The regression fixture redirects source-browser paths to temporary Arc/Chrome
+data and exercises automatic readiness, option changes without a manual step,
+retained composite emoji, rapid source changes, stale in-flight replies, direct
+Import, and reopening while applying. History feasibility was checked against
+Chromium's `ProfileWriter::AddHistoryPage` / `HistoryService::AddPagesWithDetails`.
+Cookie storage decrypts `encrypted_value` through its crypto delegate; the macOS
+OSCrypt key is obtained from that browser's Keychain service. History and cookie
+import implementations are not part of this UI change.
+
+The final build passed `ArcImportStructureAndPersistence`,
+`ImportOptionsInvalidatePreview`, `FirstRunImportReplacesStarterAndRollsBackOnFailure`
+and `FirstRunImportOffer`, plus the header dependency check. The signed Debug
+package passed strict deep verification and was restarted. Visual inspection
+confirmed two data checkboxes, no emoji checkbox, no manual preparation button,
+no excluded-data footer, and an automatically enabled Import action after the
+source read. The panel was left open without applying another import.
+
+## History, cookies and importer close control — 2026-10-21
+
+History and cookies are separate opt-in selections for Arc, Chrome, Edge and
+Brave. Preparation retains each source-profile directory and destination ID even
+when profiles are merged. Preview only reads sidebar/bookmark metadata; selected
+browsing databases and the source Keychain entry are read after the explicit
+Import action. The header × replaces the Pomiń / Zamknij button, keeps its
+first-run dismissal behavior, and is disabled while applying.
+
+Database reads use temporary SQLite snapshots, copying DB/WAL and checking source
+metadata around the copy. The encrypted-cookie regression reads an update that
+exists only in a live WAL, preserves its partition key, decrypts a v24 `v10`
+cookie with the expected domain hash, rejects denied key access and a mismatched
+domain hash, and checks that the original cookie database remains byte-identical.
+macOS key lookup uses FindGenericPassword rather than the key-creating OSCrypt
+helper. It derives the compatibility key using the Chromium macOS parameters
+(PBKDF2 SHA-1 / saltysalt / 1003 / AES-128-CBC) and never changes source keys.
+
+Destination writes start after a successful catalogue save. History uses
+AddPagesWithDetails with imported visit provenance and Chromium's 90-day
+retention; existing pages are preserved and merged-source URL duplicates are
+collapsed. This is page history with last-visit dates rather than a copy of every
+individual visit. CookieManager applies destination validation/encryption,
+retains cookie attributes and partitions, preserves existing cookies, and flushes
+before reporting completion. Invalid/expired/rejected records are counted as
+skipped; a destination-service failure is reported without rolling back committed
+workspaces.
+
+The destination regression imports a workspace first, later adds history and
+cookies to its existing profile, checks history search and profile isolation,
+changes a destination cookie, and imports again to ensure the local value wins.
+It then recreates the window, waits for asynchronous profile realization and
+checks the persistent cookie value. The local replacement fixture explicitly
+uses Max-Age: session cookies correctly follow Chromium's normal lifetime.
+
+Seven targeted browser scenarios passed on the final implementation:
+`ArcImportStructureAndPersistence`, `BrowsingImportEncryptedCookiesAndSelection`,
+`BrowsingImportPersistsInDestinationServices`,
+`ChromiumBrowserImportSelectionAndPersistence`, `ImportOptionsInvalidatePreview`,
+`FirstRunImportReplacesStarterAndRollsBackOnFailure`, and `FirstRunImportOffer`.
+The header dependency check and diff whitespace check passed. The Debug package
+passed strict deep signature verification with the pinned Team ID `7L5KF39DAR`.
+It was restarted and inspected visually: the × is at the top right, the old
+bottom dismissal button is absent, and both new unchecked data selections and
+Import are fully visible. The existing user catalogue was retained and no live
+source-history/cookie import was applied; real Keychain approval is left to the
+user's explicit import.
+
+## Profile history browser and clearing — 2026-10-21
+
+Added History in the sidebar, Privacy preferences and command palette, with the
+configurable Cmd+Y / Ctrl+Y shortcut. The shared native tools panel shows the
+active profile name, a debounced search field, title/URL/local visit-time rows,
+and a 200-visit initial page with Show More. A row opens in a new tab under the
+same profile. The query tracker is separate from command-palette history;
+generation, profile, query and result-limit checks reject stale responses.
+Search controls remain mounted while the result list updates.
+
+The history panel offers hour/day/week/all-time clearing through the existing
+BrowsingDataRemover. Its confirmation captures the profile and selection, keeps
+Cancel as default, and now receives the visible parent widget's actual native
+view, including when opened from History. Completion refreshes the visible list;
+cookie/cache/password data is not selected by the History clear action. The
+broader preferences data-clear form remains available.
+
+Regression coverage seeds both profiles with distinct history, checks ordering,
+search and empty results, opens a result as a new tab, cancels the clear prompt,
+checks its screen bounds, then clears the recent hour and all time while checking
+profile isolation. A separate case seeds 205 visits, verifies 200/205 pagination
+and rejects a stale search reply. Existing configurable shortcuts, command
+center, history search and browsing-data scope scenarios are also exercised.
+
+All six targeted scenarios passed: `BrowsingHistoryPanelSearchOpenAndClear`,
+`BrowsingHistoryPaginationAndStaleSearch`, `ClearBrowsingDataConfirmationAndScope`,
+`ConfigurableNativeKeyboardShortcuts`, `CommandCenterSearchAndDispatch`, and
+`ChromiumHistoryAndCommandPalette`. Header dependency and diff whitespace checks
+passed. The signed Debug app passed strict deep signature verification, was
+restarted, and opened History with Cmd+Y. Visual inspection confirmed the search,
+profile label, interval picker, clear action and empty state. Its confirmation
+sheet was opened, inspected and cancelled; no live user data was cleared. History
+was left open for the user.
+
+## Sidebar utility menu and folder creation — 2026-10-21
+
+Removed the Time Machine, History, Downloads and Settings utility rows above the
+sidebar's tabs. Their native macOS commands are grouped in the Zitter app menu;
+Downloads is no longer duplicated under File. History and Time Machine dispatch
+to Zitter's existing panels, and all four menu shortcuts follow the configured
+bindings.
+
+The sidebar/scroll background now has a context-menu controller. Ordinary tab
+and pin menus offer New Folder; folder rows are also registered in the pin-view
+cache and offer New Subfolder. The modal name prompt captures the workspace and
+parent folder, trims the supplied name and preserves Unicode. A bounded ancestor
+check rejects invalid/deep parents. Adding a child expands its parent. Folders
+are saved through the workspace catalogue; failed writes roll back the new item
+and show a retry message. Cancel leaves the catalogue untouched.
+
+The folder regression checks the simplified sidebar, context controllers, cancel,
+a named Unicode folder, a nested folder, validation, profile/workspace isolation
+and restoration after reopening. A second case forces atomic-write failure and
+checks rollback plus the error dialog. Existing native-shortcut, workspace-menu
+and Arc-import scenarios passed as well; the two folder scenarios were rerun
+following the final workspace-target capture adjustment.
+
+Live inspection confirmed the four native Zitter menu entries and History's
+menu dispatch. Right-clicking an existing folder opened New Subfolder and its
+name sheet; the sheet was cancelled. Inspection also found that blank section
+headings and scroll/layout descendants require their own context controllers,
+so background controllers are installed once throughout the sidebar tree while
+button label subtrees retain their normal event handling. The regression now
+checks those descendants and the metadata-row stability case remains passing.
+
+The final signed Debug package was restarted. A right-click in blank sidebar
+heading space opened New Folder, and selecting it opened the native name sheet.
+The sheet was cancelled. Root-folder and subfolder prompts were both inspected
+without adding test data to the user's catalogue. Strict deep signature and
+header dependency verification passed; final sidebar folder/rollback and stable
+row regressions passed. The simplified sidebar was left visible.
+
+## Folder editing and workspace switching — 2026-10-21
+
+Folder context menus now include rename and delete. Rename retains stable IDs and
+nested relationships. Delete confirms the named folder, defaults to Cancel and
+removes all pinned descendants. Opened pins remain alive as ordinary tabs.
+Catalogue writes are transactional: rename/delete restore the previous pin tree
+on failure and show the existing save-error sheet. Tests cover cancel, Unicode
+rename, persistence, recursive removal, write failures for all three folder
+operations and preserving opened imported pins after their folder is removed.
+
+Workspace switches skip global theme refresh and hidden-panel measurement.
+Inactive pinned lists are built one workspace per delayed UI task after startup
+(or import), without creating WebContents. Cached lists are reused. Content/list
+transitions take 120 ms with a smaller page offset. In a native Debug fixture with
+300 pins, synchronous first Select measured 250.152 ms before and 34.005 ms after
+allowing sidebar preparation; twenty warm switches averaged 21.9684 ms before
+and 17.036 ms after. These measurements exclude animation completion/paint and
+are not a guarantee for cold profile loading or clicks before preparation.
+
+Horizontal gestures over the sidebar select one adjacent workspace per gesture,
+without wrapping. Axis locking preserves vertical scrolling; momentum cannot
+select further spaces. Modified scrolling is ignored except Shift+wheel's
+horizontal mapping. Native ScrollEvent-to-wheel fallback is deduplicated by
+timestamp. Page content is outside this handler. Gesture tests cover direction,
+axis lock, one switch per gesture, inertia/fallback, boundaries and hidden panel.
+The final gesture regression also dispatches a ScrollEvent through the sidebar
+Widget and verifies that its registered pre-target handler selects the space;
+this final native-dispatch rerun passed. Automated live horizontal scrolling did
+not change the selected space, so physical trackpad behavior remains a manual
+check; synthetic native widget dispatch is covered by the regression.
+
+Native regression passes: SidebarMetadataUpdatesPreserveRows,
+StartupPrioritizesActiveProfileWithoutReorderingCatalogue,
+SidebarRemainsOpenWhileSpacesSlide, WorkspaceSwitchCostWithImportedSidebar,
+SidebarFoldersCreateNestAndPersist, SidebarFolderRenameAndDeleteContents,
+SidebarSwipeSwitchesOnceAndIgnoresInertia, SidebarFolderFailedWriteRollsBack and
+FolderRemovalKeepsOpenedPinsAsTabs. The hidden-sidebar case explicitly unpins
+the test panel, because CloseOverlays intentionally leaves pinned sidebars open.
+Header dependency and whitespace checks passed. The Debug app was packaged,
+signed with the pinned development identity, strictly verified and restarted.
+Live folder-menu, prefilled rename sheet and named deletion sheet were inspected
+and cancelled without changing the user's folder catalogue.
+
+## Workspace switching hot-path correction — 2026-10-21
+
+The earlier Select benchmark omitted subsequent animation frames. Inspection
+found that every shell update recursively registered context menus throughout
+all cached sidebar trees, and checked every pin against every displayed tab.
+Context registration now runs only for new/changed trees; pin visibility is
+updated only when pin/tab/split structure changes, using a set of paired pins.
+Only the previous and next cache roots change visibility. Catalogue pruning and
+full sidebar context installation run on catalogue changes. Hidden workspace
+settings are refreshed when opened. Building ShellState indexes pin views once
+instead of searching the pin map for each tab.
+
+Removed the PaneHost SlideAnimation which invalidated layout and moved native
+WebViews every animation frame. Pages now immediately occupy their final bounds.
+The 120 ms animation moves just the clipped list ScrollView in the compositor
+by 32 px; no layer spans the complete imported pin tree. Reduced motion,
+disabling animations, direction and rapid switching remain supported.
+
+The imported-sidebar benchmark now asserts that warm switching performs zero
+context-controller visits and zero pin-visibility updates, in addition to zero
+pin-tree builds. A second fixture puts 300 pins in each of two workspaces. Debug
+measurements were 34.174 ms first / 16.6125 ms warm for the original fixture and
+75.917 ms first / 30.4928 ms warm with both large lists. The original warm result
+was previously 17.036 ms, so synchronous Select improvement alone is small;
+these measurements do not measure frame presentation. The structural correction
+removes native per-frame layout work rather than proving a particular frame
+rate. The animation regression verifies viewport-bounded layer size, no layers
+on cached full list roots, repeated switching, final page bounds, disabled
+animations and reduced motion.
+
+All eight native cases passed: both switching benchmarks,
+SidebarRemainsOpenWhileSpacesSlide, SidebarMetadataUpdatesPreserveRows,
+SidebarFoldersCreateNestAndPersist, SidebarFolderRenameAndDeleteContents,
+SidebarSwipeSwitchesOnceAndIgnoresInertia and ArcImportStructureAndPersistence.
+App/test header checks and diff whitespace check passed. The new Debug package
+passed strict signature verification and was restarted. Native UI clicks switched
+from cc-member to Work and back, with the sidebar remaining visible. The user
+catalogue was preserved.
+
+## Smooth sidebar animation and repeated Cocoa swipes — 2026-10-21
+
+Chromium's Cocoa GetScrollOffsets maps NSEvent phase Began/MayBegin to
+EventMomentumPhase::MAY_BEGIN, while ScrollEvent leaves scroll_event_phase at
+kNone. The workspace handler previously classified MAY_BEGIN as inertia, so a
+second gesture could retain the first gesture's switched latch. MAY_BEGIN now
+resets the gesture and processes any initial delta. END without delta ends the
+gesture, while phase-less wheel END events with delta remain usable. Actual
+inertia never switches spaces. The new native Widget-dispatch regression uses
+only Cocoa momentum phases at a fixed point, with no mouse movements or idle
+gaps, and checks six consecutive changes, a new touch interrupting inertia and
+phase-less wheel deltas. It passed alongside the existing axis/boundary/inertia
+regression.
+
+Sidebar animation now prepares layout and the offset viewport, then waits for
+successful presentation before starting its 180 ms compositor transition. This
+keeps initial layout/raster time outside the animation clock. Render-surface
+caching is requested for the animation's lifetime. Pages still switch directly
+to final bounds. A generation invalidates callbacks from superseded transitions;
+hiding the sidebar, disabling animations and detaching cancel both pending and
+running transitions. Hidden sidebars do not enqueue presentation callbacks.
+The animation regression verifies pending-before-presentation then running,
+viewport-only layering, rapid switching, completion and reduced motion, and
+passed. Header checks for app/tests and whitespace verification passed.
+
+Five native regressions passed in total, including metadata row stability and
+the two-large-sidebars hot-path checks. The Debug package passed strict deep
+signature verification with the pinned identity, was restarted and switched
+Work → cc-member → Work through native UI clicks. The sidebar was left visible.
+Physical trackpad frame cadence was not measured by the UI automation.
+
+## Interactive workspace scrubbing — 2026-10-21
+
+Horizontal sidebar gestures now drive continuous position directly from finger
+distance / viewport width. No selection happens while fingers remain down.
+Reversing can return to the source; a longer gesture can cross several spaces.
+Finger-up selects the nearest space and settles the preview for 160 ms. A small
+rubber-band offset resists both ends without wrapping. Cocoa MAY_BEGIN/END,
+interrupted settling, omitted END followed by inertia, and phase-less wheel idle
+completion are supported. Inertia cannot commit another workspace. Escape or
+hiding the panel cancels; an external selection/catalogue change cancels stale
+preview state. Click-driven transitions retain their presentation-gated animation.
+
+Preview pages are compositor-only decorative layers with viewport-sized paint
+records. Visible rows use the same row decoration painter as native sidebar
+buttons, including folders, indentation, monograms, active pins and split tiles.
+No full native tree layout/visibility changes or profile/page activation are
+needed to create a preview. At most three surfaces are alive; up to eight paint
+records are kept for reversing direction within the gesture. Finger updates
+move layers without View accessibility location notifications. Headings/dots
+change only when the nearest candidate changes. The committed catalogue,
+WebContents and profile remain unchanged until release. A committed swipe does
+not trigger a second click-style workspace animation.
+
+Native gesture tests cover reversing/cancelling, crossing three spaces in one
+motion, fixed-cursor repetition, boundaries, vertical axis locking, inertia,
+hiding mid-drag, phase-less wheels and no page creation for an intermediate
+preview. The 300-pins-per-space case also measures preparation and twenty
+tracking events, checks bounded previews and no native pin-tree reconstruction.
+
+The six distinct regressions passed; all three gesture/performance cases were
+rerun after the compositor-only layer implementation. The final 300-pins-per-
+space measurement was 48.789 ms for initial preparation through native Widget
+dispatch and 0.01185 ms mean for twenty direct gesture-handler updates. A prior
+measurement including full Widget dispatch averaged 17.3455 ms per update;
+handler timing is not end-to-end presentation latency or a frame-rate claim.
+Header dependency and whitespace checks passed. The final Debug package passed
+strict deep signature verification with the pinned identity and was restarted.
+Native automation does not synthesize held trackpad phases; reversal and release
+are verified by native Widget-dispatched regression events at a fixed cursor.

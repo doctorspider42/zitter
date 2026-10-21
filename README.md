@@ -2,7 +2,8 @@
 
 C++ + Chromium fork + Views. This repository contains a native browser development app and a separate
 workspace/profile test harness. The selected macOS ARM64 bundle is a local
-non-component Release build with ThinLTO/PGO, not a signed release installer.
+non-component Release build with ThinLTO/PGO, signed locally with Developer ID.
+It is not a notarized release installer.
 
 ## Run the desktop app (macOS)
 
@@ -59,10 +60,11 @@ media-handler registration hook that retains Chromium's capture policy and
 output-protection accounting. Product code is
 installed under `src/zitter/`; the production target needs no test-runner hook.
 
-The packager uses hard links for component dylibs and places real helper bundles
+The signed packager uses private APFS clones (copies on other filesystems) and places real helper bundles
 inside the outer app, preserving Chromium's framework lookup and sandbox startup.
 Repackage after rebuilding. This development app depends on the local build and
-has no signing/notarization or standalone redistribution workflow yet. The native
+uses a pinned Developer ID certificate for local packaging; notarization and
+standalone redistribution are not configured yet. The native
 bootstrap also has a Linux target, but only macOS ARM64 has been built and run;
 a Windows production entry point remains to be implemented.
 
@@ -135,26 +137,65 @@ inversion. Workspace accent colors tint both light and dark frames.
 
 Switching spaces keeps an already-visible left panel open, including in auto-hide
 mode; it does not change the pinning preference. Incoming sidebar rows slide in
-the direction of the selected workspace, with a short native content slide.
-Animations settle before subsequent layout changes and restart cleanly on rapid
-switching. They can be disabled and respect the OS reduced-motion preference.
-Cached pin trees remain intact during transitions.
+the direction of the selected workspace. Only the visible list viewport animates;
+native page views switch straight to their final bounds. Animations restart
+cleanly on rapid switching, can be disabled and respect the OS reduced-motion
+preference. Cached pin trees remain intact during transitions. Inactive pinned lists are
+prepared incrementally after startup without opening pages. Switching skips
+refreshing hidden settings, repeated context-menu tree walks and pin/tab
+visibility scans. The list viewport uses a 180 ms compositor transition, starting after the new
+viewport has presented its first frame, with render-surface caching. Swipe horizontally over
+the sidebar to scrub continuously through spaces. The preview follows finger
+distance in either direction: reverse before lifting to cancel, or drag farther
+to cross several spaces. Release selects the nearest preview and settles it;
+intermediate spaces do not open pages or change profiles. At most three clipped
+viewport previews are retained, with resistance at the ends and no wrapping.
+Vertical scrolling and gestures over web pages keep their normal behavior.
+Cocoa finger-down/up phases re-arm a new gesture without requiring cursor
+movement, including when it interrupts settling/inertia. Phase-less wheels
+settle after a brief idle interval.
 
 Use the sidebar's workspace dots to switch spaces and its gear button to manage
-spaces. Enter a name, choose a profile, then choose **Dodaj przestrzeń** to create
-a space or **Zapisz zmiany** to edit the current one. Each space has its own tabs
-and accent color. Spaces assigned to the same profile share cookies, logins and
-persistent site storage. Changing a space's profile closes its tabs and opens one
-blank tab in the selected profile. Removing a space closes its tabs, preserves
-profile data and selects another space; the last space cannot be removed.
+spaces. **Zapisz nazwę i profil** applies the name and browsing profile; colors
+and emoji save immediately. **Nowa przestrzeń…** opens a separate creation mode
+with **Utwórz przestrzeń** and **Anuluj**. Settings are grouped and scroll in small
+windows. Each space has its own tabs and accent color. Spaces assigned to the
+same profile share cookies, logins and persistent site storage. Changing a
+space's profile closes its tabs and opens one blank tab in the selected profile.
+Removing a space requires a confirmation naming that space, with Cancel as the
+default. It removes its tabs and pins, preserves profile data and keeps the active
+space when deleting an inactive one; the last space cannot be removed.
 
-Right-click a workspace dot and open **Set profile** to select its profile,
-edit its profile's name, or create and assign a new profile to that space. This
+Right-click a workspace dot to choose its color or emoji (including clearing the
+emoji), open settings, or delete it with confirmation. **Profil przeglądania**
+selects its profile, edits the profile name, or creates and assigns a new one. This
 also works on inactive workspaces without switching the active page. Long dot
 bars scroll horizontally. The profile editor retains Chromium profile identity,
 storage and workspace assignments when renaming a profile.
 
-**Time Machine** is available above the sidebar tab list and in Preferences →
+The sidebar keeps **Nowa karta** and the workspace's pins/tabs. Time Machine,
+History, Downloads and Settings live in the native **Zitter** menu on macOS.
+Right-click the sidebar/tab-list background or a tab to add a named folder.
+Right-click an existing folder for **Nowy podfolder…**, **Zmień nazwę folderu…**
+and **Usuń folder…**. Removal requires confirmation and deletes the folder,
+nested folders and all their pins. Already opened pages remain ordinary tabs.
+Folder names and nesting persist with the workspace catalogue; cancellation
+makes no changes, and a failed catalogue save rolls back the edit and shows a
+retry message.
+
+**Historia** opens from the Zitter app menu, Preferences → Prywatność, the command
+palette, or Cmd+Y (Ctrl+Y outside macOS). It shows the active profile's actual
+Chromium history, including imported page history, with titles, URLs and local
+visit dates. Search filters titles/URLs. Results start with the newest 200 visits;
+**Pokaż więcej** loads another 200. Selecting an entry opens it in a new tab in
+the same profile. History remains separate from Time Machine snapshots.
+
+**Wyczyść historię…** in that panel offers the last hour, 24 hours, 7 days or all
+time. A confirmation names the profile and interval, with Cancel as the default.
+Only history is selected by this action; the open list reloads after deletion.
+Preferences also retain the broader data-clear controls for cookies and cache.
+
+**Time Machine** is available in the Zitter app menu and in Preferences →
 Wygląd. Save a named snapshot of the current workspace's pages, pinned folders,
 active pane and split ratio. Restoring creates a recovery point for the current
 layout first. Automatic points are also made before closing tabs/changing splits,
@@ -335,18 +376,88 @@ first. The original company and personal profiles follow the same rules. Chromiu
 clears browsing data and schedules directory cleanup through its profile-deletion
 service; a saved deletion marker survives an interrupted shutdown.
 
-**Importuj z Arc** reads the local macOS Arc installation's
-`~/Library/Application Support/Arc/StorableSidebar.json` and profile display names
-from `User Data/Local State`. The first launch also offers this import, with a
-skip option. **Sprawdź dane Arc** previews profile, Space, folder and pinned-tab
-counts; **Importuj** adds separate profiles, workspaces, nested folders and pins.
-Arc Favorites appear under **Ulubione Arc** in the corresponding profile's Spaces.
-The source files are read only. Existing Zitter spaces remain; repeat imports skip
-already imported Spaces. Invalid/non-HTTP(S) links and unsupported items are
-counted as skipped. A Split View becomes a folder of its supported child tabs.
-Unpinned Today tabs are excluded. Logins, cookies, history and passwords are not
-copied; imported profiles start with fresh site data. Pins load on demand when
-clicked and retain their folder hierarchy across restarts.
+**Importuj z przeglądarki…** opens a browser picker for Arc, Google Chrome,
+Microsoft Edge and Brave, followed by checkboxes for the supported data. Choose
+separate browsing profiles, bookmarks/pins/folders, browsing history and cookies.
+History and cookies are opt-in. Close the importer with the × in its header;
+on first launch this keeps the single starter workspace. Arc workspace emoji are
+always retained. Disabling separate profiles assigns imported spaces to one
+destination profile for that source browser. Opening the panel or changing a
+browser/checkbox automatically prepares the selected data. The Import button
+becomes available when that read completes; stale scan replies are ignored.
+
+Arc reads local `~/Library/Application Support/Arc/StorableSidebar.json` and
+profile names from `User Data/Local State`. It retains Space names, nested pins,
+Favorites and emoji, including composite emoji and legacy code points.
+Chrome, Edge and Brave read their local Chromium `Local State` and each regular
+profile's `Bookmarks` file. Profile display names become workspace names; folder
+hierarchies become workspace pins. Sources are read only. Invalid/non-HTTP(S)
+links and unsupported items are counted as skipped. Arc Split View becomes a
+folder of supported child tabs; unpinned Today tabs are excluded. Passwords are
+not imported.
+
+History and cookies are read from snapshots of each selected source profile,
+including its SQLite WAL, without writing to the source. History uses Chromium's
+page-history importer: HTTP(S) page URLs, titles, visit/typed counts and last-visit
+dates within its 90-day retention window. Existing destination history pages are
+kept. This does not copy every individual visit or search-provider metadata.
+Cookie import preserves expiry, Secure, HttpOnly, SameSite and partition keys;
+expired/invalid cookies are counted as skipped. Existing destination cookies take
+precedence, so repeating an import does not replace current sessions.
+
+On macOS, encrypted `v10` cookies are decrypted in memory with the selected
+browser's existing Safe Storage Keychain entry. Only clicking **Importuj** with
+cookies checked can request Keychain access; preview never requests it. Zitter
+neither creates nor changes source keys. Denied access, unsupported encryption or
+invalid host binding stops preparation before destination changes, with a retry
+message. Destination CookieManager applies its normal validation and encryption,
+and flushes the cookie store before completion. Some sites may require signing
+in again. Data is copied to the matching imported profile, including on a later
+import into an existing workspace; merging profiles intentionally merges their
+selected browsing data. If a source database changes during copying, close that
+browser and retry. Destination data writes start only after the workspace
+catalogue has been saved successfully. A destination write failure is reported
+without deleting already committed workspaces.
+
+A fresh installation starts with one **Moja przestrzeń** workspace and one
+profile. Skipping import keeps that workspace. A successful first-run import
+replaces the untouched starter workspace and its profile, so only imported
+spaces remain. A failed import preserves the starter and can be retried.
+Existing installations and customized workspaces remain intact; later imports
+add spaces and skip previously imported ones, retaining local icon changes.
+Pins load on demand and retain their hierarchy across restarts.
+
+## Stable local macOS signing
+
+`tools/package_app.py` signs the application, nested helpers, framework and
+libraries with the certificate pinned in the git-ignored `.zitter-signing.json`.
+Normal packaging commands reuse that identity. The private key stays in macOS
+Keychain. To configure another checkout explicitly:
+
+```sh
+security find-identity -v -p codesigning
+python3 tools/package_app.py --sign-identity '<Developer ID certificate SHA-1>'
+```
+
+`ZITTER_CODESIGN_IDENTITY` can override the saved certificate. Missing or invalid
+certificates fail packaging rather than falling back to an ad hoc signature.
+`--unsigned` is an explicit opt-out for disposable test/benchmark bundles.
+The Python `package()` helper used by filesystem tests remains unsigned unless
+an identity is passed; the normal command-line entry point requires signing.
+
+Signed packages keep the `dev.zitter.browser` bundle identity across component
+and optimized builds. Code is signed from the inside out and verified with
+`codesign --verify --deep --strict` before replacing an existing owned bundle.
+Private clones prevent signing from changing the compiler's original outputs.
+The development marker lives in `Contents/Resources` so it is sealed as data;
+legacy marker locations are still recognized when replacing an older bundle.
+
+After the first transition from an ad hoc build, macOS may ask once more for
+**Zitter Safe Storage** access. Choose **Zawsze pozwalaj** yourself to authorize
+the signed application. Its designated requirement then stays stable across
+rebuilds signed by the same Developer ID team. Packaging does not change the
+keychain item, its secret or its access controls. This local signing workflow
+does not add notarization or enable Hardened Runtime.
 
 ## Current verification status
 
@@ -644,7 +755,7 @@ current experimental/final verification state.
 pinned mac-arm PGO profile. Our regular executable explicitly enables LTO O2;
 the native test executable uses the same backend level. The comparisons and
 current acceptance status are in [the performance report](docs/performance.md).
-This is a local development bundle; it is not a signed release installer.
+This is a locally signed development bundle; it is not a notarized release installer.
 
 After preparing the pinned checkout, stage the current source without replacing
 the preserved original overlay:

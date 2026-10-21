@@ -97,6 +97,9 @@ NSMenu* BuildMainMenu() {
   Submenu(bar, @"Zitter", @[
     Item(@"O Zitter", @selector(orderFrontStandardAboutPanel:), @""),
     NSMenuItem.separatorItem,
+    Command(@"Time Machine…", AppCommand::kTimeline, @"y", kCmdShift),
+    Command(@"Historia…", AppCommand::kHistory, @"y", kCmd),
+    Command(@"Pobrania…", AppCommand::kDownloads, @"j", kCmd),
     Command(@"Ustawienia…", AppCommand::kSettings, @",", kCmd),
     NSMenuItem.separatorItem,
     Item(@"Ukryj Zitter", @selector(hide:), @"h"),
@@ -109,7 +112,6 @@ NSMenu* BuildMainMenu() {
     Command(@"Nowa karta", AppCommand::kNewTab, @"t", kCmd),
     Command(@"Otwórz adres…", AppCommand::kOpenAddress, @"l", kCmd),
     Command(@"Command Center…", AppCommand::kCommandPalette, @"k", kCmd),
-    Command(@"Pobrania…", AppCommand::kDownloads, @"", 0),
     Command(@"Hasła tego profilu…", AppCommand::kPasswords, @"", 0),
     NSMenuItem.separatorItem,
     Command(@"Zamknij kartę", AppCommand::kCloseTab, @"w", kCmd),

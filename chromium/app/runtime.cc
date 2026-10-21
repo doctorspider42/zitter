@@ -116,6 +116,8 @@ void Runtime::RunCommand(AppCommand command) {
     case AppCommand::kCloseTab: window_->CloseActiveTab(); break;
     case AppCommand::kReload: window_->RunPageCommand(prototype::PageCommand::kReload); break;
     case AppCommand::kToggleSidebar: shell->ToggleSidebar(); break;
+    case AppCommand::kHistory: window_->RunShortcut("history"); break;
+    case AppCommand::kTimeline: window_->RunShortcut("timeline"); break;
     case AppCommand::kSettings: shell->OpenGeneralSettings(); break;
     case AppCommand::kWorkspaceWork:
       if (!window_->workspaces().empty()) window_->Select(window_->workspaces()[0].id);

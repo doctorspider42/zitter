@@ -17,6 +17,8 @@ enum class AppCommand {
   kSettings,
   kWorkspaceWork,
   kWorkspacePersonal,
+  kHistory,
+  kTimeline,
 };
 
 class AppShellDelegate {

@@ -1,4 +1,9 @@
+#include "chrome/browser/history/history_service_factory.h"
+#include "components/history/core/browser/history_service.h"
+#include "components/history/core/browser/history_types.h"
 #include "chromium/prototype/workspace_window.h"
+
+#include <algorithm>
 
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
@@ -60,6 +65,28 @@ void WorkspaceWindow::OpenSystemSettings(bool certificates) {
     settings_utils::ShowNetworkProxySettings(page);
   }
 }
+void WorkspaceWindow::QueryBrowsingHistory(std::u16string query, size_t limit) {
+  history_view_tasks_.TryCancelAll();
+  const auto generation = ++history_view_generation_;
+  if (!model_.active() || !shell_->history_visible()) return;
+  const auto profile_id = model_.active()->profile_id;
+  auto* profile = ProfileFor(profile_id);
+  auto* service = profile ? HistoryServiceFactory::GetForProfile(profile, ServiceAccessType::EXPLICIT_ACCESS) : nullptr;
+  if (!service) { shell_->SetHistoryResults(query, profile_id, limit, {}, false, true); return; }
+  history::QueryOptions options;
+  options.max_count = static_cast<int>(std::min(limit, size_t{1000000}));
+  options.duplicate_policy = history::QueryOptions::KEEP_ALL_DUPLICATES;
+  options.policy_for_404_visits = history::VisitQuery404sPolicy::kInclude404s;
+  service->QueryHistory(query, options, base::BindOnce(
+      [](base::WeakPtr<WorkspaceWindow> window, size_t generation, std::u16string query,
+         std::string profile_id, size_t limit, history::QueryResults results) {
+        if (!window || generation != window->history_view_generation_) return;
+        std::vector<BrowsingHistoryEntry> entries;
+        for (const auto& row : results) if (row.url().is_valid() && row.url().SchemeIsHTTPOrHTTPS())
+          entries.push_back({row.url(), row.title(), row.visit_time()});
+        window->shell_->SetHistoryResults(query, profile_id, limit, std::move(entries), !results.reached_beginning(), false);
+      }, weak_factory_.GetWeakPtr(), generation, query, profile_id, limit), &history_view_tasks_);
+}
 void WorkspaceWindow::RequestClearBrowsingData(BrowsingDataSelection selection) {
   if (clear_data_dialog_) { clear_data_dialog_->Activate(); return; }
   if (!configuration_ready_ || profiles_busy_ || !model_.active() || data_remover_) {
@@ -96,8 +123,8 @@ void WorkspaceWindow::RequestClearBrowsingData(BrowsingDataSelection selection) 
       .OverrideDefaultButton(ui::mojom::DialogButton::kCancel)
       .Build();
   auto dialog = views::BubbleDialogModelHost::CreateModal(std::move(model), ui::mojom::ModalType::kWindow);
-  auto* parent = shell_->general_widget();
-  auto* prompt = views::DialogDelegate::CreateDialogWidget(std::move(dialog), parent->GetNativeWindow(), gfx::NativeView());
+  auto* parent = shell_->history_visible() ? shell_->tools_widget() : shell_->general_widget();
+  auto* prompt = views::DialogDelegate::CreateDialogWidget(std::move(dialog), parent->GetNativeWindow(), parent->GetNativeView());
   prompt->SetColorModeOverride(parent->color_mode_override());
   PrepareSettingsDialog(prompt->GetRootView());
   clear_data_dialog_ = prompt->GetWeakPtr();
@@ -140,5 +167,6 @@ void WorkspaceWindow::OnBrowsingDataRemoverDone(uint64_t failed_data_types) {
   shell_->SetPreferencesStatus(failed_data_types ? u"Nie udało się usunąć wszystkich wybranych danych. Spróbuj ponownie." :
       u"Wyczyszczono dane profilu „" + data_removal_profile_name_ + u"”.", failed_data_types != 0);
   history_tasks_.TryCancelAll();
+  if (shell_->history_visible()) shell_->RefreshHistory();
 }
 }  // namespace zitter::prototype

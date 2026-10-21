@@ -117,7 +117,9 @@ def main():
     parser.add_argument("--results", type=Path, default=ROOT / "build/performance")
     args = parser.parse_args()
     app = args.app.resolve()
-    marker = app / "Contents/zitter-development-bundle"
+    marker = app / "Contents/Resources/zitter-development-bundle"
+    if not marker.is_file():
+        marker = app / "Contents/zitter-development-bundle"
     if not marker.is_file():
         parser.error("Use a marker-owned bundle produced by tools/package_app.py")
     executable = app / "Contents/MacOS/Chromium"

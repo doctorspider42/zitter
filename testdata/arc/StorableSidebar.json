@@ -200,7 +200,13 @@
                 "unpinned": {}
               },
               "unpinned"
-            ]
+            ],
+            "customInfo": {
+              "iconType": {
+                "emoji_v2": "👩🏽‍💻",
+                "emoji": 128105
+              }
+            }
           },
           "space-b",
           {
@@ -219,7 +225,12 @@
                 "pinned": {}
               },
               "root-b"
-            ]
+            ],
+            "customInfo": {
+              "iconType": {
+                "emoji": 128640
+              }
+            }
           },
           "space-c",
           {
@@ -233,7 +244,12 @@
                 "pinned": {}
               },
               "root-c"
-            ]
+            ],
+            "customInfo": {
+              "iconType": {
+                "icon": "planet"
+              }
+            }
           }
         ],
         "topAppsContainerIDs": [

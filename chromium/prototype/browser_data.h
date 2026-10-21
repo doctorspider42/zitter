@@ -8,6 +8,8 @@
 #include <vector>
 
 #include "url/gurl.h"
+#include "base/files/file_path.h"
+#include "base/time/time.h"
 
 class Profile;
 
@@ -37,6 +39,12 @@ struct BrowsingDataSelection {
   bool history = false;
   bool cookies = false;
   bool cache = true;
+};
+
+struct BrowsingHistoryEntry {
+  GURL url;
+  std::u16string title;
+  base::Time visited;
 };
 
 struct PaletteResult {
@@ -82,9 +90,25 @@ struct ImportedSpace {
   std::string name;
   std::string profile_id;
   std::vector<PinnedItem> pins;
+  std::u16string emoji;
 };
 
+enum class ImportBrowser { kArc, kChrome, kEdge, kBrave };
+struct BrowserImportOptions {
+  ImportBrowser browser = ImportBrowser::kArc;
+  bool separate_profiles = true;
+  bool bookmarks = true;
+  bool history = false;
+  bool cookies = false;
+};
+
+struct ImportSourceProfile {
+  base::FilePath directory;
+  std::string destination_id;
+};
 struct ArcImport {
+  BrowserImportOptions options;
+  std::vector<ImportSourceProfile> sources;
   std::vector<ProfileInfo> profiles;
   std::vector<ImportedSpace> spaces;
   size_t tab_count = 0;

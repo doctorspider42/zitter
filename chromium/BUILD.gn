@@ -67,6 +67,8 @@ source_set("shell") {
     "chromium/prototype/page_services.cc",
     "chromium/prototype/arc_importer.h",
     "chromium/prototype/arc_importer.cc",
+    "chromium/prototype/browser_import_data.h",
+    "chromium/prototype/browser_import_data.cc",
     "chromium/prototype/workspace_shell.cc",
     "chromium/prototype/workspace_shell.h",
   ]
@@ -106,6 +108,9 @@ source_set("shell") {
     "//chrome/browser/browsing_data",
     "//chrome/browser/ui/webui/settings",
     "//net",
+    "//sql",
+    "//crypto",
+    "//services/network/public/mojom",
     "//third_party/blink/public/common",
     "//chrome/browser/password_manager",
     "//chrome/browser/ui/autofill",
@@ -141,6 +146,7 @@ source_set("shell") {
   ]
   if (is_mac) {
     sources += [
+      "chromium/prototype/browser_import_key_mac.mm",
       "chromium/prototype/workspace_frame_mac.h",
       "chromium/prototype/workspace_frame_mac.mm",
       "chromium/prototype/workspace_keyboard_mac.h",

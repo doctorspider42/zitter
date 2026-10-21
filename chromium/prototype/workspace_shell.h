@@ -21,6 +21,7 @@
 #include "base/task/sequenced_task_runner.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/views/controls/textfield/textfield_controller.h"
+#include "ui/events/event_handler.h"
 #include "ui/views/context_menu_controller.h"
 #include "ui/menus/simple_menu_model.h"
 #include "ui/views/widget/widget_delegate.h"
@@ -88,7 +89,8 @@ struct ShellState {
 };
 
 // Native Views only. No Profile, BrowserContext or WebContents dependencies.
-class WorkspaceShell final : public views::TextfieldController,
+class WorkspaceShell final : public ui::EventHandler,
+                             public views::TextfieldController,
                              public views::WidgetObserver,
                              public views::ContextMenuController,
                              public ui::SimpleMenuModel::Delegate,
@@ -102,12 +104,13 @@ class WorkspaceShell final : public views::TextfieldController,
     base::RepeatingCallback<void(std::string)> select_workspace;
     base::RepeatingCallback<bool(std::string, std::string)> add_workspace;
     base::RepeatingCallback<bool(std::string, std::string)> edit_workspace;
-    base::RepeatingCallback<bool()> remove_workspace;
+    base::RepeatingCallback<bool(std::string)> remove_workspace;
     base::RepeatingCallback<bool(std::string, std::string)> create_profile;
     base::RepeatingCallback<bool(std::string, std::string)> rename_profile;
     base::RepeatingCallback<bool(std::string, std::string)> assign_profile;
     base::RepeatingCallback<bool(std::string)> remove_profile;
-    base::RepeatingClosure preview_import;
+    base::RepeatingCallback<void(BrowserImportOptions)> preview_import;
+    base::RepeatingClosure invalidate_import;
     base::RepeatingCallback<bool()> apply_import;
     base::RepeatingClosure dismiss_import;
     base::RepeatingCallback<void(std::string)> open_pin;
@@ -120,6 +123,9 @@ class WorkspaceShell final : public views::TextfieldController,
     base::RepeatingCallback<std::vector<PaletteResult>(std::u16string)> commands;
     base::RepeatingClosure passwords;
     base::RepeatingClosure downloads;
+    base::RepeatingCallback<bool(std::string, std::string, std::string)> create_folder, rename_folder;
+    base::RepeatingCallback<bool(std::string, std::string, bool)> delete_folder;
+    base::RepeatingCallback<void(std::u16string, size_t)> query_history;
     base::RepeatingCallback<TimeMachineState()> time_machine;
     base::RepeatingCallback<bool()> operation_pending;
     base::RepeatingCallback<bool(std::string, bool)> save_snapshot;
@@ -186,7 +192,16 @@ class WorkspaceShell final : public views::TextfieldController,
   int sidebar_width() const { return sidebar_width_; }
   bool CloseOverlays(bool keep_sidebar = false);
   void OpenGeneralSettings();
-  void OpenTools(int page);  // 0: Time Machine, 1: shortcuts, 2: search providers.
+  void OpenTools(int page);  // 0: Time Machine, 1: shortcuts, 2: search providers, 3: history.
+  void RefreshHistory(bool more = false);
+  void SetHistoryResults(std::u16string query, std::string profile_id, size_t limit,
+      std::vector<BrowsingHistoryEntry> entries, bool more, bool error);
+  bool history_visible() const;
+  bool history_loaded() const { return history_loaded_; }
+  views::View* history_results_view() const { return history_list_; }
+  views::Textfield* history_search() const { return history_search_; }
+  views::Combobox* history_period() const { return history_period_; }
+  const std::vector<BrowsingHistoryEntry>& history_entries() const { return history_entries_; }
   void SyncShortcuts() { RefreshKeyRegistrations(); }
   bool CaptureShortcut(const ui::Accelerator& accelerator);
   std::string ShortcutFor(const ui::Accelerator& accelerator) const;
@@ -208,6 +223,10 @@ class WorkspaceShell final : public views::TextfieldController,
   bool workspace_animations() const { return workspace_animations_; }
   void AnimateWorkspaceSwitch(std::string_view previous);
   bool workspace_animation_running() const;
+  bool workspace_animation_pending() const { return workspace_animation_pending_; }
+  bool workspace_swipe_visible() const { return swipe_overlay_ != nullptr; }
+  double workspace_swipe_position() const { return swipe_position_; }
+  size_t workspace_swipe_preview_count() const;
   views::Widget* general_widget() const { return general_widget_.get(); }
   void SetPreferencesStatus(std::u16string text, bool error = false);
   void SetOperationStatus(std::u16string text);
@@ -226,13 +245,21 @@ class WorkspaceShell final : public views::TextfieldController,
   void SetConfigurationError(bool error);
   void OpenProfiles(std::string profile_id = {}, std::string workspace_id = {});
   void OpenImport();
-  void SetImportStatus(std::u16string message, bool can_import, bool busy = false);
+  void SetImportStatus(std::u16string message, bool can_import, bool busy = false, bool applying = false);
   bool import_visible() const;
+  BrowserImportOptions import_options() const;
+  views::Combobox* import_browser_picker() const { return import_browser_picker_; }
+  views::Checkbox* import_bookmarks() const { return import_bookmarks_; }
+  views::Button* import_close() const { return dismiss_import_; }
+  views::Checkbox* import_history() const { return import_history_; }
+  views::Checkbox* import_cookies() const { return import_cookies_; }
+  views::Checkbox* import_profiles() const { return import_profiles_; }
   views::Widget* import_widget() const { return import_widget_.get(); }
   void SetProfileStatus(std::u16string message);
   views::Widget* profiles_widget() const { return profiles_widget_.get(); }
   views::Textfield* profile_name_input() const { return profile_name_input_; }
   views::Combobox* managed_profile_picker() const { return managed_profile_picker_; }
+  views::Widget* remove_workspace_dialog() const { return remove_workspace_dialog_.get(); }
   views::Widget* settings_widget() const { return settings_widget_.get(); }
   bool pinned() const { return pinned_; }
   void SetWorkspaceColor(std::string_view id, SkColor color);
@@ -249,7 +276,22 @@ class WorkspaceShell final : public views::TextfieldController,
   views::Textfield* workspace_input() const { return workspace_input_; }
   views::Button* workspace_button(std::string_view id) const;
   size_t pinned_list_build_count() const { return pinned_list_build_count_; }
+  size_t sidebar_context_visit_count() const { return sidebar_context_visit_count_; }
+  size_t pin_visibility_update_count() const { return pin_visibility_update_count_; }
+  views::ScrollView* tab_scroll_view() const { return tab_scroll_; }
   void BuildWorkspaceMenu(std::string id);
+  void BuildFolderMenu(std::string parent = {});
+  void RequestNewFolder(std::string workspace, std::string parent = {});
+  void RequestRenameFolder(std::string workspace, std::string folder);
+  void RequestDeleteFolder(std::string workspace, std::string folder);
+  void ShowFolderSaveError();
+  void WarmWorkspaceSidebars(std::map<std::string, std::vector<PinnedItem>> pins);
+  bool sidebars_warmed() const { return sidebar_warm_queue_.empty() && !sidebar_warm_timer_.IsRunning(); }
+  void OnScrollEvent(ui::ScrollEvent* event) override;
+  void OnMouseEvent(ui::MouseEvent* event) override;
+  views::Widget* folder_dialog() const { return folder_dialog_.get(); }
+  views::View* sidebar_view() const { return sidebar_root_; }
+  views::View* tab_list_view() const { return tab_list_; }
   ui::SimpleMenuModel* workspace_menu() const { return workspace_menu_.get(); }
   views::Combobox* profile_picker() const { return profile_picker_; }
   views::Textfield* color_input() const { return color_input_; }
@@ -282,10 +324,21 @@ class WorkspaceShell final : public views::TextfieldController,
   raw_ptr<views::Combobox> closed_picker_ = nullptr;
   raw_ptr<views::ScrollView> tools_scroll_ = nullptr;
   std::vector<std::string> snapshot_ids_, closed_ids_;
+  raw_ptr<views::Textfield> history_search_ = nullptr;
+  raw_ptr<views::Combobox> history_period_ = nullptr;
+  raw_ptr<views::View> history_list_ = nullptr;
+  raw_ptr<views::Button> history_more_ = nullptr;
+  raw_ptr<views::Button> history_clear_ = nullptr;
+  std::vector<BrowsingHistoryEntry> history_entries_;
+  size_t history_limit_ = 200;
+  bool history_loaded_ = false;
+  bool browsing_data_busy_ = false;
+  base::OneShotTimer history_timer_;
   int tools_page_ = 0;
   bool recording_shortcut_ = false;
   std::unique_ptr<views::WidgetDelegate> tools_delegate_;
   std::unique_ptr<views::Widget> tools_widget_;
+  void RequestFolderName(std::string workspace, std::string parent, std::string renamed);
   void ApplyTheme();
   void RefreshGeneralControls();
   void FilterPreferences();
@@ -296,7 +349,9 @@ class WorkspaceShell final : public views::TextfieldController,
   void SaveSitePreference();
   void SaveGeneralPatch(std::optional<ThemeMode> theme, std::optional<SearchEngine> search, std::optional<bool> animations);
   void OnNativeThemeUpdated(ui::NativeTheme* observed_theme) override;
-  void RebuildTabs();
+  void RebuildTabs(std::string_view previous, bool catalogue_changed);
+  void StopWorkspaceAnimation();
+  void ConfigureSidebarContextMenus(views::View* root);
   struct TabListCache {
     raw_ptr<views::View> root = nullptr;
     raw_ptr<views::View> pins_root = nullptr;
@@ -310,7 +365,7 @@ class WorkspaceShell final : public views::TextfieldController,
     std::string active_pin;
   };
   void AppendPinnedItems(views::View* parent, const std::string& parent_id, int depth,
-      const std::map<std::string, std::vector<const PinnedItem*>>& children, TabListCache& cache);
+      const std::map<std::string, std::vector<const PinnedItem*>>& children, TabListCache& cache, const std::string& workspace);
   void RebuildWorkspaceDots();
   void ShowContextMenuForViewImpl(views::View*, const gfx::Point&, ui::mojom::MenuSourceType) override;
   bool IsCommandIdChecked(int command_id) const override;
@@ -323,13 +378,19 @@ class WorkspaceShell final : public views::TextfieldController,
   std::optional<size_t> context_tab_;
   std::string context_pin_;
   void SubmitWorkspace(bool add);
+  void ImportSelectionChanged();
+  base::OneShotTimer import_preview_timer_;
+  void ConfirmRemoveWorkspace(std::string id);
+  bool creating_workspace_ = false;
+  raw_ptr<views::View> workspace_appearance_ = nullptr;
+  base::WeakPtr<views::Widget> remove_workspace_dialog_;
   void RefreshWorkspaceSettings();
   void RefreshProfileControls();
   void SubmitProfile();
   void DeleteSelectedProfile();
   void RebuildSuggestions();
   void RequestSearch();
-  void ApplyAppearance();
+  void ApplyAppearance(bool refresh_theme = true);
   void ApplyHexColor();
   void RefreshWorkspaceHeading();
   void RestorePageFocus();
@@ -411,11 +472,14 @@ class WorkspaceShell final : public views::TextfieldController,
   std::string link_source_workspace_;
   std::vector<Workspace> route_workspaces_;
   raw_ptr<views::Button> new_tab_button_ = nullptr;
+  base::WeakPtr<views::Widget> folder_dialog_;
+  std::string folder_parent_id_;
   raw_ptr<views::View> sidebar_root_ = nullptr;
   raw_ptr<views::View> palette_root_ = nullptr;
   raw_ptr<views::View> settings_root_ = nullptr;
   raw_ptr<views::Label> settings_title_ = nullptr;
   raw_ptr<views::View> tab_list_ = nullptr;
+  raw_ptr<views::ScrollView> tab_scroll_ = nullptr;
   raw_ptr<views::View> suggestion_list_ = nullptr;
   raw_ptr<views::ScrollView> suggestion_scroll_ = nullptr;
   raw_ptr<views::Button> url_pill_ = nullptr;
@@ -432,9 +496,36 @@ class WorkspaceShell final : public views::TextfieldController,
   std::vector<ProfileInfo> menu_profiles_;
   std::unique_ptr<ui::SimpleMenuModel> workspace_menu_;
   std::unique_ptr<ui::SimpleMenuModel> profile_menu_;
+  std::unique_ptr<ui::SimpleMenuModel> color_menu_;
+  std::unique_ptr<ui::SimpleMenuModel> emoji_menu_;
   std::unique_ptr<views::MenuRunner> workspace_menu_runner_;
   std::map<std::string, TabListCache> tab_lists_;
+  void WarmNextSidebar();
+  std::vector<std::pair<std::string, std::vector<PinnedItem>>> sidebar_warm_queue_;
+  base::OneShotTimer sidebar_warm_timer_;
+  bool HandleWorkspaceScroll(float x, float y, bool began, bool ended, bool momentum, base::TimeTicks time, bool phase_less = false);
+  float swipe_x_ = 0, swipe_y_ = 0;
+  int swipe_axis_ = 0;
+  bool swipe_tracking_ = false;
+  bool swipe_closed_ = false;
+  bool swipe_phase_less_ = false;
+  bool swipe_committing_ = false;
+  int swipe_start_index_ = 0;
+  double swipe_position_ = 0;
+  std::string swipe_source_, swipe_commit_target_;
+  std::vector<std::string> swipe_workspace_ids_;
+  raw_ptr<views::View> swipe_overlay_ = nullptr;
+  base::OneShotTimer swipe_idle_timer_, swipe_settle_timer_;
+  void UpdateWorkspaceSwipePreview();
+  void FinishWorkspaceSwipe();
+  void CancelWorkspaceSwipe();
+  size_t workspace_animation_generation_ = 0;
+  bool workspace_animation_pending_ = false;
+  base::TimeTicks swipe_last_time_;
+  base::TimeTicks last_native_scroll_time_;
   size_t pinned_list_build_count_ = 0;
+  size_t sidebar_context_visit_count_ = 0;
+  size_t pin_visibility_update_count_ = 0;
   raw_ptr<views::Combobox> profile_picker_ = nullptr;
   raw_ptr<views::Textfield> workspace_input_ = nullptr;
   raw_ptr<views::Button> add_workspace_ = nullptr;
@@ -443,10 +534,16 @@ class WorkspaceShell final : public views::TextfieldController,
   raw_ptr<views::Label> configuration_error_ = nullptr;
   raw_ptr<views::View> import_root_ = nullptr;
   raw_ptr<views::Label> import_status_ = nullptr;
-  raw_ptr<views::Button> preview_import_ = nullptr;
+  raw_ptr<views::Combobox> import_browser_picker_ = nullptr;
+  raw_ptr<views::Checkbox> import_bookmarks_ = nullptr;
+  raw_ptr<views::Checkbox> import_profiles_ = nullptr;
+  raw_ptr<views::Checkbox> import_history_ = nullptr;
+  raw_ptr<views::Checkbox> import_cookies_ = nullptr;
   raw_ptr<views::Button> apply_import_ = nullptr;
+  raw_ptr<views::Button> dismiss_import_ = nullptr;
   bool import_can_apply_ = false;
   bool import_busy_ = false;
+  bool import_applying_ = false;
   std::set<std::string> collapsed_folders_;
   raw_ptr<views::View> profiles_root_ = nullptr;
   raw_ptr<views::Combobox> managed_profile_picker_ = nullptr;

@@ -1,3 +1,4 @@
+#include "chromium/prototype/browser_import_data.h"
 #include "chromium/prototype/workspace_window.h"
 #include "chromium/prototype/download_panel.h"
 #include "chromium/prototype/page_services.h"
@@ -272,9 +273,10 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   config_runner_ = base::ThreadPool::CreateSequencedTaskRunner(
       {base::MayBlock(), base::TaskPriority::USER_VISIBLE, base::TaskShutdownBehavior::BLOCK_SHUTDOWN});
   WorkspaceShell::Callbacks callbacks;
-  callbacks.preview_import = base::BindRepeating([](WorkspaceWindow* window) {
-    window->PreviewArcImport(DefaultArcDirectory());
+  callbacks.preview_import = base::BindRepeating([](WorkspaceWindow* window, BrowserImportOptions options) {
+    window->PreviewBrowserImport(options);
   }, base::Unretained(this));
+  callbacks.invalidate_import = base::BindRepeating(&WorkspaceWindow::InvalidateImportPreview, base::Unretained(this));
   callbacks.apply_import = base::BindRepeating(&WorkspaceWindow::ApplyArcImport, base::Unretained(this));
   callbacks.dismiss_import = base::BindRepeating(&WorkspaceWindow::DismissImport, base::Unretained(this));
   callbacks.open_pin = base::BindRepeating(&WorkspaceWindow::OpenPinnedItem, base::Unretained(this));
@@ -299,6 +301,10 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   callbacks.read_site_preferences = base::BindRepeating(&WorkspaceWindow::ReadSitePreferences, base::Unretained(this));
   callbacks.write_site_preference = base::BindRepeating(&WorkspaceWindow::WriteSitePreference, base::Unretained(this));
   callbacks.remove_site_preference = base::BindRepeating(&WorkspaceWindow::RemoveSitePreference, base::Unretained(this));
+  callbacks.rename_folder = base::BindRepeating(&WorkspaceWindow::RenamePinnedFolder, base::Unretained(this));
+  callbacks.delete_folder = base::BindRepeating(&WorkspaceWindow::RemovePinnedFolder, base::Unretained(this));
+  callbacks.create_folder = base::BindRepeating(&WorkspaceWindow::CreatePinnedFolder, base::Unretained(this));
+  callbacks.query_history = base::BindRepeating(&WorkspaceWindow::QueryBrowsingHistory, base::Unretained(this));
   callbacks.clear_browsing_data = base::BindRepeating(&WorkspaceWindow::RequestClearBrowsingData, base::Unretained(this));
   callbacks.system_settings = base::BindRepeating(&WorkspaceWindow::OpenSystemSettings, base::Unretained(this));
   callbacks.read_preferences = base::BindRepeating(&WorkspaceWindow::ReadPreferences, base::Unretained(this));
@@ -396,6 +402,7 @@ WorkspaceWindow::~WorkspaceWindow() {
   if (time_machine_timer_.IsRunning()) FlushTimeMachine();
   closing_ = true;
   history_tasks_.TryCancelAll();
+  history_view_tasks_.TryCancelAll();
   weak_factory_.InvalidateWeakPtrs();
   ClosePeek();
   shell_->Detach();
@@ -531,15 +538,16 @@ void WorkspaceWindow::UpdateShell() {
   for (const auto& host : hosts_) {
     if (host.workspace_id != active_id()) continue;
     ShellState state;
+    std::map<views::WebView*, std::string> pin_ids;
+    for (const auto& [id, view] : host.pin_tabs) pin_ids.emplace(view.get(), id);
     for (const auto& view : host.tabs) {
       const GURL display_url = TabUrl(host, view);
       auto title = TabTitle(host, view);
       if (title.empty()) title = base::UTF8ToUTF16(display_url.host());
       std::string pin_id;
-      for (const auto& [id, pin_view] : host.pin_tabs) {
-        if (pin_view != view) continue;
-        pin_id = id;
-        if (pin_view == host.view) state.active_pin = id;
+      if (auto pin = pin_ids.find(view.get()); pin != pin_ids.end()) {
+        pin_id = pin->second;
+        if (view == host.view) state.active_pin = pin_id;
       }
       const size_t index = &view - host.tabs.data();
       if (host.right) {
@@ -1325,6 +1333,7 @@ bool WorkspaceWindow::AcceleratorPressed(const ui::Accelerator& accelerator) {
 bool WorkspaceWindow::RunShortcut(std::string id) {
   if (id.empty()) return false;
   if (id == "downloads") { ShowDownloads(); return true; }
+  if (id == "history") { shell_->OpenTools(3); return true; }
   if (id == "settings") { shell_->OpenGeneralSettings(); return true; }
   if (id == "address" || id == "new_tab" || id == "palette") {
     if (peek_view_ && GuardPages({peek_contents()}, base::BindOnce([](base::WeakPtr<WorkspaceWindow> w, std::string id) { if (w) w->RunShortcut(id); }, weak_factory_.GetWeakPtr(), id))) return true;
@@ -1475,13 +1484,16 @@ bool WorkspaceWindow::UpdateWorkspace(std::string id, std::string name, std::str
   return false;
 }
 
-bool WorkspaceWindow::RemoveWorkspace() {
+bool WorkspaceWindow::RemoveWorkspace(std::string id) {
   if (!configuration_ready_ || configuration_invalid_ || profiles_busy() || hosts_.size() <= 1) return false;
-  const auto id = active_id();
-  if (GuardPages(WorkspacePages(id, true, true), base::BindOnce([](base::WeakPtr<WorkspaceWindow> w) { if (w) w->RemoveWorkspace(); }, weak_factory_.GetWeakPtr()))) return true;
+  if (id.empty()) id = active_id();
+  if (std::none_of(hosts_.begin(), hosts_.end(), [&](const auto& host) { return host.workspace_id == id; })) return false;
+  if (GuardPages(WorkspacePages(id, true, true), base::BindOnce([](base::WeakPtr<WorkspaceWindow> w, std::string target) {
+        if (w) w->RemoveWorkspace(std::move(target));
+      }, weak_factory_.GetWeakPtr(), id))) return true;
   const auto next = model_.workspaces()[0].id == id
       ? model_.workspaces()[1].id : model_.workspaces()[0].id;
-  if (!Select(next)) return false;
+  if (active_id() == id && !Select(next)) return false;
   for (auto it = hosts_.begin(); it != hosts_.end(); ++it) {
     if (it->workspace_id != id) continue;
     auto tabs = std::move(it->tabs);
@@ -1501,8 +1513,10 @@ bool WorkspaceWindow::RemoveWorkspace() {
 void WorkspaceWindow::SaveConfiguration(base::OnceCallback<void(bool)> done) {
   if (!configuration_ready_ || configuration_invalid_) { if (done) std::move(done).Run(false); return; }
   base::DictValue dict;
+  const auto* replaced_starter = import_replaces_starter_ ? model_.Find(starter_workspace_id_) : nullptr;
   base::ListValue profile_list;
   for (const auto& entry : profiles_) {
+    if (replaced_starter && entry.info.id == replaced_starter->profile_id) continue;
     base::DictValue item;
     item.Set("id", entry.info.id);
     item.Set("name", entry.info.name);
@@ -1516,6 +1530,7 @@ void WorkspaceWindow::SaveConfiguration(base::OnceCallback<void(bool)> done) {
   dict.Set("deleted_profiles", std::move(deleted));
   base::ListValue list;
   for (const auto& workspace : model_.workspaces()) {
+    if (replaced_starter && workspace.id == replaced_starter->id) continue;
     base::DictValue item;
     item.Set("id", workspace.id);
     item.Set("name", workspace.name);
@@ -1541,8 +1556,10 @@ void WorkspaceWindow::SaveConfiguration(base::OnceCallback<void(bool)> done) {
     rules.Append(std::move(value));
   }
   dict.Set("link_rules", std::move(rules));
-  dict.Set("active", active_id());
-  dict.Set("onboarding_complete", onboarding_complete_);
+  dict.Set("active", replaced_starter ? import_new_workspace_ids_.front() : active_id());
+  dict.Set("onboarding_complete", onboarding_complete_ || import_replaces_starter_);
+  if (!starter_workspace_id_.empty() && !onboarding_complete_ && !import_replaces_starter_)
+    dict.Set("starter_workspace", starter_workspace_id_);
   std::string json;
   if (!base::JSONWriter::Write(dict, &json)) { if (done) std::move(done).Run(false); return; }
   ++pending_config_writes_;
@@ -1811,15 +1828,25 @@ void WorkspaceWindow::RestoreConfiguration(std::string json) {
     }
     pins_ = std::move(restored_pins);
     onboarding_complete_ = dict->FindBool("onboarding_complete").value_or(true);
+    if (const auto* starter = dict->FindString("starter_workspace"))
+      if (!onboarding_complete_ && model_.Find(*starter)) starter_workspace_id_ = *starter;
     profiles_ = std::move(entries);
     deleted_directories_ = std::move(deleted);
   } else {
     configuration_invalid_ = !json.empty();
-    profiles_.push_back({{"work-profile", "Profil firmowy", "ZitterWork", ""}, nullptr});
-    profiles_.push_back({{"personal-profile", "Profil osobisty", "ZitterPersonal", ""}, nullptr});
-    model_.Add({"work", "work-profile", "Praca"});
-    model_.Add({"personal", "personal-profile", "Prywatne"});
-    restored_active_ = "work";
+    if (json.empty()) {
+      profiles_.push_back({{"personal-profile", "Profil osobisty", "ZitterPersonal", ""}, nullptr});
+      model_.Add({"personal", "personal-profile", "Moja przestrzeń"});
+      starter_workspace_id_ = "personal";
+      restored_active_ = "personal";
+    } else {
+      // Invalid existing metadata retains the established recovery behavior.
+      profiles_.push_back({{"work-profile", "Profil firmowy", "ZitterWork", ""}, nullptr});
+      profiles_.push_back({{"personal-profile", "Profil osobisty", "ZitterPersonal", ""}, nullptr});
+      model_.Add({"work", "work-profile", "Praca"});
+      model_.Add({"personal", "personal-profile", "Prywatne"});
+      restored_active_ = "work";
+    }
   }
   LoadStartupProfiles();
 }
@@ -1987,6 +2014,7 @@ void WorkspaceWindow::FinishConfiguration() {
   closing_ = false;
   configuration_ready_ = true;
   Select(restored_active_);
+  shell_->WarmWorkspaceSidebars(pins_);
   SaveConfiguration();
   for (const auto& directory : deleted_directories_) ScheduleProfileDeletion(directory);
   if (configuration_invalid_) shell_->SetConfigurationError(true);
@@ -2024,24 +2052,116 @@ void WorkspaceWindow::OpenPinnedItem(std::string id) {
   }
 }
 
-void WorkspaceWindow::PreviewArcImport(base::FilePath arc_directory) {
-  if (!configuration_ready_ || configuration_invalid_ || profiles_busy_ || import_loading_) return;
+bool WorkspaceWindow::CreatePinnedFolder(std::string workspace, std::string parent, std::string name) {
+  name = std::string(base::TrimWhitespaceASCII(name, base::TRIM_ALL));
+  if (!configuration_ready_ || configuration_invalid_ || profiles_busy_ || !model_.Find(workspace) ||
+      name.empty() || name.size() > 256 || !base::IsStringUTF8(name)) return false;
+  auto& items = pins_[workspace];
+  if (!parent.empty() && std::none_of(items.begin(), items.end(), [&](const auto& item) {
+        return item.id == parent && item.folder;
+      })) return false;
+  // Match the renderer's nesting bound; do not create an invisible descendant.
+  std::string ancestor = parent;
+  size_t depth = 0;
+  while (!ancestor.empty()) {
+    if (++depth > 64) return false;
+    auto it = std::find_if(items.begin(), items.end(), [&](const auto& item) { return item.id == ancestor && item.folder; });
+    if (it == items.end()) return false;
+    ancestor = it->parent_id;
+  }
+  const auto id = "folder-" + base::Uuid::GenerateRandomV4().AsLowercaseString();
+  items.push_back({id, parent, name, GURL(), true});
+  profiles_busy_ = true;
+  UpdateShell();
+  SaveConfiguration(base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, std::string workspace, std::string id, bool ok) {
+    if (!window) return;
+    if (!ok) std::erase_if(window->pins_[workspace], [&](const auto& item) { return item.id == id; });
+    window->profiles_busy_ = false;
+    window->UpdateShell();
+    if (!ok) window->shell_->ShowFolderSaveError();
+  }, weak_factory_.GetWeakPtr(), workspace, id));
+  return true;
+}
+
+bool WorkspaceWindow::RenamePinnedFolder(std::string workspace, std::string id, std::string name) {
+  name = std::string(base::TrimWhitespaceASCII(name, base::TRIM_ALL));
+  if (!configuration_ready_ || configuration_invalid_ || profiles_busy_ || !model_.Find(workspace) ||
+      name.empty() || name.size() > 256 || !base::IsStringUTF8(name)) return false;
+  auto& items = pins_[workspace];
+  auto folder = std::find_if(items.begin(), items.end(), [&](const auto& item) { return item.id == id && item.folder; });
+  if (folder == items.end()) return false;
+  auto previous = items;
+  folder->title = std::move(name);
+  SaveFolderEdit(std::move(workspace), std::move(previous));
+  return true;
+}
+bool WorkspaceWindow::RemovePinnedFolder(std::string workspace, std::string id, bool contents) {
+  if (!configuration_ready_ || configuration_invalid_ || profiles_busy_ || !model_.Find(workspace)) return false;
+  auto& items = pins_[workspace];
+  auto folder = std::find_if(items.begin(), items.end(), [&](const auto& item) { return item.id == id && item.folder; });
+  if (folder == items.end()) return false;
+  auto previous = items;
+  std::set<std::string> removed{id};
+  if (contents) {
+    bool changed;
+    do {
+      changed = false;
+      for (const auto& item : items) if (removed.contains(item.parent_id)) changed |= removed.insert(item.id).second;
+    } while (changed);
+  } else {
+    const auto parent = folder->parent_id;
+    for (auto& item : items) if (item.parent_id == id) item.parent_id = parent;
+  }
+  std::erase_if(items, [&](const auto& item) { return removed.contains(item.id); });
+  SaveFolderEdit(std::move(workspace), std::move(previous), std::move(removed));
+  return true;
+}
+void WorkspaceWindow::SaveFolderEdit(std::string workspace, std::vector<PinnedItem> previous, std::set<std::string> removed) {
+  profiles_busy_ = true;
+  UpdateShell();
+  SaveConfiguration(base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, std::string workspace,
+      std::vector<PinnedItem> previous, std::set<std::string> removed, bool ok) {
+    if (!window) return;
+    if (!ok) window->pins_[workspace] = std::move(previous);
+    else for (auto& host : window->hosts_) if (host.workspace_id == workspace)
+      std::erase_if(host.pin_tabs, [&](const auto& item) { return removed.contains(item.first); });
+    // Previously opened pins stay alive as ordinary tabs after unpinning.
+    window->profiles_busy_ = false;
+    window->UpdateShell();
+    if (!ok) window->shell_->ShowFolderSaveError();
+  }, weak_factory_.GetWeakPtr(), workspace, std::move(previous), std::move(removed)));
+}
+
+void WorkspaceWindow::PreviewArcImport(base::FilePath directory) {
+  PreviewBrowserImport(BrowserImportOptions(), std::move(directory));
+}
+void WorkspaceWindow::InvalidateImportPreview() {
+  if (profiles_busy_) return;
+  ++import_preview_generation_;
+  pending_import_.reset();
+  import_loading_ = false;
+}
+void WorkspaceWindow::PreviewBrowserImport(BrowserImportOptions options, base::FilePath directory) {
+  if (!configuration_ready_ || configuration_invalid_ || profiles_busy_) return;
+  if (directory.empty()) directory = DefaultBrowserDirectory(options.browser);
   import_loading_ = true;
   pending_import_.reset();
-  shell_->SetImportStatus(u"Odczytywanie danych Arc…", false, true);
-  config_runner_->PostTaskAndReplyWithResult(FROM_HERE, base::BindOnce(ReadArcImport, arc_directory),
-      base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, ArcImport result) {
+  const auto generation = ++import_preview_generation_;
+  shell_->SetImportStatus(u"Odczytywanie danych z " + ImportBrowserName(options.browser) + u"…", false, true);
+  config_runner_->PostTaskAndReplyWithResult(FROM_HERE, base::BindOnce(ReadBrowserImport, options, directory),
+      base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, size_t generation, ArcImport result) {
         if (!window) return;
+        if (generation != window->import_preview_generation_) return;
         window->import_loading_ = false;
         auto status = result.error.empty()
-            ? base::UTF8ToUTF16("Znaleziono: " + std::to_string(result.profiles.size()) + " profili, " +
-                std::to_string(result.spaces.size()) + " Spaces, " + std::to_string(result.folder_count) +
-                " folderów i " + std::to_string(result.tab_count) + " przypiętych kart.")
+            ? base::UTF8ToUTF16("Do importu: " + std::to_string(result.profiles.size()) + " profili, " +
+                std::to_string(result.spaces.size()) + " przestrzeni, " + std::to_string(result.folder_count) +
+                " folderów i " + std::to_string(result.tab_count) + " kart lub zakładek.")
             : base::UTF8ToUTF16(result.error);
-        if (result.skipped_count) status += base::UTF8ToUTF16(" Pominięte lub nieobsługiwane elementy: " + std::to_string(result.skipped_count) + ".");
+        if (result.skipped_count) status += base::UTF8ToUTF16(" Pominięte elementy: " + std::to_string(result.skipped_count) + ".");
         window->pending_import_ = std::move(result);
         window->shell_->SetImportStatus(status, window->pending_import_->error.empty());
-      }, weak_factory_.GetWeakPtr()));
+      }, weak_factory_.GetWeakPtr(), generation));
 }
 
 bool WorkspaceWindow::ApplyArcImport() {
@@ -2050,8 +2170,24 @@ bool WorkspaceWindow::ApplyArcImport() {
   import_new_profile_ids_.clear();
   import_new_workspace_ids_.clear();
   UpdateShell();
-  shell_->SetImportStatus(u"Importowanie profili i przestrzeni Arc…", false, true);
-  ImportNextProfile(0);
+  shell_->SetImportStatus(u"Importowanie wybranych danych…", false, /*busy=*/true, /*applying=*/true);
+  if (!pending_import_->options.history && !pending_import_->options.cookies) {
+    ImportNextProfile(0);
+  } else {
+    config_runner_->PostTaskAndReplyWithResult(FROM_HERE,
+        base::BindOnce([](ArcImport source) { return ReadBrowsingImportData(source); }, *pending_import_),
+        base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, std::shared_ptr<BrowsingImportData> data) {
+          if (!window) return;
+          if (!data->error.empty()) {
+            window->profiles_busy_ = false;
+            window->UpdateShell();
+            window->shell_->SetImportStatus(base::UTF8ToUTF16(data->error), true);
+            return;
+          }
+          window->import_browsing_data_ = std::move(data);
+          window->ImportNextProfile(0);
+        }, weak_factory_.GetWeakPtr()));
+  }
   return true;
 }
 
@@ -2074,6 +2210,17 @@ void WorkspaceWindow::ImportNextProfile(size_t index) {
 }
 
 void WorkspaceWindow::CommitArcImport() {
+  // Only the untouched first-run placeholder can be replaced. Existing work or
+  // workspaces are never discarded by an import opened later in Settings.
+  import_replaces_starter_ = false;
+  if (!onboarding_complete_ && model_.workspaces().size() == 1 && !starter_workspace_id_.empty()) {
+    const auto* starter = model_.Find(starter_workspace_id_);
+    auto host = std::find_if(hosts_.begin(), hosts_.end(), [&](const auto& h) { return h.workspace_id == starter_workspace_id_; });
+    import_replaces_starter_ = starter && starter->name == "Moja przestrzeń" &&
+        starter->profile_id == "personal-profile" && pinned_items(starter->id).empty() &&
+        host != hosts_.end() && host->tabs.size() == 1 && !host->right &&
+        !TabUrl(*host, host->view).SchemeIsHTTPOrHTTPS();
+  }
   closing_ = true;
   for (const auto& space : pending_import_->spaces) {
     if (model_.Find(space.id)) continue;
@@ -2088,6 +2235,7 @@ void WorkspaceWindow::CommitArcImport() {
     host.view = CreatePage(host.profile);
     host.tabs.push_back(host.view);
   }
+  if (import_new_workspace_ids_.empty()) import_replaces_starter_ = false;
   closing_ = false;
   SaveConfiguration(base::BindOnce(&WorkspaceWindow::CompleteArcImport, weak_factory_.GetWeakPtr()));
 }
@@ -2115,22 +2263,69 @@ void WorkspaceWindow::CompleteArcImport(bool ok) {
     }
     closing_ = false;
   } else {
+    if (import_replaces_starter_) {
+      const auto* starter = model_.Find(starter_workspace_id_);
+      const std::string profile_id = starter->profile_id;
+      CHECK(controller_.Activate(import_new_workspace_ids_.front()));
+      for (auto it = hosts_.begin(); it != hosts_.end(); ++it) {
+        if (it->workspace_id != starter_workspace_id_) continue;
+        auto tabs = std::move(it->tabs);
+        it->view = it->left = it->right = nullptr;
+        hosts_.erase(it);
+        for (auto& tab : tabs) shell_->content_host()->RemoveChildViewT(tab.get());
+        break;
+      }
+      CHECK(model_.Remove(starter_workspace_id_));
+      pins_.erase(starter_workspace_id_);
+      std::erase_if(profiles_, [&](const auto& p) { return p.info.id == profile_id; });
+    }
+    starter_workspace_id_.clear();
+    // Apply appearance only after a successful catalogue write, and only to new
+    // spaces so a repeated import preserves the user's local customizations.
+    for (const auto& space : pending_import_->spaces) {
+      if (!space.emoji.empty() && std::ranges::find(import_new_workspace_ids_, space.id) != import_new_workspace_ids_.end())
+        shell_->SetWorkspaceEmoji(space.id, space.emoji);
+    }
     onboarding_complete_ = true;
   }
-  profiles_busy_ = false;
-  UpdateShell();
+  import_replaces_starter_ = false;
   if (ok) SaveConfiguration();
   const auto status = ok ? base::UTF8ToUTF16("Import zakończony. Dodano " + std::to_string(added_profiles) +
       " profili i " + std::to_string(added_spaces) + " przestrzeni. Możesz wybrać je na liście przestrzeni.")
       : u"Import się nie powiódł. Dotychczasowe przestrzenie pozostały bez zmian. Spróbuj ponownie.";
+  if (ok && import_browsing_data_) {
+    std::vector<Profile*> destinations;
+    for (const auto& data : import_browsing_data_->profiles) destinations.push_back(ProfileFor(data.profile_id));
+    shell_->SetImportStatus(u"Zapisywanie historii i ciasteczek…", false, true, true);
+    WriteBrowsingImportData(std::move(import_browsing_data_), std::move(destinations),
+        base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, std::u16string status, BrowsingImportResult result) {
+          if (!window) return;
+          status += base::UTF8ToUTF16(" Przeniesiono " + std::to_string(result.history) +
+              " stron historii i " + std::to_string(result.cookies) + " ciasteczek.");
+          if (result.skipped) status += base::UTF8ToUTF16(" Pominięto: " + std::to_string(result.skipped) + ".");
+          if (result.failed) status += u" Część danych nie została zapisana. Ponów import.";
+          window->FinishArcImport(std::move(status));
+        }, weak_factory_.GetWeakPtr(), status));
+    return;
+  }
+  FinishArcImport(status);
+}
+
+void WorkspaceWindow::FinishArcImport(std::u16string status) {
+  import_browsing_data_.reset();
   pending_import_.reset();
   import_new_profile_ids_.clear();
   import_new_workspace_ids_.clear();
+  profiles_busy_ = false;
+  UpdateShell();
+  shell_->WarmWorkspaceSidebars(pins_);
   shell_->SetImportStatus(status, false);
 }
 
 void WorkspaceWindow::DismissImport() {
   if (profiles_busy_) return;
+  InvalidateImportPreview();
+  starter_workspace_id_.clear();
   onboarding_complete_ = true;
   SaveConfiguration();
 }

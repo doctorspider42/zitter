@@ -82,7 +82,7 @@ namespace zitter::prototype {
 void UpdateWorkspaceMenuShortcuts(const std::vector<Shortcut>& shortcuts) {
   const std::map<std::string, std::string> commands = {
       {"Nowa karta", "new_tab"}, {"Otwórz adres…", "address"},
-      {"Command Center…", "palette"}, {"Pobrania…", "downloads"}, {"Zamknij kartę", "close_tab"},
+      {"Command Center…", "palette"}, {"Historia…", "history"}, {"Time Machine…", "timeline"}, {"Pobrania…", "downloads"}, {"Zamknij kartę", "close_tab"},
       {"Pokaż lub ukryj karty", "sidebar"}, {"Odśwież stronę", "reload"},
       {"Ustawienia…", "settings"}, {"Pierwsza przestrzeń", "space1"}, {"Druga przestrzeń", "space2"}};
   auto update = [&](auto&& self, NSMenu* menu) -> void {

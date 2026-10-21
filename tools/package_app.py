@@ -2,9 +2,11 @@
 """Package the regular Chromium-backed Zitter executable as a local macOS app.
 
 This component development bundle links to this checkout's build dependencies;
-it is double-clickable but is not a portable distribution or signed installer.
+it is signed with a pinned identity but is not a notarized, portable installer.
 """
 import argparse
+from concurrent.futures import ThreadPoolExecutor
+import json
 import os
 from pathlib import Path
 import plistlib
@@ -12,11 +14,90 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SIGNING_CONFIG = ROOT / ".zitter-signing.json"
+BUNDLE_ID = "dev.zitter.browser"
 LSREGISTER = Path("/System/Library/Frameworks/CoreServices.framework/Frameworks/"
                   "LaunchServices.framework/Support/lsregister")
+
+
+def bundle_marker(app):
+    current = app / "Contents/Resources/zitter-development-bundle"
+    return current if current.is_file() else app / "Contents/zitter-development-bundle"
+
+
+def clone_file(source, target):
+    """Private APFS clone: signing must never mutate hard-linked build outputs."""
+    target = Path(target)
+    if target.exists() or target.is_symlink():
+        target.unlink()
+    if sys.platform == "darwin":
+        result = subprocess.run(["/bin/cp", "-c", "-p", str(source), str(target)],
+                                capture_output=True)
+        if result.returncode == 0:
+            return str(target)
+        if target.exists():
+            target.unlink()
+    shutil.copy2(source, target)
+    return str(target)
+
+
+def signing_identity(explicit=None):
+    identity = explicit or os.environ.get("ZITTER_CODESIGN_IDENTITY")
+    if not identity and SIGNING_CONFIG.exists():
+        identity = json.loads(SIGNING_CONFIG.read_text()).get("identity")
+    if not identity or identity == "-":
+        raise ValueError("Configure a permanent certificate with --sign-identity IDENTITY; "
+                         "use --unsigned only for disposable test bundles")
+    return identity
+
+
+def sign_bundle(app, identity):
+    """Sign nested code from the inside out, then verify the complete seal."""
+    magic = {b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf",
+             b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
+             b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca"}
+    files = []
+    bundles = []
+    for path in app.rglob("*"):
+        if path.is_symlink():
+            continue
+        if path.is_dir() and path.suffix in (".app", ".framework", ".xpc"):
+            bundles.append(path)
+        elif path.is_file():
+            with path.open("rb") as stream:
+                if stream.read(4) in magic:
+                    files.append(path)
+    # codesign treats a bundle's executable as the whole bundle. Seal it only
+    # after its children, through the enclosing bundle path below.
+    executables = set()
+    for bundle in bundles + [app]:
+        plist = bundle / ("Resources/Info.plist" if bundle.suffix == ".framework" else "Contents/Info.plist")
+        with plist.open("rb") as stream:
+            name = plistlib.load(stream)["CFBundleExecutable"]
+        executable = bundle / name if bundle.suffix == ".framework" else bundle / "Contents/MacOS" / name
+        executables.add(executable.resolve())
+    unique_files = {}
+    for path in files:
+        if path.resolve() not in executables:
+            stat = path.stat()
+            unique_files.setdefault((stat.st_dev, stat.st_ino), path)
+    files = list(unique_files.values())
+    # Do not use --deep for signing: each nested code object needs its own seal.
+    def sign(path):
+        command = ["/usr/bin/codesign", "--force", "--sign", identity, "--timestamp"]
+        if path == app:
+            command += ["--identifier", BUNDLE_ID]
+        subprocess.run(command + [str(path)], check=True)
+    # Independent dylibs can be signed concurrently; parent seals wait for all.
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(sign, files))
+    for path in sorted(bundles, key=lambda p: len(p.parts), reverse=True) + [app]:
+        sign(path)
+    subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app)], check=True)
 
 
 def brand_notification_helpers(framework, icon):
@@ -44,7 +125,7 @@ def brand_notification_helpers(framework, icon):
             plistlib.dump(info, stream)
 
 
-def package(out, destination, binary="zitter", register=True):
+def package(out, destination, binary="zitter", register=True, identity=None):
     out = out.resolve()
     destination = destination.absolute()
     if not re.fullmatch(r"zitter(?:_[a-z0-9]+)*", binary):
@@ -54,7 +135,7 @@ def package(out, destination, binary="zitter", register=True):
         raise ValueError(f"Build //zitter:zitter first: {executable}")
     contents = destination / "Contents"
     if destination.exists():
-        marker = contents / "zitter-development-bundle"
+        marker = bundle_marker(destination)
         if not marker.is_file():
             raise ValueError(f"Refusing to overwrite an unowned bundle: {destination}")
     macos = contents / "MacOS"
@@ -62,10 +143,15 @@ def package(out, destination, binary="zitter", register=True):
     # Upstream helper/path conventions expect this inner executable name. The
     # application's visible name, bundle identity and data directory are Zitter.
     target = macos / "Chromium"
+    if identity and (target.exists() or target.is_symlink()):
+        target.unlink()
     if target.exists() and not os.path.samefile(target, executable):
         target.unlink()
     if not target.exists():
-        os.link(executable, target)
+        if identity:
+            clone_file(executable, target)
+        else:
+            os.link(executable, target)
     frameworks = contents / "Frameworks"
     frameworks.mkdir(exist_ok=True)
     framework = frameworks / "Chromium Framework.framework"
@@ -73,7 +159,20 @@ def package(out, destination, binary="zitter", register=True):
         framework.unlink()
     elif framework.exists():
         shutil.rmtree(framework)  # Generated subtree of our marker-owned bundle.
+    private_copies = {}
     def link_file(source, target):
+        if identity:
+            source = Path(source).resolve()
+            target = Path(target)
+            existing = private_copies.get(source)
+            if existing and existing.exists():
+                if target.exists() or target.is_symlink():
+                    target.unlink()
+                os.link(existing, target)
+                return str(target)
+            clone_file(source, target)
+            private_copies[source] = target
+            return str(target)
         target = Path(target)
         if target.exists():
             if os.path.samefile(source, target):
@@ -125,7 +224,7 @@ def package(out, destination, binary="zitter", register=True):
         brand_notification_helpers(framework, icon)
     info = {
         "CFBundleExecutable": "Chromium",
-        "CFBundleIdentifier": "dev.zitter.browser",
+        "CFBundleIdentifier": BUNDLE_ID,
         "CFBundleName": "Zitter",
         "CFBundleDisplayName": "Zitter",
         "CFBundlePackageType": "APPL",
@@ -147,8 +246,11 @@ def package(out, destination, binary="zitter", register=True):
         info["CFBundleIconFile"] = "app.icns"
     with (contents / "Info.plist").open("wb") as stream:
         plistlib.dump(info, stream)
-    (contents / "zitter-development-bundle").write_text(str(out) + "\n")
+    (resources / "zitter-development-bundle").write_text(str(out) + "\n")
+    (contents / "zitter-development-bundle").unlink(missing_ok=True)
     os.utime(destination)
+    if identity:
+        sign_bundle(destination, identity)
     if register and LSREGISTER.exists() and destination.is_relative_to(ROOT):
         subprocess.run([str(LSREGISTER), "-f", str(destination)], check=False)
     print(destination)
@@ -160,12 +262,37 @@ def main():
     parser.add_argument("--destination", type=Path, default=ROOT / "build/Zitter.app")
     parser.add_argument("--binary", default="zitter", help="Regular application target basename")
     parser.add_argument("--no-register", action="store_true", help="Skip LaunchServices registration for benchmark bundles")
+    signing = parser.add_mutually_exclusive_group()
+    signing.add_argument("--sign-identity", help="Permanent certificate name or SHA-1; saved locally after success")
+    signing.add_argument("--unsigned", action="store_true", help="Explicit opt-out for disposable test bundles")
     args = parser.parse_args()
     if sys.platform != "darwin":
         parser.exit(1, "This packager is for macOS; run the native executable on Linux.\n")
     try:
-        package(args.out, args.destination, args.binary, register=not args.no_register)
-    except (OSError, ValueError) as error:
+        identity = None if args.unsigned else signing_identity(args.sign_identity)
+        destination = args.destination.absolute()
+        if destination.exists() and not bundle_marker(destination).is_file():
+            raise ValueError(f"Refusing to overwrite an unowned bundle: {destination}")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        # Do not replace the installed bundle until signing and verification pass.
+        with tempfile.TemporaryDirectory(prefix=".zitter-package-", dir=destination.parent) as stage:
+            staged_app = Path(stage) / destination.name
+            package(args.out, staged_app, args.binary, register=False, identity=identity)
+            previous = Path(stage) / "previous.app"
+            if destination.exists():
+                destination.rename(previous)
+            try:
+                staged_app.rename(destination)
+            except OSError:
+                if previous.exists():
+                    previous.rename(destination)
+                raise
+        if identity:
+            SIGNING_CONFIG.write_text(json.dumps({"identity": identity}, indent=2) + "\n")
+        if not args.no_register and LSREGISTER.exists() and destination.is_relative_to(ROOT):
+            subprocess.run([str(LSREGISTER), "-f", str(destination)], check=False)
+        print(f"Packaged: {destination}")
+    except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"Packaging failed: {error}\n")
 
 

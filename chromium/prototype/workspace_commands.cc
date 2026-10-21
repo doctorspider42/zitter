@@ -63,7 +63,8 @@ std::vector<PaletteResult> WorkspaceWindow::CommandResults(std::u16string query)
   add("sidebar", u"Pokaż / ukryj panel boczny", u"Karty i przestrzenie", u"sidebar menu");
   add("spaces", u"Zarządzaj przestrzeniami", u"Dodaj lub edytuj space i przypisanie profilu", u"workspace spaces");
   add("profiles", u"Zarządzaj profilami", u"Dodaj profil i zarządzaj jego danymi", u"profile accounts");
-  add("import", u"Importuj z Arc", u"Podgląd importu kart, folderów, space i profili", u"import arc");
+  add("import", u"Importuj z przeglądarki", u"Wybierz przeglądarkę i zakres importu", u"import arc chrome edge brave zakladki profile");
+  add("history", u"Historia przeglądania", u"Przeglądaj, szukaj i czyść historię profilu", u"history visited historia wyczysc");
   add("downloads", u"Pobrania", u"Postęp, pauza, wznowienie i Finder", u"downloads pobierz pliki transfer");
   if (page) {
     add("split", split() ? u"Zakończ Split View" : u"Otwórz Split View", u"Dwie karty obok siebie", u"split podziel porównaj compare");
@@ -123,6 +124,7 @@ bool WorkspaceWindow::ExecuteCommand(const PaletteResult& result) {
   if (id == "profiles") { shell_->OpenProfiles(); return true; }
   if (id == "import") { shell_->OpenImport(); return true; }
   if (id == "downloads") { ShowDownloads(); return true; }
+  if (id == "history") { shell_->OpenTools(3); return true; }
   if (id == "passwords") { ShowPasswords(); return true; }
   if (id == "save_snapshot") {
     if (!SaveSnapshot("Command Center")) return false;

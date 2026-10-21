@@ -42,6 +42,7 @@ class WidgetDelegate;
 namespace zitter::prototype {
 
 class DownloadPanel;
+struct BrowsingImportData;
 
 // Intentionally a substrate probe, not a replacement BrowserWindowInterface.
 // The window owns profile keep-alives; WebViews own their WebContents.
@@ -57,12 +58,17 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   WorkspaceWindow& operator=(const WorkspaceWindow&) = delete;
 
   void PreviewArcImport(base::FilePath arc_directory);
+  void PreviewBrowserImport(BrowserImportOptions options, base::FilePath directory = {});
+  void InvalidateImportPreview();
   bool ApplyArcImport();
   void DismissImport();
   bool import_ready() const { return pending_import_.has_value() && pending_import_->error.empty(); }
   const ArcImport* import_preview() const { return pending_import_ ? &*pending_import_ : nullptr; }
   const std::vector<PinnedItem>& pinned_items(std::string_view workspace_id) const;
   void OpenPinnedItem(std::string id);
+  bool CreatePinnedFolder(std::string workspace, std::string parent, std::string name);
+  bool RenamePinnedFolder(std::string workspace, std::string id, std::string name);
+  bool RemovePinnedFolder(std::string workspace, std::string id, bool contents);
   bool CreateProfile(std::string name, std::string workspace_id = {});
   bool RenameProfile(std::string id, std::string name);
   bool AssignProfile(std::string workspace_id, std::string profile_id);
@@ -71,7 +77,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   bool profiles_busy() const { return profiles_busy_ || !StartupProfilesReady(); }
   bool AddWorkspace(std::string name, std::string profile_id);
   bool EditWorkspace(std::string name, std::string profile_id);
-  bool RemoveWorkspace();
+  bool RemoveWorkspace(std::string id = {});
   bool configuration_ready() const { return configuration_ready_; }
   using StartupProfileLoader = base::RepeatingCallback<void(base::FilePath, base::OnceCallback<void(Profile*)>)>;
   void SetStartupProfileLoaderForTesting(StartupProfileLoader loader);
@@ -101,6 +107,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   std::vector<SitePreferenceRule> ReadSitePreferences() const;
   bool WriteSitePreference(std::string origin, std::string key, int setting);
   bool RemoveSitePreference(SitePreferenceRule rule);
+  void QueryBrowsingHistory(std::u16string query, size_t limit);
   void RequestClearBrowsingData(BrowsingDataSelection selection);
   bool ClearBrowsingData(std::string profile_id, BrowsingDataSelection selection);
   bool clearing_browsing_data() const { return data_remover_ != nullptr; }
@@ -190,6 +197,8 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void ImportNextProfile(size_t index);
   void CommitArcImport();
   void CompleteArcImport(bool ok);
+  void SaveFolderEdit(std::string workspace, std::vector<PinnedItem> previous, std::set<std::string> removed = {});
+  void FinishArcImport(std::u16string status);
   bool CanRemoveProfile(std::string_view id) const;
   void ScheduleProfileDeletion(const std::string& directory);
 
@@ -287,8 +296,12 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   bool profiles_busy_ = false;
   bool offer_import_ = true;
   bool onboarding_complete_ = false;
+  std::string starter_workspace_id_;
+  bool import_replaces_starter_ = false;
+  size_t import_preview_generation_ = 0;
   std::map<std::string, std::vector<PinnedItem>> pins_;
   std::optional<ArcImport> pending_import_;
+  std::shared_ptr<BrowsingImportData> import_browsing_data_;
   bool import_loading_ = false;
   std::vector<std::string> import_new_profile_ids_;
   std::vector<std::string> import_new_workspace_ids_;
@@ -312,6 +325,8 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   GURL last_preconnect_origin_;
   base::TimeTicks last_preconnect_time_;
   base::CancelableTaskTracker history_tasks_;
+  base::CancelableTaskTracker history_view_tasks_;
+  size_t history_view_generation_ = 0;
   size_t search_generation_ = 0;
   std::unique_ptr<WorkspaceShell> shell_;
   // Widget must die before its non-owned delegate and before profiles.
