@@ -21,7 +21,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Next/previous tab wrapping | Rust; existing configurable key dispatch | Preserve page shortcut precedence and editing/IME behavior |
 | Vertical list/folder columns and full content extent | Rust via native View measurement/bounds adapter | Verify collapse/resize against Views; replace the native hierarchy with stable Rust item identities |
 | Folder hierarchy, collapse state, indentation wrappers and split tile geometry/placement | Rust tree/tab plans keyed by workspace/item IDs; native View/measurement/AX adapters | Replace native node containers and viewport/clipping adapters |
-| Scroll, viewport, scrollbar | Native ScrollView/Cocoa scrollbar | Native input adapter + Rust offset/clipping; native wheel and trackpad coverage |
+| Scroll offset normalization, viewport projection and clipping | Rust logical viewport; native ScrollView/Cocoa input/scrollbar adapters | Replace native scroll containers; expand real trackpad/scale coverage |
 | Selection, close/reopen, title changes, pinned navigation | Rust row actions into existing application callbacks; native close child and AX action | Migrate close child and remaining command routing; preserve persistence and last-tab rules |
 | Folder expand/collapse and tree visibility; create/rename/delete and nested pins | Rust tree state/layout; application persistence and native menu/editing adapters | Rust editing forms; preserve failed writes and validation rollback |
 | Tab/pin context menus and drag to split | Views event routing + application commands | Rust target/action routing; retain native menus and drop policy |
@@ -93,6 +93,15 @@ Views-specific layout and control behavior must have an explicit replacement.
   folder depths, swapping while collapsed and restoring both original pins.
   Signed app pane/menu order was checked and restored. See
   [tab-plan validation](benchmarks/rust-tab-plan-functional-2026-10-21.json).
+
+- Rust now owns logical viewport state, offset normalization, local-to-viewport
+  projection and inherited clipping; Metal applies the clips with scissor state.
+  Native scrolling/input containers remain adapters. 34 Metal browser tests,
+  10 Views controls, 26 Rust tests and 59 Python tests passed. The new regression
+  matches native and submitted fractional bounds/clips, verifies hit targets and
+  normalizes an out-of-range physical offset. Signed app scrolling/selection was
+  inspected and restored. See
+  [viewport validation](benchmarks/rust-viewport-functional-2026-10-21.json).
 
 ## Completion gates
 

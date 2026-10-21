@@ -6,7 +6,7 @@ The optional `--zitter-sidebar=rust-metal` backend renders the **live tab/pin li
 
 - Rust produces the display list for actual tab titles, site monograms, selected/hovered cards, folder rows, section labels, close affordances and both tiles of a Split View pair. It also handles next/previous tab index wrapping for the Metal backend. Row title/detail/close geometry and pointer drag state now come from Rust: the native interaction adapter and the GPU display list share the same row geometry. The platform still measures text and delivers events; a Rust input reducer owns row hover/pressed states, click eligibility, latched drags, cancellation and platform key activation. On macOS Space activates on key-down, while Return remains available for the native default action. Disabled rows cannot activate; capture loss and focus loss cancel pending gestures.
 - A visual-only AppKit view presents directly through an asynchronous `CAMetalLayer`. Rounded geometry is drawn by Metal; CoreText shapes/truncates real Unicode text, including system font fallback. Text tiles are cached, bounded to 256 entries / 16 MiB, and uploaded on cache misses. Live tab/pin/folder rows no longer create hidden Views title Labels; their titles come directly from the row model and the Rust display list. No web page pixels are copied into the sidebar.
-- Rust also lays out the vertical columns of the live tab/pin/folder tree, with native adapters supplying preferred sizes and installing the returned rectangles. Hidden children are omitted from spacing; margins and full scroll extent are preserved. Rust also sets folder indentation (12 logical pixels per level, capped at eight) and lays out indented pin wrappers and split tiles. Split tiles share a four-pixel frame/gap, including odd-width remainder distribution; compact preferred size is 200 × 46 logical pixels. Viewport clipping and scroll offsets still come from the native interaction tree, which retains hierarchy/identity and receives the Rust rectangles. Paint invalidation and scroll notifications coalesce updates onto the UI task queue, independently of whether the native compositor rasterizes a frame. Pending layouts are applied before collecting scene geometry; identical frames skip GPU submission. There is no polling/redraw timer. The shared tab ScrollView now sizes its contents to their full preferred height, fixing overflow scrolling in both backends. In Metal mode, the native fading scrollbar occupies a gutter outside the GPU canvas so it stays visible and draggable. Its list offset stays on the UI thread to keep native hit testing synchronized with the separately presented Metal surface.
+- Rust also lays out the vertical columns of the live tab/pin/folder tree, with native adapters supplying preferred sizes and installing the returned rectangles. Hidden children are omitted from spacing; margins and full scroll extent are preserved. Rust also sets folder indentation (12 logical pixels per level, capped at eight) and lays out indented pin wrappers and split tiles. Split tiles share a four-pixel frame/gap, including odd-width remainder distribution; compact preferred size is 200 × 46 logical pixels. Rust projects and clips the viewport from native local bounds and floating-point scroll offsets, normalizing offsets back into the physical input adapter. The native tree retains node identity and receives the Rust layout rectangles. Paint invalidation and scroll notifications coalesce updates onto the UI task queue, independently of whether the native compositor rasterizes a frame. Pending layouts are applied before collecting scene geometry; identical frames skip GPU submission. There is no polling/redraw timer. The shared tab ScrollView now sizes its contents to their full preferred height, fixing overflow scrolling in both backends. In Metal mode, the native fading scrollbar occupies a gutter outside the GPU canvas so it stays visible and draggable. Its list offset stays on the UI thread to keep native hit testing synchronized with the separately presented Metal surface.
 
 This is an incremental renderer prototype, **not a complete removal of Views**. Views still owns outer/container layout, address pill, New Tab rendering, workspace controls, event delivery, focus, accessibility/default action, context menus, drag-to-split target policy, dialogs, palette editing and IME. RowButton mouse/key decisions use Rust, including palette and New Tab rows, while application callbacks still own browser commands. Its tab interaction nodes remain in place; the Metal overlay returns `nil` from hit testing, cannot become first responder and adds no accessibility element. The fallback painter remains available for startup, missing drawables and workspace animation snapshots. While Metal is visible, the list paint root skips native child traversal instead of painting those rows underneath it. Hiding Metal for an animation explicitly invalidates native contents; losing a previously visible drawable also requests one fresh fallback paint. Views still supplies hierarchy, interaction nodes and some layout, so this does not establish the performance of a future entirely Rust-owned sidebar.
 
@@ -170,3 +170,28 @@ Validated for tab/pin grouping on 2026-10-21: **33/33 Metal browser regressions,
 10/10 Views controls, 22/22 Rust tests and 59/59 Python tests passed**. The signed
 app's native menu swapped the real pages and GPU tiles in the same order, then
 restored the demo. See [tab-plan validation](benchmarks/rust-tab-plan-functional-2026-10-21.json).
+
+The viewport migration gives Rust the logical viewport state, offset
+normalization, parent-local projection and inherited clipping. Native adapters
+supply mirrored local bounds, visibility and floating-point scroll offsets;
+they no longer convert each row to screen coordinates or decide offscreen
+rejection. Invisible native subtrees remain shallow placeholders so inactive
+workspace caches are not traversed.
+Rust rejects offscreen/hidden/invalid geometry before title/color preparation.
+Its ancestry scratch buffer is reused across updates. Out-of-range native
+programmatic offsets are normalized back into the native input adapter as well.
+
+Projected card bounds remain untrimmed, preserving text layout and rounded
+geometry at viewport edges. Each display primitive carries its inherited clip;
+Metal applies a device-pixel scissor, rounded out and clamped to drawable bounds.
+Identical consecutive clips reuse scissor state, and frame signatures include
+clips so clipping-only changes submit a new frame. Native wheel/trackpad delivery,
+scrollbar behavior, focus/AX hit testing and main-thread scroll synchronization
+remain adapters. Native animations still use their existing fallback path.
+
+Validated for viewport projection/clipping on 2026-10-21: **34/34 Metal browser
+regressions, 10/10 Views controls, 26/26 Rust tests and 59/59 Python tests passed**.
+Fractional native geometry and the submitted GPU bounds/clip agree, including
+partial-row hit testing and normalized programmatic overscroll. The signed app
+was scrolled to tab 24, selected and restored to its original split pair. See
+[viewport validation](benchmarks/rust-viewport-functional-2026-10-21.json).

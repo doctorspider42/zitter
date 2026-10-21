@@ -3,6 +3,10 @@
 // remain in WorkspaceShell. No URLs, profiles or WebContents cross this ABI.
 #[cxx::bridge(namespace = "zitter::sidebar")]
 mod ffi {
+    struct FloatRect { x: f32, y: f32, width: f32, height: f32 }
+    struct ViewportNode { parent: usize, bounds: FloatRect, visible: bool }
+    struct ProjectedNode { index: usize, bounds: FloatRect, clip: FloatRect }
+    struct ViewportProjection { x: f32, y: f32, nodes: Vec<ProjectedNode> }
     struct Item {
         x: f32, y: f32, width: f32, height: f32,
         // 0: row, 1: section label, 2: split group background.
@@ -11,6 +15,7 @@ mod ffi {
         ink: u32, fill: u32, badge: u32,
         active: bool, hovered: bool, tile: bool, close: bool, close_visible: bool, focused: bool,
         font_size: f32,
+        clip: FloatRect,
     }
     struct TreeNode { id: String, parent: String, folder: bool }
     struct TreeEntry { index: usize, parent: usize, depth: i32, collapsed: bool, visible: bool }
@@ -29,9 +34,14 @@ mod ffi {
     struct Primitive {
         x: f32, y: f32, width: f32, height: f32,
         radius: f32, color: u32,
-        text: String, font_size: f32, bold: bool,
+        text: String, font_size: f32, bold: bool, clip: FloatRect,
     }
     extern "Rust" {
+        type Viewport;
+        fn new_viewport() -> Box<Viewport>;
+        fn project(self: &mut Viewport, content_width: f32, content_height: f32,
+                   width: f32, height: f32, x: f32, y: f32,
+                   nodes: &[ViewportNode]) -> ViewportProjection;
         type SidebarTree;
         fn new_sidebar_tree() -> Box<SidebarTree>;
         fn tree_plan(self: &SidebarTree, workspace: &str, nodes: &[TreeNode]) -> Vec<TreeEntry>;
@@ -64,6 +74,56 @@ mod ffi {
         fn cycle_tab(current: usize, count: usize, backwards: bool) -> usize;
     }
 }
+// The platform delivers scroll offsets. Rust owns normalization, parent-local
+// coordinate projection and inherited clipping; no native View pointers enter.
+#[derive(Clone, Copy)]
+struct ViewportWorld { x: f64, y: f64, left: f64, top: f64, right: f64, bottom: f64, visible: bool }
+#[derive(Default)]
+struct Viewport { width: f32, height: f32, x: f32, y: f32, world: Vec<ViewportWorld> }
+fn new_viewport() -> Box<Viewport> { Box::new(Viewport::default()) }
+impl Viewport {
+    fn project(&mut self, content_width: f32, content_height: f32, width: f32, height: f32,
+               x: f32, y: f32, nodes: &[ffi::ViewportNode]) -> ffi::ViewportProjection {
+        let positive = |v: f32| if v.is_finite() {v.max(0.0)} else {0.0};
+        let offset = |v: f32, max: f32| if v.is_finite() {v.clamp(0.0, max)} else {0.0};
+        self.width = positive(width); self.height = positive(height);
+        self.x = offset(x, (positive(content_width) - self.width).max(0.0));
+        self.y = offset(y, (positive(content_height) - self.height).max(0.0));
+        // Keep intermediate ancestry sums in f64 so large or deep native
+        // rectangles cannot overflow before viewport rejection.
+        let mut world = std::mem::take(&mut self.world);
+        world.clear(); world.reserve(nodes.len());
+        let mut out = Vec::new();
+        for (index, node) in nodes.iter().enumerate() {
+            let b = &node.bounds;
+            let valid = node.visible && [b.x, b.y, b.width, b.height].iter().all(|v| v.is_finite())
+                && b.width > 0.0 && b.height > 0.0;
+            let parent = if node.parent == usize::MAX {
+                ViewportWorld {x: 0.0, y: 0.0, left: 0.0, top: 0.0,
+                    right: f64::from(self.width), bottom: f64::from(self.height), visible: true}
+            } else if node.parent < index {world[node.parent]} else {
+                ViewportWorld {x: 0.0, y: 0.0, left: 0.0, top: 0.0, right: 0.0, bottom: 0.0, visible: false}
+            };
+            let x = parent.x + f64::from(b.x); let y = parent.y + f64::from(b.y);
+            let px = x - f64::from(self.x); let py = y - f64::from(self.y);
+            let left = px.max(parent.left); let top = py.max(parent.top);
+            let right = (px + f64::from(b.width)).min(parent.right);
+            let bottom = (py + f64::from(b.height)).min(parent.bottom);
+            let visible = valid && parent.visible && right > left && bottom > top &&
+                [px as f32, py as f32].iter().all(|v| v.is_finite());
+            world.push(ViewportWorld {x, y, left, top, right, bottom, visible});
+            if visible {
+                out.push(ffi::ProjectedNode {index,
+                    bounds: ffi::FloatRect {x: px as f32, y: py as f32, width: b.width, height: b.height},
+                    clip: ffi::FloatRect {x: left as f32, y: top as f32,
+                        width: (right - left) as f32, height: (bottom - top) as f32}});
+            }
+        }
+        self.world = world;
+        ffi::ViewportProjection {x: self.x, y: self.y, nodes: out}
+    }
+}
+
 // UI identity and expansion state only. Browser URLs, titles, profiles and
 // commands stay in the application. State survives reconstruction and rename
 // because it is keyed by workspace and item IDs, never by native View pointers.
@@ -296,11 +356,14 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
     let mut out = Vec::with_capacity(items.len() * 5);
     for i in items {
         if ![i.x, i.y, i.width, i.height].iter().all(|v| v.is_finite())
-            || i.width <= 0.0 || i.height <= 0.0 { continue; }
+            || i.width <= 0.0 || i.height <= 0.0
+            || ![i.clip.x, i.clip.y, i.clip.width, i.clip.height].iter().all(|v| v.is_finite())
+            || i.clip.width <= 0.0 || i.clip.height <= 0.0 { continue; }
         let mut emit = |x, y, w: f32, h: f32, radius, color, text: &str, size, bold| {
             if w > 0.0 && h > 0.0 {
                 out.push(ffi::Primitive { x, y, width: w, height: h, radius,
-                    color, text: text.into(), font_size: size, bold });
+                    color, text: text.into(), font_size: size, bold,
+                    clip: ffi::FloatRect {x: i.clip.x, y: i.clip.y, width: i.clip.width, height: i.clip.height} });
             }
         };
         if i.kind == 1 {
@@ -343,6 +406,7 @@ mod tests {
         title:"Zażółć 日本語 🦀".into(), monogram:"Z".into(), ink:0xff101010,
         fill:0xffffffff, badge:0xff556677, active:true, hovered:false,
         tile:false, close:true, close_visible:true, focused:false, font_size:13.0,
+        clip:ffi::FloatRect {x:0.0, y:0.0, width:width.max(0.0), height:34.0},
     }}
     fn child(width: i32, height: i32) -> ffi::ColumnChild {
         ffi::ColumnChild { width, height, top: 0, left: 0, bottom: 0, right: 0 }
@@ -369,6 +433,49 @@ mod tests {
         assert_eq!(huge.height, i32::MAX);
         assert_eq!(huge.children[1].y, i32::MAX);
         assert_eq!(huge.children[1].height, 0);
+    }
+    fn viewport_node(parent: usize, x: f32, y: f32, width: f32, height: f32, visible: bool) -> ffi::ViewportNode {
+        ffi::ViewportNode {parent, bounds: ffi::FloatRect {x, y, width, height}, visible}
+    }
+    #[test] fn viewport_preserves_fractional_scroll_and_card_geometry() {
+        let mut v = new_viewport();
+        let nodes = [viewport_node(usize::MAX, 0.0, 0.0, 200.0, 1000.0, true),
+            viewport_node(0, 12.0, 36.0, 180.0, 34.0, true),
+            viewport_node(0, 0.0, 800.0, 200.0, 34.0, true)];
+        let p = v.project(200.0, 1000.0, 200.0, 100.0, 0.0, 45.25, &nodes);
+        assert_eq!(p.y, 45.25); assert_eq!(p.nodes.len(), 2);
+        let row = &p.nodes[1];
+        assert_eq!((row.bounds.x, row.bounds.y, row.bounds.width, row.bounds.height), (12.0, -9.25, 180.0, 34.0));
+        assert_eq!((row.clip.x, row.clip.y, row.clip.width, row.clip.height), (12.0, 0.0, 180.0, 24.75));
+    }
+    #[test] fn viewport_inherits_visibility_and_all_parent_clips() {
+        let mut v = new_viewport();
+        let nodes = [viewport_node(usize::MAX, 0.0, 0.0, 200.0, 500.0, true),
+            viewport_node(0, 24.0, 10.0, 100.0, 50.0, true),
+            viewport_node(1, -12.0, 30.0, 150.0, 34.0, true),
+            viewport_node(0, 0.0, 0.0, 200.0, 200.0, false),
+            viewport_node(3, 0.0, 0.0, 100.0, 34.0, true)];
+        let p = v.project(200.0, 500.0, 200.0, 100.0, 0.0, 0.0, &nodes);
+        assert_eq!(p.nodes.len(), 3);
+        let child = &p.nodes[2];
+        assert_eq!((child.bounds.x, child.bounds.y), (12.0, 40.0));
+        assert_eq!((child.clip.x, child.clip.y, child.clip.width, child.clip.height), (24.0, 40.0, 100.0, 20.0));
+    }
+    #[test] fn viewport_clamps_offsets_after_shrink_and_rejects_invalid_geometry() {
+        let mut v = new_viewport();
+        assert_eq!(v.project(200.0, 1000.0, 200.0, 100.0, -20.0, 9000.0, &[]).y, 900.0);
+        let shrunk = v.project(200.0, 40.0, 200.0, 100.0, f32::NAN, 900.0, &[]);
+        assert_eq!((shrunk.x, shrunk.y), (0.0, 0.0));
+        let nodes = [viewport_node(usize::MAX, f32::NAN, 0.0, 200.0, 100.0, true),
+            viewport_node(7, 0.0, 0.0, 200.0, 34.0, true),
+            viewport_node(usize::MAX, 0.0, 0.0, -1.0, 34.0, true)];
+        assert!(v.project(200.0, 100.0, 200.0, 100.0, f32::INFINITY, -1.0, &nodes).nodes.is_empty());
+        assert!(v.project(f32::INFINITY, 100.0, 0.0, -1.0, 0.0, 0.0, &nodes).nodes.is_empty());
+    }
+    #[test] fn every_draw_primitive_keeps_its_item_clip() {
+        let mut item = row(200.0); item.y = -9.25; item.clip.height = 24.75;
+        let ops = layout(&[item]); assert!(!ops.is_empty());
+        assert!(ops.iter().all(|op| op.clip.y == 0.0 && op.clip.height == 24.75));
     }
     fn node(id: &str, parent: &str, folder: bool) -> ffi::TreeNode {
         ffi::TreeNode {id: id.into(), parent: parent.into(), folder}

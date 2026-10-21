@@ -648,8 +648,8 @@ The real workspace now has an optional Rust + Metal tab-list renderer, with live
 titles, folders, Split View and existing keyboard/controller routing. Live rows
 use scene text without hidden Views Labels, and skip native subtree painting
 while Metal is visible. Rust owns folder hierarchy/collapse state, tab grouping
-and pinned-pair placement, plus split tile/folder geometry; model
-updates refresh the scene independently of native painting. Rust also owns row
+and pinned-pair placement, split tile/folder geometry and viewport projection/
+clipping. Model updates refresh the scene independently of native painting. Rust also owns row
 click/drag/cancellation and platform key activation through native event, focus
 and accessibility adapters. See
 [build, isolated demo and validation](docs/rust-metal-sidebar.md).

@@ -4,17 +4,25 @@
 #include <cstddef>
 #include <memory>
 #include <string_view>
+#include <vector>
+#include "ui/gfx/geometry/point_f.h"
+#include "ui/gfx/geometry/rect_f.h"
 #include "base/containers/span.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/native_ui_types.h"
 namespace views { class ScrollBar; }
 namespace zitter::sidebar { struct Item; }
 namespace zitter::prototype {
+struct SidebarViewportNode { size_t parent; gfx::Rect bounds; bool visible; };
+struct SidebarProjectedNode { size_t index; gfx::RectF bounds, clip; };
+struct SidebarViewportProjection { gfx::PointF offset; std::vector<SidebarProjectedNode> nodes; };
 // A visual-only overlay. Native Views retain hit testing, scrolling, menus,
 // keyboard/IME and accessibility; the overlay never becomes a responder.
 class SidebarMetal {
  public:
   virtual ~SidebarMetal() = default;
+  virtual SidebarViewportProjection Project(gfx::Size content, gfx::Size viewport,
+      gfx::PointF offset, base::span<const SidebarViewportNode> nodes) = 0;
   virtual void Update(gfx::NativeWindow window, gfx::Rect screen_bounds,
                       base::span<const sidebar::Item> items, unsigned background) = 0;
   virtual void Hide() = 0;
@@ -23,6 +31,7 @@ class SidebarMetal {
   virtual size_t frame_count() const = 0;
   // Last submitted display-list text, not proof of physical presentation.
   virtual bool contains_text_for_testing(std::string_view text) const = 0;
+  virtual bool contains_rect_for_testing(gfx::RectF bounds, gfx::RectF clip) const = 0;
 };
 std::unique_ptr<SidebarMetal> CreateSidebarMetal();
 // Keep the native fading scroller outside the Metal canvas.

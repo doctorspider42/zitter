@@ -23,6 +23,7 @@
 #include "base/task/sequenced_task_runner.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/views/controls/textfield/textfield_controller.h"
+#include "ui/gfx/geometry/rect_f.h"
 #include "ui/views/controls/scroll_view.h"
 #include "ui/events/event_handler.h"
 #include "ui/views/context_menu_controller.h"
@@ -250,6 +251,7 @@ class WorkspaceShell final : public ui::EventHandler,
   // GPU submissions are separate from native subtree paint passes skipped/run.
   size_t metal_sidebar_frame_count() const;
   bool metal_sidebar_contains_text_for_testing(std::string_view text) const;
+  bool metal_sidebar_contains_rect_for_testing(gfx::RectF bounds, gfx::RectF clip) const;
   size_t native_sidebar_paint_count() const;
   size_t metal_sidebar_paint_count() const;
   size_t CycleSidebarTab(size_t current, size_t count, bool backwards) const;

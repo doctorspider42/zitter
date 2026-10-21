@@ -2336,6 +2336,9 @@ size_t WorkspaceShell::metal_sidebar_frame_count() const {
 bool WorkspaceShell::metal_sidebar_contains_text_for_testing(std::string_view text) const {
   return metal_sidebar_ && metal_sidebar_->contains_text_for_testing(text);
 }
+bool WorkspaceShell::metal_sidebar_contains_rect_for_testing(gfx::RectF bounds, gfx::RectF clip) const {
+  return metal_sidebar_ && metal_sidebar_->contains_rect_for_testing(bounds, clip);
+}
 size_t WorkspaceShell::native_sidebar_paint_count() const {
   return tab_list_ ? static_cast<SidebarListView*>(tab_list_.get())->native_paints() : 0;
 }
@@ -2361,17 +2364,37 @@ void WorkspaceShell::UpdateMetalSidebar() {
   // Invalidations can reach Metal before the next native compositor paint.
   // Apply the Rust column/row layouts now, rather than publish zero/stale bounds.
   sidebar_widget_->LayoutRootViewIfNecessary();
-  // The viewport is shared with native hit testing, including folder indentation,
-  // scroll offset and the two independent tiles of a split pair. Never invent a
-  // second tab model: title, selection, callbacks and close targets stay live.
   auto* viewport = tab_list_->parent();
   const auto bounds = viewport->GetBoundsInScreen();
+  std::vector<SidebarViewportNode> nodes;
+  std::vector<views::View*> native_views;
+  // Native adapters deliver parent-local mirrored geometry and visibility only.
+  // Rust projects the active tree and clips it before text/color preparation.
+  auto gather = [&](auto&& self, views::View* view, size_t parent) -> void {
+    const size_t index = nodes.size();
+    nodes.push_back({parent, view == tab_list_ ? gfx::Rect(view->size()) : view->GetMirroredBounds(), view->GetVisible()});
+    native_views.push_back(view);
+    if (!view->GetVisible() || views::AsViewClass<RowButton>(view) || views::AsViewClass<views::Label>(view)) return;
+    for (const auto& child : view->children()) self(self, child.get(), index);
+  };
+  gather(gather, tab_list_, SidebarTree::kRoot);
+  const auto requested = tab_scroll_->CurrentOffset();
+  const auto projection = metal_sidebar_->Project(tab_list_->size(), bounds.size(), requested, nodes);
+  if (projection.offset != requested) {
+    // Direct programmatic offsets and resized content can exceed the new
+    // extent. Apply Rust's normalized offset to the native input adapter too.
+    tab_scroll_->ScrollToOffset(projection.offset);
+    ScheduleMetalSidebar();
+    return;
+  }
   std::vector<sidebar::Item> items;
-  auto collect = [&](auto&& self, views::View* view) -> void {
-    if (!view->IsDrawn()) return;
-    auto rect = view->GetBoundsInScreen();
-    if (!rect.Intersects(bounds)) return;
-    rect.Offset(-bounds.x(), -bounds.y());
+  items.reserve(projection.nodes.size());
+  for (const auto& projected : projection.nodes) {
+    auto* view = native_views[projected.index];
+    const auto& rect = projected.bounds;
+    sidebar::Item item{};
+    item.x = rect.x(); item.y = rect.y(); item.width = rect.width(); item.height = rect.height();
+    item.clip = {projected.clip.x(), projected.clip.y(), projected.clip.width(), projected.clip.height()};
     if (auto* row = views::AsViewClass<RowButton>(view)) {
       const auto& spec = row->preview_spec();
       const bool hovered = row->GetState() == views::Button::STATE_HOVERED ||
@@ -2381,35 +2404,23 @@ void WorkspaceShell::UpdateMetalSidebar() {
       else if (spec.active) fill = Tone(row, kCard);
       else if (spec.highlighted) fill = Tone(row, kAccentWash);
       else if (hovered) fill = HoverWash(row);
-      sidebar::Item item{};
-      item.x = rect.x(); item.y = rect.y(); item.width = rect.width(); item.height = rect.height();
       item.kind = 0; item.title = base::UTF16ToUTF8(spec.title);
       item.monogram = base::UTF16ToUTF8(spec.icon ? u"📁" : spec.monogram);
       item.ink = Tone(row, kInk); item.fill = fill;
       item.badge = spec.icon ? SK_ColorTRANSPARENT : spec.monogram_color;
       item.active = spec.active; item.hovered = hovered; item.tile = spec.tile;
       item.close = row->has_close_button(); item.close_visible = row->close_button_visible();
-      item.focused = row->HasFocus();
-      item.font_size = Font(0).GetFontSize();
+      item.focused = row->HasFocus(); item.font_size = Font(0).GetFontSize();
       items.push_back(std::move(item));
-      return;  // Rust renders title, badge and close affordance together.
-    }
-    if (auto* label = views::AsViewClass<views::Label>(view)) {
-      sidebar::Item item{};
-      item.x=rect.x(); item.y=rect.y(); item.width=rect.width(); item.height=rect.height();
+    } else if (auto* label = views::AsViewClass<views::Label>(view)) {
       item.kind=1; item.title=base::UTF16ToUTF8(label->GetText());
       item.ink=label->GetEnabledColor(); item.font_size=label->font_list().GetFontSize();
-      items.push_back(std::move(item)); return;
-    }
-    if (views::AsViewClass<SplitPair>(view)) {
-      sidebar::Item item{};
-      item.x=rect.x(); item.y=rect.y(); item.width=rect.width(); item.height=rect.height();
+      items.push_back(std::move(item));
+    } else if (views::AsViewClass<SplitPair>(view)) {
       item.kind=2; item.fill=SkColorSetA(Tone(view,kCard),0x33);
       items.push_back(std::move(item));
     }
-    for (const auto& child : view->children()) self(self, child.get());
-  };
-  collect(collect, tab_list_);
+  }
   const SkColor tint = FrameTint(workspace_color(state_.workspace_id), root_);
   metal_sidebar_->Update(sidebar_widget_->GetNativeWindow(), bounds, items, pinned_ ? tint : Mix(tint, Tone(root_, kCard), 70));
   // A failed drawable must expose freshly painted fallback content, even if

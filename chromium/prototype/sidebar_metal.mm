@@ -7,7 +7,9 @@
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <QuartzCore/CATransaction.h>
+#include <algorithm>
 #include <cmath>
+#include <optional>
 #include <map>
 #include <sstream>
 #include <vector>
@@ -77,6 +79,27 @@ class Surface final : public SidebarMetal {
     // Reuse the existing frame signature; no per-frame diagnostic text copies.
     return last_frame_.find(":" + std::to_string(text.size()) + ":" + std::string(text)) != std::string::npos;
   }
+  bool contains_rect_for_testing(gfx::RectF bounds, gfx::RectF clip) const override {
+    std::ostringstream prefix;
+    prefix << '|' << bounds.x() << ',' << bounds.y() << ',' << bounds.width() << ',' << bounds.height()
+           << ',' << clip.x() << ',' << clip.y() << ',' << clip.width() << ',' << clip.height() << ',';
+    return last_frame_.find(prefix.str()) != std::string::npos;
+  }
+  SidebarViewportProjection Project(gfx::Size content, gfx::Size size, gfx::PointF offset,
+      base::span<const SidebarViewportNode> nodes) override {
+    std::vector<sidebar::ViewportNode> input;
+    input.reserve(nodes.size());
+    for (const auto& node : nodes) input.push_back({node.parent,
+        {float(node.bounds.x()), float(node.bounds.y()), float(node.bounds.width()), float(node.bounds.height())}, node.visible});
+    const auto result = viewport_->project(content.width(), content.height(), size.width(), size.height(),
+        offset.x(), offset.y(), rust::Slice<const sidebar::ViewportNode>(input.data(), input.size()));
+    SidebarViewportProjection out;
+    out.offset = gfx::PointF(result.x, result.y); out.nodes.reserve(result.nodes.size());
+    for (const auto& node : result.nodes) out.nodes.push_back({node.index,
+        gfx::RectF(node.bounds.x, node.bounds.y, node.bounds.width, node.bounds.height),
+        gfx::RectF(node.clip.x, node.clip.y, node.clip.width, node.clip.height)});
+    return out;
+  }
   void Update(gfx::NativeWindow native_window, gfx::Rect bounds,
               base::span<const sidebar::Item> items, unsigned background) override {
     NSWindow* window = native_window.GetNativeNSWindow();
@@ -92,7 +115,8 @@ class Surface final : public SidebarMetal {
     std::ostringstream signature;
     signature << bounds.ToString() << ':' << scale << ':' << background;
     for (const auto& op : ops) signature << '|' << op.x << ',' << op.y << ',' << op.width << ','
-        << op.height << ',' << op.radius << ',' << op.color << ',' << op.font_size << ','
+        << op.height << ',' << op.clip.x << ',' << op.clip.y << ',' << op.clip.width << ',' << op.clip.height
+        << ',' << op.radius << ',' << op.color << ',' << op.font_size << ','
         << op.bold << ':' << op.text.size() << ':' << std::string(op.text);
     std::string fingerprint = signature.str();
     if (fingerprint == last_frame_ && !view_.hidden) return;
@@ -116,7 +140,18 @@ class Surface final : public SidebarMetal {
     [encoder setRenderPipelineState:pipeline_];
     const float viewport[2] = {float(bounds.width()), float(bounds.height())};
     [encoder setVertexBytes:viewport length:sizeof(viewport) atIndex:1];
+    std::optional<MTLScissorRect> last_clip;
     for (const auto& op : ops) {
+      const double x = std::clamp(std::floor(op.clip.x * scale), 0.0, double(pixels.width));
+      const double y = std::clamp(std::floor(op.clip.y * scale), 0.0, double(pixels.height));
+      const double right = std::clamp(std::ceil((op.clip.x + op.clip.width) * scale), x, double(pixels.width));
+      const double bottom = std::clamp(std::ceil((op.clip.y + op.clip.height) * scale), y, double(pixels.height));
+      if (right <= x || bottom <= y) continue;
+      const MTLScissorRect clip{NSUInteger(x), NSUInteger(y), NSUInteger(right - x), NSUInteger(bottom - y)};
+      if (!last_clip || last_clip->x != clip.x || last_clip->y != clip.y ||
+          last_clip->width != clip.width || last_clip->height != clip.height) {
+        [encoder setScissorRect:clip]; last_clip = clip;
+      }
       const bool text = !op.text.empty();
       if (text) {
         id<MTLTexture> texture = Text(op, scale);
@@ -180,6 +215,7 @@ class Surface final : public SidebarMetal {
   }
   std::map<std::string, TextTile> text_;
   size_t text_bytes_ = 0;
+  rust::Box<sidebar::Viewport> viewport_ = sidebar::new_viewport();
   size_t frame_count_ = 0;
   std::string last_frame_;
   ZitterSidebarMetalView* __strong view_;

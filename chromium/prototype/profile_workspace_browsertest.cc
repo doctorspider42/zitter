@@ -3946,6 +3946,45 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, RealTabViewportScrolls) {
   ASSERT_TRUE(clicked.Wait());
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->contents("work") != first; }));
 }
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ViewportProjectionTracksFractionalScrollAndClipping) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->SetWorkspaceAnimations(false);
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html");
+  for (int i = 0; i < 28; ++i) ASSERT_TRUE(window_->NavigateFromBar(url, true));
+  window_->SelectTab(1);
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  ASSERT_TRUE(content::ExecJs(window_->contents("work"), "document.title = 'Viewport fractional 日本語';"));
+  shell->CloseOverlays(true); shell->SetPinned(true); shell->ShowSidebar();
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return shell->metal_sidebar_visible() && shell->metal_sidebar_contains_text_for_testing("Viewport fractional 日本語");
+  }));
+  auto* scroll = shell->tab_scroll_view(); auto* row = shell->tab_button(1);
+  auto* viewport = shell->tab_list_view()->parent();
+  auto local = views::View::ConvertRectToTarget(row, shell->tab_list_view(), gfx::RectF(row->GetLocalBounds()));
+  const float max_offset = shell->tab_list_view()->height() - viewport->height();
+  ASSERT_GT(max_offset, local.y() + 10);
+  scroll->ScrollToOffset(gfx::PointF(0, local.y() + 9.25f));
+  auto expected = views::View::ConvertRectToTarget(row, viewport, gfx::RectF(row->GetLocalBounds()));
+  auto clipped = expected; clipped.Intersect(gfx::RectF(viewport->GetLocalBounds()));
+  EXPECT_FLOAT_EQ(-9.25f, expected.y()); EXPECT_FLOAT_EQ(24.75f, clipped.height());
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return shell->metal_sidebar_contains_rect_for_testing(expected, clipped);
+  })) << "Native bounds/clip: " << expected.ToString() << " / " << clipped.ToString();
+  const auto hit_point = views::View::ConvertPointToTarget(viewport,
+      shell->sidebar_widget()->GetRootView(), gfx::ToRoundedPoint(clipped.CenterPoint()));
+  auto* hit = shell->sidebar_widget()->GetRootView()->GetEventHandlerForPoint(hit_point);
+  EXPECT_TRUE(hit == row || row->Contains(hit));
+  // ScrollToOffset accepts raw programmatic positions. Rust normalizes the
+  // physical adapter as well as its own scene after an out-of-range request.
+  scroll->ScrollToOffset(gfx::PointF(0, 1000000));
+  ASSERT_TRUE(base::test::RunUntil([&] { return scroll->CurrentOffset().y() == max_offset; }));
+  window_->SelectTab(28); row = shell->tab_button(28);
+  expected = views::View::ConvertRectToTarget(row, viewport, gfx::RectF(row->GetLocalBounds()));
+  clipped = expected; clipped.Intersect(gfx::RectF(viewport->GetLocalBounds()));
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_contains_rect_for_testing(expected, clipped); }));
+  EXPECT_FALSE(clipped.IsEmpty());
+}
 // This geometry/controller regression does not synthesize OS input. It can
 // validate list layout independently of foreground focus and presentation.
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarColumnLayoutTracksCollapsedFolders) {
