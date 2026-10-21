@@ -10,6 +10,7 @@
 #include "base/check.h"
 #include "base/command_line.h"
 #include "chromium/prototype/sidebar_metal.h"
+#include "chromium/prototype/sidebar_layout.h"
 #include "base/files/file_util.h"
 #include "base/files/important_file_writer.h"
 #include "base/functional/bind.h"
@@ -1181,8 +1182,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto list = std::make_unique<SidebarListView>(base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar, weak));
   metal_scroll_subscription_ = scroll->AddContentsScrolledCallback(
       base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar, weak));
-  list->SetLayoutManager(std::make_unique<views::BoxLayout>(
-      views::BoxLayout::Orientation::kVertical, gfx::Insets(), 2));
+  list->SetLayoutManager(CreateSidebarColumnLayout(2));
   tab_list_ = scroll->SetContents(std::move(list));
   // Keep layer scrolling enabled (required by Chromium's scroll event handler),
   // but synchronize its offset with native hit testing and Metal submission.
@@ -2068,13 +2068,13 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
   auto& cache = tab_lists_[state_.workspace_id];
   if (!cache.root) {
     auto root = std::make_unique<views::View>();
-    root->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical));
+    root->SetLayoutManager(CreateSidebarColumnLayout());
     cache.root = root.get();
     root->set_context_menu_controller(this);
     cache.pins_root = root->AddChildView(std::make_unique<views::View>());
-    cache.pins_root->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 2));
+    cache.pins_root->SetLayoutManager(CreateSidebarColumnLayout(2));
     cache.tabs_root = root->AddChildView(std::make_unique<views::View>());
-    cache.tabs_root->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 2));
+    cache.tabs_root->SetLayoutManager(CreateSidebarColumnLayout(2));
     // Attach a completed tree only once, instead of hundreds of live AX/layout mutations.
     cache.root->SetVisible(false);
     tab_list_->AddChildView(std::move(root));
@@ -2085,7 +2085,7 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
     cache.pin_buttons.clear();
     cache.pins_root->RemoveAllChildViews();
     auto contents = std::make_unique<views::View>();
-    contents->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 2));
+    contents->SetLayoutManager(CreateSidebarColumnLayout(2));
     std::map<std::string, std::vector<const PinnedItem*>> children;
     for (const auto& pin : state_.pins) children[pin.parent_id].push_back(&pin);
     if (!state_.pins.empty()) {
@@ -2117,7 +2117,7 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
     cache.tab_buttons.clear();
     cache.tabs_root->RemoveAllChildViews();
     auto contents = std::make_unique<views::View>();
-    contents->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 2));
+    contents->SetLayoutManager(CreateSidebarColumnLayout(2));
     auto add_tab = [&](views::View* parent, const ShellTab& tab, bool tile = false) {
       RowButton::Spec spec;
       spec.title = tab.title;
@@ -2321,14 +2321,14 @@ void WorkspaceShell::WarmNextSidebar() {
   if (exists && !tab_lists_.contains(workspace) && workspace != state_.workspace_id) {
     auto& cache = tab_lists_[workspace];
     auto root = std::make_unique<views::View>();
-    root->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical));
+    root->SetLayoutManager(CreateSidebarColumnLayout());
     root->SetVisible(false); root->set_context_menu_controller(this); cache.root = root.get();
     cache.pins_root = root->AddChildView(std::make_unique<views::View>());
-    cache.pins_root->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 2));
+    cache.pins_root->SetLayoutManager(CreateSidebarColumnLayout(2));
     cache.tabs_root = root->AddChildView(std::make_unique<views::View>());
-    cache.tabs_root->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 2));
+    cache.tabs_root->SetLayoutManager(CreateSidebarColumnLayout(2));
     auto contents = std::make_unique<views::View>();
-    contents->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 2));
+    contents->SetLayoutManager(CreateSidebarColumnLayout(2));
     Label(contents.get(), u"PRZYPIĘTE", kMuted, Font(-2));
     std::map<std::string, std::vector<const PinnedItem*>> children;
     for (const auto& pin : pins) children[pin.parent_id].push_back(&pin);
@@ -2585,7 +2585,7 @@ void WorkspaceShell::AppendPinnedItems(views::View* parent, const std::string& p
     auto* button = row->AddChildView(std::make_unique<RowButton>(views::Button::PressedCallback(), std::move(spec)));
     if (pin->folder) {
       auto* group = parent->AddChildView(std::make_unique<views::View>());
-      group->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 2));
+      group->SetLayoutManager(CreateSidebarColumnLayout(2));
       AppendPinnedItems(group, pin->id, depth + 1, children, cache, workspace);
       group->SetVisible(!collapsed_folders_.contains(key));
       button->SetCallback(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, views::View* group,

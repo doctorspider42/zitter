@@ -19,7 +19,8 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Row title/detail/close geometry | Rust in opt-in backend, shared with display list | Replace remaining native row containers and typography measurement adapter |
 | Row drag threshold, latched drag, cancellation and close visibility | Rust in opt-in backend; native event delivery | Native drag-to-split verified; capture-loss unit coverage; migrate target policy |
 | Next/previous tab wrapping | Rust; existing configurable key dispatch | Preserve page shortcut precedence and editing/IME behavior |
-| Tab list hierarchy, indentation, split tile placement | Views | Rust layout from stable tab/pin identities, retaining scroll and AX correctness |
+| Vertical list/folder columns and full content extent | Rust via native View measurement/bounds adapter | Verify collapse/resize against Views; replace the native hierarchy with stable Rust item identities |
+| Folder hierarchy, indentation wrappers and split tile placement | Views | Rust tree and split layout, retaining scroll and AX correctness |
 | Scroll, viewport, scrollbar | Native ScrollView/Cocoa scrollbar | Native input adapter + Rust offset/clipping; native wheel and trackpad coverage |
 | Selection, close/reopen, title changes, pinned navigation | Existing application callbacks; native interaction nodes | Rust control actions into the same callbacks; persistence and last-tab rules |
 | Folder expand/create/rename/delete; nested pins | Existing application + Views | Rust interaction state and layout; native menu/editing adapters; rollback tests |
@@ -48,6 +49,11 @@ Views-specific layout and control behavior must have an explicit replacement.
   tests passed. Includes native drag-to-split and close clicks at width limits.
   See [validation](benchmarks/rust-row-controls-functional-2026-10-21.json).
   This is a control migration step, not full Views removal.
+- Rust-owned vertical list/folder columns, including cached workspace trees,
+  visible-child spacing, margins and full scroll extent: 9 controller/geometry
+  browser regressions, 1 Views geometry comparison, 9 Rust tests and 59 Python
+  tests passed. Native pointer and visual verification awaits manual Mac unlock.
+  See [column validation](benchmarks/rust-column-layout-functional-2026-10-21.json).
 
 ## Completion gates
 

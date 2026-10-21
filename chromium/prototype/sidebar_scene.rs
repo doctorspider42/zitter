@@ -14,6 +14,8 @@ mod ffi {
     }
     struct Rect { x: i32, y: i32, width: i32, height: i32 }
     struct RowLayout { title: Rect, detail: Rect, close: Rect }
+    struct ColumnChild { width: i32, height: i32, top: i32, left: i32, bottom: i32, right: i32 }
+    struct ColumnLayout { width: i32, height: i32, children: Vec<Rect> }
     struct Primitive {
         x: f32, y: f32, width: f32, height: f32,
         radius: f32, color: u32,
@@ -26,6 +28,8 @@ mod ffi {
         fn drag(self: &mut RowPointer, x: i32, y: i32, enabled: bool);
         fn release(self: &mut RowPointer) -> bool;
         fn cancel(self: &mut RowPointer);
+        fn column_layout(width: i32, spacing: i32, top: i32, left: i32,
+                         bottom: i32, right: i32, children: &[ColumnChild]) -> ColumnLayout;
         fn close_visible(active: bool, tile: bool, hovered: bool) -> bool;
         fn row_layout(width: i32, height: i32, title_width: i32,
                       detail: bool, chip: bool, close: bool) -> RowLayout;
@@ -57,6 +61,29 @@ impl RowPointer {
 }
 // Shared by the native input/accessibility adapter and the GPU display list.
 // Widths are logical pixels; CoreText still owns font shaping and measurement.
+// Geometry for an ordered visible list. Hidden/collapsed children are omitted
+// by the adapter; no gap is created for them. -1 width requests natural size.
+fn column_layout(width: i32, spacing: i32, top: i32, left: i32,
+                 bottom: i32, right: i32, children: &[ffi::ColumnChild]) -> ffi::ColumnLayout {
+    let positive = |v: i32| i64::from(v.max(0));
+    let bounded = |v: i64| v.clamp(0, i64::from(i32::MAX)) as i32;
+    let left = positive(left); let right = positive(right);
+    let natural = children.iter().map(|c| positive(c.width) + positive(c.left) + positive(c.right))
+        .max().unwrap_or(0).saturating_add(left).saturating_add(right);
+    let width = if width < 0 {bounded(natural)} else {width};
+    let mut y = positive(top);
+    let mut rects = Vec::with_capacity(children.len());
+    for (index, child) in children.iter().enumerate() {
+        if index > 0 {y = y.saturating_add(positive(spacing));}
+        y = y.saturating_add(positive(child.top));
+        rects.push(ffi::Rect { x: bounded(left + positive(child.left)), y: bounded(y),
+            width: bounded(i64::from(width) - left - right - positive(child.left) - positive(child.right)),
+            height: bounded(positive(child.height).min(i64::from(i32::MAX) - i64::from(bounded(y)))) });
+        y = y.saturating_add(positive(child.height)).saturating_add(positive(child.bottom));
+    }
+    ffi::ColumnLayout { width, height: bounded(y.saturating_add(positive(bottom))), children: rects }
+}
+
 fn close_visible(active: bool, tile: bool, hovered: bool) -> bool {
     (active && !tile) || hovered
 }
@@ -135,6 +162,32 @@ mod tests {
         fill:0xffffffff, badge:0xff556677, active:true, hovered:false,
         tile:false, close:true, close_visible:true, focused:false, font_size:13.0,
     }}
+    fn child(width: i32, height: i32) -> ffi::ColumnChild {
+        ffi::ColumnChild { width, height, top: 0, left: 0, bottom: 0, right: 0 }
+    }
+    #[test] fn column_measures_full_scroll_extent_and_stretches_rows() {
+        let children: Vec<_> = (0..29).map(|_| child(200, 34)).collect();
+        let natural = column_layout(-1, 2, 0, 0, 0, 0, &children);
+        assert_eq!((natural.width, natural.height), (200, 1042));
+        let actual = column_layout(300, 2, 0, 0, 0, 0, &children);
+        assert_eq!(actual.children.last().unwrap().y, 1008);
+        assert!(actual.children.iter().all(|r| r.width == 300 && r.height == 34));
+        assert_eq!(actual.height, natural.height);
+    }
+    #[test] fn column_handles_folder_indents_empty_lists_and_size_limits() {
+        let mut indented = child(200, 46); indented.left = 24;
+        let result = column_layout(200, 2, 3, 8, 5, 6, &[indented, child(200, 34)]);
+        assert_eq!((result.children[0].x, result.children[0].width), (32, 162));
+        assert_eq!(result.children[1].y, 51);
+        assert_eq!(result.height, 90);
+        let empty = column_layout(-1, 20, 3, 8, 5, 6, &[]);
+        assert_eq!((empty.width, empty.height), (14, 8));
+        let huge = column_layout(10, i32::MAX, 0, 0, 0, 0,
+            &[child(i32::MAX, i32::MAX), child(i32::MAX, i32::MAX)]);
+        assert_eq!(huge.height, i32::MAX);
+        assert_eq!(huge.children[1].y, i32::MAX);
+        assert_eq!(huge.children[1].height, 0);
+    }
     #[test] fn row_geometry_reserves_close_and_detail_without_overlap() {
         for width in [90, 200, 248, 480] {
             let g = row_layout(width, 38, 100, true, false, true);

@@ -3938,6 +3938,55 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, RealTabViewportScrolls) {
   ASSERT_TRUE(clicked.Wait());
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->contents("work") != first; }));
 }
+// This geometry/controller regression does not synthesize OS input. It can
+// validate list layout independently of foreground focus and presentation.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarColumnLayoutTracksCollapsedFolders) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->SetWorkspaceAnimations(false);
+  ASSERT_TRUE(window_->CreatePinnedFolder("work", {}, "Parent"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  const auto parent = window_->pinned_items("work")[0].id;
+  ASSERT_TRUE(window_->CreatePinnedFolder("work", parent, "Child"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html");
+  for (int i = 0; i < 28; ++i) ASSERT_TRUE(window_->NavigateFromBar(url, true));
+  shell->CloseOverlays(true); shell->SetPinned(true); shell->ShowSidebar();
+  for (int width : {200, 480}) {
+    SCOPED_TRACE(width);
+    shell->ResizeSidebar(width - shell->sidebar_width(), true);
+    shell->sidebar_widget()->LayoutRootViewIfNecessary();
+    auto* folder = SidebarNamedButton(shell->sidebar_view(), u"▾ Parent");
+    auto* child = SidebarNamedButton(shell->sidebar_view(), u"▾ Child");
+    ASSERT_TRUE(folder); ASSERT_TRUE(child);
+    EXPECT_EQ(folder->GetBoundsInScreen().x() + 12, child->GetBoundsInScreen().x());
+    const int expanded_height = shell->tab_list_view()->height();
+    EXPECT_GT(expanded_height, shell->tab_scroll_view()->GetVisibleRect().height());
+    const int expanded_first = shell->tab_button(0)->GetBoundsInScreen().y();
+    for (size_t index = 0; index < 29; ++index) {
+      auto* row = shell->tab_button(index);
+      ASSERT_TRUE(row);
+      EXPECT_TRUE(row->parent()->GetLocalBounds().Contains(row->bounds()));
+      if (index) EXPECT_EQ(shell->tab_button(index - 1)->bounds().bottom() + 2, row->y());
+    }
+    views::test::ButtonTestApi(folder).NotifyDefaultMouseClick();
+    shell->sidebar_widget()->LayoutRootViewIfNecessary();
+    EXPECT_FALSE(child->IsDrawn());
+    // Views baseline: a 34px child, its empty nested group's 2px spacing,
+    // and the parent column's 2px spacing disappear on collapse.
+    EXPECT_EQ(expanded_height - 38, shell->tab_list_view()->height());
+    EXPECT_EQ(expanded_first - 38, shell->tab_button(0)->GetBoundsInScreen().y());
+    views::test::ButtonTestApi(folder).NotifyDefaultMouseClick();
+    shell->sidebar_widget()->LayoutRootViewIfNecessary();
+    EXPECT_TRUE(child->IsDrawn());
+    EXPECT_EQ(expanded_height, shell->tab_list_view()->height());
+    EXPECT_EQ(expanded_first, shell->tab_button(0)->GetBoundsInScreen().y());
+    auto* first = shell->tab_button(0);
+    ASSERT_TRUE(window_->Select("personal"));
+    ASSERT_TRUE(window_->Select("work"));
+    EXPECT_EQ(first, shell->tab_button(0));
+  }
+}
 // Exercise Rust-owned gesture state and row geometry through native events,
 // rather than invoking the command callbacks or asserting implementation data.
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeDragAndCloseAtWidthLimits) {

@@ -1,0 +1,92 @@
+{
+  "date": "2026-10-21",
+  "platform": "macOS arm64",
+  "build": "Release, ThinLTO, Chromium PGO",
+  "purpose": "Controller and geometry validation of Rust vertical list/folder layout; no OS input or presentation benchmark",
+  "base_commit": "5c7b53f1d80a5d105a02785af1f8875d292e1a2b",
+  "test_binary_uuid": "4C4C4481-5555-3144-A109-867791FF1714",
+  "source_sha256": {
+    "chromium/BUILD.gn": "b31aa8755af3bde0a00010fdc4dee40cc924cb4ee12c0071efb95f3988f53196",
+    "chromium/prototype/sidebar_layout.h": "485dbd6ecd976c8de68ba5de28756dbcbef07e8dde5d4fbc9f26918b8e294ea2",
+    "chromium/prototype/sidebar_layout.cc": "48862935a432a79a957feb229b38373dc62e79e184606ed2d523997dbf7acaa1",
+    "chromium/prototype/sidebar_scene.rs": "7a7d9c49470e41ab12744195aac6dbaad212926adc45483091cea73c729887b4",
+    "chromium/prototype/workspace_shell.cc": "7b5a89646147dea02719e09be4547bc3855a9e320cd116daaad07fc3d752bc74",
+    "chromium/prototype/profile_workspace_browsertest.cc": "5320482f9fa3505f8af6727b8a5b9c959539df5b4084ed6500291c81d3f57280"
+  },
+  "rust_metal": {
+    "metal_api_validation": true,
+    "tests": [
+      {
+        "name": "ZitterProfilesBrowserTest.FolderRemovalKeepsOpenedPinsAsTabs",
+        "status": "SUCCESS",
+        "elapsed_ms": 1441
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarColumnLayoutTracksCollapsedFolders",
+        "status": "SUCCESS",
+        "elapsed_ms": 1697
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarFolderFailedWriteRollsBack",
+        "status": "SUCCESS",
+        "elapsed_ms": 3874
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarFolderRenameAndDeleteContents",
+        "status": "SUCCESS",
+        "elapsed_ms": 4433
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarFoldersCreateNestAndPersist",
+        "status": "SUCCESS",
+        "elapsed_ms": 3610
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarMetadataUpdatesPreserveRows",
+        "status": "SUCCESS",
+        "elapsed_ms": 1964
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SplitPairPersistsWhileAnotherTabIsShown",
+        "status": "SUCCESS",
+        "elapsed_ms": 1717
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation",
+        "status": "SUCCESS",
+        "elapsed_ms": 1711
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SplitViewSessionRestore",
+        "status": "SUCCESS",
+        "elapsed_ms": 2538
+      }
+    ]
+  },
+  "views": {
+    "tests": [
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarColumnLayoutTracksCollapsedFolders",
+        "status": "SUCCESS",
+        "elapsed_ms": 1721
+      }
+    ]
+  },
+  "rust_unit_tests_passed": 9,
+  "python_unit_tests_passed": 59,
+  "gn_dependency_check": "passed",
+  "product_boundaries": "passed",
+  "geometry_observations": [
+    "29 real tab rows retain their full scroll extent at sidebar widths 200 and 480.",
+    "Nested folder indentation, 2px row gaps and the 38px subtree collapse delta match the Views baseline.",
+    "Expand restores list height and row position; workspace roundtrip preserves row identity."
+  ],
+  "pending_validation": [
+    "Physical mouse/keyboard/trackpad and visual checks for this column migration: computer-use service reports a locked Mac; waiting for manual unlock.",
+    "Refresh the signed app package after the application target finishes linking."
+  ],
+  "limitations": [
+    "Views still owns hierarchy construction, preferred-size measurement, indentation wrappers, split tile layout and native interaction/accessibility adapters.",
+    "No new performance improvement is claimed."
+  ]
+}

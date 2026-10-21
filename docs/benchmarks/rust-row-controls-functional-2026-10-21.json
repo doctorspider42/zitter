@@ -162,6 +162,8 @@
   "limitations": [
     "Views still supplies row event delivery, accessibility nodes, text measurement and container layout.",
     "This milestone does not remove duplicate Views painting or establish a performance gain.",
-    "The signed app package will be refreshed after the application link; these results refer to the native browser-test executable."
-  ]
+    "The signed row-control app was refreshed and its executable UUID matched the build; manual visual inspection was prevented by the locked Mac."
+  ],
+  "packaged_app_uuid": "4C4C44A0-5555-3144-A184-38EE6C56164E",
+  "packaged_app_source_commit": "5c7b53f"
 }

@@ -6,7 +6,7 @@ The optional `--zitter-sidebar=rust-metal` backend renders the **live tab/pin li
 
 - Rust produces the display list for actual tab titles, site monograms, selected/hovered cards, folder rows, section labels, close affordances and both tiles of a Split View pair. It also handles next/previous tab index wrapping for the Metal backend. Row title/detail/close geometry and pointer drag state now come from Rust: the native interaction adapter and the GPU display list share the same row geometry. The platform still measures text and delivers events; Rust distinguishes clicks, latched drags and cancellation on capture loss.
 - A visual-only AppKit view presents directly through an asynchronous `CAMetalLayer`. Rounded geometry is drawn by Metal; CoreText shapes/truncates real Unicode text, including system font fallback. Text tiles are cached, bounded to 256 entries / 16 MiB, and uploaded on cache misses. No web page pixels are copied into the sidebar.
-- Viewport clipping, scroll offsets, indentation and split tile bounds come from the live interaction tree. Paint and scroll notifications coalesce updates onto the UI task queue; identical frames skip GPU submission. There is no polling/redraw timer. The shared tab ScrollView now sizes its contents to their full preferred height, fixing overflow scrolling in both backends. In Metal mode, the native fading scrollbar occupies a gutter outside the GPU canvas so it stays visible and draggable. Its list offset stays on the UI thread to keep native hit testing synchronized with the separately presented Metal surface.
+- Rust also lays out the vertical columns of the live tab/pin/folder tree, with native adapters supplying preferred sizes and installing the returned rectangles. Hidden children are omitted from spacing; margins and full scroll extent are preserved. Viewport clipping, scroll offsets, indentation wrappers and split tile bounds still come from the native interaction tree. Paint and scroll notifications coalesce updates onto the UI task queue; identical frames skip GPU submission. There is no polling/redraw timer. The shared tab ScrollView now sizes its contents to their full preferred height, fixing overflow scrolling in both backends. In Metal mode, the native fading scrollbar occupies a gutter outside the GPU canvas so it stays visible and draggable. Its list offset stays on the UI thread to keep native hit testing synchronized with the separately presented Metal surface.
 
 This is an incremental renderer prototype, **not a complete removal of Views**. Views still owns outer/container layout, address pill, New Tab action, workspace controls, event delivery, accessibility, context menus, drag-to-split, dialogs, palette editing and IME. Its tab interaction nodes remain in place; the Metal overlay returns `nil` from hit testing, cannot become first responder and adds no accessibility element. The existing paint path also remains available beneath the overlay for fallback and workspace animation snapshots. Consequently, this prototype still pays some Views layout/paint cost; it does not establish the performance of a future entirely Rust-owned sidebar.
 
@@ -57,3 +57,11 @@ pointer regression drags a real tab into Split View and clicks close buttons
 at both sidebar width limits (200 and 480 logical pixels). Palette, history,
 settings and folder regressions also passed with the Rust row adapter enabled.
 See the [row control validation artifact](benchmarks/rust-row-controls-functional-2026-10-21.json).
+
+The subsequent vertical-column migration passed **9/9 controller/geometry browser
+regressions, 1/1 Views geometry comparison, 9/9 Rust tests and 59/59 Python tests**.
+These controller tests do not inject OS input. Physical mouse/keyboard/trackpad
+and visual verification of this newer layout are pending manual Mac unlock;
+the earlier 24-test pointer/keyboard matrix above describes the row-control
+milestone, not a fresh full matrix for this column migration. See the
+[column validation artifact](benchmarks/rust-column-layout-functional-2026-10-21.json).
