@@ -58,6 +58,14 @@ class UiResultsTest(unittest.TestCase):
         self.assertEqual(metric["run_medians"], [1, 3])
         self.assertEqual(metric["median"], 2)
 
+    def test_validates_warmup_drop_accounting(self):
+        output = self.output("rust-metal", [self.sample(metal_gpu_ms=.2)])
+        self.assertEqual(benchmark.parse_run(output + '\nZITTER_UI_WARMUP_DROP 1', "rust-metal", 1)["warmup_dropped_frames"], 1)
+        with self.assertRaises(ValueError):
+            benchmark.parse_run(output + '\nZITTER_UI_WARMUP_DROP 2', "rust-metal", 1)
+        with self.assertRaises(ValueError):
+            benchmark.parse_run(self.output() + '\nZITTER_UI_WARMUP_DROP 1', "views", 1)
+
 
 if __name__ == "__main__":
     unittest.main()

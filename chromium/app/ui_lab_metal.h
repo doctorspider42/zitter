@@ -2,6 +2,7 @@
 #define ZITTER_CHROMIUM_APP_UI_LAB_METAL_H_
 
 #include <memory>
+#include "base/containers/span.h"
 #include "base/functional/callback.h"
 #include "ui/gfx/native_ui_types.h"
 #include "third_party/rust/cxx/v1/cxx.h"
@@ -16,9 +17,11 @@ class MetalSurface {
   virtual gfx::NativeView native_view() = 0;
   // Latency is drawable.presentedTime minus the update's CACurrentMediaTime.
   // GPU time is command-buffer execution, not system composition time.
-  virtual void Draw(const rust::Vec<Rect>& scene, Presented presented) = 0;
+  virtual void Draw(base::span<const Rect> scene, Presented presented) = 0;
 };
 std::unique_ptr<MetalSurface> CreateMetalSurface(
     base::RepeatingCallback<void(float)> clicked);
+// All backends must have an actually visible window for presentation timings.
+void ShowLabWindow(gfx::NativeWindow window);
 }  // namespace zitter::ui_lab
 #endif

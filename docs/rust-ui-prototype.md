@@ -65,6 +65,15 @@ the page, waits for its renderer visual-state callback, settles for three second
 discards ten warmup updates. One measured update is in flight at a time, followed
 by deterministic variable delays to vary its phase against vsync.
 
+Metal primes its swapchain before settling. macOS can skip the first drawable
+after the surface resumes; up to ten such skips may be retried during warmup,
+without advancing the ten **successfully presented** warmup updates. Their count
+is retained per process. Any missing presentation in the measured phase fails the
+run; no measured failures are silently removed. Metal uses layer-hosting NSViews,
+explicit CoreAnimation transactions and scheduled command buffers to coordinate
+its native surface with the window. Every backend explicitly raises its window
+before loading the fixture.
+
 `selection` moves the selected row. `resize` also changes sidebar width and hence
 the real page's viewport. All backends render the same primitive geometry and
 colors. This is a comparison of retained widgets and two custom scene approaches,
@@ -87,7 +96,10 @@ Metrics:
   GPU and WindowServer costs. Metal submits from the browser, whereas Chromium
   can perform work in its GPU process; browser CPU alone cannot rank total cost.
 
-All modes run from one binary with the same compiler/profile/settings. Six rounds
+All modes run from one binary with the same compiler/profile/settings. The C++
+reference uses a native `std::vector`, avoiding per-primitive Rust FFI
+overhead in the baseline. Both Skia sidebars retain a native copy of the display
+list for deferred painting. Six rounds
 use all backend permutations to balance run order. Logs, profiles, raw samples,
 binary hash, GN flags, run medians, pooled median and p95 remain in
 `build/ui-performance/<UTC timestamp>/`. A partial result is retained on failure.

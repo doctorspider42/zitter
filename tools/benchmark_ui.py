@@ -31,6 +31,9 @@ def parse_run(output, backend, iterations):
     samples = records(output, "ZITTER_UI_SAMPLE")
     resources = records(output, "ZITTER_UI_RESOURCE")
     idle = records(output, "ZITTER_UI_IDLE")
+    dropped = [int(match[1]) for match in re.finditer(r"ZITTER_UI_WARMUP_DROP (\d+)", output)]
+    if (dropped and backend != "rust-metal") or dropped != list(range(1, len(dropped) + 1)) or len(dropped) > 10:
+        raise ValueError("Invalid warmup drop accounting")
     if status != [{"ok": True}] or ready != [{"backend": backend, "scene_parity": True,
                                                "page_surface": "native-webcontents"}]:
         raise ValueError("Missing successful status or matching scene/page readiness")
@@ -54,7 +57,7 @@ def parse_run(output, backend, iterations):
     if len(idle) != 1 or any(type(idle[0][key]) not in (int, float) or not math.isfinite(idle[0][key])
                              or idle[0][key] < 0 for key in ("browser_cpu_ms", "wall_ms")) or idle[0]["wall_ms"] < 1900:
         raise ValueError("Missing or invalid idle measurement")
-    return {"samples": samples, "resources": resource, "idle": idle[0]}
+    return {"samples": samples, "resources": resource, "idle": idle[0], "warmup_dropped_frames": len(dropped)}
 
 
 def stats(values):
@@ -151,6 +154,7 @@ def main():
             pass
     runs = []
     result = {"timestamp_utc": stamp, "platform": platform.platform(), "app": str(app),
+              "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
               "cpu_model": subprocess.check_output(["sysctl", "-n", "machdep.cpu.brand_string"], text=True).strip(),
               "physical_memory_bytes": int(subprocess.check_output(["sysctl", "-n", "hw.memsize"], text=True)),
               "executable_sha256": digest, "chromium_revision": json.loads((ROOT / "chromium/revision.json").read_text())["revision"],

@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <cmath>
 #include <utility>
+#include <vector>
 
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
@@ -44,9 +46,10 @@ using ui_lab::Rect;
 
 // Optimized retained Views reference with the exact same primitive scene.
 // No text, shadows, rounded corners or production workspace services are timed.
-rust::Vec<Rect> ReferenceScene(float width, float height, uint32_t rows, uint32_t selected) {
-  rust::Vec<Rect> result;
+std::vector<Rect> ReferenceScene(float width, float height, uint32_t rows, uint32_t selected) {
+  std::vector<Rect> result;
   if (!std::isfinite(width) || !std::isfinite(height) || width <= 0 || height <= 0) return result;
+  result.reserve(68);
   result.push_back({0, 0, width, height, 0xff18202c});
   result.push_back({16, 20, std::max(0.f, width - 32), 28, 0xff30405a});
   for (uint32_t row = 0; row < std::min(rows, 200u); ++row) {
@@ -81,7 +84,7 @@ class Sidebar final : public views::View {
  public:
   Sidebar(bool retained, base::RepeatingCallback<void(float)> clicked)
       : retained_(retained), clicked_(std::move(clicked)) {}
-  void Update(rust::Vec<Rect> scene) {
+  void Update(base::span<const Rect> scene) {
     if (retained_) {
       while (children().size() > scene.size()) RemoveChildViewT(children().back());
       while (children().size() < scene.size()) AddChildView(std::make_unique<views::View>());
@@ -93,7 +96,7 @@ class Sidebar final : public views::View {
         }
       }
     }
-    scene_ = std::move(scene);
+    scene_.assign(scene.begin(), scene.end());
     if (!retained_) SchedulePaint();
   }
   void OnPaint(gfx::Canvas* canvas) override {
@@ -108,7 +111,7 @@ class Sidebar final : public views::View {
  private:
   bool retained_;
   base::RepeatingCallback<void(float)> clicked_;
-  rust::Vec<Rect> scene_;
+  std::vector<Rect> scene_;
 };
 BEGIN_METADATA(Sidebar)
 END_METADATA
@@ -184,6 +187,7 @@ class Lab final : public UiLab, public content::WebContentsObserver {
     if (native_host_) native_host_->Attach(metal_->native_view());
     widget_->Show();
     widget_->Activate();
+    ui_lab::ShowLabWindow(widget_->GetNativeWindow());
     widget_->LayoutRootViewIfNecessary();
     Observe(page_->GetWebContents());
     page_->LoadInitialURL(url_);
@@ -199,7 +203,9 @@ class Lab final : public UiLab, public content::WebContentsObserver {
   }
   void PageFrame(bool ok) {
     if (!ok) { Finish(false); return; }
-    if (!metal_) Update(false);
+    // Prime the native swapchain before the settling interval. Its first
+    // drawable may be discarded by the initial CoreAnimation transaction.
+    Update(false);
     LOG(INFO) << "ZITTER_UI_READY {\"backend\":\"" << backend_
               << "\",\"scene_parity\":true,\"page_surface\":\"native-webcontents\"}";
     if (interactive_) {
@@ -236,8 +242,12 @@ class Lab final : public UiLab, public content::WebContentsObserver {
   void Update(bool timed) {
     const auto before = base::TimeTicks::Now();
     const float width = sidebar_view_->width(), height = sidebar_view_->height();
-    auto scene = backend_ == "views" ? ReferenceScene(width, height, 25, selected_)
-                                    : ui_lab::scene(width, height, 25, selected_);
+    auto cpp_scene = backend_ == "views" ? ReferenceScene(width, height, 25, selected_) : std::vector<Rect>();
+    auto rust_scene = backend_ == "views" ? rust::Vec<Rect>() : ui_lab::scene(width, height, 25, selected_);
+    // SAFETY: CXX Vec owns this contiguous allocation and outlives the span.
+    // Consumers synchronously copy it before returning; no borrowed data escapes.
+    const auto scene = backend_ == "views" ? base::span<const Rect>(cpp_scene)
+        : UNSAFE_BUFFERS(base::span<const Rect>(rust_scene.data(), rust_scene.size()));
     scene_ms_ = (base::TimeTicks::Now() - before).InMillisecondsF();
     if (metal_) {
       const double before_draw_ms = timed ? (base::TimeTicks::Now() - started_).InMillisecondsF() : 0;
@@ -247,7 +257,7 @@ class Lab final : public UiLab, public content::WebContentsObserver {
         widget_->GetCompositor()->RequestPresentationTimeForNextFrame(
             base::BindOnce(&Lab::ViewsPresented, weak_.GetWeakPtr()));
       }
-      sidebar_->Update(std::move(scene));
+      sidebar_->Update(scene);
     }
     if (timed) submit_ms_ = (base::TimeTicks::Now() - started_).InMillisecondsF();
   }
@@ -257,6 +267,11 @@ class Lab final : public UiLab, public content::WebContentsObserver {
   }
   void MetalPresented(bool timed, double before_draw_ms, bool ok, double latency, double gpu) {
     if (!timed) return;  // Initial drawable may precede the first window transaction.
+    if (!ok && trial_ < 0 && warmup_skipped_ < 10) {
+      LOG(INFO) << "ZITTER_UI_WARMUP_DROP " << ++warmup_skipped_;
+      PostStep(base::Milliseconds(33));
+      return;
+    }
     if (!ok) { Finish(false); return; }
     Presented(before_draw_ms + latency, gpu, 0);
   }
@@ -317,6 +332,7 @@ class Lab final : public UiLab, public content::WebContentsObserver {
   raw_ptr<Sidebar> sidebar_ = nullptr;
   raw_ptr<views::WebView> page_ = nullptr;
   int iterations_ = 120, trial_ = -kWarmups;
+  int warmup_skipped_ = 0;
   uint32_t selected_ = 0;
   bool loaded_ = false, finished_ = false, interactive_ = false;
   double scene_ms_ = 0, submit_ms_ = 0;

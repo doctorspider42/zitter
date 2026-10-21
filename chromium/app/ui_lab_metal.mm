@@ -4,6 +4,7 @@
 #import <AppKit/AppKit.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
+#import <QuartzCore/CATransaction.h>
 
 #include "base/functional/bind.h"
 #include "base/logging.h"
@@ -21,6 +22,12 @@
 @end
 
 namespace zitter::ui_lab {
+void ShowLabWindow(gfx::NativeWindow native_window) {
+  NSWindow* window = native_window.GetNativeNSWindow();
+  [NSApp activateIgnoringOtherApps:YES];
+  [window makeKeyAndOrderFront:nil];
+  [window orderFrontRegardless];
+}
 namespace {
 // Identical opaque rectangles to gfx::Canvas. No page texture is imported,
 // read back, or uploaded: WebContents remains a sibling native surface.
@@ -52,20 +59,31 @@ class Surface final : public MetalSurface {
     layer_.framebufferOnly = YES;
     layer_.opaque = YES;
     layer_.displaySyncEnabled = YES;
+    layer_.presentsWithTransaction = YES;
     layer_.maximumDrawableCount = 3;
-    view_.wantsLayer = YES;
     view_.layer = layer_;
+    view_.wantsLayer = YES;
+    view_.layerContentsRedrawPolicy = NSViewLayerContentsRedrawNever;
     return true;
   }
   ~Surface() override { view_.clicked = nil; [view_ removeFromSuperview]; }
   gfx::NativeView native_view() override { return gfx::NativeView(view_); }
-  void Draw(const rust::Vec<Rect>& scene, Presented presented) override {
+  void Draw(base::span<const Rect> scene, Presented presented) override {
     static_assert(sizeof(Rect) == 20);
     const double started = CACurrentMediaTime();
     const auto size = view_.bounds.size;
     const double scale = view_.window.backingScaleFactor ?: 1;
-    layer_.contentsScale = scale;
-    layer_.drawableSize = CGSizeMake(size.width * scale, size.height * scale);
+    const CGSize drawable_size = CGSizeMake(size.width * scale, size.height * scale);
+    if (layer_.contentsScale != scale || !CGSizeEqualToSize(layer_.drawableSize, drawable_size)) {
+      [CATransaction begin];
+      [CATransaction setDisableActions:YES];
+      layer_.contentsScale = scale;
+      layer_.drawableSize = drawable_size;
+      [CATransaction commit];
+      // Register changed native surface geometry before presenting its drawable.
+      // Reassigning drawableSize on every unchanged frame can discard drawables.
+      [CATransaction flush];
+    }
     id<CAMetalDrawable> drawable = [layer_ nextDrawable];
     if (!drawable || scene.empty() || size.width <= 0 || size.height <= 0) {
       LOG(ERROR) << "UI lab Metal surface unavailable: drawable=" << !!drawable
@@ -89,16 +107,22 @@ class Surface final : public MetalSurface {
     [encoder endEncoding];
     auto callback = std::make_shared<Presented>(std::move(presented));
     auto runner = base::SingleThreadTaskRunner::GetCurrentDefault();
+    const bool visible = view_.window.isVisible && !view_.isHiddenOrHasHiddenAncestor;
+    const bool occluded = !(view_.window.occlusionState & NSWindowOcclusionStateVisible);
     [drawable addPresentedHandler:^(id<MTLDrawable> shown) {
       const double latency = (shown.presentedTime - started) * 1000;
       const double gpu = (command.GPUEndTime - command.GPUStartTime) * 1000;
+      if (!shown.presentedTime) LOG(INFO) << "Metal drawable not presented: visible=" << visible
+          << " occluded=" << occluded << " gpu_ms=" << gpu;
       runner->PostTask(FROM_HERE, base::BindOnce(
           [](std::shared_ptr<Presented> cb, bool ok, double ms, double gpu_ms) {
             if (*cb) std::move(*cb).Run(ok, ms, gpu_ms);
           }, callback, shown.presentedTime >= started, latency, gpu));
     }];
-    [command presentDrawable:drawable];
     [command commit];
+    [command waitUntilScheduled];
+    [drawable present];
+    [CATransaction flush];
   }
  private:
   ZitterLabMetalView* __strong view_;
