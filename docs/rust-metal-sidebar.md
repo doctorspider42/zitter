@@ -148,3 +148,25 @@ regressions, 9/9 Views controls, 19/19 Rust tests and 59/59 Python tests passed*
 The signed isolated app retained folder collapse across a profile/workspace
 round trip, restored its pin on expansion and preserved the Unicode split pair.
 See [tree validation](benchmarks/rust-sidebar-tree-functional-2026-10-21.json).
+
+The tab-plan migration moves ordinary-tab order, split membership, pane order,
+pinned-pair anchor selection and original-pin visibility into Rust. The plan
+contains indices and UI pin IDs only. A valid pair appears once at the first
+member's tab-list position; its tiles follow pane order. If either member has a
+reachable pin, the first pinned pane in pane order anchors the pair in that
+pin's folder, including when the folder is collapsed. Both original pin rows
+stay hidden until the pair is dissolved. Invalid/missing pair members fall back
+to ordinary unique rows rather than creating duplicate or incomplete controls.
+
+Native adapters instantiate rows and pair groups from the returned slots and
+apply the returned pin visibility. The cached plan is reused on metadata-only
+updates and consumed by swipe previews, removing their independent C++ pair
+selection. Swapping panes can move a two-pin pair between folder positions;
+application WebContents/session commands remain unchanged. Default Views uses a
+C++ implementation of the same plan contract. Native containers, clipping,
+menu/input/focus/AX adapters and animation painting remain.
+
+Validated for tab/pin grouping on 2026-10-21: **33/33 Metal browser regressions,
+10/10 Views controls, 22/22 Rust tests and 59/59 Python tests passed**. The signed
+app's native menu swapped the real pages and GPU tiles in the same order, then
+restored the demo. See [tab-plan validation](benchmarks/rust-tab-plan-functional-2026-10-21.json).

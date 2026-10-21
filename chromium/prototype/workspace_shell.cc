@@ -2249,24 +2249,19 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
       cache.tab_buttons[tab.index]->set_context_menu_controller(this);
       return cache.tab_buttons[tab.index].get();
     };
-    bool pair_added = false;
-    for (const auto& tab : state_.tabs) {
-      const bool paired = state_.split &&
-          (state_.split_tabs[0] == tab.index || state_.split_tabs[1] == tab.index);
-      if (!paired) { add_tab(contents.get(), tab); continue; }
-      if (pair_added) continue;
-      pair_added = true;
-      // A pair with a pinned half sits in that pin's place, among the pins.
-      views::View* pin_row = nullptr;
-      for (const auto& index : state_.split_tabs) {
-        for (const auto& item : state_.tabs) {
-          if (item.index != index || item.pin_id.empty() || pin_row) continue;
-          if (auto pin = cache.pin_buttons.find(item.pin_id); pin != cache.pin_buttons.end())
-            pin_row = pin->second->parent();
-        }
-      }
+    std::vector<SidebarTreeNode> pin_nodes;
+    std::vector<SidebarTabNode> tab_nodes;
+    pin_nodes.reserve(state_.pins.size()); tab_nodes.reserve(state_.tabs.size());
+    for (const auto& pin : state_.pins) pin_nodes.push_back({pin.id, pin.parent_id, pin.folder});
+    for (const auto& tab : state_.tabs) tab_nodes.push_back({tab.index, tab.pin_id});
+    cache.tab_plan = sidebar_tree_.Tabs(state_.workspace_id, pin_nodes, tab_nodes,
+        state_.split_tabs[0].value_or(SidebarTree::kRoot),
+        state_.split_tabs[1].value_or(SidebarTree::kRoot), state_.split);
+    for (const auto& slot : cache.tab_plan.slots) {
+      if (!slot.pair) { add_tab(contents.get(), state_.tabs[slot.first]); continue; }
       SplitPair* pair = nullptr;
-      if (pin_row) {
+      if (slot.pin != SidebarTree::kRoot) {
+        auto* pin_row = cache.pin_buttons.at(state_.pins[slot.pin].id)->parent();
         auto* group = pin_row->parent();
         pair = group->AddChildViewAt(std::make_unique<SplitPair>(), *group->GetIndexOf(pin_row));
         pair->SetProperty(views::kMarginsKey, pin_row->GetInsets());
@@ -2274,11 +2269,8 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
       } else {
         pair = contents->AddChildView(std::make_unique<SplitPair>());
       }
-      for (const auto& index : state_.split_tabs) {
-        auto partner = std::find_if(state_.tabs.begin(), state_.tabs.end(),
-            [&](const ShellTab& item) { return index == item.index; });
-        if (partner != state_.tabs.end()) add_tab(pair, *partner, true);
-      }
+      add_tab(pair, state_.tabs[slot.first], true);
+      add_tab(pair, state_.tabs[slot.second], true);
     }
     cache.tabs_root->AddChildView(std::move(contents));
     cache.tabs = state_.tabs;
@@ -2307,11 +2299,9 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
     cache.active_pin = state_.active_pin;
   }
   if (!same_structure) {
-    std::set<std::string> paired_pins;
-    for (const auto& tab : state_.tabs) if (!tab.pin_id.empty()) paired_pins.insert(tab.pin_id);
-    for (const auto& [id, button] : cache.pin_buttons) {
+    for (const auto& pin : cache.tab_plan.pins) {
       ++pin_visibility_update_count_;
-      button->parent()->SetVisible(!paired_pins.contains(id));
+      cache.pin_buttons.at(state_.pins[pin.index].id)->parent()->SetVisible(pin.visible);
     }
   }
   for (const auto& [index, button] : cache.tab_buttons)
@@ -2516,22 +2506,24 @@ void WorkspaceShell::UpdateWorkspaceSwipePreview() {
             RowButton::PaintPreview(canvas, gfx::Rect(indent, y, std::max(0, size.width() - indent), row_height), spec, shell->root_);
           y += row_height + 2;
         };
-        bool pair_drawn = false;
-        auto pair = [&](int indent) {
-          if (!cache) return;
+        const SidebarTabSlot* pair_slot = nullptr;
+        if (cache) for (const auto& slot : cache->tab_plan.slots) if (slot.pair) {pair_slot = &slot; break;}
+        std::vector<bool> pin_visibility(pins ? pins->size() : 0, true);
+        if (cache) for (const auto& pin : cache->tab_plan.pins) pin_visibility[pin.index] = pin.visible;
+        auto pair = [&](const SidebarTabSlot& slot, int indent) {
           const int half = std::max(0, size.width() - indent - 12) / 2;
           if (y + 46 > 0 && y < size.height())
             FillRound(canvas, gfx::Rect(indent, y, size.width() - indent, 46), 12, SkColorSetA(Tone(shell->root_, kCard), 0x33));
           int x = indent + 4;
-          for (const auto& index : cache->split_tabs) {
-            if (!index) continue;
-            auto button = cache->tab_buttons.find(*index);
+          for (size_t position : {slot.first, slot.second}) {
+            const auto& tab = cache->tabs[position];
+            auto button = cache->tab_buttons.find(tab.index);
             if (button == cache->tab_buttons.end()) continue;
             if (y + 38 > 0 && y < size.height())
               RowButton::PaintPreview(canvas, gfx::Rect(x, y + 4, half, 38), static_cast<RowButton*>(button->second.get())->preview_spec(), shell->root_);
             x += half + 4;
           }
-          y += 48; pair_drawn = true;
+          y += 48;
         };
         if (pins && !pins->empty()) {
           const int label_height = Font(-2).GetHeight();
@@ -2552,9 +2544,9 @@ void WorkspaceShell::UpdateWorkspaceSwipePreview() {
             const int indent = SidebarFolderIndent(entry.depth);
             auto button = cache ? cache->pin_buttons.find(pin->id) : std::map<std::string, raw_ptr<views::Button>>::const_iterator();
             if (cache && button != cache->pin_buttons.end()) {
-              if (button->second->parent()->GetVisible())
+              if (pair_slot && pair_slot->pin == entry.index) pair(*pair_slot, indent);
+              else if (pin_visibility[entry.index])
                 row(static_cast<RowButton*>(button->second.get())->preview_spec(), indent, 34);
-              else if (cache->pin_pair && !pair_drawn) pair(indent);
             } else {
               RowButton::Spec spec; spec.title = base::UTF8ToUTF16(pin->title);
               if (pin->folder) {
@@ -2569,12 +2561,12 @@ void WorkspaceShell::UpdateWorkspaceSwipePreview() {
             if (pin->folder && !entry.collapsed) open_groups.push_back(entry.depth);
           }
           y += static_cast<int>(open_groups.size()) * 2 + 8;
-          if (cache && cache->pin_pair) pair_drawn = true;
         }
-        if (cache) for (const auto& tab : cache->tabs) {
-          const bool paired = cache->split_tabs[0] == tab.index || cache->split_tabs[1] == tab.index;
-          if (paired) { if (!pair_drawn) pair(0); continue; }
-          if (auto button = cache->tab_buttons.find(tab.index); button != cache->tab_buttons.end())
+        if (cache) for (const auto& slot : cache->tab_plan.slots) {
+          if (slot.pair) { if (slot.pin == SidebarTree::kRoot) pair(slot, 0); continue; }
+          const auto& tab = cache->tabs[slot.first];
+          auto button = cache->tab_buttons.find(tab.index);
+          if (button != cache->tab_buttons.end())
             row(static_cast<RowButton*>(button->second.get())->preview_spec(), 0, 34);
         }
         if (!cache || (cache->tabs.empty() && id != shell->swipe_source_)) {

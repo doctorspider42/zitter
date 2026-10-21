@@ -92,4 +92,53 @@ std::vector<SidebarTreeEntry> SidebarTree::Plan(std::string_view workspace,
   };
   out.reserve(nodes.size()); append(append, "", kRoot, 0, true); return out;
 }
+SidebarTabPlan SidebarTree::Tabs(std::string_view workspace, base::span<const SidebarTreeNode> nodes,
+    base::span<const SidebarTabNode> tabs, size_t first, size_t second, bool split) const {
+  SidebarTabPlan out;
+#if BUILDFLAG(IS_MAC)
+  if (impl_->rust_tree) {
+    std::vector<sidebar::TreeNode> input;
+    std::vector<sidebar::TabNode> tab_input;
+    input.reserve(nodes.size()); tab_input.reserve(tabs.size());
+    for (const auto& node : nodes) input.push_back({rust::String(node.id), rust::String(node.parent), node.folder});
+    for (const auto& tab : tabs) tab_input.push_back({tab.index, rust::String(tab.pin)});
+    const auto result = (*impl_->rust_tree)->tab_plan(rust::Str(workspace.data(), workspace.size()),
+        rust::Slice<const sidebar::TreeNode>(input.data(), input.size()),
+        rust::Slice<const sidebar::TabNode>(tab_input.data(), tab_input.size()), first, second, split);
+    out.slots.reserve(result.slots.size()); out.pins.reserve(result.pins.size());
+    for (const auto& item : result.slots) out.slots.push_back({item.first, item.second, item.pin, item.pair});
+    for (const auto& item : result.pins) out.pins.push_back({item.index, item.visible});
+    return out;
+  }
+#endif
+  // Default Views keeps the same grouping contract in its native baseline.
+  const auto tree = Plan(workspace, nodes);
+  std::map<std::string_view, size_t> reachable;
+  for (const auto& entry : tree) reachable.emplace(nodes[entry.index].id, entry.index);
+  std::map<size_t, size_t> positions;
+  std::vector<size_t> order;
+  std::set<std::string_view> referenced;
+  for (size_t i = 0; i < tabs.size(); ++i) {
+    if (!positions.emplace(tabs[i].index, i).second) continue;
+    order.push_back(i);
+    if (!tabs[i].pin.empty()) referenced.insert(tabs[i].pin);
+  }
+  for (const auto& entry : tree) out.pins.push_back({entry.index, !referenced.contains(nodes[entry.index].id)});
+  const auto a = positions.find(first), b = positions.find(second);
+  const bool paired = split && first != second && a != positions.end() && b != positions.end();
+  bool emitted = false;
+  for (size_t index : order) {
+    if (paired && (index == a->second || index == b->second)) {
+      if (!emitted) {
+        size_t pin = kRoot;
+        for (size_t member : {a->second, b->second}) {
+          if (auto found = reachable.find(tabs[member].pin); found != reachable.end()) {pin = found->second; break;}
+        }
+        out.slots.push_back({a->second, b->second, pin, true}); emitted = true;
+      }
+    } else out.slots.push_back({index, kRoot, kRoot, false});
+  }
+  return out;
+}
+
 }

@@ -378,6 +378,7 @@ class WorkspaceShell final : public ui::EventHandler,
     raw_ptr<views::View> tabs_root = nullptr;
     std::vector<PinnedItem> pins;
     std::vector<ShellTab> tabs;
+    SidebarTabPlan tab_plan;
     std::array<std::optional<size_t>, 2> split_tabs;
     std::map<std::string, raw_ptr<views::Button>> pin_buttons;
     std::map<size_t, raw_ptr<views::Button>> tab_buttons;

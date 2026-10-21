@@ -20,7 +20,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Row mouse/key activation, drag threshold, latched drag, cancellation and close visibility | Rust input reducer in opt-in backend; native event/focus/AX adapter | Preserve native default action; migrate drop target policy and replace Button containers |
 | Next/previous tab wrapping | Rust; existing configurable key dispatch | Preserve page shortcut precedence and editing/IME behavior |
 | Vertical list/folder columns and full content extent | Rust via native View measurement/bounds adapter | Verify collapse/resize against Views; replace the native hierarchy with stable Rust item identities |
-| Folder hierarchy, collapse state, indentation wrappers and split tile geometry | Rust plan keyed by workspace/item IDs; native View/measurement/AX adapters | Replace native node containers; migrate placement policy for pinned split pairs |
+| Folder hierarchy, collapse state, indentation wrappers and split tile geometry/placement | Rust tree/tab plans keyed by workspace/item IDs; native View/measurement/AX adapters | Replace native node containers and viewport/clipping adapters |
 | Scroll, viewport, scrollbar | Native ScrollView/Cocoa scrollbar | Native input adapter + Rust offset/clipping; native wheel and trackpad coverage |
 | Selection, close/reopen, title changes, pinned navigation | Rust row actions into existing application callbacks; native close child and AX action | Migrate close child and remaining command routing; preserve persistence and last-tab rules |
 | Folder expand/collapse and tree visibility; create/rename/delete and nested pins | Rust tree state/layout; application persistence and native menu/editing adapters | Rust editing forms; preserve failed writes and validation rollback |
@@ -85,6 +85,14 @@ Views-specific layout and control behavior must have an explicit replacement.
   and 59 Python tests passed, including hidden-folder rename/rebuild and large
   warmed sidebars. Signed app collapse state survived workspace switching.
   See [tree validation](benchmarks/rust-sidebar-tree-functional-2026-10-21.json).
+
+- Rust now owns tab slots, split membership/pane order, pinned-pair anchoring and
+  original-pin visibility. Native row/group adapters and swipe previews consume
+  the same cached plan. 33 Metal browser regressions, 10 Views controls, 22 Rust
+  tests and 59 Python tests passed, including two pinned panes at different
+  folder depths, swapping while collapsed and restoring both original pins.
+  Signed app pane/menu order was checked and restored. See
+  [tab-plan validation](benchmarks/rust-tab-plan-functional-2026-10-21.json).
 
 ## Completion gates
 

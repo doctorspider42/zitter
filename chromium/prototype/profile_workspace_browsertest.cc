@@ -4136,6 +4136,63 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarSplitAndDeepFolderGeome
   EXPECT_TRUE(pin->IsDrawn());
   EXPECT_EQ(pin_x, pin->GetBoundsInScreen().x());
 }
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarPinnedPairFollowsPaneOrderAndFolders) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->SetWorkspaceAnimations(false);
+  base::FilePath source;
+  ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &source));
+  window_->PreviewArcImport(source.AppendASCII("zitter/testdata/arc"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->import_ready(); }));
+  ASSERT_TRUE(window_->ApplyArcImport());
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  ASSERT_TRUE(window_->Select("arc-space-space-a"));
+  shell->CloseOverlays(true); shell->SetPinned(true); shell->ShowSidebar();
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  auto* a = SidebarNamedButton(shell->sidebar_view(), u"Przypięta A");
+  auto* b = SidebarNamedButton(shell->sidebar_view(), u"Przypięta B");
+  ASSERT_TRUE(a); ASSERT_TRUE(b);
+  const int a_x = a->GetBoundsInScreen().x(), b_x = b->GetBoundsInScreen().x();
+  EXPECT_EQ(a_x + 12, b_x);
+  window_->OpenPinnedItem("tab-a"); auto* page_a = window_->contents("arc-space-space-a");
+  window_->OpenPinnedItem("tab-b"); auto* page_b = window_->contents("arc-space-space-a");
+  ASSERT_EQ(3u, window_->tab_count("arc-space-space-a"));
+  ASSERT_TRUE(window_->SplitTab(1));  // B left, A right: anchor in B's nested folder.
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  ASSERT_TRUE(shell->tab_button(1)); ASSERT_TRUE(shell->tab_button(2));
+  EXPECT_EQ(page_b, window_->pane_contents(false)); EXPECT_EQ(page_a, window_->pane_contents(true));
+  EXPECT_EQ(b_x, shell->tab_button(2)->parent()->GetBoundsInScreen().x());
+  EXPECT_LT(shell->tab_button(2)->x(), shell->tab_button(1)->x());
+  EXPECT_FALSE(a->IsDrawn()); EXPECT_FALSE(b->IsDrawn());
+  window_->SwapSplit();
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  EXPECT_EQ(page_a, window_->pane_contents(false)); EXPECT_EQ(page_b, window_->pane_contents(true));
+  EXPECT_EQ(a_x, shell->tab_button(1)->parent()->GetBoundsInScreen().x());
+  EXPECT_LT(shell->tab_button(1)->x(), shell->tab_button(2)->x());
+  auto* docs = SidebarNamedButton(shell->sidebar_view(), u"▾ Dokumenty");
+  ASSERT_TRUE(docs); views::test::ButtonTestApi(docs).NotifyDefaultMouseClick();
+  window_->SwapSplit();
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  EXPECT_FALSE(shell->tab_button(2)->IsDrawn());
+  views::test::ButtonTestApi(docs).NotifyDefaultMouseClick();
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  EXPECT_TRUE(shell->tab_button(2)->IsDrawn());
+  auto* nested = SidebarNamedButton(shell->sidebar_view(), u"▾ Projekt");
+  ASSERT_TRUE(nested); views::test::ButtonTestApi(nested).NotifyDefaultMouseClick();
+  ASSERT_TRUE(window_->Select("arc-space-space-b")); ASSERT_TRUE(window_->Select("arc-space-space-a"));
+  shell->CloseOverlays(true); shell->ShowSidebar(); shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  EXPECT_FALSE(shell->tab_button(2)->IsDrawn());
+  EXPECT_TRUE(window_->split()); EXPECT_EQ(page_b, window_->pane_contents(false));
+  views::test::ButtonTestApi(nested).NotifyDefaultMouseClick();
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  EXPECT_TRUE(shell->tab_button(2)->IsDrawn());
+  EXPECT_EQ(b_x, shell->tab_button(2)->parent()->GetBoundsInScreen().x());
+  window_->Unsplit(1);
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  EXPECT_FALSE(window_->split()); EXPECT_FALSE(shell->tab_button(1)); EXPECT_FALSE(shell->tab_button(2));
+  EXPECT_TRUE(a->IsDrawn()); EXPECT_TRUE(b->IsDrawn());
+  EXPECT_EQ(a_x, a->GetBoundsInScreen().x()); EXPECT_EQ(b_x, b->GetBoundsInScreen().x());
+}
 // Exercise Rust-owned gesture state and row geometry through native events,
 // rather than invoking the command callbacks or asserting implementation data.
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeDragAndCloseAtWidthLimits) {

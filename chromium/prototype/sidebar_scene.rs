@@ -14,6 +14,10 @@ mod ffi {
     }
     struct TreeNode { id: String, parent: String, folder: bool }
     struct TreeEntry { index: usize, parent: usize, depth: i32, collapsed: bool, visible: bool }
+    struct TabNode { index: usize, pin: String }
+    struct TabSlot { first: usize, second: usize, pin: usize, pair: bool }
+    struct PinVisibility { index: usize, visible: bool }
+    struct TabPlan { slots: Vec<TabSlot>, pins: Vec<PinVisibility> }
     enum PointerPhase { Enter, Exit, Move, Press, Drag, Release }
     enum RowVisual { Normal, Hovered, Pressed, Disabled }
     enum RowAction { None, Activate, Drop, Cancel }
@@ -31,6 +35,8 @@ mod ffi {
         type SidebarTree;
         fn new_sidebar_tree() -> Box<SidebarTree>;
         fn tree_plan(self: &SidebarTree, workspace: &str, nodes: &[TreeNode]) -> Vec<TreeEntry>;
+        fn tab_plan(self: &SidebarTree, workspace: &str, nodes: &[TreeNode], tabs: &[TabNode],
+                    first: usize, second: usize, split: bool) -> TabPlan;
         fn collapsed(self: &SidebarTree, workspace: &str, id: &str) -> bool;
         fn set_collapsed(self: &mut SidebarTree, workspace: &str, id: &str, value: bool);
         fn toggle(self: &mut SidebarTree, workspace: &str, id: &str) -> bool;
@@ -81,6 +87,39 @@ impl SidebarTree {
         self.set_collapsed(workspace, id, collapsed); collapsed
     }
     fn forget_workspace(&mut self, workspace: &str) {self.collapsed.remove(workspace);}
+    fn tab_plan(&self, workspace: &str, nodes: &[ffi::TreeNode], tabs: &[ffi::TabNode],
+                first: usize, second: usize, split: bool) -> ffi::TabPlan {
+        let tree = self.tree_plan(workspace, nodes);
+        let reachable: BTreeMap<&str, usize> = tree.iter().map(|e| (nodes[e.index].id.as_str(), e.index)).collect();
+        let mut positions = BTreeMap::new(); let mut order = Vec::new();
+        for (index, tab) in tabs.iter().enumerate() {
+            if let std::collections::btree_map::Entry::Vacant(entry) = positions.entry(tab.index) {
+                entry.insert(index); order.push(index);
+            }
+        }
+        let referenced: BTreeSet<&str> = order.iter().map(|&i| tabs[i].pin.as_str()).filter(|s| !s.is_empty()).collect();
+        let pins = tree.iter().map(|e| ffi::PinVisibility {
+            index: e.index, visible: !referenced.contains(nodes[e.index].id.as_str())
+        }).collect();
+        let pair = if split && first != second {
+            positions.get(&first).zip(positions.get(&second)).map(|(&a, &b)| (a, b))
+        } else {None};
+        let mut slots = Vec::with_capacity(order.len()); let mut emitted = false;
+        for index in order {
+            if let Some((a, b)) = pair {
+                if index == a || index == b {
+                    if !emitted {
+                        let pin = [a, b].iter().find_map(|&i| reachable.get(tabs[i].pin.as_str()).copied()).unwrap_or(usize::MAX);
+                        slots.push(ffi::TabSlot {first: a, second: b, pin, pair: true});
+                        emitted = true;
+                    }
+                    continue;
+                }
+            }
+            slots.push(ffi::TabSlot {first: index, second: usize::MAX, pin: usize::MAX, pair: false});
+        }
+        ffi::TabPlan {slots, pins}
+    }
     fn tree_plan(&self, workspace: &str, nodes: &[ffi::TreeNode]) -> Vec<ffi::TreeEntry> {
         let mut children: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
         let mut ids = BTreeSet::new();
@@ -371,6 +410,42 @@ mod tests {
         for index in 0..70 {chain.push(node(&index.to_string(), if index == 0 {"".into()} else {(index - 1).to_string()}.as_str(), true));}
         let plan = tree.tree_plan("work", &chain);
         assert_eq!(plan.len(), 65); assert_eq!(plan.last().unwrap().depth, 64);
+    }
+    fn tab(index: usize, pin: &str) -> ffi::TabNode {ffi::TabNode {index, pin: pin.into()}}
+    #[test] fn tab_plan_groups_once_in_pane_order_and_preserves_other_tabs() {
+        let tree = new_sidebar_tree();
+        let tabs = [tab(3, ""), tab(7, ""), tab(9, ""), tab(12, "")];
+        let p = tree.tab_plan("work", &[], &tabs, 9, 3, true);
+        assert_eq!(p.slots.len(), 3);
+        assert!(p.slots[0].pair); assert_eq!((p.slots[0].first, p.slots[0].second), (2, 0));
+        assert_eq!(p.slots[0].pin, usize::MAX);
+        assert_eq!((p.slots[1].first, p.slots[2].first), (1, 3));
+        assert!(!p.slots[1].pair && !p.slots[2].pair);
+    }
+    #[test] fn tab_plan_anchors_pinned_pairs_by_pane_order_even_in_collapsed_folders() {
+        let mut tree = new_sidebar_tree(); tree.set_collapsed("work", "folder", true);
+        let nodes = [node("folder", "", true), node("a", "folder", false), node("b", "", false)];
+        let tabs = [tab(0, ""), tab(1, "a"), tab(2, "b")];
+        let p = tree.tab_plan("work", &nodes, &tabs, 1, 2, true);
+        assert_eq!(p.slots.len(), 2); assert_eq!(p.slots[1].pin, 1);
+        assert!(p.pins[0].visible && !p.pins[1].visible && !p.pins[2].visible);
+        let swapped = tree.tab_plan("work", &nodes, &tabs, 2, 1, true);
+        assert_eq!((swapped.slots[1].first, swapped.slots[1].second, swapped.slots[1].pin), (2, 1, 2));
+        let right_pinned = tree.tab_plan("work", &nodes, &tabs, 0, 1, true);
+        assert_eq!(right_pinned.slots[0].pin, 1);
+    }
+    #[test] fn tab_plan_falls_back_for_invalid_pairs_and_unreachable_pins() {
+        let tree = new_sidebar_tree();
+        let nodes = [node("orphan", "missing", false), node("good", "", false)];
+        let tabs = [tab(5, "orphan"), tab(8, "good"), tab(8, "duplicate")];
+        let p = tree.tab_plan("work", &nodes, &tabs, 5, 8, true);
+        assert_eq!(p.slots.len(), 1); assert_eq!(p.slots[0].pin, 1); assert_eq!(p.pins.len(), 1);
+        for (first, second, split) in [(5, 8, false), (5, 5, true), (5, 100, true)] {
+            let p = tree.tab_plan("work", &nodes, &tabs, first, second, split);
+            assert_eq!(p.slots.len(), 2); assert!(p.slots.iter().all(|s| !s.pair));
+            assert_eq!((p.slots[0].first, p.slots[1].first), (0, 1));
+        }
+        assert!(tree.tab_plan("work", &[], &[], 0, 1, true).slots.is_empty());
     }
     #[test] fn split_tiles_fill_odd_widths_and_respect_frame_and_order() {
         let natural = split_layout(-1, -1, 2);

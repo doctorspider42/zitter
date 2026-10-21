@@ -10,6 +10,13 @@
 #include "base/containers/span.h"
 namespace zitter::prototype {
 struct SidebarTreeNode { std::string id, parent; bool folder; };
+struct SidebarTabNode { size_t index; std::string pin; };
+struct SidebarTabSlot { size_t first, second, pin; bool pair; };
+struct SidebarPinVisibility { size_t index; bool visible; };
+struct SidebarTabPlan {
+  std::vector<SidebarTabSlot> slots;
+  std::vector<SidebarPinVisibility> pins;
+};
 struct SidebarTreeEntry {
   size_t index, parent;
   int depth;
@@ -24,6 +31,8 @@ class SidebarTree {
   ~SidebarTree();
   std::vector<SidebarTreeEntry> Plan(std::string_view workspace,
                                    base::span<const SidebarTreeNode> nodes) const;
+  SidebarTabPlan Tabs(std::string_view workspace, base::span<const SidebarTreeNode> nodes,
+                      base::span<const SidebarTabNode> tabs, size_t first, size_t second, bool split) const;
   bool Collapsed(std::string_view workspace, std::string_view id) const;
   void SetCollapsed(std::string_view workspace, std::string_view id, bool value);
   bool Toggle(std::string_view workspace, std::string_view id);
