@@ -4,11 +4,11 @@ The optional `--zitter-sidebar=rust-metal` backend renders the **live tab/pin li
 
 ## What moved
 
-- Rust produces the display list for actual tab titles, site monograms, selected/hovered cards, folder rows, section labels, close affordances and both tiles of a Split View pair. It also handles next/previous tab index wrapping for the Metal backend.
+- Rust produces the display list for actual tab titles, site monograms, selected/hovered cards, folder rows, section labels, close affordances and both tiles of a Split View pair. It also handles next/previous tab index wrapping for the Metal backend. Row title/detail/close geometry and pointer drag state now come from Rust: the native interaction adapter and the GPU display list share the same row geometry. The platform still measures text and delivers events; Rust distinguishes clicks, latched drags and cancellation on capture loss.
 - A visual-only AppKit view presents directly through an asynchronous `CAMetalLayer`. Rounded geometry is drawn by Metal; CoreText shapes/truncates real Unicode text, including system font fallback. Text tiles are cached, bounded to 256 entries / 16 MiB, and uploaded on cache misses. No web page pixels are copied into the sidebar.
 - Viewport clipping, scroll offsets, indentation and split tile bounds come from the live interaction tree. Paint and scroll notifications coalesce updates onto the UI task queue; identical frames skip GPU submission. There is no polling/redraw timer. The shared tab ScrollView now sizes its contents to their full preferred height, fixing overflow scrolling in both backends. In Metal mode, the native fading scrollbar occupies a gutter outside the GPU canvas so it stays visible and draggable. Its list offset stays on the UI thread to keep native hit testing synchronized with the separately presented Metal surface.
 
-This is an incremental renderer prototype, **not a complete removal of Views**. Views still owns outer layout, address pill, New Tab action, workspace controls, event routing, accessibility, context menus, drag-to-split, dialogs, palette editing and IME. Its tab interaction nodes remain in place; the Metal overlay returns `nil` from hit testing, cannot become first responder and adds no accessibility element. The existing paint path also remains available beneath the overlay for fallback and workspace animation snapshots. Consequently, this prototype still pays some Views layout/paint cost; it does not establish the performance of a future entirely Rust-owned sidebar.
+This is an incremental renderer prototype, **not a complete removal of Views**. Views still owns outer/container layout, address pill, New Tab action, workspace controls, event delivery, accessibility, context menus, drag-to-split, dialogs, palette editing and IME. Its tab interaction nodes remain in place; the Metal overlay returns `nil` from hit testing, cannot become first responder and adds no accessibility element. The existing paint path also remains available beneath the overlay for fallback and workspace animation snapshots. Consequently, this prototype still pays some Views layout/paint cost; it does not establish the performance of a future entirely Rust-owned sidebar.
 
 Existing browser shortcuts continue to use the normal configurable bindings: Ctrl+Tab / Ctrl+Shift+Tab, Cmd+1…9, Cmd+T/W/L/K, workspace switching and split commands. Folder and tab menus, folder collapse/rename/delete, tab close, profile isolation, downloads, preferences, Peek and session restore retain their current controllers. A single pinned site still uses the existing monogram representation; this change does not add network favicon fetching. Folder rows use a system folder glyph in the Metal list.
 
@@ -42,3 +42,18 @@ This prototype introduces no downloaded UI/font framework: the Rust bridge uses 
 No new performance improvement is claimed by this change. The previous rectangle benchmark is not a measurement of this text-bearing workspace UI; a later comparison must measure this actual workload and presentation path.
 
 Validated on 2026-10-21: **16/16 real-browser tests with Rust/Metal and Metal API Validation, 2/2 default Views checks, 4/4 Rust tests and 59/59 Python tests passed**. The overflowing-list test also verifies native hit testing and a native mouse click after scrolling. GN dependency checks, product boundaries and bundle signature verification passed; the packaged executable UUID matches the current build. Filtered test results and source hashes are recorded in [the functional validation artifact](benchmarks/metal-sidebar-functional-2026-10-21.json).
+
+The [functional parity checklist](rust-metal-parity.md) tracks the rest of the
+migration. Rust row geometry/gesture state also applies to the existing
+`RowButton` controls in palettes when this backend is selected; the palettes
+still use Views for rendering, editing and focus. The default Views backend
+keeps its C++ layout and gesture path. Both backends keep the row hovered when
+the pointer enters its close child, so a split-tile close button remains
+clickable; selection changes also retain its visibility while hovered.
+
+Row control migration validated on 2026-10-21: **24/24 Rust/Metal browser tests,
+3/3 Views controls, 7/7 Rust tests and 59/59 Python tests passed**. The native
+pointer regression drags a real tab into Split View and clicks close buttons
+at both sidebar width limits (200 and 480 logical pixels). Palette, history,
+settings and folder regressions also passed with the Rust row adapter enabled.
+See the [row control validation artifact](benchmarks/rust-row-controls-functional-2026-10-21.json).

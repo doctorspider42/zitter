@@ -407,6 +407,12 @@ class RowButton final : public views::Button {
   };
   RowButton(PressedCallback callback, Spec spec)
       : views::Button(std::move(callback)), spec_(std::move(spec)) {
+    // The close affordance is a descendant: entering it must retain row hover.
+    SetNotifyEnterExitOnChild(true);
+#if BUILDFLAG(IS_MAC)
+    if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar") == "rust-metal")
+      rust_pointer_.emplace(sidebar::new_row_pointer());
+#endif
     GetViewAccessibility().SetName(spec_.title);
     SetTooltipText(spec_.title);
     title_ = Label(this, spec_.title, kInk,
@@ -427,16 +433,27 @@ class RowButton final : public views::Button {
     }
   }
   bool OnMousePressed(const ui::MouseEvent& event) override {
+#if BUILDFLAG(IS_MAC)
+    if (rust_pointer_) (*rust_pointer_)->press(event.x(), event.y());
+#endif
     drag_start_ = event.location();
     dragging_ = false;
     return views::Button::OnMousePressed(event);
   }
   bool OnMouseDragged(const ui::MouseEvent& event) override {
+#if BUILDFLAG(IS_MAC)
+    if (rust_pointer_) (*rust_pointer_)->drag(event.x(), event.y(), !spec_.drop.is_null());
+    else
+#endif
     if (spec_.drop && (event.location() - drag_start_).LengthSquared() > 64) dragging_ = true;
     return views::Button::OnMouseDragged(event);
   }
   void OnMouseReleased(const ui::MouseEvent& event) override {
-    if (dragging_ && spec_.drop) {
+    bool dragged = dragging_;
+#if BUILDFLAG(IS_MAC)
+    if (rust_pointer_) dragged = (*rust_pointer_)->release();
+#endif
+    if (dragged && spec_.drop) {
       SetState(STATE_NORMAL);
       auto callback = spec_.drop;
       callback.Run(display::Screen::Get()->GetCursorScreenPoint());
@@ -444,11 +461,18 @@ class RowButton final : public views::Button {
     }
     views::Button::OnMouseReleased(event);
   }
+  void OnMouseCaptureLost() override {
+#if BUILDFLAG(IS_MAC)
+    if (rust_pointer_) (*rust_pointer_)->cancel();
+#endif
+    dragging_ = false;
+    views::Button::OnMouseCaptureLost();
+  }
   void SetActive(bool active) {
     if (spec_.active == active) return;
     spec_.active = active;
     title_->SetFontList(Font(0, active ? gfx::Font::Weight::MEDIUM : gfx::Font::Weight::NORMAL));
-    if (close_) close_->SetVisible(active && !spec_.tile);
+    UpdateCloseVisibility();
     SchedulePaint();
   }
   void SetDetail(std::u16string detail) {
@@ -472,10 +496,21 @@ class RowButton final : public views::Button {
   }
   void StateChanged(ButtonState) override {
     // Half-width split tiles keep their title room; close appears on hover.
-    if (close_) close_->SetVisible((spec_.active && !spec_.tile) || GetState() == STATE_HOVERED);
+    UpdateCloseVisibility();
     SchedulePaint();
   }
   void Layout(PassKey) override {
+#if BUILDFLAG(IS_MAC)
+    if (rust_pointer_) {
+      const auto geometry = sidebar::row_layout(width(), height(),
+          title_->GetPreferredSize().width(), detail_ != nullptr, spec_.chip, close_ != nullptr);
+      auto rect = [](const sidebar::Rect& r) { return gfx::Rect(r.x, r.y, r.width, r.height); };
+      title_->SetBoundsRect(rect(geometry.title));
+      if (detail_) detail_->SetBoundsRect(rect(geometry.detail));
+      if (close_) close_->SetBoundsRect(rect(geometry.close));
+      return;
+    }
+#endif
     const int lead = spec_.chip ? 52 : 36;
     const int trail = close_ ? 32 : 10;
     const int width = std::max(0, this->width() - lead - trail);
@@ -534,6 +569,20 @@ class RowButton final : public views::Button {
     }
   }
  private:
+  void UpdateCloseVisibility() {
+    if (!close_) return;
+    const bool hovered = GetState() == STATE_HOVERED || GetState() == STATE_PRESSED;
+#if BUILDFLAG(IS_MAC)
+    if (rust_pointer_) {
+      close_->SetVisible(sidebar::close_visible(spec_.active, spec_.tile, hovered));
+      return;
+    }
+#endif
+    close_->SetVisible((spec_.active && !spec_.tile) || hovered);
+  }
+#if BUILDFLAG(IS_MAC)
+  std::optional<rust::Box<sidebar::RowPointer>> rust_pointer_;
+#endif
   gfx::Point drag_start_;
   bool dragging_ = false;
   Spec spec_;

@@ -12,16 +12,71 @@ mod ffi {
         active: bool, hovered: bool, tile: bool, close: bool, close_visible: bool, focused: bool,
         font_size: f32,
     }
+    struct Rect { x: i32, y: i32, width: i32, height: i32 }
+    struct RowLayout { title: Rect, detail: Rect, close: Rect }
     struct Primitive {
         x: f32, y: f32, width: f32, height: f32,
         radius: f32, color: u32,
         text: String, font_size: f32, bold: bool,
     }
     extern "Rust" {
+        type RowPointer;
+        fn new_row_pointer() -> Box<RowPointer>;
+        fn press(self: &mut RowPointer, x: i32, y: i32);
+        fn drag(self: &mut RowPointer, x: i32, y: i32, enabled: bool);
+        fn release(self: &mut RowPointer) -> bool;
+        fn cancel(self: &mut RowPointer);
+        fn close_visible(active: bool, tile: bool, hovered: bool) -> bool;
+        fn row_layout(width: i32, height: i32, title_width: i32,
+                      detail: bool, chip: bool, close: bool) -> RowLayout;
         fn layout(items: &[Item]) -> Vec<Primitive>;
         fn cycle_tab(current: usize, count: usize, backwards: bool) -> usize;
     }
 }
+// A row's gesture state is independent of its platform event adapter. Once the
+// threshold is crossed, returning to the press point still completes a drag.
+#[derive(Default)]
+struct RowPointer { origin: Option<(i32, i32)>, dragging: bool }
+fn new_row_pointer() -> Box<RowPointer> { Box::new(RowPointer::default()) }
+impl RowPointer {
+    fn press(&mut self, x: i32, y: i32) {
+        self.origin = Some((x, y)); self.dragging = false;
+    }
+    fn drag(&mut self, x: i32, y: i32, enabled: bool) {
+        if let Some((sx, sy)) = self.origin {
+            let dx = i128::from(x) - i128::from(sx);
+            let dy = i128::from(y) - i128::from(sy);
+            self.dragging |= enabled && dx * dx + dy * dy > 64;
+        }
+    }
+    fn release(&mut self) -> bool {
+        let result = self.origin.is_some() && self.dragging;
+        self.cancel(); result
+    }
+    fn cancel(&mut self) { self.origin = None; self.dragging = false; }
+}
+// Shared by the native input/accessibility adapter and the GPU display list.
+// Widths are logical pixels; CoreText still owns font shaping and measurement.
+fn close_visible(active: bool, tile: bool, hovered: bool) -> bool {
+    (active && !tile) || hovered
+}
+
+fn row_layout(width: i32, height: i32, title_width: i32,
+              detail: bool, chip: bool, close: bool) -> ffi::RowLayout {
+    let width = width.max(0); let height = height.max(0);
+    let lead = if chip {52} else {36};
+    let trail = if close {32} else {10};
+    let available = (width - lead - trail).max(0);
+    let title = if detail {title_width.max(0).min((i64::from(available) * 3 / 5) as i32)} else {available};
+    ffi::RowLayout {
+        title: ffi::Rect { x: lead, y: 0, width: title, height },
+        detail: ffi::Rect { x: lead + title + 10, y: 0,
+            width: if detail {(available - title - 10).max(0)} else {0}, height },
+        close: ffi::Rect { x: (width - 30).max(0), y: (height - 24).max(0) / 2,
+            width: if close {24.min(width)} else {0}, height: if close {24.min(height)} else {0} },
+    }
+}
+
 fn cycle_tab(current: usize, count: usize, backwards: bool) -> usize {
     if count == 0 { return 0; }
     let current = current.min(count - 1);
@@ -60,11 +115,12 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
              &i.monogram, 10.0, true);
         // Keep a close-button hit area reserved whenever it exists, just as the
         // native interaction node does (including half-width split cards).
-        let trailing = if i.close {32.0} else {10.0};
-        emit(i.x + 36.0, i.y, (i.width - 36.0 - trailing).max(0.0), i.height,
+        let geometry = row_layout(i.width as i32, i.height as i32, 0, false, false, i.close);
+        emit(i.x + geometry.title.x as f32, i.y, geometry.title.width as f32, i.height,
              0.0, i.ink, &i.title, i.font_size, i.active);
         if i.close && i.close_visible {
-            emit(i.x + i.width - 25.0, i.y, 14.0, i.height,
+            emit(i.x + geometry.close.x as f32 + 5.0, i.y,
+                 (geometry.close.width - 10).max(0) as f32, i.height,
                  0.0, i.ink, "×", 18.0, false);
         }
     }
@@ -79,6 +135,41 @@ mod tests {
         fill:0xffffffff, badge:0xff556677, active:true, hovered:false,
         tile:false, close:true, close_visible:true, focused:false, font_size:13.0,
     }}
+    #[test] fn row_geometry_reserves_close_and_detail_without_overlap() {
+        for width in [90, 200, 248, 480] {
+            let g = row_layout(width, 38, 100, true, false, true);
+            assert!(g.title.x + g.title.width <= g.detail.x);
+            assert!(g.detail.x + g.detail.width <= g.close.x);
+            assert_eq!(g.close.x + g.close.width, width - 6);
+        }
+        let chip = row_layout(248, 40, 100, false, true, false);
+        assert_eq!(chip.title.x, 52);
+        assert_eq!(chip.close.width, 0);
+        for width in [i32::MIN, 0, 30, i32::MAX] {
+            let g = row_layout(width, -1, i32::MAX, true, true, true);
+            assert!(g.title.width >= 0 && g.detail.width >= 0 && g.close.width >= 0);
+            assert_eq!(g.title.height, 0);
+        }
+    }
+    #[test] fn close_policy_preserves_hover_across_selection_changes() {
+        assert!(close_visible(true, false, false));
+        assert!(!close_visible(false, false, false));
+        assert!(!close_visible(true, true, false));
+        for active in [false, true] {
+            for tile in [false, true] { assert!(close_visible(active, tile, true)); }
+        }
+    }
+    #[test] fn row_pointer_distinguishes_click_drag_and_capture_loss() {
+        let mut p = new_row_pointer();
+        p.drag(100, 100, true); assert!(!p.release());
+        p.press(10, 10); p.drag(18, 10, true); assert!(!p.release());
+        p.press(10, 10); p.drag(19, 10, false); assert!(!p.release());
+        p.press(10, 10); p.drag(19, 10, true); p.drag(10, 10, true);
+        assert!(p.release()); assert!(!p.release());
+        p.press(i32::MIN, i32::MIN); p.drag(i32::MAX, i32::MAX, true);
+        assert!(p.release());
+        p.press(0, 0); p.drag(100, 0, true); p.cancel(); assert!(!p.release());
+    }
     #[test] fn unicode_and_live_title_are_preserved() {
         let r = layout(&[row(240.0)]);
         assert!(r.iter().any(|p| p.text == "Zażółć 日本語 🦀"));

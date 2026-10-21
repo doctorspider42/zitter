@@ -3938,6 +3938,71 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, RealTabViewportScrolls) {
   ASSERT_TRUE(clicked.Wait());
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->contents("work") != first; }));
 }
+// Exercise Rust-owned gesture state and row geometry through native events,
+// rather than invoking the command callbacks or asserting implementation data.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeDragAndCloseAtWidthLimits) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->SetWorkspaceAnimations(false);
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html");
+  ASSERT_TRUE(window_->NavigateFromBar(url, true));
+  auto* dragged = window_->contents("work");
+  ASSERT_TRUE(window_->NavigateFromBar(url, true));
+  auto* original = window_->contents("work");
+  shell->CloseOverlays(true); shell->SetPinned(true); shell->ShowSidebar();
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar") == "rust-metal")
+    ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible(); }));
+  ui_controls::EnableUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  const auto sidebar_window = shell->sidebar_widget()->GetNativeWindow();
+  auto move = [&](gfx::Point p) {
+    base::test::TestFuture<void> done;
+    return ui_controls::SendMouseMoveNotifyWhenDone(p.x(), p.y(), done.GetCallback(),
+        sidebar_window) && done.Wait();
+  };
+  auto mouse = [&](int state) {
+    base::test::TestFuture<void> done;
+    return ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT, state,
+        done.GetCallback(), ui_controls::kNoAccelerator, sidebar_window) && done.Wait();
+  };
+  ASSERT_TRUE(move(shell->tab_button(1)->GetBoundsInScreen().CenterPoint()));
+  ASSERT_TRUE(mouse(ui_controls::DOWN));
+  const auto content = shell->content_host()->GetBoundsInScreen();
+  ASSERT_TRUE(move(gfx::Point(content.right() - 60, content.CenterPoint().y())));
+  ASSERT_TRUE(mouse(ui_controls::UP));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->split(); }));
+  EXPECT_EQ(3u, window_->tab_count("work"));
+  EXPECT_EQ(original, window_->pane_contents(false));
+  EXPECT_EQ(dragged, window_->pane_contents(true));
+  // Close the hovered split tile at minimum width, then an ordinary row at
+  // maximum width. Both clicks must hit the actual child affordance.
+  for (const int width : {200, 480}) {
+    SCOPED_TRACE(width);
+    shell->ResizeSidebar(width - shell->sidebar_width(), true);
+    EXPECT_EQ(width, shell->sidebar_width());
+    if (width == 480) window_->SelectTab(0);
+    shell->sidebar_widget()->LayoutRootViewIfNecessary();
+    auto* row = shell->tab_button(width == 200 ? 1 : 0);
+    ASSERT_TRUE(row);
+    ASSERT_TRUE(move(row->GetBoundsInScreen().CenterPoint()));
+    auto* close = SidebarNamedButton(row, u"Zamknij kartę");
+    ASSERT_TRUE(close);
+    ASSERT_TRUE(base::test::RunUntil([&] { return close->IsDrawn(); }));
+    const size_t count = window_->tab_count("work");
+    ASSERT_TRUE(move(close->GetBoundsInScreen().CenterPoint()));
+    ASSERT_TRUE(close->IsDrawn()) << "Entering the close child must preserve row hover";
+    auto hit_point = close->GetBoundsInScreen().CenterPoint();
+    auto* root = shell->sidebar_widget()->GetRootView();
+    views::View::ConvertPointFromScreen(root, &hit_point);
+    EXPECT_EQ(close, root->GetEventHandlerForPoint(hit_point));
+    ASSERT_TRUE(mouse(ui_controls::DOWN | ui_controls::UP));
+    ASSERT_TRUE(base::test::RunUntil([&] { return window_->tab_count("work") == count - 1; }));
+    EXPECT_FALSE(window_->split());
+  }
+  EXPECT_EQ(original, window_->contents("work"));
+  EXPECT_FALSE(SidebarNamedButton(shell->tab_button(0), u"Zamknij kartę"));
+}
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, MetalReturnsAfterWorkspaceAnimation) {
   auto* shell = window_->shell();
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
