@@ -1,0 +1,317 @@
+{
+  "date": "2026-10-22",
+  "platform": "macOS arm64",
+  "build": "Release, ThinLTO, Chromium PGO",
+  "purpose": "Functional verification of Rust scroll-thumb geometry, drag state and Metal ownership; not a performance benchmark",
+  "base_commit": "b615edc7da613a3f5b9f9036d7cd9fb2b4672f03",
+  "chromium_base_revision": "1a732fcc23b20dd0bcf38f35d72c1fe1ec799d35",
+  "app_uuid": "4C4C44D6-5555-3144-A1FE-8B3D1A14CEF2",
+  "test_binary_uuid": "4C4C440F-5555-3144-A1BB-115110089888",
+  "bundle_signature": {
+    "verification": "codesign --verify --deep --strict passed; packaged/build UUIDs match",
+    "timestamp": true,
+    "scope": "isolated development prototype",
+    "mode": "unchanged repository packager and configured permanent certificate"
+  },
+  "source_sha256": {
+    "chromium/prototype/profile_workspace_browsertest.cc": "1c4bc8c6012f921c630c3d3ccf450dba771b7e785cbceba4c54d50649f834167",
+    "chromium/prototype/sidebar_metal.h": "a73ec3a9b64d670940a94721f8139a73925b3954661d7844e746adf48f34828a",
+    "chromium/prototype/sidebar_metal.mm": "55e40d4c1824619abd9daf689e6058a6a555d4894d264a80fcfbd85dbda5bf4a",
+    "chromium/prototype/sidebar_scene.rs": "e18b438d3dd65a8baeb98656d06971b581a3f57a0fecc4109e1b735876f0e736",
+    "chromium/prototype/workspace_shell.cc": "c50020816279cb63e8b3dce14cdd7b76f1dcadf5783e6b41fc4739bce1b0f74c"
+  },
+  "rust_metal": {
+    "metal_api_validation": true,
+    "tests": [
+      {
+        "name": "ZitterMetalSidebarBrowserTest.AddressAndWorkspaceHeadingOwnSceneText",
+        "status": "SUCCESS",
+        "elapsed_ms": 1373
+      },
+      {
+        "name": "ZitterMetalSidebarBrowserTest.LiveTabsKeyboardFoldersAndSplit",
+        "status": "SUCCESS",
+        "elapsed_ms": 1616
+      },
+      {
+        "name": "ZitterMetalSidebarBrowserTest.MetalOwnsRowTextAndSkipsNativePainting",
+        "status": "SUCCESS",
+        "elapsed_ms": 1912
+      },
+      {
+        "name": "ZitterMetalSidebarBrowserTest.MetalReturnsAfterWorkspaceAnimation",
+        "status": "SUCCESS",
+        "elapsed_ms": 1643
+      },
+      {
+        "name": "ZitterMetalSidebarBrowserTest.NewTabActionUsesSceneTextAndConfiguredShortcut",
+        "status": "SUCCESS",
+        "elapsed_ms": 1926
+      },
+      {
+        "name": "ZitterMetalSidebarBrowserTest.RealTabViewportScrolls",
+        "status": "SUCCESS",
+        "elapsed_ms": 1909
+      },
+      {
+        "name": "ZitterMetalSidebarBrowserTest.RustRowInputCancellationAndPlatformKeys",
+        "status": "SUCCESS",
+        "elapsed_ms": 1367
+      },
+      {
+        "name": "ZitterMetalSidebarBrowserTest.RustScrollThumbDragTrackKeyboardAndAccessibility",
+        "status": "SUCCESS",
+        "elapsed_ms": 1894
+      },
+      {
+        "name": "ZitterMetalSidebarBrowserTest.SplitTitleUpdatesWithoutNativePaint",
+        "status": "SUCCESS",
+        "elapsed_ms": 1382
+      },
+      {
+        "name": "ZitterMetalSidebarBrowserTest.ViewportProjectionTracksFractionalScrollAndClipping",
+        "status": "SUCCESS",
+        "elapsed_ms": 1651
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.ChromiumHistoryAndCommandPalette",
+        "status": "SUCCESS",
+        "elapsed_ms": 1632
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.CocoaSwipesRepeatWithoutMouseMovement",
+        "status": "SUCCESS",
+        "elapsed_ms": 1616
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.CommandCenterMoveCopyAndSleep",
+        "status": "SUCCESS",
+        "elapsed_ms": 1380
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.CommandCenterMoveSplitAndLastPage",
+        "status": "SUCCESS",
+        "elapsed_ms": 1371
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.CommandCenterSearchAndDispatch",
+        "status": "SUCCESS",
+        "elapsed_ms": 1383
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.ConfigurableNativeKeyboardShortcuts",
+        "status": "SUCCESS",
+        "elapsed_ms": 2167
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.FolderRemovalKeepsOpenedPinsAsTabs",
+        "status": "SUCCESS",
+        "elapsed_ms": 1363
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.GeneralSettingsThemeAndPersistence",
+        "status": "SUCCESS",
+        "elapsed_ms": 2437
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.NativeDragAndCloseAtWidthLimits",
+        "status": "SUCCESS",
+        "elapsed_ms": 1372
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.NativeKeyboardWorkspaceSwitching",
+        "status": "SUCCESS",
+        "elapsed_ms": 1638
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.NativeShellAndAppearance",
+        "status": "SUCCESS",
+        "elapsed_ms": 1897
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarColumnLayoutTracksCollapsedFolders",
+        "status": "SUCCESS",
+        "elapsed_ms": 1640
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarFolderFailedWriteRollsBack",
+        "status": "SUCCESS",
+        "elapsed_ms": 3743
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarFolderRenameAndDeleteContents",
+        "status": "SUCCESS",
+        "elapsed_ms": 4299
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarFoldersCreateNestAndPersist",
+        "status": "SUCCESS",
+        "elapsed_ms": 3525
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarMetadataUpdatesPreserveRows",
+        "status": "SUCCESS",
+        "elapsed_ms": 1377
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarPinnedPairFollowsPaneOrderAndFolders",
+        "status": "SUCCESS",
+        "elapsed_ms": 1377
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarRemainsOpenWhileSpacesSlide",
+        "status": "SUCCESS",
+        "elapsed_ms": 1891
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarSplitAndDeepFolderGeometry",
+        "status": "SUCCESS",
+        "elapsed_ms": 1370
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarSwipeTracksCancelsAndSkipsSpaces",
+        "status": "SUCCESS",
+        "elapsed_ms": 2452
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarTreeStateSurvivesRebuildsAndSpaces",
+        "status": "SUCCESS",
+        "elapsed_ms": 1903
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SplitPairPersistsWhileAnotherTabIsShown",
+        "status": "SUCCESS",
+        "elapsed_ms": 1379
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation",
+        "status": "SUCCESS",
+        "elapsed_ms": 1362
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SplitViewSessionRestore",
+        "status": "SUCCESS",
+        "elapsed_ms": 2703
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.WorkspaceContextAppearanceAndDeletion",
+        "status": "SUCCESS",
+        "elapsed_ms": 2441
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.WorkspaceSwitchCostWithImportedSidebar",
+        "status": "SUCCESS",
+        "elapsed_ms": 2435
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.WorkspaceSwitchCostWithTwoLargeSidebars",
+        "status": "SUCCESS",
+        "elapsed_ms": 2713
+      }
+    ]
+  },
+  "views": {
+    "tests": [
+      {
+        "name": "ZitterProfilesBrowserTest.ChromiumHistoryAndCommandPalette",
+        "status": "SUCCESS",
+        "elapsed_ms": 1641
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.ConfigurableNativeKeyboardShortcuts",
+        "status": "SUCCESS",
+        "elapsed_ms": 2177
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.GeneralSettingsThemeAndPersistence",
+        "status": "SUCCESS",
+        "elapsed_ms": 2435
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.NativeDragAndCloseAtWidthLimits",
+        "status": "SUCCESS",
+        "elapsed_ms": 1379
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.NativeKeyboardWorkspaceSwitching",
+        "status": "SUCCESS",
+        "elapsed_ms": 1643
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.NativeShellAndAppearance",
+        "status": "SUCCESS",
+        "elapsed_ms": 1891
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarColumnLayoutTracksCollapsedFolders",
+        "status": "SUCCESS",
+        "elapsed_ms": 1649
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarMetadataUpdatesPreserveRows",
+        "status": "SUCCESS",
+        "elapsed_ms": 1375
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarPinnedPairFollowsPaneOrderAndFolders",
+        "status": "SUCCESS",
+        "elapsed_ms": 1384
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarSplitAndDeepFolderGeometry",
+        "status": "SUCCESS",
+        "elapsed_ms": 1369
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SidebarTreeStateSurvivesRebuildsAndSpaces",
+        "status": "SUCCESS",
+        "elapsed_ms": 1908
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation",
+        "status": "SUCCESS",
+        "elapsed_ms": 1376
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.WorkspaceSwitchCostWithImportedSidebar",
+        "status": "SUCCESS",
+        "elapsed_ms": 2456
+      },
+      {
+        "name": "ZitterProfilesBrowserTest.WorkspaceSwitchCostWithTwoLargeSidebars",
+        "status": "SUCCESS",
+        "elapsed_ms": 2698
+      }
+    ]
+  },
+  "rust_unit_tests_passed": 35,
+  "python_unit_tests_passed": 59,
+  "gn_dependency_check": "passed for //zitter_ui_lab:*",
+  "product_boundaries": "passed",
+  "verified_mechanisms": [
+    "Rust computes normalized content offset, maximum range, minimum thumb length and both track endpoints. The native ScrollBar measurement/bounds adapter applies the returned geometry after native metric updates and on layout.",
+    "Rust stores the pointer grip and initial content offset across capture. Dragging maps track coordinates to the current content range, clamps endpoints, preserves the 128-point cross-axis snap-back policy and normalizes content shrink. Release/capture loss cancel the Rust state.",
+    "The existing Metal canvas now includes the vertical scrollbar gutter. A clipped Rust display primitive draws the inset thumb; platform color-provider normal/hover/pressed colors remain adapters. There is no second Metal layer, queue or renderer.",
+    "Native thumb painting is gated while Metal is visible. The fallback draws the same Rust primitive through the native canvas; ownership, animation, swipe and drawable-failure paths request fresh native scrollbar paint.",
+    "The opt-in backend replaces the fading Cocoa scrollbar with an always-visible overflow thumb. No fading timer or animation polling is introduced. The default Views backend retains its original scrollbar.",
+    "Native ScrollView scrolling, wheel/gesture delivery, ScrollBar track repeat, menu and key dispatch remain adapters. The new native accessibility node exposes its name, numeric range/current value and increment/decrement actions.",
+    "The new browser regression physically drags to the end, moves outside the snap threshold, returns and releases capture; submitted thumb geometry matches the native hit target. It also clicks the track, dispatches Home/End and invokes accessibility decrement.",
+    "The bitmap regression confirms no native thumb ink under Metal and restores native ink with the panel hidden. Existing real wheel/scroll/tab selection, fractional viewport, large sidebar, input, split/folder/session and settings regressions pass.",
+    "New Tab canvas bounds now explicitly include the scrollbar while preserving its viewport-aligned action width."
+  ],
+  "manual_observations": [
+    "The matching signed and timestamped app showed the GPU thumb alongside real Unicode tabs, with the original split pair and address/heading visible.",
+    "Accessibility Increment changed the scrollbar value from 0 to 122 and moved the list. Scrolling reached value 328 with tab 24 visible at the bottom; selecting it opened the correct real Chromium page.",
+    "Scrolling back returned the accessibility value to 0; selecting the original first pair member restored the split view. The prototype was closed and its launcher exited successfully.",
+    "A separate CUA element-index right click opened the sidebar background menu rather than supplying reliable scrollbar-menu evidence; it was dismissed and that prototype run was closed. No product change was inferred from this coordinate-routing observation.",
+    "The normal application/profile was not used."
+  ],
+  "limitations": [
+    "The scrollbar now stays visible while content overflows; Cocoa fading/expansion appearance is intentionally replaced in this prototype.",
+    "Native ScrollBar/View nodes, range bookkeeping, track autorepeat, menu and keyboard dispatch, wheel/fling services and accessibility delivery remain. This is not complete Views scroll-container removal.",
+    "The new native regression verifies track, drag, key adapter and AX behavior but does not independently exercise the scrollbar context menu. Its inherited menu/controller binding still needs dedicated native input coverage.",
+    "Horizontal workspace scrolling, footer/navigation painting, resize/autohide, split headers, animations and the remaining forms/palettes still require migration.",
+    "This is not a complete VoiceOver/trackpad/RTL/scale matrix or a CPU/GPU/physical-presentation speed comparison.",
+    "No new third-party binary dependency was introduced; original-code Apache-2.0 and required upstream notices are unchanged."
+  ]
+}

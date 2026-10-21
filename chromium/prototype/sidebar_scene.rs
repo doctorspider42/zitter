@@ -3,13 +3,14 @@
 // remain in WorkspaceShell. No URLs, profiles or WebContents cross this ABI.
 #[cxx::bridge(namespace = "zitter::sidebar")]
 mod ffi {
+    struct ScrollMetrics { position: i32, length: i32, offset: i32, max_offset: i32 }
     struct FloatRect { x: f32, y: f32, width: f32, height: f32 }
     struct ViewportNode { parent: usize, bounds: FloatRect, visible: bool }
     struct ProjectedNode { index: usize, bounds: FloatRect, clip: FloatRect }
     struct ViewportProjection { x: f32, y: f32, nodes: Vec<ProjectedNode> }
     struct Item {
         x: f32, y: f32, width: f32, height: f32,
-        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading.
+        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb.
         kind: u32,
         title: String, monogram: String, detail: String,
         title_width: f32, detail_ink: u32, detail_font_size: f32,
@@ -38,6 +39,14 @@ mod ffi {
         text: String, font_size: f32, bold: bool, middle: bool, clip: FloatRect,
     }
     extern "Rust" {
+        type ScrollThumb;
+        fn new_scroll_thumb() -> Box<ScrollThumb>;
+        fn begin(self: &mut ScrollThumb, track: i32, viewport: i32, content: i32, offset: i32, pointer: f32);
+        fn drag(self: &ScrollThumb, track: i32, viewport: i32, content: i32, offset: i32,
+                pointer: f32, cross: f32, thickness: i32, snap: bool) -> i32;
+        fn end(self: &mut ScrollThumb);
+        fn scroll_metrics(track: i32, viewport: i32, content: i32, offset: i32) -> ScrollMetrics;
+        fn scroll_offset(track: i32, viewport: i32, content: i32, position: f32) -> i32;
         type Viewport;
         fn new_viewport() -> Box<Viewport>;
         fn project(self: &mut Viewport, content_width: f32, content_height: f32,
@@ -77,6 +86,51 @@ mod ffi {
         fn cycle_tab(current: usize, count: usize, backwards: bool) -> usize;
     }
 }
+// Scroll geometry and thumb drag state use content offsets, never View IDs.
+// The native adapter delivers track-local coordinates and applies the result to
+// Chromium's scroll service; capture, keyboard/menu and AX delivery remain native.
+fn scroll_metrics(track: i32, viewport: i32, content: i32, offset: i32) -> ffi::ScrollMetrics {
+    let track = track.max(0); let viewport = viewport.max(0); let content = content.max(0);
+    let max_offset = content.saturating_sub(viewport).max(0);
+    let offset = offset.clamp(0, max_offset);
+    let length = if track == 0 || viewport == 0 || content == 0 {0} else {
+        (f64::from(viewport) / f64::from(content) * f64::from(track)).round()
+            .clamp(f64::from(20.min(track)), f64::from(track)) as i32
+    };
+    let position = if max_offset == 0 {0} else {
+        (f64::from(offset) / f64::from(max_offset) * f64::from(track - length)).round() as i32
+    };
+    ffi::ScrollMetrics {position, length, offset, max_offset}
+}
+fn scroll_offset(track: i32, viewport: i32, content: i32, position: f32) -> i32 {
+    let g = scroll_metrics(track, viewport, content, 0);
+    let travel = track.max(0) - g.length;
+    if !position.is_finite() || travel <= 0 {return 0;}
+    (f64::from(position).clamp(0.0, f64::from(travel)) / f64::from(travel)
+        * f64::from(g.max_offset)).round() as i32
+}
+#[derive(Default)]
+struct ScrollThumb { grip: Option<f32>, initial_offset: i32 }
+fn new_scroll_thumb() -> Box<ScrollThumb> {Box::new(ScrollThumb::default())}
+impl ScrollThumb {
+    fn begin(&mut self, track: i32, viewport: i32, content: i32, offset: i32, pointer: f32) {
+        let g = scroll_metrics(track, viewport, content, offset);
+        self.grip = pointer.is_finite().then_some(pointer - g.position as f32);
+        self.initial_offset = g.offset;
+    }
+    fn drag(&self, track: i32, viewport: i32, content: i32, offset: i32,
+            pointer: f32, cross: f32, thickness: i32, snap: bool) -> i32 {
+        let current = scroll_metrics(track, viewport, content, offset).offset;
+        let Some(grip) = self.grip else {return current;};
+        if !pointer.is_finite() || !cross.is_finite() {return current;}
+        if snap && (cross < -128.0 || cross > thickness.max(0) as f32 + 128.0) {
+            return scroll_metrics(track, viewport, content, self.initial_offset).offset;
+        }
+        scroll_offset(track, viewport, content, pointer - grip)
+    }
+    fn end(&mut self) {self.grip = None;}
+}
+
 // The platform delivers scroll offsets. Rust owns normalization, parent-local
 // coordinate projection and inherited clipping; no native View pointers enter.
 #[derive(Clone, Copy)]
@@ -388,6 +442,11 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
                     clip: ffi::FloatRect {x: i.clip.x, y: i.clip.y, width: i.clip.width, height: i.clip.height} });
             }
         };
+        if i.kind == 6 {
+            emit(i.x + 4.0, i.y + 2.0, (i.width - 8.0).max(0.0), (i.height - 4.0).max(0.0),
+                3.5, i.fill, "", 0.0, false);
+            continue;
+        }
         if i.kind == 1 {
             emit(i.x, i.y, i.width, i.height, 0.0, i.ink, &i.title, i.font_size, false);
             continue;
@@ -578,6 +637,37 @@ mod tests {
         let ops = layout(&[item]); assert_eq!(ops.len(), 1);
         assert_eq!((ops[0].x, ops[0].width), (8.0, 184.0));
         assert!(ops[0].bold); assert_eq!(ops[0].text, "🚀 Praca 日本語");
+    }
+    #[test] fn scroll_thumb_reaches_both_endpoints_and_handles_tiny_tracks() {
+        let start = scroll_metrics(300, 300, 3000, -10);
+        assert_eq!((start.position, start.length, start.offset, start.max_offset), (0, 30, 0, 2700));
+        let end = scroll_metrics(300, 300, 3000, i32::MAX);
+        assert_eq!((end.position, end.offset), (270, 2700));
+        assert_eq!(scroll_offset(300, 300, 3000, 270.0), 2700);
+        assert_eq!(scroll_offset(300, 300, 3000, 135.0), 1350);
+        assert_eq!(scroll_metrics(10, 100, 10000, 9900).length, 10);
+        assert_eq!(scroll_offset(10, 100, 10000, 1.0), 0);
+        assert_eq!(scroll_metrics(0, 0, -1, 20).length, 0);
+        assert_eq!(scroll_metrics(300, 400, 300, 50).length, 300);
+        assert_eq!(scroll_offset(300, 300, 3000, f32::NAN), 0);
+    }
+    #[test] fn scroll_drag_keeps_grip_snaps_back_and_cancels_without_late_scroll() {
+        let mut drag = new_scroll_thumb();
+        drag.begin(300, 300, 3000, 1000, 105.0); // Thumb starts at 100, grip is 5.
+        assert_eq!(drag.drag(300, 300, 3000, 1000, 275.0, 7.0, 15, true), 2700);
+        assert_eq!(drag.drag(300, 300, 3000, 2700, 275.0, -129.0, 15, true), 1000);
+        assert_eq!(drag.drag(300, 300, 3000, 1000, 275.0, -129.0, 15, false), 2700);
+        assert_eq!(drag.drag(300, 300, 3000, 1000, f32::NAN, 0.0, 15, true), 1000);
+        // Content can shrink during capture; initial snap offset is normalized.
+        assert_eq!(drag.drag(300, 300, 500, 0, 100.0, 999.0, 15, true), 200);
+        drag.end();
+        assert_eq!(drag.drag(300, 300, 3000, 400, 275.0, 0.0, 15, true), 400);
+    }
+    #[test] fn scrollbar_display_is_an_inset_clipped_thumb_without_text_or_cards() {
+        let mut item = row(15.0); item.kind = 6; item.height = 80.0;
+        let ops = layout(&[item]); assert_eq!(ops.len(), 1);
+        assert_eq!((ops[0].x, ops[0].y, ops[0].width, ops[0].height), (4.0, 2.0, 7.0, 76.0));
+        assert!(ops[0].text.is_empty()); assert_eq!(ops[0].clip.width, 15.0);
     }
     fn viewport_node(parent: usize, x: f32, y: f32, width: f32, height: f32, visible: bool) -> ffi::ViewportNode {
         ffi::ViewportNode {parent, bounds: ffi::FloatRect {x, y, width, height}, visible}

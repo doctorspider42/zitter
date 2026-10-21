@@ -19,6 +19,9 @@
 #include "base/test/scoped_path_override.h"
 #include "ui/compositor/layer.h"
 #include "ui/views/controls/scroll_view.h"
+#include "ui/views/controls/scrollbar/scroll_bar.h"
+#include "ui/gfx/geometry/insets_f.h"
+#include "ui/accessibility/ax_action_data.h"
 #include "ui/views/controls/button/checkbox.h"
 #include "ui/views/test/combobox_test_api.h"
 #include "chromium/prototype/page_services.h"
@@ -3929,7 +3932,10 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NewTabActionUsesSceneTextA
   const auto canvas = shell->metal_sidebar_screen_bounds_for_testing();
   const auto viewport = shell->tab_list_view()->parent()->GetBoundsInScreen();
   EXPECT_EQ(SidebarNamedButton(shell->sidebar_view(), u"Adres strony")->GetBoundsInScreen().origin(), canvas.origin());
-  EXPECT_EQ(viewport.width(), action->width()); EXPECT_EQ(viewport.width(), canvas.width());
+  EXPECT_EQ(viewport.width(), action->width());
+  const auto scrollbar_bounds = shell->tab_scroll_view()->vertical_scroll_bar()->GetBoundsInScreen();
+  EXPECT_EQ(std::max(viewport.right(), scrollbar_bounds.right()), canvas.right());
+  EXPECT_TRUE(canvas.Contains(scrollbar_bounds));
   EXPECT_EQ(viewport.bottom(), canvas.bottom());
   auto paint_action = [&] {
     // The helper paints a root at (0,0); a sidebar child's parent-relative
@@ -4061,6 +4067,73 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, AddressAndWorkspaceHeading
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_contains_text_for_testing("🏠  Prywatne"); }));
   ASSERT_TRUE(window_->Select("work")); shell->ShowSidebar();
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_contains_text_for_testing("🚀  Praca"); }));
+}
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, RustScrollThumbDragTrackKeyboardAndAccessibility) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->SetWorkspaceAnimations(false);
+  const auto url=embedded_test_server()->GetURL("/storage_probe.html");
+  for (int i=0;i<28;++i) ASSERT_TRUE(window_->NavigateFromBar(url,true));
+  shell->CloseOverlays(true); shell->SetPinned(true); shell->ShowSidebar();
+  auto* scroll=shell->tab_scroll_view(); auto* bar=scroll->vertical_scroll_bar();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible() && bar->IsDrawn(); }));
+  ASSERT_EQ(1u,bar->children().size()); auto* thumb=bar->children().front().get();
+  auto has_submitted_thumb=[&] {
+    const auto frame=shell->metal_sidebar_screen_bounds_for_testing();
+    auto rect=gfx::RectF(thumb->GetBoundsInScreen()); rect.Offset(-frame.x(),-frame.y());
+    rect.Inset(gfx::InsetsF::TLBR(2,4,2,4));
+    auto clip=gfx::RectF(bar->GetBoundsInScreen()); clip.Offset(-frame.x(),-frame.y());
+    return frame.Contains(bar->GetBoundsInScreen()) && shell->metal_sidebar_contains_rect_for_testing(rect,clip);
+  };
+  ASSERT_TRUE(base::test::RunUntil(has_submitted_thumb));
+  auto native_ink=[&] {
+    const auto saved=bar->bounds(); bar->SetBoundsRect(gfx::Rect(bar->size())); bar->SchedulePaint();
+    const auto bitmap=views::test::PaintViewToBitmap(bar); bar->SetBoundsRect(saved);
+    for (int y=0;y<bitmap.height();++y) for (int x=0;x<bitmap.width();++x)
+      if (bitmap.getColor(x,y)!=SK_ColorRED) return true;
+    return false;
+  };
+  EXPECT_FALSE(native_ink()); shell->sidebar_widget()->Hide();
+  EXPECT_FALSE(shell->metal_sidebar_visible()); EXPECT_TRUE(native_ink());
+  shell->ShowSidebar(); ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible(); }));
+  ui_controls::EnableUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  auto move=[&](gfx::Point point) {
+    base::test::TestFuture<void> done;
+    return ui_controls::SendMouseMoveNotifyWhenDone(point.x(),point.y(),done.GetCallback(),shell->sidebar_widget()->GetNativeWindow()) && done.Wait();
+  };
+  auto mouse=[&](int state) {
+    base::test::TestFuture<void> done;
+    return ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT,state,done.GetCallback(),ui_controls::kNoAccelerator,shell->sidebar_widget()->GetNativeWindow()) && done.Wait();
+  };
+  ASSERT_TRUE(move(thumb->GetBoundsInScreen().CenterPoint())); ASSERT_TRUE(mouse(ui_controls::DOWN));
+  base::ScopedClosureRunner release_mouse(base::BindOnce([] { ui_controls::SendMouseEvents(ui_controls::LEFT,ui_controls::UP); }));
+  const auto track=bar->GetBoundsInScreen();
+  const gfx::Point end(track.CenterPoint().x(),track.bottom()-1);
+  ASSERT_TRUE(move(end));
+  const int max_offset=shell->tab_list_view()->height()-shell->tab_list_view()->parent()->height();
+  ASSERT_GT(max_offset,0);
+  ASSERT_TRUE(base::test::RunUntil([&] { return scroll->GetVisibleRect().y()==max_offset; }));
+  // Preserve the existing thumb snap-back threshold while capture remains held.
+  ASSERT_TRUE(move(gfx::Point(track.x()-200,end.y())));
+  ASSERT_TRUE(base::test::RunUntil([&] { return scroll->GetVisibleRect().y()==0; }));
+  ASSERT_TRUE(move(end));
+  ASSERT_TRUE(base::test::RunUntil([&] { return scroll->GetVisibleRect().y()==max_offset; }));
+  ASSERT_TRUE(mouse(ui_controls::UP)); static_cast<void>(release_mouse.Release());
+  ASSERT_TRUE(base::test::RunUntil(has_submitted_thumb));
+  ui::AXNodeData accessible; bar->GetViewAccessibility().GetAccessibleNodeData(&accessible);
+  EXPECT_EQ(ax::mojom::Role::kScrollBar,accessible.role);
+  EXPECT_EQ(max_offset,accessible.GetFloatAttribute(ax::mojom::FloatAttribute::kMaxValueForRange));
+  EXPECT_EQ(max_offset,accessible.GetFloatAttribute(ax::mojom::FloatAttribute::kValueForRange));
+  ui::AXActionData decrement; decrement.action=ax::mojom::Action::kDecrement;
+  EXPECT_TRUE(bar->HandleAccessibleAction(decrement)); EXPECT_LT(scroll->GetVisibleRect().y(),max_offset);
+  ui::KeyEvent home(ui::EventType::kKeyPressed,ui::VKEY_HOME,ui::EF_NONE);
+  EXPECT_TRUE(bar->OnKeyPressed(home)); EXPECT_EQ(0,scroll->GetVisibleRect().y());
+  ASSERT_TRUE(move(gfx::Point(track.CenterPoint().x(),thumb->GetBoundsInScreen().bottom()+10)));
+  ASSERT_TRUE(mouse(ui_controls::DOWN|ui_controls::UP));
+  ASSERT_TRUE(base::test::RunUntil([&] { return scroll->GetVisibleRect().y()>0; }));
+  ui::KeyEvent last(ui::EventType::kKeyPressed,ui::VKEY_END,ui::EF_NONE);
+  EXPECT_TRUE(bar->OnKeyPressed(last)); EXPECT_EQ(max_offset,scroll->GetVisibleRect().y());
 }
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, RealTabViewportScrolls) {
   auto* shell = window_->shell();

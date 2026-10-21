@@ -5,6 +5,7 @@
 #include <memory>
 #include <string_view>
 #include <vector>
+#include "base/functional/callback.h"
 #include "ui/gfx/geometry/point_f.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "base/containers/span.h"
@@ -35,7 +36,9 @@ class SidebarMetal {
   virtual bool contains_rect_for_testing(gfx::RectF bounds, gfx::RectF clip) const = 0;
 };
 std::unique_ptr<SidebarMetal> CreateSidebarMetal();
-// Keep the native fading scroller outside the Metal canvas.
-std::unique_ptr<views::ScrollBar> CreateSidebarScrollBar();
+struct SidebarScrollBarSnapshot { gfx::Rect bounds, thumb; unsigned color = 0; bool visible = false; };
+// Native event/scroll-service/menu/AX adapter; Rust owns thumb geometry and drag.
+std::unique_ptr<views::ScrollBar> CreateSidebarScrollBar(base::RepeatingCallback<bool()> scene_visible);
+SidebarScrollBarSnapshot GetSidebarScrollBarSnapshot(views::ScrollBar* bar);
 }
 #endif

@@ -21,7 +21,8 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Next/previous tab wrapping | Rust; existing configurable key dispatch | Preserve page shortcut precedence and editing/IME behavior |
 | Vertical list/folder columns and full content extent | Rust via native View measurement/bounds adapter | Verify collapse/resize against Views; replace the native hierarchy with stable Rust item identities |
 | Folder hierarchy, collapse state, indentation wrappers and split tile geometry/placement | Rust tree/tab plans keyed by workspace/item IDs; native View/measurement/AX adapters | Replace native node containers and viewport/clipping adapters |
-| Scroll offset normalization, viewport projection and clipping | Rust logical viewport; native ScrollView/Cocoa input/scrollbar adapters | Replace native scroll containers; expand real trackpad/scale coverage |
+| Scroll offset normalization, viewport projection and clipping | Rust logical viewport; native ScrollView input/scroll-service adapters | Replace native scroll containers; expand real trackpad/scale coverage |
+| Vertical scrollbar geometry, range normalization, thumb drag/snap/cancellation and drawing | Rust + shared Metal canvas; native ScrollBar/View, key/menu/AX and platform color adapters | Replace native nodes and track-repeat/menu dispatch; horizontal scrollbar, dedicated menu/VoiceOver/scale coverage |
 | Selection, close/reopen, title changes, pinned navigation | Rust row actions into existing application callbacks; native close child and AX action | Migrate close child and remaining command routing; preserve persistence and last-tab rules |
 | Folder expand/collapse and tree visibility; create/rename/delete and nested pins | Rust tree state/layout; application persistence and native menu/editing adapters | Rust editing forms; preserve failed writes and validation rollback |
 | Tab/pin context menus and drag to split | Views event routing + application commands | Rust target/action routing; retain native menus and drop policy |
@@ -122,6 +123,15 @@ Views-specific layout and control behavior must have an explicit replacement.
   59 Python tests passed**. The signed, timestamped app passed address/keyboard
   and workspace round-trip inspection. See
   [address/heading validation](benchmarks/rust-address-heading-functional-2026-10-22.json).
+
+- Rust now owns vertical scrollbar range/geometry, pointer grip, drag snap-back
+  and cancellation, plus drawing on the existing Metal canvas. Native fallback
+  uses the same primitive; the overflow thumb stays visible rather than fading.
+  Native scroll services, track repeat/menu/key and AX adapters remain. **37 Metal
+  browser tests, 14 Views controls, 35 Rust tests and 59 Python tests passed**;
+  signed app scrolling, selection and AX value updates were inspected. Footer
+  and navigation migration remain next. See
+  [scrollbar validation](benchmarks/rust-scrollbar-functional-2026-10-22.json).
 
 ## Completion gates
 

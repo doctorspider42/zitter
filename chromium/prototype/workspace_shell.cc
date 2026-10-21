@@ -1356,7 +1356,10 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   scroll->set_context_menu_controller(this);
   scroll->SetPreferredSize(gfx::Size(200, 0));
 #if BUILDFLAG(IS_MAC)
-  if (metal_sidebar_) scroll->SetVerticalScrollBar(CreateSidebarScrollBar());
+  if (metal_sidebar_) scroll->SetVerticalScrollBar(CreateSidebarScrollBar(
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+        return shell && shell->metal_sidebar_visible();
+      }, weak)));
 #endif
   scroll->SetBackgroundColor(std::nullopt);
   scroll->SetDrawOverflowIndicator(false);
@@ -2432,7 +2435,7 @@ void WorkspaceShell::UpdateMetalSidebar() {
   const bool was_visible = metal_sidebar_->visible();
   if (!sidebar_visible() || swipe_overlay_ || workspace_animation_running()) {
     metal_sidebar_->Hide();
-    if (was_visible) { tab_list_->SchedulePaint(); new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); }
+    if (was_visible) { tab_list_->SchedulePaint(); new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint(); }
     return;
   }
   // Invalidations can reach Metal before the next native compositor paint.
@@ -2449,7 +2452,9 @@ void WorkspaceShell::UpdateMetalSidebar() {
   }
   workspace_name_->SetBoundsRect(sidebar_root_->GetMirroredRect(gfx::Rect(
       viewport_frame.x(), workspace_name_->y(), viewport_frame.width(), workspace_name_->height())));
+  const auto scroller=GetSidebarScrollBarSnapshot(tab_scroll_->vertical_scroll_bar());
   auto bounds = list_bounds;
+  if (scroller.visible) bounds.Union(scroller.bounds);
   if (url_pill_->IsDrawn()) bounds.Union(url_pill_->GetBoundsInScreen());
   if (new_tab_button_->IsDrawn()) bounds.Union(new_tab_button_->GetBoundsInScreen());
   const gfx::Vector2dF list_origin(list_bounds.x() - bounds.x(), list_bounds.y() - bounds.y());
@@ -2535,15 +2540,23 @@ void WorkspaceShell::UpdateMetalSidebar() {
     item.ink=Tone(workspace_name_,kSubtle); item.font_size=Font(-1).GetFontSize();
     items.push_back(std::move(item));
   }
+  if (scroller.visible) {
+    auto rect=scroller.thumb; rect.Offset(-bounds.x(),-bounds.y());
+    auto clip=scroller.bounds; clip.Offset(-bounds.x(),-bounds.y());
+    sidebar::Item item{}; item.kind=6; item.fill=scroller.color;
+    item.x=rect.x(); item.y=rect.y(); item.width=rect.width(); item.height=rect.height();
+    item.clip={float(clip.x()),float(clip.y()),float(clip.width()),float(clip.height())};
+    items.push_back(std::move(item));
+  }
   const SkColor tint = FrameTint(workspace_color(state_.workspace_id), root_);
   metal_sidebar_->Update(sidebar_widget_->GetNativeWindow(), bounds, items, pinned_ ? tint : Mix(tint, Tone(root_, kCard), 70));
   // The initial native paint record can contain fallback text. Re-record it
   // once when GPU presentation takes ownership, then the control paint gate
   // keeps it empty until fallback is needed again.
-  if (!was_visible && metal_sidebar_->visible()) { new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); }
+  if (!was_visible && metal_sidebar_->visible()) { new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint(); }
   // A failed drawable must expose freshly painted fallback content, even if
   // the last native paint was skipped while Metal still had a visible frame.
-  if (was_visible && !metal_sidebar_->visible()) { tab_list_->SchedulePaint(); new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); }
+  if (was_visible && !metal_sidebar_->visible()) { tab_list_->SchedulePaint(); new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint(); }
 #endif
 }
 
@@ -2611,7 +2624,7 @@ size_t WorkspaceShell::workspace_swipe_preview_count() const {
 void WorkspaceShell::UpdateWorkspaceSwipePreview() {
   if (metal_sidebar_ && metal_sidebar_->visible()) {
     metal_sidebar_->Hide();
-    new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint();
+    new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint();
   }
   if (!swipe_overlay_) {
     StopWorkspaceAnimation();
@@ -3376,7 +3389,7 @@ void WorkspaceShell::AnimateWorkspaceSwitch(std::string_view previous) {
   if (metal_sidebar_) {
     metal_sidebar_->Hide();
     tab_list_->SchedulePaint();  // Refresh cached native contents before animating.
-    new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint();
+    new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint();
   }
   tab_scroll_->SetPaintToLayer();
   tab_scroll_->layer()->SetFillsBoundsOpaquely(false);

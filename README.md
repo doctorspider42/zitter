@@ -648,8 +648,9 @@ The real workspace now has an optional Rust + Metal tab-list renderer, with live
 titles, folders, Split View and existing keyboard/controller routing. Live rows
 use scene text without hidden Views Labels, and skip native subtree painting
 while Metal is visible. Rust owns folder hierarchy/collapse state, tab grouping
-and pinned-pair placement, split tile/folder geometry and viewport projection/
-clipping. The same Metal surface draws New Tab and its configurable shortcut
+and pinned-pair placement, split tile/folder geometry, viewport projection/
+clipping, and vertical scrollbar geometry/drag/snap state. The overflow thumb
+is drawn on the shared GPU canvas and remains visible. The same Metal surface draws New Tab and its configurable shortcut
 hint, the address host/path with GPU icons and the workspace heading without
 native text Labels. Model updates refresh the scene independently of
 native painting. Rust also owns row

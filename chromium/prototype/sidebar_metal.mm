@@ -16,7 +16,14 @@
 #include "base/apple/scoped_cftyperef.h"
 #include "base/logging.h"
 #include "base/strings/sys_string_conversions.h"
-#include "ui/views/controls/scrollbar/cocoa_scroll_bar.h"
+#include "ui/views/controls/scrollbar/scroll_bar.h"
+#include "ui/views/controls/scrollbar/base_scroll_bar_thumb.h"
+#include "ui/views/accessibility/view_accessibility.h"
+#include "ui/accessibility/ax_action_data.h"
+#include "ui/color/color_id.h"
+#include "ui/color/color_provider.h"
+#include "ui/gfx/canvas.h"
+#include "cc/paint/paint_flags.h"
 
 // Returning nil delegates EVERY event to Chromium's existing native view:
 // mouse/hover/drag, context menus, trackpad scrolling, key routing and VoiceOver.
@@ -30,11 +37,90 @@
 @end
 namespace zitter::prototype {
 namespace {
-class SidebarScrollBar final : public views::CocoaScrollBar {
+class SidebarScrollBar;
+class SidebarThumb final : public views::BaseScrollBarThumb {
  public:
-  SidebarScrollBar() : views::CocoaScrollBar(views::ScrollBar::Orientation::kVertical) {}
-  bool OverlapsContent() const override { return false; }
+  SidebarThumb(views::ScrollBar* bar, base::RepeatingCallback<bool()> scene_visible)
+      : BaseScrollBarThumb(bar), scene_visible_(std::move(scene_visible)) {}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override { return gfx::Size(15, 20); }
+  unsigned color() const {
+    const auto state = GetState();
+    return GetColorProvider()->GetColor(state == views::Button::STATE_PRESSED
+        ? ui::kColorWebNativeControlScrollbarThumbPressed : state == views::Button::STATE_HOVERED
+        ? ui::kColorWebNativeControlScrollbarThumbHovered : ui::kColorWebNativeControlScrollbarThumb);
+  }
+  void OnPaint(gfx::Canvas* canvas) override {
+    if (scene_visible_ && scene_visible_.Run()) return;
+    sidebar::Item item{}; item.kind=6; item.width=width(); item.height=height(); item.fill=color();
+    item.clip={0,0,float(width()),float(height())};
+    const auto ops=sidebar::layout(rust::Slice<const sidebar::Item>(&item,1));
+    for (const auto& op : ops) {
+      cc::PaintFlags flags; flags.setAntiAlias(true); flags.setColor(op.color);
+      canvas->DrawRoundRect(gfx::RectF(op.x,op.y,op.width,op.height),op.radius,flags);
+    }
+  }
+  bool OnMousePressed(const ui::MouseEvent& event) override;
+  bool OnMouseDragged(const ui::MouseEvent& event) override;
+  void OnMouseReleased(const ui::MouseEvent& event) override { drag_->end(); BaseScrollBarThumb::OnMouseReleased(event); }
+  void OnMouseCaptureLost() override { drag_->end(); BaseScrollBarThumb::OnMouseCaptureLost(); }
+ private:
+  rust::Box<sidebar::ScrollThumb> drag_=sidebar::new_scroll_thumb();
+  base::RepeatingCallback<bool()> scene_visible_;
 };
+class SidebarScrollBar final : public views::ScrollBar {
+ public:
+  explicit SidebarScrollBar(base::RepeatingCallback<bool()> scene_visible)
+      : ScrollBar(Orientation::kVertical) {
+    SetThumb(new SidebarThumb(this,std::move(scene_visible)));
+    GetViewAccessibility().SetName(u"Przewijanie kart");
+    GetViewAccessibility().AddAction(ax::mojom::Action::kIncrement);
+    GetViewAccessibility().AddAction(ax::mojom::Action::kDecrement);
+  }
+  int GetThickness() const override { return 15; }
+  gfx::Rect GetTrackBounds() const override { return GetLocalBounds(); }
+  void Update(int viewport, int content, int offset) override {
+    viewport_=viewport; content_=content; offset_=offset;
+    ScrollBar::Update(viewport,content,offset); SyncThumb();
+  }
+  void Layout(PassKey) override { SyncThumb(); }
+  bool HandleAccessibleAction(const ui::AXActionData& action) override {
+    if (action.action==ax::mojom::Action::kIncrement) return ScrollByAmount(ScrollAmount::kNextLine);
+    if (action.action==ax::mojom::Action::kDecrement) return ScrollByAmount(ScrollAmount::kPrevLine);
+    return ScrollBar::HandleAccessibleAction(action);
+  }
+  void Begin(sidebar::ScrollThumb& drag, float pointer) {
+    drag.begin(height(),viewport_,content_,offset_,pointer);
+  }
+  void Drag(const sidebar::ScrollThumb& drag, float pointer, float cross, bool snap) {
+    ScrollToPosition(drag.drag(height(),viewport_,content_,offset_,pointer,cross,width(),snap));
+  }
+  SidebarScrollBarSnapshot Snapshot() const {
+    return {GetBoundsInScreen(),GetThumb()->GetBoundsInScreen(),
+        static_cast<SidebarThumb*>(GetThumb())->color(),IsDrawn()};
+  }
+ protected:
+  void ScrollToPosition(int position) override {
+    offset_=sidebar::scroll_metrics(height(),viewport_,content_,position).offset;
+    ScrollBar::ScrollToPosition(offset_);
+  }
+ private:
+  void SyncThumb() {
+    const auto g=sidebar::scroll_metrics(height(),viewport_,content_,offset_);
+    offset_=g.offset; GetThumb()->SetBounds(0,g.position,width(),g.length);
+    auto& ax=GetViewAccessibility(); ax.SetMinValueForRange(0); ax.SetMaxValueForRange(g.max_offset); ax.SetValueForRange(g.offset);
+  }
+  int viewport_=0,content_=0,offset_=0;
+};
+bool SidebarThumb::OnMousePressed(const ui::MouseEvent& event) {
+  if (!event.IsOnlyLeftMouseButton() || !GetEnabledInViewsSubtree()) return false;
+  static_cast<SidebarScrollBar*>(scroll_bar())->Begin(*drag_,y()+event.y());
+  SetState(views::Button::STATE_PRESSED); return true;
+}
+bool SidebarThumb::OnMouseDragged(const ui::MouseEvent& event) {
+  if (!GetEnabledInViewsSubtree()) { drag_->end(); return false; }
+  static_cast<SidebarScrollBar*>(scroll_bar())->Drag(*drag_,y()+event.y(),event.x(),GetSnapBackOnDragOutside());
+  return true;
+}
 struct Quad { float x, y, width, height, radius; uint32_t color, textured; float stroke; };
 static_assert(sizeof(Quad) == 32);
 struct TextTile { id<MTLTexture> __strong texture; size_t bytes; };
@@ -227,8 +313,11 @@ class Surface final : public SidebarMetal {
   id<MTLRenderPipelineState> __strong pipeline_;
 };
 }
-std::unique_ptr<views::ScrollBar> CreateSidebarScrollBar() {
-  return std::make_unique<SidebarScrollBar>();
+std::unique_ptr<views::ScrollBar> CreateSidebarScrollBar(base::RepeatingCallback<bool()> scene_visible) {
+  return std::make_unique<SidebarScrollBar>(std::move(scene_visible));
+}
+SidebarScrollBarSnapshot GetSidebarScrollBarSnapshot(views::ScrollBar* bar) {
+  return static_cast<SidebarScrollBar*>(bar)->Snapshot();
 }
 std::unique_ptr<SidebarMetal> CreateSidebarMetal() {
   auto surface = std::make_unique<Surface>();
