@@ -130,4 +130,77 @@ readiness, missing resources and missing idle measurements.
 
 ## Measurements and decision
 
-Pending optimized measurements. Debug smoke checks are not decision evidence.
+Measured on **21 October 2026**, Apple M3 Pro, 36 GiB RAM, macOS 27.0.1,
+ARM64 non-component Release with ThinLTO/PGO. All three backends used the same
+binary, fresh isolated profiles, six process repetitions per scenario/backend and
+120 measured updates per process: **36 processes / 4,320 valid samples**.
+
+[Raw samples, per-process resources, configuration and binary hash](benchmarks/rust-ui-2026-10-21.json).
+The successful archive is the complete series; earlier incomplete smoke runs are
+excluded. Source commit: `fb2701f2b936a1996af056d27502e9ab0e19c3ef`. Binary SHA-256:
+`b87466cb271b115029becc3b08d04f49e611cfe32465fce50d5a2043d346b464`.
+
+All times below are milliseconds. Presentation p50/p95 pool 720 samples per row;
+CPU/update and footprint are medians of the six process-level measurements.
+
+| Scenario | Backend | Submit p50 | Present p50 | Present p95 | Browser CPU/update | Browser footprint MiB |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| selection | views | 0.126 | 17.79 | 26.93 | 4.27 | 65.7 |
+| selection | rust-skia | 0.102 | 18.91 | 26.96 | 4.05 | 65.5 |
+| selection | rust-metal | 0.715 | 20.72 | 24.75 | 5.30 | 184.5 |
+| resize | views | 0.460 | 18.57 | 24.91 | 4.59 | 64.8 |
+| resize | rust-skia | 0.257 | 17.86 | 23.85 | 4.19 | 67.8 |
+| resize | rust-metal | 1.963 | 21.49 | 26.17 | 9.64 | 186.6 |
+
+The range of the six independent process medians is:
+
+| Backend | Selection presentation, ms | Resize presentation, ms |
+| --- | ---: | ---: |
+| views | 15.85–18.69 | 16.85–19.55 |
+| rust-skia | 18.44–19.08 | 17.31–18.70 |
+| rust-metal | 20.67–20.74 | 21.16–21.65 |
+
+**Recommendation: carry Rust/Skia forward as the next UI prototype, retain Views
+as the control, and keep direct Metal experimental.** The Rust scene already uses
+the current Chromium fork and its compositing path; the small Views window/page
+host remains. This is a choice of the next implementation direction, not evidence
+that a complete Rust browser UI will outperform the existing one.
+
+Observed synchronous update cost fell from 0.126 to 0.102 ms for selection
+(about 19%), and from 0.460 to 0.257 ms for sidebar resizing (about 44%). Selection
+presentation favored Views at the median (17.79 vs 18.91 ms), with almost identical
+p95 values. Resizing favored Rust/Skia (17.86 vs 18.57 ms median, 23.85 vs 24.91 ms
+p95). Per-process presentation ranges overlap, so there is no broad latency win
+over Views. Rust scene generation itself took roughly 3–5 microseconds and was
+slightly more expensive than the native C++ reference in this scene.
+
+This Metal adapter had higher median presentation latency, roughly 7–8 times the
+synchronous submission cost of Rust/Skia, and about 185–187 MiB browser footprint
+against 65–68 MiB for the other paths. Its selection p95 was better than both
+Skia paths (24.75 ms), so it did not lose on every metric. The adapter explicitly
+waits for Metal command scheduling and presents through a CoreAnimation
+transaction; its submission cost includes that wait. These measurements do not
+establish a lower bound for an asynchronous Metal adapter, GPUI or all custom
+GPU renderers. A future asynchronous adapter must preserve the same presentation
+validation before its numbers can be compared.
+
+All 4,320 measured updates had valid presentation timestamps. Metal retried 14
+skipped **warmup** drawables across 12 processes (11 processes skipped one, one
+skipped three). No failed measured update was removed. The embedded shader was
+compiled at build time; the app did not invoke a shader-source compiler.
+
+The two-second idle browser-CPU windows varied substantially (about 1.3%–50.1%
+across processes), include other Chromium background work, and are too short to
+rank steady-state idle behavior or battery life. Their raw counters are retained;
+no energy or total-process-tree/GPU claim is made here.
+
+Before replacing the production UI, repeat with real tab text, scrolling, an
+editable address palette/IME, focus routing, accessibility and overlays above
+WebContents. Measure the complete process tree, GPU work and power over longer
+steady-state intervals. The current data supports testing a Rust scene painted
+through Chromium/Skia before committing to a separate GPU rendering stack.
+
+Validation: optimized Chromium build and signed package, all 36 regular-app runs,
+44 Python tests, two Rust scene/hit-test tests, workspace CTest, GN dependency
+check, Rust formatting and whitespace checks. The Metal sidebar and native page
+were also inspected visually, and row selection was verified by clicking.
