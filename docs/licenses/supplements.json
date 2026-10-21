@@ -1,0 +1,81 @@
+{
+  "llvm_license_url": "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-10.0.0/llvm/LICENSE.TXT",
+  "components": [
+    {
+      "Name": "Catapult",
+      "dir": "third_party/catapult",
+      "License": "BSD-3-Clause",
+      "License File": [
+        "third_party/catapult/LICENSE"
+      ],
+      "rationale": "Missing root README metadata; conservatively retain notice for generated/packaged tracing assets."
+    },
+    {
+      "Name": "Perfetto Android protobuf schemas",
+      "dir": "third_party/perfetto/protos/third_party/android",
+      "License": "Apache-2.0",
+      "License File": [
+        "third_party/perfetto/LICENSE"
+      ],
+      "rationale": "Schema source headers carry Apache-2.0; generated code may be linked."
+    },
+    {
+      "Name": "Perfetto Chromium protobuf schemas",
+      "dir": "third_party/perfetto/protos/third_party/chromium",
+      "License": "BSD-3-Clause",
+      "License File": [
+        "LICENSE"
+      ],
+      "rationale": "Schema headers name Chromium BSD license."
+    },
+    {
+      "Name": "Rust GN wrappers",
+      "dir": "third_party/rust",
+      "License": "BSD-3-Clause",
+      "License File": [
+        "LICENSE"
+      ],
+      "rationale": "Aggregator/build glue; individual crates retain their own scanner metadata."
+    },
+    {
+      "Name": "Crubit",
+      "dir": "third_party/rust-toolchain/lib/third_party/crubit",
+      "License": "Apache-2.0 WITH LLVM-exception",
+      "License File": [
+        "third_party/rust-toolchain/lib/third_party/crubit/LICENSE"
+      ],
+      "rationale": "Retain notice conservatively for binding support; generator reachability alone does not prove runtime linkage."
+    },
+    {
+      "Name": "SwiftShader LLVM 10",
+      "dir": "third_party/swiftshader/third_party/llvm-10.0",
+      "License": "Apache-2.0 WITH LLVM-exception AND NCSA",
+      "License File": [
+        "@root/docs/licenses/llvm-10-LICENSE.txt",
+        "third_party/swiftshader/third_party/llvm-10.0/llvm/include/llvm/Support/LICENSE.TXT"
+      ],
+      "rationale": "LLVMJIT.cpp/LLVMContext.cpp use Apache-2.0 WITH LLVM-exception; upstream versioned root license recovered from llvmorg-10.0.0. Support subdirectory adds copyright; do not discard historical notices."
+    },
+    {
+      "Name": "SwiftShader Marl",
+      "dir": "third_party/swiftshader/third_party/marl",
+      "License": "Apache-2.0",
+      "License File": [
+        "third_party/swiftshader/third_party/marl/LICENSE"
+      ],
+      "rationale": "Missing root README; linked by packaged libvk_swiftshader."
+    },
+    {
+      "Name": "Rust standard library and bundled library dependencies",
+      "dir": "third_party/rust-toolchain",
+      "License": "See COPYRIGHT-library.html; includes MIT, Apache-2.0 and LLVM exceptions",
+      "License File": [
+        "third_party/rust-toolchain/share/doc/rustc/COPYRIGHT-library.html"
+      ],
+      "rationale": "Actual std rlib is a linker input. Preserve complete toolchain-supplied library copyright/licensing inventory rather than treating compiler license as sufficient."
+    }
+  ],
+  "aliases": {
+    "third_party/crashpad/crashpad/third_party/zlib": "third_party/zlib: crashpad wrapper BUILD.gn selects Chromium zlib; existing zlib notice covers the linked library, not a missing nested checkout."
+  }
+}

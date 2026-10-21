@@ -1,3 +1,5 @@
+> Update 2026-10-21: [CPU/GPU profiling](ui-profile-and-licenses.md) confirms that macOS Chromium reports a future DisplayLink target; callbacks can precede it. Presentation latency below is the API-reported value, not a hardware-confirmed input-to-photon measurement, and differs from Metal drawable timing.
+
 # Rust UI / GPU prototype
 
 This is an opt-in macOS ARM64 experiment, separate from the production workspace

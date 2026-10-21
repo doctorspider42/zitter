@@ -86,14 +86,15 @@ def aggregate(runs):
     return result
 
 
-def launch(executable, directory, url, backend, scenario, iterations, log, interactive=False):
+def launch(executable, directory, url, backend, scenario, iterations, log, interactive=False, extra_args=()):
     directory.mkdir()
     (directory / ".zitter-ui-lab").write_text("isolated-ui-lab\n")
     command = [str(executable), "--user-data-dir=" + str(directory), "--no-first-run",
-               "--no-default-browser-check", "--disable-background-networking", "--use-mock-keychain",
+               "--no-default-browser-check", "--disable-background-networking", "--disable-component-update", "--use-mock-keychain",
                "--enable-logging=stderr", "--disable-backgrounding-occluded-windows",
                "--zitter-ui-lab=" + backend, "--zitter-ui-scenario=" + scenario,
                "--zitter-performance-url=" + url, "--zitter-perf-iterations=" + str(iterations)]
+    command.extend(extra_args)
     if interactive:
         command.append("--zitter-ui-interactive")
     with log.open("w") as stream, subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT,
@@ -160,7 +161,7 @@ def main():
               "executable_sha256": digest, "chromium_revision": json.loads((ROOT / "chromium/revision.json").read_text())["revision"],
               "gn_args": (out / "args.gn").read_text(), "iterations": args.iterations,
               "warmups_per_process": 10, "settling_seconds": 3, "rounds": args.rounds, "runs": runs,
-              "scope": "Controlled opaque-rectangle sidebar with one visible native WebContents and a minimal shared Views window/page host. No production UI, text shaping, IME, accessibility, DnD, overlays or scrolling. Views retains primitive children; rust-skia paints a Rust display list through Chromium; rust-metal submits that list to a sibling CAMetalLayer, composed by macOS. No web-pixel readback. Sequential update-to-presentation feedback, not physical input-to-photon latency. Backend presentation APIs differ; feedback flags retained. CPU and footprint cover browser only, excluding GPU/renderer processes; no energy measurements. Samples in a process are correlated; compare run medians."}
+              "scope": "Controlled opaque-rectangle sidebar with one visible native WebContents and a minimal shared Views window/page host. No production UI, text shaping, IME, accessibility, DnD, overlays or scrolling. Views retains primitive children; rust-skia paints a Rust display list through Chromium; rust-metal submits that list to a sibling CAMetalLayer, composed by macOS. No web-pixel readback. Sequential update-to-reported-presentation feedback, not physical input-to-photon latency. On macOS Chromium reports a DisplayLink-derived future target time; its callback can arrive before that time. Metal uses drawable.presentedTime, so cross-backend latency APIs are not equivalent. Backend presentation APIs differ; feedback flags retained. CPU and footprint cover browser only, excluding GPU/renderer processes; no energy measurements. Samples in a process are correlated; compare run medians."}
     with http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()

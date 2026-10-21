@@ -1,0 +1,410 @@
+{
+  "window_seconds": [
+    7.91737500000454,
+    12.342423000009148
+  ],
+  "owned_pids": [
+    "61375",
+    "61376",
+    "61377",
+    "61378",
+    "61379",
+    "61381",
+    "61382",
+    "61383",
+    "61384",
+    "61386",
+    "61387",
+    "61388",
+    "61389",
+    "61390",
+    "61391",
+    "61392",
+    "61399",
+    "61400",
+    "61402",
+    "61403"
+  ],
+  "sampled_cpu_ms": 3298.0,
+  "process_cpu_ms": {
+    "61387": 733.0,
+    "61381": 1312.0,
+    "61375": 906.0,
+    "61382": 256.0,
+    "61399": 45.0,
+    "61400": 39.0,
+    "61391": 1.0,
+    "61386": 2.0,
+    "61390": 2.0,
+    "61388": 1.0,
+    "61389": 1.0
+  },
+  "thread_cpu_ms": [
+    [
+      "Main Thread (0x3fac26) (Chromium Helper (Aperitif), pid: 61381)",
+      553.0
+    ],
+    [
+      "Main Thread (0x3fabdc) (Chromium, pid: 61375)",
+      411.0
+    ],
+    [
+      "Main Thread (0x3facac) (Chromium Helper (Aperitif Render, pid: 61387)",
+      402.0
+    ],
+    [
+      "ThreadPoolBackgroundWorker (0x3fac15) (Chromium, pid: 61375)",
+      251.0
+    ],
+    [
+      "Chrome_ChildIOThread (0x3fac4d) (Chromium Helper (Aperitif), pid: 61382)",
+      250.0
+    ],
+    [
+      "Compositor (0x3facd6) (Chromium Helper (Aperitif Render, pid: 61387)",
+      229.0
+    ],
+    [
+      "VizCompositorThread (0x3fac8a) (Chromium Helper (Aperitif), pid: 61381)",
+      191.0
+    ],
+    [
+      "Chromium Helper (Aperitif) (0x3fac8d) (Chromium Helper (Aperitif), pid: 61381)",
+      170.0
+    ],
+    [
+      "Chromium Helper (Aperitif) (0x3fac3c) (Chromium Helper (Aperitif), pid: 61381)",
+      162.0
+    ],
+    [
+      "CompositorGpuThread (0x3fac8b) (Chromium Helper (Aperitif), pid: 61381)",
+      128.0
+    ],
+    [
+      "Chrome_IOThread (0x3fac18) (Chromium, pid: 61375)",
+      99.0
+    ],
+    [
+      "ThreadPoolBackgroundWorker (0x3fac17) (Chromium, pid: 61375)",
+      81.0
+    ],
+    [
+      "ThreadPoolForegroundWorker (0x3facc6) (Chromium Helper (Aperitif Render, pid: 61387)",
+      63.0
+    ],
+    [
+      "Chrome_ChildIOThread (0x3fac84) (Chromium Helper (Aperitif), pid: 61381)",
+      57.0
+    ],
+    [
+      "Main Thread (0x3fad6c) (Chromium Helper (Aperitif), pid: 61399)",
+      36.0
+    ],
+    [
+      "Main Thread (0x3fad79) (Chromium Helper (Aperitif), pid: 61400)",
+      33.0
+    ],
+    [
+      "Chrome_ChildIOThread (0x3facc4) (Chromium Helper (Aperitif Render, pid: 61387)",
+      32.0
+    ],
+    [
+      "CompositorTileWorker1 (0x3fac25) (Chromium, pid: 61375)",
+      25.0
+    ],
+    [
+      "StackSamplingProfiler (0x3fac37) (Chromium Helper (Aperitif), pid: 61381)",
+      19.0
+    ],
+    [
+      "ThreadPoolForegroundWorker (0x3fac12) (Chromium, pid: 61375)",
+      18.0
+    ]
+  ],
+  "leaf_cpu_ms": [
+    [
+      "mach_msg2_trap",
+      339.0
+    ],
+    [
+      "iokit_user_client_trap",
+      281.0
+    ],
+    [
+      "Cr_z_inflate_fast_chunk_",
+      158.0
+    ],
+    [
+      "write",
+      137.0
+    ],
+    [
+      "<deduplicated_symbol>",
+      99.0
+    ],
+    [
+      "_platform_memmove",
+      58.0
+    ],
+    [
+      "kevent64",
+      57.0
+    ],
+    [
+      "_platform_memset",
+      46.0
+    ],
+    [
+      "partition_alloc::internal::ThreadCache::FillBucket(unsigned long)",
+      41.0
+    ],
+    [
+      "mach_absolute_time",
+      38.0
+    ],
+    [
+      "void* partition_alloc::PartitionRoot::Alloc<(partition_alloc::internal::AllocFlags)16>(unsigned long, char const*)",
+      38.0
+    ],
+    [
+      "partition_alloc::internal::SchedulerLoopQuarantineBranch<true, (partition_alloc::internal::QuarantineTarget)0>::Quarantine(partition_alloc::SlotStart, partition_alloc::internal::SlotSpanMetadata*, partition_alloc::internal::BucketSizeDetails)",
+      37.0
+    ],
+    [
+      "_kernelrpc_mach_port_deallocate_trap",
+      33.0
+    ],
+    [
+      "read",
+      32.0
+    ],
+    [
+      "start_wqthread",
+      31.0
+    ],
+    [
+      "SkRegion::op(SkRegion const&, SkIRect const&, SkRegion::Op)",
+      26.0
+    ],
+    [
+      "partition_alloc::internal::FreelistEntry::CheckFreeListForThreadCache(unsigned long) const",
+      22.0
+    ],
+    [
+      "__open",
+      22.0
+    ],
+    [
+      "partition_alloc::internal::SchedulerLoopQuarantineBranch<true, (partition_alloc::internal::QuarantineTarget)0>::PurgeInternal(unsigned long, bool)",
+      20.0
+    ],
+    [
+      "void partition_alloc::PartitionRoot::FreeInUnknownRoot<(partition_alloc::internal::FreeFlags)6, partition_alloc::internal::base::StrongAlias<partition_alloc::FreeSizeHintTag, unsigned long>>(void*, partition_alloc::internal::base::StrongAlias<partition_alloc::FreeSizeHintTag, unsigned long>...)",
+      19.0
+    ],
+    [
+      "objc_msgSend",
+      19.0
+    ],
+    [
+      "__kdebug_trace64",
+      18.0
+    ],
+    [
+      "partition_alloc::SlotAddressAndSize::From(unsigned long, partition_alloc::internal::pool_handle)",
+      11.0
+    ],
+    [
+      "ipcz::RemoteRouterLink::AcceptParcel(std::__Cr::unique_ptr<ipcz::Parcel, std::__Cr::default_delete<ipcz::Parcel>>)",
+      11.0
+    ],
+    [
+      "sktext::gpu::SubRunContainer::MakeFromBufferInAlloc(SkReadBuffer&, SkStrikeClient const*, sktext::gpu::SubRunAllocator*)",
+      11.0
+    ],
+    [
+      "mach_o::NListSymbolTable::findClosestDefinedSymbol(unsigned long long, mach_o::Symbol&) const",
+      11.0
+    ],
+    [
+      "fsync",
+      9.0
+    ],
+    [
+      "blink::BlockNode::Layout(blink::ConstraintSpace const&, blink::BlockBreakToken const*, blink::EarlyBreak const*, blink::ColumnSpannerPath const*) const",
+      8.0
+    ],
+    [
+      "base::HexStringToInt(std::__Cr::basic_string_view<char, std::__Cr::char_traits<char>>, int*)",
+      8.0
+    ],
+    [
+      "skcms_TransferFunction_eval",
+      7.0
+    ]
+  ],
+  "inclusive_stack_cpu_ms": [
+    [
+      "base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::Run(bool, base::TimeDelta)",
+      2391.0
+    ],
+    [
+      "base::RunLoop::Run(base::Location const&)",
+      2391.0
+    ],
+    [
+      "base::TaskAnnotator::RunTaskImpl(base::PendingTask&)",
+      2116.0
+    ],
+    [
+      "base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::DoWorkImpl(base::LazyNow*)",
+      1797.0
+    ],
+    [
+      "_pthread_start",
+      1510.0
+    ],
+    [
+      "thread_start",
+      1510.0
+    ],
+    [
+      "base::(anonymous namespace)::ThreadFunc(void*)",
+      1489.0
+    ],
+    [
+      "start",
+      1433.0
+    ],
+    [
+      "main",
+      1400.0
+    ],
+    [
+      "content::ContentMain(content::ContentMainParams)",
+      1390.0
+    ],
+    [
+      "content::ContentMainRunnerImpl::Run()",
+      1376.0
+    ],
+    [
+      "base::MessagePumpCFRunLoopBase::Run(base::MessagePump::Delegate*)",
+      1283.0
+    ],
+    [
+      "_CFRunLoopRunSpecificWithOptions",
+      1276.0
+    ],
+    [
+      "__CFRunLoopRun",
+      1261.0
+    ],
+    [
+      "base::apple::CallWithEHFrame(void () block_pointer)",
+      1229.0
+    ],
+    [
+      "base::MessagePumpCFRunLoopBase::RunWork()",
+      1133.0
+    ],
+    [
+      "__CFRunLoopDoSources0",
+      1061.0
+    ],
+    [
+      "__CFRUNLOOP_IS_CALLING_OUT_TO_A_SOURCE0_PERFORM_FUNCTION__",
+      1057.0
+    ],
+    [
+      "__CFRunLoopDoSource0",
+      1057.0
+    ],
+    [
+      "base::MessagePumpCFRunLoopBase::RunWorkSource(void*)",
+      1025.0
+    ],
+    [
+      "ChromeMain",
+      988.0
+    ],
+    [
+      "<deduplicated_symbol>",
+      900.0
+    ],
+    [
+      "base::MessagePumpNSRunLoop::DoRun(base::MessagePump::Delegate*)",
+      872.0
+    ],
+    [
+      "-[NSRunLoop(NSRunLoop) runMode:beforeDate:]",
+      871.0
+    ],
+    [
+      "base::Thread::ThreadMain()",
+      793.0
+    ],
+    [
+      "base::MessagePumpKqueue::Run(base::MessagePump::Delegate*)",
+      673.0
+    ],
+    [
+      "base::internal::Invoker<base::internal::FunctorTraits<void (gpu::Scheduler::*&&)(), gpu::Scheduler*>, base::internal::BindState<true, true, false, void (gpu::Scheduler::*)(), base::internal::UnretainedWrapper<gpu::Scheduler, base::unretained_traits::MayNotDangle, (partition_alloc::internal::RawPtrTraits)0>>, void ()>::RunOnce(base::internal::BindStateBase*)",
+      641.0
+    ],
+    [
+      "gpu::Scheduler::ExecuteSequence(base::IdType<gpu::SyncPointOrderData, unsigned int, 0u, 1u>)",
+      638.0
+    ],
+    [
+      "content::GpuMain(content::MainFunctionParams)",
+      553.0
+    ],
+    [
+      "base::internal::Invoker<base::internal::FunctorTraits<void (gpu::GpuChannel::*&&)(mojo::StructPtr<gpu::mojom::DeferredRequestParams>, gpu::FenceSyncReleaseDelegate*), base::WeakPtr<gpu::GpuChannel>&&, mojo::StructPtr<gpu::mojom::DeferredRequestParams>&&>, base::internal::BindState<true, true, false, void (gpu::GpuChannel::*)(mojo::StructPtr<gpu::mojom::DeferredRequestParams>, gpu::FenceSyncReleaseDelegate*), base::WeakPtr<gpu::GpuChannel>, mojo::StructPtr<gpu::mojom::DeferredRequestParams>>, void (gpu::FenceSyncReleaseDelegate*)>::RunOnce(base::internal::BindStateBase*, gpu::FenceSyncReleaseDelegate*)",
+      524.0
+    ],
+    [
+      "gpu::GpuChannel::ExecuteDeferredRequest(mojo::StructPtr<gpu::mojom::DeferredRequestParams>, gpu::FenceSyncReleaseDelegate*)",
+      524.0
+    ],
+    [
+      "base::internal::WorkerThread::RunWorker()",
+      442.0
+    ],
+    [
+      "base::internal::WorkerThread::ThreadMain()",
+      442.0
+    ],
+    [
+      "base::MessagePumpDefault::Run(base::MessagePump::Delegate*)",
+      435.0
+    ],
+    [
+      "non-virtual thunk to base::sequence_manager::internal::ThreadControllerWithMessagePumpImpl::DoWork()",
+      430.0
+    ],
+    [
+      "-[NSApplication(NSEventRouting) nextEventMatchingMask:untilDate:inMode:dequeue:]",
+      411.0
+    ],
+    [
+      "content::BrowserMainRunnerImpl::Run()",
+      411.0
+    ],
+    [
+      "ReceiveNextEventCommon",
+      411.0
+    ],
+    [
+      "content::BrowserMainLoop::RunMainMessageLoop()",
+      411.0
+    ],
+    [
+      "_DPSBlockUntilNextEventMatchingListInMode",
+      411.0
+    ]
+  ],
+  "missing_backtraces": 4,
+  "note": "Time Profiler 1ms running-thread statistical samples, filtered to bundle-owned processes and measured update phase. Window uses log wall timestamps relative to Instruments recording start, approximate at phase boundaries. Inclusive stack entries overlap; do not sum them."
+}

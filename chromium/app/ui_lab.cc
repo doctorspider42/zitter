@@ -16,9 +16,11 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/timer/timer.h"
+#include "base/trace_event/trace_event.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "components/viz/common/frame_timing_details.h"
 #include "chrome/browser/profiles/keep_alive/scoped_profile_keep_alive.h"
 #include "chrome/browser/profiles/keep_alive/profile_keep_alive_types.h"
 #include "chromium/app/ui_lab_metal.h"
@@ -100,6 +102,7 @@ class Sidebar final : public views::View {
     if (!retained_) SchedulePaint();
   }
   void OnPaint(gfx::Canvas* canvas) override {
+    TRACE_EVENT("benchmark", "Zitter.UiLab.SidebarPaint", "retained", retained_);
     views::View::OnPaint(canvas);
     if (!retained_) {
       for (const auto& r : scene_) canvas->FillRect(gfx::Rect(r.x, r.y, r.width, r.height), r.color);
@@ -227,6 +230,8 @@ class Lab final : public UiLab, public content::WebContentsObserver {
   }
   void Step() {
     if (finished_) return;
+    TRACE_EVENT("benchmark", "Zitter.UiLab.Update", "trial", trial_,
+                "backend", backend_, "scenario", scenario_);
     if (trial_ == 0) {
       measured_start_ = base::TimeTicks::Now();
       cpu_start_ = process_metrics_->GetCumulativeCPUUsage();
@@ -254,6 +259,10 @@ class Lab final : public UiLab, public content::WebContentsObserver {
       metal_->Draw(scene, base::BindOnce(&Lab::MetalPresented, weak_.GetWeakPtr(), timed, before_draw_ms));
     } else {
       if (timed) {
+        if (base::CommandLine::ForCurrentProcess()->HasSwitch("zitter-ui-profile")) {
+          widget_->GetCompositor()->RequestSuccessfulPresentationTimeForNextFrame(
+              base::BindOnce(&Lab::ProfileFrame, weak_.GetWeakPtr(), trial_, started_));
+        }
         widget_->GetCompositor()->RequestPresentationTimeForNextFrame(
             base::BindOnce(&Lab::ViewsPresented, weak_.GetWeakPtr()));
       }
@@ -262,8 +271,24 @@ class Lab final : public UiLab, public content::WebContentsObserver {
     if (timed) submit_ms_ = (base::TimeTicks::Now() - started_).InMillisecondsF();
   }
   void ViewsPresented(const gfx::PresentationFeedback& feedback) {
+    TRACE_EVENT_INSTANT("benchmark", "Zitter.UiLab.Presented", "trial", trial_,
+        "presentation_us", feedback.timestamp.since_origin().InMicroseconds(),
+        "callback_delay_ms", (base::TimeTicks::Now() - feedback.timestamp).InMillisecondsF(),
+        "vsync_interval_ms", feedback.interval.InMillisecondsF());
     if (feedback.failed() || feedback.timestamp < started_) { Finish(false); return; }
     Presented((feedback.timestamp - started_).InMillisecondsF(), -1, feedback.flags);
+  }
+  void ProfileFrame(int trial, base::TimeTicks started, const viz::FrameTimingDetails& frame) {
+    const auto us = [](base::TimeTicks ticks) { return ticks.since_origin().InMicroseconds(); };
+    LOG(INFO) << "ZITTER_UI_FRAME {\"trial\":" << trial << ",\"start_us\":" << us(started)
+              << ",\"received_us\":" << us(frame.received_compositor_frame_timestamp)
+              << ",\"draw_start_us\":" << us(frame.draw_start_timestamp)
+              << ",\"swap_start_us\":" << us(frame.swap_timings.swap_start)
+              << ",\"swap_end_us\":" << us(frame.swap_timings.swap_end)
+              << ",\"presentation_us\":" << us(frame.presentation_feedback.timestamp)
+              << ",\"callback_us\":" << us(base::TimeTicks::Now())
+              << ",\"interval_us\":" << frame.presentation_feedback.interval.InMicroseconds()
+              << ",\"flags\":" << frame.presentation_feedback.flags << "}";
   }
   void MetalPresented(bool timed, double before_draw_ms, bool ok, double latency, double gpu) {
     if (!timed) return;  // Initial drawable may precede the first window transaction.
