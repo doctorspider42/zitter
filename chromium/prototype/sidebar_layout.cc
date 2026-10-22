@@ -1,6 +1,7 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 #include "chromium/prototype/sidebar_layout.h"
 #include <algorithm>
+#include <array>
 #include <optional>
 #include <vector>
 #include "base/command_line.h"
@@ -20,6 +21,20 @@ namespace {
 bool RustLayoutEnabled() {
   return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar") == "rust-metal";
 }
+class RustPaletteInputLayout final : public views::LayoutManager {
+ public:
+  void ViewAdded(views::View* host,views::View*) override{host->InvalidateLayout();}
+  void ViewRemoved(views::View* host,views::View*) override{host->InvalidateLayout();}
+  void Layout(views::View* host) override {
+    if(host->children().size()!=3)return;
+    const auto icon=host->children()[0]->GetPreferredSize(),field=host->children()[1]->GetPreferredSize(),hint=host->children()[2]->GetPreferredSize();
+    const auto g=sidebar::palette_input_layout(host->width(),host->height(),{0,0,icon.width(),icon.height()},field.height(),{0,0,hint.width(),hint.height()});
+    const std::array<sidebar::Rect,3> rects{g.icon,g.input,g.hint};
+    for(size_t i=0;i<rects.size();++i){const auto& r=rects[i];host->children()[i]->SetBounds(r.x,r.y,r.width,r.height);}
+  }
+  gfx::Size GetPreferredSize(const views::View*) const override{return gfx::Size(560,56);}
+  gfx::Size GetPreferredSize(const views::View* host,const views::SizeBounds&) const override{return GetPreferredSize(host);}
+};
 class RustFooterLayout final : public views::LayoutManager {
  public:
   void ViewAdded(views::View* host,views::View*) override {host->InvalidateLayout();}
@@ -142,6 +157,12 @@ class RustColumnLayout final : public views::LayoutManager {
   const int spacing_;
 };
 #endif
+}
+std::unique_ptr<views::LayoutManager> CreatePaletteInputLayout() {
+#if BUILDFLAG(IS_MAC)
+  if(RustLayoutEnabled())return std::make_unique<RustPaletteInputLayout>();
+#endif
+  return std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal,gfx::Insets::VH(0,18),12);
 }
 std::unique_ptr<views::LayoutManager> CreateSidebarColumnLayout(int spacing) {
 #if BUILDFLAG(IS_MAC)

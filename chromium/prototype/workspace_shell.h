@@ -247,6 +247,12 @@ class WorkspaceShell final : public ui::EventHandler,
   views::Combobox* search_engine_picker() const { return search_engine_picker_; }
   bool address_visible() const;
   bool sidebar_visible() const;
+  bool metal_palette_visible() const;
+  bool metal_palette_contains_text_for_testing(std::string_view text) const;
+  gfx::Rect metal_palette_screen_bounds_for_testing() const;
+  size_t palette_selection_for_testing() const;
+  views::View* palette_results_view() const{return suggestion_list_;}
+  views::ScrollView* palette_scroll_view() const{return suggestion_scroll_;}
   bool metal_sidebar_visible() const;
   bool metal_sidebar_grip_visible() const;
   bool metal_split_visible(size_t index) const;
@@ -331,6 +337,12 @@ class WorkspaceShell final : public ui::EventHandler,
   void UpdateMetalSplit();
   void ScheduleMetalHeader();
   void UpdateMetalHeader();
+  void ScheduleMetalPalette();
+  void UpdateMetalPalette();
+  std::unique_ptr<SidebarMetal> metal_palette_;
+  bool metal_palette_pending_=false;
+  base::CallbackListSubscription metal_palette_scroll_subscription_;
+  std::unique_ptr<views::ScrollView::ScopedScrollSynchronizer> metal_palette_scroll_synchronizer_;
   void ScheduleMetalSidebar();
   void UpdateMetalSidebar();
   std::array<std::unique_ptr<SidebarMetal>,3> metal_split_;
@@ -621,9 +633,7 @@ class WorkspaceShell final : public ui::EventHandler,
   std::u16string search_query_;
   base::OneShotTimer search_timer_;
   bool command_palette_ = false;
-  bool selection_moved_ = false;
   std::u16string suggestions_text_;
-  size_t selected_suggestion_ = 0;
   std::map<std::string, SkColor> colors_ = {{"work", 0xFF9E91DC}, {"personal", 0xFF84B6A4}};
   std::set<std::string> color_dirty_;
   std::map<std::string, std::u16string> emoji_;

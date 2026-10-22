@@ -661,7 +661,10 @@ orientations. Metal draws pane titles, menu/close controls and the divider grip
 on clipped UI surfaces that share the existing GPU context and leave page
 content unobscured. Rust also controls sidebar resizing, shell/sidebar bounds
 and auto-hide guards, with a separate narrow GPU resize grip. Native event,
-cursor and accessibility adapters remain.
+cursor and accessibility adapters remain. Command Center/address results also
+use scene text and GPU icons without native title/detail Labels. Rust owns
+result selection, list/input geometry and palette placement; the native editor
+retains text editing, caret, selection and IME.
 Model updates refresh the scene independently of
 native painting. Rust also owns row
 click/drag/cancellation and platform key activation through native event, focus

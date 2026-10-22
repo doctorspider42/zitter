@@ -368,3 +368,37 @@ app passed pinned/overlay and hide/show inspection, with its original demo state
 restored. Native containers, edge-indicator paint, broader input/accessibility
 coverage and actual presentation/CPU/GPU comparison remain. See
 [sidebar sizing validation](benchmarks/rust-sidebar-sizing-functional-2026-10-22.json).
+
+The address/Command Center result list now uses Rust scene text and analytic GPU
+search/arrow/gear icons. Result rows do not create title/detail Labels; native
+button names and detail descriptions retain accessibility information. Native
+font measurements are cached and invalidated on title, active-state and theme
+changes. The result canvas covers only the clipped scroll viewport and its
+scrollbar, leaving the native editor and caret visible and interactive.
+
+Rust owns result selection/wrapping/reconciliation, list and input-row geometry,
+palette placement and the result viewport height cap. Application search/ranking
+still supplies result identities; asynchronous updates preserve a deliberately
+selected result. Native scrolling stays synchronized with GPU geometry and
+native hit testing. Title/detail drawing returns when Metal is unavailable.
+
+The native Textfield retains editing, text selection, clipboard and IME. While
+it reports active composition, the Metal backend's palette controller leaves
+navigation, commit and cancel keys to the editor. Static palette chrome, error
+and hint Labels, native containers, services and application commands remain to
+be migrated. A direct TextInputClient composition regression does not establish
+coverage of every installed OS input method or candidate window.
+
+Automated validation on 2026-10-22 passed **42/42 Metal browser regressions,
+17/17 Views controls, 47/47 Rust tests and 59/59 Python tests**, with no retries
+in the final browser matrices. The new case verifies asynchronous selection
+identity, stale-result guards, wrap/scroll, composition key routing, fallback
+paint and activation through native application events. The signed package
+matches the built app and passed strict signature/timestamp checks.
+
+**Manual visual inspection is pending:** computer use reported a locked Mac and
+the user was asked to unlock it. The matching prototype was launched only on the
+isolated demo profile. Automated in-process events do not replace that visual
+check, physical input/VoiceOver/scale coverage or actual presentation/CPU/GPU
+measurement. See
+[palette validation](benchmarks/rust-palette-functional-2026-10-22.json).

@@ -34,8 +34,8 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Sidebar resizing, pinning, auto-hide, edge reveal | Rust drag/width bounds, shell/sidebar/grip geometry and auto-hide guards; Metal grip; native pin/show commands | Replace native window/event/cursor/AX adapters and edge-indicator painting; broaden input/accessibility coverage |
 | Workspace swipe/animation/cancellation | Views layers + existing workspace controller | Rust scene transitions without native-painted row snapshots |
 | Split headers/divider, focus, orientation, swap/close | Rust pane/bar layout, title text, menu/close input and divider drag; shared Metal rendering | Replace native View/Button/ResizeArea event, cursor and AX adapters; expand gesture/RTL/scale coverage |
-| Address/search palette, suggestions, providers, IME | Views | Rust palette layout and selection; platform text-input adapter |
-| Command Center tabs/pins/workspaces/history/actions | Views | Rust palette and command routing, same application commands |
+| Address/search palette, suggestions, providers, IME | Rust result selection/layout/text/icons and palette/input geometry; native Textfield/IME, provider/search controllers | Migrate static palette chrome/errors/hints and remaining native containers; expand composition/accessibility/scale coverage |
+| Command Center tabs/pins/workspaces/history/actions | Rust result selection/drawing; existing search/ranking and application commands | Replace remaining native chrome/containers and command adapters; preserve stale results and identity |
 | Workspace/profile create/edit/delete and settings | Views + persistent application model | Rust forms, validation, focus; preserve isolation and failed-write behavior |
 | General preferences, shortcuts and site preferences | Views + application services | Rust forms; use the same persisted configuration |
 | History, downloads, passwords and permissions | Views/native service adapters | Rust presentation/control layer; retain browser service and security semantics |
@@ -169,6 +169,15 @@ Views-specific layout and control behavior must have an explicit replacement.
   animation restoration passed. Signed app pinned/overlay and hide/show checks
   preserved the original demo. See
   [sidebar sizing validation](benchmarks/rust-sidebar-sizing-functional-2026-10-22.json).
+- Address/Command Center results now use Rust selection/wrap/reconciliation,
+  list/input geometry and palette placement, with scene text and analytic GPU
+  icons. Native editing/IME, data/ranking/commands and static palette chrome
+  remain. **42 Metal browser tests, 17 Views controls, 47 Rust tests and 59 Python
+  tests passed**. Native application events verify async identity, stale guards,
+  scrolling, composition routing, fallback and tab activation. The matching
+  signed isolated app was launched, but **manual visual inspection is pending
+  because the Mac is locked**. See
+  [palette validation](benchmarks/rust-palette-functional-2026-10-22.json).
 
 ## Completion gates
 

@@ -13,6 +13,7 @@ gfx::Size SidebarSplitPreferredSize();
 std::unique_ptr<views::LayoutManager> CreateSidebarPinnedRowLayout();
 int SidebarFolderIndent(int depth);
 std::unique_ptr<views::LayoutManager> CreateSidebarFooterLayout();
+std::unique_ptr<views::LayoutManager> CreatePaletteInputLayout();
 std::unique_ptr<views::LayoutManager> CreateSidebarDotsLayout(int spacing = 0);
 }
 #endif

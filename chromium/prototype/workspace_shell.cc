@@ -542,6 +542,56 @@ sidebar::Item GlyphSceneItem(GlyphButton* button,gfx::RectF rect,gfx::RectF clip
 }
 #endif
 
+// Editing/IME remains a platform service; result selection is scene state.
+class PaletteView final : public views::View {
+  METADATA_HEADER(PaletteView,views::View)
+ public:
+  explicit PaletteView(base::RepeatingClosure painted):painted_(std::move(painted)) {
+#if BUILDFLAG(IS_MAC)
+    if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal")selection_.emplace(sidebar::new_palette_selection());
+#endif
+  }
+  void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);painted_.Run();}
+  void Reset() {
+#if BUILDFLAG(IS_MAC)
+    if(selection_){(*selection_)->reset();return;}
+#endif
+    index_=0;moved_=false;
+  }
+  size_t selected() const {
+#if BUILDFLAG(IS_MAC)
+    if(selection_)return (*selection_)->selected();
+#endif
+    return index_;
+  }
+  bool moved() const {
+#if BUILDFLAG(IS_MAC)
+    if(selection_)return (*selection_)->moved();
+#endif
+    return moved_;
+  }
+  void Step(size_t count,bool backwards) {
+#if BUILDFLAG(IS_MAC)
+    if(selection_){static_cast<void>((*selection_)->step(count,backwards));return;}
+#endif
+    if(count){moved_=true;index_=(index_+(backwards?count-1:1))%count;}
+  }
+  void Reconcile(size_t count,size_t preserved,bool found) {
+#if BUILDFLAG(IS_MAC)
+    if(selection_){(*selection_)->reconcile(count,preserved,found);return;}
+#endif
+    if(found)index_=preserved;index_=std::min(index_,count?count-1:0);
+  }
+ private:
+#if BUILDFLAG(IS_MAC)
+  std::optional<rust::Box<sidebar::PaletteSelection>> selection_;
+#endif
+  base::RepeatingClosure painted_;
+  size_t index_=0;bool moved_=false;
+};
+BEGIN_METADATA(PaletteView)
+END_METADATA
+
 class ChromeHeaderView final : public views::View {
   METADATA_HEADER(ChromeHeaderView,views::View)
  public:
@@ -587,6 +637,7 @@ class RowButton : public views::Button {
     scene_text_ = rust_pointer_.has_value() && spec_.sidebar_row;
 #endif
     GetViewAccessibility().SetName(spec_.title);
+    if(scene_text_&&spec_.chip)GetViewAccessibility().SetDescription(spec_.detail);
     SetTooltipText(spec_.title);
     if (!scene_text_) {
       title_ = Label(this, spec_.title, kInk,
@@ -682,7 +733,7 @@ class RowButton : public views::Button {
   }
   void SetActive(bool active) {
     if (spec_.active == active) return;
-    spec_.active = active;
+    spec_.active = active;scene_title_width_cache_.reset();
     if (title_) title_->SetFontList(Font(0, active ? gfx::Font::Weight::MEDIUM : gfx::Font::Weight::NORMAL));
     UpdateCloseVisibility();
     SchedulePaint();
@@ -694,12 +745,14 @@ class RowButton : public views::Button {
     InvalidateLayout(); SchedulePaint();
   }
   int scene_title_width() const {
-    return !spec_.address && spec_.detail.empty() ? 0 : gfx::GetStringWidth(spec_.title,
-        Font(0, spec_.active || spec_.chip || spec_.address ? gfx::Font::Weight::MEDIUM : gfx::Font::Weight::NORMAL));
+    if(!spec_.address&&!spec_.chip&&spec_.detail.empty())return 0;
+    if(!scene_title_width_cache_)scene_title_width_cache_=gfx::GetStringWidth(spec_.title,
+        Font(0,spec_.active||spec_.chip||spec_.address?gfx::Font::Weight::MEDIUM:gfx::Font::Weight::NORMAL))+2;
+    return *scene_title_width_cache_;
   }
   void SetTitle(std::u16string title) {
     if (spec_.title == title) return;
-    spec_.title = std::move(title);
+    spec_.title = std::move(title);scene_title_width_cache_.reset();
     if (title_) title_->SetText(spec_.title);
     else SchedulePaint();
     GetViewAccessibility().SetName(spec_.title);
@@ -770,6 +823,7 @@ class RowButton : public views::Button {
         !spec_.detail.empty(), spec_.chip, close_ != nullptr);
   }
 #endif
+  void OnThemeChanged() override{views::Button::OnThemeChanged();scene_title_width_cache_.reset();}
   bool has_close_button() const { return close_ != nullptr; }
   bool close_button_visible() const { return close_ && close_->GetVisible(); }
   const Spec& preview_spec() const { return spec_; }
@@ -795,7 +849,7 @@ class RowButton : public views::Button {
       const auto geometry = SceneGeometry();
       const auto& r = geometry.title;
       canvas->DrawStringRectWithFlags(spec_.title,
-          Font(0, spec_.active || spec_.address ? gfx::Font::Weight::MEDIUM : gfx::Font::Weight::NORMAL),
+          Font(0, spec_.active || spec_.chip || spec_.address ? gfx::Font::Weight::MEDIUM : gfx::Font::Weight::NORMAL),
           Tone(this, spec_.blank ? kMuted : kInk), gfx::Rect(r.x, r.y, r.width, r.height), gfx::Canvas::TEXT_ALIGN_LEFT);
       if (!spec_.detail.empty()) {
         const auto& d = geometry.detail;
@@ -888,6 +942,7 @@ class RowButton : public views::Button {
   std::optional<rust::Box<sidebar::RowPointer>> rust_pointer_;
 #endif
   bool scene_text_ = false;
+  mutable std::optional<int> scene_title_width_cache_;
   gfx::Point drag_start_;
   bool dragging_ = false;
   Spec spec_;
@@ -1930,7 +1985,10 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 #endif
 
   // Command palette: input, suggestions, keyboard hints.
-  auto palette = std::make_unique<views::View>();
+  auto palette=std::make_unique<PaletteView>(base::BindRepeating(&WorkspaceShell::ScheduleMetalPalette,weak));
+#if BUILDFLAG(IS_MAC)
+  if(metal_sidebar_)metal_palette_=CreateSidebarMetal();
+#endif
   palette_root_ = palette.get();
   palette->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kVertical, gfx::Insets(), 0));
@@ -1956,16 +2014,29 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   input_layout->SetFlexForView(address_, 1);
   Label(input_row, u"esc", kMuted, Font(-2))
       ->SetBorder(views::CreateRoundedRectBorder(1, 5, Hairline(root_)));
+  if(metal_palette_){palette->SetLayoutManager(CreateSidebarColumnLayout());input_row->SetLayoutManager(CreatePaletteInputLayout());}
   address_error_ = Label(palette.get(), u"", kError, Font(-1));
   address_error_->SetBorder(views::CreateEmptyBorder(gfx::Insets::VH(8, 18)));
   address_error_->SetVisible(false);
   suggestion_scroll_ = palette->AddChildView(std::make_unique<views::ScrollView>());
   suggestion_scroll_->ClipHeightTo(0, 300);
   suggestion_scroll_->SetHorizontalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);
-  suggestion_list_ = suggestion_scroll_->SetContents(std::make_unique<views::View>());
+  suggestion_list_=suggestion_scroll_->SetContents(std::make_unique<SidebarListView>(
+      base::BindRepeating(&WorkspaceShell::ScheduleMetalPalette,weak),
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_palette_visible();},weak)));
   suggestion_list_->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kVertical, gfx::Insets(8), 2));
   suggestion_list_->SetBorder(views::CreateSolidSidedBorder(gfx::Insets::TLBR(1, 0, 0, 0), Hairline(root_)));
+#if BUILDFLAG(IS_MAC)
+  if(metal_palette_) {
+    suggestion_list_->SetLayoutManager(CreateSidebarColumnLayout(2));
+    suggestion_list_->SetBorder(views::CreatePaddedBorder(views::CreateSolidSidedBorder(gfx::Insets::TLBR(1,0,0,0),Hairline(root_)),gfx::Insets(8)));
+    suggestion_scroll_->SetUseContentsPreferredSize(true);
+    suggestion_scroll_->SetVerticalScrollBar(CreateSidebarScrollBar(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_palette_visible();},weak)));
+    metal_palette_scroll_synchronizer_=suggestion_scroll_->EnableScrollSynchronization();
+    metal_palette_scroll_subscription_=suggestion_scroll_->AddContentsScrolledCallback(base::BindRepeating(&WorkspaceShell::ScheduleMetalPalette,weak));
+  }
+#endif
 #if BUILDFLAG(IS_MAC)
   auto* hints = Label(palette.get(), u"↑↓ wybierz     ↵ wykonaj / otwórz     > polecenia", kMuted, Font(-2));
 #else
@@ -2461,6 +2532,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 }
 
 void WorkspaceShell::Detach() {
+  metal_palette_scroll_subscription_={};metal_palette_scroll_synchronizer_.reset();metal_palette_.reset();metal_palette_pending_=false;
   metal_sidebar_grip_.reset();
   for(auto& surface:metal_split_)surface.reset();metal_split_pending_=false;
   metal_header_.reset();metal_header_pending_=false;header_view_=nullptr;header_sidebar_button_=nullptr;
@@ -2911,6 +2983,52 @@ void WorkspaceShell::UpdateMetalHeader() {
   }
   metal_header_->Update(widget_->GetNativeWindow(),bounds,items,FrameTint(workspace_color(state_.workspace_id),root_));
   if (was_visible!=metal_header_->visible()) header_view_->SchedulePaint();
+#endif
+}
+bool WorkspaceShell::metal_palette_visible() const{return metal_palette_&&metal_palette_->visible();}
+bool WorkspaceShell::metal_palette_contains_text_for_testing(std::string_view text) const{return metal_palette_&&metal_palette_->contains_text_for_testing(text);}
+gfx::Rect WorkspaceShell::metal_palette_screen_bounds_for_testing() const{return metal_palette_?metal_palette_->screen_bounds_for_testing():gfx::Rect();}
+size_t WorkspaceShell::palette_selection_for_testing() const{return palette_root_?static_cast<PaletteView*>(palette_root_.get())->selected():0;}
+void WorkspaceShell::ScheduleMetalPalette() {
+  if(!metal_palette_||metal_palette_pending_)return;
+  metal_palette_pending_=true;
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&WorkspaceShell::UpdateMetalPalette,weak_factory_.GetWeakPtr()));
+}
+void WorkspaceShell::UpdateMetalPalette() {
+  metal_palette_pending_=false;
+#if BUILDFLAG(IS_MAC)
+  if(!metal_palette_||!address_widget_||!suggestion_list_)return;
+  const bool was_visible=metal_palette_->visible();
+  if(!address_visible()||!suggestion_scroll_->IsDrawn()) {
+    metal_palette_->Hide();if(was_visible){suggestion_list_->SchedulePaint();suggestion_scroll_->vertical_scroll_bar()->SchedulePaint();}return;
+  }
+  address_widget_->LayoutRootViewIfNecessary();
+  auto* viewport=suggestion_list_->parent();const auto viewport_bounds=viewport->GetBoundsInScreen();
+  if(viewport_bounds.IsEmpty()){metal_palette_->Hide();return;}
+  const auto scroller=GetSidebarScrollBarSnapshot(suggestion_scroll_->vertical_scroll_bar());
+  auto bounds=viewport_bounds;if(scroller.visible)bounds.Union(scroller.bounds);
+  std::vector<SidebarViewportNode> nodes{{SidebarTree::kRoot,gfx::Rect(suggestion_list_->size()),true}};
+  for(const auto& row:suggestion_list_->children())nodes.push_back({0,row->GetMirroredBounds(),row->GetVisible()});
+  const auto projection=metal_palette_->Project(suggestion_list_->size(),viewport_bounds.size(),suggestion_scroll_->CurrentOffset(),nodes);
+  if(projection.offset!=suggestion_scroll_->CurrentOffset()){suggestion_scroll_->ScrollToOffset(projection.offset);ScheduleMetalPalette();return;}
+  const gfx::Vector2dF origin(viewport_bounds.x()-bounds.x(),viewport_bounds.y()-bounds.y());
+  std::vector<sidebar::Item> items;
+  for(const auto& node:projection.nodes) {
+    auto rect=node.bounds;rect.Offset(origin);auto clip=node.clip;clip.Offset(origin);
+    if(node.index==0){sidebar::Item line{};line.kind=14;line.x=rect.x();line.y=rect.y();line.width=rect.width();line.height=1;line.fill=Hairline(suggestion_list_);line.clip={clip.x(),clip.y(),clip.width(),clip.height()};items.push_back(std::move(line));continue;}
+    auto* row=static_cast<RowButton*>(suggestion_list_->children()[node.index-1].get());const auto& spec=row->preview_spec();
+    const bool hovered=row->GetState()==views::Button::STATE_HOVERED||row->GetState()==views::Button::STATE_PRESSED;
+    sidebar::Item item{};item.kind=12;item.x=rect.x();item.y=rect.y();item.width=rect.width();item.height=rect.height();item.clip={clip.x(),clip.y(),clip.width(),clip.height()};
+    item.title=base::UTF16ToUTF8(spec.title);item.detail=base::UTF16ToUTF8(spec.detail);item.title_width=row->scene_title_width();
+    item.ink=Tone(row,kInk);item.detail_ink=Tone(row,kMuted);item.badge=Tone(row,kChip);item.font_size=Font(0).GetFontSize();item.detail_font_size=Font(-1).GetFontSize();
+    item.active=spec.highlighted;item.hovered=hovered;item.focused=row->HasFocus();item.fill=spec.highlighted?Tone(row,kAccentWash):hovered?HoverWash(row):SK_ColorTRANSPARENT;
+    items.push_back(std::move(item));
+    sidebar::Item icon{};icon.kind=13;icon.x=rect.x();icon.y=rect.y();icon.width=rect.width();icon.height=rect.height();icon.clip={clip.x(),clip.y(),clip.width(),clip.height()};icon.ink=Tone(row,kSubtle);
+    icon.glyph=spec.icon==&vector_icons::kSettingsIcon?2:spec.icon==&vector_icons::kArrowForwardIcon?1:0;items.push_back(std::move(icon));
+  }
+  if(scroller.visible){auto rect=scroller.thumb;rect.Offset(-bounds.x(),-bounds.y());auto clip=scroller.bounds;clip.Offset(-bounds.x(),-bounds.y());sidebar::Item thumb{};thumb.kind=6;thumb.x=rect.x();thumb.y=rect.y();thumb.width=rect.width();thumb.height=rect.height();thumb.fill=scroller.color;thumb.clip={float(clip.x()),float(clip.y()),float(clip.width()),float(clip.height())};items.push_back(std::move(thumb));}
+  metal_palette_->Update(address_widget_->GetNativeWindow(),bounds,items,Tone(palette_root_,kCard));
+  if(was_visible!=metal_palette_->visible()){suggestion_list_->SchedulePaint();suggestion_scroll_->vertical_scroll_bar()->SchedulePaint();}
 #endif
 }
 void WorkspaceShell::ScheduleMetalSidebar() {
@@ -3835,9 +3953,10 @@ void WorkspaceShell::ExecuteCommand(int command_id, int) {
 }
 
 void WorkspaceShell::RebuildSuggestions() {
+  auto* palette=static_cast<PaletteView*>(palette_root_.get());
   std::optional<Suggestion> selected;
-  if (selection_moved_ && selected_suggestion_ < suggestions_.size() && suggestions_text_ == address_->GetText())
-    selected = suggestions_[selected_suggestion_];
+  if(palette->moved()&&palette->selected()<suggestions_.size()&&suggestions_text_==address_->GetText())
+    selected=suggestions_[palette->selected()];
   suggestions_.clear();
   suggestions_text_ = address_->GetText();
   const auto text = base::UTF16ToUTF8(base::TrimWhitespace(address_->GetText(), base::TRIM_ALL));
@@ -3863,11 +3982,9 @@ void WorkspaceShell::RebuildSuggestions() {
     const auto position = keyword_search && !suggestions_.empty() ? suggestions_.begin() + 1 : suggestions_.begin();
     suggestions_.insert(position, commands.begin(), commands.end());
   }
-  if (selected) {
-    auto found = std::find(suggestions_.begin(), suggestions_.end(), *selected);
-    if (found != suggestions_.end()) selected_suggestion_ = found - suggestions_.begin();
-  }
-  selected_suggestion_ = std::min(selected_suggestion_, suggestions_.empty() ? 0 : suggestions_.size() - 1);
+  size_t preserved=0;bool found_selected=false;
+  if(selected){auto found=std::find(suggestions_.begin(),suggestions_.end(),*selected);if(found!=suggestions_.end()){preserved=found-suggestions_.begin();found_selected=true;}}
+  palette->Reconcile(suggestions_.size(),preserved,found_selected);
   suggestion_list_->RemoveAllChildViews();
   for (size_t i = 0; i < suggestions_.size(); ++i) {
     const auto& item = suggestions_[i];
@@ -3876,7 +3993,9 @@ void WorkspaceShell::RebuildSuggestions() {
     spec.detail = item.detail;
     spec.chip = true;
     spec.height = 44;
-    spec.highlighted = i == selected_suggestion_;
+    spec.highlighted=i==palette->selected();
+    spec.sidebar_row=metal_palette_!=nullptr;
+    spec.scene_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_palette_visible();},weak_factory_.GetWeakPtr());
     spec.icon = !item.command_id.empty() ? &vector_icons::kSettingsIcon
               : (item.tab || item.workspace_only || !item.pin_id.empty()) ? &vector_icons::kArrowForwardIcon
               : item.title == u"Otwórz" ? &vector_icons::kArrowForwardIcon
@@ -3889,7 +4008,8 @@ void WorkspaceShell::RebuildSuggestions() {
   suggestion_scroll_->SetVisible(!suggestions_.empty());
   PositionPanels();
   address_widget_->LayoutRootViewIfNecessary();
-  if (!suggestions_.empty()) suggestion_list_->children()[selected_suggestion_]->ScrollViewToVisible();
+  if (!suggestions_.empty()) suggestion_list_->children()[palette->selected()]->ScrollViewToVisible();
+  ScheduleMetalPalette();
 }
 
 void WorkspaceShell::StopWorkspaceAnimation() {
@@ -3995,7 +4115,12 @@ void WorkspaceShell::ApplyTheme() {
     emoji_input_->SetBackgroundColor(Tone(root_, kChip));
     emoji_input_->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1, 7, Hairline(root_)), gfx::Insets::VH(4, 8)));
   }
-  if (suggestion_list_) suggestion_list_->SetBorder(views::CreateSolidSidedBorder(gfx::Insets::TLBR(1, 0, 0, 0), Hairline(root_)));
+  if(suggestion_list_) {
+    auto border=views::CreateSolidSidedBorder(gfx::Insets::TLBR(1,0,0,0),Hairline(root_));
+    if(metal_palette_)border=views::CreatePaddedBorder(std::move(border),gfx::Insets(8));
+    suggestion_list_->SetBorder(std::move(border));
+  }
+  ScheduleMetalPalette();
   RefreshGeneralControls();
   applying_theme_ = false;
 }
@@ -4314,12 +4439,22 @@ void WorkspaceShell::PositionPanels() {
     peek_widget_->SetBounds(gfx::Rect(area.x() + margin, area.y() + 20,
         std::max(240, area.width() - 2 * margin), std::max(280, area.height() - 40)));
   }
-  const int palette_width = std::min(640, std::max(120, bounds.width() - 48));
+  int palette_width=std::min(640,std::max(120,bounds.width()-48));
+#if BUILDFLAG(IS_MAC)
+  if(metal_palette_)palette_width=sidebar::palette_width(bounds.width());
+#endif
   const auto content = content_host_->GetBoundsInScreen();
-  suggestion_scroll_->ClipHeightTo(0, std::max(90, std::min(300, content.height() - 230)));
+  int results_height=std::max(90,std::min(300,content.height()-230));
+#if BUILDFLAG(IS_MAC)
+  if(metal_palette_)results_height=sidebar::palette_results_height(content.height());
+#endif
+  suggestion_scroll_->ClipHeightTo(0,results_height);
   const int height = palette_root_->GetHeightForWidth(palette_width);
-  address_widget_->SetBounds(gfx::Rect(content.CenterPoint().x() - palette_width / 2,
-      content.y() + std::min(132, content.height() / 6), palette_width, height));
+  auto palette_bounds=gfx::Rect(content.CenterPoint().x()-palette_width/2,content.y()+std::min(132,content.height()/6),palette_width,height);
+#if BUILDFLAG(IS_MAC)
+  if(metal_palette_){const auto r=sidebar::palette_frame({content.x(),content.y(),content.width(),content.height()},palette_width,height);palette_bounds=gfx::Rect(r.x,r.y,r.width,r.height);}
+#endif
+  address_widget_->SetBounds(palette_bounds);
 }
 
 std::string WorkspaceShell::ShortcutFor(const ui::Accelerator& accelerator) const {
@@ -4668,13 +4803,12 @@ void WorkspaceShell::OpenAddress(bool new_tab) {
   address_->SetPlaceholderText(u"Szukaj lub wpisz adres…");
   address_->GetViewAccessibility().SetName(u"Szukaj lub wpisz adres");
   new_tab_ = new_tab;
-  selection_moved_ = false;
+  static_cast<PaletteView*>(palette_root_.get())->Reset();
   search_results_.clear();
   search_query_.clear();
   search_timer_.Stop();
   if (!pinned_) sidebar_widget_->Hide();
   address_error_->SetVisible(false);
-  selected_suggestion_ = 0;
   const bool blank = new_tab || state_.url.path() == "/start.html";
   address_->SetText(blank ? u"" : base::UTF8ToUTF16(state_.url.spec()));
   RebuildSuggestions();
@@ -5077,8 +5211,7 @@ void WorkspaceShell::ContentsChanged(views::Textfield* sender, const std::u16str
   }
   if (sender != address_) return;
   address_error_->SetVisible(false);
-  selected_suggestion_ = 0;
-  selection_moved_ = false;
+  static_cast<PaletteView*>(palette_root_.get())->Reset();
   search_results_.clear();
   RebuildSuggestions();
   RequestSearch();
@@ -5111,6 +5244,7 @@ bool WorkspaceShell::HandleKeyEvent(views::Textfield* sender, const ui::KeyEvent
     }
   }
   if (event.type() != ui::EventType::kKeyPressed) return false;
+  if(sender==address_&&metal_palette_&&address_->IsIMEComposing())return false;
   if (event.key_code() == ui::VKEY_ESCAPE) { CloseOverlays(); RestorePageFocus(); return true; }
   if (sender == preferences_search_ || sender == history_search_) return false;
   for (const auto& [key, field] : preference_textfields_) if (sender == field) {
@@ -5123,9 +5257,7 @@ bool WorkspaceShell::HandleKeyEvent(views::Textfield* sender, const ui::KeyEvent
   }
   if (sender == address_ && !suggestions_.empty() &&
       (event.key_code() == ui::VKEY_DOWN || event.key_code() == ui::VKEY_UP)) {
-    const size_t count = suggestions_.size();
-    selection_moved_ = true;
-    selected_suggestion_ = (selected_suggestion_ + (event.key_code() == ui::VKEY_DOWN ? 1 : count - 1)) % count;
+    static_cast<PaletteView*>(palette_root_.get())->Step(suggestions_.size(),event.key_code()==ui::VKEY_UP);
     RebuildSuggestions();
     return true;
   }
@@ -5143,10 +5275,11 @@ bool WorkspaceShell::HandleKeyEvent(views::Textfield* sender, const ui::KeyEvent
     } else ShowAddressError();
     return true;
   }
-  RunSuggestion(selected_suggestion_);
+  RunSuggestion(static_cast<PaletteView*>(palette_root_.get())->selected());
   return true;
 }
 void WorkspaceShell::OnWidgetBoundsChanged(views::Widget* widget, const gfx::Rect&) {
+  if(widget==address_widget_.get())ScheduleMetalPalette();
   if (widget == widget_) {PositionPanels();ScheduleMetalHeader();ScheduleMetalSplit();}
 }
 void WorkspaceShell::OnWidgetActivationChanged(views::Widget* widget, bool active) {
@@ -5162,6 +5295,7 @@ void WorkspaceShell::OnWidgetActivationChanged(views::Widget* widget, bool activ
   }
 }
 void WorkspaceShell::OnWidgetVisibilityChanged(views::Widget* widget, bool visible) {
+  if(widget==address_widget_.get())ScheduleMetalPalette();
   if (widget==widget_) {ScheduleMetalHeader();ScheduleMetalSplit();}
   if (widget == sidebar_widget_.get() && !visible) { CancelWorkspaceSwipe(); StopWorkspaceAnimation(); }
   if (widget == widget_ && !visible) {

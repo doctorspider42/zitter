@@ -129,6 +129,7 @@
 #include "ui/views/test/views_drawing_test_utils.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/views/controls/resize_area.h"
+#include "ui/base/ime/composition_text.h"
 #include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/controls/combobox/combobox.h"
 #include "ui/views/test/button_test_api.h"
@@ -4243,6 +4244,49 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NavigationHeaderHistoryRel
   window_->widget()->Show();ASSERT_TRUE(base::test::RunUntil([&] {return shell->metal_header_visible();}));
   base::RunLoop().RunUntilIdle();const auto idle=shell->metal_header_frame_count();base::RunLoop().RunUntilIdle();
   EXPECT_EQ(idle,shell->metal_header_frame_count());
+}
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, PaletteScenesAsyncSelectionScrollAndIME) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
+  const auto url=embedded_test_server()->GetURL("/storage_probe.html?palette-gpu");
+  for(int i=0;i<8;++i){ASSERT_TRUE(window_->NavigateFromBar(url,true));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));ASSERT_TRUE(content::ExecJs(window_->contents("work"),"document.title='Palette GPU 日本語 "+base::NumberToString(i)+"';"));}
+  shell->OpenCommandPalette();SetPaletteQuery(u"Palette GPU");
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->search_results().size()>=8&&shell->metal_palette_visible();}));
+  auto no_labels=[&](auto&& self,views::View* view)->void{EXPECT_FALSE(views::AsViewClass<views::Label>(view));for(const auto& child:view->children())self(self,child.get());};no_labels(no_labels,shell->palette_results_view());
+  auto drain_history=[&]{auto* service=HistoryServiceFactory::GetForProfile(work_,ServiceAccessType::EXPLICIT_ACCESS);base::CancelableTaskTracker tasks;history::QueryOptions options;options.max_count=1;base::test::TestFuture<history::QueryResults> done;service->QueryHistory(u"Palette GPU",options,done.GetCallback(),&tasks);return done.Wait();};
+  ASSERT_TRUE(drain_history());
+  auto* field=shell->address_input();auto* panel=field->GetWidget();
+  const auto frame=shell->metal_palette_screen_bounds_for_testing();EXPECT_FALSE(frame.IsEmpty());EXPECT_FALSE(frame.Intersects(field->GetBoundsInScreen()));
+  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(panel->GetNativeWindow()));field->RequestFocus();
+  auto key=[&](ui::KeyboardCode code){return ui_test_utils::SendKeyPressToWindowSync(panel->GetNativeWindow(),code,false,false,false,false);};
+  for(int i=0;i<3;++i)ASSERT_TRUE(key(ui::VKEY_DOWN));ASSERT_EQ(3u,shell->palette_selection_for_testing());
+  const auto selected=shell->suggestions()[3];auto results=shell->search_results();
+  PaletteResult inserted;inserted.title=u"Palette GPU 新しい結果 🦀";inserted.detail=u"History / 日本語";inserted.url=url;results.insert(results.begin(),inserted);
+  {
+    views::ScopedPaintLock locked(shell->palette_results_view());shell->SetSearchResults(u"Palette GPU",window_->workspaces().front().profile_id,results);
+    ASSERT_EQ(selected,shell->suggestions()[shell->palette_selection_for_testing()]);EXPECT_EQ(4u,shell->palette_selection_for_testing());
+    ASSERT_TRUE(base::test::RunUntil([&]{return shell->metal_palette_contains_text_for_testing("Palette GPU 新しい結果 🦀");}));
+  }
+  const auto count=shell->suggestions().size();shell->SetSearchResults(u"stale query",window_->workspaces().front().profile_id,{});shell->SetSearchResults(u"Palette GPU","personal-profile",{});EXPECT_EQ(count,shell->suggestions().size());
+  for(int i=0;i<5;++i)ASSERT_TRUE(key(ui::VKEY_UP));EXPECT_EQ(count-1,shell->palette_selection_for_testing());
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->palette_scroll_view()->CurrentOffset().y()>0;}));
+  // While composition is active the platform editor owns navigation, commit
+  // and cancel keys. The palette must neither change selection nor dispatch.
+  ui::CompositionText composition;composition.text=u"にほん";composition.selection=gfx::Range(composition.text.size());field->SetCompositionText(composition);ASSERT_TRUE(field->IsIMEComposing());
+  const auto composing_selection=shell->palette_selection_for_testing();
+  for(auto code:{ui::VKEY_DOWN,ui::VKEY_RETURN,ui::VKEY_ESCAPE}){ui::KeyEvent event(ui::EventType::kKeyPressed,code,0);EXPECT_FALSE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(field,event));}
+  EXPECT_EQ(composing_selection,shell->palette_selection_for_testing());EXPECT_TRUE(shell->address_visible());EXPECT_TRUE(field->IsIMEComposing());field->ClearCompositionText();
+  SetPaletteQuery(u"Palette GPU");ASSERT_TRUE(base::test::RunUntil([&]{return shell->search_results().size()>=8&&shell->metal_palette_visible();}));
+  ASSERT_TRUE(drain_history());
+  auto* row=shell->palette_results_view()->children().front().get();
+  auto native_ink=[&]{const auto saved=row->bounds();row->SetBoundsRect(gfx::Rect(row->size()));row->SchedulePaint();const auto bitmap=views::test::PaintViewToBitmap(row);row->SetBoundsRect(saved);for(int y=0;y<bitmap.height();++y)for(int x=0;x<bitmap.width();++x)if(bitmap.getColor(x,y)!=SK_ColorRED)return true;return false;};
+  EXPECT_FALSE(native_ink());panel->Hide();EXPECT_TRUE(native_ink());panel->Show();panel->Activate();field->RequestFocus();ASSERT_TRUE(base::test::RunUntil([&]{return shell->metal_palette_visible();}));
+  const auto current_title=window_->contents("work")->GetTitle();
+  auto target=std::find_if(shell->suggestions().begin(),shell->suggestions().end(),[&](const auto& item){return item.tab&&item.title!=current_title;});ASSERT_NE(target,shell->suggestions().end());
+  const auto expected=*target;const size_t index=target-shell->suggestions().begin();auto* button=shell->palette_results_view()->children()[index].get();button->ScrollViewToVisible();
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->metal_palette_contains_text_for_testing(base::UTF16ToUTF8(expected.title));}));
+  const auto point=button->GetBoundsInScreen().CenterPoint();base::test::TestFuture<void> moved;ASSERT_TRUE(ui_controls::SendMouseMoveNotifyWhenDone(point.x(),point.y(),moved.GetCallback(),panel->GetNativeWindow()));ASSERT_TRUE(moved.Wait());
+  base::test::TestFuture<void> clicked;ASSERT_TRUE(ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT,ui_controls::DOWN|ui_controls::UP,clicked.GetCallback(),ui_controls::kNoAccelerator,panel->GetNativeWindow()));ASSERT_TRUE(clicked.Wait());
+  ASSERT_TRUE(base::test::RunUntil([&]{return !shell->address_visible()&&window_->contents("work")->GetTitle()==expected.title;}));EXPECT_EQ(work_.get(),window_->contents("work")->GetBrowserContext());EXPECT_FALSE(shell->metal_palette_visible());
 }
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, SidebarGripDragAutoHideAndEdgeReveal) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));

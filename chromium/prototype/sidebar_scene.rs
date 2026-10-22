@@ -3,6 +3,7 @@
 // remain in WorkspaceShell. No URLs, profiles or WebContents cross this ABI.
 #[cxx::bridge(namespace = "zitter::sidebar")]
 mod ffi {
+    struct PaletteInputLayout { icon: Rect, input: Rect, hint: Rect }
     struct WidthChange { width: i32, changed: bool }
     struct ShellLayout { content: Rect, edge: Rect, sidebar: Rect }
     struct PaneHostLayout { first: Rect, second: Rect, first_bar: Rect, second_bar: Rect, divider: Rect }
@@ -15,7 +16,7 @@ mod ffi {
     struct ViewportProjection { x: f32, y: f32, nodes: Vec<ProjectedNode> }
     struct Item {
         x: f32, y: f32, width: f32, height: f32,
-        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: control glyph, 8: pane title, 9: split grip, 10: rounded backing, 11: sidebar grip.
+        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: control glyph, 8: pane title, 9: split grip, 10: rounded backing, 11: sidebar grip, 12: palette result, 13: result icon, 14: separator.
         kind: u32, glyph: u32,
         title: String, monogram: String, detail: String,
         title_width: f32, detail_ink: u32, detail_font_size: f32,
@@ -44,6 +45,17 @@ mod ffi {
         text: String, font_size: f32, bold: bool, middle: bool, center: bool, clip: FloatRect,
     }
     extern "Rust" {
+        type PaletteSelection;
+        fn new_palette_selection() -> Box<PaletteSelection>;
+        fn reset(self: &mut PaletteSelection);
+        fn selected(self: &PaletteSelection) -> usize;
+        fn moved(self: &PaletteSelection) -> bool;
+        fn step(self: &mut PaletteSelection, count: usize, backwards: bool) -> bool;
+        fn reconcile(self: &mut PaletteSelection, count: usize, preserved: usize, found: bool);
+        fn palette_input_layout(width: i32, height: i32, icon: Rect, field_height: i32, hint: Rect) -> PaletteInputLayout;
+        fn palette_width(window_width: i32) -> i32;
+        fn palette_results_height(content_height: i32) -> i32;
+        fn palette_frame(content: Rect, width: i32, height: i32) -> Rect;
         type SidebarDrag;
         fn new_sidebar_drag() -> Box<SidebarDrag>;
         fn begin(self: &mut SidebarDrag, width: i32, pointer: f64);
@@ -116,6 +128,34 @@ mod ffi {
         fn cycle_tab(current: usize, count: usize, backwards: bool) -> usize;
     }
 }
+#[derive(Default)]
+struct PaletteSelection { index:usize, moved:bool }
+fn new_palette_selection()->Box<PaletteSelection>{Box::new(PaletteSelection::default())}
+impl PaletteSelection {
+    fn reset(&mut self){self.index=0;self.moved=false;}
+    fn selected(&self)->usize{self.index}
+    fn moved(&self)->bool{self.moved}
+    fn step(&mut self,count:usize,backwards:bool)->bool {
+        if count==0{return false;}self.index=self.index.min(count-1);
+        self.index=if backwards{if self.index==0{count-1}else{self.index-1}}else if self.index+1==count{0}else{self.index+1};
+        self.moved=true;true
+    }
+    fn reconcile(&mut self,count:usize,preserved:usize,found:bool){if found{self.index=preserved;}self.index=self.index.min(count.saturating_sub(1));}
+}
+fn palette_width(window_width:i32)->i32{window_width.saturating_sub(48).clamp(120,640)}
+fn palette_results_height(content_height:i32)->i32{content_height.saturating_sub(230).clamp(90,300)}
+fn palette_frame(content:ffi::Rect,width:i32,height:i32)->ffi::Rect {
+    ffi::Rect{x:content.x+content.width/2-width/2,y:content.y+132.min(content.height/6),width,height}
+}
+fn palette_input_layout(width:i32,height:i32,icon:ffi::Rect,field_height:i32,hint:ffi::Rect)->ffi::PaletteInputLayout {
+    let width=width.max(0);let height=height.max(0);let inner=(width-36).max(0);
+    let icon_width=icon.width.clamp(0,inner);let hint_width=hint.width.clamp(0,(inner-icon_width-24).max(0));
+    let rect=|x:i32,w:i32,h:i32|ffi::Rect{x,y:(height-h).max(0)/2,width:w,height:h};
+    ffi::PaletteInputLayout{icon:rect(18.min(width),icon_width,icon.height.clamp(0,height)),
+        input:rect(18+icon_width+12,(inner-icon_width-hint_width-24).max(0),field_height.clamp(0,height)),
+        hint:rect((width-18-hint_width).max(0),hint_width,hint.height.clamp(0,height))}
+}
+
 fn sidebar_resize_width(initial:i32,amount:i32)->i32 {initial.saturating_add(amount).clamp(200,480)}
 fn sidebar_grip_layout(width:i32,height:i32)->ffi::Rect{let width=width.max(0);ffi::Rect{x:(width-6).max(0),y:0,width:width.min(6),height:height.max(0)}}
 fn sidebar_auto_hide(pinned:bool,blocked:bool,inside:bool,dragging:bool)->bool {!pinned&&!blocked&&!inside&&!dragging}
@@ -580,6 +620,21 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
                     clip: ffi::FloatRect {x: i.clip.x, y: i.clip.y, width: i.clip.width, height: i.clip.height} });
             }
         };
+        if i.kind == 14 {emit(i.x,i.y,i.width,i.height,0.0,i.fill,"",0.0,false);continue;}
+        if i.kind == 13 {
+            let start=first_primitive;
+            emit(i.x+18.0,i.y+(i.height-16.0)/2.0,16.0,16.0,0.0,i.ink,"",0.0,false);
+            for p in out[start..].iter_mut(){p.shape=if i.glyph==1{3}else if i.glyph==2{6}else{7};}continue;
+        }
+        if i.kind == 12 {
+            emit(i.x,i.y,i.width,i.height,if i.active{9.0}else{8.0},i.fill,"",0.0,false);
+            emit(i.x+12.0,i.y+(i.height-28.0)/2.0,28.0,28.0,7.0,i.badge,"",0.0,false);
+            let g=row_layout(i.width as i32,i.height as i32,i.title_width as i32,!i.detail.is_empty(),true,false);
+            if i.focused{emit(i.x+2.0,i.y+i.height-3.0,(i.width-4.0).max(0.0),2.0,1.0,i.ink,"",0.0,false);}
+            if !i.title.is_empty(){emit(i.x+g.title.x as f32,i.y,(g.title.width as f32).min(i.title_width.max(0.0)),i.height,0.0,i.ink,&i.title,i.font_size,true);}
+            if !i.detail.is_empty(){emit(i.x+g.detail.x as f32,i.y,g.detail.width as f32,i.height,0.0,i.detail_ink,&i.detail,i.detail_font_size,false);}
+            for p in out[first_primitive..].iter_mut(){if !p.text.is_empty()&&!p.bold{p.middle=true;}}continue;
+        }
         if i.kind == 11 {
             if i.active||i.hovered {emit(i.x+i.width-3.0,i.y+8.0,2.0,(i.height-16.0).max(0.0),1.0,i.ink,"",0.0,false);}continue;
         }
@@ -884,6 +939,24 @@ mod tests {
             assert_eq!(icon.shape,glyph-1);assert_eq!((icon.x,icon.y,icon.width,icon.height),(8.0,8.0,16.0,16.0));
             assert!(ops.iter().all(|p|p.text.is_empty()));
         }
+    }
+    #[test] fn palette_selection_wraps_and_reconciles_async_identity() {
+        let mut p=new_palette_selection();assert!(!p.step(0,false));assert!(!p.moved());
+        assert!(p.step(4,true));assert_eq!(p.selected(),3);assert!(p.step(4,false));assert_eq!(p.selected(),0);
+        p.step(4,false);p.reconcile(7,5,true);assert_eq!(p.selected(),5);p.reconcile(2,0,false);assert_eq!(p.selected(),1);
+        p.reconcile(0,0,false);assert_eq!(p.selected(),0);p.reset();assert!(!p.moved());
+    }
+    #[test] fn palette_geometry_preserves_editor_space_and_anchor() {
+        let g=palette_input_layout(640,56,ffi::Rect{x:0,y:0,width:32,height:32},22,ffi::Rect{x:0,y:0,width:20,height:16});
+        assert_eq!((g.icon.x,g.input.x,g.input.width,g.hint.x),(18,62,528,602));
+        assert_eq!((palette_width(560),palette_results_height(560)),(512,300));
+        let r=palette_frame(ffi::Rect{x:264,y:38,width:728,height:754},640,300);assert_eq!((r.x,r.y),(308,163));
+    }
+    #[test] fn palette_result_text_geometry_and_analytic_glyphs() {
+        let mut r=row(400.0);r.kind=12;r.height=44.0;r.title_width=80.0;r.detail="History / 日本語".into();
+        let ops=layout(&[r]);let title=ops.iter().find(|p|p.bold&&!p.text.is_empty()).unwrap();assert_eq!((title.x,title.width),(52.0,80.0));
+        assert!(ops.iter().any(|p|p.middle&&p.text=="History / 日本語"));
+        for (glyph,shape) in [(0,7),(1,3),(2,6)]{let mut g=row(400.0);g.kind=13;g.glyph=glyph;assert_eq!(layout(&[g])[0].shape,shape);}
     }
     #[test] fn sidebar_shell_layout_matches_pinned_and_overlay_bounds() {
         let p=shell_layout(1000,800,248,true);assert_eq!((p.content.x,p.content.width,p.sidebar.width,sidebar_grip_layout(248,754).x),(264,728,248,242));
