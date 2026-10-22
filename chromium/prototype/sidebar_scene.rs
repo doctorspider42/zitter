@@ -3,6 +3,8 @@
 // remain in WorkspaceShell. No URLs, profiles or WebContents cross this ABI.
 #[cxx::bridge(namespace = "zitter::sidebar")]
 mod ffi {
+    struct WidthChange { width: i32, changed: bool }
+    struct ShellLayout { content: Rect, edge: Rect, sidebar: Rect }
     struct PaneHostLayout { first: Rect, second: Rect, first_bar: Rect, second_bar: Rect, divider: Rect }
     struct PaneBarLayout { title: Rect, menu: Rect, close: Rect }
     struct DragRatio { ratio: f64, changed: bool }
@@ -13,7 +15,7 @@ mod ffi {
     struct ViewportProjection { x: f32, y: f32, nodes: Vec<ProjectedNode> }
     struct Item {
         x: f32, y: f32, width: f32, height: f32,
-        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: footer glyph.
+        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: control glyph, 8: pane title, 9: split grip, 10: rounded backing, 11: sidebar grip.
         kind: u32, glyph: u32,
         title: String, monogram: String, detail: String,
         title_width: f32, detail_ink: u32, detail_font_size: f32,
@@ -42,6 +44,18 @@ mod ffi {
         text: String, font_size: f32, bold: bool, middle: bool, center: bool, clip: FloatRect,
     }
     extern "Rust" {
+        type SidebarDrag;
+        fn new_sidebar_drag() -> Box<SidebarDrag>;
+        fn begin(self: &mut SidebarDrag, width: i32, pointer: f64);
+        fn update(self: &mut SidebarDrag, pointer: f64, reverse: bool) -> WidthChange;
+        fn delta(self: &mut SidebarDrag, delta: f64, reverse: bool) -> WidthChange;
+        fn end(self: &mut SidebarDrag) -> WidthChange;
+        fn cancel(self: &mut SidebarDrag);
+        fn active(self: &SidebarDrag) -> bool;
+        fn sidebar_resize_width(initial: i32, amount: i32) -> i32;
+        fn shell_layout(width: i32, height: i32, preferred: i32, pinned: bool) -> ShellLayout;
+        fn sidebar_grip_layout(width: i32, height: i32) -> Rect;
+        fn sidebar_auto_hide(pinned: bool, blocked: bool, inside: bool, dragging: bool) -> bool;
         type SplitDrag;
         fn new_split_drag() -> Box<SplitDrag>;
         fn begin(self: &mut SplitDrag, ratio: f64, pointer: f64);
@@ -102,6 +116,38 @@ mod ffi {
         fn cycle_tab(current: usize, count: usize, backwards: bool) -> usize;
     }
 }
+fn sidebar_resize_width(initial:i32,amount:i32)->i32 {initial.saturating_add(amount).clamp(200,480)}
+fn sidebar_grip_layout(width:i32,height:i32)->ffi::Rect{let width=width.max(0);ffi::Rect{x:(width-6).max(0),y:0,width:width.min(6),height:height.max(0)}}
+fn sidebar_auto_hide(pinned:bool,blocked:bool,inside:bool,dragging:bool)->bool {!pinned&&!blocked&&!inside&&!dragging}
+fn shell_layout(width:i32,height:i32,preferred:i32,pinned:bool)->ffi::ShellLayout {
+    let width=width.max(0);let height=height.max(0);
+    let sidebar_width=preferred.clamp(200,480).min(120.max(width/2));
+    let column=if pinned{sidebar_width+8}else{0};
+    ffi::ShellLayout {
+        content:ffi::Rect{x:column+8,y:38,width:(width-column-16).max(0),height:(height-46).max(0)},
+        edge:ffi::Rect{x:0,y:38,width:8,height:(height-38).max(0)},
+        sidebar:ffi::Rect{x:8,y:38,width:sidebar_width,height:200.max(height-46)},
+    }
+}
+#[derive(Default)]
+struct SidebarDrag {anchor:Option<f64>,pointer:f64,initial:i32,width:i32,moved:bool}
+fn new_sidebar_drag()->Box<SidebarDrag>{Box::new(SidebarDrag::default())}
+impl SidebarDrag {
+    fn begin(&mut self,width:i32,pointer:f64){self.initial=width.clamp(200,480);self.width=self.initial;self.pointer=pointer;self.anchor=pointer.is_finite().then_some(pointer);self.moved=false;}
+    fn update(&mut self,pointer:f64,reverse:bool)->ffi::WidthChange {
+        let Some(anchor)=self.anchor else{return ffi::WidthChange{width:self.width,changed:false};};
+        if !pointer.is_finite(){return ffi::WidthChange{width:self.width,changed:false};}
+        self.pointer=pointer;self.moved|=pointer!=anchor;
+        let amount=((pointer-anchor)*if reverse{-1.0}else{1.0}) as i32;
+        self.width=sidebar_resize_width(self.initial,amount);
+        ffi::WidthChange{width:self.width,changed:self.moved}
+    }
+    fn delta(&mut self,delta:f64,reverse:bool)->ffi::WidthChange{self.update(self.pointer+delta,reverse)}
+    fn end(&mut self)->ffi::WidthChange{let changed=self.anchor.is_some()&&self.moved;self.cancel();ffi::WidthChange{width:self.width,changed}}
+    fn cancel(&mut self){self.anchor=None;self.moved=false;}
+    fn active(&self)->bool{self.anchor.is_some()}
+}
+
 fn pane_bar_layout(width: i32, height: i32) -> ffi::PaneBarLayout {
     let width=width.max(0);let height=height.max(0);
     let close_width=32.min((width-4).max(0));let close_x=(width-4-close_width).max(0);
@@ -534,6 +580,9 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
                     clip: ffi::FloatRect {x: i.clip.x, y: i.clip.y, width: i.clip.width, height: i.clip.height} });
             }
         };
+        if i.kind == 11 {
+            if i.active||i.hovered {emit(i.x+i.width-3.0,i.y+8.0,2.0,(i.height-16.0).max(0.0),1.0,i.ink,"",0.0,false);}continue;
+        }
         if i.kind == 10 {
             emit(i.x,i.y,i.width,i.height,10.0,i.fill,"",0.0,false);continue;
         }
@@ -835,6 +884,24 @@ mod tests {
             assert_eq!(icon.shape,glyph-1);assert_eq!((icon.x,icon.y,icon.width,icon.height),(8.0,8.0,16.0,16.0));
             assert!(ops.iter().all(|p|p.text.is_empty()));
         }
+    }
+    #[test] fn sidebar_shell_layout_matches_pinned_and_overlay_bounds() {
+        let p=shell_layout(1000,800,248,true);assert_eq!((p.content.x,p.content.width,p.sidebar.width,sidebar_grip_layout(248,754).x),(264,728,248,242));
+        let overlay=shell_layout(560,560,480,false);assert_eq!((overlay.content.x,overlay.content.width,overlay.sidebar.width),(8,544,280));
+        assert_eq!(shell_layout(0,0,480,true).content.width,0);
+        assert_eq!(sidebar_grip_layout(i32::MIN,0).width,0);
+        let mut grip=row(6.0);grip.kind=11;grip.height=200.0;grip.hovered=false;grip.active=false;assert!(layout(&[grip]).is_empty());
+        let mut grip=row(6.0);grip.kind=11;grip.height=200.0;grip.hovered=true;let ops=layout(&[grip]);assert_eq!((ops[0].x,ops[0].y,ops[0].width,ops[0].height),(3.0,8.0,2.0,184.0));
+    }
+    #[test] fn sidebar_drag_is_anchored_clamped_and_cancelled() {
+        let mut d=new_sidebar_drag();d.begin(248,100.0);assert_eq!(d.update(140.0,false).width,288);
+        assert_eq!(d.update(1000.0,false).width,480);assert_eq!(d.update(-1000.0,false).width,200);assert!(d.end().changed);
+        assert!(!d.update(200.0,false).changed);d.begin(248,0.0);assert_eq!(d.delta(20.0,true).width,228);d.cancel();assert!(!d.end().changed);
+        d.begin(248,0.0);assert!(!d.end().changed);assert_eq!(sidebar_resize_width(i32::MAX,i32::MAX),480);
+    }
+    #[test] fn sidebar_auto_hide_respects_all_guards() {
+        assert!(sidebar_auto_hide(false,false,false,false));
+        for (p,b,i,d) in [(true,false,false,false),(false,true,false,false),(false,false,true,false),(false,false,false,true)] {assert!(!sidebar_auto_hide(p,b,i,d));}
     }
     #[test] fn pane_layout_separates_real_page_rects_in_both_orientations() {
         let g=pane_host_layout(809,600,0.5,false,true);

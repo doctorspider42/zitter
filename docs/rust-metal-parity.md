@@ -31,7 +31,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Workspace heading and emoji text | Rust display list + Metal; native static-text accessibility adapter | Replace outer native View placement; expand VoiceOver/scale coverage |
 | Footer pin/settings, workspace dots/emoji and horizontal overflow | Rust layout, input reducer and shared Metal canvas; native focus/AX/menu adapters | Replace native containers; expand focus, trackpad, RTL and scale coverage |
 | Navigation/header controls | Rust strip layout/input and analytic GPU icons; main-window Metal canvas sharing sidebar GPU resources | Replace native Button/outer frame adapters; expand peek, accessibility, RTL and scale coverage |
-| Sidebar resizing, pinning, auto-hide, edge reveal | Views | Rust interaction state; preserve content bounds and pointer behavior |
+| Sidebar resizing, pinning, auto-hide, edge reveal | Rust drag/width bounds, shell/sidebar/grip geometry and auto-hide guards; Metal grip; native pin/show commands | Replace native window/event/cursor/AX adapters and edge-indicator painting; broaden input/accessibility coverage |
 | Workspace swipe/animation/cancellation | Views layers + existing workspace controller | Rust scene transitions without native-painted row snapshots |
 | Split headers/divider, focus, orientation, swap/close | Rust pane/bar layout, title text, menu/close input and divider drag; shared Metal rendering | Replace native View/Button/ResizeArea event, cursor and AX adapters; expand gesture/RTL/scale coverage |
 | Address/search palette, suggestions, providers, IME | Views | Rust palette layout and selection; platform text-input adapter |
@@ -160,6 +160,15 @@ Views-specific layout and control behavior must have an explicit replacement.
   restored the demo. Broader input/accessibility/scale and performance comparison
   remain pending. See
   [split pane validation](benchmarks/rust-split-panes-functional-2026-10-22.json).
+- Sidebar pointer/gesture drag state, width clamping, shell/sidebar/grip geometry
+  and auto-hide guards now use Rust. A narrow Metal grip shares the existing GPU
+  context; native window/event/cursor/AX, pin/show/persistence and edge-indicator
+  painting remain adapters. **41 Metal browser tests, 14 Views controls, 44 Rust
+  tests and 59 Python tests passed**. Physical dragging, gestures, persistence,
+  half-window sizing, auto-hide/edge reveal, settings guards, cancelled drags and
+  animation restoration passed. Signed app pinned/overlay and hide/show checks
+  preserved the original demo. See
+  [sidebar sizing validation](benchmarks/rust-sidebar-sizing-functional-2026-10-22.json).
 
 ## Completion gates
 

@@ -4244,6 +4244,48 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NavigationHeaderHistoryRel
   base::RunLoop().RunUntilIdle();const auto idle=shell->metal_header_frame_count();base::RunLoop().RunUntilIdle();
   EXPECT_EQ(idle,shell->metal_header_frame_count());
 }
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, SidebarGripDragAutoHideAndEdgeReveal) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
+  shell->SetWorkspaceAnimations(false);shell->CloseOverlays(true);shell->SetPinned(true);shell->ShowSidebar();
+  shell->ResizeSidebar(248-shell->sidebar_width(),true);
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->metal_sidebar_visible()&&shell->metal_sidebar_grip_visible();}));
+  auto find=[&](auto&& self,views::View* view)->views::ResizeArea*{if(auto* area=views::AsViewClass<views::ResizeArea>(view))return area;for(const auto& child:view->children())if(auto* result=self(self,child.get()))return result;return nullptr;};
+  auto* grip=find(find,shell->sidebar_view());ASSERT_TRUE(grip);
+  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  auto move=[&](gfx::Point point,views::Widget* widget){base::test::TestFuture<void> done;return ui_controls::SendMouseMoveNotifyWhenDone(point.x(),point.y(),done.GetCallback(),widget->GetNativeWindow())&&done.Wait();};
+  auto mouse=[&](int state){base::test::TestFuture<void> done;return ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT,state,done.GetCallback(),ui_controls::kNoAccelerator,shell->sidebar_widget()->GetNativeWindow())&&done.Wait();};
+  const auto start=grip->GetBoundsInScreen().CenterPoint();const auto page_x=shell->content_host()->GetBoundsInScreen().x();
+  ASSERT_TRUE(move(start,shell->sidebar_widget()));ASSERT_TRUE(mouse(ui_controls::DOWN));
+  base::ScopedClosureRunner release(base::BindOnce([]{ui_controls::SendMouseEvents(ui_controls::LEFT,ui_controls::UP);}));
+  ASSERT_TRUE(move(start+gfx::Vector2d(60,0),shell->sidebar_widget()));ASSERT_TRUE(mouse(ui_controls::UP));static_cast<void>(release.Release());
+  EXPECT_EQ(308,shell->sidebar_width());window_->widget()->LayoutRootViewIfNecessary();EXPECT_GT(shell->content_host()->GetBoundsInScreen().x(),page_x);
+  auto gesture=[&](ui::GestureEventDetails details){ui::GestureEvent event(3,20,0,base::TimeTicks::Now(),details);grip->OnGestureEvent(&event);EXPECT_TRUE(event.handled());};
+  gesture(ui::GestureEventDetails(ui::EventType::kGestureScrollBegin,0,0));
+  gesture(ui::GestureEventDetails(ui::EventType::kGestureScrollUpdate,20,0));
+  gesture(ui::GestureEventDetails(ui::EventType::kGestureEnd));EXPECT_EQ(328,shell->sidebar_width());
+  shell->ResizeSidebar(-20,true);
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_saved();}));
+  const auto wide=window_->widget()->GetWindowBoundsInScreen();auto narrow=wide;narrow.set_width(560);window_->widget()->SetBounds(narrow);
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->sidebar_widget()->GetWindowBoundsInScreen().width()<=280;}));EXPECT_EQ(308,shell->sidebar_width());
+  window_->widget()->SetBounds(wide);window_->widget()->LayoutRootViewIfNecessary();
+  ASSERT_TRUE(move(shell->sidebar_view()->GetBoundsInScreen().CenterPoint(),shell->sidebar_widget()));shell->SetPinned(false);
+  window_->widget()->LayoutRootViewIfNecessary();const auto overlay_x=shell->content_host()->GetBoundsInScreen().x();
+  ASSERT_TRUE(move(shell->content_host()->GetBoundsInScreen().CenterPoint(),window_->widget()));
+  ASSERT_TRUE(base::test::RunUntil([&]{return !shell->sidebar_visible()&&!shell->metal_sidebar_grip_visible();}));
+  const auto client=window_->widget()->GetClientAreaBoundsInScreen();
+  ASSERT_TRUE(move(gfx::Point(client.x()+2,client.y()+150),window_->widget()));
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->sidebar_visible()&&shell->metal_sidebar_grip_visible();}));
+  EXPECT_EQ(overlay_x,shell->content_host()->GetBoundsInScreen().x());
+  shell->OpenWorkspaceSettings();ASSERT_TRUE(shell->settings_visible());
+  ASSERT_TRUE(move(shell->content_host()->GetBoundsInScreen().CenterPoint(),window_->widget()));EXPECT_TRUE(shell->sidebar_visible());
+  shell->CloseOverlays(true);shell->SetPinned(true);shell->ShowSidebar();
+  // Hiding the sidebar cancels a captured resize, so a late native drag cannot
+  // resize the restored sidebar until another press starts a Rust gesture.
+  ui::MouseEvent press(ui::EventType::kMousePressed,gfx::Point(3,20),gfx::Point(3,20),base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);
+  ASSERT_TRUE(grip->OnMousePressed(press));const auto width=shell->sidebar_width();shell->sidebar_widget()->Hide();shell->ShowSidebar();
+  ui::MouseEvent late(ui::EventType::kMouseDragged,gfx::Point(90,20),gfx::Point(90,20),base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,0);
+  ASSERT_TRUE(grip->OnMouseDragged(late));grip->OnMouseCaptureLost();EXPECT_EQ(width,shell->sidebar_width());
+}
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, SplitPaneScenesDragOrientTitleAndClose) {
   auto* shell=window_->shell();
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
@@ -4855,14 +4897,16 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, MetalReturnsAfterWorkspace
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
   shell->SetWorkspaceAnimations(true);
   shell->ShowSidebar();
-  ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible(); }));
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible()&&shell->metal_sidebar_grip_visible(); }));
   ASSERT_TRUE(window_->Select("personal"));
+  if(shell->workspace_animation_running())EXPECT_FALSE(shell->metal_sidebar_grip_visible());
   ASSERT_TRUE(base::test::RunUntil([&] {
-    return !shell->workspace_animation_running() && shell->metal_sidebar_visible();
+    return !shell->workspace_animation_running() && shell->metal_sidebar_visible()&&shell->metal_sidebar_grip_visible();
   }));
   ASSERT_TRUE(window_->Select("work"));
+  if(shell->workspace_animation_running())EXPECT_FALSE(shell->metal_sidebar_grip_visible());
   ASSERT_TRUE(base::test::RunUntil([&] {
-    return !shell->workspace_animation_running() && shell->metal_sidebar_visible();
+    return !shell->workspace_animation_running() && shell->metal_sidebar_visible()&&shell->metal_sidebar_grip_visible();
   }));
 }
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, LiveTabsKeyboardFoldersAndSplit) {

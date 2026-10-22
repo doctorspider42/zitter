@@ -340,3 +340,31 @@ and restored the original demo state. Full trackpad/VoiceOver/IME/RTL/scale
 validation, remaining Views controls and real presentation/CPU/GPU comparison
 are still pending. See
 [split pane validation](benchmarks/rust-split-panes-functional-2026-10-22.json).
+
+Sidebar sizing now uses a Rust pointer/gesture state machine. It anchors the
+stored preferred width, clamps to 200–480 points, reverses horizontal deltas for
+RTL and commits on release/capture loss. Hiding the native control cancels a
+pending drag. Programmatic cumulative-delta resizing retains its existing API
+and uses the same Rust clamp in the Metal backend.
+
+Rust also computes sidebar-window, content, edge-target and resize-handle bounds.
+The visible sidebar keeps the original half-window cap without overwriting the
+preferred width. Auto-hide guards are evaluated in Rust from native pointer,
+button, pin and overlay state; deactivation keeps its original settings guard.
+Pin/show/toggle commands, persistence and edge-enter delivery remain native.
+
+The resize indicator is drawn by Rust + Metal on a two-point-wide surface that
+shares the existing GPU context. It covers only the inset indicator rectangle,
+preserving the sidebar outline, corners and existing canvas bounds. Native
+drawing is gated during GPU ownership and invalidated when animation fallback
+takes over. No redraw timer or new third-party dependency was added.
+
+Validated on 2026-10-22: **41/41 Metal browser regressions, 14/14 Views controls,
+44/44 Rust tests and 59/59 Python tests passed**, without browser-test retries.
+Native cases cover physical sidebar dragging, gesture updates, persistence,
+the half-window cap, auto-hide/edge reveal, settings guards, stale-drag rejection
+and return of both Metal surfaces after workspace animation. The matching signed
+app passed pinned/overlay and hide/show inspection, with its original demo state
+restored. Native containers, edge-indicator paint, broader input/accessibility
+coverage and actual presentation/CPU/GPU comparison remain. See
+[sidebar sizing validation](benchmarks/rust-sidebar-sizing-functional-2026-10-22.json).

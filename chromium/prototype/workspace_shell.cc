@@ -996,27 +996,83 @@ END_METADATA
 class SidebarGrip final : public views::ResizeArea, public views::ResizeAreaDelegate {
   METADATA_HEADER(SidebarGrip, views::ResizeArea)
  public:
-  explicit SidebarGrip(base::RepeatingCallback<void(int, bool)> resized)
-      : views::ResizeArea(this), resized_(std::move(resized)) {
-    GetViewAccessibility().SetName(u"Zmień szerokość panelu bocznego");
-    SetProperty(views::kViewIgnoredByLayoutKey, true);
+  SidebarGrip(base::RepeatingCallback<void(int,bool)> resized,base::RepeatingCallback<int()> width,
+      base::RepeatingCallback<void(int,bool)> applied,base::RepeatingClosure painted,base::RepeatingCallback<bool()> visible)
+      : views::ResizeArea(this),resized_(std::move(resized)),width_(std::move(width)),applied_(std::move(applied)),painted_(std::move(painted)),visible_(std::move(visible)) {
+    GetViewAccessibility().SetName(u"Zmień szerokość panelu bocznego");SetProperty(views::kViewIgnoredByLayoutKey,true);
+#if BUILDFLAG(IS_MAC)
+    if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal")drag_.emplace(sidebar::new_sidebar_drag());
+#endif
   }
-  void OnResize(int amount, bool done) override {
-    active_ = !done;
-    SchedulePaint();
-    resized_.Run(amount, done);
+  bool active() const{return active_;} bool hovered() const{return hovered_;}
+  void OnResize(int amount,bool done) override{active_=!done;SchedulePaint();resized_.Run(amount,done);}
+  void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);painted_.Run();}
+  void OnMouseEntered(const ui::MouseEvent&) override{hovered_=true;SchedulePaint();}
+  void OnMouseExited(const ui::MouseEvent&) override{hovered_=false;SchedulePaint();}
+  bool OnMousePressed(const ui::MouseEvent& event) override {
+#if BUILDFLAG(IS_MAC)
+    if(drag_){if(!event.IsOnlyLeftMouseButton()||!GetEnabledInViewsSubtree())return false;(*drag_)->begin(width_.Run(),Pointer(event.location()));active_=true;SchedulePaint();return true;}
+#endif
+    return ResizeArea::OnMousePressed(event);
   }
-  void OnMouseEntered(const ui::MouseEvent&) override { hovered_ = true; SchedulePaint(); }
-  void OnMouseExited(const ui::MouseEvent&) override { hovered_ = false; SchedulePaint(); }
+  bool OnMouseDragged(const ui::MouseEvent& event) override {
+#if BUILDFLAG(IS_MAC)
+    if(drag_){if(!event.IsLeftMouseButton()||!GetEnabledInViewsSubtree())return false;Apply((*drag_)->update(Pointer(event.location()),base::i18n::IsRTL()),false);return true;}
+#endif
+    return ResizeArea::OnMouseDragged(event);
+  }
+  void OnMouseReleased(const ui::MouseEvent& event) override {
+#if BUILDFLAG(IS_MAC)
+    if(drag_){if(GetEnabledInViewsSubtree())static_cast<void>((*drag_)->update(Pointer(event.location()),base::i18n::IsRTL()));active_=false;SchedulePaint();Apply((*drag_)->end(),true);return;}
+#endif
+    ResizeArea::OnMouseReleased(event);
+  }
+  void OnMouseCaptureLost() override {
+#if BUILDFLAG(IS_MAC)
+    if(drag_){active_=false;SchedulePaint();Apply((*drag_)->end(),true);return;}
+#endif
+    ResizeArea::OnMouseCaptureLost();
+  }
+  void VisibilityChanged(views::View* view,bool visible) override {
+    ResizeArea::VisibilityChanged(view,visible);
+#if BUILDFLAG(IS_MAC)
+    if(drag_&&!visible){(*drag_)->cancel();active_=false;}
+#endif
+  }
+  void OnGestureEvent(ui::GestureEvent* event) override {
+#if BUILDFLAG(IS_MAC)
+    if(drag_){
+      if(!GetEnabledInViewsSubtree())return;
+      if(event->type()==ui::EventType::kGestureTapDown||event->type()==ui::EventType::kGestureScrollBegin){if(!(*drag_)->active())(*drag_)->begin(width_.Run(),Pointer(event->location()));active_=true;SchedulePaint();}
+      else if(event->type()==ui::EventType::kGestureScrollUpdate)Apply((*drag_)->delta(event->details().scroll_x(),base::i18n::IsRTL()),false);
+      else if(event->type()==ui::EventType::kGestureEnd){active_=false;SchedulePaint();Apply((*drag_)->end(),true);}
+      else if(event->type()==ui::EventType::kGestureTapCancel){(*drag_)->cancel();active_=false;SchedulePaint();}
+      else return;
+      event->SetHandled();return;
+    }
+#endif
+    ResizeArea::OnGestureEvent(event);
+  }
   void OnPaint(gfx::Canvas* canvas) override {
-    if (!hovered_ && !active_) return;
-    FillRound(canvas, gfx::Rect(width() - 3, 8, 2, std::max(0, height() - 16)), 1,
-              SkColorSetA(Tone(this, kInk), active_ ? 0x40 : 0x26));
+    if(visible_&&visible_.Run())return;
+    if(!hovered_&&!active_)return;
+#if BUILDFLAG(IS_MAC)
+    if(drag_){sidebar::Item item{};item.kind=11;item.width=width();item.height=height();item.active=active_;item.hovered=hovered_;item.ink=SkColorSetA(Tone(this,kInk),active_?0x40:0x26);item.clip={0,0,float(width()),float(height())};const auto ops=sidebar::layout(rust::Slice<const sidebar::Item>(&item,1));for(const auto& op:ops)FillRound(canvas,gfx::Rect(op.x,op.y,op.width,op.height),op.radius,op.color);return;}
+#endif
+    FillRound(canvas,gfx::Rect(width()-3,8,2,std::max(0,height()-16)),1,SkColorSetA(Tone(this,kInk),active_?0x40:0x26));
   }
  private:
-  base::RepeatingCallback<void(int, bool)> resized_;
-  bool hovered_ = false;
-  bool active_ = false;
+#if BUILDFLAG(IS_MAC)
+  double Pointer(gfx::Point point){views::View::ConvertPointToScreen(this,&point);return point.x();}
+  void Apply(const sidebar::WidthChange& change,bool done){if(change.changed)applied_.Run(change.width,done);}
+  std::optional<rust::Box<sidebar::SidebarDrag>> drag_;
+#endif
+  base::RepeatingCallback<void(int,bool)> resized_;
+  base::RepeatingCallback<int()> width_;
+  base::RepeatingCallback<void(int,bool)> applied_;
+  base::RepeatingClosure painted_;
+  base::RepeatingCallback<bool()> visible_;
+  bool hovered_=false,active_=false;
 };
 BEGIN_METADATA(SidebarGrip)
 END_METADATA
@@ -1053,16 +1109,20 @@ class SidebarListView final : public views::View {
 class SidebarView final : public views::View {
   METADATA_HEADER(SidebarView, views::View)
  public:
-  explicit SidebarView(base::RepeatingClosure leave) : leave_(std::move(leave)) {
+  explicit SidebarView(base::RepeatingCallback<void(bool,bool)> leave) : leave_(std::move(leave)) {
     SetNotifyEnterExitOnChild(true);
   }
   void OnMouseExited(const ui::MouseEvent& event) override {
-    if (event.IsLeftMouseButton()) return;
-    if (!GetBoundsInScreen().Contains(display::Screen::Get()->GetCursorScreenPoint())) leave_.Run();
+    leave_.Run(GetBoundsInScreen().Contains(display::Screen::Get()->GetCursorScreenPoint()),event.IsLeftMouseButton());
   }
   void Layout(PassKey) override {
     LayoutSuperclass<views::View>(this);
-    if (grip) grip->SetBounds(width() - 6, 0, 6, height());
+    if (grip) {
+#if BUILDFLAG(IS_MAC)
+      if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal") {const auto r=sidebar::sidebar_grip_layout(width(),height());grip->SetBounds(r.x,r.y,r.width,r.height);return;}
+#endif
+      grip->SetBounds(width()-6,0,6,height());
+    }
   }
   void OnPaint(gfx::Canvas* canvas) override {
     views::View::OnPaint(canvas);
@@ -1075,7 +1135,7 @@ class SidebarView final : public views::View {
   base::RepeatingClosure painted;
   raw_ptr<views::View> grip = nullptr;
  private:
-  base::RepeatingClosure leave_;
+  base::RepeatingCallback<void(bool,bool)> leave_;
 };
 BEGIN_METADATA(SidebarView)
 END_METADATA
@@ -1444,6 +1504,13 @@ class ShellRoot final : public views::View {
                        std::max(0, height() - top - kGap));
     edge->SetBounds(0, kShellHeaderHeight, kGap, std::max(0, height() - kShellHeaderHeight));
     edge->SetVisible(!pinned);
+#if BUILDFLAG(IS_MAC)
+    if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal") {
+      const auto g=sidebar::shell_layout(width(),height(),sidebar_width,pinned);
+      content->SetBounds(g.content.x,g.content.y,g.content.width,g.content.height);
+      edge->SetBounds(g.edge.x,g.edge.y,g.edge.width,g.edge.height);
+    }
+#endif
     LayoutSuperclass<views::View>(this);
   }
   // Empty frame and header space moves the window, like a native titlebar.
@@ -1609,11 +1676,17 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 
   // Sidebar: address pill, workspace, tabs; workspace switch and color below.
   auto sidebar = std::make_unique<SidebarView>(base::BindRepeating(
-      [](base::WeakPtr<WorkspaceShell> shell) {
-        if (shell && !shell->pinned_ && !shell->settings_visible() &&
-            !(shell->general_widget_ && shell->general_widget_->IsVisible()) &&
-            !(shell->tools_widget_ && shell->tools_widget_->IsVisible()) &&
-            !(shell->workspace_menu_runner_ && shell->workspace_menu_runner_->IsRunning())) {
+      [](base::WeakPtr<WorkspaceShell> shell,bool inside,bool dragging) {
+        if (!shell)return;
+        const bool blocked=shell->settings_visible() ||
+            (shell->general_widget_ && shell->general_widget_->IsVisible()) ||
+            (shell->tools_widget_ && shell->tools_widget_->IsVisible()) ||
+            (shell->workspace_menu_runner_ && shell->workspace_menu_runner_->IsRunning());
+        bool hide=!shell->pinned_&&!blocked&&!inside&&!dragging;
+#if BUILDFLAG(IS_MAC)
+        if(shell->metal_sidebar_)hide=sidebar::sidebar_auto_hide(shell->pinned_,blocked,inside,dragging);
+#endif
+        if(hide) {
           shell->sidebar_widget_->Hide();
           shell->RestorePageFocus();
         }
@@ -1628,7 +1701,11 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   sidebar->AddPreTargetHandler(this);
   sidebar->set_context_menu_controller(this);
   sidebar->grip = sidebar->AddChildView(std::make_unique<SidebarGrip>(
-      base::BindRepeating(&WorkspaceShell::ResizeSidebar, weak)));
+      base::BindRepeating(&WorkspaceShell::ResizeSidebar,weak),
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell?shell->sidebar_width_:248;},weak),
+      base::BindRepeating(&WorkspaceShell::ApplySidebarWidth,weak),
+      base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_sidebar_grip_visible();},weak)));
   auto* layout = sidebar->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kVertical, gfx::Insets::TLBR(2, 4, 8, 4), 2));
   auto* pill = sidebar->AddChildView(std::make_unique<UrlPill>(
@@ -2384,6 +2461,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 }
 
 void WorkspaceShell::Detach() {
+  metal_sidebar_grip_.reset();
   for(auto& surface:metal_split_)surface.reset();metal_split_pending_=false;
   metal_header_.reset();metal_header_pending_=false;header_view_=nullptr;header_sidebar_button_=nullptr;
   metal_workspace_scroll_subscription_={};
@@ -2754,6 +2832,12 @@ size_t WorkspaceShell::native_sidebar_paint_count() const {
 size_t WorkspaceShell::metal_sidebar_paint_count() const {
   return tab_list_ ? static_cast<SidebarListView*>(tab_list_.get())->metal_paints() : 0;
 }
+bool WorkspaceShell::metal_sidebar_grip_visible() const{return metal_sidebar_grip_&&metal_sidebar_grip_->visible();}
+void WorkspaceShell::HideMetalSidebarGrip() {
+  if(!metal_sidebar_grip_)return;
+  const bool visible=metal_sidebar_grip_->visible();metal_sidebar_grip_->Hide();
+  if(visible&&sidebar_root_)static_cast<SidebarView*>(sidebar_root_.get())->grip->SchedulePaint();
+}
 bool WorkspaceShell::metal_split_visible(size_t index) const {return index<metal_split_.size() && metal_split_[index] && metal_split_[index]->visible();}
 bool WorkspaceShell::metal_split_contains_text_for_testing(size_t index,std::string_view text) const {return index<metal_split_.size() && metal_split_[index] && metal_split_[index]->contains_text_for_testing(text);}
 gfx::Rect WorkspaceShell::metal_split_screen_bounds_for_testing(size_t index) const {return index<metal_split_.size() && metal_split_[index] ? metal_split_[index]->screen_bounds_for_testing() : gfx::Rect();}
@@ -2842,7 +2926,7 @@ void WorkspaceShell::UpdateMetalSidebar() {
   if (!metal_sidebar_) return;
   const bool was_visible = metal_sidebar_->visible();
   if (!sidebar_visible() || swipe_overlay_ || workspace_animation_running()) {
-    metal_sidebar_->Hide();
+    metal_sidebar_->Hide();HideMetalSidebarGrip();
     if (was_visible) { tab_list_->SchedulePaint(); new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint(); sidebar_footer_->SchedulePaint(); }
     return;
   }
@@ -2986,6 +3070,15 @@ void WorkspaceShell::UpdateMetalSidebar() {
     items.push_back(std::move(item));
   }
   const SkColor tint = FrameTint(workspace_color(state_.workspace_id), root_);
+  auto* grip=static_cast<SidebarGrip*>(static_cast<SidebarView*>(sidebar_root_.get())->grip.get());
+  if(!metal_sidebar_grip_)metal_sidebar_grip_=CreateSidebarMetal();
+  if(metal_sidebar_grip_) {
+    const bool before=metal_sidebar_grip_->visible();auto frame=grip->GetBoundsInScreen();frame.Inset(gfx::Insets::TLBR(8,3,8,1));
+    sidebar::Item item{};item.kind=11;item.x=-3;item.y=-8;item.width=grip->width();item.height=grip->height();item.clip={0,0,float(frame.width()),float(frame.height())};
+    item.active=grip->active();item.hovered=grip->hovered();item.ink=SkColorSetA(Tone(grip,kInk),item.active?0x40:0x26);
+    metal_sidebar_grip_->Update(sidebar_widget_->GetNativeWindow(),frame,{item},pinned_?tint:Mix(tint,Tone(root_,kCard),70));
+    if(before!=metal_sidebar_grip_->visible())grip->SchedulePaint();
+  }
   metal_sidebar_->Update(sidebar_widget_->GetNativeWindow(), bounds, items, pinned_ ? tint : Mix(tint, Tone(root_, kCard), 70));
   // The initial native paint record can contain fallback text. Re-record it
   // once when GPU presentation takes ownership, then the control paint gate
@@ -3060,7 +3153,7 @@ size_t WorkspaceShell::workspace_swipe_preview_count() const {
 }
 void WorkspaceShell::UpdateWorkspaceSwipePreview() {
   if (metal_sidebar_ && metal_sidebar_->visible()) {
-    metal_sidebar_->Hide();
+    metal_sidebar_->Hide();HideMetalSidebarGrip();
     new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint(); sidebar_footer_->SchedulePaint();
   }
   if (!swipe_overlay_) {
@@ -3826,7 +3919,7 @@ void WorkspaceShell::AnimateWorkspaceSwitch(std::string_view previous) {
   // layout/raster can consume much of a short animation and skip its opening.
   sidebar_widget_->LayoutRootViewIfNecessary();
   if (metal_sidebar_) {
-    metal_sidebar_->Hide();
+    metal_sidebar_->Hide();HideMetalSidebarGrip();
     tab_list_->SchedulePaint();  // Refresh cached native contents before animating.
     new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint(); sidebar_footer_->SchedulePaint();
   }
@@ -4180,8 +4273,11 @@ void WorkspaceShell::PositionPanels() {
     tools_widget_->SetBounds(gfx::Rect(bounds.CenterPoint().x() - w / 2, bounds.CenterPoint().y() - h / 2, w, h));
   }
   const int width = SidebarColumn(sidebar_width_, bounds.width());
-  sidebar_widget_->SetBounds(gfx::Rect(bounds.x() + kGap, bounds.y() + kShellHeaderHeight, width,
-                                      std::max(200, bounds.height() - kShellHeaderHeight - kGap)));
+  auto sidebar_bounds=gfx::Rect(bounds.x()+kGap,bounds.y()+kShellHeaderHeight,width,std::max(200,bounds.height()-kShellHeaderHeight-kGap));
+#if BUILDFLAG(IS_MAC)
+  if(metal_sidebar_){const auto g=sidebar::shell_layout(bounds.width(),bounds.height(),sidebar_width_,pinned_);sidebar_bounds=gfx::Rect(bounds.x()+g.sidebar.x,bounds.y()+g.sidebar.y,g.sidebar.width,g.sidebar.height);}
+#endif
+  sidebar_widget_->SetBounds(sidebar_bounds);
   if (general_widget_) {
     const int panel_width = std::max(320, std::min(960, bounds.width() - 24));
     const int panel_height = std::max(240, std::min(760, bounds.height() - 24));
@@ -4666,7 +4762,18 @@ void WorkspaceShell::SetPinned(bool pinned) {
 void WorkspaceShell::ResizeSidebar(int amount, bool done) {
   if (!widget_) return;
   if (!sidebar_resizing_) { sidebar_resize_start_ = sidebar_width_; sidebar_resizing_ = true; }
-  sidebar_width_ = std::clamp(sidebar_resize_start_ + amount, kMinSidebarWidth, kMaxSidebarWidth);
+  int width;
+#if BUILDFLAG(IS_MAC)
+  if(metal_sidebar_)width=sidebar::sidebar_resize_width(sidebar_resize_start_,amount);
+  else
+#endif
+    width=std::clamp(sidebar_resize_start_+amount,kMinSidebarWidth,kMaxSidebarWidth);
+  if(done)sidebar_resizing_=false;
+  ApplySidebarWidth(width,done);
+}
+void WorkspaceShell::ApplySidebarWidth(int width,bool done) {
+  if(!widget_)return;
+  sidebar_width_=width;
   sidebar_width_dirty_ = true;
   static_cast<ShellRoot*>(root_.get())->sidebar_width = sidebar_width_;
   root_->InvalidateLayout();
@@ -5046,7 +5153,13 @@ void WorkspaceShell::OnWidgetActivationChanged(views::Widget* widget, bool activ
   if (active) return;
   if (widget == address_widget_.get()) address_widget_->Hide();
   if (widget == settings_widget_.get()) settings_widget_->Hide();
-  if (widget == sidebar_widget_.get() && !pinned_ && !settings_visible()) sidebar_widget_->Hide();
+  if(widget==sidebar_widget_.get()) {
+    bool hide=!pinned_&&!settings_visible();
+#if BUILDFLAG(IS_MAC)
+    if(metal_sidebar_)hide=sidebar::sidebar_auto_hide(pinned_,settings_visible(),false,false);
+#endif
+    if(hide)sidebar_widget_->Hide();
+  }
 }
 void WorkspaceShell::OnWidgetVisibilityChanged(views::Widget* widget, bool visible) {
   if (widget==widget_) {ScheduleMetalHeader();ScheduleMetalSplit();}
