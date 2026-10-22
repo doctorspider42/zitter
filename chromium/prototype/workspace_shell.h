@@ -248,6 +248,9 @@ class WorkspaceShell final : public ui::EventHandler,
   bool address_visible() const;
   bool sidebar_visible() const;
   bool metal_sidebar_visible() const;
+  bool metal_split_visible(size_t index) const;
+  bool metal_split_contains_text_for_testing(size_t index,std::string_view text) const;
+  gfx::Rect metal_split_screen_bounds_for_testing(size_t index) const;
   bool metal_header_visible() const;
   size_t metal_header_frame_count() const;
   gfx::Rect metal_header_screen_bounds_for_testing() const;
@@ -321,10 +324,14 @@ class WorkspaceShell final : public ui::EventHandler,
   using Suggestion = PaletteResult;
 
   void PositionPanels();
+  void ScheduleMetalSplit();
+  void UpdateMetalSplit();
   void ScheduleMetalHeader();
   void UpdateMetalHeader();
   void ScheduleMetalSidebar();
   void UpdateMetalSidebar();
+  std::array<std::unique_ptr<SidebarMetal>,3> metal_split_;
+  bool metal_split_pending_=false;
   std::unique_ptr<SidebarMetal> metal_header_;
   bool metal_header_pending_=false;
   raw_ptr<views::View> header_view_=nullptr;

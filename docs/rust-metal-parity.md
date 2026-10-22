@@ -23,7 +23,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Folder hierarchy, collapse state, indentation wrappers and split tile geometry/placement | Rust tree/tab plans keyed by workspace/item IDs; native View/measurement/AX adapters | Replace native node containers and viewport/clipping adapters |
 | Scroll offset normalization, viewport projection and clipping | Rust logical viewport; native ScrollView input/scroll-service adapters | Replace native scroll containers; expand real trackpad/scale coverage |
 | Vertical/horizontal scrollbar geometry, range normalization, thumb drag/snap/cancellation and drawing | Rust + shared Metal canvas; native ScrollBar/View, key/menu/AX and platform color adapters | Replace native nodes and track-repeat/menu dispatch; dedicated menu/VoiceOver/scale coverage |
-| Selection, close/reopen, title changes, pinned navigation | Rust row actions into existing application callbacks; native close child and AX action | Migrate close child and remaining command routing; preserve persistence and last-tab rules |
+| Selection, close/reopen, title changes, pinned navigation | Rust row/close input into existing application callbacks; native Button/AX adapters | Migrate remaining command routing and containers; preserve persistence and last-tab rules |
 | Folder expand/collapse and tree visibility; create/rename/delete and nested pins | Rust tree state/layout; application persistence and native menu/editing adapters | Rust editing forms; preserve failed writes and validation rollback |
 | Tab/pin context menus and drag to split | Views event routing + application commands | Rust target/action routing; retain native menus and drop policy |
 | New Tab action and configurable shortcut hint | Rust text/icon/hint layout, width alignment and input; shared Metal surface; native outer placement/focus/AX adapter | Replace the native Button container; expand keyboard/appearance coverage |
@@ -33,7 +33,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Navigation/header controls | Rust strip layout/input and analytic GPU icons; main-window Metal canvas sharing sidebar GPU resources | Replace native Button/outer frame adapters; expand peek, accessibility, RTL and scale coverage |
 | Sidebar resizing, pinning, auto-hide, edge reveal | Views | Rust interaction state; preserve content bounds and pointer behavior |
 | Workspace swipe/animation/cancellation | Views layers + existing workspace controller | Rust scene transitions without native-painted row snapshots |
-| Split headers/divider, focus, orientation, swap/close | Views + application commands | Rust controls/layout; preserve independent WebContents and pane focus |
+| Split headers/divider, focus, orientation, swap/close | Rust pane/bar layout, title text, menu/close input and divider drag; shared Metal rendering | Replace native View/Button/ResizeArea event, cursor and AX adapters; expand gesture/RTL/scale coverage |
 | Address/search palette, suggestions, providers, IME | Views | Rust palette layout and selection; platform text-input adapter |
 | Command Center tabs/pins/workspaces/history/actions | Views | Rust palette and command routing, same application commands |
 | Workspace/profile create/edit/delete and settings | Views + persistent application model | Rust forms, validation, focus; preserve isolation and failed-write behavior |
@@ -150,6 +150,16 @@ Views-specific layout and control behavior must have an explicit replacement.
   14 Views controls, 38 Rust tests and 59 Python tests passed**. Signed app history,
   actual reload and sidebar-toggle behavior were inspected and restored. See
   [navigation validation](benchmarks/rust-navigation-functional-2026-10-22.json).
+- Split pane/header geometry, title text, menu/close input and divider drag state
+  now use Rust. Three clipped Metal UI surfaces share the existing GPU context
+  and exclude page bounds. Native View/Button/ResizeArea, cursor, event/AX and
+  application command adapters remain. **40 Metal browser tests, 14 Views
+  controls, 41 Rust tests and 59 Python tests passed**. Physical drags in both
+  orientations, gesture/cancellation, title updates under paint lock, fallback
+  and split-half close passed. Signed app menus switched both layouts and
+  restored the demo. Broader input/accessibility/scale and performance comparison
+  remain pending. See
+  [split pane validation](benchmarks/rust-split-panes-functional-2026-10-22.json).
 
 ## Completion gates
 

@@ -656,6 +656,10 @@ native text Labels. Rust also lays out and draws the pin/settings footer and
 workspace dots/emoji, including horizontal overflow and scrollbar dragging.
 The main-window navigation strip has its own Metal canvas and analytic icons;
 it shares GPU resources with the sidebar and stays usable when the panel hides.
+Rust also owns split pane/header geometry and divider drag state in both
+orientations. Metal draws pane titles, menu/close controls and the divider grip
+on clipped UI surfaces that share the existing GPU context and leave page
+content unobscured. Native event, cursor and accessibility adapters remain.
 Model updates refresh the scene independently of
 native painting. Rust also owns row
 click/drag/cancellation and platform key activation through native event, focus

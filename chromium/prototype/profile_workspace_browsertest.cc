@@ -21,6 +21,7 @@
 #include "ui/views/controls/scroll_view.h"
 #include "ui/views/controls/scrollbar/scroll_bar.h"
 #include "ui/gfx/geometry/insets_f.h"
+#include "ui/events/gesture_event_details.h"
 #include "ui/accessibility/ax_action_data.h"
 #include "ui/views/controls/button/checkbox.h"
 #include "ui/views/test/combobox_test_api.h"
@@ -4242,6 +4243,63 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NavigationHeaderHistoryRel
   window_->widget()->Show();ASSERT_TRUE(base::test::RunUntil([&] {return shell->metal_header_visible();}));
   base::RunLoop().RunUntilIdle();const auto idle=shell->metal_header_frame_count();base::RunLoop().RunUntilIdle();
   EXPECT_EQ(idle,shell->metal_header_frame_count());
+}
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, SplitPaneScenesDragOrientTitleAndClose) {
+  auto* shell=window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
+  const auto a=embedded_test_server()->GetURL("/storage_probe.html?pane-a");
+  const auto b=embedded_test_server()->GetURL("/storage_probe.html?pane-b");
+  ASSERT_TRUE(window_->NavigateFromBar(a,false));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  ASSERT_TRUE(window_->NavigateFromBar(b,true));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  window_->SelectTab(0);ASSERT_TRUE(window_->SplitTab(1));shell->SetPinned(true);shell->ShowSidebar();
+  auto ready=[&]{return shell->metal_split_visible(0)&&shell->metal_split_visible(1)&&shell->metal_split_visible(2);};
+  ASSERT_TRUE(base::test::RunUntil(ready));
+  auto* host=shell->content_host();auto* divider=views::AsViewClass<views::ResizeArea>(host->children().front().get());ASSERT_TRUE(divider);
+  auto* bar=shell->split_pane_button(true,false)->parent();
+  auto no_labels=[&](auto&& self,views::View* view)->void{EXPECT_FALSE(views::AsViewClass<views::Label>(view));for(const auto& child:view->children())self(self,child.get());};
+  no_labels(no_labels,bar);
+  auto check_regions=[&] {
+    ASSERT_TRUE(base::test::RunUntil([&]{return shell->metal_split_screen_bounds_for_testing(2)==divider->GetBoundsInScreen();}));
+    const auto left=window_->pane_contents(false)->GetContainerBounds(),right=window_->pane_contents(true)->GetContainerBounds();
+    EXPECT_FALSE(left.Intersects(right));
+    for(size_t i=0;i<3;++i){const auto frame=shell->metal_split_screen_bounds_for_testing(i);EXPECT_FALSE(frame.Intersects(left));EXPECT_FALSE(frame.Intersects(right));}
+  };
+  check_regions();
+  {
+    views::ScopedPaintLock locked(host);
+    ASSERT_TRUE(content::ExecJs(window_->pane_contents(true),"document.title='Split GPU 日本語';"));
+    ASSERT_TRUE(base::test::RunUntil([&]{return shell->metal_split_contains_text_for_testing(1,"Split GPU 日本語");}));
+  }
+  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  auto move=[&](gfx::Point point){base::test::TestFuture<void> done;return ui_controls::SendMouseMoveNotifyWhenDone(point.x(),point.y(),done.GetCallback(),window_->widget()->GetNativeWindow())&&done.Wait();};
+  auto mouse=[&](int state){base::test::TestFuture<void> done;return ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT,state,done.GetCallback(),ui_controls::kNoAccelerator,window_->widget()->GetNativeWindow())&&done.Wait();};
+  auto drag=[&](int dx,int dy) {
+    const auto point=divider->GetBoundsInScreen().CenterPoint();if(!move(point)||!mouse(ui_controls::DOWN))return false;
+    base::ScopedClosureRunner release(base::BindOnce([]{ui_controls::SendMouseEvents(ui_controls::LEFT,ui_controls::UP);}));
+    if(!move(point+gfx::Vector2d(dx,dy))||!mouse(ui_controls::UP))return false;static_cast<void>(release.Release());return true;
+  };
+  const auto ratio=window_->split_ratio();ASSERT_TRUE(drag(80,0));EXPECT_GT(window_->split_ratio(),ratio);
+  window_->SetSplitRatio(0.5);window_->SetSplitVertical(true);window_->widget()->LayoutRootViewIfNecessary();
+  ASSERT_TRUE(base::test::RunUntil([&]{return ready() && shell->metal_split_screen_bounds_for_testing(2).width()>100;}));
+  ASSERT_TRUE(drag(0,60));EXPECT_GT(window_->split_ratio(),0.5);check_regions();
+  window_->SetSplitRatio(0.5);window_->widget()->LayoutRootViewIfNecessary();
+  auto gesture=[&](ui::GestureEventDetails details){const auto point=divider->GetLocalBounds().CenterPoint();ui::GestureEvent event(point.x(),point.y(),0,base::TimeTicks::Now(),details);divider->OnGestureEvent(&event);EXPECT_TRUE(event.handled());};
+  gesture(ui::GestureEventDetails(ui::EventType::kGestureScrollBegin,0,0));
+  gesture(ui::GestureEventDetails(ui::EventType::kGestureScrollUpdate,0,40));
+  gesture(ui::GestureEventDetails(ui::EventType::kGestureEnd));EXPECT_GT(window_->split_ratio(),0.5);
+  // Axis changes cancel the captured Rust gesture; a late drag cannot mutate
+  // the newly oriented pair until another valid press begins it.
+  ui::MouseEvent press(ui::EventType::kMousePressed,gfx::Point(4,4),gfx::Point(4,4),base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);
+  ASSERT_TRUE(divider->OnMousePressed(press));window_->SetSplitVertical(false);const auto cancelled=window_->split_ratio();
+  ui::MouseEvent late(ui::EventType::kMouseDragged,gfx::Point(104,4),gfx::Point(104,4),base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,0);
+  ASSERT_TRUE(divider->OnMouseDragged(late));divider->OnMouseCaptureLost();EXPECT_DOUBLE_EQ(cancelled,window_->split_ratio());
+  ASSERT_TRUE(base::test::RunUntil(ready));
+  auto native_ink=[&]{const auto saved=bar->bounds();bar->SetBoundsRect(gfx::Rect(bar->size()));bar->SchedulePaint();const auto bitmap=views::test::PaintViewToBitmap(bar);bar->SetBoundsRect(saved);for(int y=0;y<bitmap.height();++y)for(int x=0;x<bitmap.width();++x)if(bitmap.getColor(x,y)!=SK_ColorRED)return true;return false;};
+  EXPECT_FALSE(native_ink());window_->widget()->Hide();EXPECT_TRUE(native_ink());window_->widget()->Show();ASSERT_TRUE(base::test::RunUntil(ready));
+  auto* close=shell->split_pane_button(true,true);ASSERT_TRUE(move(close->GetBoundsInScreen().CenterPoint()));ASSERT_TRUE(mouse(ui_controls::DOWN|ui_controls::UP));
+  ASSERT_TRUE(base::test::RunUntil([&]{return window_->tab_count("work")==1 && !window_->split();}));
+  ASSERT_TRUE(base::test::RunUntil([&]{return !shell->metal_split_visible(0)&&!shell->metal_split_visible(1)&&!shell->metal_split_visible(2);}));
+  EXPECT_EQ(a,window_->contents("work")->GetLastCommittedURL());
 }
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, RealTabViewportScrolls) {
   auto* shell = window_->shell();

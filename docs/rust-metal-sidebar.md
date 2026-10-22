@@ -1,6 +1,6 @@
 # Real workspace sidebar: Rust + Metal prototype
 
-The optional `--zitter-sidebar=rust-metal` backend renders the **live tab/pin list and New Tab action** in the normal workspace window. It does not start the synthetic `--zitter-ui-lab` scene. It uses the same `ShellState`, native interaction nodes, controller callbacks, profiles and session persistence as the existing application.
+The optional `--zitter-sidebar=rust-metal` backend renders the **live sidebar, navigation strip and split pane controls** in the normal workspace window. It does not start the synthetic `--zitter-ui-lab` scene. It uses the same `ShellState`, native interaction nodes, controller callbacks, profiles and session persistence as the existing application.
 
 ## What moved
 
@@ -8,7 +8,7 @@ The optional `--zitter-sidebar=rust-metal` backend renders the **live tab/pin li
 - A visual-only AppKit view presents directly through an asynchronous `CAMetalLayer`. Rounded geometry is drawn by Metal; CoreText shapes/truncates real Unicode text, including system font fallback. Text tiles are cached, bounded to 256 entries / 16 MiB, and uploaded on cache misses. Live tab/pin/folder rows no longer create hidden Views title Labels; their titles come directly from the row model and the Rust display list. No web page pixels are copied into the sidebar.
 - Rust also lays out the vertical columns of the live tab/pin/folder tree, with native adapters supplying preferred sizes and installing the returned rectangles. Hidden children are omitted from spacing; margins and full scroll extent are preserved. Rust also sets folder indentation (12 logical pixels per level, capped at eight) and lays out indented pin wrappers and split tiles. Split tiles share a four-pixel frame/gap, including odd-width remainder distribution; compact preferred size is 200 × 46 logical pixels. Rust projects and clips the viewport from native local bounds and floating-point scroll offsets, normalizing offsets back into the physical input adapter. The native tree retains node identity and receives the Rust layout rectangles. Paint invalidation and scroll notifications coalesce updates onto the UI task queue, independently of whether the native compositor rasterizes a frame. Pending layouts are applied before collecting scene geometry; identical frames skip GPU submission. There is no polling/redraw timer. The shared tab ScrollView now sizes its contents to their full preferred height, fixing overflow scrolling in both backends. In Metal mode, Rust now sizes and drags an always-visible overflow thumb on the shared GPU canvas. Native ScrollView/ScrollBar services retain wheel, key/menu and AX delivery adapters. Its list offset stays on the UI thread to keep native hit testing synchronized with the separately presented Metal surface.
 
-This is an incremental renderer prototype, **not a complete removal of Views**. Views still owns outer/container layout, address pill, workspace controls, event delivery, focus, accessibility/default action, context menus, drag-to-split target policy, dialogs, palette editing and IME. RowButton mouse/key decisions use Rust, including palette and New Tab rows, while application callbacks still own browser commands. Its tab interaction nodes remain in place; the Metal overlay returns `nil` from hit testing, cannot become first responder and adds no accessibility element. The fallback painter remains available for startup, missing drawables and workspace animation snapshots. While Metal is visible, the list paint root skips native child traversal instead of painting those rows underneath it. Hiding Metal for an animation explicitly invalidates native contents; losing a previously visible drawable also requests one fresh fallback paint. Views still supplies hierarchy, interaction nodes and some layout, so this does not establish the performance of a future entirely Rust-owned sidebar.
+This is an incremental renderer prototype, **not a complete removal of Views**. Views still supplies outer/container layout, event delivery, focus, accessibility/default action, context menus, drag-to-split target policy, dialogs, palette editing and IME. Rust owns the migrated address/workspace/navigation control geometry, scene drawing and input decisions through those adapters. RowButton mouse/key decisions use Rust, including palette and New Tab rows, while application callbacks still own browser commands. Its tab interaction nodes remain in place; the Metal overlay returns `nil` from hit testing, cannot become first responder and adds no accessibility element. The fallback painter remains available for startup, missing drawables and workspace animation snapshots. While Metal is visible, the list paint root skips native child traversal instead of painting those rows underneath it. Hiding Metal for an animation explicitly invalidates native contents; losing a previously visible drawable also requests one fresh fallback paint. Views still supplies hierarchy, interaction nodes and some layout, so this does not establish the performance of a future entirely Rust-owned sidebar.
 
 Existing browser shortcuts continue to use the normal configurable bindings: Ctrl+Tab / Ctrl+Shift+Tab, Cmd+1…9, Cmd+T/W/L/K, workspace switching and split commands. Folder and tab menus, folder collapse/rename/delete, tab close, profile isolation, downloads, preferences, Peek and session restore retain their current controllers. A single pinned site still uses the existing monogram representation; this change does not add network favicon fetching. Folder rows use a system folder glyph in the Metal list.
 
@@ -86,7 +86,7 @@ The row input migration replaces RowButton's Views mouse/key dispatch in the
 opt-in backend with a Rust reducer. The native adapter delivers events, installs
 the returned visual state and invokes the existing application callbacks. It
 retains focus, accessibility/default-action, context-menu and gesture adapters;
-close glyph children and drop target policy still need migration. Space/Return
+Close glyph children now use the same Rust input reducer; drop target policy and native containers still need migration. Space/Return
 policy is explicit in Rust, and tests distinguish disabled rows, lost capture,
 release outside the row, stray release and key-down versus key-up activation.
 Browser callbacks may delete a row or palette; the adapter does not read row
@@ -317,3 +317,26 @@ original page, split pair and pinning. Native frame/control removal, peek-specif
 coverage, the broader accessibility/input/scale matrix and controlled performance
 comparison remain. See
 [navigation validation](benchmarks/rust-navigation-functional-2026-10-22.json).
+
+Split pane geometry, title text and divider drag state now come from Rust.
+Both side-by-side and stacked layouts preserve independent Chromium pages.
+Pane titles have no hidden Labels: native group names retain accessibility,
+while cached font measurements bound the GPU text tiles. Empty titles emit no
+ink. Menu/close controls and row close children use the shared Rust input reducer.
+
+Three clipped Metal surfaces draw the two pane bars and divider grip, sharing
+the existing device, queue and pipeline. Parent-relative rounded backing retains
+the content card corners. Their bounds exclude both WebContents. Rust clamps
+drag ratios, commits on release/capture loss and cancels stale drags when pane
+identity or orientation changes. Native cursor, event, focus/AX and menu services
+remain adapters; fallback painting returns when GPU ownership is unavailable.
+
+Validated on 2026-10-22: **40/40 Metal browser regressions, 14/14 Views controls,
+41/41 Rust tests and 59/59 Python tests passed**, without browser-test retries.
+The new case covers physical divider drags in both orientations, gestures,
+cancelled drags, Unicode title updates without native paint, page non-overlap,
+fallback and split-half close. The signed app's pane menu switched both layouts
+and restored the original demo state. Full trackpad/VoiceOver/IME/RTL/scale
+validation, remaining Views controls and real presentation/CPU/GPU comparison
+are still pending. See
+[split pane validation](benchmarks/rust-split-panes-functional-2026-10-22.json).

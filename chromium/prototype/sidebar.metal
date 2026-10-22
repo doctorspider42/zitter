@@ -24,6 +24,9 @@ fragment float4 ui_fragment(Out in [[stage_in]], texture2d<float> text [[texture
     float2 p=in.uv*16.0;if(in.textured==3)p.x=16.0-p.x;
     dist=min(segment_distance(p,float2(9,3),float2(4,8)),
          min(segment_distance(p,float2(4,8),float2(9,13)),segment_distance(p,float2(4,8),float2(13,8))))-1.0;
+  } else if (in.textured==5) {
+    float2 p=in.uv*16.0;
+    dist=min(segment_distance(p,float2(4,4),float2(12,12)),segment_distance(p,float2(12,4),float2(4,12)))-0.85;
   } else if (in.textured==4) {
     float2 p=in.uv*16.0;float2 q=p-float2(8,8.5);float r=5.5;
     dist=q.x>0 && q.y<0 ? min(length(q-float2(r,0)),length(q-float2(0,-r)))-1.0 : abs(length(q)-r)-1.0;

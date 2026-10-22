@@ -18,6 +18,7 @@
 #include "base/hash/hash.h"
 #include "base/i18n/break_iterator.h"
 #include "base/i18n/case_conversion.h"
+#include "base/i18n/rtl.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/strings/escape.h"
@@ -528,9 +529,9 @@ sidebar::Item GlyphSceneItem(GlyphButton* button,gfx::RectF rect,gfx::RectF clip
   sidebar::Item item{}; item.kind=7;
   item.x=rect.x(); item.y=rect.y(); item.width=rect.width(); item.height=rect.height();
   item.clip={clip.x(),clip.y(),clip.width(),clip.height()};
-  item.glyph=button->glyph()==GlyphButton::Glyph::kSidebar ? 0 : button->glyph()==GlyphButton::Glyph::kDot ? 1
+  item.glyph=button->glyph()==GlyphButton::Glyph::kSidebar ? 0 : button->glyph()==GlyphButton::Glyph::kDot ? 1 : button->glyph()==GlyphButton::Glyph::kMore ? 6
       : button->icon()==&vector_icons::kArrowBackIcon ? 3 : button->icon()==&vector_icons::kArrowForwardIcon ? 4
-      : button->icon()==&vector_icons::kReloadCustomIcon ? 5 : 2;
+      : button->icon()==&vector_icons::kReloadCustomIcon ? 5 : button->icon()==&vector_icons::kCloseSmallIcon ? 7 : 2;
   item.active=button->on(); item.focused=button->HasFocus();
   item.hovered=button->GetEnabledInViewsSubtree() && (button->GetState()==views::Button::STATE_HOVERED || button->GetState()==views::Button::STATE_PRESSED);
   item.ink=Tone(button,!button->GetEnabledInViewsSubtree() ? kDisabled : item.glyph==1 ? item.active || item.hovered ? kInk : kMuted : kSubtle);
@@ -600,9 +601,9 @@ class RowButton : public views::Button {
       detail_->SetCanProcessEventsWithinSubtree(false);
     }
     if (spec_.close) {
-      close_ = AddChildView(std::make_unique<GlyphButton>(
+      close_ = AddChildView(std::make_unique<SceneGlyphButton>(
           std::move(spec_.close), u"Zamknij kartę", GlyphButton::Glyph::kVector,
-          &vector_icons::kCloseSmallIcon));
+          &vector_icons::kCloseSmallIcon,base::RepeatingCallback<bool()>()));
       close_->SetVisible(spec_.active && !spec_.tile);
     }
   }
@@ -1158,19 +1159,105 @@ END_METADATA
 class SplitDivider final : public views::ResizeArea {
   METADATA_HEADER(SplitDivider, views::ResizeArea)
  public:
-  using views::ResizeArea::ResizeArea;
+  SplitDivider(views::ResizeAreaDelegate* delegate,base::RepeatingCallback<double()> ratio,
+      base::RepeatingCallback<int()> extent,base::RepeatingCallback<void(double,bool)> changed,
+      base::RepeatingClosure painted,base::RepeatingCallback<bool()> visible)
+      : ResizeArea(delegate),ratio_(std::move(ratio)),extent_(std::move(extent)),changed_(std::move(changed)),
+        painted_(std::move(painted)),visible_(std::move(visible)) {
+#if BUILDFLAG(IS_MAC)
+    if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal") drag_.emplace(sidebar::new_split_drag());
+#endif
+  }
+  bool hovered() const {return hovered_;}
+  void CancelDrag() {
+#if BUILDFLAG(IS_MAC)
+    if(drag_)(*drag_)->cancel();
+#endif
+  }
+  void OnDidSchedulePaint(const gfx::Rect& rect) override {views::View::OnDidSchedulePaint(rect);painted_.Run();}
   void OnMouseEntered(const ui::MouseEvent&) override { hovered_ = true; SchedulePaint(); }
   void OnMouseExited(const ui::MouseEvent&) override { hovered_ = false; SchedulePaint(); }
+  bool OnMousePressed(const ui::MouseEvent& event) override {
+#if BUILDFLAG(IS_MAC)
+    if(drag_) {
+      if(!event.IsOnlyLeftMouseButton() || !GetEnabledInViewsSubtree())return false;
+      (*drag_)->begin(ratio_.Run(),Pointer(event.location()));return true;
+    }
+#endif
+    return ResizeArea::OnMousePressed(event);
+  }
+  bool OnMouseDragged(const ui::MouseEvent& event) override {
+#if BUILDFLAG(IS_MAC)
+    if(drag_) {
+      if(!event.IsLeftMouseButton() || !GetEnabledInViewsSubtree())return false;
+      Apply((*drag_)->update(Pointer(event.location()),extent_.Run(),Reverse()),false);return true;
+    }
+#endif
+    return ResizeArea::OnMouseDragged(event);
+  }
+  void OnMouseReleased(const ui::MouseEvent& event) override {
+#if BUILDFLAG(IS_MAC)
+    if(drag_) {
+      if((*drag_)->moved() && GetEnabledInViewsSubtree()) static_cast<void>((*drag_)->update(Pointer(event.location()),extent_.Run(),Reverse()));
+      Apply((*drag_)->end(),true);return;
+    }
+#endif
+    ResizeArea::OnMouseReleased(event);
+  }
+  void OnMouseCaptureLost() override {
+#if BUILDFLAG(IS_MAC)
+    if(drag_) {Apply((*drag_)->end(),true);return;}
+#endif
+    ResizeArea::OnMouseCaptureLost();
+  }
+  void OnGestureEvent(ui::GestureEvent* event) override {
+#if BUILDFLAG(IS_MAC)
+    if(drag_) {
+      if(!GetEnabledInViewsSubtree())return;
+      if(event->type()==ui::EventType::kGestureTapDown || event->type()==ui::EventType::kGestureScrollBegin) {
+        if(!(*drag_)->active())(*drag_)->begin(ratio_.Run(),Pointer(event->location()));
+      } else if(event->type()==ui::EventType::kGestureScrollUpdate) {
+        Apply((*drag_)->delta(axis()==Axis::kVertical ? event->details().scroll_y() : event->details().scroll_x(),extent_.Run(),Reverse()),false);
+      } else if(event->type()==ui::EventType::kGestureEnd) Apply((*drag_)->end(),true);
+      else if(event->type()==ui::EventType::kGestureTapCancel)(*drag_)->cancel();
+      else return;
+      event->SetHandled();return;
+    }
+#endif
+    ResizeArea::OnGestureEvent(event);
+  }
   void OnPaint(gfx::Canvas* canvas) override {
+#if BUILDFLAG(IS_MAC)
+    if(drag_) {
+      if(visible_ && visible_.Run())return;
+      canvas->FillRect(GetLocalBounds(),Tone(this,kChip));
+      sidebar::Item item{};item.kind=9;item.width=width();item.height=height();item.ink=Tone(this,hovered_?kSubtle:kDisabled);
+      item.clip={0,0,float(width()),float(height())};
+      const auto ops=sidebar::layout(rust::Slice<const sidebar::Item>(&item,1));
+      for(const auto& op:ops){cc::PaintFlags flags;flags.setAntiAlias(true);flags.setColor(op.color);canvas->DrawRoundRect(gfx::RectF(op.x,op.y,op.width,op.height),op.radius,flags);}
+      return;
+    }
+#endif
     views::ResizeArea::OnPaint(canvas);
-    const bool across = width() > height();  // Vertical split: horizontal bar.
+    const bool across = width() > height();
     const int grip = std::min(40, (across ? width() : height()) / 4);
     const gfx::Rect bar = across ? gfx::Rect(width() / 2 - grip / 2, height() / 2 - 2, grip, 4)
                                  : gfx::Rect(width() / 2 - 2, height() / 2 - grip / 2, 4, grip);
     FillRound(canvas, bar, 2, Tone(this, hovered_ ? kSubtle : kDisabled));
   }
  private:
+#if BUILDFLAG(IS_MAC)
+  double Pointer(gfx::Point point) {views::View::ConvertPointToScreen(this,&point);return axis()==Axis::kVertical ? point.y() : point.x();}
+  bool Reverse() const {return axis()==Axis::kHorizontal && base::i18n::IsRTL();}
+  void Apply(const sidebar::DragRatio& result,bool done) {if(result.changed)changed_.Run(result.ratio,done);}
+  std::optional<rust::Box<sidebar::SplitDrag>> drag_;
+#endif
   bool hovered_ = false;
+  base::RepeatingCallback<double()> ratio_;
+  base::RepeatingCallback<int()> extent_;
+  base::RepeatingCallback<void(double,bool)> changed_;
+  base::RepeatingClosure painted_;
+  base::RepeatingCallback<bool()> visible_;
 };
 BEGIN_METADATA(SplitDivider)
 END_METADATA
@@ -1179,25 +1266,53 @@ END_METADATA
 class PaneBar final : public views::View {
   METADATA_HEADER(PaneBar, views::View)
  public:
-  PaneBar(views::Button::PressedCallback menu, views::Button::PressedCallback close) {
-    auto* layout = SetLayoutManager(std::make_unique<views::BoxLayout>(
-        views::BoxLayout::Orientation::kHorizontal, gfx::Insets::TLBR(0, 12, 0, 4), 0));
-    layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
-    title_ = Label(this, u"", kMuted, Font(-1));
-    title_->SetElideBehavior(gfx::ELIDE_TAIL);
-    title_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-    layout->SetFlexForView(title_, 1);
-    menu_ = AddChildView(std::make_unique<GlyphButton>(std::move(menu), u"Opcje Split View", GlyphButton::Glyph::kMore));
-    close_ = AddChildView(std::make_unique<GlyphButton>(std::move(close), u"Zamknij kartę w Split View",
-                                                        GlyphButton::Glyph::kVector, &vector_icons::kCloseSmallIcon));
+  PaneBar(views::Button::PressedCallback menu, views::Button::PressedCallback close,
+      base::RepeatingClosure painted,base::RepeatingCallback<bool()> visible)
+      : painted_(std::move(painted)),visible_(std::move(visible)) {
+#if BUILDFLAG(IS_MAC)
+    scene_=base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal";
+#endif
+    if(!scene_) {
+      auto* layout=SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal,gfx::Insets::TLBR(0,12,0,4),0));
+      layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
+      title_=Label(this,u"",kMuted,Font(-1));title_->SetElideBehavior(gfx::ELIDE_TAIL);title_->SetHorizontalAlignment(gfx::ALIGN_LEFT);layout->SetFlexForView(title_,1);
+    } else GetViewAccessibility().SetRole(ax::mojom::Role::kGroup);
+    menu_=AddChildView(std::make_unique<SceneGlyphButton>(std::move(menu),u"Opcje Split View",GlyphButton::Glyph::kMore,nullptr,visible_));
+    close_=AddChildView(std::make_unique<SceneGlyphButton>(std::move(close),u"Zamknij kartę w Split View",GlyphButton::Glyph::kVector,&vector_icons::kCloseSmallIcon,visible_));
   }
-  void SetTitle(std::u16string title, bool active) {
-    title_->SetText(title);
-    static_cast<ThemedLabel*>(title_.get())->SetTone(active ? kInk : kMuted);
+  void SetTitle(std::u16string title,bool active) {
+    if(text_==title && active_==active)return;
+    if(text_!=title)measured_.reset();text_=std::move(title);active_=active;
+    if(title_){title_->SetText(text_);static_cast<ThemedLabel*>(title_.get())->SetTone(active?kInk:kMuted);}
+    else GetViewAccessibility().SetName(text_);
+    SchedulePaint();painted_.Run();
+  }
+  const std::u16string& text() const{return text_;}
+  bool active() const{return active_;}
+  int text_width() const{if(!measured_)measured_=gfx::GetStringWidth(text_,Font(-1))+2;return *measured_;}
+  void OnThemeChanged() override{views::View::OnThemeChanged();measured_.reset();painted_.Run();}
+  void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);painted_.Run();}
+  void Layout(PassKey) override {
+#if BUILDFLAG(IS_MAC)
+    if(scene_){const auto g=sidebar::pane_bar_layout(width(),height());menu_->SetBounds(g.menu.x,g.menu.y,g.menu.width,g.menu.height);close_->SetBounds(g.close.x,g.close.y,g.close.width,g.close.height);return;}
+#endif
+    LayoutSuperclass<views::View>(this);
+  }
+  void OnPaint(gfx::Canvas* canvas) override {
+    if(!scene_ || (visible_ && visible_.Run()))return;
+#if BUILDFLAG(IS_MAC)
+    const auto g=sidebar::pane_bar_layout(width(),height());
+    canvas->DrawStringRectWithFlags(text_,Font(-1),Tone(this,active_?kInk:kMuted),gfx::Rect(g.title.x,g.title.y,g.title.width,g.title.height),gfx::Canvas::TEXT_ALIGN_LEFT);
+#endif
   }
   views::Button* menu() const { return menu_; }
   views::Button* close() const { return close_; }
  private:
+  bool scene_=false,active_=false;
+  std::u16string text_;
+  mutable std::optional<int> measured_;
+  base::RepeatingClosure painted_;
+  base::RepeatingCallback<bool()> visible_;
   raw_ptr<views::Label> title_ = nullptr;
   raw_ptr<views::Button> menu_ = nullptr;
   raw_ptr<views::Button> close_ = nullptr;
@@ -1212,24 +1327,33 @@ class PaneHost final : public views::View, public views::ResizeAreaDelegate {
  public:
   PaneHost(base::RepeatingCallback<void(double, bool)> changed,
            base::RepeatingCallback<void(bool, views::View*)> menu,
-           base::RepeatingCallback<void(bool)> close)
-      : changed_(std::move(changed)) {
-    divider_ = AddChildView(std::make_unique<SplitDivider>(this));
-    divider_->SetBackground(views::CreateSolidBackground(kChip));
+           base::RepeatingCallback<void(bool)> close,base::RepeatingClosure painted,
+           base::RepeatingCallback<bool(size_t)> visible)
+      : painted_(std::move(painted)),changed_(std::move(changed)) {
+#if BUILDFLAG(IS_MAC)
+    rust_=base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal";
+#endif
+    divider_=AddChildView(std::make_unique<SplitDivider>(this,
+        base::BindRepeating([](PaneHost* host){return host->ratio_;},base::Unretained(this)),
+        base::BindRepeating([](PaneHost* host){return host->vertical_?host->height():host->width();},base::Unretained(this)),
+        base::BindRepeating(&PaneHost::ApplyRustRatio,base::Unretained(this)),painted_,base::BindRepeating(visible,size_t{2})));
+    if(!rust_)divider_->SetBackground(views::CreateSolidBackground(kChip));
     divider_->GetViewAccessibility().SetName(u"Zmień szerokość paneli");
     divider_->SetVisible(false);
     for (bool right : {false, true}) {
       auto* bar = AddChildView(std::make_unique<PaneBar>(views::Button::PressedCallback(),
-                                                         base::BindRepeating(close, right)));
+                                                         base::BindRepeating(close, right),painted_,base::BindRepeating(visible,size_t{right})));
       bar->menu()->SetCallback(base::BindRepeating(menu, right, base::Unretained(bar->menu())));
       bar->SetVisible(false);
       bars_[right] = bar;
     }
   }
   PaneBar* bar(bool right) const { return bars_[right]; }
+  SplitDivider* divider() const{return static_cast<SplitDivider*>(divider_.get());}
   void SetPanes(views::View* left, views::View* right, double ratio, bool vertical) {
     if (left_ == left && right_ == right && ratio_ == ratio &&
         vertical_ == vertical) return;
+    if(left_!=left || right_!=right || vertical_!=vertical)divider()->CancelDrag();
     left_ = left; right_ = right; ratio_ = ratio; vertical_ = vertical;
     divider_->set_axis(vertical ? views::ResizeArea::Axis::kVertical : views::ResizeArea::Axis::kHorizontal);
     divider_->SetVisible(right != nullptr);
@@ -1238,9 +1362,18 @@ class PaneHost final : public views::View, public views::ResizeAreaDelegate {
   }
   void OnThemeChanged() override {
     views::View::OnThemeChanged();
-    divider_->SetBackground(views::CreateSolidBackground(Tone(this, kChip)));
+    if(!rust_)divider_->SetBackground(views::CreateSolidBackground(Tone(this, kChip)));
+    painted_.Run();
   }
   void Layout(PassKey) override {
+#if BUILDFLAG(IS_MAC)
+    if(rust_) {
+      const auto g=sidebar::pane_host_layout(width(),height(),ratio_,vertical_,right_!=nullptr);
+      auto set=[](views::View* view,const sidebar::Rect& r){if(view)view->SetBounds(r.x,r.y,r.width,r.height);};
+      set(left_,g.first);set(right_,g.second);set(bars_[0],g.first_bar);set(bars_[1],g.second_bar);set(divider_,g.divider);
+      LayoutSuperclass<views::View>(this);painted_.Run();return;
+    }
+#endif
     constexpr int offset = 0;
     if (!right_) {
       if (left_) left_->SetBounds(offset, 0, width(), height());
@@ -1278,6 +1411,9 @@ class PaneHost final : public views::View, public views::ResizeAreaDelegate {
     if (done) resizing_ = false;
   }
  private:
+  void ApplyRustRatio(double ratio,bool done){ratio_=ratio;InvalidateLayout();painted_.Run();changed_.Run(ratio,done);}
+  bool rust_=false;
+  base::RepeatingClosure painted_;
   raw_ptr<views::View> left_ = nullptr;
   raw_ptr<views::View> right_ = nullptr;
   raw_ptr<views::ResizeArea> divider_ = nullptr;
@@ -1444,7 +1580,8 @@ std::unique_ptr<views::View> WorkspaceShell::Build() {
       }, weak),
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, bool right) {
         if (shell) shell->CloseSplitPane(right);
-      }, weak)));
+      }, weak),base::BindRepeating(&WorkspaceShell::ScheduleMetalSplit,weak),
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,size_t index){return shell && shell->metal_split_visible(index);},weak)));
   content_host_->SetBackground(views::CreateRoundedRectBackground(kCard, 10));
   edge_ = root->AddChildView(std::make_unique<EdgeView>(
       base::BindRepeating(&WorkspaceShell::ShowSidebar, weak)));
@@ -1458,6 +1595,7 @@ void WorkspaceShell::SetPanes(views::View* left, views::View* right, double rati
   static_cast<PaneHost*>(content_host_.get())->SetPanes(left, right, ratio, vertical);
   // Size hidden native pages before WasShown can request their first frame.
   if (widget_) widget_->LayoutRootViewIfNecessary();
+  ScheduleMetalSplit();
 }
 
 void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target) {
@@ -2246,6 +2384,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 }
 
 void WorkspaceShell::Detach() {
+  for(auto& surface:metal_split_)surface.reset();metal_split_pending_=false;
   metal_header_.reset();metal_header_pending_=false;header_view_=nullptr;header_sidebar_button_=nullptr;
   metal_workspace_scroll_subscription_={};
   metal_workspace_scroll_synchronizer_.reset();
@@ -2614,6 +2753,52 @@ size_t WorkspaceShell::native_sidebar_paint_count() const {
 }
 size_t WorkspaceShell::metal_sidebar_paint_count() const {
   return tab_list_ ? static_cast<SidebarListView*>(tab_list_.get())->metal_paints() : 0;
+}
+bool WorkspaceShell::metal_split_visible(size_t index) const {return index<metal_split_.size() && metal_split_[index] && metal_split_[index]->visible();}
+bool WorkspaceShell::metal_split_contains_text_for_testing(size_t index,std::string_view text) const {return index<metal_split_.size() && metal_split_[index] && metal_split_[index]->contains_text_for_testing(text);}
+gfx::Rect WorkspaceShell::metal_split_screen_bounds_for_testing(size_t index) const {return index<metal_split_.size() && metal_split_[index] ? metal_split_[index]->screen_bounds_for_testing() : gfx::Rect();}
+void WorkspaceShell::ScheduleMetalSplit() {
+  if ((!metal_header_ && !metal_sidebar_) || metal_split_pending_)return;
+  metal_split_pending_=true;
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&WorkspaceShell::UpdateMetalSplit,weak_factory_.GetWeakPtr()));
+}
+void WorkspaceShell::UpdateMetalSplit() {
+  metal_split_pending_=false;
+#if BUILDFLAG(IS_MAC)
+  if(!content_host_ || !widget_ || (!metal_header_ && !metal_sidebar_))return;
+  widget_->LayoutRootViewIfNecessary();
+  auto* host=static_cast<PaneHost*>(content_host_.get());
+  const std::array<views::View*,3> views{host->bar(false),host->bar(true),host->divider()};
+  for(size_t index=0;index<views.size();++index) {
+    auto* view=views[index];auto& surface=metal_split_[index];const bool was=surface && surface->visible();
+    const auto visible=view->GetVisibleBounds();
+    if(!widget_->IsVisible() || !view->IsDrawn() || visible.IsEmpty()) {
+      if(surface)surface->Hide();if(was)view->SchedulePaint();continue;
+    }
+    if(!surface)surface=CreateSidebarMetal();if(!surface)continue;
+    auto bounds=view->GetBoundsInScreen();bounds.Offset(visible.x(),visible.y());bounds.set_size(visible.size());
+    const sidebar::FloatRect clip{0,0,float(bounds.width()),float(bounds.height())};
+    auto rect=gfx::RectF(view->GetBoundsInScreen());rect.Offset(-bounds.x(),-bounds.y());
+    std::vector<sidebar::Item> items;
+    if(index<2) {
+      auto card=gfx::RectF(host->GetBoundsInScreen());card.Offset(-bounds.x(),-bounds.y());
+      sidebar::Item background{};background.kind=10;background.fill=Tone(host,kCard);background.clip=clip;
+      background.x=card.x();background.y=card.y();background.width=card.width();background.height=card.height();items.push_back(std::move(background));
+      auto* bar=static_cast<PaneBar*>(view);
+      sidebar::Item title{};title.kind=8;title.x=rect.x();title.y=rect.y();title.width=rect.width();title.height=rect.height();title.clip=clip;
+      title.title=base::UTF16ToUTF8(bar->text());title.title_width=bar->text_width();title.ink=Tone(bar,bar->active()?kInk:kMuted);title.font_size=Font(-1).GetFontSize();items.push_back(std::move(title));
+      for(auto* button:{bar->menu(),bar->close()}) {
+        auto box=gfx::RectF(button->GetBoundsInScreen());box.Offset(-bounds.x(),-bounds.y());
+        items.push_back(GlyphSceneItem(static_cast<GlyphButton*>(button),box,gfx::RectF(gfx::Rect(bounds.size()))));
+      }
+    } else {
+      sidebar::Item item{};item.kind=9;item.x=rect.x();item.y=rect.y();item.width=rect.width();item.height=rect.height();item.clip=clip;
+      item.ink=Tone(view,host->divider()->hovered()?kSubtle:kDisabled);items.push_back(std::move(item));
+    }
+    surface->Update(widget_->GetNativeWindow(),bounds,items,index<2 ? FrameTint(workspace_color(state_.workspace_id),root_) : Tone(view,kChip));
+    if(was!=surface->visible())view->SchedulePaint();
+  }
+#endif
 }
 bool WorkspaceShell::metal_header_visible() const {return metal_header_ && metal_header_->visible();}
 size_t WorkspaceShell::metal_header_frame_count() const {return metal_header_ ? metal_header_->frame_count() : 0;}
@@ -3948,7 +4133,7 @@ void WorkspaceShell::SaveGeneralPatch(std::optional<ThemeMode> theme, std::optio
 }
 
 void WorkspaceShell::ApplyAppearance(bool refresh_theme) {
-  ScheduleMetalHeader();
+  ScheduleMetalHeader();ScheduleMetalSplit();
   if (!widget_) return;
   const auto color = workspace_color(state_.workspace_id);
   if (refresh_theme) ApplyTheme();
@@ -4855,7 +5040,7 @@ bool WorkspaceShell::HandleKeyEvent(views::Textfield* sender, const ui::KeyEvent
   return true;
 }
 void WorkspaceShell::OnWidgetBoundsChanged(views::Widget* widget, const gfx::Rect&) {
-  if (widget == widget_) {PositionPanels();ScheduleMetalHeader();}
+  if (widget == widget_) {PositionPanels();ScheduleMetalHeader();ScheduleMetalSplit();}
 }
 void WorkspaceShell::OnWidgetActivationChanged(views::Widget* widget, bool active) {
   if (active) return;
@@ -4864,7 +5049,7 @@ void WorkspaceShell::OnWidgetActivationChanged(views::Widget* widget, bool activ
   if (widget == sidebar_widget_.get() && !pinned_ && !settings_visible()) sidebar_widget_->Hide();
 }
 void WorkspaceShell::OnWidgetVisibilityChanged(views::Widget* widget, bool visible) {
-  if (widget==widget_) ScheduleMetalHeader();
+  if (widget==widget_) {ScheduleMetalHeader();ScheduleMetalSplit();}
   if (widget == sidebar_widget_.get() && !visible) { CancelWorkspaceSwipe(); StopWorkspaceAnimation(); }
   if (widget == widget_ && !visible) {
     HidePeek();

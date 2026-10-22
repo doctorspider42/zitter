@@ -3,6 +3,9 @@
 // remain in WorkspaceShell. No URLs, profiles or WebContents cross this ABI.
 #[cxx::bridge(namespace = "zitter::sidebar")]
 mod ffi {
+    struct PaneHostLayout { first: Rect, second: Rect, first_bar: Rect, second_bar: Rect, divider: Rect }
+    struct PaneBarLayout { title: Rect, menu: Rect, close: Rect }
+    struct DragRatio { ratio: f64, changed: bool }
     struct ScrollMetrics { position: i32, length: i32, offset: i32, max_offset: i32 }
     struct FloatRect { x: f32, y: f32, width: f32, height: f32 }
     struct ViewportNode { parent: usize, bounds: FloatRect, visible: bool }
@@ -39,6 +42,17 @@ mod ffi {
         text: String, font_size: f32, bold: bool, middle: bool, center: bool, clip: FloatRect,
     }
     extern "Rust" {
+        type SplitDrag;
+        fn new_split_drag() -> Box<SplitDrag>;
+        fn begin(self: &mut SplitDrag, ratio: f64, pointer: f64);
+        fn update(self: &mut SplitDrag, pointer: f64, extent: i32, reverse: bool) -> DragRatio;
+        fn delta(self: &mut SplitDrag, delta: f64, extent: i32, reverse: bool) -> DragRatio;
+        fn end(self: &mut SplitDrag) -> DragRatio;
+        fn cancel(self: &mut SplitDrag);
+        fn active(self: &SplitDrag) -> bool;
+        fn moved(self: &SplitDrag) -> bool;
+        fn pane_host_layout(width: i32, height: i32, ratio: f64, vertical: bool, split: bool) -> PaneHostLayout;
+        fn pane_bar_layout(width: i32, height: i32) -> PaneBarLayout;
         type ScrollThumb;
         fn new_scroll_thumb() -> Box<ScrollThumb>;
         fn begin(self: &mut ScrollThumb, track: i32, viewport: i32, content: i32, offset: i32, pointer: f32);
@@ -88,6 +102,58 @@ mod ffi {
         fn cycle_tab(current: usize, count: usize, backwards: bool) -> usize;
     }
 }
+fn pane_bar_layout(width: i32, height: i32) -> ffi::PaneBarLayout {
+    let width=width.max(0);let height=height.max(0);
+    let close_width=32.min((width-4).max(0));let close_x=(width-4-close_width).max(0);
+    let menu_width=32.min(close_x);let menu_x=close_x-menu_width;
+    ffi::PaneBarLayout {
+        title:ffi::Rect{x:12.min(width),y:0,width:(menu_x-12).max(0),height},
+        menu:ffi::Rect{x:menu_x,y:(height-32).max(0)/2,width:menu_width,height:32.min(height)},
+        close:ffi::Rect{x:close_x,y:(height-32).max(0)/2,width:close_width,height:32.min(height)},
+    }
+}
+fn pane_host_layout(width: i32, height: i32, ratio: f64, vertical: bool, split: bool) -> ffi::PaneHostLayout {
+    let width=width.max(0);let height=height.max(0);
+    let empty=||ffi::Rect{x:0,y:0,width:0,height:0};
+    if !split {return ffi::PaneHostLayout{first:ffi::Rect{x:0,y:0,width,height},second:empty(),first_bar:empty(),second_bar:empty(),divider:empty()};}
+    let ratio=if ratio.is_finite(){ratio.clamp(0.0,1.0)}else{0.5};
+    let extent=if vertical{height}else{width};let gap=8.min(extent);let available=extent-gap;
+    let first=(f64::from(available)*ratio) as i32;let second=available-first;
+    let (a,b,d)=if vertical {
+        (ffi::Rect{x:0,y:0,width,height:first},ffi::Rect{x:0,y:first+gap,width,height:second},ffi::Rect{x:0,y:first,width,height:gap})
+    } else {
+        (ffi::Rect{x:0,y:0,width:first,height},ffi::Rect{x:first+gap,y:0,width:second,height},ffi::Rect{x:first,y:0,width:gap,height})
+    };
+    let bar=|r:&ffi::Rect|ffi::Rect{x:r.x,y:r.y,width:r.width,height:30.min(r.height)};
+    let page=|r:&ffi::Rect|ffi::Rect{x:r.x,y:r.y+30.min(r.height),width:r.width,height:(r.height-30).max(0)};
+    ffi::PaneHostLayout{first:page(&a),second:page(&b),first_bar:bar(&a),second_bar:bar(&b),divider:d}
+}
+#[derive(Default)]
+struct SplitDrag { anchor: Option<f64>, initial: f64, pointer: f64, ratio: f64, moved: bool }
+fn new_split_drag()->Box<SplitDrag>{Box::new(SplitDrag::default())}
+impl SplitDrag {
+    fn begin(&mut self, ratio:f64, pointer:f64) {
+        self.initial=if ratio.is_finite(){ratio.clamp(0.2,0.8)}else{0.5};
+        self.ratio=self.initial;self.pointer=pointer;self.anchor=pointer.is_finite().then_some(pointer);self.moved=false;
+    }
+    fn update(&mut self,pointer:f64,extent:i32,reverse:bool)->ffi::DragRatio {
+        let Some(anchor)=self.anchor else{return ffi::DragRatio{ratio:self.ratio,changed:false};};
+        if !pointer.is_finite(){return ffi::DragRatio{ratio:self.ratio,changed:false};}
+        self.pointer=pointer;self.moved=true;
+        self.ratio=(self.initial+(pointer-anchor)*if reverse{-1.0}else{1.0}/f64::from(extent.saturating_sub(8).max(1))).clamp(0.2,0.8);
+        ffi::DragRatio{ratio:self.ratio,changed:true}
+    }
+    fn delta(&mut self,delta:f64,extent:i32,reverse:bool)->ffi::DragRatio {
+        self.update(self.pointer+delta,extent,reverse)
+    }
+    fn end(&mut self)->ffi::DragRatio {
+        let changed=self.anchor.is_some()&&self.moved;self.cancel();ffi::DragRatio{ratio:self.ratio,changed}
+    }
+    fn cancel(&mut self){self.anchor=None;self.moved=false;}
+    fn active(&self)->bool{self.anchor.is_some()}
+    fn moved(&self)->bool{self.moved}
+}
+
 // Scroll geometry and thumb drag state use content offsets, never View IDs.
 // The native adapter delivers track-local coordinates and applies the result to
 // Chromium's scroll service; capture, keyboard/menu and AX delivery remain native.
@@ -468,6 +534,18 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
                     clip: ffi::FloatRect {x: i.clip.x, y: i.clip.y, width: i.clip.width, height: i.clip.height} });
             }
         };
+        if i.kind == 10 {
+            emit(i.x,i.y,i.width,i.height,10.0,i.fill,"",0.0,false);continue;
+        }
+        if i.kind == 8 {
+            let g=pane_bar_layout(i.width as i32,i.height as i32);
+            if !i.title.is_empty() {emit(i.x+g.title.x as f32,i.y,(g.title.width as f32).min(i.title_width.max(0.0)),i.height,0.0,i.ink,&i.title,i.font_size,false);}continue;
+        }
+        if i.kind == 9 {
+            let across=i.width>i.height;let extent=if across{i.width}else{i.height};let grip=40.0f32.min(extent/4.0);
+            emit(i.x+(i.width-if across{grip}else{4.0})/2.0,i.y+(i.height-if across{4.0}else{grip})/2.0,
+                if across{grip}else{4.0},if across{4.0}else{grip},2.0,i.ink,"",0.0,false);continue;
+        }
         if i.kind == 7 {
             let cx=i.x+i.width/2.0; let cy=i.y+i.height/2.0;
             if i.glyph==1 {
@@ -488,6 +566,8 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
                         emit(cx-7.0,cy+dy-0.5,14.0,1.0,0.5,i.ink,"",0.0,false);
                         emit(cx+knob-1.5,cy+dy-1.5,3.0,3.0,1.5,i.ink,"",0.0,false);
                     }
+                } else if i.glyph==6 {
+                    for dx in [-5.0,0.0,5.0] {emit(cx+dx-1.0,cy-1.0,3.0,3.0,1.5,i.ink,"",0.0,false);}
                 } else {
                     emit(cx-8.0,cy-8.0,16.0,16.0,0.0,i.ink,"",0.0,false);
                 }
@@ -495,7 +575,8 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
             if i.focused {emit(i.x+2.0,i.y+i.height-3.0,(i.width-4.0).max(0.0),2.0,1.0,i.ink,"",0.0,false);}
             for p in out[first_primitive..].iter_mut() {
                 if !p.text.is_empty() {p.center=true;}
-                if i.glyph>=3 && p.width==16.0 && p.height==16.0 {p.shape=i.glyph-1;}
+                if (3..=5).contains(&i.glyph) && p.width==16.0 && p.height==16.0 {p.shape=i.glyph-1;}
+                if i.glyph==7 && p.width==16.0 && p.height==16.0 {p.shape=5;}
                 if i.glyph==0 && p.width==16.0 && p.height==14.0 {p.stroke=1.0;}
                 if i.glyph==1 && i.monogram.is_empty() && p.width==8.0 && p.height==8.0 && !i.active {p.stroke=1.0;}
             }
@@ -754,6 +835,35 @@ mod tests {
             assert_eq!(icon.shape,glyph-1);assert_eq!((icon.x,icon.y,icon.width,icon.height),(8.0,8.0,16.0,16.0));
             assert!(ops.iter().all(|p|p.text.is_empty()));
         }
+    }
+    #[test] fn pane_layout_separates_real_page_rects_in_both_orientations() {
+        let g=pane_host_layout(809,600,0.5,false,true);
+        assert_eq!((g.first.width,g.second.x,g.second.width,g.divider.width),(400,408,401,8));
+        assert_eq!((g.first.y,g.first.height),(30,570));
+        let v=pane_host_layout(600,809,0.5,true,true);
+        assert_eq!((v.first.height,v.second.y,v.second.height,v.divider.y),(370,438,371,400));
+        let single=pane_host_layout(600,809,0.5,false,false);assert_eq!(single.first.height,809);assert_eq!(single.first_bar.height,0);
+        for width in [0,4,54,120] {
+            let b=pane_bar_layout(width,30);assert!(b.menu.x+b.menu.width<=b.close.x);assert!(b.close.x+b.close.width<=width);
+            assert!(pane_host_layout(width,4,f64::NAN,true,true).second.height>=0);
+        }
+    }
+    #[test] fn split_drag_clamps_commits_and_rejects_stale_or_cancelled_events() {
+        let mut drag=new_split_drag();drag.begin(0.5,100.0);
+        assert_eq!(drag.update(200.0,508,false).ratio,0.7);
+        assert_eq!(drag.update(10000.0,508,false).ratio,0.8);assert!(drag.end().changed);
+        assert!(!drag.update(300.0,508,false).changed);
+        drag.begin(0.5,100.0);assert_eq!(drag.delta(100.0,508,true).ratio,0.3);drag.cancel();assert!(!drag.end().changed);
+        drag.begin(f64::NAN,0.0);assert!(!drag.end().changed);
+    }
+    #[test] fn pane_title_uses_tight_text_bounds_and_split_icons_have_no_label_text() {
+        let mut item=row(400.0);item.kind=8;item.title_width=70.0;
+        let ops=layout(&[item]);assert_eq!((ops[0].x,ops[0].width),(12.0,70.0));
+        let mut empty=row(400.0);empty.kind=8;empty.title.clear();empty.title_width=2.0;assert!(layout(&[empty]).is_empty());
+        let mut more=row(32.0);more.kind=7;more.glyph=6;more.fill=0;more.focused=false;
+        let ops=layout(&[more]);assert_eq!(ops.len(),3);assert!(ops.iter().all(|p|p.shape==0&&p.text.is_empty()));
+        let mut close=row(32.0);close.kind=7;close.glyph=7;
+        assert!(layout(&[close]).iter().any(|p|p.shape==5));
     }
     fn viewport_node(parent: usize, x: f32, y: f32, width: f32, height: f32, visible: bool) -> ffi::ViewportNode {
         ffi::ViewportNode {parent, bounds: ffi::FloatRect {x, y, width, height}, visible}
