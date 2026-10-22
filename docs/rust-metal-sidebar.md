@@ -402,3 +402,28 @@ isolated demo profile. Automated in-process events do not replace that visual
 check, physical input/VoiceOver/scale coverage or actual presentation/CPU/GPU
 measurement. See
 [palette validation](benchmarks/rust-palette-functional-2026-10-22.json).
+
+Static palette search/escape decoration, hints and errors now use Rust layout
+and Metal rendering. The four small chrome canvases share the existing GPU
+context. They update even when the result list is empty; the hint canvas covers
+only its text so the native editor, separator and rounded corners stay visible.
+These controls create no hidden Labels and retain native static-text AX nodes.
+Default Views keeps its original Labels and glyph control.
+
+Rust supplies the rounded frame and hint separator recipe, rasterized through
+the native compositor behind the editor. Caret-only editor repaints skip scene
+updates; text/data/theme changes still invalidate explicitly, including updates
+under a native paint lock. Native editing/IME, containers and application services
+remain adapters. See
+[palette chrome validation](benchmarks/rust-palette-chrome-functional-2026-10-22.json).
+
+Final validation on 2026-10-22 passed **43/43 Metal browser regressions,
+17/17 Views controls, 50/50 Rust tests and 59/59 Python tests**, with no browser
+retries. GN dependency checks, product boundaries and strict bundle signature
+verification passed; bundle/build UUIDs match. On the unlocked desktop, the
+matching signed isolated app displayed command rows, Unicode results, keyboard
+selection and both unknown-command/invalid-address errors. Escape restored the
+original demo without navigating or changing its tabs/split pair. This newer
+check completes the desktop palette inspection that was blocked in the previous
+milestone. Physical input, broader accessibility/IME/scale coverage and real
+CPU/GPU/presentation comparisons remain pending.

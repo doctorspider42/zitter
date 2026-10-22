@@ -16,13 +16,13 @@ mod ffi {
     struct ViewportProjection { x: f32, y: f32, nodes: Vec<ProjectedNode> }
     struct Item {
         x: f32, y: f32, width: f32, height: f32,
-        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: control glyph, 8: pane title, 9: split grip, 10: rounded backing, 11: sidebar grip, 12: palette result, 13: result icon, 14: separator.
+        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: control glyph, 8: pane title, 9: split grip, 10: rounded backing, 11: sidebar grip, 12: palette result, 13: result icon, 14: separator, 15: palette static text, 16: palette frame.
         kind: u32, glyph: u32,
         title: String, monogram: String, detail: String,
         title_width: f32, detail_ink: u32, detail_font_size: f32,
         ink: u32, fill: u32, badge: u32,
         active: bool, hovered: bool, tile: bool, close: bool, close_visible: bool, focused: bool,
-        font_size: f32,
+        font_size: f32, font_height: f32,
         clip: FloatRect,
     }
     struct TreeNode { id: String, parent: String, folder: bool }
@@ -52,6 +52,7 @@ mod ffi {
         fn moved(self: &PaletteSelection) -> bool;
         fn step(self: &mut PaletteSelection, count: usize, backwards: bool) -> bool;
         fn reconcile(self: &mut PaletteSelection, count: usize, preserved: usize, found: bool);
+        fn palette_text_layout(kind: u32, width: i32, height: i32, text_width: i32, font_height: i32) -> ColumnLayout;
         fn palette_input_layout(width: i32, height: i32, icon: Rect, field_height: i32, hint: Rect) -> PaletteInputLayout;
         fn palette_width(window_width: i32) -> i32;
         fn palette_results_height(content_height: i32) -> i32;
@@ -142,6 +143,15 @@ impl PaletteSelection {
     }
     fn reconcile(&mut self,count:usize,preserved:usize,found:bool){if found{self.index=preserved;}self.index=self.index.min(count.saturating_sub(1));}
 }
+fn palette_text_layout(kind:u32,width:i32,height:i32,text_width:i32,font_height:i32)->ffi::ColumnLayout {
+    let (top,left,bottom,right):(i32,i32,i32,i32)=match kind{0=>(1,1,1,1),1=>(11,18,10,18),_=>(8,18,8,18)};
+    let tw=text_width.max(0);let fh=font_height.max(0);
+    let width=if width<0{tw.saturating_add(left+right)}else{width};
+    let height=if height<0{fh.saturating_add(top+bottom)}else{height};
+    let inner_width=width.saturating_sub(left+right).max(0);let inner_height=height.saturating_sub(top+bottom).max(0);
+    ffi::ColumnLayout{width,height,children:vec![ffi::Rect{x:left.min(width),y:top.min(height)+(inner_height-fh.min(inner_height))/2,width:tw.min(inner_width),height:fh.min(inner_height)}]}
+}
+
 fn palette_width(window_width:i32)->i32{window_width.saturating_sub(48).clamp(120,640)}
 fn palette_results_height(content_height:i32)->i32{content_height.saturating_sub(230).clamp(90,300)}
 fn palette_frame(content:ffi::Rect,width:i32,height:i32)->ffi::Rect {
@@ -620,6 +630,18 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
                     clip: ffi::FloatRect {x: i.clip.x, y: i.clip.y, width: i.clip.width, height: i.clip.height} });
             }
         };
+        if i.kind == 16 {
+            emit(i.x,i.y,i.width,i.height,14.0,i.fill,"",0.0,false);
+            emit(i.x+0.5,i.y+0.5,i.width-1.0,i.height-1.0,13.5,i.badge,"",0.0,false);
+            if let Some(border)=out.get_mut(first_primitive+1){border.stroke=1.0;}continue;
+        }
+        if i.kind == 15 {
+            if i.glyph==0{emit(i.x+0.5,i.y+0.5,i.width-1.0,i.height-1.0,4.5,i.badge,"",0.0,false);}
+            let g=palette_text_layout(i.glyph,i.width as i32,i.height as i32,i.title_width as i32,i.font_height as i32);
+            let r=&g.children[0];
+            if !i.title.is_empty(){emit(i.x+r.x as f32,i.y+r.y as f32,r.width as f32,r.height as f32,0.0,i.ink,&i.title,i.font_size,false);}
+            if i.glyph==0{if let Some(border)=out.get_mut(first_primitive){border.stroke=1.0;}}continue;
+        }
         if i.kind == 14 {emit(i.x,i.y,i.width,i.height,0.0,i.fill,"",0.0,false);continue;}
         if i.kind == 13 {
             let start=first_primitive;
@@ -681,6 +703,7 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
                 if !p.text.is_empty() {p.center=true;}
                 if (3..=5).contains(&i.glyph) && p.width==16.0 && p.height==16.0 {p.shape=i.glyph-1;}
                 if i.glyph==7 && p.width==16.0 && p.height==16.0 {p.shape=5;}
+                if i.glyph==8 && p.width==16.0 && p.height==16.0 {p.shape=7;}
                 if i.glyph==0 && p.width==16.0 && p.height==14.0 {p.stroke=1.0;}
                 if i.glyph==1 && i.monogram.is_empty() && p.width==8.0 && p.height==8.0 && !i.active {p.stroke=1.0;}
             }
@@ -792,7 +815,7 @@ mod tests {
         title:"Zażółć 日本語 🦀".into(), monogram:"Z".into(), detail:String::new(),
         title_width:0.0, detail_ink:0, detail_font_size:12.0, ink:0xff101010,
         fill:0xffffffff, badge:0xff556677, active:true, hovered:false,
-        tile:false, close:true, close_visible:true, focused:false, font_size:13.0,
+        tile:false, close:true, close_visible:true, focused:false, font_size:13.0, font_height:16.0,
         clip:ffi::FloatRect {x:0.0, y:0.0, width:width.max(0.0), height:34.0},
     }}
     fn child(width: i32, height: i32) -> ffi::ColumnChild {
@@ -939,6 +962,21 @@ mod tests {
             assert_eq!(icon.shape,glyph-1);assert_eq!((icon.x,icon.y,icon.width,icon.height),(8.0,8.0,16.0,16.0));
             assert!(ops.iter().all(|p|p.text.is_empty()));
         }
+    }
+    #[test] fn palette_static_text_owns_padding_and_tight_bounds() {
+        let e=palette_text_layout(0,-1,-1,20,13);assert_eq!((e.width,e.height,e.children[0].x,e.children[0].y),(22,15,1,1));
+        let h=palette_text_layout(1,640,34,280,13);assert_eq!((h.children[0].x,h.children[0].y,h.children[0].width,h.children[0].height),(18,11,280,13));
+        let r=palette_text_layout(2,-1,-1,200,15);assert_eq!((r.width,r.height,r.children[0].y),(236,31,8));
+        assert_eq!(palette_text_layout(2,0,0,200,15).children[0].width,0);
+    }
+    #[test] fn palette_chrome_has_no_empty_text_ink_and_frames_use_inset_strokes() {
+        let mut e=row(400.0);e.kind=15;e.glyph=2;e.title.clear();assert!(layout(&[e]).is_empty());
+        let mut h=row(400.0);h.kind=15;h.glyph=1;h.title_width=80.0;h.font_height=13.0;h.height=34.0;
+        let ops=layout(&[h]);assert_eq!((ops[0].x,ops[0].y,ops[0].width),(18.0,11.0,80.0));
+        let mut f=row(400.0);f.kind=16;let ops=layout(&[f]);assert_eq!((ops[0].radius,ops[1].stroke),(14.0,1.0));
+    }
+    #[test] fn palette_search_decoration_is_the_analytic_search_shape() {
+        let mut s=row(32.0);s.kind=7;s.glyph=8;assert!(layout(&[s]).iter().any(|p|p.shape==7&&p.text.is_empty()));
     }
     #[test] fn palette_selection_wraps_and_reconciles_async_identity() {
         let mut p=new_palette_selection();assert!(!p.step(0,false));assert!(!p.moved());

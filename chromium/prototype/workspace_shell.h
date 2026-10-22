@@ -247,6 +247,11 @@ class WorkspaceShell final : public ui::EventHandler,
   views::Combobox* search_engine_picker() const { return search_engine_picker_; }
   bool address_visible() const;
   bool sidebar_visible() const;
+  bool metal_palette_chrome_visible(size_t index) const;
+  size_t metal_palette_chrome_frame_count_for_testing(size_t index) const;
+  bool metal_palette_chrome_contains_text_for_testing(size_t index,std::string_view text) const;
+  gfx::Rect metal_palette_chrome_screen_bounds_for_testing(size_t index) const;
+  views::View* palette_chrome_view_for_testing(size_t index) const{return index<palette_chrome_views_.size()?palette_chrome_views_[index].get():nullptr;}
   bool metal_palette_visible() const;
   bool metal_palette_contains_text_for_testing(std::string_view text) const;
   gfx::Rect metal_palette_screen_bounds_for_testing() const;
@@ -339,6 +344,10 @@ class WorkspaceShell final : public ui::EventHandler,
   void UpdateMetalHeader();
   void ScheduleMetalPalette();
   void UpdateMetalPalette();
+  void UpdateMetalPaletteChrome();
+  void SetPaletteErrorText(std::u16string text);
+  std::array<std::unique_ptr<SidebarMetal>,4> metal_palette_chrome_;
+  std::array<raw_ptr<views::View>,4> palette_chrome_views_={};
   std::unique_ptr<SidebarMetal> metal_palette_;
   bool metal_palette_pending_=false;
   base::CallbackListSubscription metal_palette_scroll_subscription_;
@@ -615,7 +624,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::Textfield> address_ = nullptr;
   raw_ptr<views::Textfield> color_input_ = nullptr;
   raw_ptr<views::Textfield> emoji_input_ = nullptr;
-  raw_ptr<views::Label> address_error_ = nullptr;
+  raw_ptr<views::View> address_error_ = nullptr;
   raw_ptr<views::Label> color_error_ = nullptr;
   std::unique_ptr<views::WidgetDelegate> import_delegate_;
   std::unique_ptr<views::Widget> import_widget_;

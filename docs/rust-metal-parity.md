@@ -34,8 +34,8 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Sidebar resizing, pinning, auto-hide, edge reveal | Rust drag/width bounds, shell/sidebar/grip geometry and auto-hide guards; Metal grip; native pin/show commands | Replace native window/event/cursor/AX adapters and edge-indicator painting; broaden input/accessibility coverage |
 | Workspace swipe/animation/cancellation | Views layers + existing workspace controller | Rust scene transitions without native-painted row snapshots |
 | Split headers/divider, focus, orientation, swap/close | Rust pane/bar layout, title text, menu/close input and divider drag; shared Metal rendering | Replace native View/Button/ResizeArea event, cursor and AX adapters; expand gesture/RTL/scale coverage |
-| Address/search palette, suggestions, providers, IME | Rust result selection/layout/text/icons and palette/input geometry; native Textfield/IME, provider/search controllers | Migrate static palette chrome/errors/hints and remaining native containers; expand composition/accessibility/scale coverage |
-| Command Center tabs/pins/workspaces/history/actions | Rust result selection/drawing; existing search/ranking and application commands | Replace remaining native chrome/containers and command adapters; preserve stale results and identity |
+| Address/search palette, suggestions, providers, IME | Rust result selection/layout/text/icons, palette/input/static chrome geometry, Metal hints/errors; native Textfield/IME, provider/search controllers | Migrate remaining native containers/frame presentation; expand composition/accessibility/scale coverage |
+| Command Center tabs/pins/workspaces/history/actions | Rust result selection/drawing; existing search/ranking and application commands | Replace remaining native containers/frame presentation and command adapters; preserve stale results and identity |
 | Workspace/profile create/edit/delete and settings | Views + persistent application model | Rust forms, validation, focus; preserve isolation and failed-write behavior |
 | General preferences, shortcuts and site preferences | Views + application services | Rust forms; use the same persisted configuration |
 | History, downloads, passwords and permissions | Views/native service adapters | Rust presentation/control layer; retain browser service and security semantics |
@@ -178,6 +178,18 @@ Views-specific layout and control behavior must have an explicit replacement.
   signed isolated app was launched, but **manual visual inspection is pending
   because the Mac is locked**. See
   [palette validation](benchmarks/rust-palette-functional-2026-10-22.json).
+
+- Static palette search/escape decoration, hint text and validation errors now
+  use Rust geometry and Metal rendering without hidden Labels. Native static-text
+  accessibility and the Textfield/IME remain adapters. Rust also supplies the
+  rounded frame and separator recipe, rasterized behind the native editor.
+  Empty-result errors, theme changes, updates under paint lock and fallback are
+  covered by a dedicated browser regression. **43 Metal browser tests, 17 Views
+  controls, 50 Rust tests and 59 Python tests passed**. The matching signed app
+  passed the unlocked-desktop palette check, completing the inspection blocked
+  in the previous milestone. Physical input/IME/accessibility/scale and real
+  CPU/GPU/presentation comparison remain pending. See
+  [palette chrome validation](benchmarks/rust-palette-chrome-functional-2026-10-22.json).
 
 ## Completion gates
 

@@ -531,7 +531,7 @@ sidebar::Item GlyphSceneItem(GlyphButton* button,gfx::RectF rect,gfx::RectF clip
   item.clip={clip.x(),clip.y(),clip.width(),clip.height()};
   item.glyph=button->glyph()==GlyphButton::Glyph::kSidebar ? 0 : button->glyph()==GlyphButton::Glyph::kDot ? 1 : button->glyph()==GlyphButton::Glyph::kMore ? 6
       : button->icon()==&vector_icons::kArrowBackIcon ? 3 : button->icon()==&vector_icons::kArrowForwardIcon ? 4
-      : button->icon()==&vector_icons::kReloadCustomIcon ? 5 : button->icon()==&vector_icons::kCloseSmallIcon ? 7 : 2;
+      : button->icon()==&vector_icons::kReloadCustomIcon ? 5 : button->icon()==&vector_icons::kCloseSmallIcon ? 7 : button->icon()==&vector_icons::kSearchIcon ? 8 : 2;
   item.active=button->on(); item.focused=button->HasFocus();
   item.hovered=button->GetEnabledInViewsSubtree() && (button->GetState()==views::Button::STATE_HOVERED || button->GetState()==views::Button::STATE_PRESSED);
   item.ink=Tone(button,!button->GetEnabledInViewsSubtree() ? kDisabled : item.glyph==1 ? item.active || item.hovered ? kInk : kMuted : kSubtle);
@@ -539,6 +539,16 @@ sidebar::Item GlyphSceneItem(GlyphButton* button,gfx::RectF rect,gfx::RectF clip
   item.fill=item.glyph==1 ? item.active && !item.monogram.empty() ? SkColorSetA(Tone(button,kInk),0x1f) : item.hovered ? HoverWash(button) : SK_ColorTRANSPARENT
       : item.hovered ? HoverWash(button) : SK_ColorTRANSPARENT;
   return item;
+}
+// Rasterization behind the native editor and GPU fallback consume the same
+// Rust recipe; no Views background, border or hidden text layout is required.
+void PaintSceneRecipe(gfx::Canvas* canvas,const sidebar::Item& item,const gfx::FontList& font) {
+  const auto ops=sidebar::layout(rust::Slice<const sidebar::Item>(&item,1));
+  for(const auto& op:ops) {
+    gfx::ScopedCanvas clipped(canvas);canvas->ClipRect(gfx::Rect(op.clip.x,op.clip.y,op.clip.width,op.clip.height));
+    if(op.text.size())canvas->DrawStringRectWithFlags(base::UTF8ToUTF16(std::string(op.text)),font,op.color,gfx::Rect(op.x,op.y,op.width,op.height),gfx::Canvas::TEXT_ALIGN_LEFT);
+    else {cc::PaintFlags flags;flags.setAntiAlias(true);flags.setColor(op.color);if(op.stroke>0){flags.setStyle(cc::PaintFlags::kStroke_Style);flags.setStrokeWidth(op.stroke);}canvas->DrawRoundRect(gfx::RectF(op.x,op.y,op.width,op.height),op.radius,flags);}
+  }
 }
 #endif
 
@@ -551,7 +561,27 @@ class PaletteView final : public views::View {
     if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal")selection_.emplace(sidebar::new_palette_selection());
 #endif
   }
-  void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);painted_.Run();}
+  void SetEditor(views::View* editor){editor_=editor;}
+  void OnDidSchedulePaint(const gfx::Rect& rect) override {
+    views::View::OnDidSchedulePaint(rect);
+    // Native caret/preedit repainting does not change a GPU scene. Text/data
+    // changes schedule explicitly; retain other invalidations (e.g. scrollbar).
+    if(editor_&&scene()&&views::View::ConvertRectToTarget(editor_,this,editor_->GetLocalBounds()).Contains(rect))return;
+    painted_.Run();
+  }
+  bool scene() const {
+#if BUILDFLAG(IS_MAC)
+    return selection_.has_value();
+#else
+    return false;
+#endif
+  }
+  void OnPaint(gfx::Canvas* canvas) override {
+#if BUILDFLAG(IS_MAC)
+    if(scene()){sidebar::Item frame{};frame.kind=16;frame.width=width();frame.height=height();frame.fill=Tone(this,kCard);frame.badge=Hairline(this);frame.clip={0,0,float(width()),float(height())};PaintSceneRecipe(canvas,frame,Font(-2));return;}
+#endif
+    views::View::OnPaint(canvas);
+  }
   void Reset() {
 #if BUILDFLAG(IS_MAC)
     if(selection_){(*selection_)->reset();return;}
@@ -586,6 +616,7 @@ class PaletteView final : public views::View {
 #if BUILDFLAG(IS_MAC)
   std::optional<rust::Box<sidebar::PaletteSelection>> selection_;
 #endif
+  raw_ptr<views::View> editor_=nullptr;
   base::RepeatingClosure painted_;
   size_t index_=0;bool moved_=false;
 };
@@ -1031,6 +1062,61 @@ class WorkspaceHeading final : public views::View {
 };
 BEGIN_METADATA(WorkspaceHeading)
 END_METADATA
+
+#if BUILDFLAG(IS_MAC)
+// Static palette text retains a native AX node and font-metrics adapter.
+// The factory leaves ordinary Labels untouched in the default Views backend.
+class PaletteText final : public views::View {
+  METADATA_HEADER(PaletteText,views::View)
+ public:
+  PaletteText(std::u16string text,uint32_t kind,base::RepeatingClosure painted,base::RepeatingCallback<bool()> visible)
+      :text_(std::move(text)),kind_(kind),font_(Font(kind==2?-1:-2)),painted_(std::move(painted)),visible_(std::move(visible)) {
+    GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);GetViewAccessibility().SetName(text_);
+  }
+  void SetText(std::u16string text) {
+    if(text_==text)return;text_=std::move(text);measured_.reset();
+    GetViewAccessibility().SetName(text_);
+    PreferredSizeChanged();SchedulePaint();painted_.Run();
+  }
+  const std::u16string& text() const{return text_;}
+  int text_width() const{if(!measured_)measured_=text_.empty()?0:gfx::GetStringWidth(text_,font_)+2;return *measured_;}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override {
+#if BUILDFLAG(IS_MAC)
+    const auto g=sidebar::palette_text_layout(kind_,-1,-1,text_width(),font_.GetHeight());return gfx::Size(g.width,g.height);
+#else
+    return views::View::CalculatePreferredSize(available);
+#endif
+  }
+  gfx::Rect text_bounds() const {
+#if BUILDFLAG(IS_MAC)
+    const auto g=sidebar::palette_text_layout(kind_,width(),height(),text_width(),font_.GetHeight());const auto& r=g.children[0];return gfx::Rect(r.x,r.y,r.width,r.height);
+#else
+    return GetLocalBounds();
+#endif
+  }
+#if BUILDFLAG(IS_MAC)
+  sidebar::Item SceneItem(gfx::RectF rect,gfx::RectF clip) const {
+    sidebar::Item item{};item.kind=15;item.glyph=kind_;item.x=rect.x();item.y=rect.y();item.width=rect.width();item.height=rect.height();item.clip={clip.x(),clip.y(),clip.width(),clip.height()};
+    item.title=base::UTF16ToUTF8(text_);item.title_width=text_width();item.font_size=font_.GetFontSize();item.font_height=font_.GetHeight();item.ink=Tone(this,kind_==2?kError:kMuted);item.badge=Hairline(this);return item;
+  }
+#endif
+  void OnThemeChanged() override{views::View::OnThemeChanged();measured_.reset();PreferredSizeChanged();painted_.Run();}
+  void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);painted_.Run();}
+  void OnPaint(gfx::Canvas* canvas) override {
+#if BUILDFLAG(IS_MAC)
+    if(kind_==1){sidebar::Item line{};line.kind=14;line.width=width();line.height=1;line.fill=Hairline(this);line.clip={0,0,float(width()),float(height())};PaintSceneRecipe(canvas,line,font_);}
+    if(visible_&&visible_.Run())return;
+    const auto bounds=gfx::RectF(GetLocalBounds());PaintSceneRecipe(canvas,SceneItem(bounds,bounds),font_);
+#endif
+  }
+ private:
+  std::u16string text_;uint32_t kind_;gfx::FontList font_;
+  base::RepeatingClosure painted_;base::RepeatingCallback<bool()> visible_;
+  mutable std::optional<int> measured_;
+};
+BEGIN_METADATA(PaletteText)
+END_METADATA
+#endif
 
 class EdgeView final : public views::View {
   METADATA_HEADER(EdgeView, views::View)
@@ -1992,16 +2078,35 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   palette_root_ = palette.get();
   palette->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kVertical, gfx::Insets(), 0));
-  palette->SetBackground(views::CreateRoundedRectBackground(kCard, 14));
-  palette->SetBorder(views::CreateRoundedRectBorder(1, 14, Hairline(root_)));
+  if(palette->scene())palette->SetBorder(views::CreateEmptyBorder(1));
+  else {palette->SetBackground(views::CreateRoundedRectBackground(kCard,14));palette->SetBorder(views::CreateRoundedRectBorder(1,14,Hairline(root_)));}
+#if BUILDFLAG(IS_MAC)
+  auto chrome_visible=[weak](size_t index){return base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,size_t index){return shell&&shell->metal_palette_chrome_visible(index);},weak,index);};
+  auto chrome_painted=base::BindRepeating(&WorkspaceShell::ScheduleMetalPalette,weak);
+#endif
+  auto palette_text=[&](views::View* parent,std::u16string text,uint32_t kind,[[maybe_unused]] size_t index)->views::View* {
+#if BUILDFLAG(IS_MAC)
+    if(palette->scene())return parent->AddChildView(std::make_unique<PaletteText>(std::move(text),kind,chrome_painted,chrome_visible(index)));
+#endif
+    auto* label=Label(parent,std::move(text),kind==2?kError:kMuted,Font(kind==2?-1:-2));
+    if(kind==0)label->SetBorder(views::CreateRoundedRectBorder(1,5,Hairline(root_)));
+    else if(kind==1)label->SetBorder(views::CreatePaddedBorder(views::CreateSolidSidedBorder(gfx::Insets::TLBR(1,0,0,0),Hairline(root_)),gfx::Insets::TLBR(10,18,10,18)));
+    else label->SetBorder(views::CreateEmptyBorder(gfx::Insets::VH(8,18)));
+    return label;
+  };
   auto* input_row = palette->AddChildView(std::make_unique<views::View>());
   auto* input_layout = input_row->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kHorizontal, gfx::Insets::VH(0, 18), 12));
   input_layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
   input_row->SetPreferredSize(gfx::Size(560, 56));
-  auto* search_icon = input_row->AddChildView(std::make_unique<GlyphButton>(
-      views::Button::PressedCallback(), u"Szukaj", GlyphButton::Glyph::kVector,
-      &vector_icons::kSearchIcon));
+  std::unique_ptr<GlyphButton> search_control;
+#if BUILDFLAG(IS_MAC)
+  if(palette->scene())search_control=std::make_unique<SceneGlyphButton>(views::Button::PressedCallback(),u"Szukaj",GlyphButton::Glyph::kVector,&vector_icons::kSearchIcon,chrome_visible(0));
+  else
+#endif
+    search_control=std::make_unique<GlyphButton>(views::Button::PressedCallback(),u"Szukaj",GlyphButton::Glyph::kVector,&vector_icons::kSearchIcon);
+  auto* search_icon=input_row->AddChildView(std::move(search_control));
+  palette_chrome_views_[0]=search_icon;
   search_icon->SetFocusBehavior(views::View::FocusBehavior::NEVER);
   search_icon->SetCanProcessEventsWithinSubtree(false);
   address_ = input_row->AddChildView(std::make_unique<views::Textfield>());
@@ -2010,13 +2115,11 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   address_->SetFontList(Font(3));
   address_->SetBackgroundColor(kCard);
   address_->SetBorder(views::CreateEmptyBorder(0));
-  address_->set_controller(this);
+  address_->set_controller(this);palette->SetEditor(address_);
   input_layout->SetFlexForView(address_, 1);
-  Label(input_row, u"esc", kMuted, Font(-2))
-      ->SetBorder(views::CreateRoundedRectBorder(1, 5, Hairline(root_)));
+  palette_chrome_views_[1]=palette_text(input_row,u"esc",0,1);
   if(metal_palette_){palette->SetLayoutManager(CreateSidebarColumnLayout());input_row->SetLayoutManager(CreatePaletteInputLayout());}
-  address_error_ = Label(palette.get(), u"", kError, Font(-1));
-  address_error_->SetBorder(views::CreateEmptyBorder(gfx::Insets::VH(8, 18)));
+  address_error_=palette_text(palette.get(),u"",2,3);palette_chrome_views_[3]=address_error_;
   address_error_->SetVisible(false);
   suggestion_scroll_ = palette->AddChildView(std::make_unique<views::ScrollView>());
   suggestion_scroll_->ClipHeightTo(0, 300);
@@ -2037,14 +2140,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     metal_palette_scroll_subscription_=suggestion_scroll_->AddContentsScrolledCallback(base::BindRepeating(&WorkspaceShell::ScheduleMetalPalette,weak));
   }
 #endif
-#if BUILDFLAG(IS_MAC)
-  auto* hints = Label(palette.get(), u"↑↓ wybierz     ↵ wykonaj / otwórz     > polecenia", kMuted, Font(-2));
-#else
-  auto* hints = Label(palette.get(), u"↑↓ wybierz     ↵ wykonaj / otwórz     > polecenia", kMuted, Font(-2));
-#endif
-  hints->SetBorder(views::CreatePaddedBorder(
-      views::CreateSolidSidedBorder(gfx::Insets::TLBR(1, 0, 0, 0), Hairline(root_)),
-      gfx::Insets::TLBR(10, 18, 10, 18)));
+  palette_chrome_views_[2]=palette_text(palette.get(),u"↑↓ wybierz     ↵ wykonaj / otwórz     > polecenia",1,2);
 
   auto profiles_panel = std::make_unique<views::View>();
   profiles_root_ = profiles_panel.get();
@@ -2532,6 +2628,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 }
 
 void WorkspaceShell::Detach() {
+  for(auto& surface:metal_palette_chrome_)surface.reset();palette_chrome_views_.fill(nullptr);
   metal_palette_scroll_subscription_={};metal_palette_scroll_synchronizer_.reset();metal_palette_.reset();metal_palette_pending_=false;
   metal_sidebar_grip_.reset();
   for(auto& surface:metal_split_)surface.reset();metal_split_pending_=false;
@@ -2989,6 +3086,29 @@ bool WorkspaceShell::metal_palette_visible() const{return metal_palette_&&metal_
 bool WorkspaceShell::metal_palette_contains_text_for_testing(std::string_view text) const{return metal_palette_&&metal_palette_->contains_text_for_testing(text);}
 gfx::Rect WorkspaceShell::metal_palette_screen_bounds_for_testing() const{return metal_palette_?metal_palette_->screen_bounds_for_testing():gfx::Rect();}
 size_t WorkspaceShell::palette_selection_for_testing() const{return palette_root_?static_cast<PaletteView*>(palette_root_.get())->selected():0;}
+bool WorkspaceShell::metal_palette_chrome_visible(size_t index) const{return index<metal_palette_chrome_.size()&&metal_palette_chrome_[index]&&metal_palette_chrome_[index]->visible();}
+size_t WorkspaceShell::metal_palette_chrome_frame_count_for_testing(size_t index) const{return index<metal_palette_chrome_.size()&&metal_palette_chrome_[index]?metal_palette_chrome_[index]->frame_count():0;}
+bool WorkspaceShell::metal_palette_chrome_contains_text_for_testing(size_t index,std::string_view text) const{return index<metal_palette_chrome_.size()&&metal_palette_chrome_[index]&&metal_palette_chrome_[index]->contains_text_for_testing(text);}
+gfx::Rect WorkspaceShell::metal_palette_chrome_screen_bounds_for_testing(size_t index) const{return index<metal_palette_chrome_.size()&&metal_palette_chrome_[index]?metal_palette_chrome_[index]->screen_bounds_for_testing():gfx::Rect();}
+void WorkspaceShell::UpdateMetalPaletteChrome() {
+#if BUILDFLAG(IS_MAC)
+  if(!address_widget_||!metal_palette_)return;
+  if(address_visible())address_widget_->LayoutRootViewIfNecessary();
+  for(size_t i=0;i<palette_chrome_views_.size();++i) {
+    auto* view=palette_chrome_views_[i].get();auto& surface=metal_palette_chrome_[i];const bool was=surface&&surface->visible();
+    if(!view||!address_visible()||!view->IsDrawn()){if(surface)surface->Hide();if(was&&view)view->SchedulePaint();continue;}
+    auto local=view->GetVisibleBounds();if(i==2)local.Intersect(static_cast<PaletteText*>(view)->text_bounds());
+    if(local.IsEmpty()){if(surface)surface->Hide();if(was)view->SchedulePaint();continue;}
+    if(!surface)surface=CreateSidebarMetal();if(!surface)continue;
+    auto bounds=view->GetBoundsInScreen();bounds.Offset(local.x(),local.y());bounds.set_size(local.size());
+    auto full=gfx::RectF(view->GetBoundsInScreen());full.Offset(-bounds.x(),-bounds.y());const auto clip=gfx::RectF(gfx::Rect(bounds.size()));
+    std::vector<sidebar::Item> items;
+    if(i==0)items.push_back(GlyphSceneItem(static_cast<GlyphButton*>(view),full,clip));
+    else items.push_back(static_cast<PaletteText*>(view)->SceneItem(full,clip));
+    surface->Update(address_widget_->GetNativeWindow(),bounds,items,Tone(palette_root_,kCard));if(was!=surface->visible())view->SchedulePaint();
+  }
+#endif
+}
 void WorkspaceShell::ScheduleMetalPalette() {
   if(!metal_palette_||metal_palette_pending_)return;
   metal_palette_pending_=true;
@@ -2998,6 +3118,7 @@ void WorkspaceShell::UpdateMetalPalette() {
   metal_palette_pending_=false;
 #if BUILDFLAG(IS_MAC)
   if(!metal_palette_||!address_widget_||!suggestion_list_)return;
+  UpdateMetalPaletteChrome();
   const bool was_visible=metal_palette_->visible();
   if(!address_visible()||!suggestion_scroll_->IsDrawn()) {
     metal_palette_->Hide();if(was_visible){suggestion_list_->SchedulePaint();suggestion_scroll_->vertical_scroll_bar()->SchedulePaint();}return;
@@ -4097,8 +4218,8 @@ void WorkspaceShell::ApplyTheme() {
        peek_widget_ ? peek_widget_->GetContentsView() : nullptr, general_root_.get(), palette_root_.get(), tools_root_.get()}) {
     if (!surface) continue;
     const int radius = surface == palette_root_ ? 14 : 12;
-    surface->SetBackground(views::CreateRoundedRectBackground(Tone(surface, kCard), radius));
-    surface->SetBorder(views::CreateRoundedRectBorder(1, radius, Hairline(surface)));
+    if(surface==palette_root_&&static_cast<PaletteView*>(surface)->scene()){surface->SetBackground(nullptr);surface->SetBorder(views::CreateEmptyBorder(1));}
+    else {surface->SetBackground(views::CreateRoundedRectBackground(Tone(surface,kCard),radius));surface->SetBorder(views::CreateRoundedRectBorder(1,radius,Hairline(surface)));}
     surface->SchedulePaint();
   }
   for (auto* field : {snapshot_name_.get(), timeline_filter_.get(), shortcut_chord_.get(), provider_name_.get(), provider_keyword_.get(), provider_url_.get()})
@@ -5158,8 +5279,15 @@ void WorkspaceShell::ApplyHexColor() {
     SetWorkspaceColor(state_.workspace_id, *color);
   else { color_error_->SetText(u"Podaj kolor #RRGGBB"); color_error_->SetVisible(true); }
 }
+void WorkspaceShell::SetPaletteErrorText(std::u16string text) {
+  if(!address_error_)return;
+#if BUILDFLAG(IS_MAC)
+  if(palette_root_&&static_cast<PaletteView*>(palette_root_.get())->scene()){static_cast<PaletteText*>(address_error_.get())->SetText(std::move(text));return;}
+#endif
+  static_cast<views::Label*>(address_error_.get())->SetText(text);
+}
 void WorkspaceShell::ShowAddressError() {
-  address_error_->SetText(u"Wpisz adres strony HTTP lub HTTPS");
+  SetPaletteErrorText(u"Wpisz adres strony HTTP lub HTTPS");
   address_error_->SetVisible(true);
   PositionPanels();
 }
@@ -5271,7 +5399,7 @@ bool WorkspaceShell::HandleKeyEvent(views::Textfield* sender, const ui::KeyEvent
     return true;
   if (suggestions_.empty()) {
     if (command_palette_ && base::TrimWhitespace(address_->GetText(), base::TRIM_ALL).starts_with(u">")) {
-      address_error_->SetText(u"Brak pasujących poleceń."); address_error_->SetVisible(true); PositionPanels();
+      SetPaletteErrorText(u"Brak pasujących poleceń."); address_error_->SetVisible(true); PositionPanels();
     } else ShowAddressError();
     return true;
   }

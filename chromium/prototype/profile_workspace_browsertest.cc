@@ -4245,6 +4245,34 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NavigationHeaderHistoryRel
   base::RunLoop().RunUntilIdle();const auto idle=shell->metal_header_frame_count();base::RunLoop().RunUntilIdle();
   EXPECT_EQ(idle,shell->metal_header_frame_count());
 }
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, PaletteChromeTextErrorsThemeAndFallback) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
+  const auto original=window_->contents("work")->GetLastCommittedURL();shell->OpenCommandPalette();SetPaletteQuery(u"> no-such-zitter-command");ASSERT_TRUE(shell->suggestions().empty());
+  ui::KeyEvent enter(ui::EventType::kKeyPressed,ui::VKEY_RETURN,0);auto* field=shell->address_input();auto* controller=static_cast<views::TextfieldController*>(shell);
+  ASSERT_TRUE(controller->HandleKeyEvent(field,enter));
+  auto ready=[&]{return shell->metal_palette_chrome_visible(0)&&shell->metal_palette_chrome_visible(1)&&shell->metal_palette_chrome_visible(2)&&shell->metal_palette_chrome_visible(3);};
+  ASSERT_TRUE(base::test::RunUntil(ready));EXPECT_FALSE(shell->metal_palette_visible());EXPECT_TRUE(shell->address_visible());EXPECT_TRUE(field->HasFocus());
+  EXPECT_TRUE(shell->metal_palette_chrome_contains_text_for_testing(1,"esc"));EXPECT_TRUE(shell->metal_palette_chrome_contains_text_for_testing(3,"Brak pasujących poleceń."));
+  auto* root=field->parent()->parent();auto no_labels=[&](auto&& self,views::View* view)->void{if(view==field)return;EXPECT_FALSE(views::AsViewClass<views::Label>(view));for(const auto& child:view->children())self(self,child.get());};no_labels(no_labels,root);
+  for(size_t i=0;i<4;++i){const auto frame=shell->metal_palette_chrome_screen_bounds_for_testing(i);EXPECT_FALSE(frame.IsEmpty());EXPECT_FALSE(frame.Intersects(field->GetBoundsInScreen()));}
+  const auto hint_frame=shell->metal_palette_chrome_screen_bounds_for_testing(2),hint_view=shell->palette_chrome_view_for_testing(2)->GetBoundsInScreen();
+  EXPECT_GT(hint_frame.x(),hint_view.x());EXPECT_LT(hint_frame.bottom(),hint_view.bottom()-5);
+  ui::AXNodeData accessible;shell->palette_chrome_view_for_testing(3)->GetViewAccessibility().GetAccessibleNodeData(&accessible);EXPECT_EQ(ax::mojom::Role::kStaticText,accessible.role);EXPECT_EQ(u"Brak pasujących poleceń.",accessible.GetString16Attribute(ax::mojom::StringAttribute::kName));
+  auto* esc=shell->palette_chrome_view_for_testing(1);auto native_ink=[&]{const auto saved=esc->bounds();esc->SetBoundsRect(gfx::Rect(esc->size()));esc->SchedulePaint();const auto bitmap=views::test::PaintViewToBitmap(esc);esc->SetBoundsRect(saved);for(int y=0;y<bitmap.height();++y)for(int x=0;x<bitmap.width();++x)if(bitmap.getColor(x,y)!=SK_ColorRED)return true;return false;};
+  EXPECT_FALSE(native_ink());auto* panel=field->GetWidget();panel->Hide();EXPECT_TRUE(native_ink());panel->Show();panel->Activate();field->RequestFocus();ASSERT_TRUE(base::test::RunUntil(ready));
+  shell->SetThemeMode(ThemeMode::kLight);base::RunLoop().RunUntilIdle();const auto before=shell->metal_palette_chrome_frame_count_for_testing(1);
+  shell->SetThemeMode(ThemeMode::kDark);ASSERT_TRUE(base::test::RunUntil([&]{return ready()&&shell->metal_palette_chrome_frame_count_for_testing(1)>before;}));
+  // Error text updates explicitly while native paint is locked; the editor is
+  // still the only text-input owner and an invalid scheme cannot navigate.
+  {
+    views::ScopedPaintLock locked(shell->palette_chrome_view_for_testing(3));shell->OpenAddress(true);SetPaletteQuery(u"file:///tmp/should-not-navigate");ASSERT_TRUE(controller->HandleKeyEvent(field,enter));
+    ASSERT_TRUE(base::test::RunUntil([&]{return shell->metal_palette_chrome_contains_text_for_testing(3,"Wpisz adres strony HTTP lub HTTPS");}));
+  }
+  EXPECT_EQ(original,window_->contents("work")->GetLastCommittedURL());EXPECT_TRUE(shell->address_visible());EXPECT_TRUE(field->HasFocus());
+  SetPaletteQuery(u"plain search text");ASSERT_TRUE(base::test::RunUntil([&]{return !shell->metal_palette_chrome_visible(3)&&shell->metal_palette_visible();}));
+  for(size_t i=0;i<3;++i){const auto frame=shell->metal_palette_chrome_screen_bounds_for_testing(i);EXPECT_FALSE(frame.Intersects(field->GetBoundsInScreen()));EXPECT_FALSE(frame.Intersects(shell->metal_palette_screen_bounds_for_testing()));}
+  shell->CloseOverlays();ASSERT_TRUE(base::test::RunUntil([&]{for(size_t i=0;i<4;++i)if(shell->metal_palette_chrome_visible(i))return false;return true;}));
+}
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, PaletteScenesAsyncSelectionScrollAndIME) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
   const auto url=embedded_test_server()->GetURL("/storage_probe.html?palette-gpu");

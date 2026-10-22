@@ -664,7 +664,9 @@ and auto-hide guards, with a separate narrow GPU resize grip. Native event,
 cursor and accessibility adapters remain. Command Center/address results also
 use scene text and GPU icons without native title/detail Labels. Rust owns
 result selection, list/input geometry and palette placement; the native editor
-retains text editing, caret, selection and IME.
+retains text editing, caret, selection and IME. Static search/escape decoration,
+hints and validation errors also use Rust geometry and Metal text, with native
+accessibility and fallback painting.
 Model updates refresh the scene independently of
 native painting. Rust also owns row
 click/drag/cancellation and platform key activation through native event, focus
