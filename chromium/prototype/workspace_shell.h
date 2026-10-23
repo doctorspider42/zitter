@@ -332,6 +332,10 @@ class WorkspaceShell final : public ui::EventHandler,
   void RequestRenameFolder(std::string workspace, std::string folder);
   void RequestDeleteFolder(std::string workspace, std::string folder);
   void ShowFolderSaveError();
+  views::View* folder_form_for_testing() const;
+  bool folder_form_metal_visible() const;
+  bool folder_form_contains_scene_text(std::string_view text) const;
+  std::u16string folder_form_error_for_testing() const;
   void WarmWorkspaceSidebars(std::map<std::string, std::vector<PinnedItem>> pins);
   bool sidebars_warmed() const { return sidebar_warm_queue_.empty() && !sidebar_warm_timer_.IsRunning(); }
   void OnScrollEvent(ui::ScrollEvent* event) override;

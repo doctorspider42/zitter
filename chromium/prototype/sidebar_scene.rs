@@ -3,6 +3,10 @@
 // remain in WorkspaceShell. No URLs, profiles or WebContents cross this ABI.
 #[cxx::bridge(namespace = "zitter::sidebar")]
 mod ffi {
+    struct FolderCopy { title: String, label: String, accept: String, cancel: String }
+    enum FolderAction { None, Create, Rename }
+    struct FolderRequest { action: FolderAction, workspace: String, parent: String, folder: String, name: String, expand_parent: bool }
+    struct FolderLayout { width: i32, height: i32, label: Rect, input: Rect, error: Rect }
     struct MenuTab { index: usize, high: u64, low: u64 }
     struct RowTarget { valid: bool, has_tab: bool, tab: usize, pin: String }
     struct TabMenuState {
@@ -32,7 +36,7 @@ mod ffi {
     struct ViewportProjection { x: f32, y: f32, nodes: Vec<ProjectedNode> }
     struct Item {
         x: f32, y: f32, width: f32, height: f32,
-        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: control glyph, 8: pane title, 9: split grip, 10: rounded backing, 11: sidebar grip, 12: palette result, 13: result icon, 14: separator, 15: palette static text, 16: palette frame.
+        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: control glyph, 8: pane title, 9: split grip, 10: rounded backing, 11: sidebar grip, 12: palette result, 13: result icon, 14: separator, 15: palette static text, 16: palette frame, 17: form static text.
         kind: u32, glyph: u32,
         title: String, monogram: String, detail: String,
         title_width: f32, detail_ink: u32, detail_font_size: f32,
@@ -61,6 +65,15 @@ mod ffi {
         text: String, font_size: f32, bold: bool, middle: bool, center: bool, clip: FloatRect,
     }
     extern "Rust" {
+        type FolderForm;
+        fn new_folder_form(workspace: &str, parent: &str, folder: &str, initial: &str) -> Box<FolderForm>;
+        fn copy(self: &FolderForm) -> FolderCopy;
+        fn edit(self: &mut FolderForm, name: &str);
+        fn error(self: &FolderForm) -> &str;
+        fn submit(self: &mut FolderForm, current: &str, ready: bool, busy: bool, nodes: &[TreeNode], composing: bool) -> FolderRequest;
+        fn finish_attempt(self: &mut FolderForm, accepted: bool);
+        fn cancel(self: &mut FolderForm);
+        fn folder_form_layout(width: i32, label_height: i32, input_height: i32, error_height: i32, error: bool) -> FolderLayout;
         fn resolve_row_target(source: &str, current: &str, high: u64, low: u64, pin: &str, tabs: &[MenuTab], pins: &[TreeNode]) -> RowTarget;
         fn sidebar_drop_accepts(bounds: Rect, x: i32, y: i32, allowed: bool) -> bool;
         fn tab_context_menu(state: &TabMenuState) -> Vec<TabMenuEntry>;
@@ -234,6 +247,38 @@ fn swipe_layout(position:f64,count:i32,width:i32)->ffi::SwipeLayout {
         for index in (center-1).max(0)..=(center+1).min(count-1){pages.push(ffi::SwipePage{index,x:(index as f64-position)*width.max(0) as f64});}
     }
     ffi::SwipeLayout{center,pages}
+}
+
+pub struct FolderForm { workspace:String, parent:String, folder:String, name:String, error:String, submitting:bool, closed:bool }
+fn new_folder_form(workspace:&str,parent:&str,folder:&str,initial:&str)->Box<FolderForm>{Box::new(FolderForm{workspace:workspace.into(),parent:parent.into(),folder:folder.into(),name:initial.into(),error:String::new(),submitting:false,closed:false})}
+impl FolderForm {
+    fn copy(&self)->ffi::FolderCopy{ffi::FolderCopy{title:if !self.folder.is_empty(){"Zmień nazwę folderu"}else if self.parent.is_empty(){"Nowy folder"}else{"Nowy podfolder"}.into(),label:"Nazwa folderu".into(),accept:if self.folder.is_empty(){"Dodaj folder"}else{"Zapisz nazwę"}.into(),cancel:"Anuluj".into()}}
+    fn edit(&mut self,name:&str){if !self.closed&&!self.submitting&&self.name!=name{self.name=name.into();self.error.clear();}}
+    fn error(&self)->&str{&self.error}
+    fn submit(&mut self,current:&str,ready:bool,busy:bool,nodes:&[ffi::TreeNode],composing:bool)->ffi::FolderRequest {
+        let none=||ffi::FolderRequest{action:ffi::FolderAction::None,workspace:String::new(),parent:String::new(),folder:String::new(),name:String::new(),expand_parent:false};
+        if self.closed||self.submitting||composing{return none();}
+        if self.workspace.is_empty()||self.workspace!=current{self.error="Przestrzeń zmieniła się. Otwórz formularz ponownie.".into();return none();}
+        if !ready||busy{self.error="Poczekaj na zakończenie zapisywania.".into();return none();}
+        let target=if self.folder.is_empty(){&self.parent}else{&self.folder};
+        if (!self.folder.is_empty()&&!self.parent.is_empty())||(!target.is_empty()&&!nodes.iter().any(|n|n.id==*target&&n.folder)){self.error="Folder nie jest już dostępny.".into();return none();}
+        // Unicode White_Space matches Chromium's kWhitespaceUTF16 set. The
+        // 256-byte UTF-8 limit is the existing application persistence contract.
+        let name=self.name.trim();
+        if name.is_empty(){self.error="Wpisz nazwę folderu.".into();return none();}
+        if name.len()>256{self.error="Nazwa folderu jest za długa.".into();return none();}
+        self.error.clear();self.submitting=true;
+        ffi::FolderRequest{action:if self.folder.is_empty(){ffi::FolderAction::Create}else{ffi::FolderAction::Rename},workspace:self.workspace.clone(),parent:self.parent.clone(),folder:self.folder.clone(),name:name.into(),expand_parent:!self.parent.is_empty()}
+    }
+    // This acknowledges application admission, not completion of async storage.
+    fn finish_attempt(&mut self,accepted:bool){if !self.submitting{return;}self.submitting=false;self.closed=accepted;if !accepted{self.error="Nie udało się zapisać folderu. Spróbuj ponownie.".into();}}
+    fn cancel(&mut self){self.closed=true;self.submitting=false;}
+}
+fn folder_form_layout(width:i32,label_height:i32,input_height:i32,error_height:i32,error:bool)->ffi::FolderLayout {
+    let width=if width<0{400}else{width};let label_height=label_height.max(0);let input_height=input_height.max(32);
+    let input_y=label_height.saturating_add(8);let bottom=input_y.saturating_add(input_height);let error_y=bottom.saturating_add(8);
+    let error_height=if error{error_height.max(0)}else{0};let height=if error{error_y.saturating_add(error_height)}else{bottom};
+    ffi::FolderLayout{width,height,label:ffi::Rect{x:0,y:0,width,height:label_height},input:ffi::Rect{x:0,y:input_y,width,height:input_height.min(i32::MAX-input_y)},error:ffi::Rect{x:0,y:error_y,width,height:error_height.min(i32::MAX-error_y)}}
 }
 
 // Stable opaque WebContents UI identities, never browser objects or URLs.
@@ -787,6 +832,9 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
                     clip: ffi::FloatRect {x: i.clip.x, y: i.clip.y, width: i.clip.width, height: i.clip.height} });
             }
         };
+        if i.kind == 17 {
+            if !i.title.is_empty(){emit(i.x,i.y,i.width,i.height,0.0,i.ink,&i.title,i.font_size,false);}continue;
+        }
         if i.kind == 16 {
             emit(i.x,i.y,i.width,i.height,14.0,i.fill,"",0.0,false);
             emit(i.x+0.5,i.y+0.5,i.width-1.0,i.height-1.0,13.5,i.badge,"",0.0,false);
@@ -1121,6 +1169,39 @@ mod tests {
         }
     }
     fn menu_state()->ffi::TabMenuState{ffi::TabMenuState{ready:true,busy:false,valid:true,tab:7,has_tab:true,split:true,first:3,has_first:true,second:7,has_second:true,vertical:false,tab_count:3,http:true}}
+    fn folder_nodes()->Vec<ffi::TreeNode>{vec![ffi::TreeNode{id:"parent".into(),parent:String::new(),folder:true},ffi::TreeNode{id:"pin".into(),parent:String::new(),folder:false}]}
+    #[test] fn folder_form_normalizes_unicode_and_preserves_byte_limit() {
+        let mut form=new_folder_form("work","",""," \u{3000}Zażółć 日本語 🦀\u{a0} ");
+        let r=form.submit("work",true,false,&[],false);assert!(matches!(r.action,ffi::FolderAction::Create));assert_eq!(r.name,"Zażółć 日本語 🦀");
+        let mut form=new_folder_form("work","","",&"ą".repeat(128));assert!(matches!(form.submit("work",true,false,&[],false).action,ffi::FolderAction::Create));
+        let mut form=new_folder_form("work","","",&"ą".repeat(129));assert!(matches!(form.submit("work",true,false,&[],false).action,ffi::FolderAction::None));assert!(!form.error().is_empty());
+        let mut form=new_folder_form("work","","","\u{200b}");assert_eq!(form.submit("work",true,false,&[],false).name,"\u{200b}");
+    }
+    #[test] fn folder_form_handles_empty_composition_and_editing_without_submission() {
+        let mut f=new_folder_form("work","",""," \u{3000}\u{a0} ");assert!(matches!(f.submit("work",true,false,&[],false).action,ffi::FolderAction::None));assert_eq!(f.error(),"Wpisz nazwę folderu.");
+        f.edit("Nowy 🦀");assert!(f.error().is_empty());assert!(matches!(f.submit("work",true,false,&[],true).action,ffi::FolderAction::None));assert!(f.error().is_empty());
+        assert_eq!(f.submit("work",true,false,&[],false).name,"Nowy 🦀");
+    }
+    #[test] fn folder_form_keeps_target_copy_and_checks_live_folder_context() {
+        let mut f=new_folder_form("work","parent","","Child");assert_eq!(f.copy().title,"Nowy podfolder");let r=f.submit("work",true,false,&folder_nodes(),false);assert!(r.expand_parent);assert_eq!((r.workspace.as_str(),r.parent.as_str()),("work","parent"));
+        let mut f=new_folder_form("work","","parent","Rename");assert_eq!(f.copy().accept,"Zapisz nazwę");assert!(matches!(f.submit("work",true,false,&folder_nodes(),false).action,ffi::FolderAction::Rename));
+        for (current,ready,busy,parent,folder) in [("personal",true,false,"",""),("work",false,false,"",""),("work",true,true,"",""),("work",true,false,"pin",""),("work",true,false,"missing",""),("work",true,false,"","missing"),("work",true,false,"parent","parent")] {
+            let mut f=new_folder_form("work",parent,folder,"Name");assert!(matches!(f.submit(current,ready,busy,&folder_nodes(),false).action,ffi::FolderAction::None));assert!(!f.error().is_empty());
+        }
+    }
+    #[test] fn folder_form_retries_rejection_and_blocks_duplicate_or_cancelled_accept() {
+        let mut f=new_folder_form("work","","","Name");f.submit("work",true,false,&[],false);assert!(matches!(f.submit("work",true,false,&[],false).action,ffi::FolderAction::None));
+        f.finish_attempt(false);assert!(!f.error().is_empty());assert!(matches!(f.submit("work",true,false,&[],false).action,ffi::FolderAction::Create));f.finish_attempt(true);assert!(matches!(f.submit("work",true,false,&[],false).action,ffi::FolderAction::None));
+        let mut f=new_folder_form("work","","","Name");f.cancel();assert!(matches!(f.submit("work",true,false,&[],false).action,ffi::FolderAction::None));
+    }
+    #[test] fn folder_form_layout_separates_editor_and_static_text_at_font_sizes() {
+        let g=folder_form_layout(-1,17,20,17,false);assert_eq!((g.width,g.height,g.input.y,g.input.height,g.error.height),(400,57,25,32,0));
+        let g=folder_form_layout(250,24,42,24,true);assert_eq!((g.height,g.input.y,g.error.y),(106,32,82));assert!(g.label.y+g.label.height<g.input.y);assert!(g.input.y+g.input.height<g.error.y);
+        assert_eq!(folder_form_layout(0,17,32,17,true).input.width,0);let g=folder_form_layout(100,i32::MAX,i32::MAX,i32::MAX,true);assert_eq!(g.height,i32::MAX);assert_eq!(g.input.height,0);assert_eq!(g.error.height,0);
+    }
+    #[test] fn folder_form_static_text_uses_the_scene_recipe() {
+        let mut item=row(300.0);item.kind=17;item.title="Wpisz nazwę folderu.".into();let ops=layout(&[item]);assert_eq!(ops.len(),1);assert_eq!(ops[0].text,"Wpisz nazwę folderu.");assert_eq!(ops[0].x,0.0);
+    }
     #[test] fn row_targets_follow_identity_across_reindex_and_reject_reused_slots() {
         let tabs=vec![ffi::MenuTab{index:0,high:1,low:3},ffi::MenuTab{index:1,high:1,low:2}];
         let t=resolve_row_target("work","work",1,2,"",&tabs,&[]);assert!(t.valid&&t.has_tab);assert_eq!(t.tab,1);

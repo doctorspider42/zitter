@@ -1,0 +1,77 @@
+{
+  "date": "2026-10-23",
+  "platform": "macOS arm64",
+  "build": "Release, ThinLTO, Chromium PGO",
+  "base_commit": "324658cbeb88b5372fd3eca2ff13eb2bac74164e",
+  "chromium_base_revision": "1a732fcc23b20dd0bcf38f35d72c1fe1ec799d35",
+  "purpose": "Non-windowed verification of Rust folder create/rename form state, validation, layout and static scene text; modal/Metal/persistence runtime acceptance deferred",
+  "acceptance_status": "awaiting_gui_checkpoint",
+  "source_sha256": {
+    "chromium/prototype/profile_workspace_browsertest.cc": "8758da46419d9d1253c8aa9634949a618bf154144f2ea9b7c212e2124f374762",
+    "chromium/prototype/sidebar_scene.rs": "73b28ca31d60451d80ed613652ddc458eef7fe9c12a856258c9a140f3a54c5e2",
+    "chromium/prototype/workspace_shell.cc": "cdf2c52733cb1c55443ff8721ac16ba7b18157967ac0f57193f0b19e0ffbea45",
+    "chromium/prototype/workspace_shell.h": "ec1ea9e1466be79285c75c9c44013a4fc296e7257e9e77e458835a0f7027c8aa",
+    "chromium/prototype/workspace_window.cc": "cc604f6da199ec6b964de92d5a8efe99ca8d548836ad5e1ca4d4f7d8ee2f278e"
+  },
+  "staged_sources_match": true,
+  "compiled_app_uuid": "4C4C44F7-5555-3144-A1BE-325EBC49F0FE",
+  "compiled_browser_test_uuid": "4C4C4485-5555-3144-A1CF-C35AC2A612AA",
+  "build_targets": [
+    "sidebar_scene_unittests_exe",
+    "zitter_prototype_ui_lab",
+    "zitter_ui_lab"
+  ],
+  "build_result": "passed",
+  "build_consistency": "final Ninja dry run reported no work to do",
+  "rust_unit_tests_passed": 74,
+  "python_unit_tests_passed": 59,
+  "new_rust_tests_passed": [
+    "folder_form_layout_separates_editor_and_static_text_at_font_sizes",
+    "folder_form_handles_empty_composition_and_editing_without_submission",
+    "folder_form_keeps_target_copy_and_checks_live_folder_context",
+    "folder_form_normalizes_unicode_and_preserves_byte_limit",
+    "folder_form_retries_rejection_and_blocks_duplicate_or_cancelled_accept",
+    "folder_form_static_text_uses_the_scene_recipe"
+  ],
+  "gn_dependency_check": "passed for //zitter_ui_lab:*",
+  "product_boundaries": "passed",
+  "gui_tests": {
+    "status": "not run at user request",
+    "new_compiled_case": "ZitterMetalSidebarBrowserTest.FolderFormScenesValidationCompositionAndStaleContext",
+    "last_accepted_commit": "3cd95d82019b239c6c9cc6e84331a4f9f5ef0c55",
+    "prior_gui_results_apply_to_current_code": false
+  },
+  "manual_validation": {
+    "status": "deferred",
+    "app_launched": false,
+    "packaged_or_signed": false,
+    "normal_application_or_profile_used": false
+  },
+  "unit_verified_mechanisms": [
+    "Rust owns create/root/subfolder/rename copy, Unicode whitespace trimming, empty-name and existing 256-byte UTF-8 validation. Tests cover Polish/Japanese/emoji, exactly 256 versus 258 UTF-8 bytes, whitespace-only input and retaining zero-width space as Chromium does.",
+    "Submission rechecks source workspace, readiness/busy state and live folder/parent IDs. Pins cannot act as folders. Composition, duplicate, cancelled and already accepted submissions return no action.",
+    "Immediate rejection can retry with the same name; accepted admission closes controller state. This is not confirmation of durable asynchronous storage.",
+    "Rust lays out label, minimum-height native editor and optional error without overlapping. Zero/narrow/font-height/saturated dimensions remain bounded. Static form text uses the Rust display list."
+  ],
+  "implemented_pending_runtime_verification": [
+    "The opt-in modal uses a custom FolderFormView in the existing DialogModel host. The body creates a native Textfield and static-text AX Views without hidden Labels; Rust supplies title/field/button copy and body layout.",
+    "Two small shared-context Metal canvases draw only label/error regions and exclude the native editor. Native fallback consumes the same Rust scene recipe. Native modal title/buttons, initial focus, Enter/Escape, clipboard and IME remain adapters.",
+    "The accept adapter reads current native text, prevents acceptance during IME composition, obtains a typed Rust request and calls existing create/rename application services. A temporarily expanded parent is restored on immediate application rejection.",
+    "Accepted application admission closes the form. Existing configuration writes, asynchronous rollback and separate ShowFolderSaveError presentation remain unchanged; delete confirmation and save-error dialogs are not migrated here.",
+    "Error changes update AX names/visibility, request a native alert event and resize through the modal host. Caret-only invalidations skip scene scheduling; unchanged error text does not resize/redraw. Surface teardown follows the custom View lifecycle.",
+    "The compiled GUI regression checks no Labels in the custom body, scene text, editor/non-text bounds, empty/long validation, IME composition, Unicode create/rename, removed parent and changed workspace. It has not been executed."
+  ],
+  "deferred_checkpoint": [
+    "Run the curated 47-case Metal matrix (prior 46 plus FolderFormScenesValidationCompositionAndStaleContext).",
+    "Expand Views controls from 17 to 20 by adding SidebarFoldersCreateNestAndPersist, SidebarFolderRenameAndDeleteContents and SidebarFolderFailedWriteRollsBack; run all three folder cases in both backends.",
+    "Verify actual modal focus/selection/Enter/Escape/IME and alert announcements, static canvas clipping, missing-drawable fallback/recovery, sizing/theme/scale and dialog teardown.",
+    "Verify parent expansion and immediate rejection rollback, accepted async configuration writes, failed-write rollback/save-error dialog, cancellation/stale contexts and profile/session isolation.",
+    "Package/sign and inspect the matching isolated app. Measure actual CPU/GPU/presentation workload separately; test durations and submitted command buffers are not performance gains."
+  ],
+  "limitations": [
+    "Compilation and non-windowed unit tests do not establish native modal/Metal/IME/AX behavior, persistence integration, visual quality or speedup. Those remain unaccepted until the GUI checkpoint.",
+    "Modal host/title/button presentation, native editing/focus/IME, delete confirmation and asynchronous-error dialogs still use native adapters/Views. Full UI migration is incomplete.",
+    "Domain validation, persistence, filesystem failures and rollback remain application services. This form acknowledges admission and does not claim storage success.",
+    "No dependency, crate or framework was added; original-code Apache-2.0 and required upstream notices are unchanged."
+  ]
+}

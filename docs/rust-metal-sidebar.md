@@ -535,3 +535,37 @@ labels. Actual popup interaction, drags, AX/keyboard behavior and profile/sessio
 regressions still require the checkpoint. The default Views menu plan and native
 command path remain for control comparison. See
 [row menu verification](benchmarks/rust-row-menu-headless-2026-10-23.json).
+
+
+Folder creation and rename now use a Rust-owned form body in the opt-in backend.
+Rust supplies the title/field/button copy, Unicode trimming, the existing 256-byte
+UTF-8 name limit, live parent/rename-target checks, source-workspace/readiness/busy
+guards, duplicate-submit/cancel state and layout. The field remains a native
+Textfield for selection, clipboard and IME; active composition cannot submit.
+The modal host retains its native title/button presentation, initial focus,
+Enter/Escape handling and window lifetime. Delete confirmation and asynchronous
+save-error dialogs are still native presentation to migrate.
+
+The form body creates static-text AX Views and no hidden Labels. Rust emits the
+field label and validation error text on two small shared-context Metal canvases
+whose bounds exclude the editor. Native fallback consumes the same scene recipe;
+validation errors update AX names and send an alert event. Caret-only paint
+invalidations do not schedule scene work, and unchanged error text does not
+resize/redraw the form. Error visibility changes resize the modal through its
+existing host adapter.
+
+Submission rechecks the live context and then calls existing create/rename
+services. A parent is expanded before admission and restored if the application
+rejects immediately. Acceptance closes the form and prevents duplicate admission;
+it is **not** proof that asynchronous disk storage completed. The application
+retains its existing configuration write, rollback and separate error dialog.
+
+Non-windowed verification passed **74 Rust tests and 59 Python tests**. The new
+`FolderFormScenesValidationCompositionAndStaleContext` browser case is compiled
+but not run. It checks scene/AX structure, empty/long names, IME composition,
+Unicode create/rename, removed parents and workspace changes. Existing create,
+rename/delete and failed-write cases must also run in both backends at the GUI
+checkpoint; the Views control set expands from 17 to 20. Native modal behavior,
+GPU fallback, focus, alert announcement, sizing, theme/scale and persistence
+integration remain unaccepted until then. See
+[folder form verification](benchmarks/rust-folder-form-headless-2026-10-23.json).

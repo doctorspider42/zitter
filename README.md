@@ -666,7 +666,9 @@ use scene text and GPU icons without native title/detail Labels. Rust owns
 result selection, list/input geometry and palette placement; the native editor
 retains text editing, caret, selection and IME. Static search/escape decoration,
 hints and validation errors also use Rust geometry and Metal text, with native
-accessibility and fallback painting.
+accessibility and fallback painting. Folder create/rename bodies also use Rust
+validation/layout and Metal label/error text while retaining native editing and
+modal adapters; these newer stages await the deferred GUI checkpoint.
 Model updates refresh the scene independently of
 native painting. Rust also owns row
 click/drag/cancellation and platform key activation through native event, focus

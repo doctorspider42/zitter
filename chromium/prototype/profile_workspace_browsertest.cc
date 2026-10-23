@@ -3913,6 +3913,33 @@ class ZitterMetalSidebarBrowserTest : public ZitterProfilesBrowserTest {
   }
 };
 // Compiled with the migration; execution is deferred to the requested GUI checkpoint.
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, FolderFormScenesValidationCompositionAndStaleContext) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
+  shell->RequestNewFolder("work");ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_form_metal_visible();}));
+  auto* form=shell->folder_form_for_testing();ASSERT_TRUE(form);auto* field=FolderNameInput(form);ASSERT_TRUE(field);EXPECT_TRUE(field->HasFocus());
+  auto no_labels=[&](auto&& self,views::View* view)->void{if(view==field)return;EXPECT_FALSE(views::AsViewClass<views::Label>(view));for(const auto& child:view->children())self(self,child.get());};no_labels(no_labels,form);
+  EXPECT_TRUE(shell->folder_form_contains_scene_text("Nazwa folderu"));
+  field->SetText(u" \u3000\u00a0 ");shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+  ASSERT_TRUE(shell->folder_dialog());EXPECT_EQ(u"Wpisz nazwę folderu.",shell->folder_form_error_for_testing());EXPECT_TRUE(window_->pinned_items("work").empty());
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_form_contains_scene_text("Wpisz nazwę folderu.");}));
+  for(const auto& child:form->children())if(child.get()!=field&&child->GetVisible())EXPECT_FALSE(child->GetBoundsInScreen().Intersects(field->GetBoundsInScreen()));
+  field->SetText(std::u16string(129,u'ą'));shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();EXPECT_EQ(u"Nazwa folderu jest za długa.",shell->folder_form_error_for_testing());
+  field->SelectAll(false);field->InsertOrReplaceText(u"  Projekty 🦀  ");EXPECT_TRUE(shell->folder_form_error_for_testing().empty());
+  ui::CompositionText composition;composition.text=u"にほん";composition.selection=gfx::Range(composition.text.size());field->SetCompositionText(composition);ASSERT_TRUE(field->IsIMEComposing());
+  shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();EXPECT_TRUE(shell->folder_dialog());EXPECT_TRUE(window_->pinned_items("work").empty());field->ClearCompositionText();
+  field->SetText(u"  Projekty 🦀  ");shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+  ASSERT_TRUE(base::test::RunUntil([&]{return !shell->folder_dialog()&&!window_->profiles_busy();}));ASSERT_EQ(1u,window_->pinned_items("work").size());EXPECT_EQ("Projekty 🦀",window_->pinned_items("work")[0].title);
+  const auto id=window_->pinned_items("work")[0].id;shell->RequestRenameFolder("work",id);
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_form_metal_visible();}));EXPECT_EQ(u"Zmień nazwę folderu",shell->folder_dialog()->widget_delegate()->GetWindowTitle());
+  field=FolderNameInput(shell->folder_form_for_testing());ASSERT_TRUE(field);field->SetText(u"  Zmieniony 日本語  ");shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+  ASSERT_TRUE(base::test::RunUntil([&]{return !shell->folder_dialog()&&!window_->profiles_busy();}));EXPECT_EQ("Zmieniony 日本語",window_->pinned_items("work")[0].title);
+  shell->RequestNewFolder("work",id);ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_form_metal_visible();}));
+  EXPECT_EQ(u"Nowy podfolder",shell->folder_dialog()->widget_delegate()->GetWindowTitle());ASSERT_TRUE(window_->RemovePinnedFolder("work",id,true));
+  ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();EXPECT_EQ(u"Folder nie jest już dostępny.",shell->folder_form_error_for_testing());
+  ASSERT_TRUE(window_->Select("personal"));ASSERT_TRUE(base::test::RunUntil([&]{return window_->active_id()=="personal"&&!window_->profiles_busy();}));
+  shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();EXPECT_EQ(u"Przestrzeń zmieniła się. Otwórz formularz ponownie.",shell->folder_form_error_for_testing());
+  shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->CancelDialog();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->folder_dialog();}));EXPECT_TRUE(window_->pinned_items("personal").empty());
+}
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, RowMenuPlansAndQueuedIdentitySurviveReindex) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
   const auto url=embedded_test_server()->GetURL("/storage_probe.html?row-menu");

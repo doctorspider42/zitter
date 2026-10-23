@@ -1118,6 +1118,97 @@ BEGIN_METADATA(PaletteText)
 END_METADATA
 #endif
 
+#if BUILDFLAG(IS_MAC)
+// The modal host retains system focus/buttons/IME. Rust owns this form's
+// copy, validation/submission state, geometry and static text display list.
+class FolderFormView final : public views::View, public views::TextfieldController {
+  METADATA_HEADER(FolderFormView,views::View)
+ public:
+  FolderFormView(const std::string& workspace,const std::string& parent,const std::string& folder,std::u16string initial,
+      base::RepeatingCallback<bool(FolderFormView*)> submit)
+      :form_(sidebar::new_folder_form(workspace,parent,folder,base::UTF16ToUTF8(initial))),copy_(form_->copy()),submit_(std::move(submit)) {
+    GetViewAccessibility().SetRole(ax::mojom::Role::kGroup);
+    for(auto& part:parts_){part=AddChildView(std::make_unique<views::View>());part->GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);}
+    parts_[0]->GetViewAccessibility().SetName(base::UTF8ToUTF16(std::string(copy_.label)));parts_[1]->SetVisible(false);
+    field_=AddChildView(std::make_unique<views::Textfield>());field_->GetViewAccessibility().SetName(base::UTF8ToUTF16(std::string(copy_.label)));
+    field_->SetFontList(Font(-1));field_->SetText(initial);field_->set_controller(this);
+  }
+  ~FolderFormView() override{field_->set_controller(nullptr);}
+  base::WeakPtr<FolderFormView> weak(){return weak_factory_.GetWeakPtr();}
+  views::Textfield* field() const{return field_;}
+  std::u16string title() const{return base::UTF8ToUTF16(std::string(copy_.title));}
+  std::u16string accept_label() const{return base::UTF8ToUTF16(std::string(copy_.accept));}
+  std::u16string cancel_label() const{return base::UTF8ToUTF16(std::string(copy_.cancel));}
+  bool Accept(){return field_->IsIMEComposing()?false:submit_.Run(this);}
+  void Cancel(){form_->cancel();}
+  sidebar::FolderRequest Prepare(const std::string& current,bool ready,bool busy,const std::vector<PinnedItem>& pins) {
+    form_->edit(base::UTF16ToUTF8(field_->GetText()));std::vector<sidebar::TreeNode> nodes;nodes.reserve(pins.size());for(const auto& pin:pins)nodes.push_back({pin.id,pin.parent_id,pin.folder});
+    auto request=form_->submit(current,ready,busy,rust::Slice<const sidebar::TreeNode>(nodes.data(),nodes.size()),field_->IsIMEComposing());Refresh();return request;
+  }
+  void Finish(bool accepted){form_->finish_attempt(accepted);Refresh();}
+  bool metal_visible() const{return surfaces_[0]&&surfaces_[0]->visible()&&(error_.empty()||(surfaces_[1]&&surfaces_[1]->visible()));}
+  bool contains_scene_text(std::string_view text) const{for(const auto& surface:surfaces_)if(surface&&surface->visible()&&surface->contains_text_for_testing(text))return true;return false;}
+  const std::u16string& error_text() const{return error_;}
+  void ContentsChanged(views::Textfield*,const std::u16string& text) override{form_->edit(base::UTF16ToUTF8(text));Refresh();}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override {
+    const auto g=Geometry(available.width().is_bounded()?available.width().value():-1);return gfx::Size(g.width,g.height);
+  }
+  void Layout(PassKey) override {
+    const auto g=Geometry(width());auto rect=[](const sidebar::Rect& r){return gfx::Rect(r.x,r.y,r.width,r.height);};
+    parts_[0]->SetBoundsRect(rect(g.label));field_->SetBoundsRect(rect(g.input));parts_[1]->SetBoundsRect(rect(g.error));Schedule();
+  }
+  void OnThemeChanged() override {
+    views::View::OnThemeChanged();SetBackground(views::CreateSolidBackground(Tone(this,kCard)));
+    if(field_){field_->SetBackgroundColor(Tone(this,kChip));field_->SetColor(Tone(this,kInk));field_->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,7,Hairline(this)),gfx::Insets::VH(4,8)));}
+    Schedule();
+  }
+  void AddedToWidget() override{views::View::AddedToWidget();Schedule();}
+  void RemovedFromWidget() override{for(auto& surface:surfaces_)surface.reset();views::View::RemovedFromWidget();}
+  void OnDidSchedulePaint(const gfx::Rect& rect) override {
+    views::View::OnDidSchedulePaint(rect);if(field_&&views::View::ConvertRectToTarget(field_,this,field_->GetLocalBounds()).Contains(rect))return;Schedule();
+  }
+  void OnPaint(gfx::Canvas* canvas) override {
+    for(size_t i=0;i<parts_.size();++i)if(parts_[i]->GetVisible()&&(!surfaces_[i]||!surfaces_[i]->visible()))PaintSceneRecipe(canvas,Item(i,gfx::RectF(parts_[i]->bounds())),Font(-1));
+    Schedule();
+  }
+ private:
+  sidebar::FolderLayout Geometry(int width) const{return sidebar::folder_form_layout(width,Font(-1).GetHeight(),field_?field_->GetPreferredSize().height():32,Font(-1).GetHeight(),!error_.empty());}
+  sidebar::Item Item(size_t i,gfx::RectF r) const {
+    sidebar::Item item{};item.kind=17;item.x=r.x();item.y=r.y();item.width=r.width();item.height=r.height();item.clip={r.x(),r.y(),r.width(),r.height()};
+    item.title=i?base::UTF16ToUTF8(error_):std::string(copy_.label);item.ink=Tone(this,i?kError:kMuted);item.font_size=Font(-1).GetFontSize();return item;
+  }
+  void Refresh() {
+    const auto error=base::UTF8ToUTF16(std::string(form_->error()));if(error==error_)return;error_=error;
+    parts_[1]->GetViewAccessibility().SetName(error_);parts_[1]->SetVisible(!error_.empty());
+    if(!error_.empty()&&GetWidget())parts_[1]->GetViewAccessibility().NotifyEvent(ax::mojom::Event::kAlert,true);
+    PreferredSizeChanged();SchedulePaint();
+    if(GetWidget())if(auto* host=GetWidget()->widget_delegate()->AsBubbleDialogDelegate())host->SizeToContents();Schedule();
+  }
+  void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&FolderFormView::UpdateMetal,weak()));}
+  void UpdateMetal() {
+    pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();
+    for(size_t i=0;i<parts_.size();++i) {
+      auto& surface=surfaces_[i];const bool was=surface&&surface->visible();
+      if(!parts_[i]->IsDrawn()||parts_[i]->GetVisibleBounds().IsEmpty()){if(surface)surface->Hide();if(was)SchedulePaint();continue;}
+      if(!surface)surface=CreateSidebarMetal();if(!surface)continue;
+      const auto local=parts_[i]->GetVisibleBounds();auto frame=parts_[i]->GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());
+      auto full=gfx::RectF(parts_[i]->GetLocalBounds());full.Offset(-local.x(),-local.y());auto item=Item(i,full);item.clip={0,0,float(frame.width()),float(frame.height())};
+      surface->Update(GetWidget()->GetNativeWindow(),frame,{item},Tone(this,kCard));if(was!=surface->visible())SchedulePaint();
+    }
+  }
+  rust::Box<sidebar::FolderForm> form_;sidebar::FolderCopy copy_;base::RepeatingCallback<bool(FolderFormView*)> submit_;
+  std::array<raw_ptr<views::View>,2> parts_{};raw_ptr<views::Textfield> field_=nullptr;
+  std::array<std::unique_ptr<SidebarMetal>,2> surfaces_;std::u16string error_;bool pending_=false;
+  base::WeakPtrFactory<FolderFormView> weak_factory_{this};
+};
+BEGIN_METADATA(FolderFormView)
+END_METADATA
+FolderFormView* FindFolderForm(views::View* view) {
+  if(auto* form=views::AsViewClass<FolderFormView>(view))return form;
+  for(const auto& child:view->children())if(auto* form=FindFolderForm(child.get()))return form;return nullptr;
+}
+#endif
+
 class EdgeView final : public views::View {
   METADATA_HEADER(EdgeView, views::View)
  public:
@@ -3946,6 +4037,34 @@ void WorkspaceShell::BuildFolderMenu(std::string parent) {
   }
 }
 
+views::View* WorkspaceShell::folder_form_for_testing() const {
+#if BUILDFLAG(IS_MAC)
+  return folder_dialog_?FindFolderForm(folder_dialog_->GetContentsView()):nullptr;
+#else
+  return nullptr;
+#endif
+}
+bool WorkspaceShell::folder_form_metal_visible() const {
+#if BUILDFLAG(IS_MAC)
+  auto* form=static_cast<FolderFormView*>(folder_form_for_testing());return form&&form->metal_visible();
+#else
+  return false;
+#endif
+}
+bool WorkspaceShell::folder_form_contains_scene_text(std::string_view text) const {
+#if BUILDFLAG(IS_MAC)
+  auto* form=static_cast<FolderFormView*>(folder_form_for_testing());return form&&form->contains_scene_text(text);
+#else
+  return false;
+#endif
+}
+std::u16string WorkspaceShell::folder_form_error_for_testing() const {
+#if BUILDFLAG(IS_MAC)
+  auto* form=static_cast<FolderFormView*>(folder_form_for_testing());return form?form->error_text():std::u16string();
+#else
+  return {};
+#endif
+}
 void WorkspaceShell::RequestNewFolder(std::string workspace, std::string parent) {
   RequestFolderName(std::move(workspace), std::move(parent), {});
 }
@@ -3961,6 +4080,29 @@ void WorkspaceShell::RequestFolderName(std::string workspace, std::string parent
     if (state_.workspace_id != workspace || item == state_.pins.end()) return;
     initial_name = base::UTF8ToUTF16(item->title);
   }
+#if BUILDFLAG(IS_MAC)
+  if(metal_sidebar_) {
+    auto contents=std::make_unique<FolderFormView>(workspace,parent,renamed,initial_name,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,FolderFormView* form){
+      if(!shell)return true;const auto alive=form->weak();auto request=form->Prepare(shell->state_.workspace_id,shell->state_.configuration_ready,shell->state_.profiles_busy,shell->state_.pins);
+      if(request.action==sidebar::FolderAction::None)return false;
+      const auto target=std::string(request.workspace),parent=std::string(request.parent),folder=std::string(request.folder),name=std::string(request.name);
+      const bool collapsed=request.expand_parent&&shell->sidebar_tree_.Collapsed(target,parent);
+      if(request.expand_parent)shell->sidebar_tree_.SetCollapsed(target,parent,false);
+      const bool ok=request.action==sidebar::FolderAction::Create?shell->callbacks_.create_folder.Run(target,parent,name):shell->callbacks_.rename_folder.Run(target,folder,name);
+      if(!shell||!alive)return true;
+      if(!ok&&request.expand_parent)shell->sidebar_tree_.SetCollapsed(target,parent,collapsed);
+      form->Finish(ok);if(ok)shell->folder_dialog_.reset();return ok;
+    },weak_factory_.GetWeakPtr()));
+    const auto title=contents->title(),accept=contents->accept_label(),cancel=contents->cancel_label();const auto weak=contents->weak();auto* input=contents->field();
+    auto model=ui::DialogModel::Builder().SetTitle(title)
+        .AddCustomField(std::make_unique<views::BubbleDialogModelHost::CustomView>(std::move(contents),views::BubbleDialogModelHost::FieldType::kControl,input),kFolderNameField)
+        .SetInitiallyFocusedField(kFolderNameField)
+        .AddOkButton(base::BindRepeating([](base::WeakPtr<FolderFormView> form){return !form||form->Accept();},weak),ui::DialogModel::Button::Params().SetLabel(accept))
+        .AddCancelButton(base::BindOnce([](base::WeakPtr<FolderFormView> form){if(form)form->Cancel();},weak),ui::DialogModel::Button::Params().SetLabel(cancel)).Build();
+    auto* prompt=views::DialogDelegate::CreateDialogWidget(views::BubbleDialogModelHost::CreateModal(std::move(model),ui::mojom::ModalType::kWindow),widget_->GetNativeWindow(),widget_->GetNativeView());
+    prompt->SetColorModeOverride(widget_->color_mode_override());PreparePanelText(prompt->GetRootView());folder_dialog_=prompt->GetWeakPtr();prompt->Show();input->SelectAll(false);return;
+  }
+#endif
   ui::DialogModel::Builder builder;
   auto* model = builder.model();
   auto weak = weak_factory_.GetWeakPtr();
