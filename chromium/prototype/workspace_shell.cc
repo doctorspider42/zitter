@@ -101,6 +101,12 @@
 #endif
 
 namespace zitter::prototype {
+class ImportFormState {
+ public:
+#if BUILDFLAG(IS_MAC)
+  rust::Box<sidebar::ImportForm> form=sidebar::new_import_form();
+#endif
+};
 class WorkspaceFormState {
  public:
 #if BUILDFLAG(IS_MAC)
@@ -1528,6 +1534,8 @@ void SetPanelText(views::View* view,std::u16string text) {
   static_cast<views::Label*>(view)->SetText(text);
 }
 #if BUILDFLAG(IS_MAC)
+sidebar::ImportSelection ImportUiSelection(const BrowserImportOptions& o){return {static_cast<uint32_t>(o.browser),o.separate_profiles,o.bookmarks,o.history,o.cookies};}
+BrowserImportOptions ImportServiceOptions(const sidebar::ImportSelection& s){BrowserImportOptions o;o.browser=static_cast<ImportBrowser>(s.browser);o.separate_profiles=s.separate_profiles;o.bookmarks=s.bookmarks;o.history=s.history;o.cookies=s.cookies;return o;}
 std::vector<sidebar::ProfileOption> ProfileOptions(const ShellState& state){std::vector<sidebar::ProfileOption> out;out.reserve(state.profiles.size());for(const auto& p:state.profiles)out.push_back({p.id,p.name});return out;}
 std::vector<sidebar::ProfileUse> ProfileUses(const ShellState& state){std::vector<sidebar::ProfileUse> out;out.reserve(state.workspaces.size());for(const auto& w:state.workspaces)out.push_back({w.id,w.name,w.profile_id});return out;}
 #endif
@@ -2710,6 +2718,20 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 
   if(profile_form_){profiles_panel->SetLayoutManager(CreateSidebarColumnLayout(10));profiles_panel->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(20)));}
 
+#if BUILDFLAG(IS_MAC)
+  if(metal_sidebar_)import_form_=std::make_unique<ImportFormState>();
+#endif
+  std::array<std::u16string,10> import_copy={u"Przenieś się do Zittera",u"Zamknij import",u"Wybierz przeglądarkę i dane, które chcesz przenieść.",u"Przeglądarka źródłowa",u"Przeglądarka do importu",u"Co chcesz przenieść?",u"Oddzielne profile przeglądania",u"Historia przeglądania",u"Ciasteczka i sesje witryn",u"Importuj"};
+  std::vector<std::u16string> import_browsers={u"Arc",u"Google Chrome",u"Microsoft Edge",u"Brave"};
+#if BUILDFLAG(IS_MAC)
+  if(import_form_){const auto c=sidebar::import_copy();auto text=[](const rust::String& value){return base::UTF8ToUTF16(std::string(value));};import_copy={text(c.title),text(c.dismiss),text(c.intro),text(c.source_label),text(c.source_ax),text(c.heading),text(c.profiles),text(c.history),text(c.cookies),text(c.apply_label)};import_browsers.clear();for(const auto& b:c.browsers)import_browsers.push_back(text(b));}
+#endif
+  auto import_text=[&](views::View* parent,std::u16string text,SkColor ink,int delta=0,gfx::Font::Weight weight=gfx::Font::Weight::NORMAL,bool multiline=false)->views::View* {
+#if BUILDFLAG(IS_MAC)
+    if(import_form_)return parent->AddChildView(std::make_unique<SceneParagraph>(std::move(text),delta,weight!=gfx::Font::Weight::NORMAL,ink));
+#endif
+    auto* label=Label(parent,std::move(text),ink,Font(delta,weight));label->SetMultiLine(multiline);return label;
+  };
   auto import_panel = std::make_unique<views::View>();
   import_root_ = import_panel.get();
   import_panel->SetLayoutManager(std::make_unique<views::BoxLayout>(
@@ -2719,7 +2741,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto* import_header = import_panel->AddChildView(std::make_unique<views::View>());
   auto* import_header_layout = import_header->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 8));
-  auto* import_title = Label(import_header, u"Przenieś się do Zittera", kInk, Font(4, gfx::Font::Weight::SEMIBOLD));
+  auto* import_title = import_text(import_header,import_copy[0],kInk,4,gfx::Font::Weight::SEMIBOLD);
   import_header_layout->SetFlexForView(import_title, 1);
   dismiss_import_ = import_header->AddChildView(std::make_unique<GlyphButton>(
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
@@ -2727,35 +2749,34 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         shell->callbacks_.dismiss_import.Run();
         shell->CloseOverlays();
         shell->RestorePageFocus();
-      }, weak), u"Zamknij import", GlyphButton::Glyph::kVector, &vector_icons::kCloseSmallIcon));
-  auto* intro = Label(import_panel.get(), u"Wybierz przeglądarkę i dane, które chcesz przenieść.", kMuted, Font(-1));
-  intro->SetMultiLine(true);
-  Label(import_panel.get(), u"Przeglądarka źródłowa", kSubtle, Font(-1));
-  import_browser_picker_ = import_panel->AddChildView(std::make_unique<views::Combobox>(
-      std::make_unique<ui::SimpleComboboxModel>(std::vector<ui::SimpleComboboxModel::Item>{ui::SimpleComboboxModel::Item(u"Arc"), ui::SimpleComboboxModel::Item(u"Google Chrome"), ui::SimpleComboboxModel::Item(u"Microsoft Edge"), ui::SimpleComboboxModel::Item(u"Brave")})));
-  import_browser_picker_->SetTooltipTextAndAccessibleName(u"Przeglądarka do importu");
+      }, weak), import_copy[1], GlyphButton::Glyph::kVector, &vector_icons::kCloseSmallIcon));
+  import_text(import_panel.get(),import_copy[2],kMuted,-1,gfx::Font::Weight::NORMAL,true);
+  import_text(import_panel.get(),import_copy[3],kSubtle,-1);
+  std::vector<ui::SimpleComboboxModel::Item> import_items;for(const auto& b:import_browsers)import_items.emplace_back(b);
+  import_browser_picker_ = import_panel->AddChildView(std::make_unique<views::Combobox>(std::make_unique<ui::SimpleComboboxModel>(import_items)));
+  import_browser_picker_->SetTooltipTextAndAccessibleName(import_copy[4]);
   import_browser_picker_->SetSelectedIndex(0);
   import_browser_picker_->SetCallback(base::BindRepeating(&WorkspaceShell::ImportSelectionChanged, weak));
   Spacer(import_panel.get(), 8);
-  Label(import_panel.get(), u"Co chcesz przenieść?", kInk, Font(0, gfx::Font::Weight::SEMIBOLD));
+  import_text(import_panel.get(),import_copy[5],kInk,0,gfx::Font::Weight::SEMIBOLD);
   auto selection_changed = base::BindRepeating(&WorkspaceShell::ImportSelectionChanged, weak);
-  import_profiles_ = import_panel->AddChildView(std::make_unique<views::Checkbox>(u"Oddzielne profile przeglądania", selection_changed));
+  import_profiles_ = import_panel->AddChildView(std::make_unique<views::Checkbox>(import_copy[6], selection_changed));
   import_bookmarks_ = import_panel->AddChildView(std::make_unique<views::Checkbox>(u"Przypięte karty, foldery i Ulubione", selection_changed));
   for (auto* checkbox : {import_profiles_.get(), import_bookmarks_.get()}) {
     checkbox->SetChecked(true);
     checkbox->SetMultiLine(true);
   }
-  import_history_ = import_panel->AddChildView(std::make_unique<views::Checkbox>(u"Historia przeglądania", selection_changed));
-  import_cookies_ = import_panel->AddChildView(std::make_unique<views::Checkbox>(u"Ciasteczka i sesje witryn", selection_changed));
+  import_history_ = import_panel->AddChildView(std::make_unique<views::Checkbox>(import_copy[7], selection_changed));
+  import_cookies_ = import_panel->AddChildView(std::make_unique<views::Checkbox>(import_copy[8], selection_changed));
   Spacer(import_panel.get(), 8);
-  import_status_ = Label(import_panel.get(), u"", kSubtle, Font(-1));
-  import_status_->SetMultiLine(true);
+  import_status_ = import_text(import_panel.get(),u"",kSubtle,-1,gfx::Font::Weight::NORMAL,true);
   import_status_->SetVisible(false);
-  apply_import_ = import_panel->AddChildView(std::make_unique<views::MdTextButton>(
-      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
-        if (shell) shell->callbacks_.apply_import.Run();
-      }, weak), u"Importuj"));
+  auto* import_actions=ActionGroup(import_panel.get(),bool(import_form_),true,0);
+  apply_import_ = AddAction(import_actions,base::BindRepeating(&WorkspaceShell::SubmitImport,weak),import_copy[9]);
   apply_import_->SetEnabled(false);
+#if BUILDFLAG(IS_MAC)
+  if(import_form_){const auto d=sidebar::import_defaults();import_browser_picker_->SetSelectedIndex(d.browser);import_profiles_->SetChecked(d.separate_profiles);import_bookmarks_->SetChecked(d.bookmarks);import_history_->SetChecked(d.history);import_cookies_->SetChecked(d.cookies);import_panel->SetLayoutManager(CreateSidebarColumnLayout(12));import_panel->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(20)));}
+#endif
 
 
   auto general = std::make_unique<views::View>();
@@ -3195,7 +3216,7 @@ void WorkspaceShell::Detach() {
   color_input_->set_controller(nullptr);
   emoji_input_->set_controller(nullptr);
   import_root_ = nullptr;
-  import_status_ = nullptr;
+  import_status_ = nullptr;import_form_.reset();
   import_browser_picker_ = nullptr;
   import_bookmarks_ = nullptr;
   import_profiles_ = nullptr;
@@ -3328,6 +3349,10 @@ void WorkspaceShell::Update(ShellState state) {
     if(profile_form_){const auto profiles=ProfileOptions(state_);profile_form_->form->reconcile(rust::Slice<const sidebar::ProfileOption>(profiles.data(),profiles.size()),added_profile);const std::string id(profile_form_->form->selection());for(size_t i=0;i<state_.profiles.size();++i)if(state_.profiles[i].id==id)managed_profile_picker_->SetSelectedIndex(i);}
 #endif
   }
+#if BUILDFLAG(IS_MAC)
+  if(import_form_){RefreshRustImportControls();if(ready_changed&&import_visible()&&import_form_->form->should_resume(state_.configuration_ready,state_.profiles_busy))ImportSelectionChanged();}
+  else
+#endif
   apply_import_->SetEnabled(import_can_apply_ && !import_busy_ && state_.configuration_ready && !state_.profiles_busy);
   profile_picker_->SetEnabled(state_.configuration_ready && !state_.profiles_busy);
   if (changed || profiles_changed || ready_changed) RefreshProfileControls();
@@ -5041,7 +5066,7 @@ void WorkspaceShell::ApplyTheme() {
     const int radius = surface == palette_root_ ? 14 : 12;
     if(surface==palette_root_&&static_cast<PaletteView*>(surface)->scene()){surface->SetBackground(nullptr);surface->SetBorder(views::CreateEmptyBorder(1));}
     else {surface->SetBackground(views::CreateRoundedRectBackground(Tone(surface,kCard),radius));
-      if((surface==profiles_root_&&profile_form_)||(surface==settings_root_&&workspace_form_))surface->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,radius,Hairline(surface)),gfx::Insets(20)));
+      if((surface==profiles_root_&&profile_form_)||(surface==settings_root_&&workspace_form_)||(surface==import_root_&&import_form_))surface->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,radius,Hairline(surface)),gfx::Insets(20)));
       else surface->SetBorder(views::CreateRoundedRectBorder(1,radius,Hairline(surface)));}
     surface->SchedulePaint();
   }
@@ -5814,6 +5839,9 @@ bool WorkspaceShell::CloseOverlays(bool keep_sidebar) {
   address_widget_->Hide();
   settings_widget_->Hide();
   import_preview_timer_.Stop();
+#if BUILDFLAG(IS_MAC)
+  if(import_form_)import_form_->form->cancel_scan();
+#endif
   history_timer_.Stop();
   if (!keep_sidebar && !pinned_) sidebar_widget_->Hide();
   return visible;
@@ -6129,7 +6157,51 @@ BrowserImportOptions WorkspaceShell::import_options() const {
   options.cookies = import_cookies_->GetChecked();
   return options;
 }
+void WorkspaceShell::BeginImportPreview(const BrowserImportOptions& options) {
+#if BUILDFLAG(IS_MAC)
+  if(import_form_){import_preview_timer_.Stop();import_form_->form->begin_preview(ImportUiSelection(options));CancelSceneActions(import_root_);}
+#endif
+}
+void WorkspaceShell::RefreshRustImportControls() {
+#if BUILDFLAG(IS_MAC)
+  if(!import_form_||!import_status_)return;const auto v=import_form_->form->view(state_.configuration_ready,state_.profiles_busy);
+  SetPanelText(import_status_,base::UTF8ToUTF16(std::string(v.message)));import_status_->SetVisible(!v.message.empty());import_bookmarks_->SetText(base::UTF8ToUTF16(std::string(v.bookmarks_label)));
+  import_browser_picker_->SetEnabled(v.options_enabled);for(auto* control:{import_profiles_.get(),import_bookmarks_.get(),import_history_.get(),import_cookies_.get()})control->SetEnabled(v.options_enabled);
+  dismiss_import_->SetEnabled(v.close_enabled);apply_import_->SetEnabled(v.apply_enabled);import_applying_=v.applying;import_busy_=v.busy;import_can_apply_=v.can_apply;
+#endif
+}
+void WorkspaceShell::DispatchImportPreview(uint64_t epoch) {
+#if BUILDFLAG(IS_MAC)
+  if(!import_form_)return;const auto request=import_form_->form->take_scan(epoch,import_visible(),ImportUiSelection(import_options()),state_.configuration_ready,state_.profiles_busy);
+  RefreshRustImportControls();PositionPanels();
+  if(request.action==sidebar::ImportAction::Rescan){ImportSelectionChanged();return;}
+  if(request.action==sidebar::ImportAction::Preview)callbacks_.preview_import.Run(ImportServiceOptions(request.selection));
+#endif
+}
+void WorkspaceShell::SubmitImport() {
+#if BUILDFLAG(IS_MAC)
+  if(import_form_){const auto request=import_form_->form->request_apply(ImportUiSelection(import_options()),state_.configuration_ready,state_.profiles_busy,import_visible());
+    if(request.action==sidebar::ImportAction::Rescan){ImportSelectionChanged();return;}
+    RefreshRustImportControls();PositionPanels();if(request.action!=sidebar::ImportAction::Apply)return;
+    const auto alive=weak_factory_.GetWeakPtr();const bool accepted=callbacks_.apply_import.Run();if(!alive||!import_form_)return;import_form_->form->finish_apply(accepted);RefreshRustImportControls();PositionPanels();return;
+  }
+#endif
+  callbacks_.apply_import.Run();
+}
+bool WorkspaceShell::import_panel_contains_scene_text(std::string_view text) const {
+#if BUILDFLAG(IS_MAC)
+  if(!import_root_)return false;auto find=[&](auto&& self,views::View* view)->bool{if(auto* node=views::AsViewClass<SceneParagraph>(view))if(node->contains_scene_text(text))return true;if(auto* group=views::AsViewClass<SceneActionGroup>(view))if(group->contains_text(text))return true;for(const auto& child:view->children())if(self(self,child.get()))return true;return false;};return find(find,import_root_);
+#else
+  return false;
+#endif
+}
 void WorkspaceShell::ImportSelectionChanged() {
+#if BUILDFLAG(IS_MAC)
+  if(import_form_){import_preview_timer_.Stop();const auto request=import_form_->form->select(ImportUiSelection(import_options()));RefreshRustImportControls();PositionPanels();if(request.action!=sidebar::ImportAction::Preview)return;
+    CancelSceneActions(import_root_);callbacks_.invalidate_import.Run();
+    import_preview_timer_.Start(FROM_HERE,base::Milliseconds(200),base::BindOnce(&WorkspaceShell::DispatchImportPreview,weak_factory_.GetWeakPtr(),request.epoch));return;
+  }
+#endif
   if (import_applying_) return;
   const bool arc = import_options().browser == ImportBrowser::kArc;
   import_bookmarks_->SetText(arc ? u"Przypięte karty, foldery i Ulubione" : u"Zakładki i foldery");
@@ -6141,8 +6213,11 @@ void WorkspaceShell::ImportSelectionChanged() {
       }, weak_factory_.GetWeakPtr()));
 }
 void WorkspaceShell::SetImportStatus(std::u16string message, bool can_import, bool busy, bool applying) {
-  import_preview_timer_.Stop();
-  import_status_->SetText(message);
+  import_preview_timer_.Stop();if(!import_status_)return;
+#if BUILDFLAG(IS_MAC)
+  if(import_form_){import_form_->form->set_status(base::UTF16ToUTF8(message),can_import,busy,applying);RefreshRustImportControls();PositionPanels();return;}
+#endif
+  SetPanelText(import_status_,message);
   import_status_->SetVisible(!message.empty());
   // The source and options remain editable while scanning. Only applying an
   // import locks them; replies from earlier scans cannot enable Apply again.

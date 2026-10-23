@@ -679,7 +679,9 @@ native modal controls and deletion services. Color/emoji preset rows now use Rus
 geometry, selection and input with batched Metal canvases excluding native editors.
 Nine workspace/profile form actions also use Rust layout/input and scene text
 without native button Labels, batched into four Metal groups. These newer stages
-await the deferred GUI checkpoint.
+await the deferred GUI checkpoint. Import also uses a Rust form controller for
+option snapshots, debounce/admission and control locks, with Metal static/status
+text and Apply drawing; source access and native selectors remain services.
 Model updates refresh the scene independently of
 native painting. Rust also owns row
 click/drag/cancellation and platform key activation through native event, focus

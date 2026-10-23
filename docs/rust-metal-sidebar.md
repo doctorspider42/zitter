@@ -836,3 +836,56 @@ CPU/GPU/presentation speedup was established. Native interaction containers,
 editors/pickers, header/outer panel and modal-host controls and other Views
 surfaces remain. See
 [form action verification](benchmarks/rust-form-actions-headless-2026-10-23.json).
+
+
+## Import form controller and presentation (GUI checkpoint pending)
+
+Import now has a Rust UI controller for the four browser choices and existing
+option defaults, option snapshots, debounce tokens, waiting/scanning/applying
+state, control availability and Apply admission. Scans keep source/options and
+close editable; submitted/applying operations lock them. No data category is
+newly required: profile/workspace-only selections remain possible. A timer can
+consume only the latest visible selection once; hidden/cancelled or superseded
+tokens cannot start a read. Programmatic option changes without a native callback
+request a fresh preview before Apply. A scan blocked by configuration readiness
+or another profile operation waits and resumes from the native state-change
+notification when the panel is visible.
+
+Native preview service startup supplies only its UI option snapshot to the Rust
+controller through `BeginImportPreview`. Source paths, imported URLs/history/
+cookies/profile objects and credentials remain in native services. Existing
+`WorkspaceWindow` generation checks still reject obsolete I/O replies; Rust owns
+UI debounce rather than replacing that filter. Native status remains authoritative
+and can unlock retry after a read/authorization error. A synchronous completion
+cannot be overwritten by the callback's later admission return. Duplicate and
+hidden Apply requests are rejected; admission still differs from durable import
+completion.
+
+Rust supplies fixed panel copy/source labels, column geometry and control state.
+Shared paragraph canvases render title/help/headings/status without native static
+Labels, and a shared action group renders Apply without MdTextButton. Native
+checkboxes and their labels, source Combobox, header close button/row placement,
+outer popup and import-summary/error formatting remain. The body preserves its
+20-point padding, one-point border and twelve-point spacing. Native source I/O,
+read-only preview, explicit cookie authorization, data import, profile isolation,
+first-run behavior and persistence/rollback remain services; only one UI metadata
+notification was added before the existing source read.
+
+**125 Rust and 61 Python tests passed** without windows, with scoped GN,
+boundaries and optimized app/browser-test builds. The compiled case
+`ImportFormScenesLatestOptionsLocksAndAdmission` is unrun. It uses owned source
+fixtures and checks static/Apply scene text, native selector retention, rapid
+source changes, callback-free option mutation/rescan, error text, applying locks,
+Space admission and final configuration state. Seven existing import cases add
+source immutability, encrypted-cookie opt-in/denial, destination persistence,
+option invalidation and first-run rollback/offer to both backends. The deferred
+checkpoint now totals **67 Metal cases and 34 Views controls**.
+
+The checkpoint must verify real rendering/wrapping/clipping, keyboard/AX and
+native selector behavior, busy/wait/resume and callback/visibility races, stale
+I/O replies, single Apply admission, authorization denial/retry, source data
+retention, first-run and durable restore. Build inputs use committed `cc0023a`
+tools/bootstrap plus five UI/metadata-notification source overrides, excluding
+unrelated network-policy edits. No app/window was launched, new dependency introduced or shader/quad ABI changed.
+No CPU/GPU/presentation speedup was established. See
+[import form verification](benchmarks/rust-import-form-headless-2026-10-23.json).

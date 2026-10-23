@@ -52,7 +52,8 @@ Views-specific layout and control behavior must have an explicit replacement.
 | General preferences, shortcuts and site preferences | Views + application services | Rust forms; use the same persisted configuration |
 | History, downloads, passwords and permissions | Views/native service adapters | Rust presentation/control layer; retain browser service and security semantics |
 | Peek, promote/split, link/page menus and routing | Views/native adapters + application | Rust control routing, focus and dismissal; retain native page integration |
-| Imports, first run and Time Machine | Views + application services | Rust presentation; preserve previews, validation, backups and restoration |
+| Import form and first-run import | Rust UI option/debounce/admission/controller state, copy, columns and Metal static/status/Apply text; native checkbox/source/header nodes and application import services (GUI checkpoint pending) | Migrate native selectors/header; verify latest options, busy recovery, credentials opt-in, source immutability, first-run/persistence/rollback and runtime accessibility |
+| Time Machine | Views + application services | Rust presentation; preserve previews, validation, backups and restoration |
 | Keyboard accessibility, VoiceOver, focus and tooltips | Native Views nodes | Explicit native accessibility adapter for Rust controls; no duplicate nodes |
 
 ## Verified milestones
@@ -332,6 +333,17 @@ and the return of Metal after settling. Preserve the normal application/profile.
   **115 Rust and 61 Python tests passed** without windows; the new compiled GUI
   case expands the deferred matrix to **59 Metal cases and 27 Views controls**.
   See [form action verification](benchmarks/rust-form-actions-headless-2026-10-23.json).
+
+- Import now uses a Rust form controller for option snapshots, latest-only
+  debounce, hidden/cancelled scans, busy/readiness waiting, control locks and
+  matching-preview Apply admission. Native service status remains authoritative;
+  source I/O, stale I/O reply filtering, credentials/profile data and persistence
+  remain native. Static/status copy and Apply use Metal with Rust column layout;
+  selectors, checkbox labels and header close remain native. **125 Rust and 61
+  Python tests passed** without windows. The new compiled case and seven existing
+  import/first-run/source/persistence cases expand the deferred checkpoint to
+  **67 Metal cases and 34 Views controls**. See
+  [import form verification](benchmarks/rust-import-form-headless-2026-10-23.json).
 
 ## Completion gates
 

@@ -3916,6 +3916,24 @@ class ZitterMetalSidebarBrowserTest : public ZitterProfilesBrowserTest {
     command_line->AppendSwitchASCII("zitter-sidebar", "rust-metal");
   }
 };
+// Compile only; real import UI acceptance awaits the requested checkpoint.
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ImportFormScenesLatestOptionsLocksAndAdmission) {
+  base::ScopedAllowBlockingForTesting files;base::ScopedTempDir source;ASSERT_TRUE(source.CreateUniqueTempDir());base::FilePath root;ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT,&root));
+  ASSERT_TRUE(base::CopyDirectory(root.AppendASCII("zitter/testdata/arc"),source.GetPath().AppendASCII("Arc"),true));const auto chrome=source.GetPath().AppendASCII("Google/Chrome");ASSERT_TRUE(base::CreateDirectory(chrome.AppendASCII("Default")));base::ScopedPathOverride app_data(base::DIR_APP_DATA,source.GetPath());
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenImport();ASSERT_TRUE(base::test::RunUntil([&]{return window_->import_ready()&&shell->import_panel_contains_scene_text("Przenieś się do Zittera");}));
+  auto* panel=shell->import_panel_for_testing();ASSERT_TRUE(panel);auto no_labels=[&](auto&& self,views::View* view)->void {if(views::AsViewClass<views::Combobox>(view)||views::AsViewClass<views::Checkbox>(view))return;EXPECT_FALSE(views::AsViewClass<views::Label>(view));for(const auto& child:view->children())self(self,child.get());};no_labels(no_labels,panel);
+  auto* apply=FindButton(panel,u"Importuj");ASSERT_TRUE(apply);EXPECT_FALSE(views::AsViewClass<views::MdTextButton>(apply));ASSERT_TRUE(base::test::RunUntil([&]{return shell->import_panel_contains_scene_text("Importuj");}));
+  views::test::ComboboxTestApi(shell->import_browser_picker()).PerformActionAt(1);views::test::ComboboxTestApi(shell->import_browser_picker()).PerformActionAt(0);views::test::ComboboxTestApi(shell->import_browser_picker()).PerformActionAt(1);
+  EXPECT_FALSE(window_->import_ready());ASSERT_TRUE(shell->import_browser_picker()->GetEnabled());ASSERT_TRUE(base::test::RunUntil([&]{return window_->import_ready();}));EXPECT_EQ("chrome-space-Default",window_->import_preview()->spaces[0].id);EXPECT_EQ(u"Zakładki i foldery",shell->import_bookmarks()->GetText());
+  // Programmatic changes do not emit a Checkbox callback; Apply must rescan.
+  shell->import_history()->SetChecked(true);views::test::ButtonTestApi(apply).NotifyDefaultMouseClick();EXPECT_FALSE(window_->import_ready());ASSERT_TRUE(base::test::RunUntil([&]{return window_->import_ready();}));EXPECT_TRUE(window_->import_preview()->options.history);
+  views::test::ButtonTestApi(shell->import_history()).NotifyDefaultMouseClick();ASSERT_TRUE(base::test::RunUntil([&]{return window_->import_ready();}));EXPECT_FALSE(window_->import_preview()->options.history);
+  shell->SetImportStatus(u"Błąd odczytu 日本語",false);ASSERT_TRUE(base::test::RunUntil([&]{return shell->import_panel_contains_scene_text("Błąd odczytu 日本語");}));EXPECT_FALSE(apply->GetEnabled());EXPECT_TRUE(shell->import_browser_picker()->GetEnabled());
+  shell->SetImportStatus(u"Importowanie…",false,true,true);EXPECT_FALSE(shell->import_browser_picker()->GetEnabled());EXPECT_FALSE(shell->import_cookies()->GetEnabled());EXPECT_FALSE(shell->import_close()->GetEnabled());
+  shell->SetImportStatus(u"Gotowe do importu",true);EXPECT_TRUE(apply->GetEnabled());EXPECT_TRUE(shell->import_close()->GetEnabled());
+  ui::KeyEvent space(ui::EventType::kKeyPressed,ui::VKEY_SPACE,ui::EF_NONE);ui::KeyEvent up(ui::EventType::kKeyReleased,ui::VKEY_SPACE,ui::EF_NONE);apply->RequestFocus();ASSERT_TRUE(apply->OnKeyPressed(space));apply->OnKeyReleased(up);
+  EXPECT_FALSE(shell->import_browser_picker()->GetEnabled());ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));EXPECT_EQ(3u,window_->workspaces().size());ASSERT_TRUE(base::test::RunUntil([&]{return window_->configuration_saved();}));
+}
 // Compile only: action/scene acceptance is deferred to the requested GUI checkpoint.
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, FormActionGroupsSceneTextDynamicLabelsAndCancelledTargets) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);

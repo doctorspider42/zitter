@@ -2144,6 +2144,7 @@ void WorkspaceWindow::InvalidateImportPreview() {
 void WorkspaceWindow::PreviewBrowserImport(BrowserImportOptions options, base::FilePath directory) {
   if (!configuration_ready_ || configuration_invalid_ || profiles_busy_) return;
   if (directory.empty()) directory = DefaultBrowserDirectory(options.browser);
+  shell_->BeginImportPreview(options);
   import_loading_ = true;
   pending_import_.reset();
   const auto generation = ++import_preview_generation_;

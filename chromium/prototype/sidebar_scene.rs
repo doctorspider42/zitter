@@ -4,6 +4,12 @@
 // profile objects/directories or WebContents.
 #[cxx::bridge(namespace = "zitter::sidebar")]
 mod ffi {
+    #[derive(Clone, PartialEq, Eq)]
+    struct ImportSelection { browser: u32, separate_profiles: bool, bookmarks: bool, history: bool, cookies: bool }
+    struct ImportCopy { title: String, dismiss: String, intro: String, source_label: String, source_ax: String, heading: String, profiles: String, history: String, cookies: String, apply_label: String, browsers: Vec<String> }
+    enum ImportAction { None, Preview, Rescan, Apply }
+    struct ImportDispatch { action: ImportAction, epoch: u64, selection: ImportSelection }
+    struct ImportView { message: String, bookmarks_label: String, options_enabled: bool, close_enabled: bool, apply_enabled: bool, applying: bool, busy: bool, can_apply: bool }
     struct ActionButtonLayout { width: i32, height: i32, text: Rect }
     struct AppearancePreset { color: u32, emoji: String, label: String }
     struct WorkspaceCopy { name_label: String, placeholder: String, profile_label: String, profile_ax: String, profile_hint: String, save_hint: String, close: String, appearance: String, color: String, color_ax: String, emoji: String, emoji_ax: String, emoji_placeholder: String, more: String, manage: String, import_label: String, remove_label: String }
@@ -84,6 +90,19 @@ mod ffi {
         text: String, font_size: f32, bold: bool, middle: bool, center: bool, clip: FloatRect,
     }
     extern "Rust" {
+        type ImportForm;
+        fn new_import_form() -> Box<ImportForm>;
+        fn import_defaults() -> ImportSelection;
+        fn import_copy() -> ImportCopy;
+        fn select(self: &mut ImportForm, selection: ImportSelection) -> ImportDispatch;
+        fn cancel_scan(self: &mut ImportForm);
+        fn take_scan(self: &mut ImportForm, epoch: u64, visible: bool, current: ImportSelection, ready: bool, profiles_busy: bool) -> ImportDispatch;
+        fn should_resume(self: &ImportForm, ready: bool, profiles_busy: bool) -> bool;
+        fn begin_preview(self: &mut ImportForm, selection: ImportSelection);
+        fn set_status(self: &mut ImportForm, message: &str, can_apply: bool, busy: bool, applying: bool);
+        fn view(self: &ImportForm, ready: bool, profiles_busy: bool) -> ImportView;
+        fn request_apply(self: &mut ImportForm, current: ImportSelection, ready: bool, profiles_busy: bool, visible: bool) -> ImportDispatch;
+        fn finish_apply(self: &mut ImportForm, accepted: bool);
         fn action_button_layout(width: i32, height: i32, text_width: i32, control_height: i32, padding: i32, minimum_width: i32) -> ActionButtonLayout;
         fn action_group_layout(width: i32, height: i32, vertical: bool, spacing: i32, children: &[ColumnChild]) -> ColumnLayout;
         fn appearance_presets(emoji: bool) -> Vec<AppearancePreset>;
@@ -408,6 +427,51 @@ impl ProfileForm {
     fn finish_attempt(&mut self,accepted:bool){self.submitting=false;if !accepted&&self.status.is_empty(){self.status="Nie udało się wykonać operacji na profilu. Spróbuj ponownie.".into();}}
 }
 fn paragraph_layout(width:i32,line_height:i32,count:usize)->ffi::ColumnLayout{let g=notice_layout(width,line_height,count,0,0);ffi::ColumnLayout{width:g.width,height:g.height,children:g.body_lines}}
+
+// UI option snapshots contain no source paths, imported data or credentials.
+pub struct ImportForm { selection: ffi::ImportSelection, preview: ffi::ImportSelection, epoch: u64, scheduled: bool, waiting: bool, can_apply: bool, busy: bool, applying: bool, submitted: bool, message: String }
+fn import_defaults() -> ffi::ImportSelection { ffi::ImportSelection { browser:0, separate_profiles:true, bookmarks:true, history:false, cookies:false } }
+fn import_copy() -> ffi::ImportCopy {
+    ffi::ImportCopy { title:"Przenieś się do Zittera".into(), dismiss:"Zamknij import".into(), intro:"Wybierz przeglądarkę i dane, które chcesz przenieść.".into(), source_label:"Przeglądarka źródłowa".into(), source_ax:"Przeglądarka do importu".into(), heading:"Co chcesz przenieść?".into(), profiles:"Oddzielne profile przeglądania".into(), history:"Historia przeglądania".into(), cookies:"Ciasteczka i sesje witryn".into(), apply_label:"Importuj".into(), browsers:vec!["Arc".into(),"Google Chrome".into(),"Microsoft Edge".into(),"Brave".into()] }
+}
+fn new_import_form() -> Box<ImportForm> { Box::new(ImportForm { selection:import_defaults(), preview:import_defaults(), epoch:0, scheduled:false, waiting:false, can_apply:false, busy:false, applying:false, submitted:false, message:String::new() }) }
+impl ImportForm {
+    fn dispatch(&self, action: ffi::ImportAction) -> ffi::ImportDispatch {ffi::ImportDispatch {action, epoch:self.epoch, selection:self.selection.clone()}}
+    fn next_epoch(&mut self) {self.epoch=self.epoch.wrapping_add(1);if self.epoch==0 {self.epoch=1;}}
+    fn select(&mut self, selection: ffi::ImportSelection) -> ffi::ImportDispatch {
+        if self.applying||self.submitted {return self.dispatch(ffi::ImportAction::None);}
+        self.next_epoch();self.can_apply=false;self.waiting=false;
+        if selection.browser>3 {self.scheduled=false;self.busy=false;self.message="Wybierz przeglądarkę źródłową.".into();return self.dispatch(ffi::ImportAction::None);}
+        self.selection=selection;self.scheduled=true;self.busy=true;self.message="Odczytywanie danych…".into();self.dispatch(ffi::ImportAction::Preview)
+    }
+    fn cancel_scan(&mut self) {self.next_epoch();self.scheduled=false;self.waiting=false;}
+    fn take_scan(&mut self, epoch: u64, visible: bool, current: ffi::ImportSelection, ready: bool, profiles_busy: bool) -> ffi::ImportDispatch {
+        if !self.scheduled||epoch!=self.epoch||self.applying||self.submitted {return self.dispatch(ffi::ImportAction::None);}
+        self.scheduled=false;if !visible{return self.dispatch(ffi::ImportAction::None);}
+        if current!=self.selection {self.can_apply=false;return self.dispatch(ffi::ImportAction::Rescan);}
+        if !ready||profiles_busy {self.waiting=true;self.busy=false;self.message="Poczekaj na zakończenie zapisywania.".into();return self.dispatch(ffi::ImportAction::None);}
+        self.busy=true;self.dispatch(ffi::ImportAction::Preview)
+    }
+    fn should_resume(&self, ready: bool, profiles_busy: bool) -> bool {self.waiting&&ready&&!profiles_busy&&!self.applying&&!self.submitted}
+    fn begin_preview(&mut self, selection: ffi::ImportSelection) {self.next_epoch();self.scheduled=false;self.waiting=false;self.preview=selection;self.can_apply=false;self.busy=true;}
+    fn set_status(&mut self, message: &str, can_apply: bool, busy: bool, applying: bool) {self.scheduled=false;self.waiting=false;self.submitted=false;self.message=message.into();self.can_apply=can_apply;self.busy=busy;self.applying=applying;}
+    fn view(&self, ready: bool, profiles_busy: bool) -> ffi::ImportView {
+        let locked=self.applying||self.submitted;ffi::ImportView {message:self.message.clone(),bookmarks_label:if self.selection.browser==0 {"Przypięte karty, foldery i Ulubione"} else {"Zakładki i foldery"}.into(),options_enabled:!locked,close_enabled:!locked,apply_enabled:self.can_apply&&!self.busy&&!locked&&ready&&!profiles_busy&&self.preview==self.selection,applying:locked,busy:self.busy||self.submitted,can_apply:self.can_apply}
+    }
+    fn request_apply(&mut self, current: ffi::ImportSelection, ready: bool, profiles_busy: bool, visible: bool) -> ffi::ImportDispatch {
+        if !visible||self.applying||self.submitted {return self.dispatch(ffi::ImportAction::None);}
+        if current!=self.selection||current!=self.preview {self.can_apply=false;return self.dispatch(ffi::ImportAction::Rescan);}
+        if !self.view(ready,profiles_busy).apply_enabled {return self.dispatch(ffi::ImportAction::None);}
+        self.submitted=true;self.dispatch(ffi::ImportAction::Apply)
+    }
+    fn finish_apply(&mut self, accepted: bool) {
+        // A synchronous service callback may already have supplied progress or
+        // completion. Do not overwrite its authoritative state on return.
+        if !self.submitted {return;}self.submitted=false;
+        if accepted {self.applying=true;self.busy=true;self.can_apply=false;self.message="Importowanie wybranych danych…".into();}
+        else {self.message="Nie udało się rozpocząć importu. Spróbuj ponownie.".into();}
+    }
+}
 
 fn action_button_layout(width: i32, height: i32, text_width: i32, control_height: i32, padding: i32, minimum_width: i32) -> ffi::ActionButtonLayout {
     let padding=padding.max(0);let width=if width<0 {text_width.max(0).saturating_add(padding.saturating_mul(2)).max(minimum_width.max(0))} else {width};
@@ -1452,6 +1516,43 @@ mod tests {
         }
     }
     fn menu_state()->ffi::TabMenuState{ffi::TabMenuState{ready:true,busy:false,valid:true,tab:7,has_tab:true,split:true,first:3,has_first:true,second:7,has_second:true,vertical:false,tab_count:3,http:true}}
+    fn import_ready_form() -> Box<ImportForm> {let mut f=new_import_form();let s=import_defaults();f.select(s.clone());f.begin_preview(s);f.set_status("Gotowe",true,false,false);f}
+    #[test] fn import_form_preserves_defaults_sources_and_copy() {
+        let s=import_defaults();assert_eq!(s.browser,0);assert!(s.separate_profiles&&s.bookmarks&&!s.history&&!s.cookies);let c=import_copy();assert_eq!(c.browsers,vec!["Arc","Google Chrome","Microsoft Edge","Brave"]);assert_eq!(c.apply_label,"Importuj");assert!(c.cookies.contains("sesje"));
+    }
+    #[test] fn import_form_selects_all_browsers_without_forcing_data_categories() {
+        let mut f=new_import_form();for browser in 0..4 {let mut s=import_defaults();s.browser=browser;s.bookmarks=false;s.separate_profiles=false;let r=f.select(s);assert!(matches!(r.action,ffi::ImportAction::Preview));assert!(!r.selection.bookmarks&&!r.selection.history&&!r.selection.cookies);assert_eq!(f.view(true,false).bookmarks_label,if browser==0 {"Przypięte karty, foldery i Ulubione"} else {"Zakładki i foldery"});}
+    }
+    #[test] fn import_form_debounce_dispatches_only_latest_visible_selection_once() {
+        let mut f=new_import_form();let a=f.select(import_defaults());let mut current=import_defaults();current.browser=1;let b=f.select(current.clone());assert_ne!(a.epoch,b.epoch);assert!(matches!(f.take_scan(a.epoch,true,current.clone(),true,false).action,ffi::ImportAction::None));
+        let r=f.take_scan(b.epoch,true,current.clone(),true,false);assert!(matches!(r.action,ffi::ImportAction::Preview));assert_eq!(r.selection.browser,1);assert!(matches!(f.take_scan(b.epoch,true,current,true,false).action,ffi::ImportAction::None));
+    }
+    #[test] fn import_form_cancel_and_hidden_tick_cannot_restart_scan() {
+        let mut f=new_import_form();let a=f.select(import_defaults());f.cancel_scan();assert!(matches!(f.take_scan(a.epoch,true,import_defaults(),true,false).action,ffi::ImportAction::None));let b=f.select(import_defaults());assert!(matches!(f.take_scan(b.epoch,false,import_defaults(),true,false).action,ffi::ImportAction::None));assert!(matches!(f.take_scan(b.epoch,true,import_defaults(),true,false).action,ffi::ImportAction::None));
+    }
+    #[test] fn import_form_blocked_preview_resumes_only_when_configuration_available() {
+        for (ready,busy) in [(false,false),(true,true)] {let mut f=new_import_form();let r=f.select(import_defaults());assert!(matches!(f.take_scan(r.epoch,true,import_defaults(),ready,busy).action,ffi::ImportAction::None));assert!(!f.should_resume(false,false));assert!(!f.should_resume(true,true));assert!(f.should_resume(true,false));f.cancel_scan();assert!(!f.should_resume(true,false));}
+    }
+    #[test] fn import_form_rechecks_programmatic_option_changes_before_scan_and_apply() {
+        let mut f=new_import_form();let r=f.select(import_defaults());let mut changed=import_defaults();changed.cookies=true;assert!(matches!(f.take_scan(r.epoch,true,changed.clone(),true,false).action,ffi::ImportAction::Rescan));
+        let mut f=import_ready_form();assert!(matches!(f.request_apply(changed,true,false,true).action,ffi::ImportAction::Rescan));assert!(!f.view(true,false).apply_enabled);
+    }
+    #[test] fn import_form_scanning_stays_editable_applying_locks_controls_and_close() {
+        let mut f=new_import_form();f.select(import_defaults());let v=f.view(true,false);assert!(v.options_enabled&&v.close_enabled&&!v.apply_enabled);f.set_status("Importowanie…",false,true,true);let v=f.view(true,false);assert!(!v.options_enabled&&!v.close_enabled&&!v.apply_enabled);assert!(v.applying);assert!(matches!(f.select(import_defaults()).action,ffi::ImportAction::None));
+        f.set_status("Odmowa dostępu do źródła",true,false,false);let v=f.view(true,false);assert!(v.options_enabled&&v.close_enabled&&v.apply_enabled);assert_eq!(v.message,"Odmowa dostępu do źródła");
+    }
+    #[test] fn import_form_apply_admission_prevents_duplicates_and_can_retry_rejection() {
+        let mut f=import_ready_form();assert!(matches!(f.request_apply(import_defaults(),true,false,true).action,ffi::ImportAction::Apply));assert!(!f.view(true,false).options_enabled);assert!(matches!(f.request_apply(import_defaults(),true,false,true).action,ffi::ImportAction::None));f.finish_apply(false);assert!(f.view(true,false).apply_enabled);assert!(f.view(true,false).message.contains("Spróbuj ponownie"));assert!(matches!(f.request_apply(import_defaults(),true,false,true).action,ffi::ImportAction::Apply));f.finish_apply(true);assert!(f.view(true,false).applying);
+    }
+    #[test] fn import_form_service_completion_is_not_overwritten_by_admission_return() {
+        let mut f=import_ready_form();f.request_apply(import_defaults(),true,false,true);f.set_status("Zaimportowano dane",false,false,false);f.finish_apply(true);let v=f.view(true,false);assert!(!v.applying&&!v.apply_enabled);assert!(v.options_enabled);assert_eq!(v.message,"Zaimportowano dane");
+        f.begin_preview(import_defaults());f.set_status("Odczytywanie…",true,true,false);assert!(!f.view(true,false).apply_enabled);
+    }
+    #[test] fn import_form_rejects_invalid_sources_hidden_apply_and_unready_service_state() {
+        let mut f=new_import_form();let mut invalid=import_defaults();invalid.browser=99;assert!(matches!(f.select(invalid).action,ffi::ImportAction::None));assert!(!f.view(true,false).message.is_empty());
+        for (ready,busy,visible) in [(false,false,true),(true,true,true),(true,false,false)] {let mut f=import_ready_form();assert!(matches!(f.request_apply(import_defaults(),ready,busy,visible).action,ffi::ImportAction::None));}
+        let mut f=import_ready_form();let mut external=import_defaults();external.history=true;f.begin_preview(external);f.set_status("Inny podgląd",true,false,false);assert!(!f.view(true,false).apply_enabled);
+    }
     #[test] fn action_button_metrics_preserve_platform_padding_minimum_and_height() {
         let g=action_button_layout(-1,-1,100,40,16,64);assert_eq!((g.width,g.height,g.text.x,g.text.width),(132,40,16,100));assert_eq!(action_button_layout(-1,-1,0,40,16,64).width,64);
     }

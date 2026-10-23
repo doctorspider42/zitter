@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <cstdint>
 #include <map>
 #include <set>
 #include "zitter/core/workspace_model.h"
@@ -54,6 +55,7 @@ namespace zitter::prototype {
 class WorkspaceSwipeState;
 class ProfileFormState;
 class WorkspaceFormState;
+class ImportFormState;
 
 // Top band above the sidebar; its first 28 px align with macOS's titlebar,
 // where the native traffic lights sit.
@@ -293,6 +295,9 @@ class WorkspaceShell final : public ui::EventHandler,
   void OpenProfiles(std::string profile_id = {}, std::string workspace_id = {});
   void OpenImport();
   void SetImportStatus(std::u16string message, bool can_import, bool busy = false, bool applying = false);
+  void BeginImportPreview(const BrowserImportOptions& options);
+  bool import_panel_contains_scene_text(std::string_view text) const;
+  views::View* import_panel_for_testing() const{return import_root_;}
   bool import_visible() const;
   BrowserImportOptions import_options() const;
   views::Combobox* import_browser_picker() const { return import_browser_picker_; }
@@ -491,6 +496,9 @@ class WorkspaceShell final : public ui::EventHandler,
   std::string context_pin_;
   void SubmitWorkspace(bool add);
   void ImportSelectionChanged();
+  void RefreshRustImportControls();
+  void DispatchImportPreview(uint64_t epoch);
+  void SubmitImport();
   base::OneShotTimer import_preview_timer_;
   void ConfirmRemoveWorkspace(std::string id);
   bool creating_workspace_ = false;
@@ -647,7 +655,8 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::Button> remove_workspace_ = nullptr;
   raw_ptr<views::View> configuration_error_ = nullptr;
   raw_ptr<views::View> import_root_ = nullptr;
-  raw_ptr<views::Label> import_status_ = nullptr;
+  raw_ptr<views::View> import_status_ = nullptr;
+  std::unique_ptr<ImportFormState> import_form_;
   raw_ptr<views::Combobox> import_browser_picker_ = nullptr;
   raw_ptr<views::Checkbox> import_bookmarks_ = nullptr;
   raw_ptr<views::Checkbox> import_profiles_ = nullptr;
