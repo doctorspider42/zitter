@@ -671,7 +671,9 @@ validation/layout and Metal label/error text while retaining native editing and
 modal adapters. Folder deletion/save-error bodies use Rust notice state and
 wrapped Metal scene text as well. Profile management now uses Rust state,
 validation, stable-ID selection and two-step deletion, with Metal static text
-and native editors/pickers/buttons. Workspace create/edit settings also use Rust
+and native editing/service adapters. Both profile selectors now use Rust stable-ID
+selection and Metal closed-control drawing, with native popup/IME/AX adapters.
+Workspace create/edit settings also use Rust
 form state, validation and column layout, with Metal headings/help/error text;
 native input, appearance controls and storage services remain. Workspace deletion
 confirmation now has Rust state/copy and a shared Metal notice body, retaining

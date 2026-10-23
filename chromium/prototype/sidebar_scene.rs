@@ -5,7 +5,7 @@
 #[cxx::bridge(namespace = "zitter::sidebar")]
 mod ffi {
     struct SelectLayout { width: i32, height: i32, label: Rect, arrow: Rect }
-    struct SelectOption { label: String, search: String }
+    struct SelectOption { key: String, label: String, search: String }
     struct CheckboxLayout { width: i32, height: i32, mark: Rect, label: Rect, lines: Vec<Rect> }
     #[derive(Clone, PartialEq, Eq)]
     struct ImportSelection { browser: u32, separate_profiles: bool, bookmarks: bool, history: bool, cookies: bool }
@@ -96,6 +96,13 @@ mod ffi {
         type SelectState;
         fn new_select_state(options: Vec<SelectOption>) -> Box<SelectState>;
         fn selected(self: &SelectState) -> usize;
+        fn has_selection(self: &SelectState) -> bool;
+        fn selected_key(self: &SelectState) -> &str;
+        fn option_key(self: &SelectState, index: usize) -> &str;
+        fn replace_options(self: &mut SelectState, options: Vec<SelectOption>, fallback_last: bool, select_last: bool) -> bool;
+        fn can_choose(self: &SelectState, token: u64, key: &str, enabled: bool) -> bool;
+        fn choose_key(self: &mut SelectState, token: u64, key: &str, enabled: bool) -> bool;
+        fn close_menu(self: &mut SelectState, token: u64) -> bool;
         fn select_index(self: &mut SelectState, index: usize) -> bool;
         fn open(self: &mut SelectState, enabled: bool) -> u64;
         fn expanded(self: &SelectState) -> bool;
@@ -449,12 +456,25 @@ impl ProfileForm {
 }
 fn paragraph_layout(width:i32,line_height:i32,count:usize)->ffi::ColumnLayout{let g=notice_layout(width,line_height,count,0,0);ffi::ColumnLayout{width:g.width,height:g.height,children:g.body_lines}}
 
-// Immutable menu options use index identities. A token rejects commands from
-// a closed/hidden/disabled or superseded native popup. No browser data crosses.
+// Stable UI keys retain selection through model changes. Popup generations and
+// captured keys reject stale native callbacks. No browser data crosses.
 pub struct SelectState { options: Vec<ffi::SelectOption>, selected: usize, epoch: u64, expanded: bool, prefix: String, last_input: Option<u64> }
-fn new_select_state(options: Vec<ffi::SelectOption>) -> Box<SelectState> {Box::new(SelectState {options,selected:0,epoch:0,expanded:false,prefix:String::new(),last_input:None})}
+fn new_select_state(options: Vec<ffi::SelectOption>) -> Box<SelectState> {let mut state=Box::new(SelectState {options:vec![],selected:0,epoch:0,expanded:false,prefix:String::new(),last_input:None});state.replace_options(options,false,false);state}
 impl SelectState {
     fn selected(&self)->usize {self.selected}
+    fn has_selection(&self)->bool {self.selected<self.options.len()}
+    fn option_key(&self,index:usize)->&str {self.options.get(index).map_or("",|option|option.key.as_str())}
+    fn selected_key(&self)->&str {self.options.get(self.selected).map_or("",|option|option.key.as_str())}
+    fn replace_options(&mut self,options:Vec<ffi::SelectOption>,fallback_last:bool,select_last:bool)->bool {
+        let mut keys=BTreeSet::new();if options.iter().any(|option|option.key.is_empty()||!keys.insert(option.key.as_str())){return false;}
+        let selected=self.selected_key().to_owned();self.dismiss();self.reset_prefix();
+        let last=options.len().saturating_sub(1);
+        self.selected=if select_last{last}else{options.iter().position(|option|option.key==selected).unwrap_or(if fallback_last{last}else{0})};
+        self.options=options;true
+    }
+    fn can_choose(&self,token:u64,key:&str,enabled:bool)->bool {enabled&&self.expanded&&token!=0&&token==self.epoch&&self.options.iter().any(|option|option.key==key)}
+    fn choose_key(&mut self,token:u64,key:&str,enabled:bool)->bool {if !self.can_choose(token,key,enabled){return false;}self.selected=self.options.iter().position(|option|option.key==key).unwrap();self.expanded=false;true}
+    fn close_menu(&mut self,token:u64)->bool {if token==0||token!=self.epoch{return false;}self.dismiss();true}
     fn select_index(&mut self,index:usize)->bool {if index>=self.options.len(){return false;}self.dismiss();self.reset_prefix();self.selected=index;true}
     fn open(&mut self,enabled:bool)->u64 {if !enabled||self.options.is_empty(){return 0;}self.dismiss();self.reset_prefix();self.expanded=true;self.epoch}
     fn expanded(&self)->bool {self.expanded}
@@ -1608,7 +1628,32 @@ mod tests {
         }
     }
     fn menu_state()->ffi::TabMenuState{ffi::TabMenuState{ready:true,busy:false,valid:true,tab:7,has_tab:true,split:true,first:3,has_first:true,second:7,has_second:true,vertical:false,tab_count:3,http:true}}
-    fn select_fixture()->Box<SelectState> {new_select_state(vec![ffi::SelectOption{label:"Arc".into(),search:"arc".into()},ffi::SelectOption{label:"Google Chrome".into(),search:"google chrome".into()},ffi::SelectOption{label:"Microsoft Edge".into(),search:"microsoft edge".into()},ffi::SelectOption{label:"Brave".into(),search:"brave".into()}])}
+    fn select_fixture()->Box<SelectState> {new_select_state(vec![ffi::SelectOption{key:"Arc".into(),label:"Arc".into(),search:"arc".into()},ffi::SelectOption{key:"Google Chrome".into(),label:"Google Chrome".into(),search:"google chrome".into()},ffi::SelectOption{key:"Microsoft Edge".into(),label:"Microsoft Edge".into(),search:"microsoft edge".into()},ffi::SelectOption{key:"Brave".into(),label:"Brave".into(),search:"brave".into()}])}
+    fn keyed_options(values:&[(&str,&str)])->Vec<ffi::SelectOption>{values.iter().map(|(key,label)|ffi::SelectOption{key:(*key).into(),label:(*label).into(),search:label.to_lowercase()}).collect()}
+    #[test] fn select_model_reorder_and_rename_preserve_identity_with_duplicate_labels() {
+        let mut s=new_select_state(keyed_options(&[("a","Same"),("b","Same"),("c","Other")]));assert!(s.select_index(1));assert!(s.replace_options(keyed_options(&[("c","Other"),("a","Same"),("b","Renamed 🦀")]),false,false));assert_eq!((s.selected(),s.selected_key()),(2,"b"));assert!(s.replace_options(keyed_options(&[("b","Renamed again"),("c","Other")]),false,false));assert_eq!((s.selected(),s.selected_key()),(0,"b"));
+    }
+    #[test] fn select_model_new_profile_policy_selects_last_while_other_updates_preserve() {
+        let mut s=new_select_state(keyed_options(&[("a","A"),("b","B")]));assert!(s.replace_options(keyed_options(&[("a","A"),("b","B"),("c","C")]),true,true));assert_eq!(s.selected_key(),"c");assert!(s.replace_options(keyed_options(&[("c","C"),("d","D"),("a","A")]),true,false));assert_eq!(s.selected_key(),"c");
+    }
+    #[test] fn select_model_removed_selection_uses_first_or_last_fallback_and_empty_clears() {
+        for last in [false,true]{let mut s=new_select_state(keyed_options(&[("a","A")]));s.replace_options(keyed_options(&[("b","B"),("c","C")]),last,false);assert_eq!(s.selected_key(),if last{"c"}else{"b"});assert!(s.replace_options(vec![],last,false));assert!(!s.has_selection());assert_eq!(s.selected_key(),"");assert_eq!(s.open(true),0);assert!(s.replace_options(keyed_options(&[("d","D")]),last,false));assert!(s.has_selection());assert_eq!(s.selected_key(),"d");}
+    }
+    #[test] fn select_model_invalid_empty_or_duplicate_keys_are_rejected_transactionally() {
+        let mut s=new_select_state(keyed_options(&[("a","A"),("b","B")]));s.select_index(1);let t=s.open(true);assert!(!s.replace_options(keyed_options(&[("","Empty")]),false,false));assert!(!s.replace_options(keyed_options(&[("x","First"),("x","Second")]),false,false));assert_eq!(s.selected_key(),"b");assert!(s.can_choose(t,"a",true));assert_eq!(s.option_key(1),"b");assert_eq!(s.option_key(99),"");
+    }
+    #[test] fn select_model_replacement_rejects_captured_key_and_numeric_commands() {
+        let mut s=new_select_state(keyed_options(&[("a","A"),("b","B")]));let old=s.open(true);assert!(s.replace_options(keyed_options(&[("b","B"),("a","A")]),false,false));assert!(!s.can_choose(old,"b",true));assert!(!s.choose_key(old,"b",true));assert!(!s.choose(old,1,true));let current=s.open(true);assert!(!s.choose_key(current,"missing",true));assert!(!s.choose_key(current,"b",false));assert!(s.choose_key(current,"b",true));assert_eq!((s.selected(),s.selected_key()),(0,"b"));assert!(!s.choose_key(current,"a",true));
+    }
+    #[test] fn select_old_close_callback_cannot_collapse_new_popup_or_choose_after_close() {
+        let mut s=select_fixture();let old=s.open(true);let current=s.open(true);assert!(!s.close_menu(old));assert!(s.expanded());assert!(s.choose_key(current,"Brave",true));assert!(s.close_menu(current));assert!(!s.expanded());let next=s.open(true);assert!(!s.close_menu(current));assert!(s.can_choose(next,"Arc",true));assert!(s.close_menu(next));assert!(!s.choose_key(next,"Arc",true));assert!(!s.close_menu(next));
+    }
+    #[test] fn select_model_update_resets_prefix_and_keyed_same_value_dispatch_is_once() {
+        let mut s=new_select_state(keyed_options(&[("a","Alpha"),("b","Beta")]));assert!(s.input("b",10,true));s.replace_options(keyed_options(&[("a","Alpha"),("b","Beta renamed")]),true,false);assert!(s.input("a",11,true));assert_eq!(s.selected_key(),"a");let t=s.open(true);assert!(s.choose_key(t,"a",true));assert!(!s.choose_key(t,"a",true));assert!(s.select_index(1));assert!(!s.choose_key(t,"a",true));
+    }
+    #[test] fn select_unicode_normalized_search_survives_rename_and_distinguishes_ids() {
+        let mut s=new_select_state(keyed_options(&[("a","Łódź 🦀"),("b","日本語"),("c","Łódź 🦀")]));assert!(s.input("łó",10,true));assert_eq!(s.selected_key(),"c");s.replace_options(keyed_options(&[("c","日本語 🦀"),("a","Łódź 🦀")]),false,false);assert_eq!(s.selected_key(),"c");assert!(!s.input("日本",11,true));assert_eq!(s.selected_key(),"c");assert!(s.input("ł",1011,true));assert_eq!(s.selected_key(),"a");
+    }
     #[test] fn select_menu_tokens_reject_old_closed_duplicate_and_disabled_commands() {
         let mut s=select_fixture();let first=s.open(true);assert!(s.expanded());let second=s.open(true);assert_ne!(first,second);assert!(!s.choose(first,1,true));assert!(!s.choose(second,1,false));assert!(!s.choose(second,4,true));assert_eq!(s.selected(),0);assert!(s.choose(second,1,true));assert!(!s.choose(second,2,true));assert_eq!(s.selected(),1);let t=s.open(true);s.dismiss();assert!(!s.expanded());assert!(!s.choose(t,0,true));assert_eq!(s.selected(),1);
     }
@@ -1619,7 +1664,7 @@ mod tests {
         let mut s=select_fixture();assert!(s.input("g",100,true));assert_eq!(s.selected(),1);assert!(!s.input("oogle",101,true));assert!(!s.input("b",999,true));assert_eq!(s.selected(),1);assert!(s.input("b",1999,true));assert_eq!(s.selected(),3);s.reset_prefix();assert!(s.input("arc",2000,true));assert_eq!(s.selected(),0);
     }
     #[test] fn select_prefix_cycles_after_timeout_and_handles_clock_reset() {
-        let mut s=new_select_state(vec![ffi::SelectOption{label:"A".into(),search:"a".into()},ffi::SelectOption{label:"Ab".into(),search:"ab".into()}]);assert!(s.input("a",5000,true));assert_eq!(s.selected(),1);assert!(s.input("a",6000,true));assert_eq!(s.selected(),0);assert!(s.input("a",10,true));assert_eq!(s.selected(),1);assert!(!s.input("a",11,true));assert_eq!(s.selected(),1);
+        let mut s=new_select_state(vec![ffi::SelectOption{key:"A".into(),label:"A".into(),search:"a".into()},ffi::SelectOption{key:"Ab".into(),label:"Ab".into(),search:"ab".into()}]);assert!(s.input("a",5000,true));assert_eq!(s.selected(),1);assert!(s.input("a",6000,true));assert_eq!(s.selected(),0);assert!(s.input("a",10,true));assert_eq!(s.selected(),1);assert!(!s.input("a",11,true));assert_eq!(s.selected(),1);
     }
     #[test] fn select_prefix_ignores_controls_disabled_and_empty_without_poisoning_search() {
         let mut s=select_fixture();assert!(!s.input("g",0,false));assert!(!s.input("\t",0,true));assert!(!s.input("\r",0,true));assert!(!s.input("",0,true));assert!(s.input("g",10,true));assert!(!s.input("\n",11,true));assert!(!s.input("oogle",12,true));assert_eq!(s.selected(),1);

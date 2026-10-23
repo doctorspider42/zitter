@@ -2483,7 +2483,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DynamicWorkspacesAndProfiles) 
   views::test::ButtonTestApi(add).NotifyDefaultMouseClick();
   EXPECT_EQ(2u, window_->workspaces().size());
   shell->workspace_input()->SetText(u"Projekt Łódź");
-  shell->profile_picker()->SetSelectedIndex(0);
+  shell->SetProfilePickerSelectionForTesting(false,0);
   views::test::ButtonTestApi(add).NotifyDefaultMouseClick();
   const auto project = window_->active_id();
   ASSERT_EQ(3u, window_->workspaces().size());
@@ -2497,7 +2497,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DynamicWorkspacesAndProfiles) 
   EXPECT_EQ(2u, window_->tab_count(project));
   shell->OpenWorkspaceSettings();
   shell->workspace_input()->SetText(u"Klient");
-  shell->profile_picker()->SetSelectedIndex(1);
+  shell->SetProfilePickerSelectionForTesting(false,1);
   auto* edit = FindButton(shell->settings_widget()->GetContentsView(), u"Zapisz nazwę i profil");
   ASSERT_TRUE(edit);
   views::test::ButtonTestApi(edit).NotifyDefaultMouseClick();
@@ -3058,7 +3058,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceDotProfileMenu) {
   views::test::ButtonTestApi(rename).NotifyDefaultMouseClick();
   ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
   EXPECT_EQ("Profil zespołu", window_->profiles()[0].name);
-  EXPECT_EQ(0u, shell->managed_profile_picker()->GetSelectedIndex());
+  EXPECT_EQ(0u, shell->profile_picker_selection(true));
   EXPECT_EQ(work_.get(), window_->contents("work")->GetBrowserContext());
   shell->BuildWorkspaceMenu("personal");
   profiles = shell->workspace_menu()->GetSubmenuModelAt(0);
@@ -3099,7 +3099,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DynamicProfiles) {
   EXPECT_FALSE(window_->CreateProfile("  "));
   EXPECT_FALSE(window_->CreateProfile("Klient Łódź"));
   shell->OpenWorkspaceSettings();
-  ASSERT_EQ(3u, shell->profile_picker()->GetModel()->GetItemCount());
+  ASSERT_EQ(3u, shell->profile_picker_count());
   ASSERT_TRUE(window_->EditWorkspace("Praca", added.id));
   EXPECT_FALSE(window_->RemoveProfile(added.id));
   const auto url = embedded_test_server()->GetURL("/storage_probe.html");
@@ -3118,7 +3118,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DynamicProfiles) {
   ASSERT_TRUE(window_->EditWorkspace("Praca", "work-profile"));
   shell = window_->shell();
   shell->OpenProfiles();
-  shell->managed_profile_picker()->SetSelectedIndex(2);
+  shell->SetProfilePickerSelectionForTesting(true,2);
   auto* remove = FindButton(shell->profiles_widget()->GetContentsView(), u"Usuń profil i jego dane");
   ASSERT_TRUE(remove);
   views::test::ButtonTestApi(remove).NotifyDefaultMouseClick();
@@ -3917,6 +3917,17 @@ class ZitterMetalSidebarBrowserTest : public ZitterProfilesBrowserTest {
     command_line->AppendSwitchASCII("zitter-sidebar", "rust-metal");
   }
 };
+// Compile only. Native popup, IME and Metal acceptance awaits the GUI checkpoint.
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ProfilePickerScenesStableIDsPrefixAndModelCancellation) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenWorkspaceSettings();ASSERT_TRUE(base::test::RunUntil([&]{return shell->profile_picker_metal_visible(false);}));auto* assignment=shell->profile_picker();EXPECT_FALSE(views::AsViewClass<views::Combobox>(assignment));for(const auto& child:assignment->children())EXPECT_FALSE(views::AsViewClass<views::Label>(child.get()));
+  ASSERT_TRUE(shell->profile_picker_selection(false));EXPECT_EQ("work-profile",window_->profiles()[*shell->profile_picker_selection(false)].id);shell->SetProfilePickerSelectionForTesting(false,1);ui::AXNodeData chosen;assignment->GetViewAccessibility().GetAccessibleNodeData(&chosen);EXPECT_EQ(ax::mojom::Role::kComboBoxSelect,chosen.role);EXPECT_EQ(base::UTF8ToUTF16(window_->profiles()[1].name),chosen.GetString16Attribute(ax::mojom::StringAttribute::kValue));shell->OpenWorkspaceSettings();ASSERT_TRUE(shell->profile_picker_selection(false));EXPECT_EQ("work-profile",window_->profiles()[*shell->profile_picker_selection(false)].id);
+  shell->OpenProfiles("work-profile");ASSERT_TRUE(base::test::RunUntil([&]{return shell->profile_picker_metal_visible(true);}));auto* managed=shell->managed_profile_picker();EXPECT_FALSE(views::AsViewClass<views::Combobox>(managed));ASSERT_TRUE(window_->CreateProfile("Picker Łódź 🦀"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy()&&shell->profile_picker_selection(true)==2u;}));const auto added=window_->profiles().back().id;ASSERT_TRUE(base::test::RunUntil([&]{return shell->profile_panel_contains_scene_text("Picker Łódź 🦀");}));EXPECT_EQ(3u,shell->profile_picker_count());
+  ASSERT_TRUE(window_->RenameProfile(added,"Picker 日本語"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy()&&shell->profile_panel_contains_scene_text("Picker 日本語");}));ASSERT_TRUE(shell->profile_picker_selection(true));EXPECT_EQ(added,window_->profiles()[*shell->profile_picker_selection(true)].id);
+  auto* remove=FindButton(shell->profile_panel_for_testing(),u"Usuń profil i jego dane");ASSERT_TRUE(remove&&remove->GetEnabled());views::test::ButtonTestApi(remove).NotifyDefaultMouseClick();ASSERT_TRUE(FindButton(shell->profile_panel_for_testing(),u"Potwierdź usunięcie profilu i danych"));shell->ActivateProfilePickerSelectionForTesting(true,0);EXPECT_FALSE(FindButton(shell->profile_panel_for_testing(),u"Potwierdź usunięcie profilu i danych"));EXPECT_EQ(base::UTF8ToUTF16(window_->profiles()[0].name),shell->profile_name_input()->GetText());EXPECT_EQ(3u,window_->profiles().size());
+  managed->RequestFocus();ASSERT_TRUE(managed->HasFocus());auto* input=managed->GetInputMethod()->GetTextInputClient();ASSERT_TRUE(input);input->InsertText(u"picker",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);ASSERT_TRUE(shell->profile_picker_selection(true));EXPECT_EQ(added,window_->profiles()[*shell->profile_picker_selection(true)].id);EXPECT_EQ(u"Picker 日本語",shell->profile_name_input()->GetText());managed->SetEnabled(false);shell->ActivateProfilePickerSelectionForTesting(true,0);EXPECT_EQ(2u,shell->profile_picker_selection(true));managed->SetEnabled(true);
+  const gfx::Point point(12,12);ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ASSERT_TRUE(managed->OnMousePressed(press));ASSERT_TRUE(window_->RenameProfile(added,"Picker after update"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));managed->OnMouseReleased(release);ui::AXNodeData collapsed;managed->GetViewAccessibility().GetAccessibleNodeData(&collapsed);EXPECT_TRUE(collapsed.HasState(ax::mojom::State::kCollapsed));EXPECT_EQ(u"Picker after update",collapsed.GetString16Attribute(ax::mojom::StringAttribute::kValue));
+  shell->profiles_widget()->Hide();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->profile_picker_metal_visible(true);}));shell->OpenProfiles(added);ASSERT_TRUE(base::test::RunUntil([&]{return shell->profile_picker_metal_visible(true)&&shell->profile_panel_contains_scene_text("Picker after update");}));
+}
 // Compile only. Real popup, IME and Metal acceptance awaits the GUI checkpoint.
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ImportSourceScenePrefixAXDisabledAndVisibility) {
   base::ScopedAllowBlockingForTesting files;base::ScopedTempDir source;ASSERT_TRUE(source.CreateUniqueTempDir());base::FilePath root;ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT,&root));ASSERT_TRUE(base::CopyDirectory(root.AppendASCII("zitter/testdata/arc"),source.GetPath().AppendASCII("Arc"),true));ASSERT_TRUE(base::CreateDirectory(source.GetPath().AppendASCII("Google/Chrome/Default")));base::ScopedPathOverride app_data(base::DIR_APP_DATA,source.GetPath());
@@ -4042,10 +4053,10 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, WorkspaceFormScenesCreateC
   views::test::ButtonTestApi(create).NotifyDefaultMouseClick();EXPECT_EQ(2u,window_->workspaces().size());ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_panel_contains_scene_text("Podaj nazwę przestrzeni.");}));
   ui::CompositionText composition;composition.text=u"にほん";composition.selection=gfx::Range(composition.text.size());field->SetCompositionText(composition);ASSERT_TRUE(field->IsIMEComposing());
   views::test::ButtonTestApi(create).NotifyDefaultMouseClick();EXPECT_EQ(2u,window_->workspaces().size());field->ClearCompositionText();
-  field->SetText(u"  Projekt Łódź 🦀  ");shell->profile_picker()->SetSelectedIndex(0);views::test::ButtonTestApi(create).NotifyDefaultMouseClick();
+  field->SetText(u"  Projekt Łódź 🦀  ");shell->SetProfilePickerSelectionForTesting(false,0);views::test::ButtonTestApi(create).NotifyDefaultMouseClick();
   ASSERT_EQ(3u,window_->workspaces().size());const auto project=window_->active_id();EXPECT_EQ("Projekt Łódź 🦀",window_->workspaces().back().name);EXPECT_EQ(work_.get(),window_->contents(project)->GetBrowserContext());
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_panel_contains_scene_text("Projekt Łódź 🦀");}));ASSERT_TRUE(button(u"Zapisz nazwę i profil"));
-  shell->OpenWorkspaceSettings();field->SetText(u"  Klient 日本語  ");shell->profile_picker()->SetSelectedIndex(1);views::test::ButtonTestApi(button(u"Zapisz nazwę i profil")).NotifyDefaultMouseClick();
+  shell->OpenWorkspaceSettings();field->SetText(u"  Klient 日本語  ");shell->SetProfilePickerSelectionForTesting(false,1);views::test::ButtonTestApi(button(u"Zapisz nazwę i profil")).NotifyDefaultMouseClick();
   EXPECT_EQ("Klient 日本語",window_->workspaces().back().name);EXPECT_EQ(personal_.get(),window_->contents(project)->GetBrowserContext());
   shell->OpenWorkspaceSettings();shell->color_input()->SetText(u"invalid");ui::KeyEvent enter(ui::EventType::kKeyPressed,ui::VKEY_RETURN,ui::EF_NONE);
   ASSERT_TRUE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(shell->color_input(),enter));ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_panel_contains_scene_text("Podaj kolor #RRGGBB");}));
@@ -4089,8 +4100,8 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ProfilePanelScenesValidati
   shell->OpenProfiles(added.id);remove=button(u"Usuń profil i jego dane");ASSERT_TRUE(remove);views::test::ButtonTestApi(remove).NotifyDefaultMouseClick();
   // An external rename updates the catalogue and disarms the pending deletion.
   ASSERT_TRUE(window_->RenameProfile(added.id,"Po zmianie katalogu"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));
-  ASSERT_TRUE(button(u"Usuń profil i jego dane"));ASSERT_TRUE(shell->managed_profile_picker()->GetSelectedIndex());
-  EXPECT_EQ(added.id,window_->profiles()[*shell->managed_profile_picker()->GetSelectedIndex()].id);
+  ASSERT_TRUE(button(u"Usuń profil i jego dane"));ASSERT_TRUE(shell->profile_picker_selection(true));
+  EXPECT_EQ(added.id,window_->profiles()[*shell->profile_picker_selection(true)].id);
   views::test::ButtonTestApi(button(u"Usuń profil i jego dane")).NotifyDefaultMouseClick();EXPECT_EQ(3u,window_->profiles().size());
   auto* confirm=button(u"Potwierdź usunięcie profilu i danych");ASSERT_TRUE(confirm);views::test::ButtonTestApi(confirm).NotifyDefaultMouseClick();
   ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));EXPECT_EQ(2u,window_->profiles().size());

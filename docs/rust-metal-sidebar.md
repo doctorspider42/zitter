@@ -992,3 +992,69 @@ bounds, theme/scale/RTL, native fallback and import persistence. Existing post-
 baseline GUI results remain unaccepted. Packaging/signing and CPU/GPU/actual
 presentation comparisons remain separate pending work. See
 [source selector verification](benchmarks/rust-source-picker-headless-2026-10-23.json).
+
+
+## Profile selectors (GUI checkpoint pending)
+
+Workspace assignment and managed-profile selection now use `SceneSelect` in the
+opt-in backend, sharing the Rust/Metal closed-control recipe and native popup,
+IME, focus, AX and event adapters introduced for the import source. Each has one
+Metal canvas with no native Combobox/Label/arrow-button/focus-ring/ink painting.
+Legacy Views retains both native Combobox controls. Native platform typography,
+colors/control-height metrics, profile creation/deletion/storage, browser-context
+isolation and workspace persistence remain application services.
+
+Rust selector options now carry stable UI keys. Replacing a model preserves the
+selected key across reorder and rename, even when labels are equal. Workspace
+selection falls back to the first entry if its key disappears; management falls
+back to the last, and the existing newly-created-profile rule selects the last
+entry. The existing Rust ProfileForm reconciler remains the source of management
+form intent; it synchronizes the selector after updates. An empty model has no
+selection, no AX value and no admissible popup. Rust rejects duplicate or empty
+keys without mutating the option list.
+
+Model replacement and programmatic selection cancel armed pointer/key input,
+prefix search and pending menu identity before updating presentation. Programmatic
+selection does not invoke a user callback. Managed-profile user selection retains
+the original callback: it clears deletion confirmation/new-profile workspace
+intent, fills the name editor, selects the profile in Rust form state and refreshes
+controls/status. Workspace selection remains unsaved until the existing form's
+Save/Create action. Reopening workspace settings selects the active workspace's
+actual profile as before.
+
+Each native menu now owns a snapshot of keys and its opening's generation.
+Enabled/activation callbacks pass those captured values to Rust, rather than
+reading a newer menu token or applying an old numeric index to a new model. Close
+callbacks also carry the captured generation: a delayed old close cannot collapse
+or reset a new popup. This hardening also applies to the import source selector.
+Invalid test-selection indices are rejected before opening any Rust menu state.
+
+Internal getters expose common View nodes and optional selection/count helpers;
+explicit test setters preserve callback-free native SetSelectedIndex semantics,
+while a separate activation helper dispatches the real selection callback for
+either backend. Existing browser tests were adapted without retaining hidden
+native Comboboxes in the opt-in UI. Scene-text and surface diagnostics now include
+both profile selectors.
+
+**148 Rust and 61 Python tests passed** without windows, with scoped GN and
+boundary checks, optimized app/test compilation and a final no-work Ninja check.
+Eight new Rust cases exercise stable IDs with equal labels/reorder/rename,
+new-profile selection and deletion/empty fallbacks, invalid-key rejection,
+replaced-model command rejection, old-close/new-popup ordering, prefix reset,
+same-value single admission and Unicode normalized search.
+`ProfilePickerScenesStableIDsPrefixAndModelCancellation` was compiled only. It
+covers both Metal selectors, no native Combobox/Labels, optional selected index
+and AX value, workspace reopen reset, profile creation/rename, deletion-confirmation
+cancellation, committed prefix input/name prefilling, disabled activation,
+model-change capture cancellation and hide/reopen behavior. Existing profile CRUD,
+workspace/profile assignment, menu routing, failed-write and import cases remain
+in the deferred matrix: **70 Metal cases and 34 Views controls**.
+
+No application/windowed test was launched, packaged or signed. Actual popup
+selection/cancel/staleness/destruction, keyboard/IME/VoiceOver and focus return,
+profile CRUD/workspace persistence and isolation, Metal text/arrow output,
+truncation/narrow bounds, RTL/theme/scale/clipping and native fallback await the
+checkpoint. GPU quad/shader ABI and binary dependencies are unchanged; the CPU
+Rust/C++ selector bridge was extended for stable keys and model lifecycle.
+CPU/GPU/actual presentation still need a separate comparison. See
+[profile selector verification](benchmarks/rust-profile-pickers-headless-2026-10-23.json).

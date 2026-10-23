@@ -314,7 +314,12 @@ class WorkspaceShell final : public ui::EventHandler,
   void SetProfileStatus(std::u16string message);
   views::Widget* profiles_widget() const { return profiles_widget_.get(); }
   views::Textfield* profile_name_input() const { return profile_name_input_; }
-  views::Combobox* managed_profile_picker() const { return managed_profile_picker_; }
+  views::View* managed_profile_picker() const { return managed_profile_picker_; }
+  std::optional<size_t> profile_picker_selection(bool managed) const;
+  size_t profile_picker_count() const;
+  void SetProfilePickerSelectionForTesting(bool managed,size_t index);
+  void ActivateProfilePickerSelectionForTesting(bool managed,size_t index);
+  bool profile_picker_metal_visible(bool managed) const;
   bool profile_panel_contains_scene_text(std::string_view text) const;
   bool workspace_panel_contains_scene_text(std::string_view text) const;
   views::View* workspace_panel_for_testing() const{return settings_root_;}
@@ -374,11 +379,12 @@ class WorkspaceShell final : public ui::EventHandler,
   views::View* sidebar_view() const { return sidebar_root_; }
   views::View* tab_list_view() const { return tab_list_; }
   ui::SimpleMenuModel* workspace_menu() const { return workspace_menu_.get(); }
-  views::Combobox* profile_picker() const { return profile_picker_; }
+  views::View* profile_picker() const { return profile_picker_; }
   views::Textfield* color_input() const { return color_input_; }
   views::Textfield* address_input() const { return address_; }
 
  private:
+  void ManagedProfileSelectionChanged();
   using Suggestion = PaletteResult;
 
   void PositionPanels();
@@ -652,7 +658,7 @@ class WorkspaceShell final : public ui::EventHandler,
   size_t pinned_list_build_count_ = 0;
   size_t sidebar_context_visit_count_ = 0;
   size_t pin_visibility_update_count_ = 0;
-  raw_ptr<views::Combobox> profile_picker_ = nullptr;
+  raw_ptr<views::View> profile_picker_ = nullptr;
   raw_ptr<views::Textfield> workspace_input_ = nullptr;
   raw_ptr<views::Button> add_workspace_ = nullptr;
   raw_ptr<views::Button> edit_workspace_ = nullptr;
@@ -673,7 +679,7 @@ class WorkspaceShell final : public ui::EventHandler,
   bool import_applying_ = false;
   SidebarTree sidebar_tree_;
   raw_ptr<views::View> profiles_root_ = nullptr;
-  raw_ptr<views::Combobox> managed_profile_picker_ = nullptr;
+  raw_ptr<views::View> managed_profile_picker_ = nullptr;
   raw_ptr<views::Textfield> profile_name_input_ = nullptr;
   raw_ptr<views::Button> create_profile_ = nullptr;
   raw_ptr<views::Button> rename_profile_ = nullptr;

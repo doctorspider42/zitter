@@ -761,7 +761,20 @@ class SceneSelectInput final : public views::PrefixSelector {
  private:
   base::RepeatingCallback<void(std::u16string)> input_;base::RepeatingClosure reset_;
 };
-class SceneSelect final : public SceneGlyphButton,public ui::SimpleMenuModel::Delegate {
+// Each native menu owns its opening's key snapshot and generation. A callback
+// from a replaced model must never borrow a newer opening's token or indices.
+class SceneSelectMenu final : public ui::SimpleMenuModel,public ui::SimpleMenuModel::Delegate {
+ public:
+  SceneSelectMenu(std::vector<std::pair<std::string,std::u16string>> items,std::string selected,uint64_t token,base::RepeatingCallback<bool(uint64_t,const std::string&)> enabled,base::RepeatingCallback<void(uint64_t,const std::string&)> activate)
+      :ui::SimpleMenuModel(this),selected_(std::move(selected)),token_(token),enabled_(std::move(enabled)),activate_(std::move(activate)) {for(auto& item:items){AddRadioItem(keys_.size(),item.second,1);keys_.push_back(std::move(item.first));}}
+  bool IsCommandIdChecked(int command) const override {return Valid(command)&&keys_[command]==selected_;}
+  bool IsCommandIdEnabled(int command) const override {return Valid(command)&&enabled_.Run(token_,keys_[command]);}
+  void ExecuteCommand(int command,int) override {if(Valid(command))activate_.Run(token_,keys_[command]);}
+ private:
+  bool Valid(int command) const {return command>=0&&static_cast<size_t>(command)<keys_.size();}
+  std::vector<std::string> keys_;std::string selected_;uint64_t token_;base::RepeatingCallback<bool(uint64_t,const std::string&)> enabled_;base::RepeatingCallback<void(uint64_t,const std::string&)> activate_;
+};
+class SceneSelect final : public SceneGlyphButton {
   METADATA_HEADER(SceneSelect,SceneGlyphButton)
  public:
   SceneSelect(std::vector<std::u16string> labels,std::u16string name,base::RepeatingClosure changed)
@@ -769,8 +782,16 @@ class SceneSelect final : public SceneGlyphButton,public ui::SimpleMenuModel::De
     SetInstallFocusRingOnFocus(false);SetHasInkDropActionOnClick(false);SetAnimateOnStateChange(false);SetRequestFocusOnPress(false);GetViewAccessibility().SetRole(ax::mojom::Role::kComboBoxSelect);GetViewAccessibility().SetHasPopup(ax::mojom::HasPopup::kMenu);SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kOpen);UpdateAccessibleDefaultActionVerb();RefreshAX();
   }
   ~SceneSelect() override {if(GetInputMethod())GetInputMethod()->DetachTextInputClient(&input_);}
-  size_t Selected() const{return state_->selected();}
-  void SelectForTesting(size_t index){if(!GetEnabledInViewsSubtree()||!IsDrawn())return;CancelMenu();const auto token=state_->open(true);if(!state_->choose(token,index,true))return;RefreshAX();Schedule();changed_.Run();}
+  std::optional<size_t> Selected() const {return state_->has_selection()?std::optional<size_t>(state_->selected()):std::nullopt;}
+  size_t Count() const {return labels_.size();}
+  void SetSelectedIndex(size_t index){if(index>=Count())return;OnMouseCaptureLost();CancelMenu();if(state_->select_index(index)){RefreshAX();Schedule();}}
+  void SetProfiles(const std::vector<ProfileInfo>& profiles,bool fallback_last,bool select_last){
+    OnMouseCaptureLost();CancelMenu();rust::Vec<sidebar::SelectOption> options;std::vector<std::u16string> labels;
+    for(const auto& profile:profiles){auto label=base::UTF8ToUTF16(profile.name);options.push_back({profile.id,profile.name,base::UTF16ToUTF8(base::i18n::ToLower(label))});labels.push_back(std::move(label));}
+    if(!state_->replace_options(std::move(options),fallback_last,select_last))return;
+    labels_=std::move(labels);RefreshAX();PreferredSizeChanged();Schedule();
+  }
+  void SelectForTesting(size_t index){if(index>=Count()||!GetEnabledInViewsSubtree()||!IsDrawn())return;CancelMenu();const auto token=state_->open(true);if(!state_->choose(token,index,true))return;RefreshAX();Schedule();changed_.Run();}
   bool metal_visible() const{return surface_&&surface_->visible();}
   bool contains_text(std::string_view text) const{return metal_visible()&&surface_->contains_text_for_testing(text);}
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {int widest=0;for(const auto& text:labels_)widest=std::max(widest,gfx::GetStringWidth(text,TextFont()));const auto g=sidebar::select_layout(-1,-1,widest,views::LayoutProvider::GetControlHeightForFont(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY,TextFont()),false);return gfx::Size(g.width,g.height);}
@@ -787,33 +808,67 @@ class SceneSelect final : public SceneGlyphButton,public ui::SimpleMenuModel::De
   void OnThemeChanged() override {SceneGlyphButton::OnThemeChanged();PreferredSizeChanged();Schedule();}
   void OnDidSchedulePaint(const gfx::Rect& rect) override {SceneGlyphButton::OnDidSchedulePaint(rect);Schedule();}
   void PaintButtonContents(gfx::Canvas* canvas) override {if(!metal_visible())PaintSceneRecipe(canvas,Scene(0,0,gfx::RectF(GetLocalBounds())),TextFont());Schedule();}
-  bool IsCommandIdChecked(int command) const override {return command>=0&&static_cast<size_t>(command)==Selected();}
-  bool IsCommandIdEnabled(int command) const override {return GetEnabledInViewsSubtree()&&IsDrawn()&&command>=0&&static_cast<size_t>(command)<labels_.size();}
-  void ExecuteCommand(int command,int) override {if(command<0||!state_->choose(menu_token_,command,GetEnabledInViewsSubtree()&&IsDrawn()))return;RefreshAX();Schedule();changed_.Run();}
  protected:
   void NotifyClick(const ui::Event& event) override {if(GetEnabledInViewsSubtree()&&IsDrawn())ShowMenu(ui::GetMenuSourceTypeForEvent(event));}
  private:
-  static rust::Box<sidebar::SelectState> MakeState(const std::vector<std::u16string>& labels){rust::Vec<sidebar::SelectOption> options;for(const auto& label:labels)options.push_back({base::UTF16ToUTF8(label),base::UTF16ToUTF8(base::i18n::ToLower(label))});return sidebar::new_select_state(std::move(options));}
+  static rust::Box<sidebar::SelectState> MakeState(const std::vector<std::u16string>& labels){rust::Vec<sidebar::SelectOption> options;for(size_t i=0;i<labels.size();++i)options.push_back({base::NumberToString(i),base::UTF16ToUTF8(labels[i]),base::UTF16ToUTF8(base::i18n::ToLower(labels[i]))});return sidebar::new_select_state(std::move(options));}
   static gfx::FontList TextFont(){return views::TypographyProvider::Get().GetFont(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY);}
   void ResetPrefix(){state_->reset_prefix();}
   void Input(std::u16string text){if(!IsDrawn()||!HasFocus())return;const auto lower=base::UTF16ToUTF8(base::i18n::ToLower(text));if(!state_->input(lower,(base::TimeTicks::Now()-base::TimeTicks()).InMilliseconds(),GetEnabledInViewsSubtree()))return;RefreshAX();Schedule();changed_.Run();}
-  void RefreshAX(){if(Selected()<labels_.size())GetViewAccessibility().SetValue(labels_[Selected()]);if(state_->expanded())GetViewAccessibility().SetIsExpanded();else GetViewAccessibility().SetIsCollapsed();}
+  void RefreshAX(){const auto selected=Selected();GetViewAccessibility().SetValue(selected?labels_[*selected]:std::u16string());if(state_->expanded())GetViewAccessibility().SetIsExpanded();else GetViewAccessibility().SetIsCollapsed();}
   void CancelMenu(){state_->dismiss();ResetPrefix();RefreshAX();auto old=std::move(runner_);old.reset();}
-  void Closed(){state_->dismiss();runner_.reset();RefreshAX();Schedule();}
-  void ShowMenu(ui::mojom::MenuSourceType source){if(!GetWidget()||!IsDrawn()||!GetEnabledInViewsSubtree())return;CancelMenu();menu_token_=state_->open(true);if(!menu_token_)return;menu_=std::make_unique<ui::SimpleMenuModel>(this);for(size_t i=0;i<labels_.size();++i)menu_->AddRadioItem(i,labels_[i],1);runner_=std::make_unique<views::MenuRunner>(menu_.get(),views::MenuRunner::COMBOBOX,base::BindRepeating(&SceneSelect::Closed,weak_factory_.GetWeakPtr()));RefreshAX();Schedule();runner_->RunMenuAt(GetWidget(),nullptr,GetBoundsInScreen(),views::MenuAnchorPosition::kTopLeft,source);}
-  sidebar::Item Scene(float dx,float dy,gfx::RectF clip) const {sidebar::Item item{};item.kind=21;item.x=dx;item.y=dy;item.width=width();item.height=height();if(Selected()<labels_.size())item.title=base::UTF16ToUTF8(labels_[Selected()]);const auto* colors=GetColorProvider();const bool enabled=GetEnabledInViewsSubtree();item.font_size=TextFont().GetFontSize();item.active=TextFont().GetFontWeight()>=gfx::Font::Weight::MEDIUM;item.tile=base::i18n::IsRTL();item.focused=HasFocus();item.hovered=enabled&&(GetState()==STATE_HOVERED||state_->expanded());item.ink=colors->GetColor(views::TypographyProvider::Get().GetColorId(views::style::CONTEXT_LABEL,enabled?views::style::STYLE_PRIMARY:views::style::STYLE_DISABLED));item.fill=colors->GetColor(enabled?ui::kColorComboboxBackground:ui::kColorComboboxBackgroundDisabled);item.badge=colors->GetColor(HasFocus()?ui::kColorFocusableBorderFocused:enabled?ui::kColorButtonBorder:ui::kColorButtonBorderDisabled);item.detail_ink=colors->GetColor(ui::kColorSysStateHoverOnSubtle);item.clip={clip.x(),clip.y(),clip.width(),clip.height()};return item;}
+  void Closed(uint64_t token){if(!state_->close_menu(token))return;runner_.reset();RefreshAX();Schedule();}
+  bool CanChoose(uint64_t token,const std::string& key) const {return state_->can_choose(token,key,GetEnabledInViewsSubtree()&&IsDrawn());}
+  void Choose(uint64_t token,const std::string& key){if(!state_->choose_key(token,key,GetEnabledInViewsSubtree()&&IsDrawn()))return;RefreshAX();Schedule();changed_.Run();}
+  void ShowMenu(ui::mojom::MenuSourceType source){
+    if(!GetWidget()||!IsDrawn()||!GetEnabledInViewsSubtree())return;CancelMenu();const auto token=state_->open(true);if(!token)return;
+    std::vector<std::pair<std::string,std::u16string>> items;for(size_t i=0;i<labels_.size();++i)items.emplace_back(std::string(state_->option_key(i)),labels_[i]);
+    const auto weak=weak_factory_.GetWeakPtr();menu_=std::make_unique<SceneSelectMenu>(std::move(items),std::string(state_->selected_key()),token,base::BindRepeating([](base::WeakPtr<SceneSelect> owner,uint64_t epoch,const std::string& key){return owner&&owner->CanChoose(epoch,key);},weak),base::BindRepeating(&SceneSelect::Choose,weak));
+    runner_=std::make_unique<views::MenuRunner>(menu_.get(),views::MenuRunner::COMBOBOX,base::BindRepeating(&SceneSelect::Closed,weak,token));RefreshAX();Schedule();runner_->RunMenuAt(GetWidget(),nullptr,GetBoundsInScreen(),views::MenuAnchorPosition::kTopLeft,source);
+  }
+  sidebar::Item Scene(float dx,float dy,gfx::RectF clip) const {sidebar::Item item{};item.kind=21;item.x=dx;item.y=dy;item.width=width();item.height=height();if(const auto selected=Selected())item.title=base::UTF16ToUTF8(labels_[*selected]);const auto* colors=GetColorProvider();const bool enabled=GetEnabledInViewsSubtree();item.font_size=TextFont().GetFontSize();item.active=TextFont().GetFontWeight()>=gfx::Font::Weight::MEDIUM;item.tile=base::i18n::IsRTL();item.focused=HasFocus();item.hovered=enabled&&(GetState()==STATE_HOVERED||state_->expanded());item.ink=colors->GetColor(views::TypographyProvider::Get().GetColorId(views::style::CONTEXT_LABEL,enabled?views::style::STYLE_PRIMARY:views::style::STYLE_DISABLED));item.fill=colors->GetColor(enabled?ui::kColorComboboxBackground:ui::kColorComboboxBackgroundDisabled);item.badge=colors->GetColor(HasFocus()?ui::kColorFocusableBorderFocused:enabled?ui::kColorButtonBorder:ui::kColorButtonBorderDisabled);item.detail_ink=colors->GetColor(ui::kColorSysStateHoverOnSubtle);item.clip={clip.x(),clip.y(),clip.width(),clip.height()};return item;}
   void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneSelect::UpdateMetal,weak_factory_.GetWeakPtr()));}
   void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!IsDrawn()||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());std::vector<sidebar::Item> items;items.push_back(Scene(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size()))));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
-  std::vector<std::u16string> labels_;rust::Box<sidebar::SelectState> state_;base::RepeatingClosure changed_;SceneSelectInput input_;std::unique_ptr<ui::SimpleMenuModel> menu_;std::unique_ptr<views::MenuRunner> runner_;uint64_t menu_token_=0;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;base::WeakPtrFactory<SceneSelect> weak_factory_{this};
+  std::vector<std::u16string> labels_;rust::Box<sidebar::SelectState> state_;base::RepeatingClosure changed_;SceneSelectInput input_;std::unique_ptr<SceneSelectMenu> menu_;std::unique_ptr<views::MenuRunner> runner_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;base::WeakPtrFactory<SceneSelect> weak_factory_{this};
 };
 BEGIN_METADATA(SceneSelect)
 END_METADATA
 #endif
 size_t ImportSourceIndex(views::View* view){
 #if BUILDFLAG(IS_MAC)
-  if(auto* scene=views::AsViewClass<SceneSelect>(view))return scene->Selected();
+  if(auto* scene=views::AsViewClass<SceneSelect>(view))return scene->Selected().value_or(0);
 #endif
   return static_cast<views::Combobox*>(view)->GetSelectedIndex().value_or(0);
+}
+std::optional<size_t> PickerIndex(views::View* picker){
+#if BUILDFLAG(IS_MAC)
+  if(auto* scene=views::AsViewClass<SceneSelect>(picker))return scene->Selected();
+#endif
+  return static_cast<views::Combobox*>(picker)->GetSelectedIndex();
+}
+size_t PickerCount(views::View* picker){
+#if BUILDFLAG(IS_MAC)
+  if(auto* scene=views::AsViewClass<SceneSelect>(picker))return scene->Count();
+#endif
+  return static_cast<views::Combobox*>(picker)->GetModel()->GetItemCount();
+}
+void SetPickerIndex(views::View* picker,size_t index){
+#if BUILDFLAG(IS_MAC)
+  if(auto* scene=views::AsViewClass<SceneSelect>(picker)){scene->SetSelectedIndex(index);return;}
+#endif
+  static_cast<views::Combobox*>(picker)->SetSelectedIndex(index);
+}
+views::View* ProfilePicker(views::View* parent,std::u16string name,bool scene,base::RepeatingClosure changed){
+#if BUILDFLAG(IS_MAC)
+  if(scene)return parent->AddChildView(std::make_unique<SceneSelect>(std::vector<std::u16string>(),std::move(name),std::move(changed)));
+#endif
+  auto* picker=parent->AddChildView(std::make_unique<views::Combobox>());picker->SetTooltipTextAndAccessibleName(name);picker->SetCallback(std::move(changed));return picker;
+}
+void ReplaceProfilePickerOptions(views::View* picker,const std::vector<ProfileInfo>& profiles,bool fallback_last,bool select_last){
+#if BUILDFLAG(IS_MAC)
+  if(auto* scene=views::AsViewClass<SceneSelect>(picker)){scene->SetProfiles(profiles,fallback_last,select_last);return;}
+#endif
+  std::vector<ui::SimpleComboboxModel::Item> labels;for(const auto& profile:profiles)labels.emplace_back(base::UTF8ToUTF16(profile.name));static_cast<views::Combobox*>(picker)->SetOwnedModel(std::make_unique<ui::SimpleComboboxModel>(std::move(labels)));
 }
 views::Button* AddImportCheck(views::View* parent,std::u16string text,views::Button::PressedCallback callback) {
 #if BUILDFLAG(IS_MAC)
@@ -2612,8 +2667,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   workspace_input_->GetViewAccessibility().SetName(workspace_copy[0]);
   workspace_input_->SetPlaceholderText(workspace_copy[1]);
   settings_text(settings.get(),workspace_copy[2],kSubtle,-1);
-  profile_picker_ = settings->AddChildView(std::make_unique<views::Combobox>());
-  profile_picker_->SetTooltipTextAndAccessibleName(workspace_copy[3]);
+  profile_picker_=ProfilePicker(settings.get(),workspace_copy[3],bool(workspace_form_),base::BindRepeating([]{}));
   settings_text(settings.get(),workspace_copy[4],kMuted,-2,gfx::Font::Weight::NORMAL,true);
   settings_text(settings.get(),workspace_copy[5],kMuted,-2,gfx::Font::Weight::NORMAL,true);
   auto* actions=ActionGroup(settings.get(),bool(workspace_form_),false,8);
@@ -2848,21 +2902,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   rename_profile_ = AddAction(profile_create_actions,
       base::BindRepeating(&WorkspaceShell::RenameSelectedProfile, weak), profile_copy[8]);
   profile_text(profile_copy[5],kSubtle,-1);
-  managed_profile_picker_ = profiles_panel->AddChildView(std::make_unique<views::Combobox>());
-  managed_profile_picker_->SetTooltipTextAndAccessibleName(profile_copy[6]);
-  managed_profile_picker_->SetCallback(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
-    if (!shell) return;
-    shell->confirm_profile_deletion_ = false;
-    shell->new_profile_workspace_id_.clear();
-    const auto selected = shell->managed_profile_picker_->GetSelectedIndex();
-    if (selected && *selected < shell->state_.profiles.size())
-      shell->profile_name_input_->SetText(base::UTF8ToUTF16(shell->state_.profiles[*selected].name));
-#if BUILDFLAG(IS_MAC)
-    if(shell->profile_form_){CancelSceneActions(shell->profiles_root_);const auto id=selected&&*selected<shell->state_.profiles.size()?shell->state_.profiles[*selected].id:std::string();shell->profile_form_->form->select(id);}
-#endif
-    shell->SetProfileStatus(u"");
-    shell->RefreshProfileControls();
-  }, weak));
+  managed_profile_picker_=ProfilePicker(profiles_panel.get(),profile_copy[6],bool(profile_form_),base::BindRepeating(&WorkspaceShell::ManagedProfileSelectionChanged,weak));
   profile_status_=profile_text(u"",kSubtle,-1,gfx::Font::Weight::NORMAL,true);
   auto* profile_delete_actions=ActionGroup(profiles_panel.get(),bool(profile_form_),true,10);
   delete_profile_ = AddAction(profile_delete_actions,
@@ -3469,7 +3509,7 @@ void WorkspaceShell::Update(ShellState state) {
     }
   }
   const bool ready_changed = state.configuration_ready != state_.configuration_ready || state.profiles_busy != state_.profiles_busy;
-  const auto managed_index = managed_profile_picker_->GetSelectedIndex();
+  const auto managed_index = PickerIndex(managed_profile_picker_);
   const std::string managed_id = managed_index && *managed_index < state_.profiles.size()
       ? state_.profiles[*managed_index].id : std::string();
   const bool added_profile = state.profiles.size() > state_.profiles.size();
@@ -3492,21 +3532,21 @@ void WorkspaceShell::Update(ShellState state) {
     button->SetEnabled(state_.configuration_ready);
   }
   if (profiles_changed) {
-    std::vector<ui::SimpleComboboxModel::Item> assignments, managed;
-    for (const auto& profile : state_.profiles) {
-      assignments.emplace_back(base::UTF8ToUTF16(profile.name));
-      managed.emplace_back(base::UTF8ToUTF16(profile.name));
-    }
-    profile_picker_->SetOwnedModel(std::make_unique<ui::SimpleComboboxModel>(std::move(assignments)));
-    managed_profile_picker_->SetOwnedModel(std::make_unique<ui::SimpleComboboxModel>(std::move(managed)));
-    if (!state_.profiles.empty()) managed_profile_picker_->SetSelectedIndex(state_.profiles.size() - 1);
+    ReplaceProfilePickerOptions(profile_picker_,state_.profiles,false,false);
+    ReplaceProfilePickerOptions(managed_profile_picker_,state_.profiles,true,added_profile);
+#if BUILDFLAG(IS_MAC)
+    if(!profile_form_)
+#endif
+    {
+    if (!state_.profiles.empty()) SetPickerIndex(managed_profile_picker_,state_.profiles.size() - 1);
     if (!added_profile) {
       for (size_t i = 0; i < state_.profiles.size(); ++i)
-        if (state_.profiles[i].id == managed_id) managed_profile_picker_->SetSelectedIndex(i);
+        if (state_.profiles[i].id == managed_id) SetPickerIndex(managed_profile_picker_,i);
+    }
     }
     confirm_profile_deletion_ = false;
 #if BUILDFLAG(IS_MAC)
-    if(profile_form_){const auto profiles=ProfileOptions(state_);profile_form_->form->reconcile(rust::Slice<const sidebar::ProfileOption>(profiles.data(),profiles.size()),added_profile);const std::string id(profile_form_->form->selection());for(size_t i=0;i<state_.profiles.size();++i)if(state_.profiles[i].id==id)managed_profile_picker_->SetSelectedIndex(i);}
+    if(profile_form_){const auto profiles=ProfileOptions(state_);profile_form_->form->reconcile(rust::Slice<const sidebar::ProfileOption>(profiles.data(),profiles.size()),added_profile);const std::string id(profile_form_->form->selection());for(size_t i=0;i<state_.profiles.size();++i)if(state_.profiles[i].id==id)SetPickerIndex(managed_profile_picker_,i);}
 #endif
   }
 #if BUILDFLAG(IS_MAC)
@@ -6160,7 +6200,7 @@ void WorkspaceShell::ShowWorkspaceAppearanceError(unsigned kind) {
 }
 bool WorkspaceShell::workspace_panel_contains_scene_text(std::string_view text) const {
 #if BUILDFLAG(IS_MAC)
-  if(!settings_root_)return false;auto find=[&](auto&& self,views::View* view)->bool{if(auto* node=views::AsViewClass<SceneParagraph>(view))if(node->contains_scene_text(text))return true;for(const auto& child:view->children())if(self(self,child.get()))return true;return false;};return find(find,settings_root_);
+  if(!settings_root_)return false;auto find=[&](auto&& self,views::View* view)->bool{if(auto* picker=views::AsViewClass<SceneSelect>(view))if(picker->contains_text(text))return true;if(auto* node=views::AsViewClass<SceneParagraph>(view))if(node->contains_scene_text(text))return true;for(const auto& child:view->children())if(self(self,child.get()))return true;return false;};return find(find,settings_root_);
 #else
   return false;
 #endif
@@ -6176,7 +6216,7 @@ void WorkspaceShell::RefreshWorkspaceSettings() {
   SetActionText(add_workspace_,u"Nowa przestrzeń…");
   workspace_input_->SetText(state_.workspace_name);
   for (size_t i = 0; i < state_.profiles.size(); ++i)
-    if (state_.profiles[i].id == state_.profile_id) profile_picker_->SetSelectedIndex(i);
+    if (state_.profiles[i].id == state_.profile_id) SetPickerIndex(profile_picker_,i);
   RefreshRustWorkspacePresentation();
 }
 void WorkspaceShell::SetConfigurationError(bool error) {
@@ -6273,7 +6313,7 @@ void WorkspaceShell::ConfirmRemoveWorkspace(std::string id) {
 void WorkspaceShell::SubmitWorkspace(bool add) {
 #if BUILDFLAG(IS_MAC)
   if(workspace_form_){
-    const auto index=profile_picker_->GetSelectedIndex();const auto profile=index&&*index<state_.profiles.size()?state_.profiles[*index].id:std::string();
+    const auto index=PickerIndex(profile_picker_);const auto profile=index&&*index<state_.profiles.size()?state_.profiles[*index].id:std::string();
     const auto profiles=ProfileOptions(state_);const auto uses=ProfileUses(state_);
     const auto request=workspace_form_->form->submit(base::UTF16ToUTF8(workspace_input_->GetText()),profile,state_.workspace_id,state_.configuration_ready,state_.profiles_busy,workspace_input_->IsIMEComposing(),rust::Slice<const sidebar::ProfileOption>(profiles.data(),profiles.size()),rust::Slice<const sidebar::ProfileUse>(uses.data(),uses.size()));
     if(request.action==sidebar::WorkspaceFormAction::None){RefreshRustWorkspacePresentation();PositionPanels();return;}
@@ -6292,7 +6332,7 @@ void WorkspaceShell::SubmitWorkspace(bool add) {
     PositionPanels();
     return;
   }
-  const auto index = profile_picker_->GetSelectedIndex();
+  const auto index = PickerIndex(profile_picker_);
   if (!index || *index >= state_.profiles.size()) return;
   const std::string profile = state_.profiles[*index].id;
   const bool ok = add ? callbacks_.add_workspace.Run(name, profile) : callbacks_.edit_workspace.Run(name, profile);
@@ -6417,6 +6457,31 @@ void WorkspaceShell::SetImportStatus(std::u16string message, bool can_import, bo
   apply_import_->SetEnabled(can_import && !busy && state_.configuration_ready && !state_.profiles_busy);
   PositionPanels();
 }
+std::optional<size_t> WorkspaceShell::profile_picker_selection(bool managed) const {return PickerIndex(managed?managed_profile_picker_.get():profile_picker_.get());}
+size_t WorkspaceShell::profile_picker_count() const {return PickerCount(profile_picker_);}
+void WorkspaceShell::SetProfilePickerSelectionForTesting(bool managed,size_t index){auto* picker=managed?managed_profile_picker_.get():profile_picker_.get();if(picker&&index<PickerCount(picker))SetPickerIndex(picker,index);}
+void WorkspaceShell::ActivateProfilePickerSelectionForTesting(bool managed,size_t index){
+  auto* picker=managed?managed_profile_picker_.get():profile_picker_.get();if(!picker||index>=PickerCount(picker)||!picker->IsDrawn()||!picker->GetEnabledInViewsSubtree())return;
+#if BUILDFLAG(IS_MAC)
+  if(auto* scene=views::AsViewClass<SceneSelect>(picker)){scene->SelectForTesting(index);return;}
+#endif
+  SetPickerIndex(picker,index);if(managed)ManagedProfileSelectionChanged();
+}
+bool WorkspaceShell::profile_picker_metal_visible(bool managed) const {
+#if BUILDFLAG(IS_MAC)
+  auto* scene=views::AsViewClass<SceneSelect>(managed?managed_profile_picker_.get():profile_picker_.get());return scene&&scene->metal_visible();
+#else
+  return false;
+#endif
+}
+void WorkspaceShell::ManagedProfileSelectionChanged(){
+  confirm_profile_deletion_=false;new_profile_workspace_id_.clear();const auto selected=PickerIndex(managed_profile_picker_);
+  if(selected&&*selected<state_.profiles.size())profile_name_input_->SetText(base::UTF8ToUTF16(state_.profiles[*selected].name));
+#if BUILDFLAG(IS_MAC)
+  if(profile_form_){CancelSceneActions(profiles_root_);const auto id=selected&&*selected<state_.profiles.size()?state_.profiles[*selected].id:std::string();profile_form_->form->select(id);}
+#endif
+  SetProfileStatus(u"");RefreshProfileControls();
+}
 void WorkspaceShell::OpenProfiles(std::string profile_id, std::string workspace_id) {
   if (!profiles_widget_) return;
 #if BUILDFLAG(IS_MAC)
@@ -6426,12 +6491,12 @@ void WorkspaceShell::OpenProfiles(std::string profile_id, std::string workspace_
   confirm_profile_deletion_ = false;
   new_profile_workspace_id_ = std::move(workspace_id);
   for (size_t i = 0; i < state_.profiles.size(); ++i)
-    if (state_.profiles[i].id == profile_id) managed_profile_picker_->SetSelectedIndex(i);
+    if (state_.profiles[i].id == profile_id) SetPickerIndex(managed_profile_picker_,i);
   profile_name_input_->SetText(u"");
   for (const auto& profile : state_.profiles)
     if (profile.id == profile_id) profile_name_input_->SetText(base::UTF8ToUTF16(profile.name));
 #if BUILDFLAG(IS_MAC)
-  if(profile_form_){const auto selected=managed_profile_picker_->GetSelectedIndex();const auto id=selected&&*selected<state_.profiles.size()?state_.profiles[*selected].id:std::string();profile_form_->form->open(id,new_profile_workspace_id_);}
+  if(profile_form_){const auto selected=PickerIndex(managed_profile_picker_);const auto id=selected&&*selected<state_.profiles.size()?state_.profiles[*selected].id:std::string();profile_form_->form->open(id,new_profile_workspace_id_);}
 #endif
   RefreshProfileControls();
   PositionPanels();
@@ -6460,7 +6525,7 @@ void WorkspaceShell::RefreshProfileControls() {
   create_profile_->SetEnabled(ready);
   rename_profile_->SetEnabled(ready && new_profile_workspace_id_.empty());
   managed_profile_picker_->SetEnabled(ready);
-  auto index = managed_profile_picker_->GetSelectedIndex();
+  auto index = PickerIndex(managed_profile_picker_);
   bool used = false;
   std::u16string names;
   if (index && *index < state_.profiles.size()) {
@@ -6481,7 +6546,7 @@ bool WorkspaceShell::SubmitRustProfileAction(unsigned action) {
 #if BUILDFLAG(IS_MAC)
   if(!profile_form_)return false;
   if(profile_name_input_->IsIMEComposing())return true;
-  const auto index=managed_profile_picker_->GetSelectedIndex();const auto selected=index&&*index<state_.profiles.size()?state_.profiles[*index].id:std::string();
+  const auto index=PickerIndex(managed_profile_picker_);const auto selected=index&&*index<state_.profiles.size()?state_.profiles[*index].id:std::string();
   if(selected!=std::string(profile_form_->form->selection()))profile_form_->form->select(selected);
   const auto profiles=ProfileOptions(state_);const auto uses=ProfileUses(state_);
   const auto request=profile_form_->form->request(action,base::UTF16ToUTF8(profile_name_input_->GetText()),state_.configuration_ready,state_.profiles_busy,rust::Slice<const sidebar::ProfileOption>(profiles.data(),profiles.size()),rust::Slice<const sidebar::ProfileUse>(uses.data(),uses.size()));
@@ -6503,7 +6568,7 @@ bool WorkspaceShell::SubmitRustProfileAction(unsigned action) {
 }
 bool WorkspaceShell::profile_panel_contains_scene_text(std::string_view text) const {
 #if BUILDFLAG(IS_MAC)
-  if(!profiles_root_)return false;auto find=[&](auto&& self,views::View* view)->bool{if(auto* node=views::AsViewClass<SceneParagraph>(view))if(node->contains_scene_text(text))return true;for(const auto& child:view->children())if(self(self,child.get()))return true;return false;};return find(find,profiles_root_);
+  if(!profiles_root_)return false;auto find=[&](auto&& self,views::View* view)->bool{if(auto* picker=views::AsViewClass<SceneSelect>(view))if(picker->contains_text(text))return true;if(auto* node=views::AsViewClass<SceneParagraph>(view))if(node->contains_scene_text(text))return true;for(const auto& child:view->children())if(self(self,child.get()))return true;return false;};return find(find,profiles_root_);
 #else
   return false;
 #endif
@@ -6516,7 +6581,7 @@ void WorkspaceShell::SubmitProfile() {
 }
 void WorkspaceShell::RenameSelectedProfile() {
   if(SubmitRustProfileAction(1))return;
-  const auto index = managed_profile_picker_->GetSelectedIndex();
+  const auto index = PickerIndex(managed_profile_picker_);
   if (!index || *index >= state_.profiles.size()) return;
   const auto name = base::UTF16ToUTF8(base::TrimWhitespace(profile_name_input_->GetText(), base::TRIM_ALL));
   if (name.empty()) { SetProfileStatus(u"Podaj nazwę profilu."); return; }
@@ -6524,7 +6589,7 @@ void WorkspaceShell::RenameSelectedProfile() {
 }
 void WorkspaceShell::DeleteSelectedProfile() {
   if(SubmitRustProfileAction(2))return;
-  const auto index = managed_profile_picker_->GetSelectedIndex();
+  const auto index = PickerIndex(managed_profile_picker_);
   if (!index || *index >= state_.profiles.size()) return;
   if (!confirm_profile_deletion_) {
     confirm_profile_deletion_ = true;
