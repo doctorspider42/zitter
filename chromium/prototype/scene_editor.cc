@@ -77,7 +77,13 @@ class NativeEditor final : public views::Textfield, public EditorControl, privat
   void SetText(std::u16string_view value) override{views::Textfield::SetText(value);}
   void SetPlaceholderText(std::u16string value) override{views::Textfield::SetPlaceholderText(std::move(value));}
   bool IsIMEComposing() const override{return views::Textfield::IsIMEComposing();}
-  void SetCompositionText(const ui::CompositionText& value) override{views::Textfield::SetCompositionText(value);}
+  void SetCompositionText(const ui::CompositionText& value) override {
+    // Empty marked text terminates preedit; without preedit it is a no-op.
+    // Do not let the native model delete an idle service selection or publish
+    // its cancellation via ContentsChanged as a committed application edit.
+    if(value.text.empty()){ClearCompositionText();return;}
+    base::AutoReset<bool> suppress(&suppress_committed_,true);views::Textfield::SetCompositionText(value);
+  }
   void ClearCompositionText() override{base::AutoReset<bool> suppress(&suppress_committed_,true);views::Textfield::ClearCompositionText();}
   size_t ConfirmCompositionText(bool keep) override{return views::Textfield::ConfirmCompositionText(keep);}
   gfx::Range GetSelectedRange() const override{return views::Textfield::GetSelectedRange();}
@@ -146,6 +152,7 @@ class SceneEditor final : public views::View, public EditorControl,
   ui::Cursor GetCursor(const ui::MouseEvent&) override{return ui::Cursor(ui::mojom::CursorType::kIBeam);}
   base::WeakPtr<ui::TextInputClient> AsWeakPtr() override{return weak_factory_.GetWeakPtr();}
   void SetCompositionText(const ui::CompositionText& composition) override {
+    if(composition.text.empty()){ClearCompositionText();return;}
     if(!Editable())return;const auto token=sidebar::editor_begin_composition(*state_);if(!token)return;
     const auto range=composition.selection.IsValid()?composition.selection:gfx::Range(composition.text.size());
     auto update=sidebar::editor_compose(*state_,token,Slice(composition.text),range.start(),range.end());
@@ -185,7 +192,7 @@ class SceneEditor final : public views::View, public EditorControl,
     if(out.IsEmpty())out=ScreenRect({geometry_.origin+line_->Caret(i.composition_start+index).x,geometry_.caret.y,1,geometry_.caret.height});*rect=out;return true;
   }
   bool GetTextRange(gfx::Range* range) const override{if(!Available())return false;*range=gfx::Range(0,text_.size());return true;}
-  bool GetCompositionTextRange(gfx::Range* range) const override{auto i=sidebar::editor_info(*state_);if(!Available()||!i.composing)return false;*range=gfx::Range(i.composition_start,i.composition_end);return true;}
+  bool GetCompositionTextRange(gfx::Range* range) const override{if(!Editable())return false;auto i=sidebar::editor_info(*state_);*range=i.composing?gfx::Range(i.composition_start,i.composition_end):gfx::Range::InvalidRange();return true;}
   bool GetEditableSelectionRange(gfx::Range* range) const override{if(!Available()||!HasFocus())return false;*range=GetSelectedRange();return true;}
   bool SetEditableSelectionRange(const gfx::Range& range) override {
     if(!Available()||!range.IsValid())return false;if(IsIMEComposing())ConfirmCompositionText(true);

@@ -5589,6 +5589,28 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AddressEditorCocoaCommitCompos
   shell->OpenCommandPalette();field=shell->address_input();EXPECT_TRUE(field->GetText().empty());ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->address_widget()->GetNativeWindow()));field->RequestFocus();ASSERT_TRUE(key(ui::VKEY_ESCAPE));ASSERT_TRUE(base::test::RunUntil([&]{return !shell->address_visible();}));
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NameEditorEmptyMarkedTextEndsWithoutCommit) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenWorkspaceSettings();auto* field=shell->workspace_input();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));field->RequestFocus();
+  int commits=0;base::ScopedClosureRunner cleanup(base::BindOnce([](EditorControl* editor){editor->SetCallbacks({},{});},field));
+  field->SetCallbacks(base::BindRepeating([](int* count){++*count;},base::Unretained(&commits)),{});
+  ui::CompositionText empty;field->SetText(u"base");field->SelectRange(gfx::Range(3,1));
+  field->SetCompositionText(empty);EXPECT_EQ(u"base",field->GetText());EXPECT_EQ(gfx::Range(3,1),field->GetSelectedRange());EXPECT_FALSE(field->IsIMEComposing());EXPECT_EQ(0,commits);
+  field->SelectRange(gfx::Range(4));ui::CompositionText marked;marked.text=u"にほん";marked.selection=gfx::Range(marked.text.size());field->SetCompositionText(marked);ASSERT_TRUE(field->IsIMEComposing());EXPECT_EQ(0,commits);
+  field->SetCompositionText(empty);EXPECT_FALSE(field->IsIMEComposing());EXPECT_FALSE(field->input_client()->HasCompositionText());EXPECT_EQ(u"base",field->GetText());EXPECT_EQ(gfx::Range(4),field->GetSelectedRange());EXPECT_EQ(0,commits);
+  gfx::Range range;ASSERT_TRUE(field->input_client()->GetCompositionTextRange(&range));EXPECT_FALSE(range.IsValid());EXPECT_EQ(0u,field->ConfirmCompositionText(false));EXPECT_EQ(0,commits);
+  field->SetReadOnly(true);EXPECT_FALSE(field->input_client()->GetCompositionTextRange(&range));field->SetReadOnly(false);
+  marked.text=u"語";marked.selection=gfx::Range(1);field->SetCompositionText(marked);ASSERT_TRUE(field->IsIMEComposing());field->ConfirmCompositionText(false);EXPECT_EQ(u"base語",field->GetText());EXPECT_EQ(1,commits);
+  field->SetCompositionText(empty);field->SetCompositionText(empty);EXPECT_FALSE(field->IsIMEComposing());EXPECT_EQ(u"base語",field->GetText());EXPECT_EQ(1,commits);
+  // An empty marker must not auto-save an empty emoji draft as a deletion.
+  shell->SetWorkspaceEmoji("work",u"🦊");auto* emoji=shell->emoji_input();emoji->RequestFocus();emoji->SetText(u"");
+  marked.text=u"にほん";marked.selection=gfx::Range(marked.text.size());emoji->SetCompositionText(marked);ASSERT_TRUE(emoji->IsIMEComposing());EXPECT_EQ(u"🦊",shell->workspace_emoji("work"));
+  emoji->SetCompositionText(empty);EXPECT_FALSE(emoji->IsIMEComposing());EXPECT_TRUE(emoji->GetText().empty());EXPECT_EQ(u"🦊",shell->workspace_emoji("work"));
+  // Idle empty updates preserve an existing selection as well as its value.
+  emoji->SetText(u"🦊");emoji->SelectRange(gfx::Range(0,2));emoji->SetCompositionText(empty);EXPECT_EQ(u"🦊",emoji->GetText());EXPECT_EQ(gfx::Range(0,2),emoji->GetSelectedRange());EXPECT_EQ(u"🦊",shell->workspace_emoji("work"));
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_saved();}));
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NameEditorCommittedCallbackContract) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenWorkspaceSettings();
   auto* field=shell->workspace_input();auto* view=field->view();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));field->RequestFocus();
