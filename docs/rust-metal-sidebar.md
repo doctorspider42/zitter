@@ -1058,3 +1058,40 @@ checkpoint. GPU quad/shader ABI and binary dependencies are unchanged; the CPU
 Rust/C++ selector bridge was extended for stable keys and model lifecycle.
 CPU/GPU/actual presentation still need a separate comparison. See
 [profile selector verification](benchmarks/rust-profile-pickers-headless-2026-10-23.json).
+
+
+## Full automated UI checkpoint (2026-10-23)
+
+UI source `c902e77f4983932ddb89b2cc1f531ffe9f21bd81` passed the complete compiled automated
+suite: **116 Metal cases and 86 Views cases**, with six explicit opt-in skips per
+backend and no failures/retries. All 122 compiled tests were selected with Metal;
+the applicable 92 common tests ran with Views, excluding the 30 dedicated Metal
+cases. This covers and exceeds every previously deferred 70/34 case. Tests used
+isolated temporary profiles, ran serially and enabled Metal API validation in the
+Metal run. The normal app/profile was untouched.
+
+The first full run exposed regressions beyond the earlier hand-selected matrix.
+The repaired UI now uses a WebView-lifetime row token without creating dormant
+WebContents, observes host-widget visibility for form canvases/input cancellation,
+defers emoji persistence during IME composition, gives error alerts native alert
+roles, and sends main-window plain keydowns/keyups through the normal NSWindow
+responder chain. Main command equivalents retain AppKit menu handling; panel
+command routing stays explicit. Native typing and renderer keyup after workspace
+chords are checked together. New explicit fixture configuration replaces stale
+onboarding assumptions, and navigation/focus/closed-settings/Metal-transition
+checks synchronize to the behavior they assert. Wrapped paragraph diagnostics
+require all shaped fragments of the logical value in the submitted scene.
+
+Four performance scenarios, the opt-in real Arc import and the manual one-hour
+harness were skipped per backend and are not counted as passes. **148 Rust and
+61 Python tests**, scoped GN/boundaries, optimized app/test build and a no-work
+Ninja check also passed. Source hashes, compiled UUIDs, all individual outcomes
+and the failed initial/intermediate runs are in
+[the checkpoint artifact](benchmarks/rust-ui-checkpoint-2026-10-23.json).
+
+Earlier “GUI checkpoint pending” milestone notes describe their creation-time
+status. This checkpoint supersedes that deferred automated matrix for the current
+matching sources; it does not retroactively accept older source versions. Full
+Views removal, native editor replacement, manual signed-app/IME-candidate/
+VoiceOver/theme/scale/RTL acceptance and CPU/GPU/actual presentation comparisons
+remain work. See [the remaining plan](rust-metal-next-steps-2026-10-23.md).

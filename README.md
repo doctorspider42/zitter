@@ -680,8 +680,9 @@ confirmation now has Rust state/copy and a shared Metal notice body, retaining
 native modal controls and deletion services. Color/emoji preset rows now use Rust
 geometry, selection and input with batched Metal canvases excluding native editors.
 Nine workspace/profile form actions also use Rust layout/input and scene text
-without native button Labels, batched into four Metal groups. These newer stages
-await the deferred GUI checkpoint. Import also uses a Rust form controller for
+without native button Labels, batched into four Metal groups. These newer stages pass the
+[full automated GUI checkpoint](docs/benchmarks/rust-ui-checkpoint-2026-10-23.json);
+manual signed-app and performance acceptance remain pending. Import also uses a Rust form controller for
 option snapshots, debounce/admission and control locks, with Metal static/status
 text and Apply drawing. Four import checkboxes now share a Metal canvas with Rust
 checked state, wrapped labels and geometry. The import source picker also uses
@@ -692,6 +693,8 @@ native painting. Rust also owns row
 click/drag/cancellation and platform key activation through native event, focus
 and accessibility adapters. See
 [build, isolated demo and validation](docs/rust-metal-sidebar.md).
+The [remaining work plan](docs/rust-metal-next-steps-2026-10-23.md) covers native
+editor replacement, the remaining Views surfaces and final acceptance.
 The ongoing [functional parity checklist](docs/rust-metal-parity.md) distinguishes
 preserved native features from controls already migrated to Rust.
 

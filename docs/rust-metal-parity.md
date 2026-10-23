@@ -8,12 +8,19 @@ milestones to `origin/main` as they land. The opt-in switch remains
 
 ## Current execution policy
 
-The user requested the GUI checkpoint on 2026-10-23 after the current editor
-investigation. Windowed automated tests and isolated application validation are
-now authorized. Run native UI suites serially on fixture-owned temporary profiles;
-do not use the normal application/profile. Record real results, skips and failures.
-Earlier headless artifacts remain historical; they do not imply later GUI success.
-See [the remaining work and checkpoint plan](rust-metal-next-steps-2026-10-23.md).
+The requested full automated GUI checkpoint passed on 2026-10-23 for UI source
+`c902e77f4983932ddb89b2cc1f531ffe9f21bd81`: **116 Metal cases and 86 Views cases passed**,
+with six explicit opt-in skips per backend and no failures/retries. The complete
+compiled inventory was attempted (122 Metal / 92 applicable Views tests); the
+30 dedicated Metal cases are excluded from the Views control run. See
+[the checkpoint report](benchmarks/rust-ui-checkpoint-2026-10-23.json).
+
+Continue windowed checks on isolated test profiles as changes land. Do not use the
+normal app/profile. Earlier headless artifacts are historical; the matching current
+source hashes and compiled UUIDs in the checkpoint report establish automated
+acceptance. Manual signed-app/IME/VoiceOver/scale/RTL checks and CPU/GPU/actual
+presentation comparison remain pending. See
+[the remaining work plan](rust-metal-next-steps-2026-10-23.md).
 
 ## How to read progress
 
@@ -33,30 +40,30 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Scroll offset normalization, viewport projection and clipping | Rust logical viewport; native ScrollView input/scroll-service adapters | Replace native scroll containers; expand real trackpad/scale coverage |
 | Vertical/horizontal scrollbar geometry, range normalization, thumb drag/snap/cancellation and drawing | Rust + shared Metal canvas; native ScrollBar/View, key/menu/AX and platform color adapters | Replace native nodes and track-repeat/menu dispatch; dedicated menu/VoiceOver/scale coverage |
 | Selection, close/reopen, title changes, pinned navigation | Rust row/close input into existing application callbacks; native Button/AX adapters | Migrate remaining command routing and containers; preserve persistence and last-tab rules |
-| Folder expand/collapse and tree visibility; create/rename/delete and nested pins | Rust tree and folder form/notice state, copy, layout and scene text; native text input/modal title/buttons and application persistence (GUI checkpoint pending) | Migrate remaining dialog controls; verify destructive defaults, paragraph typography, admission failure, persistence rollback, IME and stale context |
-| Tab/pin context menus and drag to split | Rust menu composition, stable-identity target/action resolution and drop geometry; native event/popup and application adapters (GUI checkpoint pending) | Verify menu/drag/stale-target/RTL coverage; replace native View identity lookup/interaction nodes |
+| Folder expand/collapse and tree visibility; create/rename/delete and nested pins | Rust tree and folder form/notice state, copy, layout and scene text; native text input/modal title/buttons and application persistence (automated UI checked; manual acceptance pending) | Migrate remaining dialog controls; verify destructive defaults, paragraph typography, admission failure, persistence rollback, IME and stale context |
+| Tab/pin context menus and drag to split | Rust menu composition, stable-identity target/action resolution and drop geometry; native event/popup and application adapters (automated UI checked; manual acceptance pending) | Verify menu/drag/stale-target/RTL coverage; replace native View identity lookup/interaction nodes |
 | New Tab action and configurable shortcut hint | Rust text/icon/hint layout, width alignment and input; shared Metal surface; native outer placement/focus/AX adapter | Replace the native Button container; expand keyboard/appearance coverage |
 | Address pill | Rust host/path layout, GPU icon/outline/text and shared input reducer; native outer placement/focus/AX adapter | Replace native Button container; retain address/search/IME service |
 | Workspace heading and emoji text | Rust display list + Metal; native static-text accessibility adapter | Replace outer native View placement; expand VoiceOver/scale coverage |
 | Footer pin/settings, workspace dots/emoji and horizontal overflow | Rust layout, input reducer and shared Metal canvas; native focus/AX/menu adapters | Replace native containers; expand focus, trackpad, RTL and scale coverage |
 | Navigation/header controls | Rust strip layout/input and analytic GPU icons; main-window Metal canvas sharing sidebar GPU resources | Replace native Button/outer frame adapters; expand peek, accessibility, RTL and scale coverage |
 | Sidebar resizing, pinning, auto-hide, edge reveal | Rust drag/width bounds, shell/sidebar/grip geometry and auto-hide guards; Metal grip; native pin/show commands | Replace native window/event/cursor/AX adapters and edge-indicator painting; broaden input/accessibility coverage |
-| Workspace swipe/animation/cancellation | Rust gesture/preview/transition policy and Metal canvases; native event/CA completion and application commit adapters (GUI checkpoint pending) | Run deferred browser/desktop acceptance; audit native fallback, cancellation, accessibility and scale |
+| Workspace swipe/animation/cancellation | Rust gesture/preview/transition policy and Metal canvases; native event/CA completion and application commit adapters (automated UI checked; manual acceptance pending) | Run deferred browser/desktop acceptance; audit native fallback, cancellation, accessibility and scale |
 | Split headers/divider, focus, orientation, swap/close | Rust pane/bar layout, title text, menu/close input and divider drag; shared Metal rendering | Replace native View/Button/ResizeArea event, cursor and AX adapters; expand gesture/RTL/scale coverage |
 | Address/search palette, suggestions, providers, IME | Rust result selection/layout/text/icons, palette/input/static chrome geometry, Metal hints/errors; native Textfield/IME, provider/search controllers | Migrate remaining native containers/frame presentation; expand composition/accessibility/scale coverage |
 | Command Center tabs/pins/workspaces/history/actions | Rust result selection/drawing; existing search/ranking and application commands | Replace remaining native containers/frame presentation and command adapters; preserve stale results and identity |
-| Profile management create/rename/delete | Rust controller, copy, validation, stable-ID selection, two-step delete and column/text layout; Metal static text and selectors; native input/popup/IME and storage services (GUI checkpoint pending) | Migrate remaining native input nodes; verify IME, typography, action groups, stale confirmation, profile/session isolation and failed-write rollback |
-| Workspace create/edit settings | Rust form mode/validation/requests and column/text layout; Metal headings/help/status; native input, header row, appearance/editor services and storage (GUI checkpoint pending) | Migrate remaining native controls/header/action rows and outer panel; verify profile changes, IME, async errors and persistence |
-| Workspace/profile form action buttons | Rust button/group geometry, shared pointer/key reducer and text/background/border/focus primitives; four Metal groups; native Button/AX/focus, platform font/metric/color and command adapters (GUI checkpoint pending) | Replace native interaction nodes; verify dynamic labels, disabled styles, focus/keyboard/cancellation, clipping/fallback and service semantics |
-| Workspace color/emoji presets | Rust preset data/selection, row geometry, pointer/key reducer and scene primitives; two shared-context Metal canvases; native Button/AX/focus and text/grapheme/storage adapters (GUI checkpoint pending) | Replace native input nodes and editor presentation; verify capture/visibility/workspace cancellation, clipping, keyboard/IME/AX, theme/scale and persistence |
-| Workspace deletion confirmation | Rust captured-target notice state/copy and shared paragraph layout; Metal body/error text; native modal title/buttons and deletion/persistence services (GUI checkpoint pending) | Migrate remaining host controls; verify default Cancel, beforeunload, stale targets, retained profile data, typography and screen bounds |
+| Profile management create/rename/delete | Rust controller, copy, validation, stable-ID selection, two-step delete and column/text layout; Metal static text and selectors; native input/popup/IME and storage services (automated UI checked; manual acceptance pending) | Migrate remaining native input nodes; verify IME, typography, action groups, stale confirmation, profile/session isolation and failed-write rollback |
+| Workspace create/edit settings | Rust form mode/validation/requests and column/text layout; Metal headings/help/status; native input, header row, appearance/editor services and storage (automated UI checked; manual acceptance pending) | Migrate remaining native controls/header/action rows and outer panel; verify profile changes, IME, async errors and persistence |
+| Workspace/profile form action buttons | Rust button/group geometry, shared pointer/key reducer and text/background/border/focus primitives; four Metal groups; native Button/AX/focus, platform font/metric/color and command adapters (automated UI checked; manual acceptance pending) | Replace native interaction nodes; verify dynamic labels, disabled styles, focus/keyboard/cancellation, clipping/fallback and service semantics |
+| Workspace color/emoji presets | Rust preset data/selection, row geometry, pointer/key reducer and scene primitives; two shared-context Metal canvases; native Button/AX/focus and text/grapheme/storage adapters (automated UI checked; manual acceptance pending) | Replace native input nodes and editor presentation; verify capture/visibility/workspace cancellation, clipping, keyboard/IME/AX, theme/scale and persistence |
+| Workspace deletion confirmation | Rust captured-target notice state/copy and shared paragraph layout; Metal body/error text; native modal title/buttons and deletion/persistence services (automated UI checked; manual acceptance pending) | Migrate remaining host controls; verify default Cancel, beforeunload, stale targets, retained profile data, typography and screen bounds |
 | General preferences, shortcuts and site preferences | Views + application services | Rust forms; use the same persisted configuration |
 | History, downloads, passwords and permissions | Views/native service adapters | Rust presentation/control layer; retain browser service and security semantics |
 | Peek, promote/split, link/page menus and routing | Views/native adapters + application | Rust control routing, focus and dismissal; retain native page integration |
-| Import form and first-run import | Rust UI option/debounce/admission/controller state, copy, columns and Metal static/status/Apply text; native Button/AX/focus, header nodes, native popup/IME adapters and application import services (GUI checkpoint pending) | Migrate remaining native header and input nodes; verify latest options, busy recovery, credentials opt-in, source immutability, first-run/persistence/rollback and runtime accessibility |
-| Import checkboxes | Rust checked state, shared pointer/key input, mark/label/RTL geometry and primitives; one Metal canvas; native Button/AX/focus/event and font/inset/color adapters (GUI checkpoint pending) | Replace native interaction nodes; verify checked/default action, disabled/capture/context/visibility behavior, actual marks/typography, theme/scale and fallback |
-| Import source selector | Rust selected state, prefix timeout/search, popup tokens, macOS key policy and closed-control geometry/scene; Metal canvas; native menu/IME/focus/AX/event adapters (GUI checkpoint pending) | Verify popup lifecycle, typeahead, keyboard and VoiceOver, disabled/hide/capture, RTL/theme/scale and fallback; migrate remaining native adapters |
-| Workspace/managed profile selectors | Rust stable-ID reconciliation, prefix/menu state and scene; two Metal canvases; native popup/IME/focus/AX/event and font/color adapters (GUI checkpoint pending) | Verify profile CRUD/assignment persistence, renamed/reordered/removed choices, stale menu callbacks, native popup/IME/AX, clipping and theme/scale/RTL; migrate remaining native adapters |
+| Import form and first-run import | Rust UI option/debounce/admission/controller state, copy, columns and Metal static/status/Apply text; native Button/AX/focus, header nodes, native popup/IME adapters and application import services (automated UI checked; manual acceptance pending) | Migrate remaining native header and input nodes; verify latest options, busy recovery, credentials opt-in, source immutability, first-run/persistence/rollback and runtime accessibility |
+| Import checkboxes | Rust checked state, shared pointer/key input, mark/label/RTL geometry and primitives; one Metal canvas; native Button/AX/focus/event and font/inset/color adapters (automated UI checked; manual acceptance pending) | Replace native interaction nodes; verify checked/default action, disabled/capture/context/visibility behavior, actual marks/typography, theme/scale and fallback |
+| Import source selector | Rust selected state, prefix timeout/search, popup tokens, macOS key policy and closed-control geometry/scene; Metal canvas; native menu/IME/focus/AX/event adapters (automated UI checked; manual acceptance pending) | Verify popup lifecycle, typeahead, keyboard and VoiceOver, disabled/hide/capture, RTL/theme/scale and fallback; migrate remaining native adapters |
+| Workspace/managed profile selectors | Rust stable-ID reconciliation, prefix/menu state and scene; two Metal canvases; native popup/IME/focus/AX/event and font/color adapters (automated UI checked; manual acceptance pending) | Verify profile CRUD/assignment persistence, renamed/reordered/removed choices, stale menu callbacks, native popup/IME/AX, clipping and theme/scale/RTL; migrate remaining native adapters |
 | Time Machine | Views + application services | Rust presentation; preserve previews, validation, backups and restoration |
 | Keyboard accessibility, VoiceOver, focus and tooltips | Native Views nodes | Explicit native accessibility adapter for Rust controls; no duplicate nodes |
 
@@ -392,3 +399,16 @@ remain. Passing the current tests establishes the tested milestone only.
   [profile selector verification](benchmarks/rust-profile-pickers-headless-2026-10-23.json).
   Actual popup behavior, rendering, persistence and CPU/GPU/presentation comparisons
   remain pending; this stage does not complete functional parity.
+
+- The complete compiled automated UI inventory now passes in both backends:
+  **116 Metal cases and 86 Views cases**, plus six explicit opt-in skips per
+  backend, without retries. It covers the entire previously deferred 70/34
+  matrix. The checkpoint repaired lazy-tab realization caused by UI identity
+  extraction, hidden-window input/Metal lifecycle, emoji IME updates, alert
+  roles and main-window Cocoa plain-key/keyup routing, and corrected stale
+  fixture/navigation/focus/animation assumptions. **148 Rust and 61 Python
+  tests**, optimized app/test compilation, scoped GN/boundaries and a no-work
+  Ninja check also passed. See
+  [the full checkpoint report](benchmarks/rust-ui-checkpoint-2026-10-23.json).
+  This establishes current automated behavior; full Rust ownership, manual
+  signed-app acceptance and actual performance comparison are still incomplete.
