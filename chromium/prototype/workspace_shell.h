@@ -25,7 +25,6 @@
 #include "base/memory/weak_ptr.h"
 #include "base/task/sequenced_task_runner.h"
 #include "third_party/skia/include/core/SkColor.h"
-#include "ui/views/controls/textfield/textfield_controller.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/views/controls/scroll_view.h"
 #include "ui/events/event_handler.h"
@@ -106,7 +105,6 @@ class SidebarMetal;
 // Native interaction tree with optional Rust/Metal card rendering.
 // No Profile, BrowserContext or WebContents dependencies.
 class WorkspaceShell final : public ui::EventHandler,
-                             public views::TextfieldController,
                              public views::WidgetObserver,
                              public views::ContextMenuController,
                              public ui::SimpleMenuModel::Delegate,
@@ -215,7 +213,7 @@ class WorkspaceShell final : public ui::EventHandler,
   bool history_visible() const;
   bool history_loaded() const { return history_loaded_; }
   views::View* history_results_view() const { return history_list_; }
-  views::Textfield* history_search() const { return history_search_; }
+  EditorControl* history_search() const { return history_search_; }
   views::Combobox* history_period() const { return history_period_; }
   const std::vector<BrowsingHistoryEntry>& history_entries() const { return history_entries_; }
   void SyncShortcuts() { RefreshKeyRegistrations(); }
@@ -229,7 +227,7 @@ class WorkspaceShell final : public ui::EventHandler,
   const BrowserTools& browser_tools() const { return tools_; }
   bool tools_ready() const { return tools_ready_; }
   views::Widget* tools_widget() const { return tools_widget_.get(); }
-  views::Textfield* shortcut_input() const { return shortcut_chord_; }
+  EditorControl* shortcut_input() const { return shortcut_chord_; }
   views::Combobox* tools_selection() const { return tools_picker_; }
   void SetThemeMode(ThemeMode mode);
   ThemeMode theme_mode() const { return theme_mode_; }
@@ -387,6 +385,12 @@ class WorkspaceShell final : public ui::EventHandler,
   // Application key policy; the platform input method owns composing keys.
   bool HandleAddressKey(const ui::KeyEvent& event);
   bool HandlePreferenceEditorKey(EditorControl* sender,const ui::KeyEvent& event);
+  bool HandleToolsEditorKey(EditorControl* sender,const ui::KeyEvent& event);
+  EditorControl* snapshot_input() const { return snapshot_name_; }
+  EditorControl* timeline_filter_input() const { return timeline_filter_; }
+  EditorControl* provider_input(size_t index) const {
+    return std::array<EditorControl*,3>{provider_name_,provider_keyword_,provider_url_}.at(index);
+  }
 
  private:
   void ManagedProfileSelectionChanged();
@@ -437,17 +441,17 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> tools_body_ = nullptr;
   raw_ptr<views::Label> tools_title_ = nullptr;
   raw_ptr<views::Label> tools_status_ = nullptr;
-  raw_ptr<views::Textfield> snapshot_name_ = nullptr;
-  raw_ptr<views::Textfield> timeline_filter_ = nullptr;
-  raw_ptr<views::Textfield> shortcut_chord_ = nullptr;
-  raw_ptr<views::Textfield> provider_name_ = nullptr;
-  raw_ptr<views::Textfield> provider_keyword_ = nullptr;
-  raw_ptr<views::Textfield> provider_url_ = nullptr;
+  raw_ptr<EditorControl> snapshot_name_ = nullptr;
+  raw_ptr<EditorControl> timeline_filter_ = nullptr;
+  raw_ptr<EditorControl> shortcut_chord_ = nullptr;
+  raw_ptr<EditorControl> provider_name_ = nullptr;
+  raw_ptr<EditorControl> provider_keyword_ = nullptr;
+  raw_ptr<EditorControl> provider_url_ = nullptr;
   raw_ptr<views::Combobox> tools_picker_ = nullptr;
   raw_ptr<views::Combobox> closed_picker_ = nullptr;
   raw_ptr<views::ScrollView> tools_scroll_ = nullptr;
   std::vector<std::string> snapshot_ids_, closed_ids_;
-  raw_ptr<views::Textfield> history_search_ = nullptr;
+  raw_ptr<EditorControl> history_search_ = nullptr;
   raw_ptr<views::Combobox> history_period_ = nullptr;
   raw_ptr<views::View> history_list_ = nullptr;
   raw_ptr<views::Button> history_more_ = nullptr;
@@ -459,6 +463,12 @@ class WorkspaceShell final : public ui::EventHandler,
   base::OneShotTimer history_timer_;
   int tools_page_ = 0;
   bool recording_shortcut_ = false;
+  uint64_t tools_generation_ = 0;
+  std::u16string history_query_;
+  std::u16string timeline_query_;
+  void ToolsEditorEdited(EditorControl* sender);
+  void PostToolsAction(int action);
+  void SetShortcutRecording(bool recording);
   std::unique_ptr<views::WidgetDelegate> tools_delegate_;
   std::unique_ptr<views::Widget> tools_widget_;
   void RequestFolderName(std::string workspace, std::string parent, std::string renamed);
@@ -539,9 +549,6 @@ class WorkspaceShell final : public ui::EventHandler,
   void RestorePageFocus();
   void RunSuggestion(size_t index);
   void ShowAddressError();
-  bool HandleKeyEvent(views::Textfield* sender, const ui::KeyEvent& event) override;
-  void ContentsChanged(views::Textfield* sender,
-                       const std::u16string& new_contents) override;
   void OnWidgetBoundsChanged(views::Widget*, const gfx::Rect&) override;
   void OnWidgetActivationChanged(views::Widget*, bool active) override;
   void OnWidgetVisibilityChanged(views::Widget*, bool visible) override;

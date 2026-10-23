@@ -3345,7 +3345,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   tools_title_ = Label(tools_heading, u"Time Machine", kInk, Font(5, gfx::Font::Weight::SEMIBOLD));
   tools_heading_layout->SetFlexForView(tools_title_, 1);
   tools_heading->AddChildView(std::make_unique<GlyphButton>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
-    if (shell) { shell->recording_shortcut_ = false; shell->tools_widget_->Hide(); shell->RestorePageFocus(); }
+    if (shell) { shell->SetShortcutRecording(false); shell->tools_widget_->Hide(); shell->RestorePageFocus(); }
   }, weak), u"Zamknij narzędzia", GlyphButton::Glyph::kVector, &vector_icons::kCloseIcon));
   auto tools_scroll = std::make_unique<views::ScrollView>(); tools_scroll_ = tools_scroll.get();
   tools_scroll->SetBackgroundColor(std::nullopt); tools_scroll->SetDrawOverflowIndicator(false);
@@ -3467,6 +3467,8 @@ void WorkspaceShell::Detach() {
   for (auto* panel : {sidebar_widget_.get(), address_widget_.get(), settings_widget_.get(), profiles_widget_.get(), import_widget_.get(), peek_widget_.get(), general_widget_.get(), tools_widget_.get()})
     panel->RemoveObserver(this);
   search_timer_.Stop();
+  for(auto* field:{snapshot_name_.get(),timeline_filter_.get(),shortcut_chord_.get(),provider_name_.get(),provider_keyword_.get(),provider_url_.get(),history_search_.get()})
+    if(field)field->SetCallbacks({},{});
   address_->SetCallbacks({},{});
   color_input_->SetCallbacks({},{});
   emoji_input_->SetCallbacks({},{});
@@ -5338,8 +5340,8 @@ void WorkspaceShell::ApplyTheme() {
       else surface->SetBorder(views::CreateRoundedRectBorder(1,radius,Hairline(surface)));}
     surface->SchedulePaint();
   }
-  for (auto* field : {snapshot_name_.get(), timeline_filter_.get(), shortcut_chord_.get(), provider_name_.get(), provider_keyword_.get(), provider_url_.get()})
-    if (field) { field->SetBackgroundColor(Tone(field, kChip)); field->SetColor(Tone(field, kInk)); }
+  for (auto* field : {snapshot_name_.get(), timeline_filter_.get(), shortcut_chord_.get(), provider_name_.get(), provider_keyword_.get(), provider_url_.get(),history_search_.get()})
+    if (field) field->SetPresentation(gfx::FontList().GetFontSize(),8,true,Tone(root_, kChip));
   content_host_->SetBackground(views::CreateRoundedRectBackground(Tone(root_, kCard), 10));
   if (general_scroll_) general_scroll_->SetBackgroundColor(Tone(root_, kCard));
   if (preferences_search_) preferences_search_->SetPresentation(gfx::FontList().GetFontSize(),8,true,Tone(root_, kChip));
@@ -5760,7 +5762,7 @@ bool WorkspaceShell::SetShortcut(std::string id, std::string chord) {
 bool WorkspaceShell::CaptureShortcut(const ui::Accelerator& accelerator) {
   if (!recording_shortcut_ || !tools_widget_ || !tools_widget_->IsVisible()) return false;
   if (accelerator.key_code() == ui::VKEY_ESCAPE) {
-    recording_shortcut_ = false;
+    SetShortcutRecording(false);
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(&WorkspaceShell::RefreshKeyRegistrations, weak_factory_.GetWeakPtr()));
     tools_status_->SetText(u"Nagrywanie anulowane."); return true;
   }
@@ -5768,7 +5770,7 @@ bool WorkspaceShell::CaptureShortcut(const ui::Accelerator& accelerator) {
     tools_status_->SetText(u"Użyj Cmd / Ctrl / Alt i klawisza. Skróty edycji tekstu oraz systemowe są zarezerwowane."); return true;
   }
   shortcut_chord_->SetText(base::UTF8ToUTF16(FormatShortcut(accelerator)));
-  recording_shortcut_ = false;
+  SetShortcutRecording(false);
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(&WorkspaceShell::RefreshKeyRegistrations, weak_factory_.GetWeakPtr()));
   tools_status_->SetText(u"Kombinacja przechwycona. Wybierz Zapisz skrót."); return true;
 }
@@ -5856,12 +5858,12 @@ void WorkspaceShell::RefreshHistory(bool more) {
   history_loaded_ = false;
   history_more_->SetEnabled(false);
   tools_status_->SetText(u"Odczytywanie historii…");
-  callbacks_.query_history.Run(std::u16string(base::TrimWhitespace(history_search_->GetText(), base::TRIM_ALL)), history_limit_);
+  callbacks_.query_history.Run(history_query_,history_limit_);
 }
 void WorkspaceShell::SetHistoryResults(std::u16string query, std::string profile_id, size_t limit,
     std::vector<BrowsingHistoryEntry> entries, bool more, bool error) {
   if (!history_visible() || !history_search_ || profile_id != state_.profile_id ||
-      base::TrimWhitespace(history_search_->GetText(), base::TRIM_ALL) != query || limit != history_limit_) return;
+      history_query_ != query || limit != history_limit_) return;
   history_entries_ = std::move(entries);
   history_loaded_ = true;
   history_list_->RemoveAllChildViews();
@@ -5897,7 +5899,7 @@ void WorkspaceShell::SetHistoryResults(std::u16string query, std::string profile
 void WorkspaceShell::RefreshTimelineItems() {
   if (tools_page_ != 0 || !tools_picker_) return;
   const auto state = callbacks_.time_machine ? callbacks_.time_machine.Run() : TimeMachineState();
-  const auto query = timeline_filter_ ? base::i18n::ToLower(timeline_filter_->GetText()) : std::u16string();
+  const auto& query = timeline_query_;
   auto fill = [&](const auto& items, views::Combobox* picker, std::vector<std::string>& ids) {
     ids.clear(); std::vector<ui::SimpleComboboxModel::Item> labels;
     for (const auto& item : items) if (query.empty() || base::i18n::ToLower(item.title + u" " + item.detail).find(query) != std::u16string::npos) {
@@ -5911,6 +5913,11 @@ void WorkspaceShell::RefreshTimelineItems() {
   fill(state.snapshots, tools_picker_, snapshot_ids_); fill(state.closed, closed_picker_, closed_ids_);
 }
 void WorkspaceShell::RefreshTools() {
+  ++tools_generation_;
+  SetShortcutRecording(false);
+  for(auto* field:{snapshot_name_.get(),timeline_filter_.get(),shortcut_chord_.get(),provider_name_.get(),provider_keyword_.get(),provider_url_.get(),history_search_.get()})
+    if(field)field->SetCallbacks({},{});
+  history_query_.clear();timeline_query_.clear();
   history_timer_.Stop();
   history_search_ = nullptr; history_period_ = nullptr; history_list_ = nullptr;
   history_more_ = nullptr; history_clear_ = nullptr; history_entries_.clear(); history_loaded_ = false;
@@ -5922,14 +5929,20 @@ void WorkspaceShell::RefreshTools() {
   auto weak = weak_factory_.GetWeakPtr();
   auto hint = [&](std::u16string text) { auto* label = Label(tools_body_, text, kMuted, Font(-1)); label->SetMultiLine(true); return label; };
   auto input = [&](std::u16string name) {
-    auto* field = tools_body_->AddChildView(std::make_unique<views::Textfield>());
-    field->SetAccessibleName(name); field->SetPlaceholderText(name); field->SetController(this);
-    field->SetBackgroundColor(Tone(root_, kChip)); field->SetColor(Tone(root_, kInk)); field->SetPreferredSize(gfx::Size(200, 36)); return field;
+    auto* field = AddEditor(tools_body_,bool(workspace_form_));
+    field->GetViewAccessibility().SetName(name);field->SetPlaceholderText(name);
+    field->view()->SetPreferredSize(gfx::Size(200,36));
+    field->SetPresentation(gfx::FontList().GetFontSize(),8,true,Tone(root_,kChip));
+    field->SetCallbacks(base::BindRepeating(&WorkspaceShell::ToolsEditorEdited,weak,base::Unretained(field)),
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,EditorControl* editor,const ui::KeyEvent& event){
+        return shell&&shell->HandleToolsEditorKey(editor,event);
+      },weak,base::Unretained(field)));
+    return field;
   };
   auto button = [&](std::u16string title, int action) {
     tools_body_->AddChildView(std::make_unique<views::MdTextButton>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, int action) {
       if (!shell) return;
-      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(&WorkspaceShell::ToolsAction, shell, action));
+      shell->PostToolsAction(action);
     }, weak, action), title));
   };
   auto picker = [&](std::u16string name, const std::vector<std::u16string>& values) {
@@ -5967,7 +5980,8 @@ void WorkspaceShell::RefreshTools() {
       if (!shell || !shell->shortcut_chord_) return;
       const size_t i = shell->tools_picker_->GetSelectedIndex().value_or(0);
       if (i < shell->tools_.shortcuts.size()) shell->shortcut_chord_->SetText(base::UTF8ToUTF16(FormatShortcut(shell->tools_.shortcuts[i].accelerator)));
-      shell->recording_shortcut_ = false;
+      shell->SetShortcutRecording(false);
+      shell->RefreshKeyRegistrations();
     }, weak));
     button(u"Nagraj kombinację…", 10); button(u"Zapisz skrót", 11);
     button(u"Wyłącz wybrany skrót", 12); button(u"Przywróć schemat Arc", 13);
@@ -6013,10 +6027,26 @@ void WorkspaceShell::RefreshTools() {
   PreparePanelText(tools_widget_->GetRootView()); tools_body_->InvalidateLayout();
   if (history_visible()) RefreshHistory();
 }
+void WorkspaceShell::PostToolsAction(int action) {
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(
+      [](base::WeakPtr<WorkspaceShell> shell,uint64_t generation,std::string workspace,std::string profile,int action){
+        if(shell&&shell->tools_generation_==generation&&shell->state_.workspace_id==workspace&&shell->state_.profile_id==profile)
+          shell->ToolsAction(action);
+      },weak_factory_.GetWeakPtr(),tools_generation_,state_.workspace_id,state_.profile_id,action));
+}
+void WorkspaceShell::SetShortcutRecording(bool recording) {
+  if(recording&&shortcut_chord_)shortcut_chord_->ClearCompositionText();
+  recording_shortcut_=recording;
+  if(shortcut_chord_)shortcut_chord_->SetReadOnly(recording);
+}
 void WorkspaceShell::ToolsAction(int action) {
   if (!tools_widget_ || !tools_widget_->IsVisible()) return;
+  if(action==1&&snapshot_name_&&snapshot_name_->IsIMEComposing())return;
+  if(action>=20&&action<=22)
+    for(auto* field:{provider_name_.get(),provider_keyword_.get(),provider_url_.get()})if(field&&field->IsIMEComposing())return;
+  if((action==11||action==12)&&shortcut_chord_&&shortcut_chord_->IsIMEComposing())return;
   bool ok = false;
-  if (action != 10 && recording_shortcut_) { recording_shortcut_ = false; RefreshKeyRegistrations(); }
+  if (action != 10 && recording_shortcut_) { SetShortcutRecording(false); RefreshKeyRegistrations(); }
   const size_t index = tools_picker_ ? tools_picker_->GetSelectedIndex().value_or(0) : 0;
   if (action == 1 && snapshot_name_) {
     ok = callbacks_.save_snapshot && callbacks_.save_snapshot.Run(base::UTF16ToUTF8(snapshot_name_->GetText()), false);
@@ -6030,7 +6060,7 @@ void WorkspaceShell::ToolsAction(int action) {
     ok = callbacks_.sleep_workspace && callbacks_.sleep_workspace.Run(id);
     if (ok) return;
   } else if (action == 10 && shortcut_chord_) {
-    recording_shortcut_ = true; RefreshKeyRegistrations(); shortcut_chord_->RequestFocus();
+    SetShortcutRecording(true); RefreshKeyRegistrations(); shortcut_chord_->RequestFocus();
     tools_status_->SetText(u"Naciśnij kombinację. Escape anuluje nagrywanie."); return;
   } else if ((action == 11 || action == 12) && index < tools_.shortcuts.size() && shortcut_chord_) {
     ok = SetShortcut(tools_.shortcuts[index].id, action == 12 ? "" : base::UTF16ToUTF8(shortcut_chord_->GetText()));
@@ -6101,7 +6131,7 @@ bool WorkspaceShell::CloseOverlays(bool keep_sidebar) {
       (profiles_widget_ && profiles_widget_->IsVisible()) || import_visible() ||
       (general_widget_ && general_widget_->IsVisible()) || (tools_widget_ && tools_widget_->IsVisible()) || (!keep_sidebar && !pinned_ && sidebar_visible());
   if (tools_widget_) tools_widget_->Hide();
-  recording_shortcut_ = false;
+  SetShortcutRecording(false);
   if (general_widget_) general_widget_->Hide();
   if (profiles_widget_) profiles_widget_->Hide();
   if (import_widget_) import_widget_->Hide();
@@ -6757,17 +6787,18 @@ void WorkspaceShell::RunSuggestion(size_t index) {
     ShowAddressError();
   }
 }
-void WorkspaceShell::ContentsChanged(views::Textfield* sender, const std::u16string& contents) {
-  if (sender == history_search_) {
-    history_loaded_ = false;
-    history_entries_.clear();
-    if (history_list_) history_list_->RemoveAllChildViews();
+void WorkspaceShell::ToolsEditorEdited(EditorControl* sender) {
+  if(!tools_widget_||!tools_widget_->IsVisible()||sender->IsIMEComposing())return;
+  if(sender==history_search_){
+    history_query_=base::TrimWhitespace(sender->GetText(),base::TRIM_ALL);
+    history_loaded_=false;history_entries_.clear();
+    if(history_list_)history_list_->RemoveAllChildViews();
     tools_status_->SetText(u"Wyszukiwanie historii…");
-    if (history_more_) history_more_->SetEnabled(false);
-    history_timer_.Start(FROM_HERE, base::Milliseconds(150), base::BindOnce(&WorkspaceShell::RefreshHistory, weak_factory_.GetWeakPtr(), false));
-    return;
+    if(history_more_)history_more_->SetEnabled(false);
+    history_timer_.Start(FROM_HERE,base::Milliseconds(150),base::BindOnce(&WorkspaceShell::RefreshHistory,weak_factory_.GetWeakPtr(),false));
+  }else if(sender==timeline_filter_){
+    timeline_query_=base::i18n::ToLower(sender->GetText());RefreshTimelineItems();
   }
-  if (sender == timeline_filter_) { RefreshTimelineItems(); return; }
 }
 void WorkspaceShell::AddressEdited() {
   if(!address_visible()||address_->IsIMEComposing())return;
@@ -6790,21 +6821,17 @@ void WorkspaceShell::SetSearchResults(std::u16string query, std::string profile_
   search_results_ = std::move(results);
   RebuildSuggestions();
 }
-bool WorkspaceShell::HandleKeyEvent(views::Textfield* sender, const ui::KeyEvent& event) {
-  if (sender == shortcut_chord_ && recording_shortcut_ && event.type() == ui::EventType::kKeyPressed) {
-    return CaptureShortcut(ui::Accelerator(event.key_code(), ui::Accelerator::MaskOutKeyEventFlags(event.flags())));
+bool WorkspaceShell::HandleToolsEditorKey(EditorControl* sender,const ui::KeyEvent& event) {
+  if(!tools_widget_||!tools_widget_->IsVisible()||!sender->view()->GetEnabledInViewsSubtree()||event.type()!=ui::EventType::kKeyPressed)return false;
+  if(sender==shortcut_chord_&&recording_shortcut_)
+    return CaptureShortcut(ui::Accelerator(event.key_code(),ui::Accelerator::MaskOutKeyEventFlags(event.flags())));
+  if(sender->IsIMEComposing())return false;
+  if(event.key_code()==ui::VKEY_ESCAPE){CloseOverlays();RestorePageFocus();return true;}
+  if(event.key_code()==ui::VKEY_RETURN){
+    const int action=sender==snapshot_name_?1:sender==shortcut_chord_?11:
+        (sender==provider_name_||sender==provider_keyword_||sender==provider_url_)?20:0;
+    if(action){PostToolsAction(action);return true;}
   }
-
-  if (event.type() == ui::EventType::kKeyPressed && event.key_code() == ui::VKEY_RETURN && tools_widget_ && tools_widget_->IsVisible()) {
-    const int action = sender == snapshot_name_ ? 1 : sender == shortcut_chord_ ? 11 :
-        (sender == provider_name_ || sender == provider_keyword_ || sender == provider_url_) ? 20 : 0;
-    if (action) {
-      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(&WorkspaceShell::ToolsAction, weak_factory_.GetWeakPtr(), action));
-      return true;
-    }
-  }
-  if (event.type() != ui::EventType::kKeyPressed) return false;
-  if (event.key_code() == ui::VKEY_ESCAPE) { CloseOverlays(); RestorePageFocus(); return true; }
   return false;
 }
 bool WorkspaceShell::HandlePreferenceEditorKey(EditorControl* sender,const ui::KeyEvent& event) {
