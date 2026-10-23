@@ -269,8 +269,34 @@ calling native Textfield::OnKeyPressed directly bypasses the OS filter and execu
 native edit commands, so it is not an equivalent IME simulation. That incorrect
 initial fixture failed in Views and was corrected. Real Cocoa typing, clear,
 Return/navigation and Escape remain tested in both backends; actual candidate-window
-acceptance is still manual. Empty marked-string and full IME termination paths
-also need reconciliation with the native adapter; this checkpoint covers nonempty
-preedit and explicit ClearCompositionText cancellation. The policy rejects hidden
+acceptance is still manual. Empty marked-string updates are now reconciled in the platform adapter (below);
+other undo/menu/focus/hidden and real candidate-window termination paths still
+require broader acceptance. The policy rejects hidden
 palette input.
 [Matching evidence](benchmarks/rust-address-editor-checkpoint-2026-10-23.json).
+
+
+## Empty platform marked text and range availability
+
+Both adapters now interpret SetCompositionText(empty) as termination of existing
+preedit. With no preedit it is an idle no-op, preserving text and service selection.
+The Rust adapter cancels its existing transaction before considering a new one;
+the underlying Rust model retains its lower-level empty-preedit/token capability.
+The native adapter avoids forwarding idle empty text to TextfieldModel, whose
+normal implementation would delete a selected range even without active preedit.
+All native marked-text updates are callback-suppressed; explicit final insertion
+and ConfirmCompositionText still publish committed edits normally.
+
+After termination HasCompositionText is false, a normal editable client's range
+query succeeds with gfx::Range::InvalidRange, and confirmation returns zero. The
+Rust adapter now matches that native availability contract, including rejecting
+range queries for readonly/unavailable input. Cancellation publishes no domain
+commit, so an empty emoji draft cannot erase the saved emoji through autosave.
+
+The new shared native/Metal test covers idle reversed selection, active termination,
+range/readonly semantics, repeated empty updates, a subsequent normal confirmation
+and saved-emoji protection. It adds no native shadow editing model. When preedit
+already replaced selected text, the original native cancellation-selection behavior
+remains; Rust restores its atomic original value/selection as documented earlier.
+Undo/menu/focus/hide sequences and real OS candidate-window acceptance remain open.
+[Matching checkpoint](benchmarks/rust-ime-empty-marked-checkpoint-2026-10-23.json).

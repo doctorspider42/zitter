@@ -1238,3 +1238,20 @@ was corrected to test the application policy seam; actual Cocoa input/navigation
 remain covered and the failure is preserved. Real candidate windows, VoiceOver,
 remaining fields/forms/services/containers and performance/release checks remain.
 [Matching report](benchmarks/rust-address-editor-checkpoint-2026-10-23.json).
+
+
+## Empty marked-text platform termination (2026-10-23)
+
+UI source `a6d994b91dd92b42d34a540df6203ac6a69df930` interprets empty marked updates as active preedit
+cancellation or idle no-ops in both backends. It suppresses native preedit callbacks,
+protects idle selections from native empty-marker deletion and aligns composition
+range queries for editable/readonly input. The shared test also verifies repeated
+updates, later confirmation and saved emoji protection. No Rust model or shadow
+native editing state was added; existing native selected-text cancellation behavior
+remains distinct from Rust's atomic restoration.
+
+Full **129 Metal / 97 Views**, six explicit skips each, **66 committed Python**,
+GN/boundaries and optimized build passed. Rust/geometry sources match the preceding
+214/61/180 unit/SDK evidence; no repeat of those unchanged checks. Broader native
+termination, real candidate windows/VoiceOver, remaining UI, profiling and release
+acceptance remain open. [Matching report](benchmarks/rust-ime-empty-marked-checkpoint-2026-10-23.json).

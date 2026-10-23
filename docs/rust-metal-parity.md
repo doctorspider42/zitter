@@ -8,14 +8,15 @@ milestones to `origin/main` as they land. The opt-in switch remains
 
 ## Current execution policy
 
-Latest automated acceptance: UI source `e17b856ce11e6d6994370998036b15f99e2f2c37`
-passed **128 Metal / 96 Views cases**, six explicit skips per backend, from the
-complete 134-case inventory (102 applicable Views cases; 32 dedicated Metal cases
-excluded), with one job and no retries. **214 Rust / 66 clean-archive Python tests**,
-61 standalone model cases, 180 SDK font/direction cases plus raster, GN/boundaries
-and optimized compilation passed. The live checkout passed 68 Python tests including
-two concurrent cases outside this UI commit.
-[Matching checkpoint](benchmarks/rust-address-editor-checkpoint-2026-10-23.json).
+Latest automated acceptance: UI source `a6d994b91dd92b42d34a540df6203ac6a69df930`
+passed **129 Metal / 97 Views cases**, six explicit skips per backend, from the
+complete 135-case inventory (103 applicable Views cases; 32 dedicated Metal cases
+excluded), with one job and no retries. **66 clean-archive Python tests**, scoped
+GN/boundaries and optimized compilation passed; the live checkout passed 68 Python
+cases including two concurrent cases outside this commit. Rust/scene/geometry
+sources match the preceding 214 Rust / 61 standalone / 180 SDK plus raster evidence,
+which was not repeated for this native adapter change.
+[Matching checkpoint](benchmarks/rust-ime-empty-marked-checkpoint-2026-10-23.json).
 
 The live workspace/profile name editor now has macOS selection direction/policies,
 page/paragraph commands, kill/yank, transpose and matched forced direction/raster
@@ -492,3 +493,13 @@ remain. Passing the current tests establishes the tested milestone only.
   application policy seam and remains recorded; real candidate windows/VoiceOver,
   remaining settings/services/containers, performance and release checks stay open.
   [Evidence](benchmarks/rust-address-editor-checkpoint-2026-10-23.json).
+
+- **Empty marked-text termination (2026-10-23):** Both platform adapters end active
+  preedit and preserve idle text/selection on empty updates, without domain commits.
+  Native callbacks are suppressed through marked updates; Rust composition range
+  availability matches native editable/readonly behavior. A subsequent normal
+  confirmation still commits. Shared tests cover emoji autosave protection. Full
+  **129 Metal / 97 Views**, six skips each, **66 committed Python**; unchanged Rust/
+  geometry match prior unit/SDK evidence. Broader native termination/menu/focus,
+  candidate windows/VoiceOver, remaining fields/containers and performance/release
+  work stay open. [Evidence](benchmarks/rust-ime-empty-marked-checkpoint-2026-10-23.json).
