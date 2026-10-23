@@ -8,6 +8,7 @@
 #include "ui/base/dragdrop/mojom/drag_drop_types.mojom.h"
 #include "ui/views/drag_controller.h"
 #include "ui/compositor/layer_tree_owner.h"
+#include "ui/compositor/compositor.h"
 #include "crypto/aes_cbc.h"
 #include "crypto/hash.h"
 #include "net/cookies/cookie_options.h"
@@ -1510,6 +1511,57 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ProfilePreferencesAndSearch) {
   EXPECT_EQ(0, window_->ReadPreferences().at("javascript").value);
   EXPECT_EQ(1, window_->ReadPreferences().at("do_not_track").value);
   EXPECT_EQ(4, window_->ReadPreferences().at("zoom").value);
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceChoicesCocoaEmptySelectionAndProfileScope) {
+  ASSERT_NO_FATAL_FAILURE(NavigateBoth("/preferences_probe.html"));ASSERT_TRUE(window_->Select("work"));
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
+  // A valid Chromium value outside the predefined choices must remain blank.
+  work_->GetPrefs()->SetInteger(prefs::kWebKitDefaultFontSize,17);shell->OpenGeneralSettings();
+  auto filter=[&](std::u16string query){auto* field=shell->preferences_search();field->SelectRange(gfx::Range(0,field->GetText().size()));field->input_client()->InsertText(query,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();};
+  filter(u"Rozmiar tekstu");auto* picker=shell->preference_picker("font_size");ASSERT_TRUE(picker->IsDrawn());
+  EXPECT_FALSE(shell->preference_choice_selection_for_testing("font_size"));
+  const bool rust=shell->workspace_input()->rust_editor();EXPECT_EQ(rust,!views::AsViewClass<views::Combobox>(picker));
+  ui::AXNodeData empty;picker->GetViewAccessibility().GetAccessibleNodeData(&empty);EXPECT_TRUE(empty.GetString16Attribute(ax::mojom::StringAttribute::kValue).empty());
+  picker->ScrollRectToVisible(picker->GetLocalBounds());
+  if(rust)ASSERT_TRUE(base::test::RunUntil([&]{return shell->preference_choice_metal_visible_for_testing("font_size");}));
+  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->general_widget()->GetNativeWindow()));picker->RequestFocus();ASSERT_TRUE(picker->HasFocus());
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->general_widget()->GetNativeWindow(),ui::VKEY_2,false,false,false,false));
+  ASSERT_TRUE(base::test::RunUntil([&]{return work_->GetPrefs()->GetInteger(prefs::kWebKitDefaultFontSize)==20;}));EXPECT_EQ(4u,shell->preference_choice_selection_for_testing("font_size"));
+  picker->SetEnabled(false);shell->ActivatePreferenceChoiceForTesting("font_size",0);EXPECT_EQ(20,work_->GetPrefs()->GetInteger(prefs::kWebKitDefaultFontSize));picker->SetEnabled(true);
+  const auto personal_size=personal_->GetPrefs()->GetInteger(prefs::kWebKitDefaultFontSize);
+  ASSERT_TRUE(window_->Select("personal"));shell->OpenGeneralSettings();EXPECT_EQ(personal_size,personal_->GetPrefs()->GetInteger(prefs::kWebKitDefaultFontSize));
+  ASSERT_TRUE(window_->Select("work"));shell->OpenGeneralSettings();EXPECT_EQ(4u,shell->preference_choice_selection_for_testing("font_size"));
+  EXPECT_EQ(20,work_->GetPrefs()->GetInteger(prefs::kWebKitDefaultFontSize));
+  filter(u"czcion");auto* bottom=shell->preference_textfield("font_fixed")->view();
+  views::ScrollView* scroller=nullptr;for(auto* parent=bottom->parent();parent&&!scroller;parent=parent->parent())scroller=views::AsViewClass<views::ScrollView>(parent);
+  ASSERT_TRUE(scroller);
+  // Native compositor scrolling cannot target a newly resized layer until its
+  // new extent has committed. Wait for presentation, not an arbitrary delay.
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->general_widget()->GetNativeWindow()));
+  base::test::TestFuture<void> presented;auto* compositor=shell->general_widget()->GetCompositor();ASSERT_TRUE(compositor);
+  compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));
+  compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
+  scroller->ScrollToPosition(scroller->vertical_scroll_bar(),scroller->vertical_scroll_bar()->GetMaxPosition());
+  ASSERT_TRUE(base::test::RunUntil([&]{return bottom->GetVisibleBounds().height()==bottom->height();}))<<"query="<<base::UTF16ToUTF8(shell->preferences_search()->GetText())<<" bottom="<<bottom->GetBoundsInScreen().ToString()<<" visible="<<bottom->GetVisibleBounds().ToString()<<" viewport="<<scroller->GetVisibleRect().ToString()<<" contents="<<scroller->contents()->size().ToString()<<" scroll="<<scroller->vertical_scroll_bar()->GetPosition()<<"/"<<scroller->vertical_scroll_bar()->GetMaxPosition();
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_saved();}));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceChoicesSitePolicyAndClearDataAdmission) {
+  ASSERT_NO_FATAL_FAILURE(NavigateBoth());ASSERT_TRUE(window_->Select("work"));auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenGeneralSettings();
+  auto filter=[&](std::u16string query){auto* field=shell->preferences_search();field->SelectRange(gfx::Range(0,field->GetText().size()));field->input_client()->InsertText(query,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();};
+  filter(u"Wyjątek dla witryny");shell->ActivatePreferenceChoiceForTesting("site_type",4);EXPECT_EQ(4u,shell->preference_choice_count_for_testing("site_policy"));
+  shell->ActivatePreferenceChoiceForTesting("site_policy",3);EXPECT_EQ(3u,shell->preference_choice_selection_for_testing("site_policy"));
+  shell->ActivatePreferenceChoiceForTesting("site_type",0);EXPECT_EQ(3u,shell->preference_choice_count_for_testing("site_policy"));EXPECT_EQ(0u,shell->preference_choice_selection_for_testing("site_policy"));
+  shell->ActivatePreferenceChoiceForTesting("site_policy",3);EXPECT_EQ(0u,shell->preference_choice_selection_for_testing("site_policy"));
+  const auto origin=embedded_test_server()->GetURL("/").DeprecatedGetOriginAsURL().spec();shell->site_origin_input()->SetText(base::UTF8ToUTF16(origin));
+  shell->ActivatePreferenceChoiceForTesting("site_policy",2);auto* save=FindButton(shell->general_widget()->GetContentsView(),u"Zapisz wyjątek");ASSERT_TRUE(save);views::test::ButtonTestApi(save).NotifyDefaultMouseClick();
+  EXPECT_EQ(CONTENT_SETTING_BLOCK,HostContentSettingsMapFactory::GetForProfile(work_)->GetContentSetting(GURL(origin),GURL(origin),ContentSettingsType::JAVASCRIPT));
+  EXPECT_NE(CONTENT_SETTING_BLOCK,HostContentSettingsMapFactory::GetForProfile(personal_)->GetContentSetting(GURL(origin),GURL(origin),ContentSettingsType::JAVASCRIPT));
+  filter(u"Wyczyść dane przeglądania");auto* period=shell->preference_choice_for_testing("clear_period");ASSERT_TRUE(period);period->ScrollRectToVisible(period->GetLocalBounds());
+  shell->ActivatePreferenceChoiceForTesting("clear_period",3);EXPECT_EQ(3u,shell->preference_choice_selection_for_testing("clear_period"));
+  auto* clear=FindButton(shell->general_widget()->GetContentsView(),u"Wyczyść…");ASSERT_TRUE(clear);views::test::ButtonTestApi(clear).NotifyDefaultMouseClick();ASSERT_TRUE(window_->clear_data_dialog());
+  window_->clear_data_dialog()->widget_delegate()->AsDialogDelegate()->CancelDialog();ASSERT_TRUE(base::test::RunUntil([&]{return !window_->clear_data_dialog();}));EXPECT_FALSE(window_->clearing_browsing_data());
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, GeneralSettingsThemeAndPersistence) {
@@ -4220,6 +4272,41 @@ class ZitterMetalSidebarBrowserTest : public ZitterProfilesBrowserTest {
     command_line->AppendSwitchASCII("zitter-sidebar", "rust-metal");
   }
 };
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, PreferenceChoicesScenesIdentityScrollAndCancellation) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready()&&shell->tools_ready();}));
+  window_->widget()->SetBounds(gfx::Rect(60,60,700,660));shell->OpenGeneralSettings();
+  auto filter=[&](std::u16string query){auto* field=shell->preferences_search();field->SelectRange(gfx::Range(0,field->GetText().size()));if(query.empty())field->input_client()->DeleteRange(gfx::Range(0,field->GetText().size()));else field->input_client()->InsertText(query,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();};
+  for(const auto* key:{"theme","search","category","zoom","font_size","minimum_font_size","fixed_font_size","dns_mode","site_type","site_policy","clear_period"}){
+    auto* picker=shell->preference_choice_for_testing(key);ASSERT_TRUE(picker);EXPECT_FALSE(views::AsViewClass<views::Combobox>(picker));EXPECT_TRUE(picker->children().empty());
+    ui::AXNodeData ax;picker->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kComboBoxSelect,ax.role);
+  }
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->preference_choice_metal_visible_for_testing("theme");}));shell->ActivatePreferenceChoiceForTesting("theme",2);EXPECT_EQ(ThemeMode::kDark,shell->theme_mode());
+  shell->ActivatePreferenceChoiceForTesting("category",4);EXPECT_EQ(4u,shell->preference_choice_selection_for_testing("category"));
+  filter(u"czcion");auto* font=shell->preference_picker("font_size");font->ScrollRectToVisible(font->GetLocalBounds());
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->preference_choice_metal_visible_for_testing("font_size");}));
+  auto expected=font->GetVisibleBounds();expected.Offset(font->GetBoundsInScreen().x(),font->GetBoundsInScreen().y());
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->preference_choice_metal_bounds_for_testing("font_size")==expected;}));
+  auto* bottom=shell->preference_textfield("font_fixed")->view();bottom->ScrollRectToVisible(bottom->GetLocalBounds());
+  views::ScrollView* scroller=nullptr;for(auto* parent=bottom->parent();parent&&!scroller;parent=parent->parent())scroller=views::AsViewClass<views::ScrollView>(parent);
+  ASSERT_TRUE(scroller);auto* bar=scroller->vertical_scroll_bar();ASSERT_GT(bar->GetMaxPosition(),0);
+  scroller->ScrollToPosition(bar,bar->GetMaxPosition());
+  ASSERT_TRUE(base::test::RunUntil([&]{return font->GetVisibleBounds().IsEmpty();}))<<"font="<<font->GetBoundsInScreen().ToString()<<" visible="<<font->GetVisibleBounds().ToString()<<" viewport="<<scroller->GetVisibleRect().ToString()<<" contents="<<scroller->contents()->size().ToString()<<" scroll="<<bar->GetPosition()<<"/"<<bar->GetMaxPosition();
+  ASSERT_TRUE(base::test::RunUntil([&]{return !shell->preference_choice_metal_visible_for_testing("font_size");}));
+  font->ScrollRectToVisible(font->GetLocalBounds());ASSERT_TRUE(base::test::RunUntil([&]{return shell->preference_choice_metal_visible_for_testing("font_size");}));
+  ASSERT_TRUE(shell->UpsertSearchProvider({"Wyszukiwarka 🦀","zsame","https://provider.test/?q={query}"}));
+  ASSERT_TRUE(shell->UpsertSearchProvider({"Wyszukiwarka 🦀","zother","https://other.test/?q={query}"}));
+  filter(u"Domyślna wyszukiwarka");auto* search=shell->search_engine_picker();search->ScrollRectToVisible(search->GetLocalBounds());
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->preference_choice_metal_visible_for_testing("search");}));
+  const auto find=[&](std::string key){const auto& providers=shell->browser_tools().providers;return std::find_if(providers.begin(),providers.end(),[&](const auto& provider){return provider.keyword==key;})-providers.begin();};
+  shell->ActivatePreferenceChoiceForTesting("search",find("zsame"));EXPECT_EQ("zsame",shell->browser_tools().default_keyword);
+  const gfx::Point point(12,12);ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);
+  ASSERT_TRUE(search->OnMousePressed(press));ASSERT_TRUE(shell->UpsertSearchProvider({"Wyszukiwarka 🦀","zrenamed","https://provider.test/?q={query}"},"zsame"));search->OnMouseReleased(release);
+  EXPECT_EQ("zrenamed",shell->browser_tools().default_keyword);ui::AXNodeData collapsed;search->GetViewAccessibility().GetAccessibleNodeData(&collapsed);EXPECT_TRUE(collapsed.HasState(ax::mojom::State::kCollapsed));EXPECT_EQ(u"Wyszukiwarka 🦀",collapsed.GetString16Attribute(ax::mojom::StringAttribute::kValue));
+  shell->general_widget()->Hide();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->preference_choice_metal_visible_for_testing("search");}));shell->ActivatePreferenceChoiceForTesting("search",find("zother"));EXPECT_EQ("zrenamed",shell->browser_tools().default_keyword);
+  shell->OpenGeneralSettings();ASSERT_TRUE(base::test::RunUntil([&]{return shell->preference_choice_metal_visible_for_testing("search");}));
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_saved();}));
+}
+
 // Compile only. Native popup, IME and Metal acceptance awaits the GUI checkpoint.
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ProfilePickerScenesStableIDsPrefixAndModelCancellation) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenWorkspaceSettings();ASSERT_TRUE(base::test::RunUntil([&]{return shell->profile_picker_metal_visible(false);}));auto* assignment=shell->profile_picker();EXPECT_FALSE(views::AsViewClass<views::Combobox>(assignment));for(const auto& child:assignment->children())EXPECT_FALSE(views::AsViewClass<views::Label>(child.get()));

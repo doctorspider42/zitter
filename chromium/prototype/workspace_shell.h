@@ -252,12 +252,19 @@ class WorkspaceShell final : public ui::EventHandler,
   void SetOperationStatus(std::u16string text);
   void SetBrowsingDataBusy(bool busy);
   EditorControl* preference_textfield(std::string key) const { return preference_textfields_.at(key); }
-  views::Combobox* preference_picker(std::string key) const { return preference_pickers_.at(key); }
+  views::View* preference_picker(std::string key) const { return preference_pickers_.at(key); }
   EditorControl* site_origin_input() const { return site_origin_; }
   EditorControl* preferences_search() const { return preferences_search_; }
   views::ToggleButton* preference_toggle(std::string key) const { return preference_toggles_.at(key); }
-  views::Combobox* theme_picker() const { return theme_picker_; }
-  views::Combobox* search_engine_picker() const { return search_engine_picker_; }
+  views::View* theme_picker() const { return theme_picker_; }
+  views::View* search_engine_picker() const { return search_engine_picker_; }
+  views::View* preference_choice_for_testing(std::string_view key) const;
+  std::optional<size_t> preference_choice_selection_for_testing(std::string_view key) const;
+  size_t preference_choice_count_for_testing(std::string_view key) const;
+  bool preference_choice_metal_visible_for_testing(std::string_view key) const;
+  gfx::Rect preference_choice_metal_bounds_for_testing(std::string_view key) const;
+  void ActivatePreferenceChoiceForTesting(std::string_view key,size_t index);
+
   bool address_visible() const;
   bool sidebar_visible() const;
   bool metal_palette_chrome_visible(size_t index) const;
@@ -474,6 +481,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void RequestFolderName(std::string workspace, std::string parent, std::string renamed);
   void ApplyTheme();
   void RefreshGeneralControls();
+  void RefreshPreferenceViewport();
   void FilterPreferences();
   void SelectPreferenceCategory(size_t category);
   void WritePreference(std::string key, int value);
@@ -562,8 +570,10 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> edge_ = nullptr;
   raw_ptr<views::View> general_root_ = nullptr;
   raw_ptr<views::ScrollView> general_scroll_ = nullptr;
-  raw_ptr<views::Combobox> theme_picker_ = nullptr;
-  raw_ptr<views::Combobox> search_engine_picker_ = nullptr;
+  std::unique_ptr<views::ScrollView::ScopedScrollSynchronizer> metal_general_scroll_synchronizer_;
+  base::CallbackListSubscription metal_general_scroll_subscription_;
+  raw_ptr<views::View> theme_picker_ = nullptr;
+  raw_ptr<views::View> search_engine_picker_ = nullptr;
   raw_ptr<views::ToggleButton> sidebar_check_ = nullptr;
   raw_ptr<views::ToggleButton> animations_check_ = nullptr;
   raw_ptr<EditorControl> preferences_search_ = nullptr;
@@ -573,7 +583,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::Label> preferences_empty_ = nullptr;
   raw_ptr<views::View> preferences_body_ = nullptr;
   raw_ptr<views::View> preferences_navigation_ = nullptr;
-  raw_ptr<views::Combobox> preferences_category_picker_ = nullptr;
+  raw_ptr<views::View> preferences_category_picker_ = nullptr;
   struct PreferenceRow {
     raw_ptr<views::View> view;
     std::u16string keywords;
@@ -585,20 +595,20 @@ class WorkspaceShell final : public ui::EventHandler,
   };
   std::vector<PreferenceSection> preference_sections_;
   std::map<std::string, raw_ptr<views::ToggleButton>> preference_toggles_;
-  std::map<std::string, raw_ptr<views::Combobox>> preference_pickers_;
+  std::map<std::string, raw_ptr<views::View>> preference_pickers_;
   size_t preference_category_ = 0;
   std::map<std::string, raw_ptr<EditorControl>> preference_textfields_;
   std::map<std::string, raw_ptr<views::Button>> preference_save_buttons_;
   std::set<std::string> preference_text_dirty_;
   std::string preferences_profile_id_;
   raw_ptr<EditorControl> site_origin_ = nullptr;
-  raw_ptr<views::Combobox> site_type_ = nullptr;
-  raw_ptr<views::Combobox> site_policy_ = nullptr;
+  raw_ptr<views::View> site_type_ = nullptr;
+  raw_ptr<views::View> site_policy_ = nullptr;
   raw_ptr<views::View> site_rules_list_ = nullptr;
   raw_ptr<views::View> site_rules_card_ = nullptr;
   std::vector<SitePreferenceRule> site_preference_rules_;
   size_t site_rules_limit_ = 50;
-  raw_ptr<views::Combobox> clear_data_period_ = nullptr;
+  raw_ptr<views::View> clear_data_period_ = nullptr;
   raw_ptr<views::Checkbox> clear_history_ = nullptr;
   raw_ptr<views::Checkbox> clear_cookies_ = nullptr;
   raw_ptr<views::Checkbox> clear_cache_ = nullptr;

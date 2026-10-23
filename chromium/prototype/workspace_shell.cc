@@ -808,14 +808,25 @@ class SceneSelect final : public SceneGlyphButton {
   ~SceneSelect() override {if(GetInputMethod())GetInputMethod()->DetachTextInputClient(&input_);}
   std::optional<size_t> Selected() const {return state_->has_selection()?std::optional<size_t>(state_->selected()):std::nullopt;}
   size_t Count() const {return labels_.size();}
-  void SetSelectedIndex(size_t index){if(index>=Count())return;OnMouseCaptureLost();CancelMenu();if(state_->select_index(index)){RefreshAX();Schedule();}}
+  void SetSelectedIndex(std::optional<size_t> index){if(index&&*index>=Count())return;OnMouseCaptureLost();CancelMenu();if(index)state_->select_index(*index);else state_->clear_selection();RefreshAX();Schedule();}
+  void SetChangedCallback(base::RepeatingClosure changed){changed_=std::move(changed);}
+  void CancelInteraction(){OnMouseCaptureLost();CancelMenu();Schedule();}
+  void SetOptions(const std::vector<std::pair<std::string,std::u16string>>& choices){
+    bool same=choices.size()==labels_.size();
+    for(size_t i=0;same&&i<choices.size();++i)same=choices[i].first==std::string(state_->option_key(i))&&choices[i].second==labels_[i];
+    if(same)return;
+    OnMouseCaptureLost();CancelMenu();rust::Vec<sidebar::SelectOption> options;std::vector<std::u16string> labels;
+    for(const auto& [key,label]:choices){options.push_back({key,base::UTF16ToUTF8(label),base::UTF16ToUTF8(base::i18n::ToLower(label))});labels.push_back(label);}
+    if(!state_->replace_options(std::move(options),false,false))return;
+    labels_=std::move(labels);RefreshAX();PreferredSizeChanged();Schedule();
+  }
   void SetProfiles(const std::vector<ProfileInfo>& profiles,bool fallback_last,bool select_last){
     OnMouseCaptureLost();CancelMenu();rust::Vec<sidebar::SelectOption> options;std::vector<std::u16string> labels;
     for(const auto& profile:profiles){auto label=base::UTF8ToUTF16(profile.name);options.push_back({profile.id,profile.name,base::UTF16ToUTF8(base::i18n::ToLower(label))});labels.push_back(std::move(label));}
     if(!state_->replace_options(std::move(options),fallback_last,select_last))return;
     labels_=std::move(labels);RefreshAX();PreferredSizeChanged();Schedule();
   }
-  void SelectForTesting(size_t index){if(index>=Count()||!GetEnabledInViewsSubtree()||!SceneIsVisible(this))return;CancelMenu();const auto token=state_->open(true);if(!state_->choose(token,index,true))return;RefreshAX();Schedule();changed_.Run();}
+  void SelectForTesting(size_t index){if(index>=Count()||!GetEnabledInViewsSubtree()||!SceneIsVisible(this))return;CancelMenu();const auto token=state_->open(true);if(!state_->choose(token,index,true))return;RefreshAX();Schedule();if(changed_)changed_.Run();}
   bool metal_visible() const{return surface_&&surface_->visible();}
   bool contains_text(std::string_view text) const{return metal_visible()&&surface_->contains_text_for_testing(text);}
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {int widest=0;for(const auto& text:labels_)widest=std::max(widest,gfx::GetStringWidth(text,TextFont()));const auto g=sidebar::select_layout(-1,-1,widest,views::LayoutProvider::GetControlHeightForFont(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY,TextFont()),false);return gfx::Size(g.width,g.height);}
@@ -831,6 +842,9 @@ class SceneSelect final : public SceneGlyphButton {
   void OnBoundsChanged(const gfx::Rect& previous) override {SceneGlyphButton::OnBoundsChanged(previous);Schedule();}
   void OnThemeChanged() override {SceneGlyphButton::OnThemeChanged();PreferredSizeChanged();Schedule();}
   void OnDidSchedulePaint(const gfx::Rect& rect) override {SceneGlyphButton::OnDidSchedulePaint(rect);Schedule();}
+  bool GetNeedsNotificationWhenVisibleBoundsChange() const override{return true;}
+  void OnVisibleBoundsChanged() override{Schedule();}
+  gfx::Rect metal_bounds_for_testing() const{return surface_?surface_->screen_bounds_for_testing():gfx::Rect();}
   void PaintButtonContents(gfx::Canvas* canvas) override {if(!metal_visible())PaintSceneRecipe(canvas,Scene(0,0,gfx::RectF(GetLocalBounds())),TextFont());Schedule();}
  protected:
   void NotifyClick(const ui::Event& event) override {if(GetEnabledInViewsSubtree()&&SceneIsVisible(this))ShowMenu(ui::GetMenuSourceTypeForEvent(event));}
@@ -838,12 +852,12 @@ class SceneSelect final : public SceneGlyphButton {
   static rust::Box<sidebar::SelectState> MakeState(const std::vector<std::u16string>& labels){rust::Vec<sidebar::SelectOption> options;for(size_t i=0;i<labels.size();++i)options.push_back({base::NumberToString(i),base::UTF16ToUTF8(labels[i]),base::UTF16ToUTF8(base::i18n::ToLower(labels[i]))});return sidebar::new_select_state(std::move(options));}
   static gfx::FontList TextFont(){return views::TypographyProvider::Get().GetFont(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY);}
   void ResetPrefix(){state_->reset_prefix();}
-  void Input(std::u16string text){if(!SceneIsVisible(this)||!HasFocus())return;const auto lower=base::UTF16ToUTF8(base::i18n::ToLower(text));if(!state_->input(lower,(base::TimeTicks::Now()-base::TimeTicks()).InMilliseconds(),GetEnabledInViewsSubtree()))return;RefreshAX();Schedule();changed_.Run();}
+  void Input(std::u16string text){if(!SceneIsVisible(this)||!HasFocus())return;const auto lower=base::UTF16ToUTF8(base::i18n::ToLower(text));if(!state_->input(lower,(base::TimeTicks::Now()-base::TimeTicks()).InMilliseconds(),GetEnabledInViewsSubtree()))return;RefreshAX();Schedule();if(changed_)changed_.Run();}
   void RefreshAX(){const auto selected=Selected();GetViewAccessibility().SetValue(selected?labels_[*selected]:std::u16string());if(state_->expanded())GetViewAccessibility().SetIsExpanded();else GetViewAccessibility().SetIsCollapsed();}
   void CancelMenu(){state_->dismiss();ResetPrefix();RefreshAX();auto old=std::move(runner_);old.reset();}
   void Closed(uint64_t token){if(!state_->close_menu(token))return;runner_.reset();RefreshAX();Schedule();}
   bool CanChoose(uint64_t token,const std::string& key) const {return state_->can_choose(token,key,GetEnabledInViewsSubtree()&&SceneIsVisible(this));}
-  void Choose(uint64_t token,const std::string& key){if(!state_->choose_key(token,key,GetEnabledInViewsSubtree()&&SceneIsVisible(this)))return;RefreshAX();Schedule();changed_.Run();}
+  void Choose(uint64_t token,const std::string& key){if(!state_->choose_key(token,key,GetEnabledInViewsSubtree()&&SceneIsVisible(this)))return;RefreshAX();Schedule();if(changed_)changed_.Run();}
   void ShowMenu(ui::mojom::MenuSourceType source){
     if(!GetWidget()||!SceneIsVisible(this)||!GetEnabledInViewsSubtree())return;CancelMenu();const auto token=state_->open(true);if(!token)return;
     std::vector<std::pair<std::string,std::u16string>> items;for(size_t i=0;i<labels_.size();++i)items.emplace_back(std::string(state_->option_key(i)),labels_[i]);
@@ -856,6 +870,26 @@ class SceneSelect final : public SceneGlyphButton {
   std::vector<std::u16string> labels_;rust::Box<sidebar::SelectState> state_;base::RepeatingClosure changed_;SceneSelectInput input_;std::unique_ptr<SceneSelectMenu> menu_;std::unique_ptr<views::MenuRunner> runner_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneSelect::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneSelect> weak_factory_{this};
 };
 BEGIN_METADATA(SceneSelect)
+END_METADATA
+// Chromium paints a nonempty model with no selection, and its prefix service
+// supports it, but Combobox::OnKeyPressed CHECKs. Preserve the blank value and
+// delegate to the same native input/menu services instead of inventing a preset.
+class PreferenceCombobox final : public views::Combobox {
+  METADATA_HEADER(PreferenceCombobox,views::Combobox)
+ public:
+  using views::Combobox::Combobox;
+  bool OnKeyPressed(const ui::KeyEvent& event) override {
+    if(!GetSelectedIndex()&&GetModel()->GetItemCount()){
+      if(event.key_code()==ui::VKEY_DOWN||event.key_code()==ui::VKEY_UP||event.key_code()==ui::VKEY_SPACE||event.key_code()==ui::VKEY_HOME||event.key_code()==ui::VKEY_END){
+        ui::AXActionData action;action.action=ax::mojom::Action::kDoDefault;
+        return HandleAccessibleAction(action);
+      }
+      return false;
+    }
+    return views::Combobox::OnKeyPressed(event);
+  }
+};
+BEGIN_METADATA(PreferenceCombobox)
 END_METADATA
 #endif
 size_t ImportSourceIndex(views::View* view){
@@ -876,11 +910,60 @@ size_t PickerCount(views::View* picker){
 #endif
   return static_cast<views::Combobox*>(picker)->GetModel()->GetItemCount();
 }
-void SetPickerIndex(views::View* picker,size_t index){
+void SetPickerIndex(views::View* picker,std::optional<size_t> index){
 #if BUILDFLAG(IS_MAC)
   if(auto* scene=views::AsViewClass<SceneSelect>(picker)){scene->SetSelectedIndex(index);return;}
 #endif
   static_cast<views::Combobox*>(picker)->SetSelectedIndex(index);
+}
+// Programmatic refresh does not steal an unchanged popup/IME interaction.
+void SyncPickerIndex(views::View* picker,std::optional<size_t> index){if(PickerIndex(picker)!=index)SetPickerIndex(picker,index);}
+void SetPickerCallback(views::View* picker,base::RepeatingClosure callback){
+#if BUILDFLAG(IS_MAC)
+  if(auto* scene=views::AsViewClass<SceneSelect>(picker)){scene->SetChangedCallback(std::move(callback));return;}
+#endif
+  static_cast<views::Combobox*>(picker)->SetCallback(std::move(callback));
+}
+views::View* ChoicePicker(views::View* parent,std::u16string name,std::vector<std::u16string> labels,bool scene){
+#if BUILDFLAG(IS_MAC)
+  if(scene)return parent->AddChildView(std::make_unique<SceneSelect>(std::move(labels),std::move(name),base::RepeatingClosure()));
+#endif
+  std::vector<ui::SimpleComboboxModel::Item> items;for(const auto& label:labels)items.emplace_back(label);
+#if BUILDFLAG(IS_MAC)
+  using NativeChoice=PreferenceCombobox;
+#else
+  using NativeChoice=views::Combobox;
+#endif
+  auto* picker=parent->AddChildView(std::make_unique<NativeChoice>(std::make_unique<ui::SimpleComboboxModel>(std::move(items))));
+  picker->SetTooltipTextAndAccessibleName(name);return picker;
+}
+void ReplacePickerOptions(views::View* picker,const std::vector<std::pair<std::string,std::u16string>>& choices){
+#if BUILDFLAG(IS_MAC)
+  if(auto* scene=views::AsViewClass<SceneSelect>(picker)){scene->SetOptions(choices);return;}
+#endif
+  auto* native=static_cast<views::Combobox*>(picker);bool same=native->GetModel()->GetItemCount()==choices.size();
+  for(size_t i=0;same&&i<choices.size();++i)same=native->GetModel()->GetItemAt(i)==choices[i].second;
+  if(same)return;
+  std::vector<ui::SimpleComboboxModel::Item> labels;for(const auto& choice:choices)labels.emplace_back(choice.second);
+  native->SetSelectedIndex(std::nullopt);native->SetOwnedModel(std::make_unique<ui::SimpleComboboxModel>(std::move(labels)));
+}
+void ReplacePickerLabels(views::View* picker,const std::vector<std::u16string>& labels){
+  std::vector<std::pair<std::string,std::u16string>> choices;
+  for(size_t i=0;i<labels.size();++i)choices.emplace_back(base::NumberToString(i),labels[i]);
+  ReplacePickerOptions(picker,choices);
+  SetPickerIndex(picker,0); // Native site-policy model replacement starts at Default.
+}
+void RefreshChoiceViewports(views::View* root){
+#if BUILDFLAG(IS_MAC)
+  if(auto* scene=views::AsViewClass<SceneSelect>(root)){scene->OnVisibleBoundsChanged();return;}
+  for(const auto& child:root->children())RefreshChoiceViewports(child.get());
+#endif
+}
+void CancelChoiceInteractions(views::View* root){
+#if BUILDFLAG(IS_MAC)
+  if(auto* scene=views::AsViewClass<SceneSelect>(root)){scene->CancelInteraction();return;}
+  for(const auto& child:root->children())CancelChoiceInteractions(child.get());
+#endif
 }
 views::View* ProfilePicker(views::View* parent,std::u16string name,bool scene,base::RepeatingClosure changed){
 #if BUILDFLAG(IS_MAC)
@@ -3064,6 +3147,9 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   preferences_profile_->SetMultiLine(true);
   auto general_scroll = std::make_unique<views::ScrollView>();
   general_scroll_ = general_scroll.get();
+  // Category/search changes alter content height. Without preferred sizing the
+  // scroll layer retains the initial extent while its children overflow it.
+  general_scroll->SetUseContentsPreferredSize(true);
   general_scroll->SetBackgroundColor(std::nullopt);
   general_scroll->SetDrawOverflowIndicator(false);
   general_scroll->SetHorizontalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);
@@ -3082,15 +3168,11 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       u"Wybierz języki witryn i pomoc podczas pisania.",
       u"Kontroluj dane zapisane w bieżącym profilu.",
       u"Dostępność, połączenia i ustawienia silnika Chromium."};
-  std::vector<ui::SimpleComboboxModel::Item> category_items;
-  for (const auto& category : categories) category_items.emplace_back(category);
-  preferences_category_picker_ = main->AddChildView(std::make_unique<views::Combobox>(
-      std::make_unique<ui::SimpleComboboxModel>(category_items)));
-  preferences_category_picker_->SetTooltipTextAndAccessibleName(u"Kategoria preferencji");
+  preferences_category_picker_=ChoicePicker(main,u"Kategoria preferencji",categories,bool(workspace_form_));
   preferences_category_picker_->SetVisible(false);
-  preferences_category_picker_->SetCallback(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
-    if (shell) shell->SelectPreferenceCategory(shell->preferences_category_picker_->GetSelectedIndex().value_or(0));
-  }, weak));
+  SetPickerCallback(preferences_category_picker_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+    if(shell)shell->SelectPreferenceCategory(PickerIndex(shell->preferences_category_picker_).value_or(0));
+  },weak));
   for (size_t i = 0; i < categories.size(); ++i) {
     const std::array icons = {&vector_icons::kSettingsIcon, &vector_icons::kSearchIcon,
         &vector_icons::kShieldIcon, &vector_icons::kTuneIcon, &vector_icons::kGlobeIcon,
@@ -3125,12 +3207,8 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     preference_sections_[category].rows.push_back({row, base::i18n::ToLower(categories[category] + u" " + title + u" " + detail)});
     return row;
   };
-  auto picker = [&](views::View* row, std::u16string name, std::vector<std::u16string> choices) {
-    std::vector<ui::SimpleComboboxModel::Item> items;
-    for (const auto& choice : choices) items.emplace_back(choice);
-    auto* control = row->AddChildView(std::make_unique<views::Combobox>(std::make_unique<ui::SimpleComboboxModel>(items)));
-    control->SetTooltipTextAndAccessibleName(name);
-    return control;
+  auto picker = [&](views::View* row,std::u16string name,std::vector<std::u16string> choices){
+    return ChoicePicker(row,std::move(name),std::move(choices),bool(workspace_form_));
   };
   auto toggle = [&](views::View* row, std::u16string name) {
     auto* control = row->AddChildView(std::make_unique<views::ToggleButton>());
@@ -3140,8 +3218,8 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   };
   theme_picker_ = picker(make_row(0, u"Motyw aplikacji", u"Kolory interfejsu i stron obsługujących motyw systemowy."),
       u"Motyw aplikacji", {u"Systemowy", u"Jasny", u"Ciemny"});
-  theme_picker_->SetCallback(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
-    if (shell) shell->SetThemeMode(static_cast<ThemeMode>(shell->theme_picker_->GetSelectedIndex().value_or(0)));
+  SetPickerCallback(theme_picker_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+    if (shell) shell->SetThemeMode(static_cast<ThemeMode>(PickerIndex(shell->theme_picker_).value_or(0)));
   }, weak));
   sidebar_check_ = toggle(make_row(0, u"Zawsze widoczny panel kart", u"Przypnij karty i przestrzenie przy lewej krawędzi."), u"Zawsze widoczny panel kart");
   sidebar_check_->SetCallback(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
@@ -3153,9 +3231,9 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   }, weak));
   search_engine_picker_ = picker(make_row(1, u"Domyślna wyszukiwarka", u"Używana, gdy wpiszesz zapytanie w pasku adresu."),
       u"Domyślna wyszukiwarka", {u"DuckDuckGo", u"Google", u"Bing"});
-  search_engine_picker_->SetCallback(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+  SetPickerCallback(search_engine_picker_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
     if (!shell) return;
-    const size_t index = shell->search_engine_picker_->GetSelectedIndex().value_or(0);
+    const size_t index = PickerIndex(shell->search_engine_picker_).value_or(0);
     if (index < shell->tools_.providers.size()) shell->SetDefaultSearchProvider(shell->tools_.providers[index].keyword);
   }, weak));
   auto add_toggle = [&](size_t category, std::string key, std::u16string title, std::u16string detail) {
@@ -3198,9 +3276,9 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto add_picker = [&](size_t category, std::string key, std::u16string title, std::u16string detail, std::vector<std::u16string> choices) {
     auto* control = picker(make_row(category, title, detail), title, choices);
     preference_pickers_[key] = control;
-    control->SetCallback(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, std::string key) {
+    SetPickerCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, std::string key) {
       if (shell) {
-        auto index = shell->preference_pickers_.at(key)->GetSelectedIndex();
+        auto index = PickerIndex(shell->preference_pickers_.at(key));
         if (index) shell->WritePreference(key, static_cast<int>(*index));
       }
     }, weak, key));
@@ -3265,12 +3343,11 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   std::vector<std::u16string> site_names(kSitePreferenceNames.begin(), kSitePreferenceNames.end());
   site_type_ = picker(site_fields, u"Rodzaj uprawnienia dla witryny", site_names);
   site_policy_ = picker(site_fields, u"Polityka dla witryny", {u"Użyj domyślnej", u"Zezwalaj", u"Blokuj"});
-  site_type_->SetCallback(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+  SetPickerCallback(site_type_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
     if (!shell) return;
-    std::vector<ui::SimpleComboboxModel::Item> choices = {
-      ui::SimpleComboboxModel::Item(u"Użyj domyślnej"), ui::SimpleComboboxModel::Item(u"Zezwalaj"), ui::SimpleComboboxModel::Item(u"Blokuj")};
-    if (shell->site_type_->GetSelectedIndex().value_or(0) >= 4) choices.emplace_back(u"Pytaj");
-    shell->site_policy_->SetOwnedModel(std::make_unique<ui::SimpleComboboxModel>(choices));
+    std::vector<std::u16string> choices={u"Użyj domyślnej",u"Zezwalaj",u"Blokuj"};
+    if(PickerIndex(shell->site_type_).value_or(0)>=4)choices.emplace_back(u"Pytaj");
+    ReplacePickerLabels(shell->site_policy_,choices);
   }, weak));
   site_editor->AddChildView(std::make_unique<views::MdTextButton>(base::BindRepeating(&WorkspaceShell::SaveSitePreference, weak), u"Zapisz wyjątek"));
   site_rules_card_ = make_row(3, u"Zapisane wyjątki", u"Własne reguły możesz usunąć, aby wrócić do ustawień domyślnych. Reguły zarządzane pozostają tylko do odczytu.");
@@ -3286,7 +3363,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   clear_cache_->SetChecked(true);
   clear_data_button_ = clear_row->AddChildView(std::make_unique<views::MdTextButton>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
     if (!shell || !shell->callbacks_.clear_browsing_data) return;
-    shell->callbacks_.clear_browsing_data.Run({static_cast<int>(shell->clear_data_period_->GetSelectedIndex().value_or(0)),
+    shell->callbacks_.clear_browsing_data.Run({static_cast<int>(PickerIndex(shell->clear_data_period_).value_or(0)),
         shell->clear_history_->GetChecked(), shell->clear_cookies_->GetChecked(), shell->clear_cache_->GetChecked()});
   }, weak), u"Wyczyść…"));
   action(1, u"Wyszukiwarki i prefiksy", u"Własne wyszukiwarki: g zapytanie, w hasło, yt film…", base::BindRepeating(&WorkspaceShell::OpenTools, weak, 2));
@@ -3297,6 +3374,10 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   preferences_empty_ = Label(body.get(), u"Brak pasujących ustawień. Spróbuj innego hasła.", kMuted, Font(0));
   preferences_empty_->SetMultiLine(true);
   general_scroll->SetContents(std::move(body));
+  if(workspace_form_){
+    metal_general_scroll_synchronizer_=general_scroll->EnableScrollSynchronization();
+    metal_general_scroll_subscription_=general_scroll->AddContentsScrolledCallback(base::BindRepeating(&WorkspaceShell::RefreshPreferenceViewport,weak));
+  }
   main_layout->SetFlexForView(main->AddChildView(std::move(general_scroll)), 1);
   general_status_ = Label(main, u"Przełączniki zapisują się automatycznie. Pola tekstowe zatwierdź przyciskiem Zapisz lub Enter.", kMuted, Font(-2));
   general_status_->SetMultiLine(true);
@@ -3436,6 +3517,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 
 void WorkspaceShell::Detach() {
   for(auto& surface:metal_palette_chrome_)surface.reset();palette_chrome_views_.fill(nullptr);
+  metal_general_scroll_subscription_={};metal_general_scroll_synchronizer_.reset();
   metal_palette_scroll_subscription_={};metal_palette_scroll_synchronizer_.reset();metal_palette_.reset();metal_palette_pending_=false;
   metal_sidebar_grip_.reset();
   for(auto& surface:metal_split_)surface.reset();metal_split_pending_=false;
@@ -5366,29 +5448,60 @@ void WorkspaceShell::ApplyTheme() {
 void WorkspaceShell::OnNativeThemeUpdated(ui::NativeTheme*) {
   if (theme_mode_ == ThemeMode::kSystem && general_widget_) ApplyAppearance();
 }
+views::View* WorkspaceShell::preference_choice_for_testing(std::string_view key) const {
+  if(key=="theme")return theme_picker_;if(key=="search")return search_engine_picker_;
+  if(key=="category")return preferences_category_picker_;if(key=="site_type")return site_type_;
+  if(key=="site_policy")return site_policy_;if(key=="clear_period")return clear_data_period_;
+  const auto it=preference_pickers_.find(std::string(key));return it==preference_pickers_.end()?nullptr:it->second.get();
+}
+std::optional<size_t> WorkspaceShell::preference_choice_selection_for_testing(std::string_view key) const {
+  auto* picker=preference_choice_for_testing(key);return picker?PickerIndex(picker):std::nullopt;
+}
+size_t WorkspaceShell::preference_choice_count_for_testing(std::string_view key) const {
+  auto* picker=preference_choice_for_testing(key);return picker?PickerCount(picker):0;
+}
+bool WorkspaceShell::preference_choice_metal_visible_for_testing(std::string_view key) const {
+#if BUILDFLAG(IS_MAC)
+  auto* scene=views::AsViewClass<SceneSelect>(preference_choice_for_testing(key));return scene&&scene->metal_visible();
+#else
+  return false;
+#endif
+}
+gfx::Rect WorkspaceShell::preference_choice_metal_bounds_for_testing(std::string_view key) const {
+#if BUILDFLAG(IS_MAC)
+  auto* scene=views::AsViewClass<SceneSelect>(preference_choice_for_testing(key));if(scene)return scene->metal_bounds_for_testing();
+#endif
+  return {};
+}
+void WorkspaceShell::ActivatePreferenceChoiceForTesting(std::string_view key,size_t index){
+  auto* picker=preference_choice_for_testing(key);if(!picker||index>=PickerCount(picker)||!SceneIsVisible(picker)||!picker->GetEnabledInViewsSubtree())return;
+#if BUILDFLAG(IS_MAC)
+  if(auto* scene=views::AsViewClass<SceneSelect>(picker)){scene->SelectForTesting(index);return;}
+#endif
+  static_cast<views::Combobox*>(picker)->MenuSelectionAt(index);
+}
+void WorkspaceShell::RefreshPreferenceViewport(){
+  if(preferences_body_)RefreshChoiceViewports(preferences_body_);
+  for(const auto& [key,field]:preference_textfields_)field->view()->SchedulePaint();
+  if(site_origin_)site_origin_->view()->SchedulePaint();
+}
 void WorkspaceShell::RefreshGeneralControls() {
   if (!general_widget_) return;
-  theme_picker_->SetSelectedIndex(static_cast<size_t>(theme_mode_));
-  std::vector<ui::SimpleComboboxModel::Item> provider_choices;
-  size_t provider_index = 0;
-  const std::string implicit = search_engine_ == SearchEngine::kGoogle ? "g" : search_engine_ == SearchEngine::kBing ? "b" : "d";
-  const std::string selected = tools_.default_keyword.empty() ? implicit : tools_.default_keyword;
-  for (size_t i = 0; i < tools_.providers.size(); ++i) {
-    provider_choices.emplace_back(base::UTF8ToUTF16(tools_.providers[i].name));
-    if (tools_.providers[i].keyword == selected) provider_index = i;
+  const bool profile_changed=preferences_profile_id_!=state_.profile_id;
+  if(profile_changed)CancelChoiceInteractions(general_widget_->GetContentsView());
+  SyncPickerIndex(theme_picker_,static_cast<size_t>(theme_mode_));
+  std::vector<std::pair<std::string,std::u16string>> provider_choices;
+  size_t provider_index=0;
+  const std::string implicit=search_engine_==SearchEngine::kGoogle?"g":search_engine_==SearchEngine::kBing?"b":"d";
+  const std::string selected=tools_.default_keyword.empty()?implicit:tools_.default_keyword;
+  for(size_t i=0;i<tools_.providers.size();++i){
+    provider_choices.emplace_back(tools_.providers[i].keyword,base::UTF8ToUTF16(tools_.providers[i].name));
+    if(tools_.providers[i].keyword==selected)provider_index=i;
   }
-  // Avoid model churn while typing in the preferences search field.
-  bool same = search_engine_picker_->GetModel()->GetItemCount() == provider_choices.size();
-  for (size_t i = 0; same && i < tools_.providers.size(); ++i)
-    same = search_engine_picker_->GetModel()->GetItemAt(i) == base::UTF8ToUTF16(tools_.providers[i].name);
-  if (!same) {
-    search_engine_picker_->SetSelectedIndex(std::nullopt);
-    search_engine_picker_->SetOwnedModel(std::make_unique<ui::SimpleComboboxModel>(provider_choices));
-  }
-  search_engine_picker_->SetSelectedIndex(provider_index);
+  ReplacePickerOptions(search_engine_picker_,provider_choices);
+  SyncPickerIndex(search_engine_picker_,provider_choices.empty()?std::nullopt:std::optional<size_t>(provider_index));
   sidebar_check_->SetIsOn(pinned_);
   animations_check_->SetIsOn(workspace_animations_);
-  const bool profile_changed = preferences_profile_id_ != state_.profile_id;
   if (profile_changed) {
     preferences_profile_id_ = state_.profile_id;
     preference_text_dirty_.clear();
@@ -5422,13 +5535,13 @@ void WorkspaceShell::RefreshGeneralControls() {
   for (const auto& [key, control] : preference_pickers_) {
     auto it = values.find(key);
     control->SetEnabled(it != values.end() && it->second.editable);
-    if (it != values.end()) control->SetSelectedIndex(it->second.value < 0 ? std::nullopt : std::optional<size_t>(it->second.value));
+    if (it != values.end()) SyncPickerIndex(control,it->second.value < 0 ? std::nullopt : std::optional<size_t>(it->second.value));
   }
 }
 void WorkspaceShell::SelectPreferenceCategory(size_t category) {
   if (category >= preference_sections_.size()) return;
   preference_category_ = category;
-  preferences_category_picker_->SetSelectedIndex(category);
+  SyncPickerIndex(preferences_category_picker_,category);
   preferences_search_->SetText(u"");
   FilterPreferences();
 }
@@ -5479,8 +5592,8 @@ void WorkspaceShell::SaveTextPreference(std::string key) {
 }
 void WorkspaceShell::SaveSitePreference() {
   if(!site_origin_||site_origin_->IsIMEComposing())return;
-  const auto type = site_type_->GetSelectedIndex().value_or(kSitePreferenceKeys.size());
-  const auto policy = site_policy_->GetSelectedIndex().value_or(0);
+  const auto type = PickerIndex(site_type_).value_or(kSitePreferenceKeys.size());
+  const auto policy = PickerIndex(site_policy_).value_or(0);
   if (type >= kSitePreferenceKeys.size()) return;
   const bool ok = callbacks_.write_site_preference && callbacks_.write_site_preference.Run(
       base::UTF16ToUTF8(site_origin_->GetText()), kSitePreferenceKeys[type], static_cast<int>(policy));

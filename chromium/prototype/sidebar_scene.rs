@@ -150,6 +150,7 @@ mod ffi {
         fn choose_key(self: &mut SelectState, token: u64, key: &str, enabled: bool) -> bool;
         fn close_menu(self: &mut SelectState, token: u64) -> bool;
         fn select_index(self: &mut SelectState, index: usize) -> bool;
+        fn clear_selection(self: &mut SelectState);
         fn open(self: &mut SelectState, enabled: bool) -> u64;
         fn expanded(self: &SelectState) -> bool;
         fn choose(self: &mut SelectState, token: u64, index: usize, enabled: bool) -> bool;
@@ -521,6 +522,7 @@ impl SelectState {
     fn can_choose(&self,token:u64,key:&str,enabled:bool)->bool {enabled&&self.expanded&&token!=0&&token==self.epoch&&self.options.iter().any(|option|option.key==key)}
     fn choose_key(&mut self,token:u64,key:&str,enabled:bool)->bool {if !self.can_choose(token,key,enabled){return false;}self.selected=self.options.iter().position(|option|option.key==key).unwrap();self.expanded=false;true}
     fn close_menu(&mut self,token:u64)->bool {if token==0||token!=self.epoch{return false;}self.dismiss();true}
+    fn clear_selection(&mut self){self.dismiss();self.reset_prefix();self.selected=usize::MAX;}
     fn select_index(&mut self,index:usize)->bool {if index>=self.options.len(){return false;}self.dismiss();self.reset_prefix();self.selected=index;true}
     fn open(&mut self,enabled:bool)->u64 {if !enabled||self.options.is_empty(){return 0;}self.dismiss();self.reset_prefix();self.expanded=true;self.epoch}
     fn expanded(&self)->bool {self.expanded}
@@ -530,7 +532,7 @@ impl SelectState {
     fn input(&mut self,text:&str,now:u64,enabled:bool)->bool {
         if !enabled||self.options.is_empty()||text.is_empty()||text.chars().any(char::is_control){return false;}
         let continuing=self.last_input.is_some_and(|last|now>=last&&now-last<1000);
-        let start=if continuing{self.selected}else{(self.selected+1)%self.options.len()};
+        let start=if !self.has_selection(){0}else if continuing{self.selected}else{(self.selected+1)%self.options.len()};
         if !continuing{self.prefix.clear();}self.prefix.push_str(text);self.last_input=Some(now);
         for offset in 0..self.options.len(){let i=(start+offset)%self.options.len();if self.options[i].search.starts_with(&self.prefix){let changed=i!=self.selected;self.selected=i;return changed;}}
         false
@@ -1676,6 +1678,22 @@ mod tests {
     fn menu_state()->ffi::TabMenuState{ffi::TabMenuState{ready:true,busy:false,valid:true,tab:7,has_tab:true,split:true,first:3,has_first:true,second:7,has_second:true,vertical:false,tab_count:3,http:true}}
     fn select_fixture()->Box<SelectState> {new_select_state(vec![ffi::SelectOption{key:"Arc".into(),label:"Arc".into(),search:"arc".into()},ffi::SelectOption{key:"Google Chrome".into(),label:"Google Chrome".into(),search:"google chrome".into()},ffi::SelectOption{key:"Microsoft Edge".into(),label:"Microsoft Edge".into(),search:"microsoft edge".into()},ffi::SelectOption{key:"Brave".into(),label:"Brave".into(),search:"brave".into()}])}
     fn keyed_options(values:&[(&str,&str)])->Vec<ffi::SelectOption>{values.iter().map(|(key,label)|ffi::SelectOption{key:(*key).into(),label:(*label).into(),search:label.to_lowercase()}).collect()}
+    #[test] fn select_none_cancels_old_popup_and_allows_first_item_prefix() {
+        let mut s=select_fixture();let old=s.open(true);s.clear_selection();
+        assert!(!s.has_selection());assert_eq!(s.selected_key(),"");assert!(!s.expanded());
+        assert!(!s.choose(old,1,true));assert!(!s.choose_key(old,"Arc",true));
+        assert!(!s.select_index(99));assert!(!s.has_selection());
+        assert!(s.input("arc",1,true));assert_eq!(s.selected_key(),"Arc");
+        s.clear_selection();assert!(s.input("g",2,true));assert_eq!(s.selected_key(),"Google Chrome");
+        let menu=s.open(true);assert!(s.choose_key(menu,"Brave",true));assert_eq!(s.selected(),3);
+    }
+    #[test] fn select_none_reconciles_empty_disabled_and_nonmatching_input() {
+        let mut s=select_fixture();s.clear_selection();assert!(!s.input("z",1,true));assert!(!s.has_selection());
+        assert!(s.input("a",1002,true));assert_eq!(s.selected_key(),"Arc");
+        s.clear_selection();assert!(!s.input("b",3,false));assert!(!s.has_selection());
+        assert!(s.replace_options(vec![],false,false));s.clear_selection();assert_eq!(s.open(true),0);assert!(!s.input("a",4,true));
+        assert!(s.replace_options(keyed_options(&[("a","A"),("b","B")]),true,false));assert!(s.has_selection());assert_eq!(s.selected_key(),"b");
+    }
     #[test] fn select_model_reorder_and_rename_preserve_identity_with_duplicate_labels() {
         let mut s=new_select_state(keyed_options(&[("a","Same"),("b","Same"),("c","Other")]));assert!(s.select_index(1));assert!(s.replace_options(keyed_options(&[("c","Other"),("a","Same"),("b","Renamed 🦀")]),false,false));assert_eq!((s.selected(),s.selected_key()),(2,"b"));assert!(s.replace_options(keyed_options(&[("b","Renamed again"),("c","Other")]),false,false));assert_eq!((s.selected(),s.selected_key()),(0,"b"));
     }
