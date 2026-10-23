@@ -13,8 +13,9 @@
 #include "base/containers/span.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/native_ui_types.h"
+namespace gfx {class Canvas;}
 namespace views { class ScrollBar; }
-namespace zitter::sidebar { struct Item; }
+namespace zitter::sidebar { struct Item; struct Primitive; }
 namespace zitter::prototype {
 struct SidebarViewportNode { size_t parent; gfx::Rect bounds; bool visible; };
 struct SidebarProjectedNode { size_t index; gfx::RectF bounds, clip; };
@@ -28,6 +29,8 @@ class SidebarMetal {
       gfx::PointF offset, base::span<const SidebarViewportNode> nodes) = 0;
   virtual void Update(gfx::NativeWindow window, gfx::Rect screen_bounds,
                       base::span<const sidebar::Item> items, unsigned background) = 0;
+  virtual void UpdateScene(gfx::NativeWindow window,gfx::Rect screen_bounds,
+      base::span<const sidebar::Primitive> primitives,unsigned background)=0;
   // A full page translated inside a viewport-sized native clipping adapter.
   // Immutable page scenes set redraw only on capture. Translation/settle reuse
   // the drawable; bounds/scale changes and missing drawables also force redraw.
@@ -47,6 +50,8 @@ class SidebarMetal {
   virtual bool contains_rect_for_testing(gfx::RectF bounds, gfx::RectF clip) const = 0;
 };
 std::unique_ptr<SidebarMetal> CreateSidebarMetal();
+// Same untruncated CoreText editor line for a missing-device/drawable fallback.
+void PaintEditorSceneFallback(gfx::Canvas* canvas,base::span<const sidebar::Primitive> scene);
 // CoreText typography adapter, matching the font used for GPU text tiles.
 // Returns complete UTF-8 line fragments, without any native View/Label layout.
 std::vector<std::string> ShapeSidebarParagraph(std::string_view text,float font_size,int width,bool bold = false);

@@ -2698,7 +2698,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       }, weak), workspace_copy[6], GlyphButton::Glyph::kVector, &vector_icons::kCloseSmallIcon));
   profile_name_ = settings_text(settings.get(),u"",kMuted,-1);
   settings_text(settings.get(),workspace_copy[0],kSubtle,-1);
-  workspace_input_ = settings->AddChildView(std::make_unique<views::Textfield>());
+  workspace_input_ = AddEditor(settings.get(),bool(workspace_form_));
   workspace_input_->GetViewAccessibility().SetName(workspace_copy[0]);
   workspace_input_->SetPlaceholderText(workspace_copy[1]);
   settings_text(settings.get(),workspace_copy[2],kSubtle,-1);
@@ -2928,7 +2928,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   profile_text(profile_copy[0],kInk,3,gfx::Font::Weight::SEMIBOLD);
   profile_text(profile_copy[1],kMuted,-1,gfx::Font::Weight::NORMAL,true);
   profile_text(profile_copy[2],kSubtle,-1);
-  profile_name_input_ = profiles_panel->AddChildView(std::make_unique<views::Textfield>());
+  profile_name_input_ = AddEditor(profiles_panel.get(),bool(profile_form_));
   profile_name_input_->GetViewAccessibility().SetName(profile_copy[3]);
   profile_name_input_->SetPlaceholderText(profile_copy[4]);
   auto* profile_create_actions=ActionGroup(profiles_panel.get(),bool(profile_form_),true,10);

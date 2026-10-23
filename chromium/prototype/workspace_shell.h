@@ -9,6 +9,7 @@
 #include <set>
 #include "zitter/core/workspace_model.h"
 #include "chromium/prototype/browser_data.h"
+#include "chromium/prototype/editor_control.h"
 #include "chromium/prototype/sidebar_tree.h"
 #include "chromium/prototype/browser_tools.h"
 #include <optional>
@@ -313,7 +314,7 @@ class WorkspaceShell final : public ui::EventHandler,
   views::Widget* import_widget() const { return import_widget_.get(); }
   void SetProfileStatus(std::u16string message);
   views::Widget* profiles_widget() const { return profiles_widget_.get(); }
-  views::Textfield* profile_name_input() const { return profile_name_input_; }
+  EditorControl* profile_name_input() const { return profile_name_input_; }
   views::View* managed_profile_picker() const { return managed_profile_picker_; }
   std::optional<size_t> profile_picker_selection(bool managed) const;
   size_t profile_picker_count() const;
@@ -348,7 +349,7 @@ class WorkspaceShell final : public ui::EventHandler,
   views::Widget* address_widget() const { return address_widget_.get(); }
   views::Button* tab_button(size_t index) const;
   views::Widget* sidebar_widget() const { return sidebar_widget_.get(); }
-  views::Textfield* workspace_input() const { return workspace_input_; }
+  EditorControl* workspace_input() const { return workspace_input_; }
   views::Button* workspace_button(std::string_view id) const;
   size_t pinned_list_build_count() const { return pinned_list_build_count_; }
   size_t sidebar_context_visit_count() const { return sidebar_context_visit_count_; }
@@ -659,7 +660,7 @@ class WorkspaceShell final : public ui::EventHandler,
   size_t sidebar_context_visit_count_ = 0;
   size_t pin_visibility_update_count_ = 0;
   raw_ptr<views::View> profile_picker_ = nullptr;
-  raw_ptr<views::Textfield> workspace_input_ = nullptr;
+  raw_ptr<EditorControl> workspace_input_ = nullptr;
   raw_ptr<views::Button> add_workspace_ = nullptr;
   raw_ptr<views::Button> edit_workspace_ = nullptr;
   raw_ptr<views::Button> remove_workspace_ = nullptr;
@@ -680,7 +681,7 @@ class WorkspaceShell final : public ui::EventHandler,
   SidebarTree sidebar_tree_;
   raw_ptr<views::View> profiles_root_ = nullptr;
   raw_ptr<views::View> managed_profile_picker_ = nullptr;
-  raw_ptr<views::Textfield> profile_name_input_ = nullptr;
+  raw_ptr<EditorControl> profile_name_input_ = nullptr;
   raw_ptr<views::Button> create_profile_ = nullptr;
   raw_ptr<views::Button> rename_profile_ = nullptr;
   raw_ptr<views::Button> delete_profile_ = nullptr;

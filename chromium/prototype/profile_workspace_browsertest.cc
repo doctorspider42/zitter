@@ -1,4 +1,11 @@
 #include "chromium/prototype/browser_import_data.h"
+#include "ui/base/clipboard/test/test_clipboard.h"
+#include "ui/base/dragdrop/os_exchange_data.h"
+#include "ui/base/dragdrop/drop_target_event.h"
+#include "ui/base/dragdrop/drag_drop_types.h"
+#include "ui/base/dragdrop/mojom/drag_drop_types.mojom.h"
+#include "ui/views/drag_controller.h"
+#include "ui/compositor/layer_tree_owner.h"
 #include "crypto/aes_cbc.h"
 #include "crypto/hash.h"
 #include "net/cookies/cookie_options.h"
@@ -5421,3 +5428,69 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ManualWindow) {
   loop.Run();
 }
 }  // namespace zitter::prototype
+
+namespace zitter::prototype {
+#if BUILDFLAG(IS_MAC)
+class DeferredEditorClipboard final:public ui::TestClipboard {
+ public:
+  void ReadText(ui::ClipboardBuffer buffer,const std::optional<ui::DataTransferEndpoint>& destination,ReadTextCallback callback) const override {
+    ui::TestClipboard::ReadText(buffer,destination,base::BindOnce([](ReadTextCallback callback,std::u16string text){base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(std::move(callback),std::move(text)));},std::move(callback)));
+  }
+};
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NameEditorsTypingUndoCompositionAndPersistence) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->OpenWorkspaceSettings();
+  auto* field=shell->workspace_input();ASSERT_TRUE(field);auto* view=field->view();
+  const bool metal=base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal";
+  EXPECT_EQ(metal,field->rust_editor());EXPECT_EQ(!metal,views::AsViewClass<views::Textfield>(view)!=nullptr);
+  if(metal){EXPECT_TRUE(view->children().empty());ASSERT_TRUE(base::test::RunUntil([&]{return field->metal_visible();}));}
+  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));view->RequestFocus();ASSERT_TRUE(base::test::RunUntil([&]{return view->HasFocus();}));
+  auto key=[&](ui::KeyboardCode code,bool shift=false,bool command=false){return ui_test_utils::SendKeyPressToWindowSync(shell->settings_widget()->GetNativeWindow(),code,false,shift,false,command);};
+  field->SetText(u"Praca");ASSERT_TRUE(key(ui::VKEY_A,false,true));ASSERT_TRUE(key(ui::VKEY_X));ASSERT_TRUE(base::test::RunUntil([&]{return field->GetText()==u"x";}));
+  ASSERT_TRUE(key(ui::VKEY_Z,false,true));ASSERT_TRUE(base::test::RunUntil([&]{return field->GetText()==u"Praca";}));
+  field->SelectRange(gfx::Range(0,field->GetText().size()));auto* client=field->input_client();ASSERT_EQ(client,view->GetInputMethod()->GetTextInputClient());
+  client->InsertText(u"a\u0301🦀",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);EXPECT_EQ(u"a\u0301🦀",field->GetText());
+  ui::KeyEvent back(ui::EventType::kKeyPressed,ui::VKEY_BACK,ui::EF_NONE);EXPECT_TRUE(view->OnKeyPressed(back));EXPECT_EQ(u"a\u0301",field->GetText());EXPECT_TRUE(view->OnKeyPressed(back));EXPECT_TRUE(field->GetText().empty());
+  field->SetText(u"alpha");field->SelectRange(gfx::Range(5));ui::CompositionText marked;marked.text=u"にほん";marked.selection=gfx::Range(marked.text.size());marked.ime_text_spans.emplace_back(ui::ImeTextSpan::Type::kComposition,0,marked.text.size(),ui::ImeTextSpan::Thickness::kThick);
+  client->SetCompositionText(marked);ASSERT_TRUE(field->IsIMEComposing());gfx::Range range;ASSERT_TRUE(client->GetCompositionTextRange(&range));EXPECT_EQ(gfx::Range(5,8),range);gfx::Rect character;ASSERT_TRUE(client->GetCompositionCharacterBounds(1,&character));EXPECT_FALSE(character.IsEmpty());EXPECT_TRUE(view->GetBoundsInScreen().Intersects(character));
+  EXPECT_EQ(3u,client->ConfirmCompositionText(false));EXPECT_FALSE(field->IsIMEComposing());EXPECT_EQ(u"alphaにほん",field->GetText());ASSERT_TRUE(key(ui::VKEY_Z,false,true));ASSERT_TRUE(base::test::RunUntil([&]{return field->GetText()==u"alpha";}));
+  ui::AXNodeData node;field->GetViewAccessibility().GetAccessibleNodeData(&node);EXPECT_EQ(ax::mojom::Role::kTextField,node.role);EXPECT_EQ(u"alpha",node.GetString16Attribute(ax::mojom::StringAttribute::kValue));
+  std::u16string long_text(1000,u'x');long_text+=u"🦀";field->SetText(long_text);const auto caret=client->GetCaretBounds();EXPECT_GE(caret.x(),view->GetBoundsInScreen().x());EXPECT_LE(caret.right(),view->GetBoundsInScreen().right());
+  field->SetText(u"Workspace 日本語");auto* save=FindButton(shell->workspace_panel_for_testing(),u"Zapisz nazwę i profil");ASSERT_TRUE(save);views::test::ButtonTestApi(save).NotifyDefaultMouseClick();EXPECT_EQ("Workspace 日本語",window_->workspaces()[0].name);ASSERT_TRUE(base::test::RunUntil([&]{return window_->configuration_saved();}));
+  shell->OpenProfiles("work-profile");auto* profile=shell->profile_name_input();ASSERT_TRUE(profile);EXPECT_EQ(metal,profile->rust_editor());profile->SetText(u"Profil 日本語");auto* rename=FindButton(shell->profile_panel_for_testing(),u"Zapisz nazwę profilu");ASSERT_TRUE(rename&&rename->GetEnabled());views::test::ButtonTestApi(rename).NotifyDefaultMouseClick();ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));EXPECT_EQ("Profil 日本語",window_->profiles()[0].name);
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NameEditorsAdmissionHideResetAndClipboard) {
+  auto old_clipboard=ui::Clipboard::TakeForCurrentThread();ui::Clipboard::SetClipboardForCurrentThread(std::make_unique<DeferredEditorClipboard>());
+  base::ScopedClosureRunner restore_clipboard(base::BindOnce([](std::unique_ptr<ui::Clipboard> old){ui::Clipboard::DestroyClipboardForCurrentThread();if(old)ui::Clipboard::SetClipboardForCurrentThread(std::move(old));},std::move(old_clipboard)));
+
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenWorkspaceSettings();auto* field=shell->workspace_input();ASSERT_TRUE(field->rust_editor());auto* view=field->view();auto* client=field->input_client();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));view->RequestFocus();ASSERT_TRUE(base::test::RunUntil([&]{return view->HasFocus();}));
+  field->SetText(u"original");field->SelectRange(gfx::Range(0,8));ui::CompositionText marked;marked.text=u"仮";marked.selection=gfx::Range(1);client->SetCompositionText(marked);ASSERT_TRUE(field->IsIMEComposing());client->ClearCompositionText();EXPECT_EQ(u"original",field->GetText());EXPECT_EQ(gfx::Range(0,8),field->GetSelectedRange());
+  field->SetReadOnly(true);client->InsertText(u"blocked",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);EXPECT_EQ(u"original",field->GetText());EXPECT_EQ(ui::TEXT_INPUT_TYPE_NONE,client->GetTextInputType());field->SetReadOnly(false);
+  client->SetCompositionText(marked);ASSERT_TRUE(field->IsIMEComposing());view->SetEnabled(false);EXPECT_FALSE(field->IsIMEComposing());EXPECT_EQ(u"original",field->GetText());view->SetEnabled(true);
+  client->SetCompositionText(marked);ASSERT_TRUE(field->IsIMEComposing());shell->settings_widget()->Hide();EXPECT_FALSE(field->IsIMEComposing());EXPECT_EQ(u"original",field->GetText());EXPECT_FALSE(field->metal_visible());client->InsertText(u"hidden",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);EXPECT_EQ(u"original",field->GetText());
+  shell->OpenWorkspaceSettings();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));view->RequestFocus();field->SetText(u"one two");field->SelectRange(gfx::Range(0,3));
+  ui::KeyEvent copy(ui::EventType::kKeyPressed,ui::VKEY_C,ui::EF_COMMAND_DOWN);ASSERT_TRUE(view->OnKeyPressed(copy));field->SelectRange(gfx::Range(7));ui::KeyEvent paste(ui::EventType::kKeyPressed,ui::VKEY_V,ui::EF_COMMAND_DOWN);ASSERT_TRUE(view->OnKeyPressed(paste));ASSERT_TRUE(base::test::RunUntil([&]{return field->GetText()==u"one twoone";}));
+  ASSERT_TRUE(base::test::RunUntil([&]{return field->scene_contains("one twoone");}));
+  // A paste callback captured before a programmatic context reset is rejected.
+  ASSERT_TRUE(view->OnKeyPressed(paste));field->SetText(u"reset");base::RunLoop().RunUntilIdle();EXPECT_EQ(u"reset",field->GetText());
+  ui::AXActionData action;action.action=ax::mojom::Action::kSetSelection;action.anchor_offset=0;action.focus_offset=5;ASSERT_TRUE(view->HandleAccessibleAction(action));EXPECT_EQ(gfx::Range(0,5),field->GetSelectedRange());
+  action.action=ax::mojom::Action::kReplaceSelectedText;action.value="AX 日本語";ASSERT_TRUE(view->HandleAccessibleAction(action));EXPECT_EQ(u"AX 日本語",field->GetText());
+}
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NameEditorMouseDropAndNativeFallback) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenWorkspaceSettings();auto* field=shell->workspace_input();auto* view=field->view();ASSERT_TRUE(field->rust_editor());
+  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));field->SetText(u"abcdef");field->SelectRange(gfx::Range(0,6));
+  const auto target=view->GetBoundsInScreen();const gfx::Point point(target.right()-10,target.CenterPoint().y());base::test::TestFuture<void> moved;ASSERT_TRUE(ui_controls::SendMouseMoveNotifyWhenDone(point.x(),point.y(),moved.GetCallback(),shell->settings_widget()->GetNativeWindow()));ASSERT_TRUE(moved.Wait());
+  base::test::TestFuture<void> clicked;ASSERT_TRUE(ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT,ui_controls::DOWN|ui_controls::UP,clicked.GetCallback(),ui_controls::kNoAccelerator,shell->settings_widget()->GetNativeWindow()));ASSERT_TRUE(clicked.Wait());EXPECT_TRUE(view->HasFocus());EXPECT_EQ(gfx::Range(6),field->GetSelectedRange());
+  field->SelectRange(gfx::Range(1,3));ui::OSExchangeData dragged;ASSERT_TRUE(view->drag_controller());view->drag_controller()->WriteDragDataForView(view,gfx::Point(15,16),&dragged);ASSERT_TRUE(dragged.GetString());EXPECT_EQ(u"bc",*dragged.GetString());
+  ui::DropTargetEvent drop(dragged,gfx::PointF(view->width()-10,16),gfx::PointF(view->width()-10,16),ui::DragDropTypes::DRAG_MOVE);ASSERT_TRUE(view->CanDrop(dragged));auto callback=view->GetDropCallback(drop);ASSERT_TRUE(callback);ui::mojom::DragOperation operation=ui::mojom::DragOperation::kNone;std::move(callback).Run(drop,operation,nullptr);EXPECT_EQ(ui::mojom::DragOperation::kMove,operation);EXPECT_EQ(u"adefbc",field->GetText());view->OnDragDone();
+  ui::KeyEvent undo(ui::EventType::kKeyPressed,ui::VKEY_Z,ui::EF_COMMAND_DOWN);ASSERT_TRUE(view->OnKeyPressed(undo));EXPECT_EQ(u"abcdef",field->GetText());EXPECT_EQ(gfx::Range(1,3),field->GetSelectedRange());
+  // Mutation after drag start invalidates the payload/selection transaction.
+  view->drag_controller()->WriteDragDataForView(view,gfx::Point(15,16),&dragged);field->input_client()->InsertText(u"other",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);EXPECT_FALSE(view->GetDropCallback(drop));view->OnDragDone();
+  ui::OSExchangeData external;external.SetString(u"日本語");ui::DropTargetEvent incoming(external,gfx::PointF(view->width()-10,16),gfx::PointF(view->width()-10,16),ui::DragDropTypes::DRAG_COPY);auto late=view->GetDropCallback(incoming);ASSERT_TRUE(late);field->SetText(u"new context");operation=ui::mojom::DragOperation::kNone;std::move(late).Run(incoming,operation,nullptr);EXPECT_EQ(u"new context",field->GetText());EXPECT_EQ(ui::mojom::DragOperation::kNone,operation);
+  shell->settings_widget()->Hide();EXPECT_FALSE(field->metal_visible());const auto saved_bounds=view->bounds();view->SetBoundsRect(gfx::Rect(view->size()));view->SchedulePaint();const auto bitmap=views::test::PaintViewToBitmap(view);view->SetBoundsRect(saved_bounds);const auto background=bitmap.getColor(bitmap.width()-12,bitmap.height()/2);size_t ink=0;for(int y=4;y<bitmap.height()-4;++y)for(int x=10;x<bitmap.width()-12;++x)if(bitmap.getColor(x,y)!=background)++ink;EXPECT_GT(ink,20u);EXPECT_FALSE(views::AsViewClass<views::Textfield>(view));EXPECT_TRUE(view->children().empty());
+}
+
+#endif
+
+} // namespace zitter::prototype

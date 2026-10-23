@@ -115,6 +115,8 @@ source_set("shell") {
     "chromium/prototype/sidebar_tree.cc",
     "chromium/prototype/sidebar_tree.h",
     "chromium/prototype/workspace_shell.cc",
+    "chromium/prototype/editor_control.h",
+    "chromium/prototype/scene_editor.cc",
     "chromium/prototype/workspace_shell.h",
   ]
   include_dirs = [ "." ]
@@ -237,6 +239,7 @@ source_set("profile_workspace_browser_tests") {
     "//net:test_support",
     "//testing/gtest",
     "//ui/base:test_support",
+    "//ui/base/clipboard:clipboard_test_support",
     "//ui/views:test_support",
   ]
 }

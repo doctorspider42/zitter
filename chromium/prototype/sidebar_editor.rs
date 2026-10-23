@@ -74,6 +74,7 @@ pub struct EditorState {
     text: Vec<u16>,
     selection: Selection,
     revision: u64,
+    scroll: f32,
     enabled: bool,
     read_only: bool,
     composition: Option<Composition>,
@@ -91,6 +92,7 @@ impl Default for EditorState {
             text: vec![],
             selection: Selection::default(),
             revision: 0,
+            scroll: 0.0,
             enabled: true,
             read_only: false,
             composition: None,
@@ -108,6 +110,16 @@ impl EditorState {
     // A bounded number of delta groups, rather than whole-text snapshots on
     // every keystroke. A single arbitrarily sized edit remains undoable.
     const HISTORY_GROUPS: usize = 256;
+    pub fn scroll(&self) -> f32 {
+        self.scroll
+    }
+    pub fn set_scroll(&mut self, offset: f32) {
+        self.scroll = if offset.is_finite() {
+            offset.max(0.0)
+        } else {
+            0.0
+        };
+    }
     pub fn text(&self) -> &[u16] {
         &self.text
     }
@@ -218,6 +230,7 @@ impl EditorState {
     // Context/programmatic reset never emits a committed edit and invalidates
     // old IME callbacks even if the new text happens to be identical.
     pub fn reset(&mut self, text: &[u16]) -> Change {
+        self.scroll = 0.0;
         let before = self.selection;
         let composing = self.composition.take().is_some();
         self.next_ime();
@@ -523,6 +536,62 @@ impl EditorState {
             selection: before != self.selection,
             composition: false,
             committed: changed,
+        }
+    }
+    pub fn drop_selection(&mut self, destination: usize, copy: bool) -> Change {
+        if !self.editable()
+            || self.composition.is_some()
+            || self.boundaries_revision != Some(self.revision)
+            || self.graphemes.binary_search(&destination).is_err()
+        {
+            return Change::default();
+        }
+        let before = self.selection;
+        let range = before.range();
+        if range.is_empty() || (!copy && destination >= range.start && destination <= range.end) {
+            return Change::default();
+        }
+        let selected = self.text[range.clone()].to_vec();
+        let (start, end, inserted, caret) = if copy {
+            (
+                destination,
+                destination,
+                selected.clone(),
+                destination + selected.len(),
+            )
+        } else if destination < range.start {
+            let mut text = selected;
+            text.extend_from_slice(&self.text[destination..range.start]);
+            (destination, range.end, text, destination + range.len())
+        } else {
+            let mut text = self.text[range.end..destination].to_vec();
+            text.extend_from_slice(&selected);
+            (range.start, destination, text, destination)
+        };
+        if !self.replacement_boundaries(start, end, &inserted)
+            || !valid_point(&inserted, caret - start)
+        {
+            return Change::default();
+        }
+        let removed = self.text[start..end].to_vec();
+        let changed = self.replace_raw(start, end, &inserted);
+        self.selection = Selection::caret(caret);
+        self.break_group();
+        self.record(Edit {
+            start,
+            removed,
+            inserted,
+            before,
+            after: self.selection,
+            group: self.group,
+            kind: Kind::Separate,
+        });
+        Change {
+            admitted: true,
+            text: changed,
+            selection: before != self.selection,
+            committed: changed,
+            ..Change::default()
         }
     }
     pub fn begin_composition(&mut self) -> u64 {
@@ -1051,5 +1120,69 @@ mod malformed_service_tests {
         e.select(2, 2, false);
         assert!(!e.insert(&[0xd800], true).admitted);
         assert_eq!(e.text(), &[0xd800, 65, 0xdc00]);
+    }
+}
+
+#[cfg(test)]
+mod drop_tests {
+    use super::*;
+    fn model() -> EditorState {
+        let mut e = EditorState::default();
+        e.reset(&"abcdef".encode_utf16().collect::<Vec<_>>());
+        let stops = (0..=6).collect::<Vec<_>>();
+        assert!(e.install_boundaries(e.info().revision, &stops, &[]));
+        e.select(1, 3, false);
+        e
+    }
+    #[test]
+    fn drag_moves_in_either_direction_as_one_undo() {
+        for (at, expected, caret) in [(0, "bcadef", 2), (6, "adefbc", 6)] {
+            let mut e = model();
+            assert!(e.drop_selection(at, false).committed);
+            assert_eq!(String::from_utf16(e.text()).unwrap(), expected);
+            assert_eq!(e.info().selection.focus, caret);
+            e.undo();
+            assert_eq!(String::from_utf16(e.text()).unwrap(), "abcdef");
+            assert_eq!(
+                e.info().selection,
+                Selection {
+                    anchor: 1,
+                    focus: 3,
+                    secondary: false
+                }
+            );
+            assert!(!e.info().can_undo);
+            e.redo();
+            assert_eq!(String::from_utf16(e.text()).unwrap(), expected);
+        }
+    }
+    #[test]
+    fn drag_copy_does_not_remove_source() {
+        let mut e = model();
+        e.drop_selection(6, true);
+        assert_eq!(String::from_utf16(e.text()).unwrap(), "abcdefbc");
+        assert_eq!(e.info().selection.focus, 8);
+        e.undo();
+        assert_eq!(String::from_utf16(e.text()).unwrap(), "abcdef");
+    }
+    #[test]
+    fn move_into_source_and_stale_geometry_are_rejected() {
+        let mut e = model();
+        for at in [1, 2, 3] {
+            assert!(!e.drop_selection(at, false).admitted);
+        }
+        e.insert(&[65], false);
+        assert!(!e.drop_selection(0, false).admitted);
+    }
+    #[test]
+    fn composing_disabled_and_readonly_cannot_drop() {
+        let mut e = model();
+        let token = e.begin_composition();
+        assert!(!e.drop_selection(0, false).admitted);
+        e.cancel(token);
+        e.availability(true, true);
+        assert!(!e.drop_selection(0, false).admitted);
+        e.availability(false, false);
+        assert!(!e.drop_selection(0, true).admitted);
     }
 }

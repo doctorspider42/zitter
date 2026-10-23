@@ -27,6 +27,8 @@
 #include "ui/color/color_id.h"
 #include "ui/color/color_provider.h"
 #include "ui/gfx/canvas.h"
+#include "ui/gfx/scoped_canvas.h"
+#include "ui/gfx/image/image_skia.h"
 #include "cc/paint/paint_flags.h"
 
 #include "chromium/prototype/editor_text_layout_mac.inc"
@@ -230,6 +232,11 @@ class Surface final : public SidebarMetal {
   }
   void Update(gfx::NativeWindow native_window, gfx::Rect bounds,
               base::span<const sidebar::Item> items, unsigned background) override {
+    auto ops=sidebar::layout(rust::Slice<const sidebar::Item>(items.data(),items.size()));
+    UpdateScene(native_window,bounds,UNSAFE_BUFFERS(base::span<const sidebar::Primitive>(ops.data(),ops.size())),background);
+  }
+  void UpdateScene(gfx::NativeWindow native_window,gfx::Rect bounds,
+      base::span<const sidebar::Primitive> ops,unsigned background) override {
     NSWindow* window = native_window.GetNativeNSWindow();
     if (!window.isVisible || bounds.IsEmpty()) { Hide(); return; }
     if(preview_clip_) {
@@ -242,7 +249,7 @@ class Surface final : public SidebarMetal {
     const double top = NSMaxY(NSScreen.screens.firstObject.frame);
     NSRect screen = NSMakeRect(bounds.x(), top - bounds.bottom(), bounds.width(), bounds.height());
     NSRect frame = [parent convertRect:[window convertRectFromScreen:screen] fromView:nil];
-    Render(window,bounds,frame,items,background);
+    RenderScene(window,bounds,frame,ops,background);
   }
   void UpdatePreview(gfx::NativeWindow native_window,gfx::Rect bounds,double x,
       base::span<const sidebar::Item> items,unsigned background,bool settle,bool redraw) override {
@@ -288,14 +295,19 @@ class Surface final : public SidebarMetal {
  private:
   void Render(NSWindow* window,gfx::Rect bounds,NSRect frame,
       base::span<const sidebar::Item> items,unsigned background) {
+    auto ops=sidebar::layout(rust::Slice<const sidebar::Item>(items.data(),items.size()));
+    RenderScene(window,bounds,frame,UNSAFE_BUFFERS(base::span<const sidebar::Primitive>(ops.data(),ops.size())),background);
+  }
+  void RenderScene(NSWindow* window,gfx::Rect bounds,NSRect frame,
+      base::span<const sidebar::Primitive> ops,unsigned background) {
     const double scale = window.backingScaleFactor ?: 1;
-    auto ops = sidebar::layout(rust::Slice<const sidebar::Item>(items.data(), items.size()));
     std::ostringstream signature;
     signature << bounds.ToString() << ':' << scale << ':' << background;
     for (const auto& op : ops) signature << '|' << op.x << ',' << op.y << ',' << op.width << ','
         << op.height << ',' << op.clip.x << ',' << op.clip.y << ',' << op.clip.width << ',' << op.clip.height
         << ',' << op.radius << ',' << op.color << ',' << op.font_size << ','
-        << op.shape << ',' << op.stroke << ',' << op.bold << ',' << op.middle << ',' << op.center << ':' << op.text.size() << ':' << std::string(op.text);
+        << op.shape << ',' << op.stroke << ',' << op.bold << ',' << op.middle << ',' << op.center << ',' << op.editor << ',' << op.text_x << ',' << op.baseline << ':' << op.text.size() << ':' << std::string(op.text);
+    for(const auto& op:ops)if(op.editor){signature << ':' << op.utf16.size();for(uint16_t c:op.utf16)signature << ',' << c;}
     std::string fingerprint = signature.str();
     if (fingerprint == last_frame_ && !view_.hidden && !next_presentation_) return;
     [CATransaction begin]; [CATransaction setDisableActions:YES];
@@ -330,7 +342,7 @@ class Surface final : public SidebarMetal {
           last_clip->width != clip.width || last_clip->height != clip.height) {
         [encoder setScissorRect:clip]; last_clip = clip;
       }
-      const bool text = !op.text.empty();
+      const bool text = op.editor || !op.text.empty();
       if (text) {
         id<MTLTexture> texture = Text(op, scale);
         if (!texture) continue;
@@ -353,7 +365,8 @@ class Surface final : public SidebarMetal {
   id<MTLTexture> Text(const sidebar::Primitive& op, double scale) {
     std::ostringstream key;
     key << op.width << ',' << op.height << ',' << op.font_size << ',' << scale << ','
-        << op.color << ',' << op.shape << ',' << op.stroke << ',' << op.bold << ',' << op.middle << ',' << op.center << ':' << std::string(op.text);
+        << op.color << ',' << op.shape << ',' << op.stroke << ',' << op.bold << ',' << op.middle << ',' << op.center << ',' << op.editor << ',' << op.text_x << ',' << op.baseline << ':' << std::string(op.text);
+    if(op.editor){key << ':' << op.utf16.size();for(uint16_t c:op.utf16)key << ',' << c;}
     auto found = text_.find(key.str());
     if (found != text_.end()) return found->second.texture;
     const size_t width = std::min(size_t{4096}, size_t(std::ceil(op.width * scale)));
@@ -369,6 +382,11 @@ class Surface final : public SidebarMetal {
         width, height, 8, width * 4, space.get(), static_cast<uint32_t>(kCGImageAlphaPremultipliedFirst) | static_cast<uint32_t>(kCGBitmapByteOrder32Little)));
     if (!context) return nil;
     CGContextScaleCTM(context.get(), scale, scale);
+    if(op.editor) {
+      const std::u16string text(op.utf16.begin(),op.utf16.end());
+      EditorTextLayout line(text,op.font_size,op.bold);
+      line.Draw(context.get(),op.text_x,op.height-op.baseline,op.color);
+    } else {
     NSFont* font = editor_text_detail::Font(op.font_size,op.bold);
     NSColor* color = [NSColor colorWithSRGBRed:((op.color>>16)&255)/255.
         green:((op.color>>8)&255)/255. blue:(op.color&255)/255. alpha:(op.color>>24)/255.];
@@ -386,6 +404,7 @@ class Surface final : public SidebarMetal {
     CTLineGetTypographicBounds(draw, &ascent, &descent, nullptr);
     CGContextSetTextPosition(context.get(), op.center ? std::max(0.0, (op.width-CTLineGetTypographicBounds(draw,nullptr,nullptr,nullptr))/2.0) : 0, (op.height - ascent - descent) / 2 + descent);
     CTLineDraw(draw, context.get());
+    }
     MTLTextureDescriptor* descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
         width:width height:height mipmapped:NO];
     descriptor.usage = MTLTextureUsageShaderRead;
@@ -410,6 +429,23 @@ class Surface final : public SidebarMetal {
   id<MTLCommandQueue> __strong queue_;
   id<MTLRenderPipelineState> __strong pipeline_;
 };
+}
+void PaintEditorSceneFallback(gfx::Canvas* canvas,base::span<const sidebar::Primitive> scene) {
+  for(const auto& op:scene) {
+    gfx::ScopedCanvas save(canvas);canvas->ClipRect(gfx::RectF(op.clip.x,op.clip.y,op.clip.width,op.clip.height));
+    if(op.editor) {
+      const int w=std::min(4096,int(std::ceil(op.width))),h=std::min(512,int(std::ceil(op.height)));if(w<=0||h<=0)continue;
+      SkBitmap bitmap;bitmap.allocN32Pixels(w,h);bitmap.eraseColor(SK_ColorTRANSPARENT);
+      base::apple::ScopedCFTypeRef<CGColorSpaceRef> space(CGColorSpaceCreateDeviceRGB());
+      base::apple::ScopedCFTypeRef<CGContextRef> context(CGBitmapContextCreate(bitmap.getPixels(),w,h,8,bitmap.rowBytes(),space.get(),static_cast<uint32_t>(kCGImageAlphaPremultipliedFirst)|static_cast<uint32_t>(kCGBitmapByteOrder32Little)));
+      if(!context)continue;const std::u16string text(op.utf16.begin(),op.utf16.end());
+      EditorTextLayout line(text,op.font_size,op.bold);line.Draw(context.get(),op.text_x,op.height-op.baseline,op.color);
+      canvas->DrawImageInt(gfx::ImageSkia::CreateFrom1xBitmap(bitmap),int(op.x),int(op.y));
+    } else {
+      cc::PaintFlags flags;flags.setColor(op.color);flags.setAntiAlias(true);if(op.stroke>0){flags.setStyle(cc::PaintFlags::kStroke_Style);flags.setStrokeWidth(op.stroke);}
+      canvas->DrawRoundRect(gfx::RectF(op.x,op.y,op.width,op.height),op.radius,flags);
+    }
+  }
 }
 std::unique_ptr<views::ScrollBar> CreateSidebarScrollBar(base::RepeatingCallback<bool()> scene_visible, bool horizontal) {
   return std::make_unique<SidebarScrollBar>(std::move(scene_visible),horizontal);
