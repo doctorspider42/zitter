@@ -1185,3 +1185,21 @@ SELECT_WORD admission expectation in both backends; the corrected final gate and
 full suite passed. Remaining fields, forms, settings/services, Views containers,
 manual release acceptance and actual presentation profiling are still required.
 [Matching report](benchmarks/rust-editor-pointer-checkpoint-2026-10-23.json).
+
+
+## Rust color/emoji editing and committed input (2026-10-23)
+
+UI source `488faf5d7df2ef02f2a4144ef8546c336d7a650c` moves workspace color and emoji to the shared Rust
+editor with CoreText/Metal drawing. The Views control backend retains one native
+Textfield per field. Explicit committed-edit/key callbacks keep color validation
+on Return and emoji first-grapheme autosave in the existing domain service, while
+preedit/cancellation/programmatic updates are silent. Reentrant normalization,
+callback detachment, actual Cocoa typing/Return, synthetic IME and workspace
+isolation have shared regressions; preset-row and persistence/theme cases remain.
+
+The complete inventory passed **126 Metal / 94 Views**, six explicit skips each,
+with **211 Rust / 66 committed Python**. No new library or licensing change and
+no presentation speedup claim. Folder/address and other fields, forms/preferences/
+service panels, Views containers, manual platform/release checks and actual
+CPU/GPU/drawable presentation profiling remain open.
+[Matching report](benchmarks/rust-appearance-editors-checkpoint-2026-10-23.json).

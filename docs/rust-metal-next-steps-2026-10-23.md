@@ -1,6 +1,6 @@
 # Rust + Metal: remaining work and GUI checkpoint
 
-Snapshot: `5e236d2b634168c0f42a0b03f750e853446b177c`, 2026-10-23.
+Snapshot: `488faf5d7df2ef02f2a4144ef8546c336d7a650c`, 2026-10-23.
 This is a work plan, not a claim of functional parity. The detailed inventory is
 [the parity checklist](rust-metal-parity.md). Existing native behavior is preserved
 in many places where Views presentation and interaction still need replacement.
@@ -8,30 +8,27 @@ in many places where Views presentation and interaction still need replacement.
 ## Current checkpoint
 
 The full compiled automated browser/UI inventory passed for UI source
-`5e236d2b634168c0f42a0b03f750e853446b177c`:
+`488faf5d7df2ef02f2a4144ef8546c336d7a650c`:
 
 | Backend | Passed | Explicit skips | Failed / crashed |
 | --- | ---: | ---: | ---: |
-| Rust + Metal | 124 | 6 | 0 |
-| Views | 92 | 6 | 0 |
+| Rust + Metal | 126 | 6 | 0 |
+| Views | 94 | 6 | 0 |
 
 The complete run was serial, with one launcher job and no retries, using temporary
 fixture-owned profiles. Metal API validation was enabled. The 32 dedicated Metal
-cases are excluded from Views (130 Metal / 98 Views inventory). **211 Rust tests
+cases are excluded from Views (132 Metal / 100 Views inventory). **211 Rust tests
 (including 60 editor model tests) and 66 Python tests from a clean archive** passed.
 The live checkout passed 68 Python tests, including two concurrent tests outside
 this UI commit. Optimized compilation, scoped GN/boundaries and a final no-work
 Ninja check passed. CoreText geometry/raster code is unchanged from the preceding
-verified checkpoint. [Full results and source/binary hashes](benchmarks/rust-editor-pointer-checkpoint-2026-10-23.json).
+verified checkpoint. [Full results and source/binary hashes](benchmarks/rust-appearance-editors-checkpoint-2026-10-23.json).
 
-The first focused gate had one incorrect test expectation in both backends:
-native SELECT_WORD rejects a nonempty selection. The test was corrected to check
-that rejection and selection at end-of-text. A second gate overlapped inventory
-startup and failed the existing Metal
-Cocoa typing case; new pointer cases and Views passed. Focus interference is
-possible, not proven. The strictly serial final gate and full suite passed on
-identical binaries. Both attempts are retained in the report. The prior
-checkpoint's AppKit teardown timeout remains in its historical report.
+The callback and appearance gate covers both backends, including the migrated
+fields, committed-edit notifications, actual Cocoa typing/Return, synthetic IME,
+preset rows, theme/save behavior and shared kill-buffer interoperability with a
+fixture-owned native field. Historical intermediate failures remain in their
+preceding reports; the latest gate and complete suite passed.
 
 Each backend explicitly skipped four opt-in performance scenarios, the real-user
 Arc import and the interactive one-hour manual harness. They are not counted as
@@ -51,7 +48,7 @@ The older failed/intermediate runs remain recorded in the
 
 1. **Text editing and IME.** Finish remaining native service/interaction parity for the live
    Rust workspace/profile name fields, then replace Views textfield layout/drawing
-   and editing in folder names, color/emoji editors and address search. Preserve UTF-16 selection, grapheme/word navigation, bidi affinity,
+   and editing in folder names and address search. Preserve UTF-16 selection, grapheme/word navigation, bidi affinity,
    horizontal scrolling, composition/candidate geometry, undo/redo, clipboard,
    mouse/keyboard selection, drag/drop, context commands, focus and accessibility.
    Keep native IME/clipboard/accessibility as explicit platform adapters.
@@ -85,22 +82,19 @@ The older failed/intermediate runs remain recorded in the
    manifest and Apache-2.0/upstream notices. Keep the opt-in backend until parity
    and the performance comparison are established.
 
-## Pointer selection and edge scrolling now verified
+## Color and emoji editor migration now verified
 
-Rust owns word-selection expansion and pointer sessions, retaining the initial
-word while dragging through repeated reversals. The native adapter supplies
-CoreText geometry, capture and a 100ms timer for continuous horizontal selection
-scrolling while the cursor is stationary outside the field. Release/capture/focus,
-context resets and unavailable controls cancel the session/timer. Single-line
-triple-click and command admission are compared with Views. The canonical native
-kill buffer and previous editing commands remain covered.
+Workspace/profile names, color and emoji fields use the Rust editor in Metal.
+Explicit commit/key callbacks preserve color-on-Return and automatic first-grapheme
+emoji save without persisting preedit/cancel/programmatic changes. The Views
+control backend remains native; both use the same shell/domain settings services.
+Pointer word selection and stationary edge scrolling remain covered.
 [Implementation and remaining editor gaps](rust-metal-editor.md).
 
-Next: broaden complex bidi and actual Cocoa multi-click/vertical-pointer/menu/
-IME/VoiceOver acceptance, and migrate folder/color/emoji/address fields using the
-same native-service/domain boundaries. Windows-only character-offset arrays are
-not a missing macOS baseline requirement; manual macOS accessibility acceptance
-remains required.
+Next: migrate folder and address fields and broaden actual Cocoa multi-click/
+vertical pointer/complex bidi/menu/IME/VoiceOver acceptance. The preferences and
+browser-service panels, form/container ownership, real presentation profiling and
+manual/release checks remain separate work areas.
 
 The seven work areas above remain open, including all remaining form/service UI,
 Views container ownership, manual acceptance and real presentation profiling.

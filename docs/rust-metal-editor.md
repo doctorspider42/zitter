@@ -1,13 +1,13 @@
-# Rust name editors and remaining service work
+# Rust editors and remaining service work
 
-Workspace/profile name fields now use the Rust model and CoreText/Metal editor
+Workspace/profile name, color and emoji fields now use the Rust model and CoreText/Metal editor
 when `--zitter-sidebar=rust-metal` is selected. They have one native View for
 window/input/focus/AX services and no Textfield child/model/RenderText. The Views
 backend keeps one real native Textfield through the same `EditorControl`
-interface, without a wrapper or second model. Folder names, color/emoji, address
-input and other fields still use Views.
+interface, without a wrapper or second model. Folder names, address input and
+other fields still use Views.
 
-This is the first live editor integration, not full textfield parity or a
+This is a live editor migration checkpoint, not full textfield parity or a
 performance acceptance. The remaining adapters/commands below are explicit.
 
 `sidebar_editor.rs` owns UTF-16 text, directional selection/affinity, revisioned
@@ -134,7 +134,7 @@ Remaining editor work before parity:
 - Inspect actual macOS VoiceOver and real IME candidate windows, complex clause/
   background/underline styles, dictionary and menu lifecycles, paste availability,
   focus/capture/touch, different scales/themes/directions and GPU loss/recovery.
-- Migrate folder/color/emoji/address and other fields through the same service
+- Migrate folder/address and other fields through the same service
   contracts, preserving persisted data and domain authorization. Move remaining
   control policy out of native adapters where appropriate.
 - Measure actual CPU/GPU/cache/idle and drawable-presentation work. No end-to-end
@@ -175,3 +175,37 @@ gate exposed an incorrect test assumption that native SELECT_WORD admits a
 nonempty selection; only that expectation was corrected, with the failed logs
 retained locally. Existing Cocoa typing/commands and other browser cases still run.
 [Full checkpoint](benchmarks/rust-editor-pointer-checkpoint-2026-10-23.json).
+
+
+## Live color and emoji fields
+
+Workspace color and emoji now use the same single Rust-backed View as name fields
+in the Metal backend. Views retains one real native Textfield for each field.
+Preset-row Rust layout/input and the appearance stores remain unchanged; the
+field surface now uses the existing shared Metal renderer and editor color provider.
+Native font/background/border styling remains on the control backend only.
+
+`EditorControl::SetCallbacks` exposes committed user changes and key admission.
+Rust notifies from its committed update flag, including IME confirmation when the
+display text already contains the preedit. Native Textfield forwards user changes
+outside composition and suppresses cancellation notifications. Programmatic
+SetText, preedit and cancellation are silent. Native fields with no callbacks
+retain no controller; no wrapper or second native editing model is created.
+The shell reads and copies current text in the callback, so no borrowed UTF-16
+buffer survives synchronous normalization/reset.
+
+Color validation/submission remains on Return. Emoji auto-applies the first
+committed grapheme (including ZWJ sequences), using the existing workspace-scoped
+normalization/save services. Return/Escape during composition stay with the input
+method. Native composition cancellation no longer reaches emoji persistence;
+this does not change the native model's documented selection-cancel semantics.
+Callbacks detach before widget destruction and use weak shell references.
+
+Shared tests cover silent programmatic/preedit/cancel operations, exactly one
+notification for commit, callback removal and reentrant normalization. Actual Cocoa
+Return/typing exercises validation and emoji save; synthetic IME checks confirm
+and cancel, and workspace switching checks domain isolation. Existing theme/save,
+preset-row clipping/cancellation and all applicable browser tests pass. The
+kill-buffer test now creates a fixture-owned native control rather than relying
+on an unmigrated production color field. No such test control ships in the app.
+[Matching evidence](benchmarks/rust-appearance-editors-checkpoint-2026-10-23.json).
