@@ -8,16 +8,16 @@ milestones to `origin/main` as they land. The opt-in switch remains
 
 ## Current execution policy
 
-Latest automated acceptance: UI source `b17b87a02f689e51daf3245fd7cb8c14f80f333a`
-passed **122 Metal / 90 Views cases**, six explicit skips per backend, from the
-complete 128-case inventory (96 applicable Views cases; 32 dedicated Metal cases
-excluded). The accepted full rerun used one job and no retries. The first run had
-one Metal viewport-test teardown timeout in AppKit/FrontBoard; the full identical
-binary rerun passed. The initial timeout is preserved in the report, not erased.
-**203 Rust / 66 clean-archive Python tests**, CoreText, GN/boundaries and optimized
-app/test compilation passed; the live checkout passed 68 Python tests including
-two concurrent tests outside this commit.
-[Matching checkpoint](benchmarks/rust-shared-kill-checkpoint-2026-10-23.json).
+Latest automated acceptance: UI source `5e236d2b634168c0f42a0b03f750e853446b177c`
+passed **124 Metal / 92 Views cases**, six explicit skips per backend, from the
+complete 130-case inventory (98 applicable Views cases; 32 dedicated Metal cases
+excluded). The full run used one job and no retries. **211 Rust / 66 clean-archive
+Python tests**, GN/boundaries and optimized app/test compilation passed; the live
+checkout passed 68 Python tests including two concurrent cases outside this commit.
+A focused gate initially had an incorrect SELECT_WORD admission expectation in both
+backends, corrected before the final gate/full suite. The preceding checkpoint's
+AppKit teardown timeout is retained in its own report.
+[Matching checkpoint](benchmarks/rust-editor-pointer-checkpoint-2026-10-23.json).
 
 The live workspace/profile name editor now has macOS selection direction/policies,
 page/paragraph commands, kill/yank, transpose and matched forced direction/raster
@@ -70,7 +70,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Import source selector | Rust selected state, prefix timeout/search, popup tokens, macOS key policy and closed-control geometry/scene; Metal canvas; native menu/IME/focus/AX/event adapters (automated UI checked; manual acceptance pending) | Verify popup lifecycle, typeahead, keyboard and VoiceOver, disabled/hide/capture, RTL/theme/scale and fallback; migrate remaining native adapters |
 | Workspace/managed profile selectors | Rust stable-ID reconciliation, prefix/menu state and scene; two Metal canvases; native popup/IME/focus/AX/event and font/color adapters (automated UI checked; manual acceptance pending) | Verify profile CRUD/assignment persistence, renamed/reordered/removed choices, stale menu callbacks, native popup/IME/AX, clipping and theme/scale/RTL; migrate remaining native adapters |
 | Time Machine | Views + application services | Rust presentation; preserve previews, validation, backups and restoration |
-| Workspace/profile name editing | Rust UTF-16 state/history/IME, viewport and scene; CoreText geometry, Metal and CPU fallback; one native input/focus/AX/menu/clipboard/drag/dictionary adapter | Shared native/Rust kill buffer verified; complete word/paragraph drag, edge-selection scrolling and native macOS IME/VoiceOver/complex bidi/scale/menu acceptance; other editors remain Views |
+| Workspace/profile name editing | Rust UTF-16 state/history/IME, viewport and scene; CoreText geometry, Metal and CPU fallback; one native input/focus/AX/menu/clipboard/drag/dictionary adapter | Shared kill buffer, word drag/reversal and stationary edge scrolling verified; broaden actual Cocoa multi-click/vertical-pointer/IME/VoiceOver/complex bidi/scale/menu acceptance; other editors remain Views |
 | Keyboard accessibility, VoiceOver, focus and tooltips | Native Views nodes | Explicit native accessibility adapter for Rust controls; no duplicate nodes |
 
 ## Verified milestones
@@ -453,3 +453,13 @@ remain. Passing the current tests establishes the tested milestone only.
   production library or crate. Full rerun: **122 Metal / 90 Views**, six skips
   each; **203 Rust / 66 committed Python**. The first Metal teardown timeout
   remains recorded. [Report](benchmarks/rust-shared-kill-checkpoint-2026-10-23.json).
+
+- **Pointer selection and edge scrolling (2026-10-23):** Rust owns word expansion,
+  original-word retention through reversals and revision-bound pointer sessions.
+  Native code adapts capture/coordinates and a 100ms stationary edge-scroll timer,
+  stopped on release/capture/focus/context/lifecycle changes. Triple-click behavior
+  matches the native single-line control. Shared synthetic pointer tests and eight
+  new model cases pass, with **211 Rust / 66 committed Python** and full **124 Metal
+  / 92 Views**, six explicit skips each. Actual Cocoa multi-click/vertical pointer,
+  complex bidi/manual editor acceptance and all other migration areas remain.
+  [Evidence](benchmarks/rust-editor-pointer-checkpoint-2026-10-23.json).

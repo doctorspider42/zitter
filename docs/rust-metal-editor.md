@@ -129,8 +129,8 @@ replace manual macOS VoiceOver and platform range/selection acceptance.
 
 Remaining editor work before parity:
 
-- Complete word/paragraph mouse-drag expansion and continuous selection scrolling at the
-  viewport edge, plus more complex visual-word bidi and native key-policy cases.
+- Broaden complex visual-word bidi, actual Cocoa multi-click timing/aggregation,
+  vertical pointer policy, long-word edge scrolling and native key-policy cases.
 - Inspect actual macOS VoiceOver and real IME candidate windows, complex clause/
   background/underline styles, dictionary and menu lifecycles, paste availability,
   focus/capture/touch, different scales/themes/directions and GPU loss/recovery.
@@ -142,3 +142,36 @@ Remaining editor work before parity:
 
 New project source remains Apache-2.0; no new crate or production third-party
 library was added.
+
+
+## Pointer word selection and stationary edge scrolling
+
+The Rust model now owns the active pointer selection unit, original double-click
+word and anchor/reversal policy. Double-click drag expands through word boundaries
+and retains the initially selected word after repeated direction changes. Gaps
+between native word tokens, including whitespace and punctuation, select as one
+unit. `SELECT_WORD` at end-of-text selects the preceding unit; the public command
+still rejects an existing selection, matching native admission. Expansion of
+nonempty ranges is used internally during word dragging.
+
+A pointer session is tied to the text revision. Reset (even identical text),
+external selection/navigation, availability transitions, composition and edits
+invalidate it. Native code supplies coordinates and current CoreText grapheme/word
+boundaries. Boundary lookup is logarithmic; the new session is fixed-size and
+introduces no text copy or production dependency.
+
+The adapter has a 100ms timer for selection beyond horizontal view edges. Each
+tick hit-tests through the scrolled viewport, applies Rust selection and reveals
+the caret. It stops at text ends, on release/capture loss/focus/lifecycle changes,
+and when the model no longer admits the pointer session. Single-line triple click
+selects all, then dragging retains its native initial anchor; this is not a claim
+about multiline paragraph editing.
+
+Eight new model regressions and two shared browser tests cover reversal, gaps,
+Unicode/graphemes, readonly/stale sessions, undo restoration and stationary edge
+scrolling/cancellation. The browser comparisons dispatch explicit UI MouseEvents
+in both backends; actual Cocoa multi-click acceptance remains separate. The first
+gate exposed an incorrect test assumption that native SELECT_WORD admits a
+nonempty selection; only that expectation was corrected, with the failed logs
+retained locally. Existing Cocoa typing/commands and other browser cases still run.
+[Full checkpoint](benchmarks/rust-editor-pointer-checkpoint-2026-10-23.json).

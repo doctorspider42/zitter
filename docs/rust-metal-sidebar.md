@@ -1167,3 +1167,21 @@ rerun. No performance gain or full UI parity is claimed. Word/paragraph drag,
 edge-selection scrolling, remaining editors/forms/service panels/container
 ownership and manual/performance/release acceptance remain open.
 [Matching report](benchmarks/rust-shared-kill-checkpoint-2026-10-23.json).
+
+
+## Rust pointer selection and edge scrolling (2026-10-23)
+
+UI source `5e236d2b634168c0f42a0b03f750e853446b177c` moves word-range expansion and double-click drag
+retention/reversal into the Rust editor, with fixed-size revision-bound pointer
+sessions. A native 100ms timer drives continuous selection beyond horizontal
+edges, including without new motion events; release/capture/focus/context changes
+stop it. Triple-click behavior follows the existing single-line Views control.
+
+**211 Rust / 66 committed Python tests** and the complete **124 Metal / 92 Views**
+inventory passed, six explicit skips each. Shared synthetic MouseEvents compare
+real controls; actual Cocoa multi-click/vertical pointer/complex bidi and manual
+IME/VoiceOver acceptance remain open. The initial focused gate had a mistaken
+SELECT_WORD admission expectation in both backends; the corrected final gate and
+full suite passed. Remaining fields, forms, settings/services, Views containers,
+manual release acceptance and actual presentation profiling are still required.
+[Matching report](benchmarks/rust-editor-pointer-checkpoint-2026-10-23.json).
