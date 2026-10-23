@@ -2635,10 +2635,20 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceDeletionConfirmationS
 }
 
 namespace {
-views::Textfield* FolderNameInput(views::View* root) {
+views::Textfield* NativeFolderNameInput(views::View* root) {
   if (auto* field = views::AsViewClass<views::Textfield>(root)) return field;
-  for (const auto& child : root->children()) if (auto* field = FolderNameInput(child.get())) return field;
+  for (const auto& child : root->children()) if (auto* field = NativeFolderNameInput(child.get())) return field;
   return nullptr;
+}
+// Exercise the real field in each backend, with no test editing model/wrapper.
+bool ReplaceFolderName(WorkspaceShell* shell,std::u16string_view text) {
+  if(auto* editor=shell->folder_editor_for_testing()){
+    editor->SelectRange(gfx::Range(0,editor->GetText().size()));
+    editor->input_client()->InsertText(std::u16string(text),ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
+    return editor->GetText()==text;
+  }
+  auto* native=NativeFolderNameInput(shell->folder_dialog()->GetContentsView());
+  if(!native)return false;native->SelectAll(false);native->InsertOrReplaceText(std::u16string(text));return native->GetText()==text;
 }
 views::Button* SidebarNamedButton(views::View* root, std::u16string_view name) {
   if (auto* button = views::AsViewClass<views::Button>(root)) {
@@ -2808,10 +2818,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarFoldersCreateNestAndPer
     EXPECT_EQ(parent.empty() ? u"Nowy folder…" : u"Nowy podfolder…", shell->workspace_menu()->GetLabelAt(0));
     shell->workspace_menu()->ActivatedAt(0, 0);
     ASSERT_TRUE(base::test::RunUntil([&] { return shell->folder_dialog() != nullptr; }));
-    auto* field = FolderNameInput(shell->folder_dialog()->GetContentsView());
-    ASSERT_TRUE(field);
-    field->SelectAll(false);
-    field->InsertOrReplaceText(name);
+    ASSERT_TRUE(ReplaceFolderName(shell,name));
     shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
     ASSERT_TRUE(base::test::RunUntil([&] { return !shell->folder_dialog() && !window_->profiles_busy(); }));
   };
@@ -2853,10 +2860,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarFolderRenameAndDeleteCo
   EXPECT_EQ(u"Usuń folder…", shell->workspace_menu()->GetLabelAt(3));
   shell->workspace_menu()->ActivatedAt(2, 0);
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->folder_dialog() != nullptr; }));
-  auto* field = FolderNameInput(shell->folder_dialog()->GetContentsView());
-  ASSERT_TRUE(field);
-  EXPECT_EQ(u"Parent", field->GetText());
-  field->SelectAll(false); field->InsertOrReplaceText(u"  Renamed 🦊  ");
+  auto* editor=shell->folder_editor_for_testing();auto* native=NativeFolderNameInput(shell->folder_dialog()->GetContentsView());ASSERT_TRUE(editor||native);
+  EXPECT_EQ(u"Parent",editor?editor->GetText():native->GetText());
+  ASSERT_TRUE(ReplaceFolderName(shell,u"  Renamed 🦊  "));
   shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
   ASSERT_TRUE(base::test::RunUntil([&] { return !shell->folder_dialog() && !window_->profiles_busy(); }));
   EXPECT_EQ(id, window_->pinned_items("work")[0].id);
@@ -4161,22 +4167,22 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, FolderNoticesWrapPreserveC
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, FolderFormScenesValidationCompositionAndStaleContext) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
   shell->RequestNewFolder("work");ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_form_metal_visible();}));
-  auto* form=shell->folder_form_for_testing();ASSERT_TRUE(form);auto* field=FolderNameInput(form);ASSERT_TRUE(field);EXPECT_TRUE(field->HasFocus());
-  auto no_labels=[&](auto&& self,views::View* view)->void{if(view==field)return;EXPECT_FALSE(views::AsViewClass<views::Label>(view));for(const auto& child:view->children())self(self,child.get());};no_labels(no_labels,form);
+  auto* form=shell->folder_form_for_testing();ASSERT_TRUE(form);auto* field=shell->folder_editor_for_testing();ASSERT_TRUE(field);EXPECT_TRUE(field->HasFocus());
+  auto no_labels=[&](auto&& self,views::View* view)->void{if(view==field->view())return;EXPECT_FALSE(views::AsViewClass<views::Label>(view));for(const auto& child:view->children())self(self,child.get());};no_labels(no_labels,form);
   EXPECT_TRUE(shell->folder_form_contains_scene_text("Nazwa folderu"));
   field->SetText(u" \u3000\u00a0 ");shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
   ASSERT_TRUE(shell->folder_dialog());EXPECT_EQ(u"Wpisz nazwę folderu.",shell->folder_form_error_for_testing());EXPECT_TRUE(window_->pinned_items("work").empty());
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_form_contains_scene_text("Wpisz nazwę folderu.");}));
-  for(const auto& child:form->children())if(child.get()!=field&&child->GetVisible())EXPECT_FALSE(child->GetBoundsInScreen().Intersects(field->GetBoundsInScreen()));
+  for(const auto& child:form->children())if(child.get()!=field->view()&&child->GetVisible())EXPECT_FALSE(child->GetBoundsInScreen().Intersects(field->view()->GetBoundsInScreen()));
   field->SetText(std::u16string(129,u'ą'));shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();EXPECT_EQ(u"Nazwa folderu jest za długa.",shell->folder_form_error_for_testing());
-  field->SelectAll(false);field->InsertOrReplaceText(u"  Projekty 🦀  ");EXPECT_TRUE(shell->folder_form_error_for_testing().empty());
+  ASSERT_TRUE(ReplaceFolderName(shell,u"  Projekty 🦀  "));EXPECT_TRUE(shell->folder_form_error_for_testing().empty());
   ui::CompositionText composition;composition.text=u"にほん";composition.selection=gfx::Range(composition.text.size());field->SetCompositionText(composition);ASSERT_TRUE(field->IsIMEComposing());
   shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();EXPECT_TRUE(shell->folder_dialog());EXPECT_TRUE(window_->pinned_items("work").empty());field->ClearCompositionText();
   field->SetText(u"  Projekty 🦀  ");shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
   ASSERT_TRUE(base::test::RunUntil([&]{return !shell->folder_dialog()&&!window_->profiles_busy();}));ASSERT_EQ(1u,window_->pinned_items("work").size());EXPECT_EQ("Projekty 🦀",window_->pinned_items("work")[0].title);
   const auto id=window_->pinned_items("work")[0].id;shell->RequestRenameFolder("work",id);
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_form_metal_visible();}));EXPECT_EQ(u"Zmień nazwę folderu",shell->folder_dialog()->widget_delegate()->GetWindowTitle());
-  field=FolderNameInput(shell->folder_form_for_testing());ASSERT_TRUE(field);field->SetText(u"  Zmieniony 日本語  ");shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+  field=shell->folder_editor_for_testing();ASSERT_TRUE(field);field->SetText(u"  Zmieniony 日本語  ");shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
   ASSERT_TRUE(base::test::RunUntil([&]{return !shell->folder_dialog()&&!window_->profiles_busy();}));EXPECT_EQ("Zmieniony 日本語",window_->pinned_items("work")[0].title);
   shell->RequestNewFolder("work",id);ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_form_metal_visible();}));
   EXPECT_EQ(u"Nowy podfolder",shell->folder_dialog()->widget_delegate()->GetWindowTitle());ASSERT_TRUE(window_->RemovePinnedFolder("work",id,true));
@@ -4957,8 +4963,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarTreeStateSurvivesRebuil
   // in the Rust state before the application reconstructs the native adapter.
   shell->RequestNewFolder("work", root_id);
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->folder_dialog(); }));
-  auto* field = FolderNameInput(shell->folder_dialog()->GetContentsView());
-  ASSERT_TRUE(field); field->SelectAll(false); field->InsertOrReplaceText(u"Tree new child");
+  ASSERT_TRUE(ReplaceFolderName(shell,u"Tree new child"));
   shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
   ASSERT_TRUE(base::test::RunUntil([&] { return !shell->folder_dialog() && !window_->profiles_busy(); }));
   shell->sidebar_widget()->LayoutRootViewIfNecessary();
@@ -5540,6 +5545,27 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NameEditorStationaryEdgeSelect
   // Capture loss must stop the same timer without waiting for a mouse release.
   point.set_x(10);stamp+=base::Seconds(1);ui::MouseEvent again(ui::EventType::kMousePressed,point,point,stamp,ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);again.SetClickCount(1);field->SelectRange(gfx::Range(0));ASSERT_TRUE(view->OnMousePressed(again));ASSERT_TRUE(view->OnMouseDragged(outside));view->OnMouseCaptureLost();const auto captured=field->GetSelectedRange();pump();EXPECT_EQ(captured,field->GetSelectedRange());
   EXPECT_EQ(text,field->GetText());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FolderEditorCocoaTypingUnicodeAndModalLifetime) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->RequestNewFolder("work");ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_dialog()!=nullptr;}));
+  auto* editor=shell->folder_editor_for_testing();auto* native=NativeFolderNameInput(shell->folder_dialog()->GetContentsView());ASSERT_TRUE(editor||native);
+  auto* view=editor?editor->view():static_cast<views::View*>(native);auto* client=editor?editor->input_client():static_cast<ui::TextInputClient*>(native);
+  if(editor){EXPECT_TRUE(editor->rust_editor());EXPECT_FALSE(native);EXPECT_TRUE(view->children().empty());ASSERT_TRUE(base::test::RunUntil([&]{return editor->metal_visible();}));}
+  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->folder_dialog()->GetNativeWindow()));view->RequestFocus();ASSERT_TRUE(base::test::RunUntil([&]{return view->HasFocus();}));
+  auto key=[&](ui::KeyboardCode code){return ui_test_utils::SendKeyPressToWindowSync(shell->folder_dialog()->GetNativeWindow(),code,false,false,false,false);};
+  for(auto code:{ui::VKEY_T,ui::VKEY_E,ui::VKEY_S,ui::VKEY_T})ASSERT_TRUE(key(code));
+  ASSERT_TRUE(base::test::RunUntil([&]{gfx::Range range;std::u16string text;return client->GetTextRange(&range)&&client->GetTextFromRange(range,&text)&&text==u"test";}));
+  client->InsertText(u" 🦀",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
+  gfx::Range range;std::u16string text;ASSERT_TRUE(client->GetTextRange(&range));ASSERT_TRUE(client->GetTextFromRange(range,&text));EXPECT_EQ(u"test 🦀",text);EXPECT_TRUE(window_->pinned_items("work").empty());
+  ASSERT_TRUE(key(ui::VKEY_RETURN));ASSERT_TRUE(base::test::RunUntil([&]{return !shell->folder_dialog()&&!window_->profiles_busy();}));ASSERT_EQ(1u,window_->pinned_items("work").size());const auto id=window_->pinned_items("work")[0].id;EXPECT_EQ("test 🦀",window_->pinned_items("work")[0].title);
+  shell->RequestRenameFolder("work",id);ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_dialog()!=nullptr;}));editor=shell->folder_editor_for_testing();native=NativeFolderNameInput(shell->folder_dialog()->GetContentsView());ASSERT_TRUE(editor||native);view=editor?editor->view():static_cast<views::View*>(native);client=editor?editor->input_client():static_cast<ui::TextInputClient*>(native);
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->folder_dialog()->GetNativeWindow()));view->RequestFocus();ASSERT_TRUE(base::test::RunUntil([&]{return view->HasFocus();}));
+  ASSERT_TRUE(client->GetTextRange(&range));ASSERT_TRUE(client->SetEditableSelectionRange(gfx::Range(range.end())));
+  ui::CompositionText preedit;preedit.text=u"にほん";preedit.selection=gfx::Range(preedit.text.size());client->SetCompositionText(preedit);EXPECT_EQ("test 🦀",window_->pinned_items("work")[0].title);
+  auto lifetime=client->AsWeakPtr();ASSERT_TRUE(lifetime);shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->CancelDialog();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->folder_dialog()&&!lifetime;}));EXPECT_EQ("test 🦀",window_->pinned_items("work")[0].title);
+  shell->RequestNewFolder("work");ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_dialog()!=nullptr;}));editor=shell->folder_editor_for_testing();native=NativeFolderNameInput(shell->folder_dialog()->GetContentsView());ASSERT_TRUE(editor||native);client=editor?editor->input_client():static_cast<ui::TextInputClient*>(native);ASSERT_TRUE(client->GetTextRange(&range));ASSERT_TRUE(client->GetTextFromRange(range,&text));EXPECT_EQ(u"Nowy folder",text);
+  shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->CancelDialog();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->folder_dialog();}));EXPECT_EQ(1u,window_->pinned_items("work").size());
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NameEditorCommittedCallbackContract) {

@@ -1507,7 +1507,7 @@ END_METADATA
 #if BUILDFLAG(IS_MAC)
 // The modal host retains system focus/buttons/IME. Rust owns this form's
 // copy, validation/submission state, geometry and static text display list.
-class FolderFormView final : public views::View, public views::TextfieldController {
+class FolderFormView final : public views::View {
   METADATA_HEADER(FolderFormView,views::View)
  public:
   void SyncWindowVisibility(){if(!SceneIsVisible(this))for(auto& surface:surfaces_)if(surface)surface->Hide();Schedule();}
@@ -1519,17 +1519,20 @@ class FolderFormView final : public views::View, public views::TextfieldControll
     for(auto& part:parts_){part=AddChildView(std::make_unique<views::View>());part->GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);}
     parts_[1]->GetViewAccessibility().SetRole(ax::mojom::Role::kAlert);
     parts_[0]->GetViewAccessibility().SetName(base::UTF8ToUTF16(std::string(copy_.label)));parts_[1]->SetVisible(false);
-    field_=AddChildView(std::make_unique<views::Textfield>());field_->GetViewAccessibility().SetName(base::UTF8ToUTF16(std::string(copy_.label)));
-    field_->SetFontList(Font(-1));field_->SetText(initial);field_->set_controller(this);
+    field_=AddEditor(this,true);field_->GetViewAccessibility().SetName(base::UTF8ToUTF16(std::string(copy_.label)));
+    field_->SetText(initial);
+    field_->SetCallbacks(base::BindRepeating([](base::WeakPtr<FolderFormView> form){
+      if(form){form->form_->edit(base::UTF16ToUTF8(form->field_->GetText()));form->Refresh();}
+    },weak()),{});
   }
-  ~FolderFormView() override{field_->set_controller(nullptr);}
+  ~FolderFormView() override{field_->SetCallbacks({},{});}
   base::WeakPtr<FolderFormView> weak(){return weak_factory_.GetWeakPtr();}
-  views::Textfield* field() const{return field_;}
+  EditorControl* field() const{return field_;}
   std::u16string title() const{return base::UTF8ToUTF16(std::string(copy_.title));}
   std::u16string accept_label() const{return base::UTF8ToUTF16(std::string(copy_.accept));}
   std::u16string cancel_label() const{return base::UTF8ToUTF16(std::string(copy_.cancel));}
   bool Accept(){return field_->IsIMEComposing()?false:submit_.Run(this);}
-  void Cancel(){form_->cancel();}
+  void Cancel(){field_->ClearCompositionText();form_->cancel();}
   sidebar::FolderRequest Prepare(const std::string& current,bool ready,bool busy,const std::vector<PinnedItem>& pins) {
     form_->edit(base::UTF16ToUTF8(field_->GetText()));std::vector<sidebar::TreeNode> nodes;nodes.reserve(pins.size());for(const auto& pin:pins)nodes.push_back({pin.id,pin.parent_id,pin.folder});
     auto request=form_->submit(current,ready,busy,rust::Slice<const sidebar::TreeNode>(nodes.data(),nodes.size()),field_->IsIMEComposing());Refresh();return request;
@@ -1538,30 +1541,28 @@ class FolderFormView final : public views::View, public views::TextfieldControll
   bool metal_visible() const{return surfaces_[0]&&surfaces_[0]->visible()&&(error_.empty()||(surfaces_[1]&&surfaces_[1]->visible()));}
   bool contains_scene_text(std::string_view text) const{for(const auto& surface:surfaces_)if(surface&&surface->visible()&&surface->contains_text_for_testing(text))return true;return false;}
   const std::u16string& error_text() const{return error_;}
-  void ContentsChanged(views::Textfield*,const std::u16string& text) override{form_->edit(base::UTF16ToUTF8(text));Refresh();}
   gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override {
     const auto g=Geometry(available.width().is_bounded()?available.width().value():-1);return gfx::Size(g.width,g.height);
   }
   void Layout(PassKey) override {
     const auto g=Geometry(width());auto rect=[](const sidebar::Rect& r){return gfx::Rect(r.x,r.y,r.width,r.height);};
-    parts_[0]->SetBoundsRect(rect(g.label));field_->SetBoundsRect(rect(g.input));parts_[1]->SetBoundsRect(rect(g.error));Schedule();
+    parts_[0]->SetBoundsRect(rect(g.label));field_->view()->SetBoundsRect(rect(g.input));parts_[1]->SetBoundsRect(rect(g.error));Schedule();
   }
   void OnThemeChanged() override {
     views::View::OnThemeChanged();SetBackground(views::CreateSolidBackground(Tone(this,kCard)));
-    if(field_){field_->SetBackgroundColor(Tone(this,kChip));field_->SetColor(Tone(this,kInk));field_->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,7,Hairline(this)),gfx::Insets::VH(4,8)));}
     Schedule();
   }
   void AddedToWidget() override{views::View::AddedToWidget();window_visibility_.Observe(GetWidget());Schedule();}
   void RemovedFromWidget() override{window_visibility_.Observe(nullptr);for(auto& surface:surfaces_)surface.reset();views::View::RemovedFromWidget();}
   void OnDidSchedulePaint(const gfx::Rect& rect) override {
-    views::View::OnDidSchedulePaint(rect);if(field_&&views::View::ConvertRectToTarget(field_,this,field_->GetLocalBounds()).Contains(rect))return;Schedule();
+    views::View::OnDidSchedulePaint(rect);if(field_&&views::View::ConvertRectToTarget(field_->view(),this,field_->view()->GetLocalBounds()).Contains(rect))return;Schedule();
   }
   void OnPaint(gfx::Canvas* canvas) override {
     for(size_t i=0;i<parts_.size();++i)if(parts_[i]->GetVisible()&&(!surfaces_[i]||!surfaces_[i]->visible()))PaintSceneRecipe(canvas,Item(i,gfx::RectF(parts_[i]->bounds())),Font(-1));
     Schedule();
   }
  private:
-  sidebar::FolderLayout Geometry(int width) const{return sidebar::folder_form_layout(width,Font(-1).GetHeight(),field_?field_->GetPreferredSize().height():32,Font(-1).GetHeight(),!error_.empty());}
+  sidebar::FolderLayout Geometry(int width) const{return sidebar::folder_form_layout(width,Font(-1).GetHeight(),field_?field_->view()->GetPreferredSize().height():32,Font(-1).GetHeight(),!error_.empty());}
   sidebar::Item Item(size_t i,gfx::RectF r) const {
     sidebar::Item item{};item.kind=17;item.x=r.x();item.y=r.y();item.width=r.width();item.height=r.height();item.clip={r.x(),r.y(),r.width(),r.height()};
     item.title=i?base::UTF16ToUTF8(error_):std::string(copy_.label);item.ink=Tone(this,i?kError:kMuted);item.font_size=Font(-1).GetFontSize();return item;
@@ -1586,7 +1587,7 @@ class FolderFormView final : public views::View, public views::TextfieldControll
     }
   }
   rust::Box<sidebar::FolderForm> form_;sidebar::FolderCopy copy_;base::RepeatingCallback<bool(FolderFormView*)> submit_;
-  std::array<raw_ptr<views::View>,2> parts_{};raw_ptr<views::Textfield> field_=nullptr;
+  std::array<raw_ptr<views::View>,2> parts_{};raw_ptr<EditorControl> field_=nullptr;
   std::array<std::unique_ptr<SidebarMetal>,2> surfaces_;std::u16string error_;bool pending_=false;
   SceneWindowObserver window_visibility_{base::BindRepeating(&FolderFormView::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<FolderFormView> weak_factory_{this};
 };
@@ -4665,6 +4666,13 @@ views::View* WorkspaceShell::folder_form_for_testing() const {
   return nullptr;
 #endif
 }
+EditorControl* WorkspaceShell::folder_editor_for_testing() const {
+#if BUILDFLAG(IS_MAC)
+  auto* form=static_cast<FolderFormView*>(folder_form_for_testing());return form?form->field():nullptr;
+#else
+  return nullptr;
+#endif
+}
 bool WorkspaceShell::folder_form_metal_visible() const {
 #if BUILDFLAG(IS_MAC)
   auto* form=static_cast<FolderFormView*>(folder_form_for_testing());return form&&form->metal_visible();
@@ -4716,12 +4724,12 @@ void WorkspaceShell::RequestFolderName(std::string workspace, std::string parent
     },weak_factory_.GetWeakPtr()));
     const auto title=contents->title(),accept=contents->accept_label(),cancel=contents->cancel_label();const auto weak=contents->weak();auto* input=contents->field();
     auto model=ui::DialogModel::Builder().SetTitle(title)
-        .AddCustomField(std::make_unique<views::BubbleDialogModelHost::CustomView>(std::move(contents),views::BubbleDialogModelHost::FieldType::kControl,input),kFolderNameField)
+        .AddCustomField(std::make_unique<views::BubbleDialogModelHost::CustomView>(std::move(contents),views::BubbleDialogModelHost::FieldType::kControl,input->view()),kFolderNameField)
         .SetInitiallyFocusedField(kFolderNameField)
         .AddOkButton(base::BindRepeating([](base::WeakPtr<FolderFormView> form){return !form||form->Accept();},weak),ui::DialogModel::Button::Params().SetLabel(accept))
         .AddCancelButton(base::BindOnce([](base::WeakPtr<FolderFormView> form){if(form)form->Cancel();},weak),ui::DialogModel::Button::Params().SetLabel(cancel)).Build();
     auto* prompt=views::DialogDelegate::CreateDialogWidget(views::BubbleDialogModelHost::CreateModal(std::move(model),ui::mojom::ModalType::kWindow),widget_->GetNativeWindow(),widget_->GetNativeView());
-    prompt->SetColorModeOverride(widget_->color_mode_override());PreparePanelText(prompt->GetRootView());folder_dialog_=prompt->GetWeakPtr();prompt->Show();input->SelectAll(false);return;
+    prompt->SetColorModeOverride(widget_->color_mode_override());InstallWorkspaceKeyboardRouting(prompt,true);PreparePanelText(prompt->GetRootView());folder_dialog_=prompt->GetWeakPtr();prompt->Show();input->SelectRange(gfx::Range(0,input->GetText().size()));return;
   }
 #endif
   ui::DialogModel::Builder builder;
@@ -4749,6 +4757,9 @@ void WorkspaceShell::RequestFolderName(std::string workspace, std::string parent
       views::BubbleDialogModelHost::CreateModal(std::move(dialog_model), ui::mojom::ModalType::kWindow),
       widget_->GetNativeWindow(), widget_->GetNativeView());
   prompt->SetColorModeOverride(widget_->color_mode_override());
+#if BUILDFLAG(IS_MAC)
+  InstallWorkspaceKeyboardRouting(prompt,true);
+#endif
   PreparePanelText(prompt->GetRootView());
   folder_dialog_ = prompt->GetWeakPtr();
   prompt->Show();

@@ -364,6 +364,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void RequestDeleteFolder(std::string workspace, std::string folder);
   void ShowFolderSaveError();
   views::View* folder_form_for_testing() const;
+  EditorControl* folder_editor_for_testing() const;
   bool folder_form_metal_visible() const;
   bool folder_form_contains_scene_text(std::string_view text) const;
   std::u16string folder_form_error_for_testing() const;
