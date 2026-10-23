@@ -1,11 +1,12 @@
 # Rust editors and remaining service work
 
-Workspace/profile name, color and emoji fields now use the Rust model and CoreText/Metal editor
+Workspace/profile name, color, emoji and folder-name fields now use the Rust model and CoreText/Metal editor
 when `--zitter-sidebar=rust-metal` is selected. They have one native View for
 window/input/focus/AX services and no Textfield child/model/RenderText. The Views
-backend keeps one real native Textfield through the same `EditorControl`
-interface, without a wrapper or second model. Folder names, address input and
-other fields still use Views.
+backend keeps one real native Textfield per field. Workspace/profile/appearance
+fields use `EditorControl`; folders retain the original DialogModel Textfield.
+Neither has a wrapper or second editing model. Address input and other fields
+still use Views.
 
 This is a live editor migration checkpoint, not full textfield parity or a
 performance acceptance. The remaining adapters/commands below are explicit.
@@ -134,7 +135,7 @@ Remaining editor work before parity:
 - Inspect actual macOS VoiceOver and real IME candidate windows, complex clause/
   background/underline styles, dictionary and menu lifecycles, paste availability,
   focus/capture/touch, different scales/themes/directions and GPU loss/recovery.
-- Migrate folder/address and other fields through the same service
+- Migrate address and other fields through the same service
   contracts, preserving persisted data and domain authorization. Move remaining
   control policy out of native adapters where appropriate.
 - Measure actual CPU/GPU/cache/idle and drawable-presentation work. No end-to-end
@@ -209,3 +210,31 @@ preset-row clipping/cancellation and all applicable browser tests pass. The
 kill-buffer test now creates a fixture-owned native control rather than relying
 on an unmigrated production color field. No such test control ships in the app.
 [Matching evidence](benchmarks/rust-appearance-editors-checkpoint-2026-10-23.json).
+
+
+## Live folder-name editor in the modal form
+
+The Metal folder form now uses `AddEditor(..., true)` instead of a Textfield.
+Rust owns the text/selection/history/composition and the existing Rust folder form
+owns copy, captured target, validation and geometry. A weak committed-edit callback
+reconciles form text/errors; programmatic changes are read explicitly at submit.
+Preedit does not publish a form edit. Cancel clears composition and cancels the
+captured form, and the callback detaches before the host destroys its children.
+
+The modal DialogModel host receives the editor's native View as its focus target.
+Native title/buttons/default action and original create/rename/persistence services
+remain adapters. Both folder modal variants now install the existing macOS workspace
+keyboard router: the first focused gate showed that actual Cocoa letters and
+Return were lost in both the original Views and Rust branches, while direct input
+client calls worked. The final gate/full suite verifies the routing fix; initial
+failures remain recorded in the checkpoint report. The original Views branch still uses its actual DialogModel
+Textfield and validation path; it is not switched to a second Rust editing model.
+Shared tests use the real input client for each backend and add no editing wrapper.
+
+The new shared case exercises actual Cocoa typing/Return, Unicode insertion,
+rename prefill, synthetic IME cancellation, destruction of the previous input
+client and a default-prefilled next modal. Existing nested create/rename/persistence, rollback,
+limits/error/IME/stale context, tree and menu cases remain in the full inventory.
+The Rust editor/scene sources are unchanged from the prior verified 211-case unit
+run; native compilation and the new focused/full GUI runs verify this binding.
+[Matching checkpoint](benchmarks/rust-folder-editor-checkpoint-2026-10-23.json).

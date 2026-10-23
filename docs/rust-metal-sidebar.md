@@ -1203,3 +1203,20 @@ no presentation speedup claim. Folder/address and other fields, forms/preference
 service panels, Views containers, manual platform/release checks and actual
 CPU/GPU/drawable presentation profiling remain open.
 [Matching report](benchmarks/rust-appearance-editors-checkpoint-2026-10-23.json).
+
+
+## Rust folder-name editor in the modal host (2026-10-23)
+
+UI source `84d032bf2f0d87c7196fe843347119c1cd8078d9` replaces the Metal folder form's Textfield with the
+shared Rust/CoreText/Metal editor. A weak committed-edit callback updates the Rust
+form's text/errors; submit retains captured-target validation and existing domain
+save behavior. Native modal title/buttons/default action and focus adapter remain.
+The original Views DialogModel Textfield stays intact as the control backend.
+
+Actual Cocoa typing/Return, Unicode, synthetic IME cancel, old input-client lifetime
+and default-prefilled modal reopen are covered, alongside existing folder/tree/menu/save cases.
+Full **127 Metal / 95 Views**, six explicit skips each, **66 committed Python**
+passed. Rust editor/scene sources match the preceding 211-case unit run; no repeat
+Rust run or new geometry/performance claim. Address/settings/service fields and
+broader container/form/manual/release/performance work remain.
+[Matching report](benchmarks/rust-folder-editor-checkpoint-2026-10-23.json).
