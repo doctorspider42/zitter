@@ -1,0 +1,74 @@
+{
+  "date": "2026-10-23",
+  "platform": "macOS arm64",
+  "build": "Release, ThinLTO, Chromium PGO",
+  "base_commit": "7707491d76106a56478aa13f6d6c6ef6605b95be",
+  "chromium_base_revision": "1a732fcc23b20dd0bcf38f35d72c1fe1ec799d35",
+  "purpose": "Non-windowed verification of Rust workspace preview content geometry and compilation of direct Metal preview canvases; no runtime GPU acceptance",
+  "acceptance_status": "awaiting_gui_checkpoint",
+  "source_sha256": {
+    "chromium/prototype/profile_workspace_browsertest.cc": "1351ed39a15affd0a93f4623678660ff4e812f9c29802919566713be67658068",
+    "chromium/prototype/sidebar_metal.h": "ba068c48b355294a1cf0371a26c4ec57ae9ae148bed369a4e864aaa4a427602a",
+    "chromium/prototype/sidebar_metal.mm": "72a5185996de032a5ddc08daf0162af18878afc48f66c6abdb98caa070bf2c64",
+    "chromium/prototype/sidebar_scene.rs": "8ff7ecd4a8c62c27852567a8379bce994230d5580dc439feb3633c8533022758",
+    "chromium/prototype/workspace_shell.cc": "77165f75aaf2994a8c4e2fc6c2a05fb827fda5f1de8b5ac33a1a8864d6534192",
+    "chromium/prototype/workspace_shell.h": "07b5134f66248ff3239c606bd28ac3f7c338e307dcb632da6561a73e63e51cab"
+  },
+  "staged_sources_match": true,
+  "compiled_app_uuid": "4C4C44CD-5555-3144-A1D6-907F4209B96C",
+  "compiled_browser_test_uuid": "4C4C4418-5555-3144-A13D-E378188FCBDB",
+  "build_targets": [
+    "sidebar_scene_unittests_exe",
+    "zitter_prototype_ui_lab",
+    "zitter_ui_lab"
+  ],
+  "build_result": "passed",
+  "build_consistency": "final Ninja dry run reported no work to do",
+  "rust_unit_tests_passed": 61,
+  "python_unit_tests_passed": 59,
+  "new_rust_tests_passed": [
+    "workspace_preview_pairs_share_live_split_geometry_and_outer_clipping",
+    "workspace_preview_rows_keep_order_gaps_indent_and_partial_clip",
+    "workspace_preview_large_source_scroll_culls_offscreen_rows",
+    "workspace_preview_clamps_deep_narrow_and_saturated_input",
+    "workspace_preview_uses_unicode_row_display_list_without_native_labels"
+  ],
+  "gn_dependency_check": "passed for //zitter_ui_lab:*",
+  "product_boundaries": "passed",
+  "gui_tests": {
+    "status": "not run at user request",
+    "new_compiled_case": "ZitterMetalSidebarBrowserTest.SwipePreviewUsesMetalWithoutNativeSnapshots",
+    "last_accepted_commit": "3cd95d82019b239c6c9cc6e84331a4f9f5ef0c55",
+    "prior_gui_results_apply_to_current_code": false
+  },
+  "manual_validation": {
+    "status": "deferred",
+    "app_launched": false,
+    "packaged_or_signed": false,
+    "normal_application_or_profile_used": false
+  },
+  "unit_verified_mechanisms": [
+    "Rust places rows, section labels, split groups/tiles and explicit group/section gaps in data order. It reuses the live indentation cap and split geometry, including odd-width remainder distribution.",
+    "The source scroll offset is applied before viewport intersection; fully offscreen rows are culled and partially visible rows carry clipped bounds. Large/deep/narrow/zero-size/saturated inputs remain bounded.",
+    "The preview rows use the established Rust display-list recipe, retaining Unicode titles, monograms, active text and the close glyph without native Labels."
+  ],
+  "implemented_pending_runtime_verification": [
+    "The Metal opt-in preview resolves tab/pin/tree data without creating WebContents. Up to three page canvases render the Rust display list with the existing shared device, queue, pipeline and 32-byte GPU quad ABI.",
+    "Each page uses a native visual-only viewport clipping adapter. Core Animation translates cached page drawables and supplies the 160ms final settle; platform event/focus/AX routing remains native.",
+    "Immutable scene captures redraw on first use, changed viewport/scale or drawable loss. Movement alone skips display-list generation and GPU submission. The preview retains at most eight scenes and resets scene/surface caches on viewport resize.",
+    "Only a complete GPU preview owns drawing. If any required surface is unavailable, every GPU page hides and the native paint-record path supplies the entire preview. A successful GPU preview does not invoke native snapshot capture.",
+    "Preview destruction removes both page views and clipping adapters. Workspace IDs, validation, commit callbacks, timers, reduced-motion policy and native fallback remain application/platform adapters.",
+    "The compiled checkpoint regression checks scene text, zero native captures, no new GPU submissions during simple translation, no WebContents creation before commit, commit/cancel and restoration of the normal Metal sidebar. It has not been executed."
+  ],
+  "deferred_checkpoint": [
+    "Run the complete 44-case Metal matrix (prior 43 plus SwipePreviewUsesMetalWithoutNativeSnapshots) and the 17 Views controls against these rebuilt sources.",
+    "Exercise real clipping/scale/window motion, source scroll offset, folder collapse/deep nesting, split pairs, Unicode, momentum/phase-less streams, repeated gestures, reduced motion and final settle.",
+    "Force unavailable drawables/context failure and verify complete native fallback, then recovery; inspect cancellation/hide/window destruction and removal of native clipping adapters.",
+    "Package/sign and inspect the matching isolated app; run actual CPU/GPU/presentation comparisons separately. Unit test durations and submitted command buffers are not presentation latency."
+  ],
+  "limitations": [
+    "Native Metal/Core Animation integration, visual correctness, input/AX interaction and performance are unverified until the windowed checkpoint. Compilation and Rust tests do not prove those behaviors.",
+    "Regular non-gesture workspace-switch animation still rasterizes native content. The native snapshot fallback and other Views surfaces remain; full functional migration is incomplete.",
+    "No new dependency, crate or framework was introduced. New animation APIs use the already-linked QuartzCore framework. Original-code Apache-2.0 and upstream notices are unchanged."
+  ]
+}

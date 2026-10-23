@@ -443,3 +443,35 @@ This stage therefore has non-windowed verification only; it does not extend the
 last accepted 43 Metal / 17 Views runtime matrix. See the
 [checkpoint policy](rust-metal-parity.md#current-checkpoint-policy-2026-10-23) and
 [verification report](benchmarks/rust-workspace-swipe-headless-2026-10-23.json).
+
+
+Workspace gesture previews now have a direct Metal rendering path. The native
+adapter resolves cached tab/pin/folder data and font metrics; Rust computes row,
+section and split-pair bounds, applies source scroll offset, and culls/clips
+against the preview viewport. The preview then renders the established Rust
+row display list, including Unicode text, monograms and active close controls.
+Split tiles use the live Rust geometry, including odd-width distribution.
+
+Up to three visual-only page canvases share the existing Metal context. Each
+canvas has a native viewport clipping adapter and translates its cached drawable
+under the gesture. An immutable cached scene only redraws on capture, changed
+bounds/scale or drawable loss; movement alone skips display-list regeneration
+and GPU submission. Core Animation provides the 160 ms final settle, respecting
+the existing reduced-motion/workspace-animation policy at the call site. Page
+scenes are bounded to eight cached entries and clear on viewport size changes.
+
+Native paint-record previews remain a complete fallback: if any required canvas
+is unavailable, all GPU pages hide before native preview layers are used. A
+successful Metal preview skips native snapshot capture. Closing/cancelling the
+preview destroys the page canvases/clipping adapters. Existing native input,
+accessibility and application workspace commits remain unchanged adapters.
+
+This stage passed 61 Rust and 59 Python tests and compiled both app and browser
+test binaries. The new `SwipePreviewUsesMetalWithoutNativeSnapshots` browser case
+is compiled **but not run**, following the user's no-windowed-tests instruction.
+It is intended to check scene text, zero native captures, drawable reuse,
+commit/cancellation and return to the normal sidebar at the later checkpoint.
+Actual clipping, settle animation and GPU ownership are still unverified in a
+running window. Regular click/shortcut workspace-switch animation continues to
+use native-painted content. See
+[scene verification](benchmarks/rust-workspace-preview-scenes-headless-2026-10-23.json).

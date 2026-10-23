@@ -32,7 +32,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Footer pin/settings, workspace dots/emoji and horizontal overflow | Rust layout, input reducer and shared Metal canvas; native focus/AX/menu adapters | Replace native containers; expand focus, trackpad, RTL and scale coverage |
 | Navigation/header controls | Rust strip layout/input and analytic GPU icons; main-window Metal canvas sharing sidebar GPU resources | Replace native Button/outer frame adapters; expand peek, accessibility, RTL and scale coverage |
 | Sidebar resizing, pinning, auto-hide, edge reveal | Rust drag/width bounds, shell/sidebar/grip geometry and auto-hide guards; Metal grip; native pin/show commands | Replace native window/event/cursor/AX adapters and edge-indicator painting; broaden input/accessibility coverage |
-| Workspace swipe/animation/cancellation | Rust gesture reducer, target selection and preview placement; native timers/layers and application commit adapter (GUI checkpoint pending) | Rust scene transitions without native-painted row snapshots; run deferred browser/desktop acceptance |
+| Workspace swipe/animation/cancellation | Rust gesture/preview content geometry and Metal page canvases; native timers/compositor settle and application commit adapter (GUI checkpoint pending) | Migrate regular workspace-switch animation and native fallback snapshots; run deferred browser/desktop acceptance |
 | Split headers/divider, focus, orientation, swap/close | Rust pane/bar layout, title text, menu/close input and divider drag; shared Metal rendering | Replace native View/Button/ResizeArea event, cursor and AX adapters; expand gesture/RTL/scale coverage |
 | Address/search palette, suggestions, providers, IME | Rust result selection/layout/text/icons, palette/input/static chrome geometry, Metal hints/errors; native Textfield/IME, provider/search controllers | Migrate remaining native containers/frame presentation; expand composition/accessibility/scale coverage |
 | Command Center tabs/pins/workspaces/history/actions | Rust result selection/drawing; existing search/ranking and application commands | Replace remaining native containers/frame presentation and command adapters; preserve stale results and identity |
@@ -204,7 +204,8 @@ The next checkpoint must run both complete browser matrices against the rebuilt
 binaries and inspect the matching signed isolated app. In particular, exercise
 `SidebarSwipeTracksCancelsAndSkipsSpaces`,
 `CocoaSwipesRepeatWithoutMouseMovement`, `SidebarRemainsOpenWhileSpacesSlide`,
-`MetalReturnsAfterWorkspaceAnimation`, sidebar hide/cancel, workspace changes
+`MetalReturnsAfterWorkspaceAnimation`,
+`SwipePreviewUsesMetalWithoutNativeSnapshots`, sidebar hide/cancel, workspace changes
 while committing and the prior palette regressions. Verify vertical scrolling,
 repeated stationary-cursor gestures, momentum, reduced motion, Unicode previews
 and the return of Metal after settling. Preserve the normal application/profile.
@@ -215,6 +216,17 @@ and the return of Metal after settling. Preserve the normal application/profile.
   windows. Native snapshot painting, compositor animation, timers, guards and
   workspace-ID command routing remain. This stage awaits GUI checkpoint
   acceptance; see [non-windowed verification](benchmarks/rust-workspace-swipe-headless-2026-10-23.json).
+
+- Workspace gesture previews now have a direct Metal scene path. Rust lays out
+  visible preview rows/section labels/split pairs, reuses live indentation and
+  split geometry and clips the scrolled source before GPU preparation. At most
+  three clipped page canvases share the existing device/queue/pipeline. Native
+  Core Animation translates cached drawables and settles them; unchanged scenes
+  skip display-list work and GPU submission during movement. Native paint records
+  are created only if the complete GPU preview is unavailable. The new compiled
+  GUI regression is deferred; this stage is **not runtime accepted**. Regular
+  non-gesture workspace-switch animation still uses native row painting. See
+  [non-windowed scene verification](benchmarks/rust-workspace-preview-scenes-headless-2026-10-23.json).
 
 ## Completion gates
 

@@ -1313,10 +1313,40 @@ class WorkspaceSwipePreview final : public views::View {
     SetPaintToLayer(); layer()->SetMasksToBounds(true);
     layer()->SetFillsBoundsOpaquely(false);
   }
+#if BUILDFLAG(IS_MAC)
+  void SetSceneCapture(base::RepeatingCallback<std::vector<sidebar::Item>(int)> capture,unsigned background) {
+    scene_capture_=std::move(capture);background_=background;
+  }
+#endif
   void Move(double position, int count, bool settle) {
     const auto plan=SidebarSwipeLayout(position,count,width());
     const int center=plan.center;
     center_ = center;
+#if BUILDFLAG(IS_MAC)
+    if(scene_capture_&&GetWidget()) {
+      if(scene_size_!=size()){scene_size_=size();scenes_.clear();surfaces_.clear();records_.clear();pages_.clear();}
+      for(auto it=surfaces_.begin();it!=surfaces_.end();) {
+        if(std::abs(it->first-center)<=1){++it;continue;}it=surfaces_.erase(it);
+      }
+      bool ready=!plan.pages.empty();
+      for(const auto& placement:plan.pages) {
+        const int i=placement.index;
+        const bool captured=!scenes_.contains(i);
+        if(captured)scenes_[i]=scene_capture_.Run(i);
+        auto& surface=surfaces_[i];if(!surface)surface=CreateSidebarMetal();
+        if(!surface){ready=false;continue;}
+        surface->UpdatePreview(GetWidget()->GetNativeWindow(),GetBoundsInScreen(),placement.x,scenes_[i],background_,settle,captured);
+        ready=ready&&surface->visible();
+      }
+      while(scenes_.size()>8) {
+        auto farthest=std::max_element(scenes_.begin(),scenes_.end(),[&](const auto& a,const auto& b){return std::abs(a.first-center)<std::abs(b.first-center);});scenes_.erase(farthest);
+      }
+      metal_owned_=ready;
+      if(ready){pages_.clear();return;}
+      // A partial GPU preview must never cover an otherwise complete fallback.
+      for(auto& [index,surface]:surfaces_)if(surface)surface->Hide();
+    }
+#endif
     for (auto it = pages_.begin(); it != pages_.end();) {
       if (std::abs(it->first - center) <= 1) { ++it; continue; }
       it = pages_.erase(it);
@@ -1324,7 +1354,7 @@ class WorkspaceSwipePreview final : public views::View {
     for (const auto& placement : plan.pages) {
       const int i=placement.index;
       if (!pages_.contains(i)) {
-        if (!records_.contains(i)) records_[i] = capture_.Run(i);
+        if (!records_.contains(i)) {records_[i] = capture_.Run(i);++native_capture_count_;}
         auto page = std::make_unique<SwipePage>(records_[i], size());
         layer()->Add(page->layer()); pages_[i] = std::move(page);
       }
@@ -1347,10 +1377,45 @@ class WorkspaceSwipePreview final : public views::View {
       records_.erase(farthest);
     }
   }
-  size_t page_count() const { return pages_.size(); }
+  size_t page_count() const {
+#if BUILDFLAG(IS_MAC)
+    if(metal_owned_)return surfaces_.size();
+#endif
+    return pages_.size();
+  }
+  bool metal_owned() const {
+#if BUILDFLAG(IS_MAC)
+    return metal_owned_;
+#else
+    return false;
+#endif
+  }
+  size_t native_capture_count() const{return native_capture_count_;}
+  size_t metal_frame_count() const {
+    size_t count=0;
+#if BUILDFLAG(IS_MAC)
+    for(const auto& [index,surface]:surfaces_)if(surface)count+=surface->frame_count();
+#endif
+    return count;
+  }
+  bool contains_scene_text(std::string_view text) const {
+#if BUILDFLAG(IS_MAC)
+    if(metal_owned_)for(const auto& [index,surface]:surfaces_)if(surface&&surface->visible()&&surface->contains_text_for_testing(text))return true;
+#endif
+    return false;
+  }
   int center() const { return center_; }
  private:
   int center_ = -1;
+  size_t native_capture_count_=0;
+#if BUILDFLAG(IS_MAC)
+  base::RepeatingCallback<std::vector<sidebar::Item>(int)> scene_capture_;
+  std::map<int,std::vector<sidebar::Item>> scenes_;
+  std::map<int,std::unique_ptr<SidebarMetal>> surfaces_;
+  gfx::Size scene_size_;
+  unsigned background_=0;
+  bool metal_owned_=false;
+#endif
   base::RepeatingCallback<cc::PaintRecord(int)> capture_;
   std::map<int, std::unique_ptr<SwipePage>> pages_;
   std::map<int, cc::PaintRecord> records_;
@@ -3391,6 +3456,10 @@ void WorkspaceShell::CancelWorkspaceSwipe(bool reset_state) {
       static_cast<GlyphButton*>(button.get())->set_on(id == state_.workspace_id);
   }
 }
+bool WorkspaceShell::workspace_swipe_metal_visible() const {return swipe_overlay_&&static_cast<WorkspaceSwipePreview*>(swipe_overlay_.get())->metal_owned();}
+size_t WorkspaceShell::workspace_swipe_metal_frame_count() const {return swipe_overlay_?static_cast<WorkspaceSwipePreview*>(swipe_overlay_.get())->metal_frame_count():0;}
+bool WorkspaceShell::workspace_swipe_contains_scene_text(std::string_view text) const {return swipe_overlay_&&static_cast<WorkspaceSwipePreview*>(swipe_overlay_.get())->contains_scene_text(text);}
+size_t WorkspaceShell::workspace_swipe_native_capture_count() const {return swipe_overlay_?static_cast<WorkspaceSwipePreview*>(swipe_overlay_.get())->native_capture_count():0;}
 double WorkspaceShell::workspace_swipe_position() const { return workspace_swipe_->position(); }
 size_t WorkspaceShell::workspace_swipe_preview_count() const {
   return swipe_overlay_ ? static_cast<WorkspaceSwipePreview*>(swipe_overlay_.get())->page_count() : 0;
@@ -3497,6 +3566,67 @@ void WorkspaceShell::UpdateWorkspaceSwipePreview() {
       return list->paint_op_buffer().DeepCopyAsRecord();
     }, weak_factory_.GetWeakPtr());
     auto preview = std::make_unique<WorkspaceSwipePreview>(std::move(capture));
+#if BUILDFLAG(IS_MAC)
+    if(metal_sidebar_) {
+      const auto tint=FrameTint(workspace_color(swipe_source_),root_);
+      preview->SetSceneCapture(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,int index)->std::vector<sidebar::Item>{
+        if(!shell||index<0||index>=static_cast<int>(shell->swipe_workspace_ids_.size())||!shell->swipe_overlay_)return {};
+        const auto& id=shell->swipe_workspace_ids_[index];const auto size=shell->swipe_overlay_->size();
+        const auto found=shell->tab_lists_.find(id);const TabListCache* cache=found==shell->tab_lists_.end()?nullptr:&found->second;
+        const std::vector<PinnedItem>* pins=cache?&cache->pins:nullptr;
+        if(!pins){auto queued=std::find_if(shell->sidebar_warm_queue_.begin(),shell->sidebar_warm_queue_.end(),[&](const auto& entry){return entry.first==id;});if(queued!=shell->sidebar_warm_queue_.end())pins=&queued->second;}
+        std::vector<sidebar::Item> data;std::vector<sidebar::PreviewRow> rows;
+        auto make_item=[&](const RowButton::Spec& spec){
+          sidebar::Item item{};item.kind=0;item.title=base::UTF16ToUTF8(spec.title);item.monogram=base::UTF16ToUTF8(spec.icon?u"📁":spec.monogram);
+          item.ink=Tone(shell->root_,kInk);item.badge=spec.icon?SK_ColorTRANSPARENT:spec.monogram_color;
+          item.fill=spec.tile?SkColorSetA(Tone(shell->root_,kCard),spec.active?0xFF:0x59):spec.active?Tone(shell->root_,kCard):spec.highlighted?Tone(shell->root_,kAccentWash):SK_ColorTRANSPARENT;
+          item.active=spec.active;item.tile=spec.tile;item.close=bool(spec.close);item.close_visible=spec.close&&spec.active&&!spec.tile;item.font_size=Font(0).GetFontSize();return item;
+        };
+        auto gap=[&](int height){rows.push_back({0,3,0,height});};
+        auto row=[&](const RowButton::Spec& spec,int depth){rows.push_back({data.size(),0,depth,34});data.push_back(make_item(spec));};
+        auto pair=[&](const SidebarTabSlot& slot,int depth){
+          // Tab plans contain both identities; resolve before publishing a group.
+          const auto first=cache->tab_buttons.find(cache->tabs[slot.first].index),second=cache->tab_buttons.find(cache->tabs[slot.second].index);
+          if(first==cache->tab_buttons.end()||second==cache->tab_buttons.end())return;
+          rows.push_back({data.size(),2,depth,46});sidebar::Item group{};group.kind=2;group.fill=SkColorSetA(Tone(shell->root_,kCard),0x33);data.push_back(std::move(group));
+          data.push_back(make_item(static_cast<RowButton*>(first->second.get())->preview_spec()));data.push_back(make_item(static_cast<RowButton*>(second->second.get())->preview_spec()));
+        };
+        const SidebarTabSlot* pair_slot=nullptr;if(cache)for(const auto& slot:cache->tab_plan.slots)if(slot.pair){pair_slot=&slot;break;}
+        std::vector<bool> visible(pins?pins->size():0,true);if(cache)for(const auto& pin:cache->tab_plan.pins)visible[pin.index]=pin.visible;
+        if(pins&&!pins->empty()) {
+          rows.push_back({data.size(),1,0,Font(-2).GetHeight()});sidebar::Item label{};label.kind=1;label.title="PRZYPIĘTE";label.ink=Tone(shell->root_,kMuted);label.font_size=Font(-2).GetFontSize();data.push_back(std::move(label));
+          std::vector<SidebarTreeNode> nodes;for(const auto& pin:*pins)nodes.push_back({pin.id,pin.parent_id,pin.folder});
+          const auto plan=shell->sidebar_tree_.Plan(id,nodes);std::vector<int> groups;
+          for(const auto& entry:plan) {
+            if(!entry.visible)continue;
+            while(!groups.empty()&&groups.back()>=entry.depth){gap(2);groups.pop_back();}
+            const auto& pin=(*pins)[entry.index];auto button=cache?cache->pin_buttons.find(pin.id):std::map<std::string,raw_ptr<views::Button>>::const_iterator();
+            if(cache&&button!=cache->pin_buttons.end()) {
+              if(pair_slot&&pair_slot->pin==entry.index)pair(*pair_slot,entry.depth);
+              else if(visible[entry.index])row(static_cast<RowButton*>(button->second.get())->preview_spec(),entry.depth);
+            } else {
+              RowButton::Spec spec;spec.title=base::UTF8ToUTF16(pin.title);
+              if(pin.folder){spec.icon=&vector_icons::kFolderFilledIcon;spec.title=(entry.collapsed?u"▸ ":u"▾ ")+spec.title;}
+              else {spec.monogram=base::i18n::ToUpper(spec.title.substr(0,1));spec.monogram_color=kMonogramColors[base::FastHash(pin.url.host())%kMonogramColors.size()];}
+              row(spec,entry.depth);
+            }
+            if(pin.folder&&!entry.collapsed)groups.push_back(entry.depth);
+          }
+          gap(static_cast<int>(groups.size())*2+8);
+        }
+        if(cache)for(const auto& slot:cache->tab_plan.slots){
+          if(slot.pair){if(slot.pin==SidebarTree::kRoot)pair(slot,0);continue;}
+          auto button=cache->tab_buttons.find(cache->tabs[slot.first].index);if(button!=cache->tab_buttons.end())row(static_cast<RowButton*>(button->second.get())->preview_spec(),0);
+        }
+        if(!cache||(cache->tabs.empty()&&id!=shell->swipe_source_)){RowButton::Spec blank;blank.title=u"Nowa karta";blank.monogram=u"N";row(blank,0);}
+        const int offset=id==shell->swipe_source_?shell->tab_scroll_->GetVisibleRect().y():0;
+        const auto plan=sidebar::workspace_preview_layout(size.width(),size.height(),offset,rust::Slice<const sidebar::PreviewRow>(rows.data(),rows.size()));
+        std::vector<sidebar::Item> items;items.reserve(plan.size());
+        for(const auto& placement:plan){auto item=std::move(data[placement.index]);const auto& r=placement.bounds;const auto& c=placement.clip;item.x=r.x;item.y=r.y;item.width=r.width;item.height=r.height;item.clip={float(c.x),float(c.y),float(c.width),float(c.height)};items.push_back(std::move(item));}
+        return items;
+      },weak_factory_.GetWeakPtr()),pinned_?tint:Mix(tint,Tone(root_,kCard),70));
+    }
+#endif
     swipe_overlay_ = sidebar_root_->AddChildView(std::move(preview));
     swipe_overlay_->SetBoundsRect(tab_scroll_->bounds());
     const auto tint = FrameTint(workspace_color(swipe_source_), root_);

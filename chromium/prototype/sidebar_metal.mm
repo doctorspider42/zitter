@@ -7,6 +7,8 @@
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <QuartzCore/CATransaction.h>
+#import <QuartzCore/CAAnimation.h>
+#import <QuartzCore/CAMediaTimingFunction.h>
 #include <algorithm>
 #include <cmath>
 #include <optional>
@@ -181,8 +183,8 @@ class Surface final : public SidebarMetal {
     view_.hidden = YES;
     return true;
   }
-  ~Surface() override { [view_ removeFromSuperview]; }
-  void Hide() override { view_.hidden = YES; last_frame_.clear(); last_bounds_ = {}; }
+  ~Surface() override { [view_ removeFromSuperview]; [preview_clip_ removeFromSuperview]; }
+  void Hide() override { view_.hidden = YES; [view_.layer removeAnimationForKey:@"zitter-preview"]; last_frame_.clear(); last_bounds_ = {}; }
   bool visible() const override { return view_.superview && view_.window.isVisible && !view_.isHiddenOrHasHiddenAncestor; }
   size_t frame_count() const override { return frame_count_; }
   bool contains_text_for_testing(std::string_view text) const override {
@@ -215,12 +217,53 @@ class Surface final : public SidebarMetal {
               base::span<const sidebar::Item> items, unsigned background) override {
     NSWindow* window = native_window.GetNativeNSWindow();
     if (!window.isVisible || bounds.IsEmpty()) { Hide(); return; }
+    if(preview_clip_) {
+      [view_ removeFromSuperview];[preview_clip_ removeFromSuperview];preview_clip_=nil;
+      [view_.layer removeAnimationForKey:@"zitter-preview"];view_.layer.transform=CATransform3DIdentity;
+    }
     NSView* parent = window.contentView;
     if (view_.superview != parent) { [view_ removeFromSuperview]; [parent addSubview:view_]; last_frame_.clear(); }
     // gfx screen coordinates start at the primary display's upper left.
     const double top = NSMaxY(NSScreen.screens.firstObject.frame);
     NSRect screen = NSMakeRect(bounds.x(), top - bounds.bottom(), bounds.width(), bounds.height());
     NSRect frame = [parent convertRect:[window convertRectFromScreen:screen] fromView:nil];
+    Render(window,bounds,frame,items,background);
+  }
+  void UpdatePreview(gfx::NativeWindow native_window,gfx::Rect bounds,double x,
+      base::span<const sidebar::Item> items,unsigned background,bool settle,bool redraw) override {
+    NSWindow* window=native_window.GetNativeNSWindow();
+    if(!window.isVisible||bounds.IsEmpty()||!std::isfinite(x)){Hide();return;}
+    NSView* parent=window.contentView;
+    if(!preview_clip_){preview_clip_=[[ZitterSidebarMetalView alloc] initWithFrame:NSZeroRect];preview_clip_.wantsLayer=YES;preview_clip_.layer.masksToBounds=YES;}
+    if(preview_clip_.superview!=parent){[preview_clip_ removeFromSuperview];[parent addSubview:preview_clip_];}
+    if(view_.superview!=preview_clip_){[view_ removeFromSuperview];[preview_clip_ addSubview:view_];last_frame_.clear();}
+    const double top=NSMaxY(NSScreen.screens.firstObject.frame);
+    const NSRect screen=NSMakeRect(bounds.x(),top-bounds.bottom(),bounds.width(),bounds.height());
+    [CATransaction begin];[CATransaction setDisableActions:YES];
+    preview_clip_.frame=[parent convertRect:[window convertRectFromScreen:screen] fromView:nil];
+    [CATransaction commit];
+    // Page pixels never move in the display list; Core Animation translates the
+    // drawable layer inside the clipping adapter, also during the final settle.
+    const bool was=visible();
+    if(redraw||!was||bounds!=last_bounds_||layer_.contentsScale!=(window.backingScaleFactor?:1))
+      Render(window,bounds,NSMakeRect(0,0,bounds.width(),bounds.height()),items,background);
+    if(!visible())return;
+    CALayer* presentation=(CALayer*)view_.layer.presentationLayer;
+    const double previous=presentation?presentation.transform.m41:view_.layer.transform.m41;
+    [CATransaction begin];[CATransaction setDisableActions:YES];
+    [view_.layer removeAnimationForKey:@"zitter-preview"];
+    view_.layer.transform=CATransform3DMakeTranslation(x,0,0);
+    if(settle&&was&&previous!=x){
+      CABasicAnimation* animation=[CABasicAnimation animationWithKeyPath:@"transform.translation.x"];
+      animation.fromValue=@(previous);animation.toValue=@(x);animation.duration=0.160;
+      animation.timingFunction=[CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
+      [view_.layer addAnimation:animation forKey:@"zitter-preview"];
+    }
+    [CATransaction commit];
+  }
+ private:
+  void Render(NSWindow* window,gfx::Rect bounds,NSRect frame,
+      base::span<const sidebar::Item> items,unsigned background) {
     const double scale = window.backingScaleFactor ?: 1;
     auto ops = sidebar::layout(rust::Slice<const sidebar::Item>(items.data(), items.size()));
     std::ostringstream signature;
@@ -331,6 +374,7 @@ class Surface final : public SidebarMetal {
   size_t frame_count_ = 0;
   std::string last_frame_;
   gfx::Rect last_bounds_;
+  ZitterSidebarMetalView* __strong preview_clip_;
   ZitterSidebarMetalView* __strong view_;
   CAMetalLayer* __strong layer_;
   id<MTLDevice> __strong device_;

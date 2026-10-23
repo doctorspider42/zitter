@@ -3,6 +3,9 @@
 // remain in WorkspaceShell. No URLs, profiles or WebContents cross this ABI.
 #[cxx::bridge(namespace = "zitter::sidebar")]
 mod ffi {
+    // kind: 0 row, 1 section label, 2 split pair (three consecutive items), 3 gap.
+    struct PreviewRow { index: usize, kind: u32, depth: i32, height: i32 }
+    struct PreviewPlacement { index: usize, bounds: Rect, clip: Rect }
     struct SwipeUpdate { started: bool, preview: bool, finish: bool, handled: bool }
     struct SwipePage { index: i32, x: f64 }
     struct SwipeLayout { center: i32, pages: Vec<SwipePage> }
@@ -59,6 +62,7 @@ mod ffi {
         fn position(self: &WorkspaceSwipe) -> f64;
         fn target(self: &WorkspaceSwipe, count: i32) -> i32;
         fn swipe_layout(position: f64, count: i32, width: i32) -> SwipeLayout;
+        fn workspace_preview_layout(width: i32, height: i32, offset: i32, rows: &[PreviewRow]) -> Vec<PreviewPlacement>;
         type PaletteSelection;
         fn new_palette_selection() -> Box<PaletteSelection>;
         fn reset(self: &mut PaletteSelection);
@@ -215,6 +219,29 @@ fn swipe_layout(position:f64,count:i32,width:i32)->ffi::SwipeLayout {
     }
     ffi::SwipeLayout{center,pages}
 }
+
+// Preview data carries identities and font metrics, never native View bounds.
+// Reuse live row indentation/split geometry and clip before preparing GPU text.
+fn workspace_preview_layout(width:i32,height:i32,offset:i32,rows:&[ffi::PreviewRow])->Vec<ffi::PreviewPlacement> {
+    let width=width.max(0);let height=height.max(0);let mut y=-offset.max(0);let mut out=Vec::new();
+    let mut emit=|index,b:ffi::Rect| {
+        let x=b.x.max(0);let top=b.y.max(0);let right=b.x.saturating_add(b.width).min(width);let bottom=b.y.saturating_add(b.height).min(height);
+        if right>x && bottom>top{out.push(ffi::PreviewPlacement{index,bounds:b,clip:ffi::Rect{x,y:top,width:right-x,height:bottom-top}});}
+    };
+    for row in rows {
+        if row.kind==3{y=y.saturating_add(row.height.max(0));continue;}
+        let x=folder_indent(row.depth).min(width);let w=width-x;
+        let h=match row.kind{1=>row.height.max(0),2=>46,_=>34};
+        emit(row.index,ffi::Rect{x,y,width:w,height:h});
+        if row.kind==2 {
+            let g=split_layout(w,h,2);
+            for (i,r) in g.children.into_iter().enumerate(){emit(row.index.saturating_add(i+1),ffi::Rect{x:x.saturating_add(r.x),y:y.saturating_add(r.y),width:r.width,height:r.height});}
+        }
+        y=y.saturating_add(h).saturating_add(2);
+    }
+    out
+}
+
 
 fn palette_text_layout(kind:u32,width:i32,height:i32,text_width:i32,font_height:i32)->ffi::ColumnLayout {
     let (top,left,bottom,right):(i32,i32,i32,i32)=match kind{0=>(1,1,1,1),1=>(11,18,10,18),_=>(8,18,8,18)};
@@ -1035,6 +1062,42 @@ mod tests {
             assert_eq!(icon.shape,glyph-1);assert_eq!((icon.x,icon.y,icon.width,icon.height),(8.0,8.0,16.0,16.0));
             assert!(ops.iter().all(|p|p.text.is_empty()));
         }
+    }
+    #[test] fn workspace_preview_rows_keep_order_gaps_indent_and_partial_clip() {
+        let rows=vec![ffi::PreviewRow{index:0,kind:1,depth:0,height:13},ffi::PreviewRow{index:1,kind:0,depth:2,height:34},ffi::PreviewRow{index:0,kind:3,depth:0,height:8},ffi::PreviewRow{index:2,kind:0,depth:0,height:34}];
+        let p=workspace_preview_layout(201,60,20,&rows);
+        assert_eq!(p.iter().map(|p|p.index).collect::<Vec<_>>(),vec![1,2]);
+        assert_eq!((p[0].bounds.x,p[0].bounds.y,p[0].bounds.width),(24,-5,177));
+        assert_eq!((p[0].clip.x,p[0].clip.y,p[0].clip.height),(24,0,29));
+        assert_eq!((p[1].bounds.y,p[1].clip.height),(39,21));
+    }
+    #[test] fn workspace_preview_pairs_share_live_split_geometry_and_outer_clipping() {
+        let rows=vec![ffi::PreviewRow{index:5,kind:2,depth:1,height:0}];let p=workspace_preview_layout(201,40,3,&rows);
+        assert_eq!(p.iter().map(|p|p.index).collect::<Vec<_>>(),vec![5,6,7]);
+        let g=split_layout(189,46,2);
+        for (i,r) in g.children.iter().enumerate(){assert_eq!((p[i+1].bounds.x,p[i+1].bounds.y,p[i+1].bounds.width,p[i+1].bounds.height),(12+r.x,-3+r.y,r.width,r.height));}
+        assert_eq!((p[0].clip.y,p[0].clip.height),(0,40));
+    }
+    #[test] fn workspace_preview_large_source_scroll_culls_offscreen_rows() {
+        let rows:Vec<_>=(0..1000).map(|index|ffi::PreviewRow{index,kind:0,depth:0,height:0}).collect();
+        let p=workspace_preview_layout(240,72,36*800,&rows);
+        assert_eq!(p.iter().map(|p|p.index).collect::<Vec<_>>(),vec![800,801]);
+        assert!(p.iter().all(|p|p.clip.y>=0&&p.clip.y+p.clip.height<=72));
+    }
+    #[test] fn workspace_preview_clamps_deep_narrow_and_saturated_input() {
+        let rows=vec![ffi::PreviewRow{index:0,kind:0,depth:99,height:34}];
+        assert!(workspace_preview_layout(20,100,0,&rows).is_empty());
+        let p=workspace_preview_layout(240,100,-5,&rows);assert_eq!((p[0].bounds.x,p[0].bounds.y),(96,0));
+        assert!(workspace_preview_layout(0,0,0,&rows).is_empty());
+        let rows=vec![ffi::PreviewRow{index:0,kind:3,depth:0,height:i32::MAX},ffi::PreviewRow{index:1,kind:0,depth:0,height:34}];
+        assert!(workspace_preview_layout(240,100,0,&rows).is_empty());
+    }
+    #[test] fn workspace_preview_uses_unicode_row_display_list_without_native_labels() {
+        let p=workspace_preview_layout(240,30,4,&[ffi::PreviewRow{index:0,kind:0,depth:0,height:34}]);
+        let mut item=row(240.0);item.title="Zażółć 日本語 مرحبا 🦀".into();item.x=p[0].bounds.x as f32;item.y=p[0].bounds.y as f32;
+        let c=&p[0].clip;item.clip=ffi::FloatRect{x:c.x as f32,y:c.y as f32,width:c.width as f32,height:c.height as f32};
+        let ops=layout(&[item]);assert!(ops.iter().any(|p|p.text=="Zażółć 日本語 مرحبا 🦀"));assert!(ops.iter().any(|p|p.text=="×"));
+        assert!(ops.iter().all(|p|p.clip.y==0.0&&p.clip.height==30.0));
     }
     #[test] fn workspace_swipe_reverses_skips_and_rearms_at_same_cursor() {
         let mut s=new_workspace_swipe();

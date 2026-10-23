@@ -235,6 +235,10 @@ class WorkspaceShell final : public ui::EventHandler,
   bool workspace_swipe_visible() const { return swipe_overlay_ != nullptr; }
   double workspace_swipe_position() const;
   size_t workspace_swipe_preview_count() const;
+  bool workspace_swipe_metal_visible() const;
+  size_t workspace_swipe_native_capture_count() const;
+  size_t workspace_swipe_metal_frame_count() const;
+  bool workspace_swipe_contains_scene_text(std::string_view text) const;
   views::Widget* general_widget() const { return general_widget_.get(); }
   void SetPreferencesStatus(std::u16string text, bool error = false);
   void SetOperationStatus(std::u16string text);

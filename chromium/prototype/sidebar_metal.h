@@ -26,6 +26,11 @@ class SidebarMetal {
       gfx::PointF offset, base::span<const SidebarViewportNode> nodes) = 0;
   virtual void Update(gfx::NativeWindow window, gfx::Rect screen_bounds,
                       base::span<const sidebar::Item> items, unsigned background) = 0;
+  // A full page translated inside a viewport-sized native clipping adapter.
+  // Immutable page scenes set redraw only on capture. Translation/settle reuse
+  // the drawable; bounds/scale changes and missing drawables also force redraw.
+  virtual void UpdatePreview(gfx::NativeWindow window,gfx::Rect viewport,double x,
+      base::span<const sidebar::Item> items,unsigned background,bool settle,bool redraw) = 0;
   virtual void Hide() = 0;
   virtual bool visible() const = 0;
   // Submitted command buffers, not presentation timestamps. UI thread only.

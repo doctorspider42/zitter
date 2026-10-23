@@ -3912,6 +3912,37 @@ class ZitterMetalSidebarBrowserTest : public ZitterProfilesBrowserTest {
     command_line->AppendSwitchASCII("zitter-sidebar", "rust-metal");
   }
 };
+// Compiled with the migration; execution is deferred to the requested GUI checkpoint.
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, SwipePreviewUsesMetalWithoutNativeSnapshots) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
+  shell->SetWorkspaceAnimations(false);
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html?gpu-swipe"),true));
+  ASSERT_TRUE(content::ExecJs(window_->contents("work"),"document.title='GPU preview 🦀'"));
+  shell->SetPinned(true);shell->ShowSidebar();
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->metal_sidebar_visible()&&shell->metal_sidebar_contains_text_for_testing("GPU preview 🦀");}));
+  const auto width=shell->tab_scroll_view()->width();ASSERT_GT(width,100);
+  auto stamp=base::TimeTicks::Now();
+  const auto point=shell->tab_scroll_view()->GetBoundsInScreen().CenterPoint()-shell->sidebar_widget()->GetWindowBoundsInScreen().OffsetFromOrigin();
+  auto scroll=[&](float x,ui::ScrollEventPhase phase){stamp+=base::Milliseconds(10);ui::ScrollEvent event(ui::EventType::kScroll,point,stamp,0,x,0,x,0,2,ui::EventMomentumPhase::NONE,phase);shell->sidebar_widget()->OnScrollEvent(&event);};
+  scroll(0,ui::ScrollEventPhase::kBegan);scroll(-width*0.4f,ui::ScrollEventPhase::kUpdate);
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_swipe_metal_visible();}));
+  EXPECT_TRUE(shell->workspace_swipe_contains_scene_text("GPU preview 🦀"));
+  EXPECT_EQ(0u,shell->workspace_swipe_native_capture_count());EXPECT_LE(shell->workspace_swipe_preview_count(),3u);
+  EXPECT_FALSE(window_->contents("personal"));EXPECT_EQ("work",window_->active_id());
+  const auto submitted=shell->workspace_swipe_metal_frame_count();
+  scroll(-width*0.05f,ui::ScrollEventPhase::kUpdate);base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(submitted,shell->workspace_swipe_metal_frame_count()); // Translation reuses drawable pixels.
+  EXPECT_EQ(0u,shell->workspace_swipe_native_capture_count());
+  scroll(0,ui::ScrollEventPhase::kEnd);
+  ASSERT_TRUE(base::test::RunUntil([&]{return !shell->workspace_swipe_visible()&&shell->metal_sidebar_visible();}));EXPECT_EQ("work",window_->active_id());
+  scroll(0,ui::ScrollEventPhase::kBegan);scroll(-width*0.7f,ui::ScrollEventPhase::kUpdate);
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_swipe_metal_visible();}));
+  EXPECT_FALSE(window_->contents("personal"));scroll(0,ui::ScrollEventPhase::kEnd);
+  ASSERT_TRUE(base::test::RunUntil([&]{return window_->active_id()=="personal"&&!shell->workspace_swipe_visible()&&shell->metal_sidebar_visible();}));
+  scroll(0,ui::ScrollEventPhase::kBegan);scroll(width*0.7f,ui::ScrollEventPhase::kUpdate);
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_swipe_metal_visible();}));
+  shell->CloseOverlays();EXPECT_FALSE(shell->workspace_swipe_visible());EXPECT_FALSE(shell->workspace_swipe_metal_visible());EXPECT_EQ("personal",window_->active_id());
+}
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NewTabActionUsesSceneTextAndConfiguredShortcut) {
   auto* shell = window_->shell();
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready() && shell->tools_ready(); }));
