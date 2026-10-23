@@ -30,7 +30,6 @@ pub enum SelectionPolicy {
     Extend,
     Caret,
 }
-thread_local! {static KILL_BUFFER:std::cell::RefCell<Vec<u16>>=const {std::cell::RefCell::new(Vec::new())};}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Change {
@@ -40,6 +39,15 @@ pub struct Change {
     pub composition: bool,
     // Preedit/cancel are display changes, not committed application edits.
     pub committed: bool,
+}
+// The platform adapter owns the shared kill buffer. Return offsets into its
+// pre-edit text cache instead of allocating a second copy of the fragment.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct KillResult {
+    pub change: Change,
+    pub start: usize,
+    pub end: usize,
+    pub before_revision: u64,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Info {
@@ -458,9 +466,9 @@ impl EditorState {
         self.apply_motion(target, policy, false, backward)
     }
 
-    pub fn kill_to_boundary(&mut self, end: bool) -> Change {
+    pub fn kill_to_boundary(&mut self, end: bool) -> KillResult {
         if !self.editable() || self.composition.is_some() {
-            return Change::default();
+            return KillResult::default();
         }
         let old = self.selection;
         let range = old.range();
@@ -474,15 +482,18 @@ impl EditorState {
             range
         };
         if range.is_empty() {
-            return Change {
-                admitted: true,
-                ..Change::default()
+            return KillResult {
+                change: Change {
+                    admitted: true,
+                    ..Change::default()
+                },
+                ..KillResult::default()
             };
         }
         if !self.replacement_boundaries(range.start, range.end, &[]) {
-            return Change::default();
+            return KillResult::default();
         }
-        let killed = self.text[range.clone()].to_vec();
+        let before_revision = self.revision;
         // Native undo restores the selection used by the deletion, including
         // the range extended from an initially collapsed caret.
         if old.anchor == old.focus {
@@ -493,18 +504,19 @@ impl EditorState {
             };
         }
         let mut change = self.erase(false, false);
-        if change.text {
-            KILL_BUFFER.with(|buffer| *buffer.borrow_mut() = killed);
-        }
         change.selection = old != self.selection;
-        change
+        KillResult {
+            change,
+            start: range.start,
+            end: range.end,
+            before_revision,
+        }
     }
-    pub fn yank(&mut self) -> Change {
+    pub fn yank(&mut self, text: &[u16]) -> Change {
         if !self.editable() {
             return Change::default();
         }
-        let text = KILL_BUFFER.with(|buffer| buffer.borrow().clone());
-        self.insert(&text, false)
+        self.insert(text, false)
     }
     pub fn transpose(&mut self) -> Change {
         if !self.editable()
@@ -1454,8 +1466,15 @@ mod command_tests {
     fn text(e: &EditorState) -> String {
         String::from_utf16(e.text()).unwrap()
     }
-    fn clear_kill() {
-        KILL_BUFFER.with(|b| b.borrow_mut().clear());
+    fn kill(e: &mut EditorState, end: bool, buffer: &mut Vec<u16>) -> Change {
+        let text = e.text().to_vec();
+        let revision = e.info().revision;
+        let result = e.kill_to_boundary(end);
+        if result.change.text {
+            assert_eq!(revision, result.before_revision);
+            *buffer = text[result.start..result.end].to_vec();
+        }
+        result.change
     }
     #[test]
     fn selection_policies_match_mac_reversal() {
@@ -1532,10 +1551,10 @@ mod command_tests {
     }
     #[test]
     fn kill_to_end_yank_and_undo_restore_native_selection() {
-        clear_kill();
+        let mut buffer = vec![];
         let mut e = model("one two");
         e.select(4, 4, false);
-        assert!(e.kill_to_boundary(true).committed);
+        assert!(kill(&mut e, true, &mut buffer).committed);
         assert_eq!(text(&e), "one ");
         e.undo();
         assert_eq!(text(&e), "one two");
@@ -1548,18 +1567,18 @@ mod command_tests {
             }
         );
         e.redo();
-        e.yank();
+        e.yank(&buffer);
         assert_eq!(text(&e), "one two");
     }
     #[test]
     fn kill_to_start_is_one_edit_and_yanks_in_another_editor() {
-        clear_kill();
+        let mut buffer = vec![];
         let mut e = model("one two");
         e.select(4, 4, false);
-        e.kill_to_boundary(false);
+        kill(&mut e, false, &mut buffer);
         assert_eq!(text(&e), "two");
         let mut other = model("X");
-        other.yank();
+        other.yank(&buffer);
         assert_eq!(text(&other), "Xone ");
         e.undo();
         assert_eq!(text(&e), "one two");
@@ -1575,49 +1594,49 @@ mod command_tests {
     }
     #[test]
     fn selected_kill_does_not_expand_and_next_kill_overwrites() {
-        clear_kill();
+        let mut buffer = vec![];
         let mut e = model("abcdef");
         e.select(4, 2, true);
-        e.kill_to_boundary(true);
+        kill(&mut e, true, &mut buffer);
         assert_eq!(text(&e), "abef");
         e.select(0, 1, false);
-        e.kill_to_boundary(false);
+        kill(&mut e, false, &mut buffer);
         let mut other = model("");
-        other.yank();
+        other.yank(&buffer);
         assert_eq!(text(&other), "a");
     }
     #[test]
     fn empty_kill_preserves_previous_buffer() {
-        clear_kill();
+        let mut buffer = vec![];
         let mut e = model("abc");
-        e.kill_to_boundary(false);
-        assert!(e.kill_to_boundary(true).admitted);
+        kill(&mut e, false, &mut buffer);
+        assert!(kill(&mut e, true, &mut buffer).admitted);
         let mut other = model("");
-        other.yank();
+        other.yank(&buffer);
         assert_eq!(text(&other), "abc");
     }
     #[test]
     fn kill_and_yank_respect_readonly_disabled_and_composition() {
-        clear_kill();
+        let mut buffer = vec![];
         let mut e = model("abc");
         e.availability(true, true);
-        assert!(!e.kill_to_boundary(false).admitted);
-        assert!(!e.yank().admitted);
+        assert!(!kill(&mut e, false, &mut buffer).admitted);
+        assert!(!e.yank(&buffer).admitted);
         e.availability(true, false);
         let t = e.begin_composition();
-        assert!(!e.kill_to_boundary(false).admitted);
+        assert!(!kill(&mut e, false, &mut buffer).admitted);
         e.cancel(t);
         e.availability(false, false);
-        assert!(!e.yank().admitted);
+        assert!(!e.yank(&buffer).admitted);
         let mut other = model("");
-        assert!(!other.yank().text);
+        assert!(!other.yank(&buffer).text);
     }
     #[test]
     fn empty_yank_replaces_selection_like_native() {
-        clear_kill();
+        let buffer = vec![];
         let mut e = model("abc");
         e.select(0, 2, false);
-        assert!(e.yank().text);
+        assert!(e.yank(&buffer).text);
         assert_eq!(text(&e), "c");
         e.undo();
         assert_eq!(text(&e), "abc");
@@ -1744,5 +1763,40 @@ mod undirected_tests {
         assert!(!e.info().directed);
         assert_eq!(e.info().selection.anchor, 5);
         assert_eq!(e.info().selection.focus, 9);
+    }
+}
+
+#[cfg(test)]
+mod kill_service_contract_tests {
+    use super::*;
+    #[test]
+    fn killed_offsets_refer_to_previous_revision_and_cache() {
+        let mut e = EditorState::default();
+        e.reset(&"a🦀b".encode_utf16().collect::<Vec<_>>());
+        e.select(1, 1, false);
+        let before = e.text().to_vec();
+        let revision = e.info().revision;
+        let killed = e.kill_to_boundary(true);
+        assert!(killed.change.committed);
+        assert_eq!(
+            (killed.start, killed.end, killed.before_revision),
+            (1, 4, revision)
+        );
+        assert!(killed.end > e.text().len());
+        assert_ne!(e.info().revision, revision);
+        let buffer = &before[killed.start..killed.end];
+        e.yank(buffer);
+        assert_eq!(e.text(), before);
+    }
+    #[test]
+    fn rejected_kill_exposes_no_fragment_and_changes_no_state() {
+        let mut e = EditorState::default();
+        e.reset(&[65, 66, 67]);
+        e.availability(true, true);
+        let before = e.info();
+        let k = e.kill_to_boundary(false);
+        assert_eq!(k, KillResult::default());
+        assert_eq!(e.info(), before);
+        assert_eq!(e.text(), &[65, 66, 67]);
     }
 }

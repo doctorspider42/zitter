@@ -13,6 +13,7 @@ mod ffi {
     struct EditorStyle { width: f32, height: f32, font_size: f32, ink: u32, fill: u32, edge: u32, selection_fill: u32, selection_ink: u32, placeholder_ink: u32, text_direction: u32, placeholder_width: f32, right_align: bool, focused: bool, caret_visible: bool }
 
     struct EditorInfo { revision: u64, anchor: usize, focus: usize, secondary: bool, directed: bool, enabled: bool, read_only: bool, composing: bool, composition_start: usize, composition_end: usize, composition_token: u64, can_undo: bool, can_redo: bool, boundaries_ready: bool }
+    struct EditorKill { update: EditorUpdate, start: usize, end: usize, before_revision: u64 }
     struct EditorUpdate { admitted: bool, text_changed: bool, selection_changed: bool, composition_changed: bool, committed: bool, info: EditorInfo }
     struct SelectLayout { width: i32, height: i32, label: Rect, arrow: Rect }
     struct SelectOption { key: String, label: String, search: String }
@@ -111,8 +112,8 @@ mod ffi {
         fn editor_orient(state: &mut EditorState, anchor: usize, focus: usize, secondary: bool) -> EditorUpdate;
         fn editor_move_policy(state: &mut EditorState, index: usize, policy: EditorSelectionPolicy, secondary: bool) -> EditorUpdate;
         fn editor_navigate(state: &mut EditorState, backward: bool, word: bool, policy: EditorSelectionPolicy) -> EditorUpdate;
-        fn editor_kill(state: &mut EditorState, end: bool) -> EditorUpdate;
-        fn editor_yank(state: &mut EditorState) -> EditorUpdate;
+        fn editor_kill(state: &mut EditorState, end: bool) -> EditorKill;
+        fn editor_yank(state: &mut EditorState, text: &[u16]) -> EditorUpdate;
         fn editor_transpose(state: &mut EditorState) -> EditorUpdate;
         type EditorState;
         fn new_editor_state() -> Box<EditorState>;
@@ -2548,8 +2549,8 @@ mod editor_scene_tests {
 fn editor_policy(policy:ffi::EditorSelectionPolicy)->sidebar_editor::SelectionPolicy {use sidebar_editor::SelectionPolicy as P;match policy{ffi::EditorSelectionPolicy::Retain=>P::Retain,ffi::EditorSelectionPolicy::Extend=>P::Extend,ffi::EditorSelectionPolicy::Caret=>P::Caret,_=>P::None}}
 fn editor_move_policy(state:&mut EditorState,index:usize,policy:ffi::EditorSelectionPolicy,secondary:bool)->ffi::EditorUpdate {let c=state.move_with_policy(index,editor_policy(policy),secondary);editor_update(state,c)}
 fn editor_navigate(state:&mut EditorState,backward:bool,word:bool,policy:ffi::EditorSelectionPolicy)->ffi::EditorUpdate {let c=state.navigate(backward,word,editor_policy(policy));editor_update(state,c)}
-fn editor_kill(state:&mut EditorState,end:bool)->ffi::EditorUpdate {let c=state.kill_to_boundary(end);editor_update(state,c)}
-fn editor_yank(state:&mut EditorState)->ffi::EditorUpdate {let c=state.yank();editor_update(state,c)}
+fn editor_kill(state:&mut EditorState,end:bool)->ffi::EditorKill {let k=state.kill_to_boundary(end);ffi::EditorKill{update:editor_update(state,k.change),start:k.start,end:k.end,before_revision:k.before_revision}}
+fn editor_yank(state:&mut EditorState,text:&[u16])->ffi::EditorUpdate {let c=state.yank(text);editor_update(state,c)}
 fn editor_transpose(state:&mut EditorState)->ffi::EditorUpdate {let c=state.transpose();editor_update(state,c)}
 
 fn editor_orient(state:&mut EditorState,anchor:usize,focus:usize,secondary:bool)->ffi::EditorUpdate {let c=state.orient(anchor,focus,secondary);editor_update(state,c)}

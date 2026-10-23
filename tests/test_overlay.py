@@ -1,4 +1,6 @@
 import importlib.util
+import sys
+import editor_service_fixture
 from pathlib import Path
 import tempfile
 import unittest
@@ -7,7 +9,8 @@ from unittest import mock
 spec = importlib.util.spec_from_file_location(
     "overlay", Path(__file__).resolve().parents[1] / "tools/install_chromium_overlay.py")
 overlay = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(overlay)
+with mock.patch.object(sys, "path", [str(Path(__file__).resolve().parents[1] / "tools"), *sys.path]):
+    spec.loader.exec_module(overlay)
 
 
 class OverlayTests(unittest.TestCase):
@@ -67,6 +70,7 @@ class OverlayTests(unittest.TestCase):
         revision = json.loads((overlay.ROOT / "chromium/revision.json").read_text())["revision"]
         with tempfile.TemporaryDirectory() as directory:
             checkout = Path(directory)
+            editor_service_fixture.seed(checkout)
             build = checkout / "chrome/test/BUILD.gn"
             build.parent.mkdir(parents=True)
             original = ('# Existing local build configuration\n'

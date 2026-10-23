@@ -11,6 +11,8 @@ import shutil
 import subprocess
 import tempfile
 
+import editor_service_patch as editor_services
+
 ROOT = Path(__file__).resolve().parents[1]
 DEPENDENCY = '      "//zitter:profile_workspace_browser_tests",\n'
 MARKER = ".zitter-overlay.json"
@@ -122,6 +124,7 @@ def install(checkout, dry_run=False):
         ["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True).strip()
     if revision != lock["revision"]:
         raise ValueError(f"Chromium revision mismatch: {revision}; expected {lock['revision']}")
+    editor_patch = editor_services.prepare(checkout)
     build = checkout / "chrome/test/BUILD.gn"
     original = build.read_text()
     patched = patch_build(original)
@@ -173,6 +176,7 @@ def install(checkout, dry_run=False):
                 media_header.write_text(media_header_patched)
             if media_source_patched != media_source_original:
                 media_source.write_text(media_source_patched)
+            editor_services.apply(editor_patch)
         except Exception:
             if destination.exists():
                 shutil.rmtree(destination)

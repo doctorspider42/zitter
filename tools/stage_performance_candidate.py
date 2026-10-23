@@ -49,6 +49,7 @@ def stage(checkout, variant="zitter_candidate", reference_overlay=None, current_
         ["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True).strip()
     if revision != lock["revision"]:
         raise ValueError("Chromium revision does not match the pinned baseline")
+    editor_patch = overlay.editor_services.prepare(checkout)
     destination = checkout / variant
     test_target = "zitter_prototype_" + variant[len("zitter_"):]
     if reference_overlay is None:
@@ -116,9 +117,14 @@ def stage(checkout, variant="zitter_candidate", reference_overlay=None, current_
         previous = Path(directory) / "previous"
         if destination.exists():
             destination.rename(previous)
+        installed = False
         try:
             staged.rename(destination)
+            installed = True
+            overlay.editor_services.apply(editor_patch)
         except Exception:
+            if installed:
+                shutil.rmtree(destination)
             if previous.exists():
                 previous.rename(destination)
             raise

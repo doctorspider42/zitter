@@ -6,6 +6,7 @@
 #include <set>
 #include <utility>
 #include "base/functional/bind.h"
+#include "base/check_op.h"
 #include "base/i18n/rtl.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
@@ -43,6 +44,7 @@
 #include "ui/views/widget/widget_observer.h"
 #if BUILDFLAG(IS_MAC)
 #include "chromium/prototype/editor_text_layout.h"
+#include "ui/views/controls/textfield/text_edit_kill_buffer.h"
 #include "chromium/prototype/sidebar_scene.rs.h"
 #include "chromium/prototype/sidebar_metal.h"
 #endif
@@ -270,7 +272,7 @@ class SceneEditor final : public views::View, public EditorControl,
   void Detach(){if(GetInputMethod())GetInputMethod()->DetachTextInputClient(this);}
   void CancelNativeComposition(){if(GetInputMethod()&&GetInputMethod()->GetTextInputClient()==this)GetInputMethod()->CancelComposition(this);}
   void NotifyCaret(){if(GetInputMethod())GetInputMethod()->OnCaretBoundsChanged(this);}
-  void RefreshText(){const auto text=sidebar::editor_text(*state_);text_.assign(text.begin(),text.end());line_.reset();}
+  void RefreshText(){text_revision_=sidebar::editor_info(*state_).revision;const auto text=sidebar::editor_text(*state_);text_.assign(text.begin(),text.end());line_.reset();}
   void RefreshAX(){auto i=sidebar::editor_info(*state_);GetViewAccessibility().SetValue(text_);GetViewAccessibility().SetTextDirection(static_cast<int32_t>(GetTextDirection()==base::i18n::RIGHT_TO_LEFT?ax::mojom::WritingDirection::kRtl:ax::mojom::WritingDirection::kLtr));GetViewAccessibility().SetTextSelStart(i.anchor);GetViewAccessibility().SetTextSelEnd(i.focus);GetViewAccessibility().SetReadOnly(read_only_);}
   void Apply(sidebar::EditorUpdate update){if(!update.admitted)return;if(update.text_changed){RefreshText();++edit_generation_;}if(!update.info.composing)clauses_.clear();EnsureLayout();RefreshAX();blink_visible_=true;Schedule();NotifyCaret();if(update.text_changed)GetViewAccessibility().NotifyEvent(ax::mojom::Event::kValueChanged,true);if(update.selection_changed)GetViewAccessibility().NotifyEvent(ax::mojom::Event::kTextSelectionChanged,true);}
   void EnsureLayout() const {
@@ -285,7 +287,11 @@ class SceneEditor final : public views::View, public EditorControl,
   void MoveBoundary(bool end,sidebar::EditorSelectionPolicy policy){EnsureLayout();Apply(sidebar::editor_move_policy(*state_,end?text_.size():0,policy,false));}
   void Boundary(bool end,bool extend){MoveBoundary(end,extend?sidebar::EditorSelectionPolicy::Extend:sidebar::EditorSelectionPolicy::None);}
   void RetainedBoundary(bool end,bool extend){MoveBoundary(end,extend?sidebar::EditorSelectionPolicy::Retain:sidebar::EditorSelectionPolicy::None);}
-  void DeleteBoundary(bool end){if(!Editable())return;EnsureLayout();Apply(sidebar::editor_kill(*state_,end));}
+  void DeleteBoundary(bool end){
+    if(!Editable())return;EnsureLayout();auto killed=sidebar::editor_kill(*state_,end);
+    if(killed.update.text_changed){CHECK_EQ(text_revision_,killed.before_revision);CHECK_LE(killed.start,killed.end);CHECK_LE(killed.end,text_.size());views::SetTextEditKillBuffer(std::u16string_view(text_).substr(killed.start,killed.end-killed.start));}
+    Apply(std::move(killed.update));
+  }
   void Visual(bool right,bool extend){EnsureLayout();auto i=sidebar::editor_info(*state_);if(line_->carets().empty())return;
     if(!extend&&i.anchor!=i.focus){const auto a=line_->Caret(i.anchor).x,b=line_->Caret(i.focus,i.secondary).x;const auto p=right?(a>b?i.anchor:i.focus):(a<b?i.anchor:i.focus);Apply(sidebar::editor_move_to(*state_,p,false,p==i.focus&&i.secondary));return;}
     if(extend&&!i.directed&&i.anchor!=i.focus){const auto a=line_->Caret(i.anchor).x,b=line_->Caret(i.focus,i.secondary).x;const bool reverse=right?a>b:a<b;if(reverse)Apply(sidebar::editor_orient(*state_,i.focus,i.anchor,false));else Apply(sidebar::editor_orient(*state_,i.anchor,i.focus,i.secondary));i=sidebar::editor_info(*state_);}
@@ -297,7 +303,7 @@ class SceneEditor final : public views::View, public EditorControl,
     if(!IsTextEditCommandEnabled(command))return false;using C=ui::TextEditCommand;EnsureLayout();
     switch(command){
       case C::TRANSPOSE:Apply(sidebar::editor_transpose(*state_));return true;
-      case C::YANK:Apply(sidebar::editor_yank(*state_));return true;
+      case C::YANK:Apply(sidebar::editor_yank(*state_,Slice(views::GetTextEditKillBuffer())));return true;
       case C::UNDO:Apply(sidebar::editor_undo(*state_));return true;
       case C::REDO:Apply(sidebar::editor_redo(*state_));return true;
       case C::SELECT_ALL:Apply(sidebar::editor_select(*state_,0,text_.size(),false));return true;
@@ -352,7 +358,7 @@ class SceneEditor final : public views::View, public EditorControl,
     base::WeakPtr<SceneEditor> owner_;uint64_t context_,serial_;
   };
   mutable rust::Box<sidebar::EditorState> state_;std::u16string text_,placeholder_;mutable std::unique_ptr<EditorTextLayout> line_;mutable sidebar::EditorGeometry geometry_{};
-  ui::ImeTextSpans clauses_;std::optional<base::i18n::TextDirection> direction_;std::optional<bool> align_right_;bool read_only_=false,pending_=false,blink_visible_=true,dragging_=false,drag_candidate_=false,drag_started_=false;uint64_t context_=0,edit_generation_=0,menu_generation_=0,drag_revision_=0;gfx::Range drag_selection_;
+  ui::ImeTextSpans clauses_;std::optional<base::i18n::TextDirection> direction_;std::optional<bool> align_right_;bool read_only_=false,pending_=false,blink_visible_=true,dragging_=false,drag_candidate_=false,drag_started_=false;uint64_t text_revision_=0,context_=0,edit_generation_=0,menu_generation_=0,drag_revision_=0;gfx::Range drag_selection_;
   ui::TextEditCommand pending_command_=ui::TextEditCommand::INVALID_COMMAND;base::RepeatingTimer blink_;base::CallbackListSubscription enabled_subscription_;std::unique_ptr<SidebarMetal> surface_;std::unique_ptr<MenuDelegate> menu_delegate_;std::unique_ptr<ui::SimpleMenuModel> menu_;std::unique_ptr<views::MenuRunner> runner_;
   SceneWindowObserver window_{base::BindRepeating(&SceneEditor::SyncLifecycle,base::Unretained(this))};base::WeakPtrFactory<SceneEditor> weak_factory_{this};
 };

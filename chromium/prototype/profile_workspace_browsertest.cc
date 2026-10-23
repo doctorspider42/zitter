@@ -1,6 +1,7 @@
 #include "chromium/prototype/browser_import_data.h"
 #include "ui/base/clipboard/test/test_clipboard.h"
 #include "ui/base/ime/text_edit_commands.h"
+#include "ui/views/controls/textfield/text_edit_kill_buffer.h"
 #include "ui/base/dragdrop/os_exchange_data.h"
 #include "ui/base/dragdrop/drop_target_event.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
@@ -5519,6 +5520,23 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NameEditorBidiDirectionAndShar
   ASSERT_TRUE(client->ChangeTextDirectionAndLayoutAlignment(base::i18n::RIGHT_TO_LEFT));EXPECT_EQ(base::i18n::LEFT_TO_RIGHT,client->GetTextDirection());ui::AXNodeData ltr;field->GetViewAccessibility().GetAccessibleNodeData(&ltr);EXPECT_EQ(static_cast<int>(ax::mojom::WritingDirection::kLtr),ltr.GetIntAttribute(ax::mojom::IntAttribute::kTextDirection));
   field->SetText(u"one two");field->SelectRange(gfx::Range(4));ASSERT_TRUE(command(field,C::DELETE_TO_END_OF_PARAGRAPH));EXPECT_EQ(u"one ",field->GetText());
   shell->OpenProfiles("work-profile");auto* other=shell->profile_name_input();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->profiles_widget()->GetNativeWindow()));other->RequestFocus();other->SetText(u"");ASSERT_TRUE(command(other,C::YANK));EXPECT_EQ(u"two",other->GetText());ASSERT_TRUE(command(other,C::UNDO));EXPECT_TRUE(other->GetText().empty());ASSERT_TRUE(command(other,C::REDO));EXPECT_EQ(u"two",other->GetText());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NameEditorKillYankInteroperatesWithNativeFields) {
+  using C=ui::TextEditCommand;auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenWorkspaceSettings();auto* name=shell->workspace_input();auto* native=shell->color_input();ASSERT_TRUE(native);EXPECT_TRUE(views::AsViewClass<views::Textfield>(native));
+  const std::u16string saved(views::GetTextEditKillBuffer());base::ScopedClosureRunner restore(base::BindOnce([](std::u16string text){views::SetTextEditKillBuffer(text);},saved));
+  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));
+  auto key=[&](views::View* view,ui::KeyboardCode key){view->RequestFocus();return base::test::RunUntil([&]{return view->HasFocus();})&&ui_test_utils::SendKeyPressToWindowSync(shell->settings_widget()->GetNativeWindow(),key,true,false,false,false);};
+  name->SetText(u"workspace-cut");name->SelectRange(gfx::Range(10));ASSERT_TRUE(key(name->view(),ui::VKEY_K));EXPECT_EQ(u"workspace-",name->GetText());EXPECT_EQ(u"cut",views::GetTextEditKillBuffer());
+  native->SetText(u"native:");native->SetSelectedRange(gfx::Range(7));ASSERT_TRUE(key(native,ui::VKEY_Y));EXPECT_EQ(u"native:cut",native->GetText());
+  native->SetText(u"old-shared");native->SetSelectedRange(gfx::Range(4));ASSERT_TRUE(key(native,ui::VKEY_K));EXPECT_EQ(u"old-",native->GetText());EXPECT_EQ(u"shared",views::GetTextEditKillBuffer());
+  name->SetText(u"R:");name->SelectRange(gfx::Range(2));ASSERT_TRUE(key(name->view(),ui::VKEY_Y));EXPECT_EQ(u"R:shared",name->GetText());
+  // Reversed service selection kills only that range, then native yank sees it.
+  name->SetText(u"abcdef");name->SelectRange(gfx::Range(4,2));ASSERT_TRUE(key(name->view(),ui::VKEY_K));EXPECT_EQ(u"abef",name->GetText());EXPECT_EQ(u"cd",views::GetTextEditKillBuffer());native->SetText(u"");ASSERT_TRUE(key(native,ui::VKEY_Y));EXPECT_EQ(u"cd",native->GetText());
+  views::SetTextEditKillBuffer(u"keep");name->SetText(u"");ASSERT_TRUE(key(name->view(),ui::VKEY_K));EXPECT_EQ(u"keep",views::GetTextEditKillBuffer());native->SetText(u"");ASSERT_TRUE(key(native,ui::VKEY_K));EXPECT_EQ(u"keep",views::GetTextEditKillBuffer());
+  name->SetReadOnly(true);EXPECT_FALSE(name->input_client()->IsTextEditCommandEnabled(C::YANK));EXPECT_FALSE(name->input_client()->IsTextEditCommandEnabled(C::DELETE_TO_END_OF_LINE));EXPECT_EQ(u"keep",views::GetTextEditKillBuffer());name->SetReadOnly(false);
+  views::SetTextEditKillBuffer(u"🦀語");name->SetText(u"");ASSERT_TRUE(key(name->view(),ui::VKEY_Y));EXPECT_EQ(u"🦀語",name->GetText());native->SetText(u"");ASSERT_TRUE(key(native,ui::VKEY_Y));EXPECT_EQ(u"🦀語",native->GetText());
+  views::SetTextEditKillBuffer(u"");name->SetText(u"xx");name->SelectRange(gfx::Range(0,2));ASSERT_TRUE(key(name->view(),ui::VKEY_Y));EXPECT_TRUE(name->GetText().empty());
 }
 
 #endif

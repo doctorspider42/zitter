@@ -1,4 +1,5 @@
 import importlib.util
+import editor_service_fixture
 import hashlib
 import json
 from pathlib import Path
@@ -48,6 +49,7 @@ class PerformanceCandidateTest(unittest.TestCase):
             candidate.overlay.check_existing(baseline)
 
     def stage(self, checkout, files, **options):
+        editor_service_fixture.seed(checkout)
         revision = json.loads((candidate.overlay.ROOT / "chromium/revision.json").read_text())["revision"]
         with mock.patch.object(candidate.overlay, "overlay_files", return_value=files), \
                 mock.patch.object(candidate.subprocess, "check_output", return_value=revision):
