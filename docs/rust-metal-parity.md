@@ -8,20 +8,20 @@ milestones to `origin/main` as they land. The opt-in switch remains
 
 ## Current execution policy
 
-Latest automated acceptance: UI source `84d032bf2f0d87c7196fe843347119c1cd8078d9`
-passed **127 Metal / 95 Views cases**, six explicit skips per backend, from the
-complete 133-case inventory (101 applicable Views cases; 32 dedicated Metal cases
-excluded), with one job and no retries. **66 clean-archive Python tests**,
-GN/boundaries and optimized app/test compilation passed; the live checkout passed
-68 Python tests including two concurrent cases outside this commit. Rust sources
-are byte-identical to the preceding **211-case** unit run; that run was not repeated
-for this native folder binding. [Matching checkpoint](benchmarks/rust-folder-editor-checkpoint-2026-10-23.json).
+Latest automated acceptance: UI source `e17b856ce11e6d6994370998036b15f99e2f2c37`
+passed **128 Metal / 96 Views cases**, six explicit skips per backend, from the
+complete 134-case inventory (102 applicable Views cases; 32 dedicated Metal cases
+excluded), with one job and no retries. **214 Rust / 66 clean-archive Python tests**,
+61 standalone model cases, 180 SDK font/direction cases plus raster, GN/boundaries
+and optimized compilation passed. The live checkout passed 68 Python tests including
+two concurrent cases outside this UI commit.
+[Matching checkpoint](benchmarks/rust-address-editor-checkpoint-2026-10-23.json).
 
 The live workspace/profile name editor now has macOS selection direction/policies,
 page/paragraph commands, kill/yank, transpose and matched forced direction/raster
 geometry. It remains a prototype with native adapters and explicit transition
 and interaction gaps. [Editor details](rust-metal-editor.md).
-Address and other settings/service fields remain Views; folder names and color/emoji now use the replacement editor with committed-edit callbacks. Continue isolated windowed checks;
+Remaining settings/service fields use Views; address/palette, folder names and color/emoji now use replacement editors with committed-edit callbacks. Continue isolated windowed checks;
 manual signed-app/IME/VoiceOver/scale/RTL and actual profiling remain pending.
 [Full remaining plan](rust-metal-next-steps-2026-10-23.md).
 
@@ -53,7 +53,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Sidebar resizing, pinning, auto-hide, edge reveal | Rust drag/width bounds, shell/sidebar/grip geometry and auto-hide guards; Metal grip; native pin/show commands | Replace native window/event/cursor/AX adapters and edge-indicator painting; broaden input/accessibility coverage |
 | Workspace swipe/animation/cancellation | Rust gesture/preview/transition policy and Metal canvases; native event/CA completion and application commit adapters (automated UI checked; manual acceptance pending) | Run deferred browser/desktop acceptance; audit native fallback, cancellation, accessibility and scale |
 | Split headers/divider, focus, orientation, swap/close | Rust pane/bar layout, title text, menu/close input and divider drag; shared Metal rendering | Replace native View/Button/ResizeArea event, cursor and AX adapters; expand gesture/RTL/scale coverage |
-| Address/search palette, suggestions, providers, IME | Rust result selection/layout/text/icons, palette/input/static chrome geometry, Metal hints/errors; native Textfield/IME, provider/search controllers | Migrate remaining native containers/frame presentation; expand composition/accessibility/scale coverage |
+| Address/search palette, suggestions, providers, IME | Rust editor and result selection/layout/text/icons, palette/input/static chrome geometry, Metal input/hints/errors; explicit native IME/focus/AX and existing provider/search adapters | Migrate remaining native containers/frame presentation; expand composition/accessibility/scale coverage |
 | Command Center tabs/pins/workspaces/history/actions | Rust result selection/drawing; existing search/ranking and application commands | Replace remaining native containers/frame presentation and command adapters; preserve stale results and identity |
 | Profile management create/rename/delete | Rust controller, copy, validation, stable-ID selection, two-step delete and column/text layout; Metal static text and selectors; native input/popup/IME and storage services (automated UI checked; manual acceptance pending) | Migrate remaining native input nodes; verify IME, typography, action groups, stale confirmation, profile/session isolation and failed-write rollback |
 | Workspace create/edit settings | Rust form mode/validation/requests and column/text layout; Metal headings/help/status; native input, header row, appearance/editor services and storage (automated UI checked; manual acceptance pending) | Migrate remaining native controls/header/action rows and outer panel; verify profile changes, IME, async errors and persistence |
@@ -68,7 +68,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Import source selector | Rust selected state, prefix timeout/search, popup tokens, macOS key policy and closed-control geometry/scene; Metal canvas; native menu/IME/focus/AX/event adapters (automated UI checked; manual acceptance pending) | Verify popup lifecycle, typeahead, keyboard and VoiceOver, disabled/hide/capture, RTL/theme/scale and fallback; migrate remaining native adapters |
 | Workspace/managed profile selectors | Rust stable-ID reconciliation, prefix/menu state and scene; two Metal canvases; native popup/IME/focus/AX/event and font/color adapters (automated UI checked; manual acceptance pending) | Verify profile CRUD/assignment persistence, renamed/reordered/removed choices, stale menu callbacks, native popup/IME/AX, clipping and theme/scale/RTL; migrate remaining native adapters |
 | Time Machine | Views + application services | Rust presentation; preserve previews, validation, backups and restoration |
-| Workspace/profile name, color/emoji and folder-name editing | Rust UTF-16 state/history/IME, viewport and scene; CoreText geometry, Metal and CPU fallback; one native input/focus/AX/menu/clipboard/drag/dictionary adapter | Shared kill buffer, word drag/reversal and stationary edge scrolling verified; broaden actual Cocoa multi-click/vertical-pointer/IME/VoiceOver/complex bidi/scale/menu acceptance; other editors remain Views |
+| Workspace/profile name, color/emoji, folder-name and address/palette editing | Rust UTF-16 state/history/IME, viewport and scene; CoreText geometry, Metal and CPU fallback; one native input/focus/AX/menu/clipboard/drag/dictionary adapter | Shared kill buffer, word drag/reversal and stationary edge scrolling verified; broaden actual Cocoa multi-click/vertical-pointer/IME/VoiceOver/complex bidi/scale/menu acceptance; other editors remain Views |
 | Keyboard accessibility, VoiceOver, focus and tooltips | Native Views nodes | Explicit native accessibility adapter for Rust controls; no duplicate nodes |
 
 ## Verified milestones
@@ -481,3 +481,14 @@ remain. Passing the current tests establishes the tested milestone only.
   six skips each, **66 committed Python**; Rust sources match the previous 211-test
   run. Address/settings/service fields, remaining containers/forms, manual and
   performance acceptance remain. [Evidence](benchmarks/rust-folder-editor-checkpoint-2026-10-23.json).
+
+- **Address/palette Rust editor (2026-10-23):** Input state/drawing migrates with
+  larger borderless presentation and explicit committed/key callbacks. Suggestions,
+  keyword/command routing, actual navigation, profile/preconnect and stale-result
+  handling remain. Preedit is excluded from dispatch/results. Same-value insertion
+  notifies UI without redundant undo/revision changes. Full **128 Metal / 96 Views**,
+  six skips each, **214 Rust / 66 committed Python**, 180 SDK font/direction cases
+  plus raster passed. Initial Views synthetic IME key routing was corrected at the
+  application policy seam and remains recorded; real candidate windows/VoiceOver,
+  remaining settings/services/containers, performance and release checks stay open.
+  [Evidence](benchmarks/rust-address-editor-checkpoint-2026-10-23.json).

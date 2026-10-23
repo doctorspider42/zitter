@@ -1,11 +1,11 @@
 # Rust editors and remaining service work
 
-Workspace/profile name, color, emoji and folder-name fields now use the Rust model and CoreText/Metal editor
+Workspace/profile name, color/emoji, folder-name and address/palette fields now use the Rust model and CoreText/Metal editor
 when `--zitter-sidebar=rust-metal` is selected. They have one native View for
 window/input/focus/AX services and no Textfield child/model/RenderText. The Views
-backend keeps one real native Textfield per field. Workspace/profile/appearance
-fields use `EditorControl`; folders retain the original DialogModel Textfield.
-Neither has a wrapper or second editing model. Address input and other fields
+backend keeps one real native Textfield per field. Workspace/profile/appearance/
+address fields use `EditorControl`; folders retain the original DialogModel Textfield.
+Neither has a wrapper or second editing model. Other preferences/service fields
 still use Views.
 
 This is a live editor migration checkpoint, not full textfield parity or a
@@ -135,7 +135,7 @@ Remaining editor work before parity:
 - Inspect actual macOS VoiceOver and real IME candidate windows, complex clause/
   background/underline styles, dictionary and menu lifecycles, paste availability,
   focus/capture/touch, different scales/themes/directions and GPU loss/recovery.
-- Migrate address and other fields through the same service
+- Migrate remaining preferences/service fields through the same service
   contracts, preserving persisted data and domain authorization. Move remaining
   control policy out of native adapters where appropriate.
 - Measure actual CPU/GPU/cache/idle and drawable-presentation work. No end-to-end
@@ -238,3 +238,39 @@ limits/error/IME/stale context, tree and menu cases remain in the full inventory
 The Rust editor/scene sources are unchanged from the prior verified 211-case unit
 run; native compilation and the new focused/full GUI runs verify this binding.
 [Matching checkpoint](benchmarks/rust-folder-editor-checkpoint-2026-10-23.json).
+
+
+## Address and Command Center input
+
+The palette now uses the same Rust editor in Metal and one native Textfield via
+`NativeEditor` in Views. Committed/key callbacks replace the shell's Textfield
+controller coupling for this field. Existing up/down selection, Return resolution,
+Escape, command/keyword handling, history ranking, navigation and profile/preconnect
+services remain. Fixture helpers use the actual input clients instead of invoking
+controller methods after a programmatic SetText.
+
+`SetPresentation` supplies font size, horizontal inset, frame and fill. The palette
+retains `Font(3)`, zero inset and no field frame. Standard fields keep their original
+13px/8px framed defaults. CoreText input geometry, placeholder measurement, dictionary
+font and raster/cache metadata use the same requested size. Rust viewport padding
+is finite/clamped, and borderless scene primitives omit the edge. Quad ABI and
+production dependencies are unchanged. The window-free SDK harness now covers
+13/14/16/17px samples in all three directions (180 line cases), plus raster checks.
+
+Same-text nonempty insertion is now a user commit notification like native Views,
+without changing text revision or adding an undo entry. Dependent palette state
+therefore resets for a replacement paste even when its value is identical.
+Programmatic reset, preedit, cancellation and empty no-op insertion stay silent.
+
+Search dispatch checks current text and composition; result acceptance rejects
+preedit as well as stale query/profile. Composition keys belong to the platform
+IME. The synthetic test checks the application's `HandleAddressKey` policy seam;
+calling native Textfield::OnKeyPressed directly bypasses the OS filter and executes
+native edit commands, so it is not an equivalent IME simulation. That incorrect
+initial fixture failed in Views and was corrected. Real Cocoa typing, clear,
+Return/navigation and Escape remain tested in both backends; actual candidate-window
+acceptance is still manual. Empty marked-string and full IME termination paths
+also need reconciliation with the native adapter; this checkpoint covers nonempty
+preedit and explicit ClearCompositionText cancellation. The policy rejects hidden
+palette input.
+[Matching evidence](benchmarks/rust-address-editor-checkpoint-2026-10-23.json).

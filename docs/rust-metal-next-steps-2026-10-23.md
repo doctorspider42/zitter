@@ -1,6 +1,6 @@
 # Rust + Metal: remaining work and GUI checkpoint
 
-Snapshot: `84d032bf2f0d87c7196fe843347119c1cd8078d9`, 2026-10-23.
+Snapshot: `e17b856ce11e6d6994370998036b15f99e2f2c37`, 2026-10-23.
 This is a work plan, not a claim of functional parity. The detailed inventory is
 [the parity checklist](rust-metal-parity.md). Existing native behavior is preserved
 in many places where Views presentation and interaction still need replacement.
@@ -8,33 +8,29 @@ in many places where Views presentation and interaction still need replacement.
 ## Current checkpoint
 
 The full compiled automated browser/UI inventory passed for UI source
-`84d032bf2f0d87c7196fe843347119c1cd8078d9`:
+`e17b856ce11e6d6994370998036b15f99e2f2c37`:
 
 | Backend | Passed | Explicit skips | Failed / crashed |
 | --- | ---: | ---: | ---: |
-| Rust + Metal | 127 | 6 | 0 |
-| Views | 95 | 6 | 0 |
+| Rust + Metal | 128 | 6 | 0 |
+| Views | 96 | 6 | 0 |
 
 The complete run was serial, with one launcher job and no retries, using temporary
 fixture-owned profiles. Metal API validation was enabled. The 32 dedicated Metal
-cases are excluded from Views (133 Metal / 101 Views inventory). **66 Python
-tests from a clean archive** passed. The preceding **211 Rust tests
-(including 60 editor model tests)** remain matching evidence: both Rust sources
-are unchanged, and that unit run was not repeated for this native binding.
-The live checkout passed 68 Python tests, including two concurrent tests outside
-this UI commit. Optimized compilation, scoped GN/boundaries and a final no-work
-Ninja check passed. CoreText geometry/raster code is unchanged from the preceding
-verified checkpoint. [Full results and source/binary hashes](benchmarks/rust-folder-editor-checkpoint-2026-10-23.json).
+cases are excluded from Views (134 Metal / 102 Views inventory). **214 Rust tests
+(including 61 editor-model and five editor-scene tests), a standalone 61-case model
+run and 66 Python tests from a clean archive** passed. The live checkout passed
+68 Python tests including two concurrent cases outside the UI commit. Fresh
+CoreText SDK checks cover 180 font/direction cases plus raster; optimized build,
+GN/boundaries and final no-work Ninja checks passed.
+[Results and source/binary hashes](benchmarks/rust-address-editor-checkpoint-2026-10-23.json).
 
-The focused folder/editor gate and complete suite cover actual Cocoa typing and
-modal Return, Unicode, synthetic IME cancellation and input-client lifetime,
-existing nested folder create/rename/persistence, rollback/stale targets, tree/menu
-behavior and editor regressions in both backends. Original Views retains its native
-DialogModel Textfield. The initial focused gate exposed lost actual Cocoa typing/
-Return in both modal variants; installing the existing macOS keyboard router fixed
-it. A subsequent gate passed those checks but exposed an incorrect final test
-expectation: a new form preserves the original “Nowy folder” prefill. Only the
-expectation was corrected; both intermediate attempts are preserved in the report.
+The address/palette/keyword/shortcut/preconnect/editor gate passed in both backends.
+The first Metal gate was green; the initial Views fixture directly sent synthetic
+composing keys to the entire Textfield key handler, bypassing its OS IME filter.
+The fixture now checks the application key-policy seam during composition, while
+retaining actual Cocoa typing/clear/navigation/Escape. The failed attempt remains
+recorded. Actual candidate-window acceptance is still manual.
 
 Each backend explicitly skipped four opt-in performance scenarios, the real-user
 Arc import and the interactive one-hour manual harness. They are not counted as
@@ -54,7 +50,7 @@ The older failed/intermediate runs remain recorded in the
 
 1. **Text editing and IME.** Finish remaining native service/interaction parity for the live
    Rust workspace/profile name fields, then replace Views textfield layout/drawing
-   and editing in address search and remaining settings/service fields. Preserve UTF-16 selection, grapheme/word navigation, bidi affinity,
+   and editing in remaining settings/service fields. Preserve UTF-16 selection, grapheme/word navigation, bidi affinity,
    horizontal scrolling, composition/candidate geometry, undo/redo, clipboard,
    mouse/keyboard selection, drag/drop, context commands, focus and accessibility.
    Keep native IME/clipboard/accessibility as explicit platform adapters.
@@ -88,19 +84,20 @@ The older failed/intermediate runs remain recorded in the
    manifest and Apache-2.0/upstream notices. Keep the opt-in backend until parity
    and the performance comparison are established.
 
-## Folder-name editor migration now verified
+## Address/Command Center editor migration now verified
 
-The Metal folder modal uses the same Rust/CoreText/Metal editor as workspace/
-profile names and appearance fields. Rust folder validation/state/layout and the
-native modal title/buttons/default action remain, together with original domain
-create/rename/save services. The committed-edit callback updates form errors and
-cancels safely with the modal; the original Views branch stays native.
+The Metal address/palette field uses Rust editing, CoreText/Metal and its original
+larger borderless presentation. Committed/key callbacks retain suggestions,
+keyboard selection, command/keyword dispatch, navigation and profile/preconnect
+services. Preedit and stale text cannot dispatch new searches or enter results;
+same-value insertion notifies dependent UI without redundant undo/revision changes.
 [Implementation and remaining editor gaps](rust-metal-editor.md).
 
-Next: migrate the address editor and remaining settings/service fields, then
-continue form/container and service-panel ownership. Actual Cocoa multi-click,
-vertical pointer/complex bidi, IME/VoiceOver/manual release and real presentation
-profiling remain separate acceptance work.
+Next: reconcile empty marked-string/IME termination sequences with the native
+adapter, then migrate remaining settings/service fields and continue form/container and
+service-panel ownership. Complex native IME/VoiceOver, multi-click/bidi/pointer/
+menu/clipboard/scale/theme/GPU-recovery acceptance, real profiling and signed/manual
+release checks remain separate work areas.
 
 The seven work areas above remain open, including all remaining form/service UI,
 Views container ownership, manual acceptance and real presentation profiling.

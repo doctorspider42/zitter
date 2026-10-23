@@ -1220,3 +1220,21 @@ passed. Rust editor/scene sources match the preceding 211-case unit run; no repe
 Rust run or new geometry/performance claim. Address/settings/service fields and
 broader container/form/manual/release/performance work remain.
 [Matching report](benchmarks/rust-folder-editor-checkpoint-2026-10-23.json).
+
+
+## Rust address/Command Center input (2026-10-23)
+
+UI source `e17b856ce11e6d6994370998036b15f99e2f2c37` migrates palette editing to Rust/CoreText/Metal with
+its original larger borderless presentation. Explicit commit/key callbacks retain
+up/down selection, command/keyword/Return resolution, Escape, navigation and the
+existing profile/history/preconnect services. Search timers/results exclude preedit
+and stale text. Same-value insertion is a commit notification without a redundant
+text revision/undo record, matching native UI refresh behavior.
+
+Full **128 Metal / 96 Views**, six explicit skips each, **214 Rust / 66 committed
+Python**, 61 standalone model and 180 SDK font/direction cases plus raster passed.
+The initial Views synthetic composing-key fixture bypassed its OS IME filter and
+was corrected to test the application policy seam; actual Cocoa input/navigation
+remain covered and the failure is preserved. Real candidate windows, VoiceOver,
+remaining fields/forms/services/containers and performance/release checks remain.
+[Matching report](benchmarks/rust-address-editor-checkpoint-2026-10-23.json).
