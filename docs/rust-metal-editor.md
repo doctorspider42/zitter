@@ -75,20 +75,55 @@ and drop rejection, and fallback text ink. Tests use fixture profiles. The
 clipboard regression uses a restored asynchronous fake, so its copy/paste
 operations do not access the system clipboard.
 
+## macOS command and selection checkpoint
+
+Rust now owns macOS Retain/Extend/Caret reversal and directed/undirected selection
+state. A service selection chooses its active edge on the first keyboard motion;
+word movement without Shift advances beyond the appropriate selection edge.
+The native adapter supplies platform commands and CoreText visual positions.
+Page/document/paragraph movement, selected-range deletion, kill/yank and transpose
+are implemented. Native `INSERT_TEXT`, `SET_MARK` and `UNSELECT` edit-command enum
+values remain disabled, matching the current macOS Views baseline.
+
+The UI-thread-local Rust kill buffer is shared by Rust editors and survives
+field/context changes. Each successful kill replaces the previous fragment; undo
+restores the deletion selection. **The mixed Rust/Views migration currently has
+separate kill buffers.** Cross-control interoperability with still-native fields
+must be unified before complete compatibility can be claimed.
+
+Forced paragraph direction now reaches both cached input geometry and text tile
+rasterization, including the tile cache key. Toggling the same direction restores
+natural direction and retains explicit alignment as the native control does.
+The renderer normalizes CoreText's negative origins for RTL edge whitespace;
+caret, hit testing, selected spans and drawing use one bias. Hit testing uses
+binary search and preserves the stable affinity choice at coincident carets.
+
+The shared UI tests exercise actual Cocoa Ctrl+T, Ctrl+K, Ctrl+Y and Command+Z,
+selection reversal/page/paragraph/word motion, shared kill/yank across forms,
+transpose/undo/surrogates/combining sequences, RTL words, visual character motion
+inside mixed text, forced direction toggle and AX writing direction. The native
+SDK harness checks 15 line samples in natural/LTR/RTL (45 configurations),
+nearest-caret affinity, selection extents and forced-RTL raster/geometry alignment.
+[Exact source/binary evidence](benchmarks/rust-editor-commands-checkpoint-2026-10-23.json).
+
+The pinned Chromium `ui/views/features.gni` enables character-offset computation
+only on Windows (`supports_ax_text_offsets = is_win`). Those Windows arrays are
+not an unfinished requirement of the macOS Textfield baseline. This does not
+replace manual macOS VoiceOver and platform range/selection acceptance.
+
 Remaining editor work before parity:
 
-- Complete uncommon native commands (kill/yank, transpose, mark/unselect and page
-  movement), word/paragraph drag expansion and continuous selection scrolling at
-  the viewport edge; extend native key-policy/visual-word RTL coverage.
-- Complete native AX text offsets/VoiceOver geometry and inspect a real IME
-  candidate window, clause/background/underline styles, dictionary and menu
-  lifecycles and paste-availability validation at different scales/themes/directions. Current clause geometry uses
-  solid thin/thick underlines; complex decorations remain.
-- Expand native mouse capture/drag/touch and GPU-loss/recovery checks, measure
-  actual presentation/CPU/GPU/cache/idle work and optimize from those results.
-- Migrate folder/color/emoji/address and other fields using the same services,
-  retaining application persistence and domain authorization. Move remaining
-  control policy out of native event adapters where appropriate.
+- Unify the native/Rust kill-buffer service during the transition; complete
+  word/paragraph mouse-drag expansion and continuous selection scrolling at the
+  viewport edge, plus more complex visual-word bidi and native key-policy cases.
+- Inspect actual macOS VoiceOver and real IME candidate windows, complex clause/
+  background/underline styles, dictionary and menu lifecycles, paste availability,
+  focus/capture/touch, different scales/themes/directions and GPU loss/recovery.
+- Migrate folder/color/emoji/address and other fields through the same service
+  contracts, preserving persisted data and domain authorization. Move remaining
+  control policy out of native adapters where appropriate.
+- Measure actual CPU/GPU/cache/idle and drawable-presentation work. No end-to-end
+  speedup is inferred from passing tests or from hit-test algorithm complexity.
 
-No end-to-end speedup is inferred from passing tests. New project source remains
-Apache-2.0; no new crate or production third-party library was added.
+New project source remains Apache-2.0; no new crate or production third-party
+library was added.

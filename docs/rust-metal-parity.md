@@ -8,21 +8,21 @@ milestones to `origin/main` as they land. The opt-in switch remains
 
 ## Current execution policy
 
-Latest automated acceptance: UI source `c27d3e66f28842fff10e41999bd1dc121a8f2563` passed
-**119 Metal / 87 Views cases**, six explicit opt-in skips per backend, no failures
-or retries, from the complete 125-case inventory (93 applicable Views cases;
-32 dedicated Metal cases are excluded from the control backend). **182 Rust and
-61 Python tests**, the native CoreText harness, GN/boundaries and optimized
-app/test compilation also passed. See
-[the live name editor checkpoint](benchmarks/rust-name-editors-checkpoint-2026-10-23.json).
+Latest automated acceptance: UI source `8633a64f84b5b09ac7cb5a39307c8fa08044cf27` passed
+**121 Metal / 89 Views cases**, six explicit skips per backend, no failures or
+retries, from the complete 127-case inventory (95 applicable Views cases;
+32 dedicated Metal cases are excluded from the control backend). **201 Rust and
+61 Python tests**, the extended CoreText harness, GN/boundaries and optimized
+app/test compilation also passed.
+[Matching checkpoint](benchmarks/rust-editor-commands-checkpoint-2026-10-23.json).
 
-Workspace/profile name fields now use Rust editing/viewport state and CoreText/
-Metal presentation, with explicit native View/input/clipboard/menu/dictionary/AX
-adapters. The Views baseline retains native Textfields. This is the first live
-editor integration; [remaining native editor work](rust-metal-editor.md) is still
-open. Folder/color/emoji/address fields remain Views. Continue isolated windowed
-checks; manual signed-app/IME/VoiceOver/scale/RTL and actual presentation profiling
-remain pending. [Full remaining plan](rust-metal-next-steps-2026-10-23.md).
+The live workspace/profile name editor now has macOS selection direction/policies,
+page/paragraph commands, kill/yank, transpose and matched forced direction/raster
+geometry. It remains a prototype with native adapters and explicit transition
+and interaction gaps. [Editor details](rust-metal-editor.md).
+Folder/color/emoji/address fields remain Views. Continue isolated windowed checks;
+manual signed-app/IME/VoiceOver/scale/RTL and actual profiling remain pending.
+[Full remaining plan](rust-metal-next-steps-2026-10-23.md).
 
 ## How to read progress
 
@@ -67,7 +67,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Import source selector | Rust selected state, prefix timeout/search, popup tokens, macOS key policy and closed-control geometry/scene; Metal canvas; native menu/IME/focus/AX/event adapters (automated UI checked; manual acceptance pending) | Verify popup lifecycle, typeahead, keyboard and VoiceOver, disabled/hide/capture, RTL/theme/scale and fallback; migrate remaining native adapters |
 | Workspace/managed profile selectors | Rust stable-ID reconciliation, prefix/menu state and scene; two Metal canvases; native popup/IME/focus/AX/event and font/color adapters (automated UI checked; manual acceptance pending) | Verify profile CRUD/assignment persistence, renamed/reordered/removed choices, stale menu callbacks, native popup/IME/AX, clipping and theme/scale/RTL; migrate remaining native adapters |
 | Time Machine | Views + application services | Rust presentation; preserve previews, validation, backups and restoration |
-| Workspace/profile name editing | Rust UTF-16 state/history/IME, viewport and scene; CoreText geometry, Metal and CPU fallback; one native input/focus/AX/menu/clipboard/drag/dictionary adapter | Complete uncommon commands, edge-selection scrolling, AX text offsets and native IME/RTL/scale/menu acceptance; other editors remain Views |
+| Workspace/profile name editing | Rust UTF-16 state/history/IME, viewport and scene; CoreText geometry, Metal and CPU fallback; one native input/focus/AX/menu/clipboard/drag/dictionary adapter | Unify transitional kill buffers; complete word/paragraph drag, edge-selection scrolling and native macOS IME/VoiceOver/complex bidi/scale/menu acceptance; other editors remain Views |
 | Keyboard accessibility, VoiceOver, focus and tooltips | Native Views nodes | Explicit native accessibility adapter for Rust controls; no duplicate nodes |
 
 ## Verified milestones
@@ -430,3 +430,13 @@ remain. Passing the current tests establishes the tested milestone only.
   119 Metal / 87 Views passed**, six explicit skips each. Native uncommon commands,
   text offsets/manual acceptance, other editors and actual profiling remain open.
   [Matching report](benchmarks/rust-name-editors-checkpoint-2026-10-23.json).
+
+- macOS editor command/selection checkpoint: Retain/Extend/Caret, undirected
+  first-motion resolution, page/paragraph/document movement, shared Rust kill/
+  yank and transpose; forced CoreText direction/cache keys and normalized RTL
+  whitespace coordinates. Actual native chords and shared command cases pass in
+  both backends. **201 Rust / 61 Python and full 121 Metal / 89 Views passed**,
+  six skips each. Transitional native/Rust kill interoperability and remaining
+  drag/IME/VoiceOver/bidi/menu/scale acceptance stay open. Native unsupported
+  mark/unselect and Windows-only offset arrays are not presumed macOS gaps.
+  [Source and binary evidence](benchmarks/rust-editor-commands-checkpoint-2026-10-23.json).

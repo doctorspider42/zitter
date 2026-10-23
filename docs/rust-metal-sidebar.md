@@ -1129,3 +1129,22 @@ asynchronous fake clipboard, AX, stale/atomic drag/drop and CPU fallback ink.
 [Report and exact source/binary hashes](benchmarks/rust-name-editors-checkpoint-2026-10-23.json).
 [Remaining editor work](rust-metal-editor.md) includes uncommon commands, full AX/
 IME/RTL/scale/drag acceptance, remaining fields and actual presentation profiling.
+
+
+## macOS editor commands and direction (2026-10-23)
+
+UI source `8633a64f84b5b09ac7cb5a39307c8fa08044cf27` adds native-compatible selection
+Retain/Extend/Caret and undirected state, page/paragraph/document commands, Rust
+kill/yank and transpose, native Ctrl+T/K/Y checks, RTL/mixed visual character
+motion and forced-direction AX metadata. CoreText geometry and raster share
+paragraph direction/cache identity and normalized RTL whitespace origins; hit
+testing is logarithmic with stable affinity. Rust and Views kill buffers remain
+separate during the mixed transition and must be unified for full interoperability.
+
+**201 Rust / 61 Python**, 45 native line-direction configurations/raster checks
+and full **121 Metal / 89 Views** passed, six explicit opt-in skips each, no
+failures/retries, isolated profiles and Metal API validation. Manual acceptance,
+other editor fields, drag/edge scrolling/complex bidi/native menu services and
+actual CPU/GPU/presentation comparison remain. The native Mac baseline disables
+mark/unselect; Windows-only AX offset arrays are not a presumed macOS feature gap.
+[Matching report](benchmarks/rust-editor-commands-checkpoint-2026-10-23.json).
