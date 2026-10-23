@@ -3,7 +3,7 @@
 
 #include "base/memory/weak_ptr.h"
 #include "base/memory/raw_ptr.h"
-#include "ui/views/view_tracker.h"
+#include <memory>
 #include "content/public/browser/javascript_dialog_manager.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
@@ -41,15 +41,13 @@ class PageDialogs final : public content::JavaScriptDialogManager,
       const std::u16string&, const std::u16string&, bool, DialogClosedCallback);
   void Answer(bool accepted);
   void PostPromptAction(bool accepted);
-  void DialogBodyDestroyed(size_t generation);
   void FinishCheck(bool proceed);
   void BeforeUnloadFired(bool proceed) override;
   void DidStartNavigation(content::NavigationHandle*) override;
   void OnVisibilityChanged(content::Visibility) override;
   void RenderFrameDeleted(content::RenderFrameHost*) override;
   void WebContentsDestroyed() override;
-  base::WeakPtr<views::Widget> dialog_;
-  views::ViewTracker dialog_body_;
+  std::unique_ptr<views::Widget> dialog_;
   raw_ptr<EditorControl> prompt_ = nullptr;
   raw_ptr<content::RenderFrameHost> requesting_frame_ = nullptr;
   DialogClosedCallback dialog_callback_;

@@ -528,7 +528,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void ConfirmRemoveWorkspace(std::string id);
   bool creating_workspace_ = false;
   raw_ptr<views::View> workspace_appearance_ = nullptr;
-  base::WeakPtr<views::Widget> remove_workspace_dialog_;
+  std::unique_ptr<views::Widget> remove_workspace_dialog_;
   void RefreshWorkspaceSettings();
   void ToggleWorkspaceCreation();
   void RefreshRustWorkspacePresentation();

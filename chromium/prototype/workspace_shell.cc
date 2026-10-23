@@ -3453,7 +3453,7 @@ void WorkspaceShell::Detach() {
   history_timer_.Stop();
   import_preview_timer_.Stop();
   if (folder_dialog_) folder_dialog_->CloseNow();
-  if (remove_workspace_dialog_) remove_workspace_dialog_->CloseNow();
+  remove_workspace_dialog_.reset();
   link_menu_runner_.reset(); link_menu_.reset(); route_menu_.reset();
   workspace_menu_runner_.reset();
   workspace_menu_.reset();
@@ -6342,8 +6342,15 @@ bool WorkspaceShell::ShowRustWorkspaceNotice(std::string workspace,std::string t
       .AddOkButton(base::BindRepeating([](base::WeakPtr<WorkspaceNoticeView> notice){return !notice||notice->Accept();},weak),ui::DialogModel::Button::Params().SetLabel(base::UTF8ToUTF16(std::string(copy.accept))))
       .AddCancelButton(base::BindOnce([](base::WeakPtr<WorkspaceNoticeView> notice){if(notice)notice->Cancel();},weak),ui::DialogModel::Button::Params().SetLabel(base::UTF8ToUTF16(std::string(copy.cancel))));
   if(copy.default_cancel)builder.OverrideDefaultButton(ui::mojom::DialogButton::kCancel);
-  auto* prompt=views::DialogDelegate::CreateDialogWidget(views::BubbleDialogModelHost::CreateModal(builder.Build(),ui::mojom::ModalType::kWindow),widget_->GetNativeWindow(),widget_->GetNativeView());
-  prompt->SetColorModeOverride(widget_->color_mode_override());PreparePanelText(prompt->GetRootView());remove_workspace_dialog_=prompt->GetWeakPtr();prompt->Show();return true;
+  auto dialog=views::BubbleDialogModelHost::CreateModal(builder.Build(),ui::mojom::ModalType::kWindow);
+  dialog->SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
+  auto* prompt=views::DialogDelegate::CreateDialogWidget(std::move(dialog),widget_->GetNativeWindow(),widget_->GetNativeView());
+  prompt->SetColorModeOverride(widget_->color_mode_override());PreparePanelText(prompt->GetRootView());
+  remove_workspace_dialog_.reset(prompt);
+  prompt->MakeCloseSynchronous(base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,views::Widget::ClosedReason){
+    if(shell)shell->remove_workspace_dialog_.reset();
+  },weak_factory_.GetWeakPtr()));
+  prompt->Show();return true;
 #else
   return false;
 #endif
@@ -6402,10 +6409,14 @@ void WorkspaceShell::ConfirmRemoveWorkspace(std::string id) {
       .OverrideDefaultButton(ui::mojom::DialogButton::kCancel)
       .Build();
   auto dialog = views::BubbleDialogModelHost::CreateModal(std::move(model), ui::mojom::ModalType::kWindow);
+  dialog->SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
   auto* prompt = views::DialogDelegate::CreateDialogWidget(std::move(dialog), widget_->GetNativeWindow(), widget_->GetNativeView());
   prompt->SetColorModeOverride(widget_->color_mode_override());
   PreparePanelText(prompt->GetRootView());
-  remove_workspace_dialog_ = prompt->GetWeakPtr();
+  remove_workspace_dialog_.reset(prompt);
+  prompt->MakeCloseSynchronous(base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,views::Widget::ClosedReason){
+    if(shell)shell->remove_workspace_dialog_.reset();
+  },weak_factory_.GetWeakPtr()));
   prompt->Show();
 }
 

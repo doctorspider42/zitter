@@ -59,10 +59,8 @@ void PageDialogs::Show(content::RenderFrameHost* frame, content::JavaScriptDialo
   const auto generation=++dialog_generation_;
   requesting_frame_ = frame; unload_dialog_ = unload; dialog_callback_ = std::move(callback);
   auto dialog = std::make_unique<views::DialogDelegate>();
+  dialog->SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
   auto* body = dialog->SetContentsView(std::make_unique<views::View>());
-  dialog_body_.SetTrackEntireViewHierarchy(true);
-  dialog_body_.SetView(body);
-  dialog_body_.SetIsDeletingCallback(base::BindOnce(&PageDialogs::DialogBodyDestroyed,weak_factory_.GetWeakPtr(),generation));
   dialog->SetTitle((unload ? u"Opuścić stronę? · " : u"Strona: ") + base::UTF8ToUTF16(frame->GetLastCommittedOrigin().Serialize()));
   dialog->SetModalType(ui::mojom::ModalType::kWindow);
   dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk) |
@@ -94,18 +92,21 @@ void PageDialogs::Show(content::RenderFrameHost* frame, content::JavaScriptDialo
   dialog->SetAcceptCallbackWithClose(base::BindRepeating([](base::WeakPtr<PageDialogs> manager,size_t generation){
     if(!manager||manager->dialog_generation_!=generation)return true;
     if(manager->prompt_input()&&manager->prompt_->IsIMEComposing())return false;
-    manager->Answer(true);return true;
+    return true;
   },weak_factory_.GetWeakPtr(),generation));
-  const auto cancel=[](base::WeakPtr<PageDialogs> manager,size_t generation){
-    if(manager&&manager->dialog_generation_==generation)manager->Answer(false);
-  };
-  dialog->SetCancelCallback(base::BindOnce(cancel,weak_factory_.GetWeakPtr(),generation));
-  dialog->SetCloseCallback(base::BindOnce(cancel,weak_factory_.GetWeakPtr(),generation));
   auto* parent = views::Widget::GetWidgetForNativeWindow(web_contents()->GetTopLevelNativeWindow());
   auto* widget = views::DialogDelegate::CreateDialogWidget(std::move(dialog),
       web_contents()->GetTopLevelNativeWindow(), parent ? parent->GetNativeView() : gfx::NativeView());
   if (parent) widget->SetColorModeOverride(parent->color_mode_override());
-  dialog_ = widget->GetWeakPtr();
+  dialog_.reset(widget);
+  // Own the C++ widget synchronously. An AppKit sheet's hide animation may
+  // outlive the answer, but must not retain a text client or a stale prompt.
+  // This also handles forced native/parent destruction through CloseNow().
+  widget->MakeCloseSynchronous(base::BindOnce(
+      [](base::WeakPtr<PageDialogs> manager,size_t generation,views::Widget::ClosedReason reason){
+        if(manager&&manager->dialog_generation_==generation)
+          manager->Answer(reason==views::Widget::ClosedReason::kAcceptButtonClicked);
+      },weak_factory_.GetWeakPtr(),generation));
 #if BUILDFLAG(IS_MAC)
   InstallWorkspaceKeyboardRouting(widget,true);
 #endif
@@ -132,13 +133,6 @@ void PageDialogs::PostPromptAction(bool accepted) {
         if(accepted)delegate->AcceptDialog();else delegate->CancelDialog();
       },weak_factory_.GetWeakPtr(),dialog_generation_,accepted));
 }
-void PageDialogs::DialogBodyDestroyed(size_t generation) {
-  if(generation!=dialog_generation_)return;
-  // This notification precedes child destruction, including CloseNow paths
-  // that do not run a DialogDelegate close callback. Never retain a dead field
-  // or leave the renderer waiting for a response after the native UI is gone.
-  prompt_=nullptr;dialog_.reset();Answer(false);
-}
 void PageDialogs::Answer(bool accepted) {
   if (!dialog_callback_) return;
   ++dialog_generation_;
@@ -146,9 +140,8 @@ void PageDialogs::Answer(bool accepted) {
   auto* field=prompt_input();
   if(field){field->SetCallbacks({},{});if(!accepted)field->ClearCompositionText();}
   const std::u16string text = field && accepted ? std::u16string(field->GetText()) : std::u16string();
-  dialog_body_.SetIsDeletingCallback({});dialog_body_.SetView(nullptr);
   prompt_ = nullptr; requesting_frame_ = nullptr; unload_dialog_ = false;
-  if (dialog_) dialog_->Close(); dialog_.reset();
+  dialog_.reset();
   // Renderer callbacks can destroy pages. Never run them on a button's stack.
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(std::move(callback), accepted, text));
 }

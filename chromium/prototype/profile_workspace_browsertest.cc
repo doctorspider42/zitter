@@ -213,6 +213,12 @@ class ZitterProfilesBrowserTest : public InProcessBrowserTest {
     }
     window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
     ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+#if BUILDFLAG(IS_MAC)
+    // This executable is unbundled. Merely showing a widget does not reliably
+    // activate AppKit; native modal-close animations can otherwise stall. Use
+    // real foreground/key-window activation, keeping native animations enabled.
+    ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+#endif
     embedded_test_server()->ServeFilesFromSourceDirectory("zitter/testdata");
     embedded_test_server()->RegisterRequestMonitor(base::BindRepeating([](ZitterProfilesBrowserTest* self, const net::test_server::HttpRequest& request) {
       if (request.relative_url != "/storage_probe.html?routed") return;
