@@ -8,21 +8,21 @@ milestones to `origin/main` as they land. The opt-in switch remains
 
 ## Current execution policy
 
-Latest automated acceptance: UI source `425a23b0dc423b307fa95018e7772f841596ea2a`
-passed **130 Metal / 98 Views cases**, six explicit skips per backend, from the
-complete 136-case inventory (104 applicable Views cases; 32 dedicated Metal cases
+Latest automated acceptance: UI source `bb32e6f253953c5090a24bebf1d3ef8a382a74e9`
+passed **133 Metal / 101 Views cases**, six explicit skips per backend, from the
+complete 139-case inventory (107 applicable Views cases; 32 dedicated Metal cases
 excluded), with one job and no retries. **66 clean-archive Python tests**, scoped
 GN/boundaries and optimized compilation passed; the live checkout passed 68 Python
 cases including two concurrent cases outside this commit. Rust/scene/geometry
 sources match the preceding 214 Rust / 61 standalone / 180 SDK plus raster evidence,
 which was not repeated for this native adapter change.
-[Matching checkpoint](benchmarks/rust-preference-editors-checkpoint-2026-10-23.json).
+[Matching checkpoint](benchmarks/rust-tools-editors-checkpoint-2026-10-23.json).
 
 The live workspace/profile name editor now has macOS selection direction/policies,
 page/paragraph commands, kill/yank, transpose and matched forced direction/raster
 geometry. It remains a prototype with native adapters and explicit transition
 and interaction gaps. [Editor details](rust-metal-editor.md).
-Preferences search, six Chromium preference text fields and site origin now use replacement editors too. Remaining history, snapshot/Time Machine, shortcut and search-provider fields still use Views; settings containers and controls remain to migrate. Continue isolated windowed checks;
+All declared WorkspaceShell text-input roles now use replacement editors, including history, snapshot/Time Machine, shortcut recording and provider fields. The separate JavaScript page prompt still uses a native Textfield; settings/tools controls and containers remain to migrate. Continue isolated windowed checks;
 manual signed-app/IME/VoiceOver/scale/RTL and actual profiling remain pending.
 [Full remaining plan](rust-metal-next-steps-2026-10-23.md).
 
@@ -61,14 +61,14 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Workspace/profile form action buttons | Rust button/group geometry, shared pointer/key reducer and text/background/border/focus primitives; four Metal groups; native Button/AX/focus, platform font/metric/color and command adapters (automated UI checked; manual acceptance pending) | Replace native interaction nodes; verify dynamic labels, disabled styles, focus/keyboard/cancellation, clipping/fallback and service semantics |
 | Workspace color/emoji presets | Rust preset data/selection, row geometry, pointer/key reducer and scene primitives; two shared-context Metal canvases; native Button/AX/focus and text/grapheme/storage adapters (automated UI checked; manual acceptance pending) | Color/emoji editor migration verified; replace remaining native preset Button interaction ownership and broaden capture/visibility/IME/AX/theme/scale/persistence acceptance |
 | Workspace deletion confirmation | Rust captured-target notice state/copy and shared paragraph layout; Metal body/error text; native modal title/buttons and deletion/persistence services (automated UI checked; manual acceptance pending) | Migrate remaining host controls; verify default Cancel, beforeunload, stale targets, retained profile data, typography and screen bounds |
-| General preferences, shortcuts and site preferences | Rust/Metal search, six per-key text editors and site origin; native stores and remaining Views controls | Migrate sections, switches/pickers/buttons, shortcut recorder and outer containers; retain persisted profile/global configuration |
-| History, downloads, passwords and permissions | Views/native service adapters | Rust presentation/control layer; retain browser service and security semantics |
+| General preferences, shortcuts and site preferences | Rust/Metal editors including the shortcut field; native capture/admission and stores; remaining Views controls | Migrate sections, switches/pickers/buttons, form state and outer containers; retain profile/global configuration and recorder behavior |
+| History, downloads, passwords and permissions | Rust/Metal history query editor; native committed-query/service adapters and remaining Views lists/controls | Migrate result/control presentation and forms; retain browser service and security semantics |
 | Peek, promote/split, link/page menus and routing | Views/native adapters + application | Rust control routing, focus and dismissal; retain native page integration |
 | Import form and first-run import | Rust UI option/debounce/admission/controller state, copy, columns and Metal static/status/Apply text; native Button/AX/focus, header nodes, native popup/IME adapters and application import services (automated UI checked; manual acceptance pending) | Migrate remaining native header and input nodes; verify latest options, busy recovery, credentials opt-in, source immutability, first-run/persistence/rollback and runtime accessibility |
 | Import checkboxes | Rust checked state, shared pointer/key input, mark/label/RTL geometry and primitives; one Metal canvas; native Button/AX/focus/event and font/inset/color adapters (automated UI checked; manual acceptance pending) | Replace native interaction nodes; verify checked/default action, disabled/capture/context/visibility behavior, actual marks/typography, theme/scale and fallback |
 | Import source selector | Rust selected state, prefix timeout/search, popup tokens, macOS key policy and closed-control geometry/scene; Metal canvas; native menu/IME/focus/AX/event adapters (automated UI checked; manual acceptance pending) | Verify popup lifecycle, typeahead, keyboard and VoiceOver, disabled/hide/capture, RTL/theme/scale and fallback; migrate remaining native adapters |
 | Workspace/managed profile selectors | Rust stable-ID reconciliation, prefix/menu state and scene; two Metal canvases; native popup/IME/focus/AX/event and font/color adapters (automated UI checked; manual acceptance pending) | Verify profile CRUD/assignment persistence, renamed/reordered/removed choices, stale menu callbacks, native popup/IME/AX, clipping and theme/scale/RTL; migrate remaining native adapters |
-| Time Machine | Views + application services | Rust presentation; preserve previews, validation, backups and restoration |
+| Time Machine | Rust/Metal name/filter editors; native snapshot/restore services and remaining Views controls | Migrate form/picker/button presentation; preserve previews, validation, backups and restoration |
 | Workspace/profile name, color/emoji, folder-name and address/palette editing | Rust UTF-16 state/history/IME, viewport and scene; CoreText geometry, Metal and CPU fallback; one native input/focus/AX/menu/clipboard/drag/dictionary adapter | Shared kill buffer, word drag/reversal and stationary edge scrolling verified; broaden actual Cocoa multi-click/vertical-pointer/IME/VoiceOver/complex bidi/scale/menu acceptance; other editors remain Views |
 | Keyboard accessibility, VoiceOver, focus and tooltips | Native Views nodes | Explicit native accessibility adapter for Rust controls; no duplicate nodes |
 
@@ -507,3 +507,9 @@ remain. Passing the current tests establishes the tested milestone only.
 ## Settings text-input milestone
 
 Eight preferences fields now use the same Rust/Metal editor contract as the palette and workspace fields, retaining one real native Textfield per field in the Views baseline. Committed callbacks own search/dirty tracking; composing keys and save buttons cannot persist preedit. Unrelated refreshes preserve drafts/composition, while opening another profile reloads its authoritative values. The actual Cocoa/IME/profile test and complete matrix passed **130 Metal / 98 Views**, with six explicit skips per backend. Controls, containers, remaining service fields, manual platform acceptance and performance comparison remain open. [Evidence](benchmarks/rust-preference-editors-checkpoint-2026-10-23.json).
+
+## Tools text-input milestone
+
+All seven tools editor roles now use EditorControl: snapshot name, timeline filter, history query, shortcut chord and provider name/keyword/URL. WorkspaceShell no longer inherits TextfieldController. History/timeline keep a committed service query independent of marked text; a pending history request can finish during preedit without losing the committed query on cancellation. Deferred actions carry a form generation and workspace/profile identity. Recording exposes no text input while still receiving native accelerators and restores editing after capture/cancel.
+
+The 17-case gate and full **133 Metal / 101 Views** matrix passed in both backends, six explicit skips each. Three new scenarios cover actual Cocoa entry/save, composing buttons/keys, client destruction, stale-form/profile writes, committed history during preedit and reserved/valid/cancelled shortcut capture. Forms/containers, page prompt, broader OS acceptance and profiling remain open. [Evidence](benchmarks/rust-tools-editors-checkpoint-2026-10-23.json).

@@ -1,11 +1,11 @@
 # Rust editors and remaining service work
 
-Workspace/profile name, color/emoji, folder-name, address/palette and eight preferences fields now use the Rust model and CoreText/Metal editor
+Workspace/profile name, color/emoji, folder-name, address/palette, eight preferences and seven tools fields now use the Rust model and CoreText/Metal editor
 when `--zitter-sidebar=rust-metal` is selected. They have one native View for
 window/input/focus/AX services and no Textfield child/model/RenderText. The Views
 backend keeps one real native Textfield per field. Workspace/profile/appearance/
-address/preferences fields use `EditorControl`; folders retain the original DialogModel Textfield.
-Neither has a wrapper or second editing model. Remaining history, snapshot/Time Machine, shortcut and search-provider fields still use Views.
+address/preferences/tools fields use `EditorControl`; folders retain the original DialogModel Textfield.
+Neither has a wrapper or second editing model. All declared WorkspaceShell editor roles are migrated. The separate page JavaScript prompt still uses a Views Textfield.
 
 This is a live editor migration checkpoint, not full textfield parity or a
 performance acceptance. The remaining adapters/commands below are explicit.
@@ -134,7 +134,7 @@ Remaining editor work before parity:
 - Inspect actual macOS VoiceOver and real IME candidate windows, complex clause/
   background/underline styles, dictionary and menu lifecycles, paste availability,
   focus/capture/touch, different scales/themes/directions and GPU loss/recovery.
-- Migrate remaining service fields through the same service
+- Migrate remaining custom dialog/page-prompt fields through the same service
   contracts, preserving persisted data and domain authorization. Move remaining
   control policy out of native adapters where appropriate.
 - Measure actual CPU/GPU/cache/idle and drawable-presentation work. No end-to-end
@@ -307,3 +307,13 @@ The general preferences search, six per-key Chromium text preferences (font fami
 Only committed edits filter sections or mark a preference dirty. Programmatic reset, preedit and cancellation are silent. Enter/Escape use an application policy callback that rejects composition; both button/key saves also reject preedit. General refresh preserves a same-profile active composition even before it becomes dirty; profile changes and unavailable/managed values reset from the store as before. Switching workspace closes the panel; its cached controls refresh on reopening, as in Views.
 
 The new shared test uses actual Cocoa typing and Return/Escape, UTF-16 input clients, preedit suppression, animation refresh, canonical/invalid language values, personal/work reopening and a fixture-owned site exception. It verifies real Metal presentation and absence of a native child editor in the migrated language field. Managed-policy transition injection, broader OS candidate/undo/menu/focus acceptance and remaining service fields are still open. [Matching checkpoint](benchmarks/rust-preference-editors-checkpoint-2026-10-23.json).
+
+## History, Time Machine, provider and shortcut editors
+
+Seven tools roles now use the shared editor contract. WorkspaceShell has no TextfieldController inheritance or manual ContentsChanged entry point. Callbacks are detached before rebuilding the tools subtree, and tests verify old input-client weak references expire. Views retains one true native Textfield per role. Browser/profile history, snapshot, provider and shortcut stores remain existing native domain services.
+
+History and timeline maintain committed service-query strings. These are query identity, not shadow editing state. Preedit/cancel/reset cannot change them. The 150 ms history request can query and accept its committed value while the editor displays marked text; response admission still checks visibility, profile, committed query and limit, with existing service generation/cancellation protection. Timeline filtering changes only on committed edits.
+
+Posted button/key actions carry tools-generation and workspace/profile identity, and still require a visible current panel. Reopening a form invalidates the old action. Snapshot/shortcut saves reject active composition; provider actions check all three fields. The shortcut recorder explicitly cancels preedit and sets read-only/TEXT_INPUT_TYPE_NONE while recording so an IME cannot consume a chord as text. Native accelerator validation/capture, reserved-key rejection, Escape cancellation and explicit save remain; capture/cancel restore text input.
+
+Three shared scenarios exercise actual Cocoa events, Unicode snapshots/providers, validation, composing key/button suppression, stale form/profile actions, destruction, delayed committed history during preedit and recorder admission/cancel/save. The separate page prompt, form/control containers, broader native menu/undo/focus/IME/AX acceptance and actual performance remain open. [Checkpoint](benchmarks/rust-tools-editors-checkpoint-2026-10-23.json).
