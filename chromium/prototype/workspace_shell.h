@@ -2,6 +2,7 @@
 #define ZITTER_CHROMIUM_PROTOTYPE_WORKSPACE_SHELL_H_
 
 #include <array>
+#include <cstdint>
 #include <memory>
 #include <map>
 #include <set>
@@ -66,6 +67,7 @@ struct ShellTab {
   GURL url;
   size_t index = 0;
   std::string pin_id;
+  std::array<uint64_t,2> identity{};  // Opaque 128-bit page token; no per-update string formatting.
   bool operator==(const ShellTab&) const = default;
 };
 
@@ -324,6 +326,8 @@ class WorkspaceShell final : public ui::EventHandler,
   views::ScrollView* tab_scroll_view() const { return tab_scroll_; }
   void BuildWorkspaceMenu(std::string id);
   void BuildFolderMenu(std::string parent = {});
+  void BuildTabMenu(std::optional<size_t> tab,std::string pin = {});
+  ui::SimpleMenuModel* tab_context_menu_for_testing() const {return workspace_menu_.get();}
   void RequestNewFolder(std::string workspace, std::string parent = {});
   void RequestRenameFolder(std::string workspace, std::string folder);
   void RequestDeleteFolder(std::string workspace, std::string folder);
@@ -449,9 +453,15 @@ class WorkspaceShell final : public ui::EventHandler,
   void ExecuteCommand(int command_id, int event_flags) override;
   void RenameSelectedProfile();
   void QueueSplit(std::optional<size_t> tab, std::string pin);
+  struct ResolvedRowTarget { bool valid; std::optional<size_t> tab; std::string pin; };
+  ResolvedRowTarget ResolveSidebarTarget(std::string_view workspace,std::array<uint64_t,2> identity,std::string_view pin) const;
+  void HandleSidebarDrop(std::string workspace,std::optional<size_t> tab,std::array<uint64_t,2> identity,std::string pin,gfx::Point point);
+  void QueueTabCommand(int command);
+  bool RustTabCommandEnabled(int command) const;
   // Menu for context_tab_/context_pin_, at a screen point.
   void ShowTabMenu(gfx::Point point, ui::mojom::MenuSourceType source_type);
   std::optional<size_t> context_tab_;
+  std::array<uint64_t,2> context_tab_identity_{};
   std::string context_pin_;
   void SubmitWorkspace(bool add);
   void ImportSelectionChanged();

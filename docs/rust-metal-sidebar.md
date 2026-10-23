@@ -504,3 +504,34 @@ disable, hide and window reflow, followed by ordinary Metal restoration. Actual 
 ordering, CA callbacks, cancellation, missing drawables and visual quality still
 require the requested GUI checkpoint. This is not a measured performance gain.
 See [switch verification](benchmarks/rust-workspace-switch-headless-2026-10-23.json).
+
+
+Tab/pin context menus now consume a Rust command/label plan in the opt-in backend.
+The plan preserves folder/Peek ordering, pair/unpaired actions, orientation-aware
+labels and HTTP-only rule entries. URL and rule semantics remain native; only
+an HTTP eligibility flag crosses the Rust boundary. Native popup presentation
+and native View-to-item lookup remain adapters.
+
+Rust also owns target resolution, split-side action availability, typed command
+selection and the existing physical right-half drop policy. Menu and drop tasks
+revalidate configuration/busy state, source workspace and item existence before
+calling application commands. Queued menu actions resolve a surviving page at
+its current index and reject a removed page even if its old index/URL is reused.
+They respect split membership/direction and the last-tab close guard.
+
+The native page-data adapter now carries the full opaque 128-bit WebContents
+unique token as two fixed-size integers, avoiding per-update string formatting
+and allocation. No browser object, URL or profile crosses into Rust. Native row
+caches include that identity in structure comparisons so replacement pages get
+fresh callbacks. Pins retain their existing stable IDs; folders cannot become
+split-drop targets. Cached drop callbacks also retain their source workspace.
+
+Non-windowed verification passed **68 Rust tests and 59 Python tests**. The new
+`RowMenuPlansAndQueuedIdentitySurviveReindex` browser case is compiled but not run.
+It builds menu models without showing a popup, but its browser fixture opens a
+window, so it remains deferred with the other GUI tests. It checks index shifts,
+removed/replaced targets, workspace changes, split-side availability and vertical
+labels. Actual popup interaction, drags, AX/keyboard behavior and profile/session
+regressions still require the checkpoint. The default Views menu plan and native
+command path remain for control comparison. See
+[row menu verification](benchmarks/rust-row-menu-headless-2026-10-23.json).

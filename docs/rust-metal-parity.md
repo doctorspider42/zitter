@@ -17,7 +17,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | --- | --- | --- |
 | Live tab/pin/folder/split text and card drawing | Rust display list + Metal; CoreText text shaping | Expand focus/disabled/theme/scale coverage; replace native animation snapshots |
 | Row title/detail/close geometry | Rust in opt-in backend, shared with display list | Replace native interaction containers; keep explicit platform font/accessibility adapters |
-| Row mouse/key activation, drag threshold, latched drag, cancellation and close visibility | Rust input reducer in opt-in backend; native event/focus/AX adapter | Preserve native default action; migrate drop target policy and replace Button containers |
+| Row mouse/key activation, drag threshold, latched drag, cancellation and close visibility | Rust input reducer in opt-in backend; native event/focus/AX adapter | Preserve native default action; replace Button containers and verify migrated drop/menu routing |
 | Next/previous tab wrapping | Rust; existing configurable key dispatch | Preserve page shortcut precedence and editing/IME behavior |
 | Vertical list/folder columns and full content extent | Rust via native View measurement/bounds adapter | Verify collapse/resize against Views; replace the native hierarchy with stable Rust item identities |
 | Folder hierarchy, collapse state, indentation wrappers and split tile geometry/placement | Rust tree/tab plans keyed by workspace/item IDs; native View/measurement/AX adapters | Replace native node containers and viewport/clipping adapters |
@@ -25,7 +25,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Vertical/horizontal scrollbar geometry, range normalization, thumb drag/snap/cancellation and drawing | Rust + shared Metal canvas; native ScrollBar/View, key/menu/AX and platform color adapters | Replace native nodes and track-repeat/menu dispatch; dedicated menu/VoiceOver/scale coverage |
 | Selection, close/reopen, title changes, pinned navigation | Rust row/close input into existing application callbacks; native Button/AX adapters | Migrate remaining command routing and containers; preserve persistence and last-tab rules |
 | Folder expand/collapse and tree visibility; create/rename/delete and nested pins | Rust tree state/layout; application persistence and native menu/editing adapters | Rust editing forms; preserve failed writes and validation rollback |
-| Tab/pin context menus and drag to split | Views event routing + application commands | Rust target/action routing; retain native menus and drop policy |
+| Tab/pin context menus and drag to split | Rust menu composition, stable-identity target/action resolution and drop geometry; native event/popup and application adapters (GUI checkpoint pending) | Verify menu/drag/stale-target/RTL coverage; replace native View identity lookup/interaction nodes |
 | New Tab action and configurable shortcut hint | Rust text/icon/hint layout, width alignment and input; shared Metal surface; native outer placement/focus/AX adapter | Replace the native Button container; expand keyboard/appearance coverage |
 | Address pill | Rust host/path layout, GPU icon/outline/text and shared input reducer; native outer placement/focus/AX adapter | Replace native Button container; retain address/search/IME service |
 | Workspace heading and emoji text | Rust display list + Metal; native static-text accessibility adapter | Replace outer native View placement; expand VoiceOver/scale coverage |
@@ -206,7 +206,8 @@ binaries and inspect the matching signed isolated app. In particular, exercise
 `CocoaSwipesRepeatWithoutMouseMovement`, `SidebarRemainsOpenWhileSpacesSlide`,
 `MetalReturnsAfterWorkspaceAnimation`,
 `SwipePreviewUsesMetalWithoutNativeSnapshots`,
-`WorkspaceSwitchUsesPresentedMetalSceneAndCancels`, sidebar hide/cancel, workspace changes
+`WorkspaceSwitchUsesPresentedMetalSceneAndCancels`,
+`RowMenuPlansAndQueuedIdentitySurviveReindex`, sidebar hide/cancel, workspace changes
 while committing and the prior palette regressions. Verify vertical scrolling,
 repeated stationary-cursor gestures, momentum, reduced motion, Unicode previews
 and the return of Metal after settling. Preserve the normal application/profile.
@@ -238,6 +239,14 @@ and the return of Metal after settling. Preserve the normal application/profile.
   GPU resources. Native input/AX and workspace commands remain adapters. This
   stage has non-windowed verification only; see
   [switch verification](benchmarks/rust-workspace-switch-headless-2026-10-23.json).
+
+- Tab/pin menu composition, split-side availability, typed tab/split command
+  selection and the physical right-half drop target now use Rust. Opaque 128-bit
+  page tokens let queued actions follow a tab after index shifts and reject
+  deleted/replaced pages or foreign workspaces. Native adapters keep popup
+  presentation, View-to-row lookup, URL/rule semantics and browser callbacks.
+  The new regression is compiled but deferred; see
+  [row menu verification](benchmarks/rust-row-menu-headless-2026-10-23.json).
 
 ## Completion gates
 

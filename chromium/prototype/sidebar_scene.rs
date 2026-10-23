@@ -3,6 +3,15 @@
 // remain in WorkspaceShell. No URLs, profiles or WebContents cross this ABI.
 #[cxx::bridge(namespace = "zitter::sidebar")]
 mod ffi {
+    struct MenuTab { index: usize, high: u64, low: u64 }
+    struct RowTarget { valid: bool, has_tab: bool, tab: usize, pin: String }
+    struct TabMenuState {
+        ready: bool, busy: bool, valid: bool, tab: usize, has_tab: bool,
+        split: bool, first: usize, has_first: bool, second: usize, has_second: bool,
+        vertical: bool, tab_count: usize, http: bool,
+    }
+    struct TabMenuEntry { command: u32, label: String }
+    enum SidebarAction { None, OpenSplit, CloseSplit, MoveFirst, MoveSecond, ToggleOrientation, CloseTab }
     // kind: 0 row, 1 section label, 2 split pair (three consecutive items), 3 gap.
     struct PreviewRow { index: usize, kind: u32, depth: i32, height: i32 }
     struct PreviewPlacement { index: usize, bounds: Rect, clip: Rect }
@@ -52,6 +61,11 @@ mod ffi {
         text: String, font_size: f32, bold: bool, middle: bool, center: bool, clip: FloatRect,
     }
     extern "Rust" {
+        fn resolve_row_target(source: &str, current: &str, high: u64, low: u64, pin: &str, tabs: &[MenuTab], pins: &[TreeNode]) -> RowTarget;
+        fn sidebar_drop_accepts(bounds: Rect, x: i32, y: i32, allowed: bool) -> bool;
+        fn tab_context_menu(state: &TabMenuState) -> Vec<TabMenuEntry>;
+        fn tab_menu_enabled(command: u32, state: &TabMenuState) -> bool;
+        fn tab_menu_action(command: u32, state: &TabMenuState) -> SidebarAction;
         type WorkspaceSwipe;
         fn new_workspace_swipe() -> Box<WorkspaceSwipe>;
         fn event(self: &mut WorkspaceSwipe, x: f32, y: f32, width: i32, index: i32, count: i32,
@@ -220,6 +234,42 @@ fn swipe_layout(position:f64,count:i32,width:i32)->ffi::SwipeLayout {
         for index in (center-1).max(0)..=(center+1).min(count-1){pages.push(ffi::SwipePage{index,x:(index as f64-position)*width.max(0) as f64});}
     }
     ffi::SwipeLayout{center,pages}
+}
+
+// Stable opaque WebContents UI identities, never browser objects or URLs.
+// A surviving tab can move to another index; a reused index is a different target.
+fn resolve_row_target(source:&str,current:&str,high:u64,low:u64,pin:&str,tabs:&[ffi::MenuTab],pins:&[ffi::TreeNode])->ffi::RowTarget {
+    let none=||ffi::RowTarget{valid:false,has_tab:false,tab:0,pin:String::new()};
+    if source.is_empty()||source!=current||((high==0&&low==0)==pin.is_empty()){return none();}
+    if high!=0||low!=0{
+        if let Some(tab)=tabs.iter().find(|t|t.high==high&&t.low==low){return ffi::RowTarget{valid:true,has_tab:true,tab:tab.index,pin:String::new()};}
+    } else if pins.iter().any(|p|p.id==pin&&!p.folder){return ffi::RowTarget{valid:true,has_tab:false,tab:0,pin:pin.into()};}
+    none()
+}
+fn sidebar_drop_accepts(bounds:ffi::Rect,x:i32,y:i32,allowed:bool)->bool {
+    if !allowed||bounds.width<=0||bounds.height<=0{return false;}
+    let left=bounds.x as i64;let top=bounds.y as i64;let x=x as i64;let y=y as i64;
+    x>=left+bounds.width as i64/2 && x<left+bounds.width as i64 && y>=top && y<top+bounds.height as i64
+}
+fn tab_menu_paired(s:&ffi::TabMenuState)->bool{s.valid&&s.has_tab&&s.split&&((s.has_first&&s.first==s.tab)||(s.has_second&&s.second==s.tab))}
+fn tab_menu_enabled(command:u32,s:&ffi::TabMenuState)->bool {
+    if !s.valid||!s.ready||s.busy{return false;}
+    let paired=tab_menu_paired(s);
+    match command {5=>!paired,6|9=>paired,7=>paired&&s.has_second&&s.second==s.tab,8=>paired&&s.has_first&&s.first==s.tab,10=>s.has_tab&&s.tab_count>1,_=>false}
+}
+fn tab_menu_action(command:u32,s:&ffi::TabMenuState)->ffi::SidebarAction {
+    use ffi::SidebarAction as A;if !tab_menu_enabled(command,s){return A::None;}
+    match command{5=>A::OpenSplit,6=>A::CloseSplit,7=>A::MoveFirst,8=>A::MoveSecond,9=>A::ToggleOrientation,10=>A::CloseTab,_=>A::None}
+}
+fn tab_context_menu(s:&ffi::TabMenuState)->Vec<ffi::TabMenuEntry> {
+    let mut entries=Vec::new();let mut add=|command,label:&str|entries.push(ffi::TabMenuEntry{command,label:label.into()});
+    add(36,"Nowy folder…");add(0,"");add(20,"Otwórz w Peek");
+    if tab_menu_paired(s){
+        add(7,if s.vertical{"Przesuń w górę"}else{"Przesuń w lewo"});add(8,if s.vertical{"Przesuń w dół"}else{"Przesuń w prawo"});add(0,"");
+        add(9,if s.vertical{"Podział poziomy (obok siebie)"}else{"Podział pionowy (jedna nad drugą)"});add(0,"");add(6,"Wyjmij kartę ze splitu");add(10,"Zamknij kartę");
+    } else {add(5,"Otwórz obok w Split View");}
+    if s.http{add(0,"");add(23,"Zawsze otwieraj tę domenę tutaj");add(24,"Usuń regułę dla tej domeny");}
+    entries
 }
 
 fn workspace_switch_motion(previous:i32,current:i32,visible:bool,enabled:bool,reduced:bool)->ffi::WorkspaceMotion {
@@ -1069,6 +1119,38 @@ mod tests {
             assert_eq!(icon.shape,glyph-1);assert_eq!((icon.x,icon.y,icon.width,icon.height),(8.0,8.0,16.0,16.0));
             assert!(ops.iter().all(|p|p.text.is_empty()));
         }
+    }
+    fn menu_state()->ffi::TabMenuState{ffi::TabMenuState{ready:true,busy:false,valid:true,tab:7,has_tab:true,split:true,first:3,has_first:true,second:7,has_second:true,vertical:false,tab_count:3,http:true}}
+    #[test] fn row_targets_follow_identity_across_reindex_and_reject_reused_slots() {
+        let tabs=vec![ffi::MenuTab{index:0,high:1,low:3},ffi::MenuTab{index:1,high:1,low:2}];
+        let t=resolve_row_target("work","work",1,2,"",&tabs,&[]);assert!(t.valid&&t.has_tab);assert_eq!(t.tab,1);
+        let tabs=vec![ffi::MenuTab{index:0,high:2,low:2}];assert!(!resolve_row_target("work","work",1,2,"",&tabs,&[]).valid);
+        assert!(!resolve_row_target("work","personal",2,2,"",&tabs,&[]).valid);
+    }
+    #[test] fn row_targets_reject_folders_ambiguity_missing_and_empty_workspace() {
+        let pins=vec![ffi::TreeNode{id:"folder".into(),parent:String::new(),folder:true},ffi::TreeNode{id:"pin".into(),parent:String::new(),folder:false}];
+        let t=resolve_row_target("work","work",0,0,"pin",&[],&pins);assert!(t.valid&&!t.has_tab);assert_eq!(t.pin,"pin");
+        for (source,high,low,pin) in [("work",0,0,"folder"),("work",0,0,"missing"),("work",1,2,"pin"),("work",0,0,""),("",0,0,"pin")] {assert!(!resolve_row_target(source,"work",high,low,pin,&[],&pins).valid);}
+    }
+    #[test] fn sidebar_drop_uses_physical_right_half_and_exclusive_edges() {
+        let r=||ffi::Rect{x:-20,y:30,width:101,height:50};
+        assert!(!sidebar_drop_accepts(r(),29,30,true));assert!(sidebar_drop_accepts(r(),30,30,true));assert!(sidebar_drop_accepts(r(),80,79,true));
+        assert!(!sidebar_drop_accepts(r(),81,79,true));assert!(!sidebar_drop_accepts(r(),30,80,true));assert!(!sidebar_drop_accepts(r(),30,29,true));assert!(!sidebar_drop_accepts(r(),30,30,false));
+        assert!(!sidebar_drop_accepts(ffi::Rect{x:0,y:0,width:0,height:50},0,0,true));
+        assert!(sidebar_drop_accepts(ffi::Rect{x:i32::MAX-20,y:0,width:100,height:20},i32::MAX,0,true)==false);
+    }
+    #[test] fn tab_menu_preserves_order_labels_and_orientation() {
+        let mut s=menu_state();let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,0,20,7,8,0,9,0,6,10,0,23,24]);assert_eq!(entries[3].label,"Przesuń w lewo");
+        s.vertical=true;let entries=tab_context_menu(&s);assert_eq!(entries[3].label,"Przesuń w górę");assert_eq!(entries[6].label,"Podział poziomy (obok siebie)");
+        s.has_tab=false;s.http=false;let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,0,20,5]);
+    }
+    #[test] fn tab_menu_actions_revalidate_split_side_readiness_and_last_tab() {
+        use ffi::SidebarAction as A;let mut s=menu_state();
+        assert!(matches!(tab_menu_action(7,&s),A::MoveFirst));assert!(matches!(tab_menu_action(8,&s),A::None));assert!(matches!(tab_menu_action(9,&s),A::ToggleOrientation));
+        s.tab=3;assert!(matches!(tab_menu_action(8,&s),A::MoveSecond));assert!(matches!(tab_menu_action(7,&s),A::None));
+        s.split=false;assert!(matches!(tab_menu_action(6,&s),A::None));assert!(matches!(tab_menu_action(5,&s),A::OpenSplit));
+        s.tab_count=1;assert!(matches!(tab_menu_action(10,&s),A::None));s.tab_count=2;assert!(matches!(tab_menu_action(10,&s),A::CloseTab));
+        for mode in 0..3 {s.valid=mode!=0;s.ready=mode!=1;s.busy=mode==2;for command in 5..=10 {assert!(matches!(tab_menu_action(command,&s),A::None));}}
     }
     #[test] fn workspace_switch_motion_preserves_direction_and_duration() {
         let next=workspace_switch_motion(0,3,true,true,false);assert!(next.enabled);assert_eq!((next.offset,next.duration_ms),(32.0,180));

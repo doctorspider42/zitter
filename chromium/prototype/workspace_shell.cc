@@ -2964,7 +2964,7 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
       cache.split_tabs == state_.split_tabs &&
       std::equal(cache.tabs.begin(), cache.tabs.end(), state_.tabs.begin(),
           [](const ShellTab& a, const ShellTab& b) {
-            return a.index == b.index && a.pin_id == b.pin_id;
+            return a.index == b.index && a.pin_id == b.pin_id && a.identity == b.identity;
           });
   if (!same_structure) {
     if (cache.pin_pair) {
@@ -2984,13 +2984,9 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
       auto host = HostLabel(tab.url);
       spec.monogram = base::i18n::ToUpper((host.empty() ? tab.title : host).substr(0, 1));
       spec.monogram_color = kMonogramColors[base::FastHash(base::UTF16ToUTF8(host)) % kMonogramColors.size()];
-      spec.drop = base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, size_t index, gfx::Point point) {
-        if (!shell) return;
-        auto bounds = shell->content_host_->GetBoundsInScreen();
-        if (bounds.Contains(point) && point.x() >= bounds.CenterPoint().x()) {
-          shell->QueueSplit(index, {});
-        }
-      }, weak_factory_.GetWeakPtr(), tab.index);
+      spec.drop=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::string workspace,size_t index,std::array<uint64_t,2> identity,gfx::Point point){
+        if(shell)shell->HandleSidebarDrop(std::move(workspace),index,std::move(identity),{},point);
+      },weak_factory_.GetWeakPtr(),state_.workspace_id,tab.index,tab.identity);
       if (state_.tabs.size() > 1) spec.close = base::BindRepeating(callbacks_.close_tab, tab.index);
       cache.tab_buttons[tab.index] = parent->AddChildView(std::make_unique<RowButton>(
           base::BindRepeating(callbacks_.select_tab, tab.index), std::move(spec)));
@@ -3764,12 +3760,9 @@ void WorkspaceShell::AppendPinnedItems(views::View* root, const std::vector<Pinn
       spec.icon = &vector_icons::kFolderFilledIcon;
       spec.title = (entry.collapsed ? u"▸ " : u"▾ ") + spec.title;
     } else {
-      spec.drop = base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, std::string id, gfx::Point point) {
-        if (!shell) return;
-        auto bounds = shell->content_host_->GetBoundsInScreen();
-        if (bounds.Contains(point) && point.x() >= bounds.CenterPoint().x())
-          shell->QueueSplit(std::nullopt, std::move(id));
-      }, weak_factory_.GetWeakPtr(), pin->id);
+      spec.drop=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::string workspace,std::string id,gfx::Point point){
+        if(shell)shell->HandleSidebarDrop(std::move(workspace),std::nullopt,{},std::move(id),point);
+      },weak_factory_.GetWeakPtr(),workspace,pin->id);
       spec.monogram = base::i18n::ToUpper(spec.title.substr(0, 1));
       spec.monogram_color = kMonogramColors[base::FastHash(pin->url.host()) % kMonogramColors.size()];
     }
@@ -3856,6 +3849,16 @@ constexpr int kClearEmoji = 35;
 constexpr int kColorBase = 40;
 constexpr int kEmojiBase = 50;
 constexpr int kProfileCommandBase = 100;
+#if BUILDFLAG(IS_MAC)
+// Rust plans use the established application command IDs; fail compilation if
+// the native IDs change without updating the Rust UI contract.
+static_assert(kOpenSplit==5&&kCloseSplit==6&&kMoveLeft==7&&kMoveRight==8&&kToggleVertical==9&&kCloseTab==10&&kLinkPeek==20&&kRuleHere==23&&kRemoveRule==24&&kNewFolder==36);
+sidebar::TabMenuState RowMenuState(const ShellState& state,std::optional<size_t> tab,bool valid,bool http) {
+  sidebar::TabMenuState out{};out.ready=state.configuration_ready;out.busy=state.profiles_busy;out.valid=valid;out.tab=tab.value_or(0);out.has_tab=tab.has_value();
+  out.split=state.split;out.first=state.split_tabs[0].value_or(0);out.has_first=state.split_tabs[0].has_value();out.second=state.split_tabs[1].value_or(0);out.has_second=state.split_tabs[1].has_value();
+  out.vertical=state.split_vertical;out.tab_count=state.tabs.size();out.http=http;return out;
+}
+#endif
 }
 
 void WorkspaceShell::SetPeekTitle(std::u16string title) { peek_title_->SetText(u"Peek · " + title); }
@@ -3898,7 +3901,7 @@ void WorkspaceShell::BuildWorkspaceMenu(std::string id) {
   workspace_menu_runner_.reset();
   workspace_menu_.reset();
   profile_menu_.reset();
-  context_tab_.reset();
+  context_tab_.reset();context_tab_identity_={};
   context_pin_.clear();
   context_workspace_id_ = std::move(id);
   menu_profiles_ = state_.profiles;
@@ -3930,6 +3933,7 @@ void WorkspaceShell::BuildWorkspaceMenu(std::string id) {
 }
 
 void WorkspaceShell::BuildFolderMenu(std::string parent) {
+  context_tab_.reset();context_tab_identity_={};context_pin_.clear();
   workspace_menu_runner_.reset();
   workspace_menu_ = std::make_unique<ui::SimpleMenuModel>(this);
   folder_parent_id_ = std::move(parent);
@@ -4023,7 +4027,7 @@ void WorkspaceShell::ShowFolderSaveError() {
 
 void WorkspaceShell::ShowContextMenuForViewImpl(views::View* source, const gfx::Point& point,
                                                ui::mojom::MenuSourceType source_type) {
-  context_tab_.reset(); context_pin_.clear();
+  context_tab_.reset(); context_pin_.clear();context_tab_identity_={};
   if (source == url_pill_) {
     if (state_.url.SchemeIsHTTPOrHTTPS()) ShowLinkMenu(state_.url, state_.workspace_id, point);
     return;
@@ -4077,14 +4081,24 @@ views::Button* WorkspaceShell::split_pane_button(bool right, bool close) const {
   return close ? bar->close() : bar->menu();
 }
 
-void WorkspaceShell::ShowTabMenu(gfx::Point point, ui::mojom::MenuSourceType source_type) {
-  {
+void WorkspaceShell::BuildTabMenu(std::optional<size_t> target_tab,std::string target_pin) {
+  context_tab_=target_tab;context_pin_=std::move(target_pin);context_tab_identity_={};
+  if(target_tab)for(const auto& row:state_.tabs)if(row.index==*target_tab){context_tab_identity_=row.identity;break;}
     workspace_menu_runner_.reset();
     workspace_menu_ = std::make_unique<ui::SimpleMenuModel>(this);
     GURL url;
     if (context_tab_) for (const auto& tab : state_.tabs) if (tab.index == *context_tab_) url = tab.url;
     if (!context_pin_.empty()) for (const auto& pin : state_.pins) if (pin.id == context_pin_) url = pin.url;
     context_url_ = url; link_source_workspace_ = state_.workspace_id;
+    folder_parent_id_.clear();context_workspace_id_=state_.workspace_id;
+#if BUILDFLAG(IS_MAC)
+    if(metal_sidebar_) {
+      const auto target=ResolveSidebarTarget(context_workspace_id_,context_tab_identity_,context_pin_);
+      const auto plan=sidebar::tab_context_menu(RowMenuState(state_,target.tab,target.valid,url.SchemeIsHTTPOrHTTPS()));
+      for(const auto& entry:plan){if(entry.command==0)workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);else workspace_menu_->AddItem(entry.command,base::UTF8ToUTF16(std::string(entry.label)));}
+      return;
+    }
+#endif
     workspace_menu_->AddItem(kNewFolder, u"Nowy folder…");
     folder_parent_id_.clear();
     context_workspace_id_ = state_.workspace_id;
@@ -4110,9 +4124,11 @@ void WorkspaceShell::ShowTabMenu(gfx::Point point, ui::mojom::MenuSourceType sou
       workspace_menu_->AddItem(kRuleHere, u"Zawsze otwieraj tę domenę tutaj");
       workspace_menu_->AddItem(kRemoveRule, u"Usuń regułę dla tej domeny");
     }
-    workspace_menu_runner_ = std::make_unique<views::MenuRunner>(workspace_menu_.get(), views::MenuRunner::CONTEXT_MENU);
-    workspace_menu_runner_->RunMenuAt(widget_, nullptr, gfx::Rect(point, gfx::Size()), views::MenuAnchorPosition::kTopLeft, source_type);
-  }
+}
+void WorkspaceShell::ShowTabMenu(gfx::Point point,ui::mojom::MenuSourceType source_type) {
+  BuildTabMenu(context_tab_,context_pin_);
+  workspace_menu_runner_=std::make_unique<views::MenuRunner>(workspace_menu_.get(),views::MenuRunner::CONTEXT_MENU);
+  workspace_menu_runner_->RunMenuAt(widget_,nullptr,gfx::Rect(point,gfx::Size()),views::MenuAnchorPosition::kTopLeft,source_type);
 }
 
 bool WorkspaceShell::IsCommandIdChecked(int command_id) const {
@@ -4130,6 +4146,9 @@ bool WorkspaceShell::IsCommandIdChecked(int command_id) const {
   return false;
 }
 bool WorkspaceShell::IsCommandIdEnabled(int command_id) const {
+#if BUILDFLAG(IS_MAC)
+  if(metal_sidebar_&&command_id>=kOpenSplit&&command_id<=kCloseTab)return RustTabCommandEnabled(command_id);
+#endif
   if (command_id == kNewFolder || command_id == kRenameFolder || command_id == kDeleteFolder) return state_.configuration_ready && !state_.profiles_busy;
   if (command_id == kRemoveWorkspace) return state_.configuration_ready && !state_.profiles_busy && state_.workspaces.size() > 1;
   // Left/top half can only move right/down, and vice versa.
@@ -4140,16 +4159,74 @@ bool WorkspaceShell::IsCommandIdEnabled(int command_id) const {
       std::any_of(state_.link_rules.begin(), state_.link_rules.end(), [&](const auto& rule) { return rule.host == context_url_.host(); });
   return state_.configuration_ready;
 }
+WorkspaceShell::ResolvedRowTarget WorkspaceShell::ResolveSidebarTarget(std::string_view workspace,std::array<uint64_t,2> identity,std::string_view pin) const {
+#if BUILDFLAG(IS_MAC)
+  std::vector<sidebar::MenuTab> tabs;tabs.reserve(state_.tabs.size());for(const auto& tab:state_.tabs)tabs.push_back({tab.index,tab.identity[0],tab.identity[1]});
+  std::vector<sidebar::TreeNode> pins;pins.reserve(state_.pins.size());for(const auto& row:state_.pins)pins.push_back({row.id,row.parent_id,row.folder});
+  const auto target=sidebar::resolve_row_target(rust::Str(workspace.data(),workspace.size()),state_.workspace_id,identity[0],identity[1],rust::Str(pin.data(),pin.size()),rust::Slice<const sidebar::MenuTab>(tabs.data(),tabs.size()),rust::Slice<const sidebar::TreeNode>(pins.data(),pins.size()));
+  return {target.valid,target.has_tab?std::optional<size_t>(target.tab):std::nullopt,std::string(target.pin)};
+#else
+  return {false,std::nullopt,{}};
+#endif
+}
+void WorkspaceShell::HandleSidebarDrop(std::string workspace,std::optional<size_t> tab,std::array<uint64_t,2> identity,std::string pin,gfx::Point point) {
+  if(workspace!=state_.workspace_id)return;
+  const auto bounds=content_host_->GetBoundsInScreen();
+#if BUILDFLAG(IS_MAC)
+  if(metal_sidebar_) {
+    const auto target=ResolveSidebarTarget(workspace,identity,pin);
+    const bool allowed=target.valid&&state_.configuration_ready&&!state_.profiles_busy;
+    if(sidebar::sidebar_drop_accepts({bounds.x(),bounds.y(),bounds.width(),bounds.height()},point.x(),point.y(),allowed))QueueSplit(target.tab,target.pin);
+    return;
+  }
+#endif
+  if(bounds.Contains(point)&&point.x()>=bounds.CenterPoint().x())QueueSplit(tab,std::move(pin));
+}
+bool WorkspaceShell::RustTabCommandEnabled(int command) const {
+#if BUILDFLAG(IS_MAC)
+  const auto target=ResolveSidebarTarget(context_workspace_id_,context_tab_identity_,context_pin_);
+  return sidebar::tab_menu_enabled(command,RowMenuState(state_,target.tab,target.valid,context_url_.SchemeIsHTTPOrHTTPS()));
+#else
+  return false;
+#endif
+}
+void WorkspaceShell::QueueTabCommand(int command) {
+#if BUILDFLAG(IS_MAC)
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,int command,std::string workspace,std::array<uint64_t,2> identity,std::string pin){
+    if(!shell)return;const auto target=shell->ResolveSidebarTarget(workspace,identity,pin);
+    const auto action=sidebar::tab_menu_action(command,RowMenuState(shell->state_,target.tab,target.valid,shell->context_url_.SchemeIsHTTPOrHTTPS()));
+    switch(action) {
+      case sidebar::SidebarAction::OpenSplit:if(target.tab)shell->callbacks_.split_tab.Run(*target.tab);else shell->callbacks_.split_pin.Run(target.pin);break;
+      case sidebar::SidebarAction::CloseSplit:shell->callbacks_.unsplit.Run(*target.tab);break;
+      case sidebar::SidebarAction::MoveFirst:case sidebar::SidebarAction::MoveSecond:shell->callbacks_.swap_split.Run();break;
+      case sidebar::SidebarAction::ToggleOrientation:shell->callbacks_.split_vertical.Run(!shell->state_.split_vertical);break;
+      case sidebar::SidebarAction::CloseTab:shell->callbacks_.close_tab.Run(*target.tab);break;
+      default:break;
+    }
+  },weak_factory_.GetWeakPtr(),command,context_workspace_id_,context_tab_identity_,context_pin_));
+#endif
+}
 void WorkspaceShell::QueueSplit(std::optional<size_t> tab, std::string pin) {
+  std::array<uint64_t,2> identity{};if(tab)for(const auto& row:state_.tabs)if(row.index==*tab){identity=row.identity;break;}
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(
-      [](base::WeakPtr<WorkspaceShell> shell, std::string workspace, std::optional<size_t> tab, std::string pin) {
+      [](base::WeakPtr<WorkspaceShell> shell, std::string workspace, std::optional<size_t> tab, std::string pin,std::array<uint64_t,2> identity) {
         if (!shell || shell->state_.workspace_id != workspace) return;
+#if BUILDFLAG(IS_MAC)
+        if(shell->metal_sidebar_) {
+          const auto target=shell->ResolveSidebarTarget(workspace,identity,pin);
+          if(!target.valid||!shell->state_.configuration_ready||shell->state_.profiles_busy)return;
+          if(target.tab)shell->callbacks_.split_tab.Run(*target.tab);else shell->callbacks_.split_pin.Run(target.pin);return;
+        }
+#endif
         if (tab) shell->callbacks_.split_tab.Run(*tab);
         else if (!pin.empty()) shell->callbacks_.split_pin.Run(std::move(pin));
-      }, weak_factory_.GetWeakPtr(), state_.workspace_id, tab, std::move(pin)));
+      }, weak_factory_.GetWeakPtr(), state_.workspace_id, tab, std::move(pin),std::move(identity)));
 }
 
 void WorkspaceShell::ExecuteCommand(int command_id, int) {
+#if BUILDFLAG(IS_MAC)
+  if(metal_sidebar_&&command_id>=kOpenSplit&&command_id<=kCloseTab){QueueTabCommand(command_id);return;}
+#endif
   if (command_id == kRenameFolder || command_id == kDeleteFolder) {
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
         base::BindOnce(command_id == kRenameFolder ? &WorkspaceShell::RequestRenameFolder : &WorkspaceShell::RequestDeleteFolder,

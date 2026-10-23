@@ -3913,6 +3913,32 @@ class ZitterMetalSidebarBrowserTest : public ZitterProfilesBrowserTest {
   }
 };
 // Compiled with the migration; execution is deferred to the requested GUI checkpoint.
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, RowMenuPlansAndQueuedIdentitySurviveReindex) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
+  const auto url=embedded_test_server()->GetURL("/storage_probe.html?row-menu");
+  for(int i=0;i<3;++i)ASSERT_TRUE(window_->NavigateFromBar(url,true));
+  auto target=window_->contents("work")->GetWeakPtr();
+  auto* delegate=static_cast<ui::SimpleMenuModel::Delegate*>(shell);
+  shell->BuildTabMenu(window_->tab_count("work")-1);
+  auto* menu=shell->tab_context_menu_for_testing();ASSERT_TRUE(menu->GetIndexOfCommandId(5));EXPECT_TRUE(menu->IsEnabledAt(*menu->GetIndexOfCommandId(5)));
+  EXPECT_TRUE(menu->GetIndexOfCommandId(20));EXPECT_TRUE(menu->GetIndexOfCommandId(23));
+  // Close the selected identity after another tab shifts its original index.
+  delegate->ExecuteCommand(10,0);window_->CloseTab(0);
+  ASSERT_TRUE(base::test::RunUntil([&]{return !target;}));EXPECT_EQ(2u,window_->tab_count("work"));
+  ASSERT_TRUE(window_->NavigateFromBar(url,true));shell->BuildTabMenu(window_->tab_count("work")-1);
+  delegate->ExecuteCommand(10,0);window_->CloseTab(window_->tab_count("work")-1);
+  ASSERT_TRUE(window_->NavigateFromBar(url,true));auto replacement=window_->contents("work")->GetWeakPtr();const auto count=window_->tab_count("work");
+  base::RunLoop().RunUntilIdle();EXPECT_TRUE(replacement);EXPECT_EQ(count,window_->tab_count("work")); // Reused index/URL is not the removed identity.
+  shell->BuildTabMenu(window_->tab_count("work")-1);delegate->ExecuteCommand(5,0);ASSERT_TRUE(window_->Select("personal"));
+  ASSERT_TRUE(base::test::RunUntil([&]{return window_->active_id()=="personal"&&!window_->profiles_busy();}));base::RunLoop().RunUntilIdle();EXPECT_FALSE(window_->split());
+  ASSERT_TRUE(window_->NavigateFromBar(url,true));window_->SelectTab(0);ASSERT_TRUE(window_->SplitTab(1));
+  shell->BuildTabMenu(1);menu=shell->tab_context_menu_for_testing();
+  ASSERT_TRUE(menu->GetIndexOfCommandId(7));ASSERT_TRUE(menu->GetIndexOfCommandId(8));
+  EXPECT_TRUE(menu->IsEnabledAt(*menu->GetIndexOfCommandId(7)));EXPECT_FALSE(menu->IsEnabledAt(*menu->GetIndexOfCommandId(8)));
+  delegate->ExecuteCommand(9,0);ASSERT_TRUE(base::test::RunUntil([&]{return window_->split_vertical();}));
+  shell->BuildTabMenu(1);menu=shell->tab_context_menu_for_testing();EXPECT_EQ(u"Przesuń w górę",menu->GetLabelAt(*menu->GetIndexOfCommandId(7)));
+  delegate->ExecuteCommand(6,0);ASSERT_TRUE(base::test::RunUntil([&]{return !window_->split();}));
+}
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, WorkspaceSwitchUsesPresentedMetalSceneAndCancels) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
   shell->SetWorkspaceAnimations(false);shell->SetPinned(true);shell->ShowSidebar();

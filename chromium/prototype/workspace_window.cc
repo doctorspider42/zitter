@@ -555,7 +555,7 @@ void WorkspaceWindow::UpdateShell() {
         if (view == host.right) state.split_tabs[1] = index;
       }
       if (pin_id.empty() || (host.right && (view == host.left || view == host.right)))
-        state.tabs.push_back({title.empty() ? u"Nowa karta" : title, display_url, index, pin_id});
+        state.tabs.push_back({title.empty() ? u"Nowa karta" : title, display_url, index, pin_id, {view->GetWebContents()->GetUniqueToken().value().GetHighForSerialization(),view->GetWebContents()->GetUniqueToken().value().GetLowForSerialization()}});
     }
     auto& controller = host.view->GetWebContents()->GetController();
     state.workspace_id = host.workspace_id;

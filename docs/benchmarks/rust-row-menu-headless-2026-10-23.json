@@ -1,0 +1,74 @@
+{
+  "date": "2026-10-23",
+  "platform": "macOS arm64",
+  "build": "Release, ThinLTO, Chromium PGO",
+  "base_commit": "1aca4b68ba2c14e75cdbd5f4e533dbc0f0f09a33",
+  "chromium_base_revision": "1a732fcc23b20dd0bcf38f35d72c1fe1ec799d35",
+  "purpose": "Non-windowed verification of Rust tab/pin menu composition, stable target resolution, typed split/tab actions and drop geometry; native UI acceptance deferred",
+  "acceptance_status": "awaiting_gui_checkpoint",
+  "source_sha256": {
+    "chromium/prototype/profile_workspace_browsertest.cc": "cc31fd26954a65404b7956ef42f9c3aee623e00faffada6c836fea976fba4516",
+    "chromium/prototype/sidebar_scene.rs": "bc64ce78ae0639f064048b3fdabb29a1e58beb27f87e8f7d6946de836863546f",
+    "chromium/prototype/workspace_shell.cc": "d5614f5ccd91de3cb1b9254dc71be812cd8c0516fd91b8c4a895fad9ae4c1198",
+    "chromium/prototype/workspace_shell.h": "0bc4536cd766a89c5d041fc023e252265f89cbab411e6c5712eccde1e279227d",
+    "chromium/prototype/workspace_window.cc": "cc604f6da199ec6b964de92d5a8efe99ca8d548836ad5e1ca4d4f7d8ee2f278e"
+  },
+  "staged_sources_match": true,
+  "compiled_app_uuid": "4C4C4466-5555-3144-A13E-0D7D6F2FF8BC",
+  "compiled_browser_test_uuid": "4C4C445B-5555-3144-A1DF-7385A809280A",
+  "build_targets": [
+    "sidebar_scene_unittests_exe",
+    "zitter_prototype_ui_lab",
+    "zitter_ui_lab"
+  ],
+  "build_result": "passed",
+  "build_consistency": "final Ninja dry run reported no work to do",
+  "rust_unit_tests_passed": 68,
+  "python_unit_tests_passed": 59,
+  "new_rust_tests_passed": [
+    "row_targets_reject_folders_ambiguity_missing_and_empty_workspace",
+    "row_targets_follow_identity_across_reindex_and_reject_reused_slots",
+    "tab_menu_preserves_order_labels_and_orientation",
+    "tab_menu_actions_revalidate_split_side_readiness_and_last_tab",
+    "sidebar_drop_uses_physical_right_half_and_exclusive_edges"
+  ],
+  "gn_dependency_check": "passed for //zitter_ui_lab:*",
+  "product_boundaries": "passed",
+  "gui_tests": {
+    "status": "not run at user request",
+    "new_compiled_case": "ZitterMetalSidebarBrowserTest.RowMenuPlansAndQueuedIdentitySurviveReindex",
+    "last_accepted_commit": "3cd95d82019b239c6c9cc6e84331a4f9f5ef0c55",
+    "prior_gui_results_apply_to_current_code": false
+  },
+  "manual_validation": {
+    "status": "deferred",
+    "app_launched": false,
+    "packaged_or_signed": false,
+    "normal_application_or_profile_used": false
+  },
+  "unit_verified_mechanisms": [
+    "Rust composes the established menu order, command IDs and Polish labels for paired/unpaired targets, both split orientations and HTTP eligibility. Native URL/rule semantics are represented only by an eligibility flag.",
+    "Opaque 128-bit page identities resolve to the current tab index after reindexing. Removed identities are rejected even when a new page occupies their old index; foreign/empty source workspaces, ambiguous targets, missing pins and folders are rejected.",
+    "Typed menu actions revalidate readiness, busy state, current target, split side/membership and last-tab close protection. The side-to-move policy follows pane order independently of orientation.",
+    "The existing physical right-half drop target uses inclusive center/upper/left boundaries and exclusive lower/right boundaries. Empty bounds and disallowed targets are rejected; widened arithmetic avoids coordinate overflow."
+  ],
+  "implemented_pending_runtime_verification": [
+    "The native ShellTab data adapter carries the full WebContents unique token as two 64-bit integers. Metadata updates do not format an identity string; cached row structure comparisons include page identity so replacement pages receive new callbacks.",
+    "The Metal backend builds SimpleMenuModel from the Rust command/label plan. Native View-to-item lookup and popup presentation remain adapters. Existing application command IDs have a compile-time assertion against the Rust plan contract.",
+    "Tab/split menu dispatch captures workspace, stable page identity or pin ID. At posted-task execution, Rust resolves the live target and returns a typed action; native callbacks still perform browser/profile operations.",
+    "Cached row drop callbacks retain their source workspace and stable target. Rust resolves the target and drop geometry before queueing, and split tasks resolve it again before invoking application callbacks.",
+    "The default Views menu plan and positional command route remain for comparison. Source-workspace capture also protects its cached drop callbacks from applying to a different active workspace.",
+    "The compiled regression builds models without opening a popup, but its browser fixture still opens a window; it is unrun under the no-window policy. It covers queued close after index shift, removed/replaced identities, foreign-workspace split rejection, split-side enablement and vertical labels."
+  ],
+  "deferred_checkpoint": [
+    "Run the curated 46-case Metal matrix (the prior 45 plus RowMenuPlansAndQueuedIdentitySurviveReindex) and all 17 Views controls against these rebuilt sources.",
+    "Inspect native popup selection/dismissal, keyboard/AX invocation, split-pane menus, tab/pin drag-to-split at width/edge limits, cancelled drags, collapsed folders and busy/profile transitions.",
+    "Verify actual queued-command identity behavior after close/reorder/replace/workspace changes, last-tab rules, pin targets and profile/session isolation. Include the previous animation/palette regressions.",
+    "Package/sign and inspect the matching isolated app; measure real CPU/GPU/presentation workload and large-sidebar menu behavior separately."
+  ],
+  "limitations": [
+    "Compilation and unit tests do not prove native menu/drag integration, persistence, AX/focus behavior or performance. Browser tests and app inspection remain unaccepted until the checkpoint.",
+    "Native popup and View identity/event nodes, link/rule services and application callbacks remain. Closing through other native controls is outside this menu-dispatch migration; full UI migration is incomplete.",
+    "This stage adds no dependency, crate or framework. Chromium page-token and existing base/standard-library types are already available. Original-code Apache-2.0 and required upstream notices are unchanged."
+  ]
+}
