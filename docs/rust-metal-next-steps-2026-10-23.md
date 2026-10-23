@@ -1,6 +1,6 @@
 # Rust + Metal: remaining work and GUI checkpoint
 
-Snapshot: `c902e77f4983932ddb89b2cc1f531ffe9f21bd81`, 2026-10-23.
+Snapshot: `4475ee78600cc38270943ead14b9289b2f84b999`, 2026-10-23.
 This is a work plan, not a claim of functional parity. The detailed inventory is
 [the parity checklist](rust-metal-parity.md). Existing native behavior is preserved
 in many places where Views presentation and interaction still need replacement.
@@ -8,7 +8,7 @@ in many places where Views presentation and interaction still need replacement.
 ## Current checkpoint
 
 The full compiled automated browser/UI inventory passed for UI source
-`c902e77f4983932ddb89b2cc1f531ffe9f21bd81`:
+`4475ee78600cc38270943ead14b9289b2f84b999`:
 
 | Backend | Passed | Explicit skips | Failed / crashed |
 | --- | ---: | ---: | ---: |
@@ -18,9 +18,9 @@ The full compiled automated browser/UI inventory passed for UI source
 The two runs were serial, with one launcher job and no retries, using temporary
 fixture-owned profiles. Metal API validation was enabled. The 30 dedicated Metal
 cases are excluded from Views; every common fixture runs with both backends. The
-scope exceeds the previous deferred 70 Metal / 34 Views matrix. **148 Rust and
-61 Python tests**, optimized compilation, scoped GN/boundaries and a final no-work
-Ninja check also passed. [Full results and matching source/binary hashes](benchmarks/rust-ui-checkpoint-2026-10-23.json).
+scope exceeds the previous deferred 70 Metal / 34 Views matrix. **175 Rust and
+61 Python tests** also passed, along with the window-free CoreText geometry/raster
+harness, optimized compilation, scoped GN/boundaries and a final no-work Ninja check. [Full results and matching source/binary hashes](benchmarks/rust-editor-foundation-checkpoint-2026-10-23.json).
 
 Each backend explicitly skipped four opt-in performance scenarios, the real-user
 Arc import and the interactive one-hour manual harness. They are not counted as
@@ -28,12 +28,13 @@ UI passes. The normal app/profile was not used or changed; no app was packaged
 or signed in this checkpoint. Real presentation/performance and manual app,
 IME-candidate, VoiceOver, scale/RTL/long-interaction acceptance remain separate.
 
-The checkpoint fixed unintended dormant-WebContents creation during sidebar
+The preceding checkpoint fixed unintended dormant-WebContents creation during sidebar
 identity extraction, hidden-window input/Metal lifecycle, emoji preedit saving,
 native alert-role crashes and main-window Cocoa keyup routing. Older upload,
 media and preconnect fixtures now seed their explicit two-workspace setup;
 UI tests wait for real navigation/focus and reopen closed settings as a user would.
-The older failed/intermediate runs remain recorded in the report.
+The older failed/intermediate runs remain recorded in the
+[preceding checkpoint report](benchmarks/rust-ui-checkpoint-2026-10-23.json).
 
 ## Next implementation steps
 
@@ -73,23 +74,26 @@ The older failed/intermediate runs remain recorded in the report.
    manifest and Apache-2.0/upstream notices. Keep the opt-in backend until parity
    and the performance comparison are established.
 
-## Textfield investigation completed for this checkpoint
+## Editor foundation now completed
 
-The current fields are native `views::Textfield` controls. Their protected
-`GetRenderText()` uses Chromium's RenderText/HarfBuzz layout for hit testing,
-selection, caret and composition geometry. `Textfield::OnPaint` also draws native
-background/text/border, with a separate native cursor view. Metal text tiles use
-CoreText. Repainting the same string with the existing tile path alone would not
-establish matching glyph advances, bidi caret affinity or IME candidate positions.
+The [editor model and geometry](rust-metal-editor.md) are compiled into the
+prototype. Rust owns the replacement UTF-16 text/selection, revisioned boundaries,
+256-group delta undo/redo, admission and token-guarded atomic IME transactions.
+The CXX bridge is compiled. CoreText supplies one immutable untruncated line for
+caret affinity, hit testing, selection and drawing, with the same system-font
+helper as the Metal renderer. The 27 new model tests and native window-free
+geometry/raster harness passed, alongside the full existing automated UI matrix.
 
-The next editor implementation therefore needs one authoritative text/selection
-model and matching shaping geometry for both input and GPU output. The required
-bridge includes UTF-16 grapheme/word boundaries, visual caret stops/affinity,
-selection spans, scroll offsets and composition underlines, alongside the native
-text-input protocol. Native editor painting/behavior has **not** been marked as
-migrated by this investigation. No source changes to editors were made before the
-requested GUI checkpoint.
+**Live fields still belong to Views.** The next concrete step is a replacement
+editor view plus native text-input/AX/clipboard/focus adapters, beginning with
+workspace/profile name fields. Connect the same shaped geometry to clipped GPU
+text, cursor, selection, horizontal scroll and composition clauses/candidate
+rectangles. Then migrate folder names, color/emoji and address search. Verify
+real IME behavior and persistence before marking any field migrated. The existing
+browser cases validate preserved behavior; they do not yet exercise a live Rust
+editor. Base paragraph direction/alignment and full native service behavior must
+be resolved in that adapter rather than inferred from the first glyph run.
 
-During the checkpoint, the emoji composition callback was corrected to defer
-persistence until composition finishes. The editing model and field rendering
-still belong to Views; this repair does not mark the editor migration complete.
+The seven work areas above remain open. Passing the current suite establishes a
+regression checkpoint, not a percentage of completed migration. No reliable
+remaining-time estimate exists until the native editor adapter is proven.

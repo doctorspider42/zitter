@@ -1095,3 +1095,19 @@ matching sources; it does not retroactively accept older source versions. Full
 Views removal, native editor replacement, manual signed-app/IME-candidate/
 VoiceOver/theme/scale/RTL acceptance and CPU/GPU/actual presentation comparisons
 remain work. See [the remaining plan](rust-metal-next-steps-2026-10-23.md).
+
+
+## Editor foundation and full UI repeat (2026-10-23)
+
+UI source `4475ee78600cc38270943ead14b9289b2f84b999` adds Rust UTF-16 editing state,
+a compiled CXX bridge and immutable CoreText geometry sharing the Metal font
+helper. Live fields remain `views::Textfield`; the replacement native input view
+and clipped GPU editor scene are the next implementation step. See
+[the editor foundation](rust-metal-editor.md).
+
+The matching optimized binaries passed **175 Rust / 61 Python tests**, the
+window-free CoreText geometry/raster harness and the full serial automated GUI
+repeat: **116 Metal / 86 Views passes**, six explicit opt-in skips per backend,
+zero failures/retries, Metal API validation enabled. Temporary fixture profiles
+were used; no manual signed-app or physical-presentation benchmark was performed.
+[Source hashes, binary UUIDs and test results](benchmarks/rust-editor-foundation-checkpoint-2026-10-23.json).

@@ -8,19 +8,19 @@ milestones to `origin/main` as they land. The opt-in switch remains
 
 ## Current execution policy
 
-The requested full automated GUI checkpoint passed on 2026-10-23 for UI source
-`c902e77f4983932ddb89b2cc1f531ffe9f21bd81`: **116 Metal cases and 86 Views cases passed**,
+The latest full automated GUI checkpoint passed on 2026-10-23 for UI source
+`4475ee78600cc38270943ead14b9289b2f84b999`: **116 Metal cases and 86 Views cases passed**,
 with six explicit opt-in skips per backend and no failures/retries. The complete
 compiled inventory was attempted (122 Metal / 92 applicable Views tests); the
-30 dedicated Metal cases are excluded from the Views control run. See
-[the checkpoint report](benchmarks/rust-ui-checkpoint-2026-10-23.json).
+30 dedicated Metal cases are excluded from the Views control run. **175 Rust and
+61 Python tests** and the window-free CoreText geometry/raster harness also passed.
+See [the editor foundation checkpoint](benchmarks/rust-editor-foundation-checkpoint-2026-10-23.json).
 
-Continue windowed checks on isolated test profiles as changes land. Do not use the
-normal app/profile. Earlier headless artifacts are historical; the matching current
-source hashes and compiled UUIDs in the checkpoint report establish automated
-acceptance. Manual signed-app/IME/VoiceOver/scale/RTL checks and CPU/GPU/actual
-presentation comparison remain pending. See
-[the remaining work plan](rust-metal-next-steps-2026-10-23.md).
+The Rust UTF-16 editor state/CXX bridge and CoreText geometry are implemented and
+tested; **live fields still use Views**. See [the editor foundation](rust-metal-editor.md).
+Continue windowed checks on isolated profiles. Manual signed-app/IME/VoiceOver/
+scale/RTL acceptance and CPU/GPU/actual presentation comparison remain pending.
+See [the remaining work plan](rust-metal-next-steps-2026-10-23.md).
 
 ## How to read progress
 
@@ -215,14 +215,14 @@ Views-specific layout and control behavior must have an explicit replacement.
   CPU/GPU/presentation comparison remain pending. See
   [palette chrome validation](benchmarks/rust-palette-chrome-functional-2026-10-22.json).
 
-## Current checkpoint policy (2026-10-23)
+## Historical headless policy (superseded by the full GUI checkpoints)
 
-At the user's request, development currently runs without windowed tests. Rust
-and Python tests, dependency checks and compilation continue. Browser regressions,
-manual app inspection and presentation benchmarks are deferred until an explicit
-GUI checkpoint. A compiled stage is not accepted as runtime parity on that basis.
-The last complete GUI matrix is the palette-chrome stage (`3cd95d8`): 43 Metal and
-17 Views cases. Do not apply those results to newer code.
+The following records describe the earlier headless phase; the current execution
+policy above supersedes it. At that time, development ran without windowed tests.
+Rust/Python checks and compilation continued while browser/manual/presentation
+checks awaited an explicit checkpoint. The earlier palette-chrome stage
+(`3cd95d8`, 43 Metal / 17 Views cases) was the last complete GUI acceptance then.
+The following checkpoint requirements were recorded before the complete repeat:
 
 The next checkpoint must run both complete browser matrices against the rebuilt
 binaries and inspect the matching signed isolated app. In particular, exercise
@@ -412,3 +412,10 @@ remain. Passing the current tests establishes the tested milestone only.
   [the full checkpoint report](benchmarks/rust-ui-checkpoint-2026-10-23.json).
   This establishes current automated behavior; full Rust ownership, manual
   signed-app acceptance and actual performance comparison are still incomplete.
+
+- Editor foundation (`4475ee7`): replacement UTF-16 state, delta history, atomic
+  token-guarded composition and CXX bridge, plus shared-font CoreText geometry.
+  **175 Rust / 61 Python tests and the native geometry/raster harness passed**;
+  the full automated UI repeat passed **116 Metal / 86 Views**, six explicit skips
+  each. Live editors remain Views; this is not field migration acceptance. See
+  [the matching report](benchmarks/rust-editor-foundation-checkpoint-2026-10-23.json).
