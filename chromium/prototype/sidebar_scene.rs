@@ -125,6 +125,11 @@ mod ffi {
         fn editor_availability(state: &mut EditorState, enabled: bool, read_only: bool) -> EditorUpdate;
         fn editor_select(state: &mut EditorState, anchor: usize, focus: usize, secondary: bool) -> EditorUpdate;
         fn editor_move_to(state: &mut EditorState, index: usize, extend: bool, secondary: bool) -> EditorUpdate;
+        fn editor_select_word(state: &mut EditorState) -> EditorUpdate;
+        fn editor_pointer_begin(state: &mut EditorState, index: usize, secondary: bool, extend: bool, clicks: u8) -> EditorUpdate;
+        fn editor_pointer_drag(state: &mut EditorState, index: usize, secondary: bool) -> EditorUpdate;
+        fn editor_pointer_end(state: &mut EditorState);
+        fn editor_pointer_active(state: &EditorState) -> bool;
         fn editor_move_logical(state: &mut EditorState, backward: bool, word: bool, extend: bool) -> EditorUpdate;
         fn editor_insert(state: &mut EditorState, text: &[u16], typing: bool) -> EditorUpdate;
         fn editor_erase(state: &mut EditorState, backward: bool, word: bool) -> EditorUpdate;
@@ -2554,3 +2559,9 @@ fn editor_yank(state:&mut EditorState,text:&[u16])->ffi::EditorUpdate {let c=sta
 fn editor_transpose(state:&mut EditorState)->ffi::EditorUpdate {let c=state.transpose();editor_update(state,c)}
 
 fn editor_orient(state:&mut EditorState,anchor:usize,focus:usize,secondary:bool)->ffi::EditorUpdate {let c=state.orient(anchor,focus,secondary);editor_update(state,c)}
+
+fn editor_select_word(state:&mut EditorState)->ffi::EditorUpdate {let c=state.select_word();editor_update(state,c)}
+fn editor_pointer_begin(state:&mut EditorState,index:usize,secondary:bool,extend:bool,clicks:u8)->ffi::EditorUpdate {let c=state.pointer_begin(index,secondary,extend,clicks);editor_update(state,c)}
+fn editor_pointer_drag(state:&mut EditorState,index:usize,secondary:bool)->ffi::EditorUpdate {let c=state.pointer_drag(index,secondary);editor_update(state,c)}
+fn editor_pointer_end(state:&mut EditorState) {state.pointer_end()}
+fn editor_pointer_active(state:&EditorState)->bool {state.pointer_active()}

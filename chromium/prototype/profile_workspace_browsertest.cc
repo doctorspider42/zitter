@@ -5493,6 +5493,54 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NameEditorMouseDropAndNati
   shell->settings_widget()->Hide();EXPECT_FALSE(field->metal_visible());const auto saved_bounds=view->bounds();view->SetBoundsRect(gfx::Rect(view->size()));view->SchedulePaint();const auto bitmap=views::test::PaintViewToBitmap(view);view->SetBoundsRect(saved_bounds);const auto background=bitmap.getColor(bitmap.width()-12,bitmap.height()/2);size_t ink=0;for(int y=4;y<bitmap.height()-4;++y)for(int x=10;x<bitmap.width()-12;++x)if(bitmap.getColor(x,y)!=background)++ink;EXPECT_GT(ink,20u);EXPECT_FALSE(views::AsViewClass<views::Textfield>(view));EXPECT_TRUE(view->children().empty());
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NameEditorWordDragAndSingleLineTripleClick) {
+  auto* shell=window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
+  shell->OpenWorkspaceSettings();auto* field=shell->workspace_input();auto* view=field->view();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));
+  field->SetText(u"one  two!! three");
+  auto at=[&](size_t index){field->SelectRange(gfx::Range(index));auto point=field->input_client()->GetCaretBounds().CenterPoint();views::View::ConvertPointFromScreen(view,&point);return point;};
+  const auto middle=at(6),left=at(1),right=at(14),gap=at(9);
+  base::TimeTicks stamp=base::TimeTicks::Now();
+  auto release=[&](gfx::Point point){ui::MouseEvent event(ui::EventType::kMouseReleased,point,point,stamp,0,ui::EF_LEFT_MOUSE_BUTTON);view->OnMouseReleased(event);};
+  auto press=[&](gfx::Point point,int count){stamp+=base::Seconds(1);for(int i=1;i<=count;++i){stamp+=base::Milliseconds(10);ui::MouseEvent event(ui::EventType::kMousePressed,point,point,stamp,ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);event.SetClickCount(i);if(!view->OnMousePressed(event))return false;if(i<count)release(point);}return true;};
+  auto drag=[&](gfx::Point point){stamp+=base::Milliseconds(10);ui::MouseEvent event(ui::EventType::kMouseDragged,point,point,stamp,ui::EF_LEFT_MOUSE_BUTTON,0);return view->OnMouseDragged(event);};
+  ASSERT_TRUE(press(middle,2));EXPECT_EQ(gfx::Range(5,8),field->GetSelectedRange());
+  ASSERT_TRUE(drag(right));EXPECT_EQ(gfx::Range(5,16),field->GetSelectedRange());
+  ASSERT_TRUE(drag(left));EXPECT_EQ(gfx::Range(8,0),field->GetSelectedRange());
+  ASSERT_TRUE(drag(middle));EXPECT_EQ(gfx::Range(8,5),field->GetSelectedRange());
+  ASSERT_TRUE(drag(right));EXPECT_EQ(gfx::Range(5,16),field->GetSelectedRange());release(right);
+  ASSERT_TRUE(press(gap,2));EXPECT_EQ(gfx::Range(8,11),field->GetSelectedRange());release(gap);
+  ASSERT_TRUE(press(middle,3));EXPECT_EQ(gfx::Range(0,16),field->GetSelectedRange());
+  ASSERT_TRUE(drag(right));EXPECT_EQ(gfx::Range(0,14),field->GetSelectedRange());release(right);
+  // The native command requires an empty selection, including at end-of-text.
+  field->SelectRange(gfx::Range(6,1));EXPECT_FALSE(field->input_client()->IsTextEditCommandEnabled(ui::TextEditCommand::SELECT_WORD));
+  field->SelectRange(gfx::Range(16));field->input_client()->SetTextEditCommandForNextKeyEvent(ui::TextEditCommand::SELECT_WORD);
+  ui::KeyEvent command(ui::EventType::kKeyPressed,ui::VKEY_F15,0);ASSERT_TRUE(view->OnKeyPressed(command));
+  EXPECT_EQ(gfx::Range(11,16),field->GetSelectedRange());EXPECT_EQ(u"one  two!! three",field->GetText());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NameEditorStationaryEdgeSelectionScrollAndCancellation) {
+  gfx::ScopedAnimationDurationScaleMode duration(gfx::ScopedAnimationDurationScaleMode::NORMAL_DURATION);
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
+  shell->OpenWorkspaceSettings();auto* field=shell->workspace_input();auto* view=field->view();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));
+  std::u16string text;for(int i=0;i<100;++i)text+=u"abcdefghij ";field->SetText(text);field->SelectRange(gfx::Range(0));
+  auto point=field->input_client()->GetCaretBounds().CenterPoint();views::View::ConvertPointFromScreen(view,&point);
+  auto stamp=base::TimeTicks::Now();ui::MouseEvent down(ui::EventType::kMousePressed,point,point,stamp,ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);down.SetClickCount(1);ASSERT_TRUE(view->OnMousePressed(down));
+  const gfx::Point edge(view->width()+40,view->height()/2);
+  ui::MouseEvent outside(ui::EventType::kMouseDragged,edge,edge,stamp+base::Milliseconds(10),ui::EF_LEFT_MOUSE_BUTTON,0);ASSERT_TRUE(view->OnMouseDragged(outside));
+  const auto first=field->GetSelectedRange().end();ASSERT_GT(first,0u);ASSERT_LT(first,text.size());
+  // No further mouse motion: the timer must reveal and select more text.
+  ASSERT_TRUE(base::test::RunUntil([&]{return field->GetSelectedRange().end()>first+2;}));
+  auto pump=[](){base::RunLoop loop;base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE,loop.QuitClosure(),base::Milliseconds(250));loop.Run();};
+  ui::MouseEvent up(ui::EventType::kMouseReleased,edge,edge,stamp+base::Milliseconds(20),0,ui::EF_LEFT_MOUSE_BUTTON);view->OnMouseReleased(up);
+  const auto released=field->GetSelectedRange();pump();EXPECT_EQ(released,field->GetSelectedRange());
+  // Capture loss must stop the same timer without waiting for a mouse release.
+  point.set_x(10);stamp+=base::Seconds(1);ui::MouseEvent again(ui::EventType::kMousePressed,point,point,stamp,ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);again.SetClickCount(1);field->SelectRange(gfx::Range(0));ASSERT_TRUE(view->OnMousePressed(again));ASSERT_TRUE(view->OnMouseDragged(outside));view->OnMouseCaptureLost();const auto captured=field->GetSelectedRange();pump();EXPECT_EQ(captured,field->GetSelectedRange());
+  EXPECT_EQ(text,field->GetText());
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NameEditorMacCommandsAndSelectionPolicies) {
   using C=ui::TextEditCommand;auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenWorkspaceSettings();auto* field=shell->workspace_input();auto* view=field->view();auto* client=field->input_client();
   ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));view->RequestFocus();ASSERT_TRUE(base::test::RunUntil([&]{return view->HasFocus();}));

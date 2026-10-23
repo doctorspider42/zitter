@@ -89,6 +89,13 @@ struct Composition {
     original: Vec<u16>,
     before: Selection,
 }
+// An active pointer selection is tied to the current text. Native code owns
+// coordinates/capture; Rust owns the selected unit and reversal policy.
+#[derive(Clone, Copy, Debug)]
+struct PointerSelection {
+    revision: u64,
+    initial_word: Option<Selection>,
+}
 #[derive(Debug)]
 pub struct EditorState {
     text: Vec<u16>,
@@ -106,6 +113,7 @@ pub struct EditorState {
     boundaries_revision: Option<u64>,
     graphemes: Vec<usize>,
     words: Vec<(usize, usize)>,
+    pointer: Option<PointerSelection>,
 }
 impl Default for EditorState {
     fn default() -> Self {
@@ -125,6 +133,7 @@ impl Default for EditorState {
             boundaries_revision: Some(0),
             graphemes: vec![0],
             words: vec![],
+            pointer: None,
         }
     }
 }
@@ -192,6 +201,7 @@ impl EditorState {
         }
     }
     fn replace_raw(&mut self, start: usize, end: usize, text: &[u16]) -> bool {
+        self.pointer = None;
         if self.text[start..end] == *text {
             return false;
         }
@@ -254,6 +264,7 @@ impl EditorState {
     // Context/programmatic reset never emits a committed edit and invalidates
     // old IME callbacks even if the new text happens to be identical.
     pub fn reset(&mut self, text: &[u16]) -> Change {
+        self.pointer = None;
         self.scroll = 0.0;
         self.directed = false;
         let before = self.selection;
@@ -273,6 +284,9 @@ impl EditorState {
         }
     }
     pub fn availability(&mut self, enabled: bool, read_only: bool) -> Change {
+        if !enabled || self.read_only != read_only {
+            self.pointer = None;
+        }
         let mut change = Change {
             admitted: true,
             ..Change::default()
@@ -293,6 +307,7 @@ impl EditorState {
         if !self.enabled || !self.point(anchor) || !self.point(focus) {
             return Change::default();
         }
+        self.pointer = None;
         self.directed = false;
         let next = Selection {
             anchor,
@@ -343,6 +358,122 @@ impl EditorState {
         self.words = words;
         self.boundaries_revision = Some(revision);
         true
+    }
+    // Expand through native word starts/ends, including intervening whitespace
+    // and punctuation. All endpoints are installed grapheme boundaries. A caret
+    // at end-of-text selects the preceding unit, as in the native textfield.
+    fn word_selection(&self, range: Selection) -> Selection {
+        if self.text.is_empty() {
+            return Selection::caret(0);
+        }
+        let reversed = range.anchor > range.focus;
+        let selected = range.range();
+        let mut lo = selected.start;
+        let mut hi = selected.end;
+        if lo == self.text.len() {
+            lo = self.graphemes[self.graphemes.len() - 2];
+        }
+        let before = self.words.partition_point(|&(_, end)| end <= lo);
+        lo = if before < self.words.len() && self.words[before].0 <= lo {
+            self.words[before].0
+        } else if before > 0 {
+            self.words[before - 1].1
+        } else {
+            0
+        };
+        if lo == hi && hi < self.text.len() {
+            hi = self.graphemes[self.graphemes.partition_point(|&at| at <= hi)];
+        }
+        let after = self.words.partition_point(|&(_, end)| end < hi);
+        hi = if after == self.words.len() {
+            self.text.len()
+        } else if self.words[after].0 >= hi {
+            self.words[after].0
+        } else {
+            self.words[after].1
+        };
+        Selection {
+            anchor: if reversed { hi } else { lo },
+            focus: if reversed { lo } else { hi },
+            secondary: false,
+        }
+    }
+    pub fn select_word(&mut self) -> Change {
+        if !self.enabled
+            || self.composition.is_some()
+            || self.boundaries_revision != Some(self.revision)
+        {
+            return Change::default();
+        }
+        let range = self.word_selection(self.selection);
+        self.select(range.anchor, range.focus, false)
+    }
+    pub fn pointer_active(&self) -> bool {
+        self.pointer.is_some()
+    }
+    pub fn pointer_end(&mut self) {
+        self.pointer = None;
+    }
+    pub fn pointer_begin(
+        &mut self,
+        index: usize,
+        secondary: bool,
+        extend: bool,
+        clicks: u8,
+    ) -> Change {
+        if !self.enabled
+            || self.composition.is_some()
+            || self.boundaries_revision != Some(self.revision)
+            || self.graphemes.binary_search(&index).is_err()
+        {
+            return Change::default();
+        }
+        let change = if clicks == 2 {
+            let range = self.word_selection(Selection::caret(index));
+            self.select(range.anchor, range.focus, false)
+        } else if clicks >= 3 {
+            self.select(0, self.text.len(), false)
+        } else {
+            self.move_to(index, extend, secondary)
+        };
+        if change.admitted {
+            self.pointer = Some(PointerSelection {
+                revision: self.revision,
+                initial_word: if clicks == 2 {
+                    Some(self.selection)
+                } else {
+                    None
+                },
+            });
+        }
+        change
+    }
+    pub fn pointer_drag(&mut self, index: usize, secondary: bool) -> Change {
+        let Some(pointer) = self.pointer.take() else {
+            return Change::default();
+        };
+        if pointer.revision != self.revision {
+            return Change::default();
+        }
+        let previous = self.selection;
+        let mut change = self.move_to(index, true, secondary);
+        if change.admitted {
+            if let Some(initial) = pointer.initial_word {
+                let expanded = self.word_selection(self.selection);
+                let lo = expanded.range().start.min(initial.range().start);
+                let hi = expanded.range().end.max(initial.range().end);
+                let reversed = expanded.anchor > expanded.focus;
+                self.select(
+                    if reversed { hi } else { lo },
+                    if reversed { lo } else { hi },
+                    false,
+                );
+                // Report the final selection, not intermediate character motion.
+                change.selection = self.selection != previous;
+            }
+        }
+        self.pointer = Some(pointer);
+        change
     }
     pub fn move_to(&mut self, index: usize, extend: bool, secondary: bool) -> Change {
         if self.composition.is_some()
@@ -859,6 +990,7 @@ impl EditorState {
         }
     }
     pub fn begin_composition(&mut self) -> u64 {
+        self.pointer = None;
         if !self.editable() {
             return 0;
         }
@@ -1798,5 +1930,173 @@ mod kill_service_contract_tests {
         assert_eq!(k, KillResult::default());
         assert_eq!(e.info(), before);
         assert_eq!(e.text(), &[65, 66, 67]);
+    }
+}
+
+#[cfg(test)]
+mod pointer_tests {
+    use super::*;
+    fn model() -> EditorState {
+        let mut e = EditorState::default();
+        e.reset(&"one  two!! three".encode_utf16().collect::<Vec<_>>());
+        assert!(e.install_boundaries(
+            e.info().revision,
+            &(0..=16).collect::<Vec<_>>(),
+            &[0, 3, 5, 8, 11, 16]
+        ));
+        e
+    }
+    fn selected(e: &EditorState) -> (usize, usize) {
+        (e.selection.anchor, e.selection.focus)
+    }
+    #[test]
+    fn double_click_selects_words_gaps_and_final_unit() {
+        let mut e = model();
+        for (at, want) in [
+            (1, (0, 3)),
+            (3, (3, 5)),
+            (4, (3, 5)),
+            (5, (5, 8)),
+            (8, (8, 11)),
+            (16, (11, 16)),
+        ] {
+            assert!(e.pointer_begin(at, false, false, 2).admitted);
+            assert_eq!(selected(&e), want);
+        }
+        e.select(16, 16, false);
+        e.select_word();
+        assert_eq!(selected(&e), (11, 16));
+        e.select(6, 1, false);
+        e.select_word();
+        assert_eq!(selected(&e), (8, 0));
+    }
+    #[test]
+    fn word_drag_keeps_initial_word_through_multiple_reversals() {
+        let mut e = model();
+        e.pointer_begin(6, false, false, 2);
+        for (at, want) in [
+            (14, (5, 16)),
+            (1, (8, 0)),
+            (6, (8, 5)),
+            (14, (5, 16)),
+            (10, (5, 11)),
+            (6, (5, 8)),
+        ] {
+            assert!(e.pointer_drag(at, false).admitted);
+            assert_eq!(selected(&e), want);
+            assert!(e.pointer_active());
+        }
+        assert!(!e.pointer_drag(6, false).selection);
+        assert!(!e.info().can_undo);
+    }
+    #[test]
+    fn character_shift_and_triple_click_keep_native_single_line_anchors() {
+        let mut e = model();
+        e.select(4, 9, false);
+        e.pointer_begin(12, true, true, 1);
+        assert_eq!(selected(&e), (4, 12));
+        assert!(e.selection.secondary);
+        e.pointer_drag(1, false);
+        assert_eq!(selected(&e), (4, 1));
+        e.pointer_begin(6, false, true, 2);
+        assert_eq!(selected(&e), (5, 8));
+        e.pointer_begin(6, false, false, 3);
+        assert_eq!(selected(&e), (0, 16));
+        e.pointer_drag(9, false);
+        assert_eq!(selected(&e), (0, 9));
+    }
+    #[test]
+    fn unicode_pointer_selection_never_splits_a_composed_cluster() {
+        let mut e = EditorState::default();
+        e.reset(&"a\u{301} 🦀 z".encode_utf16().collect::<Vec<_>>());
+        assert!(e.install_boundaries(e.info().revision, &[0, 2, 3, 5, 6, 7], &[0, 2, 3, 5, 6, 7]));
+        e.pointer_begin(3, false, false, 2);
+        assert_eq!(selected(&e), (3, 5));
+        assert!(!e.pointer_drag(1, false).admitted);
+        assert_eq!(selected(&e), (3, 5));
+        e.pointer_drag(0, false);
+        assert_eq!(selected(&e), (5, 0));
+        assert!(!e.pointer_drag(4, false).admitted);
+        e.pointer_drag(7, false);
+        assert_eq!(selected(&e), (3, 7));
+    }
+    #[test]
+    fn pointer_session_does_not_survive_context_or_service_mutations() {
+        for operation in 0..7 {
+            let mut e = model();
+            e.pointer_begin(6, false, false, 2);
+            match operation {
+                0 => {
+                    let copy = e.text().to_vec();
+                    e.reset(&copy);
+                }
+                1 => {
+                    e.select(0, 0, false);
+                }
+                2 => {
+                    e.move_to(0, false, false);
+                }
+                3 => {
+                    e.availability(false, false);
+                }
+                4 => {
+                    e.availability(true, true);
+                }
+                5 => {
+                    e.begin_composition();
+                }
+                _ => {
+                    e.insert(&[65], false);
+                }
+            }
+            let before = e.selection;
+            assert!(!e.pointer_active(), "operation {operation}");
+            assert!(!e.pointer_drag(1, false).admitted);
+            assert_eq!(e.selection, before);
+        }
+        let mut e = model();
+        e.pointer_begin(6, false, false, 2);
+        e.pointer_end();
+        assert!(!e.pointer_drag(1, false).admitted);
+    }
+    #[test]
+    fn readonly_allows_selection_but_unavailable_or_composing_rejects_pointer() {
+        let mut e = model();
+        e.availability(true, true);
+        assert!(e.pointer_begin(6, false, false, 2).admitted);
+        assert!(e.pointer_drag(14, false).admitted);
+        assert!(!e.insert(&[65], false).admitted);
+        e.availability(false, true);
+        assert!(!e.pointer_begin(6, false, false, 2).admitted);
+        e.availability(true, false);
+        e.begin_composition();
+        assert!(!e.pointer_begin(6, false, false, 2).admitted);
+        let mut stale = EditorState::default();
+        stale.reset(&[65]);
+        assert!(!stale.pointer_begin(0, false, false, 2).admitted);
+    }
+    #[test]
+    fn empty_and_whitespace_only_double_clicks_have_total_boundaries() {
+        let mut e = EditorState::default();
+        assert!(e.pointer_begin(0, false, false, 2).admitted);
+        assert!(e.pointer_drag(0, false).admitted);
+        e.reset(&[32, 32, 32]);
+        e.install_boundaries(e.info().revision, &[0, 1, 2, 3], &[]);
+        e.pointer_begin(1, false, false, 2);
+        assert_eq!(selected(&e), (0, 3));
+        e.pointer_drag(0, false);
+        assert_eq!(selected(&e), (0, 3));
+    }
+    #[test]
+    fn replacing_drag_selection_is_one_edit_with_reversible_selection() {
+        let mut e = model();
+        e.pointer_begin(6, false, false, 2);
+        e.pointer_drag(1, false);
+        e.pointer_end();
+        e.insert(&[65], false);
+        assert_eq!(String::from_utf16_lossy(e.text()), "A!! three");
+        e.undo();
+        assert_eq!(selected(&e), (8, 0));
+        assert!(!e.info().can_undo);
     }
 }

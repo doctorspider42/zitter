@@ -108,7 +108,7 @@ class SceneEditor final : public views::View, public EditorControl,
   std::u16string_view GetText() const override{return text_;}
   ui::TextInputClient* input_client() override{return this;}
   void SetText(std::u16string_view text) override {
-    ++context_;CancelMenu();CancelNativeComposition();clauses_.clear();
+    CancelPointerSelection();++context_;CancelMenu();CancelNativeComposition();clauses_.clear();
     Apply(sidebar::editor_reset(*state_,Slice(text)));blink_visible_=true;
   }
   void SetPlaceholderText(std::u16string text) override{placeholder_=std::move(text);GetViewAccessibility().SetPlaceholder(base::UTF16ToUTF8(placeholder_));Schedule();}
@@ -216,20 +216,35 @@ class SceneEditor final : public views::View, public EditorControl,
     return false;
   }
   bool OnMousePressed(const ui::MouseEvent& event) override {
-    if(!Available()||!event.IsOnlyLeftMouseButton())return views::View::OnMousePressed(event);RequestFocus();if(IsIMEComposing())ConfirmCompositionText(false);EnsureLayout();
-    const auto stop=Hit(event.x());const auto r=GetSelectedRange();drag_candidate_=!event.IsShiftDown()&&event.GetClickCount()==1&&r.GetMin()<stop.index&&stop.index<r.GetMax();
-    if(drag_candidate_)return true;dragging_=true;
-    if(event.GetClickCount()>=3)Apply(sidebar::editor_select(*state_,0,text_.size(),false));
-    else if(event.GetClickCount()==2)SelectWord(stop.index);
-    else Apply(sidebar::editor_move_to(*state_,stop.index,event.IsShiftDown(),stop.secondary));return true;
+    if(!Available()||!event.IsOnlyLeftMouseButton())return views::View::OnMousePressed(event);
+    CancelPointerSelection();RequestFocus();if(IsIMEComposing())ConfirmCompositionText(false);EnsureLayout();
+    const auto stop=Hit(event.x());const auto r=GetSelectedRange();
+    drag_candidate_=!event.IsShiftDown()&&event.GetClickCount()==1&&r.GetMin()<stop.index&&stop.index<r.GetMax();
+    if(drag_candidate_)return true;
+    dragging_=true;
+    Apply(sidebar::editor_pointer_begin(*state_,stop.index,stop.secondary,event.IsShiftDown(),event.GetClickCount()));
+    return true;
   }
-  bool OnMouseDragged(const ui::MouseEvent& event) override{if(!dragging_||!Available())return drag_candidate_;EnsureLayout();const auto stop=Hit(event.x());Apply(sidebar::editor_move_to(*state_,stop.index,true,stop.secondary));return true;}
-  void OnMouseReleased(const ui::MouseEvent& event) override{if(drag_candidate_&&!drag_started_&&Available()){auto stop=Hit(event.x());Apply(sidebar::editor_move_to(*state_,stop.index,false,stop.secondary));}dragging_=false;drag_candidate_=false;}
-  void OnMouseCaptureLost() override{dragging_=false;drag_candidate_=false;}
+  bool OnMouseDragged(const ui::MouseEvent& event) override {
+    if(!dragging_||!Available()||!event.IsOnlyLeftMouseButton())return drag_candidate_;
+    last_drag_x_=std::clamp(event.x(),0.f,static_cast<float>(width()));
+    if(event.x()>=0&&event.x()<=width()) {
+      selection_scroll_.Stop();SelectThroughPointer();
+    } else if(!selection_scroll_.IsRunning()) {
+      SelectThroughPointer();
+      if(dragging_)selection_scroll_.Start(FROM_HERE,base::Milliseconds(100),this,&SceneEditor::SelectThroughPointer);
+    }
+    return true;
+  }
+  void OnMouseReleased(const ui::MouseEvent& event) override {
+    if(drag_candidate_&&!drag_started_&&Available()){auto stop=Hit(event.x());Apply(sidebar::editor_move_to(*state_,stop.index,false,stop.secondary));}
+    CancelPointerSelection();
+  }
+  void OnMouseCaptureLost() override{CancelPointerSelection();}
   void OnFocus() override{views::View::OnFocus();if(GetInputMethod())GetInputMethod()->SetFocusedTextInputClient(this);StartBlink();Schedule();}
-  void OnBlur() override{Detach();blink_.Stop();dragging_=false;Schedule();views::View::OnBlur();}
+  void OnBlur() override{CancelPointerSelection();Detach();blink_.Stop();Schedule();views::View::OnBlur();}
   void AddedToWidget() override{views::View::AddedToWidget();window_.Observe(GetWidget());SyncLifecycle();}
-  void RemovedFromWidget() override{window_.Observe(nullptr);Detach();CancelMenu();blink_.Stop();surface_.reset();views::View::RemovedFromWidget();}
+  void RemovedFromWidget() override{CancelPointerSelection();window_.Observe(nullptr);Detach();CancelMenu();blink_.Stop();surface_.reset();views::View::RemovedFromWidget();}
   void VisibilityChanged(views::View* changed,bool visible) override{views::View::VisibilityChanged(changed,visible);SyncLifecycle();}
   void OnBoundsChanged(const gfx::Rect&) override{Schedule();}
   bool GetNeedsNotificationWhenVisibleBoundsChange() const override{return true;}
@@ -260,7 +275,7 @@ class SceneEditor final : public views::View, public EditorControl,
   void WriteDragDataForView(views::View*,const gfx::Point&,ui::OSExchangeData* data) override{const auto r=GetSelectedRange();data->SetString(text_.substr(r.GetMin(),r.length()));drag_started_=true;drag_revision_=sidebar::editor_info(*state_).revision;drag_selection_=r;}
   int GetDragOperationsForView(views::View*,const gfx::Point&) override{return Available()&&!GetSelectedRange().is_empty()?ui::DragDropTypes::DRAG_COPY|(Editable()?ui::DragDropTypes::DRAG_MOVE:0):ui::DragDropTypes::DRAG_NONE;}
   bool CanStartDragForView(views::View*,const gfx::Point&,const gfx::Point&) override{return drag_candidate_;}
-  void OnDragDone() override{drag_candidate_=false;drag_started_=false;dragging_=false;}
+  void OnDragDone() override{CancelPointerSelection();drag_started_=false;}
  private:
   static rust::Slice<const uint16_t> Slice(std::u16string_view text){return {reinterpret_cast<const uint16_t*>(text.data()),text.size()};}
   static std::u16string SingleLine(std::u16string_view text){std::u16string out;for(char16_t c:text)if(c>=0x20&&(c<0x7f||c>0x9f))out.push_back(c);return out;}
@@ -274,7 +289,7 @@ class SceneEditor final : public views::View, public EditorControl,
   void NotifyCaret(){if(GetInputMethod())GetInputMethod()->OnCaretBoundsChanged(this);}
   void RefreshText(){text_revision_=sidebar::editor_info(*state_).revision;const auto text=sidebar::editor_text(*state_);text_.assign(text.begin(),text.end());line_.reset();}
   void RefreshAX(){auto i=sidebar::editor_info(*state_);GetViewAccessibility().SetValue(text_);GetViewAccessibility().SetTextDirection(static_cast<int32_t>(GetTextDirection()==base::i18n::RIGHT_TO_LEFT?ax::mojom::WritingDirection::kRtl:ax::mojom::WritingDirection::kLtr));GetViewAccessibility().SetTextSelStart(i.anchor);GetViewAccessibility().SetTextSelEnd(i.focus);GetViewAccessibility().SetReadOnly(read_only_);}
-  void Apply(sidebar::EditorUpdate update){if(!update.admitted)return;if(update.text_changed){RefreshText();++edit_generation_;}if(!update.info.composing)clauses_.clear();EnsureLayout();RefreshAX();blink_visible_=true;Schedule();NotifyCaret();if(update.text_changed)GetViewAccessibility().NotifyEvent(ax::mojom::Event::kValueChanged,true);if(update.selection_changed)GetViewAccessibility().NotifyEvent(ax::mojom::Event::kTextSelectionChanged,true);}
+  void Apply(sidebar::EditorUpdate update){if(!update.admitted)return;if(!sidebar::editor_pointer_active(*state_)){selection_scroll_.Stop();dragging_=false;}if(update.text_changed){RefreshText();++edit_generation_;}if(!update.info.composing)clauses_.clear();EnsureLayout();RefreshAX();blink_visible_=true;Schedule();NotifyCaret();if(update.text_changed)GetViewAccessibility().NotifyEvent(ax::mojom::Event::kValueChanged,true);if(update.selection_changed)GetViewAccessibility().NotifyEvent(ax::mojom::Event::kTextSelectionChanged,true);}
   void EnsureLayout() const {
     if(!line_){line_=std::make_unique<EditorTextLayout>(text_,13,false,WritingDirection());std::vector<size_t> words;for(auto word:line_->words()){words.push_back(word.start);words.push_back(word.end);}const auto& stops=line_->graphemes();sidebar::editor_install_boundaries(*state_,sidebar::editor_info(*state_).revision,rust::Slice<const size_t>(stops.data(),stops.size()),rust::Slice<const size_t>(words.data(),words.size()));}
     auto i=sidebar::editor_info(*state_);geometry_=sidebar::editor_viewport(*state_,width(),height(),line_->width(),line_->Caret(i.focus,i.secondary).x,line_->ascent(),line_->descent(),AlignRight());
@@ -298,7 +313,18 @@ class SceneEditor final : public views::View, public EditorControl,
     EnsureLayout();const auto& stops=line_->carets();
     auto at=std::find_if(stops.begin(),stops.end(),[&](const auto& s){return s.index==i.focus&&s.secondary==i.secondary;});if(at==stops.end())at=stops.begin();if(right){if(at+1!=stops.end())++at;}else if(at!=stops.begin())--at;Apply(sidebar::editor_move_to(*state_,at->index,extend,at->secondary));
   }
-  void SelectWord(size_t at){EnsureLayout();for(auto word:line_->words())if(at>=word.start&&at<word.end){Apply(sidebar::editor_select(*state_,word.start,word.end,false));return;}auto hi=std::upper_bound(line_->graphemes().begin(),line_->graphemes().end(),at);const auto end=hi==line_->graphemes().end()?text_.size():*hi;Apply(sidebar::editor_select(*state_,at,end,false));}
+  void CancelPointerSelection(){selection_scroll_.Stop();dragging_=false;drag_candidate_=false;sidebar::editor_pointer_end(*state_);}
+  void SelectThroughPointer(){
+    if(!dragging_||!Available()||!HasFocus()){CancelPointerSelection();return;}
+    EnsureLayout();const auto stop=Hit(last_drag_x_);
+    auto update=sidebar::editor_pointer_drag(*state_,stop.index,stop.secondary);
+    if(!update.admitted){CancelPointerSelection();return;}
+    const bool changed=update.selection_changed;Apply(std::move(update));
+    // Stop idle wakeups once the caret reaches the text edge. A new drag event
+    // can start scrolling again, including after reversing direction.
+    if(!changed)selection_scroll_.Stop();
+  }
+
   bool Execute(ui::TextEditCommand command) {
     if(!IsTextEditCommandEnabled(command))return false;using C=ui::TextEditCommand;EnsureLayout();
     switch(command){
@@ -307,7 +333,7 @@ class SceneEditor final : public views::View, public EditorControl,
       case C::UNDO:Apply(sidebar::editor_undo(*state_));return true;
       case C::REDO:Apply(sidebar::editor_redo(*state_));return true;
       case C::SELECT_ALL:Apply(sidebar::editor_select(*state_,0,text_.size(),false));return true;
-      case C::SELECT_WORD:SelectWord(sidebar::editor_info(*state_).focus);return true;
+      case C::SELECT_WORD:Apply(sidebar::editor_select_word(*state_));return true;
       case C::COPY:case C::CUT:{const auto r=GetSelectedRange();{ui::ScopedClipboardWriter writer(ui::ClipboardBuffer::kCopyPaste);writer.WriteText(text_.substr(r.GetMin(),r.length()));}if(command==C::CUT)Apply(sidebar::editor_insert(*state_,rust::Slice<const uint16_t>(),false));return true;}
       case C::PASTE:{const auto context=context_,generation=edit_generation_;const auto i=sidebar::editor_info(*state_);ui::Clipboard::GetForCurrentThread()->ReadText(ui::ClipboardBuffer::kCopyPaste,std::nullopt,base::BindOnce([](base::WeakPtr<SceneEditor> self,uint64_t context,uint64_t generation,size_t anchor,size_t focus,std::u16string text){if(!self||!self->Editable()||!self->HasFocus()||self->context_!=context||self->edit_generation_!=generation)return;auto i=sidebar::editor_info(*self->state_);if(i.anchor!=anchor||i.focus!=focus||i.composing)return;self->InsertText(text,InsertTextCursorBehavior::kMoveCursorAfterText);},weak_factory_.GetWeakPtr(),context,generation,i.anchor,i.focus));return true;}
       case C::DELETE_BACKWARD:case C::DELETE_FORWARD:case C::DELETE_WORD_BACKWARD:case C::DELETE_WORD_FORWARD:if(!Editable())return false;Apply(sidebar::editor_erase(*state_,command==C::DELETE_BACKWARD||command==C::DELETE_WORD_BACKWARD,command==C::DELETE_WORD_BACKWARD||command==C::DELETE_WORD_FORWARD));return true;
@@ -359,7 +385,7 @@ class SceneEditor final : public views::View, public EditorControl,
   };
   mutable rust::Box<sidebar::EditorState> state_;std::u16string text_,placeholder_;mutable std::unique_ptr<EditorTextLayout> line_;mutable sidebar::EditorGeometry geometry_{};
   ui::ImeTextSpans clauses_;std::optional<base::i18n::TextDirection> direction_;std::optional<bool> align_right_;bool read_only_=false,pending_=false,blink_visible_=true,dragging_=false,drag_candidate_=false,drag_started_=false;uint64_t text_revision_=0,context_=0,edit_generation_=0,menu_generation_=0,drag_revision_=0;gfx::Range drag_selection_;
-  ui::TextEditCommand pending_command_=ui::TextEditCommand::INVALID_COMMAND;base::RepeatingTimer blink_;base::CallbackListSubscription enabled_subscription_;std::unique_ptr<SidebarMetal> surface_;std::unique_ptr<MenuDelegate> menu_delegate_;std::unique_ptr<ui::SimpleMenuModel> menu_;std::unique_ptr<views::MenuRunner> runner_;
+  ui::TextEditCommand pending_command_=ui::TextEditCommand::INVALID_COMMAND;base::RepeatingTimer blink_,selection_scroll_;float last_drag_x_=0;base::CallbackListSubscription enabled_subscription_;std::unique_ptr<SidebarMetal> surface_;std::unique_ptr<MenuDelegate> menu_delegate_;std::unique_ptr<ui::SimpleMenuModel> menu_;std::unique_ptr<views::MenuRunner> runner_;
   SceneWindowObserver window_{base::BindRepeating(&SceneEditor::SyncLifecycle,base::Unretained(this))};base::WeakPtrFactory<SceneEditor> weak_factory_{this};
 };
 BEGIN_METADATA(SceneEditor)
