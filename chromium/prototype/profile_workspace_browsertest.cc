@@ -3913,6 +3913,35 @@ class ZitterMetalSidebarBrowserTest : public ZitterProfilesBrowserTest {
   }
 };
 // Compiled with the migration; execution is deferred to the requested GUI checkpoint.
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, WorkspaceSwitchUsesPresentedMetalSceneAndCancels) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
+  shell->SetWorkspaceAnimations(false);shell->SetPinned(true);shell->ShowSidebar();
+  const auto url=embedded_test_server()->GetURL("/storage_probe.html?gpu-switch");
+  ASSERT_TRUE(window_->NavigateFromBar(url,true));ASSERT_TRUE(content::ExecJs(window_->contents("work"),"document.title='Workspace alpha 🦀'"));
+  ASSERT_TRUE(window_->Select("personal"));ASSERT_TRUE(base::test::RunUntil([&]{return window_->active_id()=="personal"&&!window_->profiles_busy();}));
+  ASSERT_TRUE(window_->NavigateFromBar(url,true));ASSERT_TRUE(content::ExecJs(window_->contents("personal"),"document.title='Workspace beta 日本語'"));
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->metal_sidebar_visible()&&shell->metal_sidebar_contains_text_for_testing("Workspace beta 日本語");}));
+  ASSERT_TRUE(window_->Select("work"));ASSERT_TRUE(base::test::RunUntil([&]{return shell->metal_sidebar_visible()&&shell->metal_sidebar_contains_text_for_testing("Workspace alpha 🦀");}));
+  shell->SetWorkspaceAnimations(true);ASSERT_TRUE(window_->Select("personal"));
+  EXPECT_TRUE(shell->workspace_switch_metal_visible());EXPECT_TRUE(shell->workspace_switch_contains_scene_text("Workspace beta 日本語"));EXPECT_TRUE(shell->workspace_animation_running());
+  ASSERT_TRUE(base::test::RunUntil([&]{return !shell->workspace_animation_running()&&shell->metal_sidebar_visible();}));
+  EXPECT_FALSE(shell->workspace_switch_metal_visible());EXPECT_TRUE(shell->metal_sidebar_contains_text_for_testing("Workspace beta 日本語"));
+  ASSERT_TRUE(window_->Select("work"));EXPECT_TRUE(shell->workspace_switch_metal_visible());
+  shell->SetWorkspaceAnimations(false);EXPECT_FALSE(shell->workspace_switch_metal_visible());EXPECT_FALSE(shell->workspace_animation_running());
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->metal_sidebar_visible();}));
+  // Replace a pending presentation/animation before its callback can run.
+  shell->SetWorkspaceAnimations(true);ASSERT_TRUE(window_->Select("personal"));ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(base::test::RunUntil([&]{return !shell->workspace_animation_running()&&shell->metal_sidebar_visible();}));
+  EXPECT_EQ("work",window_->active_id());EXPECT_TRUE(shell->metal_sidebar_contains_text_for_testing("Workspace alpha 🦀"));
+  ASSERT_TRUE(window_->Select("personal"));EXPECT_TRUE(shell->workspace_switch_metal_visible());
+  shell->sidebar_widget()->Hide();EXPECT_FALSE(shell->workspace_switch_metal_visible());EXPECT_FALSE(shell->workspace_animation_running());
+  shell->ShowSidebar();ASSERT_TRUE(base::test::RunUntil([&]{return shell->metal_sidebar_visible();}));
+  EXPECT_EQ("personal",window_->active_id());EXPECT_TRUE(shell->metal_sidebar_contains_text_for_testing("Workspace beta 日本語"));
+  ASSERT_TRUE(window_->Select("work"));EXPECT_TRUE(shell->workspace_switch_metal_visible());
+  const auto original=window_->widget()->GetWindowBoundsInScreen();auto resized=original;resized.set_width(original.width()+20);window_->widget()->SetBounds(resized);
+  ASSERT_TRUE(base::test::RunUntil([&]{return !shell->workspace_animation_running()&&shell->metal_sidebar_visible();}));
+  EXPECT_FALSE(shell->workspace_switch_metal_visible());EXPECT_TRUE(shell->metal_sidebar_contains_text_for_testing("Workspace alpha 🦀"));window_->widget()->SetBounds(original);
+}
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, SwipePreviewUsesMetalWithoutNativeSnapshots) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
   shell->SetWorkspaceAnimations(false);

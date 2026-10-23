@@ -32,7 +32,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Footer pin/settings, workspace dots/emoji and horizontal overflow | Rust layout, input reducer and shared Metal canvas; native focus/AX/menu adapters | Replace native containers; expand focus, trackpad, RTL and scale coverage |
 | Navigation/header controls | Rust strip layout/input and analytic GPU icons; main-window Metal canvas sharing sidebar GPU resources | Replace native Button/outer frame adapters; expand peek, accessibility, RTL and scale coverage |
 | Sidebar resizing, pinning, auto-hide, edge reveal | Rust drag/width bounds, shell/sidebar/grip geometry and auto-hide guards; Metal grip; native pin/show commands | Replace native window/event/cursor/AX adapters and edge-indicator painting; broaden input/accessibility coverage |
-| Workspace swipe/animation/cancellation | Rust gesture/preview content geometry and Metal page canvases; native timers/compositor settle and application commit adapter (GUI checkpoint pending) | Migrate regular workspace-switch animation and native fallback snapshots; run deferred browser/desktop acceptance |
+| Workspace swipe/animation/cancellation | Rust gesture/preview/transition policy and Metal canvases; native event/CA completion and application commit adapters (GUI checkpoint pending) | Run deferred browser/desktop acceptance; audit native fallback, cancellation, accessibility and scale |
 | Split headers/divider, focus, orientation, swap/close | Rust pane/bar layout, title text, menu/close input and divider drag; shared Metal rendering | Replace native View/Button/ResizeArea event, cursor and AX adapters; expand gesture/RTL/scale coverage |
 | Address/search palette, suggestions, providers, IME | Rust result selection/layout/text/icons, palette/input/static chrome geometry, Metal hints/errors; native Textfield/IME, provider/search controllers | Migrate remaining native containers/frame presentation; expand composition/accessibility/scale coverage |
 | Command Center tabs/pins/workspaces/history/actions | Rust result selection/drawing; existing search/ranking and application commands | Replace remaining native containers/frame presentation and command adapters; preserve stale results and identity |
@@ -205,7 +205,8 @@ binaries and inspect the matching signed isolated app. In particular, exercise
 `SidebarSwipeTracksCancelsAndSkipsSpaces`,
 `CocoaSwipesRepeatWithoutMouseMovement`, `SidebarRemainsOpenWhileSpacesSlide`,
 `MetalReturnsAfterWorkspaceAnimation`,
-`SwipePreviewUsesMetalWithoutNativeSnapshots`, sidebar hide/cancel, workspace changes
+`SwipePreviewUsesMetalWithoutNativeSnapshots`,
+`WorkspaceSwitchUsesPresentedMetalSceneAndCancels`, sidebar hide/cancel, workspace changes
 while committing and the prior palette regressions. Verify vertical scrolling,
 repeated stationary-cursor gestures, momentum, reduced motion, Unicode previews
 and the return of Metal after settling. Preserve the normal application/profile.
@@ -227,6 +228,16 @@ and the return of Metal after settling. Preserve the normal application/profile.
   GUI regression is deferred; this stage is **not runtime accepted**. Regular
   non-gesture workspace-switch animation still uses native row painting. See
   [non-windowed scene verification](benchmarks/rust-workspace-preview-scenes-headless-2026-10-23.json).
+
+- Regular click/shortcut workspace transitions now also have a direct Metal
+  viewport overlay. Rust owns direction, displacement, duration and static
+  motion guards. The overlay reuses the preview scene-data adapter, starts after
+  a one-shot Metal drawable-presented callback and finishes through an asynchronous
+  Core Animation delegate. Generation guards reject callbacks from cancelled or
+  superseded transitions; native row painting remains a fallback for unavailable
+  GPU resources. Native input/AX and workspace commands remain adapters. This
+  stage has non-windowed verification only; see
+  [switch verification](benchmarks/rust-workspace-switch-headless-2026-10-23.json).
 
 ## Completion gates
 

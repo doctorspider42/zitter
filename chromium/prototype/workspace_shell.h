@@ -33,6 +33,7 @@
 #include "ui/native_theme/native_theme_observer.h"
 #include "url/gurl.h"
 
+namespace zitter::sidebar { struct Item; }
 namespace ui { class AcceleratorTarget; }
 namespace views {
 class Button;
@@ -232,6 +233,8 @@ class WorkspaceShell final : public ui::EventHandler,
   void AnimateWorkspaceSwitch(std::string_view previous);
   bool workspace_animation_running() const;
   bool workspace_animation_pending() const { return workspace_animation_pending_; }
+  bool workspace_switch_metal_visible() const;
+  bool workspace_switch_contains_scene_text(std::string_view text) const;
   bool workspace_swipe_visible() const { return swipe_overlay_ != nullptr; }
   double workspace_swipe_position() const;
   size_t workspace_swipe_preview_count() const;
@@ -422,6 +425,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void OnNativeThemeUpdated(ui::NativeTheme* observed_theme) override;
   void RebuildTabs(std::string_view previous, bool catalogue_changed);
   void StopWorkspaceAnimation();
+  std::vector<sidebar::Item> CaptureWorkspaceScene(std::string_view id,gfx::Size size,int offset,bool source);
   void ConfigureSidebarContextMenus(views::View* root);
   struct TabListCache {
     raw_ptr<views::View> root = nullptr;
@@ -588,6 +592,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void CancelWorkspaceSwipe(bool reset_state = true);
   size_t workspace_animation_generation_ = 0;
   bool workspace_animation_pending_ = false;
+  raw_ptr<views::View> workspace_switch_overlay_ = nullptr;
   base::TimeTicks swipe_last_time_;
   base::TimeTicks last_native_scroll_time_;
   size_t pinned_list_build_count_ = 0;

@@ -6,6 +6,7 @@ mod ffi {
     // kind: 0 row, 1 section label, 2 split pair (three consecutive items), 3 gap.
     struct PreviewRow { index: usize, kind: u32, depth: i32, height: i32 }
     struct PreviewPlacement { index: usize, bounds: Rect, clip: Rect }
+    struct WorkspaceMotion { enabled: bool, offset: f64, duration_ms: u32 }
     struct SwipeUpdate { started: bool, preview: bool, finish: bool, handled: bool }
     struct SwipePage { index: i32, x: f64 }
     struct SwipeLayout { center: i32, pages: Vec<SwipePage> }
@@ -62,6 +63,7 @@ mod ffi {
         fn position(self: &WorkspaceSwipe) -> f64;
         fn target(self: &WorkspaceSwipe, count: i32) -> i32;
         fn swipe_layout(position: f64, count: i32, width: i32) -> SwipeLayout;
+        fn workspace_switch_motion(previous: i32, current: i32, visible: bool, enabled: bool, reduced: bool) -> WorkspaceMotion;
         fn workspace_preview_layout(width: i32, height: i32, offset: i32, rows: &[PreviewRow]) -> Vec<PreviewPlacement>;
         type PaletteSelection;
         fn new_palette_selection() -> Box<PaletteSelection>;
@@ -218,6 +220,11 @@ fn swipe_layout(position:f64,count:i32,width:i32)->ffi::SwipeLayout {
         for index in (center-1).max(0)..=(center+1).min(count-1){pages.push(ffi::SwipePage{index,x:(index as f64-position)*width.max(0) as f64});}
     }
     ffi::SwipeLayout{center,pages}
+}
+
+fn workspace_switch_motion(previous:i32,current:i32,visible:bool,enabled:bool,reduced:bool)->ffi::WorkspaceMotion {
+    let enabled=previous>=0 && current>=0 && previous!=current && visible && enabled && !reduced;
+    ffi::WorkspaceMotion{enabled,offset:if !enabled{0.0}else if current>previous{32.0}else{-32.0},duration_ms:if enabled{180}else{0}}
 }
 
 // Preview data carries identities and font metrics, never native View bounds.
@@ -1061,6 +1068,16 @@ mod tests {
             let ops=layout(&[item]);let icon=ops.iter().find(|p|p.shape>0).unwrap();
             assert_eq!(icon.shape,glyph-1);assert_eq!((icon.x,icon.y,icon.width,icon.height),(8.0,8.0,16.0,16.0));
             assert!(ops.iter().all(|p|p.text.is_empty()));
+        }
+    }
+    #[test] fn workspace_switch_motion_preserves_direction_and_duration() {
+        let next=workspace_switch_motion(0,3,true,true,false);assert!(next.enabled);assert_eq!((next.offset,next.duration_ms),(32.0,180));
+        let previous=workspace_switch_motion(3,0,true,true,false);assert!(previous.enabled);assert_eq!((previous.offset,previous.duration_ms),(-32.0,180));
+        let far=workspace_switch_motion(0,i32::MAX,true,true,false);assert_eq!(far.offset,32.0);
+    }
+    #[test] fn workspace_switch_motion_respects_motion_visibility_and_identity_guards() {
+        for (old,new,visible,enabled,reduced) in [(0,0,true,true,false),(-1,1,true,true,false),(0,-1,true,true,false),(0,1,false,true,false),(0,1,true,false,false),(0,1,true,true,true)] {
+            let motion=workspace_switch_motion(old,new,visible,enabled,reduced);assert!(!motion.enabled);assert_eq!((motion.offset,motion.duration_ms),(0.0,0));
         }
     }
     #[test] fn workspace_preview_rows_keep_order_gaps_indent_and_partial_clip() {

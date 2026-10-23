@@ -475,3 +475,32 @@ Actual clipping, settle animation and GPU ownership are still unverified in a
 running window. Regular click/shortcut workspace-switch animation continues to
 use native-painted content. See
 [scene verification](benchmarks/rust-workspace-preview-scenes-headless-2026-10-23.json).
+
+
+Regular workspace switches (clicks and configured keyboard actions) now use a
+single Metal viewport overlay in the opt-in backend. Rust decides whether motion
+is allowed and supplies the existing 32-point directional displacement and
+180 ms duration. The scene-data adapter is shared with gesture previews; no
+native row snapshot is required on the successful GPU path. Non-Metal Views and
+missing-GPU fallback retain the established native layer animation.
+
+The overlay registers a one-shot `MTLDrawable` presented handler before submitting
+its first frame. That handler posts back to the UI sequence before starting the
+Core Animation translation. Animation completion also posts to the UI sequence;
+it never tears down an active delegate synchronously. Generation guards reject
+stale presentation/completion callbacks after a new switch, hide, disable or
+teardown. This adds neither a polling timer nor a synchronous GPU wait. The
+ordinary sidebar canvas is restored after the transition overlay is removed.
+
+Underlying row painting is gated while either GPU transition owns the viewport.
+Removing a transition explicitly invalidates native rows so missing-drawable
+fallback can paint fresh content. Native event/focus/AX nodes and browser/profile
+commands remain adapters.
+
+Non-windowed verification passed **63 Rust tests and 59 Python tests**. The new
+`WorkspaceSwitchUsesPresentedMetalSceneAndCancels` browser regression is compiled
+but not run; it covers target scene text, normal completion, rapid replacement,
+disable, hide and window reflow, followed by ordinary Metal restoration. Actual presentation
+ordering, CA callbacks, cancellation, missing drawables and visual quality still
+require the requested GUI checkpoint. This is not a measured performance gain.
+See [switch verification](benchmarks/rust-workspace-switch-headless-2026-10-23.json).

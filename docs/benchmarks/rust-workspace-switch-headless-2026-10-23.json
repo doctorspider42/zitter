@@ -1,0 +1,72 @@
+{
+  "date": "2026-10-23",
+  "platform": "macOS arm64",
+  "build": "Release, ThinLTO, Chromium PGO",
+  "base_commit": "fe36d97dafa2f95bafd1f0d75b8e7be0ed50656c",
+  "chromium_base_revision": "1a732fcc23b20dd0bcf38f35d72c1fe1ec799d35",
+  "purpose": "Non-windowed verification of Rust regular workspace transition policy and compilation of a presentation-gated Metal overlay; native runtime acceptance deferred",
+  "acceptance_status": "awaiting_gui_checkpoint",
+  "source_sha256": {
+    "chromium/prototype/profile_workspace_browsertest.cc": "75de792ad07f1c73fa69b5b5d85661abb558ee9d25b72b9fedc7d49c0fd4b743",
+    "chromium/prototype/sidebar_metal.h": "7f390bdeee8b0bbdd60e782e934dc7f5b0b773aabac034ef013bb711dd88d276",
+    "chromium/prototype/sidebar_metal.mm": "3b66c3d75988605c595fde32969c3281478cc9f75844daa0c6b773aaa5650fcb",
+    "chromium/prototype/sidebar_scene.rs": "0b278fc33af6c6514bcb83355ba420353d6530b46b4694b22af01281e8c12dbc",
+    "chromium/prototype/workspace_shell.cc": "eff8a0154ed8d8704576d25cddb3fd71a988f261ffcd58caf8cdee49cd93008f",
+    "chromium/prototype/workspace_shell.h": "b9688d733445025a1d1464762113e77ad8e35712bd222fde248e517b399f29c0"
+  },
+  "staged_sources_match": true,
+  "compiled_app_uuid": "4C4C4461-5555-3144-A125-2F57329AA393",
+  "compiled_browser_test_uuid": "4C4C442F-5555-3144-A1FD-0AEC784E5858",
+  "build_targets": [
+    "sidebar_scene_unittests_exe",
+    "zitter_prototype_ui_lab",
+    "zitter_ui_lab"
+  ],
+  "build_result": "passed",
+  "build_consistency": "final Ninja dry run reported no work to do",
+  "rust_unit_tests_passed": 63,
+  "python_unit_tests_passed": 59,
+  "new_rust_tests_passed": [
+    "workspace_switch_motion_preserves_direction_and_duration",
+    "workspace_switch_motion_respects_motion_visibility_and_identity_guards"
+  ],
+  "gn_dependency_check": "passed for //zitter_ui_lab:*",
+  "product_boundaries": "passed",
+  "gui_tests": {
+    "status": "not run at user request",
+    "new_compiled_case": "ZitterMetalSidebarBrowserTest.WorkspaceSwitchUsesPresentedMetalSceneAndCancels",
+    "last_accepted_commit": "3cd95d82019b239c6c9cc6e84331a4f9f5ef0c55",
+    "prior_gui_results_apply_to_current_code": false
+  },
+  "manual_validation": {
+    "status": "deferred",
+    "app_launched": false,
+    "packaged_or_signed": false,
+    "normal_application_or_profile_used": false
+  },
+  "unit_verified_mechanisms": [
+    "Rust owns regular transition eligibility for known distinct workspace indexes, visible sidebar, enabled animation and no reduced motion. It supplies the established +/-32 point displacement and 180ms duration; non-adjacent index changes retain the same displacement.",
+    "The complete previous Rust display-list, viewport, gesture and preview-content test set remains green. Shared scene capture keeps workspace IDs, browser commands and font metrics in the native application adapter."
+  ],
+  "implemented_pending_runtime_verification": [
+    "Normal click/shortcut switches have a visual-only Metal viewport overlay using the same scene-data capture adapter as gesture previews, the established Rust display list and the shared GPU device/queue/pipeline. The successful path does not rasterize native row snapshots or use a Views compositor animation clock.",
+    "Before the first submission, the surface registers an MTLDrawable addPresentedHandler. Presentation posts a one-shot callback to the UI sequence, then starts the cached drawable translation through Core Animation. No synchronous GPU wait or polling timer is added.",
+    "A retained CAAnimationDelegate posts animation completion to the UI sequence. Normal completion removes the overlay, invalidates native fallback rows and schedules restoration of the ordinary Metal sidebar.",
+    "Generation guards reject stale presentation/completion callbacks after replacement, disable, hide or teardown. Window/sidebar reflow cancels a captured overlay instead of retaining old screen-space clipping.",
+    "Native row traversal is suppressed while a Metal gesture or normal transition owns the viewport. Overlay removal explicitly invalidates rows for fresh missing-drawable fallback. Header/footer input, focus/AX and browser/profile commands remain native adapters.",
+    "If the GPU overlay cannot prepare, it is discarded and the existing native layer animation runs. The default Views backend retains its existing native animation policy.",
+    "The compiled GUI case warms two real workspaces, checks target Unicode scene text, completion and normal Metal return, disable, rapid replacement, hide and window resize. It has not been executed."
+  ],
+  "deferred_checkpoint": [
+    "Run the curated 45-case Metal matrix (prior 43 plus SwipePreviewUsesMetalWithoutNativeSnapshots and WorkspaceSwitchUsesPresentedMetalSceneAndCancels) and all 17 Views controls against the matching rebuilt sources.",
+    "Check actual drawable presentation ordering, Core Animation completion/cancellation, unavailable drawable/context fallback, repeated switches before first presentation, window hide/resize/teardown and reduced motion.",
+    "Inspect gesture and regular transitions with source scroll, Unicode, deep/collapsed folders, split pairs, focus/accessibility and multiple scales, then package/sign and inspect the matching isolated app.",
+    "Measure real-workload CPU, GPU and actual presentation separately. A presented callback is a lifecycle gate here, not a recorded benchmark or proof of speedup."
+  ],
+  "limitations": [
+    "Compilation and non-windowed unit tests do not prove native Metal/CA behavior, visual quality, callback ordering, focus/AX behavior or performance. Those remain unaccepted until the GUI checkpoint.",
+    "The scene is a short-lived snapshot during the transition; native Views containers, native snapshot fallback, forms and service presentation remain. Full functional migration is incomplete.",
+    "Text tiles remain cached per surface. Cost of capturing/rendering a fresh transition surface and possible cache sharing require workload profiling; no performance gain is claimed.",
+    "No dependency, crate or framework was added. Metal drawable and QuartzCore delegate APIs use already-linked system frameworks; original-code Apache-2.0 and required upstream notices are unchanged."
+  ]
+}

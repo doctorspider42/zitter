@@ -6,6 +6,7 @@
 #include <string_view>
 #include <vector>
 #include "base/functional/callback.h"
+#include "base/time/time.h"
 #include "ui/gfx/geometry/point_f.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "base/containers/span.h"
@@ -31,6 +32,10 @@ class SidebarMetal {
   // the drawable; bounds/scale changes and missing drawables also force redraw.
   virtual void UpdatePreview(gfx::NativeWindow window,gfx::Rect viewport,double x,
       base::span<const sidebar::Item> items,unsigned background,bool settle,bool redraw) = 0;
+  // One-shot actual Metal drawable presentation, dispatched back to the UI
+  // sequence. Register before a forced UpdatePreview; no synchronous GPU wait.
+  virtual void SetNextPresentationCallback(base::OnceClosure presented) = 0;
+  virtual void AnimatePreview(double x,base::TimeDelta duration,base::OnceClosure done) = 0;
   virtual void Hide() = 0;
   virtual bool visible() const = 0;
   // Submitted command buffers, not presentation timestamps. UI thread only.

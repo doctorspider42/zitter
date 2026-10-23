@@ -18,6 +18,7 @@
 #include "base/apple/scoped_cftyperef.h"
 #include "base/logging.h"
 #include "base/no_destructor.h"
+#include "base/task/bind_post_task.h"
 #include "base/strings/sys_string_conversions.h"
 #include "ui/views/controls/scrollbar/scroll_bar.h"
 #include "ui/views/controls/scrollbar/base_scroll_bar_thumb.h"
@@ -37,6 +38,18 @@
 - (NSView*)hitTest:(NSPoint)point { return nil; }
 - (BOOL)acceptsFirstResponder { return NO; }
 - (BOOL)isAccessibilityElement { return NO; }
+@end
+// Both presentation and animation completion may originate outside the UI
+// sequence. Their callbacks are posted and guarded by the shell generation.
+@interface ZitterMetalAnimationCompletion : NSObject <CAAnimationDelegate> {
+ @public
+  base::OnceClosure callback;
+}
+@end
+@implementation ZitterMetalAnimationCompletion
+- (void)animationDidStop:(CAAnimation*)animation finished:(BOOL)finished {
+  if(callback)std::move(callback).Run();
+}
 @end
 namespace zitter::prototype {
 namespace {
@@ -183,8 +196,8 @@ class Surface final : public SidebarMetal {
     view_.hidden = YES;
     return true;
   }
-  ~Surface() override { [view_ removeFromSuperview]; [preview_clip_ removeFromSuperview]; }
-  void Hide() override { view_.hidden = YES; [view_.layer removeAnimationForKey:@"zitter-preview"]; last_frame_.clear(); last_bounds_ = {}; }
+  ~Surface() override { [view_.layer removeAnimationForKey:@"zitter-preview"]; [view_ removeFromSuperview]; [preview_clip_ removeFromSuperview]; }
+  void Hide() override { next_presentation_.Reset(); view_.hidden = YES; [view_.layer removeAnimationForKey:@"zitter-preview"]; last_frame_.clear(); last_bounds_ = {}; }
   bool visible() const override { return view_.superview && view_.window.isVisible && !view_.isHiddenOrHasHiddenAncestor; }
   size_t frame_count() const override { return frame_count_; }
   bool contains_text_for_testing(std::string_view text) const override {
@@ -245,20 +258,29 @@ class Surface final : public SidebarMetal {
     // Page pixels never move in the display list; Core Animation translates the
     // drawable layer inside the clipping adapter, also during the final settle.
     const bool was=visible();
-    if(redraw||!was||bounds!=last_bounds_||layer_.contentsScale!=(window.backingScaleFactor?:1))
+    if(redraw||!was||next_presentation_||bounds!=last_bounds_||layer_.contentsScale!=(window.backingScaleFactor?:1))
       Render(window,bounds,NSMakeRect(0,0,bounds.width(),bounds.height()),items,background);
     if(!visible())return;
+    AnimatePreview(x,settle&&was?base::Milliseconds(160):base::TimeDelta(),{});
+  }
+  void SetNextPresentationCallback(base::OnceClosure presented) override {next_presentation_=std::move(presented);}
+  void AnimatePreview(double x,base::TimeDelta duration,base::OnceClosure done) override {
+    // Post completion even for cancellation/zero duration. Reentrant teardown
+    // from a CAAnimationDelegate call must not destroy its active receiver.
+    auto posted=done?base::BindPostTaskToCurrentDefault(std::move(done)):base::OnceClosure();
+    if(!visible()||!std::isfinite(x)){if(posted)std::move(posted).Run();return;}
     CALayer* presentation=(CALayer*)view_.layer.presentationLayer;
     const double previous=presentation?presentation.transform.m41:view_.layer.transform.m41;
     [CATransaction begin];[CATransaction setDisableActions:YES];
     [view_.layer removeAnimationForKey:@"zitter-preview"];
     view_.layer.transform=CATransform3DMakeTranslation(x,0,0);
-    if(settle&&was&&previous!=x){
+    if(duration.is_positive()&&previous!=x){
       CABasicAnimation* animation=[CABasicAnimation animationWithKeyPath:@"transform.translation.x"];
-      animation.fromValue=@(previous);animation.toValue=@(x);animation.duration=0.160;
+      animation.fromValue=@(previous);animation.toValue=@(x);animation.duration=duration.InSecondsF();
       animation.timingFunction=[CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
+      auto* completion=[[ZitterMetalAnimationCompletion alloc] init];completion->callback=std::move(posted);animation.delegate=completion;
       [view_.layer addAnimation:animation forKey:@"zitter-preview"];
-    }
+    } else if(posted)std::move(posted).Run();
     [CATransaction commit];
   }
  private:
@@ -273,7 +295,7 @@ class Surface final : public SidebarMetal {
         << ',' << op.radius << ',' << op.color << ',' << op.font_size << ','
         << op.shape << ',' << op.stroke << ',' << op.bold << ',' << op.middle << ',' << op.center << ':' << op.text.size() << ':' << std::string(op.text);
     std::string fingerprint = signature.str();
-    if (fingerprint == last_frame_ && !view_.hidden) return;
+    if (fingerprint == last_frame_ && !view_.hidden && !next_presentation_) return;
     [CATransaction begin]; [CATransaction setDisableActions:YES];
     view_.frame = frame;
     const CGSize pixels = CGSizeMake(bounds.width() * scale, bounds.height() * scale);
@@ -317,6 +339,10 @@ class Surface final : public SidebarMetal {
       [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:6];
     }
     [encoder endEncoding];
+    if(next_presentation_) {
+      auto callback=std::make_shared<base::OnceClosure>(base::BindPostTaskToCurrentDefault(std::move(next_presentation_)));
+      [drawable addPresentedHandler:^(id<MTLDrawable> presented) {if(*callback)std::move(*callback).Run();}];
+    }
     [command presentDrawable:drawable]; [command commit];
     ++frame_count_;
     view_.hidden = NO; last_frame_ = std::move(fingerprint); last_bounds_ = bounds;
@@ -371,6 +397,7 @@ class Surface final : public SidebarMetal {
   size_t text_bytes_ = 0;
   rust::Box<sidebar::Viewport> viewport_ = sidebar::new_viewport();
   std::shared_ptr<SharedMetalContext> context_;
+  base::OnceClosure next_presentation_;
   size_t frame_count_ = 0;
   std::string last_frame_;
   gfx::Rect last_bounds_;
