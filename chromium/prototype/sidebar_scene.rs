@@ -1,8 +1,13 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 // Control layout, presentation and input policy; browser state and command ownership
-// remain in WorkspaceShell. No URLs, profiles or WebContents cross this ABI.
+// remain in WorkspaceShell. Only UI IDs/text/metrics cross this ABI, never URLs,
+// profile objects/directories or WebContents.
 #[cxx::bridge(namespace = "zitter::sidebar")]
 mod ffi {
+    struct WorkspaceCopy { name_label: String, placeholder: String, profile_label: String, profile_ax: String, profile_hint: String, save_hint: String, close: String, appearance: String, color: String, color_ax: String, emoji: String, emoji_ax: String, emoji_placeholder: String, more: String, manage: String, import_label: String, remove_label: String }
+    enum WorkspaceFormAction { None, Create, Edit }
+    struct WorkspaceFormRequest { action: WorkspaceFormAction, workspace: String, name: String, profile: String }
+    struct WorkspaceFormView { creating: bool, title: String, description: String, save_label: String, secondary_label: String, appearance: bool, enabled: bool, remove_enabled: bool, error: String }
     struct ProfileOption { id: String, name: String }
     struct ProfileUse { workspace: String, name: String, profile: String }
     struct ProfileCopy { title: String, hint: String, name_label: String, name_ax: String, placeholder: String, existing: String, picker_ax: String, create: String, rename: String, remove_label: String, confirm_delete: String, back: String }
@@ -75,6 +80,17 @@ mod ffi {
         text: String, font_size: f32, bold: bool, middle: bool, center: bool, clip: FloatRect,
     }
     extern "Rust" {
+        type WorkspaceForm;
+        fn new_workspace_form() -> Box<WorkspaceForm>;
+        fn workspace_copy() -> WorkspaceCopy;
+        fn workspace_appearance_error(kind: u32) -> String;
+        fn reset(self: &mut WorkspaceForm, current: &str);
+        fn begin_create(self: &mut WorkspaceForm, current: &str);
+        fn creating(self: &WorkspaceForm) -> bool;
+        fn view(self: &WorkspaceForm, name: &str, profile_name: &str, ready: bool, busy: bool, count: usize) -> WorkspaceFormView;
+        fn set_configuration_error(self: &mut WorkspaceForm, error: bool);
+        fn submit(self: &mut WorkspaceForm, name: &str, profile: &str, current: &str, ready: bool, busy: bool, composing: bool, profiles: &[ProfileOption], workspaces: &[ProfileUse]) -> WorkspaceFormRequest;
+        fn finish_attempt(self: &mut WorkspaceForm, accepted: bool);
         type ProfileForm;
         fn new_profile_form() -> Box<ProfileForm>;
         fn profile_copy() -> ProfileCopy;
@@ -278,6 +294,63 @@ fn swipe_layout(position:f64,count:i32,width:i32)->ffi::SwipeLayout {
         for index in (center-1).max(0)..=(center+1).min(count-1){pages.push(ffi::SwipePage{index,x:(index as f64-position)*width.max(0) as f64});}
     }
     ffi::SwipeLayout{center,pages}
+}
+
+// Workspace names retain the original ASCII-only trimming policy. Unicode
+// whitespace, duplicate workspace names and long names were accepted previously.
+pub struct WorkspaceForm {
+    workspace: String,
+    creating: bool,
+    submitting: bool,
+    error: String,
+}
+fn new_workspace_form() -> Box<WorkspaceForm> {
+    Box::new(WorkspaceForm { workspace: String::new(), creating: false, submitting: false, error: String::new() })
+}
+fn workspace_copy() -> ffi::WorkspaceCopy {
+    ffi::WorkspaceCopy {
+        name_label: "Nazwa przestrzeni".into(), placeholder: "Np. Projekt lub Klient".into(),
+        profile_label: "Profil przeglądania".into(), profile_ax: "Profil przestrzeni".into(),
+        profile_hint: "Wspólny profil = wspólne logowanie i cookies.\nZmiana profilu zamknie karty tej przestrzeni.".into(),
+        save_hint: "Zapisz poniżej nazwę i profil. Wygląd zapisuje się od razu.".into(),
+        close: "Zamknij ustawienia przestrzeni".into(), appearance: "Wygląd · zapis automatyczny".into(),
+        color: "Kolor przestrzeni".into(), color_ax: "Kolor przestrzeni #RRGGBB".into(),
+        emoji: "Emoji przestrzeni".into(), emoji_ax: "Emoji przestrzeni".into(), emoji_placeholder: "Inne… (⌃⌘Spacja)".into(),
+        more: "Więcej opcji".into(), manage: "Zarządzaj profilami".into(), import_label: "Importuj z przeglądarki…".into(), remove_label: "Usuń przestrzeń…".into(),
+    }
+}
+fn workspace_appearance_error(kind: u32) -> String {
+    match kind { 0 => "Nie udało się zapisać ustawień", 1 => "Nie udało się zapisać koloru", 2 => "Nie udało się zapisać emoji", _ => "Podaj kolor #RRGGBB" }.into()
+}
+const WORKSPACE_CONFIGURATION_ERROR: &str = "Nie udało się odczytać lub zapisać przestrzeni.";
+impl WorkspaceForm {
+    fn reset(&mut self, current: &str) { self.workspace=current.into(); self.creating=false; self.submitting=false; }
+    fn begin_create(&mut self, current: &str) { self.workspace=current.into(); self.creating=true; self.submitting=false; self.error.clear(); }
+    fn creating(&self) -> bool { self.creating }
+    fn view(&self, name: &str, profile_name: &str, ready: bool, busy: bool, count: usize) -> ffi::WorkspaceFormView {
+        let enabled=ready&&!busy&&!self.submitting;
+        ffi::WorkspaceFormView { creating:self.creating, title:if self.creating { "Nowa przestrzeń".into() } else { name.into() }, description:format!("Chromium: {}",profile_name),
+            save_label:if self.creating { "Utwórz przestrzeń" } else { "Zapisz nazwę i profil" }.into(),
+            secondary_label:if self.creating { "Anuluj" } else { "Nowa przestrzeń…" }.into(),
+            appearance:!self.creating, enabled, remove_enabled:enabled&&!self.creating&&count>1, error:self.error.clone() }
+    }
+    fn set_configuration_error(&mut self, error: bool) { self.error=if error { WORKSPACE_CONFIGURATION_ERROR.into() } else { String::new() }; }
+    fn submit(&mut self, raw_name: &str, profile: &str, current: &str, ready: bool, busy: bool, composing: bool, profiles: &[ffi::ProfileOption], workspaces: &[ffi::ProfileUse]) -> ffi::WorkspaceFormRequest {
+        let none=||ffi::WorkspaceFormRequest { action:ffi::WorkspaceFormAction::None, workspace:String::new(), name:String::new(), profile:String::new() };
+        if composing||self.submitting { return none(); }
+        if !ready||busy { self.error="Poczekaj na zakończenie zapisywania.".into(); return none(); }
+        if self.workspace.is_empty()||self.workspace!=current||!workspaces.iter().any(|w|w.workspace==self.workspace) { self.error="Przestrzeń zmieniła się. Otwórz ustawienia ponownie.".into(); return none(); }
+        let name=raw_name.trim_matches(|c|matches!(c,' '|'\t'|'\n'|'\r'|'\x0b'|'\x0c'));
+        if name.is_empty() { self.error="Podaj nazwę przestrzeni.".into(); return none(); }
+        if profile.is_empty()||!profiles.iter().any(|p|p.id==profile) { self.error="Wybierz istniejący profil.".into(); return none(); }
+        self.error.clear(); self.submitting=true;
+        ffi::WorkspaceFormRequest { action:if self.creating { ffi::WorkspaceFormAction::Create } else { ffi::WorkspaceFormAction::Edit }, workspace:self.workspace.clone(), name:name.into(), profile:profile.into() }
+    }
+    fn finish_attempt(&mut self, accepted: bool) {
+        self.submitting=false;
+        if accepted { self.creating=false; self.error.clear(); }
+        else if self.error.is_empty() { self.error=WORKSPACE_CONFIGURATION_ERROR.into(); }
+    }
 }
 
 pub struct ProfileForm { selected:String, workspace:String, confirmation:String, status:String, submitting:bool }
@@ -1270,6 +1343,47 @@ mod tests {
         }
     }
     fn menu_state()->ffi::TabMenuState{ffi::TabMenuState{ready:true,busy:false,valid:true,tab:7,has_tab:true,split:true,first:3,has_first:true,second:7,has_second:true,vertical:false,tab_count:3,http:true}}
+    #[test] fn workspace_form_preserves_copy_and_profile_change_warning() {
+        let c=workspace_copy();assert!(c.profile_hint.contains("Zmiana profilu zamknie karty"));assert!(c.profile_hint.contains("wspólne logowanie i cookies"));assert!(c.save_hint.contains("Wygląd zapisuje się od razu"));
+        assert_eq!(workspace_appearance_error(2),"Nie udało się zapisać emoji");assert_eq!(workspace_appearance_error(3),"Podaj kolor #RRGGBB");
+    }
+    #[test] fn workspace_form_tracks_create_cancel_and_edit_presentation() {
+        let mut f=new_workspace_form();f.reset("work");let v=f.view("Praca","Pracowy",true,false,2);assert!(!v.creating);assert!(v.appearance&&v.enabled&&v.remove_enabled);assert_eq!(v.description,"Chromium: Pracowy");
+        f.set_configuration_error(true);f.begin_create("work");let v=f.view("Praca","Pracowy",true,false,2);assert!(v.creating);assert!(!v.appearance&&!v.remove_enabled);assert!(v.error.is_empty());assert_eq!(v.title,"Nowa przestrzeń");assert_eq!(v.secondary_label,"Anuluj");
+        f.reset("work");assert!(!f.creating());assert_eq!(f.view("Praca","P",true,false,2).save_label,"Zapisz nazwę i profil");
+    }
+    #[test] fn workspace_form_preserves_ascii_trim_and_unicode_name_policy() {
+        let mut f=new_workspace_form();f.begin_create("work");let r=f.submit(" \tŻółć 日本語 🦀\r\n","used","work",true,false,false,&profile_options(),&profile_uses());assert_eq!(r.name,"Żółć 日本語 🦀");assert!(matches!(r.action,ffi::WorkspaceFormAction::Create));f.finish_attempt(true);
+        let raw="\u{3000}\u{00a0}";let r=f.submit(raw,"used","work",true,false,false,&profile_options(),&profile_uses());assert_eq!(r.name,raw);f.finish_attempt(true);
+        // Existing model permits duplicate and arbitrarily long workspace names.
+        let name="Praca".repeat(300);assert_eq!(f.submit(&name,"used","work",true,false,false,&profile_options(),&profile_uses()).name,name);
+    }
+    #[test] fn workspace_form_rejects_stale_context_missing_profile_and_unready_state() {
+        let mut f=new_workspace_form();f.reset("work");
+        for (current,ready,busy,profile) in [("other",true,false,"used"),("work",false,false,"used"),("work",true,true,"used"),("work",true,false,"missing"),("work",true,false,"")] {
+            assert!(matches!(f.submit("Name",profile,current,ready,busy,false,&profile_options(),&profile_uses()).action,ffi::WorkspaceFormAction::None));assert!(!f.error.is_empty());
+        }
+        assert!(matches!(f.submit("Name","used","work",true,false,false,&profile_options(),&[]).action,ffi::WorkspaceFormAction::None));
+    }
+    #[test] fn workspace_form_keeps_composition_and_empty_validation_separate() {
+        let mut f=new_workspace_form();f.reset("work");assert!(matches!(f.submit("Name","used","work",true,false,true,&profile_options(),&profile_uses()).action,ffi::WorkspaceFormAction::None));assert!(f.error.is_empty());
+        assert!(matches!(f.submit(" \t\r\n\x0b\x0c","used","work",true,false,false,&profile_options(),&profile_uses()).action,ffi::WorkspaceFormAction::None));assert_eq!(f.error,"Podaj nazwę przestrzeni.");
+        assert!(matches!(f.submit("Name","used","work",true,false,true,&profile_options(),&profile_uses()).action,ffi::WorkspaceFormAction::None));assert_eq!(f.error,"Podaj nazwę przestrzeni.");
+    }
+    #[test] fn workspace_form_latches_ids_and_admits_only_one_pending_action() {
+        let mut f=new_workspace_form();f.reset("work");let mut profiles=profile_options();profiles.reverse();let r=f.submit("Renamed","spare","work",true,false,false,&profiles,&profile_uses());assert_eq!((r.workspace.as_str(),r.profile.as_str()),("work","spare"));assert!(matches!(r.action,ffi::WorkspaceFormAction::Edit));
+        assert!(!f.view("Praca","P",true,false,2).enabled);assert!(matches!(f.submit("Other","used","work",true,false,false,&profiles,&profile_uses()).action,ffi::WorkspaceFormAction::None));
+        f.finish_attempt(false);assert!(!f.error.is_empty());assert!(matches!(f.submit("Retry","used","work",true,false,false,&profiles,&profile_uses()).action,ffi::WorkspaceFormAction::Edit));
+    }
+    #[test] fn workspace_form_callback_refresh_does_not_restore_old_target() {
+        let mut f=new_workspace_form();f.begin_create("work");f.submit("New","used","work",true,false,false,&profile_options(),&profile_uses());
+        // Native AddWorkspace selects its allocated ID before returning admission.
+        f.reset("allocated");f.finish_attempt(true);assert_eq!(f.workspace,"allocated");assert!(!f.creating());assert!(f.error.is_empty());
+    }
+    #[test] fn workspace_form_readiness_last_workspace_and_external_errors() {
+        let mut f=new_workspace_form();f.reset("work");for (ready,busy) in [(false,false),(true,true)] { let v=f.view("W","P",ready,busy,2);assert!(!v.enabled&&!v.remove_enabled); }
+        assert!(!f.view("W","P",true,false,1).remove_enabled);f.set_configuration_error(true);f.reset("work");assert_eq!(f.view("W","P",true,false,2).error,WORKSPACE_CONFIGURATION_ERROR);f.set_configuration_error(false);assert!(f.error.is_empty());
+    }
     fn profile_options()->Vec<ffi::ProfileOption>{vec![ffi::ProfileOption{id:"used".into(),name:"Work".into()},ffi::ProfileOption{id:"spare".into(),name:"Spare".into()}]}
     fn profile_uses()->Vec<ffi::ProfileUse>{vec![ffi::ProfileUse{workspace:"work".into(),name:"Praca".into(),profile:"used".into()}]}
     #[test] fn profile_form_selects_by_id_across_reorder_and_catalogue_changes() {

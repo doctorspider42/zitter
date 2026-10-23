@@ -53,6 +53,7 @@ class Widget;
 namespace zitter::prototype {
 class WorkspaceSwipeState;
 class ProfileFormState;
+class WorkspaceFormState;
 
 // Top band above the sidebar; its first 28 px align with macOS's titlebar,
 // where the native traffic lights sit.
@@ -306,6 +307,8 @@ class WorkspaceShell final : public ui::EventHandler,
   views::Textfield* profile_name_input() const { return profile_name_input_; }
   views::Combobox* managed_profile_picker() const { return managed_profile_picker_; }
   bool profile_panel_contains_scene_text(std::string_view text) const;
+  bool workspace_panel_contains_scene_text(std::string_view text) const;
+  views::View* workspace_panel_for_testing() const{return settings_root_;}
   views::View* profile_panel_for_testing() const{return profiles_root_;}
   views::Widget* remove_workspace_dialog() const { return remove_workspace_dialog_.get(); }
   views::Widget* settings_widget() const { return settings_widget_.get(); }
@@ -484,6 +487,10 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> workspace_appearance_ = nullptr;
   base::WeakPtr<views::Widget> remove_workspace_dialog_;
   void RefreshWorkspaceSettings();
+  void ToggleWorkspaceCreation();
+  void RefreshRustWorkspacePresentation();
+  void ShowWorkspaceAppearanceError(unsigned kind);
+  std::unique_ptr<WorkspaceFormState> workspace_form_;
   void RefreshProfileControls();
   bool SubmitRustProfileAction(unsigned action);
   void SubmitProfile();
@@ -577,14 +584,14 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> sidebar_root_ = nullptr;
   raw_ptr<views::View> palette_root_ = nullptr;
   raw_ptr<views::View> settings_root_ = nullptr;
-  raw_ptr<views::Label> settings_title_ = nullptr;
+  raw_ptr<views::View> settings_title_ = nullptr;
   raw_ptr<views::View> tab_list_ = nullptr;
   raw_ptr<views::ScrollView> tab_scroll_ = nullptr;
   raw_ptr<views::View> suggestion_list_ = nullptr;
   raw_ptr<views::ScrollView> suggestion_scroll_ = nullptr;
   raw_ptr<views::Button> url_pill_ = nullptr;
   raw_ptr<views::View> workspace_name_ = nullptr;
-  raw_ptr<views::Label> profile_name_ = nullptr;
+  raw_ptr<views::View> profile_name_ = nullptr;
   raw_ptr<views::Button> pin_button_ = nullptr;
   std::array<raw_ptr<views::Button>, 3> nav_buttons_ = {};
   raw_ptr<views::View> sidebar_footer_=nullptr;
@@ -627,7 +634,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::Button> add_workspace_ = nullptr;
   raw_ptr<views::Button> edit_workspace_ = nullptr;
   raw_ptr<views::Button> remove_workspace_ = nullptr;
-  raw_ptr<views::Label> configuration_error_ = nullptr;
+  raw_ptr<views::View> configuration_error_ = nullptr;
   raw_ptr<views::View> import_root_ = nullptr;
   raw_ptr<views::Label> import_status_ = nullptr;
   raw_ptr<views::Combobox> import_browser_picker_ = nullptr;
@@ -654,7 +661,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::Textfield> color_input_ = nullptr;
   raw_ptr<views::Textfield> emoji_input_ = nullptr;
   raw_ptr<views::View> address_error_ = nullptr;
-  raw_ptr<views::Label> color_error_ = nullptr;
+  raw_ptr<views::View> color_error_ = nullptr;
   std::unique_ptr<views::WidgetDelegate> import_delegate_;
   std::unique_ptr<views::Widget> import_widget_;
   std::unique_ptr<views::WidgetDelegate> profiles_delegate_;

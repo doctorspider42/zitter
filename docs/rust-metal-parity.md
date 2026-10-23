@@ -45,7 +45,8 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Address/search palette, suggestions, providers, IME | Rust result selection/layout/text/icons, palette/input/static chrome geometry, Metal hints/errors; native Textfield/IME, provider/search controllers | Migrate remaining native containers/frame presentation; expand composition/accessibility/scale coverage |
 | Command Center tabs/pins/workspaces/history/actions | Rust result selection/drawing; existing search/ranking and application commands | Replace remaining native containers/frame presentation and command adapters; preserve stale results and identity |
 | Profile management create/rename/delete | Rust controller, copy, validation, stable-ID selection, two-step delete and column/text layout; Metal static text; native input/picker/buttons and storage services (GUI checkpoint pending) | Migrate native controls; verify IME, typography, stale confirmation, profile/session isolation and failed-write rollback |
-| Workspace create/edit/delete and settings | Views + persistent application model | Rust forms, validation, focus; preserve isolation and failed-write behavior |
+| Workspace create/edit settings | Rust form mode/validation/requests and column/text layout; Metal headings/help/status; native input, row layout, buttons, appearance controls and storage services (GUI checkpoint pending) | Migrate remaining native controls/rows, color/emoji interaction and outer panel; verify profile changes, IME, async errors and persistence |
+| Workspace deletion confirmation | Views + persistent application model | Rust notice state/layout and platform modal adapter; preserve default Cancel, stable target and retained browsing profile data |
 | General preferences, shortcuts and site preferences | Views + application services | Rust forms; use the same persisted configuration |
 | History, downloads, passwords and permissions | Views/native service adapters | Rust presentation/control layer; retain browser service and security semantics |
 | Peek, promote/split, link/page menus and routing | Views/native adapters + application | Rust control routing, focus and dismissal; retain native page integration |
@@ -289,6 +290,16 @@ and the return of Metal after settling. Preserve the normal application/profile.
   cases expand the deferred checkpoint to **53 Metal cases and 24 Views controls**.
   No GUI acceptance or performance gain is established. See
   [profile panel verification](benchmarks/rust-profile-panel-headless-2026-10-23.json).
+
+- Workspace create/edit settings now use Rust form mode, captions/feedback,
+  readiness/submission guards, original ASCII-only name trimming, current
+  workspace/profile validation and typed requests. Settings/appearance vertical
+  columns and static text use the shared Rust/CoreText/Metal paragraph adapter;
+  native header/action rows, inputs/buttons/color/emoji controls and persistence
+  remain. **95 Rust and 61 Python tests passed** without windows. The new compiled
+  GUI case and existing workspace-dialog bounds case extend the deferred matrix
+  to **55 Metal cases and 25 Views controls**. See
+  [workspace form verification](benchmarks/rust-workspace-form-headless-2026-10-23.json).
 
 ## Completion gates
 

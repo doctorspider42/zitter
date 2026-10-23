@@ -3912,6 +3912,36 @@ class ZitterMetalSidebarBrowserTest : public ZitterProfilesBrowserTest {
     command_line->AppendSwitchASCII("zitter-sidebar", "rust-metal");
   }
 };
+// Compilation only; do not execute before the requested GUI checkpoint.
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, WorkspaceFormScenesCreateCancelIMEAndProfileAssignment) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->OpenWorkspaceSettings();
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_panel_contains_scene_text("Nazwa przestrzeni");}));
+  auto* panel=shell->workspace_panel_for_testing();ASSERT_TRUE(panel);
+  auto no_labels=[&](auto&& self,views::View* view)->void {
+    if(views::AsViewClass<views::Textfield>(view)||views::AsViewClass<views::Combobox>(view)||views::AsViewClass<views::Button>(view))return;
+    EXPECT_FALSE(views::AsViewClass<views::Label>(view));for(const auto& child:view->children())self(self,child.get());
+  };no_labels(no_labels,panel);
+  auto button=[&](std::u16string_view title){return FindButton(panel,title);};
+  auto* start=button(u"Nowa przestrzeń…");ASSERT_TRUE(start);views::test::ButtonTestApi(start).NotifyDefaultMouseClick();
+  ASSERT_TRUE(button(u"Utwórz przestrzeń"));ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_panel_contains_scene_text("Nowa przestrzeń");}));
+  ASSERT_TRUE(button(u"Anuluj"));views::test::ButtonTestApi(button(u"Anuluj")).NotifyDefaultMouseClick();EXPECT_EQ(2u,window_->workspaces().size());EXPECT_EQ(u"Praca",shell->workspace_input()->GetText());
+  views::test::ButtonTestApi(button(u"Nowa przestrzeń…")).NotifyDefaultMouseClick();auto* create=button(u"Utwórz przestrzeń");ASSERT_TRUE(create);auto* field=shell->workspace_input();field->SetText(u" \t ");
+  views::test::ButtonTestApi(create).NotifyDefaultMouseClick();EXPECT_EQ(2u,window_->workspaces().size());ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_panel_contains_scene_text("Podaj nazwę przestrzeni.");}));
+  ui::CompositionText composition;composition.text=u"にほん";composition.selection=gfx::Range(composition.text.size());field->SetCompositionText(composition);ASSERT_TRUE(field->IsIMEComposing());
+  views::test::ButtonTestApi(create).NotifyDefaultMouseClick();EXPECT_EQ(2u,window_->workspaces().size());field->ClearCompositionText();
+  field->SetText(u"  Projekt Łódź 🦀  ");shell->profile_picker()->SetSelectedIndex(0);views::test::ButtonTestApi(create).NotifyDefaultMouseClick();
+  ASSERT_EQ(3u,window_->workspaces().size());const auto project=window_->active_id();EXPECT_EQ("Projekt Łódź 🦀",window_->workspaces().back().name);EXPECT_EQ(work_.get(),window_->contents(project)->GetBrowserContext());
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_panel_contains_scene_text("Projekt Łódź 🦀");}));ASSERT_TRUE(button(u"Zapisz nazwę i profil"));
+  shell->OpenWorkspaceSettings();field->SetText(u"  Klient 日本語  ");shell->profile_picker()->SetSelectedIndex(1);views::test::ButtonTestApi(button(u"Zapisz nazwę i profil")).NotifyDefaultMouseClick();
+  EXPECT_EQ("Klient 日本語",window_->workspaces().back().name);EXPECT_EQ(personal_.get(),window_->contents(project)->GetBrowserContext());
+  shell->OpenWorkspaceSettings();shell->color_input()->SetText(u"invalid");ui::KeyEvent enter(ui::EventType::kKeyPressed,ui::VKEY_RETURN,ui::EF_NONE);
+  ASSERT_TRUE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(shell->color_input(),enter));ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_panel_contains_scene_text("Podaj kolor #RRGGBB");}));
+  shell->color_input()->SetText(u"#123456");ASSERT_TRUE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(shell->color_input(),enter));EXPECT_EQ(0xFF123456u,shell->workspace_color(project));
+  views::test::ButtonTestApi(button(u"Nowa przestrzeń…")).NotifyDefaultMouseClick();ASSERT_TRUE(button(u"Utwórz przestrzeń"));ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(base::test::RunUntil([&]{return button(u"Zapisz nazwę i profil")!=nullptr;}));EXPECT_EQ(u"Praca",field->GetText());
+  shell->SetConfigurationError(true);ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_panel_contains_scene_text("Nie udało się odczytać lub zapisać przestrzeni.");}));shell->SetConfigurationError(false);
+  ASSERT_TRUE(base::test::RunUntil([&]{return window_->configuration_saved()&&shell->appearance_saved();}));
+}
 // Compiled only until the user requests the GUI checkpoint.
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ProfilePanelScenesValidationIMEAndStableDeletion) {
   auto* shell=window_->shell();

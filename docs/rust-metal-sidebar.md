@@ -644,3 +644,50 @@ stable selection/destructive confirmation, async failure/retry, profile data
 isolation and durable restore. Nothing from this stage has GUI acceptance and
 no presentation/CPU/GPU speedup was measured. See
 [profile panel verification](benchmarks/rust-profile-panel-headless-2026-10-23.json).
+
+
+## Workspace create/edit settings (GUI checkpoint pending)
+
+Rust now owns edit/create/cancel mode, current workspace identity, readiness and
+pending-admission guards, captions, validation/error feedback and typed requests
+for workspace creation or name/profile changes. Empty names, missing profiles,
+changed/removed workspace context and busy/unready state cannot dispatch. IME
+composition waits for completion. Names retain the original ASCII-only trimming
+policy: Unicode whitespace, duplicate names and long names have no new restriction.
+The application still allocates new workspace IDs and owns profile assignment,
+beforeunload guards, BrowserContext isolation, tab replacement and persistence.
+A create callback can select its allocated workspace before returning admission;
+the Rust completion path preserves that refreshed identity. Admission is not a
+completed configuration write or beforeunload decision.
+
+The settings body and appearance section use the existing Rust column adapter,
+preserving 20-point panel padding and the one-point rounded border. The paragraph
+adapter previously used by profiles is now shared as `SceneParagraph`. Settings
+headings, labels, profile description, help/warnings and configuration/appearance
+errors use CoreText shaping, Rust line placement and clipped shared-context Metal
+canvases, with full-text accessibility nodes and the same native fallback recipe.
+The warning that profile changes close workspace tabs remains intact. Async
+configuration and appearance errors reach these text nodes and resize the panel.
+Existing text/metrics caches and frame fingerprints still apply.
+
+Native Textfield/IME, Combobox, buttons, header/action/color/emoji row layout,
+color parsing, Unicode grapheme extraction, appearance storage, outer panel and
+workspace deletion modal remain. This is not complete workspace control migration.
+No shader ABI, binary dependency, crate or framework was added.
+
+**95 Rust and 61 Python tests passed** without windows, along with scoped GN,
+boundary checks and optimized app/browser-test compilation. The new
+`WorkspaceFormScenesCreateCancelIMEAndProfileAssignment` regression is compiled
+but unrun. The checkpoint now has **55 Metal cases and 25 Views controls**; it
+also adds `WorkspaceDeletionConfirmationStaysOnScreen` in both modes. Existing
+profile assignment/isolation, native appearance, deletion and persistence cases
+remain required. The checkpoint must verify actual wrapping, clipping/overlap,
+keyboard/IME/AX/focus, native/Metal fallback, create/cancel/stale context, profile
+change/beforeunload semantics, async error delivery and durable restore.
+
+Build inputs use committed `6b4723d` bootstrap/build tools plus only the four UI
+source overrides for this stage, excluding the concurrent network-policy task's
+uncommitted bootstrap/tool edits. The shared Chromium updater patch is unchanged
+from the preceding milestone and identified in the report. No GUI acceptance or
+CPU/GPU/presentation gain is established. See
+[workspace form verification](benchmarks/rust-workspace-form-headless-2026-10-23.json).
