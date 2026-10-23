@@ -90,9 +90,9 @@ class NativeEditor final : public views::Textfield, public EditorControl, privat
   void SelectRange(const gfx::Range& range) override{views::Textfield::SetSelectedRange(range);}
   ui::TextInputClient* input_client() override{return this;}
   void SetReadOnly(bool value) override{views::Textfield::SetReadOnly(value);}
-  void SetPresentation(int font_size,float inset,bool framed,SkColor fill) override {
+  void SetPresentation(int font_size,float inset,bool framed,std::optional<SkColor> fill) override {
     const auto fonts=gfx::FontList();SetFontList(fonts.DeriveWithSizeDelta(std::clamp(font_size,1,256)-fonts.GetFontSize()));
-    SetBackgroundColor(fill);
+    SetBackgroundColor(fill?std::optional<ui::ColorVariant>(*fill):std::nullopt);
     const int padding=std::isfinite(inset)?static_cast<int>(std::clamp(inset,0.f,4096.f)):0;
     if(framed)SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,5,GetColorProvider()?GetColorProvider()->GetColor(ui::kColorTextfieldOutline):SK_ColorGRAY),gfx::Insets::VH(4,padding)));
     else SetBorder(views::CreateEmptyBorder(gfx::Insets::VH(0,padding)));
@@ -143,7 +143,7 @@ class SceneEditor final : public views::View, public EditorControl,
   gfx::Range GetSelectedRange() const override{auto i=sidebar::editor_info(*state_);return gfx::Range(i.anchor,i.focus);}
   void SelectRange(const gfx::Range& range) override{SetEditableSelectionRange(range);}
   void SetReadOnly(bool value) override{read_only_=value;SyncLifecycle();}
-  void SetPresentation(int font_size,float inset,bool framed,SkColor fill) override {
+  void SetPresentation(int font_size,float inset,bool framed,std::optional<SkColor> fill) override {
     const auto size=std::clamp(font_size,1,256);if(font_size_!=size){font_size_=size;line_.reset();}
     inset_=std::isfinite(inset)?std::max(0.f,inset):0.f;framed_=framed;fill_=fill;Schedule();NotifyCaret();
   }

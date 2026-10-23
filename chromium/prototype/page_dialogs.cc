@@ -1,5 +1,13 @@
 #include "chromium/prototype/page_dialogs.h"
+#include <algorithm>
 #include "chromium/prototype/browser_data.h"
+#include "chromium/prototype/editor_control.h"
+#include "base/command_line.h"
+#include "build/build_config.h"
+#if BUILDFLAG(IS_MAC)
+#include "chromium/prototype/workspace_keyboard_mac.h"
+#endif
+#include "ui/events/event.h"
 
 #include "base/functional/bind.h"
 #include "base/strings/utf_string_conversions.h"
@@ -13,6 +21,7 @@
 #include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/views/controls/label.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/scroll_view.h"
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/layout/box_layout.h"
@@ -47,9 +56,13 @@ void PageDialogs::Show(content::RenderFrameHost* frame, content::JavaScriptDialo
   if (!web_contents() || !frame || !frame->IsActive() || !web_contents()->GetTopLevelNativeWindow()) {
     std::move(callback).Run(false, {}); return;
   }
+  const auto generation=++dialog_generation_;
   requesting_frame_ = frame; unload_dialog_ = unload; dialog_callback_ = std::move(callback);
   auto dialog = std::make_unique<views::DialogDelegate>();
   auto* body = dialog->SetContentsView(std::make_unique<views::View>());
+  dialog_body_.SetTrackEntireViewHierarchy(true);
+  dialog_body_.SetView(body);
+  dialog_body_.SetIsDeletingCallback(base::BindOnce(&PageDialogs::DialogBodyDestroyed,weak_factory_.GetWeakPtr(),generation));
   dialog->SetTitle((unload ? u"Opuścić stronę? · " : u"Strona: ") + base::UTF8ToUTF16(frame->GetLastCommittedOrigin().Serialize()));
   dialog->SetModalType(ui::mojom::ModalType::kWindow);
   dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk) |
@@ -68,30 +81,72 @@ void PageDialogs::Show(content::RenderFrameHost* frame, content::JavaScriptDialo
   label->SetSubpixelRenderingEnabled(false); label->SetMultiLine(true); label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   label->SizeToFit(440); scroll->SetContents(std::move(label));
   if (type == content::JAVASCRIPT_DIALOG_TYPE_PROMPT) {
-    prompt_ = body->AddChildView(std::make_unique<views::Textfield>());
-    prompt_->SetAccessibleName(u"Odpowiedź dla strony"); prompt_->SetText(initial);
-    dialog->SetInitiallyFocusedView(prompt_);
+    prompt_ = AddEditor(body,base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal");
+    prompt_->GetViewAccessibility().SetName(u"Odpowiedź dla strony");prompt_->SetText(initial);
+    // Retain the native font metric; resolve the background from the live theme.
+    prompt_->SetPresentation(views::Textfield::GetDefaultFontList().GetFontSize(),8,true,std::nullopt);
+    prompt_->SetCallbacks({},base::BindRepeating([](base::WeakPtr<PageDialogs> manager,size_t generation,const ui::KeyEvent& event){
+      return manager&&manager->dialog_generation_==generation&&manager->HandlePromptKey(event);
+    },weak_factory_.GetWeakPtr(),generation));
+    dialog->SetInitiallyFocusedView(prompt_->view());
   }
-  body->SetPreferredSize(gfx::Size(480, 280));
-  dialog->SetAcceptCallback(base::BindOnce(&PageDialogs::Answer, weak_factory_.GetWeakPtr(), true));
-  dialog->SetCancelCallback(base::BindOnce(&PageDialogs::Answer, weak_factory_.GetWeakPtr(), false));
-  dialog->SetCloseCallback(base::BindOnce(&PageDialogs::Answer, weak_factory_.GetWeakPtr(), false));
+  body->SetPreferredSize(gfx::Size(480,std::max(280,body->GetHeightForWidth(480))));
+  dialog->SetAcceptCallbackWithClose(base::BindRepeating([](base::WeakPtr<PageDialogs> manager,size_t generation){
+    if(!manager||manager->dialog_generation_!=generation)return true;
+    if(manager->prompt_input()&&manager->prompt_->IsIMEComposing())return false;
+    manager->Answer(true);return true;
+  },weak_factory_.GetWeakPtr(),generation));
+  const auto cancel=[](base::WeakPtr<PageDialogs> manager,size_t generation){
+    if(manager&&manager->dialog_generation_==generation)manager->Answer(false);
+  };
+  dialog->SetCancelCallback(base::BindOnce(cancel,weak_factory_.GetWeakPtr(),generation));
+  dialog->SetCloseCallback(base::BindOnce(cancel,weak_factory_.GetWeakPtr(),generation));
   auto* parent = views::Widget::GetWidgetForNativeWindow(web_contents()->GetTopLevelNativeWindow());
   auto* widget = views::DialogDelegate::CreateDialogWidget(std::move(dialog),
       web_contents()->GetTopLevelNativeWindow(), parent ? parent->GetNativeView() : gfx::NativeView());
   if (parent) widget->SetColorModeOverride(parent->color_mode_override());
-  dialog_ = widget->GetWeakPtr(); widget->Show();
+  dialog_ = widget->GetWeakPtr();
+#if BUILDFLAG(IS_MAC)
+  InstallWorkspaceKeyboardRouting(widget,true);
+#endif
+  widget->Show();
 }
 bool PageDialogs::HandleJavaScriptDialog(content::WebContents* contents, bool accept,
     const std::u16string* override_text) {
   if (contents != web_contents() || !dialog_callback_) return false;
-  if (prompt_ && override_text) prompt_->SetText(*override_text);
+  if(!dialog_){Answer(false);return false;}
+  if(prompt_&&override_text)prompt_->SetText(*override_text);
+  else if(prompt_&&accept)prompt_->ConfirmCompositionText(false);
   Answer(accept); return true;
+}
+bool PageDialogs::HandlePromptKey(const ui::KeyEvent& event) {
+  if(!dialog_||!dialog_->IsVisible()||!prompt_||prompt_->IsIMEComposing()||event.type()!=ui::EventType::kKeyPressed)return false;
+  if(event.key_code()!=ui::VKEY_RETURN&&event.key_code()!=ui::VKEY_ESCAPE)return false;
+  PostPromptAction(event.key_code()==ui::VKEY_RETURN);return true;
+}
+void PageDialogs::PostPromptAction(bool accepted) {
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(
+      [](base::WeakPtr<PageDialogs> manager,size_t generation,bool accepted){
+        if(!manager||manager->dialog_generation_!=generation||!manager->dialog_||!manager->dialog_->IsVisible())return;
+        auto* delegate=manager->dialog_->widget_delegate()->AsDialogDelegate();
+        if(accepted)delegate->AcceptDialog();else delegate->CancelDialog();
+      },weak_factory_.GetWeakPtr(),dialog_generation_,accepted));
+}
+void PageDialogs::DialogBodyDestroyed(size_t generation) {
+  if(generation!=dialog_generation_)return;
+  // This notification precedes child destruction, including CloseNow paths
+  // that do not run a DialogDelegate close callback. Never retain a dead field
+  // or leave the renderer waiting for a response after the native UI is gone.
+  prompt_=nullptr;dialog_.reset();Answer(false);
 }
 void PageDialogs::Answer(bool accepted) {
   if (!dialog_callback_) return;
+  ++dialog_generation_;
   auto callback = std::move(dialog_callback_);
-  const std::u16string text = prompt_ && accepted ? std::u16string(prompt_->GetText()) : std::u16string();
+  auto* field=prompt_input();
+  if(field){field->SetCallbacks({},{});if(!accepted)field->ClearCompositionText();}
+  const std::u16string text = field && accepted ? std::u16string(field->GetText()) : std::u16string();
+  dialog_body_.SetIsDeletingCallback({});dialog_body_.SetView(nullptr);
   prompt_ = nullptr; requesting_frame_ = nullptr; unload_dialog_ = false;
   if (dialog_) dialog_->Close(); dialog_.reset();
   // Renderer callbacks can destroy pages. Never run them on a button's stack.

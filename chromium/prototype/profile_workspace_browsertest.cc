@@ -134,6 +134,7 @@
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/controls/textfield/textfield.h"
+#include "ui/views/style/platform_style.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/test/views_drawing_test_utils.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -1951,6 +1952,103 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeJavaScriptDialogs) {
   ASSERT_TRUE(base::test::RunUntil([&] { return dialogs->dialog() != nullptr; }));
   ASSERT_TRUE(content::NavigateToURL(page, embedded_test_server()->GetURL("/storage_probe.html?after-dialog")));
   EXPECT_FALSE(dialogs->dialog());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, JavaScriptPromptEditorCocoaCompositionAndKeyboard) {
+  auto* page=window_->contents("work");ASSERT_TRUE(content::NavigateToURL(page,embedded_test_server()->GetURL("/storage_probe.html?prompt-editor")));
+  auto* manager=PageDialogs::FromWebContents(page);ASSERT_TRUE(manager);
+  window_->shell()->SetThemeMode(ThemeMode::kDark);
+  content::ExecuteScriptAsync(page,"window.answer=prompt('Long message\\n'.repeat(800),'szkic 🦀');");
+  ASSERT_TRUE(base::test::RunUntil([&]{return manager->dialog()!=nullptr;}));
+  auto* field=manager->prompt_input();ASSERT_TRUE(field);auto* widget=manager->dialog();
+  EXPECT_EQ(ui::ColorProviderKey::ColorMode::kDark,widget->GetColorMode());
+  EXPECT_EQ(window_->shell()->workspace_input()->rust_editor(),field->rust_editor());EXPECT_EQ(u"szkic 🦀",field->GetText());
+  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));field->RequestFocus();
+  field->SelectRange(gfx::Range(field->GetText().size()));
+  auto key=[&](ui::KeyboardCode code){return ui_test_utils::SendKeyPressToWindowSync(manager->dialog()->GetNativeWindow(),code,false,false,false,false);};
+  ASSERT_TRUE(key(ui::VKEY_A));ASSERT_TRUE(base::test::RunUntil([&]{return field->GetText()==u"szkic 🦀a";}));
+  EXPECT_TRUE(widget->GetContentsView()->GetBoundsInScreen().Contains(field->view()->GetBoundsInScreen()));
+  if(field->rust_editor()){EXPECT_TRUE(field->view()->children().empty());EXPECT_FALSE(views::AsViewClass<views::Textfield>(field->view()));ASSERT_TRUE(base::test::RunUntil([&]{return field->metal_visible();}));}
+  ui::CompositionText marked;marked.text=u"未";marked.selection=gfx::Range(1);field->SetCompositionText(marked);ASSERT_TRUE(field->IsIMEComposing());
+  ui::KeyEvent enter(ui::EventType::kKeyPressed,ui::VKEY_RETURN,0),escape(ui::EventType::kKeyPressed,ui::VKEY_ESCAPE,0);
+  EXPECT_FALSE(manager->HandlePromptKey(enter));EXPECT_FALSE(manager->HandlePromptKey(escape));
+  widget->widget_delegate()->AsDialogDelegate()->AcceptDialog();base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(widget,manager->dialog());EXPECT_EQ(field,manager->prompt_input());EXPECT_TRUE(field->IsIMEComposing());
+  field->SetCompositionText(ui::CompositionText());EXPECT_EQ(u"szkic 🦀a",field->GetText());
+  field->SelectRange(gfx::Range(0,field->GetText().size()));field->input_client()->InsertText(u"zażółć 🦀",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
+  marked.text=u"語";field->SetCompositionText(marked);field->ConfirmCompositionText(false);auto lifetime=field->input_client()->AsWeakPtr();
+  ASSERT_TRUE(key(ui::VKEY_RETURN));ASSERT_TRUE(base::test::RunUntil([&]{return !manager->dialog()&&!lifetime;}));EXPECT_EQ("zażółć 🦀語",content::EvalJs(page,"answer"));
+  content::ExecuteScriptAsync(page,"window.answer=prompt('Escape','draft');");ASSERT_TRUE(base::test::RunUntil([&]{return manager->dialog()!=nullptr;}));
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(manager->dialog()->GetNativeWindow()));manager->prompt_input()->RequestFocus();ASSERT_TRUE(key(ui::VKEY_ESCAPE));
+  ASSERT_TRUE(base::test::RunUntil([&]{return !manager->dialog();}));EXPECT_EQ(true,content::EvalJs(page,"answer===null"));
+  content::ExecuteScriptAsync(page,"window.answer=prompt('Cancel marked text','draft');");ASSERT_TRUE(base::test::RunUntil([&]{return manager->dialog()!=nullptr;}));
+  field=manager->prompt_input();field->SetCompositionText(marked);lifetime=field->input_client()->AsWeakPtr();manager->dialog()->widget_delegate()->AsDialogDelegate()->CancelDialog();
+  ASSERT_TRUE(base::test::RunUntil([&]{return !manager->dialog()&&!lifetime;}));EXPECT_EQ(true,content::EvalJs(page,"answer===null"));
+  content::ExecuteScriptAsync(page,"window.answer=confirm('Default OK');");ASSERT_TRUE(base::test::RunUntil([&]{return manager->dialog()!=nullptr;}));
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(manager->dialog()->GetNativeWindow()));ASSERT_TRUE(key(ui::VKEY_RETURN));ASSERT_TRUE(base::test::RunUntil([&]{return !manager->dialog();}));EXPECT_EQ(true,content::EvalJs(page,"answer"));
+  content::ExecuteScriptAsync(page,"alert('Escape dismisses alert');window.alertDone=true;");ASSERT_TRUE(base::test::RunUntil([&]{return manager->dialog()!=nullptr;}));
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(manager->dialog()->GetNativeWindow()));ASSERT_TRUE(key(ui::VKEY_ESCAPE));ASSERT_TRUE(base::test::RunUntil([&]{return !manager->dialog();}));EXPECT_EQ(true,content::EvalJs(page,"alertDone"));
+  ASSERT_TRUE(base::test::RunUntil([&]{return window_->shell()->appearance_saved();}));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, JavaScriptPromptEditorOverrideStaleActionsAndCloseNow) {
+  auto* page=window_->contents("work");ASSERT_TRUE(content::NavigateToURL(page,embedded_test_server()->GetURL("/storage_probe.html?prompt-lifetime")));
+  auto* manager=PageDialogs::FromWebContents(page);ASSERT_TRUE(manager);
+  int count=0;bool accepted=false;std::u16string answer;
+  base::ScopedClosureRunner cleanup(base::BindOnce([](PageDialogs* manager,content::WebContents* page){manager->CancelDialogs(page,true);base::RunLoop().RunUntilIdle();},base::Unretained(manager),base::Unretained(page)));
+  auto open=[&](std::u16string initial){bool suppressed=true;manager->RunJavaScriptDialog(page,page->GetPrimaryMainFrame(),content::JAVASCRIPT_DIALOG_TYPE_PROMPT,u"Fixture prompt",initial,
+      base::BindOnce([](int* count,bool* accepted,std::u16string* answer,bool ok,const std::u16string& text){++*count;*accepted=ok;*answer=text;},base::Unretained(&count),base::Unretained(&accepted),base::Unretained(&answer)),&suppressed);EXPECT_FALSE(suppressed);};
+  open(u"initial");ASSERT_TRUE(manager->prompt_input());auto* field=manager->prompt_input();ui::CompositionText marked;marked.text=u"未";marked.selection=gfx::Range(1);field->SetCompositionText(marked);
+  std::u16string response=u"override";response.push_back(0);response+=u"\r\n🦀 אבג";
+  EXPECT_FALSE(manager->HandleJavaScriptDialog(window_->contents("personal"),true,&response));EXPECT_TRUE(field->IsIMEComposing());
+  EXPECT_TRUE(manager->HandleJavaScriptDialog(page,true,&response));EXPECT_FALSE(manager->HandleJavaScriptDialog(page,true,&response));
+  base::RunLoop().RunUntilIdle();EXPECT_EQ(1,count);EXPECT_TRUE(accepted);EXPECT_EQ(response,answer);
+  open(u"old form");field=manager->prompt_input();ASSERT_TRUE(field);auto lifetime=field->input_client()->AsWeakPtr();ui::KeyEvent enter(ui::EventType::kKeyPressed,ui::VKEY_RETURN,0);
+  ASSERT_TRUE(field->view()->OnKeyPressed(enter));manager->CancelDialogs(page,false);open(u"new form");
+  ASSERT_TRUE(base::test::RunUntil([&]{return !lifetime&&count==2;}));EXPECT_FALSE(accepted);ASSERT_TRUE(manager->dialog());EXPECT_EQ(u"new form",manager->prompt_input()->GetText());
+  EXPECT_TRUE(manager->HandleJavaScriptDialog(page,false,nullptr));base::RunLoop().RunUntilIdle();EXPECT_EQ(3,count);EXPECT_FALSE(accepted);EXPECT_TRUE(answer.empty());
+  open(u"close immediately");field=manager->prompt_input();lifetime=field->input_client()->AsWeakPtr();manager->dialog()->CloseNow();
+  ASSERT_TRUE(base::test::RunUntil([&]{return !manager->prompt_input()&&!lifetime&&count==4;}));EXPECT_FALSE(accepted);EXPECT_TRUE(answer.empty());
+  manager->CancelDialogs(page,true);manager->CancelDialogs(page,true);base::RunLoop().RunUntilIdle();EXPECT_EQ(4,count);
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, JavaScriptPromptEditorHiddenPageAndFrameNavigation) {
+  ASSERT_NO_FATAL_FAILURE(NavigateBoth("/storage_probe.html?prompt-scope"));
+  ASSERT_TRUE(window_->Select("work"));
+  auto* page=window_->contents("work");auto* manager=PageDialogs::FromWebContents(page);ASSERT_TRUE(manager);
+  content::ExecuteScriptAsync(page,"window.answer=prompt('Hidden page','draft');");ASSERT_TRUE(base::test::RunUntil([&]{return manager->dialog()!=nullptr;}));auto lifetime=manager->prompt_input()->input_client()->AsWeakPtr();
+  ASSERT_TRUE(window_->Select("personal"));ASSERT_TRUE(base::test::RunUntil([&]{return !manager->dialog()&&!lifetime;}));EXPECT_EQ(true,content::EvalJs(page,"answer===null"));EXPECT_EQ("undefined",content::EvalJs(window_->contents("personal"),"typeof answer"));
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(content::ExecJs(page,"const child=document.createElement('iframe');child.name='prompt-child';document.body.appendChild(child);"));
+  auto* frame=content::ChildFrameAt(page,0);ASSERT_TRUE(frame);int count=0;bool accepted=true;bool suppressed=true;
+  base::ScopedClosureRunner cleanup(base::BindOnce([](PageDialogs* manager,content::WebContents* page){manager->CancelDialogs(page,true);base::RunLoop().RunUntilIdle();},base::Unretained(manager),base::Unretained(page)));
+  manager->RunJavaScriptDialog(page,frame,content::JAVASCRIPT_DIALOG_TYPE_PROMPT,u"Frame-owned prompt",u"frame draft",
+      base::BindOnce([](int* count,bool* accepted,bool ok,const std::u16string& text){++*count;*accepted=ok;EXPECT_TRUE(text.empty());},base::Unretained(&count),base::Unretained(&accepted)),&suppressed);
+  EXPECT_FALSE(suppressed);ASSERT_TRUE(manager->dialog());lifetime=manager->prompt_input()->input_client()->AsWeakPtr();
+  EXPECT_NE(std::u16string::npos,manager->dialog()->widget_delegate()->GetWindowTitle().find(base::UTF8ToUTF16(frame->GetLastCommittedOrigin().Serialize())));
+  content::NavigationController::LoadURLParams params(embedded_test_server()->GetURL("/storage_probe.html?new-child-document"));params.frame_tree_node_id=frame->GetFrameTreeNodeId();page->GetController().LoadURLWithParams(params);
+  ASSERT_TRUE(content::WaitForLoadStop(page));ASSERT_TRUE(base::test::RunUntil([&]{return count==1&&!manager->dialog()&&!lifetime;}));EXPECT_FALSE(accepted);
+  manager->CancelDialogs(page,true);base::RunLoop().RunUntilIdle();EXPECT_EQ(1,count);
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PageDialogsCocoaBeforeUnloadDefaultCancel) {
+  ASSERT_NO_FATAL_FAILURE(NavigateBoth());ASSERT_TRUE(window_->Select("work"));auto* page=window_->contents("work");
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html?other-tab"),true));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));window_->SelectTab(0);ASSERT_EQ(page,window_->contents("work"));
+  auto* manager=PageDialogs::FromWebContents(page);ASSERT_TRUE(manager);ui_controls::EnableUIControls();
+  for(auto code:{ui::VKEY_RETURN,ui::VKEY_ESCAPE}){
+    SCOPED_TRACE(static_cast<int>(code));
+    ASSERT_NO_FATAL_FAILURE(ArmUnsaved(page));window_->CloseTab(0);ASSERT_TRUE(base::test::RunUntil([&]{return manager->dialog()!=nullptr;}));
+    auto* dialog=manager->dialog();auto* delegate=dialog->widget_delegate()->AsDialogDelegate();ASSERT_EQ(static_cast<int>(ui::mojom::DialogButton::kCancel),delegate->GetDefaultDialogButton());EXPECT_FALSE(manager->prompt_input());
+    EXPECT_EQ(views::PlatformStyle::kDialogDefaultButtonCanBeCancel,delegate->GetIsDefault(ui::mojom::DialogButton::kCancel));
+    ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(dialog->GetNativeWindow()));ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(dialog->GetNativeWindow(),code,false,false,false,false));
+    if(code==ui::VKEY_RETURN&&!views::PlatformStyle::kDialogDefaultButtonCanBeCancel){
+      // macOS intentionally leaves a Cancel-default dialog open on Return.
+      base::RunLoop().RunUntilIdle();ASSERT_EQ(dialog,manager->dialog());EXPECT_TRUE(window_->lifecycle_pending());EXPECT_EQ(2u,window_->tab_count("work"));
+      ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(dialog->GetNativeWindow(),ui::VKEY_ESCAPE,false,false,false,false));
+    }
+    ASSERT_TRUE(base::test::RunUntil([&]{return !window_->lifecycle_pending();}));ASSERT_EQ(2u,window_->tab_count("work"));
+    EXPECT_FALSE(manager->dialog());EXPECT_EQ(page,window_->contents("work"));EXPECT_EQ("draft",content::EvalJs(page,"unsaved"));
+  }
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, BeforeUnloadCloseAndAtomicRestore) {

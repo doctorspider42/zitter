@@ -1,6 +1,7 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 #ifndef ZITTER_CHROMIUM_PROTOTYPE_EDITOR_CONTROL_H_
 #define ZITTER_CHROMIUM_PROTOTYPE_EDITOR_CONTROL_H_
+#include <optional>
 #include <string>
 #include <string_view>
 #include "base/functional/callback.h"
@@ -26,7 +27,7 @@ class EditorControl {
   virtual void SelectRange(const gfx::Range& range)=0;
   virtual ui::TextInputClient* input_client()=0;
   virtual void SetReadOnly(bool value)=0;
-  virtual void SetPresentation(int font_size,float inset,bool framed,SkColor fill)=0;
+  virtual void SetPresentation(int font_size,float inset,bool framed,std::optional<SkColor> fill)=0;
   // User commits (including same-text insertion): resets/preedit/cancel are silent.
   // The domain reads current text in its callback; no borrowed text survives it.
   virtual void SetCallbacks(base::RepeatingClosure committed,

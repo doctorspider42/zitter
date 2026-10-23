@@ -3,12 +3,15 @@
 
 #include "base/memory/weak_ptr.h"
 #include "base/memory/raw_ptr.h"
+#include "ui/views/view_tracker.h"
 #include "content/public/browser/javascript_dialog_manager.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
 
-namespace views { class Widget; class Textfield; }
+namespace views { class Widget; }
+namespace ui { class KeyEvent; }
 namespace zitter::prototype {
+class EditorControl;
 // Native dialogs bound to the requesting WebContents, including beforeunload
 // checks used by atomic workspace operations outside Chrome's TabStripModel.
 class PageDialogs final : public content::JavaScriptDialogManager,
@@ -21,6 +24,8 @@ class PageDialogs final : public content::JavaScriptDialogManager,
   bool checking_before_unload() const { return checking_; }
   size_t navigation_generation() const { return navigation_generation_; }
   views::Widget* dialog() const { return dialog_.get(); }
+  EditorControl* prompt_input() const { return dialog_?prompt_.get():nullptr; }
+  bool HandlePromptKey(const ui::KeyEvent& event);
   void RunJavaScriptDialog(content::WebContents*, content::RenderFrameHost*,
       content::JavaScriptDialogType, const std::u16string&, const std::u16string&,
       DialogClosedCallback, bool*) override;
@@ -35,6 +40,8 @@ class PageDialogs final : public content::JavaScriptDialogManager,
   void Show(content::RenderFrameHost*, content::JavaScriptDialogType,
       const std::u16string&, const std::u16string&, bool, DialogClosedCallback);
   void Answer(bool accepted);
+  void PostPromptAction(bool accepted);
+  void DialogBodyDestroyed(size_t generation);
   void FinishCheck(bool proceed);
   void BeforeUnloadFired(bool proceed) override;
   void DidStartNavigation(content::NavigationHandle*) override;
@@ -42,11 +49,13 @@ class PageDialogs final : public content::JavaScriptDialogManager,
   void RenderFrameDeleted(content::RenderFrameHost*) override;
   void WebContentsDestroyed() override;
   base::WeakPtr<views::Widget> dialog_;
-  raw_ptr<views::Textfield> prompt_ = nullptr;
+  views::ViewTracker dialog_body_;
+  raw_ptr<EditorControl> prompt_ = nullptr;
   raw_ptr<content::RenderFrameHost> requesting_frame_ = nullptr;
   DialogClosedCallback dialog_callback_;
   base::OnceCallback<void(bool)> check_callback_;
   size_t navigation_generation_ = 0;
+  size_t dialog_generation_ = 0;
   bool checking_ = false;
   bool unload_dialog_ = false;
   base::WeakPtrFactory<PageDialogs> weak_factory_{this};

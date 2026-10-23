@@ -13,17 +13,21 @@
 #include "ui/content_accelerators/accelerator_util.h"
 #import "ui/views/cocoa/native_widget_mac_ns_window_host.h"
 #include "ui/views/widget/widget.h"
+#include "ui/views/widget/widget_delegate.h"
+#include "ui/views/focus/focus_manager.h"
+#include "ui/base/ime/input_method.h"
 
 @interface ZitterCommandDispatcherDelegate : DefaultCommandDispatcherDelegate {
   id _monitor;
 }
-- (instancetype)initWithWindow:(NSWindow*)window panel:(BOOL)panel;
+- (instancetype)initWithWindow:(NSWindow*)window panel:(BOOL)panel widget:(views::Widget*)widget;
 @end
 
 @implementation ZitterCommandDispatcherDelegate
-- (instancetype)initWithWindow:(NSWindow*)window panel:(BOOL)panel {
+- (instancetype)initWithWindow:(NSWindow*)window panel:(BOOL)panel widget:(views::Widget*)widget {
   if ((self = [super init])) {
     __weak NSWindow* weak_window = window;
+    const auto weak_widget=widget->GetWeakPtr();
     _monitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown | NSEventMaskKeyUp
         handler:^NSEvent*(NSEvent* event) {
       NSWindow* target = weak_window;
@@ -45,6 +49,23 @@
             (event.modifierFlags & NSEventModifierFlagCommand)) {
           if (panel && [target performKeyEquivalent:event]) return nil;
           return event;  // Preserve application menu commands.
+        }
+        // Textless dialog keys need their registered native accelerators.
+        // In particular, macOS registers Escape but deliberately does not make
+        // Cancel a Return default. Never bypass an active text client's IME
+        // or key policy, and never invent a default action for an unbound key.
+        if(panel&&event.type==NSEventTypeKeyDown&&weak_widget){
+          auto* delegate=weak_widget->widget_delegate();
+          if(delegate&&delegate->AsDialogDelegate()){
+            auto* input=weak_widget->GetInputMethod();
+            auto* focus=weak_widget->GetFocusManager();
+            if(focus&&(!input||!input->GetTextInputClient())){
+              input::NativeWebKeyboardEvent keyboard_event((base::apple::OwnedNSEvent(event)));
+              const auto accelerator=ui::GetAcceleratorFromNativeWebKeyboardEvent(keyboard_event);
+              if((accelerator.key_code()==ui::VKEY_RETURN||accelerator.key_code()==ui::VKEY_ESCAPE)&&
+                  focus->ProcessAccelerator(accelerator))return nil;
+            }
+          }
         }
         [target sendEvent:event];
         return nil;
@@ -122,7 +143,7 @@ void InstallWorkspaceKeyboardRouting(views::Widget* widget, bool panel) {
   CHECK(host);
   auto* bridge = host->GetInProcessNSWindowBridge();
   CHECK(bridge);  // This probe owns an in-process native window.
-  bridge->SetCommandDispatcher([[ZitterCommandDispatcherDelegate alloc] initWithWindow:widget->GetNativeWindow().GetNativeNSWindow() panel:panel], nil);
+  bridge->SetCommandDispatcher([[ZitterCommandDispatcherDelegate alloc] initWithWindow:widget->GetNativeWindow().GetNativeNSWindow() panel:panel widget:widget], nil);
 
 }
 }
