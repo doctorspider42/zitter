@@ -681,7 +681,9 @@ Nine workspace/profile form actions also use Rust layout/input and scene text
 without native button Labels, batched into four Metal groups. These newer stages
 await the deferred GUI checkpoint. Import also uses a Rust form controller for
 option snapshots, debounce/admission and control locks, with Metal static/status
-text and Apply drawing; source access and native selectors remain services.
+text and Apply drawing. Four import checkboxes now share a Metal canvas with Rust
+checked state, wrapped labels and geometry; source access and the source picker
+remain native services.
 Model updates refresh the scene independently of
 native painting. Rust also owns row
 click/drag/cancellation and platform key activation through native event, focus

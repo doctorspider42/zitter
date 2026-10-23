@@ -4,6 +4,7 @@
 // profile objects/directories or WebContents.
 #[cxx::bridge(namespace = "zitter::sidebar")]
 mod ffi {
+    struct CheckboxLayout { width: i32, height: i32, mark: Rect, label: Rect, lines: Vec<Rect> }
     #[derive(Clone, PartialEq, Eq)]
     struct ImportSelection { browser: u32, separate_profiles: bool, bookmarks: bool, history: bool, cookies: bool }
     struct ImportCopy { title: String, dismiss: String, intro: String, source_label: String, source_ax: String, heading: String, profiles: String, history: String, cookies: String, apply_label: String, browsers: Vec<String> }
@@ -61,7 +62,7 @@ mod ffi {
     struct ViewportProjection { x: f32, y: f32, nodes: Vec<ProjectedNode> }
     struct Item {
         x: f32, y: f32, width: f32, height: f32,
-        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: control glyph, 8: pane title, 9: split grip, 10: rounded backing, 11: sidebar grip, 12: palette result, 13: result icon, 14: separator, 15: palette static text, 16: palette frame, 17: form static text, 18: appearance color swatch, 19: form text action.
+        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: control glyph, 8: pane title, 9: split grip, 10: rounded backing, 11: sidebar grip, 12: palette result, 13: result icon, 14: separator, 15: palette static text, 16: palette frame, 17: form static text, 18: appearance color swatch, 19: form text action, 20: checkbox mark.
         kind: u32, glyph: u32,
         title: String, monogram: String, detail: String,
         title_width: f32, detail_ink: u32, detail_font_size: f32,
@@ -90,6 +91,12 @@ mod ffi {
         text: String, font_size: f32, bold: bool, middle: bool, center: bool, clip: FloatRect,
     }
     extern "Rust" {
+        type CheckboxState;
+        fn new_checkbox_state(checked: bool) -> Box<CheckboxState>;
+        fn checked(self: &CheckboxState) -> bool;
+        fn set_checked(self: &mut CheckboxState, checked: bool) -> bool;
+        fn toggle(self: &mut CheckboxState, enabled: bool) -> bool;
+        fn checkbox_layout(width: i32, line_height: i32, line_count: usize, left: i32, top: i32, right: i32, bottom: i32, rtl: bool) -> CheckboxLayout;
         type ImportForm;
         fn new_import_form() -> Box<ImportForm>;
         fn import_defaults() -> ImportSelection;
@@ -427,6 +434,25 @@ impl ProfileForm {
     fn finish_attempt(&mut self,accepted:bool){self.submitting=false;if !accepted&&self.status.is_empty(){self.status="Nie udało się wykonać operacji na profilu. Spróbuj ponownie.".into();}}
 }
 fn paragraph_layout(width:i32,line_height:i32,count:usize)->ffi::ColumnLayout{let g=notice_layout(width,line_height,count,0,0);ffi::ColumnLayout{width:g.width,height:g.height,children:g.body_lines}}
+
+pub struct CheckboxState { checked: bool }
+fn new_checkbox_state(checked: bool) -> Box<CheckboxState> {Box::new(CheckboxState {checked})}
+impl CheckboxState {
+    fn checked(&self) -> bool {self.checked}
+    fn set_checked(&mut self, checked: bool) -> bool {let changed=self.checked!=checked;self.checked=checked;changed}
+    fn toggle(&mut self, enabled: bool) -> bool {if !enabled {return false;}self.checked=!self.checked;true}
+}
+fn checkbox_layout(width: i32, line_height: i32, line_count: usize, left: i32, top: i32, right: i32, bottom: i32, rtl: bool) -> ffi::CheckboxLayout {
+    let width=width.max(0);let left=left.max(0).min(width/2);let right=right.max(0).min(width-left);let top=top.max(0);let bottom=bottom.max(0);let line_height=line_height.max(0);
+    let inside=width-left-right;let mark_width=inside.min(16);let gap=(inside-mark_width).min(8);let label_width=inside-mark_width-gap;
+    let label_height=line_height.saturating_mul(line_count.min(i32::MAX as usize) as i32);let content=label_height.max(16);
+    let height=content.saturating_add(top).saturating_add(bottom).saturating_add(4);let content_y=top.min(height);let room=height-content_y;
+    let mark_height=16.min(room);let mark_y=content_y+(room.min(content.saturating_add(4))-mark_height).max(0)/2;
+    let label_y=content_y+2.min((height-content_y).max(0));let label_x=if rtl {left} else {left+mark_width+gap};
+    let mut lines=Vec::with_capacity(line_count);let mut y=label_y;
+    for _ in 0..line_count {let h=line_height.min((height-y).max(0));lines.push(ffi::Rect{x:label_x,y,width:label_width,height:h});y=y.saturating_add(h);}
+    ffi::CheckboxLayout {width,height,mark:ffi::Rect{x:if rtl {width-right-mark_width} else {left},y:mark_y,width:mark_width,height:mark_height},label:ffi::Rect{x:label_x,y:label_y,width:label_width,height:(y-label_y).max(0)},lines}
+}
 
 // UI option snapshots contain no source paths, imported data or credentials.
 pub struct ImportForm { selection: ffi::ImportSelection, preview: ffi::ImportSelection, epoch: u64, scheduled: bool, waiting: bool, can_apply: bool, busy: bool, applying: bool, submitted: bool, message: String }
@@ -1203,6 +1229,19 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
             emit(i.x+(i.width-if across{grip}else{4.0})/2.0,i.y+(i.height-if across{4.0}else{grip})/2.0,
                 if across{grip}else{4.0},if across{4.0}else{grip},2.0,i.ink,"",0.0,false);continue;
         }
+        if i.kind == 20 {
+            if !(i.width>0.0&&i.height>0.0){continue;}
+            if i.hovered {emit(i.x-3.0,i.y-3.0,i.width+6.0,i.height+6.0,12.0,(i.badge&0xffffff)|0x14000000,"",0.0,false);}
+            if i.active {emit(i.x,i.y,i.width,i.height,2.0,i.fill,"",0.0,false);emit(i.x,i.y,i.width,i.height,0.0,i.ink,"✓",i.font_size,false);}
+            else {emit(i.x,i.y,i.width,i.height,2.0,i.badge,"",0.0,false);}
+            if i.focused {emit(i.x-2.0,i.y-2.0,i.width+4.0,i.height+4.0,4.0,i.detail_ink,"",0.0,false);}
+            for p in out[first_primitive..].iter_mut() {
+                if !p.text.is_empty(){p.center=true;}
+                else if !i.active&&p.x==i.x&&p.y==i.y&&p.width==i.width&&p.height==i.height {p.stroke=1.5;}
+                else if i.focused&&p.x==i.x-2.0&&p.y==i.y-2.0 {p.stroke=2.0;}
+            }
+            continue;
+        }
         if i.kind == 19 {
             if !(i.width>0.0&&i.height>0.0){continue;}
             let radius=i.width.min(i.height).max(0.0)/2.0;
@@ -1516,6 +1555,28 @@ mod tests {
         }
     }
     fn menu_state()->ffi::TabMenuState{ffi::TabMenuState{ready:true,busy:false,valid:true,tab:7,has_tab:true,split:true,first:3,has_first:true,second:7,has_second:true,vertical:false,tab_count:3,http:true}}
+    #[test] fn checkbox_state_programmatic_sets_are_idempotent_and_user_toggle_is_explicit() {
+        let mut c=new_checkbox_state(false);assert!(!c.checked());assert!(!c.set_checked(false));assert!(c.set_checked(true));assert!(c.checked());assert!(!c.set_checked(true));assert!(c.toggle(true));assert!(!c.checked());
+    }
+    #[test] fn checkbox_state_disabled_activation_does_not_mutate_value() {
+        for value in [false,true] {let mut c=new_checkbox_state(value);assert!(!c.toggle(false));assert_eq!(c.checked(),value);assert!(c.set_checked(!value));assert_eq!(c.checked(),!value);}
+    }
+    #[test] fn checkbox_layout_places_mark_gap_and_full_label_extent() {
+        let g=checkbox_layout(400,20,1,6,5,6,5,false);assert_eq!((g.mark.x,g.mark.width,g.label.x,g.label.width),(6,16,30,364));assert_eq!(g.height,34);assert_eq!(g.lines.len(),1);assert_eq!(g.label.height,20);
+    }
+    #[test] fn checkbox_layout_retains_wrapped_line_positions_and_empty_label_space() {
+        let g=checkbox_layout(200,20,3,6,5,6,5,false);assert_eq!(g.height,74);assert_eq!(g.lines.iter().map(|r|r.y).collect::<Vec<_>>(),vec![7,27,47]);assert_eq!(g.label.height,60);assert_eq!(checkbox_layout(200,20,0,6,5,6,5,false).height,30);
+    }
+    #[test] fn checkbox_layout_mirrors_mark_and_label_for_rtl() {
+        let ltr=checkbox_layout(300,20,2,6,5,6,5,false);let rtl=checkbox_layout(300,20,2,6,5,6,5,true);assert_eq!(ltr.height,rtl.height);assert_eq!(rtl.mark.x,278);assert_eq!(rtl.label.x,6);assert_eq!(rtl.label.width,ltr.label.width);assert!(rtl.label.x+rtl.label.width<rtl.mark.x);
+    }
+    #[test] fn checkbox_layout_is_bounded_for_zero_narrow_and_saturated_metrics() {
+        for width in [0,1,6,15,50,i32::MAX] {for rtl in [false,true] {let g=checkbox_layout(width,i32::MAX,3,6,i32::MAX,6,i32::MAX,rtl);for r in g.lines.iter().chain([&g.mark,&g.label]) {assert!(r.x>=0&&r.y>=0&&r.width>=0&&r.height>=0);assert!(i64::from(r.x)+i64::from(r.width)<=i64::from(width));assert!(i64::from(r.y)+i64::from(r.height)<=i64::from(g.height));}}}
+    }
+    #[test] fn checkbox_mark_scene_preserves_checked_unchecked_focus_hover_and_clip() {
+        let mut c=row(16.0);c.kind=20;c.height=16.0;c.active=true;c.hovered=true;c.focused=true;c.detail_ink=0xff0000ff;let ops=layout(&[c]);assert_eq!(ops.len(),4);assert_eq!(ops[2].text,"✓");assert!(ops[2].center);assert_eq!(ops[3].stroke,2.0);
+        let mut c=row(16.0);c.kind=20;c.height=16.0;c.active=false;let ops=layout(&[c]);assert_eq!(ops.len(),1);assert_eq!(ops[0].stroke,1.5);assert!(ops[0].text.is_empty());
+    }
     fn import_ready_form() -> Box<ImportForm> {let mut f=new_import_form();let s=import_defaults();f.select(s.clone());f.begin_preview(s);f.set_status("Gotowe",true,false,false);f}
     #[test] fn import_form_preserves_defaults_sources_and_copy() {
         let s=import_defaults();assert_eq!(s.browser,0);assert!(s.separate_profiles&&s.bookmarks&&!s.history&&!s.cookies);let c=import_copy();assert_eq!(c.browsers,vec!["Arc","Google Chrome","Microsoft Edge","Brave"]);assert_eq!(c.apply_label,"Importuj");assert!(c.cookies.contains("sesje"));

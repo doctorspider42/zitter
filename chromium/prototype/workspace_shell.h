@@ -297,15 +297,17 @@ class WorkspaceShell final : public ui::EventHandler,
   void SetImportStatus(std::u16string message, bool can_import, bool busy = false, bool applying = false);
   void BeginImportPreview(const BrowserImportOptions& options);
   bool import_panel_contains_scene_text(std::string_view text) const;
+  bool import_choices_metal_visible() const;
+  void SetImportOptionCheckedForTesting(size_t option,bool checked);
   views::View* import_panel_for_testing() const{return import_root_;}
   bool import_visible() const;
   BrowserImportOptions import_options() const;
   views::Combobox* import_browser_picker() const { return import_browser_picker_; }
-  views::Checkbox* import_bookmarks() const { return import_bookmarks_; }
+  views::Button* import_bookmarks() const { return import_bookmarks_; }
   views::Button* import_close() const { return dismiss_import_; }
-  views::Checkbox* import_history() const { return import_history_; }
-  views::Checkbox* import_cookies() const { return import_cookies_; }
-  views::Checkbox* import_profiles() const { return import_profiles_; }
+  views::Button* import_history() const { return import_history_; }
+  views::Button* import_cookies() const { return import_cookies_; }
+  views::Button* import_profiles() const { return import_profiles_; }
   views::Widget* import_widget() const { return import_widget_.get(); }
   void SetProfileStatus(std::u16string message);
   views::Widget* profiles_widget() const { return profiles_widget_.get(); }
@@ -658,10 +660,10 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> import_status_ = nullptr;
   std::unique_ptr<ImportFormState> import_form_;
   raw_ptr<views::Combobox> import_browser_picker_ = nullptr;
-  raw_ptr<views::Checkbox> import_bookmarks_ = nullptr;
-  raw_ptr<views::Checkbox> import_profiles_ = nullptr;
-  raw_ptr<views::Checkbox> import_history_ = nullptr;
-  raw_ptr<views::Checkbox> import_cookies_ = nullptr;
+  raw_ptr<views::Button> import_bookmarks_ = nullptr;
+  raw_ptr<views::Button> import_profiles_ = nullptr;
+  raw_ptr<views::Button> import_history_ = nullptr;
+  raw_ptr<views::Button> import_cookies_ = nullptr;
   raw_ptr<views::Button> apply_import_ = nullptr;
   raw_ptr<views::Button> dismiss_import_ = nullptr;
   bool import_can_apply_ = false;

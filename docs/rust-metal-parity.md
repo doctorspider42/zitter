@@ -52,7 +52,8 @@ Views-specific layout and control behavior must have an explicit replacement.
 | General preferences, shortcuts and site preferences | Views + application services | Rust forms; use the same persisted configuration |
 | History, downloads, passwords and permissions | Views/native service adapters | Rust presentation/control layer; retain browser service and security semantics |
 | Peek, promote/split, link/page menus and routing | Views/native adapters + application | Rust control routing, focus and dismissal; retain native page integration |
-| Import form and first-run import | Rust UI option/debounce/admission/controller state, copy, columns and Metal static/status/Apply text; native checkbox/source/header nodes and application import services (GUI checkpoint pending) | Migrate native selectors/header; verify latest options, busy recovery, credentials opt-in, source immutability, first-run/persistence/rollback and runtime accessibility |
+| Import form and first-run import | Rust UI option/debounce/admission/controller state, copy, columns and Metal static/status/Apply text; native Button/AX/focus, source/header nodes and application import services (GUI checkpoint pending) | Migrate remaining native source/header and input nodes; verify latest options, busy recovery, credentials opt-in, source immutability, first-run/persistence/rollback and runtime accessibility |
+| Import checkboxes | Rust checked state, shared pointer/key input, mark/label/RTL geometry and primitives; one Metal canvas; native Button/AX/focus/event and font/inset/color adapters (GUI checkpoint pending) | Replace native interaction nodes; verify checked/default action, disabled/capture/context/visibility behavior, actual marks/typography, theme/scale and fallback |
 | Time Machine | Views + application services | Rust presentation; preserve previews, validation, backups and restoration |
 | Keyboard accessibility, VoiceOver, focus and tooltips | Native Views nodes | Explicit native accessibility adapter for Rust controls; no duplicate nodes |
 
@@ -344,6 +345,14 @@ and the return of Metal after settling. Preserve the normal application/profile.
   import/first-run/source/persistence cases expand the deferred checkpoint to
   **67 Metal cases and 34 Views controls**. See
   [import form verification](benchmarks/rust-import-form-headless-2026-10-23.json).
+
+- Four import checkboxes now use Rust checked state, programmatic/user mutation
+  policy, wrapped/RTL mark-label layout and scene primitives on one shared Metal
+  canvas. Native Checkbox/Label/focus-ring/ink drawing is absent in the opt-in
+  backend; native Button/AX/focus and platform typography/colors remain adapters.
+  **132 Rust and 61 Python tests passed** without windows. The new compiled case
+  expands the deferred matrix to **68 Metal cases and 34 Views controls**. See
+  [checkbox verification](benchmarks/rust-checkboxes-headless-2026-10-23.json).
 
 ## Completion gates
 

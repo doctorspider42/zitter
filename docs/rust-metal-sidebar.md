@@ -889,3 +889,50 @@ tools/bootstrap plus five UI/metadata-notification source overrides, excluding
 unrelated network-policy edits. No app/window was launched, new dependency introduced or shader/quad ABI changed.
 No CPU/GPU/presentation speedup was established. See
 [import form verification](benchmarks/rust-import-form-headless-2026-10-23.json).
+
+
+## Import checkboxes (GUI checkpoint pending)
+
+The four import checkboxes now keep their checked value in Rust and use the
+existing Rust pointer/key reducer through native Button adapters. A user action
+checks availability, toggles once, updates native checked/default-action AX state
+and then invokes the existing form callback. Programmatic SetChecked remains
+idempotent, can set disabled controls and does not dispatch that callback. Disabled
+user activation cannot mutate the value or dispatch. Capture loss, visibility and
+option/source context changes cancel armed input; changing a label also cancels
+its pending gesture.
+
+Rust places a sixteen-point mark, eight-point label gap, platform insets and all
+CoreText-shaped label lines, including RTL mark/label mirroring. One Metal canvas
+batches the four controls and excludes other panel controls. The ordinary checkbox
+mark primitive supplies backing/outline, centered check glyph, hover and focus;
+label lines use the existing text primitive. The check glyph uses the existing
+CoreText tile path, so no shader, quad ABI, dependency or icon asset was added.
+Native fallback consumes the same recipe. Native Checkbox/Label/image/focus-ring/
+ink drawing is absent for these opt-in controls; platform fonts/insets/colors and
+native Button/event/focus/AX nodes remain.
+
+Legacy Views keeps actual Checkbox controls. Internal import checkbox accessors
+now return the common Button interface so native test clicks still target the
+real control in either backend. Option values remain available through
+`import_options()`; callback-free test mutation uses the explicit
+`SetImportOptionCheckedForTesting`. The two existing checkbox-specific browser-test
+calls were adapted to that state/AX interface; their behavior remains required at
+the checkpoint.
+
+**132 Rust and 61 Python tests passed** without windows, along with scoped GN,
+boundaries and optimized app/browser-test builds. The new compiled case,
+`ImportCheckboxScenesAXSpaceCaptureDisabledAndVisibility`, awaits execution. It
+checks default flags, absence of native Checkbox/Labels/focus rings, native AX
+role/checked state, capture cancellation, Space/default-AX activation, disabled
+mutation, source-caption cancellation and hide/reopen. The deferred matrix now
+contains **68 Metal cases and 34 Views controls**, retaining all import option,
+credential opt-in, persistence and first-run cases.
+
+Actual check glyphs, complete wrapping, RTL, theme/scale, clipping, fallback,
+keyboard/focus/AX announcements, capture/visibility/context transitions and import
+persistence remain unaccepted. Build inputs use committed `6311e94` tools/bootstrap
+plus four UI source overrides, excluding unrelated network-policy work. No app or
+window was launched and no CPU/GPU/presentation gain was established. Native
+source/header/outer controls and other Views surfaces remain. See
+[checkbox verification](benchmarks/rust-checkboxes-headless-2026-10-23.json).

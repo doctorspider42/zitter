@@ -687,6 +687,90 @@ BEGIN_METADATA(SceneActionGroup)
 END_METADATA
 void CancelSceneActions(views::View* root){if(!root)return;if(auto* group=views::AsViewClass<SceneActionGroup>(root)){group->CancelInput();return;}for(const auto& child:root->children())CancelSceneActions(child.get());}
 #endif
+#if BUILDFLAG(IS_MAC)
+class SceneCheckbox final : public SceneGlyphButton {
+  METADATA_HEADER(SceneCheckbox,SceneGlyphButton)
+ public:
+  SceneCheckbox(views::Button::PressedCallback callback,std::u16string text,base::RepeatingClosure painted)
+      :SceneGlyphButton(std::move(callback),text,Glyph::kMore,nullptr,base::BindRepeating([]{return true;}),std::move(painted)),state_(sidebar::new_checkbox_state(false)),text_(std::move(text)) {
+    SetInstallFocusRingOnFocus(false);SetHasInkDropActionOnClick(false);SetAnimateOnStateChange(false);SetRequestFocusOnPress(false);GetViewAccessibility().SetRole(ax::mojom::Role::kCheckBox);RefreshAX();
+  }
+  bool Checked() const{return state_->checked();}
+  void SetChecked(bool checked){if(!state_->set_checked(checked))return;RefreshAX();SchedulePaint();}
+  void SetText(std::u16string text){if(text==text_)return;OnMouseCaptureLost();text_=std::move(text);measured_width_=-1;GetViewAccessibility().SetName(text_);SetTooltipText(text_);PreferredSizeChanged();SchedulePaint();}
+  static gfx::FontList TextFont(){return views::TypographyProvider::Get().GetFont(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override {const auto g=Geometry(available.width().is_bounded()?available.width().value():-1);return gfx::Size(g.width,g.height);}
+  void OnThemeChanged() override {SceneGlyphButton::OnThemeChanged();measured_width_=-1;PreferredSizeChanged();SchedulePaint();}
+  std::vector<sidebar::Item> Scene(gfx::RectF bounds,gfx::RectF clip) const {
+    const auto g=Geometry(bounds.width());const auto* provider=GetColorProvider();const bool enabled=GetEnabledInViewsSubtree();const auto font=TextFont();std::vector<sidebar::Item> out;
+    sidebar::Item mark{};mark.kind=20;mark.x=bounds.x()+g.mark.x;mark.y=bounds.y()+g.mark.y;mark.width=g.mark.width;mark.height=g.mark.height;mark.active=Checked();mark.focused=HasFocus();mark.hovered=enabled&&(GetState()==STATE_HOVERED||GetState()==STATE_PRESSED);mark.font_size=font.GetFontSize();
+    mark.fill=provider->GetColor(enabled?ui::kColorCheckboxContainer:ui::kColorCheckboxContainerDisabled);mark.ink=provider->GetColor(enabled?ui::kColorCheckboxCheck:ui::kColorCheckboxCheckDisabled);mark.badge=provider->GetColor(enabled?ui::kColorCheckboxOutline:ui::kColorCheckboxOutlineDisabled);mark.detail_ink=provider->GetColor(ui::kColorFocusableBorderFocused);mark.clip={clip.x(),clip.y(),clip.width(),clip.height()};out.push_back(std::move(mark));
+    for(size_t i=0;i<g.lines.size();++i){const auto& r=g.lines[i];sidebar::Item item{};item.kind=17;item.x=bounds.x()+r.x;item.y=bounds.y()+r.y;item.width=r.width;item.height=r.height;item.title=lines_[i];item.font_size=font.GetFontSize();item.active=font.GetFontWeight()>=gfx::Font::Weight::MEDIUM;item.ink=provider->GetColor(views::TypographyProvider::Get().GetColorId(views::style::CONTEXT_LABEL,enabled?views::style::STYLE_PRIMARY:views::style::STYLE_DISABLED));item.clip={clip.x(),clip.y(),clip.width(),clip.height()};out.push_back(std::move(item));}return out;
+  }
+ protected:
+  void NotifyClick(const ui::Event& event) override {if(!state_->toggle(GetEnabledInViewsSubtree()))return;RefreshAX();SchedulePaint();SceneGlyphButton::NotifyClick(event);}
+ private:
+  void RefreshAX(){SetDefaultActionVerb(Checked()?ax::mojom::DefaultActionVerb::kUncheck:ax::mojom::DefaultActionVerb::kCheck);UpdateAccessibleDefaultActionVerb();GetViewAccessibility().SetCheckedState(Checked()?ax::mojom::CheckedState::kTrue:ax::mojom::CheckedState::kFalse);}
+  sidebar::CheckboxLayout Geometry(int requested) const {
+    const auto font=TextFont();const auto padding=views::LayoutProvider::Get()->GetInsetsMetric(views::INSETS_CHECKBOX_RADIO_BUTTON);const int width=requested<0?gfx::GetStringWidth(text_,font)+padding.width()+24:requested;const int label_width=std::max(0,width-padding.width()-24);
+    if(measured_width_!=label_width||measured_font_!=font.GetFontSize()){lines_=ShapeSidebarParagraph(base::UTF16ToUTF8(text_),font.GetFontSize(),label_width,font.GetFontWeight()>=gfx::Font::Weight::MEDIUM);measured_width_=label_width;measured_font_=font.GetFontSize();}
+    return sidebar::checkbox_layout(width,font.GetHeight(),lines_.size(),padding.left(),padding.top(),padding.right(),padding.bottom(),base::i18n::IsRTL());
+  }
+  rust::Box<sidebar::CheckboxState> state_;std::u16string text_;mutable std::vector<std::string> lines_;mutable int measured_width_=-1,measured_font_=0;
+};
+BEGIN_METADATA(SceneCheckbox)
+END_METADATA
+class SceneCheckboxGroup final : public views::View {
+  METADATA_HEADER(SceneCheckboxGroup,views::View)
+ public:
+  explicit SceneCheckboxGroup(int spacing){SetLayoutManager(CreateSidebarColumnLayout(spacing));}
+  views::Button* AddChoice(views::Button::PressedCallback callback,std::u16string text){return AddChildView(std::make_unique<SceneCheckbox>(std::move(callback),std::move(text),base::BindRepeating(&SceneCheckboxGroup::Schedule,weak_factory_.GetWeakPtr())));}
+  bool metal_visible() const{return surface_&&surface_->visible();}
+  bool contains_text(std::string_view text) const{return metal_visible()&&surface_->contains_text_for_testing(text);}
+  void CancelInput(){for(const auto& child:children())child->OnMouseCaptureLost();}
+  void Layout(PassKey) override {LayoutSuperclass<views::View>(this);Schedule();}
+  void OnBoundsChanged(const gfx::Rect& previous) override {views::View::OnBoundsChanged(previous);Schedule();}
+  void AddedToWidget() override {views::View::AddedToWidget();Schedule();}
+  void RemovedFromWidget() override {surface_.reset();views::View::RemovedFromWidget();}
+  void OnThemeChanged() override {views::View::OnThemeChanged();PreferredSizeChanged();Schedule();}
+  void VisibilityChanged(views::View* changed,bool visible) override {views::View::VisibilityChanged(changed,visible);if(!IsDrawn()){CancelInput();if(surface_)surface_->Hide();}Schedule();}
+  void OnDidSchedulePaint(const gfx::Rect& rect) override {views::View::OnDidSchedulePaint(rect);Schedule();}
+  void OnPaint(gfx::Canvas* canvas) override {if(!metal_visible())for(const auto& item:Items(0,0,gfx::RectF(GetLocalBounds())))PaintSceneRecipe(canvas,item,SceneCheckbox::TextFont());Schedule();}
+ private:
+  std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const {std::vector<sidebar::Item> out;for(const auto& child:children())if(child->GetVisible()){auto bounds=gfx::RectF(child->bounds());bounds.Offset(dx,dy);auto local=bounds;local.Intersect(clip);auto items=static_cast<SceneCheckbox*>(child.get())->Scene(bounds,local);for(auto& item:items)out.push_back(std::move(item));}return out;}
+  void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneCheckboxGroup::UpdateMetal,weak_factory_.GetWeakPtr()));}
+  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!IsDrawn()||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
+  bool pending_=false;std::unique_ptr<SidebarMetal> surface_;base::WeakPtrFactory<SceneCheckboxGroup> weak_factory_{this};
+};
+BEGIN_METADATA(SceneCheckboxGroup)
+END_METADATA
+void CancelSceneCheckboxes(views::View* root){if(!root)return;if(auto* group=views::AsViewClass<SceneCheckboxGroup>(root)){group->CancelInput();return;}for(const auto& child:root->children())CancelSceneCheckboxes(child.get());}
+#endif
+views::Button* AddImportCheck(views::View* parent,std::u16string text,views::Button::PressedCallback callback) {
+#if BUILDFLAG(IS_MAC)
+  if(auto* group=views::AsViewClass<SceneCheckboxGroup>(parent))return group->AddChoice(std::move(callback),std::move(text));
+#endif
+  return parent->AddChildView(std::make_unique<views::Checkbox>(std::move(text),std::move(callback)));
+}
+bool CheckValue(views::Button* button) {
+#if BUILDFLAG(IS_MAC)
+  if(auto* scene=views::AsViewClass<SceneCheckbox>(button))return scene->Checked();
+#endif
+  return static_cast<views::Checkbox*>(button)->GetChecked();
+}
+void SetCheckValue(views::Button* button,bool checked) {
+#if BUILDFLAG(IS_MAC)
+  if(auto* scene=views::AsViewClass<SceneCheckbox>(button)){scene->SetChecked(checked);return;}
+#endif
+  static_cast<views::Checkbox*>(button)->SetChecked(checked);
+}
+void SetCheckText(views::Button* button,std::u16string text) {
+#if BUILDFLAG(IS_MAC)
+  if(auto* scene=views::AsViewClass<SceneCheckbox>(button)){scene->SetText(std::move(text));return;}
+#endif
+  static_cast<views::Checkbox*>(button)->SetText(text);
+}
+
 views::View* ActionGroup(views::View* parent,bool scene,bool vertical,int spacing) {
 #if BUILDFLAG(IS_MAC)
   if(scene)return parent->AddChildView(std::make_unique<SceneActionGroup>(vertical,spacing));
@@ -2760,14 +2844,18 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   Spacer(import_panel.get(), 8);
   import_text(import_panel.get(),import_copy[5],kInk,0,gfx::Font::Weight::SEMIBOLD);
   auto selection_changed = base::BindRepeating(&WorkspaceShell::ImportSelectionChanged, weak);
-  import_profiles_ = import_panel->AddChildView(std::make_unique<views::Checkbox>(import_copy[6], selection_changed));
-  import_bookmarks_ = import_panel->AddChildView(std::make_unique<views::Checkbox>(u"Przypięte karty, foldery i Ulubione", selection_changed));
+  views::View* import_choices=import_panel.get();
+#if BUILDFLAG(IS_MAC)
+  if(import_form_)import_choices=import_panel->AddChildView(std::make_unique<SceneCheckboxGroup>(12));
+#endif
+  import_profiles_ = AddImportCheck(import_choices,import_copy[6],selection_changed);
+  import_bookmarks_ = AddImportCheck(import_choices,u"Przypięte karty, foldery i Ulubione",selection_changed);
   for (auto* checkbox : {import_profiles_.get(), import_bookmarks_.get()}) {
-    checkbox->SetChecked(true);
-    checkbox->SetMultiLine(true);
+    SetCheckValue(checkbox,true);
+    if(auto* native=views::AsViewClass<views::Checkbox>(checkbox))native->SetMultiLine(true);
   }
-  import_history_ = import_panel->AddChildView(std::make_unique<views::Checkbox>(import_copy[7], selection_changed));
-  import_cookies_ = import_panel->AddChildView(std::make_unique<views::Checkbox>(import_copy[8], selection_changed));
+  import_history_ = AddImportCheck(import_choices,import_copy[7],selection_changed);
+  import_cookies_ = AddImportCheck(import_choices,import_copy[8],selection_changed);
   Spacer(import_panel.get(), 8);
   import_status_ = import_text(import_panel.get(),u"",kSubtle,-1,gfx::Font::Weight::NORMAL,true);
   import_status_->SetVisible(false);
@@ -2775,7 +2863,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   apply_import_ = AddAction(import_actions,base::BindRepeating(&WorkspaceShell::SubmitImport,weak),import_copy[9]);
   apply_import_->SetEnabled(false);
 #if BUILDFLAG(IS_MAC)
-  if(import_form_){const auto d=sidebar::import_defaults();import_browser_picker_->SetSelectedIndex(d.browser);import_profiles_->SetChecked(d.separate_profiles);import_bookmarks_->SetChecked(d.bookmarks);import_history_->SetChecked(d.history);import_cookies_->SetChecked(d.cookies);import_panel->SetLayoutManager(CreateSidebarColumnLayout(12));import_panel->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(20)));}
+  if(import_form_){const auto d=sidebar::import_defaults();import_browser_picker_->SetSelectedIndex(d.browser);SetCheckValue(import_profiles_,d.separate_profiles);SetCheckValue(import_bookmarks_,d.bookmarks);SetCheckValue(import_history_,d.history);SetCheckValue(import_cookies_,d.cookies);import_panel->SetLayoutManager(CreateSidebarColumnLayout(12));import_panel->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(20)));}
 #endif
 
 
@@ -6151,11 +6239,21 @@ bool WorkspaceShell::import_visible() const { return import_widget_ && import_wi
 BrowserImportOptions WorkspaceShell::import_options() const {
   BrowserImportOptions options;
   options.browser = static_cast<ImportBrowser>(import_browser_picker_->GetSelectedIndex().value_or(0));
-  options.separate_profiles = import_profiles_->GetChecked();
-  options.bookmarks = import_bookmarks_->GetChecked();
-  options.history = import_history_->GetChecked();
-  options.cookies = import_cookies_->GetChecked();
+  options.separate_profiles = CheckValue(import_profiles_);
+  options.bookmarks = CheckValue(import_bookmarks_);
+  options.history = CheckValue(import_history_);
+  options.cookies = CheckValue(import_cookies_);
   return options;
+}
+void WorkspaceShell::SetImportOptionCheckedForTesting(size_t option,bool checked) {
+  const std::array<views::Button*,4> controls={import_profiles_,import_bookmarks_,import_history_,import_cookies_};if(option<controls.size()&&controls[option])SetCheckValue(controls[option],checked);
+}
+bool WorkspaceShell::import_choices_metal_visible() const {
+#if BUILDFLAG(IS_MAC)
+  auto* group=import_profiles_?views::AsViewClass<SceneCheckboxGroup>(import_profiles_->parent()):nullptr;return group&&group->metal_visible();
+#else
+  return false;
+#endif
 }
 void WorkspaceShell::BeginImportPreview(const BrowserImportOptions& options) {
 #if BUILDFLAG(IS_MAC)
@@ -6165,7 +6263,7 @@ void WorkspaceShell::BeginImportPreview(const BrowserImportOptions& options) {
 void WorkspaceShell::RefreshRustImportControls() {
 #if BUILDFLAG(IS_MAC)
   if(!import_form_||!import_status_)return;const auto v=import_form_->form->view(state_.configuration_ready,state_.profiles_busy);
-  SetPanelText(import_status_,base::UTF8ToUTF16(std::string(v.message)));import_status_->SetVisible(!v.message.empty());import_bookmarks_->SetText(base::UTF8ToUTF16(std::string(v.bookmarks_label)));
+  SetPanelText(import_status_,base::UTF8ToUTF16(std::string(v.message)));import_status_->SetVisible(!v.message.empty());SetCheckText(import_bookmarks_,base::UTF8ToUTF16(std::string(v.bookmarks_label)));
   import_browser_picker_->SetEnabled(v.options_enabled);for(auto* control:{import_profiles_.get(),import_bookmarks_.get(),import_history_.get(),import_cookies_.get()})control->SetEnabled(v.options_enabled);
   dismiss_import_->SetEnabled(v.close_enabled);apply_import_->SetEnabled(v.apply_enabled);import_applying_=v.applying;import_busy_=v.busy;import_can_apply_=v.can_apply;
 #endif
@@ -6190,7 +6288,7 @@ void WorkspaceShell::SubmitImport() {
 }
 bool WorkspaceShell::import_panel_contains_scene_text(std::string_view text) const {
 #if BUILDFLAG(IS_MAC)
-  if(!import_root_)return false;auto find=[&](auto&& self,views::View* view)->bool{if(auto* node=views::AsViewClass<SceneParagraph>(view))if(node->contains_scene_text(text))return true;if(auto* group=views::AsViewClass<SceneActionGroup>(view))if(group->contains_text(text))return true;for(const auto& child:view->children())if(self(self,child.get()))return true;return false;};return find(find,import_root_);
+  if(!import_root_)return false;auto find=[&](auto&& self,views::View* view)->bool{if(auto* node=views::AsViewClass<SceneParagraph>(view))if(node->contains_scene_text(text))return true;if(auto* group=views::AsViewClass<SceneActionGroup>(view))if(group->contains_text(text))return true;if(auto* choices=views::AsViewClass<SceneCheckboxGroup>(view))if(choices->contains_text(text))return true;for(const auto& child:view->children())if(self(self,child.get()))return true;return false;};return find(find,import_root_);
 #else
   return false;
 #endif
@@ -6198,13 +6296,13 @@ bool WorkspaceShell::import_panel_contains_scene_text(std::string_view text) con
 void WorkspaceShell::ImportSelectionChanged() {
 #if BUILDFLAG(IS_MAC)
   if(import_form_){import_preview_timer_.Stop();const auto request=import_form_->form->select(ImportUiSelection(import_options()));RefreshRustImportControls();PositionPanels();if(request.action!=sidebar::ImportAction::Preview)return;
-    CancelSceneActions(import_root_);callbacks_.invalidate_import.Run();
+    CancelSceneActions(import_root_);CancelSceneCheckboxes(import_root_);callbacks_.invalidate_import.Run();
     import_preview_timer_.Start(FROM_HERE,base::Milliseconds(200),base::BindOnce(&WorkspaceShell::DispatchImportPreview,weak_factory_.GetWeakPtr(),request.epoch));return;
   }
 #endif
   if (import_applying_) return;
   const bool arc = import_options().browser == ImportBrowser::kArc;
-  import_bookmarks_->SetText(arc ? u"Przypięte karty, foldery i Ulubione" : u"Zakładki i foldery");
+  SetCheckText(import_bookmarks_,arc ? u"Przypięte karty, foldery i Ulubione" : u"Zakładki i foldery");
   callbacks_.invalidate_import.Run();
   SetImportStatus(u"Odczytywanie danych…", false, true);
   import_preview_timer_.Start(FROM_HERE, base::Milliseconds(200), base::BindOnce(
