@@ -39,6 +39,7 @@
 #include "ui/views/controls/menu/menu_runner.h"
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/drag_controller.h"
+#include "ui/views/border.h"
 #include "ui/views/word_lookup_client.h"
 #include "ui/gfx/decorated_text.h"
 #include "ui/gfx/font_list.h"
@@ -83,6 +84,13 @@ class NativeEditor final : public views::Textfield, public EditorControl, privat
   void SelectRange(const gfx::Range& range) override{views::Textfield::SetSelectedRange(range);}
   ui::TextInputClient* input_client() override{return this;}
   void SetReadOnly(bool value) override{views::Textfield::SetReadOnly(value);}
+  void SetPresentation(int font_size,float inset,bool framed,SkColor fill) override {
+    const auto fonts=gfx::FontList();SetFontList(fonts.DeriveWithSizeDelta(std::clamp(font_size,1,256)-fonts.GetFontSize()));
+    SetBackgroundColor(fill);
+    const int padding=std::isfinite(inset)?static_cast<int>(std::clamp(inset,0.f,4096.f)):0;
+    if(framed)SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,5,GetColorProvider()?GetColorProvider()->GetColor(ui::kColorTextfieldOutline):SK_ColorGRAY),gfx::Insets::VH(4,padding)));
+    else SetBorder(views::CreateEmptyBorder(gfx::Insets::VH(0,padding)));
+  }
   void SetCallbacks(base::RepeatingClosure committed,base::RepeatingCallback<bool(const ui::KeyEvent&)> key) override {
     committed_=std::move(committed);key_=std::move(key);set_controller(committed_||key_?this:nullptr);
   }
@@ -129,6 +137,10 @@ class SceneEditor final : public views::View, public EditorControl,
   gfx::Range GetSelectedRange() const override{auto i=sidebar::editor_info(*state_);return gfx::Range(i.anchor,i.focus);}
   void SelectRange(const gfx::Range& range) override{SetEditableSelectionRange(range);}
   void SetReadOnly(bool value) override{read_only_=value;SyncLifecycle();}
+  void SetPresentation(int font_size,float inset,bool framed,SkColor fill) override {
+    const auto size=std::clamp(font_size,1,256);if(font_size_!=size){font_size_=size;line_.reset();}
+    inset_=std::isfinite(inset)?std::max(0.f,inset):0.f;framed_=framed;fill_=fill;Schedule();NotifyCaret();
+  }
   void SetCallbacks(base::RepeatingClosure committed,base::RepeatingCallback<bool(const ui::KeyEvent&)> key) override {committed_=std::move(committed);key_=std::move(key);}
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(120,32);}
   ui::Cursor GetCursor(const ui::MouseEvent&) override{return ui::Cursor(ui::mojom::CursorType::kIBeam);}
@@ -294,6 +306,7 @@ class SceneEditor final : public views::View, public EditorControl,
  private:
   static rust::Slice<const uint16_t> Slice(std::u16string_view text){return {reinterpret_cast<const uint16_t*>(text.data()),text.size()};}
   static std::u16string SingleLine(std::u16string_view text){std::u16string out;for(char16_t c:text)if(c>=0x20&&(c<0x7f||c>0x9f))out.push_back(c);return out;}
+  SkColor Fill() const{return fill_.value_or(Color(ui::kColorTextfieldBackground,SK_ColorWHITE));}
   bool AlignRight() const{return align_right_.value_or(GetTextDirection()==base::i18n::RIGHT_TO_LEFT);}
   int WritingDirection() const {return !direction_?0:*direction_==base::i18n::RIGHT_TO_LEFT?2:1;}
   SkColor Color(ui::ColorId id,SkColor fallback) const {const auto* provider=GetColorProvider();return provider?provider->GetColor(id):fallback;}
@@ -306,12 +319,12 @@ class SceneEditor final : public views::View, public EditorControl,
   void RefreshAX(){auto i=sidebar::editor_info(*state_);GetViewAccessibility().SetValue(text_);GetViewAccessibility().SetTextDirection(static_cast<int32_t>(GetTextDirection()==base::i18n::RIGHT_TO_LEFT?ax::mojom::WritingDirection::kRtl:ax::mojom::WritingDirection::kLtr));GetViewAccessibility().SetTextSelStart(i.anchor);GetViewAccessibility().SetTextSelEnd(i.focus);GetViewAccessibility().SetReadOnly(read_only_);}
   void Apply(sidebar::EditorUpdate update){if(!update.admitted)return;if(!sidebar::editor_pointer_active(*state_)){selection_scroll_.Stop();dragging_=false;}if(update.text_changed){RefreshText();++edit_generation_;}if(!update.info.composing)clauses_.clear();EnsureLayout();RefreshAX();blink_visible_=true;Schedule();NotifyCaret();if(update.text_changed)GetViewAccessibility().NotifyEvent(ax::mojom::Event::kValueChanged,true);if(update.selection_changed)GetViewAccessibility().NotifyEvent(ax::mojom::Event::kTextSelectionChanged,true);if(update.committed&&committed_){auto notify=committed_;notify.Run();}}
   void EnsureLayout() const {
-    if(!line_){line_=std::make_unique<EditorTextLayout>(text_,13,false,WritingDirection());std::vector<size_t> words;for(auto word:line_->words()){words.push_back(word.start);words.push_back(word.end);}const auto& stops=line_->graphemes();sidebar::editor_install_boundaries(*state_,sidebar::editor_info(*state_).revision,rust::Slice<const size_t>(stops.data(),stops.size()),rust::Slice<const size_t>(words.data(),words.size()));}
-    auto i=sidebar::editor_info(*state_);geometry_=sidebar::editor_viewport(*state_,width(),height(),line_->width(),line_->Caret(i.focus,i.secondary).x,line_->ascent(),line_->descent(),AlignRight());
+    if(!line_){line_=std::make_unique<EditorTextLayout>(text_,font_size_,false,WritingDirection());std::vector<size_t> words;for(auto word:line_->words()){words.push_back(word.start);words.push_back(word.end);}const auto& stops=line_->graphemes();sidebar::editor_install_boundaries(*state_,sidebar::editor_info(*state_).revision,rust::Slice<const size_t>(stops.data(),stops.size()),rust::Slice<const size_t>(words.data(),words.size()));}
+    auto i=sidebar::editor_info(*state_);geometry_=sidebar::editor_viewport(*state_,width(),height(),line_->width(),line_->Caret(i.focus,i.secondary).x,line_->ascent(),line_->descent(),AlignRight(),inset_);
   }
   gfx::Rect ScreenRect(const sidebar::FloatRect& rect) const{gfx::Rect out=gfx::ToEnclosingRect(gfx::RectF(rect.x,rect.y,rect.width,rect.height));const auto origin=GetBoundsInScreen().origin();out.Offset(origin.x(),origin.y());return out;}
   EditorCaretStop Hit(float x) const{EnsureLayout();return line_->HitTest(x-geometry_.origin);}
-  bool Lookup(gfx::Range range,gfx::DecoratedText* text,gfx::Rect* rect){if(range.is_empty()||range.GetMax()>text_.size())return false;EnsureLayout();const auto spans=line_->Spans(range.start(),range.end());if(spans.empty())return false;text->text=text_.substr(range.GetMin(),range.length());text->attributes.clear();const auto fonts=gfx::FontList().DeriveWithSizeDelta(13-gfx::FontList().GetFontSize());text->attributes.emplace_back(gfx::Range(0,text->text.size()),fonts.GetPrimaryFont());*rect=gfx::ToEnclosingRect(gfx::RectF(geometry_.origin+spans.front().x,geometry_.caret.y,spans.front().width,geometry_.caret.height));return true;}
+  bool Lookup(gfx::Range range,gfx::DecoratedText* text,gfx::Rect* rect){if(range.is_empty()||range.GetMax()>text_.size())return false;EnsureLayout();const auto spans=line_->Spans(range.start(),range.end());if(spans.empty())return false;text->text=text_.substr(range.GetMin(),range.length());text->attributes.clear();const auto fonts=gfx::FontList().DeriveWithSizeDelta(font_size_-gfx::FontList().GetFontSize());text->attributes.emplace_back(gfx::Range(0,text->text.size()),fonts.GetPrimaryFont());*rect=gfx::ToEnclosingRect(gfx::RectF(geometry_.origin+spans.front().x,geometry_.caret.y,spans.front().width,geometry_.caret.height));return true;}
   void Logical(bool backward,bool word,bool extend){EnsureLayout();using P=sidebar::EditorSelectionPolicy;Apply(sidebar::editor_navigate(*state_,backward,word,!extend?P::None:word?P::Caret:P::Retain));}
   void VisualWord(bool right,bool extend){Logical(right==(GetTextDirection()==base::i18n::RIGHT_TO_LEFT),true,extend);}
   void MoveBoundary(bool end,sidebar::EditorSelectionPolicy policy){EnsureLayout();Apply(sidebar::editor_move_policy(*state_,end?text_.size():0,policy,false));}
@@ -377,11 +390,11 @@ class SceneEditor final : public views::View, public EditorControl,
     EnsureLayout();auto i=sidebar::editor_info(*state_);std::vector<sidebar::EditorSpan> selected,composition;
     for(auto s:line_->Spans(i.anchor,i.focus))selected.push_back({s.x,s.width,0,0});
     if(i.composing){if(clauses_.empty()){for(auto s:line_->Spans(i.composition_start,i.composition_end))composition.push_back({s.x,s.width,1,Color(ui::kColorTextfieldForeground,SK_ColorBLACK)});}else for(const auto& clause:clauses_) {const size_t length=i.composition_end-i.composition_start;if(clause.start_offset>=clause.end_offset||clause.end_offset>length||clause.underline_style==ui::ImeTextSpan::UnderlineStyle::kNone)continue;for(auto s:line_->Spans(i.composition_start+clause.start_offset,i.composition_start+clause.end_offset))composition.push_back({s.x,s.width,clause.thickness==ui::ImeTextSpan::Thickness::kThick?2.f:1.f,clause.underline_color?clause.underline_color:Color(ui::kColorTextfieldForeground,SK_ColorBLACK)});}}
-    sidebar::EditorStyle style{};style.right_align=AlignRight();style.text_direction=WritingDirection();if(text_.empty()&&!placeholder_.empty()){EditorTextLayout hint(placeholder_,13,false,WritingDirection());style.placeholder_width=hint.width();}style.width=width();style.height=height();style.font_size=13;style.ink=Color(GetEnabledInViewsSubtree()?ui::kColorTextfieldForeground:ui::kColorTextfieldForegroundDisabled,SK_ColorBLACK);style.fill=Color(ui::kColorTextfieldBackground,SK_ColorWHITE);style.edge=Color(HasFocus()?ui::kColorFocusableBorderFocused:ui::kColorTextfieldOutline,SK_ColorGRAY);style.selection_fill=Color(ui::kColorTextfieldSelectionBackground,0xFF6755C8);style.selection_ink=Color(ui::kColorTextfieldSelectionForeground,SK_ColorWHITE);style.placeholder_ink=Color(ui::kColorTextfieldForegroundPlaceholder,SK_ColorGRAY);style.focused=HasFocus();style.caret_visible=blink_visible_&&Editable();
+    sidebar::EditorStyle style{};style.right_align=AlignRight();style.text_direction=WritingDirection();if(text_.empty()&&!placeholder_.empty()){EditorTextLayout hint(placeholder_,font_size_,false,WritingDirection());style.placeholder_width=hint.width();}style.width=width();style.height=height();style.font_size=font_size_;style.framed=framed_;style.ink=Color(GetEnabledInViewsSubtree()?ui::kColorTextfieldForeground:ui::kColorTextfieldForegroundDisabled,SK_ColorBLACK);style.fill=Fill();style.edge=Color(HasFocus()?ui::kColorFocusableBorderFocused:ui::kColorTextfieldOutline,SK_ColorGRAY);style.selection_fill=Color(ui::kColorTextfieldSelectionBackground,0xFF6755C8);style.selection_ink=Color(ui::kColorTextfieldSelectionForeground,SK_ColorWHITE);style.placeholder_ink=Color(ui::kColorTextfieldForegroundPlaceholder,SK_ColorGRAY);style.focused=HasFocus();style.caret_visible=blink_visible_&&Editable();
     return sidebar::editor_scene(*state_,Slice(placeholder_),geometry_,style,rust::Slice<const sidebar::EditorSpan>(selected.data(),selected.size()),rust::Slice<const sidebar::EditorSpan>(composition.data(),composition.size()));
   }
   void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneEditor::UpdateMetal,weak_factory_.GetWeakPtr()));SchedulePaint();}
-  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();if(!SceneIsVisible(this)||GetVisibleBounds().IsEmpty()){if(surface_)surface_->Hide();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto scene=Scene();const bool was=metal_visible();auto bounds=GetBoundsInScreen();auto visible=GetVisibleBounds();bounds.Offset(visible.x(),visible.y());bounds.set_size(visible.size());for(auto& op:scene){const auto clip=gfx::IntersectRects(gfx::RectF(op.clip.x,op.clip.y,op.clip.width,op.clip.height),gfx::RectF(visible));op.x-=visible.x();op.y-=visible.y();op.clip={clip.x()-visible.x(),clip.y()-visible.y(),clip.width(),clip.height()};}surface_->UpdateScene(GetWidget()->GetNativeWindow(),bounds,UNSAFE_BUFFERS(base::span<const sidebar::Primitive>(scene.data(),scene.size())),Color(ui::kColorTextfieldBackground,SK_ColorWHITE));if(was!=metal_visible())SchedulePaint();}
+  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();if(!SceneIsVisible(this)||GetVisibleBounds().IsEmpty()){if(surface_)surface_->Hide();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto scene=Scene();const bool was=metal_visible();auto bounds=GetBoundsInScreen();auto visible=GetVisibleBounds();bounds.Offset(visible.x(),visible.y());bounds.set_size(visible.size());for(auto& op:scene){const auto clip=gfx::IntersectRects(gfx::RectF(op.clip.x,op.clip.y,op.clip.width,op.clip.height),gfx::RectF(visible));op.x-=visible.x();op.y-=visible.y();op.clip={clip.x()-visible.x(),clip.y()-visible.y(),clip.width(),clip.height()};}surface_->UpdateScene(GetWidget()->GetNativeWindow(),bounds,UNSAFE_BUFFERS(base::span<const sidebar::Primitive>(scene.data(),scene.size())),Fill());if(was!=metal_visible())SchedulePaint();}
   void StartBlink(){blink_visible_=true;if(!Editable()||!HasFocus())return;blink_.Start(FROM_HERE,base::Milliseconds(500),base::BindRepeating([](SceneEditor* self){self->blink_visible_=!self->blink_visible_;self->Schedule();},base::Unretained(this)));}
   void SyncLifecycle(){auto update=sidebar::editor_availability(*state_,GetEnabledInViewsSubtree(),read_only_);Apply(std::move(update));if(!Available()){++context_;CancelMenu();CancelNativeComposition();ClearCompositionText();Detach();blink_.Stop();OnMouseCaptureLost();if(surface_)surface_->Hide();}else if(HasFocus()){if(GetInputMethod())GetInputMethod()->SetFocusedTextInputClient(this);StartBlink();}if(GetInputMethod())GetInputMethod()->OnTextInputTypeChanged(this);Schedule();}
   void CancelMenu(){++menu_generation_;if(runner_)runner_->Cancel();}
@@ -398,6 +411,7 @@ class SceneEditor final : public views::View, public EditorControl,
     bool Current() const{return owner_&&owner_->context_==context_&&owner_->menu_generation_==serial_&&owner_->Available();}
     base::WeakPtr<SceneEditor> owner_;uint64_t context_,serial_;
   };
+  int font_size_=13;float inset_=8;bool framed_=true;std::optional<SkColor> fill_;
   mutable rust::Box<sidebar::EditorState> state_;std::u16string text_,placeholder_;mutable std::unique_ptr<EditorTextLayout> line_;mutable sidebar::EditorGeometry geometry_{};
   ui::ImeTextSpans clauses_;std::optional<base::i18n::TextDirection> direction_;std::optional<bool> align_right_;bool read_only_=false,pending_=false,blink_visible_=true,dragging_=false,drag_candidate_=false,drag_started_=false;uint64_t text_revision_=0,context_=0,edit_generation_=0,menu_generation_=0,drag_revision_=0;gfx::Range drag_selection_;
   base::RepeatingClosure committed_;base::RepeatingCallback<bool(const ui::KeyEvent&)> key_;

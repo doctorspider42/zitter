@@ -1,3 +1,4 @@
+#include "chromium/prototype/editor_control.h"
 #include "chromium/prototype/workspace_window.h"
 
 #include <atomic>
@@ -158,8 +159,9 @@ class ZitterPreconnectBrowserTest : public InProcessBrowserTest {
  protected:
   void TypeAddress(std::u16string query) {
     auto* input = window_->shell()->address_input();
-    input->SetText(query);
-    static_cast<views::TextfieldController*>(window_->shell())->ContentsChanged(input, query);
+    const auto length=input->GetText().size();input->SelectRange(gfx::Range(0,length));
+    if(query.empty()){if(length)ASSERT_TRUE(input->input_client()->DeleteRange(gfx::Range(0,length)));}
+    else input->input_client()->InsertText(query,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
   }
   base::test::ScopedFeatureList features_;
   raw_ptr<Profile> work_ = nullptr, personal_ = nullptr;

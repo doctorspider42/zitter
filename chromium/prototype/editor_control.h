@@ -26,7 +26,8 @@ class EditorControl {
   virtual void SelectRange(const gfx::Range& range)=0;
   virtual ui::TextInputClient* input_client()=0;
   virtual void SetReadOnly(bool value)=0;
-  // User commits only: programmatic resets, preedit and cancellation are silent.
+  virtual void SetPresentation(int font_size,float inset,bool framed,SkColor fill)=0;
+  // User commits (including same-text insertion): resets/preedit/cancel are silent.
   // The domain reads current text in its callback; no borrowed text survives it.
   virtual void SetCallbacks(base::RepeatingClosure committed,
       base::RepeatingCallback<bool(const ui::KeyEvent&)> key)=0;

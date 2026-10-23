@@ -841,7 +841,7 @@ impl EditorState {
             text: changed,
             selection: before != self.selection,
             composition: false,
-            committed: changed,
+            committed: changed || !text.is_empty(),
         }
     }
     pub fn erase(&mut self, backward: bool, word: bool) -> Change {
@@ -2098,5 +2098,27 @@ mod pointer_tests {
         e.undo();
         assert_eq!(selected(&e), (8, 0));
         assert!(!e.info().can_undo);
+    }
+}
+
+#[cfg(test)]
+mod same_text_commit_tests {
+    use super::*;
+    #[test]
+    fn same_text_user_insertion_commits_without_revision_or_undo_changes() {
+        let mut e = EditorState::default();
+        let text = "abc".encode_utf16().collect::<Vec<_>>();
+        e.reset(&text);
+        e.select(3, 0, false);
+        let revision = e.info().revision;
+        let update = e.insert(&text, false);
+        assert!(update.admitted && update.committed && !update.text);
+        assert_eq!(e.info().revision, revision);
+        assert!(!e.info().can_undo);
+        assert_eq!(e.selection, Selection::caret(3));
+        let empty = e.insert(&[], false);
+        assert!(empty.admitted && !empty.committed && !empty.text);
+        e.availability(true, true);
+        assert!(!e.insert(&text, false).committed);
     }
 }

@@ -10,7 +10,7 @@ mod ffi {
     enum EditorSelectionPolicy { None, Retain, Extend, Caret }
     struct EditorGeometry { clip: FloatRect, origin: f32, baseline: f32, caret: FloatRect }
     struct EditorSpan { x: f32, width: f32, thickness: f32, color: u32 }
-    struct EditorStyle { width: f32, height: f32, font_size: f32, ink: u32, fill: u32, edge: u32, selection_fill: u32, selection_ink: u32, placeholder_ink: u32, text_direction: u32, placeholder_width: f32, right_align: bool, focused: bool, caret_visible: bool }
+    struct EditorStyle { width: f32, height: f32, font_size: f32, ink: u32, fill: u32, edge: u32, selection_fill: u32, selection_ink: u32, placeholder_ink: u32, text_direction: u32, placeholder_width: f32, right_align: bool, framed: bool, focused: bool, caret_visible: bool }
 
     struct EditorInfo { revision: u64, anchor: usize, focus: usize, secondary: bool, directed: bool, enabled: bool, read_only: bool, composing: bool, composition_start: usize, composition_end: usize, composition_token: u64, can_undo: bool, can_redo: bool, boundaries_ready: bool }
     struct EditorKill { update: EditorUpdate, start: usize, end: usize, before_revision: u64 }
@@ -106,7 +106,7 @@ mod ffi {
     }
     extern "Rust" {
 
-        fn editor_viewport(state: &mut EditorState, width: f32, height: f32, line_width: f32, caret_x: f32, ascent: f32, descent: f32, rtl: bool) -> EditorGeometry;
+        fn editor_viewport(state: &mut EditorState, width: f32, height: f32, line_width: f32, caret_x: f32, ascent: f32, descent: f32, rtl: bool, inset: f32) -> EditorGeometry;
         fn editor_scene(state: &EditorState, placeholder: &[u16], geometry: &EditorGeometry, style: &EditorStyle, selection: &[EditorSpan], composition: &[EditorSpan]) -> Vec<Primitive>;
         fn editor_drop(state: &mut EditorState, destination: usize, copy: bool) -> EditorUpdate;
         fn editor_orient(state: &mut EditorState, anchor: usize, focus: usize, secondary: bool) -> EditorUpdate;
@@ -2513,10 +2513,10 @@ fn editor_undo(state: &mut EditorState)->ffi::EditorUpdate {let change=state.und
 fn editor_redo(state: &mut EditorState)->ffi::EditorUpdate {let change=state.redo();editor_update(state,change)}
 
 fn editor_drop(state:&mut EditorState,destination:usize,copy:bool)->ffi::EditorUpdate {let c=state.drop_selection(destination,copy);editor_update(state,c)}
-fn editor_viewport(state:&mut EditorState,width:f32,height:f32,line_width:f32,caret_x:f32,ascent:f32,descent:f32,rtl:bool)->ffi::EditorGeometry {
+fn editor_viewport(state:&mut EditorState,width:f32,height:f32,line_width:f32,caret_x:f32,ascent:f32,descent:f32,rtl:bool,padding:f32)->ffi::EditorGeometry {
     let finite=|n:f32|if n.is_finite(){n.max(0.0)}else{0.0};
     let (w,h,line,c,a,d)=(finite(width),finite(height),finite(line_width),finite(caret_x),finite(ascent),finite(descent));
-    let inset=8.0f32.min(w/2.0);let cw=(w-2.0*inset).max(0.0);let room=(cw-1.0).max(0.0);
+    let inset=finite(padding).min(w/2.0);let cw=(w-2.0*inset).max(0.0);let room=(cw-1.0).max(0.0);
     let max_scroll=(line-room).max(0.0);let mut scroll=state.scroll().clamp(0.0,max_scroll);
     if c<scroll{scroll=c;}else if c>scroll+room{scroll=c-room;}scroll=scroll.clamp(0.0,max_scroll);state.set_scroll(scroll);
     let align=if rtl&&line<room{room-line}else{0.0};let origin=inset+align-scroll;
@@ -2529,8 +2529,8 @@ fn editor_scene(state:&EditorState,placeholder:&[u16],g:&ffi::EditorGeometry,s:&
     let full=||ffi::FloatRect{x:0.0,y:0.0,width:s.width,height:s.height};
     let clip=||ffi::FloatRect{x:g.clip.x,y:g.clip.y,width:g.clip.width,height:g.clip.height};
     let rect=|x,y,width,height,color,cl:ffi::FloatRect|ffi::Primitive{x,y,width,height,radius:0.0,color,stroke:0.0,shape:0,text:String::new(),font_size:0.0,bold:false,middle:false,center:false,clip:cl,editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0};
-    let mut frame=rect(0.0,0.0,s.width,s.height,s.fill,full());frame.radius=5.0;ops.push(frame);
-    let mut edge=rect(0.5,0.5,(s.width-1.0).max(0.0),(s.height-1.0).max(0.0),s.edge,full());edge.radius=4.5;edge.stroke=if s.focused{2.0}else{1.0};edge.shape=0;ops.push(edge);
+    let mut frame=rect(0.0,0.0,s.width,s.height,s.fill,full());frame.radius=if s.framed{5.0}else{0.0};ops.push(frame);
+    if s.framed{let mut edge=rect(0.5,0.5,(s.width-1.0).max(0.0),(s.height-1.0).max(0.0),s.edge,full());edge.radius=4.5;edge.stroke=if s.focused{2.0}else{1.0};edge.shape=0;ops.push(edge);}
     for span in selection {if span.x.is_finite()&&span.width.is_finite()&&span.width>0.0{ops.push(rect(g.origin+span.x,g.caret.y,span.width,g.caret.height,s.selection_fill,clip()));}}
     let text=if state.text().is_empty(){placeholder}else{state.text()};
     if !text.is_empty() {
@@ -2546,9 +2546,9 @@ fn editor_scene(state:&EditorState,placeholder:&[u16],g:&ffi::EditorGeometry,s:&
 #[cfg(test)]
 mod editor_scene_tests {
  use super::*;
- #[test] fn viewport_reveals_caret_clamps_scroll_and_aligns_short_rtl(){let mut e=EditorState::default();let g=editor_viewport(&mut e,100.0,32.0,1000.0,900.0,12.0,3.0,false);assert_eq!(g.clip.width,84.0);assert_eq!(g.caret.x,91.0);assert_eq!(e.scroll(),817.0);let g=editor_viewport(&mut e,100.0,32.0,1000.0,0.0,12.0,3.0,false);assert_eq!(g.caret.x,8.0);assert_eq!(e.scroll(),0.0);let g=editor_viewport(&mut e,100.0,32.0,30.0,30.0,12.0,3.0,true);assert_eq!(g.origin,61.0);assert_eq!(g.caret.x,91.0);}
- #[test] fn viewport_rejects_nonfinite_and_handles_tiny_fields(){let mut e=EditorState::default();let g=editor_viewport(&mut e,f32::NAN,-10.0,f32::INFINITY,f32::NAN,12.0,3.0,false);assert_eq!(g.clip.width,0.0);assert_eq!(g.clip.height,0.0);assert!(g.origin.is_finite()&&g.caret.x.is_finite());}
- #[test] fn editor_keeps_full_utf16_and_recolors_whole_shaped_line_with_clips(){let mut e=EditorState::default();e.reset(&"office אבג".encode_utf16().collect::<Vec<_>>());e.select(1,4,false);let g=editor_viewport(&mut e,100.0,32.0,70.0,20.0,12.0,3.0,false);let s=ffi::EditorStyle{width:100.0,height:32.0,font_size:13.0,ink:0xff000000,fill:0xffffffff,edge:0xff777777,selection_fill:0xff4444ff,selection_ink:0xffffffff,placeholder_ink:0xff888888,text_direction:0,placeholder_width:0.0,right_align:false,focused:true,caret_visible:true};let selection=[ffi::EditorSpan{x:6.0,width:18.0,thickness:0.0,color:0}];let scene=editor_scene(&e,&[],&g,&s,&selection,&[]);let text=scene.iter().filter(|p|p.editor).collect::<Vec<_>>();assert_eq!(text.len(),2);assert_eq!(text[0].utf16,e.text());assert_eq!(text[0].utf16,text[1].utf16);assert_eq!(text[0].text_x,text[1].text_x);assert_eq!(text[1].clip.width,18.0);assert_eq!(text[1].color,0xffffffff);assert!(scene.iter().all(|p|p.shape!=2));}
+ #[test] fn viewport_reveals_caret_clamps_scroll_and_aligns_short_rtl(){let mut e=EditorState::default();let g=editor_viewport(&mut e,100.0,32.0,1000.0,900.0,12.0,3.0,false,8.0);assert_eq!(g.clip.width,84.0);assert_eq!(g.caret.x,91.0);assert_eq!(e.scroll(),817.0);let g=editor_viewport(&mut e,100.0,32.0,1000.0,0.0,12.0,3.0,false,8.0);assert_eq!(g.caret.x,8.0);assert_eq!(e.scroll(),0.0);let g=editor_viewport(&mut e,100.0,32.0,30.0,30.0,12.0,3.0,true,8.0);assert_eq!(g.origin,61.0);assert_eq!(g.caret.x,91.0);}
+ #[test] fn viewport_rejects_nonfinite_and_handles_tiny_fields(){let mut e=EditorState::default();let g=editor_viewport(&mut e,f32::NAN,-10.0,f32::INFINITY,f32::NAN,12.0,3.0,false,8.0);assert_eq!(g.clip.width,0.0);assert_eq!(g.clip.height,0.0);assert!(g.origin.is_finite()&&g.caret.x.is_finite());}
+ #[test] fn editor_keeps_full_utf16_and_recolors_whole_shaped_line_with_clips(){let mut e=EditorState::default();e.reset(&"office אבג".encode_utf16().collect::<Vec<_>>());e.select(1,4,false);let g=editor_viewport(&mut e,100.0,32.0,70.0,20.0,12.0,3.0,false,8.0);let s=ffi::EditorStyle{width:100.0,height:32.0,font_size:13.0,ink:0xff000000,fill:0xffffffff,edge:0xff777777,selection_fill:0xff4444ff,selection_ink:0xffffffff,placeholder_ink:0xff888888,text_direction:0,placeholder_width:0.0,right_align:false,framed:true,focused:true,caret_visible:true};let selection=[ffi::EditorSpan{x:6.0,width:18.0,thickness:0.0,color:0}];let scene=editor_scene(&e,&[],&g,&s,&selection,&[]);let text=scene.iter().filter(|p|p.editor).collect::<Vec<_>>();assert_eq!(text.len(),2);assert_eq!(text[0].utf16,e.text());assert_eq!(text[0].utf16,text[1].utf16);assert_eq!(text[0].text_x,text[1].text_x);assert_eq!(text[1].clip.width,18.0);assert_eq!(text[1].color,0xffffffff);assert!(scene.iter().all(|p|p.shape!=2));}
 }
 
 fn editor_policy(policy:ffi::EditorSelectionPolicy)->sidebar_editor::SelectionPolicy {use sidebar_editor::SelectionPolicy as P;match policy{ffi::EditorSelectionPolicy::Retain=>P::Retain,ffi::EditorSelectionPolicy::Extend=>P::Extend,ffi::EditorSelectionPolicy::Caret=>P::Caret,_=>P::None}}
@@ -2565,3 +2565,27 @@ fn editor_pointer_begin(state:&mut EditorState,index:usize,secondary:bool,extend
 fn editor_pointer_drag(state:&mut EditorState,index:usize,secondary:bool)->ffi::EditorUpdate {let c=state.pointer_drag(index,secondary);editor_update(state,c)}
 fn editor_pointer_end(state:&mut EditorState) {state.pointer_end()}
 fn editor_pointer_active(state:&EditorState)->bool {state.pointer_active()}
+
+#[cfg(test)]
+mod palette_editor_presentation_tests {
+ use super::*;
+ #[test] fn borderless_padding_reveals_caret_and_rejects_nonfinite_insets(){
+  let mut e=EditorState::default();
+  let g=editor_viewport(&mut e,100.0,32.0,1000.0,900.0,16.0,4.0,false,0.0);
+  assert_eq!(g.clip.x,0.0);assert_eq!(g.clip.width,100.0);assert_eq!(g.caret.x,99.0);assert_eq!(e.scroll(),801.0);
+  for inset in [f32::NAN,f32::INFINITY,-20.0] {
+   let g=editor_viewport(&mut e,100.0,32.0,20.0,0.0,16.0,4.0,false,inset);
+   assert_eq!(g.clip.x,0.0);assert_eq!(g.clip.width,100.0);assert_eq!(g.origin,0.0);
+  }
+  let g=editor_viewport(&mut e,10.0,32.0,20.0,0.0,16.0,4.0,false,1000.0);
+  assert_eq!(g.clip.x,5.0);assert_eq!(g.clip.width,0.0);assert!(g.origin.is_finite());
+ }
+ #[test] fn palette_scene_uses_requested_text_size_without_a_field_frame(){
+  let mut e=EditorState::default();e.reset(&"Search 日本語".encode_utf16().collect::<Vec<_>>());
+  let g=editor_viewport(&mut e,200.0,32.0,100.0,100.0,16.0,4.0,false,0.0);
+  let style=ffi::EditorStyle{width:200.0,height:32.0,font_size:17.0,ink:0xff000000,fill:0xffffffff,edge:0xff777777,selection_fill:0xff4444ff,selection_ink:0xffffffff,placeholder_ink:0xff888888,text_direction:0,placeholder_width:0.0,right_align:false,framed:false,focused:true,caret_visible:true};
+  let scene=editor_scene(&e,&[],&g,&style,&[],&[]);
+  assert!(scene.iter().all(|op|op.stroke==0.0&&op.radius==0.0));
+  let text=scene.iter().find(|op|op.editor).unwrap();assert_eq!(text.font_size,17.0);assert_eq!(text.utf16,e.text());assert_eq!(text.text_x,0.0);
+ }
+}

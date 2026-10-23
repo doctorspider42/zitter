@@ -1,3 +1,4 @@
+#include "chromium/prototype/editor_control.h"
 #include "chromium/prototype/workspace_window.h"
 
 #include "base/feature_list.h"

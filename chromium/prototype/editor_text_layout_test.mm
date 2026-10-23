@@ -12,9 +12,9 @@ void Check(bool ok, const char *message) {
   }
 }
 bool Near(float a, float b) { return std::abs(a - b) < 0.05f; }
-void Line(std::u16string_view text, int direction = 0) {
+void Line(std::u16string_view text, int direction = 0,float font_size=14) {
   fprintf(stderr,"Checking direction=%d text=%s\n",direction,[[[NSString alloc] initWithCharacters:reinterpret_cast<const unichar*>(text.data()) length:text.size()] UTF8String]);
-  EditorTextLayout l(text, 14, false, direction);
+  EditorTextLayout l(text, font_size, false, direction);
   Check(l.valid(), "line creation");
   Check(l.length() == text.size(), "UTF16 length");
   Check(std::isfinite(l.width()) && l.width() >= 0, "finite width");
@@ -119,7 +119,7 @@ int main() {
                       u"👩‍👩‍👧‍👦🇵🇱🦀",
                       u"日本語 中文 ไทย", u"مرحبا بالعالم", u"אבג 123 דהו",
                       u"abc אבג xyz", u"אבג abc דהו", u"a  b   ", u"אבג   ",u"   אבג",u"123 אבג   ",u"אבג abc   "})
-      for(int direction=0;direction<3;++direction)Line(text,direction);
+      for(float font_size:{13.f,14.f,16.f,17.f})for(int direction=0;direction<3;++direction)Line(text,direction,font_size);
     EditorTextLayout cluster(u"a\u0301🦀", 14);
     Check(cluster.graphemes() == std::vector<size_t>({0, 2, 4}),
           "composed boundaries");

@@ -383,7 +383,9 @@ class WorkspaceShell final : public ui::EventHandler,
   ui::SimpleMenuModel* workspace_menu() const { return workspace_menu_.get(); }
   views::View* profile_picker() const { return profile_picker_; }
   EditorControl* color_input() const { return color_input_; }
-  views::Textfield* address_input() const { return address_; }
+  EditorControl* address_input() const { return address_; }
+  // Application key policy; the platform input method owns composing keys.
+  bool HandleAddressKey(const ui::KeyEvent& event);
 
  private:
   void ManagedProfileSelectionChanged();
@@ -528,6 +530,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void DeleteSelectedProfile();
   void RebuildSuggestions();
   void RequestSearch();
+  void AddressEdited();
   void ApplyAppearance(bool refresh_theme = true);
   void ApplyHexColor();
   bool HandleAppearanceEditorKey(bool emoji,const ui::KeyEvent& event);
@@ -690,7 +693,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> profile_status_ = nullptr;
   std::unique_ptr<ProfileFormState> profile_form_;
   bool confirm_profile_deletion_ = false;
-  raw_ptr<views::Textfield> address_ = nullptr;
+  raw_ptr<EditorControl> address_ = nullptr;
   raw_ptr<EditorControl> color_input_ = nullptr;
   raw_ptr<EditorControl> emoji_input_ = nullptr;
   raw_ptr<views::View> address_error_ = nullptr;

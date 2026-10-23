@@ -252,8 +252,10 @@ class ZitterProfilesBrowserTest : public InProcessBrowserTest {
  protected:
   void SetPaletteQuery(std::u16string query) {
     auto* shell = window_->shell();
-    shell->address_input()->SetText(query);
-    static_cast<views::TextfieldController*>(shell)->ContentsChanged(shell->address_input(), query);
+    auto* field=shell->address_input();
+    const auto length=field->GetText().size();field->SelectRange(gfx::Range(0,length));
+    if(query.empty()){if(length)ASSERT_TRUE(field->input_client()->DeleteRange(gfx::Range(0,length)));}
+    else field->input_client()->InsertText(query,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
   }
   void ArmUnsaved(content::WebContents* page) {
     ASSERT_TRUE(content::ExecJs(page, "window.unsaved='draft'; window.onbeforeunload = e => { e.preventDefault(); e.returnValue=''; };"));
@@ -927,7 +929,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, KeywordSearchProvidersAndPersi
   ASSERT_TRUE(shell->SetDefaultSearchProvider("p"));
   shell->OpenAddress(true); SetPaletteQuery(u"p zażółć & a/b");
   ui::KeyEvent enter(ui::EventType::kKeyPressed, ui::VKEY_RETURN, ui::EF_NONE);
-  ASSERT_TRUE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(shell->address_input(), enter));
+  ASSERT_TRUE(shell->address_input()->view()->OnKeyPressed(enter));
   const auto expected = SearchDestination({"Local probe", "p", pattern}, "zażółć & a/b");
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->contents("work")->GetLastCommittedURL() == expected; }));
   EXPECT_EQ(expected, shell->ResolveInput("zażółć & a/b"));
@@ -1397,7 +1399,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, GeneralSettingsThemeAndPersist
       }));
   shell->CloseOverlays(); shell->OpenAddress(true); SetPaletteQuery(u"zitter theme test");
   ui::KeyEvent enter(ui::EventType::kKeyPressed, ui::VKEY_RETURN, ui::EF_NONE);
-  ASSERT_TRUE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(shell->address_input(), enter));
+  ASSERT_TRUE(shell->address_input()->view()->OnKeyPressed(enter));
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->contents("work")->GetLastCommittedURL().host() == "www.google.com"; }));
   EXPECT_EQ("q=zitter+theme+test", window_->contents("work")->GetLastCommittedURL().query());
   ASSERT_TRUE(window_->OpenPeek(url));
@@ -1912,19 +1914,19 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CommandCenterSearchAndDispatch
   ASSERT_EQ(1u, shell->suggestions().size());
   EXPECT_EQ("shortcuts", shell->suggestions().front().command_id);
   ui::KeyEvent enter(ui::EventType::kKeyPressed, ui::VKEY_RETURN, 0);
-  EXPECT_TRUE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(shell->address_input(), enter));
+  EXPECT_TRUE(shell->address_input()->view()->OnKeyPressed(enter));
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->tools_widget()->IsVisible(); }));
   EXPECT_FALSE(shell->address_visible());
   shell->CloseOverlays();
   window_->OpenCommandPalette(); SetPaletteQuery(u"> zapisz snapshot");
   ASSERT_EQ(1u, shell->suggestions().size());
   const auto before = window_->TimeMachine().snapshots.size();
-  EXPECT_TRUE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(shell->address_input(), enter));
+  EXPECT_TRUE(shell->address_input()->view()->OnKeyPressed(enter));
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->TimeMachine().snapshots.size() > before; }));
   EXPECT_EQ(u"Command Center", window_->TimeMachine().snapshots.front().title);
   shell->CloseOverlays(); window_->OpenCommandPalette(); SetPaletteQuery(u"> no-such-command-xyz");
   EXPECT_TRUE(shell->suggestions().empty());
-  EXPECT_TRUE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(shell->address_input(), enter));
+  EXPECT_TRUE(shell->address_input()->view()->OnKeyPressed(enter));
   EXPECT_TRUE(shell->address_visible());
   EXPECT_EQ(url, window_->contents("work")->GetVisibleURL());
   SetPaletteQuery(u"g ustawienia");
@@ -2053,7 +2055,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ChromiumHistoryAndCommandPalet
     });
   }));
   ui::KeyEvent enter(ui::EventType::kKeyPressed, ui::VKEY_RETURN, 0);
-  static_cast<views::TextfieldController*>(window_->shell())->HandleKeyEvent(window_->shell()->address_input(), enter);
+  window_->shell()->address_input()->view()->OnKeyPressed(enter);
   ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
   EXPECT_EQ(work_url, window_->contents("work")->GetLastCommittedURL());
   ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), embedded_test_server()->GetURL("/storage_probe.html?current")));
@@ -4613,29 +4615,29 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NavigationHeaderHistoryRel
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, PaletteChromeTextErrorsThemeAndFallback) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
   const auto original=window_->contents("work")->GetLastCommittedURL();shell->OpenCommandPalette();SetPaletteQuery(u"> no-such-zitter-command");ASSERT_TRUE(shell->suggestions().empty());
-  ui::KeyEvent enter(ui::EventType::kKeyPressed,ui::VKEY_RETURN,0);auto* field=shell->address_input();auto* controller=static_cast<views::TextfieldController*>(shell);
-  ASSERT_TRUE(controller->HandleKeyEvent(field,enter));
+  ui::KeyEvent enter(ui::EventType::kKeyPressed,ui::VKEY_RETURN,0);auto* field=shell->address_input();
+  ASSERT_TRUE(field->view()->OnKeyPressed(enter));
   auto ready=[&]{return shell->metal_palette_chrome_visible(0)&&shell->metal_palette_chrome_visible(1)&&shell->metal_palette_chrome_visible(2)&&shell->metal_palette_chrome_visible(3);};
   ASSERT_TRUE(base::test::RunUntil(ready));EXPECT_FALSE(shell->metal_palette_visible());EXPECT_TRUE(shell->address_visible());EXPECT_TRUE(field->HasFocus());
   EXPECT_TRUE(shell->metal_palette_chrome_contains_text_for_testing(1,"esc"));EXPECT_TRUE(shell->metal_palette_chrome_contains_text_for_testing(3,"Brak pasujących poleceń."));
-  auto* root=field->parent()->parent();auto no_labels=[&](auto&& self,views::View* view)->void{if(view==field)return;EXPECT_FALSE(views::AsViewClass<views::Label>(view));for(const auto& child:view->children())self(self,child.get());};no_labels(no_labels,root);
-  for(size_t i=0;i<4;++i){const auto frame=shell->metal_palette_chrome_screen_bounds_for_testing(i);EXPECT_FALSE(frame.IsEmpty());EXPECT_FALSE(frame.Intersects(field->GetBoundsInScreen()));}
+  auto* root=field->view()->parent()->parent();auto no_labels=[&](auto&& self,views::View* view)->void{if(view==field->view())return;EXPECT_FALSE(views::AsViewClass<views::Label>(view));for(const auto& child:view->children())self(self,child.get());};no_labels(no_labels,root);
+  for(size_t i=0;i<4;++i){const auto frame=shell->metal_palette_chrome_screen_bounds_for_testing(i);EXPECT_FALSE(frame.IsEmpty());EXPECT_FALSE(frame.Intersects(field->view()->GetBoundsInScreen()));}
   const auto hint_frame=shell->metal_palette_chrome_screen_bounds_for_testing(2),hint_view=shell->palette_chrome_view_for_testing(2)->GetBoundsInScreen();
   EXPECT_GT(hint_frame.x(),hint_view.x());EXPECT_LT(hint_frame.bottom(),hint_view.bottom()-5);
   ui::AXNodeData accessible;shell->palette_chrome_view_for_testing(3)->GetViewAccessibility().GetAccessibleNodeData(&accessible);EXPECT_EQ(ax::mojom::Role::kStaticText,accessible.role);EXPECT_EQ(u"Brak pasujących poleceń.",accessible.GetString16Attribute(ax::mojom::StringAttribute::kName));
   auto* esc=shell->palette_chrome_view_for_testing(1);auto native_ink=[&]{const auto saved=esc->bounds();esc->SetBoundsRect(gfx::Rect(esc->size()));esc->SchedulePaint();const auto bitmap=views::test::PaintViewToBitmap(esc);esc->SetBoundsRect(saved);for(int y=0;y<bitmap.height();++y)for(int x=0;x<bitmap.width();++x)if(bitmap.getColor(x,y)!=SK_ColorRED)return true;return false;};
-  EXPECT_FALSE(native_ink());auto* panel=field->GetWidget();panel->Hide();EXPECT_TRUE(native_ink());panel->Show();panel->Activate();field->RequestFocus();ASSERT_TRUE(base::test::RunUntil(ready));
+  EXPECT_FALSE(native_ink());auto* panel=field->view()->GetWidget();panel->Hide();EXPECT_TRUE(native_ink());panel->Show();panel->Activate();field->RequestFocus();ASSERT_TRUE(base::test::RunUntil(ready));
   shell->SetThemeMode(ThemeMode::kLight);base::RunLoop().RunUntilIdle();const auto before=shell->metal_palette_chrome_frame_count_for_testing(1);
   shell->SetThemeMode(ThemeMode::kDark);ASSERT_TRUE(base::test::RunUntil([&]{return ready()&&shell->metal_palette_chrome_frame_count_for_testing(1)>before;}));
   // Error text updates explicitly while native paint is locked; the editor is
   // still the only text-input owner and an invalid scheme cannot navigate.
   {
-    views::ScopedPaintLock locked(shell->palette_chrome_view_for_testing(3));shell->OpenAddress(true);SetPaletteQuery(u"file:///tmp/should-not-navigate");ASSERT_TRUE(controller->HandleKeyEvent(field,enter));
+    views::ScopedPaintLock locked(shell->palette_chrome_view_for_testing(3));shell->OpenAddress(true);SetPaletteQuery(u"file:///tmp/should-not-navigate");ASSERT_TRUE(field->view()->OnKeyPressed(enter));
     ASSERT_TRUE(base::test::RunUntil([&]{return shell->metal_palette_chrome_contains_text_for_testing(3,"Wpisz adres strony HTTP lub HTTPS");}));
   }
   EXPECT_EQ(original,window_->contents("work")->GetLastCommittedURL());EXPECT_TRUE(shell->address_visible());EXPECT_TRUE(field->HasFocus());
   SetPaletteQuery(u"plain search text");ASSERT_TRUE(base::test::RunUntil([&]{return !shell->metal_palette_chrome_visible(3)&&shell->metal_palette_visible();}));
-  for(size_t i=0;i<3;++i){const auto frame=shell->metal_palette_chrome_screen_bounds_for_testing(i);EXPECT_FALSE(frame.Intersects(field->GetBoundsInScreen()));EXPECT_FALSE(frame.Intersects(shell->metal_palette_screen_bounds_for_testing()));}
+  for(size_t i=0;i<3;++i){const auto frame=shell->metal_palette_chrome_screen_bounds_for_testing(i);EXPECT_FALSE(frame.Intersects(field->view()->GetBoundsInScreen()));EXPECT_FALSE(frame.Intersects(shell->metal_palette_screen_bounds_for_testing()));}
   shell->CloseOverlays();ASSERT_TRUE(base::test::RunUntil([&]{for(size_t i=0;i<4;++i)if(shell->metal_palette_chrome_visible(i))return false;return true;}));
 }
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, PaletteScenesAsyncSelectionScrollAndIME) {
@@ -4647,8 +4649,8 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, PaletteScenesAsyncSelectio
   auto no_labels=[&](auto&& self,views::View* view)->void{EXPECT_FALSE(views::AsViewClass<views::Label>(view));for(const auto& child:view->children())self(self,child.get());};no_labels(no_labels,shell->palette_results_view());
   auto drain_history=[&]{auto* service=HistoryServiceFactory::GetForProfile(work_,ServiceAccessType::EXPLICIT_ACCESS);base::CancelableTaskTracker tasks;history::QueryOptions options;options.max_count=1;base::test::TestFuture<history::QueryResults> done;service->QueryHistory(u"Palette GPU",options,done.GetCallback(),&tasks);return done.Wait();};
   ASSERT_TRUE(drain_history());
-  auto* field=shell->address_input();auto* panel=field->GetWidget();
-  const auto frame=shell->metal_palette_screen_bounds_for_testing();EXPECT_FALSE(frame.IsEmpty());EXPECT_FALSE(frame.Intersects(field->GetBoundsInScreen()));
+  auto* field=shell->address_input();auto* panel=field->view()->GetWidget();
+  const auto frame=shell->metal_palette_screen_bounds_for_testing();EXPECT_FALSE(frame.IsEmpty());EXPECT_FALSE(frame.Intersects(field->view()->GetBoundsInScreen()));
   ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(panel->GetNativeWindow()));field->RequestFocus();
   auto key=[&](ui::KeyboardCode code){return ui_test_utils::SendKeyPressToWindowSync(panel->GetNativeWindow(),code,false,false,false,false);};
   for(int i=0;i<3;++i)ASSERT_TRUE(key(ui::VKEY_DOWN));ASSERT_EQ(3u,shell->palette_selection_for_testing());
@@ -4666,7 +4668,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, PaletteScenesAsyncSelectio
   // and cancel keys. The palette must neither change selection nor dispatch.
   ui::CompositionText composition;composition.text=u"にほん";composition.selection=gfx::Range(composition.text.size());field->SetCompositionText(composition);ASSERT_TRUE(field->IsIMEComposing());
   const auto composing_selection=shell->palette_selection_for_testing();
-  for(auto code:{ui::VKEY_DOWN,ui::VKEY_RETURN,ui::VKEY_ESCAPE}){ui::KeyEvent event(ui::EventType::kKeyPressed,code,0);EXPECT_FALSE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(field,event));}
+  for(auto code:{ui::VKEY_DOWN,ui::VKEY_RETURN,ui::VKEY_ESCAPE}){ui::KeyEvent event(ui::EventType::kKeyPressed,code,0);EXPECT_FALSE(field->view()->OnKeyPressed(event));}
   EXPECT_EQ(composing_selection,shell->palette_selection_for_testing());EXPECT_TRUE(shell->address_visible());EXPECT_TRUE(field->IsIMEComposing());field->ClearCompositionText();
   SetPaletteQuery(u"Palette GPU");ASSERT_TRUE(base::test::RunUntil([&]{return shell->search_results().size()>=8&&shell->metal_palette_visible();}));
   ASSERT_TRUE(drain_history());
@@ -5568,6 +5570,25 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FolderEditorCocoaTypingUnicode
   shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->CancelDialog();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->folder_dialog();}));EXPECT_EQ(1u,window_->pinned_items("work").size());
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AddressEditorCocoaCommitCompositionAndNavigation) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenAddress(true);auto* field=shell->address_input();auto* view=field->view();
+  EXPECT_EQ(shell->workspace_input()->rust_editor(),field->rust_editor());
+  if(field->rust_editor()){EXPECT_TRUE(view->children().empty());EXPECT_FALSE(views::AsViewClass<views::Textfield>(view));ASSERT_TRUE(base::test::RunUntil([&]{return field->metal_visible();}));}
+  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->address_widget()->GetNativeWindow()));field->RequestFocus();
+  auto key=[&](ui::KeyboardCode code,bool command=false){return ui_test_utils::SendKeyPressToWindowSync(shell->address_widget()->GetNativeWindow(),code,false,false,false,command);};
+  ASSERT_TRUE(key(ui::VKEY_A));ASSERT_TRUE(base::test::RunUntil([&]{return field->GetText()==u"a";}));
+  const auto original=window_->contents("work")->GetLastCommittedURL();ui::CompositionText marked;marked.text=u"にほん";marked.selection=gfx::Range(marked.text.size());field->SetCompositionText(marked);ASSERT_TRUE(field->IsIMEComposing());
+  const auto before=shell->suggestions();PaletteResult injected;injected.title=u"Must not enter palette during composition";injected.url=embedded_test_server()->GetURL("/storage_probe.html?injected");
+  shell->SetSearchResults(std::u16string(field->GetText()),window_->workspaces().front().profile_id,{injected});EXPECT_EQ(before,shell->suggestions());
+  for(auto code:{ui::VKEY_DOWN,ui::VKEY_RETURN,ui::VKEY_ESCAPE}){ui::KeyEvent event(ui::EventType::kKeyPressed,code,0);EXPECT_FALSE(shell->HandleAddressKey(event));}
+  EXPECT_TRUE(shell->address_visible());EXPECT_EQ(original,window_->contents("work")->GetLastCommittedURL());field->ClearCompositionText();EXPECT_EQ(u"a",field->GetText());
+  ASSERT_TRUE(key(ui::VKEY_A,true));ASSERT_TRUE(key(ui::VKEY_BACK));ASSERT_TRUE(base::test::RunUntil([&]{return field->GetText().empty();}));
+  const auto url=embedded_test_server()->GetURL("/storage_probe.html?address-editor-long-long-long-long-long-long-long-long-long-long-long");field->input_client()->InsertText(base::UTF8ToUTF16(url.spec()),ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
+  const auto caret=field->input_client()->GetCaretBounds(),bounds=view->GetBoundsInScreen();EXPECT_GE(caret.CenterPoint().x(),bounds.x());EXPECT_LE(caret.CenterPoint().x(),bounds.right()+1);
+  ASSERT_TRUE(key(ui::VKEY_RETURN));ASSERT_TRUE(base::test::RunUntil([&]{return !shell->address_visible()&&window_->contents("work")->GetLastCommittedURL()==url;}));
+  shell->OpenCommandPalette();field=shell->address_input();EXPECT_TRUE(field->GetText().empty());ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->address_widget()->GetNativeWindow()));field->RequestFocus();ASSERT_TRUE(key(ui::VKEY_ESCAPE));ASSERT_TRUE(base::test::RunUntil([&]{return !shell->address_visible();}));
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NameEditorCommittedCallbackContract) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenWorkspaceSettings();
   auto* field=shell->workspace_input();auto* view=field->view();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));field->RequestFocus();
@@ -5586,6 +5607,8 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NameEditorCommittedCallbackCon
   field->SetCallbacks(base::BindRepeating([](int* count,EditorControl* editor){++*count;editor->SetText(u"normalized");},base::Unretained(&commits),base::Unretained(field)),{});
   field->input_client()->InsertText(u"x",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);EXPECT_EQ(3,commits);EXPECT_EQ(u"normalized",field->GetText());
   field->SetCallbacks({},{});field->input_client()->InsertText(u"!",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);EXPECT_EQ(3,commits);EXPECT_EQ(u"normalized!",field->GetText());
+  field->SetCallbacks(base::BindRepeating([](int* count){++*count;},base::Unretained(&commits)),{});
+  field->SelectRange(gfx::Range(0,field->GetText().size()));field->input_client()->InsertText(u"normalized!",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);EXPECT_EQ(4,commits);EXPECT_EQ(u"normalized!",field->GetText());
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AppearanceEditorsCommitValidationIMEAndWorkspaceIsolation) {

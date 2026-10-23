@@ -2882,14 +2882,13 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   palette_chrome_views_[0]=search_icon;
   search_icon->SetFocusBehavior(views::View::FocusBehavior::NEVER);
   search_icon->SetCanProcessEventsWithinSubtree(false);
-  address_ = input_row->AddChildView(std::make_unique<views::Textfield>());
+  address_ = AddEditor(input_row,palette->scene());
   address_->GetViewAccessibility().SetName(u"Szukaj lub wpisz adres");
   address_->SetPlaceholderText(u"Szukaj lub wpisz adres…");
-  address_->SetFontList(Font(3));
-  address_->SetBackgroundColor(kCard);
-  address_->SetBorder(views::CreateEmptyBorder(0));
-  address_->set_controller(this);palette->SetEditor(address_);
-  input_layout->SetFlexForView(address_, 1);
+  address_->SetPresentation(Font(3).GetFontSize(),0,false,Tone(root_,kCard));
+  address_->SetCallbacks(base::BindRepeating(&WorkspaceShell::AddressEdited,weak),
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,const ui::KeyEvent& event){return shell&&shell->HandleAddressKey(event);},weak));
+  palette->SetEditor(address_->view());input_layout->SetFlexForView(address_->view(),1);
   palette_chrome_views_[1]=palette_text(input_row,u"esc",0,1);
   if(metal_palette_){palette->SetLayoutManager(CreateSidebarColumnLayout());input_row->SetLayoutManager(CreatePaletteInputLayout());}
   address_error_=palette_text(palette.get(),u"",2,3);palette_chrome_views_[3]=address_error_;
@@ -3456,7 +3455,7 @@ void WorkspaceShell::Detach() {
   for (auto* panel : {sidebar_widget_.get(), address_widget_.get(), settings_widget_.get(), profiles_widget_.get(), import_widget_.get(), peek_widget_.get(), general_widget_.get(), tools_widget_.get()})
     panel->RemoveObserver(this);
   search_timer_.Stop();
-  address_->set_controller(nullptr);
+  address_->SetCallbacks({},{});
   color_input_->SetCallbacks({},{});
   emoji_input_->SetCallbacks({},{});
   import_root_ = nullptr;
@@ -5331,7 +5330,7 @@ void WorkspaceShell::ApplyTheme() {
   if (preferences_search_) preferences_search_->SetBackgroundColor(Tone(root_, kChip));
   for (const auto& [key, field] : preference_textfields_) field->SetBackgroundColor(Tone(root_, kChip));
   if (site_origin_) site_origin_->SetBackgroundColor(Tone(root_, kChip));
-  if (address_) address_->SetBackgroundColor(Tone(root_, kCard));
+  if (address_) address_->SetPresentation(Font(3).GetFontSize(),0,false,Tone(root_,kCard));
   for(auto* editor:{color_input_.get(),emoji_input_.get()})if(editor)
     if(auto* native=views::AsViewClass<views::Textfield>(editor->view())){
       native->SetBackgroundColor(Tone(root_, kChip));
@@ -6053,7 +6052,7 @@ void WorkspaceShell::OpenAddress(bool new_tab) {
   address_widget_->Activate();
   address_widget_->ClearNativeFocus();
   address_->RequestFocus();
-  address_->SelectAll(false);
+  address_->SelectRange(gfx::Range(0,address_->GetText().size()));
   RequestSearch();
 }
 void WorkspaceShell::OpenCommandPalette() {
@@ -6758,23 +6757,24 @@ void WorkspaceShell::ContentsChanged(views::Textfield* sender, const std::u16str
     preference_text_dirty_.insert(key);
     return;
   }
-  if (sender != address_) return;
+}
+void WorkspaceShell::AddressEdited() {
+  if(!address_visible()||address_->IsIMEComposing())return;
   address_error_->SetVisible(false);
   static_cast<PaletteView*>(palette_root_.get())->Reset();
-  search_results_.clear();
-  RebuildSuggestions();
-  RequestSearch();
+  search_results_.clear();RebuildSuggestions();RequestSearch();
 }
+
 void WorkspaceShell::RequestSearch() {
   if (!callbacks_.search) return;
   search_query_ = base::TrimWhitespace(address_->GetText(), base::TRIM_ALL);
   search_timer_.Start(FROM_HERE, base::Milliseconds(120), base::BindOnce(
       [](base::WeakPtr<WorkspaceShell> shell, std::u16string query) {
-        if (shell && shell->address_visible()) shell->callbacks_.search.Run(query);
+        if (shell && shell->address_visible()&&!shell->address_->IsIMEComposing()&&base::TrimWhitespace(shell->address_->GetText(),base::TRIM_ALL)==query) shell->callbacks_.search.Run(query);
       }, weak_factory_.GetWeakPtr(), search_query_));
 }
 void WorkspaceShell::SetSearchResults(std::u16string query, std::string profile_id, std::vector<PaletteResult> results) {
-  if (!address_visible() || profile_id != state_.profile_id ||
+  if (!address_visible() || address_->IsIMEComposing() || profile_id != state_.profile_id ||
       base::TrimWhitespace(address_->GetText(), base::TRIM_ALL) != query) return;
   search_results_ = std::move(results);
   RebuildSuggestions();
@@ -6793,7 +6793,6 @@ bool WorkspaceShell::HandleKeyEvent(views::Textfield* sender, const ui::KeyEvent
     }
   }
   if (event.type() != ui::EventType::kKeyPressed) return false;
-  if(sender==address_&&metal_palette_&&address_->IsIMEComposing())return false;
   if (event.key_code() == ui::VKEY_ESCAPE) { CloseOverlays(); RestorePageFocus(); return true; }
   if (sender == preferences_search_ || sender == history_search_) return false;
   for (const auto& [key, field] : preference_textfields_) if (sender == field) {
@@ -6804,14 +6803,18 @@ bool WorkspaceShell::HandleKeyEvent(views::Textfield* sender, const ui::KeyEvent
     if (event.key_code() == ui::VKEY_RETURN) { SaveSitePreference(); return true; }
     return false;
   }
-  if (sender == address_ && !suggestions_.empty() &&
+  return false;
+}
+bool WorkspaceShell::HandleAddressKey(const ui::KeyEvent& event) {
+  if(!address_visible()||event.type()!=ui::EventType::kKeyPressed||address_->IsIMEComposing())return false;
+  if(event.key_code()==ui::VKEY_ESCAPE){CloseOverlays();RestorePageFocus();return true;}
+  if (!suggestions_.empty() &&
       (event.key_code() == ui::VKEY_DOWN || event.key_code() == ui::VKEY_UP)) {
     static_cast<PaletteView*>(palette_root_.get())->Step(suggestions_.size(),event.key_code()==ui::VKEY_UP);
     RebuildSuggestions();
     return true;
   }
   if (event.key_code() != ui::VKEY_RETURN) return false;
-  if (sender != address_) return false;
   // SetText() does not notify the controller; resolve what is typed now.
   if (address_->GetText() != suggestions_text_) RebuildSuggestions();
   if (base::TrimWhitespace(address_->GetText(), base::TRIM_ALL).empty() && suggestions_.empty())
