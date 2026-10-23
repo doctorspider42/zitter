@@ -52,6 +52,7 @@ class Widget;
 
 namespace zitter::prototype {
 class WorkspaceSwipeState;
+class ProfileFormState;
 
 // Top band above the sidebar; its first 28 px align with macOS's titlebar,
 // where the native traffic lights sit.
@@ -304,6 +305,8 @@ class WorkspaceShell final : public ui::EventHandler,
   views::Widget* profiles_widget() const { return profiles_widget_.get(); }
   views::Textfield* profile_name_input() const { return profile_name_input_; }
   views::Combobox* managed_profile_picker() const { return managed_profile_picker_; }
+  bool profile_panel_contains_scene_text(std::string_view text) const;
+  views::View* profile_panel_for_testing() const{return profiles_root_;}
   views::Widget* remove_workspace_dialog() const { return remove_workspace_dialog_.get(); }
   views::Widget* settings_widget() const { return settings_widget_.get(); }
   bool pinned() const { return pinned_; }
@@ -482,6 +485,7 @@ class WorkspaceShell final : public ui::EventHandler,
   base::WeakPtr<views::Widget> remove_workspace_dialog_;
   void RefreshWorkspaceSettings();
   void RefreshProfileControls();
+  bool SubmitRustProfileAction(unsigned action);
   void SubmitProfile();
   void DeleteSelectedProfile();
   void RebuildSuggestions();
@@ -643,7 +647,8 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::Button> create_profile_ = nullptr;
   raw_ptr<views::Button> rename_profile_ = nullptr;
   raw_ptr<views::Button> delete_profile_ = nullptr;
-  raw_ptr<views::Label> profile_status_ = nullptr;
+  raw_ptr<views::View> profile_status_ = nullptr;
+  std::unique_ptr<ProfileFormState> profile_form_;
   bool confirm_profile_deletion_ = false;
   raw_ptr<views::Textfield> address_ = nullptr;
   raw_ptr<views::Textfield> color_input_ = nullptr;

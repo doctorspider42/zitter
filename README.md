@@ -669,7 +669,9 @@ hints and validation errors also use Rust geometry and Metal text, with native
 accessibility and fallback painting. Folder create/rename bodies also use Rust
 validation/layout and Metal label/error text while retaining native editing and
 modal adapters. Folder deletion/save-error bodies use Rust notice state and
-wrapped Metal scene text as well; these newer stages await the deferred GUI
+wrapped Metal scene text as well. Profile management now uses Rust state,
+validation, stable-ID selection and two-step deletion, with Metal static text
+and native editors/pickers/buttons. These newer stages await the deferred GUI
 checkpoint.
 Model updates refresh the scene independently of
 native painting. Rust also owns row

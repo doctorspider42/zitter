@@ -3912,6 +3912,47 @@ class ZitterMetalSidebarBrowserTest : public ZitterProfilesBrowserTest {
     command_line->AppendSwitchASCII("zitter-sidebar", "rust-metal");
   }
 };
+// Compiled only until the user requests the GUI checkpoint.
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ProfilePanelScenesValidationIMEAndStableDeletion) {
+  auto* shell=window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
+  shell->OpenProfiles("work-profile");
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->profile_panel_contains_scene_text("Profile przeglądania");}));
+  auto* panel=shell->profile_panel_for_testing();ASSERT_TRUE(panel);
+  // Editor, picker and buttons retain their own native text; panel copy does not.
+  for(const auto& child:panel->children())EXPECT_FALSE(views::AsViewClass<views::Label>(child.get()));
+  ui::AXNodeData heading;panel->children()[0]->GetViewAccessibility().GetAccessibleNodeData(&heading);
+  EXPECT_EQ(ax::mojom::Role::kStaticText,heading.role);
+  EXPECT_EQ(u"Profile przeglądania",heading.GetString16Attribute(ax::mojom::StringAttribute::kName));
+  auto button=[&](std::u16string_view name){return FindButton(panel,name);};
+  auto* create=button(u"Utwórz profil");ASSERT_TRUE(create);
+  auto* remove=button(u"Usuń profil i jego dane");ASSERT_TRUE(remove);EXPECT_FALSE(remove->GetEnabled());
+  auto* field=shell->profile_name_input();field->SetText(u" \u3000\u00a0 ");
+  views::test::ButtonTestApi(create).NotifyDefaultMouseClick();EXPECT_EQ(2u,window_->profiles().size());
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->profile_panel_contains_scene_text("Podaj nazwę profilu.");}));
+  ui::CompositionText composition;composition.text=u"にほん";composition.selection=gfx::Range(composition.text.size());field->SetCompositionText(composition);
+  ASSERT_TRUE(field->IsIMEComposing());views::test::ButtonTestApi(create).NotifyDefaultMouseClick();EXPECT_EQ(2u,window_->profiles().size());field->ClearCompositionText();
+  field->SetText(u"  Klient Łódź 🦀  ");views::test::ButtonTestApi(create).NotifyDefaultMouseClick();
+  ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));ASSERT_EQ(3u,window_->profiles().size());
+  const auto added=window_->profiles().back();EXPECT_EQ("Klient Łódź 🦀",added.name);
+  shell->OpenProfiles(added.id);field->SetText(u"Klient Łódź 🦀");views::test::ButtonTestApi(create).NotifyDefaultMouseClick();
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->profile_panel_contains_scene_text("Profil o tej nazwie już istnieje.");}));EXPECT_EQ(3u,window_->profiles().size());
+  auto* rename=button(u"Zapisz nazwę profilu");ASSERT_TRUE(rename);field->SetText(u"  Zmieniony 日本語  ");views::test::ButtonTestApi(rename).NotifyDefaultMouseClick();
+  ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));EXPECT_EQ(added.id,window_->profiles().back().id);EXPECT_EQ("Zmieniony 日本語",window_->profiles().back().name);
+  shell->OpenProfiles(added.id);remove=button(u"Usuń profil i jego dane");ASSERT_TRUE(remove);ASSERT_TRUE(remove->GetEnabled());views::test::ButtonTestApi(remove).NotifyDefaultMouseClick();
+  ASSERT_TRUE(button(u"Potwierdź usunięcie profilu i danych"));EXPECT_EQ(3u,window_->profiles().size());
+  // Opening another target must not transfer the destructive confirmation.
+  shell->OpenProfiles("work-profile");remove=button(u"Usuń profil i jego dane");ASSERT_TRUE(remove);EXPECT_FALSE(remove->GetEnabled());
+  shell->OpenProfiles(added.id);remove=button(u"Usuń profil i jego dane");ASSERT_TRUE(remove);views::test::ButtonTestApi(remove).NotifyDefaultMouseClick();
+  // An external rename updates the catalogue and disarms the pending deletion.
+  ASSERT_TRUE(window_->RenameProfile(added.id,"Po zmianie katalogu"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));
+  ASSERT_TRUE(button(u"Usuń profil i jego dane"));ASSERT_TRUE(shell->managed_profile_picker()->GetSelectedIndex());
+  EXPECT_EQ(added.id,window_->profiles()[*shell->managed_profile_picker()->GetSelectedIndex()].id);
+  views::test::ButtonTestApi(button(u"Usuń profil i jego dane")).NotifyDefaultMouseClick();EXPECT_EQ(3u,window_->profiles().size());
+  auto* confirm=button(u"Potwierdź usunięcie profilu i danych");ASSERT_TRUE(confirm);views::test::ButtonTestApi(confirm).NotifyDefaultMouseClick();
+  ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));EXPECT_EQ(2u,window_->profiles().size());
+  for(const auto& profile:window_->profiles())EXPECT_NE(added.id,profile.id);
+}
 // Compiled with the migration; execution is deferred to the requested GUI checkpoint.
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, FolderNoticesWrapPreserveCancelAndRejectStaleTargets) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);

@@ -603,3 +603,44 @@ all existing folder/persistence cases. Actual CoreText wrapping, canvas clipping
 GPU fallback, focus/keyboard/AX/default-button behavior, theme/scale and failed
 writes remain unaccepted until then. See
 [notice verification](benchmarks/rust-folder-notices-headless-2026-10-23.json).
+
+
+## Profile management controller and static text (GUI checkpoint pending)
+
+The opt-in profile panel now keeps its selection, attach-workspace context,
+submission state, status and destructive confirmation in Rust. Selection follows
+profile IDs across catalogue reordering, rename and removal; adding a profile
+selects the new entry as before. Deletion rechecks the current ID, usage, catalogue
+size and readiness on both clicks. Selection/catalogue changes, busy state or a
+new workspace usage disarm confirmation. Create/rename normalize Unicode
+whitespace, preserve the existing ASCII-only case-insensitive duplicate policy,
+and recheck the attach workspace. The native editor retains IME; actions wait
+until composition ends.
+
+Rust supplies panel copy, button labels, column layout and paragraph line
+placement. Static headings, help, labels and feedback are plain accessibility
+nodes plus clipped Metal canvases sharing the existing device/queue/pipeline.
+CoreText shapes the same regular/medium system font used by GPU tiles; native
+fallback consumes the same scene recipe. Paragraph metrics cache by text/width/
+font and unchanged scene fingerprints skip GPU submission. No hidden native
+Labels measure panel copy. Native Textfield, Combobox, MdTextButton, focus and
+outer popup placement/lifetime remain adapters and are not yet migrated.
+
+Typed Rust requests call existing application profile services. Profile creation,
+assignment, leases, directories, async persistence and rollback remain there;
+accepted UI admission does not mean a completed durable write. Native service
+status is retained after admission, and controls resynchronize after synchronous
+callbacks as well as later busy-state updates. No dependency or framework was
+added; the existing license/notice arrangement is unchanged.
+
+**87 Rust and 60 Python tests passed** without windows. GN dependency checks,
+boundary checks and both optimized app/browser-test builds passed. The new
+`ProfilePanelScenesValidationIMEAndStableDeletion` case is compiled but unrun.
+The deferred checkpoint now lists **53 Metal cases and 24 Views controls**, adding
+`DynamicProfiles`, `DynamicWorkspacesAndProfiles`, `WorkspaceDotProfileMenu` and
+`FailedConfigurationWritePreservesProfiles` to both modes. It must verify actual
+font/wrapping/clipping, native/Metal overlap and fallback, IME/keyboard/AX/focus,
+stable selection/destructive confirmation, async failure/retry, profile data
+isolation and durable restore. Nothing from this stage has GUI acceptance and
+no presentation/CPU/GPU speedup was measured. See
+[profile panel verification](benchmarks/rust-profile-panel-headless-2026-10-23.json).

@@ -415,10 +415,10 @@ std::unique_ptr<views::ScrollBar> CreateSidebarScrollBar(base::RepeatingCallback
 SidebarScrollBarSnapshot GetSidebarScrollBarSnapshot(views::ScrollBar* bar) {
   return static_cast<SidebarScrollBar*>(bar)->Snapshot();
 }
-std::vector<std::string> ShapeSidebarParagraph(std::string_view text,float font_size,int width) {
+std::vector<std::string> ShapeSidebarParagraph(std::string_view text,float font_size,int width,bool bold) {
   std::vector<std::string> lines;if(text.empty()||width<=0||!std::isfinite(font_size)||font_size<=0)return lines;
   NSString* string=base::SysUTF8ToNSString(std::string(text));
-  NSFont* font=[NSFont systemFontOfSize:font_size weight:NSFontWeightRegular];
+  NSFont* font=[NSFont systemFontOfSize:font_size weight:bold?NSFontWeightMedium:NSFontWeightRegular];
   NSAttributedString* attributed=[[NSAttributedString alloc] initWithString:string attributes:@{NSFontAttributeName:font}];
   base::apple::ScopedCFTypeRef<CTTypesetterRef> typesetter(CTTypesetterCreateWithAttributedString((__bridge CFAttributedStringRef)attributed));
   if(!typesetter)return lines;

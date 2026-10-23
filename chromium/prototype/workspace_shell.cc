@@ -96,6 +96,12 @@
 #endif
 
 namespace zitter::prototype {
+class ProfileFormState {
+ public:
+#if BUILDFLAG(IS_MAC)
+  rust::Box<sidebar::ProfileForm> form=sidebar::new_profile_form();
+#endif
+};
 namespace {
 DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kFolderNameField);
 // Light "frame + card" palette from the Zitter design canvas.
@@ -1293,6 +1299,53 @@ FolderNoticeView* FindFolderNotice(views::View* view) {
 }
 #endif
 
+#if BUILDFLAG(IS_MAC)
+// Reusable static paragraph/heading adapter: no native Label or hidden text
+// measurement. CoreText shapes lines; Rust places them; Metal presents them.
+class ProfilePanelText final : public views::View {
+  METADATA_HEADER(ProfilePanelText,views::View)
+ public:
+  ProfilePanelText(std::u16string text,int delta,bool bold,SkColor ink):text_(std::move(text)),delta_(delta),bold_(bold),ink_(ink) {
+    GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);GetViewAccessibility().SetName(text_);
+  }
+  void SetText(std::u16string text){if(text==text_)return;text_=std::move(text);GetViewAccessibility().SetName(text_);measured_width_=-1;PreferredSizeChanged();SchedulePaint();Schedule();}
+  bool contains_scene_text(std::string_view text) const{return surface_&&surface_->visible()&&surface_->contains_text_for_testing(text);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override{const auto g=Geometry(available.width().is_bounded()?available.width().value():200);return gfx::Size(g.width,g.height);}
+  void OnThemeChanged() override{views::View::OnThemeChanged();measured_width_=-1;PreferredSizeChanged();Schedule();}
+  void OnBoundsChanged(const gfx::Rect& previous) override{views::View::OnBoundsChanged(previous);Schedule();}
+  void AddedToWidget() override{views::View::AddedToWidget();Schedule();}
+  void RemovedFromWidget() override{surface_.reset();views::View::RemovedFromWidget();}
+  void VisibilityChanged(views::View* view,bool visible) override{views::View::VisibilityChanged(view,visible);if(!IsDrawn()&&surface_)surface_->Hide();Schedule();}
+  void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);Schedule();}
+  void OnPaint(gfx::Canvas* canvas) override {
+    if(!surface_||!surface_->visible()){const auto items=Items(0,0,gfx::RectF(GetLocalBounds()));for(const auto& item:items)PaintSceneRecipe(canvas,item,Font(delta_,bold_?gfx::Font::Weight::MEDIUM:gfx::Font::Weight::NORMAL));}Schedule();
+  }
+ private:
+  sidebar::ColumnLayout Geometry(int requested) const {
+    const int width=std::max(0,requested);const auto font=Font(delta_,bold_?gfx::Font::Weight::MEDIUM:gfx::Font::Weight::NORMAL);
+    if(width!=measured_width_||font.GetFontSize()!=measured_font_){lines_=ShapeSidebarParagraph(base::UTF16ToUTF8(text_),font.GetFontSize(),width,bold_);measured_width_=width;measured_font_=font.GetFontSize();}
+    return sidebar::paragraph_layout(width,font.GetHeight(),lines_.size());
+  }
+  std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const {
+    const auto g=Geometry(width());std::vector<sidebar::Item> items;items.reserve(g.children.size());
+    for(size_t i=0;i<g.children.size();++i){const auto& r=g.children[i];sidebar::Item item{};item.kind=17;item.x=r.x+dx;item.y=r.y+dy;item.width=r.width;item.height=r.height;item.title=lines_[i];item.font_size=Font(delta_).GetFontSize();item.active=bold_;item.ink=Tone(this,ink_);item.clip={clip.x(),clip.y(),clip.width(),clip.height()};items.push_back(std::move(item));}return items;
+  }
+  void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&ProfilePanelText::UpdateMetal,weak_factory_.GetWeakPtr()));}
+  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=surface_&&surface_->visible();const auto local=GetVisibleBounds();
+    if(!IsDrawn()||local.IsEmpty()||text_.empty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}
+    if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;
+    auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));
+    surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,kCard));if(was!=surface_->visible())SchedulePaint();
+  }
+  std::u16string text_;int delta_;bool bold_;SkColor ink_;mutable int measured_width_=-1,measured_font_=0;mutable std::vector<std::string> lines_;
+  std::unique_ptr<SidebarMetal> surface_;bool pending_=false;base::WeakPtrFactory<ProfilePanelText> weak_factory_{this};
+};
+BEGIN_METADATA(ProfilePanelText)
+END_METADATA
+std::vector<sidebar::ProfileOption> ProfileOptions(const ShellState& state){std::vector<sidebar::ProfileOption> out;out.reserve(state.profiles.size());for(const auto& p:state.profiles)out.push_back({p.id,p.name});return out;}
+std::vector<sidebar::ProfileUse> ProfileUses(const ShellState& state){std::vector<sidebar::ProfileUse> out;out.reserve(state.workspaces.size());for(const auto& w:state.workspaces)out.push_back({w.id,w.name,w.profile_id});return out;}
+#endif
+
 class EdgeView final : public views::View {
   METADATA_HEADER(EdgeView, views::View)
  public:
@@ -2412,26 +2465,38 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 #endif
   palette_chrome_views_[2]=palette_text(palette.get(),u"↑↓ wybierz     ↵ wykonaj / otwórz     > polecenia",1,2);
 
+#if BUILDFLAG(IS_MAC)
+  if(metal_sidebar_)profile_form_=std::make_unique<ProfileFormState>();
+#endif
+  std::array<std::u16string,12> profile_copy={u"Profile przeglądania",u"Każdy profil ma osobne logowania i dane stron.\nMożesz przypisać go do kilku przestrzeni.",u"Nazwa profilu",u"Nazwa nowego profilu",u"Np. Klient, Projekt, Konto testowe",u"Istniejące profile",u"Zarządzany profil",u"Utwórz profil",u"Zapisz nazwę profilu",u"Usuń profil i jego dane",u"Potwierdź usunięcie profilu i danych",u"Wróć do przestrzeni"};
+#if BUILDFLAG(IS_MAC)
+  if(profile_form_){const auto c=sidebar::profile_copy();auto text=[](const rust::String& value){return base::UTF8ToUTF16(std::string(value));};profile_copy={text(c.title),text(c.hint),text(c.name_label),text(c.name_ax),text(c.placeholder),text(c.existing),text(c.picker_ax),text(c.create),text(c.rename),text(c.remove_label),text(c.confirm_delete),text(c.back)};}
+#endif
   auto profiles_panel = std::make_unique<views::View>();
   profiles_root_ = profiles_panel.get();
   profiles_panel->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kVertical, gfx::Insets(20), 10));
   profiles_panel->SetBackground(views::CreateRoundedRectBackground(kCard, 12));
   profiles_panel->SetBorder(views::CreateRoundedRectBorder(1, 12, Hairline(root_)));
-  Label(profiles_panel.get(), u"Profile przeglądania", kInk, Font(3, gfx::Font::Weight::SEMIBOLD));
-  auto* profile_hint = Label(profiles_panel.get(), u"Każdy profil ma osobne logowania i dane stron.\nMożesz przypisać go do kilku przestrzeni.", kMuted, Font(-1));
-  profile_hint->SetMultiLine(true);
-  Label(profiles_panel.get(), u"Nazwa profilu", kSubtle, Font(-1));
+  auto profile_text=[&](std::u16string text,SkColor ink,int delta,gfx::Font::Weight weight=gfx::Font::Weight::NORMAL,bool multiline=false)->views::View* {
+#if BUILDFLAG(IS_MAC)
+    if(profile_form_)return profiles_panel->AddChildView(std::make_unique<ProfilePanelText>(std::move(text),delta,weight!=gfx::Font::Weight::NORMAL,ink));
+#endif
+    auto* label=Label(profiles_panel.get(),std::move(text),ink,Font(delta,weight));label->SetMultiLine(multiline);return label;
+  };
+  profile_text(profile_copy[0],kInk,3,gfx::Font::Weight::SEMIBOLD);
+  profile_text(profile_copy[1],kMuted,-1,gfx::Font::Weight::NORMAL,true);
+  profile_text(profile_copy[2],kSubtle,-1);
   profile_name_input_ = profiles_panel->AddChildView(std::make_unique<views::Textfield>());
-  profile_name_input_->GetViewAccessibility().SetName(u"Nazwa nowego profilu");
-  profile_name_input_->SetPlaceholderText(u"Np. Klient, Projekt, Konto testowe");
+  profile_name_input_->GetViewAccessibility().SetName(profile_copy[3]);
+  profile_name_input_->SetPlaceholderText(profile_copy[4]);
   create_profile_ = profiles_panel->AddChildView(std::make_unique<views::MdTextButton>(
-      base::BindRepeating(&WorkspaceShell::SubmitProfile, weak), u"Utwórz profil"));
+      base::BindRepeating(&WorkspaceShell::SubmitProfile, weak), profile_copy[7]));
   rename_profile_ = profiles_panel->AddChildView(std::make_unique<views::MdTextButton>(
-      base::BindRepeating(&WorkspaceShell::RenameSelectedProfile, weak), u"Zapisz nazwę profilu"));
-  Label(profiles_panel.get(), u"Istniejące profile", kSubtle, Font(-1));
+      base::BindRepeating(&WorkspaceShell::RenameSelectedProfile, weak), profile_copy[8]));
+  profile_text(profile_copy[5],kSubtle,-1);
   managed_profile_picker_ = profiles_panel->AddChildView(std::make_unique<views::Combobox>());
-  managed_profile_picker_->SetTooltipTextAndAccessibleName(u"Zarządzany profil");
+  managed_profile_picker_->SetTooltipTextAndAccessibleName(profile_copy[6]);
   managed_profile_picker_->SetCallback(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
     if (!shell) return;
     shell->confirm_profile_deletion_ = false;
@@ -2439,15 +2504,19 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     const auto selected = shell->managed_profile_picker_->GetSelectedIndex();
     if (selected && *selected < shell->state_.profiles.size())
       shell->profile_name_input_->SetText(base::UTF8ToUTF16(shell->state_.profiles[*selected].name));
+#if BUILDFLAG(IS_MAC)
+    if(shell->profile_form_){const auto id=selected&&*selected<shell->state_.profiles.size()?shell->state_.profiles[*selected].id:std::string();shell->profile_form_->form->select(id);}
+#endif
     shell->SetProfileStatus(u"");
     shell->RefreshProfileControls();
   }, weak));
-  profile_status_ = Label(profiles_panel.get(), u"", kSubtle, Font(-1));
-  profile_status_->SetMultiLine(true);
+  profile_status_=profile_text(u"",kSubtle,-1,gfx::Font::Weight::NORMAL,true);
   delete_profile_ = profiles_panel->AddChildView(std::make_unique<views::MdTextButton>(
-      base::BindRepeating(&WorkspaceShell::DeleteSelectedProfile, weak), u"Usuń profil i jego dane"));
+      base::BindRepeating(&WorkspaceShell::DeleteSelectedProfile, weak), profile_copy[9]));
   profiles_panel->AddChildView(std::make_unique<views::MdTextButton>(
-      base::BindRepeating(&WorkspaceShell::OpenWorkspaceSettings, weak), u"Wróć do przestrzeni"));
+      base::BindRepeating(&WorkspaceShell::OpenWorkspaceSettings, weak), profile_copy[11]));
+
+  if(profile_form_){profiles_panel->SetLayoutManager(CreateSidebarColumnLayout(10));profiles_panel->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(20)));}
 
   auto import_panel = std::make_unique<views::View>();
   import_root_ = import_panel.get();
@@ -2948,7 +3017,7 @@ void WorkspaceShell::Detach() {
   create_profile_ = nullptr;
   rename_profile_ = nullptr;
   delete_profile_ = nullptr;
-  profile_status_ = nullptr;
+  profile_status_ = nullptr;profile_form_.reset();
   address_ = nullptr;
   color_input_ = nullptr;
   emoji_input_ = nullptr;
@@ -3059,6 +3128,9 @@ void WorkspaceShell::Update(ShellState state) {
         if (state_.profiles[i].id == managed_id) managed_profile_picker_->SetSelectedIndex(i);
     }
     confirm_profile_deletion_ = false;
+#if BUILDFLAG(IS_MAC)
+    if(profile_form_){const auto profiles=ProfileOptions(state_);profile_form_->form->reconcile(rust::Slice<const sidebar::ProfileOption>(profiles.data(),profiles.size()),added_profile);const std::string id(profile_form_->form->selection());for(size_t i=0;i<state_.profiles.size();++i)if(state_.profiles[i].id==id)managed_profile_picker_->SetSelectedIndex(i);}
+#endif
   }
   apply_import_->SetEnabled(import_can_apply_ && !import_busy_ && state_.configuration_ready && !state_.profiles_busy);
   profile_picker_->SetEnabled(state_.configuration_ready && !state_.profiles_busy);
@@ -4771,7 +4843,9 @@ void WorkspaceShell::ApplyTheme() {
     if (!surface) continue;
     const int radius = surface == palette_root_ ? 14 : 12;
     if(surface==palette_root_&&static_cast<PaletteView*>(surface)->scene()){surface->SetBackground(nullptr);surface->SetBorder(views::CreateEmptyBorder(1));}
-    else {surface->SetBackground(views::CreateRoundedRectBackground(Tone(surface,kCard),radius));surface->SetBorder(views::CreateRoundedRectBorder(1,radius,Hairline(surface)));}
+    else {surface->SetBackground(views::CreateRoundedRectBackground(Tone(surface,kCard),radius));
+      if(surface==profiles_root_&&profile_form_)surface->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,radius,Hairline(surface)),gfx::Insets(20)));
+      else surface->SetBorder(views::CreateRoundedRectBorder(1,radius,Hairline(surface)));}
     surface->SchedulePaint();
   }
   for (auto* field : {snapshot_name_.get(), timeline_filter_.get(), shortcut_chord_.get(), provider_name_.get(), provider_keyword_.get(), provider_url_.get()})
@@ -5770,17 +5844,32 @@ void WorkspaceShell::OpenProfiles(std::string profile_id, std::string workspace_
   profile_name_input_->SetText(u"");
   for (const auto& profile : state_.profiles)
     if (profile.id == profile_id) profile_name_input_->SetText(base::UTF8ToUTF16(profile.name));
+#if BUILDFLAG(IS_MAC)
+  if(profile_form_){const auto selected=managed_profile_picker_->GetSelectedIndex();const auto id=selected&&*selected<state_.profiles.size()?state_.profiles[*selected].id:std::string();profile_form_->form->open(id,new_profile_workspace_id_);}
+#endif
   RefreshProfileControls();
   PositionPanels();
   profiles_widget_->Show();
   profiles_widget_->Activate();
 }
 void WorkspaceShell::SetProfileStatus(std::u16string message) {
-  profile_status_->SetText(message);
-  profile_status_->SetVisible(!message.empty());
-  PositionPanels();
+  if(!profile_status_)return;
+#if BUILDFLAG(IS_MAC)
+  if(profile_form_)profile_form_->form->set_status(base::UTF16ToUTF8(message));
+  if(auto* text=views::AsViewClass<ProfilePanelText>(profile_status_))text->SetText(message);
+  else
+#endif
+    static_cast<views::Label*>(profile_status_.get())->SetText(message);
+  profile_status_->SetVisible(!message.empty());PositionPanels();
 }
 void WorkspaceShell::RefreshProfileControls() {
+#if BUILDFLAG(IS_MAC)
+  if(profile_form_){const auto profiles=ProfileOptions(state_);const auto uses=ProfileUses(state_);
+    const auto controls=profile_form_->form->controls(state_.configuration_ready,state_.profiles_busy,rust::Slice<const sidebar::ProfileOption>(profiles.data(),profiles.size()),rust::Slice<const sidebar::ProfileUse>(uses.data(),uses.size()));
+    create_profile_->SetEnabled(controls.create);rename_profile_->SetEnabled(controls.rename);delete_profile_->SetEnabled(controls.remove);managed_profile_picker_->SetEnabled(controls.picker);
+    static_cast<views::MdTextButton*>(delete_profile_.get())->SetText(base::UTF8ToUTF16(std::string(controls.delete_label)));SetProfileStatus(base::UTF8ToUTF16(std::string(controls.status)));return;
+  }
+#endif
   const bool ready = state_.configuration_ready && !state_.profiles_busy;
   create_profile_->SetEnabled(ready);
   rename_profile_->SetEnabled(ready && new_profile_workspace_id_.empty());
@@ -5802,12 +5891,45 @@ void WorkspaceShell::RefreshProfileControls() {
       confirm_profile_deletion_ ? u"Potwierdź usunięcie profilu i danych" : u"Usuń profil i jego dane");
   if (used && !state_.profiles_busy) SetProfileStatus(u"Profil jest używany przez: " + names + u". Najpierw zmień profil tych przestrzeni.");
 }
+bool WorkspaceShell::SubmitRustProfileAction(unsigned action) {
+#if BUILDFLAG(IS_MAC)
+  if(!profile_form_)return false;
+  if(profile_name_input_->IsIMEComposing())return true;
+  const auto index=managed_profile_picker_->GetSelectedIndex();const auto selected=index&&*index<state_.profiles.size()?state_.profiles[*index].id:std::string();
+  if(selected!=std::string(profile_form_->form->selection()))profile_form_->form->select(selected);
+  const auto profiles=ProfileOptions(state_);const auto uses=ProfileUses(state_);
+  const auto request=profile_form_->form->request(action,base::UTF16ToUTF8(profile_name_input_->GetText()),state_.configuration_ready,state_.profiles_busy,rust::Slice<const sidebar::ProfileOption>(profiles.data(),profiles.size()),rust::Slice<const sidebar::ProfileUse>(uses.data(),uses.size()));
+  if(request.action==sidebar::ProfileAction::None){const auto status=base::UTF8ToUTF16(std::string(profile_form_->form->status()));RefreshProfileControls();SetProfileStatus(status);return true;}
+  if(request.action==sidebar::ProfileAction::ConfirmDelete){RefreshProfileControls();return true;}
+  const auto alive=weak_factory_.GetWeakPtr();bool accepted=false;
+  switch(request.action){
+    case sidebar::ProfileAction::Create:accepted=callbacks_.create_profile.Run(std::string(request.name),std::string(request.workspace));break;
+    case sidebar::ProfileAction::Rename:accepted=callbacks_.rename_profile.Run(std::string(request.id),std::string(request.name));break;
+    case sidebar::ProfileAction::Delete:accepted=callbacks_.remove_profile.Run(std::string(request.id));break;
+    default:break;
+  }
+  if(!alive||!profile_form_)return true;profile_form_->form->finish_attempt(accepted);
+  if(accepted&&request.action==sidebar::ProfileAction::Create)profile_name_input_->SetText(u"");
+  const auto status=base::UTF8ToUTF16(std::string(profile_form_->form->status()));RefreshProfileControls();SetProfileStatus(status);return true;
+#else
+  return false;
+#endif
+}
+bool WorkspaceShell::profile_panel_contains_scene_text(std::string_view text) const {
+#if BUILDFLAG(IS_MAC)
+  if(!profiles_root_)return false;auto find=[&](auto&& self,views::View* view)->bool{if(auto* node=views::AsViewClass<ProfilePanelText>(view))if(node->contains_scene_text(text))return true;for(const auto& child:view->children())if(self(self,child.get()))return true;return false;};return find(find,profiles_root_);
+#else
+  return false;
+#endif
+}
 void WorkspaceShell::SubmitProfile() {
+  if(SubmitRustProfileAction(0))return;
   auto name = base::UTF16ToUTF8(base::TrimWhitespace(profile_name_input_->GetText(), base::TRIM_ALL));
   if (name.empty()) { SetProfileStatus(u"Podaj nazwę profilu."); return; }
   if (callbacks_.create_profile.Run(name, new_profile_workspace_id_)) profile_name_input_->SetText(u"");
 }
 void WorkspaceShell::RenameSelectedProfile() {
+  if(SubmitRustProfileAction(1))return;
   const auto index = managed_profile_picker_->GetSelectedIndex();
   if (!index || *index >= state_.profiles.size()) return;
   const auto name = base::UTF16ToUTF8(base::TrimWhitespace(profile_name_input_->GetText(), base::TRIM_ALL));
@@ -5815,6 +5937,7 @@ void WorkspaceShell::RenameSelectedProfile() {
   callbacks_.rename_profile.Run(state_.profiles[*index].id, name);
 }
 void WorkspaceShell::DeleteSelectedProfile() {
+  if(SubmitRustProfileAction(2))return;
   const auto index = managed_profile_picker_->GetSelectedIndex();
   if (!index || *index >= state_.profiles.size()) return;
   if (!confirm_profile_deletion_) {

@@ -6,6 +6,14 @@ application/domain commands; preserve profile/session isolation. Push verified
 milestones to `origin/main` as they land. The opt-in switch remains
 `--zitter-sidebar=rust-metal` until the migration and comparison are complete.
 
+## Current execution policy
+
+At the user's request, continue development, non-windowed Rust/Python tests,
+GN/dependency checks and compilation. Do not launch the application or execute
+windowed browser/desktop tests until the user requests the later GUI checkpoint.
+Compiled GUI regressions remain `awaiting_gui_checkpoint`; earlier GUI passes do
+not accept subsequent source changes.
+
 ## How to read progress
 
 “Preserved” means a feature still works through its existing Views controller.
@@ -36,7 +44,8 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Split headers/divider, focus, orientation, swap/close | Rust pane/bar layout, title text, menu/close input and divider drag; shared Metal rendering | Replace native View/Button/ResizeArea event, cursor and AX adapters; expand gesture/RTL/scale coverage |
 | Address/search palette, suggestions, providers, IME | Rust result selection/layout/text/icons, palette/input/static chrome geometry, Metal hints/errors; native Textfield/IME, provider/search controllers | Migrate remaining native containers/frame presentation; expand composition/accessibility/scale coverage |
 | Command Center tabs/pins/workspaces/history/actions | Rust result selection/drawing; existing search/ranking and application commands | Replace remaining native containers/frame presentation and command adapters; preserve stale results and identity |
-| Workspace/profile create/edit/delete and settings | Views + persistent application model | Rust forms, validation, focus; preserve isolation and failed-write behavior |
+| Profile management create/rename/delete | Rust controller, copy, validation, stable-ID selection, two-step delete and column/text layout; Metal static text; native input/picker/buttons and storage services (GUI checkpoint pending) | Migrate native controls; verify IME, typography, stale confirmation, profile/session isolation and failed-write rollback |
+| Workspace create/edit/delete and settings | Views + persistent application model | Rust forms, validation, focus; preserve isolation and failed-write behavior |
 | General preferences, shortcuts and site preferences | Views + application services | Rust forms; use the same persisted configuration |
 | History, downloads, passwords and permissions | Views/native service adapters | Rust presentation/control layer; retain browser service and security semantics |
 | Peek, promote/split, link/page menus and routing | Views/native adapters + application | Rust control routing, focus and dismissal; retain native page integration |
@@ -269,6 +278,17 @@ and the return of Metal after settling. Preserve the normal application/profile.
   title/buttons and application deletion/async persistence remain adapters.
   This stage is compiled and unit tested only; see
   [notice verification](benchmarks/rust-folder-notices-headless-2026-10-23.json).
+
+- Profile management now uses a Rust controller for stable-ID selection, readiness,
+  busy/submission guards, name normalization/duplicates, create-and-attach context,
+  service feedback and same-target two-click deletion. Rust also owns panel copy,
+  column geometry and paragraph placement; CoreText/Metal draw static copy without
+  native Labels. Native editors, picker, buttons, outer popup and profile/storage
+  services remain. **87 Rust tests and 60 Python tests passed** without windows.
+  The new compiled GUI case and four existing profile lifecycle/isolation/write
+  cases expand the deferred checkpoint to **53 Metal cases and 24 Views controls**.
+  No GUI acceptance or performance gain is established. See
+  [profile panel verification](benchmarks/rust-profile-panel-headless-2026-10-23.json).
 
 ## Completion gates
 

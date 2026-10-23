@@ -3,6 +3,12 @@
 // remain in WorkspaceShell. No URLs, profiles or WebContents cross this ABI.
 #[cxx::bridge(namespace = "zitter::sidebar")]
 mod ffi {
+    struct ProfileOption { id: String, name: String }
+    struct ProfileUse { workspace: String, name: String, profile: String }
+    struct ProfileCopy { title: String, hint: String, name_label: String, name_ax: String, placeholder: String, existing: String, picker_ax: String, create: String, rename: String, remove_label: String, confirm_delete: String, back: String }
+    enum ProfileAction { None, Create, Rename, Delete, ConfirmDelete }
+    struct ProfileRequest { action: ProfileAction, id: String, name: String, workspace: String }
+    struct ProfileControls { create: bool, rename: bool, remove: bool, picker: bool, delete_label: String, status: String, selected: usize, has_selected: bool }
     struct FolderNoticeCopy { title: String, body: String, accept: String, cancel: String, default_cancel: bool }
     enum FolderNoticeAction { None, Delete, Acknowledge }
     struct FolderNoticeRequest { action: FolderNoticeAction, workspace: String, folder: String }
@@ -69,6 +75,19 @@ mod ffi {
         text: String, font_size: f32, bold: bool, middle: bool, center: bool, clip: FloatRect,
     }
     extern "Rust" {
+        type ProfileForm;
+        fn new_profile_form() -> Box<ProfileForm>;
+        fn profile_copy() -> ProfileCopy;
+        fn open(self: &mut ProfileForm, selected: &str, workspace: &str);
+        fn select(self: &mut ProfileForm, selected: &str);
+        fn reconcile(self: &mut ProfileForm, profiles: &[ProfileOption], prefer_new: bool);
+        fn set_status(self: &mut ProfileForm, status: &str);
+        fn status(self: &ProfileForm) -> &str;
+        fn selection(self: &ProfileForm) -> &str;
+        fn controls(self: &mut ProfileForm, ready: bool, busy: bool, profiles: &[ProfileOption], uses: &[ProfileUse]) -> ProfileControls;
+        fn request(self: &mut ProfileForm, action: u32, name: &str, ready: bool, busy: bool, profiles: &[ProfileOption], uses: &[ProfileUse]) -> ProfileRequest;
+        fn finish_attempt(self: &mut ProfileForm, accepted: bool);
+        fn paragraph_layout(width: i32, line_height: i32, count: usize) -> ColumnLayout;
         type FolderNotice;
         fn new_folder_notice(workspace: &str, folder: &str, title: &str, error_only: bool) -> Box<FolderNotice>;
         fn copy(self: &FolderNotice) -> FolderNoticeCopy;
@@ -260,6 +279,46 @@ fn swipe_layout(position:f64,count:i32,width:i32)->ffi::SwipeLayout {
     }
     ffi::SwipeLayout{center,pages}
 }
+
+pub struct ProfileForm { selected:String, workspace:String, confirmation:String, status:String, submitting:bool }
+fn new_profile_form()->Box<ProfileForm>{Box::new(ProfileForm{selected:String::new(),workspace:String::new(),confirmation:String::new(),status:String::new(),submitting:false})}
+fn profile_copy()->ffi::ProfileCopy {ffi::ProfileCopy{title:"Profile przeglądania".into(),hint:"Każdy profil ma osobne logowania i dane stron.\nMożesz przypisać go do kilku przestrzeni.".into(),name_label:"Nazwa profilu".into(),name_ax:"Nazwa nowego profilu".into(),placeholder:"Np. Klient, Projekt, Konto testowe".into(),existing:"Istniejące profile".into(),picker_ax:"Zarządzany profil".into(),create:"Utwórz profil".into(),rename:"Zapisz nazwę profilu".into(),remove_label:"Usuń profil i jego dane".into(),confirm_delete:"Potwierdź usunięcie profilu i danych".into(),back:"Wróć do przestrzeni".into()}}
+impl ProfileForm {
+    fn open(&mut self,selected:&str,workspace:&str){self.selected=selected.into();self.workspace=workspace.into();self.confirmation.clear();self.status.clear();self.submitting=false;}
+    fn select(&mut self,selected:&str){self.selected=selected.into();self.workspace.clear();self.confirmation.clear();self.status.clear();}
+    fn reconcile(&mut self,profiles:&[ffi::ProfileOption],prefer_new:bool){if prefer_new||!profiles.iter().any(|p|p.id==self.selected){self.selected=profiles.last().map(|p|p.id.clone()).unwrap_or_default();}self.confirmation.clear();}
+    fn set_status(&mut self,status:&str){self.status=status.into();}
+    fn status(&self)->&str{&self.status}
+    fn selection(&self)->&str{&self.selected}
+    fn used_names(&self,uses:&[ffi::ProfileUse])->String {uses.iter().filter(|w|w.profile==self.selected).map(|w|w.name.as_str()).collect::<Vec<_>>().join(", ")}
+    fn controls(&mut self,ready:bool,busy:bool,profiles:&[ffi::ProfileOption],uses:&[ffi::ProfileUse])->ffi::ProfileControls {
+        let selected=profiles.iter().position(|p|p.id==self.selected);let used=uses.iter().any(|w|w.profile==self.selected);let enabled=ready&&!busy&&!self.submitting;
+        if !enabled||used||selected.is_none()||profiles.len()<=1{self.confirmation.clear();}
+        if used&&!busy{self.status=format!("Profil jest używany przez: {}. Najpierw zmień profil tych przestrzeni.",self.used_names(uses));}
+        let copy=profile_copy();ffi::ProfileControls{create:enabled,rename:enabled&&selected.is_some()&&self.workspace.is_empty(),remove:enabled&&selected.is_some()&&!used&&profiles.len()>1,picker:enabled,delete_label:if self.confirmation==self.selected&&!self.confirmation.is_empty(){copy.confirm_delete}else{copy.remove_label},status:self.status.clone(),selected:selected.unwrap_or(0),has_selected:selected.is_some()}
+    }
+    fn request(&mut self,action:u32,raw_name:&str,ready:bool,busy:bool,profiles:&[ffi::ProfileOption],uses:&[ffi::ProfileUse])->ffi::ProfileRequest {
+        let none=||ffi::ProfileRequest{action:ffi::ProfileAction::None,id:String::new(),name:String::new(),workspace:String::new()};
+        if !ready||busy||self.submitting{self.confirmation.clear();self.status="Poczekaj na zakończenie operacji na profilach.".into();return none();}
+        if action>2{return none();}
+        let selected=profiles.iter().find(|p|p.id==self.selected);
+        if action==2 {
+            if selected.is_none(){self.confirmation.clear();self.status="Wybierz istniejący profil.".into();return none();}
+            if uses.iter().any(|w|w.profile==self.selected){self.confirmation.clear();self.status=format!("Profil jest używany przez: {}. Najpierw zmień profil tych przestrzeni.",self.used_names(uses));return none();}
+            if profiles.len()<=1{self.confirmation.clear();self.status="Nie można usunąć ostatniego profilu.".into();return none();}
+            if self.confirmation!=self.selected {self.confirmation=self.selected.clone();self.status="Usunięte zostaną logowania, cookies i dane stron tego profilu. Tej operacji nie można cofnąć.".into();return ffi::ProfileRequest{action:ffi::ProfileAction::ConfirmDelete,id:self.selected.clone(),name:String::new(),workspace:String::new()};}
+            self.confirmation.clear();self.status.clear();self.submitting=true;return ffi::ProfileRequest{action:ffi::ProfileAction::Delete,id:self.selected.clone(),name:String::new(),workspace:String::new()};
+        }
+        self.confirmation.clear();let name=raw_name.trim();
+        if name.is_empty(){self.status="Podaj nazwę profilu.".into();return none();}
+        if action==1&&(selected.is_none()||!self.workspace.is_empty()){self.status="Wybierz profil w trybie zarządzania.".into();return none();}
+        if action==0&&!self.workspace.is_empty()&&!uses.iter().any(|w|w.workspace==self.workspace){self.status="Przestrzeń nie jest już dostępna.".into();return none();}
+        if profiles.iter().any(|p|(action==0||p.id!=self.selected)&&p.name.eq_ignore_ascii_case(name)){self.status="Profil o tej nazwie już istnieje.".into();return none();}
+        self.status.clear();self.submitting=true;ffi::ProfileRequest{action:if action==0{ffi::ProfileAction::Create}else{ffi::ProfileAction::Rename},id:if action==0{String::new()}else{self.selected.clone()},name:name.into(),workspace:if action==0{self.workspace.clone()}else{String::new()}}
+    }
+    fn finish_attempt(&mut self,accepted:bool){self.submitting=false;if !accepted&&self.status.is_empty(){self.status="Nie udało się wykonać operacji na profilu. Spróbuj ponownie.".into();}}
+}
+fn paragraph_layout(width:i32,line_height:i32,count:usize)->ffi::ColumnLayout{let g=folder_notice_layout(width,line_height,count,0,0);ffi::ColumnLayout{width:g.width,height:g.height,children:g.body_lines}}
 
 pub struct FolderNotice { workspace:String, folder:String, title:String, error_only:bool, error:String, submitting:bool, closed:bool }
 fn new_folder_notice(workspace:&str,folder:&str,title:&str,error_only:bool)->Box<FolderNotice>{Box::new(FolderNotice{workspace:workspace.into(),folder:folder.into(),title:title.into(),error_only,error:String::new(),submitting:false,closed:false})}
@@ -875,7 +934,7 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
             }
         };
         if i.kind == 17 {
-            if !i.title.is_empty(){emit(i.x,i.y,i.width,i.height,0.0,i.ink,&i.title,i.font_size,false);}continue;
+            if !i.title.is_empty(){emit(i.x,i.y,i.width,i.height,0.0,i.ink,&i.title,i.font_size,i.active);}continue;
         }
         if i.kind == 16 {
             emit(i.x,i.y,i.width,i.height,14.0,i.fill,"",0.0,false);
@@ -1211,6 +1270,49 @@ mod tests {
         }
     }
     fn menu_state()->ffi::TabMenuState{ffi::TabMenuState{ready:true,busy:false,valid:true,tab:7,has_tab:true,split:true,first:3,has_first:true,second:7,has_second:true,vertical:false,tab_count:3,http:true}}
+    fn profile_options()->Vec<ffi::ProfileOption>{vec![ffi::ProfileOption{id:"used".into(),name:"Work".into()},ffi::ProfileOption{id:"spare".into(),name:"Spare".into()}]}
+    fn profile_uses()->Vec<ffi::ProfileUse>{vec![ffi::ProfileUse{workspace:"work".into(),name:"Praca".into(),profile:"used".into()}]}
+    #[test] fn profile_form_selects_by_id_across_reorder_and_catalogue_changes() {
+        let mut f=new_profile_form();f.open("spare","");let mut profiles=profile_options();profiles.reverse();f.reconcile(&profiles,false);assert_eq!(f.controls(true,false,&profiles,&profile_uses()).selected,0);
+        profiles.remove(0);f.reconcile(&profiles,false);assert_eq!(f.selected,"used");assert!(!f.controls(true,false,&profiles,&profile_uses()).remove);
+        profiles.push(ffi::ProfileOption{id:"new".into(),name:"New".into()});f.reconcile(&profiles,true);assert_eq!(f.selected,"new");
+    }
+    #[test] fn profile_form_keeps_used_last_busy_and_unready_profiles_safe() {
+        let mut f=new_profile_form();f.open("used","");let c=f.controls(true,false,&profile_options(),&profile_uses());assert!(!c.remove);assert!(c.status.contains("Praca"));assert!(c.rename);
+        assert!(matches!(f.request(2,"",true,false,&profile_options(),&profile_uses()).action,ffi::ProfileAction::None));
+        f.open("spare","");for (ready,busy) in [(false,false),(true,true)]{let c=f.controls(ready,busy,&profile_options(),&[]);assert!(!c.create&&!c.rename&&!c.remove&&!c.picker);}
+        let mut profiles=profile_options();profiles.remove(0);assert!(matches!(f.request(2,"",true,false,&profiles,&[]).action,ffi::ProfileAction::None));
+    }
+    #[test] fn profile_form_requires_fresh_same_target_delete_confirmation() {
+        let mut f=new_profile_form();f.open("spare","");assert!(matches!(f.request(2,"",true,false,&profile_options(),&profile_uses()).action,ffi::ProfileAction::ConfirmDelete));
+        assert!(f.controls(true,false,&profile_options(),&profile_uses()).delete_label.starts_with("Potwierdź"));
+        f.select("used");assert!(matches!(f.request(2,"",true,false,&profile_options(),&[]).action,ffi::ProfileAction::ConfirmDelete));
+        let r=f.request(2,"",true,false,&profile_options(),&[]);assert!(matches!(r.action,ffi::ProfileAction::Delete));assert_eq!(r.id,"used");
+        assert!(matches!(f.request(2,"",true,false,&profile_options(),&[]).action,ffi::ProfileAction::None));
+    }
+    #[test] fn profile_form_busy_and_usage_changes_disarm_confirmation() {
+        let mut f=new_profile_form();f.open("spare","");f.request(2,"",true,false,&profile_options(),&[]);f.controls(true,true,&profile_options(),&[]);
+        assert!(matches!(f.request(2,"",true,false,&profile_options(),&[]).action,ffi::ProfileAction::ConfirmDelete));
+        let uses=vec![ffi::ProfileUse{workspace:"new".into(),name:"Nowa".into(),profile:"spare".into()}];f.controls(true,false,&profile_options(),&uses);
+        assert!(matches!(f.request(2,"",true,false,&profile_options(),&[]).action,ffi::ProfileAction::ConfirmDelete));
+        f.reconcile(&profile_options(),false);assert!(matches!(f.request(2,"",true,false,&profile_options(),&[]).action,ffi::ProfileAction::ConfirmDelete));
+    }
+    #[test] fn profile_form_normalizes_names_preserves_ascii_duplicate_policy_and_targets() {
+        let mut f=new_profile_form();f.open("spare","");assert!(matches!(f.request(0," \u{3000} ",true,false,&profile_options(),&profile_uses()).action,ffi::ProfileAction::None));
+        assert!(matches!(f.request(0,"work",true,false,&profile_options(),&profile_uses()).action,ffi::ProfileAction::None));
+        let r=f.request(1,"  Spare  ",true,false,&profile_options(),&profile_uses());assert!(matches!(r.action,ffi::ProfileAction::Rename));assert_eq!(r.id,"spare");f.finish_attempt(true);
+        let r=f.request(0," Żółć 日本語 🦀 ",true,false,&profile_options(),&profile_uses());assert_eq!(r.name,"Żółć 日本語 🦀");
+    }
+    #[test] fn profile_form_rechecks_attach_context_and_preserves_service_status() {
+        let mut f=new_profile_form();f.open("spare","work");assert!(!f.controls(true,false,&profile_options(),&profile_uses()).rename);
+        assert!(matches!(f.request(0,"Name",true,false,&profile_options(),&[]).action,ffi::ProfileAction::None));
+        let r=f.request(0,"Name",true,false,&profile_options(),&profile_uses());assert_eq!(r.workspace,"work");f.set_status("Tworzenie profilu…");f.finish_attempt(true);assert_eq!(f.status(),"Tworzenie profilu…");
+        f.request(0,"Other",true,false,&profile_options(),&profile_uses());f.set_status("Błąd usługi");f.finish_attempt(false);assert_eq!(f.status(),"Błąd usługi");
+    }
+    #[test] fn profile_paragraph_layout_retains_lines_and_bold_scene_text() {
+        let g=paragraph_layout(300,18,3);assert_eq!((g.width,g.height,g.children[2].y),(300,54,36));
+        let mut text=row(300.0);text.kind=17;text.active=true;let ops=layout(&[text]);assert!(ops[0].bold);assert_eq!(ops[0].text,"Zażółć 日本語 🦀");
+    }
     #[test] fn folder_notice_preserves_destructive_copy_and_safe_default() {
         let f=new_folder_notice("work","folder","Zażółć 日本語 🦀",false);let copy=f.copy();assert_eq!(copy.title,"Usunąć folder „Zażółć 日本語 🦀”?");assert!(copy.default_cancel);assert_eq!(copy.cancel,"Anuluj");
         assert!(copy.body.contains("Tej operacji nie można cofnąć."));assert!(copy.body.contains("Strony już otwarte w kartach pozostaną otwarte."));
