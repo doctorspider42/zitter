@@ -3049,11 +3049,17 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   preferences_heading->AddChildView(std::make_unique<GlyphButton>(base::BindRepeating(
       [](base::WeakPtr<WorkspaceShell> shell) { if (shell) { shell->CloseOverlays(); shell->RestorePageFocus(); } }, weak),
       u"Zamknij preferencje (Escape)", GlyphButton::Glyph::kVector, &vector_icons::kCloseIcon));
-  preferences_search_ = main->AddChildView(std::make_unique<views::Textfield>());
+  preferences_search_ = AddEditor(main,bool(workspace_form_));
   preferences_search_->SetPlaceholderText(u"Szukaj ustawień…");
-  preferences_search_->SetAccessibleName(u"Szukaj we wszystkich ustawieniach");
-  preferences_search_->SetController(this);
-  preferences_search_->SetPreferredSize(gfx::Size(240, 38));
+  preferences_search_->GetViewAccessibility().SetName(u"Szukaj we wszystkich ustawieniach");
+  preferences_search_->SetCallbacks(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){
+    if(shell&&shell->general_widget_->IsVisible()&&!shell->preferences_search_->IsIMEComposing()){
+      shell->site_rules_limit_=50;shell->FilterPreferences();
+    }
+  },weak),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,EditorControl* field,const ui::KeyEvent& event){
+    return shell&&shell->HandlePreferenceEditorKey(field,event);
+  },weak,base::Unretained(preferences_search_.get())));
+  preferences_search_->view()->SetPreferredSize(gfx::Size(240, 38));
   preferences_profile_ = Label(main, u"", kMuted, Font(-1));
   preferences_profile_->SetMultiLine(true);
   auto general_scroll = std::make_unique<views::ScrollView>();
@@ -3161,11 +3167,15 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   };
   auto add_text = [&](size_t category, std::string key, std::u16string title, std::u16string detail, std::u16string placeholder) {
     auto* row = make_row(category, title, detail);
-    auto* field = row->children().front()->AddChildView(std::make_unique<views::Textfield>());
-    field->SetAccessibleName(title);
+    auto* field = AddEditor(row->children().front(),bool(workspace_form_));
+    field->GetViewAccessibility().SetName(title);
     field->SetPlaceholderText(placeholder);
-    field->SetController(this);
-    field->SetPreferredSize(gfx::Size(240, 36));
+    field->SetCallbacks(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::string key){
+      if(shell) shell->preference_text_dirty_.insert(key);
+    },weak,key),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,EditorControl* field,const ui::KeyEvent& event){
+    return shell&&shell->HandlePreferenceEditorKey(field,event);
+  },weak,base::Unretained(field)));
+    field->view()->SetPreferredSize(gfx::Size(240, 36));
     preference_textfields_[key] = field;
     auto* save = row->AddChildView(std::make_unique<views::MdTextButton>(
         base::BindRepeating(&WorkspaceShell::SaveTextPreference, weak, key), u"Zapisz"));
@@ -3246,10 +3256,12 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 #endif
   auto* site_editor = make_row(3, u"Wyjątek dla witryny", u"Wpisz pełny adres witryny bez ścieżki, np. https://example.com. Wyjątek zastępuje politykę domyślną w tym profilu.");
   auto* site_fields = site_editor->children().front().get();
-  site_origin_ = site_fields->AddChildView(std::make_unique<views::Textfield>());
-  site_origin_->SetAccessibleName(u"Adres witryny dla wyjątku");
+  site_origin_ = AddEditor(site_fields,bool(workspace_form_));
+  site_origin_->GetViewAccessibility().SetName(u"Adres witryny dla wyjątku");
   site_origin_->SetPlaceholderText(u"https://example.com");
-  site_origin_->SetController(this);
+  site_origin_->SetCallbacks({},base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,EditorControl* field,const ui::KeyEvent& event){
+    return shell&&shell->HandlePreferenceEditorKey(field,event);
+  },weak,base::Unretained(site_origin_.get())));
   std::vector<std::u16string> site_names(kSitePreferenceNames.begin(), kSitePreferenceNames.end());
   site_type_ = picker(site_fields, u"Rodzaj uprawnienia dla witryny", site_names);
   site_policy_ = picker(site_fields, u"Polityka dla witryny", {u"Użyj domyślnej", u"Zezwalaj", u"Blokuj"});
@@ -3458,6 +3470,9 @@ void WorkspaceShell::Detach() {
   address_->SetCallbacks({},{});
   color_input_->SetCallbacks({},{});
   emoji_input_->SetCallbacks({},{});
+  preferences_search_->SetCallbacks({},{});
+  site_origin_->SetCallbacks({},{});
+  for(const auto& [key,field]:preference_textfields_)field->SetCallbacks({},{});
   import_root_ = nullptr;
   import_status_ = nullptr;import_form_.reset();
   import_browser_picker_ = nullptr;
@@ -5327,9 +5342,9 @@ void WorkspaceShell::ApplyTheme() {
     if (field) { field->SetBackgroundColor(Tone(field, kChip)); field->SetColor(Tone(field, kInk)); }
   content_host_->SetBackground(views::CreateRoundedRectBackground(Tone(root_, kCard), 10));
   if (general_scroll_) general_scroll_->SetBackgroundColor(Tone(root_, kCard));
-  if (preferences_search_) preferences_search_->SetBackgroundColor(Tone(root_, kChip));
-  for (const auto& [key, field] : preference_textfields_) field->SetBackgroundColor(Tone(root_, kChip));
-  if (site_origin_) site_origin_->SetBackgroundColor(Tone(root_, kChip));
+  if (preferences_search_) preferences_search_->SetPresentation(gfx::FontList().GetFontSize(),8,true,Tone(root_, kChip));
+  for (const auto& [key, field] : preference_textfields_) field->SetPresentation(gfx::FontList().GetFontSize(),8,true,Tone(root_, kChip));
+  if (site_origin_) site_origin_->SetPresentation(gfx::FontList().GetFontSize(),8,true,Tone(root_, kChip));
   if (address_) address_->SetPresentation(Font(3).GetFontSize(),0,false,Tone(root_,kCard));
   for(auto* editor:{color_input_.get(),emoji_input_.get()})if(editor)
     if(auto* native=views::AsViewClass<views::Textfield>(editor->view())){
@@ -5385,13 +5400,13 @@ void WorkspaceShell::RefreshGeneralControls() {
   for (const auto& [key, field] : preference_textfields_) {
     auto it = values.find(key);
     const bool enabled = it != values.end() && it->second.editable;
-    field->SetEnabled(enabled);
+    field->view()->SetEnabled(enabled);
     preference_save_buttons_.at(key)->SetEnabled(enabled);
-    if (it != values.end() && (!preference_text_dirty_.contains(key) || !enabled)) {
+    if (it != values.end() && ((!preference_text_dirty_.contains(key)&&!field->IsIMEComposing()) || !enabled || profile_changed)) {
       field->SetText(base::UTF8ToUTF16(it->second.text));
       preference_text_dirty_.erase(key);
     }
-    field->SetTooltipText(it == values.end() ? u"Ustawienie jest niedostępne" : !enabled ? u"To ustawienie jest zarządzane" : u"Zapisz przyciskiem lub klawiszem Enter");
+    field->view()->SetTooltipText(it == values.end() ? u"Ustawienie jest niedostępne" : !enabled ? u"To ustawienie jest zarządzane" : u"Zapisz przyciskiem lub klawiszem Enter");
   }
   auto directory = values.find("download_directory");
   download_directory_button_->SetEnabled(directory != values.end() && directory->second.editable);
@@ -5451,7 +5466,7 @@ void WorkspaceShell::SetPreferencesStatus(std::u16string text, bool error) {
 }
 void WorkspaceShell::SaveTextPreference(std::string key) {
   auto it = preference_textfields_.find(key);
-  if (it == preference_textfields_.end()) return;
+  if (it == preference_textfields_.end()||it->second->IsIMEComposing()||!it->second->view()->GetEnabledInViewsSubtree()) return;
   const bool ok = callbacks_.write_text_preference && callbacks_.write_text_preference.Run(key, base::UTF16ToUTF8(it->second->GetText()));
   if (ok) preference_text_dirty_.erase(key);
   RefreshGeneralControls();
@@ -5461,6 +5476,7 @@ void WorkspaceShell::SaveTextPreference(std::string key) {
       u"Nie udało się zapisać. Podaj nazwę rodziny czcionki (do 128 znaków). Ustawienie może być zarządzane.", !ok);
 }
 void WorkspaceShell::SaveSitePreference() {
+  if(!site_origin_||site_origin_->IsIMEComposing())return;
   const auto type = site_type_->GetSelectedIndex().value_or(kSitePreferenceKeys.size());
   const auto policy = site_policy_->GetSelectedIndex().value_or(0);
   if (type >= kSitePreferenceKeys.size()) return;
@@ -6752,11 +6768,6 @@ void WorkspaceShell::ContentsChanged(views::Textfield* sender, const std::u16str
     return;
   }
   if (sender == timeline_filter_) { RefreshTimelineItems(); return; }
-  if (sender == preferences_search_) { site_rules_limit_ = 50; FilterPreferences(); return; }
-  for (const auto& [key, field] : preference_textfields_) if (sender == field) {
-    preference_text_dirty_.insert(key);
-    return;
-  }
 }
 void WorkspaceShell::AddressEdited() {
   if(!address_visible()||address_->IsIMEComposing())return;
@@ -6794,15 +6805,15 @@ bool WorkspaceShell::HandleKeyEvent(views::Textfield* sender, const ui::KeyEvent
   }
   if (event.type() != ui::EventType::kKeyPressed) return false;
   if (event.key_code() == ui::VKEY_ESCAPE) { CloseOverlays(); RestorePageFocus(); return true; }
-  if (sender == preferences_search_ || sender == history_search_) return false;
-  for (const auto& [key, field] : preference_textfields_) if (sender == field) {
-    if (event.key_code() == ui::VKEY_RETURN) { SaveTextPreference(key); return true; }
-    return false;
-  }
-  if (sender == site_origin_) {
-    if (event.key_code() == ui::VKEY_RETURN) { SaveSitePreference(); return true; }
-    return false;
-  }
+  return false;
+}
+bool WorkspaceShell::HandlePreferenceEditorKey(EditorControl* sender,const ui::KeyEvent& event) {
+  if(!general_widget_->IsVisible()||!sender->view()->GetEnabledInViewsSubtree()||
+      sender->IsIMEComposing()||event.type()!=ui::EventType::kKeyPressed)return false;
+  if(event.key_code()==ui::VKEY_ESCAPE){CloseOverlays();RestorePageFocus();return true;}
+  if(event.key_code()!=ui::VKEY_RETURN)return false;
+  for(const auto& [key,field]:preference_textfields_)if(sender==field){SaveTextPreference(key);return true;}
+  if(sender==site_origin_){SaveSitePreference();return true;}
   return false;
 }
 bool WorkspaceShell::HandleAddressKey(const ui::KeyEvent& event) {

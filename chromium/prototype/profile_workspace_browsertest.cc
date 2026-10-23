@@ -1046,23 +1046,98 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, TimeMachineSnapshotsClosedTabs
       node.GetStringAttribute(ax::mojom::StringAttribute::kValue));
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceEditorsCocoaCompositionAndProfileScope) {
+  auto* shell=window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(window_->WriteTextPreference("accept_languages","en-US"));
+  shell->OpenGeneralSettings();
+  ui_controls::EnableUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->general_widget()->GetNativeWindow()));
+  auto key=[&](ui::KeyboardCode code){return ui_test_utils::SendKeyPressToWindowSync(
+      shell->general_widget()->GetNativeWindow(),code,false,false,false,false);};
+  auto replace=[](EditorControl* field,std::u16string text){
+    field->SelectRange(gfx::Range(0,field->GetText().size()));
+    field->input_client()->InsertText(text,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
+  };
+  auto* search=shell->preferences_search();search->RequestFocus();
+  EXPECT_EQ(shell->workspace_input()->rust_editor(),search->rust_editor());
+  ASSERT_TRUE(key(ui::VKEY_A));
+  ASSERT_TRUE(base::test::RunUntil([&]{return search->GetText()==u"a";}));
+  replace(search,u"języki");shell->general_widget()->LayoutRootViewIfNecessary();
+  auto* languages=shell->preference_textfield("accept_languages");
+  ASSERT_TRUE(languages->view()->IsDrawn());
+  EXPECT_EQ(search->rust_editor(),languages->rust_editor());
+  EXPECT_EQ(search->rust_editor(),shell->site_origin_input()->rust_editor());
+  if(search->rust_editor()){
+    EXPECT_TRUE(languages->view()->children().empty());
+    EXPECT_FALSE(views::AsViewClass<views::Textfield>(languages->view()));
+    ASSERT_TRUE(base::test::RunUntil([&]{return search->metal_visible()&&languages->metal_visible();}));
+  }
+  // Preedit must not refilter the section containing the field underneath it.
+  search->SelectRange(gfx::Range(search->GetText().size()));
+  ui::CompositionText marked;marked.text=u"にほん";marked.selection=gfx::Range(marked.text.size());
+  search->SetCompositionText(marked);ASSERT_TRUE(search->IsIMEComposing());
+  EXPECT_TRUE(languages->view()->IsDrawn());search->ClearCompositionText();
+  languages->view()->ScrollRectToVisible(languages->view()->GetLocalBounds());languages->RequestFocus();
+  replace(languages,u"pl");
+  marked.text=u", EN-us";marked.selection=gfx::Range(marked.text.size());
+  languages->SetCompositionText(marked);ASSERT_TRUE(languages->IsIMEComposing());
+  ui::KeyEvent enter(ui::EventType::kKeyPressed,ui::VKEY_RETURN,0),escape(ui::EventType::kKeyPressed,ui::VKEY_ESCAPE,0);
+  EXPECT_FALSE(shell->HandlePreferenceEditorKey(languages,enter));
+  EXPECT_FALSE(shell->HandlePreferenceEditorKey(languages,escape));
+  EXPECT_EQ("en-US",window_->ReadPreferences().at("accept_languages").text);
+  shell->SetWorkspaceAnimations(false);
+  EXPECT_TRUE(languages->IsIMEComposing());EXPECT_EQ(u"pl, EN-us",languages->GetText());
+  languages->ConfirmCompositionText(false);
+  ASSERT_TRUE(key(ui::VKEY_RETURN));
+  ASSERT_TRUE(base::test::RunUntil([&]{return window_->ReadPreferences().at("accept_languages").text=="pl,en-US";}));
+  EXPECT_EQ(u"pl,en-US",languages->GetText());
+  replace(languages,u"pl,,en");ASSERT_TRUE(key(ui::VKEY_RETURN));
+  EXPECT_EQ("pl,en-US",window_->ReadPreferences().at("accept_languages").text);
+  EXPECT_EQ(u"pl,,en",languages->GetText());
+  // Programmatic refresh is silent; a committed draft remains unsaved.
+  shell->SetWorkspaceAnimations(true);EXPECT_EQ(u"pl,,en",languages->GetText());
+  ASSERT_TRUE(window_->Select("personal"));shell->OpenGeneralSettings();
+  EXPECT_NE(u"pl,,en",languages->GetText());
+  EXPECT_NE("pl,en-US",window_->ReadPreferences().at("accept_languages").text);
+  ASSERT_TRUE(window_->Select("work"));shell->OpenGeneralSettings();
+  EXPECT_EQ(u"pl,en-US",languages->GetText());
+  shell->OpenGeneralSettings();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->general_widget()->GetNativeWindow()));
+  search->RequestFocus();replace(search,u"wyjątek");shell->general_widget()->LayoutRootViewIfNecessary();
+  auto* origin=shell->site_origin_input();ASSERT_TRUE(origin->view()->IsDrawn());
+  origin->view()->ScrollRectToVisible(origin->view()->GetLocalBounds());origin->RequestFocus();
+  // Default policy removes a pre-existing JS rule only after a committed Enter.
+  const std::string site="https://editor-scope.test";
+  ASSERT_TRUE(window_->WriteSitePreference(site,"javascript",1));
+  replace(origin,base::UTF8ToUTF16(site));
+  marked.text=u"/path";marked.selection=gfx::Range(marked.text.size());origin->SetCompositionText(marked);
+  EXPECT_FALSE(shell->HandlePreferenceEditorKey(origin,enter));
+  EXPECT_FALSE(window_->ReadSitePreferences().empty());origin->ClearCompositionText();
+  ASSERT_TRUE(key(ui::VKEY_RETURN));
+  EXPECT_TRUE(window_->ReadSitePreferences().empty());
+  ASSERT_TRUE(key(ui::VKEY_ESCAPE));
+  ASSERT_TRUE(base::test::RunUntil([&]{return !shell->general_widget()->IsVisible();}));
+  EXPECT_FALSE(shell->HandlePreferenceEditorKey(origin,enter));
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AdvancedChromiumPreferences) {
   ASSERT_NO_FATAL_FAILURE(NavigateBoth("/preferences_probe.html"));
   ASSERT_TRUE(window_->Select("work"));
   auto* shell = window_->shell();
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
   shell->OpenGeneralSettings();
-  shell->preferences_search()->SetText(u"języki");
-  static_cast<views::TextfieldController*>(shell)->ContentsChanged(shell->preferences_search(), u"języki");
+  shell->preferences_search()->input_client()->InsertText(u"języki",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
   shell->general_widget()->LayoutRootViewIfNecessary();
-  ASSERT_TRUE(shell->preference_textfield("accept_languages")->IsDrawn());
+  ASSERT_TRUE(shell->preference_textfield("accept_languages")->view()->IsDrawn());
   auto* field = shell->preference_textfield("accept_languages");
-  field->SetText(u"pl, EN-us, pl");
-  static_cast<views::TextfieldController*>(shell)->ContentsChanged(field, std::u16string(field->GetText()));
+  field->SelectRange(gfx::Range(0,field->GetText().size()));
+  field->input_client()->InsertText(u"pl, EN-us, pl",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
   shell->SetWorkspaceAnimations(false);
   EXPECT_EQ(u"pl, EN-us, pl", field->GetText());  // A refresh preserves an unsaved edit.
   ui::KeyEvent enter(ui::EventType::kKeyPressed, ui::VKEY_RETURN, ui::EF_NONE);
-  ASSERT_TRUE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(field, enter));
+  ASSERT_TRUE(shell->HandlePreferenceEditorKey(field, enter));
   EXPECT_EQ("pl,en-US", window_->ReadPreferences().at("accept_languages").text);
   EXPECT_EQ(u"pl,en-US", field->GetText());
   EXPECT_FALSE(window_->WriteTextPreference("accept_languages", "pl,,en"));
@@ -1288,13 +1363,15 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ProfilePreferencesAndSearch) {
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
   shell->OpenGeneralSettings();
   auto search = [&](std::u16string text) {
-    shell->preferences_search()->SetText(text);
-    static_cast<views::TextfieldController*>(shell)->ContentsChanged(shell->preferences_search(), text);
+    auto* field=shell->preferences_search();
+    const gfx::Range range(0,field->GetText().size());field->SelectRange(range);
+    if(text.empty())field->input_client()->DeleteRange(range);
+    else field->input_client()->InsertText(text,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
     shell->general_widget()->LayoutRootViewIfNecessary();
   };
   search(u"  KAMERA  ");
   ui::KeyEvent enter_preferences(ui::EventType::kKeyPressed, ui::VKEY_RETURN, ui::EF_NONE);
-  EXPECT_FALSE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(shell->preferences_search(), enter_preferences));
+  EXPECT_FALSE(shell->HandlePreferenceEditorKey(shell->preferences_search(), enter_preferences));
   EXPECT_TRUE(shell->preference_toggle("camera")->IsDrawn());
   EXPECT_FALSE(shell->theme_picker()->IsDrawn());
   views::test::ButtonTestApi(shell->preference_toggle("camera")).NotifyDefaultMouseClick();

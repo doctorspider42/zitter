@@ -253,10 +253,10 @@ class WorkspaceShell final : public ui::EventHandler,
   void SetPreferencesStatus(std::u16string text, bool error = false);
   void SetOperationStatus(std::u16string text);
   void SetBrowsingDataBusy(bool busy);
-  views::Textfield* preference_textfield(std::string key) const { return preference_textfields_.at(key); }
+  EditorControl* preference_textfield(std::string key) const { return preference_textfields_.at(key); }
   views::Combobox* preference_picker(std::string key) const { return preference_pickers_.at(key); }
-  views::Textfield* site_origin_input() const { return site_origin_; }
-  views::Textfield* preferences_search() const { return preferences_search_; }
+  EditorControl* site_origin_input() const { return site_origin_; }
+  EditorControl* preferences_search() const { return preferences_search_; }
   views::ToggleButton* preference_toggle(std::string key) const { return preference_toggles_.at(key); }
   views::Combobox* theme_picker() const { return theme_picker_; }
   views::Combobox* search_engine_picker() const { return search_engine_picker_; }
@@ -386,6 +386,7 @@ class WorkspaceShell final : public ui::EventHandler,
   EditorControl* address_input() const { return address_; }
   // Application key policy; the platform input method owns composing keys.
   bool HandleAddressKey(const ui::KeyEvent& event);
+  bool HandlePreferenceEditorKey(EditorControl* sender,const ui::KeyEvent& event);
 
  private:
   void ManagedProfileSelectionChanged();
@@ -558,7 +559,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::Combobox> search_engine_picker_ = nullptr;
   raw_ptr<views::ToggleButton> sidebar_check_ = nullptr;
   raw_ptr<views::ToggleButton> animations_check_ = nullptr;
-  raw_ptr<views::Textfield> preferences_search_ = nullptr;
+  raw_ptr<EditorControl> preferences_search_ = nullptr;
   raw_ptr<views::Label> preferences_profile_ = nullptr;
   raw_ptr<views::Label> download_directory_label_ = nullptr;
   raw_ptr<views::Button> download_directory_button_ = nullptr;
@@ -579,11 +580,11 @@ class WorkspaceShell final : public ui::EventHandler,
   std::map<std::string, raw_ptr<views::ToggleButton>> preference_toggles_;
   std::map<std::string, raw_ptr<views::Combobox>> preference_pickers_;
   size_t preference_category_ = 0;
-  std::map<std::string, raw_ptr<views::Textfield>> preference_textfields_;
+  std::map<std::string, raw_ptr<EditorControl>> preference_textfields_;
   std::map<std::string, raw_ptr<views::Button>> preference_save_buttons_;
   std::set<std::string> preference_text_dirty_;
   std::string preferences_profile_id_;
-  raw_ptr<views::Textfield> site_origin_ = nullptr;
+  raw_ptr<EditorControl> site_origin_ = nullptr;
   raw_ptr<views::Combobox> site_type_ = nullptr;
   raw_ptr<views::Combobox> site_policy_ = nullptr;
   raw_ptr<views::View> site_rules_list_ = nullptr;
