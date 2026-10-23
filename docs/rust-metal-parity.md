@@ -8,21 +8,21 @@ milestones to `origin/main` as they land. The opt-in switch remains
 
 ## Current execution policy
 
-Latest automated acceptance: UI source `a6d994b91dd92b42d34a540df6203ac6a69df930`
-passed **129 Metal / 97 Views cases**, six explicit skips per backend, from the
-complete 135-case inventory (103 applicable Views cases; 32 dedicated Metal cases
+Latest automated acceptance: UI source `425a23b0dc423b307fa95018e7772f841596ea2a`
+passed **130 Metal / 98 Views cases**, six explicit skips per backend, from the
+complete 136-case inventory (104 applicable Views cases; 32 dedicated Metal cases
 excluded), with one job and no retries. **66 clean-archive Python tests**, scoped
 GN/boundaries and optimized compilation passed; the live checkout passed 68 Python
 cases including two concurrent cases outside this commit. Rust/scene/geometry
 sources match the preceding 214 Rust / 61 standalone / 180 SDK plus raster evidence,
 which was not repeated for this native adapter change.
-[Matching checkpoint](benchmarks/rust-ime-empty-marked-checkpoint-2026-10-23.json).
+[Matching checkpoint](benchmarks/rust-preference-editors-checkpoint-2026-10-23.json).
 
 The live workspace/profile name editor now has macOS selection direction/policies,
 page/paragraph commands, kill/yank, transpose and matched forced direction/raster
 geometry. It remains a prototype with native adapters and explicit transition
 and interaction gaps. [Editor details](rust-metal-editor.md).
-Remaining settings/service fields use Views; address/palette, folder names and color/emoji now use replacement editors with committed-edit callbacks. Continue isolated windowed checks;
+Preferences search, six Chromium preference text fields and site origin now use replacement editors too. Remaining history, snapshot/Time Machine, shortcut and search-provider fields still use Views; settings containers and controls remain to migrate. Continue isolated windowed checks;
 manual signed-app/IME/VoiceOver/scale/RTL and actual profiling remain pending.
 [Full remaining plan](rust-metal-next-steps-2026-10-23.md).
 
@@ -61,7 +61,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Workspace/profile form action buttons | Rust button/group geometry, shared pointer/key reducer and text/background/border/focus primitives; four Metal groups; native Button/AX/focus, platform font/metric/color and command adapters (automated UI checked; manual acceptance pending) | Replace native interaction nodes; verify dynamic labels, disabled styles, focus/keyboard/cancellation, clipping/fallback and service semantics |
 | Workspace color/emoji presets | Rust preset data/selection, row geometry, pointer/key reducer and scene primitives; two shared-context Metal canvases; native Button/AX/focus and text/grapheme/storage adapters (automated UI checked; manual acceptance pending) | Color/emoji editor migration verified; replace remaining native preset Button interaction ownership and broaden capture/visibility/IME/AX/theme/scale/persistence acceptance |
 | Workspace deletion confirmation | Rust captured-target notice state/copy and shared paragraph layout; Metal body/error text; native modal title/buttons and deletion/persistence services (automated UI checked; manual acceptance pending) | Migrate remaining host controls; verify default Cancel, beforeunload, stale targets, retained profile data, typography and screen bounds |
-| General preferences, shortcuts and site preferences | Views + application services | Rust forms; use the same persisted configuration |
+| General preferences, shortcuts and site preferences | Rust/Metal search, six per-key text editors and site origin; native stores and remaining Views controls | Migrate sections, switches/pickers/buttons, shortcut recorder and outer containers; retain persisted profile/global configuration |
 | History, downloads, passwords and permissions | Views/native service adapters | Rust presentation/control layer; retain browser service and security semantics |
 | Peek, promote/split, link/page menus and routing | Views/native adapters + application | Rust control routing, focus and dismissal; retain native page integration |
 | Import form and first-run import | Rust UI option/debounce/admission/controller state, copy, columns and Metal static/status/Apply text; native Button/AX/focus, header nodes, native popup/IME adapters and application import services (automated UI checked; manual acceptance pending) | Migrate remaining native header and input nodes; verify latest options, busy recovery, credentials opt-in, source immutability, first-run/persistence/rollback and runtime accessibility |
@@ -503,3 +503,7 @@ remain. Passing the current tests establishes the tested milestone only.
   geometry match prior unit/SDK evidence. Broader native termination/menu/focus,
   candidate windows/VoiceOver, remaining fields/containers and performance/release
   work stay open. [Evidence](benchmarks/rust-ime-empty-marked-checkpoint-2026-10-23.json).
+
+## Settings text-input milestone
+
+Eight preferences fields now use the same Rust/Metal editor contract as the palette and workspace fields, retaining one real native Textfield per field in the Views baseline. Committed callbacks own search/dirty tracking; composing keys and save buttons cannot persist preedit. Unrelated refreshes preserve drafts/composition, while opening another profile reloads its authoritative values. The actual Cocoa/IME/profile test and complete matrix passed **130 Metal / 98 Views**, with six explicit skips per backend. Controls, containers, remaining service fields, manual platform acceptance and performance comparison remain open. [Evidence](benchmarks/rust-preference-editors-checkpoint-2026-10-23.json).

@@ -1,6 +1,6 @@
 # Rust + Metal: remaining work and GUI checkpoint
 
-Snapshot: `a6d994b91dd92b42d34a540df6203ac6a69df930`, 2026-10-23.
+Snapshot: `425a23b0dc423b307fa95018e7772f841596ea2a`, 2026-10-23.
 This is a work plan, not a claim of functional parity. The detailed inventory is
 [the parity checklist](rust-metal-parity.md). Existing native behavior is preserved
 in many places where Views presentation and interaction still need replacement.
@@ -8,28 +8,24 @@ in many places where Views presentation and interaction still need replacement.
 ## Current checkpoint
 
 The full compiled automated browser/UI inventory passed for UI source
-`a6d994b91dd92b42d34a540df6203ac6a69df930`:
+`425a23b0dc423b307fa95018e7772f841596ea2a`:
 
 | Backend | Passed | Explicit skips | Failed / crashed |
 | --- | ---: | ---: | ---: |
-| Rust + Metal | 129 | 6 | 0 |
-| Views | 97 | 6 | 0 |
+| Rust + Metal | 130 | 6 | 0 |
+| Views | 98 | 6 | 0 |
 
 The complete run was serial, with one launcher job and no retries, using temporary
 fixture-owned profiles. Metal API validation was enabled. The 32 dedicated Metal
-cases are excluded from Views (135 Metal / 103 Views inventory). **66 Python tests
+cases are excluded from Views (136 Metal / 104 Views inventory). **66 Python tests
 from a clean archive** and 68 in the live checkout passed (the latter includes two
 concurrent tests outside this UI commit). Rust/editor/scene/geometry sources are
 unchanged from the preceding **214 Rust / 61 standalone model / 180 SDK font and
-direction plus raster** checks; those runs were not repeated for this adapter edit.
+direction plus raster** checks; those runs were not repeated for this settings-adapter migration.
 Optimized compilation, scoped GN/boundaries and a final no-work Ninja check passed.
-[Results and source/binary hashes](benchmarks/rust-ime-empty-marked-checkpoint-2026-10-23.json).
+[Results and source/binary hashes](benchmarks/rust-preference-editors-checkpoint-2026-10-23.json).
 
-The native/Metal gate and complete inventory cover idle empty markers preserving
-selection, active preedit termination without commit, range/readonly semantics,
-repeated no-ops, subsequent confirmation and saved-emoji protection. Actual Cocoa
-input/navigation and existing broader UI cases remain in the full run. Historical
-intermediate failures are retained in their own checkpoint reports.
+The native/Metal gate passed 15 tests per backend. The complete inventory covers the new settings editors: actual Cocoa typing/Enter/Escape, committed filtering, preedit suppression, canonical/invalid language drafts, unrelated refresh and profile reopening, plus a site-origin exception. The prior empty-marker and broader UI regression cases remain included. The first new gate exposed an invalid test assumption about hidden preferences refreshing immediately after Select; reopening each profile fixes the fixture in both backends. Initial logs are retained.
 
 Each backend explicitly skipped four opt-in performance scenarios, the real-user
 Arc import and the interactive one-hour manual harness. They are not counted as
@@ -93,7 +89,7 @@ and its empty-preedit capability are unchanged.
 [Implementation and remaining editor gaps](rust-metal-editor.md).
 
 Next: broaden undo/menu/focus/hide/native candidate-window termination acceptance,
-then migrate remaining settings/service fields and continue form/container and
+then migrate remaining service fields and continue settings controls/form/container and
 service-panel ownership. VoiceOver, multi-click/bidi/pointer/menu/clipboard/scale/
 theme/GPU recovery, actual profiling and signed/manual release checks remain.
 
@@ -104,10 +100,4 @@ Passing the current inventory does not establish a completion percentage.
 
 ## Remaining native text-input roles
 
-The current WorkspaceShell still has native roles for general preferences search,
-the per-key preference textfield map, site origin, history search, snapshot name,
-Time Machine filtering, the shortcut recorder and search-provider name/keyword/URL.
-These are role declarations, not a count of simultaneous widgets. The shortcut
-recorder needs its existing accelerator capture/admission semantics preserved; it
-is not an ordinary freely editable field. Stores, profile scope and service
-authorization remain domain boundaries during their migration.
+The preferences search, six per-key Chromium text fields and site-origin editor are migrated. WorkspaceShell still has native roles for history search, snapshot name, Time Machine filtering, the shortcut recorder and search-provider name/keyword/URL. These are role declarations, not a count of simultaneous widgets. The shortcut recorder needs accelerator capture/admission semantics preserved; it is not an ordinary freely editable field. Stores, profile scope and service authorization remain domain boundaries.
