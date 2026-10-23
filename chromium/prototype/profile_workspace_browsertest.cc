@@ -132,6 +132,7 @@
 #include "ui/base/ime/composition_text.h"
 #include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/controls/combobox/combobox.h"
+#include "ui/base/ime/input_method.h"
 #include "ui/views/test/button_test_api.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/accessibility/ax_node_data.h"
@@ -3582,9 +3583,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ImportOptionsInvalidatePreview
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->import_ready(); }));
   EXPECT_EQ(1u, window_->import_preview()->profiles.size());
   // Rapid source changes prepare only the final choice, without a check step.
-  views::test::ComboboxTestApi(shell->import_browser_picker()).PerformActionAt(1);
-  views::test::ComboboxTestApi(shell->import_browser_picker()).PerformActionAt(0);
-  views::test::ComboboxTestApi(shell->import_browser_picker()).PerformActionAt(1);
+  shell->SelectImportBrowserForTesting(1);
+  shell->SelectImportBrowserForTesting(0);
+  shell->SelectImportBrowserForTesting(1);
   EXPECT_FALSE(window_->import_ready());
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->import_ready(); }));
   ASSERT_EQ(1u, window_->import_preview()->spaces.size());
@@ -3916,6 +3917,16 @@ class ZitterMetalSidebarBrowserTest : public ZitterProfilesBrowserTest {
     command_line->AppendSwitchASCII("zitter-sidebar", "rust-metal");
   }
 };
+// Compile only. Real popup, IME and Metal acceptance awaits the GUI checkpoint.
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ImportSourceScenePrefixAXDisabledAndVisibility) {
+  base::ScopedAllowBlockingForTesting files;base::ScopedTempDir source;ASSERT_TRUE(source.CreateUniqueTempDir());base::FilePath root;ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT,&root));ASSERT_TRUE(base::CopyDirectory(root.AppendASCII("zitter/testdata/arc"),source.GetPath().AppendASCII("Arc"),true));ASSERT_TRUE(base::CreateDirectory(source.GetPath().AppendASCII("Google/Chrome/Default")));base::ScopedPathOverride app_data(base::DIR_APP_DATA,source.GetPath());
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenImport();ASSERT_TRUE(base::test::RunUntil([&]{return window_->import_ready()&&shell->import_source_metal_visible();}));auto* picker=shell->import_browser_picker();ASSERT_TRUE(picker);EXPECT_FALSE(views::AsViewClass<views::Combobox>(picker));for(const auto& child:picker->children())EXPECT_FALSE(views::AsViewClass<views::Label>(child.get()));EXPECT_TRUE(shell->import_panel_contains_scene_text("Arc"));
+  ui::AXNodeData data;picker->GetViewAccessibility().GetAccessibleNodeData(&data);EXPECT_EQ(ax::mojom::Role::kComboBoxSelect,data.role);EXPECT_EQ(u"Arc",data.GetString16Attribute(ax::mojom::StringAttribute::kValue));EXPECT_TRUE(data.HasState(ax::mojom::State::kCollapsed));
+  picker->RequestFocus();ASSERT_TRUE(picker->HasFocus());auto* input=picker->GetInputMethod()->GetTextInputClient();ASSERT_TRUE(input);input->InsertText(u"g",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);EXPECT_EQ(ImportBrowser::kChrome,shell->import_options().browser);ASSERT_TRUE(base::test::RunUntil([&]{return window_->import_ready()&&shell->import_panel_contains_scene_text("Google Chrome");}));
+  shell->SetImportStatus(u"Importowanie…",false,true,true);shell->SelectImportBrowserForTesting(0);input->InsertText(u"b",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);EXPECT_EQ(ImportBrowser::kChrome,shell->import_options().browser);shell->SetImportStatus(u"Gotowe",true);
+  shell->SelectImportBrowserForTesting(0);ASSERT_TRUE(base::test::RunUntil([&]{return window_->import_ready();}));shell->SelectImportBrowserForTesting(99);EXPECT_EQ(ImportBrowser::kArc,shell->import_options().browser);
+  const gfx::Point point(12,12);ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ASSERT_TRUE(picker->OnMousePressed(press));shell->import_widget()->Hide();picker->OnMouseReleased(release);shell->SelectImportBrowserForTesting(1);EXPECT_EQ(ImportBrowser::kArc,shell->import_options().browser);ASSERT_TRUE(base::test::RunUntil([&]{return !shell->import_source_metal_visible();}));shell->OpenImport();ASSERT_TRUE(base::test::RunUntil([&]{return window_->import_ready()&&shell->import_source_metal_visible();}));
+}
 // Compile only. Checkbox rendering/input acceptance awaits the GUI checkpoint.
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ImportCheckboxScenesAXSpaceCaptureDisabledAndVisibility) {
   base::ScopedAllowBlockingForTesting files;base::ScopedTempDir source;ASSERT_TRUE(source.CreateUniqueTempDir());base::FilePath root;ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT,&root));ASSERT_TRUE(base::CopyDirectory(root.AppendASCII("zitter/testdata/arc"),source.GetPath().AppendASCII("Arc"),true));ASSERT_TRUE(base::CreateDirectory(source.GetPath().AppendASCII("Google/Chrome/Default")));base::ScopedPathOverride app_data(base::DIR_APP_DATA,source.GetPath());
@@ -3928,7 +3939,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ImportCheckboxScenesAXSpac
   ui::AXNodeData checked;history->GetViewAccessibility().GetAccessibleNodeData(&checked);EXPECT_EQ(static_cast<int>(ax::mojom::CheckedState::kTrue),checked.GetIntAttribute(ax::mojom::IntAttribute::kCheckedState));
   shell->SetImportStatus(u"Importowanie…",false,true,true);auto* cookies=shell->import_cookies();EXPECT_FALSE(cookies->GetEnabled());views::test::ButtonTestApi(cookies).NotifyDefaultMouseClick();EXPECT_FALSE(shell->import_options().cookies);shell->SetImportStatus(u"Gotowe",true);
   ASSERT_TRUE(history->OnKeyPressed(space));history->OnKeyReleased(up);ASSERT_TRUE(base::test::RunUntil([&]{return window_->import_ready();}));EXPECT_FALSE(shell->import_options().history);
-  auto* bookmarks=shell->import_bookmarks();ASSERT_TRUE(bookmarks->OnMousePressed(press));views::test::ComboboxTestApi(shell->import_browser_picker()).PerformActionAt(1);bookmarks->OnMouseReleased(release);EXPECT_TRUE(shell->import_options().bookmarks);ASSERT_TRUE(base::test::RunUntil([&]{return window_->import_ready();}));ASSERT_TRUE(base::test::RunUntil([&]{return shell->import_panel_contains_scene_text("Zakładki i foldery");}));EXPECT_EQ(u"Zakładki i foldery",bookmarks->GetTooltipText());
+  auto* bookmarks=shell->import_bookmarks();ASSERT_TRUE(bookmarks->OnMousePressed(press));shell->SelectImportBrowserForTesting(1);bookmarks->OnMouseReleased(release);EXPECT_TRUE(shell->import_options().bookmarks);ASSERT_TRUE(base::test::RunUntil([&]{return window_->import_ready();}));ASSERT_TRUE(base::test::RunUntil([&]{return shell->import_panel_contains_scene_text("Zakładki i foldery");}));EXPECT_EQ(u"Zakładki i foldery",bookmarks->GetTooltipText());
   ui::AXActionData action;action.action=ax::mojom::Action::kDoDefault;EXPECT_TRUE(cookies->HandleAccessibleAction(action));EXPECT_TRUE(shell->import_options().cookies);ASSERT_TRUE(base::test::RunUntil([&]{return window_->import_ready();}));
   ASSERT_TRUE(cookies->OnMousePressed(press));shell->import_widget()->Hide();cookies->OnMouseReleased(release);EXPECT_TRUE(shell->import_options().cookies);ASSERT_TRUE(base::test::RunUntil([&]{return !shell->import_choices_metal_visible();}));shell->OpenImport();ASSERT_TRUE(base::test::RunUntil([&]{return window_->import_ready()&&shell->import_choices_metal_visible();}));
 }
@@ -3939,7 +3950,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ImportFormScenesLatestOpti
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenImport();ASSERT_TRUE(base::test::RunUntil([&]{return window_->import_ready()&&shell->import_panel_contains_scene_text("Przenieś się do Zittera");}));
   auto* panel=shell->import_panel_for_testing();ASSERT_TRUE(panel);auto no_labels=[&](auto&& self,views::View* view)->void {if(views::AsViewClass<views::Combobox>(view)||views::AsViewClass<views::Checkbox>(view))return;EXPECT_FALSE(views::AsViewClass<views::Label>(view));for(const auto& child:view->children())self(self,child.get());};no_labels(no_labels,panel);
   auto* apply=FindButton(panel,u"Importuj");ASSERT_TRUE(apply);EXPECT_FALSE(views::AsViewClass<views::MdTextButton>(apply));ASSERT_TRUE(base::test::RunUntil([&]{return shell->import_panel_contains_scene_text("Importuj");}));
-  views::test::ComboboxTestApi(shell->import_browser_picker()).PerformActionAt(1);views::test::ComboboxTestApi(shell->import_browser_picker()).PerformActionAt(0);views::test::ComboboxTestApi(shell->import_browser_picker()).PerformActionAt(1);
+  shell->SelectImportBrowserForTesting(1);shell->SelectImportBrowserForTesting(0);shell->SelectImportBrowserForTesting(1);
   EXPECT_FALSE(window_->import_ready());ASSERT_TRUE(shell->import_browser_picker()->GetEnabled());ASSERT_TRUE(base::test::RunUntil([&]{return window_->import_ready();}));EXPECT_EQ("chrome-space-Default",window_->import_preview()->spaces[0].id);ui::AXNodeData bookmarks_name;shell->import_bookmarks()->GetViewAccessibility().GetAccessibleNodeData(&bookmarks_name);EXPECT_EQ(u"Zakładki i foldery",bookmarks_name.GetString16Attribute(ax::mojom::StringAttribute::kName));
   // Programmatic changes do not emit a Checkbox callback; Apply must rescan.
   shell->SetImportOptionCheckedForTesting(2,true);views::test::ButtonTestApi(apply).NotifyDefaultMouseClick();EXPECT_FALSE(window_->import_ready());ASSERT_TRUE(base::test::RunUntil([&]{return window_->import_ready();}));EXPECT_TRUE(window_->import_preview()->options.history);

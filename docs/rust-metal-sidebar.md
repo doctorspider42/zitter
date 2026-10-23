@@ -936,3 +936,59 @@ plus four UI source overrides, excluding unrelated network-policy work. No app o
 window was launched and no CPU/GPU/presentation gain was established. Native
 source/header/outer controls and other Views surfaces remain. See
 [checkbox verification](benchmarks/rust-checkboxes-headless-2026-10-23.json).
+
+
+## Import source selector (GUI checkpoint pending)
+
+The opt-in import source list now uses a `SceneSelect` native event/focus/AX node
+with Rust selected-index state and immutable UI label/search options. The closed
+control has one Metal canvas and a Rust recipe for backing, border, focus, label
+and arrow; the native fallback consumes the same recipe. It contains no native
+Combobox/Label/arrow-button/focus-ring/ink painting. Legacy Views retains its
+Combobox. The two dynamic profile pickers are unchanged.
+
+Rust mirrors the existing macOS Combobox policy: Up, Down, Space, Home and End
+open a popup rather than advancing selection directly. A native `MenuRunner`
+with `COMBOBOX` handles the popup itself. Each opening captures a Rust generation;
+commands from dismissed, hidden, disabled or superseded menus cannot change the
+selection. Selecting the same item through a menu still invokes the existing
+source-change callback, matching native Combobox behavior.
+
+A `PrefixSelector` subclass supplies the native text-input protocol, including
+its existing non-inline composition behavior. Committed InsertText/InsertChar
+input is normalized with Chromium ICU, then Rust owns prefix state, the original
+one-second timeout, wraparound matching and selected index. Prefix extension
+starts at the current row; a new search starts at the next row. Focus/input-method
+changes reset the prefix. Disabled or hidden controls cannot change the source.
+The UI carries labels/options only: native source paths, parsers, imported data,
+credentials and destination services never enter Rust.
+
+Native platform font, color and minimum-control-height services remain. Rust
+places the text and ordinary text-tile arrow with bounded and mirrored RTL
+geometry. The existing shader and GPU quad ABI are unchanged. Weak scheduled
+scene invalidation updates independently of native painting; surface fingerprints
+skip identical recipes. This does not establish an end-to-end speedup.
+
+The internal source accessor now exposes a common View node. Browser tests use
+`SelectImportBrowserForTesting` to dispatch a source action for either backend;
+production menu/typeahead callbacks retain the existing import invalidation and
+debounce path. `import_source_metal_visible` and scene-text inspection are
+checkpoint diagnostics. Source reading/import service behavior is unchanged.
+
+**140 Rust and 61 Python tests passed** without windows, with scoped GN and
+boundary checks, optimized app/test compilation and a final no-work Ninja check.
+Eight new Rust cases cover popup admission/staleness, disabled/empty/out-of-range
+values, prefix extension/timeout/reset/control filtering, native macOS menu-key
+policy, saturated/RTL geometry and closed-control primitives/clipping.
+`ImportSourceScenePrefixAXDisabledAndVisibility` was compiled only: it checks the
+absence of a native Combobox/Labels, AX role/value/collapsed state, committed
+prefix input, disabled/invalid selection and hidden/reopened surface behavior.
+The deferred matrix is **69 Metal cases and 34 Views controls**.
+
+No application or windowed test was launched. The later checkpoint must exercise
+actual popup open/selection/cancel and lifetime, pointer/capture/focus, keyboard,
+IME/VoiceOver announcements, text/arrow rasterization, full labels and narrow
+bounds, theme/scale/RTL, native fallback and import persistence. Existing post-
+baseline GUI results remain unaccepted. Packaging/signing and CPU/GPU/actual
+presentation comparisons remain separate pending work. See
+[source selector verification](benchmarks/rust-source-picker-headless-2026-10-23.json).

@@ -35,10 +35,14 @@
 #include "components/url_formatter/url_fixer.h"
 #include "components/vector_icons/vector_icons.h"
 #include "ui/base/hit_test.h"
+#include "ui/base/menu_source_utils.h"
+#include "ui/accessibility/ax_action_data.h"
 #include "ui/gfx/text_utils.h"
 #include "ui/gfx/text_elider.h"
 #include "ui/base/models/simple_combobox_model.h"
 #include "ui/views/controls/combobox/combobox.h"
+#include "ui/views/controls/prefix_selector.h"
+#include "ui/base/ime/input_method.h"
 #include "ui/views/controls/scroll_view.h"
 #include "ui/views/controls/scrollbar/scroll_bar.h"
 #include "ui/views/controls/resize_area.h"
@@ -746,6 +750,71 @@ BEGIN_METADATA(SceneCheckboxGroup)
 END_METADATA
 void CancelSceneCheckboxes(views::View* root){if(!root)return;if(auto* group=views::AsViewClass<SceneCheckboxGroup>(root)){group->CancelInput();return;}for(const auto& child:root->children())CancelSceneCheckboxes(child.get());}
 #endif
+#if BUILDFLAG(IS_MAC)
+// Native IME protocol only; prefix matching and selected state live in Rust.
+class SceneSelectInput final : public views::PrefixSelector {
+ public:
+  SceneSelectInput(views::View* host,base::RepeatingCallback<void(std::u16string)> input,base::RepeatingClosure reset):views::PrefixSelector(nullptr,host),input_(std::move(input)),reset_(std::move(reset)){}
+  void InsertText(const std::u16string& text,InsertTextCursorBehavior) override {input_.Run(text);}
+  void InsertChar(const ui::KeyEvent& event) override {input_.Run(std::u16string(1,event.GetCharacter()));}
+  void OnInputMethodChanged() override {reset_.Run();}
+ private:
+  base::RepeatingCallback<void(std::u16string)> input_;base::RepeatingClosure reset_;
+};
+class SceneSelect final : public SceneGlyphButton,public ui::SimpleMenuModel::Delegate {
+  METADATA_HEADER(SceneSelect,SceneGlyphButton)
+ public:
+  SceneSelect(std::vector<std::u16string> labels,std::u16string name,base::RepeatingClosure changed)
+      :SceneGlyphButton(base::BindRepeating([]{}),std::move(name),Glyph::kMore,nullptr,base::BindRepeating([]{return true;})),labels_(std::move(labels)),state_(MakeState(labels_)),changed_(std::move(changed)),input_(this,base::BindRepeating(&SceneSelect::Input,base::Unretained(this)),base::BindRepeating(&SceneSelect::ResetPrefix,base::Unretained(this))) {
+    SetInstallFocusRingOnFocus(false);SetHasInkDropActionOnClick(false);SetAnimateOnStateChange(false);SetRequestFocusOnPress(false);GetViewAccessibility().SetRole(ax::mojom::Role::kComboBoxSelect);GetViewAccessibility().SetHasPopup(ax::mojom::HasPopup::kMenu);SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kOpen);UpdateAccessibleDefaultActionVerb();RefreshAX();
+  }
+  ~SceneSelect() override {if(GetInputMethod())GetInputMethod()->DetachTextInputClient(&input_);}
+  size_t Selected() const{return state_->selected();}
+  void SelectForTesting(size_t index){if(!GetEnabledInViewsSubtree()||!IsDrawn())return;CancelMenu();const auto token=state_->open(true);if(!state_->choose(token,index,true))return;RefreshAX();Schedule();changed_.Run();}
+  bool metal_visible() const{return surface_&&surface_->visible();}
+  bool contains_text(std::string_view text) const{return metal_visible()&&surface_->contains_text_for_testing(text);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {int widest=0;for(const auto& text:labels_)widest=std::max(widest,gfx::GetStringWidth(text,TextFont()));const auto g=sidebar::select_layout(-1,-1,widest,views::LayoutProvider::GetControlHeightForFont(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY,TextFont()),false);return gfx::Size(g.width,g.height);}
+  bool OnKeyPressed(const ui::KeyEvent& event) override {if(!GetEnabledInViewsSubtree())return false;if(!sidebar::select_menu_key(event.key_code()))return false;ShowMenu(ui::mojom::MenuSourceType::kKeyboard);return true;}
+  bool OnKeyReleased(const ui::KeyEvent&) override {return false;}
+  void OnFocus() override {SceneGlyphButton::OnFocus();if(GetInputMethod())GetInputMethod()->SetFocusedTextInputClient(&input_);}
+  void OnBlur() override {if(GetInputMethod())GetInputMethod()->DetachTextInputClient(&input_);ResetPrefix();SceneGlyphButton::OnBlur();}
+  bool HandleAccessibleAction(const ui::AXActionData& action) override {if(action.action==ax::mojom::Action::kDoDefault&&GetEnabledInViewsSubtree()){ShowMenu(ui::mojom::MenuSourceType::kKeyboard);return true;}return SceneGlyphButton::HandleAccessibleAction(action);}
+  void StateChanged(ButtonState previous) override {SceneGlyphButton::StateChanged(previous);if(!GetEnabledInViewsSubtree())CancelMenu();Schedule();}
+  void VisibilityChanged(views::View* changed,bool visible) override {SceneGlyphButton::VisibilityChanged(changed,visible);if(!IsDrawn()){OnMouseCaptureLost();CancelMenu();if(surface_)surface_->Hide();}Schedule();}
+  void AddedToWidget() override {SceneGlyphButton::AddedToWidget();Schedule();}
+  void RemovedFromWidget() override {if(GetInputMethod())GetInputMethod()->DetachTextInputClient(&input_);CancelMenu();surface_.reset();SceneGlyphButton::RemovedFromWidget();}
+  void OnBoundsChanged(const gfx::Rect& previous) override {SceneGlyphButton::OnBoundsChanged(previous);Schedule();}
+  void OnThemeChanged() override {SceneGlyphButton::OnThemeChanged();PreferredSizeChanged();Schedule();}
+  void OnDidSchedulePaint(const gfx::Rect& rect) override {SceneGlyphButton::OnDidSchedulePaint(rect);Schedule();}
+  void PaintButtonContents(gfx::Canvas* canvas) override {if(!metal_visible())PaintSceneRecipe(canvas,Scene(0,0,gfx::RectF(GetLocalBounds())),TextFont());Schedule();}
+  bool IsCommandIdChecked(int command) const override {return command>=0&&static_cast<size_t>(command)==Selected();}
+  bool IsCommandIdEnabled(int command) const override {return GetEnabledInViewsSubtree()&&IsDrawn()&&command>=0&&static_cast<size_t>(command)<labels_.size();}
+  void ExecuteCommand(int command,int) override {if(command<0||!state_->choose(menu_token_,command,GetEnabledInViewsSubtree()&&IsDrawn()))return;RefreshAX();Schedule();changed_.Run();}
+ protected:
+  void NotifyClick(const ui::Event& event) override {if(GetEnabledInViewsSubtree()&&IsDrawn())ShowMenu(ui::GetMenuSourceTypeForEvent(event));}
+ private:
+  static rust::Box<sidebar::SelectState> MakeState(const std::vector<std::u16string>& labels){rust::Vec<sidebar::SelectOption> options;for(const auto& label:labels)options.push_back({base::UTF16ToUTF8(label),base::UTF16ToUTF8(base::i18n::ToLower(label))});return sidebar::new_select_state(std::move(options));}
+  static gfx::FontList TextFont(){return views::TypographyProvider::Get().GetFont(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY);}
+  void ResetPrefix(){state_->reset_prefix();}
+  void Input(std::u16string text){if(!IsDrawn()||!HasFocus())return;const auto lower=base::UTF16ToUTF8(base::i18n::ToLower(text));if(!state_->input(lower,(base::TimeTicks::Now()-base::TimeTicks()).InMilliseconds(),GetEnabledInViewsSubtree()))return;RefreshAX();Schedule();changed_.Run();}
+  void RefreshAX(){if(Selected()<labels_.size())GetViewAccessibility().SetValue(labels_[Selected()]);if(state_->expanded())GetViewAccessibility().SetIsExpanded();else GetViewAccessibility().SetIsCollapsed();}
+  void CancelMenu(){state_->dismiss();ResetPrefix();RefreshAX();auto old=std::move(runner_);old.reset();}
+  void Closed(){state_->dismiss();runner_.reset();RefreshAX();Schedule();}
+  void ShowMenu(ui::mojom::MenuSourceType source){if(!GetWidget()||!IsDrawn()||!GetEnabledInViewsSubtree())return;CancelMenu();menu_token_=state_->open(true);if(!menu_token_)return;menu_=std::make_unique<ui::SimpleMenuModel>(this);for(size_t i=0;i<labels_.size();++i)menu_->AddRadioItem(i,labels_[i],1);runner_=std::make_unique<views::MenuRunner>(menu_.get(),views::MenuRunner::COMBOBOX,base::BindRepeating(&SceneSelect::Closed,weak_factory_.GetWeakPtr()));RefreshAX();Schedule();runner_->RunMenuAt(GetWidget(),nullptr,GetBoundsInScreen(),views::MenuAnchorPosition::kTopLeft,source);}
+  sidebar::Item Scene(float dx,float dy,gfx::RectF clip) const {sidebar::Item item{};item.kind=21;item.x=dx;item.y=dy;item.width=width();item.height=height();if(Selected()<labels_.size())item.title=base::UTF16ToUTF8(labels_[Selected()]);const auto* colors=GetColorProvider();const bool enabled=GetEnabledInViewsSubtree();item.font_size=TextFont().GetFontSize();item.active=TextFont().GetFontWeight()>=gfx::Font::Weight::MEDIUM;item.tile=base::i18n::IsRTL();item.focused=HasFocus();item.hovered=enabled&&(GetState()==STATE_HOVERED||state_->expanded());item.ink=colors->GetColor(views::TypographyProvider::Get().GetColorId(views::style::CONTEXT_LABEL,enabled?views::style::STYLE_PRIMARY:views::style::STYLE_DISABLED));item.fill=colors->GetColor(enabled?ui::kColorComboboxBackground:ui::kColorComboboxBackgroundDisabled);item.badge=colors->GetColor(HasFocus()?ui::kColorFocusableBorderFocused:enabled?ui::kColorButtonBorder:ui::kColorButtonBorderDisabled);item.detail_ink=colors->GetColor(ui::kColorSysStateHoverOnSubtle);item.clip={clip.x(),clip.y(),clip.width(),clip.height()};return item;}
+  void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneSelect::UpdateMetal,weak_factory_.GetWeakPtr()));}
+  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!IsDrawn()||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());std::vector<sidebar::Item> items;items.push_back(Scene(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size()))));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
+  std::vector<std::u16string> labels_;rust::Box<sidebar::SelectState> state_;base::RepeatingClosure changed_;SceneSelectInput input_;std::unique_ptr<ui::SimpleMenuModel> menu_;std::unique_ptr<views::MenuRunner> runner_;uint64_t menu_token_=0;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;base::WeakPtrFactory<SceneSelect> weak_factory_{this};
+};
+BEGIN_METADATA(SceneSelect)
+END_METADATA
+#endif
+size_t ImportSourceIndex(views::View* view){
+#if BUILDFLAG(IS_MAC)
+  if(auto* scene=views::AsViewClass<SceneSelect>(view))return scene->Selected();
+#endif
+  return static_cast<views::Combobox*>(view)->GetSelectedIndex().value_or(0);
+}
 views::Button* AddImportCheck(views::View* parent,std::u16string text,views::Button::PressedCallback callback) {
 #if BUILDFLAG(IS_MAC)
   if(auto* group=views::AsViewClass<SceneCheckboxGroup>(parent))return group->AddChoice(std::move(callback),std::move(text));
@@ -2836,11 +2905,14 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       }, weak), import_copy[1], GlyphButton::Glyph::kVector, &vector_icons::kCloseSmallIcon));
   import_text(import_panel.get(),import_copy[2],kMuted,-1,gfx::Font::Weight::NORMAL,true);
   import_text(import_panel.get(),import_copy[3],kSubtle,-1);
-  std::vector<ui::SimpleComboboxModel::Item> import_items;for(const auto& b:import_browsers)import_items.emplace_back(b);
-  import_browser_picker_ = import_panel->AddChildView(std::make_unique<views::Combobox>(std::make_unique<ui::SimpleComboboxModel>(import_items)));
-  import_browser_picker_->SetTooltipTextAndAccessibleName(import_copy[4]);
-  import_browser_picker_->SetSelectedIndex(0);
-  import_browser_picker_->SetCallback(base::BindRepeating(&WorkspaceShell::ImportSelectionChanged, weak));
+  auto source_changed=base::BindRepeating(&WorkspaceShell::ImportSelectionChanged,weak);
+#if BUILDFLAG(IS_MAC)
+  if(import_form_)import_browser_picker_=import_panel->AddChildView(std::make_unique<SceneSelect>(import_browsers,import_copy[4],source_changed));else
+#endif
+  {
+    std::vector<ui::SimpleComboboxModel::Item> items;for(const auto& b:import_browsers)items.emplace_back(b);
+    auto* picker=import_panel->AddChildView(std::make_unique<views::Combobox>(std::make_unique<ui::SimpleComboboxModel>(items)));picker->SetTooltipTextAndAccessibleName(import_copy[4]);picker->SetSelectedIndex(0);picker->SetCallback(source_changed);import_browser_picker_=picker;
+  }
   Spacer(import_panel.get(), 8);
   import_text(import_panel.get(),import_copy[5],kInk,0,gfx::Font::Weight::SEMIBOLD);
   auto selection_changed = base::BindRepeating(&WorkspaceShell::ImportSelectionChanged, weak);
@@ -2863,7 +2935,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   apply_import_ = AddAction(import_actions,base::BindRepeating(&WorkspaceShell::SubmitImport,weak),import_copy[9]);
   apply_import_->SetEnabled(false);
 #if BUILDFLAG(IS_MAC)
-  if(import_form_){const auto d=sidebar::import_defaults();import_browser_picker_->SetSelectedIndex(d.browser);SetCheckValue(import_profiles_,d.separate_profiles);SetCheckValue(import_bookmarks_,d.bookmarks);SetCheckValue(import_history_,d.history);SetCheckValue(import_cookies_,d.cookies);import_panel->SetLayoutManager(CreateSidebarColumnLayout(12));import_panel->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(20)));}
+  if(import_form_){const auto d=sidebar::import_defaults();SetCheckValue(import_profiles_,d.separate_profiles);SetCheckValue(import_bookmarks_,d.bookmarks);SetCheckValue(import_history_,d.history);SetCheckValue(import_cookies_,d.cookies);import_panel->SetLayoutManager(CreateSidebarColumnLayout(12));import_panel->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(20)));}
 #endif
 
 
@@ -6238,12 +6310,26 @@ void WorkspaceShell::OpenImport() {
 bool WorkspaceShell::import_visible() const { return import_widget_ && import_widget_->IsVisible(); }
 BrowserImportOptions WorkspaceShell::import_options() const {
   BrowserImportOptions options;
-  options.browser = static_cast<ImportBrowser>(import_browser_picker_->GetSelectedIndex().value_or(0));
+  options.browser = static_cast<ImportBrowser>(ImportSourceIndex(import_browser_picker_));
   options.separate_profiles = CheckValue(import_profiles_);
   options.bookmarks = CheckValue(import_bookmarks_);
   options.history = CheckValue(import_history_);
   options.cookies = CheckValue(import_cookies_);
   return options;
+}
+void WorkspaceShell::SelectImportBrowserForTesting(size_t index) {
+  if(!import_browser_picker_||!import_browser_picker_->GetEnabledInViewsSubtree()||!import_browser_picker_->IsDrawn())return;
+#if BUILDFLAG(IS_MAC)
+  if(auto* scene=views::AsViewClass<SceneSelect>(import_browser_picker_)){scene->SelectForTesting(index);return;}
+#endif
+  auto* native=static_cast<views::Combobox*>(import_browser_picker_.get());if(index>=native->GetModel()->GetItemCount())return;native->SetSelectedIndex(index);ImportSelectionChanged();
+}
+bool WorkspaceShell::import_source_metal_visible() const {
+#if BUILDFLAG(IS_MAC)
+  auto* source=views::AsViewClass<SceneSelect>(import_browser_picker_);return source&&source->metal_visible();
+#else
+  return false;
+#endif
 }
 void WorkspaceShell::SetImportOptionCheckedForTesting(size_t option,bool checked) {
   const std::array<views::Button*,4> controls={import_profiles_,import_bookmarks_,import_history_,import_cookies_};if(option<controls.size()&&controls[option])SetCheckValue(controls[option],checked);
@@ -6288,7 +6374,7 @@ void WorkspaceShell::SubmitImport() {
 }
 bool WorkspaceShell::import_panel_contains_scene_text(std::string_view text) const {
 #if BUILDFLAG(IS_MAC)
-  if(!import_root_)return false;auto find=[&](auto&& self,views::View* view)->bool{if(auto* node=views::AsViewClass<SceneParagraph>(view))if(node->contains_scene_text(text))return true;if(auto* group=views::AsViewClass<SceneActionGroup>(view))if(group->contains_text(text))return true;if(auto* choices=views::AsViewClass<SceneCheckboxGroup>(view))if(choices->contains_text(text))return true;for(const auto& child:view->children())if(self(self,child.get()))return true;return false;};return find(find,import_root_);
+  if(!import_root_)return false;auto find=[&](auto&& self,views::View* view)->bool{if(auto* source=views::AsViewClass<SceneSelect>(view))if(source->contains_text(text))return true;if(auto* node=views::AsViewClass<SceneParagraph>(view))if(node->contains_scene_text(text))return true;if(auto* group=views::AsViewClass<SceneActionGroup>(view))if(group->contains_text(text))return true;if(auto* choices=views::AsViewClass<SceneCheckboxGroup>(view))if(choices->contains_text(text))return true;for(const auto& child:view->children())if(self(self,child.get()))return true;return false;};return find(find,import_root_);
 #else
   return false;
 #endif

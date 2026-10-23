@@ -52,8 +52,9 @@ Views-specific layout and control behavior must have an explicit replacement.
 | General preferences, shortcuts and site preferences | Views + application services | Rust forms; use the same persisted configuration |
 | History, downloads, passwords and permissions | Views/native service adapters | Rust presentation/control layer; retain browser service and security semantics |
 | Peek, promote/split, link/page menus and routing | Views/native adapters + application | Rust control routing, focus and dismissal; retain native page integration |
-| Import form and first-run import | Rust UI option/debounce/admission/controller state, copy, columns and Metal static/status/Apply text; native Button/AX/focus, source/header nodes and application import services (GUI checkpoint pending) | Migrate remaining native source/header and input nodes; verify latest options, busy recovery, credentials opt-in, source immutability, first-run/persistence/rollback and runtime accessibility |
+| Import form and first-run import | Rust UI option/debounce/admission/controller state, copy, columns and Metal static/status/Apply text; native Button/AX/focus, header nodes, native popup/IME adapters and application import services (GUI checkpoint pending) | Migrate remaining native header and input nodes; verify latest options, busy recovery, credentials opt-in, source immutability, first-run/persistence/rollback and runtime accessibility |
 | Import checkboxes | Rust checked state, shared pointer/key input, mark/label/RTL geometry and primitives; one Metal canvas; native Button/AX/focus/event and font/inset/color adapters (GUI checkpoint pending) | Replace native interaction nodes; verify checked/default action, disabled/capture/context/visibility behavior, actual marks/typography, theme/scale and fallback |
+| Import source selector | Rust selected state, prefix timeout/search, popup tokens, macOS key policy and closed-control geometry/scene; Metal canvas; native menu/IME/focus/AX/event adapters (GUI checkpoint pending) | Verify popup lifecycle, typeahead, keyboard and VoiceOver, disabled/hide/capture, RTL/theme/scale and fallback; migrate remaining native adapters |
 | Time Machine | Views + application services | Rust presentation; preserve previews, validation, backups and restoration |
 | Keyboard accessibility, VoiceOver, focus and tooltips | Native Views nodes | Explicit native accessibility adapter for Rust controls; no duplicate nodes |
 
@@ -370,3 +371,12 @@ and the return of Metal after settling. Preserve the normal application/profile.
 
 The active goal is intentionally not complete while preserved Views surfaces
 remain. Passing the current tests establishes the tested milestone only.
+
+- Import source selection now uses Rust state, prefix matching/timeouts, popup
+  tokens and macOS menu-key policy, with one Metal canvas for the closed control.
+  Native menu and IME/AX/focus/event protocols remain. **140 Rust and 61 Python
+  tests passed** without windows; the compiled new regression brings the deferred
+  matrix to **69 Metal cases and 34 Views controls**. See
+  [source selector verification](benchmarks/rust-source-picker-headless-2026-10-23.json).
+  Native popup/keyboard/IME/accessibility behavior and actual rendering await the
+  checkpoint; this stage establishes no presentation-performance gain.

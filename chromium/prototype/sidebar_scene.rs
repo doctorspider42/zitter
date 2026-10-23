@@ -4,6 +4,8 @@
 // profile objects/directories or WebContents.
 #[cxx::bridge(namespace = "zitter::sidebar")]
 mod ffi {
+    struct SelectLayout { width: i32, height: i32, label: Rect, arrow: Rect }
+    struct SelectOption { label: String, search: String }
     struct CheckboxLayout { width: i32, height: i32, mark: Rect, label: Rect, lines: Vec<Rect> }
     #[derive(Clone, PartialEq, Eq)]
     struct ImportSelection { browser: u32, separate_profiles: bool, bookmarks: bool, history: bool, cookies: bool }
@@ -62,7 +64,7 @@ mod ffi {
     struct ViewportProjection { x: f32, y: f32, nodes: Vec<ProjectedNode> }
     struct Item {
         x: f32, y: f32, width: f32, height: f32,
-        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: control glyph, 8: pane title, 9: split grip, 10: rounded backing, 11: sidebar grip, 12: palette result, 13: result icon, 14: separator, 15: palette static text, 16: palette frame, 17: form static text, 18: appearance color swatch, 19: form text action, 20: checkbox mark.
+        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: control glyph, 8: pane title, 9: split grip, 10: rounded backing, 11: sidebar grip, 12: palette result, 13: result icon, 14: separator, 15: palette static text, 16: palette frame, 17: form static text, 18: appearance color swatch, 19: form text action, 20: checkbox mark, 21: closed selector.
         kind: u32, glyph: u32,
         title: String, monogram: String, detail: String,
         title_width: f32, detail_ink: u32, detail_font_size: f32,
@@ -91,6 +93,18 @@ mod ffi {
         text: String, font_size: f32, bold: bool, middle: bool, center: bool, clip: FloatRect,
     }
     extern "Rust" {
+        type SelectState;
+        fn new_select_state(options: Vec<SelectOption>) -> Box<SelectState>;
+        fn selected(self: &SelectState) -> usize;
+        fn select_index(self: &mut SelectState, index: usize) -> bool;
+        fn open(self: &mut SelectState, enabled: bool) -> u64;
+        fn expanded(self: &SelectState) -> bool;
+        fn choose(self: &mut SelectState, token: u64, index: usize, enabled: bool) -> bool;
+        fn dismiss(self: &mut SelectState);
+        fn reset_prefix(self: &mut SelectState);
+        fn input(self: &mut SelectState, lower_text: &str, now_ms: u64, enabled: bool) -> bool;
+        fn select_menu_key(key: u32) -> bool;
+        fn select_layout(width: i32, height: i32, text_width: i32, control_height: i32, rtl: bool) -> SelectLayout;
         type CheckboxState;
         fn new_checkbox_state(checked: bool) -> Box<CheckboxState>;
         fn checked(self: &CheckboxState) -> bool;
@@ -434,6 +448,35 @@ impl ProfileForm {
     fn finish_attempt(&mut self,accepted:bool){self.submitting=false;if !accepted&&self.status.is_empty(){self.status="Nie udało się wykonać operacji na profilu. Spróbuj ponownie.".into();}}
 }
 fn paragraph_layout(width:i32,line_height:i32,count:usize)->ffi::ColumnLayout{let g=notice_layout(width,line_height,count,0,0);ffi::ColumnLayout{width:g.width,height:g.height,children:g.body_lines}}
+
+// Immutable menu options use index identities. A token rejects commands from
+// a closed/hidden/disabled or superseded native popup. No browser data crosses.
+pub struct SelectState { options: Vec<ffi::SelectOption>, selected: usize, epoch: u64, expanded: bool, prefix: String, last_input: Option<u64> }
+fn new_select_state(options: Vec<ffi::SelectOption>) -> Box<SelectState> {Box::new(SelectState {options,selected:0,epoch:0,expanded:false,prefix:String::new(),last_input:None})}
+impl SelectState {
+    fn selected(&self)->usize {self.selected}
+    fn select_index(&mut self,index:usize)->bool {if index>=self.options.len(){return false;}self.dismiss();self.reset_prefix();self.selected=index;true}
+    fn open(&mut self,enabled:bool)->u64 {if !enabled||self.options.is_empty(){return 0;}self.dismiss();self.reset_prefix();self.expanded=true;self.epoch}
+    fn expanded(&self)->bool {self.expanded}
+    fn choose(&mut self,token:u64,index:usize,enabled:bool)->bool {if !enabled||!self.expanded||token==0||token!=self.epoch||index>=self.options.len(){return false;}self.expanded=false;self.selected=index;true}
+    fn dismiss(&mut self){self.expanded=false;self.epoch=self.epoch.wrapping_add(1).max(1);}
+    fn reset_prefix(&mut self){self.prefix.clear();self.last_input=None;}
+    fn input(&mut self,text:&str,now:u64,enabled:bool)->bool {
+        if !enabled||self.options.is_empty()||text.is_empty()||text.chars().any(char::is_control){return false;}
+        let continuing=self.last_input.is_some_and(|last|now>=last&&now-last<1000);
+        let start=if continuing{self.selected}else{(self.selected+1)%self.options.len()};
+        if !continuing{self.prefix.clear();}self.prefix.push_str(text);self.last_input=Some(now);
+        for offset in 0..self.options.len(){let i=(start+offset)%self.options.len();if self.options[i].search.starts_with(&self.prefix){let changed=i!=self.selected;self.selected=i;return changed;}}
+        false
+    }
+}
+// macOS Combobox opens a menu for these keys rather than changing selection.
+fn select_menu_key(key:u32)->bool {matches!(key,32|35|36|38|40)}
+fn select_layout(width:i32,height:i32,text_width:i32,control_height:i32,rtl:bool)->ffi::SelectLayout {
+    let width=if width<0{text_width.max(0).saturating_add(48)}else{width};let height=if height<0{control_height.max(28)}else{height.max(0)};
+    let pad=12.min(width/2);let room=width-pad*2;let arrow_width=16.min(room);let gap=8.min(room-arrow_width);let label_width=room-arrow_width-gap;
+    ffi::SelectLayout{width,height,label:ffi::Rect{x:if rtl{pad+arrow_width+gap}else{pad},y:0,width:label_width,height},arrow:ffi::Rect{x:if rtl{pad}else{width-pad-arrow_width},y:0,width:arrow_width,height}}
+}
 
 pub struct CheckboxState { checked: bool }
 fn new_checkbox_state(checked: bool) -> Box<CheckboxState> {Box::new(CheckboxState {checked})}
@@ -1229,6 +1272,16 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
             emit(i.x+(i.width-if across{grip}else{4.0})/2.0,i.y+(i.height-if across{4.0}else{grip})/2.0,
                 if across{grip}else{4.0},if across{4.0}else{grip},2.0,i.ink,"",0.0,false);continue;
         }
+        if i.kind == 21 {
+            if !(i.width>0.0&&i.height>0.0){continue;}
+            emit(i.x,i.y,i.width,i.height,6.0,i.fill,"",0.0,false);
+            if i.hovered {emit(i.x,i.y,i.width,i.height,6.0,i.detail_ink,"",0.0,false);}
+            let g=select_layout(i.width as i32,i.height as i32,0,0,i.tile);
+            if !i.title.is_empty()&&g.label.width>0 {emit(i.x+g.label.x as f32,i.y,g.label.width as f32,i.height,0.0,i.ink,&i.title,i.font_size,i.active);}
+            if g.arrow.width>0 {emit(i.x+g.arrow.x as f32,i.y,g.arrow.width as f32,i.height,0.0,i.ink,"▾",i.font_size,false);}
+            emit(i.x,i.y,i.width,i.height,6.0,i.badge,"",0.0,false);if let Some(p)=out.last_mut(){p.stroke=if i.focused{2.0}else{1.0};}for p in out[first_primitive..].iter_mut(){if p.text=="▾"{p.center=true;}}
+            continue;
+        }
         if i.kind == 20 {
             if !(i.width>0.0&&i.height>0.0){continue;}
             if i.hovered {emit(i.x-3.0,i.y-3.0,i.width+6.0,i.height+6.0,12.0,(i.badge&0xffffff)|0x14000000,"",0.0,false);}
@@ -1555,6 +1608,32 @@ mod tests {
         }
     }
     fn menu_state()->ffi::TabMenuState{ffi::TabMenuState{ready:true,busy:false,valid:true,tab:7,has_tab:true,split:true,first:3,has_first:true,second:7,has_second:true,vertical:false,tab_count:3,http:true}}
+    fn select_fixture()->Box<SelectState> {new_select_state(vec![ffi::SelectOption{label:"Arc".into(),search:"arc".into()},ffi::SelectOption{label:"Google Chrome".into(),search:"google chrome".into()},ffi::SelectOption{label:"Microsoft Edge".into(),search:"microsoft edge".into()},ffi::SelectOption{label:"Brave".into(),search:"brave".into()}])}
+    #[test] fn select_menu_tokens_reject_old_closed_duplicate_and_disabled_commands() {
+        let mut s=select_fixture();let first=s.open(true);assert!(s.expanded());let second=s.open(true);assert_ne!(first,second);assert!(!s.choose(first,1,true));assert!(!s.choose(second,1,false));assert!(!s.choose(second,4,true));assert_eq!(s.selected(),0);assert!(s.choose(second,1,true));assert!(!s.choose(second,2,true));assert_eq!(s.selected(),1);let t=s.open(true);s.dismiss();assert!(!s.expanded());assert!(!s.choose(t,0,true));assert_eq!(s.selected(),1);
+    }
+    #[test] fn select_empty_disabled_and_programmatic_values_are_bounded() {
+        let mut empty=new_select_state(vec![]);assert_eq!(empty.open(true),0);assert!(!empty.input("a",0,true));assert!(!empty.select_index(0));let mut s=select_fixture();assert_eq!(s.open(false),0);assert!(!s.expanded());let t=s.open(true);assert!(s.select_index(3));assert!(!s.choose(t,1,true));assert!(!s.select_index(99));assert_eq!(s.selected(),3);
+    }
+    #[test] fn select_prefix_extends_within_timeout_and_restarts_after_one_second() {
+        let mut s=select_fixture();assert!(s.input("g",100,true));assert_eq!(s.selected(),1);assert!(!s.input("oogle",101,true));assert!(!s.input("b",999,true));assert_eq!(s.selected(),1);assert!(s.input("b",1999,true));assert_eq!(s.selected(),3);s.reset_prefix();assert!(s.input("arc",2000,true));assert_eq!(s.selected(),0);
+    }
+    #[test] fn select_prefix_cycles_after_timeout_and_handles_clock_reset() {
+        let mut s=new_select_state(vec![ffi::SelectOption{label:"A".into(),search:"a".into()},ffi::SelectOption{label:"Ab".into(),search:"ab".into()}]);assert!(s.input("a",5000,true));assert_eq!(s.selected(),1);assert!(s.input("a",6000,true));assert_eq!(s.selected(),0);assert!(s.input("a",10,true));assert_eq!(s.selected(),1);assert!(!s.input("a",11,true));assert_eq!(s.selected(),1);
+    }
+    #[test] fn select_prefix_ignores_controls_disabled_and_empty_without_poisoning_search() {
+        let mut s=select_fixture();assert!(!s.input("g",0,false));assert!(!s.input("\t",0,true));assert!(!s.input("\r",0,true));assert!(!s.input("",0,true));assert!(s.input("g",10,true));assert!(!s.input("\n",11,true));assert!(!s.input("oogle",12,true));assert_eq!(s.selected(),1);
+    }
+    #[test] fn select_mac_keyboard_policy_opens_only_original_combobox_keys() {
+        for key in [32,35,36,38,40]{assert!(select_menu_key(key));}for key in [0,9,13,27,37,39,65,115]{assert!(!select_menu_key(key));}
+    }
+    #[test] fn select_layout_mirrors_and_bounds_text_arrow_and_saturated_sizes() {
+        let ltr=select_layout(300,30,0,0,false);let rtl=select_layout(300,30,0,0,true);assert_eq!((ltr.label.x,ltr.label.width,ltr.arrow.x),(12,252,272));assert_eq!((rtl.label.x,rtl.label.width,rtl.arrow.x),(36,252,12));assert_eq!(select_layout(-1,-1,100,20,false).height,28);assert_eq!(select_layout(-1,-1,i32::MAX,20,false).width,i32::MAX);
+        for width in [0,1,10,30,300,i32::MAX]{for rtl in [false,true]{let g=select_layout(width,30,0,0,rtl);for r in [&g.label,&g.arrow]{assert!(r.x>=0&&r.width>=0&&i64::from(r.x)+i64::from(r.width)<=i64::from(width));}}}
+    }
+    #[test] fn select_recipe_uses_separate_text_arrow_clipping_and_no_empty_label_ink() {
+        let mut item=row(300.0);item.kind=21;item.title="Google Chrome".into();item.focused=true;let ops=layout(std::slice::from_ref(&item));assert_eq!(ops.iter().filter(|p|!p.text.is_empty()).count(),2);assert!(ops.iter().any(|p|p.text=="▾"&&p.center));assert!(ops.iter().any(|p|p.text=="Google Chrome"&&!p.center&&p.width==252.0));assert_eq!(ops.last().unwrap().stroke,2.0);assert!(ops.iter().all(|p|p.clip.width<=item.clip.width));item.title.clear();assert_eq!(layout(std::slice::from_ref(&item)).iter().filter(|p|!p.text.is_empty()).count(),1);item.width=0.0;assert!(layout(&[item]).is_empty());
+    }
     #[test] fn checkbox_state_programmatic_sets_are_idempotent_and_user_toggle_is_explicit() {
         let mut c=new_checkbox_state(false);assert!(!c.checked());assert!(!c.set_checked(false));assert!(c.set_checked(true));assert!(c.checked());assert!(!c.set_checked(true));assert!(c.toggle(true));assert!(!c.checked());
     }

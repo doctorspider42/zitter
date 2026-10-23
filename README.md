@@ -682,8 +682,9 @@ without native button Labels, batched into four Metal groups. These newer stages
 await the deferred GUI checkpoint. Import also uses a Rust form controller for
 option snapshots, debounce/admission and control locks, with Metal static/status
 text and Apply drawing. Four import checkboxes now share a Metal canvas with Rust
-checked state, wrapped labels and geometry; source access and the source picker
-remain native services.
+checked state, wrapped labels and geometry. The import source picker also uses
+Rust selection, prefix-search and popup admission with a Metal closed control;
+native menu/IME/accessibility adapters and source-access services remain.
 Model updates refresh the scene independently of
 native painting. Rust also owns row
 click/drag/cancellation and platform key activation through native event, focus
