@@ -8,29 +8,44 @@ milestones to `origin/main` as they land. The opt-in switch remains
 
 ## Current execution policy
 
-Latest automated acceptance: UI source `b59df50b21cba35e9dca66d16ba311548f812393`
-passed **137 Metal / 105 Views cases**, six explicit skips per backend, from the
-complete 143-case inventory (111 applicable Views cases; 32 dedicated Metal cases
-excluded), with one job and no retries. **66 clean-archive Python tests**, scoped
-GN/boundaries and optimized compilation passed; the live checkout passed 68 Python
-cases including two concurrent cases outside this commit. Rust model/display-list and CoreText/SDK
-sources match the preceding 214 Rust / 61 standalone / 180 SDK plus raster evidence,
-which was not repeated for this native adapter change.
-[Matching checkpoint](benchmarks/rust-page-prompt-editor-checkpoint-2026-10-24.json).
+UI source `651bc58cc631dda054d6209ef7c1bdf7e00b9747`, 2026-10-24, passed the full compiled
+regression inventory with one launcher job, no retries and temporary profiles:
 
-The four skipped performance cases passed separately with 30 measured trials
-per case/backend. Combined coverage is **141 Metal / 109 Views passes**; only
-real-user Arc import and the interactive manual window remain excluded per
-backend. Metal validation was enabled, so these samples are execution evidence,
-not a controlled end-to-end performance comparison.
+| Backend | Regular matrix passed | Regular skips | Failed / crashed |
+| --- | ---: | ---: | ---: |
+| Rust + Metal | 140 | 6 | 0 |
+| Views | 107 | 6 | 0 |
 
-The live workspace/profile name editor now has macOS selection direction/policies,
-page/paragraph commands, kill/yank, transpose and matched forced direction/raster
-geometry. It remains a prototype with native adapters and explicit transition
-and interaction gaps. [Editor details](rust-metal-editor.md).
-All declared WorkspaceShell text-input roles now use replacement editors, including history, snapshot/Time Machine, shortcut recording and provider fields. The page JavaScript prompt now also uses EditorControl. Dialog titles/buttons/labels/scroll and settings/tools controls and containers remain to migrate. Continue isolated windowed checks;
-manual signed-app/IME/VoiceOver/scale/RTL and actual profiling remain pending.
-[Full remaining plan](rust-metal-next-steps-2026-10-23.md).
+The inventory contains 146 cases; Views excludes 33 dedicated Metal cases
+(113 applicable cases). The four opt-in performance scenarios then passed
+separately on each backend with their default 30 measured trials. **Combined
+coverage is 144 Metal / 111 Views passes**, with two exclusions per backend:
+real-user Arc import and the interactive manual window. Metal API validation
+remained enabled. These samples are execution coverage, not controlled
+CPU/GPU/drawable-presentation comparisons.
+
+The selector/editor gate passed **37 Metal / 34 Views**. Fresh checks passed:
+**216 Rust tests**, **180 SDK font/direction cases plus raster**, **66 Python
+from a clean archive**, scoped GN/boundaries and optimized compilation. The live
+checkout passed 68 Python cases, including two concurrent cases outside this UI
+commit. The 61 editor model cases are included in the Rust suite; the separate
+standalone model run was not repeated. Final Ninja reported no work to do.
+[Results, commands, source/binary identities and retained failures](benchmarks/rust-preference-selectors-checkpoint-2026-10-24.json).
+
+Eleven preference selectors now use Rust selection/prefix/menu-token state and
+layout/display lists with Metal and matching CPU fallback. Native input, window,
+focus, typography, AX, popup menus and browser preference/storage services remain
+adapters. A blank choice remains distinct from the first preset. Actual Cocoa
+input covers unsupported font values and profile scope; site-policy rebuilding,
+clear-data confirmation admission, provider identity, hide/reopen and scrolling
+are also covered.
+
+The checkpoint fixes two discovered native boundaries: a Views Combobox key
+CHECK for a nonempty model with no selection, and stale preferences scroll
+content height after category/search changes. Native compositor scrolling waits
+for the resized layout's successful presentation in the fixture. Earlier failed
+runs are retained in the report. No normal installed app/profile was changed,
+and no bundle was packaged or signed.
 
 ## How to read progress
 
@@ -67,7 +82,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Workspace/profile form action buttons | Rust button/group geometry, shared pointer/key reducer and text/background/border/focus primitives; four Metal groups; native Button/AX/focus, platform font/metric/color and command adapters (automated UI checked; manual acceptance pending) | Replace native interaction nodes; verify dynamic labels, disabled styles, focus/keyboard/cancellation, clipping/fallback and service semantics |
 | Workspace color/emoji presets | Rust preset data/selection, row geometry, pointer/key reducer and scene primitives; two shared-context Metal canvases; native Button/AX/focus and text/grapheme/storage adapters (automated UI checked; manual acceptance pending) | Color/emoji editor migration verified; replace remaining native preset Button interaction ownership and broaden capture/visibility/IME/AX/theme/scale/persistence acceptance |
 | Workspace deletion confirmation | Rust captured-target notice state/copy and shared paragraph layout; Metal body/error text; native modal title/buttons and deletion/persistence services (automated UI checked; manual acceptance pending) | Migrate remaining host controls; verify default Cancel, beforeunload, stale targets, retained profile data, typography and screen bounds |
-| General preferences, shortcuts and site preferences | Rust/Metal editors including the shortcut field; native capture/admission and stores; remaining Views controls | Migrate sections, switches/pickers/buttons, form state and outer containers; retain profile/global configuration and recorder behavior |
+| General preferences, shortcuts and site preferences | Rust/Metal editors and eleven preference selectors; native capture/admission, menus and stores; remaining Views controls | Migrate switches, action controls, tools pickers, sections/form state and outer containers; retain profile/global configuration and recorder behavior |
 | History, downloads, passwords and permissions | Rust/Metal history query editor; native committed-query/service adapters and remaining Views lists/controls | Migrate result/control presentation and forms; retain browser service and security semantics |
 | Peek, promote/split, link/page menus and routing | Views/native adapters + application | Rust control routing, focus and dismissal; retain native page integration |
 | Import form and first-run import | Rust UI option/debounce/admission/controller state, copy, columns and Metal static/status/Apply text; native Button/AX/focus, header nodes, native popup/IME adapters and application import services (automated UI checked; manual acceptance pending) | Migrate remaining native header and input nodes; verify latest options, busy recovery, credentials opt-in, source immutability, first-run/persistence/rollback and runtime accessibility |
@@ -526,3 +541,18 @@ The 17-case gate and full **133 Metal / 101 Views** matrix passed in both backen
 JavaScript prompt editing uses the same Rust/Metal control, native font metric and live theme-color defaults. Page origin/profile identity, request-frame/navigation/visibility cancellation and beforeunload defaults remain native domain boundaries. Composing UI acceptance stays open; explicit automation override preserves raw UTF-16. Editor, acceptance, close and posted-key callbacks carry a dialog generation so an old prompt cannot answer its replacement. Negative answers detach callbacks and cancel marked text; client-owned synchronous widget destruction automatically handles forced native closure once before explicit cleanup.
 
 The 30-case gate and full **137 Metal / 105 Views** matrix passed, with six explicit skips each. Actual Cocoa beforeunload Return stays open on macOS, while Escape preserves both tabs/draft by canceling, including repeated dialogs. Unicode prompt input/Return/Escape, long-message bounds, composing acceptance, override/stale/CloseNow lifecycle and hidden-page/subframe cancellation are covered. The initial cross-profile fixture lacked an explicit navigation before EvalJs; NavigateBoth fixes that precondition in both backends. That fixture repair changed no production code. A later beforeunload test incorrectly assumed that Return activates Cancel on macOS. The native PlatformStyle intentionally prevents that; the corrected test requires Return to stay open and Escape to cancel. A separate repeated-dialog Escape timeout required registered native accelerator dispatch for textless dialogs. Unregistered Return stays unchanged and active editors retain IME precedence. Native sheet lifetime failures in the first full run were fixed with client-owned page/deletion widgets and synchronous C++ destruction; native animations remain enabled. The Views modal/form/label/button/scroll layer, broader OS acceptance and profiling remain open. [Evidence](benchmarks/rust-page-prompt-editor-checkpoint-2026-10-24.json).
+
+## Preference selector milestone
+
+Eleven selectors use Rust state and select layout/scene recipes with shared-context
+Metal: theme, default search, compact category, zoom, three font-size choices,
+DNS mode, site type/policy and clear period. Nil selection supports Chromium
+values outside the preset list. Provider keys invalidate old interactions even
+when labels duplicate. Unchanged refreshes preserve prefix/menu interaction;
+profile changes cancel it before synchronizing new values. Native popup/input/
+focus/AX/typography adapters and stores remain explicit boundaries.
+
+The full checkpoint and remaining native container/control scope are described in
+[the current report](benchmarks/rust-preference-selectors-checkpoint-2026-10-24.json). Actual popup/candidate-window,
+VoiceOver, complex bidi/scale/gesture and signed-app acceptance, as well as real
+CPU/GPU/presentation profiling, remain open.

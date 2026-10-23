@@ -681,24 +681,28 @@ native modal controls and deletion services. Color/emoji preset rows now use Rus
 geometry, selection and input with batched Metal canvases excluding native editors.
 Nine workspace/profile form actions also use Rust layout/input and scene text
 without native button Labels, batched into four Metal groups. These newer stages pass the
-[latest full automated GUI checkpoint](docs/benchmarks/rust-page-prompt-editor-checkpoint-2026-10-24.json);
+[latest full automated GUI checkpoint](docs/benchmarks/rust-preference-selectors-checkpoint-2026-10-24.json);
 manual signed-app and performance acceptance remain pending. Import also uses a Rust form controller for
 option snapshots, debounce/admission and control locks, with Metal static/status
 text and Apply drawing. Four import checkboxes now share a Metal canvas with Rust
 checked state, wrapped labels and geometry. The import source picker also uses
 Rust selection, prefix-search and popup admission with a Metal closed control;
 native menu/IME/accessibility adapters and source-access services remain.
-Workspace/profile name, color, emoji, folder and address/palette fields now use Rust UTF-16 editing/IME/history and viewport
-state with CoreText/Metal drawing; native input/clipboard/menu/dictionary/AX
-adapters remain. Other fields and full editor service/command acceptance are
-[still being migrated](docs/rust-metal-editor.md).
+Workspace/profile name, color/emoji, folder, address/palette, preferences, tools
+and JavaScript prompt fields now use Rust UTF-16 editing/IME/history and viewport
+state with CoreText/Metal drawing. Native input/clipboard/menu/dictionary/AX
+adapters remain. Eleven preference selectors also use Rust selection, prefix,
+menu-token state and layout with Metal presentation; native popup and preference
+services remain adapters. Switches, buttons, form/outer-container ownership and
+broader editor service/platform acceptance are still in progress.
+[Editor contracts and acceptance](docs/rust-metal-editor.md).
 Model updates refresh the scene independently of
 native painting. Rust also owns row
 click/drag/cancellation and platform key activation through native event, focus
 and accessibility adapters. See
 [build, isolated demo and validation](docs/rust-metal-sidebar.md).
-The [remaining work plan](docs/rust-metal-next-steps-2026-10-23.md) covers native
-editor replacement, the remaining Views surfaces and final acceptance.
+The [remaining work plan](docs/rust-metal-next-steps-2026-10-23.md) covers inherited
+browser fields, remaining controls/Views surfaces and final acceptance.
 The ongoing [functional parity checklist](docs/rust-metal-parity.md) distinguishes
 preserved native features from controls already migrated to Rust.
 

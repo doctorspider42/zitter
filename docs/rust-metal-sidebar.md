@@ -1267,3 +1267,15 @@ UI source `bb32e6f253953c5090a24bebf1d3ef8a382a74e9` moves seven tools text role
 ## Page prompt editor checkpoint
 
 UI source `b59df50b21cba35e9dca66d16ba311548f812393` migrates JavaScript prompt input to Rust/Metal with native baseline font/theme services, generation-guarded keys and composing-aware acceptance. Frame/origin/profile ownership and renderer reply/cancellation semantics remain. The 30-case gate and complete **137 Metal / 105 Views** matrix passed, six explicit skips each; **66 clean-archive Python** and GN/boundaries passed. The initial fixture needed both pages navigated before cross-profile EvalJs; its failed logs are retained. Rust/model/SDK evidence is inherited for unchanged sources. Modal controls/containers, inherited-browser inventory, broader OS acceptance and actual presentation profiling remain open. [Report](benchmarks/rust-page-prompt-editor-checkpoint-2026-10-24.json).
+
+## Preference selector checkpoint
+
+UI source `651bc58cc631dda054d6209ef7c1bdf7e00b9747` moves eleven preference selectors to the shared
+Rust state/layout and Metal scene path. The native Combobox baseline handles
+blank-value keyboard input without a shadow model. Preferences resize their
+scroll content after filtering, and Metal follows the clipped viewport. The
+37/34-case gates, complete 140 Metal / 107 Views regular matrix and four opt-in
+performance scenarios per backend passed (144/111 combined). Fresh Rust/SDK and
+clean-archive Python checks passed. Controls, form/container ownership, platform
+manual acceptance and real presentation profiling remain open.
+[Evidence](benchmarks/rust-preference-selectors-checkpoint-2026-10-24.json).

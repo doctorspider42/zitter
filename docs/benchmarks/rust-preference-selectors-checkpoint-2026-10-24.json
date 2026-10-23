@@ -1,0 +1,4481 @@
+{
+  "date": "2026-10-24",
+  "tested_ui_source_commit": "651bc58cc631dda054d6209ef7c1bdf7e00b9747",
+  "acceptance_status": "preference_selectors_checkpoint_passed_full_ui_migration_pending",
+  "scope": "Eleven preference selectors use the existing Rust SelectState, Rust select layout/display-list and shared-context Metal renderer. Native Views Combobox controls remain the Views baseline. Native window/input/focus/AX/menu and browser preference/domain services remain adapters. Remaining switches/buttons/forms/container ownership are not migrated by this change.",
+  "selectors": [
+    "theme",
+    "search",
+    "category",
+    "zoom",
+    "font_size",
+    "minimum_font_size",
+    "fixed_font_size",
+    "dns_mode",
+    "site_type",
+    "site_policy",
+    "clear_period"
+  ],
+  "source_sha256": {
+    "chromium/prototype/page_dialogs.cc": "2bcb248a69841f8a4cdd852f5190406d51c20783eb9063eb578c06488ea3fcdb",
+    "chromium/prototype/page_dialogs.h": "7afc7bbee12abebac485722fe970334346215e3b642d3abb9fd9f1b4eab8ffe1",
+    "chromium/prototype/editor_control.h": "6a7d417696dadff55daaa05581be0cc71a825cfbbc934921fcd3616d872275f3",
+    "chromium/prototype/scene_editor.cc": "1750eabbc946da28efc519939e5de6db0c59813212feaae47716fd705bfb1c75",
+    "chromium/prototype/sidebar_metal.h": "6c4455d523556d51161866bd60f3ddbea596029fb3e97c12a7e04b89041e995f",
+    "chromium/prototype/sidebar_editor.rs": "963e52ae3fb70efd48e1d15ca059095ed02812fbaea3ddd1266d39188134c6de",
+    "chromium/prototype/editor_text_layout.h": "35a72c6965037f684ee5f88338f71aa07b41842de4e7417ab6af1df7300c26cb",
+    "chromium/prototype/editor_text_layout_mac.inc": "13f2fddef229486fb25f42fb275cc0d7256bebe6d9599356822ff4b11db81984",
+    "chromium/prototype/editor_text_layout_test.mm": "a0bc7f9d485717b6a303b31952ad35ae8d3b3b021b016cb2b0ee8fc890726844",
+    "chromium/prototype/sidebar_metal.mm": "51c9fa444d9709177ee9de17bc59b35e7e590c3d5716d115295e98bd81f70456",
+    "chromium/prototype/sidebar_scene.rs": "fc437ad2b86c40f5007ce30604e20fbd9f2622895a81f4f8397f71a1cbe8d23c",
+    "chromium/prototype/workspace_shell.cc": "7596ae848ad92d74de1f32a51e9942bf7de6939aeb81d53af1d6569003c5ecc6",
+    "chromium/prototype/workspace_shell.h": "0dec1fdebe54e2e32dfbed92eb256d8be074295daef3a6197d69ba18fc6968db",
+    "chromium/prototype/workspace_window.cc": "9a4b7d30c8d0911c477a1d03ce965122b600e2b6a98f98486159bc5e137082f1",
+    "chromium/prototype/profile_workspace_browsertest.cc": "b55d04d599fe5e2ad547c056dfbd2c4b7a1b3cb0b28f9eedc531466e1d0a52b5",
+    "chromium/prototype/workspace_preconnect_browsertest.cc": "5243272c30d25c9c39a5f413259227d4ce083294207326415ddf35da2a0a1e09",
+    "chromium/prototype/page_file_access_browsertest.cc": "008833c70f884d045277409a5371d006ca1ddd851f0047584b3d0d0fb2b04f81",
+    "chromium/prototype/page_media_access_browsertest.cc": "3ab3be59689d9e91d0ef2677a1ce35e07f509d86f2a2ec560dce22daa858c410",
+    "chromium/prototype/workspace_keyboard_mac.mm": "cf823ee1905183eaeadb8677900b9def11332b9335be221cbe4e4fbbfcf8a654",
+    "chromium/prototype/workspace_keyboard_mac.h": "7eccc4c4ad3bbbd4c005f1631fe3d7ea0ebbbcd679fa87c54af14e044dd27479",
+    "chromium/prototype/workspace_preconnect.cc": "4b049f91fa11fb4ae523051a37a573c505ef0f1197935afaa6cdd22fa38e664c"
+  },
+  "compiled_browser_test_uuid": "4C4C4413-5555-3144-A109-08477B85083E",
+  "compiled_app_uuid": "4C4C44CB-5555-3144-A1E4-E1566690FAC1",
+  "compiled_framework_uuid": "4C4C44A2-5555-3144-A110-FFEEFE0D5D89",
+  "build_input_snapshot": {
+    "frozen_base": "a3afc206f742f0a59da6e65d609ddf1df3c7326d",
+    "gn_delta": "No target/dependency change. Rust bridge adds clear_selection for existing SelectState. Explicit native adapters, preference selector allocation/refresh and browser tests changed. Concurrent root network-policy work remains excluded.",
+    "method": "Committed archive with explicit prototype overrides, including page_dialogs.cc/h, and unchanged shared-service install/stage hooks, excluding concurrent root network-policy work. Final staging idempotent and Ninja no-work.",
+    "staged_build_gn_sha256": "711f7d01a8d55c4046a9dc297a30f7724d414d7682d8c8b6759397bac28cfdd7",
+    "staged_main_cc_sha256": "61dea81d0e263778c386eb6435429a8d90c4daa51f1dd787563facf7ddffa5d1",
+    "global_component_updater_sha256": "df5664ec70774c448137a2c4c7fa0503de084098932552d9d278f63e19d910ac",
+    "global_component_updater_matches_previous_checkpoint": true,
+    "build_tools_sha256": {
+      "tools/editor_service_patch.py": "73a4e43cfd4edb0dd919c7bec97392f1ceabe063ebc500aa289b1c030f90f9b8",
+      "tools/install_chromium_overlay.py": "a32bc13189118b9d4bbb56a4c8023b19ce94dfeefeb8fd42dc31a7d36de7b5d0",
+      "tools/stage_performance_candidate.py": "2e8482b94a72ac37c50aead85de00253afba581c22daabfce2053f10b7c550ed"
+    }
+  },
+  "native_service_patch": {
+    "chromium_revision": "1a732fcc23b20dd0bcf38f35d72c1fe1ec799d35",
+    "files": {
+      "ui/views/controls/textfield/text_edit_kill_buffer.h": {
+        "sha256": "0bacacfdd8480cb991ab9b041f15a6aee8775e358f901e2774f04c0a9e6e37c0",
+        "pinned_original_sha256": null
+      },
+      "ui/views/controls/textfield/textfield_model.cc": {
+        "sha256": "7884c624f8d5a075891d5b059b16ff686956ca8e9158be0c23444744c47716fd",
+        "pinned_original_sha256": "3f7df6d86aeabe0f2b43e9d3312eb0f07838c55f69cd3a0a05af9a02755eb9a7"
+      },
+      "ui/views/BUILD.gn": {
+        "sha256": "8fc448fd6e0513f8bfe25d479531d1739fe21620d1ec4ec3253ba7dc80a8dd91",
+        "pinned_original_sha256": "fee5303f268675f877649144c07d4dda788a21068bc620f16e73efae5d674c70"
+      }
+    },
+    "only_expected_upstream_edits": true,
+    "model_instance_created_by_service": false,
+    "license": "Generated Chromium header and source hook retain the Chromium BSD-style license; project adapter/tool/model changes use Apache-2.0."
+  },
+  "native_combobox_contract_sources": {
+    "ui/views/controls/combobox/combobox.cc": "f453a9d98ab7c9ef9e6ab2346193b9e997b872275286c115644abdada9665cce",
+    "ui/views/controls/prefix_selector.cc": "adb53496eaef175da7860311cb7e9c02f697d36addde86fd5f2b91cf3164e111",
+    "ui/compositor/layer.cc": "1c35aeeb12a2d50261d916886b998a65f209cd5dd425c59092a0c00e73537bd1",
+    "ui/compositor/compositor.h": "62a68380af3b78038a957a4532f51292f04210a8b551a7155bd4078f383adfea"
+  },
+  "verification": {
+    "rust_unit_tests_passed": 216,
+    "editor_model_cases_in_fresh_rust_suite": 61,
+    "standalone_editor_model_tests_scope": "The 61-case editor model is included in the fresh Rust suite. Separate standalone run not repeated; editor source unchanged.",
+    "coretext_sdk_cases_passed": 180,
+    "coretext_raster_harness": "Fresh run passed; no windows.",
+    "python_clean_archive_passed": 66,
+    "python_live_passed": 68,
+    "python_live_scope": "Two concurrent network/staging tests are outside this UI commit.",
+    "gn": "passed //zitter_ui_lab:*",
+    "boundaries": "passed",
+    "ninja": "no work to do",
+    "rust_log_sha256": "ef039790d4be881f4712ab0609b4e7ddd88dce86fa1185000b7acbeb5cd9f711",
+    "sdk_log_sha256": "e318e6319c1fac17bedeb24a5f3a4a4a5a1ff9532049292973e04a9eb3f1276f",
+    "clean_python_log_sha256": "79826b0ee55595a0045ba46cbd1469274adbb57bc0cce2ecedf3a51056254ad7",
+    "live_python_log_sha256": "a454f17c990138173eeb0163488c16df90434b6b65bce0ae9fcf4f1ee6c247cb"
+  },
+  "ui_inventory": {
+    "compiled": 146,
+    "metal_selected": 146,
+    "views_selected": 113,
+    "dedicated_metal_excluded_from_views": 33,
+    "skipped_cases": [
+      "ZitterPreconnectBrowserTest.PerformancePreconnect",
+      "ZitterProfilesBrowserTest.LiveArcImport",
+      "ZitterProfilesBrowserTest.ManualWindow",
+      "ZitterProfilesBrowserTest.PerformanceBaseline",
+      "ZitterProfilesBrowserTest.PerformanceProfileStartup",
+      "ZitterProfilesBrowserTest.PerformanceRestoration"
+    ]
+  },
+  "native_editor_selector_gate": {
+    "metal": {
+      "counts": {
+        "SUCCESS": 37
+      },
+      "results": {
+        "ZitterMetalSidebarBrowserTest.ImportSourceScenePrefixAXDisabledAndVisibility": "SUCCESS",
+        "ZitterMetalSidebarBrowserTest.PreferenceChoicesScenesIdentityScrollAndCancellation": "SUCCESS",
+        "ZitterMetalSidebarBrowserTest.ProfilePickerScenesStableIDsPrefixAndModelCancellation": "SUCCESS",
+        "ZitterProfilesBrowserTest.AddressEditorCocoaCommitCompositionAndNavigation": "SUCCESS",
+        "ZitterProfilesBrowserTest.AdvancedChromiumPreferences": "SUCCESS",
+        "ZitterProfilesBrowserTest.AppearanceEditorsCommitValidationIMEAndWorkspaceIsolation": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadCloseAndAtomicRestore": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadPeekAndBackgroundBatch": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadProfileSleepAndWindowClose": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadRechecksNewDirtyPages": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadRoutedPeekIsPartOfDiscardPlan": "SUCCESS",
+        "ZitterProfilesBrowserTest.ConfigurableNativeKeyboardShortcuts": "SUCCESS",
+        "ZitterProfilesBrowserTest.FolderEditorCocoaTypingUnicodeAndModalLifetime": "SUCCESS",
+        "ZitterProfilesBrowserTest.GeneralSettingsThemeAndPersistence": "SUCCESS",
+        "ZitterProfilesBrowserTest.HistoryEditorCommittedQueryDuringPreeditAndReopen": "SUCCESS",
+        "ZitterProfilesBrowserTest.JavaScriptPromptEditorCocoaCompositionAndKeyboard": "SUCCESS",
+        "ZitterProfilesBrowserTest.JavaScriptPromptEditorHiddenPageAndFrameNavigation": "SUCCESS",
+        "ZitterProfilesBrowserTest.JavaScriptPromptEditorOverrideStaleActionsAndCloseNow": "SUCCESS",
+        "ZitterProfilesBrowserTest.KeywordSearchProvidersAndPersistence": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorBidiDirectionAndSharedKillYank": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorCommittedCallbackContract": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorEmptyMarkedTextEndsWithoutCommit": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorKillYankInteroperatesWithNativeFields": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorMacCommandsAndSelectionPolicies": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorStationaryEdgeSelectionScrollAndCancellation": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorWordDragAndSingleLineTripleClick": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorsTypingUndoCompositionAndPersistence": "SUCCESS",
+        "ZitterProfilesBrowserTest.NativeJavaScriptDialogs": "SUCCESS",
+        "ZitterProfilesBrowserTest.NativeShellAndAppearance": "SUCCESS",
+        "ZitterProfilesBrowserTest.PageDialogsCocoaBeforeUnloadDefaultCancel": "SUCCESS",
+        "ZitterProfilesBrowserTest.PreferenceChoicesCocoaEmptySelectionAndProfileScope": "SUCCESS",
+        "ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission": "SUCCESS",
+        "ZitterProfilesBrowserTest.PreferenceEditorsCocoaCompositionAndProfileScope": "SUCCESS",
+        "ZitterProfilesBrowserTest.ProfilePreferencesAndSearch": "SUCCESS",
+        "ZitterProfilesBrowserTest.ShortcutEditorCocoaRecorderAdmissionAndCancel": "SUCCESS",
+        "ZitterProfilesBrowserTest.SitePreferenceExceptionsAndIsolation": "SUCCESS",
+        "ZitterProfilesBrowserTest.ToolsEditorsCocoaSnapshotProviderAndStaleActions": "SUCCESS"
+      },
+      "summary_sha256": "50541aa4a9b90e01e26d68de7ade81c3c1ce942775564b7a8db2d06ec8e595e3",
+      "log_sha256": "c5c1dfdad520bc4eebc5910ce6146c61d7ad620c26a0942786eb2b175c8f33e6"
+    },
+    "views": {
+      "counts": {
+        "SUCCESS": 34
+      },
+      "results": {
+        "ZitterProfilesBrowserTest.AddressEditorCocoaCommitCompositionAndNavigation": "SUCCESS",
+        "ZitterProfilesBrowserTest.AdvancedChromiumPreferences": "SUCCESS",
+        "ZitterProfilesBrowserTest.AppearanceEditorsCommitValidationIMEAndWorkspaceIsolation": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadCloseAndAtomicRestore": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadPeekAndBackgroundBatch": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadProfileSleepAndWindowClose": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadRechecksNewDirtyPages": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadRoutedPeekIsPartOfDiscardPlan": "SUCCESS",
+        "ZitterProfilesBrowserTest.ConfigurableNativeKeyboardShortcuts": "SUCCESS",
+        "ZitterProfilesBrowserTest.FolderEditorCocoaTypingUnicodeAndModalLifetime": "SUCCESS",
+        "ZitterProfilesBrowserTest.GeneralSettingsThemeAndPersistence": "SUCCESS",
+        "ZitterProfilesBrowserTest.HistoryEditorCommittedQueryDuringPreeditAndReopen": "SUCCESS",
+        "ZitterProfilesBrowserTest.JavaScriptPromptEditorCocoaCompositionAndKeyboard": "SUCCESS",
+        "ZitterProfilesBrowserTest.JavaScriptPromptEditorHiddenPageAndFrameNavigation": "SUCCESS",
+        "ZitterProfilesBrowserTest.JavaScriptPromptEditorOverrideStaleActionsAndCloseNow": "SUCCESS",
+        "ZitterProfilesBrowserTest.KeywordSearchProvidersAndPersistence": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorBidiDirectionAndSharedKillYank": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorCommittedCallbackContract": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorEmptyMarkedTextEndsWithoutCommit": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorKillYankInteroperatesWithNativeFields": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorMacCommandsAndSelectionPolicies": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorStationaryEdgeSelectionScrollAndCancellation": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorWordDragAndSingleLineTripleClick": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorsTypingUndoCompositionAndPersistence": "SUCCESS",
+        "ZitterProfilesBrowserTest.NativeJavaScriptDialogs": "SUCCESS",
+        "ZitterProfilesBrowserTest.NativeShellAndAppearance": "SUCCESS",
+        "ZitterProfilesBrowserTest.PageDialogsCocoaBeforeUnloadDefaultCancel": "SUCCESS",
+        "ZitterProfilesBrowserTest.PreferenceChoicesCocoaEmptySelectionAndProfileScope": "SUCCESS",
+        "ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission": "SUCCESS",
+        "ZitterProfilesBrowserTest.PreferenceEditorsCocoaCompositionAndProfileScope": "SUCCESS",
+        "ZitterProfilesBrowserTest.ProfilePreferencesAndSearch": "SUCCESS",
+        "ZitterProfilesBrowserTest.ShortcutEditorCocoaRecorderAdmissionAndCancel": "SUCCESS",
+        "ZitterProfilesBrowserTest.SitePreferenceExceptionsAndIsolation": "SUCCESS",
+        "ZitterProfilesBrowserTest.ToolsEditorsCocoaSnapshotProviderAndStaleActions": "SUCCESS"
+      },
+      "summary_sha256": "88b1e6d7d19f858137bf2aa8e92a239575b23def8fefaf7f7848cc3a75b63843",
+      "log_sha256": "60bbe75cab31819cd66f0e0829c38b134cb0c1ac219a28d0f821dc1e65914c9a"
+    }
+  },
+  "rust_metal": {
+    "mode": "metal",
+    "selected_tests": [
+      "ZitterProfilesBrowserTest.PerformanceBaseline",
+      "ZitterProfilesBrowserTest.PerformanceRestoration",
+      "ZitterProfilesBrowserTest.PerformanceProfileStartup",
+      "ZitterProfilesBrowserTest.SidebarMetadataUpdatesPreserveRows",
+      "ZitterProfilesBrowserTest.TimeMachineFlushesPendingHistoryOnClose",
+      "ZitterProfilesBrowserTest.RestoredTabsStayUnrealizedUntilShown",
+      "ZitterProfilesBrowserTest.StartupPrioritizesActiveProfileWithoutReorderingCatalogue",
+      "ZitterProfilesBrowserTest.StartupProfileFailureKeepsActiveProfileUsable",
+      "ZitterProfilesBrowserTest.KeywordSearchProvidersAndPersistence",
+      "ZitterProfilesBrowserTest.ConfigurableNativeKeyboardShortcuts",
+      "ZitterProfilesBrowserTest.ToolsEditorsCocoaSnapshotProviderAndStaleActions",
+      "ZitterProfilesBrowserTest.HistoryEditorCommittedQueryDuringPreeditAndReopen",
+      "ZitterProfilesBrowserTest.ShortcutEditorCocoaRecorderAdmissionAndCancel",
+      "ZitterProfilesBrowserTest.TimeMachineSnapshotsClosedTabsAndSleep",
+      "ZitterProfilesBrowserTest.PreferenceEditorsCocoaCompositionAndProfileScope",
+      "ZitterProfilesBrowserTest.AdvancedChromiumPreferences",
+      "ZitterProfilesBrowserTest.SitePreferenceExceptionsAndIsolation",
+      "ZitterProfilesBrowserTest.BrowsingHistoryPanelSearchOpenAndClear",
+      "ZitterProfilesBrowserTest.BrowsingHistoryPaginationAndStaleSearch",
+      "ZitterProfilesBrowserTest.ClearBrowsingDataConfirmationAndScope",
+      "ZitterProfilesBrowserTest.ProfilePreferencesAndSearch",
+      "ZitterProfilesBrowserTest.PreferenceChoicesCocoaEmptySelectionAndProfileScope",
+      "ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission",
+      "ZitterProfilesBrowserTest.GeneralSettingsThemeAndPersistence",
+      "ZitterProfilesBrowserTest.SidebarRemainsOpenWhileSpacesSlide",
+      "ZitterProfilesBrowserTest.PeekLifecycleAndPromotion",
+      "ZitterProfilesBrowserTest.DomainRoutingAndPersistence",
+      "ZitterProfilesBrowserTest.RoutingLeavesFormsFramesAndRedirects",
+      "ZitterProfilesBrowserTest.DownloadsTransferControlsAndProfileIsolation",
+      "ZitterProfilesBrowserTest.DownloadsDangerousHistoryCannotRevealOrResume",
+      "ZitterProfilesBrowserTest.PasswordOverviewVisibleAndDraggable",
+      "ZitterProfilesBrowserTest.NativeJavaScriptDialogs",
+      "ZitterProfilesBrowserTest.JavaScriptPromptEditorCocoaCompositionAndKeyboard",
+      "ZitterProfilesBrowserTest.JavaScriptPromptEditorOverrideStaleActionsAndCloseNow",
+      "ZitterProfilesBrowserTest.JavaScriptPromptEditorHiddenPageAndFrameNavigation",
+      "ZitterProfilesBrowserTest.PageDialogsCocoaBeforeUnloadDefaultCancel",
+      "ZitterProfilesBrowserTest.BeforeUnloadCloseAndAtomicRestore",
+      "ZitterProfilesBrowserTest.BeforeUnloadRechecksNewDirtyPages",
+      "ZitterProfilesBrowserTest.BeforeUnloadProfileSleepAndWindowClose",
+      "ZitterProfilesBrowserTest.BeforeUnloadPeekAndBackgroundBatch",
+      "ZitterProfilesBrowserTest.BeforeUnloadRoutedPeekIsPartOfDiscardPlan",
+      "ZitterProfilesBrowserTest.CommandCenterSearchAndDispatch",
+      "ZitterProfilesBrowserTest.CommandCenterMoveCopyAndSleep",
+      "ZitterProfilesBrowserTest.CommandCenterMoveSplitAndLastPage",
+      "ZitterProfilesBrowserTest.ChromiumHistoryAndCommandPalette",
+      "ZitterProfilesBrowserTest.ChromiumPasswordSaveAndFill",
+      "ZitterProfilesBrowserTest.SplitPairPersistsWhileAnotherTabIsShown",
+      "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation",
+      "ZitterProfilesBrowserTest.SplitViewSessionRestore",
+      "ZitterProfilesBrowserTest.StorageIsolationAndSwitching",
+      "ZitterProfilesBrowserTest.DynamicWorkspacesAndProfiles",
+      "ZitterProfilesBrowserTest.WorkspaceContextAppearanceAndDeletion",
+      "ZitterProfilesBrowserTest.WorkspaceDeletionConfirmationStaysOnScreen",
+      "ZitterProfilesBrowserTest.WorkspaceSwitchCostWithImportedSidebar",
+      "ZitterProfilesBrowserTest.WorkspaceSwitchCostWithTwoLargeSidebars",
+      "ZitterProfilesBrowserTest.SidebarFoldersCreateNestAndPersist",
+      "ZitterProfilesBrowserTest.SidebarFolderRenameAndDeleteContents",
+      "ZitterProfilesBrowserTest.SidebarSwipeTracksCancelsAndSkipsSpaces",
+      "ZitterProfilesBrowserTest.CocoaSwipesRepeatWithoutMouseMovement",
+      "ZitterProfilesBrowserTest.SidebarFolderFailedWriteRollsBack",
+      "ZitterProfilesBrowserTest.FolderRemovalKeepsOpenedPinsAsTabs",
+      "ZitterProfilesBrowserTest.WorkspaceDotProfileMenu",
+      "ZitterProfilesBrowserTest.DynamicProfiles",
+      "ZitterProfilesBrowserTest.ArcImportStructureAndPersistence",
+      "ZitterProfilesBrowserTest.FailedConfigurationWritePreservesProfiles",
+      "ZitterProfilesBrowserTest.BrowsingImportEncryptedCookiesAndSelection",
+      "ZitterProfilesBrowserTest.BrowsingImportPersistsInDestinationServices",
+      "ZitterProfilesBrowserTest.ChromiumBrowserImportSelectionAndPersistence",
+      "ZitterProfilesBrowserTest.ImportOptionsInvalidatePreview",
+      "ZitterProfilesBrowserTest.FirstRunImportReplacesStarterAndRollsBackOnFailure",
+      "ZitterProfilesBrowserTest.FirstRunImportOffer",
+      "ZitterProfilesBrowserTest.LiveArcImport",
+      "ZitterProfilesBrowserTest.KeyboardWorkspaceSwitching",
+      "ZitterProfilesBrowserTest.NativeKeyboardWorkspaceSwitching",
+      "ZitterProfilesBrowserTest.NativeShellAndAppearance",
+      "ZitterProfilesBrowserTest.SidebarColumnLayoutTracksCollapsedFolders",
+      "ZitterProfilesBrowserTest.SidebarTreeStateSurvivesRebuildsAndSpaces",
+      "ZitterProfilesBrowserTest.SidebarSplitAndDeepFolderGeometry",
+      "ZitterProfilesBrowserTest.SidebarPinnedPairFollowsPaneOrderAndFolders",
+      "ZitterProfilesBrowserTest.NativeDragAndCloseAtWidthLimits",
+      "ZitterProfilesBrowserTest.ManualWindow",
+      "ZitterProfilesBrowserTest.NameEditorsTypingUndoCompositionAndPersistence",
+      "ZitterProfilesBrowserTest.NameEditorWordDragAndSingleLineTripleClick",
+      "ZitterProfilesBrowserTest.NameEditorStationaryEdgeSelectionScrollAndCancellation",
+      "ZitterProfilesBrowserTest.FolderEditorCocoaTypingUnicodeAndModalLifetime",
+      "ZitterProfilesBrowserTest.AddressEditorCocoaCommitCompositionAndNavigation",
+      "ZitterProfilesBrowserTest.NameEditorEmptyMarkedTextEndsWithoutCommit",
+      "ZitterProfilesBrowserTest.NameEditorCommittedCallbackContract",
+      "ZitterProfilesBrowserTest.AppearanceEditorsCommitValidationIMEAndWorkspaceIsolation",
+      "ZitterProfilesBrowserTest.NameEditorMacCommandsAndSelectionPolicies",
+      "ZitterProfilesBrowserTest.NameEditorBidiDirectionAndSharedKillYank",
+      "ZitterProfilesBrowserTest.NameEditorKillYankInteroperatesWithNativeFields",
+      "ZitterMetalSidebarBrowserTest.PreferenceChoicesScenesIdentityScrollAndCancellation",
+      "ZitterMetalSidebarBrowserTest.ProfilePickerScenesStableIDsPrefixAndModelCancellation",
+      "ZitterMetalSidebarBrowserTest.ImportSourceScenePrefixAXDisabledAndVisibility",
+      "ZitterMetalSidebarBrowserTest.ImportCheckboxScenesAXSpaceCaptureDisabledAndVisibility",
+      "ZitterMetalSidebarBrowserTest.ImportFormScenesLatestOptionsLocksAndAdmission",
+      "ZitterMetalSidebarBrowserTest.FormActionGroupsSceneTextDynamicLabelsAndCancelledTargets",
+      "ZitterMetalSidebarBrowserTest.AppearanceRowsSceneInputClippingCompositionAndWorkspaceChange",
+      "ZitterMetalSidebarBrowserTest.WorkspaceNoticeCancelCapturedTargetUnloadAndRetainedProfile",
+      "ZitterMetalSidebarBrowserTest.WorkspaceFormScenesCreateCancelIMEAndProfileAssignment",
+      "ZitterMetalSidebarBrowserTest.ProfilePanelScenesValidationIMEAndStableDeletion",
+      "ZitterMetalSidebarBrowserTest.FolderNoticesWrapPreserveCancelAndRejectStaleTargets",
+      "ZitterMetalSidebarBrowserTest.FolderFormScenesValidationCompositionAndStaleContext",
+      "ZitterMetalSidebarBrowserTest.RowMenuPlansAndQueuedIdentitySurviveReindex",
+      "ZitterMetalSidebarBrowserTest.WorkspaceSwitchUsesPresentedMetalSceneAndCancels",
+      "ZitterMetalSidebarBrowserTest.SwipePreviewUsesMetalWithoutNativeSnapshots",
+      "ZitterMetalSidebarBrowserTest.NewTabActionUsesSceneTextAndConfiguredShortcut",
+      "ZitterMetalSidebarBrowserTest.AddressAndWorkspaceHeadingOwnSceneText",
+      "ZitterMetalSidebarBrowserTest.RustScrollThumbDragTrackKeyboardAndAccessibility",
+      "ZitterMetalSidebarBrowserTest.FooterSpacesScrollSelectPinAndSettings",
+      "ZitterMetalSidebarBrowserTest.NavigationHeaderHistoryReloadAndIndependentVisibility",
+      "ZitterMetalSidebarBrowserTest.PaletteChromeTextErrorsThemeAndFallback",
+      "ZitterMetalSidebarBrowserTest.PaletteScenesAsyncSelectionScrollAndIME",
+      "ZitterMetalSidebarBrowserTest.SidebarGripDragAutoHideAndEdgeReveal",
+      "ZitterMetalSidebarBrowserTest.SplitPaneScenesDragOrientTitleAndClose",
+      "ZitterMetalSidebarBrowserTest.RealTabViewportScrolls",
+      "ZitterMetalSidebarBrowserTest.ViewportProjectionTracksFractionalScrollAndClipping",
+      "ZitterMetalSidebarBrowserTest.RustRowInputCancellationAndPlatformKeys",
+      "ZitterMetalSidebarBrowserTest.SplitTitleUpdatesWithoutNativePaint",
+      "ZitterMetalSidebarBrowserTest.MetalOwnsRowTextAndSkipsNativePainting",
+      "ZitterMetalSidebarBrowserTest.MetalReturnsAfterWorkspaceAnimation",
+      "ZitterMetalSidebarBrowserTest.LiveTabsKeyboardFoldersAndSplit",
+      "ZitterMetalSidebarBrowserTest.NameEditorsAdmissionHideResetAndClipboard",
+      "ZitterMetalSidebarBrowserTest.NameEditorMouseDropAndNativeFallback",
+      "ZitterPreconnectBrowserTest.PredictionPreferenceAndCancelledIntent",
+      "ZitterPreconnectBrowserTest.RoutedProfileOwnsWarmConnectionAndCookies",
+      "ZitterPreconnectBrowserTest.ClosingCancelsPendingHint",
+      "ZitterPreconnectBrowserTest.PredictionPreferenceIsScopedAndPreservesExtendedState",
+      "ZitterPreconnectBrowserTest.BareDomainUsesAddressClassifierWithoutWarmingSearchQueries",
+      "ZitterPreconnectBrowserTest.PendingProfileDoesNotQueueSpeculativeConnections",
+      "ZitterPreconnectBrowserTest.ProfileReassignmentInvalidatesHint",
+      "ZitterPreconnectBrowserTest.LateTextAndRouteChangesInvalidateHint",
+      "ZitterPreconnectBrowserTest.PerformancePreconnect",
+      "ZitterFileUploadBrowserTest.SingleMultipleAndCancel",
+      "ZitterFileUploadBrowserTest.FolderRelativePathsAndContents",
+      "ZitterFileUploadBrowserTest.PendingFolderCanceledOnNavigationAndDestruction",
+      "ZitterFileUploadBrowserTest.FolderEnumerationDuringSheetOcclusion",
+      "ZitterFileUploadBrowserTest.BackgroundAndInvalidRequestsCancel",
+      "ZitterMediaBrowserTest.PermissionConsentProfileIsolationAndStop",
+      "ZitterMediaBrowserTest.NavigationCancelsPromptAndCaptureTeardown",
+      "ZitterMediaBrowserTest.CrossOriginFrameCaptureShowsRequestingOrigin",
+      "ZitterMediaBrowserTest.DesktopPickerCancelDoesNotCapture",
+      "ZitterMediaBrowserTest.TabPickerListsOnlySameProfileAndHonorsFilter",
+      "ZitterMediaBrowserTest.PendingScreenPickerCancelsOnDocumentChange",
+      "ZitterMediaBrowserTest.SiteGrantCannotOverrideMacOSDenial"
+    ],
+    "command": [
+      "/Users/papaj/Projects/zitter/.chromium/src/out/ZitterOptimized/zitter_prototype_ui_lab",
+      "--gtest_filter=*",
+      "--test-launcher-jobs=1",
+      "--test-launcher-retry-limit=0",
+      "--test-launcher-summary-output=/Users/papaj/Projects/zitter/build/ui-checkpoint-20261023T234130Z/metal-summary.json",
+      "--disable-component-update",
+      "--zitter-sidebar=rust-metal"
+    ],
+    "metal_api_validation": true,
+    "started_utc": "2026-10-23T23:41:30.920103+00:00",
+    "finished_utc": "2026-10-23T23:47:19.881032+00:00",
+    "exit_code": 0,
+    "summary": "/Users/papaj/Projects/zitter/build/ui-checkpoint-20261023T234130Z/metal-summary.json",
+    "log": "/Users/papaj/Projects/zitter/build/ui-checkpoint-20261023T234130Z/metal.log",
+    "counts": {
+      "SUCCESS": 140,
+      "SKIPPED": 6
+    },
+    "results": {
+      "ZitterFileUploadBrowserTest.BackgroundAndInvalidRequestsCancel": "SUCCESS",
+      "ZitterFileUploadBrowserTest.FolderEnumerationDuringSheetOcclusion": "SUCCESS",
+      "ZitterFileUploadBrowserTest.FolderRelativePathsAndContents": "SUCCESS",
+      "ZitterFileUploadBrowserTest.PendingFolderCanceledOnNavigationAndDestruction": "SUCCESS",
+      "ZitterFileUploadBrowserTest.SingleMultipleAndCancel": "SUCCESS",
+      "ZitterMediaBrowserTest.CrossOriginFrameCaptureShowsRequestingOrigin": "SUCCESS",
+      "ZitterMediaBrowserTest.DesktopPickerCancelDoesNotCapture": "SUCCESS",
+      "ZitterMediaBrowserTest.NavigationCancelsPromptAndCaptureTeardown": "SUCCESS",
+      "ZitterMediaBrowserTest.PendingScreenPickerCancelsOnDocumentChange": "SUCCESS",
+      "ZitterMediaBrowserTest.PermissionConsentProfileIsolationAndStop": "SUCCESS",
+      "ZitterMediaBrowserTest.SiteGrantCannotOverrideMacOSDenial": "SUCCESS",
+      "ZitterMediaBrowserTest.TabPickerListsOnlySameProfileAndHonorsFilter": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.AddressAndWorkspaceHeadingOwnSceneText": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.AppearanceRowsSceneInputClippingCompositionAndWorkspaceChange": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.FolderFormScenesValidationCompositionAndStaleContext": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.FolderNoticesWrapPreserveCancelAndRejectStaleTargets": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.FooterSpacesScrollSelectPinAndSettings": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.FormActionGroupsSceneTextDynamicLabelsAndCancelledTargets": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.ImportCheckboxScenesAXSpaceCaptureDisabledAndVisibility": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.ImportFormScenesLatestOptionsLocksAndAdmission": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.ImportSourceScenePrefixAXDisabledAndVisibility": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.LiveTabsKeyboardFoldersAndSplit": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.MetalOwnsRowTextAndSkipsNativePainting": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.MetalReturnsAfterWorkspaceAnimation": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.NameEditorMouseDropAndNativeFallback": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.NameEditorsAdmissionHideResetAndClipboard": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.NavigationHeaderHistoryReloadAndIndependentVisibility": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.NewTabActionUsesSceneTextAndConfiguredShortcut": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.PaletteChromeTextErrorsThemeAndFallback": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.PaletteScenesAsyncSelectionScrollAndIME": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.PreferenceChoicesScenesIdentityScrollAndCancellation": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.ProfilePanelScenesValidationIMEAndStableDeletion": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.ProfilePickerScenesStableIDsPrefixAndModelCancellation": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.RealTabViewportScrolls": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.RowMenuPlansAndQueuedIdentitySurviveReindex": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.RustRowInputCancellationAndPlatformKeys": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.RustScrollThumbDragTrackKeyboardAndAccessibility": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.SidebarGripDragAutoHideAndEdgeReveal": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.SplitPaneScenesDragOrientTitleAndClose": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.SplitTitleUpdatesWithoutNativePaint": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.SwipePreviewUsesMetalWithoutNativeSnapshots": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.ViewportProjectionTracksFractionalScrollAndClipping": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.WorkspaceFormScenesCreateCancelIMEAndProfileAssignment": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.WorkspaceNoticeCancelCapturedTargetUnloadAndRetainedProfile": "SUCCESS",
+      "ZitterMetalSidebarBrowserTest.WorkspaceSwitchUsesPresentedMetalSceneAndCancels": "SUCCESS",
+      "ZitterPreconnectBrowserTest.BareDomainUsesAddressClassifierWithoutWarmingSearchQueries": "SUCCESS",
+      "ZitterPreconnectBrowserTest.ClosingCancelsPendingHint": "SUCCESS",
+      "ZitterPreconnectBrowserTest.LateTextAndRouteChangesInvalidateHint": "SUCCESS",
+      "ZitterPreconnectBrowserTest.PendingProfileDoesNotQueueSpeculativeConnections": "SUCCESS",
+      "ZitterPreconnectBrowserTest.PerformancePreconnect": "SKIPPED",
+      "ZitterPreconnectBrowserTest.PredictionPreferenceAndCancelledIntent": "SUCCESS",
+      "ZitterPreconnectBrowserTest.PredictionPreferenceIsScopedAndPreservesExtendedState": "SUCCESS",
+      "ZitterPreconnectBrowserTest.ProfileReassignmentInvalidatesHint": "SUCCESS",
+      "ZitterPreconnectBrowserTest.RoutedProfileOwnsWarmConnectionAndCookies": "SUCCESS",
+      "ZitterProfilesBrowserTest.AddressEditorCocoaCommitCompositionAndNavigation": "SUCCESS",
+      "ZitterProfilesBrowserTest.AdvancedChromiumPreferences": "SUCCESS",
+      "ZitterProfilesBrowserTest.AppearanceEditorsCommitValidationIMEAndWorkspaceIsolation": "SUCCESS",
+      "ZitterProfilesBrowserTest.ArcImportStructureAndPersistence": "SUCCESS",
+      "ZitterProfilesBrowserTest.BeforeUnloadCloseAndAtomicRestore": "SUCCESS",
+      "ZitterProfilesBrowserTest.BeforeUnloadPeekAndBackgroundBatch": "SUCCESS",
+      "ZitterProfilesBrowserTest.BeforeUnloadProfileSleepAndWindowClose": "SUCCESS",
+      "ZitterProfilesBrowserTest.BeforeUnloadRechecksNewDirtyPages": "SUCCESS",
+      "ZitterProfilesBrowserTest.BeforeUnloadRoutedPeekIsPartOfDiscardPlan": "SUCCESS",
+      "ZitterProfilesBrowserTest.BrowsingHistoryPaginationAndStaleSearch": "SUCCESS",
+      "ZitterProfilesBrowserTest.BrowsingHistoryPanelSearchOpenAndClear": "SUCCESS",
+      "ZitterProfilesBrowserTest.BrowsingImportEncryptedCookiesAndSelection": "SUCCESS",
+      "ZitterProfilesBrowserTest.BrowsingImportPersistsInDestinationServices": "SUCCESS",
+      "ZitterProfilesBrowserTest.ChromiumBrowserImportSelectionAndPersistence": "SUCCESS",
+      "ZitterProfilesBrowserTest.ChromiumHistoryAndCommandPalette": "SUCCESS",
+      "ZitterProfilesBrowserTest.ChromiumPasswordSaveAndFill": "SUCCESS",
+      "ZitterProfilesBrowserTest.ClearBrowsingDataConfirmationAndScope": "SUCCESS",
+      "ZitterProfilesBrowserTest.CocoaSwipesRepeatWithoutMouseMovement": "SUCCESS",
+      "ZitterProfilesBrowserTest.CommandCenterMoveCopyAndSleep": "SUCCESS",
+      "ZitterProfilesBrowserTest.CommandCenterMoveSplitAndLastPage": "SUCCESS",
+      "ZitterProfilesBrowserTest.CommandCenterSearchAndDispatch": "SUCCESS",
+      "ZitterProfilesBrowserTest.ConfigurableNativeKeyboardShortcuts": "SUCCESS",
+      "ZitterProfilesBrowserTest.DomainRoutingAndPersistence": "SUCCESS",
+      "ZitterProfilesBrowserTest.DownloadsDangerousHistoryCannotRevealOrResume": "SUCCESS",
+      "ZitterProfilesBrowserTest.DownloadsTransferControlsAndProfileIsolation": "SUCCESS",
+      "ZitterProfilesBrowserTest.DynamicProfiles": "SUCCESS",
+      "ZitterProfilesBrowserTest.DynamicWorkspacesAndProfiles": "SUCCESS",
+      "ZitterProfilesBrowserTest.FailedConfigurationWritePreservesProfiles": "SUCCESS",
+      "ZitterProfilesBrowserTest.FirstRunImportOffer": "SUCCESS",
+      "ZitterProfilesBrowserTest.FirstRunImportReplacesStarterAndRollsBackOnFailure": "SUCCESS",
+      "ZitterProfilesBrowserTest.FolderEditorCocoaTypingUnicodeAndModalLifetime": "SUCCESS",
+      "ZitterProfilesBrowserTest.FolderRemovalKeepsOpenedPinsAsTabs": "SUCCESS",
+      "ZitterProfilesBrowserTest.GeneralSettingsThemeAndPersistence": "SUCCESS",
+      "ZitterProfilesBrowserTest.HistoryEditorCommittedQueryDuringPreeditAndReopen": "SUCCESS",
+      "ZitterProfilesBrowserTest.ImportOptionsInvalidatePreview": "SUCCESS",
+      "ZitterProfilesBrowserTest.JavaScriptPromptEditorCocoaCompositionAndKeyboard": "SUCCESS",
+      "ZitterProfilesBrowserTest.JavaScriptPromptEditorHiddenPageAndFrameNavigation": "SUCCESS",
+      "ZitterProfilesBrowserTest.JavaScriptPromptEditorOverrideStaleActionsAndCloseNow": "SUCCESS",
+      "ZitterProfilesBrowserTest.KeyboardWorkspaceSwitching": "SUCCESS",
+      "ZitterProfilesBrowserTest.KeywordSearchProvidersAndPersistence": "SUCCESS",
+      "ZitterProfilesBrowserTest.LiveArcImport": "SKIPPED",
+      "ZitterProfilesBrowserTest.ManualWindow": "SKIPPED",
+      "ZitterProfilesBrowserTest.NameEditorBidiDirectionAndSharedKillYank": "SUCCESS",
+      "ZitterProfilesBrowserTest.NameEditorCommittedCallbackContract": "SUCCESS",
+      "ZitterProfilesBrowserTest.NameEditorEmptyMarkedTextEndsWithoutCommit": "SUCCESS",
+      "ZitterProfilesBrowserTest.NameEditorKillYankInteroperatesWithNativeFields": "SUCCESS",
+      "ZitterProfilesBrowserTest.NameEditorMacCommandsAndSelectionPolicies": "SUCCESS",
+      "ZitterProfilesBrowserTest.NameEditorStationaryEdgeSelectionScrollAndCancellation": "SUCCESS",
+      "ZitterProfilesBrowserTest.NameEditorWordDragAndSingleLineTripleClick": "SUCCESS",
+      "ZitterProfilesBrowserTest.NameEditorsTypingUndoCompositionAndPersistence": "SUCCESS",
+      "ZitterProfilesBrowserTest.NativeDragAndCloseAtWidthLimits": "SUCCESS",
+      "ZitterProfilesBrowserTest.NativeJavaScriptDialogs": "SUCCESS",
+      "ZitterProfilesBrowserTest.NativeKeyboardWorkspaceSwitching": "SUCCESS",
+      "ZitterProfilesBrowserTest.NativeShellAndAppearance": "SUCCESS",
+      "ZitterProfilesBrowserTest.PageDialogsCocoaBeforeUnloadDefaultCancel": "SUCCESS",
+      "ZitterProfilesBrowserTest.PasswordOverviewVisibleAndDraggable": "SUCCESS",
+      "ZitterProfilesBrowserTest.PeekLifecycleAndPromotion": "SUCCESS",
+      "ZitterProfilesBrowserTest.PerformanceBaseline": "SKIPPED",
+      "ZitterProfilesBrowserTest.PerformanceProfileStartup": "SKIPPED",
+      "ZitterProfilesBrowserTest.PerformanceRestoration": "SKIPPED",
+      "ZitterProfilesBrowserTest.PreferenceChoicesCocoaEmptySelectionAndProfileScope": "SUCCESS",
+      "ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission": "SUCCESS",
+      "ZitterProfilesBrowserTest.PreferenceEditorsCocoaCompositionAndProfileScope": "SUCCESS",
+      "ZitterProfilesBrowserTest.ProfilePreferencesAndSearch": "SUCCESS",
+      "ZitterProfilesBrowserTest.RestoredTabsStayUnrealizedUntilShown": "SUCCESS",
+      "ZitterProfilesBrowserTest.RoutingLeavesFormsFramesAndRedirects": "SUCCESS",
+      "ZitterProfilesBrowserTest.ShortcutEditorCocoaRecorderAdmissionAndCancel": "SUCCESS",
+      "ZitterProfilesBrowserTest.SidebarColumnLayoutTracksCollapsedFolders": "SUCCESS",
+      "ZitterProfilesBrowserTest.SidebarFolderFailedWriteRollsBack": "SUCCESS",
+      "ZitterProfilesBrowserTest.SidebarFolderRenameAndDeleteContents": "SUCCESS",
+      "ZitterProfilesBrowserTest.SidebarFoldersCreateNestAndPersist": "SUCCESS",
+      "ZitterProfilesBrowserTest.SidebarMetadataUpdatesPreserveRows": "SUCCESS",
+      "ZitterProfilesBrowserTest.SidebarPinnedPairFollowsPaneOrderAndFolders": "SUCCESS",
+      "ZitterProfilesBrowserTest.SidebarRemainsOpenWhileSpacesSlide": "SUCCESS",
+      "ZitterProfilesBrowserTest.SidebarSplitAndDeepFolderGeometry": "SUCCESS",
+      "ZitterProfilesBrowserTest.SidebarSwipeTracksCancelsAndSkipsSpaces": "SUCCESS",
+      "ZitterProfilesBrowserTest.SidebarTreeStateSurvivesRebuildsAndSpaces": "SUCCESS",
+      "ZitterProfilesBrowserTest.SitePreferenceExceptionsAndIsolation": "SUCCESS",
+      "ZitterProfilesBrowserTest.SplitPairPersistsWhileAnotherTabIsShown": "SUCCESS",
+      "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation": "SUCCESS",
+      "ZitterProfilesBrowserTest.SplitViewSessionRestore": "SUCCESS",
+      "ZitterProfilesBrowserTest.StartupPrioritizesActiveProfileWithoutReorderingCatalogue": "SUCCESS",
+      "ZitterProfilesBrowserTest.StartupProfileFailureKeepsActiveProfileUsable": "SUCCESS",
+      "ZitterProfilesBrowserTest.StorageIsolationAndSwitching": "SUCCESS",
+      "ZitterProfilesBrowserTest.TimeMachineFlushesPendingHistoryOnClose": "SUCCESS",
+      "ZitterProfilesBrowserTest.TimeMachineSnapshotsClosedTabsAndSleep": "SUCCESS",
+      "ZitterProfilesBrowserTest.ToolsEditorsCocoaSnapshotProviderAndStaleActions": "SUCCESS",
+      "ZitterProfilesBrowserTest.WorkspaceContextAppearanceAndDeletion": "SUCCESS",
+      "ZitterProfilesBrowserTest.WorkspaceDeletionConfirmationStaysOnScreen": "SUCCESS",
+      "ZitterProfilesBrowserTest.WorkspaceDotProfileMenu": "SUCCESS",
+      "ZitterProfilesBrowserTest.WorkspaceSwitchCostWithImportedSidebar": "SUCCESS",
+      "ZitterProfilesBrowserTest.WorkspaceSwitchCostWithTwoLargeSidebars": "SUCCESS"
+    },
+    "summary_sha256": "57d14d9843b069a78dd923bf035f27fc38718f524f19b9b9cd5fb5f464328cc6",
+    "log_sha256": "771dab994777a8dde5102d52bd96e460246e52d9bc951ad18cec12d7a3a003a1"
+  },
+  "views": {
+    "mode": "views",
+    "selected_tests": [
+      "ZitterProfilesBrowserTest.PerformanceBaseline",
+      "ZitterProfilesBrowserTest.PerformanceRestoration",
+      "ZitterProfilesBrowserTest.PerformanceProfileStartup",
+      "ZitterProfilesBrowserTest.SidebarMetadataUpdatesPreserveRows",
+      "ZitterProfilesBrowserTest.TimeMachineFlushesPendingHistoryOnClose",
+      "ZitterProfilesBrowserTest.RestoredTabsStayUnrealizedUntilShown",
+      "ZitterProfilesBrowserTest.StartupPrioritizesActiveProfileWithoutReorderingCatalogue",
+      "ZitterProfilesBrowserTest.StartupProfileFailureKeepsActiveProfileUsable",
+      "ZitterProfilesBrowserTest.KeywordSearchProvidersAndPersistence",
+      "ZitterProfilesBrowserTest.ConfigurableNativeKeyboardShortcuts",
+      "ZitterProfilesBrowserTest.ToolsEditorsCocoaSnapshotProviderAndStaleActions",
+      "ZitterProfilesBrowserTest.HistoryEditorCommittedQueryDuringPreeditAndReopen",
+      "ZitterProfilesBrowserTest.ShortcutEditorCocoaRecorderAdmissionAndCancel",
+      "ZitterProfilesBrowserTest.TimeMachineSnapshotsClosedTabsAndSleep",
+      "ZitterProfilesBrowserTest.PreferenceEditorsCocoaCompositionAndProfileScope",
+      "ZitterProfilesBrowserTest.AdvancedChromiumPreferences",
+      "ZitterProfilesBrowserTest.SitePreferenceExceptionsAndIsolation",
+      "ZitterProfilesBrowserTest.BrowsingHistoryPanelSearchOpenAndClear",
+      "ZitterProfilesBrowserTest.BrowsingHistoryPaginationAndStaleSearch",
+      "ZitterProfilesBrowserTest.ClearBrowsingDataConfirmationAndScope",
+      "ZitterProfilesBrowserTest.ProfilePreferencesAndSearch",
+      "ZitterProfilesBrowserTest.PreferenceChoicesCocoaEmptySelectionAndProfileScope",
+      "ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission",
+      "ZitterProfilesBrowserTest.GeneralSettingsThemeAndPersistence",
+      "ZitterProfilesBrowserTest.SidebarRemainsOpenWhileSpacesSlide",
+      "ZitterProfilesBrowserTest.PeekLifecycleAndPromotion",
+      "ZitterProfilesBrowserTest.DomainRoutingAndPersistence",
+      "ZitterProfilesBrowserTest.RoutingLeavesFormsFramesAndRedirects",
+      "ZitterProfilesBrowserTest.DownloadsTransferControlsAndProfileIsolation",
+      "ZitterProfilesBrowserTest.DownloadsDangerousHistoryCannotRevealOrResume",
+      "ZitterProfilesBrowserTest.PasswordOverviewVisibleAndDraggable",
+      "ZitterProfilesBrowserTest.NativeJavaScriptDialogs",
+      "ZitterProfilesBrowserTest.JavaScriptPromptEditorCocoaCompositionAndKeyboard",
+      "ZitterProfilesBrowserTest.JavaScriptPromptEditorOverrideStaleActionsAndCloseNow",
+      "ZitterProfilesBrowserTest.JavaScriptPromptEditorHiddenPageAndFrameNavigation",
+      "ZitterProfilesBrowserTest.PageDialogsCocoaBeforeUnloadDefaultCancel",
+      "ZitterProfilesBrowserTest.BeforeUnloadCloseAndAtomicRestore",
+      "ZitterProfilesBrowserTest.BeforeUnloadRechecksNewDirtyPages",
+      "ZitterProfilesBrowserTest.BeforeUnloadProfileSleepAndWindowClose",
+      "ZitterProfilesBrowserTest.BeforeUnloadPeekAndBackgroundBatch",
+      "ZitterProfilesBrowserTest.BeforeUnloadRoutedPeekIsPartOfDiscardPlan",
+      "ZitterProfilesBrowserTest.CommandCenterSearchAndDispatch",
+      "ZitterProfilesBrowserTest.CommandCenterMoveCopyAndSleep",
+      "ZitterProfilesBrowserTest.CommandCenterMoveSplitAndLastPage",
+      "ZitterProfilesBrowserTest.ChromiumHistoryAndCommandPalette",
+      "ZitterProfilesBrowserTest.ChromiumPasswordSaveAndFill",
+      "ZitterProfilesBrowserTest.SplitPairPersistsWhileAnotherTabIsShown",
+      "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation",
+      "ZitterProfilesBrowserTest.SplitViewSessionRestore",
+      "ZitterProfilesBrowserTest.StorageIsolationAndSwitching",
+      "ZitterProfilesBrowserTest.DynamicWorkspacesAndProfiles",
+      "ZitterProfilesBrowserTest.WorkspaceContextAppearanceAndDeletion",
+      "ZitterProfilesBrowserTest.WorkspaceDeletionConfirmationStaysOnScreen",
+      "ZitterProfilesBrowserTest.WorkspaceSwitchCostWithImportedSidebar",
+      "ZitterProfilesBrowserTest.WorkspaceSwitchCostWithTwoLargeSidebars",
+      "ZitterProfilesBrowserTest.SidebarFoldersCreateNestAndPersist",
+      "ZitterProfilesBrowserTest.SidebarFolderRenameAndDeleteContents",
+      "ZitterProfilesBrowserTest.SidebarSwipeTracksCancelsAndSkipsSpaces",
+      "ZitterProfilesBrowserTest.CocoaSwipesRepeatWithoutMouseMovement",
+      "ZitterProfilesBrowserTest.SidebarFolderFailedWriteRollsBack",
+      "ZitterProfilesBrowserTest.FolderRemovalKeepsOpenedPinsAsTabs",
+      "ZitterProfilesBrowserTest.WorkspaceDotProfileMenu",
+      "ZitterProfilesBrowserTest.DynamicProfiles",
+      "ZitterProfilesBrowserTest.ArcImportStructureAndPersistence",
+      "ZitterProfilesBrowserTest.FailedConfigurationWritePreservesProfiles",
+      "ZitterProfilesBrowserTest.BrowsingImportEncryptedCookiesAndSelection",
+      "ZitterProfilesBrowserTest.BrowsingImportPersistsInDestinationServices",
+      "ZitterProfilesBrowserTest.ChromiumBrowserImportSelectionAndPersistence",
+      "ZitterProfilesBrowserTest.ImportOptionsInvalidatePreview",
+      "ZitterProfilesBrowserTest.FirstRunImportReplacesStarterAndRollsBackOnFailure",
+      "ZitterProfilesBrowserTest.FirstRunImportOffer",
+      "ZitterProfilesBrowserTest.LiveArcImport",
+      "ZitterProfilesBrowserTest.KeyboardWorkspaceSwitching",
+      "ZitterProfilesBrowserTest.NativeKeyboardWorkspaceSwitching",
+      "ZitterProfilesBrowserTest.NativeShellAndAppearance",
+      "ZitterProfilesBrowserTest.SidebarColumnLayoutTracksCollapsedFolders",
+      "ZitterProfilesBrowserTest.SidebarTreeStateSurvivesRebuildsAndSpaces",
+      "ZitterProfilesBrowserTest.SidebarSplitAndDeepFolderGeometry",
+      "ZitterProfilesBrowserTest.SidebarPinnedPairFollowsPaneOrderAndFolders",
+      "ZitterProfilesBrowserTest.NativeDragAndCloseAtWidthLimits",
+      "ZitterProfilesBrowserTest.ManualWindow",
+      "ZitterProfilesBrowserTest.NameEditorsTypingUndoCompositionAndPersistence",
+      "ZitterProfilesBrowserTest.NameEditorWordDragAndSingleLineTripleClick",
+      "ZitterProfilesBrowserTest.NameEditorStationaryEdgeSelectionScrollAndCancellation",
+      "ZitterProfilesBrowserTest.FolderEditorCocoaTypingUnicodeAndModalLifetime",
+      "ZitterProfilesBrowserTest.AddressEditorCocoaCommitCompositionAndNavigation",
+      "ZitterProfilesBrowserTest.NameEditorEmptyMarkedTextEndsWithoutCommit",
+      "ZitterProfilesBrowserTest.NameEditorCommittedCallbackContract",
+      "ZitterProfilesBrowserTest.AppearanceEditorsCommitValidationIMEAndWorkspaceIsolation",
+      "ZitterProfilesBrowserTest.NameEditorMacCommandsAndSelectionPolicies",
+      "ZitterProfilesBrowserTest.NameEditorBidiDirectionAndSharedKillYank",
+      "ZitterProfilesBrowserTest.NameEditorKillYankInteroperatesWithNativeFields",
+      "ZitterPreconnectBrowserTest.PredictionPreferenceAndCancelledIntent",
+      "ZitterPreconnectBrowserTest.RoutedProfileOwnsWarmConnectionAndCookies",
+      "ZitterPreconnectBrowserTest.ClosingCancelsPendingHint",
+      "ZitterPreconnectBrowserTest.PredictionPreferenceIsScopedAndPreservesExtendedState",
+      "ZitterPreconnectBrowserTest.BareDomainUsesAddressClassifierWithoutWarmingSearchQueries",
+      "ZitterPreconnectBrowserTest.PendingProfileDoesNotQueueSpeculativeConnections",
+      "ZitterPreconnectBrowserTest.ProfileReassignmentInvalidatesHint",
+      "ZitterPreconnectBrowserTest.LateTextAndRouteChangesInvalidateHint",
+      "ZitterPreconnectBrowserTest.PerformancePreconnect",
+      "ZitterFileUploadBrowserTest.SingleMultipleAndCancel",
+      "ZitterFileUploadBrowserTest.FolderRelativePathsAndContents",
+      "ZitterFileUploadBrowserTest.PendingFolderCanceledOnNavigationAndDestruction",
+      "ZitterFileUploadBrowserTest.FolderEnumerationDuringSheetOcclusion",
+      "ZitterFileUploadBrowserTest.BackgroundAndInvalidRequestsCancel",
+      "ZitterMediaBrowserTest.PermissionConsentProfileIsolationAndStop",
+      "ZitterMediaBrowserTest.NavigationCancelsPromptAndCaptureTeardown",
+      "ZitterMediaBrowserTest.CrossOriginFrameCaptureShowsRequestingOrigin",
+      "ZitterMediaBrowserTest.DesktopPickerCancelDoesNotCapture",
+      "ZitterMediaBrowserTest.TabPickerListsOnlySameProfileAndHonorsFilter",
+      "ZitterMediaBrowserTest.PendingScreenPickerCancelsOnDocumentChange",
+      "ZitterMediaBrowserTest.SiteGrantCannotOverrideMacOSDenial"
+    ],
+    "command": [
+      "/Users/papaj/Projects/zitter/.chromium/src/out/ZitterOptimized/zitter_prototype_ui_lab",
+      "--gtest_filter=*-ZitterMetalSidebarBrowserTest.*",
+      "--test-launcher-jobs=1",
+      "--test-launcher-retry-limit=0",
+      "--test-launcher-summary-output=/Users/papaj/Projects/zitter/build/ui-checkpoint-20261023T234130Z/views-summary.json",
+      "--disable-component-update"
+    ],
+    "metal_api_validation": false,
+    "started_utc": "2026-10-23T23:47:19.881564+00:00",
+    "finished_utc": "2026-10-23T23:51:52.688914+00:00",
+    "exit_code": 0,
+    "summary": "/Users/papaj/Projects/zitter/build/ui-checkpoint-20261023T234130Z/views-summary.json",
+    "log": "/Users/papaj/Projects/zitter/build/ui-checkpoint-20261023T234130Z/views.log",
+    "counts": {
+      "SUCCESS": 107,
+      "SKIPPED": 6
+    },
+    "results": {
+      "ZitterFileUploadBrowserTest.BackgroundAndInvalidRequestsCancel": "SUCCESS",
+      "ZitterFileUploadBrowserTest.FolderEnumerationDuringSheetOcclusion": "SUCCESS",
+      "ZitterFileUploadBrowserTest.FolderRelativePathsAndContents": "SUCCESS",
+      "ZitterFileUploadBrowserTest.PendingFolderCanceledOnNavigationAndDestruction": "SUCCESS",
+      "ZitterFileUploadBrowserTest.SingleMultipleAndCancel": "SUCCESS",
+      "ZitterMediaBrowserTest.CrossOriginFrameCaptureShowsRequestingOrigin": "SUCCESS",
+      "ZitterMediaBrowserTest.DesktopPickerCancelDoesNotCapture": "SUCCESS",
+      "ZitterMediaBrowserTest.NavigationCancelsPromptAndCaptureTeardown": "SUCCESS",
+      "ZitterMediaBrowserTest.PendingScreenPickerCancelsOnDocumentChange": "SUCCESS",
+      "ZitterMediaBrowserTest.PermissionConsentProfileIsolationAndStop": "SUCCESS",
+      "ZitterMediaBrowserTest.SiteGrantCannotOverrideMacOSDenial": "SUCCESS",
+      "ZitterMediaBrowserTest.TabPickerListsOnlySameProfileAndHonorsFilter": "SUCCESS",
+      "ZitterPreconnectBrowserTest.BareDomainUsesAddressClassifierWithoutWarmingSearchQueries": "SUCCESS",
+      "ZitterPreconnectBrowserTest.ClosingCancelsPendingHint": "SUCCESS",
+      "ZitterPreconnectBrowserTest.LateTextAndRouteChangesInvalidateHint": "SUCCESS",
+      "ZitterPreconnectBrowserTest.PendingProfileDoesNotQueueSpeculativeConnections": "SUCCESS",
+      "ZitterPreconnectBrowserTest.PerformancePreconnect": "SKIPPED",
+      "ZitterPreconnectBrowserTest.PredictionPreferenceAndCancelledIntent": "SUCCESS",
+      "ZitterPreconnectBrowserTest.PredictionPreferenceIsScopedAndPreservesExtendedState": "SUCCESS",
+      "ZitterPreconnectBrowserTest.ProfileReassignmentInvalidatesHint": "SUCCESS",
+      "ZitterPreconnectBrowserTest.RoutedProfileOwnsWarmConnectionAndCookies": "SUCCESS",
+      "ZitterProfilesBrowserTest.AddressEditorCocoaCommitCompositionAndNavigation": "SUCCESS",
+      "ZitterProfilesBrowserTest.AdvancedChromiumPreferences": "SUCCESS",
+      "ZitterProfilesBrowserTest.AppearanceEditorsCommitValidationIMEAndWorkspaceIsolation": "SUCCESS",
+      "ZitterProfilesBrowserTest.ArcImportStructureAndPersistence": "SUCCESS",
+      "ZitterProfilesBrowserTest.BeforeUnloadCloseAndAtomicRestore": "SUCCESS",
+      "ZitterProfilesBrowserTest.BeforeUnloadPeekAndBackgroundBatch": "SUCCESS",
+      "ZitterProfilesBrowserTest.BeforeUnloadProfileSleepAndWindowClose": "SUCCESS",
+      "ZitterProfilesBrowserTest.BeforeUnloadRechecksNewDirtyPages": "SUCCESS",
+      "ZitterProfilesBrowserTest.BeforeUnloadRoutedPeekIsPartOfDiscardPlan": "SUCCESS",
+      "ZitterProfilesBrowserTest.BrowsingHistoryPaginationAndStaleSearch": "SUCCESS",
+      "ZitterProfilesBrowserTest.BrowsingHistoryPanelSearchOpenAndClear": "SUCCESS",
+      "ZitterProfilesBrowserTest.BrowsingImportEncryptedCookiesAndSelection": "SUCCESS",
+      "ZitterProfilesBrowserTest.BrowsingImportPersistsInDestinationServices": "SUCCESS",
+      "ZitterProfilesBrowserTest.ChromiumBrowserImportSelectionAndPersistence": "SUCCESS",
+      "ZitterProfilesBrowserTest.ChromiumHistoryAndCommandPalette": "SUCCESS",
+      "ZitterProfilesBrowserTest.ChromiumPasswordSaveAndFill": "SUCCESS",
+      "ZitterProfilesBrowserTest.ClearBrowsingDataConfirmationAndScope": "SUCCESS",
+      "ZitterProfilesBrowserTest.CocoaSwipesRepeatWithoutMouseMovement": "SUCCESS",
+      "ZitterProfilesBrowserTest.CommandCenterMoveCopyAndSleep": "SUCCESS",
+      "ZitterProfilesBrowserTest.CommandCenterMoveSplitAndLastPage": "SUCCESS",
+      "ZitterProfilesBrowserTest.CommandCenterSearchAndDispatch": "SUCCESS",
+      "ZitterProfilesBrowserTest.ConfigurableNativeKeyboardShortcuts": "SUCCESS",
+      "ZitterProfilesBrowserTest.DomainRoutingAndPersistence": "SUCCESS",
+      "ZitterProfilesBrowserTest.DownloadsDangerousHistoryCannotRevealOrResume": "SUCCESS",
+      "ZitterProfilesBrowserTest.DownloadsTransferControlsAndProfileIsolation": "SUCCESS",
+      "ZitterProfilesBrowserTest.DynamicProfiles": "SUCCESS",
+      "ZitterProfilesBrowserTest.DynamicWorkspacesAndProfiles": "SUCCESS",
+      "ZitterProfilesBrowserTest.FailedConfigurationWritePreservesProfiles": "SUCCESS",
+      "ZitterProfilesBrowserTest.FirstRunImportOffer": "SUCCESS",
+      "ZitterProfilesBrowserTest.FirstRunImportReplacesStarterAndRollsBackOnFailure": "SUCCESS",
+      "ZitterProfilesBrowserTest.FolderEditorCocoaTypingUnicodeAndModalLifetime": "SUCCESS",
+      "ZitterProfilesBrowserTest.FolderRemovalKeepsOpenedPinsAsTabs": "SUCCESS",
+      "ZitterProfilesBrowserTest.GeneralSettingsThemeAndPersistence": "SUCCESS",
+      "ZitterProfilesBrowserTest.HistoryEditorCommittedQueryDuringPreeditAndReopen": "SUCCESS",
+      "ZitterProfilesBrowserTest.ImportOptionsInvalidatePreview": "SUCCESS",
+      "ZitterProfilesBrowserTest.JavaScriptPromptEditorCocoaCompositionAndKeyboard": "SUCCESS",
+      "ZitterProfilesBrowserTest.JavaScriptPromptEditorHiddenPageAndFrameNavigation": "SUCCESS",
+      "ZitterProfilesBrowserTest.JavaScriptPromptEditorOverrideStaleActionsAndCloseNow": "SUCCESS",
+      "ZitterProfilesBrowserTest.KeyboardWorkspaceSwitching": "SUCCESS",
+      "ZitterProfilesBrowserTest.KeywordSearchProvidersAndPersistence": "SUCCESS",
+      "ZitterProfilesBrowserTest.LiveArcImport": "SKIPPED",
+      "ZitterProfilesBrowserTest.ManualWindow": "SKIPPED",
+      "ZitterProfilesBrowserTest.NameEditorBidiDirectionAndSharedKillYank": "SUCCESS",
+      "ZitterProfilesBrowserTest.NameEditorCommittedCallbackContract": "SUCCESS",
+      "ZitterProfilesBrowserTest.NameEditorEmptyMarkedTextEndsWithoutCommit": "SUCCESS",
+      "ZitterProfilesBrowserTest.NameEditorKillYankInteroperatesWithNativeFields": "SUCCESS",
+      "ZitterProfilesBrowserTest.NameEditorMacCommandsAndSelectionPolicies": "SUCCESS",
+      "ZitterProfilesBrowserTest.NameEditorStationaryEdgeSelectionScrollAndCancellation": "SUCCESS",
+      "ZitterProfilesBrowserTest.NameEditorWordDragAndSingleLineTripleClick": "SUCCESS",
+      "ZitterProfilesBrowserTest.NameEditorsTypingUndoCompositionAndPersistence": "SUCCESS",
+      "ZitterProfilesBrowserTest.NativeDragAndCloseAtWidthLimits": "SUCCESS",
+      "ZitterProfilesBrowserTest.NativeJavaScriptDialogs": "SUCCESS",
+      "ZitterProfilesBrowserTest.NativeKeyboardWorkspaceSwitching": "SUCCESS",
+      "ZitterProfilesBrowserTest.NativeShellAndAppearance": "SUCCESS",
+      "ZitterProfilesBrowserTest.PageDialogsCocoaBeforeUnloadDefaultCancel": "SUCCESS",
+      "ZitterProfilesBrowserTest.PasswordOverviewVisibleAndDraggable": "SUCCESS",
+      "ZitterProfilesBrowserTest.PeekLifecycleAndPromotion": "SUCCESS",
+      "ZitterProfilesBrowserTest.PerformanceBaseline": "SKIPPED",
+      "ZitterProfilesBrowserTest.PerformanceProfileStartup": "SKIPPED",
+      "ZitterProfilesBrowserTest.PerformanceRestoration": "SKIPPED",
+      "ZitterProfilesBrowserTest.PreferenceChoicesCocoaEmptySelectionAndProfileScope": "SUCCESS",
+      "ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission": "SUCCESS",
+      "ZitterProfilesBrowserTest.PreferenceEditorsCocoaCompositionAndProfileScope": "SUCCESS",
+      "ZitterProfilesBrowserTest.ProfilePreferencesAndSearch": "SUCCESS",
+      "ZitterProfilesBrowserTest.RestoredTabsStayUnrealizedUntilShown": "SUCCESS",
+      "ZitterProfilesBrowserTest.RoutingLeavesFormsFramesAndRedirects": "SUCCESS",
+      "ZitterProfilesBrowserTest.ShortcutEditorCocoaRecorderAdmissionAndCancel": "SUCCESS",
+      "ZitterProfilesBrowserTest.SidebarColumnLayoutTracksCollapsedFolders": "SUCCESS",
+      "ZitterProfilesBrowserTest.SidebarFolderFailedWriteRollsBack": "SUCCESS",
+      "ZitterProfilesBrowserTest.SidebarFolderRenameAndDeleteContents": "SUCCESS",
+      "ZitterProfilesBrowserTest.SidebarFoldersCreateNestAndPersist": "SUCCESS",
+      "ZitterProfilesBrowserTest.SidebarMetadataUpdatesPreserveRows": "SUCCESS",
+      "ZitterProfilesBrowserTest.SidebarPinnedPairFollowsPaneOrderAndFolders": "SUCCESS",
+      "ZitterProfilesBrowserTest.SidebarRemainsOpenWhileSpacesSlide": "SUCCESS",
+      "ZitterProfilesBrowserTest.SidebarSplitAndDeepFolderGeometry": "SUCCESS",
+      "ZitterProfilesBrowserTest.SidebarSwipeTracksCancelsAndSkipsSpaces": "SUCCESS",
+      "ZitterProfilesBrowserTest.SidebarTreeStateSurvivesRebuildsAndSpaces": "SUCCESS",
+      "ZitterProfilesBrowserTest.SitePreferenceExceptionsAndIsolation": "SUCCESS",
+      "ZitterProfilesBrowserTest.SplitPairPersistsWhileAnotherTabIsShown": "SUCCESS",
+      "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation": "SUCCESS",
+      "ZitterProfilesBrowserTest.SplitViewSessionRestore": "SUCCESS",
+      "ZitterProfilesBrowserTest.StartupPrioritizesActiveProfileWithoutReorderingCatalogue": "SUCCESS",
+      "ZitterProfilesBrowserTest.StartupProfileFailureKeepsActiveProfileUsable": "SUCCESS",
+      "ZitterProfilesBrowserTest.StorageIsolationAndSwitching": "SUCCESS",
+      "ZitterProfilesBrowserTest.TimeMachineFlushesPendingHistoryOnClose": "SUCCESS",
+      "ZitterProfilesBrowserTest.TimeMachineSnapshotsClosedTabsAndSleep": "SUCCESS",
+      "ZitterProfilesBrowserTest.ToolsEditorsCocoaSnapshotProviderAndStaleActions": "SUCCESS",
+      "ZitterProfilesBrowserTest.WorkspaceContextAppearanceAndDeletion": "SUCCESS",
+      "ZitterProfilesBrowserTest.WorkspaceDeletionConfirmationStaysOnScreen": "SUCCESS",
+      "ZitterProfilesBrowserTest.WorkspaceDotProfileMenu": "SUCCESS",
+      "ZitterProfilesBrowserTest.WorkspaceSwitchCostWithImportedSidebar": "SUCCESS",
+      "ZitterProfilesBrowserTest.WorkspaceSwitchCostWithTwoLargeSidebars": "SUCCESS"
+    },
+    "summary_sha256": "16b6f49f7d1ef3b8bc84da82029edaa97870f3a54cd1a9eae0a329c940a0b8fc",
+    "log_sha256": "3011dbcdf7c5b5c8d451f76199e2dd849757ef5680c45b12ea9754fa09571030"
+  },
+  "additional_performance_scenario_coverage": {
+    "purpose": "Execute all four opt-in performance scenarios as additional automated coverage, with their default 30 trials. Metal validation is enabled; these are not controlled CPU/GPU/drawable presentation comparisons.",
+    "runs": {
+      "metal": {
+        "mode": "metal",
+        "command": [
+          "/Users/papaj/Projects/zitter/.chromium/src/out/ZitterOptimized/zitter_prototype_ui_lab",
+          "--gtest_filter=ZitterProfilesBrowserTest.Performance*:ZitterPreconnectBrowserTest.PerformancePreconnect",
+          "--zitter-benchmark",
+          "--test-launcher-jobs=1",
+          "--test-launcher-retry-limit=0",
+          "--test-launcher-timeout=900000",
+          "--test-launcher-summary-output=/Users/papaj/Projects/zitter/build/preference-choices-performance-coverage/metal.json",
+          "--disable-component-update",
+          "--zitter-sidebar=rust-metal"
+        ],
+        "exit_code": 0,
+        "started_utc": "2026-10-23T23:52:00.836583+00:00",
+        "finished_utc": "2026-10-23T23:53:49.333851+00:00",
+        "counts": {
+          "SUCCESS": 4
+        },
+        "results": {
+          "ZitterPreconnectBrowserTest.PerformancePreconnect": "SUCCESS",
+          "ZitterProfilesBrowserTest.PerformanceBaseline": "SUCCESS",
+          "ZitterProfilesBrowserTest.PerformanceProfileStartup": "SUCCESS",
+          "ZitterProfilesBrowserTest.PerformanceRestoration": "SUCCESS"
+        },
+        "summary_sha256": "a6c491362ed71bdbc6c9bf82a09fc0af659235baf47e063f7cdae5074dbdf1d3",
+        "log_sha256": "b1103598cb59b44147612485d730682fbc959c4ce7b9effa1e5b7458b0512c68",
+        "samples": [
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 0,
+            "ms": 7.516
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 0,
+            "ms": 34.711
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 1,
+            "ms": 6.952
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 1,
+            "ms": 34.6
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 2,
+            "ms": 6.949
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 2,
+            "ms": 34.639
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 3,
+            "ms": 6.933
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 3,
+            "ms": 33.586
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 4,
+            "ms": 6.546
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 4,
+            "ms": 34.501
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 5,
+            "ms": 6.625
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 5,
+            "ms": 36.716
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 6,
+            "ms": 6.553
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 6,
+            "ms": 34.635
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 7,
+            "ms": 6.659
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 7,
+            "ms": 34.667
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 8,
+            "ms": 6.727
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 8,
+            "ms": 34.558
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 9,
+            "ms": 6.732
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 9,
+            "ms": 34.636
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 10,
+            "ms": 7.103
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 10,
+            "ms": 76.355
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 11,
+            "ms": 6.93
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 11,
+            "ms": 34.695
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 12,
+            "ms": 6.684
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 12,
+            "ms": 34.96
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 13,
+            "ms": 6.783
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 13,
+            "ms": 34.655
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 14,
+            "ms": 6.518
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 14,
+            "ms": 34.692
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 15,
+            "ms": 6.594
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 15,
+            "ms": 34.466
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 16,
+            "ms": 6.529
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 16,
+            "ms": 34.023
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 17,
+            "ms": 6.962
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 17,
+            "ms": 34.195
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 18,
+            "ms": 6.805
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 18,
+            "ms": 33.456
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 19,
+            "ms": 6.936
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 19,
+            "ms": 36.621
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 20,
+            "ms": 6.931
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 20,
+            "ms": 33.321
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 21,
+            "ms": 6.985
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 21,
+            "ms": 34.579
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 22,
+            "ms": 7.416
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 22,
+            "ms": 33.424
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 23,
+            "ms": 6.61
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 23,
+            "ms": 34.22
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 24,
+            "ms": 7.134
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 24,
+            "ms": 34.329
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 25,
+            "ms": 6.481
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 25,
+            "ms": 34.649
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 26,
+            "ms": 6.9
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 26,
+            "ms": 34.595
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 27,
+            "ms": 6.739
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 27,
+            "ms": 34.612
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 28,
+            "ms": 6.712
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 28,
+            "ms": 34.524
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 29,
+            "ms": 6.851
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 29,
+            "ms": 34.65
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 0,
+            "ms": 2.439
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 0,
+            "ms": 33.294
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 1,
+            "ms": 1.999
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 1,
+            "ms": 33.163
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 2,
+            "ms": 2.053
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 2,
+            "ms": 33.28
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 3,
+            "ms": 1.971
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 3,
+            "ms": 33.348
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 4,
+            "ms": 1.912
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 4,
+            "ms": 49.86
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 5,
+            "ms": 2.506
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 5,
+            "ms": 33.228
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 6,
+            "ms": 2.509
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 6,
+            "ms": 33.267
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 7,
+            "ms": 2.699
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 7,
+            "ms": 33.277
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 8,
+            "ms": 2.422
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 8,
+            "ms": 33.303
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 9,
+            "ms": 2.425
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 9,
+            "ms": 33.226
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 10,
+            "ms": 2.652
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 10,
+            "ms": 33.228
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 11,
+            "ms": 2.516
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 11,
+            "ms": 49.963
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 12,
+            "ms": 3.03
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 12,
+            "ms": 33.189
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 13,
+            "ms": 3.019
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 13,
+            "ms": 33.253
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 14,
+            "ms": 2.3
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 14,
+            "ms": 33.255
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 15,
+            "ms": 2.212
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 15,
+            "ms": 33.23
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 16,
+            "ms": 2.808
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 16,
+            "ms": 49.915
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 17,
+            "ms": 2.534
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 17,
+            "ms": 33.234
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 18,
+            "ms": 2.637
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 18,
+            "ms": 33.23
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 19,
+            "ms": 2.845
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 19,
+            "ms": 33.238
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 20,
+            "ms": 2.721
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 20,
+            "ms": 33.229
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 21,
+            "ms": 2.965
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 21,
+            "ms": 33.264
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 22,
+            "ms": 2.801
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 22,
+            "ms": 33.245
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 23,
+            "ms": 2.938
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 23,
+            "ms": 33.234
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 24,
+            "ms": 2.694
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 24,
+            "ms": 33.19
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 25,
+            "ms": 2.547
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 25,
+            "ms": 33.268
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 26,
+            "ms": 2.526
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 26,
+            "ms": 49.924
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 27,
+            "ms": 2.882
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 27,
+            "ms": 33.251
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 28,
+            "ms": 2.787
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 28,
+            "ms": 33.238
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 29,
+            "ms": 3.336
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 29,
+            "ms": 33.186
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 0,
+            "ms": 134.307
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 0,
+            "ms": 167.703
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 1,
+            "ms": 133.607
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 1,
+            "ms": 166.993
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 2,
+            "ms": 106.374
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 2,
+            "ms": 133.234
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 3,
+            "ms": 152.394
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 3,
+            "ms": 169.095
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 4,
+            "ms": 155.785
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 4,
+            "ms": 172.483
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 5,
+            "ms": 152.292
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 5,
+            "ms": 168.923
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 6,
+            "ms": 151.483
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 6,
+            "ms": 168.214
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 7,
+            "ms": 192.884
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 7,
+            "ms": 209.559
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 8,
+            "ms": 151.697
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 8,
+            "ms": 168.338
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 9,
+            "ms": 142.792
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 9,
+            "ms": 159.476
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 10,
+            "ms": 154.622
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 10,
+            "ms": 171.309
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 11,
+            "ms": 134.369
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 11,
+            "ms": 167.753
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 12,
+            "ms": 160.192
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 12,
+            "ms": 176.893
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 13,
+            "ms": 148.832
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 13,
+            "ms": 182.435
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 14,
+            "ms": 153.3
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 14,
+            "ms": 169.995
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 15,
+            "ms": 163.203
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 15,
+            "ms": 179.922
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 16,
+            "ms": 168.123
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 16,
+            "ms": 185.03
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 17,
+            "ms": 152.339
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 17,
+            "ms": 169.075
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 18,
+            "ms": 156.963
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 18,
+            "ms": 169.143
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 19,
+            "ms": 147.123
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 19,
+            "ms": 180.523
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 20,
+            "ms": 156.463
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 20,
+            "ms": 173.144
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 21,
+            "ms": 166.224
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 21,
+            "ms": 182.967
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 22,
+            "ms": 162.442
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 22,
+            "ms": 179.006
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 23,
+            "ms": 165.705
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 23,
+            "ms": 182.401
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 24,
+            "ms": 161.738
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 24,
+            "ms": 178.386
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 25,
+            "ms": 153.931
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 25,
+            "ms": 185.135
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 26,
+            "ms": 169.905
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 26,
+            "ms": 186.829
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 27,
+            "ms": 155.222
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 27,
+            "ms": 171.966
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 28,
+            "ms": 168.772
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 28,
+            "ms": 185.329
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 29,
+            "ms": 166.532
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 29,
+            "ms": 183.236
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 0,
+            "ms": 137.799
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 0,
+            "ms": 171.869
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 0,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 1,
+            "ms": 143.663
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 1,
+            "ms": 174.739
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 1,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 2,
+            "ms": 160.323
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 2,
+            "ms": 176.924
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 2,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 3,
+            "ms": 164.435
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 3,
+            "ms": 182.695
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 3,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 4,
+            "ms": 157.965
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 4,
+            "ms": 188.156
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 4,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 5,
+            "ms": 154.177
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 5,
+            "ms": 190.477
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 5,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 6,
+            "ms": 137.345
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 6,
+            "ms": 194.166
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 6,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 7,
+            "ms": 171.517
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 7,
+            "ms": 198.919
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 7,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 8,
+            "ms": 133.913
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 8,
+            "ms": 204.734
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 8,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 9,
+            "ms": 151.43
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 9,
+            "ms": 206.556
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 9,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 10,
+            "ms": 151.3
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 10,
+            "ms": 210.12
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 10,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 11,
+            "ms": 154.844
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 11,
+            "ms": 214.19
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 11,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 12,
+            "ms": 161.907
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 12,
+            "ms": 219.738
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 12,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 13,
+            "ms": 161.424
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 13,
+            "ms": 224.868
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 13,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 14,
+            "ms": 162.164
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 14,
+            "ms": 227.121
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 14,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 15,
+            "ms": 166.357
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 15,
+            "ms": 234.694
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 15,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 16,
+            "ms": 159.961
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 16,
+            "ms": 236.326
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 16,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 17,
+            "ms": 181.172
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 17,
+            "ms": 240.994
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 17,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 18,
+            "ms": 181.065
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 18,
+            "ms": 243.036
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 18,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 19,
+            "ms": 186.483
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 19,
+            "ms": 247.857
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 19,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 20,
+            "ms": 176.921
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 20,
+            "ms": 251.263
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 20,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 21,
+            "ms": 159.734
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 21,
+            "ms": 254.946
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 21,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 22,
+            "ms": 171.411
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 22,
+            "ms": 257.753
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 22,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 23,
+            "ms": 151.949
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 23,
+            "ms": 261.943
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 23,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 24,
+            "ms": 174.005
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 24,
+            "ms": 265.797
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 24,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 25,
+            "ms": 161.857
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 25,
+            "ms": 271.793
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 25,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 26,
+            "ms": 163.813
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 26,
+            "ms": 273.652
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 26,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 27,
+            "ms": 190.065
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 27,
+            "ms": 277.265
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 27,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 28,
+            "ms": 202.708
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 28,
+            "ms": 281.862
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 28,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 29,
+            "ms": 204.639
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 29,
+            "ms": 287.525
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 29,
+            "ms": 0
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 0,
+            "ms": 284.678
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 0,
+            "ms": 254.2
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 1,
+            "ms": 284.471
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 1,
+            "ms": 251.8
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 2,
+            "ms": 274.996
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 2,
+            "ms": 251.9
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 3,
+            "ms": 293.646
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 3,
+            "ms": 262.8
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 4,
+            "ms": 282.737
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 4,
+            "ms": 257
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 5,
+            "ms": 291.76
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 5,
+            "ms": 260
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 6,
+            "ms": 286.937
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 6,
+            "ms": 259.6
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 7,
+            "ms": 278.669
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 7,
+            "ms": 252.3
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 8,
+            "ms": 295.171
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 8,
+            "ms": 258.1
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 9,
+            "ms": 290.763
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 9,
+            "ms": 262
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 10,
+            "ms": 284.619
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 10,
+            "ms": 254.6
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 11,
+            "ms": 293.373
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 11,
+            "ms": 261.7
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 12,
+            "ms": 292.528
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 12,
+            "ms": 257
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 13,
+            "ms": 287.108
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 13,
+            "ms": 254.5
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 14,
+            "ms": 288.932
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 14,
+            "ms": 258
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 15,
+            "ms": 294.021
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 15,
+            "ms": 259.3
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 16,
+            "ms": 279.555
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 16,
+            "ms": 247
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 17,
+            "ms": 293.578
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 17,
+            "ms": 264
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 18,
+            "ms": 286.365
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 18,
+            "ms": 256
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 19,
+            "ms": 295.972
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 19,
+            "ms": 262.7
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 20,
+            "ms": 286.208
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 20,
+            "ms": 255.1
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 21,
+            "ms": 282.885
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 21,
+            "ms": 252.9
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 22,
+            "ms": 292.007
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 22,
+            "ms": 261.1
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 23,
+            "ms": 292.281
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 23,
+            "ms": 258.3
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 24,
+            "ms": 292.216
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 24,
+            "ms": 258.2
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 25,
+            "ms": 292.461
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 25,
+            "ms": 258.5
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 26,
+            "ms": 285.71
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 26,
+            "ms": 259.5
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 27,
+            "ms": 288.551
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 27,
+            "ms": 255.1
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 28,
+            "ms": 284.258
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 28,
+            "ms": 258.6
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 29,
+            "ms": 294.028
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 29,
+            "ms": 260.6
+          }
+        ]
+      },
+      "views": {
+        "mode": "views",
+        "command": [
+          "/Users/papaj/Projects/zitter/.chromium/src/out/ZitterOptimized/zitter_prototype_ui_lab",
+          "--gtest_filter=ZitterProfilesBrowserTest.Performance*:ZitterPreconnectBrowserTest.PerformancePreconnect",
+          "--zitter-benchmark",
+          "--test-launcher-jobs=1",
+          "--test-launcher-retry-limit=0",
+          "--test-launcher-timeout=900000",
+          "--test-launcher-summary-output=/Users/papaj/Projects/zitter/build/preference-choices-performance-coverage/views.json",
+          "--disable-component-update"
+        ],
+        "exit_code": 0,
+        "started_utc": "2026-10-23T23:53:49.334232+00:00",
+        "finished_utc": "2026-10-23T23:55:37.088530+00:00",
+        "counts": {
+          "SUCCESS": 4
+        },
+        "results": {
+          "ZitterPreconnectBrowserTest.PerformancePreconnect": "SUCCESS",
+          "ZitterProfilesBrowserTest.PerformanceBaseline": "SUCCESS",
+          "ZitterProfilesBrowserTest.PerformanceProfileStartup": "SUCCESS",
+          "ZitterProfilesBrowserTest.PerformanceRestoration": "SUCCESS"
+        },
+        "summary_sha256": "4f8952e14c99c337555858064797a3c7a07b123004a2d020e3ed8f2dab18a940",
+        "log_sha256": "2ea5cbf00fdf36994479a9c4de800001d600f93b5d31e6b8fafb9091b4fc3cf6",
+        "samples": [
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 0,
+            "ms": 7.436
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 0,
+            "ms": 34.183
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 1,
+            "ms": 7.538
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 1,
+            "ms": 34.059
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 2,
+            "ms": 7.305
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 2,
+            "ms": 34.086
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 3,
+            "ms": 7.107
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 3,
+            "ms": 34.316
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 4,
+            "ms": 7.023
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 4,
+            "ms": 34.179
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 5,
+            "ms": 7.107
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 5,
+            "ms": 34.223
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 6,
+            "ms": 6.968
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 6,
+            "ms": 33.797
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 7,
+            "ms": 7.1
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 7,
+            "ms": 34.223
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 8,
+            "ms": 7.295
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 8,
+            "ms": 34.215
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 9,
+            "ms": 7.759
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 9,
+            "ms": 75.794
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 10,
+            "ms": 7.237
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 10,
+            "ms": 34.146
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 11,
+            "ms": 7.163
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 11,
+            "ms": 33.74
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 12,
+            "ms": 6.4
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 12,
+            "ms": 34.103
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 13,
+            "ms": 7.211
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 13,
+            "ms": 34.105
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 14,
+            "ms": 6.854
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 14,
+            "ms": 33.656
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 15,
+            "ms": 6.838
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 15,
+            "ms": 34.098
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 16,
+            "ms": 7.151
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 16,
+            "ms": 34.2
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 17,
+            "ms": 6.985
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 17,
+            "ms": 34.167
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 18,
+            "ms": 7.515
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 18,
+            "ms": 34.219
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 19,
+            "ms": 7.099
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 19,
+            "ms": 34.213
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 20,
+            "ms": 7.162
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 20,
+            "ms": 34.225
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 21,
+            "ms": 7.356
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 21,
+            "ms": 34.167
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 22,
+            "ms": 7.242
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 22,
+            "ms": 33.937
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 23,
+            "ms": 7.676
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 23,
+            "ms": 34.04
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 24,
+            "ms": 7.531
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 24,
+            "ms": 33.843
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 25,
+            "ms": 7.055
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 25,
+            "ms": 34.184
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 26,
+            "ms": 7.431
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 26,
+            "ms": 34.187
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 27,
+            "ms": 7.045
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 27,
+            "ms": 34.279
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 28,
+            "ms": 7.44
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 28,
+            "ms": 34.108
+          },
+          {
+            "metric": "new_tab_dispatch_ms",
+            "trial": 29,
+            "ms": 7.043
+          },
+          {
+            "metric": "new_tab_first_visual_paint_ms",
+            "trial": 29,
+            "ms": 34.248
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 0,
+            "ms": 3.297
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 0,
+            "ms": 33.268
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 1,
+            "ms": 3.487
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 1,
+            "ms": 33.218
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 2,
+            "ms": 3.772
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 2,
+            "ms": 33.247
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 3,
+            "ms": 3.678
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 3,
+            "ms": 33.31
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 4,
+            "ms": 3.338
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 4,
+            "ms": 33.245
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 5,
+            "ms": 3.86
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 5,
+            "ms": 33.206
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 6,
+            "ms": 3.44
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 6,
+            "ms": 33.235
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 7,
+            "ms": 3.764
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 7,
+            "ms": 33.219
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 8,
+            "ms": 4.343
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 8,
+            "ms": 49.811
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 9,
+            "ms": 3.905
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 9,
+            "ms": 33.157
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 10,
+            "ms": 4.165
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 10,
+            "ms": 33.169
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 11,
+            "ms": 3.215
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 11,
+            "ms": 33.14
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 12,
+            "ms": 3.113
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 12,
+            "ms": 33.239
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 13,
+            "ms": 3.002
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 13,
+            "ms": 49.958
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 14,
+            "ms": 4.002
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 14,
+            "ms": 33.19
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 15,
+            "ms": 4.27
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 15,
+            "ms": 33.205
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 16,
+            "ms": 3.919
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 16,
+            "ms": 33.206
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 17,
+            "ms": 4.438
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 17,
+            "ms": 33.233
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 18,
+            "ms": 3.824
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 18,
+            "ms": 49.925
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 19,
+            "ms": 4.479
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 19,
+            "ms": 33.222
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 20,
+            "ms": 4.089
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 20,
+            "ms": 33.219
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 21,
+            "ms": 4.11
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 21,
+            "ms": 33.222
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 22,
+            "ms": 4.471
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 22,
+            "ms": 33.186
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 23,
+            "ms": 4.277
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 23,
+            "ms": 33.219
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 24,
+            "ms": 4.638
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 24,
+            "ms": 33.154
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 25,
+            "ms": 3.877
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 25,
+            "ms": 49.894
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 26,
+            "ms": 4.532
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 26,
+            "ms": 33.235
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 27,
+            "ms": 4.115
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 27,
+            "ms": 33.187
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 28,
+            "ms": 4.604
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 28,
+            "ms": 33.17
+          },
+          {
+            "metric": "split_dispatch_ms",
+            "trial": 29,
+            "ms": 4.205
+          },
+          {
+            "metric": "split_both_renderer_frames_ms",
+            "trial": 29,
+            "ms": 33.214
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 0,
+            "ms": 104.39
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 0,
+            "ms": 161.118
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 1,
+            "ms": 101.849
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 1,
+            "ms": 154.446
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 2,
+            "ms": 123.065
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 2,
+            "ms": 173.043
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 3,
+            "ms": 106.914
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 3,
+            "ms": 167.241
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 4,
+            "ms": 104.516
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 4,
+            "ms": 162.042
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 5,
+            "ms": 109.838
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 5,
+            "ms": 159.918
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 6,
+            "ms": 124.189
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 6,
+            "ms": 159.99
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 7,
+            "ms": 153.387
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 7,
+            "ms": 186.795
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 8,
+            "ms": 113.577
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 8,
+            "ms": 163.571
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 9,
+            "ms": 124.284
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 9,
+            "ms": 174.326
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 10,
+            "ms": 120.047
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 10,
+            "ms": 170.116
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 11,
+            "ms": 124.484
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 11,
+            "ms": 174.515
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 12,
+            "ms": 116.107
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 12,
+            "ms": 166.116
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 13,
+            "ms": 123.226
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 13,
+            "ms": 173.309
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 14,
+            "ms": 123.294
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 14,
+            "ms": 173.582
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 15,
+            "ms": 114.911
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 15,
+            "ms": 164.911
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 16,
+            "ms": 110.364
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 16,
+            "ms": 160.245
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 17,
+            "ms": 120.912
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 17,
+            "ms": 170.941
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 18,
+            "ms": 126.561
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 18,
+            "ms": 176.911
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 19,
+            "ms": 124.583
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 19,
+            "ms": 157.954
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 20,
+            "ms": 131.24
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 20,
+            "ms": 164.599
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 21,
+            "ms": 117.331
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 21,
+            "ms": 167.412
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 22,
+            "ms": 136.402
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 22,
+            "ms": 169.791
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 23,
+            "ms": 126.648
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 23,
+            "ms": 193.743
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 24,
+            "ms": 136.435
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 24,
+            "ms": 169.813
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 25,
+            "ms": 121.223
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 25,
+            "ms": 171.289
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 26,
+            "ms": 145.098
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 26,
+            "ms": 178.472
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 27,
+            "ms": 117.054
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 27,
+            "ms": 176.833
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 28,
+            "ms": 113.663
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 28,
+            "ms": 173.392
+          },
+          {
+            "metric": "restore_ready_ms",
+            "trial": 29,
+            "ms": 129.645
+          },
+          {
+            "metric": "restore_both_first_paints_ms",
+            "trial": 29,
+            "ms": 163.04
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 0,
+            "ms": 121.526
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 0,
+            "ms": 169.659
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 0,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 1,
+            "ms": 126.753
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 1,
+            "ms": 172.506
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 1,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 2,
+            "ms": 126.786
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 2,
+            "ms": 179.88
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 2,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 3,
+            "ms": 130.837
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 3,
+            "ms": 184.201
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 3,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 4,
+            "ms": 136.766
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 4,
+            "ms": 189.355
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 4,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 5,
+            "ms": 141.625
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 5,
+            "ms": 194.029
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 5,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 6,
+            "ms": 143.472
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 6,
+            "ms": 195.505
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 6,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 7,
+            "ms": 162.164
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 7,
+            "ms": 200.738
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 7,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 8,
+            "ms": 142.438
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 8,
+            "ms": 204.719
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 8,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 9,
+            "ms": 134.263
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 9,
+            "ms": 208.763
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 9,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 10,
+            "ms": 138.257
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 10,
+            "ms": 212.646
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 10,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 11,
+            "ms": 138.737
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 11,
+            "ms": 212.644
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 11,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 12,
+            "ms": 153.846
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 12,
+            "ms": 220.512
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 12,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 13,
+            "ms": 155.073
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 13,
+            "ms": 220.8
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 13,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 14,
+            "ms": 153.397
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 14,
+            "ms": 237.131
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 14,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 15,
+            "ms": 150.638
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 15,
+            "ms": 234.196
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 15,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 16,
+            "ms": 154.123
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 16,
+            "ms": 236.099
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 16,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 17,
+            "ms": 149.587
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 17,
+            "ms": 242.446
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 17,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 18,
+            "ms": 164.158
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 18,
+            "ms": 245.467
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 18,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 19,
+            "ms": 144.62
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 19,
+            "ms": 249.217
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 19,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 20,
+            "ms": 155.121
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 20,
+            "ms": 253.013
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 20,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 21,
+            "ms": 132.153
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 21,
+            "ms": 255.665
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 21,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 22,
+            "ms": 161.589
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 22,
+            "ms": 262.05
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 22,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 23,
+            "ms": 144.827
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 23,
+            "ms": 263.679
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 23,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 24,
+            "ms": 147.14
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 24,
+            "ms": 265.328
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 24,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 25,
+            "ms": 139
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 25,
+            "ms": 285.228
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 25,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 26,
+            "ms": 173.869
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 26,
+            "ms": 279.177
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 26,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 27,
+            "ms": 167.109
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 27,
+            "ms": 282.305
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 27,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 28,
+            "ms": 173.289
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 28,
+            "ms": 284.564
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 28,
+            "ms": 0
+          },
+          {
+            "metric": "profiles_ready_ms",
+            "trial": 29,
+            "ms": 140.854
+          },
+          {
+            "metric": "profile_batch_ms",
+            "trial": 29,
+            "ms": 287.248
+          },
+          {
+            "metric": "active_profile_delay_ms",
+            "trial": 29,
+            "ms": 0
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 0,
+            "ms": 283.829
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 0,
+            "ms": 253.3
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 1,
+            "ms": 282.513
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 1,
+            "ms": 247.7
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 2,
+            "ms": 281.256
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 2,
+            "ms": 256.3
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 3,
+            "ms": 294.289
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 3,
+            "ms": 258.1
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 4,
+            "ms": 289.092
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 4,
+            "ms": 258
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 5,
+            "ms": 292.594
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 5,
+            "ms": 257.9
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 6,
+            "ms": 297.431
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 6,
+            "ms": 263.6
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 7,
+            "ms": 281.761
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 7,
+            "ms": 253.7
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 8,
+            "ms": 292.027
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 8,
+            "ms": 258.3
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 9,
+            "ms": 289.906
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 9,
+            "ms": 263.7
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 10,
+            "ms": 290.705
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 10,
+            "ms": 256.8
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 11,
+            "ms": 281.655
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 11,
+            "ms": 255
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 12,
+            "ms": 277.124
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 12,
+            "ms": 251.8
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 13,
+            "ms": 297.658
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 13,
+            "ms": 263.5
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 14,
+            "ms": 286.868
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 14,
+            "ms": 260.6
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 15,
+            "ms": 291.304
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 15,
+            "ms": 259.5
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 16,
+            "ms": 287.371
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 16,
+            "ms": 259.3
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 17,
+            "ms": 295.795
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 17,
+            "ms": 262.9
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 18,
+            "ms": 282.463
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 18,
+            "ms": 254.8
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 19,
+            "ms": 282.798
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 19,
+            "ms": 254.4
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 20,
+            "ms": 291.71
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 20,
+            "ms": 256.6
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 21,
+            "ms": 288.924
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 21,
+            "ms": 261.8
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 22,
+            "ms": 289.765
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 22,
+            "ms": 261.2
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 23,
+            "ms": 297.61
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 23,
+            "ms": 264.1
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 24,
+            "ms": 298.14
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 24,
+            "ms": 264.1
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 25,
+            "ms": 290.603
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 25,
+            "ms": 262.3
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 26,
+            "ms": 281.745
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 26,
+            "ms": 252.1
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 27,
+            "ms": 283.354
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 27,
+            "ms": 252.1
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 28,
+            "ms": 297.761
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 28,
+            "ms": 261.8
+          },
+          {
+            "metric": "preconnect_first_visual_paint_ms",
+            "trial": 29,
+            "ms": 287.116
+          },
+          {
+            "metric": "preconnect_response_start_ms",
+            "trial": 29,
+            "ms": 259.5
+          }
+        ]
+      }
+    }
+  },
+  "combined_ui_execution": {
+    "metal": {
+      "passed": 144,
+      "excluded": 2,
+      "failed_or_crashed": 0
+    },
+    "views": {
+      "passed": 111,
+      "excluded": 2,
+      "failed_or_crashed": 0
+    }
+  },
+  "coverage": [
+    "Actual Cocoa digit key after a valid unsupported native font size (17 px): blank selection stays blank until user input chooses 20 px; preference write reaches the selected profile only. Native Combobox baseline and Rust adapter are both exercised.",
+    "Site type changes rebuild valid policy choices, reset to Default and reject an out-of-range Ask choice. Save writes the owning profile only. Clear-period selection reaches the original confirmation path; cancellation does not delete data.",
+    "All eleven opt-in selectors have no native Combobox/Label child control and expose the combo-box-select accessibility role. Theme and compact category choices use the same Rust control.",
+    "Nested preference scrolling hides offscreen Metal surfaces and restores clipped screen bounds when scrolled back. Theme inheritance and hide/reopen are exercised.",
+    "Duplicate search provider labels retain keyword identity. Replacing a provider keyword during a pressed interaction cancels the old target; a hidden control cannot change the default provider.",
+    "Fresh Rust tests verify clearing a selection invalidates old popup tokens and prefix state, leaves no false selected key, safely admits the first matching option and handles empty/disabled/nonmatching input without usize overflow."
+  ],
+  "contracts": [
+    "Programmatic preference refresh leaves unchanged selection/models untouched, preserving the active prefix/menu. In the Rust adapter, provider key or label changes replace the model and invalidate its popup generation. A profile transition cancels preference picker interactions before resynchronization.",
+    "Nil selection remains distinct from option zero for supported Chromium values outside the preset list.",
+    "Site policy replacements preserve original native behavior: the new model starts at Default. All actual writes, authorization, managed-preference checks, scope and persistence remain native services."
+  ],
+  "initial_compile_issue": {
+    "issue": "SceneSelect callback setter name hid a virtual Button callback overload under -Woverloaded-virtual. Renamed it SetChangedCallback; no API behavior change.",
+    "log_sha256": "a3868bd3cb5156b27077d98ad5d34d1036054829340802bf9ac23badd1c410f8"
+  },
+  "preferred_size_compile_issue": {
+    "issue": "Direct PreferredSizeChanged access is protected in pinned Views; keep public InvalidateLayout and enable ScrollView preferred-content sizing instead. No GUI run from that failed build.",
+    "log_sha256": "da8752a98de1e3b406518abce63eec7122fa389ab627646a8d75b5e3793e0bd0"
+  },
+  "initial_gate": {
+    "metal": {
+      "counts": {
+        "SUCCESS": 35,
+        "FAILURE": 2
+      },
+      "results": {
+        "ZitterMetalSidebarBrowserTest.ImportSourceScenePrefixAXDisabledAndVisibility": "SUCCESS",
+        "ZitterMetalSidebarBrowserTest.PreferenceChoicesScenesIdentityScrollAndCancellation": "FAILURE",
+        "ZitterMetalSidebarBrowserTest.ProfilePickerScenesStableIDsPrefixAndModelCancellation": "SUCCESS",
+        "ZitterProfilesBrowserTest.AddressEditorCocoaCommitCompositionAndNavigation": "SUCCESS",
+        "ZitterProfilesBrowserTest.AdvancedChromiumPreferences": "SUCCESS",
+        "ZitterProfilesBrowserTest.AppearanceEditorsCommitValidationIMEAndWorkspaceIsolation": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadCloseAndAtomicRestore": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadPeekAndBackgroundBatch": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadProfileSleepAndWindowClose": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadRechecksNewDirtyPages": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadRoutedPeekIsPartOfDiscardPlan": "SUCCESS",
+        "ZitterProfilesBrowserTest.ConfigurableNativeKeyboardShortcuts": "SUCCESS",
+        "ZitterProfilesBrowserTest.FolderEditorCocoaTypingUnicodeAndModalLifetime": "SUCCESS",
+        "ZitterProfilesBrowserTest.GeneralSettingsThemeAndPersistence": "SUCCESS",
+        "ZitterProfilesBrowserTest.HistoryEditorCommittedQueryDuringPreeditAndReopen": "SUCCESS",
+        "ZitterProfilesBrowserTest.JavaScriptPromptEditorCocoaCompositionAndKeyboard": "SUCCESS",
+        "ZitterProfilesBrowserTest.JavaScriptPromptEditorHiddenPageAndFrameNavigation": "SUCCESS",
+        "ZitterProfilesBrowserTest.JavaScriptPromptEditorOverrideStaleActionsAndCloseNow": "SUCCESS",
+        "ZitterProfilesBrowserTest.KeywordSearchProvidersAndPersistence": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorBidiDirectionAndSharedKillYank": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorCommittedCallbackContract": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorEmptyMarkedTextEndsWithoutCommit": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorKillYankInteroperatesWithNativeFields": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorMacCommandsAndSelectionPolicies": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorStationaryEdgeSelectionScrollAndCancellation": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorWordDragAndSingleLineTripleClick": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorsTypingUndoCompositionAndPersistence": "SUCCESS",
+        "ZitterProfilesBrowserTest.NativeJavaScriptDialogs": "SUCCESS",
+        "ZitterProfilesBrowserTest.NativeShellAndAppearance": "SUCCESS",
+        "ZitterProfilesBrowserTest.PageDialogsCocoaBeforeUnloadDefaultCancel": "SUCCESS",
+        "ZitterProfilesBrowserTest.PreferenceChoicesCocoaEmptySelectionAndProfileScope": "SUCCESS",
+        "ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission": "FAILURE",
+        "ZitterProfilesBrowserTest.PreferenceEditorsCocoaCompositionAndProfileScope": "SUCCESS",
+        "ZitterProfilesBrowserTest.ProfilePreferencesAndSearch": "SUCCESS",
+        "ZitterProfilesBrowserTest.ShortcutEditorCocoaRecorderAdmissionAndCancel": "SUCCESS",
+        "ZitterProfilesBrowserTest.SitePreferenceExceptionsAndIsolation": "SUCCESS",
+        "ZitterProfilesBrowserTest.ToolsEditorsCocoaSnapshotProviderAndStaleActions": "SUCCESS"
+      },
+      "summary_sha256": "05dcb4c3fcb7712e675fea7843593ece994cc1cb73b73970e1c51b8079d9a8e0",
+      "log_sha256": "1aac948f973f16c6846994d6e69ba2fa25b92799a6c9617fa842d5c47980b54c"
+    },
+    "views": {
+      "counts": {
+        "SUCCESS": 32,
+        "CRASH": 1,
+        "FAILURE": 1
+      },
+      "results": {
+        "ZitterProfilesBrowserTest.AddressEditorCocoaCommitCompositionAndNavigation": "SUCCESS",
+        "ZitterProfilesBrowserTest.AdvancedChromiumPreferences": "SUCCESS",
+        "ZitterProfilesBrowserTest.AppearanceEditorsCommitValidationIMEAndWorkspaceIsolation": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadCloseAndAtomicRestore": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadPeekAndBackgroundBatch": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadProfileSleepAndWindowClose": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadRechecksNewDirtyPages": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadRoutedPeekIsPartOfDiscardPlan": "SUCCESS",
+        "ZitterProfilesBrowserTest.ConfigurableNativeKeyboardShortcuts": "SUCCESS",
+        "ZitterProfilesBrowserTest.FolderEditorCocoaTypingUnicodeAndModalLifetime": "SUCCESS",
+        "ZitterProfilesBrowserTest.GeneralSettingsThemeAndPersistence": "SUCCESS",
+        "ZitterProfilesBrowserTest.HistoryEditorCommittedQueryDuringPreeditAndReopen": "SUCCESS",
+        "ZitterProfilesBrowserTest.JavaScriptPromptEditorCocoaCompositionAndKeyboard": "SUCCESS",
+        "ZitterProfilesBrowserTest.JavaScriptPromptEditorHiddenPageAndFrameNavigation": "SUCCESS",
+        "ZitterProfilesBrowserTest.JavaScriptPromptEditorOverrideStaleActionsAndCloseNow": "SUCCESS",
+        "ZitterProfilesBrowserTest.KeywordSearchProvidersAndPersistence": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorBidiDirectionAndSharedKillYank": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorCommittedCallbackContract": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorEmptyMarkedTextEndsWithoutCommit": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorKillYankInteroperatesWithNativeFields": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorMacCommandsAndSelectionPolicies": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorStationaryEdgeSelectionScrollAndCancellation": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorWordDragAndSingleLineTripleClick": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorsTypingUndoCompositionAndPersistence": "SUCCESS",
+        "ZitterProfilesBrowserTest.NativeJavaScriptDialogs": "SUCCESS",
+        "ZitterProfilesBrowserTest.NativeShellAndAppearance": "SUCCESS",
+        "ZitterProfilesBrowserTest.PageDialogsCocoaBeforeUnloadDefaultCancel": "SUCCESS",
+        "ZitterProfilesBrowserTest.PreferenceChoicesCocoaEmptySelectionAndProfileScope": "CRASH",
+        "ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission": "FAILURE",
+        "ZitterProfilesBrowserTest.PreferenceEditorsCocoaCompositionAndProfileScope": "SUCCESS",
+        "ZitterProfilesBrowserTest.ProfilePreferencesAndSearch": "SUCCESS",
+        "ZitterProfilesBrowserTest.ShortcutEditorCocoaRecorderAdmissionAndCancel": "SUCCESS",
+        "ZitterProfilesBrowserTest.SitePreferenceExceptionsAndIsolation": "SUCCESS",
+        "ZitterProfilesBrowserTest.ToolsEditorsCocoaSnapshotProviderAndStaleActions": "SUCCESS"
+      },
+      "summary_sha256": "d02603c8ef541225c2c63ef5fb2570015d37b7f0cbd3ef324bb7efadc35d4508",
+      "log_sha256": "c7462ae5ea29bf43d4e0fe8cea1f9bb9a67edd16530823fe9453d1a077bf9627"
+    }
+  },
+  "intermediate_diagnostics": {
+    "critical-scroll-initial/metal": {
+      "counts": {
+        "FAILURE": 1,
+        "SUCCESS": 2
+      },
+      "results": {
+        "ZitterMetalSidebarBrowserTest.PreferenceChoicesScenesIdentityScrollAndCancellation": "FAILURE",
+        "ZitterProfilesBrowserTest.PreferenceChoicesCocoaEmptySelectionAndProfileScope": "SUCCESS",
+        "ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission": "SUCCESS"
+      },
+      "summary_sha256": "f051f5aaa2fad30eacbd21d86e8d4ce9b91068b30155983e09f82f78d90799b6",
+      "log_sha256": "6723ae298221e8a2315cdf413a36b0bebfc02e0806e9031d9a46b88df7cbd0bd"
+    },
+    "critical-scroll-initial/views": {
+      "counts": {
+        "SUCCESS": 2
+      },
+      "results": {
+        "ZitterProfilesBrowserTest.PreferenceChoicesCocoaEmptySelectionAndProfileScope": "SUCCESS",
+        "ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission": "SUCCESS"
+      },
+      "summary_sha256": "aaa35d1aa8aab47f045246db7b7f5380088cb68d65e279eabc857094b3602d81",
+      "log_sha256": "e8b8f4adcde6401389104a631bd88f67c087e6bc24451d089815f48a8a2e82ae"
+    },
+    "critical-short-extent/metal": {
+      "counts": {
+        "FAILURE": 1,
+        "SUCCESS": 2
+      },
+      "results": {
+        "ZitterMetalSidebarBrowserTest.PreferenceChoicesScenesIdentityScrollAndCancellation": "FAILURE",
+        "ZitterProfilesBrowserTest.PreferenceChoicesCocoaEmptySelectionAndProfileScope": "SUCCESS",
+        "ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission": "SUCCESS"
+      },
+      "summary_sha256": "a4d1897ad3c2d3354c111dbbbe5cdcfcb99f31a23ed8c1258968c3a181098d84",
+      "log_sha256": "5e9815bd2ee066a733ca1b21b011b51072b2b552de10708a6f62c88ae0995d97"
+    },
+    "critical-short-extent/views": {
+      "counts": {
+        "SUCCESS": 2
+      },
+      "results": {
+        "ZitterProfilesBrowserTest.PreferenceChoicesCocoaEmptySelectionAndProfileScope": "SUCCESS",
+        "ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission": "SUCCESS"
+      },
+      "summary_sha256": "807fd9fe8d014c7bebaae8f3ab37e6730b75743ab082d898312985353de58ee8",
+      "log_sha256": "ce8f864bf3dd9163c7ae3978e4d69e45578b871c02919cf6b670c7aeac666e43"
+    },
+    "critical-extent-initial/metal": {
+      "counts": {
+        "SUCCESS": 3
+      },
+      "results": {
+        "ZitterMetalSidebarBrowserTest.PreferenceChoicesScenesIdentityScrollAndCancellation": "SUCCESS",
+        "ZitterProfilesBrowserTest.PreferenceChoicesCocoaEmptySelectionAndProfileScope": "SUCCESS",
+        "ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission": "SUCCESS"
+      },
+      "summary_sha256": "216d942359f496af31598568750b9a5b44e7b740de6d3ab6ee5d4591ce78eebd",
+      "log_sha256": "d7d53690b321ada0efb5790559a3e8dd83ec451418f10fa4c49364c0234acffb"
+    },
+    "critical-extent-initial/views": {
+      "counts": {
+        "FAILURE": 1,
+        "SUCCESS": 1
+      },
+      "results": {
+        "ZitterProfilesBrowserTest.PreferenceChoicesCocoaEmptySelectionAndProfileScope": "FAILURE",
+        "ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission": "SUCCESS"
+      },
+      "summary_sha256": "4518c1c0d3b4964402b2602e1966d70979dcbd0175b633e4837f4ff28478dbd0",
+      "log_sha256": "c291dc51b3b80b7d06f5258217bc32f4ff942f59dd465764687117e414b21f70"
+    },
+    "gate-extent-initial/metal": {
+      "counts": {
+        "SUCCESS": 37
+      },
+      "results": {
+        "ZitterMetalSidebarBrowserTest.ImportSourceScenePrefixAXDisabledAndVisibility": "SUCCESS",
+        "ZitterMetalSidebarBrowserTest.PreferenceChoicesScenesIdentityScrollAndCancellation": "SUCCESS",
+        "ZitterMetalSidebarBrowserTest.ProfilePickerScenesStableIDsPrefixAndModelCancellation": "SUCCESS",
+        "ZitterProfilesBrowserTest.AddressEditorCocoaCommitCompositionAndNavigation": "SUCCESS",
+        "ZitterProfilesBrowserTest.AdvancedChromiumPreferences": "SUCCESS",
+        "ZitterProfilesBrowserTest.AppearanceEditorsCommitValidationIMEAndWorkspaceIsolation": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadCloseAndAtomicRestore": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadPeekAndBackgroundBatch": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadProfileSleepAndWindowClose": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadRechecksNewDirtyPages": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadRoutedPeekIsPartOfDiscardPlan": "SUCCESS",
+        "ZitterProfilesBrowserTest.ConfigurableNativeKeyboardShortcuts": "SUCCESS",
+        "ZitterProfilesBrowserTest.FolderEditorCocoaTypingUnicodeAndModalLifetime": "SUCCESS",
+        "ZitterProfilesBrowserTest.GeneralSettingsThemeAndPersistence": "SUCCESS",
+        "ZitterProfilesBrowserTest.HistoryEditorCommittedQueryDuringPreeditAndReopen": "SUCCESS",
+        "ZitterProfilesBrowserTest.JavaScriptPromptEditorCocoaCompositionAndKeyboard": "SUCCESS",
+        "ZitterProfilesBrowserTest.JavaScriptPromptEditorHiddenPageAndFrameNavigation": "SUCCESS",
+        "ZitterProfilesBrowserTest.JavaScriptPromptEditorOverrideStaleActionsAndCloseNow": "SUCCESS",
+        "ZitterProfilesBrowserTest.KeywordSearchProvidersAndPersistence": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorBidiDirectionAndSharedKillYank": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorCommittedCallbackContract": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorEmptyMarkedTextEndsWithoutCommit": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorKillYankInteroperatesWithNativeFields": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorMacCommandsAndSelectionPolicies": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorStationaryEdgeSelectionScrollAndCancellation": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorWordDragAndSingleLineTripleClick": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorsTypingUndoCompositionAndPersistence": "SUCCESS",
+        "ZitterProfilesBrowserTest.NativeJavaScriptDialogs": "SUCCESS",
+        "ZitterProfilesBrowserTest.NativeShellAndAppearance": "SUCCESS",
+        "ZitterProfilesBrowserTest.PageDialogsCocoaBeforeUnloadDefaultCancel": "SUCCESS",
+        "ZitterProfilesBrowserTest.PreferenceChoicesCocoaEmptySelectionAndProfileScope": "SUCCESS",
+        "ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission": "SUCCESS",
+        "ZitterProfilesBrowserTest.PreferenceEditorsCocoaCompositionAndProfileScope": "SUCCESS",
+        "ZitterProfilesBrowserTest.ProfilePreferencesAndSearch": "SUCCESS",
+        "ZitterProfilesBrowserTest.ShortcutEditorCocoaRecorderAdmissionAndCancel": "SUCCESS",
+        "ZitterProfilesBrowserTest.SitePreferenceExceptionsAndIsolation": "SUCCESS",
+        "ZitterProfilesBrowserTest.ToolsEditorsCocoaSnapshotProviderAndStaleActions": "SUCCESS"
+      },
+      "summary_sha256": "d3509fd61e0e63de6aecfd9a87c216162686f4d6b6d56983a32e82a58789a90c",
+      "log_sha256": "0af8af2709473b7cd83b0ad687a55a050a52e111ec21fd722e1ed50a7a7405f5"
+    },
+    "gate-extent-initial/views": {
+      "counts": {
+        "SUCCESS": 33,
+        "FAILURE": 1
+      },
+      "results": {
+        "ZitterProfilesBrowserTest.AddressEditorCocoaCommitCompositionAndNavigation": "SUCCESS",
+        "ZitterProfilesBrowserTest.AdvancedChromiumPreferences": "SUCCESS",
+        "ZitterProfilesBrowserTest.AppearanceEditorsCommitValidationIMEAndWorkspaceIsolation": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadCloseAndAtomicRestore": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadPeekAndBackgroundBatch": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadProfileSleepAndWindowClose": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadRechecksNewDirtyPages": "SUCCESS",
+        "ZitterProfilesBrowserTest.BeforeUnloadRoutedPeekIsPartOfDiscardPlan": "SUCCESS",
+        "ZitterProfilesBrowserTest.ConfigurableNativeKeyboardShortcuts": "SUCCESS",
+        "ZitterProfilesBrowserTest.FolderEditorCocoaTypingUnicodeAndModalLifetime": "SUCCESS",
+        "ZitterProfilesBrowserTest.GeneralSettingsThemeAndPersistence": "SUCCESS",
+        "ZitterProfilesBrowserTest.HistoryEditorCommittedQueryDuringPreeditAndReopen": "SUCCESS",
+        "ZitterProfilesBrowserTest.JavaScriptPromptEditorCocoaCompositionAndKeyboard": "SUCCESS",
+        "ZitterProfilesBrowserTest.JavaScriptPromptEditorHiddenPageAndFrameNavigation": "SUCCESS",
+        "ZitterProfilesBrowserTest.JavaScriptPromptEditorOverrideStaleActionsAndCloseNow": "SUCCESS",
+        "ZitterProfilesBrowserTest.KeywordSearchProvidersAndPersistence": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorBidiDirectionAndSharedKillYank": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorCommittedCallbackContract": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorEmptyMarkedTextEndsWithoutCommit": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorKillYankInteroperatesWithNativeFields": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorMacCommandsAndSelectionPolicies": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorStationaryEdgeSelectionScrollAndCancellation": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorWordDragAndSingleLineTripleClick": "SUCCESS",
+        "ZitterProfilesBrowserTest.NameEditorsTypingUndoCompositionAndPersistence": "SUCCESS",
+        "ZitterProfilesBrowserTest.NativeJavaScriptDialogs": "SUCCESS",
+        "ZitterProfilesBrowserTest.NativeShellAndAppearance": "SUCCESS",
+        "ZitterProfilesBrowserTest.PageDialogsCocoaBeforeUnloadDefaultCancel": "SUCCESS",
+        "ZitterProfilesBrowserTest.PreferenceChoicesCocoaEmptySelectionAndProfileScope": "FAILURE",
+        "ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission": "SUCCESS",
+        "ZitterProfilesBrowserTest.PreferenceEditorsCocoaCompositionAndProfileScope": "SUCCESS",
+        "ZitterProfilesBrowserTest.ProfilePreferencesAndSearch": "SUCCESS",
+        "ZitterProfilesBrowserTest.ShortcutEditorCocoaRecorderAdmissionAndCancel": "SUCCESS",
+        "ZitterProfilesBrowserTest.SitePreferenceExceptionsAndIsolation": "SUCCESS",
+        "ZitterProfilesBrowserTest.ToolsEditorsCocoaSnapshotProviderAndStaleActions": "SUCCESS"
+      },
+      "summary_sha256": "3559ddf04a698d376030e45e9b9e950ca2aee78df3f342dd2bb92ce60d3901fa",
+      "log_sha256": "788c33bef785329c2903192b4e570f59b4dee3e58bc2dc479d21f3000d87511e"
+    }
+  },
+  "final_critical_gate": {
+    "metal": {
+      "counts": {
+        "SUCCESS": 3
+      },
+      "results": {
+        "ZitterMetalSidebarBrowserTest.PreferenceChoicesScenesIdentityScrollAndCancellation": "SUCCESS",
+        "ZitterProfilesBrowserTest.PreferenceChoicesCocoaEmptySelectionAndProfileScope": "SUCCESS",
+        "ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission": "SUCCESS"
+      },
+      "summary_sha256": "eefd941f88c98b5083abd471902ba85804a4b87bd864ec24b87bfe8e59a5305b",
+      "log_sha256": "cd2a11f75d38ce8fafab6bfa541ad1eb789461025d59ec9193191ef9025039e2"
+    },
+    "views": {
+      "counts": {
+        "SUCCESS": 2
+      },
+      "results": {
+        "ZitterProfilesBrowserTest.PreferenceChoicesCocoaEmptySelectionAndProfileScope": "SUCCESS",
+        "ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission": "SUCCESS"
+      },
+      "summary_sha256": "0ef9fc5b31f5fb890044a736c8ccba840c94a45d0fce64cbec5715d74d243a3c",
+      "log_sha256": "e24b96b899925fe6ff2b3fb6ed8630a9a01de5060626a9ed7c35bf734d55a369"
+    }
+  },
+  "initial_gate_investigation": {
+    "native_empty_choice": "Actual Cocoa input on a nonempty native Combobox model with null selection hit its existing OnKeyPressed CHECK. The project-local PreferenceCombobox keeps the real native model/prefix/AX/menu services and bypasses only this invalid guard path; no replacement value or shadow editing model is introduced.",
+    "site_fixture": "NavigateBoth leaves personal selected. The initial site-rule test incorrectly assumed work was active; both backends correctly wrote the active personal profile. The corrected test explicitly selects work before checking isolation.",
+    "scroll_surface": "The initial Metal test expected ScrollRectToVisible to hide an earlier field. Follow-up geometry proved the earlier field was still natively visible, so this alone did not establish stale GPU state. Driving the native scrollbar showed an underestimated content extent (534 px despite later overflowing fields, with only 18 px scroll range). Enable ScrollView contents preferred sizing so the existing layout invalidation after filtering remeasures the scroll layer extent on both backends. The final test verifies actual native viewport exclusion before GPU visibility, and both-backend coverage requires the last font editor to remain reachable. Preferences also use Chromium ScopedScrollSynchronizer and explicit viewport callbacks for native-overlay coherence.",
+    "native_resize_scroll_race": "After the extent fix, all 37 Metal cases passed but the native last-field test still attempted compositor scrolling immediately after resizing the layer. Pinned Layer::SetScrollOffset documents that scrolling before the resized layer commits may not complete. The final fixture focuses the actual panel and awaits RequestSuccessfulPresentationTimeForNextFrame before scrolling. It retains strict actual viewport reachability assertions; no sleep, disabled animation or synthetic geometry success is substituted.",
+    "initial_source_sha256": {
+      "workspace_shell.cc": "2cbdbfa9a89012dfa34d6b2dc3cfbf371ccb07dc8a8abd0dad4cbbba85def70d",
+      "workspace_shell.h": "4b816daf8d1ef094ecb03073f43517c965da6a1e191dc0346f36d704316836f3",
+      "sidebar_scene.rs": "fc437ad2b86c40f5007ce30604e20fbd9f2622895a81f4f8397f71a1cbe8d23c",
+      "profile_workspace_browsertest.cc": "4fe6b87fdcb3b6bcc082a2ba7e0ae254fedac8962bfdabfe6b0d59be5df18bc8"
+    }
+  },
+  "limits": [
+    "The modal/frame/row/container/switch/button and native event/focus/AX nodes still have remaining Views ownership. This is selector migration, not complete preferences or full UI parity.",
+    "Actual native popup/candidate-window/VoiceOver/complex bidi/scale/trackpad/GPU-recovery/focus/menu acceptance remains distinct from reducer/domain and automated Cocoa input evidence.",
+    "Default performance scenarios add execution coverage with Metal validation enabled. No controlled CPU/GPU/drawable-presentation speedup is claimed.",
+    "Real-user Arc import and interactive manual window are excluded per backend. Normal installed apps/profiles are untouched. No bundle was packaged or signed.",
+    "No new crate/library/dependency/license. Apache-2.0 release/upstream notice verification remains a release check."
+  ],
+  "previous_gui_checkpoint": "rust-page-prompt-editor-checkpoint-2026-10-24.json",
+  "remaining_work": "docs/rust-metal-next-steps-2026-10-23.md"
+}

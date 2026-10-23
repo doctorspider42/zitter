@@ -1,56 +1,48 @@
 # Rust + Metal: remaining work and GUI checkpoint
 
-Snapshot: `b59df50b21cba35e9dca66d16ba311548f812393`, 2026-10-24.
-This is a work plan, not a claim of functional parity. The detailed inventory is
-[the parity checklist](rust-metal-parity.md). Existing native behavior is preserved
-in many places where Views presentation and interaction still need replacement.
+This is a work plan, not a claim of complete functional parity. The detailed
+inventory is [the parity checklist](rust-metal-parity.md).
 
 ## Current checkpoint
 
-The full compiled automated browser/UI inventory passed for UI source
-`b59df50b21cba35e9dca66d16ba311548f812393`:
+UI source `651bc58cc631dda054d6209ef7c1bdf7e00b9747`, 2026-10-24, passed the full compiled
+regression inventory with one launcher job, no retries and temporary profiles:
 
-| Backend | Passed | Explicit skips | Failed / crashed |
+| Backend | Regular matrix passed | Regular skips | Failed / crashed |
 | --- | ---: | ---: | ---: |
-| Rust + Metal | 137 | 6 | 0 |
-| Views | 105 | 6 | 0 |
+| Rust + Metal | 140 | 6 | 0 |
+| Views | 107 | 6 | 0 |
 
-The complete run was serial, with one launcher job and no retries, using temporary
-fixture-owned profiles. Metal API validation was enabled. The 32 dedicated Metal
-cases are excluded from Views (143 Metal / 111 Views inventory). **66 Python tests
-from a clean archive** and 68 in the live checkout passed (the latter includes two
-concurrent tests outside this UI commit). Rust model/display-list and CoreText/SDK sources are
-unchanged from the preceding **214 Rust / 61 standalone model / 180 SDK font and
-direction plus raster** checks; those runs were not repeated for this page-dialog/editor-adapter migration.
-Optimized compilation, scoped GN/boundaries and a final no-work Ninja check passed.
-[Results and source/binary hashes](benchmarks/rust-page-prompt-editor-checkpoint-2026-10-24.json).
+The inventory contains 146 cases; Views excludes 33 dedicated Metal cases
+(113 applicable cases). The four opt-in performance scenarios then passed
+separately on each backend with their default 30 measured trials. **Combined
+coverage is 144 Metal / 111 Views passes**, with two exclusions per backend:
+real-user Arc import and the interactive manual window. Metal API validation
+remained enabled. These samples are execution coverage, not controlled
+CPU/GPU/drawable-presentation comparisons.
 
-The 30-case gate passed on both backends. Four new cases cover real Cocoa
-prompt input/Return/Escape and beforeunload default-key policy, composing UI
-acceptance, raw UTF-16 overrides, stale keys, forced closure and hidden-page or
-subframe navigation cancellation. Page dialogs and workspace-removal confirmation
-now use client-owned widgets and synchronous C++ destruction, independently of
-native sheet animations. Earlier failed runs and investigations are retained in
-the matching report.
+The selector/editor gate passed **37 Metal / 34 Views**. Fresh checks passed:
+**216 Rust tests**, **180 SDK font/direction cases plus raster**, **66 Python
+from a clean archive**, scoped GN/boundaries and optimized compilation. The live
+checkout passed 68 Python cases, including two concurrent cases outside this UI
+commit. The 61 editor model cases are included in the Rust suite; the separate
+standalone model run was not repeated. Final Ninja reported no work to do.
+[Results, commands, source/binary identities and retained failures](benchmarks/rust-preference-selectors-checkpoint-2026-10-24.json).
 
-The regular matrix skipped four opt-in performance cases, real-user Arc import
-and the interactive manual window. The four performance cases then passed
-separately on each backend, using their default 30 measured trials. **Combined
-coverage is 141 Metal / 109 Views passes**, with only Arc and manual-window cases
-excluded per backend. Metal validation stayed enabled; these timing samples are
-not controlled CPU/GPU/drawable-presentation comparisons.
+Eleven preference selectors now use Rust selection/prefix/menu-token state and
+layout/display lists with Metal and matching CPU fallback. Native input, window,
+focus, typography, AX, popup menus and browser preference/storage services remain
+adapters. A blank choice remains distinct from the first preset. Actual Cocoa
+input covers unsupported font values and profile scope; site-policy rebuilding,
+clear-data confirmation admission, provider identity, hide/reopen and scrolling
+are also covered.
 
-Tests used isolated temporary profiles. The normal app/profile was not changed;
-no app was packaged or signed. Real presentation profiling, native candidate
-windows, VoiceOver, scale/RTL and long-interaction acceptance remain separate.
-
-An earlier full-UI checkpoint fixed unintended dormant-WebContents creation during sidebar
-identity extraction, hidden-window input/Metal lifecycle, emoji preedit saving,
-native alert-role crashes and main-window Cocoa keyup routing. Older upload,
-media and preconnect fixtures now seed their explicit two-workspace setup;
-UI tests wait for real navigation/focus and reopen closed settings as a user would.
-The older failed/intermediate runs remain recorded in the
-[preceding checkpoint report](benchmarks/rust-ui-checkpoint-2026-10-23.json).
+The checkpoint fixes two discovered native boundaries: a Views Combobox key
+CHECK for a nonempty model with no selection, and stale preferences scroll
+content height after category/search changes. Native compositor scrolling waits
+for the resized layout's successful presentation in the fixture. Earlier failed
+runs are retained in the report. No normal installed app/profile was changed,
+and no bundle was packaged or signed.
 
 ## Next implementation steps
 
@@ -63,10 +55,11 @@ The older failed/intermediate runs remain recorded in the
    controls and outer placement for workspace/profile/import/folder/deletion
    surfaces. Finish the address/command palette input/frame/container layer.
    Verify stale context, defaults, cancellation, validation and persistence.
-3. **Preferences.** Move general settings, advanced Chromium preferences, search
-   providers, configurable shortcuts, site exceptions and data-clearing controls
-   into Rust form state and Metal presentation. Retain existing settings stores,
-   profile scope and service authorization.
+3. **Preferences.** Eleven preference choice selectors and the text fields now
+   use Rust/Metal. Migrate the remaining switches, checkboxes, buttons, section
+   navigation and form/controller state, along with tools-provider/shortcut
+   pickers. Keep native stores, managed-setting checks, profile/global scope,
+   site-policy validation and data-clearing confirmation authorization.
 4. **Browser service panels.** Migrate history/search/pagination, downloads,
    passwords/permissions and Time Machine previews/restore. Preserve real service
    data, stale-response handling, confirmation and failure/rollback behavior.
