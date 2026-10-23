@@ -1,9 +1,14 @@
-# Rust editor foundation
+# Rust name editors and remaining service work
 
-The new editor model and CoreText geometry are compiled into the isolated
-Rust/Metal prototype. **Live fields still use `views::Textfield`.** This milestone
-adds the replacement's state/geometry and bridge; it does not claim a migrated
-control, functional parity, physical presentation or a performance improvement.
+Workspace/profile name fields now use the Rust model and CoreText/Metal editor
+when `--zitter-sidebar=rust-metal` is selected. They have one native View for
+window/input/focus/AX services and no Textfield child/model/RenderText. The Views
+backend keeps one real native Textfield through the same `EditorControl`
+interface, without a wrapper or second model. Folder names, color/emoji, address
+input and other fields still use Views.
+
+This is the first live editor integration, not full textfield parity or a
+performance acceptance. The remaining adapters/commands below are explicit.
 
 `sidebar_editor.rs` owns UTF-16 text, directional selection/affinity, revisioned
 platform boundaries, enabled/read-only admission, editing, delta undo/redo (256
@@ -27,7 +32,10 @@ UTF-16 composed/word boundaries, visual caret stops/secondary affinity, hit test
 and selection spans. It shares the system-font helper with the Metal text tile
 renderer. Drawing accepts a viewport clip and scroll transform instead of
 reshaping truncated strings. The current tile renderer otherwise retains its
-existing behavior. The new line is **not yet used by a live input control**.
+existing behavior. The same CoreText line implementation supplies live input
+geometry and
+untruncated GPU/fallback raster output; selected text is recolored by clipping
+the whole shaped line, preserving ligatures and bidi run geometry.
 
 Window-free validation:
 
@@ -44,14 +52,43 @@ window and uses no profile. It checks empty/long lines, ligatures, composed text
 emoji, CJK/Thai, RTL/mixed-direction caret geometry, selection, raster colors and
 scrolled clipping. These checks do not establish native IME/VoiceOver acceptance.
 
-Next: connect an editor view and native text-input/accessibility adapters, starting
-with workspace/profile name fields. Use the same shaped line for input geometry
-and GPU output; add clipped editor-text primitives rather than overlaying
-CoreText text on HarfBuzz hit geometry. Preserve composition clauses/candidate
-rectangles, clipboard/context commands, keyboard/mouse/drag selection, focus,
-scrolling, accessibility and persistence, then extend to folder/color/emoji and
-address input. Test undo grouping and IME behavior against real interactions;
-the atomic composition transaction must be validated with the adapter.
+`scene_editor.cc` implements the native text-input contract: composition/selected
+ranges, keep-selection confirmation, character/caret/selection rectangles,
+read-only/disabled/hide admission, document range editing and native direction
+requests. Rust supplies viewport/caret/scroll geometry and display-list
+primitives. Native adapters provide key commands, mouse hit testing/selection,
+clipboard, generation-guarded menu actions, atomic internal drag/copy and
+stale-source/drop rejection, dictionary lookup and AX value/selection actions.
+Native services never receive browser/profile handles through the Rust bridge.
 
-No new crate or third-party library was added. New project source is Apache-2.0;
-the platform layer uses already-linked macOS frameworks.
+Text tiles now accept editor UTF-16 and baseline/scroll offsets without ellipsis.
+The shader's quad ABI is unchanged. Selection layers draw the complete shaped
+line; only their clip/color differs. A missing Metal surface draws the same scene and
+CoreText text through a CPU fallback, without recreating a Textfield. Caret
+blinking runs only for focused editable visible fields.
+
+The automated checkpoint checks real Cocoa typing/undo, composed-character
+backspace, IME commit/cancel/candidate geometry, long-line caret visibility,
+workspace/profile persistence, read-only/disabled/hide rejection, delayed paste
+across reset, AX actions, native mouse hit routing, atomic drag/undo, stale drag
+and drop rejection, and fallback text ink. Tests use fixture profiles. The
+clipboard regression uses a restored asynchronous fake, so its copy/paste
+operations do not access the system clipboard.
+
+Remaining editor work before parity:
+
+- Complete uncommon native commands (kill/yank, transpose, mark/unselect and page
+  movement), word/paragraph drag expansion and continuous selection scrolling at
+  the viewport edge; extend native key-policy/visual-word RTL coverage.
+- Complete native AX text offsets/VoiceOver geometry and inspect a real IME
+  candidate window, clause/background/underline styles, dictionary and menu
+  lifecycles and paste-availability validation at different scales/themes/directions. Current clause geometry uses
+  solid thin/thick underlines; complex decorations remain.
+- Expand native mouse capture/drag/touch and GPU-loss/recovery checks, measure
+  actual presentation/CPU/GPU/cache/idle work and optimize from those results.
+- Migrate folder/color/emoji/address and other fields using the same services,
+  retaining application persistence and domain authorization. Move remaining
+  control policy out of native event adapters where appropriate.
+
+No end-to-end speedup is inferred from passing tests. New project source remains
+Apache-2.0; no new crate or production third-party library was added.

@@ -1111,3 +1111,21 @@ repeat: **116 Metal / 86 Views passes**, six explicit opt-in skips per backend,
 zero failures/retries, Metal API validation enabled. Temporary fixture profiles
 were used; no manual signed-app or physical-presentation benchmark was performed.
 [Source hashes, binary UUIDs and test results](benchmarks/rust-editor-foundation-checkpoint-2026-10-23.json).
+
+
+## Live workspace/profile name fields (2026-10-23)
+
+UI source `c27d3e66f28842fff10e41999bd1dc121a8f2563` connects the replacement editor to the
+real workspace/profile name forms. Rust owns UTF-16 editing, history, composition,
+viewport and scene; CoreText supplies matching geometry/drawing; Metal supplies
+presentation. Native View/input/focus/clipboard/menu/dictionary/drag/AX adapters
+remain explicit. The Views baseline keeps one native Textfield per field.
+
+**182 Rust / 61 Python tests**, CoreText raster/geometry and the complete automated
+UI repeat passed: **119 Metal / 87 Views**, six opt-in skips each, no retries or
+failures, isolated profiles, Metal API validation enabled. The new cases cover
+native typing/undo/mouse routing, composition, long text, persistence, admission,
+asynchronous fake clipboard, AX, stale/atomic drag/drop and CPU fallback ink.
+[Report and exact source/binary hashes](benchmarks/rust-name-editors-checkpoint-2026-10-23.json).
+[Remaining editor work](rust-metal-editor.md) includes uncommon commands, full AX/
+IME/RTL/scale/drag acceptance, remaining fields and actual presentation profiling.

@@ -8,19 +8,21 @@ milestones to `origin/main` as they land. The opt-in switch remains
 
 ## Current execution policy
 
-The latest full automated GUI checkpoint passed on 2026-10-23 for UI source
-`4475ee78600cc38270943ead14b9289b2f84b999`: **116 Metal cases and 86 Views cases passed**,
-with six explicit opt-in skips per backend and no failures/retries. The complete
-compiled inventory was attempted (122 Metal / 92 applicable Views tests); the
-30 dedicated Metal cases are excluded from the Views control run. **175 Rust and
-61 Python tests** and the window-free CoreText geometry/raster harness also passed.
-See [the editor foundation checkpoint](benchmarks/rust-editor-foundation-checkpoint-2026-10-23.json).
+Latest automated acceptance: UI source `c27d3e66f28842fff10e41999bd1dc121a8f2563` passed
+**119 Metal / 87 Views cases**, six explicit opt-in skips per backend, no failures
+or retries, from the complete 125-case inventory (93 applicable Views cases;
+32 dedicated Metal cases are excluded from the control backend). **182 Rust and
+61 Python tests**, the native CoreText harness, GN/boundaries and optimized
+app/test compilation also passed. See
+[the live name editor checkpoint](benchmarks/rust-name-editors-checkpoint-2026-10-23.json).
 
-The Rust UTF-16 editor state/CXX bridge and CoreText geometry are implemented and
-tested; **live fields still use Views**. See [the editor foundation](rust-metal-editor.md).
-Continue windowed checks on isolated profiles. Manual signed-app/IME/VoiceOver/
-scale/RTL acceptance and CPU/GPU/actual presentation comparison remain pending.
-See [the remaining work plan](rust-metal-next-steps-2026-10-23.md).
+Workspace/profile name fields now use Rust editing/viewport state and CoreText/
+Metal presentation, with explicit native View/input/clipboard/menu/dictionary/AX
+adapters. The Views baseline retains native Textfields. This is the first live
+editor integration; [remaining native editor work](rust-metal-editor.md) is still
+open. Folder/color/emoji/address fields remain Views. Continue isolated windowed
+checks; manual signed-app/IME/VoiceOver/scale/RTL and actual presentation profiling
+remain pending. [Full remaining plan](rust-metal-next-steps-2026-10-23.md).
 
 ## How to read progress
 
@@ -65,6 +67,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Import source selector | Rust selected state, prefix timeout/search, popup tokens, macOS key policy and closed-control geometry/scene; Metal canvas; native menu/IME/focus/AX/event adapters (automated UI checked; manual acceptance pending) | Verify popup lifecycle, typeahead, keyboard and VoiceOver, disabled/hide/capture, RTL/theme/scale and fallback; migrate remaining native adapters |
 | Workspace/managed profile selectors | Rust stable-ID reconciliation, prefix/menu state and scene; two Metal canvases; native popup/IME/focus/AX/event and font/color adapters (automated UI checked; manual acceptance pending) | Verify profile CRUD/assignment persistence, renamed/reordered/removed choices, stale menu callbacks, native popup/IME/AX, clipping and theme/scale/RTL; migrate remaining native adapters |
 | Time Machine | Views + application services | Rust presentation; preserve previews, validation, backups and restoration |
+| Workspace/profile name editing | Rust UTF-16 state/history/IME, viewport and scene; CoreText geometry, Metal and CPU fallback; one native input/focus/AX/menu/clipboard/drag/dictionary adapter | Complete uncommon commands, edge-selection scrolling, AX text offsets and native IME/RTL/scale/menu acceptance; other editors remain Views |
 | Keyboard accessibility, VoiceOver, focus and tooltips | Native Views nodes | Explicit native accessibility adapter for Rust controls; no duplicate nodes |
 
 ## Verified milestones
@@ -419,3 +422,11 @@ remain. Passing the current tests establishes the tested milestone only.
   the full automated UI repeat passed **116 Metal / 86 Views**, six explicit skips
   each. Live editors remain Views; this is not field migration acceptance. See
   [the matching report](benchmarks/rust-editor-foundation-checkpoint-2026-10-23.json).
+
+- Live workspace/profile name editors: Rust UTF-16 model, revisioned boundaries,
+  history/IME and viewport/scene; CoreText/Metal text, selection, clauses and caret;
+  one native input/focus/AX/menu/dictionary/clipboard/drag adapter per field. The
+  Views baseline retains native Textfields. **182 Rust / 61 Python and full UI
+  119 Metal / 87 Views passed**, six explicit skips each. Native uncommon commands,
+  text offsets/manual acceptance, other editors and actual profiling remain open.
+  [Matching report](benchmarks/rust-name-editors-checkpoint-2026-10-23.json).
