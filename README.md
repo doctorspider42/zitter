@@ -673,8 +673,10 @@ wrapped Metal scene text as well. Profile management now uses Rust state,
 validation, stable-ID selection and two-step deletion, with Metal static text
 and native editors/pickers/buttons. Workspace create/edit settings also use Rust
 form state, validation and column layout, with Metal headings/help/error text;
-native input, appearance controls and storage services remain. These newer stages
-await the deferred GUI checkpoint.
+native input, appearance controls and storage services remain. Workspace deletion
+confirmation now has Rust state/copy and a shared Metal notice body, retaining
+native modal controls and deletion services. These newer stages await the
+deferred GUI checkpoint.
 Model updates refresh the scene independently of
 native painting. Rust also owns row
 click/drag/cancellation and platform key activation through native event, focus

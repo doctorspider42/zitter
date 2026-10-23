@@ -3912,6 +3912,31 @@ class ZitterMetalSidebarBrowserTest : public ZitterProfilesBrowserTest {
     command_line->AppendSwitchASCII("zitter-sidebar", "rust-metal");
   }
 };
+// Compiled with the shared notice renderer; execution awaits the GUI checkpoint.
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, WorkspaceNoticeCancelCapturedTargetUnloadAndRetainedProfile) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
+  ASSERT_TRUE(window_->Select("personal"));ASSERT_TRUE(window_->EditWorkspace("Prywatne 日本語 🦀","personal-profile"));
+  const auto url=embedded_test_server()->GetURL("/storage_probe.html");auto* personal=window_->contents("personal");ASSERT_TRUE(content::NavigateToURL(personal,url));EXPECT_EQ("kept",content::EvalJs(personal,"writeMarker('kept')"));ASSERT_TRUE(window_->Select("work"));
+  auto open=[&](const std::string& id){shell->BuildWorkspaceMenu(id);shell->workspace_menu()->ActivatedAt(5,0);};
+  open("personal");ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_notice_metal_visible();}));
+  auto* notice=shell->workspace_notice_for_testing();ASSERT_TRUE(notice);EXPECT_GE(shell->workspace_notice_line_count_for_testing(),4u);
+  EXPECT_EQ(u"Usunąć przestrzeń „Prywatne 日本語 🦀”?",shell->remove_workspace_dialog()->widget_delegate()->GetWindowTitle());
+  EXPECT_EQ(static_cast<int>(ui::mojom::DialogButton::kCancel),shell->remove_workspace_dialog()->widget_delegate()->AsDialogDelegate()->GetDefaultDialogButton());
+  for(const auto& child:notice->children())EXPECT_FALSE(views::AsViewClass<views::Label>(child.get()));ui::AXNodeData data;notice->children()[0]->GetViewAccessibility().GetAccessibleNodeData(&data);EXPECT_EQ(ax::mojom::Role::kStaticText,data.role);
+  EXPECT_NE(std::u16string::npos,data.GetString16Attribute(ax::mojom::StringAttribute::kName).find(u"Profil przeglądania, hasła, historia i cookies pozostaną zachowane."));
+  shell->remove_workspace_dialog()->widget_delegate()->AsDialogDelegate()->CancelDialog();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->remove_workspace_dialog();}));EXPECT_EQ(2u,window_->workspaces().size());
+  ASSERT_TRUE(window_->Select("personal"));ArmUnsaved(personal);ASSERT_TRUE(window_->Select("work"));
+  open("personal");ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_notice_metal_visible();}));shell->remove_workspace_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+  AnswerUnload(personal,false);ASSERT_TRUE(base::test::RunUntil([&]{return !window_->lifecycle_pending()&&!shell->remove_workspace_dialog();}));EXPECT_EQ(personal,window_->contents("personal"));EXPECT_EQ(2u,window_->workspaces().size());
+  open("personal");ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_notice_metal_visible();}));ASSERT_TRUE(window_->Select("personal"));ASSERT_TRUE(window_->Select("work"));
+  shell->remove_workspace_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();AnswerUnload(personal,true);
+  ASSERT_TRUE(base::test::RunUntil([&]{return !shell->remove_workspace_dialog()&&!window_->lifecycle_pending()&&!window_->contents("personal");}));EXPECT_EQ("work",window_->active_id());ASSERT_EQ(2u,window_->profiles().size());
+  ASSERT_TRUE(window_->AddWorkspace("Retained profile","personal-profile"));const auto retained=window_->active_id();EXPECT_EQ(personal_.get(),window_->contents(retained)->GetBrowserContext());ASSERT_TRUE(content::NavigateToURL(window_->contents(retained),url));EXPECT_EQ("kept|kept|kept|",content::EvalJs(window_->contents(retained),"readMarker()"));
+  ASSERT_TRUE(window_->Select("work"));open(retained);ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_notice_metal_visible();}));ASSERT_TRUE(window_->RemoveWorkspace(retained));
+  shell->remove_workspace_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();ASSERT_TRUE(shell->remove_workspace_dialog());EXPECT_EQ(u"Przestrzeń nie jest już dostępna.",shell->workspace_notice_error_for_testing());ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_notice_contains_scene_text("Przestrzeń nie jest już dostępna.");}));EXPECT_EQ(1u,window_->workspaces().size());EXPECT_NE(nullptr,window_->contents("work"));
+  shell->remove_workspace_dialog()->widget_delegate()->AsDialogDelegate()->CancelDialog();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->remove_workspace_dialog();}));shell->BuildWorkspaceMenu("work");EXPECT_FALSE(shell->workspace_menu()->IsEnabledAt(5));
+  ASSERT_TRUE(base::test::RunUntil([&]{return window_->configuration_saved();}));
+}
 // Compilation only; do not execute before the requested GUI checkpoint.
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, WorkspaceFormScenesCreateCancelIMEAndProfileAssignment) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->OpenWorkspaceSettings();

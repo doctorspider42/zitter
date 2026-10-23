@@ -691,3 +691,50 @@ uncommitted bootstrap/tool edits. The shared Chromium updater patch is unchanged
 from the preceding milestone and identified in the report. No GUI acceptance or
 CPU/GPU/presentation gain is established. See
 [workspace form verification](benchmarks/rust-workspace-form-headless-2026-10-23.json).
+
+
+## Workspace deletion notice and shared rendering (GUI checkpoint pending)
+
+Workspace deletion now has a Rust notice controller. It captures the target ID
+when opened and deliberately permits deleting a non-active workspace; changing
+the active workspace never redirects the request. Each admission rechecks the
+configuration/busy state, target existence and remaining workspace count. Missing
+and last-workspace targets reject with inline feedback. Pending, cancelled and
+accepted notices cannot dispatch twice; immediate service rejection can retry.
+The complete irreversible-deletion warning and separate paragraph stating that
+the browsing profile, passwords, history and cookies are retained remain intact.
+Cancel remains the native default button.
+
+Folder and workspace notices now share `NoticeCopy`, `notice_layout` and the
+`NoticeBodyView` rendering adapter. Their Rust controllers and typed requests
+remain distinct. CoreText line shaping, Rust body/error placement, clipped Metal
+canvases sharing the GPU context, full static-text AX nodes, alert events and
+native fallback consume the same paragraph recipe. The extracted renderer keeps
+existing text/metric caches, fingerprint submission skips and weak scheduled
+updates. There are no hidden native body Labels and no shader/quad ABI change.
+
+The native modal host still owns title/button drawing, focus/keys, placement and
+widget lifetime. The captured Rust Delete request invokes the existing workspace
+removal callback. Beforeunload handling, tab/pin disposal, retained profile data
+and configuration writes stay in application services. Accepted admission can
+still be cancelled later by beforeunload and is not proof of deletion or durable
+storage. Immediate rejection keeps the notice open with an inline error and also
+preserves the existing settings error delivery.
+
+**101 Rust and 61 Python tests passed** without windows. Scoped GN checks,
+boundaries and optimized app/browser-test builds passed. The new compiled case,
+`WorkspaceNoticeCancelCapturedTargetUnloadAndRetainedProfile`, awaits execution.
+It covers Unicode title/default Cancel, complete warning/AX body without Labels,
+selection changes behind the dialog, rejected/accepted beforeunload, retained
+profile storage and a removed target with inline Metal error. Both backends also
+add `BeforeUnloadProfileSleepAndWindowClose`, bringing the deferred checkpoint to
+**57 Metal cases and 26 Views controls**. Shared folder notice regressions and
+workspace modal bounds cases remain required.
+
+Actual paragraph/blank-line shaping, clipping, fallback, theme/scale, keyboard,
+focus/accessibility, lifetime/retry, beforeunload and durable restore remain
+unaccepted until the requested GUI checkpoint. Build inputs use committed
+`bd363ab` tools/bootstrap plus this stage's four UI overrides, excluding unrelated
+uncommitted network-policy work. No app was launched and no new dependency,
+framework or license was introduced. No CPU/GPU/presentation gain is claimed. See
+[workspace notice verification](benchmarks/rust-workspace-notice-headless-2026-10-23.json).

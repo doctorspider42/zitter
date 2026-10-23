@@ -46,7 +46,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Command Center tabs/pins/workspaces/history/actions | Rust result selection/drawing; existing search/ranking and application commands | Replace remaining native containers/frame presentation and command adapters; preserve stale results and identity |
 | Profile management create/rename/delete | Rust controller, copy, validation, stable-ID selection, two-step delete and column/text layout; Metal static text; native input/picker/buttons and storage services (GUI checkpoint pending) | Migrate native controls; verify IME, typography, stale confirmation, profile/session isolation and failed-write rollback |
 | Workspace create/edit settings | Rust form mode/validation/requests and column/text layout; Metal headings/help/status; native input, row layout, buttons, appearance controls and storage services (GUI checkpoint pending) | Migrate remaining native controls/rows, color/emoji interaction and outer panel; verify profile changes, IME, async errors and persistence |
-| Workspace deletion confirmation | Views + persistent application model | Rust notice state/layout and platform modal adapter; preserve default Cancel, stable target and retained browsing profile data |
+| Workspace deletion confirmation | Rust captured-target notice state/copy and shared paragraph layout; Metal body/error text; native modal title/buttons and deletion/persistence services (GUI checkpoint pending) | Migrate remaining host controls; verify default Cancel, beforeunload, stale targets, retained profile data, typography and screen bounds |
 | General preferences, shortcuts and site preferences | Views + application services | Rust forms; use the same persisted configuration |
 | History, downloads, passwords and permissions | Views/native service adapters | Rust presentation/control layer; retain browser service and security semantics |
 | Peek, promote/split, link/page menus and routing | Views/native adapters + application | Rust control routing, focus and dismissal; retain native page integration |
@@ -300,6 +300,16 @@ and the return of Metal after settling. Preserve the normal application/profile.
   GUI case and existing workspace-dialog bounds case extend the deferred matrix
   to **55 Metal cases and 25 Views controls**. See
   [workspace form verification](benchmarks/rust-workspace-form-headless-2026-10-23.json).
+
+- Workspace deletion confirmation now uses Rust captured-target notice state,
+  full irreversible/profile-retention copy, default Cancel policy and typed
+  deletion requests. A shared notice body supplies Rust paragraph geometry,
+  CoreText/Metal rendering, native AX/fallback and retryable inline feedback for
+  both workspace and folder notices. Native deletion/beforeunload/persistence
+  remain services. **101 Rust and 61 Python tests passed** without windows; the
+  new compiled GUI regression and existing beforeunload/profile case expand the
+  deferred matrix to **57 Metal cases and 26 Views controls**. See
+  [workspace notice verification](benchmarks/rust-workspace-notice-headless-2026-10-23.json).
 
 ## Completion gates
 

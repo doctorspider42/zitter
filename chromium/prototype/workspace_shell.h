@@ -311,6 +311,11 @@ class WorkspaceShell final : public ui::EventHandler,
   views::View* workspace_panel_for_testing() const{return settings_root_;}
   views::View* profile_panel_for_testing() const{return profiles_root_;}
   views::Widget* remove_workspace_dialog() const { return remove_workspace_dialog_.get(); }
+  views::View* workspace_notice_for_testing() const;
+  bool workspace_notice_metal_visible() const;
+  bool workspace_notice_contains_scene_text(std::string_view text) const;
+  std::u16string workspace_notice_error_for_testing() const;
+  size_t workspace_notice_line_count_for_testing() const;
   views::Widget* settings_widget() const { return settings_widget_.get(); }
   bool pinned() const { return pinned_; }
   void SetWorkspaceColor(std::string_view id, SkColor color);
@@ -490,6 +495,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void ToggleWorkspaceCreation();
   void RefreshRustWorkspacePresentation();
   void ShowWorkspaceAppearanceError(unsigned kind);
+  bool ShowRustWorkspaceNotice(std::string workspace,std::string title);
   std::unique_ptr<WorkspaceFormState> workspace_form_;
   void RefreshProfileControls();
   bool SubmitRustProfileAction(unsigned action);

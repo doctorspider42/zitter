@@ -14,7 +14,9 @@ mod ffi {
     enum ProfileAction { None, Create, Rename, Delete, ConfirmDelete }
     struct ProfileRequest { action: ProfileAction, id: String, name: String, workspace: String }
     struct ProfileControls { create: bool, rename: bool, remove: bool, picker: bool, delete_label: String, status: String, selected: usize, has_selected: bool }
-    struct FolderNoticeCopy { title: String, body: String, accept: String, cancel: String, default_cancel: bool }
+    enum WorkspaceNoticeAction { None, Delete }
+    struct WorkspaceNoticeRequest { action: WorkspaceNoticeAction, workspace: String }
+    struct NoticeCopy { title: String, body: String, accept: String, cancel: String, default_cancel: bool }
     enum FolderNoticeAction { None, Delete, Acknowledge }
     struct FolderNoticeRequest { action: FolderNoticeAction, workspace: String, folder: String }
     struct NoticeLayout { width: i32, height: i32, body: Rect, error: Rect, body_lines: Vec<Rect>, error_lines: Vec<Rect> }
@@ -80,6 +82,13 @@ mod ffi {
         text: String, font_size: f32, bold: bool, middle: bool, center: bool, clip: FloatRect,
     }
     extern "Rust" {
+        type WorkspaceNotice;
+        fn new_workspace_notice(workspace: &str, title: &str) -> Box<WorkspaceNotice>;
+        fn copy(self: &WorkspaceNotice) -> NoticeCopy;
+        fn error(self: &WorkspaceNotice) -> &str;
+        fn submit(self: &mut WorkspaceNotice, ready: bool, busy: bool, workspaces: &[ProfileUse]) -> WorkspaceNoticeRequest;
+        fn finish_attempt(self: &mut WorkspaceNotice, accepted: bool);
+        fn cancel(self: &mut WorkspaceNotice);
         type WorkspaceForm;
         fn new_workspace_form() -> Box<WorkspaceForm>;
         fn workspace_copy() -> WorkspaceCopy;
@@ -106,12 +115,12 @@ mod ffi {
         fn paragraph_layout(width: i32, line_height: i32, count: usize) -> ColumnLayout;
         type FolderNotice;
         fn new_folder_notice(workspace: &str, folder: &str, title: &str, error_only: bool) -> Box<FolderNotice>;
-        fn copy(self: &FolderNotice) -> FolderNoticeCopy;
+        fn copy(self: &FolderNotice) -> NoticeCopy;
         fn error(self: &FolderNotice) -> &str;
         fn submit(self: &mut FolderNotice, current: &str, ready: bool, busy: bool, nodes: &[TreeNode]) -> FolderNoticeRequest;
         fn finish_attempt(self: &mut FolderNotice, accepted: bool);
         fn cancel(self: &mut FolderNotice);
-        fn folder_notice_layout(width: i32, body_height: i32, body_count: usize, error_height: i32, error_count: usize) -> NoticeLayout;
+        fn notice_layout(width: i32, body_height: i32, body_count: usize, error_height: i32, error_count: usize) -> NoticeLayout;
         type FolderForm;
         fn new_folder_form(workspace: &str, parent: &str, folder: &str, initial: &str) -> Box<FolderForm>;
         fn copy(self: &FolderForm) -> FolderCopy;
@@ -391,14 +400,44 @@ impl ProfileForm {
     }
     fn finish_attempt(&mut self,accepted:bool){self.submitting=false;if !accepted&&self.status.is_empty(){self.status="Nie udało się wykonać operacji na profilu. Spróbuj ponownie.".into();}}
 }
-fn paragraph_layout(width:i32,line_height:i32,count:usize)->ffi::ColumnLayout{let g=folder_notice_layout(width,line_height,count,0,0);ffi::ColumnLayout{width:g.width,height:g.height,children:g.body_lines}}
+fn paragraph_layout(width:i32,line_height:i32,count:usize)->ffi::ColumnLayout{let g=notice_layout(width,line_height,count,0,0);ffi::ColumnLayout{width:g.width,height:g.height,children:g.body_lines}}
+
+// A workspace notice targets the captured ID, independently of the currently
+// selected workspace. Removing a workspace never emits a profile deletion.
+pub struct WorkspaceNotice { workspace: String, title: String, error: String, submitting: bool, closed: bool }
+fn new_workspace_notice(workspace: &str, title: &str) -> Box<WorkspaceNotice> {
+    Box::new(WorkspaceNotice { workspace: workspace.into(), title: title.into(), error: String::new(), submitting: false, closed: false })
+}
+impl WorkspaceNotice {
+    fn copy(&self) -> ffi::NoticeCopy {
+        ffi::NoticeCopy { title: format!("Usunąć przestrzeń „{}”?", self.title),
+            body: "Przestrzeń, jej karty i przypięte elementy zostaną usunięte. Tej operacji nie można cofnąć.\n\nProfil przeglądania, hasła, historia i cookies pozostaną zachowane.".into(),
+            accept: "Usuń przestrzeń".into(), cancel: "Anuluj".into(), default_cancel: true }
+    }
+    fn error(&self) -> &str { &self.error }
+    fn submit(&mut self, ready: bool, busy: bool, workspaces: &[ffi::ProfileUse]) -> ffi::WorkspaceNoticeRequest {
+        let none=||ffi::WorkspaceNoticeRequest { action: ffi::WorkspaceNoticeAction::None, workspace: String::new() };
+        if self.closed||self.submitting { return none(); }
+        if !ready||busy { self.error="Poczekaj na zakończenie zapisywania.".into(); return none(); }
+        if self.workspace.is_empty()||!workspaces.iter().any(|w|w.workspace==self.workspace) { self.error="Przestrzeń nie jest już dostępna.".into(); return none(); }
+        if workspaces.len()<=1 { self.error="Nie można usunąć ostatniej przestrzeni.".into(); return none(); }
+        self.error.clear();self.submitting=true;
+        ffi::WorkspaceNoticeRequest { action: ffi::WorkspaceNoticeAction::Delete, workspace: self.workspace.clone() }
+    }
+    fn finish_attempt(&mut self, accepted: bool) {
+        if !self.submitting { return; }
+        self.submitting=false;self.closed=accepted;
+        if !accepted { self.error="Nie udało się usunąć przestrzeni. Spróbuj ponownie.".into(); }
+    }
+    fn cancel(&mut self) { self.closed=true;self.submitting=false; }
+}
 
 pub struct FolderNotice { workspace:String, folder:String, title:String, error_only:bool, error:String, submitting:bool, closed:bool }
 fn new_folder_notice(workspace:&str,folder:&str,title:&str,error_only:bool)->Box<FolderNotice>{Box::new(FolderNotice{workspace:workspace.into(),folder:folder.into(),title:title.into(),error_only,error:String::new(),submitting:false,closed:false})}
 impl FolderNotice {
-    fn copy(&self)->ffi::FolderNoticeCopy {
-        if self.error_only{return ffi::FolderNoticeCopy{title:"Nie udało się zapisać folderu".into(),body:"Sprawdź wolne miejsce na dysku i spróbuj ponownie.".into(),accept:"OK".into(),cancel:String::new(),default_cancel:false};}
-        ffi::FolderNoticeCopy{title:format!("Usunąć folder „{}”?",self.title),body:"Folder i cała jego przypięta zawartość zostaną usunięte. Tej operacji nie można cofnąć. Strony już otwarte w kartach pozostaną otwarte.".into(),accept:"Usuń folder".into(),cancel:"Anuluj".into(),default_cancel:true}
+    fn copy(&self)->ffi::NoticeCopy {
+        if self.error_only{return ffi::NoticeCopy{title:"Nie udało się zapisać folderu".into(),body:"Sprawdź wolne miejsce na dysku i spróbuj ponownie.".into(),accept:"OK".into(),cancel:String::new(),default_cancel:false};}
+        ffi::NoticeCopy{title:format!("Usunąć folder „{}”?",self.title),body:"Folder i cała jego przypięta zawartość zostaną usunięte. Tej operacji nie można cofnąć. Strony już otwarte w kartach pozostaną otwarte.".into(),accept:"Usuń folder".into(),cancel:"Anuluj".into(),default_cancel:true}
     }
     fn error(&self)->&str{&self.error}
     fn submit(&mut self,current:&str,ready:bool,busy:bool,nodes:&[ffi::TreeNode])->ffi::FolderNoticeRequest {
@@ -413,7 +452,7 @@ impl FolderNotice {
     fn finish_attempt(&mut self,accepted:bool){if !self.submitting{return;}self.submitting=false;self.closed=accepted;if !accepted{self.error="Nie udało się usunąć folderu. Spróbuj ponownie.".into();}}
     fn cancel(&mut self){self.closed=true;self.submitting=false;}
 }
-fn folder_notice_layout(width:i32,body_height:i32,body_count:usize,error_height:i32,error_count:usize)->ffi::NoticeLayout {
+fn notice_layout(width:i32,body_height:i32,body_count:usize,error_height:i32,error_count:usize)->ffi::NoticeLayout {
     let width=if width<0{400}else{width};let body_height=body_height.max(0);let error_height=error_height.max(0);
     let mut y:i32=0;let mut body_lines=Vec::with_capacity(body_count);
     for _ in 0..body_count{body_lines.push(ffi::Rect{x:0,y,width,height:body_height.min(i32::MAX-y)});y=y.saturating_add(body_height);}
@@ -1343,6 +1382,34 @@ mod tests {
         }
     }
     fn menu_state()->ffi::TabMenuState{ffi::TabMenuState{ready:true,busy:false,valid:true,tab:7,has_tab:true,split:true,first:3,has_first:true,second:7,has_second:true,vertical:false,tab_count:3,http:true}}
+    fn notice_workspaces() -> Vec<ffi::ProfileUse> { vec![ffi::ProfileUse { workspace:"work".into(), name:"Praca".into(), profile:"shared".into() },ffi::ProfileUse { workspace:"personal".into(), name:"Prywatne".into(), profile:"shared".into() }] }
+    #[test] fn workspace_notice_preserves_irreversible_warning_profile_data_and_cancel() {
+        let f=new_workspace_notice("personal","Żółć 日本語 🦀");let c=f.copy();assert_eq!(c.title,"Usunąć przestrzeń „Żółć 日本語 🦀”?");assert!(c.default_cancel);assert_eq!(c.cancel,"Anuluj");assert_eq!(c.accept,"Usuń przestrzeń");
+        assert!(c.body.contains("karty i przypięte elementy zostaną usunięte"));assert!(c.body.contains("Tej operacji nie można cofnąć."));assert!(c.body.contains("\n\nProfil przeglądania, hasła, historia i cookies pozostaną zachowane."));
+    }
+    #[test] fn workspace_notice_revalidates_readiness_busy_last_and_missing_targets() {
+        for (id,ready,busy) in [("personal",false,false),("personal",true,true),("missing",true,false),("",true,false)] {
+            let mut f=new_workspace_notice(id,"W");let r=f.submit(ready,busy,&notice_workspaces());assert!(matches!(r.action,ffi::WorkspaceNoticeAction::None));assert!(r.workspace.is_empty());assert!(!f.error().is_empty());
+        }
+        let mut f=new_workspace_notice("work","W");let mut workspaces=notice_workspaces();workspaces.pop();assert!(matches!(f.submit(true,false,&workspaces).action,ffi::WorkspaceNoticeAction::None));assert!(f.error().contains("ostatniej"));
+    }
+    #[test] fn workspace_notice_keeps_captured_id_across_reorder_and_profile_assignment() {
+        let mut f=new_workspace_notice("personal","Prywatne");let mut workspaces=notice_workspaces();workspaces.reverse();workspaces[0].profile="changed".into();workspaces[0].name="Renamed".into();
+        let r=f.submit(true,false,&workspaces);assert!(matches!(r.action,ffi::WorkspaceNoticeAction::Delete));assert_eq!(r.workspace,"personal");
+    }
+    #[test] fn workspace_notice_admission_can_retry_but_pending_and_accepted_cannot_repeat() {
+        let mut f=new_workspace_notice("personal","P");assert!(matches!(f.submit(true,false,&notice_workspaces()).action,ffi::WorkspaceNoticeAction::Delete));assert!(matches!(f.submit(true,false,&notice_workspaces()).action,ffi::WorkspaceNoticeAction::None));
+        f.finish_attempt(false);assert!(f.error().contains("Spróbuj ponownie"));assert!(matches!(f.submit(true,false,&notice_workspaces()).action,ffi::WorkspaceNoticeAction::Delete));assert!(f.error().is_empty());f.finish_attempt(true);
+        assert!(matches!(f.submit(true,false,&notice_workspaces()).action,ffi::WorkspaceNoticeAction::None));
+    }
+    #[test] fn workspace_notice_cancel_is_terminal_and_external_removal_never_redirects() {
+        let mut f=new_workspace_notice("personal","P");f.cancel();assert!(matches!(f.submit(true,false,&notice_workspaces()).action,ffi::WorkspaceNoticeAction::None));
+        let mut f=new_workspace_notice("personal","P");let mut workspaces=notice_workspaces();workspaces[1].workspace="replacement".into();let r=f.submit(true,false,&workspaces);assert!(matches!(r.action,ffi::WorkspaceNoticeAction::None));assert!(r.workspace.is_empty());assert_eq!(f.error(),"Przestrzeń nie jest już dostępna.");
+    }
+    #[test] fn workspace_notice_shared_geometry_retains_blank_paragraph_lines_and_errors() {
+        let g=notice_layout(400,20,5,18,2);assert_eq!(g.body_lines.len(),5);assert_eq!((g.body.height,g.error.y,g.height),(100,108,144));assert_eq!(g.body_lines[3].y,60);
+        let g=notice_layout(400,20,5,18,0);assert_eq!(g.height,100);assert!(g.error_lines.is_empty());
+    }
     #[test] fn workspace_form_preserves_copy_and_profile_change_warning() {
         let c=workspace_copy();assert!(c.profile_hint.contains("Zmiana profilu zamknie karty"));assert!(c.profile_hint.contains("wspólne logowanie i cookies"));assert!(c.save_hint.contains("Wygląd zapisuje się od razu"));
         assert_eq!(workspace_appearance_error(2),"Nie udało się zapisać emoji");assert_eq!(workspace_appearance_error(3),"Podaj kolor #RRGGBB");
@@ -1447,12 +1514,12 @@ mod tests {
         let r=f.submit("personal",false,true,&[]);assert!(matches!(r.action,ffi::FolderNoticeAction::Acknowledge));assert!(r.workspace.is_empty()&&r.folder.is_empty());f.finish_attempt(true);assert!(matches!(f.submit("work",true,false,&folder_nodes()).action,ffi::FolderNoticeAction::None));
     }
     #[test] fn folder_notice_layout_preserves_all_shaped_lines_and_separates_errors() {
-        let g=folder_notice_layout(-1,18,3,16,2);assert_eq!((g.width,g.height,g.body.height,g.error.y,g.error.height),(400,94,54,62,32));assert_eq!(g.body_lines.iter().map(|r|r.y).collect::<Vec<_>>(),vec![0,18,36]);assert_eq!(g.error_lines[1].y,78);
-        assert_eq!(folder_notice_layout(200,18,3,16,0).height,54);assert_eq!(folder_notice_layout(200,18,0,16,1).height,16);
+        let g=notice_layout(-1,18,3,16,2);assert_eq!((g.width,g.height,g.body.height,g.error.y,g.error.height),(400,94,54,62,32));assert_eq!(g.body_lines.iter().map(|r|r.y).collect::<Vec<_>>(),vec![0,18,36]);assert_eq!(g.error_lines[1].y,78);
+        assert_eq!(notice_layout(200,18,3,16,0).height,54);assert_eq!(notice_layout(200,18,0,16,1).height,16);
     }
     #[test] fn folder_notice_layout_handles_empty_narrow_and_saturated_metrics() {
-        let g=folder_notice_layout(0,18,0,16,0);assert_eq!((g.width,g.height),(0,0));
-        let g=folder_notice_layout(5,i32::MAX,2,i32::MAX,2);assert_eq!(g.height,i32::MAX);assert_eq!(g.body_lines[1].height,0);assert!(g.error_lines.iter().all(|r|r.height==0));
+        let g=notice_layout(0,18,0,16,0);assert_eq!((g.width,g.height),(0,0));
+        let g=notice_layout(5,i32::MAX,2,i32::MAX,2);assert_eq!(g.height,i32::MAX);assert_eq!(g.body_lines[1].height,0);assert!(g.error_lines.iter().all(|r|r.height==0));
     }
     fn folder_nodes()->Vec<ffi::TreeNode>{vec![ffi::TreeNode{id:"parent".into(),parent:String::new(),folder:true},ffi::TreeNode{id:"pin".into(),parent:String::new(),folder:false}]}
     #[test] fn folder_form_normalizes_unicode_and_preserves_byte_limit() {
