@@ -344,6 +344,7 @@ class GlyphButton : public views::Button {
   bool on() const { return on_; }
   const std::u16string& label() const { return label_; }
   void set_color(SkColor color) { color_ = color; SchedulePaint(); }
+  SkColor color() const {return color_;}
   void set_on(bool on) { if (on_==on) return; on_ = on; SchedulePaint(); }
   // A workspace emoji replaces the plain dot.
   void set_label(std::u16string label) { label_ = std::move(label); PreferredSizeChanged(); }
@@ -413,13 +414,15 @@ class SceneGlyphButton final : public GlyphButton {
   METADATA_HEADER(SceneGlyphButton,GlyphButton)
  public:
   SceneGlyphButton(PressedCallback callback, std::u16string name, Glyph glyph,
-      const gfx::VectorIcon* icon, base::RepeatingCallback<bool()> scene_visible)
-      : GlyphButton(std::move(callback),std::move(name),glyph,icon),scene_visible_(std::move(scene_visible)) {
+      const gfx::VectorIcon* icon, base::RepeatingCallback<bool()> scene_visible,base::RepeatingClosure painted={})
+      : GlyphButton(std::move(callback),std::move(name),glyph,icon),scene_visible_(std::move(scene_visible)),painted_(std::move(painted)) {
 #if BUILDFLAG(IS_MAC)
     if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal")
       rust_pointer_.emplace(sidebar::new_row_pointer());
 #endif
   }
+  void OnDidSchedulePaint(const gfx::Rect& rect) override {GlyphButton::OnDidSchedulePaint(rect);if(painted_)painted_.Run();}
+  void OnFocus() override {GlyphButton::OnFocus();SchedulePaint();}
   bool OnMousePressed(const ui::MouseEvent& event) override {
 #if BUILDFLAG(IS_MAC)
     if (rust_pointer_) {
@@ -476,7 +479,7 @@ class SceneGlyphButton final : public GlyphButton {
 #if BUILDFLAG(IS_MAC)
     if (rust_pointer_) (*rust_pointer_)->cancel();
 #endif
-    views::Button::OnBlur();
+    views::Button::OnBlur();SchedulePaint();
   }
   void OnMouseCaptureLost() override {
 #if BUILDFLAG(IS_MAC)
@@ -531,6 +534,7 @@ class SceneGlyphButton final : public GlyphButton {
   std::optional<rust::Box<sidebar::RowPointer>> rust_pointer_;
 #endif
   base::RepeatingCallback<bool()> scene_visible_;
+  base::RepeatingClosure painted_;
 };
 
 BEGIN_METADATA(SceneGlyphButton)
@@ -550,6 +554,7 @@ sidebar::Item GlyphSceneItem(GlyphButton* button,gfx::RectF rect,gfx::RectF clip
   item.monogram=base::UTF16ToUTF8(button->label()); item.font_size=Font(3).GetFontSize();
   item.fill=item.glyph==1 ? item.active && !item.monogram.empty() ? SkColorSetA(Tone(button,kInk),0x1f) : item.hovered ? HoverWash(button) : SK_ColorTRANSPARENT
       : item.hovered ? HoverWash(button) : SK_ColorTRANSPARENT;
+  if(button->glyph()==GlyphButton::Glyph::kSwatch){item.kind=18;item.badge=button->color();item.ink=Tone(button,!button->GetEnabledInViewsSubtree()?kDisabled:item.active?kInk:kMuted);}
   return item;
 }
 // Rasterization behind the native editor and GPU fallback consume the same
@@ -558,11 +563,63 @@ void PaintSceneRecipe(gfx::Canvas* canvas,const sidebar::Item& item,const gfx::F
   const auto ops=sidebar::layout(rust::Slice<const sidebar::Item>(&item,1));
   for(const auto& op:ops) {
     gfx::ScopedCanvas clipped(canvas);canvas->ClipRect(gfx::Rect(op.clip.x,op.clip.y,op.clip.width,op.clip.height));
-    if(op.text.size())canvas->DrawStringRectWithFlags(base::UTF8ToUTF16(std::string(op.text)),font,op.color,gfx::Rect(op.x,op.y,op.width,op.height),gfx::Canvas::TEXT_ALIGN_LEFT);
+    if(op.text.size())canvas->DrawStringRectWithFlags(base::UTF8ToUTF16(std::string(op.text)),font,op.color,gfx::Rect(op.x,op.y,op.width,op.height),op.center?gfx::Canvas::TEXT_ALIGN_CENTER:gfx::Canvas::TEXT_ALIGN_LEFT);
     else {cc::PaintFlags flags;flags.setAntiAlias(true);flags.setColor(op.color);if(op.stroke>0){flags.setStyle(cc::PaintFlags::kStroke_Style);flags.setStrokeWidth(op.stroke);}canvas->DrawRoundRect(gfx::RectF(op.x,op.y,op.width,op.height),op.radius,flags);}
   }
 }
 #endif
+
+#if BUILDFLAG(IS_MAC)
+// Rust lays out preset controls and the native editor separately. The canvas
+// covers only preset bounds; fallback consumes the same Rust scene recipe.
+class AppearanceRow final : public views::View {
+  METADATA_HEADER(AppearanceRow,views::View)
+ public:
+  explicit AppearanceRow(bool emoji):emoji_(emoji) {}
+  GlyphButton* AddPicker(views::Button::PressedCallback callback,std::u16string label,GlyphButton::Glyph glyph) {
+    auto* button=AddChildView(std::make_unique<SceneGlyphButton>(std::move(callback),std::move(label),glyph,nullptr,
+        base::BindRepeating([]{return true;}),base::BindRepeating(&AppearanceRow::Schedule,weak_factory_.GetWeakPtr())));
+    button->SetInstallFocusRingOnFocus(false);button->SetHasInkDropActionOnClick(false);return button;
+  }
+  void CancelInput(){if(children().size()!=Count()+2)return;for(size_t i=0;i<Count();++i)children()[i]->OnMouseCaptureLost();}
+  bool metal_visible() const{return surface_&&surface_->visible();}
+  bool contains_text(std::string_view text) const{return metal_visible()&&surface_->contains_text_for_testing(text);}
+  gfx::Rect scene_bounds() const{return metal_visible()?frame_:gfx::Rect();}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override {const auto g=Geometry(available.width().is_bounded()?available.width().value():-1,-1);return gfx::Size(g.width,g.height);}
+  void Layout(PassKey) override {const auto g=Geometry(width(),height());if(g.children.size()!=children().size())return;for(size_t i=0;i<g.children.size();++i){const auto& r=g.children[i];children()[i]->SetBounds(r.x,r.y,r.width,r.height);}Schedule();}
+  void OnBoundsChanged(const gfx::Rect& previous) override {views::View::OnBoundsChanged(previous);Schedule();}
+  void AddedToWidget() override {views::View::AddedToWidget();Schedule();}
+  void RemovedFromWidget() override {surface_.reset();frame_={};views::View::RemovedFromWidget();}
+  void OnThemeChanged() override {views::View::OnThemeChanged();PreferredSizeChanged();Schedule();}
+  void VisibilityChanged(views::View* changed,bool visible) override {views::View::VisibilityChanged(changed,visible);if(!IsDrawn()){CancelInput();if(surface_)surface_->Hide();frame_={};}Schedule();}
+  void OnDidSchedulePaint(const gfx::Rect& rect) override {views::View::OnDidSchedulePaint(rect);Schedule();}
+  void OnPaint(gfx::Canvas* canvas) override {if(!metal_visible())for(const auto& item:Items(0,0,gfx::RectF(Controls())))PaintSceneRecipe(canvas,item,Font(3));Schedule();}
+ private:
+  size_t Count() const{return emoji_?6:4;}
+  sidebar::ColumnLayout Geometry(int width,int height) const {const auto field=children().size()==Count()+2?children().back()->GetPreferredSize():gfx::Size();return sidebar::appearance_row_layout(width,height,field.width(),field.height(),emoji_);}
+  gfx::Rect Controls() const {return children().size()==Count()+2?gfx::Rect(0,0,children()[Count()-1]->bounds().right(),height()):gfx::Rect();}
+  std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const {
+    std::vector<sidebar::Item> items;if(children().size()!=Count()+2)return items;
+    for(size_t i=0;i<Count();++i){auto* button=static_cast<GlyphButton*>(children()[i].get());auto bounds=gfx::RectF(button->bounds());bounds.Offset(dx,dy);auto child_clip=bounds;child_clip.Intersect(clip);items.push_back(GlyphSceneItem(button,bounds,child_clip));}return items;
+  }
+  void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&AppearanceRow::UpdateMetal,weak_factory_.GetWeakPtr()));}
+  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();auto local=GetVisibleBounds();local.Intersect(Controls());
+    if(!IsDrawn()||local.IsEmpty()){if(surface_)surface_->Hide();frame_={};if(was)SchedulePaint();return;}
+    if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;
+    frame_=GetBoundsInScreen();frame_.Offset(local.x(),local.y());frame_.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame_.size())));
+    surface_->Update(GetWidget()->GetNativeWindow(),frame_,items,Tone(this,kCard));if(was!=metal_visible())SchedulePaint();
+  }
+  bool emoji_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;gfx::Rect frame_;base::WeakPtrFactory<AppearanceRow> weak_factory_{this};
+};
+BEGIN_METADATA(AppearanceRow)
+END_METADATA
+#endif
+GlyphButton* AppearancePicker(views::View* parent,views::Button::PressedCallback callback,std::u16string label,GlyphButton::Glyph glyph) {
+#if BUILDFLAG(IS_MAC)
+  if(auto* row=views::AsViewClass<AppearanceRow>(parent))return row->AddPicker(std::move(callback),std::move(label),glyph);
+#endif
+  return parent->AddChildView(std::make_unique<GlyphButton>(std::move(callback),std::move(label),glyph));
+}
 
 // Editing/IME remains a platform service; result selection is scene state.
 class PaletteView final : public views::View {
@@ -2340,15 +2397,23 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   Spacer(appearance, 8);
   settings_text(appearance,workspace_copy[7],kInk,0,gfx::Font::Weight::SEMIBOLD);
   settings_text(appearance,workspace_copy[8],kSubtle,-1,gfx::Font::Weight::MEDIUM);
-  auto* color_row = appearance->AddChildView(std::make_unique<views::View>());
-  auto* color_layout = color_row->SetLayoutManager(std::make_unique<views::BoxLayout>(
-      views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 0));
-  color_layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
-  for (SkColor color : kWorkspaceColors) {
-    auto* swatch = color_row->AddChildView(std::make_unique<GlyphButton>(
+  auto appearance_row=[&](bool emoji)->views::View* {
+#if BUILDFLAG(IS_MAC)
+    if(workspace_form_)return appearance->AddChildView(std::make_unique<AppearanceRow>(emoji));
+#endif
+    return appearance->AddChildView(std::make_unique<views::View>());
+  };
+  auto* color_row=appearance_row(false);views::BoxLayout* color_layout=nullptr;
+  if(!workspace_form_){color_layout=color_row->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal,gfx::Insets(),0));color_layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);}
+  std::vector<std::pair<SkColor,std::u16string>> colors;for(const auto c:kWorkspaceColors)colors.emplace_back(c,base::UTF8ToUTF16(Hex(c)));
+#if BUILDFLAG(IS_MAC)
+  if(workspace_form_){colors.clear();for(const auto& p:sidebar::appearance_presets(false))colors.emplace_back(p.color,base::UTF8ToUTF16(std::string(p.label)));}
+#endif
+  for (const auto& [color,label] : colors) {
+    auto* swatch = AppearancePicker(color_row,
         base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, SkColor value) {
           if (shell) shell->SetWorkspaceColor(shell->state_.workspace_id, value);
-        }, weak, color), base::UTF8ToUTF16(Hex(color)), GlyphButton::Glyph::kSwatch));
+        }, weak, color), label, GlyphButton::Glyph::kSwatch);
     swatch->set_color(color);
   }
   Spacer(color_row, 1)->SetPreferredSize(gfx::Size(8, 1));
@@ -2360,20 +2425,22 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   color_input_->SetBorder(views::CreatePaddedBorder(
       views::CreateRoundedRectBorder(1, 7, Hairline(root_)), gfx::Insets::VH(4, 8)));
   color_input_->set_controller(this);
-  color_layout->SetFlexForView(color_input_, 1);
+  if(color_layout)color_layout->SetFlexForView(color_input_, 1);
   color_error_ = settings_text(appearance,u"",kError,-2,gfx::Font::Weight::NORMAL,true);
   color_error_->SetVisible(false);
   Spacer(appearance, 6);
   settings_text(appearance,workspace_copy[10],kSubtle,-1,gfx::Font::Weight::MEDIUM);
-  auto* emoji_row = appearance->AddChildView(std::make_unique<views::View>());
-  auto* emoji_layout = emoji_row->SetLayoutManager(std::make_unique<views::BoxLayout>(
-      views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 0));
-  emoji_layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
-  for (const char16_t* emoji : kWorkspaceEmojis) {
-    auto* pick = emoji_row->AddChildView(std::make_unique<GlyphButton>(
+  auto* emoji_row=appearance_row(true);views::BoxLayout* emoji_layout=nullptr;
+  if(!workspace_form_){emoji_layout=emoji_row->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal,gfx::Insets(),0));emoji_layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);}
+  std::vector<std::pair<std::u16string,std::u16string>> emojis;for(const auto* e:kWorkspaceEmojis)emojis.emplace_back(e,u"Emoji "+std::u16string(e));
+#if BUILDFLAG(IS_MAC)
+  if(workspace_form_){emojis.clear();for(const auto& p:sidebar::appearance_presets(true))emojis.emplace_back(base::UTF8ToUTF16(std::string(p.emoji)),base::UTF8ToUTF16(std::string(p.label)));}
+#endif
+  for (const auto& [emoji,label] : emojis) {
+    auto* pick = AppearancePicker(emoji_row,
         base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, std::u16string value) {
           if (shell) shell->SetWorkspaceEmoji(shell->state_.workspace_id, value);
-        }, weak, std::u16string(emoji)), u"Emoji " + std::u16string(emoji), GlyphButton::Glyph::kDot));
+        }, weak, std::u16string(emoji)), label, GlyphButton::Glyph::kDot);
     pick->set_label(emoji);
   }
   Spacer(emoji_row, 1)->SetPreferredSize(gfx::Size(8, 1));
@@ -2385,7 +2452,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   emoji_input_->SetBorder(views::CreatePaddedBorder(
       views::CreateRoundedRectBorder(1, 7, Hairline(root_)), gfx::Insets::VH(4, 8)));
   emoji_input_->set_controller(this);
-  emoji_layout->SetFlexForView(emoji_input_, 1);
+  if(emoji_layout)emoji_layout->SetFlexForView(emoji_input_, 1);
 
   Spacer(appearance, 8);
   settings_text(appearance,workspace_copy[13],kInk,0,gfx::Font::Weight::SEMIBOLD);
@@ -3160,6 +3227,9 @@ void WorkspaceShell::Update(ShellState state) {
   const bool history_profile_changed = state.profile_id != state_.profile_id;
   state_ = std::move(state);
   if (!widget_) return;
+#if BUILDFLAG(IS_MAC)
+  if(selected&&workspace_form_){for(auto* field:{color_input_.get(),emoji_input_.get()})if(auto* row=views::AsViewClass<AppearanceRow>(field->parent()))row->CancelInput();}
+#endif
   if (history_profile_changed && history_visible()) RefreshTools();
   if (changed || profiles_changed) RebuildWorkspaceDots();
   for (const auto& [id, button] : workspace_buttons_) {
@@ -5169,15 +5239,29 @@ void WorkspaceShell::ApplyAppearance(bool refresh_theme) {
   static_cast<EdgeView*>(edge_.get())->color = color;
   edge_->SchedulePaint();
   color_input_->SetText(base::UTF8ToUTF16(Hex(color)));
+#if BUILDFLAG(IS_MAC)
+  size_t color_index=0;
+#endif
   for (auto& child : color_input_->parent()->children()) {
-    if (auto* swatch = views::AsViewClass<GlyphButton>(child.get()))
+    if (auto* swatch = views::AsViewClass<GlyphButton>(child.get())) {
+#if BUILDFLAG(IS_MAC)
+      if(workspace_form_){swatch->set_on(sidebar::appearance_selected(false,color_index++,color,{}));continue;}
+#endif
       swatch->set_on(swatch->GetTooltipText() == base::UTF8ToUTF16(Hex(color)));
+    }
   }
   const auto emoji = workspace_emoji(state_.workspace_id);
   if (!emoji_input_->HasFocus()) emoji_input_->SetText(emoji);
+#if BUILDFLAG(IS_MAC)
+  size_t emoji_index=0;
+#endif
   for (auto& child : emoji_input_->parent()->children()) {
-    if (auto* pick = views::AsViewClass<GlyphButton>(child.get()))
+    if (auto* pick = views::AsViewClass<GlyphButton>(child.get())) {
+#if BUILDFLAG(IS_MAC)
+      if(workspace_form_){pick->set_on(sidebar::appearance_selected(true,emoji_index++,color,base::UTF16ToUTF8(emoji)));continue;}
+#endif
       pick->set_on(!emoji.empty() && pick->GetTooltipText() == u"Emoji " + emoji);
+    }
   }
   auto* pin = static_cast<GlyphButton*>(pin_button_.get());
   pin->set_on(pinned_);
@@ -6115,6 +6199,27 @@ void WorkspaceShell::DeleteSelectedProfile() {
   confirm_profile_deletion_ = false;
   callbacks_.remove_profile.Run(state_.profiles[*index].id);
 }
+bool WorkspaceShell::appearance_metal_visible(bool emoji) const {
+#if BUILDFLAG(IS_MAC)
+  auto* field=emoji?emoji_input_.get():color_input_.get();auto* row=field?views::AsViewClass<AppearanceRow>(field->parent()):nullptr;return row&&row->metal_visible();
+#else
+  return false;
+#endif
+}
+bool WorkspaceShell::appearance_contains_scene_text(std::string_view text) const {
+#if BUILDFLAG(IS_MAC)
+  auto* row=emoji_input_?views::AsViewClass<AppearanceRow>(emoji_input_->parent()):nullptr;return row&&row->contains_text(text);
+#else
+  return false;
+#endif
+}
+gfx::Rect WorkspaceShell::appearance_scene_bounds_for_testing(bool emoji) const {
+#if BUILDFLAG(IS_MAC)
+  auto* field=emoji?emoji_input_.get():color_input_.get();auto* row=field?views::AsViewClass<AppearanceRow>(field->parent()):nullptr;return row?row->scene_bounds():gfx::Rect();
+#else
+  return {};
+#endif
+}
 void WorkspaceShell::ApplyHexColor() {
   if (auto color = ParseColor(base::UTF16ToUTF8(color_input_->GetText())))
     SetWorkspaceColor(state_.workspace_id, *color);
@@ -6214,6 +6319,7 @@ bool WorkspaceShell::HandleKeyEvent(views::Textfield* sender, const ui::KeyEvent
   }
   if (event.type() != ui::EventType::kKeyPressed) return false;
   if(sender==address_&&metal_palette_&&address_->IsIMEComposing())return false;
+  if(workspace_form_&&(sender==color_input_||sender==emoji_input_)&&sender->IsIMEComposing())return false;
   if (event.key_code() == ui::VKEY_ESCAPE) { CloseOverlays(); RestorePageFocus(); return true; }
   if (sender == preferences_search_ || sender == history_search_) return false;
   for (const auto& [key, field] : preference_textfields_) if (sender == field) {

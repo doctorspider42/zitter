@@ -738,3 +738,52 @@ unaccepted until the requested GUI checkpoint. Build inputs use committed
 uncommitted network-policy work. No app was launched and no new dependency,
 framework or license was introduced. No CPU/GPU/presentation gain is claimed. See
 [workspace notice verification](benchmarks/rust-workspace-notice-headless-2026-10-23.json).
+
+
+## Workspace appearance preset rows (GUI checkpoint pending)
+
+Rust now supplies the existing four-color/six-emoji preset data and labels,
+selection matching, row geometry, editor exclusion and analytic color swatch
+primitives. Selection preserves RGB matching and accepts custom colors or emoji
+with no preset selected. The row keeps original 32×32 color and 30×28 emoji
+controls, an eight-point editor gap and centered native editing bounds. Extremely
+narrow synthetic widths distribute control bounds without negative sizes or
+editor overlap; real window/theme/scale behavior still requires the checkpoint.
+
+Each row batches its controls on one clipped Metal canvas sharing the existing
+GPU context. Existing glyph primitives draw centered emoji, selection/hover wash
+and focus feedback; the new ordinary swatch kind emits a raw-color circle,
+optional stroked selection/hover ring and focus marker. No shader/quad ABI change
+or new dependency is needed. The canvas excludes native editor bounds. Native
+fallback paints the same Rust recipe, including the primitive's text-centering
+flag (now respected by the shared fallback helper).
+
+Preset buttons reuse the Rust pointer/key reducer through native event/focus/AX
+nodes. Their native focus ring and click ink effects are removed; hover/focus/
+selection invalidations schedule the row scene directly, including before native
+rasterization. Capture loss, workspace changes and hiding the appearance section
+cancel armed gestures; a later release cannot mutate a new/hidden workspace.
+Visibility and teardown hide/drop canvases; unchanged fingerprints skip GPU work.
+Native color parsing, Textfield/IME/caret/selection, Unicode grapheme extraction,
+appearance storage and async error delivery remain services. Composition in
+color/emoji editors waits before handling form keys. No editor or storage service
+was replaced in this stage.
+
+**108 Rust and 61 Python tests passed** without windows. Scoped GN/dependency and
+boundary checks and optimized app/browser-test builds passed. The compiled
+`AppearanceRowsSceneInputClippingCompositionAndWorkspaceChange` regression remains
+unrun. It checks submitted canvas/editor separation, native focus-ring removal,
+mouse/capture cancellation, Space activation, preset/custom values, composition,
+workspace-change and visibility cancellation, and row restoration. The deferred
+checkpoint now has **58 Metal cases and 27 Views controls**, adding the existing
+`WorkspaceContextAppearanceAndDeletion` case to Views. It must also recheck shared
+footer/navigation/row input and fallback/palette rendering after adapter changes.
+
+Actual clipping/presentation, focus/keyboard/AX, pointer capture, IME, first
+Unicode grapheme, theme/scale, fallback, visibility/teardown and durable appearance
+restore remain unaccepted until the requested GUI checkpoint. Build inputs use
+committed `498af7d` tools/bootstrap plus four UI overrides, excluding unrelated
+network-policy edits. No app/window was launched and no CPU/GPU/presentation
+speedup is established. Native Button containers, editors, action/header rows,
+outer panels and other Views surfaces remain. See
+[appearance verification](benchmarks/rust-appearance-headless-2026-10-23.json).

@@ -45,7 +45,8 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Address/search palette, suggestions, providers, IME | Rust result selection/layout/text/icons, palette/input/static chrome geometry, Metal hints/errors; native Textfield/IME, provider/search controllers | Migrate remaining native containers/frame presentation; expand composition/accessibility/scale coverage |
 | Command Center tabs/pins/workspaces/history/actions | Rust result selection/drawing; existing search/ranking and application commands | Replace remaining native containers/frame presentation and command adapters; preserve stale results and identity |
 | Profile management create/rename/delete | Rust controller, copy, validation, stable-ID selection, two-step delete and column/text layout; Metal static text; native input/picker/buttons and storage services (GUI checkpoint pending) | Migrate native controls; verify IME, typography, stale confirmation, profile/session isolation and failed-write rollback |
-| Workspace create/edit settings | Rust form mode/validation/requests and column/text layout; Metal headings/help/status; native input, row layout, buttons, appearance controls and storage services (GUI checkpoint pending) | Migrate remaining native controls/rows, color/emoji interaction and outer panel; verify profile changes, IME, async errors and persistence |
+| Workspace create/edit settings | Rust form mode/validation/requests and column/text layout; Metal headings/help/status; native input, row layout, buttons, appearance controls and storage services (GUI checkpoint pending) | Migrate remaining native controls/header/action rows and outer panel; verify profile changes, IME, async errors and persistence |
+| Workspace color/emoji presets | Rust preset data/selection, row geometry, pointer/key reducer and scene primitives; two shared-context Metal canvases; native Button/AX/focus and text/grapheme/storage adapters (GUI checkpoint pending) | Replace native input nodes and editor presentation; verify capture/visibility/workspace cancellation, clipping, keyboard/IME/AX, theme/scale and persistence |
 | Workspace deletion confirmation | Rust captured-target notice state/copy and shared paragraph layout; Metal body/error text; native modal title/buttons and deletion/persistence services (GUI checkpoint pending) | Migrate remaining host controls; verify default Cancel, beforeunload, stale targets, retained profile data, typography and screen bounds |
 | General preferences, shortcuts and site preferences | Views + application services | Rust forms; use the same persisted configuration |
 | History, downloads, passwords and permissions | Views/native service adapters | Rust presentation/control layer; retain browser service and security semantics |
@@ -310,6 +311,17 @@ and the return of Metal after settling. Preserve the normal application/profile.
   new compiled GUI regression and existing beforeunload/profile case expand the
   deferred matrix to **57 Metal cases and 26 Views controls**. See
   [workspace notice verification](benchmarks/rust-workspace-notice-headless-2026-10-23.json).
+
+- Color/emoji preset rows now use Rust preset data/selection, bounded row/editor
+  geometry, the shared Rust pointer/key reducer and scene primitives. Two Metal
+  canvases batch their controls and exclude native text editors. Native preset
+  focus-ring/click effects are removed; the same Rust recipe supplies fallback
+  and focus feedback. Pending input cancels on capture loss, workspace changes
+  and hiding the appearance section; IME composition is guarded. **108 Rust and
+  61 Python tests passed** without windows. The new compiled regression extends
+  the deferred matrix to **58 Metal cases and 27 Views controls**, adding the
+  existing workspace appearance/context case to Views. See
+  [appearance verification](benchmarks/rust-appearance-headless-2026-10-23.json).
 
 ## Completion gates
 

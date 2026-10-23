@@ -4,6 +4,7 @@
 // profile objects/directories or WebContents.
 #[cxx::bridge(namespace = "zitter::sidebar")]
 mod ffi {
+    struct AppearancePreset { color: u32, emoji: String, label: String }
     struct WorkspaceCopy { name_label: String, placeholder: String, profile_label: String, profile_ax: String, profile_hint: String, save_hint: String, close: String, appearance: String, color: String, color_ax: String, emoji: String, emoji_ax: String, emoji_placeholder: String, more: String, manage: String, import_label: String, remove_label: String }
     enum WorkspaceFormAction { None, Create, Edit }
     struct WorkspaceFormRequest { action: WorkspaceFormAction, workspace: String, name: String, profile: String }
@@ -53,7 +54,7 @@ mod ffi {
     struct ViewportProjection { x: f32, y: f32, nodes: Vec<ProjectedNode> }
     struct Item {
         x: f32, y: f32, width: f32, height: f32,
-        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: control glyph, 8: pane title, 9: split grip, 10: rounded backing, 11: sidebar grip, 12: palette result, 13: result icon, 14: separator, 15: palette static text, 16: palette frame, 17: form static text.
+        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: control glyph, 8: pane title, 9: split grip, 10: rounded backing, 11: sidebar grip, 12: palette result, 13: result icon, 14: separator, 15: palette static text, 16: palette frame, 17: form static text, 18: appearance color swatch.
         kind: u32, glyph: u32,
         title: String, monogram: String, detail: String,
         title_width: f32, detail_ink: u32, detail_font_size: f32,
@@ -82,6 +83,9 @@ mod ffi {
         text: String, font_size: f32, bold: bool, middle: bool, center: bool, clip: FloatRect,
     }
     extern "Rust" {
+        fn appearance_presets(emoji: bool) -> Vec<AppearancePreset>;
+        fn appearance_selected(emoji: bool, index: usize, color: u32, current_emoji: &str) -> bool;
+        fn appearance_row_layout(width: i32, height: i32, editor_width: i32, editor_height: i32, emoji: bool) -> ColumnLayout;
         type WorkspaceNotice;
         fn new_workspace_notice(workspace: &str, title: &str) -> Box<WorkspaceNotice>;
         fn copy(self: &WorkspaceNotice) -> NoticeCopy;
@@ -401,6 +405,27 @@ impl ProfileForm {
     fn finish_attempt(&mut self,accepted:bool){self.submitting=false;if !accepted&&self.status.is_empty(){self.status="Nie udało się wykonać operacji na profilu. Spróbuj ponownie.".into();}}
 }
 fn paragraph_layout(width:i32,line_height:i32,count:usize)->ffi::ColumnLayout{let g=notice_layout(width,line_height,count,0,0);ffi::ColumnLayout{width:g.width,height:g.height,children:g.body_lines}}
+
+const APPEARANCE_COLORS: [u32;4] = [0xff9e91dc,0xff84b6a4,0xffd6a07b,0xff7faacb];
+const APPEARANCE_EMOJIS: [&str;6] = ["💼","🏠","🚀","🎨","📚","🎮"];
+fn appearance_presets(emoji: bool) -> Vec<ffi::AppearancePreset> {
+    if emoji { APPEARANCE_EMOJIS.iter().map(|e|ffi::AppearancePreset { color:0, emoji:(*e).into(), label:format!("Emoji {}",e) }).collect() }
+    else { APPEARANCE_COLORS.iter().map(|&c|ffi::AppearancePreset { color:c, emoji:String::new(), label:format!("#{:06X}",c&0xffffff) }).collect() }
+}
+fn appearance_selected(emoji: bool, index: usize, color: u32, current_emoji: &str) -> bool {
+    if emoji { APPEARANCE_EMOJIS.get(index).map(|e|*e==current_emoji).unwrap_or(false) }
+    else { APPEARANCE_COLORS.get(index).map(|c|c&0xffffff==color&0xffffff).unwrap_or(false) }
+}
+fn appearance_row_layout(width: i32, height: i32, editor_width: i32, editor_height: i32, emoji: bool) -> ffi::ColumnLayout {
+    let count=if emoji {6} else {4};let button_width=if emoji {30} else {32};let button_height=if emoji {28} else {32};
+    let editor_height=editor_height.max(0);let width=if width<0 {(count*button_width+8i32).saturating_add(editor_width.max(0))} else {width};
+    let height=if height<0 {button_height.max(editor_height)} else {height};let control_width=width.min(count*button_width);
+    let mut children=Vec::with_capacity(count as usize+2);let mut x=0;
+    for index in 0..count { let width=control_width/count+if index<control_width%count {1} else {0};let h=button_height.min(height);children.push(ffi::Rect {x,y:(height-h)/2,width,height:h});x+=width; }
+    let gap=(width-x).min(8);children.push(ffi::Rect{x,y:0,width:gap,height});x+=gap;
+    let h=editor_height.min(height);children.push(ffi::Rect{x,y:(height-h)/2,width:width-x,height:h});
+    ffi::ColumnLayout {width,height,children}
+}
 
 // A workspace notice targets the captured ID, independently of the currently
 // selected workspace. Removing a workspace never emits a profile deletion.
@@ -1090,6 +1115,14 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
             emit(i.x+(i.width-if across{grip}else{4.0})/2.0,i.y+(i.height-if across{4.0}else{grip})/2.0,
                 if across{grip}else{4.0},if across{4.0}else{grip},2.0,i.ink,"",0.0,false);continue;
         }
+        if i.kind == 18 {
+            let cx=i.x+i.width/2.0;let cy=i.y+i.height/2.0;
+            if i.active||i.hovered {emit(cx-10.0,cy-10.0,20.0,20.0,10.0,i.ink,"",0.0,false);}
+            emit(cx-7.0,cy-7.0,14.0,14.0,7.0,i.badge,"",0.0,false);
+            if i.focused {emit(i.x+2.0,i.y+i.height-3.0,(i.width-4.0).max(0.0),2.0,1.0,i.ink,"",0.0,false);}
+            for p in out[first_primitive..].iter_mut() {if p.width==20.0&&p.height==20.0 {p.stroke=1.0;}}
+            continue;
+        }
         if i.kind == 7 {
             let cx=i.x+i.width/2.0; let cy=i.y+i.height/2.0;
             if i.glyph==1 {
@@ -1382,6 +1415,38 @@ mod tests {
         }
     }
     fn menu_state()->ffi::TabMenuState{ffi::TabMenuState{ready:true,busy:false,valid:true,tab:7,has_tab:true,split:true,first:3,has_first:true,second:7,has_second:true,vertical:false,tab_count:3,http:true}}
+    #[test] fn appearance_presets_preserve_palette_order_labels_and_unicode() {
+        let colors=appearance_presets(false);assert_eq!(colors.len(),4);assert_eq!(colors[0].color,0xff9e91dc);assert_eq!(colors[3].label,"#7FAACB");assert!(colors.iter().all(|p|p.emoji.is_empty()&&p.color>>24==255));
+        let emojis=appearance_presets(true);assert_eq!(emojis.len(),6);assert_eq!(emojis[2].emoji,"🚀");assert_eq!(emojis[5].label,"Emoji 🎮");
+    }
+    #[test] fn appearance_selection_matches_custom_values_and_out_of_range_indices() {
+        assert!(appearance_selected(false,0,0x9e91dc,""));assert!(!appearance_selected(false,0,0xff123456,""));assert!(!appearance_selected(false,4,0xff9e91dc,""));
+        assert!(appearance_selected(true,2,0,"🚀"));assert!(!appearance_selected(true,2,0,"👩‍💻"));assert!(!appearance_selected(true,6,0,"🚀"));assert!(!appearance_selected(true,0,0,""));
+    }
+    #[test] fn appearance_row_preserves_control_sizes_and_excludes_editor() {
+        for (emoji,count,bw,bh) in [(false,4,32,32),(true,6,30,28)] {
+            let g=appearance_row_layout(398,-1,100,30,emoji);assert_eq!(g.children.len(),count+2);assert_eq!(g.height,bh.max(30));
+            for r in &g.children[..count] {assert_eq!((r.width,r.height),(bw,bh));}
+            let field=&g.children[count+1];assert_eq!(field.x,count as i32*bw+8);assert_eq!(field.x+field.width,398);
+        }
+    }
+    #[test] fn appearance_row_bounds_remain_nonnegative_on_tiny_and_saturated_metrics() {
+        for emoji in [false,true] {for width in [0,1,17,127,188,398,i32::MAX] {for height in [0,1,40] {
+            let g=appearance_row_layout(width,height,100,30,emoji);for r in &g.children {assert!(r.x>=0&&r.y>=0&&r.width>=0&&r.height>=0);assert!(i64::from(r.x)+i64::from(r.width)<=i64::from(width));assert!(r.y+r.height<=height);}
+        }}}
+        assert_eq!(appearance_row_layout(-1,-1,100,30,false).width,236);assert_eq!(appearance_row_layout(-1,-1,i32::MAX,i32::MAX,true).width,i32::MAX);
+    }
+    #[test] fn appearance_swatch_draws_raw_color_outline_focus_and_clip() {
+        let mut swatch=row(32.0);swatch.kind=18;swatch.height=32.0;swatch.active=false;swatch.badge=0xff84b6a4;let ops=layout(std::slice::from_ref(&swatch));assert_eq!(ops.len(),1);assert_eq!(ops[0].color,0xff84b6a4);assert_eq!(ops[0].radius,7.0);
+        swatch.active=true;swatch.focused=true;let ops=layout(&[swatch]);assert_eq!(ops.len(),3);assert_eq!(ops[0].stroke,1.0);assert_eq!(ops[1].width,14.0);assert_eq!(ops[2].height,2.0);assert_eq!(ops[0].clip.width,32.0);
+    }
+    #[test] fn appearance_emoji_scene_uses_centered_text_and_selection_wash() {
+        let mut emoji=row(30.0);emoji.kind=7;emoji.glyph=1;emoji.monogram="🚀".into();emoji.fill=0x1f1b1a22;let ops=layout(&[emoji]);assert_eq!(ops.len(),2);assert_eq!(ops[0].radius,7.0);assert_eq!(ops[1].text,"🚀");assert!(ops[1].center);
+    }
+    #[test] fn appearance_input_reuses_cancel_disabled_and_platform_key_policy() {
+        let mut p=new_row_pointer();p.pointer_event(ffi::PointerPhase::Press,10,10,true,true,true,false);p.cancel();assert!(matches!(p.pointer_event(ffi::PointerPhase::Release,10,10,true,true,true,false).action,ffi::RowAction::Cancel));
+        assert!(matches!(p.key_event(true,key_policy(1,true),true).action,ffi::RowAction::Activate));assert!(!p.key_event(true,key_policy(2,true),true).handled);assert!(matches!(p.key_event(true,key_policy(1,true),false).action,ffi::RowAction::None));
+    }
     fn notice_workspaces() -> Vec<ffi::ProfileUse> { vec![ffi::ProfileUse { workspace:"work".into(), name:"Praca".into(), profile:"shared".into() },ffi::ProfileUse { workspace:"personal".into(), name:"Prywatne".into(), profile:"shared".into() }] }
     #[test] fn workspace_notice_preserves_irreversible_warning_profile_data_and_cancel() {
         let f=new_workspace_notice("personal","Żółć 日本語 🦀");let c=f.copy();assert_eq!(c.title,"Usunąć przestrzeń „Żółć 日本語 🦀”?");assert!(c.default_cancel);assert_eq!(c.cancel,"Anuluj");assert_eq!(c.accept,"Usuń przestrzeń");
