@@ -677,7 +677,9 @@ native input, appearance controls and storage services remain. Workspace deletio
 confirmation now has Rust state/copy and a shared Metal notice body, retaining
 native modal controls and deletion services. Color/emoji preset rows now use Rust
 geometry, selection and input with batched Metal canvases excluding native editors.
-These newer stages await the deferred GUI checkpoint.
+Nine workspace/profile form actions also use Rust layout/input and scene text
+without native button Labels, batched into four Metal groups. These newer stages
+await the deferred GUI checkpoint.
 Model updates refresh the scene independently of
 native painting. Rust also owns row
 click/drag/cancellation and platform key activation through native event, focus

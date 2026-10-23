@@ -787,3 +787,52 @@ network-policy edits. No app/window was launched and no CPU/GPU/presentation
 speedup is established. Native Button containers, editors, action/header rows,
 outer panels and other Views surfaces remain. See
 [appearance verification](benchmarks/rust-appearance-headless-2026-10-23.json).
+
+
+## Profile/workspace form actions (GUI checkpoint pending)
+
+Nine actions now use a shared text-button adapter and Rust geometry/input/drawing:
+workspace save/create/cancel, profile management/import/workspace removal, and
+profile create/rename/delete/back. Adjacent controls share four Metal canvases
+(two workspace groups and two profile groups), excluding native input controls.
+Native MdTextButton and its text Labels are absent for these opt-in actions.
+
+Rust consumes supplied platform text width, control height, horizontal padding
+and minimum-width metrics to calculate button bounds. Vertical groups preserve
+full-width controls and original gaps; horizontal groups preserve natural sizes
+and distribute insufficient width safely. The ordinary text-action primitive
+supplies pill backing, hover overlay, optional border, centered text and focus
+feedback using the existing shader/quad ABI. Platform typography/color services
+still supply fonts and enabled/disabled/prominent/text colors. Existing CoreText
+regular/medium text tiles and the native recipe fallback render the same display
+list; actual typography/colors remain subject to GUI acceptance.
+
+`SceneTextButton` reuses the existing Rust pointer/key reducer through the shared
+native event adapter. Native focus-ring, click-ink and state animation drawing
+are disabled for these controls. Caption changes cancel armed input, refresh AX
+names/tooltips/metrics and explicitly schedule scene updates. Group visibility,
+workspace switches, profile catalogue/selection changes and reopening profile
+management cancel pending activation. Mac Space follows the existing key-down
+policy; Return remains available to the native default action. Native font,
+accessibility, focus/event delivery and command/storage services remain adapters.
+The legacy Views path retains MdTextButton controls, grouped with the same gaps.
+
+**115 Rust and 61 Python tests passed** without windows, along with scoped GN,
+boundary checks and optimized app/browser-test builds. The compiled regression,
+`FormActionGroupsSceneTextDynamicLabelsAndCancelledTargets`, awaits execution.
+It covers group text/visibility and absence of MdTextButton/Labels/focus rings,
+create/cancel captions, stale workspace/profile gestures, mouse and Space actions,
+profile validation, two-step deletion and configuration completion. The common
+FindButton browser-test helper now also resolves non-Md buttons by their native
+AX names; all curated cases must be rechecked after that change.
+
+The checkpoint now has **59 Metal cases and 27 Views controls**. It must inspect
+real typography/ellipsis, enabled/disabled/default/prominent/text styles,
+hover/focus/keyboard/AX, clipping/scale/theme, fallback and group visibility,
+repeated/cancelled gestures and existing persistence/isolation/beforeunload cases.
+Build inputs use committed `fd51257` tools/bootstrap plus four UI overrides,
+excluding unrelated network-policy edits. No app/window was launched and no
+CPU/GPU/presentation speedup was established. Native interaction containers,
+editors/pickers, header/outer panel and modal-host controls and other Views
+surfaces remain. See
+[form action verification](benchmarks/rust-form-actions-headless-2026-10-23.json).

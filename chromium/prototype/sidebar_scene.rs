@@ -4,6 +4,7 @@
 // profile objects/directories or WebContents.
 #[cxx::bridge(namespace = "zitter::sidebar")]
 mod ffi {
+    struct ActionButtonLayout { width: i32, height: i32, text: Rect }
     struct AppearancePreset { color: u32, emoji: String, label: String }
     struct WorkspaceCopy { name_label: String, placeholder: String, profile_label: String, profile_ax: String, profile_hint: String, save_hint: String, close: String, appearance: String, color: String, color_ax: String, emoji: String, emoji_ax: String, emoji_placeholder: String, more: String, manage: String, import_label: String, remove_label: String }
     enum WorkspaceFormAction { None, Create, Edit }
@@ -54,7 +55,7 @@ mod ffi {
     struct ViewportProjection { x: f32, y: f32, nodes: Vec<ProjectedNode> }
     struct Item {
         x: f32, y: f32, width: f32, height: f32,
-        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: control glyph, 8: pane title, 9: split grip, 10: rounded backing, 11: sidebar grip, 12: palette result, 13: result icon, 14: separator, 15: palette static text, 16: palette frame, 17: form static text, 18: appearance color swatch.
+        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: control glyph, 8: pane title, 9: split grip, 10: rounded backing, 11: sidebar grip, 12: palette result, 13: result icon, 14: separator, 15: palette static text, 16: palette frame, 17: form static text, 18: appearance color swatch, 19: form text action.
         kind: u32, glyph: u32,
         title: String, monogram: String, detail: String,
         title_width: f32, detail_ink: u32, detail_font_size: f32,
@@ -83,6 +84,8 @@ mod ffi {
         text: String, font_size: f32, bold: bool, middle: bool, center: bool, clip: FloatRect,
     }
     extern "Rust" {
+        fn action_button_layout(width: i32, height: i32, text_width: i32, control_height: i32, padding: i32, minimum_width: i32) -> ActionButtonLayout;
+        fn action_group_layout(width: i32, height: i32, vertical: bool, spacing: i32, children: &[ColumnChild]) -> ColumnLayout;
         fn appearance_presets(emoji: bool) -> Vec<AppearancePreset>;
         fn appearance_selected(emoji: bool, index: usize, color: u32, current_emoji: &str) -> bool;
         fn appearance_row_layout(width: i32, height: i32, editor_width: i32, editor_height: i32, emoji: bool) -> ColumnLayout;
@@ -405,6 +408,27 @@ impl ProfileForm {
     fn finish_attempt(&mut self,accepted:bool){self.submitting=false;if !accepted&&self.status.is_empty(){self.status="Nie udało się wykonać operacji na profilu. Spróbuj ponownie.".into();}}
 }
 fn paragraph_layout(width:i32,line_height:i32,count:usize)->ffi::ColumnLayout{let g=notice_layout(width,line_height,count,0,0);ffi::ColumnLayout{width:g.width,height:g.height,children:g.body_lines}}
+
+fn action_button_layout(width: i32, height: i32, text_width: i32, control_height: i32, padding: i32, minimum_width: i32) -> ffi::ActionButtonLayout {
+    let padding=padding.max(0);let width=if width<0 {text_width.max(0).saturating_add(padding.saturating_mul(2)).max(minimum_width.max(0))} else {width};
+    let height=if height<0 {control_height.max(0)} else {height};let left=padding.min(width/2);
+    ffi::ActionButtonLayout {width,height,text:ffi::Rect{x:left,y:0,width:width-left*2,height}}
+}
+fn action_group_layout(width: i32, height: i32, vertical: bool, spacing: i32, children: &[ffi::ColumnChild]) -> ffi::ColumnLayout {
+    let spacing=spacing.max(0);let gaps=children.len().saturating_sub(1).min(i32::MAX as usize) as i32;
+    let sum_width=children.iter().fold(0i64,|s,c|s.saturating_add(i64::from(c.width.max(0))));
+    let sum_height=children.iter().fold(0i32,|s,c|s.saturating_add(c.height.max(0)));
+    let natural_width=if vertical {children.iter().map(|c|c.width.max(0)).max().unwrap_or(0)} else {sum_width.saturating_add(i64::from(spacing)*i64::from(gaps)).min(i64::from(i32::MAX)) as i32};
+    let natural_height=if vertical {sum_height.saturating_add(spacing.saturating_mul(gaps))} else {children.iter().map(|c|c.height.max(0)).max().unwrap_or(0)};
+    let width=if width<0 {natural_width} else {width};let height=if height<0 {natural_height} else {height};
+    let gap=if !vertical&&gaps>0 {spacing.min(width/gaps)} else {spacing};let available=width-gap.saturating_mul(if vertical {0} else {gaps});
+    let mut offset=0i32;let mut prefix=0i128;let mut previous=0i32;let mut rects=Vec::with_capacity(children.len());
+    for (index,c) in children.iter().enumerate() {
+        if vertical {let h=c.height.max(0).min((height-offset).max(0));rects.push(ffi::Rect{x:0,y:offset,width,height:h});offset=offset.saturating_add(h);if index+1<children.len(){offset=offset.saturating_add(spacing.min(height-offset));}}
+        else {prefix+=i128::from(c.width.max(0));let edge=if sum_width>i64::from(available) {((prefix*i128::from(available))/i128::from(sum_width)) as i32} else {prefix.min(i128::from(i32::MAX)) as i32};let w=edge-previous;previous=edge;let h=c.height.max(0).min(height);rects.push(ffi::Rect{x:offset,y:(height-h)/2,width:w,height:h});offset=offset.saturating_add(w);if index+1<children.len(){offset=offset.saturating_add(gap);}}
+    }
+    ffi::ColumnLayout {width,height,children:rects}
+}
 
 const APPEARANCE_COLORS: [u32;4] = [0xff9e91dc,0xff84b6a4,0xffd6a07b,0xff7faacb];
 const APPEARANCE_EMOJIS: [&str;6] = ["💼","🏠","🚀","🎨","📚","🎮"];
@@ -1115,6 +1139,19 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
             emit(i.x+(i.width-if across{grip}else{4.0})/2.0,i.y+(i.height-if across{4.0}else{grip})/2.0,
                 if across{grip}else{4.0},if across{4.0}else{grip},2.0,i.ink,"",0.0,false);continue;
         }
+        if i.kind == 19 {
+            if !(i.width>0.0&&i.height>0.0){continue;}
+            let radius=i.width.min(i.height).max(0.0)/2.0;
+            if i.fill>>24!=0 {emit(i.x,i.y,i.width,i.height,radius,i.fill,"",0.0,false);}
+            if i.hovered&&i.detail_ink>>24!=0 {emit(i.x,i.y,i.width,i.height,radius,i.detail_ink,"",0.0,false);}
+            let padding=i.title_width.max(0.0).min(i.width.max(0.0)/2.0);
+            if !i.title.is_empty(){emit(i.x+padding,i.y,(i.width-padding*2.0).max(0.0),i.height,0.0,i.ink,&i.title,i.font_size,i.active);}
+            if i.focused {emit(i.x+8.0,i.y+i.height-5.0,(i.width-16.0).max(0.0),2.0,1.0,i.ink,"",0.0,false);}
+            if i.badge>>24!=0 {emit(i.x,i.y,i.width,i.height,radius,i.badge,"",0.0,false);}
+            if i.badge>>24!=0 {if let Some(border)=out.last_mut(){border.stroke=1.0;}}
+            for p in out[first_primitive..].iter_mut(){if !p.text.is_empty(){p.center=true;}}
+            continue;
+        }
         if i.kind == 18 {
             let cx=i.x+i.width/2.0;let cy=i.y+i.height/2.0;
             if i.active||i.hovered {emit(cx-10.0,cy-10.0,20.0,20.0,10.0,i.ink,"",0.0,false);}
@@ -1415,6 +1452,32 @@ mod tests {
         }
     }
     fn menu_state()->ffi::TabMenuState{ffi::TabMenuState{ready:true,busy:false,valid:true,tab:7,has_tab:true,split:true,first:3,has_first:true,second:7,has_second:true,vertical:false,tab_count:3,http:true}}
+    #[test] fn action_button_metrics_preserve_platform_padding_minimum_and_height() {
+        let g=action_button_layout(-1,-1,100,40,16,64);assert_eq!((g.width,g.height,g.text.x,g.text.width),(132,40,16,100));assert_eq!(action_button_layout(-1,-1,0,40,16,64).width,64);
+    }
+    #[test] fn action_button_metrics_bound_tiny_negative_and_saturated_inputs() {
+        for width in [0,1,8,64,i32::MAX] {let g=action_button_layout(width,0,100,40,16,64);assert!(g.text.x>=0&&g.text.width>=0);assert!(g.text.x+g.text.width<=width);assert_eq!(g.text.height,0);}
+        let g=action_button_layout(-1,-1,i32::MAX,40,i32::MAX,64);assert_eq!(g.width,i32::MAX);assert_eq!(action_button_layout(-1,-1,-5,-1,-8,-1).width,0);
+    }
+    #[test] fn action_group_vertical_preserves_full_width_spacing_and_extent() {
+        let g=action_group_layout(378,-1,true,10,&[child(100,40),child(150,40)]);assert_eq!((g.width,g.height,g.children[1].y),(378,90,50));assert!(g.children.iter().all(|r|r.width==378));
+        assert_eq!(action_group_layout(-1,-1,true,8,&[child(100,40),child(150,40),child(90,40)]).height,136);
+    }
+    #[test] fn action_group_horizontal_preserves_natural_width_and_shrinks_safely() {
+        let g=action_group_layout(-1,-1,false,8,&[child(132,40),child(100,36)]);assert_eq!((g.width,g.height,g.children[1].x,g.children[1].y),(240,40,140,2));
+        let g=action_group_layout(100,-1,false,8,&[child(132,40),child(100,40)]);assert_eq!(g.children[1].x+g.children[1].width,100);assert!(g.children[0].width>g.children[1].width);
+    }
+    #[test] fn action_groups_remain_bounded_with_empty_tiny_and_maximum_metrics() {
+        for vertical in [false,true] {for width in [0,1,80,i32::MAX] {for height in [0,1,40,i32::MAX] {let g=action_group_layout(width,height,vertical,8,&[child(i32::MAX,i32::MAX),child(i32::MAX,i32::MAX),child(i32::MAX,i32::MAX)]);for r in g.children{assert!(r.x>=0&&r.y>=0&&r.width>=0&&r.height>=0);assert!(i64::from(r.x)+i64::from(r.width)<=i64::from(width));assert!(i64::from(r.y)+i64::from(r.height)<=i64::from(height));}}}}
+        assert!(action_group_layout(-1,-1,false,8,&[]).children.is_empty());
+    }
+    #[test] fn action_button_scene_keeps_hover_border_focus_and_centered_text() {
+        let mut b=row(160.0);b.kind=19;b.height=40.0;b.title_width=16.0;b.hovered=true;b.focused=true;b.detail_ink=0x14101010;let ops=layout(&[b]);assert_eq!(ops.len(),5);assert_eq!(ops[0].radius,20.0);assert_eq!(ops[2].text,"Zażółć 日本語 🦀");assert!(ops[2].center);assert_eq!(ops[2].width,128.0);assert_eq!(ops[4].stroke,1.0);
+    }
+    #[test] fn action_button_text_style_omits_empty_background_and_border() {
+        let mut b=row(160.0);b.kind=19;b.fill=0;b.badge=0;b.active=false;b.title_width=16.0;let ops=layout(&[b]);assert_eq!(ops.len(),1);assert!(ops[0].center);assert!(!ops[0].bold);assert_eq!(ops[0].text,"Zażółć 日本語 🦀");
+        let mut empty=row(160.0);empty.kind=19;empty.fill=0;empty.badge=0;empty.title.clear();assert!(layout(&[empty]).is_empty());
+    }
     #[test] fn appearance_presets_preserve_palette_order_labels_and_unicode() {
         let colors=appearance_presets(false);assert_eq!(colors.len(),4);assert_eq!(colors[0].color,0xff9e91dc);assert_eq!(colors[3].label,"#7FAACB");assert!(colors.iter().all(|p|p.emoji.is_empty()&&p.color>>24==255));
         let emojis=appearance_presets(true);assert_eq!(emojis.len(),6);assert_eq!(emojis[2].emoji,"🚀");assert_eq!(emojis[5].label,"Emoji 🎮");

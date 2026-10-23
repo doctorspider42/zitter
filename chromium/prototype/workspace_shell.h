@@ -314,6 +314,8 @@ class WorkspaceShell final : public ui::EventHandler,
   views::View* workspace_notice_for_testing() const;
   bool workspace_notice_metal_visible() const;
   bool appearance_metal_visible(bool emoji) const;
+  bool form_actions_contains_scene_text(bool profiles,std::string_view text) const;
+  size_t form_action_canvases_visible_for_testing(bool profiles) const;
   bool appearance_contains_scene_text(std::string_view text) const;
   gfx::Rect appearance_scene_bounds_for_testing(bool emoji) const;
   bool workspace_notice_contains_scene_text(std::string_view text) const;

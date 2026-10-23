@@ -48,6 +48,11 @@
 #include "ui/base/mojom/menu_source_type.mojom.h"
 #include "base/task/single_thread_task_runner.h"
 #include "ui/views/controls/button/md_text_button.h"
+#include "ui/color/color_id.h"
+#include "ui/color/color_provider.h"
+#include "ui/views/layout/layout_provider.h"
+#include "ui/views/style/typography.h"
+#include "ui/views/style/typography_provider.h"
 #include "ui/views/controls/button/checkbox.h"
 #include "ui/views/controls/button/toggle_button.h"
 #include "ui/native_theme/native_theme.h"
@@ -410,7 +415,7 @@ END_METADATA
 
 // Footer controls retain one native event/focus/AX node, while Rust owns
 // their pointer/key state and Metal owns their steady-state painting.
-class SceneGlyphButton final : public GlyphButton {
+class SceneGlyphButton : public GlyphButton {
   METADATA_HEADER(SceneGlyphButton,GlyphButton)
  public:
   SceneGlyphButton(PressedCallback callback, std::u16string name, Glyph glyph,
@@ -619,6 +624,80 @@ GlyphButton* AppearancePicker(views::View* parent,views::Button::PressedCallback
   if(auto* row=views::AsViewClass<AppearanceRow>(parent))return row->AddPicker(std::move(callback),std::move(label),glyph);
 #endif
   return parent->AddChildView(std::make_unique<GlyphButton>(std::move(callback),std::move(label),glyph));
+}
+
+#if BUILDFLAG(IS_MAC)
+class SceneTextButton final : public SceneGlyphButton {
+  METADATA_HEADER(SceneTextButton,SceneGlyphButton)
+ public:
+  SceneTextButton(views::Button::PressedCallback callback,std::u16string text,ui::ButtonStyle style,base::RepeatingClosure painted)
+      :SceneGlyphButton(std::move(callback),text,Glyph::kMore,nullptr,base::BindRepeating([]{return true;}),std::move(painted)),text_(std::move(text)),style_(style) {
+    SetInstallFocusRingOnFocus(false);SetHasInkDropActionOnClick(false);SetAnimateOnStateChange(false);SetRequestFocusOnPress(false);
+  }
+  void SetText(std::u16string text){if(text==text_)return;OnMouseCaptureLost();text_=std::move(text);GetViewAccessibility().SetName(text_);SetTooltipText(text_);PreferredSizeChanged();SchedulePaint();}
+  static gfx::FontList TextFont(){return views::TypographyProvider::Get().GetFont(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {const auto g=Metrics(-1,-1);return gfx::Size(g.width,g.height);}
+  sidebar::Item Scene(gfx::RectF bounds,gfx::RectF clip) const {
+    const auto* provider=GetColorProvider();const bool enabled=GetEnabledInViewsSubtree();const auto font=TextFont();const bool prominent=style_==ui::ButtonStyle::kProminent;
+    sidebar::Item item{};item.kind=19;item.x=bounds.x();item.y=bounds.y();item.width=bounds.width();item.height=bounds.height();item.title=base::UTF16ToUTF8(text_);item.font_size=font.GetFontSize();item.active=font.GetFontWeight()>=gfx::Font::Weight::MEDIUM;
+    item.title_width=views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_BUTTON_HORIZONTAL_PADDING);item.focused=HasFocus();item.hovered=enabled&&(GetState()==STATE_HOVERED||GetState()==STATE_PRESSED);
+    item.ink=provider->GetColor(views::TypographyProvider::Get().GetColorId(views::style::CONTEXT_BUTTON_MD,!enabled?views::style::STYLE_DISABLED:prominent?views::style::STYLE_DIALOG_BUTTON_DEFAULT:views::style::STYLE_PRIMARY));
+    item.fill=style_==ui::ButtonStyle::kText?SK_ColorTRANSPARENT:provider->GetColor(prominent?!enabled?ui::kColorButtonBackgroundProminentDisabled:HasFocus()?ui::kColorButtonBackgroundProminentFocused:ui::kColorButtonBackgroundProminent:ui::kColorButtonBackground);
+    if(GetState()==STATE_PRESSED)item.fill=GetNativeTheme()->GetSystemButtonPressedColor(item.fill);
+    item.badge=style_==ui::ButtonStyle::kDefault?provider->GetColor(enabled?ui::kColorButtonBorder:ui::kColorButtonBorderDisabled):SK_ColorTRANSPARENT;
+    item.detail_ink=provider->GetColor(prominent?ui::kColorSysStateHoverOnProminent:ui::kColorSysStateHoverOnSubtle);item.clip={clip.x(),clip.y(),clip.width(),clip.height()};return item;
+  }
+ private:
+  sidebar::ActionButtonLayout Metrics(int width,int height) const {const auto font=TextFont();return sidebar::action_button_layout(width,height,gfx::GetStringWidth(text_,font),views::LayoutProvider::GetControlHeightForFont(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY,font),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_BUTTON_HORIZONTAL_PADDING),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_DIALOG_BUTTON_MINIMUM_WIDTH));}
+  std::u16string text_;ui::ButtonStyle style_;
+};
+BEGIN_METADATA(SceneTextButton)
+END_METADATA
+class SceneActionGroup final : public views::View {
+  METADATA_HEADER(SceneActionGroup,views::View)
+ public:
+  SceneActionGroup(bool vertical,int spacing):vertical_(vertical),spacing_(spacing) {}
+  views::Button* AddAction(views::Button::PressedCallback callback,std::u16string text,ui::ButtonStyle style){return AddChildView(std::make_unique<SceneTextButton>(std::move(callback),std::move(text),style,base::BindRepeating(&SceneActionGroup::Schedule,weak_factory_.GetWeakPtr())));}
+  bool metal_visible() const{return surface_&&surface_->visible();}
+  bool contains_text(std::string_view text) const{return metal_visible()&&surface_->contains_text_for_testing(text);}
+  void CancelInput(){for(const auto& child:children())child->OnMouseCaptureLost();}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override {const auto g=Geometry(available.width().is_bounded()?available.width().value():-1,-1);return gfx::Size(g.width,g.height);}
+  void Layout(PassKey) override {const auto g=Geometry(width(),height());size_t i=0;for(const auto& child:children())if(child->GetVisible()){const auto& r=g.children[i++];child->SetBounds(r.x,r.y,r.width,r.height);}Schedule();}
+  void OnBoundsChanged(const gfx::Rect& previous) override {views::View::OnBoundsChanged(previous);Schedule();}
+  void AddedToWidget() override {views::View::AddedToWidget();Schedule();}
+  void RemovedFromWidget() override {surface_.reset();views::View::RemovedFromWidget();}
+  void OnThemeChanged() override {views::View::OnThemeChanged();PreferredSizeChanged();Schedule();}
+  void VisibilityChanged(views::View* view,bool visible) override {views::View::VisibilityChanged(view,visible);if(!IsDrawn()){CancelInput();if(surface_)surface_->Hide();}Schedule();}
+  void OnDidSchedulePaint(const gfx::Rect& rect) override {views::View::OnDidSchedulePaint(rect);Schedule();}
+  void OnPaint(gfx::Canvas* canvas) override {if(!metal_visible())for(const auto& item:Items(0,0,gfx::RectF(GetLocalBounds())))PaintSceneRecipe(canvas,item,SceneTextButton::TextFont());Schedule();}
+ private:
+  sidebar::ColumnLayout Geometry(int width,int height) const {std::vector<sidebar::ColumnChild> measured;for(const auto& child:children())if(child->GetVisible()){const auto size=child->GetPreferredSize();measured.push_back({size.width(),size.height(),0,0,0,0});}return sidebar::action_group_layout(width,height,vertical_,spacing_,rust::Slice<const sidebar::ColumnChild>(measured.data(),measured.size()));}
+  std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const {std::vector<sidebar::Item> out;for(const auto& child:children())if(child->GetVisible()){auto bounds=gfx::RectF(child->bounds());bounds.Offset(dx,dy);auto local=bounds;local.Intersect(clip);out.push_back(static_cast<SceneTextButton*>(child.get())->Scene(bounds,local));}return out;}
+  void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneActionGroup::UpdateMetal,weak_factory_.GetWeakPtr()));}
+  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!IsDrawn()||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
+  bool vertical_;int spacing_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;base::WeakPtrFactory<SceneActionGroup> weak_factory_{this};
+};
+BEGIN_METADATA(SceneActionGroup)
+END_METADATA
+void CancelSceneActions(views::View* root){if(!root)return;if(auto* group=views::AsViewClass<SceneActionGroup>(root)){group->CancelInput();return;}for(const auto& child:root->children())CancelSceneActions(child.get());}
+#endif
+views::View* ActionGroup(views::View* parent,bool scene,bool vertical,int spacing) {
+#if BUILDFLAG(IS_MAC)
+  if(scene)return parent->AddChildView(std::make_unique<SceneActionGroup>(vertical,spacing));
+#endif
+  auto* group=parent->AddChildView(std::make_unique<views::View>());group->SetLayoutManager(std::make_unique<views::BoxLayout>(vertical?views::BoxLayout::Orientation::kVertical:views::BoxLayout::Orientation::kHorizontal,gfx::Insets(),spacing));return group;
+}
+views::Button* AddAction(views::View* parent,views::Button::PressedCallback callback,std::u16string text,ui::ButtonStyle style=ui::ButtonStyle::kDefault) {
+#if BUILDFLAG(IS_MAC)
+  if(auto* group=views::AsViewClass<SceneActionGroup>(parent))return group->AddAction(std::move(callback),std::move(text),style);
+#endif
+  auto* button=parent->AddChildView(std::make_unique<views::MdTextButton>(std::move(callback),std::move(text)));button->SetStyle(style);return button;
+}
+void SetActionText(views::Button* button,std::u16string text) {
+#if BUILDFLAG(IS_MAC)
+  if(auto* scene=views::AsViewClass<SceneTextButton>(button)){scene->SetText(std::move(text));return;}
+#endif
+  static_cast<views::MdTextButton*>(button)->SetText(text);
 }
 
 // Editing/IME remains a platform service; result selection is scene state.
@@ -2376,18 +2455,13 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   profile_picker_->SetTooltipTextAndAccessibleName(workspace_copy[3]);
   settings_text(settings.get(),workspace_copy[4],kMuted,-2,gfx::Font::Weight::NORMAL,true);
   settings_text(settings.get(),workspace_copy[5],kMuted,-2,gfx::Font::Weight::NORMAL,true);
-  auto* actions = settings->AddChildView(std::make_unique<views::View>());
-  actions->SetLayoutManager(std::make_unique<views::BoxLayout>(
-      views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 8));
-  edit_workspace_ = actions->AddChildView(std::make_unique<views::MdTextButton>(
-      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+  auto* actions=ActionGroup(settings.get(),bool(workspace_form_),false,8);
+  edit_workspace_ = AddAction(actions,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
         if (shell) shell->SubmitWorkspace(shell->creating_workspace_);
-      }, weak), u"Zapisz nazwę i profil"));
-  static_cast<views::MdTextButton*>(edit_workspace_.get())->SetStyle(ui::ButtonStyle::kProminent);
-  add_workspace_ = actions->AddChildView(std::make_unique<views::MdTextButton>(
-      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+      }, weak),u"Zapisz nazwę i profil",ui::ButtonStyle::kProminent);
+  add_workspace_ = AddAction(actions,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
         if(shell)shell->ToggleWorkspaceCreation();
-      }, weak), u"Nowa przestrzeń…"));
+      }, weak),u"Nowa przestrzeń…");
   configuration_error_ = settings_text(settings.get(),u"",kError,-2,gfx::Font::Weight::NORMAL,true);
   configuration_error_->SetVisible(false);
   auto* appearance = settings->AddChildView(std::make_unique<views::View>());
@@ -2456,17 +2530,15 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 
   Spacer(appearance, 8);
   settings_text(appearance,workspace_copy[13],kInk,0,gfx::Font::Weight::SEMIBOLD);
-  auto* manage_profiles = appearance->AddChildView(std::make_unique<views::MdTextButton>(
-      base::BindRepeating(&WorkspaceShell::OpenProfiles, weak, std::string(), std::string()), workspace_copy[14]));
-  auto* import_arc = appearance->AddChildView(std::make_unique<views::MdTextButton>(
-      base::BindRepeating(&WorkspaceShell::OpenImport, weak), workspace_copy[15]));
-  remove_workspace_ = appearance->AddChildView(std::make_unique<views::MdTextButton>(
+  auto* more_actions=ActionGroup(appearance,bool(workspace_form_),true,8);
+  AddAction(more_actions,
+      base::BindRepeating(&WorkspaceShell::OpenProfiles, weak, std::string(), std::string()), workspace_copy[14],ui::ButtonStyle::kText);
+  AddAction(more_actions,
+      base::BindRepeating(&WorkspaceShell::OpenImport, weak), workspace_copy[15],ui::ButtonStyle::kText);
+  remove_workspace_ = AddAction(more_actions,
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
         if (shell) shell->ConfirmRemoveWorkspace(shell->state_.workspace_id);
-      }, weak), workspace_copy[16]));
-  manage_profiles->SetStyle(ui::ButtonStyle::kText);
-  import_arc->SetStyle(ui::ButtonStyle::kText);
-  static_cast<views::MdTextButton*>(remove_workspace_.get())->SetStyle(ui::ButtonStyle::kText);
+      }, weak), workspace_copy[16],ui::ButtonStyle::kText);
 
   if(workspace_form_){settings->SetLayoutManager(CreateSidebarColumnLayout(8));settings->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(20)));appearance->SetLayoutManager(CreateSidebarColumnLayout(8));}
 
@@ -2609,10 +2681,11 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   profile_name_input_ = profiles_panel->AddChildView(std::make_unique<views::Textfield>());
   profile_name_input_->GetViewAccessibility().SetName(profile_copy[3]);
   profile_name_input_->SetPlaceholderText(profile_copy[4]);
-  create_profile_ = profiles_panel->AddChildView(std::make_unique<views::MdTextButton>(
-      base::BindRepeating(&WorkspaceShell::SubmitProfile, weak), profile_copy[7]));
-  rename_profile_ = profiles_panel->AddChildView(std::make_unique<views::MdTextButton>(
-      base::BindRepeating(&WorkspaceShell::RenameSelectedProfile, weak), profile_copy[8]));
+  auto* profile_create_actions=ActionGroup(profiles_panel.get(),bool(profile_form_),true,10);
+  create_profile_ = AddAction(profile_create_actions,
+      base::BindRepeating(&WorkspaceShell::SubmitProfile, weak), profile_copy[7]);
+  rename_profile_ = AddAction(profile_create_actions,
+      base::BindRepeating(&WorkspaceShell::RenameSelectedProfile, weak), profile_copy[8]);
   profile_text(profile_copy[5],kSubtle,-1);
   managed_profile_picker_ = profiles_panel->AddChildView(std::make_unique<views::Combobox>());
   managed_profile_picker_->SetTooltipTextAndAccessibleName(profile_copy[6]);
@@ -2624,16 +2697,16 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     if (selected && *selected < shell->state_.profiles.size())
       shell->profile_name_input_->SetText(base::UTF8ToUTF16(shell->state_.profiles[*selected].name));
 #if BUILDFLAG(IS_MAC)
-    if(shell->profile_form_){const auto id=selected&&*selected<shell->state_.profiles.size()?shell->state_.profiles[*selected].id:std::string();shell->profile_form_->form->select(id);}
+    if(shell->profile_form_){CancelSceneActions(shell->profiles_root_);const auto id=selected&&*selected<shell->state_.profiles.size()?shell->state_.profiles[*selected].id:std::string();shell->profile_form_->form->select(id);}
 #endif
     shell->SetProfileStatus(u"");
     shell->RefreshProfileControls();
   }, weak));
   profile_status_=profile_text(u"",kSubtle,-1,gfx::Font::Weight::NORMAL,true);
-  delete_profile_ = profiles_panel->AddChildView(std::make_unique<views::MdTextButton>(
-      base::BindRepeating(&WorkspaceShell::DeleteSelectedProfile, weak), profile_copy[9]));
-  profiles_panel->AddChildView(std::make_unique<views::MdTextButton>(
-      base::BindRepeating(&WorkspaceShell::OpenWorkspaceSettings, weak), profile_copy[11]));
+  auto* profile_delete_actions=ActionGroup(profiles_panel.get(),bool(profile_form_),true,10);
+  delete_profile_ = AddAction(profile_delete_actions,
+      base::BindRepeating(&WorkspaceShell::DeleteSelectedProfile, weak), profile_copy[9]);
+  AddAction(profile_delete_actions,base::BindRepeating(&WorkspaceShell::OpenWorkspaceSettings, weak), profile_copy[11]);
 
   if(profile_form_){profiles_panel->SetLayoutManager(CreateSidebarColumnLayout(10));profiles_panel->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(20)));}
 
@@ -3228,7 +3301,8 @@ void WorkspaceShell::Update(ShellState state) {
   state_ = std::move(state);
   if (!widget_) return;
 #if BUILDFLAG(IS_MAC)
-  if(selected&&workspace_form_){for(auto* field:{color_input_.get(),emoji_input_.get()})if(auto* row=views::AsViewClass<AppearanceRow>(field->parent()))row->CancelInput();}
+  if(selected&&workspace_form_){for(auto* field:{color_input_.get(),emoji_input_.get()})if(auto* row=views::AsViewClass<AppearanceRow>(field->parent()))row->CancelInput();CancelSceneActions(settings_root_);CancelSceneActions(profiles_root_);}
+  if(profiles_changed&&profile_form_)CancelSceneActions(profiles_root_);
 #endif
   if (history_profile_changed && history_visible()) RefreshTools();
   if (changed || profiles_changed) RebuildWorkspaceDots();
@@ -5875,7 +5949,7 @@ void WorkspaceShell::ToggleWorkspaceCreation() {
 #endif
   creating_workspace_=true;workspace_appearance_->SetVisible(false);configuration_error_->SetVisible(false);
   SetPanelText(settings_title_,u"Nowa przestrzeń");workspace_input_->SetText(u"");workspace_input_->RequestFocus();
-  static_cast<views::MdTextButton*>(edit_workspace_.get())->SetText(u"Utwórz przestrzeń");static_cast<views::MdTextButton*>(add_workspace_.get())->SetText(u"Anuluj");
+  SetActionText(edit_workspace_,u"Utwórz przestrzeń");SetActionText(add_workspace_,u"Anuluj");
   RefreshRustWorkspacePresentation();PositionPanels();
 }
 void WorkspaceShell::RefreshRustWorkspacePresentation() {
@@ -5883,7 +5957,7 @@ void WorkspaceShell::RefreshRustWorkspacePresentation() {
   if(!workspace_form_)return;
   const auto v=workspace_form_->form->view(base::UTF16ToUTF8(state_.workspace_name),base::UTF16ToUTF8(state_.profile_name),state_.configuration_ready,state_.profiles_busy,state_.workspaces.size());
   creating_workspace_=v.creating;SetPanelText(settings_title_,base::UTF8ToUTF16(std::string(v.title)));SetPanelText(profile_name_,base::UTF8ToUTF16(std::string(v.description)));
-  static_cast<views::MdTextButton*>(edit_workspace_.get())->SetText(base::UTF8ToUTF16(std::string(v.save_label)));static_cast<views::MdTextButton*>(add_workspace_.get())->SetText(base::UTF8ToUTF16(std::string(v.secondary_label)));
+  SetActionText(edit_workspace_,base::UTF8ToUTF16(std::string(v.save_label)));SetActionText(add_workspace_,base::UTF8ToUTF16(std::string(v.secondary_label)));
   workspace_appearance_->SetVisible(v.appearance);edit_workspace_->SetEnabled(v.enabled);add_workspace_->SetEnabled(v.enabled);profile_picker_->SetEnabled(v.enabled);remove_workspace_->SetEnabled(v.remove_enabled);
   SetPanelText(configuration_error_,base::UTF8ToUTF16(std::string(v.error)));configuration_error_->SetVisible(!v.error.empty());
 #endif
@@ -5910,8 +5984,8 @@ void WorkspaceShell::RefreshWorkspaceSettings() {
   creating_workspace_ = false;
   workspace_appearance_->SetVisible(true);
   SetPanelText(settings_title_,state_.workspace_name);
-  static_cast<views::MdTextButton*>(edit_workspace_.get())->SetText(u"Zapisz nazwę i profil");
-  static_cast<views::MdTextButton*>(add_workspace_.get())->SetText(u"Nowa przestrzeń…");
+  SetActionText(edit_workspace_,u"Zapisz nazwę i profil");
+  SetActionText(add_workspace_,u"Nowa przestrzeń…");
   workspace_input_->SetText(state_.workspace_name);
   for (size_t i = 0; i < state_.profiles.size(); ++i)
     if (state_.profiles[i].id == state_.profile_id) profile_picker_->SetSelectedIndex(i);
@@ -6086,6 +6160,9 @@ void WorkspaceShell::SetImportStatus(std::u16string message, bool can_import, bo
 }
 void WorkspaceShell::OpenProfiles(std::string profile_id, std::string workspace_id) {
   if (!profiles_widget_) return;
+#if BUILDFLAG(IS_MAC)
+  if(profile_form_)CancelSceneActions(profiles_root_);
+#endif
   CloseOverlays();
   confirm_profile_deletion_ = false;
   new_profile_workspace_id_ = std::move(workspace_id);
@@ -6117,7 +6194,7 @@ void WorkspaceShell::RefreshProfileControls() {
   if(profile_form_){const auto profiles=ProfileOptions(state_);const auto uses=ProfileUses(state_);
     const auto controls=profile_form_->form->controls(state_.configuration_ready,state_.profiles_busy,rust::Slice<const sidebar::ProfileOption>(profiles.data(),profiles.size()),rust::Slice<const sidebar::ProfileUse>(uses.data(),uses.size()));
     create_profile_->SetEnabled(controls.create);rename_profile_->SetEnabled(controls.rename);delete_profile_->SetEnabled(controls.remove);managed_profile_picker_->SetEnabled(controls.picker);
-    static_cast<views::MdTextButton*>(delete_profile_.get())->SetText(base::UTF8ToUTF16(std::string(controls.delete_label)));SetProfileStatus(base::UTF8ToUTF16(std::string(controls.status)));return;
+    SetActionText(delete_profile_,base::UTF8ToUTF16(std::string(controls.delete_label)));SetProfileStatus(base::UTF8ToUTF16(std::string(controls.status)));return;
   }
 #endif
   const bool ready = state_.configuration_ready && !state_.profiles_busy;
@@ -6137,7 +6214,7 @@ void WorkspaceShell::RefreshProfileControls() {
     }
   }
   delete_profile_->SetEnabled(ready && index.has_value() && !used && state_.profiles.size() > 1);
-  static_cast<views::MdTextButton*>(delete_profile_.get())->SetText(
+  SetActionText(delete_profile_,
       confirm_profile_deletion_ ? u"Potwierdź usunięcie profilu i danych" : u"Usuń profil i jego dane");
   if (used && !state_.profiles_busy) SetProfileStatus(u"Profil jest używany przez: " + names + u". Najpierw zmień profil tych przestrzeni.");
 }
@@ -6218,6 +6295,20 @@ gfx::Rect WorkspaceShell::appearance_scene_bounds_for_testing(bool emoji) const 
   auto* field=emoji?emoji_input_.get():color_input_.get();auto* row=field?views::AsViewClass<AppearanceRow>(field->parent()):nullptr;return row?row->scene_bounds():gfx::Rect();
 #else
   return {};
+#endif
+}
+bool WorkspaceShell::form_actions_contains_scene_text(bool profiles,std::string_view text) const {
+#if BUILDFLAG(IS_MAC)
+  auto* root=profiles?profiles_root_.get():settings_root_.get();if(!root)return false;auto find=[&](auto&& self,views::View* view)->bool{if(auto* group=views::AsViewClass<SceneActionGroup>(view))if(group->contains_text(text))return true;for(const auto& child:view->children())if(self(self,child.get()))return true;return false;};return find(find,root);
+#else
+  return false;
+#endif
+}
+size_t WorkspaceShell::form_action_canvases_visible_for_testing(bool profiles) const {
+#if BUILDFLAG(IS_MAC)
+  auto* root=profiles?profiles_root_.get():settings_root_.get();if(!root)return 0;auto count=[&](auto&& self,views::View* view)->size_t{size_t n=0;if(auto* group=views::AsViewClass<SceneActionGroup>(view))n+=group->metal_visible();for(const auto& child:view->children())n+=self(self,child.get());return n;};return count(count,root);
+#else
+  return 0;
 #endif
 }
 void WorkspaceShell::ApplyHexColor() {

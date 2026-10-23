@@ -44,8 +44,9 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Split headers/divider, focus, orientation, swap/close | Rust pane/bar layout, title text, menu/close input and divider drag; shared Metal rendering | Replace native View/Button/ResizeArea event, cursor and AX adapters; expand gesture/RTL/scale coverage |
 | Address/search palette, suggestions, providers, IME | Rust result selection/layout/text/icons, palette/input/static chrome geometry, Metal hints/errors; native Textfield/IME, provider/search controllers | Migrate remaining native containers/frame presentation; expand composition/accessibility/scale coverage |
 | Command Center tabs/pins/workspaces/history/actions | Rust result selection/drawing; existing search/ranking and application commands | Replace remaining native containers/frame presentation and command adapters; preserve stale results and identity |
-| Profile management create/rename/delete | Rust controller, copy, validation, stable-ID selection, two-step delete and column/text layout; Metal static text; native input/picker/buttons and storage services (GUI checkpoint pending) | Migrate native controls; verify IME, typography, stale confirmation, profile/session isolation and failed-write rollback |
-| Workspace create/edit settings | Rust form mode/validation/requests and column/text layout; Metal headings/help/status; native input, row layout, buttons, appearance controls and storage services (GUI checkpoint pending) | Migrate remaining native controls/header/action rows and outer panel; verify profile changes, IME, async errors and persistence |
+| Profile management create/rename/delete | Rust controller, copy, validation, stable-ID selection, two-step delete and column/text layout; Metal static text; native input/picker and storage services (GUI checkpoint pending) | Migrate remaining native input/picker nodes; verify IME, typography, action groups, stale confirmation, profile/session isolation and failed-write rollback |
+| Workspace create/edit settings | Rust form mode/validation/requests and column/text layout; Metal headings/help/status; native input, header row, appearance/editor services and storage (GUI checkpoint pending) | Migrate remaining native controls/header/action rows and outer panel; verify profile changes, IME, async errors and persistence |
+| Workspace/profile form action buttons | Rust button/group geometry, shared pointer/key reducer and text/background/border/focus primitives; four Metal groups; native Button/AX/focus, platform font/metric/color and command adapters (GUI checkpoint pending) | Replace native interaction nodes; verify dynamic labels, disabled styles, focus/keyboard/cancellation, clipping/fallback and service semantics |
 | Workspace color/emoji presets | Rust preset data/selection, row geometry, pointer/key reducer and scene primitives; two shared-context Metal canvases; native Button/AX/focus and text/grapheme/storage adapters (GUI checkpoint pending) | Replace native input nodes and editor presentation; verify capture/visibility/workspace cancellation, clipping, keyboard/IME/AX, theme/scale and persistence |
 | Workspace deletion confirmation | Rust captured-target notice state/copy and shared paragraph layout; Metal body/error text; native modal title/buttons and deletion/persistence services (GUI checkpoint pending) | Migrate remaining host controls; verify default Cancel, beforeunload, stale targets, retained profile data, typography and screen bounds |
 | General preferences, shortcuts and site preferences | Views + application services | Rust forms; use the same persisted configuration |
@@ -322,6 +323,15 @@ and the return of Metal after settling. Preserve the normal application/profile.
   the deferred matrix to **58 Metal cases and 27 Views controls**, adding the
   existing workspace appearance/context case to Views. See
   [appearance verification](benchmarks/rust-appearance-headless-2026-10-23.json).
+
+- Nine profile/workspace actions now use Rust button/group layout and shared
+  input, with scene text and background/border/hover/focus primitives batched on
+  four Metal canvases. Native MdTextButton/Label drawing is removed for those
+  opt-in actions; platform font/metrics/colors and native event/AX/focus nodes
+  remain. Text/context/catalogue/visibility changes cancel pending activation.
+  **115 Rust and 61 Python tests passed** without windows; the new compiled GUI
+  case expands the deferred matrix to **59 Metal cases and 27 Views controls**.
+  See [form action verification](benchmarks/rust-form-actions-headless-2026-10-23.json).
 
 ## Completion gates
 

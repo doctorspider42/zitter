@@ -151,6 +151,10 @@ views::Button* FindButton(views::View* root, std::u16string_view text) {
   if (auto* button = views::AsViewClass<views::MdTextButton>(root)) {
     if (button->GetText() == text) return button;
   }
+  if(auto* button=views::AsViewClass<views::Button>(root)) {
+    ui::AXNodeData data;button->GetViewAccessibility().GetAccessibleNodeData(&data);
+    if(data.GetString16Attribute(ax::mojom::StringAttribute::kName)==text)return button;
+  }
   for (const auto& child : root->children()) {
     if (auto* button = FindButton(child.get(), text)) return button;
   }
@@ -3912,6 +3916,26 @@ class ZitterMetalSidebarBrowserTest : public ZitterProfilesBrowserTest {
     command_line->AppendSwitchASCII("zitter-sidebar", "rust-metal");
   }
 };
+// Compile only: action/scene acceptance is deferred to the requested GUI checkpoint.
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, FormActionGroupsSceneTextDynamicLabelsAndCancelledTargets) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
+  window_->widget()->SetBounds(display::Screen::Get()->GetDisplayNearestWindow(window_->widget()->GetNativeWindow()).work_area());shell->OpenWorkspaceSettings();
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->form_action_canvases_visible_for_testing(false)==2;}));ASSERT_TRUE(shell->form_actions_contains_scene_text(false,"Zapisz nazwę i profil"));
+  auto find=[&](bool profiles,std::u16string_view name){return FindButton(profiles?shell->profile_panel_for_testing():shell->workspace_panel_for_testing(),name);};
+  auto check=[&](views::Button* button)->bool{if(!button)return false;EXPECT_FALSE(views::AsViewClass<views::MdTextButton>(button));EXPECT_FALSE(button->GetInstallFocusRingOnFocus());for(const auto& child:button->children())EXPECT_FALSE(views::AsViewClass<views::Label>(child.get()));return true;};
+  auto* create=find(false,u"Nowa przestrzeń…");ASSERT_TRUE(check(create));const gfx::Point point(12,12);ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);
+  ASSERT_TRUE(create->OnMousePressed(press));create->OnMouseReleased(release);ASSERT_TRUE(base::test::RunUntil([&]{return shell->form_actions_contains_scene_text(false,"Utwórz przestrzeń");}));EXPECT_EQ(1u,shell->form_action_canvases_visible_for_testing(false));
+  auto* save=find(false,u"Utwórz przestrzeń");ASSERT_TRUE(check(save));shell->workspace_input()->SetText(u"Must not create");ASSERT_TRUE(save->OnMousePressed(press));ASSERT_TRUE(window_->Select("personal"));save->OnMouseReleased(release);EXPECT_EQ(2u,window_->workspaces().size());EXPECT_EQ("Prywatne",window_->workspaces()[1].name);
+  shell->OpenWorkspaceSettings();auto* manage=find(false,u"Zarządzaj profilami");ASSERT_TRUE(check(manage));ASSERT_TRUE(manage->OnMousePressed(press));manage->OnMouseReleased(release);
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->form_action_canvases_visible_for_testing(true)==2;}));ASSERT_TRUE(shell->form_actions_contains_scene_text(true,"Utwórz profil"));auto* profile_create=find(true,u"Utwórz profil");ASSERT_TRUE(check(profile_create));
+  shell->profile_name_input()->SetText(u"  ");ui::KeyEvent space(ui::EventType::kKeyPressed,ui::VKEY_SPACE,ui::EF_NONE);ui::KeyEvent up(ui::EventType::kKeyReleased,ui::VKEY_SPACE,ui::EF_NONE);profile_create->RequestFocus();ASSERT_TRUE(profile_create->OnKeyPressed(space));profile_create->OnKeyReleased(up);
+  EXPECT_EQ(2u,window_->profiles().size());ASSERT_TRUE(base::test::RunUntil([&]{return shell->profile_panel_contains_scene_text("Podaj nazwę profilu.");}));
+  ASSERT_TRUE(window_->CreateProfile("Action profile"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));const auto added=window_->profiles().back();shell->OpenProfiles(added.id);
+  auto* remove=find(true,u"Usuń profil i jego dane");ASSERT_TRUE(check(remove));ASSERT_TRUE(remove->OnKeyPressed(space));remove->OnKeyReleased(up);ASSERT_TRUE(base::test::RunUntil([&]{return shell->form_actions_contains_scene_text(true,"Potwierdź usunięcie profilu i danych");}));
+  auto* confirm=find(true,u"Potwierdź usunięcie profilu i danych");ASSERT_TRUE(confirm);ASSERT_TRUE(confirm->OnMousePressed(press));shell->OpenProfiles("personal-profile");confirm->OnMouseReleased(release);EXPECT_EQ(3u,window_->profiles().size());EXPECT_FALSE(find(true,u"Usuń profil i jego dane")->GetEnabled());
+  shell->OpenProfiles(added.id);remove=find(true,u"Usuń profil i jego dane");ASSERT_TRUE(remove->OnKeyPressed(space));remove->OnKeyReleased(up);confirm=find(true,u"Potwierdź usunięcie profilu i danych");ASSERT_TRUE(confirm);ASSERT_TRUE(confirm->OnKeyPressed(space));confirm->OnKeyReleased(up);
+  ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));EXPECT_EQ(2u,window_->profiles().size());ASSERT_TRUE(base::test::RunUntil([&]{return window_->configuration_saved();}));
+}
 // Compiled only. Execution remains deferred to the user's GUI checkpoint.
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, AppearanceRowsSceneInputClippingCompositionAndWorkspaceChange) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->OpenWorkspaceSettings();
