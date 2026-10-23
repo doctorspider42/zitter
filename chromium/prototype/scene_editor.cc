@@ -6,6 +6,8 @@
 #include <set>
 #include <utility>
 #include "base/functional/bind.h"
+#include "base/auto_reset.h"
+#include "ui/views/controls/textfield/textfield_controller.h"
 #include "base/check_op.h"
 #include "base/i18n/rtl.h"
 #include "base/memory/weak_ptr.h"
@@ -62,9 +64,10 @@ class SceneWindowObserver final:public views::WidgetObserver {
   base::RepeatingClosure changed_;base::ScopedObservation<views::Widget,views::WidgetObserver> observation_{this};
 };
 #endif
-class NativeEditor final : public views::Textfield, public EditorControl {
+class NativeEditor final : public views::Textfield, public EditorControl, private views::TextfieldController {
   METADATA_HEADER(NativeEditor,views::Textfield)
  public:
+  ~NativeEditor() override{set_controller(nullptr);}
   bool rust_editor() const override{return false;}
   bool metal_visible() const override{return false;}
   bool scene_contains(std::string_view) const override{return false;}
@@ -74,12 +77,22 @@ class NativeEditor final : public views::Textfield, public EditorControl {
   void SetPlaceholderText(std::u16string value) override{views::Textfield::SetPlaceholderText(std::move(value));}
   bool IsIMEComposing() const override{return views::Textfield::IsIMEComposing();}
   void SetCompositionText(const ui::CompositionText& value) override{views::Textfield::SetCompositionText(value);}
-  void ClearCompositionText() override{views::Textfield::ClearCompositionText();}
+  void ClearCompositionText() override{base::AutoReset<bool> suppress(&suppress_committed_,true);views::Textfield::ClearCompositionText();}
   size_t ConfirmCompositionText(bool keep) override{return views::Textfield::ConfirmCompositionText(keep);}
   gfx::Range GetSelectedRange() const override{return views::Textfield::GetSelectedRange();}
   void SelectRange(const gfx::Range& range) override{views::Textfield::SetSelectedRange(range);}
   ui::TextInputClient* input_client() override{return this;}
   void SetReadOnly(bool value) override{views::Textfield::SetReadOnly(value);}
+  void SetCallbacks(base::RepeatingClosure committed,base::RepeatingCallback<bool(const ui::KeyEvent&)> key) override {
+    committed_=std::move(committed);key_=std::move(key);set_controller(committed_||key_?this:nullptr);
+  }
+ private:
+  void ContentsChanged(views::Textfield*,const std::u16string&) override {
+    if(!suppress_committed_&&!IsIMEComposing()&&committed_){auto notify=committed_;notify.Run();}
+  }
+  bool HandleKeyEvent(views::Textfield*,const ui::KeyEvent& event) override {auto key=key_;return key&&key.Run(event);}
+  bool suppress_committed_=false;
+  base::RepeatingClosure committed_;base::RepeatingCallback<bool(const ui::KeyEvent&)> key_;
 };
 BEGIN_METADATA(NativeEditor)
 END_METADATA
@@ -116,6 +129,7 @@ class SceneEditor final : public views::View, public EditorControl,
   gfx::Range GetSelectedRange() const override{auto i=sidebar::editor_info(*state_);return gfx::Range(i.anchor,i.focus);}
   void SelectRange(const gfx::Range& range) override{SetEditableSelectionRange(range);}
   void SetReadOnly(bool value) override{read_only_=value;SyncLifecycle();}
+  void SetCallbacks(base::RepeatingClosure committed,base::RepeatingCallback<bool(const ui::KeyEvent&)> key) override {committed_=std::move(committed);key_=std::move(key);}
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(120,32);}
   ui::Cursor GetCursor(const ui::MouseEvent&) override{return ui::Cursor(ui::mojom::CursorType::kIBeam);}
   base::WeakPtr<ui::TextInputClient> AsWeakPtr() override{return weak_factory_.GetWeakPtr();}
@@ -203,6 +217,7 @@ class SceneEditor final : public views::View, public EditorControl,
   void SetTextEditCommandForNextKeyEvent(ui::TextEditCommand command) override{pending_command_=command;}
   bool OnKeyPressed(const ui::KeyEvent& event) override {
     auto command=std::exchange(pending_command_,ui::TextEditCommand::INVALID_COMMAND);if(!Available())return false;
+    if(key_){auto key=key_;auto alive=weak_factory_.GetWeakPtr();if(key.Run(event))return true;if(!alive)return false;}
     if(IsIMEComposing())return false;
     if(command!=ui::TextEditCommand::INVALID_COMMAND)return Execute(command);
     using C=ui::TextEditCommand;const bool modify=event.IsShiftDown();
@@ -289,7 +304,7 @@ class SceneEditor final : public views::View, public EditorControl,
   void NotifyCaret(){if(GetInputMethod())GetInputMethod()->OnCaretBoundsChanged(this);}
   void RefreshText(){text_revision_=sidebar::editor_info(*state_).revision;const auto text=sidebar::editor_text(*state_);text_.assign(text.begin(),text.end());line_.reset();}
   void RefreshAX(){auto i=sidebar::editor_info(*state_);GetViewAccessibility().SetValue(text_);GetViewAccessibility().SetTextDirection(static_cast<int32_t>(GetTextDirection()==base::i18n::RIGHT_TO_LEFT?ax::mojom::WritingDirection::kRtl:ax::mojom::WritingDirection::kLtr));GetViewAccessibility().SetTextSelStart(i.anchor);GetViewAccessibility().SetTextSelEnd(i.focus);GetViewAccessibility().SetReadOnly(read_only_);}
-  void Apply(sidebar::EditorUpdate update){if(!update.admitted)return;if(!sidebar::editor_pointer_active(*state_)){selection_scroll_.Stop();dragging_=false;}if(update.text_changed){RefreshText();++edit_generation_;}if(!update.info.composing)clauses_.clear();EnsureLayout();RefreshAX();blink_visible_=true;Schedule();NotifyCaret();if(update.text_changed)GetViewAccessibility().NotifyEvent(ax::mojom::Event::kValueChanged,true);if(update.selection_changed)GetViewAccessibility().NotifyEvent(ax::mojom::Event::kTextSelectionChanged,true);}
+  void Apply(sidebar::EditorUpdate update){if(!update.admitted)return;if(!sidebar::editor_pointer_active(*state_)){selection_scroll_.Stop();dragging_=false;}if(update.text_changed){RefreshText();++edit_generation_;}if(!update.info.composing)clauses_.clear();EnsureLayout();RefreshAX();blink_visible_=true;Schedule();NotifyCaret();if(update.text_changed)GetViewAccessibility().NotifyEvent(ax::mojom::Event::kValueChanged,true);if(update.selection_changed)GetViewAccessibility().NotifyEvent(ax::mojom::Event::kTextSelectionChanged,true);if(update.committed&&committed_){auto notify=committed_;notify.Run();}}
   void EnsureLayout() const {
     if(!line_){line_=std::make_unique<EditorTextLayout>(text_,13,false,WritingDirection());std::vector<size_t> words;for(auto word:line_->words()){words.push_back(word.start);words.push_back(word.end);}const auto& stops=line_->graphemes();sidebar::editor_install_boundaries(*state_,sidebar::editor_info(*state_).revision,rust::Slice<const size_t>(stops.data(),stops.size()),rust::Slice<const size_t>(words.data(),words.size()));}
     auto i=sidebar::editor_info(*state_);geometry_=sidebar::editor_viewport(*state_,width(),height(),line_->width(),line_->Caret(i.focus,i.secondary).x,line_->ascent(),line_->descent(),AlignRight());
@@ -385,6 +400,7 @@ class SceneEditor final : public views::View, public EditorControl,
   };
   mutable rust::Box<sidebar::EditorState> state_;std::u16string text_,placeholder_;mutable std::unique_ptr<EditorTextLayout> line_;mutable sidebar::EditorGeometry geometry_{};
   ui::ImeTextSpans clauses_;std::optional<base::i18n::TextDirection> direction_;std::optional<bool> align_right_;bool read_only_=false,pending_=false,blink_visible_=true,dragging_=false,drag_candidate_=false,drag_started_=false;uint64_t text_revision_=0,context_=0,edit_generation_=0,menu_generation_=0,drag_revision_=0;gfx::Range drag_selection_;
+  base::RepeatingClosure committed_;base::RepeatingCallback<bool(const ui::KeyEvent&)> key_;
   ui::TextEditCommand pending_command_=ui::TextEditCommand::INVALID_COMMAND;base::RepeatingTimer blink_,selection_scroll_;float last_drag_x_=0;base::CallbackListSubscription enabled_subscription_;std::unique_ptr<SidebarMetal> surface_;std::unique_ptr<MenuDelegate> menu_delegate_;std::unique_ptr<ui::SimpleMenuModel> menu_;std::unique_ptr<views::MenuRunner> runner_;
   SceneWindowObserver window_{base::BindRepeating(&SceneEditor::SyncLifecycle,base::Unretained(this))};base::WeakPtrFactory<SceneEditor> weak_factory_{this};
 };

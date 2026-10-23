@@ -3,9 +3,11 @@
 #define ZITTER_CHROMIUM_PROTOTYPE_EDITOR_CONTROL_H_
 #include <string>
 #include <string_view>
+#include "base/functional/callback.h"
 #include "ui/base/ime/text_input_client.h"
 #include "ui/gfx/range/range.h"
 #include "ui/views/view.h"
+namespace ui { class KeyEvent; }
 namespace zitter::prototype {
 // Service-facing field contract. Each implementation is exactly one owned View;
 // the Views baseline has no extra wrapper or second editing model.
@@ -24,6 +26,10 @@ class EditorControl {
   virtual void SelectRange(const gfx::Range& range)=0;
   virtual ui::TextInputClient* input_client()=0;
   virtual void SetReadOnly(bool value)=0;
+  // User commits only: programmatic resets, preedit and cancellation are silent.
+  // The domain reads current text in its callback; no borrowed text survives it.
+  virtual void SetCallbacks(base::RepeatingClosure committed,
+      base::RepeatingCallback<bool(const ui::KeyEvent&)> key)=0;
   virtual bool rust_editor() const=0;
   virtual bool metal_visible() const=0;
   virtual bool scene_contains(std::string_view) const=0;

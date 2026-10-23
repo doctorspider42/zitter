@@ -2741,15 +2741,16 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     swatch->set_color(color);
   }
   Spacer(color_row, 1)->SetPreferredSize(gfx::Size(8, 1));
-  color_input_ = color_row->AddChildView(std::make_unique<views::Textfield>());
+  color_input_ = AddEditor(color_row,bool(workspace_form_));
   color_input_->GetViewAccessibility().SetName(workspace_copy[9]);
   color_input_->SetPlaceholderText(u"#RRGGBB");
-  color_input_->SetFontList(Font(-1));
-  color_input_->SetBackgroundColor(kChip);
-  color_input_->SetBorder(views::CreatePaddedBorder(
+  if(auto* native=views::AsViewClass<views::Textfield>(color_input_->view())){
+    native->SetFontList(Font(-1));
+  native->SetBackgroundColor(kChip);
+  native->SetBorder(views::CreatePaddedBorder(
       views::CreateRoundedRectBorder(1, 7, Hairline(root_)), gfx::Insets::VH(4, 8)));
-  color_input_->set_controller(this);
-  if(color_layout)color_layout->SetFlexForView(color_input_, 1);
+  }
+  if(color_layout)color_layout->SetFlexForView(color_input_->view(), 1);
   color_error_ = settings_text(appearance,u"",kError,-2,gfx::Font::Weight::NORMAL,true);
   color_error_->SetVisible(false);
   Spacer(appearance, 6);
@@ -2768,15 +2769,22 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     pick->set_label(emoji);
   }
   Spacer(emoji_row, 1)->SetPreferredSize(gfx::Size(8, 1));
-  emoji_input_ = emoji_row->AddChildView(std::make_unique<views::Textfield>());
+  emoji_input_ = AddEditor(emoji_row,bool(workspace_form_));
   emoji_input_->GetViewAccessibility().SetName(workspace_copy[11]);
   emoji_input_->SetPlaceholderText(workspace_copy[12]);
-  emoji_input_->SetFontList(Font(-1));
-  emoji_input_->SetBackgroundColor(kChip);
-  emoji_input_->SetBorder(views::CreatePaddedBorder(
+  if(auto* native=views::AsViewClass<views::Textfield>(emoji_input_->view())){
+    native->SetFontList(Font(-1));
+  native->SetBackgroundColor(kChip);
+  native->SetBorder(views::CreatePaddedBorder(
       views::CreateRoundedRectBorder(1, 7, Hairline(root_)), gfx::Insets::VH(4, 8)));
-  emoji_input_->set_controller(this);
-  if(emoji_layout)emoji_layout->SetFlexForView(emoji_input_, 1);
+  }
+  if(emoji_layout)emoji_layout->SetFlexForView(emoji_input_->view(), 1);
+
+  color_input_->SetCallbacks({},base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,const ui::KeyEvent& event){return shell&&shell->HandleAppearanceEditorKey(false,event);},weak));
+  emoji_input_->SetCallbacks(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){
+    if(shell&&shell->emoji_input_&&!shell->emoji_input_->IsIMEComposing())
+      shell->SetWorkspaceEmoji(shell->state_.workspace_id,std::u16string(shell->emoji_input_->GetText()));
+  },weak),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,const ui::KeyEvent& event){return shell&&shell->HandleAppearanceEditorKey(true,event);},weak));
 
   Spacer(appearance, 8);
   settings_text(appearance,workspace_copy[13],kInk,0,gfx::Font::Weight::SEMIBOLD);
@@ -3448,8 +3456,8 @@ void WorkspaceShell::Detach() {
     panel->RemoveObserver(this);
   search_timer_.Stop();
   address_->set_controller(nullptr);
-  color_input_->set_controller(nullptr);
-  emoji_input_->set_controller(nullptr);
+  color_input_->SetCallbacks({},{});
+  emoji_input_->SetCallbacks({},{});
   import_root_ = nullptr;
   import_status_ = nullptr;import_form_.reset();
   import_browser_picker_ = nullptr;
@@ -3557,7 +3565,7 @@ void WorkspaceShell::Update(ShellState state) {
   state_ = std::move(state);
   if (!widget_) return;
 #if BUILDFLAG(IS_MAC)
-  if(selected&&workspace_form_){for(auto* field:{color_input_.get(),emoji_input_.get()})if(auto* row=views::AsViewClass<AppearanceRow>(field->parent()))row->CancelInput();CancelSceneActions(settings_root_);CancelSceneActions(profiles_root_);}
+  if(selected&&workspace_form_){for(auto* field:{color_input_.get(),emoji_input_.get()})if(auto* row=views::AsViewClass<AppearanceRow>(field->view()->parent()))row->CancelInput();CancelSceneActions(settings_root_);CancelSceneActions(profiles_root_);}
   if(profiles_changed&&profile_form_)CancelSceneActions(profiles_root_);
 #endif
   if (history_profile_changed && history_visible()) RefreshTools();
@@ -5313,12 +5321,12 @@ void WorkspaceShell::ApplyTheme() {
   for (const auto& [key, field] : preference_textfields_) field->SetBackgroundColor(Tone(root_, kChip));
   if (site_origin_) site_origin_->SetBackgroundColor(Tone(root_, kChip));
   if (address_) address_->SetBackgroundColor(Tone(root_, kCard));
-  if (color_input_) {
-    color_input_->SetBackgroundColor(Tone(root_, kChip));
-    color_input_->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1, 7, Hairline(root_)), gfx::Insets::VH(4, 8)));
-    emoji_input_->SetBackgroundColor(Tone(root_, kChip));
-    emoji_input_->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1, 7, Hairline(root_)), gfx::Insets::VH(4, 8)));
-  }
+  for(auto* editor:{color_input_.get(),emoji_input_.get()})if(editor)
+    if(auto* native=views::AsViewClass<views::Textfield>(editor->view())){
+      native->SetBackgroundColor(Tone(root_, kChip));
+      native->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,7,Hairline(root_)),gfx::Insets::VH(4,8)));
+    }
+
   if(suggestion_list_) {
     auto border=views::CreateSolidSidedBorder(gfx::Insets::TLBR(1,0,0,0),Hairline(root_));
     if(metal_palette_)border=views::CreatePaddedBorder(std::move(border),gfx::Insets(8));
@@ -5576,7 +5584,7 @@ void WorkspaceShell::ApplyAppearance(bool refresh_theme) {
 #if BUILDFLAG(IS_MAC)
   size_t color_index=0;
 #endif
-  for (auto& child : color_input_->parent()->children()) {
+  for (auto& child : color_input_->view()->parent()->children()) {
     if (auto* swatch = views::AsViewClass<GlyphButton>(child.get())) {
 #if BUILDFLAG(IS_MAC)
       if(workspace_form_){swatch->set_on(sidebar::appearance_selected(false,color_index++,color,{}));continue;}
@@ -5589,7 +5597,7 @@ void WorkspaceShell::ApplyAppearance(bool refresh_theme) {
 #if BUILDFLAG(IS_MAC)
   size_t emoji_index=0;
 #endif
-  for (auto& child : emoji_input_->parent()->children()) {
+  for (auto& child : emoji_input_->view()->parent()->children()) {
     if (auto* pick = views::AsViewClass<GlyphButton>(child.get())) {
 #if BUILDFLAG(IS_MAC)
       if(workspace_form_){pick->set_on(sidebar::appearance_selected(true,emoji_index++,color,base::UTF16ToUTF8(emoji)));continue;}
@@ -6637,21 +6645,21 @@ void WorkspaceShell::DeleteSelectedProfile() {
 }
 bool WorkspaceShell::appearance_metal_visible(bool emoji) const {
 #if BUILDFLAG(IS_MAC)
-  auto* field=emoji?emoji_input_.get():color_input_.get();auto* row=field?views::AsViewClass<AppearanceRow>(field->parent()):nullptr;return row&&row->metal_visible();
+  auto* field=emoji?emoji_input_.get():color_input_.get();auto* row=field?views::AsViewClass<AppearanceRow>(field->view()->parent()):nullptr;return row&&row->metal_visible();
 #else
   return false;
 #endif
 }
 bool WorkspaceShell::appearance_contains_scene_text(std::string_view text) const {
 #if BUILDFLAG(IS_MAC)
-  auto* row=emoji_input_?views::AsViewClass<AppearanceRow>(emoji_input_->parent()):nullptr;return row&&row->contains_text(text);
+  auto* row=emoji_input_?views::AsViewClass<AppearanceRow>(emoji_input_->view()->parent()):nullptr;return row&&row->contains_text(text);
 #else
   return false;
 #endif
 }
 gfx::Rect WorkspaceShell::appearance_scene_bounds_for_testing(bool emoji) const {
 #if BUILDFLAG(IS_MAC)
-  auto* field=emoji?emoji_input_.get():color_input_.get();auto* row=field?views::AsViewClass<AppearanceRow>(field->parent()):nullptr;return row?row->scene_bounds():gfx::Rect();
+  auto* field=emoji?emoji_input_.get():color_input_.get();auto* row=field?views::AsViewClass<AppearanceRow>(field->view()->parent()):nullptr;return row?row->scene_bounds():gfx::Rect();
 #else
   return {};
 #endif
@@ -6669,6 +6677,14 @@ size_t WorkspaceShell::form_action_canvases_visible_for_testing(bool profiles) c
 #else
   return 0;
 #endif
+}
+bool WorkspaceShell::HandleAppearanceEditorKey(bool emoji,const ui::KeyEvent& event) {
+  auto* field=emoji?emoji_input_.get():color_input_.get();
+  if(!field||event.type()!=ui::EventType::kKeyPressed||field->IsIMEComposing())return false;
+  if(event.key_code()==ui::VKEY_ESCAPE){CloseOverlays();RestorePageFocus();return true;}
+  if(event.key_code()!=ui::VKEY_RETURN)return false;
+  if(emoji)SetWorkspaceEmoji(state_.workspace_id,std::u16string(field->GetText()));else ApplyHexColor();
+  return true;
 }
 void WorkspaceShell::ApplyHexColor() {
   if (auto color = ParseColor(base::UTF16ToUTF8(color_input_->GetText())))
@@ -6716,8 +6732,6 @@ void WorkspaceShell::RunSuggestion(size_t index) {
   }
 }
 void WorkspaceShell::ContentsChanged(views::Textfield* sender, const std::u16string& contents) {
-  // The emoji picker inserts without a Return; apply as soon as text lands.
-  if (sender == emoji_input_) { if(!sender->IsIMEComposing())SetWorkspaceEmoji(state_.workspace_id, contents); return; }
   if (sender == history_search_) {
     history_loaded_ = false;
     history_entries_.clear();
@@ -6769,7 +6783,6 @@ bool WorkspaceShell::HandleKeyEvent(views::Textfield* sender, const ui::KeyEvent
   }
   if (event.type() != ui::EventType::kKeyPressed) return false;
   if(sender==address_&&metal_palette_&&address_->IsIMEComposing())return false;
-  if(workspace_form_&&(sender==color_input_||sender==emoji_input_)&&sender->IsIMEComposing())return false;
   if (event.key_code() == ui::VKEY_ESCAPE) { CloseOverlays(); RestorePageFocus(); return true; }
   if (sender == preferences_search_ || sender == history_search_) return false;
   for (const auto& [key, field] : preference_textfields_) if (sender == field) {
@@ -6787,8 +6800,6 @@ bool WorkspaceShell::HandleKeyEvent(views::Textfield* sender, const ui::KeyEvent
     return true;
   }
   if (event.key_code() != ui::VKEY_RETURN) return false;
-  if (sender == color_input_) { ApplyHexColor(); return true; }
-  if (sender == emoji_input_) { SetWorkspaceEmoji(state_.workspace_id, std::u16string(emoji_input_->GetText())); return true; }
   if (sender != address_) return false;
   // SetText() does not notify the controller; resolve what is typed now.
   if (address_->GetText() != suggestions_text_) RebuildSuggestions();

@@ -343,7 +343,7 @@ class WorkspaceShell final : public ui::EventHandler,
   // One emoji grapheme shown instead of the workspace dot; empty clears it.
   void SetWorkspaceEmoji(std::string_view id, std::u16string emoji);
   std::u16string workspace_emoji(std::string_view id) const;
-  views::Textfield* emoji_input() const { return emoji_input_; }
+  EditorControl* emoji_input() const { return emoji_input_; }
   bool appearance_ready() const { return appearance_ready_; }
   bool appearance_saved() const { return pending_writes_ == 0; }
   views::Widget* address_widget() const { return address_widget_.get(); }
@@ -381,7 +381,7 @@ class WorkspaceShell final : public ui::EventHandler,
   views::View* tab_list_view() const { return tab_list_; }
   ui::SimpleMenuModel* workspace_menu() const { return workspace_menu_.get(); }
   views::View* profile_picker() const { return profile_picker_; }
-  views::Textfield* color_input() const { return color_input_; }
+  EditorControl* color_input() const { return color_input_; }
   views::Textfield* address_input() const { return address_; }
 
  private:
@@ -529,6 +529,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void RequestSearch();
   void ApplyAppearance(bool refresh_theme = true);
   void ApplyHexColor();
+  bool HandleAppearanceEditorKey(bool emoji,const ui::KeyEvent& event);
   void RefreshWorkspaceHeading();
   void RestorePageFocus();
   void RunSuggestion(size_t index);
@@ -689,8 +690,8 @@ class WorkspaceShell final : public ui::EventHandler,
   std::unique_ptr<ProfileFormState> profile_form_;
   bool confirm_profile_deletion_ = false;
   raw_ptr<views::Textfield> address_ = nullptr;
-  raw_ptr<views::Textfield> color_input_ = nullptr;
-  raw_ptr<views::Textfield> emoji_input_ = nullptr;
+  raw_ptr<EditorControl> color_input_ = nullptr;
+  raw_ptr<EditorControl> emoji_input_ = nullptr;
   raw_ptr<views::View> address_error_ = nullptr;
   raw_ptr<views::View> color_error_ = nullptr;
   std::unique_ptr<views::WidgetDelegate> import_delegate_;

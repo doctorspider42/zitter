@@ -1379,8 +1379,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, GeneralSettingsThemeAndPersist
   shell->SetPinned(false);
   shell->SetWorkspaceColor("work", 0xFF123456);
   // Typing more than one grapheme keeps only the first emoji.
-  shell->emoji_input()->SetText(u"🚀abc");
-  static_cast<views::TextfieldController*>(shell)->ContentsChanged(shell->emoji_input(), u"🚀abc");
+  shell->OpenWorkspaceSettings();shell->emoji_input()->RequestFocus();
+  shell->emoji_input()->SelectRange(gfx::Range(0,shell->emoji_input()->GetText().size()));
+  shell->emoji_input()->input_client()->InsertText(u"🚀abc",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
   EXPECT_EQ(u"🚀", shell->workspace_emoji("work"));
   EXPECT_EQ(u"🚀", shell->emoji_input()->GetText());
   shell->SetWorkspaceEmoji("personal", u"🏠");
@@ -4017,8 +4018,8 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, FormActionGroupsSceneTextD
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, AppearanceRowsSceneInputClippingCompositionAndWorkspaceChange) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->OpenWorkspaceSettings();
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_metal_visible(false)&&shell->appearance_metal_visible(true);}));
-  auto* colors=shell->color_input()->parent();auto* emojis=shell->emoji_input()->parent();ASSERT_EQ(6u,colors->children().size());ASSERT_EQ(8u,emojis->children().size());
-  for(bool emoji:{false,true}){auto* field=emoji?shell->emoji_input():shell->color_input();auto* row=field->parent();const auto frame=shell->appearance_scene_bounds_for_testing(emoji);EXPECT_FALSE(frame.IsEmpty());EXPECT_FALSE(frame.Intersects(field->GetBoundsInScreen()));for(size_t i=0;i<(emoji?6u:4u);++i){EXPECT_TRUE(frame.Contains(row->children()[i]->GetBoundsInScreen()));EXPECT_FALSE(static_cast<views::Button*>(row->children()[i].get())->GetInstallFocusRingOnFocus());for(const auto& child:row->children()[i]->children())EXPECT_FALSE(views::AsViewClass<views::Label>(child.get()));}}
+  auto* colors=shell->color_input()->view()->parent();auto* emojis=shell->emoji_input()->view()->parent();ASSERT_EQ(6u,colors->children().size());ASSERT_EQ(8u,emojis->children().size());
+  for(bool emoji:{false,true}){auto* field=emoji?shell->emoji_input():shell->color_input();auto* row=field->view()->parent();const auto frame=shell->appearance_scene_bounds_for_testing(emoji);EXPECT_FALSE(frame.IsEmpty());EXPECT_FALSE(frame.Intersects(field->view()->GetBoundsInScreen()));for(size_t i=0;i<(emoji?6u:4u);++i){EXPECT_TRUE(frame.Contains(row->children()[i]->GetBoundsInScreen()));EXPECT_FALSE(static_cast<views::Button*>(row->children()[i].get())->GetInstallFocusRingOnFocus());for(const auto& child:row->children()[i]->children())EXPECT_FALSE(views::AsViewClass<views::Label>(child.get()));}}
   auto* mint=static_cast<views::Button*>(colors->children()[1].get());const gfx::Point point(10,10);ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);
   ASSERT_TRUE(mint->OnMousePressed(press));mint->OnMouseReleased(release);EXPECT_EQ(0xFF84B6A4u,shell->workspace_color("work"));
   auto* peach=static_cast<views::Button*>(colors->children()[2].get());ASSERT_TRUE(peach->OnMousePressed(press));peach->OnMouseCaptureLost();peach->OnMouseReleased(release);EXPECT_EQ(0xFF84B6A4u,shell->workspace_color("work"));
@@ -4026,8 +4027,8 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, AppearanceRowsSceneInputCl
   auto* rocket=static_cast<views::Button*>(emojis->children()[2].get());rocket->RequestFocus();ASSERT_TRUE(rocket->OnKeyPressed(space));rocket->OnKeyReleased(space_up);EXPECT_EQ(u"🚀",shell->workspace_emoji("work"));ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_contains_scene_text("🚀");}));
   const auto personal_color=shell->workspace_color("personal");ASSERT_TRUE(peach->OnMousePressed(press));ASSERT_TRUE(window_->Select("personal"));peach->OnMouseReleased(release);EXPECT_EQ(personal_color,shell->workspace_color("personal"));EXPECT_EQ(0xFF7FAACBu,shell->workspace_color("work"));
   shell->OpenWorkspaceSettings();auto* field=shell->emoji_input();field->RequestFocus();ASSERT_TRUE(field->HasFocus());field->SetText(u"");ui::CompositionText composition;composition.text=u"にほん";composition.selection=gfx::Range(composition.text.size());field->SetCompositionText(composition);ASSERT_TRUE(field->IsIMEComposing());const auto before=shell->workspace_emoji("personal");ui::KeyEvent enter(ui::EventType::kKeyPressed,ui::VKEY_RETURN,ui::EF_NONE);
-  EXPECT_FALSE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(field,enter));EXPECT_EQ(before,shell->workspace_emoji("personal"));field->ClearCompositionText();field->SetText(u"👩‍💻abc");ASSERT_TRUE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(field,enter));EXPECT_EQ(u"👩‍💻",shell->workspace_emoji("personal"));
-  shell->OpenWorkspaceSettings();shell->color_input()->SetText(u"#123456");ASSERT_TRUE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(shell->color_input(),enter));EXPECT_EQ(0xFF123456u,shell->workspace_color("personal"));
+  EXPECT_FALSE(field->view()->OnKeyPressed(enter));EXPECT_EQ(before,shell->workspace_emoji("personal"));field->ClearCompositionText();field->SetText(u"👩‍💻abc");ASSERT_TRUE(field->view()->OnKeyPressed(enter));EXPECT_EQ(u"👩‍💻",shell->workspace_emoji("personal"));
+  shell->OpenWorkspaceSettings();shell->color_input()->SetText(u"#123456");ASSERT_TRUE(shell->color_input()->view()->OnKeyPressed(enter));EXPECT_EQ(0xFF123456u,shell->workspace_color("personal"));
   auto* create=FindButton(shell->workspace_panel_for_testing(),u"Nowa przestrzeń…");ASSERT_TRUE(create);ASSERT_TRUE(peach->OnMousePressed(press));views::test::ButtonTestApi(create).NotifyDefaultMouseClick();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->appearance_metal_visible(false)&&!shell->appearance_metal_visible(true);}));peach->OnMouseReleased(release);EXPECT_EQ(0xFF123456u,shell->workspace_color("personal"));
   auto* cancel=FindButton(shell->workspace_panel_for_testing(),u"Anuluj");ASSERT_TRUE(cancel);views::test::ButtonTestApi(cancel).NotifyDefaultMouseClick();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_metal_visible(false)&&shell->appearance_metal_visible(true);}));
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_saved();}));
@@ -4082,8 +4083,8 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, WorkspaceFormScenesCreateC
   shell->OpenWorkspaceSettings();field->SetText(u"  Klient 日本語  ");shell->SetProfilePickerSelectionForTesting(false,1);views::test::ButtonTestApi(button(u"Zapisz nazwę i profil")).NotifyDefaultMouseClick();
   EXPECT_EQ("Klient 日本語",window_->workspaces().back().name);EXPECT_EQ(personal_.get(),window_->contents(project)->GetBrowserContext());
   shell->OpenWorkspaceSettings();shell->color_input()->SetText(u"invalid");ui::KeyEvent enter(ui::EventType::kKeyPressed,ui::VKEY_RETURN,ui::EF_NONE);
-  ASSERT_TRUE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(shell->color_input(),enter));ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_panel_contains_scene_text("Podaj kolor #RRGGBB");}));
-  shell->color_input()->SetText(u"#123456");ASSERT_TRUE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(shell->color_input(),enter));EXPECT_EQ(0xFF123456u,shell->workspace_color(project));
+  ASSERT_TRUE(shell->color_input()->view()->OnKeyPressed(enter));ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_panel_contains_scene_text("Podaj kolor #RRGGBB");}));
+  shell->color_input()->SetText(u"#123456");ASSERT_TRUE(shell->color_input()->view()->OnKeyPressed(enter));EXPECT_EQ(0xFF123456u,shell->workspace_color(project));
   views::test::ButtonTestApi(button(u"Nowa przestrzeń…")).NotifyDefaultMouseClick();ASSERT_TRUE(button(u"Utwórz przestrzeń"));ASSERT_TRUE(window_->Select("work"));shell->OpenWorkspaceSettings();
   ASSERT_TRUE(base::test::RunUntil([&]{return button(u"Zapisz nazwę i profil")!=nullptr;}));EXPECT_EQ(u"Praca",field->GetText());
   shell->SetConfigurationError(true);ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_panel_contains_scene_text("Nie udało się odczytać lub zapisać przestrzeni.");}));shell->SetConfigurationError(false);
@@ -4533,7 +4534,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, FooterSpacesScrollSelectPi
   ASSERT_TRUE(base::test::RunUntil([&] {return window_->active_id()==last;}));
   ASSERT_TRUE(move(settings->GetBoundsInScreen().CenterPoint()));ASSERT_TRUE(mouse(ui_controls::DOWN|ui_controls::UP));
   ASSERT_TRUE(base::test::RunUntil([&] {return shell->settings_visible();}));
-  shell->emoji_input()->RequestFocus();shell->emoji_input()->SelectAll(false);
+  shell->emoji_input()->RequestFocus();shell->emoji_input()->SelectRange(gfx::Range(0,shell->emoji_input()->GetText().size()));
   ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->settings_widget()->GetNativeWindow(),ui::VKEY_BACK,false,false,false,false));
   ASSERT_TRUE(base::test::RunUntil([&] {return shell->workspace_emoji(last).empty();}));
   EXPECT_TRUE(shell->settings_visible());shell->CloseOverlays(true);
@@ -5541,6 +5542,45 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NameEditorStationaryEdgeSelect
   EXPECT_EQ(text,field->GetText());
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NameEditorCommittedCallbackContract) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenWorkspaceSettings();
+  auto* field=shell->workspace_input();auto* view=field->view();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));field->RequestFocus();
+  int commits=0,keys=0;std::u16string observed;
+  base::ScopedClosureRunner cleanup(base::BindOnce([](EditorControl* editor){editor->SetCallbacks({},{});},field));
+  field->SetCallbacks(base::BindRepeating([](int* count,std::u16string* observed,EditorControl* editor){++*count;*observed=editor->GetText();},base::Unretained(&commits),base::Unretained(&observed),base::Unretained(field)),base::BindRepeating([](int* count,const ui::KeyEvent& event){if(event.key_code()!=ui::VKEY_F15)return false;++*count;return true;},base::Unretained(&keys)));
+  field->SetText(u"base");EXPECT_EQ(0,commits);
+  field->input_client()->InsertText(u"!",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);EXPECT_EQ(1,commits);EXPECT_EQ(u"base!",observed);
+  auto preedit=[&](std::u16string text){ui::CompositionText composition;composition.text=std::move(text);composition.selection=gfx::Range(composition.text.size());field->SetCompositionText(composition);};
+  preedit(u"cancel");ASSERT_TRUE(field->IsIMEComposing());EXPECT_EQ(1,commits);field->ClearCompositionText();EXPECT_EQ(1,commits);EXPECT_EQ(u"base!",field->GetText());
+  preedit(u"✓");EXPECT_EQ(1,commits);field->ConfirmCompositionText(false);EXPECT_EQ(2,commits);EXPECT_EQ(u"base!✓",observed);field->ConfirmCompositionText(false);EXPECT_EQ(2,commits);
+  preedit(u"stale");field->SetText(u"new context");EXPECT_EQ(2,commits);EXPECT_FALSE(field->IsIMEComposing());
+  ui::KeyEvent key(ui::EventType::kKeyPressed,ui::VKEY_F15,0);ASSERT_TRUE(view->OnKeyPressed(key));EXPECT_EQ(1,keys);EXPECT_EQ(2,commits);
+  // Domain normalization is synchronous and must neither recurse nor publish a
+  // borrowed buffer invalidated by SetText inside the callback.
+  field->SetCallbacks(base::BindRepeating([](int* count,EditorControl* editor){++*count;editor->SetText(u"normalized");},base::Unretained(&commits),base::Unretained(field)),{});
+  field->input_client()->InsertText(u"x",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);EXPECT_EQ(3,commits);EXPECT_EQ(u"normalized",field->GetText());
+  field->SetCallbacks({},{});field->input_client()->InsertText(u"!",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);EXPECT_EQ(3,commits);EXPECT_EQ(u"normalized!",field->GetText());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AppearanceEditorsCommitValidationIMEAndWorkspaceIsolation) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenWorkspaceSettings();
+  auto* color=shell->color_input();auto* emoji=shell->emoji_input();ASSERT_TRUE(color);ASSERT_TRUE(emoji);
+  const bool metal=shell->workspace_input()->rust_editor();EXPECT_EQ(metal,color->rust_editor());EXPECT_EQ(metal,emoji->rust_editor());
+  if(metal){EXPECT_TRUE(color->view()->children().empty());EXPECT_TRUE(emoji->view()->children().empty());EXPECT_FALSE(views::AsViewClass<views::Textfield>(color->view()));EXPECT_FALSE(views::AsViewClass<views::Textfield>(emoji->view()));ASSERT_TRUE(base::test::RunUntil([&]{return color->metal_visible()&&emoji->metal_visible();}));}
+  else {EXPECT_TRUE(views::AsViewClass<views::Textfield>(color->view()));EXPECT_TRUE(views::AsViewClass<views::Textfield>(emoji->view()));}
+  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));
+  auto key=[&](EditorControl* field,ui::KeyboardCode code,bool command=false){field->RequestFocus();return base::test::RunUntil([&]{return field->HasFocus();})&&ui_test_utils::SendKeyPressToWindowSync(shell->settings_widget()->GetNativeWindow(),code,false,false,false,command);};
+  const auto initial=shell->workspace_color("work");color->SetText(u"invalid");EXPECT_EQ(initial,shell->workspace_color("work"));ASSERT_TRUE(key(color,ui::VKEY_RETURN));EXPECT_EQ(initial,shell->workspace_color("work"));
+  color->SetText(u"#123456");EXPECT_EQ(initial,shell->workspace_color("work"));ASSERT_TRUE(key(color,ui::VKEY_RETURN));EXPECT_EQ(0xFF123456u,shell->workspace_color("work"));
+  ui::CompositionText preedit;preedit.text=u"uncommitted";preedit.selection=gfx::Range(preedit.text.size());color->SetCompositionText(preedit);ASSERT_TRUE(color->IsIMEComposing());ui::KeyEvent enter(ui::EventType::kKeyPressed,ui::VKEY_RETURN,0);EXPECT_FALSE(color->view()->OnKeyPressed(enter));EXPECT_EQ(0xFF123456u,shell->workspace_color("work"));color->ClearCompositionText();
+  shell->SetWorkspaceEmoji("work",u"🦊");emoji->RequestFocus();emoji->SetText(u"");EXPECT_EQ(u"🦊",shell->workspace_emoji("work"));
+  preedit.text=u"にほん";preedit.selection=gfx::Range(preedit.text.size());emoji->SetCompositionText(preedit);ASSERT_TRUE(emoji->IsIMEComposing());EXPECT_EQ(u"🦊",shell->workspace_emoji("work"));emoji->ClearCompositionText();EXPECT_EQ(u"🦊",shell->workspace_emoji("work"));
+  preedit.text=u"👩‍💻abc";preedit.selection=gfx::Range(preedit.text.size());emoji->SetCompositionText(preedit);EXPECT_EQ(u"🦊",shell->workspace_emoji("work"));emoji->ConfirmCompositionText(false);EXPECT_EQ(u"👩‍💻",shell->workspace_emoji("work"));EXPECT_EQ(u"👩‍💻",emoji->GetText());
+  ASSERT_TRUE(key(emoji,ui::VKEY_A,true));ASSERT_TRUE(key(emoji,ui::VKEY_X));ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_emoji("work")==u"x";}));
+  ASSERT_TRUE(window_->Select("personal"));shell->OpenWorkspaceSettings();emoji=shell->emoji_input();emoji->RequestFocus();emoji->SetText(u"");emoji->input_client()->InsertText(u"🌳extra",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);EXPECT_EQ(u"🌳",shell->workspace_emoji("personal"));EXPECT_EQ(u"x",shell->workspace_emoji("work"));EXPECT_EQ(0xFF123456u,shell->workspace_color("work"));
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_saved();}));
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NameEditorMacCommandsAndSelectionPolicies) {
   using C=ui::TextEditCommand;auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenWorkspaceSettings();auto* field=shell->workspace_input();auto* view=field->view();auto* client=field->input_client();
   ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));view->RequestFocus();ASSERT_TRUE(base::test::RunUntil([&]{return view->HasFocus();}));
@@ -5571,7 +5611,11 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NameEditorBidiDirectionAndShar
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NameEditorKillYankInteroperatesWithNativeFields) {
-  using C=ui::TextEditCommand;auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenWorkspaceSettings();auto* name=shell->workspace_input();auto* native=shell->color_input();ASSERT_TRUE(native);EXPECT_TRUE(views::AsViewClass<views::Textfield>(native));
+  using C=ui::TextEditCommand;auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenWorkspaceSettings();auto* name=shell->workspace_input();
+  // A fixture-owned native control exercises the shared service while all live
+  // appearance fields can migrate. It is not part of the production UI.
+  auto* native=name->view()->parent()->AddChildView(std::make_unique<views::Textfield>());
+  native->SetBoundsRect(name->view()->bounds());ASSERT_TRUE(native);
   const std::u16string saved(views::GetTextEditKillBuffer());base::ScopedClosureRunner restore(base::BindOnce([](std::u16string text){views::SetTextEditKillBuffer(text);},saved));
   ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));
   auto key=[&](views::View* view,ui::KeyboardCode key){view->RequestFocus();return base::test::RunUntil([&]{return view->HasFocus();})&&ui_test_utils::SendKeyPressToWindowSync(shell->settings_widget()->GetNativeWindow(),key,true,false,false,false);};
