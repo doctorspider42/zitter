@@ -1148,3 +1148,22 @@ other editor fields, drag/edge scrolling/complex bidi/native menu services and
 actual CPU/GPU/presentation comparison remain. The native Mac baseline disables
 mark/unselect; Windows-only AX offset arrays are not a presumed macOS feature gap.
 [Matching report](benchmarks/rust-editor-commands-checkpoint-2026-10-23.json).
+
+
+## Shared native/Rust kill buffer (2026-10-23)
+
+UI source `b17b87a02f689e51daf3245fd7cb8c14f80f333a` replaces the transitional Rust
+kill store with the existing Chromium Views buffer. The adapter publishes validated
+pre-edit ranges from its current UTF-16 cache before refreshing; no hidden native
+editor/model or extra Rust fragment allocation is introduced. Cocoa Ctrl+K/Y
+interoperability between workspace names and the native color field passes in both
+directions. Both build installation paths apply a guarded, reversible fork hook.
+
+**203 Rust / 66 clean-archive Python tests** and the full independent rerun of
+**122 Metal / 90 Views** passed, six explicit skips each. The first full run had
+one viewport-test process timeout with a stack in AppKit/FrontBoard teardown;
+Views passed. The report retains it alongside the identical-binary successful
+rerun. No performance gain or full UI parity is claimed. Word/paragraph drag,
+edge-selection scrolling, remaining editors/forms/service panels/container
+ownership and manual/performance/release acceptance remain open.
+[Matching report](benchmarks/rust-shared-kill-checkpoint-2026-10-23.json).

@@ -85,11 +85,27 @@ Page/document/paragraph movement, selected-range deletion, kill/yank and transpo
 are implemented. Native `INSERT_TEXT`, `SET_MARK` and `UNSELECT` edit-command enum
 values remain disabled, matching the current macOS Views baseline.
 
-The UI-thread-local Rust kill buffer is shared by Rust editors and survives
-field/context changes. Each successful kill replaces the previous fragment; undo
-restores the deletion selection. **The mixed Rust/Views migration currently has
-separate kill buffers.** Cross-control interoperability with still-native fields
-must be unified before complete compatibility can be claimed.
+The existing Chromium Views kill buffer is now canonical for both native and
+Rust fields. Rust has no shadow buffer. A successful kill returns a fixed-size
+pre-edit UTF-16 range and revision; the adapter checks its existing text cache,
+publishes that range to the native service and then applies the updated text.
+Yank borrows the native fragment on the UI thread; Rust copies it before events
+can invalidate the borrowed view. Undo restores the deletion selection.
+
+The fork API exposes two accessors backed by the existing private native buffer.
+It creates no Textfield, RenderText or native editing model. The standard overlay
+installer and isolated performance stager apply a guarded, idempotent patch to
+`ui/views/BUILD.gn`, `textfield_model.cc` and one new service header. Preparation
+validates all anchors before mutation; conflict/symlink/intervening-edit checks and
+rollback preserve unrelated changes. Chromium additions retain BSD-style notices;
+the project tool and adapter/model changes use Apache-2.0. No production library
+or crate was added.
+
+Actual Cocoa Ctrl+K/Y transfers text in both directions between the Rust workspace
+name field and a real native color Textfield. Regression coverage includes reversed
+selection, Unicode/surrogates, empty kills retaining the fragment, readonly commands
+and empty-buffer yank over selection. The same cases pass in the Views control run.
+[Shared-buffer checkpoint](benchmarks/rust-shared-kill-checkpoint-2026-10-23.json).
 
 Forced paragraph direction now reaches both cached input geometry and text tile
 rasterization, including the tile cache key. Toggling the same direction restores
@@ -113,8 +129,7 @@ replace manual macOS VoiceOver and platform range/selection acceptance.
 
 Remaining editor work before parity:
 
-- Unify the native/Rust kill-buffer service during the transition; complete
-  word/paragraph mouse-drag expansion and continuous selection scrolling at the
+- Complete word/paragraph mouse-drag expansion and continuous selection scrolling at the
   viewport edge, plus more complex visual-word bidi and native key-policy cases.
 - Inspect actual macOS VoiceOver and real IME candidate windows, complex clause/
   background/underline styles, dictionary and menu lifecycles, paste availability,
