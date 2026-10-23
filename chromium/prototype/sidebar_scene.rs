@@ -3,6 +3,10 @@
 // remain in WorkspaceShell. No URLs, profiles or WebContents cross this ABI.
 #[cxx::bridge(namespace = "zitter::sidebar")]
 mod ffi {
+    struct FolderNoticeCopy { title: String, body: String, accept: String, cancel: String, default_cancel: bool }
+    enum FolderNoticeAction { None, Delete, Acknowledge }
+    struct FolderNoticeRequest { action: FolderNoticeAction, workspace: String, folder: String }
+    struct NoticeLayout { width: i32, height: i32, body: Rect, error: Rect, body_lines: Vec<Rect>, error_lines: Vec<Rect> }
     struct FolderCopy { title: String, label: String, accept: String, cancel: String }
     enum FolderAction { None, Create, Rename }
     struct FolderRequest { action: FolderAction, workspace: String, parent: String, folder: String, name: String, expand_parent: bool }
@@ -65,6 +69,14 @@ mod ffi {
         text: String, font_size: f32, bold: bool, middle: bool, center: bool, clip: FloatRect,
     }
     extern "Rust" {
+        type FolderNotice;
+        fn new_folder_notice(workspace: &str, folder: &str, title: &str, error_only: bool) -> Box<FolderNotice>;
+        fn copy(self: &FolderNotice) -> FolderNoticeCopy;
+        fn error(self: &FolderNotice) -> &str;
+        fn submit(self: &mut FolderNotice, current: &str, ready: bool, busy: bool, nodes: &[TreeNode]) -> FolderNoticeRequest;
+        fn finish_attempt(self: &mut FolderNotice, accepted: bool);
+        fn cancel(self: &mut FolderNotice);
+        fn folder_notice_layout(width: i32, body_height: i32, body_count: usize, error_height: i32, error_count: usize) -> NoticeLayout;
         type FolderForm;
         fn new_folder_form(workspace: &str, parent: &str, folder: &str, initial: &str) -> Box<FolderForm>;
         fn copy(self: &FolderForm) -> FolderCopy;
@@ -247,6 +259,36 @@ fn swipe_layout(position:f64,count:i32,width:i32)->ffi::SwipeLayout {
         for index in (center-1).max(0)..=(center+1).min(count-1){pages.push(ffi::SwipePage{index,x:(index as f64-position)*width.max(0) as f64});}
     }
     ffi::SwipeLayout{center,pages}
+}
+
+pub struct FolderNotice { workspace:String, folder:String, title:String, error_only:bool, error:String, submitting:bool, closed:bool }
+fn new_folder_notice(workspace:&str,folder:&str,title:&str,error_only:bool)->Box<FolderNotice>{Box::new(FolderNotice{workspace:workspace.into(),folder:folder.into(),title:title.into(),error_only,error:String::new(),submitting:false,closed:false})}
+impl FolderNotice {
+    fn copy(&self)->ffi::FolderNoticeCopy {
+        if self.error_only{return ffi::FolderNoticeCopy{title:"Nie udało się zapisać folderu".into(),body:"Sprawdź wolne miejsce na dysku i spróbuj ponownie.".into(),accept:"OK".into(),cancel:String::new(),default_cancel:false};}
+        ffi::FolderNoticeCopy{title:format!("Usunąć folder „{}”?",self.title),body:"Folder i cała jego przypięta zawartość zostaną usunięte. Tej operacji nie można cofnąć. Strony już otwarte w kartach pozostaną otwarte.".into(),accept:"Usuń folder".into(),cancel:"Anuluj".into(),default_cancel:true}
+    }
+    fn error(&self)->&str{&self.error}
+    fn submit(&mut self,current:&str,ready:bool,busy:bool,nodes:&[ffi::TreeNode])->ffi::FolderNoticeRequest {
+        let none=||ffi::FolderNoticeRequest{action:ffi::FolderNoticeAction::None,workspace:String::new(),folder:String::new()};
+        if self.closed||self.submitting{return none();}
+        if self.error_only{self.submitting=true;return ffi::FolderNoticeRequest{action:ffi::FolderNoticeAction::Acknowledge,workspace:String::new(),folder:String::new()};}
+        if self.workspace.is_empty()||self.workspace!=current{self.error="Przestrzeń zmieniła się. Otwórz potwierdzenie ponownie.".into();return none();}
+        if !ready||busy{self.error="Poczekaj na zakończenie zapisywania.".into();return none();}
+        if self.folder.is_empty()||!nodes.iter().any(|n|n.id==self.folder&&n.folder){self.error="Folder nie jest już dostępny.".into();return none();}
+        self.error.clear();self.submitting=true;ffi::FolderNoticeRequest{action:ffi::FolderNoticeAction::Delete,workspace:self.workspace.clone(),folder:self.folder.clone()}
+    }
+    fn finish_attempt(&mut self,accepted:bool){if !self.submitting{return;}self.submitting=false;self.closed=accepted;if !accepted{self.error="Nie udało się usunąć folderu. Spróbuj ponownie.".into();}}
+    fn cancel(&mut self){self.closed=true;self.submitting=false;}
+}
+fn folder_notice_layout(width:i32,body_height:i32,body_count:usize,error_height:i32,error_count:usize)->ffi::NoticeLayout {
+    let width=if width<0{400}else{width};let body_height=body_height.max(0);let error_height=error_height.max(0);
+    let mut y:i32=0;let mut body_lines=Vec::with_capacity(body_count);
+    for _ in 0..body_count{body_lines.push(ffi::Rect{x:0,y,width,height:body_height.min(i32::MAX-y)});y=y.saturating_add(body_height);}
+    let body=ffi::Rect{x:0,y:0,width,height:y};if body_count>0&&error_count>0{y=y.saturating_add(8);}
+    let top=y;let mut error_lines=Vec::with_capacity(error_count);
+    for _ in 0..error_count{error_lines.push(ffi::Rect{x:0,y,width,height:error_height.min(i32::MAX-y)});y=y.saturating_add(error_height);}
+    ffi::NoticeLayout{width,height:y,body,error:ffi::Rect{x:0,y:top,width,height:y-top},body_lines,error_lines}
 }
 
 pub struct FolderForm { workspace:String, parent:String, folder:String, name:String, error:String, submitting:bool, closed:bool }
@@ -1169,6 +1211,33 @@ mod tests {
         }
     }
     fn menu_state()->ffi::TabMenuState{ffi::TabMenuState{ready:true,busy:false,valid:true,tab:7,has_tab:true,split:true,first:3,has_first:true,second:7,has_second:true,vertical:false,tab_count:3,http:true}}
+    #[test] fn folder_notice_preserves_destructive_copy_and_safe_default() {
+        let f=new_folder_notice("work","folder","Zażółć 日本語 🦀",false);let copy=f.copy();assert_eq!(copy.title,"Usunąć folder „Zażółć 日本語 🦀”?");assert!(copy.default_cancel);assert_eq!(copy.cancel,"Anuluj");
+        assert!(copy.body.contains("Tej operacji nie można cofnąć."));assert!(copy.body.contains("Strony już otwarte w kartach pozostaną otwarte."));
+    }
+    #[test] fn folder_notice_delete_revalidates_source_busy_and_live_folder() {
+        let nodes=folder_nodes();let mut f=new_folder_notice("work","parent","Folder",false);let r=f.submit("work",true,false,&nodes);assert!(matches!(r.action,ffi::FolderNoticeAction::Delete));assert_eq!((r.workspace.as_str(),r.folder.as_str()),("work","parent"));
+        for (current,ready,busy,id) in [("personal",true,false,"parent"),("work",false,false,"parent"),("work",true,true,"parent"),("work",true,false,"pin"),("work",true,false,"missing"),("work",true,false,"")] {
+            let mut f=new_folder_notice("work",id,"Folder",false);assert!(matches!(f.submit(current,ready,busy,&nodes).action,ffi::FolderNoticeAction::None));assert!(!f.error().is_empty());
+        }
+    }
+    #[test] fn folder_notice_admission_rejection_retry_cancel_and_duplicate() {
+        let mut f=new_folder_notice("work","parent","Folder",false);f.submit("work",true,false,&folder_nodes());assert!(matches!(f.submit("work",true,false,&folder_nodes()).action,ffi::FolderNoticeAction::None));
+        f.finish_attempt(false);assert!(!f.error().is_empty());assert!(matches!(f.submit("work",true,false,&folder_nodes()).action,ffi::FolderNoticeAction::Delete));f.finish_attempt(true);assert!(matches!(f.submit("work",true,false,&folder_nodes()).action,ffi::FolderNoticeAction::None));
+        let mut f=new_folder_notice("work","parent","Folder",false);f.cancel();assert!(matches!(f.submit("work",true,false,&folder_nodes()).action,ffi::FolderNoticeAction::None));
+    }
+    #[test] fn folder_notice_error_acknowledgement_never_deletes() {
+        let mut f=new_folder_notice("work","parent","Folder",true);let copy=f.copy();assert_eq!(copy.accept,"OK");assert!(copy.cancel.is_empty());assert!(!copy.default_cancel);
+        let r=f.submit("personal",false,true,&[]);assert!(matches!(r.action,ffi::FolderNoticeAction::Acknowledge));assert!(r.workspace.is_empty()&&r.folder.is_empty());f.finish_attempt(true);assert!(matches!(f.submit("work",true,false,&folder_nodes()).action,ffi::FolderNoticeAction::None));
+    }
+    #[test] fn folder_notice_layout_preserves_all_shaped_lines_and_separates_errors() {
+        let g=folder_notice_layout(-1,18,3,16,2);assert_eq!((g.width,g.height,g.body.height,g.error.y,g.error.height),(400,94,54,62,32));assert_eq!(g.body_lines.iter().map(|r|r.y).collect::<Vec<_>>(),vec![0,18,36]);assert_eq!(g.error_lines[1].y,78);
+        assert_eq!(folder_notice_layout(200,18,3,16,0).height,54);assert_eq!(folder_notice_layout(200,18,0,16,1).height,16);
+    }
+    #[test] fn folder_notice_layout_handles_empty_narrow_and_saturated_metrics() {
+        let g=folder_notice_layout(0,18,0,16,0);assert_eq!((g.width,g.height),(0,0));
+        let g=folder_notice_layout(5,i32::MAX,2,i32::MAX,2);assert_eq!(g.height,i32::MAX);assert_eq!(g.body_lines[1].height,0);assert!(g.error_lines.iter().all(|r|r.height==0));
+    }
     fn folder_nodes()->Vec<ffi::TreeNode>{vec![ffi::TreeNode{id:"parent".into(),parent:String::new(),folder:true},ffi::TreeNode{id:"pin".into(),parent:String::new(),folder:false}]}
     #[test] fn folder_form_normalizes_unicode_and_preserves_byte_limit() {
         let mut form=new_folder_form("work","",""," \u{3000}Zażółć 日本語 🦀\u{a0} ");

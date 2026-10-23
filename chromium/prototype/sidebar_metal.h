@@ -3,6 +3,7 @@
 #define ZITTER_CHROMIUM_PROTOTYPE_SIDEBAR_METAL_H_
 #include <cstddef>
 #include <memory>
+#include <string>
 #include <string_view>
 #include <vector>
 #include "base/functional/callback.h"
@@ -46,6 +47,9 @@ class SidebarMetal {
   virtual bool contains_rect_for_testing(gfx::RectF bounds, gfx::RectF clip) const = 0;
 };
 std::unique_ptr<SidebarMetal> CreateSidebarMetal();
+// CoreText typography adapter, matching the font used for GPU text tiles.
+// Returns complete UTF-8 line fragments, without any native View/Label layout.
+std::vector<std::string> ShapeSidebarParagraph(std::string_view text,float font_size,int width);
 struct SidebarScrollBarSnapshot { gfx::Rect bounds, thumb; unsigned color = 0; bool visible = false; bool horizontal = false; };
 // Native event/scroll-service/menu/AX adapter; Rust owns thumb geometry and drag.
 std::unique_ptr<views::ScrollBar> CreateSidebarScrollBar(base::RepeatingCallback<bool()> scene_visible, bool horizontal = false);

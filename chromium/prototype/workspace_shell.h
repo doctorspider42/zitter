@@ -336,6 +336,11 @@ class WorkspaceShell final : public ui::EventHandler,
   bool folder_form_metal_visible() const;
   bool folder_form_contains_scene_text(std::string_view text) const;
   std::u16string folder_form_error_for_testing() const;
+  views::View* folder_notice_for_testing() const;
+  bool folder_notice_metal_visible() const;
+  bool folder_notice_contains_scene_text(std::string_view text) const;
+  std::u16string folder_notice_error_for_testing() const;
+  size_t folder_notice_line_count_for_testing() const;
   void WarmWorkspaceSidebars(std::map<std::string, std::vector<PinnedItem>> pins);
   bool sidebars_warmed() const { return sidebar_warm_queue_.empty() && !sidebar_warm_timer_.IsRunning(); }
   void OnScrollEvent(ui::ScrollEvent* event) override;
@@ -456,6 +461,7 @@ class WorkspaceShell final : public ui::EventHandler,
   bool IsCommandIdEnabled(int command_id) const override;
   void ExecuteCommand(int command_id, int event_flags) override;
   void RenameSelectedProfile();
+  bool ShowRustFolderNotice(std::string workspace,std::string folder,std::string title,bool error_only);
   void QueueSplit(std::optional<size_t> tab, std::string pin);
   struct ResolvedRowTarget { bool valid; std::optional<size_t> tab; std::string pin; };
   ResolvedRowTarget ResolveSidebarTarget(std::string_view workspace,std::array<uint64_t,2> identity,std::string_view pin) const;

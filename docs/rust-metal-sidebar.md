@@ -543,8 +543,8 @@ UTF-8 name limit, live parent/rename-target checks, source-workspace/readiness/b
 guards, duplicate-submit/cancel state and layout. The field remains a native
 Textfield for selection, clipboard and IME; active composition cannot submit.
 The modal host retains its native title/button presentation, initial focus,
-Enter/Escape handling and window lifetime. Delete confirmation and asynchronous
-save-error dialogs are still native presentation to migrate.
+Enter/Escape handling and window lifetime. At that milestone, delete confirmation and asynchronous save-error bodies
+still used native presentation; the notice milestone below replaces those bodies.
 
 The form body creates static-text AX Views and no hidden Labels. Rust emits the
 field label and validation error text on two small shared-context Metal canvases
@@ -569,3 +569,37 @@ checkpoint; the Views control set expands from 17 to 20. Native modal behavior,
 GPU fallback, focus, alert announcement, sizing, theme/scale and persistence
 integration remain unaccepted until then. See
 [folder form verification](benchmarks/rust-folder-form-headless-2026-10-23.json).
+
+
+Folder deletion confirmation and save-error message bodies now use the same
+Rust/Metal approach. Rust supplies the complete warning, Unicode folder title,
+button copy, default-cancel policy, acknowledgement/deletion state and live
+workspace/configuration/folder guards. A rejected delete can retry; duplicate,
+cancelled and accepted admissions cannot dispatch again. Save-error acknowledgement
+is independent of workspace/busy state and never emits a deletion target.
+
+A CoreText typography adapter breaks complete paragraph text into UTF-8 line
+fragments using the same system font as the existing GPU text tiles. It falls
+back to a composed-character boundary if a line is narrower than one cluster.
+Rust places all body/error lines and computes their extents/gap. The resulting
+ordinary text primitives use the existing shader and 32-byte quad ABI. Native
+fallback paints the same line plan, and a full-paragraph static-text AX node
+preserves the warning for assistive technology without hidden Labels.
+
+Body/error canvases share the existing GPU context. Typography results cache by
+width/font/error text; unchanged scenes keep the existing fingerprint skip.
+Validation errors update AX names and alert events. Native title/button drawing,
+modal focus/default-button behavior and widget lifetime remain host adapters.
+Application deletion, preservation of already open tabs, configuration writes,
+async rollback and error delivery remain unchanged services. Acknowledgement of
+admission remains distinct from durable storage success.
+
+Non-windowed verification passed **80 Rust tests and 59 Python tests**. The new
+`FolderNoticesWrapPreserveCancelAndRejectStaleTargets` case is compiled but not
+run. It checks wrapped warning/AX structure, default Cancel, cancellation,
+foreign/removed targets, confirmed deletion and save-error acknowledgement.
+The checkpoint must run the 48-case Metal matrix and 20 Views controls, including
+all existing folder/persistence cases. Actual CoreText wrapping, canvas clipping,
+GPU fallback, focus/keyboard/AX/default-button behavior, theme/scale and failed
+writes remain unaccepted until then. See
+[notice verification](benchmarks/rust-folder-notices-headless-2026-10-23.json).

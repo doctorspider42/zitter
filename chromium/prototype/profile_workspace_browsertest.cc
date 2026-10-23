@@ -3913,6 +3913,32 @@ class ZitterMetalSidebarBrowserTest : public ZitterProfilesBrowserTest {
   }
 };
 // Compiled with the migration; execution is deferred to the requested GUI checkpoint.
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, FolderNoticesWrapPreserveCancelAndRejectStaleTargets) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
+  ASSERT_TRUE(window_->CreatePinnedFolder("work",{},"Notice 🦀"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));
+  const auto id=window_->pinned_items("work")[0].id;shell->RequestDeleteFolder("work",id);
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_notice_metal_visible();}));
+  auto* notice=shell->folder_notice_for_testing();ASSERT_TRUE(notice);EXPECT_GE(shell->folder_notice_line_count_for_testing(),2u);
+  EXPECT_EQ(static_cast<int>(ui::mojom::DialogButton::kCancel),shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->GetDefaultDialogButton());
+  for(const auto& child:notice->children())EXPECT_FALSE(views::AsViewClass<views::Label>(child.get()));
+  ui::AXNodeData data;notice->children()[0]->GetViewAccessibility().GetAccessibleNodeData(&data);EXPECT_EQ(ax::mojom::Role::kStaticText,data.role);
+  EXPECT_NE(std::u16string::npos,data.GetString16Attribute(ax::mojom::StringAttribute::kName).find(u"Strony już otwarte w kartach pozostaną otwarte."));
+  shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->CancelDialog();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->folder_dialog();}));EXPECT_EQ(1u,window_->pinned_items("work").size());
+  shell->RequestDeleteFolder("work",id);ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_notice_metal_visible();}));
+  ASSERT_TRUE(window_->Select("personal"));ASSERT_TRUE(base::test::RunUntil([&]{return window_->active_id()=="personal"&&!window_->profiles_busy();}));
+  shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();EXPECT_FALSE(shell->folder_notice_error_for_testing().empty());EXPECT_EQ(1u,window_->pinned_items("work").size());
+  shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->CancelDialog();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->folder_dialog();}));
+  ASSERT_TRUE(window_->Select("work"));shell->RequestDeleteFolder("work",id);ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_notice_metal_visible();}));
+  shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->folder_dialog()&&!window_->profiles_busy();}));EXPECT_TRUE(window_->pinned_items("work").empty());
+  ASSERT_TRUE(window_->CreatePinnedFolder("work",{},"Removed"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));const auto removed=window_->pinned_items("work")[0].id;
+  shell->RequestDeleteFolder("work",removed);ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_notice_metal_visible();}));ASSERT_TRUE(window_->RemovePinnedFolder("work",removed,true));
+  ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();EXPECT_EQ(u"Folder nie jest już dostępny.",shell->folder_notice_error_for_testing());
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_notice_contains_scene_text("Folder nie jest już dostępny.");}));shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->CancelDialog();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->folder_dialog();}));
+  shell->ShowFolderSaveError();ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_notice_metal_visible();}));
+  EXPECT_EQ(u"Nie udało się zapisać folderu",shell->folder_dialog()->widget_delegate()->GetWindowTitle());
+  auto* dialog=shell->folder_dialog()->widget_delegate()->AsDialogDelegate();EXPECT_EQ(0,dialog->buttons()&static_cast<int>(ui::mojom::DialogButton::kCancel));
+  dialog->AcceptDialog();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->folder_dialog();}));EXPECT_TRUE(window_->pinned_items("work").empty());
+}
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, FolderFormScenesValidationCompositionAndStaleContext) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
   shell->RequestNewFolder("work");ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_form_metal_visible();}));

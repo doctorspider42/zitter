@@ -1209,6 +1209,90 @@ FolderFormView* FindFolderForm(views::View* view) {
 }
 #endif
 
+#if BUILDFLAG(IS_MAC)
+class FolderNoticeView final : public views::View {
+  METADATA_HEADER(FolderNoticeView,views::View)
+ public:
+  FolderNoticeView(const std::string& workspace,const std::string& folder,const std::string& title,bool error_only,
+      base::RepeatingCallback<bool(FolderNoticeView*)> submit)
+      :notice_(sidebar::new_folder_notice(workspace,folder,title,error_only)),copy_(notice_->copy()),submit_(std::move(submit)) {
+    GetViewAccessibility().SetRole(ax::mojom::Role::kGroup);
+    for(auto& part:parts_){part=AddChildView(std::make_unique<views::View>());part->GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);}
+    parts_[0]->GetViewAccessibility().SetName(base::UTF8ToUTF16(std::string(copy_.body)));parts_[1]->SetVisible(false);
+  }
+  base::WeakPtr<FolderNoticeView> weak(){return weak_factory_.GetWeakPtr();}
+  const sidebar::FolderNoticeCopy& copy() const{return copy_;}
+  bool Accept(){return submit_.Run(this);}
+  void Cancel(){notice_->cancel();}
+  sidebar::FolderNoticeRequest Prepare(const std::string& current,bool ready,bool busy,const std::vector<PinnedItem>& pins) {
+    std::vector<sidebar::TreeNode> nodes;nodes.reserve(pins.size());for(const auto& pin:pins)nodes.push_back({pin.id,pin.parent_id,pin.folder});
+    auto request=notice_->submit(current,ready,busy,rust::Slice<const sidebar::TreeNode>(nodes.data(),nodes.size()));Refresh();return request;
+  }
+  void Finish(bool accepted){notice_->finish_attempt(accepted);Refresh();}
+  bool metal_visible() const{return surfaces_[0]&&surfaces_[0]->visible()&&(error_.empty()||(surfaces_[1]&&surfaces_[1]->visible()));}
+  bool contains_scene_text(std::string_view text) const{for(const auto& surface:surfaces_)if(surface&&surface->visible()&&surface->contains_text_for_testing(text))return true;return false;}
+  const std::u16string& error_text() const{return error_;}
+  size_t body_line_count() const{Geometry(width());return lines_[0].size();}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override {
+    const auto g=Geometry(available.width().is_bounded()?available.width().value():-1);return gfx::Size(g.width,g.height);
+  }
+  void Layout(PassKey) override{const auto g=Geometry(width());parts_[0]->SetBounds(g.body.x,g.body.y,g.body.width,g.body.height);parts_[1]->SetBounds(g.error.x,g.error.y,g.error.width,g.error.height);Schedule();}
+  void OnThemeChanged() override{views::View::OnThemeChanged();SetBackground(views::CreateSolidBackground(Tone(this,kCard)));measured_width_=-1;PreferredSizeChanged();Schedule();}
+  void AddedToWidget() override{views::View::AddedToWidget();Schedule();}
+  void RemovedFromWidget() override{for(auto& surface:surfaces_)surface.reset();views::View::RemovedFromWidget();}
+  void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);Schedule();}
+  void OnPaint(gfx::Canvas* canvas) override {
+    const auto g=Geometry(width());
+    for(size_t i=0;i<2;++i)if(parts_[i]->GetVisible()&&(!surfaces_[i]||!surfaces_[i]->visible())) {
+      const auto clip=gfx::RectF(parts_[i]->bounds());const auto items=Items(i,g,0,0,clip);
+      for(const auto& item:items)PaintSceneRecipe(canvas,item,Font(i?-1:0));
+    }
+    Schedule();
+  }
+ private:
+  sidebar::NoticeLayout Geometry(int requested_width) const {
+    const int width=requested_width<0?400:requested_width;const auto body_font=Font(0),error_font=Font(-1);
+    if(width!=measured_width_||body_font.GetFontSize()!=measured_body_font_||error_font.GetFontSize()!=measured_error_font_||error_!=measured_error_) {
+      lines_[0]=ShapeSidebarParagraph(std::string(copy_.body),body_font.GetFontSize(),width);
+      lines_[1]=ShapeSidebarParagraph(base::UTF16ToUTF8(error_),error_font.GetFontSize(),width);
+      measured_width_=width;measured_body_font_=body_font.GetFontSize();measured_error_font_=error_font.GetFontSize();measured_error_=error_;
+    }
+    return sidebar::folder_notice_layout(width,body_font.GetHeight(),lines_[0].size(),error_font.GetHeight(),lines_[1].size());
+  }
+  std::vector<sidebar::Item> Items(size_t i,const sidebar::NoticeLayout& g,float dx,float dy,gfx::RectF clip) const {
+    const auto& rects=i?g.error_lines:g.body_lines;std::vector<sidebar::Item> items;items.reserve(rects.size());
+    for(size_t n=0;n<rects.size();++n){const auto& r=rects[n];sidebar::Item item{};item.kind=17;item.x=r.x+dx;item.y=r.y+dy;item.width=r.width;item.height=r.height;item.title=lines_[i][n];item.font_size=Font(i?-1:0).GetFontSize();item.ink=Tone(this,i?kError:kInk);item.clip={clip.x(),clip.y(),clip.width(),clip.height()};items.push_back(std::move(item));}return items;
+  }
+  void Refresh() {
+    const auto error=base::UTF8ToUTF16(std::string(notice_->error()));if(error==error_)return;error_=error;
+    parts_[1]->GetViewAccessibility().SetName(error_);parts_[1]->SetVisible(!error_.empty());if(error_.empty()&&surfaces_[1])surfaces_[1]->Hide();
+    if(!error_.empty()&&GetWidget())parts_[1]->GetViewAccessibility().NotifyEvent(ax::mojom::Event::kAlert,true);
+    PreferredSizeChanged();SchedulePaint();if(GetWidget())if(auto* host=GetWidget()->widget_delegate()->AsBubbleDialogDelegate())host->SizeToContents();Schedule();
+  }
+  void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&FolderNoticeView::UpdateMetal,weak()));}
+  void UpdateMetal() {
+    pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const auto g=Geometry(width());
+    for(size_t i=0;i<2;++i){auto& surface=surfaces_[i];const bool was=surface&&surface->visible();
+      const auto local=parts_[i]->GetVisibleBounds();if(!parts_[i]->IsDrawn()||local.IsEmpty()){if(surface)surface->Hide();if(was)SchedulePaint();continue;}
+      if(!surface)surface=CreateSidebarMetal();if(!surface)continue;
+      auto frame=parts_[i]->GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());
+      const auto items=Items(i,g,-parts_[i]->x()-local.x(),-parts_[i]->y()-local.y(),gfx::RectF(gfx::Rect(frame.size())));
+      surface->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,kCard));if(was!=surface->visible())SchedulePaint();
+    }
+  }
+  rust::Box<sidebar::FolderNotice> notice_;sidebar::FolderNoticeCopy copy_;base::RepeatingCallback<bool(FolderNoticeView*)> submit_;
+  std::array<raw_ptr<views::View>,2> parts_{};std::array<std::unique_ptr<SidebarMetal>,2> surfaces_;std::u16string error_;bool pending_=false;
+  mutable std::array<std::vector<std::string>,2> lines_;mutable int measured_width_=-1,measured_body_font_=0,measured_error_font_=0;mutable std::u16string measured_error_;
+  base::WeakPtrFactory<FolderNoticeView> weak_factory_{this};
+};
+BEGIN_METADATA(FolderNoticeView)
+END_METADATA
+FolderNoticeView* FindFolderNotice(views::View* view) {
+  if(auto* notice=views::AsViewClass<FolderNoticeView>(view))return notice;
+  for(const auto& child:view->children())if(auto* notice=FindFolderNotice(child.get()))return notice;return nullptr;
+}
+#endif
+
 class EdgeView final : public views::View {
   METADATA_HEADER(EdgeView, views::View)
  public:
@@ -4133,10 +4217,67 @@ void WorkspaceShell::RequestFolderName(std::string workspace, std::string parent
   prompt->Show();
 }
 
+bool WorkspaceShell::ShowRustFolderNotice(std::string workspace,std::string folder,std::string title,bool error_only) {
+#if BUILDFLAG(IS_MAC)
+  if(!metal_sidebar_)return false;
+  auto content=std::make_unique<FolderNoticeView>(workspace,folder,title,error_only,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,FolderNoticeView* notice){
+    if(!shell)return true;const auto alive=notice->weak();auto request=notice->Prepare(shell->state_.workspace_id,shell->state_.configuration_ready,shell->state_.profiles_busy,shell->state_.pins);
+    if(request.action==sidebar::FolderNoticeAction::None)return false;
+    const bool ok=request.action==sidebar::FolderNoticeAction::Acknowledge||shell->callbacks_.delete_folder.Run(std::string(request.workspace),std::string(request.folder),true);
+    if(!shell||!alive)return true;notice->Finish(ok);if(ok)shell->folder_dialog_.reset();return ok;
+  },weak_factory_.GetWeakPtr()));
+  const auto copy=content->copy();const auto weak=content->weak();
+  ui::DialogModel::Builder builder;builder.SetTitle(base::UTF8ToUTF16(std::string(copy.title)))
+      .AddCustomField(std::make_unique<views::BubbleDialogModelHost::CustomView>(std::move(content),views::BubbleDialogModelHost::FieldType::kText))
+      .AddOkButton(base::BindRepeating([](base::WeakPtr<FolderNoticeView> notice){return !notice||notice->Accept();},weak),ui::DialogModel::Button::Params().SetLabel(base::UTF8ToUTF16(std::string(copy.accept))));
+  if(!copy.cancel.empty())builder.AddCancelButton(base::BindOnce([](base::WeakPtr<FolderNoticeView> notice){if(notice)notice->Cancel();},weak),ui::DialogModel::Button::Params().SetLabel(base::UTF8ToUTF16(std::string(copy.cancel))));
+  if(copy.default_cancel)builder.OverrideDefaultButton(ui::mojom::DialogButton::kCancel);
+  auto* prompt=views::DialogDelegate::CreateDialogWidget(views::BubbleDialogModelHost::CreateModal(builder.Build(),ui::mojom::ModalType::kWindow),widget_->GetNativeWindow(),widget_->GetNativeView());
+  prompt->SetColorModeOverride(widget_->color_mode_override());PreparePanelText(prompt->GetRootView());folder_dialog_=prompt->GetWeakPtr();prompt->Show();return true;
+#else
+  return false;
+#endif
+}
+views::View* WorkspaceShell::folder_notice_for_testing() const {
+#if BUILDFLAG(IS_MAC)
+  return folder_dialog_?FindFolderNotice(folder_dialog_->GetContentsView()):nullptr;
+#else
+  return nullptr;
+#endif
+}
+bool WorkspaceShell::folder_notice_metal_visible() const {
+#if BUILDFLAG(IS_MAC)
+  auto* notice=static_cast<FolderNoticeView*>(folder_notice_for_testing());return notice&&notice->metal_visible();
+#else
+  return false;
+#endif
+}
+bool WorkspaceShell::folder_notice_contains_scene_text(std::string_view text) const {
+#if BUILDFLAG(IS_MAC)
+  auto* notice=static_cast<FolderNoticeView*>(folder_notice_for_testing());return notice&&notice->contains_scene_text(text);
+#else
+  return false;
+#endif
+}
+std::u16string WorkspaceShell::folder_notice_error_for_testing() const {
+#if BUILDFLAG(IS_MAC)
+  auto* notice=static_cast<FolderNoticeView*>(folder_notice_for_testing());return notice?notice->error_text():std::u16string();
+#else
+  return {};
+#endif
+}
+size_t WorkspaceShell::folder_notice_line_count_for_testing() const {
+#if BUILDFLAG(IS_MAC)
+  auto* notice=static_cast<FolderNoticeView*>(folder_notice_for_testing());return notice?notice->body_line_count():0;
+#else
+  return 0;
+#endif
+}
 void WorkspaceShell::RequestDeleteFolder(std::string workspace, std::string folder) {
   if (folder_dialog_) { folder_dialog_->Activate(); return; }
   auto item = std::find_if(state_.pins.begin(), state_.pins.end(), [&](const auto& item) { return item.id == folder && item.folder; });
   if (state_.workspace_id != workspace || item == state_.pins.end() || state_.profiles_busy) return;
+  if(ShowRustFolderNotice(workspace,folder,item->title,false))return;
   auto model = ui::DialogModel::Builder().SetTitle(u"Usunąć folder „" + base::UTF8ToUTF16(item->title) + u"”?")
       .AddParagraph(ui::DialogModelLabel(u"Folder i cała jego przypięta zawartość zostaną usunięte. Tej operacji nie można cofnąć. Strony już otwarte w kartach pozostaną otwarte."))
       .AddOkButton(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, std::string workspace, std::string folder) {
@@ -4155,6 +4296,8 @@ void WorkspaceShell::RequestDeleteFolder(std::string workspace, std::string fold
 }
 
 void WorkspaceShell::ShowFolderSaveError() {
+  if(!widget_)return;
+  if(ShowRustFolderNotice({},{},{},true))return;
   auto model = ui::DialogModel::Builder().SetTitle(u"Nie udało się zapisać folderu")
       .AddParagraph(ui::DialogModelLabel(u"Sprawdź wolne miejsce na dysku i spróbuj ponownie."))
       .AddOkButton(base::DoNothing(), ui::DialogModel::Button::Params().SetLabel(u"OK")).Build();

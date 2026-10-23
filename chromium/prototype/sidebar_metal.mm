@@ -415,6 +415,21 @@ std::unique_ptr<views::ScrollBar> CreateSidebarScrollBar(base::RepeatingCallback
 SidebarScrollBarSnapshot GetSidebarScrollBarSnapshot(views::ScrollBar* bar) {
   return static_cast<SidebarScrollBar*>(bar)->Snapshot();
 }
+std::vector<std::string> ShapeSidebarParagraph(std::string_view text,float font_size,int width) {
+  std::vector<std::string> lines;if(text.empty()||width<=0||!std::isfinite(font_size)||font_size<=0)return lines;
+  NSString* string=base::SysUTF8ToNSString(std::string(text));
+  NSFont* font=[NSFont systemFontOfSize:font_size weight:NSFontWeightRegular];
+  NSAttributedString* attributed=[[NSAttributedString alloc] initWithString:string attributes:@{NSFontAttributeName:font}];
+  base::apple::ScopedCFTypeRef<CTTypesetterRef> typesetter(CTTypesetterCreateWithAttributedString((__bridge CFAttributedStringRef)attributed));
+  if(!typesetter)return lines;
+  for(NSUInteger offset=0;offset<string.length;) {
+    CFIndex count=CTTypesetterSuggestLineBreak(typesetter.get(),offset,width);
+    if(count<=0)count=[string rangeOfComposedCharacterSequenceAtIndex:offset].length;
+    const NSUInteger length=std::min(static_cast<NSUInteger>(count),string.length-offset);
+    lines.push_back(base::SysNSStringToUTF8([string substringWithRange:NSMakeRange(offset,length)]));offset+=length;
+  }
+  return lines;
+}
 std::unique_ptr<SidebarMetal> CreateSidebarMetal() {
   auto surface = std::make_unique<Surface>();
   return surface->Init() ? std::move(surface) : nullptr;

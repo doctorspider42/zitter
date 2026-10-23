@@ -668,7 +668,9 @@ retains text editing, caret, selection and IME. Static search/escape decoration,
 hints and validation errors also use Rust geometry and Metal text, with native
 accessibility and fallback painting. Folder create/rename bodies also use Rust
 validation/layout and Metal label/error text while retaining native editing and
-modal adapters; these newer stages await the deferred GUI checkpoint.
+modal adapters. Folder deletion/save-error bodies use Rust notice state and
+wrapped Metal scene text as well; these newer stages await the deferred GUI
+checkpoint.
 Model updates refresh the scene independently of
 native painting. Rust also owns row
 click/drag/cancellation and platform key activation through native event, focus

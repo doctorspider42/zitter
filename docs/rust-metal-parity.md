@@ -24,7 +24,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Scroll offset normalization, viewport projection and clipping | Rust logical viewport; native ScrollView input/scroll-service adapters | Replace native scroll containers; expand real trackpad/scale coverage |
 | Vertical/horizontal scrollbar geometry, range normalization, thumb drag/snap/cancellation and drawing | Rust + shared Metal canvas; native ScrollBar/View, key/menu/AX and platform color adapters | Replace native nodes and track-repeat/menu dispatch; dedicated menu/VoiceOver/scale coverage |
 | Selection, close/reopen, title changes, pinned navigation | Rust row/close input into existing application callbacks; native Button/AX adapters | Migrate remaining command routing and containers; preserve persistence and last-tab rules |
-| Folder expand/collapse and tree visibility; create/rename/delete and nested pins | Rust tree state/layout and create/rename form copy/state/layout/static text; native text input/modal buttons, delete/save-error dialogs and application persistence (GUI checkpoint pending) | Migrate remaining dialog controls/delete/error presentation; verify admission failure, persistence rollback, IME and stale context |
+| Folder expand/collapse and tree visibility; create/rename/delete and nested pins | Rust tree and folder form/notice state, copy, layout and scene text; native text input/modal title/buttons and application persistence (GUI checkpoint pending) | Migrate remaining dialog controls; verify destructive defaults, paragraph typography, admission failure, persistence rollback, IME and stale context |
 | Tab/pin context menus and drag to split | Rust menu composition, stable-identity target/action resolution and drop geometry; native event/popup and application adapters (GUI checkpoint pending) | Verify menu/drag/stale-target/RTL coverage; replace native View identity lookup/interaction nodes |
 | New Tab action and configurable shortcut hint | Rust text/icon/hint layout, width alignment and input; shared Metal surface; native outer placement/focus/AX adapter | Replace the native Button container; expand keyboard/appearance coverage |
 | Address pill | Rust host/path layout, GPU icon/outline/text and shared input reducer; native outer placement/focus/AX adapter | Replace native Button container; retain address/search/IME service |
@@ -208,7 +208,8 @@ binaries and inspect the matching signed isolated app. In particular, exercise
 `SwipePreviewUsesMetalWithoutNativeSnapshots`,
 `WorkspaceSwitchUsesPresentedMetalSceneAndCancels`,
 `RowMenuPlansAndQueuedIdentitySurviveReindex`,
-`FolderFormScenesValidationCompositionAndStaleContext`, sidebar hide/cancel, workspace changes
+`FolderFormScenesValidationCompositionAndStaleContext`,
+`FolderNoticesWrapPreserveCancelAndRejectStaleTargets`, sidebar hide/cancel, workspace changes
 while committing and the prior palette regressions. Verify vertical scrolling,
 repeated stationary-cursor gestures, momentum, reduced motion, Unicode previews
 and the return of Metal after settling. Preserve the normal application/profile.
@@ -259,6 +260,15 @@ and the return of Metal after settling. Preserve the normal application/profile.
   folder create/rename/failed-write cases to the Views controls at the checkpoint
   (20 total); the new compiled Metal case is deferred. See
   [folder form verification](benchmarks/rust-folder-form-headless-2026-10-23.json).
+
+- Folder deletion confirmation and save-error message bodies now use Rust
+  copy/state/layout and Metal text. A CoreText typography adapter supplies complete
+  line fragments; Rust places those lines and errors without native Label layout.
+  Deletion keeps Cancel as the default and revalidates context/target before
+  admission. Error acknowledgement emits no delete target/action. Native modal
+  title/buttons and application deletion/async persistence remain adapters.
+  This stage is compiled and unit tested only; see
+  [notice verification](benchmarks/rust-folder-notices-headless-2026-10-23.json).
 
 ## Completion gates
 

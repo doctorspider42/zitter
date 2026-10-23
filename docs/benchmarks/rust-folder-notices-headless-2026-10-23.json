@@ -1,0 +1,79 @@
+{
+  "date": "2026-10-23",
+  "platform": "macOS arm64",
+  "build": "Release, ThinLTO, Chromium PGO",
+  "base_commit": "9a7254e7c5253afa7713858330be6738b6d4d57e",
+  "chromium_base_revision": "1a732fcc23b20dd0bcf38f35d72c1fe1ec799d35",
+  "purpose": "Non-windowed verification of Rust folder deletion/save-error notice state, copy and line layout; CoreText/Metal/modal/persistence acceptance deferred",
+  "acceptance_status": "awaiting_gui_checkpoint",
+  "source_sha256": {
+    "chromium/prototype/profile_workspace_browsertest.cc": "7f0f62721dfb68c909704493e3722e55f036490f0cd8a448fc363eb0ec1fdcb7",
+    "chromium/prototype/sidebar_metal.h": "52229662e5657b4a97edaf28e8e5b05880e9da4b93fb97b2fdac3eada0bb8685",
+    "chromium/prototype/sidebar_metal.mm": "6eda361163f392c8b91e877da2c7a2e01f1a00df4dc9eb703a3dd962197b9545",
+    "chromium/prototype/sidebar_scene.rs": "07292443a12f37336c2204e20651b468d4d1280c1dfec72b0eae2d1cdf0e7769",
+    "chromium/prototype/workspace_shell.cc": "36037d2f24921af6b9afe662962c94efc660ee7bc96e7e0f774aa4e6b154d6a7",
+    "chromium/prototype/workspace_shell.h": "c4ab5dc20ee105821e00a5b51af0f1e22679edf04c8fb55fcc260dcd4e7f95bf",
+    "chromium/prototype/workspace_window.cc": "cc604f6da199ec6b964de92d5a8efe99ca8d548836ad5e1ca4d4f7d8ee2f278e"
+  },
+  "staged_sources_match": true,
+  "compiled_app_uuid": "4C4C4400-5555-3144-A15C-2641717979DA",
+  "compiled_browser_test_uuid": "4C4C44E0-5555-3144-A14C-ACA879AAB79B",
+  "build_targets": [
+    "sidebar_scene_unittests_exe",
+    "zitter_prototype_ui_lab",
+    "zitter_ui_lab"
+  ],
+  "build_result": "passed",
+  "build_consistency": "final Ninja dry run reported no work to do",
+  "rust_unit_tests_passed": 80,
+  "python_unit_tests_passed": 59,
+  "new_rust_tests_passed": [
+    "folder_notice_admission_rejection_retry_cancel_and_duplicate",
+    "folder_notice_delete_revalidates_source_busy_and_live_folder",
+    "folder_notice_layout_preserves_all_shaped_lines_and_separates_errors",
+    "folder_notice_preserves_destructive_copy_and_safe_default",
+    "folder_notice_error_acknowledgement_never_deletes",
+    "folder_notice_layout_handles_empty_narrow_and_saturated_metrics"
+  ],
+  "gn_dependency_check": "passed for //zitter_ui_lab:*",
+  "product_boundaries": "passed",
+  "gui_tests": {
+    "status": "not run at user request",
+    "new_compiled_case": "ZitterMetalSidebarBrowserTest.FolderNoticesWrapPreserveCancelAndRejectStaleTargets",
+    "last_accepted_commit": "3cd95d82019b239c6c9cc6e84331a4f9f5ef0c55",
+    "prior_gui_results_apply_to_current_code": false
+  },
+  "manual_validation": {
+    "status": "deferred",
+    "app_launched": false,
+    "packaged_or_signed": false,
+    "normal_application_or_profile_used": false
+  },
+  "unit_verified_mechanisms": [
+    "Rust preserves the complete irreversible-deletion warning, already-open-tabs statement, Unicode folder title and default Cancel policy. Save-error copy has only OK and no deletion/default-cancel action.",
+    "Delete admission rechecks workspace/readiness/busy state and live folder identity/type. Missing/pin/foreign targets, cancelled, duplicate and already accepted submissions produce no action.",
+    "Immediate rejection can retry; accepted admission closes notice state. Error acknowledgement remains possible after workspace/busy changes and never emits a deletion target.",
+    "Rust lays out every shaped body/error line, their complete extents and the separating gap. Empty, zero-width and saturated font metrics remain bounded."
+  ],
+  "implemented_pending_runtime_verification": [
+    "CoreText CTTypesetter supplies complete UTF-8 line fragments using the same system font as the GPU text tiles, with a composed-character fallback when one cluster exceeds available width. Rust owns line placement and body/error extents; no native Label measures the body.",
+    "The notice custom view uses two native static-text AX nodes containing full body/error copy and small shared-context Metal canvases. Each line uses the existing ordinary Rust text primitive, shader and 32-byte quad ABI. Native fallback consumes the same line recipe.",
+    "Typography caches invalidate on width/font/error changes. Existing frame fingerprints skip unchanged GPU work. Error updates refresh AX names/alert events and resize through the native modal host.",
+    "Rust copy controls native modal title/button labels and default Cancel for deletion. The native host retains modal focus, button drawing, keyboard/default-button behavior and widget ownership.",
+    "A typed Delete request invokes the existing recursive deletion callback; Acknowledge short-circuits without invoking deletion. Existing opened-tab retention, asynchronous storage and rollback/error delivery remain application services. Admission is not durable storage completion.",
+    "The compiled GUI regression checks wrapped warning/AX structure, default Cancel and cancellation, changed workspace, confirmed deletion, removed target rejection and error acknowledgement. It has not been executed."
+  ],
+  "deferred_checkpoint": [
+    "Run the curated 48-case Metal matrix (prior 47 plus FolderNoticesWrapPreserveCancelAndRejectStaleTargets) and all 20 Views controls, including folder creation, rename/delete and failed-write rollback.",
+    "Inspect actual CoreText line breaking and glyph output, no text loss/clipping, long Unicode titles, minimum-width/scale/theme behavior, missing-drawable fallback and native/Metal ownership transitions.",
+    "Verify native default Cancel/Enter/Escape/keyboard/AX behavior, error alert announcement, repeated/rejected/stale confirmations, modal teardown and asynchronous write failure rollback/error delivery.",
+    "Confirm already-open tabs survive folder deletion and profile/session isolation remains intact; package/sign and inspect the matching isolated app.",
+    "Measure actual CPU/GPU/presentation workload separately; no latency or speedup is established by the unit results."
+  ],
+  "limitations": [
+    "CoreText shaping, native modal behavior and GPU rendering were compiled but not exercised. Rust line-layout tests consume supplied metrics and do not prove native typography or visual quality.",
+    "Native title/button controls, focus/keyboard/window lifetime and other Views surfaces remain. Full UI migration is incomplete.",
+    "Deletion and durable storage remain existing application services. Runtime persistence, rollback and opened-tab behavior still require the checkpoint.",
+    "No dependency, crate or framework was added. CoreText and the existing shader/text path were already linked; original-code Apache-2.0 and required upstream notices are unchanged."
+  ]
+}
