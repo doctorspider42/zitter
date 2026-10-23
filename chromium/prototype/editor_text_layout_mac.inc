@@ -24,7 +24,7 @@ float Finite(CGFloat x) { return std::isfinite(x) ? static_cast<float>(x) : 0; }
 struct EditorTextLayout::Impl {
   std::u16string text;
   CTLineRef line = nullptr;
-  float width = 0, ascent = 0, descent = 0;
+  float width = 0, ascent = 0, descent = 0, origin_bias = 0;
   std::vector<size_t> graphemes;
   std::vector<EditorTextRange> words;
   std::vector<EditorCaretStop> carets;
@@ -35,7 +35,7 @@ struct EditorTextLayout::Impl {
   }
 };
 EditorTextLayout::EditorTextLayout(std::u16string_view text, float font_size,
-                                   bool medium)
+                                   bool medium, int writing_direction)
     : impl_(std::make_unique<Impl>()) {
   impl_->text = text;
   auto &g = *impl_;
@@ -44,7 +44,9 @@ EditorTextLayout::EditorTextLayout(std::u16string_view text, float font_size,
   NSString *string = [[NSString alloc]
       initWithCharacters:reinterpret_cast<const unichar *>(text.data())
                   length:text.size()];
-  NSDictionary *attributes = @{
+  NSMutableParagraphStyle* paragraph=[[NSMutableParagraphStyle alloc] init];
+  paragraph.baseWritingDirection=writing_direction==1?NSWritingDirectionLeftToRight:writing_direction==2?NSWritingDirectionRightToLeft:NSWritingDirectionNatural;
+  NSDictionary *attributes = @{NSParagraphStyleAttributeName:paragraph,
     NSFontAttributeName : editor_text_detail::Font(font_size, medium),
     (__bridge NSString *)kCTForegroundColorFromContextAttributeName : @YES
   };
@@ -117,6 +119,15 @@ EditorTextLayout::EditorTextLayout(std::u16string_view text, float font_size,
                       static_cast<size_t>(range.location + range.length), left,
                       std::max(0.f, right - left), rtl});
   }
+  // Forced RTL can place trailing spaces left of CoreText's line origin.
+  // Normalize the entire logical advance interval, not each individual caret:
+  // geometry and drawing then share a nonnegative, viewport-relative origin.
+  float left=0,right=0;
+  for(const auto& run:g.runs){left=std::min(left,run.x);right=std::max(right,run.x+run.width);}
+  for(const auto& caret:g.carets){left=std::min(left,caret.x);right=std::max(right,caret.x);}
+  g.origin_bias=-left;g.width=std::max(g.width,right-left);
+  for(auto& run:g.runs)run.x+=g.origin_bias;
+  for(auto& caret:g.carets)caret.x+=g.origin_bias;
   CFStringTokenizerRef tokenizer = CFStringTokenizerCreate(
       kCFAllocatorDefault, chars, CFRangeMake(0, text.size()),
       kCFStringTokenizerUnitWord, nullptr);
@@ -164,12 +175,15 @@ EditorCaretStop EditorTextLayout::HitTest(float x) const {
     return {};
   if (!std::isfinite(x))
     x = 0;
-  const auto at =
-      std::min_element(impl_->carets.begin(), impl_->carets.end(),
-                       [x](const auto &a, const auto &b) {
-                         return std::abs(a.x - x) < std::abs(b.x - x);
-                       });
-  return *at;
+  const auto& stops=impl_->carets;
+  const auto upper=std::lower_bound(stops.begin(),stops.end(),x,[](const auto& stop,float at){return stop.x<at;});
+  if(upper==stops.begin())return *upper;
+  const auto lower=std::prev(upper);
+  if(upper==stops.end()||x-lower->x<=upper->x-x){
+    // Keep the existing stable affinity choice when several carets share x.
+    return *std::lower_bound(stops.begin(),stops.end(),lower->x,[](const auto& stop,float at){return stop.x<at;});
+  }
+  return *upper;
 }
 EditorCaretStop EditorTextLayout::Caret(size_t index, bool secondary) const {
   index = std::min(index, impl_->text.size());
@@ -177,7 +191,7 @@ EditorCaretStop EditorTextLayout::Caret(size_t index, bool secondary) const {
     return {index, 0, false};
   CGFloat other = 0;
   CGFloat primary = CTLineGetOffsetForStringIndex(impl_->line, index, &other);
-  return {index, editor_text_detail::Finite(secondary ? other : primary),
+  return {index, editor_text_detail::Finite(secondary ? other : primary)+impl_->origin_bias,
           secondary};
 }
 std::vector<EditorTextSpan> EditorTextLayout::Spans(size_t start,
@@ -227,7 +241,7 @@ void EditorTextLayout::Draw(CGContextRef context, float x, float baseline,
   CGContextSetRGBFillColor(context, ((argb >> 16) & 255) / 255.,
                            ((argb >> 8) & 255) / 255., (argb & 255) / 255.,
                            (argb >> 24) / 255.);
-  CGContextSetTextPosition(context, x, baseline);
+  CGContextSetTextPosition(context, x+impl_->origin_bias, baseline);
   CTLineDraw(impl_->line, context);
   CGContextRestoreGState(context);
 }

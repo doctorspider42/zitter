@@ -21,6 +21,17 @@ impl Selection {
         }
     }
 }
+// macOS distinguishes retaining the anchor, extending past a reversal and
+// stopping at the original anchor for word/paragraph selection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelectionPolicy {
+    None,
+    Retain,
+    Extend,
+    Caret,
+}
+thread_local! {static KILL_BUFFER:std::cell::RefCell<Vec<u16>>=const {std::cell::RefCell::new(Vec::new())};}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Change {
     pub admitted: bool,
@@ -34,6 +45,7 @@ pub struct Change {
 pub struct Info {
     pub revision: u64,
     pub selection: Selection,
+    pub directed: bool,
     pub enabled: bool,
     pub read_only: bool,
     pub composing: bool,
@@ -73,6 +85,7 @@ struct Composition {
 pub struct EditorState {
     text: Vec<u16>,
     selection: Selection,
+    directed: bool,
     revision: u64,
     scroll: f32,
     enabled: bool,
@@ -91,6 +104,7 @@ impl Default for EditorState {
         Self {
             text: vec![],
             selection: Selection::default(),
+            directed: false,
             revision: 0,
             scroll: 0.0,
             enabled: true,
@@ -131,6 +145,7 @@ impl EditorState {
         Info {
             revision: self.revision,
             selection: self.selection,
+            directed: self.directed,
             enabled: self.enabled,
             read_only: self.read_only,
             composing: self.composition.is_some(),
@@ -172,6 +187,7 @@ impl EditorState {
         if self.text[start..end] == *text {
             return false;
         }
+        self.directed = false;
         self.text.splice(start..end, text.iter().copied());
         self.revision = self.revision.wrapping_add(1);
         self.boundaries_revision = if self.text.is_empty() {
@@ -231,6 +247,7 @@ impl EditorState {
     // old IME callbacks even if the new text happens to be identical.
     pub fn reset(&mut self, text: &[u16]) -> Change {
         self.scroll = 0.0;
+        self.directed = false;
         let before = self.selection;
         let composing = self.composition.take().is_some();
         self.next_ime();
@@ -268,6 +285,7 @@ impl EditorState {
         if !self.enabled || !self.point(anchor) || !self.point(focus) {
             return Change::default();
         }
+        self.directed = false;
         let next = Selection {
             anchor,
             focus,
@@ -325,11 +343,245 @@ impl EditorState {
         {
             return Change::default();
         }
-        self.select(
+        let change = self.select(
             if extend { self.selection.anchor } else { index },
             index,
             secondary,
+        );
+        if change.admitted {
+            self.directed = true;
+        }
+        change
+    }
+    pub fn orient(&mut self, anchor: usize, focus: usize, secondary: bool) -> Change {
+        let change = self.select(anchor, focus, secondary);
+        if change.admitted {
+            self.directed = true;
+        }
+        change
+    }
+    fn motion_selection(&self, backward: bool, policy: SelectionPolicy) -> Selection {
+        let mut selection = self.selection;
+        if (!self.directed || policy == SelectionPolicy::None)
+            && selection.anchor != selection.focus
+            && ((backward && selection.focus > selection.anchor)
+                || (!backward && selection.focus < selection.anchor))
+        {
+            std::mem::swap(&mut selection.anchor, &mut selection.focus);
+            selection.secondary = false;
+        }
+        selection
+    }
+    fn apply_motion(
+        &mut self,
+        index: usize,
+        policy: SelectionPolicy,
+        secondary: bool,
+        backward: bool,
+    ) -> Change {
+        if !self.enabled
+            || self.composition.is_some()
+            || self.boundaries_revision != Some(self.revision)
+            || self.graphemes.binary_search(&index).is_err()
+        {
+            return Change::default();
+        }
+        let old = self.motion_selection(backward, policy);
+        let reversed = old.anchor != old.focus
+            && old.focus.min(index) < old.anchor
+            && old.anchor < old.focus.max(index);
+        let (anchor, focus, affinity) = match policy {
+            SelectionPolicy::None => (index, index, secondary),
+            SelectionPolicy::Retain => (old.anchor, index, secondary),
+            SelectionPolicy::Extend => (
+                if reversed { old.focus } else { old.anchor },
+                index,
+                secondary,
+            ),
+            SelectionPolicy::Caret if reversed => (old.anchor, old.anchor, old.secondary),
+            SelectionPolicy::Caret => (old.anchor, index, secondary),
+        };
+        self.orient(anchor, focus, affinity)
+    }
+    pub fn move_with_policy(
+        &mut self,
+        index: usize,
+        policy: SelectionPolicy,
+        secondary: bool,
+    ) -> Change {
+        self.apply_motion(
+            index,
+            policy,
+            secondary,
+            index < self.selection.focus
+                || (index == self.selection.focus && index <= self.selection.anchor),
         )
+    }
+    pub fn navigate(&mut self, backward: bool, word: bool, policy: SelectionPolicy) -> Change {
+        if !self.enabled
+            || self.composition.is_some()
+            || self.boundaries_revision != Some(self.revision)
+        {
+            return Change::default();
+        }
+        let old = self.motion_selection(backward, policy);
+        let range = old.range();
+        let target = if !word && policy == SelectionPolicy::None && !range.is_empty() {
+            old.focus
+        } else if word {
+            if backward {
+                self.words
+                    .iter()
+                    .rev()
+                    .find(|w| w.0 < old.focus)
+                    .map_or(0, |w| w.0)
+            } else {
+                self.words
+                    .iter()
+                    .find(|w| w.1 > old.focus)
+                    .map_or(self.text.len(), |w| w.1)
+            }
+        } else if backward {
+            self.graphemes
+                .iter()
+                .rev()
+                .copied()
+                .find(|&p| p < old.focus)
+                .unwrap_or(0)
+        } else {
+            self.graphemes
+                .iter()
+                .copied()
+                .find(|&p| p > old.focus)
+                .unwrap_or(self.text.len())
+        };
+        self.apply_motion(target, policy, false, backward)
+    }
+
+    pub fn kill_to_boundary(&mut self, end: bool) -> Change {
+        if !self.editable() || self.composition.is_some() {
+            return Change::default();
+        }
+        let old = self.selection;
+        let range = old.range();
+        let range = if range.is_empty() {
+            if end {
+                range.start..self.text.len()
+            } else {
+                0..range.start
+            }
+        } else {
+            range
+        };
+        if range.is_empty() {
+            return Change {
+                admitted: true,
+                ..Change::default()
+            };
+        }
+        if !self.replacement_boundaries(range.start, range.end, &[]) {
+            return Change::default();
+        }
+        let killed = self.text[range.clone()].to_vec();
+        // Native undo restores the selection used by the deletion, including
+        // the range extended from an initially collapsed caret.
+        if old.anchor == old.focus {
+            self.selection = Selection {
+                anchor: old.focus,
+                focus: if end { range.end } else { range.start },
+                secondary: false,
+            };
+        }
+        let mut change = self.erase(false, false);
+        if change.text {
+            KILL_BUFFER.with(|buffer| *buffer.borrow_mut() = killed);
+        }
+        change.selection = old != self.selection;
+        change
+    }
+    pub fn yank(&mut self) -> Change {
+        if !self.editable() {
+            return Change::default();
+        }
+        let text = KILL_BUFFER.with(|buffer| buffer.borrow().clone());
+        self.insert(&text, false)
+    }
+    pub fn transpose(&mut self) -> Change {
+        if !self.editable()
+            || self.composition.is_some()
+            || self.selection.anchor != self.selection.focus
+            || self.boundaries_revision != Some(self.revision)
+        {
+            return Change::default();
+        }
+        let Ok(mut at) = self.graphemes.binary_search(&self.selection.focus) else {
+            return Change::default();
+        };
+        if at + 1 == self.graphemes.len() {
+            at = at.saturating_sub(1);
+        }
+        if at == 0 || at + 1 >= self.graphemes.len() {
+            return Change {
+                admitted: true,
+                ..Change::default()
+            };
+        }
+        let (start, middle, end) = (
+            self.graphemes[at - 1],
+            self.graphemes[at],
+            self.graphemes[at + 1],
+        );
+        // Chromium's current macOS command requires exactly two Unicode code
+        // points as well as adjacent graphemes; combining/ZWJ sequences stay put.
+        let mut scalar_count = 0;
+        let mut cursor = start;
+        while cursor < end {
+            scalar_count += 1;
+            cursor += if is_high(self.text[cursor])
+                && cursor + 1 < end
+                && is_low(self.text[cursor + 1])
+            {
+                2
+            } else {
+                1
+            };
+        }
+        if scalar_count != 2 {
+            return Change {
+                admitted: true,
+                ..Change::default()
+            };
+        }
+        let mut inserted = self.text[middle..end].to_vec();
+        inserted.extend_from_slice(&self.text[start..middle]);
+        if !self.replacement_boundaries(start, end, &inserted) {
+            return Change::default();
+        }
+        let removed = self.text[start..end].to_vec();
+        let old = self.selection;
+        let changed = self.replace_raw(start, end, &inserted);
+        self.selection = Selection::caret(end);
+        self.break_group();
+        self.record(Edit {
+            start,
+            removed,
+            inserted,
+            before: Selection {
+                anchor: start,
+                focus: end,
+                secondary: false,
+            },
+            after: self.selection,
+            group: self.group,
+            kind: Kind::Separate,
+        });
+        Change {
+            admitted: true,
+            text: changed,
+            selection: old != self.selection,
+            committed: changed,
+            ..Change::default()
+        }
     }
     pub fn move_logical(&mut self, backward: bool, word: bool, extend: bool) -> Change {
         if !self.enabled
@@ -1184,5 +1436,313 @@ mod drop_tests {
         assert!(!e.drop_selection(0, false).admitted);
         e.availability(false, false);
         assert!(!e.drop_selection(0, true).admitted);
+    }
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::*;
+    fn model(s: &str) -> EditorState {
+        let mut e = EditorState::default();
+        e.reset(&s.encode_utf16().collect::<Vec<_>>());
+        e
+    }
+    fn ascii(e: &mut EditorState) {
+        let stops = (0..=e.text().len()).collect::<Vec<_>>();
+        assert!(e.install_boundaries(e.info().revision, &stops, &[]));
+    }
+    fn text(e: &EditorState) -> String {
+        String::from_utf16(e.text()).unwrap()
+    }
+    fn clear_kill() {
+        KILL_BUFFER.with(|b| b.borrow_mut().clear());
+    }
+    #[test]
+    fn selection_policies_match_mac_reversal() {
+        for (policy, anchor, focus) in [
+            (SelectionPolicy::Retain, 5, 0),
+            (SelectionPolicy::Extend, 9, 0),
+            (SelectionPolicy::Caret, 5, 5),
+            (SelectionPolicy::None, 0, 0),
+        ] {
+            let mut e = model("one two three");
+            ascii(&mut e);
+            e.orient(5, 9, false);
+            e.move_with_policy(0, policy, false);
+            assert_eq!(
+                (e.info().selection.anchor, e.info().selection.focus),
+                (anchor, focus)
+            );
+        }
+    }
+    #[test]
+    fn returning_exactly_to_anchor_collapses_without_reversal() {
+        for policy in [
+            SelectionPolicy::Retain,
+            SelectionPolicy::Extend,
+            SelectionPolicy::Caret,
+        ] {
+            let mut e = model("abcdef");
+            ascii(&mut e);
+            e.orient(3, 5, false);
+            e.move_with_policy(3, policy, false);
+            assert_eq!(e.info().selection, Selection::caret(3));
+        }
+    }
+    #[test]
+    fn reverse_selection_extends_from_its_previous_focus() {
+        let mut e = model("abcdef");
+        ascii(&mut e);
+        e.orient(4, 1, false);
+        e.move_with_policy(6, SelectionPolicy::Extend, false);
+        assert_eq!(
+            e.info().selection,
+            Selection {
+                anchor: 1,
+                focus: 6,
+                secondary: false
+            }
+        );
+    }
+    #[test]
+    fn word_selection_stops_at_anchor_when_reversing() {
+        let mut e = model("one two three");
+        let stops = (0..=13).collect::<Vec<_>>();
+        e.install_boundaries(e.info().revision, &stops, &[0, 3, 4, 7, 8, 13]);
+        e.orient(5, 9, false);
+        e.navigate(true, true, SelectionPolicy::Caret);
+        assert_eq!(e.info().selection.focus, 8);
+        e.navigate(true, true, SelectionPolicy::Caret);
+        assert_eq!(e.info().selection, Selection::caret(5));
+    }
+    #[test]
+    fn policy_rejects_stale_or_invalid_grapheme_points() {
+        let mut e = model("a\u{301}b");
+        assert!(
+            !e.move_with_policy(0, SelectionPolicy::Extend, false)
+                .admitted
+        );
+        e.install_boundaries(e.info().revision, &[0, 2, 3], &[]);
+        assert!(
+            !e.move_with_policy(1, SelectionPolicy::Retain, false)
+                .admitted
+        );
+        e.availability(false, false);
+        assert!(!e.move_with_policy(0, SelectionPolicy::None, false).admitted);
+    }
+    #[test]
+    fn kill_to_end_yank_and_undo_restore_native_selection() {
+        clear_kill();
+        let mut e = model("one two");
+        e.select(4, 4, false);
+        assert!(e.kill_to_boundary(true).committed);
+        assert_eq!(text(&e), "one ");
+        e.undo();
+        assert_eq!(text(&e), "one two");
+        assert_eq!(
+            e.info().selection,
+            Selection {
+                anchor: 4,
+                focus: 7,
+                secondary: false
+            }
+        );
+        e.redo();
+        e.yank();
+        assert_eq!(text(&e), "one two");
+    }
+    #[test]
+    fn kill_to_start_is_one_edit_and_yanks_in_another_editor() {
+        clear_kill();
+        let mut e = model("one two");
+        e.select(4, 4, false);
+        e.kill_to_boundary(false);
+        assert_eq!(text(&e), "two");
+        let mut other = model("X");
+        other.yank();
+        assert_eq!(text(&other), "Xone ");
+        e.undo();
+        assert_eq!(text(&e), "one two");
+        assert_eq!(
+            e.info().selection,
+            Selection {
+                anchor: 4,
+                focus: 0,
+                secondary: false
+            }
+        );
+        assert!(!e.info().can_undo);
+    }
+    #[test]
+    fn selected_kill_does_not_expand_and_next_kill_overwrites() {
+        clear_kill();
+        let mut e = model("abcdef");
+        e.select(4, 2, true);
+        e.kill_to_boundary(true);
+        assert_eq!(text(&e), "abef");
+        e.select(0, 1, false);
+        e.kill_to_boundary(false);
+        let mut other = model("");
+        other.yank();
+        assert_eq!(text(&other), "a");
+    }
+    #[test]
+    fn empty_kill_preserves_previous_buffer() {
+        clear_kill();
+        let mut e = model("abc");
+        e.kill_to_boundary(false);
+        assert!(e.kill_to_boundary(true).admitted);
+        let mut other = model("");
+        other.yank();
+        assert_eq!(text(&other), "abc");
+    }
+    #[test]
+    fn kill_and_yank_respect_readonly_disabled_and_composition() {
+        clear_kill();
+        let mut e = model("abc");
+        e.availability(true, true);
+        assert!(!e.kill_to_boundary(false).admitted);
+        assert!(!e.yank().admitted);
+        e.availability(true, false);
+        let t = e.begin_composition();
+        assert!(!e.kill_to_boundary(false).admitted);
+        e.cancel(t);
+        e.availability(false, false);
+        assert!(!e.yank().admitted);
+        let mut other = model("");
+        assert!(!other.yank().text);
+    }
+    #[test]
+    fn empty_yank_replaces_selection_like_native() {
+        clear_kill();
+        let mut e = model("abc");
+        e.select(0, 2, false);
+        assert!(e.yank().text);
+        assert_eq!(text(&e), "c");
+        e.undo();
+        assert_eq!(text(&e), "abc");
+    }
+    #[test]
+    fn transpose_inside_and_at_end_is_atomic() {
+        for (caret, expected) in [(2, "acbd"), (4, "abdc")] {
+            let mut e = model("abcd");
+            ascii(&mut e);
+            e.select(caret, caret, false);
+            assert!(e.transpose().committed);
+            assert_eq!(text(&e), expected);
+            e.undo();
+            assert_eq!(text(&e), "abcd");
+            assert_eq!(
+                e.info().selection,
+                Selection {
+                    anchor: if caret == 2 { 1 } else { 2 },
+                    focus: if caret == 2 { 3 } else { 4 },
+                    secondary: false
+                }
+            );
+            assert!(!e.info().can_undo);
+            e.redo();
+            assert_eq!(text(&e), expected);
+        }
+    }
+    #[test]
+    fn transpose_handles_surrogate_pairs_but_keeps_combining_clusters() {
+        let mut e = model("🦀x");
+        e.install_boundaries(e.info().revision, &[0, 2, 3], &[]);
+        e.transpose();
+        assert_eq!(text(&e), "x🦀");
+        e.undo();
+        assert_eq!(text(&e), "🦀x");
+        let mut e = model("a\u{301}b");
+        e.install_boundaries(e.info().revision, &[0, 2, 3], &[]);
+        assert!(!e.transpose().text);
+        assert_eq!(text(&e), "a\u{301}b");
+    }
+    #[test]
+    fn transpose_noops_at_start_or_with_one_cluster() {
+        for s in ["", "a", "🦀"] {
+            let mut e = model(s);
+            let n = e.text().len();
+            let stops = if n == 0 { vec![0] } else { vec![0, n] };
+            e.install_boundaries(e.info().revision, &stops, &[]);
+            assert!(!e.transpose().text);
+            assert!(!e.info().can_undo);
+        }
+        let mut e = model("ab");
+        ascii(&mut e);
+        e.select(0, 0, false);
+        assert!(!e.transpose().text);
+    }
+    #[test]
+    fn transpose_rejects_selection_composition_and_unavailable_model() {
+        let mut e = model("abc");
+        ascii(&mut e);
+        e.select(0, 1, false);
+        assert!(!e.transpose().admitted);
+        e.select(2, 2, false);
+        let t = e.begin_composition();
+        assert!(!e.transpose().admitted);
+        e.cancel(t);
+        e.availability(true, true);
+        assert!(!e.transpose().admitted);
+    }
+}
+
+#[cfg(test)]
+mod undirected_tests {
+    use super::*;
+    fn model() -> EditorState {
+        let mut e = EditorState::default();
+        e.reset(&"one two three".encode_utf16().collect::<Vec<_>>());
+        let stops = (0..=13).collect::<Vec<_>>();
+        e.install_boundaries(e.info().revision, &stops, &[0, 3, 4, 7, 8, 13]);
+        e.select(5, 9, false);
+        e
+    }
+    #[test]
+    fn service_selection_chooses_edge_on_first_word_motion() {
+        let mut e = model();
+        assert!(!e.info().directed);
+        e.navigate(true, true, SelectionPolicy::Caret);
+        assert_eq!(
+            e.info().selection,
+            Selection {
+                anchor: 9,
+                focus: 4,
+                secondary: false
+            }
+        );
+        assert!(e.info().directed);
+    }
+    #[test]
+    fn word_motion_without_shift_advances_past_selection_edge() {
+        for (backward, at) in [(true, 4), (false, 13)] {
+            let mut e = model();
+            e.navigate(backward, true, SelectionPolicy::None);
+            assert_eq!(e.info().selection, Selection::caret(at));
+        }
+    }
+    #[test]
+    fn undirected_page_selection_retains_the_resolved_edge() {
+        let mut e = model();
+        e.move_with_policy(0, SelectionPolicy::Retain, false);
+        assert_eq!(
+            e.info().selection,
+            Selection {
+                anchor: 9,
+                focus: 0,
+                secondary: false
+            }
+        );
+    }
+    #[test]
+    fn undo_restores_an_undirected_service_selection() {
+        let mut e = model();
+        e.orient(5, 9, false);
+        e.insert(&[65], false);
+        e.undo();
+        assert!(!e.info().directed);
+        assert_eq!(e.info().selection.anchor, 5);
+        assert_eq!(e.info().selection.focus, 9);
     }
 }

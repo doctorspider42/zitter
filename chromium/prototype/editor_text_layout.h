@@ -24,8 +24,9 @@ struct EditorTextSpan {
 // points.
 class EditorTextLayout {
 public:
+  // writing_direction: 0 natural, 1 LTR, 2 RTL; shared by input and raster.
   EditorTextLayout(std::u16string_view text, float font_size,
-                   bool medium = false);
+                   bool medium = false, int writing_direction = 0);
   ~EditorTextLayout();
   EditorTextLayout(const EditorTextLayout &) = delete;
   EditorTextLayout &operator=(const EditorTextLayout &) = delete;

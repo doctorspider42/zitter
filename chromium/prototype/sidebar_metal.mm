@@ -306,7 +306,7 @@ class Surface final : public SidebarMetal {
     for (const auto& op : ops) signature << '|' << op.x << ',' << op.y << ',' << op.width << ','
         << op.height << ',' << op.clip.x << ',' << op.clip.y << ',' << op.clip.width << ',' << op.clip.height
         << ',' << op.radius << ',' << op.color << ',' << op.font_size << ','
-        << op.shape << ',' << op.stroke << ',' << op.bold << ',' << op.middle << ',' << op.center << ',' << op.editor << ',' << op.text_x << ',' << op.baseline << ':' << op.text.size() << ':' << std::string(op.text);
+        << op.shape << ',' << op.stroke << ',' << op.bold << ',' << op.middle << ',' << op.center << ',' << op.editor << ',' << op.text_x << ',' << op.baseline << ',' << op.text_direction << ':' << op.text.size() << ':' << std::string(op.text);
     for(const auto& op:ops)if(op.editor){signature << ':' << op.utf16.size();for(uint16_t c:op.utf16)signature << ',' << c;}
     std::string fingerprint = signature.str();
     if (fingerprint == last_frame_ && !view_.hidden && !next_presentation_) return;
@@ -365,7 +365,7 @@ class Surface final : public SidebarMetal {
   id<MTLTexture> Text(const sidebar::Primitive& op, double scale) {
     std::ostringstream key;
     key << op.width << ',' << op.height << ',' << op.font_size << ',' << scale << ','
-        << op.color << ',' << op.shape << ',' << op.stroke << ',' << op.bold << ',' << op.middle << ',' << op.center << ',' << op.editor << ',' << op.text_x << ',' << op.baseline << ':' << std::string(op.text);
+        << op.color << ',' << op.shape << ',' << op.stroke << ',' << op.bold << ',' << op.middle << ',' << op.center << ',' << op.editor << ',' << op.text_x << ',' << op.baseline << ',' << op.text_direction << ':' << std::string(op.text);
     if(op.editor){key << ':' << op.utf16.size();for(uint16_t c:op.utf16)key << ',' << c;}
     auto found = text_.find(key.str());
     if (found != text_.end()) return found->second.texture;
@@ -384,7 +384,7 @@ class Surface final : public SidebarMetal {
     CGContextScaleCTM(context.get(), scale, scale);
     if(op.editor) {
       const std::u16string text(op.utf16.begin(),op.utf16.end());
-      EditorTextLayout line(text,op.font_size,op.bold);
+      EditorTextLayout line(text,op.font_size,op.bold,op.text_direction);
       line.Draw(context.get(),op.text_x,op.height-op.baseline,op.color);
     } else {
     NSFont* font = editor_text_detail::Font(op.font_size,op.bold);
@@ -439,7 +439,7 @@ void PaintEditorSceneFallback(gfx::Canvas* canvas,base::span<const sidebar::Prim
       base::apple::ScopedCFTypeRef<CGColorSpaceRef> space(CGColorSpaceCreateDeviceRGB());
       base::apple::ScopedCFTypeRef<CGContextRef> context(CGBitmapContextCreate(bitmap.getPixels(),w,h,8,bitmap.rowBytes(),space.get(),static_cast<uint32_t>(kCGImageAlphaPremultipliedFirst)|static_cast<uint32_t>(kCGBitmapByteOrder32Little)));
       if(!context)continue;const std::u16string text(op.utf16.begin(),op.utf16.end());
-      EditorTextLayout line(text,op.font_size,op.bold);line.Draw(context.get(),op.text_x,op.height-op.baseline,op.color);
+      EditorTextLayout line(text,op.font_size,op.bold,op.text_direction);line.Draw(context.get(),op.text_x,op.height-op.baseline,op.color);
       canvas->DrawImageInt(gfx::ImageSkia::CreateFrom1xBitmap(bitmap),int(op.x),int(op.y));
     } else {
       cc::PaintFlags flags;flags.setColor(op.color);flags.setAntiAlias(true);if(op.stroke>0){flags.setStyle(cc::PaintFlags::kStroke_Style);flags.setStrokeWidth(op.stroke);}

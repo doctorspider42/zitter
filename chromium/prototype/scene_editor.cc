@@ -177,15 +177,26 @@ class SceneEditor final : public views::View, public EditorControl,
     const auto& stops=line_->graphemes();auto lo=std::upper_bound(stops.begin(),stops.end(),start);if(lo!=stops.begin())start=*--lo;auto hi=std::lower_bound(stops.begin(),stops.end(),end);if(hi!=stops.end())end=*hi;DeleteRange(gfx::Range(start,end));
   }
   void OnInputMethodChanged() override{Schedule();}
-  bool ChangeTextDirectionAndLayoutAlignment(base::i18n::TextDirection direction) override{direction_=direction;Schedule();return true;}
+  bool ChangeTextDirectionAndLayoutAlignment(base::i18n::TextDirection direction) override{if(direction==base::i18n::UNKNOWN_DIRECTION)return false;direction_=direction_==direction?std::nullopt:std::optional(direction);align_right_=direction==base::i18n::RIGHT_TO_LEFT;line_.reset();EnsureLayout();RefreshAX();NotifyCaret();Schedule();return true;}
   void EnsureCaretNotInRect(const gfx::Rect&) override{EnsureLayout();NotifyCaret();}
   ukm::SourceId GetClientSourceForMetrics() const override{return ukm::kInvalidSourceId;}
   bool ShouldDoLearning() override{return false;}
   void GetActiveTextInputControlLayoutBounds(std::optional<gfx::Rect>* control,std::optional<gfx::Rect>* selection) override{*control=GetBoundsInScreen();*selection=GetSelectionBoundingBox();}
-  static bool Supported(ui::TextEditCommand command){using C=ui::TextEditCommand;switch(command){case C::UNDO:case C::REDO:case C::SELECT_ALL:case C::SELECT_WORD:case C::COPY:case C::CUT:case C::PASTE:case C::DELETE_BACKWARD:case C::DELETE_FORWARD:case C::DELETE_WORD_BACKWARD:case C::DELETE_WORD_FORWARD:case C::DELETE_TO_BEGINNING_OF_LINE:case C::DELETE_TO_BEGINNING_OF_PARAGRAPH:case C::DELETE_TO_END_OF_LINE:case C::DELETE_TO_END_OF_PARAGRAPH:case C::MOVE_BACKWARD:case C::MOVE_BACKWARD_AND_MODIFY_SELECTION:case C::MOVE_FORWARD:case C::MOVE_FORWARD_AND_MODIFY_SELECTION:case C::MOVE_WORD_BACKWARD:case C::MOVE_WORD_BACKWARD_AND_MODIFY_SELECTION:case C::MOVE_WORD_LEFT:case C::MOVE_WORD_LEFT_AND_MODIFY_SELECTION:case C::MOVE_WORD_FORWARD:case C::MOVE_WORD_FORWARD_AND_MODIFY_SELECTION:case C::MOVE_WORD_RIGHT:case C::MOVE_WORD_RIGHT_AND_MODIFY_SELECTION:case C::MOVE_LEFT:case C::MOVE_LEFT_AND_MODIFY_SELECTION:case C::MOVE_RIGHT:case C::MOVE_RIGHT_AND_MODIFY_SELECTION:case C::MOVE_TO_BEGINNING_OF_DOCUMENT:case C::MOVE_TO_BEGINNING_OF_LINE:case C::MOVE_TO_BEGINNING_OF_PARAGRAPH:case C::MOVE_UP:case C::MOVE_TO_BEGINNING_OF_DOCUMENT_AND_MODIFY_SELECTION:case C::MOVE_TO_BEGINNING_OF_LINE_AND_MODIFY_SELECTION:case C::MOVE_TO_BEGINNING_OF_PARAGRAPH_AND_MODIFY_SELECTION:case C::MOVE_UP_AND_MODIFY_SELECTION:case C::MOVE_TO_END_OF_DOCUMENT:case C::MOVE_TO_END_OF_LINE:case C::MOVE_TO_END_OF_PARAGRAPH:case C::MOVE_DOWN:case C::MOVE_TO_END_OF_DOCUMENT_AND_MODIFY_SELECTION:case C::MOVE_TO_END_OF_LINE_AND_MODIFY_SELECTION:case C::MOVE_TO_END_OF_PARAGRAPH_AND_MODIFY_SELECTION:case C::MOVE_DOWN_AND_MODIFY_SELECTION:return true;default:return false;}}
   bool IsTextEditCommandEnabled(ui::TextEditCommand command) const override {
-    if(!Available())return false;using C=ui::TextEditCommand;auto i=sidebar::editor_info(*state_);
-    switch(command){case C::UNDO:return Editable()&&i.can_undo;case C::REDO:return Editable()&&i.can_redo;case C::COPY:return !IsIMEComposing()&&i.anchor!=i.focus;case C::CUT:return Editable()&&!IsIMEComposing()&&i.anchor!=i.focus;case C::PASTE:return Editable();case C::INVALID_COMMAND:return false;case C::DELETE_BACKWARD:case C::DELETE_FORWARD:case C::DELETE_WORD_BACKWARD:case C::DELETE_WORD_FORWARD:case C::DELETE_TO_BEGINNING_OF_LINE:case C::DELETE_TO_BEGINNING_OF_PARAGRAPH:case C::DELETE_TO_END_OF_LINE:case C::DELETE_TO_END_OF_PARAGRAPH:return Editable();default:return Supported(command);}
+    if(!Available())return false;using C=ui::TextEditCommand;const auto i=sidebar::editor_info(*state_);const bool selected=i.anchor!=i.focus;
+    switch(command){
+      case C::UNDO:return Editable()&&i.can_undo;
+      case C::REDO:return Editable()&&i.can_redo;
+      case C::CUT:return Editable()&&!i.composing&&selected;
+      case C::COPY:return !i.composing&&selected;
+      case C::PASTE:case C::YANK:return Editable();
+      case C::SELECT_ALL:return !text_.empty()&&GetSelectedRange().length()!=text_.size();
+      case C::SELECT_WORD:return !text_.empty()&&!selected;
+      case C::TRANSPOSE:return Editable()&&!selected&&!i.composing;
+      case C::DELETE_BACKWARD:case C::DELETE_FORWARD:case C::DELETE_WORD_BACKWARD:case C::DELETE_WORD_FORWARD:case C::DELETE_TO_BEGINNING_OF_LINE:case C::DELETE_TO_BEGINNING_OF_PARAGRAPH:case C::DELETE_TO_END_OF_LINE:case C::DELETE_TO_END_OF_PARAGRAPH:return Editable();
+      case C::INSERT_TEXT:case C::SET_MARK:case C::UNSELECT:case C::INVALID_COMMAND:return false;
+      default:return true;
+    }
   }
   void SetTextEditCommandForNextKeyEvent(ui::TextEditCommand command) override{pending_command_=command;}
   bool OnKeyPressed(const ui::KeyEvent& event) override {
@@ -195,9 +206,11 @@ class SceneEditor final : public views::View, public EditorControl,
     using C=ui::TextEditCommand;const bool modify=event.IsShiftDown();
     if(event.IsCommandDown()){switch(event.key_code()){case ui::VKEY_A:return Execute(C::SELECT_ALL);case ui::VKEY_C:return Execute(C::COPY);case ui::VKEY_X:return Execute(C::CUT);case ui::VKEY_V:return Execute(C::PASTE);case ui::VKEY_Z:return Execute(modify?C::REDO:C::UNDO);case ui::VKEY_LEFT:Boundary(false,modify);return true;case ui::VKEY_RIGHT:Boundary(true,modify);return true;case ui::VKEY_BACK:DeleteBoundary(false);return true;case ui::VKEY_DELETE:DeleteBoundary(true);return true;default:return false;}}
     if(event.key_code()==ui::VKEY_LEFT||event.key_code()==ui::VKEY_RIGHT){const bool right=event.key_code()==ui::VKEY_RIGHT;if(event.IsAltDown())Logical(right==(GetTextDirection()==base::i18n::RIGHT_TO_LEFT),true,modify);else Visual(right,modify);return true;}
+    if(event.key_code()==ui::VKEY_PRIOR||event.key_code()==ui::VKEY_NEXT){RetainedBoundary(event.key_code()==ui::VKEY_NEXT,modify);return true;}
+    if(event.key_code()==ui::VKEY_UP||event.key_code()==ui::VKEY_DOWN){RetainedBoundary(event.key_code()==ui::VKEY_DOWN,modify);return true;}
     if(event.key_code()==ui::VKEY_HOME||event.key_code()==ui::VKEY_END){Boundary(event.key_code()==ui::VKEY_END,modify);return true;}
     if(event.key_code()==ui::VKEY_BACK||event.key_code()==ui::VKEY_DELETE){if(!Editable())return false;EnsureLayout();Apply(sidebar::editor_erase(*state_,event.key_code()==ui::VKEY_BACK,event.IsAltDown()));return true;}
-    if(event.IsControlDown()){switch(event.key_code()){case ui::VKEY_A:Boundary(false,modify);return true;case ui::VKEY_E:Boundary(true,modify);return true;case ui::VKEY_B:Logical(true,false,modify);return true;case ui::VKEY_F:Logical(false,false,modify);return true;case ui::VKEY_H:return Execute(C::DELETE_BACKWARD);case ui::VKEY_D:return Execute(C::DELETE_FORWARD);default:break;}}
+    if(event.IsControlDown()){switch(event.key_code()){case ui::VKEY_A:Boundary(false,modify);return true;case ui::VKEY_E:Boundary(true,modify);return true;case ui::VKEY_B:Visual(GetTextDirection()==base::i18n::RIGHT_TO_LEFT,modify);return true;case ui::VKEY_F:Visual(GetTextDirection()!=base::i18n::RIGHT_TO_LEFT,modify);return true;case ui::VKEY_H:return Execute(C::DELETE_BACKWARD);case ui::VKEY_D:return Execute(C::DELETE_FORWARD);case ui::VKEY_K:return Execute(C::DELETE_TO_END_OF_LINE);case ui::VKEY_U:return Execute(C::DELETE_TO_BEGINNING_OF_LINE);case ui::VKEY_Y:return Execute(C::YANK);case ui::VKEY_T:return Execute(C::TRANSPOSE);default:break;}}
     return false;
   }
   bool OnMousePressed(const ui::MouseEvent& event) override {
@@ -249,6 +262,8 @@ class SceneEditor final : public views::View, public EditorControl,
  private:
   static rust::Slice<const uint16_t> Slice(std::u16string_view text){return {reinterpret_cast<const uint16_t*>(text.data()),text.size()};}
   static std::u16string SingleLine(std::u16string_view text){std::u16string out;for(char16_t c:text)if(c>=0x20&&(c<0x7f||c>0x9f))out.push_back(c);return out;}
+  bool AlignRight() const{return align_right_.value_or(GetTextDirection()==base::i18n::RIGHT_TO_LEFT);}
+  int WritingDirection() const {return !direction_?0:*direction_==base::i18n::RIGHT_TO_LEFT?2:1;}
   SkColor Color(ui::ColorId id,SkColor fallback) const {const auto* provider=GetColorProvider();return provider?provider->GetColor(id):fallback;}
   bool Available() const{return SceneIsVisible(this)&&GetEnabledInViewsSubtree();}
   bool Editable() const{return Available()&&!read_only_;}
@@ -256,26 +271,33 @@ class SceneEditor final : public views::View, public EditorControl,
   void CancelNativeComposition(){if(GetInputMethod()&&GetInputMethod()->GetTextInputClient()==this)GetInputMethod()->CancelComposition(this);}
   void NotifyCaret(){if(GetInputMethod())GetInputMethod()->OnCaretBoundsChanged(this);}
   void RefreshText(){const auto text=sidebar::editor_text(*state_);text_.assign(text.begin(),text.end());line_.reset();}
-  void RefreshAX(){auto i=sidebar::editor_info(*state_);GetViewAccessibility().SetValue(text_);GetViewAccessibility().SetTextSelStart(i.anchor);GetViewAccessibility().SetTextSelEnd(i.focus);GetViewAccessibility().SetReadOnly(read_only_);}
+  void RefreshAX(){auto i=sidebar::editor_info(*state_);GetViewAccessibility().SetValue(text_);GetViewAccessibility().SetTextDirection(static_cast<int32_t>(GetTextDirection()==base::i18n::RIGHT_TO_LEFT?ax::mojom::WritingDirection::kRtl:ax::mojom::WritingDirection::kLtr));GetViewAccessibility().SetTextSelStart(i.anchor);GetViewAccessibility().SetTextSelEnd(i.focus);GetViewAccessibility().SetReadOnly(read_only_);}
   void Apply(sidebar::EditorUpdate update){if(!update.admitted)return;if(update.text_changed){RefreshText();++edit_generation_;}if(!update.info.composing)clauses_.clear();EnsureLayout();RefreshAX();blink_visible_=true;Schedule();NotifyCaret();if(update.text_changed)GetViewAccessibility().NotifyEvent(ax::mojom::Event::kValueChanged,true);if(update.selection_changed)GetViewAccessibility().NotifyEvent(ax::mojom::Event::kTextSelectionChanged,true);}
   void EnsureLayout() const {
-    if(!line_){line_=std::make_unique<EditorTextLayout>(text_,13);std::vector<size_t> words;for(auto word:line_->words()){words.push_back(word.start);words.push_back(word.end);}const auto& stops=line_->graphemes();sidebar::editor_install_boundaries(*state_,sidebar::editor_info(*state_).revision,rust::Slice<const size_t>(stops.data(),stops.size()),rust::Slice<const size_t>(words.data(),words.size()));}
-    auto i=sidebar::editor_info(*state_);geometry_=sidebar::editor_viewport(*state_,width(),height(),line_->width(),line_->Caret(i.focus,i.secondary).x,line_->ascent(),line_->descent(),GetTextDirection()==base::i18n::RIGHT_TO_LEFT);
+    if(!line_){line_=std::make_unique<EditorTextLayout>(text_,13,false,WritingDirection());std::vector<size_t> words;for(auto word:line_->words()){words.push_back(word.start);words.push_back(word.end);}const auto& stops=line_->graphemes();sidebar::editor_install_boundaries(*state_,sidebar::editor_info(*state_).revision,rust::Slice<const size_t>(stops.data(),stops.size()),rust::Slice<const size_t>(words.data(),words.size()));}
+    auto i=sidebar::editor_info(*state_);geometry_=sidebar::editor_viewport(*state_,width(),height(),line_->width(),line_->Caret(i.focus,i.secondary).x,line_->ascent(),line_->descent(),AlignRight());
   }
   gfx::Rect ScreenRect(const sidebar::FloatRect& rect) const{gfx::Rect out=gfx::ToEnclosingRect(gfx::RectF(rect.x,rect.y,rect.width,rect.height));const auto origin=GetBoundsInScreen().origin();out.Offset(origin.x(),origin.y());return out;}
   EditorCaretStop Hit(float x) const{EnsureLayout();return line_->HitTest(x-geometry_.origin);}
   bool Lookup(gfx::Range range,gfx::DecoratedText* text,gfx::Rect* rect){if(range.is_empty()||range.GetMax()>text_.size())return false;EnsureLayout();const auto spans=line_->Spans(range.start(),range.end());if(spans.empty())return false;text->text=text_.substr(range.GetMin(),range.length());text->attributes.clear();const auto fonts=gfx::FontList().DeriveWithSizeDelta(13-gfx::FontList().GetFontSize());text->attributes.emplace_back(gfx::Range(0,text->text.size()),fonts.GetPrimaryFont());*rect=gfx::ToEnclosingRect(gfx::RectF(geometry_.origin+spans.front().x,geometry_.caret.y,spans.front().width,geometry_.caret.height));return true;}
-  void Logical(bool backward,bool word,bool extend){EnsureLayout();Apply(sidebar::editor_move_logical(*state_,backward,word,extend));}
-  void Boundary(bool end,bool extend){EnsureLayout();Apply(sidebar::editor_move_to(*state_,end?text_.size():0,extend,false));}
-  void DeleteBoundary(bool end){if(!Editable())return;EnsureLayout();const auto i=sidebar::editor_info(*state_);Apply(sidebar::editor_select(*state_,i.focus,end?text_.size():0,false));Apply(sidebar::editor_insert(*state_,rust::Slice<const uint16_t>(),false));}
-  void Visual(bool right,bool extend){EnsureLayout();const auto i=sidebar::editor_info(*state_);const auto& stops=line_->carets();if(stops.empty())return;
+  void Logical(bool backward,bool word,bool extend){EnsureLayout();using P=sidebar::EditorSelectionPolicy;Apply(sidebar::editor_navigate(*state_,backward,word,!extend?P::None:word?P::Caret:P::Retain));}
+  void VisualWord(bool right,bool extend){Logical(right==(GetTextDirection()==base::i18n::RIGHT_TO_LEFT),true,extend);}
+  void MoveBoundary(bool end,sidebar::EditorSelectionPolicy policy){EnsureLayout();Apply(sidebar::editor_move_policy(*state_,end?text_.size():0,policy,false));}
+  void Boundary(bool end,bool extend){MoveBoundary(end,extend?sidebar::EditorSelectionPolicy::Extend:sidebar::EditorSelectionPolicy::None);}
+  void RetainedBoundary(bool end,bool extend){MoveBoundary(end,extend?sidebar::EditorSelectionPolicy::Retain:sidebar::EditorSelectionPolicy::None);}
+  void DeleteBoundary(bool end){if(!Editable())return;EnsureLayout();Apply(sidebar::editor_kill(*state_,end));}
+  void Visual(bool right,bool extend){EnsureLayout();auto i=sidebar::editor_info(*state_);if(line_->carets().empty())return;
     if(!extend&&i.anchor!=i.focus){const auto a=line_->Caret(i.anchor).x,b=line_->Caret(i.focus,i.secondary).x;const auto p=right?(a>b?i.anchor:i.focus):(a<b?i.anchor:i.focus);Apply(sidebar::editor_move_to(*state_,p,false,p==i.focus&&i.secondary));return;}
+    if(extend&&!i.directed&&i.anchor!=i.focus){const auto a=line_->Caret(i.anchor).x,b=line_->Caret(i.focus,i.secondary).x;const bool reverse=right?a>b:a<b;if(reverse)Apply(sidebar::editor_orient(*state_,i.focus,i.anchor,false));else Apply(sidebar::editor_orient(*state_,i.anchor,i.focus,i.secondary));i=sidebar::editor_info(*state_);}
+    EnsureLayout();const auto& stops=line_->carets();
     auto at=std::find_if(stops.begin(),stops.end(),[&](const auto& s){return s.index==i.focus&&s.secondary==i.secondary;});if(at==stops.end())at=stops.begin();if(right){if(at+1!=stops.end())++at;}else if(at!=stops.begin())--at;Apply(sidebar::editor_move_to(*state_,at->index,extend,at->secondary));
   }
   void SelectWord(size_t at){EnsureLayout();for(auto word:line_->words())if(at>=word.start&&at<word.end){Apply(sidebar::editor_select(*state_,word.start,word.end,false));return;}auto hi=std::upper_bound(line_->graphemes().begin(),line_->graphemes().end(),at);const auto end=hi==line_->graphemes().end()?text_.size():*hi;Apply(sidebar::editor_select(*state_,at,end,false));}
   bool Execute(ui::TextEditCommand command) {
     if(!IsTextEditCommandEnabled(command))return false;using C=ui::TextEditCommand;EnsureLayout();
     switch(command){
+      case C::TRANSPOSE:Apply(sidebar::editor_transpose(*state_));return true;
+      case C::YANK:Apply(sidebar::editor_yank(*state_));return true;
       case C::UNDO:Apply(sidebar::editor_undo(*state_));return true;
       case C::REDO:Apply(sidebar::editor_redo(*state_));return true;
       case C::SELECT_ALL:Apply(sidebar::editor_select(*state_,0,text_.size(),false));return true;
@@ -285,16 +307,22 @@ class SceneEditor final : public views::View, public EditorControl,
       case C::DELETE_BACKWARD:case C::DELETE_FORWARD:case C::DELETE_WORD_BACKWARD:case C::DELETE_WORD_FORWARD:if(!Editable())return false;Apply(sidebar::editor_erase(*state_,command==C::DELETE_BACKWARD||command==C::DELETE_WORD_BACKWARD,command==C::DELETE_WORD_BACKWARD||command==C::DELETE_WORD_FORWARD));return true;
       case C::DELETE_TO_BEGINNING_OF_LINE:case C::DELETE_TO_BEGINNING_OF_PARAGRAPH:DeleteBoundary(false);return true;
       case C::DELETE_TO_END_OF_LINE:case C::DELETE_TO_END_OF_PARAGRAPH:DeleteBoundary(true);return true;
-      case C::MOVE_BACKWARD:case C::MOVE_BACKWARD_AND_MODIFY_SELECTION:Logical(true,false,command==C::MOVE_BACKWARD_AND_MODIFY_SELECTION);return true;
-      case C::MOVE_FORWARD:case C::MOVE_FORWARD_AND_MODIFY_SELECTION:Logical(false,false,command==C::MOVE_FORWARD_AND_MODIFY_SELECTION);return true;
-      case C::MOVE_WORD_BACKWARD:case C::MOVE_WORD_BACKWARD_AND_MODIFY_SELECTION:case C::MOVE_WORD_LEFT:case C::MOVE_WORD_LEFT_AND_MODIFY_SELECTION:Logical(true,true,command==C::MOVE_WORD_BACKWARD_AND_MODIFY_SELECTION||command==C::MOVE_WORD_LEFT_AND_MODIFY_SELECTION);return true;
-      case C::MOVE_WORD_FORWARD:case C::MOVE_WORD_FORWARD_AND_MODIFY_SELECTION:case C::MOVE_WORD_RIGHT:case C::MOVE_WORD_RIGHT_AND_MODIFY_SELECTION:Logical(false,true,command==C::MOVE_WORD_FORWARD_AND_MODIFY_SELECTION||command==C::MOVE_WORD_RIGHT_AND_MODIFY_SELECTION);return true;
+      case C::MOVE_BACKWARD:case C::MOVE_BACKWARD_AND_MODIFY_SELECTION:Visual(GetTextDirection()==base::i18n::RIGHT_TO_LEFT,command==C::MOVE_BACKWARD_AND_MODIFY_SELECTION);return true;
+      case C::MOVE_FORWARD:case C::MOVE_FORWARD_AND_MODIFY_SELECTION:Visual(GetTextDirection()!=base::i18n::RIGHT_TO_LEFT,command==C::MOVE_FORWARD_AND_MODIFY_SELECTION);return true;
+      case C::MOVE_WORD_BACKWARD:case C::MOVE_WORD_BACKWARD_AND_MODIFY_SELECTION:Logical(true,true,command==C::MOVE_WORD_BACKWARD_AND_MODIFY_SELECTION);return true;
+      case C::MOVE_WORD_FORWARD:case C::MOVE_WORD_FORWARD_AND_MODIFY_SELECTION:Logical(false,true,command==C::MOVE_WORD_FORWARD_AND_MODIFY_SELECTION);return true;
+      case C::MOVE_WORD_LEFT:case C::MOVE_WORD_LEFT_AND_MODIFY_SELECTION:VisualWord(false,command==C::MOVE_WORD_LEFT_AND_MODIFY_SELECTION);return true;
+      case C::MOVE_WORD_RIGHT:case C::MOVE_WORD_RIGHT_AND_MODIFY_SELECTION:VisualWord(true,command==C::MOVE_WORD_RIGHT_AND_MODIFY_SELECTION);return true;
       case C::MOVE_LEFT:case C::MOVE_LEFT_AND_MODIFY_SELECTION:Visual(false,command==C::MOVE_LEFT_AND_MODIFY_SELECTION);return true;
       case C::MOVE_RIGHT:case C::MOVE_RIGHT_AND_MODIFY_SELECTION:Visual(true,command==C::MOVE_RIGHT_AND_MODIFY_SELECTION);return true;
-      case C::MOVE_TO_BEGINNING_OF_DOCUMENT:case C::MOVE_TO_BEGINNING_OF_LINE:case C::MOVE_TO_BEGINNING_OF_PARAGRAPH:case C::MOVE_UP:Boundary(false,false);return true;
-      case C::MOVE_TO_BEGINNING_OF_DOCUMENT_AND_MODIFY_SELECTION:case C::MOVE_TO_BEGINNING_OF_LINE_AND_MODIFY_SELECTION:case C::MOVE_TO_BEGINNING_OF_PARAGRAPH_AND_MODIFY_SELECTION:case C::MOVE_UP_AND_MODIFY_SELECTION:Boundary(false,true);return true;
-      case C::MOVE_TO_END_OF_DOCUMENT:case C::MOVE_TO_END_OF_LINE:case C::MOVE_TO_END_OF_PARAGRAPH:case C::MOVE_DOWN:Boundary(true,false);return true;
-      case C::MOVE_TO_END_OF_DOCUMENT_AND_MODIFY_SELECTION:case C::MOVE_TO_END_OF_LINE_AND_MODIFY_SELECTION:case C::MOVE_TO_END_OF_PARAGRAPH_AND_MODIFY_SELECTION:case C::MOVE_DOWN_AND_MODIFY_SELECTION:Boundary(true,true);return true;
+      case C::MOVE_TO_BEGINNING_OF_DOCUMENT:case C::MOVE_TO_BEGINNING_OF_LINE:case C::MOVE_TO_BEGINNING_OF_PARAGRAPH:case C::MOVE_UP:case C::MOVE_PAGE_UP:case C::SCROLL_PAGE_UP:case C::SCROLL_TO_BEGINNING_OF_DOCUMENT:Boundary(false,false);return true;
+      case C::MOVE_TO_BEGINNING_OF_DOCUMENT_AND_MODIFY_SELECTION:case C::MOVE_TO_BEGINNING_OF_LINE_AND_MODIFY_SELECTION:case C::MOVE_TO_BEGINNING_OF_PARAGRAPH_AND_MODIFY_SELECTION:Boundary(false,true);return true;
+      case C::MOVE_TO_END_OF_DOCUMENT:case C::MOVE_TO_END_OF_LINE:case C::MOVE_TO_END_OF_PARAGRAPH:case C::MOVE_DOWN:case C::MOVE_PAGE_DOWN:case C::SCROLL_PAGE_DOWN:case C::SCROLL_TO_END_OF_DOCUMENT:Boundary(true,false);return true;
+      case C::MOVE_TO_END_OF_DOCUMENT_AND_MODIFY_SELECTION:case C::MOVE_TO_END_OF_LINE_AND_MODIFY_SELECTION:case C::MOVE_TO_END_OF_PARAGRAPH_AND_MODIFY_SELECTION:Boundary(true,true);return true;
+      case C::MOVE_UP_AND_MODIFY_SELECTION:case C::MOVE_PAGE_UP_AND_MODIFY_SELECTION:RetainedBoundary(false,true);return true;
+      case C::MOVE_DOWN_AND_MODIFY_SELECTION:case C::MOVE_PAGE_DOWN_AND_MODIFY_SELECTION:RetainedBoundary(true,true);return true;
+      case C::MOVE_PARAGRAPH_BACKWARD_AND_MODIFY_SELECTION:MoveBoundary(false,sidebar::EditorSelectionPolicy::Caret);return true;
+      case C::MOVE_PARAGRAPH_FORWARD_AND_MODIFY_SELECTION:MoveBoundary(true,sidebar::EditorSelectionPolicy::Caret);return true;
       default:return false;
     }
   }
@@ -302,7 +330,7 @@ class SceneEditor final : public views::View, public EditorControl,
     EnsureLayout();auto i=sidebar::editor_info(*state_);std::vector<sidebar::EditorSpan> selected,composition;
     for(auto s:line_->Spans(i.anchor,i.focus))selected.push_back({s.x,s.width,0,0});
     if(i.composing){if(clauses_.empty()){for(auto s:line_->Spans(i.composition_start,i.composition_end))composition.push_back({s.x,s.width,1,Color(ui::kColorTextfieldForeground,SK_ColorBLACK)});}else for(const auto& clause:clauses_) {const size_t length=i.composition_end-i.composition_start;if(clause.start_offset>=clause.end_offset||clause.end_offset>length||clause.underline_style==ui::ImeTextSpan::UnderlineStyle::kNone)continue;for(auto s:line_->Spans(i.composition_start+clause.start_offset,i.composition_start+clause.end_offset))composition.push_back({s.x,s.width,clause.thickness==ui::ImeTextSpan::Thickness::kThick?2.f:1.f,clause.underline_color?clause.underline_color:Color(ui::kColorTextfieldForeground,SK_ColorBLACK)});}}
-    sidebar::EditorStyle style{};style.width=width();style.height=height();style.font_size=13;style.ink=Color(GetEnabledInViewsSubtree()?ui::kColorTextfieldForeground:ui::kColorTextfieldForegroundDisabled,SK_ColorBLACK);style.fill=Color(ui::kColorTextfieldBackground,SK_ColorWHITE);style.edge=Color(HasFocus()?ui::kColorFocusableBorderFocused:ui::kColorTextfieldOutline,SK_ColorGRAY);style.selection_fill=Color(ui::kColorTextfieldSelectionBackground,0xFF6755C8);style.selection_ink=Color(ui::kColorTextfieldSelectionForeground,SK_ColorWHITE);style.placeholder_ink=Color(ui::kColorTextfieldForegroundPlaceholder,SK_ColorGRAY);style.focused=HasFocus();style.caret_visible=blink_visible_&&Editable();
+    sidebar::EditorStyle style{};style.right_align=AlignRight();style.text_direction=WritingDirection();if(text_.empty()&&!placeholder_.empty()){EditorTextLayout hint(placeholder_,13,false,WritingDirection());style.placeholder_width=hint.width();}style.width=width();style.height=height();style.font_size=13;style.ink=Color(GetEnabledInViewsSubtree()?ui::kColorTextfieldForeground:ui::kColorTextfieldForegroundDisabled,SK_ColorBLACK);style.fill=Color(ui::kColorTextfieldBackground,SK_ColorWHITE);style.edge=Color(HasFocus()?ui::kColorFocusableBorderFocused:ui::kColorTextfieldOutline,SK_ColorGRAY);style.selection_fill=Color(ui::kColorTextfieldSelectionBackground,0xFF6755C8);style.selection_ink=Color(ui::kColorTextfieldSelectionForeground,SK_ColorWHITE);style.placeholder_ink=Color(ui::kColorTextfieldForegroundPlaceholder,SK_ColorGRAY);style.focused=HasFocus();style.caret_visible=blink_visible_&&Editable();
     return sidebar::editor_scene(*state_,Slice(placeholder_),geometry_,style,rust::Slice<const sidebar::EditorSpan>(selected.data(),selected.size()),rust::Slice<const sidebar::EditorSpan>(composition.data(),composition.size()));
   }
   void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneEditor::UpdateMetal,weak_factory_.GetWeakPtr()));SchedulePaint();}
@@ -324,7 +352,7 @@ class SceneEditor final : public views::View, public EditorControl,
     base::WeakPtr<SceneEditor> owner_;uint64_t context_,serial_;
   };
   mutable rust::Box<sidebar::EditorState> state_;std::u16string text_,placeholder_;mutable std::unique_ptr<EditorTextLayout> line_;mutable sidebar::EditorGeometry geometry_{};
-  ui::ImeTextSpans clauses_;std::optional<base::i18n::TextDirection> direction_;bool read_only_=false,pending_=false,blink_visible_=true,dragging_=false,drag_candidate_=false,drag_started_=false;uint64_t context_=0,edit_generation_=0,menu_generation_=0,drag_revision_=0;gfx::Range drag_selection_;
+  ui::ImeTextSpans clauses_;std::optional<base::i18n::TextDirection> direction_;std::optional<bool> align_right_;bool read_only_=false,pending_=false,blink_visible_=true,dragging_=false,drag_candidate_=false,drag_started_=false;uint64_t context_=0,edit_generation_=0,menu_generation_=0,drag_revision_=0;gfx::Range drag_selection_;
   ui::TextEditCommand pending_command_=ui::TextEditCommand::INVALID_COMMAND;base::RepeatingTimer blink_;base::CallbackListSubscription enabled_subscription_;std::unique_ptr<SidebarMetal> surface_;std::unique_ptr<MenuDelegate> menu_delegate_;std::unique_ptr<ui::SimpleMenuModel> menu_;std::unique_ptr<views::MenuRunner> runner_;
   SceneWindowObserver window_{base::BindRepeating(&SceneEditor::SyncLifecycle,base::Unretained(this))};base::WeakPtrFactory<SceneEditor> weak_factory_{this};
 };

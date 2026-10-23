@@ -12,8 +12,9 @@ void Check(bool ok, const char *message) {
   }
 }
 bool Near(float a, float b) { return std::abs(a - b) < 0.05f; }
-void Line(std::u16string_view text) {
-  EditorTextLayout l(text, 14);
+void Line(std::u16string_view text, int direction = 0) {
+  fprintf(stderr,"Checking direction=%d text=%s\n",direction,[[[NSString alloc] initWithCharacters:reinterpret_cast<const unichar*>(text.data()) length:text.size()] UTF8String]);
+  EditorTextLayout l(text, 14, false, direction);
   Check(l.valid(), "line creation");
   Check(l.length() == text.size(), "UTF16 length");
   Check(std::isfinite(l.width()) && l.width() >= 0, "finite width");
@@ -31,6 +32,7 @@ void Line(std::u16string_view text) {
     Check(Near(l.Caret(c.index, c.secondary).x, c.x),
           "caret affinity geometry");
   }
+  for(int sample=0;sample<=100;++sample){const float x=-5+(l.width()+10)*sample/100.f;const auto expected=std::min_element(l.carets().begin(),l.carets().end(),[&](const auto& a,const auto& b){return std::abs(a.x-x)<std::abs(b.x-x);});const auto hit=l.HitTest(x);Check(hit.index==expected->index&&hit.secondary==expected->secondary,"stable nearest-caret affinity");}
   size_t previous = 0;
   for (auto w : l.words()) {
     Check(w.start >= previous && w.start < w.end && w.end <= text.size(),
@@ -104,6 +106,10 @@ void Raster() {
       }
     }
   Check(ink > 0, "scroll retains ink");
+  std::fill(pixels.begin(),pixels.end(),0);
+  EditorTextLayout rtl_spaces(u"a b   ",18,false,2);rtl_spaces.Draw(context,8,24,0xffff0000);
+  size_t left=width;for(size_t y=0;y<height;++y)for(size_t x=0;x<width;++x)if(pixels[(y*width+x)*4+3])left=std::min(left,x);
+  const auto span=rtl_spaces.Spans(0,1);Check(!span.empty(),"forced RTL first glyph span");const float expected_left=8+span.front().x;Check(left>=std::floor(expected_left)-2&&left<=std::ceil(expected_left)+4,"RTL origin shared by raster and geometry");
   CGContextRelease(context);
 }
 } // namespace
@@ -112,8 +118,8 @@ int main() {
     for (auto text : {u"", u"hello world", u"office affine ffi", u"a\u0301b",
                       u"👩‍👩‍👧‍👦🇵🇱🦀",
                       u"日本語 中文 ไทย", u"مرحبا بالعالم", u"אבג 123 דהו",
-                      u"abc אבג xyz", u"אבג abc דהו", u"a  b   "})
-      Line(text);
+                      u"abc אבג xyz", u"אבג abc דהו", u"a  b   ", u"אבג   ",u"   אבג",u"123 אבג   ",u"אבג abc   "})
+      for(int direction=0;direction<3;++direction)Line(text,direction);
     EditorTextLayout cluster(u"a\u0301🦀", 14);
     Check(cluster.graphemes() == std::vector<size_t>({0, 2, 4}),
           "composed boundaries");
@@ -127,6 +133,9 @@ int main() {
     EditorTextLayout long_line(long_text, 14);
     Check(long_line.length() == 10000 && long_line.width() > 4096,
           "no tile-limit truncation");
+    EditorTextLayout natural(u"abc אבג",14),forced(u"abc אבג",14,false,2);
+    Check(Near(natural.width(),forced.width()),"forced direction keeps line extent");
+    Check(std::abs(natural.Caret(0).x-forced.Caret(0).x)>10,"forced RTL changes visual geometry");
     Raster();
     printf("PASS: CoreText geometry, Unicode/bidi, selection, long line, "
            "clipping/raster; no windows\n");
