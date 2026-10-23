@@ -49,6 +49,7 @@ class Widget;
 }
 
 namespace zitter::prototype {
+class WorkspaceSwipeState;
 
 // Top band above the sidebar; its first 28 px align with macOS's titlebar,
 // where the native traffic lights sit.
@@ -232,7 +233,7 @@ class WorkspaceShell final : public ui::EventHandler,
   bool workspace_animation_running() const;
   bool workspace_animation_pending() const { return workspace_animation_pending_; }
   bool workspace_swipe_visible() const { return swipe_overlay_ != nullptr; }
-  double workspace_swipe_position() const { return swipe_position_; }
+  double workspace_swipe_position() const;
   size_t workspace_swipe_preview_count() const;
   views::Widget* general_widget() const { return general_widget_.get(); }
   void SetPreferencesStatus(std::u16string text, bool error = false);
@@ -572,21 +573,15 @@ class WorkspaceShell final : public ui::EventHandler,
   std::vector<std::pair<std::string, std::vector<PinnedItem>>> sidebar_warm_queue_;
   base::OneShotTimer sidebar_warm_timer_;
   bool HandleWorkspaceScroll(float x, float y, bool began, bool ended, bool momentum, base::TimeTicks time, bool phase_less = false);
-  float swipe_x_ = 0, swipe_y_ = 0;
-  int swipe_axis_ = 0;
-  bool swipe_tracking_ = false;
-  bool swipe_closed_ = false;
-  bool swipe_phase_less_ = false;
+  std::unique_ptr<WorkspaceSwipeState> workspace_swipe_;
   bool swipe_committing_ = false;
-  int swipe_start_index_ = 0;
-  double swipe_position_ = 0;
   std::string swipe_source_, swipe_commit_target_;
   std::vector<std::string> swipe_workspace_ids_;
   raw_ptr<views::View> swipe_overlay_ = nullptr;
   base::OneShotTimer swipe_idle_timer_, swipe_settle_timer_;
   void UpdateWorkspaceSwipePreview();
   void FinishWorkspaceSwipe();
-  void CancelWorkspaceSwipe();
+  void CancelWorkspaceSwipe(bool reset_state = true);
   size_t workspace_animation_generation_ = 0;
   bool workspace_animation_pending_ = false;
   base::TimeTicks swipe_last_time_;

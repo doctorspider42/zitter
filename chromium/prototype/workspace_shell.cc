@@ -1314,20 +1314,22 @@ class WorkspaceSwipePreview final : public views::View {
     layer()->SetFillsBoundsOpaquely(false);
   }
   void Move(double position, int count, bool settle) {
-    const int center = std::clamp(static_cast<int>(std::round(position)), 0, count - 1);
+    const auto plan=SidebarSwipeLayout(position,count,width());
+    const int center=plan.center;
     center_ = center;
     for (auto it = pages_.begin(); it != pages_.end();) {
       if (std::abs(it->first - center) <= 1) { ++it; continue; }
       it = pages_.erase(it);
     }
-    for (int i = std::max(0, center - 1); i <= std::min(count - 1, center + 1); ++i) {
+    for (const auto& placement : plan.pages) {
+      const int i=placement.index;
       if (!pages_.contains(i)) {
         if (!records_.contains(i)) records_[i] = capture_.Run(i);
         auto page = std::make_unique<SwipePage>(records_[i], size());
         layer()->Add(page->layer()); pages_[i] = std::move(page);
       }
       auto* page = pages_[i].get();
-      gfx::Transform transform; transform.Translate((i - position) * width(), 0);
+      gfx::Transform transform; transform.Translate(placement.x, 0);
       if (settle) {
         ui::ScopedLayerAnimationSettings settings(page->layer()->GetAnimator());
         settings.SetTransitionDuration(base::Milliseconds(160));
@@ -1739,6 +1741,7 @@ WorkspaceShell::WorkspaceShell(base::FilePath path, Callbacks callbacks)
     : settings_path_(std::move(path)), callbacks_(std::move(callbacks)),
       io_runner_(base::ThreadPool::CreateSequencedTaskRunner(
           {base::MayBlock(), base::TaskShutdownBehavior::BLOCK_SHUTDOWN})) {
+  workspace_swipe_ = std::make_unique<WorkspaceSwipeState>();
   state_.workspace_id = "work";
   ui::NativeTheme::GetInstanceForNativeUi()->AddObserver(this);
 }
@@ -3375,10 +3378,11 @@ void WorkspaceShell::WarmNextSidebar() {
       base::BindOnce(&WorkspaceShell::WarmNextSidebar, weak_factory_.GetWeakPtr()));
 }
 
-void WorkspaceShell::CancelWorkspaceSwipe() {
+void WorkspaceShell::CancelWorkspaceSwipe(bool reset_state) {
+  if(reset_state)workspace_swipe_->Cancel();
   ScheduleMetalSidebar();
   swipe_idle_timer_.Stop(); swipe_settle_timer_.Stop();
-  swipe_tracking_ = swipe_committing_ = false; swipe_closed_ = true;
+  swipe_committing_ = false;
   if (swipe_overlay_) {
     auto* overlay = swipe_overlay_.get(); swipe_overlay_ = nullptr;
     sidebar_root_->RemoveChildViewT(overlay);
@@ -3387,6 +3391,7 @@ void WorkspaceShell::CancelWorkspaceSwipe() {
       static_cast<GlyphButton*>(button.get())->set_on(id == state_.workspace_id);
   }
 }
+double WorkspaceShell::workspace_swipe_position() const { return workspace_swipe_->position(); }
 size_t WorkspaceShell::workspace_swipe_preview_count() const {
   return swipe_overlay_ ? static_cast<WorkspaceSwipePreview*>(swipe_overlay_.get())->page_count() : 0;
 }
@@ -3499,8 +3504,8 @@ void WorkspaceShell::UpdateWorkspaceSwipePreview() {
   }
   auto* preview = static_cast<WorkspaceSwipePreview*>(swipe_overlay_.get());
   const auto previous_center = preview->center();
-  preview->Move(swipe_position_, swipe_workspace_ids_.size(), false);
-  const int nearest = std::clamp(static_cast<int>(std::round(swipe_position_)), 0, static_cast<int>(state_.workspaces.size()) - 1);
+  preview->Move(workspace_swipe_->position(), swipe_workspace_ids_.size(), false);
+  const int nearest = workspace_swipe_->target(state_.workspaces.size());
   if (previous_center == nearest) return;
   const auto& workspace = state_.workspaces[nearest];
   const auto emoji = workspace_emoji(workspace.id);
@@ -3509,9 +3514,9 @@ void WorkspaceShell::UpdateWorkspaceSwipePreview() {
     static_cast<GlyphButton*>(button.get())->set_on(id == workspace.id);
 }
 void WorkspaceShell::FinishWorkspaceSwipe() {
-  swipe_idle_timer_.Stop(); swipe_tracking_ = false; swipe_closed_ = true;
+  swipe_idle_timer_.Stop(); workspace_swipe_->Finish();
   if (!swipe_overlay_) return;
-  const int target = std::clamp(static_cast<int>(std::round(swipe_position_)), 0, static_cast<int>(swipe_workspace_ids_.size()) - 1);
+  const int target = workspace_swipe_->target(swipe_workspace_ids_.size());
   swipe_commit_target_ = swipe_workspace_ids_[target]; swipe_committing_ = true;
   static_cast<WorkspaceSwipePreview*>(swipe_overlay_.get())->Move(target, swipe_workspace_ids_.size(),
       workspace_animations_ && !gfx::Animation::PrefersReducedMotion());
@@ -3525,47 +3530,28 @@ void WorkspaceShell::FinishWorkspaceSwipe() {
         }
         shell->swipe_settle_timer_.Start(FROM_HERE,
             shell->workspace_animations_ && !gfx::Animation::PrefersReducedMotion() ? base::Milliseconds(180) : base::TimeDelta(),
-            base::BindOnce(&WorkspaceShell::CancelWorkspaceSwipe, shell));
+            base::BindOnce(&WorkspaceShell::CancelWorkspaceSwipe, shell, true));
       }, weak_factory_.GetWeakPtr(), source, destination));
 }
 bool WorkspaceShell::HandleWorkspaceScroll(float x, float y, bool began, bool ended, bool momentum, base::TimeTicks time, bool phase_less) {
   if (!sidebar_visible() || !state_.configuration_ready || state_.profiles_busy || state_.workspaces.size() < 2 || folder_dialog_ || remove_workspace_dialog_ ||
       (workspace_menu_runner_ && workspace_menu_runner_->IsRunning())) return false;
-  if (began || (!swipe_tracking_ && !momentum && !ended && (!swipe_closed_ || phase_less))) {
-    CancelWorkspaceSwipe();
-    swipe_x_ = swipe_y_ = 0; swipe_axis_ = 0; swipe_closed_ = false; swipe_tracking_ = true; swipe_phase_less_ = phase_less;
+  const int index=std::find_if(state_.workspaces.begin(),state_.workspaces.end(),[&](const auto& w){return w.id==state_.workspace_id;})-state_.workspaces.begin();
+  const auto update=workspace_swipe_->Event(x,y,tab_scroll_->width(),index,state_.workspaces.size(),began,ended,momentum,phase_less);
+  if(update.started) {
+    // Retire the previous native preview/timers without resetting the new Rust
+    // gesture. Workspace identities remain in the application adapter.
+    CancelWorkspaceSwipe(false);
     swipe_workspace_ids_.clear();
-    for (const auto& workspace : state_.workspaces) swipe_workspace_ids_.push_back(workspace.id);
-    swipe_source_ = state_.workspace_id;
-    swipe_start_index_ = std::find(swipe_workspace_ids_.begin(), swipe_workspace_ids_.end(), swipe_source_) - swipe_workspace_ids_.begin();
-    swipe_position_ = swipe_start_index_;
+    for(const auto& workspace:state_.workspaces)swipe_workspace_ids_.push_back(workspace.id);
+    swipe_source_=state_.workspace_id;
   }
-  swipe_last_time_ = time;
-  if (momentum) {
-    if (swipe_tracking_) FinishWorkspaceSwipe();
-    return swipe_axis_ == 1;
-  }
-  if (!swipe_tracking_) return swipe_axis_ == 1;
-  if (swipe_axis_ != -1) {
-    swipe_x_ += x; swipe_y_ += y;
-    if (!swipe_axis_) {
-      if (std::abs(swipe_y_) >= 12 && std::abs(swipe_y_) > std::abs(swipe_x_)) swipe_axis_ = -1;
-      else if (std::abs(swipe_x_) >= 12 && std::abs(swipe_x_) >= std::abs(swipe_y_) * 1.5f) swipe_axis_ = 1;
-    }
-    if (swipe_axis_ == 1) {
-      const double extent = std::max(1, tab_scroll_->width());
-      const double position = swipe_start_index_ - swipe_x_ / extent;
-      const double last = swipe_workspace_ids_.size() - 1;
-      swipe_position_ = position < 0 ? -std::min(0.22, -position * 0.2) :
-          position > last ? last + std::min(0.22, (position - last) * 0.2) : position;
-      UpdateWorkspaceSwipePreview();
-    }
-  }
-  const bool handled = swipe_axis_ == 1;
-  if (ended) FinishWorkspaceSwipe();
-  else if (phase_less) swipe_idle_timer_.Start(FROM_HERE, base::Milliseconds(140),
-      base::BindOnce(&WorkspaceShell::FinishWorkspaceSwipe, weak_factory_.GetWeakPtr()));
-  return handled;
+  swipe_last_time_=time;
+  if(update.preview)UpdateWorkspaceSwipePreview();
+  if(update.finish)FinishWorkspaceSwipe();
+  else if(workspace_swipe_->tracking()&&phase_less&&!momentum)swipe_idle_timer_.Start(FROM_HERE,base::Milliseconds(140),
+      base::BindOnce(&WorkspaceShell::FinishWorkspaceSwipe,weak_factory_.GetWeakPtr()));
+  return update.handled;
 }
 void WorkspaceShell::OnScrollEvent(ui::ScrollEvent* event) {
   last_native_scroll_time_ = event->time_stamp();
@@ -3579,7 +3565,7 @@ void WorkspaceShell::OnScrollEvent(ui::ScrollEvent* event) {
       event->momentum_phase() == ui::EventMomentumPhase::INERTIAL_UPDATE;
   const bool phase_less = event->scroll_event_phase() == ui::ScrollEventPhase::kNone &&
       event->momentum_phase() == ui::EventMomentumPhase::END &&
-      (event->x_offset() != 0 || event->y_offset() != 0) && (!swipe_tracking_ || swipe_phase_less_);
+      (event->x_offset() != 0 || event->y_offset() != 0) && (!workspace_swipe_->tracking() || workspace_swipe_->phase_less());
   const bool ended = !phase_less && (event->scroll_event_phase() == ui::ScrollEventPhase::kEnd ||
       event->momentum_phase() == ui::EventMomentumPhase::END);
   if (HandleWorkspaceScroll(event->x_offset(), event->y_offset(), began, ended, momentum,
@@ -5063,8 +5049,8 @@ std::u16string WorkspaceShell::workspace_emoji(std::string_view id) const {
   return it == emoji_.end() ? std::u16string() : it->second;
 }
 void WorkspaceShell::RefreshWorkspaceHeading() {
-  if (swipe_overlay_ && swipe_tracking_ && !swipe_workspace_ids_.empty()) {
-    const auto index = std::clamp(static_cast<int>(std::round(swipe_position_)), 0, static_cast<int>(state_.workspaces.size()) - 1);
+  if (swipe_overlay_ && workspace_swipe_->tracking() && !swipe_workspace_ids_.empty()) {
+    const auto index = workspace_swipe_->target(state_.workspaces.size());
     const auto& workspace = state_.workspaces[index];
     const auto emoji = workspace_emoji(workspace.id);
     static_cast<WorkspaceHeading*>(workspace_name_.get())->SetText((emoji.empty() ? u"" : emoji + u"  ") + base::UTF8ToUTF16(workspace.name));

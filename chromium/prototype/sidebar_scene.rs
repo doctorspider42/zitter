@@ -3,6 +3,9 @@
 // remain in WorkspaceShell. No URLs, profiles or WebContents cross this ABI.
 #[cxx::bridge(namespace = "zitter::sidebar")]
 mod ffi {
+    struct SwipeUpdate { started: bool, preview: bool, finish: bool, handled: bool }
+    struct SwipePage { index: i32, x: f64 }
+    struct SwipeLayout { center: i32, pages: Vec<SwipePage> }
     struct PaletteInputLayout { icon: Rect, input: Rect, hint: Rect }
     struct WidthChange { width: i32, changed: bool }
     struct ShellLayout { content: Rect, edge: Rect, sidebar: Rect }
@@ -45,6 +48,17 @@ mod ffi {
         text: String, font_size: f32, bold: bool, middle: bool, center: bool, clip: FloatRect,
     }
     extern "Rust" {
+        type WorkspaceSwipe;
+        fn new_workspace_swipe() -> Box<WorkspaceSwipe>;
+        fn event(self: &mut WorkspaceSwipe, x: f32, y: f32, width: i32, index: i32, count: i32,
+                 began: bool, ended: bool, momentum: bool, phase_less: bool) -> SwipeUpdate;
+        fn finish(self: &mut WorkspaceSwipe);
+        fn cancel(self: &mut WorkspaceSwipe);
+        fn tracking(self: &WorkspaceSwipe) -> bool;
+        fn phase_less(self: &WorkspaceSwipe) -> bool;
+        fn position(self: &WorkspaceSwipe) -> f64;
+        fn target(self: &WorkspaceSwipe, count: i32) -> i32;
+        fn swipe_layout(position: f64, count: i32, width: i32) -> SwipeLayout;
         type PaletteSelection;
         fn new_palette_selection() -> Box<PaletteSelection>;
         fn reset(self: &mut PaletteSelection);
@@ -143,6 +157,65 @@ impl PaletteSelection {
     }
     fn reconcile(&mut self,count:usize,preserved:usize,found:bool){if found{self.index=preserved;}self.index=self.index.min(count.saturating_sub(1));}
 }
+// Gesture state is independent of window visibility, timers and workspace IDs.
+// Only the native adapter commits the selected workspace after settling begins.
+pub struct WorkspaceSwipe {
+    x:f32, y:f32, axis:i32, tracking:bool, closed:bool, phase_less:bool,
+    start:i32, count:i32, position:f64,
+}
+fn new_workspace_swipe()->Box<WorkspaceSwipe>{Box::new(WorkspaceSwipe{x:0.0,y:0.0,axis:0,tracking:false,closed:false,phase_less:false,start:0,count:0,position:0.0})}
+impl WorkspaceSwipe {
+    fn event(&mut self,x:f32,y:f32,width:i32,index:i32,count:i32,began:bool,ended:bool,momentum:bool,phase_less:bool)->ffi::SwipeUpdate {
+        let started=count>=2 && (began || (!self.tracking && !momentum && !ended && (!self.closed || phase_less)));
+        if started {
+            self.cancel();self.x=0.0;self.y=0.0;self.axis=0;self.tracking=true;self.closed=false;
+            self.phase_less=phase_less;self.count=count;self.start=index.clamp(0,count-1);self.position=self.start as f64;
+        }
+        let mut out=ffi::SwipeUpdate{started,preview:false,finish:false,handled:self.axis==1};
+        if momentum || !self.tracking {
+            if momentum && self.tracking {self.finish();out.finish=true;}
+            return out;
+        }
+        // Malformed platform input must not poison later transforms/targets.
+        if self.axis!=-1 && x.is_finite() && y.is_finite() {
+            let nx=self.x+x;let ny=self.y+y;
+            if nx.is_finite() && ny.is_finite(){self.x=nx;self.y=ny;}
+            if self.axis==0 {
+                if self.y.abs()>=12.0 && self.y.abs()>self.x.abs(){self.axis=-1;}
+                else if self.x.abs()>=12.0 && self.x.abs()>=self.y.abs()*1.5{self.axis=1;}
+            }
+            if self.axis==1 {
+                let position=self.start as f64-self.x as f64/width.max(1) as f64;let last=(self.count-1) as f64;
+                self.position=if position<0.0{-(-position*0.2).min(0.22)}else if position>last{last+((position-last)*0.2).min(0.22)}else{position};
+                out.preview=true;
+            }
+        }
+        out.handled=self.axis==1;
+        if ended{self.finish();out.finish=true;}
+        out
+    }
+    fn finish(&mut self){self.tracking=false;self.closed=true;}
+    fn cancel(&mut self){self.finish();}
+    fn tracking(&self)->bool{self.tracking}
+    fn phase_less(&self)->bool{self.phase_less}
+    fn position(&self)->f64{self.position}
+    fn target(&self,count:i32)->i32{swipe_center(self.position,count)}
+}
+fn swipe_center(position:f64,count:i32)->i32 {
+    if count<=0{return -1;}
+    let position=if position.is_finite(){position}else{0.0};
+    (position.round() as i32).clamp(0,count-1)
+}
+fn swipe_layout(position:f64,count:i32,width:i32)->ffi::SwipeLayout {
+    let center=swipe_center(position,count);
+    let mut pages=Vec::new();
+    if center>=0 {
+        let position=if position.is_finite(){position}else{0.0};
+        for index in (center-1).max(0)..=(center+1).min(count-1){pages.push(ffi::SwipePage{index,x:(index as f64-position)*width.max(0) as f64});}
+    }
+    ffi::SwipeLayout{center,pages}
+}
+
 fn palette_text_layout(kind:u32,width:i32,height:i32,text_width:i32,font_height:i32)->ffi::ColumnLayout {
     let (top,left,bottom,right):(i32,i32,i32,i32)=match kind{0=>(1,1,1,1),1=>(11,18,10,18),_=>(8,18,8,18)};
     let tw=text_width.max(0);let fh=font_height.max(0);
@@ -962,6 +1035,59 @@ mod tests {
             assert_eq!(icon.shape,glyph-1);assert_eq!((icon.x,icon.y,icon.width,icon.height),(8.0,8.0,16.0,16.0));
             assert!(ops.iter().all(|p|p.text.is_empty()));
         }
+    }
+    #[test] fn workspace_swipe_reverses_skips_and_rearms_at_same_cursor() {
+        let mut s=new_workspace_swipe();
+        let u=s.event(0.0,0.0,200,0,4,true,false,false,false);assert!(u.started&&!u.handled);
+        let u=s.event(-90.0,0.0,200,0,4,false,false,false,false);assert!(u.preview&&u.handled);assert!((s.position()-0.45).abs()<1e-9);
+        s.event(80.0,0.0,200,0,4,false,false,false,false);assert!((s.position()-0.05).abs()<1e-9);
+        let u=s.event(0.0,0.0,200,0,4,false,true,false,false);assert!(u.finish&&u.handled&&!s.tracking());assert_eq!(s.target(4),0);
+        s.event(-240.0,0.0,200,0,4,true,false,false,false);s.event(-320.0,0.0,200,0,4,false,false,false,false);
+        assert!((s.position()-2.8).abs()<1e-9);assert_eq!(s.target(4),3);
+        s.event(0.0,0.0,200,0,4,false,true,false,false);
+        s.event(620.0,0.0,200,3,4,true,false,false,false);assert_eq!(s.target(4),0);
+    }
+    #[test] fn workspace_swipe_axis_thresholds_and_vertical_lock() {
+        let mut s=new_workspace_swipe();s.event(0.0,0.0,200,0,4,true,false,false,false);
+        assert!(!s.event(-11.0,0.0,200,0,4,false,false,false,false).preview);
+        assert!(s.event(-1.0,0.0,200,0,4,false,false,false,false).handled);
+        s.event(0.0,0.0,200,0,4,true,false,false,false);
+        assert!(!s.event(0.0,-12.0,200,0,4,false,false,false,false).handled);
+        let u=s.event(-600.0,0.0,200,0,4,false,false,false,false);assert!(!u.preview&&!u.handled);assert_eq!(s.position(),0.0);
+        s.event(-15.0,10.0,200,0,4,true,false,false,false);assert_eq!(s.position(),0.075);
+        // Horizontal lock survives subsequent vertical movement.
+        assert!(s.event(0.0,100.0,200,0,4,false,false,false,false).handled);
+    }
+    #[test] fn workspace_swipe_momentum_finishes_once_and_closed_stream_stays_closed() {
+        let mut s=new_workspace_swipe();s.event(-140.0,0.0,200,0,4,true,false,false,false);
+        let u=s.event(-999.0,0.0,200,0,4,false,false,true,false);assert!(u.finish&&u.handled&&!s.tracking());assert_eq!(s.position(),0.7);assert_eq!(s.target(4),1);
+        let u=s.event(999.0,0.0,200,0,4,false,false,true,false);assert!(!u.finish&&!u.started&&u.handled);assert_eq!(s.position(),0.7);
+        let u=s.event(-100.0,0.0,200,0,4,false,false,false,false);assert!(!u.started&&!u.preview);
+        s.cancel();assert!(!s.tracking());assert!(!s.event(-100.0,0.0,200,0,4,false,true,false,false).started);
+        assert!(s.event(0.0,0.0,200,1,4,true,false,false,false).started);assert_eq!(s.position(),1.0);
+    }
+    #[test] fn workspace_swipe_phase_less_idle_finish_and_rubber_band() {
+        let mut s=new_workspace_swipe();let u=s.event(-120.0,0.0,200,0,4,false,false,false,true);assert!(u.started&&u.handled&&s.phase_less());
+        s.finish();assert_eq!(s.target(4),1);
+        assert!(s.event(-200.0,0.0,200,1,4,false,false,false,true).started);assert_eq!(s.position(),2.0);
+        s.event(10000.0,0.0,200,0,4,true,false,false,false);assert_eq!(s.position(),-0.22);assert_eq!(s.target(4),0);
+        s.event(-10000.0,0.0,200,3,4,true,false,false,false);assert_eq!(s.position(),3.22);assert_eq!(s.target(4),3);
+    }
+    #[test] fn workspace_swipe_preview_plan_keeps_only_neighbors_and_fractional_offsets() {
+        let p=swipe_layout(2.8,6,201);assert_eq!(p.center,3);assert_eq!(p.pages.iter().map(|p|p.index).collect::<Vec<_>>(),vec![2,3,4]);
+        for page in p.pages{assert!((page.x-(page.index as f64-2.8)*201.0).abs()<1e-9);}
+        assert_eq!(swipe_layout(-0.22,6,200).pages.len(),2);
+        assert_eq!(swipe_layout(5.22,6,200).pages.len(),2);
+        assert_eq!(swipe_layout(0.5,6,200).center,1);
+        let empty=swipe_layout(0.0,0,200);assert_eq!(empty.center,-1);assert!(empty.pages.is_empty());
+    }
+    #[test] fn workspace_swipe_invalid_input_cannot_poison_transforms() {
+        let mut s=new_workspace_swipe();assert!(!s.event(0.0,0.0,0,0,0,true,false,false,false).started);
+        s.event(0.0,0.0,0,0,4,true,false,false,false);
+        assert!(!s.event(f32::NAN,0.0,0,0,4,false,false,false,false).preview);
+        assert!(!s.event(f32::INFINITY,0.0,0,0,4,false,false,false,false).preview);
+        s.event(-20.0,0.0,0,0,4,false,false,false,false);assert!(s.position().is_finite());
+        let p=swipe_layout(f64::NAN,4,-1);assert!(p.pages.iter().all(|p|p.x==0.0));assert_eq!(s.target(0),-1);
     }
     #[test] fn palette_static_text_owns_padding_and_tight_bounds() {
         let e=palette_text_layout(0,-1,-1,20,13);assert_eq!((e.width,e.height,e.children[0].x,e.children[0].y),(22,15,1,1));

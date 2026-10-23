@@ -1,0 +1,67 @@
+{
+  "date": "2026-10-23",
+  "platform": "macOS arm64",
+  "build": "Release, ThinLTO, Chromium PGO",
+  "base_commit": "3cd95d82019b239c6c9cc6e84331a4f9f5ef0c55",
+  "chromium_base_revision": "1a732fcc23b20dd0bcf38f35d72c1fe1ec799d35",
+  "purpose": "Non-windowed verification of Rust workspace swipe state and preview placement; GUI acceptance deferred by user",
+  "acceptance_status": "awaiting_gui_checkpoint",
+  "source_sha256": {
+    "chromium/prototype/sidebar_scene.rs": "643cca7b69a608b20c4372dcccb492405f7ab6a9a895fa94af1c67220085b133",
+    "chromium/prototype/sidebar_layout.cc": "e5fb75d14d856852263be183a581d69e27814dce315f94733fb2906bf3f0aca9",
+    "chromium/prototype/sidebar_layout.h": "efe11e2c842686bb8772573aff7ca83438cc0c313e405a928f020a00dc877598",
+    "chromium/prototype/workspace_shell.cc": "f5dc867d7f41d3669d1cece80536b708e90a26d55fe68c965d542639b3608a90",
+    "chromium/prototype/workspace_shell.h": "4ee6fc7f9d9d9ad03ad64e48faebf6717185b90553f97e6fc78826b56ba56919"
+  },
+  "staged_sources_match": true,
+  "compiled_app_uuid": "4C4C443A-5555-3144-A1BF-30FB49ABB50C",
+  "compiled_browser_test_uuid": "4C4C4459-5555-3144-A1B8-17FAFFCB42F4",
+  "build_targets": [
+    "sidebar_scene_unittests_exe",
+    "zitter_prototype_ui_lab",
+    "zitter_ui_lab"
+  ],
+  "build_result": "passed",
+  "rust_unit_tests_passed": 56,
+  "python_unit_tests_passed": 59,
+  "new_rust_tests_passed": [
+    "workspace_swipe_momentum_finishes_once_and_closed_stream_stays_closed",
+    "workspace_swipe_axis_thresholds_and_vertical_lock",
+    "workspace_swipe_invalid_input_cannot_poison_transforms",
+    "workspace_swipe_phase_less_idle_finish_and_rubber_band",
+    "workspace_swipe_preview_plan_keeps_only_neighbors_and_fractional_offsets",
+    "workspace_swipe_reverses_skips_and_rearms_at_same_cursor"
+  ],
+  "gn_dependency_check": "passed for //zitter_ui_lab:*",
+  "product_boundaries": "passed",
+  "gui_tests": {
+    "status": "not run at user request",
+    "last_accepted_commit": "3cd95d82019b239c6c9cc6e84331a4f9f5ef0c55",
+    "prior_results_apply_to_current_code": false
+  },
+  "manual_validation": {
+    "status": "deferred to GUI checkpoint",
+    "app_launched": false,
+    "packaged_or_signed": false,
+    "normal_application_or_profile_used": false
+  },
+  "verified_mechanisms": [
+    "Rust owns the opt-in workspace swipe gesture state: accumulated deltas, 12-point threshold, horizontal dominance/vertical lock, current position, 0.22-page edge rubber band, nearest target and gesture lifecycle.",
+    "Finger-up, first momentum event and phase-less idle completion close tracking. Trailing inertia does not apply additional movement. Explicit begin or a new phase-less gesture re-arms state; cancellation stops tracking without committing a browser command.",
+    "Rust returns neighboring preview indices and fractional horizontal translations, bounded to three pages. Native compositor layers consume the plan. Workspace IDs and WebContents remain outside Rust.",
+    "The C++ bridge retains the previous Views gesture policy. WorkspaceShell retains visibility/dialog/configuration guards, platform phase decoding, native timers, source/destination validation and application commit callbacks.",
+    "Six new unit cases cover reversal, multi-space skipping, stationary-cursor rearming, axis thresholds/lock, one-shot momentum finish, closed streams, phase-less completion, both edge limits, preview bounds/rounding and malformed numeric input."
+  ],
+  "deferred_checkpoint": [
+    "Run the complete Metal and Views browser matrices on these rebuilt sources. Include SidebarSwipeTracksCancelsAndSkipsSpaces, CocoaSwipesRepeatWithoutMouseMovement, SidebarRemainsOpenWhileSpacesSlide and MetalReturnsAfterWorkspaceAnimation.",
+    "Package/sign the matching build and inspect isolated-profile gestures, vertical scrolling, repeated gestures, cancellation/hide, workspace changes while committing, reduced motion, Unicode previews and restoration of Metal after settle.",
+    "Run broader physical input/IME/accessibility/RTL/scale coverage and controlled CPU/GPU/actual presentation measurements."
+  ],
+  "limitations": [
+    "Compilation and non-windowed unit tests do not establish native event integration, visual correctness, focus behavior, frame presentation or a performance gain.",
+    "Preview paint records, snapshot rasterization, compositor animation and timers remain native. This stage does not remove Views from workspace transitions.",
+    "The old 43 Metal / 17 Views GUI results are historical evidence only; no new windowed tests or app launch were performed.",
+    "No new dependency, crate or framework was introduced. Original-code Apache-2.0 and required upstream notices are unchanged."
+  ],
+  "build_consistency": "final Ninja dry run reported no work to do"
+}

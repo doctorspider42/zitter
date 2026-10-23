@@ -2,6 +2,7 @@
 #include "chromium/prototype/sidebar_layout.h"
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <optional>
 #include <vector>
 #include "base/command_line.h"
@@ -216,6 +217,79 @@ std::unique_ptr<views::LayoutManager> CreateSidebarDotsLayout(int spacing) {
 #else
   return std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal,gfx::Insets(),spacing);
 #endif
+}
+
+struct WorkspaceSwipeState::Impl {
+#if BUILDFLAG(IS_MAC)
+  std::optional<rust::Box<sidebar::WorkspaceSwipe>> rust;
+#endif
+  float x=0,y=0;int axis=0,start=0,count=0;
+  bool tracking=false,closed=false,phase_less=false;double position=0;
+};
+WorkspaceSwipeState::WorkspaceSwipeState():impl_(std::make_unique<Impl>()) {
+#if BUILDFLAG(IS_MAC)
+  if(RustLayoutEnabled())impl_->rust.emplace(sidebar::new_workspace_swipe());
+#endif
+}
+WorkspaceSwipeState::~WorkspaceSwipeState()=default;
+WorkspaceSwipeUpdate WorkspaceSwipeState::Event(float x,float y,int width,int index,int count,bool began,bool ended,bool momentum,bool phase_less) {
+#if BUILDFLAG(IS_MAC)
+  if(impl_->rust){const auto u=(*impl_->rust)->event(x,y,width,index,count,began,ended,momentum,phase_less);return {u.started,u.preview,u.finish,u.handled};}
+#endif
+  auto& s=*impl_;const bool started=count>=2&&(began||(!s.tracking&&!momentum&&!ended&&(!s.closed||phase_less)));
+  if(started){s.x=s.y=0;s.axis=0;s.closed=false;s.tracking=true;s.phase_less=phase_less;s.start=index;s.count=count;s.position=index;}
+  WorkspaceSwipeUpdate out{started,false,false,s.axis==1};
+  if(momentum||!s.tracking){if(momentum&&s.tracking){Finish();out.finish=true;}return out;}
+  if(s.axis!=-1){
+    s.x+=x;s.y+=y;
+    if(!s.axis){if(std::abs(s.y)>=12&&std::abs(s.y)>std::abs(s.x))s.axis=-1;else if(std::abs(s.x)>=12&&std::abs(s.x)>=std::abs(s.y)*1.5f)s.axis=1;}
+    if(s.axis==1){const double p=s.start-s.x/static_cast<double>(std::max(1,width)),last=s.count-1;s.position=p<0?-std::min(0.22,-p*0.2):p>last?last+std::min(0.22,(p-last)*0.2):p;out.preview=true;}
+  }
+  out.handled=s.axis==1;if(ended){Finish();out.finish=true;}return out;
+}
+void WorkspaceSwipeState::Finish(){
+#if BUILDFLAG(IS_MAC)
+  if(impl_->rust){(*impl_->rust)->finish();return;}
+#endif
+  impl_->tracking=false;impl_->closed=true;
+}
+void WorkspaceSwipeState::Cancel(){
+#if BUILDFLAG(IS_MAC)
+  if(impl_->rust){(*impl_->rust)->cancel();return;}
+#endif
+  Finish();
+}
+bool WorkspaceSwipeState::tracking() const {
+#if BUILDFLAG(IS_MAC)
+  if(impl_->rust)return (*impl_->rust)->tracking();
+#endif
+  return impl_->tracking;
+}
+bool WorkspaceSwipeState::phase_less() const {
+#if BUILDFLAG(IS_MAC)
+  if(impl_->rust)return (*impl_->rust)->phase_less();
+#endif
+  return impl_->phase_less;
+}
+double WorkspaceSwipeState::position() const {
+#if BUILDFLAG(IS_MAC)
+  if(impl_->rust)return (*impl_->rust)->position();
+#endif
+  return impl_->position;
+}
+int WorkspaceSwipeState::target(int count) const {
+#if BUILDFLAG(IS_MAC)
+  if(impl_->rust)return (*impl_->rust)->target(count);
+#endif
+  return count>0?std::clamp(static_cast<int>(std::round(impl_->position)),0,count-1):-1;
+}
+WorkspaceSwipeLayout SidebarSwipeLayout(double position,int count,int width) {
+#if BUILDFLAG(IS_MAC)
+  if(RustLayoutEnabled()){const auto g=sidebar::swipe_layout(position,count,width);WorkspaceSwipeLayout out{g.center,{}};for(const auto& p:g.pages)out.pages.push_back({p.index,p.x});return out;}
+#endif
+  if(count<=0)return {-1,{}};
+  const int center=std::clamp(static_cast<int>(std::round(position)),0,count-1);WorkspaceSwipeLayout out{center,{}};
+  for(int i=std::max(0,center-1);i<=std::min(count-1,center+1);++i)out.pages.push_back({i,(i-position)*width});return out;
 }
 
 }

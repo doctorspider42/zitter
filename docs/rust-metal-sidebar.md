@@ -427,3 +427,19 @@ original demo without navigating or changing its tabs/split pair. This newer
 check completes the desktop palette inspection that was blocked in the previous
 milestone. Physical input, broader accessibility/IME/scale coverage and real
 CPU/GPU/presentation comparisons remain pending.
+
+
+Workspace swipe state and preview placement now belong to Rust in the opt-in
+backend. The native adapter supplies scroll phases, dimensions and the current
+workspace index; Rust owns the movement threshold, axis lock, accumulation,
+reversal, multi-workspace position, bounded overscroll and nearest target. It
+also returns up to three neighboring preview indices and their fractional
+translations. Native workspace identities, commit callbacks, timers, cached paint
+records and compositor animation remain. The default Views controller retains
+its previous gesture policy through the same adapter.
+
+As of 2026-10-23, the user has deferred windowed tests to a later checkpoint.
+This stage therefore has non-windowed verification only; it does not extend the
+last accepted 43 Metal / 17 Views runtime matrix. See the
+[checkpoint policy](rust-metal-parity.md#current-checkpoint-policy-2026-10-23) and
+[verification report](benchmarks/rust-workspace-swipe-headless-2026-10-23.json).
