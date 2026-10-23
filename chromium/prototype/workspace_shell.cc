@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "base/check.h"
+#include "base/scoped_observation.h"
 #include "base/command_line.h"
 #include "chromium/prototype/sidebar_metal.h"
 #include "chromium/prototype/sidebar_layout.h"
@@ -423,6 +424,19 @@ class GlyphButton : public views::Button {
 BEGIN_METADATA(GlyphButton)
 END_METADATA
 
+// IsDrawn follows View visibility only; a hidden Widget can still have a drawn
+// hierarchy. Input admission and native Metal subviews must also track the host.
+bool SceneIsVisible(const views::View* view){return view&&view->IsDrawn()&&view->GetWidget()&&view->GetWidget()->IsVisible();}
+class SceneWindowObserver final : public views::WidgetObserver {
+ public:
+  explicit SceneWindowObserver(base::RepeatingClosure changed):changed_(std::move(changed)){}
+  void Observe(views::Widget* widget){if(observation_.GetSource()==widget)return;observation_.Reset();if(widget)observation_.Observe(widget);}
+  void OnWidgetVisibilityChanged(views::Widget*,bool) override {changed_.Run();}
+  void OnWidgetDestroying(views::Widget*) override {observation_.Reset();}
+ private:
+  base::RepeatingClosure changed_;base::ScopedObservation<views::Widget,views::WidgetObserver> observation_{this};
+};
+
 // Footer controls retain one native event/focus/AX node, while Rust owns
 // their pointer/key state and Metal owns their steady-state painting.
 class SceneGlyphButton : public GlyphButton {
@@ -516,6 +530,8 @@ class SceneGlyphButton : public GlyphButton {
     if (scene_visible_ && scene_visible_.Run()) return;
     GlyphButton::PaintButtonContents(canvas);
   }
+ protected:
+  void NotifyClick(const ui::Event& event) override {if(GetEnabledInViewsSubtree()&&SceneIsVisible(this))GlyphButton::NotifyClick(event);}
  private:
 #if BUILDFLAG(IS_MAC)
   sidebar::RowInputResult RustPointerEvent(sidebar::PointerPhase phase, const ui::MouseEvent& event) {
@@ -590,6 +606,8 @@ void PaintSceneRecipe(gfx::Canvas* canvas,const sidebar::Item& item,const gfx::F
 class AppearanceRow final : public views::View {
   METADATA_HEADER(AppearanceRow,views::View)
  public:
+  void SyncWindowVisibility(){CancelInput();if(!SceneIsVisible(this)&&surface_)surface_->Hide();Schedule();}
+
   explicit AppearanceRow(bool emoji):emoji_(emoji) {}
   GlyphButton* AddPicker(views::Button::PressedCallback callback,std::u16string label,GlyphButton::Glyph glyph) {
     auto* button=AddChildView(std::make_unique<SceneGlyphButton>(std::move(callback),std::move(label),glyph,nullptr,
@@ -603,10 +621,10 @@ class AppearanceRow final : public views::View {
   gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override {const auto g=Geometry(available.width().is_bounded()?available.width().value():-1,-1);return gfx::Size(g.width,g.height);}
   void Layout(PassKey) override {const auto g=Geometry(width(),height());if(g.children.size()!=children().size())return;for(size_t i=0;i<g.children.size();++i){const auto& r=g.children[i];children()[i]->SetBounds(r.x,r.y,r.width,r.height);}Schedule();}
   void OnBoundsChanged(const gfx::Rect& previous) override {views::View::OnBoundsChanged(previous);Schedule();}
-  void AddedToWidget() override {views::View::AddedToWidget();Schedule();}
-  void RemovedFromWidget() override {surface_.reset();frame_={};views::View::RemovedFromWidget();}
+  void AddedToWidget() override {views::View::AddedToWidget();window_visibility_.Observe(GetWidget());Schedule();}
+  void RemovedFromWidget() override {window_visibility_.Observe(nullptr);surface_.reset();frame_={};views::View::RemovedFromWidget();}
   void OnThemeChanged() override {views::View::OnThemeChanged();PreferredSizeChanged();Schedule();}
-  void VisibilityChanged(views::View* changed,bool visible) override {views::View::VisibilityChanged(changed,visible);if(!IsDrawn()){CancelInput();if(surface_)surface_->Hide();frame_={};}Schedule();}
+  void VisibilityChanged(views::View* changed,bool visible) override {views::View::VisibilityChanged(changed,visible);if(!SceneIsVisible(this)){CancelInput();if(surface_)surface_->Hide();frame_={};}Schedule();}
   void OnDidSchedulePaint(const gfx::Rect& rect) override {views::View::OnDidSchedulePaint(rect);Schedule();}
   void OnPaint(gfx::Canvas* canvas) override {if(!metal_visible())for(const auto& item:Items(0,0,gfx::RectF(Controls())))PaintSceneRecipe(canvas,item,Font(3));Schedule();}
  private:
@@ -619,12 +637,12 @@ class AppearanceRow final : public views::View {
   }
   void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&AppearanceRow::UpdateMetal,weak_factory_.GetWeakPtr()));}
   void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();auto local=GetVisibleBounds();local.Intersect(Controls());
-    if(!IsDrawn()||local.IsEmpty()){if(surface_)surface_->Hide();frame_={};if(was)SchedulePaint();return;}
+    if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();frame_={};if(was)SchedulePaint();return;}
     if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;
     frame_=GetBoundsInScreen();frame_.Offset(local.x(),local.y());frame_.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame_.size())));
     surface_->Update(GetWidget()->GetNativeWindow(),frame_,items,Tone(this,kCard));if(was!=metal_visible())SchedulePaint();
   }
-  bool emoji_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;gfx::Rect frame_;base::WeakPtrFactory<AppearanceRow> weak_factory_{this};
+  bool emoji_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;gfx::Rect frame_;SceneWindowObserver window_visibility_{base::BindRepeating(&AppearanceRow::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<AppearanceRow> weak_factory_{this};
 };
 BEGIN_METADATA(AppearanceRow)
 END_METADATA
@@ -666,6 +684,8 @@ END_METADATA
 class SceneActionGroup final : public views::View {
   METADATA_HEADER(SceneActionGroup,views::View)
  public:
+  void SyncWindowVisibility(){CancelInput();if(!SceneIsVisible(this)&&surface_)surface_->Hide();Schedule();}
+
   SceneActionGroup(bool vertical,int spacing):vertical_(vertical),spacing_(spacing) {}
   views::Button* AddAction(views::Button::PressedCallback callback,std::u16string text,ui::ButtonStyle style){return AddChildView(std::make_unique<SceneTextButton>(std::move(callback),std::move(text),style,base::BindRepeating(&SceneActionGroup::Schedule,weak_factory_.GetWeakPtr())));}
   bool metal_visible() const{return surface_&&surface_->visible();}
@@ -674,18 +694,18 @@ class SceneActionGroup final : public views::View {
   gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override {const auto g=Geometry(available.width().is_bounded()?available.width().value():-1,-1);return gfx::Size(g.width,g.height);}
   void Layout(PassKey) override {const auto g=Geometry(width(),height());size_t i=0;for(const auto& child:children())if(child->GetVisible()){const auto& r=g.children[i++];child->SetBounds(r.x,r.y,r.width,r.height);}Schedule();}
   void OnBoundsChanged(const gfx::Rect& previous) override {views::View::OnBoundsChanged(previous);Schedule();}
-  void AddedToWidget() override {views::View::AddedToWidget();Schedule();}
-  void RemovedFromWidget() override {surface_.reset();views::View::RemovedFromWidget();}
+  void AddedToWidget() override {views::View::AddedToWidget();window_visibility_.Observe(GetWidget());Schedule();}
+  void RemovedFromWidget() override {window_visibility_.Observe(nullptr);surface_.reset();views::View::RemovedFromWidget();}
   void OnThemeChanged() override {views::View::OnThemeChanged();PreferredSizeChanged();Schedule();}
-  void VisibilityChanged(views::View* view,bool visible) override {views::View::VisibilityChanged(view,visible);if(!IsDrawn()){CancelInput();if(surface_)surface_->Hide();}Schedule();}
+  void VisibilityChanged(views::View* view,bool visible) override {views::View::VisibilityChanged(view,visible);if(!SceneIsVisible(this)){CancelInput();if(surface_)surface_->Hide();}Schedule();}
   void OnDidSchedulePaint(const gfx::Rect& rect) override {views::View::OnDidSchedulePaint(rect);Schedule();}
   void OnPaint(gfx::Canvas* canvas) override {if(!metal_visible())for(const auto& item:Items(0,0,gfx::RectF(GetLocalBounds())))PaintSceneRecipe(canvas,item,SceneTextButton::TextFont());Schedule();}
  private:
   sidebar::ColumnLayout Geometry(int width,int height) const {std::vector<sidebar::ColumnChild> measured;for(const auto& child:children())if(child->GetVisible()){const auto size=child->GetPreferredSize();measured.push_back({size.width(),size.height(),0,0,0,0});}return sidebar::action_group_layout(width,height,vertical_,spacing_,rust::Slice<const sidebar::ColumnChild>(measured.data(),measured.size()));}
   std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const {std::vector<sidebar::Item> out;for(const auto& child:children())if(child->GetVisible()){auto bounds=gfx::RectF(child->bounds());bounds.Offset(dx,dy);auto local=bounds;local.Intersect(clip);out.push_back(static_cast<SceneTextButton*>(child.get())->Scene(bounds,local));}return out;}
   void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneActionGroup::UpdateMetal,weak_factory_.GetWeakPtr()));}
-  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!IsDrawn()||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
-  bool vertical_;int spacing_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;base::WeakPtrFactory<SceneActionGroup> weak_factory_{this};
+  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
+  bool vertical_;int spacing_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneActionGroup::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneActionGroup> weak_factory_{this};
 };
 BEGIN_METADATA(SceneActionGroup)
 END_METADATA
@@ -712,7 +732,7 @@ class SceneCheckbox final : public SceneGlyphButton {
     for(size_t i=0;i<g.lines.size();++i){const auto& r=g.lines[i];sidebar::Item item{};item.kind=17;item.x=bounds.x()+r.x;item.y=bounds.y()+r.y;item.width=r.width;item.height=r.height;item.title=lines_[i];item.font_size=font.GetFontSize();item.active=font.GetFontWeight()>=gfx::Font::Weight::MEDIUM;item.ink=provider->GetColor(views::TypographyProvider::Get().GetColorId(views::style::CONTEXT_LABEL,enabled?views::style::STYLE_PRIMARY:views::style::STYLE_DISABLED));item.clip={clip.x(),clip.y(),clip.width(),clip.height()};out.push_back(std::move(item));}return out;
   }
  protected:
-  void NotifyClick(const ui::Event& event) override {if(!state_->toggle(GetEnabledInViewsSubtree()))return;RefreshAX();SchedulePaint();SceneGlyphButton::NotifyClick(event);}
+  void NotifyClick(const ui::Event& event) override {if(!state_->toggle(GetEnabledInViewsSubtree()&&SceneIsVisible(this)))return;RefreshAX();SchedulePaint();SceneGlyphButton::NotifyClick(event);}
  private:
   void RefreshAX(){SetDefaultActionVerb(Checked()?ax::mojom::DefaultActionVerb::kUncheck:ax::mojom::DefaultActionVerb::kCheck);UpdateAccessibleDefaultActionVerb();GetViewAccessibility().SetCheckedState(Checked()?ax::mojom::CheckedState::kTrue:ax::mojom::CheckedState::kFalse);}
   sidebar::CheckboxLayout Geometry(int requested) const {
@@ -727,6 +747,8 @@ END_METADATA
 class SceneCheckboxGroup final : public views::View {
   METADATA_HEADER(SceneCheckboxGroup,views::View)
  public:
+  void SyncWindowVisibility(){CancelInput();if(!SceneIsVisible(this)&&surface_)surface_->Hide();Schedule();}
+
   explicit SceneCheckboxGroup(int spacing){SetLayoutManager(CreateSidebarColumnLayout(spacing));}
   views::Button* AddChoice(views::Button::PressedCallback callback,std::u16string text){return AddChildView(std::make_unique<SceneCheckbox>(std::move(callback),std::move(text),base::BindRepeating(&SceneCheckboxGroup::Schedule,weak_factory_.GetWeakPtr())));}
   bool metal_visible() const{return surface_&&surface_->visible();}
@@ -734,17 +756,17 @@ class SceneCheckboxGroup final : public views::View {
   void CancelInput(){for(const auto& child:children())child->OnMouseCaptureLost();}
   void Layout(PassKey) override {LayoutSuperclass<views::View>(this);Schedule();}
   void OnBoundsChanged(const gfx::Rect& previous) override {views::View::OnBoundsChanged(previous);Schedule();}
-  void AddedToWidget() override {views::View::AddedToWidget();Schedule();}
-  void RemovedFromWidget() override {surface_.reset();views::View::RemovedFromWidget();}
+  void AddedToWidget() override {views::View::AddedToWidget();window_visibility_.Observe(GetWidget());Schedule();}
+  void RemovedFromWidget() override {window_visibility_.Observe(nullptr);surface_.reset();views::View::RemovedFromWidget();}
   void OnThemeChanged() override {views::View::OnThemeChanged();PreferredSizeChanged();Schedule();}
-  void VisibilityChanged(views::View* changed,bool visible) override {views::View::VisibilityChanged(changed,visible);if(!IsDrawn()){CancelInput();if(surface_)surface_->Hide();}Schedule();}
+  void VisibilityChanged(views::View* changed,bool visible) override {views::View::VisibilityChanged(changed,visible);if(!SceneIsVisible(this)){CancelInput();if(surface_)surface_->Hide();}Schedule();}
   void OnDidSchedulePaint(const gfx::Rect& rect) override {views::View::OnDidSchedulePaint(rect);Schedule();}
   void OnPaint(gfx::Canvas* canvas) override {if(!metal_visible())for(const auto& item:Items(0,0,gfx::RectF(GetLocalBounds())))PaintSceneRecipe(canvas,item,SceneCheckbox::TextFont());Schedule();}
  private:
   std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const {std::vector<sidebar::Item> out;for(const auto& child:children())if(child->GetVisible()){auto bounds=gfx::RectF(child->bounds());bounds.Offset(dx,dy);auto local=bounds;local.Intersect(clip);auto items=static_cast<SceneCheckbox*>(child.get())->Scene(bounds,local);for(auto& item:items)out.push_back(std::move(item));}return out;}
   void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneCheckboxGroup::UpdateMetal,weak_factory_.GetWeakPtr()));}
-  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!IsDrawn()||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
-  bool pending_=false;std::unique_ptr<SidebarMetal> surface_;base::WeakPtrFactory<SceneCheckboxGroup> weak_factory_{this};
+  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
+  bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneCheckboxGroup::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneCheckboxGroup> weak_factory_{this};
 };
 BEGIN_METADATA(SceneCheckboxGroup)
 END_METADATA
@@ -777,6 +799,8 @@ class SceneSelectMenu final : public ui::SimpleMenuModel,public ui::SimpleMenuMo
 class SceneSelect final : public SceneGlyphButton {
   METADATA_HEADER(SceneSelect,SceneGlyphButton)
  public:
+  void SyncWindowVisibility(){OnMouseCaptureLost();if(!SceneIsVisible(this)){CancelMenu();if(surface_)surface_->Hide();}Schedule();}
+
   SceneSelect(std::vector<std::u16string> labels,std::u16string name,base::RepeatingClosure changed)
       :SceneGlyphButton(base::BindRepeating([]{}),std::move(name),Glyph::kMore,nullptr,base::BindRepeating([]{return true;})),labels_(std::move(labels)),state_(MakeState(labels_)),changed_(std::move(changed)),input_(this,base::BindRepeating(&SceneSelect::Input,base::Unretained(this)),base::BindRepeating(&SceneSelect::ResetPrefix,base::Unretained(this))) {
     SetInstallFocusRingOnFocus(false);SetHasInkDropActionOnClick(false);SetAnimateOnStateChange(false);SetRequestFocusOnPress(false);GetViewAccessibility().SetRole(ax::mojom::Role::kComboBoxSelect);GetViewAccessibility().SetHasPopup(ax::mojom::HasPopup::kMenu);SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kOpen);UpdateAccessibleDefaultActionVerb();RefreshAX();
@@ -791,7 +815,7 @@ class SceneSelect final : public SceneGlyphButton {
     if(!state_->replace_options(std::move(options),fallback_last,select_last))return;
     labels_=std::move(labels);RefreshAX();PreferredSizeChanged();Schedule();
   }
-  void SelectForTesting(size_t index){if(index>=Count()||!GetEnabledInViewsSubtree()||!IsDrawn())return;CancelMenu();const auto token=state_->open(true);if(!state_->choose(token,index,true))return;RefreshAX();Schedule();changed_.Run();}
+  void SelectForTesting(size_t index){if(index>=Count()||!GetEnabledInViewsSubtree()||!SceneIsVisible(this))return;CancelMenu();const auto token=state_->open(true);if(!state_->choose(token,index,true))return;RefreshAX();Schedule();changed_.Run();}
   bool metal_visible() const{return surface_&&surface_->visible();}
   bool contains_text(std::string_view text) const{return metal_visible()&&surface_->contains_text_for_testing(text);}
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {int widest=0;for(const auto& text:labels_)widest=std::max(widest,gfx::GetStringWidth(text,TextFont()));const auto g=sidebar::select_layout(-1,-1,widest,views::LayoutProvider::GetControlHeightForFont(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY,TextFont()),false);return gfx::Size(g.width,g.height);}
@@ -801,35 +825,35 @@ class SceneSelect final : public SceneGlyphButton {
   void OnBlur() override {if(GetInputMethod())GetInputMethod()->DetachTextInputClient(&input_);ResetPrefix();SceneGlyphButton::OnBlur();}
   bool HandleAccessibleAction(const ui::AXActionData& action) override {if(action.action==ax::mojom::Action::kDoDefault&&GetEnabledInViewsSubtree()){ShowMenu(ui::mojom::MenuSourceType::kKeyboard);return true;}return SceneGlyphButton::HandleAccessibleAction(action);}
   void StateChanged(ButtonState previous) override {SceneGlyphButton::StateChanged(previous);if(!GetEnabledInViewsSubtree())CancelMenu();Schedule();}
-  void VisibilityChanged(views::View* changed,bool visible) override {SceneGlyphButton::VisibilityChanged(changed,visible);if(!IsDrawn()){OnMouseCaptureLost();CancelMenu();if(surface_)surface_->Hide();}Schedule();}
-  void AddedToWidget() override {SceneGlyphButton::AddedToWidget();Schedule();}
-  void RemovedFromWidget() override {if(GetInputMethod())GetInputMethod()->DetachTextInputClient(&input_);CancelMenu();surface_.reset();SceneGlyphButton::RemovedFromWidget();}
+  void VisibilityChanged(views::View* changed,bool visible) override {SceneGlyphButton::VisibilityChanged(changed,visible);if(!SceneIsVisible(this)){OnMouseCaptureLost();CancelMenu();if(surface_)surface_->Hide();}Schedule();}
+  void AddedToWidget() override {SceneGlyphButton::AddedToWidget();window_visibility_.Observe(GetWidget());Schedule();}
+  void RemovedFromWidget() override {window_visibility_.Observe(nullptr);if(GetInputMethod())GetInputMethod()->DetachTextInputClient(&input_);CancelMenu();surface_.reset();SceneGlyphButton::RemovedFromWidget();}
   void OnBoundsChanged(const gfx::Rect& previous) override {SceneGlyphButton::OnBoundsChanged(previous);Schedule();}
   void OnThemeChanged() override {SceneGlyphButton::OnThemeChanged();PreferredSizeChanged();Schedule();}
   void OnDidSchedulePaint(const gfx::Rect& rect) override {SceneGlyphButton::OnDidSchedulePaint(rect);Schedule();}
   void PaintButtonContents(gfx::Canvas* canvas) override {if(!metal_visible())PaintSceneRecipe(canvas,Scene(0,0,gfx::RectF(GetLocalBounds())),TextFont());Schedule();}
  protected:
-  void NotifyClick(const ui::Event& event) override {if(GetEnabledInViewsSubtree()&&IsDrawn())ShowMenu(ui::GetMenuSourceTypeForEvent(event));}
+  void NotifyClick(const ui::Event& event) override {if(GetEnabledInViewsSubtree()&&SceneIsVisible(this))ShowMenu(ui::GetMenuSourceTypeForEvent(event));}
  private:
   static rust::Box<sidebar::SelectState> MakeState(const std::vector<std::u16string>& labels){rust::Vec<sidebar::SelectOption> options;for(size_t i=0;i<labels.size();++i)options.push_back({base::NumberToString(i),base::UTF16ToUTF8(labels[i]),base::UTF16ToUTF8(base::i18n::ToLower(labels[i]))});return sidebar::new_select_state(std::move(options));}
   static gfx::FontList TextFont(){return views::TypographyProvider::Get().GetFont(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY);}
   void ResetPrefix(){state_->reset_prefix();}
-  void Input(std::u16string text){if(!IsDrawn()||!HasFocus())return;const auto lower=base::UTF16ToUTF8(base::i18n::ToLower(text));if(!state_->input(lower,(base::TimeTicks::Now()-base::TimeTicks()).InMilliseconds(),GetEnabledInViewsSubtree()))return;RefreshAX();Schedule();changed_.Run();}
+  void Input(std::u16string text){if(!SceneIsVisible(this)||!HasFocus())return;const auto lower=base::UTF16ToUTF8(base::i18n::ToLower(text));if(!state_->input(lower,(base::TimeTicks::Now()-base::TimeTicks()).InMilliseconds(),GetEnabledInViewsSubtree()))return;RefreshAX();Schedule();changed_.Run();}
   void RefreshAX(){const auto selected=Selected();GetViewAccessibility().SetValue(selected?labels_[*selected]:std::u16string());if(state_->expanded())GetViewAccessibility().SetIsExpanded();else GetViewAccessibility().SetIsCollapsed();}
   void CancelMenu(){state_->dismiss();ResetPrefix();RefreshAX();auto old=std::move(runner_);old.reset();}
   void Closed(uint64_t token){if(!state_->close_menu(token))return;runner_.reset();RefreshAX();Schedule();}
-  bool CanChoose(uint64_t token,const std::string& key) const {return state_->can_choose(token,key,GetEnabledInViewsSubtree()&&IsDrawn());}
-  void Choose(uint64_t token,const std::string& key){if(!state_->choose_key(token,key,GetEnabledInViewsSubtree()&&IsDrawn()))return;RefreshAX();Schedule();changed_.Run();}
+  bool CanChoose(uint64_t token,const std::string& key) const {return state_->can_choose(token,key,GetEnabledInViewsSubtree()&&SceneIsVisible(this));}
+  void Choose(uint64_t token,const std::string& key){if(!state_->choose_key(token,key,GetEnabledInViewsSubtree()&&SceneIsVisible(this)))return;RefreshAX();Schedule();changed_.Run();}
   void ShowMenu(ui::mojom::MenuSourceType source){
-    if(!GetWidget()||!IsDrawn()||!GetEnabledInViewsSubtree())return;CancelMenu();const auto token=state_->open(true);if(!token)return;
+    if(!GetWidget()||!SceneIsVisible(this)||!GetEnabledInViewsSubtree())return;CancelMenu();const auto token=state_->open(true);if(!token)return;
     std::vector<std::pair<std::string,std::u16string>> items;for(size_t i=0;i<labels_.size();++i)items.emplace_back(std::string(state_->option_key(i)),labels_[i]);
     const auto weak=weak_factory_.GetWeakPtr();menu_=std::make_unique<SceneSelectMenu>(std::move(items),std::string(state_->selected_key()),token,base::BindRepeating([](base::WeakPtr<SceneSelect> owner,uint64_t epoch,const std::string& key){return owner&&owner->CanChoose(epoch,key);},weak),base::BindRepeating(&SceneSelect::Choose,weak));
     runner_=std::make_unique<views::MenuRunner>(menu_.get(),views::MenuRunner::COMBOBOX,base::BindRepeating(&SceneSelect::Closed,weak,token));RefreshAX();Schedule();runner_->RunMenuAt(GetWidget(),nullptr,GetBoundsInScreen(),views::MenuAnchorPosition::kTopLeft,source);
   }
   sidebar::Item Scene(float dx,float dy,gfx::RectF clip) const {sidebar::Item item{};item.kind=21;item.x=dx;item.y=dy;item.width=width();item.height=height();if(const auto selected=Selected())item.title=base::UTF16ToUTF8(labels_[*selected]);const auto* colors=GetColorProvider();const bool enabled=GetEnabledInViewsSubtree();item.font_size=TextFont().GetFontSize();item.active=TextFont().GetFontWeight()>=gfx::Font::Weight::MEDIUM;item.tile=base::i18n::IsRTL();item.focused=HasFocus();item.hovered=enabled&&(GetState()==STATE_HOVERED||state_->expanded());item.ink=colors->GetColor(views::TypographyProvider::Get().GetColorId(views::style::CONTEXT_LABEL,enabled?views::style::STYLE_PRIMARY:views::style::STYLE_DISABLED));item.fill=colors->GetColor(enabled?ui::kColorComboboxBackground:ui::kColorComboboxBackgroundDisabled);item.badge=colors->GetColor(HasFocus()?ui::kColorFocusableBorderFocused:enabled?ui::kColorButtonBorder:ui::kColorButtonBorderDisabled);item.detail_ink=colors->GetColor(ui::kColorSysStateHoverOnSubtle);item.clip={clip.x(),clip.y(),clip.width(),clip.height()};return item;}
   void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneSelect::UpdateMetal,weak_factory_.GetWeakPtr()));}
-  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!IsDrawn()||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());std::vector<sidebar::Item> items;items.push_back(Scene(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size()))));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
-  std::vector<std::u16string> labels_;rust::Box<sidebar::SelectState> state_;base::RepeatingClosure changed_;SceneSelectInput input_;std::unique_ptr<SceneSelectMenu> menu_;std::unique_ptr<views::MenuRunner> runner_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;base::WeakPtrFactory<SceneSelect> weak_factory_{this};
+  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());std::vector<sidebar::Item> items;items.push_back(Scene(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size()))));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
+  std::vector<std::u16string> labels_;rust::Box<sidebar::SelectState> state_;base::RepeatingClosure changed_;SceneSelectInput input_;std::unique_ptr<SceneSelectMenu> menu_;std::unique_ptr<views::MenuRunner> runner_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneSelect::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneSelect> weak_factory_{this};
 };
 BEGIN_METADATA(SceneSelect)
 END_METADATA
@@ -1486,11 +1510,14 @@ END_METADATA
 class FolderFormView final : public views::View, public views::TextfieldController {
   METADATA_HEADER(FolderFormView,views::View)
  public:
+  void SyncWindowVisibility(){if(!SceneIsVisible(this))for(auto& surface:surfaces_)if(surface)surface->Hide();Schedule();}
+
   FolderFormView(const std::string& workspace,const std::string& parent,const std::string& folder,std::u16string initial,
       base::RepeatingCallback<bool(FolderFormView*)> submit)
       :form_(sidebar::new_folder_form(workspace,parent,folder,base::UTF16ToUTF8(initial))),copy_(form_->copy()),submit_(std::move(submit)) {
     GetViewAccessibility().SetRole(ax::mojom::Role::kGroup);
     for(auto& part:parts_){part=AddChildView(std::make_unique<views::View>());part->GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);}
+    parts_[1]->GetViewAccessibility().SetRole(ax::mojom::Role::kAlert);
     parts_[0]->GetViewAccessibility().SetName(base::UTF8ToUTF16(std::string(copy_.label)));parts_[1]->SetVisible(false);
     field_=AddChildView(std::make_unique<views::Textfield>());field_->GetViewAccessibility().SetName(base::UTF8ToUTF16(std::string(copy_.label)));
     field_->SetFontList(Font(-1));field_->SetText(initial);field_->set_controller(this);
@@ -1524,8 +1551,8 @@ class FolderFormView final : public views::View, public views::TextfieldControll
     if(field_){field_->SetBackgroundColor(Tone(this,kChip));field_->SetColor(Tone(this,kInk));field_->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,7,Hairline(this)),gfx::Insets::VH(4,8)));}
     Schedule();
   }
-  void AddedToWidget() override{views::View::AddedToWidget();Schedule();}
-  void RemovedFromWidget() override{for(auto& surface:surfaces_)surface.reset();views::View::RemovedFromWidget();}
+  void AddedToWidget() override{views::View::AddedToWidget();window_visibility_.Observe(GetWidget());Schedule();}
+  void RemovedFromWidget() override{window_visibility_.Observe(nullptr);for(auto& surface:surfaces_)surface.reset();views::View::RemovedFromWidget();}
   void OnDidSchedulePaint(const gfx::Rect& rect) override {
     views::View::OnDidSchedulePaint(rect);if(field_&&views::View::ConvertRectToTarget(field_,this,field_->GetLocalBounds()).Contains(rect))return;Schedule();
   }
@@ -1551,7 +1578,7 @@ class FolderFormView final : public views::View, public views::TextfieldControll
     pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();
     for(size_t i=0;i<parts_.size();++i) {
       auto& surface=surfaces_[i];const bool was=surface&&surface->visible();
-      if(!parts_[i]->IsDrawn()||parts_[i]->GetVisibleBounds().IsEmpty()){if(surface)surface->Hide();if(was)SchedulePaint();continue;}
+      if(!SceneIsVisible(parts_[i])||parts_[i]->GetVisibleBounds().IsEmpty()){if(surface)surface->Hide();if(was)SchedulePaint();continue;}
       if(!surface)surface=CreateSidebarMetal();if(!surface)continue;
       const auto local=parts_[i]->GetVisibleBounds();auto frame=parts_[i]->GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());
       auto full=gfx::RectF(parts_[i]->GetLocalBounds());full.Offset(-local.x(),-local.y());auto item=Item(i,full);item.clip={0,0,float(frame.width()),float(frame.height())};
@@ -1561,7 +1588,7 @@ class FolderFormView final : public views::View, public views::TextfieldControll
   rust::Box<sidebar::FolderForm> form_;sidebar::FolderCopy copy_;base::RepeatingCallback<bool(FolderFormView*)> submit_;
   std::array<raw_ptr<views::View>,2> parts_{};raw_ptr<views::Textfield> field_=nullptr;
   std::array<std::unique_ptr<SidebarMetal>,2> surfaces_;std::u16string error_;bool pending_=false;
-  base::WeakPtrFactory<FolderFormView> weak_factory_{this};
+  SceneWindowObserver window_visibility_{base::BindRepeating(&FolderFormView::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<FolderFormView> weak_factory_{this};
 };
 BEGIN_METADATA(FolderFormView)
 END_METADATA
@@ -1575,9 +1602,12 @@ FolderFormView* FindFolderForm(views::View* view) {
 class NoticeBodyView : public views::View {
   METADATA_HEADER(NoticeBodyView,views::View)
  public:
+  void SyncWindowVisibility(){if(!SceneIsVisible(this))for(auto& surface:surfaces_)if(surface)surface->Hide();Schedule();}
+
   explicit NoticeBodyView(sidebar::NoticeCopy copy):copy_(std::move(copy)) {
     GetViewAccessibility().SetRole(ax::mojom::Role::kGroup);
     for(auto& part:parts_){part=AddChildView(std::make_unique<views::View>());part->GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);}
+    parts_[1]->GetViewAccessibility().SetRole(ax::mojom::Role::kAlert);
     parts_[0]->GetViewAccessibility().SetName(base::UTF8ToUTF16(std::string(copy_.body)));parts_[1]->SetVisible(false);
   }
   const sidebar::NoticeCopy& copy() const{return copy_;}
@@ -1590,8 +1620,8 @@ class NoticeBodyView : public views::View {
   }
   void Layout(PassKey) override{const auto g=Geometry(width());parts_[0]->SetBounds(g.body.x,g.body.y,g.body.width,g.body.height);parts_[1]->SetBounds(g.error.x,g.error.y,g.error.width,g.error.height);Schedule();}
   void OnThemeChanged() override{views::View::OnThemeChanged();SetBackground(views::CreateSolidBackground(Tone(this,kCard)));measured_width_=-1;PreferredSizeChanged();Schedule();}
-  void AddedToWidget() override{views::View::AddedToWidget();Schedule();}
-  void RemovedFromWidget() override{for(auto& surface:surfaces_)surface.reset();views::View::RemovedFromWidget();}
+  void AddedToWidget() override{views::View::AddedToWidget();window_visibility_.Observe(GetWidget());Schedule();}
+  void RemovedFromWidget() override{window_visibility_.Observe(nullptr);for(auto& surface:surfaces_)surface.reset();views::View::RemovedFromWidget();}
   void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);Schedule();}
   void OnPaint(gfx::Canvas* canvas) override {
     const auto g=Geometry(width());
@@ -1627,7 +1657,7 @@ class NoticeBodyView : public views::View {
   void UpdateMetal() {
     pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const auto g=Geometry(width());
     for(size_t i=0;i<2;++i){auto& surface=surfaces_[i];const bool was=surface&&surface->visible();
-      const auto local=parts_[i]->GetVisibleBounds();if(!parts_[i]->IsDrawn()||local.IsEmpty()){if(surface)surface->Hide();if(was)SchedulePaint();continue;}
+      const auto local=parts_[i]->GetVisibleBounds();if(!SceneIsVisible(parts_[i])||local.IsEmpty()){if(surface)surface->Hide();if(was)SchedulePaint();continue;}
       if(!surface)surface=CreateSidebarMetal();if(!surface)continue;
       auto frame=parts_[i]->GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());
       const auto items=Items(i,g,-parts_[i]->x()-local.x(),-parts_[i]->y()-local.y(),gfx::RectF(gfx::Rect(frame.size())));
@@ -1637,7 +1667,7 @@ class NoticeBodyView : public views::View {
   sidebar::NoticeCopy copy_;
   std::array<raw_ptr<views::View>,2> parts_{};std::array<std::unique_ptr<SidebarMetal>,2> surfaces_;std::u16string error_;bool pending_=false;
   mutable std::array<std::vector<std::string>,2> lines_;mutable int measured_width_=-1,measured_body_font_=0,measured_error_font_=0;mutable std::u16string measured_error_;
-  base::WeakPtrFactory<NoticeBodyView> renderer_weak_factory_{this};
+  SceneWindowObserver window_visibility_{base::BindRepeating(&NoticeBodyView::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<NoticeBodyView> renderer_weak_factory_{this};
 };
 BEGIN_METADATA(NoticeBodyView)
 END_METADATA
@@ -1697,17 +1727,22 @@ FolderNoticeView* FindFolderNotice(views::View* view) {
 class SceneParagraph final : public views::View {
   METADATA_HEADER(SceneParagraph,views::View)
  public:
+  void SyncWindowVisibility(){if(!SceneIsVisible(this)&&surface_)surface_->Hide();Schedule();}
+
   SceneParagraph(std::u16string text,int delta,bool bold,SkColor ink):text_(std::move(text)),delta_(delta),bold_(bold),ink_(ink) {
     GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);GetViewAccessibility().SetName(text_);
   }
   void SetText(std::u16string text){if(text==text_)return;text_=std::move(text);GetViewAccessibility().SetName(text_);measured_width_=-1;PreferredSizeChanged();SchedulePaint();Schedule();}
-  bool contains_scene_text(std::string_view text) const{return surface_&&surface_->visible()&&surface_->contains_text_for_testing(text);}
+  bool contains_scene_text(std::string_view text) const{
+    if(!surface_||!surface_->visible())return false;if(surface_->contains_text_for_testing(text))return true;
+    return !lines_.empty()&&base::UTF16ToUTF8(text_)==text&&std::all_of(lines_.begin(),lines_.end(),[&](const auto& line){return surface_->contains_text_for_testing(line);});
+  }
   gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override{const auto g=Geometry(available.width().is_bounded()?available.width().value():200);return gfx::Size(g.width,g.height);}
   void OnThemeChanged() override{views::View::OnThemeChanged();measured_width_=-1;PreferredSizeChanged();Schedule();}
   void OnBoundsChanged(const gfx::Rect& previous) override{views::View::OnBoundsChanged(previous);Schedule();}
-  void AddedToWidget() override{views::View::AddedToWidget();Schedule();}
-  void RemovedFromWidget() override{surface_.reset();views::View::RemovedFromWidget();}
-  void VisibilityChanged(views::View* view,bool visible) override{views::View::VisibilityChanged(view,visible);if(!IsDrawn()&&surface_)surface_->Hide();Schedule();}
+  void AddedToWidget() override{views::View::AddedToWidget();window_visibility_.Observe(GetWidget());Schedule();}
+  void RemovedFromWidget() override{window_visibility_.Observe(nullptr);surface_.reset();views::View::RemovedFromWidget();}
+  void VisibilityChanged(views::View* view,bool visible) override{views::View::VisibilityChanged(view,visible);if(!SceneIsVisible(this)&&surface_)surface_->Hide();Schedule();}
   void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);Schedule();}
   void OnPaint(gfx::Canvas* canvas) override {
     if(!surface_||!surface_->visible()){const auto items=Items(0,0,gfx::RectF(GetLocalBounds()));for(const auto& item:items)PaintSceneRecipe(canvas,item,Font(delta_,bold_?gfx::Font::Weight::MEDIUM:gfx::Font::Weight::NORMAL));}Schedule();
@@ -1724,13 +1759,13 @@ class SceneParagraph final : public views::View {
   }
   void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneParagraph::UpdateMetal,weak_factory_.GetWeakPtr()));}
   void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=surface_&&surface_->visible();const auto local=GetVisibleBounds();
-    if(!IsDrawn()||local.IsEmpty()||text_.empty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}
+    if(!SceneIsVisible(this)||local.IsEmpty()||text_.empty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}
     if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;
     auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));
     surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,kCard));if(was!=surface_->visible())SchedulePaint();
   }
   std::u16string text_;int delta_;bool bold_;SkColor ink_;mutable int measured_width_=-1,measured_font_=0;mutable std::vector<std::string> lines_;
-  std::unique_ptr<SidebarMetal> surface_;bool pending_=false;base::WeakPtrFactory<SceneParagraph> weak_factory_{this};
+  std::unique_ptr<SidebarMetal> surface_;bool pending_=false;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneParagraph::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneParagraph> weak_factory_{this};
 };
 BEGIN_METADATA(SceneParagraph)
 END_METADATA
@@ -6358,7 +6393,7 @@ BrowserImportOptions WorkspaceShell::import_options() const {
   return options;
 }
 void WorkspaceShell::SelectImportBrowserForTesting(size_t index) {
-  if(!import_browser_picker_||!import_browser_picker_->GetEnabledInViewsSubtree()||!import_browser_picker_->IsDrawn())return;
+  if(!import_browser_picker_||!import_browser_picker_->GetEnabledInViewsSubtree()||!SceneIsVisible(import_browser_picker_))return;
 #if BUILDFLAG(IS_MAC)
   if(auto* scene=views::AsViewClass<SceneSelect>(import_browser_picker_)){scene->SelectForTesting(index);return;}
 #endif
@@ -6461,7 +6496,7 @@ std::optional<size_t> WorkspaceShell::profile_picker_selection(bool managed) con
 size_t WorkspaceShell::profile_picker_count() const {return PickerCount(profile_picker_);}
 void WorkspaceShell::SetProfilePickerSelectionForTesting(bool managed,size_t index){auto* picker=managed?managed_profile_picker_.get():profile_picker_.get();if(picker&&index<PickerCount(picker))SetPickerIndex(picker,index);}
 void WorkspaceShell::ActivateProfilePickerSelectionForTesting(bool managed,size_t index){
-  auto* picker=managed?managed_profile_picker_.get():profile_picker_.get();if(!picker||index>=PickerCount(picker)||!picker->IsDrawn()||!picker->GetEnabledInViewsSubtree())return;
+  auto* picker=managed?managed_profile_picker_.get():profile_picker_.get();if(!picker||index>=PickerCount(picker)||!SceneIsVisible(picker)||!picker->GetEnabledInViewsSubtree())return;
 #if BUILDFLAG(IS_MAC)
   if(auto* scene=views::AsViewClass<SceneSelect>(picker)){scene->SelectForTesting(index);return;}
 #endif
@@ -6682,7 +6717,7 @@ void WorkspaceShell::RunSuggestion(size_t index) {
 }
 void WorkspaceShell::ContentsChanged(views::Textfield* sender, const std::u16string& contents) {
   // The emoji picker inserts without a Return; apply as soon as text lands.
-  if (sender == emoji_input_) { SetWorkspaceEmoji(state_.workspace_id, contents); return; }
+  if (sender == emoji_input_) { if(!sender->IsIMEComposing())SetWorkspaceEmoji(state_.workspace_id, contents); return; }
   if (sender == history_search_) {
     history_loaded_ = false;
     history_entries_.clear();

@@ -24,7 +24,7 @@
 - (instancetype)initWithWindow:(NSWindow*)window panel:(BOOL)panel {
   if ((self = [super init])) {
     __weak NSWindow* weak_window = window;
-    if (panel) _monitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown | NSEventMaskKeyUp
+    _monitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown | NSEventMaskKeyUp
         handler:^NSEvent*(NSEvent* event) {
       NSWindow* target = weak_window;
       if (target && target.isKeyWindow) {
@@ -38,11 +38,12 @@
               charactersIgnoringModifiers:event.charactersIgnoringModifiers
               isARepeat:event.isARepeat keyCode:event.keyCode];
         }
-        // AppKit's application dispatch can swallow keydowns for these standalone
-        // Views panels. Keep text/IME dispatch on NSWindow's normal responder path.
+        // Standalone workspace and panel windows need NSWindow's responder
+        // path for plain text and matching keyups. Panel command equivalents
+        // still need explicit dispatch; main-window menu dispatch stays in AppKit.
         if (event.type == NSEventTypeKeyDown &&
             (event.modifierFlags & NSEventModifierFlagCommand)) {
-          if ([target performKeyEquivalent:event]) return nil;
+          if (panel && [target performKeyEquivalent:event]) return nil;
           return event;  // Preserve application menu commands.
         }
         [target sendEvent:event];

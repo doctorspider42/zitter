@@ -63,6 +63,15 @@ class ZitterFileUploadBrowserTest : public InProcessBrowserTest {
     personal_ = personal_ready.Get(); ASSERT_TRUE(personal_);
     personal_lease_ = std::make_unique<ScopedProfileKeepAlive>(personal_, ProfileKeepAliveOrigin::kBrowserWindow);
     browser()->GetWindow()->Hide();
+    {
+      base::ScopedAllowBlockingForTesting files;
+      const auto config=manager->user_data_dir().AppendASCII("ZitterWorkspaces.json");
+      if(!base::PathExists(config))ASSERT_TRUE(base::WriteFile(config,R"({
+        "profiles":[{"id":"work-profile","name":"Profil firmowy","directory":"ZitterWork"},{"id":"personal-profile","name":"Profil osobisty","directory":"ZitterPersonal"}],
+        "workspaces":[{"id":"work","name":"Praca","profile_id":"work-profile"},{"id":"personal","name":"Prywatne","profile_id":"personal-profile"}],
+        "active":"work","onboarding_complete":true
+      })"));
+    }
     window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
     ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
     embedded_test_server()->ServeFilesFromSourceDirectory("zitter/testdata");

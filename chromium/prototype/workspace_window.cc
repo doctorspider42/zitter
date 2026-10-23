@@ -10,6 +10,7 @@
 #include "chromium/prototype/browser_preferences.h"
 #include "chromium/prototype/link_navigation.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/unguessable_token.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/context_menu_params.h"
@@ -151,8 +152,10 @@ class WorkspaceWebView final : public views::WebView {
       : views::WebView(profile), handler_(std::move(handler)), open_(std::move(open)), menu_(std::move(menu)),
         adopt_(std::move(adopt)), created_(std::move(created)), changed_(std::move(changed)), interacted_(std::move(interacted)) {}
   ~WorkspaceWebView() override = default;
+  std::array<uint64_t,2> sidebar_identity() const {return {sidebar_identity_.GetHighForSerialization(),sidebar_identity_.GetLowForSerialization()};}
 
  private:
+  const base::UnguessableToken sidebar_identity_=base::UnguessableToken::Create();
   content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
       content::WebContents* source,
       const input::NativeWebKeyboardEvent& event) override {
@@ -555,7 +558,7 @@ void WorkspaceWindow::UpdateShell() {
         if (view == host.right) state.split_tabs[1] = index;
       }
       if (pin_id.empty() || (host.right && (view == host.left || view == host.right)))
-        state.tabs.push_back({title.empty() ? u"Nowa karta" : title, display_url, index, pin_id, {view->GetWebContents()->GetUniqueToken().value().GetHighForSerialization(),view->GetWebContents()->GetUniqueToken().value().GetLowForSerialization()}});
+        state.tabs.push_back({title.empty() ? u"Nowa karta" : title, display_url, index, pin_id, static_cast<WorkspaceWebView*>(view.get())->sidebar_identity()});
     }
     auto& controller = host.view->GetWebContents()->GetController();
     state.workspace_id = host.workspace_id;

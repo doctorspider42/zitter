@@ -6,8 +6,10 @@
 namespace views { class Widget; }
 
 namespace zitter::prototype {
-// Connect the standalone Views window's Cocoa key equivalents to its own
-// high-priority accelerators. The native window bridge owns the delegate.
+// Route standalone window text/keyups through NSWindow's responder chain and
+// connect command equivalents to priority accelerators. Panels dispatch their
+// equivalents explicitly; the main window keeps AppKit menu dispatch. The
+// native window bridge owns the delegate.
 void UpdateWorkspaceMenuShortcuts(const std::vector<Shortcut>& shortcuts);
 void InstallWorkspaceKeyboardRouting(views::Widget* widget, bool panel = false);
 }

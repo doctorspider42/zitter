@@ -1430,11 +1430,19 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarRemainsOpenWhileSpacesS
   EXPECT_FALSE(shell->pinned());
   EXPECT_TRUE(shell->workspace_animation_running());
   EXPECT_TRUE(shell->workspace_animation_pending());
-  ASSERT_TRUE(shell->tab_scroll_view()->layer());
-  EXPECT_LE(shell->tab_scroll_view()->layer()->bounds().height(), window_->widget()->GetWindowBoundsInScreen().height());
+  if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal") {
+    EXPECT_TRUE(shell->workspace_switch_metal_visible());
+    EXPECT_FALSE(shell->tab_scroll_view()->layer());
+  } else {
+    ASSERT_TRUE(shell->tab_scroll_view()->layer());
+    EXPECT_LE(shell->tab_scroll_view()->layer()->bounds().height(),window_->widget()->GetWindowBoundsInScreen().height());
+  }
   for (const auto& list : shell->tab_list_view()->children()) EXPECT_FALSE(list->layer());
   ASSERT_TRUE(base::test::RunUntil([&] { return !shell->workspace_animation_pending(); }));
-  EXPECT_TRUE(shell->workspace_animation_running());  // Starts after presentation.
+  // Metal presentation and completion can both arrive in the same task turn.
+  if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal")
+    EXPECT_TRUE(shell->workspace_animation_running()||!shell->workspace_switch_metal_visible());
+  else EXPECT_TRUE(shell->workspace_animation_running());
   ASSERT_TRUE(base::test::RunUntil([&] { return !shell->workspace_animation_running(); }));
   ASSERT_TRUE(base::test::RunUntil([&] {
     return window_->contents("work")->GetContainerBounds().x() == shell->content_host()->GetBoundsInScreen().x();
@@ -2519,6 +2527,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DynamicWorkspacesAndProfiles) 
   shell->remove_workspace_dialog()->widget_delegate()->AsDialogDelegate()->CancelDialog();
   ASSERT_TRUE(base::test::RunUntil([&] { return !shell->remove_workspace_dialog(); }));
   EXPECT_NE(nullptr, window_->contents("work"));
+  shell->OpenWorkspaceSettings();  // Confirmation dismissed the settings overlay.
   views::test::ButtonTestApi(remove).NotifyDefaultMouseClick();
   ASSERT_TRUE(shell->remove_workspace_dialog());
   shell->remove_workspace_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
@@ -3770,8 +3779,11 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, KeyboardWorkspaceSwitching) {
   // A plain press of the same digit after a chord must retain its keyup too.
   ASSERT_TRUE(content::ExecJs(work, "window.released = []; document.addEventListener('keyup', e => released.push(e.key));"));
   ui_controls::EnableUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));work->Focus();
+  ASSERT_TRUE(content::ExecJs(work,"window.releaseReady = new Promise(resolve => document.addEventListener('keyup', e => {if(e.key==='1')resolve(true);}, {once:true})); void 0;"));
   ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(window_->widget()->GetNativeWindow(), ui::VKEY_1, false, false, false, false));
-  EXPECT_EQ(true, content::EvalJs(work, "released.includes('1')"));
+  EXPECT_EQ(true, content::EvalJs(work,"releaseReady"));
+  EXPECT_EQ("x1",content::EvalJs(work,"document.querySelector('#marker').value"));
 }
 
 #if BUILDFLAG(IS_MAC)
@@ -4004,7 +4016,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, AppearanceRowsSceneInputCl
   auto* blue=static_cast<views::Button*>(colors->children()[3].get());blue->RequestFocus();ui::KeyEvent space(ui::EventType::kKeyPressed,ui::VKEY_SPACE,ui::EF_NONE);ui::KeyEvent space_up(ui::EventType::kKeyReleased,ui::VKEY_SPACE,ui::EF_NONE);ASSERT_TRUE(blue->OnKeyPressed(space));blue->OnKeyReleased(space_up);EXPECT_EQ(0xFF7FAACBu,shell->workspace_color("work"));EXPECT_EQ(u"#7FAACB",shell->color_input()->GetText());
   auto* rocket=static_cast<views::Button*>(emojis->children()[2].get());rocket->RequestFocus();ASSERT_TRUE(rocket->OnKeyPressed(space));rocket->OnKeyReleased(space_up);EXPECT_EQ(u"🚀",shell->workspace_emoji("work"));ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_contains_scene_text("🚀");}));
   const auto personal_color=shell->workspace_color("personal");ASSERT_TRUE(peach->OnMousePressed(press));ASSERT_TRUE(window_->Select("personal"));peach->OnMouseReleased(release);EXPECT_EQ(personal_color,shell->workspace_color("personal"));EXPECT_EQ(0xFF7FAACBu,shell->workspace_color("work"));
-  auto* field=shell->emoji_input();field->RequestFocus();field->SetText(u"");ui::CompositionText composition;composition.text=u"にほん";composition.selection=gfx::Range(composition.text.size());field->SetCompositionText(composition);ASSERT_TRUE(field->IsIMEComposing());const auto before=shell->workspace_emoji("personal");ui::KeyEvent enter(ui::EventType::kKeyPressed,ui::VKEY_RETURN,ui::EF_NONE);
+  shell->OpenWorkspaceSettings();auto* field=shell->emoji_input();field->RequestFocus();ASSERT_TRUE(field->HasFocus());field->SetText(u"");ui::CompositionText composition;composition.text=u"にほん";composition.selection=gfx::Range(composition.text.size());field->SetCompositionText(composition);ASSERT_TRUE(field->IsIMEComposing());const auto before=shell->workspace_emoji("personal");ui::KeyEvent enter(ui::EventType::kKeyPressed,ui::VKEY_RETURN,ui::EF_NONE);
   EXPECT_FALSE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(field,enter));EXPECT_EQ(before,shell->workspace_emoji("personal"));field->ClearCompositionText();field->SetText(u"👩‍💻abc");ASSERT_TRUE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(field,enter));EXPECT_EQ(u"👩‍💻",shell->workspace_emoji("personal"));
   shell->OpenWorkspaceSettings();shell->color_input()->SetText(u"#123456");ASSERT_TRUE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(shell->color_input(),enter));EXPECT_EQ(0xFF123456u,shell->workspace_color("personal"));
   auto* create=FindButton(shell->workspace_panel_for_testing(),u"Nowa przestrzeń…");ASSERT_TRUE(create);ASSERT_TRUE(peach->OnMousePressed(press));views::test::ButtonTestApi(create).NotifyDefaultMouseClick();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->appearance_metal_visible(false)&&!shell->appearance_metal_visible(true);}));peach->OnMouseReleased(release);EXPECT_EQ(0xFF123456u,shell->workspace_color("personal"));
@@ -4055,13 +4067,15 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, WorkspaceFormScenesCreateC
   views::test::ButtonTestApi(create).NotifyDefaultMouseClick();EXPECT_EQ(2u,window_->workspaces().size());field->ClearCompositionText();
   field->SetText(u"  Projekt Łódź 🦀  ");shell->SetProfilePickerSelectionForTesting(false,0);views::test::ButtonTestApi(create).NotifyDefaultMouseClick();
   ASSERT_EQ(3u,window_->workspaces().size());const auto project=window_->active_id();EXPECT_EQ("Projekt Łódź 🦀",window_->workspaces().back().name);EXPECT_EQ(work_.get(),window_->contents(project)->GetBrowserContext());
+  // Selecting the new workspace closes settings, just as in the Views backend.
+  shell->OpenWorkspaceSettings();
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_panel_contains_scene_text("Projekt Łódź 🦀");}));ASSERT_TRUE(button(u"Zapisz nazwę i profil"));
   shell->OpenWorkspaceSettings();field->SetText(u"  Klient 日本語  ");shell->SetProfilePickerSelectionForTesting(false,1);views::test::ButtonTestApi(button(u"Zapisz nazwę i profil")).NotifyDefaultMouseClick();
   EXPECT_EQ("Klient 日本語",window_->workspaces().back().name);EXPECT_EQ(personal_.get(),window_->contents(project)->GetBrowserContext());
   shell->OpenWorkspaceSettings();shell->color_input()->SetText(u"invalid");ui::KeyEvent enter(ui::EventType::kKeyPressed,ui::VKEY_RETURN,ui::EF_NONE);
   ASSERT_TRUE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(shell->color_input(),enter));ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_panel_contains_scene_text("Podaj kolor #RRGGBB");}));
   shell->color_input()->SetText(u"#123456");ASSERT_TRUE(static_cast<views::TextfieldController*>(shell)->HandleKeyEvent(shell->color_input(),enter));EXPECT_EQ(0xFF123456u,shell->workspace_color(project));
-  views::test::ButtonTestApi(button(u"Nowa przestrzeń…")).NotifyDefaultMouseClick();ASSERT_TRUE(button(u"Utwórz przestrzeń"));ASSERT_TRUE(window_->Select("work"));
+  views::test::ButtonTestApi(button(u"Nowa przestrzeń…")).NotifyDefaultMouseClick();ASSERT_TRUE(button(u"Utwórz przestrzeń"));ASSERT_TRUE(window_->Select("work"));shell->OpenWorkspaceSettings();
   ASSERT_TRUE(base::test::RunUntil([&]{return button(u"Zapisz nazwę i profil")!=nullptr;}));EXPECT_EQ(u"Praca",field->GetText());
   shell->SetConfigurationError(true);ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_panel_contains_scene_text("Nie udało się odczytać lub zapisać przestrzeni.");}));shell->SetConfigurationError(false);
   ASSERT_TRUE(base::test::RunUntil([&]{return window_->configuration_saved()&&shell->appearance_saved();}));
@@ -4165,6 +4179,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, RowMenuPlansAndQueuedIdent
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
   const auto url=embedded_test_server()->GetURL("/storage_probe.html?row-menu");
   for(int i=0;i<3;++i)ASSERT_TRUE(window_->NavigateFromBar(url,true));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
   auto target=window_->contents("work")->GetWeakPtr();
   auto* delegate=static_cast<ui::SimpleMenuModel::Delegate*>(shell);
   shell->BuildTabMenu(window_->tab_count("work")-1);
@@ -4191,9 +4206,9 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, WorkspaceSwitchUsesPresent
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
   shell->SetWorkspaceAnimations(false);shell->SetPinned(true);shell->ShowSidebar();
   const auto url=embedded_test_server()->GetURL("/storage_probe.html?gpu-switch");
-  ASSERT_TRUE(window_->NavigateFromBar(url,true));ASSERT_TRUE(content::ExecJs(window_->contents("work"),"document.title='Workspace alpha 🦀'"));
+  ASSERT_TRUE(window_->NavigateFromBar(url,true));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));ASSERT_TRUE(content::ExecJs(window_->contents("work"),"document.title='Workspace alpha 🦀'"));
   ASSERT_TRUE(window_->Select("personal"));ASSERT_TRUE(base::test::RunUntil([&]{return window_->active_id()=="personal"&&!window_->profiles_busy();}));
-  ASSERT_TRUE(window_->NavigateFromBar(url,true));ASSERT_TRUE(content::ExecJs(window_->contents("personal"),"document.title='Workspace beta 日本語'"));
+  ASSERT_TRUE(window_->NavigateFromBar(url,true));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("personal")));ASSERT_TRUE(content::ExecJs(window_->contents("personal"),"document.title='Workspace beta 日本語'"));
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->metal_sidebar_visible()&&shell->metal_sidebar_contains_text_for_testing("Workspace beta 日本語");}));
   ASSERT_TRUE(window_->Select("work"));ASSERT_TRUE(base::test::RunUntil([&]{return shell->metal_sidebar_visible()&&shell->metal_sidebar_contains_text_for_testing("Workspace alpha 🦀");}));
   shell->SetWorkspaceAnimations(true);ASSERT_TRUE(window_->Select("personal"));
@@ -4220,7 +4235,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, SwipePreviewUsesMetalWitho
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
   shell->SetWorkspaceAnimations(false);
   ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html?gpu-swipe"),true));
-  ASSERT_TRUE(content::ExecJs(window_->contents("work"),"document.title='GPU preview 🦀'"));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));ASSERT_TRUE(content::ExecJs(window_->contents("work"),"document.title='GPU preview 🦀'"));
   shell->SetPinned(true);shell->ShowSidebar();
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->metal_sidebar_visible()&&shell->metal_sidebar_contains_text_for_testing("GPU preview 🦀");}));
   const auto width=shell->tab_scroll_view()->width();ASSERT_GT(width,100);
@@ -5272,13 +5287,12 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, MetalOwnsRowTextAndSkipsNa
   EXPECT_EQ(u"GPU · Zażółć 日本語 🦀",
       accessible.GetString16Attribute(ax::mojom::StringAttribute::kName));
   EXPECT_EQ(native_before, shell->native_sidebar_paint_count());
-  // Animations temporarily use freshly painted native snapshots. Completion
-  // must restore the GPU-only paint path, without retaining stale text pixels.
+  // The Metal transition now presents a captured GPU scene. It must preserve
+  // the GPU-only paint path without the native snapshot work it replaced.
   shell->SetWorkspaceAnimations(true);
   ASSERT_TRUE(window_->Select("personal"));
-  ASSERT_TRUE(base::test::RunUntil([&] {
-    return shell->native_sidebar_paint_count() > native_before;
-  }));
+  EXPECT_TRUE(shell->workspace_switch_metal_visible());
+  EXPECT_EQ(native_before,shell->native_sidebar_paint_count());
   ASSERT_TRUE(base::test::RunUntil([&] {
     return !shell->workspace_animation_running() && shell->metal_sidebar_visible();
   }));
