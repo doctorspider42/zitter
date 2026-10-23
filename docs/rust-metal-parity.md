@@ -8,11 +8,12 @@ milestones to `origin/main` as they land. The opt-in switch remains
 
 ## Current execution policy
 
-At the user's request, continue development, non-windowed Rust/Python tests,
-GN/dependency checks and compilation. Do not launch the application or execute
-windowed browser/desktop tests until the user requests the later GUI checkpoint.
-Compiled GUI regressions remain `awaiting_gui_checkpoint`; earlier GUI passes do
-not accept subsequent source changes.
+The user requested the GUI checkpoint on 2026-10-23 after the current editor
+investigation. Windowed automated tests and isolated application validation are
+now authorized. Run native UI suites serially on fixture-owned temporary profiles;
+do not use the normal application/profile. Record real results, skips and failures.
+Earlier headless artifacts remain historical; they do not imply later GUI success.
+See [the remaining work and checkpoint plan](rust-metal-next-steps-2026-10-23.md).
 
 ## How to read progress
 
