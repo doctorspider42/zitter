@@ -1,0 +1,1055 @@
+// Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
+// UTF-16 UI editing only. Native services supply Unicode/visual boundaries;
+// profile objects, browser state and platform handles never enter this model.
+use std::collections::VecDeque;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Selection {
+    pub anchor: usize,
+    pub focus: usize,
+    pub secondary: bool,
+}
+impl Selection {
+    fn range(self) -> std::ops::Range<usize> {
+        self.anchor.min(self.focus)..self.anchor.max(self.focus)
+    }
+    fn caret(at: usize) -> Self {
+        Self {
+            anchor: at,
+            focus: at,
+            secondary: false,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Change {
+    pub admitted: bool,
+    pub text: bool,
+    pub selection: bool,
+    pub composition: bool,
+    // Preedit/cancel are display changes, not committed application edits.
+    pub committed: bool,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Info {
+    pub revision: u64,
+    pub selection: Selection,
+    pub enabled: bool,
+    pub read_only: bool,
+    pub composing: bool,
+    pub composition_start: usize,
+    pub composition_end: usize,
+    pub composition_token: u64,
+    pub can_undo: bool,
+    pub can_redo: bool,
+    pub boundaries_ready: bool,
+}
+#[derive(Clone, Debug)]
+struct Edit {
+    start: usize,
+    removed: Vec<u16>,
+    inserted: Vec<u16>,
+    before: Selection,
+    after: Selection,
+    group: u64,
+    kind: Kind,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    Typing,
+    Backspace,
+    Delete,
+    Separate,
+}
+#[derive(Debug)]
+struct Composition {
+    token: u64,
+    start: usize,
+    length: usize,
+    original: Vec<u16>,
+    before: Selection,
+}
+#[derive(Debug)]
+pub struct EditorState {
+    text: Vec<u16>,
+    selection: Selection,
+    revision: u64,
+    enabled: bool,
+    read_only: bool,
+    composition: Option<Composition>,
+    ime_generation: u64,
+    undo: VecDeque<Edit>,
+    redo: Vec<Edit>,
+    group: u64,
+    boundaries_revision: Option<u64>,
+    graphemes: Vec<usize>,
+    words: Vec<(usize, usize)>,
+}
+impl Default for EditorState {
+    fn default() -> Self {
+        Self {
+            text: vec![],
+            selection: Selection::default(),
+            revision: 0,
+            enabled: true,
+            read_only: false,
+            composition: None,
+            ime_generation: 0,
+            undo: VecDeque::new(),
+            redo: vec![],
+            group: 0,
+            boundaries_revision: Some(0),
+            graphemes: vec![0],
+            words: vec![],
+        }
+    }
+}
+impl EditorState {
+    // A bounded number of delta groups, rather than whole-text snapshots on
+    // every keystroke. A single arbitrarily sized edit remains undoable.
+    const HISTORY_GROUPS: usize = 256;
+    pub fn text(&self) -> &[u16] {
+        &self.text
+    }
+    pub fn info(&self) -> Info {
+        let (start, end, token) = self
+            .composition
+            .as_ref()
+            .map_or((0, 0, 0), |c| (c.start, c.start + c.length, c.token));
+        Info {
+            revision: self.revision,
+            selection: self.selection,
+            enabled: self.enabled,
+            read_only: self.read_only,
+            composing: self.composition.is_some(),
+            composition_start: start,
+            composition_end: end,
+            composition_token: token,
+            can_undo: self.editable() && (!self.undo.is_empty() || self.composition.is_some()),
+            can_redo: self.editable() && self.composition.is_none() && !self.redo.is_empty(),
+            boundaries_ready: self.boundaries_revision == Some(self.revision),
+        }
+    }
+    fn editable(&self) -> bool {
+        self.enabled && !self.read_only
+    }
+    fn point(&self, index: usize) -> bool {
+        valid_point(&self.text, index)
+    }
+    fn break_group(&mut self) {
+        self.group = self.group.wrapping_add(1);
+    }
+    fn next_ime(&mut self) -> u64 {
+        self.ime_generation = self.ime_generation.wrapping_add(1).max(1);
+        self.ime_generation
+    }
+    // Lone surrogates from native services are preserved, but an edit cannot
+    // join two across its boundary: that would split its new caret/marked range.
+    fn replacement_boundaries(&self, start: usize, end: usize, text: &[u16]) -> bool {
+        let left = self.text.get(start.wrapping_sub(1)).copied();
+        let right = self.text.get(end).copied();
+        let joins =
+            |a: Option<u16>, b: Option<u16>| a.is_some_and(is_high) && b.is_some_and(is_low);
+        if text.is_empty() {
+            !joins(left, right)
+        } else {
+            !joins(left, text.first().copied()) && !joins(text.last().copied(), right)
+        }
+    }
+    fn replace_raw(&mut self, start: usize, end: usize, text: &[u16]) -> bool {
+        if self.text[start..end] == *text {
+            return false;
+        }
+        self.text.splice(start..end, text.iter().copied());
+        self.revision = self.revision.wrapping_add(1);
+        self.boundaries_revision = if self.text.is_empty() {
+            Some(self.revision)
+        } else {
+            None
+        };
+        self.graphemes = vec![0];
+        self.words.clear();
+        true
+    }
+    fn record(&mut self, edit: Edit) {
+        if edit.removed == edit.inserted {
+            return;
+        }
+        self.redo.clear();
+        if let Some(last) = self.undo.back_mut() {
+            if last.group == edit.group && last.kind == edit.kind && last.after == edit.before {
+                if edit.kind == Kind::Typing
+                    && last.removed.is_empty()
+                    && edit.removed.is_empty()
+                    && last.start + last.inserted.len() == edit.start
+                {
+                    last.inserted.extend(edit.inserted);
+                    last.after = edit.after;
+                    return;
+                }
+                if edit.kind == Kind::Backspace
+                    && last.inserted.is_empty()
+                    && edit.inserted.is_empty()
+                    && edit.start + edit.removed.len() == last.start
+                {
+                    let mut removed = edit.removed;
+                    removed.append(&mut last.removed);
+                    last.removed = removed;
+                    last.start = edit.start;
+                    last.after = edit.after;
+                    return;
+                }
+                if edit.kind == Kind::Delete
+                    && last.inserted.is_empty()
+                    && edit.inserted.is_empty()
+                    && last.start == edit.start
+                {
+                    last.removed.extend(edit.removed);
+                    last.after = edit.after;
+                    return;
+                }
+            }
+        }
+        self.undo.push_back(edit);
+        while self.undo.len() > Self::HISTORY_GROUPS {
+            self.undo.pop_front();
+        }
+    }
+    // Context/programmatic reset never emits a committed edit and invalidates
+    // old IME callbacks even if the new text happens to be identical.
+    pub fn reset(&mut self, text: &[u16]) -> Change {
+        let before = self.selection;
+        let composing = self.composition.take().is_some();
+        self.next_ime();
+        self.break_group();
+        let changed = self.replace_raw(0, self.text.len(), text);
+        self.selection = Selection::caret(text.len());
+        self.undo.clear();
+        self.redo.clear();
+        Change {
+            admitted: true,
+            text: changed,
+            selection: before != self.selection,
+            composition: composing,
+            committed: false,
+        }
+    }
+    pub fn availability(&mut self, enabled: bool, read_only: bool) -> Change {
+        let mut change = Change {
+            admitted: true,
+            ..Change::default()
+        };
+        if (!enabled || read_only) && self.composition.is_some() {
+            change = self.cancel(self.info().composition_token);
+        }
+        if self.enabled != enabled || self.read_only != read_only {
+            self.break_group();
+        }
+        self.enabled = enabled;
+        self.read_only = read_only;
+        change
+    }
+    // Exact UTF-16 selection for native IME/AX services. Interactive movement
+    // uses the platform's current grapheme stops below, never byte indices.
+    pub fn select(&mut self, anchor: usize, focus: usize, secondary: bool) -> Change {
+        if !self.enabled || !self.point(anchor) || !self.point(focus) {
+            return Change::default();
+        }
+        let next = Selection {
+            anchor,
+            focus,
+            secondary,
+        };
+        let changed = next != self.selection;
+        if changed {
+            self.break_group();
+            self.selection = next;
+        }
+        Change {
+            admitted: true,
+            selection: changed,
+            ..Change::default()
+        }
+    }
+    pub fn install_boundaries(
+        &mut self,
+        revision: u64,
+        stops: &[usize],
+        word_pairs: &[usize],
+    ) -> bool {
+        if revision != self.revision
+            || stops.first() != Some(&0)
+            || stops.last() != Some(&self.text.len())
+            || stops.windows(2).any(|p| p[0] >= p[1])
+            || stops.iter().any(|&p| !self.point(p))
+            || word_pairs.len() % 2 != 0
+        {
+            return false;
+        }
+        let mut words = vec![];
+        let mut previous = 0;
+        for pair in word_pairs.chunks_exact(2) {
+            let (start, end) = (pair[0], pair[1]);
+            if start >= end
+                || start < previous
+                || stops.binary_search(&start).is_err()
+                || stops.binary_search(&end).is_err()
+            {
+                return false;
+            }
+            words.push((start, end));
+            previous = end;
+        }
+        self.graphemes = stops.to_vec();
+        self.words = words;
+        self.boundaries_revision = Some(revision);
+        true
+    }
+    pub fn move_to(&mut self, index: usize, extend: bool, secondary: bool) -> Change {
+        if self.composition.is_some()
+            || self.boundaries_revision != Some(self.revision)
+            || self.graphemes.binary_search(&index).is_err()
+        {
+            return Change::default();
+        }
+        self.select(
+            if extend { self.selection.anchor } else { index },
+            index,
+            secondary,
+        )
+    }
+    pub fn move_logical(&mut self, backward: bool, word: bool, extend: bool) -> Change {
+        if !self.enabled
+            || self.composition.is_some()
+            || self.boundaries_revision != Some(self.revision)
+        {
+            return Change::default();
+        }
+        let range = self.selection.range();
+        let target = if !extend && range.start != range.end {
+            if backward {
+                self.graphemes
+                    .iter()
+                    .rev()
+                    .copied()
+                    .find(|&p| p <= range.start)
+                    .unwrap_or(0)
+            } else {
+                self.graphemes
+                    .iter()
+                    .copied()
+                    .find(|&p| p >= range.end)
+                    .unwrap_or(self.text.len())
+            }
+        } else if word {
+            if backward {
+                self.words
+                    .iter()
+                    .rev()
+                    .find(|w| w.0 < self.selection.focus)
+                    .map_or(0, |w| w.0)
+            } else {
+                self.words
+                    .iter()
+                    .find(|w| w.1 > self.selection.focus)
+                    .map_or(self.text.len(), |w| w.1)
+            }
+        } else if backward {
+            self.graphemes
+                .iter()
+                .rev()
+                .copied()
+                .find(|&p| p < self.selection.focus)
+                .unwrap_or(0)
+        } else {
+            self.graphemes
+                .iter()
+                .copied()
+                .find(|&p| p > self.selection.focus)
+                .unwrap_or(self.text.len())
+        };
+        self.move_to(target, extend, false)
+    }
+    pub fn insert(&mut self, text: &[u16], typing: bool) -> Change {
+        if !self.editable() {
+            return Change::default();
+        }
+        let range = self
+            .composition
+            .as_ref()
+            .map_or_else(|| self.selection.range(), |c| c.start..c.start + c.length);
+        if !self.replacement_boundaries(range.start, range.end, text) {
+            return Change::default();
+        }
+        if let Some(c) = self.composition.take() {
+            let before = self.selection;
+            let changed = self.replace_raw(c.start, c.start + c.length, text);
+            self.selection = Selection::caret(c.start + text.len());
+            self.next_ime();
+            self.break_group();
+            self.record(Edit {
+                start: c.start,
+                removed: c.original,
+                inserted: text.to_vec(),
+                before: c.before,
+                after: self.selection,
+                group: self.group,
+                kind: Kind::Separate,
+            });
+            return Change {
+                admitted: true,
+                text: changed,
+                selection: before != self.selection,
+                composition: true,
+                committed: true,
+            };
+        }
+        let before = self.selection;
+        let range = before.range();
+        let removed = self.text[range.clone()].to_vec();
+        if !typing || !removed.is_empty() {
+            self.break_group();
+        }
+        let changed = self.replace_raw(range.start, range.end, text);
+        self.selection = Selection::caret(range.start + text.len());
+        self.record(Edit {
+            start: range.start,
+            removed,
+            inserted: text.to_vec(),
+            before,
+            after: self.selection,
+            group: self.group,
+            kind: if typing && range.is_empty() {
+                Kind::Typing
+            } else {
+                Kind::Separate
+            },
+        });
+        if !typing {
+            self.break_group();
+        }
+        Change {
+            admitted: true,
+            text: changed,
+            selection: before != self.selection,
+            composition: false,
+            committed: changed,
+        }
+    }
+    pub fn erase(&mut self, backward: bool, word: bool) -> Change {
+        if !self.editable() {
+            return Change::default();
+        }
+        if self.composition.is_some() {
+            return self.cancel(self.info().composition_token);
+        }
+        let before = self.selection;
+        let mut range = before.range();
+        if range.is_empty() {
+            if self.boundaries_revision != Some(self.revision) {
+                return Change::default();
+            }
+            let point = if word {
+                if backward {
+                    self.words
+                        .iter()
+                        .rev()
+                        .find(|w| w.0 < range.start)
+                        .map_or(0, |w| w.0)
+                } else {
+                    self.words
+                        .iter()
+                        .find(|w| w.1 > range.end)
+                        .map_or(self.text.len(), |w| w.1)
+                }
+            } else if backward {
+                self.graphemes
+                    .iter()
+                    .rev()
+                    .copied()
+                    .find(|&p| p < range.start)
+                    .unwrap_or(0)
+            } else {
+                self.graphemes
+                    .iter()
+                    .copied()
+                    .find(|&p| p > range.end)
+                    .unwrap_or(self.text.len())
+            };
+            // A service may put its exact UTF-16 caret inside a composed cluster.
+            // Interactive deletion must still remove the complete cluster.
+            let start = self
+                .graphemes
+                .iter()
+                .rev()
+                .copied()
+                .find(|&p| p <= range.start.min(point))
+                .unwrap_or(0);
+            let end = self
+                .graphemes
+                .iter()
+                .copied()
+                .find(|&p| p >= range.end.max(point))
+                .unwrap_or(self.text.len());
+            range = start..end;
+        }
+        if !self.replacement_boundaries(range.start, range.end, &[]) {
+            return Change::default();
+        }
+        let removed = self.text[range.clone()].to_vec();
+        let changed = self.replace_raw(range.start, range.end, &[]);
+        self.selection = Selection::caret(range.start);
+        if word || before.anchor != before.focus {
+            self.break_group();
+        }
+        self.record(Edit {
+            start: range.start,
+            removed,
+            inserted: vec![],
+            before,
+            after: self.selection,
+            group: self.group,
+            kind: if word || before.anchor != before.focus {
+                Kind::Separate
+            } else if backward {
+                Kind::Backspace
+            } else {
+                Kind::Delete
+            },
+        });
+        Change {
+            admitted: true,
+            text: changed,
+            selection: before != self.selection,
+            composition: false,
+            committed: changed,
+        }
+    }
+    pub fn begin_composition(&mut self) -> u64 {
+        if !self.editable() {
+            return 0;
+        }
+        if let Some(c) = &self.composition {
+            return c.token;
+        }
+        self.break_group();
+        let range = self.selection.range();
+        let token = self.next_ime();
+        self.composition = Some(Composition {
+            token,
+            start: range.start,
+            length: range.len(),
+            original: self.text[range].to_vec(),
+            before: self.selection,
+        });
+        token
+    }
+    pub fn compose(&mut self, token: u64, text: &[u16], anchor: usize, focus: usize) -> Change {
+        if !self.editable() || !valid_point(text, anchor) || !valid_point(text, focus) {
+            return Change::default();
+        }
+        let Some(c) = &self.composition else {
+            return Change::default();
+        };
+        if c.token != token || token == 0 {
+            return Change::default();
+        }
+        let (start, end) = (c.start, c.start + c.length);
+        if !self.replacement_boundaries(start, end, text) {
+            return Change::default();
+        }
+        let before = self.selection;
+        let changed = self.replace_raw(start, end, text);
+        self.composition.as_mut().unwrap().length = text.len();
+        self.selection = Selection {
+            anchor: start + anchor,
+            focus: start + focus,
+            secondary: false,
+        };
+        Change {
+            admitted: true,
+            text: changed,
+            selection: before != self.selection,
+            composition: true,
+            committed: false,
+        }
+    }
+    pub fn confirm(&mut self, token: u64) -> Change {
+        if !self.editable()
+            || self
+                .composition
+                .as_ref()
+                .is_none_or(|c| token == 0 || c.token != token)
+        {
+            return Change::default();
+        }
+        let c = self.composition.take().unwrap();
+        let before = self.selection;
+        self.selection = Selection::caret(c.start + c.length);
+        self.record(Edit {
+            start: c.start,
+            removed: c.original,
+            inserted: self.text[c.start..c.start + c.length].to_vec(),
+            before: c.before,
+            after: self.selection,
+            group: self.group,
+            kind: Kind::Separate,
+        });
+        self.next_ime();
+        self.break_group();
+        Change {
+            admitted: true,
+            selection: before != self.selection,
+            composition: true,
+            committed: true,
+            ..Change::default()
+        }
+    }
+    pub fn cancel(&mut self, token: u64) -> Change {
+        if self
+            .composition
+            .as_ref()
+            .is_none_or(|c| token == 0 || c.token != token)
+        {
+            return Change::default();
+        }
+        let c = self.composition.take().unwrap();
+        let before = self.selection;
+        let changed = self.replace_raw(c.start, c.start + c.length, &c.original);
+        self.selection = c.before;
+        self.next_ime();
+        self.break_group();
+        Change {
+            admitted: true,
+            text: changed,
+            selection: before != self.selection,
+            composition: true,
+            committed: false,
+        }
+    }
+    pub fn undo(&mut self) -> Change {
+        if !self.editable() {
+            return Change::default();
+        }
+        if self.composition.is_some() {
+            return self.cancel(self.info().composition_token);
+        }
+        let Some(edit) = self.undo.pop_back() else {
+            return Change::default();
+        };
+        let before = self.selection;
+        let changed = self.replace_raw(edit.start, edit.start + edit.inserted.len(), &edit.removed);
+        self.selection = edit.before;
+        self.redo.push(edit);
+        self.break_group();
+        Change {
+            admitted: true,
+            text: changed,
+            selection: before != self.selection,
+            committed: changed,
+            ..Change::default()
+        }
+    }
+    pub fn redo(&mut self) -> Change {
+        if !self.editable() || self.composition.is_some() {
+            return Change::default();
+        }
+        let Some(edit) = self.redo.pop() else {
+            return Change::default();
+        };
+        let before = self.selection;
+        let changed = self.replace_raw(edit.start, edit.start + edit.removed.len(), &edit.inserted);
+        self.selection = edit.after;
+        self.undo.push_back(edit);
+        self.break_group();
+        Change {
+            admitted: true,
+            text: changed,
+            selection: before != self.selection,
+            committed: changed,
+            ..Change::default()
+        }
+    }
+}
+fn valid_point(text: &[u16], at: usize) -> bool {
+    at <= text.len()
+        && (at == 0 || at == text.len() || !(is_high(text[at - 1]) && is_low(text[at])))
+}
+fn is_high(c: u16) -> bool {
+    (0xd800..=0xdbff).contains(&c)
+}
+fn is_low(c: u16) -> bool {
+    (0xdc00..=0xdfff).contains(&c)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn u(s: &str) -> Vec<u16> {
+        s.encode_utf16().collect()
+    }
+    fn value(e: &EditorState) -> String {
+        String::from_utf16(e.text()).unwrap()
+    }
+    fn ascii(e: &mut EditorState) {
+        let stops = (0..=e.text().len()).collect::<Vec<_>>();
+        assert!(e.install_boundaries(e.info().revision, &stops, &[]));
+    }
+    fn editor(s: &str) -> EditorState {
+        let mut e = EditorState::default();
+        e.reset(&u(s));
+        e
+    }
+    #[test]
+    fn typing_coalesces_and_redoes() {
+        let mut e = editor("");
+        for c in ["a", "b", "c"] {
+            assert!(e.insert(&u(c), true).committed);
+        }
+        assert_eq!(value(&e), "abc");
+        assert!(e.undo().text);
+        assert_eq!(value(&e), "");
+        assert!(!e.info().can_undo);
+        assert!(e.redo().text);
+        assert_eq!(value(&e), "abc");
+    }
+    #[test]
+    fn movement_breaks_typing_group() {
+        let mut e = editor("");
+        e.insert(&u("a"), true);
+        e.select(0, 0, false);
+        e.select(1, 1, false);
+        e.insert(&u("b"), true);
+        e.undo();
+        assert_eq!(value(&e), "a");
+        e.undo();
+        assert_eq!(value(&e), "");
+    }
+    #[test]
+    fn paste_is_separate() {
+        let mut e = editor("");
+        e.insert(&u("a"), true);
+        e.insert(&u("bc"), false);
+        e.insert(&u("d"), true);
+        for expected in ["abc", "a", ""] {
+            e.undo();
+            assert_eq!(value(&e), expected);
+        }
+    }
+    #[test]
+    fn reverse_selection_is_restored() {
+        let mut e = editor("abcd");
+        e.select(3, 1, true);
+        e.insert(&u("X"), true);
+        assert_eq!(value(&e), "aXd");
+        e.undo();
+        assert_eq!(value(&e), "abcd");
+        assert_eq!(
+            e.info().selection,
+            Selection {
+                anchor: 3,
+                focus: 1,
+                secondary: true
+            }
+        );
+    }
+    #[test]
+    fn repeated_backspace_coalesces() {
+        let mut e = editor("abcd");
+        for _ in 0..3 {
+            ascii(&mut e);
+            e.erase(true, false);
+        }
+        assert_eq!(value(&e), "a");
+        e.undo();
+        assert_eq!(value(&e), "abcd");
+        assert!(!e.info().can_undo);
+    }
+    #[test]
+    fn repeated_delete_coalesces() {
+        let mut e = editor("abcd");
+        e.select(0, 0, false);
+        for _ in 0..3 {
+            ascii(&mut e);
+            e.erase(false, false);
+        }
+        assert_eq!(value(&e), "d");
+        e.undo();
+        assert_eq!(value(&e), "abcd");
+    }
+    #[test]
+    fn stale_and_invalid_geometry_rejected_transactionally() {
+        let mut e = editor("abc");
+        let r = e.info().revision;
+        assert!(!e.install_boundaries(r - 1, &[0, 3], &[]));
+        assert!(!e.install_boundaries(r, &[0, 1, 1, 3], &[]));
+        assert!(!e.install_boundaries(r, &[0, 1, 2, 3], &[1, 3, 2, 3]));
+        assert!(!e.info().boundaries_ready);
+        ascii(&mut e);
+        assert!(!e.install_boundaries(r, &[0, 4], &[]));
+        assert!(e.info().boundaries_ready);
+        e.insert(&u("d"), true);
+        assert!(!e.info().boundaries_ready);
+        assert!(!e.move_logical(true, false, false).admitted);
+    }
+    #[test]
+    fn surrogate_pair_never_splits() {
+        let mut e = editor("a🦀b");
+        assert!(!e.select(2, 2, false).admitted);
+        let r = e.info().revision;
+        assert!(!e.install_boundaries(r, &[0, 1, 2, 3, 4], &[]));
+        assert!(e.install_boundaries(r, &[0, 1, 3, 4], &[]));
+        e.select(3, 3, false);
+        e.erase(true, false);
+        assert_eq!(value(&e), "ab");
+        e.undo();
+        assert_eq!(value(&e), "a🦀b");
+    }
+    #[test]
+    fn deletion_expands_service_caret_inside_cluster() {
+        for backward in [false, true] {
+            let mut e = editor("a\u{301}b");
+            e.install_boundaries(e.info().revision, &[0, 2, 3], &[]);
+            e.select(1, 1, false);
+            e.erase(backward, false);
+            assert_eq!(value(&e), "b");
+            e.undo();
+            assert_eq!(value(&e), "a\u{301}b");
+        }
+    }
+    #[test]
+    fn collapsing_service_selection_snaps_outward() {
+        for backward in [false, true] {
+            let mut e = editor("a\u{301}bc");
+            e.install_boundaries(e.info().revision, &[0, 2, 3, 4], &[]);
+            e.select(1, 3, false);
+            assert!(e.move_logical(backward, false, false).admitted);
+            assert_eq!(e.info().selection.focus, if backward { 0 } else { 3 });
+        }
+    }
+    #[test]
+    fn word_navigation_and_deletion() {
+        let mut e = editor("one  two");
+        let stops = (0..=8).collect::<Vec<_>>();
+        e.install_boundaries(e.info().revision, &stops, &[0, 3, 5, 8]);
+        e.move_logical(true, true, false);
+        assert_eq!(e.info().selection.focus, 5);
+        e.erase(true, true);
+        assert_eq!(value(&e), "two");
+        e.undo();
+        assert_eq!(value(&e), "one  two");
+    }
+    #[test]
+    fn shift_navigation_keeps_anchor() {
+        let mut e = editor("abc");
+        ascii(&mut e);
+        e.move_logical(true, false, true);
+        e.move_logical(true, false, true);
+        assert_eq!(
+            e.info().selection,
+            Selection {
+                anchor: 3,
+                focus: 1,
+                secondary: false
+            }
+        );
+    }
+    #[test]
+    fn composition_is_atomic_and_only_confirmation_commits() {
+        let mut e = editor("abcd");
+        e.select(3, 1, true);
+        let t = e.begin_composition();
+        assert_ne!(t, 0);
+        assert_eq!(t, e.begin_composition());
+        assert!(!e.compose(t, &u("日"), 1, 1).committed);
+        assert!(!e.compose(t, &u("日本"), 2, 2).committed);
+        assert_eq!(value(&e), "a日本d");
+        assert!(e.confirm(t).committed);
+        assert!(!e.info().composing);
+        e.undo();
+        assert_eq!(value(&e), "abcd");
+        assert_eq!(e.info().selection.anchor, 3);
+        e.redo();
+        assert_eq!(value(&e), "a日本d");
+    }
+    #[test]
+    fn cancel_restores_text_selection_and_redo() {
+        let mut e = editor("abc");
+        e.insert(&u("d"), false);
+        e.undo();
+        e.select(2, 0, true);
+        let t = e.begin_composition();
+        e.compose(t, &u("漢"), 1, 1);
+        let c = e.cancel(t);
+        assert!(c.text && !c.committed);
+        assert_eq!(value(&e), "abc");
+        assert_eq!(
+            e.info().selection,
+            Selection {
+                anchor: 2,
+                focus: 0,
+                secondary: true
+            }
+        );
+        assert!(e.info().can_redo);
+        e.redo();
+        assert_eq!(value(&e), "abcd");
+    }
+    #[test]
+    fn empty_preedit_still_active() {
+        let mut e = editor("abc");
+        e.select(0, 2, false);
+        let t = e.begin_composition();
+        e.compose(t, &[], 0, 0);
+        assert!(e.info().composing);
+        assert_eq!(value(&e), "c");
+        e.cancel(t);
+        assert_eq!(value(&e), "abc");
+    }
+    #[test]
+    fn insert_during_composition_is_one_undo() {
+        let mut e = editor("abc");
+        e.select(0, 2, false);
+        let t = e.begin_composition();
+        e.compose(t, &u("x"), 1, 1);
+        assert!(e.insert(&u("日本"), false).committed);
+        assert_eq!(value(&e), "日本c");
+        e.undo();
+        assert_eq!(value(&e), "abc");
+        assert!(!e.info().can_undo);
+    }
+    #[test]
+    fn old_ime_callbacks_cannot_mutate_new_context() {
+        let mut e = editor("abc");
+        let t = e.begin_composition();
+        e.reset(&u("abc"));
+        let next = e.begin_composition();
+        assert_ne!(t, next);
+        for c in [e.compose(t, &u("x"), 1, 1), e.confirm(t), e.cancel(t)] {
+            assert!(!c.admitted);
+        }
+        assert_eq!(value(&e), "abc");
+        assert_eq!(e.info().composition_token, next);
+    }
+    #[test]
+    fn readonly_cancels_preedit_and_blocks_edits() {
+        let mut e = editor("abc");
+        e.select(0, 2, false);
+        let t = e.begin_composition();
+        e.compose(t, &u("x"), 1, 1);
+        let c = e.availability(true, true);
+        assert!(!c.committed);
+        assert_eq!(value(&e), "abc");
+        assert!(e.select(0, 3, false).admitted);
+        assert!(!e.insert(&u("x"), true).admitted);
+        assert!(!e.erase(true, false).admitted);
+        assert_eq!(e.begin_composition(), 0);
+        assert!(!e.undo().admitted);
+        assert!(!e.info().can_undo);
+    }
+    #[test]
+    fn disabled_blocks_selection_and_editing() {
+        let mut e = editor("abc");
+        e.availability(false, false);
+        assert!(!e.select(0, 0, false).admitted);
+        assert!(!e.insert(&u("x"), true).admitted);
+        e.availability(true, false);
+        assert!(e.insert(&u("x"), true).admitted);
+    }
+    #[test]
+    fn undo_cancels_preedit_before_history() {
+        let mut e = editor("abc");
+        e.insert(&u("d"), false);
+        let t = e.begin_composition();
+        e.compose(t, &u("x"), 1, 1);
+        assert!(!e.undo().committed);
+        assert_eq!(value(&e), "abcd");
+        assert!(e.undo().committed);
+        assert_eq!(value(&e), "abc");
+    }
+    #[test]
+    fn new_edit_invalidates_redo() {
+        let mut e = editor("a");
+        e.insert(&u("b"), false);
+        e.undo();
+        assert!(e.info().can_redo);
+        e.insert(&u("c"), false);
+        assert!(!e.info().can_redo);
+        assert!(!e.redo().admitted);
+    }
+    #[test]
+    fn reset_clears_history_even_for_identical_text() {
+        let mut e = editor("a");
+        e.insert(&u("b"), false);
+        let r = e.info().revision;
+        let c = e.reset(&u("ab"));
+        assert!(!c.text && !c.committed);
+        assert_eq!(e.info().revision, r);
+        assert!(!e.info().can_undo);
+    }
+    #[test]
+    fn history_is_bounded_without_truncating_text() {
+        let mut e = editor("");
+        for _ in 0..300 {
+            e.insert(&u("x"), false);
+        }
+        for _ in 0..256 {
+            assert!(e.undo().admitted);
+        }
+        assert_eq!(e.text().len(), 44);
+        assert!(!e.undo().admitted);
+        for _ in 0..256 {
+            e.redo();
+        }
+        assert_eq!(e.text().len(), 300);
+    }
+    #[test]
+    fn invalid_relative_ime_selection_is_transactional() {
+        let mut e = editor("abc");
+        let t = e.begin_composition();
+        assert!(!e.compose(t, &u("🦀"), 1, 1).admitted);
+        assert!(!e.compose(t, &u("x"), 2, 2).admitted);
+        assert_eq!(value(&e), "abc");
+        assert!(e.info().composing);
+    }
+    #[test]
+    fn arbitrary_utf16_roundtrips() {
+        let mut e = EditorState::default();
+        e.reset(&[0xd800, 65, 0xdc00]);
+        assert_eq!(e.text(), &[0xd800, 65, 0xdc00]);
+        e.select(0, 3, false);
+        e.insert(&u("ok"), false);
+        e.undo();
+        assert_eq!(e.text(), &[0xd800, 65, 0xdc00]);
+    }
+    #[test]
+    fn no_op_confirmation_is_a_commit_notification() {
+        let mut e = editor("abc");
+        let t = e.begin_composition();
+        let c = e.confirm(t);
+        assert!(c.committed && !c.text);
+        assert!(!e.info().can_undo);
+    }
+}
+
+#[cfg(test)]
+mod malformed_service_tests {
+    use super::*;
+    #[test]
+    fn edits_cannot_create_surrogate_pairs_across_caret_or_marked_boundaries() {
+        let mut e = EditorState::default();
+        e.reset(&[0xd800, 65, 0xdc00]);
+        e.select(1, 2, false);
+        assert!(!e.insert(&[], false).admitted);
+        assert!(!e.erase(true, false).admitted);
+        let t = e.begin_composition();
+        assert!(!e.compose(t, &[], 0, 0).admitted);
+        assert!(e.info().composing);
+        e.cancel(t);
+        e.select(1, 1, false);
+        assert!(!e.insert(&[0xdc00], true).admitted);
+        e.select(2, 2, false);
+        assert!(!e.insert(&[0xd800], true).admitted);
+        assert_eq!(e.text(), &[0xd800, 65, 0xdc00]);
+    }
+}

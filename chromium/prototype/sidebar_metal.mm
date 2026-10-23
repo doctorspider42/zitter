@@ -29,6 +29,8 @@
 #include "ui/gfx/canvas.h"
 #include "cc/paint/paint_flags.h"
 
+#include "chromium/prototype/editor_text_layout_mac.inc"
+
 // Returning nil delegates EVERY event to Chromium's existing native view:
 // mouse/hover/drag, context menus, trackpad scrolling, key routing and VoiceOver.
 @interface ZitterSidebarMetalView : NSView
@@ -367,7 +369,7 @@ class Surface final : public SidebarMetal {
         width, height, 8, width * 4, space.get(), static_cast<uint32_t>(kCGImageAlphaPremultipliedFirst) | static_cast<uint32_t>(kCGBitmapByteOrder32Little)));
     if (!context) return nil;
     CGContextScaleCTM(context.get(), scale, scale);
-    NSFont* font = [NSFont systemFontOfSize:op.font_size weight:op.bold ? NSFontWeightMedium : NSFontWeightRegular];
+    NSFont* font = editor_text_detail::Font(op.font_size,op.bold);
     NSColor* color = [NSColor colorWithSRGBRed:((op.color>>16)&255)/255.
         green:((op.color>>8)&255)/255. blue:(op.color&255)/255. alpha:(op.color>>24)/255.];
     NSString* string = base::SysUTF8ToNSString(std::string(op.text));

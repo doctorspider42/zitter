@@ -2,8 +2,13 @@
 // Control layout, presentation and input policy; browser state and command ownership
 // remain in WorkspaceShell. Only UI IDs/text/metrics cross this ABI, never URLs,
 // profile objects/directories or WebContents.
+mod sidebar_editor;
+use sidebar_editor::EditorState;
+
 #[cxx::bridge(namespace = "zitter::sidebar")]
 mod ffi {
+    struct EditorInfo { revision: u64, anchor: usize, focus: usize, secondary: bool, enabled: bool, read_only: bool, composing: bool, composition_start: usize, composition_end: usize, composition_token: u64, can_undo: bool, can_redo: bool, boundaries_ready: bool }
+    struct EditorUpdate { admitted: bool, text_changed: bool, selection_changed: bool, composition_changed: bool, committed: bool, info: EditorInfo }
     struct SelectLayout { width: i32, height: i32, label: Rect, arrow: Rect }
     struct SelectOption { key: String, label: String, search: String }
     struct CheckboxLayout { width: i32, height: i32, mark: Rect, label: Rect, lines: Vec<Rect> }
@@ -93,6 +98,26 @@ mod ffi {
         text: String, font_size: f32, bold: bool, middle: bool, center: bool, clip: FloatRect,
     }
     extern "Rust" {
+
+        type EditorState;
+        fn new_editor_state() -> Box<EditorState>;
+        fn editor_text(state: &EditorState) -> &[u16];
+        fn editor_info(state: &EditorState) -> EditorInfo;
+        fn editor_install_boundaries(state: &mut EditorState, revision: u64, stops: &[usize], words: &[usize]) -> bool;
+        fn editor_begin_composition(state: &mut EditorState) -> u64;
+        fn editor_reset(state: &mut EditorState, text: &[u16]) -> EditorUpdate;
+        fn editor_availability(state: &mut EditorState, enabled: bool, read_only: bool) -> EditorUpdate;
+        fn editor_select(state: &mut EditorState, anchor: usize, focus: usize, secondary: bool) -> EditorUpdate;
+        fn editor_move_to(state: &mut EditorState, index: usize, extend: bool, secondary: bool) -> EditorUpdate;
+        fn editor_move_logical(state: &mut EditorState, backward: bool, word: bool, extend: bool) -> EditorUpdate;
+        fn editor_insert(state: &mut EditorState, text: &[u16], typing: bool) -> EditorUpdate;
+        fn editor_erase(state: &mut EditorState, backward: bool, word: bool) -> EditorUpdate;
+        fn editor_compose(state: &mut EditorState, token: u64, text: &[u16], anchor: usize, focus: usize) -> EditorUpdate;
+        fn editor_confirm(state: &mut EditorState, token: u64) -> EditorUpdate;
+        fn editor_cancel(state: &mut EditorState, token: u64) -> EditorUpdate;
+        fn editor_undo(state: &mut EditorState) -> EditorUpdate;
+        fn editor_redo(state: &mut EditorState) -> EditorUpdate;
+
         type SelectState;
         fn new_select_state(options: Vec<SelectOption>) -> Box<SelectState>;
         fn selected(self: &SelectState) -> usize;
@@ -2436,3 +2461,32 @@ mod tests {
         assert_eq!(cycle_tab(0, 1, true), 0);
     }
 }
+
+
+// Borrowed text is valid until the next mutation. Native adapters copy/cache it
+// by revision; no browser handles or profile state cross this boundary.
+fn new_editor_state() -> Box<EditorState> { Box::default() }
+fn editor_text(state: &EditorState) -> &[u16] { state.text() }
+fn editor_info(state: &EditorState) -> ffi::EditorInfo {
+    let i=state.info();
+    ffi::EditorInfo { revision:i.revision,anchor:i.selection.anchor,focus:i.selection.focus,secondary:i.selection.secondary,
+        enabled:i.enabled,read_only:i.read_only,composing:i.composing,composition_start:i.composition_start,
+        composition_end:i.composition_end,composition_token:i.composition_token,can_undo:i.can_undo,can_redo:i.can_redo,boundaries_ready:i.boundaries_ready }
+}
+fn editor_update(state:&EditorState,c:sidebar_editor::Change)->ffi::EditorUpdate {
+    ffi::EditorUpdate {admitted:c.admitted,text_changed:c.text,selection_changed:c.selection,composition_changed:c.composition,committed:c.committed,info:editor_info(state)}
+}
+fn editor_install_boundaries(state:&mut EditorState,revision:u64,stops:&[usize],words:&[usize])->bool {state.install_boundaries(revision,stops,words)}
+fn editor_begin_composition(state:&mut EditorState)->u64 {state.begin_composition()}
+fn editor_reset(state: &mut EditorState, text: &[u16])->ffi::EditorUpdate {let change=state.reset(text);editor_update(state,change)}
+fn editor_availability(state: &mut EditorState, enabled: bool, read_only: bool)->ffi::EditorUpdate {let change=state.availability(enabled,read_only);editor_update(state,change)}
+fn editor_select(state: &mut EditorState, anchor: usize, focus: usize, secondary: bool)->ffi::EditorUpdate {let change=state.select(anchor,focus,secondary);editor_update(state,change)}
+fn editor_move_to(state: &mut EditorState, index: usize, extend: bool, secondary: bool)->ffi::EditorUpdate {let change=state.move_to(index,extend,secondary);editor_update(state,change)}
+fn editor_move_logical(state: &mut EditorState, backward: bool, word: bool, extend: bool)->ffi::EditorUpdate {let change=state.move_logical(backward,word,extend);editor_update(state,change)}
+fn editor_insert(state: &mut EditorState, text: &[u16], typing: bool)->ffi::EditorUpdate {let change=state.insert(text,typing);editor_update(state,change)}
+fn editor_erase(state: &mut EditorState, backward: bool, word: bool)->ffi::EditorUpdate {let change=state.erase(backward,word);editor_update(state,change)}
+fn editor_compose(state: &mut EditorState, token: u64, text: &[u16], anchor: usize, focus: usize)->ffi::EditorUpdate {let change=state.compose(token,text,anchor,focus);editor_update(state,change)}
+fn editor_confirm(state: &mut EditorState, token: u64)->ffi::EditorUpdate {let change=state.confirm(token);editor_update(state,change)}
+fn editor_cancel(state: &mut EditorState, token: u64)->ffi::EditorUpdate {let change=state.cancel(token);editor_update(state,change)}
+fn editor_undo(state: &mut EditorState)->ffi::EditorUpdate {let change=state.undo();editor_update(state,change)}
+fn editor_redo(state: &mut EditorState)->ffi::EditorUpdate {let change=state.redo();editor_update(state,change)}

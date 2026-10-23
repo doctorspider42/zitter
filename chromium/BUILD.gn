@@ -17,7 +17,7 @@ if (is_mac) {
   }
   rust_static_library("sidebar_scene") {
     crate_root = "chromium/prototype/sidebar_scene.rs"
-    sources = [ crate_root ]
+    sources = [ crate_root, "chromium/prototype/sidebar_editor.rs" ]
     cxx_bindings = [ crate_root ]
     allow_unsafe = true
     build_native_rust_unit_tests = true
