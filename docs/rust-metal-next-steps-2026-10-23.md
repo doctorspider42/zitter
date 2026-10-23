@@ -1,6 +1,6 @@
 # Rust + Metal: remaining work and GUI checkpoint
 
-Snapshot: `bb32e6f253953c5090a24bebf1d3ef8a382a74e9`, 2026-10-23.
+Snapshot: `b59df50b21cba35e9dca66d16ba311548f812393`, 2026-10-24.
 This is a work plan, not a claim of functional parity. The detailed inventory is
 [the parity checklist](rust-metal-parity.md). Existing native behavior is preserved
 in many places where Views presentation and interaction still need replacement.
@@ -8,30 +8,41 @@ in many places where Views presentation and interaction still need replacement.
 ## Current checkpoint
 
 The full compiled automated browser/UI inventory passed for UI source
-`bb32e6f253953c5090a24bebf1d3ef8a382a74e9`:
+`b59df50b21cba35e9dca66d16ba311548f812393`:
 
 | Backend | Passed | Explicit skips | Failed / crashed |
 | --- | ---: | ---: | ---: |
-| Rust + Metal | 133 | 6 | 0 |
-| Views | 101 | 6 | 0 |
+| Rust + Metal | 137 | 6 | 0 |
+| Views | 105 | 6 | 0 |
 
 The complete run was serial, with one launcher job and no retries, using temporary
 fixture-owned profiles. Metal API validation was enabled. The 32 dedicated Metal
-cases are excluded from Views (139 Metal / 107 Views inventory). **66 Python tests
+cases are excluded from Views (143 Metal / 111 Views inventory). **66 Python tests
 from a clean archive** and 68 in the live checkout passed (the latter includes two
-concurrent tests outside this UI commit). Rust/editor/scene/geometry sources are
+concurrent tests outside this UI commit). Rust model/display-list and CoreText/SDK sources are
 unchanged from the preceding **214 Rust / 61 standalone model / 180 SDK font and
-direction plus raster** checks; those runs were not repeated for this tools-adapter migration.
+direction plus raster** checks; those runs were not repeated for this page-dialog/editor-adapter migration.
 Optimized compilation, scoped GN/boundaries and a final no-work Ninja check passed.
-[Results and source/binary hashes](benchmarks/rust-tools-editors-checkpoint-2026-10-23.json).
+[Results and source/binary hashes](benchmarks/rust-page-prompt-editor-checkpoint-2026-10-24.json).
 
-The native/Metal gate passed 17 tests per backend. Three new full-matrix cases cover tools editors: actual Cocoa snapshot/provider entry/save, composition suppression for button/key actions, old-client destruction, stale form/profile actions, history committed-query progress during preedit and recorder admission/cancellation/save. Existing preferences, editing and browser/service cases remain included. No new gate/UI failure occurred in this milestone. Historical intermediate failures remain in their own reports.
+The 30-case gate passed on both backends. Four new cases cover real Cocoa
+prompt input/Return/Escape and beforeunload default-key policy, composing UI
+acceptance, raw UTF-16 overrides, stale keys, forced closure and hidden-page or
+subframe navigation cancellation. Page dialogs and workspace-removal confirmation
+now use client-owned widgets and synchronous C++ destruction, independently of
+native sheet animations. Earlier failed runs and investigations are retained in
+the matching report.
 
-Each backend explicitly skipped four opt-in performance scenarios, the real-user
-Arc import and the interactive one-hour manual harness. They are not counted as
-UI passes. The normal app/profile was not used or changed; no app was packaged
-or signed in this checkpoint. Real presentation/performance and manual app,
-IME-candidate, VoiceOver, scale/RTL/long-interaction acceptance remain separate.
+The regular matrix skipped four opt-in performance cases, real-user Arc import
+and the interactive manual window. The four performance cases then passed
+separately on each backend, using their default 30 measured trials. **Combined
+coverage is 141 Metal / 109 Views passes**, with only Arc and manual-window cases
+excluded per backend. Metal validation stayed enabled; these timing samples are
+not controlled CPU/GPU/drawable-presentation comparisons.
+
+Tests used isolated temporary profiles. The normal app/profile was not changed;
+no app was packaged or signed. Real presentation profiling, native candidate
+windows, VoiceOver, scale/RTL and long-interaction acceptance remain separate.
 
 An earlier full-UI checkpoint fixed unintended dormant-WebContents creation during sidebar
 identity extraction, hidden-window input/Metal lifecycle, emoji preedit saving,
@@ -43,12 +54,11 @@ The older failed/intermediate runs remain recorded in the
 
 ## Next implementation steps
 
-1. **Text editing and IME.** Finish remaining native service/interaction parity for the live
-   Rust workspace/profile name fields, then replace Views textfield layout/drawing
-   and editing in remaining custom dialog/page-prompt fields. Preserve UTF-16 selection, grapheme/word navigation, bidi affinity,
-   horizontal scrolling, composition/candidate geometry, undo/redo, clipboard,
-   mouse/keyboard selection, drag/drop, context commands, focus and accessibility.
-   Keep native IME/clipboard/accessibility as explicit platform adapters.
+1. **Text editing and IME acceptance.** The inventoried custom fields, including
+   page prompts, use the shared editor adapter. Complete native candidate-window,
+   menu/undo/focus/hide, VoiceOver, multi-click/drag, complex bidi and scale/theme
+   acceptance. Continue inventorying inherited Chromium fields. Preserve native
+   IME, clipboard and accessibility services as explicit platform adapters.
 2. **Finish migrated forms and dialogs.** Replace remaining header/close/modal
    controls and outer placement for workspace/profile/import/folder/deletion
    surfaces. Finish the address/command palette input/frame/container layer.
@@ -89,7 +99,7 @@ and its empty-preedit capability are unchanged.
 [Implementation and remaining editor gaps](rust-metal-editor.md).
 
 Next: broaden undo/menu/focus/hide/native candidate-window termination acceptance,
-then migrate the separate page prompt and continue settings/tools controls/form/container and
+then continue dialog/settings/tools controls/form/container and
 service-panel ownership. VoiceOver, multi-click/bidi/pointer/menu/clipboard/scale/
 theme/GPU recovery, actual profiling and signed/manual release checks remain.
 
@@ -98,8 +108,8 @@ Views container ownership, manual acceptance and real presentation profiling.
 Passing the current inventory does not establish a completion percentage.
 
 
-## Remaining native text-input roles
+## Text-input inventory and remaining ownership
 
-All declared WorkspaceShell text-input roles now use EditorControl in the Rust/Metal backend, including all seven tools roles. WorkspaceShell no longer inherits TextfieldController. The separate page JavaScript prompt in `page_dialogs.cc` still owns a Views Textfield. The native folder DialogModel field remains the deliberate Views baseline. Continue inventorying custom dialogs and inherited Chromium UI; this is not a claim that all application text input or all controls are migrated.
+All declared WorkspaceShell roles and the separate page JavaScript prompt now use EditorControl in the opt-in backend. Source inventory finds no direct custom prototype Textfield allocation outside the native adapter, except the deliberate Views folder DialogModel baseline. This is not proof that all inherited Chromium UI or all application controls are migrated.
 
-Native service stores, profile/global scope, authorization and accelerator/IME/clipboard/accessibility adapters remain explicit boundaries. Tools/preferences form state, pickers, buttons, lists, scroll and outer container ownership still require migration.
+Continue custom-dialog and inherited-browser inventory, broader IME/native service acceptance and dialog/settings/tools form state, pickers, buttons, lists, scrolling and outer container migration. Frame/origin/profile authorization, persisted stores and native IME/clipboard/accessibility/accelerator adapters remain explicit boundaries.

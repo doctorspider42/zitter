@@ -1,11 +1,11 @@
 # Rust editors and remaining service work
 
-Workspace/profile name, color/emoji, folder-name, address/palette, eight preferences and seven tools fields now use the Rust model and CoreText/Metal editor
+Workspace/profile name, color/emoji, folder-name, address/palette, eight preferences fields, seven tools fields and page JavaScript prompts now use the Rust model and CoreText/Metal editor
 when `--zitter-sidebar=rust-metal` is selected. They have one native View for
 window/input/focus/AX services and no Textfield child/model/RenderText. The Views
 backend keeps one real native Textfield per field. Workspace/profile/appearance/
-address/preferences/tools fields use `EditorControl`; folders retain the original DialogModel Textfield.
-Neither has a wrapper or second editing model. All declared WorkspaceShell editor roles are migrated. The separate page JavaScript prompt still uses a Views Textfield.
+address/preferences/tools/page-prompt fields use `EditorControl`; the Views folder baseline retains its original DialogModel Textfield.
+Neither has a wrapper or second editing model. All declared WorkspaceShell editor roles are migrated. The page JavaScript prompt uses the same contract; its modal host controls still use Views.
 
 This is a live editor migration checkpoint, not full textfield parity or a
 performance acceptance. The remaining adapters/commands below are explicit.
@@ -134,8 +134,7 @@ Remaining editor work before parity:
 - Inspect actual macOS VoiceOver and real IME candidate windows, complex clause/
   background/underline styles, dictionary and menu lifecycles, paste availability,
   focus/capture/touch, different scales/themes/directions and GPU loss/recovery.
-- Migrate remaining custom dialog/page-prompt fields through the same service
-  contracts, preserving persisted data and domain authorization. Move remaining
+- Continue custom-dialog/inherited-Chromium field inventory and migrate remaining form controls through the same service contracts, preserving data and domain authorization. Move remaining
   control policy out of native adapters where appropriate.
 - Measure actual CPU/GPU/cache/idle and drawable-presentation work. No end-to-end
   speedup is inferred from passing tests or from hit-test algorithm complexity.
@@ -317,3 +316,13 @@ History and timeline maintain committed service-query strings. These are query i
 Posted button/key actions carry tools-generation and workspace/profile identity, and still require a visible current panel. Reopening a form invalidates the old action. Snapshot/shortcut saves reject active composition; provider actions check all three fields. The shortcut recorder explicitly cancels preedit and sets read-only/TEXT_INPUT_TYPE_NONE while recording so an IME cannot consume a chord as text. Native accelerator validation/capture, reserved-key rejection, Escape cancellation and explicit save remain; capture/cancel restore text input.
 
 Three shared scenarios exercise actual Cocoa events, Unicode snapshots/providers, validation, composing key/button suppression, stale form/profile actions, destruction, delayed committed history during preedit and recorder admission/cancel/save. The separate page prompt, form/control containers, broader native menu/undo/focus/IME/AX acceptance and actual performance remain open. [Checkpoint](benchmarks/rust-tools-editors-checkpoint-2026-10-23.json).
+
+## Page JavaScript prompt boundary
+
+PageDialogs uses EditorControl for prompt initial text, editing and explicit API override. It retains the requesting origin/profile title/label, parent theme, captured frame, cancellation on navigation/visibility/frame deletion and asynchronous renderer callbacks. The native folder DialogModel field remains the real Views baseline; no hidden native editor model was introduced for Metal.
+
+Normal UI acceptance rejects marked text and leaves the dialog open. The platform input method owns composing keys; noncomposing Return/Escape post accept/cancel with the captured dialog generation and weak/visibility guards. Explicit HandleJavaScriptDialog is restricted to the owning WebContents and can replace raw UTF-16 (including NUL/CR/LF) or confirm composition before answering. Negative answers detach callbacks and cancel preedit before closing. PageDialogs owns its widget with CLIENT_OWNS_WIDGET and MakeCloseSynchronous, so the text client dies when answering even if a native sheet animation continues. Forced native/parent closure, including CloseNow, automatically posts a single negative response. Prompt access also checks widget lifetime. Replies remain posted off the button/key stack and fire once. Textless dialogs dispatch registered native accelerators without inventing a default. On macOS, PlatformStyle prevents Cancel from becoming the Return default, so the test verifies that Return stays open and Escape cancels while preserving tabs/draft.
+
+SetPresentation now accepts an optional background. Nullopt resolves the current native theme in both adapters; existing explicitly colored fields retain their colors. Page prompts use the native default font metric and a computed content height with the previous 280 px minimum, keeping the field inside a capped long-message dialog. Tests verify parent dark-mode inheritance and bounds, not all theme pixels.
+
+Four shared scenarios cover actual Cocoa beforeunload default-Cancel/Return/Escape, Unicode input/Return/Escape, preedit/UI acceptance, raw API override and wrong-page rejection, stale dialog keys, forced closure, real renderer cancellation when hidden and frame-owned navigation cancellation. Remaining modal buttons/title/labels/scroll/form ownership, native candidate-window/VoiceOver/menu/focus acceptance and CPU/GPU/presentation measurements stay open. [Checkpoint](benchmarks/rust-page-prompt-editor-checkpoint-2026-10-24.json).

@@ -8,21 +8,27 @@ milestones to `origin/main` as they land. The opt-in switch remains
 
 ## Current execution policy
 
-Latest automated acceptance: UI source `bb32e6f253953c5090a24bebf1d3ef8a382a74e9`
-passed **133 Metal / 101 Views cases**, six explicit skips per backend, from the
-complete 139-case inventory (107 applicable Views cases; 32 dedicated Metal cases
+Latest automated acceptance: UI source `b59df50b21cba35e9dca66d16ba311548f812393`
+passed **137 Metal / 105 Views cases**, six explicit skips per backend, from the
+complete 143-case inventory (111 applicable Views cases; 32 dedicated Metal cases
 excluded), with one job and no retries. **66 clean-archive Python tests**, scoped
 GN/boundaries and optimized compilation passed; the live checkout passed 68 Python
-cases including two concurrent cases outside this commit. Rust/scene/geometry
+cases including two concurrent cases outside this commit. Rust model/display-list and CoreText/SDK
 sources match the preceding 214 Rust / 61 standalone / 180 SDK plus raster evidence,
 which was not repeated for this native adapter change.
-[Matching checkpoint](benchmarks/rust-tools-editors-checkpoint-2026-10-23.json).
+[Matching checkpoint](benchmarks/rust-page-prompt-editor-checkpoint-2026-10-24.json).
+
+The four skipped performance cases passed separately with 30 measured trials
+per case/backend. Combined coverage is **141 Metal / 109 Views passes**; only
+real-user Arc import and the interactive manual window remain excluded per
+backend. Metal validation was enabled, so these samples are execution evidence,
+not a controlled end-to-end performance comparison.
 
 The live workspace/profile name editor now has macOS selection direction/policies,
 page/paragraph commands, kill/yank, transpose and matched forced direction/raster
 geometry. It remains a prototype with native adapters and explicit transition
 and interaction gaps. [Editor details](rust-metal-editor.md).
-All declared WorkspaceShell text-input roles now use replacement editors, including history, snapshot/Time Machine, shortcut recording and provider fields. The separate JavaScript page prompt still uses a native Textfield; settings/tools controls and containers remain to migrate. Continue isolated windowed checks;
+All declared WorkspaceShell text-input roles now use replacement editors, including history, snapshot/Time Machine, shortcut recording and provider fields. The page JavaScript prompt now also uses EditorControl. Dialog titles/buttons/labels/scroll and settings/tools controls and containers remain to migrate. Continue isolated windowed checks;
 manual signed-app/IME/VoiceOver/scale/RTL and actual profiling remain pending.
 [Full remaining plan](rust-metal-next-steps-2026-10-23.md).
 
@@ -69,7 +75,8 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Import source selector | Rust selected state, prefix timeout/search, popup tokens, macOS key policy and closed-control geometry/scene; Metal canvas; native menu/IME/focus/AX/event adapters (automated UI checked; manual acceptance pending) | Verify popup lifecycle, typeahead, keyboard and VoiceOver, disabled/hide/capture, RTL/theme/scale and fallback; migrate remaining native adapters |
 | Workspace/managed profile selectors | Rust stable-ID reconciliation, prefix/menu state and scene; two Metal canvases; native popup/IME/focus/AX/event and font/color adapters (automated UI checked; manual acceptance pending) | Verify profile CRUD/assignment persistence, renamed/reordered/removed choices, stale menu callbacks, native popup/IME/AX, clipping and theme/scale/RTL; migrate remaining native adapters |
 | Time Machine | Rust/Metal name/filter editors; native snapshot/restore services and remaining Views controls | Migrate form/picker/button presentation; preserve previews, validation, backups and restoration |
-| Workspace/profile name, color/emoji, folder-name and address/palette editing | Rust UTF-16 state/history/IME, viewport and scene; CoreText geometry, Metal and CPU fallback; one native input/focus/AX/menu/clipboard/drag/dictionary adapter | Shared kill buffer, word drag/reversal and stationary edge scrolling verified; broaden actual Cocoa multi-click/vertical-pointer/IME/VoiceOver/complex bidi/scale/menu acceptance; other editors remain Views |
+| Page prompt, confirm/alert and beforeunload | Rust/Metal prompt editor; native origin/profile/frame services, generation-scoped callbacks and platform default-key policy | Migrate modal title/buttons/labels/scroll/form layout; retain request identity, cancellation and beforeunload safety |
+| Workspace/profile name, color/emoji, folder-name and address/palette editing | Rust UTF-16 state/history/IME, viewport and scene; CoreText geometry, Metal and CPU fallback; one native input/focus/AX/menu/clipboard/drag/dictionary adapter | Shared kill buffer, word drag/reversal and stationary edge scrolling verified; broaden actual Cocoa multi-click/vertical-pointer/IME/VoiceOver/complex bidi/scale/menu acceptance; preferences/tools/page-prompt editors are also migrated; inherited-browser fields and remaining controls still need inventory |
 | Keyboard accessibility, VoiceOver, focus and tooltips | Native Views nodes | Explicit native accessibility adapter for Rust controls; no duplicate nodes |
 
 ## Verified milestones
@@ -513,3 +520,9 @@ Eight preferences fields now use the same Rust/Metal editor contract as the pale
 All seven tools editor roles now use EditorControl: snapshot name, timeline filter, history query, shortcut chord and provider name/keyword/URL. WorkspaceShell no longer inherits TextfieldController. History/timeline keep a committed service query independent of marked text; a pending history request can finish during preedit without losing the committed query on cancellation. Deferred actions carry a form generation and workspace/profile identity. Recording exposes no text input while still receiving native accelerators and restores editing after capture/cancel.
 
 The 17-case gate and full **133 Metal / 101 Views** matrix passed in both backends, six explicit skips each. Three new scenarios cover actual Cocoa entry/save, composing buttons/keys, client destruction, stale-form/profile writes, committed history during preedit and reserved/valid/cancelled shortcut capture. Forms/containers, page prompt, broader OS acceptance and profiling remain open. [Evidence](benchmarks/rust-tools-editors-checkpoint-2026-10-23.json).
+
+## Page prompt editor milestone
+
+JavaScript prompt editing uses the same Rust/Metal control, native font metric and live theme-color defaults. Page origin/profile identity, request-frame/navigation/visibility cancellation and beforeunload defaults remain native domain boundaries. Composing UI acceptance stays open; explicit automation override preserves raw UTF-16. Editor, acceptance, close and posted-key callbacks carry a dialog generation so an old prompt cannot answer its replacement. Negative answers detach callbacks and cancel marked text; client-owned synchronous widget destruction automatically handles forced native closure once before explicit cleanup.
+
+The 30-case gate and full **137 Metal / 105 Views** matrix passed, with six explicit skips each. Actual Cocoa beforeunload Return stays open on macOS, while Escape preserves both tabs/draft by canceling, including repeated dialogs. Unicode prompt input/Return/Escape, long-message bounds, composing acceptance, override/stale/CloseNow lifecycle and hidden-page/subframe cancellation are covered. The initial cross-profile fixture lacked an explicit navigation before EvalJs; NavigateBoth fixes that precondition in both backends. That fixture repair changed no production code. A later beforeunload test incorrectly assumed that Return activates Cancel on macOS. The native PlatformStyle intentionally prevents that; the corrected test requires Return to stay open and Escape to cancel. A separate repeated-dialog Escape timeout required registered native accelerator dispatch for textless dialogs. Unregistered Return stays unchanged and active editors retain IME precedence. Native sheet lifetime failures in the first full run were fixed with client-owned page/deletion widgets and synchronous C++ destruction; native animations remain enabled. The Views modal/form/label/button/scroll layer, broader OS acceptance and profiling remain open. [Evidence](benchmarks/rust-page-prompt-editor-checkpoint-2026-10-24.json).
