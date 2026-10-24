@@ -17,6 +17,8 @@ mod ffi {
     struct EditorUpdate { admitted: bool, text_changed: bool, selection_changed: bool, composition_changed: bool, committed: bool, info: EditorInfo }
     struct SelectLayout { width: i32, height: i32, label: Rect, arrow: Rect }
     struct SelectOption { key: String, label: String, search: String }
+    struct PreferenceRow { category: usize, keywords: Vec<u16> }
+    struct PreferenceVisibility { rows: Vec<bool>, sections: Vec<bool>, navigation: Vec<bool>, any: bool }
     struct ToggleStyle { width: f32, height: f32, progress: f32, hover: f32, checked: bool, pressed: bool, focused: bool, rtl: bool, track_on: u32, track_off: u32, thumb_on: u32, thumb_off: u32, thumb_hover: u32, halo: u32, focus: u32, border: u32, clip: FloatRect }
     struct CheckboxLayout { width: i32, height: i32, mark: Rect, label: Rect, lines: Vec<Rect> }
     #[derive(Clone, PartialEq, Eq)]
@@ -76,7 +78,7 @@ mod ffi {
     struct ViewportProjection { x: f32, y: f32, nodes: Vec<ProjectedNode> }
     struct Item {
         x: f32, y: f32, width: f32, height: f32,
-        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: control glyph, 8: pane title, 9: split grip, 10: rounded backing, 11: sidebar grip, 12: palette result, 13: result icon, 14: separator, 15: palette static text, 16: palette frame, 17: form static text, 18: appearance color swatch, 19: form text action, 20: checkbox mark, 21: closed selector.
+        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: control glyph, 8: pane title, 9: split grip, 10: rounded backing, 11: sidebar grip, 12: palette result, 13: result icon, 14: separator, 15: palette static text, 16: palette frame, 17: form static text, 18: appearance color swatch, 19: form text action, 20: checkbox mark, 21: closed selector, 22: preference category, 23: preferences dismiss.
         kind: u32, glyph: u32,
         title: String, monogram: String, detail: String,
         title_width: f32, detail_ink: u32, detail_font_size: f32,
@@ -140,6 +142,11 @@ mod ffi {
         fn editor_undo(state: &mut EditorState) -> EditorUpdate;
         fn editor_redo(state: &mut EditorState) -> EditorUpdate;
 
+        type PreferencesForm;
+        fn new_preferences_form(categories: usize) -> Box<PreferencesForm>;
+        fn preference_select(self: &mut PreferencesForm, category: usize) -> bool;
+        fn preference_current(self: &PreferencesForm) -> usize;
+        fn preference_filter(self: &mut PreferencesForm, query: Vec<u16>, rows: &[PreferenceRow]) -> PreferenceVisibility;
         type SelectState;
         fn new_select_state(options: Vec<SelectOption>) -> Box<SelectState>;
         fn selected(self: &SelectState) -> usize;
@@ -556,6 +563,21 @@ fn select_layout(width:i32,height:i32,text_width:i32,control_height:i32,rtl:bool
     let width=if width<0{text_width.max(0).saturating_add(48)}else{width};let height=if height<0{control_height.max(28)}else{height.max(0)};
     let pad=12.min(width/2);let room=width-pad*2;let arrow_width=16.min(room);let gap=8.min(room-arrow_width);let label_width=room-arrow_width-gap;
     ffi::SelectLayout{width,height,label:ffi::Rect{x:if rtl{pad+arrow_width+gap}else{pad},y:0,width:label_width,height},arrow:ffi::Rect{x:if rtl{pad}else{width-pad-arrow_width},y:0,width:arrow_width,height}}
+}
+
+// Query and keywords arrive normalized by the native Unicode/whitespace service.
+// Preserve UTF-16 units, including partial surrogates, exactly as native find().
+pub struct PreferencesForm { categories: usize, selected: usize, query: Vec<u16> }
+fn new_preferences_form(categories:usize)->Box<PreferencesForm>{Box::new(PreferencesForm{categories,selected:0,query:vec![]})}
+impl PreferencesForm {
+    fn preference_select(&mut self,category:usize)->bool{if category>=self.categories{return false;}self.selected=category;self.query.clear();true}
+    fn preference_current(&self)->usize{self.selected}
+    fn preference_filter(&mut self,query:Vec<u16>,rows:&[ffi::PreferenceRow])->ffi::PreferenceVisibility{
+        self.query=query;let searching=!self.query.is_empty();let mut sections=vec![false;self.categories];
+        let visible=rows.iter().map(|row|{let found=row.category<self.categories&&if searching{row.keywords.windows(self.query.len()).any(|text|text==self.query.as_slice())}else{row.category==self.selected};if found{sections[row.category]=true;}found}).collect::<Vec<_>>();
+        let navigation=(0..self.categories).map(|category|!searching&&category==self.selected).collect();let any=sections.iter().any(|value|*value);
+        ffi::PreferenceVisibility{rows:visible,sections,navigation,any}
+    }
 }
 
 // Targets are authoritative immediately; only visual interpolation is timed.
@@ -1328,6 +1350,33 @@ fn cycle_tab(current: usize, count: usize, backwards: bool) -> usize {
     if backwards { if current == 0 { count - 1 } else { current - 1 } }
     else if current + 1 == count { 0 } else { current + 1 }
 }
+// Navigation and dismiss icons use only clipped analytic rectangles/circles,
+// so Metal and the CPU recipe do not depend on native vector-icon painting.
+fn preference_control_scene(i:&ffi::Item)->Vec<ffi::Primitive>{
+    let mut ops=Vec::new();
+    let mut rect=|x:f32,y:f32,w:f32,h:f32,r:f32,color:u32,stroke:f32|{if w>0.0&&h>0.0{ops.push(ffi::Primitive{x,y,width:w,height:h,radius:r,color,stroke,shape:0,text:String::new(),font_size:0.0,bold:false,middle:false,center:false,clip:ffi::FloatRect{x:i.clip.x,y:i.clip.y,width:i.clip.width,height:i.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0});}};
+    if i.fill>>24!=0{rect(i.x,i.y,i.width,i.height,8.0,i.fill,0.0);}
+    if i.active&&i.kind==22{rect(i.x+0.5,i.y+0.5,(i.width-1.0).max(0.0),(i.height-1.0).max(0.0),8.0,i.detail_ink,1.0);}
+    let cx=if i.kind==23{i.x+i.width/2.0}else if i.tile{i.x+i.width-18.0}else{i.x+18.0};let cy=i.y+i.height/2.0;
+    if i.kind==23{
+        for n in -5..=5{let d=n as f32;rect(cx+d-0.8,cy+d-0.8,1.6,1.6,0.8,i.ink,0.0);rect(cx+d-0.8,cy-d-0.8,1.6,1.6,0.8,i.ink,0.0);}
+    }else{
+        match i.glyph{
+            0=>{rect(cx-5.5,cy-5.5,11.0,11.0,5.5,i.ink,1.5);rect(cx-2.0,cy-2.0,4.0,4.0,2.0,i.ink,1.25);for (x,y,w,h) in [(-1.0,-8.0,2.0,3.0),(-1.0,5.0,2.0,3.0),(-8.0,-1.0,3.0,2.0),(5.0,-1.0,3.0,2.0)]{rect(cx+x,cy+y,w,h,0.5,i.ink,0.0);}},
+            1=>{rect(cx-6.0,cy-6.0,10.0,10.0,5.0,i.ink,1.5);for d in 0..5{rect(cx+2.0+d as f32,cy+2.0+d as f32,1.8,1.8,0.8,i.ink,0.0);}},
+            2|8=>{rect(cx-6.0,cy-7.0,12.0,14.0,4.0,i.ink,1.5);rect(cx-0.75,cy-4.0,1.5,6.0,0.5,i.ink,0.0);rect(cx-0.75,cy+3.0,1.5,1.5,0.75,i.ink,0.0);},
+            3|9=>{for (y,x) in [(-5.0,-3.0),(0.0,3.0),(5.0,-1.0)]{rect(cx-7.0,cy+y-0.6,14.0,1.2,0.6,i.ink,0.0);rect(cx+x-1.5,cy+y-1.5,3.0,3.0,1.5,i.ink,0.0);}},
+            4|7=>{rect(cx-7.0,cy-7.0,14.0,14.0,7.0,i.ink,1.25);rect(cx-3.0,cy-7.0,6.0,14.0,3.0,i.ink,1.0);rect(cx-6.0,cy-0.6,12.0,1.2,0.6,i.ink,0.0);},
+            5=>{rect(cx-4.0,cy-7.0,8.0,10.0,4.0,i.ink,1.5);rect(cx-6.0,cy-1.0,12.0,9.0,2.0,i.ink,0.0);},
+            6=>{rect(cx-0.75,cy-7.0,1.5,10.0,0.75,i.ink,0.0);for d in 0..5{let d=d as f32;rect(cx-d-0.75,cy+4.0-d-0.75,1.5,1.5,0.5,i.ink,0.0);rect(cx+d-0.75,cy+4.0-d-0.75,1.5,1.5,0.5,i.ink,0.0);}rect(cx-6.0,cy+7.0,12.0,1.5,0.75,i.ink,0.0);},
+            _=>{}
+        }
+    }
+    if i.focused{rect(i.x+2.0,i.y+i.height-3.0,(i.width-4.0).max(0.0),2.0,1.0,i.ink,0.0);}
+    if i.kind==22&&!i.title.is_empty(){let x=if i.tile{i.x+10.0}else{i.x+36.0};let w=(i.width-46.0).max(0.0);if w>0.0{ops.push(ffi::Primitive{x,y:i.y,width:w,height:i.height,radius:0.0,color:i.ink,stroke:0.0,shape:0,text:i.title.clone(),font_size:i.font_size,bold:i.active,middle:false,center:false,clip:ffi::FloatRect{x:i.clip.x,y:i.clip.y,width:i.clip.width,height:i.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0});}}
+    ops
+}
+
 fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
     let mut out = Vec::with_capacity(items.len() * 5);
     for i in items {
@@ -1335,6 +1384,7 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
             || i.width <= 0.0 || i.height <= 0.0
             || ![i.clip.x, i.clip.y, i.clip.width, i.clip.height].iter().all(|v| v.is_finite())
             || i.clip.width <= 0.0 || i.clip.height <= 0.0 { continue; }
+        if i.kind==22||i.kind==23{out.extend(preference_control_scene(i));continue;}
         let first_primitive = out.len();
         let mut emit = |x, y, w: f32, h: f32, radius, color, text: &str, size, bold| {
             if w > 0.0 && h > 0.0 {
@@ -1796,6 +1846,21 @@ mod tests {
     }
     #[test] fn checkbox_state_disabled_activation_does_not_mutate_value() {
         for value in [false,true] {let mut c=new_checkbox_state(value);assert!(!c.toggle(false));assert_eq!(c.checked(),value);assert!(c.set_checked(!value));assert_eq!(c.checked(),!value);}
+    }
+    #[test] fn preferences_form_filters_all_categories_and_preserves_selection() {
+        let mut f=new_preferences_form(3);let rows=vec![ffi::PreferenceRow{category:0,keywords:"wygląd motyw".encode_utf16().collect()},ffi::PreferenceRow{category:1,keywords:"języki witryn".encode_utf16().collect()},ffi::PreferenceRow{category:1,keywords:"języki pisownia".encode_utf16().collect()},ffi::PreferenceRow{category:99,keywords:vec![]}];
+        let v=f.preference_filter(vec![],&rows);assert_eq!(v.rows,vec![true,false,false,false]);assert_eq!(v.navigation,vec![true,false,false]);assert!(v.any);
+        let v=f.preference_filter("języki".encode_utf16().collect(),&rows);assert_eq!(v.rows,vec![false,true,true,false]);assert_eq!(v.sections,vec![false,true,false]);assert_eq!(v.navigation,vec![false,false,false]);assert_eq!(f.preference_current(),0);
+        assert!(!f.preference_select(usize::MAX));assert_eq!(f.preference_current(),0);assert!(f.preference_select(2));let v=f.preference_filter(vec![],&rows);assert!(!v.any);assert_eq!(v.navigation,vec![false,false,true]);
+    }
+    #[test] fn preferences_form_matches_utf16_units_and_updated_rule_keywords() {
+        let mut f=new_preferences_form(1);let mut rows=vec![ffi::PreferenceRow{category:0,keywords:vec![0xd83e,0xdd80,0xfffd]}];
+        assert!(f.preference_filter(vec![0xd83e],&rows).any);assert!(!f.preference_filter(vec![0xd800],&rows).any);assert!(!f.preference_filter(vec![1,2,3,4],&rows).any);rows[0].keywords="nowy wyjątek".encode_utf16().collect();assert!(f.preference_filter("nowy".encode_utf16().collect(),&rows).any);
+        let mut empty=new_preferences_form(0);assert!(!empty.preference_select(0));assert!(!empty.preference_filter(vec![],&rows).any);
+    }
+    #[test] fn preference_category_and_dismiss_share_clipped_cpu_gpu_recipe() {
+        for glyph in 0..10{let mut i=row(180.0);i.kind=22;i.glyph=glyph;i.title="Uprawnienia stron".into();i.active=true;i.focused=true;let ops=layout(std::slice::from_ref(&i));assert!(ops.iter().any(|p|p.text=="Uprawnienia stron"&&p.bold));assert!(ops.iter().any(|p|p.stroke>0.0));assert!(ops.iter().all(|p|p.shape==0&&p.clip.width==180.0&&p.width>0.0&&p.height>0.0));i.tile=true;assert_eq!(layout(std::slice::from_ref(&i)).iter().find(|p|!p.text.is_empty()).unwrap().x,i.x+10.0);}
+        let mut close=row(32.0);close.kind=23;close.height=32.0;close.fill=0;close.title.clear();let ops=layout(std::slice::from_ref(&close));assert_eq!(ops.len(),22);assert!(ops.iter().all(|p|p.text.is_empty()&&p.shape==0));close.width=f32::NAN;assert!(layout(std::slice::from_ref(&close)).is_empty());
     }
     #[test] fn toggle_transition_reverses_and_programmatic_refresh_snaps() {
         let mut s=new_toggle_state();assert!(!s.toggle_flip(false,10,true));assert!(!s.toggle_checked());

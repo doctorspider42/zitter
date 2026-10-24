@@ -55,6 +55,7 @@ namespace zitter::prototype {
 class WorkspaceSwipeState;
 class ProfileFormState;
 class WorkspaceFormState;
+class PreferencesFormState;
 class ImportFormState;
 
 // Top band above the sidebar; its first 28 px align with macOS's titlebar,
@@ -256,6 +257,13 @@ class WorkspaceShell final : public ui::EventHandler,
   EditorControl* site_origin_input() const { return site_origin_; }
   EditorControl* preferences_search() const { return preferences_search_; }
   views::Button* preference_toggle(std::string key) const { return preference_toggles_.at(key); }
+  size_t preference_category_for_testing() const;
+  views::Button* preference_navigation_for_testing(size_t category) const;
+  views::Button* preference_close_for_testing() const{return preferences_close_;}
+  bool preference_navigation_metal_visible_for_testing() const;
+  bool preference_navigation_selected_for_testing(size_t category) const;
+  bool preference_navigation_contains_text_for_testing(std::string_view text) const;
+  bool preference_close_metal_visible_for_testing() const;
   views::Button* preference_save_button_for_testing(std::string key) const{return preference_save_buttons_.at(key);}
   bool preference_action_metal_visible_for_testing(views::Button* button) const;
   bool preference_actions_contains_scene_text_for_testing(std::string_view text) const;
@@ -552,6 +560,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void ShowWorkspaceAppearanceError(unsigned kind);
   bool ShowRustWorkspaceNotice(std::string workspace,std::string title);
   std::unique_ptr<WorkspaceFormState> workspace_form_;
+  std::unique_ptr<PreferencesFormState> preferences_form_;
   void RefreshProfileControls();
   bool SubmitRustProfileAction(unsigned action);
   void SubmitProfile();
@@ -592,6 +601,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::Label> preferences_empty_ = nullptr;
   raw_ptr<views::View> preferences_body_ = nullptr;
   raw_ptr<views::View> preferences_navigation_ = nullptr;
+  raw_ptr<views::Button> preferences_close_ = nullptr;
   raw_ptr<views::View> preferences_category_picker_ = nullptr;
   struct PreferenceRow {
     raw_ptr<views::View> view;

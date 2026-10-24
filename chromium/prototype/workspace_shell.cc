@@ -118,6 +118,15 @@ class WorkspaceFormState {
   rust::Box<sidebar::WorkspaceForm> form=sidebar::new_workspace_form();
 #endif
 };
+class PreferencesFormState {
+ public:
+#if BUILDFLAG(IS_MAC)
+  explicit PreferencesFormState(size_t categories):form(sidebar::new_preferences_form(categories)){}
+  rust::Box<sidebar::PreferencesForm> form;
+#else
+  explicit PreferencesFormState(size_t){}
+#endif
+};
 class ProfileFormState {
  public:
 #if BUILDFLAG(IS_MAC)
@@ -655,6 +664,55 @@ GlyphButton* AppearancePicker(views::View* parent,views::Button::PressedCallback
 }
 
 #if BUILDFLAG(IS_MAC)
+class ScenePreferenceButton final : public SceneGlyphButton {
+  METADATA_HEADER(ScenePreferenceButton,SceneGlyphButton)
+ public:
+  ScenePreferenceButton(PressedCallback callback,std::u16string text,size_t category,bool dismiss,base::RepeatingClosure painted)
+      :SceneGlyphButton(std::move(callback),text,Glyph::kMore,nullptr,base::BindRepeating([]{return true;}),std::move(painted)),text_(std::move(text)),category_(category),dismiss_(dismiss){SetInstallFocusRingOnFocus(false);SetHasInkDropActionOnClick(false);SetAnimateOnStateChange(false);SetRequestFocusOnPress(false);}
+  void SetSelected(bool selected){if(selected_==selected)return;selected_=selected;SchedulePaint();}
+  bool selected() const{return selected_;}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return dismiss_?gfx::Size(32,32):gfx::Size(200,40);}
+  sidebar::Item Scene(gfx::RectF bounds,gfx::RectF clip) const{
+    sidebar::Item item{};item.kind=dismiss_?23:22;item.glyph=category_;item.x=bounds.x();item.y=bounds.y();item.width=bounds.width();item.height=bounds.height();item.title=base::UTF16ToUTF8(text_);item.active=selected_;item.focused=HasFocus();item.tile=base::i18n::IsRTL();item.font_size=Font(0).GetFontSize();item.ink=Tone(this,GetEnabledInViewsSubtree()?kInk:kDisabled);item.fill=selected_?Tone(this,kCard):GetEnabledInViewsSubtree()&&(GetState()==STATE_HOVERED||GetState()==STATE_PRESSED)?HoverWash(this):SK_ColorTRANSPARENT;item.detail_ink=SkColorSetA(Tone(this,kInk),0x0f);item.clip={clip.x(),clip.y(),clip.width(),clip.height()};return item;
+  }
+  void PaintButtonContents(gfx::Canvas*) override{}  // The parent owns both render paths.
+ private:
+  std::u16string text_;size_t category_;bool dismiss_;bool selected_=false;
+};
+BEGIN_METADATA(ScenePreferenceButton)
+END_METADATA
+class ScenePreferenceControls final : public views::View {
+  METADATA_HEADER(ScenePreferenceControls,views::View)
+ public:
+  explicit ScenePreferenceControls(bool dismiss):dismiss_(dismiss){}
+  views::Button* AddControl(views::Button::PressedCallback callback,std::u16string title,size_t category){return AddChildView(std::make_unique<ScenePreferenceButton>(std::move(callback),std::move(title),category,dismiss_,base::BindRepeating(&ScenePreferenceControls::Schedule,weak_factory_.GetWeakPtr())));}
+  bool metal_visible() const{return surface_&&surface_->visible();}
+  bool contains_text(std::string_view text) const{return metal_visible()&&surface_->contains_text_for_testing(text);}
+  void CancelInput(){for(const auto& child:children())child->OnMouseCaptureLost();}
+  void SyncWindowVisibility(){if(!SceneIsVisible(this)){CancelInput();if(surface_)surface_->Hide();}Schedule();}
+  bool GetNeedsNotificationWhenVisibleBoundsChange() const override{return true;}
+  void OnVisibleBoundsChanged() override{if(GetVisibleBounds().IsEmpty())CancelInput();Schedule();}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override{auto g=Geometry(!dismiss_&&available.width().is_bounded()?available.width().value():-1,-1);return gfx::Size(g.width,g.height);}
+  void Layout(PassKey) override{auto g=Geometry(width(),height());for(size_t i=0;i<children().size();++i){auto r=g.children[i];children()[i]->SetBounds(r.x,r.y,r.width,r.height);}Schedule();}
+  void AddedToWidget() override{views::View::AddedToWidget();window_visibility_.Observe(GetWidget());Schedule();}
+  void RemovedFromWidget() override{window_visibility_.Observe(nullptr);surface_.reset();views::View::RemovedFromWidget();}
+  void OnBoundsChanged(const gfx::Rect& previous) override{views::View::OnBoundsChanged(previous);Schedule();}
+  void OnThemeChanged() override{views::View::OnThemeChanged();SchedulePaint();Schedule();}
+  void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);Schedule();}
+  void VisibilityChanged(views::View* changed,bool visible) override{views::View::VisibilityChanged(changed,visible);SyncWindowVisibility();}
+  void OnPaint(gfx::Canvas* canvas) override{if(!metal_visible())for(const auto& item:Items(0,0,gfx::RectF(GetLocalBounds())))PaintSceneRecipe(canvas,item,Font(0,item.active?gfx::Font::Weight::MEDIUM:gfx::Font::Weight::NORMAL));Schedule();}
+ private:
+  sidebar::ColumnLayout Geometry(int width,int height) const{std::vector<sidebar::ColumnChild> measured;for(const auto& child:children()){auto size=child->GetPreferredSize();measured.push_back({size.width(),size.height(),0,0,0,0});}return sidebar::action_group_layout(width,height,!dismiss_,dismiss_?0:6,rust::Slice<const sidebar::ColumnChild>(measured.data(),measured.size()));}
+  std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const{std::vector<sidebar::Item> items;for(const auto& child:children()){auto bounds=gfx::RectF(child->bounds());bounds.Offset(dx,dy);auto local=bounds;local.Intersect(clip);items.push_back(static_cast<ScenePreferenceButton*>(child.get())->Scene(bounds,local));}return items;}
+  void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&ScenePreferenceControls::UpdateMetal,weak_factory_.GetWeakPtr()));}
+  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,dismiss_?kCard:kChip));if(was!=metal_visible())SchedulePaint();}
+  bool dismiss_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&ScenePreferenceControls::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<ScenePreferenceControls> weak_factory_{this};
+};
+BEGIN_METADATA(ScenePreferenceControls)
+END_METADATA
+#endif
+
+#if BUILDFLAG(IS_MAC)
 class SceneTextButton final : public SceneGlyphButton {
   METADATA_HEADER(SceneTextButton,SceneGlyphButton)
  public:
@@ -1025,6 +1083,7 @@ void ReplacePickerLabels(views::View* picker,const std::vector<std::u16string>& 
 }
 void RefreshChoiceViewports(views::View* root){
 #if BUILDFLAG(IS_MAC)
+  if(auto* group=views::AsViewClass<ScenePreferenceControls>(root)){group->OnVisibleBoundsChanged();return;}
   if(auto* group=views::AsViewClass<SceneActionGroup>(root)){group->OnVisibleBoundsChanged();return;}
   if(auto* scene=views::AsViewClass<SceneToggle>(root)){scene->OnVisibleBoundsChanged();return;}
   if(auto* group=views::AsViewClass<SceneCheckboxGroup>(root)){group->OnVisibleBoundsChanged();return;}
@@ -1034,6 +1093,7 @@ void RefreshChoiceViewports(views::View* root){
 }
 void CancelChoiceInteractions(views::View* root){
 #if BUILDFLAG(IS_MAC)
+  if(auto* group=views::AsViewClass<ScenePreferenceControls>(root)){group->CancelInput();return;}
   if(auto* group=views::AsViewClass<SceneActionGroup>(root)){group->CancelInput();return;}
   if(auto* scene=views::AsViewClass<SceneToggle>(root)){scene->CancelInteraction();return;}
   if(auto* group=views::AsViewClass<SceneCheckboxGroup>(root)){group->CancelInput();return;}
@@ -1540,6 +1600,13 @@ class RowButton : public views::Button {
 };
 BEGIN_METADATA(RowButton)
 END_METADATA
+void SetPreferenceNavigationSelected(views::Button* control,bool selected){
+#if BUILDFLAG(IS_MAC)
+  if(auto* button=views::AsViewClass<ScenePreferenceButton>(control)){button->SetSelected(selected);return;}
+#endif
+  static_cast<RowButton*>(control)->SetActive(selected);
+}
+
 
 // One compact sidebar item containing the two pages in visual pane order.
 class SplitPair final : public views::View {
@@ -3217,9 +3284,12 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   Label(heading_text, u"Preferencje", kInk, Font(9, gfx::Font::Weight::SEMIBOLD));
   Label(heading_text, u"Twoja przestrzeń. Twoje zasady.", kMuted, Font(0));
   heading_layout->SetFlexForView(heading_text, 1);
-  preferences_heading->AddChildView(std::make_unique<GlyphButton>(base::BindRepeating(
-      [](base::WeakPtr<WorkspaceShell> shell) { if (shell) { shell->CloseOverlays(); shell->RestorePageFocus(); } }, weak),
-      u"Zamknij preferencje (Escape)", GlyphButton::Glyph::kVector, &vector_icons::kCloseIcon));
+  auto dismiss=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell){shell->CloseOverlays();shell->RestorePageFocus();}},weak);
+#if BUILDFLAG(IS_MAC)
+  if(workspace_form_){auto* controls=preferences_heading->AddChildView(std::make_unique<ScenePreferenceControls>(true));preferences_close_=controls->AddControl(dismiss,u"Zamknij preferencje (Escape)",0);}
+  else
+#endif
+  preferences_close_=preferences_heading->AddChildView(std::make_unique<GlyphButton>(dismiss,u"Zamknij preferencje (Escape)",GlyphButton::Glyph::kVector,&vector_icons::kCloseIcon));
   preferences_search_ = AddEditor(main,bool(workspace_form_));
   preferences_search_->SetPlaceholderText(u"Szukaj ustawień…");
   preferences_search_->GetViewAccessibility().SetName(u"Szukaj we wszystkich ustawieniach");
@@ -3261,6 +3331,14 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   SetPickerCallback(preferences_category_picker_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
     if(shell)shell->SelectPreferenceCategory(PickerIndex(shell->preferences_category_picker_).value_or(0));
   },weak));
+  views::View* category_controls=navigation;
+#if BUILDFLAG(IS_MAC)
+  if(workspace_form_){
+    // This UI-only controller retains category selection across view rebuilds.
+    if(!preferences_form_)preferences_form_=std::make_unique<PreferencesFormState>(categories.size());
+    category_controls=navigation->AddChildView(std::make_unique<ScenePreferenceControls>(false));
+  }
+#endif
   for (size_t i = 0; i < categories.size(); ++i) {
     const std::array icons = {&vector_icons::kSettingsIcon, &vector_icons::kSearchIcon,
         &vector_icons::kShieldIcon, &vector_icons::kTuneIcon, &vector_icons::kGlobeIcon,
@@ -3268,8 +3346,12 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         &vector_icons::kShieldIcon, &vector_icons::kTuneIcon};
     RowButton::Spec spec;
     spec.title = categories[i]; spec.icon = icons[i]; spec.height = 40;
-    auto* button = navigation->AddChildView(std::make_unique<RowButton>(
-        base::BindRepeating(&WorkspaceShell::SelectPreferenceCategory, weak, i), std::move(spec)));
+    views::Button* button=nullptr;
+#if BUILDFLAG(IS_MAC)
+    if(auto* controls=views::AsViewClass<ScenePreferenceControls>(category_controls))button=controls->AddControl(base::BindRepeating(&WorkspaceShell::SelectPreferenceCategory,weak,i),categories[i],i);
+    else
+#endif
+    button=category_controls->AddChildView(std::make_unique<RowButton>(base::BindRepeating(&WorkspaceShell::SelectPreferenceCategory,weak,i),std::move(spec)));
     auto* section = body->AddChildView(std::make_unique<views::View>());
     section->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 12));
     Label(section, categories[i], kInk, Font(4, gfx::Font::Weight::SEMIBOLD));
@@ -3695,7 +3777,7 @@ void WorkspaceShell::Detach() {
   site_preference_rules_.clear(); preferences_profile_id_.clear();
   preference_sections_.clear(); preference_toggles_.clear(); preference_pickers_.clear();
   download_directory_label_ = nullptr; download_directory_button_ = nullptr;
-  preferences_navigation_ = nullptr; preferences_category_picker_ = nullptr;
+  preferences_navigation_ = nullptr; preferences_category_picker_ = nullptr;preferences_close_=nullptr;
   preferences_search_ = nullptr; preferences_profile_ = nullptr; preferences_empty_ = nullptr; preferences_body_ = nullptr;
   general_root_ = nullptr; general_scroll_ = nullptr; general_status_ = nullptr;
   theme_picker_ = nullptr; search_engine_picker_ = nullptr;
@@ -5536,6 +5618,41 @@ void WorkspaceShell::ApplyTheme() {
 void WorkspaceShell::OnNativeThemeUpdated(ui::NativeTheme*) {
   if (theme_mode_ == ThemeMode::kSystem && general_widget_) ApplyAppearance();
 }
+size_t WorkspaceShell::preference_category_for_testing() const{
+#if BUILDFLAG(IS_MAC)
+  if(preferences_form_)return preferences_form_->form->preference_current();
+#endif
+  return preference_category_;
+}
+views::Button* WorkspaceShell::preference_navigation_for_testing(size_t category) const{return category<preference_sections_.size()?preference_sections_[category].navigation.get():nullptr;}
+bool WorkspaceShell::preference_navigation_selected_for_testing(size_t category) const{
+  auto* control=preference_navigation_for_testing(category);if(!control)return false;
+#if BUILDFLAG(IS_MAC)
+  if(auto* button=views::AsViewClass<ScenePreferenceButton>(control))return button->selected();
+#endif
+  return static_cast<RowButton*>(control)->preview_spec().active;
+}
+bool WorkspaceShell::preference_navigation_metal_visible_for_testing() const{
+#if BUILDFLAG(IS_MAC)
+  auto* first=preference_navigation_for_testing(0);auto* group=first?views::AsViewClass<ScenePreferenceControls>(first->parent()):nullptr;return group&&group->metal_visible();
+#else
+  return false;
+#endif
+}
+bool WorkspaceShell::preference_navigation_contains_text_for_testing(std::string_view text) const{
+#if BUILDFLAG(IS_MAC)
+  auto* first=preference_navigation_for_testing(0);auto* group=first?views::AsViewClass<ScenePreferenceControls>(first->parent()):nullptr;return group&&group->contains_text(text);
+#else
+  return false;
+#endif
+}
+bool WorkspaceShell::preference_close_metal_visible_for_testing() const{
+#if BUILDFLAG(IS_MAC)
+  auto* group=preferences_close_?views::AsViewClass<ScenePreferenceControls>(preferences_close_->parent()):nullptr;return group&&group->metal_visible();
+#else
+  return false;
+#endif
+}
 bool WorkspaceShell::preference_action_metal_visible_for_testing(views::Button* button) const {
 #if BUILDFLAG(IS_MAC)
   auto* group=button?views::AsViewClass<SceneActionGroup>(button->parent()):nullptr;return group&&group->metal_visible();
@@ -5677,6 +5794,10 @@ void WorkspaceShell::RefreshGeneralControls() {
 }
 void WorkspaceShell::SelectPreferenceCategory(size_t category) {
   if (category >= preference_sections_.size()) return;
+#if BUILDFLAG(IS_MAC)
+  if(preferences_form_){if(!preferences_form_->form->preference_select(category))return;}
+  else
+#endif
   preference_category_ = category;
   SyncPickerIndex(preferences_category_picker_,category);
   preferences_search_->SetText(u"");
@@ -5685,6 +5806,17 @@ void WorkspaceShell::SelectPreferenceCategory(size_t category) {
 void WorkspaceShell::FilterPreferences() {
   if (site_rules_list_) RefreshSitePreferences(false);
   const auto query = base::i18n::ToLower(base::TrimWhitespace(preferences_search_->GetText(), base::TRIM_ALL));
+#if BUILDFLAG(IS_MAC)
+  if(preferences_form_){
+    SyncPickerIndex(preferences_category_picker_,preferences_form_->form->preference_current());
+    std::vector<sidebar::PreferenceRow> rows;
+    for(size_t i=0;i<preference_sections_.size();++i)for(const auto& row:preference_sections_[i].rows){sidebar::PreferenceRow input{};input.category=i;for(auto unit:row.keywords)input.keywords.push_back(unit);rows.push_back(std::move(input));}
+    rust::Vec<uint16_t> normalized;for(auto unit:query)normalized.push_back(unit);
+    auto visible=preferences_form_->form->preference_filter(std::move(normalized),rust::Slice<const sidebar::PreferenceRow>(rows.data(),rows.size()));
+    size_t cursor=0;for(size_t i=0;i<preference_sections_.size();++i){auto& section=preference_sections_[i];for(auto& row:section.rows)row.view->SetVisible(visible.rows[cursor++]);section.view->SetVisible(visible.sections[i]);SetPreferenceNavigationSelected(section.navigation,visible.navigation[i]);}
+    preferences_empty_->SetVisible(!visible.any);preferences_body_->InvalidateLayout();general_scroll_->ScrollToPosition(general_scroll_->vertical_scroll_bar(),0);return;
+  }
+#endif
   bool any = false;
   for (size_t i = 0; i < preference_sections_.size(); ++i) {
     auto& section = preference_sections_[i];
@@ -5694,7 +5826,7 @@ void WorkspaceShell::FilterPreferences() {
       row.view->SetVisible(match); visible |= match;
     }
     section.view->SetVisible(visible); any |= visible;
-    static_cast<RowButton*>(section.navigation.get())->SetActive(query.empty() && i == preference_category_);
+    SetPreferenceNavigationSelected(section.navigation,query.empty() && i == preference_category_);
   }
   preferences_empty_->SetVisible(!any);
   preferences_body_->InvalidateLayout();
