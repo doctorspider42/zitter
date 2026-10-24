@@ -5,50 +5,53 @@ inventory is [the parity checklist](rust-metal-parity.md).
 
 ## Current checkpoint
 
-UI source `84bbc52875079a96d2cc6750e5f9b328bcb11cbc`, 2026-10-24, passed the full compiled regression
-inventory with one launcher job, no retries and temporary profiles:
+UI source `d0f90cf9fe34392f6b79215e11221f03c207dc79`, 2026-10-24, passed the full compiled
+regression inventory with one launcher job, no automatic retries and temporary profiles.
+The first Views matrix had one timeout during native teardown; the unchanged test
+then passed alone and in a complete Views rerun. The failed run is retained in
+the report; its root cause is not fully established. Final results:
 
 | Backend | Regular matrix passed | Regular skips | Failed / crashed |
 | --- | ---: | ---: | ---: |
-| Rust + Metal | 147 | 6 | 0 |
-| Views | 111 | 6 | 0 |
+| Rust + Metal | 149 | 6 | 0 |
+| Views | 112 | 6 | 0 |
 
-The inventory contains 153 cases; Views excludes 36 dedicated Metal cases
-(117 applicable cases). Four optional default-30-trial scenarios then passed
-on each backend. **Combined execution is 151 Metal / 115 Views passes**, with
-real-user Arc import and the interactive manual window excluded per backend.
-Metal API validation remained enabled. These are execution results, not
-controlled CPU/GPU/drawable-presentation speedup measurements.
+The inventory contains 155 cases; Views excludes 37 dedicated Metal cases
+(118 applicable cases). Four optional default-30-trial scenarios then passed on
+each backend. **Combined execution is 153 Metal / 116 Views passes**, with real-user
+Arc import and the interactive manual window excluded per backend. Metal API
+validation remained enabled. These execution results establish no controlled
+CPU/GPU/drawable-presentation speedup.
 
-The preference navigation/form/action/editor/selector gate passed **14 Metal /
-10 Views**. Checks passed **223 Rust tests**, **180 SDK font/direction cases plus
-raster**, **66 clean-archive Python tests**, scoped GN/boundaries and optimized
-compilation. The live checkout passed 68 Python tests, including two concurrent
-cases outside this UI commit. Final Ninja reported no work to do.
-[Source/binary identities, commands and results](benchmarks/rust-preference-navigation-checkpoint-2026-10-24.json).
+The preference chrome/form/control gate passed **16 Metal / 11 Views**. Checks
+passed **225 Rust tests**, **180 SDK font/direction cases plus raster**, **66
+clean-archive Python tests**, scoped GN/boundaries and optimized compilation.
+The live checkout passed 68 Python tests, including two concurrent cases outside
+this UI commit. Final Ninja reported no work to do.
+[Source/binary identities, commands and results](benchmarks/rust-preference-chrome-checkpoint-2026-10-24.json).
 
-Ten category controls share one Metal canvas; the dismiss control uses another.
-Rust PreferencesForm owns selection, normalized UTF-16 query and row/section/
-navigation visibility. Native Unicode normalization, event/focus/AX, placement,
-pref stores and domain services remain adapters. Category/search/compact-picker
-synchronization, Cocoa activation/dismissal, profile/resize/hide cancellation,
-query retention and scene text are verified. Analytic Rust symbols preserve the
-semantic icon mapping with the same CPU/GPU recipe; they are newly drawn symbols
-rather than pixel-identical native vector paths. Dedicated detach/reattach,
-complete RTL/typography/platform/device-loss and manual acceptance remain open.
+Preference branding/header/section/row/status copy and row/navigation backing now
+use Rust recipes and one additional transparent Metal underlay. Rust subtracts
+interactive control cutouts; Cocoa ordering keeps the underlay below existing
+control canvases. The Rust preference tree has no native Label instances.
+Native text wrapping, font metrics and static-text AX/layout nodes remain
+adapters. Native minimum line height and long-word handling preserve the original
+Label geometry, checked at three widths. Navigation keeps CPU backdrop painting
+for control fallback; row/text CPU recipes remain fallback when the canvas is
+unavailable. This does not remove all native nodes or CPU drawing.
 
-Previously migrated editors, eleven selectors, 24 switches, three clear-data
-checkboxes, 19 fixed actions and dynamic rule actions remain verified in the full
-matrix. Normal installed apps/profiles were untouched. No bundle was signed.
+Dynamic Unicode error/status/profile labels, themes, no-results filtering, scroll
+and full last-editor visibility, cutouts, layer order and hide/reopen pass.
+Earlier editor/selector/switch/action/navigation and browser-service contracts
+remain covered. Normal installed apps/profiles were untouched; no bundle signed.
 
 ## Immediate preference work still remaining
 
-Category controls, dismiss, category selection and filter decisions now use the
-Rust scene/controller path. Next migrate header/branding/section/row/status text,
-row surface chrome, UI descriptions/data and remaining draft/admission/busy/form
-state. Preserve normalization, IME and managed-setting admission, native platform
-services, profile-bound confirmation and deferred rule mutation semantics.
-Tools-provider/shortcut pickers and browser/service panels are separate surfaces.
+Text/backing, category/dismiss controls and category/filter decisions now use the
+Rust scene/controller path. Migrate UI descriptions/data and remaining draft/
+admission/busy/form state. Preserve normalization, IME, managed-setting admission,
+profile-bound confirmation and deferred rule mutation semantics. Tools-provider/
+shortcut pickers and browser/service panels remain separate surfaces.
 Native ScrollView, BoxLayout, View groups, event/focus/AX adapters and outer
 placement still require an explicit ownership decision and verification.
 
@@ -65,7 +68,7 @@ placement still require an explicit ownership decision and verification.
    Verify stale context, defaults, cancellation, validation and persistence.
 3. **Preferences.** Editors, eleven selectors, 24 switches, three clear-data
    checkboxes, fixed/dynamic actions, category/dismiss controls and category/filter
-   state now use Rust/Metal. Migrate remaining text/chrome, UI data and draft/
+   state, preference text and backing now use Rust/Metal. Migrate UI data and draft/
    admission/busy/form state, together with tools-provider/shortcut pickers.
    Preserve native stores, managed-setting checks, profile/global scope,
    site-policy validation and data-clearing confirmation authorization.

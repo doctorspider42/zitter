@@ -1333,3 +1333,24 @@ touched. Remaining text/chrome/data/draft/form and native container ownership,
 other service UI, manual/native reattachment/release acceptance and real
 CPU/GPU/presentation profiling remain open.
 [Evidence](benchmarks/rust-preference-navigation-checkpoint-2026-10-24.json).
+
+
+## Preference shared chrome checkpoint
+
+Preference branding/header/section/row/status copy and backing now render from
+Rust recipes in one additional transparent Metal underlay. Interactive holes are
+subtracted from clips, and the underlay is ordered below existing control
+canvases. Native layout/static-text AX and font/wrapping metrics remain adapters;
+no native Label remains in this Rust preference tree. Navigation CPU backdrop
+painting and row/text fallback remain available.
+
+The critical gate passed 16 Metal / 11 Views, including native Label geometry
+oracles, dynamic Unicode text, themes, filtering, scroll, cutouts and ordering.
+The final full regular matrix passed 149/112 plus four optional scenarios each
+(153/116 combined). The initial Views matrix had one teardown timeout; isolated
+and full Views reruns passed without code changes. The initial failure is retained.
+Checks passed 225 Rust tests, 180 SDK cases plus raster,
+66 clean-archive Python tests, GN/boundaries and final Ninja no-op. No controlled
+performance gain or complete UI parity is claimed. Form/data state, other
+surfaces/native containers, manual acceptance, profiling and release remain.
+[Evidence](benchmarks/rust-preference-chrome-checkpoint-2026-10-24.json).

@@ -82,7 +82,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Workspace/profile form action buttons | Rust button/group geometry, shared pointer/key reducer and text/background/border/focus primitives; four Metal groups; native Button/AX/focus, platform font/metric/color and command adapters (automated UI checked; manual acceptance pending) | Replace native interaction nodes; verify dynamic labels, disabled styles, focus/keyboard/cancellation, clipping/fallback and service semantics |
 | Workspace color/emoji presets | Rust preset data/selection, row geometry, pointer/key reducer and scene primitives; two shared-context Metal canvases; native Button/AX/focus and text/grapheme/storage adapters (automated UI checked; manual acceptance pending) | Color/emoji editor migration verified; replace remaining native preset Button interaction ownership and broaden capture/visibility/IME/AX/theme/scale/persistence acceptance |
 | Workspace deletion confirmation | Rust captured-target notice state/copy and shared paragraph layout; Metal body/error text; native modal title/buttons and deletion/persistence services (automated UI checked; manual acceptance pending) | Migrate remaining host controls; verify default Cancel, beforeunload, stale targets, retained profile data, typography and screen bounds |
-| General preferences, shortcuts and site preferences | Rust/Metal editors, eleven preference selectors, 24 switches, three clear-data checkboxes and 19 fixed actions plus dynamic rule controls; Rust category/dismiss recipes and category/filter state; native event/focus/AX, normalization, menus and stores | Migrate remaining text/chrome/data/draft/form state, tools pickers and outer containers; retain profile/global configuration and recorder behavior |
+| General preferences, shortcuts and site preferences | Rust/Metal editors, eleven preference selectors, 24 switches, three clear-data checkboxes and 19 fixed actions plus dynamic rule controls; Rust category/dismiss recipes, category/filter state and shared text/backing underlay; native event/focus/AX, normalization, menus and stores | Migrate remaining UI data/draft/form state, tools pickers and outer containers; retain profile/global configuration and recorder behavior |
 | History, downloads, passwords and permissions | Rust/Metal history query editor; native committed-query/service adapters and remaining Views lists/controls | Migrate result/control presentation and forms; retain browser service and security semantics |
 | Peek, promote/split, link/page menus and routing | Views/native adapters + application | Rust control routing, focus and dismissal; retain native page integration |
 | Import form and first-run import | Rust UI option/debounce/admission/controller state, copy, columns and Metal static/status/Apply text; native Button/AX/focus, header nodes, native popup/IME adapters and application import services (automated UI checked; manual acceptance pending) | Migrate remaining native header and input nodes; verify latest options, busy recovery, credentials opt-in, source immutability, first-run/persistence/rollback and runtime accessibility |
@@ -612,3 +612,28 @@ crate/library was introduced. Header/branding/section/row/status text, data,
 draft/admission/busy/form state, other service UI, native nodes/containers,
 manual platform/reattachment acceptance and controlled CPU/GPU/presentation
 profiling remain. [Evidence](benchmarks/rust-preference-navigation-checkpoint-2026-10-24.json).
+
+
+## Preference text and backing milestone
+
+Preference branding/header/section/row/status text and rounded row/navigation
+backing now use Rust recipes in one additional transparent Metal underlay.
+Interactive control cutouts are subtracted from primitive clips; actual Cocoa
+ordering keeps it below existing control canvases. No native Label remains in
+the Rust preference tree. Native static-text AX/layout nodes, wrapping and font
+metrics remain adapters. Exact font weights are cached and rendered in Metal.
+Navigation CPU backdrop painting remains for control fallback; row/text fallback
+is retained. This is not removal of all native views or CPU painting.
+
+The critical gate passed 16 Metal / 11 Views. Native Label geometry comparisons
+at three widths, dynamic Unicode status/profile text, theme/filter/scroll,
+last-editor visibility, control cutouts and underlay order pass. Full regular
+execution passed 149/112, plus four optional scenarios each (153/116 combined).
+The first Views matrix had one native teardown timeout; the unchanged isolated
+test and full Views rerun passed. That initial failure remains recorded.
+Rust tests passed 225; SDK geometry 180 plus raster; clean Python 66; GN and
+boundaries passed. Initial typography/visibility/presentation/scroll failures
+remain recorded alongside the final successful run. UI data/draft/form state,
+other surfaces/native containers, manual acceptance, controlled profiling and
+release/license acceptance remain open.
+[Evidence](benchmarks/rust-preference-chrome-checkpoint-2026-10-24.json).
