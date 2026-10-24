@@ -1314,3 +1314,22 @@ layout/inventory probes are retained. Remaining navigation/chrome/form/native
 container ownership, other service UI, manual/release acceptance and controlled
 CPU/GPU/presentation profiling remain open.
 [Evidence](benchmarks/rust-preference-actions-checkpoint-2026-10-24.json).
+
+
+## Preference navigation and controller checkpoint
+
+UI source `84bbc52875079a96d2cc6750e5f9b328bcb11cbc` migrates ten category controls (one Metal canvas),
+header dismiss and category/filter UI state to Rust. Original normalized UTF-16
+search semantics, compact-choice synchronization and browser/profile service
+admission remain intact. Native event/focus/AX, typography/normalization and
+placement remain adapters. Analytic Rust category/dismiss symbols share the
+clipped CPU/GPU recipe; exact native vector-icon pixel parity is not claimed.
+
+Tests passed: 14 Metal / 10 Views critical cases; 147/111 regular cases plus four
+optional default-30-trial scenarios each (151/115 combined); 223 Rust, 180 SDK
+font/direction cases plus raster, 66 clean-archive Python, GN/boundaries and an
+optimized build with final Ninja no-op. Normal installed apps/profiles were not
+touched. Remaining text/chrome/data/draft/form and native container ownership,
+other service UI, manual/native reattachment/release acceptance and real
+CPU/GPU/presentation profiling remain open.
+[Evidence](benchmarks/rust-preference-navigation-checkpoint-2026-10-24.json).

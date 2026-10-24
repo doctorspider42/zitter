@@ -82,7 +82,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Workspace/profile form action buttons | Rust button/group geometry, shared pointer/key reducer and text/background/border/focus primitives; four Metal groups; native Button/AX/focus, platform font/metric/color and command adapters (automated UI checked; manual acceptance pending) | Replace native interaction nodes; verify dynamic labels, disabled styles, focus/keyboard/cancellation, clipping/fallback and service semantics |
 | Workspace color/emoji presets | Rust preset data/selection, row geometry, pointer/key reducer and scene primitives; two shared-context Metal canvases; native Button/AX/focus and text/grapheme/storage adapters (automated UI checked; manual acceptance pending) | Color/emoji editor migration verified; replace remaining native preset Button interaction ownership and broaden capture/visibility/IME/AX/theme/scale/persistence acceptance |
 | Workspace deletion confirmation | Rust captured-target notice state/copy and shared paragraph layout; Metal body/error text; native modal title/buttons and deletion/persistence services (automated UI checked; manual acceptance pending) | Migrate remaining host controls; verify default Cancel, beforeunload, stale targets, retained profile data, typography and screen bounds |
-| General preferences, shortcuts and site preferences | Rust/Metal editors, eleven preference selectors, 24 switches, three clear-data checkboxes and 19 fixed actions plus dynamic rule controls; native event/focus/AX, menus and stores | Migrate header/category controls, tools pickers, sections/chrome/form state and outer containers; retain profile/global configuration and recorder behavior |
+| General preferences, shortcuts and site preferences | Rust/Metal editors, eleven preference selectors, 24 switches, three clear-data checkboxes and 19 fixed actions plus dynamic rule controls; Rust category/dismiss recipes and category/filter state; native event/focus/AX, normalization, menus and stores | Migrate remaining text/chrome/data/draft/form state, tools pickers and outer containers; retain profile/global configuration and recorder behavior |
 | History, downloads, passwords and permissions | Rust/Metal history query editor; native committed-query/service adapters and remaining Views lists/controls | Migrate result/control presentation and forms; retain browser service and security semantics |
 | Peek, promote/split, link/page menus and routing | Views/native adapters + application | Rust control routing, focus and dismissal; retain native page integration |
 | Import form and first-run import | Rust UI option/debounce/admission/controller state, copy, columns and Metal static/status/Apply text; native Button/AX/focus, header nodes, native popup/IME adapters and application import services (automated UI checked; manual acceptance pending) | Migrate remaining native header and input nodes; verify latest options, busy recovery, credentials opt-in, source immutability, first-run/persistence/rollback and runtime accessibility |
@@ -593,3 +593,22 @@ hide/offscreen cancellation. Ten category controls, header close, section/row
 chrome, form state, native nodes/containers, other service UI, manual platform
 acceptance, release checks and real CPU/GPU/presentation profiling remain.
 [Evidence](benchmarks/rust-preference-actions-checkpoint-2026-10-24.json).
+
+
+## Preference navigation and filter controller milestone
+
+Ten category nodes share one Metal canvas and header dismiss has another. Rust
+owns category/query/row/section/navigation visibility, consuming the same native
+trimmed/lowercased UTF-16 units as the Views baseline. Dynamic rule display keys
+are refreshed per filter. Native event/focus/AX, typography, normalization,
+placement and browser service/authorization adapters remain. Analytic Rust
+symbols replace native icon paths; the CPU and GPU recipe is shared.
+
+The critical gate passed 14 Metal / 10 Views; the full regular matrix passed
+147/111, plus four optional scenarios each (151/115 combined). Real Cocoa
+category/search/compact-choice synchronization and dismiss, profile/resize/hide
+cancellation, query retention and all prior forms/editors/services pass. No new
+crate/library was introduced. Header/branding/section/row/status text, data,
+draft/admission/busy/form state, other service UI, native nodes/containers,
+manual platform/reattachment acceptance and controlled CPU/GPU/presentation
+profiling remain. [Evidence](benchmarks/rust-preference-navigation-checkpoint-2026-10-24.json).
