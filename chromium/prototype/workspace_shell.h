@@ -256,6 +256,9 @@ class WorkspaceShell final : public ui::EventHandler,
   EditorControl* site_origin_input() const { return site_origin_; }
   EditorControl* preferences_search() const { return preferences_search_; }
   views::Button* preference_toggle(std::string key) const { return preference_toggles_.at(key); }
+  views::Button* preference_save_button_for_testing(std::string key) const{return preference_save_buttons_.at(key);}
+  bool preference_action_metal_visible_for_testing(views::Button* button) const;
+  bool preference_actions_contains_scene_text_for_testing(std::string_view text) const;
   views::Button* preference_switch_for_testing(std::string_view key) const;
   bool preference_switch_checked_for_testing(std::string_view key) const;
   bool preference_switch_metal_visible_for_testing(std::string_view key) const;
@@ -618,7 +621,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::Button> clear_history_ = nullptr;
   raw_ptr<views::Button> clear_cookies_ = nullptr;
   raw_ptr<views::Button> clear_cache_ = nullptr;
-  raw_ptr<views::MdTextButton> clear_data_button_ = nullptr;
+  raw_ptr<views::Button> clear_data_button_ = nullptr;
   raw_ptr<views::Label> general_status_ = nullptr;
   std::unique_ptr<views::WidgetDelegate> general_delegate_;
   std::unique_ptr<views::Widget> general_widget_;

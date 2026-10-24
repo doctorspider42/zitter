@@ -686,12 +686,14 @@ class SceneActionGroup final : public views::View {
  public:
   void SyncWindowVisibility(){CancelInput();if(!SceneIsVisible(this)&&surface_)surface_->Hide();Schedule();}
 
-  SceneActionGroup(bool vertical,int spacing):vertical_(vertical),spacing_(spacing) {}
+  bool GetNeedsNotificationWhenVisibleBoundsChange() const override{return true;}
+  void OnVisibleBoundsChanged() override{if(GetVisibleBounds().IsEmpty())CancelInput();Schedule();}
+  SceneActionGroup(bool vertical,int spacing,bool intrinsic=false):vertical_(vertical),spacing_(spacing),intrinsic_(intrinsic) {}
   views::Button* AddAction(views::Button::PressedCallback callback,std::u16string text,ui::ButtonStyle style){return AddChildView(std::make_unique<SceneTextButton>(std::move(callback),std::move(text),style,base::BindRepeating(&SceneActionGroup::Schedule,weak_factory_.GetWeakPtr())));}
   bool metal_visible() const{return surface_&&surface_->visible();}
   bool contains_text(std::string_view text) const{return metal_visible()&&surface_->contains_text_for_testing(text);}
   void CancelInput(){for(const auto& child:children())child->OnMouseCaptureLost();}
-  gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override {const auto g=Geometry(available.width().is_bounded()?available.width().value():-1,-1);return gfx::Size(g.width,g.height);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override {const auto g=Geometry(!intrinsic_&&available.width().is_bounded()?available.width().value():-1,-1);return gfx::Size(g.width,g.height);}
   void Layout(PassKey) override {const auto g=Geometry(width(),height());size_t i=0;for(const auto& child:children())if(child->GetVisible()){const auto& r=g.children[i++];child->SetBounds(r.x,r.y,r.width,r.height);}Schedule();}
   void OnBoundsChanged(const gfx::Rect& previous) override {views::View::OnBoundsChanged(previous);Schedule();}
   void AddedToWidget() override {views::View::AddedToWidget();window_visibility_.Observe(GetWidget());Schedule();}
@@ -705,7 +707,7 @@ class SceneActionGroup final : public views::View {
   std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const {std::vector<sidebar::Item> out;for(const auto& child:children())if(child->GetVisible()){auto bounds=gfx::RectF(child->bounds());bounds.Offset(dx,dy);auto local=bounds;local.Intersect(clip);out.push_back(static_cast<SceneTextButton*>(child.get())->Scene(bounds,local));}return out;}
   void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneActionGroup::UpdateMetal,weak_factory_.GetWeakPtr()));}
   void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
-  bool vertical_;int spacing_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneActionGroup::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneActionGroup> weak_factory_{this};
+  bool vertical_;int spacing_;bool intrinsic_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneActionGroup::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneActionGroup> weak_factory_{this};
 };
 BEGIN_METADATA(SceneActionGroup)
 END_METADATA
@@ -1023,6 +1025,7 @@ void ReplacePickerLabels(views::View* picker,const std::vector<std::u16string>& 
 }
 void RefreshChoiceViewports(views::View* root){
 #if BUILDFLAG(IS_MAC)
+  if(auto* group=views::AsViewClass<SceneActionGroup>(root)){group->OnVisibleBoundsChanged();return;}
   if(auto* scene=views::AsViewClass<SceneToggle>(root)){scene->OnVisibleBoundsChanged();return;}
   if(auto* group=views::AsViewClass<SceneCheckboxGroup>(root)){group->OnVisibleBoundsChanged();return;}
   if(auto* scene=views::AsViewClass<SceneSelect>(root)){scene->OnVisibleBoundsChanged();return;}
@@ -1031,6 +1034,7 @@ void RefreshChoiceViewports(views::View* root){
 }
 void CancelChoiceInteractions(views::View* root){
 #if BUILDFLAG(IS_MAC)
+  if(auto* group=views::AsViewClass<SceneActionGroup>(root)){group->CancelInput();return;}
   if(auto* scene=views::AsViewClass<SceneToggle>(root)){scene->CancelInteraction();return;}
   if(auto* group=views::AsViewClass<SceneCheckboxGroup>(root)){group->CancelInput();return;}
   if(auto* scene=views::AsViewClass<SceneSelect>(root)){scene->CancelInteraction();return;}
@@ -1091,6 +1095,18 @@ void SetActionText(views::Button* button,std::u16string text) {
   if(auto* scene=views::AsViewClass<SceneTextButton>(button)){scene->SetText(std::move(text));return;}
 #endif
   static_cast<views::MdTextButton*>(button)->SetText(text);
+}
+
+// Preserve the native baseline hierarchy; scene buttons share the existing
+// action-group recipe and retain one native event/focus/accessibility adapter.
+views::Button* PreferenceAction(views::View* parent,bool scene,views::Button::PressedCallback callback,std::u16string text,bool stretch=false) {
+#if BUILDFLAG(IS_MAC)
+  // A button in a horizontal preference row keeps its intrinsic width, even
+  // when Views asks for its height at the full row width. Vertical list actions
+  // retain the original stretch behavior.
+  if(scene)parent=parent->AddChildView(std::make_unique<SceneActionGroup>(stretch,0,!stretch));
+#endif
+  return AddAction(parent,std::move(callback),std::move(text));
 }
 
 // Editing/IME remains a platform service; result selection is scene state.
@@ -3322,8 +3338,8 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   },weak,base::Unretained(field)));
     field->view()->SetPreferredSize(gfx::Size(240, 36));
     preference_textfields_[key] = field;
-    auto* save = row->AddChildView(std::make_unique<views::MdTextButton>(
-        base::BindRepeating(&WorkspaceShell::SaveTextPreference, weak, key), u"Zapisz"));
+    auto* save = PreferenceAction(row,bool(workspace_form_),
+        base::BindRepeating(&WorkspaceShell::SaveTextPreference, weak, key), u"Zapisz");
     save->SetTooltipText(u"Zapisz: " + title);
     save->GetViewAccessibility().SetName(u"Zapisz: " + title);
     preference_save_buttons_[key] = save;
@@ -3366,7 +3382,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   add_toggle(5, "auto_signin", u"Automatyczne logowanie", u"Korzystaj z zapisanych danych logowania, gdy witryna na to pozwala.");
   auto action = [&](size_t category, std::u16string title, std::u16string detail, base::RepeatingClosure callback) {
     auto* row = make_row(category, title, detail);
-    auto* button = row->AddChildView(std::make_unique<views::MdTextButton>(std::move(callback), u"Otwórz →"));
+    auto* button = PreferenceAction(row,bool(workspace_form_),std::move(callback),u"Otwórz →");
     button->SetTooltipText(title);
     button->GetViewAccessibility().SetName(title);
   };
@@ -3378,8 +3394,8 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   action(5, u"Import z przeglądarki", u"Przenieś profile, przestrzenie, foldery i zakładki.", base::BindRepeating(&WorkspaceShell::OpenImport, weak));
   add_toggle(6, "download_prompt", u"Pytaj, gdzie zapisać każdy plik", u"Wybieraj miejsce zapisu przy każdym pobieraniu.");
   auto* directory_row = make_row(6, u"Folder pobierania", u"Domyślne miejsce zapisu plików w tym profilu.");
-  download_directory_button_ = directory_row->AddChildView(std::make_unique<views::MdTextButton>(
-      callbacks_.choose_download_directory, u"Zmień…"));
+  download_directory_button_ = PreferenceAction(directory_row,bool(workspace_form_),
+      callbacks_.choose_download_directory,u"Zmień…");
   download_directory_button_->SetTooltipText(u"Zmień folder pobierania");
   download_directory_button_->GetViewAccessibility().SetName(u"Zmień folder pobierania");
   download_directory_label_ = Label(directory_row->children().front().get(), u"", kMuted, Font(-1));
@@ -3416,7 +3432,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     if(PickerIndex(shell->site_type_).value_or(0)>=4)choices.emplace_back(u"Pytaj");
     ReplacePickerLabels(shell->site_policy_,choices);
   }, weak));
-  site_editor->AddChildView(std::make_unique<views::MdTextButton>(base::BindRepeating(&WorkspaceShell::SaveSitePreference, weak), u"Zapisz wyjątek"));
+  PreferenceAction(site_editor,bool(workspace_form_),base::BindRepeating(&WorkspaceShell::SaveSitePreference,weak),u"Zapisz wyjątek");
   site_rules_card_ = make_row(3, u"Zapisane wyjątki", u"Własne reguły możesz usunąć, aby wrócić do ustawień domyślnych. Reguły zarządzane pozostają tylko do odczytu.");
   site_rules_list_ = site_rules_card_->children().front()->AddChildView(std::make_unique<views::View>());
   site_rules_list_->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 8));
@@ -3433,11 +3449,11 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   for(auto* checkbox:{clear_history_.get(),clear_cookies_.get(),clear_cache_.get()})
     if(auto* native=views::AsViewClass<views::Checkbox>(checkbox))native->SetMultiLine(true);
   SetCheckValue(clear_cache_,true);
-  clear_data_button_ = clear_row->AddChildView(std::make_unique<views::MdTextButton>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+  clear_data_button_ = PreferenceAction(clear_row,bool(workspace_form_),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
     if (!shell || !shell->callbacks_.clear_browsing_data) return;
     shell->callbacks_.clear_browsing_data.Run({static_cast<int>(PickerIndex(shell->clear_data_period_).value_or(0)),
         CheckValue(shell->clear_history_), CheckValue(shell->clear_cookies_), CheckValue(shell->clear_cache_)});
-  }, weak), u"Wyczyść…"));
+  }, weak), u"Wyczyść…");
   action(1, u"Wyszukiwarki i prefiksy", u"Własne wyszukiwarki: g zapytanie, w hasło, yt film…", base::BindRepeating(&WorkspaceShell::OpenTools, weak, 2));
   action(1, u"Skróty klawiszowe", u"Schemat Arc, własne kombinacje i wykrywanie konfliktów.", base::BindRepeating(&WorkspaceShell::OpenTools, weak, 1));
   action(0, u"Time Machine przestrzeni", u"Snapshoty, zamknięte karty i usypianie całych projektów.", base::BindRepeating(&WorkspaceShell::OpenTools, weak, 0));
@@ -5520,6 +5536,20 @@ void WorkspaceShell::ApplyTheme() {
 void WorkspaceShell::OnNativeThemeUpdated(ui::NativeTheme*) {
   if (theme_mode_ == ThemeMode::kSystem && general_widget_) ApplyAppearance();
 }
+bool WorkspaceShell::preference_action_metal_visible_for_testing(views::Button* button) const {
+#if BUILDFLAG(IS_MAC)
+  auto* group=button?views::AsViewClass<SceneActionGroup>(button->parent()):nullptr;return group&&group->metal_visible();
+#else
+  return false;
+#endif
+}
+bool WorkspaceShell::preference_actions_contains_scene_text_for_testing(std::string_view text) const {
+#if BUILDFLAG(IS_MAC)
+  if(!general_widget_)return false;auto find=[&](auto&& self,views::View* view)->bool{if(auto* group=views::AsViewClass<SceneActionGroup>(view))if(group->contains_text(text))return true;for(const auto& child:view->children())if(self(self,child.get()))return true;return false;};return find(find,general_widget_->GetContentsView());
+#else
+  return false;
+#endif
+}
 views::Button* WorkspaceShell::preference_switch_for_testing(std::string_view key) const {
   if(key=="sidebar")return sidebar_check_;
   if(key=="animations")return animations_check_;
@@ -5678,7 +5708,7 @@ void WorkspaceShell::SetBrowsingDataBusy(bool busy) {
   }
   if (!clear_data_button_) return;
   clear_data_button_->SetEnabled(!busy);
-  clear_data_button_->SetText(busy ? u"Czyszczenie…" : u"Wyczyść…");
+  SetActionText(clear_data_button_,busy ? u"Czyszczenie…" : u"Wyczyść…");
 }
 void WorkspaceShell::SetPreferencesStatus(std::u16string text, bool error) {
   if (history_visible()) tools_status_->SetText(text);
@@ -5736,7 +5766,7 @@ void WorkspaceShell::RefreshSitePreferences(bool reload) {
     auto* label = Label(row, detail, kSubtle, Font(-1));
     label->SetMultiLine(true);
     layout->SetFlexForView(label, 1);
-    auto* remove = row->AddChildView(std::make_unique<views::MdTextButton>(base::BindRepeating(
+    auto* remove = PreferenceAction(row,bool(workspace_form_),base::BindRepeating(
         [](base::WeakPtr<WorkspaceShell> shell, SitePreferenceRule rule, std::string profile_id) {
           // Rebuild on the next UI task, after the pressed button has returned.
           base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(
@@ -5746,7 +5776,7 @@ void WorkspaceShell::RefreshSitePreferences(bool reload) {
                 shell->RefreshSitePreferences(); shell->FilterPreferences();
                 shell->SetPreferencesStatus(ok ? u"Usunięto wyjątek. Witryna wróci do ustawień domyślnych." : u"Nie udało się usunąć wyjątku. Reguła może być zarządzana.", !ok);
               }, shell, std::move(rule), std::move(profile_id)));
-        }, weak_factory_.GetWeakPtr(), rule, state_.profile_id), u"Usuń"));
+        }, weak_factory_.GetWeakPtr(), rule, state_.profile_id), u"Usuń");
     remove->SetEnabled(rule.editable);
     remove->GetViewAccessibility().SetName(u"Usuń wyjątek: " + detail);
   }
@@ -5754,13 +5784,13 @@ void WorkspaceShell::RefreshSitePreferences(bool reload) {
     auto* empty = Label(site_rules_list_, site_preference_rules_.empty() ? u"Nie masz jeszcze zapisanych wyjątków." : u"Brak wyjątków pasujących do wyszukiwania.", kMuted, Font(-1));
     empty->SetMultiLine(true);
   } else if (matching > shown) {
-    site_rules_list_->AddChildView(std::make_unique<views::MdTextButton>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+    PreferenceAction(site_rules_list_,bool(workspace_form_),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
       base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceShell> shell) {
         if (!shell) return;
         shell->site_rules_limit_ += 50;
         shell->RefreshSitePreferences(false);
       }, shell));
-    }, weak_factory_.GetWeakPtr()), u"Pokaż kolejne wyjątki…"));
+    }, weak_factory_.GetWeakPtr()), u"Pokaż kolejne wyjątki…",true);
   }
   for (auto& row : preference_sections_[3].rows) if (row.view == site_rules_card_) row.keywords = keywords;
   site_rules_list_->InvalidateLayout();
