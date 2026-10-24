@@ -712,6 +712,70 @@ END_METADATA
 void CancelSceneActions(views::View* root){if(!root)return;if(auto* group=views::AsViewClass<SceneActionGroup>(root)){group->CancelInput();return;}for(const auto& child:root->children())CancelSceneActions(child.get());}
 #endif
 #if BUILDFLAG(IS_MAC)
+class SceneToggle final : public SceneGlyphButton {
+  METADATA_HEADER(SceneToggle,SceneGlyphButton)
+ public:
+  explicit SceneToggle(std::u16string name):SceneGlyphButton(PressedCallback(),std::move(name),Glyph::kMore,nullptr,base::BindRepeating([]{return true;})),state_(sidebar::new_toggle_state()){
+    SetInstallFocusRingOnFocus(false);SetHasInkDropActionOnClick(false);SetAnimateOnStateChange(false);GetViewAccessibility().SetRole(ax::mojom::Role::kSwitch);RefreshAX();
+  }
+  bool On() const{return state_->toggle_checked();}
+  void SetOn(bool value){state_->toggle_set(value);RefreshAX();Schedule();}
+  bool metal_visible() const{return surface_&&surface_->visible();}
+  bool timer_running_for_testing() const{return timer_.IsRunning();}
+  void CancelInteraction(){OnMouseCaptureLost();state_->toggle_finish();timer_.Stop();Schedule();}
+  void SyncWindowVisibility(){if(!SceneIsVisible(this)){CancelInteraction();if(surface_)surface_->Hide();}Schedule();}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(38,28);}
+  bool GetNeedsNotificationWhenVisibleBoundsChange() const override{return true;}
+  void OnVisibleBoundsChanged() override{Schedule();}
+  void OnBoundsChanged(const gfx::Rect& previous) override{SceneGlyphButton::OnBoundsChanged(previous);Schedule();}
+  void OnThemeChanged() override{SceneGlyphButton::OnThemeChanged();Schedule();}
+  void AddedToWidget() override{SceneGlyphButton::AddedToWidget();window_visibility_.Observe(GetWidget());Schedule();}
+  void RemovedFromWidget() override{window_visibility_.Observe(nullptr);timer_.Stop();surface_.reset();SceneGlyphButton::RemovedFromWidget();}
+  void VisibilityChanged(views::View* changed,bool visible) override{SceneGlyphButton::VisibilityChanged(changed,visible);SyncWindowVisibility();}
+  void StateChanged(ButtonState previous) override{SceneGlyphButton::StateChanged(previous);state_->toggle_hover(GetEnabledInViewsSubtree()&&(GetState()==STATE_HOVERED||GetState()==STATE_PRESSED),Now(),gfx::Animation::ShouldRenderRichAnimation());Schedule();}
+  void OnFocus() override{SceneGlyphButton::OnFocus();Schedule();}
+  void OnBlur() override{SceneGlyphButton::OnBlur();Schedule();}
+  void OnDidSchedulePaint(const gfx::Rect& rect) override{SceneGlyphButton::OnDidSchedulePaint(rect);Schedule();}
+  void PaintButtonContents(gfx::Canvas* canvas) override{if(!metal_visible()){auto scene=Scene();PaintEditorSceneFallback(canvas,UNSAFE_BUFFERS(base::span<const sidebar::Primitive>(scene.data(),scene.size())));}Schedule();}
+ protected:
+  // Native Button treats visual pressed state as checked; Rust owns this value.
+  void UpdateAccessibleCheckedState() override{RefreshAX();}
+  void NotifyClick(const ui::Event& event) override{if(!state_->toggle_flip(GetEnabledInViewsSubtree()&&SceneIsVisible(this),Now(),gfx::Animation::ShouldRenderRichAnimation()))return;RefreshAX();Schedule();SceneGlyphButton::NotifyClick(event);}
+ private:
+  static uint64_t Now(){return (base::TimeTicks::Now()-base::TimeTicks()).InMilliseconds();}
+  void RefreshAX(){GetViewAccessibility().SetCheckedState(On()?ax::mojom::CheckedState::kTrue:ax::mojom::CheckedState::kFalse);}
+  rust::Vec<sidebar::Primitive> Scene() const{
+    const auto* colors=GetColorProvider();const bool enabled=GetEnabledInViewsSubtree();sidebar::ToggleStyle s{};s.width=width();s.height=height();s.checked=On();s.pressed=GetState()==STATE_PRESSED;s.focused=HasFocus();s.rtl=base::i18n::IsRTL();s.progress=state_->toggle_progress(Now());s.hover=state_->toggle_hover_progress(Now());
+    s.track_on=SkColorSetRGB(110,86,207);s.track_off=colors->GetColor(enabled?ui::kColorToggleButtonTrackOff:ui::kColorToggleButtonTrackOffDisabled);s.thumb_on=colors->GetColor(enabled?ui::kColorToggleButtonThumbOn:ui::kColorToggleButtonThumbOnDisabled);s.thumb_off=colors->GetColor(enabled?ui::kColorToggleButtonThumbOff:ui::kColorToggleButtonThumbOffDisabled);s.thumb_hover=colors->GetColor(ui::kColorToggleButtonThumbOnHover);s.halo=colors->GetColor(s.pressed?ui::kColorToggleButtonPressed:ui::kColorToggleButtonHover);s.focus=colors->GetColor(ui::kColorFocusableBorderFocused);s.border=colors->GetColor(ui::kColorToggleButtonShadow);s.clip={0,0,float(width()),float(height())};return sidebar::toggle_scene(s);
+  }
+  void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneToggle::UpdateMetal,weak_factory_.GetWeakPtr()));}
+  void Tick(){if(!metal_visible())SchedulePaint();Schedule();}
+  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){timer_.Stop();if(surface_)surface_->Hide();return;}auto scene=Scene();for(auto& op:scene){op.x-=local.x();op.y-=local.y();op.clip={0,0,float(local.width()),float(local.height())};}if(!surface_)surface_=CreateSidebarMetal();const bool was=metal_visible();if(surface_){auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());surface_->UpdateScene(GetWidget()->GetNativeWindow(),frame,UNSAFE_BUFFERS(base::span<const sidebar::Primitive>(scene.data(),scene.size())),Tone(this,kCard));}if(was!=metal_visible())SchedulePaint();if(state_->toggle_animating(Now())){if(!timer_.IsRunning())timer_.Start(FROM_HERE,base::Milliseconds(16),this,&SceneToggle::Tick);}else timer_.Stop();}
+  rust::Box<sidebar::ToggleState> state_;base::RepeatingTimer timer_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneToggle::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneToggle> weak_factory_{this};
+};
+BEGIN_METADATA(SceneToggle)
+END_METADATA
+#endif
+bool ToggleOn(views::Button* control){
+#if BUILDFLAG(IS_MAC)
+  if(auto* scene=views::AsViewClass<SceneToggle>(control))return scene->On();
+#endif
+  return static_cast<views::ToggleButton*>(control)->GetIsOn();
+}
+void SetToggleOn(views::Button* control,bool value){
+#if BUILDFLAG(IS_MAC)
+  if(auto* scene=views::AsViewClass<SceneToggle>(control)){scene->SetOn(value);return;}
+#endif
+  static_cast<views::ToggleButton*>(control)->SetIsOn(value);
+}
+views::Button* PreferenceToggle(views::View* parent,std::u16string name,bool scene){
+#if BUILDFLAG(IS_MAC)
+  if(scene)return parent->AddChildView(std::make_unique<SceneToggle>(std::move(name)));
+#endif
+  auto* toggle=parent->AddChildView(std::make_unique<views::ToggleButton>());toggle->GetViewAccessibility().SetName(name);toggle->SetTrackOnColor(SkColorSetRGB(110,86,207));return toggle;
+}
+
+#if BUILDFLAG(IS_MAC)
 class SceneCheckbox final : public SceneGlyphButton {
   METADATA_HEADER(SceneCheckbox,SceneGlyphButton)
  public:
@@ -732,6 +796,8 @@ class SceneCheckbox final : public SceneGlyphButton {
     for(size_t i=0;i<g.lines.size();++i){const auto& r=g.lines[i];sidebar::Item item{};item.kind=17;item.x=bounds.x()+r.x;item.y=bounds.y()+r.y;item.width=r.width;item.height=r.height;item.title=lines_[i];item.font_size=font.GetFontSize();item.active=font.GetFontWeight()>=gfx::Font::Weight::MEDIUM;item.ink=provider->GetColor(views::TypographyProvider::Get().GetColorId(views::style::CONTEXT_LABEL,enabled?views::style::STYLE_PRIMARY:views::style::STYLE_DISABLED));item.clip={clip.x(),clip.y(),clip.width(),clip.height()};out.push_back(std::move(item));}return out;
   }
  protected:
+  // Capture loss, hover and disabling must not replace the model checked value.
+  void UpdateAccessibleCheckedState() override{RefreshAX();}
   void NotifyClick(const ui::Event& event) override {if(!state_->toggle(GetEnabledInViewsSubtree()&&SceneIsVisible(this)))return;RefreshAX();SchedulePaint();SceneGlyphButton::NotifyClick(event);}
  private:
   void RefreshAX(){SetDefaultActionVerb(Checked()?ax::mojom::DefaultActionVerb::kUncheck:ax::mojom::DefaultActionVerb::kCheck);UpdateAccessibleDefaultActionVerb();GetViewAccessibility().SetCheckedState(Checked()?ax::mojom::CheckedState::kTrue:ax::mojom::CheckedState::kFalse);}
@@ -749,6 +815,8 @@ class SceneCheckboxGroup final : public views::View {
  public:
   void SyncWindowVisibility(){CancelInput();if(!SceneIsVisible(this)&&surface_)surface_->Hide();Schedule();}
 
+  bool GetNeedsNotificationWhenVisibleBoundsChange() const override{return true;}
+  void OnVisibleBoundsChanged() override{Schedule();}
   explicit SceneCheckboxGroup(int spacing){SetLayoutManager(CreateSidebarColumnLayout(spacing));}
   views::Button* AddChoice(views::Button::PressedCallback callback,std::u16string text){return AddChildView(std::make_unique<SceneCheckbox>(std::move(callback),std::move(text),base::BindRepeating(&SceneCheckboxGroup::Schedule,weak_factory_.GetWeakPtr())));}
   bool metal_visible() const{return surface_&&surface_->visible();}
@@ -955,12 +1023,16 @@ void ReplacePickerLabels(views::View* picker,const std::vector<std::u16string>& 
 }
 void RefreshChoiceViewports(views::View* root){
 #if BUILDFLAG(IS_MAC)
+  if(auto* scene=views::AsViewClass<SceneToggle>(root)){scene->OnVisibleBoundsChanged();return;}
+  if(auto* group=views::AsViewClass<SceneCheckboxGroup>(root)){group->OnVisibleBoundsChanged();return;}
   if(auto* scene=views::AsViewClass<SceneSelect>(root)){scene->OnVisibleBoundsChanged();return;}
   for(const auto& child:root->children())RefreshChoiceViewports(child.get());
 #endif
 }
 void CancelChoiceInteractions(views::View* root){
 #if BUILDFLAG(IS_MAC)
+  if(auto* scene=views::AsViewClass<SceneToggle>(root)){scene->CancelInteraction();return;}
+  if(auto* group=views::AsViewClass<SceneCheckboxGroup>(root)){group->CancelInput();return;}
   if(auto* scene=views::AsViewClass<SceneSelect>(root)){scene->CancelInteraction();return;}
   for(const auto& child:root->children())CancelChoiceInteractions(child.get());
 #endif
@@ -3210,12 +3282,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto picker = [&](views::View* row,std::u16string name,std::vector<std::u16string> choices){
     return ChoicePicker(row,std::move(name),std::move(choices),bool(workspace_form_));
   };
-  auto toggle = [&](views::View* row, std::u16string name) {
-    auto* control = row->AddChildView(std::make_unique<views::ToggleButton>());
-    control->GetViewAccessibility().SetName(name);
-    control->SetTrackOnColor(SkColorSetRGB(110, 86, 207));
-    return control;
-  };
+  auto toggle = [&](views::View* row,std::u16string name){return PreferenceToggle(row,std::move(name),bool(workspace_form_));};
   theme_picker_ = picker(make_row(0, u"Motyw aplikacji", u"Kolory interfejsu i stron obsługujących motyw systemowy."),
       u"Motyw aplikacji", {u"Systemowy", u"Jasny", u"Ciemny"});
   SetPickerCallback(theme_picker_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
@@ -3223,11 +3290,11 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   }, weak));
   sidebar_check_ = toggle(make_row(0, u"Zawsze widoczny panel kart", u"Przypnij karty i przestrzenie przy lewej krawędzi."), u"Zawsze widoczny panel kart");
   sidebar_check_->SetCallback(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
-    if (shell) shell->SetPinned(shell->sidebar_check_->GetIsOn());
+    if (shell) shell->SetPinned(ToggleOn(shell->sidebar_check_));
   }, weak));
   animations_check_ = toggle(make_row(0, u"Animacje przestrzeni", u"Płynne przejścia. Systemowe ograniczenie ruchu ma pierwszeństwo."), u"Animacje przestrzeni");
   animations_check_->SetCallback(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
-    if (shell) shell->SetWorkspaceAnimations(shell->animations_check_->GetIsOn());
+    if (shell) shell->SetWorkspaceAnimations(ToggleOn(shell->animations_check_));
   }, weak));
   search_engine_picker_ = picker(make_row(1, u"Domyślna wyszukiwarka", u"Używana, gdy wpiszesz zapytanie w pasku adresu."),
       u"Domyślna wyszukiwarka", {u"DuckDuckGo", u"Google", u"Bing"});
@@ -3240,7 +3307,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     auto* control = toggle(make_row(category, title, detail), title);
     preference_toggles_[key] = control;
     control->SetCallback(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, std::string key) {
-      if (shell) shell->WritePreference(key, shell->preference_toggles_.at(key)->GetIsOn());
+      if (shell) shell->WritePreference(key, ToggleOn(shell->preference_toggles_.at(key)));
     }, weak, key));
   };
   auto add_text = [&](size_t category, std::string key, std::u16string title, std::u16string detail, std::u16string placeholder) {
@@ -3356,15 +3423,20 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto* clear_row = make_row(8, u"Wyczyść dane przeglądania", u"Dotyczy wyłącznie aktywnego profilu. Pobrane pliki, zapisane hasła i przypięte karty pozostaną zachowane. Przed usunięciem zobaczysz potwierdzenie.");
   auto* clear_fields = clear_row->children().front().get();
   clear_data_period_ = picker(clear_fields, u"Zakres czasu czyszczenia danych", {u"Ostatnia godzina", u"Ostatnie 24 godziny", u"Ostatnie 7 dni", u"Cały okres"});
-  clear_history_ = clear_fields->AddChildView(std::make_unique<views::Checkbox>(u"Historia przeglądania"));
-  clear_cookies_ = clear_fields->AddChildView(std::make_unique<views::Checkbox>(u"Cookies i dane witryn (może wylogować)"));
-  clear_cache_ = clear_fields->AddChildView(std::make_unique<views::Checkbox>(u"Pamięć podręczna"));
-  for (auto* checkbox : {clear_history_.get(), clear_cookies_.get(), clear_cache_.get()}) checkbox->SetMultiLine(true);
-  clear_cache_->SetChecked(true);
+  auto* clear_choices=clear_fields;
+#if BUILDFLAG(IS_MAC)
+  if(workspace_form_)clear_choices=clear_fields->AddChildView(std::make_unique<SceneCheckboxGroup>(8));
+#endif
+  clear_history_=AddImportCheck(clear_choices,u"Historia przeglądania",{});
+  clear_cookies_=AddImportCheck(clear_choices,u"Cookies i dane witryn (może wylogować)",{});
+  clear_cache_=AddImportCheck(clear_choices,u"Pamięć podręczna",{});
+  for(auto* checkbox:{clear_history_.get(),clear_cookies_.get(),clear_cache_.get()})
+    if(auto* native=views::AsViewClass<views::Checkbox>(checkbox))native->SetMultiLine(true);
+  SetCheckValue(clear_cache_,true);
   clear_data_button_ = clear_row->AddChildView(std::make_unique<views::MdTextButton>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
     if (!shell || !shell->callbacks_.clear_browsing_data) return;
     shell->callbacks_.clear_browsing_data.Run({static_cast<int>(PickerIndex(shell->clear_data_period_).value_or(0)),
-        shell->clear_history_->GetChecked(), shell->clear_cookies_->GetChecked(), shell->clear_cache_->GetChecked()});
+        CheckValue(shell->clear_history_), CheckValue(shell->clear_cookies_), CheckValue(shell->clear_cache_)});
   }, weak), u"Wyczyść…"));
   action(1, u"Wyszukiwarki i prefiksy", u"Własne wyszukiwarki: g zapytanie, w hasło, yt film…", base::BindRepeating(&WorkspaceShell::OpenTools, weak, 2));
   action(1, u"Skróty klawiszowe", u"Schemat Arc, własne kombinacje i wykrywanie konfliktów.", base::BindRepeating(&WorkspaceShell::OpenTools, weak, 1));
@@ -5448,6 +5520,41 @@ void WorkspaceShell::ApplyTheme() {
 void WorkspaceShell::OnNativeThemeUpdated(ui::NativeTheme*) {
   if (theme_mode_ == ThemeMode::kSystem && general_widget_) ApplyAppearance();
 }
+views::Button* WorkspaceShell::preference_switch_for_testing(std::string_view key) const {
+  if(key=="sidebar")return sidebar_check_;
+  if(key=="animations")return animations_check_;
+  const auto it=preference_toggles_.find(std::string(key));
+  return it==preference_toggles_.end()?nullptr:it->second.get();
+}
+bool WorkspaceShell::preference_switch_checked_for_testing(std::string_view key) const {
+  auto* control=preference_switch_for_testing(key);return control&&ToggleOn(control);
+}
+bool WorkspaceShell::preference_switch_metal_visible_for_testing(std::string_view key) const {
+#if BUILDFLAG(IS_MAC)
+  auto* scene=views::AsViewClass<SceneToggle>(preference_switch_for_testing(key));return scene&&scene->metal_visible();
+#else
+  return false;
+#endif
+}
+bool WorkspaceShell::preference_switch_timer_running_for_testing(std::string_view key) const {
+#if BUILDFLAG(IS_MAC)
+  auto* scene=views::AsViewClass<SceneToggle>(preference_switch_for_testing(key));return scene&&scene->timer_running_for_testing();
+#else
+  return false;
+#endif
+}
+views::Button* WorkspaceShell::clear_checkbox_for_testing(size_t index) const {
+  const std::array<views::Button*,3> choices={clear_history_,clear_cookies_,clear_cache_};
+  return index<choices.size()?choices[index]:nullptr;
+}
+bool WorkspaceShell::clear_choices_metal_visible_for_testing() const {
+#if BUILDFLAG(IS_MAC)
+  auto* group=clear_history_?views::AsViewClass<SceneCheckboxGroup>(clear_history_->parent()):nullptr;
+  return group&&group->metal_visible();
+#else
+  return false;
+#endif
+}
 views::View* WorkspaceShell::preference_choice_for_testing(std::string_view key) const {
   if(key=="theme")return theme_picker_;if(key=="search")return search_engine_picker_;
   if(key=="category")return preferences_category_picker_;if(key=="site_type")return site_type_;
@@ -5500,8 +5607,8 @@ void WorkspaceShell::RefreshGeneralControls() {
   }
   ReplacePickerOptions(search_engine_picker_,provider_choices);
   SyncPickerIndex(search_engine_picker_,provider_choices.empty()?std::nullopt:std::optional<size_t>(provider_index));
-  sidebar_check_->SetIsOn(pinned_);
-  animations_check_->SetIsOn(workspace_animations_);
+  SetToggleOn(sidebar_check_,pinned_);
+  SetToggleOn(animations_check_,workspace_animations_);
   if (profile_changed) {
     preferences_profile_id_ = state_.profile_id;
     preference_text_dirty_.clear();
@@ -5528,7 +5635,7 @@ void WorkspaceShell::RefreshGeneralControls() {
   for (const auto& [key, control] : preference_toggles_) {
     auto it = values.find(key);
     control->SetEnabled(it != values.end() && it->second.editable);
-    if (it != values.end()) control->SetIsOn(it->second.value != 0);
+    if (it != values.end()) SetToggleOn(control,it->second.value != 0);
     control->SetTooltipText(it == values.end() ? u"Profil nie jest jeszcze gotowy" :
         !it->second.editable ? u"To ustawienie jest zarządzane" : u"Dotyczy aktywnego profilu");
   }

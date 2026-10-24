@@ -1513,6 +1513,51 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ProfilePreferencesAndSearch) {
   EXPECT_EQ(4, window_->ReadPreferences().at("zoom").value);
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceSwitchesCocoaScopeAndClearSelections) {
+  ASSERT_NO_FATAL_FAILURE(NavigateBoth());ASSERT_TRUE(window_->Select("work"));
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenGeneralSettings();
+  const bool rust=shell->workspace_input()->rust_editor();
+  auto filter=[&](std::u16string query){auto* field=shell->preferences_search();field->SelectRange(gfx::Range(0,field->GetText().size()));field->input_client()->InsertText(query,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();};
+  filter(u"Animacje przestrzeni");auto* animations=shell->preference_switch_for_testing("animations");ASSERT_TRUE(animations);
+  const bool previous_animations=shell->workspace_animations();views::test::ButtonTestApi(animations).NotifyDefaultMouseClick();EXPECT_EQ(!previous_animations,shell->workspace_animations());
+  filter(u"Zawsze widoczny panel kart");auto* pinned=shell->preference_switch_for_testing("sidebar");ASSERT_TRUE(pinned);
+  const bool previous_pinned=shell->pinned();views::test::ButtonTestApi(pinned).NotifyDefaultMouseClick();EXPECT_EQ(!previous_pinned,shell->pinned());
+  filter(u"Kamera");auto* camera=shell->preference_toggle("camera");
+  EXPECT_EQ(rust,!views::AsViewClass<views::ToggleButton>(camera));
+  ui::AXNodeData node;camera->GetViewAccessibility().GetAccessibleNodeData(&node);EXPECT_EQ(ax::mojom::Role::kSwitch,node.role);EXPECT_EQ(ax::mojom::CheckedState::kTrue,node.GetCheckedState());
+  camera->ScrollRectToVisible(camera->GetLocalBounds());
+  if(rust)ASSERT_TRUE(base::test::RunUntil([&]{return shell->preference_switch_metal_visible_for_testing("camera");}));
+  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->general_widget()->GetNativeWindow()));camera->RequestFocus();ASSERT_TRUE(camera->HasFocus());
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->general_widget()->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));
+  EXPECT_EQ(0,window_->ReadPreferences().at("camera").value);EXPECT_FALSE(shell->preference_switch_checked_for_testing("camera"));
+  camera->GetViewAccessibility().GetAccessibleNodeData(&node);EXPECT_EQ(ax::mojom::CheckedState::kFalse,node.GetCheckedState());
+  EXPECT_EQ(CONTENT_SETTING_BLOCK,HostContentSettingsMapFactory::GetForProfile(work_)->GetDefaultContentSetting(ContentSettingsType::MEDIASTREAM_CAMERA));
+  ASSERT_TRUE(window_->Select("personal"));shell->OpenGeneralSettings();EXPECT_TRUE(shell->preference_switch_checked_for_testing("camera"));EXPECT_EQ(1,window_->ReadPreferences().at("camera").value);
+  EXPECT_EQ(!previous_animations,shell->workspace_animations());EXPECT_EQ(!previous_pinned,shell->pinned());
+  ASSERT_TRUE(window_->Select("work"));shell->OpenGeneralSettings();EXPECT_FALSE(shell->preference_switch_checked_for_testing("camera"));
+  filter(u"Wyczyść dane przeglądania");auto* cookies=shell->clear_checkbox_for_testing(1);auto* cache=shell->clear_checkbox_for_testing(2);ASSERT_TRUE(cookies);ASSERT_TRUE(cache);
+  EXPECT_EQ(rust,!views::AsViewClass<views::Checkbox>(cookies));
+  cookies->ScrollRectToVisible(cookies->GetLocalBounds());
+  if(rust)ASSERT_TRUE(base::test::RunUntil([&]{return shell->clear_choices_metal_visible_for_testing();}));
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->general_widget()->GetNativeWindow()));cookies->RequestFocus();ASSERT_TRUE(cookies->HasFocus());
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->general_widget()->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));
+  views::test::ButtonTestApi(cache).NotifyDefaultMouseClick();
+  for(size_t i=0;i<3;++i){auto* choice=shell->clear_checkbox_for_testing(i);choice->GetViewAccessibility().GetAccessibleNodeData(&node);EXPECT_EQ(ax::mojom::Role::kCheckBox,node.role);EXPECT_EQ(i==1?ax::mojom::CheckedState::kTrue:ax::mojom::CheckedState::kFalse,node.GetCheckedState());}
+  shell->ActivatePreferenceChoiceForTesting("clear_period",3);
+  auto* clear=FindButton(shell->general_widget()->GetContentsView(),u"Wyczyść…");ASSERT_TRUE(clear);
+  // The form's selection must drive the real controller and durable profile data.
+  EXPECT_EQ("work",content::EvalJs(window_->contents("work"),"writeMarker('work')"));
+  EXPECT_EQ("personal",content::EvalJs(window_->contents("personal"),"writeMarker('personal')"));
+  views::test::ButtonTestApi(clear).NotifyDefaultMouseClick();ASSERT_TRUE(window_->clear_data_dialog());
+  ASSERT_TRUE(window_->Select("personal"));window_->clear_data_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+  ASSERT_TRUE(base::test::RunUntil([&]{return !window_->clearing_browsing_data();}));
+  EXPECT_EQ("personal|personal|personal|personal",content::EvalJs(window_->contents("personal"),"readMarker()"));
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"),embedded_test_server()->GetURL("/storage_probe.html?ui-clear")));
+  EXPECT_EQ("",content::EvalJs(window_->contents("work"),"document.cookie"));
+  EXPECT_EQ("",content::EvalJs(window_->contents("work"),"localStorage.getItem('zitter') || ''"));
+  EXPECT_EQ("",content::EvalJs(window_->contents("work"),"readMarker().then(value => value.split('|')[2])"));
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceChoicesCocoaEmptySelectionAndProfileScope) {
   ASSERT_NO_FATAL_FAILURE(NavigateBoth("/preferences_probe.html"));ASSERT_TRUE(window_->Select("work"));
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
@@ -4272,6 +4317,30 @@ class ZitterMetalSidebarBrowserTest : public ZitterProfilesBrowserTest {
     command_line->AppendSwitchASCII("zitter-sidebar", "rust-metal");
   }
 };
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, PreferenceSwitchesRustScenesCancellationAndScroll) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenGeneralSettings();
+  for(const auto* key:{"sidebar","animations","referrers","https_only","third_party_cookies","do_not_track","preconnect","link_auditing","camera","microphone","location","notifications","clipboard","javascript","images","popups","sound","save_passwords","auto_signin","download_prompt","spellcheck","online_spellcheck","caret_browsing","hardware_acceleration"}){
+    auto* control=shell->preference_switch_for_testing(key);ASSERT_TRUE(control)<<key;EXPECT_FALSE(views::AsViewClass<views::ToggleButton>(control));EXPECT_TRUE(control->children().empty());EXPECT_FALSE(control->GetInstallFocusRingOnFocus());
+    ui::AXNodeData node;control->GetViewAccessibility().GetAccessibleNodeData(&node);EXPECT_EQ(ax::mojom::Role::kSwitch,node.role);EXPECT_EQ(shell->preference_switch_checked_for_testing(key)?ax::mojom::CheckedState::kTrue:ax::mojom::CheckedState::kFalse,node.GetCheckedState());
+  }
+  auto filter=[&](std::u16string query){auto* field=shell->preferences_search();field->SelectRange(gfx::Range(0,field->GetText().size()));if(query.empty())field->input_client()->DeleteRange(gfx::Range(0,field->GetText().size()));else field->input_client()->InsertText(query,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();};
+  auto expect_checked=[](views::Button* control,bool checked){ui::AXNodeData node;control->GetViewAccessibility().GetAccessibleNodeData(&node);EXPECT_EQ(checked?ax::mojom::CheckedState::kTrue:ax::mojom::CheckedState::kFalse,node.GetCheckedState());};
+  filter(u"Kamera");auto* camera=shell->preference_toggle("camera");camera->ScrollRectToVisible(camera->GetLocalBounds());ASSERT_TRUE(base::test::RunUntil([&]{return shell->preference_switch_metal_visible_for_testing("camera");}));
+  const gfx::Point point(12,12);ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);
+  ASSERT_TRUE(camera->OnMousePressed(press));ASSERT_TRUE(window_->Select("personal"));camera->OnMouseReleased(release);EXPECT_EQ(1,window_->ReadPreferences().at("camera").value);
+  shell->OpenGeneralSettings();filter(u"Kamera");camera->SetEnabled(false);expect_checked(camera,true);views::test::ButtonTestApi(camera).NotifyDefaultMouseClick();EXPECT_TRUE(shell->preference_switch_checked_for_testing("camera"));camera->SetEnabled(true);expect_checked(camera,true);
+  ASSERT_TRUE(camera->OnMousePressed(press));expect_checked(camera,true);shell->general_widget()->Hide();camera->OnMouseReleased(release);EXPECT_TRUE(shell->preference_switch_checked_for_testing("camera"));expect_checked(camera,true);
+  ASSERT_TRUE(base::test::RunUntil([&]{return !shell->preference_switch_metal_visible_for_testing("camera")&&!shell->preference_switch_timer_running_for_testing("camera");}));
+  shell->OpenGeneralSettings();filter(u"Wyczyść dane przeglądania");auto* cookies=shell->clear_checkbox_for_testing(1);ASSERT_TRUE(cookies);cookies->ScrollRectToVisible(cookies->GetLocalBounds());ASSERT_TRUE(base::test::RunUntil([&]{return shell->clear_choices_metal_visible_for_testing();}));
+  ASSERT_TRUE(cookies->OnMousePressed(press));expect_checked(cookies,false);shell->general_widget()->Hide();cookies->OnMouseReleased(release);expect_checked(cookies,false);ASSERT_TRUE(base::test::RunUntil([&]{return !shell->clear_choices_metal_visible_for_testing();}));
+  shell->OpenGeneralSettings();filter(u"Wyczyść dane przeglądania");expect_checked(cookies,false);
+  shell->OpenGeneralSettings();filter(u"a");auto* top=shell->preference_switch_for_testing("sidebar");top->ScrollRectToVisible(top->GetLocalBounds());ASSERT_TRUE(base::test::RunUntil([&]{return shell->preference_switch_metal_visible_for_testing("sidebar");}));
+  views::ScrollView* scroll=nullptr;for(auto* parent=top->parent();parent&&!scroll;parent=parent->parent())scroll=views::AsViewClass<views::ScrollView>(parent);ASSERT_TRUE(scroll);
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->general_widget()->GetNativeWindow()));base::test::TestFuture<void> presented;auto* compositor=shell->general_widget()->GetCompositor();ASSERT_TRUE(compositor);compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
+  scroll->ScrollToPosition(scroll->vertical_scroll_bar(),scroll->vertical_scroll_bar()->GetMaxPosition());ASSERT_TRUE(base::test::RunUntil([&]{return top->GetVisibleBounds().IsEmpty();}));ASSERT_TRUE(base::test::RunUntil([&]{return !shell->preference_switch_metal_visible_for_testing("sidebar")&&!shell->preference_switch_timer_running_for_testing("sidebar");}));
+  top->ScrollRectToVisible(top->GetLocalBounds());ASSERT_TRUE(base::test::RunUntil([&]{return shell->preference_switch_metal_visible_for_testing("sidebar");}));ASSERT_TRUE(base::test::RunUntil([&]{return !shell->preference_switch_timer_running_for_testing("sidebar");}));
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, PreferenceChoicesScenesIdentityScrollAndCancellation) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready()&&shell->tools_ready();}));
   window_->widget()->SetBounds(gfx::Rect(60,60,700,660));shell->OpenGeneralSettings();

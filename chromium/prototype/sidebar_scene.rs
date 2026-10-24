@@ -17,6 +17,7 @@ mod ffi {
     struct EditorUpdate { admitted: bool, text_changed: bool, selection_changed: bool, composition_changed: bool, committed: bool, info: EditorInfo }
     struct SelectLayout { width: i32, height: i32, label: Rect, arrow: Rect }
     struct SelectOption { key: String, label: String, search: String }
+    struct ToggleStyle { width: f32, height: f32, progress: f32, hover: f32, checked: bool, pressed: bool, focused: bool, rtl: bool, track_on: u32, track_off: u32, thumb_on: u32, thumb_off: u32, thumb_hover: u32, halo: u32, focus: u32, border: u32, clip: FloatRect }
     struct CheckboxLayout { width: i32, height: i32, mark: Rect, label: Rect, lines: Vec<Rect> }
     #[derive(Clone, PartialEq, Eq)]
     struct ImportSelection { browser: u32, separate_profiles: bool, bookmarks: bool, history: bool, cookies: bool }
@@ -159,6 +160,17 @@ mod ffi {
         fn input(self: &mut SelectState, lower_text: &str, now_ms: u64, enabled: bool) -> bool;
         fn select_menu_key(key: u32) -> bool;
         fn select_layout(width: i32, height: i32, text_width: i32, control_height: i32, rtl: bool) -> SelectLayout;
+        type ToggleState;
+        fn new_toggle_state() -> Box<ToggleState>;
+        fn toggle_checked(self: &ToggleState) -> bool;
+        fn toggle_set(self: &mut ToggleState, checked: bool);
+        fn toggle_flip(self: &mut ToggleState, enabled: bool, now: u64, animate: bool) -> bool;
+        fn toggle_hover(self: &mut ToggleState, hovered: bool, now: u64, animate: bool);
+        fn toggle_progress(self: &ToggleState, now: u64) -> f32;
+        fn toggle_hover_progress(self: &ToggleState, now: u64) -> f32;
+        fn toggle_animating(self: &ToggleState, now: u64) -> bool;
+        fn toggle_finish(self: &mut ToggleState);
+        fn toggle_scene(style: &ToggleStyle) -> Vec<Primitive>;
         type CheckboxState;
         fn new_checkbox_state(checked: bool) -> Box<CheckboxState>;
         fn checked(self: &CheckboxState) -> bool;
@@ -544,6 +556,42 @@ fn select_layout(width:i32,height:i32,text_width:i32,control_height:i32,rtl:bool
     let width=if width<0{text_width.max(0).saturating_add(48)}else{width};let height=if height<0{control_height.max(28)}else{height.max(0)};
     let pad=12.min(width/2);let room=width-pad*2;let arrow_width=16.min(room);let gap=8.min(room-arrow_width);let label_width=room-arrow_width-gap;
     ffi::SelectLayout{width,height,label:ffi::Rect{x:if rtl{pad+arrow_width+gap}else{pad},y:0,width:label_width,height},arrow:ffi::Rect{x:if rtl{pad}else{width-pad-arrow_width},y:0,width:arrow_width,height}}
+}
+
+// Targets are authoritative immediately; only visual interpolation is timed.
+struct ToggleTransition { from:f32, target:bool, started:Option<u64>, duration:u64 }
+impl ToggleTransition {
+ fn progress(&self,now:u64)->f32 {let to=if self.target{1.0}else{0.0};self.started.map_or(to,|start|{let t=(now.saturating_sub(start) as f32/self.duration as f32).clamp(0.0,1.0);self.from+(to-self.from)*t})}
+ fn set(&mut self,target:bool){self.target=target;self.from=if target{1.0}else{0.0};self.started=None;}
+ fn animate(&mut self,target:bool,now:u64,animate:bool){if target==self.target{return;}self.from=self.progress(now);self.target=target;self.started=if animate{Some(now)}else{None};}
+ fn animating(&self,now:u64)->bool {self.started.is_some_and(|start|now.saturating_sub(start)<self.duration)}
+}
+pub struct ToggleState { slide:ToggleTransition, hover:ToggleTransition }
+fn new_toggle_state()->Box<ToggleState>{Box::new(ToggleState{slide:ToggleTransition{from:0.0,target:false,started:None,duration:80},hover:ToggleTransition{from:0.0,target:false,started:None,duration:250}})}
+impl ToggleState {
+ fn toggle_checked(&self)->bool{self.slide.target}
+ fn toggle_set(&mut self,checked:bool){self.slide.set(checked);}
+ fn toggle_flip(&mut self,enabled:bool,now:u64,animate:bool)->bool{if !enabled{return false;}self.slide.animate(!self.slide.target,now,animate);true}
+ fn toggle_hover(&mut self,hovered:bool,now:u64,animate:bool){self.hover.animate(hovered,now,animate);}
+ fn toggle_progress(&self,now:u64)->f32{self.slide.progress(now)}
+ fn toggle_hover_progress(&self,now:u64)->f32{self.hover.progress(now)}
+ fn toggle_animating(&self,now:u64)->bool{self.slide.animating(now)||self.hover.animating(now)}
+ fn toggle_finish(&mut self){self.slide.set(self.slide.target);self.hover.set(false);}
+}
+fn toggle_scene(s:&ffi::ToggleStyle)->Vec<ffi::Primitive>{
+ if ![s.width,s.height,s.progress,s.hover,s.clip.x,s.clip.y,s.clip.width,s.clip.height].iter().all(|v|v.is_finite())||s.width<=0.0||s.height<=0.0{return vec![];}
+ let p=s.progress.clamp(0.0,1.0);let hover=s.hover.clamp(0.0,1.0);
+ let blend=|on:u32,off:u32,t:f32|{let mut color=0;for shift in [0,8,16,24]{let a=((on>>shift)&255) as f32;let b=((off>>shift)&255) as f32;color|=((b+(a-b)*t).round() as u32)<<shift;}color};
+ let make=|x,y,width,height,radius,color,stroke|ffi::Primitive{x,y,width,height,radius,color,stroke,shape:0,text:String::new(),font_size:0.0,bold:false,middle:false,center:false,clip:ffi::FloatRect{x:s.clip.x,y:s.clip.y,width:s.clip.width,height:s.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0};
+ let w=s.width.min(26.0);let h=s.height.min(16.0);let x=(s.width-w)/2.0;let y=(s.height-h)/2.0;
+ let inset=if s.checked{2.0}else{4.0};let diameter=(h-2.0*inset).max(0.0);let pos=if s.rtl{1.0-p}else{p};let tx=x+inset+pos*(w-h).max(0.0);let ty=y+inset;let out=if s.pressed{1.0}else{0.0};
+ let mut ops=vec![make(x,y,w,h,h/2.0,blend(s.track_on,s.track_off,p),0.0)];
+ if !s.checked{ops.push(make(x+0.5,y+0.5,(w-1.0).max(0.0),(h-1.0).max(0.0),(h-1.0).max(0.0)/2.0,s.border,1.0));}
+ if hover>0.0{let cx=tx+diameter/2.0;let cy=ty+diameter/2.0;ops.push(make(cx-10.0,cy-10.0,20.0,20.0,10.0,blend(s.halo,s.halo&0xffffff,hover),0.0));}
+ let mut thumb=blend(s.thumb_on,s.thumb_off,p);if s.checked{thumb=blend(s.thumb_hover,thumb,hover);}
+ ops.push(make(tx-out,ty-out,diameter+out*2.0,diameter+out*2.0,(diameter+out*2.0)/2.0,thumb,0.0));
+ if s.focused{ops.push(make(x-3.0,y-3.0,w+6.0,h+6.0,h/2.0+3.0,s.focus,2.0));}
+ ops
 }
 
 pub struct CheckboxState { checked: bool }
@@ -1748,6 +1796,28 @@ mod tests {
     }
     #[test] fn checkbox_state_disabled_activation_does_not_mutate_value() {
         for value in [false,true] {let mut c=new_checkbox_state(value);assert!(!c.toggle(false));assert_eq!(c.checked(),value);assert!(c.set_checked(!value));assert_eq!(c.checked(),!value);}
+    }
+    #[test] fn toggle_transition_reverses_and_programmatic_refresh_snaps() {
+        let mut s=new_toggle_state();assert!(!s.toggle_flip(false,10,true));assert!(!s.toggle_checked());
+        assert!(s.toggle_flip(true,10,true));assert!(s.toggle_checked());assert_eq!(s.toggle_progress(50),0.5);
+        assert!(s.toggle_flip(true,50,true));assert!(!s.toggle_checked());assert_eq!(s.toggle_progress(90),0.25);assert_eq!(s.toggle_progress(130),0.0);assert!(!s.toggle_animating(130));
+        s.toggle_flip(true,200,true);s.toggle_set(true);assert_eq!(s.toggle_progress(201),1.0);assert!(!s.toggle_animating(201));
+    }
+    #[test] fn toggle_hover_reduced_motion_and_hide_do_not_leave_idle_animation() {
+        let mut s=new_toggle_state();s.toggle_hover(true,0,true);assert_eq!(s.toggle_hover_progress(125),0.5);assert!(s.toggle_animating(125));
+        s.toggle_finish();assert_eq!(s.toggle_hover_progress(126),0.0);assert!(!s.toggle_animating(126));
+        assert!(s.toggle_flip(true,130,false));s.toggle_hover(true,130,false);assert_eq!(s.toggle_progress(130),1.0);assert_eq!(s.toggle_hover_progress(130),1.0);assert!(!s.toggle_animating(130));
+    }
+    fn toggle_style()->ffi::ToggleStyle {ffi::ToggleStyle{width:38.0,height:28.0,progress:0.0,hover:0.0,checked:false,pressed:false,focused:false,rtl:false,track_on:0xff8040c0,track_off:0xffeeeeee,thumb_on:0xffffffff,thumb_off:0xff111111,thumb_hover:0xffcccccc,halo:0x22000000,focus:0xff0000ff,border:0xff888888,clip:ffi::FloatRect{x:0.0,y:0.0,width:38.0,height:28.0}}}
+    #[test] fn toggle_scene_matches_native_track_thumb_and_rtl_endpoints() {
+        let mut s=toggle_style();let off=toggle_scene(&s);assert_eq!((off[0].x,off[0].y,off[0].width,off[0].height),(6.0,6.0,26.0,16.0));assert_eq!((off[2].x,off[2].width),(10.0,8.0));
+        s.checked=true;s.progress=1.0;let on=toggle_scene(&s);assert_eq!((on[1].x,on[1].width),(18.0,12.0));assert_eq!(on[0].color,s.track_on);
+        s.rtl=true;let rtl=toggle_scene(&s);assert_eq!(rtl[1].x,8.0);s.focused=true;s.hover=1.0;s.pressed=true;let ops=toggle_scene(&s);assert_eq!(ops.len(),4);assert_eq!(ops[3].stroke,2.0);assert!(ops.iter().all(|p|p.text.is_empty()&&p.clip.width==38.0));
+    }
+    #[test] fn toggle_scene_rejects_nonfinite_and_empty_surfaces() {
+        for value in [f32::NAN,f32::INFINITY,f32::NEG_INFINITY]{let mut s=toggle_style();s.progress=value;assert!(toggle_scene(&s).is_empty());}
+        let mut s=toggle_style();s.width=0.0;assert!(toggle_scene(&s).is_empty());
+        s.width=1.0;s.height=1.0;assert!(toggle_scene(&s).iter().all(|p|p.width>=0.0&&p.height>=0.0&&p.x.is_finite()));
     }
     #[test] fn checkbox_layout_places_mark_gap_and_full_label_extent() {
         let g=checkbox_layout(400,20,1,6,5,6,5,false);assert_eq!((g.mark.x,g.mark.width,g.label.x,g.label.width),(6,16,30,364));assert_eq!(g.height,34);assert_eq!(g.lines.len(),1);assert_eq!(g.label.height,20);

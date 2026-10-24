@@ -255,7 +255,13 @@ class WorkspaceShell final : public ui::EventHandler,
   views::View* preference_picker(std::string key) const { return preference_pickers_.at(key); }
   EditorControl* site_origin_input() const { return site_origin_; }
   EditorControl* preferences_search() const { return preferences_search_; }
-  views::ToggleButton* preference_toggle(std::string key) const { return preference_toggles_.at(key); }
+  views::Button* preference_toggle(std::string key) const { return preference_toggles_.at(key); }
+  views::Button* preference_switch_for_testing(std::string_view key) const;
+  bool preference_switch_checked_for_testing(std::string_view key) const;
+  bool preference_switch_metal_visible_for_testing(std::string_view key) const;
+  bool preference_switch_timer_running_for_testing(std::string_view key) const;
+  views::Button* clear_checkbox_for_testing(size_t index) const;
+  bool clear_choices_metal_visible_for_testing() const;
   views::View* theme_picker() const { return theme_picker_; }
   views::View* search_engine_picker() const { return search_engine_picker_; }
   views::View* preference_choice_for_testing(std::string_view key) const;
@@ -574,8 +580,8 @@ class WorkspaceShell final : public ui::EventHandler,
   base::CallbackListSubscription metal_general_scroll_subscription_;
   raw_ptr<views::View> theme_picker_ = nullptr;
   raw_ptr<views::View> search_engine_picker_ = nullptr;
-  raw_ptr<views::ToggleButton> sidebar_check_ = nullptr;
-  raw_ptr<views::ToggleButton> animations_check_ = nullptr;
+  raw_ptr<views::Button> sidebar_check_ = nullptr;
+  raw_ptr<views::Button> animations_check_ = nullptr;
   raw_ptr<EditorControl> preferences_search_ = nullptr;
   raw_ptr<views::Label> preferences_profile_ = nullptr;
   raw_ptr<views::Label> download_directory_label_ = nullptr;
@@ -594,7 +600,7 @@ class WorkspaceShell final : public ui::EventHandler,
     std::vector<PreferenceRow> rows;
   };
   std::vector<PreferenceSection> preference_sections_;
-  std::map<std::string, raw_ptr<views::ToggleButton>> preference_toggles_;
+  std::map<std::string, raw_ptr<views::Button>> preference_toggles_;
   std::map<std::string, raw_ptr<views::View>> preference_pickers_;
   size_t preference_category_ = 0;
   std::map<std::string, raw_ptr<EditorControl>> preference_textfields_;
@@ -609,9 +615,9 @@ class WorkspaceShell final : public ui::EventHandler,
   std::vector<SitePreferenceRule> site_preference_rules_;
   size_t site_rules_limit_ = 50;
   raw_ptr<views::View> clear_data_period_ = nullptr;
-  raw_ptr<views::Checkbox> clear_history_ = nullptr;
-  raw_ptr<views::Checkbox> clear_cookies_ = nullptr;
-  raw_ptr<views::Checkbox> clear_cache_ = nullptr;
+  raw_ptr<views::Button> clear_history_ = nullptr;
+  raw_ptr<views::Button> clear_cookies_ = nullptr;
+  raw_ptr<views::Button> clear_cache_ = nullptr;
   raw_ptr<views::MdTextButton> clear_data_button_ = nullptr;
   raw_ptr<views::Label> general_status_ = nullptr;
   std::unique_ptr<views::WidgetDelegate> general_delegate_;
