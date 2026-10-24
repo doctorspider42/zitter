@@ -1296,3 +1296,21 @@ cases plus raster and 66 clean-archive Python cases passed. The initial native B
 regression, failed reopening probe and final model-owned override are retained. Native nodes, remaining form/
 container/service UI, manual acceptance, final packaging and real presentation
 profiling remain open. [Evidence](benchmarks/rust-preference-switches-checkpoint-2026-10-24.json).
+
+
+## Preference actions checkpoint
+
+UI source `bab9feb8152e02917e5aa23d2585bd8a5db4ef74` moves 19 fixed preference actions and dynamic rule
+removal/pagination to the existing Rust action geometry/input/primitive path with
+Metal text and CPU fallback. Native Button/View/focus/AX/event nodes and browser
+stores/services remain explicit adapters. Intrinsic row measurement, original
+editor visibility, IME/disabled admission, busy labels, profile-bound deferred
+commands and hide/offscreen cancellation are covered.
+
+The critical gate passed 8 Metal / 7 Views; the full regular matrix passed
+145/110 plus four optional default-30-trial scenarios per backend (149/114
+combined). Fresh Rust/SDK and clean-archive Python checks passed. Initial failed
+layout/inventory probes are retained. Remaining navigation/chrome/form/native
+container ownership, other service UI, manual/release acceptance and controlled
+CPU/GPU/presentation profiling remain open.
+[Evidence](benchmarks/rust-preference-actions-checkpoint-2026-10-24.json).

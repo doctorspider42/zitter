@@ -82,7 +82,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Workspace/profile form action buttons | Rust button/group geometry, shared pointer/key reducer and text/background/border/focus primitives; four Metal groups; native Button/AX/focus, platform font/metric/color and command adapters (automated UI checked; manual acceptance pending) | Replace native interaction nodes; verify dynamic labels, disabled styles, focus/keyboard/cancellation, clipping/fallback and service semantics |
 | Workspace color/emoji presets | Rust preset data/selection, row geometry, pointer/key reducer and scene primitives; two shared-context Metal canvases; native Button/AX/focus and text/grapheme/storage adapters (automated UI checked; manual acceptance pending) | Color/emoji editor migration verified; replace remaining native preset Button interaction ownership and broaden capture/visibility/IME/AX/theme/scale/persistence acceptance |
 | Workspace deletion confirmation | Rust captured-target notice state/copy and shared paragraph layout; Metal body/error text; native modal title/buttons and deletion/persistence services (automated UI checked; manual acceptance pending) | Migrate remaining host controls; verify default Cancel, beforeunload, stale targets, retained profile data, typography and screen bounds |
-| General preferences, shortcuts and site preferences | Rust/Metal editors, eleven preference selectors, 24 switches and three clear-data checkboxes; native event/focus/AX, menus and stores; remaining Views controls | Migrate action controls, tools pickers, sections/form state and outer containers; retain profile/global configuration and recorder behavior |
+| General preferences, shortcuts and site preferences | Rust/Metal editors, eleven preference selectors, 24 switches, three clear-data checkboxes and 19 fixed actions plus dynamic rule controls; native event/focus/AX, menus and stores | Migrate header/category controls, tools pickers, sections/chrome/form state and outer containers; retain profile/global configuration and recorder behavior |
 | History, downloads, passwords and permissions | Rust/Metal history query editor; native committed-query/service adapters and remaining Views lists/controls | Migrate result/control presentation and forms; retain browser service and security semantics |
 | Peek, promote/split, link/page menus and routing | Views/native adapters + application | Rust control routing, focus and dismissal; retain native page integration |
 | Import form and first-run import | Rust UI option/debounce/admission/controller state, copy, columns and Metal static/status/Apply text; native Button/AX/focus, header nodes, native popup/IME adapters and application import services (automated UI checked; manual acceptance pending) | Migrate remaining native header and input nodes; verify latest options, busy recovery, credentials opt-in, source immutability, first-run/persistence/rollback and runtime accessibility |
@@ -574,3 +574,22 @@ viewport exclusion/reappearance and idle timer shutdown are covered. Remaining
 buttons/sections/controllers/containers, manual platform acceptance, device-loss
 fallback acceptance and controlled CPU/GPU/presentation profiling remain open.
 [Evidence](benchmarks/rust-preference-switches-checkpoint-2026-10-24.json).
+
+
+## Preference action milestone
+
+Nineteen fixed actions plus dynamic site-rule Remove/More controls reuse Rust
+input, action layout and primitive recipes with Metal text and CPU fallback.
+Native event/focus/AX adapters and original stores, IME/managed admission, platform
+services and deferred profile-bound callbacks remain. Horizontal row actions
+preserve intrinsic measurement; the More list action retains stretch. The first
+version's group measurement regression is fixed without weakening the original
+editor/selector visibility and final-font reachability checks.
+
+The checkpoint passed 145 Metal / 110 Views regular cases and four optional
+scenarios each (149/114 combined), including real Cocoa save/pagination,
+IME/disabled admission, busy labels, deferred cross-profile removal and
+hide/offscreen cancellation. Ten category controls, header close, section/row
+chrome, form state, native nodes/containers, other service UI, manual platform
+acceptance, release checks and real CPU/GPU/presentation profiling remain.
+[Evidence](benchmarks/rust-preference-actions-checkpoint-2026-10-24.json).

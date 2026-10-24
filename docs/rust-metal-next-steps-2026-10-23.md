@@ -5,60 +5,54 @@ inventory is [the parity checklist](rust-metal-parity.md).
 
 ## Current checkpoint
 
-UI source `67bb21f11a769d47f2e6c0fcebfc707b84d84503`, 2026-10-24, passed the full compiled
+UI source `bab9feb8152e02917e5aa23d2585bd8a5db4ef74`, 2026-10-24, passed the full compiled
 regression inventory with one launcher job, no retries and temporary profiles:
 
 | Backend | Regular matrix passed | Regular skips | Failed / crashed |
 | --- | ---: | ---: | ---: |
-| Rust + Metal | 142 | 6 | 0 |
-| Views | 108 | 6 | 0 |
+| Rust + Metal | 145 | 6 | 0 |
+| Views | 110 | 6 | 0 |
 
-The inventory contains 148 cases; Views excludes 34 dedicated Metal cases
-(114 applicable cases). Four opt-in performance scenarios also passed separately
+The inventory contains 151 cases; Views excludes 35 dedicated Metal cases
+(116 applicable cases). Four opt-in performance scenarios also passed separately
 on each backend with their default 30 measured trials. **Combined coverage is
-146 Metal / 112 Views passes**, with real-user Arc import and the interactive
-manual window excluded per backend. Metal API validation remained enabled.
-These are execution results, not controlled CPU/GPU/presentation comparisons.
+149 Metal / 114 Views passes**, excluding real-user Arc import and the interactive
+manual window per backend. Metal API validation remained enabled. These are
+execution results, not controlled CPU/GPU/presentation comparisons.
 
-The switch/clear-data critical gate passed **4 Metal / 3 Views**. Fresh checks
+The preference action/editor/selector gate passed **8 Metal / 7 Views**. Checks
 passed **220 Rust tests**, **180 SDK font/direction cases plus raster**, **66
 Python from a clean archive**, scoped GN/boundaries and optimized compilation.
 The live checkout passed 68 Python cases including two concurrent cases outside
 this UI commit. Final Ninja reported no work to do.
-[Results, source/binary identities and retained initial failure](benchmarks/rust-preference-switches-checkpoint-2026-10-24.json).
+[Results, source/binary identities and retained initial failures](benchmarks/rust-preference-actions-checkpoint-2026-10-24.json).
 
-Twenty-two profile switches, two global switches and three clear-data checkboxes
-now use Rust checked state and Metal display lists, retaining native event/focus/
-AX adapters and original preference, permission, confirmation and storage services.
-Timed switch interpolation respects reduced motion and stops offscreen or hidden;
-CPU fallback requests repaint when Metal is unavailable. The native 26x16 track
-sits inside a 38x28 target to contain focus/hover drawing. Cocoa keyboard, profile/
-global scope, actual cookies/localStorage/IndexedDB deletion and isolation,
-press cancellation, viewport exclusion/reappearance and idle timer shutdown are
-covered. A discovered native Button AX override bug is fixed: checked state
-now remains model-owned while pressed, disabled, cancelled or hidden. The
-initial misdiagnosis, failed reopening probe and final regression are retained.
+Nineteen fixed preference actions and dynamic site-rule Remove/More controls now
+reuse Rust action layout, pointer/key state and primitive recipes with Metal
+text and CPU fallback. Their native Button/focus/AX/event adapters and original
+stores, validation, platform services and profile-bound deferred callbacks remain.
+Cocoa save/pagination, IME/disabled admission, busy labels, cross-profile deferred
+removal, hide/offscreen press cancellation and real viewport reachability pass.
+Horizontal row groups preserve intrinsic button width; the vertical More action
+retains stretch. This fixes the initial group measurement regression that clipped
+editor content. The original editor reachability checks are retained.
 
-Eleven preference selectors and the custom text editors remain on the previously
-verified Rust/Metal path. Native buttons, sections, forms/controllers, containers,
-platform acceptance and real profiling remain open. The installed app and normal
-profiles were untouched; no bundle was packaged or signed.
+Eleven preference selectors, 24 switches, three clear-data checkboxes and the
+custom text fields remain on the previously verified Rust/Metal path. Their
+native nodes and broader platform/manual/performance/release acceptance remain
+open. The installed app and normal profiles were untouched; no bundle was signed.
 
 ## Immediate preference controls still to migrate
 
-The source inventory at this checkpoint contains **19 fixed MdTextButton
-instances**: six text-setting Save buttons, ten Open actions, download-directory
-selection, site-rule Save and Clear. It also retains ten category RowButtons,
-one header Close GlyphButton, variable per-rule Remove buttons and the
-conditional More exceptions button. These are source counts for preferences,
-not an estimate of the entire application's remaining UI.
-
-Next, move these action labels/layout/input recipes to shared Rust scene controls
-while retaining managed-setting enablement, text/IME commit admission, dynamic
-busy labels, platform directory/proxy/certificate services, profile-bound
-confirmation and deferred removal/pagination callbacks. Then move section/title/
-status/row chrome and filtering/category/form state. The current ScrollView,
-BoxLayout and native event/focus/AX nodes remain a separate container milestone.
+The 19 fixed actions (six text-setting Saves, ten Open actions, download-directory
+selection, site-rule Save and Clear) and dynamic rule removal/pagination are now
+on the scene path. Remaining preferences work starts with ten category
+RowButtons, the header Close GlyphButton and section/title/status/row chrome.
+Then move category/filter/form state and tools-provider/shortcut pickers. Retain
+managed-setting checks, text/IME commit admission, dynamic busy labels, platform
+services, profile-bound confirmation and deferred deletion/pagination semantics.
+The current ScrollView, BoxLayout, View groups and native Button event/focus/AX
+nodes remain a separate container ownership milestone.
 
 ## Next implementation steps
 
@@ -72,9 +66,11 @@ BoxLayout and native event/focus/AX nodes remain a separate container milestone.
    surfaces. Finish the address/command palette input/frame/container layer.
    Verify stale context, defaults, cancellation, validation and persistence.
 3. **Preferences.** Eleven preference choice selectors and the text fields now
-   use Rust/Metal, along with 24 switches and three clear-data checkboxes. Migrate
-   the remaining buttons, section navigation and form/controller state, along with
-   tools-provider/shortcut pickers. Keep native stores, managed-setting checks, profile/global scope,
+   use Rust/Metal, along with 24 switches and three clear-data checkboxes.
+   Nineteen fixed actions and dynamic rule removal/pagination now
+   use the scene action path. Migrate header/category controls, section chrome
+   and form/controller state, along with tools-provider/shortcut pickers. Keep
+   native stores, managed-setting checks, profile/global scope,
    site-policy validation and data-clearing confirmation authorization.
 4. **Browser service panels.** Migrate history/search/pagination, downloads,
    passwords/permissions and Time Machine previews/restore. Preserve real service
