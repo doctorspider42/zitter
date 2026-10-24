@@ -314,14 +314,29 @@ END_METADATA
 class PreferenceSurface final : public views::View {
   METADATA_HEADER(PreferenceSurface, views::View)
  public:
-  explicit PreferenceSurface(bool navigation = false) : navigation_(navigation) {}
+  explicit PreferenceSurface(bool navigation=false,bool scene=false,base::RepeatingClosure changed={},base::RepeatingCallback<bool()> visible={}):navigation_(navigation),scene_(scene),changed_(std::move(changed)),visible_(std::move(visible)){}
+  bool scene() const{return scene_;}
+#if BUILDFLAG(IS_MAC)
+  sidebar::Item Scene(gfx::RectF bounds,gfx::RectF clip) const{sidebar::Item item{};item.kind=24;item.x=bounds.x();item.y=bounds.y();item.width=bounds.width();item.height=bounds.height();item.fill=Tone(this,navigation_?kFrameBase:kCard);item.ink=Hairline(this);item.active=navigation_;item.clip={clip.x(),clip.y(),clip.width(),clip.height()};return item;}
+#endif
+  bool GetNeedsNotificationWhenVisibleBoundsChange() const override{return scene_;}
+  void OnVisibleBoundsChanged() override{Notify();}
+  void OnBoundsChanged(const gfx::Rect& previous) override{views::View::OnBoundsChanged(previous);Notify();}
+  void AddedToWidget() override{views::View::AddedToWidget();Notify();}
+  void VisibilityChanged(views::View* changed,bool visible) override{views::View::VisibilityChanged(changed,visible);Notify();}
+  void OnPaint(gfx::Canvas* canvas) override{views::View::OnPaint(canvas);
+#if BUILDFLAG(IS_MAC)
+    if(scene_&&(navigation_||!visible_||!visible_.Run())){auto item=Scene(gfx::RectF(GetLocalBounds()),gfx::RectF(GetLocalBounds()));auto ops=sidebar::layout(rust::Slice<const sidebar::Item>(&item,1));PaintEditorSceneFallback(canvas,UNSAFE_BUFFERS(base::span<const sidebar::Primitive>(ops.data(),ops.size())));}
+#endif
+  }
   void OnThemeChanged() override {
     views::View::OnThemeChanged();
-    SetBackground(views::CreateRoundedRectBackground(Tone(this, navigation_ ? kFrameBase : kCard), 12));
-    if (!navigation_) SetBorder(views::CreateRoundedRectBorder(1, 12, Hairline(this)));
+    if(scene_){SetBackground(nullptr);SetBorder(views::CreateEmptyBorder(navigation_?gfx::Insets():gfx::Insets(1)));Notify();}
+    else {SetBackground(views::CreateRoundedRectBackground(Tone(this,navigation_?kFrameBase:kCard),12));if(!navigation_)SetBorder(views::CreateRoundedRectBorder(1,12,Hairline(this)));}
   }
  private:
-  bool navigation_;
+  void Notify(){if(changed_)changed_.Run();}
+  bool navigation_;bool scene_;base::RepeatingClosure changed_;base::RepeatingCallback<bool()> visible_;
 };
 BEGIN_METADATA(PreferenceSurface)
 END_METADATA
@@ -705,7 +720,7 @@ class ScenePreferenceControls final : public views::View {
   sidebar::ColumnLayout Geometry(int width,int height) const{std::vector<sidebar::ColumnChild> measured;for(const auto& child:children()){auto size=child->GetPreferredSize();measured.push_back({size.width(),size.height(),0,0,0,0});}return sidebar::action_group_layout(width,height,!dismiss_,dismiss_?0:6,rust::Slice<const sidebar::ColumnChild>(measured.data(),measured.size()));}
   std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const{std::vector<sidebar::Item> items;for(const auto& child:children()){auto bounds=gfx::RectF(child->bounds());bounds.Offset(dx,dy);auto local=bounds;local.Intersect(clip);items.push_back(static_cast<ScenePreferenceButton*>(child.get())->Scene(bounds,local));}return items;}
   void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&ScenePreferenceControls::UpdateMetal,weak_factory_.GetWeakPtr()));}
-  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,dismiss_?kCard:kChip));if(was!=metal_visible())SchedulePaint();}
+  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,dismiss_?kCard:kFrameBase));if(was!=metal_visible())SchedulePaint();}
   bool dismiss_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&ScenePreferenceControls::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<ScenePreferenceControls> weak_factory_{this};
 };
 BEGIN_METADATA(ScenePreferenceControls)
@@ -1961,6 +1976,58 @@ FolderNoticeView* FindFolderNotice(views::View* view) {
 #endif
 
 #if BUILDFLAG(IS_MAC)
+class PreferenceCopy final : public views::View {
+  METADATA_HEADER(PreferenceCopy,views::View)
+ public:
+  PreferenceCopy(std::u16string text,SkColor tone,int delta,gfx::Font::Weight weight,bool multiline,base::RepeatingClosure changed,base::RepeatingCallback<bool()> visible)
+      :text_(std::move(text)),tone_(tone),delta_(delta),weight_(weight),multiline_(multiline),changed_(std::move(changed)),visible_(std::move(visible)){GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);GetViewAccessibility().SetName(text_);SetCanProcessEventsWithinSubtree(false);}
+  const std::u16string& text() const{return text_;}
+  gfx::FontList font() const{return Font(delta_,weight_);}
+  void SetText(std::u16string text){if(text==text_)return;text_=std::move(text);GetViewAccessibility().SetName(text_);measured_width_=-1;natural_width_=-1;PreferredSizeChanged();SchedulePaint();Notify();}
+  void SetTone(SkColor tone){if(tone_==tone)return;tone_=tone;SchedulePaint();Notify();}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override{const int natural=NaturalWidth();const int width=available.width().is_bounded()?std::min(natural,available.width().value()):natural;auto g=Geometry(width);return gfx::Size(width,g.height);}
+  void Append(std::vector<sidebar::Item>& items,gfx::Point origin,gfx::Rect clip) const{auto g=Geometry(width());for(size_t i=0;i<lines_.size();++i){auto r=g.children[i];gfx::Rect box(origin.x()+r.x,origin.y()+r.y,r.width,r.height);auto visible=box;visible.Intersect(clip);if(visible.IsEmpty()||lines_[i].empty())continue;sidebar::Item item{};item.kind=17;item.x=box.x();item.y=box.y();item.width=box.width();item.height=box.height();item.title=lines_[i];item.ink=Tone(this,GetEnabledInViewsSubtree()?tone_:kDisabled);item.font_size=font().GetFontSize();item.font_weight=static_cast<int>(weight_);item.active=weight_>=gfx::Font::Weight::MEDIUM;item.clip={float(visible.x()),float(visible.y()),float(visible.width()),float(visible.height())};items.push_back(std::move(item));}}
+  bool HasFullText(const SidebarMetal& surface,std::string_view text) const{if(base::UTF16ToUTF8(text_)!=text||!SceneIsVisible(this)||GetVisibleBounds().height()!=height())return false;Geometry(width());return !lines_.empty()&&std::all_of(lines_.begin(),lines_.end(),[&](const auto& line){return line.empty()||surface.contains_text_for_testing(line);});}
+  bool GetNeedsNotificationWhenVisibleBoundsChange() const override{return true;}
+  void OnVisibleBoundsChanged() override{Notify();}
+  void AddedToWidget() override{views::View::AddedToWidget();Notify();}
+  void RemovedFromWidget() override{Notify();views::View::RemovedFromWidget();}
+  void OnBoundsChanged(const gfx::Rect& previous) override{views::View::OnBoundsChanged(previous);Notify();}
+  void VisibilityChanged(views::View* changed,bool visible) override{views::View::VisibilityChanged(changed,visible);Notify();}
+  void OnThemeChanged() override{views::View::OnThemeChanged();measured_width_=-1;natural_width_=-1;PreferredSizeChanged();Notify();}
+  void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);Notify();}
+  void OnPaint(gfx::Canvas* canvas) override{if(!visible_||!visible_.Run()){std::vector<sidebar::Item> items;Append(items,gfx::Point(),GetLocalBounds());for(const auto& item:items)PaintSceneRecipe(canvas,item,font());}}
+ private:
+  void Notify(){if(changed_)changed_.Run();}
+  int NaturalWidth() const{const auto f=font();if(natural_width_>=0&&measured_font_==f.GetFontSize())return natural_width_;int width=0;size_t start=0;do{const auto end=text_.find(u'\n',start);width=std::max(width,gfx::GetStringWidth(text_.substr(start,end==std::u16string::npos?end:end-start),f));if(end==std::u16string::npos)break;start=end+1;}while(start<=text_.size());natural_width_=width;return width;}
+  sidebar::ColumnLayout Geometry(int width) const{const auto f=font();width=std::max(0,width);if(width!=measured_width_||f.GetFontSize()!=measured_font_){lines_.clear();if(multiline_&&width>0){std::vector<std::u16string> wrapped;gfx::ElideRectangleText(text_,f,width,std::numeric_limits<int>::max(),gfx::ELIDE_LONG_WORDS,&wrapped);for(const auto& line:wrapped)lines_.push_back(base::UTF16ToUTF8(line));}else lines_.push_back(base::UTF16ToUTF8(text_));if(lines_.empty())lines_.push_back("");measured_width_=width;measured_font_=f.GetFontSize();}return sidebar::paragraph_layout(width,std::max(f.GetHeight(),views::TypographyProvider::Get().GetLineHeight(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY)),lines_.size());}
+  std::u16string text_;SkColor tone_;int delta_;gfx::Font::Weight weight_;bool multiline_;base::RepeatingClosure changed_;base::RepeatingCallback<bool()> visible_;mutable int measured_width_=-1,measured_font_=0,natural_width_=-1;mutable std::vector<std::string> lines_;
+};
+BEGIN_METADATA(PreferenceCopy)
+END_METADATA
+class PreferenceChromeRenderer : public views::WidgetObserver {
+ public:
+  explicit PreferenceChromeRenderer(views::View* root):root_(root){}
+  ~PreferenceChromeRenderer() override{observation_.Reset();}
+  bool visible() const{return surface_&&surface_->visible();}
+  bool order_correct() const{return visible()&&surface_->underlay_order_correct_for_testing();}
+  size_t frame_count() const{return surface_?surface_->frame_count():0;}
+  std::string Debug() const{return "root="+root_->GetBoundsInScreen().ToString()+" visible="+root_->GetVisibleBounds().ToString()+" widget="+std::to_string(root_->GetWidget()!=nullptr)+" drawn="+std::to_string(SceneIsVisible(root_))+" canvas="+std::to_string(visible())+" order="+std::to_string(order_correct())+" ops="+std::to_string(last_ops_.size())+" frames="+std::to_string(frame_count());}
+  bool contains_text(std::string_view text) const{if(!visible())return false;if(surface_->contains_text_for_testing(text))return true;auto find=[&](auto&& self,views::View* view)->bool{if(auto* copy=views::AsViewClass<PreferenceCopy>(view))if(copy->HasFullText(*surface_,text))return true;for(const auto& child:view->children())if(self(self,child.get()))return true;return false;};return find(find,root_);}
+  bool excludes(views::View* view) const{if(!visible()||!view)return false;auto rect=Projected(view);if(rect.IsEmpty())return false;for(const auto& op:last_ops_){gfx::RectF clip(op.clip.x,op.clip.y,op.clip.width,op.clip.height);if(clip.Intersects(gfx::RectF(rect)))return false;}return true;}
+  void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&PreferenceChromeRenderer::Update,weak_factory_.GetWeakPtr()));}
+  void OnWidgetVisibilityChanged(views::Widget*,bool visible) override{if(!visible&&surface_)surface_->Hide();Schedule();}
+  void OnWidgetBoundsChanged(views::Widget*,const gfx::Rect&) override{Schedule();}
+  void OnWidgetDestroying(views::Widget*) override{observation_.Reset();if(surface_)surface_->Hide();}
+ private:
+  gfx::Rect Projected(views::View* view) const{auto rect=view->GetVisibleBounds();rect.Offset(view->GetBoundsInScreen().x()-root_->GetBoundsInScreen().x(),view->GetBoundsInScreen().y()-root_->GetBoundsInScreen().y());rect.Intersect(root_->GetLocalBounds());return rect;}
+  void Collect(views::View* view,std::vector<sidebar::Item>& backgrounds,std::vector<sidebar::Item>& text,std::vector<sidebar::FloatRect>& holes){if(!SceneIsVisible(view))return;auto clip=Projected(view);if(clip.IsEmpty())return;auto box=view->GetBoundsInScreen();box.Offset(-root_->GetBoundsInScreen().x(),-root_->GetBoundsInScreen().y());if(auto* copy=views::AsViewClass<PreferenceCopy>(view)){copy->Append(text,box.origin(),clip);return;}if(auto* surface=views::AsViewClass<PreferenceSurface>(view))if(surface->scene())backgrounds.push_back(surface->Scene(gfx::RectF(box),gfx::RectF(clip)));if(views::AsViewClass<SceneActionGroup>(view)||views::AsViewClass<SceneCheckboxGroup>(view)||views::AsViewClass<ScenePreferenceControls>(view)||views::AsViewClass<SceneSelect>(view)||views::AsViewClass<SceneToggle>(view)||views::AsViewClass<views::Button>(view)||view->GetViewAccessibility().GetCachedRole()==ax::mojom::Role::kTextField){holes.push_back({float(clip.x()),float(clip.y()),float(clip.width()),float(clip.height())});return;}for(const auto& child:view->children())Collect(child.get(),backgrounds,text,holes);}
+  void Update(){pending_=false;auto* widget=root_->GetWidget();if(!widget)return;if(observation_.GetSource()!=widget){observation_.Reset();observation_.Observe(widget);}widget->LayoutRootViewIfNecessary();const bool was=visible();if(!SceneIsVisible(root_)){if(surface_)surface_->Hide();return;}std::vector<sidebar::Item> backgrounds,text;std::vector<sidebar::FloatRect> holes;Collect(root_,backgrounds,text,holes);backgrounds.insert(backgrounds.end(),std::make_move_iterator(text.begin()),std::make_move_iterator(text.end()));last_ops_=sidebar::preference_chrome_scene(rust::Slice<const sidebar::Item>(backgrounds.data(),backgrounds.size()),rust::Slice<const sidebar::FloatRect>(holes.data(),holes.size()));if(!surface_)surface_=CreateSidebarMetal();if(surface_)surface_->UpdateUnderlay(widget->GetNativeWindow(),root_->GetBoundsInScreen(),UNSAFE_BUFFERS(base::span<const sidebar::Primitive>(last_ops_.data(),last_ops_.size())));if(was!=visible())root_->SchedulePaint();}
+  raw_ptr<views::View> root_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;rust::Vec<sidebar::Primitive> last_ops_;base::ScopedObservation<views::Widget,views::WidgetObserver> observation_{this};base::WeakPtrFactory<PreferenceChromeRenderer> weak_factory_{this};
+};
+#endif
+
+#if BUILDFLAG(IS_MAC)
 // Reusable static paragraph/heading adapter: no native Label or hidden text
 // measurement. CoreText shapes lines; Rust places them; Metal presents them.
 class SceneParagraph final : public views::View {
@@ -2011,6 +2078,7 @@ END_METADATA
 #endif
 void SetPanelText(views::View* view,std::u16string text) {
 #if BUILDFLAG(IS_MAC)
+  if(auto* copy=views::AsViewClass<PreferenceCopy>(view)){copy->SetText(std::move(text));return;}
   if(auto* scene=views::AsViewClass<SceneParagraph>(view)){scene->SetText(std::move(text));return;}
 #endif
   static_cast<views::Label*>(view)->SetText(text);
@@ -2727,6 +2795,11 @@ GURL ResolveTyped(const std::string& text, SearchEngine engine) {
   return url.SchemeIsHTTPOrHTTPS() ? url : GURL();
 }
 }  // namespace
+#if BUILDFLAG(IS_MAC)
+class PreferenceChromeState final : public PreferenceChromeRenderer {public:using PreferenceChromeRenderer::PreferenceChromeRenderer;};
+#else
+class PreferenceChromeState {};
+#endif
 
 WorkspaceShell::Callbacks::Callbacks() = default;
 WorkspaceShell::Callbacks::Callbacks(Callbacks&&) = default;
@@ -3262,15 +3335,21 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 
   auto general = std::make_unique<views::View>();
   general_root_ = general.get();
+#if BUILDFLAG(IS_MAC)
+  if(workspace_form_)preferences_chrome_=std::make_unique<PreferenceChromeState>(general_root_);
+#endif
+  auto preference_chrome_painted=base::BindRepeating(&WorkspaceShell::SchedulePreferenceChrome,weak);
+  auto preference_chrome_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->PreferenceChromeVisible();},weak);
+  auto copy=[&](views::View* parent,std::u16string text,SkColor tone,int delta=0,gfx::Font::Weight weight=gfx::Font::Weight::NORMAL,bool multiline=false){return AddPreferenceCopy(parent,std::move(text),tone,delta,static_cast<int>(weight),multiline);};
   auto* general_layout = general->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kHorizontal, gfx::Insets(8), 8));
-  auto* navigation = general->AddChildView(std::make_unique<PreferenceSurface>(true));
+  auto* navigation = general->AddChildView(std::make_unique<PreferenceSurface>(true,bool(workspace_form_),preference_chrome_painted,preference_chrome_visible));
   preferences_navigation_ = navigation;
   navigation->SetPreferredSize(gfx::Size(212, 1));
   auto* nav_layout = navigation->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kVertical, gfx::Insets(16), 6));
-  Label(navigation, u"zitter", kInk, Font(8, gfx::Font::Weight::BOLD));
-  Label(navigation, u"TWOJA PRZEGLĄDARKA", kMuted, Font(-3, gfx::Font::Weight::MEDIUM));
+  copy(navigation, u"zitter", kInk, 8, gfx::Font::Weight::BOLD);
+  copy(navigation, u"TWOJA PRZEGLĄDARKA", kMuted, -3, gfx::Font::Weight::MEDIUM);
   Spacer(navigation, 20);
   auto* main = general->AddChildView(std::make_unique<views::View>());
   general_layout->SetFlexForView(main, 1);
@@ -3281,8 +3360,8 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 12));
   auto* heading_text = preferences_heading->AddChildView(std::make_unique<views::View>());
   heading_text->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 5));
-  Label(heading_text, u"Preferencje", kInk, Font(9, gfx::Font::Weight::SEMIBOLD));
-  Label(heading_text, u"Twoja przestrzeń. Twoje zasady.", kMuted, Font(0));
+  copy(heading_text, u"Preferencje", kInk, 9, gfx::Font::Weight::SEMIBOLD);
+  copy(heading_text, u"Twoja przestrzeń. Twoje zasady.", kMuted, 0);
   heading_layout->SetFlexForView(heading_text, 1);
   auto dismiss=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell){shell->CloseOverlays();shell->RestorePageFocus();}},weak);
 #if BUILDFLAG(IS_MAC)
@@ -3301,8 +3380,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     return shell&&shell->HandlePreferenceEditorKey(field,event);
   },weak,base::Unretained(preferences_search_.get())));
   preferences_search_->view()->SetPreferredSize(gfx::Size(240, 38));
-  preferences_profile_ = Label(main, u"", kMuted, Font(-1));
-  preferences_profile_->SetMultiLine(true);
+  preferences_profile_ = copy(main, u"",kMuted,-1,gfx::Font::Weight::NORMAL,true);
   auto general_scroll = std::make_unique<views::ScrollView>();
   general_scroll_ = general_scroll.get();
   // Category/search changes alter content height. Without preferred sizing the
@@ -3354,25 +3432,22 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     button=category_controls->AddChildView(std::make_unique<RowButton>(base::BindRepeating(&WorkspaceShell::SelectPreferenceCategory,weak,i),std::move(spec)));
     auto* section = body->AddChildView(std::make_unique<views::View>());
     section->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 12));
-    Label(section, categories[i], kInk, Font(4, gfx::Font::Weight::SEMIBOLD));
-    auto* description = Label(section, descriptions[i], kMuted, Font(-1));
-    description->SetMultiLine(true);
+    copy(section, categories[i],kInk,4,gfx::Font::Weight::SEMIBOLD);
+    copy(section,descriptions[i],kMuted,-1,gfx::Font::Weight::NORMAL,true);
     preference_sections_.push_back({section, button, {}});
   }
   auto* nav_space = Spacer(navigation, 1);
   nav_layout->SetFlexForView(nav_space, 1);
-  Label(navigation, u"ZITTER / PREFERENCJE", kMuted, Font(-3));
+  copy(navigation, u"ZITTER / PREFERENCJE", kMuted, -3);
   auto make_row = [&](size_t category, std::u16string title, std::u16string detail) {
-    auto* row = preference_sections_[category].view->AddChildView(std::make_unique<PreferenceSurface>());
+    auto* row = preference_sections_[category].view->AddChildView(std::make_unique<PreferenceSurface>(false,bool(workspace_form_),preference_chrome_painted,preference_chrome_visible));
     auto* layout = row->SetLayoutManager(std::make_unique<views::BoxLayout>(
         views::BoxLayout::Orientation::kHorizontal, gfx::Insets(16), 20));
     layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
     auto* text = row->AddChildView(std::make_unique<views::View>());
     text->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 5));
-    auto* label = Label(text, title, kInk, Font(0, gfx::Font::Weight::MEDIUM));
-    label->SetMultiLine(true);
-    auto* hint = Label(text, detail, kMuted, Font(-1));
-    hint->SetMultiLine(true);
+    copy(text,title,kInk,0,gfx::Font::Weight::MEDIUM,true);
+    copy(text,detail,kMuted,-1,gfx::Font::Weight::NORMAL,true);
     layout->SetFlexForView(text, 1);
     preference_sections_[category].rows.push_back({row, base::i18n::ToLower(categories[category] + u" " + title + u" " + detail)});
     return row;
@@ -3480,8 +3555,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       callbacks_.choose_download_directory,u"Zmień…");
   download_directory_button_->SetTooltipText(u"Zmień folder pobierania");
   download_directory_button_->GetViewAccessibility().SetName(u"Zmień folder pobierania");
-  download_directory_label_ = Label(directory_row->children().front().get(), u"", kMuted, Font(-1));
-  download_directory_label_->SetMultiLine(true);
+  download_directory_label_=copy(directory_row->children().front().get(),u"",kMuted,-1,gfx::Font::Weight::NORMAL,true);
   add_text(7, "accept_languages", u"Preferowane języki witryn", u"Kody języków w kolejności preferencji, oddzielone przecinkami. Np. pl, en-US, en. Zmiana dotyczy treści witryn; interfejs Zitter pozostaje po polsku.", u"pl, en-US, en");
   add_toggle(7, "spellcheck", u"Sprawdzaj pisownię", u"Podkreślaj błędy w polach tekstowych na stronach. Na macOS słowniki wybiera system.");
   add_toggle(7, "online_spellcheck", u"Rozszerzone sprawdzanie pisowni", u"Wysyłaj wpisywany tekst do usługi Google w celu sprawdzania pisowni. Wymaga włączonego sprawdzania pisowni.");
@@ -3541,16 +3615,14 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   action(0, u"Time Machine przestrzeni", u"Snapshoty, zamknięte karty i usypianie całych projektów.", base::BindRepeating(&WorkspaceShell::OpenTools, weak, 0));
   auto* shortcuts = make_row(1, u"Szybciej z klawiaturą", u"⌘ L  adres i wyszukiwanie\n⌘ K  karty, przestrzenie i historia\n⌘ T  nowa karta     ⌘ ,  preferencje");
   shortcuts->SetTooltipText(u"Skróty klawiaturowe Zitter");
-  preferences_empty_ = Label(body.get(), u"Brak pasujących ustawień. Spróbuj innego hasła.", kMuted, Font(0));
-  preferences_empty_->SetMultiLine(true);
+  preferences_empty_ = copy(body.get(), u"Brak pasujących ustawień. Spróbuj innego hasła.", kMuted,0,gfx::Font::Weight::NORMAL,true);
   general_scroll->SetContents(std::move(body));
   if(workspace_form_){
     metal_general_scroll_synchronizer_=general_scroll->EnableScrollSynchronization();
     metal_general_scroll_subscription_=general_scroll->AddContentsScrolledCallback(base::BindRepeating(&WorkspaceShell::RefreshPreferenceViewport,weak));
   }
   main_layout->SetFlexForView(main->AddChildView(std::move(general_scroll)), 1);
-  general_status_ = Label(main, u"Przełączniki zapisują się automatycznie. Pola tekstowe zatwierdź przyciskiem Zapisz lub Enter.", kMuted, Font(-2));
-  general_status_->SetMultiLine(true);
+  general_status_ = copy(main, u"Przełączniki zapisują się automatycznie. Pola tekstowe zatwierdź przyciskiem Zapisz lub Enter.", kMuted,-2,gfx::Font::Weight::NORMAL,true);
   FilterPreferences();
   auto peek = std::make_unique<views::View>();
   auto* peek_layout = peek->SetLayoutManager(std::make_unique<views::BoxLayout>(
@@ -3686,6 +3758,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 }
 
 void WorkspaceShell::Detach() {
+  preferences_chrome_.reset();
   for(auto& surface:metal_palette_chrome_)surface.reset();palette_chrome_views_.fill(nullptr);
   metal_general_scroll_subscription_={};metal_general_scroll_synchronizer_.reset();
   metal_palette_scroll_subscription_={};metal_palette_scroll_synchronizer_.reset();metal_palette_.reset();metal_palette_pending_=false;
@@ -5618,6 +5691,58 @@ void WorkspaceShell::ApplyTheme() {
 void WorkspaceShell::OnNativeThemeUpdated(ui::NativeTheme*) {
   if (theme_mode_ == ThemeMode::kSystem && general_widget_) ApplyAppearance();
 }
+void WorkspaceShell::SchedulePreferenceChrome(){
+#if BUILDFLAG(IS_MAC)
+  if(preferences_chrome_)preferences_chrome_->Schedule();
+#endif
+}
+bool WorkspaceShell::PreferenceChromeVisible() const{
+#if BUILDFLAG(IS_MAC)
+  return preferences_chrome_&&preferences_chrome_->visible();
+#else
+  return false;
+#endif
+}
+views::View* WorkspaceShell::AddPreferenceCopy(views::View* parent,std::u16string text,SkColor tone,int delta,int weight,bool multiline){
+#if BUILDFLAG(IS_MAC)
+  if(preferences_chrome_)return parent->AddChildView(std::make_unique<PreferenceCopy>(std::move(text),tone,delta,static_cast<gfx::Font::Weight>(weight),multiline,base::BindRepeating(&WorkspaceShell::SchedulePreferenceChrome,weak_factory_.GetWeakPtr()),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->PreferenceChromeVisible();},weak_factory_.GetWeakPtr())));
+#endif
+  auto* label=Label(parent,std::move(text),tone,Font(delta,static_cast<gfx::Font::Weight>(weight)));label->SetMultiLine(multiline);return label;
+}
+void WorkspaceShell::SetPreferenceCopyTone(views::View* view,SkColor tone){
+#if BUILDFLAG(IS_MAC)
+  if(auto* copy=views::AsViewClass<PreferenceCopy>(view)){copy->SetTone(tone);return;}
+#endif
+  static_cast<ThemedLabel*>(view)->SetTone(tone);
+}
+bool WorkspaceShell::preference_chrome_contains_text_for_testing(std::string_view text) const{
+#if BUILDFLAG(IS_MAC)
+  return preferences_chrome_&&preferences_chrome_->contains_text(text);
+#else
+  return false;
+#endif
+}
+std::string WorkspaceShell::preference_chrome_debug_for_testing() const{
+#if BUILDFLAG(IS_MAC)
+  return preferences_chrome_?preferences_chrome_->Debug():"no renderer";
+#else
+  return "native";
+#endif
+}
+bool WorkspaceShell::preference_chrome_order_correct_for_testing() const{
+#if BUILDFLAG(IS_MAC)
+  return preferences_chrome_&&preferences_chrome_->order_correct();
+#else
+  return false;
+#endif
+}
+bool WorkspaceShell::preference_chrome_excludes_for_testing(views::View* view) const{
+#if BUILDFLAG(IS_MAC)
+  return preferences_chrome_&&preferences_chrome_->excludes(view);
+#else
+  return false;
+#endif
+}
 size_t WorkspaceShell::preference_category_for_testing() const{
 #if BUILDFLAG(IS_MAC)
   if(preferences_form_)return preferences_form_->form->preference_current();
@@ -5735,6 +5860,7 @@ void WorkspaceShell::ActivatePreferenceChoiceForTesting(std::string_view key,siz
   static_cast<views::Combobox*>(picker)->MenuSelectionAt(index);
 }
 void WorkspaceShell::RefreshPreferenceViewport(){
+  SchedulePreferenceChrome();
   if(preferences_body_)RefreshChoiceViewports(preferences_body_);
   for(const auto& [key,field]:preference_textfields_)field->view()->SchedulePaint();
   if(site_origin_)site_origin_->view()->SchedulePaint();
@@ -5763,9 +5889,9 @@ void WorkspaceShell::RefreshGeneralControls() {
     site_rules_limit_ = 50;
     RefreshSitePreferences();
   }
-  preferences_profile_->SetText(u"Profil: " + state_.profile_name + u" · Ustawienia wspólne dla aplikacji są oznaczone w opisach.");
+  SetPanelText(preferences_profile_,u"Profil: " + state_.profile_name + u" · Ustawienia wspólne dla aplikacji są oznaczone w opisach.");
   const auto values = callbacks_.read_preferences ? callbacks_.read_preferences.Run() : BrowserPreferences();
-  download_directory_label_->SetText(callbacks_.download_directory ? callbacks_.download_directory.Run() : u"");
+  SetPanelText(download_directory_label_,callbacks_.download_directory ? callbacks_.download_directory.Run() : u"");
   for (const auto& [key, field] : preference_textfields_) {
     auto it = values.find(key);
     const bool enabled = it != values.end() && it->second.editable;
@@ -5845,8 +5971,7 @@ void WorkspaceShell::SetBrowsingDataBusy(bool busy) {
 void WorkspaceShell::SetPreferencesStatus(std::u16string text, bool error) {
   if (history_visible()) tools_status_->SetText(text);
   if (!general_status_) return;
-  general_status_->SetText(text);
-  static_cast<ThemedLabel*>(general_status_.get())->SetTone(error ? kError : kMuted);
+  SetPanelText(general_status_,text);SetPreferenceCopyTone(general_status_,error?kError:kMuted);
 }
 void WorkspaceShell::SaveTextPreference(std::string key) {
   auto it = preference_textfields_.find(key);
@@ -5895,8 +6020,7 @@ void WorkspaceShell::RefreshSitePreferences(bool reload) {
     auto* row = site_rules_list_->AddChildView(std::make_unique<views::View>());
     auto* layout = row->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal, gfx::Insets::VH(4, 0), 12));
     layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
-    auto* label = Label(row, detail, kSubtle, Font(-1));
-    label->SetMultiLine(true);
+    auto* label=AddPreferenceCopy(row,detail,kSubtle,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
     layout->SetFlexForView(label, 1);
     auto* remove = PreferenceAction(row,bool(workspace_form_),base::BindRepeating(
         [](base::WeakPtr<WorkspaceShell> shell, SitePreferenceRule rule, std::string profile_id) {
@@ -5913,8 +6037,7 @@ void WorkspaceShell::RefreshSitePreferences(bool reload) {
     remove->GetViewAccessibility().SetName(u"Usuń wyjątek: " + detail);
   }
   if (!matching) {
-    auto* empty = Label(site_rules_list_, site_preference_rules_.empty() ? u"Nie masz jeszcze zapisanych wyjątków." : u"Brak wyjątków pasujących do wyszukiwania.", kMuted, Font(-1));
-    empty->SetMultiLine(true);
+    AddPreferenceCopy(site_rules_list_,site_preference_rules_.empty()?u"Nie masz jeszcze zapisanych wyjątków.":u"Brak wyjątków pasujących do wyszukiwania.",kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
   } else if (matching > shown) {
     PreferenceAction(site_rules_list_,bool(workspace_form_),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
       base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceShell> shell) {
@@ -5967,8 +6090,8 @@ void WorkspaceShell::SaveGeneralPatch(std::optional<ThemeMode> theme, std::optio
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
         if (!shell) return;
         --shell->pending_writes_;
-        shell->general_status_->SetText(ok ? u"Przełączniki zapisują się automatycznie. Pola tekstowe zatwierdź przyciskiem Zapisz lub Enter." : u"Nie udało się zapisać ustawień. Spróbuj ponownie.");
-        static_cast<ThemedLabel*>(shell->general_status_.get())->SetTone(ok ? kMuted : kError);
+        SetPanelText(shell->general_status_,ok ? u"Przełączniki zapisują się automatycznie. Pola tekstowe zatwierdź przyciskiem Zapisz lub Enter." : u"Nie udało się zapisać ustawień. Spróbuj ponownie.");
+        shell->SetPreferenceCopyTone(shell->general_status_,ok?kMuted:kError);
       }, weak_factory_.GetWeakPtr()));
 }
 

@@ -72,19 +72,20 @@ mod ffi {
     struct PaneBarLayout { title: Rect, menu: Rect, close: Rect }
     struct DragRatio { ratio: f64, changed: bool }
     struct ScrollMetrics { position: i32, length: i32, offset: i32, max_offset: i32 }
+    #[derive(Clone, Copy)]
     struct FloatRect { x: f32, y: f32, width: f32, height: f32 }
     struct ViewportNode { parent: usize, bounds: FloatRect, visible: bool }
     struct ProjectedNode { index: usize, bounds: FloatRect, clip: FloatRect }
     struct ViewportProjection { x: f32, y: f32, nodes: Vec<ProjectedNode> }
     struct Item {
         x: f32, y: f32, width: f32, height: f32,
-        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: control glyph, 8: pane title, 9: split grip, 10: rounded backing, 11: sidebar grip, 12: palette result, 13: result icon, 14: separator, 15: palette static text, 16: palette frame, 17: form static text, 18: appearance color swatch, 19: form text action, 20: checkbox mark, 21: closed selector, 22: preference category, 23: preferences dismiss.
+        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: control glyph, 8: pane title, 9: split grip, 10: rounded backing, 11: sidebar grip, 12: palette result, 13: result icon, 14: separator, 15: palette static text, 16: palette frame, 17: form static text, 18: appearance color swatch, 19: form text action, 20: checkbox mark, 21: closed selector, 22: preference category, 23: preferences dismiss, 24: preference surface.
         kind: u32, glyph: u32,
         title: String, monogram: String, detail: String,
         title_width: f32, detail_ink: u32, detail_font_size: f32,
         ink: u32, fill: u32, badge: u32,
         active: bool, hovered: bool, tile: bool, close: bool, close_visible: bool, focused: bool,
-        font_size: f32, font_height: f32,
+        font_size: f32, font_height: f32, font_weight: i32,
         clip: FloatRect,
     }
     struct TreeNode { id: String, parent: String, folder: bool }
@@ -101,10 +102,11 @@ mod ffi {
     struct RowLayout { title: Rect, detail: Rect, close: Rect }
     struct ColumnChild { width: i32, height: i32, top: i32, left: i32, bottom: i32, right: i32 }
     struct ColumnLayout { width: i32, height: i32, children: Vec<Rect> }
+    #[derive(Clone)]
     struct Primitive {
         x: f32, y: f32, width: f32, height: f32,
         radius: f32, color: u32, stroke: f32, shape: u32,
-        text: String, font_size: f32, bold: bool, middle: bool, center: bool, clip: FloatRect,
+        text: String, font_size: f32, font_weight: i32, bold: bool, middle: bool, center: bool, clip: FloatRect,
         editor: bool, utf16: Vec<u16>, text_x: f32, baseline: f32, text_direction: u32,
     }
     extern "Rust" {
@@ -232,6 +234,7 @@ mod ffi {
         fn controls(self: &mut ProfileForm, ready: bool, busy: bool, profiles: &[ProfileOption], uses: &[ProfileUse]) -> ProfileControls;
         fn request(self: &mut ProfileForm, action: u32, name: &str, ready: bool, busy: bool, profiles: &[ProfileOption], uses: &[ProfileUse]) -> ProfileRequest;
         fn finish_attempt(self: &mut ProfileForm, accepted: bool);
+        fn preference_chrome_scene(items: &[Item], holes: &[FloatRect]) -> Vec<Primitive>;
         fn paragraph_layout(width: i32, line_height: i32, count: usize) -> ColumnLayout;
         type FolderNotice;
         fn new_folder_notice(workspace: &str, folder: &str, title: &str, error_only: bool) -> Box<FolderNotice>;
@@ -604,7 +607,7 @@ fn toggle_scene(s:&ffi::ToggleStyle)->Vec<ffi::Primitive>{
  if ![s.width,s.height,s.progress,s.hover,s.clip.x,s.clip.y,s.clip.width,s.clip.height].iter().all(|v|v.is_finite())||s.width<=0.0||s.height<=0.0{return vec![];}
  let p=s.progress.clamp(0.0,1.0);let hover=s.hover.clamp(0.0,1.0);
  let blend=|on:u32,off:u32,t:f32|{let mut color=0;for shift in [0,8,16,24]{let a=((on>>shift)&255) as f32;let b=((off>>shift)&255) as f32;color|=((b+(a-b)*t).round() as u32)<<shift;}color};
- let make=|x,y,width,height,radius,color,stroke|ffi::Primitive{x,y,width,height,radius,color,stroke,shape:0,text:String::new(),font_size:0.0,bold:false,middle:false,center:false,clip:ffi::FloatRect{x:s.clip.x,y:s.clip.y,width:s.clip.width,height:s.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0};
+ let make=|x,y,width,height,radius,color,stroke|ffi::Primitive{x,y,width,height,radius,color,stroke,shape:0,text:String::new(),font_size:0.0,font_weight:0,bold:false,middle:false,center:false,clip:ffi::FloatRect{x:s.clip.x,y:s.clip.y,width:s.clip.width,height:s.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0};
  let w=s.width.min(26.0);let h=s.height.min(16.0);let x=(s.width-w)/2.0;let y=(s.height-h)/2.0;
  let inset=if s.checked{2.0}else{4.0};let diameter=(h-2.0*inset).max(0.0);let pos=if s.rtl{1.0-p}else{p};let tx=x+inset+pos*(w-h).max(0.0);let ty=y+inset;let out=if s.pressed{1.0}else{0.0};
  let mut ops=vec![make(x,y,w,h,h/2.0,blend(s.track_on,s.track_off,p),0.0)];
@@ -1354,7 +1357,7 @@ fn cycle_tab(current: usize, count: usize, backwards: bool) -> usize {
 // so Metal and the CPU recipe do not depend on native vector-icon painting.
 fn preference_control_scene(i:&ffi::Item)->Vec<ffi::Primitive>{
     let mut ops=Vec::new();
-    let mut rect=|x:f32,y:f32,w:f32,h:f32,r:f32,color:u32,stroke:f32|{if w>0.0&&h>0.0{ops.push(ffi::Primitive{x,y,width:w,height:h,radius:r,color,stroke,shape:0,text:String::new(),font_size:0.0,bold:false,middle:false,center:false,clip:ffi::FloatRect{x:i.clip.x,y:i.clip.y,width:i.clip.width,height:i.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0});}};
+    let mut rect=|x:f32,y:f32,w:f32,h:f32,r:f32,color:u32,stroke:f32|{if w>0.0&&h>0.0{ops.push(ffi::Primitive{x,y,width:w,height:h,radius:r,color,stroke,shape:0,text:String::new(),font_size:0.0,font_weight:0,bold:false,middle:false,center:false,clip:ffi::FloatRect{x:i.clip.x,y:i.clip.y,width:i.clip.width,height:i.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0});}};
     if i.fill>>24!=0{rect(i.x,i.y,i.width,i.height,8.0,i.fill,0.0);}
     if i.active&&i.kind==22{rect(i.x+0.5,i.y+0.5,(i.width-1.0).max(0.0),(i.height-1.0).max(0.0),8.0,i.detail_ink,1.0);}
     let cx=if i.kind==23{i.x+i.width/2.0}else if i.tile{i.x+i.width-18.0}else{i.x+18.0};let cy=i.y+i.height/2.0;
@@ -1373,8 +1376,26 @@ fn preference_control_scene(i:&ffi::Item)->Vec<ffi::Primitive>{
         }
     }
     if i.focused{rect(i.x+2.0,i.y+i.height-3.0,(i.width-4.0).max(0.0),2.0,1.0,i.ink,0.0);}
-    if i.kind==22&&!i.title.is_empty(){let x=if i.tile{i.x+10.0}else{i.x+36.0};let w=(i.width-46.0).max(0.0);if w>0.0{ops.push(ffi::Primitive{x,y:i.y,width:w,height:i.height,radius:0.0,color:i.ink,stroke:0.0,shape:0,text:i.title.clone(),font_size:i.font_size,bold:i.active,middle:false,center:false,clip:ffi::FloatRect{x:i.clip.x,y:i.clip.y,width:i.clip.width,height:i.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0});}}
+    if i.kind==22&&!i.title.is_empty(){let x=if i.tile{i.x+10.0}else{i.x+36.0};let w=(i.width-46.0).max(0.0);if w>0.0{ops.push(ffi::Primitive{x,y:i.y,width:w,height:i.height,radius:0.0,color:i.ink,stroke:0.0,shape:0,text:i.title.clone(),font_size:i.font_size,font_weight:0,bold:i.active,middle:false,center:false,clip:ffi::FloatRect{x:i.clip.x,y:i.clip.y,width:i.clip.width,height:i.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0});}}
     ops
+}
+
+// Keep interactive rectangles transparent, including during a per-control
+// drawable failure. Only display geometry crosses this clipping boundary.
+fn preference_chrome_scene(items:&[ffi::Item],holes:&[ffi::FloatRect])->Vec<ffi::Primitive>{
+    let mut result=Vec::new();
+    for op in layout(items){
+        let mut clips=vec![ffi::FloatRect{x:op.clip.x,y:op.clip.y,width:op.clip.width,height:op.clip.height}];
+        for hole in holes {
+            if ![hole.x,hole.y,hole.width,hole.height].iter().all(|x|x.is_finite())||hole.width<=0.0||hole.height<=0.0{continue;}
+            let mut next=Vec::new();for c in clips {
+                let x=c.x.max(hole.x);let y=c.y.max(hole.y);let right=(c.x+c.width).min(hole.x+hole.width);let bottom=(c.y+c.height).min(hole.y+hole.height);
+                if right<=x||bottom<=y{next.push(c);continue;}
+                for (px,py,w,h) in [(c.x,c.y,c.width,y-c.y),(c.x,bottom,c.width,c.y+c.height-bottom),(c.x,y,x-c.x,bottom-y),(right,y,c.x+c.width-right,bottom-y)]{if w>0.0&&h>0.0{next.push(ffi::FloatRect{x:px,y:py,width:w,height:h});}}
+            }clips=next;if clips.is_empty(){break;}
+        }
+        for clip in clips{let mut piece=op.clone();piece.clip=clip;result.push(piece);}
+    }result
 }
 
 fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
@@ -1389,12 +1410,17 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
         let mut emit = |x, y, w: f32, h: f32, radius, color, text: &str, size, bold| {
             if w > 0.0 && h > 0.0 {
                 out.push(ffi::Primitive { x, y, width: w, height: h, radius,
-                    color, stroke: 0.0, shape: 0, text: text.into(), font_size: size, bold, middle: false, center: false, editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0,
+                    color, stroke: 0.0, shape: 0, text: text.into(), font_size: size, font_weight:0, bold, middle: false, center: false, editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0,
                     clip: ffi::FloatRect {x: i.clip.x, y: i.clip.y, width: i.clip.width, height: i.clip.height} });
             }
         };
         if i.kind == 17 {
-            if !i.title.is_empty(){emit(i.x,i.y,i.width,i.height,0.0,i.ink,&i.title,i.font_size,i.active);}continue;
+            if !i.title.is_empty(){emit(i.x,i.y,i.width,i.height,0.0,i.ink,&i.title,i.font_size,i.active);out.last_mut().unwrap().font_weight=i.font_weight;}continue;
+        }
+        if i.kind==24 {
+            emit(i.x,i.y,i.width,i.height,12.0,i.fill,"",0.0,false);
+            if !i.active&&i.width>1.0&&i.height>1.0 {emit(i.x+0.5,i.y+0.5,i.width-1.0,i.height-1.0,12.0,i.ink,"",0.0,false);out.last_mut().unwrap().stroke=1.0;}
+            continue;
         }
         if i.kind == 16 {
             emit(i.x,i.y,i.width,i.height,14.0,i.fill,"",0.0,false);
@@ -1625,7 +1651,7 @@ mod tests {
         title:"Zażółć 日本語 🦀".into(), monogram:"Z".into(), detail:String::new(),
         title_width:0.0, detail_ink:0, detail_font_size:12.0, ink:0xff101010,
         fill:0xffffffff, badge:0xff556677, active:true, hovered:false,
-        tile:false, close:true, close_visible:true, focused:false, font_size:13.0, font_height:16.0,
+        tile:false, close:true, close_visible:true, focused:false, font_size:13.0, font_height:16.0, font_weight:0,
         clip:ffi::FloatRect {x:0.0, y:0.0, width:width.max(0.0), height:34.0},
     }}
     fn child(width: i32, height: i32) -> ffi::ColumnChild {
@@ -1857,6 +1883,18 @@ mod tests {
         let mut f=new_preferences_form(1);let mut rows=vec![ffi::PreferenceRow{category:0,keywords:vec![0xd83e,0xdd80,0xfffd]}];
         assert!(f.preference_filter(vec![0xd83e],&rows).any);assert!(!f.preference_filter(vec![0xd800],&rows).any);assert!(!f.preference_filter(vec![1,2,3,4],&rows).any);rows[0].keywords="nowy wyjątek".encode_utf16().collect();assert!(f.preference_filter("nowy".encode_utf16().collect(),&rows).any);
         let mut empty=new_preferences_form(0);assert!(!empty.preference_select(0));assert!(!empty.preference_filter(vec![],&rows).any);
+    }
+    #[test] fn preference_chrome_holes_partition_and_preserve_text_weight() {
+        let mut item=row(100.0);item.kind=24;item.height=100.0;item.clip.height=100.0;item.active=true;
+        let hole=ffi::FloatRect{x:20.0,y:20.0,width:40.0,height:40.0};let ops=preference_chrome_scene(std::slice::from_ref(&item),&[hole]);assert_eq!(ops.len(),4);assert_eq!(ops.iter().map(|p|p.clip.width*p.clip.height).sum::<f32>(),8400.0);
+        assert!(ops.iter().all(|p|p.clip.x+p.clip.width<=20.0||p.clip.x>=60.0||p.clip.y+p.clip.height<=20.0||p.clip.y>=60.0));
+        item.kind=17;item.font_weight=600;let text=preference_chrome_scene(std::slice::from_ref(&item),&[]);assert_eq!(text[0].font_weight,600);assert_eq!(text[0].text,item.title);
+    }
+    #[test] fn preference_chrome_overlapping_invalid_and_covering_holes() {
+        let mut item=row(100.0);item.kind=24;item.height=100.0;item.clip.height=100.0;item.active=true;
+        let ops=preference_chrome_scene(std::slice::from_ref(&item),&[ffi::FloatRect{x:0.0,y:0.0,width:60.0,height:100.0},ffi::FloatRect{x:40.0,y:0.0,width:40.0,height:100.0},ffi::FloatRect{x:f32::NAN,y:0.0,width:10.0,height:10.0}]);assert_eq!(ops.iter().map(|p|p.clip.width*p.clip.height).sum::<f32>(),2000.0);
+        assert!(preference_chrome_scene(std::slice::from_ref(&item),&[ffi::FloatRect{x:-1.0,y:-1.0,width:102.0,height:102.0}]).is_empty());
+        item.active=false;let ops=layout(std::slice::from_ref(&item));assert_eq!(ops.len(),2);assert_eq!(ops[1].stroke,1.0);assert_eq!(ops[0].radius,12.0);
     }
     #[test] fn preference_category_and_dismiss_share_clipped_cpu_gpu_recipe() {
         for glyph in 0..10{let mut i=row(180.0);i.kind=22;i.glyph=glyph;i.title="Uprawnienia stron".into();i.active=true;i.focused=true;let ops=layout(std::slice::from_ref(&i));assert!(ops.iter().any(|p|p.text=="Uprawnienia stron"&&p.bold));assert!(ops.iter().any(|p|p.stroke>0.0));assert!(ops.iter().all(|p|p.shape==0&&p.clip.width==180.0&&p.width>0.0&&p.height>0.0));i.tile=true;assert_eq!(layout(std::slice::from_ref(&i)).iter().find(|p|!p.text.is_empty()).unwrap().x,i.x+10.0);}
@@ -2681,13 +2719,13 @@ fn editor_scene(state:&EditorState,placeholder:&[u16],g:&ffi::EditorGeometry,s:&
     if ![s.width,s.height,s.font_size,g.origin,g.baseline,g.clip.x,g.clip.y,g.clip.width,g.clip.height].iter().all(|v|v.is_finite())||s.width<=0.0||s.height<=0.0||s.font_size<=0.0{return ops;}
     let full=||ffi::FloatRect{x:0.0,y:0.0,width:s.width,height:s.height};
     let clip=||ffi::FloatRect{x:g.clip.x,y:g.clip.y,width:g.clip.width,height:g.clip.height};
-    let rect=|x,y,width,height,color,cl:ffi::FloatRect|ffi::Primitive{x,y,width,height,radius:0.0,color,stroke:0.0,shape:0,text:String::new(),font_size:0.0,bold:false,middle:false,center:false,clip:cl,editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0};
+    let rect=|x,y,width,height,color,cl:ffi::FloatRect|ffi::Primitive{x,y,width,height,radius:0.0,color,stroke:0.0,shape:0,text:String::new(),font_size:0.0,font_weight:0,bold:false,middle:false,center:false,clip:cl,editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0};
     let mut frame=rect(0.0,0.0,s.width,s.height,s.fill,full());frame.radius=if s.framed{5.0}else{0.0};ops.push(frame);
     if s.framed{let mut edge=rect(0.5,0.5,(s.width-1.0).max(0.0),(s.height-1.0).max(0.0),s.edge,full());edge.radius=4.5;edge.stroke=if s.focused{2.0}else{1.0};edge.shape=0;ops.push(edge);}
     for span in selection {if span.x.is_finite()&&span.width.is_finite()&&span.width>0.0{ops.push(rect(g.origin+span.x,g.caret.y,span.width,g.caret.height,s.selection_fill,clip()));}}
     let text=if state.text().is_empty(){placeholder}else{state.text()};
     if !text.is_empty() {
-        let make=|color,cl:ffi::FloatRect|ffi::Primitive{x:0.0,y:0.0,width:s.width,height:s.height,radius:0.0,color,stroke:0.0,shape:0,text:String::from_utf16_lossy(text),font_size:s.font_size,bold:false,middle:false,center:false,clip:cl,editor:true,utf16:text.to_vec(),text_x:if state.text().is_empty()&&s.right_align{g.clip.x+g.clip.width-s.placeholder_width}else{g.origin},baseline:g.baseline,text_direction:s.text_direction};
+        let make=|color,cl:ffi::FloatRect|ffi::Primitive{x:0.0,y:0.0,width:s.width,height:s.height,radius:0.0,color,stroke:0.0,shape:0,text:String::from_utf16_lossy(text),font_size:s.font_size,font_weight:0,bold:false,middle:false,center:false,clip:cl,editor:true,utf16:text.to_vec(),text_x:if state.text().is_empty()&&s.right_align{g.clip.x+g.clip.width-s.placeholder_width}else{g.origin},baseline:g.baseline,text_direction:s.text_direction};
         ops.push(make(if state.text().is_empty(){s.placeholder_ink}else{s.ink},clip()));
         if !state.text().is_empty(){for span in selection{if span.x.is_finite()&&span.width.is_finite()&&span.width>0.0{let x=(g.origin+span.x).max(g.clip.x);let end=(g.origin+span.x+span.width).min(g.clip.x+g.clip.width);if end>x{ops.push(make(s.selection_ink,ffi::FloatRect{x,y:g.clip.y,width:end-x,height:g.clip.height}));}}}}
     }

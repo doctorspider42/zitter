@@ -56,6 +56,7 @@ class WorkspaceSwipeState;
 class ProfileFormState;
 class WorkspaceFormState;
 class PreferencesFormState;
+class PreferenceChromeState;
 class ImportFormState;
 
 // Top band above the sidebar; its first 28 px align with macOS's titlebar,
@@ -257,6 +258,11 @@ class WorkspaceShell final : public ui::EventHandler,
   EditorControl* site_origin_input() const { return site_origin_; }
   EditorControl* preferences_search() const { return preferences_search_; }
   views::Button* preference_toggle(std::string key) const { return preference_toggles_.at(key); }
+  bool preference_chrome_contains_text_for_testing(std::string_view text) const;
+  bool preference_chrome_order_correct_for_testing() const;
+  std::string preference_chrome_debug_for_testing() const;
+  bool preference_chrome_excludes_for_testing(views::View* view) const;
+  bool preference_chrome_visible_for_testing() const{return PreferenceChromeVisible();}
   size_t preference_category_for_testing() const;
   views::Button* preference_navigation_for_testing(size_t category) const;
   views::Button* preference_close_for_testing() const{return preferences_close_;}
@@ -561,6 +567,11 @@ class WorkspaceShell final : public ui::EventHandler,
   bool ShowRustWorkspaceNotice(std::string workspace,std::string title);
   std::unique_ptr<WorkspaceFormState> workspace_form_;
   std::unique_ptr<PreferencesFormState> preferences_form_;
+  std::unique_ptr<PreferenceChromeState> preferences_chrome_;
+  void SchedulePreferenceChrome();
+  bool PreferenceChromeVisible() const;
+  views::View* AddPreferenceCopy(views::View* parent,std::u16string text,SkColor tone,int delta,int weight,bool multiline);
+  void SetPreferenceCopyTone(views::View* view,SkColor tone);
   void RefreshProfileControls();
   bool SubmitRustProfileAction(unsigned action);
   void SubmitProfile();
@@ -595,10 +606,10 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::Button> sidebar_check_ = nullptr;
   raw_ptr<views::Button> animations_check_ = nullptr;
   raw_ptr<EditorControl> preferences_search_ = nullptr;
-  raw_ptr<views::Label> preferences_profile_ = nullptr;
-  raw_ptr<views::Label> download_directory_label_ = nullptr;
+  raw_ptr<views::View> preferences_profile_ = nullptr;
+  raw_ptr<views::View> download_directory_label_ = nullptr;
   raw_ptr<views::Button> download_directory_button_ = nullptr;
-  raw_ptr<views::Label> preferences_empty_ = nullptr;
+  raw_ptr<views::View> preferences_empty_ = nullptr;
   raw_ptr<views::View> preferences_body_ = nullptr;
   raw_ptr<views::View> preferences_navigation_ = nullptr;
   raw_ptr<views::Button> preferences_close_ = nullptr;
@@ -632,7 +643,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::Button> clear_cookies_ = nullptr;
   raw_ptr<views::Button> clear_cache_ = nullptr;
   raw_ptr<views::Button> clear_data_button_ = nullptr;
-  raw_ptr<views::Label> general_status_ = nullptr;
+  raw_ptr<views::View> general_status_ = nullptr;
   std::unique_ptr<views::WidgetDelegate> general_delegate_;
   std::unique_ptr<views::Widget> general_widget_;
   ThemeMode theme_mode_ = ThemeMode::kSystem;

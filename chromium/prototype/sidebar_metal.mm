@@ -35,10 +35,13 @@
 
 // Returning nil delegates EVERY event to Chromium's existing native view:
 // mouse/hover/drag, context menus, trackpad scrolling, key routing and VoiceOver.
-@interface ZitterSidebarMetalView : NSView
+@interface ZitterSidebarMetalView : NSView { BOOL _zitterUnderlay; }
+@property(nonatomic) BOOL zitterUnderlay;
 @end
 @implementation ZitterSidebarMetalView
+@synthesize zitterUnderlay=_zitterUnderlay;
 - (BOOL)isFlipped { return YES; }
+- (BOOL)isOpaque { return self.layer.opaque; }
 - (NSView*)hitTest:(NSPoint)point { return nil; }
 - (BOOL)acceptsFirstResponder { return NO; }
 - (BOOL)isAccessibilityElement { return NO; }
@@ -183,6 +186,11 @@ std::shared_ptr<SharedMetalContext> AcquireMetalContext() {
   if (!context->Init()) return nullptr;
   *cached=context; return context;
 }
+NSFont* ChromeFont(float size,int weight,bool medium=false){
+  if(weight<=0)return editor_text_detail::Font(size,medium);
+  const CGFloat native_weight=weight>=900?NSFontWeightBlack:weight>=800?NSFontWeightHeavy:weight>=700?NSFontWeightBold:weight>=600?NSFontWeightSemibold:weight>=500?NSFontWeightMedium:weight>=400?NSFontWeightRegular:weight>=300?NSFontWeightLight:NSFontWeightThin;
+  return [NSFont systemFontOfSize:std::isfinite(size)&&size>0?size:13 weight:native_weight];
+}
 class Surface final : public SidebarMetal {
  public:
   bool Init() {
@@ -230,6 +238,15 @@ class Surface final : public SidebarMetal {
         gfx::RectF(node.clip.x, node.clip.y, node.clip.width, node.clip.height)});
     return out;
   }
+  void UpdateUnderlay(gfx::NativeWindow window,gfx::Rect bounds,base::span<const sidebar::Primitive> ops) override {
+    view_.zitterUnderlay=YES;UpdateScene(window,bounds,ops,0);
+  }
+  bool underlay_order_correct_for_testing() const override {
+    if(!view_.zitterUnderlay||!view_.superview)return false;
+    auto children=view_.superview.subviews;const NSUInteger index=[children indexOfObjectIdenticalTo:view_];
+    for(NSUInteger i=0;i<children.count;++i)if([children[i] isKindOfClass:ZitterSidebarMetalView.class]&&![(ZitterSidebarMetalView*)children[i] zitterUnderlay]&&i<index)return false;
+    return true;
+  }
   void Update(gfx::NativeWindow native_window, gfx::Rect bounds,
               base::span<const sidebar::Item> items, unsigned background) override {
     auto ops=sidebar::layout(rust::Slice<const sidebar::Item>(items.data(),items.size()));
@@ -244,7 +261,10 @@ class Surface final : public SidebarMetal {
       [view_.layer removeAnimationForKey:@"zitter-preview"];view_.layer.transform=CATransform3DIdentity;
     }
     NSView* parent = window.contentView;
-    if (view_.superview != parent) { [view_ removeFromSuperview]; [parent addSubview:view_]; last_frame_.clear(); }
+    if(view_.zitterUnderlay){
+      NSView* foreground=nil;for(NSView* child in parent.subviews)if(child!=view_&&[child isKindOfClass:ZitterSidebarMetalView.class]&&![(ZitterSidebarMetalView*)child zitterUnderlay]){foreground=child;break;}
+      if(view_.superview!=parent||!underlay_order_correct_for_testing()){[view_ removeFromSuperview];if(foreground)[parent addSubview:view_ positioned:NSWindowBelow relativeTo:foreground];else [parent addSubview:view_];last_frame_.clear();}
+    }else if(view_.superview!=parent){[view_ removeFromSuperview];[parent addSubview:view_];last_frame_.clear();}
     // gfx screen coordinates start at the primary display's upper left.
     const double top = NSMaxY(NSScreen.screens.firstObject.frame);
     NSRect screen = NSMakeRect(bounds.x(), top - bounds.bottom(), bounds.width(), bounds.height());
@@ -305,13 +325,13 @@ class Surface final : public SidebarMetal {
     signature << bounds.ToString() << ':' << scale << ':' << background;
     for (const auto& op : ops) signature << '|' << op.x << ',' << op.y << ',' << op.width << ','
         << op.height << ',' << op.clip.x << ',' << op.clip.y << ',' << op.clip.width << ',' << op.clip.height
-        << ',' << op.radius << ',' << op.color << ',' << op.font_size << ','
+        << ',' << op.radius << ',' << op.color << ',' << op.font_size << ',' << op.font_weight << ','
         << op.shape << ',' << op.stroke << ',' << op.bold << ',' << op.middle << ',' << op.center << ',' << op.editor << ',' << op.text_x << ',' << op.baseline << ',' << op.text_direction << ':' << op.text.size() << ':' << std::string(op.text);
     for(const auto& op:ops)if(op.editor){signature << ':' << op.utf16.size();for(uint16_t c:op.utf16)signature << ',' << c;}
     std::string fingerprint = signature.str();
     if (fingerprint == last_frame_ && !view_.hidden && !next_presentation_) return;
     [CATransaction begin]; [CATransaction setDisableActions:YES];
-    view_.frame = frame;
+    view_.frame = frame;layer_.opaque=((background>>24)==255);
     const CGSize pixels = CGSizeMake(bounds.width() * scale, bounds.height() * scale);
     if (layer_.contentsScale != scale || !CGSizeEqualToSize(layer_.drawableSize, pixels)) {
       layer_.contentsScale = scale; layer_.drawableSize = pixels;
@@ -324,7 +344,7 @@ class Surface final : public SidebarMetal {
     pass.colorAttachments[0].loadAction = MTLLoadActionClear;
     pass.colorAttachments[0].storeAction = MTLStoreActionStore;
     pass.colorAttachments[0].clearColor = MTLClearColorMake(((background>>16)&255)/255.,
-        ((background>>8)&255)/255., (background&255)/255., 1);
+        ((background>>8)&255)/255., (background&255)/255., (background>>24)/255.);
     id<MTLCommandBuffer> command = [queue_ commandBuffer];
     id<MTLRenderCommandEncoder> encoder = [command renderCommandEncoderWithDescriptor:pass];
     [encoder setRenderPipelineState:pipeline_];
@@ -364,7 +384,7 @@ class Surface final : public SidebarMetal {
  private:
   id<MTLTexture> Text(const sidebar::Primitive& op, double scale) {
     std::ostringstream key;
-    key << op.width << ',' << op.height << ',' << op.font_size << ',' << scale << ','
+    key << op.width << ',' << op.height << ',' << op.font_size << ',' << op.font_weight << ',' << scale << ','
         << op.color << ',' << op.shape << ',' << op.stroke << ',' << op.bold << ',' << op.middle << ',' << op.center << ',' << op.editor << ',' << op.text_x << ',' << op.baseline << ',' << op.text_direction << ':' << std::string(op.text);
     if(op.editor){key << ':' << op.utf16.size();for(uint16_t c:op.utf16)key << ',' << c;}
     auto found = text_.find(key.str());
@@ -387,7 +407,7 @@ class Surface final : public SidebarMetal {
       EditorTextLayout line(text,op.font_size,op.bold,op.text_direction);
       line.Draw(context.get(),op.text_x,op.height-op.baseline,op.color);
     } else {
-    NSFont* font = editor_text_detail::Font(op.font_size,op.bold);
+    NSFont* font = ChromeFont(op.font_size,op.font_weight,op.bold);
     NSColor* color = [NSColor colorWithSRGBRed:((op.color>>16)&255)/255.
         green:((op.color>>8)&255)/255. blue:(op.color&255)/255. alpha:(op.color>>24)/255.];
     NSString* string = base::SysUTF8ToNSString(std::string(op.text));
@@ -454,9 +474,12 @@ SidebarScrollBarSnapshot GetSidebarScrollBarSnapshot(views::ScrollBar* bar) {
   return static_cast<SidebarScrollBar*>(bar)->Snapshot();
 }
 std::vector<std::string> ShapeSidebarParagraph(std::string_view text,float font_size,int width,bool bold) {
+  return ShapeSidebarParagraphWeight(text,font_size,width,bold?500:400);
+}
+std::vector<std::string> ShapeSidebarParagraphWeight(std::string_view text,float font_size,int width,int weight) {
   std::vector<std::string> lines;if(text.empty()||width<=0||!std::isfinite(font_size)||font_size<=0)return lines;
   NSString* string=base::SysUTF8ToNSString(std::string(text));
-  NSFont* font=[NSFont systemFontOfSize:font_size weight:bold?NSFontWeightMedium:NSFontWeightRegular];
+  NSFont* font=ChromeFont(font_size,weight);
   NSAttributedString* attributed=[[NSAttributedString alloc] initWithString:string attributes:@{NSFontAttributeName:font}];
   base::apple::ScopedCFTypeRef<CTTypesetterRef> typesetter(CTTypesetterCreateWithAttributedString((__bridge CFAttributedStringRef)attributed));
   if(!typesetter)return lines;

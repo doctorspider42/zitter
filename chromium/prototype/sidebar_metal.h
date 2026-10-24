@@ -31,6 +31,11 @@ class SidebarMetal {
                       base::span<const sidebar::Item> items, unsigned background) = 0;
   virtual void UpdateScene(gfx::NativeWindow window,gfx::Rect screen_bounds,
       base::span<const sidebar::Primitive> primitives,unsigned background)=0;
+  // Transparent chrome above the native host but below other Metal controls.
+  // Interactive rectangles must already be removed from primitive clips.
+  virtual void UpdateUnderlay(gfx::NativeWindow window,gfx::Rect bounds,
+      base::span<const sidebar::Primitive> primitives)=0;
+  virtual bool underlay_order_correct_for_testing() const=0;
   // A full page translated inside a viewport-sized native clipping adapter.
   // Immutable page scenes set redraw only on capture. Translation/settle reuse
   // the drawable; bounds/scale changes and missing drawables also force redraw.
@@ -55,6 +60,7 @@ void PaintEditorSceneFallback(gfx::Canvas* canvas,base::span<const sidebar::Prim
 // CoreText typography adapter, matching the font used for GPU text tiles.
 // Returns complete UTF-8 line fragments, without any native View/Label layout.
 std::vector<std::string> ShapeSidebarParagraph(std::string_view text,float font_size,int width,bool bold = false);
+std::vector<std::string> ShapeSidebarParagraphWeight(std::string_view text,float font_size,int width,int weight);
 struct SidebarScrollBarSnapshot { gfx::Rect bounds, thumb; unsigned color = 0; bool visible = false; bool horizontal = false; };
 // Native event/scroll-service/menu/AX adapter; Rust owns thumb geometry and drag.
 std::unique_ptr<views::ScrollBar> CreateSidebarScrollBar(base::RepeatingCallback<bool()> scene_visible, bool horizontal = false);
