@@ -1279,3 +1279,20 @@ performance scenarios per backend passed (144/111 combined). Fresh Rust/SDK and
 clean-archive Python checks passed. Controls, form/container ownership, platform
 manual acceptance and real presentation profiling remain open.
 [Evidence](benchmarks/rust-preference-selectors-checkpoint-2026-10-24.json).
+
+
+## Preference switches and clear-data checkpoint
+
+UI source `67bb21f11a769d47f2e6c0fcebfc707b84d84503` moves 24 preference switches and three clear-data
+checkboxes to Rust checked/animation state and Metal display lists, retaining
+native event/focus/AX adapters and original browser/domain commands. Reversible
+slide/hover animation, reduced motion, clipped offscreen/hide handling, CPU
+fallback repaint, global/profile scope and real clear-data confirmation are
+preserved. The native track sits in an expanded target for focus/hover drawing.
+
+Full automated results: 142 Metal / 108 Views regular cases plus four optional
+performance scenarios each (146/112 combined); 220 Rust, 180 SDK font/direction
+cases plus raster and 66 clean-archive Python cases passed. The initial native Button checked-AX
+regression, failed reopening probe and final model-owned override are retained. Native nodes, remaining form/
+container/service UI, manual acceptance, final packaging and real presentation
+profiling remain open. [Evidence](benchmarks/rust-preference-switches-checkpoint-2026-10-24.json).

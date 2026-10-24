@@ -681,7 +681,7 @@ native modal controls and deletion services. Color/emoji preset rows now use Rus
 geometry, selection and input with batched Metal canvases excluding native editors.
 Nine workspace/profile form actions also use Rust layout/input and scene text
 without native button Labels, batched into four Metal groups. These newer stages pass the
-[latest full automated GUI checkpoint](docs/benchmarks/rust-preference-selectors-checkpoint-2026-10-24.json);
+[latest full automated GUI checkpoint](docs/benchmarks/rust-preference-switches-checkpoint-2026-10-24.json);
 manual signed-app and performance acceptance remain pending. Import also uses a Rust form controller for
 option snapshots, debounce/admission and control locks, with Metal static/status
 text and Apply drawing. Four import checkboxes now share a Metal canvas with Rust
@@ -693,8 +693,11 @@ and JavaScript prompt fields now use Rust UTF-16 editing/IME/history and viewpor
 state with CoreText/Metal drawing. Native input/clipboard/menu/dictionary/AX
 adapters remain. Eleven preference selectors also use Rust selection, prefix,
 menu-token state and layout with Metal presentation; native popup and preference
-services remain adapters. Switches, buttons, form/outer-container ownership and
-broader editor service/platform acceptance are still in progress.
+services remain adapters. Twenty-four preference switches and three clear-data
+checkboxes now use Rust checked state and Metal primitives, including keyboard/AX,
+profile/global scope, cancellation and scrolling coverage. Buttons, section/form/
+outer-container ownership and broader editor service/platform acceptance remain
+in progress.
 [Editor contracts and acceptance](docs/rust-metal-editor.md).
 Model updates refresh the scene independently of
 native painting. Rust also owns row

@@ -82,7 +82,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Workspace/profile form action buttons | Rust button/group geometry, shared pointer/key reducer and text/background/border/focus primitives; four Metal groups; native Button/AX/focus, platform font/metric/color and command adapters (automated UI checked; manual acceptance pending) | Replace native interaction nodes; verify dynamic labels, disabled styles, focus/keyboard/cancellation, clipping/fallback and service semantics |
 | Workspace color/emoji presets | Rust preset data/selection, row geometry, pointer/key reducer and scene primitives; two shared-context Metal canvases; native Button/AX/focus and text/grapheme/storage adapters (automated UI checked; manual acceptance pending) | Color/emoji editor migration verified; replace remaining native preset Button interaction ownership and broaden capture/visibility/IME/AX/theme/scale/persistence acceptance |
 | Workspace deletion confirmation | Rust captured-target notice state/copy and shared paragraph layout; Metal body/error text; native modal title/buttons and deletion/persistence services (automated UI checked; manual acceptance pending) | Migrate remaining host controls; verify default Cancel, beforeunload, stale targets, retained profile data, typography and screen bounds |
-| General preferences, shortcuts and site preferences | Rust/Metal editors and eleven preference selectors; native capture/admission, menus and stores; remaining Views controls | Migrate switches, action controls, tools pickers, sections/form state and outer containers; retain profile/global configuration and recorder behavior |
+| General preferences, shortcuts and site preferences | Rust/Metal editors, eleven preference selectors, 24 switches and three clear-data checkboxes; native event/focus/AX, menus and stores; remaining Views controls | Migrate action controls, tools pickers, sections/form state and outer containers; retain profile/global configuration and recorder behavior |
 | History, downloads, passwords and permissions | Rust/Metal history query editor; native committed-query/service adapters and remaining Views lists/controls | Migrate result/control presentation and forms; retain browser service and security semantics |
 | Peek, promote/split, link/page menus and routing | Views/native adapters + application | Rust control routing, focus and dismissal; retain native page integration |
 | Import form and first-run import | Rust UI option/debounce/admission/controller state, copy, columns and Metal static/status/Apply text; native Button/AX/focus, header nodes, native popup/IME adapters and application import services (automated UI checked; manual acceptance pending) | Migrate remaining native header and input nodes; verify latest options, busy recovery, credentials opt-in, source immutability, first-run/persistence/rollback and runtime accessibility |
@@ -556,3 +556,21 @@ The full checkpoint and remaining native container/control scope are described i
 [the current report](benchmarks/rust-preference-selectors-checkpoint-2026-10-24.json). Actual popup/candidate-window,
 VoiceOver, complex bidi/scale/gesture and signed-app acceptance, as well as real
 CPU/GPU/presentation profiling, remain open.
+
+
+## Preference switch and clear-data milestone
+
+Twenty-two profile switches and two global switches use Rust checked/animation
+state and clipped Metal primitives. Native 26x16 track geometry is retained inside
+an expanded 38x28 focus/hover target. Three clear-data checkboxes reuse the Rust
+checkbox model and one Metal canvas. Native Button event/focus/AX nodes, stores,
+permission services, profile binding and deletion confirmation remain adapters.
+
+The complete automated checkpoint passed 142 Metal / 108 Views regular cases and
+four default-30-trial optional scenarios per backend (146/112 combined). Actual
+Cocoa input, global/profile scope, durable cookie/localStorage/IndexedDB deletion,
+profile isolation, disabled admission, stale press cancellation, compositor
+viewport exclusion/reappearance and idle timer shutdown are covered. Remaining
+buttons/sections/controllers/containers, manual platform acceptance, device-loss
+fallback acceptance and controlled CPU/GPU/presentation profiling remain open.
+[Evidence](benchmarks/rust-preference-switches-checkpoint-2026-10-24.json).
