@@ -1487,3 +1487,29 @@ some popup/empty-item/service wording, native result rows, other panels/
 containers, manual acceptance, real profiling and release/license checks remain.
 No new dependency was introduced; RenderText already belongs to Chromium.
 [Evidence](benchmarks/rust-tools-chrome-checkpoint-2026-10-25.json).
+
+
+## Tools controller checkpoint
+
+Rust ToolsForm owns page selection, shortcut recording, committed history and
+Time Machine filter queries, history pagination and loaded state in the opt-in
+backend. Native Unicode services trim/lowercase committed UTF-16; IME preedit does
+not replace the committed query. New requests reset to 200; More adds 200 with
+saturation. Edits/requests clear loaded state. Matching query/limit responses,
+including errors, mark loaded. Native visibility/current-profile checks run
+first. Page reconstruction resets transient queries/recording/loaded state.
+Native timers, accelerator policy, editor read-only/IME handling, domain stores/
+operations and posted-action generation/workspace/profile guards remain.
+
+The shared browser test covers completed errors, wrong query/limit/profile,
+Unicode edits during debounce, whitespace normalization, valid results, hidden
+page rejection, page clamping and reconstruction. Existing real 205-row paging,
+committed-query/preedit, timeline stable-ID/filtering, Cocoa recording and Metal
+rendering tests remain covered. Tests passed: 22/18 critical, 159/119 regular
+Metal/Views, six explicit skips each, 232 Rust, 180 SDK plus raster, 66 clean-
+archive Python, GN/boundaries and final Ninja no-op. Optional performance cases
+were not rerun here; the previous report retains that earlier coverage.
+No new dependency or rendering recipe was introduced, and no controlled speedup
+is claimed. Native result rows, action/status decisions, busy state, remaining
+forms/service panels/containers, manual platform acceptance, profiling and
+release/license checks remain open. [Evidence](benchmarks/rust-tools-form-checkpoint-2026-10-25.json).

@@ -5,59 +5,54 @@ inventory is [the parity checklist](rust-metal-parity.md).
 
 ## Current checkpoint
 
-UI source `c1cf3333a7767f76cc0ff1ec8afa7c30129b4937`, 2026-10-25, passed the full compiled
+UI source `209ca2dfcd0fc3e29acb236c9443e5640f8342ae`, 2026-10-25, passed the full compiled
 regression inventory with one launcher job, no automatic retries and temporary
 profiles:
 
 | Backend | Regular matrix passed | Regular skips | Failed / crashed |
 | --- | ---: | ---: | ---: |
-| Rust + Metal | 158 | 6 | 0 |
-| Views | 118 | 6 | 0 |
+| Rust + Metal | 159 | 6 | 0 |
+| Views | 119 | 6 | 0 |
 
-The inventory contains 164 cases; Views excludes 40 dedicated Metal cases
-(124 applicable cases). Four optional default-30-trial scenarios passed on each
-backend: **162 Metal / 122 Views passes combined**. Real-user Arc import and the
-interactive manual window remain excluded per backend. Metal API validation
-remained enabled; these results establish no controlled CPU/GPU/presentation or
-memory improvement.
+The inventory contains 165 cases; Views excludes 40 dedicated Metal cases
+(125 applicable cases). Four opt-in performance scenarios, real-user Arc import
+and the interactive manual window are skipped per backend. Optional scenarios
+passed in the previous checkpoint; those results are not current-commit passes.
+Metal API validation remained enabled. No controlled CPU/GPU/presentation or
+memory improvement is established.
 
-The tools/history/provider and shared preference-chrome gate passed **21 Metal /
-17 Views**. Checks passed **229 Rust tests**, **180 SDK font/direction cases plus
+The tools/history/provider/shared preference-chrome gate passed **22 Metal /
+18 Views**. Checks passed **232 Rust tests**, **180 SDK font/direction cases plus
 raster**, **66 clean-archive Python tests**, scoped GN/boundaries and optimized
 compilation. The live checkout passed 68 Python tests, including two concurrent
 cases outside this UI commit. Final Ninja reported no work to do.
-[Source/binary identities, commands and results](benchmarks/rust-tools-chrome-checkpoint-2026-10-25.json).
+[Source/binary identities, commands and results](benchmarks/rust-tools-form-checkpoint-2026-10-25.json).
 
-Four Rust page descriptors now supply tools titles, intros, field/picker names,
-section/action captions, history-range choices and initial status. Rust also
-supplies clear-busy text. Only display names cross this copy ABI; native stores,
-callback IDs, validation, IME and profile/workspace/generation checks remain.
-One additional transparent Metal underlay draws header/body/status copy, sleeping
-descriptions and empty/error history text. Native control/result rectangles are
-holes, with the shared underlay below foreground canvases. There are no native
-Labels outside controls in the Rust tools tree. Native history-row labels and
-native static-text AX/layout nodes remain.
+Rust ToolsForm now owns selected page, shortcut-recording state, committed
+history/timeline queries, history limit and loaded state. History starts at 200;
+More adds 200 with saturation. Edits/requests clear loaded state. Matching query/
+limit responses mark loaded, including errors; stale query/limit results do not.
+Native visibility/current-profile checks run before Rust admission. Native
+Unicode services normalize committed UTF-16; IME preedit remains excluded from
+query edits. Page rebuild clears transient queries/recording/loaded state.
+Native timers, service calls, accelerator policy, stores and posted-action
+workspace/profile/generation guards remain adapters.
 
-The same lightweight copy adapter serves preferences and tools. A standalone
-cached gfx::RenderText supplies Label-compatible cursor-disabled, unelided,
-truncated-long-word boundaries and native minimum line height. Rust places the
-lines; CoreText/Metal presents them. No hidden Label measures or draws text.
-The first probe found 300px instead of native 320px for two long descriptions
-at width 80. The native oracle was preserved; replacing approximate wrapping
-fixed it. The failed probe remains recorded. Tests compare four page titles/
-descriptions and real Unicode multiline status at widths 80/160/320, and verify
-page/profile changes, scene text, layer order, interactive/native-result holes,
-scrolling, theme, hide/reopen and history error copy.
+The new shared browser test verifies error completion, wrong query/limit/profile,
+Unicode query edits during debounce, whitespace normalization, valid replacement,
+hidden-page rejection, page clamping and reconstruction. Existing real 205-row
+pagination, committed-query/preedit, timeline filtering/identity, Cocoa recorder,
+provider/actions and Metal rendering/cutout tests remain in the gate.
+No rendering recipe or dependency changed.
 
-Prior editors/selectors/switches/actions, preference chrome/draft/pagination and
-browser-service contracts remain covered by the complete matrix.
-[Tools actions](benchmarks/rust-tools-actions-checkpoint-2026-10-25.json),
-[tools selectors](benchmarks/rust-tools-choices-checkpoint-2026-10-25.json),
-[preference drafts](benchmarks/rust-preference-drafts-checkpoint-2026-10-25.json)
-and [preference chrome](benchmarks/rust-preference-chrome-checkpoint-2026-10-24.json)
-retain their detailed evidence and earlier failed probes.
-CPU fallback/native background painting and native interaction/layout nodes
-remain. Normal installed apps/profiles were untouched; no bundle was signed.
+Four Rust tools page descriptors and shared Metal header/body/status copy were
+verified in the [previous checkpoint](benchmarks/rust-tools-chrome-checkpoint-2026-10-25.json),
+including text geometry, underlay ordering and native control/result cutouts.
+Editors/selectors/switches/actions, preference chrome/drafts/pagination and
+browser-service contracts remain covered by the full matrix. Native history
+result rows, action/status decisions, busy state and other form/service UI,
+container ownership and manual acceptance remain open. Normal installed apps/
+profiles were untouched; no bundle was signed.
 
 ## Immediate preference work still remaining
 
@@ -66,10 +61,11 @@ and pagination now use Rust scene/controller state. Migrate UI descriptions/data
 and remaining busy/status/form coordination. Preserve normalization, IME,
 managed-setting admission, profile-bound confirmation and deferred rule mutation.
 Tools page copy, static/dynamic copy rendering, pickers, fourteen actions and
-dismiss are migrated. Remaining form/status decisions, some popup/empty-item/
-service wording and native result rows remain, alongside other service panels.
-Native ScrollView, BoxLayout, View groups, event/focus/AX adapters and outer placement still require
-an explicit ownership decision and verification.
+dismiss are migrated. Rust also owns tools page/recording/query/pagination/
+loaded state. Remaining action/status decisions, busy state, some popup/empty-
+item/service wording and native result rows remain, alongside other panels.
+Native ScrollView, BoxLayout, View groups, event/focus/AX adapters and outer
+placement still require an explicit ownership decision and verification.
 
 ## Next implementation steps
 
@@ -86,15 +82,16 @@ an explicit ownership decision and verification.
    checkboxes, fixed/dynamic actions, category/dismiss controls and category/filter
    state, text/backing, text-draft refresh/admission and pagination use Rust/Metal.
    Migrate UI descriptions/data and remaining busy/status/form coordination,
-   together with remaining tools form/status decisions and native result rows;
-   tools page data/copy rendering, five selectors, fourteen actions and dismiss
-   already use Rust/Metal.
+   together with remaining tools action/status decisions, busy state and native
+   result rows. Tools page data/copy rendering, five selectors, fourteen actions and dismiss
+   already use Rust/Metal. Tools page/recording/query/pagination/loaded state
+   also uses Rust.
    Preserve native stores, managed-setting checks, profile/global scope,
    site-policy validation and data-clearing confirmation authorization.
-4. **Browser service panels.** Migrate remaining history/search/pagination,
-   downloads/passwords/permissions UI and Time Machine previews/restore. Preserve
-   real service
-   data, stale-response handling, confirmation and failure/rollback behavior.
+4. **Browser service panels.** Migrate remaining history result/list presentation
+   and service coordination, downloads/passwords/permissions UI and Time Machine
+   previews/restore. Preserve real service data, stale-response handling,
+   confirmation and failure/rollback behavior.
    Complete Peek/promote/split and link/page menu UI routing.
 5. **Remove Views interaction/container ownership.** Replace remaining tab/tree,
    scroll/viewport, native Button/View/ResizeArea hierarchy, outer layout and

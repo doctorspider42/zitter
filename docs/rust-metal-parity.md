@@ -82,14 +82,14 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Workspace/profile form action buttons | Rust button/group geometry, shared pointer/key reducer and text/background/border/focus primitives; four Metal groups; native Button/AX/focus, platform font/metric/color and command adapters (automated UI checked; manual acceptance pending) | Replace native interaction nodes; verify dynamic labels, disabled styles, focus/keyboard/cancellation, clipping/fallback and service semantics |
 | Workspace color/emoji presets | Rust preset data/selection, row geometry, pointer/key reducer and scene primitives; two shared-context Metal canvases; native Button/AX/focus and text/grapheme/storage adapters (automated UI checked; manual acceptance pending) | Color/emoji editor migration verified; replace remaining native preset Button interaction ownership and broaden capture/visibility/IME/AX/theme/scale/persistence acceptance |
 | Workspace deletion confirmation | Rust captured-target notice state/copy and shared paragraph layout; Metal body/error text; native modal title/buttons and deletion/persistence services (automated UI checked; manual acceptance pending) | Migrate remaining host controls; verify default Cancel, beforeunload, stale targets, retained profile data, typography and screen bounds |
-| General preferences, shortcuts and site preferences | Rust/Metal editors, eleven preference selectors, 24 switches, three clear-data checkboxes and 19 fixed actions plus dynamic rule controls; Rust category/dismiss recipes, category/filter state, text-draft/profile refresh/admission, rule paging and shared text/backing underlay; native event/focus/AX, normalization, menus and stores | Migrate UI descriptions/data, remaining busy/status/form state, tools form/status decisions and outer containers; retain profile/global configuration and recorder behavior |
-| History, downloads, passwords and permissions | Rust/Metal history query editor, clear-period selector and clear/more actions; shared Rust/Metal tools header/status/empty copy; native committed-query/service adapters and remaining Views lists/controls | Migrate result/control presentation and forms; retain browser service and security semantics |
+| General preferences, shortcuts and site preferences | Rust/Metal editors, eleven preference selectors, 24 switches, three clear-data checkboxes and 19 fixed actions plus dynamic rule controls; Rust category/dismiss recipes, category/filter state, text-draft/profile refresh/admission, rule paging and shared text/backing underlay; native event/focus/AX, normalization, menus and stores | Migrate UI descriptions/data, remaining busy/status/form state, tools action/status decisions, busy state and outer containers; retain profile/global configuration and recorder behavior |
+| History, downloads, passwords and permissions | Rust/Metal history query editor, clear-period selector and clear/more actions; shared Rust/Metal tools header/status/empty copy and committed-query/pagination/loaded state; native Unicode/IME/service adapters and remaining Views lists/controls | Migrate result/control presentation and forms; retain browser service and security semantics |
 | Peek, promote/split, link/page menus and routing | Views/native adapters + application | Rust control routing, focus and dismissal; retain native page integration |
 | Import form and first-run import | Rust UI option/debounce/admission/controller state, copy, columns and Metal static/status/Apply text; native Button/AX/focus, header nodes, native popup/IME adapters and application import services (automated UI checked; manual acceptance pending) | Migrate remaining native header and input nodes; verify latest options, busy recovery, credentials opt-in, source immutability, first-run/persistence/rollback and runtime accessibility |
 | Import checkboxes | Rust checked state, shared pointer/key input, mark/label/RTL geometry and primitives; one Metal canvas; native Button/AX/focus/event and font/inset/color adapters (automated UI checked; manual acceptance pending) | Replace native interaction nodes; verify checked/default action, disabled/capture/context/visibility behavior, actual marks/typography, theme/scale and fallback |
 | Import source selector | Rust selected state, prefix timeout/search, popup tokens, macOS key policy and closed-control geometry/scene; Metal canvas; native menu/IME/focus/AX/event adapters (automated UI checked; manual acceptance pending) | Verify popup lifecycle, typeahead, keyboard and VoiceOver, disabled/hide/capture, RTL/theme/scale and fallback; migrate remaining native adapters |
 | Workspace/managed profile selectors | Rust stable-ID reconciliation, prefix/menu state and scene; two Metal canvases; native popup/IME/focus/AX/event and font/color adapters (automated UI checked; manual acceptance pending) | Verify profile CRUD/assignment persistence, renamed/reordered/removed choices, stale menu callbacks, native popup/IME/AX, clipping and theme/scale/RTL; migrate remaining native adapters |
-| Time Machine | Rust/Metal name/filter editors, stable-ID snapshot/closed selectors and five actions, Rust page copy and shared Metal header/body/status text; native snapshot/restore services and remaining Views controls | Migrate remaining form/status decisions, rows and container ownership; preserve previews, validation, backups and restoration |
+| Time Machine | Rust/Metal name/filter editors, stable-ID snapshot/closed selectors and five actions, Rust page/filter state, page copy and shared Metal header/body/status text; native snapshot/restore services and remaining Views controls | Migrate remaining form/status decisions, rows and container ownership; preserve previews, validation, backups and restoration |
 | Page prompt, confirm/alert and beforeunload | Rust/Metal prompt editor; native origin/profile/frame services, generation-scoped callbacks and platform default-key policy | Migrate modal title/buttons/labels/scroll/form layout; retain request identity, cancellation and beforeunload safety |
 | Workspace/profile name, color/emoji, folder-name and address/palette editing | Rust UTF-16 state/history/IME, viewport and scene; CoreText geometry, Metal and CPU fallback; one native input/focus/AX/menu/clipboard/drag/dictionary adapter | Shared kill buffer, word drag/reversal and stationary edge scrolling verified; broaden actual Cocoa multi-click/vertical-pointer/IME/VoiceOver/complex bidi/scale/menu acceptance; preferences/tools/page-prompt editors are also migrated; inherited-browser fields and remaining controls still need inventory |
 | Keyboard accessibility, VoiceOver, focus and tooltips | Native Views nodes | Explicit native accessibility adapter for Rust controls; no duplicate nodes |
@@ -770,3 +770,29 @@ some popup/empty-item/service wording, native result rows, other panels/
 containers, manual acceptance, real profiling and release/license checks remain.
 No new dependency was introduced; RenderText already belongs to Chromium.
 [Evidence](benchmarks/rust-tools-chrome-checkpoint-2026-10-25.json).
+
+
+## Tools controller checkpoint
+
+Rust ToolsForm owns page selection, shortcut recording, committed history and
+Time Machine filter queries, history pagination and loaded state in the opt-in
+backend. Native Unicode services trim/lowercase committed UTF-16; IME preedit does
+not replace the committed query. New requests reset to 200; More adds 200 with
+saturation. Edits/requests clear loaded state. Matching query/limit responses,
+including errors, mark loaded. Native visibility/current-profile checks run
+first. Page reconstruction resets transient queries/recording/loaded state.
+Native timers, accelerator policy, editor read-only/IME handling, domain stores/
+operations and posted-action generation/workspace/profile guards remain.
+
+The shared browser test covers completed errors, wrong query/limit/profile,
+Unicode edits during debounce, whitespace normalization, valid results, hidden
+page rejection, page clamping and reconstruction. Existing real 205-row paging,
+committed-query/preedit, timeline stable-ID/filtering, Cocoa recording and Metal
+rendering tests remain covered. Tests passed: 22/18 critical, 159/119 regular
+Metal/Views, six explicit skips each, 232 Rust, 180 SDK plus raster, 66 clean-
+archive Python, GN/boundaries and final Ninja no-op. Optional performance cases
+were not rerun here; the previous report retains that earlier coverage.
+No new dependency or rendering recipe was introduced, and no controlled speedup
+is claimed. Native result rows, action/status decisions, busy state, remaining
+forms/service panels/containers, manual platform acceptance, profiling and
+release/license checks remain open. [Evidence](benchmarks/rust-tools-form-checkpoint-2026-10-25.json).
