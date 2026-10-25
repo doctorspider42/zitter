@@ -1,3 +1,4 @@
+#include "base/i18n/number_formatting.h"
 #include "ui/views/style/platform_style.h"
 #include "ui/views/window/dialog_client_view.h"
 #include "chromium/prototype/page_dialogs.h"
@@ -749,6 +750,8 @@ class SceneTextButton final : public SceneGlyphButton {
       :SceneGlyphButton(std::move(callback),text,Glyph::kMore,nullptr,base::BindRepeating([]{return true;}),std::move(painted)),text_(std::move(text)),style_(style) {
     SetInstallFocusRingOnFocus(false);SetHasInkDropActionOnClick(false);SetAnimateOnStateChange(false);SetRequestFocusOnPress(false);
   }
+  void UseNativeMinimum(){native_minimum_=true;}
+  gfx::Size GetMinimumSize() const override{if(!native_minimum_)return SceneGlyphButton::GetMinimumSize();const auto font=TextFont();return gfx::Size(views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_DIALOG_BUTTON_MINIMUM_WIDTH),std::max(0,views::LayoutProvider::GetControlHeightForFont(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY,font)-std::max(font.GetHeight(),views::TypographyProvider::Get().GetLineHeight(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY))));}
   void SetDefault(bool value){if(value==default_)return;default_=value;GetViewAccessibility().SetIsDefault(value);const ui::Accelerator enter(ui::VKEY_RETURN,ui::EF_NONE);if(value)AddAccelerator(enter);else RemoveAccelerator(enter);}
   void SetText(std::u16string text){if(text==text_)return;OnMouseCaptureLost();text_=std::move(text);GetViewAccessibility().SetName(text_);SetTooltipText(text_);PreferredSizeChanged();SchedulePaint();}
   static gfx::FontList TextFont(){return views::TypographyProvider::Get().GetFont(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY);}
@@ -765,7 +768,7 @@ class SceneTextButton final : public SceneGlyphButton {
   }
  private:
   sidebar::ActionButtonLayout Metrics(int width,int height) const {const auto font=TextFont();return sidebar::action_button_layout(width,height,gfx::GetStringWidth(text_,font),views::LayoutProvider::GetControlHeightForFont(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY,font),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_BUTTON_HORIZONTAL_PADDING),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_DIALOG_BUTTON_MINIMUM_WIDTH));}
-  std::u16string text_;ui::ButtonStyle style_;bool default_=false;
+  std::u16string text_;ui::ButtonStyle style_;bool default_=false;bool native_minimum_=false;
 };
 BEGIN_METADATA(SceneTextButton)
 END_METADATA
@@ -777,13 +780,16 @@ class SceneActionGroup final : public views::View {
   bool GetNeedsNotificationWhenVisibleBoundsChange() const override{return true;}
   void OnVisibleBoundsChanged() override{for(const auto& child:children())if(!child->GetVisible()||child->GetVisibleBounds().IsEmpty())child->OnMouseCaptureLost();Schedule();}
   SceneActionGroup(bool vertical,int spacing,bool intrinsic=false,bool dialog=false):vertical_(vertical),spacing_(spacing),intrinsic_(intrinsic),dialog_(dialog) {}
-  views::Button* AddAction(views::Button::PressedCallback callback,std::u16string text,ui::ButtonStyle style){return AddChildView(std::make_unique<SceneTextButton>(std::move(callback),std::move(text),style,base::BindRepeating(&SceneActionGroup::Schedule,weak_factory_.GetWeakPtr())));}
-  bool metal_visible() const{return surface_&&surface_->visible();}
+  void Share(base::RepeatingCallback<bool()> visible,base::RepeatingClosure changed){shared_visible_=std::move(visible);shared_changed_=std::move(changed);SetSidebarPanelLayout(this,false,gfx::Insets(),spacing_);}
+  bool shared() const{return bool(shared_visible_);}
+  void Append(std::vector<sidebar::Item>& items,gfx::Point origin,gfx::Rect clip) const{auto next=Items(origin.x(),origin.y(),gfx::RectF(clip));items.insert(items.end(),std::make_move_iterator(next.begin()),std::make_move_iterator(next.end()));}
+  views::Button* AddAction(views::Button::PressedCallback callback,std::u16string text,ui::ButtonStyle style){auto* button=AddChildView(std::make_unique<SceneTextButton>(std::move(callback),std::move(text),style,base::BindRepeating(&SceneActionGroup::Schedule,weak_factory_.GetWeakPtr())));if(shared())button->UseNativeMinimum();return button;}
+  bool metal_visible() const{return shared()?shared_visible_.Run():surface_&&surface_->visible();}
   gfx::Rect metal_bounds_for_testing() const{return surface_?surface_->screen_bounds_for_testing():gfx::Rect();}
-  bool contains_text(std::string_view text) const{return metal_visible()&&surface_->contains_text_for_testing(text);}
+  bool contains_text(std::string_view text) const{return surface_&&surface_->visible()&&surface_->contains_text_for_testing(text);}
   void CancelInput(){for(const auto& child:children())child->OnMouseCaptureLost();}
-  gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override {const auto g=Geometry(!intrinsic_&&available.width().is_bounded()?available.width().value():-1,-1);return gfx::Size(g.width,g.height);}
-  void Layout(PassKey) override {const auto g=Geometry(width(),height());size_t i=0;for(const auto& child:children())if(child->GetVisible()){const auto& r=g.children[i++];child->SetBounds(r.x,r.y,r.width,r.height);}Schedule();}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override {if(shared())return views::View::CalculatePreferredSize(available);const auto g=Geometry(!intrinsic_&&available.width().is_bounded()?available.width().value():-1,-1);return gfx::Size(g.width,g.height);}
+  void Layout(PassKey) override {if(shared()){LayoutSuperclass<views::View>(this);Schedule();return;}const auto g=Geometry(width(),height());size_t i=0;for(const auto& child:children())if(child->GetVisible()){const auto& r=g.children[i++];child->SetBounds(r.x,r.y,r.width,r.height);}Schedule();}
   void OnBoundsChanged(const gfx::Rect& previous) override {views::View::OnBoundsChanged(previous);Schedule();}
   void AddedToWidget() override {views::View::AddedToWidget();window_visibility_.Observe(GetWidget());Schedule();}
   void RemovedFromWidget() override {window_visibility_.Observe(nullptr);surface_.reset();views::View::RemovedFromWidget();}
@@ -794,8 +800,9 @@ class SceneActionGroup final : public views::View {
  private:
   sidebar::ColumnLayout Geometry(int width,int height) const {std::vector<sidebar::ColumnChild> measured;for(const auto& child:children())if(child->GetVisible()){const auto size=child->GetPreferredSize();measured.push_back({size.width(),size.height(),0,0,0,0});}if(dialog_){auto* provider=views::LayoutProvider::Get();const auto insets=provider->GetInsetsMetric(views::INSETS_DIALOG_BUTTON_ROW);return sidebar::dialog_actions_layout(width,height,spacing_,provider->GetDistanceMetric(views::DISTANCE_BUTTON_MAX_LINKABLE_WIDTH),insets.top(),insets.left(),insets.bottom(),insets.right(),rust::Slice<const sidebar::ColumnChild>(measured.data(),measured.size()));}return sidebar::action_group_layout(width,height,vertical_,spacing_,rust::Slice<const sidebar::ColumnChild>(measured.data(),measured.size()));}
   std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const {std::vector<sidebar::Item> out;for(const auto& child:children())if(child->GetVisible()){auto bounds=gfx::RectF(child->bounds());bounds.Offset(dx,dy);auto local=bounds;local.Intersect(clip);out.push_back(static_cast<SceneTextButton*>(child.get())->Scene(bounds,local));}return out;}
-  void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneActionGroup::UpdateMetal,weak_factory_.GetWeakPtr()));}
+  void Schedule(){if(shared()){shared_changed_.Run();return;}if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneActionGroup::UpdateMetal,weak_factory_.GetWeakPtr()));}
   void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,dialog_?GetColorProvider()->GetColor(ui::kColorDialogBackground):Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
+  base::RepeatingCallback<bool()> shared_visible_;base::RepeatingClosure shared_changed_;
   bool vertical_;int spacing_;bool intrinsic_;bool dialog_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneActionGroup::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneActionGroup> weak_factory_{this};
 };
 BEGIN_METADATA(SceneActionGroup)
@@ -2098,35 +2105,67 @@ class PreferenceCopy final : public views::View {
 };
 BEGIN_METADATA(PreferenceCopy)
 END_METADATA
+class SceneProgress final : public views::View {
+  METADATA_HEADER(SceneProgress,views::View)
+ public:
+  SceneProgress(base::RepeatingClosure changed,base::RepeatingCallback<bool()> visible):changed_(std::move(changed)),visible_(std::move(visible)){GetViewAccessibility().SetRole(ax::mojom::Role::kProgressIndicator);SetCanProcessEventsWithinSubtree(false);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(1,5);}
+  void SetValue(double value){const double next=!std::isfinite(value)||value<0||value>1?-1:value;if(next==value_)return;value_=next;if(value_<0)started_=base::TimeTicks::Now();AX();SchedulePaint();changed_.Run();}
+  bool moving() const{return value_<0;}
+  sidebar::Item Scene(gfx::Rect box,gfx::Rect clip) const{sidebar::Item item{};item.kind=26;item.x=box.x();item.y=box.y();item.width=box.width();item.height=box.height();item.title_width=value_;item.detail_font_size=started_.is_null()?0:std::fmod((base::TimeTicks::Now()-started_).InSecondsF(),2.0)/2.0;item.tile=base::i18n::IsRTL();item.ink=GetColorProvider()->GetColor(ui::kColorProgressBar);item.fill=GetColorProvider()->GetColor(ui::kColorProgressBarBackground);item.clip={float(clip.x()),float(clip.y()),float(clip.width()),float(clip.height())};return item;}
+  bool GetNeedsNotificationWhenVisibleBoundsChange() const override{return true;}
+  void OnVisibleBoundsChanged() override{changed_.Run();}
+  void OnBoundsChanged(const gfx::Rect& old) override{views::View::OnBoundsChanged(old);changed_.Run();}
+  void AddedToWidget() override{views::View::AddedToWidget();AX();changed_.Run();}
+  void VisibilityChanged(views::View* view,bool visible) override{views::View::VisibilityChanged(view,visible);AX();changed_.Run();}
+  void OnThemeChanged() override{views::View::OnThemeChanged();changed_.Run();}
+  void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);changed_.Run();}
+  void OnPaint(gfx::Canvas* canvas) override{if(!visible_.Run())PaintSceneRecipe(canvas,Scene(GetLocalBounds(),GetLocalBounds()),Font(0));}
+ private:
+  void AX(){if(value_<0){GetViewAccessibility().RemoveValue();return;}if(!GetWidget()||!GetWidget()->IsVisible())return;const int percent=static_cast<int>(value_*100);if(percent!=announced_){announced_=percent;GetViewAccessibility().SetValue(base::FormatPercent(percent));}}
+  double value_=0;int announced_=-1;base::TimeTicks started_;base::RepeatingClosure changed_;base::RepeatingCallback<bool()> visible_;
+};
+BEGIN_METADATA(SceneProgress)
+END_METADATA
 class PreferenceChromeRenderer : public views::WidgetObserver {
  public:
   explicit PreferenceChromeRenderer(views::View* root):root_(root){}
-  ~PreferenceChromeRenderer() override{observation_.Reset();}
+  ~PreferenceChromeRenderer() override{timer_.Stop();observation_.Reset();}
   bool visible() const{return surface_&&surface_->visible();}
   bool order_correct() const{return visible()&&surface_->underlay_order_correct_for_testing();}
+  bool animating() const{return timer_.IsRunning();}
   size_t frame_count() const{return surface_?surface_->frame_count():0;}
   std::string Debug() const{return "root="+root_->GetBoundsInScreen().ToString()+" visible="+root_->GetVisibleBounds().ToString()+" widget="+std::to_string(root_->GetWidget()!=nullptr)+" drawn="+std::to_string(SceneIsVisible(root_))+" canvas="+std::to_string(visible())+" order="+std::to_string(order_correct())+" ops="+std::to_string(last_ops_.size())+" frames="+std::to_string(frame_count());}
   bool contains_text(std::string_view text) const{if(!visible())return false;if(surface_->contains_text_for_testing(text))return true;auto find=[&](auto&& self,views::View* view)->bool{if(auto* copy=views::AsViewClass<PreferenceCopy>(view))if(copy->HasFullText(*surface_,text))return true;for(const auto& child:view->children())if(self(self,child.get()))return true;return false;};return find(find,root_);}
   bool excludes(views::View* view) const{if(!visible()||!view)return false;auto rect=Projected(view);if(rect.IsEmpty())return false;for(const auto& op:last_ops_){gfx::RectF clip(op.clip.x,op.clip.y,op.clip.width,op.clip.height);if(clip.Intersects(gfx::RectF(rect)))return false;}return true;}
   void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&PreferenceChromeRenderer::Update,weak_factory_.GetWeakPtr()));}
-  void OnWidgetVisibilityChanged(views::Widget*,bool visible) override{if(!visible){auto cancel=[&](auto&& self,views::View* view)->void{if(auto* row=views::AsViewClass<SceneHistoryRow>(view))row->CancelInput();for(const auto& child:view->children())self(self,child.get());};cancel(cancel,root_);if(surface_)surface_->Hide();}Schedule();}
+  void OnWidgetVisibilityChanged(views::Widget*,bool visible) override{if(!visible){auto cancel=[&](auto&& self,views::View* view)->void{if(auto* row=views::AsViewClass<SceneHistoryRow>(view))row->CancelInput();if(auto* group=views::AsViewClass<SceneActionGroup>(view);group&&group->shared())group->CancelInput();for(const auto& child:view->children())self(self,child.get());};cancel(cancel,root_);timer_.Stop();if(surface_)surface_->Hide();}Schedule();}
   void OnWidgetBoundsChanged(views::Widget*,const gfx::Rect&) override{Schedule();}
-  void OnWidgetDestroying(views::Widget*) override{observation_.Reset();if(surface_)surface_->Hide();}
+  void OnWidgetDestroying(views::Widget*) override{timer_.Stop();observation_.Reset();if(surface_)surface_->Hide();}
  private:
   gfx::Rect Projected(views::View* view) const{auto rect=view->GetVisibleBounds();rect.Offset(view->GetBoundsInScreen().x()-root_->GetBoundsInScreen().x(),view->GetBoundsInScreen().y()-root_->GetBoundsInScreen().y());rect.Intersect(root_->GetLocalBounds());return rect;}
-  void Collect(views::View* view,std::vector<sidebar::Item>& backgrounds,std::vector<sidebar::Item>& text,std::vector<sidebar::FloatRect>& holes){if(!SceneIsVisible(view))return;auto clip=Projected(view);if(clip.IsEmpty())return;auto box=view->GetBoundsInScreen();box.Offset(-root_->GetBoundsInScreen().x(),-root_->GetBoundsInScreen().y());if(auto* copy=views::AsViewClass<PreferenceCopy>(view)){copy->Append(text,box.origin(),clip);return;}if(auto* row=views::AsViewClass<SceneHistoryRow>(view)){text.push_back(row->Scene(gfx::RectF(box),gfx::RectF(clip)));return;}if(auto* surface=views::AsViewClass<PreferenceSurface>(view))if(surface->scene())backgrounds.push_back(surface->Scene(gfx::RectF(box),gfx::RectF(clip)));if(views::AsViewClass<SceneActionGroup>(view)||views::AsViewClass<SceneCheckboxGroup>(view)||views::AsViewClass<ScenePreferenceControls>(view)||views::AsViewClass<SceneSelect>(view)||views::AsViewClass<SceneToggle>(view)||views::AsViewClass<views::Button>(view)||view->GetViewAccessibility().GetCachedRole()==ax::mojom::Role::kTextField){holes.push_back({float(clip.x()),float(clip.y()),float(clip.width()),float(clip.height())});return;}for(const auto& child:view->children())Collect(child.get(),backgrounds,text,holes);}
-  void Update(){pending_=false;auto* widget=root_->GetWidget();if(!widget)return;if(observation_.GetSource()!=widget){observation_.Reset();observation_.Observe(widget);}widget->LayoutRootViewIfNecessary();const bool was=visible();if(!SceneIsVisible(root_)){if(surface_)surface_->Hide();return;}std::vector<sidebar::Item> backgrounds,text;std::vector<sidebar::FloatRect> holes;Collect(root_,backgrounds,text,holes);backgrounds.insert(backgrounds.end(),std::make_move_iterator(text.begin()),std::make_move_iterator(text.end()));last_ops_=sidebar::preference_chrome_scene(rust::Slice<const sidebar::Item>(backgrounds.data(),backgrounds.size()),rust::Slice<const sidebar::FloatRect>(holes.data(),holes.size()));if(!surface_)surface_=CreateSidebarMetal();if(surface_)surface_->UpdateUnderlay(widget->GetNativeWindow(),root_->GetBoundsInScreen(),UNSAFE_BUFFERS(base::span<const sidebar::Primitive>(last_ops_.data(),last_ops_.size())));if(was!=visible())root_->SchedulePaint();}
+  void Collect(views::View* view,std::vector<sidebar::Item>& backgrounds,std::vector<sidebar::Item>& text,std::vector<sidebar::FloatRect>& holes){if(!SceneIsVisible(view))return;auto clip=Projected(view);if(clip.IsEmpty())return;auto box=view->GetBoundsInScreen();box.Offset(-root_->GetBoundsInScreen().x(),-root_->GetBoundsInScreen().y());if(auto* progress=views::AsViewClass<SceneProgress>(view)){text.push_back(progress->Scene(box,clip));moving_|=progress->moving();return;}if(auto* actions=views::AsViewClass<SceneActionGroup>(view);actions&&actions->shared()){actions->Append(text,box.origin(),clip);return;}if(auto* copy=views::AsViewClass<PreferenceCopy>(view)){copy->Append(text,box.origin(),clip);return;}if(auto* row=views::AsViewClass<SceneHistoryRow>(view)){text.push_back(row->Scene(gfx::RectF(box),gfx::RectF(clip)));return;}if(auto* surface=views::AsViewClass<PreferenceSurface>(view))if(surface->scene())backgrounds.push_back(surface->Scene(gfx::RectF(box),gfx::RectF(clip)));if(views::AsViewClass<SceneActionGroup>(view)||views::AsViewClass<SceneCheckboxGroup>(view)||views::AsViewClass<ScenePreferenceControls>(view)||views::AsViewClass<SceneSelect>(view)||views::AsViewClass<SceneToggle>(view)||views::AsViewClass<views::Button>(view)||view->GetViewAccessibility().GetCachedRole()==ax::mojom::Role::kTextField){holes.push_back({float(clip.x()),float(clip.y()),float(clip.width()),float(clip.height())});return;}for(const auto& child:view->children())Collect(child.get(),backgrounds,text,holes);}
+  void Update(){pending_=false;auto* widget=root_->GetWidget();if(!widget)return;if(observation_.GetSource()!=widget){observation_.Reset();observation_.Observe(widget);}widget->LayoutRootViewIfNecessary();const bool was=visible();if(!SceneIsVisible(root_)){timer_.Stop();if(surface_)surface_->Hide();return;}moving_=false;std::vector<sidebar::Item> backgrounds,text;std::vector<sidebar::FloatRect> holes;Collect(root_,backgrounds,text,holes);backgrounds.insert(backgrounds.end(),std::make_move_iterator(text.begin()),std::make_move_iterator(text.end()));last_ops_=sidebar::preference_chrome_scene(rust::Slice<const sidebar::Item>(backgrounds.data(),backgrounds.size()),rust::Slice<const sidebar::FloatRect>(holes.data(),holes.size()));if(!surface_)surface_=CreateSidebarMetal();if(surface_)surface_->UpdateUnderlay(widget->GetNativeWindow(),root_->GetBoundsInScreen(),UNSAFE_BUFFERS(base::span<const sidebar::Primitive>(last_ops_.data(),last_ops_.size())));if(was!=visible())root_->SchedulePaint();if(moving_){if(!timer_.IsRunning())timer_.Start(FROM_HERE,base::Milliseconds(16),base::BindRepeating(&PreferenceChromeRenderer::Tick,base::Unretained(this)));}else timer_.Stop();}
+  void Tick(){if(!visible())root_->SchedulePaint();Schedule();}
+  base::RepeatingTimer timer_;bool moving_=false;
   raw_ptr<views::View> root_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;rust::Vec<sidebar::Primitive> last_ops_;base::ScopedObservation<views::Widget,views::WidgetObserver> observation_{this};base::WeakPtrFactory<PreferenceChromeRenderer> weak_factory_{this};
 };
 
-class PageDialogSceneImpl final : public PageDialogScene {
+class PanelSceneImpl final : public PanelScene {
  public:
-  explicit PageDialogSceneImpl(views::View* root):renderer_(root){}
+  explicit PanelSceneImpl(views::View* root):renderer_(root){}
   std::unique_ptr<views::View> MakeText(std::u16string text,bool multiline,bool center,int fixed_width) override{
-    return std::make_unique<PreferenceCopy>(std::move(text),kInk,0,gfx::Font::Weight::NORMAL,multiline,base::BindRepeating(&PageDialogSceneImpl::Schedule,weak_factory_.GetWeakPtr()),base::BindRepeating([](base::WeakPtr<PageDialogSceneImpl> self){return self&&self->visible();},weak_factory_.GetWeakPtr()),true,center,fixed_width);
+    return std::make_unique<PreferenceCopy>(std::move(text),kInk,0,gfx::Font::Weight::NORMAL,multiline,base::BindRepeating(&PanelSceneImpl::Schedule,weak_factory_.GetWeakPtr()),base::BindRepeating([](base::WeakPtr<PanelSceneImpl> self){return self&&self->visible();},weak_factory_.GetWeakPtr()),true,center,fixed_width);
   }
+  void SetText(views::View* view,std::u16string text) override{static_cast<PreferenceCopy*>(view)->SetText(std::move(text));}
+  std::unique_ptr<views::View> MakeActions(int spacing) override{auto group=std::make_unique<SceneActionGroup>(false,spacing);group->Share(base::BindRepeating([](base::WeakPtr<PanelSceneImpl> self){return self&&self->visible();},weak_factory_.GetWeakPtr()),base::BindRepeating(&PanelSceneImpl::Schedule,weak_factory_.GetWeakPtr()));return group;}
+  views::Button* AddAction(views::View* group,base::RepeatingClosure callback,std::u16string text) override{return static_cast<SceneActionGroup*>(group)->AddAction(std::move(callback),std::move(text),ui::ButtonStyle::kDefault);}
+  void SetActionText(views::Button* button,std::u16string text) override{static_cast<SceneTextButton*>(button)->SetText(std::move(text));}
+  std::unique_ptr<views::View> MakeProgress() override{return std::make_unique<SceneProgress>(base::BindRepeating(&PanelSceneImpl::Schedule,weak_factory_.GetWeakPtr()),base::BindRepeating([](base::WeakPtr<PanelSceneImpl> self){return self&&self->visible();},weak_factory_.GetWeakPtr()));}
+  void SetProgress(views::View* view,double value) override{static_cast<SceneProgress*>(view)->SetValue(value);}
+  bool animating() const override{return renderer_.animating();}
   void Schedule() override{renderer_.Schedule();}
-  void ObserveScroll(views::ScrollView* scroll) override{scroll_sync_=scroll->EnableScrollSynchronization();scroll_subscription_=scroll->AddContentsScrolledCallback(base::BindRepeating(&PageDialogSceneImpl::Schedule,weak_factory_.GetWeakPtr()));}
+  void ObserveScroll(views::ScrollView* scroll) override{scroll_sync_=scroll->EnableScrollSynchronization();scroll_subscription_=scroll->AddContentsScrolledCallback(base::BindRepeating(&PanelSceneImpl::Schedule,weak_factory_.GetWeakPtr()));}
   bool visible() const override{return renderer_.visible();}
   bool contains_text(std::string_view text) const override{return renderer_.contains_text(text);}
   bool excludes(views::View* view) const override{return renderer_.excludes(view);}
@@ -2135,7 +2174,7 @@ class PageDialogSceneImpl final : public PageDialogScene {
   PreferenceChromeRenderer renderer_;
   std::unique_ptr<views::ScrollView::ScopedScrollSynchronizer> scroll_sync_;
   base::CallbackListSubscription scroll_subscription_;
-  base::WeakPtrFactory<PageDialogSceneImpl> weak_factory_{this};
+  base::WeakPtrFactory<PanelSceneImpl> weak_factory_{this};
 };
 #endif
 
@@ -2936,12 +2975,13 @@ std::unique_ptr<views::View> CreatePageDialogActions(views::Widget* widget){
 #endif
 }
 
-std::unique_ptr<PageDialogScene> CreatePageDialogScene(views::View* root){
+std::unique_ptr<PanelScene> CreatePanelScene(views::View* root){
 #if BUILDFLAG(IS_MAC)
-  if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal")return std::make_unique<PageDialogSceneImpl>(root);
+  if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal")return std::make_unique<PanelSceneImpl>(root);
 #endif
   return nullptr;
 }
+std::unique_ptr<PageDialogScene> CreatePageDialogScene(views::View* root){return CreatePanelScene(root);}
 #if BUILDFLAG(IS_MAC)
 class PreferenceChromeState final : public PreferenceChromeRenderer {public:using PreferenceChromeRenderer::PreferenceChromeRenderer;};
 #else

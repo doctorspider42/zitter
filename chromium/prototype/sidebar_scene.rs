@@ -86,7 +86,7 @@ mod ffi {
     struct ViewportProjection { x: f32, y: f32, nodes: Vec<ProjectedNode> }
     struct Item {
         x: f32, y: f32, width: f32, height: f32,
-        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: control glyph, 8: pane title, 9: split grip, 10: rounded backing, 11: sidebar grip, 12: palette result, 13: result icon, 14: separator, 15: palette static text, 16: palette frame, 17: form static text, 18: appearance color swatch, 19: form text action, 20: checkbox mark, 21: closed selector, 22: preference category, 23: preferences dismiss, 24: preference surface, 25: history result row.
+        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: control glyph, 8: pane title, 9: split grip, 10: rounded backing, 11: sidebar grip, 12: palette result, 13: result icon, 14: separator, 15: palette static text, 16: palette frame, 17: form static text, 18: appearance color swatch, 19: form text action, 20: checkbox mark, 21: closed selector, 22: preference category, 23: preferences dismiss, 24: preference surface, 25: history result row, 26: progress indicator.
         kind: u32, glyph: u32,
         title: String, monogram: String, detail: String,
         title_width: f32, detail_ink: u32, detail_font_size: f32,
@@ -1608,6 +1608,14 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
                     clip: ffi::FloatRect {x: i.clip.x, y: i.clip.y, width: i.clip.width, height: i.clip.height} });
             }
         };
+        if i.kind==26 {
+            if !i.title_width.is_finite()||!i.detail_font_size.is_finite(){continue;}
+            emit(i.x,i.y,i.width,i.height,0.0,i.fill,"",0.0,false);
+            let mut slice=|left:f32,right:f32|{let left=(i.width*left).round();let right=(i.width*right.min(1.0)).round();let x=if i.tile{i.x+i.width-right}else{i.x+left};emit(x,i.y,(right-left).max(0.0),i.height,0.0,i.ink,"",0.0,false);};
+            if i.title_width>=0.0{slice(0.0,i.title_width.min(1.0));}
+            else{let t=i.detail_font_size.clamp(0.0,1.0);if t<0.5{slice(t/2.0,t*2.0);}else if t<0.75{slice(t*3.0-1.25,1.0);slice(0.0,t-0.5);}else{let left=(t-0.75)*4.0;slice(left,left+0.25-(t-0.75));}}
+            continue;
+        }
         if i.kind == 17 {
             if !i.title.is_empty(){emit(i.x,i.y,i.width,i.height,0.0,i.ink,&i.title,i.font_size,i.active);let last=out.last_mut().unwrap();last.font_weight=i.font_weight;last.center=i.glyph==1;}continue;
         }
@@ -1864,6 +1872,22 @@ mod tests {
     }}
     fn child(width: i32, height: i32) -> ffi::ColumnChild {
         ffi::ColumnChild { width, height, top: 0, left: 0, bottom: 0, right: 0 }
+    }
+    #[test]
+    fn download_progress_rounding_direction_and_clipping() {
+        let mut item=row(101.0);item.kind=26;item.height=5.0;item.fill=0xff112233;item.ink=0xff445566;item.title_width=0.5;
+        let ltr=layout(std::slice::from_ref(&item));assert_eq!(ltr.len(),2);assert_eq!((ltr[0].width,ltr[1].width,ltr[1].x),(101.0,51.0,0.0));assert_eq!(ltr[0].radius,0.0);
+        item.tile=true;let rtl=layout(std::slice::from_ref(&item));assert_eq!((rtl[1].x,rtl[1].width),(50.0,51.0));
+        item.title_width=0.0;assert_eq!(layout(std::slice::from_ref(&item)).len(),1);item.title_width=1.0;assert_eq!(layout(std::slice::from_ref(&item))[1].width,101.0);
+        item.title_width=f32::NAN;assert!(layout(std::slice::from_ref(&item)).is_empty());
+    }
+    #[test]
+    fn download_progress_indeterminate_native_keyframes() {
+        let mut item=row(100.0);item.kind=26;item.height=5.0;item.title_width=-1.0;
+        for (time,segments) in [(0.0,vec![]),(0.25,vec![(13.0,37.0)]),(0.5,vec![(25.0,75.0)]),(0.625,vec![(63.0,37.0),(0.0,13.0)]),(0.75,vec![(0.0,25.0)]),(1.0,vec![])] {
+            item.detail_font_size=time;let ops=layout(std::slice::from_ref(&item));assert_eq!(ops.iter().skip(1).map(|p|(p.x,p.width)).collect::<Vec<_>>(),segments);
+            for p in ops{assert!(p.x>=0.0&&p.x+p.width<=100.0&&p.height==5.0);}
+        }
     }
     #[test]
     fn dialog_actions_link_and_trailing_geometry() {

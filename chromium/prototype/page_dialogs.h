@@ -4,6 +4,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/memory/raw_ptr.h"
 #include <memory>
+#include "chromium/prototype/sidebar_metal.h"
 #include <string>
 #include <string_view>
 #include "content/public/browser/javascript_dialog_manager.h"
@@ -14,19 +15,7 @@ namespace views { class Widget; class View; class ScrollView; class DialogDelega
 namespace ui { class KeyEvent; }
 namespace zitter::prototype {
 class EditorControl;
-// Shared static text/transparent scene service; native window/domain ownership
-// remains here. Implemented beside the existing preference/tools renderer.
-class PageDialogScene {
- public:
-  virtual ~PageDialogScene() = default;
-  virtual std::unique_ptr<views::View> MakeText(std::u16string text,bool multiline,bool center,int fixed_width)=0;
-  virtual void Schedule()=0;
-  virtual void ObserveScroll(views::ScrollView* scroll)=0;
-  virtual bool visible() const=0;
-  virtual bool contains_text(std::string_view text) const=0;
-  virtual bool excludes(views::View* view) const=0;
-  virtual bool order_correct() const=0;
-};
+using PageDialogScene=PanelScene;
 std::unique_ptr<PageDialogScene> CreatePageDialogScene(views::View* root);
 std::unique_ptr<views::View> CreatePageDialogActions(views::Widget* widget);
 views::ClientView* CreateSceneDialogClient(views::Widget* widget,views::View* contents);

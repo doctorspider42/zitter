@@ -2,7 +2,9 @@
 #define ZITTER_CHROMIUM_PROTOTYPE_DOWNLOAD_PANEL_H_
 
 #include <map>
+#include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
@@ -11,8 +13,9 @@
 #include "components/download/public/common/download_item.h"
 
 class Profile;
-namespace views { class Widget; class View; }
+namespace views { class Widget; class View; class ScrollView; class DialogDelegate; }
 namespace zitter::prototype {
+class PanelScene;
 // Presentation only: Chromium owns transfers, history, policy and file safety.
 class DownloadPanel final : public content::DownloadManager::Observer,
                             public download::DownloadItem::Observer {
@@ -25,9 +28,18 @@ class DownloadPanel final : public content::DownloadManager::Observer,
   views::Widget* widget() const { return widget_.get(); }
   bool Act(std::string guid, Action action);
   std::vector<std::string> visible_guids() const;
+  bool scene_visible_for_testing() const;
+  bool scene_contains_text_for_testing(std::string_view text) const;
+  bool scene_animating_for_testing() const;
+  bool scene_order_correct_for_testing() const;
+  views::ScrollView* scroll_for_testing() const{return scroll_;}
+  views::View* list_for_testing() const{return list_;}
  private:
   struct Row;
   void Disconnect();
+  void CloseUI();
+  views::View* MakeLabel(views::View* parent,std::u16string text);
+  void SetText(views::View* view,std::u16string text);
   void Observe(download::DownloadItem* item);
   void ScheduleRefresh();
   void Refresh();
@@ -40,7 +52,10 @@ class DownloadPanel final : public content::DownloadManager::Observer,
   raw_ptr<Profile> profile_ = nullptr;
   raw_ptr<content::DownloadManager> manager_ = nullptr;
   std::map<std::string, raw_ptr<download::DownloadItem>> items_;
-  base::WeakPtr<views::Widget> widget_;
+  std::unique_ptr<views::DialogDelegate> delegate_;
+  std::unique_ptr<views::Widget> widget_;
+  std::unique_ptr<PanelScene> scene_;
+  raw_ptr<views::ScrollView> scroll_=nullptr;
   raw_ptr<views::View> list_ = nullptr;
   std::vector<Row> rows_;
   base::RepeatingTimer timer_;

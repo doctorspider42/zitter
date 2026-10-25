@@ -14,9 +14,30 @@
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/native_ui_types.h"
 namespace gfx {class Canvas;}
-namespace views { class ScrollBar; }
+namespace views { class ScrollBar; class ScrollView; class View; class Button; }
 namespace zitter::sidebar { struct Item; struct Primitive; }
 namespace zitter::prototype {
+// Shared control scene with native event/focus/AX adapters. All managed text,
+// actions and progress share one transparent canvas; browser services stay native.
+class PanelScene {
+ public:
+  virtual ~PanelScene()=default;
+  virtual std::unique_ptr<views::View> MakeText(std::u16string text,bool multiline,bool center,int fixed_width)=0;
+  virtual void SetText(views::View* view,std::u16string text)=0;
+  virtual std::unique_ptr<views::View> MakeActions(int spacing)=0;
+  virtual views::Button* AddAction(views::View* group,base::RepeatingClosure callback,std::u16string text)=0;
+  virtual void SetActionText(views::Button* button,std::u16string text)=0;
+  virtual std::unique_ptr<views::View> MakeProgress()=0;
+  virtual void SetProgress(views::View* view,double value)=0;
+  virtual void Schedule()=0;
+  virtual void ObserveScroll(views::ScrollView* scroll)=0;
+  virtual bool visible() const=0;
+  virtual bool contains_text(std::string_view text) const=0;
+  virtual bool excludes(views::View* view) const=0;
+  virtual bool order_correct() const=0;
+  virtual bool animating() const=0;
+};
+std::unique_ptr<PanelScene> CreatePanelScene(views::View* root);
 struct SidebarViewportNode { size_t parent; gfx::Rect bounds; bool visible; };
 struct SidebarProjectedNode { size_t index; gfx::RectF bounds, clip; };
 struct SidebarViewportProjection { gfx::PointF offset; std::vector<SidebarProjectedNode> nodes; };
