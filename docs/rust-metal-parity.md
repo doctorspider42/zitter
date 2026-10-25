@@ -83,7 +83,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Workspace color/emoji presets | Rust preset data/selection, row geometry, pointer/key reducer and scene primitives; two shared-context Metal canvases; native Button/AX/focus and text/grapheme/storage adapters (automated UI checked; manual acceptance pending) | Color/emoji editor migration verified; replace remaining native preset Button interaction ownership and broaden capture/visibility/IME/AX/theme/scale/persistence acceptance |
 | Workspace deletion confirmation | Rust captured-target notice state/copy and shared paragraph layout; Metal body/error text; native modal title/buttons and deletion/persistence services (automated UI checked; manual acceptance pending) | Migrate remaining host controls; verify default Cancel, beforeunload, stale targets, retained profile data, typography and screen bounds |
 | General preferences, shortcuts and site preferences | Rust/Metal editors, eleven preference selectors, 24 switches, three clear-data checkboxes and 19 fixed actions plus dynamic rule controls; Rust category/dismiss recipes, category/filter state, text-draft/profile refresh/admission, rule paging and shared text/backing underlay; native event/focus/AX, normalization, menus and stores | Migrate UI descriptions/data, remaining busy/status/form state, tools action/status decisions, busy state and outer containers; retain profile/global configuration and recorder behavior |
-| History, downloads, passwords and permissions | Rust/Metal history query editor, clear-period selector and clear/more actions; shared Rust/Metal tools header/status/empty copy and committed-query/pagination/loaded state; native Unicode/IME/service adapters and remaining Views lists/controls | Migrate result/control presentation and forms; retain browser service and security semantics |
+| History, downloads, passwords and permissions | Rust/Metal history query editor, clear-period selector and clear/more actions; shared Rust/Metal tools header/status/empty copy and committed-query/pagination/loaded state; Rust/Metal history result text/backing and column layout; native Unicode/IME/service and row event/focus/AX/scroll adapters, with other remaining Views lists/controls | Finish native history interaction/container ownership and other service forms/result controls; retain browser service and security semantics |
 | Peek, promote/split, link/page menus and routing | Views/native adapters + application | Rust control routing, focus and dismissal; retain native page integration |
 | Import form and first-run import | Rust UI option/debounce/admission/controller state, copy, columns and Metal static/status/Apply text; native Button/AX/focus, header nodes, native popup/IME adapters and application import services (automated UI checked; manual acceptance pending) | Migrate remaining native header and input nodes; verify latest options, busy recovery, credentials opt-in, source immutability, first-run/persistence/rollback and runtime accessibility |
 | Import checkboxes | Rust checked state, shared pointer/key input, mark/label/RTL geometry and primitives; one Metal canvas; native Button/AX/focus/event and font/inset/color adapters (automated UI checked; manual acceptance pending) | Replace native interaction nodes; verify checked/default action, disabled/capture/context/visibility behavior, actual marks/typography, theme/scale and fallback |
@@ -796,3 +796,38 @@ No new dependency or rendering recipe was introduced, and no controlled speedup
 is claimed. Native result rows, action/status decisions, busy state, remaining
 forms/service panels/containers, manual platform acceptance, profiling and
 release/license checks remain open. [Evidence](benchmarks/rust-tools-form-checkpoint-2026-10-25.json).
+
+
+## History result presentation checkpoint
+
+History result title/date/URL text, hover backing and focus recipes now use Rust
+on the existing shared tools Metal underlay. Rows create no Label children or
+per-row drawables. Rust column layout preserves 60px rows and 4px spacing. The
+native 36px text lead, measured/capped primary width, 10px gap, tail title and
+middle date/URL elision remain; native font/time formatting and event/focus/AX
+nodes remain adapters. Native GURL/profile-bound posted navigation still opens
+a new tab and restores page focus. Views retains RowButton/Label/BoxLayout.
+CPU fallback consumes the same Rust recipe with font sizes, title/detail elision
+and focus drawing while the shared Metal underlay is absent.
+
+The collector admits migrated rows before native Button cutouts. Only projected
+visible rows enter the scene; other interactive controls remain holes. Paint,
+bounds, input, theme and scrolling schedule updates. Offscreen/hidden rows and
+widget hide cancel pending input. Shared tests seed real history, check Unicode
+and empty-title URL fallback, AX/row geometry and real Cocoa Space navigation.
+A Metal test uses 80 rows for scene/order/cutouts, culling/scroll, offscreen/hide
+press cancellation, rebuild, dark theme and profile isolation. The earlier
+shared-chrome test now requires actual scene row text and childlessness rather
+than the former native-row cutout. Other requirements remain.
+
+Tests passed: 24/19 critical and 161/120 regular Metal/Views, six explicit skips
+each, 233 Rust, 180 SDK plus raster, 66 clean-archive Python, GN/boundaries and
+final Ninja no-op. The initial bool/WeakPtr callback binding compile error was
+corrected with an explicit owner-check lambda; its log remains. The initial GPU probe exposed offscreen-release navigation; explicit scroll
+synchronization and release visibility guards fixed it without relaxing the
+no-navigation assertion. The shared test now preserves native tooltip-URL AX
+naming and checks two native Labels separately from the native focus-ring node.
+Migrated rows disable that ring and use Rust focus drawing, including CPU
+fallback. Failed probe identities/logs remain. No dependency was added. No controlled speedup is claimed. Native row interaction/list/scroll
+and outer ownership, remaining forms/service UI, manual acceptance, profiling
+and release/license checks remain. [Evidence](benchmarks/rust-history-rows-checkpoint-2026-10-25.json).

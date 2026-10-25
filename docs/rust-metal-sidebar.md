@@ -1513,3 +1513,38 @@ No new dependency or rendering recipe was introduced, and no controlled speedup
 is claimed. Native result rows, action/status decisions, busy state, remaining
 forms/service panels/containers, manual platform acceptance, profiling and
 release/license checks remain open. [Evidence](benchmarks/rust-tools-form-checkpoint-2026-10-25.json).
+
+
+## History result presentation checkpoint
+
+History result title/date/URL text, hover backing and focus recipes now use Rust
+on the existing shared tools Metal underlay. Rows create no Label children or
+per-row drawables. Rust column layout preserves 60px rows and 4px spacing. The
+native 36px text lead, measured/capped primary width, 10px gap, tail title and
+middle date/URL elision remain; native font/time formatting and event/focus/AX
+nodes remain adapters. Native GURL/profile-bound posted navigation still opens
+a new tab and restores page focus. Views retains RowButton/Label/BoxLayout.
+CPU fallback consumes the same Rust recipe with font sizes, title/detail elision
+and focus drawing while the shared Metal underlay is absent.
+
+The collector admits migrated rows before native Button cutouts. Only projected
+visible rows enter the scene; other interactive controls remain holes. Paint,
+bounds, input, theme and scrolling schedule updates. Offscreen/hidden rows and
+widget hide cancel pending input. Shared tests seed real history, check Unicode
+and empty-title URL fallback, AX/row geometry and real Cocoa Space navigation.
+A Metal test uses 80 rows for scene/order/cutouts, culling/scroll, offscreen/hide
+press cancellation, rebuild, dark theme and profile isolation. The earlier
+shared-chrome test now requires actual scene row text and childlessness rather
+than the former native-row cutout. Other requirements remain.
+
+Tests passed: 24/19 critical and 161/120 regular Metal/Views, six explicit skips
+each, 233 Rust, 180 SDK plus raster, 66 clean-archive Python, GN/boundaries and
+final Ninja no-op. The initial bool/WeakPtr callback binding compile error was
+corrected with an explicit owner-check lambda; its log remains. The initial GPU probe exposed offscreen-release navigation; explicit scroll
+synchronization and release visibility guards fixed it without relaxing the
+no-navigation assertion. The shared test now preserves native tooltip-URL AX
+naming and checks two native Labels separately from the native focus-ring node.
+Migrated rows disable that ring and use Rust focus drawing, including CPU
+fallback. Failed probe identities/logs remain. No dependency was added. No controlled speedup is claimed. Native row interaction/list/scroll
+and outer ownership, remaining forms/service UI, manual acceptance, profiling
+and release/license checks remain. [Evidence](benchmarks/rust-history-rows-checkpoint-2026-10-25.json).
