@@ -1588,6 +1588,46 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, BrowsingHistoryPanelSearchOpen
   EXPECT_TRUE(shell->history_entries().empty());
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsFormHistoryAdmissionErrorRecoveryAndPageReset) {
+  ASSERT_TRUE(window_->Select("work"));
+  auto* shell=window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));
+  const auto profile=window_->workspaces().front().profile_id;
+  shell->OpenTools(3);
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));
+  // A service failure is a completed response; wrong query/limit/profile cannot
+  // replace it, even if those results contain otherwise valid rows.
+  shell->SetHistoryResults(u"",profile,200,{},false,true);
+  ASSERT_TRUE(shell->history_loaded());ASSERT_TRUE(shell->history_entries().empty());
+  const std::vector<BrowsingHistoryEntry> poison={{GURL("https://stale.test/"),u"Stale",base::Time::Now()}};
+  shell->SetHistoryResults(u"",profile,400,poison,true,false);
+  shell->SetHistoryResults(u"older",profile,200,poison,true,false);
+  shell->SetHistoryResults(u"","other-profile",200,poison,true,false);
+  EXPECT_TRUE(shell->history_loaded());EXPECT_TRUE(shell->history_entries().empty());
+  auto* field=shell->history_search();ASSERT_TRUE(field);
+  field->RequestFocus();field->SelectRange(gfx::Range(0,field->GetText().size()));
+  field->input_client()->InsertText(u"  Nowe 🦀 אבג  ",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
+  EXPECT_FALSE(shell->history_loaded());
+  shell->SetHistoryResults(u"",profile,200,poison,true,false);
+  EXPECT_FALSE(shell->history_loaded());EXPECT_TRUE(shell->history_entries().empty());
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));
+  shell->SetHistoryResults(u"Nowe 🦀 אבג",profile,200,
+      {{GURL("https://current.test/"),u"Current",base::Time::Now()}},false,false);
+  ASSERT_EQ(1u,shell->history_entries().size());EXPECT_EQ(u"Current",shell->history_entries()[0].title);
+  shell->OpenTools(0);EXPECT_FALSE(shell->history_visible());
+  shell->SetHistoryResults(u"Nowe 🦀 אבג",profile,200,poison,true,false);
+  EXPECT_FALSE(shell->history_loaded());EXPECT_TRUE(shell->history_entries().empty());
+  // Page clamping and reconstruction reset committed queries, matching Views.
+  shell->OpenTools(99);ASSERT_TRUE(shell->history_visible());
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));
+  EXPECT_TRUE(shell->history_search()->GetText().empty());
+  shell->SetHistoryResults(u"",profile,200,{},false,true);
+  shell->SetHistoryResults(u"Nowe 🦀 אבג",profile,200,poison,true,false);
+  EXPECT_TRUE(shell->history_entries().empty());EXPECT_TRUE(shell->history_loaded());
+  shell->OpenTools(-1);EXPECT_FALSE(shell->history_visible());
+  EXPECT_TRUE(shell->tools_selection());
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, BrowsingHistoryPaginationAndStaleSearch) {
   ASSERT_TRUE(window_->Select("work"));
   auto* shell = window_->shell();

@@ -56,6 +56,7 @@ class WorkspaceSwipeState;
 class ProfileFormState;
 class WorkspaceFormState;
 class PreferencesFormState;
+class ToolsFormState;
 class PreferenceChromeState;
 class ImportFormState;
 
@@ -213,7 +214,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void SetHistoryResults(std::u16string query, std::string profile_id, size_t limit,
       std::vector<BrowsingHistoryEntry> entries, bool more, bool error);
   bool history_visible() const;
-  bool history_loaded() const { return history_loaded_; }
+  bool history_loaded() const;
   views::View* history_results_view() const { return history_list_; }
   EditorControl* history_search() const { return history_search_; }
   views::View* history_period() const { return history_period_; }
@@ -476,6 +477,11 @@ class WorkspaceShell final : public ui::EventHandler,
   std::unique_ptr<views::ScrollView::ScopedScrollSynchronizer> metal_workspace_scroll_synchronizer_;
   base::CallbackListSubscription metal_scroll_subscription_;
   std::unique_ptr<views::ScrollView::ScopedScrollSynchronizer> metal_scroll_synchronizer_;
+  int ToolsPage() const;
+  bool ToolsRecording() const;
+  std::u16string ToolsHistoryQuery() const;
+  std::u16string ToolsTimelineQuery() const;
+  void ResetToolsForm();
   void RefreshTools();
   void RefreshTimelineItems();
   void RefreshToolsViewport();
@@ -510,6 +516,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::Button> history_more_ = nullptr;
   raw_ptr<views::Button> history_clear_ = nullptr;
   std::vector<BrowsingHistoryEntry> history_entries_;
+  // Views-only UI state; the opt-in backend reads/writes ToolsForm instead.
   size_t history_limit_ = 200;
   bool history_loaded_ = false;
   bool browsing_data_busy_ = false;
@@ -596,6 +603,7 @@ class WorkspaceShell final : public ui::EventHandler,
   bool ShowRustWorkspaceNotice(std::string workspace,std::string title);
   std::unique_ptr<WorkspaceFormState> workspace_form_;
   std::unique_ptr<PreferencesFormState> preferences_form_;
+  std::unique_ptr<ToolsFormState> tools_form_;
   std::unique_ptr<PreferenceChromeState> preferences_chrome_;
   std::unique_ptr<PreferenceChromeState> tools_chrome_;
   void ScheduleToolsChrome();

@@ -119,6 +119,12 @@ class WorkspaceFormState {
   rust::Box<sidebar::WorkspaceForm> form=sidebar::new_workspace_form();
 #endif
 };
+class ToolsFormState {
+ public:
+#if BUILDFLAG(IS_MAC)
+  rust::Box<sidebar::ToolsForm> form=sidebar::new_tools_form();
+#endif
+};
 class PreferencesFormState {
  public:
 #if BUILDFLAG(IS_MAC)
@@ -2995,7 +3001,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 
   // Workspace settings: profile and color live here, not in the sidebar.
 #if BUILDFLAG(IS_MAC)
-  if(metal_sidebar_)workspace_form_=std::make_unique<WorkspaceFormState>();
+  if(metal_sidebar_){workspace_form_=std::make_unique<WorkspaceFormState>();tools_form_=std::make_unique<ToolsFormState>();}
 #endif
   std::array<std::u16string,17> workspace_copy={u"Nazwa przestrzeni",u"Np. Projekt lub Klient",u"Profil przeglądania",u"Profil przestrzeni",u"Wspólny profil = wspólne logowanie i cookies.\nZmiana profilu zamknie karty tej przestrzeni.",u"Zapisz poniżej nazwę i profil. Wygląd zapisuje się od razu.",u"Zamknij ustawienia przestrzeni",u"Wygląd · zapis automatyczny",u"Kolor przestrzeni",u"Kolor przestrzeni #RRGGBB",u"Emoji przestrzeni",u"Emoji przestrzeni",u"Inne… (⌃⌘Spacja)",u"Więcej opcji",u"Zarządzaj profilami",u"Importuj z przeglądarki…",u"Usuń przestrzeń…"};
 #if BUILDFLAG(IS_MAC)
@@ -3814,7 +3820,7 @@ void WorkspaceShell::Detach() {
   weak_factory_.InvalidateWeakPtrs();
   if (!widget_) return;
   accelerator_target_ = nullptr;
-  recording_shortcut_ = false;
+  ResetToolsForm();
   new_tab_button_ = nullptr;
   widget_->RemoveObserver(this);
   for (auto* panel : {sidebar_widget_.get(), address_widget_.get(), settings_widget_.get(), profiles_widget_.get(), import_widget_.get(), peek_widget_.get(), general_widget_.get(), tools_widget_.get()})
@@ -6367,7 +6373,7 @@ void WorkspaceShell::RefreshKeyRegistrations() {
     if (!panel) continue;
     panel->GetFocusManager()->UnregisterAccelerators(accelerator_target_);
     RegisterKeys(panel, accelerator_target_, tools_, panel != widget_, false);
-    if (recording_shortcut_ && panel == tools_widget_.get()) {
+    if (ToolsRecording() && panel == tools_widget_.get()) {
       for (int code = 1; code < 256; ++code) for (int bits = 1; bits < 16; ++bits) {
         const int mods = ((bits & 1) ? ui::EF_COMMAND_DOWN : 0) | ((bits & 2) ? ui::EF_CONTROL_DOWN : 0) |
             ((bits & 4) ? ui::EF_ALT_DOWN : 0) | ((bits & 8) ? ui::EF_SHIFT_DOWN : 0);
@@ -6389,7 +6395,7 @@ bool WorkspaceShell::SetShortcut(std::string id, std::string chord) {
   RefreshKeyRegistrations(); SaveTools(); return true;
 }
 bool WorkspaceShell::CaptureShortcut(const ui::Accelerator& accelerator) {
-  if (!recording_shortcut_ || !tools_widget_ || !tools_widget_->IsVisible()) return false;
+  if (!ToolsRecording() || !tools_widget_ || !tools_widget_->IsVisible()) return false;
   if (accelerator.key_code() == ui::VKEY_ESCAPE) {
     SetShortcutRecording(false);
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(&WorkspaceShell::RefreshKeyRegistrations, weak_factory_.GetWeakPtr()));
@@ -6467,9 +6473,49 @@ void WorkspaceShell::SaveTools() {
     --shell->pending_writes_; if (!ok && shell->tools_status_) SetPanelText(shell->tools_status_,u"Nie udało się zapisać ustawień na dysku.");
   }, weak_factory_.GetWeakPtr()));
 }
+int WorkspaceShell::ToolsPage() const {
+#if BUILDFLAG(IS_MAC)
+  if(tools_form_)return static_cast<int>(tools_form_->form->tools_page());
+#endif
+  return tools_page_;
+}
+bool WorkspaceShell::ToolsRecording() const {
+#if BUILDFLAG(IS_MAC)
+  if(tools_form_)return tools_form_->form->tools_recording();
+#endif
+  return recording_shortcut_;
+}
+bool WorkspaceShell::history_loaded() const {
+#if BUILDFLAG(IS_MAC)
+  if(tools_form_)return tools_form_->form->tools_history_loaded();
+#endif
+  return history_loaded_;
+}
+std::u16string WorkspaceShell::ToolsHistoryQuery() const {
+#if BUILDFLAG(IS_MAC)
+  if(tools_form_){const auto units=tools_form_->form->tools_history_query();return std::u16string(units.begin(),units.end());}
+#endif
+  return history_query_;
+}
+std::u16string WorkspaceShell::ToolsTimelineQuery() const {
+#if BUILDFLAG(IS_MAC)
+  if(tools_form_){const auto units=tools_form_->form->tools_timeline_query();return std::u16string(units.begin(),units.end());}
+#endif
+  return timeline_query_;
+}
+void WorkspaceShell::ResetToolsForm() {
+#if BUILDFLAG(IS_MAC)
+  if(tools_form_){tools_form_->form->tools_reset();return;}
+#endif
+  history_query_.clear();timeline_query_.clear();history_loaded_=false;recording_shortcut_=false;
+}
 void WorkspaceShell::OpenTools(int page) {
   if (!widget_ || !tools_widget_) return;
-  CloseOverlays(true); tools_page_ = std::clamp(page, 0, 3);
+  CloseOverlays(true);
+#if BUILDFLAG(IS_MAC)
+  if(tools_form_)tools_form_->form->tools_select(std::clamp(page,0,3));else
+#endif
+  tools_page_=std::clamp(page,0,3);
   RefreshTools(); RefreshKeyRegistrations(); PositionPanels(); ApplyTheme();
   tools_widget_->LayoutRootViewIfNecessary();
   tools_widget_->Show(); tools_widget_->Activate(); tools_widget_->ClearNativeFocus();
@@ -6478,23 +6524,28 @@ void WorkspaceShell::OpenTools(int page) {
   else if (tools_picker_) tools_picker_->RequestFocus();
 }
 bool WorkspaceShell::history_visible() const {
-  return tools_page_ == 3 && tools_widget_ && tools_widget_->IsVisible();
+  return ToolsPage() == 3 && tools_widget_ && tools_widget_->IsVisible();
 }
 void WorkspaceShell::RefreshHistory(bool more) {
   history_timer_.Stop();
   if (!history_visible() || !history_search_ || !callbacks_.query_history) return;
-  history_limit_ = more ? history_limit_ + 200 : 200;
-  history_loaded_ = false;
+  size_t limit;
+#if BUILDFLAG(IS_MAC)
+  if(tools_form_)limit=tools_form_->form->tools_history_request(more);else
+#endif
+  {history_limit_=more?history_limit_+200:200;history_loaded_=false;limit=history_limit_;}
   history_more_->SetEnabled(false);
   SetPanelText(tools_status_,u"Odczytywanie historii…");
-  callbacks_.query_history.Run(history_query_,history_limit_);
+  callbacks_.query_history.Run(ToolsHistoryQuery(),limit);
 }
 void WorkspaceShell::SetHistoryResults(std::u16string query, std::string profile_id, size_t limit,
     std::vector<BrowsingHistoryEntry> entries, bool more, bool error) {
-  if (!history_visible() || !history_search_ || profile_id != state_.profile_id ||
-      history_query_ != query || limit != history_limit_) return;
+  if (!history_visible() || !history_search_ || profile_id != state_.profile_id) return;
+#if BUILDFLAG(IS_MAC)
+  if(tools_form_){if(!tools_form_->form->tools_history_accept(rust::Slice<const uint16_t>(reinterpret_cast<const uint16_t*>(query.data()),query.size()),limit))return;}else
+#endif
+  {if(history_query_!=query||limit!=history_limit_)return;history_loaded_=true;}
   history_entries_ = std::move(entries);
-  history_loaded_ = true;
   history_list_->RemoveAllChildViews();
   if (history_entries_.empty()) {
     AddToolsCopy(history_list_,error ? u"Nie udało się odczytać historii." :
@@ -6595,9 +6646,9 @@ void WorkspaceShell::SetHistoryMoreVisible(bool visible){
 }
 void WorkspaceShell::RefreshToolsViewport(){ScheduleToolsChrome();if(tools_body_)RefreshChoiceViewports(tools_body_);}
 void WorkspaceShell::RefreshTimelineItems() {
-  if (tools_page_ != 0 || !tools_picker_) return;
+  if (ToolsPage() != 0 || !tools_picker_) return;
   const auto state = callbacks_.time_machine ? callbacks_.time_machine.Run() : TimeMachineState();
-  const auto& query = timeline_query_;
+  const auto query = ToolsTimelineQuery();
   auto fill = [&](const auto& items, views::View* picker, std::vector<std::string>& ids) {
     ids.clear(); std::vector<ui::SimpleComboboxModel::Item> labels;
     for (const auto& item : items) if (query.empty() || base::i18n::ToLower(item.title + u" " + item.detail).find(query) != std::u16string::npos) {
@@ -6625,21 +6676,20 @@ void WorkspaceShell::RefreshTools() {
   SetShortcutRecording(false);
   for(auto* field:{snapshot_name_.get(),timeline_filter_.get(),shortcut_chord_.get(),provider_name_.get(),provider_keyword_.get(),provider_url_.get(),history_search_.get()})
     if(field)field->SetCallbacks({},{});
-  history_query_.clear();timeline_query_.clear();
+  ResetToolsForm();
   history_timer_.Stop();
   history_search_ = nullptr; history_period_ = nullptr; history_list_ = nullptr;
-  history_more_ = nullptr; history_clear_ = nullptr; history_entries_.clear(); history_loaded_ = false;
-  recording_shortcut_ = false;
+  history_more_ = nullptr; history_clear_ = nullptr; history_entries_.clear();
   snapshot_name_ = nullptr; timeline_filter_ = nullptr; shortcut_chord_ = nullptr;
   provider_name_ = nullptr; provider_keyword_ = nullptr; provider_url_ = nullptr; tools_picker_ = nullptr; closed_picker_ = nullptr;
   tools_body_->RemoveAllChildViews();
-  std::u16string context=tools_page_==0?state_.workspace_name:std::u16string();
-  if(tools_page_==3)for(const auto& profile:state_.profiles)if(profile.id==state_.profile_id)context=base::UTF8ToUTF16(profile.name);
+  std::u16string context=ToolsPage()==0?state_.workspace_name:std::u16string();
+  if(ToolsPage()==3)for(const auto& profile:state_.profiles)if(profile.id==state_.profile_id)context=base::UTF8ToUTF16(profile.name);
   std::u16string form_title,form_intro,form_tail,form_status;
   std::vector<std::u16string> fields,pickers,headings,actions,form_choices;
 #if BUILDFLAG(IS_MAC)
   if(workspace_form_){
-    auto data=sidebar::tools_copy(tools_page_,base::UTF16ToUTF8(context));
+    auto data=sidebar::tools_copy(ToolsPage(),base::UTF16ToUTF8(context));
     auto strings=[](const auto& input){std::vector<std::u16string> out;for(const auto& value:input)out.push_back(base::UTF8ToUTF16(std::string(value)));return out;};
     form_title=base::UTF8ToUTF16(std::string(data.title));form_intro=base::UTF8ToUTF16(std::string(data.intro));form_tail=base::UTF8ToUTF16(std::string(data.tail));form_status=base::UTF8ToUTF16(std::string(data.initial_status));
     fields=strings(data.fields);pickers=strings(data.pickers);headings=strings(data.headings);actions=strings(data.actions);form_choices=strings(data.choices);
@@ -6671,7 +6721,7 @@ void WorkspaceShell::RefreshTools() {
     return tools_body_;
   };
   auto button = [&](std::u16string_view native, int action) {
-    const size_t index=tools_page_==0?action-1:tools_page_==1?action-10:action-20;
+    const size_t index=ToolsPage()==0?action-1:ToolsPage()==1?action-10:action-20;
     auto title=text(actions,index,native);
     return AddAction(action_parent(),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, int action) {
       if (shell) shell->PostToolsAction(action);
@@ -6688,7 +6738,7 @@ void WorkspaceShell::RefreshTools() {
     auto* control = parent->AddChildView(std::make_unique<views::Combobox>(std::make_unique<ui::SimpleComboboxModel>(items)));
     control->SetTooltipTextAndAccessibleName(name); control->SetSelectedIndex(0); return control;
   };
-  if (tools_page_ == 0) {
+  if (ToolsPage() == 0) {
     SetPanelText(tools_title_,workspace_form_?form_title:u"Time Machine · " + state_.workspace_name);
     hint(workspace_form_?form_intro:u"Snapshot zapisuje karty, foldery i Split View w tej przestrzeni. Przywrócenie przeładuje strony; formularze i historia Wstecz nie są częścią snapshotu. Poprzedni układ otrzyma punkt przywracania.");
     snapshot_name_ = input(text(fields,0,u"Nazwa snapshotu, np. Research przed deployem"));
@@ -6705,7 +6755,7 @@ void WorkspaceShell::RefreshTools() {
     const auto timeline = callbacks_.time_machine ? callbacks_.time_machine.Run() : TimeMachineState();
     for (const auto& item : timeline.sleeping) hint(item.title + u" · " + item.detail);
     RefreshTimelineItems();
-  } else if (tools_page_ == 1) {
+  } else if (ToolsPage() == 1) {
     SetPanelText(tools_title_,workspace_form_?form_title:u"Skróty klawiszowe");
     hint(workspace_form_?form_intro:u"Schemat inspirowany Arc. Wybierz akcję, nagraj kombinację lub wpisz np. Cmd+Shift+J. Puste pole wyłącza skrót. Escape, skróty edycji tekstu i systemowe pozostają zarezerwowane.");
     std::vector<std::u16string> choices;
@@ -6722,7 +6772,7 @@ void WorkspaceShell::RefreshTools() {
     }, weak));
     button(u"Nagraj kombinację…", 10); button(u"Zapisz skrót", 11);
     button(u"Wyłącz wybrany skrót", 12); button(u"Przywróć schemat Arc", 13);
-  } else if (tools_page_ == 2) {
+  } else if (ToolsPage() == 2) {
     SetPanelText(tools_title_,workspace_form_?form_title:u"Wyszukiwarki i prefiksy");
     hint(workspace_form_?form_intro:u"W pasku adresu wpisz prefiks i zapytanie, np. g koty lub w Warszawa. Szablon musi być adresem HTTP(S) z jednym znacznikiem {query}. Zapytania są kodowane automatycznie.");
     std::vector<std::u16string> provider_choices{workspace_form_?std::move(form_choices.at(0)):u"Dodaj nową wyszukiwarkę…"};
@@ -6738,7 +6788,7 @@ void WorkspaceShell::RefreshTools() {
     }, weak));
     button(u"Zapisz wyszukiwarkę", 20); button(u"Ustaw jako domyślną", 21); button(u"Usuń wyszukiwarkę", 22);
   }
-  if (tools_page_ == 3) {
+  if (ToolsPage() == 3) {
     SetPanelText(tools_title_,workspace_form_?form_title:u"Historia przeglądania");
     hint(workspace_form_?form_intro:u"Profil: "+context);
     history_search_ = input(text(fields,0,u"Szukaj w historii"));
@@ -6769,6 +6819,9 @@ void WorkspaceShell::PostToolsAction(int action) {
 }
 void WorkspaceShell::SetShortcutRecording(bool recording) {
   if(recording&&shortcut_chord_)shortcut_chord_->ClearCompositionText();
+#if BUILDFLAG(IS_MAC)
+  if(tools_form_)tools_form_->form->tools_record(recording);else
+#endif
   recording_shortcut_=recording;
   if(shortcut_chord_)shortcut_chord_->SetReadOnly(recording);
 }
@@ -6779,7 +6832,7 @@ void WorkspaceShell::ToolsAction(int action) {
     for(auto* field:{provider_name_.get(),provider_keyword_.get(),provider_url_.get()})if(field&&field->IsIMEComposing())return;
   if((action==11||action==12)&&shortcut_chord_&&shortcut_chord_->IsIMEComposing())return;
   bool ok = false;
-  if (action != 10 && recording_shortcut_) { SetShortcutRecording(false); RefreshKeyRegistrations(); }
+  if (action != 10 && ToolsRecording()) { SetShortcutRecording(false); RefreshKeyRegistrations(); }
   const size_t index = tools_picker_ ? PickerIndex(tools_picker_).value_or(0) : 0;
   if (action == 1 && snapshot_name_) {
     ok = callbacks_.save_snapshot && callbacks_.save_snapshot.Run(base::UTF16ToUTF8(snapshot_name_->GetText()), false);
@@ -6806,7 +6859,7 @@ void WorkspaceShell::ToolsAction(int action) {
     if (action == 22) ok = RemoveSearchProvider(previous);
   }
   if (ok) { RefreshTools(); SetPanelText(tools_status_,callbacks_.operation_pending && callbacks_.operation_pending.Run() ? u"Oczekiwanie na zgodę na opuszczenie strony…" : u"Gotowe. Zmiany zostały zastosowane."); }
-  else SetPanelText(tools_status_,tools_page_ == 1 ? u"Nieprawidłowa lub zajęta kombinacja. Zmień ją albo wyłącz skrót drugiej akcji." : tools_page_ == 2 ? u"Sprawdź unikalny prefiks, nazwę i adres z {query}. Musi pozostać co najmniej jedna wyszukiwarka." : u"Nie można wykonać operacji. Podaj nazwę, wybierz pozycję zgodną z profilem lub zostaw drugą przestrzeń do przełączenia.");
+  else SetPanelText(tools_status_,ToolsPage() == 1 ? u"Nieprawidłowa lub zajęta kombinacja. Zmień ją albo wyłącz skrót drugiej akcji." : ToolsPage() == 2 ? u"Sprawdź unikalny prefiks, nazwę i adres z {query}. Musi pozostać co najmniej jedna wyszukiwarka." : u"Nie można wykonać operacji. Podaj nazwę, wybierz pozycję zgodną z profilem lub zostaw drugą przestrzeń do przełączenia.");
 }
 
 void WorkspaceShell::SetOperationStatus(std::u16string text) {
@@ -7534,14 +7587,23 @@ void WorkspaceShell::RunSuggestion(size_t index) {
 void WorkspaceShell::ToolsEditorEdited(EditorControl* sender) {
   if(!tools_widget_||!tools_widget_->IsVisible()||sender->IsIMEComposing())return;
   if(sender==history_search_){
-    history_query_=base::TrimWhitespace(sender->GetText(),base::TRIM_ALL);
-    history_loaded_=false;history_entries_.clear();
+    const auto query=base::TrimWhitespace(sender->GetText(),base::TRIM_ALL);
+#if BUILDFLAG(IS_MAC)
+    if(tools_form_){rust::Vec<uint16_t> units;for(char16_t unit:query)units.push_back(unit);tools_form_->form->tools_history_edit(std::move(units));}else
+#endif
+    {history_query_=query;history_loaded_=false;}
+    history_entries_.clear();
     if(history_list_)history_list_->RemoveAllChildViews();
     SetPanelText(tools_status_,u"Wyszukiwanie historii…");
     if(history_more_)history_more_->SetEnabled(false);
     history_timer_.Start(FROM_HERE,base::Milliseconds(150),base::BindOnce(&WorkspaceShell::RefreshHistory,weak_factory_.GetWeakPtr(),false));
   }else if(sender==timeline_filter_){
-    timeline_query_=base::i18n::ToLower(sender->GetText());RefreshTimelineItems();
+    const auto query=base::i18n::ToLower(sender->GetText());
+#if BUILDFLAG(IS_MAC)
+    if(tools_form_){rust::Vec<uint16_t> units;for(char16_t unit:query)units.push_back(unit);tools_form_->form->tools_timeline_edit(std::move(units));}else
+#endif
+    timeline_query_=query;
+    RefreshTimelineItems();
   }
 }
 void WorkspaceShell::AddressEdited() {
@@ -7567,7 +7629,7 @@ void WorkspaceShell::SetSearchResults(std::u16string query, std::string profile_
 }
 bool WorkspaceShell::HandleToolsEditorKey(EditorControl* sender,const ui::KeyEvent& event) {
   if(!tools_widget_||!tools_widget_->IsVisible()||!sender->view()->GetEnabledInViewsSubtree()||event.type()!=ui::EventType::kKeyPressed)return false;
-  if(sender==shortcut_chord_&&recording_shortcut_)
+  if(sender==shortcut_chord_&&ToolsRecording())
     return CaptureShortcut(ui::Accelerator(event.key_code(),ui::Accelerator::MaskOutKeyEventFlags(event.flags())));
   if(sender->IsIMEComposing())return false;
   if(event.key_code()==ui::VKEY_ESCAPE){CloseOverlays();RestorePageFocus();return true;}

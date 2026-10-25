@@ -147,6 +147,20 @@ mod ffi {
 
         fn tools_copy(page: usize, context: &str) -> ToolsCopy;
         fn tools_clear_label(busy: bool) -> String;
+        type ToolsForm;
+        fn new_tools_form() -> Box<ToolsForm>;
+        fn tools_select(self: &mut ToolsForm, page: usize);
+        fn tools_page(self: &ToolsForm) -> usize;
+        fn tools_reset(self: &mut ToolsForm);
+        fn tools_record(self: &mut ToolsForm, recording: bool);
+        fn tools_recording(self: &ToolsForm) -> bool;
+        fn tools_history_edit(self: &mut ToolsForm, query: Vec<u16>);
+        fn tools_history_request(self: &mut ToolsForm, more: bool) -> usize;
+        fn tools_history_query(self: &ToolsForm) -> Vec<u16>;
+        fn tools_history_accept(self: &mut ToolsForm, query: &[u16], limit: usize) -> bool;
+        fn tools_history_loaded(self: &ToolsForm) -> bool;
+        fn tools_timeline_edit(self: &mut ToolsForm, query: Vec<u16>);
+        fn tools_timeline_query(self: &ToolsForm) -> Vec<u16>;
         type PreferencesForm;
         fn new_preferences_form(categories: usize) -> Box<PreferencesForm>;
         fn preference_select(self: &mut PreferencesForm, category: usize) -> bool;
@@ -591,6 +605,49 @@ fn tools_copy(page:usize,context:&str)->ffi::ToolsCopy{
     }
 }
 fn tools_clear_label(busy:bool)->String{if busy{"Czyszczenie…"}else{"Wyczyść historię…"}.into()}
+
+// UI state only. Native code supplies committed, normalized UTF-16 and retains
+// visibility/profile authorization, timers, IME and all browser-service calls.
+// Reconstructing a page clears its transient query/recording state. The history
+// limit is reset by a fresh request, as in Views, not by page reconstruction.
+pub struct ToolsForm {
+    page: usize,
+    recording: bool,
+    history_query: Vec<u16>,
+    timeline_query: Vec<u16>,
+    history_limit: usize,
+    history_loaded: bool,
+}
+fn new_tools_form() -> Box<ToolsForm> {
+    Box::new(ToolsForm { page: 0, recording: false, history_query: vec![],
+        timeline_query: vec![], history_limit: 200, history_loaded: false })
+}
+impl ToolsForm {
+    fn tools_select(&mut self, page: usize) { self.page = page.min(3); }
+    fn tools_page(&self) -> usize { self.page }
+    fn tools_reset(&mut self) {
+        self.recording = false;
+        self.history_query.clear(); self.timeline_query.clear();
+        self.history_loaded = false;
+    }
+    fn tools_record(&mut self, recording: bool) { self.recording = recording; }
+    fn tools_recording(&self) -> bool { self.recording }
+    fn tools_history_edit(&mut self, query: Vec<u16>) {
+        self.history_query = query; self.history_loaded = false;
+    }
+    fn tools_history_request(&mut self, more: bool) -> usize {
+        self.history_limit = if more { self.history_limit.saturating_add(200) } else { 200 };
+        self.history_loaded = false; self.history_limit
+    }
+    fn tools_history_query(&self) -> Vec<u16> { self.history_query.clone() }
+    fn tools_history_accept(&mut self, query: &[u16], limit: usize) -> bool {
+        if query != self.history_query || limit != self.history_limit { return false; }
+        self.history_loaded = true; true
+    }
+    fn tools_history_loaded(&self) -> bool { self.history_loaded }
+    fn tools_timeline_edit(&mut self, query: Vec<u16>) { self.timeline_query = query; }
+    fn tools_timeline_query(&self) -> Vec<u16> { self.timeline_query.clone() }
+}
 
 // Query and keywords arrive normalized by the native Unicode/whitespace service.
 // Preserve UTF-16 units, including partial surrogates, exactly as native find().
@@ -1924,6 +1981,47 @@ mod tests {
         let mut f=new_preferences_form(1);let mut rows=vec![ffi::PreferenceRow{category:0,keywords:vec![0xd83e,0xdd80,0xfffd]}];
         assert!(f.preference_filter(vec![0xd83e],&rows).any);assert!(!f.preference_filter(vec![0xd800],&rows).any);assert!(!f.preference_filter(vec![1,2,3,4],&rows).any);rows[0].keywords="nowy wyjątek".encode_utf16().collect();assert!(f.preference_filter("nowy".encode_utf16().collect(),&rows).any);
         let mut empty=new_preferences_form(0);assert!(!empty.preference_select(0));assert!(!empty.preference_filter(vec![],&rows).any);
+    }
+    #[test] fn tools_form_committed_queries_paging_and_stale_results() {
+        let mut form = new_tools_form(); form.tools_select(3);
+        let query = vec![0x41, 0xd83e, 0xdd80, 0xd800, 0x5d0];
+        form.tools_history_edit(query.clone());
+        assert_eq!(form.tools_history_query(), query);
+        assert_eq!(form.tools_history_request(false), 200);
+        assert!(!form.tools_history_accept(&[0x41], 200));
+        assert!(!form.tools_history_accept(&query, 400));
+        assert!(!form.tools_history_loaded());
+        assert!(form.tools_history_accept(&query, 200));
+        assert!(form.tools_history_loaded());
+        assert_eq!(form.tools_history_request(true), 400);
+        assert!(!form.tools_history_loaded());
+        assert!(!form.tools_history_accept(&query, 200));
+        assert!(form.tools_history_accept(&query, 400));
+        form.tools_history_edit(vec![]);
+        assert!(!form.tools_history_loaded());
+        assert!(!form.tools_history_accept(&query, 400));
+        assert_eq!(form.tools_history_request(false), 200);
+        assert!(form.tools_history_accept(&[], 200));
+    }
+    #[test] fn tools_form_rebuild_clears_transient_state_and_preserves_page() {
+        let mut form = new_tools_form(); form.tools_select(1); form.tools_record(true);
+        form.tools_history_edit(vec![0xd800]); form.tools_timeline_edit(vec![0x5d0, 0xdfff]);
+        assert_eq!(form.tools_timeline_query(), vec![0x5d0, 0xdfff]);
+        assert_eq!(form.tools_history_request(true), 400);
+        form.tools_reset();
+        assert_eq!(form.tools_page(), 1); assert!(!form.tools_recording());
+        assert!(form.tools_history_query().is_empty()); assert!(form.tools_timeline_query().is_empty());
+        assert!(!form.tools_history_loaded());
+        assert!(!form.tools_history_accept(&[], 200));
+        assert_eq!(form.tools_history_request(false), 200);
+        form.tools_select(usize::MAX); assert_eq!(form.tools_page(), 3);
+        form.tools_select(0); assert_eq!(form.tools_page(), 0);
+    }
+    #[test] fn tools_form_pagination_saturates_instead_of_wrapping() {
+        let mut form = new_tools_form(); form.history_limit = usize::MAX - 100;
+        assert_eq!(form.tools_history_request(true), usize::MAX);
+        assert_eq!(form.tools_history_request(true), usize::MAX);
+        assert_eq!(form.tools_history_request(false), 200);
     }
     #[test] fn tools_copy_display_context_and_adapter_roles_are_complete() {
         let copy=tools_copy(0,"Praca 🦀 אבג");assert_eq!(copy.title,"Time Machine · Praca 🦀 אבג");assert_eq!(copy.fields.len(),2);assert_eq!(copy.pickers.len(),2);assert_eq!(copy.headings.len(),2);assert_eq!(copy.actions.len(),5);assert!(copy.tail.contains("Niezapisane formularze"));
