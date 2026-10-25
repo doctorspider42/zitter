@@ -8,44 +8,55 @@ milestones to `origin/main` as they land. The opt-in switch remains
 
 ## Current execution policy
 
-UI source `651bc58cc631dda054d6209ef7c1bdf7e00b9747`, 2026-10-24, passed the full compiled
-regression inventory with one launcher job, no retries and temporary profiles:
+UI source `337968c1358966e3b50fa30e2358339221713b46`, 2026-10-25, passed the full compiled
+regression inventory with one launcher job, no automatic retries and temporary
+profiles:
 
 | Backend | Regular matrix passed | Regular skips | Failed / crashed |
 | --- | ---: | ---: | ---: |
-| Rust + Metal | 140 | 6 | 0 |
-| Views | 107 | 6 | 0 |
+| Rust + Metal | 167 | 6 | 0 |
+| Views | 125 | 6 | 0 |
 
-The inventory contains 146 cases; Views excludes 33 dedicated Metal cases
-(113 applicable cases). The four opt-in performance scenarios then passed
-separately on each backend with their default 30 measured trials. **Combined
-coverage is 144 Metal / 111 Views passes**, with two exclusions per backend:
-real-user Arc import and the interactive manual window. Metal API validation
-remained enabled. These samples are execution coverage, not controlled
-CPU/GPU/drawable-presentation comparisons.
+The inventory contains 173 cases; Views excludes 42 dedicated Metal cases
+(131 applicable cases). Four opt-in performance scenarios, real-user Arc import
+and the interactive manual window are skipped per backend. Optional scenarios
+remain earlier-checkpoint evidence, not current-commit passes. Metal API
+validation remained enabled. No controlled CPU/GPU/presentation or memory
+improvement is established.
 
-The selector/editor gate passed **37 Metal / 34 Views**. Fresh checks passed:
-**216 Rust tests**, **180 SDK font/direction cases plus raster**, **66 Python
-from a clean archive**, scoped GN/boundaries and optimized compilation. The live
-checkout passed 68 Python cases, including two concurrent cases outside this UI
-commit. The 61 editor model cases are included in the Rust suite; the separate
-standalone model run was not repeated. Final Ninja reported no work to do.
-[Results, commands, source/binary identities and retained failures](benchmarks/rust-preference-selectors-checkpoint-2026-10-24.json).
+The dialog/beforeunload and shared static-copy gate passed **17 Metal / 14 Views**.
+Checks passed **243 Rust tests**, **180 SDK font/direction cases plus raster**,
+**66 clean-archive Python tests**, scoped GN/boundaries and optimized compilation.
+The live checkout passed 68 Python tests, including two concurrent cases outside
+this UI commit. Final Ninja reported no work to do.
+[Source/binary identities, commands and results](benchmarks/rust-page-dialog-actions-checkpoint-2026-10-25.json).
 
-Eleven preference selectors now use Rust selection/prefix/menu-token state and
-layout/display lists with Metal and matching CPU fallback. Native input, window,
-focus, typography, AX, popup menus and browser preference/storage services remain
-adapters. A blank choice remains distinct from the first preset. Actual Cocoa
-input covers unsupported font values and profile scope; site-policy rebuilding,
-clear-data confirmation admission, provider identity, hide/reopen and scrolling
-are also covered.
+Rust/Metal now owns page-dialog action drawing/input and linked/trailing button
+row allocation, alongside the prior copy/body text/layout. Alert, confirm, prompt
+and beforeunload action controls have no MdTextButton or native/hidden Label in the
+opt-in backend. A single group canvas draws the actions, with the same Rust
+recipe available for CPU fallback. Native theme/font metrics, row insets/spacing,
+platform order, focus/AX and input-protection services remain adapters.
 
-The checkpoint fixes two discovered native boundaries: a Views Combobox key
-CHECK for a nonempty model with no selection, and stale preferences scroll
-content height after category/search changes. Native compositor scrolling waits
-for the resized layout's successful presentation in the fixture. Earlier failed
-runs are retained in the report. No normal installed app/profile was changed,
-and no bundle was packaged or signed.
+The page-dialog client bypasses Chromium's private native-button allocator and
+retains native ClientView contents adoption, Escape, protection, window theming
+and observer teardown. Native DialogDelegate owns modal/close semantics and
+metadata. Actual platform defaults register Return on the Rust nodes; macOS
+beforeunload's stored Cancel default still does not make Return activate Cancel.
+Prompt IME/generation/frame/profile authorization is unchanged. Native model
+updates rebuild the Rust row, releasing old canvases/weak callbacks/accelerators
+and restoring a matching enabled focused control. Native GetOkButton/CancelButton
+are null for this custom client; PageDialogs has an explicit test adapter.
+
+The new shared browser case compares native button and row preferred metrics,
+order and AX/default state for all four roles, checks childless Rust controls,
+actual Metal caption visibility and label/enable updates, rejects an injected
+blocked activation, then uses real Cocoa mouse and Space input. Existing real
+Return/Escape, prompt IME, navigation, CloseNow and beforeunload tests also pass.
+Two Rust cases cover linking, long-label limits, trailing placement and narrow
+clipping. The title/frame, modal/native containers and wider native ownership,
+manual platform acceptance, profiling and release/license checks remain open.
+Normal installed apps/profiles were untouched; no bundle was signed.
 
 ## How to read progress
 
@@ -90,7 +101,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Import source selector | Rust selected state, prefix timeout/search, popup tokens, macOS key policy and closed-control geometry/scene; Metal canvas; native menu/IME/focus/AX/event adapters (automated UI checked; manual acceptance pending) | Verify popup lifecycle, typeahead, keyboard and VoiceOver, disabled/hide/capture, RTL/theme/scale and fallback; migrate remaining native adapters |
 | Workspace/managed profile selectors | Rust stable-ID reconciliation, prefix/menu state and scene; two Metal canvases; native popup/IME/focus/AX/event and font/color adapters (automated UI checked; manual acceptance pending) | Verify profile CRUD/assignment persistence, renamed/reordered/removed choices, stale menu callbacks, native popup/IME/AX, clipping and theme/scale/RTL; migrate remaining native adapters |
 | Time Machine | Rust/Metal name/filter editors, stable-ID snapshot/closed selectors and five actions, Rust command/IME admission and outcome presentation, page/filter state, page copy and shared Metal header/body/status text; native snapshot/restore services and remaining Views controls | Migrate remaining form/status decisions, rows and container ownership; preserve previews, validation, backups and restoration |
-| Page prompt, confirm/alert and beforeunload | Rust/Metal prompt editor and shared profile/message body text with Rust copy/metadata and body layout; native origin/profile/frame, window/title/buttons, generation-scoped callbacks and platform default-key policy | Migrate remaining native title/buttons/modal and event/scroll/AX/window ownership; retain request identity, cancellation and beforeunload safety |
+| Page prompt, confirm/alert and beforeunload | Rust/Metal prompt editor, shared body text/copy/layout, action drawing/input and linked/trailing row layout; native origin/profile/frame, title/window/modal, event/focus/AX/input-protection and generation-scoped callbacks | Migrate remaining title/frame/modal and event/scroll/AX/window ownership; retain native request identity, cancellation and beforeunload safety |
 | Workspace/profile name, color/emoji, folder-name and address/palette editing | Rust UTF-16 state/history/IME, viewport and scene; CoreText geometry, Metal and CPU fallback; one native input/focus/AX/menu/clipboard/drag/dictionary adapter | Shared kill buffer, word drag/reversal and stationary edge scrolling verified; broaden actual Cocoa multi-click/vertical-pointer/IME/VoiceOver/complex bidi/scale/menu acceptance; preferences/tools/page-prompt editors are also migrated; inherited-browser fields and remaining controls still need inventory |
 | Keyboard accessibility, VoiceOver, focus and tooltips | Native Views nodes | Explicit native accessibility adapter for Rust controls; no duplicate nodes |
 

@@ -1651,3 +1651,24 @@ final Ninja no-op. No dependency or domain operation changed; no controlled
 speedup is claimed. Native title/buttons/modal container ownership, other forms/
 panels, native interaction/window/AX/scroll, manual acceptance, profiling and
 release/license checks remain. [Evidence](benchmarks/rust-page-dialog-scene-checkpoint-2026-10-25.json).
+
+## Page-dialog action checkpoint
+
+Page alert/confirm/prompt/beforeunload actions now use childless Rust/Metal
+controls and Rust linked/trailing row placement. The page-dialog client replaces
+the private native-button allocator; native font/theme/order/inset, focus/AX,
+input protection, Escape and modal/close services remain explicit adapters.
+Native GetOkButton/GetCancelButton are null for this custom client. Platform
+default Return registration and prompt IME/generation authorization remain.
+Dynamic label/enabled model changes rebuild the row and restore matching focus.
+The native title/frame, modal containers and wider Views ownership remain open.
+
+The full checkpoint passed **167 Metal / 125 Views**, six skips each, with
+Metal validation and zero failures. The critical gate passed **17 / 14**;
+**243 Rust**, **180 SDK font/direction plus raster**, **66 clean-archive Python**,
+scoped GN/boundaries and optimized compilation passed. The new shared browser
+case checks native button/row size oracles, order/AX/default state, childlessness,
+Metal captions, model updates, blocked-input protection and actual Cocoa mouse/
+Space activation. Existing Return/Escape/IME/beforeunload/lifetime cases pass.
+Optional performance cases were not rerun; no controlled speedup is claimed.
+[Evidence](benchmarks/rust-page-dialog-actions-checkpoint-2026-10-25.json).
