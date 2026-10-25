@@ -1836,15 +1836,16 @@ END_METADATA
 // and destroys its CLIENT_OWNS_WIDGET widget before deleting the delegate.
 class SceneModalDialog final : public views::BubbleDialogDelegate {
  public:
-  SceneModalDialog(std::unique_ptr<views::View> body,bool control)
+  SceneModalDialog(std::unique_ptr<views::View> body,bool control,bool modal=true)
       :views::BubbleDialogDelegate(views::BubbleAnchor(),views::BubbleBorder::Arrow::NONE,views::BubbleBorder::DIALOG_SHADOW,true){
-    SetModalType(ui::mojom::ModalType::kWindow);SetShowCloseButton(false);SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
+    SetModalType(modal?ui::mojom::ModalType::kWindow:ui::mojom::ModalType::kNone);SetShowCloseButton(!modal);if(!modal)set_close_on_deactivate(false);SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
     auto* provider=views::LayoutProvider::Get();set_fixed_width(provider->GetDistanceMetric(views::DISTANCE_MODAL_DIALOG_PREFERRED_WIDTH));
     const auto sides=provider->GetInsetsMetric(views::INSETS_DIALOG);
-    // Preserve the 2px scroll-content workaround of the original model host.
-    constexpr int scroll_margin=2;
+    // Modal bodies retain the native model host's 2px scroll workaround.
+    const int scroll_margin=modal?2:0;
     auto contents=std::make_unique<views::View>();SetSidebarPanelLayout(contents.get(),true,gfx::Insets::TLBR(scroll_margin,sides.left(),scroll_margin,sides.right()),0);contents->AddChildView(std::move(body));
-    auto scroll=std::make_unique<views::ScrollView>();scroll->ClipHeightTo(0,provider->GetDistanceMetric(views::DISTANCE_MODAL_DIALOG_SCROLLABLE_AREA_MAX_HEIGHT));scroll->SetHorizontalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);scroll->SetContents(std::move(contents));SetContentsView(std::move(scroll));
+    if(modal){auto scroll=std::make_unique<views::ScrollView>();scroll->ClipHeightTo(0,provider->GetDistanceMetric(views::DISTANCE_MODAL_DIALOG_SCROLLABLE_AREA_MAX_HEIGHT));scroll->SetHorizontalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);scroll->SetContents(std::move(contents));SetContentsView(std::move(scroll));}
+    else SetContentsView(std::move(contents));
     set_margins(gfx::Insets::TLBR(std::max(0,provider->GetDistanceMetric(control?views::DISTANCE_DIALOG_CONTENT_MARGIN_TOP_CONTROL:views::DISTANCE_DIALOG_CONTENT_MARGIN_TOP_TEXT)-scroll_margin),0,std::max(0,provider->GetDistanceMetric(control?views::DISTANCE_DIALOG_CONTENT_MARGIN_BOTTOM_CONTROL:views::DISTANCE_DIALOG_CONTENT_MARGIN_BOTTOM_TEXT)-scroll_margin),0));
   }
   views::ClientView* CreateClientView(views::Widget* widget) override{
@@ -2976,9 +2977,9 @@ std::unique_ptr<views::View> CreatePageDialogActions(views::Widget* widget){
 #endif
 }
 
-std::unique_ptr<views::DialogDelegate> CreateSceneModalDialog(std::unique_ptr<views::View> body,bool control){
+std::unique_ptr<views::DialogDelegate> CreateSceneModalDialog(std::unique_ptr<views::View> body,bool control,bool modal){
 #if BUILDFLAG(IS_MAC)
-  return std::make_unique<SceneModalDialog>(std::move(body),control);
+  return std::make_unique<SceneModalDialog>(std::move(body),control,modal);
 #else
   return nullptr;
 #endif

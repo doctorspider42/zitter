@@ -1,5 +1,12 @@
 #include "chromium/prototype/page_media_access.h"
 #include "chromium/prototype/browser_data.h"
+#include "chromium/prototype/page_dialogs.h"
+#include "chromium/prototype/sidebar_layout.h"
+#include "build/build_config.h"
+#if BUILDFLAG(IS_MAC)
+#include "chromium/prototype/workspace_keyboard_mac.h"
+#endif
+#include "ui/views/layout/layout_provider.h"
 
 #include <utility>
 #include <algorithm>
@@ -37,6 +44,22 @@
 #include "url/origin.h"
 
 namespace zitter::prototype {
+// Decisions stay synchronous in Chromium. Only adapter destruction is deferred
+// so a permission-manager decision or capture-stop notification may delete its
+// owner without deleting the executing dialog/button callback itself.
+class MediaSceneDialog {
+ public:
+  ~MediaSceneDialog(){scene.reset();widget.reset();delegate.reset();}
+  static void Dispose(std::unique_ptr<MediaSceneDialog> dialog){
+    if(!dialog)return;
+    dialog->scene.reset();
+    if(dialog->widget&&!dialog->widget->IsClosed())dialog->widget->Close();
+    base::SingleThreadTaskRunner::GetCurrentDefault()->DeleteSoon(FROM_HERE,std::move(dialog));
+  }
+  std::unique_ptr<views::DialogDelegate> delegate;
+  std::unique_ptr<views::Widget> widget;
+  std::unique_ptr<PanelScene> scene;
+};
 namespace {
 
 void PrepareDialogText(views::View* view) {
@@ -207,6 +230,23 @@ class MediaPermissionPrompt final : public permissions::PermissionPrompt {
       requesters += base::UTF8ToUTF16(origin);
     }
     auto* profile = Profile::FromBrowserContext(contents->GetBrowserContext());
+    auto body=std::make_unique<views::View>();
+    auto scene=CreatePanelScene(body.get());
+    std::unique_ptr<views::DialogDelegate> dialog;
+    if(scene){
+      owned_=std::make_unique<MediaSceneDialog>();owned_->scene=std::move(scene);
+      SetSidebarPanelLayout(body.get(),true,gfx::Insets(),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_UNRELATED_CONTROL_VERTICAL));
+      auto paragraph=[&](std::u16string text){body->AddChildView(owned_->scene->MakeText(std::move(text),true,false,0));};
+      paragraph(u"Prosi o dostęp: "+requesters);paragraph(capabilities);paragraph(u"Profil: "+BrowsingProfileName(profile));
+      if(!requesting_origins.contains(permission_origin))paragraph(u"Uprawnienie dla: "+base::UTF8ToUTF16(permission_origin));
+      if(!requesting_origins.contains(embedding_origin)&&embedding_origin!=permission_origin)paragraph(u"W stronie: "+base::UTF8ToUTF16(embedding_origin));
+      dialog=CreateSceneModalDialog(std::move(body),false);dialog->SetTitle(u"Uprawnienia strony");
+      dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk)|static_cast<int>(ui::mojom::DialogButton::kCancel));
+      dialog->SetButtonLabel(ui::mojom::DialogButton::kOk,temporary?u"Zezwól tym razem":u"Zezwól");dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel,u"Zablokuj");
+      dialog->SetAcceptCallback(base::BindOnce(&State::Decide,state_,temporary?Decision::kAllowOnce:Decision::kAllowPersistent));
+      dialog->SetCancelCallback(base::BindOnce(&State::Decide,state_,Decision::kDeny));
+      dialog->SetCloseCallback(base::BindOnce(&State::Decide,state_,Decision::kDismiss));
+    }else{
     auto builder = ui::DialogModel::Builder();
     builder.SetTitle(u"Uprawnienia strony")
         .AddParagraph(ui::DialogModelLabel(u"Prosi o dostęp: " + requesters))
@@ -225,22 +265,31 @@ class MediaPermissionPrompt final : public permissions::PermissionPrompt {
             ui::DialogModel::Button::Params().SetLabel(u"Zablokuj"))
         .SetDialogDestroyingCallback(base::BindOnce(&State::Decide, state_, Decision::kDismiss))
         .Build();
-    auto dialog = views::BubbleDialogModelHost::CreateModal(std::move(model),
+    dialog = views::BubbleDialogModelHost::CreateModal(std::move(model),
         ui::mojom::ModalType::kWindow);
+    }
     dialog->SetDefaultButton(static_cast<int>(ui::mojom::DialogButton::kCancel));
     auto* parent = views::Widget::GetWidgetForNativeWindow(contents->GetTopLevelNativeWindow());
-    auto* widget = views::DialogDelegate::CreateDialogWidget(std::move(dialog),
-        contents->GetTopLevelNativeWindow(), parent ? parent->GetNativeView() : gfx::NativeView());
+    views::Widget* widget=nullptr;
+    if(owned_){
+      owned_->delegate=std::move(dialog);widget=views::DialogDelegate::CreateDialogWidget(owned_->delegate.get(),contents->GetTopLevelNativeWindow(),parent?parent->GetNativeView():gfx::NativeView());owned_->widget.reset(widget);
+      widget->MakeCloseSynchronous(base::BindOnce([](std::shared_ptr<State> state,views::Widget::ClosedReason){state->Decide(Decision::kDismiss);},state_));
+    }else widget=views::DialogDelegate::CreateDialogWidget(std::move(dialog),contents->GetTopLevelNativeWindow(),parent?parent->GetNativeView():gfx::NativeView());
     if (parent)
       widget->SetColorModeOverride(parent->color_mode_override());
     PrepareDialogText(widget->GetRootView());
+#if BUILDFLAG(IS_MAC)
+    InstallWorkspaceKeyboardRouting(widget,true);
+#endif
     widget_ = widget->GetWeakPtr();
-    widget->Show();
+    widget->Show();if(owned_)owned_->scene->Schedule();
   }
   ~MediaPermissionPrompt() override {
-    state_->decided = true;
-    if (widget_) widget_->Close();
+    weak_factory_.InvalidateWeakPtrs();state_->decided=true;
+    if(owned_){widget_.reset();MediaSceneDialog::Dispose(std::move(owned_));}
+    else if(widget_)widget_->Close();
   }
+  base::RepeatingCallback<bool(std::string_view)> SceneQuery(){return base::BindRepeating([](base::WeakPtr<MediaPermissionPrompt> self,std::string_view text){return self&&self->owned_&&self->owned_->scene&&self->owned_->scene->contains_text(text);},weak_factory_.GetWeakPtr());}
   base::WeakPtr<views::Widget> widget() { return widget_; }
   bool UpdateAnchor() override { return true; }
   TabSwitchingBehavior GetTabSwitchingBehavior() override {
@@ -274,7 +323,9 @@ class MediaPermissionPrompt final : public permissions::PermissionPrompt {
     bool decided = false;
   };
   std::shared_ptr<State> state_;
+  std::unique_ptr<MediaSceneDialog> owned_;
   base::WeakPtr<views::Widget> widget_;
+  base::WeakPtrFactory<MediaPermissionPrompt> weak_factory_{this};
 };
 
 scoped_refptr<MediaStreamCaptureIndicator> Indicator() {
@@ -306,7 +357,7 @@ PageMediaAccess::PageMediaAccess(content::WebContents* contents)
              permissions::PermissionPrompt::Delegate* delegate)
               -> std::unique_ptr<permissions::PermissionPrompt> {
             auto prompt = std::make_unique<MediaPermissionPrompt>(page, delegate);
-            if (access) access->permission_prompt_ = prompt->widget();
+            if(access){access->permission_prompt_=prompt->widget();access->permission_scene_query_=prompt->SceneQuery();}
             return prompt;
           }, weak_factory_.GetWeakPtr()));
   Indicator()->AddObserver(this);
@@ -427,6 +478,24 @@ void PageMediaAccess::UpdateCaptureIndicator() {
   }
   if (origins.empty()) origins = base::UTF8ToUTF16(
       url::Origin::Create(web_contents()->GetLastCommittedURL()).Serialize());
+  auto body=std::make_unique<views::View>();auto scene=CreatePanelScene(body.get());
+  if(scene){
+    capture_scene_=std::make_unique<MediaSceneDialog>();capture_scene_->scene=std::move(scene);
+    SetSidebarPanelLayout(body.get(),true,gfx::Insets(),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_UNRELATED_CONTROL_VERTICAL));
+    for(auto text:{origins,std::u16string(u"Ta strona korzysta z mikrofonu, kamery lub udostępniania obrazu."),u"Profil: "+BrowsingProfileName(profile),std::u16string(u"Zamknięcie tego okna zatrzyma przechwytywanie.")})
+      body->AddChildView(capture_scene_->scene->MakeText(std::move(text),true,false,0));
+    auto dialog=CreateSceneModalDialog(std::move(body),false,false);dialog->SetTitle(u"Trwa przechwytywanie");dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kCancel));dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel,u"Zatrzymaj");
+    dialog->SetCancelCallback(stop);dialog->SetCloseCallback(stop);
+    capture_scene_->delegate=std::move(dialog);
+    auto* parent=views::Widget::GetWidgetForNativeWindow(web_contents()->GetTopLevelNativeWindow());
+    auto* widget=views::DialogDelegate::CreateDialogWidget(capture_scene_->delegate.get(),web_contents()->GetTopLevelNativeWindow(),parent?parent->GetNativeView():gfx::NativeView());capture_scene_->widget.reset(widget);
+    widget->MakeCloseSynchronous(base::BindOnce([](base::WeakPtr<PageMediaAccess> access,std::shared_ptr<bool> active,base::RepeatingClosure stop,views::Widget::ClosedReason){stop.Run();if(access&&access->capture_dialog_active_==active)access->CloseCaptureIndicator();},weak,capture_dialog_active_,stop));
+    if(parent)widget->SetColorModeOverride(parent->color_mode_override());
+#if BUILDFLAG(IS_MAC)
+    InstallWorkspaceKeyboardRouting(widget,true);
+#endif
+    capture_prompt_=widget->GetWeakPtr();widget->ShowInactive();capture_scene_->scene->Schedule();return;
+  }
   auto model = ui::DialogModel::Builder()
       .SetTitle(u"Trwa przechwytywanie")
       .AddParagraph(ui::DialogModelLabel(origins))
@@ -447,6 +516,9 @@ void PageMediaAccess::UpdateCaptureIndicator() {
   if (parent)
     widget->SetColorModeOverride(parent->color_mode_override());
   PrepareDialogText(widget->GetRootView());
+#if BUILDFLAG(IS_MAC)
+  InstallWorkspaceKeyboardRouting(widget,true);
+#endif
   capture_prompt_ = widget->GetWeakPtr();
   widget->ShowInactive();
 }
@@ -503,8 +575,11 @@ void PageMediaAccess::CloseCaptureIndicator() {
   capture_dialog_active_.reset();
   auto widget = capture_prompt_;
   capture_prompt_.reset();
-  if (widget) widget->Close();
+  if(capture_scene_)MediaSceneDialog::Dispose(std::move(capture_scene_));
+  else if(widget)widget->Close();
 }
+bool PageMediaAccess::permission_scene_contains_for_testing(std::string_view text) const{return permission_scene_query_&&permission_scene_query_.Run(text);}
+bool PageMediaAccess::capture_scene_contains_for_testing(std::string_view text) const{return capture_scene_&&capture_scene_->scene&&capture_scene_->scene->contains_text(text);}
 void PageMediaAccess::WebContentsDestroyed() {
   std::erase_if(ZitterPages(), [this](const auto& page) { return !page || page.get() == web_contents(); });
   weak_factory_.InvalidateWeakPtrs();

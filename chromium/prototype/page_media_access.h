@@ -3,6 +3,8 @@
 
 #include <memory>
 #include <map>
+#include <string_view>
+#include "base/functional/callback.h"
 
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/media/webrtc/media_stream_capture_indicator.h"
@@ -15,6 +17,7 @@ class DesktopMediaPickerFactory;
 class OneTimePermissionsTrackerHelper;
 
 namespace zitter::prototype {
+class MediaSceneDialog;
 
 // Per-page permission presentation and capture controls. Policy decisions,
 // device selection, OS consent and desktop picking stay in Chromium.
@@ -35,6 +38,8 @@ class PageMediaAccess : public content::WebContentsObserver,
       content::WebContents* requester, DesktopMediaList::WebContentsFilter filter);
   static void SetDesktopPickerFactoryForTesting(DesktopMediaPickerFactory* factory);
   ~PageMediaAccess() override;
+  bool permission_scene_contains_for_testing(std::string_view text) const;
+  bool capture_scene_contains_for_testing(std::string_view text) const;
   views::Widget* capture_prompt() const { return capture_prompt_.get(); }
   views::Widget* permission_prompt() const { return permission_prompt_.get(); }
 
@@ -60,6 +65,8 @@ class PageMediaAccess : public content::WebContentsObserver,
   bool observing_capture_ = true;
   bool update_pending_ = false;
   std::shared_ptr<bool> capture_dialog_active_;
+  std::unique_ptr<MediaSceneDialog> capture_scene_;
+  base::RepeatingCallback<bool(std::string_view)> permission_scene_query_;
   base::WeakPtr<views::Widget> capture_prompt_;
   base::WeakPtr<views::Widget> permission_prompt_;
   size_t next_capture_id_ = 0;
