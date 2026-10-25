@@ -2157,6 +2157,7 @@ class PanelSceneImpl final : public PanelScene {
   std::unique_ptr<views::View> MakeText(std::u16string text,bool multiline,bool center,int fixed_width) override{
     return std::make_unique<PreferenceCopy>(std::move(text),kInk,0,gfx::Font::Weight::NORMAL,multiline,base::BindRepeating(&PanelSceneImpl::Schedule,weak_factory_.GetWeakPtr()),base::BindRepeating([](base::WeakPtr<PanelSceneImpl> self){return self&&self->visible();},weak_factory_.GetWeakPtr()),true,center,fixed_width);
   }
+  std::unique_ptr<views::View> MakeSelect(std::vector<std::u16string> labels,std::u16string name) override{return std::make_unique<SceneSelect>(std::move(labels),std::move(name),base::RepeatingClosure());}
   void SetText(views::View* view,std::u16string text) override{static_cast<PreferenceCopy*>(view)->SetText(std::move(text));}
   std::unique_ptr<views::View> MakeActions(int spacing) override{auto group=std::make_unique<SceneActionGroup>(false,spacing);group->Share(base::BindRepeating([](base::WeakPtr<PanelSceneImpl> self){return self&&self->visible();},weak_factory_.GetWeakPtr()),base::BindRepeating(&PanelSceneImpl::Schedule,weak_factory_.GetWeakPtr()));return group;}
   views::Button* AddAction(views::View* group,base::RepeatingClosure callback,std::u16string text) override{return static_cast<SceneActionGroup*>(group)->AddAction(std::move(callback),std::move(text),ui::ButtonStyle::kDefault);}
@@ -2975,6 +2976,13 @@ std::unique_ptr<views::View> CreatePageDialogActions(views::Widget* widget){
 #endif
 }
 
+std::unique_ptr<views::DialogDelegate> CreateSceneModalDialog(std::unique_ptr<views::View> body,bool control){
+#if BUILDFLAG(IS_MAC)
+  return std::make_unique<SceneModalDialog>(std::move(body),control);
+#else
+  return nullptr;
+#endif
+}
 std::unique_ptr<PanelScene> CreatePanelScene(views::View* root){
 #if BUILDFLAG(IS_MAC)
   if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal")return std::make_unique<PanelSceneImpl>(root);

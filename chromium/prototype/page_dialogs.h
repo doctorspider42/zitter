@@ -16,6 +16,8 @@ namespace ui { class KeyEvent; }
 namespace zitter::prototype {
 class EditorControl;
 using PageDialogScene=PanelScene;
+std::unique_ptr<views::DialogDelegate> CreateSceneDialogDelegate();
+std::unique_ptr<views::DialogDelegate> CreateSceneModalDialog(std::unique_ptr<views::View> body,bool control);
 std::unique_ptr<PageDialogScene> CreatePageDialogScene(views::View* root);
 std::unique_ptr<views::View> CreatePageDialogActions(views::Widget* widget);
 views::ClientView* CreateSceneDialogClient(views::Widget* widget,views::View* contents);

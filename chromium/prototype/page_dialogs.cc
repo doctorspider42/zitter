@@ -81,6 +81,13 @@ class PageDialogDelegate final : public views::DialogDelegate {
 };
 #endif
 }  // namespace
+std::unique_ptr<views::DialogDelegate> CreateSceneDialogDelegate(){
+#if BUILDFLAG(IS_MAC)
+  return std::make_unique<PageDialogDelegate>();
+#else
+  return std::make_unique<views::DialogDelegate>();
+#endif
+}
 views::ClientView* CreateSceneDialogClient(views::Widget* widget,views::View* contents){
 #if BUILDFLAG(IS_MAC)
   return new SceneDialogClient(widget,contents);

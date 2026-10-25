@@ -1,5 +1,12 @@
 #include "chromium/prototype/page_services.h"
 #include "chromium/prototype/browser_data.h"
+#include "chromium/prototype/page_dialogs.h"
+#include "chromium/prototype/sidebar_layout.h"
+#include "build/build_config.h"
+#if BUILDFLAG(IS_MAC)
+#include "chromium/prototype/workspace_keyboard_mac.h"
+#endif
+#include "ui/views/layout/layout_provider.h"
 
 #include <utility>
 #include <algorithm>
@@ -144,7 +151,23 @@ bool PageServices::OfferPassword(std::unique_ptr<FormManager> form, bool update)
   const auto username = form->GetPendingCredentials().username_value;
   pending_password_ = std::make_shared<PendingPassword>(std::move(form), update);
   std::weak_ptr<PendingPassword> pending = pending_password_;
-  auto model = ui::DialogModel::Builder()
+  auto body=std::make_unique<views::View>();
+  password_scene_=CreatePanelScene(body.get());
+  std::unique_ptr<views::DialogDelegate> dialog;
+  if(password_scene_){
+    SetSidebarPanelLayout(body.get(),true,gfx::Insets(),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_UNRELATED_CONTROL_VERTICAL));
+    for(auto text:{origin,u"Użytkownik: "+username,u"Profil: "+BrowsingProfileName(profile),std::u16string(u"Hasło będzie chronione w magazynie tego profilu.")})
+      body->AddChildView(password_scene_->MakeText(std::move(text),true,false,0));
+    dialog=CreateSceneModalDialog(std::move(body),false);
+    dialog->SetTitle(update?u"Zaktualizować hasło?":u"Zapisać hasło?");
+    dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk)|static_cast<int>(ui::mojom::DialogButton::kCancel));
+    dialog->SetButtonLabel(ui::mojom::DialogButton::kOk,update?u"Zaktualizuj":u"Zapisz hasło");
+    dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel,u"Nie teraz");
+    dialog->SetAcceptCallback(base::BindOnce([](std::weak_ptr<PendingPassword> weak){if(auto value=weak.lock())value->Save();},pending));
+    dialog->SetCancelCallback(base::BindOnce([](std::weak_ptr<PendingPassword> weak){if(auto value=weak.lock())value->Decline();},pending));
+    dialog->SetCloseCallback(base::BindOnce([](std::weak_ptr<PendingPassword> weak){if(auto value=weak.lock())value->Ignore();},pending));
+  }else{
+    auto model = ui::DialogModel::Builder()
       .SetTitle(update ? u"Zaktualizować hasło?" : u"Zapisać hasło?")
       .AddParagraph(ui::DialogModelLabel(origin))
       .AddParagraph(ui::DialogModelLabel(u"Użytkownik: " + username))
@@ -156,13 +179,9 @@ bool PageServices::OfferPassword(std::unique_ptr<FormManager> form, bool update)
           ui::DialogModel::Button::Params().SetLabel(u"Nie teraz"))
       .SetDialogDestroyingCallback(base::BindOnce([](std::weak_ptr<PendingPassword> weak) { if (auto value = weak.lock()) value->Ignore(); }, pending))
       .Build();
-  auto dialog = views::BubbleDialogModelHost::CreateModal(std::move(model), ui::mojom::ModalType::kWindow);
-  auto* parent = views::Widget::GetWidgetForNativeWindow(web_contents()->GetTopLevelNativeWindow());
-  auto* widget = views::DialogDelegate::CreateDialogWidget(std::move(dialog), web_contents()->GetTopLevelNativeWindow(), parent ? parent->GetNativeView() : gfx::NativeView());
-  if (parent) widget->SetColorModeOverride(parent->color_mode_override());
-  PrepareDialogText(widget->GetRootView());
-  prompt_ = widget->GetWeakPtr();
-  widget->Show();
+    dialog = views::BubbleDialogModelHost::CreateModal(std::move(model), ui::mojom::ModalType::kWindow,true,false);
+  }
+  ShowPasswordWidget(std::move(dialog));
   return true;
 }
 void PageServices::SetManualPassword(std::unique_ptr<FormManager> form, bool update) {
@@ -171,12 +190,12 @@ void PageServices::SetManualPassword(std::unique_ptr<FormManager> form, bool upd
 void PageServices::ShowPasswords() {
   if (manual_password_) OfferPassword(std::move(manual_password_), manual_update_);
   else if (password_prompt()) password_prompt()->Activate();
-  else if (web_contents()) {
+  else if (!manage_requested_ && web_contents()) {
     auto* profile = Profile::FromBrowserContext(web_contents()->GetBrowserContext());
     auto store = ProfilePasswordStoreFactory::GetForProfile(profile, ServiceAccessType::EXPLICIT_ACCESS);
     if (!store) return;
     manage_requested_ = true;
-    store->GetAutofillableLogins(weak_factory_.GetWeakPtr());
+    store->GetAutofillableLogins(password_ui_factory_.GetWeakPtr());
   }
 }
 void PageServices::OnGetPasswordStoreResultsOrErrorFrom(password_manager::PasswordStoreInterface* store,
@@ -184,17 +203,18 @@ void PageServices::OnGetPasswordStoreResultsOrErrorFrom(password_manager::Passwo
   if (!manage_requested_ || !web_contents() || web_contents()->GetVisibility() != content::Visibility::VISIBLE) return;
   manage_requested_ = false;
   auto* profile = Profile::FromBrowserContext(web_contents()->GetBrowserContext());
-  auto dialog = std::make_unique<views::DialogDelegate>();
+  auto content=std::make_unique<views::View>();
+  password_scene_=CreatePanelScene(content.get());
+  auto dialog=password_scene_?CreateSceneDialogDelegate():std::make_unique<views::DialogDelegate>();
   dialog->SetTitle(u"Zapisane logowania");
   dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk));
   dialog->SetButtonLabel(ui::mojom::DialogButton::kOk, u"Zamknij");
   dialog->set_use_custom_frame(false);
   dialog->set_draggable(true);
   dialog->SetCanResize(true);
-  auto content = std::make_unique<views::View>();
-  content->SetLayoutManager(std::make_unique<views::BoxLayout>(
-      views::BoxLayout::Orientation::kVertical, gfx::Insets(16), 12));
+  SetSidebarPanelLayout(content.get(),true,gfx::Insets(16),12);
   auto paragraph = [&](std::u16string text) {
+    if(password_scene_){content->AddChildView(password_scene_->MakeText(std::move(text),true,false,0));return;}
     auto* label = content->AddChildView(std::make_unique<views::Label>(text));
     label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
     label->SetMultiLine(true);
@@ -205,35 +225,57 @@ void PageServices::OnGetPasswordStoreResultsOrErrorFrom(password_manager::Passwo
   } else if (results->empty()) {
     paragraph(u"Brak zapisanych logowań. Po zalogowaniu na stronie zaproponujemy zapis hasła.");
   } else {
-    std::vector<ui::SimpleComboboxModel::Item> accounts;
-    for (const auto& credential : *results)
-      accounts.emplace_back(base::UTF8ToUTF16(url::Origin::Create(credential.url).Serialize()) + u" · " + credential.username_value);
-    auto* picker = content->AddChildView(std::make_unique<views::Combobox>(
-        std::make_unique<ui::SimpleComboboxModel>(std::move(accounts))));
-    picker->GetViewAccessibility().SetName(u"Zapisane konta");
+    std::vector<std::u16string> labels;
+    for(const auto& credential:*results)
+      labels.push_back(base::UTF8ToUTF16(url::Origin::Create(credential.url).Serialize())+u" · "+credential.username_value);
+    if(password_scene_)content->AddChildView(password_scene_->MakeSelect(std::move(labels),u"Zapisane konta"));
+    else{
+      std::vector<ui::SimpleComboboxModel::Item> accounts;
+      for(auto& label:labels)accounts.emplace_back(std::move(label));
+      auto* picker=content->AddChildView(std::make_unique<views::Combobox>(std::make_unique<ui::SimpleComboboxModel>(std::move(accounts))));
+      picker->GetViewAccessibility().SetName(u"Zapisane konta");
+    }
     paragraph(u"Kliknij pole logowania na stronie, aby wybrać zapisane konto. Hasła nie są tu ujawniane.");
   }
   content->SetPreferredSize(gfx::Size(460, 180));
   dialog->SetContentsView(std::move(content));
-  auto* parent = views::Widget::GetWidgetForNativeWindow(web_contents()->GetTopLevelNativeWindow());
-  auto* widget = views::DialogDelegate::CreateDialogWidget(std::move(dialog), web_contents()->GetTopLevelNativeWindow(), parent ? parent->GetNativeView() : gfx::NativeView());
-  if (parent) widget->SetColorModeOverride(parent->color_mode_override());
-  PrepareDialogText(widget->GetRootView());
+  ShowPasswordWidget(std::move(dialog),false);
+  auto* widget=password_prompt();
+  auto* parent=views::Widget::GetWidgetForNativeWindow(web_contents()->GetTopLevelNativeWindow());
   const auto area = display::Screen::Get()->GetDisplayNearestWindow(web_contents()->GetTopLevelNativeWindow()).work_area();
   gfx::Rect bounds(0, 0, std::min(520, area.width()), std::min(300, area.height()));
   const auto anchor = parent ? parent->GetWindowBoundsInScreen().CenterPoint() : area.CenterPoint();
   bounds.set_origin(gfx::Point(anchor.x() - bounds.width()/2, anchor.y() - bounds.height()/2));
   bounds.AdjustToFit(area);
   widget->SetBoundsConstrained(bounds);
-  prompt_ = widget->GetWeakPtr(); widget->Show();
-
+  widget->Show();
+  if(password_scene_)password_scene_->Schedule();
+}
+bool PageServices::password_scene_visible_for_testing() const{return password_scene_&&password_scene_->visible();}
+bool PageServices::password_scene_contains_for_testing(std::string_view text) const{return password_scene_&&password_scene_->contains_text(text);}
+void PageServices::ShowPasswordWidget(std::unique_ptr<views::DialogDelegate> dialog,bool show){
+  dialog->SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
+  password_delegate_=std::move(dialog);
+  auto* parent=views::Widget::GetWidgetForNativeWindow(web_contents()->GetTopLevelNativeWindow());
+  auto* widget=views::DialogDelegate::CreateDialogWidget(password_delegate_.get(),web_contents()->GetTopLevelNativeWindow(),parent?parent->GetNativeView():gfx::NativeView());
+  password_widget_.reset(widget);prompt_=widget->GetWeakPtr();
+  widget->MakeCloseSynchronous(base::BindOnce([](base::WeakPtr<PageServices> services,views::Widget::ClosedReason){if(services)services->DismissPassword();},password_ui_factory_.GetWeakPtr()));
+  if(parent)widget->SetColorModeOverride(parent->color_mode_override());
+  PrepareDialogText(widget->GetRootView());
+#if BUILDFLAG(IS_MAC)
+  InstallWorkspaceKeyboardRouting(widget,true);
+#endif
+  if(show){widget->Show();if(password_scene_)password_scene_->Schedule();}
 }
 void PageServices::DismissPassword() {
   manage_requested_ = false;
+  password_ui_factory_.InvalidateWeakPtrs();
   if (pending_password_) pending_password_->Ignore();
   pending_password_.reset();
-  if (auto* widget = password_prompt()) widget->Close();
   prompt_.reset();
+  password_scene_.reset();
+  password_widget_.reset();
+  password_delegate_.reset();
 }
 void PageServices::DidStartNavigation(content::NavigationHandle* navigation) {
   if (navigation->IsInPrimaryMainFrame() && !navigation->IsSameDocument()) { DismissPassword(); manual_password_.reset(); }

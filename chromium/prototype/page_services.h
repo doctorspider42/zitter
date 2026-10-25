@@ -3,6 +3,7 @@
 
 #include <memory>
 #include <optional>
+#include <string_view>
 #include "base/scoped_observation.h"
 #include "components/content_settings/core/browser/content_settings_observer.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
@@ -15,9 +16,10 @@
 #include "components/password_manager/core/browser/password_store/password_store_consumer.h"
 
 namespace password_manager { class PasswordFormManagerForUI; }
-namespace views { class DialogDelegateView; class Widget; }
+namespace views { class DialogDelegate; class Widget; class View; }
 
 namespace zitter::prototype {
+class PanelScene;
 
 // Chromium's per-page clients, with native Zitter password consent UI and a
 // history adapter for pages outside Chrome's BrowserWindow/TabStripModel.
@@ -30,6 +32,8 @@ class PageServices final : public content::WebContentsObserver,
   ~PageServices() override;
   views::Widget* password_prompt() const;
   void ShowPasswords();
+  bool password_scene_visible_for_testing() const;
+  bool password_scene_contains_for_testing(std::string_view text) const;
 
  private:
   friend class content::WebContentsUserData<PageServices>;
@@ -37,6 +41,7 @@ class PageServices final : public content::WebContentsObserver,
   bool OfferPassword(std::unique_ptr<password_manager::PasswordFormManagerForUI> form, bool update);
   void SetManualPassword(std::unique_ptr<password_manager::PasswordFormManagerForUI> form, bool update);
   void DismissPassword();
+  void ShowPasswordWidget(std::unique_ptr<views::DialogDelegate> dialog,bool show=true);
   void DidFinishNavigation(content::NavigationHandle* navigation) override;
   void DidStartNavigation(content::NavigationHandle* navigation) override;
   void OnVisibilityChanged(content::Visibility visibility) override;
@@ -56,7 +61,13 @@ class PageServices final : public content::WebContentsObserver,
   GURL last_url_;
   std::unique_ptr<password_manager::PasswordFormManagerForUI> manual_password_;
   bool manual_update_ = false;
+  // Scene subscriptions die before the widget, and the delegate after it.
+  std::unique_ptr<views::DialogDelegate> password_delegate_;
+  std::unique_ptr<views::Widget> password_widget_;
+  std::unique_ptr<PanelScene> password_scene_;
   base::WeakPtr<views::Widget> prompt_;
+  // Store requests must be invalidated independently of stable client callbacks.
+  base::WeakPtrFactory<PageServices> password_ui_factory_{this};
   base::WeakPtrFactory<PageServices> weak_factory_{this};
   WEB_CONTENTS_USER_DATA_KEY_DECL();
 };
