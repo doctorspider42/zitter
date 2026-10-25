@@ -1,7 +1,8 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 // Control layout, presentation and input policy; browser state and command ownership
-// remain in WorkspaceShell. Only UI IDs/text/metrics cross this ABI, never URLs,
-// profile objects/directories or WebContents.
+// remain in WorkspaceShell. Only opaque IDs, display text and metrics cross the ABI.
+// Display text may include URLs; browser URL objects, profile objects/directories
+// and WebContents remain native, and projected text never authorizes an operation.
 mod sidebar_editor;
 use sidebar_editor::EditorState;
 
@@ -22,6 +23,9 @@ mod ffi {
     struct ToolsActionContext { snapshot_field: bool, shortcut_field: bool, provider_field: bool, snapshot_composing: bool, shortcut_composing: bool, provider_composing: bool, snapshot_selected: bool, closed_selected: bool, shortcut_selected: bool }
     struct ToolsDispatch { admitted: bool, action: i32, recording: bool, sync_recording: bool, record_status: String }
     struct ToolsOutcome { refresh: bool, status: String }
+    struct ToolsTimelineItem { id: String, title: Vec<u16>, detail: Vec<u16>, search: Vec<u16> }
+    struct ToolsTimelineChoice { key: String, label: Vec<u16> }
+    struct ToolsTimelineList { choices: Vec<ToolsTimelineChoice>, enabled: bool }
     struct ToolsHistoryView { empty: String, status: String, more_visible: bool, more_enabled: bool }
     struct ToolsClearControls { label: String, enabled: bool }
     struct PreferenceRow { category: usize, keywords: Vec<u16> }
@@ -173,6 +177,8 @@ mod ffi {
         fn tools_history_loaded(self: &ToolsForm) -> bool;
         fn tools_timeline_edit(self: &mut ToolsForm, query: Vec<u16>);
         fn tools_timeline_query(self: &ToolsForm) -> Vec<u16>;
+        fn tools_timeline_project(self: &mut ToolsForm, closed: bool, items: Vec<ToolsTimelineItem>) -> ToolsTimelineList;
+        fn tools_timeline_target(self: &ToolsForm, closed: bool, key: &str) -> String;
         type PreferencesForm;
         fn new_preferences_form(categories: usize) -> Box<PreferencesForm>;
         fn preference_select(self: &mut PreferencesForm, category: usize) -> bool;
@@ -636,19 +642,27 @@ pub struct ToolsForm {
     recording: bool,
     history_query: Vec<u16>,
     timeline_query: Vec<u16>,
+    timeline_epoch: u64,
+    timeline_snapshots: Vec<(String,String)>,
+    timeline_closed: Vec<(String,String)>,
     history_limit: usize,
     history_loaded: bool,
 }
 fn new_tools_form() -> Box<ToolsForm> {
     Box::new(ToolsForm { page: 0, recording: false, history_query: vec![],
-        timeline_query: vec![], history_limit: 200, history_loaded: false })
+        timeline_query: vec![], timeline_epoch: 0, timeline_snapshots: vec![], timeline_closed: vec![], history_limit: 200, history_loaded: false })
 }
 impl ToolsForm {
-    fn tools_select(&mut self, page: usize) { self.page = page.min(3); }
+    fn tools_select(&mut self, page: usize) {
+        let page=page.min(3);
+        if self.page!=page{self.timeline_snapshots.clear();self.timeline_closed.clear();}
+        self.page=page;
+    }
     fn tools_page(&self) -> usize { self.page }
     fn tools_reset(&mut self) {
         self.recording = false;
         self.history_query.clear(); self.timeline_query.clear();
+        self.timeline_snapshots.clear(); self.timeline_closed.clear();
         self.history_loaded = false;
     }
     fn tools_record(&mut self, recording: bool) { self.recording = recording; }
@@ -693,8 +707,38 @@ impl ToolsForm {
         self.history_loaded = true; true
     }
     fn tools_history_loaded(&self) -> bool { self.history_loaded }
-    fn tools_timeline_edit(&mut self, query: Vec<u16>) { self.timeline_query = query; }
+    fn tools_timeline_edit(&mut self, query: Vec<u16>) {
+        self.timeline_query=query;
+        self.timeline_snapshots.clear();self.timeline_closed.clear();
+    }
     fn tools_timeline_query(&self) -> Vec<u16> { self.timeline_query.clone() }
+    // Only opaque IDs and presentation metadata cross the bridge. Unicode
+    // normalization stays in the native service; matching preserves UTF-16
+    // units, including partial surrogates, exactly like native find().
+    fn tools_timeline_project(&mut self, closed:bool, items:Vec<ffi::ToolsTimelineItem>)->ffi::ToolsTimelineList {
+        let targets=if closed{&mut self.timeline_closed}else{&mut self.timeline_snapshots};
+        targets.clear();let mut choices=vec![];
+        if let Some(epoch)=self.timeline_epoch.checked_add(1){
+            self.timeline_epoch=epoch;
+            for item in items {
+                if !self.timeline_query.is_empty()&&!item.search.windows(self.timeline_query.len()).any(|text|text==self.timeline_query.as_slice()){continue;}
+                let key=format!("timeline:{}:{}:{}",epoch,u8::from(closed),choices.len());
+                let mut label=item.title;label.extend(" — ".encode_utf16());label.extend(item.detail);
+                targets.push((key.clone(),item.id));choices.push(ffi::ToolsTimelineChoice{key,label});
+            }
+        }
+        let enabled=!choices.is_empty();
+        if !enabled{choices.push(ffi::ToolsTimelineChoice{key:"empty".into(),label:"Brak zapisanych pozycji".encode_utf16().collect()});}
+        ffi::ToolsTimelineList{choices,enabled}
+    }
+    fn tools_timeline_target(&self,closed:bool,key:&str)->String {
+        // A UI key is valid only in its current list/projection. Native callers
+        // must still validate visibility, workspace/profile and the domain ID.
+        if self.page!=0{return String::new();}
+        let targets=if closed{&self.timeline_closed}else{&self.timeline_snapshots};
+        targets.iter().find(|(candidate,_)|candidate==key).map_or_else(String::new,|(_,id)|id.clone())
+    }
+
 }
 
 // Query and keywords arrive normalized by the native Unicode/whitespace service.
@@ -2171,6 +2215,33 @@ mod tests {
         let mut f=new_preferences_form(1);let mut rows=vec![ffi::PreferenceRow{category:0,keywords:vec![0xd83e,0xdd80,0xfffd]}];
         assert!(f.preference_filter(vec![0xd83e],&rows).any);assert!(!f.preference_filter(vec![0xd800],&rows).any);assert!(!f.preference_filter(vec![1,2,3,4],&rows).any);rows[0].keywords="nowy wyjątek".encode_utf16().collect();assert!(f.preference_filter("nowy".encode_utf16().collect(),&rows).any);
         let mut empty=new_preferences_form(0);assert!(!empty.preference_select(0));assert!(!empty.preference_filter(vec![],&rows).any);
+    }
+    fn timeline_item(id:&str,title:&[u16],detail:&[u16],search:&[u16])->ffi::ToolsTimelineItem{ffi::ToolsTimelineItem{id:id.into(),title:title.to_vec(),detail:detail.to_vec(),search:search.to_vec()}}
+    fn timeline_text(id:&str,title:&str,detail:&str)->ffi::ToolsTimelineItem{timeline_item(id,&title.encode_utf16().collect::<Vec<_>>(),&detail.encode_utf16().collect::<Vec<_>>(),&format!("{} {}",title,detail).to_lowercase().encode_utf16().collect::<Vec<_>>())}
+    #[test] fn tools_timeline_projection_preserves_raw_utf16_and_native_search_join(){
+        let mut f=new_tools_form();let title=[0x41,0xd83e,0xdd80,0xd800];let detail=[0x42,0xdfff];let search=[0x61,0xd83e,0xdd80,0xd800,0x20,0x62,0xdfff];
+        f.tools_timeline_edit(vec![0xd83e]);let p=f.tools_timeline_project(false,vec![timeline_item("opaque",&title,&detail,&search)]);assert!(p.enabled);assert_eq!(p.choices.len(),1);let mut label=title.to_vec();label.extend(" — ".encode_utf16());label.extend(detail);assert_eq!(p.choices[0].label,label);assert_eq!(f.tools_timeline_target(false,&p.choices[0].key),"opaque");
+        f.tools_timeline_edit(" — ".encode_utf16().collect());let p=f.tools_timeline_project(false,vec![timeline_text("a","Alpha","Beta")]);assert!(!p.enabled);assert_eq!(String::from_utf16(&p.choices[0].label).unwrap(),"Brak zapisanych pozycji");assert!(f.tools_timeline_target(false,&p.choices[0].key).is_empty());
+        f.tools_timeline_edit("a b".encode_utf16().collect());let p=f.tools_timeline_project(false,vec![timeline_text("a","Alpha","Beta")]);assert!(p.enabled);
+        // Search is already normalized by ICU: Rust must not fold, trim or
+        // reconstruct it using the display em dash or another Unicode policy.
+        f.tools_timeline_edit(vec![0x69,0x307]);let p=f.tools_timeline_project(false,vec![timeline_item("icu",&[0x130],&[],&[0x69,0x307,0x20])]);assert!(p.enabled);
+    }
+    #[test] fn tools_timeline_keys_reject_stale_reordered_reset_and_cross_group_targets(){
+        let mut f=new_tools_form();let a=f.tools_timeline_project(false,vec![timeline_text("a","Same",""),timeline_text("b","Same","")]);let bkey=a.choices[1].key.clone();assert_ne!(a.choices[0].key,bkey);assert_eq!(f.tools_timeline_target(false,&bkey),"b");assert!(f.tools_timeline_target(true,&bkey).is_empty());
+        let b=f.tools_timeline_project(false,vec![timeline_text("b","Renamed",""),timeline_text("a","Same","")]);assert!(f.tools_timeline_target(false,&bkey).is_empty());assert_eq!(f.tools_timeline_target(false,&b.choices[0].key),"b");
+        let key=b.choices[0].key.clone();f.tools_timeline_edit(vec![]);assert!(f.tools_timeline_target(false,&key).is_empty());
+        let c=f.tools_timeline_project(false,vec![timeline_text("b","Renamed","")]);let key=c.choices[0].key.clone();f.tools_select(3);f.tools_select(0);assert!(f.tools_timeline_target(false,&key).is_empty());
+        let c=f.tools_timeline_project(false,vec![timeline_text("b","Renamed","")]);let key=c.choices[0].key.clone();f.tools_reset();assert!(f.tools_timeline_target(false,&key).is_empty());let d=f.tools_timeline_project(false,vec![timeline_text("b","Renamed","")]);assert_ne!(key,d.choices[0].key);
+    }
+    #[test] fn tools_timeline_lists_are_independent_and_duplicate_ids_have_distinct_ui_keys(){
+        let mut f=new_tools_form();let closed=f.tools_timeline_project(true,vec![timeline_text("same-id","Same",""),timeline_text("same-id","Same","")]);assert_ne!(closed.choices[0].key,closed.choices[1].key);let key=closed.choices[1].key.clone();
+        f.tools_timeline_project(false,vec![timeline_text("snapshot","Same","")]);assert_eq!(f.tools_timeline_target(true,&key),"same-id");
+        let empty=f.tools_timeline_project(true,vec![]);assert!(!empty.enabled);assert_eq!(empty.choices.len(),1);assert!(f.tools_timeline_target(true,&key).is_empty());assert!(f.tools_timeline_target(false,"empty").is_empty());
+        let mut f=new_tools_form();let p=f.tools_timeline_project(false,vec![timeline_text("","Visible but unusable","")]);assert!(p.enabled);assert!(f.tools_timeline_target(false,&p.choices[0].key).is_empty());
+    }
+    #[test] fn tools_timeline_epoch_exhaustion_fails_closed_without_reusing_keys(){
+        let mut f=new_tools_form();let p=f.tools_timeline_project(false,vec![timeline_text("a","A","")]);let key=p.choices[0].key.clone();f.timeline_epoch=u64::MAX;let p=f.tools_timeline_project(false,vec![timeline_text("b","B","")]);assert!(!p.enabled);assert!(f.tools_timeline_target(false,&key).is_empty());f.tools_reset();let p=f.tools_timeline_project(false,vec![timeline_text("b","B","")]);assert!(!p.enabled);
     }
     fn tools_context()->ffi::ToolsActionContext {ffi::ToolsActionContext{snapshot_field:true,shortcut_field:true,provider_field:true,snapshot_composing:false,shortcut_composing:false,provider_composing:false,snapshot_selected:true,closed_selected:true,shortcut_selected:true}}
     #[test] fn tools_dispatch_preserves_command_and_composition_admission() {

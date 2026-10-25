@@ -973,6 +973,7 @@ class SceneSelect final : public SceneGlyphButton {
   }
   ~SceneSelect() override {if(GetInputMethod())GetInputMethod()->DetachTextInputClient(&input_);}
   std::optional<size_t> Selected() const {return state_->has_selection()?std::optional<size_t>(state_->selected()):std::nullopt;}
+  std::string SelectedKey() const{return std::string(state_->selected_key());}
   size_t Count() const {return labels_.size();}
   std::u16string LabelAt(size_t index) const{return index<labels_.size()?labels_[index]:std::u16string();}
   void SetSelectedIndex(std::optional<size_t> index){if(index&&*index>=Count())return;OnMouseCaptureLost();CancelMenu();if(index)state_->select_index(*index);else state_->clear_selection();RefreshAX();Schedule();}
@@ -6842,6 +6843,24 @@ void WorkspaceShell::RefreshToolsViewport(){ScheduleToolsChrome();if(tools_body_
 void WorkspaceShell::RefreshTimelineItems() {
   if (ToolsPage() != 0 || !tools_picker_) return;
   const auto state = callbacks_.time_machine ? callbacks_.time_machine.Run() : TimeMachineState();
+#if BUILDFLAG(IS_MAC)
+  if(tools_form_){
+    // The Rust projection owns filtering, display copy and the current key-to-ID
+    // map. Keep the parallel ID vectors only for the untouched Views baseline.
+    snapshot_ids_.clear();closed_ids_.clear();
+    auto fill=[&](const auto& items,views::View* picker,bool closed){
+      auto* scene=views::AsViewClass<SceneSelect>(picker);if(!scene)return;
+      auto units=[](const std::u16string& text){rust::Vec<uint16_t> value;for(char16_t unit:text)value.push_back(unit);return value;};
+      rust::Vec<sidebar::ToolsTimelineItem> metadata;
+      for(const auto& item:items)metadata.push_back({item.id,units(item.title),units(item.detail),units(base::i18n::ToLower(item.title+u" "+item.detail))});
+      auto projection=tools_form_->form->tools_timeline_project(closed,std::move(metadata));
+      std::vector<std::pair<std::string,std::u16string>> choices;choices.reserve(projection.choices.size());
+      for(const auto& choice:projection.choices)choices.emplace_back(std::string(choice.key),std::u16string(choice.label.begin(),choice.label.end()));
+      scene->SetOptions(choices);scene->SetSelectedIndex(0);scene->SetEnabled(projection.enabled);
+    };
+    fill(state.snapshots,tools_picker_,false);fill(state.closed,closed_picker_,true);return;
+  }
+#endif
   const auto query = ToolsTimelineQuery();
   auto fill = [&](const auto& items, views::View* picker, std::vector<std::string>& ids) {
     ids.clear(); std::vector<ui::SimpleComboboxModel::Item> labels;
@@ -6849,14 +6868,6 @@ void WorkspaceShell::RefreshTimelineItems() {
       ids.push_back(item.id); labels.emplace_back(item.title + u" — " + item.detail);
     }
     if (labels.empty()) labels.emplace_back(u"Brak zapisanych pozycji");
-#if BUILDFLAG(IS_MAC)
-    if(auto* scene=views::AsViewClass<SceneSelect>(picker)){
-      std::vector<std::pair<std::string,std::u16string>> choices;
-      for(size_t i=0;i<ids.size();++i)choices.emplace_back(ids[i],labels[i].text);
-      if(choices.empty())choices.emplace_back("empty",u"Brak zapisanych pozycji");
-      scene->SetOptions(choices);scene->SetSelectedIndex(0);scene->SetEnabled(!ids.empty());return;
-    }
-#endif
     auto* native=static_cast<views::Combobox*>(picker);
     // Chromium keeps the cached AX value if a model swap retains index zero.
     native->SetSelectedIndex(std::nullopt);
@@ -7006,11 +7017,18 @@ void WorkspaceShell::RefreshTools() {
   if (history_visible()) RefreshHistory();
 }
 void WorkspaceShell::PostToolsAction(int action) {
+  std::optional<std::string> timeline_key;
+#if BUILDFLAG(IS_MAC)
+  if(tools_form_&&(action==2||action==3||action==4)){
+    auto* picker=action==4?closed_picker_.get():tools_picker_.get();auto* scene=views::AsViewClass<SceneSelect>(picker);
+    timeline_key=scene?scene->SelectedKey():std::string();
+  }
+#endif
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(
-      [](base::WeakPtr<WorkspaceShell> shell,uint64_t generation,std::string workspace,std::string profile,int action){
+      [](base::WeakPtr<WorkspaceShell> shell,uint64_t generation,std::string workspace,std::string profile,int action,std::optional<std::string> key){
         if(shell&&shell->tools_generation_==generation&&shell->state_.workspace_id==workspace&&shell->state_.profile_id==profile)
-          shell->ToolsAction(action);
-      },weak_factory_.GetWeakPtr(),tools_generation_,state_.workspace_id,state_.profile_id,action));
+          shell->ToolsAction(action,std::move(key));
+      },weak_factory_.GetWeakPtr(),tools_generation_,state_.workspace_id,state_.profile_id,action,std::move(timeline_key)));
 }
 void WorkspaceShell::SetShortcutRecording(bool recording) {
   if(recording&&shortcut_chord_)shortcut_chord_->ClearCompositionText();
@@ -7020,17 +7038,23 @@ void WorkspaceShell::SetShortcutRecording(bool recording) {
   recording_shortcut_=recording;
   if(shortcut_chord_)shortcut_chord_->SetReadOnly(recording);
 }
-void WorkspaceShell::ToolsAction(int action) {
+void WorkspaceShell::ToolsAction(int action,std::optional<std::string> timeline_key) {
   if (!tools_widget_ || !tools_widget_->IsVisible()) return;
   const size_t index = tools_picker_ ? PickerIndex(tools_picker_).value_or(0) : 0;
   std::u16string record_status;
+  bool rust_timeline=false;std::string snapshot_target,closed_target;
 #if BUILDFLAG(IS_MAC)
   if(tools_form_){
+    rust_timeline=true;
+    if(ToolsPage()==0){
+      auto target=[&](views::View* picker,bool closed){auto* scene=views::AsViewClass<SceneSelect>(picker);return scene?std::string(tools_form_->form->tools_timeline_target(closed,timeline_key?*timeline_key:scene->SelectedKey())):std::string();};
+      snapshot_target=target(tools_picker_,false);closed_target=target(closed_picker_,true);
+    }
     sidebar::ToolsActionContext context{};
     context.snapshot_field=bool(snapshot_name_);context.shortcut_field=bool(shortcut_chord_);context.provider_field=bool(provider_name_);
     context.snapshot_composing=snapshot_name_&&snapshot_name_->IsIMEComposing();context.shortcut_composing=shortcut_chord_&&shortcut_chord_->IsIMEComposing();
     for(auto* field:{provider_name_.get(),provider_keyword_.get(),provider_url_.get()})if(field&&field->IsIMEComposing())context.provider_composing=true;
-    context.snapshot_selected=index<snapshot_ids_.size();context.closed_selected=closed_picker_&&PickerIndex(closed_picker_).value_or(0)<closed_ids_.size();context.shortcut_selected=index<tools_.shortcuts.size();
+    context.snapshot_selected=!snapshot_target.empty();context.closed_selected=!closed_target.empty();context.shortcut_selected=index<tools_.shortcuts.size();
     const auto plan=tools_form_->form->tools_dispatch(action,context);if(!plan.admitted)return;
     if(plan.sync_recording){SetShortcutRecording(plan.recording);RefreshKeyRegistrations();}
     action=plan.action;record_status=base::UTF8ToUTF16(std::string(plan.record_status));
@@ -7045,11 +7069,12 @@ void WorkspaceShell::ToolsAction(int action) {
   bool ok = false;
   if (action == 1 && snapshot_name_) {
     ok = callbacks_.save_snapshot && callbacks_.save_snapshot.Run(base::UTF16ToUTF8(snapshot_name_->GetText()), false);
-  } else if ((action == 2 || action == 3) && index < snapshot_ids_.size()) {
-    ok = action == 2 ? callbacks_.restore_snapshot.Run(snapshot_ids_[index]) : callbacks_.delete_snapshot.Run(snapshot_ids_[index]);
+  } else if ((action == 2 || action == 3) && (rust_timeline?!snapshot_target.empty():index<snapshot_ids_.size())) {
+    const auto& id=rust_timeline?snapshot_target:snapshot_ids_[index];
+    ok = action == 2 ? callbacks_.restore_snapshot.Run(id) : callbacks_.delete_snapshot.Run(id);
   } else if (action == 4 && closed_picker_) {
-    const size_t closed = PickerIndex(closed_picker_).value_or(0);
-    if (closed < closed_ids_.size()) ok = callbacks_.reopen_closed.Run(closed_ids_[closed]);
+    if(rust_timeline){if(!closed_target.empty())ok=callbacks_.reopen_closed.Run(closed_target);}
+    else{const size_t closed=PickerIndex(closed_picker_).value_or(0);if(closed<closed_ids_.size())ok=callbacks_.reopen_closed.Run(closed_ids_[closed]);}
   } else if (action == 5) {
     const std::string id = state_.workspace_id;
     ok = callbacks_.sleep_workspace && callbacks_.sleep_workspace.Run(id);

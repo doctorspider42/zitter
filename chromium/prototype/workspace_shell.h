@@ -489,7 +489,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void SetHistoryMoreVisible(bool visible);
   void RefreshKeyRegistrations();
   void SaveTools();
-  void ToolsAction(int action);
+  void ToolsAction(int action,std::optional<std::string> timeline_key=std::nullopt);
   BrowserTools tools_;
   bool tools_ready_ = false;
   bool keys_dirty_ = false, engines_dirty_ = false;

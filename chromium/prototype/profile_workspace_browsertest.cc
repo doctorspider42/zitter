@@ -104,6 +104,7 @@
 #include "chrome/browser/profiles/profile_manager_observer.h"
 
 #include "base/command_line.h"
+#include "base/i18n/case_conversion.h"
 #include "base/location.h"
 #include "base/base_paths.h"
 #include "base/files/file_util.h"
@@ -1246,6 +1247,32 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsChoicesTimelineIdentityFi
   shell->ActivateToolsChoiceForTesting("selection",0);EXPECT_EQ(snapshots.size(),window_->TimeMachine().snapshots.size());
   filter(u"Tools twin");EXPECT_TRUE(picker->GetEnabled());EXPECT_TRUE(shell->tools_choice_label_for_testing("selection",0).starts_with(u"Tools twin"));
   shell->tools_widget()->Hide();shell->ActivateToolsChoiceForTesting("selection",0);EXPECT_EQ(snapshots.size(),window_->TimeMachine().snapshots.size());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsChoicesTimelineUnicodeRestoreAndClosedTargets) {
+  ASSERT_TRUE(window_->Select("work"));auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready()&&shell->appearance_ready();}));
+  const auto left=embedded_test_server()->GetURL("/storage_probe.html?projection-left");const auto right=embedded_test_server()->GetURL("/storage_probe.html?projection-right");
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"),left));const std::u16string prefix=u"ΣΙΓΜΑ İSTANBUL 🦀";const auto snapshot_name=prefix+u" saved";const auto closed_name=prefix+u" closed";
+  ASSERT_TRUE(window_->SaveSnapshot(base::UTF16ToUTF8(snapshot_name)));ASSERT_TRUE(window_->NavigateFromBar(right,true));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  content::TitleWatcher title(window_->contents("work"),closed_name);ASSERT_TRUE(content::ExecJs(window_->contents("work"),content::JsReplace("document.title=$1",closed_name)));EXPECT_EQ(closed_name,title.WaitAndGetTitle());
+  ASSERT_TRUE(window_->SaveSnapshot("Different layout"));window_->CloseTab(1);ASSERT_EQ(1u,window_->tab_count("work"));shell->OpenTools(0);
+  auto filter=[&](std::u16string text){auto* field=shell->timeline_filter_input();field->SelectRange(gfx::Range(0,field->GetText().size()));if(text.empty())EXPECT_TRUE(field->input_client()->DeleteRange(gfx::Range(0,field->GetText().size())));else field->input_client()->InsertText(text,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->tools_widget()->LayoutRootViewIfNecessary();};
+  auto oracle=[&](std::u16string query){
+    filter(query);query=base::i18n::ToLower(query);const auto state=window_->TimeMachine();
+    auto check=[&](const auto& items,std::string key){std::vector<std::u16string> labels;for(const auto& item:items)if(query.empty()||base::i18n::ToLower(item.title+u" "+item.detail).find(query)!=std::u16string::npos)labels.push_back(item.title+u" — "+item.detail);auto* picker=shell->tools_choice_for_testing(key);ASSERT_TRUE(picker);EXPECT_EQ(!labels.empty(),picker->GetEnabled());if(labels.empty())labels.push_back(u"Brak zapisanych pozycji");ASSERT_EQ(labels.size(),shell->tools_choice_count_for_testing(key));for(size_t i=0;i<labels.size();++i)EXPECT_EQ(labels[i],shell->tools_choice_label_for_testing(key,i));EXPECT_EQ(0u,shell->tools_choice_selection_for_testing(key));ui::AXNodeData node;picker->GetViewAccessibility().GetAccessibleNodeData(&node);EXPECT_EQ(labels[0],node.GetString16Attribute(ax::mojom::StringAttribute::kValue));};
+    ASSERT_NO_FATAL_FAILURE(check(state.snapshots,"selection"));
+  ASSERT_NO_FATAL_FAILURE(check(state.closed,"closed"));
+  };
+  for(const auto& query:std::vector<std::u16string>{u"σιγμα i\u0307stanbul 🦀",u" — ",std::u16string(1,0xd83e),u"not a timeline match",u""}){SCOPED_TRACE(base::UTF16ToUTF8(query));
+  ASSERT_NO_FATAL_FAILURE(oracle(query));}
+  ASSERT_NO_FATAL_FAILURE(oracle(prefix));ASSERT_TRUE(shell->tools_choice_for_testing("closed")->GetEnabled());
+  auto activate=[&](std::u16string text){auto* widget=shell->tools_widget();auto* button=FindButton(widget->GetContentsView(),text);ASSERT_TRUE(button);button->ScrollRectToVisible(button->GetLocalBounds());ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));button->RequestFocus();base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));};
+  ASSERT_NO_FATAL_FAILURE(activate(u"Przywróć wybraną kartę"));ASSERT_TRUE(base::test::RunUntil([&]{return window_->tab_count("work")==2;}));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));EXPECT_EQ(right,window_->contents("work")->GetLastCommittedURL());EXPECT_EQ(work_,window_->contents("work")->GetBrowserContext());
+  shell->OpenTools(0);
+  ASSERT_NO_FATAL_FAILURE(oracle(snapshot_name));ASSERT_EQ(1u,shell->tools_choice_count_for_testing("selection"));
+  ASSERT_NO_FATAL_FAILURE(activate(u"Przywróć wybrany układ"));ASSERT_TRUE(base::test::RunUntil([&]{return window_->tab_count("work")==1;}));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));EXPECT_EQ(left,window_->contents("work")->GetLastCommittedURL());EXPECT_EQ(work_,window_->contents("work")->GetBrowserContext());
+  shell->OpenTools(0);
+  ASSERT_NO_FATAL_FAILURE(oracle(prefix));shell->tools_widget()->Hide();const auto count=window_->TimeMachine().snapshots.size();shell->ActivateToolsChoiceForTesting("selection",0);EXPECT_EQ(count,window_->TimeMachine().snapshots.size());
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsEditorsCocoaSnapshotProviderAndStaleActions) {
@@ -4909,6 +4936,19 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, PageDialogSceneScrollPromp
   widget->SetColorModeOverride(ui::ColorProviderKey::ColorMode::kLight);ASSERT_TRUE(base::test::RunUntil([&]{return manager->scene_order_correct_for_testing()&&manager->scene_contains_text_for_testing("Dialog end 🦀");}));
   auto lifetime=field->input_client()->AsWeakPtr();widget->CloseNow();ASSERT_TRUE(base::test::RunUntil([&]{return !manager->dialog()&&!lifetime&&closed==1;}));EXPECT_FALSE(manager->scene_visible_for_testing());
   open(u"Fresh dialog 🦀");ASSERT_TRUE(base::test::RunUntil([&]{return manager->scene_contains_text_for_testing("Fresh dialog 🦀");}));EXPECT_FALSE(manager->scene_contains_text_for_testing("Dialog end 🦀"));manager->CancelDialogs(page,true);ASSERT_TRUE(base::test::RunUntil([&]{return !manager->dialog()&&closed==2;}));EXPECT_FALSE(manager->scene_visible_for_testing());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsTimelinePostedDeleteCannotBorrowFilteredTarget) {
+  ASSERT_TRUE(window_->Select("work"));auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready()&&shell->appearance_ready();}));
+  ASSERT_TRUE(window_->SaveSnapshot("Ticket alpha"));ASSERT_TRUE(window_->SaveSnapshot("Ticket beta"));shell->OpenTools(0);
+  auto filter=[&](std::u16string text){auto* field=shell->timeline_filter_input();field->SelectRange(gfx::Range(0,field->GetText().size()));field->input_client()->InsertText(text,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);};
+  auto has=[&](std::u16string title){const auto state=window_->TimeMachine();return std::any_of(state.snapshots.begin(),state.snapshots.end(),[&](const auto& item){return item.title==title;});};
+  filter(u"Ticket alpha");ASSERT_EQ(1u,shell->tools_choice_count_for_testing("selection"));auto* button=FindButton(shell->tools_widget()->GetContentsView(),u"Usuń wybrany snapshot");ASSERT_TRUE(button);
+  views::test::ButtonTestApi(button).NotifyDefaultMouseClick();
+  // The button posts its command. A newer filter must not lend index zero's
+  // new target to the older click while that command is waiting in the queue.
+  filter(u"Ticket beta");ASSERT_EQ(1u,shell->tools_choice_count_for_testing("selection"));base::RunLoop().RunUntilIdle();EXPECT_TRUE(has(u"Ticket alpha"));EXPECT_TRUE(has(u"Ticket beta"));
+  views::test::ButtonTestApi(button).NotifyDefaultMouseClick();ASSERT_TRUE(base::test::RunUntil([&]{return !has(u"Ticket beta");}));EXPECT_TRUE(has(u"Ticket alpha"));
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsChromeSharedUnderlayCutoutsScrollingAndHistoryRows) {
