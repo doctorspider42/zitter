@@ -38,6 +38,7 @@
 namespace zitter::sidebar { struct Item; }
 namespace ui { class AcceleratorTarget; }
 namespace views {
+class DialogDelegate;
 class Button;
 class Combobox;
 class Checkbox;
@@ -595,6 +596,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void ConfirmRemoveWorkspace(std::string id);
   bool creating_workspace_ = false;
   raw_ptr<views::View> workspace_appearance_ = nullptr;
+  std::unique_ptr<views::DialogDelegate> remove_workspace_dialog_delegate_;
   std::unique_ptr<views::Widget> remove_workspace_dialog_;
   void RefreshWorkspaceSettings();
   void ToggleWorkspaceCreation();
@@ -703,6 +705,8 @@ class WorkspaceShell final : public ui::EventHandler,
   std::string link_source_workspace_;
   std::vector<Workspace> route_workspaces_;
   raw_ptr<views::Button> new_tab_button_ = nullptr;
+  std::unique_ptr<views::DialogDelegate> rust_folder_dialog_delegate_;
+  std::unique_ptr<views::Widget> rust_folder_dialog_;
   base::WeakPtr<views::Widget> folder_dialog_;
   std::string folder_parent_id_;
   raw_ptr<views::View> sidebar_root_ = nullptr;

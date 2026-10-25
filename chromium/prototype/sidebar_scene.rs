@@ -838,6 +838,7 @@ fn action_button_layout(width: i32, height: i32, text_width: i32, control_height
 // alignment and placement belong to the Rust scene. Insets/font metrics are
 // native theme inputs, not hidden native controls.
 fn dialog_actions_layout(width: i32, height: i32, spacing: i32, link_limit: i32, top: i32, left: i32, bottom: i32, right: i32, children: &[ffi::ColumnChild]) -> ffi::ColumnLayout {
+    if children.is_empty(){return ffi::ColumnLayout{width:width.max(0),height:height.max(0),children:Vec::new()};}
     let linked=children.iter().map(|c|c.width.max(0)).filter(|&w|w<=link_limit).max().unwrap_or(0);
     let measured:Vec<_>=children.iter().map(|c|ffi::ColumnChild{width:c.width.max(linked),height:c.height.max(0),top:0,left:0,bottom:0,right:0}).collect();
     let natural=action_group_layout(-1,-1,false,spacing,&measured);
@@ -1878,7 +1879,7 @@ mod tests {
     }
     #[test]
     fn dialog_actions_clip_empty_and_narrow_rows() {
-        assert!(dialog_actions_layout(0,0,8,200,12,20,16,20,&[]).children.is_empty());
+        let empty=dialog_actions_layout(-1,-1,8,200,12,20,16,20,&[]);assert_eq!((empty.width,empty.height),(0,0));assert!(empty.children.is_empty());
         let children=[ffi::ColumnChild{width:90,height:32,top:0,left:0,bottom:0,right:0},ffi::ColumnChild{width:100,height:32,top:0,left:0,bottom:0,right:0}];
         for width in [0,1,20,40,90,480] {for height in [0,1,20,64] {
             let g=dialog_actions_layout(width,height,8,200,12,20,16,20,&children);

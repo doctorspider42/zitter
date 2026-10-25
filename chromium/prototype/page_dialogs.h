@@ -10,7 +10,7 @@
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
 
-namespace views { class Widget; class View; class ScrollView; class DialogDelegate; class Button; }
+namespace views { class Widget; class View; class ScrollView; class DialogDelegate; class Button; class ClientView; }
 namespace ui { class KeyEvent; }
 namespace zitter::prototype {
 class EditorControl;
@@ -29,6 +29,8 @@ class PageDialogScene {
 };
 std::unique_ptr<PageDialogScene> CreatePageDialogScene(views::View* root);
 std::unique_ptr<views::View> CreatePageDialogActions(views::Widget* widget);
+views::ClientView* CreateSceneDialogClient(views::Widget* widget,views::View* contents);
+views::Button* DialogActionButton(views::Widget* widget,bool accept);
 bool PageDialogActionsVisibleForTesting(views::View* actions,std::string_view text);
 
 // Native dialogs bound to the requesting WebContents, including beforeunload
@@ -72,6 +74,8 @@ class PageDialogs final : public content::JavaScriptDialogManager,
   void OnVisibilityChanged(content::Visibility) override;
   void RenderFrameDeleted(content::RenderFrameHost*) override;
   void WebContentsDestroyed() override;
+  // The client owns the delegate and destroys it after its widget.
+  std::unique_ptr<views::DialogDelegate> delegate_;
   std::unique_ptr<views::Widget> dialog_;
   std::unique_ptr<PageDialogScene> scene_;
   raw_ptr<views::View> body_ = nullptr;

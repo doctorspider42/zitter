@@ -749,7 +749,7 @@ class SceneTextButton final : public SceneGlyphButton {
       :SceneGlyphButton(std::move(callback),text,Glyph::kMore,nullptr,base::BindRepeating([]{return true;}),std::move(painted)),text_(std::move(text)),style_(style) {
     SetInstallFocusRingOnFocus(false);SetHasInkDropActionOnClick(false);SetAnimateOnStateChange(false);SetRequestFocusOnPress(false);
   }
-  void SetDefault(bool value){GetViewAccessibility().SetIsDefault(value);if(value)AddAccelerator(ui::Accelerator(ui::VKEY_RETURN,ui::EF_NONE));}
+  void SetDefault(bool value){if(value==default_)return;default_=value;GetViewAccessibility().SetIsDefault(value);const ui::Accelerator enter(ui::VKEY_RETURN,ui::EF_NONE);if(value)AddAccelerator(enter);else RemoveAccelerator(enter);}
   void SetText(std::u16string text){if(text==text_)return;OnMouseCaptureLost();text_=std::move(text);GetViewAccessibility().SetName(text_);SetTooltipText(text_);PreferredSizeChanged();SchedulePaint();}
   static gfx::FontList TextFont(){return views::TypographyProvider::Get().GetFont(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY);}
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {const auto g=Metrics(-1,-1);return gfx::Size(g.width,g.height);}
@@ -765,7 +765,7 @@ class SceneTextButton final : public SceneGlyphButton {
   }
  private:
   sidebar::ActionButtonLayout Metrics(int width,int height) const {const auto font=TextFont();return sidebar::action_button_layout(width,height,gfx::GetStringWidth(text_,font),views::LayoutProvider::GetControlHeightForFont(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY,font),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_BUTTON_HORIZONTAL_PADDING),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_DIALOG_BUTTON_MINIMUM_WIDTH));}
-  std::u16string text_;ui::ButtonStyle style_;
+  std::u16string text_;ui::ButtonStyle style_;bool default_=false;
 };
 BEGIN_METADATA(SceneTextButton)
 END_METADATA
@@ -1824,6 +1824,30 @@ END_METADATA
 #if BUILDFLAG(IS_MAC)
 // The modal host retains system focus/buttons/IME. Rust owns this form's
 // copy, validation/submission state, geometry and static text display list.
+// A scene-owned single-body modal, retaining only native window/frame,
+// scrolling, typography, focus and AX services. The caller owns this delegate
+// and destroys its CLIENT_OWNS_WIDGET widget before deleting the delegate.
+class SceneModalDialog final : public views::BubbleDialogDelegate {
+ public:
+  SceneModalDialog(std::unique_ptr<views::View> body,bool control)
+      :views::BubbleDialogDelegate(views::BubbleAnchor(),views::BubbleBorder::Arrow::NONE,views::BubbleBorder::DIALOG_SHADOW,true){
+    SetModalType(ui::mojom::ModalType::kWindow);SetShowCloseButton(false);SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
+    auto* provider=views::LayoutProvider::Get();set_fixed_width(provider->GetDistanceMetric(views::DISTANCE_MODAL_DIALOG_PREFERRED_WIDTH));
+    const auto sides=provider->GetInsetsMetric(views::INSETS_DIALOG);
+    // Preserve the 2px scroll-content workaround of the original model host.
+    constexpr int scroll_margin=2;
+    auto contents=std::make_unique<views::View>();SetSidebarPanelLayout(contents.get(),true,gfx::Insets::TLBR(scroll_margin,sides.left(),scroll_margin,sides.right()),0);contents->AddChildView(std::move(body));
+    auto scroll=std::make_unique<views::ScrollView>();scroll->ClipHeightTo(0,provider->GetDistanceMetric(views::DISTANCE_MODAL_DIALOG_SCROLLABLE_AREA_MAX_HEIGHT));scroll->SetHorizontalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);scroll->SetContents(std::move(contents));SetContentsView(std::move(scroll));
+    set_margins(gfx::Insets::TLBR(std::max(0,provider->GetDistanceMetric(control?views::DISTANCE_DIALOG_CONTENT_MARGIN_TOP_CONTROL:views::DISTANCE_DIALOG_CONTENT_MARGIN_TOP_TEXT)-scroll_margin),0,std::max(0,provider->GetDistanceMetric(control?views::DISTANCE_DIALOG_CONTENT_MARGIN_BOTTOM_CONTROL:views::DISTANCE_DIALOG_CONTENT_MARGIN_BOTTOM_TEXT)-scroll_margin),0));
+  }
+  views::ClientView* CreateClientView(views::Widget* widget) override{
+    auto* client=CreateSceneDialogClient(widget,TransferOwnershipOfContentsView());client->SetPaintToLayer(layer_type());client->layer()->SetRoundedCornerRadius(gfx::RoundedCornersF(GetCornerRadius()));client->layer()->SetIsFastRoundedCorner(true);return client;
+  }
+  views::View* GetInitiallyFocusedView() override{
+    if(HasConfiguredInitiallyFocusedView())return views::WidgetDelegate::GetInitiallyFocusedView();
+    return GetDefaultDialogButton()?DialogActionButton(GetWidget(),GetDefaultDialogButton()==static_cast<int>(ui::mojom::DialogButton::kOk)):nullptr;
+  }
+};
 class FolderFormView final : public views::View {
   METADATA_HEADER(FolderFormView,views::View)
  public:
@@ -3914,7 +3938,8 @@ void WorkspaceShell::Detach() {
   history_timer_.Stop();
   import_preview_timer_.Stop();
   if (folder_dialog_) folder_dialog_->CloseNow();
-  remove_workspace_dialog_.reset();
+  rust_folder_dialog_.reset();rust_folder_dialog_delegate_.reset();
+  remove_workspace_dialog_.reset();remove_workspace_dialog_delegate_.reset();
   link_menu_runner_.reset(); link_menu_.reset(); route_menu_.reset();
   workspace_menu_runner_.reset();
   workspace_menu_.reset();
@@ -5204,12 +5229,10 @@ void WorkspaceShell::RequestFolderName(std::string workspace, std::string parent
       form->Finish(ok);if(ok)shell->folder_dialog_.reset();return ok;
     },weak_factory_.GetWeakPtr()));
     const auto title=contents->title(),accept=contents->accept_label(),cancel=contents->cancel_label();const auto weak=contents->weak();auto* input=contents->field();
-    auto model=ui::DialogModel::Builder().SetTitle(title)
-        .AddCustomField(std::make_unique<views::BubbleDialogModelHost::CustomView>(std::move(contents),views::BubbleDialogModelHost::FieldType::kControl,input->view()),kFolderNameField)
-        .SetInitiallyFocusedField(kFolderNameField)
-        .AddOkButton(base::BindRepeating([](base::WeakPtr<FolderFormView> form){return !form||form->Accept();},weak),ui::DialogModel::Button::Params().SetLabel(accept))
-        .AddCancelButton(base::BindOnce([](base::WeakPtr<FolderFormView> form){if(form)form->Cancel();},weak),ui::DialogModel::Button::Params().SetLabel(cancel)).Build();
-    auto* prompt=views::DialogDelegate::CreateDialogWidget(views::BubbleDialogModelHost::CreateModal(std::move(model),ui::mojom::ModalType::kWindow),widget_->GetNativeWindow(),widget_->GetNativeView());
+    auto dialog=std::make_unique<SceneModalDialog>(std::move(contents),true);dialog->SetTitle(title);dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk)|static_cast<int>(ui::mojom::DialogButton::kCancel));dialog->SetButtonLabel(ui::mojom::DialogButton::kOk,accept);dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel,cancel);dialog->SetInitiallyFocusedView(input->view());
+    dialog->SetAcceptCallbackWithClose(base::BindRepeating([](base::WeakPtr<FolderFormView> form){return !form||form->Accept();},weak));dialog->SetCancelCallback(base::BindOnce([](base::WeakPtr<FolderFormView> form){if(form)form->Cancel();},weak));
+    rust_folder_dialog_delegate_=std::move(dialog);auto* prompt=views::DialogDelegate::CreateDialogWidget(rust_folder_dialog_delegate_.get(),widget_->GetNativeWindow(),widget_->GetNativeView());rust_folder_dialog_.reset(prompt);
+    prompt->MakeCloseSynchronous(base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,views::Widget::ClosedReason){if(shell){shell->folder_dialog_.reset();shell->rust_folder_dialog_.reset();shell->rust_folder_dialog_delegate_.reset();}},weak_factory_.GetWeakPtr()));
     prompt->SetColorModeOverride(widget_->color_mode_override());InstallWorkspaceKeyboardRouting(prompt,true);PreparePanelText(prompt->GetRootView());folder_dialog_=prompt->GetWeakPtr();prompt->Show();input->SelectRange(gfx::Range(0,input->GetText().size()));return;
   }
 #endif
@@ -5256,13 +5279,11 @@ bool WorkspaceShell::ShowRustFolderNotice(std::string workspace,std::string fold
     if(!shell||!alive)return true;notice->Finish(ok);if(ok)shell->folder_dialog_.reset();return ok;
   },weak_factory_.GetWeakPtr()));
   const auto copy=content->copy();const auto weak=content->weak();
-  ui::DialogModel::Builder builder;builder.SetTitle(base::UTF8ToUTF16(std::string(copy.title)))
-      .AddCustomField(std::make_unique<views::BubbleDialogModelHost::CustomView>(std::move(content),views::BubbleDialogModelHost::FieldType::kText))
-      .AddOkButton(base::BindRepeating([](base::WeakPtr<FolderNoticeView> notice){return !notice||notice->Accept();},weak),ui::DialogModel::Button::Params().SetLabel(base::UTF8ToUTF16(std::string(copy.accept))));
-  if(!copy.cancel.empty())builder.AddCancelButton(base::BindOnce([](base::WeakPtr<FolderNoticeView> notice){if(notice)notice->Cancel();},weak),ui::DialogModel::Button::Params().SetLabel(base::UTF8ToUTF16(std::string(copy.cancel))));
-  if(copy.default_cancel)builder.OverrideDefaultButton(ui::mojom::DialogButton::kCancel);
-  auto* prompt=views::DialogDelegate::CreateDialogWidget(views::BubbleDialogModelHost::CreateModal(builder.Build(),ui::mojom::ModalType::kWindow),widget_->GetNativeWindow(),widget_->GetNativeView());
-  prompt->SetColorModeOverride(widget_->color_mode_override());PreparePanelText(prompt->GetRootView());folder_dialog_=prompt->GetWeakPtr();prompt->Show();return true;
+  auto dialog=std::make_unique<SceneModalDialog>(std::move(content),false);dialog->SetTitle(base::UTF8ToUTF16(std::string(copy.title)));dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk)|(!copy.cancel.empty()?static_cast<int>(ui::mojom::DialogButton::kCancel):0));dialog->SetButtonLabel(ui::mojom::DialogButton::kOk,base::UTF8ToUTF16(std::string(copy.accept)));dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel,base::UTF8ToUTF16(std::string(copy.cancel)));
+  dialog->SetAcceptCallbackWithClose(base::BindRepeating([](base::WeakPtr<FolderNoticeView> notice){return !notice||notice->Accept();},weak));if(!copy.cancel.empty())dialog->SetCancelCallback(base::BindOnce([](base::WeakPtr<FolderNoticeView> notice){if(notice)notice->Cancel();},weak));if(copy.default_cancel)dialog->SetDefaultButton(static_cast<int>(ui::mojom::DialogButton::kCancel));
+  rust_folder_dialog_delegate_=std::move(dialog);auto* prompt=views::DialogDelegate::CreateDialogWidget(rust_folder_dialog_delegate_.get(),widget_->GetNativeWindow(),widget_->GetNativeView());rust_folder_dialog_.reset(prompt);
+  prompt->MakeCloseSynchronous(base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,views::Widget::ClosedReason){if(shell){shell->folder_dialog_.reset();shell->rust_folder_dialog_.reset();shell->rust_folder_dialog_delegate_.reset();}},weak_factory_.GetWeakPtr()));
+  prompt->SetColorModeOverride(widget_->color_mode_override());InstallWorkspaceKeyboardRouting(prompt,true);PreparePanelText(prompt->GetRootView());folder_dialog_=prompt->GetWeakPtr();prompt->Show();return true;
 #else
   return false;
 #endif
@@ -5320,6 +5341,9 @@ void WorkspaceShell::RequestDeleteFolder(std::string workspace, std::string fold
   auto* prompt = views::DialogDelegate::CreateDialogWidget(
       views::BubbleDialogModelHost::CreateModal(std::move(model), ui::mojom::ModalType::kWindow), widget_->GetNativeWindow(), widget_->GetNativeView());
   prompt->SetColorModeOverride(widget_->color_mode_override());
+#if BUILDFLAG(IS_MAC)
+  InstallWorkspaceKeyboardRouting(prompt,true);
+#endif
   PreparePanelText(prompt->GetRootView());
   folder_dialog_ = prompt->GetWeakPtr(); prompt->Show();
 }
@@ -5334,6 +5358,9 @@ void WorkspaceShell::ShowFolderSaveError() {
       views::BubbleDialogModelHost::CreateModal(std::move(model), ui::mojom::ModalType::kWindow),
       widget_->GetNativeWindow(), widget_->GetNativeView());
   prompt->SetColorModeOverride(widget_->color_mode_override());
+#if BUILDFLAG(IS_MAC)
+  InstallWorkspaceKeyboardRouting(prompt,true);
+#endif
   PreparePanelText(prompt->GetRootView());
   folder_dialog_ = prompt->GetWeakPtr();
   prompt->Show();
@@ -7264,18 +7291,13 @@ bool WorkspaceShell::ShowRustWorkspaceNotice(std::string workspace,std::string t
     if(alive)alive->Finish(accepted);return accepted;
   },weak_factory_.GetWeakPtr()));
   const auto copy=content->copy();const auto weak=content->weak();
-  ui::DialogModel::Builder builder;builder.SetTitle(base::UTF8ToUTF16(std::string(copy.title)))
-      .AddCustomField(std::make_unique<views::BubbleDialogModelHost::CustomView>(std::move(content),views::BubbleDialogModelHost::FieldType::kText))
-      .AddOkButton(base::BindRepeating([](base::WeakPtr<WorkspaceNoticeView> notice){return !notice||notice->Accept();},weak),ui::DialogModel::Button::Params().SetLabel(base::UTF8ToUTF16(std::string(copy.accept))))
-      .AddCancelButton(base::BindOnce([](base::WeakPtr<WorkspaceNoticeView> notice){if(notice)notice->Cancel();},weak),ui::DialogModel::Button::Params().SetLabel(base::UTF8ToUTF16(std::string(copy.cancel))));
-  if(copy.default_cancel)builder.OverrideDefaultButton(ui::mojom::DialogButton::kCancel);
-  auto dialog=views::BubbleDialogModelHost::CreateModal(builder.Build(),ui::mojom::ModalType::kWindow);
-  dialog->SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
-  auto* prompt=views::DialogDelegate::CreateDialogWidget(std::move(dialog),widget_->GetNativeWindow(),widget_->GetNativeView());
-  prompt->SetColorModeOverride(widget_->color_mode_override());PreparePanelText(prompt->GetRootView());
+  auto dialog=std::make_unique<SceneModalDialog>(std::move(content),false);dialog->SetTitle(base::UTF8ToUTF16(std::string(copy.title)));dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk)|static_cast<int>(ui::mojom::DialogButton::kCancel));dialog->SetButtonLabel(ui::mojom::DialogButton::kOk,base::UTF8ToUTF16(std::string(copy.accept)));dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel,base::UTF8ToUTF16(std::string(copy.cancel)));
+  dialog->SetAcceptCallbackWithClose(base::BindRepeating([](base::WeakPtr<WorkspaceNoticeView> notice){return !notice||notice->Accept();},weak));dialog->SetCancelCallback(base::BindOnce([](base::WeakPtr<WorkspaceNoticeView> notice){if(notice)notice->Cancel();},weak));if(copy.default_cancel)dialog->SetDefaultButton(static_cast<int>(ui::mojom::DialogButton::kCancel));
+  remove_workspace_dialog_delegate_=std::move(dialog);auto* prompt=views::DialogDelegate::CreateDialogWidget(remove_workspace_dialog_delegate_.get(),widget_->GetNativeWindow(),widget_->GetNativeView());
+  prompt->SetColorModeOverride(widget_->color_mode_override());InstallWorkspaceKeyboardRouting(prompt,true);PreparePanelText(prompt->GetRootView());
   remove_workspace_dialog_.reset(prompt);
   prompt->MakeCloseSynchronous(base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,views::Widget::ClosedReason){
-    if(shell)shell->remove_workspace_dialog_.reset();
+    if(shell){shell->remove_workspace_dialog_.reset();shell->remove_workspace_dialog_delegate_.reset();}
   },weak_factory_.GetWeakPtr()));
   prompt->Show();return true;
 #else
@@ -7339,10 +7361,13 @@ void WorkspaceShell::ConfirmRemoveWorkspace(std::string id) {
   dialog->SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
   auto* prompt = views::DialogDelegate::CreateDialogWidget(std::move(dialog), widget_->GetNativeWindow(), widget_->GetNativeView());
   prompt->SetColorModeOverride(widget_->color_mode_override());
+#if BUILDFLAG(IS_MAC)
+  InstallWorkspaceKeyboardRouting(prompt,true);
+#endif
   PreparePanelText(prompt->GetRootView());
   remove_workspace_dialog_.reset(prompt);
   prompt->MakeCloseSynchronous(base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,views::Widget::ClosedReason){
-    if(shell)shell->remove_workspace_dialog_.reset();
+    if(shell){shell->remove_workspace_dialog_.reset();shell->remove_workspace_dialog_delegate_.reset();}
   },weak_factory_.GetWeakPtr()));
   prompt->Show();
 }

@@ -41,12 +41,12 @@ namespace {
 // This client replaces DialogClientView's private MdTextButton construction.
 // The inherited native Escape, input-protection and themed window services are
 // retained. Its empty private button-row container never owns controls. Only
-// this fixed PageDialogs model uses the adapter; native GetOkButton/GetCancelButton
-// are deliberately not an API for these Rust nodes.
-class PageDialogClient final : public views::DialogClientView {
-  METADATA_HEADER(PageDialogClient,views::DialogClientView)
+// scene dialogs use this adapter; native GetOkButton/GetCancelButton are
+// deliberately not an API for these Rust nodes.
+class SceneDialogClient final : public views::DialogClientView {
+  METADATA_HEADER(SceneDialogClient,views::DialogClientView)
  public:
-  PageDialogClient(views::Widget* widget,views::View* body):views::DialogClientView(widget,body){actions_=AddChildView(CreatePageDialogActions(widget));}
+  SceneDialogClient(views::Widget* widget,views::View* body):views::DialogClientView(widget,body){actions_=AddChildView(CreatePageDialogActions(widget));}
   views::View* Button(bool accept) const{return actions_->GetViewByID(static_cast<int>(accept?ui::mojom::DialogButton::kOk:ui::mojom::DialogButton::kCancel));}
   void ViewHierarchyChanged(const views::ViewHierarchyChangedDetails& details) override{
     // Skip the base's private native-button allocator; preserve ClientView's
@@ -56,11 +56,11 @@ class PageDialogClient final : public views::DialogClientView {
   }
   void OnDialogChanged() override{
     auto* focused=GetFocusManager()->GetFocusedView();const int id=focused&&actions_->Contains(focused)?focused->GetID():0;
-    RemoveChildViewT(actions_.ExtractAsDangling());actions_=AddChildView(CreatePageDialogActions(GetWidget()));PreferredSizeChanged();
+    auto* previous=actions_.get();actions_=AddChildView(CreatePageDialogActions(GetWidget()));RemoveChildViewT(previous);PreferredSizeChanged();
     if(id)if(auto* replacement=actions_->GetViewByID(id);replacement&&replacement->GetEnabled())replacement->RequestFocus();
   }
   gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override{auto size=views::DialogClientView::CalculatePreferredSize(available);size.Enlarge(0,actions_->GetPreferredSize().height());size.set_width(std::max(size.width(),actions_->GetPreferredSize().width()));return size;}
-  gfx::Size GetMinimumSize() const override{auto size=views::DialogClientView::GetMinimumSize();size.Enlarge(0,actions_->GetPreferredSize().height());size.set_width(std::max(size.width(),actions_->GetPreferredSize().width()));return size;}
+  gfx::Size GetMinimumSize() const override{const auto* delegate=GetWidget()->widget_delegate()->AsDialogDelegate();if(delegate->fixed_width())return CalculatePreferredSize(views::SizeBounds(delegate->fixed_width(),{}));auto size=views::DialogClientView::GetMinimumSize();size.Enlarge(0,actions_->GetPreferredSize().height());size.set_width(std::max(size.width(),actions_->GetPreferredSize().width()));return size;}
   gfx::Size GetMaximumSize() const override{auto size=views::DialogClientView::GetMaximumSize();if(size.height())size.Enlarge(0,actions_->GetPreferredSize().height());return size;}
   views::ProposedLayout CalculateProposedLayout(const views::SizeBounds& bounds) const override{
     auto result=views::DialogClientView::CalculateProposedLayout(bounds);const int row_height=actions_->GetHeightForWidth(bounds.width().value());
@@ -69,26 +69,33 @@ class PageDialogClient final : public views::DialogClientView {
   }
  private:raw_ptr<views::View> actions_=nullptr;
 };
-BEGIN_METADATA(PageDialogClient)
+BEGIN_METADATA(SceneDialogClient)
 END_METADATA
 class PageDialogDelegate final : public views::DialogDelegate {
  public:
-  views::ClientView* CreateClientView(views::Widget* widget) override{return new PageDialogClient(widget,TransferOwnershipOfContentsView());}
+  views::ClientView* CreateClientView(views::Widget* widget) override{return new SceneDialogClient(widget,TransferOwnershipOfContentsView());}
   views::View* GetInitiallyFocusedView() override{
     if(HasConfiguredInitiallyFocusedView())return views::WidgetDelegate::GetInitiallyFocusedView();
-    const int button=GetDefaultDialogButton();if(!button)return nullptr;auto* client=static_cast<PageDialogClient*>(GetDialogClientView());return client?client->Button(button==static_cast<int>(ui::mojom::DialogButton::kOk)):nullptr;
+    const int button=GetDefaultDialogButton();if(!button)return nullptr;auto* client=static_cast<SceneDialogClient*>(GetDialogClientView());return client?client->Button(button==static_cast<int>(ui::mojom::DialogButton::kOk)):nullptr;
   }
 };
 #endif
 }  // namespace
-views::Button* PageDialogs::dialog_button_for_testing(bool accept) const{
-  if(!dialog_)return nullptr;
+views::ClientView* CreateSceneDialogClient(views::Widget* widget,views::View* contents){
 #if BUILDFLAG(IS_MAC)
-  if(scene_)return static_cast<views::Button*>(static_cast<PageDialogClient*>(dialog_->client_view())->Button(accept));
+  return new SceneDialogClient(widget,contents);
+#else
+  return nullptr;
 #endif
-  auto* client=dialog_->widget_delegate()->AsDialogDelegate()->GetDialogClientView();
-  return accept?client->ok_button():client->cancel_button();
 }
+views::Button* DialogActionButton(views::Widget* widget,bool accept){
+  if(!widget)return nullptr;
+#if BUILDFLAG(IS_MAC)
+  if(auto* client=views::AsViewClass<SceneDialogClient>(widget->client_view()))return static_cast<views::Button*>(client->Button(accept));
+#endif
+  auto* client=widget->widget_delegate()->AsDialogDelegate()->GetDialogClientView();return client?(accept?client->ok_button():client->cancel_button()):nullptr;
+}
+views::Button* PageDialogs::dialog_button_for_testing(bool accept) const{return DialogActionButton(dialog_.get(),accept);}
 WEB_CONTENTS_USER_DATA_KEY_IMPL(PageDialogs);
 PageDialogs* PageDialogs::Attach(content::WebContents* contents) {
   CreateForWebContents(contents); return FromWebContents(contents);
@@ -162,7 +169,8 @@ void PageDialogs::Show(content::RenderFrameHost* frame, content::JavaScriptDialo
     return true;
   },weak_factory_.GetWeakPtr(),generation));
   auto* parent = views::Widget::GetWidgetForNativeWindow(web_contents()->GetTopLevelNativeWindow());
-  auto* widget = views::DialogDelegate::CreateDialogWidget(std::move(dialog),
+  delegate_=std::move(dialog);
+  auto* widget = views::DialogDelegate::CreateDialogWidget(delegate_.get(),
       web_contents()->GetTopLevelNativeWindow(), parent ? parent->GetNativeView() : gfx::NativeView());
   if (parent) widget->SetColorModeOverride(parent->color_mode_override());
   dialog_.reset(widget);
@@ -208,7 +216,7 @@ void PageDialogs::Answer(bool accepted) {
   if(field){field->SetCallbacks({},{});if(!accepted)field->ClearCompositionText();}
   const std::u16string text = field && accepted ? std::u16string(field->GetText()) : std::u16string();
   prompt_ = nullptr; requesting_frame_ = nullptr; unload_dialog_ = false;
-  scene_.reset();body_=nullptr;dialog_.reset();
+  scene_.reset();body_=nullptr;dialog_.reset();delegate_.reset();
   // Renderer callbacks can destroy pages. Never run them on a button's stack.
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(std::move(callback), accepted, text));
 }
