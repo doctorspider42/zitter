@@ -8,66 +8,69 @@ milestones to `origin/main` as they land. The opt-in switch remains
 
 ## Current execution policy
 
-UI source `eabd5a5c531cab6ada7d49e2678054c625262419`, 2026-10-25, passed the full compiled
+UI source `186faaf7cfb01f78b1a1bfce0661743d1063e5a5`, 2026-10-25, passed the full compiled
 regression inventory with one launcher job, no automatic retries and temporary
 profiles:
 
 | Backend | Regular matrix passed | Regular skips | Failed / crashed |
 | --- | ---: | ---: | ---: |
-| Rust + Metal | 169 | 6 | 0 |
-| Views | 126 | 6 | 0 |
+| Rust + Metal | 171 | 6 | 0 |
+| Views | 127 | 6 | 0 |
 
-The inventory contains 175 cases; Views excludes 43 dedicated Metal cases
-(132 applicable cases). Four opt-in performance scenarios, real-user Arc import
+The inventory contains 177 cases; Views excludes 44 dedicated Metal cases
+(133 applicable cases). Four opt-in performance scenarios, real-user Arc import
 and the interactive manual window are skipped per backend. Optional scenarios
 remain earlier-checkpoint evidence, not current-commit passes. Metal API
 validation remained enabled. No controlled CPU/GPU/presentation or memory
 improvement is established.
 
-The modal/folder/workspace-deletion/page-dialog/beforeunload/shared-chrome gate
-passed **33 Metal / 25 Views**. Checks passed **243 Rust tests**, **180 SDK font/
-direction cases plus raster**, **66 clean-archive Python tests**, scoped GN/
-boundaries and optimized compilation. The live checkout passed 68 Python tests,
-including two concurrent cases outside this UI commit. Final Ninja reported no
-work to do. All 53 tracked prototype files match the committed source and staged
-overlay. [Source/binary identities, commands, results and retained failed
-probe](benchmarks/rust-scene-modals-checkpoint-2026-10-25.json).
+The download/modal/folder/workspace-deletion/page-dialog/beforeunload/shared-
+chrome gate passed **37 Metal / 28 Views**. Checks passed **245 Rust tests**,
+**180 SDK font/direction cases plus raster**, **66 clean-archive Python tests**,
+scoped GN/boundaries and optimized compilation. The live checkout passed 68
+Python tests, including two concurrent cases outside this UI commit. Final
+Ninja reported no work to do. All 53 tracked prototype files match the committed
+source and staged overlay. [Source/binary identities, commands and results](benchmarks/rust-download-scene-checkpoint-2026-10-25.json).
 
-Folder create/rename, folder deletion/save-error and workspace deletion now use
-shared Rust/Metal actions and Rust outer-body allocation. Their opt-in branches
-no longer instantiate DialogModel/BubbleDialogModelHost or native button Labels.
-The existing Rust form/notice state and body scenes remain, alongside unchanged
-native domain validation, captured targets, stores and commands. Views mode
-retains the original model-host baseline.
+The opt-in download panel now uses Rust/Metal text, progress and actions, with
+Rust outer/list/row/action allocation. No native or hidden Label, MdTextButton
+or ProgressBar is instantiated for these managed roles. Common PanelScene lives
+in the existing sidebar Metal interface; page dialogs keep the same alias and
+factory behavior. All managed progress/actions join the transparent panel
+underlay, with no per-row drawable. Native typography/color, event/focus/AX,
+window/frame and scroll services remain adapters. Views keeps its original
+controls and BoxLayout baseline.
 
-The shared scene client keeps native event/focus/AX/input protection and Escape.
-SceneModalDialog retains the native bubble title/frame, autosizing, theme,
-rounded client layer, fixed width and capped vertical ScrollView. Rust body
-allocation preserves original text/control margins, side insets and the 2px
-scroll workaround. Native model-host preferred/minimum sizes, margins, fixed
-width and actual body rectangles are checked using the same measured body.
-Fixed-width minimum sizing adds the action row once; empty action rows have
-zero natural size. Default accelerators are removed when a control stops being
-the default. Page and migrated modal delegates are directly owned and destroyed
-after their client-owned widgets; forced folder close promptly releases IME
-clients. The old legacy unique-pointer helper did not automatically own a plain
-page delegate; PageDialogs now keeps it explicitly.
+Rust renders flat determinate bars with native pixel rounding/RTL and the
+original two-second indeterminate segment keyframes. A single panel timer runs
+only for visible projected indeterminate nodes, stops for hidden/offscreen or
+nonanimated content and requests CPU fallback paint when Metal is absent.
+Progress preferred metrics, AX names and percentage/indeterminate value behavior
+remain native-compatible. Child-size changes explicitly refresh scroll extent.
+Download widgets and delegates are directly owned and synchronously destroyed
+in widget-then-delegate order, after scene/row/subscription cleanup. Closing
+invalidates stale UI callbacks/timers; profile changes detach observers while
+leaving real transfers intact. Existing registered accelerator routing now also
+serves the download window, including actual Cocoa Escape.
 
-The first gate reproduced missing Escape dispatch in the new Cocoa modal case
-on **both** backends: 32/33 Metal and 24/25 Views passed. Original sources,
-source hashes, binary identity and logs are retained. Installing the existing
-registered-accelerator route for folder deletion/save errors and workspace
-notices fixes delivery without inventing Return for macOS's Cancel default.
-The same unchanged default/cancel test then passes. The dedicated lifetime
-case additionally uses actual Cocoa Return to acknowledge a one-button error.
-It closes three composing editors with CloseNow, reopens a clean editor and
-checks client destruction on Detach. Existing validation, stale-target,
-beforeunload, profile-retention and screen-bound cases remain in both gates.
+The real-transfer browser case compares text heights/widths, action preferred/
+minimum sizes and progress metrics/AX with original native controls. It checks
+unknown progress, hide/show timer behavior and actual Cocoa Space pause/resume,
+then Escape. Full-path filename tooltips retain native hit testing, explicitly
+checked after target resolution and layout; only filename copies opt into events.
+A dedicated Metal case populates 80 manager history rows and checks
+childlessness, actual scroll culling, theme, CloseNow/reopen and stale GUID/profile
+isolation. Two Rust cases cover determinate rounding/RTL/nonfinite input and
+indeterminate keyframes. Existing unsafe-history, transfer/Finder interception,
+cancellation, profile isolation and common chrome/dialog cases also pass.
 
-Native title/frame/modal/scroll/window and event/focus/AX containers, other
-forms/service panels, manual platform acceptance, profiling and release/license
-checks remain open. Normal installed apps/profiles were untouched; no bundle
-was signed.
+Chromium still owns DownloadItem/DownloadManager facts, status/byte/time
+formatting, active-first/history-cap ordering, unsafe/missing/terminal checks,
+observers and Act commands. A drawn or enabled Rust action never authorizes a
+transfer/file operation. Native control/scroll/window/AX node ownership,
+download presentation/list policy, other service panels, manual platform
+acceptance, profiling and release/license checks remain open. Normal installed
+apps/profiles were untouched; no bundle was signed and no dependency was added.
 
 ## How to read progress
 
@@ -105,7 +108,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Workspace color/emoji presets | Rust preset data/selection, row geometry, pointer/key reducer and scene primitives; two shared-context Metal canvases; native Button/AX/focus and text/grapheme/storage adapters (automated UI checked; manual acceptance pending) | Color/emoji editor migration verified; replace remaining native preset Button interaction ownership and broaden capture/visibility/IME/AX/theme/scale/persistence acceptance |
 | Workspace deletion confirmation | Rust captured-target notice state/copy, shared paragraph/body allocation and Metal body/error/action controls; native title/frame/scroll/focus/AX and deletion/persistence services (automated UI checked; manual acceptance pending) | Replace remaining frame/scroll/interaction containers; broaden default Cancel, beforeunload, stale-target, profile-retention, typography and screen-bound acceptance |
 | General preferences, shortcuts and site preferences | Rust/Metal editors, eleven preference selectors, 24 switches, three clear-data checkboxes and 19 fixed actions plus dynamic rule controls; Rust category/dismiss recipes, category/filter state, text-draft/profile refresh/admission, rule paging and shared text/backing underlay; native event/focus/AX, normalization, menus and stores | Migrate UI descriptions/data, remaining busy/status/form state, tools option-to-field/form construction, service/progress wording and native outer-container ownership; tools panel/header/body/clear allocation is Rust; retain profile/global configuration and recorder behavior |
-| History, downloads, passwords and permissions | Rust/Metal history query editor, clear-period selector and clear/more actions; shared Rust/Metal tools header/status/empty copy and committed-query/pagination/loaded state; Rust/Metal history result text/backing and column layout; native Unicode/IME/service and row event/focus/AX/scroll adapters, with other remaining Views lists/controls | Finish native history interaction/container ownership and other service forms/result controls; retain browser service and security semantics |
+| History, downloads, passwords and permissions | Rust/Metal history query editor, clear-period selector and clear/more actions; shared Rust/Metal tools header/status/empty copy and committed-query/pagination/loaded state; Rust/Metal history result text/backing and column layout; Rust/Metal download text/progress/actions and body/list/row allocation on one shared scene; native Unicode/IME/service, download facts/formatting/list policy and event/focus/AX/scroll adapters, with other remaining Views lists/controls | Finish native history interaction/container ownership and other service forms/result controls; retain browser service and security semantics |
 | Peek, promote/split, link/page menus and routing | Views/native adapters + application | Rust control routing, focus and dismissal; retain native page integration |
 | Import form and first-run import | Rust UI option/debounce/admission/controller state, copy, columns and Metal static/status/Apply text; native Button/AX/focus, header nodes, native popup/IME adapters and application import services (automated UI checked; manual acceptance pending) | Migrate remaining native header and input nodes; verify latest options, busy recovery, credentials opt-in, source immutability, first-run/persistence/rollback and runtime accessibility |
 | Import checkboxes | Rust checked state, shared pointer/key input, mark/label/RTL geometry and primitives; one Metal canvas; native Button/AX/focus/event and font/inset/color adapters (automated UI checked; manual acceptance pending) | Replace native interaction nodes; verify checked/default action, disabled/capture/context/visibility behavior, actual marks/typography, theme/scale and fallback |

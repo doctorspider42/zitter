@@ -1697,3 +1697,31 @@ scoped GN/boundaries and optimized compilation passed. Optional performance
 cases were not rerun; no controlled speedup is claimed. Native frames and
 containers, other panels, manual acceptance, profiling and release/license
 checks remain open. [Evidence](benchmarks/rust-scene-modals-checkpoint-2026-10-25.json).
+
+## Download shared-scene checkpoint
+
+Download title/source/status/empty text, progress and action controls now use
+one shared PanelScene underlay, with Rust outer/list/row/action allocation.
+There are no native or hidden Labels, MdTextButtons or ProgressBars for these
+managed roles, and no per-row drawable. Common controls retain native typography,
+color, event/focus/AX, window and scroll adapters. Existing page-dialog/prefs/tools
+scenes keep their previous modes; Views retains its original controls.
+
+Rust progress geometry matches native default rounding, RTL, flat track and
+indeterminate keyframes. One panel timer runs only for projected visible unknown
+progress and stops while hidden/offscreen/nonanimated. Matching CPU recipes remain
+available. Direct widget/delegate ownership clears the scene and UI callbacks
+before destruction; real transfers, status/list policy and safety checks remain
+in Chromium. Actual Cocoa Escape now uses the existing registered-accelerator route.
+
+The full checkpoint passed **171 Metal / 127 Views**, six skips each, with
+Metal validation and zero failures. The critical gate passed **37 / 28**;
+**245 Rust**, **180 SDK font/direction plus raster**, **66 clean-archive Python**,
+scoped GN/boundaries and optimized compilation passed. New browser coverage
+compares native text/action/progress metrics/AX on a real unknown-size transfer,
+uses Cocoa Space pause/resume and Escape, verifies full-path filename tooltip
+hit testing, then checks 80 real history rows, scroll culling, theme, close/reopen
+and profile isolation. Optional performance
+cases were not rerun; no controlled speedup or memory improvement is claimed.
+Native nodes and remaining service panels, manual acceptance, actual profiling
+and release/license checks remain open. [Evidence](benchmarks/rust-download-scene-checkpoint-2026-10-25.json).
