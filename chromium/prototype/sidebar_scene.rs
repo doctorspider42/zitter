@@ -80,7 +80,7 @@ mod ffi {
     struct ViewportProjection { x: f32, y: f32, nodes: Vec<ProjectedNode> }
     struct Item {
         x: f32, y: f32, width: f32, height: f32,
-        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: control glyph, 8: pane title, 9: split grip, 10: rounded backing, 11: sidebar grip, 12: palette result, 13: result icon, 14: separator, 15: palette static text, 16: palette frame, 17: form static text, 18: appearance color swatch, 19: form text action, 20: checkbox mark, 21: closed selector, 22: preference category, 23: preferences dismiss, 24: preference surface.
+        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: control glyph, 8: pane title, 9: split grip, 10: rounded backing, 11: sidebar grip, 12: palette result, 13: result icon, 14: separator, 15: palette static text, 16: palette frame, 17: form static text, 18: appearance color swatch, 19: form text action, 20: checkbox mark, 21: closed selector, 22: preference category, 23: preferences dismiss, 24: preference surface, 25: history result row.
         kind: u32, glyph: u32,
         title: String, monogram: String, detail: String,
         title_width: f32, detail_ink: u32, detail_font_size: f32,
@@ -1703,6 +1703,20 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
                  i.fill, "", 0.0, false);
         }
         if i.kind == 2 { continue; }
+        if i.kind == 25 {
+            // Match the original history RowButton's two single-line columns:
+            // primary title elides at the tail; date/URL detail in the middle.
+            let g=row_layout(i.width as i32,i.height as i32,i.title_width as i32,!i.detail.is_empty(),false,false);
+            emit(i.x+10.0,i.y+(i.height-16.0)/2.0,16.0,16.0,4.0,i.badge,"",0.0,false);
+            if !i.monogram.is_empty(){emit(i.x+10.0,i.y+(i.height-16.0)/2.0,16.0,16.0,0.0,0xffffffff,&i.monogram,10.0,true);}
+            if i.focused {emit(i.x+2.0,i.y+i.height-3.0,(i.width-4.0).max(0.0),2.0,1.0,i.ink,"",0.0,false);}
+            emit(i.x+g.title.x as f32,i.y,g.title.width as f32,i.height,0.0,i.ink,&i.title,i.font_size,false);
+            if !i.detail.is_empty() && g.detail.width>0 {
+                emit(i.x+g.detail.x as f32,i.y,g.detail.width as f32,i.height,0.0,i.detail_ink,&i.detail,i.detail_font_size,false);
+                out.last_mut().unwrap().middle=true;
+            }
+            continue;
+        }
         if i.focused {
             // Inset focus indicator; event/focus ownership stays with the node.
             emit(i.x + 2.0, i.y + i.height - 3.0, (i.width - 4.0).max(0.0), 2.0,
@@ -1784,6 +1798,23 @@ mod tests {
         assert_eq!((r.x, r.y, r.width, r.height), (4, 70, 225, 34));
         let narrow = action_frame(r, ffi::Rect {x: 19, y: 106, width: -1, height: 0});
         assert_eq!((narrow.x, narrow.width, narrow.height), (19, 0, 34));
+    }
+    #[test] fn history_rows_keep_native_columns_elision_focus_and_clip() {
+        let mut item=row(320.0);item.kind=25;item.height=60.0;item.active=false;
+        item.title_width=120.0;item.detail="2026 · example.test/אבג/🦀".into();item.detail_ink=0xff778899;
+        item.monogram.clear();item.close=false;item.focused=true;
+        item.clip=ffi::FloatRect{x:0.0,y:12.0,width:320.0,height:24.0};
+        for width in [20.0,80.0,160.0,320.0] {
+            item.width=width;let ops=layout(std::slice::from_ref(&item));
+            let g=row_layout(width as i32,60,120,true,false,false);
+            let primary=ops.iter().find(|op|op.text==item.title);
+            if g.title.width>0 {let p=primary.unwrap();assert_eq!((p.x,p.width,p.height),(36.0,g.title.width as f32,60.0));assert!(!p.middle);assert!(!p.bold);} else {assert!(primary.is_none());}
+            let detail=ops.iter().find(|op|op.text==item.detail);
+            if g.detail.width>0 {let p=detail.unwrap();assert_eq!((p.x,p.width,p.font_size),(g.detail.x as f32,g.detail.width as f32,12.0));assert!(p.middle);assert_eq!(p.color,item.detail_ink);} else {assert!(detail.is_none());}
+            assert!(ops.iter().all(|p|p.clip.y==12.0&&p.clip.height==24.0));
+            assert!(ops.iter().any(|p|p.text.is_empty()&&p.y==57.0&&p.height==2.0)||width<=4.0);
+        }
+        item.width=320.0;item.clip.height=0.0;assert!(layout(&[item]).is_empty());
     }
     #[test] fn new_tab_action_keeps_title_hint_icon_and_clip() {
         let mut item = row(177.0); item.kind = 3; item.close = false;

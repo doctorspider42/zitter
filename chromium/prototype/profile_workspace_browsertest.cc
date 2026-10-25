@@ -1588,6 +1588,35 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, BrowsingHistoryPanelSearchOpen
   EXPECT_TRUE(shell->history_entries().empty());
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, HistoryRowsCocoaKeyboardAccessibilityAndURLFallback) {
+  ASSERT_TRUE(window_->Select("work"));auto* shell=window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));
+  const auto target=embedded_test_server()->GetURL("/storage_probe.html?history-row-keyboard");
+  const GURL fallback("https://history-fallback.test/empty-title");
+  history::URLRow first(target);first.set_title(u"Wpis 🦀 אבג");first.set_visit_count(1);first.set_last_visit(base::Time::Now());
+  history::URLRow second(fallback);second.set_visit_count(1);second.set_last_visit(base::Time::Now()-base::Minutes(1));
+  HistoryServiceFactory::GetForProfile(work_,ServiceAccessType::EXPLICIT_ACCESS)->AddPagesWithDetails({first,second},history::SOURCE_OS_MIGRATION_IMPORTED);
+  shell->OpenTools(3);ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));
+  ASSERT_EQ(2u,shell->history_entries().size());auto* list=shell->history_results_view();ASSERT_EQ(2u,list->children().size());
+  const bool rust=shell->workspace_input()->rust_editor();
+  for(size_t i=0;i<2;++i){auto* row=views::AsViewClass<views::Button>(list->children()[i]);ASSERT_TRUE(row);ui::AXNodeData ax;row->GetViewAccessibility().GetAccessibleNodeData(&ax);
+    const auto& entry=shell->history_entries()[i];const auto title=entry.title.empty()?base::UTF8ToUTF16(entry.url.spec()):entry.title;
+    EXPECT_EQ(ax::mojom::Role::kButton,ax.role);EXPECT_EQ(base::UTF8ToUTF16(entry.url.spec()),ax.GetString16Attribute(ax::mojom::StringAttribute::kName));
+    EXPECT_NE(std::u16string::npos,ax.GetString16Attribute(ax::mojom::StringAttribute::kDescription).find(base::UTF8ToUTF16(entry.url.spec())));
+    EXPECT_EQ(60,row->height());EXPECT_EQ(list->width(),row->width());EXPECT_EQ(static_cast<int>(i)*64,row->y());
+    if(rust)EXPECT_TRUE(row->children().empty());else{size_t labels=0;bool primary=false;for(const auto& child:row->children())if(auto* label=views::AsViewClass<views::Label>(child)){++labels;primary|=label->GetText()==title;}EXPECT_EQ(2u,labels);EXPECT_TRUE(primary);}
+  }
+  auto* row=views::AsViewClass<views::Button>(list->children()[0]);ASSERT_TRUE(row);
+  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));
+  row->ScrollRectToVisible(row->GetLocalBounds());row->RequestFocus();ASSERT_TRUE(row->HasFocus());
+  base::test::TestFuture<void> presented;auto* compositor=shell->tools_widget()->GetCompositor();ASSERT_TRUE(compositor);shell->tools_widget()->GetRootView()->SchedulePaint();
+  compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
+  if(rust)ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_contains_text_for_testing("Wpis 🦀 אבג");}));
+  const auto tabs=window_->tab_count("work");ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->tools_widget()->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));
+  ASSERT_TRUE(base::test::RunUntil([&]{return !shell->history_visible()&&window_->tab_count("work")==tabs+1;}));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));EXPECT_EQ(target,window_->contents("work")->GetLastCommittedURL());
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsFormHistoryAdmissionErrorRecoveryAndPageReset) {
   ASSERT_TRUE(window_->Select("work"));
   auto* shell=window_->shell();
@@ -4638,10 +4667,34 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsChromeSharedUnderlayC
   HistoryServiceFactory::GetForProfile(work_,ServiceAccessType::EXPLICIT_ACCESS)->AddPagesWithDetails({entry},history::SOURCE_OS_MIGRATION_IMPORTED);
   shell->OpenTools(3);ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));ASSERT_EQ(1u,shell->history_entries().size());
   auto* row=views::AsViewClass<views::Button>(shell->history_results_view()->children()[0]);ASSERT_TRUE(row);row->ScrollRectToVisible(row->GetLocalBounds());
-  ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_excludes_for_testing(row);}));inspect();
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_contains_text_for_testing("Native result 🦀");}));EXPECT_FALSE(shell->tools_chrome_excludes_for_testing(row));EXPECT_TRUE(row->children().empty());inspect();
   shell->SetHistoryResults(u"","work-profile",200,{},false,true);
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_contains_text_for_testing("Nie udało się odczytać historii.");}));
   EXPECT_TRUE(shell->tools_chrome_order_correct_for_testing());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsHistoryRowsSharedCanvasScrollingAndCancelledPress) {
+  ASSERT_TRUE(window_->Select("work"));auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));
+  history::URLRows rows;for(int i=0;i<80;++i){history::URLRow row(GURL("https://history-gpu.test/"+std::to_string(i)));row.set_title(base::UTF8ToUTF16("History GPU "+std::to_string(i)+" 🦀"));row.set_visit_count(1);row.set_last_visit(base::Time::Now()-base::Minutes(i+1));rows.push_back(row);}
+  HistoryServiceFactory::GetForProfile(work_,ServiceAccessType::EXPLICIT_ACCESS)->AddPagesWithDetails(rows,history::SOURCE_OS_MIGRATION_IMPORTED);
+  shell->OpenTools(3);ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));ASSERT_EQ(80u,shell->history_entries().size());
+  auto* list=shell->history_results_view();for(const auto& child:list->children()){EXPECT_TRUE(child->children().empty());EXPECT_TRUE(views::AsViewClass<views::Button>(child));}
+  auto* first=views::AsViewClass<views::Button>(list->children()[0]);ASSERT_TRUE(first);first->ScrollRectToVisible(first->GetLocalBounds());
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_contains_text_for_testing("History GPU 0 🦀");}));EXPECT_FALSE(shell->tools_chrome_excludes_for_testing(first));
+  EXPECT_TRUE(shell->tools_chrome_order_correct_for_testing());EXPECT_TRUE(shell->tools_chrome_excludes_for_testing(shell->tools_close_for_testing()));
+  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));first->RequestFocus();
+  base::test::TestFuture<void> presented;auto* compositor=shell->tools_widget()->GetCompositor();ASSERT_TRUE(compositor);compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
+  const auto tabs=window_->tab_count("work");const gfx::Point point(12,12);ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);
+  ASSERT_TRUE(first->OnMousePressed(press));views::ScrollView* scroll=nullptr;for(auto* p=list->parent();p&&!scroll;p=p->parent())scroll=views::AsViewClass<views::ScrollView>(p);ASSERT_TRUE(scroll);
+  scroll->ScrollToPosition(scroll->vertical_scroll_bar(),scroll->vertical_scroll_bar()->GetMaxPosition());ASSERT_TRUE(base::test::RunUntil([&]{return first->GetVisibleBounds().IsEmpty();}));
+  ASSERT_TRUE(base::test::RunUntil([&]{return !shell->tools_chrome_contains_text_for_testing("History GPU 0 🦀")&&shell->tools_chrome_contains_text_for_testing("History GPU 79 🦀");}));
+  first->OnMouseReleased(release);base::RunLoop().RunUntilIdle();EXPECT_EQ(tabs,window_->tab_count("work"));EXPECT_TRUE(shell->history_visible());
+  first->ScrollRectToVisible(first->GetLocalBounds());ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_contains_text_for_testing("History GPU 0 🦀");}));
+  ASSERT_TRUE(first->OnMousePressed(press));shell->tools_widget()->Hide();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->tools_chrome_visible_for_testing();}));first->OnMouseReleased(release);base::RunLoop().RunUntilIdle();EXPECT_EQ(tabs,window_->tab_count("work"));
+  views::ViewTracker previous(first);shell->OpenTools(3);EXPECT_FALSE(previous.view());ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));shell->SetThemeMode(ThemeMode::kDark);
+  auto* current=shell->history_results_view()->children()[0].get();current->ScrollRectToVisible(current->GetLocalBounds());ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_contains_text_for_testing("History GPU 0 🦀")&&shell->tools_chrome_order_correct_for_testing();}));
+  ASSERT_TRUE(window_->Select("personal"));shell->OpenTools(3);ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));EXPECT_TRUE(shell->history_entries().empty());
+  ASSERT_TRUE(base::test::RunUntil([&]{return !shell->tools_chrome_contains_text_for_testing("History GPU 0 🦀");}));
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsActionsScenesBatchingClippingAndCancelledChildren) {
