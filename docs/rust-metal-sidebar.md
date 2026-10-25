@@ -1548,3 +1548,36 @@ Migrated rows disable that ring and use Rust focus drawing, including CPU
 fallback. Failed probe identities/logs remain. No dependency was added. No controlled speedup is claimed. Native row interaction/list/scroll
 and outer ownership, remaining forms/service UI, manual acceptance, profiling
 and release/license checks remain. [Evidence](benchmarks/rust-history-rows-checkpoint-2026-10-25.json).
+
+
+## Tools command and result policy checkpoint
+
+Rust ToolsForm chooses form command/IME admission, recorder transitions and
+action outcomes from UI command IDs plus field/composition/selection facts.
+Native widget visibility, posted workspace/profile/generation admission, actual
+object/index bounds, domain validation, stores and browser-service commands
+remain. Snapshot save, shortcut save/disable and provider composition gates
+match Views. Record cancels preedit natively before readonly; other actions
+cancel recording as before. Rust decides failed/done/pending copy and form
+reconstruction. Native pending status remains queried after reconstruction;
+successful sleep retains its early return. External service/disk errors remain
+native notifications.
+
+History empty/error/count/retry text and More visibility/enabled state now come
+from Rust. Nonempty errors retain rows but hide/disable More. Native shared
+service busy state projects through Rust into history clear caption/enabled,
+including reconstruction; preferences clear controls remain native. No rendering
+recipe, dependency, store or service operation changed.
+
+Three Rust cases cover command/context/composition, recorder/outcomes and
+history/clear projections. A shared browser case checks failed real provider/
+shortcut saves without mutation/reconstruction, Record during IME and Escape,
+empty profile/filter/error/result status and More, including nonempty errors.
+Tests passed: 25/20 critical and 162/121 regular Metal/Views, six explicit skips
+each, 236 Rust, 180 SDK plus raster, 66 clean-archive Python, GN/boundaries and
+final Ninja no-op. Earlier real Cocoa success, preedit/stale actions, paging/
+clearing, busy reconstruction and scene/scroll contracts remain covered.
+Remaining option-to-field/form construction, some service/progress wording,
+other forms/panels, native event/AX/scroll/container ownership, manual acceptance,
+profiling and release/license checks remain open. No controlled speedup is
+claimed. [Evidence](benchmarks/rust-tools-policy-checkpoint-2026-10-25.json).
