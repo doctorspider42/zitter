@@ -5,66 +5,73 @@ inventory is [the parity checklist](rust-metal-parity.md).
 
 ## Current checkpoint
 
-UI source `d4a9c5ff03ea1966a327a3715687d7b864a29e27`, 2026-10-25, passed the full compiled
+UI source `5b3eff639e405e703b92d6b48003686e59870dd4`, 2026-10-26, passed the full compiled
 regression inventory with one launcher job, no automatic retries and temporary
 profiles:
 
-| Backend | Regular matrix passed | Regular skips | Failed / crashed |
+| Backend | Regular matrix passed | Regular skips | Failed / crashed / timed out |
 | --- | ---: | ---: | ---: |
-| Rust + Metal | 172 | 6 | 0 |
-| Views | 128 | 6 | 0 |
+| Rust + Metal | 173 | 6 | 0 |
+| Views | 129 | 6 | 0 |
 
-The inventory contains 178 cases; Views excludes 44 dedicated Metal cases
-(134 applicable cases). Four opt-in performance scenarios, real-user Arc import
-and the interactive manual window are skipped per backend. Optional scenarios
-remain earlier-checkpoint evidence, not current-commit passes. Metal API
-validation remained enabled. No controlled CPU/GPU/presentation or memory
-improvement is established.
+The inventory contains 179 cases; Views excludes 44 dedicated Metal cases
+(135 applicable cases). Four opt-in performance scenarios, real-user Arc import
+and the interactive manual window are skipped per backend. Earlier optional
+performance scenarios remain historical evidence, not current-commit passes.
+Metal API validation remained enabled. No controlled CPU/GPU/presentation or
+memory improvement is established.
 
-The password/download/modal/folder/workspace/page-dialog/shared-chrome gate passed
-**40 Metal / 31 Views**. Checks passed **245 Rust tests**,
+The media/password/download/modal/folder/workspace/page-dialog/shared-chrome gate
+passed **48 Metal / 39 Views**. Checks passed **245 Rust tests**,
 **180 SDK font/direction cases plus raster**, **66 clean-archive Python tests**,
 scoped GN/boundaries and optimized compilation. The live checkout passed 68 Python
 tests, including two concurrent cases outside this UI commit. Final Ninja reported
 no work to do. All 53 tracked prototype files match committed source and the staged
-overlay. [Source/binary identities, commands and results](benchmarks/rust-password-scene-checkpoint-2026-10-25.json).
+overlay. [Source/binary identities, commands and results](benchmarks/rust-media-scene-checkpoint-2026-10-26.json).
 
-Password save/update consent now uses childless scene text, Rust panel allocation
-and common Rust/Metal dialog actions. The saved-account overview uses scene text
-for profile/empty/error/instruction copy and the existing Rust selector with Metal
-closed-control drawing, native popup and prefix input. That selector retains its
-own canvas; body and dialog actions also use separate surfaces. Native bubble/
-window/frame/scroll/focus/AX/menu services remain adapters. Views retains its
-original native controls and model host.
+Permission consent now uses shared scene paragraphs, Rust panel allocation and
+common Rust/Metal dialog actions. Original requesting/permission/embedding origins,
+capability strings, profile metadata, temporary-grant eligibility, default Cancel
+and tab-switch policy remain native inputs. Chromium PermissionRequestManager,
+device/OS checks, stores and State::Decide remain authoritative; rendering never
+grants a request. Views keeps its original DialogModelHost and controls.
 
-Only origin and username metadata is projected into scene/selector nodes. Password
-values remain in Chromium FormManager/PasswordStore results. Native save/update,
-decline/ignore, visible HTTP(S)/blocklist admission, autofill and profile-scoped
-storage remain authoritative. PageServices now directly owns widgets/delegates,
-destroys scenes before widgets and delegates after them, and invalidates pending
-store/UI callbacks independently of stable Chromium client callbacks. Repeated
-pending overview commands coalesce. Navigation, hidden pages and forced closes
-release the UI and pending forms.
+Capture controls also use Rust/Metal paragraphs/actions and body allocation. The
+common scene bubble now supports the original nonmodal mode: native close button,
+fixed width, no close-on-deactivate and no modal scroll wrapper. Modal mode retains
+its existing scroll workaround and margins for passwords/folders/workspaces.
+Native titles/frames, window/focus/AX/event services and the close affordance remain
+adapters. Both backends use the existing registered Cocoa dialog key routing.
 
-One initial Views run timed out in AppKit status-item scene dispatch during
-PreRunTestOnMainThread, before the test body. The unchanged binary passed a targeted
-recheck and then a complete Views repetition, without changing timeout limits or
-assertions. The original result/stack remains in the evidence report. The startup
-stall's underlying cause is not established or fixed; investigate it before final
-native acceptance.
+A client-owned adapter bundle destroys its scene before closing and defers widget/
+delegate destruction off the executing decision/button callback stack. Permission
+decisions and native Stop remain synchronous. Capture callbacks retain their weak
+page target and active generation token; programmatic refresh/close disarms Stop
+first, and old close callbacks cannot clear a newer indicator.
 
-The existing real save/fill/update browser case now uses actual Cocoa Escape,
-Space and Return after successful native presentation. A new shared case inserts
-two real store accounts and checks AX metadata/secret exclusion, prefix input,
-Escape, CloseNow/reopen, a read followed by hiding, empty personal-profile copy
-and navigation dismissal. Existing native placement, actual autofill, hidden-page
-cancellation, profile isolation and common UI regressions remain covered.
+The initial media gate is retained: the new case inspected native frame title
+Labels outside the managed body and could close capture before the page installed
+ended listeners. Only the new test changed: body-only inspection, a page-running
+precondition before stopping and a stricter stage-reporting timeout. Production
+source was unchanged after that probe; the corrected gates and full matrices are
+recorded separately.
 
-Native control/container ownership, remaining service panels and form coordination,
-manual platform acceptance, controlled profiling and final release/license checks
-remain open. Normal installed apps/profiles were untouched; no bundle was signed
-and no dependency was added. The prior download checkpoint remains documented in
-[its evidence report](benchmarks/rust-download-scene-checkpoint-2026-10-25.json).
+A new shared browser case verifies default Cancel and unbound macOS Return, actual
+Cocoa Escape denial and Space allow after successful presentation, visible origin
+text, childless controls, nonmodal close affordance, forced close ending synthetic
+tracks, fresh same-origin capture and Space stop. The original combined camera/
+microphone/profile/one-time-grant test now also verifies the capture scene remains
+visible across workspace switching and stops it using Cocoa Space. Existing
+navigation teardown, cross-origin attribution, desktop picker cancel/filter/
+document lifetime and OS-denial regressions remain covered. Devices are synthetic;
+the permission manager and UI are real.
+
+Native control/container ownership, remaining permission copy/coordination, other
+service panels and forms, manual platform acceptance, controlled profiling and
+final release/license checks remain open. Normal installed apps/profiles were
+untouched; no bundle was signed and no dependency was added. The earlier AppKit
+startup timeout remains recorded in the [password checkpoint](benchmarks/rust-password-scene-checkpoint-2026-10-25.json);
+its underlying cause is not established or fixed.
 
 ## Immediate preference work still remaining
 
@@ -111,8 +118,8 @@ adapters and outer placement still require ownership migration and verification.
 4. **Browser service panels.** Finish history native interaction/list/scroll
    ownership and remaining service coordination. Result text/backing and column
    layout use Rust/Metal. Finish download presentation/interaction ownership;
-   finish password ownership and migrate permission UI and Time Machine
-   previews/restore. Preserve
+   finish password/permission presentation and interaction ownership and migrate
+   Time Machine previews/restore. Preserve
    real service data, stale-response handling,
    confirmation and failure/rollback behavior.
    Download text/progress/actions and row/body allocation now use Rust/Metal on
