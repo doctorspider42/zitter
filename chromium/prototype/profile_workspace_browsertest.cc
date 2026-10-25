@@ -1005,6 +1005,71 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ConfigurableNativeKeyboardShor
   EXPECT_EQ(shell->browser_tools().shortcuts.size(), original.shortcuts.size());
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsChoicesCocoaPrefixCallbacksAndHistoryPeriod) {
+  auto* shell=window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready()&&shell->appearance_ready();}));
+  shell->OpenTools(1);ui_controls::EnableUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));
+  auto* picker=shell->tools_selection();ASSERT_TRUE(picker);
+  const bool rust=shell->workspace_input()->rust_editor();EXPECT_EQ(rust,!views::AsViewClass<views::Combobox>(picker));
+  EXPECT_EQ(shell->browser_tools().shortcuts.size(),shell->tools_choice_count_for_testing("selection"));
+  picker->RequestFocus();ASSERT_TRUE(picker->HasFocus());
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->tools_widget()->GetNativeWindow(),ui::VKEY_H,false,false,false,false));
+  const auto& shortcuts=shell->browser_tools().shortcuts;
+  const auto history=std::find_if(shortcuts.begin(),shortcuts.end(),[](const auto& shortcut){return shortcut.id=="history";});
+  ASSERT_NE(shortcuts.end(),history);const size_t index=history-shortcuts.begin();
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_choice_selection_for_testing("selection")==index;}));
+  EXPECT_EQ(base::UTF8ToUTF16(FormatShortcut(history->accelerator)),shell->shortcut_input()->GetText());
+  auto* record=FindButton(shell->tools_widget()->GetContentsView(),u"Nagraj kombinację…");ASSERT_TRUE(record);
+  views::test::ButtonTestApi(record).NotifyDefaultMouseClick();base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(ui::TEXT_INPUT_TYPE_NONE,shell->shortcut_input()->input_client()->GetTextInputType());
+  shell->ActivateToolsChoiceForTesting("selection",0);
+  EXPECT_EQ(ui::TEXT_INPUT_TYPE_TEXT,shell->shortcut_input()->input_client()->GetTextInputType());
+  EXPECT_EQ(base::UTF8ToUTF16(FormatShortcut(shortcuts[0].accelerator)),shell->shortcut_input()->GetText());
+  ASSERT_TRUE(shell->UpsertSearchProvider({"Tools duplicate 🦀","ztools","https://tools.test/?q={query}"}));
+  shell->OpenTools(2);picker=shell->tools_selection();
+  const auto& providers=shell->browser_tools().providers;
+  const auto provider=std::find_if(providers.begin(),providers.end(),[](const auto& item){return item.keyword=="ztools";});
+  ASSERT_NE(providers.end(),provider);const size_t provider_index=provider-providers.begin()+1;
+  shell->ActivateToolsChoiceForTesting("selection",provider_index);
+  EXPECT_EQ(u"Tools duplicate 🦀",shell->provider_input(0)->GetText());EXPECT_EQ(u"ztools",shell->provider_input(1)->GetText());
+  EXPECT_EQ(u"https://tools.test/?q={query}",shell->provider_input(2)->GetText());
+  picker->SetEnabled(false);shell->ActivateToolsChoiceForTesting("selection",0);EXPECT_EQ(provider_index,shell->tools_choice_selection_for_testing("selection"));picker->SetEnabled(true);
+  views::ViewTracker old(picker);shell->OpenTools(3);EXPECT_FALSE(old.view());
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));
+  picker=shell->history_period();ASSERT_TRUE(picker);picker->ScrollRectToVisible(picker->GetLocalBounds());picker->RequestFocus();
+  EXPECT_EQ(4u,shell->tools_choice_count_for_testing("history_period"));
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->tools_widget()->GetNativeWindow(),ui::VKEY_C,false,false,false,false));
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_choice_selection_for_testing("history_period")==3u;}));
+  ui::AXNodeData ax;picker->GetViewAccessibility().GetAccessibleNodeData(&ax);
+  EXPECT_EQ(ax::mojom::Role::kComboBoxSelect,ax.role);EXPECT_EQ(u"Cały okres",ax.GetString16Attribute(ax::mojom::StringAttribute::kValue));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsChoicesTimelineIdentityFilteringAndEmptyState) {
+  ASSERT_TRUE(window_->Select("work"));auto* shell=window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready()&&shell->appearance_ready();}));
+  ASSERT_TRUE(window_->SaveSnapshot("Tools twin"));ASSERT_TRUE(window_->SaveSnapshot("Tools twin"));
+  shell->OpenTools(0);
+  auto filter=[&](std::u16string text){auto* field=shell->timeline_filter_input();field->SelectRange(gfx::Range(0,field->GetText().size()));field->input_client()->InsertText(text,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->tools_widget()->LayoutRootViewIfNecessary();};
+  filter(u"Tools twin");ASSERT_EQ(2u,shell->tools_choice_count_for_testing("selection"));
+  auto* picker=shell->tools_selection();picker->ScrollRectToVisible(picker->GetLocalBounds());
+  std::vector<std::string> ids;for(const auto& item:window_->TimeMachine().snapshots)if(item.title==u"Tools twin")ids.push_back(item.id);ASSERT_EQ(2u,ids.size());
+  shell->ActivateToolsChoiceForTesting("selection",1);EXPECT_EQ(1u,shell->tools_choice_selection_for_testing("selection"));
+  auto* remove=FindButton(shell->tools_widget()->GetContentsView(),u"Usuń wybrany snapshot");ASSERT_TRUE(remove);
+  views::ViewTracker old(picker);views::test::ButtonTestApi(remove).NotifyDefaultMouseClick();
+  ASSERT_TRUE(base::test::RunUntil([&]{return !old.view();}));
+  auto snapshots=window_->TimeMachine().snapshots;
+  EXPECT_TRUE(std::any_of(snapshots.begin(),snapshots.end(),[&](const auto& item){return item.id==ids[0];}));
+  EXPECT_FALSE(std::any_of(snapshots.begin(),snapshots.end(),[&](const auto& item){return item.id==ids[1];}));
+  filter(u"Tools twin");EXPECT_EQ(1u,shell->tools_choice_count_for_testing("selection"));EXPECT_EQ(0u,shell->tools_choice_selection_for_testing("selection"));
+  filter(u"No saved item matches this probe");picker=shell->tools_selection();EXPECT_FALSE(picker->GetEnabled());
+  EXPECT_EQ(1u,shell->tools_choice_count_for_testing("selection"));EXPECT_EQ(u"Brak zapisanych pozycji",shell->tools_choice_label_for_testing("selection",0));
+  ui::AXNodeData empty;picker->GetViewAccessibility().GetAccessibleNodeData(&empty);EXPECT_EQ(u"Brak zapisanych pozycji",empty.GetString16Attribute(ax::mojom::StringAttribute::kValue));
+  shell->ActivateToolsChoiceForTesting("selection",0);EXPECT_EQ(snapshots.size(),window_->TimeMachine().snapshots.size());
+  filter(u"Tools twin");EXPECT_TRUE(picker->GetEnabled());EXPECT_TRUE(shell->tools_choice_label_for_testing("selection",0).starts_with(u"Tools twin"));
+  shell->tools_widget()->Hide();shell->ActivateToolsChoiceForTesting("selection",0);EXPECT_EQ(snapshots.size(),window_->TimeMachine().snapshots.size());
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsEditorsCocoaSnapshotProviderAndStaleActions) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));
   ASSERT_TRUE(window_->Select("work"));shell->OpenTools(0);ui_controls::EnableUIControls();
@@ -1027,7 +1092,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsEditorsCocoaSnapshotProvi
   ASSERT_TRUE(base::test::RunUntil([&]{return window_->TimeMachine().snapshots.size()>before&&!lifetime;}));
   EXPECT_EQ(u"Research 🦀",window_->TimeMachine().snapshots.front().title);
   auto* filter=shell->timeline_filter_input();ASSERT_TRUE(filter);filter->RequestFocus();replace(filter,u"RESEARCH");
-  auto* picker=shell->tools_selection();ASSERT_TRUE(picker->GetEnabled());ASSERT_EQ(1u,picker->GetModel()->GetItemCount());
+  auto* picker=shell->tools_selection();ASSERT_TRUE(picker->GetEnabled());ASSERT_EQ(1u,shell->tools_choice_count_for_testing("selection"));
   filter->SetCompositionText(marked);EXPECT_TRUE(picker->GetEnabled());filter->ConfirmCompositionText(false);EXPECT_FALSE(picker->GetEnabled());
   replace(filter,u"Research");EXPECT_TRUE(picker->GetEnabled());
   auto old_filter=filter->input_client()->AsWeakPtr();shell->OpenTools(2);EXPECT_FALSE(old_filter);
@@ -1141,7 +1206,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, TimeMachineSnapshotsClosedTabs
   auto* selection = window_->shell()->tools_selection();
   ui::AXNodeData node;
   selection->GetViewAccessibility().GetAccessibleNodeData(&node);
-  EXPECT_EQ(base::UTF16ToUTF8(selection->GetModel()->GetItemAt(selection->GetSelectedIndex().value_or(0))),
+  EXPECT_EQ(base::UTF16ToUTF8(window_->shell()->tools_choice_label_for_testing("selection",window_->shell()->tools_choice_selection_for_testing("selection").value_or(0))),
       node.GetStringAttribute(ax::mojom::StringAttribute::kValue));
 }
 
@@ -1436,7 +1501,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, BrowsingHistoryPanelSearchOpen
   ASSERT_EQ(1u, shell->history_entries().size());
   EXPECT_EQ(private_url, shell->history_entries()[0].url);
   // All time clears only this profile and updates the open list.
-  views::test::ComboboxTestApi(shell->history_period()).PerformActionAt(3);
+  shell->ActivateToolsChoiceForTesting("history_period",3);
   clear = FindButton(shell->tools_widget()->GetContentsView(), u"Wyczyść historię…");
   ASSERT_TRUE(clear);
   views::test::ButtonTestApi(clear).NotifyDefaultMouseClick();
@@ -4428,6 +4493,38 @@ class ZitterMetalSidebarBrowserTest : public ZitterProfilesBrowserTest {
     command_line->AppendSwitchASCII("zitter-sidebar", "rust-metal");
   }
 };
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsChoicesScenesClippingHideRebuildAndResize) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready()&&shell->tools_ready();}));
+  window_->widget()->SetBounds(gfx::Rect(50,50,640,520));
+  auto present=[&]{base::test::TestFuture<void> ready;auto* compositor=shell->tools_widget()->GetCompositor();ASSERT_TRUE(compositor);compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},ready.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(ready.Wait());};
+  for(int page=0;page<4;++page){
+    shell->OpenTools(page);shell->tools_widget()->LayoutRootViewIfNecessary();ASSERT_NO_FATAL_FAILURE(present());
+    for(const auto* key:(page==0?std::vector<const char*>{"selection","closed"}:std::vector<const char*>{page==3?"history_period":"selection"})){
+      auto* picker=shell->tools_choice_for_testing(key);ASSERT_TRUE(picker);EXPECT_TRUE(picker->children().empty());EXPECT_FALSE(views::AsViewClass<views::Combobox>(picker));
+      picker->ScrollRectToVisible(picker->GetLocalBounds());ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_choice_metal_visible_for_testing(key);}));
+      auto expected=[&]{auto r=picker->GetVisibleBounds();r.Offset(picker->GetBoundsInScreen().x(),picker->GetBoundsInScreen().y());return r;};
+      ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_choice_metal_bounds_for_testing(key)==expected();}));
+      ui::AXNodeData ax;picker->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kComboBoxSelect,ax.role);
+    }
+  }
+  shell->OpenTools(0);auto* top=shell->tools_selection();
+  // Make the offscreen precondition independent of native minimum panel size.
+  // This fixture-only spacer leaves the real controls and services unchanged.
+  auto* scrolling_fixture=top->parent()->AddChildView(std::make_unique<views::View>());
+  scrolling_fixture->SetPreferredSize(gfx::Size(1,1200));
+  shell->tools_widget()->LayoutRootViewIfNecessary();ASSERT_NO_FATAL_FAILURE(present());top->ScrollRectToVisible(top->GetLocalBounds());
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_choice_metal_visible_for_testing("selection");}));
+  views::ScrollView* scroll=nullptr;for(auto* p=top->parent();p&&!scroll;p=p->parent())scroll=views::AsViewClass<views::ScrollView>(p);ASSERT_TRUE(scroll);
+  auto* bar=scroll->vertical_scroll_bar();ASSERT_GT(bar->GetMaxPosition(),0);scroll->ScrollToPosition(bar,bar->GetMaxPosition());
+  ASSERT_TRUE(base::test::RunUntil([&]{return top->GetVisibleBounds().IsEmpty();}))<<"control="<<top->GetBoundsInScreen().ToString()<<" visible="<<top->GetVisibleBounds().ToString()<<" viewport="<<scroll->GetVisibleRect().ToString()<<" contents="<<scroll->contents()->size().ToString()<<" scroll="<<bar->GetPosition()<<"/"<<bar->GetMaxPosition();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->tools_choice_metal_visible_for_testing("selection");}));
+  top->ScrollRectToVisible(top->GetLocalBounds());ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_choice_metal_visible_for_testing("selection");}));
+  shell->tools_widget()->Hide();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->tools_choice_metal_visible_for_testing("selection");}));
+  shell->tools_widget()->Show();shell->tools_widget()->Activate();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_choice_metal_visible_for_testing("selection");}));
+  window_->widget()->SetBounds(gfx::Rect(90,90,900,720));shell->SetThemeMode(ThemeMode::kDark);
+  ASSERT_TRUE(base::test::RunUntil([&]{auto r=top->GetVisibleBounds();r.Offset(top->GetBoundsInScreen().x(),top->GetBoundsInScreen().y());return shell->tools_choice_metal_bounds_for_testing("selection")==r;}));
+  views::ViewTracker old(top);shell->OpenTools(2);EXPECT_FALSE(old.view());
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, PreferenceChromeSharedLayerCutoutsThemeAndScrolling) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));window_->widget()->SetBounds(gfx::Rect(40,40,1000,860));shell->OpenGeneralSettings();
   size_t copies=0;auto inspect=[&](auto&& self,views::View* view)->void{EXPECT_FALSE(views::AsViewClass<views::Label>(view));ui::AXNodeData node;view->GetViewAccessibility().GetAccessibleNodeData(&node);if(node.role==ax::mojom::Role::kStaticText)++copies;for(const auto& child:view->children())self(self,child.get());};inspect(inspect,shell->general_widget()->GetContentsView());EXPECT_GT(copies,80u);

@@ -216,7 +216,7 @@ class WorkspaceShell final : public ui::EventHandler,
   bool history_loaded() const { return history_loaded_; }
   views::View* history_results_view() const { return history_list_; }
   EditorControl* history_search() const { return history_search_; }
-  views::Combobox* history_period() const { return history_period_; }
+  views::View* history_period() const { return history_period_; }
   const std::vector<BrowsingHistoryEntry>& history_entries() const { return history_entries_; }
   void SyncShortcuts() { RefreshKeyRegistrations(); }
   bool CaptureShortcut(const ui::Accelerator& accelerator);
@@ -230,7 +230,14 @@ class WorkspaceShell final : public ui::EventHandler,
   bool tools_ready() const { return tools_ready_; }
   views::Widget* tools_widget() const { return tools_widget_.get(); }
   EditorControl* shortcut_input() const { return shortcut_chord_; }
-  views::Combobox* tools_selection() const { return tools_picker_; }
+  views::View* tools_selection() const { return tools_picker_; }
+  views::View* tools_choice_for_testing(std::string_view key) const;
+  size_t tools_choice_count_for_testing(std::string_view key) const;
+  std::optional<size_t> tools_choice_selection_for_testing(std::string_view key) const;
+  std::u16string tools_choice_label_for_testing(std::string_view key, size_t index) const;
+  bool tools_choice_metal_visible_for_testing(std::string_view key) const;
+  gfx::Rect tools_choice_metal_bounds_for_testing(std::string_view key) const;
+  void ActivateToolsChoiceForTesting(std::string_view key, size_t index);
   void SetThemeMode(ThemeMode mode);
   ThemeMode theme_mode() const { return theme_mode_; }
   void SetSearchEngine(SearchEngine engine);
@@ -460,6 +467,7 @@ class WorkspaceShell final : public ui::EventHandler,
   std::unique_ptr<views::ScrollView::ScopedScrollSynchronizer> metal_scroll_synchronizer_;
   void RefreshTools();
   void RefreshTimelineItems();
+  void RefreshToolsViewport();
   void RefreshKeyRegistrations();
   void SaveTools();
   void ToolsAction(int action);
@@ -477,12 +485,14 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<EditorControl> provider_name_ = nullptr;
   raw_ptr<EditorControl> provider_keyword_ = nullptr;
   raw_ptr<EditorControl> provider_url_ = nullptr;
-  raw_ptr<views::Combobox> tools_picker_ = nullptr;
-  raw_ptr<views::Combobox> closed_picker_ = nullptr;
+  raw_ptr<views::View> tools_picker_ = nullptr;
+  raw_ptr<views::View> closed_picker_ = nullptr;
   raw_ptr<views::ScrollView> tools_scroll_ = nullptr;
+  std::unique_ptr<views::ScrollView::ScopedScrollSynchronizer> metal_tools_scroll_synchronizer_;
+  base::CallbackListSubscription metal_tools_scroll_subscription_;
   std::vector<std::string> snapshot_ids_, closed_ids_;
   raw_ptr<EditorControl> history_search_ = nullptr;
-  raw_ptr<views::Combobox> history_period_ = nullptr;
+  raw_ptr<views::View> history_period_ = nullptr;
   raw_ptr<views::View> history_list_ = nullptr;
   raw_ptr<views::Button> history_more_ = nullptr;
   raw_ptr<views::Button> history_clear_ = nullptr;

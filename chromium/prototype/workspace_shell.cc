@@ -951,6 +951,7 @@ class SceneSelect final : public SceneGlyphButton {
   ~SceneSelect() override {if(GetInputMethod())GetInputMethod()->DetachTextInputClient(&input_);}
   std::optional<size_t> Selected() const {return state_->has_selection()?std::optional<size_t>(state_->selected()):std::nullopt;}
   size_t Count() const {return labels_.size();}
+  std::u16string LabelAt(size_t index) const{return index<labels_.size()?labels_[index]:std::u16string();}
   void SetSelectedIndex(std::optional<size_t> index){if(index&&*index>=Count())return;OnMouseCaptureLost();CancelMenu();if(index)state_->select_index(*index);else state_->clear_selection();RefreshAX();Schedule();}
   void SetChangedCallback(base::RepeatingClosure changed){changed_=std::move(changed);}
   void CancelInteraction(){OnMouseCaptureLost();CancelMenu();Schedule();}
@@ -3671,6 +3672,11 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     if (shell) { shell->SetShortcutRecording(false); shell->tools_widget_->Hide(); shell->RestorePageFocus(); }
   }, weak), u"Zamknij narzędzia", GlyphButton::Glyph::kVector, &vector_icons::kCloseIcon));
   auto tools_scroll = std::make_unique<views::ScrollView>(); tools_scroll_ = tools_scroll.get();
+  tools_scroll->SetUseContentsPreferredSize(true);
+  if(workspace_form_){
+    metal_tools_scroll_synchronizer_=tools_scroll->EnableScrollSynchronization();
+    metal_tools_scroll_subscription_=tools_scroll->AddContentsScrolledCallback(base::BindRepeating(&WorkspaceShell::RefreshToolsViewport,weak));
+  }
   tools_scroll->SetBackgroundColor(std::nullopt); tools_scroll->SetDrawOverflowIndicator(false);
   tools_scroll->SetHorizontalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);
   auto tools_body = std::make_unique<views::View>(); tools_body_ = tools_body.get();
@@ -3761,6 +3767,7 @@ void WorkspaceShell::Detach() {
   preferences_chrome_.reset();
   for(auto& surface:metal_palette_chrome_)surface.reset();palette_chrome_views_.fill(nullptr);
   metal_general_scroll_subscription_={};metal_general_scroll_synchronizer_.reset();
+  metal_tools_scroll_subscription_={};metal_tools_scroll_synchronizer_.reset();
   metal_palette_scroll_subscription_={};metal_palette_scroll_synchronizer_.reset();metal_palette_.reset();metal_palette_pending_=false;
   metal_sidebar_grip_.reset();
   for(auto& surface:metal_split_)surface.reset();metal_split_pending_=false;
@@ -3913,6 +3920,7 @@ void WorkspaceShell::Update(ShellState state) {
   if(selected&&workspace_form_){for(auto* field:{color_input_.get(),emoji_input_.get()})if(auto* row=views::AsViewClass<AppearanceRow>(field->view()->parent()))row->CancelInput();CancelSceneActions(settings_root_);CancelSceneActions(profiles_root_);}
   if(profiles_changed&&profile_form_)CancelSceneActions(profiles_root_);
 #endif
+  if((selected||history_profile_changed)&&tools_body_)CancelChoiceInteractions(tools_body_);
   if (history_profile_changed && history_visible()) RefreshTools();
   if (changed || profiles_changed) RebuildWorkspaceDots();
   for (const auto& [id, button] : workspace_buttons_) {
@@ -6450,24 +6458,67 @@ void WorkspaceShell::SetHistoryResults(std::u16string query, std::string profile
   history_list_->InvalidateLayout();
   tools_widget_->LayoutRootViewIfNecessary();
 }
+views::View* WorkspaceShell::tools_choice_for_testing(std::string_view key) const{
+  if(key=="selection")return tools_picker_;if(key=="closed")return closed_picker_;if(key=="history_period")return history_period_;return nullptr;
+}
+size_t WorkspaceShell::tools_choice_count_for_testing(std::string_view key) const{auto* picker=tools_choice_for_testing(key);return picker?PickerCount(picker):0;}
+std::optional<size_t> WorkspaceShell::tools_choice_selection_for_testing(std::string_view key) const{auto* picker=tools_choice_for_testing(key);return picker?PickerIndex(picker):std::nullopt;}
+std::u16string WorkspaceShell::tools_choice_label_for_testing(std::string_view key,size_t index) const{
+  auto* picker=tools_choice_for_testing(key);if(!picker||index>=PickerCount(picker))return {};
+#if BUILDFLAG(IS_MAC)
+  if(auto* scene=views::AsViewClass<SceneSelect>(picker))return scene->LabelAt(index);
+#endif
+  return static_cast<views::Combobox*>(picker)->GetModel()->GetItemAt(index);
+}
+bool WorkspaceShell::tools_choice_metal_visible_for_testing(std::string_view key) const{
+#if BUILDFLAG(IS_MAC)
+  auto* scene=views::AsViewClass<SceneSelect>(tools_choice_for_testing(key));return scene&&scene->metal_visible();
+#else
+  return false;
+#endif
+}
+gfx::Rect WorkspaceShell::tools_choice_metal_bounds_for_testing(std::string_view key) const{
+#if BUILDFLAG(IS_MAC)
+  auto* scene=views::AsViewClass<SceneSelect>(tools_choice_for_testing(key));if(scene)return scene->metal_bounds_for_testing();
+#endif
+  return {};
+}
+void WorkspaceShell::ActivateToolsChoiceForTesting(std::string_view key,size_t index){
+  auto* picker=tools_choice_for_testing(key);if(!picker||index>=PickerCount(picker)||!SceneIsVisible(picker)||!picker->GetEnabledInViewsSubtree())return;
+#if BUILDFLAG(IS_MAC)
+  if(auto* scene=views::AsViewClass<SceneSelect>(picker)){scene->SelectForTesting(index);return;}
+#endif
+  static_cast<views::Combobox*>(picker)->MenuSelectionAt(index);
+}
+void WorkspaceShell::RefreshToolsViewport(){if(tools_body_)RefreshChoiceViewports(tools_body_);}
 void WorkspaceShell::RefreshTimelineItems() {
   if (tools_page_ != 0 || !tools_picker_) return;
   const auto state = callbacks_.time_machine ? callbacks_.time_machine.Run() : TimeMachineState();
   const auto& query = timeline_query_;
-  auto fill = [&](const auto& items, views::Combobox* picker, std::vector<std::string>& ids) {
+  auto fill = [&](const auto& items, views::View* picker, std::vector<std::string>& ids) {
     ids.clear(); std::vector<ui::SimpleComboboxModel::Item> labels;
     for (const auto& item : items) if (query.empty() || base::i18n::ToLower(item.title + u" " + item.detail).find(query) != std::u16string::npos) {
       ids.push_back(item.id); labels.emplace_back(item.title + u" — " + item.detail);
     }
     if (labels.empty()) labels.emplace_back(u"Brak zapisanych pozycji");
+#if BUILDFLAG(IS_MAC)
+    if(auto* scene=views::AsViewClass<SceneSelect>(picker)){
+      std::vector<std::pair<std::string,std::u16string>> choices;
+      for(size_t i=0;i<ids.size();++i)choices.emplace_back(ids[i],labels[i].text);
+      if(choices.empty())choices.emplace_back("empty",u"Brak zapisanych pozycji");
+      scene->SetOptions(choices);scene->SetSelectedIndex(0);scene->SetEnabled(!ids.empty());return;
+    }
+#endif
+    auto* native=static_cast<views::Combobox*>(picker);
     // Chromium keeps the cached AX value if a model swap retains index zero.
-    picker->SetSelectedIndex(std::nullopt);
-    picker->SetOwnedModel(std::make_unique<ui::SimpleComboboxModel>(labels)); picker->SetSelectedIndex(0); picker->SetEnabled(!ids.empty());
+    native->SetSelectedIndex(std::nullopt);
+    native->SetOwnedModel(std::make_unique<ui::SimpleComboboxModel>(labels)); native->SetSelectedIndex(0); native->SetEnabled(!ids.empty());
   };
   fill(state.snapshots, tools_picker_, snapshot_ids_); fill(state.closed, closed_picker_, closed_ids_);
 }
 void WorkspaceShell::RefreshTools() {
   ++tools_generation_;
+  if(tools_body_)CancelChoiceInteractions(tools_body_);
   SetShortcutRecording(false);
   for(auto* field:{snapshot_name_.get(),timeline_filter_.get(),shortcut_chord_.get(),provider_name_.get(),provider_keyword_.get(),provider_url_.get(),history_search_.get()})
     if(field)field->SetCallbacks({},{});
@@ -6499,10 +6550,15 @@ void WorkspaceShell::RefreshTools() {
       shell->PostToolsAction(action);
     }, weak, action), title));
   };
-  auto picker = [&](std::u16string name, const std::vector<std::u16string>& values) {
+  auto picker = [&](std::u16string name, std::vector<std::u16string> values, views::View* parent=nullptr)->views::View* {
+    if(!parent)parent=tools_body_;
+    if(values.empty())values.emplace_back(u"Brak pozycji");
+#if BUILDFLAG(IS_MAC)
+    if(workspace_form_){auto* control=ChoicePicker(parent,std::move(name),std::move(values),true);SetPickerIndex(control,0);return control;}
+#endif
     std::vector<ui::SimpleComboboxModel::Item> items; for (const auto& value : values) items.emplace_back(value);
     if (items.empty()) items.emplace_back(u"Brak pozycji");
-    auto* control = tools_body_->AddChildView(std::make_unique<views::Combobox>(std::make_unique<ui::SimpleComboboxModel>(items)));
+    auto* control = parent->AddChildView(std::make_unique<views::Combobox>(std::make_unique<ui::SimpleComboboxModel>(items)));
     control->SetTooltipTextAndAccessibleName(name); control->SetSelectedIndex(0); return control;
   };
   if (tools_page_ == 0) {
@@ -6530,9 +6586,9 @@ void WorkspaceShell::RefreshTools() {
     tools_picker_ = picker(u"Akcja skrótu", choices);
     shortcut_chord_ = input(u"Kombinacja, np. Cmd+Shift+J");
     shortcut_chord_->SetText(base::UTF8ToUTF16(FormatShortcut(tools_.shortcuts.front().accelerator)));
-    tools_picker_->SetCallback(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+    SetPickerCallback(tools_picker_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
       if (!shell || !shell->shortcut_chord_) return;
-      const size_t i = shell->tools_picker_->GetSelectedIndex().value_or(0);
+      const size_t i = PickerIndex(shell->tools_picker_).value_or(0);
       if (i < shell->tools_.shortcuts.size()) shell->shortcut_chord_->SetText(base::UTF8ToUTF16(FormatShortcut(shell->tools_.shortcuts[i].accelerator)));
       shell->SetShortcutRecording(false);
       shell->RefreshKeyRegistrations();
@@ -6546,9 +6602,9 @@ void WorkspaceShell::RefreshTools() {
     for (const auto& provider : tools_.providers) choices.push_back(base::UTF8ToUTF16(provider.keyword + " · " + provider.name + (provider.keyword == tools_.default_keyword ? " · domyślna" : "")));
     tools_picker_ = picker(u"Wyszukiwarka do edycji", choices);
     provider_name_ = input(u"Nazwa wyszukiwarki"); provider_keyword_ = input(u"Prefiks (a–z, 0–9)"); provider_url_ = input(u"Adres z {query}");
-    tools_picker_->SetCallback(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+    SetPickerCallback(tools_picker_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
       if (!shell || !shell->provider_name_) return;
-      const size_t i = shell->tools_picker_->GetSelectedIndex().value_or(0);
+      const size_t i = PickerIndex(shell->tools_picker_).value_or(0);
       SearchProvider provider;
       if (i > 0 && i <= shell->tools_.providers.size()) provider = shell->tools_.providers[i - 1];
       shell->provider_name_->SetText(base::UTF8ToUTF16(provider.name)); shell->provider_keyword_->SetText(base::UTF8ToUTF16(provider.keyword)); shell->provider_url_->SetText(base::UTF8ToUTF16(provider.url));
@@ -6563,13 +6619,11 @@ void WorkspaceShell::RefreshTools() {
     history_search_ = input(u"Szukaj w historii");
     auto* clear_row = tools_body_->AddChildView(std::make_unique<views::View>());
     auto* clear_layout = clear_row->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 8));
-    std::vector<ui::SimpleComboboxModel::Item> periods{ui::SimpleComboboxModel::Item(u"Ostatnia godzina"), ui::SimpleComboboxModel::Item(u"Ostatnie 24 godziny"), ui::SimpleComboboxModel::Item(u"Ostatnie 7 dni"), ui::SimpleComboboxModel::Item(u"Cały okres")};
-    history_period_ = clear_row->AddChildView(std::make_unique<views::Combobox>(std::make_unique<ui::SimpleComboboxModel>(periods)));
-    history_period_->SetTooltipTextAndAccessibleName(u"Zakres czyszczenia historii");
-    history_period_->SetSelectedIndex(0); clear_layout->SetFlexForView(history_period_, 1);
+    history_period_=picker(u"Zakres czyszczenia historii",{u"Ostatnia godzina",u"Ostatnie 24 godziny",u"Ostatnie 7 dni",u"Cały okres"},clear_row);
+    clear_layout->SetFlexForView(history_period_, 1);
     history_clear_ = clear_row->AddChildView(std::make_unique<views::MdTextButton>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
       if (shell && shell->history_period_ && shell->callbacks_.clear_browsing_data)
-        shell->callbacks_.clear_browsing_data.Run({static_cast<int>(shell->history_period_->GetSelectedIndex().value_or(0)), true, false, false});
+        shell->callbacks_.clear_browsing_data.Run({static_cast<int>(PickerIndex(shell->history_period_).value_or(0)), true, false, false});
     }, weak), u"Wyczyść historię…"));
     history_list_ = tools_body_->AddChildView(std::make_unique<views::View>());
     history_list_->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 4));
@@ -6601,13 +6655,13 @@ void WorkspaceShell::ToolsAction(int action) {
   if((action==11||action==12)&&shortcut_chord_&&shortcut_chord_->IsIMEComposing())return;
   bool ok = false;
   if (action != 10 && recording_shortcut_) { SetShortcutRecording(false); RefreshKeyRegistrations(); }
-  const size_t index = tools_picker_ ? tools_picker_->GetSelectedIndex().value_or(0) : 0;
+  const size_t index = tools_picker_ ? PickerIndex(tools_picker_).value_or(0) : 0;
   if (action == 1 && snapshot_name_) {
     ok = callbacks_.save_snapshot && callbacks_.save_snapshot.Run(base::UTF16ToUTF8(snapshot_name_->GetText()), false);
   } else if ((action == 2 || action == 3) && index < snapshot_ids_.size()) {
     ok = action == 2 ? callbacks_.restore_snapshot.Run(snapshot_ids_[index]) : callbacks_.delete_snapshot.Run(snapshot_ids_[index]);
   } else if (action == 4 && closed_picker_) {
-    const size_t closed = closed_picker_->GetSelectedIndex().value_or(0);
+    const size_t closed = PickerIndex(closed_picker_).value_or(0);
     if (closed < closed_ids_.size()) ok = callbacks_.reopen_closed.Run(closed_ids_[closed]);
   } else if (action == 5) {
     const std::string id = state_.workspace_id;
