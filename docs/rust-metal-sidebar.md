@@ -1616,3 +1616,38 @@ Native container/window/event/focus/AX/scroll and outer placement ownership,
 other forms/panels/layouts, manual acceptance, profiling and release/license
 checks remain open. No controlled speedup is claimed.
 [Evidence](benchmarks/rust-tools-layout-checkpoint-2026-10-25.json).
+
+
+## Page-dialog body checkpoint
+
+Rust supplies alert/confirm/prompt/beforeunload display title/profile/message,
+button captions and prompt/cancel/default metadata. Native frame/profile/window
+validation, generation checks and browser callbacks remain authoritative.
+The message cap stays 8192 UTF-16 units, preserving the original substring
+boundary behavior; prompt initial/answer text remains independent in its editor.
+
+Profile/message text now share one transparent Metal underlay per body using the
+existing static-copy renderer. Native label fonts/colors, centered identity,
+left multiline text, SizeToFit(440) preferred dimensions, 220px message scroll
+cap and 480px/280px body preferences remain. No Label or hidden measuring Label
+is created for these text roles. Native text/AX/layout adapters and Rust body
+allocation remain. Native scrolling synchronizes scene clips; the underlay
+stays below the prompt canvas and excludes its rectangle. Native dialog title/
+buttons, modality and platform Return/Escape/default-cancel behavior remain.
+Weak callbacks/scroll subscriptions are invalidated and the scene owner is
+destroyed before the widget and prompt text client disappear.
+
+Two Rust cases cover metadata, UTF-16 cap and center/left primitives. Shared
+browser checks cover four dialog roles, metadata/AX, childlessness, native Label
+preferred-size/height oracles and once-only closure. Metal checks cover scene
+text/order, prompt cutout, start/end culling, real scrolling, theme changes,
+CloseNow/client destruction and fresh reopen. Existing Cocoa IME, override,
+stale-frame/navigation and beforeunload scope/default semantics remain in the
+gate; shared tools/preferences adapter modes remain checked.
+
+Tests passed: 16/13 critical and 166/124 regular Metal/Views, six explicit skips
+each, 241 Rust, 180 SDK plus raster, 66 clean-archive Python, GN/boundaries and
+final Ninja no-op. No dependency or domain operation changed; no controlled
+speedup is claimed. Native title/buttons/modal container ownership, other forms/
+panels, native interaction/window/AX/scroll, manual acceptance, profiling and
+release/license checks remain. [Evidence](benchmarks/rust-page-dialog-scene-checkpoint-2026-10-25.json).

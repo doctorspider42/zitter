@@ -681,7 +681,7 @@ native modal controls and deletion services. Color/emoji preset rows now use Rus
 geometry, selection and input with batched Metal canvases excluding native editors.
 Nine workspace/profile form actions also use Rust layout/input and scene text
 without native button Labels, batched into four Metal groups. These newer stages pass the
-[latest full automated GUI checkpoint](docs/benchmarks/rust-tools-layout-checkpoint-2026-10-25.json);
+[latest full automated GUI checkpoint](docs/benchmarks/rust-page-dialog-scene-checkpoint-2026-10-25.json);
 manual signed-app and performance acceptance remain pending. Import also uses a Rust form controller for
 option snapshots, debounce/admission and control locks, with Metal static/status
 text and Apply drawing. Four import checkboxes now share a Metal canvas with Rust
@@ -721,7 +721,10 @@ Rust now also allocates the tools outer panel, header, scrolling body and
 history-clear row, checked against native BoxLayout geometry. Native domain
 validation, service commands, View/window/event/focus/AX and scroll nodes remain.
 Other buttons, remaining form state, outer-container ownership and
-broader editor service/platform acceptance remain in progress.
+broader editor service/platform acceptance remain in progress. Page dialogs
+now project Rust title/profile/message/button metadata and render profile/message
+copy on one transparent Metal underlay with native typography, scrolling and
+prompt cutouts. Native title/buttons/default-key/modal services remain adapters.
 [Editor contracts and acceptance](docs/rust-metal-editor.md).
 Model updates refresh the scene independently of
 native painting. Rust also owns row

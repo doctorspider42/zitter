@@ -5,60 +5,63 @@ inventory is [the parity checklist](rust-metal-parity.md).
 
 ## Current checkpoint
 
-UI source `503178da15c475dd63aa7a6c5a714c7a7c6f7a17`, 2026-10-25, passed the full compiled
+UI source `4a217fcd9f877e16c38b738b8bc392a2db78c308`, 2026-10-25, passed the full compiled
 regression inventory with one launcher job, no automatic retries and temporary
 profiles:
 
 | Backend | Regular matrix passed | Regular skips | Failed / crashed |
 | --- | ---: | ---: | ---: |
-| Rust + Metal | 164 | 6 | 0 |
-| Views | 123 | 6 | 0 |
+| Rust + Metal | 166 | 6 | 0 |
+| Views | 124 | 6 | 0 |
 
-The inventory contains 170 cases; Views excludes 41 dedicated Metal cases
-(129 applicable cases). Four opt-in performance scenarios, real-user Arc import
+The inventory contains 172 cases; Views excludes 42 dedicated Metal cases
+(130 applicable cases). Four opt-in performance scenarios, real-user Arc import
 and the interactive manual window are skipped per backend. Optional scenarios
 remain earlier-checkpoint evidence, not current-commit passes. Metal API
 validation remained enabled. No controlled CPU/GPU/presentation or memory
 improvement is established.
 
-The tools/history/provider/shared preference-chrome gate passed **27 Metal /
-22 Views**. Checks passed **239 Rust tests**, **180 SDK font/direction cases plus
+The page-dialog/beforeunload and shared static-copy gate passed **16 Metal /
+13 Views**. Checks passed **241 Rust tests**, **180 SDK font/direction cases plus
 raster**, **66 clean-archive Python tests**, scoped GN/boundaries and optimized
 compilation. The live checkout passed 68 Python tests, including two concurrent
 cases outside this UI commit. Final Ninja reported no work to do.
-[Source/binary identities, commands and results](benchmarks/rust-tools-layout-checkpoint-2026-10-25.json).
+[Source/binary identities, commands and results](benchmarks/rust-page-dialog-scene-checkpoint-2026-10-25.json).
 
-Four tools layouts now allocate in Rust: the outer panel (20px interior/12px
-spacing, flexible scroll), header (8px gap, flexible title), scrolling body
-(bottom/right 8px and 10px spacing, no flex), and history-clear row (8px gap,
-flexible period selector). Native font/control services measure preferred sizes;
-Rust handles natural/flex allocation, zero-size spacing, clipping and reported
-host/child geometry. Shrink remeasurement preserves the initial flex budget.
-Views uses its original configured BoxLayout. The allocator covers these
-start/stretch, noncollapsing roles with an optional single flexible child;
-it does not implement every BoxLayout alignment/multiple-flex policy.
+Rust now supplies alert/confirm/prompt/beforeunload title/profile/message copy,
+button captions, prompt/cancel presence and stored default-cancel metadata.
+Only display strings, kind/unload flags and message units cross; active frame/
+window/profile authority, generation checks and browser callbacks stay native.
+The message cap remains exactly 8192 UTF-16 units, including a split surrogate
+at the boundary. Prompt initial/answer text remains independent in its editor.
 
-A native BoxLayout oracle passed 24 orientation/flex/visibility/margin
-configurations across seven widths and six heights (1,008 bounded combinations),
-plus natural/minimum/height-for-width checks. It uses independent native probe
-measurement and covers zero/narrow/odd bounds, wrapping, margins, host borders,
-hidden and ignored children. A second shared test cycles all four real pages at
-two sizes with long Unicode status, checking header/viewport/footer geometry,
-scroll extent and actual Metal ordering/editor/dismiss cutouts. The first probe
-passed the allocator oracle but targeted the outer widget wrapper in the panel
-test, failing on both backends. It now locates the true panel through the
-real editor's scroll ancestor, preserving all geometry requirements. That failed
-probe and intermediate compile corrections remain in the report.
+Profile and message text share one transparent Metal underlay per dialog body,
+with static AX/layout adapters and Rust body allocation. Native label fonts/
+colors, centered profile identity, left multiline message, SizeToFit(440)
+preferred-size behavior, 220px scroll cap and 480px/280px body preferences remain.
+There are no native or hidden measuring Labels for these two body text roles.
+The message viewport synchronizes native scrolling and scene clips. The canvas
+stays below the prompt surface and excludes its input rectangle. Native dialog
+window/title/button painting and default Return/Escape/platform Cancel behavior
+remain adapters. The scene/scroll owner is destroyed before the widget, with
+weak callbacks invalidated before text clients/views disappear.
 
-The frozen UI override and identity manifest explicitly include sidebar_layout
-source/header now. No rendering recipe, dependency or domain operation changed.
-[Prior tools command/status policy](benchmarks/rust-tools-policy-checkpoint-2026-10-25.json)
+Two Rust cases cover metadata/UTF-16 limits and explicit center/left primitives.
+A shared browser test checks all four dialog roles, title/button/default/prompt
+metadata, static AX copy and preferred-size/height oracles against native
+Labels, plus once-only closure. A Metal test checks scene text/order, prompt
+cutout, long-message start/end culling, actual scrolling, theme changes,
+CloseNow/client destruction and fresh reopen. Existing Cocoa IME, override,
+stale frame/navigation and beforeunload default/scope behavior remain covered.
+Shared tools/preferences copy tests cover unchanged adapter modes.
+
+[Prior tools layouts](benchmarks/rust-tools-layout-checkpoint-2026-10-25.json)
 and [history presentation](benchmarks/rust-history-rows-checkpoint-2026-10-25.json)
-retain their detailed contracts and evidence. Native View/ScrollView/window/
-event/focus/AX and outer placement ownership remain, alongside other forms/
-panels/layouts, remaining form construction/service wording, manual acceptance,
-profiling and release/license checks. Normal installed apps/profiles were
-untouched; no bundle was signed.
+retain their evidence. No dependency or browser-service operation changed.
+Native page-dialog title/buttons and modal containers, other forms/panels,
+remaining construction/service wording, native interaction/AX/scroll/window
+ownership, manual acceptance, profiling and release/license checks remain open.
+Normal installed apps/profiles were untouched; no bundle was signed.
 
 ## Immediate preference work still remaining
 
@@ -84,7 +87,9 @@ adapters and outer placement still require ownership migration and verification.
    menu/undo/focus/hide, VoiceOver, multi-click/drag, complex bidi and scale/theme
    acceptance. Continue inventorying inherited Chromium fields. Preserve native
    IME, clipboard and accessibility services as explicit platform adapters.
-2. **Finish migrated forms and dialogs.** Replace remaining header/close/modal
+2. **Finish migrated forms and dialogs.** Page alert/confirm/prompt/beforeunload
+   copy/body text and layout now use Rust/Metal; native title/buttons and modal
+   containers remain. Replace remaining header/close/modal
    controls and outer placement for workspace/profile/import/folder/deletion
    surfaces. Finish the address/command palette input/frame/container layer.
    Verify stale context, defaults, cancellation, validation and persistence.
