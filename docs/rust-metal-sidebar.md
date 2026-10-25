@@ -1381,3 +1381,35 @@ GN/boundaries and final Ninja no-op. UI descriptions/data, remaining busy/status
 form coordination, other panels/native containers, manual acceptance, real
 profiling and release/license checks remain open.
 [Evidence](benchmarks/rust-preference-drafts-checkpoint-2026-10-25.json).
+
+
+## Tools selector checkpoint
+
+Five tools selectors now use the existing Rust selection/prefix/menu-token
+controller and shared Metal/CPU recipe: snapshot, closed-tab, shortcut-action,
+provider-editor and history-clear period. Timeline models carry stable item IDs,
+reset to index zero on refresh and retain the original disabled empty item/AX
+value. Shortcut callbacks update the chord and stop recording; provider callbacks
+populate all three fields; history-clear selection still reaches the native
+confirmation/service path. Rebuild/profile/workspace changes cancel selector
+interaction, retaining existing deferred-command identity guards.
+
+Tools contents use preferred sizing. The Rust backend synchronizes scrolling
+and updates GPU viewport clips; native scroll/layout, menu/IME/focus/AX and
+browser service adapters remain. Native Views retains actual Combobox controls.
+No new Rust dependency or license was introduced.
+
+The critical gate passed 14 Metal / 13 Views. New tests cover real Cocoa prefix
+keys, recorder/provider/history callbacks, duplicate-name snapshot identity,
+filter reset/empty recovery and all five childless GPU selectors. Metal coverage
+checks clipped screen bounds, offscreen hide/reappearance, window hide/show,
+resize/theme and reconstruction. Two initial offscreen-geometry probes failed
+to establish enough scroll distance;
+the final fixture adds test-only scroll space after the real controls, retaining
+full hide/reappearance assertions. All probes remain recorded.
+Full regular execution passed 153/115 plus four optional scenarios each
+(157/119 combined); Rust 228, SDK 180 plus raster, clean
+Python 66, GN/boundaries and final Ninja no-op passed. Tools copy/actions/form
+state, result lists, other panels/native containers, manual platform acceptance,
+controlled profiling and release/license checks remain open.
+[Evidence](benchmarks/rust-tools-choices-checkpoint-2026-10-25.json).

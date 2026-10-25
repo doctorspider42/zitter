@@ -5,27 +5,44 @@ inventory is [the parity checklist](rust-metal-parity.md).
 
 ## Current checkpoint
 
-UI source `11be7fa679243f245e656fc9a1070af814c24389`, 2026-10-25, passed the full compiled
+UI source `3d9b5511dc294e8bbafdb9cce2702fc07d8b7209`, 2026-10-25, passed the full compiled
 regression inventory with one launcher job, no automatic retries and temporary
 profiles:
 
 | Backend | Regular matrix passed | Regular skips | Failed / crashed |
 | --- | ---: | ---: | ---: |
-| Rust + Metal | 150 | 6 | 0 |
-| Views | 113 | 6 | 0 |
+| Rust + Metal | 153 | 6 | 0 |
+| Views | 115 | 6 | 0 |
 
-The inventory contains 156 cases; Views excludes 37 dedicated Metal cases
-(119 applicable cases). Four optional default-30-trial scenarios passed on each
-backend: **154 Metal / 117 Views passes combined**. Real-user Arc import and the
+The inventory contains 159 cases; Views excludes 38 dedicated Metal cases
+(121 applicable cases). Four optional default-30-trial scenarios passed on each
+backend: **157 Metal / 119 Views passes combined**. Real-user Arc import and the
 interactive manual window remain excluded per backend. Metal API validation
 remained enabled; these results establish no controlled CPU/GPU/presentation gain.
 
-The preference gate passed **17 Metal / 12 Views**. Checks passed **228 Rust
-tests**, **180 SDK font/direction cases plus raster**, **66 clean-archive Python
-tests**, scoped GN/boundaries and optimized compilation. The live checkout passed
-68 Python tests, including two concurrent cases outside this UI commit. Final
-Ninja reported no work to do.
-[Source/binary identities, commands and results](benchmarks/rust-preference-drafts-checkpoint-2026-10-25.json).
+The tools/history/shortcut/provider gate passed **14 Metal / 13 Views**. Checks
+passed **228 Rust tests**, **180 SDK font/direction cases plus raster**, **66
+clean-archive Python tests**, scoped GN/boundaries and optimized compilation.
+The live checkout passed 68 Python tests, including two concurrent cases outside
+this UI commit. Final Ninja reported no work to do.
+[Source/binary identities, commands and results](benchmarks/rust-tools-choices-checkpoint-2026-10-25.json).
+
+Five tools selectors now reuse Rust selection/prefix/menu-token state and Metal
+presentation: snapshots, closed tabs, shortcut action, provider editing and
+history-clear period. Timeline options use stable item IDs. Refresh resets the
+selection and cancels previous input, including duplicate names and the original
+disabled empty item. Native generation/profile/workspace guards and browser
+commands remain in place. Cocoa prefix keys, recorder cancellation, provider
+fields, history period/AX and snapshot identity are checked. Dedicated Metal
+coverage checks all five childless selectors, screen-space clipping, scrolling,
+hide/show, resize/theme and reconstruction. The tools scroll container uses
+preferred sizing; the Rust backend synchronizes scrolling with its GPU layers.
+Two initial GPU probes did not establish enough scroll distance to hide the
+middle picker. The final native test fixture adds scroll space after the real
+controls, retaining offscreen/hide/reappearance assertions. Failed probes remain
+recorded; production control code was unchanged between probes.
+Native popup/menu/IME/focus/AX and service adapters remain. Tools copy, actions,
+form/controller coordination and result lists still require migration.
 
 Rust PreferencesForm now owns opaque-profile draft binding, dirty keys, text
 refresh/save admission and the site-rule page limit. The shared Rust editor
@@ -37,10 +54,11 @@ Native stores, authorization and value validation remain authoritative.
 Committed search edits and profile changes reset pagination to 50; More adds 50
 with saturation.
 Detach clears dirty/profile binding while preserving category selection.
-The new backend-shared test covers two drafts, failure, normalization, external
+The earlier backend-shared test covers two drafts, failure, normalization, external
 updates, active IME and switching profiles. Its first Metal probe tried editing
 invisible fields; the corrected scenario reveals fields through search before
-editing. Original failures and final results are retained in the report.
+editing. Original failures and final results are retained in the
+[draft checkpoint](benchmarks/rust-preference-drafts-checkpoint-2026-10-25.json).
 
 Preference branding/header/section/row/status copy and row/navigation backing now
 use Rust recipes and one additional transparent Metal underlay. Rust subtracts
@@ -63,9 +81,9 @@ Text/backing, category/dismiss controls, filtering, text-draft refresh/admission
 and pagination now use Rust scene/controller state. Migrate UI descriptions/data
 and remaining busy/status/form coordination. Preserve normalization, IME,
 managed-setting admission, profile-bound confirmation and deferred rule mutation.
-Tools-provider/shortcut pickers and browser/service panels remain separate
-surfaces. Native ScrollView, BoxLayout, View groups, event/focus/AX adapters and
-outer placement still require an explicit ownership decision and verification.
+Tools pickers are migrated; their remaining copy/actions/form state and
+browser/service panels remain separate surfaces. Native ScrollView, BoxLayout,
+View groups, event/focus/AX adapters and outer placement still require an explicit ownership decision and verification.
 
 ## Next implementation steps
 
@@ -82,11 +100,13 @@ outer placement still require an explicit ownership decision and verification.
    checkboxes, fixed/dynamic actions, category/dismiss controls and category/filter
    state, text/backing, text-draft refresh/admission and pagination use Rust/Metal.
    Migrate UI descriptions/data and remaining busy/status/form coordination,
-   together with tools-provider/shortcut pickers.
+   together with remaining tools copy/actions/form state; its five selectors
+   already use Rust/Metal.
    Preserve native stores, managed-setting checks, profile/global scope,
    site-policy validation and data-clearing confirmation authorization.
-4. **Browser service panels.** Migrate history/search/pagination, downloads,
-   passwords/permissions and Time Machine previews/restore. Preserve real service
+4. **Browser service panels.** Migrate remaining history/search/pagination,
+   downloads/passwords/permissions UI and Time Machine previews/restore. Preserve
+   real service
    data, stale-response handling, confirmation and failure/rollback behavior.
    Complete Peek/promote/split and link/page menu UI routing.
 5. **Remove Views interaction/container ownership.** Replace remaining tab/tree,
