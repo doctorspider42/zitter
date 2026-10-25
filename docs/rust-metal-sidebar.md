@@ -1413,3 +1413,42 @@ Python 66, GN/boundaries and final Ninja no-op passed. Tools copy/actions/form
 state, result lists, other panels/native containers, manual platform acceptance,
 controlled profiling and release/license checks remain open.
 [Evidence](benchmarks/rust-tools-choices-checkpoint-2026-10-25.json).
+
+
+## Tools action and dismiss checkpoint
+
+Fourteen fixed actions across Time Machine, shortcuts, provider editing and
+history now use Rust pointer/key input, button/group geometry and the shared
+Metal/CPU primitive recipe. Adjacent actions share 4/1/1 groups across the first
+three pages; history clear/more use two standalone groups. Tools dismiss reuses
+the existing analytic close recipe/canvas. Native Button/event/focus/AX, native
+menu/IME and browser-service/confirmation adapters remain; Views retains its
+native button hierarchy. Pixel-identical native close artwork is not claimed.
+
+Individual offscreen children cancel pressed input even while their shared group
+remains visible. Root rebuild/profile/workspace/hide cancellation is retained.
+History busy text uses native/scene dispatch and survives reopening history
+while an operation is active. Hiding More also hides its scene group, avoiding
+an extra empty row. Native generation/profile/workspace guards and IME/value/
+confirmation admission remain unchanged. This introduces no dependency.
+
+New Cocoa Space tests save one named Unicode snapshot, save/default/delete a
+provider and dismiss tools. The existing real 205-row history test now presents,
+scrolls and uses Space to load beyond 200 rows, retaining stale-result checks.
+Dedicated Metal checks cover all fourteen childless actions, batching, scene
+text, clipped bounds and partial-group press cancellation with a fixture-only
+trailing spacer. Busy labels, hide and reconstruction also pass. Initial shared
+save probes counted total snapshots and failed on both backends when a background
+restore point also appeared. Final acceptance checks exactly one newly named
+snapshot and its ID; the failed probes/diagnostics remain in the report.
+A separate Views presentation-wait failure reproduced in isolation. Final
+readiness focuses the actual button, checks visible/nonempty compositor state
+and invalidates real contents before requiring successful presentation; the
+platform-level root cause is not fully established.
+
+Tests passed: 17 Metal / 15 Views critical cases, 156/117 regular plus four
+optional scenarios each (160/121 combined), 228 Rust, 180 SDK cases plus raster,
+66 clean-archive Python, GN/boundaries and final Ninja no-op. Tools text/copy,
+form/controller coordination, result lists, other panels/native containers,
+manual platform acceptance, actual profiling and release/license checks remain.
+[Evidence](benchmarks/rust-tools-actions-checkpoint-2026-10-25.json).

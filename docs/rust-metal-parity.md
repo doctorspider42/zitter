@@ -82,14 +82,14 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Workspace/profile form action buttons | Rust button/group geometry, shared pointer/key reducer and text/background/border/focus primitives; four Metal groups; native Button/AX/focus, platform font/metric/color and command adapters (automated UI checked; manual acceptance pending) | Replace native interaction nodes; verify dynamic labels, disabled styles, focus/keyboard/cancellation, clipping/fallback and service semantics |
 | Workspace color/emoji presets | Rust preset data/selection, row geometry, pointer/key reducer and scene primitives; two shared-context Metal canvases; native Button/AX/focus and text/grapheme/storage adapters (automated UI checked; manual acceptance pending) | Color/emoji editor migration verified; replace remaining native preset Button interaction ownership and broaden capture/visibility/IME/AX/theme/scale/persistence acceptance |
 | Workspace deletion confirmation | Rust captured-target notice state/copy and shared paragraph layout; Metal body/error text; native modal title/buttons and deletion/persistence services (automated UI checked; manual acceptance pending) | Migrate remaining host controls; verify default Cancel, beforeunload, stale targets, retained profile data, typography and screen bounds |
-| General preferences, shortcuts and site preferences | Rust/Metal editors, eleven preference selectors, 24 switches, three clear-data checkboxes and 19 fixed actions plus dynamic rule controls; Rust category/dismiss recipes, category/filter state, text-draft/profile refresh/admission, rule paging and shared text/backing underlay; native event/focus/AX, normalization, menus and stores | Migrate UI descriptions/data, remaining busy/status/form state, tools actions/copy and outer containers; retain profile/global configuration and recorder behavior |
-| History, downloads, passwords and permissions | Rust/Metal history query editor and clear-period selector; native committed-query/service adapters and remaining Views lists/controls | Migrate result/control presentation and forms; retain browser service and security semantics |
+| General preferences, shortcuts and site preferences | Rust/Metal editors, eleven preference selectors, 24 switches, three clear-data checkboxes and 19 fixed actions plus dynamic rule controls; Rust category/dismiss recipes, category/filter state, text-draft/profile refresh/admission, rule paging and shared text/backing underlay; native event/focus/AX, normalization, menus and stores | Migrate UI descriptions/data, remaining busy/status/form state, tools copy/form state and outer containers; retain profile/global configuration and recorder behavior |
+| History, downloads, passwords and permissions | Rust/Metal history query editor, clear-period selector and clear/more actions; native committed-query/service adapters and remaining Views lists/controls | Migrate result/control presentation and forms; retain browser service and security semantics |
 | Peek, promote/split, link/page menus and routing | Views/native adapters + application | Rust control routing, focus and dismissal; retain native page integration |
 | Import form and first-run import | Rust UI option/debounce/admission/controller state, copy, columns and Metal static/status/Apply text; native Button/AX/focus, header nodes, native popup/IME adapters and application import services (automated UI checked; manual acceptance pending) | Migrate remaining native header and input nodes; verify latest options, busy recovery, credentials opt-in, source immutability, first-run/persistence/rollback and runtime accessibility |
 | Import checkboxes | Rust checked state, shared pointer/key input, mark/label/RTL geometry and primitives; one Metal canvas; native Button/AX/focus/event and font/inset/color adapters (automated UI checked; manual acceptance pending) | Replace native interaction nodes; verify checked/default action, disabled/capture/context/visibility behavior, actual marks/typography, theme/scale and fallback |
 | Import source selector | Rust selected state, prefix timeout/search, popup tokens, macOS key policy and closed-control geometry/scene; Metal canvas; native menu/IME/focus/AX/event adapters (automated UI checked; manual acceptance pending) | Verify popup lifecycle, typeahead, keyboard and VoiceOver, disabled/hide/capture, RTL/theme/scale and fallback; migrate remaining native adapters |
 | Workspace/managed profile selectors | Rust stable-ID reconciliation, prefix/menu state and scene; two Metal canvases; native popup/IME/focus/AX/event and font/color adapters (automated UI checked; manual acceptance pending) | Verify profile CRUD/assignment persistence, renamed/reordered/removed choices, stale menu callbacks, native popup/IME/AX, clipping and theme/scale/RTL; migrate remaining native adapters |
-| Time Machine | Rust/Metal name/filter editors and stable-ID snapshot/closed selectors; native snapshot/restore services and remaining Views controls | Migrate remaining form/text/button presentation; preserve previews, validation, backups and restoration |
+| Time Machine | Rust/Metal name/filter editors, stable-ID snapshot/closed selectors and five actions; native snapshot/restore services and remaining Views controls | Migrate remaining form/text/container ownership; preserve previews, validation, backups and restoration |
 | Page prompt, confirm/alert and beforeunload | Rust/Metal prompt editor; native origin/profile/frame services, generation-scoped callbacks and platform default-key policy | Migrate modal title/buttons/labels/scroll/form layout; retain request identity, cancellation and beforeunload safety |
 | Workspace/profile name, color/emoji, folder-name and address/palette editing | Rust UTF-16 state/history/IME, viewport and scene; CoreText geometry, Metal and CPU fallback; one native input/focus/AX/menu/clipboard/drag/dictionary adapter | Shared kill buffer, word drag/reversal and stationary edge scrolling verified; broaden actual Cocoa multi-click/vertical-pointer/IME/VoiceOver/complex bidi/scale/menu acceptance; preferences/tools/page-prompt editors are also migrated; inherited-browser fields and remaining controls still need inventory |
 | Keyboard accessibility, VoiceOver, focus and tooltips | Native Views nodes | Explicit native accessibility adapter for Rust controls; no duplicate nodes |
@@ -696,3 +696,42 @@ Python 66, GN/boundaries and final Ninja no-op passed. Tools copy/actions/form
 state, result lists, other panels/native containers, manual platform acceptance,
 controlled profiling and release/license checks remain open.
 [Evidence](benchmarks/rust-tools-choices-checkpoint-2026-10-25.json).
+
+
+## Tools action and dismiss checkpoint
+
+Fourteen fixed actions across Time Machine, shortcuts, provider editing and
+history now use Rust pointer/key input, button/group geometry and the shared
+Metal/CPU primitive recipe. Adjacent actions share 4/1/1 groups across the first
+three pages; history clear/more use two standalone groups. Tools dismiss reuses
+the existing analytic close recipe/canvas. Native Button/event/focus/AX, native
+menu/IME and browser-service/confirmation adapters remain; Views retains its
+native button hierarchy. Pixel-identical native close artwork is not claimed.
+
+Individual offscreen children cancel pressed input even while their shared group
+remains visible. Root rebuild/profile/workspace/hide cancellation is retained.
+History busy text uses native/scene dispatch and survives reopening history
+while an operation is active. Hiding More also hides its scene group, avoiding
+an extra empty row. Native generation/profile/workspace guards and IME/value/
+confirmation admission remain unchanged. This introduces no dependency.
+
+New Cocoa Space tests save one named Unicode snapshot, save/default/delete a
+provider and dismiss tools. The existing real 205-row history test now presents,
+scrolls and uses Space to load beyond 200 rows, retaining stale-result checks.
+Dedicated Metal checks cover all fourteen childless actions, batching, scene
+text, clipped bounds and partial-group press cancellation with a fixture-only
+trailing spacer. Busy labels, hide and reconstruction also pass. Initial shared
+save probes counted total snapshots and failed on both backends when a background
+restore point also appeared. Final acceptance checks exactly one newly named
+snapshot and its ID; the failed probes/diagnostics remain in the report.
+A separate Views presentation-wait failure reproduced in isolation. Final
+readiness focuses the actual button, checks visible/nonempty compositor state
+and invalidates real contents before requiring successful presentation; the
+platform-level root cause is not fully established.
+
+Tests passed: 17 Metal / 15 Views critical cases, 156/117 regular plus four
+optional scenarios each (160/121 combined), 228 Rust, 180 SDK cases plus raster,
+66 clean-archive Python, GN/boundaries and final Ninja no-op. Tools text/copy,
+form/controller coordination, result lists, other panels/native containers,
+manual platform acceptance, actual profiling and release/license checks remain.
+[Evidence](benchmarks/rust-tools-actions-checkpoint-2026-10-25.json).

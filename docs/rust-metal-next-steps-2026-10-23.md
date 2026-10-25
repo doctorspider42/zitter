@@ -5,27 +5,49 @@ inventory is [the parity checklist](rust-metal-parity.md).
 
 ## Current checkpoint
 
-UI source `3d9b5511dc294e8bbafdb9cce2702fc07d8b7209`, 2026-10-25, passed the full compiled
+UI source `198208690a1f0fa6ec3d175d237c5262a9050fc7`, 2026-10-25, passed the full compiled
 regression inventory with one launcher job, no automatic retries and temporary
 profiles:
 
 | Backend | Regular matrix passed | Regular skips | Failed / crashed |
 | --- | ---: | ---: | ---: |
-| Rust + Metal | 153 | 6 | 0 |
-| Views | 115 | 6 | 0 |
+| Rust + Metal | 156 | 6 | 0 |
+| Views | 117 | 6 | 0 |
 
-The inventory contains 159 cases; Views excludes 38 dedicated Metal cases
-(121 applicable cases). Four optional default-30-trial scenarios passed on each
-backend: **157 Metal / 119 Views passes combined**. Real-user Arc import and the
+The inventory contains 162 cases; Views excludes 39 dedicated Metal cases
+(123 applicable cases). Four optional default-30-trial scenarios passed on each
+backend: **160 Metal / 121 Views passes combined**. Real-user Arc import and the
 interactive manual window remain excluded per backend. Metal API validation
 remained enabled; these results establish no controlled CPU/GPU/presentation gain.
 
-The tools/history/shortcut/provider gate passed **14 Metal / 13 Views**. Checks
+The tools/history/shortcut/provider gate passed **17 Metal / 15 Views**. Checks
 passed **228 Rust tests**, **180 SDK font/direction cases plus raster**, **66
 clean-archive Python tests**, scoped GN/boundaries and optimized compilation.
 The live checkout passed 68 Python tests, including two concurrent cases outside
 this UI commit. Final Ninja reported no work to do.
-[Source/binary identities, commands and results](benchmarks/rust-tools-choices-checkpoint-2026-10-25.json).
+[Source/binary identities, commands and results](benchmarks/rust-tools-actions-checkpoint-2026-10-25.json).
+
+Fourteen tools/history actions and tools dismiss now use Rust input/layout/
+scene recipes and Metal presentation. Adjacent actions share 4/1/1 groups across
+Time Machine/shortcuts/providers; history clear/more have two standalone groups.
+A pressed action child cancels when it leaves the viewport even if its shared
+group remains visible. Hiding More hides its group, preserving native spacing.
+Native Button/focus/AX, IME, confirmations, generation/profile/workspace guards
+and service commands remain adapters. Tools dismiss uses the shared analytic
+close recipe; exact native vector-icon pixels are not claimed.
+
+Cocoa Space saves one named Unicode snapshot, saves/defaults/deletes a provider,
+loads real history from 200 to 205 entries and dismisses tools. History preserves
+its disabled busy label across panel reconstruction on both backends. Dedicated
+Metal checks cover childless actions, batching, scene text, clipped bounds and
+partial-group press cancellation using fixture-only trailing scroll space.
+The first save-test probes counted all snapshots and failed on both backends:
+background restore points made the total grow by two. The final test checks
+exactly one snapshot with the requested name and a nonempty ID, including after
+later provider operations. Initial failed probes and diagnostics are retained.
+An isolated Views presentation wait also failed; final readiness focuses and
+invalidates actual contents after compositor visibility/size checks, retaining
+the successful-presentation requirement. Its platform root cause remains open.
 
 Five tools selectors now reuse Rust selection/prefix/menu-token state and Metal
 presentation: snapshots, closed tabs, shortcut action, provider editing and
@@ -41,8 +63,9 @@ Two initial GPU probes did not establish enough scroll distance to hide the
 middle picker. The final native test fixture adds scroll space after the real
 controls, retaining offscreen/hide/reappearance assertions. Failed probes remain
 recorded; production control code was unchanged between probes.
-Native popup/menu/IME/focus/AX and service adapters remain. Tools copy, actions,
+Native popup/menu/IME/focus/AX and service adapters remain. Tools copy,
 form/controller coordination and result lists still require migration.
+[Earlier selector evidence](benchmarks/rust-tools-choices-checkpoint-2026-10-25.json).
 
 Rust PreferencesForm now owns opaque-profile draft binding, dirty keys, text
 refresh/save admission and the site-rule page limit. The shared Rust editor
@@ -81,9 +104,10 @@ Text/backing, category/dismiss controls, filtering, text-draft refresh/admission
 and pagination now use Rust scene/controller state. Migrate UI descriptions/data
 and remaining busy/status/form coordination. Preserve normalization, IME,
 managed-setting admission, profile-bound confirmation and deferred rule mutation.
-Tools pickers are migrated; their remaining copy/actions/form state and
-browser/service panels remain separate surfaces. Native ScrollView, BoxLayout,
-View groups, event/focus/AX adapters and outer placement still require an explicit ownership decision and verification.
+Tools pickers, fourteen actions and dismiss are migrated; remaining copy/form
+state and browser/service panels remain separate surfaces. Native ScrollView,
+BoxLayout, View groups, event/focus/AX adapters and outer placement still require
+an explicit ownership decision and verification.
 
 ## Next implementation steps
 
@@ -100,8 +124,8 @@ View groups, event/focus/AX adapters and outer placement still require an explic
    checkboxes, fixed/dynamic actions, category/dismiss controls and category/filter
    state, text/backing, text-draft refresh/admission and pagination use Rust/Metal.
    Migrate UI descriptions/data and remaining busy/status/form coordination,
-   together with remaining tools copy/actions/form state; its five selectors
-   already use Rust/Metal.
+   together with remaining tools copy/form state; its five selectors, fourteen
+   actions and dismiss already use Rust/Metal.
    Preserve native stores, managed-setting checks, profile/global scope,
    site-policy validation and data-clearing confirmation authorization.
 4. **Browser service panels.** Migrate remaining history/search/pagination,
