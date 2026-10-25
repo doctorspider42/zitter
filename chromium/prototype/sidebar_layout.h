@@ -4,7 +4,8 @@
 #include <memory>
 #include <vector>
 #include "ui/gfx/geometry/size.h"
-namespace views { class LayoutManager; }
+#include "ui/gfx/geometry/insets.h"
+namespace views { class LayoutManager; class View; }
 namespace zitter::prototype {
 struct WorkspaceSwipeUpdate { bool started, preview, finish, handled; };
 struct WorkspaceSwipePage { int index; double x; };
@@ -31,6 +32,9 @@ WorkspaceSwipeLayout SidebarSwipeLayout(double position,int count,int width);
 // Rust owns list geometry in the Metal backend. The native adapter retains
 // View identity, measurement, accessibility and input delivery during migration.
 std::unique_ptr<views::LayoutManager> CreateSidebarColumnLayout(int spacing = 0);
+// Install a start/stretch panel with a single optional flexible child. Views
+// uses its original BoxLayout; the opt-in backend owns allocation in Rust.
+void SetSidebarPanelLayout(views::View* host,bool vertical,gfx::Insets insets,int spacing,views::View* flex = nullptr);
 std::unique_ptr<views::LayoutManager> CreateSidebarSplitLayout();
 gfx::Size SidebarSplitPreferredSize();
 std::unique_ptr<views::LayoutManager> CreateSidebarPinnedRowLayout();

@@ -4,8 +4,10 @@
 #include <array>
 #include <cmath>
 #include <optional>
+#include <limits>
 #include <vector>
 #include "base/command_line.h"
+#include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/layout/layout_manager.h"
@@ -22,6 +24,40 @@ namespace {
 bool RustLayoutEnabled() {
   return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar") == "rust-metal";
 }
+class RustPanelLayout final : public views::LayoutManager {
+ public:
+  RustPanelLayout(bool vertical,gfx::Insets insets,int spacing,views::View* flex):vertical_(vertical),insets_(insets),spacing_(spacing),flex_(flex){}
+  void ViewAdded(views::View* host,views::View*) override{host->InvalidateLayout();}
+  void ViewRemoved(views::View* host,views::View* view) override{if(view==flex_)flex_=nullptr;host->InvalidateLayout();}
+  void Layout(views::View* host) override{const auto g=Measure(host,host->width(),host->height());size_t i=0;for(const auto& child:host->children())if(Included(child.get())){const auto& r=g.children[i++];child->SetBounds(r.x,r.y,r.width,r.height);}}
+  gfx::Size GetPreferredSize(const views::View* host) const override{const auto g=Measure(host,-1,-1);return gfx::Size(g.width,g.height);}
+  gfx::Size GetPreferredSize(const views::View* host,const views::SizeBounds& bounds) const override{if(!bounds.width().is_bounded())return GetPreferredSize(host);const auto g=Measure(host,bounds.width().value(),bounds.height().is_bounded()?bounds.height().value():-1);return gfx::Size(g.width,g.height);}
+  int GetPreferredHeightForWidth(const views::View* host,int width) const override{return Measure(host,width,-1).height;}
+  gfx::Size GetMinimumSize(const views::View* host) const override{const auto g=Measure(host,0,0);return gfx::Size(g.width,g.height);}
+ private:
+  static bool Included(const views::View* child){return child->GetVisible()&&!child->GetProperty(views::kViewIgnoredByLayoutKey);}
+  sidebar::ColumnLayout Measure(const views::View* host,int width,int height) const {
+    const auto insets=insets_+host->GetInsets();
+    std::vector<const views::View*> native_views;std::vector<sidebar::ColumnChild> initial,measured;size_t flex=std::numeric_limits<size_t>::max();
+    int natural_width=0;
+    if(vertical_&&width<0){for(const auto& child:host->children())if(Included(child.get())){const auto* margins=child->GetProperty(views::kMarginsKey);natural_width=std::max(natural_width,child->GetPreferredSize().width()+(margins?margins->width():0));}}
+    for(const auto& child:host->children())if(Included(child.get())){
+      if(child.get()==flex_)flex=initial.size();native_views.push_back(child.get());const auto* ptr=child->GetProperty(views::kMarginsKey);const auto margin=ptr?*ptr:gfx::Insets();
+      views::SizeBounds bounds;if(width>=0)bounds.set_width(std::max(0,width-insets.width()-(vertical_?margin.width():0)));else if(vertical_)bounds.set_width(std::max(0,natural_width-margin.width()));if(height>=0)bounds.set_height(std::max(0,height-insets.height()));
+      const auto size=child->GetPreferredSize(bounds);initial.push_back({size.width(),size.height(),margin.top(),margin.left(),margin.bottom(),margin.right()});
+    }
+    const sidebar::PanelStyle style{width,height,vertical_,spacing_,insets.top(),insets.left(),insets.bottom(),insets.right(),flex};
+    auto slice=[](const auto& values){return rust::Slice<const sidebar::ColumnChild>(values.data(),values.size());};
+    auto result=sidebar::panel_layout(style,slice(initial),slice(measured));
+    if((vertical_?height:width)>=0&&!(width>=0&&width<=insets.width()&&height>=0&&height<=insets.height())){
+      measured=initial;bool changed=false;
+      for(size_t i=0;i<initial.size();++i){const auto& rect=result.children[i];if((vertical_?rect.height:rect.width)>=(vertical_?initial[i].height:initial[i].width))continue;const auto size=native_views[i]->GetPreferredSize(views::SizeBounds(rect.width,rect.height));measured[i].width=size.width();measured[i].height=size.height();changed=true;}
+      if(changed)result=sidebar::panel_layout(style,slice(initial),slice(measured));
+    }
+    return result;
+  }
+  bool vertical_;gfx::Insets insets_;int spacing_;raw_ptr<views::View> flex_;
+};
 class RustPaletteInputLayout final : public views::LayoutManager {
  public:
   void ViewAdded(views::View* host,views::View*) override{host->InvalidateLayout();}
@@ -158,6 +194,12 @@ class RustColumnLayout final : public views::LayoutManager {
   const int spacing_;
 };
 #endif
+}
+void SetSidebarPanelLayout(views::View* host,bool vertical,gfx::Insets insets,int spacing,views::View* flex){
+#if BUILDFLAG(IS_MAC)
+  if(RustLayoutEnabled()){host->SetLayoutManager(std::make_unique<RustPanelLayout>(vertical,insets,spacing,flex));return;}
+#endif
+  auto* layout=host->SetLayoutManager(std::make_unique<views::BoxLayout>(vertical?views::BoxLayout::Orientation::kVertical:views::BoxLayout::Orientation::kHorizontal,insets,spacing));if(flex)layout->SetFlexForView(flex,1);
 }
 std::unique_ptr<views::LayoutManager> CreatePaletteInputLayout() {
 #if BUILDFLAG(IS_MAC)

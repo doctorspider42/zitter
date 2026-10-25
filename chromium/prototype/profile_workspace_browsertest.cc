@@ -1,3 +1,8 @@
+#include "ui/base/metadata/metadata_impl_macros.h"
+#include "chromium/prototype/sidebar_layout.h"
+#include "ui/views/layout/box_layout.h"
+#include "ui/views/view_class_properties.h"
+#include "ui/views/border.h"
 #include "chromium/prototype/browser_import_data.h"
 #include "ui/base/clipboard/test/test_clipboard.h"
 #include "ui/base/ime/text_edit_commands.h"
@@ -1021,6 +1026,71 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsChromeCopyMetricsStatusAn
   if(rust)ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_contains_text_for_testing(base::UTF16ToUTF8(status));}));
   ASSERT_TRUE(window_->Select("personal"));shell->OpenTools(3);ASSERT_TRUE(find(u"Profil: Profil osobisty"));
   if(rust)ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_contains_text_for_testing("Profil: Profil osobisty");}));
+}
+
+class ToolsPanelProbeView final : public views::View {
+  METADATA_HEADER(ToolsPanelProbeView,views::View)
+ public:
+  ToolsPanelProbeView(int width,int height,bool wrap):preferred_(width,height),wrap_(wrap){}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& bounds) const override{
+    if(!wrap_||!bounds.width().is_bounded())return preferred_;
+    const int width=std::min(preferred_.width(),bounds.width().value());
+    const int lines=(preferred_.width()+std::max(1,width)-1)/std::max(1,width);
+    return gfx::Size(width,preferred_.height()*std::max(1,lines));
+  }
+ private:
+  gfx::Size preferred_;bool wrap_;
+};
+BEGIN_METADATA(ToolsPanelProbeView)
+END_METADATA
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsPanelLayoutMatchesBoxMeasurementAndBounds) {
+  // The reference is the actual Chromium BoxLayout with independent native
+  // measurement, not a second copy of the Rust allocator's expected rectangles.
+  for(bool vertical:{false,true})for(int flex:{-1,0,1})for(int mode:{0,1,2,3}){
+    views::View candidate,reference;
+    candidate.SetBorder(views::CreateEmptyBorder(gfx::Insets(3)));reference.SetBorder(views::CreateEmptyBorder(gfx::Insets(3)));
+    const auto insets=vertical?gfx::Insets::TLBR(4,5,6,7):gfx::Insets();
+    for(auto* host:{&candidate,&reference}){
+      host->AddChildView(std::make_unique<ToolsPanelProbeView>(190,32,false));
+      host->AddChildView(std::make_unique<ToolsPanelProbeView>(260,80,true));
+      host->AddChildView(std::make_unique<ToolsPanelProbeView>(100,20,false));
+      host->AddChildView(std::make_unique<ToolsPanelProbeView>(0,0,false));
+      if(mode==1)host->children()[1]->SetVisible(false);
+      if(mode==2)host->children()[0]->SetProperty(views::kViewIgnoredByLayoutKey,true);
+      if(mode==3)for(const auto& child:host->children())child->SetProperty(views::kMarginsKey,gfx::Insets::TLBR(1,2,3,4));
+    }
+    SetSidebarPanelLayout(&candidate,vertical,insets,8,flex<0?nullptr:candidate.children()[flex].get());
+    auto* box=reference.SetLayoutManager(std::make_unique<views::BoxLayout>(vertical?views::BoxLayout::Orientation::kVertical:views::BoxLayout::Orientation::kHorizontal,insets,8));
+    if(flex>=0)box->SetFlexForView(reference.children()[flex],1);
+    SCOPED_TRACE(testing::Message()<<"vertical="<<vertical<<" flex="<<flex<<" mode="<<mode);
+    EXPECT_EQ(reference.GetPreferredSize(),candidate.GetPreferredSize());EXPECT_EQ(reference.GetMinimumSize(),candidate.GetMinimumSize());
+    for(int width:{0,1,20,80,160,320,561}){
+      EXPECT_EQ(reference.GetHeightForWidth(width),candidate.GetHeightForWidth(width))<<"width="<<width;
+      for(int height:{0,1,32,80,240,501}){
+        SCOPED_TRACE(testing::Message()<<"width="<<width<<" height="<<height);
+        EXPECT_EQ(reference.GetPreferredSize(views::SizeBounds(width,height)),candidate.GetPreferredSize(views::SizeBounds(width,height)));
+        candidate.SetSize(gfx::Size(width,height));reference.SetSize(gfx::Size(width,height));candidate.InvalidateLayout();reference.InvalidateLayout();candidate.DeprecatedLayoutImmediately();reference.DeprecatedLayoutImmediately();
+        for(size_t i=0;i<candidate.children().size();++i)if(candidate.children()[i]->GetVisible()&&!candidate.children()[i]->GetProperty(views::kViewIgnoredByLayoutKey))EXPECT_EQ(reference.children()[i]->bounds(),candidate.children()[i]->bounds())<<"child="<<i;
+      }
+    }
+  }
+}
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsPanelResizeLongStatusAndViewportGeometry) {
+  ASSERT_TRUE(window_->Select("work"));auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));
+  const bool rust=shell->workspace_input()->rust_editor();
+  for(int page=0;page<4;++page){shell->OpenTools(page);if(page==3)ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));
+    for(auto size:{gfx::Size(420,560),gfx::Size(680,720)}){
+      shell->SetOperationStatus(u"Długi status 🦀 אבג · sprawdzenie zawijania, zmiany rozmiaru i widoczności przewijanego formularza bez nachodzenia na nagłówek ani stopkę.");
+      shell->tools_widget()->SetSize(size);shell->tools_widget()->LayoutRootViewIfNecessary();
+      auto* field=page==0?shell->snapshot_input():page==1?shell->shortcut_input():page==2?shell->provider_input(0):shell->history_search();ASSERT_TRUE(field);
+      views::ScrollView* scroll=nullptr;for(auto* p=field->view()->parent();p&&!scroll;p=p->parent())scroll=views::AsViewClass<views::ScrollView>(p);ASSERT_TRUE(scroll);
+      auto* root=scroll->parent();ASSERT_TRUE(root);ASSERT_EQ(3u,root->children().size());auto* heading=root->children()[0].get();EXPECT_EQ(scroll,root->children()[1].get());auto* status=root->children()[2].get();
+      const auto insets=root->GetInsets()+gfx::Insets(20);EXPECT_EQ(insets.left(),heading->x());EXPECT_EQ(insets.top(),heading->y());EXPECT_EQ(root->width()-insets.width(),heading->width());
+      EXPECT_EQ(heading->bounds().bottom()+12,scroll->y());EXPECT_EQ(scroll->bounds().bottom()+12,status->y());EXPECT_EQ(root->height()-insets.bottom(),status->bounds().bottom());
+      EXPECT_EQ(root->width()-insets.width(),status->width());EXPECT_GT(scroll->height(),0);ASSERT_TRUE(scroll->contents());EXPECT_GE(scroll->contents()->height(),scroll->height());
+      if(rust){field->view()->ScrollRectToVisible(field->view()->GetLocalBounds());ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_order_correct_for_testing()&&shell->tools_chrome_excludes_for_testing(field->view());}));EXPECT_TRUE(shell->tools_chrome_excludes_for_testing(shell->tools_close_for_testing()));}
+    }
+  }
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsPolicyFailedActionsRecorderAndHistoryStatuses) {

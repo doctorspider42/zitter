@@ -3729,11 +3729,8 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 #if BUILDFLAG(IS_MAC)
   if(workspace_form_)tools_chrome_=std::make_unique<PreferenceChromeState>(tools_root_);
 #endif
-  auto* tools_layout = tools_panel->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(20), 12));
   auto* tools_heading = tools_panel->AddChildView(std::make_unique<views::View>());
-  auto* tools_heading_layout = tools_heading->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 8));
   tools_title_ = AddToolsCopy(tools_heading,u"Time Machine",kInk,5,static_cast<int>(gfx::Font::Weight::SEMIBOLD),false);
-  tools_heading_layout->SetFlexForView(tools_title_, 1);
   auto dismiss_tools=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){
     if(shell){shell->SetShortcutRecording(false);shell->tools_widget_->Hide();shell->RestorePageFocus();}
   },weak);
@@ -3742,6 +3739,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   else
 #endif
   tools_close_=tools_heading->AddChildView(std::make_unique<GlyphButton>(dismiss_tools,u"Zamknij narzędzia",GlyphButton::Glyph::kVector,&vector_icons::kCloseIcon));
+  SetSidebarPanelLayout(tools_heading,false,gfx::Insets(),8,tools_title_);
   auto tools_scroll = std::make_unique<views::ScrollView>(); tools_scroll_ = tools_scroll.get();
   tools_scroll->SetUseContentsPreferredSize(true);
   if(workspace_form_){
@@ -3751,9 +3749,10 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   tools_scroll->SetBackgroundColor(std::nullopt); tools_scroll->SetDrawOverflowIndicator(false);
   tools_scroll->SetHorizontalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);
   auto tools_body = std::make_unique<views::View>(); tools_body_ = tools_body.get();
-  tools_body->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets::TLBR(0, 0, 8, 8), 10));
-  tools_scroll->SetContents(std::move(tools_body)); tools_layout->SetFlexForView(tools_panel->AddChildView(std::move(tools_scroll)), 1);
+  SetSidebarPanelLayout(tools_body_,true,gfx::Insets::TLBR(0,0,8,8),10);
+  tools_scroll->SetContents(std::move(tools_body)); tools_panel->AddChildView(std::move(tools_scroll));
   tools_status_ = AddToolsCopy(tools_panel.get(),u"",kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
+  SetSidebarPanelLayout(tools_panel.get(),true,gfx::Insets(20),12,tools_scroll_);
 
   auto make_panel = [&](std::unique_ptr<views::View> contents,
                         std::unique_ptr<views::WidgetDelegate>& delegate,
@@ -6853,14 +6852,13 @@ void WorkspaceShell::RefreshTools() {
     hint(workspace_form_?form_intro:u"Profil: "+context);
     history_search_ = input(text(fields,0,u"Szukaj w historii"));
     auto* clear_row = tools_body_->AddChildView(std::make_unique<views::View>());
-    auto* clear_layout = clear_row->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 8));
     history_period_=picker(text(pickers,0,u"Zakres czyszczenia historii"),workspace_form_?std::move(form_choices):std::vector<std::u16string>{u"Ostatnia godzina",u"Ostatnie 24 godziny",u"Ostatnie 7 dni",u"Cały okres"},clear_row);
-    clear_layout->SetFlexForView(history_period_, 1);
     const auto clear_presentation=ToolsClearControls(bool(tools_form_),browsing_data_busy_);
     history_clear_ = PreferenceAction(clear_row,bool(workspace_form_),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
       if (shell && shell->history_period_ && shell->callbacks_.clear_browsing_data)
         shell->callbacks_.clear_browsing_data.Run({static_cast<int>(PickerIndex(shell->history_period_).value_or(0)), true, false, false});
     }, weak), clear_presentation.label);
+    SetSidebarPanelLayout(clear_row,false,gfx::Insets(),8,history_period_);
     history_list_ = tools_body_->AddChildView(std::make_unique<views::View>());
     if(tools_form_)history_list_->SetLayoutManager(CreateSidebarColumnLayout(4));
     else history_list_->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 4));

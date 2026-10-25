@@ -108,6 +108,7 @@ mod ffi {
     struct RowLayout { title: Rect, detail: Rect, close: Rect }
     struct ColumnChild { width: i32, height: i32, top: i32, left: i32, bottom: i32, right: i32 }
     struct ColumnLayout { width: i32, height: i32, children: Vec<Rect> }
+    struct PanelStyle { width: i32, height: i32, vertical: bool, spacing: i32, top: i32, left: i32, bottom: i32, right: i32, flex: usize }
     #[derive(Clone)]
     struct Primitive {
         x: f32, y: f32, width: f32, height: f32,
@@ -375,6 +376,7 @@ mod ffi {
         // Platform policy: 0 none, 1 activate on key press, 2 on release.
         fn key_event(self: &mut RowPointer, pressed: bool, policy: u32,
                      enabled: bool) -> RowInputResult;
+        fn panel_layout(style: &PanelStyle, initial: &[ColumnChild], measured: &[ColumnChild]) -> ColumnLayout;
         fn column_layout(width: i32, spacing: i32, top: i32, left: i32,
                          bottom: i32, right: i32, children: &[ColumnChild]) -> ColumnLayout;
         fn split_layout(width: i32, height: i32, count: usize) -> ColumnLayout;
@@ -1374,6 +1376,35 @@ impl RowPointer {
 // Widths are logical pixels; CoreText still owns font shaping and measurement.
 // Geometry for an ordered visible list. Hidden/collapsed children are omitted
 // by the adapter; no gap is created for them. -1 width requests natural size.
+// A start-aligned, stretched panel with zero or one flexible child. Native
+// font/control services measure; Rust allocates, clips and reports geometry.
+// Optional remeasurement preserves the initial flex budget, matching Views'
+// one-pass shrink policy instead of redistributing space after a child shrinks.
+fn panel_layout(s:&ffi::PanelStyle, initial:&[ffi::ColumnChild], measured:&[ffi::ColumnChild])->ffi::ColumnLayout {
+    let pos=|v:i32|i64::from(v.max(0));let bound=|v:i64|v.clamp(0,i64::from(i32::MAX)) as i32;
+    let (main_limit,cross_limit,lead,trail,cross_lead,cross_trail)=if s.vertical {(s.height,s.width,pos(s.top),pos(s.bottom),pos(s.left),pos(s.right))}else{(s.width,s.height,pos(s.left),pos(s.right),pos(s.top),pos(s.bottom))};
+    let main=if main_limit<0{None}else{Some((i64::from(main_limit)-lead-trail).max(0))};
+    let cross=if cross_limit<0{None}else{Some((i64::from(cross_limit)-cross_lead-cross_trail).max(0))};
+    let parts=|c:&ffi::ColumnChild|if s.vertical{(pos(c.height),pos(c.width),pos(c.top),pos(c.bottom),pos(c.left),pos(c.right))}else{(pos(c.width),pos(c.height),pos(c.left),pos(c.right),pos(c.top),pos(c.bottom))};
+    let mut preferred_main=0i64;let mut preferred_cross=0i64;
+    for (i,c) in initial.iter().enumerate(){let (m,x,ml,mt,xl,xt)=parts(c);if m+ml+mt==0&&i!=s.flex{continue;}preferred_main=preferred_main.saturating_add(m+ml+mt);if i+1<initial.len(){preferred_main=preferred_main.saturating_add(pos(s.spacing));}preferred_cross=preferred_cross.max(x+xl+xt);}
+    if main==Some(0)&&cross==Some(0){return ffi::ColumnLayout{width:if s.vertical{bound(preferred_cross+cross_lead+cross_trail)}else{bound(preferred_main+lead+trail)},height:if s.vertical{bound(preferred_main+lead+trail)}else{bound(preferred_cross+cross_lead+cross_trail)},children:initial.iter().map(|_|ffi::Rect{x:s.left.max(0),y:s.top.max(0),width:0,height:0}).collect()};}
+    let free=main.map_or(0,|m|m-preferred_main);let updated=if measured.len()==initial.len(){measured}else{initial};
+    let mut offset=0i64;let mut natural_cross=0i64;let mut allocated=Vec::with_capacity(initial.len());
+    for (i,(original,c)) in initial.iter().zip(updated).enumerate(){
+        let (original_main,_,_,_,_,_)=parts(original);let (new_main,x,ml,mt,xl,xt)=parts(c);offset=offset.saturating_add(ml);
+        let padding=if i==s.flex{free}else{0};let remaining=main.map_or(i64::MAX,|m|(m-offset).max(0));
+        let shrinking=padding<0||remaining<original_main;
+        let size=if i==s.flex&&main.is_some(){if shrinking{(original_main+padding).max(0).min(remaining)}else{(original_main+padding).max(0)}}else if shrinking{new_main}else{original_main};
+        allocated.push((offset,size,xl,xt));natural_cross=natural_cross.max(x+xl+xt);
+        if size>0||i==s.flex{offset=offset.saturating_add(size);if i+1<initial.len(){offset=offset.saturating_add(pos(s.spacing));}offset=offset.saturating_add(mt);}
+    }
+    let cross_size=cross.filter(|x|*x>0).unwrap_or(natural_cross);
+    let rects=allocated.into_iter().map(|(at,size,xl,xt)|{let size=main.map_or(size,|m|size.min((m-at).max(0)));let x=cross_lead+xl;let y=lead+at;let w=(cross_size-xl-xt).max(0);if s.vertical{ffi::Rect{x:bound(x),y:bound(y),width:bound(w),height:bound(size)}}else{ffi::Rect{x:bound(y),y:bound(x),width:bound(size),height:bound(w)}}}).collect();
+    let main_size=bound(offset.saturating_add(lead).saturating_add(trail));let cross_size=bound(natural_cross.saturating_add(cross_lead).saturating_add(cross_trail));
+    ffi::ColumnLayout{width:if s.vertical{cross_size}else{main_size},height:if s.vertical{main_size}else{cross_size},children:rects}
+}
+
 fn column_layout(width: i32, spacing: i32, top: i32, left: i32,
                  bottom: i32, right: i32, children: &[ffi::ColumnChild]) -> ffi::ColumnLayout {
     let positive = |v: i32| i64::from(v.max(0));
@@ -1805,6 +1836,24 @@ mod tests {
     }}
     fn child(width: i32, height: i32) -> ffi::ColumnChild {
         ffi::ColumnChild { width, height, top: 0, left: 0, bottom: 0, right: 0 }
+    }
+    #[test] fn panel_flex_allocates_viewport_and_keeps_fixed_header_footer() {
+        let s=ffi::PanelStyle{width:400,height:500,vertical:true,spacing:12,top:20,left:20,bottom:20,right:20,flex:1};
+        let g=panel_layout(&s,&[child(300,32),child(300,1000),child(200,40)],&[]);
+        assert_eq!((g.width,g.height),(340,500));assert_eq!((g.children[1].y,g.children[1].height),(64,364));assert_eq!(g.children[2].y,440);assert!(g.children.iter().all(|r|r.width==360));
+    }
+    #[test] fn panel_flex_shrink_preserves_initial_budget_and_clips_fixed_siblings() {
+        let s=ffi::PanelStyle{width:80,height:40,vertical:false,spacing:8,top:0,left:0,bottom:0,right:0,flex:0};
+        let g=panel_layout(&s,&[child(200,24),child(32,32)],&[child(40,24),child(32,32)]);
+        assert_eq!((g.width,g.height),(80,32));assert_eq!((g.children[0].width,g.children[1].x,g.children[1].width),(40,48,32));
+        let tiny=ffi::PanelStyle{width:20,..s};let g=panel_layout(&tiny,&[child(200,24),child(32,32)],&[]);assert_eq!((g.children[0].width,g.children[1].x,g.children[1].width),(0,8,12));assert_eq!(g.width,40);
+    }
+    #[test] fn panel_layout_empty_zero_children_margins_and_extreme_sizes() {
+        let s=ffi::PanelStyle{width:100,height:-1,vertical:true,spacing:10,top:0,left:0,bottom:8,right:8,flex:usize::MAX};
+        let g=panel_layout(&s,&[child(80,20),child(0,0),child(80,40)],&[]);assert_eq!(g.height,78);assert_eq!(g.children[2].y,30);
+        let empty=panel_layout(&s,&[],&[]);assert_eq!((empty.width,empty.height),(8,8));
+        let mut margin=child(80,20);margin.top=2;margin.left=3;margin.bottom=4;margin.right=5;let g=panel_layout(&s,&[margin],&[]);assert_eq!((g.width,g.height),(96,34));assert_eq!((g.children[0].x,g.children[0].y,g.children[0].width),(3,2,84));
+        let huge=ffi::PanelStyle{width:i32::MAX,height:i32::MAX,spacing:i32::MAX,..s};let g=panel_layout(&huge,&[child(i32::MAX,i32::MAX),child(i32::MAX,i32::MAX)],&[]);assert_eq!(g.height,i32::MAX);assert!(g.children.iter().all(|r|r.width>=0&&r.height>=0));
     }
     #[test] fn column_measures_full_scroll_extent_and_stretches_rows() {
         let children: Vec<_> = (0..29).map(|_| child(200, 34)).collect();
