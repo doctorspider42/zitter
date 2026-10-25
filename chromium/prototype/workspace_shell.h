@@ -238,6 +238,12 @@ class WorkspaceShell final : public ui::EventHandler,
   bool tools_choice_metal_visible_for_testing(std::string_view key) const;
   gfx::Rect tools_choice_metal_bounds_for_testing(std::string_view key) const;
   void ActivateToolsChoiceForTesting(std::string_view key, size_t index);
+  bool tools_action_metal_visible_for_testing(views::Button* button) const;
+  gfx::Rect tools_action_metal_bounds_for_testing(views::Button* button) const;
+  bool tools_actions_contains_scene_text_for_testing(std::string_view text) const;
+  size_t tools_action_groups_for_testing() const;
+  views::Button* tools_close_for_testing() const{return tools_close_;}
+  bool tools_close_metal_visible_for_testing() const;
   void SetThemeMode(ThemeMode mode);
   ThemeMode theme_mode() const { return theme_mode_; }
   void SetSearchEngine(SearchEngine engine);
@@ -468,6 +474,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void RefreshTools();
   void RefreshTimelineItems();
   void RefreshToolsViewport();
+  void SetHistoryMoreVisible(bool visible);
   void RefreshKeyRegistrations();
   void SaveTools();
   void ToolsAction(int action);
@@ -477,6 +484,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<ui::AcceleratorTarget> accelerator_target_ = nullptr;
   raw_ptr<views::View> tools_root_ = nullptr;
   raw_ptr<views::View> tools_body_ = nullptr;
+  raw_ptr<views::Button> tools_close_ = nullptr;
   raw_ptr<views::Label> tools_title_ = nullptr;
   raw_ptr<views::Label> tools_status_ = nullptr;
   raw_ptr<EditorControl> snapshot_name_ = nullptr;

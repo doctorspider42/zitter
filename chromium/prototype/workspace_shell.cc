@@ -760,10 +760,11 @@ class SceneActionGroup final : public views::View {
   void SyncWindowVisibility(){CancelInput();if(!SceneIsVisible(this)&&surface_)surface_->Hide();Schedule();}
 
   bool GetNeedsNotificationWhenVisibleBoundsChange() const override{return true;}
-  void OnVisibleBoundsChanged() override{if(GetVisibleBounds().IsEmpty())CancelInput();Schedule();}
+  void OnVisibleBoundsChanged() override{for(const auto& child:children())if(!child->GetVisible()||child->GetVisibleBounds().IsEmpty())child->OnMouseCaptureLost();Schedule();}
   SceneActionGroup(bool vertical,int spacing,bool intrinsic=false):vertical_(vertical),spacing_(spacing),intrinsic_(intrinsic) {}
   views::Button* AddAction(views::Button::PressedCallback callback,std::u16string text,ui::ButtonStyle style){return AddChildView(std::make_unique<SceneTextButton>(std::move(callback),std::move(text),style,base::BindRepeating(&SceneActionGroup::Schedule,weak_factory_.GetWeakPtr())));}
   bool metal_visible() const{return surface_&&surface_->visible();}
+  gfx::Rect metal_bounds_for_testing() const{return surface_?surface_->screen_bounds_for_testing():gfx::Rect();}
   bool contains_text(std::string_view text) const{return metal_visible()&&surface_->contains_text_for_testing(text);}
   void CancelInput(){for(const auto& child:children())child->OnMouseCaptureLost();}
   gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override {const auto g=Geometry(!intrinsic_&&available.width().is_bounded()?available.width().value():-1,-1);return gfx::Size(g.width,g.height);}
@@ -3668,9 +3669,14 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto* tools_heading_layout = tools_heading->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 8));
   tools_title_ = Label(tools_heading, u"Time Machine", kInk, Font(5, gfx::Font::Weight::SEMIBOLD));
   tools_heading_layout->SetFlexForView(tools_title_, 1);
-  tools_heading->AddChildView(std::make_unique<GlyphButton>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
-    if (shell) { shell->SetShortcutRecording(false); shell->tools_widget_->Hide(); shell->RestorePageFocus(); }
-  }, weak), u"Zamknij narzędzia", GlyphButton::Glyph::kVector, &vector_icons::kCloseIcon));
+  auto dismiss_tools=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){
+    if(shell){shell->SetShortcutRecording(false);shell->tools_widget_->Hide();shell->RestorePageFocus();}
+  },weak);
+#if BUILDFLAG(IS_MAC)
+  if(workspace_form_){auto* controls=tools_heading->AddChildView(std::make_unique<ScenePreferenceControls>(true));tools_close_=controls->AddControl(dismiss_tools,u"Zamknij narzędzia",0);}
+  else
+#endif
+  tools_close_=tools_heading->AddChildView(std::make_unique<GlyphButton>(dismiss_tools,u"Zamknij narzędzia",GlyphButton::Glyph::kVector,&vector_icons::kCloseIcon));
   auto tools_scroll = std::make_unique<views::ScrollView>(); tools_scroll_ = tools_scroll.get();
   tools_scroll->SetUseContentsPreferredSize(true);
   if(workspace_form_){
@@ -3865,7 +3871,7 @@ void WorkspaceShell::Detach() {
   general_root_ = nullptr; general_scroll_ = nullptr; general_status_ = nullptr;
   theme_picker_ = nullptr; search_engine_picker_ = nullptr;
   sidebar_check_ = nullptr; animations_check_ = nullptr;
-  tools_root_ = nullptr; tools_body_ = nullptr; tools_title_ = nullptr; tools_status_ = nullptr;
+  tools_root_ = nullptr; tools_body_ = nullptr; tools_close_=nullptr; tools_title_ = nullptr; tools_status_ = nullptr;
   tools_scroll_ = nullptr; tools_picker_ = nullptr; closed_picker_ = nullptr;
   snapshot_name_ = nullptr; timeline_filter_ = nullptr; shortcut_chord_ = nullptr;
   provider_name_ = nullptr; provider_keyword_ = nullptr; provider_url_ = nullptr;
@@ -3920,7 +3926,7 @@ void WorkspaceShell::Update(ShellState state) {
   if(selected&&workspace_form_){for(auto* field:{color_input_.get(),emoji_input_.get()})if(auto* row=views::AsViewClass<AppearanceRow>(field->view()->parent()))row->CancelInput();CancelSceneActions(settings_root_);CancelSceneActions(profiles_root_);}
   if(profiles_changed&&profile_form_)CancelSceneActions(profiles_root_);
 #endif
-  if((selected||history_profile_changed)&&tools_body_)CancelChoiceInteractions(tools_body_);
+  if((selected||history_profile_changed)&&tools_root_)CancelChoiceInteractions(tools_root_);
   if (history_profile_changed && history_visible()) RefreshTools();
   if (changed || profiles_changed) RebuildWorkspaceDots();
   for (const auto& [id, button] : workspace_buttons_) {
@@ -5975,7 +5981,7 @@ void WorkspaceShell::SetBrowsingDataBusy(bool busy) {
   browsing_data_busy_ = busy;
   if (history_clear_) {
     history_clear_->SetEnabled(!busy);
-    static_cast<views::MdTextButton*>(history_clear_.get())->SetText(busy ? u"Czyszczenie…" : u"Wyczyść historię…");
+    SetActionText(history_clear_,busy ? u"Czyszczenie…" : u"Wyczyść historię…");
   }
   if (!clear_data_button_) return;
   clear_data_button_->SetEnabled(!busy);
@@ -6450,7 +6456,7 @@ void WorkspaceShell::SetHistoryResults(std::u16string query, std::string profile
     button->SetTooltipText(base::UTF8ToUTF16(entry.url.spec()));
     button->GetViewAccessibility().SetDescription(base::TimeFormatShortDateAndTime(entry.visited) + u" · " + base::UTF8ToUTF16(entry.url.spec()));
   }
-  history_more_->SetVisible(more && !error);
+  SetHistoryMoreVisible(more && !error);
   history_more_->SetEnabled(!error);
   tools_status_->SetText(error ? u"Spróbuj ponownie otworzyć historię." :
       base::UTF8ToUTF16("Wyświetlono wpisów: " + std::to_string(history_entries_.size())));
@@ -6490,6 +6496,43 @@ void WorkspaceShell::ActivateToolsChoiceForTesting(std::string_view key,size_t i
 #endif
   static_cast<views::Combobox*>(picker)->MenuSelectionAt(index);
 }
+bool WorkspaceShell::tools_action_metal_visible_for_testing(views::Button* button) const{return preference_action_metal_visible_for_testing(button);}
+gfx::Rect WorkspaceShell::tools_action_metal_bounds_for_testing(views::Button* button) const{
+#if BUILDFLAG(IS_MAC)
+  auto* group=button?views::AsViewClass<SceneActionGroup>(button->parent()):nullptr;return group?group->metal_bounds_for_testing():gfx::Rect();
+#else
+  return {};
+#endif
+}
+bool WorkspaceShell::tools_actions_contains_scene_text_for_testing(std::string_view text) const{
+#if BUILDFLAG(IS_MAC)
+  if(!tools_body_)return false;
+  auto find=[&](auto&& self,views::View* view)->bool{if(auto* group=views::AsViewClass<SceneActionGroup>(view))if(group->contains_text(text))return true;for(const auto& child:view->children())if(self(self,child.get()))return true;return false;};return find(find,tools_body_);
+#else
+  return false;
+#endif
+}
+size_t WorkspaceShell::tools_action_groups_for_testing() const{
+#if BUILDFLAG(IS_MAC)
+  if(!tools_body_)return 0;
+  auto count=[&](auto&& self,views::View* view)->size_t{if(views::AsViewClass<SceneActionGroup>(view))return 1;size_t n=0;for(const auto& child:view->children())n+=self(self,child.get());return n;};return count(count,tools_body_);
+#else
+  return 0;
+#endif
+}
+bool WorkspaceShell::tools_close_metal_visible_for_testing() const{
+#if BUILDFLAG(IS_MAC)
+  auto* group=tools_close_?views::AsViewClass<ScenePreferenceControls>(tools_close_->parent()):nullptr;return group&&group->metal_visible();
+#else
+  return false;
+#endif
+}
+void WorkspaceShell::SetHistoryMoreVisible(bool visible){
+  history_more_->SetVisible(visible);
+#if BUILDFLAG(IS_MAC)
+  if(auto* group=views::AsViewClass<SceneActionGroup>(history_more_->parent()))group->SetVisible(visible);
+#endif
+}
 void WorkspaceShell::RefreshToolsViewport(){if(tools_body_)RefreshChoiceViewports(tools_body_);}
 void WorkspaceShell::RefreshTimelineItems() {
   if (tools_page_ != 0 || !tools_picker_) return;
@@ -6518,7 +6561,7 @@ void WorkspaceShell::RefreshTimelineItems() {
 }
 void WorkspaceShell::RefreshTools() {
   ++tools_generation_;
-  if(tools_body_)CancelChoiceInteractions(tools_body_);
+  if(tools_root_)CancelChoiceInteractions(tools_root_);
   SetShortcutRecording(false);
   for(auto* field:{snapshot_name_.get(),timeline_filter_.get(),shortcut_chord_.get(),provider_name_.get(),provider_keyword_.get(),provider_url_.get(),history_search_.get()})
     if(field)field->SetCallbacks({},{});
@@ -6544,11 +6587,20 @@ void WorkspaceShell::RefreshTools() {
       },weak,base::Unretained(field)));
     return field;
   };
+  auto action_parent=[&]()->views::View*{
+#if BUILDFLAG(IS_MAC)
+    if(workspace_form_){
+      // Batch adjacent actions while preserving the native body sequence/gaps.
+      if(!tools_body_->children().empty())if(auto* group=views::AsViewClass<SceneActionGroup>(tools_body_->children().back()))return group;
+      return ActionGroup(tools_body_,true,true,10);
+    }
+#endif
+    return tools_body_;
+  };
   auto button = [&](std::u16string title, int action) {
-    tools_body_->AddChildView(std::make_unique<views::MdTextButton>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, int action) {
-      if (!shell) return;
-      shell->PostToolsAction(action);
-    }, weak, action), title));
+    return AddAction(action_parent(),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, int action) {
+      if (shell) shell->PostToolsAction(action);
+    }, weak, action),std::move(title));
   };
   auto picker = [&](std::u16string name, std::vector<std::u16string> values, views::View* parent=nullptr)->views::View* {
     if(!parent)parent=tools_body_;
@@ -6621,14 +6673,14 @@ void WorkspaceShell::RefreshTools() {
     auto* clear_layout = clear_row->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 8));
     history_period_=picker(u"Zakres czyszczenia historii",{u"Ostatnia godzina",u"Ostatnie 24 godziny",u"Ostatnie 7 dni",u"Cały okres"},clear_row);
     clear_layout->SetFlexForView(history_period_, 1);
-    history_clear_ = clear_row->AddChildView(std::make_unique<views::MdTextButton>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+    history_clear_ = PreferenceAction(clear_row,bool(workspace_form_),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
       if (shell && shell->history_period_ && shell->callbacks_.clear_browsing_data)
         shell->callbacks_.clear_browsing_data.Run({static_cast<int>(PickerIndex(shell->history_period_).value_or(0)), true, false, false});
-    }, weak), u"Wyczyść historię…"));
+    }, weak), browsing_data_busy_?u"Czyszczenie…":u"Wyczyść historię…");
     history_list_ = tools_body_->AddChildView(std::make_unique<views::View>());
     history_list_->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 4));
-    history_more_ = tools_body_->AddChildView(std::make_unique<views::MdTextButton>(base::BindRepeating(&WorkspaceShell::RefreshHistory, weak, true), u"Pokaż więcej"));
-    history_more_->SetVisible(false);
+    history_more_ = PreferenceAction(tools_body_,bool(workspace_form_),base::BindRepeating(&WorkspaceShell::RefreshHistory, weak, true), u"Pokaż więcej",true);
+    SetHistoryMoreVisible(false);
     tools_status_->SetText(u"Odczytywanie historii…");
     history_clear_->SetEnabled(!browsing_data_busy_);
   }
