@@ -682,7 +682,7 @@ Color/emoji preset rows now use Rust
 geometry, selection and input with batched Metal canvases excluding native editors.
 Nine workspace/profile form actions also use Rust layout/input and scene text
 without native button Labels, batched into four Metal groups. These newer stages pass the
-[latest full automated GUI checkpoint](docs/benchmarks/rust-download-scene-checkpoint-2026-10-25.json);
+[latest full automated GUI checkpoint](docs/benchmarks/rust-password-scene-checkpoint-2026-10-25.json);
 manual signed-app and performance acceptance remain pending. Import also uses a Rust form controller for
 option snapshots, debounce/admission and control locks, with Metal static/status
 text and Apply drawing. Four import checkboxes now share a Metal canvas with Rust
@@ -735,6 +735,11 @@ Download text, progress and actions now also share one Rust/Metal panel scene,
 with Rust outer/list/row/action allocation and no per-row drawable. Native
 formatting, list/service policy, safety checks and control/scroll/window/AX nodes
 remain adapters and pending ownership work.
+Password save/update consent and saved-account overview now also use scene text,
+Rust panel layout and dialog actions; the account picker reuses Rust selection/
+prefix/menu state and Metal drawing. Native password storage/autofill and platform
+window/focus/AX/menu services remain adapters; only origin/username metadata reaches
+the scene. Store reads and UI lifetimes are independently invalidated on dismissal.
 [Editor contracts and acceptance](docs/rust-metal-editor.md).
 Model updates refresh the scene independently of
 native painting. Rust also owns row

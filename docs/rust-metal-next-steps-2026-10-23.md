@@ -5,69 +5,66 @@ inventory is [the parity checklist](rust-metal-parity.md).
 
 ## Current checkpoint
 
-UI source `186faaf7cfb01f78b1a1bfce0661743d1063e5a5`, 2026-10-25, passed the full compiled
+UI source `d4a9c5ff03ea1966a327a3715687d7b864a29e27`, 2026-10-25, passed the full compiled
 regression inventory with one launcher job, no automatic retries and temporary
 profiles:
 
 | Backend | Regular matrix passed | Regular skips | Failed / crashed |
 | --- | ---: | ---: | ---: |
-| Rust + Metal | 171 | 6 | 0 |
-| Views | 127 | 6 | 0 |
+| Rust + Metal | 172 | 6 | 0 |
+| Views | 128 | 6 | 0 |
 
-The inventory contains 177 cases; Views excludes 44 dedicated Metal cases
-(133 applicable cases). Four opt-in performance scenarios, real-user Arc import
+The inventory contains 178 cases; Views excludes 44 dedicated Metal cases
+(134 applicable cases). Four opt-in performance scenarios, real-user Arc import
 and the interactive manual window are skipped per backend. Optional scenarios
 remain earlier-checkpoint evidence, not current-commit passes. Metal API
 validation remained enabled. No controlled CPU/GPU/presentation or memory
 improvement is established.
 
-The download/modal/folder/workspace-deletion/page-dialog/beforeunload/shared-
-chrome gate passed **37 Metal / 28 Views**. Checks passed **245 Rust tests**,
+The password/download/modal/folder/workspace/page-dialog/shared-chrome gate passed
+**40 Metal / 31 Views**. Checks passed **245 Rust tests**,
 **180 SDK font/direction cases plus raster**, **66 clean-archive Python tests**,
-scoped GN/boundaries and optimized compilation. The live checkout passed 68
-Python tests, including two concurrent cases outside this UI commit. Final
-Ninja reported no work to do. All 53 tracked prototype files match the committed
-source and staged overlay. [Source/binary identities, commands and results](benchmarks/rust-download-scene-checkpoint-2026-10-25.json).
+scoped GN/boundaries and optimized compilation. The live checkout passed 68 Python
+tests, including two concurrent cases outside this UI commit. Final Ninja reported
+no work to do. All 53 tracked prototype files match committed source and the staged
+overlay. [Source/binary identities, commands and results](benchmarks/rust-password-scene-checkpoint-2026-10-25.json).
 
-The opt-in download panel now uses Rust/Metal text, progress and actions, with
-Rust outer/list/row/action allocation. No native or hidden Label, MdTextButton
-or ProgressBar is instantiated for these managed roles. Common PanelScene lives
-in the existing sidebar Metal interface; page dialogs keep the same alias and
-factory behavior. All managed progress/actions join the transparent panel
-underlay, with no per-row drawable. Native typography/color, event/focus/AX,
-window/frame and scroll services remain adapters. Views keeps its original
-controls and BoxLayout baseline.
+Password save/update consent now uses childless scene text, Rust panel allocation
+and common Rust/Metal dialog actions. The saved-account overview uses scene text
+for profile/empty/error/instruction copy and the existing Rust selector with Metal
+closed-control drawing, native popup and prefix input. That selector retains its
+own canvas; body and dialog actions also use separate surfaces. Native bubble/
+window/frame/scroll/focus/AX/menu services remain adapters. Views retains its
+original native controls and model host.
 
-Rust renders flat determinate bars with native pixel rounding/RTL and the
-original two-second indeterminate segment keyframes. A single panel timer runs
-only for visible projected indeterminate nodes, stops for hidden/offscreen or
-nonanimated content and requests CPU fallback paint when Metal is absent.
-Progress preferred metrics, AX names and percentage/indeterminate value behavior
-remain native-compatible. Child-size changes explicitly refresh scroll extent.
-Download widgets and delegates are directly owned and synchronously destroyed
-in widget-then-delegate order, after scene/row/subscription cleanup. Closing
-invalidates stale UI callbacks/timers; profile changes detach observers while
-leaving real transfers intact. Existing registered accelerator routing now also
-serves the download window, including actual Cocoa Escape.
+Only origin and username metadata is projected into scene/selector nodes. Password
+values remain in Chromium FormManager/PasswordStore results. Native save/update,
+decline/ignore, visible HTTP(S)/blocklist admission, autofill and profile-scoped
+storage remain authoritative. PageServices now directly owns widgets/delegates,
+destroys scenes before widgets and delegates after them, and invalidates pending
+store/UI callbacks independently of stable Chromium client callbacks. Repeated
+pending overview commands coalesce. Navigation, hidden pages and forced closes
+release the UI and pending forms.
 
-The real-transfer browser case compares text heights/widths, action preferred/
-minimum sizes and progress metrics/AX with original native controls. It checks
-unknown progress, hide/show timer behavior and actual Cocoa Space pause/resume,
-then Escape. Full-path filename tooltips retain native hit testing, explicitly
-checked after target resolution and layout; only filename copies opt into events.
-A dedicated Metal case populates 80 manager history rows and checks
-childlessness, actual scroll culling, theme, CloseNow/reopen and stale GUID/profile
-isolation. Two Rust cases cover determinate rounding/RTL/nonfinite input and
-indeterminate keyframes. Existing unsafe-history, transfer/Finder interception,
-cancellation, profile isolation and common chrome/dialog cases also pass.
+One initial Views run timed out in AppKit status-item scene dispatch during
+PreRunTestOnMainThread, before the test body. The unchanged binary passed a targeted
+recheck and then a complete Views repetition, without changing timeout limits or
+assertions. The original result/stack remains in the evidence report. The startup
+stall's underlying cause is not established or fixed; investigate it before final
+native acceptance.
 
-Chromium still owns DownloadItem/DownloadManager facts, status/byte/time
-formatting, active-first/history-cap ordering, unsafe/missing/terminal checks,
-observers and Act commands. A drawn or enabled Rust action never authorizes a
-transfer/file operation. Native control/scroll/window/AX node ownership,
-download presentation/list policy, other service panels, manual platform
-acceptance, profiling and release/license checks remain open. Normal installed
-apps/profiles were untouched; no bundle was signed and no dependency was added.
+The existing real save/fill/update browser case now uses actual Cocoa Escape,
+Space and Return after successful native presentation. A new shared case inserts
+two real store accounts and checks AX metadata/secret exclusion, prefix input,
+Escape, CloseNow/reopen, a read followed by hiding, empty personal-profile copy
+and navigation dismissal. Existing native placement, actual autofill, hidden-page
+cancellation, profile isolation and common UI regressions remain covered.
+
+Native control/container ownership, remaining service panels and form coordination,
+manual platform acceptance, controlled profiling and final release/license checks
+remain open. Normal installed apps/profiles were untouched; no bundle was signed
+and no dependency was added. The prior download checkpoint remains documented in
+[its evidence report](benchmarks/rust-download-scene-checkpoint-2026-10-25.json).
 
 ## Immediate preference work still remaining
 
@@ -114,7 +111,8 @@ adapters and outer placement still require ownership migration and verification.
 4. **Browser service panels.** Finish history native interaction/list/scroll
    ownership and remaining service coordination. Result text/backing and column
    layout use Rust/Metal. Finish download presentation/interaction ownership;
-   migrate password/permission UI and Time Machine previews/restore. Preserve
+   finish password ownership and migrate permission UI and Time Machine
+   previews/restore. Preserve
    real service data, stale-response handling,
    confirmation and failure/rollback behavior.
    Download text/progress/actions and row/body allocation now use Rust/Metal on

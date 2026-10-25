@@ -1725,3 +1725,67 @@ and profile isolation. Optional performance
 cases were not rerun; no controlled speedup or memory improvement is claimed.
 Native nodes and remaining service panels, manual acceptance, actual profiling
 and release/license checks remain open. [Evidence](benchmarks/rust-download-scene-checkpoint-2026-10-25.json).
+
+
+## Password consent and account overview checkpoint (2026-10-25)
+
+UI source `d4a9c5ff03ea1966a327a3715687d7b864a29e27`, 2026-10-25, passed the full compiled
+regression inventory with one launcher job, no automatic retries and temporary
+profiles:
+
+| Backend | Regular matrix passed | Regular skips | Failed / crashed |
+| --- | ---: | ---: | ---: |
+| Rust + Metal | 172 | 6 | 0 |
+| Views | 128 | 6 | 0 |
+
+The inventory contains 178 cases; Views excludes 44 dedicated Metal cases
+(134 applicable cases). Four opt-in performance scenarios, real-user Arc import
+and the interactive manual window are skipped per backend. Optional scenarios
+remain earlier-checkpoint evidence, not current-commit passes. Metal API
+validation remained enabled. No controlled CPU/GPU/presentation or memory
+improvement is established.
+
+The password/download/modal/folder/workspace/page-dialog/shared-chrome gate passed
+**40 Metal / 31 Views**. Checks passed **245 Rust tests**,
+**180 SDK font/direction cases plus raster**, **66 clean-archive Python tests**,
+scoped GN/boundaries and optimized compilation. The live checkout passed 68 Python
+tests, including two concurrent cases outside this UI commit. Final Ninja reported
+no work to do. All 53 tracked prototype files match committed source and the staged
+overlay. [Source/binary identities, commands and results](benchmarks/rust-password-scene-checkpoint-2026-10-25.json).
+
+Password save/update consent now uses childless scene text, Rust panel allocation
+and common Rust/Metal dialog actions. The saved-account overview uses scene text
+for profile/empty/error/instruction copy and the existing Rust selector with Metal
+closed-control drawing, native popup and prefix input. That selector retains its
+own canvas; body and dialog actions also use separate surfaces. Native bubble/
+window/frame/scroll/focus/AX/menu services remain adapters. Views retains its
+original native controls and model host.
+
+Only origin and username metadata is projected into scene/selector nodes. Password
+values remain in Chromium FormManager/PasswordStore results. Native save/update,
+decline/ignore, visible HTTP(S)/blocklist admission, autofill and profile-scoped
+storage remain authoritative. PageServices now directly owns widgets/delegates,
+destroys scenes before widgets and delegates after them, and invalidates pending
+store/UI callbacks independently of stable Chromium client callbacks. Repeated
+pending overview commands coalesce. Navigation, hidden pages and forced closes
+release the UI and pending forms.
+
+One initial Views run timed out in AppKit status-item scene dispatch during
+PreRunTestOnMainThread, before the test body. The unchanged binary passed a targeted
+recheck and then a complete Views repetition, without changing timeout limits or
+assertions. The original result/stack remains in the evidence report. The startup
+stall's underlying cause is not established or fixed; investigate it before final
+native acceptance.
+
+The existing real save/fill/update browser case now uses actual Cocoa Escape,
+Space and Return after successful native presentation. A new shared case inserts
+two real store accounts and checks AX metadata/secret exclusion, prefix input,
+Escape, CloseNow/reopen, a read followed by hiding, empty personal-profile copy
+and navigation dismissal. Existing native placement, actual autofill, hidden-page
+cancellation, profile isolation and common UI regressions remain covered.
+
+Native control/container ownership, remaining service panels and form coordination,
+manual platform acceptance, controlled profiling and final release/license checks
+remain open. Normal installed apps/profiles were untouched; no bundle was signed
+and no dependency was added. The prior download checkpoint remains documented in
+[its evidence report](benchmarks/rust-download-scene-checkpoint-2026-10-25.json).
