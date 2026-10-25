@@ -1,3 +1,5 @@
+#include "ui/views/style/platform_style.h"
+#include "ui/views/window/dialog_client_view.h"
 #include "chromium/prototype/page_dialogs.h"
 #include "base/i18n/time_formatting.h"
 #include "chromium/prototype/workspace_shell.h"
@@ -747,6 +749,7 @@ class SceneTextButton final : public SceneGlyphButton {
       :SceneGlyphButton(std::move(callback),text,Glyph::kMore,nullptr,base::BindRepeating([]{return true;}),std::move(painted)),text_(std::move(text)),style_(style) {
     SetInstallFocusRingOnFocus(false);SetHasInkDropActionOnClick(false);SetAnimateOnStateChange(false);SetRequestFocusOnPress(false);
   }
+  void SetDefault(bool value){GetViewAccessibility().SetIsDefault(value);if(value)AddAccelerator(ui::Accelerator(ui::VKEY_RETURN,ui::EF_NONE));}
   void SetText(std::u16string text){if(text==text_)return;OnMouseCaptureLost();text_=std::move(text);GetViewAccessibility().SetName(text_);SetTooltipText(text_);PreferredSizeChanged();SchedulePaint();}
   static gfx::FontList TextFont(){return views::TypographyProvider::Get().GetFont(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY);}
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {const auto g=Metrics(-1,-1);return gfx::Size(g.width,g.height);}
@@ -773,7 +776,7 @@ class SceneActionGroup final : public views::View {
 
   bool GetNeedsNotificationWhenVisibleBoundsChange() const override{return true;}
   void OnVisibleBoundsChanged() override{for(const auto& child:children())if(!child->GetVisible()||child->GetVisibleBounds().IsEmpty())child->OnMouseCaptureLost();Schedule();}
-  SceneActionGroup(bool vertical,int spacing,bool intrinsic=false):vertical_(vertical),spacing_(spacing),intrinsic_(intrinsic) {}
+  SceneActionGroup(bool vertical,int spacing,bool intrinsic=false,bool dialog=false):vertical_(vertical),spacing_(spacing),intrinsic_(intrinsic),dialog_(dialog) {}
   views::Button* AddAction(views::Button::PressedCallback callback,std::u16string text,ui::ButtonStyle style){return AddChildView(std::make_unique<SceneTextButton>(std::move(callback),std::move(text),style,base::BindRepeating(&SceneActionGroup::Schedule,weak_factory_.GetWeakPtr())));}
   bool metal_visible() const{return surface_&&surface_->visible();}
   gfx::Rect metal_bounds_for_testing() const{return surface_?surface_->screen_bounds_for_testing():gfx::Rect();}
@@ -789,11 +792,11 @@ class SceneActionGroup final : public views::View {
   void OnDidSchedulePaint(const gfx::Rect& rect) override {views::View::OnDidSchedulePaint(rect);Schedule();}
   void OnPaint(gfx::Canvas* canvas) override {if(!metal_visible())for(const auto& item:Items(0,0,gfx::RectF(GetLocalBounds())))PaintSceneRecipe(canvas,item,SceneTextButton::TextFont());Schedule();}
  private:
-  sidebar::ColumnLayout Geometry(int width,int height) const {std::vector<sidebar::ColumnChild> measured;for(const auto& child:children())if(child->GetVisible()){const auto size=child->GetPreferredSize();measured.push_back({size.width(),size.height(),0,0,0,0});}return sidebar::action_group_layout(width,height,vertical_,spacing_,rust::Slice<const sidebar::ColumnChild>(measured.data(),measured.size()));}
+  sidebar::ColumnLayout Geometry(int width,int height) const {std::vector<sidebar::ColumnChild> measured;for(const auto& child:children())if(child->GetVisible()){const auto size=child->GetPreferredSize();measured.push_back({size.width(),size.height(),0,0,0,0});}if(dialog_){auto* provider=views::LayoutProvider::Get();const auto insets=provider->GetInsetsMetric(views::INSETS_DIALOG_BUTTON_ROW);return sidebar::dialog_actions_layout(width,height,spacing_,provider->GetDistanceMetric(views::DISTANCE_BUTTON_MAX_LINKABLE_WIDTH),insets.top(),insets.left(),insets.bottom(),insets.right(),rust::Slice<const sidebar::ColumnChild>(measured.data(),measured.size()));}return sidebar::action_group_layout(width,height,vertical_,spacing_,rust::Slice<const sidebar::ColumnChild>(measured.data(),measured.size()));}
   std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const {std::vector<sidebar::Item> out;for(const auto& child:children())if(child->GetVisible()){auto bounds=gfx::RectF(child->bounds());bounds.Offset(dx,dy);auto local=bounds;local.Intersect(clip);out.push_back(static_cast<SceneTextButton*>(child.get())->Scene(bounds,local));}return out;}
   void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneActionGroup::UpdateMetal,weak_factory_.GetWeakPtr()));}
-  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
-  bool vertical_;int spacing_;bool intrinsic_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneActionGroup::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneActionGroup> weak_factory_{this};
+  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,dialog_?GetColorProvider()->GetColor(ui::kColorDialogBackground):Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
+  bool vertical_;int spacing_;bool intrinsic_;bool dialog_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneActionGroup::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneActionGroup> weak_factory_{this};
 };
 BEGIN_METADATA(SceneActionGroup)
 END_METADATA
@@ -2880,6 +2883,35 @@ GURL ResolveTyped(const std::string& text, SearchEngine engine) {
   return url.SchemeIsHTTPOrHTTPS() ? url : GURL();
 }
 }  // namespace
+bool PageDialogActionsVisibleForTesting(views::View* actions,std::string_view text){
+#if BUILDFLAG(IS_MAC)
+  auto* group=views::AsViewClass<SceneActionGroup>(actions);return group&&group->contains_text(text);
+#else
+  return false;
+#endif
+}
+std::unique_ptr<views::View> CreatePageDialogActions(views::Widget* widget){
+#if BUILDFLAG(IS_MAC)
+  auto* delegate=widget->widget_delegate()->AsDialogDelegate();
+  auto group=std::make_unique<SceneActionGroup>(false,views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_RELATED_BUTTON_HORIZONTAL),true,true);
+  auto add=[&](ui::mojom::DialogButton type){
+    if(!(delegate->buttons()&static_cast<int>(type)))return;
+    auto* button=static_cast<SceneTextButton*>(group->AddAction({},delegate->GetDialogButtonLabel(type),delegate->GetDialogButtonStyle(type)));
+    button->SetID(static_cast<int>(type));button->SetProperty(views::kElementIdentifierKey,type==ui::mojom::DialogButton::kOk?views::DialogClientView::kOkButtonElementId:views::DialogClientView::kCancelButtonElementId);button->SetGroup(6666);button->SetEnabled(delegate->IsDialogButtonEnabled(type));button->SetDefault(delegate->GetIsDefault(type));
+    button->SetCallback(base::BindRepeating([](base::WeakPtr<views::Widget> widget,views::Button* button,ui::mojom::DialogButton type,const ui::Event& event){
+      if(!widget||!widget->IsVisible())return;
+      auto* delegate=widget->widget_delegate()->AsDialogDelegate();
+      if(!delegate||delegate->GetDialogClientView()->IsPossiblyUnintendedInteraction(event,delegate->ShouldAllowKeyEventsDuringInputProtection())||delegate->ShouldIgnoreButtonPressedEventHandling(button,event))return;
+      if(type==ui::mojom::DialogButton::kOk)delegate->AcceptDialog();else delegate->CancelDialog();
+    },widget->GetWeakPtr(),base::Unretained(button),type));
+  };
+  if(views::PlatformStyle::kIsOkButtonLeading){add(ui::mojom::DialogButton::kOk);add(ui::mojom::DialogButton::kCancel);}else{add(ui::mojom::DialogButton::kCancel);add(ui::mojom::DialogButton::kOk);}
+  return group;
+#else
+  return nullptr;
+#endif
+}
+
 std::unique_ptr<PageDialogScene> CreatePageDialogScene(views::View* root){
 #if BUILDFLAG(IS_MAC)
   if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal")return std::make_unique<PageDialogSceneImpl>(root);

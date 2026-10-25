@@ -10,7 +10,7 @@
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
 
-namespace views { class Widget; class View; class ScrollView; }
+namespace views { class Widget; class View; class ScrollView; class DialogDelegate; class Button; }
 namespace ui { class KeyEvent; }
 namespace zitter::prototype {
 class EditorControl;
@@ -28,6 +28,8 @@ class PageDialogScene {
   virtual bool order_correct() const=0;
 };
 std::unique_ptr<PageDialogScene> CreatePageDialogScene(views::View* root);
+std::unique_ptr<views::View> CreatePageDialogActions(views::Widget* widget);
+bool PageDialogActionsVisibleForTesting(views::View* actions,std::string_view text);
 
 // Native dialogs bound to the requesting WebContents, including beforeunload
 // checks used by atomic workspace operations outside Chrome's TabStripModel.
@@ -43,6 +45,7 @@ class PageDialogs final : public content::JavaScriptDialogManager,
   views::Widget* dialog() const { return dialog_.get(); }
   EditorControl* prompt_input() const { return dialog_?prompt_.get():nullptr; }
   bool HandlePromptKey(const ui::KeyEvent& event);
+  views::Button* dialog_button_for_testing(bool accept) const;
   views::View* dialog_body_for_testing() const{return dialog_?body_.get():nullptr;}
   bool scene_visible_for_testing() const{return scene_&&scene_->visible();}
   bool scene_contains_text_for_testing(std::string_view text) const{return scene_&&scene_->contains_text(text);}

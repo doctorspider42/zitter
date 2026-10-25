@@ -1,3 +1,4 @@
+#include "ui/views/window/dialog_client_view.h"
 #include "chromium/prototype/browser_data.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "chromium/prototype/sidebar_layout.h"
@@ -2502,6 +2503,40 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PageDialogsSceneCopyMetricsRol
     EXPECT_EQ(reference_identity.GetPreferredSize(),identity->GetPreferredSize());EXPECT_EQ(reference_message.GetPreferredSize(),copy->GetPreferredSize());
     for(int width:{80,160,320,440}){EXPECT_EQ(reference_identity.GetHeightForWidth(width),identity->GetHeightForWidth(width));EXPECT_EQ(reference_message.GetHeightForWidth(width),copy->GetHeightForWidth(width));}
     const auto before=closed;if(kind==3)delegate->CancelDialog();else delegate->AcceptDialog();ASSERT_TRUE(base::test::RunUntil([&]{return !manager->dialog()&&closed==before+1;}));EXPECT_EQ(kind!=3,accepted);EXPECT_FALSE(manager->scene_visible_for_testing());EXPECT_FALSE(manager->dialog_body_for_testing());
+  }
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PageDialogsActionGeometryAXAndCocoaActivation) {
+  auto* page=window_->contents("work");ASSERT_TRUE(content::NavigateToURL(page,embedded_test_server()->GetURL("/storage_probe.html?dialog-actions")));auto* manager=PageDialogs::FromWebContents(page);ASSERT_TRUE(manager);
+  const bool rust=window_->shell()->workspace_input()->rust_editor();int closed=0;bool accepted=false;
+  base::ScopedClosureRunner cleanup(base::BindOnce([](PageDialogs* m,content::WebContents* p){m->CancelDialogs(p,true);base::RunLoop().RunUntilIdle();},base::Unretained(manager),base::Unretained(page)));
+  ui_controls::EnableUIControls();
+  for(int kind:{0,1,2,3}){
+    auto callback=base::BindOnce([](int* count,bool* value,bool ok,const std::u16string&){++*count;*value=ok;},base::Unretained(&closed),base::Unretained(&accepted));
+    if(kind==3)manager->RunBeforeUnloadDialog(page,page->GetPrimaryMainFrame(),false,std::move(callback));
+    else{bool suppressed=true;manager->RunJavaScriptDialog(page,page->GetPrimaryMainFrame(),kind==0?content::JAVASCRIPT_DIALOG_TYPE_ALERT:kind==1?content::JAVASCRIPT_DIALOG_TYPE_CONFIRM:content::JAVASCRIPT_DIALOG_TYPE_PROMPT,u"Actions fixture",u"draft",std::move(callback),&suppressed);ASSERT_FALSE(suppressed);}
+    auto* widget=manager->dialog();ASSERT_TRUE(widget);auto* delegate=widget->widget_delegate()->AsDialogDelegate();auto* ok=manager->dialog_button_for_testing(true);auto* cancel=manager->dialog_button_for_testing(false);ASSERT_TRUE(ok);EXPECT_EQ(kind!=0,cancel!=nullptr);
+    auto reference=std::make_unique<views::DialogDelegate>();reference->SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);auto* reference_body=reference->SetContentsView(std::make_unique<views::View>());reference_body->SetPreferredSize(manager->dialog_body_for_testing()->GetPreferredSize());reference->SetButtons(delegate->buttons());reference->SetDefaultButton(delegate->GetDefaultDialogButton());reference->SetButtonLabel(ui::mojom::DialogButton::kOk,delegate->GetDialogButtonLabel(ui::mojom::DialogButton::kOk));reference->SetButtonLabel(ui::mojom::DialogButton::kCancel,delegate->GetDialogButtonLabel(ui::mojom::DialogButton::kCancel));
+    std::unique_ptr<views::Widget> reference_widget(views::DialogDelegate::CreateDialogWidget(std::move(reference),window_->widget()->GetNativeWindow(),window_->widget()->GetNativeView()));reference_widget->SetColorModeOverride(widget->color_mode_override());auto* reference_client=reference_widget->widget_delegate()->AsDialogDelegate()->GetDialogClientView();
+    widget->LayoutRootViewIfNecessary();reference_widget->LayoutRootViewIfNecessary();
+    EXPECT_EQ(reference_client->ok_button()->GetPreferredSize(),ok->GetPreferredSize());EXPECT_EQ(reference_client->ok_button()->parent()->GetPreferredSize(),ok->parent()->GetPreferredSize());
+    if(cancel){EXPECT_EQ(reference_client->cancel_button()->GetPreferredSize(),cancel->GetPreferredSize());EXPECT_EQ(views::PlatformStyle::kIsOkButtonLeading,ok->bounds().x()<cancel->bounds().x());}
+    for(auto* button:{ok,cancel})if(button){ui::AXNodeData node;button->GetViewAccessibility().GetAccessibleNodeData(&node);EXPECT_EQ(ax::mojom::Role::kButton,node.role);EXPECT_EQ(delegate->GetDialogButtonLabel(button==ok?ui::mojom::DialogButton::kOk:ui::mojom::DialogButton::kCancel),node.GetString16Attribute(ax::mojom::StringAttribute::kName));EXPECT_EQ(delegate->GetIsDefault(button==ok?ui::mojom::DialogButton::kOk:ui::mojom::DialogButton::kCancel),node.HasState(ax::mojom::State::kDefault));if(rust){EXPECT_TRUE(button->children().empty());EXPECT_FALSE(views::AsViewClass<views::MdTextButton>(button));}}
+    if(rust){EXPECT_FALSE(delegate->GetDialogClientView()->ok_button());EXPECT_FALSE(delegate->GetDialogClientView()->cancel_button());ASSERT_TRUE(base::test::RunUntil([&]{return PageDialogActionsVisibleForTesting(ok->parent(),base::UTF16ToUTF8(delegate->GetDialogButtonLabel(ui::mojom::DialogButton::kOk)));}));}
+    reference_widget.reset();
+    if(kind==1){delegate->SetButtonLabel(ui::mojom::DialogButton::kOk,u"Nowe OK 🦀");delegate->SetButtonEnabled(ui::mojom::DialogButton::kOk,false);ok=manager->dialog_button_for_testing(true);ASSERT_TRUE(ok);EXPECT_FALSE(ok->GetEnabled());ui::AXNodeData node;ok->GetViewAccessibility().GetAccessibleNodeData(&node);EXPECT_EQ(u"Nowe OK 🦀",node.GetString16Attribute(ax::mojom::StringAttribute::kName));delegate->SetButtonEnabled(ui::mojom::DialogButton::kOk,true);ok=manager->dialog_button_for_testing(true);cancel=manager->dialog_button_for_testing(false);ASSERT_TRUE(ok);ASSERT_TRUE(cancel);EXPECT_TRUE(ok->GetEnabled());widget->LayoutRootViewIfNecessary();}
+    ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));auto* target=kind==0?ok:cancel;target->RequestFocus();
+    base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
+    if(kind==1){
+      class BlockedInput final : public views::InputEventActivationProtector {
+       public:int calls=0;bool IsPossiblyUnintendedInteraction(const ui::Event&,bool,const views::View*) override{++calls;return true;}
+      };
+      auto protection=std::make_unique<BlockedInput>();auto* observed=protection.get();delegate->GetDialogClientView()->SetInputProtectorForTesting(std::move(protection));target->AcceleratorPressed(ui::Accelerator(ui::VKEY_SPACE,ui::EF_NONE));EXPECT_EQ(1,observed->calls);EXPECT_EQ(widget,manager->dialog());EXPECT_EQ(kind,closed);delegate->GetDialogClientView()->SetInputProtectorForTesting(std::make_unique<views::InputEventActivationProtector>());
+    }
+    delegate->ResetViewShownTimeStampForTesting();
+    if(kind==1){const auto point=target->GetBoundsInScreen().CenterPoint();base::test::TestFuture<void> moved,clicked;ASSERT_TRUE(ui_controls::SendMouseMoveNotifyWhenDone(point.x(),point.y(),moved.GetCallback(),widget->GetNativeWindow()));ASSERT_TRUE(moved.Wait());ASSERT_TRUE(ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT,ui_controls::DOWN|ui_controls::UP,clicked.GetCallback(),ui_controls::kNoAccelerator,widget->GetNativeWindow()));ASSERT_TRUE(clicked.Wait());}
+    else ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));
+    ASSERT_TRUE(base::test::RunUntil([&]{return !manager->dialog()&&closed==kind+1;}));EXPECT_EQ(kind==0,accepted);
   }
 }
 

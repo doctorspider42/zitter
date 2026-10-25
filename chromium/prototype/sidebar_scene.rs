@@ -238,6 +238,7 @@ mod ffi {
         fn request_apply(self: &mut ImportForm, current: ImportSelection, ready: bool, profiles_busy: bool, visible: bool) -> ImportDispatch;
         fn finish_apply(self: &mut ImportForm, accepted: bool);
         fn action_button_layout(width: i32, height: i32, text_width: i32, control_height: i32, padding: i32, minimum_width: i32) -> ActionButtonLayout;
+        fn dialog_actions_layout(width: i32, height: i32, spacing: i32, link_limit: i32, top: i32, left: i32, bottom: i32, right: i32, children: &[ColumnChild]) -> ColumnLayout;
         fn action_group_layout(width: i32, height: i32, vertical: bool, spacing: i32, children: &[ColumnChild]) -> ColumnLayout;
         fn appearance_presets(emoji: bool) -> Vec<AppearancePreset>;
         fn appearance_selected(emoji: bool, index: usize, color: u32, current_emoji: &str) -> bool;
@@ -833,6 +834,24 @@ fn action_button_layout(width: i32, height: i32, text_width: i32, control_height
     let height=if height<0 {control_height.max(0)} else {height};let left=padding.min(width/2);
     ffi::ActionButtonLayout {width,height,text:ffi::Rect{x:left,y:0,width:width-left*2,height}}
 }
+// Dialog action order comes from the platform adapter; linking, trailing
+// alignment and placement belong to the Rust scene. Insets/font metrics are
+// native theme inputs, not hidden native controls.
+fn dialog_actions_layout(width: i32, height: i32, spacing: i32, link_limit: i32, top: i32, left: i32, bottom: i32, right: i32, children: &[ffi::ColumnChild]) -> ffi::ColumnLayout {
+    let linked=children.iter().map(|c|c.width.max(0)).filter(|&w|w<=link_limit).max().unwrap_or(0);
+    let measured:Vec<_>=children.iter().map(|c|ffi::ColumnChild{width:c.width.max(linked),height:c.height.max(0),top:0,left:0,bottom:0,right:0}).collect();
+    let natural=action_group_layout(-1,-1,false,spacing,&measured);
+    let top=top.max(0);let left=left.max(0);let bottom=bottom.max(0);let right=right.max(0);
+    let width=if width<0 {natural.width.saturating_add(left).saturating_add(right)} else {width};
+    let height=if height<0 {natural.height.saturating_add(top).saturating_add(bottom)} else {height};
+    let inner_width=width.saturating_sub(left).saturating_sub(right).max(0);
+    let inner_height=height.saturating_sub(top).saturating_sub(bottom).max(0);
+    let mut row=action_group_layout(inner_width.min(natural.width),inner_height,false,spacing,&measured);
+    let x=left.min(width).saturating_add(inner_width.saturating_sub(natural.width).max(0));
+    for r in &mut row.children {r.x=r.x.saturating_add(x);r.y=top.min(height).saturating_add(inner_height.saturating_sub(r.height));}
+    ffi::ColumnLayout{width,height,children:row.children}
+}
+
 fn action_group_layout(width: i32, height: i32, vertical: bool, spacing: i32, children: &[ffi::ColumnChild]) -> ffi::ColumnLayout {
     let spacing=spacing.max(0);let gaps=children.len().saturating_sub(1).min(i32::MAX as usize) as i32;
     let sum_width=children.iter().fold(0i64,|s,c|s.saturating_add(i64::from(c.width.max(0))));
@@ -1844,6 +1863,27 @@ mod tests {
     }}
     fn child(width: i32, height: i32) -> ffi::ColumnChild {
         ffi::ColumnChild { width, height, top: 0, left: 0, bottom: 0, right: 0 }
+    }
+    #[test]
+    fn dialog_actions_link_and_trailing_geometry() {
+        let child=|width,height|ffi::ColumnChild{width,height,top:0,left:0,bottom:0,right:0};
+        let children=[child(70,32),child(100,36)];
+        let natural=dialog_actions_layout(-1,-1,8,200,12,20,16,20,&children);
+        assert_eq!((natural.width,natural.height),(248,64));
+        assert_eq!((natural.children[0].width,natural.children[1].width),(100,100));
+        let wide=dialog_actions_layout(480,64,8,200,12,20,16,20,&children);
+        assert_eq!((wide.children[0].x,wide.children[1].x,wide.children[0].y,wide.children[1].y),(252,360,16,12));
+        let long=dialog_actions_layout(-1,-1,8,200,0,0,0,0,&[child(70,32),child(300,32)]);
+        assert_eq!((long.children[0].width,long.children[1].width),(70,300));
+    }
+    #[test]
+    fn dialog_actions_clip_empty_and_narrow_rows() {
+        assert!(dialog_actions_layout(0,0,8,200,12,20,16,20,&[]).children.is_empty());
+        let children=[ffi::ColumnChild{width:90,height:32,top:0,left:0,bottom:0,right:0},ffi::ColumnChild{width:100,height:32,top:0,left:0,bottom:0,right:0}];
+        for width in [0,1,20,40,90,480] {for height in [0,1,20,64] {
+            let g=dialog_actions_layout(width,height,8,200,12,20,16,20,&children);
+            for c in g.children {assert!(c.x>=0&&c.y>=0&&c.width>=0&&c.height>=0);assert!(c.x+c.width<=width&&c.y+c.height<=height);}
+        }}
     }
     #[test] fn panel_flex_allocates_viewport_and_keeps_fixed_header_footer() {
         let s=ffi::PanelStyle{width:400,height:500,vertical:true,spacing:12,top:20,left:20,bottom:20,right:20,flex:1};

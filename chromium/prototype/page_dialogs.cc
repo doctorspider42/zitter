@@ -29,8 +29,66 @@
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/window/dialog_delegate.h"
+#include "ui/views/window/dialog_client_view.h"
+#include "ui/views/controls/button/button.h"
+#include "ui/views/focus/focus_manager.h"
+#include "ui/views/controls/button/md_text_button.h"
+#include "ui/base/metadata/metadata_impl_macros.h"
 
 namespace zitter::prototype {
+namespace {
+#if BUILDFLAG(IS_MAC)
+// This client replaces DialogClientView's private MdTextButton construction.
+// The inherited native Escape, input-protection and themed window services are
+// retained. Its empty private button-row container never owns controls. Only
+// this fixed PageDialogs model uses the adapter; native GetOkButton/GetCancelButton
+// are deliberately not an API for these Rust nodes.
+class PageDialogClient final : public views::DialogClientView {
+  METADATA_HEADER(PageDialogClient,views::DialogClientView)
+ public:
+  PageDialogClient(views::Widget* widget,views::View* body):views::DialogClientView(widget,body){actions_=AddChildView(CreatePageDialogActions(widget));}
+  views::View* Button(bool accept) const{return actions_->GetViewByID(static_cast<int>(accept?ui::mojom::DialogButton::kOk:ui::mojom::DialogButton::kCancel));}
+  void ViewHierarchyChanged(const views::ViewHierarchyChangedDetails& details) override{
+    // Skip the base's private native-button allocator; preserve ClientView's
+    // contents ownership and register the matching observer for base teardown.
+    views::ClientView::ViewHierarchyChanged(details);
+    if(details.is_add&&details.child==this)GetWidget()->widget_delegate()->AsDialogDelegate()->AddObserver(this);
+  }
+  void OnDialogChanged() override{
+    auto* focused=GetFocusManager()->GetFocusedView();const int id=focused&&actions_->Contains(focused)?focused->GetID():0;
+    RemoveChildViewT(actions_.ExtractAsDangling());actions_=AddChildView(CreatePageDialogActions(GetWidget()));PreferredSizeChanged();
+    if(id)if(auto* replacement=actions_->GetViewByID(id);replacement&&replacement->GetEnabled())replacement->RequestFocus();
+  }
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override{auto size=views::DialogClientView::CalculatePreferredSize(available);size.Enlarge(0,actions_->GetPreferredSize().height());size.set_width(std::max(size.width(),actions_->GetPreferredSize().width()));return size;}
+  gfx::Size GetMinimumSize() const override{auto size=views::DialogClientView::GetMinimumSize();size.Enlarge(0,actions_->GetPreferredSize().height());size.set_width(std::max(size.width(),actions_->GetPreferredSize().width()));return size;}
+  gfx::Size GetMaximumSize() const override{auto size=views::DialogClientView::GetMaximumSize();if(size.height())size.Enlarge(0,actions_->GetPreferredSize().height());return size;}
+  views::ProposedLayout CalculateProposedLayout(const views::SizeBounds& bounds) const override{
+    auto result=views::DialogClientView::CalculateProposedLayout(bounds);const int row_height=actions_->GetHeightForWidth(bounds.width().value());
+    for(auto& child:result.child_layouts)if(child.child_view==contents_view())child.bounds.set_height(std::max(0,child.bounds.height()-row_height));
+    result.child_layouts.emplace_back(actions_.get(),true,gfx::Rect(0,std::max(0,bounds.height().value()-row_height),bounds.width().value(),row_height),bounds);return result;
+  }
+ private:raw_ptr<views::View> actions_=nullptr;
+};
+BEGIN_METADATA(PageDialogClient)
+END_METADATA
+class PageDialogDelegate final : public views::DialogDelegate {
+ public:
+  views::ClientView* CreateClientView(views::Widget* widget) override{return new PageDialogClient(widget,TransferOwnershipOfContentsView());}
+  views::View* GetInitiallyFocusedView() override{
+    if(HasConfiguredInitiallyFocusedView())return views::WidgetDelegate::GetInitiallyFocusedView();
+    const int button=GetDefaultDialogButton();if(!button)return nullptr;auto* client=static_cast<PageDialogClient*>(GetDialogClientView());return client?client->Button(button==static_cast<int>(ui::mojom::DialogButton::kOk)):nullptr;
+  }
+};
+#endif
+}  // namespace
+views::Button* PageDialogs::dialog_button_for_testing(bool accept) const{
+  if(!dialog_)return nullptr;
+#if BUILDFLAG(IS_MAC)
+  if(scene_)return static_cast<views::Button*>(static_cast<PageDialogClient*>(dialog_->client_view())->Button(accept));
+#endif
+  auto* client=dialog_->widget_delegate()->AsDialogDelegate()->GetDialogClientView();
+  return accept?client->ok_button():client->cancel_button();
+}
 WEB_CONTENTS_USER_DATA_KEY_IMPL(PageDialogs);
 PageDialogs* PageDialogs::Attach(content::WebContents* contents) {
   CreateForWebContents(contents); return FromWebContents(contents);
@@ -60,7 +118,11 @@ void PageDialogs::Show(content::RenderFrameHost* frame, content::JavaScriptDialo
   }
   const auto generation=++dialog_generation_;
   requesting_frame_ = frame; unload_dialog_ = unload; dialog_callback_ = std::move(callback);
-  auto dialog = std::make_unique<views::DialogDelegate>();
+  std::unique_ptr<views::DialogDelegate> dialog;
+#if BUILDFLAG(IS_MAC)
+  if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal")dialog=std::make_unique<PageDialogDelegate>();
+#endif
+  if(!dialog)dialog=std::make_unique<views::DialogDelegate>();
   dialog->SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
   auto* body = dialog->SetContentsView(std::make_unique<views::View>());body_=body;
   scene_=CreatePageDialogScene(body);
