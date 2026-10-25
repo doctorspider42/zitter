@@ -1581,3 +1581,38 @@ Remaining option-to-field/form construction, some service/progress wording,
 other forms/panels, native event/AX/scroll/container ownership, manual acceptance,
 profiling and release/license checks remain open. No controlled speedup is
 claimed. [Evidence](benchmarks/rust-tools-policy-checkpoint-2026-10-25.json).
+
+
+## Tools panel layout checkpoint
+
+Rust allocates the tools outer panel, header, scrolling form body and history-
+clear row. The native adapter supplies preferred child sizes, margins, visibility/
+ignore flags and host insets; Rust owns natural/flex allocation, zero-size gap
+handling, clipping and reported geometry. Shrink remeasurement retains the
+initial flex budget. Roles preserve 20px outer interior/12px spacing, 8px header
+and clear gaps, and body bottom/right 8px with 10px spacing. The scroll, title
+and period selector are their respective flexible children. Views retains its
+original start/stretch BoxLayout policy. This is a configured single-flex/no-
+flex allocator, not all BoxLayout policies.
+
+Three Rust cases cover allocation, shrink/clipping, zero children, empty lists,
+margins and saturating sizes. A shared native BoxLayout oracle checks 1,008
+bounded orientation/flex/visibility/margin/size combinations plus natural,
+minimum and height-for-width, including wrapping, hidden/ignored children,
+host borders and zero/narrow/odd bounds. A real-panel test cycles four pages at
+two sizes with long Unicode status, checking header/scroll/footer geometry,
+scroll extent and actual Metal ordering/editor/dismiss cutouts. Its initial
+probe used the one-child outer contents wrapper instead of the three-child
+panel, failing on both backends; locating the panel via the editor's scroll
+ancestor preserved the original requirements. Production allocation code did
+not change after that probe. Initial FFI placement/probe metadata compile
+corrections and failed probe identities/logs remain in the report.
+
+Tests passed: 27/22 critical and 164/123 regular Metal/Views, six explicit skips
+each, 239 Rust, 180 SDK plus raster, 66 clean-archive Python, GN/boundaries and
+final Ninja no-op. Frozen staging/source identities now explicitly include
+sidebar_layout.cc/h. No rendering recipe, dependency or domain operation changed.
+Native container/window/event/focus/AX/scroll and outer placement ownership,
+other forms/panels/layouts, manual acceptance, profiling and release/license
+checks remain open. No controlled speedup is claimed.
+[Evidence](benchmarks/rust-tools-layout-checkpoint-2026-10-25.json).

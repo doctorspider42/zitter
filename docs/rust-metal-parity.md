@@ -82,7 +82,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Workspace/profile form action buttons | Rust button/group geometry, shared pointer/key reducer and text/background/border/focus primitives; four Metal groups; native Button/AX/focus, platform font/metric/color and command adapters (automated UI checked; manual acceptance pending) | Replace native interaction nodes; verify dynamic labels, disabled styles, focus/keyboard/cancellation, clipping/fallback and service semantics |
 | Workspace color/emoji presets | Rust preset data/selection, row geometry, pointer/key reducer and scene primitives; two shared-context Metal canvases; native Button/AX/focus and text/grapheme/storage adapters (automated UI checked; manual acceptance pending) | Color/emoji editor migration verified; replace remaining native preset Button interaction ownership and broaden capture/visibility/IME/AX/theme/scale/persistence acceptance |
 | Workspace deletion confirmation | Rust captured-target notice state/copy and shared paragraph layout; Metal body/error text; native modal title/buttons and deletion/persistence services (automated UI checked; manual acceptance pending) | Migrate remaining host controls; verify default Cancel, beforeunload, stale targets, retained profile data, typography and screen bounds |
-| General preferences, shortcuts and site preferences | Rust/Metal editors, eleven preference selectors, 24 switches, three clear-data checkboxes and 19 fixed actions plus dynamic rule controls; Rust category/dismiss recipes, category/filter state, text-draft/profile refresh/admission, rule paging and shared text/backing underlay; native event/focus/AX, normalization, menus and stores | Migrate UI descriptions/data, remaining busy/status/form state, tools option-to-field/form construction, service/progress wording and outer containers; retain profile/global configuration and recorder behavior |
+| General preferences, shortcuts and site preferences | Rust/Metal editors, eleven preference selectors, 24 switches, three clear-data checkboxes and 19 fixed actions plus dynamic rule controls; Rust category/dismiss recipes, category/filter state, text-draft/profile refresh/admission, rule paging and shared text/backing underlay; native event/focus/AX, normalization, menus and stores | Migrate UI descriptions/data, remaining busy/status/form state, tools option-to-field/form construction, service/progress wording and native outer-container ownership; tools panel/header/body/clear allocation is Rust; retain profile/global configuration and recorder behavior |
 | History, downloads, passwords and permissions | Rust/Metal history query editor, clear-period selector and clear/more actions; shared Rust/Metal tools header/status/empty copy and committed-query/pagination/loaded state; Rust/Metal history result text/backing and column layout; native Unicode/IME/service and row event/focus/AX/scroll adapters, with other remaining Views lists/controls | Finish native history interaction/container ownership and other service forms/result controls; retain browser service and security semantics |
 | Peek, promote/split, link/page menus and routing | Views/native adapters + application | Rust control routing, focus and dismissal; retain native page integration |
 | Import form and first-run import | Rust UI option/debounce/admission/controller state, copy, columns and Metal static/status/Apply text; native Button/AX/focus, header nodes, native popup/IME adapters and application import services (automated UI checked; manual acceptance pending) | Migrate remaining native header and input nodes; verify latest options, busy recovery, credentials opt-in, source immutability, first-run/persistence/rollback and runtime accessibility |
@@ -864,3 +864,38 @@ Remaining option-to-field/form construction, some service/progress wording,
 other forms/panels, native event/AX/scroll/container ownership, manual acceptance,
 profiling and release/license checks remain open. No controlled speedup is
 claimed. [Evidence](benchmarks/rust-tools-policy-checkpoint-2026-10-25.json).
+
+
+## Tools panel layout checkpoint
+
+Rust allocates the tools outer panel, header, scrolling form body and history-
+clear row. The native adapter supplies preferred child sizes, margins, visibility/
+ignore flags and host insets; Rust owns natural/flex allocation, zero-size gap
+handling, clipping and reported geometry. Shrink remeasurement retains the
+initial flex budget. Roles preserve 20px outer interior/12px spacing, 8px header
+and clear gaps, and body bottom/right 8px with 10px spacing. The scroll, title
+and period selector are their respective flexible children. Views retains its
+original start/stretch BoxLayout policy. This is a configured single-flex/no-
+flex allocator, not all BoxLayout policies.
+
+Three Rust cases cover allocation, shrink/clipping, zero children, empty lists,
+margins and saturating sizes. A shared native BoxLayout oracle checks 1,008
+bounded orientation/flex/visibility/margin/size combinations plus natural,
+minimum and height-for-width, including wrapping, hidden/ignored children,
+host borders and zero/narrow/odd bounds. A real-panel test cycles four pages at
+two sizes with long Unicode status, checking header/scroll/footer geometry,
+scroll extent and actual Metal ordering/editor/dismiss cutouts. Its initial
+probe used the one-child outer contents wrapper instead of the three-child
+panel, failing on both backends; locating the panel via the editor's scroll
+ancestor preserved the original requirements. Production allocation code did
+not change after that probe. Initial FFI placement/probe metadata compile
+corrections and failed probe identities/logs remain in the report.
+
+Tests passed: 27/22 critical and 164/123 regular Metal/Views, six explicit skips
+each, 239 Rust, 180 SDK plus raster, 66 clean-archive Python, GN/boundaries and
+final Ninja no-op. Frozen staging/source identities now explicitly include
+sidebar_layout.cc/h. No rendering recipe, dependency or domain operation changed.
+Native container/window/event/focus/AX/scroll and outer placement ownership,
+other forms/panels/layouts, manual acceptance, profiling and release/license
+checks remain open. No controlled speedup is claimed.
+[Evidence](benchmarks/rust-tools-layout-checkpoint-2026-10-25.json).

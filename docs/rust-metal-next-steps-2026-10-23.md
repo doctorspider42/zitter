@@ -5,60 +5,60 @@ inventory is [the parity checklist](rust-metal-parity.md).
 
 ## Current checkpoint
 
-UI source `19c32eac6019bff7bb5d8af8ab702732914783e7`, 2026-10-25, passed the full compiled
+UI source `503178da15c475dd63aa7a6c5a714c7a7c6f7a17`, 2026-10-25, passed the full compiled
 regression inventory with one launcher job, no automatic retries and temporary
 profiles:
 
 | Backend | Regular matrix passed | Regular skips | Failed / crashed |
 | --- | ---: | ---: | ---: |
-| Rust + Metal | 162 | 6 | 0 |
-| Views | 121 | 6 | 0 |
+| Rust + Metal | 164 | 6 | 0 |
+| Views | 123 | 6 | 0 |
 
-The inventory contains 168 cases; Views excludes 41 dedicated Metal cases
-(127 applicable cases). Four opt-in performance scenarios, real-user Arc import
+The inventory contains 170 cases; Views excludes 41 dedicated Metal cases
+(129 applicable cases). Four opt-in performance scenarios, real-user Arc import
 and the interactive manual window are skipped per backend. Optional scenarios
 remain earlier-checkpoint evidence, not current-commit passes. Metal API
 validation remained enabled. No controlled CPU/GPU/presentation or memory
 improvement is established.
 
-The tools/history/provider/shared preference-chrome gate passed **25 Metal /
-20 Views**. Checks passed **236 Rust tests**, **180 SDK font/direction cases plus
+The tools/history/provider/shared preference-chrome gate passed **27 Metal /
+22 Views**. Checks passed **239 Rust tests**, **180 SDK font/direction cases plus
 raster**, **66 clean-archive Python tests**, scoped GN/boundaries and optimized
 compilation. The live checkout passed 68 Python tests, including two concurrent
 cases outside this UI commit. Final Ninja reported no work to do.
-[Source/binary identities, commands and results](benchmarks/rust-tools-policy-checkpoint-2026-10-25.json).
+[Source/binary identities, commands and results](benchmarks/rust-tools-layout-checkpoint-2026-10-25.json).
 
-Rust ToolsForm now chooses form command/IME admission, recording transitions and
-action result presentation. Twelve UI command IDs cross with field, composition
-and selection-validity facts. Native visibility and posted workspace/profile/
-generation checks, actual object/index bounds, validation, stores and browser
-commands remain authoritative. Snapshot-save, shortcut-save/disable and provider
-composition gates match Views. Record cancels native preedit before readonly;
-other actions cancel recording as before. Rust chooses failed/done/pending copy
-and form reconstruction; native pending status is queried after reconstruction,
-and successful sleep retains its early return.
+Four tools layouts now allocate in Rust: the outer panel (20px interior/12px
+spacing, flexible scroll), header (8px gap, flexible title), scrolling body
+(bottom/right 8px and 10px spacing, no flex), and history-clear row (8px gap,
+flexible period selector). Native font/control services measure preferred sizes;
+Rust handles natural/flex allocation, zero-size spacing, clipping and reported
+host/child geometry. Shrink remeasurement preserves the initial flex budget.
+Views uses its original configured BoxLayout. The allocator covers these
+start/stretch, noncollapsing roles with an optional single flexible child;
+it does not implement every BoxLayout alignment/multiple-flex policy.
 
-Rust also supplies history empty/error/count/retry text and More enabled/visible
-state. Nonempty errors retain rows but hide/disable More. History clear caption/
-enabled state is a Rust projection of the native shared service busy flag, both
-on busy changes and reconstruction. Preferences clearing remains native. No
-rendering recipe, dependency or domain operation changed.
+A native BoxLayout oracle passed 24 orientation/flex/visibility/margin
+configurations across seven widths and six heights (1,008 bounded combinations),
+plus natural/minimum/height-for-width checks. It uses independent native probe
+measurement and covers zero/narrow/odd bounds, wrapping, margins, host borders,
+hidden and ignored children. A second shared test cycles all four real pages at
+two sizes with long Unicode status, checking header/viewport/footer geometry,
+scroll extent and actual Metal ordering/editor/dismiss cutouts. The first probe
+passed the allocator oracle but targeted the outer widget wrapper in the panel
+test, failing on both backends. It now locates the true panel through the
+real editor's scroll ancestor, preserving all geometry requirements. That failed
+probe and intermediate compile corrections remain in the report.
 
-Three new Rust cases cover command/context/composition, recording/outcomes and
-history/clear projections. A shared browser test verifies real failed provider/
-shortcut saves without mutation/reconstruction, Record during IME and Escape
-recovery, empty profile/filter/error/result status and More, including nonempty
-errors. Earlier Cocoa success, preedit/stale actions, busy reconstruction,
-history paging/clearing and scene/scroll contracts remain in the full matrix.
-
-The prior [history presentation checkpoint](benchmarks/rust-history-rows-checkpoint-2026-10-25.json)
-retains shared Metal rows, Rust column placement, culling and cancelled offscreen
-press evidence. The [tools state checkpoint](benchmarks/rust-tools-form-checkpoint-2026-10-25.json)
-retains page/recording/committed-query/pagination/loaded state. Remaining provider/
-shortcut option-to-field and form-construction coordination, some service/
-progress wording, other forms/panels and native interaction/container ownership
-remain open, alongside manual acceptance, profiling and release/license checks.
-Normal installed apps/profiles were untouched; no bundle was signed.
+The frozen UI override and identity manifest explicitly include sidebar_layout
+source/header now. No rendering recipe, dependency or domain operation changed.
+[Prior tools command/status policy](benchmarks/rust-tools-policy-checkpoint-2026-10-25.json)
+and [history presentation](benchmarks/rust-history-rows-checkpoint-2026-10-25.json)
+retain their detailed contracts and evidence. Native View/ScrollView/window/
+event/focus/AX and outer placement ownership remain, alongside other forms/
+panels/layouts, remaining form construction/service wording, manual acceptance,
+profiling and release/license checks. Normal installed apps/profiles were
+untouched; no bundle was signed.
 
 ## Immediate preference work still remaining
 
@@ -73,8 +73,9 @@ action outcomes, history result presentation and the clear-busy UI projection.
 Remaining option-to-field/form construction and popup/empty-item/service/progress
 wording remain, alongside other panels. History result text/backing and column
 placement use Rust/Metal; native row interaction/AX and scrolling remain adapters.
-Native ScrollView, BoxLayout, View groups, event/focus/AX adapters and outer
-placement still require an explicit ownership decision and verification.
+Tools panel/header/body/clear geometry also uses Rust; their Views mode retains
+BoxLayout. Native ScrollView/View groups, other BoxLayouts, event/focus/AX
+adapters and outer placement still require ownership migration and verification.
 
 ## Next implementation steps
 
@@ -103,8 +104,10 @@ placement still require an explicit ownership decision and verification.
    Machine previews/restore. Preserve real service data, stale-response handling,
    confirmation and failure/rollback behavior.
    Complete Peek/promote/split and link/page menu UI routing.
-5. **Remove Views interaction/container ownership.** Replace remaining tab/tree,
-   scroll/viewport, native Button/View/ResizeArea hierarchy, outer layout and
+5. **Remove Views interaction/container ownership.** Tools outer/header/body/
+   clear geometry now uses Rust, while native groups/scroll/windows remain.
+   Replace remaining tab/tree, scroll/viewport, native Button/View/ResizeArea
+   hierarchy, outer layout and
    animation-snapshot dependencies with stable Rust node state. Keep Chromium
    WebContents, domain commands and explicit native event/window/cursor/menu/AX
    adapters. Verify native hit testing, focus order, scroll/trackpad, drag/split,
