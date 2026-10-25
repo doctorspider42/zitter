@@ -1452,3 +1452,38 @@ optional scenarios each (160/121 combined), 228 Rust, 180 SDK cases plus raster,
 form/controller coordination, result lists, other panels/native containers,
 manual platform acceptance, actual profiling and release/license checks remain.
 [Evidence](benchmarks/rust-tools-actions-checkpoint-2026-10-25.json).
+
+
+## Tools page data and shared text checkpoint
+
+Four Rust page-copy descriptors supply titles/intros, field/picker names,
+headings/action captions, history ranges and initial status; Rust also supplies
+clear-busy text. Native callback IDs, stores, validation, IME and profile/
+workspace/generation checks remain. One additional transparent Metal underlay
+renders tools headers, descriptions, status, sleeping descriptions and empty/
+error history copy. Control/native-history-result rectangles are holes, and
+Cocoa ordering keeps the underlay below foreground canvases. No native Label
+remains outside controls in the Rust tools tree; native result labels remain.
+
+The shared preference/tools static-text adapter uses standalone cached
+RenderText line boundaries matching Label's cursor-disabled, unelided,
+truncated-long-word/minimum-line-height policy. Rust places the lines and
+CoreText/Metal draws them. It creates no hidden measuring Label. An initial
+native oracle found 300px versus 320px at width 80 for two long intros; the
+approximate wrapping was replaced and the unchanged native requirement passed.
+The failed probe and intermediate compile correction are retained in the report.
+
+New shared tests compare four page titles/descriptions and Unicode multiline
+status at widths 80/160/320, with reconstruction and profile-context changes.
+Metal checks cover static AX nodes, scene text, underlay ordering, editor/
+selector/dismiss/native-result cutouts, scrolling, theme, hide/reopen and history
+error text. Shared preference-chrome tests remain in the critical gate.
+
+Tests passed: 21 Metal / 17 Views critical cases, 158/118 regular plus four
+optional scenarios each (162/122 combined), 229 Rust, 180 SDK cases plus raster,
+66 clean-archive Python, GN/boundaries and final Ninja no-op. CPU recipe fallback
+and native background/interaction/layout remain. Tools form/status decisions,
+some popup/empty-item/service wording, native result rows, other panels/
+containers, manual acceptance, real profiling and release/license checks remain.
+No new dependency was introduced; RenderText already belongs to Chromium.
+[Evidence](benchmarks/rust-tools-chrome-checkpoint-2026-10-25.json).
