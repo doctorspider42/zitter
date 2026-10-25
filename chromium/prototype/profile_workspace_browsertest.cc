@@ -1023,6 +1023,33 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsChromeCopyMetricsStatusAn
   if(rust)ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_contains_text_for_testing("Profil: Profil osobisty");}));
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsPolicyFailedActionsRecorderAndHistoryStatuses) {
+  ASSERT_TRUE(window_->Select("work"));auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));
+  auto has_copy=[&](std::u16string_view text){auto find=[&](auto&& self,views::View* view)->bool{ui::AXNodeData node;view->GetViewAccessibility().GetAccessibleNodeData(&node);if(node.role==ax::mojom::Role::kStaticText&&node.GetString16Attribute(ax::mojom::StringAttribute::kName)==text)return true;for(const auto& child:view->children())if(self(self,child.get()))return true;return false;};return find(find,shell->tools_widget()->GetContentsView());};
+  auto click=[&](std::u16string text){auto* button=FindButton(shell->tools_widget()->GetContentsView(),text);ASSERT_TRUE(button);views::test::ButtonTestApi(button).NotifyDefaultMouseClick();base::RunLoop().RunUntilIdle();};
+  shell->OpenTools(2);auto* provider=shell->provider_input(0);ASSERT_TRUE(provider);views::ViewTracker original(provider->view());
+  shell->provider_input(0)->SetText(u"Invalid provider 🦀");shell->provider_input(1)->SetText(u"broken");shell->provider_input(2)->SetText(u"not a search template");
+  const auto count=shell->browser_tools().providers.size();ASSERT_NO_FATAL_FAILURE(click(u"Zapisz wyszukiwarkę"));
+  EXPECT_EQ(count,shell->browser_tools().providers.size());EXPECT_TRUE(original.view());
+  EXPECT_TRUE(has_copy(u"Sprawdź unikalny prefiks, nazwę i adres z {query}. Musi pozostać co najmniej jedna wyszukiwarka."));
+  shell->OpenTools(1);auto* chord=shell->shortcut_input();ASSERT_TRUE(chord);const auto previous=shell->browser_tools().shortcuts.front().accelerator;
+  chord->SetText(u"Escape");ASSERT_NO_FATAL_FAILURE(click(u"Zapisz skrót"));EXPECT_EQ(previous,shell->browser_tools().shortcuts.front().accelerator);
+  EXPECT_TRUE(has_copy(u"Nieprawidłowa lub zajęta kombinacja. Zmień ją albo wyłącz skrót drugiej akcji."));
+  chord->RequestFocus();ui::CompositionText marked;marked.text=u"未";marked.selection=gfx::Range(1);chord->SetCompositionText(marked);ASSERT_TRUE(chord->IsIMEComposing());
+  ASSERT_NO_FATAL_FAILURE(click(u"Nagraj kombinację…"));EXPECT_FALSE(chord->IsIMEComposing());EXPECT_EQ(ui::TEXT_INPUT_TYPE_NONE,chord->input_client()->GetTextInputType());
+  EXPECT_TRUE(has_copy(u"Naciśnij kombinację. Escape anuluje nagrywanie."));
+  ASSERT_TRUE(shell->CaptureShortcut(ui::Accelerator(ui::VKEY_ESCAPE,0)));EXPECT_EQ(ui::TEXT_INPUT_TYPE_TEXT,chord->input_client()->GetTextInputType());EXPECT_TRUE(has_copy(u"Nagrywanie anulowane."));
+  shell->OpenTools(3);ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));const auto profile=window_->workspaces().front().profile_id;
+  shell->SetHistoryResults(u"",profile,200,{},false,false);EXPECT_TRUE(has_copy(u"Brak historii przeglądania w tym profilu."));EXPECT_TRUE(has_copy(u"Wyświetlono wpisów: 0"));
+  auto* field=shell->history_search();field->RequestFocus();field->input_client()->InsertText(u"Missing 🦀",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));EXPECT_TRUE(has_copy(u"Brak wyników dla tego wyszukiwania."));
+  shell->SetHistoryResults(u"Missing 🦀",profile,200,{},true,true);EXPECT_TRUE(has_copy(u"Nie udało się odczytać historii."));EXPECT_TRUE(has_copy(u"Spróbuj ponownie otworzyć historię."));
+  auto* more=FindButton(shell->tools_widget()->GetContentsView(),u"Pokaż więcej");ASSERT_TRUE(more);EXPECT_FALSE(more->GetVisible());EXPECT_FALSE(more->GetEnabled());
+  const std::vector<BrowsingHistoryEntry> entry={{GURL("https://tools-policy.test/"),u"Result 🦀",base::Time::Now()}};
+  shell->SetHistoryResults(u"Missing 🦀",profile,200,entry,true,false);EXPECT_TRUE(has_copy(u"Wyświetlono wpisów: 1"));EXPECT_TRUE(more->GetVisible());EXPECT_TRUE(more->GetEnabled());
+  shell->SetHistoryResults(u"Missing 🦀",profile,200,entry,true,true);EXPECT_EQ(1u,shell->history_entries().size());EXPECT_TRUE(has_copy(u"Spróbuj ponownie otworzyć historię."));EXPECT_FALSE(more->GetVisible());EXPECT_FALSE(more->GetEnabled());
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsActionsCocoaSnapshotProviderAndClose) {
   ASSERT_TRUE(window_->Select("work"));ASSERT_TRUE(window_->contents("work"));
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready()&&shell->appearance_ready();}));

@@ -1166,11 +1166,12 @@ void SetCheckText(views::Button* button,std::u16string text) {
   static_cast<views::Checkbox*>(button)->SetText(text);
 }
 
-std::u16string ToolsClearLabel(bool scene,bool busy){
+struct ToolsClearPresentation {std::u16string label;bool enabled;};
+ToolsClearPresentation ToolsClearControls(bool scene,bool busy){
 #if BUILDFLAG(IS_MAC)
-  if(scene)return base::UTF8ToUTF16(std::string(sidebar::tools_clear_label(busy)));
+  if(scene){const auto value=sidebar::tools_clear_controls(busy);return {base::UTF8ToUTF16(std::string(value.label)),value.enabled};}
 #endif
-  return busy?u"Czyszczenie…":u"Wyczyść historię…";
+  return {busy?u"Czyszczenie…":u"Wyczyść historię…",!busy};
 }
 
 views::View* ActionGroup(views::View* parent,bool scene,bool vertical,int spacing) {
@@ -6090,8 +6091,9 @@ void WorkspaceShell::FilterPreferences() {
 void WorkspaceShell::SetBrowsingDataBusy(bool busy) {
   browsing_data_busy_ = busy;
   if (history_clear_) {
-    history_clear_->SetEnabled(!busy);
-    SetActionText(history_clear_,ToolsClearLabel(bool(workspace_form_),busy));
+    const auto presentation=ToolsClearControls(bool(tools_form_),busy);
+    history_clear_->SetEnabled(presentation.enabled);
+    SetActionText(history_clear_,presentation.label);
   }
   if (!clear_data_button_) return;
   clear_data_button_->SetEnabled(!busy);
@@ -6590,10 +6592,12 @@ void WorkspaceShell::SetHistoryResults(std::u16string query, std::string profile
   {if(history_query_!=query||limit!=history_limit_)return;history_loaded_=true;}
   history_entries_ = std::move(entries);
   history_list_->RemoveAllChildViews();
-  if (history_entries_.empty()) {
-    AddToolsCopy(history_list_,error ? u"Nie udało się odczytać historii." :
-        query.empty() ? u"Brak historii przeglądania w tym profilu." : u"Brak wyników dla tego wyszukiwania.",kMuted,0,static_cast<int>(gfx::Font::Weight::NORMAL),true);
-  }
+  std::u16string empty_text,status_text;bool more_visible,more_enabled;
+#if BUILDFLAG(IS_MAC)
+  if(tools_form_){const auto view=tools_form_->form->tools_history_view(history_entries_.size(),more,error);empty_text=base::UTF8ToUTF16(std::string(view.empty));status_text=base::UTF8ToUTF16(std::string(view.status));more_visible=view.more_visible;more_enabled=view.more_enabled;}else
+#endif
+  {empty_text=error?u"Nie udało się odczytać historii.":query.empty()?u"Brak historii przeglądania w tym profilu.":u"Brak wyników dla tego wyszukiwania.";status_text=error?u"Spróbuj ponownie otworzyć historię.":base::UTF8ToUTF16("Wyświetlono wpisów: "+std::to_string(history_entries_.size()));more_visible=more&&!error;more_enabled=!error;}
+  if(history_entries_.empty())AddToolsCopy(history_list_,empty_text,kMuted,0,static_cast<int>(gfx::Font::Weight::NORMAL),true);
   for (const auto& entry : history_entries_) {
     RowButton::Spec row;
     row.title = entry.title.empty() ? base::UTF8ToUTF16(entry.url.spec()) : entry.title;
@@ -6619,10 +6623,9 @@ void WorkspaceShell::SetHistoryResults(std::u16string query, std::string profile
     button->SetTooltipText(base::UTF8ToUTF16(entry.url.spec()));
     button->GetViewAccessibility().SetDescription(base::TimeFormatShortDateAndTime(entry.visited) + u" · " + base::UTF8ToUTF16(entry.url.spec()));
   }
-  SetHistoryMoreVisible(more && !error);
-  history_more_->SetEnabled(!error);
-  SetPanelText(tools_status_,error ? u"Spróbuj ponownie otworzyć historię." :
-      base::UTF8ToUTF16("Wyświetlono wpisów: " + std::to_string(history_entries_.size())));
+  SetHistoryMoreVisible(more_visible);
+  history_more_->SetEnabled(more_enabled);
+  SetPanelText(tools_status_,status_text);
   PreparePanelText(tools_widget_->GetRootView());
   history_list_->InvalidateLayout();
   tools_widget_->LayoutRootViewIfNecessary();
@@ -6853,17 +6856,18 @@ void WorkspaceShell::RefreshTools() {
     auto* clear_layout = clear_row->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 8));
     history_period_=picker(text(pickers,0,u"Zakres czyszczenia historii"),workspace_form_?std::move(form_choices):std::vector<std::u16string>{u"Ostatnia godzina",u"Ostatnie 24 godziny",u"Ostatnie 7 dni",u"Cały okres"},clear_row);
     clear_layout->SetFlexForView(history_period_, 1);
+    const auto clear_presentation=ToolsClearControls(bool(tools_form_),browsing_data_busy_);
     history_clear_ = PreferenceAction(clear_row,bool(workspace_form_),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
       if (shell && shell->history_period_ && shell->callbacks_.clear_browsing_data)
         shell->callbacks_.clear_browsing_data.Run({static_cast<int>(PickerIndex(shell->history_period_).value_or(0)), true, false, false});
-    }, weak), ToolsClearLabel(bool(workspace_form_),browsing_data_busy_));
+    }, weak), clear_presentation.label);
     history_list_ = tools_body_->AddChildView(std::make_unique<views::View>());
     if(tools_form_)history_list_->SetLayoutManager(CreateSidebarColumnLayout(4));
     else history_list_->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 4));
     history_more_ = PreferenceAction(tools_body_,bool(workspace_form_),base::BindRepeating(&WorkspaceShell::RefreshHistory, weak, true), text(actions,1,u"Pokaż więcej"),true);
     SetHistoryMoreVisible(false);
     SetPanelText(tools_status_,workspace_form_?form_status:u"Odczytywanie historii…");
-    history_clear_->SetEnabled(!browsing_data_busy_);
+    history_clear_->SetEnabled(clear_presentation.enabled);
   }
   PreparePanelText(tools_widget_->GetRootView()); tools_body_->InvalidateLayout();
   if (history_visible()) RefreshHistory();
@@ -6885,13 +6889,27 @@ void WorkspaceShell::SetShortcutRecording(bool recording) {
 }
 void WorkspaceShell::ToolsAction(int action) {
   if (!tools_widget_ || !tools_widget_->IsVisible()) return;
-  if(action==1&&snapshot_name_&&snapshot_name_->IsIMEComposing())return;
-  if(action>=20&&action<=22)
-    for(auto* field:{provider_name_.get(),provider_keyword_.get(),provider_url_.get()})if(field&&field->IsIMEComposing())return;
-  if((action==11||action==12)&&shortcut_chord_&&shortcut_chord_->IsIMEComposing())return;
-  bool ok = false;
-  if (action != 10 && ToolsRecording()) { SetShortcutRecording(false); RefreshKeyRegistrations(); }
   const size_t index = tools_picker_ ? PickerIndex(tools_picker_).value_or(0) : 0;
+  std::u16string record_status;
+#if BUILDFLAG(IS_MAC)
+  if(tools_form_){
+    sidebar::ToolsActionContext context{};
+    context.snapshot_field=bool(snapshot_name_);context.shortcut_field=bool(shortcut_chord_);context.provider_field=bool(provider_name_);
+    context.snapshot_composing=snapshot_name_&&snapshot_name_->IsIMEComposing();context.shortcut_composing=shortcut_chord_&&shortcut_chord_->IsIMEComposing();
+    for(auto* field:{provider_name_.get(),provider_keyword_.get(),provider_url_.get()})if(field&&field->IsIMEComposing())context.provider_composing=true;
+    context.snapshot_selected=index<snapshot_ids_.size();context.closed_selected=closed_picker_&&PickerIndex(closed_picker_).value_or(0)<closed_ids_.size();context.shortcut_selected=index<tools_.shortcuts.size();
+    const auto plan=tools_form_->form->tools_dispatch(action,context);if(!plan.admitted)return;
+    if(plan.sync_recording){SetShortcutRecording(plan.recording);RefreshKeyRegistrations();}
+    action=plan.action;record_status=base::UTF8ToUTF16(std::string(plan.record_status));
+  }else
+#endif
+  {
+    if(action==1&&snapshot_name_&&snapshot_name_->IsIMEComposing())return;
+    if(action>=20&&action<=22)for(auto* field:{provider_name_.get(),provider_keyword_.get(),provider_url_.get()})if(field&&field->IsIMEComposing())return;
+    if((action==11||action==12)&&shortcut_chord_&&shortcut_chord_->IsIMEComposing())return;
+    if(action!=10&&ToolsRecording()){SetShortcutRecording(false);RefreshKeyRegistrations();}
+  }
+  bool ok = false;
   if (action == 1 && snapshot_name_) {
     ok = callbacks_.save_snapshot && callbacks_.save_snapshot.Run(base::UTF16ToUTF8(snapshot_name_->GetText()), false);
   } else if ((action == 2 || action == 3) && index < snapshot_ids_.size()) {
@@ -6904,8 +6922,9 @@ void WorkspaceShell::ToolsAction(int action) {
     ok = callbacks_.sleep_workspace && callbacks_.sleep_workspace.Run(id);
     if (ok) return;
   } else if (action == 10 && shortcut_chord_) {
-    SetShortcutRecording(true); RefreshKeyRegistrations(); shortcut_chord_->RequestFocus();
-    SetPanelText(tools_status_,u"Naciśnij kombinację. Escape anuluje nagrywanie."); return;
+    if(!tools_form_){SetShortcutRecording(true);RefreshKeyRegistrations();}
+    shortcut_chord_->RequestFocus();
+    SetPanelText(tools_status_,tools_form_?record_status:u"Naciśnij kombinację. Escape anuluje nagrywanie."); return;
   } else if ((action == 11 || action == 12) && index < tools_.shortcuts.size() && shortcut_chord_) {
     ok = SetShortcut(tools_.shortcuts[index].id, action == 12 ? "" : base::UTF16ToUTF8(shortcut_chord_->GetText()));
   } else if (action == 13) {
@@ -6916,6 +6935,13 @@ void WorkspaceShell::ToolsAction(int action) {
     if (action == 21) ok = SetDefaultSearchProvider(previous);
     if (action == 22) ok = RemoveSearchProvider(previous);
   }
+#if BUILDFLAG(IS_MAC)
+  if(tools_form_){
+    auto outcome=tools_form_->form->tools_outcome(ok,false);
+    if(outcome.refresh){RefreshTools();if(callbacks_.operation_pending&&callbacks_.operation_pending.Run())outcome=tools_form_->form->tools_outcome(true,true);}
+    SetPanelText(tools_status_,base::UTF8ToUTF16(std::string(outcome.status)));return;
+  }
+#endif
   if (ok) { RefreshTools(); SetPanelText(tools_status_,callbacks_.operation_pending && callbacks_.operation_pending.Run() ? u"Oczekiwanie na zgodę na opuszczenie strony…" : u"Gotowe. Zmiany zostały zastosowane."); }
   else SetPanelText(tools_status_,ToolsPage() == 1 ? u"Nieprawidłowa lub zajęta kombinacja. Zmień ją albo wyłącz skrót drugiej akcji." : ToolsPage() == 2 ? u"Sprawdź unikalny prefiks, nazwę i adres z {query}. Musi pozostać co najmniej jedna wyszukiwarka." : u"Nie można wykonać operacji. Podaj nazwę, wybierz pozycję zgodną z profilem lub zostaw drugą przestrzeń do przełączenia.");
 }

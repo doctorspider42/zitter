@@ -18,6 +18,11 @@ mod ffi {
     struct SelectLayout { width: i32, height: i32, label: Rect, arrow: Rect }
     struct SelectOption { key: String, label: String, search: String }
     struct ToolsCopy { title: String, intro: String, tail: String, initial_status: String, fields: Vec<String>, pickers: Vec<String>, headings: Vec<String>, actions: Vec<String>, choices: Vec<String> }
+    struct ToolsActionContext { snapshot_field: bool, shortcut_field: bool, provider_field: bool, snapshot_composing: bool, shortcut_composing: bool, provider_composing: bool, snapshot_selected: bool, closed_selected: bool, shortcut_selected: bool }
+    struct ToolsDispatch { admitted: bool, action: i32, recording: bool, sync_recording: bool, record_status: String }
+    struct ToolsOutcome { refresh: bool, status: String }
+    struct ToolsHistoryView { empty: String, status: String, more_visible: bool, more_enabled: bool }
+    struct ToolsClearControls { label: String, enabled: bool }
     struct PreferenceRow { category: usize, keywords: Vec<u16> }
     struct PreferenceVisibility { rows: Vec<bool>, sections: Vec<bool>, navigation: Vec<bool>, any: bool }
     struct ToggleStyle { width: f32, height: f32, progress: f32, hover: f32, checked: bool, pressed: bool, focused: bool, rtl: bool, track_on: u32, track_off: u32, thumb_on: u32, thumb_off: u32, thumb_hover: u32, halo: u32, focus: u32, border: u32, clip: FloatRect }
@@ -147,6 +152,7 @@ mod ffi {
 
         fn tools_copy(page: usize, context: &str) -> ToolsCopy;
         fn tools_clear_label(busy: bool) -> String;
+        fn tools_clear_controls(busy: bool) -> ToolsClearControls;
         type ToolsForm;
         fn new_tools_form() -> Box<ToolsForm>;
         fn tools_select(self: &mut ToolsForm, page: usize);
@@ -154,6 +160,9 @@ mod ffi {
         fn tools_reset(self: &mut ToolsForm);
         fn tools_record(self: &mut ToolsForm, recording: bool);
         fn tools_recording(self: &ToolsForm) -> bool;
+        fn tools_dispatch(self: &mut ToolsForm, action: i32, context: &ToolsActionContext) -> ToolsDispatch;
+        fn tools_outcome(self: &ToolsForm, ok: bool, pending: bool) -> ToolsOutcome;
+        fn tools_history_view(self: &ToolsForm, count: usize, more: bool, error: bool) -> ToolsHistoryView;
         fn tools_history_edit(self: &mut ToolsForm, query: Vec<u16>);
         fn tools_history_request(self: &mut ToolsForm, more: bool) -> usize;
         fn tools_history_query(self: &ToolsForm) -> Vec<u16>;
@@ -605,6 +614,7 @@ fn tools_copy(page:usize,context:&str)->ffi::ToolsCopy{
     }
 }
 fn tools_clear_label(busy:bool)->String{if busy{"Czyszczenie…"}else{"Wyczyść historię…"}.into()}
+fn tools_clear_controls(busy:bool)->ffi::ToolsClearControls{ffi::ToolsClearControls{label:tools_clear_label(busy),enabled:!busy}}
 
 // UI state only. Native code supplies committed, normalized UTF-16 and retains
 // visibility/profile authorization, timers, IME and all browser-service calls.
@@ -632,6 +642,33 @@ impl ToolsForm {
     }
     fn tools_record(&mut self, recording: bool) { self.recording = recording; }
     fn tools_recording(&self) -> bool { self.recording }
+    // These are UI command IDs and field/selection facts, never domain handles.
+    // Native visibility/profile/workspace/generation checks and bounds checks
+    // remain mandatory before applying a command to real browser services.
+    fn tools_dispatch(&mut self, action:i32, c:&ffi::ToolsActionContext) -> ffi::ToolsDispatch {
+        let composing=match action {1=>c.snapshot_composing,11|12=>c.shortcut_composing,20..=22=>c.provider_composing,_=>false};
+        if composing {return ffi::ToolsDispatch{admitted:false,action:0,recording:self.recording,sync_recording:false,record_status:String::new()};}
+        let allowed=match action {
+            1=>c.snapshot_field,2|3=>c.snapshot_selected,4=>c.closed_selected,
+            5|13=>true,10=>c.shortcut_field,11|12=>c.shortcut_field&&c.shortcut_selected,
+            20..=22=>c.provider_field,_=>false,
+        };
+        let command=if allowed{action}else{0};
+        let sync_recording=(action!=10&&self.recording)||command==10;
+        if action!=10 {self.recording=false;} else if command==10 {self.recording=true;}
+        ffi::ToolsDispatch{admitted:true,action:command,recording:self.recording,sync_recording,
+            record_status:if command==10{"Naciśnij kombinację. Escape anuluje nagrywanie.".into()}else{String::new()}}
+    }
+    fn tools_outcome(&self,ok:bool,pending:bool)->ffi::ToolsOutcome {
+        let status=if ok {if pending{"Oczekiwanie na zgodę na opuszczenie strony…"}else{"Gotowe. Zmiany zostały zastosowane."}}
+            else {match self.page {1=>"Nieprawidłowa lub zajęta kombinacja. Zmień ją albo wyłącz skrót drugiej akcji.",2=>"Sprawdź unikalny prefiks, nazwę i adres z {query}. Musi pozostać co najmniej jedna wyszukiwarka.",_=>"Nie można wykonać operacji. Podaj nazwę, wybierz pozycję zgodną z profilem lub zostaw drugą przestrzeń do przełączenia."}};
+        ffi::ToolsOutcome{refresh:ok,status:status.into()}
+    }
+    fn tools_history_view(&self,count:usize,more:bool,error:bool)->ffi::ToolsHistoryView {
+        let empty=if count!=0 {""}else if error{"Nie udało się odczytać historii."}else if self.history_query.is_empty(){"Brak historii przeglądania w tym profilu."}else{"Brak wyników dla tego wyszukiwania."};
+        ffi::ToolsHistoryView{empty:empty.into(),status:if error{"Spróbuj ponownie otworzyć historię.".into()}else{format!("Wyświetlono wpisów: {}",count)},more_visible:more&&!error,more_enabled:!error}
+    }
+
     fn tools_history_edit(&mut self, query: Vec<u16>) {
         self.history_query = query; self.history_loaded = false;
     }
@@ -2012,6 +2049,31 @@ mod tests {
         let mut f=new_preferences_form(1);let mut rows=vec![ffi::PreferenceRow{category:0,keywords:vec![0xd83e,0xdd80,0xfffd]}];
         assert!(f.preference_filter(vec![0xd83e],&rows).any);assert!(!f.preference_filter(vec![0xd800],&rows).any);assert!(!f.preference_filter(vec![1,2,3,4],&rows).any);rows[0].keywords="nowy wyjątek".encode_utf16().collect();assert!(f.preference_filter("nowy".encode_utf16().collect(),&rows).any);
         let mut empty=new_preferences_form(0);assert!(!empty.preference_select(0));assert!(!empty.preference_filter(vec![],&rows).any);
+    }
+    fn tools_context()->ffi::ToolsActionContext {ffi::ToolsActionContext{snapshot_field:true,shortcut_field:true,provider_field:true,snapshot_composing:false,shortcut_composing:false,provider_composing:false,snapshot_selected:true,closed_selected:true,shortcut_selected:true}}
+    #[test] fn tools_dispatch_preserves_command_and_composition_admission() {
+        let mut form=new_tools_form();let mut c=tools_context();
+        for action in [1,2,3,4,5,10,11,12,13,20,21,22] {let p=form.tools_dispatch(action,&c);assert!(p.admitted);assert_eq!(p.action,action);}
+        form.tools_record(true);c.snapshot_composing=true;c.shortcut_composing=true;c.provider_composing=true;
+        for action in [1,11,12,20,21,22] {let p=form.tools_dispatch(action,&c);assert!(!p.admitted);assert!(!p.sync_recording);assert!(form.tools_recording());}
+        // Record cancels preedit natively; restore/reset remain admitted as in Views.
+        for action in [2,3,4,5,10,13] {assert!(form.tools_dispatch(action,&c).admitted);}
+        c=tools_context();c.snapshot_field=false;c.shortcut_field=false;c.provider_field=false;c.snapshot_selected=false;c.closed_selected=false;c.shortcut_selected=false;
+        for action in [1,2,3,4,10,11,12,20,21,22,-1,99] {assert_eq!(form.tools_dispatch(action,&c).action,0);}
+    }
+    #[test] fn tools_dispatch_recording_and_outcomes_follow_native_flow() {
+        let mut form=new_tools_form();let c=tools_context();
+        for _ in 0..2 {let p=form.tools_dispatch(10,&c);assert!(p.recording&&p.sync_recording);assert!(!p.record_status.is_empty());}
+        let p=form.tools_dispatch(99,&c);assert!(p.admitted&&p.sync_recording);assert!(!p.recording);assert_eq!(p.action,0);
+        assert!(!form.tools_dispatch(11,&c).sync_recording);
+        for page in 0..4 {form.tools_select(page);let failed=form.tools_outcome(false,true);assert!(!failed.refresh);assert!(!failed.status.is_empty());assert_eq!(form.tools_outcome(true,false).status,"Gotowe. Zmiany zostały zastosowane.");assert!(form.tools_outcome(true,true).refresh);assert!(form.tools_outcome(true,true).status.contains("Oczekiwanie"));}
+        form.tools_select(2);assert!(form.tools_outcome(false,false).status.contains("{query}"));form.tools_select(1);assert!(form.tools_outcome(false,false).status.contains("kombinacja"));
+    }
+    #[test] fn tools_history_presentation_preserves_errors_counts_and_busy_controls() {
+        let mut form=new_tools_form();assert!(form.tools_history_view(0,false,false).empty.contains("w tym profilu"));
+        form.tools_history_edit(vec![0xd800]);assert!(form.tools_history_view(0,false,false).empty.contains("wyszukiwania"));
+        for count in [0,1,200,usize::MAX] {for error in [false,true] {for more in [false,true] {let v=form.tools_history_view(count,more,error);assert_eq!(v.more_visible,more&&!error);assert_eq!(v.more_enabled,!error);assert_eq!(v.empty.is_empty(),count!=0);if error{assert!(v.status.contains("ponownie"));}else{assert_eq!(v.status,format!("Wyświetlono wpisów: {}",count));}}}}
+        for busy in [false,true] {let c=tools_clear_controls(busy);assert_eq!(c.enabled,!busy);assert_eq!(c.label,tools_clear_label(busy));}
     }
     #[test] fn tools_form_committed_queries_paging_and_stale_results() {
         let mut form = new_tools_form(); form.tools_select(3);
