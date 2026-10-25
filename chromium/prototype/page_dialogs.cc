@@ -2,10 +2,12 @@
 #include <algorithm>
 #include "chromium/prototype/browser_data.h"
 #include "chromium/prototype/editor_control.h"
+#include "chromium/prototype/sidebar_layout.h"
 #include "base/command_line.h"
 #include "build/build_config.h"
 #if BUILDFLAG(IS_MAC)
 #include "chromium/prototype/workspace_keyboard_mac.h"
+#include "chromium/prototype/sidebar_scene.rs.h"
 #endif
 #include "ui/events/event.h"
 
@@ -60,25 +62,28 @@ void PageDialogs::Show(content::RenderFrameHost* frame, content::JavaScriptDialo
   requesting_frame_ = frame; unload_dialog_ = unload; dialog_callback_ = std::move(callback);
   auto dialog = std::make_unique<views::DialogDelegate>();
   dialog->SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
-  auto* body = dialog->SetContentsView(std::make_unique<views::View>());
-  dialog->SetTitle((unload ? u"Opuścić stronę? · " : u"Strona: ") + base::UTF8ToUTF16(frame->GetLastCommittedOrigin().Serialize()));
-  dialog->SetModalType(ui::mojom::ModalType::kWindow);
-  dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk) |
-      (type == content::JAVASCRIPT_DIALOG_TYPE_ALERT ? 0 : static_cast<int>(ui::mojom::DialogButton::kCancel)));
-  dialog->SetButtonLabel(ui::mojom::DialogButton::kOk, unload ? u"Opuść stronę" : u"OK");
-  dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel, unload ? u"Zostań" : u"Anuluj");
-  dialog->SetDefaultButton(static_cast<int>(unload ? ui::mojom::DialogButton::kCancel : ui::mojom::DialogButton::kOk));
-  body->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(20), 12));
+  auto* body = dialog->SetContentsView(std::make_unique<views::View>());body_=body;
+  scene_=CreatePageDialogScene(body);
+  const auto origin=frame->GetLastCommittedOrigin().Serialize();
   auto* profile = Profile::FromBrowserContext(web_contents()->GetBrowserContext());
-  auto* identity = body->AddChildView(std::make_unique<views::Label>(u"Profil: " + BrowsingProfileName(profile)));
-  identity->SetSubpixelRenderingEnabled(false);
-  auto* scroll = body->AddChildView(std::make_unique<views::ScrollView>());
-  scroll->ClipHeightTo(0, 220);
-  scroll->SetHorizontalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);
-  auto label = std::make_unique<views::Label>(message.substr(0, 8192));
-  label->SetSubpixelRenderingEnabled(false); label->SetMultiLine(true); label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-  label->SizeToFit(440); scroll->SetContents(std::move(label));
-  if (type == content::JAVASCRIPT_DIALOG_TYPE_PROMPT) {
+  std::u16string title=(unload?u"Opuścić stronę? · ":u"Strona: ")+base::UTF8ToUTF16(origin),identity_text=u"Profil: "+BrowsingProfileName(profile),message_text=message.substr(0,8192),accept=unload?u"Opuść stronę":u"OK",cancel=unload?u"Zostań":u"Anuluj";
+  bool show_cancel=type!=content::JAVASCRIPT_DIALOG_TYPE_ALERT,default_cancel=unload,is_prompt=type==content::JAVASCRIPT_DIALOG_TYPE_PROMPT;
+#if BUILDFLAG(IS_MAC)
+  if(scene_){const auto copy=sidebar::page_dialog_copy(type==content::JAVASCRIPT_DIALOG_TYPE_ALERT?0:type==content::JAVASCRIPT_DIALOG_TYPE_PROMPT?2:1,unload,origin,base::UTF16ToUTF8(BrowsingProfileName(profile)),rust::Slice<const uint16_t>(reinterpret_cast<const uint16_t*>(message.data()),message.size()));title=base::UTF8ToUTF16(std::string(copy.title));identity_text=base::UTF8ToUTF16(std::string(copy.identity));message_text=std::u16string(copy.message.begin(),copy.message.end());accept=base::UTF8ToUTF16(std::string(copy.accept));cancel=base::UTF8ToUTF16(std::string(copy.cancel));show_cancel=copy.show_cancel;default_cancel=copy.default_cancel;is_prompt=copy.prompt;}
+#endif
+  dialog->SetTitle(title);
+  dialog->SetModalType(ui::mojom::ModalType::kWindow);
+  dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk)|(show_cancel?static_cast<int>(ui::mojom::DialogButton::kCancel):0));
+  dialog->SetButtonLabel(ui::mojom::DialogButton::kOk,accept);dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel,cancel);
+  dialog->SetDefaultButton(static_cast<int>(default_cancel?ui::mojom::DialogButton::kCancel:ui::mojom::DialogButton::kOk));
+  SetSidebarPanelLayout(body,true,gfx::Insets(20),12);
+  if(scene_)body->AddChildView(scene_->MakeText(identity_text,false,true,0));
+  else{auto* identity=body->AddChildView(std::make_unique<views::Label>(identity_text));identity->SetSubpixelRenderingEnabled(false);}
+  auto* scroll=body->AddChildView(std::make_unique<views::ScrollView>());scroll->ClipHeightTo(0,220);scroll->SetHorizontalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);
+  if(scene_)scene_->ObserveScroll(scroll);
+  if(scene_){auto copy=scene_->MakeText(message_text,true,false,440);copy->SizeToPreferredSize();scroll->SetContents(std::move(copy));}
+  else{auto label=std::make_unique<views::Label>(message_text);label->SetSubpixelRenderingEnabled(false);label->SetMultiLine(true);label->SetHorizontalAlignment(gfx::ALIGN_LEFT);label->SizeToFit(440);scroll->SetContents(std::move(label));}
+  if (is_prompt) {
     prompt_ = AddEditor(body,base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal");
     prompt_->GetViewAccessibility().SetName(u"Odpowiedź dla strony");prompt_->SetText(initial);
     // Retain the native font metric; resolve the background from the live theme.
@@ -110,7 +115,7 @@ void PageDialogs::Show(content::RenderFrameHost* frame, content::JavaScriptDialo
 #if BUILDFLAG(IS_MAC)
   InstallWorkspaceKeyboardRouting(widget,true);
 #endif
-  widget->Show();
+  widget->Show();if(scene_)scene_->Schedule();
 }
 bool PageDialogs::HandleJavaScriptDialog(content::WebContents* contents, bool accept,
     const std::u16string* override_text) {
@@ -141,7 +146,7 @@ void PageDialogs::Answer(bool accepted) {
   if(field){field->SetCallbacks({},{});if(!accepted)field->ClearCompositionText();}
   const std::u16string text = field && accepted ? std::u16string(field->GetText()) : std::u16string();
   prompt_ = nullptr; requesting_frame_ = nullptr; unload_dialog_ = false;
-  dialog_.reset();
+  scene_.reset();body_=nullptr;dialog_.reset();
   // Renderer callbacks can destroy pages. Never run them on a button's stack.
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(std::move(callback), accepted, text));
 }

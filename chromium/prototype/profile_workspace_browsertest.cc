@@ -1,3 +1,4 @@
+#include "chromium/prototype/browser_data.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "chromium/prototype/sidebar_layout.h"
 #include "ui/views/layout/box_layout.h"
@@ -2483,6 +2484,27 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeJavaScriptDialogs) {
   EXPECT_FALSE(dialogs->dialog());
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PageDialogsSceneCopyMetricsRolesAndMessageLimit) {
+  auto* page=window_->contents("work");ASSERT_TRUE(content::NavigateToURL(page,embedded_test_server()->GetURL("/storage_probe.html?dialog-copy")));auto* manager=PageDialogs::FromWebContents(page);ASSERT_TRUE(manager);
+  int closed=0;bool accepted=false;base::ScopedClosureRunner cleanup(base::BindOnce([](PageDialogs* m,content::WebContents* p){m->CancelDialogs(p,true);base::RunLoop().RunUntilIdle();},base::Unretained(manager),base::Unretained(page)));
+  const bool rust=window_->shell()->workspace_input()->rust_editor();std::u16string message;for(int i=0;i<900;++i)message+=u"Linia 🦀 אבג 日本語\n";const auto bounded=message.substr(0,8192);
+  for(int kind:{0,1,2,3}){
+    auto callback=base::BindOnce([](int* count,bool* value,bool ok,const std::u16string&){++*count;*value=ok;},base::Unretained(&closed),base::Unretained(&accepted));
+    if(kind==3)manager->RunBeforeUnloadDialog(page,page->GetPrimaryMainFrame(),false,std::move(callback));
+    else{bool suppressed=true;manager->RunJavaScriptDialog(page,page->GetPrimaryMainFrame(),kind==0?content::JAVASCRIPT_DIALOG_TYPE_ALERT:kind==1?content::JAVASCRIPT_DIALOG_TYPE_CONFIRM:content::JAVASCRIPT_DIALOG_TYPE_PROMPT,message,u"draft 🦀",std::move(callback),&suppressed);EXPECT_FALSE(suppressed);}
+    ASSERT_TRUE(manager->dialog());auto* delegate=manager->dialog()->widget_delegate()->AsDialogDelegate();const auto origin=base::UTF8ToUTF16(page->GetPrimaryMainFrame()->GetLastCommittedOrigin().Serialize());
+    EXPECT_EQ((kind==3?u"Opuścić stronę? · ":u"Strona: ")+origin,delegate->GetWindowTitle());EXPECT_EQ(kind==0?static_cast<int>(ui::mojom::DialogButton::kOk):static_cast<int>(ui::mojom::DialogButton::kOk)|static_cast<int>(ui::mojom::DialogButton::kCancel),delegate->buttons());
+    EXPECT_EQ(kind==3?u"Opuść stronę":u"OK",delegate->GetDialogButtonLabel(ui::mojom::DialogButton::kOk));EXPECT_EQ(kind==3?u"Zostań":u"Anuluj",delegate->GetDialogButtonLabel(ui::mojom::DialogButton::kCancel));EXPECT_EQ(static_cast<int>(kind==3?ui::mojom::DialogButton::kCancel:ui::mojom::DialogButton::kOk),delegate->GetDefaultDialogButton());EXPECT_EQ(kind==2,manager->prompt_input()!=nullptr);
+    auto* body=manager->dialog_body_for_testing();ASSERT_TRUE(body);ASSERT_EQ(kind==2?3u:2u,body->children().size());auto* identity=body->children()[0].get();auto* scroll=views::AsViewClass<views::ScrollView>(body->children()[1]);ASSERT_TRUE(scroll);auto* copy=scroll->contents();ASSERT_TRUE(copy);
+    const std::u16string identity_text=u"Profil: "+BrowsingProfileName(work_);const std::u16string text=kind==3?u"Opuszczenie strony może usunąć niezapisane zmiany.":bounded;
+    for(const auto& pair:std::vector<std::pair<views::View*,std::u16string>>{{identity,identity_text},{copy,text}}){ui::AXNodeData node;pair.first->GetViewAccessibility().GetAccessibleNodeData(&node);EXPECT_EQ(ax::mojom::Role::kStaticText,node.role);EXPECT_EQ(pair.second,node.GetString16Attribute(ax::mojom::StringAttribute::kName));EXPECT_EQ(!rust,views::AsViewClass<views::Label>(pair.first)!=nullptr);EXPECT_TRUE(pair.first->children().empty());}
+    views::Label reference_identity(identity_text),reference_message(text);reference_identity.SetSubpixelRenderingEnabled(false);reference_message.SetMultiLine(true);reference_message.SetHorizontalAlignment(gfx::ALIGN_LEFT);reference_message.SetSubpixelRenderingEnabled(false);reference_message.SizeToFit(440);
+    EXPECT_EQ(reference_identity.GetPreferredSize(),identity->GetPreferredSize());EXPECT_EQ(reference_message.GetPreferredSize(),copy->GetPreferredSize());
+    for(int width:{80,160,320,440}){EXPECT_EQ(reference_identity.GetHeightForWidth(width),identity->GetHeightForWidth(width));EXPECT_EQ(reference_message.GetHeightForWidth(width),copy->GetHeightForWidth(width));}
+    const auto before=closed;if(kind==3)delegate->CancelDialog();else delegate->AcceptDialog();ASSERT_TRUE(base::test::RunUntil([&]{return !manager->dialog()&&closed==before+1;}));EXPECT_EQ(kind!=3,accepted);EXPECT_FALSE(manager->scene_visible_for_testing());EXPECT_FALSE(manager->dialog_body_for_testing());
+  }
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, JavaScriptPromptEditorCocoaCompositionAndKeyboard) {
   auto* page=window_->contents("work");ASSERT_TRUE(content::NavigateToURL(page,embedded_test_server()->GetURL("/storage_probe.html?prompt-editor")));
   auto* manager=PageDialogs::FromWebContents(page);ASSERT_TRUE(manager);
@@ -4743,6 +4765,23 @@ class ZitterMetalSidebarBrowserTest : public ZitterProfilesBrowserTest {
     command_line->AppendSwitchASCII("zitter-sidebar", "rust-metal");
   }
 };
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, PageDialogSceneScrollPromptCutoutThemeAndCloseNow) {
+  ASSERT_TRUE(window_->Select("work"));auto* page=window_->contents("work");ASSERT_TRUE(content::NavigateToURL(page,embedded_test_server()->GetURL("/storage_probe.html?dialog-scene")));auto* manager=PageDialogs::FromWebContents(page);ASSERT_TRUE(manager);window_->shell()->SetThemeMode(ThemeMode::kDark);
+  int closed=0;base::ScopedClosureRunner cleanup(base::BindOnce([](PageDialogs* m,content::WebContents* p){m->CancelDialogs(p,true);base::RunLoop().RunUntilIdle();},base::Unretained(manager),base::Unretained(page)));
+  std::u16string message=u"Dialog start 🦀\n";for(int i=0;i<120;++i)message+=u"Wiersz abc אבג\n";message+=u"Dialog end 🦀";
+  auto open=[&](std::u16string text){bool suppressed=true;manager->RunJavaScriptDialog(page,page->GetPrimaryMainFrame(),content::JAVASCRIPT_DIALOG_TYPE_PROMPT,text,u"draft",base::BindOnce([](int* count,bool,const std::u16string&){++*count;},base::Unretained(&closed)),&suppressed);EXPECT_FALSE(suppressed);};
+  open(message);ASSERT_TRUE(manager->dialog());auto* widget=manager->dialog();auto* field=manager->prompt_input();ASSERT_TRUE(field);EXPECT_EQ(ui::ColorProviderKey::ColorMode::kDark,widget->GetColorMode());
+  ASSERT_TRUE(base::test::RunUntil([&]{return manager->scene_visible_for_testing()&&manager->scene_order_correct_for_testing()&&manager->scene_contains_text_for_testing("Dialog start 🦀");}));EXPECT_FALSE(manager->scene_contains_text_for_testing("Dialog end 🦀"));
+  ASSERT_TRUE(base::test::RunUntil([&]{return manager->scene_excludes_for_testing(field->view());}));
+  auto* body=manager->dialog_body_for_testing();ASSERT_TRUE(body);auto* scroll=views::AsViewClass<views::ScrollView>(body->children()[1]);ASSERT_TRUE(scroll);
+  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));field->RequestFocus();base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
+  scroll->ScrollToPosition(scroll->vertical_scroll_bar(),scroll->vertical_scroll_bar()->GetMaxPosition());
+  ASSERT_TRUE(base::test::RunUntil([&]{return manager->scene_contains_text_for_testing("Dialog end 🦀")&&!manager->scene_contains_text_for_testing("Dialog start 🦀");}));EXPECT_TRUE(manager->scene_excludes_for_testing(field->view()));
+  widget->SetColorModeOverride(ui::ColorProviderKey::ColorMode::kLight);ASSERT_TRUE(base::test::RunUntil([&]{return manager->scene_order_correct_for_testing()&&manager->scene_contains_text_for_testing("Dialog end 🦀");}));
+  auto lifetime=field->input_client()->AsWeakPtr();widget->CloseNow();ASSERT_TRUE(base::test::RunUntil([&]{return !manager->dialog()&&!lifetime&&closed==1;}));EXPECT_FALSE(manager->scene_visible_for_testing());
+  open(u"Fresh dialog 🦀");ASSERT_TRUE(base::test::RunUntil([&]{return manager->scene_contains_text_for_testing("Fresh dialog 🦀");}));EXPECT_FALSE(manager->scene_contains_text_for_testing("Dialog end 🦀"));manager->CancelDialogs(page,true);ASSERT_TRUE(base::test::RunUntil([&]{return !manager->dialog()&&closed==2;}));EXPECT_FALSE(manager->scene_visible_for_testing());
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsChromeSharedUnderlayCutoutsScrollingAndHistoryRows) {
   ASSERT_TRUE(window_->Select("work"));auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready()&&shell->appearance_ready();}));
   auto inspect=[&]{size_t copies=0;auto visit=[&](auto&& self,views::View* view)->void{if(views::AsViewClass<views::Button>(view))return;ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);if(ax.role==ax::mojom::Role::kTextField)return;EXPECT_FALSE(views::AsViewClass<views::Label>(view));if(ax.role==ax::mojom::Role::kStaticText)++copies;for(const auto& child:view->children())self(self,child.get());};visit(visit,shell->tools_widget()->GetContentsView());EXPECT_GE(copies,3u);};

@@ -4,14 +4,31 @@
 #include "base/memory/weak_ptr.h"
 #include "base/memory/raw_ptr.h"
 #include <memory>
+#include <string>
+#include <string_view>
 #include "content/public/browser/javascript_dialog_manager.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
 
-namespace views { class Widget; }
+namespace views { class Widget; class View; class ScrollView; }
 namespace ui { class KeyEvent; }
 namespace zitter::prototype {
 class EditorControl;
+// Shared static text/transparent scene service; native window/domain ownership
+// remains here. Implemented beside the existing preference/tools renderer.
+class PageDialogScene {
+ public:
+  virtual ~PageDialogScene() = default;
+  virtual std::unique_ptr<views::View> MakeText(std::u16string text,bool multiline,bool center,int fixed_width)=0;
+  virtual void Schedule()=0;
+  virtual void ObserveScroll(views::ScrollView* scroll)=0;
+  virtual bool visible() const=0;
+  virtual bool contains_text(std::string_view text) const=0;
+  virtual bool excludes(views::View* view) const=0;
+  virtual bool order_correct() const=0;
+};
+std::unique_ptr<PageDialogScene> CreatePageDialogScene(views::View* root);
+
 // Native dialogs bound to the requesting WebContents, including beforeunload
 // checks used by atomic workspace operations outside Chrome's TabStripModel.
 class PageDialogs final : public content::JavaScriptDialogManager,
@@ -26,6 +43,11 @@ class PageDialogs final : public content::JavaScriptDialogManager,
   views::Widget* dialog() const { return dialog_.get(); }
   EditorControl* prompt_input() const { return dialog_?prompt_.get():nullptr; }
   bool HandlePromptKey(const ui::KeyEvent& event);
+  views::View* dialog_body_for_testing() const{return dialog_?body_.get():nullptr;}
+  bool scene_visible_for_testing() const{return scene_&&scene_->visible();}
+  bool scene_contains_text_for_testing(std::string_view text) const{return scene_&&scene_->contains_text(text);}
+  bool scene_excludes_for_testing(views::View* view) const{return scene_&&scene_->excludes(view);}
+  bool scene_order_correct_for_testing() const{return scene_&&scene_->order_correct();}
   void RunJavaScriptDialog(content::WebContents*, content::RenderFrameHost*,
       content::JavaScriptDialogType, const std::u16string&, const std::u16string&,
       DialogClosedCallback, bool*) override;
@@ -48,6 +70,8 @@ class PageDialogs final : public content::JavaScriptDialogManager,
   void RenderFrameDeleted(content::RenderFrameHost*) override;
   void WebContentsDestroyed() override;
   std::unique_ptr<views::Widget> dialog_;
+  std::unique_ptr<PageDialogScene> scene_;
+  raw_ptr<views::View> body_ = nullptr;
   raw_ptr<EditorControl> prompt_ = nullptr;
   raw_ptr<content::RenderFrameHost> requesting_frame_ = nullptr;
   DialogClosedCallback dialog_callback_;

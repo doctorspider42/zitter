@@ -18,6 +18,7 @@ mod ffi {
     struct SelectLayout { width: i32, height: i32, label: Rect, arrow: Rect }
     struct SelectOption { key: String, label: String, search: String }
     struct ToolsCopy { title: String, intro: String, tail: String, initial_status: String, fields: Vec<String>, pickers: Vec<String>, headings: Vec<String>, actions: Vec<String>, choices: Vec<String> }
+    struct PageDialogCopy { title: String, identity: String, message: Vec<u16>, accept: String, cancel: String, show_cancel: bool, default_cancel: bool, prompt: bool }
     struct ToolsActionContext { snapshot_field: bool, shortcut_field: bool, provider_field: bool, snapshot_composing: bool, shortcut_composing: bool, provider_composing: bool, snapshot_selected: bool, closed_selected: bool, shortcut_selected: bool }
     struct ToolsDispatch { admitted: bool, action: i32, recording: bool, sync_recording: bool, record_status: String }
     struct ToolsOutcome { refresh: bool, status: String }
@@ -152,6 +153,7 @@ mod ffi {
         fn editor_redo(state: &mut EditorState) -> EditorUpdate;
 
         fn tools_copy(page: usize, context: &str) -> ToolsCopy;
+        fn page_dialog_copy(kind: u32, unload: bool, origin: &str, profile: &str, message: &[u16]) -> PageDialogCopy;
         fn tools_clear_label(busy: bool) -> String;
         fn tools_clear_controls(busy: bool) -> ToolsClearControls;
         type ToolsForm;
@@ -603,6 +605,12 @@ fn select_layout(width:i32,height:i32,text_width:i32,control_height:i32,rtl:bool
     let width=if width<0{text_width.max(0).saturating_add(48)}else{width};let height=if height<0{control_height.max(28)}else{height.max(0)};
     let pad=12.min(width/2);let room=width-pad*2;let arrow_width=16.min(room);let gap=8.min(room-arrow_width);let label_width=room-arrow_width-gap;
     ffi::SelectLayout{width,height,label:ffi::Rect{x:if rtl{pad+arrow_width+gap}else{pad},y:0,width:label_width,height},arrow:ffi::Rect{x:if rtl{pad}else{width-pad-arrow_width},y:0,width:arrow_width,height}}
+}
+
+// Display data only. The native manager retains frame/origin/profile authority,
+// modal/default-key policy, generation checks and renderer callbacks.
+fn page_dialog_copy(kind:u32,unload:bool,origin:&str,profile:&str,message:&[u16])->ffi::PageDialogCopy {
+    ffi::PageDialogCopy{title:format!("{}{}",if unload{"Opuścić stronę? · "}else{"Strona: "},origin),identity:format!("Profil: {}",profile),message:message.iter().copied().take(8192).collect(),accept:if unload{"Opuść stronę"}else{"OK"}.into(),cancel:if unload{"Zostań"}else{"Anuluj"}.into(),show_cancel:kind!=0,default_cancel:unload,prompt:kind==2}
 }
 
 // Page copy is UI data only; context is a display name, never store authority.
@@ -1581,7 +1589,7 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
             }
         };
         if i.kind == 17 {
-            if !i.title.is_empty(){emit(i.x,i.y,i.width,i.height,0.0,i.ink,&i.title,i.font_size,i.active);out.last_mut().unwrap().font_weight=i.font_weight;}continue;
+            if !i.title.is_empty(){emit(i.x,i.y,i.width,i.height,0.0,i.ink,&i.title,i.font_size,i.active);let last=out.last_mut().unwrap();last.font_weight=i.font_weight;last.center=i.glyph==1;}continue;
         }
         if i.kind==24 {
             emit(i.x,i.y,i.width,i.height,12.0,i.fill,"",0.0,false);
@@ -2123,6 +2131,15 @@ mod tests {
         form.tools_history_edit(vec![0xd800]);assert!(form.tools_history_view(0,false,false).empty.contains("wyszukiwania"));
         for count in [0,1,200,usize::MAX] {for error in [false,true] {for more in [false,true] {let v=form.tools_history_view(count,more,error);assert_eq!(v.more_visible,more&&!error);assert_eq!(v.more_enabled,!error);assert_eq!(v.empty.is_empty(),count!=0);if error{assert!(v.status.contains("ponownie"));}else{assert_eq!(v.status,format!("Wyświetlono wpisów: {}",count));}}}}
         for busy in [false,true] {let c=tools_clear_controls(busy);assert_eq!(c.enabled,!busy);assert_eq!(c.label,tools_clear_label(busy));}
+    }
+    #[test] fn page_dialog_copy_preserves_roles_and_utf16_cap_without_authority() {
+        for kind in 0..3 {for unload in [false,true] {let copy=page_dialog_copy(kind,unload,"https://example.test","Profil 🦀 אבג",&[0xd800,0x41]);assert_eq!(copy.show_cancel,kind!=0);assert_eq!(copy.prompt,kind==2);assert_eq!(copy.default_cancel,unload);assert_eq!(copy.identity,"Profil: Profil 🦀 אבג");assert!(copy.title.ends_with("https://example.test"));assert_eq!(copy.message,vec![0xd800,0x41]);assert_eq!(copy.accept,if unload{"Opuść stronę"}else{"OK"});assert_eq!(copy.cancel,if unload{"Zostań"}else{"Anuluj"});}}
+        let mut long=vec![0x41;8191];long.extend([0xd83e,0xdd80]);let copy=page_dialog_copy(2,false,"null","",&long);assert_eq!(copy.message.len(),8192);assert_eq!(copy.message.last(),Some(&0xd83e));assert!(page_dialog_copy(0,false,"","",&[]).message.is_empty());
+    }
+    #[test] fn static_copy_centering_is_explicit_and_keeps_existing_left_alignment() {
+        let mut item=row(440.0);item.kind=17;item.glyph=1;item.font_weight=400;
+        let center=layout(std::slice::from_ref(&item));assert_eq!(center.len(),1);assert!(center[0].center);assert_eq!(center[0].font_weight,400);
+        item.glyph=0;let left=layout(&[item]);assert!(!left[0].center);
     }
     #[test] fn tools_form_committed_queries_paging_and_stale_results() {
         let mut form = new_tools_form(); form.tools_select(3);

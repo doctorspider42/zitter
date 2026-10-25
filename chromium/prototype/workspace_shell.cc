@@ -1,3 +1,4 @@
+#include "chromium/prototype/page_dialogs.h"
 #include "base/i18n/time_formatting.h"
 #include "chromium/prototype/workspace_shell.h"
 
@@ -2039,14 +2040,15 @@ FolderNoticeView* FindFolderNotice(views::View* view) {
 class PreferenceCopy final : public views::View {
   METADATA_HEADER(PreferenceCopy,views::View)
  public:
-  PreferenceCopy(std::u16string text,SkColor tone,int delta,gfx::Font::Weight weight,bool multiline,base::RepeatingClosure changed,base::RepeatingCallback<bool()> visible)
-      :text_(std::move(text)),tone_(tone),delta_(delta),weight_(weight),multiline_(multiline),changed_(std::move(changed)),visible_(std::move(visible)){GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);GetViewAccessibility().SetName(text_);SetCanProcessEventsWithinSubtree(false);}
+  PreferenceCopy(std::u16string text,SkColor tone,int delta,gfx::Font::Weight weight,bool multiline,base::RepeatingClosure changed,base::RepeatingCallback<bool()> visible,bool native_style=false,bool center=false,int fixed_width=0)
+      :text_(std::move(text)),tone_(tone),delta_(delta),weight_(weight),multiline_(multiline),native_style_(native_style),center_(center),fixed_width_(fixed_width),changed_(std::move(changed)),visible_(std::move(visible)){GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);GetViewAccessibility().SetName(text_);SetCanProcessEventsWithinSubtree(false);}
   const std::u16string& text() const{return text_;}
-  gfx::FontList font() const{return Font(delta_,weight_);}
+  gfx::FontList font() const{return native_style_?views::TypographyProvider::Get().GetFont(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY):Font(delta_,weight_);}
+  SkColor Ink() const{return native_style_?GetColorProvider()->GetColor(views::TypographyProvider::Get().GetColorId(views::style::CONTEXT_LABEL,GetEnabledInViewsSubtree()?views::style::STYLE_PRIMARY:views::style::STYLE_DISABLED)):Tone(this,GetEnabledInViewsSubtree()?tone_:kDisabled);}
   void SetText(std::u16string text){if(text==text_)return;text_=std::move(text);GetViewAccessibility().SetName(text_);measured_width_=-1;natural_width_=-1;PreferredSizeChanged();SchedulePaint();Notify();}
   void SetTone(SkColor tone){if(tone_==tone)return;tone_=tone;SchedulePaint();Notify();}
-  gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override{const int natural=NaturalWidth();const int width=available.width().is_bounded()?std::min(natural,available.width().value()):natural;auto g=Geometry(width);return gfx::Size(width,g.height);}
-  void Append(std::vector<sidebar::Item>& items,gfx::Point origin,gfx::Rect clip) const{auto g=Geometry(width());for(size_t i=0;i<lines_.size();++i){auto r=g.children[i];gfx::Rect box(origin.x()+r.x,origin.y()+r.y,r.width,r.height);auto visible=box;visible.Intersect(clip);if(visible.IsEmpty()||lines_[i].empty())continue;sidebar::Item item{};item.kind=17;item.x=box.x();item.y=box.y();item.width=box.width();item.height=box.height();item.title=lines_[i];item.ink=Tone(this,GetEnabledInViewsSubtree()?tone_:kDisabled);item.font_size=font().GetFontSize();item.font_weight=static_cast<int>(weight_);item.active=weight_>=gfx::Font::Weight::MEDIUM;item.clip={float(visible.x()),float(visible.y()),float(visible.width()),float(visible.height())};items.push_back(std::move(item));}}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override{if(multiline_&&fixed_width_>0&&!text_.empty()){const auto g=Geometry(fixed_width_);return gfx::Size(fixed_width_,g.height);}const int natural=NaturalWidth();const int width=available.width().is_bounded()?std::min(natural,available.width().value()):natural;auto g=Geometry(width);return gfx::Size(width,g.height);}
+  void Append(std::vector<sidebar::Item>& items,gfx::Point origin,gfx::Rect clip) const{auto g=Geometry(width());for(size_t i=0;i<lines_.size();++i){auto r=g.children[i];gfx::Rect box(origin.x()+r.x,origin.y()+r.y,r.width,r.height);auto visible=box;visible.Intersect(clip);if(visible.IsEmpty()||lines_[i].empty())continue;sidebar::Item item{};item.kind=17;item.x=box.x();item.y=box.y();item.width=box.width();item.height=box.height();item.title=lines_[i];item.ink=Ink();item.glyph=center_?1:0;item.font_size=font().GetFontSize();item.font_weight=static_cast<int>(native_style_?font().GetFontWeight():weight_);item.active=item.font_weight>=static_cast<int>(gfx::Font::Weight::MEDIUM);item.clip={float(visible.x()),float(visible.y()),float(visible.width()),float(visible.height())};items.push_back(std::move(item));}}
   bool HasFullText(const SidebarMetal& surface,std::string_view text) const{if(base::UTF16ToUTF8(text_)!=text||!SceneIsVisible(this)||GetVisibleBounds().height()!=height())return false;Geometry(width());return !lines_.empty()&&std::all_of(lines_.begin(),lines_.end(),[&](const auto& line){return line.empty()||surface.contains_text_for_testing(line);});}
   bool GetNeedsNotificationWhenVisibleBoundsChange() const override{return true;}
   void OnVisibleBoundsChanged() override{Notify();}
@@ -2065,7 +2067,7 @@ class PreferenceCopy final : public views::View {
       wrapped_->SetCursorEnabled(false);wrapped_->SetFontList(f);wrapped_->SetText(text_);wrapped_->SetMultiline(true);wrapped_->SetHorizontalAlignment(gfx::ALIGN_LEFT);wrapped_->SetElideBehavior(gfx::NO_ELIDE);wrapped_->SetWordWrapBehavior(gfx::TRUNCATE_LONG_WORDS);wrapped_->SetMinLineHeight(std::max(f.GetHeight(),views::TypographyProvider::Get().GetLineHeight(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY)));wrapped_->SetDisplayRect(gfx::Rect(0,0,width,0));
       for(size_t i=0;i<wrapped_->GetNumLines();++i){const auto start=std::min(text_.size(),wrapped_->GetTextIndexOfLine(i));const auto end=std::max(start,std::min(text_.size(),wrapped_->GetTextIndexOfLine(i+1)));auto line=text_.substr(start,end-start);while(!line.empty()&&(line.back()==u'\n'||line.back()==u'\r'))line.pop_back();lines_.push_back(base::UTF16ToUTF8(line));}
     }else lines_.push_back(base::UTF16ToUTF8(text_));if(lines_.empty())lines_.push_back("");measured_width_=width;measured_font_=f.GetFontSize();}return sidebar::paragraph_layout(width,std::max(f.GetHeight(),views::TypographyProvider::Get().GetLineHeight(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY)),lines_.size());}
-  std::u16string text_;SkColor tone_;int delta_;gfx::Font::Weight weight_;bool multiline_;base::RepeatingClosure changed_;base::RepeatingCallback<bool()> visible_;mutable int measured_width_=-1,measured_font_=0,natural_width_=-1;mutable std::vector<std::string> lines_;mutable std::unique_ptr<gfx::RenderText> wrapped_;
+  std::u16string text_;SkColor tone_;int delta_;gfx::Font::Weight weight_;bool multiline_;bool native_style_,center_;int fixed_width_;base::RepeatingClosure changed_;base::RepeatingCallback<bool()> visible_;mutable int measured_width_=-1,measured_font_=0,natural_width_=-1;mutable std::vector<std::string> lines_;mutable std::unique_ptr<gfx::RenderText> wrapped_;
 };
 BEGIN_METADATA(PreferenceCopy)
 END_METADATA
@@ -2088,6 +2090,25 @@ class PreferenceChromeRenderer : public views::WidgetObserver {
   void Collect(views::View* view,std::vector<sidebar::Item>& backgrounds,std::vector<sidebar::Item>& text,std::vector<sidebar::FloatRect>& holes){if(!SceneIsVisible(view))return;auto clip=Projected(view);if(clip.IsEmpty())return;auto box=view->GetBoundsInScreen();box.Offset(-root_->GetBoundsInScreen().x(),-root_->GetBoundsInScreen().y());if(auto* copy=views::AsViewClass<PreferenceCopy>(view)){copy->Append(text,box.origin(),clip);return;}if(auto* row=views::AsViewClass<SceneHistoryRow>(view)){text.push_back(row->Scene(gfx::RectF(box),gfx::RectF(clip)));return;}if(auto* surface=views::AsViewClass<PreferenceSurface>(view))if(surface->scene())backgrounds.push_back(surface->Scene(gfx::RectF(box),gfx::RectF(clip)));if(views::AsViewClass<SceneActionGroup>(view)||views::AsViewClass<SceneCheckboxGroup>(view)||views::AsViewClass<ScenePreferenceControls>(view)||views::AsViewClass<SceneSelect>(view)||views::AsViewClass<SceneToggle>(view)||views::AsViewClass<views::Button>(view)||view->GetViewAccessibility().GetCachedRole()==ax::mojom::Role::kTextField){holes.push_back({float(clip.x()),float(clip.y()),float(clip.width()),float(clip.height())});return;}for(const auto& child:view->children())Collect(child.get(),backgrounds,text,holes);}
   void Update(){pending_=false;auto* widget=root_->GetWidget();if(!widget)return;if(observation_.GetSource()!=widget){observation_.Reset();observation_.Observe(widget);}widget->LayoutRootViewIfNecessary();const bool was=visible();if(!SceneIsVisible(root_)){if(surface_)surface_->Hide();return;}std::vector<sidebar::Item> backgrounds,text;std::vector<sidebar::FloatRect> holes;Collect(root_,backgrounds,text,holes);backgrounds.insert(backgrounds.end(),std::make_move_iterator(text.begin()),std::make_move_iterator(text.end()));last_ops_=sidebar::preference_chrome_scene(rust::Slice<const sidebar::Item>(backgrounds.data(),backgrounds.size()),rust::Slice<const sidebar::FloatRect>(holes.data(),holes.size()));if(!surface_)surface_=CreateSidebarMetal();if(surface_)surface_->UpdateUnderlay(widget->GetNativeWindow(),root_->GetBoundsInScreen(),UNSAFE_BUFFERS(base::span<const sidebar::Primitive>(last_ops_.data(),last_ops_.size())));if(was!=visible())root_->SchedulePaint();}
   raw_ptr<views::View> root_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;rust::Vec<sidebar::Primitive> last_ops_;base::ScopedObservation<views::Widget,views::WidgetObserver> observation_{this};base::WeakPtrFactory<PreferenceChromeRenderer> weak_factory_{this};
+};
+
+class PageDialogSceneImpl final : public PageDialogScene {
+ public:
+  explicit PageDialogSceneImpl(views::View* root):renderer_(root){}
+  std::unique_ptr<views::View> MakeText(std::u16string text,bool multiline,bool center,int fixed_width) override{
+    return std::make_unique<PreferenceCopy>(std::move(text),kInk,0,gfx::Font::Weight::NORMAL,multiline,base::BindRepeating(&PageDialogSceneImpl::Schedule,weak_factory_.GetWeakPtr()),base::BindRepeating([](base::WeakPtr<PageDialogSceneImpl> self){return self&&self->visible();},weak_factory_.GetWeakPtr()),true,center,fixed_width);
+  }
+  void Schedule() override{renderer_.Schedule();}
+  void ObserveScroll(views::ScrollView* scroll) override{scroll_sync_=scroll->EnableScrollSynchronization();scroll_subscription_=scroll->AddContentsScrolledCallback(base::BindRepeating(&PageDialogSceneImpl::Schedule,weak_factory_.GetWeakPtr()));}
+  bool visible() const override{return renderer_.visible();}
+  bool contains_text(std::string_view text) const override{return renderer_.contains_text(text);}
+  bool excludes(views::View* view) const override{return renderer_.excludes(view);}
+  bool order_correct() const override{return renderer_.order_correct();}
+ private:
+  PreferenceChromeRenderer renderer_;
+  std::unique_ptr<views::ScrollView::ScopedScrollSynchronizer> scroll_sync_;
+  base::CallbackListSubscription scroll_subscription_;
+  base::WeakPtrFactory<PageDialogSceneImpl> weak_factory_{this};
 };
 #endif
 
@@ -2859,6 +2880,12 @@ GURL ResolveTyped(const std::string& text, SearchEngine engine) {
   return url.SchemeIsHTTPOrHTTPS() ? url : GURL();
 }
 }  // namespace
+std::unique_ptr<PageDialogScene> CreatePageDialogScene(views::View* root){
+#if BUILDFLAG(IS_MAC)
+  if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal")return std::make_unique<PageDialogSceneImpl>(root);
+#endif
+  return nullptr;
+}
 #if BUILDFLAG(IS_MAC)
 class PreferenceChromeState final : public PreferenceChromeRenderer {public:using PreferenceChromeRenderer::PreferenceChromeRenderer;};
 #else
