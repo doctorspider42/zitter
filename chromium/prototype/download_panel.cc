@@ -177,6 +177,9 @@ void DownloadPanel::Refresh() {
       SetSidebarPanelLayout(box,true,gfx::Insets(8),6);
       Row row; row.guid = guid;
       row.title=MakeLabel(box,u"");row.source=MakeLabel(box,u"");row.status=MakeLabel(box,u"");
+      // Static copies skip event targeting by default; the filename keeps its
+      // original full-path tooltip through the native hit-testing adapter.
+      if(scene_)row.title->SetCanProcessEventsWithinSubtree(true);
       row.progress=box->AddChildView(scene_?scene_->MakeProgress():std::unique_ptr<views::View>(std::make_unique<views::ProgressBar>()));
       auto* buttons=box->AddChildView(scene_?scene_->MakeActions(8):std::make_unique<views::View>());
       if(!scene_)SetSidebarPanelLayout(buttons,false,gfx::Insets(),8);
