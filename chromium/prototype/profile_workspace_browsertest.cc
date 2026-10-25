@@ -1281,6 +1281,64 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AdvancedChromiumPreferences) {
   EXPECT_FALSE(snapshot.at("dns_mode").editable);
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceDraftRefreshFailureAndProfileIsolation) {
+  ASSERT_TRUE(window_->Select("work"));
+  auto* shell=window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
+  ASSERT_TRUE(window_->WriteTextPreference("font_standard","Georgia"));
+  ASSERT_TRUE(window_->WriteTextPreference("accept_languages","en-US"));
+  shell->OpenGeneralSettings();
+  auto* font=shell->preference_textfield("font_standard");
+  auto* languages=shell->preference_textfield("accept_languages");
+  auto show=[&](EditorControl* field){
+    auto* query=shell->preferences_search();
+    query->SelectRange(gfx::Range(0,query->GetText().size()));
+    query->input_client()->InsertText(field==font?u"Czcionka standardowa":u"Preferowane języki witryn",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
+    shell->general_widget()->LayoutRootViewIfNecessary();
+    ASSERT_TRUE(field->view()->IsDrawn());field->RequestFocus();
+  };
+  auto edit=[&](EditorControl* field,std::u16string text){
+    ASSERT_NO_FATAL_FAILURE(show(field));
+    field->SelectRange(gfx::Range(0,field->GetText().size()));
+    field->input_client()->InsertText(text,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
+  };
+  const std::u16string invalid_font(129,u'x');
+  edit(font,invalid_font);edit(languages,u"pl,,en");
+  shell->SetWorkspaceAnimations(false);
+  EXPECT_EQ(invalid_font,font->GetText());EXPECT_EQ(u"pl,,en",languages->GetText());
+  ui::KeyEvent enter(ui::EventType::kKeyPressed,ui::VKEY_RETURN,ui::EF_NONE);
+  ASSERT_TRUE(shell->HandlePreferenceEditorKey(languages,enter));
+  EXPECT_EQ("en-US",window_->ReadPreferences().at("accept_languages").text);
+  EXPECT_EQ(u"pl,,en",languages->GetText());EXPECT_EQ(invalid_font,font->GetText());
+  ASSERT_NO_FATAL_FAILURE(show(font));
+  ASSERT_TRUE(shell->HandlePreferenceEditorKey(font,enter));
+  EXPECT_EQ("Georgia",window_->ReadPreferences().at("font_standard").text);
+  EXPECT_EQ(invalid_font,font->GetText());
+  edit(languages,u"pl, EN-us, pl");
+  ASSERT_TRUE(shell->HandlePreferenceEditorKey(languages,enter));
+  EXPECT_EQ(u"pl,en-US",languages->GetText());
+  // A successful save releases only that key; another dirty field survives
+  // external preference updates and all subsequent native refreshes.
+  ASSERT_TRUE(window_->WriteTextPreference("font_standard","Arial"));
+  ASSERT_TRUE(window_->WriteTextPreference("accept_languages","de"));
+  shell->SetWorkspaceAnimations(true);
+  EXPECT_EQ(invalid_font,font->GetText());EXPECT_EQ(u"de",languages->GetText());
+  ui::CompositionText preedit;preedit.text=u"未";preedit.selection=gfx::Range(1);
+  languages->SetCompositionText(preedit);ASSERT_TRUE(languages->IsIMEComposing());
+  const std::u16string marked(languages->GetText());
+  ASSERT_TRUE(window_->WriteTextPreference("accept_languages","fr"));
+  shell->SetWorkspaceAnimations(false);
+  EXPECT_TRUE(languages->IsIMEComposing());EXPECT_EQ(marked,languages->GetText());
+  // Moving profiles discards dirty and composing UI without writing either
+  // draft to the newly selected profile or overwriting saved work values.
+  ASSERT_TRUE(window_->Select("personal"));shell->OpenGeneralSettings();
+  EXPECT_FALSE(languages->IsIMEComposing());
+  EXPECT_EQ(base::UTF8ToUTF16(window_->ReadPreferences().at("font_standard").text),font->GetText());
+  EXPECT_EQ(base::UTF8ToUTF16(window_->ReadPreferences().at("accept_languages").text),languages->GetText());
+  ASSERT_TRUE(window_->Select("work"));shell->OpenGeneralSettings();
+  EXPECT_EQ(u"Arial",font->GetText());EXPECT_EQ(u"fr",languages->GetText());
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SitePreferenceExceptionsAndIsolation) {
   ASSERT_NO_FATAL_FAILURE(NavigateBoth("/preferences_probe.html"));
   ASSERT_TRUE(window_->Select("work"));

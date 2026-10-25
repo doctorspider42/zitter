@@ -148,6 +148,15 @@ mod ffi {
         fn new_preferences_form(categories: usize) -> Box<PreferencesForm>;
         fn preference_select(self: &mut PreferencesForm, category: usize) -> bool;
         fn preference_current(self: &PreferencesForm) -> usize;
+        fn preference_profile(self: &mut PreferencesForm, profile: &str) -> bool;
+        fn preference_detach(self: &mut PreferencesForm);
+        fn preference_edited(self: &mut PreferencesForm, key: &str);
+        fn preference_saved(self: &mut PreferencesForm, key: &str, ok: bool);
+        fn preference_sync_text(self: &mut PreferencesForm, key: &str, present: bool, editable: bool, composing: bool, profile_changed: bool) -> bool;
+        fn preference_can_save(self: &PreferencesForm, enabled: bool, composing: bool) -> bool;
+        fn preference_reset_rules(self: &mut PreferencesForm);
+        fn preference_more_rules(self: &mut PreferencesForm);
+        fn preference_rule_limit(self: &PreferencesForm) -> usize;
         fn preference_filter(self: &mut PreferencesForm, query: Vec<u16>, rows: &[PreferenceRow]) -> PreferenceVisibility;
         type SelectState;
         fn new_select_state(options: Vec<SelectOption>) -> Box<SelectState>;
@@ -570,11 +579,28 @@ fn select_layout(width:i32,height:i32,text_width:i32,control_height:i32,rtl:bool
 
 // Query and keywords arrive normalized by the native Unicode/whitespace service.
 // Preserve UTF-16 units, including partial surrogates, exactly as native find().
-pub struct PreferencesForm { categories: usize, selected: usize, query: Vec<u16> }
-fn new_preferences_form(categories:usize)->Box<PreferencesForm>{Box::new(PreferencesForm{categories,selected:0,query:vec![]})}
+// Opaque profile identity scopes UI drafts only. The native adapter retains all
+// store access, policy/authorization and actual mutations. Text itself lives in
+// the shared Rust editor; this controller owns whether refresh may replace it.
+pub struct PreferencesForm { categories: usize, selected: usize, query: Vec<u16>, profile: String, dirty: std::collections::BTreeSet<String>, rule_limit: usize }
+fn new_preferences_form(categories:usize)->Box<PreferencesForm>{Box::new(PreferencesForm{categories,selected:0,query:vec![],profile:String::new(),dirty:Default::default(),rule_limit:50})}
 impl PreferencesForm {
     fn preference_select(&mut self,category:usize)->bool{if category>=self.categories{return false;}self.selected=category;self.query.clear();true}
     fn preference_current(&self)->usize{self.selected}
+    fn preference_profile(&mut self,profile:&str)->bool {
+        if self.profile==profile{return false;}self.profile=profile.into();self.dirty.clear();self.preference_reset_rules();true
+    }
+    fn preference_detach(&mut self){self.profile.clear();self.dirty.clear();}
+    fn preference_edited(&mut self,key:&str){self.dirty.insert(key.into());}
+    fn preference_saved(&mut self,key:&str,ok:bool){if ok{self.dirty.remove(key);}}
+    fn preference_sync_text(&mut self,key:&str,present:bool,editable:bool,composing:bool,profile_changed:bool)->bool{
+        let replace=present&&((!self.dirty.contains(key)&&!composing)||!editable||profile_changed);
+        if replace{self.dirty.remove(key);}replace
+    }
+    fn preference_can_save(&self,enabled:bool,composing:bool)->bool{enabled&&!composing}
+    fn preference_reset_rules(&mut self){self.rule_limit=50;}
+    fn preference_more_rules(&mut self){self.rule_limit=self.rule_limit.saturating_add(50);}
+    fn preference_rule_limit(&self)->usize{self.rule_limit}
     fn preference_filter(&mut self,query:Vec<u16>,rows:&[ffi::PreferenceRow])->ffi::PreferenceVisibility{
         self.query=query;let searching=!self.query.is_empty();let mut sections=vec![false;self.categories];
         let visible=rows.iter().map(|row|{let found=row.category<self.categories&&if searching{row.keywords.windows(self.query.len()).any(|text|text==self.query.as_slice())}else{row.category==self.selected};if found{sections[row.category]=true;}found}).collect::<Vec<_>>();
@@ -1883,6 +1909,28 @@ mod tests {
         let mut f=new_preferences_form(1);let mut rows=vec![ffi::PreferenceRow{category:0,keywords:vec![0xd83e,0xdd80,0xfffd]}];
         assert!(f.preference_filter(vec![0xd83e],&rows).any);assert!(!f.preference_filter(vec![0xd800],&rows).any);assert!(!f.preference_filter(vec![1,2,3,4],&rows).any);rows[0].keywords="nowy wyjątek".encode_utf16().collect();assert!(f.preference_filter("nowy".encode_utf16().collect(),&rows).any);
         let mut empty=new_preferences_form(0);assert!(!empty.preference_select(0));assert!(!empty.preference_filter(vec![],&rows).any);
+    }
+    #[test] fn preference_draft_refresh_policy_truth_table() {
+        for dirty in [false,true]{for present in [false,true]{for editable in [false,true]{for composing in [false,true]{for profile_changed in [false,true]{
+            let mut f=new_preferences_form(10);if dirty{f.preference_edited("font_standard");}
+            let expected=present&&((!dirty&&!composing)||!editable||profile_changed);
+            assert_eq!(f.preference_sync_text("font_standard",present,editable,composing,profile_changed),expected);
+            assert_eq!(f.dirty.contains("font_standard"),dirty&&!expected);
+            assert_eq!(f.preference_can_save(present&&editable,composing),present&&editable&&!composing);
+        }}}}}
+    }
+    #[test] fn preference_failed_save_and_profile_lifecycle_preserve_original_drafts() {
+        let mut f=new_preferences_form(10);assert!(f.preference_profile("work-profile"));f.preference_select(7);
+        f.preference_edited("accept_languages");f.preference_edited("font_sans");f.preference_saved("accept_languages",false);
+        assert!(!f.preference_sync_text("accept_languages",true,true,false,false));
+        f.preference_saved("font_sans",true);assert!(f.preference_sync_text("font_sans",true,true,false,false));
+        f.preference_more_rules();assert_eq!(f.preference_rule_limit(),100);assert!(!f.preference_profile("work-profile"));
+        assert!(f.dirty.contains("accept_languages"));assert_eq!(f.preference_rule_limit(),100);
+        assert!(f.preference_profile("personal-profile"));assert!(f.dirty.is_empty());assert_eq!(f.preference_rule_limit(),50);assert_eq!(f.preference_current(),7);
+        f.preference_edited("font_fixed");f.preference_detach();assert!(f.dirty.is_empty());assert!(f.preference_profile("personal-profile"));assert_eq!(f.preference_current(),7);
+    }
+    #[test] fn preference_rule_limit_resets_and_does_not_wrap() {
+        let mut f=new_preferences_form(10);f.rule_limit=usize::MAX-20;f.preference_more_rules();assert_eq!(f.preference_rule_limit(),usize::MAX);f.preference_reset_rules();assert_eq!(f.preference_rule_limit(),50);
     }
     #[test] fn preference_chrome_holes_partition_and_preserve_text_weight() {
         let mut item=row(100.0);item.kind=24;item.height=100.0;item.clip.height=100.0;item.active=true;

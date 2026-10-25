@@ -509,6 +509,12 @@ class WorkspaceShell final : public ui::EventHandler,
   void SelectPreferenceCategory(size_t category);
   void WritePreference(std::string key, int value);
   void SaveTextPreference(std::string key);
+  void PreferenceTextEdited(const std::string& key);
+  void PreferenceTextSaved(const std::string& key, bool ok);
+  bool SyncPreferenceText(const std::string& key, bool present, bool editable, bool composing, bool profile_changed);
+  void ResetPreferenceRuleLimit();
+  void MorePreferenceRules();
+  size_t PreferenceRuleLimit() const;
   void RefreshSitePreferences(bool reload = true);
   void SaveSitePreference();
   void SaveGeneralPatch(std::optional<ThemeMode> theme, std::optional<SearchEngine> search, std::optional<bool> animations);

@@ -3374,7 +3374,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   preferences_search_->GetViewAccessibility().SetName(u"Szukaj we wszystkich ustawieniach");
   preferences_search_->SetCallbacks(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){
     if(shell&&shell->general_widget_->IsVisible()&&!shell->preferences_search_->IsIMEComposing()){
-      shell->site_rules_limit_=50;shell->FilterPreferences();
+      shell->ResetPreferenceRuleLimit();shell->FilterPreferences();
     }
   },weak),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,EditorControl* field,const ui::KeyEvent& event){
     return shell&&shell->HandlePreferenceEditorKey(field,event);
@@ -3489,7 +3489,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     field->GetViewAccessibility().SetName(title);
     field->SetPlaceholderText(placeholder);
     field->SetCallbacks(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::string key){
-      if(shell) shell->preference_text_dirty_.insert(key);
+      if(shell) shell->PreferenceTextEdited(key);
     },weak,key),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,EditorControl* field,const ui::KeyEvent& event){
     return shell&&shell->HandlePreferenceEditorKey(field,event);
   },weak,base::Unretained(field)));
@@ -3844,6 +3844,9 @@ void WorkspaceShell::Detach() {
   configuration_error_ = nullptr;workspace_form_.reset();
   address_error_ = nullptr;
   color_error_ = nullptr;
+#if BUILDFLAG(IS_MAC)
+  if(preferences_form_)preferences_form_->form->preference_detach();
+#endif
   preference_textfields_.clear(); preference_save_buttons_.clear(); preference_text_dirty_.clear();
   site_origin_ = nullptr; site_type_ = nullptr; site_policy_ = nullptr; site_rules_list_ = nullptr; site_rules_card_ = nullptr;
   clear_data_period_ = nullptr; clear_history_ = nullptr; clear_cookies_ = nullptr; clear_cache_ = nullptr; clear_data_button_ = nullptr;
@@ -5867,7 +5870,12 @@ void WorkspaceShell::RefreshPreferenceViewport(){
 }
 void WorkspaceShell::RefreshGeneralControls() {
   if (!general_widget_) return;
-  const bool profile_changed=preferences_profile_id_!=state_.profile_id;
+  bool profile_changed=false;
+#if BUILDFLAG(IS_MAC)
+  if(preferences_form_)profile_changed=preferences_form_->form->preference_profile(state_.profile_id);
+  else
+#endif
+  {profile_changed=preferences_profile_id_!=state_.profile_id;if(profile_changed){preferences_profile_id_=state_.profile_id;preference_text_dirty_.clear();}}
   if(profile_changed)CancelChoiceInteractions(general_widget_->GetContentsView());
   SyncPickerIndex(theme_picker_,static_cast<size_t>(theme_mode_));
   std::vector<std::pair<std::string,std::u16string>> provider_choices;
@@ -5883,10 +5891,8 @@ void WorkspaceShell::RefreshGeneralControls() {
   SetToggleOn(sidebar_check_,pinned_);
   SetToggleOn(animations_check_,workspace_animations_);
   if (profile_changed) {
-    preferences_profile_id_ = state_.profile_id;
-    preference_text_dirty_.clear();
     site_origin_->SetText(u"");
-    site_rules_limit_ = 50;
+    ResetPreferenceRuleLimit();
     RefreshSitePreferences();
   }
   SetPanelText(preferences_profile_,u"Profil: " + state_.profile_name + u" · Ustawienia wspólne dla aplikacji są oznaczone w opisach.");
@@ -5897,9 +5903,8 @@ void WorkspaceShell::RefreshGeneralControls() {
     const bool enabled = it != values.end() && it->second.editable;
     field->view()->SetEnabled(enabled);
     preference_save_buttons_.at(key)->SetEnabled(enabled);
-    if (it != values.end() && ((!preference_text_dirty_.contains(key)&&!field->IsIMEComposing()) || !enabled || profile_changed)) {
+    if (SyncPreferenceText(key,it!=values.end(),enabled,field->IsIMEComposing(),profile_changed)) {
       field->SetText(base::UTF8ToUTF16(it->second.text));
-      preference_text_dirty_.erase(key);
     }
     field->view()->SetTooltipText(it == values.end() ? u"Ustawienie jest niedostępne" : !enabled ? u"To ustawienie jest zarządzane" : u"Zapisz przyciskiem lub klawiszem Enter");
   }
@@ -5973,11 +5978,55 @@ void WorkspaceShell::SetPreferencesStatus(std::u16string text, bool error) {
   if (!general_status_) return;
   SetPanelText(general_status_,text);SetPreferenceCopyTone(general_status_,error?kError:kMuted);
 }
+void WorkspaceShell::PreferenceTextEdited(const std::string& key){
+#if BUILDFLAG(IS_MAC)
+  if(preferences_form_){preferences_form_->form->preference_edited(key);return;}
+#endif
+  preference_text_dirty_.insert(key);
+}
+void WorkspaceShell::PreferenceTextSaved(const std::string& key,bool ok){
+#if BUILDFLAG(IS_MAC)
+  if(preferences_form_){preferences_form_->form->preference_saved(key,ok);return;}
+#endif
+  if(ok)preference_text_dirty_.erase(key);
+}
+bool WorkspaceShell::SyncPreferenceText(const std::string& key,bool present,bool editable,bool composing,bool profile_changed){
+#if BUILDFLAG(IS_MAC)
+  if(preferences_form_)return preferences_form_->form->preference_sync_text(key,present,editable,composing,profile_changed);
+#endif
+  const bool replace=present&&((!preference_text_dirty_.contains(key)&&!composing)||!editable||profile_changed);
+  if(replace)preference_text_dirty_.erase(key);return replace;
+}
+void WorkspaceShell::ResetPreferenceRuleLimit(){
+#if BUILDFLAG(IS_MAC)
+  if(preferences_form_){preferences_form_->form->preference_reset_rules();return;}
+#endif
+  site_rules_limit_=50;
+}
+void WorkspaceShell::MorePreferenceRules(){
+#if BUILDFLAG(IS_MAC)
+  if(preferences_form_){preferences_form_->form->preference_more_rules();return;}
+#endif
+  site_rules_limit_+=50;
+}
+size_t WorkspaceShell::PreferenceRuleLimit() const{
+#if BUILDFLAG(IS_MAC)
+  if(preferences_form_)return preferences_form_->form->preference_rule_limit();
+#endif
+  return site_rules_limit_;
+}
 void WorkspaceShell::SaveTextPreference(std::string key) {
   auto it = preference_textfields_.find(key);
-  if (it == preference_textfields_.end()||it->second->IsIMEComposing()||!it->second->view()->GetEnabledInViewsSubtree()) return;
+  if (it == preference_textfields_.end()) return;
+  const bool enabled=it->second->view()->GetEnabledInViewsSubtree();
+  const bool composing=it->second->IsIMEComposing();
+#if BUILDFLAG(IS_MAC)
+  if(preferences_form_){if(!preferences_form_->form->preference_can_save(enabled,composing))return;}
+  else
+#endif
+  if(!enabled||composing)return;
   const bool ok = callbacks_.write_text_preference && callbacks_.write_text_preference.Run(key, base::UTF16ToUTF8(it->second->GetText()));
-  if (ok) preference_text_dirty_.erase(key);
+  PreferenceTextSaved(key,ok);
   RefreshGeneralControls();
   SetPreferencesStatus(ok ? u"Zapisano. Witryna może wymagać odświeżenia, aby zastosować zmianę." :
       key == "accept_languages" ? u"Podaj poprawne kody języków oddzielone przecinkami, np. pl, en-US, en." :
@@ -6015,7 +6064,7 @@ void WorkspaceShell::RefreshSitePreferences(bool reload) {
     keywords += u" " + searchable;
     if (!show_all && searchable.find(query) == std::u16string::npos) continue;
     ++matching;
-    if (shown >= site_rules_limit_) continue;
+    if (shown >= PreferenceRuleLimit()) continue;
     ++shown;
     auto* row = site_rules_list_->AddChildView(std::make_unique<views::View>());
     auto* layout = row->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal, gfx::Insets::VH(4, 0), 12));
@@ -6042,7 +6091,7 @@ void WorkspaceShell::RefreshSitePreferences(bool reload) {
     PreferenceAction(site_rules_list_,bool(workspace_form_),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
       base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceShell> shell) {
         if (!shell) return;
-        shell->site_rules_limit_ += 50;
+        shell->MorePreferenceRules();
         shell->RefreshSitePreferences(false);
       }, shell));
     }, weak_factory_.GetWeakPtr()), u"Pokaż kolejne wyjątki…",true);
