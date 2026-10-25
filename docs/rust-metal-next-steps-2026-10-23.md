@@ -5,55 +5,66 @@ inventory is [the parity checklist](rust-metal-parity.md).
 
 ## Current checkpoint
 
-UI source `337968c1358966e3b50fa30e2358339221713b46`, 2026-10-25, passed the full compiled
+UI source `eabd5a5c531cab6ada7d49e2678054c625262419`, 2026-10-25, passed the full compiled
 regression inventory with one launcher job, no automatic retries and temporary
 profiles:
 
 | Backend | Regular matrix passed | Regular skips | Failed / crashed |
 | --- | ---: | ---: | ---: |
-| Rust + Metal | 167 | 6 | 0 |
-| Views | 125 | 6 | 0 |
+| Rust + Metal | 169 | 6 | 0 |
+| Views | 126 | 6 | 0 |
 
-The inventory contains 173 cases; Views excludes 42 dedicated Metal cases
-(131 applicable cases). Four opt-in performance scenarios, real-user Arc import
+The inventory contains 175 cases; Views excludes 43 dedicated Metal cases
+(132 applicable cases). Four opt-in performance scenarios, real-user Arc import
 and the interactive manual window are skipped per backend. Optional scenarios
 remain earlier-checkpoint evidence, not current-commit passes. Metal API
 validation remained enabled. No controlled CPU/GPU/presentation or memory
 improvement is established.
 
-The dialog/beforeunload and shared static-copy gate passed **17 Metal / 14 Views**.
-Checks passed **243 Rust tests**, **180 SDK font/direction cases plus raster**,
-**66 clean-archive Python tests**, scoped GN/boundaries and optimized compilation.
-The live checkout passed 68 Python tests, including two concurrent cases outside
-this UI commit. Final Ninja reported no work to do.
-[Source/binary identities, commands and results](benchmarks/rust-page-dialog-actions-checkpoint-2026-10-25.json).
+The modal/folder/workspace-deletion/page-dialog/beforeunload/shared-chrome gate
+passed **33 Metal / 25 Views**. Checks passed **243 Rust tests**, **180 SDK font/
+direction cases plus raster**, **66 clean-archive Python tests**, scoped GN/
+boundaries and optimized compilation. The live checkout passed 68 Python tests,
+including two concurrent cases outside this UI commit. Final Ninja reported no
+work to do. All 53 tracked prototype files match the committed source and staged
+overlay. [Source/binary identities, commands, results and retained failed
+probe](benchmarks/rust-scene-modals-checkpoint-2026-10-25.json).
 
-Rust/Metal now owns page-dialog action drawing/input and linked/trailing button
-row allocation, alongside the prior copy/body text/layout. Alert, confirm, prompt
-and beforeunload action controls have no MdTextButton or native/hidden Label in the
-opt-in backend. A single group canvas draws the actions, with the same Rust
-recipe available for CPU fallback. Native theme/font metrics, row insets/spacing,
-platform order, focus/AX and input-protection services remain adapters.
+Folder create/rename, folder deletion/save-error and workspace deletion now use
+shared Rust/Metal actions and Rust outer-body allocation. Their opt-in branches
+no longer instantiate DialogModel/BubbleDialogModelHost or native button Labels.
+The existing Rust form/notice state and body scenes remain, alongside unchanged
+native domain validation, captured targets, stores and commands. Views mode
+retains the original model-host baseline.
 
-The page-dialog client bypasses Chromium's private native-button allocator and
-retains native ClientView contents adoption, Escape, protection, window theming
-and observer teardown. Native DialogDelegate owns modal/close semantics and
-metadata. Actual platform defaults register Return on the Rust nodes; macOS
-beforeunload's stored Cancel default still does not make Return activate Cancel.
-Prompt IME/generation/frame/profile authorization is unchanged. Native model
-updates rebuild the Rust row, releasing old canvases/weak callbacks/accelerators
-and restoring a matching enabled focused control. Native GetOkButton/CancelButton
-are null for this custom client; PageDialogs has an explicit test adapter.
+The shared scene client keeps native event/focus/AX/input protection and Escape.
+SceneModalDialog retains the native bubble title/frame, autosizing, theme,
+rounded client layer, fixed width and capped vertical ScrollView. Rust body
+allocation preserves original text/control margins, side insets and the 2px
+scroll workaround. Native model-host preferred/minimum sizes, margins, fixed
+width and actual body rectangles are checked using the same measured body.
+Fixed-width minimum sizing adds the action row once; empty action rows have
+zero natural size. Default accelerators are removed when a control stops being
+the default. Page and migrated modal delegates are directly owned and destroyed
+after their client-owned widgets; forced folder close promptly releases IME
+clients. The old legacy unique-pointer helper did not automatically own a plain
+page delegate; PageDialogs now keeps it explicitly.
 
-The new shared browser case compares native button and row preferred metrics,
-order and AX/default state for all four roles, checks childless Rust controls,
-actual Metal caption visibility and label/enable updates, rejects an injected
-blocked activation, then uses real Cocoa mouse and Space input. Existing real
-Return/Escape, prompt IME, navigation, CloseNow and beforeunload tests also pass.
-Two Rust cases cover linking, long-label limits, trailing placement and narrow
-clipping. The title/frame, modal/native containers and wider native ownership,
-manual platform acceptance, profiling and release/license checks remain open.
-Normal installed apps/profiles were untouched; no bundle was signed.
+The first gate reproduced missing Escape dispatch in the new Cocoa modal case
+on **both** backends: 32/33 Metal and 24/25 Views passed. Original sources,
+source hashes, binary identity and logs are retained. Installing the existing
+registered-accelerator route for folder deletion/save errors and workspace
+notices fixes delivery without inventing Return for macOS's Cancel default.
+The same unchanged default/cancel test then passes. The dedicated lifetime
+case additionally uses actual Cocoa Return to acknowledge a one-button error.
+It closes three composing editors with CloseNow, reopens a clean editor and
+checks client destruction on Detach. Existing validation, stale-target,
+beforeunload, profile-retention and screen-bound cases remain in both gates.
+
+Native title/frame/modal/scroll/window and event/focus/AX containers, other
+forms/service panels, manual platform acceptance, profiling and release/license
+checks remain open. Normal installed apps/profiles were untouched; no bundle
+was signed.
 
 ## Immediate preference work still remaining
 
@@ -81,9 +92,11 @@ adapters and outer placement still require ownership migration and verification.
    IME, clipboard and accessibility services as explicit platform adapters.
 2. **Finish migrated forms and dialogs.** Page alert/confirm/prompt/beforeunload
    copy/body text, actions and layout now use Rust/Metal; native title/frame and
-   modal containers remain. Replace remaining header/close/modal
-   controls and outer placement for workspace/profile/import/folder/deletion
-   surfaces. Finish the address/command palette input/frame/container layer.
+   modal containers remain. Folder create/rename/deletion/save errors and workspace
+   deletion now also use scene actions and Rust outer-body allocation. Replace
+   remaining header/close/modal controls and outer placement for workspace/profile/
+   import and other surfaces. Finish the address/command palette input/frame/
+   container layer.
    Verify stale context, defaults, cancellation, validation and persistence.
 3. **Preferences.** Editors, eleven selectors, 24 switches, three clear-data
    checkboxes, fixed/dynamic actions, category/dismiss controls and category/filter

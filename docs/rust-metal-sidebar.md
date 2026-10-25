@@ -1672,3 +1672,28 @@ Metal captions, model updates, blocked-input protection and actual Cocoa mouse/
 Space activation. Existing Return/Escape/IME/beforeunload/lifetime cases pass.
 Optional performance cases were not rerun; no controlled speedup is claimed.
 [Evidence](benchmarks/rust-page-dialog-actions-checkpoint-2026-10-25.json).
+
+## Folder and workspace modal action checkpoint
+
+Folder create/rename, folder deletion/save-error and workspace deletion now reuse
+the scene action client, Rust linked/trailing button rows and Rust outer-body
+allocation, without DialogModel/BubbleDialogModelHost in their opt-in branches.
+Native bubble frame/autosize/theme/scroll/focus/AX and unchanged domain services
+remain adapters. The original model host is an independent size/margin/body-
+rectangle oracle. Client-owned widgets close before their directly owned
+modal delegates; PageDialogs now explicitly owns its delegate too.
+
+A new Cocoa case first reproduced missing Escape delivery in both backends.
+Installing the existing registered-accelerator route fixes folder deletion,
+save errors and workspace notices while leaving macOS Cancel-default Return
+unbound. The original failing probe and exact source snapshot are retained.
+Another case verifies three composing editor CloseNow lifetimes, actual Return
+on a one-button error, fresh reopen and shell Detach.
+
+The full checkpoint passed **169 Metal / 126 Views**, six skips each, with
+Metal validation and zero failures. The critical gate passed **33 / 25**;
+**243 Rust**, **180 SDK font/direction plus raster**, **66 clean-archive Python**,
+scoped GN/boundaries and optimized compilation passed. Optional performance
+cases were not rerun; no controlled speedup is claimed. Native frames and
+containers, other panels, manual acceptance, profiling and release/license
+checks remain open. [Evidence](benchmarks/rust-scene-modals-checkpoint-2026-10-25.json).

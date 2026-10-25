@@ -676,12 +676,13 @@ selection and Metal closed-control drawing, with native popup/IME/AX adapters.
 Workspace create/edit settings also use Rust
 form state, validation and column layout, with Metal headings/help/error text;
 native input, appearance controls and storage services remain. Workspace deletion
-confirmation now has Rust state/copy and a shared Metal notice body, retaining
-native modal controls and deletion services. Color/emoji preset rows now use Rust
+confirmation now has Rust state/copy, a shared Metal notice body and modal
+actions/body allocation. Native frame/scroll/focus/AX and deletion services remain.
+Color/emoji preset rows now use Rust
 geometry, selection and input with batched Metal canvases excluding native editors.
 Nine workspace/profile form actions also use Rust layout/input and scene text
 without native button Labels, batched into four Metal groups. These newer stages pass the
-[latest full automated GUI checkpoint](docs/benchmarks/rust-page-dialog-actions-checkpoint-2026-10-25.json);
+[latest full automated GUI checkpoint](docs/benchmarks/rust-scene-modals-checkpoint-2026-10-25.json);
 manual signed-app and performance acceptance remain pending. Import also uses a Rust form controller for
 option snapshots, debounce/admission and control locks, with Metal static/status
 text and Apply drawing. Four import checkboxes now share a Metal canvas with Rust
@@ -727,6 +728,9 @@ copy on one transparent Metal underlay with native typography, scrolling and
 prompt cutouts. Their action buttons now also use Rust input/drawing and linked/
 trailing row layout without native button Labels. Native title/frame, modal,
 focus/AX/input-protection and platform default-key services remain adapters.
+Folder create/rename, deletion/save-error and workspace deletion also use scene
+actions and Rust body allocation, with directly owned delegates and synchronous
+widget cleanup. Native bubble framing and capped scrolling remain adapters.
 [Editor contracts and acceptance](docs/rust-metal-editor.md).
 Model updates refresh the scene independently of
 native painting. Rust also owns row
