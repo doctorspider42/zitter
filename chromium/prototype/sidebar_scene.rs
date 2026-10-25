@@ -17,6 +17,7 @@ mod ffi {
     struct EditorUpdate { admitted: bool, text_changed: bool, selection_changed: bool, composition_changed: bool, committed: bool, info: EditorInfo }
     struct SelectLayout { width: i32, height: i32, label: Rect, arrow: Rect }
     struct SelectOption { key: String, label: String, search: String }
+    struct ToolsCopy { title: String, intro: String, tail: String, initial_status: String, fields: Vec<String>, pickers: Vec<String>, headings: Vec<String>, actions: Vec<String>, choices: Vec<String> }
     struct PreferenceRow { category: usize, keywords: Vec<u16> }
     struct PreferenceVisibility { rows: Vec<bool>, sections: Vec<bool>, navigation: Vec<bool>, any: bool }
     struct ToggleStyle { width: f32, height: f32, progress: f32, hover: f32, checked: bool, pressed: bool, focused: bool, rtl: bool, track_on: u32, track_off: u32, thumb_on: u32, thumb_off: u32, thumb_hover: u32, halo: u32, focus: u32, border: u32, clip: FloatRect }
@@ -144,6 +145,8 @@ mod ffi {
         fn editor_undo(state: &mut EditorState) -> EditorUpdate;
         fn editor_redo(state: &mut EditorState) -> EditorUpdate;
 
+        fn tools_copy(page: usize, context: &str) -> ToolsCopy;
+        fn tools_clear_label(busy: bool) -> String;
         type PreferencesForm;
         fn new_preferences_form(categories: usize) -> Box<PreferencesForm>;
         fn preference_select(self: &mut PreferencesForm, category: usize) -> bool;
@@ -576,6 +579,18 @@ fn select_layout(width:i32,height:i32,text_width:i32,control_height:i32,rtl:bool
     let pad=12.min(width/2);let room=width-pad*2;let arrow_width=16.min(room);let gap=8.min(room-arrow_width);let label_width=room-arrow_width-gap;
     ffi::SelectLayout{width,height,label:ffi::Rect{x:if rtl{pad+arrow_width+gap}else{pad},y:0,width:label_width,height},arrow:ffi::Rect{x:if rtl{pad}else{width-pad-arrow_width},y:0,width:arrow_width,height}}
 }
+
+// Page copy is UI data only; context is a display name, never store authority.
+fn tools_copy(page:usize,context:&str)->ffi::ToolsCopy{
+    match page.min(3){
+        0=>ffi::ToolsCopy{title:if context.is_empty(){"Time Machine".into()}else{format!("Time Machine · {}",context)},intro:"Snapshot zapisuje karty, foldery i Split View w tej przestrzeni. Przywrócenie przeładuje strony; formularze i historia Wstecz nie są częścią snapshotu. Poprzedni układ otrzyma punkt przywracania.".into(),tail:"Uśpienie zwalnia strony tej przestrzeni z pamięci i przełącza do innej. Kliknięcie jej kropki wznowi układ. Niezapisane formularze zostaną utracone.".into(),initial_status:"Użyj przycisków poniżej pól lub Enter, aby zatwierdzić zmiany. Dane są zapisywane lokalnie.".into(),fields:vec!["Nazwa snapshotu, np. Research przed deployem".into(),"Szukaj snapshotów i zamkniętych kart".into()],pickers:vec!["Zapisane snapshoty".into(),"Zamknięte karty".into()],headings:vec!["Snapshoty · 30 własnych + 30 automatycznych".into(),"Ostatnio zamknięte · do 100 kart".into()],actions:vec!["Zapisz snapshot".into(),"Przywróć wybrany układ".into(),"Usuń wybrany snapshot".into(),"Przywróć wybraną kartę".into(),"Uśpij tę przestrzeń".into()],choices:vec![]},
+        1=>ffi::ToolsCopy{title:"Skróty klawiszowe".into(),intro:"Schemat inspirowany Arc. Wybierz akcję, nagraj kombinację lub wpisz np. Cmd+Shift+J. Puste pole wyłącza skrót. Escape, skróty edycji tekstu i systemowe pozostają zarezerwowane.".into(),tail:"".into(),initial_status:"Użyj przycisków poniżej pól lub Enter, aby zatwierdzić zmiany. Dane są zapisywane lokalnie.".into(),fields:vec!["Kombinacja, np. Cmd+Shift+J".into()],pickers:vec!["Akcja skrótu".into()],headings:vec![],actions:vec!["Nagraj kombinację…".into(),"Zapisz skrót".into(),"Wyłącz wybrany skrót".into(),"Przywróć schemat Arc".into()],choices:vec![]},
+        2=>ffi::ToolsCopy{title:"Wyszukiwarki i prefiksy".into(),intro:"W pasku adresu wpisz prefiks i zapytanie, np. g koty lub w Warszawa. Szablon musi być adresem HTTP(S) z jednym znacznikiem {query}. Zapytania są kodowane automatycznie.".into(),tail:"".into(),initial_status:"Użyj przycisków poniżej pól lub Enter, aby zatwierdzić zmiany. Dane są zapisywane lokalnie.".into(),fields:vec!["Nazwa wyszukiwarki".into(),"Prefiks (a–z, 0–9)".into(),"Adres z {query}".into()],pickers:vec!["Wyszukiwarka do edycji".into()],headings:vec![],actions:vec!["Zapisz wyszukiwarkę".into(),"Ustaw jako domyślną".into(),"Usuń wyszukiwarkę".into()],choices:vec!["Dodaj nową wyszukiwarkę…".into()]},
+        3=>ffi::ToolsCopy{title:"Historia przeglądania".into(),intro:format!("Profil: {}",context),tail:"".into(),initial_status:"Odczytywanie historii…".into(),fields:vec!["Szukaj w historii".into()],pickers:vec!["Zakres czyszczenia historii".into()],headings:vec![],actions:vec!["Wyczyść historię…".into(),"Pokaż więcej".into()],choices:vec!["Ostatnia godzina".into(),"Ostatnie 24 godziny".into(),"Ostatnie 7 dni".into(),"Cały okres".into()]},
+        _=>unreachable!(),
+    }
+}
+fn tools_clear_label(busy:bool)->String{if busy{"Czyszczenie…"}else{"Wyczyść historię…"}.into()}
 
 // Query and keywords arrive normalized by the native Unicode/whitespace service.
 // Preserve UTF-16 units, including partial surrogates, exactly as native find().
@@ -1909,6 +1924,13 @@ mod tests {
         let mut f=new_preferences_form(1);let mut rows=vec![ffi::PreferenceRow{category:0,keywords:vec![0xd83e,0xdd80,0xfffd]}];
         assert!(f.preference_filter(vec![0xd83e],&rows).any);assert!(!f.preference_filter(vec![0xd800],&rows).any);assert!(!f.preference_filter(vec![1,2,3,4],&rows).any);rows[0].keywords="nowy wyjątek".encode_utf16().collect();assert!(f.preference_filter("nowy".encode_utf16().collect(),&rows).any);
         let mut empty=new_preferences_form(0);assert!(!empty.preference_select(0));assert!(!empty.preference_filter(vec![],&rows).any);
+    }
+    #[test] fn tools_copy_display_context_and_adapter_roles_are_complete() {
+        let copy=tools_copy(0,"Praca 🦀 אבג");assert_eq!(copy.title,"Time Machine · Praca 🦀 אבג");assert_eq!(copy.fields.len(),2);assert_eq!(copy.pickers.len(),2);assert_eq!(copy.headings.len(),2);assert_eq!(copy.actions.len(),5);assert!(copy.tail.contains("Niezapisane formularze"));
+        let shortcut=tools_copy(1,"");assert_eq!(shortcut.fields.len(),1);assert_eq!(shortcut.actions.len(),4);assert!(shortcut.intro.contains("Escape"));
+        let provider=tools_copy(2,"");assert_eq!(provider.fields.len(),3);assert_eq!(provider.actions.len(),3);assert!(provider.intro.contains("{query}"));
+        let history=tools_copy(usize::MAX,"Profil 🦀");assert_eq!(history.intro,"Profil: Profil 🦀");assert_eq!(history.fields.len(),1);assert_eq!(history.choices.len(),4);assert_eq!(history.actions[0],tools_clear_label(false));assert_eq!(tools_clear_label(true),"Czyszczenie…");
+        for page in 0..4{let copy=tools_copy(page,"");assert!(!copy.title.is_empty());assert!(!copy.initial_status.is_empty());assert!(copy.fields.iter().chain(copy.actions.iter()).all(|s|!s.is_empty()));}
     }
     #[test] fn preference_draft_refresh_policy_truth_table() {
         for dirty in [false,true]{for present in [false,true]{for editable in [false,true]{for composing in [false,true]{for profile_changed in [false,true]{

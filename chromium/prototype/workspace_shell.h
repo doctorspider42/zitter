@@ -244,6 +244,11 @@ class WorkspaceShell final : public ui::EventHandler,
   size_t tools_action_groups_for_testing() const;
   views::Button* tools_close_for_testing() const{return tools_close_;}
   bool tools_close_metal_visible_for_testing() const;
+  bool tools_chrome_visible_for_testing() const{return ToolsChromeVisible();}
+  bool tools_chrome_contains_text_for_testing(std::string_view text) const;
+  bool tools_chrome_excludes_for_testing(views::View* view) const;
+  bool tools_chrome_order_correct_for_testing() const;
+  std::string tools_chrome_debug_for_testing() const;
   void SetThemeMode(ThemeMode mode);
   ThemeMode theme_mode() const { return theme_mode_; }
   void SetSearchEngine(SearchEngine engine);
@@ -485,8 +490,8 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> tools_root_ = nullptr;
   raw_ptr<views::View> tools_body_ = nullptr;
   raw_ptr<views::Button> tools_close_ = nullptr;
-  raw_ptr<views::Label> tools_title_ = nullptr;
-  raw_ptr<views::Label> tools_status_ = nullptr;
+  raw_ptr<views::View> tools_title_ = nullptr;
+  raw_ptr<views::View> tools_status_ = nullptr;
   raw_ptr<EditorControl> snapshot_name_ = nullptr;
   raw_ptr<EditorControl> timeline_filter_ = nullptr;
   raw_ptr<EditorControl> shortcut_chord_ = nullptr;
@@ -592,6 +597,10 @@ class WorkspaceShell final : public ui::EventHandler,
   std::unique_ptr<WorkspaceFormState> workspace_form_;
   std::unique_ptr<PreferencesFormState> preferences_form_;
   std::unique_ptr<PreferenceChromeState> preferences_chrome_;
+  std::unique_ptr<PreferenceChromeState> tools_chrome_;
+  void ScheduleToolsChrome();
+  bool ToolsChromeVisible() const;
+  views::View* AddToolsCopy(views::View* parent,std::u16string text,SkColor tone,int delta,int weight,bool multiline);
   void SchedulePreferenceChrome();
   bool PreferenceChromeVisible() const;
   views::View* AddPreferenceCopy(views::View* parent,std::u16string text,SkColor tone,int delta,int weight,bool multiline);

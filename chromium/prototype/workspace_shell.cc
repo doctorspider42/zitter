@@ -82,6 +82,7 @@
 #include "ui/events/event.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/font_list.h"
+#include "ui/gfx/render_text.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/gfx/scoped_canvas.h"
@@ -1155,6 +1156,13 @@ void SetCheckText(views::Button* button,std::u16string text) {
   static_cast<views::Checkbox*>(button)->SetText(text);
 }
 
+std::u16string ToolsClearLabel(bool scene,bool busy){
+#if BUILDFLAG(IS_MAC)
+  if(scene)return base::UTF8ToUTF16(std::string(sidebar::tools_clear_label(busy)));
+#endif
+  return busy?u"Czyszczenie…":u"Wyczyść historię…";
+}
+
 views::View* ActionGroup(views::View* parent,bool scene,bool vertical,int spacing) {
 #if BUILDFLAG(IS_MAC)
   if(scene)return parent->AddChildView(std::make_unique<SceneActionGroup>(vertical,spacing));
@@ -2002,8 +2010,12 @@ class PreferenceCopy final : public views::View {
  private:
   void Notify(){if(changed_)changed_.Run();}
   int NaturalWidth() const{const auto f=font();if(natural_width_>=0&&measured_font_==f.GetFontSize())return natural_width_;int width=0;size_t start=0;do{const auto end=text_.find(u'\n',start);width=std::max(width,gfx::GetStringWidth(text_.substr(start,end==std::u16string::npos?end:end-start),f));if(end==std::u16string::npos)break;start=end+1;}while(start<=text_.size());natural_width_=width;return width;}
-  sidebar::ColumnLayout Geometry(int width) const{const auto f=font();width=std::max(0,width);if(width!=measured_width_||f.GetFontSize()!=measured_font_){lines_.clear();if(multiline_&&width>0){std::vector<std::u16string> wrapped;gfx::ElideRectangleText(text_,f,width,std::numeric_limits<int>::max(),gfx::ELIDE_LONG_WORDS,&wrapped);for(const auto& line:wrapped)lines_.push_back(base::UTF16ToUTF8(line));}else lines_.push_back(base::UTF16ToUTF8(text_));if(lines_.empty())lines_.push_back("");measured_width_=width;measured_font_=f.GetFontSize();}return sidebar::paragraph_layout(width,std::max(f.GetHeight(),views::TypographyProvider::Get().GetLineHeight(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY)),lines_.size());}
-  std::u16string text_;SkColor tone_;int delta_;gfx::Font::Weight weight_;bool multiline_;base::RepeatingClosure changed_;base::RepeatingCallback<bool()> visible_;mutable int measured_width_=-1,measured_font_=0,natural_width_=-1;mutable std::vector<std::string> lines_;
+  sidebar::ColumnLayout Geometry(int width) const{const auto f=font();width=std::max(0,width);if(width!=measured_width_||f.GetFontSize()!=measured_font_){lines_.clear();if(multiline_&&width>0){
+      if(!wrapped_)wrapped_=gfx::RenderText::CreateRenderText();
+      wrapped_->SetCursorEnabled(false);wrapped_->SetFontList(f);wrapped_->SetText(text_);wrapped_->SetMultiline(true);wrapped_->SetHorizontalAlignment(gfx::ALIGN_LEFT);wrapped_->SetElideBehavior(gfx::NO_ELIDE);wrapped_->SetWordWrapBehavior(gfx::TRUNCATE_LONG_WORDS);wrapped_->SetMinLineHeight(std::max(f.GetHeight(),views::TypographyProvider::Get().GetLineHeight(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY)));wrapped_->SetDisplayRect(gfx::Rect(0,0,width,0));
+      for(size_t i=0;i<wrapped_->GetNumLines();++i){const auto start=std::min(text_.size(),wrapped_->GetTextIndexOfLine(i));const auto end=std::max(start,std::min(text_.size(),wrapped_->GetTextIndexOfLine(i+1)));auto line=text_.substr(start,end-start);while(!line.empty()&&(line.back()==u'\n'||line.back()==u'\r'))line.pop_back();lines_.push_back(base::UTF16ToUTF8(line));}
+    }else lines_.push_back(base::UTF16ToUTF8(text_));if(lines_.empty())lines_.push_back("");measured_width_=width;measured_font_=f.GetFontSize();}return sidebar::paragraph_layout(width,std::max(f.GetHeight(),views::TypographyProvider::Get().GetLineHeight(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY)),lines_.size());}
+  std::u16string text_;SkColor tone_;int delta_;gfx::Font::Weight weight_;bool multiline_;base::RepeatingClosure changed_;base::RepeatingCallback<bool()> visible_;mutable int measured_width_=-1,measured_font_=0,natural_width_=-1;mutable std::vector<std::string> lines_;mutable std::unique_ptr<gfx::RenderText> wrapped_;
 };
 BEGIN_METADATA(PreferenceCopy)
 END_METADATA
@@ -3664,10 +3676,13 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 
   auto tools_panel = std::make_unique<views::View>();
   tools_root_ = tools_panel.get();
+#if BUILDFLAG(IS_MAC)
+  if(workspace_form_)tools_chrome_=std::make_unique<PreferenceChromeState>(tools_root_);
+#endif
   auto* tools_layout = tools_panel->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(20), 12));
   auto* tools_heading = tools_panel->AddChildView(std::make_unique<views::View>());
   auto* tools_heading_layout = tools_heading->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 8));
-  tools_title_ = Label(tools_heading, u"Time Machine", kInk, Font(5, gfx::Font::Weight::SEMIBOLD));
+  tools_title_ = AddToolsCopy(tools_heading,u"Time Machine",kInk,5,static_cast<int>(gfx::Font::Weight::SEMIBOLD),false);
   tools_heading_layout->SetFlexForView(tools_title_, 1);
   auto dismiss_tools=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){
     if(shell){shell->SetShortcutRecording(false);shell->tools_widget_->Hide();shell->RestorePageFocus();}
@@ -3688,7 +3703,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto tools_body = std::make_unique<views::View>(); tools_body_ = tools_body.get();
   tools_body->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets::TLBR(0, 0, 8, 8), 10));
   tools_scroll->SetContents(std::move(tools_body)); tools_layout->SetFlexForView(tools_panel->AddChildView(std::move(tools_scroll)), 1);
-  tools_status_ = Label(tools_panel.get(), u"", kMuted, Font(-1)); tools_status_->SetMultiLine(true);
+  tools_status_ = AddToolsCopy(tools_panel.get(),u"",kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
 
   auto make_panel = [&](std::unique_ptr<views::View> contents,
                         std::unique_ptr<views::WidgetDelegate>& delegate,
@@ -3770,7 +3785,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 }
 
 void WorkspaceShell::Detach() {
-  preferences_chrome_.reset();
+  preferences_chrome_.reset();tools_chrome_.reset();
   for(auto& surface:metal_palette_chrome_)surface.reset();palette_chrome_views_.fill(nullptr);
   metal_general_scroll_subscription_={};metal_general_scroll_synchronizer_.reset();
   metal_tools_scroll_subscription_={};metal_tools_scroll_synchronizer_.reset();
@@ -5708,6 +5723,52 @@ void WorkspaceShell::ApplyTheme() {
 void WorkspaceShell::OnNativeThemeUpdated(ui::NativeTheme*) {
   if (theme_mode_ == ThemeMode::kSystem && general_widget_) ApplyAppearance();
 }
+void WorkspaceShell::ScheduleToolsChrome(){
+#if BUILDFLAG(IS_MAC)
+  if(tools_chrome_)tools_chrome_->Schedule();
+#endif
+}
+bool WorkspaceShell::ToolsChromeVisible() const{
+#if BUILDFLAG(IS_MAC)
+  return tools_chrome_&&tools_chrome_->visible();
+#else
+  return false;
+#endif
+}
+views::View* WorkspaceShell::AddToolsCopy(views::View* parent,std::u16string text,SkColor tone,int delta,int weight,bool multiline){
+#if BUILDFLAG(IS_MAC)
+  if(tools_chrome_)return parent->AddChildView(std::make_unique<PreferenceCopy>(std::move(text),tone,delta,static_cast<gfx::Font::Weight>(weight),multiline,base::BindRepeating(&WorkspaceShell::ScheduleToolsChrome,weak_factory_.GetWeakPtr()),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->ToolsChromeVisible();},weak_factory_.GetWeakPtr())));
+#endif
+  auto* label=Label(parent,std::move(text),tone,Font(delta,static_cast<gfx::Font::Weight>(weight)));label->SetMultiLine(multiline);return label;
+}
+bool WorkspaceShell::tools_chrome_contains_text_for_testing(std::string_view text) const{
+#if BUILDFLAG(IS_MAC)
+  return tools_chrome_&&tools_chrome_->contains_text(text);
+#else
+  return false;
+#endif
+}
+bool WorkspaceShell::tools_chrome_excludes_for_testing(views::View* view) const{
+#if BUILDFLAG(IS_MAC)
+  return tools_chrome_&&tools_chrome_->excludes(view);
+#else
+  return false;
+#endif
+}
+bool WorkspaceShell::tools_chrome_order_correct_for_testing() const{
+#if BUILDFLAG(IS_MAC)
+  return tools_chrome_&&tools_chrome_->order_correct();
+#else
+  return false;
+#endif
+}
+std::string WorkspaceShell::tools_chrome_debug_for_testing() const{
+#if BUILDFLAG(IS_MAC)
+  return tools_chrome_?tools_chrome_->Debug():"no renderer";
+#else
+  return "native";
+#endif
+}
 void WorkspaceShell::SchedulePreferenceChrome(){
 #if BUILDFLAG(IS_MAC)
   if(preferences_chrome_)preferences_chrome_->Schedule();
@@ -5981,14 +6042,14 @@ void WorkspaceShell::SetBrowsingDataBusy(bool busy) {
   browsing_data_busy_ = busy;
   if (history_clear_) {
     history_clear_->SetEnabled(!busy);
-    SetActionText(history_clear_,busy ? u"Czyszczenie…" : u"Wyczyść historię…");
+    SetActionText(history_clear_,ToolsClearLabel(bool(workspace_form_),busy));
   }
   if (!clear_data_button_) return;
   clear_data_button_->SetEnabled(!busy);
   SetActionText(clear_data_button_,busy ? u"Czyszczenie…" : u"Wyczyść…");
 }
 void WorkspaceShell::SetPreferencesStatus(std::u16string text, bool error) {
-  if (history_visible()) tools_status_->SetText(text);
+  if (history_visible()) SetPanelText(tools_status_,text);
   if (!general_status_) return;
   SetPanelText(general_status_,text);SetPreferenceCopyTone(general_status_,error?kError:kMuted);
 }
@@ -6332,15 +6393,15 @@ bool WorkspaceShell::CaptureShortcut(const ui::Accelerator& accelerator) {
   if (accelerator.key_code() == ui::VKEY_ESCAPE) {
     SetShortcutRecording(false);
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(&WorkspaceShell::RefreshKeyRegistrations, weak_factory_.GetWeakPtr()));
-    tools_status_->SetText(u"Nagrywanie anulowane."); return true;
+    SetPanelText(tools_status_,u"Nagrywanie anulowane."); return true;
   }
   if (!ValidShortcut(accelerator) || accelerator.key_code() == ui::VKEY_UNKNOWN) {
-    tools_status_->SetText(u"Użyj Cmd / Ctrl / Alt i klawisza. Skróty edycji tekstu oraz systemowe są zarezerwowane."); return true;
+    SetPanelText(tools_status_,u"Użyj Cmd / Ctrl / Alt i klawisza. Skróty edycji tekstu oraz systemowe są zarezerwowane."); return true;
   }
   shortcut_chord_->SetText(base::UTF8ToUTF16(FormatShortcut(accelerator)));
   SetShortcutRecording(false);
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(&WorkspaceShell::RefreshKeyRegistrations, weak_factory_.GetWeakPtr()));
-  tools_status_->SetText(u"Kombinacja przechwycona. Wybierz Zapisz skrót."); return true;
+  SetPanelText(tools_status_,u"Kombinacja przechwycona. Wybierz Zapisz skrót."); return true;
 }
 bool WorkspaceShell::UpsertSearchProvider(SearchProvider provider, std::string previous) {
   if (!ValidSearchProvider(provider)) return false;
@@ -6403,7 +6464,7 @@ void WorkspaceShell::SaveTools() {
     return base::JSONWriter::Write(merged, &output) && base::ImportantFileWriter::WriteFileAtomically(path, output);
   }, settings_path_.DirName().AppendASCII("ZitterTools.json"), std::move(json), keys_dirty_, engines_dirty_), base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
     if (!shell) return;
-    --shell->pending_writes_; if (!ok && shell->tools_status_) shell->tools_status_->SetText(u"Nie udało się zapisać ustawień na dysku.");
+    --shell->pending_writes_; if (!ok && shell->tools_status_) SetPanelText(shell->tools_status_,u"Nie udało się zapisać ustawień na dysku.");
   }, weak_factory_.GetWeakPtr()));
 }
 void WorkspaceShell::OpenTools(int page) {
@@ -6425,7 +6486,7 @@ void WorkspaceShell::RefreshHistory(bool more) {
   history_limit_ = more ? history_limit_ + 200 : 200;
   history_loaded_ = false;
   history_more_->SetEnabled(false);
-  tools_status_->SetText(u"Odczytywanie historii…");
+  SetPanelText(tools_status_,u"Odczytywanie historii…");
   callbacks_.query_history.Run(history_query_,history_limit_);
 }
 void WorkspaceShell::SetHistoryResults(std::u16string query, std::string profile_id, size_t limit,
@@ -6436,9 +6497,8 @@ void WorkspaceShell::SetHistoryResults(std::u16string query, std::string profile
   history_loaded_ = true;
   history_list_->RemoveAllChildViews();
   if (history_entries_.empty()) {
-    auto* empty = Label(history_list_, error ? u"Nie udało się odczytać historii." :
-        query.empty() ? u"Brak historii przeglądania w tym profilu." : u"Brak wyników dla tego wyszukiwania.", kMuted, Font(0));
-    empty->SetMultiLine(true);
+    AddToolsCopy(history_list_,error ? u"Nie udało się odczytać historii." :
+        query.empty() ? u"Brak historii przeglądania w tym profilu." : u"Brak wyników dla tego wyszukiwania.",kMuted,0,static_cast<int>(gfx::Font::Weight::NORMAL),true);
   }
   for (const auto& entry : history_entries_) {
     RowButton::Spec row;
@@ -6458,7 +6518,7 @@ void WorkspaceShell::SetHistoryResults(std::u16string query, std::string profile
   }
   SetHistoryMoreVisible(more && !error);
   history_more_->SetEnabled(!error);
-  tools_status_->SetText(error ? u"Spróbuj ponownie otworzyć historię." :
+  SetPanelText(tools_status_,error ? u"Spróbuj ponownie otworzyć historię." :
       base::UTF8ToUTF16("Wyświetlono wpisów: " + std::to_string(history_entries_.size())));
   PreparePanelText(tools_widget_->GetRootView());
   history_list_->InvalidateLayout();
@@ -6533,7 +6593,7 @@ void WorkspaceShell::SetHistoryMoreVisible(bool visible){
   if(auto* group=views::AsViewClass<SceneActionGroup>(history_more_->parent()))group->SetVisible(visible);
 #endif
 }
-void WorkspaceShell::RefreshToolsViewport(){if(tools_body_)RefreshChoiceViewports(tools_body_);}
+void WorkspaceShell::RefreshToolsViewport(){ScheduleToolsChrome();if(tools_body_)RefreshChoiceViewports(tools_body_);}
 void WorkspaceShell::RefreshTimelineItems() {
   if (tools_page_ != 0 || !tools_picker_) return;
   const auto state = callbacks_.time_machine ? callbacks_.time_machine.Run() : TimeMachineState();
@@ -6573,9 +6633,22 @@ void WorkspaceShell::RefreshTools() {
   snapshot_name_ = nullptr; timeline_filter_ = nullptr; shortcut_chord_ = nullptr;
   provider_name_ = nullptr; provider_keyword_ = nullptr; provider_url_ = nullptr; tools_picker_ = nullptr; closed_picker_ = nullptr;
   tools_body_->RemoveAllChildViews();
-  tools_status_->SetText(u"Użyj przycisków poniżej pól lub Enter, aby zatwierdzić zmiany. Dane są zapisywane lokalnie.");
+  std::u16string context=tools_page_==0?state_.workspace_name:std::u16string();
+  if(tools_page_==3)for(const auto& profile:state_.profiles)if(profile.id==state_.profile_id)context=base::UTF8ToUTF16(profile.name);
+  std::u16string form_title,form_intro,form_tail,form_status;
+  std::vector<std::u16string> fields,pickers,headings,actions,form_choices;
+#if BUILDFLAG(IS_MAC)
+  if(workspace_form_){
+    auto data=sidebar::tools_copy(tools_page_,base::UTF16ToUTF8(context));
+    auto strings=[](const auto& input){std::vector<std::u16string> out;for(const auto& value:input)out.push_back(base::UTF8ToUTF16(std::string(value)));return out;};
+    form_title=base::UTF8ToUTF16(std::string(data.title));form_intro=base::UTF8ToUTF16(std::string(data.intro));form_tail=base::UTF8ToUTF16(std::string(data.tail));form_status=base::UTF8ToUTF16(std::string(data.initial_status));
+    fields=strings(data.fields);pickers=strings(data.pickers);headings=strings(data.headings);actions=strings(data.actions);form_choices=strings(data.choices);
+  }
+#endif
+  auto text=[&](std::vector<std::u16string>& data,size_t index,std::u16string_view native){return workspace_form_?std::move(data.at(index)):std::u16string(native);};
+  SetPanelText(tools_status_,workspace_form_?form_status:u"Użyj przycisków poniżej pól lub Enter, aby zatwierdzić zmiany. Dane są zapisywane lokalnie.");
   auto weak = weak_factory_.GetWeakPtr();
-  auto hint = [&](std::u16string text) { auto* label = Label(tools_body_, text, kMuted, Font(-1)); label->SetMultiLine(true); return label; };
+  auto hint = [&](std::u16string text) {return AddToolsCopy(tools_body_,std::move(text),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);};
   auto input = [&](std::u16string name) {
     auto* field = AddEditor(tools_body_,bool(workspace_form_));
     field->GetViewAccessibility().SetName(name);field->SetPlaceholderText(name);
@@ -6597,7 +6670,9 @@ void WorkspaceShell::RefreshTools() {
 #endif
     return tools_body_;
   };
-  auto button = [&](std::u16string title, int action) {
+  auto button = [&](std::u16string_view native, int action) {
+    const size_t index=tools_page_==0?action-1:tools_page_==1?action-10:action-20;
+    auto title=text(actions,index,native);
     return AddAction(action_parent(),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, int action) {
       if (shell) shell->PostToolsAction(action);
     }, weak, action),std::move(title));
@@ -6614,29 +6689,29 @@ void WorkspaceShell::RefreshTools() {
     control->SetTooltipTextAndAccessibleName(name); control->SetSelectedIndex(0); return control;
   };
   if (tools_page_ == 0) {
-    tools_title_->SetText(u"Time Machine · " + state_.workspace_name);
-    hint(u"Snapshot zapisuje karty, foldery i Split View w tej przestrzeni. Przywrócenie przeładuje strony; formularze i historia Wstecz nie są częścią snapshotu. Poprzedni układ otrzyma punkt przywracania.");
-    snapshot_name_ = input(u"Nazwa snapshotu, np. Research przed deployem");
+    SetPanelText(tools_title_,workspace_form_?form_title:u"Time Machine · " + state_.workspace_name);
+    hint(workspace_form_?form_intro:u"Snapshot zapisuje karty, foldery i Split View w tej przestrzeni. Przywrócenie przeładuje strony; formularze i historia Wstecz nie są częścią snapshotu. Poprzedni układ otrzyma punkt przywracania.");
+    snapshot_name_ = input(text(fields,0,u"Nazwa snapshotu, np. Research przed deployem"));
     button(u"Zapisz snapshot", 1);
-    timeline_filter_ = input(u"Szukaj snapshotów i zamkniętych kart");
-    Label(tools_body_, u"Snapshoty · 30 własnych + 30 automatycznych", kSubtle, Font(0, gfx::Font::Weight::SEMIBOLD));
-    tools_picker_ = picker(u"Zapisane snapshoty", {});
+    timeline_filter_ = input(text(fields,1,u"Szukaj snapshotów i zamkniętych kart"));
+    AddToolsCopy(tools_body_,text(headings,0,u"Snapshoty · 30 własnych + 30 automatycznych"),kSubtle,0,static_cast<int>(gfx::Font::Weight::SEMIBOLD),false);
+    tools_picker_ = picker(text(pickers,0,u"Zapisane snapshoty"), {});
     button(u"Przywróć wybrany układ", 2); button(u"Usuń wybrany snapshot", 3);
-    Label(tools_body_, u"Ostatnio zamknięte · do 100 kart", kSubtle, Font(0, gfx::Font::Weight::SEMIBOLD));
-    closed_picker_ = picker(u"Zamknięte karty", {});
+    AddToolsCopy(tools_body_,text(headings,1,u"Ostatnio zamknięte · do 100 kart"),kSubtle,0,static_cast<int>(gfx::Font::Weight::SEMIBOLD),false);
+    closed_picker_ = picker(text(pickers,1,u"Zamknięte karty"), {});
     button(u"Przywróć wybraną kartę", 4);
-    hint(u"Uśpienie zwalnia strony tej przestrzeni z pamięci i przełącza do innej. Kliknięcie jej kropki wznowi układ. Niezapisane formularze zostaną utracone.");
+    hint(workspace_form_?form_tail:u"Uśpienie zwalnia strony tej przestrzeni z pamięci i przełącza do innej. Kliknięcie jej kropki wznowi układ. Niezapisane formularze zostaną utracone.");
     button(u"Uśpij tę przestrzeń", 5);
     const auto timeline = callbacks_.time_machine ? callbacks_.time_machine.Run() : TimeMachineState();
     for (const auto& item : timeline.sleeping) hint(item.title + u" · " + item.detail);
     RefreshTimelineItems();
   } else if (tools_page_ == 1) {
-    tools_title_->SetText(u"Skróty klawiszowe");
-    hint(u"Schemat inspirowany Arc. Wybierz akcję, nagraj kombinację lub wpisz np. Cmd+Shift+J. Puste pole wyłącza skrót. Escape, skróty edycji tekstu i systemowe pozostają zarezerwowane.");
+    SetPanelText(tools_title_,workspace_form_?form_title:u"Skróty klawiszowe");
+    hint(workspace_form_?form_intro:u"Schemat inspirowany Arc. Wybierz akcję, nagraj kombinację lub wpisz np. Cmd+Shift+J. Puste pole wyłącza skrót. Escape, skróty edycji tekstu i systemowe pozostają zarezerwowane.");
     std::vector<std::u16string> choices;
     for (const auto& shortcut : tools_.shortcuts) choices.push_back(shortcut.title + u" — " + base::UTF8ToUTF16(FormatShortcut(shortcut.accelerator)));
-    tools_picker_ = picker(u"Akcja skrótu", choices);
-    shortcut_chord_ = input(u"Kombinacja, np. Cmd+Shift+J");
+    tools_picker_ = picker(text(pickers,0,u"Akcja skrótu"), choices);
+    shortcut_chord_ = input(text(fields,0,u"Kombinacja, np. Cmd+Shift+J"));
     shortcut_chord_->SetText(base::UTF8ToUTF16(FormatShortcut(tools_.shortcuts.front().accelerator)));
     SetPickerCallback(tools_picker_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
       if (!shell || !shell->shortcut_chord_) return;
@@ -6648,12 +6723,12 @@ void WorkspaceShell::RefreshTools() {
     button(u"Nagraj kombinację…", 10); button(u"Zapisz skrót", 11);
     button(u"Wyłącz wybrany skrót", 12); button(u"Przywróć schemat Arc", 13);
   } else if (tools_page_ == 2) {
-    tools_title_->SetText(u"Wyszukiwarki i prefiksy");
-    hint(u"W pasku adresu wpisz prefiks i zapytanie, np. g koty lub w Warszawa. Szablon musi być adresem HTTP(S) z jednym znacznikiem {query}. Zapytania są kodowane automatycznie.");
-    std::vector<std::u16string> choices{u"Dodaj nową wyszukiwarkę…"};
-    for (const auto& provider : tools_.providers) choices.push_back(base::UTF8ToUTF16(provider.keyword + " · " + provider.name + (provider.keyword == tools_.default_keyword ? " · domyślna" : "")));
-    tools_picker_ = picker(u"Wyszukiwarka do edycji", choices);
-    provider_name_ = input(u"Nazwa wyszukiwarki"); provider_keyword_ = input(u"Prefiks (a–z, 0–9)"); provider_url_ = input(u"Adres z {query}");
+    SetPanelText(tools_title_,workspace_form_?form_title:u"Wyszukiwarki i prefiksy");
+    hint(workspace_form_?form_intro:u"W pasku adresu wpisz prefiks i zapytanie, np. g koty lub w Warszawa. Szablon musi być adresem HTTP(S) z jednym znacznikiem {query}. Zapytania są kodowane automatycznie.");
+    std::vector<std::u16string> provider_choices{workspace_form_?std::move(form_choices.at(0)):u"Dodaj nową wyszukiwarkę…"};
+    for (const auto& provider : tools_.providers) provider_choices.push_back(base::UTF8ToUTF16(provider.keyword + " · " + provider.name + (provider.keyword == tools_.default_keyword ? " · domyślna" : "")));
+    tools_picker_ = picker(text(pickers,0,u"Wyszukiwarka do edycji"), provider_choices);
+    provider_name_ = input(text(fields,0,u"Nazwa wyszukiwarki")); provider_keyword_ = input(text(fields,1,u"Prefiks (a–z, 0–9)")); provider_url_ = input(text(fields,2,u"Adres z {query}"));
     SetPickerCallback(tools_picker_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
       if (!shell || !shell->provider_name_) return;
       const size_t i = PickerIndex(shell->tools_picker_).value_or(0);
@@ -6664,24 +6739,22 @@ void WorkspaceShell::RefreshTools() {
     button(u"Zapisz wyszukiwarkę", 20); button(u"Ustaw jako domyślną", 21); button(u"Usuń wyszukiwarkę", 22);
   }
   if (tools_page_ == 3) {
-    tools_title_->SetText(u"Historia przeglądania");
-    std::u16string profile_name;
-    for (const auto& profile : state_.profiles) if (profile.id == state_.profile_id) profile_name = base::UTF8ToUTF16(profile.name);
-    hint(u"Profil: " + profile_name);
-    history_search_ = input(u"Szukaj w historii");
+    SetPanelText(tools_title_,workspace_form_?form_title:u"Historia przeglądania");
+    hint(workspace_form_?form_intro:u"Profil: "+context);
+    history_search_ = input(text(fields,0,u"Szukaj w historii"));
     auto* clear_row = tools_body_->AddChildView(std::make_unique<views::View>());
     auto* clear_layout = clear_row->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 8));
-    history_period_=picker(u"Zakres czyszczenia historii",{u"Ostatnia godzina",u"Ostatnie 24 godziny",u"Ostatnie 7 dni",u"Cały okres"},clear_row);
+    history_period_=picker(text(pickers,0,u"Zakres czyszczenia historii"),workspace_form_?std::move(form_choices):std::vector<std::u16string>{u"Ostatnia godzina",u"Ostatnie 24 godziny",u"Ostatnie 7 dni",u"Cały okres"},clear_row);
     clear_layout->SetFlexForView(history_period_, 1);
     history_clear_ = PreferenceAction(clear_row,bool(workspace_form_),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
       if (shell && shell->history_period_ && shell->callbacks_.clear_browsing_data)
         shell->callbacks_.clear_browsing_data.Run({static_cast<int>(PickerIndex(shell->history_period_).value_or(0)), true, false, false});
-    }, weak), browsing_data_busy_?u"Czyszczenie…":u"Wyczyść historię…");
+    }, weak), ToolsClearLabel(bool(workspace_form_),browsing_data_busy_));
     history_list_ = tools_body_->AddChildView(std::make_unique<views::View>());
     history_list_->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 4));
-    history_more_ = PreferenceAction(tools_body_,bool(workspace_form_),base::BindRepeating(&WorkspaceShell::RefreshHistory, weak, true), u"Pokaż więcej",true);
+    history_more_ = PreferenceAction(tools_body_,bool(workspace_form_),base::BindRepeating(&WorkspaceShell::RefreshHistory, weak, true), text(actions,1,u"Pokaż więcej"),true);
     SetHistoryMoreVisible(false);
-    tools_status_->SetText(u"Odczytywanie historii…");
+    SetPanelText(tools_status_,workspace_form_?form_status:u"Odczytywanie historii…");
     history_clear_->SetEnabled(!browsing_data_busy_);
   }
   PreparePanelText(tools_widget_->GetRootView()); tools_body_->InvalidateLayout();
@@ -6721,7 +6794,7 @@ void WorkspaceShell::ToolsAction(int action) {
     if (ok) return;
   } else if (action == 10 && shortcut_chord_) {
     SetShortcutRecording(true); RefreshKeyRegistrations(); shortcut_chord_->RequestFocus();
-    tools_status_->SetText(u"Naciśnij kombinację. Escape anuluje nagrywanie."); return;
+    SetPanelText(tools_status_,u"Naciśnij kombinację. Escape anuluje nagrywanie."); return;
   } else if ((action == 11 || action == 12) && index < tools_.shortcuts.size() && shortcut_chord_) {
     ok = SetShortcut(tools_.shortcuts[index].id, action == 12 ? "" : base::UTF16ToUTF8(shortcut_chord_->GetText()));
   } else if (action == 13) {
@@ -6732,12 +6805,12 @@ void WorkspaceShell::ToolsAction(int action) {
     if (action == 21) ok = SetDefaultSearchProvider(previous);
     if (action == 22) ok = RemoveSearchProvider(previous);
   }
-  if (ok) { RefreshTools(); tools_status_->SetText(callbacks_.operation_pending && callbacks_.operation_pending.Run() ? u"Oczekiwanie na zgodę na opuszczenie strony…" : u"Gotowe. Zmiany zostały zastosowane."); }
-  else tools_status_->SetText(tools_page_ == 1 ? u"Nieprawidłowa lub zajęta kombinacja. Zmień ją albo wyłącz skrót drugiej akcji." : tools_page_ == 2 ? u"Sprawdź unikalny prefiks, nazwę i adres z {query}. Musi pozostać co najmniej jedna wyszukiwarka." : u"Nie można wykonać operacji. Podaj nazwę, wybierz pozycję zgodną z profilem lub zostaw drugą przestrzeń do przełączenia.");
+  if (ok) { RefreshTools(); SetPanelText(tools_status_,callbacks_.operation_pending && callbacks_.operation_pending.Run() ? u"Oczekiwanie na zgodę na opuszczenie strony…" : u"Gotowe. Zmiany zostały zastosowane."); }
+  else SetPanelText(tools_status_,tools_page_ == 1 ? u"Nieprawidłowa lub zajęta kombinacja. Zmień ją albo wyłącz skrót drugiej akcji." : tools_page_ == 2 ? u"Sprawdź unikalny prefiks, nazwę i adres z {query}. Musi pozostać co najmniej jedna wyszukiwarka." : u"Nie można wykonać operacji. Podaj nazwę, wybierz pozycję zgodną z profilem lub zostaw drugą przestrzeń do przełączenia.");
 }
 
 void WorkspaceShell::SetOperationStatus(std::u16string text) {
-  if (tools_widget_ && tools_widget_->IsVisible()) { RefreshTools(); tools_status_->SetText(text); }
+  if (tools_widget_ && tools_widget_->IsVisible()) { RefreshTools(); SetPanelText(tools_status_,text); }
   if (profiles_widget_ && profiles_widget_->IsVisible()) SetProfileStatus(text);
 }
 void WorkspaceShell::OpenAddress(bool new_tab) {
@@ -7464,7 +7537,7 @@ void WorkspaceShell::ToolsEditorEdited(EditorControl* sender) {
     history_query_=base::TrimWhitespace(sender->GetText(),base::TRIM_ALL);
     history_loaded_=false;history_entries_.clear();
     if(history_list_)history_list_->RemoveAllChildViews();
-    tools_status_->SetText(u"Wyszukiwanie historii…");
+    SetPanelText(tools_status_,u"Wyszukiwanie historii…");
     if(history_more_)history_more_->SetEnabled(false);
     history_timer_.Start(FROM_HERE,base::Milliseconds(150),base::BindOnce(&WorkspaceShell::RefreshHistory,weak_factory_.GetWeakPtr(),false));
   }else if(sender==timeline_filter_){
