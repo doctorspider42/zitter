@@ -5,30 +5,42 @@ inventory is [the parity checklist](rust-metal-parity.md).
 
 ## Current checkpoint
 
-UI source `d0f90cf9fe34392f6b79215e11221f03c207dc79`, 2026-10-24, passed the full compiled
-regression inventory with one launcher job, no automatic retries and temporary profiles.
-The first Views matrix had one timeout during native teardown; the unchanged test
-then passed alone and in a complete Views rerun. The failed run is retained in
-the report; its root cause is not fully established. Final results:
+UI source `11be7fa679243f245e656fc9a1070af814c24389`, 2026-10-25, passed the full compiled
+regression inventory with one launcher job, no automatic retries and temporary
+profiles:
 
 | Backend | Regular matrix passed | Regular skips | Failed / crashed |
 | --- | ---: | ---: | ---: |
-| Rust + Metal | 149 | 6 | 0 |
-| Views | 112 | 6 | 0 |
+| Rust + Metal | 150 | 6 | 0 |
+| Views | 113 | 6 | 0 |
 
-The inventory contains 155 cases; Views excludes 37 dedicated Metal cases
-(118 applicable cases). Four optional default-30-trial scenarios then passed on
-each backend. **Combined execution is 153 Metal / 116 Views passes**, with real-user
-Arc import and the interactive manual window excluded per backend. Metal API
-validation remained enabled. These execution results establish no controlled
-CPU/GPU/drawable-presentation speedup.
+The inventory contains 156 cases; Views excludes 37 dedicated Metal cases
+(119 applicable cases). Four optional default-30-trial scenarios passed on each
+backend: **154 Metal / 117 Views passes combined**. Real-user Arc import and the
+interactive manual window remain excluded per backend. Metal API validation
+remained enabled; these results establish no controlled CPU/GPU/presentation gain.
 
-The preference chrome/form/control gate passed **16 Metal / 11 Views**. Checks
-passed **225 Rust tests**, **180 SDK font/direction cases plus raster**, **66
-clean-archive Python tests**, scoped GN/boundaries and optimized compilation.
-The live checkout passed 68 Python tests, including two concurrent cases outside
-this UI commit. Final Ninja reported no work to do.
-[Source/binary identities, commands and results](benchmarks/rust-preference-chrome-checkpoint-2026-10-24.json).
+The preference gate passed **17 Metal / 12 Views**. Checks passed **228 Rust
+tests**, **180 SDK font/direction cases plus raster**, **66 clean-archive Python
+tests**, scoped GN/boundaries and optimized compilation. The live checkout passed
+68 Python tests, including two concurrent cases outside this UI commit. Final
+Ninja reported no work to do.
+[Source/binary identities, commands and results](benchmarks/rust-preference-drafts-checkpoint-2026-10-25.json).
+
+Rust PreferencesForm now owns opaque-profile draft binding, dirty keys, text
+refresh/save admission and the site-rule page limit. The shared Rust editor
+already owns actual text. Failed saves retain drafts; successful saves release
+only that key. Clean values may follow external updates; dirty or composing
+fields survive ordinary refresh. Changed profiles or managed values replace
+stale edits as before; missing values disable controls without dropping drafts.
+Native stores, authorization and value validation remain authoritative.
+Committed search edits and profile changes reset pagination to 50; More adds 50
+with saturation.
+Detach clears dirty/profile binding while preserving category selection.
+The new backend-shared test covers two drafts, failure, normalization, external
+updates, active IME and switching profiles. Its first Metal probe tried editing
+invisible fields; the corrected scenario reveals fields through search before
+editing. Original failures and final results are retained in the report.
 
 Preference branding/header/section/row/status copy and row/navigation backing now
 use Rust recipes and one additional transparent Metal underlay. Rust subtracts
@@ -47,13 +59,13 @@ remain covered. Normal installed apps/profiles were untouched; no bundle signed.
 
 ## Immediate preference work still remaining
 
-Text/backing, category/dismiss controls and category/filter decisions now use the
-Rust scene/controller path. Migrate UI descriptions/data and remaining draft/
-admission/busy/form state. Preserve normalization, IME, managed-setting admission,
-profile-bound confirmation and deferred rule mutation semantics. Tools-provider/
-shortcut pickers and browser/service panels remain separate surfaces.
-Native ScrollView, BoxLayout, View groups, event/focus/AX adapters and outer
-placement still require an explicit ownership decision and verification.
+Text/backing, category/dismiss controls, filtering, text-draft refresh/admission
+and pagination now use Rust scene/controller state. Migrate UI descriptions/data
+and remaining busy/status/form coordination. Preserve normalization, IME,
+managed-setting admission, profile-bound confirmation and deferred rule mutation.
+Tools-provider/shortcut pickers and browser/service panels remain separate
+surfaces. Native ScrollView, BoxLayout, View groups, event/focus/AX adapters and
+outer placement still require an explicit ownership decision and verification.
 
 ## Next implementation steps
 
@@ -68,8 +80,9 @@ placement still require an explicit ownership decision and verification.
    Verify stale context, defaults, cancellation, validation and persistence.
 3. **Preferences.** Editors, eleven selectors, 24 switches, three clear-data
    checkboxes, fixed/dynamic actions, category/dismiss controls and category/filter
-   state, preference text and backing now use Rust/Metal. Migrate UI data and draft/
-   admission/busy/form state, together with tools-provider/shortcut pickers.
+   state, text/backing, text-draft refresh/admission and pagination use Rust/Metal.
+   Migrate UI descriptions/data and remaining busy/status/form coordination,
+   together with tools-provider/shortcut pickers.
    Preserve native stores, managed-setting checks, profile/global scope,
    site-policy validation and data-clearing confirmation authorization.
 4. **Browser service panels.** Migrate history/search/pagination, downloads,

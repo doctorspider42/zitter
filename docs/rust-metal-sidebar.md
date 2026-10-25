@@ -1354,3 +1354,30 @@ Checks passed 225 Rust tests, 180 SDK cases plus raster,
 performance gain or complete UI parity is claimed. Form/data state, other
 surfaces/native containers, manual acceptance, profiling and release remain.
 [Evidence](benchmarks/rust-preference-chrome-checkpoint-2026-10-24.json).
+
+
+## Preference draft and pagination controller checkpoint
+
+Rust PreferencesForm now owns dirty-key and opaque-profile binding, text-refresh
+replacement decisions, text-save UI admission and site-rule pagination. Actual
+UTF-16 drafts live in the shared Rust editor. Failed saves retain dirty state;
+successful saves release only that key. Ordinary refresh preserves unsaved and
+composing text; managed values and profile changes override it as in Views.
+Missing values disable fields without deleting drafts. Profile changes clear
+dirty keys and reset paging; same-profile refresh preserves both. Committed search edits reset
+the limit to 50; More advances by 50 with saturation. Detach clears profile/draft
+binding, retaining category selection; native reattachment acceptance is open.
+Native stores, authorization, validation and deferred domain mutations remain
+adapters. This adds no dependency or license obligation.
+
+The preference gate passed 17 Metal / 12 Views. A new shared runtime case covers
+independent drafts, failed saves, normalized success, external pref changes,
+active IME and profile changes. An initial Metal probe edited invisible fields;
+the corrected test reveals fields through search first, preserving all draft/
+save/profile assertions. The failed probe remains recorded. Full regular
+execution passed 150/113 plus four optional cases each (154/117 combined).
+Checks passed 228 Rust tests, 180 SDK cases plus raster, 66 clean-archive Python,
+GN/boundaries and final Ninja no-op. UI descriptions/data, remaining busy/status/
+form coordination, other panels/native containers, manual acceptance, real
+profiling and release/license checks remain open.
+[Evidence](benchmarks/rust-preference-drafts-checkpoint-2026-10-25.json).
