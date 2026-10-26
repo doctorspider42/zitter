@@ -146,4 +146,18 @@ void InstallWorkspaceKeyboardRouting(views::Widget* widget, bool panel) {
   bridge->SetCommandDispatcher([[ZitterCommandDispatcherDelegate alloc] initWithWindow:widget->GetNativeWindow().GetNativeNSWindow() panel:panel widget:widget], nil);
 
 }
+// Native context menus intentionally block Chromium application tasks. Schedule
+// inspection in Cocoa tracking/default modes, then dismiss the actual menu.
+bool RunWithNativeMenuInspectionForTesting(base::OnceClosure open,base::RepeatingClosure inspect) {
+  __block bool observed=false,completed=false,in_scope=true;
+  id observer=[NSNotificationCenter.defaultCenter addObserverForName:NSMenuDidBeginTrackingNotification object:nil queue:nil usingBlock:^(NSNotification* notification){
+    if(observed)return;observed=true;NSMenu* menu=notification.object;
+    [NSRunLoop.currentRunLoop performInModes:@[NSEventTrackingRunLoopMode,NSDefaultRunLoopMode] block:^{if(!in_scope)return;inspect.Run();completed=true;[menu cancelTracking];}];
+  }];
+  std::move(open).Run();
+  in_scope=false;
+  [NSNotificationCenter.defaultCenter removeObserver:observer];
+  return observed&&completed;
+}
+
 }

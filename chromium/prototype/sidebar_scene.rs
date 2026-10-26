@@ -414,10 +414,11 @@ mod ffi {
         fn forget_workspace(self: &mut SidebarTree, workspace: &str);
         type ActionControl;
         fn new_action_control() -> Box<ActionControl>;
+        fn action_preferred_size(dot: bool, label: bool) -> Rect;
         fn action_enabled(self: &mut ActionControl, enabled: bool) -> bool;
         fn action_focus(self: &mut ActionControl, focused: bool);
         fn action_on(self: &mut ActionControl, on: bool) -> bool;
-        fn action_cancel(self: &mut ActionControl);
+        fn action_cancel(self: &mut ActionControl) -> bool;
         fn action_snapshot(self: &ActionControl) -> ActionSnapshot;
         fn action_pointer(self: &mut ActionControl, phase: PointerPhase, x: i32, y: i32, inside: bool, trigger: bool, visible: bool) -> RowInputResult;
         fn action_key(self: &mut ActionControl, pressed: bool, key: u32, mac: bool, visible: bool) -> RowInputResult;
@@ -1685,8 +1686,9 @@ impl RowPointer {
 // An action's state outlives individual native events; no Button state is read.
 struct ActionControl { pointer:RowPointer, enabled:bool, focused:bool, on:bool, visual:ffi::RowVisual }
 fn new_action_control()->Box<ActionControl>{Box::new(ActionControl{pointer:RowPointer::default(),enabled:true,focused:false,on:false,visual:ffi::RowVisual::Normal})}
+fn action_preferred_size(dot:bool,label:bool)->ffi::Rect{ffi::Rect{x:0,y:0,width:if dot{if label{30}else{24}}else{32},height:if dot{28}else{32}}}
 impl ActionControl {
-    fn action_cancel(&mut self){self.pointer.cancel();self.visual=if self.enabled{ffi::RowVisual::Normal}else{ffi::RowVisual::Disabled};}
+    fn action_cancel(&mut self)->bool{let visual=if self.enabled{ffi::RowVisual::Normal}else{ffi::RowVisual::Disabled};let changed=self.pointer.origin.is_some()||self.pointer.hovered||self.pointer.key_armed||self.visual!=visual;self.pointer.cancel();self.visual=visual;changed}
     fn action_enabled(&mut self,enabled:bool)->bool{if self.enabled==enabled{return false;}self.enabled=enabled;self.action_cancel();true}
     fn action_focus(&mut self,focused:bool){self.focused=focused;if !focused{self.action_cancel();}}
     fn action_on(&mut self,on:bool)->bool{let changed=self.on!=on;self.on=on;changed}
@@ -2906,6 +2908,12 @@ mod tests {
     }
     #[test] fn appearance_emoji_scene_uses_centered_text_and_selection_wash() {
         let mut emoji=row(30.0);emoji.kind=7;emoji.glyph=1;emoji.monogram="🚀".into();emoji.fill=0x1f1b1a22;let ops=layout(&[emoji]);assert_eq!(ops.len(),2);assert_eq!(ops[0].radius,7.0);assert_eq!(ops[1].text,"🚀");assert!(ops[1].center);
+    }
+    #[test] fn action_geometry_preserves_workspace_emoji_and_chrome_metrics() {
+        for (dot,label,w,h) in [(false,false,32,32),(false,true,32,32),(true,false,24,28),(true,true,30,28)]{let r=action_preferred_size(dot,label);assert_eq!((r.width,r.height),(w,h));}
+    }
+    #[test] fn action_cancel_is_idle_safe_and_retires_capture_before_viewport_return() {
+        use ffi::{PointerPhase as P,RowAction as A};let mut c=new_action_control();assert!(!c.action_cancel());c.action_pointer(P::Press,1,1,true,true,true);assert!(c.action_cancel());assert!(!c.action_cancel());assert!(!matches!(c.action_pointer(P::Release,1,1,true,true,true).action,A::Activate));c.action_cancel();c.action_key(true,1,false,true);assert!(c.action_cancel());assert!(!matches!(c.action_key(false,1,false,true).action,A::Activate));c.action_enabled(false);assert!(!c.action_cancel());
     }
     #[test] fn action_control_pointer_disabled_hidden_and_cancel_never_dispatch_stale_presses() {
         use ffi::{PointerPhase as P,RowAction as A,RowVisual as V};let mut c=new_action_control();c.action_pointer(P::Press,2,2,true,true,true);assert!(matches!(c.action_snapshot().visual,V::Pressed));assert!(matches!(c.action_pointer(P::Release,2,2,true,true,true).action,A::Activate));

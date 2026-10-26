@@ -32,6 +32,7 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/spare_render_process_host_manager.h"
 #include "chromium/prototype/workspace_shell.h"
+#include "chromium/prototype/workspace_keyboard_mac.h"
 #include "chromium/prototype/browser_preferences.h"
 #include "components/prefs/testing_pref_service.h"
 #include "components/prefs/pref_registry_simple.h"
@@ -153,6 +154,7 @@
 #include "ui/views/test/views_drawing_test_utils.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/views/controls/resize_area.h"
+#include "ui/views/view_tracker.h"
 #include "ui/base/cursor/cursor.h"
 #include "ui/base/ime/composition_text.h"
 #include "ui/views/controls/button/md_text_button.h"
@@ -1214,6 +1216,28 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ServiceViewportModalBodyOwners
   viewport->ScrollTo(viewport->maximum());EXPECT_GT(viewport->offset(),0);viewport->contents()->ScrollRectToVisible(gfx::Rect(0,0,1,1));EXPECT_EQ(0,viewport->offset());
   for(auto mode:{ui::ColorProviderKey::ColorMode::kDark,ui::ColorProviderKey::ColorMode::kLight}){widget->SetColorModeOverride(mode);widget->LayoutRootViewIfNecessary();viewport->ScrollTo(viewport->maximum());EXPECT_LE(viewport->offset(),viewport->maximum());}
   widget->CloseNow();widget.reset();delegate.reset();
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FooterActionHostsOwnershipEmojiMenuKeysAXAndClip) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->SetPinned(true);shell->ShowSidebar();const bool rust=shell->workspace_input()->rust_editor();
+  for(auto* view:{shell->footer_action_for_testing(0),shell->footer_action_for_testing(1),shell->workspace_button("work"),shell->workspace_button("personal")}){ASSERT_TRUE(view);EXPECT_EQ(!rust,views::AsViewClass<views::Button>(view)!=nullptr);ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kButton,ax.role);EXPECT_FALSE(ax.GetString16Attribute(ax::mojom::StringAttribute::kName).empty());}
+  EXPECT_EQ(gfx::Size(24,28),shell->workspace_button("personal")->GetPreferredSize());views::ViewTracker old(shell->workspace_button("personal"));shell->SetWorkspaceEmoji("personal",u"🚀");EXPECT_FALSE(old.view());auto* personal=shell->workspace_button("personal");ASSERT_TRUE(personal);EXPECT_EQ(gfx::Size(30,28),personal->GetPreferredSize());shell->sidebar_widget()->LayoutRootViewIfNecessary();
+#if BUILDFLAG(IS_MAC)
+  bool inspected=false;const auto inspect=base::BindRepeating([](WorkspaceShell* shell,bool* inspected){EXPECT_TRUE(shell->workspace_context_menu_running_for_testing());auto* menu=shell->workspace_menu();EXPECT_TRUE(menu);if(menu){auto* profiles=menu->GetSubmenuModelAt(0);EXPECT_TRUE(profiles);if(profiles){EXPECT_FALSE(profiles->IsItemCheckedAt(0));EXPECT_TRUE(profiles->IsItemCheckedAt(1));}}*inspected=true;},base::Unretained(shell),&inspected);
+  EXPECT_TRUE(RunWithNativeMenuInspectionForTesting(base::BindOnce([](views::View* view){ui::AXActionData context;context.action=ax::mojom::Action::kShowContextMenu;EXPECT_TRUE(view->HandleAccessibleAction(context));},base::Unretained(personal)),inspect));EXPECT_TRUE(inspected);EXPECT_FALSE(shell->workspace_context_menu_running_for_testing());EXPECT_EQ("work",window_->active_id());
+#endif
+
+  auto* pin=shell->footer_action_for_testing(0);ui::AXActionData activate;activate.action=ax::mojom::Action::kDoDefault;pin->SetEnabled(false);pin->HandleAccessibleAction(activate);EXPECT_TRUE(shell->pinned());pin->SetEnabled(true);EXPECT_TRUE(pin->HandleAccessibleAction(activate));EXPECT_FALSE(shell->pinned());shell->SetPinned(true);shell->ShowSidebar();
+  ui::KeyEvent space(ui::EventType::kKeyPressed,ui::VKEY_SPACE,0);EXPECT_TRUE(shell->workspace_button("personal")->OnKeyPressed(space));EXPECT_EQ("personal",window_->active_id());shell->ShowSidebar();EXPECT_TRUE(shell->workspace_button("work")->HandleAccessibleAction(activate));EXPECT_EQ("work",window_->active_id());
+  std::vector<std::string> added;for(int i=0;i<10;++i){ASSERT_TRUE(window_->AddWorkspace("Action "+std::to_string(i),"work-profile"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));added.push_back(window_->workspaces().back().id);}ASSERT_TRUE(window_->Select("work"));shell->ShowSidebar();shell->sidebar_widget()->LayoutRootViewIfNecessary();auto* viewport=shell->workspace_viewport();ASSERT_TRUE(viewport);
+  if(rust){ASSERT_GT(viewport->maximum(),0);viewport->ScrollTo(0);personal=shell->workspace_button("personal");ASSERT_TRUE(personal);const auto point=personal->GetLocalBounds().CenterPoint();ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ASSERT_TRUE(personal->OnMousePressed(press));viewport->ScrollTo(viewport->maximum());EXPECT_TRUE(personal->GetVisibleBounds().IsEmpty());viewport->ScrollTo(0);personal->OnMouseReleased(release);EXPECT_EQ("work",window_->active_id());
+    const auto target=added.back();auto* last=shell->workspace_button(target);ASSERT_TRUE(last);EXPECT_TRUE(last->GetVisibleBounds().IsEmpty());EXPECT_TRUE(last->HandleAccessibleAction(activate));EXPECT_EQ(target,window_->active_id());ASSERT_TRUE(base::test::RunUntil([&]{shell->sidebar_widget()->LayoutRootViewIfNecessary();auto* current=shell->workspace_button(target);return current&&!current->GetVisibleBounds().IsEmpty();}));EXPECT_GT(viewport->offset(),0);
+    base::RunLoop().RunUntilIdle();const auto frames=shell->metal_sidebar_frame_count();base::RunLoop().RunUntilIdle();EXPECT_EQ(frames,shell->metal_sidebar_frame_count());
+  }
+}
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FooterActionCallbackCanDeleteItsOwnHost) {
+  auto delegate=std::make_unique<views::WidgetDelegate>();auto* host=delegate->SetContentsView(std::make_unique<views::View>());views::View* action=nullptr;int calls=0;action=host->AddChildView(window_->shell()->CreateWorkspaceActionForTesting(base::BindRepeating([](views::View* host,views::View** action,int* calls){++*calls;host->RemoveChildViewT(*action);},base::Unretained(host),&action,&calls)));action->SetBounds(0,0,30,28);views::ViewTracker tracked(action);
+  views::Widget::InitParams params(views::Widget::InitParams::CLIENT_OWNS_WIDGET,views::Widget::InitParams::TYPE_BUBBLE);params.delegate=delegate.get();params.SetParent(window_->widget());auto widget=std::make_unique<views::Widget>();widget->Init(std::move(params));widget->SetBounds(gfx::Rect(40,40,200,120));widget->Show();ui::MouseEvent press(ui::EventType::kMousePressed,gfx::Point(10,10),gfx::Point(10,10),base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent release(ui::EventType::kMouseReleased,gfx::Point(10,10),gfx::Point(10,10),base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ASSERT_TRUE(action->OnMousePressed(press));action->OnMouseReleased(release);EXPECT_EQ(1,calls);EXPECT_FALSE(tracked.view());widget->CloseNow();
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, HeaderActionHostOwnershipKeyboardAXGestureAndCancel) {
@@ -3779,7 +3803,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DynamicWorkspacesAndProfiles) 
   ASSERT_TRUE(content::NavigateToURL(window_->contents(project), url));
   EXPECT_EQ("personal|personal|personal|", content::EvalJs(window_->contents(project), "readMarker()"));
   window_->shell()->SetWorkspaceColor(project, 0xFF123456);
-  views::test::ButtonTestApi(shell->workspace_button("work")).NotifyDefaultMouseClick();
+  {ui::AXActionData activate;activate.action=ax::mojom::Action::kDoDefault;EXPECT_TRUE(shell->workspace_button("work")->HandleAccessibleAction(activate));}
   EXPECT_EQ("work", window_->active_id());
   shell->OpenWorkspaceSettings();
   auto* remove = FindButton(shell->settings_widget()->GetContentsView(), u"Usuń przestrzeń…");
@@ -4388,7 +4412,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceDotProfileMenu) {
   EXPECT_EQ(created.id, window_->workspaces()[1].profile_id);
   EXPECT_EQ("work", window_->active_id());
   EXPECT_NE(work_.get(), window_->contents("personal")->GetBrowserContext());
-  views::test::ButtonTestApi(shell->workspace_button("personal")).NotifyDefaultMouseClick();
+  {ui::AXActionData activate;activate.action=ax::mojom::Action::kDoDefault;EXPECT_TRUE(shell->workspace_button("personal")->HandleAccessibleAction(activate));}
   EXPECT_EQ("personal", window_->active_id());
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
   window_.reset();
@@ -5860,7 +5884,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NewTabActionUsesSceneTextA
   const auto scrollbar_bounds = shell->tab_viewport()->vertical_scroll_bar()->GetBoundsInScreen();
   EXPECT_EQ(std::max(viewport.right(), scrollbar_bounds.right()), canvas.right());
   EXPECT_TRUE(canvas.Contains(scrollbar_bounds));
-  EXPECT_EQ(SidebarNamedButton(shell->sidebar_view(),u"Ustawienia przestrzeni")->parent()->GetBoundsInScreen().bottom(),canvas.bottom());
+  EXPECT_EQ(shell->footer_action_for_testing(1)->parent()->GetBoundsInScreen().bottom(),canvas.bottom());
   auto paint_action = [&] {
     // The helper paints a root at (0,0); a sidebar child's parent-relative
     // origin would clip its entire recording outside the small test bitmap.
@@ -6094,8 +6118,8 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, FooterSpacesScrollSelectPi
   const auto last=window_->workspaces().back().id;
   shell->SetWorkspaceEmoji("work",u"🦀");shell->SetWorkspaceEmoji(last,u"🚀");
   ASSERT_TRUE(window_->Select("work"));shell->CloseOverlays(true);shell->SetPinned(true);shell->ShowSidebar();
-  auto* settings=SidebarNamedButton(shell->sidebar_view(),u"Ustawienia przestrzeni");ASSERT_TRUE(settings);
-  auto* footer=settings->parent();auto* pin=static_cast<views::Button*>(footer->children()[0].get());
+  auto* settings=shell->footer_action_for_testing(1);ASSERT_TRUE(settings);
+  auto* footer=settings->parent();auto* pin=shell->footer_action_for_testing(0);
   auto* scroll=shell->workspace_viewport();ASSERT_TRUE(scroll);EXPECT_EQ(footer->children()[2].get(),scroll->view());auto* bar=scroll->horizontal_scroll_bar();
   ASSERT_TRUE(base::test::RunUntil([&] {return shell->metal_sidebar_visible() && bar->IsDrawn();}));
   EXPECT_EQ(47,footer->height());EXPECT_GE(scroll->contents()->parent()->height(),28);

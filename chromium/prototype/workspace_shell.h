@@ -330,6 +330,8 @@ class WorkspaceShell final : public ui::EventHandler,
   bool metal_sidebar_visible() const;
   bool metal_sidebar_grip_visible() const;
   views::View* header_action_for_testing(size_t index) const;
+  views::View* footer_action_for_testing(size_t index) const{return index==0?pin_button_.get():index==1?workspace_settings_button_.get():nullptr;}
+  std::unique_ptr<views::View> CreateWorkspaceActionForTesting(base::RepeatingClosure callback) const;
   views::View* sidebar_grip_for_testing() const;
   views::View* split_divider_for_testing() const;
   bool metal_split_visible(size_t index) const;
@@ -409,7 +411,7 @@ class WorkspaceShell final : public ui::EventHandler,
   views::Button* tab_button(size_t index) const;
   views::Widget* sidebar_widget() const { return sidebar_widget_.get(); }
   EditorControl* workspace_input() const { return workspace_input_; }
-  views::Button* workspace_button(std::string_view id) const;
+  views::View* workspace_button(std::string_view id) const;
   size_t pinned_list_build_count() const { return pinned_list_build_count_; }
   size_t sidebar_context_visit_count() const { return sidebar_context_visit_count_; }
   size_t pin_visibility_update_count() const { return pin_visibility_update_count_; }
@@ -441,6 +443,7 @@ class WorkspaceShell final : public ui::EventHandler,
   views::View* sidebar_view() const { return sidebar_root_; }
   views::View* tab_list_view() const { return tab_list_; }
   ui::SimpleMenuModel* workspace_menu() const { return workspace_menu_.get(); }
+  bool workspace_context_menu_running_for_testing() const;
   views::View* profile_picker() const { return profile_picker_; }
   EditorControl* color_input() const { return color_input_; }
   EditorControl* address_input() const { return address_; }
@@ -727,13 +730,13 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::Button> url_pill_ = nullptr;
   raw_ptr<views::View> workspace_name_ = nullptr;
   raw_ptr<views::View> profile_name_ = nullptr;
-  raw_ptr<views::Button> pin_button_ = nullptr;
+  raw_ptr<views::View> pin_button_ = nullptr;
   std::array<raw_ptr<views::View>, 3> nav_buttons_ = {};
   raw_ptr<views::View> sidebar_footer_=nullptr;
   raw_ptr<PanelViewport> workspace_scroll_=nullptr;
-  raw_ptr<views::Button> workspace_settings_button_=nullptr;
+  raw_ptr<views::View> workspace_settings_button_=nullptr;
   raw_ptr<views::View> workspace_dots_ = nullptr;
-  std::map<std::string, raw_ptr<views::Button>> workspace_buttons_;
+  std::map<std::string, raw_ptr<views::View>> workspace_buttons_;
   std::string context_workspace_id_;
   std::string new_profile_workspace_id_;
   std::vector<ProfileInfo> menu_profiles_;

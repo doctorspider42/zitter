@@ -654,8 +654,11 @@ class RustActionView final : public views::View {
     SetTooltipText(name);auto& ax=GetViewAccessibility();ax.SetName(name);ax.SetRole(ax::mojom::Role::kButton);ax.SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kPress);SetFocusBehavior(views::PlatformStyle::kDefaultFocusBehavior);views::FocusRing::Install(this);
   }
   void SetOn(bool on){if(state_->action_on(on))SchedulePaint();}
-  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(32,32);}
-  sidebar::Item SceneItem(gfx::RectF rect,gfx::RectF clip){SyncEnabled();const auto s=state_->action_snapshot();return GlyphSceneData(this,glyph_,icon_,s.on,u"",kSubtle,s.enabled&&(s.visual==sidebar::RowVisual::Hovered||s.visual==sidebar::RowVisual::Pressed),s.focused,rect,clip);}
+  void SetLabel(std::u16string label){if(label_==label)return;label_=std::move(label);PreferredSizeChanged();SchedulePaint();}
+  void SyncViewportVisibility(){if(!Interactive())Cancel();}
+  bool HandleAccessibleAction(const ui::AXActionData& action) override{if(action.action==ax::mojom::Action::kDoDefault&&SceneIsVisible(this)&&GetEnabledInViewsSubtree())ScrollViewToVisible();return views::View::HandleAccessibleAction(action);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{const auto r=sidebar::action_preferred_size(glyph_==ControlGlyph::kDot,!label_.empty());return gfx::Size(r.width,r.height);}
+  sidebar::Item SceneItem(gfx::RectF rect,gfx::RectF clip){SyncEnabled();const auto s=state_->action_snapshot();return GlyphSceneData(this,glyph_,icon_,s.on,label_,kSubtle,s.enabled&&(s.visual==sidebar::RowVisual::Hovered||s.visual==sidebar::RowVisual::Pressed),s.focused,rect,clip);}
   void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);if(changed_)changed_.Run();}
   bool OnMousePressed(const ui::MouseEvent& event) override{return Pointer(sidebar::PointerPhase::Press,event);}
   bool OnMouseDragged(const ui::MouseEvent& event) override{return Pointer(sidebar::PointerPhase::Drag,event);}
@@ -665,7 +668,7 @@ class RustActionView final : public views::View {
   void OnMouseMoved(const ui::MouseEvent& event) override{Pointer(sidebar::PointerPhase::Move,event);}
   bool OnKeyPressed(const ui::KeyEvent& event) override{return Key(true,event);}
   bool OnKeyReleased(const ui::KeyEvent& event) override{return Key(false,event);}
-  void OnGestureEvent(ui::GestureEvent* event) override{SyncEnabled();const uint32_t kind=event->type()==ui::EventType::kGestureTapDown?0:event->type()==ui::EventType::kGestureTap?1:event->type()==ui::EventType::kGestureTapCancel||event->type()==ui::EventType::kGestureEnd?2:99;const auto r=state_->action_gesture(kind,SceneIsVisible(this)&&(kind==2||HitTestPoint(event->location())));if(r.handled)event->SetHandled();Apply(r,*event);}
+  void OnGestureEvent(ui::GestureEvent* event) override{SyncEnabled();const uint32_t kind=event->type()==ui::EventType::kGestureTapDown?0:event->type()==ui::EventType::kGestureTap?1:event->type()==ui::EventType::kGestureTapCancel||event->type()==ui::EventType::kGestureEnd?2:99;const auto r=state_->action_gesture(kind,Interactive()&&(kind==2||(HitTestPoint(event->location())&&GetVisibleBounds().Contains(event->location()))));if(r.handled)event->SetHandled();Apply(r,*event);}
   void OnFocus() override{views::View::OnFocus();state_->action_focus(true);SchedulePaint();}
   void OnBlur() override{state_->action_focus(false);views::View::OnBlur();SchedulePaint();}
   void OnMouseCaptureLost() override{Cancel();}
@@ -674,25 +677,42 @@ class RustActionView final : public views::View {
   void AddedToWidget() override{views::View::AddedToWidget();window_.Observe(GetWidget());}
   void RemovedFromWidget() override{window_.Observe(nullptr);Cancel();views::View::RemovedFromWidget();}
   void PaintChildren(const views::PaintInfo& info) override{if(!visible_||!visible_.Run())views::View::PaintChildren(info);}
-  void OnPaint(gfx::Canvas* canvas) override{if(visible_&&visible_.Run())return;SyncEnabled();const auto v=state_->action_snapshot();const auto paint=v.visual==sidebar::RowVisual::Disabled?views::Button::STATE_DISABLED:v.visual==sidebar::RowVisual::Pressed?views::Button::STATE_PRESSED:v.visual==sidebar::RowVisual::Hovered?views::Button::STATE_HOVERED:views::Button::STATE_NORMAL;PaintGlyphControl(this,glyph_,icon_,kSubtle,v.on,u"",paint,canvas);}
+  void OnPaint(gfx::Canvas* canvas) override{if(visible_&&visible_.Run())return;SyncEnabled();const auto v=state_->action_snapshot();const auto paint=v.visual==sidebar::RowVisual::Disabled?views::Button::STATE_DISABLED:v.visual==sidebar::RowVisual::Pressed?views::Button::STATE_PRESSED:v.visual==sidebar::RowVisual::Hovered?views::Button::STATE_HOVERED:views::Button::STATE_NORMAL;PaintGlyphControl(this,glyph_,icon_,kSubtle,v.on,label_,paint,canvas);}
  private:
   void SyncEnabled(){const bool enabled=GetEnabledInViewsSubtree();if(!state_->action_enabled(enabled))return;auto& ax=GetViewAccessibility();if(enabled)ax.SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kPress);else ax.RemoveDefaultActionVerb();}
-  void Cancel(){state_->action_cancel();SchedulePaint();}
-  void WindowChanged(){Cancel();state_->action_focus(HasFocus());}
-  bool Pointer(sidebar::PointerPhase phase,const ui::MouseEvent& event){SyncEnabled();return Apply(state_->action_pointer(phase,event.x(),event.y(),phase!=sidebar::PointerPhase::Exit&&HitTestPoint(event.location()),event.IsLeftMouseButton(),SceneIsVisible(this)),event);}
-  bool Key(bool pressed,const ui::KeyEvent& event){SyncEnabled();const uint32_t key=event.key_code()==ui::VKEY_SPACE?1:event.key_code()==ui::VKEY_RETURN?2:0;return Apply(state_->action_key(pressed,key,true,SceneIsVisible(this)),event);}
+  bool Interactive() const{return SceneIsVisible(this)&&!GetVisibleBounds().IsEmpty();}
+  void Cancel(){if(state_->action_cancel())SchedulePaint();}
+  void WindowChanged(){Cancel();state_->action_focus(HasFocus());SchedulePaint();}
+  bool Pointer(sidebar::PointerPhase phase,const ui::MouseEvent& event){SyncEnabled();return Apply(state_->action_pointer(phase,event.x(),event.y(),phase!=sidebar::PointerPhase::Exit&&HitTestPoint(event.location())&&GetVisibleBounds().Contains(event.location()),event.IsLeftMouseButton(),Interactive()),event);}
+  bool Key(bool pressed,const ui::KeyEvent& event){SyncEnabled();const uint32_t key=event.key_code()==ui::VKEY_SPACE?1:event.key_code()==ui::VKEY_RETURN?2:0;return Apply(state_->action_key(pressed,key,true,Interactive()),event);}
   bool Apply(const sidebar::RowInputResult& result,const ui::Event& event){const bool handled=result.handled;SchedulePaint();if(result.action==sidebar::RowAction::Activate&&callback_){callback_.Run(event);return handled;}return handled;}
-  views::Button::PressedCallback callback_;ControlGlyph glyph_;raw_ptr<const gfx::VectorIcon> icon_;base::RepeatingCallback<bool()> visible_;base::RepeatingClosure changed_;rust::Box<sidebar::ActionControl> state_=sidebar::new_action_control();SceneWindowObserver window_{base::BindRepeating(&RustActionView::WindowChanged,base::Unretained(this))};base::CallbackListSubscription enabled_changed_{AddEnabledInViewsSubtreeChangedCallback(base::BindRepeating(&RustActionView::EnabledChanged,base::Unretained(this)))};
+  std::u16string label_;views::Button::PressedCallback callback_;ControlGlyph glyph_;raw_ptr<const gfx::VectorIcon> icon_;base::RepeatingCallback<bool()> visible_;base::RepeatingClosure changed_;rust::Box<sidebar::ActionControl> state_=sidebar::new_action_control();SceneWindowObserver window_{base::BindRepeating(&RustActionView::WindowChanged,base::Unretained(this))};base::CallbackListSubscription enabled_changed_{AddEnabledInViewsSubtreeChangedCallback(base::BindRepeating(&RustActionView::EnabledChanged,base::Unretained(this)))};
 };
 BEGIN_METADATA(RustActionView)
 END_METADATA
 #endif
-std::unique_ptr<views::View> CreateHeaderAction(views::Button::PressedCallback callback,std::u16string name,ControlGlyph glyph,const gfx::VectorIcon* icon,base::RepeatingCallback<bool()> visible,base::RepeatingClosure changed){
+std::unique_ptr<views::View> CreateSceneAction(views::Button::PressedCallback callback,std::u16string name,ControlGlyph glyph,const gfx::VectorIcon* icon,base::RepeatingCallback<bool()> visible,base::RepeatingClosure changed){
 #if BUILDFLAG(IS_MAC)
   if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal")return std::make_unique<RustActionView>(std::move(callback),std::move(name),glyph,icon,std::move(visible),std::move(changed));
 #endif
   return std::make_unique<SceneGlyphButton>(std::move(callback),std::move(name),glyph,icon,std::move(visible),std::move(changed));
 }
+
+void SetActionOn(views::View* view,bool on){
+#if BUILDFLAG(IS_MAC)
+  if(auto* control=views::AsViewClass<RustActionView>(view)){control->SetOn(on);return;}
+#endif
+  static_cast<GlyphButton*>(view)->set_on(on);
+}
+void SetActionLabel(views::View* view,std::u16string label){
+#if BUILDFLAG(IS_MAC)
+  if(auto* control=views::AsViewClass<RustActionView>(view)){control->SetLabel(std::move(label));return;}
+#endif
+  static_cast<GlyphButton*>(view)->set_label(std::move(label));
+}
+#if BUILDFLAG(IS_MAC)
+sidebar::Item ActionSceneItem(views::View* view,gfx::RectF rect,gfx::RectF clip){if(auto* control=views::AsViewClass<RustActionView>(view))return control->SceneItem(rect,clip);return GlyphSceneItem(static_cast<GlyphButton*>(view),rect,clip);}
+#endif
 
 #if BUILDFLAG(IS_MAC)
 // Rust lays out preset controls and the native editor separately. The canvas
@@ -3079,7 +3099,7 @@ std::unique_ptr<views::View> WorkspaceShell::Build() {
   auto header_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
     return shell && shell->metal_header_visible();
   },weak);
-  header_sidebar_button_=header->AddChildView(CreateHeaderAction(
+  header_sidebar_button_=header->AddChildView(CreateSceneAction(
       base::BindRepeating(&WorkspaceShell::ToggleSidebar,weak),u"Pokaż lub ukryj karty",
       GlyphButton::Glyph::kSidebar,nullptr,header_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalHeader,weak)));
   const std::array<std::pair<const gfx::VectorIcon*, std::u16string>, 3> commands = {{
@@ -3087,7 +3107,7 @@ std::unique_ptr<views::View> WorkspaceShell::Build() {
       {&vector_icons::kArrowForwardIcon, u"Dalej"},
       {&vector_icons::kReloadCustomIcon, u"Odśwież"}}};
   for (size_t i = 0; i < commands.size(); ++i) {
-    nav_buttons_[i] = header->AddChildView(CreateHeaderAction(
+    nav_buttons_[i] = header->AddChildView(CreateSceneAction(
         base::BindRepeating(callbacks_.page_command, static_cast<PageCommand>(i)),
         commands[i].second, GlyphButton::Glyph::kVector, commands[i].first,header_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalHeader,weak)));
   }
@@ -3345,10 +3365,10 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto* footer_layout = footer->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 0));
   footer_layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
-  pin_button_ = footer->AddChildView(std::make_unique<SceneGlyphButton>(
+  pin_button_ = footer->AddChildView(CreateSceneAction(
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
         if (shell) shell->SetPinned(!shell->pinned_);
-      }, weak), u"Przypnij panel", GlyphButton::Glyph::kSidebar,nullptr,footer_visible));
+      }, weak), u"Przypnij panel", GlyphButton::Glyph::kSidebar,nullptr,footer_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak)));
   Spacer(footer, 1);
   std::unique_ptr<views::ScrollBar> workspace_bar;
 #if BUILDFLAG(IS_MAC)
@@ -3371,9 +3391,9 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 #endif
   footer_layout->SetFlexForView(dot_scroll, 1);
   Spacer(footer, 1);
-  workspace_settings_button_=footer->AddChildView(std::make_unique<SceneGlyphButton>(
+  workspace_settings_button_=footer->AddChildView(CreateSceneAction(
       base::BindRepeating(&WorkspaceShell::OpenWorkspaceSettings, weak),
-      u"Ustawienia przestrzeni", GlyphButton::Glyph::kVector, &vector_icons::kTuneIcon,footer_visible));
+      u"Ustawienia przestrzeni", GlyphButton::Glyph::kVector, &vector_icons::kTuneIcon,footer_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak)));
 #if BUILDFLAG(IS_MAC)
   if (metal_sidebar_) footer->SetLayoutManager(CreateSidebarFooterLayout());
 #endif
@@ -4137,7 +4157,7 @@ void WorkspaceShell::Update(ShellState state) {
   if (history_profile_changed && history_visible()) RefreshTools();
   if (changed || profiles_changed) RebuildWorkspaceDots();
   for (const auto& [id, button] : workspace_buttons_) {
-    static_cast<GlyphButton*>(button.get())->set_on(id == state_.workspace_id);
+    SetActionOn(button,id == state_.workspace_id);
     button->SetEnabled(state_.configuration_ready);
   }
   if (profiles_changed) {
@@ -4370,6 +4390,8 @@ size_t WorkspaceShell::native_sidebar_paint_count() const {
 size_t WorkspaceShell::metal_sidebar_paint_count() const {
   return tab_list_ ? static_cast<SidebarListView*>(tab_list_.get())->metal_paints() : 0;
 }
+bool WorkspaceShell::workspace_context_menu_running_for_testing() const{return workspace_menu_runner_&&workspace_menu_runner_->IsRunning();}
+std::unique_ptr<views::View> WorkspaceShell::CreateWorkspaceActionForTesting(base::RepeatingClosure callback) const{return CreateSceneAction(std::move(callback),u"Test workspace",ControlGlyph::kDot,nullptr,{},base::DoNothing());}
 views::View* WorkspaceShell::header_action_for_testing(size_t index) const{return header_view_&&index<header_view_->children().size()?header_view_->children()[index].get():nullptr;}
 views::View* WorkspaceShell::sidebar_grip_for_testing() const{return sidebar_root_?static_cast<SidebarView*>(sidebar_root_.get())->grip.get():nullptr;}
 views::View* WorkspaceShell::split_divider_for_testing() const{return content_host_?static_cast<PaneHost*>(content_host_.get())->divider():nullptr;}
@@ -4526,6 +4548,14 @@ void WorkspaceShell::UpdateMetalPalette() {
 #endif
 }
 void WorkspaceShell::ScheduleMetalSidebar() {
+#if BUILDFLAG(IS_MAC)
+  // Layer transforms do not deliver descendant visibility callbacks. Retire a
+  // clipped action synchronously, including while a GPU update is already queued.
+  if(tab_scroll_&&tab_scroll_->rust_owned()){
+  for(auto* view:{pin_button_.get(),workspace_settings_button_.get()})if(view)if(auto* control=views::AsViewClass<RustActionView>(view))control->SyncViewportVisibility();
+  for(const auto& [id,view]:workspace_buttons_)if(auto* control=views::AsViewClass<RustActionView>(view.get()))control->SyncViewportVisibility();
+  }
+#endif
   ScheduleMetalHeader();
   if (!metal_sidebar_ || metal_sidebar_pending_) return;
   metal_sidebar_pending_ = true;
@@ -4645,14 +4675,14 @@ void WorkspaceShell::UpdateMetalSidebar() {
     item.ink=Tone(workspace_name_,kSubtle); item.font_size=Font(-1).GetFontSize();
     items.push_back(std::move(item));
   }
-  auto append_glyph=[&](GlyphButton* button,gfx::RectF rect,gfx::RectF clip) {
-    items.push_back(GlyphSceneItem(button,rect,clip));
+  auto append_glyph=[&](views::View* button,gfx::RectF rect,gfx::RectF clip) {
+    items.push_back(ActionSceneItem(button,rect,clip));
   };
   auto local_rect=[&](views::View* view) {
     auto rect=gfx::RectF(view->GetBoundsInScreen()); rect.Offset(-bounds.x(),-bounds.y()); return rect;
   };
   for (auto* button : {pin_button_.get(),workspace_settings_button_.get()}) {
-    const auto rect=local_rect(button); append_glyph(static_cast<GlyphButton*>(button),rect,rect);
+    const auto rect=local_rect(button); append_glyph(button,rect,rect);
   }
   auto* dot_viewport=workspace_dots_->parent();
   std::vector<SidebarViewportNode> dot_nodes{{SidebarTree::kRoot,gfx::Rect(workspace_dots_->size()),true}};
@@ -4665,7 +4695,7 @@ void WorkspaceShell::UpdateMetalSidebar() {
   const auto dot_origin=local_rect(dot_viewport).OffsetFromOrigin();
   for (const auto& node : dot_projection.nodes) if (node.index>0) {
     auto rect=node.bounds;rect.Offset(dot_origin);auto clip=node.clip;clip.Offset(dot_origin);
-    append_glyph(static_cast<GlyphButton*>(workspace_dots_->children()[node.index-1].get()),rect,clip);
+    append_glyph(workspace_dots_->children()[node.index-1].get(),rect,clip);
   }
   const auto horizontal=GetSidebarScrollBarSnapshot(workspace_scroll_->horizontal_scroll_bar());
   if (horizontal.visible) {
@@ -4760,7 +4790,7 @@ void WorkspaceShell::CancelWorkspaceSwipe(bool reset_state) {
     if(tab_list_)tab_list_->SchedulePaint();
     RefreshWorkspaceHeading();
     for (const auto& [id, button] : workspace_buttons_)
-      static_cast<GlyphButton*>(button.get())->set_on(id == state_.workspace_id);
+      SetActionOn(button,id == state_.workspace_id);
   }
 }
 bool WorkspaceShell::workspace_swipe_metal_visible() const {return swipe_overlay_&&static_cast<WorkspaceSwipePreview*>(swipe_overlay_.get())->metal_owned();}
@@ -4954,7 +4984,7 @@ void WorkspaceShell::UpdateWorkspaceSwipePreview() {
   const auto emoji = workspace_emoji(workspace.id);
   static_cast<WorkspaceHeading*>(workspace_name_.get())->SetText((emoji.empty() ? u"" : emoji + u"  ") + base::UTF8ToUTF16(workspace.name));
   for (const auto& [id, button] : workspace_buttons_)
-    static_cast<GlyphButton*>(button.get())->set_on(id == workspace.id);
+    SetActionOn(button,id == workspace.id);
 }
 void WorkspaceShell::FinishWorkspaceSwipe() {
   swipe_idle_timer_.Stop(); workspace_swipe_->Finish();
@@ -5081,7 +5111,7 @@ views::Button* WorkspaceShell::tab_button(size_t index) const {
   return button == cache->second.tab_buttons.end() ? nullptr : button->second.get();
 }
 
-views::Button* WorkspaceShell::workspace_button(std::string_view id) const {
+views::View* WorkspaceShell::workspace_button(std::string_view id) const {
   auto it = workspace_buttons_.find(std::string(id));
   return it == workspace_buttons_.end() ? nullptr : it->second.get();
 }
@@ -5090,12 +5120,12 @@ void WorkspaceShell::RebuildWorkspaceDots() {
   workspace_buttons_.clear();
   workspace_dots_->RemoveAllChildViews();
   for (const auto& workspace : state_.workspaces) {
-    auto* button = workspace_dots_->AddChildView(std::make_unique<SceneGlyphButton>(
+    auto* button = workspace_dots_->AddChildView(CreateSceneAction(
         base::BindRepeating(callbacks_.select_workspace, workspace.id),
         u"Przestrzeń: " + base::UTF8ToUTF16(workspace.name) + (state_.sleeping_workspaces.contains(workspace.id) ? u" · uśpiona" : u""), GlyphButton::Glyph::kDot,nullptr,
-        base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {return shell && shell->metal_sidebar_visible();},weak_factory_.GetWeakPtr())));
-    button->set_label(workspace_emoji(workspace.id));
-    button->set_on(workspace.id == state_.workspace_id);
+        base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {return shell && shell->metal_sidebar_visible();},weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak_factory_.GetWeakPtr())));
+    SetActionLabel(button,workspace_emoji(workspace.id));
+    SetActionOn(button,workspace.id == state_.workspace_id);
     button->set_context_menu_controller(this);
     workspace_buttons_[workspace.id] = button;
   }
@@ -6549,8 +6579,8 @@ void WorkspaceShell::ApplyAppearance(bool refresh_theme) {
       pick->set_on(!emoji.empty() && pick->GetTooltipText() == u"Emoji " + emoji);
     }
   }
-  auto* pin = static_cast<GlyphButton*>(pin_button_.get());
-  pin->set_on(pinned_);
+  auto* pin = pin_button_.get();
+  SetActionOn(pin,pinned_);
   pin->SetTooltipText(pinned_ ? u"Odepnij panel (auto-ukrywanie)" : u"Przypnij panel");
   static_cast<ShellRoot*>(root_.get())->pinned = pinned_;
   static_cast<ShellRoot*>(root_.get())->sidebar_width = sidebar_width_;
