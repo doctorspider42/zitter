@@ -8,63 +8,69 @@ milestones to `origin/main` as they land. The opt-in switch remains
 
 ## Current execution policy
 
-UI source `6142576afad1b8367a7c11eba75b2c6e54f3f8a2`, 2026-10-26, passed the full compiled
+UI source `efff9570e27cf98834b9fbb22c550552332b871d`, 2026-10-26, passed the full compiled
 regression inventory with one launcher job, no automatic retries and temporary
 profiles:
 
 | Backend | Regular matrix passed | Regular skips | Failed / crashed / timed out |
 | --- | ---: | ---: | ---: |
-| Rust + Metal | 180 | 6 | 0 |
-| Views | 134 | 6 | 0 |
+| Rust + Metal | 182 | 6 | 0 |
+| Views | 136 | 6 | 0 |
 
-The inventory contains 186 cases; Views excludes 46 dedicated Metal cases
-(140 applicable cases). Four opt-in performance scenarios, real-user Arc import
+The inventory contains 188 cases; Views excludes 46 dedicated Metal cases
+(142 applicable cases). Four opt-in performance scenarios, real-user Arc import
 and the interactive manual window are skipped per backend. Earlier optional
 performance scenarios remain historical evidence, not current-commit passes.
 Metal API validation remained enabled. No controlled CPU/GPU/presentation or
 memory improvement is established.
 
 The preference/tools/timeline/Time-Machine/restored-tab/media/password/download/
-modal/shared-chrome gate passed **86 Metal / 68 Views**; the focused catalogue
-and route gate passed **2 Metal / 2 Views**. Checks passed **264 Rust tests**,
+modal/shared-chrome gate passed **88 Metal / 70 Views**; the focused geometry
+gate passed **2 Metal / 2 Views**. Checks passed **267 Rust tests**,
 **180 SDK font/direction cases plus raster**, **66 clean-archive Python tests**,
 scoped GN/boundaries and optimized compilation. The live checkout passed 68 Python
 tests, including two concurrent cases outside this UI commit. Final Ninja reported
 no work to do. All 53 tracked prototype files match committed source and the staged
-overlay. [Source/binary identities, commands and results](benchmarks/rust-preference-catalogue-checkpoint-2026-10-26.json).
+overlay. [Source/binary identities, commands and results](benchmarks/rust-preference-layout-checkpoint-2026-10-26.json).
 
-Rust now describes all ten preference categories and the original 52-row macOS
-catalogue. It owns row order, control kinds, registered UI preference keys,
-titles/descriptions, numeric choices, editor placeholders, action roles and
-save/open/directory accessibility copy. Site-editor type/policy labels and
-clear-data periods/checkbox copy also come from Rust. A native capability fact
-gates only the system-certificates row. The opt-in native builder consumes this
-catalogue; Views retains the original reference row builder.
+Rust now allocates preference root/main/navigation/header/header-text/body/category
+columns, all 52 catalogue row label columns and centered controls, plus the saved
+site-rule list and centered dynamic rule rows. Native adapters provide control/font
+measurement, visibility/ignored flags, margins, explicit preferred sizes and the
+single flexible child. Views retains its reference BoxLayouts. Native scroll/
+viewport, interaction/AX/window identity, responsive visibility and window placement
+still remain adapters requiring further ownership migration.
 
-Native adapters retain actual preference values, admitted writes, managed-setting
-checks, normalization, profile/global scope, browser/platform operations,
-site-rule validation, data-clearing confirmation and persistence. Existing Rust
-draft/filter/paging state and scene editor/selector/switch/checkbox/action
-factories remain. Dynamic provider options still come from the native service.
-Descriptors are UI data and never authorize arbitrary keys or platform actions.
+A separate centered allocator preserves the shared stretch entry point, uses a
+common cross axis and odd-size bias, handles asymmetric margins and remeasures
+wrapped content after main-axis shrink. Zero/unbounded cross extent uses the
+initial natural cross measurement. Native stores, command/context admission,
+profile/global scope, deferred rule mutation, confirmation and persistence are
+unchanged. Existing catalogue/filter/draft/paging state remains in Rust.
 
-Four Rust regressions cover counts/platform gating, exact key/kind mapping,
-editor/action accessibility and numeric/site/period option ordering. A shared
-browser case compares every original row title/detail/order in all ten categories,
-checks site labels against native service constants and filters by description.
-Another activates all four tools navigation roles and checks actual destination
-controls and closed preferences. Existing native Cocoa editing/choice/action,
-profile isolation, managed settings and scene cases also pass.
+Three Rust cases cover centering/margins, flex remeasurement and fixed controls,
+and empty/tiny/zero/saturated extents. A shared browser oracle compares actual
+Chromium BoxLayout preferred/minimum/height-for-width/bounded measurements and
+child rectangles for 1260 orientation/flex/visibility/ignored/margin/size
+combinations. Another uses native preferred-size proxies for real controls and
+compares visible layout managers/child rectangles across all ten categories and
+all 52 catalogue rows at compact and wide native-window sizes. The explicit
+external 212x1 navigation preferred size remains intact; its internal allocator
+is checked when navigation is visible.
 
-The first compile probe found a missing test-only preference-label accessor; a
-bounds-checked accessor matching the tools helper was added. Its failed compile
-log is retained in the report, separate from the final passing source/binary.
-No dependency was added. Native compound child containers, event/focus/AX/menu/
-scroll/window nodes, header/profile/status copy and remaining busy/service
-coordination remain open, alongside other surfaces, manual acceptance, controlled
-profiling and release/license checks. Normal installed apps/profiles were
-untouched; no bundle was signed.
-[Previous tools structure checkpoint](benchmarks/rust-tools-form-structure-checkpoint-2026-10-26.json).
+The initial geometry probe failed both Metal cases and one Views case. It exposed
+zero-cross-size remeasurement in the new adapter and a test setup error comparing
+the navigation external preferred-size override with its internal layout size.
+The adapter now uses natural cross constraints and the oracle compares actual
+layout-manager measurements. The original matrix/category/size coverage remains;
+initial sources, binary identity and failed logs are retained separately from the
+passing final binary. No failed probe is counted as a current pass.
+
+No dependency was added. Remaining interaction/container/scroll/window ownership,
+header/profile/status/managed copy and service coordination, other surfaces,
+manual platform acceptance, controlled profiling and release/license checks stay
+open. Normal installed apps/profiles were untouched; no bundle was signed.
+[Previous catalogue checkpoint](benchmarks/rust-preference-catalogue-checkpoint-2026-10-26.json).
 The earlier AppKit startup stall is not claimed fixed by this migration.
 
 ## How to read progress
@@ -102,7 +108,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Workspace/profile form action buttons | Rust button/group geometry, shared pointer/key reducer and text/background/border/focus primitives; four Metal groups; native Button/AX/focus, platform font/metric/color and command adapters (automated UI checked; manual acceptance pending) | Replace native interaction nodes; verify dynamic labels, disabled styles, focus/keyboard/cancellation, clipping/fallback and service semantics |
 | Workspace color/emoji presets | Rust preset data/selection, row geometry, pointer/key reducer and scene primitives; two shared-context Metal canvases; native Button/AX/focus and text/grapheme/storage adapters (automated UI checked; manual acceptance pending) | Color/emoji editor migration verified; replace remaining native preset Button interaction ownership and broaden capture/visibility/IME/AX/theme/scale/persistence acceptance |
 | Workspace deletion confirmation | Rust captured-target notice state/copy, shared paragraph/body allocation and Metal body/error/action controls; native title/frame/scroll/focus/AX and deletion/persistence services (automated UI checked; manual acceptance pending) | Replace remaining frame/scroll/interaction containers; broaden default Cancel, beforeunload, stale-target, profile-retention, typography and screen-bound acceptance |
-| General preferences, shortcuts and site preferences | Rust/Metal editors, eleven preference selectors, 24 switches, three clear-data checkboxes and 19 fixed actions plus dynamic rule controls; Rust category/dismiss recipes, ten-category/52-row catalogue, category/filter state, text-draft/profile refresh/admission, rule paging and shared text/backing underlay; native event/focus/AX, normalization, menus and stores | Migrate remaining chrome/dynamic UI data, busy/status/form state, remaining tools status/service coordination, service/progress wording and native outer-container ownership; tools form node plans, panel/header/body/clear allocation, shortcut/provider choice/draft projection and scoped posted targets use Rust; retain profile/global configuration and recorder behavior |
+| General preferences, shortcuts and site preferences | Rust/Metal editors, eleven preference selectors, 24 switches, three clear-data checkboxes and 19 fixed actions plus dynamic rule controls; Rust category/dismiss recipes, ten-category/52-row catalogue, root/column/centered-row allocation, category/filter state, text-draft/profile refresh/admission, rule paging and shared text/backing underlay; native event/focus/AX, normalization, menus and stores | Migrate remaining chrome/dynamic UI data, busy/status/form state, remaining tools status/service coordination, service/progress wording and native outer-container ownership; tools form node plans, panel/header/body/clear allocation, shortcut/provider choice/draft projection and scoped posted targets use Rust; retain profile/global configuration and recorder behavior |
 | History, downloads, passwords and permissions | Rust/Metal history query editor, clear-period selector and clear/more actions; shared Rust/Metal tools header/status/empty copy and committed-query/pagination/loaded state; Rust/Metal history result text/backing and column layout; Rust/Metal download text/progress/actions and body/list/row allocation on one shared scene; Rust/Metal password consent/overview text, actions, account selector and body layout; Rust/Metal permission/capture paragraphs, actions and body allocation; native permission/Stop authority, password stores/autofill, Unicode/IME/service, download facts/formatting/list policy and event/focus/AX/scroll adapters, with other remaining Views lists/controls | Finish native history interaction/container ownership and other service forms/result controls; retain browser service and security semantics |
 | Peek, promote/split, link/page menus and routing | Views/native adapters + application | Rust control routing, focus and dismissal; retain native page integration |
 | Import form and first-run import | Rust UI option/debounce/admission/controller state, copy, columns and Metal static/status/Apply text; native Button/AX/focus, header nodes, native popup/IME adapters and application import services (automated UI checked; manual acceptance pending) | Migrate remaining native header and input nodes; verify latest options, busy recovery, credentials opt-in, source immutability, first-run/persistence/rollback and runtime accessibility |

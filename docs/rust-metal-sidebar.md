@@ -2120,3 +2120,71 @@ profiling and release/license checks. Normal installed apps/profiles were
 untouched; no bundle was signed.
 [Previous tools structure checkpoint](benchmarks/rust-tools-form-structure-checkpoint-2026-10-26.json).
 The earlier AppKit startup stall is not claimed fixed by this migration.
+
+
+## Preference allocation checkpoint (2026-10-26)
+
+UI source `efff9570e27cf98834b9fbb22c550552332b871d`, 2026-10-26, passed the full compiled
+regression inventory with one launcher job, no automatic retries and temporary
+profiles:
+
+| Backend | Regular matrix passed | Regular skips | Failed / crashed / timed out |
+| --- | ---: | ---: | ---: |
+| Rust + Metal | 182 | 6 | 0 |
+| Views | 136 | 6 | 0 |
+
+The inventory contains 188 cases; Views excludes 46 dedicated Metal cases
+(142 applicable cases). Four opt-in performance scenarios, real-user Arc import
+and the interactive manual window are skipped per backend. Earlier optional
+performance scenarios remain historical evidence, not current-commit passes.
+Metal API validation remained enabled. No controlled CPU/GPU/presentation or
+memory improvement is established.
+
+The preference/tools/timeline/Time-Machine/restored-tab/media/password/download/
+modal/shared-chrome gate passed **88 Metal / 70 Views**; the focused geometry
+gate passed **2 Metal / 2 Views**. Checks passed **267 Rust tests**,
+**180 SDK font/direction cases plus raster**, **66 clean-archive Python tests**,
+scoped GN/boundaries and optimized compilation. The live checkout passed 68 Python
+tests, including two concurrent cases outside this UI commit. Final Ninja reported
+no work to do. All 53 tracked prototype files match committed source and the staged
+overlay. [Source/binary identities, commands and results](benchmarks/rust-preference-layout-checkpoint-2026-10-26.json).
+
+Rust now allocates preference root/main/navigation/header/header-text/body/category
+columns, all 52 catalogue row label columns and centered controls, plus the saved
+site-rule list and centered dynamic rule rows. Native adapters provide control/font
+measurement, visibility/ignored flags, margins, explicit preferred sizes and the
+single flexible child. Views retains its reference BoxLayouts. Native scroll/
+viewport, interaction/AX/window identity, responsive visibility and window placement
+still remain adapters requiring further ownership migration.
+
+A separate centered allocator preserves the shared stretch entry point, uses a
+common cross axis and odd-size bias, handles asymmetric margins and remeasures
+wrapped content after main-axis shrink. Zero/unbounded cross extent uses the
+initial natural cross measurement. Native stores, command/context admission,
+profile/global scope, deferred rule mutation, confirmation and persistence are
+unchanged. Existing catalogue/filter/draft/paging state remains in Rust.
+
+Three Rust cases cover centering/margins, flex remeasurement and fixed controls,
+and empty/tiny/zero/saturated extents. A shared browser oracle compares actual
+Chromium BoxLayout preferred/minimum/height-for-width/bounded measurements and
+child rectangles for 1260 orientation/flex/visibility/ignored/margin/size
+combinations. Another uses native preferred-size proxies for real controls and
+compares visible layout managers/child rectangles across all ten categories and
+all 52 catalogue rows at compact and wide native-window sizes. The explicit
+external 212x1 navigation preferred size remains intact; its internal allocator
+is checked when navigation is visible.
+
+The initial geometry probe failed both Metal cases and one Views case. It exposed
+zero-cross-size remeasurement in the new adapter and a test setup error comparing
+the navigation external preferred-size override with its internal layout size.
+The adapter now uses natural cross constraints and the oracle compares actual
+layout-manager measurements. The original matrix/category/size coverage remains;
+initial sources, binary identity and failed logs are retained separately from the
+passing final binary. No failed probe is counted as a current pass.
+
+No dependency was added. Remaining interaction/container/scroll/window ownership,
+header/profile/status/managed copy and service coordination, other surfaces,
+manual platform acceptance, controlled profiling and release/license checks stay
+open. Normal installed apps/profiles were untouched; no bundle was signed.
+[Previous catalogue checkpoint](benchmarks/rust-preference-catalogue-checkpoint-2026-10-26.json).
+The earlier AppKit startup stall is not claimed fixed by this migration.
