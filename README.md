@@ -803,6 +803,10 @@ The Rust sidebar grip and split divider now use plain event/paint/AX View hosts,
 with no ResizeArea base; their Rust drag controllers remain authoritative.
 [Targeted resize-host acceptance](docs/benchmarks/rust-resize-host-targeted-2026-10-26.json)
 passed 28 Metal / 21 Views affected cases. Other native control/node ownership remains.
+The four header actions now also use plain View hosts with a shared Rust action
+controller, retaining native focus/AX delivery and vector fallback painting.
+[Targeted header-action acceptance](docs/benchmarks/rust-header-action-targeted-2026-10-26.json)
+passed 71 Metal / 23 Views affected cases. Other button/row hosts remain.
 [Editor contracts and acceptance](docs/rust-metal-editor.md).
 Model updates refresh the scene independently of
 native painting. Rust also owns row

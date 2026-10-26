@@ -5,39 +5,54 @@ inventory is [the parity checklist](rust-metal-parity.md).
 
 ## Latest targeted follow-up
 
-UI source `0471902fcd5e008d8c7b72724cc875bf80a7d8f9` removes ResizeArea ownership from the
-Rust sidebar grip and split divider. The opt-in backend now creates a plain View
-host for event/paint/cursor/AX delivery and uses its existing Rust SidebarDrag or
-SplitDrag controller for active/anchor/update/delta/end/cancel. Only the applicable
-controller is allocated. Separate NativeSidebarGrip/NativeSplitDivider classes
-preserve the Views comparison path. Native shell/pane adapters consume a small
-ResizeHandle interface; sidebar active projection reads Rust state.
+UI source `4e99ac0b9186be9294e90a15d536f8a1e6cdd59a` moves the four header actions (sidebar
+toggle, back, forward, reload) from Button/ButtonController instances to plain
+RustActionView event/focus/AX hosts. Shared Rust ActionControl owns enabled,
+focused, on/visual state, pointer/key/gesture activation and cancellation, using
+existing RowPointer and platform Space/Return policy. Header fields now store
+View adapters. This is the first action-host family: other button/row/control
+families still require migration.
 
-The new shared browser case checks actual host type in both backends, splitter
-AX role/name, horizontal/vertical and disabled cursors. Its Rust branch checks
-hide and orientation cancellation followed by late input. Existing split
-lifecycle and real native mouse/gesture/sidebar-autohide/split-orient-title-close
-cases retain their assertions. The Rust host also cancels split resize on hide;
-late capture loss cannot commit an obsolete gesture.
+Metal consumes Rust snapshots through common glyph scene data. Both host paths
+share the factored native vector/icon painter for fallback. A native FocusRing
+remains an explicit focus adapter and is gated out of steady Metal painting.
+Enabled-in-subtree changes immediately cancel pending input; blur, capture loss,
+control/widget hiding and removal also cancel. Callbacks retain original browser
+commands; no host members are touched after dispatch that may delete the host.
 
-Focus passed **4 Metal / 2 Views**; affected regressions
-**28 Metal / 21 Views**, single attempt, retry limit zero.
-Checks passed **280 Rust**, **68 live and 68 clean-archive Python**, scoped
-GN/boundaries and final Ninja no-op. All 53 committed/live/staged prototype inputs
+The shared case checks actual host types, AX role/name/default-action metadata,
+physical Cocoa Space, Mac Return policy, AX activation/disabled rejection,
+tap/end, late release after hide/disable and no document reload from hidden AX
+input. The existing header case retains actual back/forward/reload, disabled
+click, sidebar toggle, focus/fallback, movement/visibility and idle checks.
+Focus passed **4 Metal / 3 Views**; affected regressions
+**71 Metal / 23 Views**, single attempt, retry zero. The affected gate
+also covers the common glyph refactor across the dedicated Metal fixture and
+shared forms/editor/choice/viewport/window/split cases.
+
+Checks passed **282 Rust**, **68 live and 68 clean-archive Python**, scoped GN/
+boundaries and final Ninja no-op. All 53 committed/live/staged prototype inputs
 and compiled/frozen-bootstrap/native-engine identities were checked. Unchanged
-CoreText sources retain the preceding full checkpoint's 180 SDK font/direction
-cases plus raster; that harness was not rerun for this host change.
-[Targeted resize-host report](benchmarks/rust-resize-host-targeted-2026-10-26.json).
+CoreText sources retain the earlier 180 SDK font/direction cases plus raster;
+that harness was not rerun for this adapter change.
+[Targeted header action report](benchmarks/rust-header-action-targeted-2026-10-26.json).
 
-Per user cadence this smaller ownership block has targeted acceptance. The full
-matrix below predates this source and is not counted as its full pass. Other
-native control/node/container/menu/input/window ownership and final manual/
-performance/release/license acceptance remain open. The lab retains frozen
-bootstrap/network inputs; current-main network policy is outside this binary's
-acceptance. No complete parity or controlled performance gain is claimed; no
-dependency, service/store/admission or persistence policy change.
+The initial probe/source is retained: native GestureEnd cancels without handling,
+so Rust now retains that propagation. Hiding the parent also hides the sidebar
+child; the final hidden-action oracle checks the document marker rather than
+assuming child visibility. The source includes the preceding
+[resize-host migration](benchmarks/rust-resize-host-targeted-2026-10-26.json).
 
-## Latest full checkpoint (before resize-host migration)
+Per user cadence this first action-host family has targeted acceptance. The
+full matrix below predates resize/header-host changes and is not a full pass of
+this source. Remaining native button/row/control/node/container/menu/input/window
+ownership, manual hardware trackpad/IME candidates/VoiceOver/RTL/scale/theme/GPU
+recovery, controlled CPU/GPU/drawable-presentation/input-latency/memory comparison
+and release/license/notice acceptance remain open. The frozen UI lab excludes
+current-main network policy. No complete parity or controlled performance gain
+claimed; no dependency, service/store/admission or persistence policy change.
+
+## Latest full checkpoint (before resize/header-host migrations)
 
 UI source `d44351ca2ad2c3d4125139e35e2354096dca7899` moves the horizontal workspace footer
 viewport to Rust. Together with the main sidebar and palette, all three shell

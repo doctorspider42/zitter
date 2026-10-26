@@ -2615,3 +2615,52 @@ performance/release/license acceptance remain open. The lab retains frozen
 bootstrap/network inputs; current-main network policy is outside this binary's
 acceptance. No complete parity or controlled performance gain is claimed; no
 dependency, service/store/admission or persistence policy change.
+
+## Header action hosts — targeted acceptance, 2026-10-26
+
+UI source `4e99ac0b9186be9294e90a15d536f8a1e6cdd59a` moves the four header actions (sidebar
+toggle, back, forward, reload) from Button/ButtonController instances to plain
+RustActionView event/focus/AX hosts. Shared Rust ActionControl owns enabled,
+focused, on/visual state, pointer/key/gesture activation and cancellation, using
+existing RowPointer and platform Space/Return policy. Header fields now store
+View adapters. This is the first action-host family: other button/row/control
+families still require migration.
+
+Metal consumes Rust snapshots through common glyph scene data. Both host paths
+share the factored native vector/icon painter for fallback. A native FocusRing
+remains an explicit focus adapter and is gated out of steady Metal painting.
+Enabled-in-subtree changes immediately cancel pending input; blur, capture loss,
+control/widget hiding and removal also cancel. Callbacks retain original browser
+commands; no host members are touched after dispatch that may delete the host.
+
+The shared case checks actual host types, AX role/name/default-action metadata,
+physical Cocoa Space, Mac Return policy, AX activation/disabled rejection,
+tap/end, late release after hide/disable and no document reload from hidden AX
+input. The existing header case retains actual back/forward/reload, disabled
+click, sidebar toggle, focus/fallback, movement/visibility and idle checks.
+Focus passed **4 Metal / 3 Views**; affected regressions
+**71 Metal / 23 Views**, single attempt, retry zero. The affected gate
+also covers the common glyph refactor across the dedicated Metal fixture and
+shared forms/editor/choice/viewport/window/split cases.
+
+Checks passed **282 Rust**, **68 live and 68 clean-archive Python**, scoped GN/
+boundaries and final Ninja no-op. All 53 committed/live/staged prototype inputs
+and compiled/frozen-bootstrap/native-engine identities were checked. Unchanged
+CoreText sources retain the earlier 180 SDK font/direction cases plus raster;
+that harness was not rerun for this adapter change.
+[Targeted header action report](benchmarks/rust-header-action-targeted-2026-10-26.json).
+
+The initial probe/source is retained: native GestureEnd cancels without handling,
+so Rust now retains that propagation. Hiding the parent also hides the sidebar
+child; the final hidden-action oracle checks the document marker rather than
+assuming child visibility. The source includes the preceding
+[resize-host migration](benchmarks/rust-resize-host-targeted-2026-10-26.json).
+
+Per user cadence this first action-host family has targeted acceptance. The
+full matrix below predates resize/header-host changes and is not a full pass of
+this source. Remaining native button/row/control/node/container/menu/input/window
+ownership, manual hardware trackpad/IME candidates/VoiceOver/RTL/scale/theme/GPU
+recovery, controlled CPU/GPU/drawable-presentation/input-latency/memory comparison
+and release/license/notice acceptance remain open. The frozen UI lab excludes
+current-main network policy. No complete parity or controlled performance gain
+claimed; no dependency, service/store/admission or persistence policy change.
