@@ -1968,9 +1968,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, BrowsingHistoryPanelSearchOpen
   search(u"Recent entry");
   ASSERT_EQ(1u, shell->history_entries().size());
   const auto tabs = window_->tab_count("work");
-  auto* row = views::AsViewClass<views::Button>(shell->history_results_view()->children()[0]);
+  auto* row=shell->history_results_view()->children()[0].get();
   ASSERT_TRUE(row);
-  views::test::ButtonTestApi(row).NotifyDefaultMouseClick();
+  ActivateSidebarRow(row);
   ASSERT_TRUE(base::test::RunUntil([&] { return !shell->history_visible() && window_->tab_count("work") == tabs + 1; }));
   ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
   EXPECT_EQ(recent_url, window_->contents("work")->GetLastCommittedURL());
@@ -2021,14 +2021,14 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, HistoryRowsCocoaKeyboardAccess
   shell->OpenTools(3);ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));
   ASSERT_EQ(2u,shell->history_entries().size());auto* list=shell->history_results_view();ASSERT_EQ(2u,list->children().size());
   const bool rust=shell->workspace_input()->rust_editor();
-  for(size_t i=0;i<2;++i){auto* row=views::AsViewClass<views::Button>(list->children()[i]);ASSERT_TRUE(row);ui::AXNodeData ax;row->GetViewAccessibility().GetAccessibleNodeData(&ax);
+  for(size_t i=0;i<2;++i){auto* row=list->children()[i].get();ASSERT_TRUE(row);ui::AXNodeData ax;row->GetViewAccessibility().GetAccessibleNodeData(&ax);
     const auto& entry=shell->history_entries()[i];const auto title=entry.title.empty()?base::UTF8ToUTF16(entry.url.spec()):entry.title;
     EXPECT_EQ(ax::mojom::Role::kButton,ax.role);EXPECT_EQ(base::UTF8ToUTF16(entry.url.spec()),ax.GetString16Attribute(ax::mojom::StringAttribute::kName));
     EXPECT_NE(std::u16string::npos,ax.GetString16Attribute(ax::mojom::StringAttribute::kDescription).find(base::UTF8ToUTF16(entry.url.spec())));
     EXPECT_EQ(60,row->height());EXPECT_EQ(list->width(),row->width());EXPECT_EQ(static_cast<int>(i)*64,row->y());
-    if(rust)EXPECT_TRUE(row->children().empty());else{size_t labels=0;bool primary=false;for(const auto& child:row->children())if(auto* label=views::AsViewClass<views::Label>(child)){++labels;primary|=label->GetText()==title;}EXPECT_EQ(2u,labels);EXPECT_TRUE(primary);}
+    EXPECT_EQ(!rust,views::AsViewClass<views::Button>(row)!=nullptr);if(rust)EXPECT_TRUE(row->children().empty());else{size_t labels=0;bool primary=false;for(const auto& child:row->children())if(auto* label=views::AsViewClass<views::Label>(child)){++labels;primary|=label->GetText()==title;}EXPECT_EQ(2u,labels);EXPECT_TRUE(primary);}
   }
-  auto* row=views::AsViewClass<views::Button>(list->children()[0]);ASSERT_TRUE(row);
+  auto* row=list->children()[0].get();ASSERT_TRUE(row);
   ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));
   row->ScrollRectToVisible(row->GetLocalBounds());row->RequestFocus();ASSERT_TRUE(row->HasFocus());
   base::test::TestFuture<void> presented;auto* compositor=shell->tools_widget()->GetCompositor();ASSERT_TRUE(compositor);shell->tools_widget()->GetRootView()->SchedulePaint();
@@ -3991,6 +3991,37 @@ class SceneModalBodyOracle final : public views::View {
 BEGIN_METADATA(SceneModalBodyOracle)
 END_METADATA
 }  // namespace
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ResultRowHostsAddressPaletteAXAndPendingReplacement) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
+  const auto initial=embedded_test_server()->GetURL("/storage_probe.html?result-host");ASSERT_TRUE(window_->NavigateFromBar(initial,false));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));ASSERT_TRUE(content::ExecJs(window_->contents("work"),"document.title='Result host sentinel';"));shell->SetPinned(true);shell->ShowSidebar();shell->sidebar_widget()->LayoutRootViewIfNecessary();const bool rust=shell->workspace_input()->rust_editor();
+  auto* address=SidebarNamedButton(shell->sidebar_view(),u"Adres strony");ASSERT_TRUE(address);EXPECT_EQ(!rust,views::AsViewClass<views::Button>(address)!=nullptr);ui::AXNodeData ax;address->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kButton,ax.role);EXPECT_FALSE(ax.GetString16Attribute(ax::mojom::StringAttribute::kDescription).empty());ActivateSidebarRow(address);ASSERT_TRUE(shell->address_visible());SetPaletteQuery(u"Result host");
+  ASSERT_TRUE(base::test::RunUntil([&]{return std::any_of(shell->search_results().begin(),shell->search_results().end(),[](const auto& item){return item.title==u"Result host sentinel";});}));
+  auto* service=HistoryServiceFactory::GetForProfile(work_,ServiceAccessType::EXPLICIT_ACCESS);base::CancelableTaskTracker tasks;history::QueryOptions options;options.max_count=1;base::test::TestFuture<history::QueryResults> queried;service->QueryHistory(u"Result host",options,queried.GetCallback(),&tasks);ASSERT_TRUE(queried.Wait());base::RunLoop().RunUntilIdle();
+  std::vector<PaletteResult> results;for(int i=0;i<30;++i){PaletteResult item;item.title=u"Result host 日本語 "+base::NumberToString16(i);item.detail=u"History / 🦀";item.url=embedded_test_server()->GetURL("/storage_probe.html?palette-result-"+base::NumberToString(i));results.push_back(std::move(item));}
+  shell->SetSearchResults(u"Result host","work-profile",results);auto* panel=shell->address_input()->view()->GetWidget();panel->LayoutRootViewIfNecessary();auto* viewport=shell->palette_viewport();ASSERT_GT(viewport->maximum(),0);auto* list=shell->palette_results_view();ASSERT_EQ(shell->suggestions().size(),list->children().size());
+  for(const auto& child:list->children()){EXPECT_EQ(!rust,views::AsViewClass<views::Button>(child)!=nullptr);ui::AXNodeData node;child->GetViewAccessibility().GetAccessibleNodeData(&node);EXPECT_EQ(ax::mojom::Role::kButton,node.role);if(rust)for(const auto& descendant:child->children())EXPECT_FALSE(views::AsViewClass<views::Label>(descendant.get()));}
+  auto press=[](views::View* row){const auto point=row->GetLocalBounds().CenterPoint();ui::MouseEvent event(ui::EventType::kMousePressed,point,point,base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);return row->OnMousePressed(event);};auto release=[](views::View* row){const auto point=row->GetLocalBounds().CenterPoint();ui::MouseEvent event(ui::EventType::kMouseReleased,point,point,base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);row->OnMouseReleased(event);};
+  if(rust){auto* first=list->children().front().get();first->ScrollViewToVisible();ASSERT_TRUE(press(first));const auto offset=viewport->offset();viewport->ScrollTo(viewport->maximum());EXPECT_TRUE(first->GetVisibleBounds().IsEmpty());viewport->ScrollTo(offset);release(first);EXPECT_TRUE(shell->address_visible());EXPECT_EQ(initial,window_->contents("work")->GetLastCommittedURL());
+    ASSERT_TRUE(press(first));first->SetEnabled(false);first->SetEnabled(true);release(first);EXPECT_TRUE(shell->address_visible());
+    ASSERT_TRUE(press(first));panel->Hide();ui::KeyEvent space(ui::EventType::kKeyPressed,ui::VKEY_SPACE,0);EXPECT_FALSE(first->OnKeyPressed(space));panel->Show();release(first);EXPECT_TRUE(shell->address_visible());
+    ASSERT_TRUE(press(first));views::ViewTracker old(first);results.front().title=u"Result host replacement";shell->SetSearchResults(u"Result host","work-profile",results);EXPECT_FALSE(old.view());panel->LayoutRootViewIfNecessary();release(list->children().front().get());EXPECT_TRUE(shell->address_visible());
+  }
+  const auto expected=shell->suggestions().back().url;auto* last=list->children().back().get();ActivateSidebarRow(last);ASSERT_TRUE(base::test::RunUntil([&]{return !shell->address_visible();}));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));EXPECT_EQ(expected,window_->contents("work")->GetLastCommittedURL());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ResultRowHostsHistoryAXClipAndReplacementTarget) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));const bool rust=shell->workspace_input()->rust_editor();history::URLRows seeds;
+  for(int i=0;i<35;++i){history::URLRow row(embedded_test_server()->GetURL("/storage_probe.html?history-result-"+base::NumberToString(i)));row.set_title(u"Result history 日本語 "+base::NumberToString16(i));row.set_visit_count(1);row.set_last_visit(base::Time::Now()-base::Minutes(i+1));seeds.push_back(row);}HistoryServiceFactory::GetForProfile(work_,ServiceAccessType::EXPLICIT_ACCESS)->AddPagesWithDetails(seeds,history::SOURCE_OS_MIGRATION_IMPORTED);
+  shell->OpenTools(3);ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));ASSERT_EQ(35u,shell->history_entries().size());auto* list=shell->history_results_view();for(const auto& child:list->children()){EXPECT_EQ(!rust,views::AsViewClass<views::Button>(child)!=nullptr);if(rust)EXPECT_TRUE(child->children().empty());}
+  auto* scroll=shell->tools_viewport_for_testing();ASSERT_GT(scroll->maximum(),0);auto* first=list->children().front().get();first->ScrollViewToVisible();const auto tabs=window_->tab_count("work");
+  auto press=[](views::View* row){ui::MouseEvent event(ui::EventType::kMousePressed,gfx::Point(12,12),gfx::Point(12,12),base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);return row->OnMousePressed(event);};auto release=[](views::View* row){ui::MouseEvent event(ui::EventType::kMouseReleased,gfx::Point(12,12),gfx::Point(12,12),base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);row->OnMouseReleased(event);};
+  if(rust){ASSERT_TRUE(press(first));const auto offset=scroll->offset();scroll->ScrollTo(scroll->maximum());EXPECT_TRUE(first->GetVisibleBounds().IsEmpty());scroll->ScrollTo(offset);release(first);base::RunLoop().RunUntilIdle();EXPECT_EQ(tabs,window_->tab_count("work"));EXPECT_TRUE(shell->history_visible());
+    ASSERT_TRUE(press(first));shell->tools_widget()->Hide();shell->tools_widget()->Show();release(first);base::RunLoop().RunUntilIdle();EXPECT_EQ(tabs,window_->tab_count("work"));
+    ASSERT_TRUE(press(first));views::ViewTracker old(first);auto replacement=shell->history_entries();replacement.front().title=u"Replacement history";shell->SetHistoryResults(u"","work-profile",200,replacement,false,false);EXPECT_FALSE(old.view());shell->tools_widget()->LayoutRootViewIfNecessary();release(list->children().front().get());base::RunLoop().RunUntilIdle();EXPECT_EQ(tabs,window_->tab_count("work"));
+  }
+  const auto expected=shell->history_entries().back().url;auto* last=list->children().back().get();ActivateSidebarRow(last);ASSERT_TRUE(base::test::RunUntil([&]{return !shell->history_visible()&&window_->tab_count("work")==tabs+1;}));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));EXPECT_EQ(expected,window_->contents("work")->GetLastCommittedURL());
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarRowHostsOwnershipMenuKeysAXAndTitleUpdate) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
   const auto url=embedded_test_server()->GetURL("/storage_probe.html?row-host");ASSERT_TRUE(window_->NavigateFromBar(url,false));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));ASSERT_TRUE(window_->NavigateFromBar(url,true));auto* second=window_->contents("work");ASSERT_TRUE(content::WaitForLoadStop(second));
@@ -5395,7 +5426,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsChromeSharedUnderlayC
   history::URLRow entry(GURL("https://tools-chrome.test/entry"));entry.set_title(u"Native result 🦀");entry.set_visit_count(1);entry.set_last_visit(base::Time::Now());
   HistoryServiceFactory::GetForProfile(work_,ServiceAccessType::EXPLICIT_ACCESS)->AddPagesWithDetails({entry},history::SOURCE_OS_MIGRATION_IMPORTED);
   shell->OpenTools(3);ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));ASSERT_EQ(1u,shell->history_entries().size());
-  auto* row=views::AsViewClass<views::Button>(shell->history_results_view()->children()[0]);ASSERT_TRUE(row);row->ScrollRectToVisible(row->GetLocalBounds());
+  auto* row=shell->history_results_view()->children()[0].get();ASSERT_TRUE(row);row->ScrollRectToVisible(row->GetLocalBounds());
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_contains_text_for_testing("Native result 🦀");}));EXPECT_FALSE(shell->tools_chrome_excludes_for_testing(row));EXPECT_TRUE(row->children().empty());inspect();
   shell->SetHistoryResults(u"","work-profile",200,{},false,true);
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_contains_text_for_testing("Nie udało się odczytać historii.");}));
@@ -5407,8 +5438,8 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsHistoryRowsSharedCanv
   history::URLRows rows;for(int i=0;i<80;++i){history::URLRow row(GURL("https://history-gpu.test/"+std::to_string(i)));row.set_title(base::UTF8ToUTF16("History GPU "+std::to_string(i)+" 🦀"));row.set_visit_count(1);row.set_last_visit(base::Time::Now()-base::Minutes(i+1));rows.push_back(row);}
   HistoryServiceFactory::GetForProfile(work_,ServiceAccessType::EXPLICIT_ACCESS)->AddPagesWithDetails(rows,history::SOURCE_OS_MIGRATION_IMPORTED);
   shell->OpenTools(3);ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));ASSERT_EQ(80u,shell->history_entries().size());
-  auto* list=shell->history_results_view();for(const auto& child:list->children()){EXPECT_TRUE(child->children().empty());EXPECT_TRUE(views::AsViewClass<views::Button>(child));}
-  auto* first=views::AsViewClass<views::Button>(list->children()[0]);ASSERT_TRUE(first);first->ScrollRectToVisible(first->GetLocalBounds());
+  auto* list=shell->history_results_view();for(const auto& child:list->children()){EXPECT_TRUE(child->children().empty());EXPECT_FALSE(views::AsViewClass<views::Button>(child));}
+  auto* first=list->children()[0].get();ASSERT_TRUE(first);first->ScrollRectToVisible(first->GetLocalBounds());
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_contains_text_for_testing("History GPU 0 🦀");}));EXPECT_FALSE(shell->tools_chrome_excludes_for_testing(first));
   EXPECT_TRUE(shell->tools_chrome_order_correct_for_testing());EXPECT_TRUE(shell->tools_chrome_excludes_for_testing(shell->tools_close_for_testing()));
   ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));first->RequestFocus();

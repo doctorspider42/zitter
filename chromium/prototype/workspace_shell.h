@@ -476,8 +476,9 @@ class WorkspaceShell final : public ui::EventHandler,
   std::array<raw_ptr<views::View>,4> palette_chrome_views_={};
   std::unique_ptr<SidebarMetal> metal_palette_;
   bool metal_palette_pending_=false;
-  void WatchSidebarRowInput(views::View* row,base::RepeatingClosure sync);
-  std::map<views::View*,base::RepeatingClosure> sidebar_row_input_;
+  void SyncSceneRowInput();
+  void WatchSceneRowInput(views::View* row,base::RepeatingClosure sync);
+  std::map<views::View*,base::RepeatingClosure> scene_row_input_;
   void ScheduleMetalSidebar();
   void UpdateMetalSidebar();
   std::array<std::unique_ptr<SidebarMetal>,3> metal_split_;
@@ -729,7 +730,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<PanelViewport> tab_scroll_ = nullptr;
   raw_ptr<views::View> suggestion_list_ = nullptr;
   raw_ptr<PanelViewport> suggestion_scroll_ = nullptr;
-  raw_ptr<views::Button> url_pill_ = nullptr;
+  raw_ptr<views::View> url_pill_ = nullptr;
   raw_ptr<views::View> workspace_name_ = nullptr;
   raw_ptr<views::View> profile_name_ = nullptr;
   raw_ptr<views::View> pin_button_ = nullptr;
