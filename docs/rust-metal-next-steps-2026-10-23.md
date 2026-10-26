@@ -5,63 +5,77 @@ inventory is [the parity checklist](rust-metal-parity.md).
 
 ## Current checkpoint
 
-UI source `4ddd40f55bd9cebbab8b83bd5a3d76425b25ea9b`, 2026-10-26, passed the full compiled
+UI source `6142576afad1b8367a7c11eba75b2c6e54f3f8a2`, 2026-10-26, passed the full compiled
 regression inventory with one launcher job, no automatic retries and temporary
 profiles:
 
 | Backend | Regular matrix passed | Regular skips | Failed / crashed / timed out |
 | --- | ---: | ---: | ---: |
-| Rust + Metal | 178 | 6 | 0 |
-| Views | 132 | 6 | 0 |
+| Rust + Metal | 180 | 6 | 0 |
+| Views | 134 | 6 | 0 |
 
-The inventory contains 184 cases; Views excludes 46 dedicated Metal cases
-(138 applicable cases). Four opt-in performance scenarios, real-user Arc import
+The inventory contains 186 cases; Views excludes 46 dedicated Metal cases
+(140 applicable cases). Four opt-in performance scenarios, real-user Arc import
 and the interactive manual window are skipped per backend. Earlier optional
 performance scenarios remain historical evidence, not current-commit passes.
 Metal API validation remained enabled. No controlled CPU/GPU/presentation or
 memory improvement is established.
 
-The tools/timeline/Time-Machine/restored-tab/media/password/download/modal/shared-
-chrome gate passed **68 Metal / 54 Views**; the focused form/selection/editor/
-action gate passed **10 Metal / 8 Views**. Checks passed **260 Rust tests**,
+The preference/tools/timeline/Time-Machine/restored-tab/media/password/download/
+modal/shared-chrome gate passed **86 Metal / 68 Views**; the focused catalogue
+and route gate passed **2 Metal / 2 Views**. Checks passed **264 Rust tests**,
 **180 SDK font/direction cases plus raster**, **66 clean-archive Python tests**,
 scoped GN/boundaries and optimized compilation. The live checkout passed 68 Python
 tests, including two concurrent cases outside this UI commit. Final Ninja reported
 no work to do. All 53 tracked prototype files match committed source and the staged
-overlay. [Source/binary identities, commands and results](benchmarks/rust-tools-form-structure-checkpoint-2026-10-26.json).
+overlay. [Source/binary identities, commands and results](benchmarks/rust-preference-catalogue-checkpoint-2026-10-26.json).
 
-Rust ToolsForm now describes the structure of all four tools pages: seven editor
-fields, five choices, fourteen actions, headings/hints, semantic roles and their
-order. Consecutive action groups and spacing, the history period/clear row and
-flexible choice, history result-column spacing, busy clear state and initially
-hidden more action are declared in Rust. Sleeping-workspace hint joining also
-preserves raw UTF-16. The native adapter instantiates the plan using the existing
-editor, selection and action factories; Views keeps its original form builder.
+Rust now describes all ten preference categories and the original 52-row macOS
+catalogue. It owns row order, control kinds, registered UI preference keys,
+titles/descriptions, numeric choices, editor placeholders, action roles and
+save/open/directory accessibility copy. Site-editor type/policy labels and
+clear-data periods/checkbox copy also come from Rust. A native capability fact
+gates only the system-certificates row. The opt-in native builder consumes this
+catalogue; Views retains the original reference row builder.
 
-Form description is read-only: it cannot clear queries, cancel recording or
-invalidate active choice keys/drafts. Existing native editor/IME callbacks, key
-registrations, captured-key command admission, timers, context checks, browser
-services and persistence remain authoritative. Existing Rust choice/timeline
-projection and stale-action guards remain in place. No dependency was added.
+Native adapters retain actual preference values, admitted writes, managed-setting
+checks, normalization, profile/global scope, browser/platform operations,
+site-rule validation, data-clearing confirmation and persistence. Existing Rust
+draft/filter/paging state and scene editor/selector/switch/checkbox/action
+factories remain. Dynamic provider options still come from the native service.
+Descriptors are UI data and never authorize arbitrary keys or platform actions.
 
-Five Rust cases cover control/command order, balanced grouping/row topology and
-spacing, history busy/hidden states, Unicode/raw UTF-16 and read-only description.
-A shared browser case verifies the ordered accessible control names on every
-page against the original UI and rebuilds history while clearing is busy. Existing
-actual Cocoa editing/selection/actions, recorder, timeline and scene geometry/
-clipping cases also pass in the same compiled inventory.
+Four Rust regressions cover counts/platform gating, exact key/kind mapping,
+editor/action accessibility and numeric/site/period option ordering. A shared
+browser case compares every original row title/detail/order in all ten categories,
+checks site labels against native service constants and filters by description.
+Another activates all four tools navigation roles and checks actual destination
+controls and closed preferences. Existing native Cocoa editing/choice/action,
+profile isolation, managed settings and scene cases also pass.
 
-Other form/status/service coordination and native interaction/container ownership,
-manual platform acceptance, controlled profiling and release/license checks stay
-open. Normal installed apps/profiles were untouched; no bundle was signed.
-[Previous selection/draft checkpoint](benchmarks/rust-tools-choice-forms-checkpoint-2026-10-26.json).
+The first compile probe found a missing test-only preference-label accessor; a
+bounds-checked accessor matching the tools helper was added. Its failed compile
+log is retained in the report, separate from the final passing source/binary.
+No dependency was added. Native compound child containers, event/focus/AX/menu/
+scroll/window nodes, header/profile/status copy and remaining busy/service
+coordination remain open, alongside other surfaces, manual acceptance, controlled
+profiling and release/license checks. Normal installed apps/profiles were
+untouched; no bundle was signed.
+[Previous tools structure checkpoint](benchmarks/rust-tools-form-structure-checkpoint-2026-10-26.json).
 The earlier AppKit startup stall is not claimed fixed by this migration.
 
 ## Immediate preference work still remaining
 
+Next, move preference row/column and outer allocation from the remaining
+BoxLayouts into Rust, including centered row controls, wrapping labels, flexible
+columns and scrolling constraints. Compare dimensions with Views before replacing
+interaction/container ownership. Finish header/profile/status and managed-state
+copy and coordination alongside that work.
+
 Text/backing, category/dismiss controls, filtering, text-draft refresh/admission
-and pagination now use Rust scene/controller state. Migrate UI descriptions/data
-and remaining busy/status/form coordination. Preserve normalization, IME,
+and pagination now use Rust scene/controller state. Static categories and all
+52 row descriptions/types/options/order now use a Rust catalogue. Migrate remaining chrome/dynamic UI data and busy/status/form
+coordination. Preserve normalization, IME,
 managed-setting admission, profile-bound confirmation and deferred rule mutation.
 Tools page copy, static/dynamic copy rendering, pickers, fourteen actions and
 dismiss are migrated. Rust also owns tools page/recording/query/pagination/
@@ -94,7 +108,8 @@ adapters and outer placement still require ownership migration and verification.
 3. **Preferences.** Editors, eleven selectors, 24 switches, three clear-data
    checkboxes, fixed/dynamic actions, category/dismiss controls and category/filter
    state, text/backing, text-draft refresh/admission and pagination use Rust/Metal.
-   Migrate UI descriptions/data and remaining busy/status/form coordination,
+   Static category/row descriptions, kinds/options/order now use Rust. Migrate
+   remaining chrome/dynamic UI data and busy/status/form coordination,
    together with remaining tools status/service coordination, some service/
    progress wording and native row interaction nodes. Tools page data/copy
    rendering, five selectors, fourteen actions and dismiss already use Rust/Metal.

@@ -2058,3 +2058,65 @@ manual platform acceptance, controlled profiling and release/license checks stay
 open. Normal installed apps/profiles were untouched; no bundle was signed.
 [Previous selection/draft checkpoint](benchmarks/rust-tools-choice-forms-checkpoint-2026-10-26.json).
 The earlier AppKit startup stall is not claimed fixed by this migration.
+
+
+## Preference catalogue checkpoint (2026-10-26)
+
+UI source `6142576afad1b8367a7c11eba75b2c6e54f3f8a2`, 2026-10-26, passed the full compiled
+regression inventory with one launcher job, no automatic retries and temporary
+profiles:
+
+| Backend | Regular matrix passed | Regular skips | Failed / crashed / timed out |
+| --- | ---: | ---: | ---: |
+| Rust + Metal | 180 | 6 | 0 |
+| Views | 134 | 6 | 0 |
+
+The inventory contains 186 cases; Views excludes 46 dedicated Metal cases
+(140 applicable cases). Four opt-in performance scenarios, real-user Arc import
+and the interactive manual window are skipped per backend. Earlier optional
+performance scenarios remain historical evidence, not current-commit passes.
+Metal API validation remained enabled. No controlled CPU/GPU/presentation or
+memory improvement is established.
+
+The preference/tools/timeline/Time-Machine/restored-tab/media/password/download/
+modal/shared-chrome gate passed **86 Metal / 68 Views**; the focused catalogue
+and route gate passed **2 Metal / 2 Views**. Checks passed **264 Rust tests**,
+**180 SDK font/direction cases plus raster**, **66 clean-archive Python tests**,
+scoped GN/boundaries and optimized compilation. The live checkout passed 68 Python
+tests, including two concurrent cases outside this UI commit. Final Ninja reported
+no work to do. All 53 tracked prototype files match committed source and the staged
+overlay. [Source/binary identities, commands and results](benchmarks/rust-preference-catalogue-checkpoint-2026-10-26.json).
+
+Rust now describes all ten preference categories and the original 52-row macOS
+catalogue. It owns row order, control kinds, registered UI preference keys,
+titles/descriptions, numeric choices, editor placeholders, action roles and
+save/open/directory accessibility copy. Site-editor type/policy labels and
+clear-data periods/checkbox copy also come from Rust. A native capability fact
+gates only the system-certificates row. The opt-in native builder consumes this
+catalogue; Views retains the original reference row builder.
+
+Native adapters retain actual preference values, admitted writes, managed-setting
+checks, normalization, profile/global scope, browser/platform operations,
+site-rule validation, data-clearing confirmation and persistence. Existing Rust
+draft/filter/paging state and scene editor/selector/switch/checkbox/action
+factories remain. Dynamic provider options still come from the native service.
+Descriptors are UI data and never authorize arbitrary keys or platform actions.
+
+Four Rust regressions cover counts/platform gating, exact key/kind mapping,
+editor/action accessibility and numeric/site/period option ordering. A shared
+browser case compares every original row title/detail/order in all ten categories,
+checks site labels against native service constants and filters by description.
+Another activates all four tools navigation roles and checks actual destination
+controls and closed preferences. Existing native Cocoa editing/choice/action,
+profile isolation, managed settings and scene cases also pass.
+
+The first compile probe found a missing test-only preference-label accessor; a
+bounds-checked accessor matching the tools helper was added. Its failed compile
+log is retained in the report, separate from the final passing source/binary.
+No dependency was added. Native compound child containers, event/focus/AX/menu/
+scroll/window nodes, header/profile/status copy and remaining busy/service
+coordination remain open, alongside other surfaces, manual acceptance, controlled
+profiling and release/license checks. Normal installed apps/profiles were
+untouched; no bundle was signed.
+[Previous tools structure checkpoint](benchmarks/rust-tools-form-structure-checkpoint-2026-10-26.json).
+The earlier AppKit startup stall is not claimed fixed by this migration.

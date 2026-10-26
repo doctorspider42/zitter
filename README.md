@@ -682,7 +682,7 @@ Color/emoji preset rows now use Rust
 geometry, selection and input with batched Metal canvases excluding native editors.
 Nine workspace/profile form actions also use Rust layout/input and scene text
 without native button Labels, batched into four Metal groups. These newer stages pass the
-[latest full automated GUI checkpoint](docs/benchmarks/rust-tools-form-structure-checkpoint-2026-10-26.json);
+[latest full automated GUI checkpoint](docs/benchmarks/rust-preference-catalogue-checkpoint-2026-10-26.json);
 manual signed-app and performance acceptance remain pending. Import also uses a Rust form controller for
 option snapshots, debounce/admission and control locks, with Metal static/status
 text and Apply drawing. Four import checkboxes now share a Metal canvas with Rust
@@ -755,6 +755,10 @@ shortcut/provider validation, configuration and persistence remain authoritative
 The four tools forms now use a Rust node plan for control order, semantic roles,
 action grouping, the history clear row and busy/hidden state. Native factories
 retain editor/IME, event/focus/AX and browser-service adapters.
+The ten preference categories and 52-row catalogue now come from Rust, including
+row order, control kinds, descriptions, options, placeholders and action roles.
+Native stores, validation, profile/global scope and browser operations remain
+authoritative; compound child containers and remaining chrome/status still need work.
 [Editor contracts and acceptance](docs/rust-metal-editor.md).
 Model updates refresh the scene independently of
 native painting. Rust also owns row
