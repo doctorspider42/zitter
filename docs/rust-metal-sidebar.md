@@ -2771,3 +2771,64 @@ trackpad/IME/VoiceOver/RTL/scale/theme/GPU recovery, remaining native ownership,
 controlled CPU/GPU/presentation/input-latency/memory comparisons and release/
 license/notice acceptance remain open. Current-main network policy is excluded
 from the frozen UI lab. No complete parity or performance gain is claimed.
+
+## Sidebar row hosts — full checkpoint, 2026-10-26
+
+UI source `878732ea7a9e8637d4df4f36254703d2d4428cdd` moves sidebar tabs, pinned pages, folders
+and New Tab to plain RustSidebarRow hosts without Button/ButtonController
+instances. Their close children use RustActionView. Rust ActionControl owns
+pointer/key/gesture, enabled/focused/on/visual state and drag-versus-click
+admission. Address, palette/history/preference row hosts and other control/
+container families retain their separately inventoried native adapters.
+
+Pending row/close input is registered only while the Rust controller reports a
+pending press/key/gesture. Viewport callbacks snapshot those watches before
+dispatch, allow safe erasure/reentrant paint, and synchronously retire clipped
+input even while GPU work is queued or fallback is active. Destruction removes
+watches. This adds no whole-row-tree scan per frame. Unchanged pointer visuals
+avoid scheduling another row paint. These are implementation properties, not a
+measured performance gain.
+
+Rust row layout/close visibility and existing native font/vector fallback are
+preserved. Metal and workspace animation previews read either row host through
+common adapters. Native View identity, FocusRing, domain/spec data, browser
+callbacks, preferred-size constants, fonts, menus, capture/focus/AX/window events
+remain explicit adapters or remaining ownership work. Metadata changes preserve
+live nodes and a pending click on the same target.
+
+The compiled inventory contains **210 cases**. Metal passed **204 regular
+cases**, Views **156 regular cases**, with the same **six optional skips** in
+both modes. One launcher job, retry zero, no failures/crashes/timeouts. Dedicated
+Metal cases are excluded from Views. Focus passed **8 Metal / 4 Views**. Checks
+passed **286 Rust**, **180 SDK font/direction cases plus raster**, **68 live and
+68 clean-archive Python**, scoped GN/boundaries and final Ninja no-op. All 53
+committed/live/staged prototype inputs and compiled/frozen-bootstrap/native-
+engine identities were checked.
+[Full sidebar-row report](benchmarks/rust-sidebar-row-checkpoint-2026-10-26.json).
+
+New shared acceptance covers host types, AX metadata, a real Cocoa row context
+menu, Space/AX selection, folder collapse/expand, New Tab palette opening and
+title mutation while pressed. The Rust-specific cancellation case covers row
+and close-child scroll-out-and-back, disable/hide and late release on a replacement
+node; Views explicitly leaves that Rust-only branch unexercised. Existing actual
+mouse drag/drop/close at minimum/maximum sidebar width, tree/space/split/session,
+text/fallback and selection assertions remain. Row test callers now use View/AX
+adapters instead of bypassing input with ButtonTestApi.
+
+Retained full logs contain **6 Metal / 4 Views invalid-mailbox diagnostics**
+with matching missing-overlay counts. All cases passed; these Chromium
+compositor diagnostics remain unresolved.
+
+This full source also includes the preceding
+[split-pane action and queued-close identity correction](benchmarks/rust-split-action-targeted-2026-10-26.json),
+header/footer/resize and main/palette/footer viewport migrations. The lab retains
+frozen bootstrap/network inputs from `d23f232`; current-main network policy is
+outside this binary's acceptance. No dependency, browser admission/store or
+persistence policy changed.
+
+Remaining native row/control/node/container/menu/input/window ownership, manual
+hardware trackpad/IME candidates/VoiceOver/global RTL/scale/theme/GPU recovery,
+controlled CPU/GPU/drawable-presentation/input-latency/memory comparison and final
+release/license/notice acceptance remain open. No complete functional parity or
+controlled performance gain is claimed. Full matrices remain reserved for larger
+blocks; this sidebar ownership family is such a checkpoint.

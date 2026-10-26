@@ -817,6 +817,11 @@ Split View menu/close actions now also use Rust hosts. Queued close resolves
 stable tab identity after index shifts or deletion.
 [Targeted split-action acceptance](docs/benchmarks/rust-split-action-targeted-2026-10-26.json)
 passed 19 Metal / 13 Views affected cases; full matrices remain reserved for larger blocks.
+Sidebar tab/pin/folder/New Tab rows and their close children now use plain Rust
+control hosts, retaining native input/focus/AX/menu adapters.
+[Full sidebar-row checkpoint](docs/benchmarks/rust-sidebar-row-checkpoint-2026-10-26.json)
+passed 204 Metal / 156 Views regular cases plus six optional skips each, 286 Rust,
+180 SDK font/direction cases plus raster and 68 live/clean-archive Python tests.
 [Editor contracts and acceptance](docs/rust-metal-editor.md).
 Model updates refresh the scene independently of
 native painting. Rust also owns row

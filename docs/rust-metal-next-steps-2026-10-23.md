@@ -3,52 +3,68 @@
 This is a work plan, not a claim of complete functional parity. The detailed
 inventory is [the parity checklist](rust-metal-parity.md).
 
-## Latest targeted follow-up: Split View pane actions
-
-UI source `f59b05523e18740e7063404089995321bafae867` moves both pane menu and close controls to
-plain RustActionView hosts without Button/ButtonController instances. Metal
-consumes the shared Rust action snapshot; fallback retains the common glyph
-painter. Native focus, AX, input, window and real Cocoa menus remain adapters.
-Other action/row/control/container families still require migration.
-
-Pending Rust input is canceled when pane views, orientation, workspace, tab
-index/128-bit identity or visibility change. Title/focus updates keep the same
-target. Deferred close callbacks capture tab identity and resolve its current
-index at execution: deleting an earlier tab cannot redirect the close, and an
-already-deleted target is ignored. The close correction applies to both backends.
-
-Focus passed **8 Metal / 6 Views**; affected regressions passed
-**19 Metal / 13 Views**, serial, retry zero. The new shared tests check all four
-host types, AX role/name, geometry, disabled activation, real Cocoa menu tracking,
-physical main-window Space, queued close across index shifts/deletion, and Rust
-late release after swap, orientation, unsplit/replacement and hide/restore.
-Existing real mouse/gesture divider, split title/fallback/close, lifecycle,
-persistence/isolation and header/footer/viewport checks retain their assertions.
-
-Checks passed **284 Rust**, **68 live and 68 clean-archive Python**, scoped GN/
-boundaries and final Ninja no-op. All 53 committed/live/staged prototype inputs
-and compiled/frozen-bootstrap/native-engine identities were checked. Unchanged
-CoreText sources inherit the preceding 180 SDK font/direction cases plus raster;
-that harness was not rerun for this adapter change.
-[Targeted split-action report](benchmarks/rust-split-action-targeted-2026-10-26.json).
-
-The retained first probe exposed an asynchronous fixture issue: expected tab
-counts were correct, but URL assertions ran before setup navigations committed.
-The final race fixture waits for those navigations; production code was unchanged.
-
-The retained final logs contain nonfatal Chromium compositor diagnostics: five
-invalid-mailbox/missing-overlay pairs in Metal focus and two in Metal affected
-regressions; none in the corresponding Views runs. All cases passed; the
-diagnostics remain unresolved and these counts do not establish a performance gain.
-
-Per user cadence, this control family has targeted acceptance. The full checkpoint
-below predates this change and is not a full matrix of the current source. Manual
-trackpad/IME/VoiceOver/RTL/scale/theme/GPU recovery, remaining native ownership,
-controlled CPU/GPU/presentation/input-latency/memory comparisons and release/
-license/notice acceptance remain open. Current-main network policy is excluded
-from the frozen UI lab. No complete parity or performance gain is claimed.
-
 ## Latest full checkpoint
+
+UI source `878732ea7a9e8637d4df4f36254703d2d4428cdd` moves sidebar tabs, pinned pages, folders
+and New Tab to plain RustSidebarRow hosts without Button/ButtonController
+instances. Their close children use RustActionView. Rust ActionControl owns
+pointer/key/gesture, enabled/focused/on/visual state and drag-versus-click
+admission. Address, palette/history/preference row hosts and other control/
+container families retain their separately inventoried native adapters.
+
+Pending row/close input is registered only while the Rust controller reports a
+pending press/key/gesture. Viewport callbacks snapshot those watches before
+dispatch, allow safe erasure/reentrant paint, and synchronously retire clipped
+input even while GPU work is queued or fallback is active. Destruction removes
+watches. This adds no whole-row-tree scan per frame. Unchanged pointer visuals
+avoid scheduling another row paint. These are implementation properties, not a
+measured performance gain.
+
+Rust row layout/close visibility and existing native font/vector fallback are
+preserved. Metal and workspace animation previews read either row host through
+common adapters. Native View identity, FocusRing, domain/spec data, browser
+callbacks, preferred-size constants, fonts, menus, capture/focus/AX/window events
+remain explicit adapters or remaining ownership work. Metadata changes preserve
+live nodes and a pending click on the same target.
+
+The compiled inventory contains **210 cases**. Metal passed **204 regular
+cases**, Views **156 regular cases**, with the same **six optional skips** in
+both modes. One launcher job, retry zero, no failures/crashes/timeouts. Dedicated
+Metal cases are excluded from Views. Focus passed **8 Metal / 4 Views**. Checks
+passed **286 Rust**, **180 SDK font/direction cases plus raster**, **68 live and
+68 clean-archive Python**, scoped GN/boundaries and final Ninja no-op. All 53
+committed/live/staged prototype inputs and compiled/frozen-bootstrap/native-
+engine identities were checked.
+[Full sidebar-row report](benchmarks/rust-sidebar-row-checkpoint-2026-10-26.json).
+
+New shared acceptance covers host types, AX metadata, a real Cocoa row context
+menu, Space/AX selection, folder collapse/expand, New Tab palette opening and
+title mutation while pressed. The Rust-specific cancellation case covers row
+and close-child scroll-out-and-back, disable/hide and late release on a replacement
+node; Views explicitly leaves that Rust-only branch unexercised. Existing actual
+mouse drag/drop/close at minimum/maximum sidebar width, tree/space/split/session,
+text/fallback and selection assertions remain. Row test callers now use View/AX
+adapters instead of bypassing input with ButtonTestApi.
+
+Retained full logs contain **6 Metal / 4 Views invalid-mailbox diagnostics**
+with matching missing-overlay counts. All cases passed; these Chromium
+compositor diagnostics remain unresolved.
+
+This full source also includes the preceding
+[split-pane action and queued-close identity correction](benchmarks/rust-split-action-targeted-2026-10-26.json),
+header/footer/resize and main/palette/footer viewport migrations. The lab retains
+frozen bootstrap/network inputs from `d23f232`; current-main network policy is
+outside this binary's acceptance. No dependency, browser admission/store or
+persistence policy changed.
+
+Remaining native row/control/node/container/menu/input/window ownership, manual
+hardware trackpad/IME candidates/VoiceOver/global RTL/scale/theme/GPU recovery,
+controlled CPU/GPU/drawable-presentation/input-latency/memory comparison and final
+release/license/notice acceptance remain open. No complete functional parity or
+controlled performance gain is claimed. Full matrices remain reserved for larger
+blocks; this sidebar ownership family is such a checkpoint.
+
+## Previous full checkpoint: footer actions
 
 UI source `c8e219585d9d7652d829e64bb2c1eb71e34cb84e` moves footer pin/settings and all
 workspace dots to plain RustActionView hosts, without Button/ButtonController
