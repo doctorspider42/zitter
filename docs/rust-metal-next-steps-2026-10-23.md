@@ -3,44 +3,50 @@
 This is a work plan, not a claim of complete functional parity. The detailed
 inventory is [the parity checklist](rust-metal-parity.md).
 
-## Latest targeted stage
-
-UI source `2c305645b9ec18d82e8174da67df5ec7973fd862` moves workspace settings and import to the shared
-Rust-owned viewport. Rust owns height clipping, wrapping-width reservation,
-allocation, offset and reveal/clamp. Native measurement, platform scrollbar/input,
-accessibility/window adapters and per-control View identity remain. The native
-Views baseline retains its original ScrollView and bounded sizing policy.
-
-Focused new tests passed **2 Metal / 2 Views**; affected regressions passed
-**27 Metal / 20 Views**, single attempt, retry limit zero.
-Checks passed **274 Rust**, **180 SDK font/direction cases plus raster**, **68 live
-and 68 clean-archive Python**, scoped GN/boundaries and final Ninja no-op.
-All 53 committed/live/staged prototype inputs and binary/bootstrap/native-engine
-identities were checked. See [the targeted report](benchmarks/rust-form-viewport-targeted-2026-10-26.json).
-
-Both panels have coverage for actual successful compositor presentation,
-offscreen/reveal, compact/wide wrapping, resize and shrink, wheel/AX commands and
-retained draft text. Earlier fixture failures are retained separately: the native
-settings opener requires a visible main widget, native scrolling is asynchronous,
-and a fixed spacer inflated the import window minimum. The final responsive
-spacer adds overflow at real layout widths without inflating its zero-width
-minimum-size query. Production code was unchanged for those fixture corrections.
-
-An earlier affected Views run had 19 passes and one successful-presentation wait
-timeout. The final fixture explicitly schedules root paint before requesting the
-frame; final focus and affected runs passed on both backends. Earlier results
-remain in the report; elimination of all presentation flakiness is not established.
-
-Full UI tests run **only after a larger block**, per user instruction. This stage
-has targeted acceptance; the previous full matrix below belongs to UI source
-`d23f232`. The lab retains frozen bootstrap/network inputs; current-main network
-policy is outside this binary's acceptance. No controlled performance gain or
-complete manual/release/license parity is claimed.
-
-Previous targeted preference viewport acceptance is retained in
-[its report](benchmarks/rust-preference-viewport-targeted-2026-10-26.json).
-
 ## Latest full checkpoint
+
+UI source `bde6809f25e1499aa6241bfe7492c27a5e7e44f4` moves downloads, page JavaScript/beforeunload
+message bodies and shared scene modal bodies to the Rust-owned viewport.
+Together with tools, preferences, workspace settings and import, these now share
+Rust extent/allocation, bounded height, wrapping-width reservation, offset and
+reveal/clamp policy. Rust also owns overflow-edge geometry and visibility.
+Native measurement, separator paint, platform scrollbar/events/AX, window/frame/
+focus/IME and per-control View identity remain adapters.
+
+The full compiled inventory has **196 cases**. Metal passed **190 regular
+cases**, Views passed **144 regular cases**; each explicitly skipped the same
+six optional manual/live-import/performance scenarios. One launcher job, retry
+limit zero, no failures/crashes/timeouts. Dedicated Metal fixture cases are
+excluded from the Views comparison. Focus passed **2 Metal / 2 Views**, affected
+regressions **40 Metal / 33 Views**. Checks also passed **276 Rust**, **180 SDK
+font/direction cases plus raster**, **68 live and 68 clean-archive Python**,
+scoped GN/boundaries and final Ninja no-op. All 53 committed/live/staged prototype
+inputs and binary/bootstrap/native-engine identities were checked.
+
+[Full service viewport report](benchmarks/rust-service-viewport-checkpoint-2026-10-26.json)
+retains exact commands, inventory/results, source hashes, UUIDs and log digests.
+The lab retains its recorded frozen bootstrap/network inputs from `d23f232`;
+current-main network policy is outside this binary's acceptance.
+
+The native oracle checks bounded preferred size, wrapping, offsets and overflow
+separators at multiple sizes and in both themes. Actual download/message scene
+scrolling, clipping, Cocoa prompt/AX actions, theme changes, forced close,
+editor lifetime and profile isolation remain covered. Modal bodies preserve the
+native provider-specific height cap and 2px scroll workaround. Weak scene
+callbacks replace ScrollView synchronization/subscriptions. No service, store,
+policy/admission/validation or persistence behavior changed; no dependency added.
+
+This is automated acceptance of a larger shared scrolling block, following the
+instruction to reserve full UI matrices for larger additions. Complete native
+control/node ownership, manual acceptance, controlled CPU/GPU/drawable-presentation
+and memory comparison, release/license/notice verification remain open. No
+controlled performance gain or complete functional parity is claimed.
+
+Earlier targeted [preferences](benchmarks/rust-preference-viewport-targeted-2026-10-26.json)
+and [workspace/import](benchmarks/rust-form-viewport-targeted-2026-10-26.json)
+reports retain their historical fixture probes and acceptance scope.
+
+## Previous full checkpoint: tools viewport
 
 UI source `d23f2326fea4902aedeee786585ab11c45558359`, 2026-10-26, passed the full compiled
 regression inventory with one launcher job, no automatic retries and temporary
@@ -115,9 +121,13 @@ The earlier AppKit startup stall is not claimed fixed by this migration.
 
 ## Immediate preference work still remaining
 
+Next small follow-up: cover pressed download actions scrolling offscreen and
+explicitly refresh shared-action visible bounds in the service viewport callback.
+
 Preference root/column/centered-row allocation now uses Rust and matches the
-native BoxLayout oracles. Tools, preferences, workspace settings and import now
-use a Rust-owned viewport without ScrollView. Next, migrate other scroll surfaces and remaining
+native BoxLayout oracles. Tools, preferences, workspace settings, import, downloads,
+page message bodies and scene modal bodies use Rust-owned viewports without
+ScrollView. Next, migrate other scroll surfaces and remaining
 interaction/container identity to Rust node ownership, retaining explicit
 platform window/event/AX adapters. Finish header/profile/status/managed-state
 copy, responsive placement and service coordination alongside that work.

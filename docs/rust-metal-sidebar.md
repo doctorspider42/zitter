@@ -2330,3 +2330,46 @@ complete manual/release/license parity is claimed.
 
 Previous targeted preference viewport acceptance is retained in
 [its report](benchmarks/rust-preference-viewport-targeted-2026-10-26.json).
+
+## Full service viewport checkpoint — 2026-10-26
+
+UI source `bde6809f25e1499aa6241bfe7492c27a5e7e44f4` moves downloads, page JavaScript/beforeunload
+message bodies and shared scene modal bodies to the Rust-owned viewport.
+Together with tools, preferences, workspace settings and import, these now share
+Rust extent/allocation, bounded height, wrapping-width reservation, offset and
+reveal/clamp policy. Rust also owns overflow-edge geometry and visibility.
+Native measurement, separator paint, platform scrollbar/events/AX, window/frame/
+focus/IME and per-control View identity remain adapters.
+
+The full compiled inventory has **196 cases**. Metal passed **190 regular
+cases**, Views passed **144 regular cases**; each explicitly skipped the same
+six optional manual/live-import/performance scenarios. One launcher job, retry
+limit zero, no failures/crashes/timeouts. Dedicated Metal fixture cases are
+excluded from the Views comparison. Focus passed **2 Metal / 2 Views**, affected
+regressions **40 Metal / 33 Views**. Checks also passed **276 Rust**, **180 SDK
+font/direction cases plus raster**, **68 live and 68 clean-archive Python**,
+scoped GN/boundaries and final Ninja no-op. All 53 committed/live/staged prototype
+inputs and binary/bootstrap/native-engine identities were checked.
+
+[Full service viewport report](benchmarks/rust-service-viewport-checkpoint-2026-10-26.json)
+retains exact commands, inventory/results, source hashes, UUIDs and log digests.
+The lab retains its recorded frozen bootstrap/network inputs from `d23f232`;
+current-main network policy is outside this binary's acceptance.
+
+The native oracle checks bounded preferred size, wrapping, offsets and overflow
+separators at multiple sizes and in both themes. Actual download/message scene
+scrolling, clipping, Cocoa prompt/AX actions, theme changes, forced close,
+editor lifetime and profile isolation remain covered. Modal bodies preserve the
+native provider-specific height cap and 2px scroll workaround. Weak scene
+callbacks replace ScrollView synchronization/subscriptions. No service, store,
+policy/admission/validation or persistence behavior changed; no dependency added.
+
+This is automated acceptance of a larger shared scrolling block, following the
+instruction to reserve full UI matrices for larger additions. Complete native
+control/node ownership, manual acceptance, controlled CPU/GPU/drawable-presentation
+and memory comparison, release/license/notice verification remain open. No
+controlled performance gain or complete functional parity is claimed.
+
+Earlier targeted [preferences](benchmarks/rust-preference-viewport-targeted-2026-10-26.json)
+and [workspace/import](benchmarks/rust-form-viewport-targeted-2026-10-26.json)
+reports retain their historical fixture probes and acceptance scope.
