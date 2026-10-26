@@ -94,6 +94,30 @@ def patch_media_dispatcher(text, header=False):
     return text.replace(anchor, addition + anchor, 1)
 
 
+def patch_component_registration(text):
+    """Optional embedder exclusions, leaving upstream verification untouched."""
+    include_anchor = '#include "base/check.h"\n'
+    includes = ('#include "base/command_line.h"\n'
+                '#include "base/strings/string_split.h"\n')
+    anchor = ('bool CrxUpdateService::RegisterComponent(\n'
+              '    const ComponentRegistration& component) {\n'
+              '  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);\n')
+    guard = ('  // Zitter: exclude unused components before registration or network access.\n'
+             '  const std::string disabled_value =\n'
+             '      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(\n'
+             '          "component-updater-disabled-ids");\n'
+             '  const auto disabled = base::SplitStringPiece(\n'
+             '      disabled_value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);\n'
+             '  if (std::find(disabled.begin(), disabled.end(), component.app_id) != disabled.end())\n'
+             '    return false;\n')
+    if text.count(anchor + guard) == 1 and text.count(include_anchor + includes) == 1:
+        return text
+    if (text.count(anchor) != 1 or text.count(include_anchor) != 1 or
+            'Zitter: exclude unused components' in text):
+        raise ValueError("Unexpected upstream component registration layout; review policy hook")
+    return text.replace(include_anchor, include_anchor + includes, 1).replace(anchor, anchor + guard, 1)
+
+
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -139,6 +163,9 @@ def install(checkout, dry_run=False):
     media_header_original, media_source_original = media_header.read_text(), media_source.read_text()
     media_header_patched = patch_media_dispatcher(media_header_original, header=True)
     media_source_patched = patch_media_dispatcher(media_source_original)
+    component_service = checkout / "components/component_updater/component_updater_service.cc"
+    component_original = component_service.read_text()
+    component_patched = patch_component_registration(component_original)
     destination = checkout / "zitter"
     check_existing(destination)
     files = overlay_files()
@@ -176,6 +203,8 @@ def install(checkout, dry_run=False):
                 media_header.write_text(media_header_patched)
             if media_source_patched != media_source_original:
                 media_source.write_text(media_source_patched)
+            if component_patched != component_original:
+                component_service.write_text(component_patched)
             editor_services.apply(editor_patch)
         except Exception:
             if destination.exists():
@@ -187,6 +216,7 @@ def install(checkout, dry_run=False):
             autofill.write_text(autofill_original)
             media_header.write_text(media_header_original)
             media_source.write_text(media_source_original)
+            component_service.write_text(component_original)
             raise
     print("Installed. Run gn gen/check and build zitter or zitter_prototype; see README.md.")
 

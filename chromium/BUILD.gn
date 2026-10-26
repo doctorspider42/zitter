@@ -244,6 +244,24 @@ source_set("profile_workspace_browser_tests") {
   ]
 }
 
+source_set("network_policy") {
+  sources = [
+    "chromium/app/network_policy.cc",
+    "chromium/app/network_policy.h",
+    "chromium/app/network_policy_features.inc",
+    "chromium/app/network_policy_components.inc",
+  ]
+  include_dirs = [ "." ]
+  public_deps = [ "//base" ]
+}
+
+test("network_policy_tests") {
+  output_name = string_replace(get_label_info(":network_policy_tests", "dir"), "//", "") + "_network_policy_tests"
+  sources = [ "chromium/app/network_policy_unittest.cc" ]
+  include_dirs = [ "." ]
+  deps = [ ":network_policy", "//base/test:run_all_unittests", "//base/test:test_support", "//testing/gtest" ]
+}
+
 # Real browser bootstrap, with no browser-test runner or test-only dependencies.
 if (is_mac || is_linux) {
   executable("zitter") {
@@ -268,6 +286,7 @@ if (is_mac || is_linux) {
     include_dirs = [ "." ]
     deps = [
       ":shell",
+      ":network_policy",
       "//base",
       "//build:chromeos_buildflags",
       "//chrome:dependencies",

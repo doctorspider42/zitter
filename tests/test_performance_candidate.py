@@ -16,6 +16,17 @@ with mock.patch.object(sys, "path", [str(TOOLS), *sys.path]):
 
 
 class PerformanceCandidateTest(unittest.TestCase):
+    def test_isolated_app_can_skip_colliding_rust_test_launchers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            checkout = Path(directory)
+            source = checkout / "source.gn"
+            source.write_text('executable("zitter") {}\n'
+                              'build_native_rust_unit_tests = true\n')
+            self.stage(checkout, {"BUILD.gn": source}, variant="zitter_security",
+                       skip_native_rust_tests=True)
+            self.assertIn('build_native_rust_unit_tests = false',
+                          (checkout / "zitter_security/BUILD.gn").read_text())
+
     def test_application_measurement_preserves_frozen_product_and_owner_hashes(self):
         with tempfile.TemporaryDirectory() as directory:
             checkout = Path(directory)

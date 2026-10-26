@@ -1,0 +1,1413 @@
+{
+  "audit_date": "2026-10-23",
+  "timezone": "Europe/Warsaw",
+  "status": "observational audit; shipping policy not changed",
+  "counter_semantics": "URL_REQUEST_START_JOB begins, not packet counts or successful service operations",
+  "runs": [
+    {
+      "run": "full",
+      "executable_sha256": "9b7a3e217c3c31fb64b17f87c13ed83f8d548377e6ff40bd7aa974b7fdc3b630",
+      "binary_mtime_utc": "2026-10-21T17:09:51.968Z",
+      "chromium_checkout_head": "1a732fcc23b20dd0bcf38f35d72c1fe1ec799d35",
+      "source_git_head": "324658cbeb88b5372fd3eca2ff13eb2bac74164e",
+      "credential_environment_variables_present": {
+        "GOOGLE_API_KEY": false,
+        "GOOGLE_DEFAULT_CLIENT_ID": false,
+        "GOOGLE_DEFAULT_CLIENT_SECRET": false
+      },
+      "scenarios": [
+        {
+          "name": "fresh-onboarding",
+          "started_utc": "2026-10-23T09:19:13.952Z",
+          "ended_utc": "2026-10-23T09:21:14.057Z",
+          "duration_seconds": 120,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/158.0.8106.0",
+            "revision": "@0000000000000000000000000000000000000000",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/158.0.0.0 Safari/537.36",
+            "jsVersion": "15.8.6"
+          },
+          "diagnostic_flags": [],
+          "exit_code": 0,
+          "netlog_complete": true,
+          "netlog_path": "build/network-audit/2026-10-23-full/fresh-onboarding.netlog.json",
+          "netlog_sha256": "071bbde7e7ad70576f0b62c6e052c5328fd06dd06cd84c544c5a7c6e19a5eee2",
+          "event_count": 465484,
+          "hosts": {
+            "clients2.google.com": {
+              "requests": 1,
+              "endpoints": [
+                "http://clients2.google.com/time/1/current"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200 OK"
+              ],
+              "net_errors": [],
+              "first_request_ms": 80,
+              "last_request_ms": 80
+            },
+            "www.google.com": {
+              "requests": 5,
+              "endpoints": [
+                "https://www.google.com/async/folae"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [],
+              "first_request_ms": 95,
+              "last_request_ms": 435
+            },
+            "update.googleapis.com": {
+              "requests": 26,
+              "endpoints": [
+                "https://update.googleapis.com/service/update2/json"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [
+                0
+              ],
+              "first_request_ms": 99,
+              "last_request_ms": 79736
+            },
+            "edgedl.me.gvt1.com": {
+              "requests": 22,
+              "endpoints": [
+                "http://edgedl.me.gvt1.com/edgedl/<component-path>"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200 OK"
+              ],
+              "net_errors": [],
+              "first_request_ms": 264,
+              "last_request_ms": 79667
+            },
+            "www.gstatic.com": {
+              "requests": 2,
+              "endpoints": [
+                "https://www.gstatic.com/chrome/intelligence/assist/ranker/models/translate/2017/03/translate_ranker_model_20170329.pb.bin"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [],
+              "first_request_ms": 4896,
+              "last_request_ms": 4914
+            },
+            "safebrowsing.googleapis.com": {
+              "requests": 1,
+              "endpoints": [
+                "https://safebrowsing.googleapis.com/v5/hashLists:batchGet"
+              ],
+              "status_lines": [
+                "HTTP/1.1 400"
+              ],
+              "net_errors": [],
+              "first_request_ms": 89077,
+              "last_request_ms": 89077
+            }
+          },
+          "dns_requests": [
+            "http://clients2.google.com",
+            "http://edgedl.me.gvt1.com",
+            "https://safebrowsing.googleapis.com",
+            "https://update.googleapis.com",
+            "https://www.google.com",
+            "https://www.gstatic.com"
+          ],
+          "tcp_connect_attempt_count": 11,
+          "tls_success_count": 7,
+          "tls_error_codes": [],
+          "actions": [],
+          "default_capture_mode": "Default"
+        },
+        {
+          "name": "fresh-ready-idle",
+          "started_utc": "2026-10-23T09:21:14.328Z",
+          "ended_utc": "2026-10-23T09:23:17.212Z",
+          "duration_seconds": 120,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/158.0.8106.0",
+            "revision": "@0000000000000000000000000000000000000000",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/158.0.0.0 Safari/537.36",
+            "jsVersion": "15.8.6"
+          },
+          "diagnostic_flags": [],
+          "exit_code": 0,
+          "netlog_complete": true,
+          "netlog_path": "build/network-audit/2026-10-23-full/fresh-ready-idle.netlog.json",
+          "netlog_sha256": "810c5c5de612839612d52e69261dd05703ac66bb18fb44fb2ace642929b9aad9",
+          "event_count": 442638,
+          "hosts": {
+            "clients2.google.com": {
+              "requests": 1,
+              "endpoints": [
+                "http://clients2.google.com/time/1/current"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200 OK"
+              ],
+              "net_errors": [],
+              "first_request_ms": 146,
+              "last_request_ms": 146
+            },
+            "www.google.com": {
+              "requests": 4,
+              "endpoints": [
+                "https://www.google.com/async/folae"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [],
+              "first_request_ms": 165,
+              "last_request_ms": 469
+            },
+            "update.googleapis.com": {
+              "requests": 16,
+              "endpoints": [
+                "https://update.googleapis.com/service/update2/json"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [
+                0
+              ],
+              "first_request_ms": 180,
+              "last_request_ms": 86279
+            },
+            "edgedl.me.gvt1.com": {
+              "requests": 13,
+              "endpoints": [
+                "http://edgedl.me.gvt1.com/edgedl/<component-path>"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200 OK"
+              ],
+              "net_errors": [],
+              "first_request_ms": 281,
+              "last_request_ms": 86319
+            },
+            "www.gstatic.com": {
+              "requests": 2,
+              "endpoints": [
+                "https://www.gstatic.com/chrome/intelligence/assist/ranker/models/translate/2017/03/translate_ranker_model_20170329.pb.bin"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [],
+              "first_request_ms": 5030,
+              "last_request_ms": 5076
+            },
+            "safebrowsing.googleapis.com": {
+              "requests": 1,
+              "endpoints": [
+                "https://safebrowsing.googleapis.com/v5/hashLists:batchGet"
+              ],
+              "status_lines": [
+                "HTTP/1.1 400"
+              ],
+              "net_errors": [],
+              "first_request_ms": 113166,
+              "last_request_ms": 113166
+            }
+          },
+          "dns_requests": [
+            "http://clients2.google.com",
+            "http://edgedl.me.gvt1.com",
+            "https://safebrowsing.googleapis.com",
+            "https://update.googleapis.com",
+            "https://www.google.com",
+            "https://www.gstatic.com"
+          ],
+          "tcp_connect_attempt_count": 11,
+          "tls_success_count": 7,
+          "tls_error_codes": [],
+          "actions": [],
+          "default_capture_mode": "Default"
+        },
+        {
+          "name": "warm-ready-idle",
+          "started_utc": "2026-10-23T09:23:17.628Z",
+          "ended_utc": "2026-10-23T09:25:17.835Z",
+          "duration_seconds": 120,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/158.0.8106.0",
+            "revision": "@0000000000000000000000000000000000000000",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/158.0.0.0 Safari/537.36",
+            "jsVersion": "15.8.6"
+          },
+          "diagnostic_flags": [],
+          "exit_code": 0,
+          "netlog_complete": true,
+          "netlog_path": "build/network-audit/2026-10-23-full/warm-ready-idle.netlog.json",
+          "netlog_sha256": "fd85614bbf75555e960c4e2f3338ac3de83683af11d71f78a351e2e4ebc8f1ae",
+          "event_count": 23609,
+          "hosts": {
+            "www.google.com": {
+              "requests": 4,
+              "endpoints": [
+                "https://www.google.com/async/folae"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [],
+              "first_request_ms": 107,
+              "last_request_ms": 416
+            },
+            "update.googleapis.com": {
+              "requests": 14,
+              "endpoints": [
+                "https://update.googleapis.com/service/update2/json"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [
+                0
+              ],
+              "first_request_ms": 141,
+              "last_request_ms": 73833
+            },
+            "edgedl.me.gvt1.com": {
+              "requests": 10,
+              "endpoints": [
+                "http://edgedl.me.gvt1.com/edgedl/<component-path>"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200 OK"
+              ],
+              "net_errors": [],
+              "first_request_ms": 60185,
+              "last_request_ms": 73760
+            },
+            "safebrowsing.googleapis.com": {
+              "requests": 1,
+              "endpoints": [
+                "https://safebrowsing.googleapis.com/v5/hashLists:batchGet"
+              ],
+              "status_lines": [
+                "HTTP/1.1 400"
+              ],
+              "net_errors": [],
+              "first_request_ms": 93108,
+              "last_request_ms": 93108
+            }
+          },
+          "dns_requests": [
+            "http://edgedl.me.gvt1.com",
+            "https://safebrowsing.googleapis.com",
+            "https://update.googleapis.com",
+            "https://www.google.com"
+          ],
+          "tcp_connect_attempt_count": 7,
+          "tls_success_count": 5,
+          "tls_error_codes": [],
+          "actions": [],
+          "default_capture_mode": "Default"
+        },
+        {
+          "name": "local-features",
+          "started_utc": "2026-10-23T09:25:17.857Z",
+          "ended_utc": "2026-10-23T09:27:17.963Z",
+          "duration_seconds": 120,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/158.0.8106.0",
+            "revision": "@0000000000000000000000000000000000000000",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/158.0.0.0 Safari/537.36",
+            "jsVersion": "15.8.6"
+          },
+          "diagnostic_flags": [],
+          "exit_code": 0,
+          "netlog_complete": true,
+          "netlog_path": "build/network-audit/2026-10-23-full/local-features.netlog.json",
+          "netlog_sha256": "7fb49109c08093bb50fc5bb54f5d89d062f00dd4db084bfafbd6774cb9af4df7",
+          "event_count": 498461,
+          "hosts": {
+            "clients2.google.com": {
+              "requests": 1,
+              "endpoints": [
+                "http://clients2.google.com/time/1/current"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200 OK"
+              ],
+              "net_errors": [],
+              "first_request_ms": 95,
+              "last_request_ms": 95
+            },
+            "www.google.com": {
+              "requests": 4,
+              "endpoints": [
+                "https://www.google.com/async/folae"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [],
+              "first_request_ms": 99,
+              "last_request_ms": 400
+            },
+            "update.googleapis.com": {
+              "requests": 26,
+              "endpoints": [
+                "https://update.googleapis.com/service/update2/json"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [
+                0
+              ],
+              "first_request_ms": 118,
+              "last_request_ms": 96902
+            },
+            "127.0.0.1": {
+              "requests": 3,
+              "endpoints": [
+                "http://127.0.0.1:56523/fixture",
+                "http://127.0.0.1:56523/fetch",
+                "http://127.0.0.1:56523/download"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200 OK"
+              ],
+              "net_errors": [],
+              "first_request_ms": 140,
+              "last_request_ms": 10209
+            },
+            "content-autofill.googleapis.com": {
+              "requests": 2,
+              "endpoints": [
+                "https://content-autofill.googleapis.com/v1/pages/<encoded-form-metadata>"
+              ],
+              "status_lines": [
+                "HTTP/1.1 400"
+              ],
+              "net_errors": [],
+              "first_request_ms": 208,
+              "last_request_ms": 10202
+            },
+            "edgedl.me.gvt1.com": {
+              "requests": 22,
+              "endpoints": [
+                "http://edgedl.me.gvt1.com/edgedl/<component-path>"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200 OK"
+              ],
+              "net_errors": [],
+              "first_request_ms": 240,
+              "last_request_ms": 96837
+            },
+            "www.gstatic.com": {
+              "requests": 2,
+              "endpoints": [
+                "https://www.gstatic.com/chrome/intelligence/assist/ranker/models/translate/2017/03/translate_ranker_model_20170329.pb.bin"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [],
+              "first_request_ms": 5011,
+              "last_request_ms": 5026
+            }
+          },
+          "dns_requests": [
+            "http://127.0.0.1:56523",
+            "http://clients2.google.com",
+            "http://edgedl.me.gvt1.com",
+            "https://content-autofill.googleapis.com",
+            "https://update.googleapis.com",
+            "https://www.google.com",
+            "https://www.gstatic.com"
+          ],
+          "tcp_connect_attempt_count": 13,
+          "tls_success_count": 6,
+          "tls_error_codes": [],
+          "actions": [
+            {
+              "name": "local-fetch",
+              "at_utc": "2026-10-23T09:25:28.358Z",
+              "result": {
+                "result": {
+                  "type": "number",
+                  "value": 200,
+                  "description": "200"
+                }
+              }
+            },
+            {
+              "name": "local-download",
+              "at_utc": "2026-10-23T09:25:28.359Z",
+              "result": {
+                "result": {
+                  "type": "string",
+                  "value": "clicked"
+                }
+              }
+            },
+            {
+              "name": "local-form-input",
+              "at_utc": "2026-10-23T09:25:28.371Z",
+              "result": {
+                "result": {
+                  "type": "string",
+                  "value": "Audit Person"
+                }
+              }
+            }
+          ],
+          "default_capture_mode": "Default"
+        },
+        {
+          "name": "external-navigation",
+          "started_utc": "2026-10-23T09:27:18.239Z",
+          "ended_utc": "2026-10-23T09:29:18.349Z",
+          "duration_seconds": 120,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/158.0.8106.0",
+            "revision": "@0000000000000000000000000000000000000000",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/158.0.0.0 Safari/537.36",
+            "jsVersion": "15.8.6"
+          },
+          "diagnostic_flags": [],
+          "exit_code": 0,
+          "netlog_complete": true,
+          "netlog_path": "build/network-audit/2026-10-23-full/external-navigation.netlog.json",
+          "netlog_sha256": "6d1a0742ea980420166469a5ed3e391c5b98ed1a097ecdbac710bcd7ace0fe6b",
+          "event_count": 461157,
+          "hosts": {
+            "clients2.google.com": {
+              "requests": 1,
+              "endpoints": [
+                "http://clients2.google.com/time/1/current"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200 OK"
+              ],
+              "net_errors": [],
+              "first_request_ms": 109,
+              "last_request_ms": 109
+            },
+            "www.google.com": {
+              "requests": 5,
+              "endpoints": [
+                "https://www.google.com/async/folae"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [],
+              "first_request_ms": 114,
+              "last_request_ms": 427
+            },
+            "update.googleapis.com": {
+              "requests": 26,
+              "endpoints": [
+                "https://update.googleapis.com/service/update2/json"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [
+                0
+              ],
+              "first_request_ms": 142,
+              "last_request_ms": 73866
+            },
+            "example.com": {
+              "requests": 2,
+              "endpoints": [
+                "https://example.com/",
+                "https://example.com/s.js"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [],
+              "first_request_ms": 163,
+              "last_request_ms": 276
+            },
+            "edgedl.me.gvt1.com": {
+              "requests": 22,
+              "endpoints": [
+                "http://edgedl.me.gvt1.com/edgedl/<component-path>"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200 OK"
+              ],
+              "net_errors": [],
+              "first_request_ms": 267,
+              "last_request_ms": 73800
+            },
+            "www.gstatic.com": {
+              "requests": 2,
+              "endpoints": [
+                "https://www.gstatic.com/chrome/intelligence/assist/ranker/models/translate/2017/03/translate_ranker_model_20170329.pb.bin"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [],
+              "first_request_ms": 5073,
+              "last_request_ms": 5095
+            }
+          },
+          "dns_requests": [
+            "http://clients2.google.com",
+            "http://edgedl.me.gvt1.com",
+            "https://example.com",
+            "https://update.googleapis.com",
+            "https://www.google.com",
+            "https://www.gstatic.com"
+          ],
+          "tcp_connect_attempt_count": 9,
+          "tls_success_count": 4,
+          "tls_error_codes": [],
+          "actions": [],
+          "default_capture_mode": "Default"
+        },
+        {
+          "name": "suppressed-control",
+          "started_utc": "2026-10-23T09:29:18.603Z",
+          "ended_utc": "2026-10-23T09:31:18.711Z",
+          "duration_seconds": 120,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/158.0.8106.0",
+            "revision": "@0000000000000000000000000000000000000000",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/158.0.0.0 Safari/537.36",
+            "jsVersion": "15.8.6"
+          },
+          "diagnostic_flags": [
+            "--disable-background-networking",
+            "--disable-component-update"
+          ],
+          "exit_code": 0,
+          "netlog_complete": true,
+          "netlog_path": "build/network-audit/2026-10-23-full/suppressed-control.netlog.json",
+          "netlog_sha256": "e3b5fdeb818c85640f1ae542cf9ed7d745f4a04bc77781a465c187da46d97126",
+          "event_count": 1949,
+          "hosts": {
+            "clients2.google.com": {
+              "requests": 1,
+              "endpoints": [
+                "http://clients2.google.com/time/1/current"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200 OK"
+              ],
+              "net_errors": [],
+              "first_request_ms": 112,
+              "last_request_ms": 112
+            },
+            "www.google.com": {
+              "requests": 4,
+              "endpoints": [
+                "https://www.google.com/async/folae"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [],
+              "first_request_ms": 117,
+              "last_request_ms": 417
+            },
+            "www.gstatic.com": {
+              "requests": 2,
+              "endpoints": [
+                "https://www.gstatic.com/chrome/intelligence/assist/ranker/models/translate/2017/03/translate_ranker_model_20170329.pb.bin"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [],
+              "first_request_ms": 5052,
+              "last_request_ms": 5072
+            }
+          },
+          "dns_requests": [
+            "http://clients2.google.com",
+            "https://www.google.com",
+            "https://www.gstatic.com"
+          ],
+          "tcp_connect_attempt_count": 7,
+          "tls_success_count": 5,
+          "tls_error_codes": [],
+          "actions": [],
+          "default_capture_mode": "Default"
+        }
+      ]
+    },
+    {
+      "run": "targeted",
+      "executable_sha256": "9b7a3e217c3c31fb64b17f87c13ed83f8d548377e6ff40bd7aa974b7fdc3b630",
+      "binary_mtime_utc": "2026-10-21T17:09:51.968Z",
+      "chromium_checkout_head": "1a732fcc23b20dd0bcf38f35d72c1fe1ec799d35",
+      "source_git_head": "324658cbeb88b5372fd3eca2ff13eb2bac74164e",
+      "credential_environment_variables_present": {
+        "GOOGLE_API_KEY": false,
+        "GOOGLE_DEFAULT_CLIENT_ID": false,
+        "GOOGLE_DEFAULT_CLIENT_SECRET": false
+      },
+      "scenarios": [
+        {
+          "name": "targeted-idle",
+          "started_utc": "2026-10-23T09:22:38.770Z",
+          "ended_utc": "2026-10-23T09:24:08.875Z",
+          "duration_seconds": 90,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/158.0.8106.0",
+            "revision": "@0000000000000000000000000000000000000000",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/158.0.0.0 Safari/537.36",
+            "jsVersion": "15.8.6"
+          },
+          "diagnostic_flags": [
+            "--disable-features=AimEnabled,NetworkTimeServiceQuerying,AutofillServerCommunication,TranslateRankerQuery,TranslateRankerEnforcement"
+          ],
+          "exit_code": 0,
+          "netlog_complete": true,
+          "netlog_path": "build/network-audit/2026-10-23-targeted/targeted-idle.netlog.json",
+          "netlog_sha256": "0e111c4f18087d8de9d2f40ce77ebb36f1cab25bd06ea26c8c7042b185c9b9e2",
+          "event_count": 168941,
+          "hosts": {
+            "update.googleapis.com": {
+              "requests": 5,
+              "endpoints": [
+                "https://update.googleapis.com/service/update2/json"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [
+                0
+              ],
+              "first_request_ms": 124,
+              "last_request_ms": 50998
+            },
+            "edgedl.me.gvt1.com": {
+              "requests": 3,
+              "endpoints": [
+                "http://edgedl.me.gvt1.com/edgedl/<component-path>"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200 OK"
+              ],
+              "net_errors": [],
+              "first_request_ms": 243,
+              "last_request_ms": 51137
+            }
+          },
+          "dns_requests": [
+            "http://edgedl.me.gvt1.com",
+            "https://update.googleapis.com"
+          ],
+          "tcp_connect_attempt_count": 2,
+          "tls_success_count": 1,
+          "tls_error_codes": [],
+          "actions": [],
+          "default_capture_mode": "Default"
+        },
+        {
+          "name": "targeted-local",
+          "started_utc": "2026-10-23T09:24:08.981Z",
+          "ended_utc": "2026-10-23T09:25:39.189Z",
+          "duration_seconds": 90,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/158.0.8106.0",
+            "revision": "@0000000000000000000000000000000000000000",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/158.0.0.0 Safari/537.36",
+            "jsVersion": "15.8.6"
+          },
+          "diagnostic_flags": [
+            "--disable-features=AimEnabled,NetworkTimeServiceQuerying,AutofillServerCommunication,TranslateRankerQuery,TranslateRankerEnforcement"
+          ],
+          "exit_code": 0,
+          "netlog_complete": true,
+          "netlog_path": "build/network-audit/2026-10-23-targeted/targeted-local.netlog.json",
+          "netlog_sha256": "c61ba3d85faf2843b475d8708cb8de67d94ba1594d8780492368a8c42f824cae",
+          "event_count": 467285,
+          "hosts": {
+            "update.googleapis.com": {
+              "requests": 23,
+              "endpoints": [
+                "https://update.googleapis.com/service/update2/json"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [
+                0
+              ],
+              "first_request_ms": 133,
+              "last_request_ms": 86579
+            },
+            "127.0.0.1": {
+              "requests": 3,
+              "endpoints": [
+                "http://127.0.0.1:56619/fixture",
+                "http://127.0.0.1:56619/fetch",
+                "http://127.0.0.1:56619/download"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200 OK"
+              ],
+              "net_errors": [],
+              "first_request_ms": 154,
+              "last_request_ms": 10164
+            },
+            "edgedl.me.gvt1.com": {
+              "requests": 20,
+              "endpoints": [
+                "http://edgedl.me.gvt1.com/edgedl/<component-path>"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200 OK"
+              ],
+              "net_errors": [],
+              "first_request_ms": 258,
+              "last_request_ms": 86631
+            }
+          },
+          "dns_requests": [
+            "http://127.0.0.1:56619",
+            "http://edgedl.me.gvt1.com",
+            "https://update.googleapis.com"
+          ],
+          "tcp_connect_attempt_count": 6,
+          "tls_success_count": 1,
+          "tls_error_codes": [],
+          "actions": [
+            {
+              "name": "local-fetch",
+              "at_utc": "2026-10-23T09:24:22.143Z",
+              "result": {
+                "result": {
+                  "type": "number",
+                  "value": 200,
+                  "description": "200"
+                }
+              }
+            },
+            {
+              "name": "local-download",
+              "at_utc": "2026-10-23T09:24:22.147Z",
+              "result": {
+                "result": {
+                  "type": "string",
+                  "value": "clicked"
+                }
+              }
+            },
+            {
+              "name": "local-form-input",
+              "at_utc": "2026-10-23T09:24:22.162Z",
+              "result": {
+                "result": {
+                  "type": "string",
+                  "value": "Audit Person"
+                }
+              }
+            }
+          ],
+          "default_capture_mode": "Default"
+        }
+      ]
+    },
+    {
+      "run": "safebrowsing-check",
+      "executable_sha256": "9b7a3e217c3c31fb64b17f87c13ed83f8d548377e6ff40bd7aa974b7fdc3b630",
+      "binary_mtime_utc": "2026-10-21T17:09:51.968Z",
+      "chromium_checkout_head": "1a732fcc23b20dd0bcf38f35d72c1fe1ec799d35",
+      "source_git_head": "324658cbeb88b5372fd3eca2ff13eb2bac74164e",
+      "credential_environment_variables_present": {
+        "GOOGLE_API_KEY": false,
+        "GOOGLE_DEFAULT_CLIENT_ID": false,
+        "GOOGLE_DEFAULT_CLIENT_SECRET": false
+      },
+      "scenarios": [
+        {
+          "name": "external-navigation",
+          "started_utc": "2026-10-23T09:23:23.857Z",
+          "ended_utc": "2026-10-23T09:24:53.974Z",
+          "duration_seconds": 90,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/158.0.8106.0",
+            "revision": "@0000000000000000000000000000000000000000",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/158.0.0.0 Safari/537.36",
+            "jsVersion": "15.8.6"
+          },
+          "diagnostic_flags": [],
+          "exit_code": 0,
+          "netlog_complete": true,
+          "netlog_path": "build/network-audit/2026-10-23-safebrowsing-check/external-navigation.netlog.json",
+          "netlog_sha256": "f85db4535b64635a5d96d7fce70d2f8d07bf9ac8015fabeea4f5e773d2c0b82b",
+          "event_count": 422728,
+          "hosts": {
+            "clients2.google.com": {
+              "requests": 1,
+              "endpoints": [
+                "http://clients2.google.com/time/1/current"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200 OK"
+              ],
+              "net_errors": [],
+              "first_request_ms": 109,
+              "last_request_ms": 109
+            },
+            "www.google.com": {
+              "requests": 4,
+              "endpoints": [
+                "https://www.google.com/async/folae"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [],
+              "first_request_ms": 115,
+              "last_request_ms": 414
+            },
+            "update.googleapis.com": {
+              "requests": 5,
+              "endpoints": [
+                "https://update.googleapis.com/service/update2/json"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [
+                0
+              ],
+              "first_request_ms": 133,
+              "last_request_ms": 12215
+            },
+            "testsafebrowsing.appspot.com": {
+              "requests": 5,
+              "endpoints": [
+                "https://testsafebrowsing.appspot.com/s/phishing.html",
+                "https://testsafebrowsing.appspot.com/s/social-engineering-ad1.png",
+                "https://testsafebrowsing.appspot.com/s/social-engineering-ad2.png",
+                "https://testsafebrowsing.appspot.com/s/social-engineering-ad3.png"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [
+                -3
+              ],
+              "first_request_ms": 156,
+              "last_request_ms": 434
+            },
+            "edgedl.me.gvt1.com": {
+              "requests": 3,
+              "endpoints": [
+                "http://edgedl.me.gvt1.com/edgedl/<component-path>"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200 OK"
+              ],
+              "net_errors": [],
+              "first_request_ms": 243,
+              "last_request_ms": 12305
+            },
+            "content-autofill.googleapis.com": {
+              "requests": 2,
+              "endpoints": [
+                "https://content-autofill.googleapis.com/v1/pages/<encoded-form-metadata>"
+              ],
+              "status_lines": [
+                "HTTP/1.1 400"
+              ],
+              "net_errors": [],
+              "first_request_ms": 473,
+              "last_request_ms": 89682
+            },
+            "www.gstatic.com": {
+              "requests": 2,
+              "endpoints": [
+                "https://www.gstatic.com/chrome/intelligence/assist/ranker/models/translate/2017/03/translate_ranker_model_20170329.pb.bin"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [],
+              "first_request_ms": 4973,
+              "last_request_ms": 4990
+            }
+          },
+          "dns_requests": [
+            "http://clients2.google.com",
+            "http://edgedl.me.gvt1.com",
+            "https://content-autofill.googleapis.com",
+            "https://testsafebrowsing.appspot.com",
+            "https://update.googleapis.com",
+            "https://www.google.com",
+            "https://www.gstatic.com"
+          ],
+          "tcp_connect_attempt_count": 12,
+          "tls_success_count": 8,
+          "tls_error_codes": [],
+          "actions": [],
+          "default_capture_mode": "Default",
+          "page_inspection": {
+            "url": "https://testsafebrowsing.appspot.com/s/phishing.html",
+            "title": "",
+            "phishing_test_content_loaded": true
+          }
+        }
+      ]
+    },
+    {
+      "run": "long-idle",
+      "executable_sha256": "9b7a3e217c3c31fb64b17f87c13ed83f8d548377e6ff40bd7aa974b7fdc3b630",
+      "binary_mtime_utc": "2026-10-21T17:09:51.968Z",
+      "chromium_checkout_head": "1a732fcc23b20dd0bcf38f35d72c1fe1ec799d35",
+      "source_git_head": "324658cbeb88b5372fd3eca2ff13eb2bac74164e",
+      "credential_environment_variables_present": {
+        "GOOGLE_API_KEY": false,
+        "GOOGLE_DEFAULT_CLIENT_ID": false,
+        "GOOGLE_DEFAULT_CLIENT_SECRET": false
+      },
+      "scenarios": [
+        {
+          "name": "fresh-ready-idle",
+          "started_utc": "2026-10-23T09:25:14.763Z",
+          "ended_utc": "2026-10-23T09:32:14.870Z",
+          "duration_seconds": 420,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/158.0.8106.0",
+            "revision": "@0000000000000000000000000000000000000000",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/158.0.0.0 Safari/537.36",
+            "jsVersion": "15.8.6"
+          },
+          "diagnostic_flags": [],
+          "exit_code": 0,
+          "netlog_complete": true,
+          "netlog_path": "build/network-audit/2026-10-23-long-idle/fresh-ready-idle.netlog.json",
+          "netlog_sha256": "11d32770d60eaad989a4bc1709a706a75e30a6c815257ed33b0706668c86d997",
+          "event_count": 497525,
+          "hosts": {
+            "clients2.google.com": {
+              "requests": 1,
+              "endpoints": [
+                "http://clients2.google.com/time/1/current"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200 OK"
+              ],
+              "net_errors": [],
+              "first_request_ms": 97,
+              "last_request_ms": 97
+            },
+            "www.google.com": {
+              "requests": 4,
+              "endpoints": [
+                "https://www.google.com/async/folae"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [],
+              "first_request_ms": 102,
+              "last_request_ms": 433
+            },
+            "update.googleapis.com": {
+              "requests": 26,
+              "endpoints": [
+                "https://update.googleapis.com/service/update2/json"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [
+                0
+              ],
+              "first_request_ms": 138,
+              "last_request_ms": 109007
+            },
+            "edgedl.me.gvt1.com": {
+              "requests": 22,
+              "endpoints": [
+                "http://edgedl.me.gvt1.com/edgedl/<component-path>"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200 OK"
+              ],
+              "net_errors": [],
+              "first_request_ms": 248,
+              "last_request_ms": 108953
+            },
+            "www.gstatic.com": {
+              "requests": 2,
+              "endpoints": [
+                "https://www.gstatic.com/chrome/intelligence/assist/ranker/models/translate/2017/03/translate_ranker_model_20170329.pb.bin"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [],
+              "first_request_ms": 5027,
+              "last_request_ms": 5049
+            },
+            "safebrowsing.googleapis.com": {
+              "requests": 1,
+              "endpoints": [
+                "https://safebrowsing.googleapis.com/v5/hashLists:batchGet"
+              ],
+              "status_lines": [
+                "HTTP/1.1 400"
+              ],
+              "net_errors": [],
+              "first_request_ms": 176105,
+              "last_request_ms": 176105
+            }
+          },
+          "dns_requests": [
+            "http://clients2.google.com",
+            "http://edgedl.me.gvt1.com",
+            "https://safebrowsing.googleapis.com",
+            "https://update.googleapis.com",
+            "https://www.google.com",
+            "https://www.gstatic.com"
+          ],
+          "tcp_connect_attempt_count": 11,
+          "tls_success_count": 6,
+          "tls_error_codes": [],
+          "actions": [],
+          "default_capture_mode": "Default"
+        }
+      ]
+    },
+    {
+      "run": "dns-failure",
+      "executable_sha256": "9b7a3e217c3c31fb64b17f87c13ed83f8d548377e6ff40bd7aa974b7fdc3b630",
+      "binary_mtime_utc": "2026-10-21T17:09:51.968Z",
+      "chromium_checkout_head": "1a732fcc23b20dd0bcf38f35d72c1fe1ec799d35",
+      "source_git_head": "9a7254e7c5253afa7713858330be6738b6d4d57e",
+      "credential_environment_variables_present": {
+        "GOOGLE_API_KEY": false,
+        "GOOGLE_DEFAULT_CLIENT_ID": false,
+        "GOOGLE_DEFAULT_CLIENT_SECRET": false
+      },
+      "scenarios": [
+        {
+          "name": "external-navigation",
+          "started_utc": "2026-10-23T09:28:25.229Z",
+          "ended_utc": "2026-10-23T09:29:55.452Z",
+          "duration_seconds": 90,
+          "browser": {
+            "protocolVersion": "1.3",
+            "product": "Chrome/158.0.8106.0",
+            "revision": "@0000000000000000000000000000000000000000",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/158.0.0.0 Safari/537.36",
+            "jsVersion": "15.8.6"
+          },
+          "diagnostic_flags": [],
+          "exit_code": 0,
+          "netlog_complete": true,
+          "netlog_path": "build/network-audit/2026-10-23-dns-failure/external-navigation.netlog.json",
+          "netlog_sha256": "5d47f4e3c62c2a92a711b8cca6ea51592b5b55f6c93e59cd8f85293d1988550d",
+          "event_count": 453306,
+          "hosts": {
+            "clients2.google.com": {
+              "requests": 1,
+              "endpoints": [
+                "http://clients2.google.com/time/1/current"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200 OK"
+              ],
+              "net_errors": [],
+              "first_request_ms": 118,
+              "last_request_ms": 118
+            },
+            "www.google.com": {
+              "requests": 5,
+              "endpoints": [
+                "https://www.google.com/async/folae"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [],
+              "first_request_ms": 123,
+              "last_request_ms": 424
+            },
+            "update.googleapis.com": {
+              "requests": 26,
+              "endpoints": [
+                "https://update.googleapis.com/service/update2/json"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [
+                0
+              ],
+              "first_request_ms": 137,
+              "last_request_ms": 85854
+            },
+            "zitter-network-audit.invalid": {
+              "requests": 4,
+              "endpoints": [
+                "https://zitter-network-audit.invalid/"
+              ],
+              "status_lines": [],
+              "net_errors": [
+                -105
+              ],
+              "first_request_ms": 163,
+              "last_request_ms": 36424
+            },
+            "edgedl.me.gvt1.com": {
+              "requests": 22,
+              "endpoints": [
+                "http://edgedl.me.gvt1.com/edgedl/<component-path>"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200 OK"
+              ],
+              "net_errors": [],
+              "first_request_ms": 263,
+              "last_request_ms": 85763
+            },
+            "www.gstatic.com": {
+              "requests": 2,
+              "endpoints": [
+                "https://www.gstatic.com/chrome/intelligence/assist/ranker/models/translate/2017/03/translate_ranker_model_20170329.pb.bin"
+              ],
+              "status_lines": [
+                "HTTP/1.1 200"
+              ],
+              "net_errors": [],
+              "first_request_ms": 5036,
+              "last_request_ms": 5047
+            }
+          },
+          "dns_requests": [
+            "http://clients2.google.com",
+            "http://edgedl.me.gvt1.com",
+            "https://update.googleapis.com",
+            "https://www.google.com",
+            "https://www.gstatic.com",
+            "https://zitter-network-audit.invalid"
+          ],
+          "tcp_connect_attempt_count": 10,
+          "tls_success_count": 5,
+          "tls_error_codes": [],
+          "actions": [],
+          "default_capture_mode": "Default",
+          "page_inspection": {
+            "url": "chrome-error://chromewebdata/",
+            "title": "zitter-network-audit.invalid",
+            "phishing_test_content_loaded": false
+          }
+        }
+      ]
+    }
+  ],
+  "installed_component_manifests": [
+    {
+      "directory": "ActorSafetyLists",
+      "version": "9.8200.9609",
+      "name": "listdata.json",
+      "manifest_sha256": "10068caf4ca65248f2479f859c264e77ef420877065374278bea00269f2ab551"
+    },
+    {
+      "directory": "AmountExtractionHeuristicRegexes",
+      "version": "4",
+      "name": "Amount Extraction Heuristic Regexes",
+      "manifest_sha256": "95a2b0748baee70740ff2d5da78f98b5a29950562f989591f0b0b5bf13354b85"
+    },
+    {
+      "directory": "CaptchaProviders",
+      "version": "8.5419.4434",
+      "name": "captcha_providers.json",
+      "manifest_sha256": "738bc3a347d6ffbcaad9fc9db10a11059993886d214c56025cc978207e759cde"
+    },
+    {
+      "directory": "CertificateRevocation",
+      "version": "10854",
+      "name": "crl-set-14049058654733452633.data",
+      "manifest_sha256": "9a729afee3143a5af8fee28825badff7a982aad56a66b85be5caeb88a1dcdc00"
+    },
+    {
+      "directory": "Crowd Deny",
+      "version": "2026.10.22.61",
+      "name": "Crowd Deny",
+      "manifest_sha256": "9776c45b4ff45a3974b98b6e1a95bcfac1084b38d2705057194b9c37898e67ef"
+    },
+    {
+      "directory": "DictationConnector",
+      "version": "20260928.1",
+      "name": "VoiceTyping Connector Extension",
+      "manifest_sha256": "b2604028f5a5e8f41867075e51cbd82b934fb559325b77ed0eb575310993d055"
+    },
+    {
+      "directory": "FileTypePolicies",
+      "version": "145.0.7584.0",
+      "name": "fileTypePolicies",
+      "manifest_sha256": "31a56f514d228a98683b8cbf7e8a3ced78857ef3e745a06fbc2c5b33162d3220"
+    },
+    {
+      "directory": "FirstPartySetsPreloaded",
+      "version": "2025.7.24.0",
+      "name": "First Party Sets",
+      "manifest_sha256": "2d905d7b28b1afd313753d14f6a916a2e56ec4c1316bfa43046b09214ceb6090"
+    },
+    {
+      "directory": "MEIPreload",
+      "version": "1.1.0.3",
+      "name": "MEI Preload",
+      "manifest_sha256": "8bd59f33a6e286c7e7352dfaebc9b03cea4e0e959a8ebb2f04b69bd92e107dc1"
+    },
+    {
+      "directory": "OnDeviceHeadSuggestModel",
+      "version": "20251024.824731831.14",
+      "name": "OnDeviceHeadSuggestENUS500000",
+      "manifest_sha256": "ba6fcb8964f3dd492fec803586a6cf000789745e0f6dee9a89f7eb1ab9d470be"
+    },
+    {
+      "directory": "OptimizationGuideModelsManifest",
+      "version": "1.20261018.2",
+      "name": "Model Manifest",
+      "manifest_sha256": "d60a5dbc95f968982e8fa1334b64380536ff5187c1ca5b59739797fde96b70bd"
+    },
+    {
+      "directory": "OptimizationHints",
+      "version": "764",
+      "name": "Optimization Hints",
+      "manifest_sha256": "7ea07ecd156862749248dd152883ff1cc7b81257092a5f2a91a085bd03bbb8d7"
+    },
+    {
+      "directory": "PKIMetadata",
+      "version": "1815",
+      "name": "pkiMetadata",
+      "manifest_sha256": "665f841d266f0d6eedf1e635138cd954542dc028a9e8c47e0b29f90cd772d3e8"
+    },
+    {
+      "directory": "SODA",
+      "version": "1.2.12",
+      "name": "Chrome SODA",
+      "manifest_sha256": "86957f1deae1aef7262484a0f7006ea4d4b9fe021150a00220cff5413fd4044a"
+    },
+    {
+      "directory": "SSLErrorAssistant",
+      "version": "7",
+      "name": "sslErrorAssistant",
+      "manifest_sha256": "20b91160e2611d3159ad82857323febc906457756678ab73f305c3a1e399d18d"
+    },
+    {
+      "directory": "SafetyTips",
+      "version": "3092",
+      "name": "safetyTips",
+      "manifest_sha256": "a408d874f731da9fd242aca690324d2fa05a2b80ee0744e49543dd514a1cb07f"
+    },
+    {
+      "directory": "TrustTokenKeyCommitments",
+      "version": "2026.10.12.1",
+      "name": "trustToken",
+      "manifest_sha256": "abe933f0db95b1a75786da21de82feb5270ffa7ae072270923da2437710d93ba"
+    },
+    {
+      "directory": "WasmTtsEngine",
+      "version": "20261005.1",
+      "name": "WASM TTS Engine",
+      "manifest_sha256": "eefb41c734acae56574c2f1e73c74d620e915398e674739cf2586e5e1e4af0f3"
+    },
+    {
+      "directory": "ZxcvbnData",
+      "version": "3",
+      "name": "zxcvbnData",
+      "manifest_sha256": "aeb364b60303212808fac02eb490ee5b054ae843ce084376e5981ef8767e5198"
+    }
+  ],
+  "socket_observation": {
+    "sample_count": 126,
+    "first_sample_utc": "2026-10-23T09:20:39Z",
+    "last_sample_utc": "2026-10-23T09:31:17Z",
+    "raw_path": "build/network-audit/2026-10-23-full/socket-samples.jsonl",
+    "sha256": "5b246ece42e0834b8fac63e7928e21431cea82fd7ea8f355e8170992c76a886d",
+    "samples_with_external_socket": 122,
+    "note": "5s sampling of owned full-matrix process descendants; no complete packet capture"
+  },
+  "upstream_source_hashes": [
+    {
+      "path": "chrome/app/chrome_crash_reporter_client.cc",
+      "sha256": "c401e25b495132453e1ae19c58447c23548220e8330310576726fbfc1135a8ac"
+    },
+    {
+      "path": "components/omnibox/browser/aim_eligibility_service.cc",
+      "sha256": "dc277ea44ecf4a30d71e4ec28508ed46df99eb416bf6541d7fb42100fcc65938"
+    },
+    {
+      "path": "components/omnibox/browser/aim_eligibility_service_features.cc",
+      "sha256": "9f4d3dc7848870c2665802d1f42023ac11a6696333d76a332b66a17c6b945278"
+    },
+    {
+      "path": "components/network_time/network_time_tracker.cc",
+      "sha256": "1ca25c3c74bceb730bce1958dfb5079997a51ac06017d85b5a806903a0f1eb10"
+    },
+    {
+      "path": "components/translate/core/browser/translate_ranker_impl.cc",
+      "sha256": "7af32cd97baa0776e1dccdb142734e87dd8bc85b493fd1ab2b07fa13ba9e3cc6"
+    },
+    {
+      "path": "components/autofill/core/browser/crowdsourcing/autofill_crowdsourcing_manager.cc",
+      "sha256": "76efc998707c0a7252f19d1aa1ed518fb79838bd7c3a75a28abaab1e7cdadae0"
+    },
+    {
+      "path": "components/component_updater/configurator_impl.cc",
+      "sha256": "c9d6437bbaed2cb563192e9cde0609fe99e4adf75dfda63bbcc8fa2eea71d432"
+    },
+    {
+      "path": "components/component_updater/component_updater_url_constants.cc",
+      "sha256": "a6a6aeeda045d335a9f2eba91235310f0685bbfb84048319d5a0e52fa2991264"
+    },
+    {
+      "path": "chrome/browser/component_updater/registration.cc",
+      "sha256": "1726c49cb5e8c8132069a58e90bbfeccfc1a949d3d45c71dd891f3fc93a2e267"
+    },
+    {
+      "path": "components/safe_browsing/core/browser/db/v5_update_protocol_manager.cc",
+      "sha256": "a42b67703ea79d1a30f43c278e00edddb8e73a171f4a6b8221b848e482bccdfc"
+    },
+    {
+      "path": "components/variations/service/variations_service.cc",
+      "sha256": "d1ecdc228195e703505bb6d75f41ba80526d2d459239cb63b4ccfa30fa33c1f9"
+    },
+    {
+      "path": "services/device/public/cpp/device_features.cc",
+      "sha256": "130a00ea1a0883e7b8aadf771402df69a97cdce1c0535a93f17abdb511c9aa3f"
+    },
+    {
+      "path": "services/device/geolocation/location_provider_manager.cc",
+      "sha256": "11b0952923a5ffadbef9098047097902b356769f9876ef35b25a0a0c5a3e85d6"
+    },
+    {
+      "path": "chrome/browser/net/dns_probe_service_factory.cc",
+      "sha256": "9744382a8174adb9db18439d845fc9f73a30615596fd1f397f6948cf5e3a50b2"
+    },
+    {
+      "path": "chrome/browser/net/dns_probe_runner.cc",
+      "sha256": "8833dc4a4fc9d823ee7df624a5860146d8481c3858ad611e89057efb95632ce1"
+    }
+  ],
+  "tool_sha256": "a8626754616e62c305e3864d0f174d0cfba94c0680c011700d12b5a0930dea83"
+}

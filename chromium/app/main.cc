@@ -16,6 +16,7 @@
 #include "build/build_config.h"
 #include "chrome/common/chrome_switches.h"
 #include "chromium/app/browser_client.h"
+#include "chromium/app/network_policy.h"
 #include "content/public/app/content_main.h"
 #include "content/public/common/content_switches.h"
 
@@ -59,6 +60,8 @@ int main(int argc, const char** argv) {
   base::CommandLine::Init(argc, argv);
   auto* command = base::CommandLine::ForCurrentProcess();
   if (!command->HasSwitch(switches::kProcessType)) {
+    zitter::ConfigureSafeBrowsingKey();
+    zitter::ConfigureNetworkPolicy(*command);
     if (!command->HasSwitch(switches::kUserDataDir))
       command->AppendSwitchPath(switches::kUserDataDir, DefaultDataDirectory());
     // Chrome initializes services/profiles, but only our Views window is opened.

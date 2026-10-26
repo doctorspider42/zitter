@@ -41,7 +41,8 @@ def instrument_app_probe(name, data):
     return text.encode()
 
 
-def stage(checkout, variant="zitter_candidate", reference_overlay=None, current_tests=False, app_benchmark=False):
+def stage(checkout, variant="zitter_candidate", reference_overlay=None, current_tests=False, app_benchmark=False,
+          skip_native_rust_tests=False):
     if not re.fullmatch(r"zitter_[a-z][a-z0-9_]*", variant):
         raise ValueError("Variant must be a simple zitter_<name> directory/target name")
     lock = json.loads((overlay.ROOT / "chromium/revision.json").read_text())
@@ -99,6 +100,12 @@ def stage(checkout, variant="zitter_candidate", reference_overlay=None, current_
             if app_benchmark and name in {"BUILD.gn", "chromium/app/runtime.cc", "chromium/app/runtime.h"}:
                 data = instrument_app_probe(name, data)
             if name == "BUILD.gn":
+                if skip_native_rust_tests:
+                    # rust_unit_tests_group emits global bin/run_<crate> paths.
+                    # An isolated app candidate must not duplicate those of
+                    # another overlay sharing this Chromium output directory.
+                    data = data.replace(b"build_native_rust_unit_tests = true",
+                                        b"build_native_rust_unit_tests = false")
                 data = re.sub(rb'test\("zitter_prototype(?:_[a-z0-9_]+)?"\)',
                               f'test("{test_target}")'.encode(), data)
                 data = re.sub(rb'executable\("zitter(?:_[a-z0-9_]+)?"\)',
@@ -141,5 +148,8 @@ if __name__ == "__main__":
                         help="Use current tests/fixtures with frozen reference product sources")
     parser.add_argument("--app-benchmark", action="store_true",
                         help="Add opt-in regular-application measurement wiring to a frozen product")
+    parser.add_argument("--skip-native-rust-tests", action="store_true",
+                        help="Avoid duplicate Rust test launcher outputs in a shared build directory")
     args = parser.parse_args()
-    stage(args.checkout.resolve(), args.variant, args.reference_overlay, args.current_tests, args.app_benchmark)
+    stage(args.checkout.resolve(), args.variant, args.reference_overlay, args.current_tests, args.app_benchmark,
+          args.skip_native_rust_tests)

@@ -14,6 +14,19 @@ with mock.patch.object(sys, "path", [str(Path(__file__).resolve().parents[1] / "
 
 
 class OverlayTests(unittest.TestCase):
+    def test_component_exclusion_hook_is_narrow_and_idempotent(self):
+        source = ('#include "base/check.h"\n'
+                  'bool CrxUpdateService::RegisterComponent(\n'
+                  '    const ComponentRegistration& component) {\n'
+                  '  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);\n'
+                  '  return original_registration(component);\n}\n')
+        patched = overlay.patch_component_registration(source)
+        self.assertEqual(patched, overlay.patch_component_registration(patched))
+        self.assertIn('const std::string disabled_value', patched)
+        self.assertIn('original_registration(component)', patched)
+        with self.assertRaises(ValueError):
+            overlay.patch_component_registration('unknown upstream layout')
+
     def test_keychain_identity_is_separate_and_patch_is_guarded(self):
         source = ('const char kDefaultServiceName[] = "Chromium Safe Storage";\n'
                   'const char kDefaultAccountName[] = "Chromium";\n')
@@ -86,6 +99,12 @@ class OverlayTests(unittest.TestCase):
             media_header.parent.mkdir(parents=True)
             media_header.write_text("  void ProcessMediaAccessRequest(content::WebContents* web_contents,\n")
             media_header.with_suffix(".cc").write_text("void MediaCaptureDevicesDispatcher::ProcessMediaAccessRequest(\n")
+            component = checkout / "components/component_updater/component_updater_service.cc"
+            component.parent.mkdir(parents=True)
+            component.write_text('#include "base/check.h"\n'
+                                 'bool CrxUpdateService::RegisterComponent(\n'
+                                 '    const ComponentRegistration& component) {\n'
+                                 '  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);\n}\n')
             with mock.patch.object(overlay.subprocess, "check_output", return_value=revision):
                 overlay.install(checkout, dry_run=True)
                 self.assertFalse((checkout / "zitter").exists())

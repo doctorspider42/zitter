@@ -1,0 +1,1449 @@
+{
+  "date": "2026-10-23",
+  "status": "Controlled warning tests pass; actual Google-backed protection unverified without valid project key. Changes in source and separate development bundle only.",
+  "scenarios": [
+    {
+      "started_utc": "2026-10-23T10:37:20.034Z",
+      "ended_utc": "2026-10-23T10:43:44.061Z",
+      "duration_seconds": 340,
+      "startup_seconds": 43.606,
+      "network": {
+        "event_count": 1538,
+        "hosts": {
+          "update.googleapis.com": {
+            "requests": 3,
+            "endpoints": [
+              "https://update.googleapis.com/service/update2/json"
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200"
+            ],
+            "net_errors": [
+              0
+            ]
+          },
+          "edgedl.me.gvt1.com": {
+            "requests": 2,
+            "endpoints": [
+              "http://edgedl.me.gvt1.com/edgedl/diffgen-puffin/gcmjkmgdlgnkkcocmoeiminaijmmjnii/93d241e87603e2aac20e9e6ab2a12f1dd352be0faabae7597f3872f3267db430",
+              "http://edgedl.me.gvt1.com/edgedl/release2/chrome_component/adhr77yzjz2qlqkv6thtqq2efneq_2026.10.12.1/kiabhabjdbkjdpjbpigfodbdjmbglcoo_2026.10.12.01_all_lsi7smbwpj4ae6vfevv2lbxwhe.crx3"
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ],
+            "net_errors": []
+          },
+          "safebrowsing.googleapis.com": {
+            "requests": 1,
+            "endpoints": [
+              "https://safebrowsing.googleapis.com/v4/threatListUpdates:fetch"
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 400"
+            ],
+            "net_errors": []
+          }
+        },
+        "requests": [
+          {
+            "source_id": 21,
+            "hops": [
+              {
+                "host": "update.googleapis.com",
+                "endpoint": "https://update.googleapis.com/service/update2/json",
+                "method": "POST",
+                "time": "50089812",
+                "initiator": "not an origin",
+                "net_error": 0,
+                "response_status_lines": [
+                  "HTTP/1.1 200"
+                ]
+              }
+            ],
+            "net_error": 0,
+            "response_status_lines": [
+              "HTTP/1.1 200"
+            ]
+          },
+          {
+            "source_id": 40,
+            "hops": [
+              {
+                "host": "edgedl.me.gvt1.com",
+                "endpoint": "http://edgedl.me.gvt1.com/edgedl/diffgen-puffin/gcmjkmgdlgnkkcocmoeiminaijmmjnii/93d241e87603e2aac20e9e6ab2a12f1dd352be0faabae7597f3872f3267db430",
+                "method": "GET",
+                "time": "50090081",
+                "initiator": "not an origin",
+                "response_status_lines": [
+                  "HTTP/1.1 200 OK"
+                ]
+              }
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ]
+          },
+          {
+            "source_id": 52,
+            "hops": [
+              {
+                "host": "safebrowsing.googleapis.com",
+                "endpoint": "https://safebrowsing.googleapis.com/v4/threatListUpdates:fetch",
+                "method": "GET",
+                "time": "50143841",
+                "initiator": "not an origin",
+                "response_status_lines": [
+                  "HTTP/1.1 400"
+                ]
+              }
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 400"
+            ]
+          },
+          {
+            "source_id": 70,
+            "hops": [
+              {
+                "host": "update.googleapis.com",
+                "endpoint": "https://update.googleapis.com/service/update2/json",
+                "method": "POST",
+                "time": "50212983",
+                "initiator": "not an origin",
+                "net_error": 0,
+                "response_status_lines": [
+                  "HTTP/1.1 200"
+                ]
+              }
+            ],
+            "net_error": 0,
+            "response_status_lines": [
+              "HTTP/1.1 200"
+            ]
+          },
+          {
+            "source_id": 89,
+            "hops": [
+              {
+                "host": "edgedl.me.gvt1.com",
+                "endpoint": "http://edgedl.me.gvt1.com/edgedl/release2/chrome_component/adhr77yzjz2qlqkv6thtqq2efneq_2026.10.12.1/kiabhabjdbkjdpjbpigfodbdjmbglcoo_2026.10.12.01_all_lsi7smbwpj4ae6vfevv2lbxwhe.crx3",
+                "method": "GET",
+                "time": "50335966",
+                "initiator": "not an origin",
+                "response_status_lines": [
+                  "HTTP/1.1 200 OK"
+                ]
+              }
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ]
+          },
+          {
+            "source_id": 92,
+            "hops": [
+              {
+                "host": "update.googleapis.com",
+                "endpoint": "https://update.googleapis.com/service/update2/json",
+                "method": "POST",
+                "time": "50337884",
+                "initiator": "not an origin",
+                "net_error": 0,
+                "response_status_lines": [
+                  "HTTP/1.1 200"
+                ]
+              }
+            ],
+            "net_error": 0,
+            "response_status_lines": [
+              "HTTP/1.1 200"
+            ]
+          }
+        ],
+        "dns_requests": [
+          "http://edgedl.me.gvt1.com",
+          "https://safebrowsing.googleapis.com",
+          "https://update.googleapis.com"
+        ],
+        "tcp_connect_attempts": [
+          {
+            "source_id": 37,
+            "address": "142.250.109.139:443",
+            "time": "50089838"
+          },
+          {
+            "source_id": 51,
+            "address": "34.104.35.123:80",
+            "time": "50090104"
+          },
+          {
+            "source_id": 67,
+            "address": "142.250.130.95:443",
+            "time": "50143863"
+          }
+        ],
+        "tls_results": [
+          {
+            "source_id": 37,
+            "net_error": 0,
+            "version": "TLS 1.3",
+            "time": "50089896"
+          },
+          {
+            "source_id": 67,
+            "net_error": 0,
+            "version": "TLS 1.3",
+            "time": "50143920"
+          }
+        ]
+      },
+      "name": "final-idle",
+      "binary_sha256": "059244db7f1b5e2c1aa1fd8cb91bd3f4481d4c6814c3e70292f62d75a2bbaa45",
+      "raw_evidence_directory": "build/security/2026-10-23-final-idle",
+      "netlog_complete": true
+    },
+    {
+      "started_utc": "2026-10-23T10:37:20.042Z",
+      "ended_utc": "2026-10-23T10:40:04.055Z",
+      "duration_seconds": 120,
+      "startup_seconds": 43.598,
+      "network": {
+        "event_count": 872,
+        "hosts": {
+          "127.0.0.1": {
+            "requests": 3,
+            "endpoints": [
+              "http://127.0.0.1:57869/fixture",
+              "http://127.0.0.1:57869/fetch",
+              "http://127.0.0.1:57869/download"
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ],
+            "net_errors": []
+          },
+          "update.googleapis.com": {
+            "requests": 1,
+            "endpoints": [
+              "https://update.googleapis.com/service/update2/json"
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200"
+            ],
+            "net_errors": [
+              0
+            ]
+          },
+          "edgedl.me.gvt1.com": {
+            "requests": 1,
+            "endpoints": [
+              "http://edgedl.me.gvt1.com/edgedl/diffgen-puffin/gcmjkmgdlgnkkcocmoeiminaijmmjnii/93d241e87603e2aac20e9e6ab2a12f1dd352be0faabae7597f3872f3267db430"
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ],
+            "net_errors": []
+          }
+        },
+        "requests": [
+          {
+            "source_id": 24,
+            "hops": [
+              {
+                "host": "127.0.0.1",
+                "endpoint": "http://127.0.0.1:57869/fixture",
+                "method": "GET",
+                "time": "50039289",
+                "initiator": "not an origin",
+                "response_status_lines": [
+                  "HTTP/1.1 200 OK"
+                ]
+              }
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ]
+          },
+          {
+            "source_id": 34,
+            "hops": [
+              {
+                "host": "127.0.0.1",
+                "endpoint": "http://127.0.0.1:57869/fetch",
+                "method": "GET",
+                "time": "50040803",
+                "initiator": "http://127.0.0.1:57869",
+                "response_status_lines": [
+                  "HTTP/1.1 200 OK"
+                ]
+              }
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ]
+          },
+          {
+            "source_id": 40,
+            "hops": [
+              {
+                "host": "127.0.0.1",
+                "endpoint": "http://127.0.0.1:57869/download",
+                "method": "GET",
+                "time": "50040925",
+                "initiator": "http://127.0.0.1:57869",
+                "response_status_lines": [
+                  "HTTP/1.1 200 OK"
+                ]
+              }
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ]
+          },
+          {
+            "source_id": 44,
+            "hops": [
+              {
+                "host": "update.googleapis.com",
+                "endpoint": "https://update.googleapis.com/service/update2/json",
+                "method": "POST",
+                "time": "50089812",
+                "initiator": "not an origin",
+                "net_error": 0,
+                "response_status_lines": [
+                  "HTTP/1.1 200"
+                ]
+              }
+            ],
+            "net_error": 0,
+            "response_status_lines": [
+              "HTTP/1.1 200"
+            ]
+          },
+          {
+            "source_id": 63,
+            "hops": [
+              {
+                "host": "edgedl.me.gvt1.com",
+                "endpoint": "http://edgedl.me.gvt1.com/edgedl/diffgen-puffin/gcmjkmgdlgnkkcocmoeiminaijmmjnii/93d241e87603e2aac20e9e6ab2a12f1dd352be0faabae7597f3872f3267db430",
+                "method": "GET",
+                "time": "50090081",
+                "initiator": "not an origin",
+                "response_status_lines": [
+                  "HTTP/1.1 200 OK"
+                ]
+              }
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ]
+          }
+        ],
+        "dns_requests": [
+          "http://127.0.0.1:57869",
+          "http://edgedl.me.gvt1.com",
+          "https://update.googleapis.com"
+        ],
+        "tcp_connect_attempts": [
+          {
+            "source_id": 23,
+            "address": "127.0.0.1:57869",
+            "time": "50039282"
+          },
+          {
+            "source_id": 33,
+            "address": "127.0.0.1:57869",
+            "time": "50039333"
+          },
+          {
+            "source_id": 60,
+            "address": "142.250.109.138:443",
+            "time": "50089842"
+          },
+          {
+            "source_id": 74,
+            "address": "34.104.35.123:80",
+            "time": "50090110"
+          }
+        ],
+        "tls_results": [
+          {
+            "source_id": 60,
+            "net_error": 0,
+            "version": "TLS 1.3",
+            "time": "50089897"
+          }
+        ]
+      },
+      "name": "final-local",
+      "binary_sha256": "059244db7f1b5e2c1aa1fd8cb91bd3f4481d4c6814c3e70292f62d75a2bbaa45",
+      "raw_evidence_directory": "build/security/2026-10-23-final-local",
+      "netlog_complete": true
+    },
+    {
+      "started_utc": "2026-10-23T10:37:20.142Z",
+      "ended_utc": "2026-10-23T10:38:54.404Z",
+      "duration_seconds": 45,
+      "startup_seconds": 43.497,
+      "warning_assertion": {
+        "passed": true,
+        "injected": true
+      },
+      "back_to_safety": {
+        "result": {
+          "type": "object",
+          "value": {
+            "url": "http://127.0.0.1:57870/fixture",
+            "text": "Local-only fixture"
+          }
+        }
+      },
+      "page_inspection": {
+        "result": {
+          "type": "object",
+          "value": {
+            "url": "chrome-error://chromewebdata/",
+            "title": "Security error",
+            "text": "Dangerous site\n\nAttackers on the site you tried visiting might trick you into installing software or revealing things like your passwords, phone, or credit card numbers. Chrome strongly recommends going back to safety. Learn more about this warning\n\nTurn on enhanced protection to get Chrome's highest level of security\nBack to safety\nDetails"
+          }
+        }
+      },
+      "network": {
+        "event_count": 533,
+        "hosts": {
+          "127.0.0.1": {
+            "requests": 2,
+            "endpoints": [
+              "http://127.0.0.1:57870/fixture"
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ],
+            "net_errors": []
+          },
+          "testsafebrowsing.appspot.com": {
+            "requests": 1,
+            "endpoints": [
+              "https://testsafebrowsing.appspot.com/s/phishing.html"
+            ],
+            "response_status_lines": [],
+            "net_errors": []
+          }
+        },
+        "requests": [
+          {
+            "source_id": 24,
+            "hops": [
+              {
+                "host": "127.0.0.1",
+                "endpoint": "http://127.0.0.1:57870/fixture",
+                "method": "GET",
+                "time": "50039104",
+                "initiator": "not an origin",
+                "response_status_lines": [
+                  "HTTP/1.1 200 OK"
+                ]
+              }
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ]
+          },
+          {
+            "source_id": 47,
+            "hops": [
+              {
+                "host": "testsafebrowsing.appspot.com",
+                "endpoint": "https://testsafebrowsing.appspot.com/s/phishing.html",
+                "method": "GET",
+                "time": "50040844",
+                "initiator": "http://127.0.0.1:57870"
+              }
+            ]
+          },
+          {
+            "source_id": 61,
+            "hops": [
+              {
+                "host": "127.0.0.1",
+                "endpoint": "http://127.0.0.1:57870/fixture",
+                "method": "GET",
+                "time": "50078241",
+                "initiator": "not an origin",
+                "response_status_lines": [
+                  "HTTP/1.1 200 OK"
+                ]
+              }
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ]
+          }
+        ],
+        "dns_requests": [
+          "http://127.0.0.1:57870",
+          "https://testsafebrowsing.appspot.com"
+        ],
+        "tcp_connect_attempts": [
+          {
+            "source_id": 23,
+            "address": "127.0.0.1:57870",
+            "time": "50039093"
+          },
+          {
+            "source_id": 33,
+            "address": "127.0.0.1:57870",
+            "time": "50039145"
+          },
+          {
+            "source_id": 53,
+            "address": "142.250.109.153:443",
+            "time": "50040856"
+          },
+          {
+            "source_id": 60,
+            "address": "127.0.0.1:57870",
+            "time": "50078224"
+          }
+        ],
+        "tls_results": [
+          {
+            "source_id": 53,
+            "net_error": 0,
+            "version": "TLS 1.3",
+            "time": "50040934"
+          }
+        ]
+      },
+      "name": "final-phishing",
+      "binary_sha256": "059244db7f1b5e2c1aa1fd8cb91bd3f4481d4c6814c3e70292f62d75a2bbaa45",
+      "raw_evidence_directory": "build/security/2026-10-23-final-warnings/phishing",
+      "netlog_complete": true
+    },
+    {
+      "started_utc": "2026-10-23T10:38:55.047Z",
+      "ended_utc": "2026-10-23T10:39:51.988Z",
+      "duration_seconds": 45,
+      "startup_seconds": 8.976,
+      "warning_assertion": {
+        "passed": true,
+        "injected": true
+      },
+      "back_to_safety": {
+        "result": {
+          "type": "object",
+          "value": {
+            "url": "http://127.0.0.1:57908/fixture",
+            "text": "Local-only fixture"
+          }
+        }
+      },
+      "page_inspection": {
+        "result": {
+          "type": "object",
+          "value": {
+            "url": "chrome-error://chromewebdata/",
+            "title": "Security error",
+            "text": "Dangerous site\n\nAttackers on the site you tried visiting might install harmful software that steals or deletes things like your passwords, photos, messages, or credit card numbers. Chrome strongly recommends going back to safety. Learn more about this warning\n\nTurn on enhanced protection to get Chrome's highest level of security\nBack to safety\nDetails"
+          }
+        }
+      },
+      "network": {
+        "event_count": 530,
+        "hosts": {
+          "127.0.0.1": {
+            "requests": 2,
+            "endpoints": [
+              "http://127.0.0.1:57908/fixture"
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ],
+            "net_errors": []
+          },
+          "testsafebrowsing.appspot.com": {
+            "requests": 1,
+            "endpoints": [
+              "https://testsafebrowsing.appspot.com/s/malware.html"
+            ],
+            "response_status_lines": [],
+            "net_errors": []
+          }
+        },
+        "requests": [
+          {
+            "source_id": 24,
+            "hops": [
+              {
+                "host": "127.0.0.1",
+                "endpoint": "http://127.0.0.1:57908/fixture",
+                "method": "GET",
+                "time": "50092018",
+                "initiator": "not an origin",
+                "response_status_lines": [
+                  "HTTP/1.1 200 OK"
+                ]
+              }
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ]
+          },
+          {
+            "source_id": 47,
+            "hops": [
+              {
+                "host": "testsafebrowsing.appspot.com",
+                "endpoint": "https://testsafebrowsing.appspot.com/s/malware.html",
+                "method": "GET",
+                "time": "50100318",
+                "initiator": "http://127.0.0.1:57908"
+              }
+            ]
+          },
+          {
+            "source_id": 61,
+            "hops": [
+              {
+                "host": "127.0.0.1",
+                "endpoint": "http://127.0.0.1:57908/fixture",
+                "method": "GET",
+                "time": "50135822",
+                "initiator": "not an origin",
+                "response_status_lines": [
+                  "HTTP/1.1 200 OK"
+                ]
+              }
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ]
+          }
+        ],
+        "dns_requests": [
+          "http://127.0.0.1:57908",
+          "https://testsafebrowsing.appspot.com"
+        ],
+        "tcp_connect_attempts": [
+          {
+            "source_id": 23,
+            "address": "127.0.0.1:57908",
+            "time": "50092013"
+          },
+          {
+            "source_id": 33,
+            "address": "127.0.0.1:57908",
+            "time": "50092054"
+          },
+          {
+            "source_id": 53,
+            "address": "142.250.109.153:443",
+            "time": "50100323"
+          },
+          {
+            "source_id": 60,
+            "address": "127.0.0.1:57908",
+            "time": "50135802"
+          }
+        ],
+        "tls_results": [
+          {
+            "source_id": 53,
+            "net_error": 0,
+            "version": "TLS 1.3",
+            "time": "50100381"
+          }
+        ]
+      },
+      "name": "final-malware",
+      "binary_sha256": "059244db7f1b5e2c1aa1fd8cb91bd3f4481d4c6814c3e70292f62d75a2bbaa45",
+      "raw_evidence_directory": "build/security/2026-10-23-final-warnings/malware",
+      "netlog_complete": true
+    },
+    {
+      "started_utc": "2026-10-23T10:31:15.705Z",
+      "ended_utc": "2026-10-23T10:32:10.430Z",
+      "duration_seconds": 45,
+      "startup_seconds": 8.712,
+      "page_inspection": {
+        "result": {
+          "type": "object",
+          "value": {
+            "url": "chrome-error://chromewebdata/",
+            "title": "Privacy error",
+            "text": "Your connection is not private\n\nAttackers might be trying to steal your information from expired.badssl.com (for example, passwords, messages, or credit cards). Learn more about this warning\n\nNET::ERR_CERT_DATE_INVALID\nTurn on enhanced protection to get Chrome's highest level of security\nBack to safety\nAdvanced"
+          }
+        }
+      },
+      "network": {
+        "event_count": 1259,
+        "hosts": {
+          "expired.badssl.com": {
+            "requests": 1,
+            "endpoints": [
+              "https://expired.badssl.com/"
+            ],
+            "response_status_lines": [],
+            "net_errors": [
+              -201
+            ]
+          },
+          "accounts.google.com": {
+            "requests": 3,
+            "endpoints": [
+              "https://accounts.google.com/ListAccounts"
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200"
+            ],
+            "net_errors": [
+              0
+            ]
+          },
+          "crt.comodoca.com": {
+            "requests": 2,
+            "endpoints": [
+              "http://crt.comodoca.com/COMODORSAAddTrustCA.crt",
+              "http://crt.comodoca.com/COMODORSADomainValidationSecureServerCA.crt"
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ],
+            "net_errors": []
+          }
+        },
+        "requests": [
+          {
+            "source_id": 31,
+            "hops": [
+              {
+                "host": "expired.badssl.com",
+                "endpoint": "https://expired.badssl.com/",
+                "method": "GET",
+                "time": "49638944",
+                "initiator": "not an origin",
+                "net_error": -201
+              }
+            ],
+            "net_error": -201
+          },
+          {
+            "source_id": 38,
+            "hops": [
+              {
+                "host": "accounts.google.com",
+                "endpoint": "https://accounts.google.com/ListAccounts",
+                "method": "POST",
+                "time": "49638993",
+                "initiator": "not an origin",
+                "net_error": 0,
+                "response_status_lines": [
+                  "HTTP/1.1 200"
+                ]
+              }
+            ],
+            "net_error": 0,
+            "response_status_lines": [
+              "HTTP/1.1 200"
+            ]
+          },
+          {
+            "source_id": 39,
+            "hops": [
+              {
+                "host": "accounts.google.com",
+                "endpoint": "https://accounts.google.com/ListAccounts",
+                "method": "POST",
+                "time": "49638995",
+                "initiator": "not an origin",
+                "net_error": 0,
+                "response_status_lines": [
+                  "HTTP/1.1 200"
+                ]
+              }
+            ],
+            "net_error": 0,
+            "response_status_lines": [
+              "HTTP/1.1 200"
+            ]
+          },
+          {
+            "source_id": 40,
+            "hops": [
+              {
+                "host": "accounts.google.com",
+                "endpoint": "https://accounts.google.com/ListAccounts",
+                "method": "POST",
+                "time": "49639000",
+                "initiator": "not an origin",
+                "net_error": 0,
+                "response_status_lines": [
+                  "HTTP/1.1 200"
+                ]
+              }
+            ],
+            "net_error": 0,
+            "response_status_lines": [
+              "HTTP/1.1 200"
+            ]
+          },
+          {
+            "source_id": 97,
+            "hops": [
+              {
+                "host": "crt.comodoca.com",
+                "endpoint": "http://crt.comodoca.com/COMODORSAAddTrustCA.crt",
+                "method": "GET",
+                "time": "49639384",
+                "initiator": "not an origin",
+                "response_status_lines": [
+                  "HTTP/1.1 200 OK"
+                ]
+              }
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ]
+          },
+          {
+            "source_id": 110,
+            "hops": [
+              {
+                "host": "crt.comodoca.com",
+                "endpoint": "http://crt.comodoca.com/COMODORSADomainValidationSecureServerCA.crt",
+                "method": "GET",
+                "time": "49639451",
+                "initiator": "not an origin",
+                "response_status_lines": [
+                  "HTTP/1.1 200 OK"
+                ]
+              }
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ]
+          }
+        ],
+        "dns_requests": [
+          "http://crt.comodoca.com",
+          "https://accounts.google.com",
+          "https://expired.badssl.com"
+        ],
+        "tcp_connect_attempts": [
+          {
+            "source_id": 37,
+            "address": "104.154.89.105:443",
+            "time": "49638988"
+          },
+          {
+            "source_id": 82,
+            "address": "142.250.147.84:443",
+            "time": "49639067"
+          },
+          {
+            "source_id": 84,
+            "address": "142.250.147.84:443",
+            "time": "49639070"
+          },
+          {
+            "source_id": 86,
+            "address": "142.250.147.84:443",
+            "time": "49639079"
+          },
+          {
+            "source_id": 109,
+            "address": "104.18.38.233:80",
+            "time": "49639406"
+          }
+        ],
+        "tls_results": [
+          {
+            "source_id": 82,
+            "net_error": 0,
+            "version": "TLS 1.3",
+            "time": "49639158"
+          },
+          {
+            "source_id": 84,
+            "net_error": 0,
+            "version": "TLS 1.3",
+            "time": "49639189"
+          },
+          {
+            "source_id": 86,
+            "net_error": 0,
+            "version": "TLS 1.3",
+            "time": "49639224"
+          },
+          {
+            "source_id": 37,
+            "net_error": -201,
+            "time": "49639497"
+          }
+        ]
+      },
+      "name": "tls-before-account-refinement",
+      "binary_sha256": "3c4ff21f79eee1f9ce05bdac38081c8e7265240e3f2969865ead19f520d415a3",
+      "raw_evidence_directory": "build/security/2026-10-23-policy-tls",
+      "netlog_complete": true
+    },
+    {
+      "started_utc": "2026-10-23T10:31:15.664Z",
+      "ended_utc": "2026-10-23T10:33:16.376Z",
+      "duration_seconds": 120,
+      "network": {
+        "event_count": 3735,
+        "hosts": {
+          "127.0.0.1": {
+            "requests": 3,
+            "endpoints": [
+              "http://127.0.0.1:57615/fixture",
+              "http://127.0.0.1:57615/fetch",
+              "http://127.0.0.1:57615/download"
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ],
+            "net_errors": []
+          },
+          "accounts.google.com": {
+            "requests": 3,
+            "endpoints": [
+              "https://accounts.google.com/ListAccounts"
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200"
+            ],
+            "net_errors": [
+              0
+            ]
+          },
+          "update.googleapis.com": {
+            "requests": 8,
+            "endpoints": [
+              "https://update.googleapis.com/service/update2/json"
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200"
+            ],
+            "net_errors": [
+              0
+            ]
+          },
+          "edgedl.me.gvt1.com": {
+            "requests": 7,
+            "endpoints": [
+              "http://edgedl.me.gvt1.com/edgedl/diffgen-puffin/gcmjkmgdlgnkkcocmoeiminaijmmjnii/93d241e87603e2aac20e9e6ab2a12f1dd352be0faabae7597f3872f3267db430",
+              "http://edgedl.me.gvt1.com/edgedl/release2/chrome_component/adhr77yzjz2qlqkv6thtqq2efneq_2026.10.12.1/kiabhabjdbkjdpjbpigfodbdjmbglcoo_2026.10.12.01_all_lsi7smbwpj4ae6vfevv2lbxwhe.crx3",
+              "http://edgedl.me.gvt1.com/edgedl/release2/chrome_component/V3P1l2hLvLw_7/7_all_sslErrorAssistant.crx3",
+              "http://edgedl.me.gvt1.com/edgedl/diffgen-puffin/khaoiebndkojlmppeemjhbpbandiljpe/14cd85900e861154aeb0b7bcf457dcf027c573b5b88077ce4ce1272b59ac0904",
+              "http://edgedl.me.gvt1.com/edgedl/release2/chrome_component/adh6aqyunlsvbjbsj3mxmllp4tva_1815/efniojlnjndmcbiieegkicadnoecjjef_1815_all_aca66uzkzrqh3x7kbpvvozzendta.crx3",
+              "http://edgedl.me.gvt1.com/edgedl/release2/chrome_component/adqsrjx53453wm3re2xnpld3vuna_10854/hfnkpimlhhgieaddgfemjhofmfblmnib_10854_all_ndjhrbt6gx3gelsboxyeweotfe.crx3",
+              "http://edgedl.me.gvt1.com/edgedl/diffgen-puffin/jflookgnkcckhobaglndicnbbgbonegd/0cf1155b4d9e26e773c8df0faebeb0ee9de1b0a54a9715191b7f2b78c48c1acd"
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ],
+            "net_errors": []
+          }
+        },
+        "requests": [
+          {
+            "source_id": 24,
+            "hops": [
+              {
+                "host": "127.0.0.1",
+                "endpoint": "http://127.0.0.1:57615/fixture",
+                "method": "GET",
+                "time": "49639477",
+                "initiator": "not an origin",
+                "response_status_lines": [
+                  "HTTP/1.1 200 OK"
+                ]
+              }
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ]
+          },
+          {
+            "source_id": 29,
+            "hops": [
+              {
+                "host": "accounts.google.com",
+                "endpoint": "https://accounts.google.com/ListAccounts",
+                "method": "POST",
+                "time": "49639520",
+                "initiator": "not an origin",
+                "net_error": 0,
+                "response_status_lines": [
+                  "HTTP/1.1 200"
+                ]
+              }
+            ],
+            "net_error": 0,
+            "response_status_lines": [
+              "HTTP/1.1 200"
+            ]
+          },
+          {
+            "source_id": 30,
+            "hops": [
+              {
+                "host": "accounts.google.com",
+                "endpoint": "https://accounts.google.com/ListAccounts",
+                "method": "POST",
+                "time": "49639524",
+                "initiator": "not an origin",
+                "net_error": 0,
+                "response_status_lines": [
+                  "HTTP/1.1 200"
+                ]
+              }
+            ],
+            "net_error": 0,
+            "response_status_lines": [
+              "HTTP/1.1 200"
+            ]
+          },
+          {
+            "source_id": 31,
+            "hops": [
+              {
+                "host": "accounts.google.com",
+                "endpoint": "https://accounts.google.com/ListAccounts",
+                "method": "POST",
+                "time": "49639527",
+                "initiator": "not an origin",
+                "net_error": 0,
+                "response_status_lines": [
+                  "HTTP/1.1 200"
+                ]
+              }
+            ],
+            "net_error": 0,
+            "response_status_lines": [
+              "HTTP/1.1 200"
+            ]
+          },
+          {
+            "source_id": 87,
+            "hops": [
+              {
+                "host": "127.0.0.1",
+                "endpoint": "http://127.0.0.1:57615/fetch",
+                "method": "GET",
+                "time": "49640836",
+                "initiator": "http://127.0.0.1:57615",
+                "response_status_lines": [
+                  "HTTP/1.1 200 OK"
+                ]
+              }
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ]
+          },
+          {
+            "source_id": 93,
+            "hops": [
+              {
+                "host": "127.0.0.1",
+                "endpoint": "http://127.0.0.1:57615/download",
+                "method": "GET",
+                "time": "49640960",
+                "initiator": "http://127.0.0.1:57615",
+                "response_status_lines": [
+                  "HTTP/1.1 200 OK"
+                ]
+              }
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ]
+          },
+          {
+            "source_id": 97,
+            "hops": [
+              {
+                "host": "update.googleapis.com",
+                "endpoint": "https://update.googleapis.com/service/update2/json",
+                "method": "POST",
+                "time": "49690506",
+                "initiator": "not an origin",
+                "net_error": 0,
+                "response_status_lines": [
+                  "HTTP/1.1 200"
+                ]
+              }
+            ],
+            "net_error": 0,
+            "response_status_lines": [
+              "HTTP/1.1 200"
+            ]
+          },
+          {
+            "source_id": 116,
+            "hops": [
+              {
+                "host": "edgedl.me.gvt1.com",
+                "endpoint": "http://edgedl.me.gvt1.com/edgedl/diffgen-puffin/gcmjkmgdlgnkkcocmoeiminaijmmjnii/93d241e87603e2aac20e9e6ab2a12f1dd352be0faabae7597f3872f3267db430",
+                "method": "GET",
+                "time": "49690657",
+                "initiator": "not an origin",
+                "response_status_lines": [
+                  "HTTP/1.1 200 OK"
+                ]
+              }
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ]
+          },
+          {
+            "source_id": 128,
+            "hops": [
+              {
+                "host": "update.googleapis.com",
+                "endpoint": "https://update.googleapis.com/service/update2/json",
+                "method": "POST",
+                "time": "49695253",
+                "initiator": "not an origin",
+                "net_error": 0,
+                "response_status_lines": [
+                  "HTTP/1.1 200"
+                ]
+              }
+            ],
+            "net_error": 0,
+            "response_status_lines": [
+              "HTTP/1.1 200"
+            ]
+          },
+          {
+            "source_id": 140,
+            "hops": [
+              {
+                "host": "edgedl.me.gvt1.com",
+                "endpoint": "http://edgedl.me.gvt1.com/edgedl/release2/chrome_component/adhr77yzjz2qlqkv6thtqq2efneq_2026.10.12.1/kiabhabjdbkjdpjbpigfodbdjmbglcoo_2026.10.12.01_all_lsi7smbwpj4ae6vfevv2lbxwhe.crx3",
+                "method": "GET",
+                "time": "49699899",
+                "initiator": "not an origin",
+                "response_status_lines": [
+                  "HTTP/1.1 200 OK"
+                ]
+              }
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ]
+          },
+          {
+            "source_id": 143,
+            "hops": [
+              {
+                "host": "update.googleapis.com",
+                "endpoint": "https://update.googleapis.com/service/update2/json",
+                "method": "POST",
+                "time": "49701877",
+                "initiator": "not an origin",
+                "net_error": 0,
+                "response_status_lines": [
+                  "HTTP/1.1 200"
+                ]
+              }
+            ],
+            "net_error": 0,
+            "response_status_lines": [
+              "HTTP/1.1 200"
+            ]
+          },
+          {
+            "source_id": 148,
+            "hops": [
+              {
+                "host": "edgedl.me.gvt1.com",
+                "endpoint": "http://edgedl.me.gvt1.com/edgedl/release2/chrome_component/V3P1l2hLvLw_7/7_all_sslErrorAssistant.crx3",
+                "method": "GET",
+                "time": "49708502",
+                "initiator": "not an origin",
+                "response_status_lines": [
+                  "HTTP/1.1 200 OK"
+                ]
+              }
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ]
+          },
+          {
+            "source_id": 151,
+            "hops": [
+              {
+                "host": "update.googleapis.com",
+                "endpoint": "https://update.googleapis.com/service/update2/json",
+                "method": "POST",
+                "time": "49710534",
+                "initiator": "not an origin",
+                "net_error": 0,
+                "response_status_lines": [
+                  "HTTP/1.1 200"
+                ]
+              }
+            ],
+            "net_error": 0,
+            "response_status_lines": [
+              "HTTP/1.1 200"
+            ]
+          },
+          {
+            "source_id": 156,
+            "hops": [
+              {
+                "host": "edgedl.me.gvt1.com",
+                "endpoint": "http://edgedl.me.gvt1.com/edgedl/diffgen-puffin/khaoiebndkojlmppeemjhbpbandiljpe/14cd85900e861154aeb0b7bcf457dcf027c573b5b88077ce4ce1272b59ac0904",
+                "method": "GET",
+                "time": "49719193",
+                "initiator": "not an origin",
+                "response_status_lines": [
+                  "HTTP/1.1 200 OK"
+                ]
+              }
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ]
+          },
+          {
+            "source_id": 159,
+            "hops": [
+              {
+                "host": "update.googleapis.com",
+                "endpoint": "https://update.googleapis.com/service/update2/json",
+                "method": "POST",
+                "time": "49723247",
+                "initiator": "not an origin",
+                "net_error": 0,
+                "response_status_lines": [
+                  "HTTP/1.1 200"
+                ]
+              }
+            ],
+            "net_error": 0,
+            "response_status_lines": [
+              "HTTP/1.1 200"
+            ]
+          },
+          {
+            "source_id": 164,
+            "hops": [
+              {
+                "host": "edgedl.me.gvt1.com",
+                "endpoint": "http://edgedl.me.gvt1.com/edgedl/release2/chrome_component/adh6aqyunlsvbjbsj3mxmllp4tva_1815/efniojlnjndmcbiieegkicadnoecjjef_1815_all_aca66uzkzrqh3x7kbpvvozzendta.crx3",
+                "method": "GET",
+                "time": "49723292",
+                "initiator": "not an origin",
+                "response_status_lines": [
+                  "HTTP/1.1 200 OK"
+                ]
+              }
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ]
+          },
+          {
+            "source_id": 167,
+            "hops": [
+              {
+                "host": "update.googleapis.com",
+                "endpoint": "https://update.googleapis.com/service/update2/json",
+                "method": "POST",
+                "time": "49725324",
+                "initiator": "not an origin",
+                "net_error": 0,
+                "response_status_lines": [
+                  "HTTP/1.1 200"
+                ]
+              }
+            ],
+            "net_error": 0,
+            "response_status_lines": [
+              "HTTP/1.1 200"
+            ]
+          },
+          {
+            "source_id": 172,
+            "hops": [
+              {
+                "host": "edgedl.me.gvt1.com",
+                "endpoint": "http://edgedl.me.gvt1.com/edgedl/release2/chrome_component/adqsrjx53453wm3re2xnpld3vuna_10854/hfnkpimlhhgieaddgfemjhofmfblmnib_10854_all_ndjhrbt6gx3gelsboxyeweotfe.crx3",
+                "method": "GET",
+                "time": "49727402",
+                "initiator": "not an origin",
+                "response_status_lines": [
+                  "HTTP/1.1 200 OK"
+                ]
+              }
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ]
+          },
+          {
+            "source_id": 175,
+            "hops": [
+              {
+                "host": "update.googleapis.com",
+                "endpoint": "https://update.googleapis.com/service/update2/json",
+                "method": "POST",
+                "time": "49729419",
+                "initiator": "not an origin",
+                "net_error": 0,
+                "response_status_lines": [
+                  "HTTP/1.1 200"
+                ]
+              }
+            ],
+            "net_error": 0,
+            "response_status_lines": [
+              "HTTP/1.1 200"
+            ]
+          },
+          {
+            "source_id": 180,
+            "hops": [
+              {
+                "host": "edgedl.me.gvt1.com",
+                "endpoint": "http://edgedl.me.gvt1.com/edgedl/diffgen-puffin/jflookgnkcckhobaglndicnbbgbonegd/0cf1155b4d9e26e773c8df0faebeb0ee9de1b0a54a9715191b7f2b78c48c1acd",
+                "method": "GET",
+                "time": "49733522",
+                "initiator": "not an origin",
+                "response_status_lines": [
+                  "HTTP/1.1 200 OK"
+                ]
+              }
+            ],
+            "response_status_lines": [
+              "HTTP/1.1 200 OK"
+            ]
+          },
+          {
+            "source_id": 187,
+            "hops": [
+              {
+                "host": "update.googleapis.com",
+                "endpoint": "https://update.googleapis.com/service/update2/json",
+                "method": "POST",
+                "time": "49737521",
+                "initiator": "not an origin",
+                "net_error": 0,
+                "response_status_lines": [
+                  "HTTP/1.1 200"
+                ]
+              }
+            ],
+            "net_error": 0,
+            "response_status_lines": [
+              "HTTP/1.1 200"
+            ]
+          }
+        ],
+        "dns_requests": [
+          "http://127.0.0.1:57615",
+          "http://edgedl.me.gvt1.com",
+          "https://accounts.google.com",
+          "https://update.googleapis.com"
+        ],
+        "tcp_connect_attempts": [
+          {
+            "source_id": 23,
+            "address": "127.0.0.1:57615",
+            "time": "49639467"
+          },
+          {
+            "source_id": 71,
+            "address": "127.0.0.1:57615",
+            "time": "49639559"
+          },
+          {
+            "source_id": 73,
+            "address": "142.250.147.84:443",
+            "time": "49639571"
+          },
+          {
+            "source_id": 75,
+            "address": "142.250.147.84:443",
+            "time": "49639574"
+          },
+          {
+            "source_id": 77,
+            "address": "142.250.147.84:443",
+            "time": "49639589"
+          },
+          {
+            "source_id": 113,
+            "address": "142.250.109.113:443",
+            "time": "49690532"
+          },
+          {
+            "source_id": 127,
+            "address": "34.104.35.123:80",
+            "time": "49690675"
+          },
+          {
+            "source_id": 186,
+            "address": "34.104.35.123:80",
+            "time": "49733527"
+          }
+        ],
+        "tls_results": [
+          {
+            "source_id": 73,
+            "net_error": 0,
+            "version": "TLS 1.3",
+            "time": "49639674"
+          },
+          {
+            "source_id": 75,
+            "net_error": 0,
+            "version": "TLS 1.3",
+            "time": "49639696"
+          },
+          {
+            "source_id": 77,
+            "net_error": 0,
+            "version": "TLS 1.3",
+            "time": "49639715"
+          },
+          {
+            "source_id": 113,
+            "net_error": 0,
+            "version": "TLS 1.3",
+            "time": "49690594"
+          }
+        ]
+      },
+      "name": "components-before-account-refinement",
+      "binary_sha256": "3c4ff21f79eee1f9ce05bdac38081c8e7265240e3f2969865ead19f520d415a3",
+      "raw_evidence_directory": "build/security/2026-10-23-policy-network",
+      "netlog_complete": true
+    }
+  ],
+  "installed_security_component_versions_before_account_refinement": {
+    "hfnkpimlhhgieaddgfemjhofmfblmnib": "10854",
+    "efniojlnjndmcbiieegkicadnoecjjef": "1815",
+    "khaoiebndkojlmppeemjhbpbandiljpe": "145.0.7584.0",
+    "jflookgnkcckhobaglndicnbbgbonegd": "3092",
+    "giekcmmlnklenlaomppkphknjmnnpneh": "7"
+  },
+  "checks": {
+    "native_policy_tests": 3,
+    "overlay_tests": 8,
+    "candidate_tests": 7,
+    "netlog_analyzer_tests": 7,
+    "release_gate_tests": 5,
+    "boundary_check": "PASS",
+    "pinned_feature_check": "PASS"
+  }
+}
