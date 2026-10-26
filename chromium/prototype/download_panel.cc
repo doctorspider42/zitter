@@ -71,7 +71,7 @@ struct DownloadPanel::Row {
   std::string guid;
   raw_ptr<views::View> title, status, source;
   raw_ptr<views::View> progress;
-  raw_ptr<views::Button> pause, cancel, reveal;
+  raw_ptr<views::View> pause, cancel, reveal;
 };
 DownloadPanel::DownloadPanel() = default;
 DownloadPanel::~DownloadPanel() { Disconnect(); }
@@ -183,7 +183,7 @@ void DownloadPanel::Refresh() {
       row.progress=box->AddChildView(scene_?scene_->MakeProgress():std::unique_ptr<views::View>(std::make_unique<views::ProgressBar>()));
       auto* buttons=box->AddChildView(scene_?scene_->MakeActions(8):std::make_unique<views::View>());
       if(!scene_)SetSidebarPanelLayout(buttons,false,gfx::Insets(),8);
-      auto button=[&](std::u16string text,Action action)->views::Button*{
+      auto button=[&](std::u16string text,Action action)->views::View*{
         auto callback=base::BindRepeating([](base::WeakPtr<DownloadPanel> panel,std::string guid,Action action){if(panel)panel->Act(std::move(guid),action);},weak_factory_.GetWeakPtr(),guid,action);
         return scene_?scene_->AddAction(buttons,std::move(callback),std::move(text)):buttons->AddChildView(std::make_unique<views::MdTextButton>(std::move(callback),text));
       };

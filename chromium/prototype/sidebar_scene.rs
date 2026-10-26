@@ -127,7 +127,7 @@ mod ffi {
     enum RowVisual { Normal, Hovered, Pressed, Disabled }
     enum RowAction { None, Activate, Drop, Cancel }
     struct RowInputResult { visual: RowVisual, action: RowAction, handled: bool }
-    struct ActionSnapshot { enabled: bool, focused: bool, on: bool, visual: RowVisual }
+    struct ActionSnapshot { enabled: bool, focused: bool, on: bool, is_default: bool, visual: RowVisual }
     struct Rect { x: i32, y: i32, width: i32, height: i32 }
     struct RowLayout { title: Rect, detail: Rect, close: Rect }
     struct ColumnChild { width: i32, height: i32, top: i32, left: i32, bottom: i32, right: i32 }
@@ -421,6 +421,8 @@ mod ffi {
         fn action_cancel(self: &mut ActionControl) -> bool;
         fn action_snapshot(self: &ActionControl) -> ActionSnapshot;
         fn action_pointer(self: &mut ActionControl, phase: PointerPhase, x: i32, y: i32, inside: bool, trigger: bool, visible: bool) -> RowInputResult;
+        fn action_default(self: &mut ActionControl, value: bool) -> bool;
+        fn action_accelerator(self: &mut ActionControl, key: u32, modified: bool, visible: bool) -> RowInputResult;
         fn action_pending(self: &ActionControl) -> bool;
         fn action_row_pointer(self: &mut ActionControl, phase: PointerPhase, x: i32, y: i32, inside: bool, trigger: bool, visible: bool, drop: bool) -> RowInputResult;
         fn action_key(self: &mut ActionControl, pressed: bool, key: u32, mac: bool, visible: bool) -> RowInputResult;
@@ -1686,16 +1688,21 @@ impl RowPointer {
     }
 }
 // An action's state outlives individual native events; no Button state is read.
-struct ActionControl { pointer:RowPointer, enabled:bool, focused:bool, on:bool, visual:ffi::RowVisual }
-fn new_action_control()->Box<ActionControl>{Box::new(ActionControl{pointer:RowPointer::default(),enabled:true,focused:false,on:false,visual:ffi::RowVisual::Normal})}
+struct ActionControl { pointer:RowPointer, enabled:bool, focused:bool, on:bool, is_default:bool, visual:ffi::RowVisual }
+fn new_action_control()->Box<ActionControl>{Box::new(ActionControl{pointer:RowPointer::default(),enabled:true,focused:false,on:false,is_default:false,visual:ffi::RowVisual::Normal})}
 fn action_preferred_size(dot:bool,label:bool)->ffi::Rect{ffi::Rect{x:0,y:0,width:if dot{if label{30}else{24}}else{32},height:if dot{28}else{32}}}
 impl ActionControl {
     fn action_cancel(&mut self)->bool{let visual=if self.enabled{ffi::RowVisual::Normal}else{ffi::RowVisual::Disabled};let changed=self.pointer.origin.is_some()||self.pointer.hovered||self.pointer.key_armed||self.visual!=visual;self.pointer.cancel();self.visual=visual;changed}
     fn action_enabled(&mut self,enabled:bool)->bool{if self.enabled==enabled{return false;}self.enabled=enabled;self.action_cancel();true}
     fn action_focus(&mut self,focused:bool){self.focused=focused;if !focused{self.action_cancel();}}
     fn action_on(&mut self,on:bool)->bool{let changed=self.on!=on;self.on=on;changed}
-    fn action_snapshot(&self)->ffi::ActionSnapshot{ffi::ActionSnapshot{enabled:self.enabled,focused:self.focused,on:self.on,visual:self.visual}}
+    fn action_snapshot(&self)->ffi::ActionSnapshot{ffi::ActionSnapshot{enabled:self.enabled,focused:self.focused,on:self.on,is_default:self.is_default,visual:self.visual}}
     fn reject(&mut self)->ffi::RowInputResult{self.action_cancel();ffi::RowInputResult{visual:self.visual,action:ffi::RowAction::None,handled:false}}
+    fn action_default(&mut self,value:bool)->bool{let changed=self.is_default!=value;self.is_default=value;changed}
+    fn action_accelerator(&mut self,key:u32,modified:bool,visible:bool)->ffi::RowInputResult{
+        if key!=2||modified||!self.is_default||!self.enabled||!visible{return self.reject();}
+        self.action_cancel();ffi::RowInputResult{visual:self.visual,action:ffi::RowAction::Activate,handled:true}
+    }
     fn action_pending(&self)->bool{self.pointer.origin.is_some()||self.pointer.key_armed}
     fn action_pointer(&mut self,phase:ffi::PointerPhase,x:i32,y:i32,inside:bool,trigger:bool,visible:bool)->ffi::RowInputResult{
         self.action_row_pointer(phase,x,y,inside,trigger,visible,false)
@@ -2917,6 +2924,13 @@ mod tests {
     }
     #[test] fn action_geometry_preserves_workspace_emoji_and_chrome_metrics() {
         for (dot,label,w,h) in [(false,false,32,32),(false,true,32,32),(true,false,24,28),(true,true,30,28)]{let r=action_preferred_size(dot,label);assert_eq!((r.width,r.height),(w,h));}
+    }
+    #[test] fn default_action_accelerator_requires_default_enabled_visible_unmodified_return() {
+        use ffi::RowAction as A;let mut c=new_action_control();assert!(!c.action_snapshot().is_default);assert!(!c.action_accelerator(2,false,true).handled);assert!(c.action_default(true));assert!(!c.action_default(true));assert!(c.action_snapshot().is_default);
+        assert!(!c.action_accelerator(1,false,true).handled);assert!(!c.action_accelerator(2,true,true).handled);assert!(!c.action_accelerator(2,false,false).handled);c.action_enabled(false);assert!(!c.action_accelerator(2,false,true).handled);c.action_enabled(true);assert!(c.action_accelerator(2,false,true).action==A::Activate);c.action_default(false);assert!(!c.action_accelerator(2,false,true).handled);
+    }
+    #[test] fn default_accelerator_retires_pointer_and_keeps_independent_selection() {
+        use ffi::{PointerPhase as P,RowAction as A,RowVisual as V};let mut c=new_action_control();c.action_default(true);c.action_on(true);c.action_pointer(P::Press,2,2,true,true,true);assert!(c.action_pending());let r=c.action_accelerator(2,false,true);assert!(r.handled&&r.action==A::Activate&&r.visual==V::Normal);assert!(!c.action_pending());assert!(c.action_snapshot().on&&c.action_snapshot().is_default);assert!(c.action_pointer(P::Release,2,2,true,true,true).action!=A::Activate);
     }
     #[test] fn action_cancel_is_idle_safe_and_retires_capture_before_viewport_return() {
         use ffi::{PointerPhase as P,RowAction as A};let mut c=new_action_control();assert!(!c.action_cancel());c.action_pointer(P::Press,1,1,true,true,true);assert!(c.action_cancel());assert!(!c.action_cancel());assert!(!matches!(c.action_pointer(P::Release,1,1,true,true,true).action,A::Activate));c.action_cancel();c.action_key(true,1,false,true);assert!(c.action_cancel());assert!(!matches!(c.action_key(false,1,false,true).action,A::Activate));c.action_enabled(false);assert!(!c.action_cancel());

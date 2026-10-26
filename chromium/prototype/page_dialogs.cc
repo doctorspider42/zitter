@@ -95,14 +95,14 @@ views::ClientView* CreateSceneDialogClient(views::Widget* widget,views::View* co
   return nullptr;
 #endif
 }
-views::Button* DialogActionButton(views::Widget* widget,bool accept){
+views::View* DialogActionButton(views::Widget* widget,bool accept){
   if(!widget)return nullptr;
 #if BUILDFLAG(IS_MAC)
-  if(auto* client=views::AsViewClass<SceneDialogClient>(widget->client_view()))return static_cast<views::Button*>(client->Button(accept));
+  if(auto* client=views::AsViewClass<SceneDialogClient>(widget->client_view()))return client->Button(accept);
 #endif
   auto* client=widget->widget_delegate()->AsDialogDelegate()->GetDialogClientView();return client?(accept?client->ok_button():client->cancel_button()):nullptr;
 }
-views::Button* PageDialogs::dialog_button_for_testing(bool accept) const{return DialogActionButton(dialog_.get(),accept);}
+views::View* PageDialogs::dialog_button_for_testing(bool accept) const{return DialogActionButton(dialog_.get(),accept);}
 WEB_CONTENTS_USER_DATA_KEY_IMPL(PageDialogs);
 PageDialogs* PageDialogs::Attach(content::WebContents* contents) {
   CreateForWebContents(contents); return FromWebContents(contents);

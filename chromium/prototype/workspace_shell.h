@@ -241,8 +241,8 @@ class WorkspaceShell final : public ui::EventHandler,
   bool tools_choice_metal_visible_for_testing(std::string_view key) const;
   gfx::Rect tools_choice_metal_bounds_for_testing(std::string_view key) const;
   void ActivateToolsChoiceForTesting(std::string_view key, size_t index);
-  bool tools_action_metal_visible_for_testing(views::Button* button) const;
-  gfx::Rect tools_action_metal_bounds_for_testing(views::Button* button) const;
+  bool tools_action_metal_visible_for_testing(views::View* button) const;
+  gfx::Rect tools_action_metal_bounds_for_testing(views::View* button) const;
   bool tools_actions_contains_scene_text_for_testing(std::string_view text) const;
   size_t tools_action_groups_for_testing() const;
   views::View* tools_body_for_testing() const{return tools_body_;}
@@ -295,8 +295,8 @@ class WorkspaceShell final : public ui::EventHandler,
   bool preference_navigation_selected_for_testing(size_t category) const;
   bool preference_navigation_contains_text_for_testing(std::string_view text) const;
   bool preference_close_metal_visible_for_testing() const;
-  views::Button* preference_save_button_for_testing(std::string key) const{return preference_save_buttons_.at(key);}
-  bool preference_action_metal_visible_for_testing(views::Button* button) const;
+  views::View* preference_save_button_for_testing(std::string key) const{return preference_save_buttons_.at(key);}
+  bool preference_action_metal_visible_for_testing(views::View* button) const;
   bool preference_actions_contains_scene_text_for_testing(std::string_view text) const;
   views::Button* preference_switch_for_testing(std::string_view key) const;
   bool preference_switch_checked_for_testing(std::string_view key) const;
@@ -527,8 +527,8 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<EditorControl> history_search_ = nullptr;
   raw_ptr<views::View> history_period_ = nullptr;
   raw_ptr<views::View> history_list_ = nullptr;
-  raw_ptr<views::Button> history_more_ = nullptr;
-  raw_ptr<views::Button> history_clear_ = nullptr;
+  raw_ptr<views::View> history_more_ = nullptr;
+  raw_ptr<views::View> history_clear_ = nullptr;
   std::vector<BrowsingHistoryEntry> history_entries_;
   // Views-only UI state; the opt-in backend reads/writes ToolsForm instead.
   size_t history_limit_ = 200;
@@ -664,7 +664,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<EditorControl> preferences_search_ = nullptr;
   raw_ptr<views::View> preferences_profile_ = nullptr;
   raw_ptr<views::View> download_directory_label_ = nullptr;
-  raw_ptr<views::Button> download_directory_button_ = nullptr;
+  raw_ptr<views::View> download_directory_button_ = nullptr;
   raw_ptr<views::View> preferences_empty_ = nullptr;
   raw_ptr<views::View> preferences_body_ = nullptr;
   raw_ptr<views::View> preferences_navigation_ = nullptr;
@@ -684,7 +684,7 @@ class WorkspaceShell final : public ui::EventHandler,
   std::map<std::string, raw_ptr<views::View>> preference_pickers_;
   size_t preference_category_ = 0;
   std::map<std::string, raw_ptr<EditorControl>> preference_textfields_;
-  std::map<std::string, raw_ptr<views::Button>> preference_save_buttons_;
+  std::map<std::string, raw_ptr<views::View>> preference_save_buttons_;
   std::set<std::string> preference_text_dirty_;
   std::string preferences_profile_id_;
   raw_ptr<EditorControl> site_origin_ = nullptr;
@@ -698,7 +698,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::Button> clear_history_ = nullptr;
   raw_ptr<views::Button> clear_cookies_ = nullptr;
   raw_ptr<views::Button> clear_cache_ = nullptr;
-  raw_ptr<views::Button> clear_data_button_ = nullptr;
+  raw_ptr<views::View> clear_data_button_ = nullptr;
   raw_ptr<views::View> general_status_ = nullptr;
   std::unique_ptr<views::WidgetDelegate> general_delegate_;
   std::unique_ptr<views::Widget> general_widget_;
@@ -773,9 +773,9 @@ class WorkspaceShell final : public ui::EventHandler,
   size_t pin_visibility_update_count_ = 0;
   raw_ptr<views::View> profile_picker_ = nullptr;
   raw_ptr<EditorControl> workspace_input_ = nullptr;
-  raw_ptr<views::Button> add_workspace_ = nullptr;
-  raw_ptr<views::Button> edit_workspace_ = nullptr;
-  raw_ptr<views::Button> remove_workspace_ = nullptr;
+  raw_ptr<views::View> add_workspace_ = nullptr;
+  raw_ptr<views::View> edit_workspace_ = nullptr;
+  raw_ptr<views::View> remove_workspace_ = nullptr;
   raw_ptr<views::View> configuration_error_ = nullptr;
   raw_ptr<PanelViewport> import_scroll_ = nullptr;
   raw_ptr<views::View> import_root_ = nullptr;
@@ -786,7 +786,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::Button> import_profiles_ = nullptr;
   raw_ptr<views::Button> import_history_ = nullptr;
   raw_ptr<views::Button> import_cookies_ = nullptr;
-  raw_ptr<views::Button> apply_import_ = nullptr;
+  raw_ptr<views::View> apply_import_ = nullptr;
   raw_ptr<views::Button> dismiss_import_ = nullptr;
   bool import_can_apply_ = false;
   bool import_busy_ = false;
@@ -795,9 +795,9 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> profiles_root_ = nullptr;
   raw_ptr<views::View> managed_profile_picker_ = nullptr;
   raw_ptr<EditorControl> profile_name_input_ = nullptr;
-  raw_ptr<views::Button> create_profile_ = nullptr;
-  raw_ptr<views::Button> rename_profile_ = nullptr;
-  raw_ptr<views::Button> delete_profile_ = nullptr;
+  raw_ptr<views::View> create_profile_ = nullptr;
+  raw_ptr<views::View> rename_profile_ = nullptr;
+  raw_ptr<views::View> delete_profile_ = nullptr;
   raw_ptr<views::View> profile_status_ = nullptr;
   std::unique_ptr<ProfileFormState> profile_form_;
   bool confirm_profile_deletion_ = false;

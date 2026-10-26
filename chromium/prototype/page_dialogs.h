@@ -22,7 +22,7 @@ std::unique_ptr<views::DialogDelegate> CreateSceneModalDialog(std::unique_ptr<vi
 std::unique_ptr<PageDialogScene> CreatePageDialogScene(views::View* root);
 std::unique_ptr<views::View> CreatePageDialogActions(views::Widget* widget);
 views::ClientView* CreateSceneDialogClient(views::Widget* widget,views::View* contents);
-views::Button* DialogActionButton(views::Widget* widget,bool accept);
+views::View* DialogActionButton(views::Widget* widget,bool accept);
 bool PageDialogActionsVisibleForTesting(views::View* actions,std::string_view text);
 
 // Native dialogs bound to the requesting WebContents, including beforeunload
@@ -39,7 +39,7 @@ class PageDialogs final : public content::JavaScriptDialogManager,
   views::Widget* dialog() const { return dialog_.get(); }
   EditorControl* prompt_input() const { return dialog_?prompt_.get():nullptr; }
   bool HandlePromptKey(const ui::KeyEvent& event);
-  views::Button* dialog_button_for_testing(bool accept) const;
+  views::View* dialog_button_for_testing(bool accept) const;
   PanelViewport* viewport_for_testing() const{return dialog_?viewport_.get():nullptr;}
   views::View* dialog_body_for_testing() const{return dialog_?body_.get():nullptr;}
   bool scene_visible_for_testing() const{return scene_&&scene_->visible();}

@@ -1,5 +1,7 @@
 #include "base/i18n/number_formatting.h"
 #include "ui/views/style/platform_style.h"
+#include "ui/views/interaction/element_tracker_views.h"
+#include "ui/views/view_tracker.h"
 #include "ui/views/window/dialog_client_view.h"
 #include "chromium/prototype/page_dialogs.h"
 #include "base/i18n/time_formatting.h"
@@ -655,6 +657,9 @@ class RustActionView : public views::View {
   }
   void OnTooltipTextChanged(const std::u16string& previous) override{views::View::OnTooltipTextChanged(previous);auto& ax=GetViewAccessibility();if((ax.GetCachedName().empty()||ax.GetCachedName()==previous)&&!GetTooltipText().empty())ax.SetName(GetTooltipText());}
   sidebar::ActionSnapshot Snapshot() const{return state_->action_snapshot();}
+  void SetDefault(bool value){if(!state_->action_default(value))return;GetViewAccessibility().SetIsDefault(value);const ui::Accelerator enter(ui::VKEY_RETURN,ui::EF_NONE);if(value)AddAccelerator(enter);else RemoveAccelerator(enter);}
+  bool SkipDefaultKeyEventProcessing(const ui::KeyEvent& event) override{return sidebar::key_policy(event.key_code()==ui::VKEY_SPACE?1:event.key_code()==ui::VKEY_RETURN?2:0,true)!=0;}
+  bool AcceleratorPressed(const ui::Accelerator& accelerator) override{SyncEnabled();const auto before=Snapshot().visual;const bool pending=Pending();return Apply(state_->action_accelerator(accelerator.key_code()==ui::VKEY_RETURN?2:0,accelerator.modifiers()!=ui::EF_NONE,SceneIsVisible(this)),accelerator.ToKeyEvent(),before,pending);}
   void SetColor(SkColor color){if(color_==color)return;color_=color;SchedulePaint();}
   void SetCallback(views::Button::PressedCallback callback){Cancel();callback_=std::move(callback);}
   void CancelInput(){Cancel();}
@@ -691,7 +696,7 @@ class RustActionView : public views::View {
   void WindowChanged(){Cancel();state_->action_focus(HasFocus());SchedulePaint();}
   bool Pointer(sidebar::PointerPhase phase,const ui::MouseEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;const bool pending=state_->action_pending();return Apply(state_->action_pointer(phase,event.x(),event.y(),phase!=sidebar::PointerPhase::Exit&&HitTestPoint(event.location())&&GetVisibleBounds().Contains(event.location()),event.IsLeftMouseButton(),Interactive()),event,before,pending);}
   bool Key(bool pressed,const ui::KeyEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;const bool pending=state_->action_pending();const uint32_t key=event.key_code()==ui::VKEY_SPACE?1:event.key_code()==ui::VKEY_RETURN?2:0;return Apply(state_->action_key(pressed,key,true,Interactive()),event,before,pending);}
-  bool Apply(const sidebar::RowInputResult& result,const ui::Event& event,sidebar::RowVisual before,bool pending){const bool handled=result.handled;if(result.visual!=before)SchedulePaint();else if(pending!=state_->action_pending()&&changed_)changed_.Run();if(result.action==sidebar::RowAction::Activate&&callback_){callback_.Run(event);return handled;}return handled;}
+  bool Apply(const sidebar::RowInputResult& result,const ui::Event& event,sidebar::RowVisual before,bool pending){const bool handled=result.handled;if(result.visual!=before)SchedulePaint();else if(pending!=state_->action_pending()&&changed_)changed_.Run();if(result.action==sidebar::RowAction::Activate&&callback_){const auto id=GetProperty(views::kElementIdentifierKey);if(id){views::ViewTracker alive(this);views::ElementTrackerViews::GetInstance()->NotifyViewActivated(id,this);if(!alive.view())return handled;}callback_.Run(event);return handled;}return handled;}
   SkColor color_=kSubtle;std::u16string label_;views::Button::PressedCallback callback_;ControlGlyph glyph_;raw_ptr<const gfx::VectorIcon> icon_;base::RepeatingCallback<bool()> visible_;base::RepeatingClosure changed_;rust::Box<sidebar::ActionControl> state_=sidebar::new_action_control();SceneWindowObserver window_{base::BindRepeating(&RustActionView::WindowChanged,base::Unretained(this))};base::CallbackListSubscription enabled_changed_{AddEnabledInViewsSubtreeChangedCallback(base::BindRepeating(&RustActionView::EnabledChanged,base::Unretained(this)))};
 };
 BEGIN_METADATA(RustActionView)
@@ -848,32 +853,29 @@ END_METADATA
 #endif
 
 #if BUILDFLAG(IS_MAC)
-class SceneTextButton final : public SceneGlyphButton {
-  METADATA_HEADER(SceneTextButton,SceneGlyphButton)
+class SceneTextButton final : public RustActionView {
+  METADATA_HEADER(SceneTextButton,RustActionView)
  public:
   SceneTextButton(views::Button::PressedCallback callback,std::u16string text,ui::ButtonStyle style,base::RepeatingClosure painted)
-      :SceneGlyphButton(std::move(callback),text,Glyph::kMore,nullptr,base::BindRepeating([]{return true;}),std::move(painted)),text_(std::move(text)),style_(style) {
-    SetInstallFocusRingOnFocus(false);SetHasInkDropActionOnClick(false);SetAnimateOnStateChange(false);SetRequestFocusOnPress(false);
-  }
+      :RustActionView(std::move(callback),text,ControlGlyph::kMore,nullptr,base::BindRepeating([]{return true;}),std::move(painted),false),text_(std::move(text)),style_(style) {}
   void UseNativeMinimum(){native_minimum_=true;}
-  gfx::Size GetMinimumSize() const override{if(!native_minimum_)return SceneGlyphButton::GetMinimumSize();const auto font=TextFont();return gfx::Size(views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_DIALOG_BUTTON_MINIMUM_WIDTH),std::max(0,views::LayoutProvider::GetControlHeightForFont(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY,font)-std::max(font.GetHeight(),views::TypographyProvider::Get().GetLineHeight(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY))));}
-  void SetDefault(bool value){if(value==default_)return;default_=value;GetViewAccessibility().SetIsDefault(value);const ui::Accelerator enter(ui::VKEY_RETURN,ui::EF_NONE);if(value)AddAccelerator(enter);else RemoveAccelerator(enter);}
+  gfx::Size GetMinimumSize() const override{if(!native_minimum_)return RustActionView::GetMinimumSize();const auto font=TextFont();return gfx::Size(views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_DIALOG_BUTTON_MINIMUM_WIDTH),std::max(0,views::LayoutProvider::GetControlHeightForFont(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY,font)-std::max(font.GetHeight(),views::TypographyProvider::Get().GetLineHeight(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY))));}
   void SetText(std::u16string text){if(text==text_)return;OnMouseCaptureLost();text_=std::move(text);GetViewAccessibility().SetName(text_);SetTooltipText(text_);PreferredSizeChanged();SchedulePaint();}
   static gfx::FontList TextFont(){return views::TypographyProvider::Get().GetFont(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY);}
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {const auto g=Metrics(-1,-1);return gfx::Size(g.width,g.height);}
   sidebar::Item Scene(gfx::RectF bounds,gfx::RectF clip) const {
-    const auto* provider=GetColorProvider();const bool enabled=GetEnabledInViewsSubtree();const auto font=TextFont();const bool prominent=style_==ui::ButtonStyle::kProminent;
+    const auto* provider=GetColorProvider();const auto state=Snapshot();const bool enabled=state.enabled;const auto font=TextFont();const bool prominent=style_==ui::ButtonStyle::kProminent;
     sidebar::Item item{};item.kind=19;item.x=bounds.x();item.y=bounds.y();item.width=bounds.width();item.height=bounds.height();item.title=base::UTF16ToUTF8(text_);item.font_size=font.GetFontSize();item.active=font.GetFontWeight()>=gfx::Font::Weight::MEDIUM;
-    item.title_width=views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_BUTTON_HORIZONTAL_PADDING);item.focused=HasFocus();item.hovered=enabled&&(GetState()==STATE_HOVERED||GetState()==STATE_PRESSED);
+    item.title_width=views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_BUTTON_HORIZONTAL_PADDING);item.focused=state.focused;item.hovered=enabled&&(state.visual==sidebar::RowVisual::Hovered||state.visual==sidebar::RowVisual::Pressed);
     item.ink=provider->GetColor(views::TypographyProvider::Get().GetColorId(views::style::CONTEXT_BUTTON_MD,!enabled?views::style::STYLE_DISABLED:prominent?views::style::STYLE_DIALOG_BUTTON_DEFAULT:views::style::STYLE_PRIMARY));
-    item.fill=style_==ui::ButtonStyle::kText?SK_ColorTRANSPARENT:provider->GetColor(prominent?!enabled?ui::kColorButtonBackgroundProminentDisabled:HasFocus()?ui::kColorButtonBackgroundProminentFocused:ui::kColorButtonBackgroundProminent:ui::kColorButtonBackground);
-    if(GetState()==STATE_PRESSED)item.fill=GetNativeTheme()->GetSystemButtonPressedColor(item.fill);
+    item.fill=style_==ui::ButtonStyle::kText?SK_ColorTRANSPARENT:provider->GetColor(prominent?!enabled?ui::kColorButtonBackgroundProminentDisabled:state.focused?ui::kColorButtonBackgroundProminentFocused:ui::kColorButtonBackgroundProminent:ui::kColorButtonBackground);
+    if(state.visual==sidebar::RowVisual::Pressed)item.fill=GetNativeTheme()->GetSystemButtonPressedColor(item.fill);
     item.badge=style_==ui::ButtonStyle::kDefault?provider->GetColor(enabled?ui::kColorButtonBorder:ui::kColorButtonBorderDisabled):SK_ColorTRANSPARENT;
     item.detail_ink=provider->GetColor(prominent?ui::kColorSysStateHoverOnProminent:ui::kColorSysStateHoverOnSubtle);item.clip={clip.x(),clip.y(),clip.width(),clip.height()};return item;
   }
  private:
   sidebar::ActionButtonLayout Metrics(int width,int height) const {const auto font=TextFont();return sidebar::action_button_layout(width,height,gfx::GetStringWidth(text_,font),views::LayoutProvider::GetControlHeightForFont(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY,font),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_BUTTON_HORIZONTAL_PADDING),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_DIALOG_BUTTON_MINIMUM_WIDTH));}
-  std::u16string text_;ui::ButtonStyle style_;bool default_=false;bool native_minimum_=false;
+  std::u16string text_;ui::ButtonStyle style_;bool native_minimum_=false;
 };
 BEGIN_METADATA(SceneTextButton)
 END_METADATA
@@ -888,7 +890,7 @@ class SceneActionGroup final : public views::View {
   void Share(base::RepeatingCallback<bool()> visible,base::RepeatingClosure changed){shared_visible_=std::move(visible);shared_changed_=std::move(changed);SetSidebarPanelLayout(this,false,gfx::Insets(),spacing_);}
   bool shared() const{return bool(shared_visible_);}
   void Append(std::vector<sidebar::Item>& items,gfx::Point origin,gfx::Rect clip) const{auto next=Items(origin.x(),origin.y(),gfx::RectF(clip));items.insert(items.end(),std::make_move_iterator(next.begin()),std::make_move_iterator(next.end()));}
-  views::Button* AddAction(views::Button::PressedCallback callback,std::u16string text,ui::ButtonStyle style){auto* button=AddChildView(std::make_unique<SceneTextButton>(std::move(callback),std::move(text),style,base::BindRepeating(&SceneActionGroup::Schedule,weak_factory_.GetWeakPtr())));if(shared())button->UseNativeMinimum();return button;}
+  views::View* AddAction(views::Button::PressedCallback callback,std::u16string text,ui::ButtonStyle style){auto* button=AddChildView(std::make_unique<SceneTextButton>(std::move(callback),std::move(text),style,base::BindRepeating(&SceneActionGroup::Schedule,weak_factory_.GetWeakPtr())));if(shared())button->UseNativeMinimum();return button;}
   bool metal_visible() const{return shared()?shared_visible_.Run():surface_&&surface_->visible();}
   gfx::Rect metal_bounds_for_testing() const{return surface_?surface_->screen_bounds_for_testing():gfx::Rect();}
   bool contains_text(std::string_view text) const{return surface_&&surface_->visible()&&surface_->contains_text_for_testing(text);}
@@ -905,7 +907,7 @@ class SceneActionGroup final : public views::View {
  private:
   sidebar::ColumnLayout Geometry(int width,int height) const {std::vector<sidebar::ColumnChild> measured;for(const auto& child:children())if(child->GetVisible()){const auto size=child->GetPreferredSize();measured.push_back({size.width(),size.height(),0,0,0,0});}if(dialog_){auto* provider=views::LayoutProvider::Get();const auto insets=provider->GetInsetsMetric(views::INSETS_DIALOG_BUTTON_ROW);return sidebar::dialog_actions_layout(width,height,spacing_,provider->GetDistanceMetric(views::DISTANCE_BUTTON_MAX_LINKABLE_WIDTH),insets.top(),insets.left(),insets.bottom(),insets.right(),rust::Slice<const sidebar::ColumnChild>(measured.data(),measured.size()));}return sidebar::action_group_layout(width,height,vertical_,spacing_,rust::Slice<const sidebar::ColumnChild>(measured.data(),measured.size()));}
   std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const {std::vector<sidebar::Item> out;for(const auto& child:children())if(child->GetVisible()){auto bounds=gfx::RectF(child->bounds());bounds.Offset(dx,dy);auto local=bounds;local.Intersect(clip);out.push_back(static_cast<SceneTextButton*>(child.get())->Scene(bounds,local));}return out;}
-  void Schedule(){if(shared()){shared_changed_.Run();return;}if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneActionGroup::UpdateMetal,weak_factory_.GetWeakPtr()));}
+  void Schedule(){for(const auto& child:children())static_cast<SceneTextButton*>(child.get())->SyncViewportVisibility();if(shared()){shared_changed_.Run();return;}if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneActionGroup::UpdateMetal,weak_factory_.GetWeakPtr()));}
   void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,dialog_?GetColorProvider()->GetColor(ui::kColorDialogBackground):Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
   base::RepeatingCallback<bool()> shared_visible_;base::RepeatingClosure shared_changed_;
   bool vertical_;int spacing_;bool intrinsic_;bool dialog_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneActionGroup::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneActionGroup> weak_factory_{this};
@@ -1297,13 +1299,13 @@ views::View* ActionGroup(views::View* parent,bool scene,bool vertical,int spacin
 #endif
   auto* group=parent->AddChildView(std::make_unique<views::View>());group->SetLayoutManager(std::make_unique<views::BoxLayout>(vertical?views::BoxLayout::Orientation::kVertical:views::BoxLayout::Orientation::kHorizontal,gfx::Insets(),spacing));return group;
 }
-views::Button* AddAction(views::View* parent,views::Button::PressedCallback callback,std::u16string text,ui::ButtonStyle style=ui::ButtonStyle::kDefault) {
+views::View* AddAction(views::View* parent,views::Button::PressedCallback callback,std::u16string text,ui::ButtonStyle style=ui::ButtonStyle::kDefault) {
 #if BUILDFLAG(IS_MAC)
   if(auto* group=views::AsViewClass<SceneActionGroup>(parent))return group->AddAction(std::move(callback),std::move(text),style);
 #endif
   auto* button=parent->AddChildView(std::make_unique<views::MdTextButton>(std::move(callback),std::move(text)));button->SetStyle(style);return button;
 }
-void SetActionText(views::Button* button,std::u16string text) {
+void SetActionText(views::View* button,std::u16string text) {
 #if BUILDFLAG(IS_MAC)
   if(auto* scene=views::AsViewClass<SceneTextButton>(button)){scene->SetText(std::move(text));return;}
 #endif
@@ -1312,7 +1314,7 @@ void SetActionText(views::Button* button,std::u16string text) {
 
 // Preserve the native baseline hierarchy; scene buttons share the existing
 // action-group recipe and retain one native event/focus/accessibility adapter.
-views::Button* PreferenceAction(views::View* parent,bool scene,views::Button::PressedCallback callback,std::u16string text,bool stretch=false) {
+views::View* PreferenceAction(views::View* parent,bool scene,views::Button::PressedCallback callback,std::u16string text,bool stretch=false) {
 #if BUILDFLAG(IS_MAC)
   // A button in a horizontal preference row keeps its intrinsic width, even
   // when Views asks for its height at the full row width. Vertical list actions
@@ -2330,8 +2332,8 @@ class PanelSceneImpl final : public PanelScene {
   std::unique_ptr<views::View> MakeSelect(std::vector<std::u16string> labels,std::u16string name) override{return std::make_unique<SceneSelect>(std::move(labels),std::move(name),base::RepeatingClosure());}
   void SetText(views::View* view,std::u16string text) override{static_cast<PreferenceCopy*>(view)->SetText(std::move(text));}
   std::unique_ptr<views::View> MakeActions(int spacing) override{auto group=std::make_unique<SceneActionGroup>(false,spacing);group->Share(base::BindRepeating([](base::WeakPtr<PanelSceneImpl> self){return self&&self->visible();},weak_factory_.GetWeakPtr()),base::BindRepeating(&PanelSceneImpl::Schedule,weak_factory_.GetWeakPtr()));return group;}
-  views::Button* AddAction(views::View* group,base::RepeatingClosure callback,std::u16string text) override{return static_cast<SceneActionGroup*>(group)->AddAction(std::move(callback),std::move(text),ui::ButtonStyle::kDefault);}
-  void SetActionText(views::Button* button,std::u16string text) override{static_cast<SceneTextButton*>(button)->SetText(std::move(text));}
+  views::View* AddAction(views::View* group,base::RepeatingClosure callback,std::u16string text) override{return static_cast<SceneActionGroup*>(group)->AddAction(std::move(callback),std::move(text),ui::ButtonStyle::kDefault);}
+  void SetActionText(views::View* button,std::u16string text) override{static_cast<SceneTextButton*>(button)->SetText(std::move(text));}
   std::unique_ptr<views::View> MakeProgress() override{return std::make_unique<SceneProgress>(base::BindRepeating(&PanelSceneImpl::Schedule,weak_factory_.GetWeakPtr()),base::BindRepeating([](base::WeakPtr<PanelSceneImpl> self){return self&&self->visible();},weak_factory_.GetWeakPtr()));}
   void SetProgress(views::View* view,double value) override{static_cast<SceneProgress*>(view)->SetValue(value);}
   bool animating() const override{return renderer_.animating();}
@@ -3114,6 +3116,12 @@ GURL ResolveTyped(const std::string& text, SearchEngine engine) {
   return url.SchemeIsHTTPOrHTTPS() ? url : GURL();
 }
 }  // namespace
+bool SceneActionPressedForTesting(views::View* view){
+#if BUILDFLAG(IS_MAC)
+  if(auto* action=views::AsViewClass<RustActionView>(view))return action->Snapshot().visual==sidebar::RowVisual::Pressed;
+#endif
+  auto* button=views::AsViewClass<views::Button>(view);return button&&button->GetState()==views::Button::STATE_PRESSED;
+}
 bool PageDialogActionsVisibleForTesting(views::View* actions,std::string_view text){
 #if BUILDFLAG(IS_MAC)
   auto* group=views::AsViewClass<SceneActionGroup>(actions);return group&&group->contains_text(text);
@@ -3129,7 +3137,7 @@ std::unique_ptr<views::View> CreatePageDialogActions(views::Widget* widget){
     if(!(delegate->buttons()&static_cast<int>(type)))return;
     auto* button=static_cast<SceneTextButton*>(group->AddAction({},delegate->GetDialogButtonLabel(type),delegate->GetDialogButtonStyle(type)));
     button->SetID(static_cast<int>(type));button->SetProperty(views::kElementIdentifierKey,type==ui::mojom::DialogButton::kOk?views::DialogClientView::kOkButtonElementId:views::DialogClientView::kCancelButtonElementId);button->SetGroup(6666);button->SetEnabled(delegate->IsDialogButtonEnabled(type));button->SetDefault(delegate->GetIsDefault(type));
-    button->SetCallback(base::BindRepeating([](base::WeakPtr<views::Widget> widget,views::Button* button,ui::mojom::DialogButton type,const ui::Event& event){
+    button->SetCallback(base::BindRepeating([](base::WeakPtr<views::Widget> widget,views::View* button,ui::mojom::DialogButton type,const ui::Event& event){
       if(!widget||!widget->IsVisible())return;
       auto* delegate=widget->widget_delegate()->AsDialogDelegate();
       if(!delegate||delegate->GetDialogClientView()->IsPossiblyUnintendedInteraction(event,delegate->ShouldAllowKeyEventsDuringInputProtection())||delegate->ShouldIgnoreButtonPressedEventHandling(button,event))return;
@@ -6213,7 +6221,7 @@ bool WorkspaceShell::preference_close_metal_visible_for_testing() const{
   return false;
 #endif
 }
-bool WorkspaceShell::preference_action_metal_visible_for_testing(views::Button* button) const {
+bool WorkspaceShell::preference_action_metal_visible_for_testing(views::View* button) const {
 #if BUILDFLAG(IS_MAC)
   auto* group=button?views::AsViewClass<SceneActionGroup>(button->parent()):nullptr;return group&&group->metal_visible();
 #else
@@ -7058,8 +7066,8 @@ void WorkspaceShell::ActivateToolsChoiceForTesting(std::string_view key,size_t i
 #endif
   static_cast<views::Combobox*>(picker)->MenuSelectionAt(index);
 }
-bool WorkspaceShell::tools_action_metal_visible_for_testing(views::Button* button) const{return preference_action_metal_visible_for_testing(button);}
-gfx::Rect WorkspaceShell::tools_action_metal_bounds_for_testing(views::Button* button) const{
+bool WorkspaceShell::tools_action_metal_visible_for_testing(views::View* button) const{return preference_action_metal_visible_for_testing(button);}
+gfx::Rect WorkspaceShell::tools_action_metal_bounds_for_testing(views::View* button) const{
 #if BUILDFLAG(IS_MAC)
   auto* group=button?views::AsViewClass<SceneActionGroup>(button->parent()):nullptr;return group?group->metal_bounds_for_testing():gfx::Rect();
 #else
@@ -7171,7 +7179,7 @@ void WorkspaceShell::BuildRustToolsForm(){
         break;
       }
       case Kind::Action:{
-        views::Button* button;
+        views::View* button;
         if(node.role==Role::HistoryClear){button=PreferenceAction(parent,true,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell&&shell->history_period_&&shell->callbacks_.clear_browsing_data)shell->callbacks_.clear_browsing_data.Run({static_cast<int>(PickerIndex(shell->history_period_).value_or(0)),true,false,false});},weak),label);history_clear_=button;}
         else if(node.role==Role::HistoryMore){button=PreferenceAction(parent,true,base::BindRepeating(&WorkspaceShell::RefreshHistory,weak,true),label,true);history_more_=button;}
         else button=AddAction(parent,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,int action){if(shell)shell->PostToolsAction(action);},weak,node.action),label);
