@@ -2943,3 +2943,57 @@ VoiceOver/RTL/scale/theme/GPU recovery, controlled performance comparison and fi
 release/license/notice acceptance remain open. Frozen UI-lab inputs exclude
 current-main network policy. No complete functional parity or performance gain
 is claimed; no dependency or browser service/store/admission policy changed.
+
+## Preference navigation/dismiss hosts — targeted acceptance, 2026-10-26
+
+UI source `be87af8e93417d2df384688b301392575b72a367` moves ten preference category controls
+and preference/tools dismiss controls onto RustActionView/View hosts through
+ScenePreferenceButton. These paths construct no Button/ButtonController
+instances. Native comparison retains RowButton/GlyphButton. Selection moves from
+the former native selected_ field into Rust ActionControl on state.
+
+The shared parent retains kind-22/category and kind-23/dismiss scenes, Rust action-
+group geometry, native fonts and no child Label/FocusRing instances. Scene reads
+Rust enabled/focused/on/visual snapshots. Native input/focus/AX/window adapters
+and existing category/filter/close callbacks remain.
+
+Group scheduling checks individual clipped controls synchronously, including
+when the parent group remains visible and GPU work is pending. The common host
+also skips paint scheduling for unchanged pointer visuals. A pending press can
+retire while its visual is already normal; owners still receive that lifecycle
+change so row-close input watches are cleaned up.
+
+Focus passed **5 Metal / 4 Views**; affected regressions passed
+**48 Metal / 33 Views**, serial, retry zero. The new shared case checks actual
+host types and AX metadata, selection, Mac Return/disabled admission, preference
+AX close and physical tools-close Space. Rust-specific branches check clipping
+of a child while its group remains visible, hide/disable late release and the
+actual category surface frame count remaining unchanged for twenty unchanged
+hover moves after a hover frame. This verifies scene submission behavior, not a
+controlled CPU/GPU/presentation/input-latency/memory gain.
+
+Existing physical Cocoa category/filter/responsive choice, retained-query/profile/
+hide lifecycle, tools keyboard/close, layout hierarchy/measurement and shared
+header/footer/split/row action outcomes remain. Test callers use View/AX adapters;
+Views does not exercise the Rust-only clipping/submission branches.
+
+Checks passed **286 Rust**, **180 SDK font/direction cases plus raster**, **68 live
+and 68 clean-archive Python**, scoped GN/boundaries and final Ninja no-op. All 53
+committed/live/staged prototype inputs and compiled/frozen-bootstrap/native-engine
+identities were checked.
+[Targeted preference-host report](benchmarks/rust-preference-host-targeted-2026-10-26.json).
+The source includes the preceding
+[appearance preset and AX-name correction](benchmarks/rust-appearance-action-targeted-2026-10-26.json).
+
+Retained affected logs contain **0 Metal / 2 Views invalid-mailbox diagnostics**
+with matching missing-overlay counts. All cases passed; these Chromium compositor
+diagnostics remain unresolved.
+
+Per user cadence this control family has targeted acceptance. The full checkpoint
+below predates appearance/preference-host changes and is not a full matrix of this
+source. Other Button controls, native per-control View identity, stable Rust nodes,
+containers/placement/UI coordination, manual trackpad/IME/VoiceOver/RTL/scale/theme/
+GPU recovery, controlled performance comparison and final release/license/notice
+acceptance remain open. Frozen UI-lab inputs exclude current-main network policy.
+No complete functional parity is claimed; no dependency or browser service/store/
+admission/persistence policy changed.

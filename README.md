@@ -832,6 +832,10 @@ painting and synchronous clip cancellation. Glyph controls preserve changing AX
 names, including the sidebar pin action.
 [Targeted appearance-action acceptance](docs/benchmarks/rust-appearance-action-targeted-2026-10-26.json)
 passed 23 Metal / 16 Views affected cases; full matrices remain reserved for larger blocks.
+Preference navigation and preference/tools dismiss controls now use Rust action
+hosts; unchanged hover moves avoid another category scene submission.
+[Targeted preference-host acceptance](docs/benchmarks/rust-preference-host-targeted-2026-10-26.json)
+passed 48 Metal / 33 Views affected cases; full matrices remain reserved for larger blocks.
 [Editor contracts and acceptance](docs/rust-metal-editor.md).
 Model updates refresh the scene independently of
 native painting. Rust also owns row
