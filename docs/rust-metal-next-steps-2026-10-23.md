@@ -3,6 +3,28 @@
 This is a work plan, not a claim of complete functional parity. The detailed
 inventory is [the parity checklist](rust-metal-parity.md).
 
+## Latest targeted follow-up
+
+UI source `8df84b24fcdaed163a78b4a925d54dfac4bf0265` explicitly refreshes shared-action visible bounds
+when a service viewport moves, then schedules the scene. Actions scrolled fully
+offscreen cancel their pressed/capture state. Weak callback lifetime and existing
+scene-before-widget teardown remain; no browser service or persistence changed.
+
+The real 80-download regression presses the first Reveal action, verifies the
+pressed state, scrolls it fully out of view and verifies cancellation without
+executing a file/Finder action. Existing clipping, theme, forced close, reopen and
+profile-isolation assertions remain. Focus passed **3 Metal / 2 Views**; affected
+regressions passed **40 Metal / 33 Views**, single attempt, no retries. Checks
+passed **276 Rust**, **180 SDK font/direction cases plus raster**, **68 live and
+68 clean-archive Python**, scoped GN/boundaries and final Ninja no-op. All 53
+committed/live/staged prototype inputs and binary/frozen-bootstrap/native-engine
+identities were checked. [Targeted capture report](benchmarks/rust-service-capture-targeted-2026-10-26.json).
+
+Per the user's cadence, this small follow-up has targeted acceptance. The full
+matrix below belongs to source `bde6809`, before the explicit capture refresh and
+new assertion; it is not counted as a full pass of this source. Frozen lab network
+scope, platform adapters, manual/performance/release/license limitations remain.
+
 ## Latest full checkpoint
 
 UI source `bde6809f25e1499aa6241bfe7492c27a5e7e44f4` moves downloads, page JavaScript/beforeunload
@@ -120,9 +142,6 @@ signed. [Previous allocation checkpoint](benchmarks/rust-preference-layout-check
 The earlier AppKit startup stall is not claimed fixed by this migration.
 
 ## Immediate preference work still remaining
-
-Next small follow-up: cover pressed download actions scrolling offscreen and
-explicitly refresh shared-action visible bounds in the service viewport callback.
 
 Preference root/column/centered-row allocation now uses Rust and matches the
 native BoxLayout oracles. Tools, preferences, workspace settings, import, downloads,

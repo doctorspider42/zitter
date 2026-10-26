@@ -779,6 +779,9 @@ including bounded dialog sizing and Rust-owned overflow edges.
 [Full service checkpoint](docs/benchmarks/rust-service-viewport-checkpoint-2026-10-26.json)
 passed 190 Metal / 144 Views regular cases, six explicit optional skips each,
 and 276 Rust cases. Platform adapters and remaining native node ownership remain.
+A [targeted follow-up](docs/benchmarks/rust-service-capture-targeted-2026-10-26.json)
+checks cancellation of pressed download actions when scrolling them offscreen;
+affected regressions passed 40 Metal / 33 Views.
 [Editor contracts and acceptance](docs/rust-metal-editor.md).
 Model updates refresh the scene independently of
 native painting. Rust also owns row
