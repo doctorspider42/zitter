@@ -7,7 +7,7 @@
 #include "ui/gfx/geometry/rect.h"
 #include "base/functional/callback.h"
 #include "ui/gfx/geometry/insets.h"
-namespace views { class LayoutManager; class View; }
+namespace views { class LayoutManager; class View; class ScrollBar; }
 namespace zitter::prototype {
 // A viewport owns scrolling state; native Views and Rust implementations share
 // only measurement/event/window adapters. The returned View owns the interface.
@@ -16,6 +16,7 @@ class PanelViewport {
   virtual ~PanelViewport()=default;
   virtual views::View* view()=0;
   virtual views::View* contents() const=0;
+  virtual views::ScrollBar* vertical_scroll_bar()=0;
   virtual void SetPanelContents(std::unique_ptr<views::View> contents)=0;
   virtual void SetViewportBackground(unsigned color)=0;
   virtual gfx::Rect visible_rect() const=0;
@@ -32,6 +33,7 @@ struct PanelViewportOptions {
   bool horizontal_scroll_enabled = false;
 };
 std::unique_ptr<views::View> CreatePanelViewport(PanelViewport** adapter,base::RepeatingClosure changed,PanelViewportOptions options = {});
+std::unique_ptr<views::View> CreatePanelViewport(PanelViewport** adapter,base::RepeatingClosure changed,PanelViewportOptions options,std::unique_ptr<views::ScrollBar> vertical_bar);
 PanelViewport* PanelViewportForView(views::View* view);
 struct WorkspaceSwipeUpdate { bool started, preview, finish, handled; };
 struct WorkspaceSwipePage { int index; double x; };

@@ -3146,34 +3146,20 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   new_tab.icon = &vector_icons::kAdd2Icon;
   new_tab_button_ = sidebar->AddChildView(std::make_unique<RowButton>(
       base::BindRepeating(&WorkspaceShell::OpenAddress, weak, true), std::move(new_tab)));
-  auto* scroll = sidebar->AddChildView(std::make_unique<views::ScrollView>());
-  tab_scroll_ = scroll;
-  // Bound the viewport while sizing contents to their full preferred height.
-  // An unbounded generic View otherwise stays viewport-sized and cannot scroll.
-  scroll->ClipHeightTo(0, std::numeric_limits<int>::max());
-  scroll->set_context_menu_controller(this);
-  scroll->SetPreferredSize(gfx::Size(200, 0));
+  std::unique_ptr<views::ScrollBar> vertical_bar;
 #if BUILDFLAG(IS_MAC)
-  if (metal_sidebar_) scroll->SetVerticalScrollBar(CreateSidebarScrollBar(
-      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
-        return shell && shell->metal_sidebar_visible();
-      }, weak)));
+  if(metal_sidebar_)vertical_bar=CreateSidebarScrollBar(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_sidebar_visible();},weak));
 #endif
-  scroll->SetBackgroundColor(std::nullopt);
-  scroll->SetDrawOverflowIndicator(false);
-  scroll->SetHorizontalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);
+  PanelViewport* tab_viewport=nullptr;
+  auto viewport_host=CreatePanelViewport(&tab_viewport,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),{0,std::numeric_limits<int>::max(),false},std::move(vertical_bar));tab_scroll_=tab_viewport;
+  auto* scroll=sidebar->AddChildView(std::move(viewport_host));scroll->set_context_menu_controller(this);scroll->SetPreferredSize(gfx::Size(200,0));
   auto list = std::make_unique<SidebarListView>(
       base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar, weak),
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
         return shell && (shell->metal_sidebar_visible()||shell->workspace_swipe_metal_visible()||shell->workspace_switch_metal_visible());
       }, weak));
-  metal_scroll_subscription_ = scroll->AddContentsScrolledCallback(
-      base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar, weak));
   list->SetLayoutManager(CreateSidebarColumnLayout(2));
-  tab_list_ = scroll->SetContents(std::move(list));
-  // Keep layer scrolling enabled (required by Chromium's scroll event handler),
-  // but synchronize its offset with native hit testing and Metal submission.
-  if (metal_sidebar_) metal_scroll_synchronizer_ = scroll->EnableScrollSynchronization();
+  tab_list_=list.get();tab_scroll_->SetPanelContents(std::move(list));
   tab_list_->set_context_menu_controller(this);
   layout->SetFlexForView(scroll, 1);
 
@@ -3960,8 +3946,6 @@ void WorkspaceShell::Detach() {
   metal_header_.reset();metal_header_pending_=false;header_view_=nullptr;header_sidebar_button_=nullptr;
   metal_workspace_scroll_subscription_={};
   metal_workspace_scroll_synchronizer_.reset();
-  metal_scroll_synchronizer_.reset();
-  metal_scroll_subscription_ = {};
   metal_sidebar_.reset();
   metal_sidebar_pending_ = false;
   CancelWorkspaceSwipe();
@@ -4547,12 +4531,12 @@ void WorkspaceShell::UpdateMetalSidebar() {
     for (const auto& child : view->children()) self(self, child.get(), index);
   };
   gather(gather, tab_list_, SidebarTree::kRoot);
-  const auto requested = tab_scroll_->CurrentOffset();
+  const auto requested = gfx::PointF(0,static_cast<float>(tab_scroll_->offset()));
   const auto projection = metal_sidebar_->Project(tab_list_->size(), list_bounds.size(), requested, nodes);
   if (projection.offset != requested) {
     // Direct programmatic offsets and resized content can exceed the new
     // extent. Apply Rust's normalized offset to the native input adapter too.
-    tab_scroll_->ScrollToOffset(projection.offset);
+    tab_scroll_->ScrollTo(projection.offset.y());
     ScheduleMetalSidebar();
     return;
   }
@@ -4822,7 +4806,7 @@ void WorkspaceShell::UpdateWorkspaceSwipePreview() {
               [&](const auto& entry) { return entry.first == id; });
           if (queued != shell->sidebar_warm_queue_.end()) pins = &queued->second;
         }
-        int y = id == shell->swipe_source_ ? -shell->tab_scroll_->GetVisibleRect().y() : 0;
+        int y = id == shell->swipe_source_ ? -shell->tab_scroll_->visible_rect().y() : 0;
         auto row = [&](const RowButton::Spec& spec, int indent, int row_height) {
           if (y + row_height > 0 && y < size.height())
             RowButton::PaintPreview(canvas, gfx::Rect(indent, y, std::max(0, size.width() - indent), row_height), spec, shell->root_);
@@ -4907,12 +4891,12 @@ void WorkspaceShell::UpdateWorkspaceSwipePreview() {
         if(!shell||index<0||index>=static_cast<int>(shell->swipe_workspace_ids_.size())||!shell->swipe_overlay_)return {};
         const auto& id=shell->swipe_workspace_ids_[index];const auto size=shell->swipe_overlay_->size();
         const bool source=id==shell->swipe_source_;
-        return shell->CaptureWorkspaceScene(id,size,source?shell->tab_scroll_->GetVisibleRect().y():0,source);
+        return shell->CaptureWorkspaceScene(id,size,source?shell->tab_scroll_->visible_rect().y():0,source);
       },weak_factory_.GetWeakPtr()),pinned_?tint:Mix(tint,Tone(root_,kCard),70));
     }
 #endif
     swipe_overlay_ = sidebar_root_->AddChildView(std::move(preview));
-    swipe_overlay_->SetBoundsRect(tab_scroll_->bounds());
+    swipe_overlay_->SetBoundsRect(tab_scroll_->view()->bounds());
     const auto tint = FrameTint(workspace_color(swipe_source_), root_);
     swipe_overlay_->SetBackground(views::CreateSolidBackground(pinned_ ? tint : Mix(tint, Tone(root_, kCard), 70)));
   }
@@ -4940,7 +4924,7 @@ void WorkspaceShell::FinishWorkspaceSwipe() {
         if (!shell || !shell->swipe_committing_ || shell->swipe_commit_target_ != destination || shell->state_.workspace_id != source) return;
         if (source != destination) {
           shell->callbacks_.select_workspace.Run(destination);
-          if (shell->tab_scroll_) shell->tab_scroll_->ScrollToPosition(shell->tab_scroll_->vertical_scroll_bar(), 0);
+          if (shell->tab_scroll_) shell->tab_scroll_->ScrollTo(0);
         }
         shell->swipe_settle_timer_.Start(FROM_HERE,
             shell->workspace_animations_ && !gfx::Animation::PrefersReducedMotion() ? base::Milliseconds(180) : base::TimeDelta(),
@@ -4951,7 +4935,7 @@ bool WorkspaceShell::HandleWorkspaceScroll(float x, float y, bool began, bool en
   if (!sidebar_visible() || !state_.configuration_ready || state_.profiles_busy || state_.workspaces.size() < 2 || folder_dialog_ || remove_workspace_dialog_ ||
       (workspace_menu_runner_ && workspace_menu_runner_->IsRunning())) return false;
   const int index=std::find_if(state_.workspaces.begin(),state_.workspaces.end(),[&](const auto& w){return w.id==state_.workspace_id;})-state_.workspaces.begin();
-  const auto update=workspace_swipe_->Event(x,y,tab_scroll_->width(),index,state_.workspaces.size(),began,ended,momentum,phase_less);
+  const auto update=workspace_swipe_->Event(x,y,tab_scroll_->view()->width(),index,state_.workspaces.size(),began,ended,momentum,phase_less);
   if(update.started) {
     // Retire the previous native preview/timers without resetting the new Rust
     // gesture. Workspace identities remain in the application adapter.
@@ -5741,9 +5725,9 @@ void WorkspaceShell::StopWorkspaceAnimation() {
   ++workspace_animation_generation_;
   workspace_animation_pending_ = false;
   if(workspace_switch_overlay_){auto* overlay=workspace_switch_overlay_.get();workspace_switch_overlay_=nullptr;sidebar_root_->RemoveChildViewT(overlay);if(tab_list_)tab_list_->SchedulePaint();}
-  if (tab_scroll_ && tab_scroll_->layer()) {
-    tab_scroll_->layer()->GetAnimator()->StopAnimating();
-    tab_scroll_->layer()->SetTransform(gfx::Transform());
+  if (tab_scroll_ && tab_scroll_->view()->layer()) {
+    tab_scroll_->view()->layer()->GetAnimator()->StopAnimating();
+    tab_scroll_->view()->layer()->SetTransform(gfx::Transform());
   }
 }
 void WorkspaceShell::AnimateWorkspaceSwitch(std::string_view previous) {
@@ -5774,7 +5758,7 @@ void WorkspaceShell::AnimateWorkspaceSwitch(std::string_view previous) {
     auto* viewport=tab_list_->parent();
     const auto frame=views::View::ConvertRectToTarget(viewport,sidebar_root_,viewport->GetLocalBounds());
     const auto tint=FrameTint(workspace_color(state_.workspace_id),root_);
-    auto preview=std::make_unique<WorkspaceSwitchPreview>(CaptureWorkspaceScene(state_.workspace_id,frame.size(),tab_scroll_->GetVisibleRect().y(),true),pinned_?tint:Mix(tint,Tone(root_,kCard),70));
+    auto preview=std::make_unique<WorkspaceSwitchPreview>(CaptureWorkspaceScene(state_.workspace_id,frame.size(),tab_scroll_->visible_rect().y(),true),pinned_?tint:Mix(tint,Tone(root_,kCard),70));
     auto* canvas=preview.get();workspace_switch_overlay_=sidebar_root_->AddChildView(std::move(preview));canvas->SetBoundsRect(frame);
     workspace_animation_pending_=true;const auto generation=workspace_animation_generation_;
     auto presented=base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,size_t generation,unsigned duration){
@@ -5793,10 +5777,10 @@ void WorkspaceShell::AnimateWorkspaceSwitch(std::string_view previous) {
 #endif
   auto* compositor=sidebar_widget_->GetCompositor();
   if(!compositor)return;
-  tab_scroll_->SetPaintToLayer();
-  tab_scroll_->layer()->SetFillsBoundsOpaquely(false);
+  tab_scroll_->view()->SetPaintToLayer();
+  tab_scroll_->view()->layer()->SetFillsBoundsOpaquely(false);
   gfx::Transform offset; offset.Translate(new_index > old_index ? 32 : -32, 0);
-  tab_scroll_->layer()->SetTransform(offset);
+  tab_scroll_->view()->layer()->SetTransform(offset);
   workspace_animation_pending_ = true;
   compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce(
       [](base::WeakPtr<WorkspaceShell> shell, size_t generation, const viz::FrameTimingDetails&) {
@@ -5806,7 +5790,7 @@ void WorkspaceShell::AnimateWorkspaceSwitch(std::string_view previous) {
           shell->StopWorkspaceAnimation();
           return;
         }
-        auto* layer = shell->tab_scroll_->layer();
+        auto* layer = shell->tab_scroll_->view()->layer();
         ui::ScopedLayerAnimationSettings settings(layer->GetAnimator());
         settings.SetTransitionDuration(base::Milliseconds(180));
         settings.SetTweenType(gfx::Tween::EASE_OUT);
@@ -5837,7 +5821,7 @@ bool WorkspaceShell::workspace_switch_contains_scene_text(std::string_view text)
 }
 bool WorkspaceShell::workspace_animation_running() const {
   return workspace_animation_pending_ || workspace_switch_overlay_ ||
-      (tab_scroll_ && tab_scroll_->layer() && tab_scroll_->layer()->GetAnimator()->is_animating());
+      (tab_scroll_ && tab_scroll_->view()->layer() && tab_scroll_->view()->layer()->GetAnimator()->is_animating());
 }
 
 void WorkspaceShell::ApplyTheme() {

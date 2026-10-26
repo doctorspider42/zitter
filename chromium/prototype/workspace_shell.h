@@ -11,6 +11,7 @@
 #include "chromium/prototype/browser_data.h"
 #include "chromium/prototype/editor_control.h"
 #include "chromium/prototype/sidebar_tree.h"
+#include "chromium/prototype/sidebar_layout.h"
 #include "chromium/prototype/browser_tools.h"
 #include <optional>
 #include <string>
@@ -410,7 +411,8 @@ class WorkspaceShell final : public ui::EventHandler,
   size_t pinned_list_build_count() const { return pinned_list_build_count_; }
   size_t sidebar_context_visit_count() const { return sidebar_context_visit_count_; }
   size_t pin_visibility_update_count() const { return pin_visibility_update_count_; }
-  views::ScrollView* tab_scroll_view() const { return tab_scroll_; }
+  views::View* tab_scroll_view() const { return tab_scroll_?tab_scroll_->view():nullptr; }
+  PanelViewport* tab_viewport() const { return tab_scroll_; }
   void BuildWorkspaceMenu(std::string id);
   void BuildFolderMenu(std::string parent = {});
   void BuildTabMenu(std::optional<size_t> tab,std::string pin = {});
@@ -484,8 +486,6 @@ class WorkspaceShell final : public ui::EventHandler,
   bool metal_sidebar_pending_ = false;
   base::CallbackListSubscription metal_workspace_scroll_subscription_;
   std::unique_ptr<views::ScrollView::ScopedScrollSynchronizer> metal_workspace_scroll_synchronizer_;
-  base::CallbackListSubscription metal_scroll_subscription_;
-  std::unique_ptr<views::ScrollView::ScopedScrollSynchronizer> metal_scroll_synchronizer_;
   int ToolsPage() const;
   bool ToolsRecording() const;
   std::u16string ToolsHistoryQuery() const;
@@ -723,7 +723,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> settings_root_ = nullptr;
   raw_ptr<views::View> settings_title_ = nullptr;
   raw_ptr<views::View> tab_list_ = nullptr;
-  raw_ptr<views::ScrollView> tab_scroll_ = nullptr;
+  raw_ptr<PanelViewport> tab_scroll_ = nullptr;
   raw_ptr<views::View> suggestion_list_ = nullptr;
   raw_ptr<views::ScrollView> suggestion_scroll_ = nullptr;
   raw_ptr<views::Button> url_pill_ = nullptr;
