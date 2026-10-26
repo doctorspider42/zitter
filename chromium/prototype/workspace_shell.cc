@@ -2155,7 +2155,7 @@ class PreferenceChromeRenderer : public views::WidgetObserver {
 
 class PanelSceneImpl final : public PanelScene {
  public:
-  explicit PanelSceneImpl(views::View* root):renderer_(root){}
+  explicit PanelSceneImpl(views::View* root):root_(root),renderer_(root){}
   std::unique_ptr<views::View> MakeText(std::u16string text,bool multiline,bool center,int fixed_width) override{
     return std::make_unique<PreferenceCopy>(std::move(text),kInk,0,gfx::Font::Weight::NORMAL,multiline,base::BindRepeating(&PanelSceneImpl::Schedule,weak_factory_.GetWeakPtr()),base::BindRepeating([](base::WeakPtr<PanelSceneImpl> self){return self&&self->visible();},weak_factory_.GetWeakPtr()),true,center,fixed_width);
   }
@@ -2168,12 +2168,14 @@ class PanelSceneImpl final : public PanelScene {
   void SetProgress(views::View* view,double value) override{static_cast<SceneProgress*>(view)->SetValue(value);}
   bool animating() const override{return renderer_.animating();}
   void Schedule() override{renderer_.Schedule();}
-  base::RepeatingClosure ViewportChangedCallback() override{return base::BindRepeating(&PanelSceneImpl::Schedule,weak_factory_.GetWeakPtr());}
+  base::RepeatingClosure ViewportChangedCallback() override{return base::BindRepeating(&PanelSceneImpl::ViewportChanged,weak_factory_.GetWeakPtr());}
   bool visible() const override{return renderer_.visible();}
   bool contains_text(std::string_view text) const override{return renderer_.contains_text(text);}
   bool excludes(views::View* view) const override{return renderer_.excludes(view);}
   bool order_correct() const override{return renderer_.order_correct();}
  private:
+  void ViewportChanged(){RefreshChoiceViewports(root_);renderer_.Schedule();}
+  raw_ptr<views::View> root_;
   PreferenceChromeRenderer renderer_;
   base::WeakPtrFactory<PanelSceneImpl> weak_factory_{this};
 };
