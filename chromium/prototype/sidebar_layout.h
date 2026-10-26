@@ -17,6 +17,7 @@ class PanelViewport {
   virtual views::View* view()=0;
   virtual views::View* contents() const=0;
   virtual void SetPanelContents(std::unique_ptr<views::View> contents)=0;
+  virtual void SetViewportBackground(unsigned color)=0;
   virtual gfx::Rect visible_rect() const=0;
   virtual double offset() const=0;
   virtual int maximum() const=0;

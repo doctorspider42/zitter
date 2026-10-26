@@ -289,6 +289,7 @@ class WorkspaceShell final : public ui::EventHandler,
   size_t preference_category_for_testing() const;
   views::Button* preference_navigation_for_testing(size_t category) const;
   std::vector<views::View*> preference_rows_for_testing(size_t category) const{std::vector<views::View*> rows;for(const auto& row:preference_sections_.at(category).rows)rows.push_back(row.view);return rows;}
+  PanelViewport* preference_viewport_for_testing() const{return general_scroll_;}
   views::Button* preference_close_for_testing() const{return preferences_close_;}
   bool preference_navigation_metal_visible_for_testing() const;
   bool preference_navigation_selected_for_testing(size_t category) const;
@@ -647,9 +648,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> content_host_ = nullptr;
   raw_ptr<views::View> edge_ = nullptr;
   raw_ptr<views::View> general_root_ = nullptr;
-  raw_ptr<views::ScrollView> general_scroll_ = nullptr;
-  std::unique_ptr<views::ScrollView::ScopedScrollSynchronizer> metal_general_scroll_synchronizer_;
-  base::CallbackListSubscription metal_general_scroll_subscription_;
+  raw_ptr<PanelViewport> general_scroll_ = nullptr;
   raw_ptr<views::View> theme_picker_ = nullptr;
   raw_ptr<views::View> search_engine_picker_ = nullptr;
   raw_ptr<views::Button> sidebar_check_ = nullptr;

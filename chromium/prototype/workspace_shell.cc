@@ -3570,14 +3570,8 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   },weak,base::Unretained(preferences_search_.get())));
   preferences_search_->view()->SetPreferredSize(gfx::Size(240, 38));
   preferences_profile_ = copy(main, u"",kMuted,-1,gfx::Font::Weight::NORMAL,true);
-  auto general_scroll = std::make_unique<views::ScrollView>();
-  general_scroll_ = general_scroll.get();
-  // Category/search changes alter content height. Without preferred sizing the
-  // scroll layer retains the initial extent while its children overflow it.
-  general_scroll->SetUseContentsPreferredSize(true);
-  general_scroll->SetBackgroundColor(std::nullopt);
-  general_scroll->SetDrawOverflowIndicator(false);
-  general_scroll->SetHorizontalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);
+  PanelViewport* preference_viewport=nullptr;
+  auto general_scroll=CreatePanelViewport(&preference_viewport,base::BindRepeating(&WorkspaceShell::RefreshPreferenceViewport,weak));general_scroll_=preference_viewport;
   auto body = std::make_unique<views::View>();
   preferences_body_ = body.get();
   SetSidebarPanelLayout(body.get(),true,gfx::Insets::TLBR(0,0,8,8),16);
@@ -3819,11 +3813,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   shortcuts->SetTooltipText(u"Skróty klawiaturowe Zitter");
   }
   preferences_empty_ = copy(body.get(), u"Brak pasujących ustawień. Spróbuj innego hasła.", kMuted,0,gfx::Font::Weight::NORMAL,true);
-  general_scroll->SetContents(std::move(body));
-  if(workspace_form_){
-    metal_general_scroll_synchronizer_=general_scroll->EnableScrollSynchronization();
-    metal_general_scroll_subscription_=general_scroll->AddContentsScrolledCallback(base::BindRepeating(&WorkspaceShell::RefreshPreferenceViewport,weak));
-  }
+  general_scroll_->SetPanelContents(std::move(body));
   auto* main_scroll=main->AddChildView(std::move(general_scroll));
   SetSidebarPanelLayout(main,true,gfx::Insets::VH(16,20),12,main_scroll);
   general_status_ = copy(main, u"Przełączniki zapisują się automatycznie. Pola tekstowe zatwierdź przyciskiem Zapisz lub Enter.", kMuted,-2,gfx::Font::Weight::NORMAL,true);
@@ -3969,7 +3959,6 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 void WorkspaceShell::Detach() {
   preferences_chrome_.reset();tools_chrome_.reset();
   for(auto& surface:metal_palette_chrome_)surface.reset();palette_chrome_views_.fill(nullptr);
-  metal_general_scroll_subscription_={};metal_general_scroll_synchronizer_.reset();
   metal_palette_scroll_subscription_={};metal_palette_scroll_synchronizer_.reset();metal_palette_.reset();metal_palette_pending_=false;
   metal_sidebar_grip_.reset();
   for(auto& surface:metal_split_)surface.reset();metal_split_pending_=false;
@@ -5884,7 +5873,7 @@ void WorkspaceShell::ApplyTheme() {
   for (auto* field : {snapshot_name_.get(), timeline_filter_.get(), shortcut_chord_.get(), provider_name_.get(), provider_keyword_.get(), provider_url_.get(),history_search_.get()})
     if (field) field->SetPresentation(gfx::FontList().GetFontSize(),8,true,Tone(root_, kChip));
   content_host_->SetBackground(views::CreateRoundedRectBackground(Tone(root_, kCard), 10));
-  if (general_scroll_) general_scroll_->SetBackgroundColor(Tone(root_, kCard));
+  if (general_scroll_) general_scroll_->SetViewportBackground(Tone(root_, kCard));
   if (preferences_search_) preferences_search_->SetPresentation(gfx::FontList().GetFontSize(),8,true,Tone(root_, kChip));
   for (const auto& [key, field] : preference_textfields_) field->SetPresentation(gfx::FontList().GetFontSize(),8,true,Tone(root_, kChip));
   if (site_origin_) site_origin_->SetPresentation(gfx::FontList().GetFontSize(),8,true,Tone(root_, kChip));
@@ -6285,7 +6274,7 @@ void WorkspaceShell::FilterPreferences() {
     rust::Vec<uint16_t> normalized;for(auto unit:query)normalized.push_back(unit);
     auto visible=preferences_form_->form->preference_filter(std::move(normalized),rust::Slice<const sidebar::PreferenceRow>(rows.data(),rows.size()));
     size_t cursor=0;for(size_t i=0;i<preference_sections_.size();++i){auto& section=preference_sections_[i];for(auto& row:section.rows)row.view->SetVisible(visible.rows[cursor++]);section.view->SetVisible(visible.sections[i]);SetPreferenceNavigationSelected(section.navigation,visible.navigation[i]);}
-    preferences_empty_->SetVisible(!visible.any);preferences_body_->InvalidateLayout();general_scroll_->ScrollToPosition(general_scroll_->vertical_scroll_bar(),0);return;
+    preferences_empty_->SetVisible(!visible.any);preferences_body_->InvalidateLayout();general_scroll_->ScrollTo(0);return;
   }
 #endif
   bool any = false;
@@ -6301,7 +6290,7 @@ void WorkspaceShell::FilterPreferences() {
   }
   preferences_empty_->SetVisible(!any);
   preferences_body_->InvalidateLayout();
-  general_scroll_->ScrollToPosition(general_scroll_->vertical_scroll_bar(), 0);
+  general_scroll_->ScrollTo(0);
 }
 void WorkspaceShell::SetBrowsingDataBusy(bool busy) {
   browsing_data_busy_ = busy;

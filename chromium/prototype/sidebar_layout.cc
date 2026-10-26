@@ -13,6 +13,7 @@
 #include "ui/views/layout/layout_manager.h"
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/view.h"
+#include "ui/views/background.h"
 #include "ui/views/controls/scroll_view.h"
 #include "ui/views/view_class_properties.h"
 #if BUILDFLAG(IS_MAC)
@@ -37,6 +38,7 @@ class NativePanelViewport final : public views::ScrollView,public PanelViewport 
   views::View* view() override{return this;}
   views::View* contents() const override{return const_cast<views::View*>(views::ScrollView::contents());}
   void SetPanelContents(std::unique_ptr<views::View> value) override{SetContents(std::move(value));}
+  void SetViewportBackground(unsigned color) override{SetBackgroundColor(color);}
   gfx::Rect visible_rect() const override{return GetVisibleRect();}
   double offset() const override{return CurrentOffset().y();}
   int maximum() const override{return contents()?std::max(0,contents()->height()-GetVisibleRect().height()):0;}
@@ -67,7 +69,8 @@ class RustPanelViewport final : public views::View,public PanelViewport,public v
   ~RustPanelViewport() override{bar_->set_controller(nullptr);}
   views::View* view() override{return this;}
   views::View* contents() const override{return contents_;}
-  void SetPanelContents(std::unique_ptr<views::View> value) override{clip_->RemoveAllChildViews();contents_=clip_->AddChildView(std::move(value));contents_->SetPaintToLayer();contents_->layer()->SetFillsBoundsOpaquely(false);InvalidateLayout();}
+  void SetPanelContents(std::unique_ptr<views::View> value) override{clip_->RemoveAllChildViews();contents_=clip_->AddChildView(std::move(value));contents_->SetPaintToLayer();contents_->layer()->SetFillsBoundsOpaquely(false);ApplyBackground();InvalidateLayout();}
+  void SetViewportBackground(unsigned color) override{background_=color;ApplyBackground();}
   gfx::Rect visible_rect() const override{return contents_?gfx::Rect(0,static_cast<int>(offset()),clip_->width(),clip_->height()):gfx::Rect();}
   double offset() const override{return state_->viewport_offset();}
   int maximum() const override{return state_->viewport_maximum();}
@@ -88,11 +91,12 @@ class RustPanelViewport final : public views::View,public PanelViewport,public v
   void ScrollToPosition(views::ScrollBar* source,int position) override{if(source==bar_)ScrollTo(position);}
   int GetScrollIncrement(views::ScrollBar*,bool page,bool) override{return page?clip_->height():clip_->height()/5;}
  private:
+  void ApplyBackground(){SetBackground(background_?views::CreateSolidBackground(*background_):nullptr);if(contents_){contents_->SetBackground(background_?views::CreateSolidBackground(*background_):nullptr);contents_->layer()->SetFillsBoundsOpaquely(background_&&((*background_>>24)==0xff));}}
   void Reveal(const gfx::Rect& rect){if(state_->viewport_reveal(rect.y(),rect.height()))Apply(true);}
   void Apply(bool moved){
     if(!contents_)return;contents_->SetTransform(gfx::Transform::MakeTranslation(0,-static_cast<float>(offset())));bar_->Update(clip_->height(),contents_->height(),static_cast<int>(offset()));auto& ax=GetViewAccessibility();ax.SetScrollY(static_cast<int>(offset()));ax.SetScrollYMax(maximum());changed_.Run();if(moved)ax.NotifyEvent(ax::mojom::Event::kScrollPositionChanged,true);
   }
-  base::RepeatingClosure changed_;
+  base::RepeatingClosure changed_;std::optional<unsigned> background_;
   rust::Box<sidebar::ScrollViewportState> state_=sidebar::new_scroll_viewport();
   raw_ptr<RustViewportClip> clip_=nullptr;raw_ptr<views::View> contents_=nullptr;raw_ptr<views::ScrollBar> bar_=nullptr;
   base::WeakPtrFactory<RustPanelViewport> weak_factory_{this};
