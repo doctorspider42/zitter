@@ -1167,6 +1167,28 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsViewportMatchesNativeExte
   }
   widget->CloseNow();
 }
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, HorizontalViewportMatchesNativeExtentRevealAndClamp) {
+  auto delegate=std::make_unique<views::WidgetDelegate>();auto* host=delegate->SetContentsView(std::make_unique<views::View>());PanelViewportOptions options;options.horizontal=true;PanelViewport* viewport=nullptr;auto* candidate=host->AddChildView(CreatePanelViewport(&viewport,base::DoNothing(),options));
+  auto reference=std::make_unique<views::ScrollView>();auto* native=reference.get();native->SetUseContentsPreferredSize(true);native->SetBackgroundColor(std::nullopt);native->SetDrawOverflowIndicator(false);native->SetVerticalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);host->AddChildView(std::move(reference));auto sync=native->EnableScrollSynchronization();viewport->SetPanelContents(std::make_unique<ToolsPanelProbeView>(900,28,false));native->SetContents(std::make_unique<ToolsPanelProbeView>(900,28,false));
+  views::Widget::InitParams params(views::Widget::InitParams::CLIENT_OWNS_WIDGET,views::Widget::InitParams::TYPE_BUBBLE);params.delegate=delegate.get();params.SetParent(window_->widget());auto widget=std::make_unique<views::Widget>();widget->Init(std::move(params));widget->SetBounds(gfx::Rect(40,40,900,300));widget->Show();
+  for(auto size:{gfx::Size(120,47),gfx::Size(240,60),gfx::Size(480,47),gfx::Size(1200,32)}){SCOPED_TRACE(size.ToString());candidate->SetBoundsRect(gfx::Rect(size));native->SetBoundsRect(gfx::Rect(400,0,size.width(),size.height()));candidate->InvalidateLayout();native->InvalidateLayout();candidate->DeprecatedLayoutImmediately();native->DeprecatedLayoutImmediately();EXPECT_EQ(native->contents()->size(),viewport->contents()->size());EXPECT_EQ(native->GetVisibleRect().size(),viewport->visible_rect().size());EXPECT_EQ(std::max(0,native->contents()->width()-native->GetVisibleRect().width()),viewport->maximum());
+    for(int position:{0,10,333,2000,-50}){viewport->ScrollTo(position);native->ScrollToPosition(native->horizontal_scroll_bar(),position);EXPECT_DOUBLE_EQ(native->CurrentOffset().x(),viewport->offset());EXPECT_EQ(native->GetVisibleRect(),viewport->visible_rect());}
+    for(int x:{-50,0,50,700,2000})for(int width:{1,40,1500}){const gfx::Rect target(x,0,width,1);viewport->contents()->ScrollRectToVisible(target);native->contents()->ScrollRectToVisible(target);EXPECT_DOUBLE_EQ(native->CurrentOffset().x(),viewport->offset())<<target.ToString();}
+  }
+  widget->CloseNow();
+}
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FooterViewportOwnershipResizeKeysAXAndShrink) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);std::vector<std::string> added;for(int i=0;i<10;++i){ASSERT_TRUE(window_->AddWorkspace("Viewport "+std::to_string(i),"work-profile"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));added.push_back(window_->workspaces().back().id);}ASSERT_TRUE(window_->Select("work"));shell->CloseOverlays(true);shell->SetPinned(true);shell->ShowSidebar();auto* viewport=shell->workspace_viewport();ASSERT_TRUE(viewport);EXPECT_EQ(shell->workspace_input()->rust_editor(),viewport->rust_owned());if(viewport->rust_owned())EXPECT_FALSE(views::AsViewClass<views::ScrollView>(viewport->view()));auto* bar=viewport->horizontal_scroll_bar();ASSERT_TRUE(bar);EXPECT_EQ(views::ScrollBar::Orientation::kHorizontal,bar->GetOrientation());
+  for(int width:{200,320}){shell->ResizeSidebar(width-shell->sidebar_width(),true);shell->ShowSidebar();auto* widget=shell->sidebar_widget();widget->LayoutRootViewIfNecessary();base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
+    // Native sizing may fit or retain an overflowing contents width after a
+    // resize. Derive its range from live geometry; Metal must retain full dots.
+    EXPECT_EQ(std::max(0,viewport->contents()->width()-viewport->visible_rect().width()),viewport->maximum());
+    if(viewport->maximum()==0){EXPECT_FALSE(viewport->rust_owned());EXPECT_DOUBLE_EQ(0,viewport->offset());EXPECT_FALSE(bar->GetVisible());continue;}
+    ASSERT_GT(viewport->maximum(),0);EXPECT_EQ(viewport->contents()->width()-viewport->visible_rect().width(),viewport->maximum());viewport->ScrollTo(viewport->maximum());EXPECT_DOUBLE_EQ(viewport->maximum(),viewport->offset());auto* first=shell->workspace_button("work");ASSERT_TRUE(first);first->ScrollViewToVisible();EXPECT_FALSE(first->GetVisibleBounds().IsEmpty());EXPECT_DOUBLE_EQ(0,viewport->offset());ui::KeyEvent end(ui::EventType::kKeyPressed,ui::VKEY_END,0);EXPECT_TRUE(viewport->view()->OnKeyPressed(end));EXPECT_DOUBLE_EQ(viewport->maximum(),viewport->offset());ui::KeyEvent home(ui::EventType::kKeyPressed,ui::VKEY_HOME,0);EXPECT_TRUE(viewport->view()->OnKeyPressed(home));EXPECT_DOUBLE_EQ(0,viewport->offset());ui::AXActionData right;right.action=ax::mojom::Action::kScrollRight;EXPECT_TRUE(viewport->view()->HandleAccessibleAction(right));EXPECT_GT(viewport->offset(),0);ui::AXNodeData ax;viewport->view()->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kScrollView,ax.role);if(viewport->rust_owned())EXPECT_EQ(viewport->maximum(),ax.GetIntAttribute(ax::mojom::IntAttribute::kScrollXMax));
+  }
+  viewport->ScrollTo(viewport->maximum());for(const auto& id:added)ASSERT_TRUE(window_->RemoveWorkspace(id));ASSERT_TRUE(base::test::RunUntil([&]{shell->sidebar_widget()->LayoutRootViewIfNecessary();return viewport->maximum()==0&&viewport->offset()==0;}));EXPECT_FALSE(bar->GetVisible());
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ServiceViewportMatchesNativeBoundedReflowAndOverflowEdges) {
   auto delegate=std::make_unique<views::WidgetDelegate>();auto* host=delegate->SetContentsView(std::make_unique<views::View>());
   views::Widget::InitParams params(views::Widget::InitParams::CLIENT_OWNS_WIDGET,views::Widget::InitParams::TYPE_BUBBLE);params.delegate=delegate.get();params.SetParent(window_->widget());auto widget=std::make_unique<views::Widget>();widget->Init(std::move(params));widget->SetBounds(gfx::Rect(40,40,900,760));widget->Show();
@@ -5954,6 +5976,18 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ScrollViewportTrackpadFrac
   send(-1000000,ui::EventMomentumPhase::INERTIAL_UPDATE,ui::ScrollEventPhase::kNone);EXPECT_DOUBLE_EQ(viewport->maximum(),viewport->offset());send(1000000,ui::EventMomentumPhase::NONE,ui::ScrollEventPhase::kUpdate);EXPECT_DOUBLE_EQ(0,viewport->offset());viewport->SetPanelContents(std::make_unique<ToolsPanelProbeView>(200,10,false));view->DeprecatedLayoutImmediately();EXPECT_EQ(0,viewport->maximum());send(-25,ui::EventMomentumPhase::NONE,ui::ScrollEventPhase::kUpdate);EXPECT_DOUBLE_EQ(0,viewport->offset());widget->CloseNow();
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, HorizontalViewportTrackpadFractionalMomentumAndAxisRouting) {
+  window_->widget()->Show();auto delegate=std::make_unique<views::WidgetDelegate>();auto* host=delegate->SetContentsView(std::make_unique<views::View>());PanelViewport* viewport=nullptr;auto candidate=CreatePanelViewport(&viewport,base::DoNothing(),{-1,-1,true,false,false,false,true});auto* view=host->AddChildView(std::move(candidate));ASSERT_TRUE(viewport->rust_owned());viewport->SetPanelContents(std::make_unique<ToolsPanelProbeView>(2000,32,false));
+  views::Widget::InitParams params(views::Widget::InitParams::CLIENT_OWNS_WIDGET,views::Widget::InitParams::TYPE_BUBBLE);params.delegate=delegate.get();params.SetParent(window_->widget());auto widget=std::make_unique<views::Widget>();widget->Init(std::move(params));widget->SetBounds(gfx::Rect(40,40,400,320));widget->Show();widget->LayoutRootViewIfNecessary();view->SetBounds(0,0,300,200);view->DeprecatedLayoutImmediately();ASSERT_GT(viewport->maximum(),0);
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
+  auto stamp=base::TimeTicks::Now();auto send=[&](float x,ui::EventMomentumPhase momentum,ui::ScrollEventPhase phase){stamp+=base::Milliseconds(10);ui::ScrollEvent event(ui::EventType::kScroll,gfx::Point(10,10),stamp,0,x,0,x,0,2,momentum,phase);widget->OnScrollEvent(&event);};
+  send(0,ui::EventMomentumPhase::MAY_BEGIN,ui::ScrollEventPhase::kBegan);send(-13.25f,ui::EventMomentumPhase::NONE,ui::ScrollEventPhase::kUpdate);EXPECT_DOUBLE_EQ(13.25,viewport->offset());
+  for(int i=0;i<8;++i)send(-0.125f,ui::EventMomentumPhase::NONE,ui::ScrollEventPhase::kUpdate);EXPECT_DOUBLE_EQ(14.25,viewport->offset());send(-4.5f,ui::EventMomentumPhase::BEGAN,ui::ScrollEventPhase::kNone);send(-1.25f,ui::EventMomentumPhase::INERTIAL_UPDATE,ui::ScrollEventPhase::kNone);send(0,ui::EventMomentumPhase::END,ui::ScrollEventPhase::kEnd);EXPECT_DOUBLE_EQ(20,viewport->offset());
+  ui::ScrollEvent vertical(ui::EventType::kScroll,gfx::Point(10,10),stamp,0,0,-60,0,-60,2,ui::EventMomentumPhase::NONE,ui::ScrollEventPhase::kUpdate);view->OnScrollEvent(&vertical);EXPECT_FALSE(vertical.handled());EXPECT_FALSE(vertical.stopped_propagation());ui::MouseWheelEvent wheel(gfx::Vector2d(0,-60),gfx::PointF(10,10),gfx::PointF(10,10),stamp,0,0);EXPECT_FALSE(view->OnMouseWheel(wheel));EXPECT_DOUBLE_EQ(20,viewport->offset());
+  ui::ScrollEvent velocity(ui::EventType::kScrollFlingStart,gfx::Point(10,10),stamp,0,-400,0,-400,0,2,ui::EventMomentumPhase::NONE,ui::ScrollEventPhase::kNone);view->OnScrollEvent(&velocity);EXPECT_FALSE(velocity.handled());EXPECT_DOUBLE_EQ(20,viewport->offset());
+  send(-1000000,ui::EventMomentumPhase::INERTIAL_UPDATE,ui::ScrollEventPhase::kNone);EXPECT_DOUBLE_EQ(viewport->maximum(),viewport->offset());send(1000000,ui::EventMomentumPhase::NONE,ui::ScrollEventPhase::kUpdate);EXPECT_DOUBLE_EQ(0,viewport->offset());viewport->SetPanelContents(std::make_unique<ToolsPanelProbeView>(10,32,false));view->DeprecatedLayoutImmediately();EXPECT_EQ(0,viewport->maximum());send(-25,ui::EventMomentumPhase::NONE,ui::ScrollEventPhase::kUpdate);EXPECT_DOUBLE_EQ(0,viewport->offset());widget->CloseNow();
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, RustScrollThumbDragTrackKeyboardAndAccessibility) {
   auto* shell = window_->shell();
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
@@ -6034,7 +6068,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, FooterSpacesScrollSelectPi
   ASSERT_TRUE(window_->Select("work"));shell->CloseOverlays(true);shell->SetPinned(true);shell->ShowSidebar();
   auto* settings=SidebarNamedButton(shell->sidebar_view(),u"Ustawienia przestrzeni");ASSERT_TRUE(settings);
   auto* footer=settings->parent();auto* pin=static_cast<views::Button*>(footer->children()[0].get());
-  auto* scroll=static_cast<views::ScrollView*>(footer->children()[2].get());auto* bar=scroll->horizontal_scroll_bar();
+  auto* scroll=shell->workspace_viewport();ASSERT_TRUE(scroll);EXPECT_EQ(footer->children()[2].get(),scroll->view());auto* bar=scroll->horizontal_scroll_bar();
   ASSERT_TRUE(base::test::RunUntil([&] {return shell->metal_sidebar_visible() && bar->IsDrawn();}));
   EXPECT_EQ(47,footer->height());EXPECT_GE(scroll->contents()->parent()->height(),28);
   EXPECT_TRUE(shell->metal_sidebar_screen_bounds_for_testing().Contains(footer->GetBoundsInScreen()));
@@ -6051,7 +6085,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, FooterSpacesScrollSelectPi
   base::ScopedClosureRunner release_mouse(base::BindOnce([]{ui_controls::SendMouseEvents(ui_controls::LEFT,ui_controls::UP);}));
   const auto track=bar->GetBoundsInScreen();ASSERT_TRUE(move(gfx::Point(track.right()-1,track.CenterPoint().y())));
   ASSERT_TRUE(mouse(ui_controls::UP));static_cast<void>(release_mouse.Release());
-  ASSERT_TRUE(base::test::RunUntil([&] {return scroll->CurrentOffset().x()>0 && shell->metal_sidebar_contains_text_for_testing("🚀");}));
+  ASSERT_TRUE(base::test::RunUntil([&] {return scroll->offset()>0 && shell->metal_sidebar_contains_text_for_testing("🚀");}));
   auto* last_button=shell->workspace_button(last);ASSERT_TRUE(last_button);
   EXPECT_TRUE(scroll->contents()->parent()->GetBoundsInScreen().Contains(last_button->GetBoundsInScreen()));
   ASSERT_TRUE(move(last_button->GetBoundsInScreen().CenterPoint()));ASSERT_TRUE(mouse(ui_controls::DOWN|ui_controls::UP));

@@ -381,10 +381,12 @@ mod ffi {
         fn viewport_preferred_size(width: i32, height: i32, minimum: i32, maximum: i32) -> Rect;
         fn viewport_measure_width(width: i32, height: i32, full_height: i32, thickness: i32, overlay: bool) -> i32;
         fn viewport_configure(self: &mut ScrollViewportState, width: i32, height: i32, preferred_width: i32, preferred_height: i32, thickness: i32, overlay: bool) -> ScrollViewportLayout;
+        fn viewport_configure_horizontal(self: &mut ScrollViewportState, width: i32, height: i32, preferred_width: i32, preferred_height: i32, thickness: i32, overlay: bool) -> ScrollViewportLayout;
         fn viewport_scroll_to(self: &mut ScrollViewportState, offset: f64) -> bool;
         fn viewport_scroll_delta(self: &mut ScrollViewportState, delta: f64) -> bool;
         fn viewport_reveal(self: &mut ScrollViewportState, y: i32, height: i32) -> bool;
         fn viewport_edges(self: &ScrollViewportState, width: i32) -> ScrollViewportEdges;
+        fn viewport_axis_edges(self: &ScrollViewportState, cross: i32, horizontal: bool) -> ScrollViewportEdges;
         fn viewport_offset(self: &ScrollViewportState) -> f64;
         fn viewport_maximum(self: &ScrollViewportState) -> i32;
         type ScrollThumb;
@@ -1395,6 +1397,11 @@ impl ScrollViewportState {
         self.height=height;self.content=preferred_height.max(height);self.maximum=if ready{self.content.saturating_sub(height).max(0)}else{0};self.offset=self.offset.clamp(0.0,f64::from(self.maximum));
         ffi::ScrollViewportLayout{viewport:ffi::Rect{x:0,y:0,width:viewport_width,height},content:ffi::Rect{x:0,y:0,width:preferred_width.max(viewport_width),height:self.content},bar:ffi::Rect{x:width-thickness,y:0,width:thickness,height},show_bar,offset:self.offset,max_offset:self.maximum}
     }
+    fn viewport_configure_horizontal(&mut self,width:i32,height:i32,preferred_width:i32,preferred_height:i32,thickness:i32,overlay:bool)->ffi::ScrollViewportLayout {
+        let mut plan=self.viewport_configure(height,width,preferred_height,preferred_width,thickness,overlay);
+        fn transpose(r:ffi::Rect)->ffi::Rect{ffi::Rect{x:r.y,y:r.x,width:r.height,height:r.width}}
+        plan.viewport=transpose(plan.viewport);plan.content=transpose(plan.content);plan.bar=transpose(plan.bar);plan
+    }
     fn viewport_scroll_to(&mut self,offset:f64)->bool {
         if !offset.is_finite(){return false;}let next=offset.clamp(0.0,f64::from(self.maximum));let changed=next!=self.offset;self.offset=next;changed
     }
@@ -1409,6 +1416,9 @@ impl ScrollViewportState {
     fn viewport_edges(&self,width:i32)->ffi::ScrollViewportEdges {
         let width=width.max(0);let thickness=self.height.clamp(0,1);let ready=width>0&&self.height>0&&self.maximum>0;
         ffi::ScrollViewportEdges{top:ffi::Rect{x:0,y:0,width,height:thickness},bottom:ffi::Rect{x:0,y:self.height.saturating_sub(thickness),width,height:thickness},show_top:ready&&self.offset>0.0,show_bottom:ready&&self.offset<f64::from(self.maximum)}
+    }
+    fn viewport_axis_edges(&self,cross:i32,horizontal:bool)->ffi::ScrollViewportEdges {
+        let mut edges=self.viewport_edges(cross);if horizontal{for r in [&mut edges.top,&mut edges.bottom]{std::mem::swap(&mut r.x,&mut r.y);std::mem::swap(&mut r.width,&mut r.height);}}edges
     }
     fn viewport_offset(&self)->f64{self.offset}
     fn viewport_maximum(&self)->i32{self.maximum}
@@ -2230,6 +2240,12 @@ mod tests {
     }
     #[test] fn scroll_viewport_geometry_preserves_overlay_and_reserved_scrollbar_contract() {
         for overlay in [false,true]{let mut v=new_scroll_viewport();let g=v.viewport_configure(300,200,280,900,15,overlay);assert!(g.show_bar);assert_eq!(g.viewport.width,if overlay{300}else{285});assert_eq!((g.content.width,g.content.height,g.bar.x,g.bar.width),(if overlay{300}else{285},900,285,15));assert_eq!(g.max_offset,700);}
+    }
+    #[test] fn horizontal_viewport_reserves_bottom_bar_and_preserves_cross_extent() {
+        for overlay in [false,true]{let mut v=new_scroll_viewport();let p=v.viewport_configure_horizontal(200,47,600,32,15,overlay);assert_eq!((p.viewport.width,p.viewport.height),(200,if overlay{47}else{32}));assert_eq!((p.content.width,p.content.height),(600,if overlay{47}else{32}));assert_eq!((p.bar.x,p.bar.y,p.bar.width,p.bar.height),(0,32,200,15));assert!(p.show_bar);assert_eq!(p.max_offset,400);let e=v.viewport_axis_edges(p.viewport.height,true);assert_eq!((e.top.x,e.top.y,e.top.width,e.top.height),(0,0,1,p.viewport.height));assert_eq!((e.bottom.x,e.bottom.width),(199,1));assert!(!e.show_top&&e.show_bottom);}
+    }
+    #[test] fn horizontal_viewport_fractional_reveal_resize_and_empty_extent() {
+        let mut v=new_scroll_viewport();v.viewport_configure_horizontal(200,47,600,32,15,false);assert!(v.viewport_scroll_delta(-13.25));assert_eq!(v.viewport_offset(),13.25);assert!(v.viewport_reveal(560,28));assert_eq!(v.viewport_offset(),388.0);let p=v.viewport_configure_horizontal(500,47,600,32,15,false);assert_eq!((p.offset,p.max_offset),(100.0,100));let p=v.viewport_configure_horizontal(700,32,600,32,15,false);assert!(!p.show_bar);assert_eq!((p.offset,p.max_offset,p.content.width),(0.0,0,700));for (w,h) in [(0,47),(200,0),(-1,-1)]{let p=v.viewport_configure_horizontal(w,h,i32::MAX,32,15,false);assert!(!p.show_bar);assert_eq!(p.max_offset,0);assert!(p.viewport.width>=0&&p.viewport.height>=0&&p.bar.y>=0);}
     }
     #[test] fn scroll_viewport_resize_and_rebuild_clamp_authoritative_offset() {
         let mut v=new_scroll_viewport();v.viewport_configure(300,200,300,900,15,true);assert!(v.viewport_scroll_to(2000.0));assert_eq!(v.viewport_offset(),700.0);let g=v.viewport_configure(300,200,300,240,15,true);assert_eq!(g.offset,40.0);let g=v.viewport_configure(300,500,200,240,15,true);assert!(!g.show_bar);assert_eq!((g.offset,g.max_offset,g.content.height),(0.0,0,500));

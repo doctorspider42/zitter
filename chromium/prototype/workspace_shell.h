@@ -27,7 +27,6 @@
 #include "base/task/sequenced_task_runner.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/geometry/rect_f.h"
-#include "ui/views/controls/scroll_view.h"
 #include "ui/events/event_handler.h"
 #include "ui/views/context_menu_controller.h"
 #include "ui/menus/simple_menu_model.h"
@@ -47,7 +46,6 @@ class ToggleButton;
 class MdTextButton;
 class Label;
 class MenuRunner;
-class ScrollView;
 class Textfield;
 class View;
 class Widget;
@@ -328,6 +326,7 @@ class WorkspaceShell final : public ui::EventHandler,
   size_t palette_selection_for_testing() const;
   views::View* palette_results_view() const{return suggestion_list_;}
   PanelViewport* palette_viewport() const{return suggestion_scroll_;}
+  PanelViewport* workspace_viewport() const{return workspace_scroll_;}
   bool metal_sidebar_visible() const;
   bool metal_sidebar_grip_visible() const;
   bool metal_split_visible(size_t index) const;
@@ -482,8 +481,6 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::Button> header_sidebar_button_=nullptr;
   std::unique_ptr<SidebarMetal> metal_sidebar_;
   bool metal_sidebar_pending_ = false;
-  base::CallbackListSubscription metal_workspace_scroll_subscription_;
-  std::unique_ptr<views::ScrollView::ScopedScrollSynchronizer> metal_workspace_scroll_synchronizer_;
   int ToolsPage() const;
   bool ToolsRecording() const;
   std::u16string ToolsHistoryQuery() const;
@@ -730,7 +727,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::Button> pin_button_ = nullptr;
   std::array<raw_ptr<views::Button>, 3> nav_buttons_ = {};
   raw_ptr<views::View> sidebar_footer_=nullptr;
-  raw_ptr<views::ScrollView> workspace_scroll_=nullptr;
+  raw_ptr<PanelViewport> workspace_scroll_=nullptr;
   raw_ptr<views::Button> workspace_settings_button_=nullptr;
   raw_ptr<views::View> workspace_dots_ = nullptr;
   std::map<std::string, raw_ptr<views::Button>> workspace_buttons_;

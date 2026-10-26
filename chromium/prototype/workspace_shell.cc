@@ -3309,24 +3309,23 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         if (shell) shell->SetPinned(!shell->pinned_);
       }, weak), u"Przypnij panel", GlyphButton::Glyph::kSidebar,nullptr,footer_visible));
   Spacer(footer, 1);
-  auto* dot_scroll = footer->AddChildView(std::make_unique<views::ScrollView>());
-  workspace_scroll_=dot_scroll;
-  dot_scroll->SetPreferredSize(gfx::Size(0, 32));
-  dot_scroll->SetBackgroundColor(std::nullopt);
-  dot_scroll->SetDrawOverflowIndicator(false);
-  dot_scroll->SetVerticalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);
+  std::unique_ptr<views::ScrollBar> workspace_bar;
+#if BUILDFLAG(IS_MAC)
+  if(metal_sidebar_)workspace_bar=CreateSidebarScrollBar(footer_visible,true);
+#endif
+  PanelViewport* workspace_viewport=nullptr;
+  auto* dot_scroll=footer->AddChildView(CreatePanelViewport(&workspace_viewport,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),{-1,-1,metal_sidebar_!=nullptr,false,false,false,true},std::move(workspace_bar)));
+  workspace_scroll_=workspace_viewport;
+  dot_scroll->SetPreferredSize(gfx::Size(0,32));
   auto dots = std::make_unique<views::View>();
   dots->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 0));
-  workspace_dots_ = dot_scroll->SetContents(std::move(dots));
+  workspace_dots_=dots.get();
+  workspace_scroll_->SetPanelContents(std::move(dots));
 #if BUILDFLAG(IS_MAC)
   if (metal_sidebar_) {
     workspace_dots_->SetLayoutManager(CreateSidebarDotsLayout());
-    dot_scroll->SetUseContentsPreferredSize(true);
-    dot_scroll->SetHorizontalScrollBar(CreateSidebarScrollBar(footer_visible,true));
-    metal_workspace_scroll_synchronizer_=dot_scroll->EnableScrollSynchronization();
-    metal_workspace_scroll_subscription_=dot_scroll->AddContentsScrolledCallback(
-        base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak));
+
   }
 #endif
   footer_layout->SetFlexForView(dot_scroll, 1);
@@ -3946,8 +3945,6 @@ void WorkspaceShell::Detach() {
   metal_sidebar_grip_.reset();
   for(auto& surface:metal_split_)surface.reset();metal_split_pending_=false;
   metal_header_.reset();metal_header_pending_=false;header_view_=nullptr;header_sidebar_button_=nullptr;
-  metal_workspace_scroll_subscription_={};
-  metal_workspace_scroll_synchronizer_.reset();
   metal_sidebar_.reset();
   metal_sidebar_pending_ = false;
   CancelWorkspaceSwipe();
@@ -4616,9 +4613,10 @@ void WorkspaceShell::UpdateMetalSidebar() {
   auto* dot_viewport=workspace_dots_->parent();
   std::vector<SidebarViewportNode> dot_nodes{{SidebarTree::kRoot,gfx::Rect(workspace_dots_->size()),true}};
   for (const auto& child : workspace_dots_->children()) dot_nodes.push_back({0,child->GetMirroredBounds(),child->GetVisible()});
-  const auto dot_projection=metal_sidebar_->Project(workspace_dots_->size(),dot_viewport->size(),workspace_scroll_->CurrentOffset(),dot_nodes);
-  if (dot_projection.offset!=workspace_scroll_->CurrentOffset()) {
-    workspace_scroll_->ScrollToOffset(dot_projection.offset); ScheduleMetalSidebar(); return;
+  const gfx::PointF dot_requested(static_cast<float>(workspace_scroll_->offset()),0);
+  const auto dot_projection=metal_sidebar_->Project(workspace_dots_->size(),dot_viewport->size(),dot_requested,dot_nodes);
+  if (dot_projection.offset!=dot_requested) {
+    workspace_scroll_->ScrollTo(dot_projection.offset.x()); ScheduleMetalSidebar(); return;
   }
   const auto dot_origin=local_rect(dot_viewport).OffsetFromOrigin();
   for (const auto& node : dot_projection.nodes) if (node.index>0) {
