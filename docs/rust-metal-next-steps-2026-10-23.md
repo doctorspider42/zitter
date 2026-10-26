@@ -3,6 +3,13 @@
 This is a work plan, not a claim of complete functional parity. The detailed
 inventory is [the parity checklist](rust-metal-parity.md).
 
+## Paused at weekly limit
+
+Weekly remaining fell to **69%**. The goal is paused by the user stop condition;
+shutdown was requested. Verified code/report are pushed. The combined full
+checkpoint was interrupted after Metal position 130/218; Views did not start.
+It is not full acceptance. [Handoff and remaining work](rust-metal-handoff-2026-10-26.md).
+
 ## Latest targeted follow-up: selector pointer policy
 
 UI source `c7d0eabf53abe496801b447e5c3c8e99127b4b7d` closes the selector mouse-phase difference recorded in the
