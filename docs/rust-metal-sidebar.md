@@ -1934,3 +1934,72 @@ signed and no dependency was added. Prior permission/capture work remains in
 [its checkpoint](benchmarks/rust-media-scene-checkpoint-2026-10-26.json). The earlier
 AppKit startup stall remains recorded in the password checkpoint and is not claimed
 fixed by this migration.
+
+
+## Tools shortcut/provider choice forms checkpoint (2026-10-26)
+
+UI source `6cee01c5513c88d49d10083aeee2c9bf4d1b361e`, 2026-10-26, passed the full compiled
+regression inventory with one launcher job, no automatic retries and temporary
+profiles:
+
+| Backend | Regular matrix passed | Regular skips | Failed / crashed / timed out |
+| --- | ---: | ---: | ---: |
+| Rust + Metal | 177 | 6 | 0 |
+| Views | 131 | 6 | 0 |
+
+The inventory contains 183 cases; Views excludes 46 dedicated Metal cases
+(137 applicable cases). Four opt-in performance scenarios, real-user Arc import
+and the interactive manual window are skipped per backend. Earlier optional
+performance scenarios remain historical evidence, not current-commit passes.
+Metal API validation remained enabled. No controlled CPU/GPU/presentation or
+memory improvement is established.
+
+The tools/timeline/Time-Machine/restored-tab/media/password/download/modal/shared-
+chrome gate passed **67 Metal / 53 Views**; the focused selection/editor/
+action gate passed **8 Metal / 6 Views**. Checks passed **255 Rust tests**,
+**180 SDK font/direction cases plus raster**, **66 clean-archive Python tests**,
+scoped GN/boundaries and optimized compilation. The live checkout passed 68 Python
+tests, including two concurrent cases outside this UI commit. Final Ninja reported
+no work to do. All 53 tracked prototype files match committed source and the staged
+overlay. [Source/binary identities, commands and results](benchmarks/rust-tools-choice-forms-checkpoint-2026-10-26.json).
+
+Rust ToolsForm now projects shortcut and search-provider choices and owns active
+choice/draft resolution. Shortcut labels retain title/em-dash/native-formatted
+chord. Provider labels retain keyword/name/default marking and explicit add-new
+copy. Rust returns field plans for chord/name/keyword/template text and recording
+cancellation. The native adapter applies those plans to the existing editors and
+translates projected keys/labels into SceneSelect. The opt-in form no longer
+formats native configuration into label lists or fills fields by native indices.
+Views keeps its original index/model/field baseline.
+
+Generation/page/role/active-choice checks invalidate stale drafts. Duplicate
+labels/IDs have distinct control keys, malformed empty IDs fail closed and the
+add-new provider is an explicit valid create draft. Exhaustion disables projection
+without key reuse. Posted shortcut save/disable and provider save/default/delete
+capture selection keys and must still match the active Rust choice at admission.
+Switching selection cannot lend another row's fields or target to an older action.
+Existing timeline captured-key admission remains unchanged.
+
+Native shortcut parsing, reserved/system/editing keys, conflict checks, actual ID
+lookup, provider HTTP(S)/template/uniqueness/limit/last-provider checks, key
+registrations, configuration scope and persistence remain authoritative. Rust
+receives native-formatted chords and UTF-16 display/draft metadata; URL templates
+are text, not browser URL objects or navigation authority. Native visibility,
+form/workspace/profile generation and IME guards still apply. Native configuration
+vectors remain service data, while UI choice/field projection is Rust state.
+
+Six Rust cases cover labels/chords/record cancellation, provider create/default/
+field plans, stale/reset/page/role drafts, raw UTF-16/duplicate/empty IDs, epoch
+exhaustion and current-choice command admission. A new shared browser case compares
+every shortcut/provider label and selected field with the native formatter/config,
+including duplicate Unicode names and default marking. A dedicated Metal case
+changes provider/shortcut selection while delete/disable is queued, requires both
+old/new targets to survive, then verifies fresh commands succeed. Existing actual
+Cocoa prefix, recording/editor/provider and timeline regressions also pass.
+
+Other form construction/status coordination, service wording, native node/container
+ownership, manual platform acceptance, controlled profiling and release/license
+checks remain open. Normal installed apps/profiles were untouched; no bundle was
+signed and no dependency was added. Earlier timeline ownership and its initial
+probe remain in [the timeline checkpoint](benchmarks/rust-tools-timeline-checkpoint-2026-10-26.json).
+The earlier AppKit startup stall is not claimed fixed by this migration.

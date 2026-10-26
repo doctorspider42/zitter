@@ -8,76 +8,71 @@ milestones to `origin/main` as they land. The opt-in switch remains
 
 ## Current execution policy
 
-UI source `3d5131c5e9887fdedc0e56ec2100bdd0c73338df`, 2026-10-26, passed the full compiled
+UI source `6cee01c5513c88d49d10083aeee2c9bf4d1b361e`, 2026-10-26, passed the full compiled
 regression inventory with one launcher job, no automatic retries and temporary
 profiles:
 
 | Backend | Regular matrix passed | Regular skips | Failed / crashed / timed out |
 | --- | ---: | ---: | ---: |
-| Rust + Metal | 175 | 6 | 0 |
-| Views | 130 | 6 | 0 |
+| Rust + Metal | 177 | 6 | 0 |
+| Views | 131 | 6 | 0 |
 
-The inventory contains 181 cases; Views excludes 45 dedicated Metal cases
-(136 applicable cases). Four opt-in performance scenarios, real-user Arc import
+The inventory contains 183 cases; Views excludes 46 dedicated Metal cases
+(137 applicable cases). Four opt-in performance scenarios, real-user Arc import
 and the interactive manual window are skipped per backend. Earlier optional
 performance scenarios remain historical evidence, not current-commit passes.
 Metal API validation remained enabled. No controlled CPU/GPU/presentation or
 memory improvement is established.
 
 The tools/timeline/Time-Machine/restored-tab/media/password/download/modal/shared-
-chrome gate passed **65 Metal / 52 Views**. Checks passed **249 Rust tests**,
+chrome gate passed **67 Metal / 53 Views**; the focused selection/editor/
+action gate passed **8 Metal / 6 Views**. Checks passed **255 Rust tests**,
 **180 SDK font/direction cases plus raster**, **66 clean-archive Python tests**,
 scoped GN/boundaries and optimized compilation. The live checkout passed 68 Python
 tests, including two concurrent cases outside this UI commit. Final Ninja reported
 no work to do. All 53 tracked prototype files match committed source and the staged
-overlay. [Source/binary identities, commands and results](benchmarks/rust-tools-timeline-checkpoint-2026-10-26.json).
+overlay. [Source/binary identities, commands and results](benchmarks/rust-tools-choice-forms-checkpoint-2026-10-26.json).
 
-Rust ToolsForm now owns snapshot/closed-tab filtering, title/em-dash/detail label
-projection, empty copy, enabled state and current control-key-to-opaque-ID maps.
-The opt-in path no longer builds native SimpleComboboxModel items or fills the
-parallel C++ snapshot_ids_/closed_ids_ arrays. Original source order and reset-to-
-first selection remain. SceneSelect retains Rust prefix/menu/input state and
-Metal drawing, with native metric/event/focus/AX/menu adapters.
+Rust ToolsForm now projects shortcut and search-provider choices and owns active
+choice/draft resolution. Shortcut labels retain title/em-dash/native-formatted
+chord. Provider labels retain keyword/name/default marking and explicit add-new
+copy. Rust returns field plans for chord/name/keyword/template text and recording
+cancellation. The native adapter applies those plans to the existing editors and
+translates projected keys/labels into SceneSelect. The opt-in form no longer
+formats native configuration into label lists or fills fields by native indices.
+Views keeps its original index/model/field baseline.
 
-ICU normalization stays native. Rust matches raw UTF-16 units against the original
-title/space/detail search text, preserving partial surrogates, dotted I and other
-Unicode behavior; it does not search the rendered em dash or trim input. Display
-metadata can include formatted URLs, but browser URL objects, stores, profile/
-workspace validation and operations remain native.
+Generation/page/role/active-choice checks invalidate stale drafts. Duplicate
+labels/IDs have distinct control keys, malformed empty IDs fail closed and the
+add-new provider is an explicit valid create draft. Exhaustion disables projection
+without key reuse. Posted shortcut save/disable and provider save/default/delete
+capture selection keys and must still match the active Rust choice at admission.
+Switching selection cannot lend another row's fields or target to an older action.
+Existing timeline captured-key admission remains unchanged.
 
-Projection keys include group/epoch/index and are independent of display labels
-and native IDs. Filtering, reprojection, reset and page changes invalidate old
-keys; duplicate labels/IDs have distinct control keys and groups cannot borrow
-one another's targets. Epoch exhaustion fails closed. Buttons capture a selected
-key before posting, and Rust resolves that captured key at admission, so an older
-click cannot operate on a newer filter's index-zero item. Native visibility,
-workspace/profile/form-generation checks, beforeunload, persistence, validation
-and rollback remain authoritative. Views retains its original arrays, filtering
-and native model baseline.
+Native shortcut parsing, reserved/system/editing keys, conflict checks, actual ID
+lookup, provider HTTP(S)/template/uniqueness/limit/last-provider checks, key
+registrations, configuration scope and persistence remain authoritative. Rust
+receives native-formatted chords and UTF-16 display/draft metadata; URL templates
+are text, not browser URL objects or navigation authority. Native visibility,
+form/workspace/profile generation and IME guards still apply. Native configuration
+vectors remain service data, while UI choice/field projection is Rust state.
 
-Four Rust cases cover UTF-16/native search boundaries, stale/reordered/reset/page/
-cross-group keys, independent lists/duplicate/empty IDs and epoch exhaustion.
-A new shared browser case compares both lists with the original native ICU/filter/
-label/AX oracle for Greek, dotted I, emoji, a partial surrogate, empty and no-match
-queries, then uses actual Cocoa Space after successful presentation to reopen a
-real closed tab and restore a real snapshot. A dedicated Metal case changes the
-filter while deletion is queued, requires both targets to survive, and verifies a
-fresh delete succeeds. Existing duplicate-title deletion/identity, empty/disabled/
-hidden picker, tools action/editor/choice and native Time Machine tests also pass.
+Six Rust cases cover labels/chords/record cancellation, provider create/default/
+field plans, stale/reset/page/role drafts, raw UTF-16/duplicate/empty IDs, epoch
+exhaustion and current-choice command admission. A new shared browser case compares
+every shortcut/provider label and selected field with the native formatter/config,
+including duplicate Unicode names and default marking. A dedicated Metal case
+changes provider/shortcut selection while delete/disable is queued, requires both
+old/new targets to survive, then verifies fresh commands succeed. Existing actual
+Cocoa prefix, recording/editor/provider and timeline regressions also pass.
 
-The first focused probe is retained. Its new helper treated empty InsertText as
-clear-selection, which is a no-op; it now uses explicit range deletion. Integration
-review also added the captured-key admission check and its stale-action case
-before final validation. Compile diagnostics and intermediate source/binary
-identities are retained separately from final passing runs.
-
-Other tools/preferences form construction, service wording, native node/container
+Other form construction/status coordination, service wording, native node/container
 ownership, manual platform acceptance, controlled profiling and release/license
 checks remain open. Normal installed apps/profiles were untouched; no bundle was
-signed and no dependency was added. Prior permission/capture work remains in
-[its checkpoint](benchmarks/rust-media-scene-checkpoint-2026-10-26.json). The earlier
-AppKit startup stall remains recorded in the password checkpoint and is not claimed
-fixed by this migration.
+signed and no dependency was added. Earlier timeline ownership and its initial
+probe remain in [the timeline checkpoint](benchmarks/rust-tools-timeline-checkpoint-2026-10-26.json).
+The earlier AppKit startup stall is not claimed fixed by this migration.
 
 ## How to read progress
 
@@ -114,7 +109,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Workspace/profile form action buttons | Rust button/group geometry, shared pointer/key reducer and text/background/border/focus primitives; four Metal groups; native Button/AX/focus, platform font/metric/color and command adapters (automated UI checked; manual acceptance pending) | Replace native interaction nodes; verify dynamic labels, disabled styles, focus/keyboard/cancellation, clipping/fallback and service semantics |
 | Workspace color/emoji presets | Rust preset data/selection, row geometry, pointer/key reducer and scene primitives; two shared-context Metal canvases; native Button/AX/focus and text/grapheme/storage adapters (automated UI checked; manual acceptance pending) | Color/emoji editor migration verified; replace remaining native preset Button interaction ownership and broaden capture/visibility/IME/AX/theme/scale/persistence acceptance |
 | Workspace deletion confirmation | Rust captured-target notice state/copy, shared paragraph/body allocation and Metal body/error/action controls; native title/frame/scroll/focus/AX and deletion/persistence services (automated UI checked; manual acceptance pending) | Replace remaining frame/scroll/interaction containers; broaden default Cancel, beforeunload, stale-target, profile-retention, typography and screen-bound acceptance |
-| General preferences, shortcuts and site preferences | Rust/Metal editors, eleven preference selectors, 24 switches, three clear-data checkboxes and 19 fixed actions plus dynamic rule controls; Rust category/dismiss recipes, category/filter state, text-draft/profile refresh/admission, rule paging and shared text/backing underlay; native event/focus/AX, normalization, menus and stores | Migrate UI descriptions/data, remaining busy/status/form state, tools option-to-field/form construction, service/progress wording and native outer-container ownership; tools panel/header/body/clear allocation is Rust; retain profile/global configuration and recorder behavior |
+| General preferences, shortcuts and site preferences | Rust/Metal editors, eleven preference selectors, 24 switches, three clear-data checkboxes and 19 fixed actions plus dynamic rule controls; Rust category/dismiss recipes, category/filter state, text-draft/profile refresh/admission, rule paging and shared text/backing underlay; native event/focus/AX, normalization, menus and stores | Migrate UI descriptions/data, remaining busy/status/form state, remaining tools form construction/status coordination, service/progress wording and native outer-container ownership; tools panel/header/body/clear allocation, shortcut/provider choice/draft projection and scoped posted targets use Rust; retain profile/global configuration and recorder behavior |
 | History, downloads, passwords and permissions | Rust/Metal history query editor, clear-period selector and clear/more actions; shared Rust/Metal tools header/status/empty copy and committed-query/pagination/loaded state; Rust/Metal history result text/backing and column layout; Rust/Metal download text/progress/actions and body/list/row allocation on one shared scene; Rust/Metal password consent/overview text, actions, account selector and body layout; Rust/Metal permission/capture paragraphs, actions and body allocation; native permission/Stop authority, password stores/autofill, Unicode/IME/service, download facts/formatting/list policy and event/focus/AX/scroll adapters, with other remaining Views lists/controls | Finish native history interaction/container ownership and other service forms/result controls; retain browser service and security semantics |
 | Peek, promote/split, link/page menus and routing | Views/native adapters + application | Rust control routing, focus and dismissal; retain native page integration |
 | Import form and first-run import | Rust UI option/debounce/admission/controller state, copy, columns and Metal static/status/Apply text; native Button/AX/focus, header nodes, native popup/IME adapters and application import services (automated UI checked; manual acceptance pending) | Migrate remaining native header and input nodes; verify latest options, busy recovery, credentials opt-in, source immutability, first-run/persistence/rollback and runtime accessibility |
