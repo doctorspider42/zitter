@@ -3,7 +3,45 @@
 This is a work plan, not a claim of complete functional parity. The detailed
 inventory is [the parity checklist](rust-metal-parity.md).
 
-## Latest full checkpoint
+## Latest targeted follow-up
+
+UI source `6e61945bff6e40a092f91c605ca2f01fb60bf395` moves palette suggestion scrolling to
+Rust-owned extent/allocation, fractional offset, reveal and clamp. The existing
+custom Rust-backed scrollbar and Metal projection remain; palette-specific
+ScrollView synchronization/subscriptions are removed. A shared height-range
+setter keeps the dynamic 90..300px result cap. Separate overflow-indicator policy
+preserves edge indicators without imposing a dialog background. Views retains
+its native ScrollView and existing contents-preferred-size behavior.
+
+The new shared actual-palette case injects 30 Unicode results, checks ownership,
+compact/wide height caps, bottom/first-row reveal, keyboard wrapping and selected
+row visibility, shrinking to one result, no-result hiding and reopening. Existing
+palette cases retain async/stable-selection, stale query/profile, IME, actual
+mouse activation after scroll, text/error/theme/fallback and editor contracts.
+Focus passed **5 Metal / 2 Views**; affected regressions
+**18 Metal / 13 Views**, single attempt, retry limit zero.
+Checks passed **278 Rust**, **68 live and 68 clean-archive Python**, scoped
+GN/boundaries and final Ninja no-op. All 53 committed/live/staged prototype inputs
+and compiled/frozen-bootstrap/native-engine identities were checked. Unchanged
+CoreText sources retain the prior full checkpoint's 180 SDK cases plus raster;
+that harness was not rerun for this adapter change.
+[Targeted palette viewport report](benchmarks/rust-palette-viewport-targeted-2026-10-26.json).
+
+Initial failing probe sources/logs are retained in the report. Final acceptance
+waits for real debounced search before injecting data, checks minimal row reveal
+below the 9px top inset, and waits for queued Metal scene visibility updates.
+No production behavior changed for those fixture corrections.
+
+Per user cadence this stage has targeted acceptance. The earlier full matrix
+below predates this source. Horizontal footer scrolling, native control/node/
+container/menu/input ownership, manual hardware trackpad/IME/VoiceOver/RTL/scale/
+theme/GPU-recovery acceptance, controlled CPU/GPU/drawable-presentation/input-
+latency/memory comparison and release/license/notice checks remain open. The lab
+retains frozen bootstrap/network inputs; current-main network policy is outside
+this binary's acceptance. No complete parity or controlled performance gain is
+claimed; no dependency, service/store/admission or persistence change.
+
+## Latest full checkpoint (before palette migration)
 
 UI source `9037db7bb4caf3d187145e410224d6c791ca6fcc` moves the main tab/tree sidebar viewport to
 Rust in the opt-in backend. Rust owns extent/allocation, fractional offset,
@@ -175,9 +213,9 @@ The earlier AppKit startup stall is not claimed fixed by this migration.
 ## Immediate preference work still remaining
 
 Preference root/column/centered-row allocation now uses Rust and matches the
-native BoxLayout oracles. The main sidebar, tools, preferences, workspace settings, import, downloads,
+native BoxLayout oracles. The main sidebar, palette, tools, preferences, workspace settings, import, downloads,
 page message bodies and scene modal bodies use Rust-owned viewports. Next,
-migrate footer/palette scrolling and remaining
+migrate horizontal footer scrolling and remaining
 interaction/container identity to Rust node ownership, retaining explicit
 platform window/event/AX adapters. Finish header/profile/status/managed-state
 copy, responsive placement and service coordination alongside that work.

@@ -788,8 +788,12 @@ horizontal-only events available to ancestors.
 The main tab/tree sidebar now uses the Rust-owned viewport with its existing
 custom Rust scrollbar. [Full main-sidebar checkpoint](docs/benchmarks/rust-main-viewport-checkpoint-2026-10-26.json)
 passed 192 Metal / 145 Views regular cases, six explicit optional skips each,
-and 278 Rust cases. Footer/palette scrolling and remaining native node/input
-ownership remain open.
+and 278 Rust cases.
+Palette suggestions now also use the Rust-owned viewport with dynamic height
+caps, existing scrollbar and keyboard/IME behavior.
+[Targeted palette acceptance](docs/benchmarks/rust-palette-viewport-targeted-2026-10-26.json)
+passed 18 Metal / 13 Views affected cases. Horizontal footer scrolling and
+remaining native node/input ownership remain open.
 [Editor contracts and acceptance](docs/rust-metal-editor.md).
 Model updates refresh the scene independently of
 native painting. Rust also owns row

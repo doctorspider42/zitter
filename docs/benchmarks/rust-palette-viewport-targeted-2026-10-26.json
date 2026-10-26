@@ -1,0 +1,957 @@
+{
+  "date": "2026-10-26",
+  "tested_ui_source_commit": "6e61945bff6e40a092f91c605ca2f01fb60bf395",
+  "status": "Targeted palette viewport migration; full matrices reserved for larger blocks per user cadence.",
+  "source_inputs": {
+    "source_commit": "6e61945bff6e40a092f91c605ca2f01fb60bf395",
+    "count": 53,
+    "source_sha256": {
+      "chromium/prototype/arc_importer.cc": "e3c6aa5d0876a9d1c29305136d225eba78a8d8b95c3267cabf5d8a96d5d9ecf4",
+      "chromium/prototype/arc_importer.h": "b5cb4ccc4871c9ad7af3e578763bc3d8347fc9adc394c05624f1653b342ea2fc",
+      "chromium/prototype/browser_data.h": "243b1d34847d4358041190ed42ee0c0600a21257003b54c056c59f4ef764a747",
+      "chromium/prototype/browser_import_data.cc": "c6d7d1750ab9be441a264691382928417cdea7e0959b2b86cb2ce5bd4fbbb37c",
+      "chromium/prototype/browser_import_data.h": "35039b3013e0754f88be9f021428160eacbbe65de8f61eef2983a65ca0291b7b",
+      "chromium/prototype/browser_import_key_mac.mm": "65d0b914b43a7268a54d309f021a5a6c7ead871dbe68c0fb2581005456af1bd1",
+      "chromium/prototype/browser_preferences.cc": "34fafbb418688d581d581599e57d68a3d572c6fbfa311f1a8525c67340a77c48",
+      "chromium/prototype/browser_preferences.h": "63a931a276df3c05f49e098c6977d99b14112ad20f4df4dc9ab8a513c96f6f68",
+      "chromium/prototype/browser_tools.cc": "62964f8f594011af7a60983890a33027ebacddd7faa3642e77bd59e4a635a62e",
+      "chromium/prototype/browser_tools.h": "ef83716f8bb01fe5b3b770f9136288a39aefedfe4b299e305b1dd1f740b1ad6a",
+      "chromium/prototype/download_panel.cc": "45fc11c2d04990baa9c2c5e3d2b7bac4d9854867145acf12a1dc958b21186c74",
+      "chromium/prototype/download_panel.h": "1db13545467abf4729b4c340323997bed4a0af4bb232670755ff20e0d37eaa50",
+      "chromium/prototype/editor_control.h": "6a7d417696dadff55daaa05581be0cc71a825cfbbc934921fcd3616d872275f3",
+      "chromium/prototype/editor_text_layout.h": "35a72c6965037f684ee5f88338f71aa07b41842de4e7417ab6af1df7300c26cb",
+      "chromium/prototype/editor_text_layout_mac.inc": "13f2fddef229486fb25f42fb275cc0d7256bebe6d9599356822ff4b11db81984",
+      "chromium/prototype/editor_text_layout_test.mm": "a0bc7f9d485717b6a303b31952ad35ae8d3b3b021b016cb2b0ee8fc890726844",
+      "chromium/prototype/link_navigation.cc": "464f61fdd785d5cc3fc8d5551d8dce767f237a7338080d87e101a6a380855f13",
+      "chromium/prototype/link_navigation.h": "77c3df9a92f9038e7794c8c482f916114c84008bb3ddc02dd31a38ba073e9ff8",
+      "chromium/prototype/page_dialogs.cc": "a07e8aa92fc10fda84cc70fbd52a63a13f91716a8d9f929ef125d2cc6333af68",
+      "chromium/prototype/page_dialogs.h": "b778741cb8e1d6c53456b5e864808c2aa22ef5591417d77b1de5d854ddccf10e",
+      "chromium/prototype/page_file_access.cc": "26d797ddc42a17806f949540e628614779836b49c2d4f9d5ea199ff9a94f0a8c",
+      "chromium/prototype/page_file_access.h": "313f54266ef5051c52b654632273a1b7f84c8c09e53930bbecdee3b747d27888",
+      "chromium/prototype/page_file_access_browsertest.cc": "008833c70f884d045277409a5371d006ca1ddd851f0047584b3d0d0fb2b04f81",
+      "chromium/prototype/page_media_access.cc": "49a3f4a21f30a31f6559bf48b82837d72c87ab8148ea870cdd2f113a4b42473d",
+      "chromium/prototype/page_media_access.h": "224414fce67a836f34acffca609593e456ce00cc1d7d02ae003eb87a5484dacc",
+      "chromium/prototype/page_media_access_browsertest.cc": "7eedc13b1453308cb9db00c2445f896c031a0afb2a1dd18b8b0f4d85f8709493",
+      "chromium/prototype/page_services.cc": "701def23690ef2c6e6843b8c4bd16f76d09a066bdade34d9dfc45010283da9c2",
+      "chromium/prototype/page_services.h": "b031e317d2e96c4245ff019e5185c6f103f533b2f9efd3ea98132ddaef333d6d",
+      "chromium/prototype/profile_workspace_browsertest.cc": "b0499780db75f65d9b333c9cc8f0d60901895b08c0829d85bf4a677d8eaaed63",
+      "chromium/prototype/scene_editor.cc": "1750eabbc946da28efc519939e5de6db0c59813212feaae47716fd705bfb1c75",
+      "chromium/prototype/sidebar.metal": "844a08c8a905931a313126a2d3c96f22e25228da1fc149ec6c12e88fc9755cc5",
+      "chromium/prototype/sidebar_editor.rs": "963e52ae3fb70efd48e1d15ca059095ed02812fbaea3ddd1266d39188134c6de",
+      "chromium/prototype/sidebar_layout.cc": "5085a7d108b9f0681fa2d943a19cdda822b502758a12ec5ec23e7ad7b6a7646e",
+      "chromium/prototype/sidebar_layout.h": "b756223bb414c8a7b23459bc75cfbaaa5d96c8e3695eef77a6b8424dd4186754",
+      "chromium/prototype/sidebar_metal.h": "9dd5c88c9caba13b675eef6d604d8ded8b41dd70facf8b51261d6c6720481e03",
+      "chromium/prototype/sidebar_metal.mm": "d10bcc4e2adc97bac0fcb897558a7992b0cbb06c6a738bdf3087738f74377a5d",
+      "chromium/prototype/sidebar_scene.rs": "c6fb587fec7935dc2f721424e43390c3a14816d5accc24d1e7165b56f8e72201",
+      "chromium/prototype/sidebar_tree.cc": "d72174ac4aac1f29b780a057b1b2773d5958fbd64904ee05dca7ce8d4109229b",
+      "chromium/prototype/sidebar_tree.h": "d59f6e86d9d44dce943e1a82591d6fda73b595fa6678a062ceed158342948e77",
+      "chromium/prototype/workspace_browser_settings.cc": "eef5a07c3857ddbe94f543293c367be7b3ef5fede5d6a1249ce8cd12ba22cf4b",
+      "chromium/prototype/workspace_commands.cc": "8b2b5f8406a9f72a971d68235ff1bf6b940bdf6968aa36bb1005380293554163",
+      "chromium/prototype/workspace_frame_mac.h": "dd234cbb65d673cd58ea4ea3a37d34111890b66b7a6f4b255304c97db6d61021",
+      "chromium/prototype/workspace_frame_mac.mm": "2827f43e3c08069d7de3002a192a5f7c6f912a9745153925326bbeca86db884e",
+      "chromium/prototype/workspace_keyboard_mac.h": "7eccc4c4ad3bbbd4c005f1631fe3d7ea0ebbbcd679fa87c54af14e044dd27479",
+      "chromium/prototype/workspace_keyboard_mac.mm": "cf823ee1905183eaeadb8677900b9def11332b9335be221cbe4e4fbbfcf8a654",
+      "chromium/prototype/workspace_lifecycle.cc": "e4d73972762ce21156a3a022de73f7edb5e9b520d15cfaf517df289128416c1b",
+      "chromium/prototype/workspace_preconnect.cc": "4b049f91fa11fb4ae523051a37a573c505ef0f1197935afaa6cdd22fa38e664c",
+      "chromium/prototype/workspace_preconnect_browsertest.cc": "5243272c30d25c9c39a5f413259227d4ce083294207326415ddf35da2a0a1e09",
+      "chromium/prototype/workspace_shell.cc": "af3b30427a9415bc877e7f6ecc7c01fad0d9b5d12ac4925a7ee9cd54a8418812",
+      "chromium/prototype/workspace_shell.h": "9b1ada42ee50df7518cc7e716f03dc101a2e1fb4794ea056e930ae6e05af407c",
+      "chromium/prototype/workspace_time_machine.cc": "4ae4f979d80cd4ece460be3cea499257d18b95243ce6f0dad0f8d2fbdad15bae",
+      "chromium/prototype/workspace_window.cc": "9a4b7d30c8d0911c477a1d03ce965122b600e2b6a98f98486159bc5e137082f1",
+      "chromium/prototype/workspace_window.h": "f338147929b886ca719807513f463494b5b8601d55c9c664b3c7b8ced2f23189"
+    }
+  },
+  "compiled_browser_test_uuid": "4C4C44D3-5555-3144-A184-CA3E0BFF0E9D",
+  "compiled_app_uuid": "4C4C44B5-5555-3144-A1A1-66571E62A49B",
+  "compiled_framework_uuid": "4C4C44A2-5555-3144-A110-FFEEFE0D5D89",
+  "build_scope": {
+    "frozen_build_tools_commit": "d23f232",
+    "snapshot": {
+      "frozen_base": "a3afc206f742f0a59da6e65d609ddf1df3c7326d",
+      "gn_delta": "No target/dependency change. Rust bridge adds clear_selection for existing SelectState. Explicit native adapters, preference selector allocation/refresh and browser tests changed. Concurrent root network-policy work remains excluded.",
+      "method": "Frozen UI overlay base a3afc206f742f0a59da6e65d609ddf1df3c7326d plus 16 explicit live UI overrides (including sidebar_metal.h/mm), with committed own installer/stager hooks; concurrent network-policy changes excluded. Twenty-one prototype source hashes are matched to committed, live and staged inputs.",
+      "staged_build_gn_sha256": "711f7d01a8d55c4046a9dc297a30f7724d414d7682d8c8b6759397bac28cfdd7",
+      "staged_main_cc_sha256": "61dea81d0e263778c386eb6435429a8d90c4daa51f1dd787563facf7ddffa5d1",
+      "global_component_updater_sha256": "df5664ec70774c448137a2c4c7fa0503de084098932552d9d278f63e19d910ac",
+      "global_component_updater_matches_previous_checkpoint": true,
+      "build_tools_sha256": {
+        "tools/editor_service_patch.py": "73a4e43cfd4edb0dd919c7bec97392f1ceabe063ebc500aa289b1c030f90f9b8",
+        "tools/install_chromium_overlay.py": "a32bc13189118b9d4bbb56a4c8023b19ce94dfeefeb8fd42dc31a7d36de7b5d0",
+        "tools/stage_performance_candidate.py": "2e8482b94a72ac37c50aead85de00253afba581c22daabfce2053f10b7c550ed"
+      }
+    },
+    "native_service_patch": {
+      "chromium_revision": "1a732fcc23b20dd0bcf38f35d72c1fe1ec799d35",
+      "files": {
+        "ui/views/controls/textfield/text_edit_kill_buffer.h": {
+          "sha256": "0bacacfdd8480cb991ab9b041f15a6aee8775e358f901e2774f04c0a9e6e37c0",
+          "pinned_original_sha256": null
+        },
+        "ui/views/controls/textfield/textfield_model.cc": {
+          "sha256": "7884c624f8d5a075891d5b059b16ff686956ca8e9158be0c23444744c47716fd",
+          "pinned_original_sha256": "3f7df6d86aeabe0f2b43e9d3312eb0f07838c55f69cd3a0a05af9a02755eb9a7"
+        },
+        "ui/views/BUILD.gn": {
+          "sha256": "8fc448fd6e0513f8bfe25d479531d1739fe21620d1ec4ec3253ba7dc80a8dd91",
+          "pinned_original_sha256": "fee5303f268675f877649144c07d4dda788a21068bc620f16e73efae5d674c70"
+        }
+      },
+      "only_expected_upstream_edits": true,
+      "model_instance_created_by_service": false,
+      "license": "Generated Chromium header and source hook retain the Chromium BSD-style license; project adapter/tool/model changes use Apache-2.0."
+    },
+    "limit": "Current-main network policy excluded from this frozen UI-lab binary and acceptance."
+  },
+  "checks": {
+    "rust": {
+      "path": "/Users/papaj/Projects/zitter/build/palette-viewport-rust.log",
+      "sha256": "ecb7acce09b2e4b1341ad674a23e0b876ad8832fd2faf8bd7249c15d190c7c9e"
+    },
+    "gn": {
+      "path": "/Users/papaj/Projects/zitter/build/palette-viewport-gn.log",
+      "sha256": "758efd67ba4374faadfea3be2227cf65809c7c37f9e1e304dda137f152db50ed"
+    },
+    "boundaries": {
+      "path": "/Users/papaj/Projects/zitter/build/palette-viewport-boundaries.log",
+      "sha256": "2734f2795db1562441bedd4b056c447b4e3c3cc848e6ff6bf5014befe98c3984"
+    },
+    "noop": {
+      "path": "/Users/papaj/Projects/zitter/build/palette-viewport-noop.log",
+      "sha256": "0e45b11aa4c9cc3cf65105ab14996d4c61b50ced60e5c9281d929e306cd70c17"
+    },
+    "coretext_inherited": {
+      "report": "rust-main-viewport-checkpoint-2026-10-26.json",
+      "source_sha256": {
+        "chromium/prototype/editor_text_layout.h": "35a72c6965037f684ee5f88338f71aa07b41842de4e7417ab6af1df7300c26cb",
+        "chromium/prototype/editor_text_layout_mac.inc": "13f2fddef229486fb25f42fb275cc0d7256bebe6d9599356822ff4b11db81984",
+        "chromium/prototype/editor_text_layout_test.mm": "a0bc7f9d485717b6a303b31952ad35ae8d3b3b021b016cb2b0ee8fc890726844"
+      },
+      "scope": "Unmodified text harness/implementation; 180 SDK font/direction cases plus raster are inherited, not rerun."
+    },
+    "python": {
+      "passed": 68,
+      "path": "/Users/papaj/Projects/zitter/build/palette-viewport-python.log",
+      "sha256": "d27b8056e709cc6c05bcaf36486f923f5fb58ce8323ab5dc1b8bbd2d3b0adbc4"
+    },
+    "committed-python": {
+      "passed": 68,
+      "path": "/Users/papaj/Projects/zitter/build/palette-viewport-committed-python.log",
+      "sha256": "cfa8549bb2d85114c53d48730a3642c412c05aee0c2ed7fd49df5b4cafb3f200"
+    }
+  },
+  "gates": {
+    "focus": {
+      "input": {
+        "source_sha256": {
+          "chromium/prototype/arc_importer.cc": "e3c6aa5d0876a9d1c29305136d225eba78a8d8b95c3267cabf5d8a96d5d9ecf4",
+          "chromium/prototype/arc_importer.h": "b5cb4ccc4871c9ad7af3e578763bc3d8347fc9adc394c05624f1653b342ea2fc",
+          "chromium/prototype/browser_data.h": "243b1d34847d4358041190ed42ee0c0600a21257003b54c056c59f4ef764a747",
+          "chromium/prototype/browser_import_data.cc": "c6d7d1750ab9be441a264691382928417cdea7e0959b2b86cb2ce5bd4fbbb37c",
+          "chromium/prototype/browser_import_data.h": "35039b3013e0754f88be9f021428160eacbbe65de8f61eef2983a65ca0291b7b",
+          "chromium/prototype/browser_import_key_mac.mm": "65d0b914b43a7268a54d309f021a5a6c7ead871dbe68c0fb2581005456af1bd1",
+          "chromium/prototype/browser_preferences.cc": "34fafbb418688d581d581599e57d68a3d572c6fbfa311f1a8525c67340a77c48",
+          "chromium/prototype/browser_preferences.h": "63a931a276df3c05f49e098c6977d99b14112ad20f4df4dc9ab8a513c96f6f68",
+          "chromium/prototype/browser_tools.cc": "62964f8f594011af7a60983890a33027ebacddd7faa3642e77bd59e4a635a62e",
+          "chromium/prototype/browser_tools.h": "ef83716f8bb01fe5b3b770f9136288a39aefedfe4b299e305b1dd1f740b1ad6a",
+          "chromium/prototype/download_panel.cc": "45fc11c2d04990baa9c2c5e3d2b7bac4d9854867145acf12a1dc958b21186c74",
+          "chromium/prototype/download_panel.h": "1db13545467abf4729b4c340323997bed4a0af4bb232670755ff20e0d37eaa50",
+          "chromium/prototype/editor_control.h": "6a7d417696dadff55daaa05581be0cc71a825cfbbc934921fcd3616d872275f3",
+          "chromium/prototype/editor_text_layout.h": "35a72c6965037f684ee5f88338f71aa07b41842de4e7417ab6af1df7300c26cb",
+          "chromium/prototype/editor_text_layout_mac.inc": "13f2fddef229486fb25f42fb275cc0d7256bebe6d9599356822ff4b11db81984",
+          "chromium/prototype/editor_text_layout_test.mm": "a0bc7f9d485717b6a303b31952ad35ae8d3b3b021b016cb2b0ee8fc890726844",
+          "chromium/prototype/link_navigation.cc": "464f61fdd785d5cc3fc8d5551d8dce767f237a7338080d87e101a6a380855f13",
+          "chromium/prototype/link_navigation.h": "77c3df9a92f9038e7794c8c482f916114c84008bb3ddc02dd31a38ba073e9ff8",
+          "chromium/prototype/page_dialogs.cc": "a07e8aa92fc10fda84cc70fbd52a63a13f91716a8d9f929ef125d2cc6333af68",
+          "chromium/prototype/page_dialogs.h": "b778741cb8e1d6c53456b5e864808c2aa22ef5591417d77b1de5d854ddccf10e",
+          "chromium/prototype/page_file_access.cc": "26d797ddc42a17806f949540e628614779836b49c2d4f9d5ea199ff9a94f0a8c",
+          "chromium/prototype/page_file_access.h": "313f54266ef5051c52b654632273a1b7f84c8c09e53930bbecdee3b747d27888",
+          "chromium/prototype/page_file_access_browsertest.cc": "008833c70f884d045277409a5371d006ca1ddd851f0047584b3d0d0fb2b04f81",
+          "chromium/prototype/page_media_access.cc": "49a3f4a21f30a31f6559bf48b82837d72c87ab8148ea870cdd2f113a4b42473d",
+          "chromium/prototype/page_media_access.h": "224414fce67a836f34acffca609593e456ce00cc1d7d02ae003eb87a5484dacc",
+          "chromium/prototype/page_media_access_browsertest.cc": "7eedc13b1453308cb9db00c2445f896c031a0afb2a1dd18b8b0f4d85f8709493",
+          "chromium/prototype/page_services.cc": "701def23690ef2c6e6843b8c4bd16f76d09a066bdade34d9dfc45010283da9c2",
+          "chromium/prototype/page_services.h": "b031e317d2e96c4245ff019e5185c6f103f533b2f9efd3ea98132ddaef333d6d",
+          "chromium/prototype/profile_workspace_browsertest.cc": "b0499780db75f65d9b333c9cc8f0d60901895b08c0829d85bf4a677d8eaaed63",
+          "chromium/prototype/scene_editor.cc": "1750eabbc946da28efc519939e5de6db0c59813212feaae47716fd705bfb1c75",
+          "chromium/prototype/sidebar.metal": "844a08c8a905931a313126a2d3c96f22e25228da1fc149ec6c12e88fc9755cc5",
+          "chromium/prototype/sidebar_editor.rs": "963e52ae3fb70efd48e1d15ca059095ed02812fbaea3ddd1266d39188134c6de",
+          "chromium/prototype/sidebar_layout.cc": "5085a7d108b9f0681fa2d943a19cdda822b502758a12ec5ec23e7ad7b6a7646e",
+          "chromium/prototype/sidebar_layout.h": "b756223bb414c8a7b23459bc75cfbaaa5d96c8e3695eef77a6b8424dd4186754",
+          "chromium/prototype/sidebar_metal.h": "9dd5c88c9caba13b675eef6d604d8ded8b41dd70facf8b51261d6c6720481e03",
+          "chromium/prototype/sidebar_metal.mm": "d10bcc4e2adc97bac0fcb897558a7992b0cbb06c6a738bdf3087738f74377a5d",
+          "chromium/prototype/sidebar_scene.rs": "c6fb587fec7935dc2f721424e43390c3a14816d5accc24d1e7165b56f8e72201",
+          "chromium/prototype/sidebar_tree.cc": "d72174ac4aac1f29b780a057b1b2773d5958fbd64904ee05dca7ce8d4109229b",
+          "chromium/prototype/sidebar_tree.h": "d59f6e86d9d44dce943e1a82591d6fda73b595fa6678a062ceed158342948e77",
+          "chromium/prototype/workspace_browser_settings.cc": "eef5a07c3857ddbe94f543293c367be7b3ef5fede5d6a1249ce8cd12ba22cf4b",
+          "chromium/prototype/workspace_commands.cc": "8b2b5f8406a9f72a971d68235ff1bf6b940bdf6968aa36bb1005380293554163",
+          "chromium/prototype/workspace_frame_mac.h": "dd234cbb65d673cd58ea4ea3a37d34111890b66b7a6f4b255304c97db6d61021",
+          "chromium/prototype/workspace_frame_mac.mm": "2827f43e3c08069d7de3002a192a5f7c6f912a9745153925326bbeca86db884e",
+          "chromium/prototype/workspace_keyboard_mac.h": "7eccc4c4ad3bbbd4c005f1631fe3d7ea0ebbbcd679fa87c54af14e044dd27479",
+          "chromium/prototype/workspace_keyboard_mac.mm": "cf823ee1905183eaeadb8677900b9def11332b9335be221cbe4e4fbbfcf8a654",
+          "chromium/prototype/workspace_lifecycle.cc": "e4d73972762ce21156a3a022de73f7edb5e9b520d15cfaf517df289128416c1b",
+          "chromium/prototype/workspace_preconnect.cc": "4b049f91fa11fb4ae523051a37a573c505ef0f1197935afaa6cdd22fa38e664c",
+          "chromium/prototype/workspace_preconnect_browsertest.cc": "5243272c30d25c9c39a5f413259227d4ce083294207326415ddf35da2a0a1e09",
+          "chromium/prototype/workspace_shell.cc": "af3b30427a9415bc877e7f6ecc7c01fad0d9b5d12ac4925a7ee9cd54a8418812",
+          "chromium/prototype/workspace_shell.h": "9b1ada42ee50df7518cc7e716f03dc101a2e1fb4794ea056e930ae6e05af407c",
+          "chromium/prototype/workspace_time_machine.cc": "4ae4f979d80cd4ece460be3cea499257d18b95243ce6f0dad0f8d2fbdad15bae",
+          "chromium/prototype/workspace_window.cc": "9a4b7d30c8d0911c477a1d03ce965122b600e2b6a98f98486159bc5e137082f1",
+          "chromium/prototype/workspace_window.h": "f338147929b886ca719807513f463494b5b8601d55c9c664b3c7b8ced2f23189"
+        },
+        "binary_uuid": "4C4C44D3-5555-3144-A184-CA3E0BFF0E9D",
+        "filter": "ZitterProfilesBrowserTest.PaletteViewport*:ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal:ZitterMetalSidebarBrowserTest.Palette*:ZitterMetalSidebarBrowserTest.ScrollViewportTrackpadFractionalMomentumAndAxisRouting",
+        "selected_tests": {
+          "metal": [
+            "ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal",
+            "ZitterProfilesBrowserTest.PaletteViewportOwnershipResizeSelectionAndShrink",
+            "ZitterMetalSidebarBrowserTest.ScrollViewportTrackpadFractionalMomentumAndAxisRouting",
+            "ZitterMetalSidebarBrowserTest.PaletteChromeTextErrorsThemeAndFallback",
+            "ZitterMetalSidebarBrowserTest.PaletteScenesAsyncSelectionScrollAndIME"
+          ],
+          "views": [
+            "ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal",
+            "ZitterProfilesBrowserTest.PaletteViewportOwnershipResizeSelectionAndShrink"
+          ]
+        }
+      },
+      "runs": {
+        "metal": {
+          "counts": {
+            "SUCCESS": 5
+          },
+          "results": {
+            "ZitterMetalSidebarBrowserTest.PaletteChromeTextErrorsThemeAndFallback": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.PaletteScenesAsyncSelectionScrollAndIME": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.ScrollViewportTrackpadFractionalMomentumAndAxisRouting": "SUCCESS",
+            "ZitterProfilesBrowserTest.PaletteViewportOwnershipResizeSelectionAndShrink": "SUCCESS",
+            "ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal": "SUCCESS"
+          },
+          "summary": "/Users/papaj/Projects/zitter/build/palette-viewport-focus/metal.json",
+          "summary_sha256": "76cbb0e4a5d8eb1173121bda5a8a41d0ebda65edcf57a09365d2017d75cc3c15",
+          "log": "/Users/papaj/Projects/zitter/build/palette-viewport-focus/metal.log",
+          "log_sha256": "2089b941b4b3af2bff6232f2a7e4bb9884a34b129f8db7c9d05d1bf8f924e519",
+          "command": [
+            "/Users/papaj/Projects/zitter/.chromium/src/out/ZitterOptimized/zitter_prototype_ui_lab",
+            "--gtest_filter=ZitterProfilesBrowserTest.PaletteViewport*:ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal:ZitterMetalSidebarBrowserTest.Palette*:ZitterMetalSidebarBrowserTest.ScrollViewportTrackpadFractionalMomentumAndAxisRouting",
+            "--test-launcher-jobs=1",
+            "--test-launcher-retry-limit=0",
+            "--test-launcher-summary-output=/Users/papaj/Projects/zitter/build/palette-viewport-focus/metal.json",
+            "--disable-component-update",
+            "--zitter-sidebar=rust-metal"
+          ],
+          "environment_overrides": {
+            "MTL_DEBUG_LAYER": "1"
+          }
+        },
+        "views": {
+          "counts": {
+            "SUCCESS": 2
+          },
+          "results": {
+            "ZitterProfilesBrowserTest.PaletteViewportOwnershipResizeSelectionAndShrink": "SUCCESS",
+            "ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal": "SUCCESS"
+          },
+          "summary": "/Users/papaj/Projects/zitter/build/palette-viewport-focus/views.json",
+          "summary_sha256": "7f04cb39835875638350d52dc2a342d85d0afa16b48f8f2ca3d9d9ffd9826fb7",
+          "log": "/Users/papaj/Projects/zitter/build/palette-viewport-focus/views.log",
+          "log_sha256": "8f55e18f209936011b728ad00ffae9d4ce11dc6a0c57089af669e6238bd648c1",
+          "command": [
+            "/Users/papaj/Projects/zitter/.chromium/src/out/ZitterOptimized/zitter_prototype_ui_lab",
+            "--gtest_filter=ZitterProfilesBrowserTest.PaletteViewport*:ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal:ZitterMetalSidebarBrowserTest.Palette*:ZitterMetalSidebarBrowserTest.ScrollViewportTrackpadFractionalMomentumAndAxisRouting-ZitterMetalSidebarBrowserTest.*",
+            "--test-launcher-jobs=1",
+            "--test-launcher-retry-limit=0",
+            "--test-launcher-summary-output=/Users/papaj/Projects/zitter/build/palette-viewport-focus/views.json",
+            "--disable-component-update"
+          ],
+          "environment_overrides": {
+            "MTL_DEBUG_LAYER": null
+          }
+        }
+      }
+    },
+    "critical": {
+      "input": {
+        "source_sha256": {
+          "chromium/prototype/arc_importer.cc": "e3c6aa5d0876a9d1c29305136d225eba78a8d8b95c3267cabf5d8a96d5d9ecf4",
+          "chromium/prototype/arc_importer.h": "b5cb4ccc4871c9ad7af3e578763bc3d8347fc9adc394c05624f1653b342ea2fc",
+          "chromium/prototype/browser_data.h": "243b1d34847d4358041190ed42ee0c0600a21257003b54c056c59f4ef764a747",
+          "chromium/prototype/browser_import_data.cc": "c6d7d1750ab9be441a264691382928417cdea7e0959b2b86cb2ce5bd4fbbb37c",
+          "chromium/prototype/browser_import_data.h": "35039b3013e0754f88be9f021428160eacbbe65de8f61eef2983a65ca0291b7b",
+          "chromium/prototype/browser_import_key_mac.mm": "65d0b914b43a7268a54d309f021a5a6c7ead871dbe68c0fb2581005456af1bd1",
+          "chromium/prototype/browser_preferences.cc": "34fafbb418688d581d581599e57d68a3d572c6fbfa311f1a8525c67340a77c48",
+          "chromium/prototype/browser_preferences.h": "63a931a276df3c05f49e098c6977d99b14112ad20f4df4dc9ab8a513c96f6f68",
+          "chromium/prototype/browser_tools.cc": "62964f8f594011af7a60983890a33027ebacddd7faa3642e77bd59e4a635a62e",
+          "chromium/prototype/browser_tools.h": "ef83716f8bb01fe5b3b770f9136288a39aefedfe4b299e305b1dd1f740b1ad6a",
+          "chromium/prototype/download_panel.cc": "45fc11c2d04990baa9c2c5e3d2b7bac4d9854867145acf12a1dc958b21186c74",
+          "chromium/prototype/download_panel.h": "1db13545467abf4729b4c340323997bed4a0af4bb232670755ff20e0d37eaa50",
+          "chromium/prototype/editor_control.h": "6a7d417696dadff55daaa05581be0cc71a825cfbbc934921fcd3616d872275f3",
+          "chromium/prototype/editor_text_layout.h": "35a72c6965037f684ee5f88338f71aa07b41842de4e7417ab6af1df7300c26cb",
+          "chromium/prototype/editor_text_layout_mac.inc": "13f2fddef229486fb25f42fb275cc0d7256bebe6d9599356822ff4b11db81984",
+          "chromium/prototype/editor_text_layout_test.mm": "a0bc7f9d485717b6a303b31952ad35ae8d3b3b021b016cb2b0ee8fc890726844",
+          "chromium/prototype/link_navigation.cc": "464f61fdd785d5cc3fc8d5551d8dce767f237a7338080d87e101a6a380855f13",
+          "chromium/prototype/link_navigation.h": "77c3df9a92f9038e7794c8c482f916114c84008bb3ddc02dd31a38ba073e9ff8",
+          "chromium/prototype/page_dialogs.cc": "a07e8aa92fc10fda84cc70fbd52a63a13f91716a8d9f929ef125d2cc6333af68",
+          "chromium/prototype/page_dialogs.h": "b778741cb8e1d6c53456b5e864808c2aa22ef5591417d77b1de5d854ddccf10e",
+          "chromium/prototype/page_file_access.cc": "26d797ddc42a17806f949540e628614779836b49c2d4f9d5ea199ff9a94f0a8c",
+          "chromium/prototype/page_file_access.h": "313f54266ef5051c52b654632273a1b7f84c8c09e53930bbecdee3b747d27888",
+          "chromium/prototype/page_file_access_browsertest.cc": "008833c70f884d045277409a5371d006ca1ddd851f0047584b3d0d0fb2b04f81",
+          "chromium/prototype/page_media_access.cc": "49a3f4a21f30a31f6559bf48b82837d72c87ab8148ea870cdd2f113a4b42473d",
+          "chromium/prototype/page_media_access.h": "224414fce67a836f34acffca609593e456ce00cc1d7d02ae003eb87a5484dacc",
+          "chromium/prototype/page_media_access_browsertest.cc": "7eedc13b1453308cb9db00c2445f896c031a0afb2a1dd18b8b0f4d85f8709493",
+          "chromium/prototype/page_services.cc": "701def23690ef2c6e6843b8c4bd16f76d09a066bdade34d9dfc45010283da9c2",
+          "chromium/prototype/page_services.h": "b031e317d2e96c4245ff019e5185c6f103f533b2f9efd3ea98132ddaef333d6d",
+          "chromium/prototype/profile_workspace_browsertest.cc": "b0499780db75f65d9b333c9cc8f0d60901895b08c0829d85bf4a677d8eaaed63",
+          "chromium/prototype/scene_editor.cc": "1750eabbc946da28efc519939e5de6db0c59813212feaae47716fd705bfb1c75",
+          "chromium/prototype/sidebar.metal": "844a08c8a905931a313126a2d3c96f22e25228da1fc149ec6c12e88fc9755cc5",
+          "chromium/prototype/sidebar_editor.rs": "963e52ae3fb70efd48e1d15ca059095ed02812fbaea3ddd1266d39188134c6de",
+          "chromium/prototype/sidebar_layout.cc": "5085a7d108b9f0681fa2d943a19cdda822b502758a12ec5ec23e7ad7b6a7646e",
+          "chromium/prototype/sidebar_layout.h": "b756223bb414c8a7b23459bc75cfbaaa5d96c8e3695eef77a6b8424dd4186754",
+          "chromium/prototype/sidebar_metal.h": "9dd5c88c9caba13b675eef6d604d8ded8b41dd70facf8b51261d6c6720481e03",
+          "chromium/prototype/sidebar_metal.mm": "d10bcc4e2adc97bac0fcb897558a7992b0cbb06c6a738bdf3087738f74377a5d",
+          "chromium/prototype/sidebar_scene.rs": "c6fb587fec7935dc2f721424e43390c3a14816d5accc24d1e7165b56f8e72201",
+          "chromium/prototype/sidebar_tree.cc": "d72174ac4aac1f29b780a057b1b2773d5958fbd64904ee05dca7ce8d4109229b",
+          "chromium/prototype/sidebar_tree.h": "d59f6e86d9d44dce943e1a82591d6fda73b595fa6678a062ceed158342948e77",
+          "chromium/prototype/workspace_browser_settings.cc": "eef5a07c3857ddbe94f543293c367be7b3ef5fede5d6a1249ce8cd12ba22cf4b",
+          "chromium/prototype/workspace_commands.cc": "8b2b5f8406a9f72a971d68235ff1bf6b940bdf6968aa36bb1005380293554163",
+          "chromium/prototype/workspace_frame_mac.h": "dd234cbb65d673cd58ea4ea3a37d34111890b66b7a6f4b255304c97db6d61021",
+          "chromium/prototype/workspace_frame_mac.mm": "2827f43e3c08069d7de3002a192a5f7c6f912a9745153925326bbeca86db884e",
+          "chromium/prototype/workspace_keyboard_mac.h": "7eccc4c4ad3bbbd4c005f1631fe3d7ea0ebbbcd679fa87c54af14e044dd27479",
+          "chromium/prototype/workspace_keyboard_mac.mm": "cf823ee1905183eaeadb8677900b9def11332b9335be221cbe4e4fbbfcf8a654",
+          "chromium/prototype/workspace_lifecycle.cc": "e4d73972762ce21156a3a022de73f7edb5e9b520d15cfaf517df289128416c1b",
+          "chromium/prototype/workspace_preconnect.cc": "4b049f91fa11fb4ae523051a37a573c505ef0f1197935afaa6cdd22fa38e664c",
+          "chromium/prototype/workspace_preconnect_browsertest.cc": "5243272c30d25c9c39a5f413259227d4ce083294207326415ddf35da2a0a1e09",
+          "chromium/prototype/workspace_shell.cc": "af3b30427a9415bc877e7f6ecc7c01fad0d9b5d12ac4925a7ee9cd54a8418812",
+          "chromium/prototype/workspace_shell.h": "9b1ada42ee50df7518cc7e716f03dc101a2e1fb4794ea056e930ae6e05af407c",
+          "chromium/prototype/workspace_time_machine.cc": "4ae4f979d80cd4ece460be3cea499257d18b95243ce6f0dad0f8d2fbdad15bae",
+          "chromium/prototype/workspace_window.cc": "9a4b7d30c8d0911c477a1d03ce965122b600e2b6a98f98486159bc5e137082f1",
+          "chromium/prototype/workspace_window.h": "f338147929b886ca719807513f463494b5b8601d55c9c664b3c7b8ced2f23189"
+        },
+        "binary_uuid": "4C4C44D3-5555-3144-A184-CA3E0BFF0E9D",
+        "filter": "ZitterProfilesBrowserTest.*Palette*:ZitterProfilesBrowserTest.ToolsViewport*:ZitterProfilesBrowserTest.ServiceViewport*:ZitterProfilesBrowserTest.FormViewport*:ZitterProfilesBrowserTest.PreferenceViewport*:ZitterProfilesBrowserTest.MainSidebarViewport*:ZitterProfilesBrowserTest.Address*:ZitterProfilesBrowserTest.NativeKeyboardWorkspaceSwitching:ZitterMetalSidebarBrowserTest.Palette*:ZitterMetalSidebarBrowserTest.ScrollViewportTrackpadFractionalMomentumAndAxisRouting:ZitterMetalSidebarBrowserTest.ViewportProjectionTracksFractionalScrollAndClipping:ZitterMetalSidebarBrowserTest.RustScrollThumbDragTrackKeyboardAndAccessibility",
+        "selected_tests": {
+          "metal": [
+            "ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal",
+            "ZitterProfilesBrowserTest.ServiceViewportMatchesNativeBoundedReflowAndOverflowEdges",
+            "ZitterProfilesBrowserTest.ServiceViewportModalBodyOwnershipRevealAndClose",
+            "ZitterProfilesBrowserTest.MainSidebarViewportOwnershipResizeAndWorkspaceClamp",
+            "ZitterProfilesBrowserTest.PaletteViewportOwnershipResizeSelectionAndShrink",
+            "ZitterProfilesBrowserTest.ToolsViewportWheelKeyboardAccessibleAndReveal",
+            "ZitterProfilesBrowserTest.FormViewportRevealResizeAndReflow",
+            "ZitterProfilesBrowserTest.FormViewportWheelAXAndDraftPreservation",
+            "ZitterProfilesBrowserTest.PreferenceViewportFilterRevealAndResize",
+            "ZitterProfilesBrowserTest.PreferenceViewportWheelAXThemeAndProfileScope",
+            "ZitterProfilesBrowserTest.ChromiumHistoryAndCommandPalette",
+            "ZitterProfilesBrowserTest.NativeKeyboardWorkspaceSwitching",
+            "ZitterProfilesBrowserTest.AddressEditorCocoaCommitCompositionAndNavigation",
+            "ZitterMetalSidebarBrowserTest.ScrollViewportTrackpadFractionalMomentumAndAxisRouting",
+            "ZitterMetalSidebarBrowserTest.RustScrollThumbDragTrackKeyboardAndAccessibility",
+            "ZitterMetalSidebarBrowserTest.PaletteChromeTextErrorsThemeAndFallback",
+            "ZitterMetalSidebarBrowserTest.PaletteScenesAsyncSelectionScrollAndIME",
+            "ZitterMetalSidebarBrowserTest.ViewportProjectionTracksFractionalScrollAndClipping"
+          ],
+          "views": [
+            "ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal",
+            "ZitterProfilesBrowserTest.ServiceViewportMatchesNativeBoundedReflowAndOverflowEdges",
+            "ZitterProfilesBrowserTest.ServiceViewportModalBodyOwnershipRevealAndClose",
+            "ZitterProfilesBrowserTest.MainSidebarViewportOwnershipResizeAndWorkspaceClamp",
+            "ZitterProfilesBrowserTest.PaletteViewportOwnershipResizeSelectionAndShrink",
+            "ZitterProfilesBrowserTest.ToolsViewportWheelKeyboardAccessibleAndReveal",
+            "ZitterProfilesBrowserTest.FormViewportRevealResizeAndReflow",
+            "ZitterProfilesBrowserTest.FormViewportWheelAXAndDraftPreservation",
+            "ZitterProfilesBrowserTest.PreferenceViewportFilterRevealAndResize",
+            "ZitterProfilesBrowserTest.PreferenceViewportWheelAXThemeAndProfileScope",
+            "ZitterProfilesBrowserTest.ChromiumHistoryAndCommandPalette",
+            "ZitterProfilesBrowserTest.NativeKeyboardWorkspaceSwitching",
+            "ZitterProfilesBrowserTest.AddressEditorCocoaCommitCompositionAndNavigation"
+          ]
+        }
+      },
+      "runs": {
+        "metal": {
+          "counts": {
+            "SUCCESS": 18
+          },
+          "results": {
+            "ZitterMetalSidebarBrowserTest.PaletteChromeTextErrorsThemeAndFallback": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.PaletteScenesAsyncSelectionScrollAndIME": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.RustScrollThumbDragTrackKeyboardAndAccessibility": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.ScrollViewportTrackpadFractionalMomentumAndAxisRouting": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.ViewportProjectionTracksFractionalScrollAndClipping": "SUCCESS",
+            "ZitterProfilesBrowserTest.AddressEditorCocoaCommitCompositionAndNavigation": "SUCCESS",
+            "ZitterProfilesBrowserTest.ChromiumHistoryAndCommandPalette": "SUCCESS",
+            "ZitterProfilesBrowserTest.FormViewportRevealResizeAndReflow": "SUCCESS",
+            "ZitterProfilesBrowserTest.FormViewportWheelAXAndDraftPreservation": "SUCCESS",
+            "ZitterProfilesBrowserTest.MainSidebarViewportOwnershipResizeAndWorkspaceClamp": "SUCCESS",
+            "ZitterProfilesBrowserTest.NativeKeyboardWorkspaceSwitching": "SUCCESS",
+            "ZitterProfilesBrowserTest.PaletteViewportOwnershipResizeSelectionAndShrink": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceViewportFilterRevealAndResize": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceViewportWheelAXThemeAndProfileScope": "SUCCESS",
+            "ZitterProfilesBrowserTest.ServiceViewportMatchesNativeBoundedReflowAndOverflowEdges": "SUCCESS",
+            "ZitterProfilesBrowserTest.ServiceViewportModalBodyOwnershipRevealAndClose": "SUCCESS",
+            "ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal": "SUCCESS",
+            "ZitterProfilesBrowserTest.ToolsViewportWheelKeyboardAccessibleAndReveal": "SUCCESS"
+          },
+          "summary": "/Users/papaj/Projects/zitter/build/palette-viewport-critical/metal.json",
+          "summary_sha256": "5f2555565a2271fcd9ed12029a652b4c68abdf38192c894c990da59f1ed0dfcc",
+          "log": "/Users/papaj/Projects/zitter/build/palette-viewport-critical/metal.log",
+          "log_sha256": "6a25c8e7ab1f6ed9e267ff42d6e506dfae2c2a5898a84df94b9d086705c9f88a",
+          "command": [
+            "/Users/papaj/Projects/zitter/.chromium/src/out/ZitterOptimized/zitter_prototype_ui_lab",
+            "--gtest_filter=ZitterProfilesBrowserTest.*Palette*:ZitterProfilesBrowserTest.ToolsViewport*:ZitterProfilesBrowserTest.ServiceViewport*:ZitterProfilesBrowserTest.FormViewport*:ZitterProfilesBrowserTest.PreferenceViewport*:ZitterProfilesBrowserTest.MainSidebarViewport*:ZitterProfilesBrowserTest.Address*:ZitterProfilesBrowserTest.NativeKeyboardWorkspaceSwitching:ZitterMetalSidebarBrowserTest.Palette*:ZitterMetalSidebarBrowserTest.ScrollViewportTrackpadFractionalMomentumAndAxisRouting:ZitterMetalSidebarBrowserTest.ViewportProjectionTracksFractionalScrollAndClipping:ZitterMetalSidebarBrowserTest.RustScrollThumbDragTrackKeyboardAndAccessibility",
+            "--test-launcher-jobs=1",
+            "--test-launcher-retry-limit=0",
+            "--test-launcher-summary-output=/Users/papaj/Projects/zitter/build/palette-viewport-critical/metal.json",
+            "--disable-component-update",
+            "--zitter-sidebar=rust-metal"
+          ],
+          "environment_overrides": {
+            "MTL_DEBUG_LAYER": "1"
+          }
+        },
+        "views": {
+          "counts": {
+            "SUCCESS": 13
+          },
+          "results": {
+            "ZitterProfilesBrowserTest.AddressEditorCocoaCommitCompositionAndNavigation": "SUCCESS",
+            "ZitterProfilesBrowserTest.ChromiumHistoryAndCommandPalette": "SUCCESS",
+            "ZitterProfilesBrowserTest.FormViewportRevealResizeAndReflow": "SUCCESS",
+            "ZitterProfilesBrowserTest.FormViewportWheelAXAndDraftPreservation": "SUCCESS",
+            "ZitterProfilesBrowserTest.MainSidebarViewportOwnershipResizeAndWorkspaceClamp": "SUCCESS",
+            "ZitterProfilesBrowserTest.NativeKeyboardWorkspaceSwitching": "SUCCESS",
+            "ZitterProfilesBrowserTest.PaletteViewportOwnershipResizeSelectionAndShrink": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceViewportFilterRevealAndResize": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceViewportWheelAXThemeAndProfileScope": "SUCCESS",
+            "ZitterProfilesBrowserTest.ServiceViewportMatchesNativeBoundedReflowAndOverflowEdges": "SUCCESS",
+            "ZitterProfilesBrowserTest.ServiceViewportModalBodyOwnershipRevealAndClose": "SUCCESS",
+            "ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal": "SUCCESS",
+            "ZitterProfilesBrowserTest.ToolsViewportWheelKeyboardAccessibleAndReveal": "SUCCESS"
+          },
+          "summary": "/Users/papaj/Projects/zitter/build/palette-viewport-critical/views.json",
+          "summary_sha256": "52e4c24b921c05385054fc67c85fae8937fcff7d7609ea77b12809c916a9aff2",
+          "log": "/Users/papaj/Projects/zitter/build/palette-viewport-critical/views.log",
+          "log_sha256": "0cbe1f6bfb080aae400965e1b741bfc0abb3097285ca57c61bd9a5a7ebd86afe",
+          "command": [
+            "/Users/papaj/Projects/zitter/.chromium/src/out/ZitterOptimized/zitter_prototype_ui_lab",
+            "--gtest_filter=ZitterProfilesBrowserTest.*Palette*:ZitterProfilesBrowserTest.ToolsViewport*:ZitterProfilesBrowserTest.ServiceViewport*:ZitterProfilesBrowserTest.FormViewport*:ZitterProfilesBrowserTest.PreferenceViewport*:ZitterProfilesBrowserTest.MainSidebarViewport*:ZitterProfilesBrowserTest.Address*:ZitterProfilesBrowserTest.NativeKeyboardWorkspaceSwitching:ZitterMetalSidebarBrowserTest.Palette*:ZitterMetalSidebarBrowserTest.ScrollViewportTrackpadFractionalMomentumAndAxisRouting:ZitterMetalSidebarBrowserTest.ViewportProjectionTracksFractionalScrollAndClipping:ZitterMetalSidebarBrowserTest.RustScrollThumbDragTrackKeyboardAndAccessibility-ZitterMetalSidebarBrowserTest.*",
+            "--test-launcher-jobs=1",
+            "--test-launcher-retry-limit=0",
+            "--test-launcher-summary-output=/Users/papaj/Projects/zitter/build/palette-viewport-critical/views.json",
+            "--disable-component-update"
+          ],
+          "environment_overrides": {
+            "MTL_DEBUG_LAYER": null
+          }
+        }
+      }
+    }
+  },
+  "contracts": [
+    "Palette suggestions use Rust viewport extent/allocation, authoritative fractional offset and reveal/clamp; Views retains native ScrollView behavior and its existing contents-preferred-size policy.",
+    "A shared height-range setter preserves dynamic 90..300 result caps across window sizes. Separate overflow-indicator policy retains palette edge indicators without changing its background to a modal dialog color.",
+    "The existing custom Rust-backed scrollbar remains injected for Metal. Native ScrollView synchronization/subscription state is removed for the palette. Scene projection and native row hit testing consume the viewport offset.",
+    "The new shared actual-palette case injects 30 Unicode results and checks ownership, compact/wide result caps, bottom/first-row reveal, keyboard wrap and selected-row visibility, shrinking to one result, no-result hiding and reopening.",
+    "Existing palette tests cover asynchronous results and stable selection, stale profile/query rejection, IME admission, native click after scroll, text/error/theme/fallback and editor lifetime.",
+    "Native measurement, View/node identity, platform event/focus/AX/window/scrollbar/animation adapters remain. No dependency, browser service/store/admission or persistence change."
+  ],
+  "previous_full_checkpoint": {
+    "report": "rust-main-viewport-checkpoint-2026-10-26.json",
+    "source_commit": "9037db7bb4caf3d187145e410224d6c791ca6fcc",
+    "counts": {
+      "metal": {
+        "SUCCESS": 192,
+        "SKIPPED": 6
+      },
+      "views": {
+        "SUCCESS": 145,
+        "SKIPPED": 6
+      }
+    },
+    "scope": "Earlier full pass predates palette viewport migration; it is not a full pass of this source."
+  },
+  "remaining": [
+    "Horizontal footer workspace dots still use native ScrollView.",
+    "Other native control/node/container/menu/window/input ownership and complete functional/manual/release parity remain open.",
+    "Manual hardware trackpad, IME candidates, VoiceOver, global RTL, scale/theme and GPU recovery remain open.",
+    "No controlled CPU/GPU/drawable presentation/input-latency/memory gain established.",
+    "Current-main combined network policy and final shipped dependency/license/notice acceptance remain outside this frozen UI lab."
+  ],
+  "initial_probe": {
+    "input": {
+      "source_sha256": {
+        "chromium/prototype/arc_importer.cc": "e3c6aa5d0876a9d1c29305136d225eba78a8d8b95c3267cabf5d8a96d5d9ecf4",
+        "chromium/prototype/arc_importer.h": "b5cb4ccc4871c9ad7af3e578763bc3d8347fc9adc394c05624f1653b342ea2fc",
+        "chromium/prototype/browser_data.h": "243b1d34847d4358041190ed42ee0c0600a21257003b54c056c59f4ef764a747",
+        "chromium/prototype/browser_import_data.cc": "c6d7d1750ab9be441a264691382928417cdea7e0959b2b86cb2ce5bd4fbbb37c",
+        "chromium/prototype/browser_import_data.h": "35039b3013e0754f88be9f021428160eacbbe65de8f61eef2983a65ca0291b7b",
+        "chromium/prototype/browser_import_key_mac.mm": "65d0b914b43a7268a54d309f021a5a6c7ead871dbe68c0fb2581005456af1bd1",
+        "chromium/prototype/browser_preferences.cc": "34fafbb418688d581d581599e57d68a3d572c6fbfa311f1a8525c67340a77c48",
+        "chromium/prototype/browser_preferences.h": "63a931a276df3c05f49e098c6977d99b14112ad20f4df4dc9ab8a513c96f6f68",
+        "chromium/prototype/browser_tools.cc": "62964f8f594011af7a60983890a33027ebacddd7faa3642e77bd59e4a635a62e",
+        "chromium/prototype/browser_tools.h": "ef83716f8bb01fe5b3b770f9136288a39aefedfe4b299e305b1dd1f740b1ad6a",
+        "chromium/prototype/download_panel.cc": "45fc11c2d04990baa9c2c5e3d2b7bac4d9854867145acf12a1dc958b21186c74",
+        "chromium/prototype/download_panel.h": "1db13545467abf4729b4c340323997bed4a0af4bb232670755ff20e0d37eaa50",
+        "chromium/prototype/editor_control.h": "6a7d417696dadff55daaa05581be0cc71a825cfbbc934921fcd3616d872275f3",
+        "chromium/prototype/editor_text_layout.h": "35a72c6965037f684ee5f88338f71aa07b41842de4e7417ab6af1df7300c26cb",
+        "chromium/prototype/editor_text_layout_mac.inc": "13f2fddef229486fb25f42fb275cc0d7256bebe6d9599356822ff4b11db81984",
+        "chromium/prototype/editor_text_layout_test.mm": "a0bc7f9d485717b6a303b31952ad35ae8d3b3b021b016cb2b0ee8fc890726844",
+        "chromium/prototype/link_navigation.cc": "464f61fdd785d5cc3fc8d5551d8dce767f237a7338080d87e101a6a380855f13",
+        "chromium/prototype/link_navigation.h": "77c3df9a92f9038e7794c8c482f916114c84008bb3ddc02dd31a38ba073e9ff8",
+        "chromium/prototype/page_dialogs.cc": "a07e8aa92fc10fda84cc70fbd52a63a13f91716a8d9f929ef125d2cc6333af68",
+        "chromium/prototype/page_dialogs.h": "b778741cb8e1d6c53456b5e864808c2aa22ef5591417d77b1de5d854ddccf10e",
+        "chromium/prototype/page_file_access.cc": "26d797ddc42a17806f949540e628614779836b49c2d4f9d5ea199ff9a94f0a8c",
+        "chromium/prototype/page_file_access.h": "313f54266ef5051c52b654632273a1b7f84c8c09e53930bbecdee3b747d27888",
+        "chromium/prototype/page_file_access_browsertest.cc": "008833c70f884d045277409a5371d006ca1ddd851f0047584b3d0d0fb2b04f81",
+        "chromium/prototype/page_media_access.cc": "49a3f4a21f30a31f6559bf48b82837d72c87ab8148ea870cdd2f113a4b42473d",
+        "chromium/prototype/page_media_access.h": "224414fce67a836f34acffca609593e456ce00cc1d7d02ae003eb87a5484dacc",
+        "chromium/prototype/page_media_access_browsertest.cc": "7eedc13b1453308cb9db00c2445f896c031a0afb2a1dd18b8b0f4d85f8709493",
+        "chromium/prototype/page_services.cc": "701def23690ef2c6e6843b8c4bd16f76d09a066bdade34d9dfc45010283da9c2",
+        "chromium/prototype/page_services.h": "b031e317d2e96c4245ff019e5185c6f103f533b2f9efd3ea98132ddaef333d6d",
+        "chromium/prototype/profile_workspace_browsertest.cc": "715aba97bf854188f88d4e753c891db48036456d969b2f1c06c13eefeb989040",
+        "chromium/prototype/scene_editor.cc": "1750eabbc946da28efc519939e5de6db0c59813212feaae47716fd705bfb1c75",
+        "chromium/prototype/sidebar.metal": "844a08c8a905931a313126a2d3c96f22e25228da1fc149ec6c12e88fc9755cc5",
+        "chromium/prototype/sidebar_editor.rs": "963e52ae3fb70efd48e1d15ca059095ed02812fbaea3ddd1266d39188134c6de",
+        "chromium/prototype/sidebar_layout.cc": "5085a7d108b9f0681fa2d943a19cdda822b502758a12ec5ec23e7ad7b6a7646e",
+        "chromium/prototype/sidebar_layout.h": "b756223bb414c8a7b23459bc75cfbaaa5d96c8e3695eef77a6b8424dd4186754",
+        "chromium/prototype/sidebar_metal.h": "9dd5c88c9caba13b675eef6d604d8ded8b41dd70facf8b51261d6c6720481e03",
+        "chromium/prototype/sidebar_metal.mm": "d10bcc4e2adc97bac0fcb897558a7992b0cbb06c6a738bdf3087738f74377a5d",
+        "chromium/prototype/sidebar_scene.rs": "c6fb587fec7935dc2f721424e43390c3a14816d5accc24d1e7165b56f8e72201",
+        "chromium/prototype/sidebar_tree.cc": "d72174ac4aac1f29b780a057b1b2773d5958fbd64904ee05dca7ce8d4109229b",
+        "chromium/prototype/sidebar_tree.h": "d59f6e86d9d44dce943e1a82591d6fda73b595fa6678a062ceed158342948e77",
+        "chromium/prototype/workspace_browser_settings.cc": "eef5a07c3857ddbe94f543293c367be7b3ef5fede5d6a1249ce8cd12ba22cf4b",
+        "chromium/prototype/workspace_commands.cc": "8b2b5f8406a9f72a971d68235ff1bf6b940bdf6968aa36bb1005380293554163",
+        "chromium/prototype/workspace_frame_mac.h": "dd234cbb65d673cd58ea4ea3a37d34111890b66b7a6f4b255304c97db6d61021",
+        "chromium/prototype/workspace_frame_mac.mm": "2827f43e3c08069d7de3002a192a5f7c6f912a9745153925326bbeca86db884e",
+        "chromium/prototype/workspace_keyboard_mac.h": "7eccc4c4ad3bbbd4c005f1631fe3d7ea0ebbbcd679fa87c54af14e044dd27479",
+        "chromium/prototype/workspace_keyboard_mac.mm": "cf823ee1905183eaeadb8677900b9def11332b9335be221cbe4e4fbbfcf8a654",
+        "chromium/prototype/workspace_lifecycle.cc": "e4d73972762ce21156a3a022de73f7edb5e9b520d15cfaf517df289128416c1b",
+        "chromium/prototype/workspace_preconnect.cc": "4b049f91fa11fb4ae523051a37a573c505ef0f1197935afaa6cdd22fa38e664c",
+        "chromium/prototype/workspace_preconnect_browsertest.cc": "5243272c30d25c9c39a5f413259227d4ce083294207326415ddf35da2a0a1e09",
+        "chromium/prototype/workspace_shell.cc": "af3b30427a9415bc877e7f6ecc7c01fad0d9b5d12ac4925a7ee9cd54a8418812",
+        "chromium/prototype/workspace_shell.h": "9b1ada42ee50df7518cc7e716f03dc101a2e1fb4794ea056e930ae6e05af407c",
+        "chromium/prototype/workspace_time_machine.cc": "4ae4f979d80cd4ece460be3cea499257d18b95243ce6f0dad0f8d2fbdad15bae",
+        "chromium/prototype/workspace_window.cc": "9a4b7d30c8d0911c477a1d03ce965122b600e2b6a98f98486159bc5e137082f1",
+        "chromium/prototype/workspace_window.h": "f338147929b886ca719807513f463494b5b8601d55c9c664b3c7b8ced2f23189"
+      },
+      "binary_uuid": "4C4C4442-5555-3144-A18D-E849C2F6092B",
+      "filter": "ZitterProfilesBrowserTest.PaletteViewport*:ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal:ZitterMetalSidebarBrowserTest.Palette*:ZitterMetalSidebarBrowserTest.ScrollViewportTrackpadFractionalMomentumAndAxisRouting",
+      "selected_tests": {
+        "metal": [
+          "ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal",
+          "ZitterProfilesBrowserTest.PaletteViewportOwnershipResizeSelectionAndShrink",
+          "ZitterMetalSidebarBrowserTest.ScrollViewportTrackpadFractionalMomentumAndAxisRouting",
+          "ZitterMetalSidebarBrowserTest.PaletteChromeTextErrorsThemeAndFallback",
+          "ZitterMetalSidebarBrowserTest.PaletteScenesAsyncSelectionScrollAndIME"
+        ],
+        "views": [
+          "ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal",
+          "ZitterProfilesBrowserTest.PaletteViewportOwnershipResizeSelectionAndShrink"
+        ]
+      }
+    },
+    "source": {
+      "base_commit": "496f039eae691fb5449cbbe7bea2af58c4ea7ab7",
+      "modified_sha256": {
+        "chromium/prototype/sidebar_layout.cc": "5085a7d108b9f0681fa2d943a19cdda822b502758a12ec5ec23e7ad7b6a7646e",
+        "chromium/prototype/sidebar_layout.h": "b756223bb414c8a7b23459bc75cfbaaa5d96c8e3695eef77a6b8424dd4186754",
+        "chromium/prototype/workspace_shell.cc": "af3b30427a9415bc877e7f6ecc7c01fad0d9b5d12ac4925a7ee9cd54a8418812",
+        "chromium/prototype/workspace_shell.h": "9b1ada42ee50df7518cc7e716f03dc101a2e1fb4794ea056e930ae6e05af407c",
+        "chromium/prototype/profile_workspace_browsertest.cc": "715aba97bf854188f88d4e753c891db48036456d969b2f1c06c13eefeb989040"
+      }
+    },
+    "source_directory": "/Users/papaj/Projects/zitter/build/palette-viewport-first-probe-sources",
+    "runs": {
+      "metal": {
+        "counts": {
+          "SUCCESS": 4,
+          "FAILURE": 1
+        },
+        "results": {
+          "ZitterMetalSidebarBrowserTest.PaletteChromeTextErrorsThemeAndFallback": "SUCCESS",
+          "ZitterMetalSidebarBrowserTest.PaletteScenesAsyncSelectionScrollAndIME": "SUCCESS",
+          "ZitterMetalSidebarBrowserTest.ScrollViewportTrackpadFractionalMomentumAndAxisRouting": "SUCCESS",
+          "ZitterProfilesBrowserTest.PaletteViewportOwnershipResizeSelectionAndShrink": "FAILURE",
+          "ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal": "SUCCESS"
+        },
+        "summary": "/Users/papaj/Projects/zitter/build/palette-viewport-first-probe/metal.json",
+        "summary_sha256": "0f825c2782d756625a1336e46fa1e7f835ff959cf97a6159ee4bf839a99ca7d5",
+        "log": "/Users/papaj/Projects/zitter/build/palette-viewport-first-probe/metal.log",
+        "log_sha256": "1ed0675df74ee933daae5b2590a51b59978e4f458dd843ed1e25b1e00fb5daa5"
+      },
+      "views": {
+        "counts": {
+          "FAILURE": 1,
+          "SUCCESS": 1
+        },
+        "results": {
+          "ZitterProfilesBrowserTest.PaletteViewportOwnershipResizeSelectionAndShrink": "FAILURE",
+          "ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal": "SUCCESS"
+        },
+        "summary": "/Users/papaj/Projects/zitter/build/palette-viewport-first-probe/views.json",
+        "summary_sha256": "0798e84dcec758f0802c3ce43b2f19a2fabf2c669b8f0605b24094cf99cb0443",
+        "log": "/Users/papaj/Projects/zitter/build/palette-viewport-first-probe/views.log",
+        "log_sha256": "78bbc1444ad7847c7d15625d7522d10dee2052fa7aa5e2478fea39fe1ee058e1"
+      }
+    },
+    "note": "The new actual-palette fixture timed out in RunUntil(offset > 0) after keyboard wrap in both backends. The first reading of the TestFuture timeout as a presentation wait was incorrect: RunUntil itself uses TestFuture. A subsequent explicit native focus change did not resolve it. The failing logs/source hashes are retained."
+  },
+  "second_probe": {
+    "input": {
+      "source_sha256": {
+        "chromium/prototype/arc_importer.cc": "e3c6aa5d0876a9d1c29305136d225eba78a8d8b95c3267cabf5d8a96d5d9ecf4",
+        "chromium/prototype/arc_importer.h": "b5cb4ccc4871c9ad7af3e578763bc3d8347fc9adc394c05624f1653b342ea2fc",
+        "chromium/prototype/browser_data.h": "243b1d34847d4358041190ed42ee0c0600a21257003b54c056c59f4ef764a747",
+        "chromium/prototype/browser_import_data.cc": "c6d7d1750ab9be441a264691382928417cdea7e0959b2b86cb2ce5bd4fbbb37c",
+        "chromium/prototype/browser_import_data.h": "35039b3013e0754f88be9f021428160eacbbe65de8f61eef2983a65ca0291b7b",
+        "chromium/prototype/browser_import_key_mac.mm": "65d0b914b43a7268a54d309f021a5a6c7ead871dbe68c0fb2581005456af1bd1",
+        "chromium/prototype/browser_preferences.cc": "34fafbb418688d581d581599e57d68a3d572c6fbfa311f1a8525c67340a77c48",
+        "chromium/prototype/browser_preferences.h": "63a931a276df3c05f49e098c6977d99b14112ad20f4df4dc9ab8a513c96f6f68",
+        "chromium/prototype/browser_tools.cc": "62964f8f594011af7a60983890a33027ebacddd7faa3642e77bd59e4a635a62e",
+        "chromium/prototype/browser_tools.h": "ef83716f8bb01fe5b3b770f9136288a39aefedfe4b299e305b1dd1f740b1ad6a",
+        "chromium/prototype/download_panel.cc": "45fc11c2d04990baa9c2c5e3d2b7bac4d9854867145acf12a1dc958b21186c74",
+        "chromium/prototype/download_panel.h": "1db13545467abf4729b4c340323997bed4a0af4bb232670755ff20e0d37eaa50",
+        "chromium/prototype/editor_control.h": "6a7d417696dadff55daaa05581be0cc71a825cfbbc934921fcd3616d872275f3",
+        "chromium/prototype/editor_text_layout.h": "35a72c6965037f684ee5f88338f71aa07b41842de4e7417ab6af1df7300c26cb",
+        "chromium/prototype/editor_text_layout_mac.inc": "13f2fddef229486fb25f42fb275cc0d7256bebe6d9599356822ff4b11db81984",
+        "chromium/prototype/editor_text_layout_test.mm": "a0bc7f9d485717b6a303b31952ad35ae8d3b3b021b016cb2b0ee8fc890726844",
+        "chromium/prototype/link_navigation.cc": "464f61fdd785d5cc3fc8d5551d8dce767f237a7338080d87e101a6a380855f13",
+        "chromium/prototype/link_navigation.h": "77c3df9a92f9038e7794c8c482f916114c84008bb3ddc02dd31a38ba073e9ff8",
+        "chromium/prototype/page_dialogs.cc": "a07e8aa92fc10fda84cc70fbd52a63a13f91716a8d9f929ef125d2cc6333af68",
+        "chromium/prototype/page_dialogs.h": "b778741cb8e1d6c53456b5e864808c2aa22ef5591417d77b1de5d854ddccf10e",
+        "chromium/prototype/page_file_access.cc": "26d797ddc42a17806f949540e628614779836b49c2d4f9d5ea199ff9a94f0a8c",
+        "chromium/prototype/page_file_access.h": "313f54266ef5051c52b654632273a1b7f84c8c09e53930bbecdee3b747d27888",
+        "chromium/prototype/page_file_access_browsertest.cc": "008833c70f884d045277409a5371d006ca1ddd851f0047584b3d0d0fb2b04f81",
+        "chromium/prototype/page_media_access.cc": "49a3f4a21f30a31f6559bf48b82837d72c87ab8148ea870cdd2f113a4b42473d",
+        "chromium/prototype/page_media_access.h": "224414fce67a836f34acffca609593e456ce00cc1d7d02ae003eb87a5484dacc",
+        "chromium/prototype/page_media_access_browsertest.cc": "7eedc13b1453308cb9db00c2445f896c031a0afb2a1dd18b8b0f4d85f8709493",
+        "chromium/prototype/page_services.cc": "701def23690ef2c6e6843b8c4bd16f76d09a066bdade34d9dfc45010283da9c2",
+        "chromium/prototype/page_services.h": "b031e317d2e96c4245ff019e5185c6f103f533b2f9efd3ea98132ddaef333d6d",
+        "chromium/prototype/profile_workspace_browsertest.cc": "0fb8cbb8b1a02f90901b87664cc94407b1c49f8838df12546d5a94763f498dd7",
+        "chromium/prototype/scene_editor.cc": "1750eabbc946da28efc519939e5de6db0c59813212feaae47716fd705bfb1c75",
+        "chromium/prototype/sidebar.metal": "844a08c8a905931a313126a2d3c96f22e25228da1fc149ec6c12e88fc9755cc5",
+        "chromium/prototype/sidebar_editor.rs": "963e52ae3fb70efd48e1d15ca059095ed02812fbaea3ddd1266d39188134c6de",
+        "chromium/prototype/sidebar_layout.cc": "5085a7d108b9f0681fa2d943a19cdda822b502758a12ec5ec23e7ad7b6a7646e",
+        "chromium/prototype/sidebar_layout.h": "b756223bb414c8a7b23459bc75cfbaaa5d96c8e3695eef77a6b8424dd4186754",
+        "chromium/prototype/sidebar_metal.h": "9dd5c88c9caba13b675eef6d604d8ded8b41dd70facf8b51261d6c6720481e03",
+        "chromium/prototype/sidebar_metal.mm": "d10bcc4e2adc97bac0fcb897558a7992b0cbb06c6a738bdf3087738f74377a5d",
+        "chromium/prototype/sidebar_scene.rs": "c6fb587fec7935dc2f721424e43390c3a14816d5accc24d1e7165b56f8e72201",
+        "chromium/prototype/sidebar_tree.cc": "d72174ac4aac1f29b780a057b1b2773d5958fbd64904ee05dca7ce8d4109229b",
+        "chromium/prototype/sidebar_tree.h": "d59f6e86d9d44dce943e1a82591d6fda73b595fa6678a062ceed158342948e77",
+        "chromium/prototype/workspace_browser_settings.cc": "eef5a07c3857ddbe94f543293c367be7b3ef5fede5d6a1249ce8cd12ba22cf4b",
+        "chromium/prototype/workspace_commands.cc": "8b2b5f8406a9f72a971d68235ff1bf6b940bdf6968aa36bb1005380293554163",
+        "chromium/prototype/workspace_frame_mac.h": "dd234cbb65d673cd58ea4ea3a37d34111890b66b7a6f4b255304c97db6d61021",
+        "chromium/prototype/workspace_frame_mac.mm": "2827f43e3c08069d7de3002a192a5f7c6f912a9745153925326bbeca86db884e",
+        "chromium/prototype/workspace_keyboard_mac.h": "7eccc4c4ad3bbbd4c005f1631fe3d7ea0ebbbcd679fa87c54af14e044dd27479",
+        "chromium/prototype/workspace_keyboard_mac.mm": "cf823ee1905183eaeadb8677900b9def11332b9335be221cbe4e4fbbfcf8a654",
+        "chromium/prototype/workspace_lifecycle.cc": "e4d73972762ce21156a3a022de73f7edb5e9b520d15cfaf517df289128416c1b",
+        "chromium/prototype/workspace_preconnect.cc": "4b049f91fa11fb4ae523051a37a573c505ef0f1197935afaa6cdd22fa38e664c",
+        "chromium/prototype/workspace_preconnect_browsertest.cc": "5243272c30d25c9c39a5f413259227d4ce083294207326415ddf35da2a0a1e09",
+        "chromium/prototype/workspace_shell.cc": "af3b30427a9415bc877e7f6ecc7c01fad0d9b5d12ac4925a7ee9cd54a8418812",
+        "chromium/prototype/workspace_shell.h": "9b1ada42ee50df7518cc7e716f03dc101a2e1fb4794ea056e930ae6e05af407c",
+        "chromium/prototype/workspace_time_machine.cc": "4ae4f979d80cd4ece460be3cea499257d18b95243ce6f0dad0f8d2fbdad15bae",
+        "chromium/prototype/workspace_window.cc": "9a4b7d30c8d0911c477a1d03ce965122b600e2b6a98f98486159bc5e137082f1",
+        "chromium/prototype/workspace_window.h": "f338147929b886ca719807513f463494b5b8601d55c9c664b3c7b8ced2f23189"
+      },
+      "binary_uuid": "4C4C44D3-5555-3144-A1B4-580CAF567AEB",
+      "filter": "ZitterProfilesBrowserTest.PaletteViewport*:ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal:ZitterMetalSidebarBrowserTest.Palette*:ZitterMetalSidebarBrowserTest.ScrollViewportTrackpadFractionalMomentumAndAxisRouting",
+      "selected_tests": {
+        "metal": [
+          "ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal",
+          "ZitterProfilesBrowserTest.PaletteViewportOwnershipResizeSelectionAndShrink",
+          "ZitterMetalSidebarBrowserTest.ScrollViewportTrackpadFractionalMomentumAndAxisRouting",
+          "ZitterMetalSidebarBrowserTest.PaletteChromeTextErrorsThemeAndFallback",
+          "ZitterMetalSidebarBrowserTest.PaletteScenesAsyncSelectionScrollAndIME"
+        ],
+        "views": [
+          "ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal",
+          "ZitterProfilesBrowserTest.PaletteViewportOwnershipResizeSelectionAndShrink"
+        ]
+      }
+    },
+    "source": {
+      "base_commit": "496f039eae691fb5449cbbe7bea2af58c4ea7ab7",
+      "modified_sha256": {
+        "chromium/prototype/sidebar_layout.cc": "5085a7d108b9f0681fa2d943a19cdda822b502758a12ec5ec23e7ad7b6a7646e",
+        "chromium/prototype/sidebar_layout.h": "b756223bb414c8a7b23459bc75cfbaaa5d96c8e3695eef77a6b8424dd4186754",
+        "chromium/prototype/workspace_shell.cc": "af3b30427a9415bc877e7f6ecc7c01fad0d9b5d12ac4925a7ee9cd54a8418812",
+        "chromium/prototype/workspace_shell.h": "9b1ada42ee50df7518cc7e716f03dc101a2e1fb4794ea056e930ae6e05af407c",
+        "chromium/prototype/profile_workspace_browsertest.cc": "0fb8cbb8b1a02f90901b87664cc94407b1c49f8838df12546d5a94763f498dd7"
+      }
+    },
+    "source_directory": "/Users/papaj/Projects/zitter/build/palette-viewport-second-probe-sources",
+    "runs": {
+      "metal": {
+        "counts": {
+          "SUCCESS": 4,
+          "FAILURE": 1
+        },
+        "results": {
+          "ZitterMetalSidebarBrowserTest.PaletteChromeTextErrorsThemeAndFallback": "SUCCESS",
+          "ZitterMetalSidebarBrowserTest.PaletteScenesAsyncSelectionScrollAndIME": "SUCCESS",
+          "ZitterMetalSidebarBrowserTest.ScrollViewportTrackpadFractionalMomentumAndAxisRouting": "SUCCESS",
+          "ZitterProfilesBrowserTest.PaletteViewportOwnershipResizeSelectionAndShrink": "FAILURE",
+          "ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal": "SUCCESS"
+        },
+        "summary": "/Users/papaj/Projects/zitter/build/palette-viewport-second-probe/metal.json",
+        "summary_sha256": "406bcb6068602a210ff5677b16f1333f76e7f636d33ba413b3b25f6f6bfbb9d6",
+        "log": "/Users/papaj/Projects/zitter/build/palette-viewport-second-probe/metal.log",
+        "log_sha256": "3310501567cdd22086a53b19c30b44cea55012b1c2b5817c1e3e6abf02f4c268"
+      },
+      "views": {
+        "counts": {
+          "FAILURE": 1,
+          "SUCCESS": 1
+        },
+        "results": {
+          "ZitterProfilesBrowserTest.PaletteViewportOwnershipResizeSelectionAndShrink": "FAILURE",
+          "ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal": "SUCCESS"
+        },
+        "summary": "/Users/papaj/Projects/zitter/build/palette-viewport-second-probe/views.json",
+        "summary_sha256": "31c23a67b51e409484f62c389da3b5499b37a603d749a2a51757585333597aff",
+        "log": "/Users/papaj/Projects/zitter/build/palette-viewport-second-probe/views.log",
+        "log_sha256": "a106a1204f83ef76aefa8fe501375937b47cae3a30ce195d1f9120cba92f0423"
+      }
+    },
+    "sample": {
+      "path": "/Users/papaj/Projects/zitter/build/palette-viewport-second-probe-sample.txt",
+      "sha256": "ff8826223d15c200bd969d26d45f324460a54d6a963a026b5b1baacf852e4d97"
+    },
+    "note": "Explicit native-window focus did not resolve the initial failure; both probes reached keyboard selection and timed out in RunUntil(offset > 0). Inspection found pending 120ms debounced search could replace the injected long list. The final fixture waits for a real titled-tab search sentinel, drains history, then injects results and asserts their count. No production behavior changed for these fixture corrections."
+  },
+  "third_probe": {
+    "input": {
+      "source_sha256": {
+        "chromium/prototype/arc_importer.cc": "e3c6aa5d0876a9d1c29305136d225eba78a8d8b95c3267cabf5d8a96d5d9ecf4",
+        "chromium/prototype/arc_importer.h": "b5cb4ccc4871c9ad7af3e578763bc3d8347fc9adc394c05624f1653b342ea2fc",
+        "chromium/prototype/browser_data.h": "243b1d34847d4358041190ed42ee0c0600a21257003b54c056c59f4ef764a747",
+        "chromium/prototype/browser_import_data.cc": "c6d7d1750ab9be441a264691382928417cdea7e0959b2b86cb2ce5bd4fbbb37c",
+        "chromium/prototype/browser_import_data.h": "35039b3013e0754f88be9f021428160eacbbe65de8f61eef2983a65ca0291b7b",
+        "chromium/prototype/browser_import_key_mac.mm": "65d0b914b43a7268a54d309f021a5a6c7ead871dbe68c0fb2581005456af1bd1",
+        "chromium/prototype/browser_preferences.cc": "34fafbb418688d581d581599e57d68a3d572c6fbfa311f1a8525c67340a77c48",
+        "chromium/prototype/browser_preferences.h": "63a931a276df3c05f49e098c6977d99b14112ad20f4df4dc9ab8a513c96f6f68",
+        "chromium/prototype/browser_tools.cc": "62964f8f594011af7a60983890a33027ebacddd7faa3642e77bd59e4a635a62e",
+        "chromium/prototype/browser_tools.h": "ef83716f8bb01fe5b3b770f9136288a39aefedfe4b299e305b1dd1f740b1ad6a",
+        "chromium/prototype/download_panel.cc": "45fc11c2d04990baa9c2c5e3d2b7bac4d9854867145acf12a1dc958b21186c74",
+        "chromium/prototype/download_panel.h": "1db13545467abf4729b4c340323997bed4a0af4bb232670755ff20e0d37eaa50",
+        "chromium/prototype/editor_control.h": "6a7d417696dadff55daaa05581be0cc71a825cfbbc934921fcd3616d872275f3",
+        "chromium/prototype/editor_text_layout.h": "35a72c6965037f684ee5f88338f71aa07b41842de4e7417ab6af1df7300c26cb",
+        "chromium/prototype/editor_text_layout_mac.inc": "13f2fddef229486fb25f42fb275cc0d7256bebe6d9599356822ff4b11db81984",
+        "chromium/prototype/editor_text_layout_test.mm": "a0bc7f9d485717b6a303b31952ad35ae8d3b3b021b016cb2b0ee8fc890726844",
+        "chromium/prototype/link_navigation.cc": "464f61fdd785d5cc3fc8d5551d8dce767f237a7338080d87e101a6a380855f13",
+        "chromium/prototype/link_navigation.h": "77c3df9a92f9038e7794c8c482f916114c84008bb3ddc02dd31a38ba073e9ff8",
+        "chromium/prototype/page_dialogs.cc": "a07e8aa92fc10fda84cc70fbd52a63a13f91716a8d9f929ef125d2cc6333af68",
+        "chromium/prototype/page_dialogs.h": "b778741cb8e1d6c53456b5e864808c2aa22ef5591417d77b1de5d854ddccf10e",
+        "chromium/prototype/page_file_access.cc": "26d797ddc42a17806f949540e628614779836b49c2d4f9d5ea199ff9a94f0a8c",
+        "chromium/prototype/page_file_access.h": "313f54266ef5051c52b654632273a1b7f84c8c09e53930bbecdee3b747d27888",
+        "chromium/prototype/page_file_access_browsertest.cc": "008833c70f884d045277409a5371d006ca1ddd851f0047584b3d0d0fb2b04f81",
+        "chromium/prototype/page_media_access.cc": "49a3f4a21f30a31f6559bf48b82837d72c87ab8148ea870cdd2f113a4b42473d",
+        "chromium/prototype/page_media_access.h": "224414fce67a836f34acffca609593e456ce00cc1d7d02ae003eb87a5484dacc",
+        "chromium/prototype/page_media_access_browsertest.cc": "7eedc13b1453308cb9db00c2445f896c031a0afb2a1dd18b8b0f4d85f8709493",
+        "chromium/prototype/page_services.cc": "701def23690ef2c6e6843b8c4bd16f76d09a066bdade34d9dfc45010283da9c2",
+        "chromium/prototype/page_services.h": "b031e317d2e96c4245ff019e5185c6f103f533b2f9efd3ea98132ddaef333d6d",
+        "chromium/prototype/profile_workspace_browsertest.cc": "bce7c51f655c98439af45dba61427ce468e156cc31d3dc46327c1324de352552",
+        "chromium/prototype/scene_editor.cc": "1750eabbc946da28efc519939e5de6db0c59813212feaae47716fd705bfb1c75",
+        "chromium/prototype/sidebar.metal": "844a08c8a905931a313126a2d3c96f22e25228da1fc149ec6c12e88fc9755cc5",
+        "chromium/prototype/sidebar_editor.rs": "963e52ae3fb70efd48e1d15ca059095ed02812fbaea3ddd1266d39188134c6de",
+        "chromium/prototype/sidebar_layout.cc": "5085a7d108b9f0681fa2d943a19cdda822b502758a12ec5ec23e7ad7b6a7646e",
+        "chromium/prototype/sidebar_layout.h": "b756223bb414c8a7b23459bc75cfbaaa5d96c8e3695eef77a6b8424dd4186754",
+        "chromium/prototype/sidebar_metal.h": "9dd5c88c9caba13b675eef6d604d8ded8b41dd70facf8b51261d6c6720481e03",
+        "chromium/prototype/sidebar_metal.mm": "d10bcc4e2adc97bac0fcb897558a7992b0cbb06c6a738bdf3087738f74377a5d",
+        "chromium/prototype/sidebar_scene.rs": "c6fb587fec7935dc2f721424e43390c3a14816d5accc24d1e7165b56f8e72201",
+        "chromium/prototype/sidebar_tree.cc": "d72174ac4aac1f29b780a057b1b2773d5958fbd64904ee05dca7ce8d4109229b",
+        "chromium/prototype/sidebar_tree.h": "d59f6e86d9d44dce943e1a82591d6fda73b595fa6678a062ceed158342948e77",
+        "chromium/prototype/workspace_browser_settings.cc": "eef5a07c3857ddbe94f543293c367be7b3ef5fede5d6a1249ce8cd12ba22cf4b",
+        "chromium/prototype/workspace_commands.cc": "8b2b5f8406a9f72a971d68235ff1bf6b940bdf6968aa36bb1005380293554163",
+        "chromium/prototype/workspace_frame_mac.h": "dd234cbb65d673cd58ea4ea3a37d34111890b66b7a6f4b255304c97db6d61021",
+        "chromium/prototype/workspace_frame_mac.mm": "2827f43e3c08069d7de3002a192a5f7c6f912a9745153925326bbeca86db884e",
+        "chromium/prototype/workspace_keyboard_mac.h": "7eccc4c4ad3bbbd4c005f1631fe3d7ea0ebbbcd679fa87c54af14e044dd27479",
+        "chromium/prototype/workspace_keyboard_mac.mm": "cf823ee1905183eaeadb8677900b9def11332b9335be221cbe4e4fbbfcf8a654",
+        "chromium/prototype/workspace_lifecycle.cc": "e4d73972762ce21156a3a022de73f7edb5e9b520d15cfaf517df289128416c1b",
+        "chromium/prototype/workspace_preconnect.cc": "4b049f91fa11fb4ae523051a37a573c505ef0f1197935afaa6cdd22fa38e664c",
+        "chromium/prototype/workspace_preconnect_browsertest.cc": "5243272c30d25c9c39a5f413259227d4ce083294207326415ddf35da2a0a1e09",
+        "chromium/prototype/workspace_shell.cc": "af3b30427a9415bc877e7f6ecc7c01fad0d9b5d12ac4925a7ee9cd54a8418812",
+        "chromium/prototype/workspace_shell.h": "9b1ada42ee50df7518cc7e716f03dc101a2e1fb4794ea056e930ae6e05af407c",
+        "chromium/prototype/workspace_time_machine.cc": "4ae4f979d80cd4ece460be3cea499257d18b95243ce6f0dad0f8d2fbdad15bae",
+        "chromium/prototype/workspace_window.cc": "9a4b7d30c8d0911c477a1d03ce965122b600e2b6a98f98486159bc5e137082f1",
+        "chromium/prototype/workspace_window.h": "f338147929b886ca719807513f463494b5b8601d55c9c664b3c7b8ced2f23189"
+      },
+      "binary_uuid": "4C4C4441-5555-3144-A101-B3F770252FF9",
+      "filter": "ZitterProfilesBrowserTest.PaletteViewport*:ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal:ZitterMetalSidebarBrowserTest.Palette*:ZitterMetalSidebarBrowserTest.ScrollViewportTrackpadFractionalMomentumAndAxisRouting",
+      "selected_tests": {
+        "metal": [
+          "ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal",
+          "ZitterProfilesBrowserTest.PaletteViewportOwnershipResizeSelectionAndShrink",
+          "ZitterMetalSidebarBrowserTest.ScrollViewportTrackpadFractionalMomentumAndAxisRouting",
+          "ZitterMetalSidebarBrowserTest.PaletteChromeTextErrorsThemeAndFallback",
+          "ZitterMetalSidebarBrowserTest.PaletteScenesAsyncSelectionScrollAndIME"
+        ],
+        "views": [
+          "ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal",
+          "ZitterProfilesBrowserTest.PaletteViewportOwnershipResizeSelectionAndShrink"
+        ]
+      }
+    },
+    "source": {
+      "base_commit": "496f039eae691fb5449cbbe7bea2af58c4ea7ab7",
+      "modified_sha256": {
+        "chromium/prototype/sidebar_layout.cc": "5085a7d108b9f0681fa2d943a19cdda822b502758a12ec5ec23e7ad7b6a7646e",
+        "chromium/prototype/sidebar_layout.h": "b756223bb414c8a7b23459bc75cfbaaa5d96c8e3695eef77a6b8424dd4186754",
+        "chromium/prototype/workspace_shell.cc": "af3b30427a9415bc877e7f6ecc7c01fad0d9b5d12ac4925a7ee9cd54a8418812",
+        "chromium/prototype/workspace_shell.h": "9b1ada42ee50df7518cc7e716f03dc101a2e1fb4794ea056e930ae6e05af407c",
+        "chromium/prototype/profile_workspace_browsertest.cc": "bce7c51f655c98439af45dba61427ce468e156cc31d3dc46327c1324de352552"
+      }
+    },
+    "source_directory": "/Users/papaj/Projects/zitter/build/palette-viewport-third-probe-sources",
+    "runs": {
+      "metal": {
+        "counts": {
+          "SUCCESS": 4,
+          "FAILURE": 1
+        },
+        "results": {
+          "ZitterMetalSidebarBrowserTest.PaletteChromeTextErrorsThemeAndFallback": "SUCCESS",
+          "ZitterMetalSidebarBrowserTest.PaletteScenesAsyncSelectionScrollAndIME": "SUCCESS",
+          "ZitterMetalSidebarBrowserTest.ScrollViewportTrackpadFractionalMomentumAndAxisRouting": "SUCCESS",
+          "ZitterProfilesBrowserTest.PaletteViewportOwnershipResizeSelectionAndShrink": "FAILURE",
+          "ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal": "SUCCESS"
+        },
+        "summary": "/Users/papaj/Projects/zitter/build/palette-viewport-third-probe/metal.json",
+        "summary_sha256": "5e05ad16f7ecbfbcf3ae10a148889ac1099fb44cc6d32a71b5caa95165749b46",
+        "log": "/Users/papaj/Projects/zitter/build/palette-viewport-third-probe/metal.log",
+        "log_sha256": "01391e0638b0c948fc0657438419a0de3ee107eea836e5936b2adb6825ee8ed7"
+      },
+      "views": {
+        "counts": {
+          "FAILURE": 1,
+          "SUCCESS": 1
+        },
+        "results": {
+          "ZitterProfilesBrowserTest.PaletteViewportOwnershipResizeSelectionAndShrink": "FAILURE",
+          "ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal": "SUCCESS"
+        },
+        "summary": "/Users/papaj/Projects/zitter/build/palette-viewport-third-probe/views.json",
+        "summary_sha256": "8f5ae0c54569ce80ba611d3431e4ca94072157a2f1c077cd1883d44f61d9eb1c",
+        "log": "/Users/papaj/Projects/zitter/build/palette-viewport-third-probe/views.log",
+        "log_sha256": "b50b3d44edc8f0669a02215643cd81f58d75f3a4d275ddb81e4f778e49d2fcac"
+      }
+    },
+    "note": "Waiting for actual debounced data exposed the next oracle error: the palette has 9px top border/padding; minimal first-row reveal must align to the row top, not offset zero. The final fixture checks first-row alignment/visibility and keyboard-selected row visibility without forcing an extra scroll policy."
+  },
+  "fourth_probe": {
+    "input": {
+      "source_sha256": {
+        "chromium/prototype/arc_importer.cc": "e3c6aa5d0876a9d1c29305136d225eba78a8d8b95c3267cabf5d8a96d5d9ecf4",
+        "chromium/prototype/arc_importer.h": "b5cb4ccc4871c9ad7af3e578763bc3d8347fc9adc394c05624f1653b342ea2fc",
+        "chromium/prototype/browser_data.h": "243b1d34847d4358041190ed42ee0c0600a21257003b54c056c59f4ef764a747",
+        "chromium/prototype/browser_import_data.cc": "c6d7d1750ab9be441a264691382928417cdea7e0959b2b86cb2ce5bd4fbbb37c",
+        "chromium/prototype/browser_import_data.h": "35039b3013e0754f88be9f021428160eacbbe65de8f61eef2983a65ca0291b7b",
+        "chromium/prototype/browser_import_key_mac.mm": "65d0b914b43a7268a54d309f021a5a6c7ead871dbe68c0fb2581005456af1bd1",
+        "chromium/prototype/browser_preferences.cc": "34fafbb418688d581d581599e57d68a3d572c6fbfa311f1a8525c67340a77c48",
+        "chromium/prototype/browser_preferences.h": "63a931a276df3c05f49e098c6977d99b14112ad20f4df4dc9ab8a513c96f6f68",
+        "chromium/prototype/browser_tools.cc": "62964f8f594011af7a60983890a33027ebacddd7faa3642e77bd59e4a635a62e",
+        "chromium/prototype/browser_tools.h": "ef83716f8bb01fe5b3b770f9136288a39aefedfe4b299e305b1dd1f740b1ad6a",
+        "chromium/prototype/download_panel.cc": "45fc11c2d04990baa9c2c5e3d2b7bac4d9854867145acf12a1dc958b21186c74",
+        "chromium/prototype/download_panel.h": "1db13545467abf4729b4c340323997bed4a0af4bb232670755ff20e0d37eaa50",
+        "chromium/prototype/editor_control.h": "6a7d417696dadff55daaa05581be0cc71a825cfbbc934921fcd3616d872275f3",
+        "chromium/prototype/editor_text_layout.h": "35a72c6965037f684ee5f88338f71aa07b41842de4e7417ab6af1df7300c26cb",
+        "chromium/prototype/editor_text_layout_mac.inc": "13f2fddef229486fb25f42fb275cc0d7256bebe6d9599356822ff4b11db81984",
+        "chromium/prototype/editor_text_layout_test.mm": "a0bc7f9d485717b6a303b31952ad35ae8d3b3b021b016cb2b0ee8fc890726844",
+        "chromium/prototype/link_navigation.cc": "464f61fdd785d5cc3fc8d5551d8dce767f237a7338080d87e101a6a380855f13",
+        "chromium/prototype/link_navigation.h": "77c3df9a92f9038e7794c8c482f916114c84008bb3ddc02dd31a38ba073e9ff8",
+        "chromium/prototype/page_dialogs.cc": "a07e8aa92fc10fda84cc70fbd52a63a13f91716a8d9f929ef125d2cc6333af68",
+        "chromium/prototype/page_dialogs.h": "b778741cb8e1d6c53456b5e864808c2aa22ef5591417d77b1de5d854ddccf10e",
+        "chromium/prototype/page_file_access.cc": "26d797ddc42a17806f949540e628614779836b49c2d4f9d5ea199ff9a94f0a8c",
+        "chromium/prototype/page_file_access.h": "313f54266ef5051c52b654632273a1b7f84c8c09e53930bbecdee3b747d27888",
+        "chromium/prototype/page_file_access_browsertest.cc": "008833c70f884d045277409a5371d006ca1ddd851f0047584b3d0d0fb2b04f81",
+        "chromium/prototype/page_media_access.cc": "49a3f4a21f30a31f6559bf48b82837d72c87ab8148ea870cdd2f113a4b42473d",
+        "chromium/prototype/page_media_access.h": "224414fce67a836f34acffca609593e456ce00cc1d7d02ae003eb87a5484dacc",
+        "chromium/prototype/page_media_access_browsertest.cc": "7eedc13b1453308cb9db00c2445f896c031a0afb2a1dd18b8b0f4d85f8709493",
+        "chromium/prototype/page_services.cc": "701def23690ef2c6e6843b8c4bd16f76d09a066bdade34d9dfc45010283da9c2",
+        "chromium/prototype/page_services.h": "b031e317d2e96c4245ff019e5185c6f103f533b2f9efd3ea98132ddaef333d6d",
+        "chromium/prototype/profile_workspace_browsertest.cc": "e81d75f08124309668d23442003da5392397654d6542c8f1eeecca7e11924b71",
+        "chromium/prototype/scene_editor.cc": "1750eabbc946da28efc519939e5de6db0c59813212feaae47716fd705bfb1c75",
+        "chromium/prototype/sidebar.metal": "844a08c8a905931a313126a2d3c96f22e25228da1fc149ec6c12e88fc9755cc5",
+        "chromium/prototype/sidebar_editor.rs": "963e52ae3fb70efd48e1d15ca059095ed02812fbaea3ddd1266d39188134c6de",
+        "chromium/prototype/sidebar_layout.cc": "5085a7d108b9f0681fa2d943a19cdda822b502758a12ec5ec23e7ad7b6a7646e",
+        "chromium/prototype/sidebar_layout.h": "b756223bb414c8a7b23459bc75cfbaaa5d96c8e3695eef77a6b8424dd4186754",
+        "chromium/prototype/sidebar_metal.h": "9dd5c88c9caba13b675eef6d604d8ded8b41dd70facf8b51261d6c6720481e03",
+        "chromium/prototype/sidebar_metal.mm": "d10bcc4e2adc97bac0fcb897558a7992b0cbb06c6a738bdf3087738f74377a5d",
+        "chromium/prototype/sidebar_scene.rs": "c6fb587fec7935dc2f721424e43390c3a14816d5accc24d1e7165b56f8e72201",
+        "chromium/prototype/sidebar_tree.cc": "d72174ac4aac1f29b780a057b1b2773d5958fbd64904ee05dca7ce8d4109229b",
+        "chromium/prototype/sidebar_tree.h": "d59f6e86d9d44dce943e1a82591d6fda73b595fa6678a062ceed158342948e77",
+        "chromium/prototype/workspace_browser_settings.cc": "eef5a07c3857ddbe94f543293c367be7b3ef5fede5d6a1249ce8cd12ba22cf4b",
+        "chromium/prototype/workspace_commands.cc": "8b2b5f8406a9f72a971d68235ff1bf6b940bdf6968aa36bb1005380293554163",
+        "chromium/prototype/workspace_frame_mac.h": "dd234cbb65d673cd58ea4ea3a37d34111890b66b7a6f4b255304c97db6d61021",
+        "chromium/prototype/workspace_frame_mac.mm": "2827f43e3c08069d7de3002a192a5f7c6f912a9745153925326bbeca86db884e",
+        "chromium/prototype/workspace_keyboard_mac.h": "7eccc4c4ad3bbbd4c005f1631fe3d7ea0ebbbcd679fa87c54af14e044dd27479",
+        "chromium/prototype/workspace_keyboard_mac.mm": "cf823ee1905183eaeadb8677900b9def11332b9335be221cbe4e4fbbfcf8a654",
+        "chromium/prototype/workspace_lifecycle.cc": "e4d73972762ce21156a3a022de73f7edb5e9b520d15cfaf517df289128416c1b",
+        "chromium/prototype/workspace_preconnect.cc": "4b049f91fa11fb4ae523051a37a573c505ef0f1197935afaa6cdd22fa38e664c",
+        "chromium/prototype/workspace_preconnect_browsertest.cc": "5243272c30d25c9c39a5f413259227d4ce083294207326415ddf35da2a0a1e09",
+        "chromium/prototype/workspace_shell.cc": "af3b30427a9415bc877e7f6ecc7c01fad0d9b5d12ac4925a7ee9cd54a8418812",
+        "chromium/prototype/workspace_shell.h": "9b1ada42ee50df7518cc7e716f03dc101a2e1fb4794ea056e930ae6e05af407c",
+        "chromium/prototype/workspace_time_machine.cc": "4ae4f979d80cd4ece460be3cea499257d18b95243ce6f0dad0f8d2fbdad15bae",
+        "chromium/prototype/workspace_window.cc": "9a4b7d30c8d0911c477a1d03ce965122b600e2b6a98f98486159bc5e137082f1",
+        "chromium/prototype/workspace_window.h": "f338147929b886ca719807513f463494b5b8601d55c9c664b3c7b8ced2f23189"
+      },
+      "binary_uuid": "4C4C4445-5555-3144-A16A-4108A084D010",
+      "filter": "ZitterProfilesBrowserTest.PaletteViewport*:ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal:ZitterMetalSidebarBrowserTest.Palette*:ZitterMetalSidebarBrowserTest.ScrollViewportTrackpadFractionalMomentumAndAxisRouting",
+      "selected_tests": {
+        "metal": [
+          "ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal",
+          "ZitterProfilesBrowserTest.PaletteViewportOwnershipResizeSelectionAndShrink",
+          "ZitterMetalSidebarBrowserTest.ScrollViewportTrackpadFractionalMomentumAndAxisRouting",
+          "ZitterMetalSidebarBrowserTest.PaletteChromeTextErrorsThemeAndFallback",
+          "ZitterMetalSidebarBrowserTest.PaletteScenesAsyncSelectionScrollAndIME"
+        ],
+        "views": [
+          "ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal",
+          "ZitterProfilesBrowserTest.PaletteViewportOwnershipResizeSelectionAndShrink"
+        ]
+      }
+    },
+    "source": {
+      "base_commit": "496f039eae691fb5449cbbe7bea2af58c4ea7ab7",
+      "modified_sha256": {
+        "chromium/prototype/sidebar_layout.cc": "5085a7d108b9f0681fa2d943a19cdda822b502758a12ec5ec23e7ad7b6a7646e",
+        "chromium/prototype/sidebar_layout.h": "b756223bb414c8a7b23459bc75cfbaaa5d96c8e3695eef77a6b8424dd4186754",
+        "chromium/prototype/workspace_shell.cc": "af3b30427a9415bc877e7f6ecc7c01fad0d9b5d12ac4925a7ee9cd54a8418812",
+        "chromium/prototype/workspace_shell.h": "9b1ada42ee50df7518cc7e716f03dc101a2e1fb4794ea056e930ae6e05af407c",
+        "chromium/prototype/profile_workspace_browsertest.cc": "e81d75f08124309668d23442003da5392397654d6542c8f1eeecca7e11924b71"
+      }
+    },
+    "source_directory": "/Users/papaj/Projects/zitter/build/palette-viewport-fourth-probe-sources",
+    "runs": {
+      "metal": {
+        "counts": {
+          "SUCCESS": 4,
+          "FAILURE": 1
+        },
+        "results": {
+          "ZitterMetalSidebarBrowserTest.PaletteChromeTextErrorsThemeAndFallback": "SUCCESS",
+          "ZitterMetalSidebarBrowserTest.PaletteScenesAsyncSelectionScrollAndIME": "SUCCESS",
+          "ZitterMetalSidebarBrowserTest.ScrollViewportTrackpadFractionalMomentumAndAxisRouting": "SUCCESS",
+          "ZitterProfilesBrowserTest.PaletteViewportOwnershipResizeSelectionAndShrink": "FAILURE",
+          "ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal": "SUCCESS"
+        },
+        "summary": "/Users/papaj/Projects/zitter/build/palette-viewport-fourth-probe/metal.json",
+        "summary_sha256": "31aab1a2b3f200fe8509f006b10ac338f782a97a99c6ca1b8cf773e1ce043712",
+        "log": "/Users/papaj/Projects/zitter/build/palette-viewport-fourth-probe/metal.log",
+        "log_sha256": "79d05885801abed4d0b324646c8aaee51f9fb7387d26d5fde01fbf51459a47e0"
+      },
+      "views": {
+        "counts": {
+          "SUCCESS": 2
+        },
+        "results": {
+          "ZitterProfilesBrowserTest.PaletteViewportOwnershipResizeSelectionAndShrink": "SUCCESS",
+          "ZitterProfilesBrowserTest.ToolsViewportMatchesNativeExtentClampAndReveal": "SUCCESS"
+        },
+        "summary": "/Users/papaj/Projects/zitter/build/palette-viewport-fourth-probe/views.json",
+        "summary_sha256": "05e0810458d5c438d5b5dd72c9ab7d1a921a80b6502d6c7dfbcd79fe42cbfb37",
+        "log": "/Users/papaj/Projects/zitter/build/palette-viewport-fourth-probe/views.log",
+        "log_sha256": "f09bc3acec79d77456ec18815d8de0c9be52b74bb5891c86b929503d5e2ee616"
+      }
+    },
+    "note": "Views passed. Metal passed geometry/scroll/selection but the final no-result check read overlay visibility before the queued scene update. The final fixture waits for the scene to hide, retaining the actual visibility condition. Production behavior unchanged."
+  }
+}
