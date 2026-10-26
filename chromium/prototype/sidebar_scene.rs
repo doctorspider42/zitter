@@ -44,6 +44,7 @@ mod ffi {
     struct PreferenceSiteCopy { origin_ax: String, placeholder: String, type_ax: String, policy_ax: String, save: String, types: Vec<String> }
     struct PreferenceClearCopy { period_ax: String, periods: Vec<String>, checks: Vec<String>, action: String }
     struct PreferenceCatalogue { categories: Vec<String>, descriptions: Vec<String>, rows: Vec<PreferenceSpec>, site: PreferenceSiteCopy, clear: PreferenceClearCopy }
+    struct ScrollViewportEdges { top: Rect, bottom: Rect, show_top: bool, show_bottom: bool }
     struct ScrollViewportLayout { viewport: Rect, content: Rect, bar: Rect, show_bar: bool, offset: f64, max_offset: i32 }
     struct PreferenceRow { category: usize, keywords: Vec<u16> }
     struct PreferenceVisibility { rows: Vec<bool>, sections: Vec<bool>, navigation: Vec<bool>, any: bool }
@@ -382,6 +383,7 @@ mod ffi {
         fn viewport_configure(self: &mut ScrollViewportState, width: i32, height: i32, preferred_width: i32, preferred_height: i32, thickness: i32, overlay: bool) -> ScrollViewportLayout;
         fn viewport_scroll_to(self: &mut ScrollViewportState, offset: f64) -> bool;
         fn viewport_reveal(self: &mut ScrollViewportState, y: i32, height: i32) -> bool;
+        fn viewport_edges(self: &ScrollViewportState, width: i32) -> ScrollViewportEdges;
         fn viewport_offset(self: &ScrollViewportState) -> f64;
         fn viewport_maximum(self: &ScrollViewportState) -> i32;
         type ScrollThumb;
@@ -1400,6 +1402,10 @@ impl ScrollViewportState {
         let visible=self.offset as i32;if start>=visible&&end<=visible.saturating_add(self.height){return false;}
         self.viewport_scroll_to(f64::from(if visible>start{start}else{end.saturating_sub(self.height).max(0)}))
     }
+    fn viewport_edges(&self,width:i32)->ffi::ScrollViewportEdges {
+        let width=width.max(0);let thickness=self.height.clamp(0,1);let ready=width>0&&self.height>0&&self.maximum>0;
+        ffi::ScrollViewportEdges{top:ffi::Rect{x:0,y:0,width,height:thickness},bottom:ffi::Rect{x:0,y:self.height.saturating_sub(thickness),width,height:thickness},show_top:ready&&self.offset>0.0,show_bottom:ready&&self.offset<f64::from(self.maximum)}
+    }
     fn viewport_offset(&self)->f64{self.offset}
     fn viewport_maximum(&self)->i32{self.maximum}
 }
@@ -2188,6 +2194,15 @@ mod tests {
         let empty=panel_layout(&s,&[],&[]);assert_eq!((empty.width,empty.height),(8,8));
         let mut margin=child(80,20);margin.top=2;margin.left=3;margin.bottom=4;margin.right=5;let g=panel_layout(&s,&[margin],&[]);assert_eq!((g.width,g.height),(96,34));assert_eq!((g.children[0].x,g.children[0].y,g.children[0].width),(3,2,84));
         let huge=ffi::PanelStyle{width:i32::MAX,height:i32::MAX,spacing:i32::MAX,..s};let g=panel_layout(&huge,&[child(i32::MAX,i32::MAX),child(i32::MAX,i32::MAX)],&[]);assert_eq!(g.height,i32::MAX);assert!(g.children.iter().all(|r|r.width>=0&&r.height>=0));
+    }
+    #[test] fn viewport_overflow_edges_follow_top_middle_bottom_and_content_shrink() {
+        let mut v=new_scroll_viewport();v.viewport_configure(300,200,300,900,15,true);let e=v.viewport_edges(300);assert!(!e.show_top&&e.show_bottom);assert_eq!((e.top.y,e.bottom.y,e.bottom.height),(0,199,1));
+        v.viewport_scroll_to(100.25);let e=v.viewport_edges(300);assert!(e.show_top&&e.show_bottom);v.viewport_scroll_to(700.0);let e=v.viewport_edges(300);assert!(e.show_top&&!e.show_bottom);
+        v.viewport_configure(300,200,300,100,15,true);let e=v.viewport_edges(300);assert!(!e.show_top&&!e.show_bottom);
+    }
+    #[test] fn viewport_overflow_edges_reject_empty_and_fit_single_pixel_hosts() {
+        let mut v=new_scroll_viewport();for (w,h) in [(0,0),(-1,-1),(0,100),(100,0)]{v.viewport_configure(w,h,100,900,15,true);let e=v.viewport_edges(w);assert!(!e.show_top&&!e.show_bottom);assert!(e.top.width>=0&&e.bottom.y>=0);}
+        v.viewport_configure(1,1,1,900,15,true);let e=v.viewport_edges(1);assert_eq!((e.top.width,e.top.height,e.bottom.y),(1,1,0));assert!(e.show_bottom);
     }
     #[test] fn bounded_viewport_clips_preferred_height_without_changing_width() {
         for (height,expected) in [(0,100),(60,100),(240,240),(900,480)]{let size=viewport_preferred_size(560,height,100,480);assert_eq!((size.width,size.height),(560,expected));}

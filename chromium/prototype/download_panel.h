@@ -16,6 +16,7 @@ class Profile;
 namespace views { class Widget; class View; class ScrollView; class DialogDelegate; }
 namespace zitter::prototype {
 class PanelScene;
+class PanelViewport;
 // Presentation only: Chromium owns transfers, history, policy and file safety.
 class DownloadPanel final : public content::DownloadManager::Observer,
                             public download::DownloadItem::Observer {
@@ -32,7 +33,7 @@ class DownloadPanel final : public content::DownloadManager::Observer,
   bool scene_contains_text_for_testing(std::string_view text) const;
   bool scene_animating_for_testing() const;
   bool scene_order_correct_for_testing() const;
-  views::ScrollView* scroll_for_testing() const{return scroll_;}
+  PanelViewport* viewport_for_testing() const{return scroll_;}
   views::View* list_for_testing() const{return list_;}
  private:
   struct Row;
@@ -55,7 +56,7 @@ class DownloadPanel final : public content::DownloadManager::Observer,
   std::unique_ptr<views::DialogDelegate> delegate_;
   std::unique_ptr<views::Widget> widget_;
   std::unique_ptr<PanelScene> scene_;
-  raw_ptr<views::ScrollView> scroll_=nullptr;
+  raw_ptr<PanelViewport> scroll_=nullptr;
   raw_ptr<views::View> list_ = nullptr;
   std::vector<Row> rows_;
   base::RepeatingTimer timer_;

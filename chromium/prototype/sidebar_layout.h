@@ -28,8 +28,11 @@ struct PanelViewportOptions {
   int minimum_height = -1;
   int maximum_height = -1;
   bool use_contents_preferred_size = true;
+  bool dialog_style = false;
+  bool horizontal_scroll_enabled = false;
 };
 std::unique_ptr<views::View> CreatePanelViewport(PanelViewport** adapter,base::RepeatingClosure changed,PanelViewportOptions options = {});
+PanelViewport* PanelViewportForView(views::View* view);
 struct WorkspaceSwipeUpdate { bool started, preview, finish, handled; };
 struct WorkspaceSwipePage { int index; double x; };
 struct WorkspaceSwipeLayout { int center; std::vector<WorkspaceSwipePage> pages; };

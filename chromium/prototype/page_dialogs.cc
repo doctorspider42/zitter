@@ -155,10 +155,9 @@ void PageDialogs::Show(content::RenderFrameHost* frame, content::JavaScriptDialo
   SetSidebarPanelLayout(body,true,gfx::Insets(20),12);
   if(scene_)body->AddChildView(scene_->MakeText(identity_text,false,true,0));
   else{auto* identity=body->AddChildView(std::make_unique<views::Label>(identity_text));identity->SetSubpixelRenderingEnabled(false);}
-  auto* scroll=body->AddChildView(std::make_unique<views::ScrollView>());scroll->ClipHeightTo(0,220);scroll->SetHorizontalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);
-  if(scene_)scene_->ObserveScroll(scroll);
-  if(scene_){auto copy=scene_->MakeText(message_text,true,false,440);copy->SizeToPreferredSize();scroll->SetContents(std::move(copy));}
-  else{auto label=std::make_unique<views::Label>(message_text);label->SetSubpixelRenderingEnabled(false);label->SetMultiLine(true);label->SetHorizontalAlignment(gfx::ALIGN_LEFT);label->SizeToFit(440);scroll->SetContents(std::move(label));}
+  PanelViewport* viewport=nullptr;auto scroll=CreatePanelViewport(&viewport,scene_?scene_->ViewportChangedCallback():base::RepeatingClosure(),{0,220,false,true});viewport_=viewport;body->AddChildView(std::move(scroll));
+  if(scene_){auto copy=scene_->MakeText(message_text,true,false,440);copy->SizeToPreferredSize();viewport->SetPanelContents(std::move(copy));}
+  else{auto label=std::make_unique<views::Label>(message_text);label->SetSubpixelRenderingEnabled(false);label->SetMultiLine(true);label->SetHorizontalAlignment(gfx::ALIGN_LEFT);label->SizeToFit(440);viewport->SetPanelContents(std::move(label));}
   if (is_prompt) {
     prompt_ = AddEditor(body,base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal");
     prompt_->GetViewAccessibility().SetName(u"Odpowiedź dla strony");prompt_->SetText(initial);
@@ -223,7 +222,7 @@ void PageDialogs::Answer(bool accepted) {
   if(field){field->SetCallbacks({},{});if(!accepted)field->ClearCompositionText();}
   const std::u16string text = field && accepted ? std::u16string(field->GetText()) : std::u16string();
   prompt_ = nullptr; requesting_frame_ = nullptr; unload_dialog_ = false;
-  scene_.reset();body_=nullptr;dialog_.reset();delegate_.reset();
+  scene_.reset();viewport_=nullptr;body_=nullptr;dialog_.reset();delegate_.reset();
   // Renderer callbacks can destroy pages. Never run them on a button's stack.
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(std::move(callback), accepted, text));
 }

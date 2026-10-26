@@ -120,13 +120,13 @@ void DownloadPanel::Show(Profile* profile, views::Widget* parent) {
   auto content = std::make_unique<views::View>();
   scene_=CreatePanelScene(content.get());
   MakeLabel(content.get(), u"Pobrania tego profilu · ostatnie 200 i wszystkie aktywne");
-  auto* scroll = content->AddChildView(std::make_unique<views::ScrollView>());
-  scroll_=scroll;scroll->ClipHeightTo(100,480);
+  PanelViewport* viewport=nullptr;
+  auto scroll_host=CreatePanelViewport(&viewport,scene_?scene_->ViewportChangedCallback():base::RepeatingClosure(),{100,480,false,true,true});scroll_=viewport;
+  auto* scroll=content->AddChildView(std::move(scroll_host));
   SetSidebarPanelLayout(content.get(),true,gfx::Insets(16),12,scroll);
-  if(scene_)scene_->ObserveScroll(scroll);
   auto list = std::make_unique<DownloadListView>();
   SetSidebarPanelLayout(list.get(),true,gfx::Insets(),16);
-  list_ = scroll->SetContents(std::move(list));
+  list_=list.get();viewport->SetPanelContents(std::move(list));
   content->SetPreferredSize(gfx::Size(560, 500));
   delegate->SetContentsView(std::move(content));
   delegate_=std::move(delegate);auto* widget=views::DialogDelegate::CreateDialogWidget(delegate_.get(),parent->GetNativeWindow(),parent->GetNativeView());widget_.reset(widget);

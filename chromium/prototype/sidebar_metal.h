@@ -31,7 +31,7 @@ class PanelScene {
   virtual std::unique_ptr<views::View> MakeProgress()=0;
   virtual void SetProgress(views::View* view,double value)=0;
   virtual void Schedule()=0;
-  virtual void ObserveScroll(views::ScrollView* scroll)=0;
+  virtual base::RepeatingClosure ViewportChangedCallback()=0;
   virtual bool visible() const=0;
   virtual bool contains_text(std::string_view text) const=0;
   virtual bool excludes(views::View* view) const=0;

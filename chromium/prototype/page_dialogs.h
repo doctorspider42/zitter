@@ -15,6 +15,7 @@ namespace views { class Widget; class View; class ScrollView; class DialogDelega
 namespace ui { class KeyEvent; }
 namespace zitter::prototype {
 class EditorControl;
+class PanelViewport;
 using PageDialogScene=PanelScene;
 std::unique_ptr<views::DialogDelegate> CreateSceneDialogDelegate();
 std::unique_ptr<views::DialogDelegate> CreateSceneModalDialog(std::unique_ptr<views::View> body,bool control,bool modal=true);
@@ -39,6 +40,7 @@ class PageDialogs final : public content::JavaScriptDialogManager,
   EditorControl* prompt_input() const { return dialog_?prompt_.get():nullptr; }
   bool HandlePromptKey(const ui::KeyEvent& event);
   views::Button* dialog_button_for_testing(bool accept) const;
+  PanelViewport* viewport_for_testing() const{return dialog_?viewport_.get():nullptr;}
   views::View* dialog_body_for_testing() const{return dialog_?body_.get():nullptr;}
   bool scene_visible_for_testing() const{return scene_&&scene_->visible();}
   bool scene_contains_text_for_testing(std::string_view text) const{return scene_&&scene_->contains_text(text);}
@@ -69,6 +71,7 @@ class PageDialogs final : public content::JavaScriptDialogManager,
   std::unique_ptr<views::DialogDelegate> delegate_;
   std::unique_ptr<views::Widget> dialog_;
   std::unique_ptr<PageDialogScene> scene_;
+  raw_ptr<PanelViewport> viewport_ = nullptr;
   raw_ptr<views::View> body_ = nullptr;
   raw_ptr<EditorControl> prompt_ = nullptr;
   raw_ptr<content::RenderFrameHost> requesting_frame_ = nullptr;

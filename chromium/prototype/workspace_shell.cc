@@ -1845,7 +1845,7 @@ class SceneModalDialog final : public views::BubbleDialogDelegate {
     // Modal bodies retain the native model host's 2px scroll workaround.
     const int scroll_margin=modal?2:0;
     auto contents=std::make_unique<views::View>();SetSidebarPanelLayout(contents.get(),true,gfx::Insets::TLBR(scroll_margin,sides.left(),scroll_margin,sides.right()),0);contents->AddChildView(std::move(body));
-    if(modal){auto scroll=std::make_unique<views::ScrollView>();scroll->ClipHeightTo(0,provider->GetDistanceMetric(views::DISTANCE_MODAL_DIALOG_SCROLLABLE_AREA_MAX_HEIGHT));scroll->SetHorizontalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);scroll->SetContents(std::move(contents));SetContentsView(std::move(scroll));}
+    if(modal){PanelViewport* viewport=nullptr;auto scroll=CreatePanelViewport(&viewport,base::BindRepeating([](views::View* root){RefreshChoiceViewports(root);auto paint=[&](auto&& self,views::View* view)->void{view->SchedulePaint();for(const auto& child:view->children())self(self,child.get());};paint(paint,root);},base::Unretained(contents.get())),{0,provider->GetDistanceMetric(views::DISTANCE_MODAL_DIALOG_SCROLLABLE_AREA_MAX_HEIGHT),false,true});viewport->SetPanelContents(std::move(contents));SetContentsView(std::move(scroll));}
     else SetContentsView(std::move(contents));
     set_margins(gfx::Insets::TLBR(std::max(0,provider->GetDistanceMetric(control?views::DISTANCE_DIALOG_CONTENT_MARGIN_TOP_CONTROL:views::DISTANCE_DIALOG_CONTENT_MARGIN_TOP_TEXT)-scroll_margin),0,std::max(0,provider->GetDistanceMetric(control?views::DISTANCE_DIALOG_CONTENT_MARGIN_BOTTOM_CONTROL:views::DISTANCE_DIALOG_CONTENT_MARGIN_BOTTOM_TEXT)-scroll_margin),0));
   }
@@ -2168,15 +2168,13 @@ class PanelSceneImpl final : public PanelScene {
   void SetProgress(views::View* view,double value) override{static_cast<SceneProgress*>(view)->SetValue(value);}
   bool animating() const override{return renderer_.animating();}
   void Schedule() override{renderer_.Schedule();}
-  void ObserveScroll(views::ScrollView* scroll) override{scroll_sync_=scroll->EnableScrollSynchronization();scroll_subscription_=scroll->AddContentsScrolledCallback(base::BindRepeating(&PanelSceneImpl::Schedule,weak_factory_.GetWeakPtr()));}
+  base::RepeatingClosure ViewportChangedCallback() override{return base::BindRepeating(&PanelSceneImpl::Schedule,weak_factory_.GetWeakPtr());}
   bool visible() const override{return renderer_.visible();}
   bool contains_text(std::string_view text) const override{return renderer_.contains_text(text);}
   bool excludes(views::View* view) const override{return renderer_.excludes(view);}
   bool order_correct() const override{return renderer_.order_correct();}
  private:
   PreferenceChromeRenderer renderer_;
-  std::unique_ptr<views::ScrollView::ScopedScrollSynchronizer> scroll_sync_;
-  base::CallbackListSubscription scroll_subscription_;
   base::WeakPtrFactory<PanelSceneImpl> weak_factory_{this};
 };
 #endif
