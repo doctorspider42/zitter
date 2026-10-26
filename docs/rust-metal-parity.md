@@ -6,7 +6,41 @@ application/domain commands; preserve profile/session isolation. Push verified
 milestones to `origin/main` as they land. The opt-in switch remains
 `--zitter-sidebar=rust-metal` until the migration and comparison are complete.
 
-## Latest full checkpoint
+## Latest targeted follow-up
+
+UI source `0471902fcd5e008d8c7b72724cc875bf80a7d8f9` removes ResizeArea ownership from the
+Rust sidebar grip and split divider. The opt-in backend now creates a plain View
+host for event/paint/cursor/AX delivery and uses its existing Rust SidebarDrag or
+SplitDrag controller for active/anchor/update/delta/end/cancel. Only the applicable
+controller is allocated. Separate NativeSidebarGrip/NativeSplitDivider classes
+preserve the Views comparison path. Native shell/pane adapters consume a small
+ResizeHandle interface; sidebar active projection reads Rust state.
+
+The new shared browser case checks actual host type in both backends, splitter
+AX role/name, horizontal/vertical and disabled cursors. Its Rust branch checks
+hide and orientation cancellation followed by late input. Existing split
+lifecycle and real native mouse/gesture/sidebar-autohide/split-orient-title-close
+cases retain their assertions. The Rust host also cancels split resize on hide;
+late capture loss cannot commit an obsolete gesture.
+
+Focus passed **4 Metal / 2 Views**; affected regressions
+**28 Metal / 21 Views**, single attempt, retry limit zero.
+Checks passed **280 Rust**, **68 live and 68 clean-archive Python**, scoped
+GN/boundaries and final Ninja no-op. All 53 committed/live/staged prototype inputs
+and compiled/frozen-bootstrap/native-engine identities were checked. Unchanged
+CoreText sources retain the preceding full checkpoint's 180 SDK font/direction
+cases plus raster; that harness was not rerun for this host change.
+[Targeted resize-host report](benchmarks/rust-resize-host-targeted-2026-10-26.json).
+
+Per user cadence this smaller ownership block has targeted acceptance. The full
+matrix below predates this source and is not counted as its full pass. Other
+native control/node/container/menu/input/window ownership and final manual/
+performance/release/license acceptance remain open. The lab retains frozen
+bootstrap/network inputs; current-main network policy is outside this binary's
+acceptance. No complete parity or controlled performance gain is claimed; no
+dependency, service/store/admission or persistence policy change.
+
+## Latest full checkpoint (before resize-host migration)
 
 UI source `d44351ca2ad2c3d4125139e35e2354096dca7899` moves the horizontal workspace footer
 viewport to Rust. Together with the main sidebar and palette, all three shell

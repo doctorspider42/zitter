@@ -799,6 +799,10 @@ primary-axis allocation/offset/reveal and the existing custom scrollbar.
 passed 196 Metal / 148 Views regular cases, six explicit optional skips each,
 and 280 Rust cases. Remaining native node/control/input ownership and manual/
 performance/release acceptance remain open.
+The Rust sidebar grip and split divider now use plain event/paint/AX View hosts,
+with no ResizeArea base; their Rust drag controllers remain authoritative.
+[Targeted resize-host acceptance](docs/benchmarks/rust-resize-host-targeted-2026-10-26.json)
+passed 28 Metal / 21 Views affected cases. Other native control/node ownership remains.
 [Editor contracts and acceptance](docs/rust-metal-editor.md).
 Model updates refresh the scene independently of
 native painting. Rust also owns row
