@@ -279,7 +279,7 @@ class WorkspaceShell final : public ui::EventHandler,
   views::View* preference_picker(std::string key) const { return preference_pickers_.at(key); }
   EditorControl* site_origin_input() const { return site_origin_; }
   EditorControl* preferences_search() const { return preferences_search_; }
-  views::Button* preference_toggle(std::string key) const { return preference_toggles_.at(key); }
+  views::View* preference_toggle(std::string key) const { return preference_toggles_.at(key); }
   bool preference_chrome_contains_text_for_testing(std::string_view text) const;
   bool preference_chrome_order_correct_for_testing() const;
   std::string preference_chrome_debug_for_testing() const;
@@ -298,11 +298,11 @@ class WorkspaceShell final : public ui::EventHandler,
   views::View* preference_save_button_for_testing(std::string key) const{return preference_save_buttons_.at(key);}
   bool preference_action_metal_visible_for_testing(views::View* button) const;
   bool preference_actions_contains_scene_text_for_testing(std::string_view text) const;
-  views::Button* preference_switch_for_testing(std::string_view key) const;
+  views::View* preference_switch_for_testing(std::string_view key) const;
   bool preference_switch_checked_for_testing(std::string_view key) const;
   bool preference_switch_metal_visible_for_testing(std::string_view key) const;
   bool preference_switch_timer_running_for_testing(std::string_view key) const;
-  views::Button* clear_checkbox_for_testing(size_t index) const;
+  views::View* clear_checkbox_for_testing(size_t index) const;
   bool clear_choices_metal_visible_for_testing() const;
   views::View* theme_picker() const { return theme_picker_; }
   views::View* search_engine_picker() const { return search_engine_picker_; }
@@ -366,11 +366,11 @@ class WorkspaceShell final : public ui::EventHandler,
   bool import_visible() const;
   BrowserImportOptions import_options() const;
   views::View* import_browser_picker() const { return import_browser_picker_; }
-  views::Button* import_bookmarks() const { return import_bookmarks_; }
+  views::View* import_bookmarks() const { return import_bookmarks_; }
   views::Button* import_close() const { return dismiss_import_; }
-  views::Button* import_history() const { return import_history_; }
-  views::Button* import_cookies() const { return import_cookies_; }
-  views::Button* import_profiles() const { return import_profiles_; }
+  views::View* import_history() const { return import_history_; }
+  views::View* import_cookies() const { return import_cookies_; }
+  views::View* import_profiles() const { return import_profiles_; }
   views::Widget* import_widget() const { return import_widget_.get(); }
   void SetProfileStatus(std::u16string message);
   views::Widget* profiles_widget() const { return profiles_widget_.get(); }
@@ -659,8 +659,8 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<PanelViewport> general_scroll_ = nullptr;
   raw_ptr<views::View> theme_picker_ = nullptr;
   raw_ptr<views::View> search_engine_picker_ = nullptr;
-  raw_ptr<views::Button> sidebar_check_ = nullptr;
-  raw_ptr<views::Button> animations_check_ = nullptr;
+  raw_ptr<views::View> sidebar_check_ = nullptr;
+  raw_ptr<views::View> animations_check_ = nullptr;
   raw_ptr<EditorControl> preferences_search_ = nullptr;
   raw_ptr<views::View> preferences_profile_ = nullptr;
   raw_ptr<views::View> download_directory_label_ = nullptr;
@@ -680,7 +680,7 @@ class WorkspaceShell final : public ui::EventHandler,
     std::vector<PreferenceRow> rows;
   };
   std::vector<PreferenceSection> preference_sections_;
-  std::map<std::string, raw_ptr<views::Button>> preference_toggles_;
+  std::map<std::string, raw_ptr<views::View>> preference_toggles_;
   std::map<std::string, raw_ptr<views::View>> preference_pickers_;
   size_t preference_category_ = 0;
   std::map<std::string, raw_ptr<EditorControl>> preference_textfields_;
@@ -695,9 +695,9 @@ class WorkspaceShell final : public ui::EventHandler,
   std::vector<SitePreferenceRule> site_preference_rules_;
   size_t site_rules_limit_ = 50;
   raw_ptr<views::View> clear_data_period_ = nullptr;
-  raw_ptr<views::Button> clear_history_ = nullptr;
-  raw_ptr<views::Button> clear_cookies_ = nullptr;
-  raw_ptr<views::Button> clear_cache_ = nullptr;
+  raw_ptr<views::View> clear_history_ = nullptr;
+  raw_ptr<views::View> clear_cookies_ = nullptr;
+  raw_ptr<views::View> clear_cache_ = nullptr;
   raw_ptr<views::View> clear_data_button_ = nullptr;
   raw_ptr<views::View> general_status_ = nullptr;
   std::unique_ptr<views::WidgetDelegate> general_delegate_;
@@ -782,10 +782,10 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> import_status_ = nullptr;
   std::unique_ptr<ImportFormState> import_form_;
   raw_ptr<views::View> import_browser_picker_ = nullptr;
-  raw_ptr<views::Button> import_bookmarks_ = nullptr;
-  raw_ptr<views::Button> import_profiles_ = nullptr;
-  raw_ptr<views::Button> import_history_ = nullptr;
-  raw_ptr<views::Button> import_cookies_ = nullptr;
+  raw_ptr<views::View> import_bookmarks_ = nullptr;
+  raw_ptr<views::View> import_profiles_ = nullptr;
+  raw_ptr<views::View> import_history_ = nullptr;
+  raw_ptr<views::View> import_cookies_ = nullptr;
   raw_ptr<views::View> apply_import_ = nullptr;
   raw_ptr<views::Button> dismiss_import_ = nullptr;
   bool import_can_apply_ = false;

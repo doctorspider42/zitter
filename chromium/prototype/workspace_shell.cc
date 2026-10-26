@@ -689,14 +689,17 @@ class RustActionView : public views::View {
   void RemovedFromWidget() override{window_.Observe(nullptr);Cancel();views::View::RemovedFromWidget();}
   void PaintChildren(const views::PaintInfo& info) override{if(!visible_||!visible_.Run())views::View::PaintChildren(info);}
   void OnPaint(gfx::Canvas* canvas) override{if(visible_&&visible_.Run())return;SyncEnabled();const auto v=state_->action_snapshot();const auto paint=v.visual==sidebar::RowVisual::Disabled?views::Button::STATE_DISABLED:v.visual==sidebar::RowVisual::Pressed?views::Button::STATE_PRESSED:v.visual==sidebar::RowVisual::Hovered?views::Button::STATE_HOVERED:views::Button::STATE_NORMAL;PaintGlyphControl(this,glyph_,icon_,color_,v.on,label_,paint,canvas);}
+ protected:
+  virtual ax::mojom::DefaultActionVerb ActionVerb() const{return ax::mojom::DefaultActionVerb::kPress;}
+  virtual void ActivateAction(const ui::Event& event){const auto id=GetProperty(views::kElementIdentifierKey);if(id){views::ViewTracker alive(this);views::ElementTrackerViews::GetInstance()->NotifyViewActivated(id,this);if(!alive.view())return;}if(callback_)callback_.Run(event);}
  private:
-  void SyncEnabled(){const bool enabled=GetEnabledInViewsSubtree();if(!state_->action_enabled(enabled))return;auto& ax=GetViewAccessibility();if(enabled)ax.SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kPress);else ax.RemoveDefaultActionVerb();}
+  void SyncEnabled(){const bool enabled=GetEnabledInViewsSubtree();if(!state_->action_enabled(enabled))return;auto& ax=GetViewAccessibility();if(enabled)ax.SetDefaultActionVerb(ActionVerb());else ax.RemoveDefaultActionVerb();}
   bool Interactive() const{return SceneIsVisible(this)&&!GetVisibleBounds().IsEmpty();}
   void Cancel(){if(state_->action_cancel())SchedulePaint();}
   void WindowChanged(){Cancel();state_->action_focus(HasFocus());SchedulePaint();}
   bool Pointer(sidebar::PointerPhase phase,const ui::MouseEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;const bool pending=state_->action_pending();return Apply(state_->action_pointer(phase,event.x(),event.y(),phase!=sidebar::PointerPhase::Exit&&HitTestPoint(event.location())&&GetVisibleBounds().Contains(event.location()),event.IsLeftMouseButton(),Interactive()),event,before,pending);}
   bool Key(bool pressed,const ui::KeyEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;const bool pending=state_->action_pending();const uint32_t key=event.key_code()==ui::VKEY_SPACE?1:event.key_code()==ui::VKEY_RETURN?2:0;return Apply(state_->action_key(pressed,key,true,Interactive()),event,before,pending);}
-  bool Apply(const sidebar::RowInputResult& result,const ui::Event& event,sidebar::RowVisual before,bool pending){const bool handled=result.handled;if(result.visual!=before)SchedulePaint();else if(pending!=state_->action_pending()&&changed_)changed_.Run();if(result.action==sidebar::RowAction::Activate&&callback_){const auto id=GetProperty(views::kElementIdentifierKey);if(id){views::ViewTracker alive(this);views::ElementTrackerViews::GetInstance()->NotifyViewActivated(id,this);if(!alive.view())return handled;}callback_.Run(event);return handled;}return handled;}
+  bool Apply(const sidebar::RowInputResult& result,const ui::Event& event,sidebar::RowVisual before,bool pending){const bool handled=result.handled;if(result.visual!=before)SchedulePaint();else if(pending!=state_->action_pending()&&changed_)changed_.Run();if(result.action==sidebar::RowAction::Activate){ActivateAction(event);return handled;}return handled;}
   SkColor color_=kSubtle;std::u16string label_;views::Button::PressedCallback callback_;ControlGlyph glyph_;raw_ptr<const gfx::VectorIcon> icon_;base::RepeatingCallback<bool()> visible_;base::RepeatingClosure changed_;rust::Box<sidebar::ActionControl> state_=sidebar::new_action_control();SceneWindowObserver window_{base::BindRepeating(&RustActionView::WindowChanged,base::Unretained(this))};base::CallbackListSubscription enabled_changed_{AddEnabledInViewsSubtreeChangedCallback(base::BindRepeating(&RustActionView::EnabledChanged,base::Unretained(this)))};
 };
 BEGIN_METADATA(RustActionView)
@@ -917,11 +920,11 @@ END_METADATA
 void CancelSceneActions(views::View* root){if(!root)return;if(auto* group=views::AsViewClass<SceneActionGroup>(root)){group->CancelInput();return;}for(const auto& child:root->children())CancelSceneActions(child.get());}
 #endif
 #if BUILDFLAG(IS_MAC)
-class SceneToggle final : public SceneGlyphButton {
-  METADATA_HEADER(SceneToggle,SceneGlyphButton)
+class SceneToggle final : public RustActionView {
+  METADATA_HEADER(SceneToggle,RustActionView)
  public:
-  explicit SceneToggle(std::u16string name):SceneGlyphButton(PressedCallback(),std::move(name),Glyph::kMore,nullptr,base::BindRepeating([]{return true;})),state_(sidebar::new_toggle_state()){
-    SetInstallFocusRingOnFocus(false);SetHasInkDropActionOnClick(false);SetAnimateOnStateChange(false);GetViewAccessibility().SetRole(ax::mojom::Role::kSwitch);RefreshAX();
+  explicit SceneToggle(std::u16string name):RustActionView({},std::move(name),ControlGlyph::kMore,nullptr,base::BindRepeating([]{return true;}),{},false),state_(sidebar::new_toggle_state()){
+    GetViewAccessibility().SetRole(ax::mojom::Role::kSwitch);RefreshAX();
   }
   bool On() const{return state_->toggle_checked();}
   void SetOn(bool value){state_->toggle_set(value);RefreshAX();Schedule();}
@@ -932,28 +935,25 @@ class SceneToggle final : public SceneGlyphButton {
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(38,28);}
   bool GetNeedsNotificationWhenVisibleBoundsChange() const override{return true;}
   void OnVisibleBoundsChanged() override{Schedule();}
-  void OnBoundsChanged(const gfx::Rect& previous) override{SceneGlyphButton::OnBoundsChanged(previous);Schedule();}
-  void OnThemeChanged() override{SceneGlyphButton::OnThemeChanged();Schedule();}
-  void AddedToWidget() override{SceneGlyphButton::AddedToWidget();window_visibility_.Observe(GetWidget());Schedule();}
-  void RemovedFromWidget() override{window_visibility_.Observe(nullptr);timer_.Stop();surface_.reset();SceneGlyphButton::RemovedFromWidget();}
-  void VisibilityChanged(views::View* changed,bool visible) override{SceneGlyphButton::VisibilityChanged(changed,visible);SyncWindowVisibility();}
-  void StateChanged(ButtonState previous) override{SceneGlyphButton::StateChanged(previous);state_->toggle_hover(GetEnabledInViewsSubtree()&&(GetState()==STATE_HOVERED||GetState()==STATE_PRESSED),Now(),gfx::Animation::ShouldRenderRichAnimation());Schedule();}
-  void OnFocus() override{SceneGlyphButton::OnFocus();Schedule();}
-  void OnBlur() override{SceneGlyphButton::OnBlur();Schedule();}
-  void OnDidSchedulePaint(const gfx::Rect& rect) override{SceneGlyphButton::OnDidSchedulePaint(rect);Schedule();}
-  void PaintButtonContents(gfx::Canvas* canvas) override{if(!metal_visible()){auto scene=Scene();PaintEditorSceneFallback(canvas,UNSAFE_BUFFERS(base::span<const sidebar::Primitive>(scene.data(),scene.size())));}Schedule();}
+  void OnBoundsChanged(const gfx::Rect& previous) override{RustActionView::OnBoundsChanged(previous);Schedule();}
+  void OnThemeChanged() override{RustActionView::OnThemeChanged();Schedule();}
+  void AddedToWidget() override{RustActionView::AddedToWidget();window_visibility_.Observe(GetWidget());Schedule();}
+  void RemovedFromWidget() override{window_visibility_.Observe(nullptr);timer_.Stop();surface_.reset();RustActionView::RemovedFromWidget();}
+  void VisibilityChanged(views::View* changed,bool visible) override{RustActionView::VisibilityChanged(changed,visible);SyncWindowVisibility();}
+  void OnFocus() override{RustActionView::OnFocus();Schedule();}
+  void OnBlur() override{RustActionView::OnBlur();Schedule();}
+  void OnDidSchedulePaint(const gfx::Rect& rect) override{RustActionView::OnDidSchedulePaint(rect);const auto input=Snapshot();state_->toggle_hover(input.enabled&&(input.visual==sidebar::RowVisual::Hovered||input.visual==sidebar::RowVisual::Pressed),Now(),gfx::Animation::ShouldRenderRichAnimation());Schedule();}
+  void OnPaint(gfx::Canvas* canvas) override{if(!metal_visible()){auto scene=Scene();PaintEditorSceneFallback(canvas,UNSAFE_BUFFERS(base::span<const sidebar::Primitive>(scene.data(),scene.size())));}Schedule();}
  protected:
-  // Native Button treats visual pressed state as checked; Rust owns this value.
-  void UpdateAccessibleCheckedState() override{RefreshAX();}
-  void NotifyClick(const ui::Event& event) override{if(!state_->toggle_flip(GetEnabledInViewsSubtree()&&SceneIsVisible(this),Now(),gfx::Animation::ShouldRenderRichAnimation()))return;RefreshAX();Schedule();SceneGlyphButton::NotifyClick(event);}
+  void ActivateAction(const ui::Event& event) override{if(!state_->toggle_flip(GetEnabledInViewsSubtree()&&SceneIsVisible(this),Now(),gfx::Animation::ShouldRenderRichAnimation()))return;RefreshAX();Schedule();RustActionView::ActivateAction(event);}
  private:
   static uint64_t Now(){return (base::TimeTicks::Now()-base::TimeTicks()).InMilliseconds();}
   void RefreshAX(){GetViewAccessibility().SetCheckedState(On()?ax::mojom::CheckedState::kTrue:ax::mojom::CheckedState::kFalse);}
   rust::Vec<sidebar::Primitive> Scene() const{
-    const auto* colors=GetColorProvider();const bool enabled=GetEnabledInViewsSubtree();sidebar::ToggleStyle s{};s.width=width();s.height=height();s.checked=On();s.pressed=GetState()==STATE_PRESSED;s.focused=HasFocus();s.rtl=base::i18n::IsRTL();s.progress=state_->toggle_progress(Now());s.hover=state_->toggle_hover_progress(Now());
+    const auto* colors=GetColorProvider();const auto input=Snapshot();const bool enabled=input.enabled;sidebar::ToggleStyle s{};s.width=width();s.height=height();s.checked=On();s.pressed=input.visual==sidebar::RowVisual::Pressed;s.focused=input.focused;s.rtl=base::i18n::IsRTL();s.progress=state_->toggle_progress(Now());s.hover=state_->toggle_hover_progress(Now());
     s.track_on=SkColorSetRGB(110,86,207);s.track_off=colors->GetColor(enabled?ui::kColorToggleButtonTrackOff:ui::kColorToggleButtonTrackOffDisabled);s.thumb_on=colors->GetColor(enabled?ui::kColorToggleButtonThumbOn:ui::kColorToggleButtonThumbOnDisabled);s.thumb_off=colors->GetColor(enabled?ui::kColorToggleButtonThumbOff:ui::kColorToggleButtonThumbOffDisabled);s.thumb_hover=colors->GetColor(ui::kColorToggleButtonThumbOnHover);s.halo=colors->GetColor(s.pressed?ui::kColorToggleButtonPressed:ui::kColorToggleButtonHover);s.focus=colors->GetColor(ui::kColorFocusableBorderFocused);s.border=colors->GetColor(ui::kColorToggleButtonShadow);s.clip={0,0,float(width()),float(height())};return sidebar::toggle_scene(s);
   }
-  void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneToggle::UpdateMetal,weak_factory_.GetWeakPtr()));}
+  void Schedule(){SyncViewportVisibility();if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneToggle::UpdateMetal,weak_factory_.GetWeakPtr()));}
   void Tick(){if(!metal_visible())SchedulePaint();Schedule();}
   void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){timer_.Stop();if(surface_)surface_->Hide();return;}auto scene=Scene();for(auto& op:scene){op.x-=local.x();op.y-=local.y();op.clip={0,0,float(local.width()),float(local.height())};}if(!surface_)surface_=CreateSidebarMetal();const bool was=metal_visible();if(surface_){auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());surface_->UpdateScene(GetWidget()->GetNativeWindow(),frame,UNSAFE_BUFFERS(base::span<const sidebar::Primitive>(scene.data(),scene.size())),Tone(this,kCard));}if(was!=metal_visible())SchedulePaint();if(state_->toggle_animating(Now())){if(!timer_.IsRunning())timer_.Start(FROM_HERE,base::Milliseconds(16),this,&SceneToggle::Tick);}else timer_.Stop();}
   rust::Box<sidebar::ToggleState> state_;base::RepeatingTimer timer_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneToggle::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneToggle> weak_factory_{this};
@@ -961,19 +961,19 @@ class SceneToggle final : public SceneGlyphButton {
 BEGIN_METADATA(SceneToggle)
 END_METADATA
 #endif
-bool ToggleOn(views::Button* control){
+bool ToggleOn(views::View* control){
 #if BUILDFLAG(IS_MAC)
   if(auto* scene=views::AsViewClass<SceneToggle>(control))return scene->On();
 #endif
   return static_cast<views::ToggleButton*>(control)->GetIsOn();
 }
-void SetToggleOn(views::Button* control,bool value){
+void SetToggleOn(views::View* control,bool value){
 #if BUILDFLAG(IS_MAC)
   if(auto* scene=views::AsViewClass<SceneToggle>(control)){scene->SetOn(value);return;}
 #endif
   static_cast<views::ToggleButton*>(control)->SetIsOn(value);
 }
-views::Button* PreferenceToggle(views::View* parent,std::u16string name,bool scene){
+views::View* PreferenceToggle(views::View* parent,std::u16string name,bool scene){
 #if BUILDFLAG(IS_MAC)
   if(scene)return parent->AddChildView(std::make_unique<SceneToggle>(std::move(name)));
 #endif
@@ -981,31 +981,30 @@ views::Button* PreferenceToggle(views::View* parent,std::u16string name,bool sce
 }
 
 #if BUILDFLAG(IS_MAC)
-class SceneCheckbox final : public SceneGlyphButton {
-  METADATA_HEADER(SceneCheckbox,SceneGlyphButton)
+class SceneCheckbox final : public RustActionView {
+  METADATA_HEADER(SceneCheckbox,RustActionView)
  public:
   SceneCheckbox(views::Button::PressedCallback callback,std::u16string text,base::RepeatingClosure painted)
-      :SceneGlyphButton(std::move(callback),text,Glyph::kMore,nullptr,base::BindRepeating([]{return true;}),std::move(painted)),state_(sidebar::new_checkbox_state(false)),text_(std::move(text)) {
-    SetInstallFocusRingOnFocus(false);SetHasInkDropActionOnClick(false);SetAnimateOnStateChange(false);SetRequestFocusOnPress(false);GetViewAccessibility().SetRole(ax::mojom::Role::kCheckBox);RefreshAX();
+      :RustActionView(std::move(callback),text,ControlGlyph::kMore,nullptr,base::BindRepeating([]{return true;}),std::move(painted),false),state_(sidebar::new_checkbox_state(false)),text_(std::move(text)) {
+    GetViewAccessibility().SetRole(ax::mojom::Role::kCheckBox);RefreshAX();
   }
   bool Checked() const{return state_->checked();}
   void SetChecked(bool checked){if(!state_->set_checked(checked))return;RefreshAX();SchedulePaint();}
   void SetText(std::u16string text){if(text==text_)return;OnMouseCaptureLost();text_=std::move(text);measured_width_=-1;GetViewAccessibility().SetName(text_);SetTooltipText(text_);PreferredSizeChanged();SchedulePaint();}
   static gfx::FontList TextFont(){return views::TypographyProvider::Get().GetFont(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY);}
   gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override {const auto g=Geometry(available.width().is_bounded()?available.width().value():-1);return gfx::Size(g.width,g.height);}
-  void OnThemeChanged() override {SceneGlyphButton::OnThemeChanged();measured_width_=-1;PreferredSizeChanged();SchedulePaint();}
+  void OnThemeChanged() override {RustActionView::OnThemeChanged();measured_width_=-1;PreferredSizeChanged();SchedulePaint();}
   std::vector<sidebar::Item> Scene(gfx::RectF bounds,gfx::RectF clip) const {
-    const auto g=Geometry(bounds.width());const auto* provider=GetColorProvider();const bool enabled=GetEnabledInViewsSubtree();const auto font=TextFont();std::vector<sidebar::Item> out;
-    sidebar::Item mark{};mark.kind=20;mark.x=bounds.x()+g.mark.x;mark.y=bounds.y()+g.mark.y;mark.width=g.mark.width;mark.height=g.mark.height;mark.active=Checked();mark.focused=HasFocus();mark.hovered=enabled&&(GetState()==STATE_HOVERED||GetState()==STATE_PRESSED);mark.font_size=font.GetFontSize();
+    const auto g=Geometry(bounds.width());const auto* provider=GetColorProvider();const auto input=Snapshot();const bool enabled=input.enabled;const auto font=TextFont();std::vector<sidebar::Item> out;
+    sidebar::Item mark{};mark.kind=20;mark.x=bounds.x()+g.mark.x;mark.y=bounds.y()+g.mark.y;mark.width=g.mark.width;mark.height=g.mark.height;mark.active=Checked();mark.focused=input.focused;mark.hovered=enabled&&(input.visual==sidebar::RowVisual::Hovered||input.visual==sidebar::RowVisual::Pressed);mark.font_size=font.GetFontSize();
     mark.fill=provider->GetColor(enabled?ui::kColorCheckboxContainer:ui::kColorCheckboxContainerDisabled);mark.ink=provider->GetColor(enabled?ui::kColorCheckboxCheck:ui::kColorCheckboxCheckDisabled);mark.badge=provider->GetColor(enabled?ui::kColorCheckboxOutline:ui::kColorCheckboxOutlineDisabled);mark.detail_ink=provider->GetColor(ui::kColorFocusableBorderFocused);mark.clip={clip.x(),clip.y(),clip.width(),clip.height()};out.push_back(std::move(mark));
     for(size_t i=0;i<g.lines.size();++i){const auto& r=g.lines[i];sidebar::Item item{};item.kind=17;item.x=bounds.x()+r.x;item.y=bounds.y()+r.y;item.width=r.width;item.height=r.height;item.title=lines_[i];item.font_size=font.GetFontSize();item.active=font.GetFontWeight()>=gfx::Font::Weight::MEDIUM;item.ink=provider->GetColor(views::TypographyProvider::Get().GetColorId(views::style::CONTEXT_LABEL,enabled?views::style::STYLE_PRIMARY:views::style::STYLE_DISABLED));item.clip={clip.x(),clip.y(),clip.width(),clip.height()};out.push_back(std::move(item));}return out;
   }
  protected:
-  // Capture loss, hover and disabling must not replace the model checked value.
-  void UpdateAccessibleCheckedState() override{RefreshAX();}
-  void NotifyClick(const ui::Event& event) override {if(!state_->toggle(GetEnabledInViewsSubtree()&&SceneIsVisible(this)))return;RefreshAX();SchedulePaint();SceneGlyphButton::NotifyClick(event);}
+  ax::mojom::DefaultActionVerb ActionVerb() const override{return Checked()?ax::mojom::DefaultActionVerb::kUncheck:ax::mojom::DefaultActionVerb::kCheck;}
+  void ActivateAction(const ui::Event& event) override {if(!state_->toggle(GetEnabledInViewsSubtree()&&SceneIsVisible(this)))return;RefreshAX();SchedulePaint();RustActionView::ActivateAction(event);}
  private:
-  void RefreshAX(){SetDefaultActionVerb(Checked()?ax::mojom::DefaultActionVerb::kUncheck:ax::mojom::DefaultActionVerb::kCheck);UpdateAccessibleDefaultActionVerb();GetViewAccessibility().SetCheckedState(Checked()?ax::mojom::CheckedState::kTrue:ax::mojom::CheckedState::kFalse);}
+  void RefreshAX(){if(GetEnabledInViewsSubtree())GetViewAccessibility().SetDefaultActionVerb(ActionVerb());else GetViewAccessibility().RemoveDefaultActionVerb();GetViewAccessibility().SetCheckedState(Checked()?ax::mojom::CheckedState::kTrue:ax::mojom::CheckedState::kFalse);}
   sidebar::CheckboxLayout Geometry(int requested) const {
     const auto font=TextFont();const auto padding=views::LayoutProvider::Get()->GetInsetsMetric(views::INSETS_CHECKBOX_RADIO_BUTTON);const int width=requested<0?gfx::GetStringWidth(text_,font)+padding.width()+24:requested;const int label_width=std::max(0,width-padding.width()-24);
     if(measured_width_!=label_width||measured_font_!=font.GetFontSize()){lines_=ShapeSidebarParagraph(base::UTF16ToUTF8(text_),font.GetFontSize(),label_width,font.GetFontWeight()>=gfx::Font::Weight::MEDIUM);measured_width_=label_width;measured_font_=font.GetFontSize();}
@@ -1023,7 +1022,7 @@ class SceneCheckboxGroup final : public views::View {
   bool GetNeedsNotificationWhenVisibleBoundsChange() const override{return true;}
   void OnVisibleBoundsChanged() override{Schedule();}
   explicit SceneCheckboxGroup(int spacing){SetLayoutManager(CreateSidebarColumnLayout(spacing));}
-  views::Button* AddChoice(views::Button::PressedCallback callback,std::u16string text){return AddChildView(std::make_unique<SceneCheckbox>(std::move(callback),std::move(text),base::BindRepeating(&SceneCheckboxGroup::Schedule,weak_factory_.GetWeakPtr())));}
+  views::View* AddChoice(views::Button::PressedCallback callback,std::u16string text){return AddChildView(std::make_unique<SceneCheckbox>(std::move(callback),std::move(text),base::BindRepeating(&SceneCheckboxGroup::Schedule,weak_factory_.GetWeakPtr())));}
   bool metal_visible() const{return surface_&&surface_->visible();}
   bool contains_text(std::string_view text) const{return metal_visible()&&surface_->contains_text_for_testing(text);}
   void CancelInput(){for(const auto& child:children())child->OnMouseCaptureLost();}
@@ -1037,7 +1036,7 @@ class SceneCheckboxGroup final : public views::View {
   void OnPaint(gfx::Canvas* canvas) override {if(!metal_visible())for(const auto& item:Items(0,0,gfx::RectF(GetLocalBounds())))PaintSceneRecipe(canvas,item,SceneCheckbox::TextFont());Schedule();}
  private:
   std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const {std::vector<sidebar::Item> out;for(const auto& child:children())if(child->GetVisible()){auto bounds=gfx::RectF(child->bounds());bounds.Offset(dx,dy);auto local=bounds;local.Intersect(clip);auto items=static_cast<SceneCheckbox*>(child.get())->Scene(bounds,local);for(auto& item:items)out.push_back(std::move(item));}return out;}
-  void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneCheckboxGroup::UpdateMetal,weak_factory_.GetWeakPtr()));}
+  void Schedule(){for(const auto& child:children())static_cast<SceneCheckbox*>(child.get())->SyncViewportVisibility();if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneCheckboxGroup::UpdateMetal,weak_factory_.GetWeakPtr()));}
   void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
   bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneCheckboxGroup::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneCheckboxGroup> weak_factory_{this};
 };
@@ -1260,25 +1259,25 @@ void ReplaceProfilePickerOptions(views::View* picker,const std::vector<ProfileIn
 #endif
   std::vector<ui::SimpleComboboxModel::Item> labels;for(const auto& profile:profiles)labels.emplace_back(base::UTF8ToUTF16(profile.name));static_cast<views::Combobox*>(picker)->SetOwnedModel(std::make_unique<ui::SimpleComboboxModel>(std::move(labels)));
 }
-views::Button* AddImportCheck(views::View* parent,std::u16string text,views::Button::PressedCallback callback) {
+views::View* AddImportCheck(views::View* parent,std::u16string text,views::Button::PressedCallback callback) {
 #if BUILDFLAG(IS_MAC)
   if(auto* group=views::AsViewClass<SceneCheckboxGroup>(parent))return group->AddChoice(std::move(callback),std::move(text));
 #endif
   return parent->AddChildView(std::make_unique<views::Checkbox>(std::move(text),std::move(callback)));
 }
-bool CheckValue(views::Button* button) {
+bool CheckValue(views::View* button) {
 #if BUILDFLAG(IS_MAC)
   if(auto* scene=views::AsViewClass<SceneCheckbox>(button))return scene->Checked();
 #endif
   return static_cast<views::Checkbox*>(button)->GetChecked();
 }
-void SetCheckValue(views::Button* button,bool checked) {
+void SetCheckValue(views::View* button,bool checked) {
 #if BUILDFLAG(IS_MAC)
   if(auto* scene=views::AsViewClass<SceneCheckbox>(button)){scene->SetChecked(checked);return;}
 #endif
   static_cast<views::Checkbox*>(button)->SetChecked(checked);
 }
-void SetCheckText(views::Button* button,std::u16string text) {
+void SetCheckText(views::View* button,std::u16string text) {
 #if BUILDFLAG(IS_MAC)
   if(auto* scene=views::AsViewClass<SceneCheckbox>(button)){scene->SetText(std::move(text));return;}
 #endif
@@ -3820,11 +3819,11 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     if (shell) shell->SetThemeMode(static_cast<ThemeMode>(PickerIndex(shell->theme_picker_).value_or(0)));
   }, weak));
   sidebar_check_ = toggle(make_row(0, u"Zawsze widoczny panel kart", u"Przypnij karty i przestrzenie przy lewej krawędzi."), u"Zawsze widoczny panel kart");
-  sidebar_check_->SetCallback(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+  SetActionCallback(sidebar_check_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
     if (shell) shell->SetPinned(ToggleOn(shell->sidebar_check_));
   }, weak));
   animations_check_ = toggle(make_row(0, u"Animacje przestrzeni", u"Płynne przejścia. Systemowe ograniczenie ruchu ma pierwszeństwo."), u"Animacje przestrzeni");
-  animations_check_->SetCallback(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+  SetActionCallback(animations_check_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
     if (shell) shell->SetWorkspaceAnimations(ToggleOn(shell->animations_check_));
   }, weak));
   search_engine_picker_ = picker(make_row(1, u"Domyślna wyszukiwarka", u"Używana, gdy wpiszesz zapytanie w pasku adresu."),
@@ -3837,7 +3836,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto add_toggle = [&](size_t category, std::string key, std::u16string title, std::u16string detail) {
     auto* control = toggle(make_row(category, title, detail), title);
     preference_toggles_[key] = control;
-    control->SetCallback(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, std::string key) {
+    SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, std::string key) {
       if (shell) shell->WritePreference(key, ToggleOn(shell->preference_toggles_.at(key)));
     }, weak, key));
   };
@@ -6235,7 +6234,7 @@ bool WorkspaceShell::preference_actions_contains_scene_text_for_testing(std::str
   return false;
 #endif
 }
-views::Button* WorkspaceShell::preference_switch_for_testing(std::string_view key) const {
+views::View* WorkspaceShell::preference_switch_for_testing(std::string_view key) const {
   if(key=="sidebar")return sidebar_check_;
   if(key=="animations")return animations_check_;
   const auto it=preference_toggles_.find(std::string(key));
@@ -6258,8 +6257,8 @@ bool WorkspaceShell::preference_switch_timer_running_for_testing(std::string_vie
   return false;
 #endif
 }
-views::Button* WorkspaceShell::clear_checkbox_for_testing(size_t index) const {
-  const std::array<views::Button*,3> choices={clear_history_,clear_cookies_,clear_cache_};
+views::View* WorkspaceShell::clear_checkbox_for_testing(size_t index) const {
+  const std::array<views::View*,3> choices={clear_history_,clear_cookies_,clear_cache_};
   return index<choices.size()?choices[index]:nullptr;
 }
 bool WorkspaceShell::clear_choices_metal_visible_for_testing() const {
@@ -6350,9 +6349,9 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
     }
     if(spec.kind==Kind::Pinned||spec.kind==Kind::Animations||spec.kind==Kind::Toggle){
       auto* control=PreferenceToggle(row,title,true);
-      if(spec.kind==Kind::Pinned){sidebar_check_=control;control->SetCallback(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetPinned(ToggleOn(shell->sidebar_check_));},weak));}
-      else if(spec.kind==Kind::Animations){animations_check_=control;control->SetCallback(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetWorkspaceAnimations(ToggleOn(shell->animations_check_));},weak));}
-      else{preference_toggles_[key]=control;control->SetCallback(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::string key){if(shell)shell->WritePreference(key,ToggleOn(shell->preference_toggles_.at(key)));},weak,key));}
+      if(spec.kind==Kind::Pinned){sidebar_check_=control;SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetPinned(ToggleOn(shell->sidebar_check_));},weak));}
+      else if(spec.kind==Kind::Animations){animations_check_=control;SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetWorkspaceAnimations(ToggleOn(shell->animations_check_));},weak));}
+      else{preference_toggles_[key]=control;SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::string key){if(shell)shell->WritePreference(key,ToggleOn(shell->preference_toggles_.at(key)));},weak,key));}
       continue;
     }
     if(spec.kind==Kind::Text){
@@ -7876,7 +7875,7 @@ bool WorkspaceShell::import_source_metal_visible() const {
 #endif
 }
 void WorkspaceShell::SetImportOptionCheckedForTesting(size_t option,bool checked) {
-  const std::array<views::Button*,4> controls={import_profiles_,import_bookmarks_,import_history_,import_cookies_};if(option<controls.size()&&controls[option])SetCheckValue(controls[option],checked);
+  const std::array<views::View*,4> controls={import_profiles_,import_bookmarks_,import_history_,import_cookies_};if(option<controls.size()&&controls[option])SetCheckValue(controls[option],checked);
 }
 bool WorkspaceShell::import_choices_metal_visible() const {
 #if BUILDFLAG(IS_MAC)
