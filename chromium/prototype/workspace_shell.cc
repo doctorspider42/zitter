@@ -3589,9 +3589,9 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto body = std::make_unique<views::View>();
   preferences_body_ = body.get();
   body->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets::TLBR(0, 0, 8, 8), 16));
-  const std::vector<std::u16string> categories = {
+  std::vector<std::u16string> categories = {
       u"Wygląd", u"Wyszukiwanie", u"Prywatność", u"Uprawnienia stron", u"Treści i czytelność", u"Hasła i profile", u"Pobieranie", u"Języki i pisownia", u"Dane przeglądania", u"Zaawansowane"};
-  const std::vector<std::u16string> descriptions = {
+  std::vector<std::u16string> descriptions = {
       u"Dopasuj Zitter do swojego rytmu.",
       u"Wybierz, gdzie zaczyna się każde wyszukiwanie.",
       u"Zdecyduj, jakie ślady zostawiasz w sieci.",
@@ -3601,6 +3601,14 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       u"Wybierz języki witryn i pomoc podczas pisania.",
       u"Kontroluj dane zapisane w bieżącym profilu.",
       u"Dostępność, połączenia i ustawienia silnika Chromium."};
+#if BUILDFLAG(IS_MAC)
+  std::optional<sidebar::PreferenceCatalogue> preference_catalogue;
+  if(workspace_form_){
+    preference_catalogue=sidebar::preference_catalogue(true);
+    auto strings=[](const auto& input){std::vector<std::u16string> output;for(const auto& value:input)output.push_back(base::UTF8ToUTF16(std::string(value)));return output;};
+    categories=strings(preference_catalogue->categories);descriptions=strings(preference_catalogue->descriptions);
+  }
+#endif
   preferences_category_picker_=ChoicePicker(main,u"Kategoria preferencji",categories,bool(workspace_form_));
   preferences_category_picker_->SetVisible(false);
   SetPickerCallback(preferences_category_picker_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
@@ -3636,6 +3644,11 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto* nav_space = Spacer(navigation, 1);
   nav_layout->SetFlexForView(nav_space, 1);
   copy(navigation, u"ZITTER / PREFERENCJE", kMuted, -3);
+#if BUILDFLAG(IS_MAC)
+  if(preference_catalogue)BuildRustPreferenceRows(*preference_catalogue);
+  else
+#endif
+  {
   auto make_row = [&](size_t category, std::u16string title, std::u16string detail) {
     auto* row = preference_sections_[category].view->AddChildView(std::make_unique<PreferenceSurface>(false,bool(workspace_form_),preference_chrome_painted,preference_chrome_visible));
     auto* layout = row->SetLayoutManager(std::make_unique<views::BoxLayout>(
@@ -3812,6 +3825,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   action(0, u"Time Machine przestrzeni", u"Snapshoty, zamknięte karty i usypianie całych projektów.", base::BindRepeating(&WorkspaceShell::OpenTools, weak, 0));
   auto* shortcuts = make_row(1, u"Szybciej z klawiaturą", u"⌘ L  adres i wyszukiwanie\n⌘ K  karty, przestrzenie i historia\n⌘ T  nowa karta     ⌘ ,  preferencje");
   shortcuts->SetTooltipText(u"Skróty klawiaturowe Zitter");
+  }
   preferences_empty_ = copy(body.get(), u"Brak pasujących ustawień. Spróbuj innego hasła.", kMuted,0,gfx::Font::Weight::NORMAL,true);
   general_scroll->SetContents(std::move(body));
   if(workspace_form_){
@@ -6102,6 +6116,13 @@ std::optional<size_t> WorkspaceShell::preference_choice_selection_for_testing(st
 size_t WorkspaceShell::preference_choice_count_for_testing(std::string_view key) const {
   auto* picker=preference_choice_for_testing(key);return picker?PickerCount(picker):0;
 }
+std::u16string WorkspaceShell::preference_choice_label_for_testing(std::string_view key,size_t index) const {
+  auto* picker=preference_choice_for_testing(key);if(!picker||index>=PickerCount(picker))return {};
+#if BUILDFLAG(IS_MAC)
+  if(auto* scene=views::AsViewClass<SceneSelect>(picker))return scene->LabelAt(index);
+#endif
+  return static_cast<views::Combobox*>(picker)->GetModel()->GetItemAt(index);
+}
 bool WorkspaceShell::preference_choice_metal_visible_for_testing(std::string_view key) const {
 #if BUILDFLAG(IS_MAC)
   auto* scene=views::AsViewClass<SceneSelect>(preference_choice_for_testing(key));return scene&&scene->metal_visible();
@@ -6127,6 +6148,81 @@ void WorkspaceShell::RefreshPreferenceViewport(){
   if(preferences_body_)RefreshChoiceViewports(preferences_body_);
   for(const auto& [key,field]:preference_textfields_)field->view()->SchedulePaint();
   if(site_origin_)site_origin_->view()->SchedulePaint();
+}
+void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue& catalogue) {
+#if BUILDFLAG(IS_MAC)
+  using Kind=sidebar::PreferenceRowKind;
+  using Action=sidebar::PreferenceActionKind;
+  auto weak=weak_factory_.GetWeakPtr();
+  auto text=[](const rust::String& value){return base::UTF8ToUTF16(std::string(value));};
+  auto strings=[&](const auto& input){std::vector<std::u16string> output;for(const auto& value:input)output.push_back(text(value));return output;};
+  auto copy=[&](views::View* parent,std::u16string value,SkColor tone,int delta,gfx::Font::Weight weight,bool multiline){return AddPreferenceCopy(parent,std::move(value),tone,delta,static_cast<int>(weight),multiline);};
+  auto make_row=[&](const sidebar::PreferenceSpec& spec){
+    CHECK_LT(spec.category,preference_sections_.size());
+    auto* row=preference_sections_[spec.category].view->AddChildView(std::make_unique<PreferenceSurface>(false,true,base::BindRepeating(&WorkspaceShell::SchedulePreferenceChrome,weak),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->PreferenceChromeVisible();},weak)));
+    auto* layout=row->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal,gfx::Insets(16),20));layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
+    auto* labels=row->AddChildView(std::make_unique<views::View>());labels->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical,gfx::Insets(),5));
+    copy(labels,text(spec.title),kInk,0,gfx::Font::Weight::MEDIUM,true);copy(labels,text(spec.detail),kMuted,-1,gfx::Font::Weight::NORMAL,true);layout->SetFlexForView(labels,1);
+    preference_sections_[spec.category].rows.push_back({row,base::i18n::ToLower(text(catalogue.categories[spec.category])+u" "+text(spec.title)+u" "+text(spec.detail))});return row;
+  };
+  for(const auto& spec:catalogue.rows){
+    auto* row=make_row(spec);const auto title=text(spec.title);const std::string key(spec.key);
+    if(spec.kind==Kind::Theme||spec.kind==Kind::Search||spec.kind==Kind::Picker){
+      auto* control=ChoicePicker(row,title,strings(spec.choices),true);
+      if(spec.kind==Kind::Theme){theme_picker_=control;SetPickerCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetThemeMode(static_cast<ThemeMode>(PickerIndex(shell->theme_picker_).value_or(0)));},weak));}
+      else if(spec.kind==Kind::Search){search_engine_picker_=control;SetPickerCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(!shell)return;const size_t index=PickerIndex(shell->search_engine_picker_).value_or(0);if(index<shell->tools_.providers.size())shell->SetDefaultSearchProvider(shell->tools_.providers[index].keyword);},weak));}
+      else{preference_pickers_[key]=control;SetPickerCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::string key){if(shell){auto index=PickerIndex(shell->preference_pickers_.at(key));if(index)shell->WritePreference(key,static_cast<int>(*index));}},weak,key));}
+      continue;
+    }
+    if(spec.kind==Kind::Pinned||spec.kind==Kind::Animations||spec.kind==Kind::Toggle){
+      auto* control=PreferenceToggle(row,title,true);
+      if(spec.kind==Kind::Pinned){sidebar_check_=control;control->SetCallback(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetPinned(ToggleOn(shell->sidebar_check_));},weak));}
+      else if(spec.kind==Kind::Animations){animations_check_=control;control->SetCallback(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetWorkspaceAnimations(ToggleOn(shell->animations_check_));},weak));}
+      else{preference_toggles_[key]=control;control->SetCallback(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::string key){if(shell)shell->WritePreference(key,ToggleOn(shell->preference_toggles_.at(key)));},weak,key));}
+      continue;
+    }
+    if(spec.kind==Kind::Text){
+      auto* field=AddEditor(row->children().front(),true);field->GetViewAccessibility().SetName(title);field->SetPlaceholderText(text(spec.placeholder));
+      field->SetCallbacks(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::string key){if(shell)shell->PreferenceTextEdited(key);},weak,key),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,EditorControl* field,const ui::KeyEvent& event){return shell&&shell->HandlePreferenceEditorKey(field,event);},weak,base::Unretained(field)));field->view()->SetPreferredSize(gfx::Size(240,36));preference_textfields_[key]=field;
+      auto* save=PreferenceAction(row,true,base::BindRepeating(&WorkspaceShell::SaveTextPreference,weak,key),text(spec.button));save->SetTooltipText(text(spec.button_ax));save->GetViewAccessibility().SetName(text(spec.button_ax));preference_save_buttons_[key]=save;continue;
+    }
+    switch(spec.kind){
+      case Kind::Action:{
+        base::RepeatingClosure callback;
+        switch(spec.action){
+          case Action::History:callback=base::BindRepeating(&WorkspaceShell::OpenTools,weak,3);break;
+          case Action::Workspace:callback=base::BindRepeating(&WorkspaceShell::OpenWorkspaceSettings,weak);break;
+          case Action::Passwords:callback=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell){shell->CloseOverlays();shell->callbacks_.passwords.Run();}},weak);break;
+          case Action::Profiles:callback=base::BindRepeating(&WorkspaceShell::OpenProfiles,weak,std::string(),std::string());break;
+          case Action::Import:callback=base::BindRepeating(&WorkspaceShell::OpenImport,weak);break;
+          case Action::Proxy:case Action::Certificates:callback=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,bool certificates){if(shell&&shell->callbacks_.system_settings)shell->callbacks_.system_settings.Run(certificates);},weak,spec.action==Action::Certificates);break;
+          case Action::Providers:callback=base::BindRepeating(&WorkspaceShell::OpenTools,weak,2);break;
+          case Action::Shortcuts:callback=base::BindRepeating(&WorkspaceShell::OpenTools,weak,1);break;
+          case Action::TimeMachine:callback=base::BindRepeating(&WorkspaceShell::OpenTools,weak,0);break;
+          default:CHECK(false);
+        }
+        auto* button=PreferenceAction(row,true,std::move(callback),text(spec.button));button->SetTooltipText(text(spec.button_ax));button->GetViewAccessibility().SetName(text(spec.button_ax));break;
+      }
+      case Kind::Directory:
+        download_directory_button_=PreferenceAction(row,true,callbacks_.choose_download_directory,text(spec.button));download_directory_button_->SetTooltipText(text(spec.button_ax));download_directory_button_->GetViewAccessibility().SetName(text(spec.button_ax));download_directory_label_=copy(row->children().front().get(),u"",kMuted,-1,gfx::Font::Weight::NORMAL,true);break;
+      case Kind::SiteEditor:{
+        const auto& site=catalogue.site;auto* fields=row->children().front().get();site_origin_=AddEditor(fields,true);site_origin_->GetViewAccessibility().SetName(text(site.origin_ax));site_origin_->SetPlaceholderText(text(site.placeholder));site_origin_->SetCallbacks({},base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,EditorControl* field,const ui::KeyEvent& event){return shell&&shell->HandlePreferenceEditorKey(field,event);},weak,base::Unretained(site_origin_.get())));
+        site_type_=ChoicePicker(fields,text(site.type_ax),strings(site.types),true);site_policy_=ChoicePicker(fields,text(site.policy_ax),strings(sidebar::preference_site_policies(0)),true);
+        SetPickerCallback(site_type_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(!shell)return;std::vector<std::u16string> choices;for(const auto& choice:sidebar::preference_site_policies(PickerIndex(shell->site_type_).value_or(0)))choices.push_back(base::UTF8ToUTF16(std::string(choice)));ReplacePickerLabels(shell->site_policy_,choices);},weak));
+        PreferenceAction(row,true,base::BindRepeating(&WorkspaceShell::SaveSitePreference,weak),text(site.save));break;
+      }
+      case Kind::SiteRules:
+        site_rules_card_=row;site_rules_list_=row->children().front()->AddChildView(std::make_unique<views::View>());site_rules_list_->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical,gfx::Insets(),8));break;
+      case Kind::ClearData:{
+        const auto& clear=catalogue.clear;auto* fields=row->children().front().get();clear_data_period_=ChoicePicker(fields,text(clear.period_ax),strings(clear.periods),true);auto* checks=fields->AddChildView(std::make_unique<SceneCheckboxGroup>(8));CHECK_EQ(clear.checks.size(),3u);
+        clear_history_=AddImportCheck(checks,text(clear.checks[0]),{});clear_cookies_=AddImportCheck(checks,text(clear.checks[1]),{});clear_cache_=AddImportCheck(checks,text(clear.checks[2]),{});SetCheckValue(clear_cache_,true);
+        clear_data_button_=PreferenceAction(row,true,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(!shell||!shell->callbacks_.clear_browsing_data)return;shell->callbacks_.clear_browsing_data.Run({static_cast<int>(PickerIndex(shell->clear_data_period_).value_or(0)),CheckValue(shell->clear_history_),CheckValue(shell->clear_cookies_),CheckValue(shell->clear_cache_)});},weak),text(clear.action));break;
+      }
+      case Kind::ShortcutHint:row->SetTooltipText(text(spec.tooltip));break;
+      default:CHECK(false);
+    }
+  }
+#endif
 }
 void WorkspaceShell::RefreshGeneralControls() {
   if (!general_widget_) return;

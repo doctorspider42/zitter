@@ -38,6 +38,12 @@ mod ffi {
     struct ToolsTimelineList { choices: Vec<ToolsTimelineChoice>, enabled: bool }
     struct ToolsHistoryView { empty: String, status: String, more_visible: bool, more_enabled: bool }
     struct ToolsClearControls { label: String, enabled: bool }
+    enum PreferenceRowKind { Theme, Pinned, Animations, Search, Toggle, Text, Picker, Action, Directory, SiteEditor, SiteRules, ClearData, ShortcutHint }
+    enum PreferenceActionKind { None, History, Workspace, Passwords, Profiles, Import, Proxy, Certificates, Providers, Shortcuts, TimeMachine }
+    struct PreferenceSpec { category: usize, kind: PreferenceRowKind, key: String, title: String, detail: String, choices: Vec<String>, placeholder: String, action: PreferenceActionKind, button: String, button_ax: String, tooltip: String }
+    struct PreferenceSiteCopy { origin_ax: String, placeholder: String, type_ax: String, policy_ax: String, save: String, types: Vec<String> }
+    struct PreferenceClearCopy { period_ax: String, periods: Vec<String>, checks: Vec<String>, action: String }
+    struct PreferenceCatalogue { categories: Vec<String>, descriptions: Vec<String>, rows: Vec<PreferenceSpec>, site: PreferenceSiteCopy, clear: PreferenceClearCopy }
     struct PreferenceRow { category: usize, keywords: Vec<u16> }
     struct PreferenceVisibility { rows: Vec<bool>, sections: Vec<bool>, navigation: Vec<bool>, any: bool }
     struct ToggleStyle { width: f32, height: f32, progress: f32, hover: f32, checked: bool, pressed: bool, focused: bool, rtl: bool, track_on: u32, track_off: u32, thumb_on: u32, thumb_off: u32, thumb_hover: u32, halo: u32, focus: u32, border: u32, clip: FloatRect }
@@ -194,6 +200,8 @@ mod ffi {
         fn tools_choice_draft(self: &ToolsForm, key: &str) -> ToolsChoiceDraft;
         fn tools_timeline_project(self: &mut ToolsForm, closed: bool, items: Vec<ToolsTimelineItem>) -> ToolsTimelineList;
         fn tools_timeline_target(self: &ToolsForm, closed: bool, key: &str) -> String;
+        fn preference_catalogue(system_certificates: bool) -> PreferenceCatalogue;
+        fn preference_site_policies(index: usize) -> Vec<String>;
         type PreferencesForm;
         fn new_preferences_form(categories: usize) -> Box<PreferencesForm>;
         fn preference_select(self: &mut PreferencesForm, category: usize) -> bool;
@@ -830,6 +838,77 @@ impl ToolsForm {
 // Opaque profile identity scopes UI drafts only. The native adapter retains all
 // store access, policy/authorization and actual mutations. Text itself lives in
 // the shared Rust editor; this controller owns whether refresh may replace it.
+// Static UI catalogue only. Browser preference keys are still admitted by the
+// native store; a descriptor never authorizes a write or a platform operation.
+fn preference_spec(category:usize,kind:ffi::PreferenceRowKind,key:&str,title:&str,detail:&str,choices:Vec<String>,placeholder:&str,action:ffi::PreferenceActionKind)->ffi::PreferenceSpec {
+    use ffi::PreferenceRowKind as K;
+    let (button,button_ax)=match kind {K::Text=>("Zapisz",format!("Zapisz: {}",title)),K::Action=>("Otwórz →",title.into()),K::Directory=>("Zmień…","Zmień folder pobierania".into()),_=>("",String::new())};
+    ffi::PreferenceSpec{category,kind,key:key.into(),title:title.into(),detail:detail.into(),choices,placeholder:placeholder.into(),action,button:button.into(),button_ax,tooltip:if kind==K::ShortcutHint{"Skróty klawiaturowe Zitter".into()}else{String::new()}}
+}
+fn preference_site_policies(index:usize)->Vec<String> {
+    let mut choices=vec!["Użyj domyślnej".into(),"Zezwalaj".into(),"Blokuj".into()];if index>=4{choices.push("Pytaj".into());}choices
+}
+fn preference_catalogue(system_certificates:bool)->ffi::PreferenceCatalogue {
+    use ffi::PreferenceRowKind as K;use ffi::PreferenceActionKind as A;
+    let mut rows=vec![];
+    rows.push(preference_spec(0,K::Theme,"","Motyw aplikacji","Kolory interfejsu i stron obsługujących motyw systemowy.",vec!["Systemowy".into(),"Jasny".into(),"Ciemny".into()],"",A::None));
+    rows.push(preference_spec(0,K::Pinned,"","Zawsze widoczny panel kart","Przypnij karty i przestrzenie przy lewej krawędzi.",vec![],"",A::None));
+    rows.push(preference_spec(0,K::Animations,"","Animacje przestrzeni","Płynne przejścia. Systemowe ograniczenie ruchu ma pierwszeństwo.",vec![],"",A::None));
+    rows.push(preference_spec(1,K::Search,"","Domyślna wyszukiwarka","Używana, gdy wpiszesz zapytanie w pasku adresu.",vec!["DuckDuckGo".into(),"Google".into(),"Bing".into()],"",A::None));
+    rows.push(preference_spec(2,K::Toggle,"referrers","Przekazuj adres strony odsyłającej","Nagłówek Referer pomaga witrynie rozpoznać, skąd pochodzi wejście. Wyłączenie może zmienić działanie niektórych serwisów.",vec![],"",A::None));
+    rows.push(preference_spec(2,K::Toggle,"https_only","Zawsze używaj HTTPS","Wymagaj bezpiecznego połączenia. Witryny bez HTTPS mogą wyświetlić ostrzeżenie.",vec![],"",A::None));
+    rows.push(preference_spec(2,K::Toggle,"third_party_cookies","Blokuj cookies innych firm","Ogranicz śledzenie między witrynami. Niektóre logowania mogą wymagać cookies.",vec![],"",A::None));
+    rows.push(preference_spec(2,K::Toggle,"do_not_track","Wysyłaj Do Not Track","Poproś witryny o nieśledzenie. Respektowanie prośby zależy od witryny.",vec![],"",A::None));
+    rows.push(preference_spec(2,K::Toggle,"preconnect","Wstępne połączenia ze stronami","Przygotowuj połączenie podczas wpisywania adresu. Może użyć sieci, nawet jeśli nie otworzysz strony. Ustawienie dotyczy tego profilu.",vec![],"",A::None));
+    rows.push(preference_spec(2,K::Toggle,"link_auditing","Raporty kliknięć w linki","Zezwalaj na wysyłanie sygnałów ping po kliknięciu odnośnika.",vec![],"",A::None));
+    rows.push(preference_spec(3,K::Toggle,"camera","Kamera","Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo.",vec![],"",A::None));
+    rows.push(preference_spec(3,K::Toggle,"microphone","Mikrofon","Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo.",vec![],"",A::None));
+    rows.push(preference_spec(3,K::Toggle,"location","Lokalizacja","Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo.",vec![],"",A::None));
+    rows.push(preference_spec(3,K::Toggle,"notifications","Powiadomienia","Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo.",vec![],"",A::None));
+    rows.push(preference_spec(3,K::Toggle,"clipboard","Odczyt schowka","Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo.",vec![],"",A::None));
+    rows.push(preference_spec(4,K::Picker,"zoom","Domyślne powiększenie","Skala stron bez własnego, zapisanego powiększenia.",vec!["75%".into(),"90%".into(),"100%".into(),"110%".into(),"125%".into(),"150%".into(),"175%".into(),"200%".into()],"",A::None));
+    rows.push(preference_spec(4,K::Picker,"font_size","Rozmiar tekstu","Domyślna wielkość czcionki na stronach.",vec!["12 px".into(),"14 px".into(),"16 px".into(),"18 px".into(),"20 px".into(),"24 px".into()],"",A::None));
+    rows.push(preference_spec(4,K::Picker,"minimum_font_size","Minimalny rozmiar tekstu","Zapobiegaj wyświetlaniu zbyt drobnych liter.",vec!["Bez limitu".into(),"10 px".into(),"12 px".into(),"14 px".into(),"16 px".into(),"18 px".into()],"",A::None));
+    rows.push(preference_spec(4,K::Picker,"fixed_font_size","Rozmiar tekstu o stałej szerokości","Domyślna wielkość tekstu w blokach kodu i elementach monospace.",vec!["12 px".into(),"14 px".into(),"16 px".into(),"18 px".into(),"20 px".into(),"24 px".into()],"",A::None));
+    rows.push(preference_spec(4,K::Text,"font_standard","Czcionka standardowa","Nazwa rodziny czcionki używanej, gdy witryna nie wybierze własnej.",vec![],"Np. Times New Roman",A::None));
+    rows.push(preference_spec(4,K::Text,"font_serif","Czcionka szeryfowa","Rodzina dla tekstu serif. Musi być zainstalowana w systemie.",vec![],"Np. Georgia",A::None));
+    rows.push(preference_spec(4,K::Text,"font_sans","Czcionka bezszeryfowa","Rodzina dla tekstu sans-serif. Musi być zainstalowana w systemie.",vec![],"Np. Arial",A::None));
+    rows.push(preference_spec(4,K::Text,"font_fixed","Czcionka o stałej szerokości","Rodzina monospace, używana m.in. w blokach kodu.",vec![],"Np. Menlo",A::None));
+    rows.push(preference_spec(4,K::Toggle,"javascript","JavaScript","Skrypty potrzebne do działania większości aplikacji internetowych.",vec![],"",A::None));
+    rows.push(preference_spec(4,K::Toggle,"images","Wyświetlaj obrazy","Pozwól witrynom ładować zdjęcia i grafiki.",vec![],"",A::None));
+    rows.push(preference_spec(4,K::Toggle,"popups","Wyskakujące okna","Pozwól stronom otwierać dodatkowe okna. Domyślnie zablokowane.",vec![],"",A::None));
+    rows.push(preference_spec(4,K::Toggle,"sound","Dźwięk na stronach","Domyślna zgoda na odtwarzanie dźwięku.",vec![],"",A::None));
+    rows.push(preference_spec(5,K::Toggle,"save_passwords","Proponuj zapisywanie haseł","Zapisuj dane logowania w menedżerze haseł tego profilu.",vec![],"",A::None));
+    rows.push(preference_spec(5,K::Toggle,"auto_signin","Automatyczne logowanie","Korzystaj z zapisanych danych logowania, gdy witryna na to pozwala.",vec![],"",A::None));
+    rows.push(preference_spec(2,K::Action,"","Historia przeglądania","Wyszukuj odwiedzone strony i czyść historię tego profilu.",vec![],"",A::History));
+    rows.push(preference_spec(0,K::Action,"","Kolor i nazwa przestrzeni","Własny akcent kolorystyczny i przypisanie profilu.",vec![],"",A::Workspace));
+    rows.push(preference_spec(5,K::Action,"","Zapisane hasła","Przeglądaj i usuwaj loginy aktywnego profilu.",vec![],"",A::Passwords));
+    rows.push(preference_spec(5,K::Action,"","Profile przeglądania","Oddziel cookies, historię i dane logowania między profilami.",vec![],"",A::Profiles));
+    rows.push(preference_spec(5,K::Action,"","Import z przeglądarki","Przenieś profile, przestrzenie, foldery i zakładki.",vec![],"",A::Import));
+    rows.push(preference_spec(6,K::Toggle,"download_prompt","Pytaj, gdzie zapisać każdy plik","Wybieraj miejsce zapisu przy każdym pobieraniu.",vec![],"",A::None));
+    rows.push(preference_spec(6,K::Directory,"","Folder pobierania","Domyślne miejsce zapisu plików w tym profilu.",vec![],"",A::None));
+    rows.push(preference_spec(7,K::Text,"accept_languages","Preferowane języki witryn","Kody języków w kolejności preferencji, oddzielone przecinkami. Np. pl, en-US, en. Zmiana dotyczy treści witryn; interfejs Zitter pozostaje po polsku.",vec![],"pl, en-US, en",A::None));
+    rows.push(preference_spec(7,K::Toggle,"spellcheck","Sprawdzaj pisownię","Podkreślaj błędy w polach tekstowych na stronach. Na macOS słowniki wybiera system.",vec![],"",A::None));
+    rows.push(preference_spec(7,K::Toggle,"online_spellcheck","Rozszerzone sprawdzanie pisowni","Wysyłaj wpisywany tekst do usługi Google w celu sprawdzania pisowni. Wymaga włączonego sprawdzania pisowni.",vec![],"",A::None));
+    rows.push(preference_spec(9,K::Toggle,"caret_browsing","Nawigacja kursorem tekstowym","Poruszaj się po tekstach witryn za pomocą klawiatury i zaznaczaj je bez myszy.",vec![],"",A::None));
+    rows.push(preference_spec(9,K::Toggle,"hardware_acceleration","Akceleracja sprzętowa","Używaj procesora graficznego do renderowania. Ustawienie wspólne dla całej aplikacji; działa po ponownym uruchomieniu Zitter.",vec![],"",A::None));
+    rows.push(preference_spec(9,K::Picker,"dns_mode","Bezpieczny DNS","Wspólne dla całej aplikacji. Tryb automatyczny może używać DNS systemowego. Tryb ścisły wymaga wcześniej zapisanego adresu DNS-over-HTTPS.",vec!["Systemowy".into(),"Automatyczny".into(),"Ścisły (DoH)".into()],"",A::None));
+    rows.push(preference_spec(9,K::Text,"dns_templates","Adres serwera DNS-over-HTTPS","Wspólny dla całej aplikacji. Wpisz szablon HTTPS, np. https://dns.google/dns-query{?dns}. Najpierw zapisz adres, następnie włącz tryb ścisły.",vec![],"https://…/dns-query{?dns}",A::None));
+    rows.push(preference_spec(9,K::Action,"","Ustawienia proxy systemowego","Zitter korzysta z konfiguracji proxy systemu operacyjnego.",vec![],"",A::Proxy));
+    if system_certificates{rows.push(preference_spec(9,K::Action,"","Certyfikaty systemowe","Otwórz systemowy magazyn certyfikatów i ustawienia zaufania.",vec![],"",A::Certificates));}
+    rows.push(preference_spec(3,K::SiteEditor,"","Wyjątek dla witryny","Wpisz pełny adres witryny bez ścieżki, np. https://example.com. Wyjątek zastępuje politykę domyślną w tym profilu.",vec![],"",A::None));
+    rows.push(preference_spec(3,K::SiteRules,"","Zapisane wyjątki","Własne reguły możesz usunąć, aby wrócić do ustawień domyślnych. Reguły zarządzane pozostają tylko do odczytu.",vec![],"",A::None));
+    rows.push(preference_spec(8,K::ClearData,"","Wyczyść dane przeglądania","Dotyczy wyłącznie aktywnego profilu. Pobrane pliki, zapisane hasła i przypięte karty pozostaną zachowane. Przed usunięciem zobaczysz potwierdzenie.",vec![],"",A::None));
+    rows.push(preference_spec(1,K::Action,"","Wyszukiwarki i prefiksy","Własne wyszukiwarki: g zapytanie, w hasło, yt film…",vec![],"",A::Providers));
+    rows.push(preference_spec(1,K::Action,"","Skróty klawiszowe","Schemat Arc, własne kombinacje i wykrywanie konfliktów.",vec![],"",A::Shortcuts));
+    rows.push(preference_spec(0,K::Action,"","Time Machine przestrzeni","Snapshoty, zamknięte karty i usypianie całych projektów.",vec![],"",A::TimeMachine));
+    rows.push(preference_spec(1,K::ShortcutHint,"","Szybciej z klawiaturą","⌘ L  adres i wyszukiwanie\n⌘ K  karty, przestrzenie i historia\n⌘ T  nowa karta     ⌘ ,  preferencje",vec![],"",A::None));
+    ffi::PreferenceCatalogue{
+        categories:vec!["Wygląd".into(),"Wyszukiwanie".into(),"Prywatność".into(),"Uprawnienia stron".into(),"Treści i czytelność".into(),"Hasła i profile".into(),"Pobieranie".into(),"Języki i pisownia".into(),"Dane przeglądania".into(),"Zaawansowane".into()],descriptions:vec!["Dopasuj Zitter do swojego rytmu.".into(),"Wybierz, gdzie zaczyna się każde wyszukiwanie.".into(),"Zdecyduj, jakie ślady zostawiasz w sieci.".into(),"Ustal domyślny dostęp witryn do urządzenia.".into(),"Wygodne czytanie i kontrola zawartości stron.".into(),"Oddzielne logowania, wspólne możliwości.".into(),"Wybierz miejsce dla pobieranych plików.".into(),"Wybierz języki witryn i pomoc podczas pisania.".into(),"Kontroluj dane zapisane w bieżącym profilu.".into(),"Dostępność, połączenia i ustawienia silnika Chromium.".into()],rows,
+        site:ffi::PreferenceSiteCopy{origin_ax:"Adres witryny dla wyjątku".into(),placeholder:"https://example.com".into(),type_ax:"Rodzaj uprawnienia dla witryny".into(),policy_ax:"Polityka dla witryny".into(),save:"Zapisz wyjątek".into(),types:vec!["JavaScript".into(),"Obrazy".into(),"Wyskakujące okna".into(),"Dźwięk".into(),"Powiadomienia".into(),"Lokalizacja".into(),"Kamera".into(),"Mikrofon".into(),"Schowek".into()]},
+        clear:ffi::PreferenceClearCopy{period_ax:"Zakres czasu czyszczenia danych".into(),periods:vec!["Ostatnia godzina".into(),"Ostatnie 24 godziny".into(),"Ostatnie 7 dni".into(),"Cały okres".into()],checks:vec!["Historia przeglądania".into(),"Cookies i dane witryn (może wylogować)".into(),"Pamięć podręczna".into()],action:"Wyczyść…".into()}
+    }
+}
 pub struct PreferencesForm { categories: usize, selected: usize, query: Vec<u16>, profile: String, dirty: std::collections::BTreeSet<String>, rule_limit: usize }
 fn new_preferences_form(categories:usize)->Box<PreferencesForm>{Box::new(PreferencesForm{categories,selected:0,query:vec![],profile:String::new(),dirty:Default::default(),rule_limit:50})}
 impl PreferencesForm {
@@ -2465,6 +2544,32 @@ mod tests {
         let provider=tools_copy(2,"");assert_eq!(provider.fields.len(),3);assert_eq!(provider.actions.len(),3);assert!(provider.intro.contains("{query}"));
         let history=tools_copy(usize::MAX,"Profil 🦀");assert_eq!(history.intro,"Profil: Profil 🦀");assert_eq!(history.fields.len(),1);assert_eq!(history.choices.len(),4);assert_eq!(history.actions[0],tools_clear_label(false));assert_eq!(tools_clear_label(true),"Czyszczenie…");
         for page in 0..4{let copy=tools_copy(page,"");assert!(!copy.title.is_empty());assert!(!copy.initial_status.is_empty());assert!(copy.fields.iter().chain(copy.actions.iter()).all(|s|!s.is_empty()));}
+    }
+    #[test] fn preference_catalogue_preserves_categories_counts_and_platform_gate() {
+        use ffi::PreferenceRowKind as K;use ffi::PreferenceActionKind as A;
+        let c=preference_catalogue(true);assert_eq!(c.categories,["Wygląd","Wyszukiwanie","Prywatność","Uprawnienia stron","Treści i czytelność","Hasła i profile","Pobieranie","Języki i pisownia","Dane przeglądania","Zaawansowane"]);assert_eq!(c.descriptions.len(),10);assert_eq!(c.rows.len(),52);
+        let mut counts=[0;10];for row in &c.rows{counts[row.category]+=1;assert!(!row.title.is_empty()&&!row.detail.is_empty());}assert_eq!(counts,[5,4,7,7,12,5,2,3,1,6]);
+        assert_eq!(c.rows.iter().filter(|r|r.kind==K::Toggle||r.kind==K::Pinned||r.kind==K::Animations).count(),24);assert_eq!(c.rows.iter().filter(|r|r.kind==K::Text).count(),6);
+        let no=preference_catalogue(false);assert_eq!(no.rows.len(),51);assert!(no.rows.iter().all(|r|r.action!=A::Certificates));assert!(c.rows.iter().filter(|r|r.action!=A::Certificates).map(|r|(&r.title,&r.detail,r.category)).eq(no.rows.iter().map(|r|(&r.title,&r.detail,r.category))));
+    }
+    #[test] fn preference_catalogue_registered_store_keys_keep_their_control_kinds() {
+        use ffi::PreferenceRowKind as K;let c=preference_catalogue(true);let mut keys=std::collections::BTreeSet::new();
+        for row in &c.rows{if row.kind==K::Text||row.kind==K::Toggle||row.kind==K::Picker{assert!(!row.key.is_empty());assert!(keys.insert(row.key.clone()));}else{assert!(row.key.is_empty());}}
+        assert_eq!(c.rows.iter().filter(|r|r.kind==K::Toggle).map(|r|r.key.as_str()).collect::<Vec<_>>(),["referrers","https_only","third_party_cookies","do_not_track","preconnect","link_auditing","camera","microphone","location","notifications","clipboard","javascript","images","popups","sound","save_passwords","auto_signin","download_prompt","spellcheck","online_spellcheck","caret_browsing","hardware_acceleration"]);
+        assert_eq!(c.rows.iter().filter(|r|r.kind==K::Text).map(|r|r.key.as_str()).collect::<Vec<_>>(),["font_standard","font_serif","font_sans","font_fixed","accept_languages","dns_templates"]);
+        assert_eq!(c.rows.iter().filter(|r|r.kind==K::Picker).map(|r|r.key.as_str()).collect::<Vec<_>>(),["zoom","font_size","minimum_font_size","fixed_font_size","dns_mode"]);
+        for key in ["hardware_acceleration","dns_mode","dns_templates"]{let row=c.rows.iter().find(|r|r.key==key).unwrap();assert!(row.detail.contains("całej aplikacji"));}
+    }
+    #[test] fn preference_catalogue_editor_and_action_accessibility_retains_native_copy() {
+        use ffi::PreferenceRowKind as K;use ffi::PreferenceActionKind as A;let c=preference_catalogue(true);let mut actions=vec![];
+        for row in &c.rows{match row.kind{K::Text=>{assert!(!row.placeholder.is_empty());assert_eq!(row.button,"Zapisz");assert_eq!(row.button_ax,format!("Zapisz: {}",row.title));assert!(row.action==A::None);},K::Action=>{assert_eq!(row.button,"Otwórz →");assert_eq!(row.button_ax,row.title);assert!(row.action!=A::None);assert!(!actions.contains(&row.action));actions.push(row.action);},K::Directory=>{assert_eq!(row.button,"Zmień…");assert_eq!(row.button_ax,"Zmień folder pobierania");},_=>{assert!(row.button.is_empty());assert!(row.action==A::None);}}}assert_eq!(actions.len(),10);
+        assert_eq!(c.site.origin_ax,"Adres witryny dla wyjątku");assert_eq!(c.site.placeholder,"https://example.com");assert_eq!(c.site.save,"Zapisz wyjątek");assert_eq!(c.clear.checks,["Historia przeglądania","Cookies i dane witryn (może wylogować)","Pamięć podręczna"]);assert_eq!(c.clear.action,"Wyczyść…");
+    }
+    #[test] fn preference_catalogue_choice_indices_match_native_value_and_permission_order() {
+        let c=preference_catalogue(true);let choices=|key:&str|c.rows.iter().find(|r|r.key==key).unwrap().choices.clone();
+        assert_eq!(choices("zoom"),["75%","90%","100%","110%","125%","150%","175%","200%"]);assert_eq!(choices("font_size"),["12 px","14 px","16 px","18 px","20 px","24 px"]);assert_eq!(choices("fixed_font_size"),choices("font_size"));assert_eq!(choices("minimum_font_size"),["Bez limitu","10 px","12 px","14 px","16 px","18 px"]);assert_eq!(choices("dns_mode"),["Systemowy","Automatyczny","Ścisły (DoH)"]);
+        assert_eq!(c.site.types,["JavaScript","Obrazy","Wyskakujące okna","Dźwięk","Powiadomienia","Lokalizacja","Kamera","Mikrofon","Schowek"]);for i in 0..9{let p=preference_site_policies(i);assert_eq!(&p[..3],["Użyj domyślnej","Zezwalaj","Blokuj"]);assert_eq!(p.len(),if i<4{3}else{4});if i>=4{assert_eq!(p[3],"Pytaj");}}
+        assert_eq!(c.clear.periods,["Ostatnia godzina","Ostatnie 24 godziny","Ostatnie 7 dni","Cały okres"]);
     }
     #[test] fn preference_draft_refresh_policy_truth_table() {
         for dirty in [false,true]{for present in [false,true]{for editable in [false,true]{for composing in [false,true]{for profile_changed in [false,true]{

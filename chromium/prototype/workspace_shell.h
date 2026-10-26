@@ -35,7 +35,7 @@
 #include "ui/native_theme/native_theme_observer.h"
 #include "url/gurl.h"
 
-namespace zitter::sidebar { struct Item; }
+namespace zitter::sidebar { struct Item; struct PreferenceCatalogue; }
 namespace ui { class AcceleratorTarget; }
 namespace views {
 class DialogDelegate;
@@ -286,6 +286,7 @@ class WorkspaceShell final : public ui::EventHandler,
   bool preference_chrome_visible_for_testing() const{return PreferenceChromeVisible();}
   size_t preference_category_for_testing() const;
   views::Button* preference_navigation_for_testing(size_t category) const;
+  std::vector<views::View*> preference_rows_for_testing(size_t category) const{std::vector<views::View*> rows;for(const auto& row:preference_sections_.at(category).rows)rows.push_back(row.view);return rows;}
   views::Button* preference_close_for_testing() const{return preferences_close_;}
   bool preference_navigation_metal_visible_for_testing() const;
   bool preference_navigation_selected_for_testing(size_t category) const;
@@ -305,6 +306,7 @@ class WorkspaceShell final : public ui::EventHandler,
   views::View* preference_choice_for_testing(std::string_view key) const;
   std::optional<size_t> preference_choice_selection_for_testing(std::string_view key) const;
   size_t preference_choice_count_for_testing(std::string_view key) const;
+  std::u16string preference_choice_label_for_testing(std::string_view key,size_t index) const;
   bool preference_choice_metal_visible_for_testing(std::string_view key) const;
   gfx::Rect preference_choice_metal_bounds_for_testing(std::string_view key) const;
   void ActivatePreferenceChoiceForTesting(std::string_view key,size_t index);
@@ -486,6 +488,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void ResetToolsForm();
   void RefreshTools();
   void BuildRustToolsForm();
+  void BuildRustPreferenceRows(const sidebar::PreferenceCatalogue& catalogue);
   void RefreshTimelineItems();
   void RefreshToolsViewport();
   void SetHistoryMoreVisible(bool visible);
