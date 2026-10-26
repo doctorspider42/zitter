@@ -6,7 +6,57 @@ application/domain commands; preserve profile/session isolation. Push verified
 milestones to `origin/main` as they land. The opt-in switch remains
 `--zitter-sidebar=rust-metal` until the migration and comparison are complete.
 
-## Latest targeted follow-up: toggle and checkbox hosts
+## Latest targeted follow-up: selector hosts
+
+UI source `9908417dc1a3d55c76716bb660d8eff2ae9ddaee` moves SceneSelect from SceneGlyphButton/Button to the common
+plain View RustActionView. Preference, tools, profile and import selector paths
+construct no Button/ButtonController instances. Native comparison retains
+Combobox/PreferenceCombobox. Existing Rust SelectState retains selected keys,
+prefix matching, empty selection, model replacement and menu-generation tokens.
+
+Rust ActionControl owns pointer/gesture, enabled/focused/visual state and capture
+cancellation. The existing Rust menu-key policy, native PrefixSelector/IME
+protocol, native menu/font/theme/measurement adapters and domain callbacks remain.
+The open AX verb disappears while disabled and restores correctly on enable;
+disabling still cancels menu/prefix state. Scheduling checks clipped pending input
+synchronously before GPU work is coalesced. No dependency or browser service,
+admission/store/persistence policy changed.
+
+Focus passed **11 Metal / 7 Views**; affected regressions passed
+**61 Metal / 42 Views**, serial, retry zero. The new shared case opens and
+cancels real Chromium Views popup menus using AX, Down and root-view mouse routing. It verifies
+host ownership, role, unchanged selected value, disabled/open-verb transitions and
+live expanded/collapsed state in both modes. A Rust-only branch scrolls an armed
+selector out/back and verifies late release does not open the menu. Existing
+physical Cocoa prefix typing, empty selection, durable preference/site policy,
+tools drafts/history/restore, profile stable IDs and import lifecycle remain.
+
+Three focus probes retain fixture corrections in the report: the initial case
+watched Cocoa NSMenu instead of Views MenuController; the next clicked too soon
+after closing and hit the native guard; the third opened the native popup but
+incorrectly required RootView capture to remain set. The final fixture checks
+the actual controller and menu outcomes. Production code was unchanged after the
+probes. Native Combobox opens on press; SceneSelect retains its earlier prototype
+release activation. Pointer-phase parity remains an explicit follow-up.
+
+Checks passed **288 Rust**, **180 SDK font/direction cases plus raster**, **68 live
+and 68 clean-archive Python**, scoped GN/boundaries and final Ninja no-op. All 53
+committed/live/staged prototype inputs and compiled/frozen-bootstrap/native-engine
+identities were checked. Compiled inventory is **218 cases**; this source has
+**targeted acceptance only** under the requested cadence.
+[Targeted selector-host report](benchmarks/rust-select-host-targeted-2026-10-26.json).
+
+Affected logs retain **2 Metal / 2 Views invalid-mailbox diagnostics**;
+overlay counts are recorded separately. Nonfatal compositor diagnostics remain
+unresolved. No controlled CPU/GPU/presentation/input-latency/memory gain is
+established. The full text-action checkpoint below predates checked and selector
+host changes. Remaining decorative/glyph Button controls, native per-control View
+identity, stable Rust nodes, Views popup/menu ownership, containers/placement/UI coordination, manual input/
+VoiceOver/RTL/scale/theme/GPU recovery, controlled performance and final release/
+license/notices remain open. Frozen UI-lab inputs exclude current-main network
+policy.
+
+## Previous targeted follow-up: toggle and checkbox hosts
 
 UI source `d75b117ec3c51344ed27df477212cde4b821e814` moves SceneToggle and SceneCheckbox to the common plain View
 RustActionView, with no Button/ButtonController instances on their Rust paths.
