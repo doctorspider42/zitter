@@ -770,6 +770,10 @@ and remaining interaction/container identity still need migration.
 Preferences now also use the Rust-owned viewport, with filter/category reset and
 existing theme/background behavior. [Targeted acceptance](docs/benchmarks/rust-preference-viewport-targeted-2026-10-26.json)
 covers affected controls; full UI matrices are reserved for larger migration blocks.
+Workspace settings and import now also use this viewport, retaining bounded
+height and wrapping behavior. [Targeted form acceptance](docs/benchmarks/rust-form-viewport-targeted-2026-10-26.json)
+passed 27 Metal / 20 Views affected cases and 274 Rust cases; native adapters and
+remaining scroll/container/interaction ownership still need migration.
 [Editor contracts and acceptance](docs/rust-metal-editor.md).
 Model updates refresh the scene independently of
 native painting. Rust also owns row

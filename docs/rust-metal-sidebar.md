@@ -2293,3 +2293,40 @@ belongs to UI source `d23f232` and is not counted as a full pass for this source
 The lab retains its recorded frozen bootstrap/network inputs; current-main network
 policy changes are not part of this UI binary's acceptance. No performance or
 full manual/release/license completion is claimed.
+
+## Workspace and import viewport — targeted stage, 2026-10-26
+
+UI source `2c305645b9ec18d82e8174da67df5ec7973fd862` moves workspace settings and import to the shared
+Rust-owned viewport. Rust owns height clipping, wrapping-width reservation,
+allocation, offset and reveal/clamp. Native measurement, platform scrollbar/input,
+accessibility/window adapters and per-control View identity remain. The native
+Views baseline retains its original ScrollView and bounded sizing policy.
+
+Focused new tests passed **2 Metal / 2 Views**; affected regressions passed
+**27 Metal / 20 Views**, single attempt, retry limit zero.
+Checks passed **274 Rust**, **180 SDK font/direction cases plus raster**, **68 live
+and 68 clean-archive Python**, scoped GN/boundaries and final Ninja no-op.
+All 53 committed/live/staged prototype inputs and binary/bootstrap/native-engine
+identities were checked. See [the targeted report](benchmarks/rust-form-viewport-targeted-2026-10-26.json).
+
+Both panels have coverage for actual successful compositor presentation,
+offscreen/reveal, compact/wide wrapping, resize and shrink, wheel/AX commands and
+retained draft text. Earlier fixture failures are retained separately: the native
+settings opener requires a visible main widget, native scrolling is asynchronous,
+and a fixed spacer inflated the import window minimum. The final responsive
+spacer adds overflow at real layout widths without inflating its zero-width
+minimum-size query. Production code was unchanged for those fixture corrections.
+
+An earlier affected Views run had 19 passes and one successful-presentation wait
+timeout. The final fixture explicitly schedules root paint before requesting the
+frame; final focus and affected runs passed on both backends. Earlier results
+remain in the report; elimination of all presentation flakiness is not established.
+
+Full UI tests run **only after a larger block**, per user instruction. This stage
+has targeted acceptance; the previous full matrix below belongs to UI source
+`d23f232`. The lab retains frozen bootstrap/network inputs; current-main network
+policy is outside this binary's acceptance. No controlled performance gain or
+complete manual/release/license parity is claimed.
+
+Previous targeted preference viewport acceptance is retained in
+[its report](benchmarks/rust-preference-viewport-targeted-2026-10-26.json).
