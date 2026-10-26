@@ -151,6 +151,7 @@
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/style/platform_style.h"
 #include "ui/views/interaction/element_tracker_views.h"
+#include "ui/views/controls/menu/menu_controller.h"
 #include "ui/base/interaction/element_tracker.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/test/views_drawing_test_utils.h"
@@ -2888,7 +2889,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PasswordOverviewAccountsCocoaA
   auto visit=[&](auto&& self,views::View* view)->void{ui::AXNodeData node;view->GetViewAccessibility().GetAccessibleNodeData(&node);exposed+=node.GetString16Attribute(ax::mojom::StringAttribute::kName)+node.GetString16Attribute(ax::mojom::StringAttribute::kValue);if(node.GetString16Attribute(ax::mojom::StringAttribute::kName)==u"Zapisane konta")picker=view;for(const auto& child:view->children())self(self,child.get());};visit(visit,widget->GetContentsView());
   ASSERT_TRUE(picker);EXPECT_EQ(std::u16string::npos,exposed.find(u"scene-secret-never-render"));
   ui::AXNodeData account;picker->GetViewAccessibility().GetAccessibleNodeData(&account);EXPECT_NE(std::u16string::npos,account.GetString16Attribute(ax::mojom::StringAttribute::kValue).find(u"alpha"));
-  if(rust){EXPECT_TRUE(picker->children().empty());EXPECT_FALSE(views::AsViewClass<views::Combobox>(picker));ASSERT_TRUE(base::test::RunUntil([&]{return services->password_scene_visible_for_testing()&&services->password_scene_contains_for_testing(base::UTF16ToUTF8(u"Profil: "+BrowsingProfileName(work_)));}));EXPECT_FALSE(services->password_scene_contains_for_testing("scene-secret-never-render"));}
+  if(rust){EXPECT_TRUE(picker->children().empty());EXPECT_FALSE(views::AsViewClass<views::Button>(picker));EXPECT_FALSE(views::AsViewClass<views::Combobox>(picker));ASSERT_TRUE(base::test::RunUntil([&]{return services->password_scene_visible_for_testing()&&services->password_scene_contains_for_testing(base::UTF16ToUTF8(u"Profil: "+BrowsingProfileName(work_)));}));EXPECT_FALSE(services->password_scene_contains_for_testing("scene-secret-never-render"));}
   ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));picker->RequestFocus();
   base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
   // Account labels start with the origin, so type its first character. This
@@ -3993,6 +3994,109 @@ class SceneModalBodyOracle final : public views::View {
 BEGIN_METADATA(SceneModalBodyOracle)
 END_METADATA
 }  // namespace
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest,
+                       SelectActionHostsPopupMenuAndClippedPress) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->OpenGeneralSettings();
+  shell->preferences_search()->input_client()->InsertText(
+      u"a", ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
+  shell->general_widget()->LayoutRootViewIfNecessary();
+  const bool rust = shell->workspace_input()->rust_editor();
+  auto* picker = shell->theme_picker();
+  ASSERT_TRUE(picker);
+  EXPECT_EQ(!rust, views::AsViewClass<views::Combobox>(picker) != nullptr);
+  EXPECT_FALSE(views::AsViewClass<views::Button>(picker));
+  if (rust) EXPECT_TRUE(picker->children().empty());
+  picker->ScrollViewToVisible();
+  auto data = [](views::View* view) {
+    ui::AXNodeData node;
+    view->GetViewAccessibility().GetAccessibleNodeData(&node);
+    return node;
+  };
+  const auto original = data(picker).GetString16Attribute(
+      ax::mojom::StringAttribute::kValue);
+  EXPECT_EQ(ax::mojom::Role::kComboBoxSelect, data(picker).role);
+  EXPECT_EQ(ax::mojom::DefaultActionVerb::kOpen,
+            data(picker).GetDefaultActionVerb());
+  ui::AXActionData activate;
+  activate.action = ax::mojom::Action::kDoDefault;
+  picker->SetEnabled(false);
+  EXPECT_FALSE(data(picker).HasIntAttribute(
+      ax::mojom::IntAttribute::kDefaultActionVerb));
+  picker->HandleAccessibleAction(activate);
+  EXPECT_EQ(original, data(picker).GetString16Attribute(
+                          ax::mojom::StringAttribute::kValue));
+  picker->SetEnabled(true);
+  EXPECT_EQ(ax::mojom::DefaultActionVerb::kOpen,
+            data(picker).GetDefaultActionVerb());
+  base::ScopedClosureRunner close_menu(base::BindOnce([] {
+    if (auto* menu = views::MenuController::GetActiveInstance())
+      menu->Cancel(views::MenuController::ExitType::kAll);
+  }));
+  ui_controls::EnableUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(
+      shell->general_widget()->GetNativeWindow()));
+  // Native Combobox guards rapid clicks after menu close; exercise mouse first.
+  for (int source : {2, 0, 1}) {
+    SCOPED_TRACE(source);
+    picker->RequestFocus();
+    ASSERT_TRUE(picker->HasFocus());
+    if (source == 0) {
+      EXPECT_TRUE(picker->HandleAccessibleAction(activate));
+    } else if (source == 1) {
+      ui::KeyEvent down(ui::EventType::kKeyPressed, ui::VKEY_DOWN, ui::EF_NONE);
+      EXPECT_TRUE(picker->OnKeyPressed(down));
+    } else {
+      auto* root = picker->GetWidget()->GetRootView();
+      auto point = picker->GetLocalBounds().CenterPoint();
+      views::View::ConvertPointToTarget(picker, root, &point);
+      ui::MouseEvent press(ui::EventType::kMousePressed, point, point,
+                           base::TimeTicks(), ui::EF_LEFT_MOUSE_BUTTON,
+                           ui::EF_LEFT_MOUSE_BUTTON);
+      ui::MouseEvent release(ui::EventType::kMouseReleased, point, point,
+                             base::TimeTicks(), ui::EF_LEFT_MOUSE_BUTTON,
+                             ui::EF_LEFT_MOUSE_BUTTON);
+      // Opening a menu on press clears RootView capture in the native combobox.
+      root->OnMousePressed(press);
+      root->OnMouseReleased(release);
+    }
+    ASSERT_TRUE(views::MenuController::GetActiveInstance());
+    EXPECT_TRUE(data(picker).HasState(ax::mojom::State::kExpanded));
+    EXPECT_EQ(original, data(picker).GetString16Attribute(
+                            ax::mojom::StringAttribute::kValue));
+    views::MenuController::GetActiveInstance()->Cancel(
+        views::MenuController::ExitType::kAll);
+    ASSERT_TRUE(base::test::RunUntil([&] {
+      return !views::MenuController::GetActiveInstance() &&
+             data(picker).HasState(ax::mojom::State::kCollapsed);
+    }));
+    EXPECT_EQ(original, data(picker).GetString16Attribute(
+                            ax::mojom::StringAttribute::kValue));
+  }
+  if (rust) {
+    const auto point = picker->GetLocalBounds().CenterPoint();
+    ui::MouseEvent press(ui::EventType::kMousePressed, point, point,
+                         base::TimeTicks(), ui::EF_LEFT_MOUSE_BUTTON,
+                         ui::EF_LEFT_MOUSE_BUTTON);
+    ui::MouseEvent release(ui::EventType::kMouseReleased, point, point,
+                           base::TimeTicks(), ui::EF_LEFT_MOUSE_BUTTON,
+                           ui::EF_LEFT_MOUSE_BUTTON);
+    auto* scroll = shell->preference_viewport_for_testing();
+    const auto offset = scroll->offset();
+    ASSERT_GT(scroll->maximum(), 0);
+    ASSERT_TRUE(picker->OnMousePressed(press));
+    scroll->ScrollTo(scroll->maximum());
+    EXPECT_TRUE(picker->GetVisibleBounds().IsEmpty());
+    scroll->ScrollTo(offset);
+    picker->OnMouseReleased(release);
+    EXPECT_FALSE(views::MenuController::GetActiveInstance());
+    EXPECT_TRUE(data(picker).HasState(ax::mojom::State::kCollapsed));
+    EXPECT_EQ(original, data(picker).GetString16Attribute(
+                            ax::mojom::StringAttribute::kValue));
+  }
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CheckedActionHostsAXAndViewportCancellation) {
   ASSERT_NO_FATAL_FAILURE(NavigateBoth());auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenGeneralSettings();const bool rust=shell->workspace_input()->rust_editor();
   auto filter=[&](std::u16string text){auto* field=shell->preferences_search();field->SelectRange(gfx::Range(0,field->GetText().size()));field->input_client()->InsertText(text,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();};
@@ -5564,7 +5668,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsChoicesScenesClipping
   for(int page=0;page<4;++page){
     shell->OpenTools(page);shell->tools_widget()->LayoutRootViewIfNecessary();ASSERT_NO_FATAL_FAILURE(present());
     for(const auto* key:(page==0?std::vector<const char*>{"selection","closed"}:std::vector<const char*>{page==3?"history_period":"selection"})){
-      auto* picker=shell->tools_choice_for_testing(key);ASSERT_TRUE(picker);EXPECT_TRUE(picker->children().empty());EXPECT_FALSE(views::AsViewClass<views::Combobox>(picker));
+      auto* picker=shell->tools_choice_for_testing(key);ASSERT_TRUE(picker);EXPECT_TRUE(picker->children().empty());EXPECT_FALSE(views::AsViewClass<views::Button>(picker));EXPECT_FALSE(views::AsViewClass<views::Combobox>(picker));
       picker->ScrollRectToVisible(picker->GetLocalBounds());ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_choice_metal_visible_for_testing(key);}));
       auto expected=[&]{auto r=picker->GetVisibleBounds();r.Offset(picker->GetBoundsInScreen().x(),picker->GetBoundsInScreen().y());return r;};
       ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_choice_metal_bounds_for_testing(key)==expected();}));
@@ -5656,7 +5760,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, PreferenceChoicesScenesIde
   window_->widget()->SetBounds(gfx::Rect(60,60,700,660));shell->OpenGeneralSettings();
   auto filter=[&](std::u16string query){auto* field=shell->preferences_search();field->SelectRange(gfx::Range(0,field->GetText().size()));if(query.empty())field->input_client()->DeleteRange(gfx::Range(0,field->GetText().size()));else field->input_client()->InsertText(query,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();};
   for(const auto* key:{"theme","search","category","zoom","font_size","minimum_font_size","fixed_font_size","dns_mode","site_type","site_policy","clear_period"}){
-    auto* picker=shell->preference_choice_for_testing(key);ASSERT_TRUE(picker);EXPECT_FALSE(views::AsViewClass<views::Combobox>(picker));EXPECT_TRUE(picker->children().empty());
+    auto* picker=shell->preference_choice_for_testing(key);ASSERT_TRUE(picker);EXPECT_FALSE(views::AsViewClass<views::Combobox>(picker));EXPECT_FALSE(views::AsViewClass<views::Button>(picker));EXPECT_TRUE(picker->children().empty());
     ui::AXNodeData ax;picker->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kComboBoxSelect,ax.role);
   }
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->preference_choice_metal_visible_for_testing("theme");}));shell->ActivatePreferenceChoiceForTesting("theme",2);EXPECT_EQ(ThemeMode::kDark,shell->theme_mode());

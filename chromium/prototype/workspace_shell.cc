@@ -1068,14 +1068,14 @@ class SceneSelectMenu final : public ui::SimpleMenuModel,public ui::SimpleMenuMo
   bool Valid(int command) const {return command>=0&&static_cast<size_t>(command)<keys_.size();}
   std::vector<std::string> keys_;std::string selected_;uint64_t token_;base::RepeatingCallback<bool(uint64_t,const std::string&)> enabled_;base::RepeatingCallback<void(uint64_t,const std::string&)> activate_;
 };
-class SceneSelect final : public SceneGlyphButton {
-  METADATA_HEADER(SceneSelect,SceneGlyphButton)
+class SceneSelect final : public RustActionView {
+  METADATA_HEADER(SceneSelect,RustActionView)
  public:
   void SyncWindowVisibility(){OnMouseCaptureLost();if(!SceneIsVisible(this)){CancelMenu();if(surface_)surface_->Hide();}Schedule();}
 
   SceneSelect(std::vector<std::u16string> labels,std::u16string name,base::RepeatingClosure changed)
-      :SceneGlyphButton(base::BindRepeating([]{}),std::move(name),Glyph::kMore,nullptr,base::BindRepeating([]{return true;})),labels_(std::move(labels)),state_(MakeState(labels_)),changed_(std::move(changed)),input_(this,base::BindRepeating(&SceneSelect::Input,base::Unretained(this)),base::BindRepeating(&SceneSelect::ResetPrefix,base::Unretained(this))) {
-    SetInstallFocusRingOnFocus(false);SetHasInkDropActionOnClick(false);SetAnimateOnStateChange(false);SetRequestFocusOnPress(false);GetViewAccessibility().SetRole(ax::mojom::Role::kComboBoxSelect);GetViewAccessibility().SetHasPopup(ax::mojom::HasPopup::kMenu);SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kOpen);UpdateAccessibleDefaultActionVerb();RefreshAX();
+      :RustActionView({},std::move(name),ControlGlyph::kMore,nullptr,base::BindRepeating([]{return true;}),{},false),labels_(std::move(labels)),state_(MakeState(labels_)),changed_(std::move(changed)),input_(this,base::BindRepeating(&SceneSelect::Input,base::Unretained(this)),base::BindRepeating(&SceneSelect::ResetPrefix,base::Unretained(this))) {
+    GetViewAccessibility().SetRole(ax::mojom::Role::kComboBoxSelect);GetViewAccessibility().SetHasPopup(ax::mojom::HasPopup::kMenu);GetViewAccessibility().SetDefaultActionVerb(ActionVerb());RefreshAX();
   }
   ~SceneSelect() override {if(GetInputMethod())GetInputMethod()->DetachTextInputClient(&input_);}
   std::optional<size_t> Selected() const {return state_->has_selection()?std::optional<size_t>(state_->selected()):std::nullopt;}
@@ -1106,22 +1106,22 @@ class SceneSelect final : public SceneGlyphButton {
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {int widest=0;for(const auto& text:labels_)widest=std::max(widest,gfx::GetStringWidth(text,TextFont()));const auto g=sidebar::select_layout(-1,-1,widest,views::LayoutProvider::GetControlHeightForFont(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY,TextFont()),false);return gfx::Size(g.width,g.height);}
   bool OnKeyPressed(const ui::KeyEvent& event) override {if(!GetEnabledInViewsSubtree())return false;if(!sidebar::select_menu_key(event.key_code()))return false;ShowMenu(ui::mojom::MenuSourceType::kKeyboard);return true;}
   bool OnKeyReleased(const ui::KeyEvent&) override {return false;}
-  void OnFocus() override {SceneGlyphButton::OnFocus();if(GetInputMethod())GetInputMethod()->SetFocusedTextInputClient(&input_);}
-  void OnBlur() override {if(GetInputMethod())GetInputMethod()->DetachTextInputClient(&input_);ResetPrefix();SceneGlyphButton::OnBlur();}
-  bool HandleAccessibleAction(const ui::AXActionData& action) override {if(action.action==ax::mojom::Action::kDoDefault&&GetEnabledInViewsSubtree()){ShowMenu(ui::mojom::MenuSourceType::kKeyboard);return true;}return SceneGlyphButton::HandleAccessibleAction(action);}
-  void StateChanged(ButtonState previous) override {SceneGlyphButton::StateChanged(previous);if(!GetEnabledInViewsSubtree())CancelMenu();Schedule();}
-  void VisibilityChanged(views::View* changed,bool visible) override {SceneGlyphButton::VisibilityChanged(changed,visible);if(!SceneIsVisible(this)){OnMouseCaptureLost();CancelMenu();if(surface_)surface_->Hide();}Schedule();}
-  void AddedToWidget() override {SceneGlyphButton::AddedToWidget();window_visibility_.Observe(GetWidget());Schedule();}
-  void RemovedFromWidget() override {window_visibility_.Observe(nullptr);if(GetInputMethod())GetInputMethod()->DetachTextInputClient(&input_);CancelMenu();surface_.reset();SceneGlyphButton::RemovedFromWidget();}
-  void OnBoundsChanged(const gfx::Rect& previous) override {SceneGlyphButton::OnBoundsChanged(previous);Schedule();}
-  void OnThemeChanged() override {SceneGlyphButton::OnThemeChanged();PreferredSizeChanged();Schedule();}
-  void OnDidSchedulePaint(const gfx::Rect& rect) override {SceneGlyphButton::OnDidSchedulePaint(rect);Schedule();}
+  void OnFocus() override {RustActionView::OnFocus();if(GetInputMethod())GetInputMethod()->SetFocusedTextInputClient(&input_);}
+  void OnBlur() override {if(GetInputMethod())GetInputMethod()->DetachTextInputClient(&input_);ResetPrefix();RustActionView::OnBlur();}
+  bool HandleAccessibleAction(const ui::AXActionData& action) override {if(action.action==ax::mojom::Action::kDoDefault&&GetEnabledInViewsSubtree()){ShowMenu(ui::mojom::MenuSourceType::kKeyboard);return true;}return RustActionView::HandleAccessibleAction(action);}
+  void VisibilityChanged(views::View* changed,bool visible) override {RustActionView::VisibilityChanged(changed,visible);if(!SceneIsVisible(this)){OnMouseCaptureLost();CancelMenu();if(surface_)surface_->Hide();}Schedule();}
+  void AddedToWidget() override {RustActionView::AddedToWidget();window_visibility_.Observe(GetWidget());Schedule();}
+  void RemovedFromWidget() override {window_visibility_.Observe(nullptr);if(GetInputMethod())GetInputMethod()->DetachTextInputClient(&input_);CancelMenu();surface_.reset();RustActionView::RemovedFromWidget();}
+  void OnBoundsChanged(const gfx::Rect& previous) override {RustActionView::OnBoundsChanged(previous);Schedule();}
+  void OnThemeChanged() override {RustActionView::OnThemeChanged();PreferredSizeChanged();Schedule();}
+  void OnDidSchedulePaint(const gfx::Rect& rect) override {RustActionView::OnDidSchedulePaint(rect);if(!GetEnabledInViewsSubtree())CancelMenu();Schedule();}
   bool GetNeedsNotificationWhenVisibleBoundsChange() const override{return true;}
   void OnVisibleBoundsChanged() override{Schedule();}
   gfx::Rect metal_bounds_for_testing() const{return surface_?surface_->screen_bounds_for_testing():gfx::Rect();}
-  void PaintButtonContents(gfx::Canvas* canvas) override {if(!metal_visible())PaintSceneRecipe(canvas,Scene(0,0,gfx::RectF(GetLocalBounds())),TextFont());Schedule();}
+  void OnPaint(gfx::Canvas* canvas) override {if(!metal_visible())PaintSceneRecipe(canvas,Scene(0,0,gfx::RectF(GetLocalBounds())),TextFont());Schedule();}
  protected:
-  void NotifyClick(const ui::Event& event) override {if(GetEnabledInViewsSubtree()&&SceneIsVisible(this))ShowMenu(ui::GetMenuSourceTypeForEvent(event));}
+  ax::mojom::DefaultActionVerb ActionVerb() const override{return ax::mojom::DefaultActionVerb::kOpen;}
+  void ActivateAction(const ui::Event& event) override {if(GetEnabledInViewsSubtree()&&SceneIsVisible(this))ShowMenu(ui::GetMenuSourceTypeForEvent(event));}
  private:
   static rust::Box<sidebar::SelectState> MakeState(const std::vector<std::u16string>& labels){rust::Vec<sidebar::SelectOption> options;for(size_t i=0;i<labels.size();++i)options.push_back({base::NumberToString(i),base::UTF16ToUTF8(labels[i]),base::UTF16ToUTF8(base::i18n::ToLower(labels[i]))});return sidebar::new_select_state(std::move(options));}
   static gfx::FontList TextFont(){return views::TypographyProvider::Get().GetFont(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY);}
@@ -1138,8 +1138,8 @@ class SceneSelect final : public SceneGlyphButton {
     const auto weak=weak_factory_.GetWeakPtr();menu_=std::make_unique<SceneSelectMenu>(std::move(items),std::string(state_->selected_key()),token,base::BindRepeating([](base::WeakPtr<SceneSelect> owner,uint64_t epoch,const std::string& key){return owner&&owner->CanChoose(epoch,key);},weak),base::BindRepeating(&SceneSelect::Choose,weak));
     runner_=std::make_unique<views::MenuRunner>(menu_.get(),views::MenuRunner::COMBOBOX,base::BindRepeating(&SceneSelect::Closed,weak,token));RefreshAX();Schedule();runner_->RunMenuAt(GetWidget(),nullptr,GetBoundsInScreen(),views::MenuAnchorPosition::kTopLeft,source);
   }
-  sidebar::Item Scene(float dx,float dy,gfx::RectF clip) const {sidebar::Item item{};item.kind=21;item.x=dx;item.y=dy;item.width=width();item.height=height();if(const auto selected=Selected())item.title=base::UTF16ToUTF8(labels_[*selected]);const auto* colors=GetColorProvider();const bool enabled=GetEnabledInViewsSubtree();item.font_size=TextFont().GetFontSize();item.active=TextFont().GetFontWeight()>=gfx::Font::Weight::MEDIUM;item.tile=base::i18n::IsRTL();item.focused=HasFocus();item.hovered=enabled&&(GetState()==STATE_HOVERED||state_->expanded());item.ink=colors->GetColor(views::TypographyProvider::Get().GetColorId(views::style::CONTEXT_LABEL,enabled?views::style::STYLE_PRIMARY:views::style::STYLE_DISABLED));item.fill=colors->GetColor(enabled?ui::kColorComboboxBackground:ui::kColorComboboxBackgroundDisabled);item.badge=colors->GetColor(HasFocus()?ui::kColorFocusableBorderFocused:enabled?ui::kColorButtonBorder:ui::kColorButtonBorderDisabled);item.detail_ink=colors->GetColor(ui::kColorSysStateHoverOnSubtle);item.clip={clip.x(),clip.y(),clip.width(),clip.height()};return item;}
-  void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneSelect::UpdateMetal,weak_factory_.GetWeakPtr()));}
+  sidebar::Item Scene(float dx,float dy,gfx::RectF clip) const {sidebar::Item item{};item.kind=21;item.x=dx;item.y=dy;item.width=width();item.height=height();if(const auto selected=Selected())item.title=base::UTF16ToUTF8(labels_[*selected]);const auto* colors=GetColorProvider();const auto input=Snapshot();const bool enabled=input.enabled;item.font_size=TextFont().GetFontSize();item.active=TextFont().GetFontWeight()>=gfx::Font::Weight::MEDIUM;item.tile=base::i18n::IsRTL();item.focused=input.focused;item.hovered=enabled&&(input.visual==sidebar::RowVisual::Hovered||state_->expanded());item.ink=colors->GetColor(views::TypographyProvider::Get().GetColorId(views::style::CONTEXT_LABEL,enabled?views::style::STYLE_PRIMARY:views::style::STYLE_DISABLED));item.fill=colors->GetColor(enabled?ui::kColorComboboxBackground:ui::kColorComboboxBackgroundDisabled);item.badge=colors->GetColor(input.focused?ui::kColorFocusableBorderFocused:enabled?ui::kColorButtonBorder:ui::kColorButtonBorderDisabled);item.detail_ink=colors->GetColor(ui::kColorSysStateHoverOnSubtle);item.clip={clip.x(),clip.y(),clip.width(),clip.height()};return item;}
+  void Schedule(){SyncViewportVisibility();if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneSelect::UpdateMetal,weak_factory_.GetWeakPtr()));}
   void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());std::vector<sidebar::Item> items;items.push_back(Scene(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size()))));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
   std::vector<std::u16string> labels_;rust::Box<sidebar::SelectState> state_;base::RepeatingClosure changed_;SceneSelectInput input_;std::unique_ptr<SceneSelectMenu> menu_;std::unique_ptr<views::MenuRunner> runner_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneSelect::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneSelect> weak_factory_{this};
 };
