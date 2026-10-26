@@ -2894,3 +2894,52 @@ scale/theme/GPU recovery, controlled performance comparison and release/license/
 notice acceptance remain open. No complete functional parity is claimed. Full
 matrices remain reserved for larger blocks; this closes the address/result-row
 host family.
+
+## Appearance action hosts — targeted acceptance, 2026-10-26
+
+UI source `f9d35649d5678ef245fb451ba624fb82ffe89671` moves four color and six emoji workspace
+presets to plain RustActionView hosts without Button/ButtonController instances.
+Appearance items and selection projection use common action accessors. Native
+comparison retains GlyphButton. Swatch color and emoji label presentation data
+flow through the shared scene/fallback painter; preset children retain their
+previous no-native-FocusRing policy. Other glyph action families retain their
+default focus adapter.
+
+Appearance scheduling and form viewport callbacks synchronously retire clipped
+input before GPU coalescing, including an immediate scroll out and back.
+Workspace change, create-form/hide, widget visibility and capture cancellation
+remain. Rust input policy and existing domain/store/persistence callbacks remain.
+The shared glyph host also restores the native tooltip-to-AX-name rule while
+preserving custom names, fixing the pin control's stale accessible name after
+pin/unpin. The footer regression now checks pin, unpin and repin names.
+
+Focus passed **5 Metal / 4 Views**; affected regressions passed
+**23 Metal / 16 Views**, serial, retry zero. The new shared case checks actual
+host types and AX metadata, empty Rust preset children, disabled AX rejection,
+physical settings-window Space, color/emoji application and actual fallback
+swatch pixels. Rust-specific branches check immediate scroll out/back, hide/show
+and workspace retarget late release. Existing scene geometry, editor composition,
+workspace changes, persistence, form viewport and header/footer/split/row outcomes
+remain. Views does not exercise Rust-only cancellation branches.
+
+Checks passed **286 Rust**, **180 SDK font/direction cases plus raster**, **68 live
+and 68 clean-archive Python**, scoped GN/boundaries and final Ninja no-op. All 53
+committed/live/staged prototype inputs and compiled/frozen-bootstrap/native-engine
+identities were checked.
+[Targeted appearance-action report](benchmarks/rust-appearance-action-targeted-2026-10-26.json).
+
+The retained initial preset probe passed 5 Metal / 4 Views, including fallback
+color pixels. Final source adds tooltip-name parity and the pin-name regression;
+focus and affected gates were rerun against that final binary.
+
+Retained affected logs contain **5 Metal / 2 Views invalid-mailbox diagnostics**
+with matching missing-overlay counts. All cases passed; these Chromium compositor
+diagnostics remain unresolved and do not establish a performance gain.
+
+Per user cadence this preset family has targeted acceptance. The full checkpoint
+below predates this change and is not a full matrix of this source. Other control/
+container/menu/window/input ownership, stable Rust nodes, manual trackpad/IME/
+VoiceOver/RTL/scale/theme/GPU recovery, controlled performance comparison and final
+release/license/notice acceptance remain open. Frozen UI-lab inputs exclude
+current-main network policy. No complete functional parity or performance gain
+is claimed; no dependency or browser service/store/admission policy changed.
