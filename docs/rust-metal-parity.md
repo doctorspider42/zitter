@@ -6,7 +6,58 @@ application/domain commands; preserve profile/session isolation. Push verified
 milestones to `origin/main` as they land. The opt-in switch remains
 `--zitter-sidebar=rust-metal` until the migration and comparison are complete.
 
-## Latest targeted follow-up: preference navigation and dismiss hosts
+## Latest full checkpoint: text action hosts
+
+UI source `dadea9bbc3a2664d4569d530babe35c8b15f9d46` moves SceneTextButton from SceneGlyphButton/Button to the
+common plain View RustActionView. Dialog, download, workspace/profile/import,
+preference and tools text actions no longer construct Button/ButtonController
+instances on their Rust paths. Native comparison retains MdTextButton.
+
+Rust ActionControl owns default-action state and admits only visible, enabled,
+default, unmodified Return accelerators. Native FocusManager registration, Mac
+Space policy, focus, accessibility, font/theme/measurement adapters and kind-19
+shared-canvas text remain. Native dialog input protection, delegate admission,
+OK/Cancel identifiers and browser/profile/download commands are preserved.
+ElementTracker activation precedes callbacks; a ViewTracker guard handles an
+observer deleting the action host. Group scheduling cancels clipped child input
+synchronously before shared/GPU work is coalesced.
+
+Focus passed **19 Metal / 14 Views**. Full inventory has **216 cases**: **210 Metal /
+162 Views passed**, with the same **six optional skips** each, serial and retry
+zero. Checks passed **288 Rust**, **180 SDK font/direction cases plus raster**,
+**68 live and 68 clean-archive Python**, scoped GN/boundaries and final Ninja
+no-op. All 53 committed/live/staged prototype inputs and compiled/frozen-bootstrap/
+native-engine identities were checked.
+[Full text-action report](benchmarks/rust-text-action-checkpoint-2026-10-26.json).
+
+New tests compare physical Return/Space, disabled default admission, dynamic
+labels/defaults and ElementTracker notifications. A Rust-only branch deletes the
+host in an activation observer and verifies the domain callback is not invoked.
+Existing dialog input-protection, action geometry/AX, modal editors, busy actions,
+download metrics/keyboard/capture and shared-canvas outcomes remain asserted.
+Test callers use View/AX adapters for migrated hosts and retain ButtonTestApi for
+unchanged native controls.
+
+Three earlier focus probes each failed the same new keyboard fixture in both
+modes; the report retains their input hashes, source snapshots and results.
+Modality and asynchronous waits alone were insufficient. The synthetic fixture
+omitted the standalone panel keyboard-routing adapter installed in production.
+Adding that same adapter fixed the fixture; production policy was unchanged.
+
+Full logs retain **15 Metal / 10 Views invalid-mailbox diagnostics**;
+missing-overlay counts are recorded separately. These nonfatal compositor
+diagnostics remain unresolved. Functional tests establish no controlled CPU/GPU/
+presentation/input-latency/memory gain.
+
+This full source includes the preceding appearance and preference-host work.
+Frozen UI-lab bootstrap/network inputs remain from d23f232; current-main network
+policy and actual release acceptance remain outside this binary. Other toggle/
+checkbox/select hosts, native per-control View identity, stable Rust nodes,
+containers/placement/UI coordination, manual input/VoiceOver/RTL/scale/theme/GPU
+recovery, controlled performance and final shipped license/notices remain open.
+No complete functional parity is claimed.
+
+## Previous targeted follow-up: preference navigation and dismiss hosts
 
 UI source `be87af8e93417d2df384688b301392575b72a367` moves ten preference category controls
 and preference/tools dismiss controls onto RustActionView/View hosts through
@@ -60,7 +111,7 @@ acceptance remain open. Frozen UI-lab inputs exclude current-main network policy
 No complete functional parity is claimed; no dependency or browser service/store/
 admission/persistence policy changed.
 
-## Latest full checkpoint
+## Previous full checkpoint: result rows
 
 UI source `ea549864ae1a4c5a1a043ae336910a472c4c55e3` extends the common plain View row host,
 now named RustRowView, to palette suggestions, two-line history results and the
