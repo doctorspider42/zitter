@@ -646,7 +646,7 @@ void PaintSceneRecipe(gfx::Canvas* canvas,const sidebar::Item& item,const gfx::F
 
 #if BUILDFLAG(IS_MAC)
 // Event/focus/AX delivery remains native; state and activation live in Rust.
-class RustActionView final : public views::View {
+class RustActionView : public views::View {
   METADATA_HEADER(RustActionView,views::View)
  public:
   RustActionView(views::Button::PressedCallback callback,std::u16string name,ControlGlyph glyph,const gfx::VectorIcon* icon,base::RepeatingCallback<bool()> visible,base::RepeatingClosure changed,bool native_focus_ring)
@@ -654,6 +654,7 @@ class RustActionView final : public views::View {
     SetTooltipText(name);auto& ax=GetViewAccessibility();ax.SetName(name);ax.SetRole(ax::mojom::Role::kButton);ax.SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kPress);SetFocusBehavior(views::PlatformStyle::kDefaultFocusBehavior);if(native_focus_ring)views::FocusRing::Install(this);
   }
   void OnTooltipTextChanged(const std::u16string& previous) override{views::View::OnTooltipTextChanged(previous);auto& ax=GetViewAccessibility();if((ax.GetCachedName().empty()||ax.GetCachedName()==previous)&&!GetTooltipText().empty())ax.SetName(GetTooltipText());}
+  sidebar::ActionSnapshot Snapshot() const{return state_->action_snapshot();}
   void SetColor(SkColor color){if(color_==color)return;color_=color;SchedulePaint();}
   void SetCallback(views::Button::PressedCallback callback){Cancel();callback_=std::move(callback);}
   void CancelInput(){Cancel();}
@@ -673,7 +674,7 @@ class RustActionView final : public views::View {
   void OnMouseMoved(const ui::MouseEvent& event) override{Pointer(sidebar::PointerPhase::Move,event);}
   bool OnKeyPressed(const ui::KeyEvent& event) override{return Key(true,event);}
   bool OnKeyReleased(const ui::KeyEvent& event) override{return Key(false,event);}
-  void OnGestureEvent(ui::GestureEvent* event) override{SyncEnabled();const uint32_t kind=event->type()==ui::EventType::kGestureTapDown?0:event->type()==ui::EventType::kGestureTap?1:event->type()==ui::EventType::kGestureTapCancel||event->type()==ui::EventType::kGestureEnd?2:99;const auto r=state_->action_gesture(kind,Interactive()&&(kind==2||(HitTestPoint(event->location())&&GetVisibleBounds().Contains(event->location()))));if(r.handled)event->SetHandled();Apply(r,*event);}
+  void OnGestureEvent(ui::GestureEvent* event) override{SyncEnabled();const uint32_t kind=event->type()==ui::EventType::kGestureTapDown?0:event->type()==ui::EventType::kGestureTap?1:event->type()==ui::EventType::kGestureTapCancel||event->type()==ui::EventType::kGestureEnd?2:99;const auto before=state_->action_snapshot().visual;const bool pending=state_->action_pending();const auto r=state_->action_gesture(kind,Interactive()&&(kind==2||(HitTestPoint(event->location())&&GetVisibleBounds().Contains(event->location()))));if(r.handled)event->SetHandled();Apply(r,*event,before,pending);}
   void OnFocus() override{views::View::OnFocus();state_->action_focus(true);SchedulePaint();}
   void OnBlur() override{state_->action_focus(false);views::View::OnBlur();SchedulePaint();}
   void OnMouseCaptureLost() override{Cancel();}
@@ -688,9 +689,9 @@ class RustActionView final : public views::View {
   bool Interactive() const{return SceneIsVisible(this)&&!GetVisibleBounds().IsEmpty();}
   void Cancel(){if(state_->action_cancel())SchedulePaint();}
   void WindowChanged(){Cancel();state_->action_focus(HasFocus());SchedulePaint();}
-  bool Pointer(sidebar::PointerPhase phase,const ui::MouseEvent& event){SyncEnabled();return Apply(state_->action_pointer(phase,event.x(),event.y(),phase!=sidebar::PointerPhase::Exit&&HitTestPoint(event.location())&&GetVisibleBounds().Contains(event.location()),event.IsLeftMouseButton(),Interactive()),event);}
-  bool Key(bool pressed,const ui::KeyEvent& event){SyncEnabled();const uint32_t key=event.key_code()==ui::VKEY_SPACE?1:event.key_code()==ui::VKEY_RETURN?2:0;return Apply(state_->action_key(pressed,key,true,Interactive()),event);}
-  bool Apply(const sidebar::RowInputResult& result,const ui::Event& event){const bool handled=result.handled;SchedulePaint();if(result.action==sidebar::RowAction::Activate&&callback_){callback_.Run(event);return handled;}return handled;}
+  bool Pointer(sidebar::PointerPhase phase,const ui::MouseEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;const bool pending=state_->action_pending();return Apply(state_->action_pointer(phase,event.x(),event.y(),phase!=sidebar::PointerPhase::Exit&&HitTestPoint(event.location())&&GetVisibleBounds().Contains(event.location()),event.IsLeftMouseButton(),Interactive()),event,before,pending);}
+  bool Key(bool pressed,const ui::KeyEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;const bool pending=state_->action_pending();const uint32_t key=event.key_code()==ui::VKEY_SPACE?1:event.key_code()==ui::VKEY_RETURN?2:0;return Apply(state_->action_key(pressed,key,true,Interactive()),event,before,pending);}
+  bool Apply(const sidebar::RowInputResult& result,const ui::Event& event,sidebar::RowVisual before,bool pending){const bool handled=result.handled;if(result.visual!=before)SchedulePaint();else if(pending!=state_->action_pending()&&changed_)changed_.Run();if(result.action==sidebar::RowAction::Activate&&callback_){callback_.Run(event);return handled;}return handled;}
   SkColor color_=kSubtle;std::u16string label_;views::Button::PressedCallback callback_;ControlGlyph glyph_;raw_ptr<const gfx::VectorIcon> icon_;base::RepeatingCallback<bool()> visible_;base::RepeatingClosure changed_;rust::Box<sidebar::ActionControl> state_=sidebar::new_action_control();SceneWindowObserver window_{base::BindRepeating(&RustActionView::WindowChanged,base::Unretained(this))};base::CallbackListSubscription enabled_changed_{AddEnabledInViewsSubtreeChangedCallback(base::BindRepeating(&RustActionView::EnabledChanged,base::Unretained(this)))};
 };
 BEGIN_METADATA(RustActionView)
@@ -797,20 +798,19 @@ views::View* AppearancePicker(views::View* parent,views::Button::PressedCallback
 }
 
 #if BUILDFLAG(IS_MAC)
-class ScenePreferenceButton final : public SceneGlyphButton {
-  METADATA_HEADER(ScenePreferenceButton,SceneGlyphButton)
+class ScenePreferenceButton final : public RustActionView {
+  METADATA_HEADER(ScenePreferenceButton,RustActionView)
  public:
-  ScenePreferenceButton(PressedCallback callback,std::u16string text,size_t category,bool dismiss,base::RepeatingClosure painted)
-      :SceneGlyphButton(std::move(callback),text,Glyph::kMore,nullptr,base::BindRepeating([]{return true;}),std::move(painted)),text_(std::move(text)),category_(category),dismiss_(dismiss){SetInstallFocusRingOnFocus(false);SetHasInkDropActionOnClick(false);SetAnimateOnStateChange(false);SetRequestFocusOnPress(false);}
-  void SetSelected(bool selected){if(selected_==selected)return;selected_=selected;SchedulePaint();}
-  bool selected() const{return selected_;}
+  ScenePreferenceButton(views::Button::PressedCallback callback,std::u16string text,size_t category,bool dismiss,base::RepeatingClosure painted)
+      :RustActionView(std::move(callback),text,ControlGlyph::kMore,nullptr,base::BindRepeating([]{return true;}),std::move(painted),false),text_(std::move(text)),category_(category),dismiss_(dismiss){}
+  void SetSelected(bool selected){SetOn(selected);}
+  bool selected() const{return Snapshot().on;}
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return dismiss_?gfx::Size(32,32):gfx::Size(200,40);}
   sidebar::Item Scene(gfx::RectF bounds,gfx::RectF clip) const{
-    sidebar::Item item{};item.kind=dismiss_?23:22;item.glyph=category_;item.x=bounds.x();item.y=bounds.y();item.width=bounds.width();item.height=bounds.height();item.title=base::UTF16ToUTF8(text_);item.active=selected_;item.focused=HasFocus();item.tile=base::i18n::IsRTL();item.font_size=Font(0).GetFontSize();item.ink=Tone(this,GetEnabledInViewsSubtree()?kInk:kDisabled);item.fill=selected_?Tone(this,kCard):GetEnabledInViewsSubtree()&&(GetState()==STATE_HOVERED||GetState()==STATE_PRESSED)?HoverWash(this):SK_ColorTRANSPARENT;item.detail_ink=SkColorSetA(Tone(this,kInk),0x0f);item.clip={clip.x(),clip.y(),clip.width(),clip.height()};return item;
+    const auto state=Snapshot();sidebar::Item item{};item.kind=dismiss_?23:22;item.glyph=category_;item.x=bounds.x();item.y=bounds.y();item.width=bounds.width();item.height=bounds.height();item.title=base::UTF16ToUTF8(text_);item.active=state.on;item.focused=state.focused;item.tile=base::i18n::IsRTL();item.font_size=Font(0).GetFontSize();item.ink=Tone(this,state.enabled?kInk:kDisabled);item.fill=state.on?Tone(this,kCard):state.enabled&&(state.visual==sidebar::RowVisual::Hovered||state.visual==sidebar::RowVisual::Pressed)?HoverWash(this):SK_ColorTRANSPARENT;item.detail_ink=SkColorSetA(Tone(this,kInk),0x0f);item.clip={clip.x(),clip.y(),clip.width(),clip.height()};return item;
   }
-  void PaintButtonContents(gfx::Canvas*) override{}  // The parent owns both render paths.
  private:
-  std::u16string text_;size_t category_;bool dismiss_;bool selected_=false;
+  std::u16string text_;size_t category_;bool dismiss_;
 };
 BEGIN_METADATA(ScenePreferenceButton)
 END_METADATA
@@ -818,7 +818,9 @@ class ScenePreferenceControls final : public views::View {
   METADATA_HEADER(ScenePreferenceControls,views::View)
  public:
   explicit ScenePreferenceControls(bool dismiss):dismiss_(dismiss){}
-  views::Button* AddControl(views::Button::PressedCallback callback,std::u16string title,size_t category){return AddChildView(std::make_unique<ScenePreferenceButton>(std::move(callback),std::move(title),category,dismiss_,base::BindRepeating(&ScenePreferenceControls::Schedule,weak_factory_.GetWeakPtr())));}
+  views::View* AddControl(views::Button::PressedCallback callback,std::u16string title,size_t category){return AddChildView(std::make_unique<ScenePreferenceButton>(std::move(callback),std::move(title),category,dismiss_,base::BindRepeating(&ScenePreferenceControls::Schedule,weak_factory_.GetWeakPtr())));}
+  size_t frame_count() const{return surface_?surface_->frame_count():0;}
+  void SyncInput(){for(const auto& child:children())static_cast<ScenePreferenceButton*>(child.get())->SyncViewportVisibility();}
   bool metal_visible() const{return surface_&&surface_->visible();}
   bool contains_text(std::string_view text) const{return metal_visible()&&surface_->contains_text_for_testing(text);}
   void CancelInput(){for(const auto& child:children())child->OnMouseCaptureLost();}
@@ -837,7 +839,7 @@ class ScenePreferenceControls final : public views::View {
  private:
   sidebar::ColumnLayout Geometry(int width,int height) const{std::vector<sidebar::ColumnChild> measured;for(const auto& child:children()){auto size=child->GetPreferredSize();measured.push_back({size.width(),size.height(),0,0,0,0});}return sidebar::action_group_layout(width,height,!dismiss_,dismiss_?0:6,rust::Slice<const sidebar::ColumnChild>(measured.data(),measured.size()));}
   std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const{std::vector<sidebar::Item> items;for(const auto& child:children()){auto bounds=gfx::RectF(child->bounds());bounds.Offset(dx,dy);auto local=bounds;local.Intersect(clip);items.push_back(static_cast<ScenePreferenceButton*>(child.get())->Scene(bounds,local));}return items;}
-  void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&ScenePreferenceControls::UpdateMetal,weak_factory_.GetWeakPtr()));}
+  void Schedule(){SyncInput();if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&ScenePreferenceControls::UpdateMetal,weak_factory_.GetWeakPtr()));}
   void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,dismiss_?kCard:kFrameBase));if(was!=metal_visible())SchedulePaint();}
   bool dismiss_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&ScenePreferenceControls::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<ScenePreferenceControls> weak_factory_{this};
 };
@@ -1865,7 +1867,7 @@ int RowTitleWidth(views::View* view){return VisitRow(view,[](auto* row){return r
 bool RowHasClose(views::View* view){return VisitRow(view,[](auto* row){return row->has_close_button();});}
 bool RowCloseVisible(views::View* view){return VisitRow(view,[](auto* row){return row->close_button_visible();});}
 void SetRowAddress(views::View* view,std::u16string host,std::u16string path,bool blank,bool secure){VisitRow(view,[&](auto* row){row->SetAddress(std::move(host),std::move(path),blank,secure);});}
-void SetPreferenceNavigationSelected(views::Button* control,bool selected){
+void SetPreferenceNavigationSelected(views::View* control,bool selected){
 #if BUILDFLAG(IS_MAC)
   if(auto* button=views::AsViewClass<ScenePreferenceButton>(control)){button->SetSelected(selected);return;}
 #endif
@@ -3767,7 +3769,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         &vector_icons::kShieldIcon, &vector_icons::kTuneIcon};
     RowButton::Spec spec;
     spec.title = categories[i]; spec.icon = icons[i]; spec.height = 40;
-    views::Button* button=nullptr;
+    views::View* button=nullptr;
 #if BUILDFLAG(IS_MAC)
     if(auto* controls=views::AsViewClass<ScenePreferenceControls>(category_controls))button=controls->AddControl(base::BindRepeating(&WorkspaceShell::SelectPreferenceCategory,weak,i),categories[i],i);
     else
@@ -6175,7 +6177,14 @@ size_t WorkspaceShell::preference_category_for_testing() const{
 #endif
   return preference_category_;
 }
-views::Button* WorkspaceShell::preference_navigation_for_testing(size_t category) const{return category<preference_sections_.size()?preference_sections_[category].navigation.get():nullptr;}
+views::View* WorkspaceShell::preference_navigation_for_testing(size_t category) const{return category<preference_sections_.size()?preference_sections_[category].navigation.get():nullptr;}
+size_t WorkspaceShell::preference_navigation_frame_count_for_testing() const{
+#if BUILDFLAG(IS_MAC)
+  auto* first=preference_navigation_for_testing(0);auto* group=first?views::AsViewClass<ScenePreferenceControls>(first->parent()):nullptr;return group?group->frame_count():0;
+#else
+  return 0;
+#endif
+}
 bool WorkspaceShell::preference_navigation_selected_for_testing(size_t category) const{
   auto* control=preference_navigation_for_testing(category);if(!control)return false;
 #if BUILDFLAG(IS_MAC)

@@ -246,7 +246,7 @@ class WorkspaceShell final : public ui::EventHandler,
   bool tools_actions_contains_scene_text_for_testing(std::string_view text) const;
   size_t tools_action_groups_for_testing() const;
   views::View* tools_body_for_testing() const{return tools_body_;}
-  views::Button* tools_close_for_testing() const{return tools_close_;}
+  views::View* tools_close_for_testing() const{return tools_close_;}
   bool tools_close_metal_visible_for_testing() const;
   bool tools_chrome_visible_for_testing() const{return ToolsChromeVisible();}
   bool tools_chrome_contains_text_for_testing(std::string_view text) const;
@@ -286,11 +286,12 @@ class WorkspaceShell final : public ui::EventHandler,
   bool preference_chrome_excludes_for_testing(views::View* view) const;
   bool preference_chrome_visible_for_testing() const{return PreferenceChromeVisible();}
   size_t preference_category_for_testing() const;
-  views::Button* preference_navigation_for_testing(size_t category) const;
+  views::View* preference_navigation_for_testing(size_t category) const;
   std::vector<views::View*> preference_rows_for_testing(size_t category) const{std::vector<views::View*> rows;for(const auto& row:preference_sections_.at(category).rows)rows.push_back(row.view);return rows;}
   PanelViewport* preference_viewport_for_testing() const{return general_scroll_;}
-  views::Button* preference_close_for_testing() const{return preferences_close_;}
+  views::View* preference_close_for_testing() const{return preferences_close_;}
   bool preference_navigation_metal_visible_for_testing() const;
+  size_t preference_navigation_frame_count_for_testing() const;
   bool preference_navigation_selected_for_testing(size_t category) const;
   bool preference_navigation_contains_text_for_testing(std::string_view text) const;
   bool preference_close_metal_visible_for_testing() const;
@@ -510,7 +511,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<ui::AcceleratorTarget> accelerator_target_ = nullptr;
   raw_ptr<views::View> tools_root_ = nullptr;
   raw_ptr<views::View> tools_body_ = nullptr;
-  raw_ptr<views::Button> tools_close_ = nullptr;
+  raw_ptr<views::View> tools_close_ = nullptr;
   raw_ptr<views::View> tools_title_ = nullptr;
   raw_ptr<views::View> tools_status_ = nullptr;
   raw_ptr<EditorControl> snapshot_name_ = nullptr;
@@ -667,7 +668,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> preferences_empty_ = nullptr;
   raw_ptr<views::View> preferences_body_ = nullptr;
   raw_ptr<views::View> preferences_navigation_ = nullptr;
-  raw_ptr<views::Button> preferences_close_ = nullptr;
+  raw_ptr<views::View> preferences_close_ = nullptr;
   raw_ptr<views::View> preferences_category_picker_ = nullptr;
   struct PreferenceRow {
     raw_ptr<views::View> view;
@@ -675,7 +676,7 @@ class WorkspaceShell final : public ui::EventHandler,
   };
   struct PreferenceSection {
     raw_ptr<views::View> view;
-    raw_ptr<views::Button> navigation;
+    raw_ptr<views::View> navigation;
     std::vector<PreferenceRow> rows;
   };
   std::vector<PreferenceSection> preference_sections_;
