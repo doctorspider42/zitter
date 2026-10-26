@@ -44,6 +44,7 @@ mod ffi {
     struct PreferenceSiteCopy { origin_ax: String, placeholder: String, type_ax: String, policy_ax: String, save: String, types: Vec<String> }
     struct PreferenceClearCopy { period_ax: String, periods: Vec<String>, checks: Vec<String>, action: String }
     struct PreferenceCatalogue { categories: Vec<String>, descriptions: Vec<String>, rows: Vec<PreferenceSpec>, site: PreferenceSiteCopy, clear: PreferenceClearCopy }
+    struct ScrollViewportLayout { viewport: Rect, content: Rect, bar: Rect, show_bar: bool, offset: f64, max_offset: i32 }
     struct PreferenceRow { category: usize, keywords: Vec<u16> }
     struct PreferenceVisibility { rows: Vec<bool>, sections: Vec<bool>, navigation: Vec<bool>, any: bool }
     struct ToggleStyle { width: f32, height: f32, progress: f32, hover: f32, checked: bool, pressed: bool, focused: bool, rtl: bool, track_on: u32, track_off: u32, thumb_on: u32, thumb_off: u32, thumb_hover: u32, halo: u32, focus: u32, border: u32, clip: FloatRect }
@@ -374,6 +375,13 @@ mod ffi {
         fn moved(self: &SplitDrag) -> bool;
         fn pane_host_layout(width: i32, height: i32, ratio: f64, vertical: bool, split: bool) -> PaneHostLayout;
         fn pane_bar_layout(width: i32, height: i32) -> PaneBarLayout;
+        type ScrollViewportState;
+        fn new_scroll_viewport() -> Box<ScrollViewportState>;
+        fn viewport_configure(self: &mut ScrollViewportState, width: i32, height: i32, preferred_width: i32, preferred_height: i32, thickness: i32, overlay: bool) -> ScrollViewportLayout;
+        fn viewport_scroll_to(self: &mut ScrollViewportState, offset: f64) -> bool;
+        fn viewport_reveal(self: &mut ScrollViewportState, y: i32, height: i32) -> bool;
+        fn viewport_offset(self: &ScrollViewportState) -> f64;
+        fn viewport_maximum(self: &ScrollViewportState) -> i32;
         type ScrollThumb;
         fn new_scroll_thumb() -> Box<ScrollThumb>;
         fn begin(self: &mut ScrollThumb, track: i32, viewport: i32, content: i32, offset: i32, pointer: f32);
@@ -1361,6 +1369,31 @@ impl SplitDrag {
     fn moved(&self)->bool{self.moved}
 }
 
+// Owns the vertical viewport, extent, offset and reveal policy. Native code
+// supplies preferred metrics and platform event/scrollbar requests, never state.
+#[derive(Default)]
+pub struct ScrollViewportState { height:i32, content:i32, maximum:i32, offset:f64 }
+fn new_scroll_viewport()->Box<ScrollViewportState>{Box::new(ScrollViewportState::default())}
+impl ScrollViewportState {
+    fn viewport_configure(&mut self,width:i32,height:i32,preferred_width:i32,preferred_height:i32,thickness:i32,overlay:bool)->ffi::ScrollViewportLayout {
+        let width=width.max(0);let height=height.max(0);let ready=width>0&&height>0;
+        let show_bar=ready&&preferred_height>height;let thickness=thickness.clamp(0,width);
+        let viewport_width=width-if show_bar&&!overlay{thickness}else{0};
+        self.height=height;self.content=preferred_height.max(height);self.maximum=if ready{self.content.saturating_sub(height).max(0)}else{0};self.offset=self.offset.clamp(0.0,f64::from(self.maximum));
+        ffi::ScrollViewportLayout{viewport:ffi::Rect{x:0,y:0,width:viewport_width,height},content:ffi::Rect{x:0,y:0,width:preferred_width.max(viewport_width),height:self.content},bar:ffi::Rect{x:width-thickness,y:0,width:thickness,height},show_bar,offset:self.offset,max_offset:self.maximum}
+    }
+    fn viewport_scroll_to(&mut self,offset:f64)->bool {
+        if !offset.is_finite(){return false;}let next=offset.clamp(0.0,f64::from(self.maximum));let changed=next!=self.offset;self.offset=next;changed
+    }
+    fn viewport_reveal(&mut self,y:i32,height:i32)->bool {
+        if self.maximum==0||self.height==0{return false;}let start=y.clamp(0,self.content);let end=(i64::from(start)+i64::from(height.max(0).min(self.height))).min(i64::from(self.content)) as i32;
+        let visible=self.offset as i32;if start>=visible&&end<=visible.saturating_add(self.height){return false;}
+        self.viewport_scroll_to(f64::from(if visible>start{start}else{end.saturating_sub(self.height).max(0)}))
+    }
+    fn viewport_offset(&self)->f64{self.offset}
+    fn viewport_maximum(&self)->i32{self.maximum}
+}
+
 // Scroll geometry and thumb drag state use content offsets, never View IDs.
 // The native adapter delivers track-local coordinates and applies the result to
 // Chromium's scroll service; capture, keyboard/menu and AX delivery remain native.
@@ -2145,6 +2178,21 @@ mod tests {
         let empty=panel_layout(&s,&[],&[]);assert_eq!((empty.width,empty.height),(8,8));
         let mut margin=child(80,20);margin.top=2;margin.left=3;margin.bottom=4;margin.right=5;let g=panel_layout(&s,&[margin],&[]);assert_eq!((g.width,g.height),(96,34));assert_eq!((g.children[0].x,g.children[0].y,g.children[0].width),(3,2,84));
         let huge=ffi::PanelStyle{width:i32::MAX,height:i32::MAX,spacing:i32::MAX,..s};let g=panel_layout(&huge,&[child(i32::MAX,i32::MAX),child(i32::MAX,i32::MAX)],&[]);assert_eq!(g.height,i32::MAX);assert!(g.children.iter().all(|r|r.width>=0&&r.height>=0));
+    }
+    #[test] fn scroll_viewport_geometry_preserves_overlay_and_reserved_scrollbar_contract() {
+        for overlay in [false,true]{let mut v=new_scroll_viewport();let g=v.viewport_configure(300,200,280,900,15,overlay);assert!(g.show_bar);assert_eq!(g.viewport.width,if overlay{300}else{285});assert_eq!((g.content.width,g.content.height,g.bar.x,g.bar.width),(if overlay{300}else{285},900,285,15));assert_eq!(g.max_offset,700);}
+    }
+    #[test] fn scroll_viewport_resize_and_rebuild_clamp_authoritative_offset() {
+        let mut v=new_scroll_viewport();v.viewport_configure(300,200,300,900,15,true);assert!(v.viewport_scroll_to(2000.0));assert_eq!(v.viewport_offset(),700.0);let g=v.viewport_configure(300,200,300,240,15,true);assert_eq!(g.offset,40.0);let g=v.viewport_configure(300,500,200,240,15,true);assert!(!g.show_bar);assert_eq!((g.offset,g.max_offset,g.content.height),(0.0,0,500));
+    }
+    #[test] fn scroll_viewport_reveal_uses_native_minimum_movement_and_oversized_target_rule() {
+        let mut v=new_scroll_viewport();v.viewport_configure(300,200,300,900,15,true);assert!(!v.viewport_reveal(20,40));assert!(v.viewport_reveal(350,40));assert_eq!(v.viewport_offset(),190.0);assert!(!v.viewport_reveal(200,20));assert!(v.viewport_reveal(300,1000));assert_eq!(v.viewport_offset(),300.0);assert!(v.viewport_reveal(-100,40));assert_eq!(v.viewport_offset(),0.0);assert!(v.viewport_reveal(i32::MAX,i32::MAX));assert_eq!(v.viewport_offset(),700.0);
+    }
+    #[test] fn scroll_viewport_fractional_and_nonfinite_requests_never_poison_state() {
+        let mut v=new_scroll_viewport();v.viewport_configure(300,200,300,900,15,true);for _ in 0..10{assert!(v.viewport_scroll_to(v.viewport_offset()+0.125));}assert_eq!(v.viewport_offset(),1.25);for bad in [f64::NAN,f64::INFINITY,f64::NEG_INFINITY]{assert!(!v.viewport_scroll_to(bad));assert_eq!(v.viewport_offset(),1.25);}assert!(v.viewport_scroll_to(-10.0));assert_eq!(v.viewport_offset(),0.0);
+    }
+    #[test] fn scroll_viewport_empty_tiny_and_extreme_metrics_have_valid_bounds() {
+        let mut v=new_scroll_viewport();for (w,h,p) in [(0,0,900),(0,20,900),(20,0,900),(-1,-2,-3),(1,1,i32::MAX),(i32::MAX,1,i32::MAX)]{let g=v.viewport_configure(w,h,p,p,15,false);assert!(g.viewport.width>=0&&g.viewport.height>=0&&g.content.width>=0&&g.content.height>=0&&g.bar.x>=0&&g.bar.width>=0);if w<=0||h<=0{assert_eq!(g.max_offset,0);assert!(!g.show_bar);assert!(!v.viewport_reveal(100,20));}}
     }
     #[test] fn panel_center_uses_common_axis_odd_bias_and_asymmetric_margins() {
         let s=ffi::PanelStyle{width:400,height:101,vertical:false,spacing:20,top:0,left:0,bottom:0,right:0,flex:usize::MAX};let mut a=child(100,33);a.top=2;a.bottom=8;let mut b=child(80,20);b.top=9;b.bottom=1;let g=panel_center_layout(&s,&[a,b],&[]);assert_eq!((g.width,g.height),(200,43));assert_eq!((g.children[0].y,g.children[0].height),(31,33));assert_eq!((g.children[1].y,g.children[1].height),(38,20));

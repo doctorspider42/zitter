@@ -18,8 +18,89 @@
 #if BUILDFLAG(IS_MAC)
 #include "chromium/prototype/sidebar_scene.rs.h"
 #endif
+#include "base/functional/bind.h"
+#include "base/memory/weak_ptr.h"
+#include "ui/base/metadata/metadata_header_macros.h"
+#include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/accessibility/ax_action_data.h"
+#include "ui/compositor/layer.h"
+#include "ui/views/accessibility/view_accessibility.h"
+#include "ui/views/controls/scrollbar/scroll_bar.h"
+#include "ui/views/style/platform_style.h"
 namespace zitter::prototype {
 namespace {
+class NativePanelViewport final : public views::ScrollView,public PanelViewport {
+  METADATA_HEADER(NativePanelViewport,views::ScrollView)
+ public:
+  // Views paints itself; retain its original path without a Metal observer.
+  explicit NativePanelViewport(base::RepeatingClosure){SetUseContentsPreferredSize(true);SetBackgroundColor(std::nullopt);SetDrawOverflowIndicator(false);SetHorizontalScrollBarMode(ScrollBarMode::kDisabled);}
+  views::View* view() override{return this;}
+  views::View* contents() const override{return const_cast<views::View*>(views::ScrollView::contents());}
+  void SetPanelContents(std::unique_ptr<views::View> value) override{SetContents(std::move(value));}
+  gfx::Rect visible_rect() const override{return GetVisibleRect();}
+  double offset() const override{return CurrentOffset().y();}
+  int maximum() const override{return contents()?std::max(0,contents()->height()-GetVisibleRect().height()):0;}
+  void ScrollTo(double position) override{if(std::isfinite(position))ScrollToPosition(vertical_scroll_bar(),static_cast<int>(std::clamp(position,0.0,double(maximum()))));}
+  bool rust_owned() const override{return false;}
+};
+BEGIN_METADATA(NativePanelViewport)
+END_METADATA
+#if BUILDFLAG(IS_MAC)
+class RustViewportClip final : public views::View {
+  METADATA_HEADER(RustViewportClip,views::View)
+ public:
+  explicit RustViewportClip(base::RepeatingCallback<void(const gfx::Rect&)> reveal):reveal_(std::move(reveal)){GetViewAccessibility().SetIsIgnored(true);SetPaintToLayer(ui::LAYER_NOT_DRAWN);layer()->SetMasksToBounds(true);layer()->SetFillsBoundsOpaquely(false);}
+  void ScrollRectToVisible(const gfx::Rect& rect) override{reveal_.Run(rect);}
+ private:
+  base::RepeatingCallback<void(const gfx::Rect&)> reveal_;
+};
+BEGIN_METADATA(RustViewportClip)
+END_METADATA
+class RustPanelViewport final : public views::View,public PanelViewport,public views::ScrollBarController {
+  METADATA_HEADER(RustPanelViewport,views::View)
+ public:
+  explicit RustPanelViewport(base::RepeatingClosure changed):changed_(std::move(changed)){
+    clip_=AddChildView(std::make_unique<RustViewportClip>(base::BindRepeating(&RustPanelViewport::Reveal,weak_factory_.GetWeakPtr())));
+    bar_=AddChildView(views::PlatformStyle::CreateScrollBar(views::ScrollBar::Orientation::kVertical));bar_->set_controller(this);bar_->SetVisible(false);bar_->GetViewAccessibility().SetIsIgnored(true);bar_->GetViewAccessibility().SetIsLeaf(true);
+    auto& ax=GetViewAccessibility();ax.SetRole(ax::mojom::Role::kScrollView);ax.SetIsScrollable(true);ax.SetScrollXMin(0);ax.SetScrollXMax(0);ax.SetScrollYMin(0);ax.SetScrollYMax(0);
+  }
+  ~RustPanelViewport() override{bar_->set_controller(nullptr);}
+  views::View* view() override{return this;}
+  views::View* contents() const override{return contents_;}
+  void SetPanelContents(std::unique_ptr<views::View> value) override{clip_->RemoveAllChildViews();contents_=clip_->AddChildView(std::move(value));contents_->SetPaintToLayer();contents_->layer()->SetFillsBoundsOpaquely(false);InvalidateLayout();}
+  gfx::Rect visible_rect() const override{return contents_?gfx::Rect(0,static_cast<int>(offset()),clip_->width(),clip_->height()):gfx::Rect();}
+  double offset() const override{return state_->viewport_offset();}
+  int maximum() const override{return state_->viewport_maximum();}
+  bool rust_owned() const override{return true;}
+  void ScrollTo(double position) override{if(state_->viewport_scroll_to(position))Apply(true);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& bounds) const override{return contents_?contents_->GetPreferredSize(bounds):gfx::Size();}
+  void Layout(PassKey) override{
+    if(!contents_)return;const auto preferred=contents_->GetPreferredSize(views::SizeBounds(width(),height()));const double previous=offset();const auto plan=state_->viewport_configure(width(),height(),preferred.width(),preferred.height(),bar_->GetThickness(),bar_->OverlapsContent());
+    auto rect=[](const auto& r){return gfx::Rect(r.x,r.y,r.width,r.height);};clip_->SetBoundsRect(rect(plan.viewport));contents_->SetBoundsRect(rect(plan.content));bar_->SetBoundsRect(rect(plan.bar));bar_->SetVisible(plan.show_bar);contents_->DeprecatedLayoutImmediately();Apply(previous!=offset());
+  }
+  bool OnMouseWheel(const ui::MouseWheelEvent& event) override{return maximum()>0&&bar_->OnMouseWheel(event);}
+  bool OnKeyPressed(const ui::KeyEvent& event) override{return maximum()>0&&bar_->OnKeyPressed(event);}
+  void OnScrollEvent(ui::ScrollEvent* event) override{if(maximum()<=0)return;bar_->ObserveScrollEvent(*event);if(event->y_offset()!=0){event->SetHandled();event->StopPropagation();}}
+  void OnGestureEvent(ui::GestureEvent* event) override{if(maximum()>0)bar_->OnGestureEvent(event);}
+  bool HandleAccessibleAction(const ui::AXActionData& action) override{
+    switch(action.action){case ax::mojom::Action::kScrollUp:return bar_->ScrollByAmount(views::ScrollBar::ScrollAmount::kPrevPage);case ax::mojom::Action::kScrollDown:return bar_->ScrollByAmount(views::ScrollBar::ScrollAmount::kNextPage);case ax::mojom::Action::kSetScrollOffset:ScrollTo(action.target_point.y());return true;default:return views::View::HandleAccessibleAction(action);}
+  }
+  void ScrollToPosition(views::ScrollBar* source,int position) override{if(source==bar_)ScrollTo(position);}
+  int GetScrollIncrement(views::ScrollBar*,bool page,bool) override{return page?clip_->height():clip_->height()/5;}
+ private:
+  void Reveal(const gfx::Rect& rect){if(state_->viewport_reveal(rect.y(),rect.height()))Apply(true);}
+  void Apply(bool moved){
+    if(!contents_)return;contents_->SetTransform(gfx::Transform::MakeTranslation(0,-static_cast<float>(offset())));bar_->Update(clip_->height(),contents_->height(),static_cast<int>(offset()));auto& ax=GetViewAccessibility();ax.SetScrollY(static_cast<int>(offset()));ax.SetScrollYMax(maximum());changed_.Run();if(moved)ax.NotifyEvent(ax::mojom::Event::kScrollPositionChanged,true);
+  }
+  base::RepeatingClosure changed_;
+  rust::Box<sidebar::ScrollViewportState> state_=sidebar::new_scroll_viewport();
+  raw_ptr<RustViewportClip> clip_=nullptr;raw_ptr<views::View> contents_=nullptr;raw_ptr<views::ScrollBar> bar_=nullptr;
+  base::WeakPtrFactory<RustPanelViewport> weak_factory_{this};
+};
+BEGIN_METADATA(RustPanelViewport)
+END_METADATA
+#endif
+
 #if BUILDFLAG(IS_MAC)
 bool RustLayoutEnabled() {
   return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar") == "rust-metal";
@@ -197,6 +278,12 @@ class RustColumnLayout final : public views::LayoutManager {
   const int spacing_;
 };
 #endif
+}
+std::unique_ptr<views::View> CreatePanelViewport(PanelViewport** adapter,base::RepeatingClosure changed){
+#if BUILDFLAG(IS_MAC)
+  if(RustLayoutEnabled()){auto host=std::make_unique<RustPanelViewport>(std::move(changed));*adapter=host.get();return host;}
+#endif
+  auto host=std::make_unique<NativePanelViewport>(std::move(changed));*adapter=host.get();return host;
 }
 void SetSidebarPanelLayout(views::View* host,bool vertical,gfx::Insets insets,int spacing,views::View* flex,bool center){
 #if BUILDFLAG(IS_MAC)

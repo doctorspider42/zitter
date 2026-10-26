@@ -54,6 +54,7 @@ class Widget;
 
 namespace zitter::prototype {
 class WorkspaceSwipeState;
+class PanelViewport;
 class ProfileFormState;
 class WorkspaceFormState;
 class PreferencesFormState;
@@ -231,6 +232,7 @@ class WorkspaceShell final : public ui::EventHandler,
   const BrowserTools& browser_tools() const { return tools_; }
   bool tools_ready() const { return tools_ready_; }
   views::Widget* tools_widget() const { return tools_widget_.get(); }
+  PanelViewport* tools_viewport_for_testing() const{return tools_scroll_;}
   EditorControl* shortcut_input() const { return shortcut_chord_; }
   views::View* tools_selection() const { return tools_picker_; }
   views::View* tools_choice_for_testing(std::string_view key) const;
@@ -512,9 +514,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<EditorControl> provider_url_ = nullptr;
   raw_ptr<views::View> tools_picker_ = nullptr;
   raw_ptr<views::View> closed_picker_ = nullptr;
-  raw_ptr<views::ScrollView> tools_scroll_ = nullptr;
-  std::unique_ptr<views::ScrollView::ScopedScrollSynchronizer> metal_tools_scroll_synchronizer_;
-  base::CallbackListSubscription metal_tools_scroll_subscription_;
+  raw_ptr<PanelViewport> tools_scroll_ = nullptr;
   std::vector<std::string> snapshot_ids_, closed_ids_;
   raw_ptr<EditorControl> history_search_ = nullptr;
   raw_ptr<views::View> history_period_ = nullptr;

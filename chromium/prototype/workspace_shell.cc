@@ -3880,19 +3880,12 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 #endif
   tools_close_=tools_heading->AddChildView(std::make_unique<GlyphButton>(dismiss_tools,u"Zamknij narzędzia",GlyphButton::Glyph::kVector,&vector_icons::kCloseIcon));
   SetSidebarPanelLayout(tools_heading,false,gfx::Insets(),8,tools_title_);
-  auto tools_scroll = std::make_unique<views::ScrollView>(); tools_scroll_ = tools_scroll.get();
-  tools_scroll->SetUseContentsPreferredSize(true);
-  if(workspace_form_){
-    metal_tools_scroll_synchronizer_=tools_scroll->EnableScrollSynchronization();
-    metal_tools_scroll_subscription_=tools_scroll->AddContentsScrolledCallback(base::BindRepeating(&WorkspaceShell::RefreshToolsViewport,weak));
-  }
-  tools_scroll->SetBackgroundColor(std::nullopt); tools_scroll->SetDrawOverflowIndicator(false);
-  tools_scroll->SetHorizontalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);
+  PanelViewport* tools_viewport=nullptr;auto tools_scroll=CreatePanelViewport(&tools_viewport,base::BindRepeating(&WorkspaceShell::RefreshToolsViewport,weak));tools_scroll_=tools_viewport;
   auto tools_body = std::make_unique<views::View>(); tools_body_ = tools_body.get();
   SetSidebarPanelLayout(tools_body_,true,gfx::Insets::TLBR(0,0,8,8),10);
-  tools_scroll->SetContents(std::move(tools_body)); tools_panel->AddChildView(std::move(tools_scroll));
+  tools_scroll_->SetPanelContents(std::move(tools_body)); tools_panel->AddChildView(std::move(tools_scroll));
   tools_status_ = AddToolsCopy(tools_panel.get(),u"",kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
-  SetSidebarPanelLayout(tools_panel.get(),true,gfx::Insets(20),12,tools_scroll_);
+  SetSidebarPanelLayout(tools_panel.get(),true,gfx::Insets(20),12,tools_scroll_->view());
 
   auto make_panel = [&](std::unique_ptr<views::View> contents,
                         std::unique_ptr<views::WidgetDelegate>& delegate,
@@ -3977,7 +3970,6 @@ void WorkspaceShell::Detach() {
   preferences_chrome_.reset();tools_chrome_.reset();
   for(auto& surface:metal_palette_chrome_)surface.reset();palette_chrome_views_.fill(nullptr);
   metal_general_scroll_subscription_={};metal_general_scroll_synchronizer_.reset();
-  metal_tools_scroll_subscription_={};metal_tools_scroll_synchronizer_.reset();
   metal_palette_scroll_subscription_={};metal_palette_scroll_synchronizer_.reset();metal_palette_.reset();metal_palette_pending_=false;
   metal_sidebar_grip_.reset();
   for(auto& surface:metal_split_)surface.reset();metal_split_pending_=false;

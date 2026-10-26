@@ -1,0 +1,48 @@
+{
+  "date": "2026-10-26",
+  "status": "Pushed source checkpoint after focused and broad validation; full UI regression matrix remains pending.",
+  "scope": "Tools viewport extent, allocation, authoritative offset, clamps and reveal policy move to Rust; native clipping/window/platform scrollbar adapters remain. Views retains ScrollView.",
+  "source_sha256": {
+    "sidebar_layout.cc": "b5b4ca0db7014e63db003d9befe66e253f209eeaf7c25ea0332045e7d3d43aac",
+    "sidebar_layout.h": "a47b5219ab6d25dbd424c8d8b0888ca30c771ee627817657f8a768b53c87c91b",
+    "sidebar_scene.rs": "bc0c041840235d09ddbd8febea241b7940652dbc394dcac9efa7f0160918b3b4",
+    "workspace_shell.cc": "4c22aa12048cc0a555948e784505ab3a25729a8b2f0d92d4216a3c20da371588",
+    "workspace_shell.h": "35f39c2be3613262d5859d546d71c08ae05a537a86f1b47bb26e333af6267f68",
+    "profile_workspace_browsertest.cc": "fffa628ec427184392b34f408c195c480e03d52e36a460670a389be3894470f7"
+  },
+  "compiled_browser_test_uuid": "4C4C4436-5555-3144-A137-025A6D8299CB",
+  "focused": {
+    "metal": {
+      "passed": 2,
+      "attempts_per_test": 1,
+      "summary_sha256": "31134bbcad42b98b71014cd0715353bf8bd0cb2418e07ad5b34705c355d70d6f",
+      "log_sha256": "46021b91830f3a5e2494c36f20fc146b10c9f4952bf2407c531dd0061025c6af"
+    },
+    "views": {
+      "passed": 2,
+      "attempts_per_test": 1,
+      "summary_sha256": "3c28177fd6bff25b2e06897ad38400a0a515655e8ba5546db2f0c1bff4660313",
+      "log_sha256": "bb830e5f198e9b380ec29cd9fa11f99536a034531aa77ae9ee754edf9e560110"
+    }
+  },
+  "broad": {
+    "metal": {
+      "passed": 90,
+      "attempts_per_test": 1,
+      "summary_sha256": "ade261161fb1fe6698c756557bd6c7cbbfa19ff2879b771867ad5df6ee7c11af",
+      "log_sha256": "d42e683dc05a9b21147a3a759541c8186f44f6c77da870117b8a6b7d6ded7712"
+    },
+    "views": {
+      "passed": 72,
+      "attempts_per_test": 1,
+      "summary_sha256": "06eb84f563052264208f83a820a9e2ccede651d4dcf64a9a7f7c2e73b1c91a1d",
+      "log_sha256": "f70793fe2c1ad7e0b1480f4b49e6871d144fed79475bff9b2287ae9a741399fa"
+    }
+  },
+  "headless": "272 Rust; 68 live Python; 180 SDK/font-direction plus raster; GN and boundaries passed",
+  "full_matrix": "Not run for this viewport change. Run 190 Metal / 144 applicable Views cases before recording a full checkpoint.",
+  "build_scope": "Isolated zitter_ui_lab built with frozen baseline build/bootstrap/network inputs; simultaneous network-policy changes are not covered by these UI binary results.",
+  "initial_probe": "One range assertion failed on both backends because an invisible Chromium scrollbar retained its previous maximum. The corrected oracle uses live content/viewport extents and checks scrollbar maximum when visible; all four sizes and 80 requests remain. Initial logs/source are retained locally in build/tools-viewport-first-probe and build/tools-viewport-first-probe-sources.",
+  "remaining_work": "docs/rust-metal-next-steps-2026-10-23.md",
+  "migration_goal": "Remains paused at the requested weekly quota threshold; this commit does not establish full functional/performance/release parity."
+}

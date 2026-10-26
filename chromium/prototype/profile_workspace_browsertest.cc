@@ -1151,6 +1151,28 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferencePanelActualHierarchy
     }
   }
 }
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsViewportMatchesNativeExtentClampAndReveal) {
+  auto delegate=std::make_unique<views::WidgetDelegate>();auto* host=delegate->SetContentsView(std::make_unique<views::View>());
+  PanelViewport* viewport=nullptr;auto candidate=CreatePanelViewport(&viewport,base::DoNothing());auto* candidate_view=host->AddChildView(std::move(candidate));
+  auto reference=std::make_unique<views::ScrollView>();auto* native=reference.get();native->SetUseContentsPreferredSize(true);native->SetBackgroundColor(std::nullopt);native->SetDrawOverflowIndicator(false);native->SetHorizontalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);host->AddChildView(std::move(reference));auto sync=native->EnableScrollSynchronization();
+  viewport->SetPanelContents(std::make_unique<ToolsPanelProbeView>(200,900,true));native->SetContents(std::make_unique<ToolsPanelProbeView>(200,900,true));
+  views::Widget::InitParams params(views::Widget::InitParams::CLIENT_OWNS_WIDGET,views::Widget::InitParams::TYPE_BUBBLE);params.delegate=delegate.get();params.SetParent(window_->widget());auto widget=std::make_unique<views::Widget>();widget->Init(std::move(params));widget->SetBounds(gfx::Rect(40,40,900,760));widget->Show();
+  for(auto size:{gfx::Size(120,100),gfx::Size(240,300),gfx::Size(480,620),gfx::Size(480,1200)}){SCOPED_TRACE(size.ToString());candidate_view->SetBoundsRect(gfx::Rect(size));native->SetBoundsRect(gfx::Rect(400,0,size.width(),size.height()));candidate_view->InvalidateLayout();native->InvalidateLayout();candidate_view->DeprecatedLayoutImmediately();native->DeprecatedLayoutImmediately();
+    EXPECT_EQ(native->contents()->size(),viewport->contents()->size());EXPECT_EQ(native->GetVisibleRect().size(),viewport->visible_rect().size());EXPECT_EQ(std::max(0,native->contents()->height()-native->GetVisibleRect().height()),viewport->maximum());if(native->vertical_scroll_bar()->GetVisible())EXPECT_EQ(native->vertical_scroll_bar()->GetMaxPosition(),viewport->maximum());
+    for(int position:{0,10,333,2000,-50}){viewport->ScrollTo(position);native->ScrollToPosition(native->vertical_scroll_bar(),position);EXPECT_EQ(native->CurrentOffset().y(),viewport->offset());EXPECT_EQ(native->GetVisibleRect(),viewport->visible_rect());}
+    for(int y:{-50,0,50,700,2000})for(int height:{1,40,1500}){const gfx::Rect target(0,y,1,height);viewport->contents()->ScrollRectToVisible(target);native->contents()->ScrollRectToVisible(target);EXPECT_EQ(native->CurrentOffset().y(),viewport->offset())<<"target="<<target.ToString();}
+  }
+  widget->CloseNow();
+}
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsViewportWheelKeyboardAccessibleAndReveal) {
+  auto* shell=window_->shell();shell->OpenTools(2);auto* viewport=shell->tools_viewport_for_testing();ASSERT_TRUE(viewport);EXPECT_EQ(shell->workspace_input()->rust_editor(),viewport->rust_owned());if(viewport->rust_owned())EXPECT_FALSE(views::AsViewClass<views::ScrollView>(viewport->view()));
+  auto* first=shell->provider_input(0)->view();auto* spacer=viewport->contents()->AddChildView(std::make_unique<views::View>());spacer->SetPreferredSize(gfx::Size(1,1400));shell->tools_widget()->LayoutRootViewIfNecessary();ASSERT_GT(viewport->maximum(),0);viewport->ScrollTo(0);
+  ui::MouseWheelEvent wheel(gfx::Vector2d(0,-120),gfx::PointF(10,10),gfx::PointF(10,10),base::TimeTicks::Now(),0,0);EXPECT_TRUE(viewport->view()->OnMouseWheel(wheel));EXPECT_GT(viewport->offset(),0);
+  ui::KeyEvent home(ui::EventType::kKeyPressed,ui::VKEY_HOME,ui::EF_NONE);EXPECT_TRUE(viewport->view()->OnKeyPressed(home));EXPECT_EQ(0,viewport->offset());
+  ui::AXActionData down;down.action=ax::mojom::Action::kScrollDown;EXPECT_TRUE(viewport->view()->HandleAccessibleAction(down));EXPECT_GT(viewport->offset(),0);viewport->ScrollTo(viewport->maximum());EXPECT_TRUE(first->GetVisibleBounds().IsEmpty());first->ScrollRectToVisible(first->GetLocalBounds());EXPECT_FALSE(first->GetVisibleBounds().IsEmpty());
+  ui::AXNodeData ax;viewport->view()->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kScrollView,ax.role);EXPECT_EQ(viewport->maximum(),ax.GetIntAttribute(ax::mojom::IntAttribute::kScrollYMax));
+  shell->tools_widget()->Hide();shell->OpenTools(2);EXPECT_GE(viewport->offset(),0);EXPECT_LE(viewport->offset(),viewport->maximum());
+}
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsPanelResizeLongStatusAndViewportGeometry) {
   ASSERT_TRUE(window_->Select("work"));auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));
   const bool rust=shell->workspace_input()->rust_editor();
@@ -1159,11 +1181,11 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsPanelResizeLongStatusAndV
       shell->SetOperationStatus(u"Długi status 🦀 אבג · sprawdzenie zawijania, zmiany rozmiaru i widoczności przewijanego formularza bez nachodzenia na nagłówek ani stopkę.");
       shell->tools_widget()->SetSize(size);shell->tools_widget()->LayoutRootViewIfNecessary();
       auto* field=page==0?shell->snapshot_input():page==1?shell->shortcut_input():page==2?shell->provider_input(0):shell->history_search();ASSERT_TRUE(field);
-      views::ScrollView* scroll=nullptr;for(auto* p=field->view()->parent();p&&!scroll;p=p->parent())scroll=views::AsViewClass<views::ScrollView>(p);ASSERT_TRUE(scroll);
-      auto* root=scroll->parent();ASSERT_TRUE(root);ASSERT_EQ(3u,root->children().size());auto* heading=root->children()[0].get();EXPECT_EQ(scroll,root->children()[1].get());auto* status=root->children()[2].get();
+      auto* scroll=shell->tools_viewport_for_testing();ASSERT_TRUE(scroll);
+      auto* root=scroll->view()->parent();ASSERT_TRUE(root);ASSERT_EQ(3u,root->children().size());auto* heading=root->children()[0].get();EXPECT_EQ(scroll->view(),root->children()[1].get());auto* status=root->children()[2].get();
       const auto insets=root->GetInsets()+gfx::Insets(20);EXPECT_EQ(insets.left(),heading->x());EXPECT_EQ(insets.top(),heading->y());EXPECT_EQ(root->width()-insets.width(),heading->width());
-      EXPECT_EQ(heading->bounds().bottom()+12,scroll->y());EXPECT_EQ(scroll->bounds().bottom()+12,status->y());EXPECT_EQ(root->height()-insets.bottom(),status->bounds().bottom());
-      EXPECT_EQ(root->width()-insets.width(),status->width());EXPECT_GT(scroll->height(),0);ASSERT_TRUE(scroll->contents());EXPECT_GE(scroll->contents()->height(),scroll->height());
+      EXPECT_EQ(heading->bounds().bottom()+12,scroll->view()->y());EXPECT_EQ(scroll->view()->bounds().bottom()+12,status->y());EXPECT_EQ(root->height()-insets.bottom(),status->bounds().bottom());
+      EXPECT_EQ(root->width()-insets.width(),status->width());EXPECT_GT(scroll->view()->height(),0);ASSERT_TRUE(scroll->contents());EXPECT_GE(scroll->contents()->height(),scroll->view()->height());
       if(rust){field->view()->ScrollRectToVisible(field->view()->GetLocalBounds());ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_order_correct_for_testing()&&shell->tools_chrome_excludes_for_testing(field->view());}));EXPECT_TRUE(shell->tools_chrome_excludes_for_testing(shell->tools_close_for_testing()));}
     }
   }
@@ -5106,7 +5128,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsChromeSharedUnderlayC
   }
   shell->OpenTools(0);auto* field=shell->snapshot_input()->view();auto* spacer=field->parent()->AddChildView(std::make_unique<views::View>());spacer->SetPreferredSize(gfx::Size(1,1200));shell->tools_widget()->LayoutRootViewIfNecessary();
   base::test::TestFuture<void> presented;auto* compositor=shell->tools_widget()->GetCompositor();ASSERT_TRUE(compositor);compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
-  views::ScrollView* scroll=nullptr;for(auto* p=field->parent();p&&!scroll;p=p->parent())scroll=views::AsViewClass<views::ScrollView>(p);ASSERT_TRUE(scroll);scroll->ScrollToPosition(scroll->vertical_scroll_bar(),scroll->vertical_scroll_bar()->GetMaxPosition());
+  auto* scroll=shell->tools_viewport_for_testing();ASSERT_TRUE(scroll);scroll->ScrollTo(scroll->maximum());
   ASSERT_TRUE(base::test::RunUntil([&]{return field->GetVisibleBounds().IsEmpty();}));
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_contains_text_for_testing("Time Machine · Praca");}));
   field->ScrollRectToVisible(field->GetLocalBounds());ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_excludes_for_testing(field);}));
@@ -5134,8 +5156,8 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsHistoryRowsSharedCanv
   ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));first->RequestFocus();
   base::test::TestFuture<void> presented;auto* compositor=shell->tools_widget()->GetCompositor();ASSERT_TRUE(compositor);compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
   const auto tabs=window_->tab_count("work");const gfx::Point point(12,12);ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);
-  ASSERT_TRUE(first->OnMousePressed(press));views::ScrollView* scroll=nullptr;for(auto* p=list->parent();p&&!scroll;p=p->parent())scroll=views::AsViewClass<views::ScrollView>(p);ASSERT_TRUE(scroll);
-  scroll->ScrollToPosition(scroll->vertical_scroll_bar(),scroll->vertical_scroll_bar()->GetMaxPosition());ASSERT_TRUE(base::test::RunUntil([&]{return first->GetVisibleBounds().IsEmpty();}));
+  ASSERT_TRUE(first->OnMousePressed(press));auto* scroll=shell->tools_viewport_for_testing();ASSERT_TRUE(scroll);
+  scroll->ScrollTo(scroll->maximum());ASSERT_TRUE(base::test::RunUntil([&]{return first->GetVisibleBounds().IsEmpty();}));
   ASSERT_TRUE(base::test::RunUntil([&]{return !shell->tools_chrome_contains_text_for_testing("History GPU 0 🦀")&&shell->tools_chrome_contains_text_for_testing("History GPU 79 🦀");}));
   first->OnMouseReleased(release);base::RunLoop().RunUntilIdle();EXPECT_EQ(tabs,window_->tab_count("work"));EXPECT_TRUE(shell->history_visible());
   first->ScrollRectToVisible(first->GetLocalBounds());ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_contains_text_for_testing("History GPU 0 🦀");}));
@@ -5167,9 +5189,9 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsActionsScenesBatching
   auto* scrolling_fixture=group->parent()->AddChildView(std::make_unique<views::View>());scrolling_fixture->SetPreferredSize(gfx::Size(1,1200));shell->tools_widget()->LayoutRootViewIfNecessary();ASSERT_NO_FATAL_FAILURE(present());first->ScrollRectToVisible(first->GetLocalBounds());
   const gfx::Point point(12,12);ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);
   ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);
-  ASSERT_TRUE(first->OnMousePressed(press));views::ScrollView* scroll=nullptr;for(auto* p=group->parent();p&&!scroll;p=p->parent())scroll=views::AsViewClass<views::ScrollView>(p);ASSERT_TRUE(scroll);
-  scroll->ScrollToPosition(scroll->vertical_scroll_bar(),group->y()+first->bounds().bottom()+20);
-  ASSERT_TRUE(base::test::RunUntil([&]{return first->GetVisibleBounds().IsEmpty()&&!group->GetVisibleBounds().IsEmpty();}))<<"first="<<first->GetVisibleBounds().ToString()<<" group="<<group->GetVisibleBounds().ToString()<<" viewport="<<scroll->GetVisibleRect().ToString();
+  ASSERT_TRUE(first->OnMousePressed(press));auto* scroll=shell->tools_viewport_for_testing();ASSERT_TRUE(scroll);
+  scroll->ScrollTo(group->y()+first->bounds().bottom()+20);
+  ASSERT_TRUE(base::test::RunUntil([&]{return first->GetVisibleBounds().IsEmpty()&&!group->GetVisibleBounds().IsEmpty();}))<<"first="<<first->GetVisibleBounds().ToString()<<" group="<<group->GetVisibleBounds().ToString()<<" viewport="<<scroll->visible_rect().ToString();
   first->OnMouseReleased(release);base::RunLoop().RunUntilIdle();EXPECT_EQ(ui::TEXT_INPUT_TYPE_TEXT,shell->shortcut_input()->input_client()->GetTextInputType());
   first->ScrollRectToVisible(first->GetLocalBounds());ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_action_metal_visible_for_testing(first);}));
   ASSERT_TRUE(first->OnMousePressed(press));shell->tools_widget()->Hide();first->OnMouseReleased(release);base::RunLoop().RunUntilIdle();EXPECT_FALSE(shell->tools_widget()->IsVisible());
@@ -5198,9 +5220,9 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsChoicesScenesClipping
   scrolling_fixture->SetPreferredSize(gfx::Size(1,1200));
   shell->tools_widget()->LayoutRootViewIfNecessary();ASSERT_NO_FATAL_FAILURE(present());top->ScrollRectToVisible(top->GetLocalBounds());
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_choice_metal_visible_for_testing("selection");}));
-  views::ScrollView* scroll=nullptr;for(auto* p=top->parent();p&&!scroll;p=p->parent())scroll=views::AsViewClass<views::ScrollView>(p);ASSERT_TRUE(scroll);
-  auto* bar=scroll->vertical_scroll_bar();ASSERT_GT(bar->GetMaxPosition(),0);scroll->ScrollToPosition(bar,bar->GetMaxPosition());
-  ASSERT_TRUE(base::test::RunUntil([&]{return top->GetVisibleBounds().IsEmpty();}))<<"control="<<top->GetBoundsInScreen().ToString()<<" visible="<<top->GetVisibleBounds().ToString()<<" viewport="<<scroll->GetVisibleRect().ToString()<<" contents="<<scroll->contents()->size().ToString()<<" scroll="<<bar->GetPosition()<<"/"<<bar->GetMaxPosition();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->tools_choice_metal_visible_for_testing("selection");}));
+  auto* scroll=shell->tools_viewport_for_testing();ASSERT_TRUE(scroll);
+  ASSERT_GT(scroll->maximum(),0);scroll->ScrollTo(scroll->maximum());
+  ASSERT_TRUE(base::test::RunUntil([&]{return top->GetVisibleBounds().IsEmpty();}))<<"control="<<top->GetBoundsInScreen().ToString()<<" visible="<<top->GetVisibleBounds().ToString()<<" viewport="<<scroll->visible_rect().ToString()<<" contents="<<scroll->contents()->size().ToString()<<" scroll="<<scroll->offset()<<"/"<<scroll->maximum();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->tools_choice_metal_visible_for_testing("selection");}));
   top->ScrollRectToVisible(top->GetLocalBounds());ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_choice_metal_visible_for_testing("selection");}));
   shell->tools_widget()->Hide();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->tools_choice_metal_visible_for_testing("selection");}));
   shell->tools_widget()->Show();shell->tools_widget()->Activate();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_choice_metal_visible_for_testing("selection");}));

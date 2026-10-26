@@ -4,9 +4,26 @@
 #include <memory>
 #include <vector>
 #include "ui/gfx/geometry/size.h"
+#include "ui/gfx/geometry/rect.h"
+#include "base/functional/callback.h"
 #include "ui/gfx/geometry/insets.h"
 namespace views { class LayoutManager; class View; }
 namespace zitter::prototype {
+// A viewport owns scrolling state; native Views and Rust implementations share
+// only measurement/event/window adapters. The returned View owns the interface.
+class PanelViewport {
+ public:
+  virtual ~PanelViewport()=default;
+  virtual views::View* view()=0;
+  virtual views::View* contents() const=0;
+  virtual void SetPanelContents(std::unique_ptr<views::View> contents)=0;
+  virtual gfx::Rect visible_rect() const=0;
+  virtual double offset() const=0;
+  virtual int maximum() const=0;
+  virtual void ScrollTo(double position)=0;
+  virtual bool rust_owned() const=0;
+};
+std::unique_ptr<views::View> CreatePanelViewport(PanelViewport** adapter,base::RepeatingClosure changed);
 struct WorkspaceSwipeUpdate { bool started, preview, finish, handled; };
 struct WorkspaceSwipePage { int index; double x; };
 struct WorkspaceSwipeLayout { int center; std::vector<WorkspaceSwipePage> pages; };
