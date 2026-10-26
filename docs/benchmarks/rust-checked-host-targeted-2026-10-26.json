@@ -1,0 +1,656 @@
+{
+  "date": "2026-10-26",
+  "tested_ui_source_commit": "d75b117ec3c51344ed27df477212cde4b821e814",
+  "status": "Targeted toggle and checkbox interaction host migration; full matrices reserved for larger blocks.",
+  "source_inputs": {
+    "source_commit": "d75b117ec3c51344ed27df477212cde4b821e814",
+    "count": 53,
+    "source_sha256": {
+      "chromium/prototype/arc_importer.cc": "e3c6aa5d0876a9d1c29305136d225eba78a8d8b95c3267cabf5d8a96d5d9ecf4",
+      "chromium/prototype/arc_importer.h": "b5cb4ccc4871c9ad7af3e578763bc3d8347fc9adc394c05624f1653b342ea2fc",
+      "chromium/prototype/browser_data.h": "243b1d34847d4358041190ed42ee0c0600a21257003b54c056c59f4ef764a747",
+      "chromium/prototype/browser_import_data.cc": "c6d7d1750ab9be441a264691382928417cdea7e0959b2b86cb2ce5bd4fbbb37c",
+      "chromium/prototype/browser_import_data.h": "35039b3013e0754f88be9f021428160eacbbe65de8f61eef2983a65ca0291b7b",
+      "chromium/prototype/browser_import_key_mac.mm": "65d0b914b43a7268a54d309f021a5a6c7ead871dbe68c0fb2581005456af1bd1",
+      "chromium/prototype/browser_preferences.cc": "34fafbb418688d581d581599e57d68a3d572c6fbfa311f1a8525c67340a77c48",
+      "chromium/prototype/browser_preferences.h": "63a931a276df3c05f49e098c6977d99b14112ad20f4df4dc9ab8a513c96f6f68",
+      "chromium/prototype/browser_tools.cc": "62964f8f594011af7a60983890a33027ebacddd7faa3642e77bd59e4a635a62e",
+      "chromium/prototype/browser_tools.h": "ef83716f8bb01fe5b3b770f9136288a39aefedfe4b299e305b1dd1f740b1ad6a",
+      "chromium/prototype/download_panel.cc": "0a3e3206a6d782a12599b8c6d0913e9b43b31ae3849be5effab9a1a60118f197",
+      "chromium/prototype/download_panel.h": "1db13545467abf4729b4c340323997bed4a0af4bb232670755ff20e0d37eaa50",
+      "chromium/prototype/editor_control.h": "6a7d417696dadff55daaa05581be0cc71a825cfbbc934921fcd3616d872275f3",
+      "chromium/prototype/editor_text_layout.h": "35a72c6965037f684ee5f88338f71aa07b41842de4e7417ab6af1df7300c26cb",
+      "chromium/prototype/editor_text_layout_mac.inc": "13f2fddef229486fb25f42fb275cc0d7256bebe6d9599356822ff4b11db81984",
+      "chromium/prototype/editor_text_layout_test.mm": "a0bc7f9d485717b6a303b31952ad35ae8d3b3b021b016cb2b0ee8fc890726844",
+      "chromium/prototype/link_navigation.cc": "464f61fdd785d5cc3fc8d5551d8dce767f237a7338080d87e101a6a380855f13",
+      "chromium/prototype/link_navigation.h": "77c3df9a92f9038e7794c8c482f916114c84008bb3ddc02dd31a38ba073e9ff8",
+      "chromium/prototype/page_dialogs.cc": "5c38cc385307fd74367f0c3a06ce046d4bb31627569811824800960268931768",
+      "chromium/prototype/page_dialogs.h": "25127bc2396ade18c6dab4c3604fe48c74fdd90e5b3c7f0d50f136faab079157",
+      "chromium/prototype/page_file_access.cc": "26d797ddc42a17806f949540e628614779836b49c2d4f9d5ea199ff9a94f0a8c",
+      "chromium/prototype/page_file_access.h": "313f54266ef5051c52b654632273a1b7f84c8c09e53930bbecdee3b747d27888",
+      "chromium/prototype/page_file_access_browsertest.cc": "008833c70f884d045277409a5371d006ca1ddd851f0047584b3d0d0fb2b04f81",
+      "chromium/prototype/page_media_access.cc": "49a3f4a21f30a31f6559bf48b82837d72c87ab8148ea870cdd2f113a4b42473d",
+      "chromium/prototype/page_media_access.h": "224414fce67a836f34acffca609593e456ce00cc1d7d02ae003eb87a5484dacc",
+      "chromium/prototype/page_media_access_browsertest.cc": "7eedc13b1453308cb9db00c2445f896c031a0afb2a1dd18b8b0f4d85f8709493",
+      "chromium/prototype/page_services.cc": "701def23690ef2c6e6843b8c4bd16f76d09a066bdade34d9dfc45010283da9c2",
+      "chromium/prototype/page_services.h": "b031e317d2e96c4245ff019e5185c6f103f533b2f9efd3ea98132ddaef333d6d",
+      "chromium/prototype/profile_workspace_browsertest.cc": "f91a8bfb137ad2166fc5726c7c50b7fc398acfcd11923f9e89bb0a69b9436b32",
+      "chromium/prototype/scene_editor.cc": "1750eabbc946da28efc519939e5de6db0c59813212feaae47716fd705bfb1c75",
+      "chromium/prototype/sidebar.metal": "844a08c8a905931a313126a2d3c96f22e25228da1fc149ec6c12e88fc9755cc5",
+      "chromium/prototype/sidebar_editor.rs": "963e52ae3fb70efd48e1d15ca059095ed02812fbaea3ddd1266d39188134c6de",
+      "chromium/prototype/sidebar_layout.cc": "23ba7bf07cc9837218c9a86877debc33584daa5178f311f288d7ae2c8c7ff757",
+      "chromium/prototype/sidebar_layout.h": "4493febfebb642634cbcba3e96c5acdd8f2cd872afb88ddd2a4de9828df553be",
+      "chromium/prototype/sidebar_metal.h": "aaec1f74aa15b73a2d524676c8e961b7a7c4c4a55e5092127f1d79586c3b158a",
+      "chromium/prototype/sidebar_metal.mm": "d10bcc4e2adc97bac0fcb897558a7992b0cbb06c6a738bdf3087738f74377a5d",
+      "chromium/prototype/sidebar_scene.rs": "4c50e767e6f956064c1a2dedb9491a1613f886078e5ea8abbb1250a0bea5170f",
+      "chromium/prototype/sidebar_tree.cc": "d72174ac4aac1f29b780a057b1b2773d5958fbd64904ee05dca7ce8d4109229b",
+      "chromium/prototype/sidebar_tree.h": "d59f6e86d9d44dce943e1a82591d6fda73b595fa6678a062ceed158342948e77",
+      "chromium/prototype/workspace_browser_settings.cc": "eef5a07c3857ddbe94f543293c367be7b3ef5fede5d6a1249ce8cd12ba22cf4b",
+      "chromium/prototype/workspace_commands.cc": "8b2b5f8406a9f72a971d68235ff1bf6b940bdf6968aa36bb1005380293554163",
+      "chromium/prototype/workspace_frame_mac.h": "dd234cbb65d673cd58ea4ea3a37d34111890b66b7a6f4b255304c97db6d61021",
+      "chromium/prototype/workspace_frame_mac.mm": "2827f43e3c08069d7de3002a192a5f7c6f912a9745153925326bbeca86db884e",
+      "chromium/prototype/workspace_keyboard_mac.h": "957a086998c824d72afc3a2fa12406771eb7f7d1439a3c1291cd404e8f6b3d25",
+      "chromium/prototype/workspace_keyboard_mac.mm": "54019c3030fd8029752c0bb55c4f5f0109bf30a34649bb78cc63c11df7193eed",
+      "chromium/prototype/workspace_lifecycle.cc": "e4d73972762ce21156a3a022de73f7edb5e9b520d15cfaf517df289128416c1b",
+      "chromium/prototype/workspace_preconnect.cc": "4b049f91fa11fb4ae523051a37a573c505ef0f1197935afaa6cdd22fa38e664c",
+      "chromium/prototype/workspace_preconnect_browsertest.cc": "5243272c30d25c9c39a5f413259227d4ce083294207326415ddf35da2a0a1e09",
+      "chromium/prototype/workspace_shell.cc": "e1d12ee72f477f3d20643e8c33df1cfcd74923b0f680a9a9af500d7c52237daa",
+      "chromium/prototype/workspace_shell.h": "baab50d8817ec4e575fb1f2e3ca7e2e5ec1449580f26e1d26a1a514fbcf4e1b3",
+      "chromium/prototype/workspace_time_machine.cc": "4ae4f979d80cd4ece460be3cea499257d18b95243ce6f0dad0f8d2fbdad15bae",
+      "chromium/prototype/workspace_window.cc": "9a4b7d30c8d0911c477a1d03ce965122b600e2b6a98f98486159bc5e137082f1",
+      "chromium/prototype/workspace_window.h": "f338147929b886ca719807513f463494b5b8601d55c9c664b3c7b8ced2f23189"
+    }
+  },
+  "compiled_browser_test_uuid": "4C4C4431-5555-3144-A105-F19FA486E15B",
+  "compiled_app_uuid": "4C4C441E-5555-3144-A189-3984164EAC39",
+  "compiled_framework_uuid": "4C4C44A2-5555-3144-A110-FFEEFE0D5D89",
+  "build_scope": {
+    "frozen_build_tools_commit": "d23f232",
+    "snapshot": {
+      "frozen_base": "a3afc206f742f0a59da6e65d609ddf1df3c7326d",
+      "gn_delta": "No target/dependency change. Rust bridge adds clear_selection for existing SelectState. Explicit native adapters, preference selector allocation/refresh and browser tests changed. Concurrent root network-policy work remains excluded.",
+      "method": "Frozen UI overlay base a3afc206f742f0a59da6e65d609ddf1df3c7326d plus 16 explicit live UI overrides (including sidebar_metal.h/mm), with committed own installer/stager hooks; concurrent network-policy changes excluded. Twenty-one prototype source hashes are matched to committed, live and staged inputs.",
+      "staged_build_gn_sha256": "711f7d01a8d55c4046a9dc297a30f7724d414d7682d8c8b6759397bac28cfdd7",
+      "staged_main_cc_sha256": "61dea81d0e263778c386eb6435429a8d90c4daa51f1dd787563facf7ddffa5d1",
+      "global_component_updater_sha256": "df5664ec70774c448137a2c4c7fa0503de084098932552d9d278f63e19d910ac",
+      "global_component_updater_matches_previous_checkpoint": true,
+      "build_tools_sha256": {
+        "tools/editor_service_patch.py": "73a4e43cfd4edb0dd919c7bec97392f1ceabe063ebc500aa289b1c030f90f9b8",
+        "tools/install_chromium_overlay.py": "a32bc13189118b9d4bbb56a4c8023b19ce94dfeefeb8fd42dc31a7d36de7b5d0",
+        "tools/stage_performance_candidate.py": "2e8482b94a72ac37c50aead85de00253afba581c22daabfce2053f10b7c550ed"
+      }
+    },
+    "native_service_patch": {
+      "chromium_revision": "1a732fcc23b20dd0bcf38f35d72c1fe1ec799d35",
+      "files": {
+        "ui/views/controls/textfield/text_edit_kill_buffer.h": {
+          "sha256": "0bacacfdd8480cb991ab9b041f15a6aee8775e358f901e2774f04c0a9e6e37c0",
+          "pinned_original_sha256": null
+        },
+        "ui/views/controls/textfield/textfield_model.cc": {
+          "sha256": "7884c624f8d5a075891d5b059b16ff686956ca8e9158be0c23444744c47716fd",
+          "pinned_original_sha256": "3f7df6d86aeabe0f2b43e9d3312eb0f07838c55f69cd3a0a05af9a02755eb9a7"
+        },
+        "ui/views/BUILD.gn": {
+          "sha256": "8fc448fd6e0513f8bfe25d479531d1739fe21620d1ec4ec3253ba7dc80a8dd91",
+          "pinned_original_sha256": "fee5303f268675f877649144c07d4dda788a21068bc620f16e73efae5d674c70"
+        }
+      },
+      "only_expected_upstream_edits": true,
+      "model_instance_created_by_service": false,
+      "license": "Generated Chromium header and source hook retain the Chromium BSD-style license; project adapter/tool/model changes use Apache-2.0."
+    },
+    "limit": "Current-main network policy excluded from this frozen UI-lab binary and acceptance."
+  },
+  "checks": {
+    "rust": {
+      "path": "/Users/papaj/Projects/zitter/build/checked-host-rust.log",
+      "sha256": "71548581292c47560b27dba34add491032a597e46f1247b20cbd11a04e1c21f6"
+    },
+    "gn": {
+      "path": "/Users/papaj/Projects/zitter/build/checked-host-gn.log",
+      "sha256": "758efd67ba4374faadfea3be2227cf65809c7c37f9e1e304dda137f152db50ed"
+    },
+    "boundaries": {
+      "path": "/Users/papaj/Projects/zitter/build/checked-host-boundaries.log",
+      "sha256": "2734f2795db1562441bedd4b056c447b4e3c3cc848e6ff6bf5014befe98c3984"
+    },
+    "noop": {
+      "path": "/Users/papaj/Projects/zitter/build/checked-host-noop.log",
+      "sha256": "0e45b11aa4c9cc3cf65105ab14996d4c61b50ced60e5c9281d929e306cd70c17"
+    },
+    "coretext": {
+      "cases": 180,
+      "raster": true,
+      "path": "/Users/papaj/Projects/zitter/build/checked-host-sdk.log",
+      "sha256": "e318e6319c1fac17bedeb24a5f3a4a4a5a1ff9532049292973e04a9eb3f1276f"
+    },
+    "python": {
+      "passed": 68,
+      "path": "/Users/papaj/Projects/zitter/build/checked-host-python.log",
+      "sha256": "bdaa962b0b2f28943d5d022eb5429f877e82fb5f1bdcaa65b1bdfa655d144815"
+    },
+    "committed-python": {
+      "passed": 68,
+      "path": "/Users/papaj/Projects/zitter/build/checked-host-committed-python.log",
+      "sha256": "550311c6574c451d498c3d0503744d46c8707c831aa3b42237a2996c087053a4"
+    }
+  },
+  "gates": {
+    "focus": {
+      "input": {
+        "source_sha256": {
+          "chromium/prototype/arc_importer.cc": "e3c6aa5d0876a9d1c29305136d225eba78a8d8b95c3267cabf5d8a96d5d9ecf4",
+          "chromium/prototype/arc_importer.h": "b5cb4ccc4871c9ad7af3e578763bc3d8347fc9adc394c05624f1653b342ea2fc",
+          "chromium/prototype/browser_data.h": "243b1d34847d4358041190ed42ee0c0600a21257003b54c056c59f4ef764a747",
+          "chromium/prototype/browser_import_data.cc": "c6d7d1750ab9be441a264691382928417cdea7e0959b2b86cb2ce5bd4fbbb37c",
+          "chromium/prototype/browser_import_data.h": "35039b3013e0754f88be9f021428160eacbbe65de8f61eef2983a65ca0291b7b",
+          "chromium/prototype/browser_import_key_mac.mm": "65d0b914b43a7268a54d309f021a5a6c7ead871dbe68c0fb2581005456af1bd1",
+          "chromium/prototype/browser_preferences.cc": "34fafbb418688d581d581599e57d68a3d572c6fbfa311f1a8525c67340a77c48",
+          "chromium/prototype/browser_preferences.h": "63a931a276df3c05f49e098c6977d99b14112ad20f4df4dc9ab8a513c96f6f68",
+          "chromium/prototype/browser_tools.cc": "62964f8f594011af7a60983890a33027ebacddd7faa3642e77bd59e4a635a62e",
+          "chromium/prototype/browser_tools.h": "ef83716f8bb01fe5b3b770f9136288a39aefedfe4b299e305b1dd1f740b1ad6a",
+          "chromium/prototype/download_panel.cc": "0a3e3206a6d782a12599b8c6d0913e9b43b31ae3849be5effab9a1a60118f197",
+          "chromium/prototype/download_panel.h": "1db13545467abf4729b4c340323997bed4a0af4bb232670755ff20e0d37eaa50",
+          "chromium/prototype/editor_control.h": "6a7d417696dadff55daaa05581be0cc71a825cfbbc934921fcd3616d872275f3",
+          "chromium/prototype/editor_text_layout.h": "35a72c6965037f684ee5f88338f71aa07b41842de4e7417ab6af1df7300c26cb",
+          "chromium/prototype/editor_text_layout_mac.inc": "13f2fddef229486fb25f42fb275cc0d7256bebe6d9599356822ff4b11db81984",
+          "chromium/prototype/editor_text_layout_test.mm": "a0bc7f9d485717b6a303b31952ad35ae8d3b3b021b016cb2b0ee8fc890726844",
+          "chromium/prototype/link_navigation.cc": "464f61fdd785d5cc3fc8d5551d8dce767f237a7338080d87e101a6a380855f13",
+          "chromium/prototype/link_navigation.h": "77c3df9a92f9038e7794c8c482f916114c84008bb3ddc02dd31a38ba073e9ff8",
+          "chromium/prototype/page_dialogs.cc": "5c38cc385307fd74367f0c3a06ce046d4bb31627569811824800960268931768",
+          "chromium/prototype/page_dialogs.h": "25127bc2396ade18c6dab4c3604fe48c74fdd90e5b3c7f0d50f136faab079157",
+          "chromium/prototype/page_file_access.cc": "26d797ddc42a17806f949540e628614779836b49c2d4f9d5ea199ff9a94f0a8c",
+          "chromium/prototype/page_file_access.h": "313f54266ef5051c52b654632273a1b7f84c8c09e53930bbecdee3b747d27888",
+          "chromium/prototype/page_file_access_browsertest.cc": "008833c70f884d045277409a5371d006ca1ddd851f0047584b3d0d0fb2b04f81",
+          "chromium/prototype/page_media_access.cc": "49a3f4a21f30a31f6559bf48b82837d72c87ab8148ea870cdd2f113a4b42473d",
+          "chromium/prototype/page_media_access.h": "224414fce67a836f34acffca609593e456ce00cc1d7d02ae003eb87a5484dacc",
+          "chromium/prototype/page_media_access_browsertest.cc": "7eedc13b1453308cb9db00c2445f896c031a0afb2a1dd18b8b0f4d85f8709493",
+          "chromium/prototype/page_services.cc": "701def23690ef2c6e6843b8c4bd16f76d09a066bdade34d9dfc45010283da9c2",
+          "chromium/prototype/page_services.h": "b031e317d2e96c4245ff019e5185c6f103f533b2f9efd3ea98132ddaef333d6d",
+          "chromium/prototype/profile_workspace_browsertest.cc": "f91a8bfb137ad2166fc5726c7c50b7fc398acfcd11923f9e89bb0a69b9436b32",
+          "chromium/prototype/scene_editor.cc": "1750eabbc946da28efc519939e5de6db0c59813212feaae47716fd705bfb1c75",
+          "chromium/prototype/sidebar.metal": "844a08c8a905931a313126a2d3c96f22e25228da1fc149ec6c12e88fc9755cc5",
+          "chromium/prototype/sidebar_editor.rs": "963e52ae3fb70efd48e1d15ca059095ed02812fbaea3ddd1266d39188134c6de",
+          "chromium/prototype/sidebar_layout.cc": "23ba7bf07cc9837218c9a86877debc33584daa5178f311f288d7ae2c8c7ff757",
+          "chromium/prototype/sidebar_layout.h": "4493febfebb642634cbcba3e96c5acdd8f2cd872afb88ddd2a4de9828df553be",
+          "chromium/prototype/sidebar_metal.h": "aaec1f74aa15b73a2d524676c8e961b7a7c4c4a55e5092127f1d79586c3b158a",
+          "chromium/prototype/sidebar_metal.mm": "d10bcc4e2adc97bac0fcb897558a7992b0cbb06c6a738bdf3087738f74377a5d",
+          "chromium/prototype/sidebar_scene.rs": "4c50e767e6f956064c1a2dedb9491a1613f886078e5ea8abbb1250a0bea5170f",
+          "chromium/prototype/sidebar_tree.cc": "d72174ac4aac1f29b780a057b1b2773d5958fbd64904ee05dca7ce8d4109229b",
+          "chromium/prototype/sidebar_tree.h": "d59f6e86d9d44dce943e1a82591d6fda73b595fa6678a062ceed158342948e77",
+          "chromium/prototype/workspace_browser_settings.cc": "eef5a07c3857ddbe94f543293c367be7b3ef5fede5d6a1249ce8cd12ba22cf4b",
+          "chromium/prototype/workspace_commands.cc": "8b2b5f8406a9f72a971d68235ff1bf6b940bdf6968aa36bb1005380293554163",
+          "chromium/prototype/workspace_frame_mac.h": "dd234cbb65d673cd58ea4ea3a37d34111890b66b7a6f4b255304c97db6d61021",
+          "chromium/prototype/workspace_frame_mac.mm": "2827f43e3c08069d7de3002a192a5f7c6f912a9745153925326bbeca86db884e",
+          "chromium/prototype/workspace_keyboard_mac.h": "957a086998c824d72afc3a2fa12406771eb7f7d1439a3c1291cd404e8f6b3d25",
+          "chromium/prototype/workspace_keyboard_mac.mm": "54019c3030fd8029752c0bb55c4f5f0109bf30a34649bb78cc63c11df7193eed",
+          "chromium/prototype/workspace_lifecycle.cc": "e4d73972762ce21156a3a022de73f7edb5e9b520d15cfaf517df289128416c1b",
+          "chromium/prototype/workspace_preconnect.cc": "4b049f91fa11fb4ae523051a37a573c505ef0f1197935afaa6cdd22fa38e664c",
+          "chromium/prototype/workspace_preconnect_browsertest.cc": "5243272c30d25c9c39a5f413259227d4ce083294207326415ddf35da2a0a1e09",
+          "chromium/prototype/workspace_shell.cc": "e1d12ee72f477f3d20643e8c33df1cfcd74923b0f680a9a9af500d7c52237daa",
+          "chromium/prototype/workspace_shell.h": "baab50d8817ec4e575fb1f2e3ca7e2e5ec1449580f26e1d26a1a514fbcf4e1b3",
+          "chromium/prototype/workspace_time_machine.cc": "4ae4f979d80cd4ece460be3cea499257d18b95243ce6f0dad0f8d2fbdad15bae",
+          "chromium/prototype/workspace_window.cc": "9a4b7d30c8d0911c477a1d03ce965122b600e2b6a98f98486159bc5e137082f1",
+          "chromium/prototype/workspace_window.h": "f338147929b886ca719807513f463494b5b8601d55c9c664b3c7b8ced2f23189"
+        },
+        "binary_uuid": "4C4C4431-5555-3144-A105-F19FA486E15B",
+        "filter": "ZitterProfilesBrowserTest.CheckedActionHosts*:ZitterProfilesBrowserTest.PreferenceSwitchesCocoaScopeAndClearSelections:ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission:ZitterProfilesBrowserTest.ImportOptionsInvalidatePreview:ZitterProfilesBrowserTest.TextActionHosts*:ZitterMetalSidebarBrowserTest.PreferenceSwitchesRustScenesCancellationAndScroll:ZitterMetalSidebarBrowserTest.ImportCheckboxScenesAXSpaceCaptureDisabledAndVisibility:ZitterMetalSidebarBrowserTest.ImportFormScenesLatestOptionsLocksAndAdmission",
+        "selected_tests": {
+          "metal": [
+            "ZitterProfilesBrowserTest.PreferenceSwitchesCocoaScopeAndClearSelections",
+            "ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission",
+            "ZitterProfilesBrowserTest.CheckedActionHostsAXAndViewportCancellation",
+            "ZitterProfilesBrowserTest.TextActionHostsDialogDefaultsAndElementActivation",
+            "ZitterProfilesBrowserTest.TextActionHostsActivationObserverCanDeleteHost",
+            "ZitterProfilesBrowserTest.ImportOptionsInvalidatePreview",
+            "ZitterMetalSidebarBrowserTest.PreferenceSwitchesRustScenesCancellationAndScroll",
+            "ZitterMetalSidebarBrowserTest.ImportCheckboxScenesAXSpaceCaptureDisabledAndVisibility",
+            "ZitterMetalSidebarBrowserTest.ImportFormScenesLatestOptionsLocksAndAdmission"
+          ],
+          "views": [
+            "ZitterProfilesBrowserTest.PreferenceSwitchesCocoaScopeAndClearSelections",
+            "ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission",
+            "ZitterProfilesBrowserTest.CheckedActionHostsAXAndViewportCancellation",
+            "ZitterProfilesBrowserTest.TextActionHostsDialogDefaultsAndElementActivation",
+            "ZitterProfilesBrowserTest.TextActionHostsActivationObserverCanDeleteHost",
+            "ZitterProfilesBrowserTest.ImportOptionsInvalidatePreview"
+          ]
+        }
+      },
+      "runs": {
+        "metal": {
+          "counts": {
+            "SUCCESS": 9
+          },
+          "results": {
+            "ZitterMetalSidebarBrowserTest.ImportCheckboxScenesAXSpaceCaptureDisabledAndVisibility": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.ImportFormScenesLatestOptionsLocksAndAdmission": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.PreferenceSwitchesRustScenesCancellationAndScroll": "SUCCESS",
+            "ZitterProfilesBrowserTest.CheckedActionHostsAXAndViewportCancellation": "SUCCESS",
+            "ZitterProfilesBrowserTest.ImportOptionsInvalidatePreview": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceSwitchesCocoaScopeAndClearSelections": "SUCCESS",
+            "ZitterProfilesBrowserTest.TextActionHostsActivationObserverCanDeleteHost": "SUCCESS",
+            "ZitterProfilesBrowserTest.TextActionHostsDialogDefaultsAndElementActivation": "SUCCESS"
+          },
+          "summary": "/Users/papaj/Projects/zitter/build/checked-host-focus/metal.json",
+          "summary_sha256": "3037c68ddd311c239e210364bfc24ce9687eb4f08597cb4c36c357a243900be2",
+          "log": "/Users/papaj/Projects/zitter/build/checked-host-focus/metal.log",
+          "log_sha256": "567763b03ad5c823900fa287a6b1965109670a3e3aecd62eb69d470289445b96",
+          "command": [
+            "/Users/papaj/Projects/zitter/.chromium/src/out/ZitterOptimized/zitter_prototype_ui_lab",
+            "--gtest_filter=ZitterProfilesBrowserTest.CheckedActionHosts*:ZitterProfilesBrowserTest.PreferenceSwitchesCocoaScopeAndClearSelections:ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission:ZitterProfilesBrowserTest.ImportOptionsInvalidatePreview:ZitterProfilesBrowserTest.TextActionHosts*:ZitterMetalSidebarBrowserTest.PreferenceSwitchesRustScenesCancellationAndScroll:ZitterMetalSidebarBrowserTest.ImportCheckboxScenesAXSpaceCaptureDisabledAndVisibility:ZitterMetalSidebarBrowserTest.ImportFormScenesLatestOptionsLocksAndAdmission",
+            "--test-launcher-jobs=1",
+            "--test-launcher-retry-limit=0",
+            "--test-launcher-summary-output=/Users/papaj/Projects/zitter/build/checked-host-focus/metal.json",
+            "--disable-component-update",
+            "--zitter-sidebar=rust-metal"
+          ],
+          "environment_overrides": {
+            "MTL_DEBUG_LAYER": "1"
+          }
+        },
+        "views": {
+          "counts": {
+            "SUCCESS": 6
+          },
+          "results": {
+            "ZitterProfilesBrowserTest.CheckedActionHostsAXAndViewportCancellation": "SUCCESS",
+            "ZitterProfilesBrowserTest.ImportOptionsInvalidatePreview": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceSwitchesCocoaScopeAndClearSelections": "SUCCESS",
+            "ZitterProfilesBrowserTest.TextActionHostsActivationObserverCanDeleteHost": "SUCCESS",
+            "ZitterProfilesBrowserTest.TextActionHostsDialogDefaultsAndElementActivation": "SUCCESS"
+          },
+          "summary": "/Users/papaj/Projects/zitter/build/checked-host-focus/views.json",
+          "summary_sha256": "e05893d1616ff8f9940ec38df08f8f2a22d2172aeedb081bd52b544b76ab58ad",
+          "log": "/Users/papaj/Projects/zitter/build/checked-host-focus/views.log",
+          "log_sha256": "a1caae62ad7e662097c1c33515ee48bbba989e19b9df49f64754e045cf2b13e6",
+          "command": [
+            "/Users/papaj/Projects/zitter/.chromium/src/out/ZitterOptimized/zitter_prototype_ui_lab",
+            "--gtest_filter=ZitterProfilesBrowserTest.CheckedActionHosts*:ZitterProfilesBrowserTest.PreferenceSwitchesCocoaScopeAndClearSelections:ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission:ZitterProfilesBrowserTest.ImportOptionsInvalidatePreview:ZitterProfilesBrowserTest.TextActionHosts*:ZitterMetalSidebarBrowserTest.PreferenceSwitchesRustScenesCancellationAndScroll:ZitterMetalSidebarBrowserTest.ImportCheckboxScenesAXSpaceCaptureDisabledAndVisibility:ZitterMetalSidebarBrowserTest.ImportFormScenesLatestOptionsLocksAndAdmission-ZitterMetalSidebarBrowserTest.*",
+            "--test-launcher-jobs=1",
+            "--test-launcher-retry-limit=0",
+            "--test-launcher-summary-output=/Users/papaj/Projects/zitter/build/checked-host-focus/views.json",
+            "--disable-component-update"
+          ],
+          "environment_overrides": {
+            "MTL_DEBUG_LAYER": null
+          }
+        }
+      }
+    },
+    "critical": {
+      "input": {
+        "source_sha256": {
+          "chromium/prototype/arc_importer.cc": "e3c6aa5d0876a9d1c29305136d225eba78a8d8b95c3267cabf5d8a96d5d9ecf4",
+          "chromium/prototype/arc_importer.h": "b5cb4ccc4871c9ad7af3e578763bc3d8347fc9adc394c05624f1653b342ea2fc",
+          "chromium/prototype/browser_data.h": "243b1d34847d4358041190ed42ee0c0600a21257003b54c056c59f4ef764a747",
+          "chromium/prototype/browser_import_data.cc": "c6d7d1750ab9be441a264691382928417cdea7e0959b2b86cb2ce5bd4fbbb37c",
+          "chromium/prototype/browser_import_data.h": "35039b3013e0754f88be9f021428160eacbbe65de8f61eef2983a65ca0291b7b",
+          "chromium/prototype/browser_import_key_mac.mm": "65d0b914b43a7268a54d309f021a5a6c7ead871dbe68c0fb2581005456af1bd1",
+          "chromium/prototype/browser_preferences.cc": "34fafbb418688d581d581599e57d68a3d572c6fbfa311f1a8525c67340a77c48",
+          "chromium/prototype/browser_preferences.h": "63a931a276df3c05f49e098c6977d99b14112ad20f4df4dc9ab8a513c96f6f68",
+          "chromium/prototype/browser_tools.cc": "62964f8f594011af7a60983890a33027ebacddd7faa3642e77bd59e4a635a62e",
+          "chromium/prototype/browser_tools.h": "ef83716f8bb01fe5b3b770f9136288a39aefedfe4b299e305b1dd1f740b1ad6a",
+          "chromium/prototype/download_panel.cc": "0a3e3206a6d782a12599b8c6d0913e9b43b31ae3849be5effab9a1a60118f197",
+          "chromium/prototype/download_panel.h": "1db13545467abf4729b4c340323997bed4a0af4bb232670755ff20e0d37eaa50",
+          "chromium/prototype/editor_control.h": "6a7d417696dadff55daaa05581be0cc71a825cfbbc934921fcd3616d872275f3",
+          "chromium/prototype/editor_text_layout.h": "35a72c6965037f684ee5f88338f71aa07b41842de4e7417ab6af1df7300c26cb",
+          "chromium/prototype/editor_text_layout_mac.inc": "13f2fddef229486fb25f42fb275cc0d7256bebe6d9599356822ff4b11db81984",
+          "chromium/prototype/editor_text_layout_test.mm": "a0bc7f9d485717b6a303b31952ad35ae8d3b3b021b016cb2b0ee8fc890726844",
+          "chromium/prototype/link_navigation.cc": "464f61fdd785d5cc3fc8d5551d8dce767f237a7338080d87e101a6a380855f13",
+          "chromium/prototype/link_navigation.h": "77c3df9a92f9038e7794c8c482f916114c84008bb3ddc02dd31a38ba073e9ff8",
+          "chromium/prototype/page_dialogs.cc": "5c38cc385307fd74367f0c3a06ce046d4bb31627569811824800960268931768",
+          "chromium/prototype/page_dialogs.h": "25127bc2396ade18c6dab4c3604fe48c74fdd90e5b3c7f0d50f136faab079157",
+          "chromium/prototype/page_file_access.cc": "26d797ddc42a17806f949540e628614779836b49c2d4f9d5ea199ff9a94f0a8c",
+          "chromium/prototype/page_file_access.h": "313f54266ef5051c52b654632273a1b7f84c8c09e53930bbecdee3b747d27888",
+          "chromium/prototype/page_file_access_browsertest.cc": "008833c70f884d045277409a5371d006ca1ddd851f0047584b3d0d0fb2b04f81",
+          "chromium/prototype/page_media_access.cc": "49a3f4a21f30a31f6559bf48b82837d72c87ab8148ea870cdd2f113a4b42473d",
+          "chromium/prototype/page_media_access.h": "224414fce67a836f34acffca609593e456ce00cc1d7d02ae003eb87a5484dacc",
+          "chromium/prototype/page_media_access_browsertest.cc": "7eedc13b1453308cb9db00c2445f896c031a0afb2a1dd18b8b0f4d85f8709493",
+          "chromium/prototype/page_services.cc": "701def23690ef2c6e6843b8c4bd16f76d09a066bdade34d9dfc45010283da9c2",
+          "chromium/prototype/page_services.h": "b031e317d2e96c4245ff019e5185c6f103f533b2f9efd3ea98132ddaef333d6d",
+          "chromium/prototype/profile_workspace_browsertest.cc": "f91a8bfb137ad2166fc5726c7c50b7fc398acfcd11923f9e89bb0a69b9436b32",
+          "chromium/prototype/scene_editor.cc": "1750eabbc946da28efc519939e5de6db0c59813212feaae47716fd705bfb1c75",
+          "chromium/prototype/sidebar.metal": "844a08c8a905931a313126a2d3c96f22e25228da1fc149ec6c12e88fc9755cc5",
+          "chromium/prototype/sidebar_editor.rs": "963e52ae3fb70efd48e1d15ca059095ed02812fbaea3ddd1266d39188134c6de",
+          "chromium/prototype/sidebar_layout.cc": "23ba7bf07cc9837218c9a86877debc33584daa5178f311f288d7ae2c8c7ff757",
+          "chromium/prototype/sidebar_layout.h": "4493febfebb642634cbcba3e96c5acdd8f2cd872afb88ddd2a4de9828df553be",
+          "chromium/prototype/sidebar_metal.h": "aaec1f74aa15b73a2d524676c8e961b7a7c4c4a55e5092127f1d79586c3b158a",
+          "chromium/prototype/sidebar_metal.mm": "d10bcc4e2adc97bac0fcb897558a7992b0cbb06c6a738bdf3087738f74377a5d",
+          "chromium/prototype/sidebar_scene.rs": "4c50e767e6f956064c1a2dedb9491a1613f886078e5ea8abbb1250a0bea5170f",
+          "chromium/prototype/sidebar_tree.cc": "d72174ac4aac1f29b780a057b1b2773d5958fbd64904ee05dca7ce8d4109229b",
+          "chromium/prototype/sidebar_tree.h": "d59f6e86d9d44dce943e1a82591d6fda73b595fa6678a062ceed158342948e77",
+          "chromium/prototype/workspace_browser_settings.cc": "eef5a07c3857ddbe94f543293c367be7b3ef5fede5d6a1249ce8cd12ba22cf4b",
+          "chromium/prototype/workspace_commands.cc": "8b2b5f8406a9f72a971d68235ff1bf6b940bdf6968aa36bb1005380293554163",
+          "chromium/prototype/workspace_frame_mac.h": "dd234cbb65d673cd58ea4ea3a37d34111890b66b7a6f4b255304c97db6d61021",
+          "chromium/prototype/workspace_frame_mac.mm": "2827f43e3c08069d7de3002a192a5f7c6f912a9745153925326bbeca86db884e",
+          "chromium/prototype/workspace_keyboard_mac.h": "957a086998c824d72afc3a2fa12406771eb7f7d1439a3c1291cd404e8f6b3d25",
+          "chromium/prototype/workspace_keyboard_mac.mm": "54019c3030fd8029752c0bb55c4f5f0109bf30a34649bb78cc63c11df7193eed",
+          "chromium/prototype/workspace_lifecycle.cc": "e4d73972762ce21156a3a022de73f7edb5e9b520d15cfaf517df289128416c1b",
+          "chromium/prototype/workspace_preconnect.cc": "4b049f91fa11fb4ae523051a37a573c505ef0f1197935afaa6cdd22fa38e664c",
+          "chromium/prototype/workspace_preconnect_browsertest.cc": "5243272c30d25c9c39a5f413259227d4ce083294207326415ddf35da2a0a1e09",
+          "chromium/prototype/workspace_shell.cc": "e1d12ee72f477f3d20643e8c33df1cfcd74923b0f680a9a9af500d7c52237daa",
+          "chromium/prototype/workspace_shell.h": "baab50d8817ec4e575fb1f2e3ca7e2e5ec1449580f26e1d26a1a514fbcf4e1b3",
+          "chromium/prototype/workspace_time_machine.cc": "4ae4f979d80cd4ece460be3cea499257d18b95243ce6f0dad0f8d2fbdad15bae",
+          "chromium/prototype/workspace_window.cc": "9a4b7d30c8d0911c477a1d03ce965122b600e2b6a98f98486159bc5e137082f1",
+          "chromium/prototype/workspace_window.h": "f338147929b886ca719807513f463494b5b8601d55c9c664b3c7b8ced2f23189"
+        },
+        "binary_uuid": "4C4C4431-5555-3144-A105-F19FA486E15B",
+        "filter": "ZitterProfilesBrowserTest.Preference*:ZitterProfilesBrowserTest.ToolsActions*:ZitterProfilesBrowserTest.ToolsChoices*:ZitterProfilesBrowserTest.ToolsChrome*:ZitterProfilesBrowserTest.FooterAction*:ZitterProfilesBrowserTest.HeaderAction*:ZitterProfilesBrowserTest.SplitPaneAction*:ZitterProfilesBrowserTest.SidebarRowHosts*:ZitterProfilesBrowserTest.AppearanceActionHosts*:ZitterProfilesBrowserTest.ResultRowHosts*:ZitterProfilesBrowserTest.TextActionHosts*:ZitterProfilesBrowserTest.CheckedActionHosts*:ZitterProfilesBrowserTest.ImportOptionsInvalidatePreview:ZitterProfilesBrowserTest.ChromiumBrowserImportSelectionAndPersistence:ZitterProfilesBrowserTest.BrowsingImport*:ZitterProfilesBrowserTest.ArcImportStructureAndPersistence:ZitterMetalSidebarBrowserTest.Import*:ZitterMetalSidebarBrowserTest.Preference*:ZitterMetalSidebarBrowserTest.Tools*:ZitterMetalSidebarBrowserTest.NavigationHeaderHistoryReloadAndIndependentVisibility:ZitterMetalSidebarBrowserTest.FooterSpacesScrollSelectPinAndSettings:ZitterMetalSidebarBrowserTest.SplitPaneScenesDragOrientTitleAndClose:ZitterMetalSidebarBrowserTest.AppearanceRowsSceneInputClippingCompositionAndWorkspaceChange",
+        "selected_tests": {
+          "metal": [
+            "ZitterProfilesBrowserTest.ToolsChromeCopyMetricsStatusAndProfileContext",
+            "ZitterProfilesBrowserTest.PreferencePanelLayoutMatchesBoxMeasurementAndCenteredBounds",
+            "ZitterProfilesBrowserTest.PreferencePanelActualHierarchyMatchesBoxAcrossCategoriesAndResize",
+            "ZitterProfilesBrowserTest.FooterActionHostsOwnershipEmojiMenuKeysAXAndClip",
+            "ZitterProfilesBrowserTest.FooterActionCallbackCanDeleteItsOwnHost",
+            "ZitterProfilesBrowserTest.SplitPaneActionHostsMenuKeyboardAXAndRetarget",
+            "ZitterProfilesBrowserTest.SplitPaneActionQueuedCloseSurvivesIndexShiftAndDeletion",
+            "ZitterProfilesBrowserTest.HeaderActionHostOwnershipKeyboardAXGestureAndCancel",
+            "ZitterProfilesBrowserTest.ToolsActionsCocoaSnapshotProviderAndClose",
+            "ZitterProfilesBrowserTest.ToolsActionsHistoryBusyAcrossRebuildAndVisibility",
+            "ZitterProfilesBrowserTest.ToolsChoicesCocoaPrefixCallbacksAndHistoryPeriod",
+            "ZitterProfilesBrowserTest.ToolsChoicesShortcutProviderProjectionAndDrafts",
+            "ZitterProfilesBrowserTest.ToolsChoicesTimelineIdentityFilteringAndEmptyState",
+            "ZitterProfilesBrowserTest.ToolsChoicesTimelineUnicodeRestoreAndClosedTargets",
+            "ZitterProfilesBrowserTest.PreferenceEditorsCocoaCompositionAndProfileScope",
+            "ZitterProfilesBrowserTest.PreferenceDraftRefreshFailureAndProfileIsolation",
+            "ZitterProfilesBrowserTest.PreferenceCatalogueRowsOrderCopyAndFilter",
+            "ZitterProfilesBrowserTest.PreferenceCatalogueToolsRoutes",
+            "ZitterProfilesBrowserTest.PreferenceViewportFilterRevealAndResize",
+            "ZitterProfilesBrowserTest.PreferenceViewportWheelAXThemeAndProfileScope",
+            "ZitterProfilesBrowserTest.PreferenceChromeTextMetricsAndDynamicStatus",
+            "ZitterProfilesBrowserTest.PreferenceNavigationCocoaFilterAndResponsiveChoice",
+            "ZitterProfilesBrowserTest.PreferenceActionsCocoaCommitAdmissionAndBusyLabels",
+            "ZitterProfilesBrowserTest.PreferenceActionsSiteRulePaginationAndDeferredProfileBinding",
+            "ZitterProfilesBrowserTest.PreferenceSwitchesCocoaScopeAndClearSelections",
+            "ZitterProfilesBrowserTest.PreferenceChoicesCocoaEmptySelectionAndProfileScope",
+            "ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission",
+            "ZitterProfilesBrowserTest.CheckedActionHostsAXAndViewportCancellation",
+            "ZitterProfilesBrowserTest.TextActionHostsDialogDefaultsAndElementActivation",
+            "ZitterProfilesBrowserTest.TextActionHostsActivationObserverCanDeleteHost",
+            "ZitterProfilesBrowserTest.PreferenceActionHostsAXSelectionClippingAndStableHover",
+            "ZitterProfilesBrowserTest.AppearanceActionHostsKeyboardAXColorAndCancelledClip",
+            "ZitterProfilesBrowserTest.ResultRowHostsAddressPaletteAXAndPendingReplacement",
+            "ZitterProfilesBrowserTest.ResultRowHostsHistoryAXClipAndReplacementTarget",
+            "ZitterProfilesBrowserTest.SidebarRowHostsOwnershipMenuKeysAXAndTitleUpdate",
+            "ZitterProfilesBrowserTest.SidebarRowHostsClipDisableHideAndReplacementCancelPendingInput",
+            "ZitterProfilesBrowserTest.ArcImportStructureAndPersistence",
+            "ZitterProfilesBrowserTest.BrowsingImportEncryptedCookiesAndSelection",
+            "ZitterProfilesBrowserTest.BrowsingImportPersistsInDestinationServices",
+            "ZitterProfilesBrowserTest.ChromiumBrowserImportSelectionAndPersistence",
+            "ZitterProfilesBrowserTest.ImportOptionsInvalidatePreview",
+            "ZitterMetalSidebarBrowserTest.ToolsChoicesPostedActionsRejectChangedSelection",
+            "ZitterMetalSidebarBrowserTest.ToolsTimelinePostedDeleteCannotBorrowFilteredTarget",
+            "ZitterMetalSidebarBrowserTest.ToolsChromeSharedUnderlayCutoutsScrollingAndHistoryRows",
+            "ZitterMetalSidebarBrowserTest.ToolsHistoryRowsSharedCanvasScrollingAndCancelledPress",
+            "ZitterMetalSidebarBrowserTest.ToolsActionsScenesBatchingClippingAndCancelledChildren",
+            "ZitterMetalSidebarBrowserTest.ToolsChoicesScenesClippingHideRebuildAndResize",
+            "ZitterMetalSidebarBrowserTest.PreferenceChromeSharedLayerCutoutsThemeAndScrolling",
+            "ZitterMetalSidebarBrowserTest.PreferenceNavigationScenesCancellationAndRetainedQuery",
+            "ZitterMetalSidebarBrowserTest.PreferenceActionsScenesCancelledTargetsAndViewport",
+            "ZitterMetalSidebarBrowserTest.PreferenceSwitchesRustScenesCancellationAndScroll",
+            "ZitterMetalSidebarBrowserTest.PreferenceChoicesScenesIdentityScrollAndCancellation",
+            "ZitterMetalSidebarBrowserTest.ImportSourceScenePrefixAXDisabledAndVisibility",
+            "ZitterMetalSidebarBrowserTest.ImportCheckboxScenesAXSpaceCaptureDisabledAndVisibility",
+            "ZitterMetalSidebarBrowserTest.ImportFormScenesLatestOptionsLocksAndAdmission",
+            "ZitterMetalSidebarBrowserTest.AppearanceRowsSceneInputClippingCompositionAndWorkspaceChange",
+            "ZitterMetalSidebarBrowserTest.FooterSpacesScrollSelectPinAndSettings",
+            "ZitterMetalSidebarBrowserTest.NavigationHeaderHistoryReloadAndIndependentVisibility",
+            "ZitterMetalSidebarBrowserTest.SplitPaneScenesDragOrientTitleAndClose"
+          ],
+          "views": [
+            "ZitterProfilesBrowserTest.ToolsChromeCopyMetricsStatusAndProfileContext",
+            "ZitterProfilesBrowserTest.PreferencePanelLayoutMatchesBoxMeasurementAndCenteredBounds",
+            "ZitterProfilesBrowserTest.PreferencePanelActualHierarchyMatchesBoxAcrossCategoriesAndResize",
+            "ZitterProfilesBrowserTest.FooterActionHostsOwnershipEmojiMenuKeysAXAndClip",
+            "ZitterProfilesBrowserTest.FooterActionCallbackCanDeleteItsOwnHost",
+            "ZitterProfilesBrowserTest.SplitPaneActionHostsMenuKeyboardAXAndRetarget",
+            "ZitterProfilesBrowserTest.SplitPaneActionQueuedCloseSurvivesIndexShiftAndDeletion",
+            "ZitterProfilesBrowserTest.HeaderActionHostOwnershipKeyboardAXGestureAndCancel",
+            "ZitterProfilesBrowserTest.ToolsActionsCocoaSnapshotProviderAndClose",
+            "ZitterProfilesBrowserTest.ToolsActionsHistoryBusyAcrossRebuildAndVisibility",
+            "ZitterProfilesBrowserTest.ToolsChoicesCocoaPrefixCallbacksAndHistoryPeriod",
+            "ZitterProfilesBrowserTest.ToolsChoicesShortcutProviderProjectionAndDrafts",
+            "ZitterProfilesBrowserTest.ToolsChoicesTimelineIdentityFilteringAndEmptyState",
+            "ZitterProfilesBrowserTest.ToolsChoicesTimelineUnicodeRestoreAndClosedTargets",
+            "ZitterProfilesBrowserTest.PreferenceEditorsCocoaCompositionAndProfileScope",
+            "ZitterProfilesBrowserTest.PreferenceDraftRefreshFailureAndProfileIsolation",
+            "ZitterProfilesBrowserTest.PreferenceCatalogueRowsOrderCopyAndFilter",
+            "ZitterProfilesBrowserTest.PreferenceCatalogueToolsRoutes",
+            "ZitterProfilesBrowserTest.PreferenceViewportFilterRevealAndResize",
+            "ZitterProfilesBrowserTest.PreferenceViewportWheelAXThemeAndProfileScope",
+            "ZitterProfilesBrowserTest.PreferenceChromeTextMetricsAndDynamicStatus",
+            "ZitterProfilesBrowserTest.PreferenceNavigationCocoaFilterAndResponsiveChoice",
+            "ZitterProfilesBrowserTest.PreferenceActionsCocoaCommitAdmissionAndBusyLabels",
+            "ZitterProfilesBrowserTest.PreferenceActionsSiteRulePaginationAndDeferredProfileBinding",
+            "ZitterProfilesBrowserTest.PreferenceSwitchesCocoaScopeAndClearSelections",
+            "ZitterProfilesBrowserTest.PreferenceChoicesCocoaEmptySelectionAndProfileScope",
+            "ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission",
+            "ZitterProfilesBrowserTest.CheckedActionHostsAXAndViewportCancellation",
+            "ZitterProfilesBrowserTest.TextActionHostsDialogDefaultsAndElementActivation",
+            "ZitterProfilesBrowserTest.TextActionHostsActivationObserverCanDeleteHost",
+            "ZitterProfilesBrowserTest.PreferenceActionHostsAXSelectionClippingAndStableHover",
+            "ZitterProfilesBrowserTest.AppearanceActionHostsKeyboardAXColorAndCancelledClip",
+            "ZitterProfilesBrowserTest.ResultRowHostsAddressPaletteAXAndPendingReplacement",
+            "ZitterProfilesBrowserTest.ResultRowHostsHistoryAXClipAndReplacementTarget",
+            "ZitterProfilesBrowserTest.SidebarRowHostsOwnershipMenuKeysAXAndTitleUpdate",
+            "ZitterProfilesBrowserTest.SidebarRowHostsClipDisableHideAndReplacementCancelPendingInput",
+            "ZitterProfilesBrowserTest.ArcImportStructureAndPersistence",
+            "ZitterProfilesBrowserTest.BrowsingImportEncryptedCookiesAndSelection",
+            "ZitterProfilesBrowserTest.BrowsingImportPersistsInDestinationServices",
+            "ZitterProfilesBrowserTest.ChromiumBrowserImportSelectionAndPersistence",
+            "ZitterProfilesBrowserTest.ImportOptionsInvalidatePreview"
+          ]
+        }
+      },
+      "runs": {
+        "metal": {
+          "counts": {
+            "SUCCESS": 59
+          },
+          "results": {
+            "ZitterMetalSidebarBrowserTest.AppearanceRowsSceneInputClippingCompositionAndWorkspaceChange": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.FooterSpacesScrollSelectPinAndSettings": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.ImportCheckboxScenesAXSpaceCaptureDisabledAndVisibility": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.ImportFormScenesLatestOptionsLocksAndAdmission": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.ImportSourceScenePrefixAXDisabledAndVisibility": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.NavigationHeaderHistoryReloadAndIndependentVisibility": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.PreferenceActionsScenesCancelledTargetsAndViewport": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.PreferenceChoicesScenesIdentityScrollAndCancellation": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.PreferenceChromeSharedLayerCutoutsThemeAndScrolling": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.PreferenceNavigationScenesCancellationAndRetainedQuery": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.PreferenceSwitchesRustScenesCancellationAndScroll": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.SplitPaneScenesDragOrientTitleAndClose": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.ToolsActionsScenesBatchingClippingAndCancelledChildren": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.ToolsChoicesPostedActionsRejectChangedSelection": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.ToolsChoicesScenesClippingHideRebuildAndResize": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.ToolsChromeSharedUnderlayCutoutsScrollingAndHistoryRows": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.ToolsHistoryRowsSharedCanvasScrollingAndCancelledPress": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.ToolsTimelinePostedDeleteCannotBorrowFilteredTarget": "SUCCESS",
+            "ZitterProfilesBrowserTest.AppearanceActionHostsKeyboardAXColorAndCancelledClip": "SUCCESS",
+            "ZitterProfilesBrowserTest.ArcImportStructureAndPersistence": "SUCCESS",
+            "ZitterProfilesBrowserTest.BrowsingImportEncryptedCookiesAndSelection": "SUCCESS",
+            "ZitterProfilesBrowserTest.BrowsingImportPersistsInDestinationServices": "SUCCESS",
+            "ZitterProfilesBrowserTest.CheckedActionHostsAXAndViewportCancellation": "SUCCESS",
+            "ZitterProfilesBrowserTest.ChromiumBrowserImportSelectionAndPersistence": "SUCCESS",
+            "ZitterProfilesBrowserTest.FooterActionCallbackCanDeleteItsOwnHost": "SUCCESS",
+            "ZitterProfilesBrowserTest.FooterActionHostsOwnershipEmojiMenuKeysAXAndClip": "SUCCESS",
+            "ZitterProfilesBrowserTest.HeaderActionHostOwnershipKeyboardAXGestureAndCancel": "SUCCESS",
+            "ZitterProfilesBrowserTest.ImportOptionsInvalidatePreview": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceActionHostsAXSelectionClippingAndStableHover": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceActionsCocoaCommitAdmissionAndBusyLabels": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceActionsSiteRulePaginationAndDeferredProfileBinding": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceCatalogueRowsOrderCopyAndFilter": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceCatalogueToolsRoutes": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceChoicesCocoaEmptySelectionAndProfileScope": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceChromeTextMetricsAndDynamicStatus": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceDraftRefreshFailureAndProfileIsolation": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceEditorsCocoaCompositionAndProfileScope": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceNavigationCocoaFilterAndResponsiveChoice": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferencePanelActualHierarchyMatchesBoxAcrossCategoriesAndResize": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferencePanelLayoutMatchesBoxMeasurementAndCenteredBounds": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceSwitchesCocoaScopeAndClearSelections": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceViewportFilterRevealAndResize": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceViewportWheelAXThemeAndProfileScope": "SUCCESS",
+            "ZitterProfilesBrowserTest.ResultRowHostsAddressPaletteAXAndPendingReplacement": "SUCCESS",
+            "ZitterProfilesBrowserTest.ResultRowHostsHistoryAXClipAndReplacementTarget": "SUCCESS",
+            "ZitterProfilesBrowserTest.SidebarRowHostsClipDisableHideAndReplacementCancelPendingInput": "SUCCESS",
+            "ZitterProfilesBrowserTest.SidebarRowHostsOwnershipMenuKeysAXAndTitleUpdate": "SUCCESS",
+            "ZitterProfilesBrowserTest.SplitPaneActionHostsMenuKeyboardAXAndRetarget": "SUCCESS",
+            "ZitterProfilesBrowserTest.SplitPaneActionQueuedCloseSurvivesIndexShiftAndDeletion": "SUCCESS",
+            "ZitterProfilesBrowserTest.TextActionHostsActivationObserverCanDeleteHost": "SUCCESS",
+            "ZitterProfilesBrowserTest.TextActionHostsDialogDefaultsAndElementActivation": "SUCCESS",
+            "ZitterProfilesBrowserTest.ToolsActionsCocoaSnapshotProviderAndClose": "SUCCESS",
+            "ZitterProfilesBrowserTest.ToolsActionsHistoryBusyAcrossRebuildAndVisibility": "SUCCESS",
+            "ZitterProfilesBrowserTest.ToolsChoicesCocoaPrefixCallbacksAndHistoryPeriod": "SUCCESS",
+            "ZitterProfilesBrowserTest.ToolsChoicesShortcutProviderProjectionAndDrafts": "SUCCESS",
+            "ZitterProfilesBrowserTest.ToolsChoicesTimelineIdentityFilteringAndEmptyState": "SUCCESS",
+            "ZitterProfilesBrowserTest.ToolsChoicesTimelineUnicodeRestoreAndClosedTargets": "SUCCESS",
+            "ZitterProfilesBrowserTest.ToolsChromeCopyMetricsStatusAndProfileContext": "SUCCESS"
+          },
+          "summary": "/Users/papaj/Projects/zitter/build/checked-host-critical/metal.json",
+          "summary_sha256": "f8ecfe8e39b82736835c345f2ca73dbe2e782c461ee1fcd5f8d5d11cf7518ed7",
+          "log": "/Users/papaj/Projects/zitter/build/checked-host-critical/metal.log",
+          "log_sha256": "c5b5c3d0ad5cb6b6be9b66d29eea3487941c6dcb64b6b83a3023f7a6a9b1568d",
+          "command": [
+            "/Users/papaj/Projects/zitter/.chromium/src/out/ZitterOptimized/zitter_prototype_ui_lab",
+            "--gtest_filter=ZitterProfilesBrowserTest.Preference*:ZitterProfilesBrowserTest.ToolsActions*:ZitterProfilesBrowserTest.ToolsChoices*:ZitterProfilesBrowserTest.ToolsChrome*:ZitterProfilesBrowserTest.FooterAction*:ZitterProfilesBrowserTest.HeaderAction*:ZitterProfilesBrowserTest.SplitPaneAction*:ZitterProfilesBrowserTest.SidebarRowHosts*:ZitterProfilesBrowserTest.AppearanceActionHosts*:ZitterProfilesBrowserTest.ResultRowHosts*:ZitterProfilesBrowserTest.TextActionHosts*:ZitterProfilesBrowserTest.CheckedActionHosts*:ZitterProfilesBrowserTest.ImportOptionsInvalidatePreview:ZitterProfilesBrowserTest.ChromiumBrowserImportSelectionAndPersistence:ZitterProfilesBrowserTest.BrowsingImport*:ZitterProfilesBrowserTest.ArcImportStructureAndPersistence:ZitterMetalSidebarBrowserTest.Import*:ZitterMetalSidebarBrowserTest.Preference*:ZitterMetalSidebarBrowserTest.Tools*:ZitterMetalSidebarBrowserTest.NavigationHeaderHistoryReloadAndIndependentVisibility:ZitterMetalSidebarBrowserTest.FooterSpacesScrollSelectPinAndSettings:ZitterMetalSidebarBrowserTest.SplitPaneScenesDragOrientTitleAndClose:ZitterMetalSidebarBrowserTest.AppearanceRowsSceneInputClippingCompositionAndWorkspaceChange",
+            "--test-launcher-jobs=1",
+            "--test-launcher-retry-limit=0",
+            "--test-launcher-summary-output=/Users/papaj/Projects/zitter/build/checked-host-critical/metal.json",
+            "--disable-component-update",
+            "--zitter-sidebar=rust-metal"
+          ],
+          "environment_overrides": {
+            "MTL_DEBUG_LAYER": "1"
+          }
+        },
+        "views": {
+          "counts": {
+            "SUCCESS": 41
+          },
+          "results": {
+            "ZitterProfilesBrowserTest.AppearanceActionHostsKeyboardAXColorAndCancelledClip": "SUCCESS",
+            "ZitterProfilesBrowserTest.ArcImportStructureAndPersistence": "SUCCESS",
+            "ZitterProfilesBrowserTest.BrowsingImportEncryptedCookiesAndSelection": "SUCCESS",
+            "ZitterProfilesBrowserTest.BrowsingImportPersistsInDestinationServices": "SUCCESS",
+            "ZitterProfilesBrowserTest.CheckedActionHostsAXAndViewportCancellation": "SUCCESS",
+            "ZitterProfilesBrowserTest.ChromiumBrowserImportSelectionAndPersistence": "SUCCESS",
+            "ZitterProfilesBrowserTest.FooterActionCallbackCanDeleteItsOwnHost": "SUCCESS",
+            "ZitterProfilesBrowserTest.FooterActionHostsOwnershipEmojiMenuKeysAXAndClip": "SUCCESS",
+            "ZitterProfilesBrowserTest.HeaderActionHostOwnershipKeyboardAXGestureAndCancel": "SUCCESS",
+            "ZitterProfilesBrowserTest.ImportOptionsInvalidatePreview": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceActionHostsAXSelectionClippingAndStableHover": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceActionsCocoaCommitAdmissionAndBusyLabels": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceActionsSiteRulePaginationAndDeferredProfileBinding": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceCatalogueRowsOrderCopyAndFilter": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceCatalogueToolsRoutes": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceChoicesCocoaEmptySelectionAndProfileScope": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceChoicesSitePolicyAndClearDataAdmission": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceChromeTextMetricsAndDynamicStatus": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceDraftRefreshFailureAndProfileIsolation": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceEditorsCocoaCompositionAndProfileScope": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceNavigationCocoaFilterAndResponsiveChoice": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferencePanelActualHierarchyMatchesBoxAcrossCategoriesAndResize": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferencePanelLayoutMatchesBoxMeasurementAndCenteredBounds": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceSwitchesCocoaScopeAndClearSelections": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceViewportFilterRevealAndResize": "SUCCESS",
+            "ZitterProfilesBrowserTest.PreferenceViewportWheelAXThemeAndProfileScope": "SUCCESS",
+            "ZitterProfilesBrowserTest.ResultRowHostsAddressPaletteAXAndPendingReplacement": "SUCCESS",
+            "ZitterProfilesBrowserTest.ResultRowHostsHistoryAXClipAndReplacementTarget": "SUCCESS",
+            "ZitterProfilesBrowserTest.SidebarRowHostsClipDisableHideAndReplacementCancelPendingInput": "SUCCESS",
+            "ZitterProfilesBrowserTest.SidebarRowHostsOwnershipMenuKeysAXAndTitleUpdate": "SUCCESS",
+            "ZitterProfilesBrowserTest.SplitPaneActionHostsMenuKeyboardAXAndRetarget": "SUCCESS",
+            "ZitterProfilesBrowserTest.SplitPaneActionQueuedCloseSurvivesIndexShiftAndDeletion": "SUCCESS",
+            "ZitterProfilesBrowserTest.TextActionHostsActivationObserverCanDeleteHost": "SUCCESS",
+            "ZitterProfilesBrowserTest.TextActionHostsDialogDefaultsAndElementActivation": "SUCCESS",
+            "ZitterProfilesBrowserTest.ToolsActionsCocoaSnapshotProviderAndClose": "SUCCESS",
+            "ZitterProfilesBrowserTest.ToolsActionsHistoryBusyAcrossRebuildAndVisibility": "SUCCESS",
+            "ZitterProfilesBrowserTest.ToolsChoicesCocoaPrefixCallbacksAndHistoryPeriod": "SUCCESS",
+            "ZitterProfilesBrowserTest.ToolsChoicesShortcutProviderProjectionAndDrafts": "SUCCESS",
+            "ZitterProfilesBrowserTest.ToolsChoicesTimelineIdentityFilteringAndEmptyState": "SUCCESS",
+            "ZitterProfilesBrowserTest.ToolsChoicesTimelineUnicodeRestoreAndClosedTargets": "SUCCESS",
+            "ZitterProfilesBrowserTest.ToolsChromeCopyMetricsStatusAndProfileContext": "SUCCESS"
+          },
+          "summary": "/Users/papaj/Projects/zitter/build/checked-host-critical/views.json",
+          "summary_sha256": "51e7169d29318c20ab4cbc144412e64a745b2af4bdc9e58325b49b362bfd32e8",
+          "log": "/Users/papaj/Projects/zitter/build/checked-host-critical/views.log",
+          "log_sha256": "eb6ae7dc3eb7152755f758bef7c81bb0eec2cb70ab961a8ec43e837bcacb44d3",
+          "command": [
+            "/Users/papaj/Projects/zitter/.chromium/src/out/ZitterOptimized/zitter_prototype_ui_lab",
+            "--gtest_filter=ZitterProfilesBrowserTest.Preference*:ZitterProfilesBrowserTest.ToolsActions*:ZitterProfilesBrowserTest.ToolsChoices*:ZitterProfilesBrowserTest.ToolsChrome*:ZitterProfilesBrowserTest.FooterAction*:ZitterProfilesBrowserTest.HeaderAction*:ZitterProfilesBrowserTest.SplitPaneAction*:ZitterProfilesBrowserTest.SidebarRowHosts*:ZitterProfilesBrowserTest.AppearanceActionHosts*:ZitterProfilesBrowserTest.ResultRowHosts*:ZitterProfilesBrowserTest.TextActionHosts*:ZitterProfilesBrowserTest.CheckedActionHosts*:ZitterProfilesBrowserTest.ImportOptionsInvalidatePreview:ZitterProfilesBrowserTest.ChromiumBrowserImportSelectionAndPersistence:ZitterProfilesBrowserTest.BrowsingImport*:ZitterProfilesBrowserTest.ArcImportStructureAndPersistence:ZitterMetalSidebarBrowserTest.Import*:ZitterMetalSidebarBrowserTest.Preference*:ZitterMetalSidebarBrowserTest.Tools*:ZitterMetalSidebarBrowserTest.NavigationHeaderHistoryReloadAndIndependentVisibility:ZitterMetalSidebarBrowserTest.FooterSpacesScrollSelectPinAndSettings:ZitterMetalSidebarBrowserTest.SplitPaneScenesDragOrientTitleAndClose:ZitterMetalSidebarBrowserTest.AppearanceRowsSceneInputClippingCompositionAndWorkspaceChange-ZitterMetalSidebarBrowserTest.*",
+            "--test-launcher-jobs=1",
+            "--test-launcher-retry-limit=0",
+            "--test-launcher-summary-output=/Users/papaj/Projects/zitter/build/checked-host-critical/views.json",
+            "--disable-component-update"
+          ],
+          "environment_overrides": {
+            "MTL_DEBUG_LAYER": null
+          }
+        }
+      }
+    }
+  },
+  "contracts": [
+    "SceneToggle and SceneCheckbox now derive from the common plain View RustActionView and construct no Button/ButtonController instances on their Rust production paths. Native comparison retains ToggleButton/Checkbox. Existing Rust ToggleState/CheckboxState still own checked values, toggle hover/progress and recipes.",
+    "Rust ActionControl owns pointer/key/gesture, enabled/focused/visual state and cancellation. A virtual activation adapter updates the Rust checked model before existing domain callbacks, including callback-free clear-data checkboxes. Checked state updates before ElementTracker notification, matching native checked controls; host-deletion protection remains before domain callbacks.",
+    "Checkbox default AX verbs derive from Rust checked state and retain check/uncheck across disabled/re-enabled transitions; disabled controls remove their action verb. Switch role/press semantics, checked metadata, text/native fonts/minimum geometry and no child Label/FocusRing policy remain.",
+    "Toggle and checkbox group scheduling synchronously retire clipped input before GPU pending coalescing. Native viewport/window/input/focus/AX adapters and existing preference/profile/import/controller/persistence policy remain.",
+    "The new shared case compares actual host types, AX checked/default verbs, observed checked state during ElementTracker activation, accessible activation, disabled admission and re-enable behavior. Rust-only branches verify hide and group-child clipping followed by late release and switch viewport scroll out/back. Existing physical Cocoa preference Space, import Space, capture/profile/menu/status cancellation and durable clear-data/import outcomes remain asserted through View adapters."
+  ],
+  "previous_full_checkpoint": {
+    "report": "rust-text-action-checkpoint-2026-10-26.json",
+    "source_commit": "dadea9bbc3a2664d4569d530babe35c8b15f9d46",
+    "counts": {
+      "metal": {
+        "SUCCESS": 210,
+        "SKIPPED": 6
+      },
+      "views": {
+        "SUCCESS": 162,
+        "SKIPPED": 6
+      }
+    },
+    "scope": "The previous full checkpoint predates appearance and checked-host changes. This source has targeted acceptance only."
+  },
+  "previous_targeted_report": "rust-preference-host-targeted-2026-10-26.json",
+  "remaining": [
+    "Remaining select/decorative Button controls, native per-control View identity, stable Rust nodes, containers/placement and UI coordination remain open.",
+    "Manual hardware trackpad, IME candidates, VoiceOver, global RTL, scale/theme and GPU recovery remain open.",
+    "No controlled CPU/GPU/drawable-presentation/input-latency/memory gain established.",
+    "Current-main combined network policy and final shipped dependency/license/notice acceptance remain outside this frozen UI lab."
+  ],
+  "gpu_log_diagnostics": {
+    "focus": {
+      "metal": {
+        "invalid_mailbox": 0,
+        "missing_overlay": 0
+      },
+      "views": {
+        "invalid_mailbox": 0,
+        "missing_overlay": 0
+      }
+    },
+    "critical": {
+      "metal": {
+        "invalid_mailbox": 2,
+        "missing_overlay": 2
+      },
+      "views": {
+        "invalid_mailbox": 2,
+        "missing_overlay": 2
+      }
+    }
+  },
+  "gpu_log_diagnostics_note": "Raw nonfatal compositor diagnostic counts remain unresolved and do not establish performance gains.",
+  "compiled_inventory": {
+    "count": 217,
+    "path": "/Users/papaj/Projects/zitter/build/checked-host-focus/inventory.log",
+    "sha256": "db23deacd0501968c18abc12f94a0eb85e5a5678e8e162dd91943ceda19bfd7b"
+  }
+}

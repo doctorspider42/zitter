@@ -6,6 +6,49 @@ application/domain commands; preserve profile/session isolation. Push verified
 milestones to `origin/main` as they land. The opt-in switch remains
 `--zitter-sidebar=rust-metal` until the migration and comparison are complete.
 
+## Latest targeted follow-up: toggle and checkbox hosts
+
+UI source `d75b117ec3c51344ed27df477212cde4b821e814` moves SceneToggle and SceneCheckbox to the common plain View
+RustActionView, with no Button/ButtonController instances on their Rust paths.
+Native comparison retains ToggleButton/Checkbox. Existing Rust ToggleState and
+CheckboxState retain checked values, toggle hover/progress and scene recipes.
+Rust ActionControl now owns pointer/key/gesture, enabled/focused/visual state and
+cancellation for these controls. Toggle and checkbox-group scheduling check
+clipped input synchronously before GPU work is coalesced.
+
+Checked state changes before ElementTracker activation observers run, matching
+native checked controls. A ViewTracker guard still prevents domain callback
+access after a notification deletes the host. Callback-free clear-data checkboxes
+also activate through Rust. Checkbox AX check/uncheck verbs derive from checked
+state, disappear while disabled and return correctly after re-enabling. Native
+focus/window/input/AX, font/theme/layout and browser/profile/import commands remain
+adapters; no dependency or persistence/admission policy changed.
+
+Focus passed **9 Metal / 6 Views**; affected regressions passed
+**59 Metal / 41 Views**, serial, retry zero. The new shared case
+checks host ownership, checked/default AX verbs, accessible activation, disabled
+admission, re-enable and the checked state seen by an activation observer.
+Rust-specific branches cover hide and individual child clipping with late release,
+and switch viewport scroll out/back. Existing physical Cocoa preference Space,
+import Space, profile/status/capture cancellation, durable clear-data/import and
+shared action/row outcomes remain asserted through View adapters.
+
+Checks passed **288 Rust**, **180 SDK font/direction cases plus raster**, **68 live
+and 68 clean-archive Python**, scoped GN/boundaries and final Ninja no-op. All 53
+committed/live/staged prototype inputs and compiled/frozen-bootstrap/native-engine
+identities were checked. Compiled inventory is **217 cases**; this source has
+**targeted acceptance only** under the requested cadence.
+[Targeted checked-host report](benchmarks/rust-checked-host-targeted-2026-10-26.json).
+
+Affected logs retain **2 Metal / 2 Views invalid-mailbox diagnostics**;
+matching overlay counts are recorded separately. Nonfatal compositor diagnostics
+remain unresolved. No controlled CPU/GPU/presentation/input-latency/memory gain is
+established. The full text-action checkpoint below predates these checked-host
+changes. Select/decorative Button controls, native per-control View identity,
+stable Rust nodes, containers/placement/UI coordination, manual input/VoiceOver/
+RTL/scale/theme/GPU recovery, controlled performance and release/license/notices
+remain open. Frozen UI-lab inputs exclude current-main network policy.
+
 ## Latest full checkpoint: text action hosts
 
 UI source `dadea9bbc3a2664d4569d530babe35c8b15f9d46` moves SceneTextButton from SceneGlyphButton/Button to the
