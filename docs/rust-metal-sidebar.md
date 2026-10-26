@@ -2003,3 +2003,58 @@ checks remain open. Normal installed apps/profiles were untouched; no bundle was
 signed and no dependency was added. Earlier timeline ownership and its initial
 probe remain in [the timeline checkpoint](benchmarks/rust-tools-timeline-checkpoint-2026-10-26.json).
 The earlier AppKit startup stall is not claimed fixed by this migration.
+
+
+## Tools form structure checkpoint (2026-10-26)
+
+UI source `4ddd40f55bd9cebbab8b83bd5a3d76425b25ea9b`, 2026-10-26, passed the full compiled
+regression inventory with one launcher job, no automatic retries and temporary
+profiles:
+
+| Backend | Regular matrix passed | Regular skips | Failed / crashed / timed out |
+| --- | ---: | ---: | ---: |
+| Rust + Metal | 178 | 6 | 0 |
+| Views | 132 | 6 | 0 |
+
+The inventory contains 184 cases; Views excludes 46 dedicated Metal cases
+(138 applicable cases). Four opt-in performance scenarios, real-user Arc import
+and the interactive manual window are skipped per backend. Earlier optional
+performance scenarios remain historical evidence, not current-commit passes.
+Metal API validation remained enabled. No controlled CPU/GPU/presentation or
+memory improvement is established.
+
+The tools/timeline/Time-Machine/restored-tab/media/password/download/modal/shared-
+chrome gate passed **68 Metal / 54 Views**; the focused form/selection/editor/
+action gate passed **10 Metal / 8 Views**. Checks passed **260 Rust tests**,
+**180 SDK font/direction cases plus raster**, **66 clean-archive Python tests**,
+scoped GN/boundaries and optimized compilation. The live checkout passed 68 Python
+tests, including two concurrent cases outside this UI commit. Final Ninja reported
+no work to do. All 53 tracked prototype files match committed source and the staged
+overlay. [Source/binary identities, commands and results](benchmarks/rust-tools-form-structure-checkpoint-2026-10-26.json).
+
+Rust ToolsForm now describes the structure of all four tools pages: seven editor
+fields, five choices, fourteen actions, headings/hints, semantic roles and their
+order. Consecutive action groups and spacing, the history period/clear row and
+flexible choice, history result-column spacing, busy clear state and initially
+hidden more action are declared in Rust. Sleeping-workspace hint joining also
+preserves raw UTF-16. The native adapter instantiates the plan using the existing
+editor, selection and action factories; Views keeps its original form builder.
+
+Form description is read-only: it cannot clear queries, cancel recording or
+invalidate active choice keys/drafts. Existing native editor/IME callbacks, key
+registrations, captured-key command admission, timers, context checks, browser
+services and persistence remain authoritative. Existing Rust choice/timeline
+projection and stale-action guards remain in place. No dependency was added.
+
+Five Rust cases cover control/command order, balanced grouping/row topology and
+spacing, history busy/hidden states, Unicode/raw UTF-16 and read-only description.
+A shared browser case verifies the ordered accessible control names on every
+page against the original UI and rebuilds history while clearing is busy. Existing
+actual Cocoa editing/selection/actions, recorder, timeline and scene geometry/
+clipping cases also pass in the same compiled inventory.
+
+Other form/status/service coordination and native interaction/container ownership,
+manual platform acceptance, controlled profiling and release/license checks stay
+open. Normal installed apps/profiles were untouched; no bundle was signed.
+[Previous selection/draft checkpoint](benchmarks/rust-tools-choice-forms-checkpoint-2026-10-26.json).
+The earlier AppKit startup stall is not claimed fixed by this migration.
