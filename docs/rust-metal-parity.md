@@ -6,7 +6,37 @@ application/domain commands; preserve profile/session isolation. Push verified
 milestones to `origin/main` as they land. The opt-in switch remains
 `--zitter-sidebar=rust-metal` until the migration and comparison are complete.
 
-## Current execution policy
+## Latest targeted stage
+
+UI source `7896cf3c3b4a70696f6f8fec39bdafec071c476c` adds the Rust-owned viewport to
+preferences. The opt-in preferences host no longer uses Views ScrollView; the
+native baseline retains it. Category/filter reset remains ScrollTo(0), and theme
+background updates preserve the existing palette and content opacity contract.
+Native platform scrollbar/event/AX/window adapters and per-control View identity
+remain. No browser store, profile/global scope or persistence policy changed.
+
+Focused new tests passed **2 Metal / 2 Views**. Affected preference/control
+regressions passed **27 Metal / 22 Views**, one launcher job and no
+retries. Checks also passed 272 Rust cases, 180 SDK font/direction cases plus
+raster, 68 live and 68 clean-archive Python cases, scoped GN/boundaries and final
+Ninja no-op. Source/binary identities and the two earlier failing test probes are
+retained in [the targeted report](benchmarks/rust-preference-viewport-targeted-2026-10-26.json).
+
+Tests cover deterministic offscreen/reveal behavior, empty-filter collapse/reset,
+compact/wide resize, wheel/AX commands, native theme-reset behavior with retained
+query, profile-specific field values, existing actual Cocoa editor/IME, selectors,
+actions, switches and scene clipping. The initial probes exposed incorrect test
+assumptions about overflow/theme reset and stale hidden-native-scrollbar AX
+metadata; production viewport behavior did not change for those corrections.
+
+Per the updated user instruction, **full UI tests run only after a larger block**.
+This stage uses targeted affected-case coverage. The previous full matrix below
+belongs to UI source `d23f232` and is not counted as a full pass for this source.
+The lab retains its recorded frozen bootstrap/network inputs; current-main network
+policy changes are not part of this UI binary's acceptance. No performance or
+full manual/release/license completion is claimed.
+
+## Latest full checkpoint
 
 UI source `d23f2326fea4902aedeee786585ab11c45558359`, 2026-10-26, passed the full compiled
 regression inventory with one launcher job, no automatic retries and temporary
@@ -114,7 +144,7 @@ Views-specific layout and control behavior must have an explicit replacement.
 | Workspace/profile form action buttons | Rust button/group geometry, shared pointer/key reducer and text/background/border/focus primitives; four Metal groups; native Button/AX/focus, platform font/metric/color and command adapters (automated UI checked; manual acceptance pending) | Replace native interaction nodes; verify dynamic labels, disabled styles, focus/keyboard/cancellation, clipping/fallback and service semantics |
 | Workspace color/emoji presets | Rust preset data/selection, row geometry, pointer/key reducer and scene primitives; two shared-context Metal canvases; native Button/AX/focus and text/grapheme/storage adapters (automated UI checked; manual acceptance pending) | Color/emoji editor migration verified; replace remaining native preset Button interaction ownership and broaden capture/visibility/IME/AX/theme/scale/persistence acceptance |
 | Workspace deletion confirmation | Rust captured-target notice state/copy, shared paragraph/body allocation and Metal body/error/action controls; native title/frame/scroll/focus/AX and deletion/persistence services (automated UI checked; manual acceptance pending) | Replace remaining frame/scroll/interaction containers; broaden default Cancel, beforeunload, stale-target, profile-retention, typography and screen-bound acceptance |
-| General preferences, shortcuts and site preferences | Rust/Metal editors, eleven preference selectors, 24 switches, three clear-data checkboxes and 19 fixed actions plus dynamic rule controls; Rust category/dismiss recipes, ten-category/52-row catalogue, root/column/centered-row allocation, category/filter state, text-draft/profile refresh/admission, rule paging and shared text/backing underlay; native event/focus/AX, normalization, menus and stores | Migrate remaining chrome/dynamic UI data, busy/status/form state, remaining tools status/service coordination, service/progress wording and native outer-container ownership; tools form node plans, panel/header/body/clear allocation, shortcut/provider choice/draft projection and scoped posted targets use Rust; retain profile/global configuration and recorder behavior |
+| General preferences, shortcuts and site preferences | Rust/Metal editors, eleven preference selectors, 24 switches, three clear-data checkboxes and 19 fixed actions plus dynamic rule controls; Rust category/dismiss recipes, ten-category/52-row catalogue, root/column/centered-row allocation, preference viewport extent/offset/reveal, category/filter state, text-draft/profile refresh/admission, rule paging and shared text/backing underlay; native event/focus/AX, normalization, menus and stores | Migrate remaining chrome/dynamic UI data, busy/status/form state, remaining tools status/service coordination, service/progress wording and native outer-container ownership; tools form node plans, panel/header/body/clear allocation, shortcut/provider choice/draft projection and scoped posted targets use Rust; retain profile/global configuration and recorder behavior |
 | History, downloads, passwords and permissions | Rust/Metal history query editor, clear-period selector and clear/more actions; shared Rust/Metal tools header/status/empty copy and committed-query/pagination/loaded state; Rust/Metal history result text/backing and column layout; Rust/Metal download text/progress/actions and body/list/row allocation on one shared scene; Rust/Metal password consent/overview text, actions, account selector and body layout; Rust/Metal permission/capture paragraphs, actions and body allocation; native permission/Stop authority, password stores/autofill, Unicode/IME/service, download facts/formatting/list policy and event/focus/AX/scroll adapters, with other remaining Views lists/controls | Finish native history interaction/container ownership and other service forms/result controls; retain browser service and security semantics |
 | Peek, promote/split, link/page menus and routing | Views/native adapters + application | Rust control routing, focus and dismissal; retain native page integration |
 | Import form and first-run import | Rust UI option/debounce/admission/controller state, copy, columns and Metal static/status/Apply text; native Button/AX/focus, header nodes, native popup/IME adapters and application import services (automated UI checked; manual acceptance pending) | Migrate remaining native header and input nodes; verify latest options, busy recovery, credentials opt-in, source immutability, first-run/persistence/rollback and runtime accessibility |

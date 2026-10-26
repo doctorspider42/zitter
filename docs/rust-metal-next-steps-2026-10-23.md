@@ -3,7 +3,37 @@
 This is a work plan, not a claim of complete functional parity. The detailed
 inventory is [the parity checklist](rust-metal-parity.md).
 
-## Current checkpoint
+## Latest targeted stage
+
+UI source `7896cf3c3b4a70696f6f8fec39bdafec071c476c` adds the Rust-owned viewport to
+preferences. The opt-in preferences host no longer uses Views ScrollView; the
+native baseline retains it. Category/filter reset remains ScrollTo(0), and theme
+background updates preserve the existing palette and content opacity contract.
+Native platform scrollbar/event/AX/window adapters and per-control View identity
+remain. No browser store, profile/global scope or persistence policy changed.
+
+Focused new tests passed **2 Metal / 2 Views**. Affected preference/control
+regressions passed **27 Metal / 22 Views**, one launcher job and no
+retries. Checks also passed 272 Rust cases, 180 SDK font/direction cases plus
+raster, 68 live and 68 clean-archive Python cases, scoped GN/boundaries and final
+Ninja no-op. Source/binary identities and the two earlier failing test probes are
+retained in [the targeted report](benchmarks/rust-preference-viewport-targeted-2026-10-26.json).
+
+Tests cover deterministic offscreen/reveal behavior, empty-filter collapse/reset,
+compact/wide resize, wheel/AX commands, native theme-reset behavior with retained
+query, profile-specific field values, existing actual Cocoa editor/IME, selectors,
+actions, switches and scene clipping. The initial probes exposed incorrect test
+assumptions about overflow/theme reset and stale hidden-native-scrollbar AX
+metadata; production viewport behavior did not change for those corrections.
+
+Per the updated user instruction, **full UI tests run only after a larger block**.
+This stage uses targeted affected-case coverage. The previous full matrix below
+belongs to UI source `d23f232` and is not counted as a full pass for this source.
+The lab retains its recorded frozen bootstrap/network inputs; current-main network
+policy changes are not part of this UI binary's acceptance. No performance or
+full manual/release/license completion is claimed.
+
+## Latest full checkpoint
 
 UI source `d23f2326fea4902aedeee786585ab11c45558359`, 2026-10-26, passed the full compiled
 regression inventory with one launcher job, no automatic retries and temporary
@@ -79,8 +109,8 @@ The earlier AppKit startup stall is not claimed fixed by this migration.
 ## Immediate preference work still remaining
 
 Preference root/column/centered-row allocation now uses Rust and matches the
-native BoxLayout oracles. Tools now also use a Rust-owned viewport without
-ScrollView. Next, migrate preference/other scroll surfaces and remaining
+native BoxLayout oracles. Tools and preferences now use a Rust-owned viewport without
+ScrollView. Next, migrate other scroll surfaces and remaining
 interaction/container identity to Rust node ownership, retaining explicit
 platform window/event/AX adapters. Finish header/profile/status/managed-state
 copy, responsive placement and service coordination alongside that work.

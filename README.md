@@ -767,6 +767,9 @@ The opt-in tools panel now uses a Rust-owned viewport instead of Views ScrollVie
 Rust owns extent, offset, clamp and reveal state; native adapters retain clipping,
 platform scrollbar/input/AX delivery and window integration. Other scroll surfaces
 and remaining interaction/container identity still need migration.
+Preferences now also use the Rust-owned viewport, with filter/category reset and
+existing theme/background behavior. [Targeted acceptance](docs/benchmarks/rust-preference-viewport-targeted-2026-10-26.json)
+covers affected controls; full UI matrices are reserved for larger migration blocks.
 [Editor contracts and acceptance](docs/rust-metal-editor.md).
 Model updates refresh the scene independently of
 native painting. Rust also owns row
