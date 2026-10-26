@@ -26,7 +26,7 @@ bool RustLayoutEnabled() {
 }
 class RustPanelLayout final : public views::LayoutManager {
  public:
-  RustPanelLayout(bool vertical,gfx::Insets insets,int spacing,views::View* flex):vertical_(vertical),insets_(insets),spacing_(spacing),flex_(flex){}
+  RustPanelLayout(bool vertical,gfx::Insets insets,int spacing,views::View* flex,bool center):vertical_(vertical),insets_(insets),spacing_(spacing),flex_(flex),center_(center){}
   void ViewAdded(views::View* host,views::View*) override{host->InvalidateLayout();}
   void ViewRemoved(views::View* host,views::View* view) override{if(view==flex_)flex_=nullptr;host->InvalidateLayout();}
   void Layout(views::View* host) override{const auto g=Measure(host,host->width(),host->height());size_t i=0;for(const auto& child:host->children())if(Included(child.get())){const auto& r=g.children[i++];child->SetBounds(r.x,r.y,r.width,r.height);}}
@@ -40,23 +40,26 @@ class RustPanelLayout final : public views::LayoutManager {
     const auto insets=insets_+host->GetInsets();
     std::vector<const views::View*> native_views;std::vector<sidebar::ColumnChild> initial,measured;size_t flex=std::numeric_limits<size_t>::max();
     int natural_width=0;
-    if(vertical_&&width<0){for(const auto& child:host->children())if(Included(child.get())){const auto* margins=child->GetProperty(views::kMarginsKey);natural_width=std::max(natural_width,child->GetPreferredSize().width()+(margins?margins->width():0));}}
+    if(vertical_&&!center_&&width<0){for(const auto& child:host->children())if(Included(child.get())){const auto* margins=child->GetProperty(views::kMarginsKey);natural_width=std::max(natural_width,child->GetPreferredSize().width()+(margins?margins->width():0));}}
     for(const auto& child:host->children())if(Included(child.get())){
       if(child.get()==flex_)flex=initial.size();native_views.push_back(child.get());const auto* ptr=child->GetProperty(views::kMarginsKey);const auto margin=ptr?*ptr:gfx::Insets();
-      views::SizeBounds bounds;if(width>=0)bounds.set_width(std::max(0,width-insets.width()-(vertical_?margin.width():0)));else if(vertical_)bounds.set_width(std::max(0,natural_width-margin.width()));if(height>=0)bounds.set_height(std::max(0,height-insets.height()));
+      views::SizeBounds bounds;if(width>=0)bounds.set_width(std::max(0,width-insets.width()-(vertical_?margin.width():0)));else if(vertical_&&!center_)bounds.set_width(std::max(0,natural_width-margin.width()));if(height>=0)bounds.set_height(std::max(0,height-insets.height()));
       const auto size=child->GetPreferredSize(bounds);initial.push_back({size.width(),size.height(),margin.top(),margin.left(),margin.bottom(),margin.right()});
     }
     const sidebar::PanelStyle style{width,height,vertical_,spacing_,insets.top(),insets.left(),insets.bottom(),insets.right(),flex};
     auto slice=[](const auto& values){return rust::Slice<const sidebar::ColumnChild>(values.data(),values.size());};
-    auto result=sidebar::panel_layout(style,slice(initial),slice(measured));
+    auto allocate=[&](){return center_?sidebar::panel_center_layout(style,slice(initial),slice(measured)):sidebar::panel_layout(style,slice(initial),slice(measured));};
+    auto result=allocate();
     if((vertical_?height:width)>=0&&!(width>=0&&width<=insets.width()&&height>=0&&height<=insets.height())){
       measured=initial;bool changed=false;
-      for(size_t i=0;i<initial.size();++i){const auto& rect=result.children[i];if((vertical_?rect.height:rect.width)>=(vertical_?initial[i].height:initial[i].width))continue;const auto size=native_views[i]->GetPreferredSize(views::SizeBounds(rect.width,rect.height));measured[i].width=size.width();measured[i].height=size.height();changed=true;}
-      if(changed)result=sidebar::panel_layout(style,slice(initial),slice(measured));
+      int center_cross=vertical_?width-insets.width():height-insets.height();
+      if(center_&&center_cross<=0){auto natural=style;natural.width=0;natural.height=0;const auto preferred=sidebar::panel_center_layout(natural,slice(initial),slice(measured));center_cross=vertical_?preferred.width-insets.width():preferred.height-insets.height();}
+      for(size_t i=0;i<initial.size();++i){const auto& rect=result.children[i];if((vertical_?rect.height:rect.width)>=(vertical_?initial[i].height:initial[i].width))continue;auto bounds=views::SizeBounds(rect.width,rect.height);if(center_){if(vertical_)bounds.set_width(std::max(0,center_cross-initial[i].left-initial[i].right));else bounds.set_height(std::max(0,center_cross-initial[i].top-initial[i].bottom));}const auto size=native_views[i]->GetPreferredSize(bounds);measured[i].width=size.width();measured[i].height=size.height();changed=true;}
+      if(changed)result=allocate();
     }
     return result;
   }
-  bool vertical_;gfx::Insets insets_;int spacing_;raw_ptr<views::View> flex_;
+  bool vertical_;gfx::Insets insets_;int spacing_;raw_ptr<views::View> flex_;bool center_;
 };
 class RustPaletteInputLayout final : public views::LayoutManager {
  public:
@@ -195,11 +198,11 @@ class RustColumnLayout final : public views::LayoutManager {
 };
 #endif
 }
-void SetSidebarPanelLayout(views::View* host,bool vertical,gfx::Insets insets,int spacing,views::View* flex){
+void SetSidebarPanelLayout(views::View* host,bool vertical,gfx::Insets insets,int spacing,views::View* flex,bool center){
 #if BUILDFLAG(IS_MAC)
-  if(RustLayoutEnabled()){host->SetLayoutManager(std::make_unique<RustPanelLayout>(vertical,insets,spacing,flex));return;}
+  if(RustLayoutEnabled()){host->SetLayoutManager(std::make_unique<RustPanelLayout>(vertical,insets,spacing,flex,center));return;}
 #endif
-  auto* layout=host->SetLayoutManager(std::make_unique<views::BoxLayout>(vertical?views::BoxLayout::Orientation::kVertical:views::BoxLayout::Orientation::kHorizontal,insets,spacing));if(flex)layout->SetFlexForView(flex,1);
+  auto* layout=host->SetLayoutManager(std::make_unique<views::BoxLayout>(vertical?views::BoxLayout::Orientation::kVertical:views::BoxLayout::Orientation::kHorizontal,insets,spacing));if(flex)layout->SetFlexForView(flex,1);if(center)layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
 }
 std::unique_ptr<views::LayoutManager> CreatePaletteInputLayout() {
 #if BUILDFLAG(IS_MAC)

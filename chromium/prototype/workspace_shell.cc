@@ -3538,28 +3538,20 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto preference_chrome_painted=base::BindRepeating(&WorkspaceShell::SchedulePreferenceChrome,weak);
   auto preference_chrome_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->PreferenceChromeVisible();},weak);
   auto copy=[&](views::View* parent,std::u16string text,SkColor tone,int delta=0,gfx::Font::Weight weight=gfx::Font::Weight::NORMAL,bool multiline=false){return AddPreferenceCopy(parent,std::move(text),tone,delta,static_cast<int>(weight),multiline);};
-  auto* general_layout = general->SetLayoutManager(std::make_unique<views::BoxLayout>(
-      views::BoxLayout::Orientation::kHorizontal, gfx::Insets(8), 8));
   auto* navigation = general->AddChildView(std::make_unique<PreferenceSurface>(true,bool(workspace_form_),preference_chrome_painted,preference_chrome_visible));
   preferences_navigation_ = navigation;
   navigation->SetPreferredSize(gfx::Size(212, 1));
-  auto* nav_layout = navigation->SetLayoutManager(std::make_unique<views::BoxLayout>(
-      views::BoxLayout::Orientation::kVertical, gfx::Insets(16), 6));
   copy(navigation, u"zitter", kInk, 8, gfx::Font::Weight::BOLD);
   copy(navigation, u"TWOJA PRZEGLĄDARKA", kMuted, -3, gfx::Font::Weight::MEDIUM);
   Spacer(navigation, 20);
   auto* main = general->AddChildView(std::make_unique<views::View>());
-  general_layout->SetFlexForView(main, 1);
-  auto* main_layout = main->SetLayoutManager(std::make_unique<views::BoxLayout>(
-      views::BoxLayout::Orientation::kVertical, gfx::Insets::VH(16, 20), 12));
+  SetSidebarPanelLayout(general.get(),false,gfx::Insets(8),8,main);
   auto* preferences_heading = main->AddChildView(std::make_unique<views::View>());
-  auto* heading_layout = preferences_heading->SetLayoutManager(std::make_unique<views::BoxLayout>(
-      views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 12));
   auto* heading_text = preferences_heading->AddChildView(std::make_unique<views::View>());
-  heading_text->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 5));
+  SetSidebarPanelLayout(heading_text,true,gfx::Insets(),5);
   copy(heading_text, u"Preferencje", kInk, 9, gfx::Font::Weight::SEMIBOLD);
   copy(heading_text, u"Twoja przestrzeń. Twoje zasady.", kMuted, 0);
-  heading_layout->SetFlexForView(heading_text, 1);
+  SetSidebarPanelLayout(preferences_heading,false,gfx::Insets(),12,heading_text);
   auto dismiss=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell){shell->CloseOverlays();shell->RestorePageFocus();}},weak);
 #if BUILDFLAG(IS_MAC)
   if(workspace_form_){auto* controls=preferences_heading->AddChildView(std::make_unique<ScenePreferenceControls>(true));preferences_close_=controls->AddControl(dismiss,u"Zamknij preferencje (Escape)",0);}
@@ -3588,7 +3580,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   general_scroll->SetHorizontalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);
   auto body = std::make_unique<views::View>();
   preferences_body_ = body.get();
-  body->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets::TLBR(0, 0, 8, 8), 16));
+  SetSidebarPanelLayout(body.get(),true,gfx::Insets::TLBR(0,0,8,8),16);
   std::vector<std::u16string> categories = {
       u"Wygląd", u"Wyszukiwanie", u"Prywatność", u"Uprawnienia stron", u"Treści i czytelność", u"Hasła i profile", u"Pobieranie", u"Języki i pisownia", u"Dane przeglądania", u"Zaawansowane"};
   std::vector<std::u16string> descriptions = {
@@ -3636,13 +3628,13 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 #endif
     button=category_controls->AddChildView(std::make_unique<RowButton>(base::BindRepeating(&WorkspaceShell::SelectPreferenceCategory,weak,i),std::move(spec)));
     auto* section = body->AddChildView(std::make_unique<views::View>());
-    section->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 12));
+    SetSidebarPanelLayout(section,true,gfx::Insets(),12);
     copy(section, categories[i],kInk,4,gfx::Font::Weight::SEMIBOLD);
     copy(section,descriptions[i],kMuted,-1,gfx::Font::Weight::NORMAL,true);
     preference_sections_.push_back({section, button, {}});
   }
   auto* nav_space = Spacer(navigation, 1);
-  nav_layout->SetFlexForView(nav_space, 1);
+  SetSidebarPanelLayout(navigation,true,gfx::Insets(16),6,nav_space);
   copy(navigation, u"ZITTER / PREFERENCJE", kMuted, -3);
 #if BUILDFLAG(IS_MAC)
   if(preference_catalogue)BuildRustPreferenceRows(*preference_catalogue);
@@ -3832,7 +3824,8 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     metal_general_scroll_synchronizer_=general_scroll->EnableScrollSynchronization();
     metal_general_scroll_subscription_=general_scroll->AddContentsScrolledCallback(base::BindRepeating(&WorkspaceShell::RefreshPreferenceViewport,weak));
   }
-  main_layout->SetFlexForView(main->AddChildView(std::move(general_scroll)), 1);
+  auto* main_scroll=main->AddChildView(std::move(general_scroll));
+  SetSidebarPanelLayout(main,true,gfx::Insets::VH(16,20),12,main_scroll);
   general_status_ = copy(main, u"Przełączniki zapisują się automatycznie. Pola tekstowe zatwierdź przyciskiem Zapisz lub Enter.", kMuted,-2,gfx::Font::Weight::NORMAL,true);
   FilterPreferences();
   auto peek = std::make_unique<views::View>();
@@ -6160,9 +6153,8 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
   auto make_row=[&](const sidebar::PreferenceSpec& spec){
     CHECK_LT(spec.category,preference_sections_.size());
     auto* row=preference_sections_[spec.category].view->AddChildView(std::make_unique<PreferenceSurface>(false,true,base::BindRepeating(&WorkspaceShell::SchedulePreferenceChrome,weak),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->PreferenceChromeVisible();},weak)));
-    auto* layout=row->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal,gfx::Insets(16),20));layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
-    auto* labels=row->AddChildView(std::make_unique<views::View>());labels->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical,gfx::Insets(),5));
-    copy(labels,text(spec.title),kInk,0,gfx::Font::Weight::MEDIUM,true);copy(labels,text(spec.detail),kMuted,-1,gfx::Font::Weight::NORMAL,true);layout->SetFlexForView(labels,1);
+    auto* labels=row->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(labels,true,gfx::Insets(),5);
+    copy(labels,text(spec.title),kInk,0,gfx::Font::Weight::MEDIUM,true);copy(labels,text(spec.detail),kMuted,-1,gfx::Font::Weight::NORMAL,true);SetSidebarPanelLayout(row,false,gfx::Insets(16),20,labels,true);
     preference_sections_[spec.category].rows.push_back({row,base::i18n::ToLower(text(catalogue.categories[spec.category])+u" "+text(spec.title)+u" "+text(spec.detail))});return row;
   };
   for(const auto& spec:catalogue.rows){
@@ -6212,7 +6204,7 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
         PreferenceAction(row,true,base::BindRepeating(&WorkspaceShell::SaveSitePreference,weak),text(site.save));break;
       }
       case Kind::SiteRules:
-        site_rules_card_=row;site_rules_list_=row->children().front()->AddChildView(std::make_unique<views::View>());site_rules_list_->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical,gfx::Insets(),8));break;
+        site_rules_card_=row;site_rules_list_=row->children().front()->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(site_rules_list_,true,gfx::Insets(),8);break;
       case Kind::ClearData:{
         const auto& clear=catalogue.clear;auto* fields=row->children().front().get();clear_data_period_=ChoicePicker(fields,text(clear.period_ax),strings(clear.periods),true);auto* checks=fields->AddChildView(std::make_unique<SceneCheckboxGroup>(8));CHECK_EQ(clear.checks.size(),3u);
         clear_history_=AddImportCheck(checks,text(clear.checks[0]),{});clear_cookies_=AddImportCheck(checks,text(clear.checks[1]),{});clear_cache_=AddImportCheck(checks,text(clear.checks[2]),{});SetCheckValue(clear_cache_,true);
@@ -6424,10 +6416,8 @@ void WorkspaceShell::RefreshSitePreferences(bool reload) {
     if (shown >= PreferenceRuleLimit()) continue;
     ++shown;
     auto* row = site_rules_list_->AddChildView(std::make_unique<views::View>());
-    auto* layout = row->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal, gfx::Insets::VH(4, 0), 12));
-    layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
     auto* label=AddPreferenceCopy(row,detail,kSubtle,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
-    layout->SetFlexForView(label, 1);
+    SetSidebarPanelLayout(row,false,gfx::Insets::VH(4,0),12,label,true);
     auto* remove = PreferenceAction(row,bool(workspace_form_),base::BindRepeating(
         [](base::WeakPtr<WorkspaceShell> shell, SitePreferenceRule rule, std::string profile_id) {
           // Rebuild on the next UI task, after the pressed button has returned.

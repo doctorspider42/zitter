@@ -1080,6 +1080,77 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsPanelLayoutMatchesBoxMeas
     }
   }
 }
+class PreferenceMeasureProxy final : public views::View {
+  METADATA_HEADER(PreferenceMeasureProxy,views::View)
+ public:
+  explicit PreferenceMeasureProxy(const views::View* source):source_(source){}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& bounds) const override{return source_->GetPreferredSize(bounds);}
+  gfx::Size GetMinimumSize() const override{return source_->GetMinimumSize();}
+ private:
+  raw_ptr<const views::View> source_;
+};
+BEGIN_METADATA(PreferenceMeasureProxy)
+END_METADATA
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferencePanelLayoutMatchesBoxMeasurementAndCenteredBounds) {
+  // The reference is the actual Chromium BoxLayout with independent native
+  // measurement, not a second copy of the Rust allocator's expected rectangles.
+  for(bool vertical:{false,true})for(int flex:{-1,0,1})for(int mode:{0,1,2,3,4}){
+    views::View candidate,reference;
+    candidate.SetBorder(views::CreateEmptyBorder(gfx::Insets(3)));reference.SetBorder(views::CreateEmptyBorder(gfx::Insets(3)));
+    const auto insets=vertical?gfx::Insets::TLBR(4,5,6,7):gfx::Insets();
+    for(auto* host:{&candidate,&reference}){
+      host->AddChildView(std::make_unique<ToolsPanelProbeView>(190,33,false));
+      host->AddChildView(std::make_unique<ToolsPanelProbeView>(260,81,true));
+      host->AddChildView(std::make_unique<ToolsPanelProbeView>(100,21,false));
+      host->AddChildView(std::make_unique<ToolsPanelProbeView>(0,0,false));
+      if(mode==1)host->children()[1]->SetVisible(false);
+      if(mode==2)host->children()[0]->SetProperty(views::kViewIgnoredByLayoutKey,true);
+      if(mode==3)for(const auto& child:host->children())child->SetProperty(views::kMarginsKey,gfx::Insets::TLBR(1,2,3,4));
+    }
+    if(mode==4)for(auto* host:{&candidate,&reference})for(size_t i=0;i<host->children().size();++i)host->children()[i]->SetProperty(views::kMarginsKey,gfx::Insets::TLBR(i+1,5-i,7-i,i+2));
+    SetSidebarPanelLayout(&candidate,vertical,insets,8,flex<0?nullptr:candidate.children()[flex].get(),true);
+    auto* box=reference.SetLayoutManager(std::make_unique<views::BoxLayout>(vertical?views::BoxLayout::Orientation::kVertical:views::BoxLayout::Orientation::kHorizontal,insets,8));
+    box->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
+    if(flex>=0)box->SetFlexForView(reference.children()[flex],1);
+    SCOPED_TRACE(testing::Message()<<"vertical="<<vertical<<" flex="<<flex<<" mode="<<mode);
+    EXPECT_EQ(reference.GetPreferredSize(),candidate.GetPreferredSize());EXPECT_EQ(reference.GetMinimumSize(),candidate.GetMinimumSize());
+    for(int width:{0,1,20,80,160,320,561}){
+      EXPECT_EQ(reference.GetHeightForWidth(width),candidate.GetHeightForWidth(width))<<"width="<<width;
+      for(int height:{0,1,32,80,240,501}){
+        SCOPED_TRACE(testing::Message()<<"width="<<width<<" height="<<height);
+        EXPECT_EQ(reference.GetPreferredSize(views::SizeBounds(width,height)),candidate.GetPreferredSize(views::SizeBounds(width,height)));
+        candidate.SetSize(gfx::Size(width,height));reference.SetSize(gfx::Size(width,height));candidate.InvalidateLayout();reference.InvalidateLayout();candidate.DeprecatedLayoutImmediately();reference.DeprecatedLayoutImmediately();
+        for(size_t i=0;i<candidate.children().size();++i)if(candidate.children()[i]->GetVisible()&&!candidate.children()[i]->GetProperty(views::kViewIgnoredByLayoutKey))EXPECT_EQ(reference.children()[i]->bounds(),candidate.children()[i]->bounds())<<"child="<<i;
+      }
+    }
+  }
+}
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferencePanelActualHierarchyMatchesBoxAcrossCategoriesAndResize) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
+  auto compare=[&](views::View* host,bool vertical,gfx::Insets insets,int gap,views::View* flex,bool center){
+    if(!host->IsDrawn())return;
+    views::View reference;reference.SetBorder(views::CreateEmptyBorder(host->GetInsets()));auto* box=reference.SetLayoutManager(std::make_unique<views::BoxLayout>(vertical?views::BoxLayout::Orientation::kVertical:views::BoxLayout::Orientation::kHorizontal,insets,gap));if(center)box->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
+    for(const auto& child:host->children()){auto* proxy=reference.AddChildView(std::make_unique<PreferenceMeasureProxy>(child.get()));proxy->SetVisible(child->GetVisible());if(auto* margins=child->GetProperty(views::kMarginsKey))proxy->SetProperty(views::kMarginsKey,*margins);proxy->SetProperty(views::kViewIgnoredByLayoutKey,child->GetProperty(views::kViewIgnoredByLayoutKey));if(child.get()==flex)box->SetFlexForView(proxy,1);}
+    auto* actual=host->GetLayoutManager();ASSERT_TRUE(actual);EXPECT_EQ(reference.GetPreferredSize(),actual->GetPreferredSize(host));EXPECT_EQ(reference.GetHeightForWidth(host->width()),actual->GetPreferredHeightForWidth(host,host->width()));EXPECT_EQ(reference.GetPreferredSize(views::SizeBounds(host->width(),host->height())),actual->GetPreferredSize(host,views::SizeBounds(host->width(),host->height())));
+    reference.SetSize(host->size());reference.DeprecatedLayoutImmediately();ASSERT_EQ(host->children().size(),reference.children().size());for(size_t i=0;i<host->children().size();++i)if(host->children()[i]->GetVisible()&&!host->children()[i]->GetProperty(views::kViewIgnoredByLayoutKey))EXPECT_EQ(reference.children()[i]->bounds(),host->children()[i]->bounds())<<"child="<<i;
+  };
+  for(auto size:{gfx::Size(700,660),gfx::Size(1000,860)}){window_->widget()->SetBounds(gfx::Rect(gfx::Point(40,40),size));shell->OpenGeneralSettings();auto* widget=shell->general_widget();widget->LayoutRootViewIfNecessary();
+    for(size_t category=0;category<10;++category){SCOPED_TRACE(testing::Message()<<"size="<<size.ToString()<<" category="<<category);auto* nav=shell->preference_navigation_for_testing(category);if(nav->IsDrawn())views::test::ButtonTestApi(nav).NotifyDefaultMouseClick();else shell->ActivatePreferenceChoiceForTesting("category",category);EXPECT_EQ(category,shell->preference_category_for_testing());widget->LayoutRootViewIfNecessary();
+      auto rows=shell->preference_rows_for_testing(category);ASSERT_FALSE(rows.empty());auto* section=rows.front()->parent();auto* body=section->parent();auto* main=shell->preferences_search()->view()->parent();auto* root=main->parent();auto* navigation=root->children().front().get();auto* header=main->children().front().get();
+      ASSERT_NO_FATAL_FAILURE(compare(root,false,gfx::Insets(8),8,main,false));
+      ASSERT_NO_FATAL_FAILURE(compare(main,true,gfx::Insets::VH(16,20),12,main->children()[main->children().size()-2],false));
+      ASSERT_NO_FATAL_FAILURE(compare(navigation,true,gfx::Insets(16),6,navigation->children()[navigation->children().size()-2],false));
+      ASSERT_NO_FATAL_FAILURE(compare(header,false,gfx::Insets(),12,header->children().front(),false));
+      ASSERT_NO_FATAL_FAILURE(compare(header->children().front(),true,gfx::Insets(),5,nullptr,false));
+      ASSERT_NO_FATAL_FAILURE(compare(body,true,gfx::Insets::TLBR(0,0,8,8),16,nullptr,false));
+      ASSERT_NO_FATAL_FAILURE(compare(section,true,gfx::Insets(),12,nullptr,false));
+      for(auto* row:rows){SCOPED_TRACE(row->bounds().ToString());ASSERT_FALSE(row->children().empty());
+        ASSERT_NO_FATAL_FAILURE(compare(row,false,gfx::Insets(16),20,row->children().front(),true));
+        ASSERT_NO_FATAL_FAILURE(compare(row->children().front(),true,gfx::Insets(),5,nullptr,false));
+      }
+    }
+  }
+}
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsPanelResizeLongStatusAndViewportGeometry) {
   ASSERT_TRUE(window_->Select("work"));auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));
   const bool rust=shell->workspace_input()->rust_editor();

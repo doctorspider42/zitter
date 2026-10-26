@@ -34,7 +34,7 @@ WorkspaceSwipeLayout SidebarSwipeLayout(double position,int count,int width);
 std::unique_ptr<views::LayoutManager> CreateSidebarColumnLayout(int spacing = 0);
 // Install a start/stretch panel with a single optional flexible child. Views
 // uses its original BoxLayout; the opt-in backend owns allocation in Rust.
-void SetSidebarPanelLayout(views::View* host,bool vertical,gfx::Insets insets,int spacing,views::View* flex = nullptr);
+void SetSidebarPanelLayout(views::View* host,bool vertical,gfx::Insets insets,int spacing,views::View* flex = nullptr,bool center = false);
 std::unique_ptr<views::LayoutManager> CreateSidebarSplitLayout();
 gfx::Size SidebarSplitPreferredSize();
 std::unique_ptr<views::LayoutManager> CreateSidebarPinnedRowLayout();
