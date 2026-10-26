@@ -1224,6 +1224,25 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsChoicesCocoaPrefixCallbac
   EXPECT_EQ(ax::mojom::Role::kComboBoxSelect,ax.role);EXPECT_EQ(u"Cały okres",ax.GetString16Attribute(ax::mojom::StringAttribute::kValue));
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsFormStructureOrderNamesAndHistoryBusy) {
+  auto* shell=window_->shell();
+  const std::vector<std::vector<std::u16string>> expected={
+    {u"Nazwa snapshotu, np. Research przed deployem",u"Zapisz snapshot",u"Szukaj snapshotów i zamkniętych kart",u"Zapisane snapshoty",u"Przywróć wybrany układ",u"Usuń wybrany snapshot",u"Zamknięte karty",u"Przywróć wybraną kartę",u"Uśpij tę przestrzeń"},
+    {u"Akcja skrótu",u"Kombinacja, np. Cmd+Shift+J",u"Nagraj kombinację…",u"Zapisz skrót",u"Wyłącz wybrany skrót",u"Przywróć schemat Arc"},
+    {u"Wyszukiwarka do edycji",u"Nazwa wyszukiwarki",u"Prefiks (a–z, 0–9)",u"Adres z {query}",u"Zapisz wyszukiwarkę",u"Ustaw jako domyślną",u"Usuń wyszukiwarkę"},
+    {u"Szukaj w historii",u"Zakres czyszczenia historii",u"Wyczyść historię…"}};
+  for(int page=0;page<4;++page){SCOPED_TRACE(page);shell->OpenTools(page);if(page==3)ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));
+    std::vector<std::u16string> names;
+    auto visit=[&](auto&& self,views::View* view)->void{if(!view->GetVisible())return;ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);
+      if(ax.role==ax::mojom::Role::kTextField||ax.role==ax::mojom::Role::kComboBoxSelect||ax.role==ax::mojom::Role::kButton){names.push_back(ax.GetString16Attribute(ax::mojom::StringAttribute::kName));return;}
+      for(const auto& child:view->children())self(self,child.get());};
+    visit(visit,shell->tools_body_for_testing());EXPECT_EQ(expected[page],names);
+  }
+  shell->SetBrowsingDataBusy(true);shell->OpenTools(3);
+  auto* clear=FindButton(shell->tools_body_for_testing(),u"Czyszczenie…");ASSERT_TRUE(clear);EXPECT_FALSE(clear->GetEnabled());
+  shell->SetBrowsingDataBusy(false);EXPECT_TRUE(clear->GetEnabled());EXPECT_EQ(clear,FindButton(shell->tools_body_for_testing(),u"Wyczyść historię…"));
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsChoicesShortcutProviderProjectionAndDrafts) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready()&&shell->appearance_ready();}));shell->OpenTools(1);
   const auto shortcuts=shell->browser_tools().shortcuts;ASSERT_FALSE(shortcuts.empty());ASSERT_EQ(shortcuts.size(),shell->tools_choice_count_for_testing("selection"));

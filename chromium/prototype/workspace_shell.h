@@ -244,6 +244,7 @@ class WorkspaceShell final : public ui::EventHandler,
   gfx::Rect tools_action_metal_bounds_for_testing(views::Button* button) const;
   bool tools_actions_contains_scene_text_for_testing(std::string_view text) const;
   size_t tools_action_groups_for_testing() const;
+  views::View* tools_body_for_testing() const{return tools_body_;}
   views::Button* tools_close_for_testing() const{return tools_close_;}
   bool tools_close_metal_visible_for_testing() const;
   bool tools_chrome_visible_for_testing() const{return ToolsChromeVisible();}
@@ -484,6 +485,7 @@ class WorkspaceShell final : public ui::EventHandler,
   std::u16string ToolsTimelineQuery() const;
   void ResetToolsForm();
   void RefreshTools();
+  void BuildRustToolsForm();
   void RefreshTimelineItems();
   void RefreshToolsViewport();
   void SetHistoryMoreVisible(bool visible);

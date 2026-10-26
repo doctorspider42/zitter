@@ -6875,6 +6875,56 @@ void WorkspaceShell::RefreshTimelineItems() {
   };
   fill(state.snapshots, tools_picker_, snapshot_ids_); fill(state.closed, closed_picker_, closed_ids_);
 }
+void WorkspaceShell::BuildRustToolsForm(){
+#if BUILDFLAG(IS_MAC)
+  using Kind=sidebar::ToolsNodeKind;using Role=sidebar::ToolsNodeRole;
+  CHECK(tools_form_);auto weak=weak_factory_.GetWeakPtr();
+  auto units=[](const std::u16string& text){rust::Vec<uint16_t> value;value.reserve(text.size());for(char16_t unit:text)value.push_back(unit);return value;};
+  auto text=[](const auto& units){return std::u16string(units.begin(),units.end());};
+  std::u16string context;rust::Vec<sidebar::ToolsSleepingCopy> sleeping;
+  if(ToolsPage()==0){context=state_.workspace_name;const auto state=callbacks_.time_machine?callbacks_.time_machine.Run():TimeMachineState();for(const auto& item:state.sleeping)sleeping.push_back({units(item.title),units(item.detail)});}
+  if(ToolsPage()==3)for(const auto& profile:state_.profiles)if(profile.id==state_.profile_id)context=base::UTF8ToUTF16(profile.name);
+  const auto plan=tools_form_->form->tools_form_plan(base::UTF16ToUTF8(context),browsing_data_busy_,std::move(sleeping));SetPanelText(tools_title_,text(plan.title));SetPanelText(tools_status_,text(plan.status));
+  struct Host {raw_ptr<views::View> view=nullptr;bool row=false;raw_ptr<views::View> flex=nullptr;int spacing=0;};
+  std::vector<Host> hosts{{tools_body_,false,nullptr,0}};bool timeline=false;
+  auto form_picker=[&](views::View* parent,std::u16string name,const sidebar::ToolsFormChoices& projection)->views::View*{
+    auto* control=parent->AddChildView(std::make_unique<SceneSelect>(std::vector<std::u16string>(),std::move(name),base::RepeatingClosure()));std::vector<std::pair<std::string,std::u16string>> choices;choices.reserve(projection.choices.size());for(const auto& choice:projection.choices)choices.emplace_back(std::string(choice.key),text(choice.label));control->SetOptions(choices);control->SetSelectedIndex(0);control->SetEnabled(projection.enabled);return control;
+  };
+  for(const auto& node:plan.nodes){auto* parent=hosts.back().view.get();const auto label=text(node.text);views::View* control=nullptr;
+    switch(node.kind){
+      case Kind::BeginRow:{auto* row=parent->AddChildView(std::make_unique<views::View>());hosts.push_back({row,true,nullptr,node.spacing});continue;}
+      case Kind::EndRow:{CHECK_GT(hosts.size(),1u);auto host=hosts.back();CHECK(host.row);SetSidebarPanelLayout(host.view,false,gfx::Insets(),host.spacing,host.flex);hosts.pop_back();continue;}
+      case Kind::BeginActions:hosts.push_back({ActionGroup(parent,true,true,node.spacing),false,nullptr,node.spacing});continue;
+      case Kind::EndActions:CHECK_GT(hosts.size(),1u);CHECK(!hosts.back().row);hosts.pop_back();continue;
+      case Kind::Hint:control=AddToolsCopy(parent,label,kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);break;
+      case Kind::Heading:control=AddToolsCopy(parent,label,kSubtle,0,static_cast<int>(gfx::Font::Weight::SEMIBOLD),false);break;
+      case Kind::Editor:{
+        auto* field=AddEditor(parent,true);field->GetViewAccessibility().SetName(label);field->SetPlaceholderText(label);field->view()->SetPreferredSize(gfx::Size(200,36));field->SetPresentation(gfx::FontList().GetFontSize(),8,true,Tone(root_,kChip));field->SetCallbacks(base::BindRepeating(&WorkspaceShell::ToolsEditorEdited,weak,base::Unretained(field)),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,EditorControl* editor,const ui::KeyEvent& event){return shell&&shell->HandleToolsEditorKey(editor,event);},weak,base::Unretained(field)));control=field->view();
+        switch(node.role){case Role::SnapshotName:snapshot_name_=field;break;case Role::TimelineFilter:timeline_filter_=field;break;case Role::ShortcutChord:shortcut_chord_=field;break;case Role::ProviderName:provider_name_=field;break;case Role::ProviderKeyword:provider_keyword_=field;break;case Role::ProviderUrl:provider_url_=field;break;case Role::HistoryQuery:history_search_=field;break;default:CHECK(false);}
+        break;
+      }
+      case Kind::Choice:{
+        if(node.role==Role::ShortcutChoice){rust::Vec<sidebar::ToolsShortcutItem> metadata;for(const auto& item:tools_.shortcuts)metadata.push_back({item.id,units(item.title),units(base::UTF8ToUTF16(FormatShortcut(item.accelerator)))});const auto projection=tools_form_->form->tools_shortcut_choices(std::move(metadata));control=form_picker(parent,label,projection);}
+        else if(node.role==Role::ProviderChoice){rust::Vec<sidebar::ToolsProviderItem> metadata;for(const auto& item:tools_.providers)metadata.push_back({item.keyword,units(base::UTF8ToUTF16(item.name)),units(base::UTF8ToUTF16(item.keyword)),units(base::UTF8ToUTF16(item.url)),item.keyword==tools_.default_keyword});const auto projection=tools_form_->form->tools_provider_choices(std::move(metadata));control=form_picker(parent,label,projection);}
+        else{std::vector<std::u16string> choices;for(const auto& value:node.choices)choices.push_back(base::UTF8ToUTF16(std::string(value)));control=ChoicePicker(parent,label,std::move(choices),true);SetPickerIndex(control,0);}
+        switch(node.role){case Role::SnapshotChoice:tools_picker_=control;timeline=true;break;case Role::ClosedChoice:closed_picker_=control;break;case Role::ShortcutChoice:case Role::ProviderChoice:tools_picker_=control;SetPickerCallback(control,base::BindRepeating(&WorkspaceShell::RefreshToolsChoiceFields,weak));break;case Role::HistoryPeriod:history_period_=control;break;default:CHECK(false);}
+        break;
+      }
+      case Kind::Action:{
+        views::Button* button;
+        if(node.role==Role::HistoryClear){button=PreferenceAction(parent,true,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell&&shell->history_period_&&shell->callbacks_.clear_browsing_data)shell->callbacks_.clear_browsing_data.Run({static_cast<int>(PickerIndex(shell->history_period_).value_or(0)),true,false,false});},weak),label);history_clear_=button;}
+        else if(node.role==Role::HistoryMore){button=PreferenceAction(parent,true,base::BindRepeating(&WorkspaceShell::RefreshHistory,weak,true),label,true);history_more_=button;}
+        else button=AddAction(parent,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,int action){if(shell)shell->PostToolsAction(action);},weak,node.action),label);
+        control=button;break;
+      }
+      case Kind::Rows:control=parent->AddChildView(std::make_unique<views::View>());control->SetLayoutManager(CreateSidebarColumnLayout(node.spacing));CHECK(node.role==Role::HistoryRows);history_list_=control;break;
+      default:CHECK(false);
+    }
+    CHECK(control);control->SetEnabled(control->GetEnabled()&&node.enabled);if(node.role==Role::HistoryMore)SetHistoryMoreVisible(node.visible);else control->SetVisible(node.visible);if(node.flex)hosts.back().flex=control;
+  }
+  CHECK_EQ(hosts.size(),1u);RefreshToolsChoiceFields();if(timeline)RefreshTimelineItems();
+#endif
+}
 void WorkspaceShell::RefreshTools() {
   ++tools_generation_;
   if(tools_root_)CancelChoiceInteractions(tools_root_);
@@ -6888,6 +6938,9 @@ void WorkspaceShell::RefreshTools() {
   snapshot_name_ = nullptr; timeline_filter_ = nullptr; shortcut_chord_ = nullptr;
   provider_name_ = nullptr; provider_keyword_ = nullptr; provider_url_ = nullptr; tools_picker_ = nullptr; closed_picker_ = nullptr;
   tools_body_->RemoveAllChildViews();
+#if BUILDFLAG(IS_MAC)
+  if(tools_form_){BuildRustToolsForm();PreparePanelText(tools_widget_->GetRootView());tools_body_->InvalidateLayout();if(history_visible())RefreshHistory();return;}
+#endif
   std::u16string context=ToolsPage()==0?state_.workspace_name:std::u16string();
   if(ToolsPage()==3)for(const auto& profile:state_.profiles)if(profile.id==state_.profile_id)context=base::UTF8ToUTF16(profile.name);
   std::u16string form_title,form_intro,form_tail,form_status;

@@ -23,6 +23,11 @@ mod ffi {
     struct ToolsActionContext { snapshot_field: bool, shortcut_field: bool, provider_field: bool, provider_selected: bool, snapshot_composing: bool, shortcut_composing: bool, provider_composing: bool, snapshot_selected: bool, closed_selected: bool, shortcut_selected: bool }
     struct ToolsDispatch { admitted: bool, action: i32, recording: bool, sync_recording: bool, record_status: String }
     struct ToolsOutcome { refresh: bool, status: String }
+    enum ToolsNodeKind { Hint, Heading, Editor, Choice, Action, BeginRow, EndRow, Rows, BeginActions, EndActions }
+    enum ToolsNodeRole { None, SnapshotName, TimelineFilter, SnapshotChoice, ClosedChoice, ShortcutChoice, ShortcutChord, ProviderChoice, ProviderName, ProviderKeyword, ProviderUrl, HistoryQuery, HistoryPeriod, HistoryClear, HistoryRows, HistoryMore }
+    struct ToolsSleepingCopy { title: Vec<u16>, detail: Vec<u16> }
+    struct ToolsFormNode { kind: ToolsNodeKind, role: ToolsNodeRole, text: Vec<u16>, action: i32, choices: Vec<String>, enabled: bool, visible: bool, flex: bool, spacing: i32 }
+    struct ToolsFormPlan { title: Vec<u16>, status: Vec<u16>, nodes: Vec<ToolsFormNode> }
     struct ToolsShortcutItem { id: String, title: Vec<u16>, chord: Vec<u16> }
     struct ToolsProviderItem { id: String, name: Vec<u16>, keyword: Vec<u16>, url: Vec<u16>, default_provider: bool }
     struct ToolsFormChoice { key: String, label: Vec<u16> }
@@ -182,6 +187,7 @@ mod ffi {
         fn tools_history_loaded(self: &ToolsForm) -> bool;
         fn tools_timeline_edit(self: &mut ToolsForm, query: Vec<u16>);
         fn tools_timeline_query(self: &ToolsForm) -> Vec<u16>;
+        fn tools_form_plan(self: &ToolsForm, context: &str, busy: bool, sleeping: Vec<ToolsSleepingCopy>) -> ToolsFormPlan;
         fn tools_shortcut_choices(self: &mut ToolsForm, items: Vec<ToolsShortcutItem>) -> ToolsFormChoices;
         fn tools_provider_choices(self: &mut ToolsForm, items: Vec<ToolsProviderItem>) -> ToolsFormChoices;
         fn tools_choice_select(self: &mut ToolsForm, key: &str) -> ToolsChoiceDraft;
@@ -669,6 +675,16 @@ fn new_tools_form() -> Box<ToolsForm> {
     Box::new(ToolsForm { page: 0, recording: false, history_query: vec![],
         timeline_query: vec![], choice_epoch: 0, active_choice:String::new(), shortcut_choices:vec![], provider_choices:vec![], timeline_epoch: 0, timeline_snapshots: vec![], timeline_closed: vec![], history_limit: 200, history_loaded: false })
 }
+fn tools_form_node(kind:ffi::ToolsNodeKind,role:ffi::ToolsNodeRole,text:&str,action:i32)->ffi::ToolsFormNode {ffi::ToolsFormNode{kind,role,text:text.encode_utf16().collect(),action,choices:vec![],enabled:true,visible:true,flex:false,spacing:0}}
+fn tools_group_actions(nodes:Vec<ffi::ToolsFormNode>)->Vec<ffi::ToolsFormNode>{
+    let mut out=vec![];let mut group=false;
+    for node in nodes{let action=node.kind==ffi::ToolsNodeKind::Action&&node.role==ffi::ToolsNodeRole::None;
+        if group&&!action{out.push(tools_form_node(ffi::ToolsNodeKind::EndActions,ffi::ToolsNodeRole::None,"",0));group=false;}
+        if action&&!group{let mut begin=tools_form_node(ffi::ToolsNodeKind::BeginActions,ffi::ToolsNodeRole::None,"",0);begin.spacing=10;out.push(begin);group=true;}
+        out.push(node);
+    }
+    if group{out.push(tools_form_node(ffi::ToolsNodeKind::EndActions,ffi::ToolsNodeRole::None,"",0));}out
+}
 impl ToolsForm {
     fn tools_select(&mut self, page: usize) {
         let page=page.min(3);
@@ -725,6 +741,28 @@ impl ToolsForm {
         self.history_loaded = true; true
     }
     fn tools_history_loaded(&self) -> bool { self.history_loaded }
+    fn tools_form_plan(&self,context:&str,busy:bool,sleeping:Vec<ffi::ToolsSleepingCopy>)->ffi::ToolsFormPlan {
+        use ffi::ToolsNodeKind as K;use ffi::ToolsNodeRole as R;
+        let copy=tools_copy(self.page,context);let mut nodes=vec![tools_form_node(K::Hint,R::None,&copy.intro,0)];
+        match self.page {
+            0=>{
+                nodes.push(tools_form_node(K::Editor,R::SnapshotName,&copy.fields[0],0));nodes.push(tools_form_node(K::Action,R::None,&copy.actions[0],1));nodes.push(tools_form_node(K::Editor,R::TimelineFilter,&copy.fields[1],0));
+                nodes.push(tools_form_node(K::Heading,R::None,&copy.headings[0],0));let mut picker=tools_form_node(K::Choice,R::SnapshotChoice,&copy.pickers[0],0);picker.choices.push("Brak pozycji".into());nodes.push(picker);
+                nodes.push(tools_form_node(K::Action,R::None,&copy.actions[1],2));nodes.push(tools_form_node(K::Action,R::None,&copy.actions[2],3));nodes.push(tools_form_node(K::Heading,R::None,&copy.headings[1],0));
+                let mut picker=tools_form_node(K::Choice,R::ClosedChoice,&copy.pickers[1],0);picker.choices.push("Brak pozycji".into());nodes.push(picker);nodes.push(tools_form_node(K::Action,R::None,&copy.actions[3],4));nodes.push(tools_form_node(K::Hint,R::None,&copy.tail,0));nodes.push(tools_form_node(K::Action,R::None,&copy.actions[4],5));
+                for item in sleeping{let mut text=item.title;text.extend(" · ".encode_utf16());text.extend(item.detail);let mut node=tools_form_node(K::Hint,R::None,"",0);node.text=text;nodes.push(node);}
+            }
+            1=>{nodes.push(tools_form_node(K::Choice,R::ShortcutChoice,&copy.pickers[0],0));nodes.push(tools_form_node(K::Editor,R::ShortcutChord,&copy.fields[0],0));for (i,text) in copy.actions.iter().enumerate(){nodes.push(tools_form_node(K::Action,R::None,text,10+i as i32));}}
+            2=>{nodes.push(tools_form_node(K::Choice,R::ProviderChoice,&copy.pickers[0],0));for (i,role) in [R::ProviderName,R::ProviderKeyword,R::ProviderUrl].into_iter().enumerate(){nodes.push(tools_form_node(K::Editor,role,&copy.fields[i],0));}for (i,text) in copy.actions.iter().enumerate(){nodes.push(tools_form_node(K::Action,R::None,text,20+i as i32));}}
+            _=>{
+                nodes.push(tools_form_node(K::Editor,R::HistoryQuery,&copy.fields[0],0));let mut begin=tools_form_node(K::BeginRow,R::None,"",0);begin.spacing=8;nodes.push(begin);
+                let mut period=tools_form_node(K::Choice,R::HistoryPeriod,&copy.pickers[0],0);period.choices=copy.choices;period.flex=true;nodes.push(period);
+                let clear=tools_clear_controls(busy);let mut action=tools_form_node(K::Action,R::HistoryClear,&clear.label,30);action.enabled=clear.enabled;nodes.push(action);nodes.push(tools_form_node(K::EndRow,R::None,"",0));
+                let mut rows=tools_form_node(K::Rows,R::HistoryRows,"",0);rows.spacing=4;nodes.push(rows);let mut more=tools_form_node(K::Action,R::HistoryMore,&copy.actions[1],31);more.visible=false;nodes.push(more);
+            }
+        }
+        ffi::ToolsFormPlan{title:copy.title.encode_utf16().collect(),status:copy.initial_status.encode_utf16().collect(),nodes:tools_group_actions(nodes)}
+    }
     fn tools_shortcut_choices(&mut self,items:Vec<ffi::ToolsShortcutItem>)->ffi::ToolsFormChoices {
         self.shortcut_choices.clear();self.active_choice.clear();let mut choices=vec![];
         if let Some(epoch)=self.choice_epoch.checked_add(1){self.choice_epoch=epoch;
@@ -2390,6 +2428,36 @@ mod tests {
         assert_eq!(form.tools_history_request(true), usize::MAX);
         assert_eq!(form.tools_history_request(true), usize::MAX);
         assert_eq!(form.tools_history_request(false), 200);
+    }
+    #[test] fn tools_form_order_preserves_native_control_and_command_sequence() {
+        use ffi::ToolsNodeKind as K;use ffi::ToolsNodeRole as R;
+        let roles=[vec![R::SnapshotName,R::TimelineFilter,R::SnapshotChoice,R::ClosedChoice],vec![R::ShortcutChoice,R::ShortcutChord],vec![R::ProviderChoice,R::ProviderName,R::ProviderKeyword,R::ProviderUrl],vec![R::HistoryQuery,R::HistoryPeriod]];
+        let actions=[vec![1,2,3,4,5],vec![10,11,12,13],vec![20,21,22],vec![30,31]];
+        for page in 0..4 {let mut f=new_tools_form();f.tools_select(page);let plan=f.tools_form_plan("Profil",false,vec![]);
+            assert!(plan.nodes.iter().filter(|n|n.kind==K::Editor||n.kind==K::Choice).map(|n|n.role).eq(roles[page].iter().copied()));
+            assert_eq!(plan.nodes.iter().filter(|n|n.kind==K::Action).map(|n|n.action).collect::<Vec<_>>(),actions[page]);
+            assert!(plan.nodes.iter().filter(|n|n.kind==K::Editor||n.kind==K::Choice||n.kind==K::Action).all(|n|!n.text.is_empty()));
+        }
+    }
+    #[test] fn tools_form_groups_preserve_native_gaps_and_history_flex() {
+        use ffi::ToolsNodeKind as K;use ffi::ToolsNodeRole as R;
+        for (page,expected) in [4,1,1,0].into_iter().enumerate(){let mut f=new_tools_form();f.tools_select(page);let plan=f.tools_form_plan("",false,vec![]);let mut stack=vec![];let mut groups=0;
+            for n in &plan.nodes {match n.kind {K::BeginActions=>{assert_eq!(n.spacing,10);groups+=1;stack.push(K::EndActions);},K::BeginRow=>{assert_eq!(n.spacing,8);stack.push(K::EndRow);},K::EndActions|K::EndRow=>assert!(stack.pop()==Some(n.kind)),_=>{}}
+                if n.role==R::HistoryPeriod{assert!(n.flex);assert!(stack.last()==Some(&K::EndRow));}else{assert!(!n.flex);}if n.role==R::HistoryRows{assert_eq!(n.spacing,4);assert!(stack.is_empty());}
+            }assert!(stack.is_empty());assert_eq!(groups,expected);
+        }
+    }
+    #[test] fn tools_form_history_reconstruction_respects_busy_and_hidden_more() {
+        use ffi::ToolsNodeRole as R;let mut f=new_tools_form();f.tools_select(3);
+        for busy in [false,true]{let p=f.tools_form_plan("Osobisty",busy,vec![]);let clear=p.nodes.iter().find(|n|n.role==R::HistoryClear).unwrap();assert_eq!(clear.enabled,!busy);assert_eq!(String::from_utf16(&clear.text).unwrap(),if busy{"Czyszczenie…"}else{"Wyczyść historię…"});assert!(!p.nodes.iter().find(|n|n.role==R::HistoryMore).unwrap().visible);assert_eq!(p.nodes.iter().find(|n|n.role==R::HistoryPeriod).unwrap().choices,["Ostatnia godzina","Ostatnie 24 godziny","Ostatnie 7 dni","Cały okres"]);}
+    }
+    #[test] fn tools_form_context_and_sleeping_copy_preserve_utf16() {
+        use ffi::ToolsNodeKind as K;let f=new_tools_form();let p=f.tools_form_plan("Praca 🦀 אבג",false,vec![ffi::ToolsSleepingCopy{title:vec![0xd800],detail:vec![0xdfff]}]);assert_eq!(String::from_utf16(&p.title).unwrap(),"Time Machine · Praca 🦀 אבג");let last=p.nodes.last().unwrap();assert!(last.kind==K::Hint);assert_eq!(last.text,vec![0xd800,0x20,0xb7,0x20,0xdfff]);assert!(p.nodes[p.nodes.len()-2].kind==K::EndActions);
+        let mut f=new_tools_form();f.tools_select(3);let p=f.tools_form_plan("Profil 🦀 אבג",false,vec![]);assert_eq!(String::from_utf16(&p.nodes[0].text).unwrap(),"Profil: Profil 🦀 אבג");
+    }
+    #[test] fn tools_form_description_does_not_reset_queries_recording_or_choice_keys() {
+        let mut f=new_tools_form();f.tools_select(1);let p=f.tools_shortcut_choices(vec![form_shortcut("a","A","Cmd+J")]);let key=p.choices[0].key.clone();f.tools_record(true);f.tools_timeline_edit(vec![0xd800]);f.tools_history_edit(vec![0xdfff]);let epoch=f.choice_epoch;
+        for _ in 0..2 {let _=f.tools_form_plan("",false,vec![]);assert!(f.tools_recording());assert_eq!(f.tools_timeline_query(),vec![0xd800]);assert_eq!(f.history_query,vec![0xdfff]);assert_eq!(f.choice_epoch,epoch);let draft=f.tools_choice_draft(&key);assert!(draft.valid);assert_eq!(draft.target,"a");}
     }
     #[test] fn tools_copy_display_context_and_adapter_roles_are_complete() {
         let copy=tools_copy(0,"Praca 🦀 אבג");assert_eq!(copy.title,"Time Machine · Praca 🦀 אבג");assert_eq!(copy.fields.len(),2);assert_eq!(copy.pickers.len(),2);assert_eq!(copy.headings.len(),2);assert_eq!(copy.actions.len(),5);assert!(copy.tail.contains("Niezapisane formularze"));
