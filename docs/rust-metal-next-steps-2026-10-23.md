@@ -3,56 +3,69 @@
 This is a work plan, not a claim of complete functional parity. The detailed
 inventory is [the parity checklist](rust-metal-parity.md).
 
-## Latest targeted follow-up
+## Latest full checkpoint
 
-UI source `4e99ac0b9186be9294e90a15d536f8a1e6cdd59a` moves the four header actions (sidebar
-toggle, back, forward, reload) from Button/ButtonController instances to plain
-RustActionView event/focus/AX hosts. Shared Rust ActionControl owns enabled,
-focused, on/visual state, pointer/key/gesture activation and cancellation, using
-existing RowPointer and platform Space/Return policy. Header fields now store
-View adapters. This is the first action-host family: other button/row/control
-families still require migration.
+UI source `c8e219585d9d7652d829e64bb2c1eb71e34cb84e` moves footer pin/settings and all
+workspace dots to plain RustActionView hosts, without Button/ButtonController
+instances. Header actions retain their preceding Rust host; other button/row/
+control families remain. Rust owns action enabled/focused/on/visual/input state,
+normal/emoji/chrome preferred-size metrics and idempotent cancellation. Existing
+workspace/profile/emoji/service stores and command callbacks remain native.
+Native View identity, FocusRing, window/focus/AX/input and fallback vector paint
+remain explicit adapters.
 
-Metal consumes Rust snapshots through common glyph scene data. Both host paths
-share the factored native vector/icon painter for fallback. A native FocusRing
-remains an explicit focus adapter and is gated out of steady Metal painting.
-Enabled-in-subtree changes immediately cancel pending input; blur, capture loss,
-control/widget hiding and removal also cancel. Callbacks retain original browser
-commands; no host members are touched after dispatch that may delete the host.
+The full compiled inventory has **206 cases**. Metal passed **200 regular
+cases**, Views **152 regular cases**; both explicitly skipped the same six
+optional manual/live-import/performance scenarios. One launcher job, retry zero,
+no failures/crashes/timeouts. Dedicated Metal fixture cases are excluded from
+Views. Focus passed **7 Metal / 5 Views**. Checks passed **284 Rust**, **180 SDK
+font/direction cases plus raster**, **68 live and 68 clean-archive Python**,
+scoped GN/boundaries and final Ninja no-op. All 53 committed/live/staged prototype
+inputs and compiled/frozen-bootstrap/native-engine identities were checked.
+[Full footer-action report](benchmarks/rust-footer-action-checkpoint-2026-10-26.json).
 
-The shared case checks actual host types, AX role/name/default-action metadata,
-physical Cocoa Space, Mac Return policy, AX activation/disabled rejection,
-tap/end, late release after hide/disable and no document reload from hidden AX
-input. The existing header case retains actual back/forward/reload, disabled
-click, sidebar toggle, focus/fallback, movement/visibility and idle checks.
-Focus passed **4 Metal / 3 Views**; affected regressions
-**71 Metal / 23 Views**, single attempt, retry zero. The affected gate
-also covers the common glyph refactor across the dedicated Metal fixture and
-shared forms/editor/choice/viewport/window/split cases.
+The shared real-footer case verifies host identity, AX names/roles, 24x28 normal
+and 30x28 emoji metrics, view replacement, inactive-dot menu/profile target,
+disabled/pin AX, workspace Space/AX selection, capture cancellation after a
+scroll out and immediate return, offscreen AX reveal/selection and idle frame
+stability. A real callback deletes its own action host in both backends. Existing
+native mouse footer scrollbar/emoji/select/settings/pin/fallback tests keep their
+semantic assertions. Dot/profile callers use View/AX adapters instead of
+ButtonTestApi; menu and selection/swipe projections retain original domain IDs.
 
-Checks passed **282 Rust**, **68 live and 68 clean-archive Python**, scoped GN/
-boundaries and final Ninja no-op. All 53 committed/live/staged prototype inputs
-and compiled/frozen-bootstrap/native-engine identities were checked. Unchanged
-CoreText sources retain the earlier 180 SDK font/direction cases plus raster;
-that harness was not rerun for this adapter change.
-[Targeted header action report](benchmarks/rust-header-action-targeted-2026-10-26.json).
+Layer transforms do not notify descendant visibility. The viewport callback
+synchronously retires clipped Rust footer input even if a GPU update is queued;
+it also works in fallback. Native comparison skips this Rust scan. Mouse/gesture
+admission checks visible bounds; a drawn/enabled AX default target is revealed
+before ordinary event dispatch. Idempotent cancel avoids an idle paint loop.
 
-The initial probe/source is retained: native GestureEnd cancels without handling,
-so Rust now retains that propagation. Hiding the parent also hides the sidebar
-child; the final hidden-action oracle checks the document marker rather than
-assuming child visibility. The source includes the preceding
-[resize-host migration](benchmarks/rust-resize-host-targeted-2026-10-26.json).
+Chromium compositor mailbox diagnostics remain in retained logs (6 invalid-
+mailbox messages per backend). Drag/width cases and both launchers passed; the
+messages are not diagnosed or resolved by this checkpoint.
 
-Per user cadence this first action-host family has targeted acceptance. The
-full matrix below predates resize/header-host changes and is not a full pass of
-this source. Remaining native button/row/control/node/container/menu/input/window
-ownership, manual hardware trackpad/IME candidates/VoiceOver/RTL/scale/theme/GPU
-recovery, controlled CPU/GPU/drawable-presentation/input-latency/memory comparison
-and release/license/notice acceptance remain open. The frozen UI lab excludes
-current-main network policy. No complete parity or controlled performance gain
-claimed; no dependency, service/store/admission or persistence policy change.
+The first probe timed out in the new native-menu case in both modes because
+Cocoa intentionally blocks Chromium application tasks while tracking a context
+menu. The final helper observes the real NSMenu, inspects in Cocoa tracking/
+default modes and closes it. Late inspection is suppressed after the helper
+returns. Failing sources, logs and a stack sample are retained; production menu
+nesting policy is unchanged.
 
-## Latest full checkpoint (before resize/header-host migrations)
+This full source includes the earlier
+[resize-host](benchmarks/rust-resize-host-targeted-2026-10-26.json) and
+[header-action](benchmarks/rust-header-action-targeted-2026-10-26.json) migrations,
+plus main/palette/footer viewport and raw-trackpad/capture corrections. The lab
+retains frozen bootstrap/network inputs from `d23f232`; current-main network
+policy is outside this binary's acceptance. No dependency, browser service/store/
+admission or persistence policy changed.
+
+Remaining button/row/control/node/container/menu/input/window ownership, manual
+hardware trackpad/IME candidates/VoiceOver/global RTL/scale/theme/GPU recovery,
+controlled CPU/GPU/drawable-presentation/input-latency/memory comparison and final
+release/license/notice acceptance remain open. No complete functional parity or
+controlled performance gain is claimed. Full matrices remain reserved for larger
+blocks, per user cadence.
+
+## Previous full checkpoint: horizontal footer viewport
 
 UI source `d44351ca2ad2c3d4125139e35e2354096dca7899` moves the horizontal workspace footer
 viewport to Rust. Together with the main sidebar and palette, all three shell

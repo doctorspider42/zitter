@@ -682,7 +682,7 @@ Color/emoji preset rows now use Rust
 geometry, selection and input with batched Metal canvases excluding native editors.
 Nine workspace/profile form actions also use Rust layout/input and scene text
 without native button Labels, batched into four Metal groups. These newer stages pass the
-[latest full automated GUI checkpoint](docs/benchmarks/rust-footer-viewport-checkpoint-2026-10-26.json);
+[latest full automated GUI checkpoint](docs/benchmarks/rust-footer-action-checkpoint-2026-10-26.json);
 manual signed-app and performance acceptance remain pending. Import also uses a Rust form controller for
 option snapshots, debounce/admission and control locks, with Metal static/status
 text and Apply drawing. Four import checkboxes now share a Metal canvas with Rust
@@ -807,6 +807,12 @@ The four header actions now also use plain View hosts with a shared Rust action
 controller, retaining native focus/AX delivery and vector fallback painting.
 [Targeted header-action acceptance](docs/benchmarks/rust-header-action-targeted-2026-10-26.json)
 passed 71 Metal / 23 Views affected cases. Other button/row hosts remain.
+Footer pin/settings and workspace dots now also use the shared Rust action host,
+retaining emoji, context menus, selection and safe clipped-input cancellation.
+[Full footer-action checkpoint](docs/benchmarks/rust-footer-action-checkpoint-2026-10-26.json)
+passed 200 Metal / 152 Views regular cases, six explicit optional skips each,
+and 284 Rust cases. Other button/row/control ownership and final manual/
+performance/release acceptance remain open.
 [Editor contracts and acceptance](docs/rust-metal-editor.md).
 Model updates refresh the scene independently of
 native painting. Rust also owns row

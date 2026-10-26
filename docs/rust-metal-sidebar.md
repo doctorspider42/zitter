@@ -2664,3 +2664,65 @@ recovery, controlled CPU/GPU/drawable-presentation/input-latency/memory comparis
 and release/license/notice acceptance remain open. The frozen UI lab excludes
 current-main network policy. No complete parity or controlled performance gain
 claimed; no dependency, service/store/admission or persistence policy change.
+
+## Footer/workspace action hosts — full checkpoint, 2026-10-26
+
+UI source `c8e219585d9d7652d829e64bb2c1eb71e34cb84e` moves footer pin/settings and all
+workspace dots to plain RustActionView hosts, without Button/ButtonController
+instances. Header actions retain their preceding Rust host; other button/row/
+control families remain. Rust owns action enabled/focused/on/visual/input state,
+normal/emoji/chrome preferred-size metrics and idempotent cancellation. Existing
+workspace/profile/emoji/service stores and command callbacks remain native.
+Native View identity, FocusRing, window/focus/AX/input and fallback vector paint
+remain explicit adapters.
+
+The full compiled inventory has **206 cases**. Metal passed **200 regular
+cases**, Views **152 regular cases**; both explicitly skipped the same six
+optional manual/live-import/performance scenarios. One launcher job, retry zero,
+no failures/crashes/timeouts. Dedicated Metal fixture cases are excluded from
+Views. Focus passed **7 Metal / 5 Views**. Checks passed **284 Rust**, **180 SDK
+font/direction cases plus raster**, **68 live and 68 clean-archive Python**,
+scoped GN/boundaries and final Ninja no-op. All 53 committed/live/staged prototype
+inputs and compiled/frozen-bootstrap/native-engine identities were checked.
+[Full footer-action report](benchmarks/rust-footer-action-checkpoint-2026-10-26.json).
+
+The shared real-footer case verifies host identity, AX names/roles, 24x28 normal
+and 30x28 emoji metrics, view replacement, inactive-dot menu/profile target,
+disabled/pin AX, workspace Space/AX selection, capture cancellation after a
+scroll out and immediate return, offscreen AX reveal/selection and idle frame
+stability. A real callback deletes its own action host in both backends. Existing
+native mouse footer scrollbar/emoji/select/settings/pin/fallback tests keep their
+semantic assertions. Dot/profile callers use View/AX adapters instead of
+ButtonTestApi; menu and selection/swipe projections retain original domain IDs.
+
+Layer transforms do not notify descendant visibility. The viewport callback
+synchronously retires clipped Rust footer input even if a GPU update is queued;
+it also works in fallback. Native comparison skips this Rust scan. Mouse/gesture
+admission checks visible bounds; a drawn/enabled AX default target is revealed
+before ordinary event dispatch. Idempotent cancel avoids an idle paint loop.
+
+Chromium compositor mailbox diagnostics remain in retained logs (6 invalid-
+mailbox messages per backend). Drag/width cases and both launchers passed; the
+messages are not diagnosed or resolved by this checkpoint.
+
+The first probe timed out in the new native-menu case in both modes because
+Cocoa intentionally blocks Chromium application tasks while tracking a context
+menu. The final helper observes the real NSMenu, inspects in Cocoa tracking/
+default modes and closes it. Late inspection is suppressed after the helper
+returns. Failing sources, logs and a stack sample are retained; production menu
+nesting policy is unchanged.
+
+This full source includes the earlier
+[resize-host](benchmarks/rust-resize-host-targeted-2026-10-26.json) and
+[header-action](benchmarks/rust-header-action-targeted-2026-10-26.json) migrations,
+plus main/palette/footer viewport and raw-trackpad/capture corrections. The lab
+retains frozen bootstrap/network inputs from `d23f232`; current-main network
+policy is outside this binary's acceptance. No dependency, browser service/store/
+admission or persistence policy changed.
+
+Remaining button/row/control/node/container/menu/input/window ownership, manual
+hardware trackpad/IME candidates/VoiceOver/global RTL/scale/theme/GPU recovery,
+controlled CPU/GPU/drawable-presentation/input-latency/memory comparison and final
+release/license/notice acceptance remain open. No complete functional parity or
+controlled performance gain is claimed. Full matrices remain reserved for larger
+blocks, per user cadence.
