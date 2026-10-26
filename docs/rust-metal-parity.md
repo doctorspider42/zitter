@@ -6,7 +6,57 @@ application/domain commands; preserve profile/session isolation. Push verified
 milestones to `origin/main` as they land. The opt-in switch remains
 `--zitter-sidebar=rust-metal` until the migration and comparison are complete.
 
-## Latest targeted follow-up: selector hosts
+## Latest targeted follow-up: selector pointer policy
+
+UI source `c7d0eabf53abe496801b447e5c3c8e99127b4b7d` closes the selector mouse-phase difference recorded in the
+previous host migration. Rust ActionControl has opt-in press activation, enabled
+for SceneSelect. It requires enabled/visible/inside/trigger admission and consumes
+pending pointer state before activation. Late release/drag cannot activate again;
+ordinary actions retain release activation and mode changes cancel pending input.
+
+Rust SelectState owns real popup-close timestamps and applies a strict pointer
+re-open guard supplied by the native mouse constant (currently 100 ms). Keyboard
+and AX opens bypass the pointer guard, matching Combobox. Stale close callbacks
+cannot change the current guard or close a newer popup. Selected popup dismissal
+records the close even after selection marks its model collapsed; observing an
+absent popup does not advance the clock. Existing identity/prefix/token policies
+remain.
+
+Scheduling synchronously closes a popup when its anchor becomes hidden or fully
+clipped. Opening first reveals an offscreen anchor and guards against a runner
+removed synchronously by scheduling. The shared popup test now asserts the actual
+MenuController exists immediately after mouse press, before release, in both
+modes. It retains AX/Down opening, live expanded/collapsed metadata and unchanged
+value. Rust-specific branches close a real popup by clipping its anchor, return
+and dispatch late release without reopening, then reveal/open the offscreen
+anchor through AX. Native popup/focus/IME/window/AX and domain services remain.
+
+Focus passed **11 Metal / 7 Views**; affected regressions passed
+**61 Metal / 42 Views**, serial, retry zero. Checks passed **293 Rust**,
+**180 SDK font/direction cases plus raster**, **68 live and 68 clean-archive
+Python**, scoped GN/boundaries and final Ninja no-op. All 53 committed/live/staged
+prototype inputs and compiled/frozen-bootstrap/native-engine identities were
+checked. Compiled inventory remains **218 cases**; acceptance is targeted under
+the requested cadence.
+[Targeted pointer-policy report](benchmarks/rust-select-pointer-targeted-2026-10-26.json).
+
+The initial Rust probe (291 pass / 2 fail) is retained with source hashes. It
+caught using handled as activation admission; final code checks actual admission.
+The late-release fixture also stopped requiring None and accepts the established
+Cancel result while still rejecting activation. No GUI ran against that initial
+source. Five new Rust cases cover pointer modes/admission, strict time boundaries,
+backwards clock values, keyboard bypass, stale closes and popup observations.
+
+Affected logs retain **2 Metal / 2 Views invalid-mailbox diagnostics**;
+overlay counts are recorded separately. They remain unresolved and establish no
+CPU/GPU/presentation/input-latency/memory gain. The previous full checkpoint
+predates checked/selector/pointer changes. Remaining glyph/decorative Buttons,
+native per-control View identity, stable Rust nodes, Views popup/menu ownership,
+containers/placement/UI coordination, manual input/VoiceOver/RTL/scale/theme/GPU
+recovery, controlled performance and final release/license/notices remain open.
+Frozen UI-lab inputs exclude current-main network policy.
+
+## Previous targeted follow-up: selector hosts
 
 UI source `9908417dc1a3d55c76716bb660d8eff2ae9ddaee` moves SceneSelect from SceneGlyphButton/Button to the common
 plain View RustActionView. Preference, tools, profile and import selector paths
