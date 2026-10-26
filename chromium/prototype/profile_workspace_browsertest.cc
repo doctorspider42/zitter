@@ -168,6 +168,8 @@
 
 namespace zitter::prototype {
 namespace {
+void ActivateSidebarRow(views::View* view){ASSERT_TRUE(view);ui::AXActionData action;action.action=ax::mojom::Action::kDoDefault;EXPECT_TRUE(view->HandleAccessibleAction(action));}
+
 class RoutingTestBrowserClient : public ChromeContentBrowserClient {
  public:
   void CreateThrottlesForNavigation(content::NavigationThrottleRegistry& registry) override {
@@ -671,10 +673,11 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarMetadataUpdatesPreserve
   ASSERT_TRUE(split_left); ASSERT_TRUE(split_right);
   EXPECT_EQ(split_left.view(), shell->tab_button(0));
   EXPECT_EQ(split_right.view(), shell->tab_button(1));
+  shell->SetPinned(true);shell->ShowSidebar();shell->sidebar_widget()->LayoutRootViewIfNecessary();
   // The retained callbacks must still select the original pages.
-  views::test::ButtonTestApi(shell->tab_button(0)).NotifyDefaultMouseClick();
+  ActivateSidebarRow(shell->tab_button(0));
   EXPECT_NE(right, window_->contents("work"));
-  views::test::ButtonTestApi(shell->tab_button(1)).NotifyDefaultMouseClick();
+  ActivateSidebarRow(shell->tab_button(1));
   EXPECT_EQ(right, window_->contents("work"));
 }
 
@@ -3637,10 +3640,10 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitViewLifecycleAndIsolation
   EXPECT_EQ(left_row->y(), right_row->y());
   EXPECT_LT(left_row->x(), right_row->x());
   EXPECT_EQ(left_row->width(), right_row->width());
-  views::test::ButtonTestApi(left_row).NotifyDefaultMouseClick();
+  ActivateSidebarRow(left_row);
   EXPECT_EQ(left, window_->contents("work"));
   EXPECT_TRUE(shell->sidebar_widget()->IsVisible());
-  views::test::ButtonTestApi(right_row).NotifyDefaultMouseClick();
+  ActivateSidebarRow(right_row);
   EXPECT_EQ(right, window_->contents("work"));
   EXPECT_TRUE(shell->sidebar_widget()->IsVisible());
   base::RunLoop().RunUntilIdle();
@@ -3967,12 +3970,9 @@ bool ReplaceFolderName(WorkspaceShell* shell,std::u16string_view text) {
   auto* native=NativeFolderNameInput(shell->folder_dialog()->GetContentsView());
   if(!native)return false;native->SelectAll(false);native->InsertOrReplaceText(std::u16string(text));return native->GetText()==text;
 }
-views::Button* SidebarNamedButton(views::View* root, std::u16string_view name) {
-  if (auto* button = views::AsViewClass<views::Button>(root)) {
-    ui::AXNodeData data;
-    button->GetViewAccessibility().GetAccessibleNodeData(&data);
-    if (data.GetString16Attribute(ax::mojom::StringAttribute::kName) == name) return button;
-  }
+views::View* SidebarNamedButton(views::View* root,std::u16string_view name){
+  ui::AXNodeData data;root->GetViewAccessibility().GetAccessibleNodeData(&data);
+  if(data.role==ax::mojom::Role::kButton&&data.GetString16Attribute(ax::mojom::StringAttribute::kName)==name)return root;
   for (const auto& child : root->children()) if (auto* button = SidebarNamedButton(child.get(), name)) return button;
   return nullptr;
 }
@@ -3991,6 +3991,36 @@ class SceneModalBodyOracle final : public views::View {
 BEGIN_METADATA(SceneModalBodyOracle)
 END_METADATA
 }  // namespace
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarRowHostsOwnershipMenuKeysAXAndTitleUpdate) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
+  const auto url=embedded_test_server()->GetURL("/storage_probe.html?row-host");ASSERT_TRUE(window_->NavigateFromBar(url,false));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));ASSERT_TRUE(window_->NavigateFromBar(url,true));auto* second=window_->contents("work");ASSERT_TRUE(content::WaitForLoadStop(second));
+  ASSERT_TRUE(window_->CreatePinnedFolder("work",{},"Host folder"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));window_->SelectTab(0);shell->CloseOverlays(true);shell->SetPinned(true);shell->ShowSidebar();shell->sidebar_widget()->LayoutRootViewIfNecessary();const bool rust=shell->workspace_input()->rust_editor();
+  auto* folder=SidebarNamedButton(shell->sidebar_view(),u"▾ Host folder");auto* fresh=SidebarNamedButton(shell->sidebar_view(),u"Nowa karta");ASSERT_TRUE(folder);ASSERT_TRUE(fresh);
+  for(auto* view:{shell->tab_button(0),shell->tab_button(1),folder,fresh}){ASSERT_TRUE(view);EXPECT_EQ(!rust,views::AsViewClass<views::Button>(view)!=nullptr);ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kButton,ax.role);EXPECT_FALSE(ax.GetString16Attribute(ax::mojom::StringAttribute::kName).empty());if(rust)for(const auto& child:view->children())EXPECT_FALSE(views::AsViewClass<views::Button>(child.get()));}
+#if BUILDFLAG(IS_MAC)
+  bool inspected=false;EXPECT_TRUE(RunWithNativeMenuInspectionForTesting(base::BindOnce([](views::View* row){ui::AXActionData action;action.action=ax::mojom::Action::kShowContextMenu;EXPECT_TRUE(row->HandleAccessibleAction(action));},base::Unretained(shell->tab_button(1))),base::BindRepeating([](WorkspaceShell* shell,bool* inspected){EXPECT_TRUE(shell->workspace_context_menu_running_for_testing());EXPECT_TRUE(shell->tab_context_menu_for_testing());*inspected=true;},base::Unretained(shell),&inspected)));EXPECT_TRUE(inspected);EXPECT_EQ(2u,window_->tab_count("work"));
+#endif
+  ui::KeyEvent space(ui::EventType::kKeyPressed,ui::VKEY_SPACE,0);EXPECT_TRUE(shell->tab_button(1)->OnKeyPressed(space));EXPECT_EQ(second,window_->contents("work"));ActivateSidebarRow(shell->tab_button(0));EXPECT_NE(second,window_->contents("work"));
+  auto* target=shell->tab_button(1);const auto point=target->GetLocalBounds().CenterPoint();ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ASSERT_TRUE(target->OnMousePressed(press));views::ViewTracker tracked(target);
+  ASSERT_TRUE(content::ExecJs(second,"document.title='Live row 日本語';"));ASSERT_TRUE(base::test::RunUntil([&]{return tracked.view()&&target->GetTooltipText()==u"Live row 日本語";}));EXPECT_EQ(target,shell->tab_button(1));target->OnMouseReleased(release);EXPECT_EQ(second,window_->contents("work"));
+  ActivateSidebarRow(folder);EXPECT_TRUE(SidebarNamedButton(shell->sidebar_view(),u"▸ Host folder"));ActivateSidebarRow(folder);EXPECT_TRUE(SidebarNamedButton(shell->sidebar_view(),u"▾ Host folder"));ActivateSidebarRow(fresh);EXPECT_TRUE(shell->address_visible());shell->CloseOverlays(true);
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarRowHostsClipDisableHideAndReplacementCancelPendingInput) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));if(!shell->workspace_input()->rust_editor())return;shell->SetWorkspaceAnimations(false);
+  const auto url=embedded_test_server()->GetURL("/storage_probe.html?row-cancel");for(int i=0;i<30;++i)ASSERT_TRUE(window_->NavigateFromBar(url,true));window_->SelectTab(0);auto* selected=window_->contents("work");shell->CloseOverlays(true);shell->SetPinned(true);shell->ShowSidebar();shell->sidebar_widget()->LayoutRootViewIfNecessary();auto* viewport=shell->tab_viewport();ASSERT_GT(viewport->maximum(),0);viewport->ScrollTo(0);
+  auto press=[](views::View* view){const auto point=view->GetLocalBounds().CenterPoint();ui::MouseEvent event(ui::EventType::kMousePressed,point,point,base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);return view->OnMousePressed(event);};
+  auto release=[](views::View* view){const auto point=view->GetLocalBounds().CenterPoint();ui::MouseEvent event(ui::EventType::kMouseReleased,point,point,base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);view->OnMouseReleased(event);};
+  auto* row=shell->tab_button(1);ASSERT_TRUE(press(row));viewport->ScrollTo(viewport->maximum());EXPECT_TRUE(row->GetVisibleBounds().IsEmpty());viewport->ScrollTo(0);release(row);EXPECT_EQ(selected,window_->contents("work"));
+  auto* close=SidebarNamedButton(shell->tab_button(0),u"Zamknij kartę");ASSERT_TRUE(close);ASSERT_TRUE(close->GetVisible());const auto count=window_->tab_count("work");ASSERT_TRUE(press(close));viewport->ScrollTo(viewport->maximum());viewport->ScrollTo(0);release(close);EXPECT_EQ(count,window_->tab_count("work"));
+  ASSERT_TRUE(press(row));row->SetEnabled(false);row->SetEnabled(true);release(row);EXPECT_EQ(selected,window_->contents("work"));
+  ASSERT_TRUE(press(row));shell->sidebar_widget()->Hide();ui::KeyEvent space(ui::EventType::kKeyPressed,ui::VKEY_SPACE,0);EXPECT_FALSE(row->OnKeyPressed(space));shell->ShowSidebar();release(row);EXPECT_EQ(selected,window_->contents("work"));
+  // A native late release can reach the replacement node after a tree rebuild;
+  // it must not inherit the captured row's press or activate the reused index.
+  ASSERT_TRUE(press(row));views::ViewTracker old(row);window_->CloseTab(0);EXPECT_FALSE(old.view());auto* kept=window_->contents("work");shell->sidebar_widget()->LayoutRootViewIfNecessary();release(shell->tab_button(1));EXPECT_EQ(kept,window_->contents("work"));
+  base::RunLoop().RunUntilIdle();const auto frames=shell->metal_sidebar_frame_count();base::RunLoop().RunUntilIdle();EXPECT_EQ(frames,shell->metal_sidebar_frame_count());
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SceneModalActionsNativeMetricsAndCocoaDefaults) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);ui_controls::EnableUIControls();
   const bool rust=shell->workspace_input()->rust_editor();
@@ -6537,14 +6567,14 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarColumnLayoutTracksColla
       EXPECT_TRUE(row->parent()->GetLocalBounds().Contains(row->bounds()));
       if (index) EXPECT_EQ(shell->tab_button(index - 1)->bounds().bottom() + 2, row->y());
     }
-    views::test::ButtonTestApi(folder).NotifyDefaultMouseClick();
+    ActivateSidebarRow(folder);
     shell->sidebar_widget()->LayoutRootViewIfNecessary();
     EXPECT_FALSE(child->IsDrawn());
     // Views baseline: a 34px child, its empty nested group's 2px spacing,
     // and the parent column's 2px spacing disappear on collapse.
     EXPECT_EQ(expanded_height - 38, shell->tab_list_view()->height());
     EXPECT_EQ(expanded_first - 38, shell->tab_button(0)->GetBoundsInScreen().y());
-    views::test::ButtonTestApi(folder).NotifyDefaultMouseClick();
+    ActivateSidebarRow(folder);
     shell->sidebar_widget()->LayoutRootViewIfNecessary();
     EXPECT_TRUE(child->IsDrawn());
     EXPECT_EQ(expanded_height, shell->tab_list_view()->height());
@@ -6572,8 +6602,8 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarTreeStateSurvivesRebuil
   auto* root = SidebarNamedButton(shell->sidebar_view(), u"▾ Tree root");
   auto* child = SidebarNamedButton(shell->sidebar_view(), u"▾ Tree child");
   ASSERT_TRUE(root); ASSERT_TRUE(child);
-  views::test::ButtonTestApi(child).NotifyDefaultMouseClick();
-  views::test::ButtonTestApi(root).NotifyDefaultMouseClick();
+  ActivateSidebarRow(child);
+  ActivateSidebarRow(root);
   ASSERT_TRUE(window_->RenamePinnedFolder("work", child_id, "Tree renamed"));
   ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
   // Reconstruction preserves both nested collapse states by item ID, not by
@@ -6592,13 +6622,13 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarTreeStateSurvivesRebuil
   shell->CloseOverlays(true); shell->ShowSidebar();
   root = SidebarNamedButton(shell->sidebar_view(), u"▸ Tree root");
   ASSERT_TRUE(root);
-  views::test::ButtonTestApi(root).NotifyDefaultMouseClick();
+  ActivateSidebarRow(root);
   shell->sidebar_widget()->LayoutRootViewIfNecessary();
   EXPECT_TRUE(child->IsDrawn()); EXPECT_FALSE(grandchild->IsDrawn());
-  views::test::ButtonTestApi(child).NotifyDefaultMouseClick();
+  ActivateSidebarRow(child);
   shell->sidebar_widget()->LayoutRootViewIfNecessary();
   EXPECT_TRUE(grandchild->IsDrawn());
-  views::test::ButtonTestApi(root).NotifyDefaultMouseClick();
+  ActivateSidebarRow(root);
   // Adding a child through the existing dialog explicitly expands its parent
   // in the Rust state before the application reconstructs the native adapter.
   shell->RequestNewFolder("work", root_id);
@@ -6682,10 +6712,10 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarSplitAndDeepFolderGeome
   EXPECT_FALSE(pin->IsDrawn());
   auto* folder = SidebarNamedButton(shell->sidebar_view(), u"▾ Dokumenty");
   ASSERT_TRUE(folder);
-  views::test::ButtonTestApi(folder).NotifyDefaultMouseClick();
+  ActivateSidebarRow(folder);
   shell->sidebar_widget()->LayoutRootViewIfNecessary();
   EXPECT_FALSE(pair->IsDrawn());
-  views::test::ButtonTestApi(folder).NotifyDefaultMouseClick();
+  ActivateSidebarRow(folder);
   shell->sidebar_widget()->LayoutRootViewIfNecessary();
   EXPECT_TRUE(pair->IsDrawn());
   for (int width : {200, 201, 247, 480}) check_pair(width);
@@ -6729,20 +6759,20 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarPinnedPairFollowsPaneOr
   EXPECT_EQ(a_x, shell->tab_button(1)->parent()->GetBoundsInScreen().x());
   EXPECT_LT(shell->tab_button(1)->x(), shell->tab_button(2)->x());
   auto* docs = SidebarNamedButton(shell->sidebar_view(), u"▾ Dokumenty");
-  ASSERT_TRUE(docs); views::test::ButtonTestApi(docs).NotifyDefaultMouseClick();
+  ASSERT_TRUE(docs); ActivateSidebarRow(docs);
   window_->SwapSplit();
   shell->sidebar_widget()->LayoutRootViewIfNecessary();
   EXPECT_FALSE(shell->tab_button(2)->IsDrawn());
-  views::test::ButtonTestApi(docs).NotifyDefaultMouseClick();
+  ActivateSidebarRow(docs);
   shell->sidebar_widget()->LayoutRootViewIfNecessary();
   EXPECT_TRUE(shell->tab_button(2)->IsDrawn());
   auto* nested = SidebarNamedButton(shell->sidebar_view(), u"▾ Projekt");
-  ASSERT_TRUE(nested); views::test::ButtonTestApi(nested).NotifyDefaultMouseClick();
+  ASSERT_TRUE(nested); ActivateSidebarRow(nested);
   ASSERT_TRUE(window_->Select("arc-space-space-b")); ASSERT_TRUE(window_->Select("arc-space-space-a"));
   shell->CloseOverlays(true); shell->ShowSidebar(); shell->sidebar_widget()->LayoutRootViewIfNecessary();
   EXPECT_FALSE(shell->tab_button(2)->IsDrawn());
   EXPECT_TRUE(window_->split()); EXPECT_EQ(page_b, window_->pane_contents(false));
-  views::test::ButtonTestApi(nested).NotifyDefaultMouseClick();
+  ActivateSidebarRow(nested);
   shell->sidebar_widget()->LayoutRootViewIfNecessary();
   EXPECT_TRUE(shell->tab_button(2)->IsDrawn());
   EXPECT_EQ(b_x, shell->tab_button(2)->parent()->GetBoundsInScreen().x());
@@ -7035,14 +7065,14 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, LiveTabsKeyboardFoldersAnd
   auto* folder = SidebarNamedButton(shell->sidebar_view(), u"▾ Projekty 🦀");
   ASSERT_TRUE(folder);
   EXPECT_EQ(shell, folder->context_menu_controller());
-  views::test::ButtonTestApi(folder).NotifyDefaultMouseClick();
+  ActivateSidebarRow(folder);
   EXPECT_EQ(u"▸ Projekty 🦀", folder->GetTooltipText());
-  views::test::ButtonTestApi(folder).NotifyDefaultMouseClick();
+  ActivateSidebarRow(folder);
   window_->SelectTab(0);
   ASSERT_TRUE(window_->SplitTab(1));
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible(); }));
   EXPECT_EQ(shell->tab_button(0)->parent(), shell->tab_button(1)->parent());
-  views::test::ButtonTestApi(shell->tab_button(1)).NotifyDefaultMouseClick();
+  ActivateSidebarRow(shell->tab_button(1));
   EXPECT_EQ(second, window_->contents("work"));
   EXPECT_TRUE(window_->split());
   shell->ResizeSidebar(90, true);

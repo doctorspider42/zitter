@@ -408,7 +408,7 @@ class WorkspaceShell final : public ui::EventHandler,
   bool appearance_ready() const { return appearance_ready_; }
   bool appearance_saved() const { return pending_writes_ == 0; }
   views::Widget* address_widget() const { return address_widget_.get(); }
-  views::Button* tab_button(size_t index) const;
+  views::View* tab_button(size_t index) const;
   views::Widget* sidebar_widget() const { return sidebar_widget_.get(); }
   EditorControl* workspace_input() const { return workspace_input_; }
   views::View* workspace_button(std::string_view id) const;
@@ -476,6 +476,8 @@ class WorkspaceShell final : public ui::EventHandler,
   std::array<raw_ptr<views::View>,4> palette_chrome_views_={};
   std::unique_ptr<SidebarMetal> metal_palette_;
   bool metal_palette_pending_=false;
+  void WatchSidebarRowInput(views::View* row,base::RepeatingClosure sync);
+  std::map<views::View*,base::RepeatingClosure> sidebar_row_input_;
   void ScheduleMetalSidebar();
   void UpdateMetalSidebar();
   std::array<std::unique_ptr<SidebarMetal>,3> metal_split_;
@@ -573,8 +575,8 @@ class WorkspaceShell final : public ui::EventHandler,
     std::vector<ShellTab> tabs;
     SidebarTabPlan tab_plan;
     std::array<std::optional<size_t>, 2> split_tabs;
-    std::map<std::string, raw_ptr<views::Button>> pin_buttons;
-    std::map<size_t, raw_ptr<views::Button>> tab_buttons;
+    std::map<std::string, raw_ptr<views::View>> pin_buttons;
+    std::map<size_t, raw_ptr<views::View>> tab_buttons;
     raw_ptr<views::View> pin_pair = nullptr;  // A split placed among the pins.
     std::string active_pin;
   };
@@ -713,7 +715,7 @@ class WorkspaceShell final : public ui::EventHandler,
   GURL context_url_;
   std::string link_source_workspace_;
   std::vector<Workspace> route_workspaces_;
-  raw_ptr<views::Button> new_tab_button_ = nullptr;
+  raw_ptr<views::View> new_tab_button_ = nullptr;
   std::unique_ptr<views::DialogDelegate> rust_folder_dialog_delegate_;
   std::unique_ptr<views::Widget> rust_folder_dialog_;
   base::WeakPtr<views::Widget> folder_dialog_;

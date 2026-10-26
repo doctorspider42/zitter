@@ -421,6 +421,8 @@ mod ffi {
         fn action_cancel(self: &mut ActionControl) -> bool;
         fn action_snapshot(self: &ActionControl) -> ActionSnapshot;
         fn action_pointer(self: &mut ActionControl, phase: PointerPhase, x: i32, y: i32, inside: bool, trigger: bool, visible: bool) -> RowInputResult;
+        fn action_pending(self: &ActionControl) -> bool;
+        fn action_row_pointer(self: &mut ActionControl, phase: PointerPhase, x: i32, y: i32, inside: bool, trigger: bool, visible: bool, drop: bool) -> RowInputResult;
         fn action_key(self: &mut ActionControl, pressed: bool, key: u32, mac: bool, visible: bool) -> RowInputResult;
         fn action_gesture(self: &mut ActionControl, kind: u32, visible: bool) -> RowInputResult;
         type RowPointer;
@@ -1694,8 +1696,12 @@ impl ActionControl {
     fn action_on(&mut self,on:bool)->bool{let changed=self.on!=on;self.on=on;changed}
     fn action_snapshot(&self)->ffi::ActionSnapshot{ffi::ActionSnapshot{enabled:self.enabled,focused:self.focused,on:self.on,visual:self.visual}}
     fn reject(&mut self)->ffi::RowInputResult{self.action_cancel();ffi::RowInputResult{visual:self.visual,action:ffi::RowAction::None,handled:false}}
+    fn action_pending(&self)->bool{self.pointer.origin.is_some()||self.pointer.key_armed}
     fn action_pointer(&mut self,phase:ffi::PointerPhase,x:i32,y:i32,inside:bool,trigger:bool,visible:bool)->ffi::RowInputResult{
-        if !visible{return self.reject();}let r=self.pointer.pointer_event(phase,x,y,inside,self.enabled,trigger,false);self.visual=r.visual;r
+        self.action_row_pointer(phase,x,y,inside,trigger,visible,false)
+    }
+    fn action_row_pointer(&mut self,phase:ffi::PointerPhase,x:i32,y:i32,inside:bool,trigger:bool,visible:bool,drop:bool)->ffi::RowInputResult{
+        if !visible{return self.reject();}let r=self.pointer.pointer_event(phase,x,y,inside,self.enabled,trigger,drop);self.visual=r.visual;r
     }
     fn action_key(&mut self,pressed:bool,key:u32,mac:bool,visible:bool)->ffi::RowInputResult{
         if !visible{return self.reject();}let r=self.pointer.key_event(pressed,key_policy(key,mac),self.enabled);self.visual=r.visual;r
@@ -3469,6 +3475,18 @@ mod tests {
         assert_eq!(folder_indent(i32::MIN), 0);
         for depth in 0..=8 {assert_eq!(folder_indent(depth), depth * 12);}
         assert_eq!(folder_indent(9), 96); assert_eq!(folder_indent(i32::MAX), 96);
+    }
+    #[test] fn action_row_drag_retains_drop_without_click_and_pending_clears() {
+        use ffi::{PointerPhase as P,RowAction as A};let mut row=new_action_control();
+        assert!(!row.action_pending());row.action_row_pointer(P::Press,1,1,true,true,true,true);assert!(row.action_pending());
+        row.action_row_pointer(P::Drag,30,1,false,true,true,true);assert!(row.action_row_pointer(P::Release,30,1,false,true,true,true).action==A::Drop);assert!(!row.action_pending());
+        row.action_row_pointer(P::Press,1,1,true,true,true,false);row.action_row_pointer(P::Drag,30,1,true,true,true,false);assert!(row.action_row_pointer(P::Release,30,1,true,true,true,false).action==A::Activate);
+    }
+    #[test] fn action_row_pending_input_is_retired_by_clip_disable_and_capture_loss() {
+        use ffi::{PointerPhase as P,RowAction as A};let mut row=new_action_control();
+        for cancel in 0..3{row.action_row_pointer(P::Press,1,1,true,true,true,true);assert!(row.action_pending());match cancel{0=>{row.action_row_pointer(P::Drag,30,1,false,true,false,true);},1=>{row.action_enabled(false);row.action_enabled(true);},_=>{row.action_cancel();}}
+            assert!(!row.action_pending());assert!(row.action_row_pointer(P::Release,1,1,true,true,true,true).action!=A::Activate);assert!(!row.action_pending());}
+        row.action_gesture(0,true);assert!(row.action_pending());row.action_gesture(2,true);assert!(!row.action_pending());
     }
     #[test] fn pointer_activation_requires_a_valid_press_and_cancels_outside() {
         use ffi::{PointerPhase as P, RowAction as A, RowVisual as V};
