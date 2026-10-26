@@ -1,0 +1,659 @@
+{
+  "date": "2026-10-26",
+  "tested_ui_source_commit": "f59b05523e18740e7063404089995321bafae867",
+  "status": "Targeted split-pane action migration; full matrices reserved for larger blocks.",
+  "source_inputs": {
+    "source_commit": "f59b05523e18740e7063404089995321bafae867",
+    "count": 53,
+    "source_sha256": {
+      "chromium/prototype/arc_importer.cc": "e3c6aa5d0876a9d1c29305136d225eba78a8d8b95c3267cabf5d8a96d5d9ecf4",
+      "chromium/prototype/arc_importer.h": "b5cb4ccc4871c9ad7af3e578763bc3d8347fc9adc394c05624f1653b342ea2fc",
+      "chromium/prototype/browser_data.h": "243b1d34847d4358041190ed42ee0c0600a21257003b54c056c59f4ef764a747",
+      "chromium/prototype/browser_import_data.cc": "c6d7d1750ab9be441a264691382928417cdea7e0959b2b86cb2ce5bd4fbbb37c",
+      "chromium/prototype/browser_import_data.h": "35039b3013e0754f88be9f021428160eacbbe65de8f61eef2983a65ca0291b7b",
+      "chromium/prototype/browser_import_key_mac.mm": "65d0b914b43a7268a54d309f021a5a6c7ead871dbe68c0fb2581005456af1bd1",
+      "chromium/prototype/browser_preferences.cc": "34fafbb418688d581d581599e57d68a3d572c6fbfa311f1a8525c67340a77c48",
+      "chromium/prototype/browser_preferences.h": "63a931a276df3c05f49e098c6977d99b14112ad20f4df4dc9ab8a513c96f6f68",
+      "chromium/prototype/browser_tools.cc": "62964f8f594011af7a60983890a33027ebacddd7faa3642e77bd59e4a635a62e",
+      "chromium/prototype/browser_tools.h": "ef83716f8bb01fe5b3b770f9136288a39aefedfe4b299e305b1dd1f740b1ad6a",
+      "chromium/prototype/download_panel.cc": "45fc11c2d04990baa9c2c5e3d2b7bac4d9854867145acf12a1dc958b21186c74",
+      "chromium/prototype/download_panel.h": "1db13545467abf4729b4c340323997bed4a0af4bb232670755ff20e0d37eaa50",
+      "chromium/prototype/editor_control.h": "6a7d417696dadff55daaa05581be0cc71a825cfbbc934921fcd3616d872275f3",
+      "chromium/prototype/editor_text_layout.h": "35a72c6965037f684ee5f88338f71aa07b41842de4e7417ab6af1df7300c26cb",
+      "chromium/prototype/editor_text_layout_mac.inc": "13f2fddef229486fb25f42fb275cc0d7256bebe6d9599356822ff4b11db81984",
+      "chromium/prototype/editor_text_layout_test.mm": "a0bc7f9d485717b6a303b31952ad35ae8d3b3b021b016cb2b0ee8fc890726844",
+      "chromium/prototype/link_navigation.cc": "464f61fdd785d5cc3fc8d5551d8dce767f237a7338080d87e101a6a380855f13",
+      "chromium/prototype/link_navigation.h": "77c3df9a92f9038e7794c8c482f916114c84008bb3ddc02dd31a38ba073e9ff8",
+      "chromium/prototype/page_dialogs.cc": "a07e8aa92fc10fda84cc70fbd52a63a13f91716a8d9f929ef125d2cc6333af68",
+      "chromium/prototype/page_dialogs.h": "b778741cb8e1d6c53456b5e864808c2aa22ef5591417d77b1de5d854ddccf10e",
+      "chromium/prototype/page_file_access.cc": "26d797ddc42a17806f949540e628614779836b49c2d4f9d5ea199ff9a94f0a8c",
+      "chromium/prototype/page_file_access.h": "313f54266ef5051c52b654632273a1b7f84c8c09e53930bbecdee3b747d27888",
+      "chromium/prototype/page_file_access_browsertest.cc": "008833c70f884d045277409a5371d006ca1ddd851f0047584b3d0d0fb2b04f81",
+      "chromium/prototype/page_media_access.cc": "49a3f4a21f30a31f6559bf48b82837d72c87ab8148ea870cdd2f113a4b42473d",
+      "chromium/prototype/page_media_access.h": "224414fce67a836f34acffca609593e456ce00cc1d7d02ae003eb87a5484dacc",
+      "chromium/prototype/page_media_access_browsertest.cc": "7eedc13b1453308cb9db00c2445f896c031a0afb2a1dd18b8b0f4d85f8709493",
+      "chromium/prototype/page_services.cc": "701def23690ef2c6e6843b8c4bd16f76d09a066bdade34d9dfc45010283da9c2",
+      "chromium/prototype/page_services.h": "b031e317d2e96c4245ff019e5185c6f103f533b2f9efd3ea98132ddaef333d6d",
+      "chromium/prototype/profile_workspace_browsertest.cc": "0ebf006da4f2cddd4f6c00d9fdec18bd81b36707b6f2a4c9fc37d6ee78b6ca32",
+      "chromium/prototype/scene_editor.cc": "1750eabbc946da28efc519939e5de6db0c59813212feaae47716fd705bfb1c75",
+      "chromium/prototype/sidebar.metal": "844a08c8a905931a313126a2d3c96f22e25228da1fc149ec6c12e88fc9755cc5",
+      "chromium/prototype/sidebar_editor.rs": "963e52ae3fb70efd48e1d15ca059095ed02812fbaea3ddd1266d39188134c6de",
+      "chromium/prototype/sidebar_layout.cc": "23ba7bf07cc9837218c9a86877debc33584daa5178f311f288d7ae2c8c7ff757",
+      "chromium/prototype/sidebar_layout.h": "4493febfebb642634cbcba3e96c5acdd8f2cd872afb88ddd2a4de9828df553be",
+      "chromium/prototype/sidebar_metal.h": "9dd5c88c9caba13b675eef6d604d8ded8b41dd70facf8b51261d6c6720481e03",
+      "chromium/prototype/sidebar_metal.mm": "d10bcc4e2adc97bac0fcb897558a7992b0cbb06c6a738bdf3087738f74377a5d",
+      "chromium/prototype/sidebar_scene.rs": "499b0b02b2939d796521558f806e20c255ddddc44a89527fadffc1e17c9e2320",
+      "chromium/prototype/sidebar_tree.cc": "d72174ac4aac1f29b780a057b1b2773d5958fbd64904ee05dca7ce8d4109229b",
+      "chromium/prototype/sidebar_tree.h": "d59f6e86d9d44dce943e1a82591d6fda73b595fa6678a062ceed158342948e77",
+      "chromium/prototype/workspace_browser_settings.cc": "eef5a07c3857ddbe94f543293c367be7b3ef5fede5d6a1249ce8cd12ba22cf4b",
+      "chromium/prototype/workspace_commands.cc": "8b2b5f8406a9f72a971d68235ff1bf6b940bdf6968aa36bb1005380293554163",
+      "chromium/prototype/workspace_frame_mac.h": "dd234cbb65d673cd58ea4ea3a37d34111890b66b7a6f4b255304c97db6d61021",
+      "chromium/prototype/workspace_frame_mac.mm": "2827f43e3c08069d7de3002a192a5f7c6f912a9745153925326bbeca86db884e",
+      "chromium/prototype/workspace_keyboard_mac.h": "957a086998c824d72afc3a2fa12406771eb7f7d1439a3c1291cd404e8f6b3d25",
+      "chromium/prototype/workspace_keyboard_mac.mm": "54019c3030fd8029752c0bb55c4f5f0109bf30a34649bb78cc63c11df7193eed",
+      "chromium/prototype/workspace_lifecycle.cc": "e4d73972762ce21156a3a022de73f7edb5e9b520d15cfaf517df289128416c1b",
+      "chromium/prototype/workspace_preconnect.cc": "4b049f91fa11fb4ae523051a37a573c505ef0f1197935afaa6cdd22fa38e664c",
+      "chromium/prototype/workspace_preconnect_browsertest.cc": "5243272c30d25c9c39a5f413259227d4ce083294207326415ddf35da2a0a1e09",
+      "chromium/prototype/workspace_shell.cc": "9c5e6a9e33eb989f036b581b59e246e14e8133ad4405529e1752a24db586528f",
+      "chromium/prototype/workspace_shell.h": "cc126d0a316c5e4e0345aa70813c266a8370eff936b9cff64dc5133f4647fb04",
+      "chromium/prototype/workspace_time_machine.cc": "4ae4f979d80cd4ece460be3cea499257d18b95243ce6f0dad0f8d2fbdad15bae",
+      "chromium/prototype/workspace_window.cc": "9a4b7d30c8d0911c477a1d03ce965122b600e2b6a98f98486159bc5e137082f1",
+      "chromium/prototype/workspace_window.h": "f338147929b886ca719807513f463494b5b8601d55c9c664b3c7b8ced2f23189"
+    }
+  },
+  "compiled_browser_test_uuid": "4C4C441F-5555-3144-A146-155A37DCAF77",
+  "compiled_app_uuid": "4C4C44FA-5555-3144-A115-6B297DE68EE1",
+  "compiled_framework_uuid": "4C4C44A2-5555-3144-A110-FFEEFE0D5D89",
+  "build_scope": {
+    "frozen_build_tools_commit": "d23f232",
+    "snapshot": {
+      "frozen_base": "a3afc206f742f0a59da6e65d609ddf1df3c7326d",
+      "gn_delta": "No target/dependency change. Rust bridge adds clear_selection for existing SelectState. Explicit native adapters, preference selector allocation/refresh and browser tests changed. Concurrent root network-policy work remains excluded.",
+      "method": "Frozen UI overlay base a3afc206f742f0a59da6e65d609ddf1df3c7326d plus 16 explicit live UI overrides (including sidebar_metal.h/mm), with committed own installer/stager hooks; concurrent network-policy changes excluded. Twenty-one prototype source hashes are matched to committed, live and staged inputs.",
+      "staged_build_gn_sha256": "711f7d01a8d55c4046a9dc297a30f7724d414d7682d8c8b6759397bac28cfdd7",
+      "staged_main_cc_sha256": "61dea81d0e263778c386eb6435429a8d90c4daa51f1dd787563facf7ddffa5d1",
+      "global_component_updater_sha256": "df5664ec70774c448137a2c4c7fa0503de084098932552d9d278f63e19d910ac",
+      "global_component_updater_matches_previous_checkpoint": true,
+      "build_tools_sha256": {
+        "tools/editor_service_patch.py": "73a4e43cfd4edb0dd919c7bec97392f1ceabe063ebc500aa289b1c030f90f9b8",
+        "tools/install_chromium_overlay.py": "a32bc13189118b9d4bbb56a4c8023b19ce94dfeefeb8fd42dc31a7d36de7b5d0",
+        "tools/stage_performance_candidate.py": "2e8482b94a72ac37c50aead85de00253afba581c22daabfce2053f10b7c550ed"
+      }
+    },
+    "native_service_patch": {
+      "chromium_revision": "1a732fcc23b20dd0bcf38f35d72c1fe1ec799d35",
+      "files": {
+        "ui/views/controls/textfield/text_edit_kill_buffer.h": {
+          "sha256": "0bacacfdd8480cb991ab9b041f15a6aee8775e358f901e2774f04c0a9e6e37c0",
+          "pinned_original_sha256": null
+        },
+        "ui/views/controls/textfield/textfield_model.cc": {
+          "sha256": "7884c624f8d5a075891d5b059b16ff686956ca8e9158be0c23444744c47716fd",
+          "pinned_original_sha256": "3f7df6d86aeabe0f2b43e9d3312eb0f07838c55f69cd3a0a05af9a02755eb9a7"
+        },
+        "ui/views/BUILD.gn": {
+          "sha256": "8fc448fd6e0513f8bfe25d479531d1739fe21620d1ec4ec3253ba7dc80a8dd91",
+          "pinned_original_sha256": "fee5303f268675f877649144c07d4dda788a21068bc620f16e73efae5d674c70"
+        }
+      },
+      "only_expected_upstream_edits": true,
+      "model_instance_created_by_service": false,
+      "license": "Generated Chromium header and source hook retain the Chromium BSD-style license; project adapter/tool/model changes use Apache-2.0."
+    },
+    "limit": "Current-main network policy excluded from this frozen UI-lab binary and acceptance."
+  },
+  "checks": {
+    "rust": {
+      "path": "/Users/papaj/Projects/zitter/build/split-action-rust.log",
+      "sha256": "6d5c939d988e755e76dbaf98d14c8a399ef3d795f9a7a95c66f4da9ca9210586"
+    },
+    "gn": {
+      "path": "/Users/papaj/Projects/zitter/build/split-action-gn.log",
+      "sha256": "758efd67ba4374faadfea3be2227cf65809c7c37f9e1e304dda137f152db50ed"
+    },
+    "boundaries": {
+      "path": "/Users/papaj/Projects/zitter/build/split-action-boundaries.log",
+      "sha256": "2734f2795db1562441bedd4b056c447b4e3c3cc848e6ff6bf5014befe98c3984"
+    },
+    "noop": {
+      "path": "/Users/papaj/Projects/zitter/build/split-action-noop.log",
+      "sha256": "0e45b11aa4c9cc3cf65105ab14996d4c61b50ced60e5c9281d929e306cd70c17"
+    },
+    "coretext_inherited": {
+      "report": "rust-footer-action-checkpoint-2026-10-26.json",
+      "source_sha256": {
+        "chromium/prototype/editor_text_layout.h": "35a72c6965037f684ee5f88338f71aa07b41842de4e7417ab6af1df7300c26cb",
+        "chromium/prototype/editor_text_layout_mac.inc": "13f2fddef229486fb25f42fb275cc0d7256bebe6d9599356822ff4b11db81984",
+        "chromium/prototype/editor_text_layout_test.mm": "a0bc7f9d485717b6a303b31952ad35ae8d3b3b021b016cb2b0ee8fc890726844"
+      },
+      "scope": "Unmodified text harness/implementation; 180 SDK font/direction cases plus raster are inherited, not rerun."
+    },
+    "python": {
+      "passed": 68,
+      "path": "/Users/papaj/Projects/zitter/build/split-action-python.log",
+      "sha256": "f30de0db6ab33ffb7b1d5e5b4d024c9db6d3f77278991b472ecb5ed6f6f56b81"
+    },
+    "committed-python": {
+      "passed": 68,
+      "path": "/Users/papaj/Projects/zitter/build/split-action-committed-python.log",
+      "sha256": "f90cad1be5326ef376c6200d855d9e76677d7872d61f19c57bdb51a61777827d"
+    },
+    "build": {
+      "path": "/Users/papaj/Projects/zitter/build/split-action-build.log",
+      "sha256": "85452a72e66514109a395bfe27b18acdf6dac4ef58fafe748707c4ba4ebcb29c"
+    },
+    "stage": {
+      "path": "/Users/papaj/Projects/zitter/build/split-action-stage.log",
+      "sha256": "dac61f54be7e0e683d8ad2b1b95218e1bea42f0e1eedc12062bc62d6dbc09e8b"
+    }
+  },
+  "gates": {
+    "focus": {
+      "input": {
+        "source_sha256": {
+          "chromium/prototype/arc_importer.cc": "e3c6aa5d0876a9d1c29305136d225eba78a8d8b95c3267cabf5d8a96d5d9ecf4",
+          "chromium/prototype/arc_importer.h": "b5cb4ccc4871c9ad7af3e578763bc3d8347fc9adc394c05624f1653b342ea2fc",
+          "chromium/prototype/browser_data.h": "243b1d34847d4358041190ed42ee0c0600a21257003b54c056c59f4ef764a747",
+          "chromium/prototype/browser_import_data.cc": "c6d7d1750ab9be441a264691382928417cdea7e0959b2b86cb2ce5bd4fbbb37c",
+          "chromium/prototype/browser_import_data.h": "35039b3013e0754f88be9f021428160eacbbe65de8f61eef2983a65ca0291b7b",
+          "chromium/prototype/browser_import_key_mac.mm": "65d0b914b43a7268a54d309f021a5a6c7ead871dbe68c0fb2581005456af1bd1",
+          "chromium/prototype/browser_preferences.cc": "34fafbb418688d581d581599e57d68a3d572c6fbfa311f1a8525c67340a77c48",
+          "chromium/prototype/browser_preferences.h": "63a931a276df3c05f49e098c6977d99b14112ad20f4df4dc9ab8a513c96f6f68",
+          "chromium/prototype/browser_tools.cc": "62964f8f594011af7a60983890a33027ebacddd7faa3642e77bd59e4a635a62e",
+          "chromium/prototype/browser_tools.h": "ef83716f8bb01fe5b3b770f9136288a39aefedfe4b299e305b1dd1f740b1ad6a",
+          "chromium/prototype/download_panel.cc": "45fc11c2d04990baa9c2c5e3d2b7bac4d9854867145acf12a1dc958b21186c74",
+          "chromium/prototype/download_panel.h": "1db13545467abf4729b4c340323997bed4a0af4bb232670755ff20e0d37eaa50",
+          "chromium/prototype/editor_control.h": "6a7d417696dadff55daaa05581be0cc71a825cfbbc934921fcd3616d872275f3",
+          "chromium/prototype/editor_text_layout.h": "35a72c6965037f684ee5f88338f71aa07b41842de4e7417ab6af1df7300c26cb",
+          "chromium/prototype/editor_text_layout_mac.inc": "13f2fddef229486fb25f42fb275cc0d7256bebe6d9599356822ff4b11db81984",
+          "chromium/prototype/editor_text_layout_test.mm": "a0bc7f9d485717b6a303b31952ad35ae8d3b3b021b016cb2b0ee8fc890726844",
+          "chromium/prototype/link_navigation.cc": "464f61fdd785d5cc3fc8d5551d8dce767f237a7338080d87e101a6a380855f13",
+          "chromium/prototype/link_navigation.h": "77c3df9a92f9038e7794c8c482f916114c84008bb3ddc02dd31a38ba073e9ff8",
+          "chromium/prototype/page_dialogs.cc": "a07e8aa92fc10fda84cc70fbd52a63a13f91716a8d9f929ef125d2cc6333af68",
+          "chromium/prototype/page_dialogs.h": "b778741cb8e1d6c53456b5e864808c2aa22ef5591417d77b1de5d854ddccf10e",
+          "chromium/prototype/page_file_access.cc": "26d797ddc42a17806f949540e628614779836b49c2d4f9d5ea199ff9a94f0a8c",
+          "chromium/prototype/page_file_access.h": "313f54266ef5051c52b654632273a1b7f84c8c09e53930bbecdee3b747d27888",
+          "chromium/prototype/page_file_access_browsertest.cc": "008833c70f884d045277409a5371d006ca1ddd851f0047584b3d0d0fb2b04f81",
+          "chromium/prototype/page_media_access.cc": "49a3f4a21f30a31f6559bf48b82837d72c87ab8148ea870cdd2f113a4b42473d",
+          "chromium/prototype/page_media_access.h": "224414fce67a836f34acffca609593e456ce00cc1d7d02ae003eb87a5484dacc",
+          "chromium/prototype/page_media_access_browsertest.cc": "7eedc13b1453308cb9db00c2445f896c031a0afb2a1dd18b8b0f4d85f8709493",
+          "chromium/prototype/page_services.cc": "701def23690ef2c6e6843b8c4bd16f76d09a066bdade34d9dfc45010283da9c2",
+          "chromium/prototype/page_services.h": "b031e317d2e96c4245ff019e5185c6f103f533b2f9efd3ea98132ddaef333d6d",
+          "chromium/prototype/profile_workspace_browsertest.cc": "0ebf006da4f2cddd4f6c00d9fdec18bd81b36707b6f2a4c9fc37d6ee78b6ca32",
+          "chromium/prototype/scene_editor.cc": "1750eabbc946da28efc519939e5de6db0c59813212feaae47716fd705bfb1c75",
+          "chromium/prototype/sidebar.metal": "844a08c8a905931a313126a2d3c96f22e25228da1fc149ec6c12e88fc9755cc5",
+          "chromium/prototype/sidebar_editor.rs": "963e52ae3fb70efd48e1d15ca059095ed02812fbaea3ddd1266d39188134c6de",
+          "chromium/prototype/sidebar_layout.cc": "23ba7bf07cc9837218c9a86877debc33584daa5178f311f288d7ae2c8c7ff757",
+          "chromium/prototype/sidebar_layout.h": "4493febfebb642634cbcba3e96c5acdd8f2cd872afb88ddd2a4de9828df553be",
+          "chromium/prototype/sidebar_metal.h": "9dd5c88c9caba13b675eef6d604d8ded8b41dd70facf8b51261d6c6720481e03",
+          "chromium/prototype/sidebar_metal.mm": "d10bcc4e2adc97bac0fcb897558a7992b0cbb06c6a738bdf3087738f74377a5d",
+          "chromium/prototype/sidebar_scene.rs": "499b0b02b2939d796521558f806e20c255ddddc44a89527fadffc1e17c9e2320",
+          "chromium/prototype/sidebar_tree.cc": "d72174ac4aac1f29b780a057b1b2773d5958fbd64904ee05dca7ce8d4109229b",
+          "chromium/prototype/sidebar_tree.h": "d59f6e86d9d44dce943e1a82591d6fda73b595fa6678a062ceed158342948e77",
+          "chromium/prototype/workspace_browser_settings.cc": "eef5a07c3857ddbe94f543293c367be7b3ef5fede5d6a1249ce8cd12ba22cf4b",
+          "chromium/prototype/workspace_commands.cc": "8b2b5f8406a9f72a971d68235ff1bf6b940bdf6968aa36bb1005380293554163",
+          "chromium/prototype/workspace_frame_mac.h": "dd234cbb65d673cd58ea4ea3a37d34111890b66b7a6f4b255304c97db6d61021",
+          "chromium/prototype/workspace_frame_mac.mm": "2827f43e3c08069d7de3002a192a5f7c6f912a9745153925326bbeca86db884e",
+          "chromium/prototype/workspace_keyboard_mac.h": "957a086998c824d72afc3a2fa12406771eb7f7d1439a3c1291cd404e8f6b3d25",
+          "chromium/prototype/workspace_keyboard_mac.mm": "54019c3030fd8029752c0bb55c4f5f0109bf30a34649bb78cc63c11df7193eed",
+          "chromium/prototype/workspace_lifecycle.cc": "e4d73972762ce21156a3a022de73f7edb5e9b520d15cfaf517df289128416c1b",
+          "chromium/prototype/workspace_preconnect.cc": "4b049f91fa11fb4ae523051a37a573c505ef0f1197935afaa6cdd22fa38e664c",
+          "chromium/prototype/workspace_preconnect_browsertest.cc": "5243272c30d25c9c39a5f413259227d4ce083294207326415ddf35da2a0a1e09",
+          "chromium/prototype/workspace_shell.cc": "9c5e6a9e33eb989f036b581b59e246e14e8133ad4405529e1752a24db586528f",
+          "chromium/prototype/workspace_shell.h": "cc126d0a316c5e4e0345aa70813c266a8370eff936b9cff64dc5133f4647fb04",
+          "chromium/prototype/workspace_time_machine.cc": "4ae4f979d80cd4ece460be3cea499257d18b95243ce6f0dad0f8d2fbdad15bae",
+          "chromium/prototype/workspace_window.cc": "9a4b7d30c8d0911c477a1d03ce965122b600e2b6a98f98486159bc5e137082f1",
+          "chromium/prototype/workspace_window.h": "f338147929b886ca719807513f463494b5b8601d55c9c664b3c7b8ced2f23189"
+        },
+        "binary_uuid": "4C4C441F-5555-3144-A146-155A37DCAF77",
+        "filter": "ZitterProfilesBrowserTest.SplitPaneAction*:ZitterProfilesBrowserTest.SplitPair*:ZitterProfilesBrowserTest.SplitView*:ZitterProfilesBrowserTest.ResizeHosts*:ZitterMetalSidebarBrowserTest.SplitPaneScenesDragOrientTitleAndClose:ZitterMetalSidebarBrowserTest.SplitTitleUpdatesWithoutNativePaint",
+        "selected_tests": {
+          "metal": [
+            "ZitterProfilesBrowserTest.SplitPaneActionHostsMenuKeyboardAXAndRetarget",
+            "ZitterProfilesBrowserTest.SplitPaneActionQueuedCloseSurvivesIndexShiftAndDeletion",
+            "ZitterProfilesBrowserTest.ResizeHostsOwnershipCursorAXAndCancelledInput",
+            "ZitterProfilesBrowserTest.SplitPairPersistsWhileAnotherTabIsShown",
+            "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation",
+            "ZitterProfilesBrowserTest.SplitViewSessionRestore",
+            "ZitterMetalSidebarBrowserTest.SplitPaneScenesDragOrientTitleAndClose",
+            "ZitterMetalSidebarBrowserTest.SplitTitleUpdatesWithoutNativePaint"
+          ],
+          "views": [
+            "ZitterProfilesBrowserTest.SplitPaneActionHostsMenuKeyboardAXAndRetarget",
+            "ZitterProfilesBrowserTest.SplitPaneActionQueuedCloseSurvivesIndexShiftAndDeletion",
+            "ZitterProfilesBrowserTest.ResizeHostsOwnershipCursorAXAndCancelledInput",
+            "ZitterProfilesBrowserTest.SplitPairPersistsWhileAnotherTabIsShown",
+            "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation",
+            "ZitterProfilesBrowserTest.SplitViewSessionRestore"
+          ]
+        }
+      },
+      "runs": {
+        "metal": {
+          "counts": {
+            "SUCCESS": 8
+          },
+          "results": {
+            "ZitterMetalSidebarBrowserTest.SplitPaneScenesDragOrientTitleAndClose": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.SplitTitleUpdatesWithoutNativePaint": "SUCCESS",
+            "ZitterProfilesBrowserTest.ResizeHostsOwnershipCursorAXAndCancelledInput": "SUCCESS",
+            "ZitterProfilesBrowserTest.SplitPairPersistsWhileAnotherTabIsShown": "SUCCESS",
+            "ZitterProfilesBrowserTest.SplitPaneActionHostsMenuKeyboardAXAndRetarget": "SUCCESS",
+            "ZitterProfilesBrowserTest.SplitPaneActionQueuedCloseSurvivesIndexShiftAndDeletion": "SUCCESS",
+            "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation": "SUCCESS",
+            "ZitterProfilesBrowserTest.SplitViewSessionRestore": "SUCCESS"
+          },
+          "summary": "/Users/papaj/Projects/zitter/build/split-action-focus/metal.json",
+          "summary_sha256": "d20bb1b10973e30edac6570b5566b85b3fd225e66b414dc3ae2aea46cc1ed713",
+          "log": "/Users/papaj/Projects/zitter/build/split-action-focus/metal.log",
+          "log_sha256": "4e55a7909939b4f597646bb3fdbdcd64919a1969ebfccb9ee4b8348c9c1c0780",
+          "command": [
+            "/Users/papaj/Projects/zitter/.chromium/src/out/ZitterOptimized/zitter_prototype_ui_lab",
+            "--gtest_filter=ZitterProfilesBrowserTest.SplitPaneAction*:ZitterProfilesBrowserTest.SplitPair*:ZitterProfilesBrowserTest.SplitView*:ZitterProfilesBrowserTest.ResizeHosts*:ZitterMetalSidebarBrowserTest.SplitPaneScenesDragOrientTitleAndClose:ZitterMetalSidebarBrowserTest.SplitTitleUpdatesWithoutNativePaint",
+            "--test-launcher-jobs=1",
+            "--test-launcher-retry-limit=0",
+            "--test-launcher-summary-output=/Users/papaj/Projects/zitter/build/split-action-focus/metal.json",
+            "--disable-component-update",
+            "--zitter-sidebar=rust-metal"
+          ],
+          "environment_overrides": {
+            "MTL_DEBUG_LAYER": "1"
+          }
+        },
+        "views": {
+          "counts": {
+            "SUCCESS": 6
+          },
+          "results": {
+            "ZitterProfilesBrowserTest.ResizeHostsOwnershipCursorAXAndCancelledInput": "SUCCESS",
+            "ZitterProfilesBrowserTest.SplitPairPersistsWhileAnotherTabIsShown": "SUCCESS",
+            "ZitterProfilesBrowserTest.SplitPaneActionHostsMenuKeyboardAXAndRetarget": "SUCCESS",
+            "ZitterProfilesBrowserTest.SplitPaneActionQueuedCloseSurvivesIndexShiftAndDeletion": "SUCCESS",
+            "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation": "SUCCESS",
+            "ZitterProfilesBrowserTest.SplitViewSessionRestore": "SUCCESS"
+          },
+          "summary": "/Users/papaj/Projects/zitter/build/split-action-focus/views.json",
+          "summary_sha256": "3cd58573f38922dc95d297c704f9e70672115e93358777a6501ef706197418ec",
+          "log": "/Users/papaj/Projects/zitter/build/split-action-focus/views.log",
+          "log_sha256": "b887b76734897058b1630dd4ccb98c5f482c9ea237e6038e2642c27240babc4d",
+          "command": [
+            "/Users/papaj/Projects/zitter/.chromium/src/out/ZitterOptimized/zitter_prototype_ui_lab",
+            "--gtest_filter=ZitterProfilesBrowserTest.SplitPaneAction*:ZitterProfilesBrowserTest.SplitPair*:ZitterProfilesBrowserTest.SplitView*:ZitterProfilesBrowserTest.ResizeHosts*:ZitterMetalSidebarBrowserTest.SplitPaneScenesDragOrientTitleAndClose:ZitterMetalSidebarBrowserTest.SplitTitleUpdatesWithoutNativePaint-ZitterMetalSidebarBrowserTest.*",
+            "--test-launcher-jobs=1",
+            "--test-launcher-retry-limit=0",
+            "--test-launcher-summary-output=/Users/papaj/Projects/zitter/build/split-action-focus/views.json",
+            "--disable-component-update"
+          ],
+          "environment_overrides": {
+            "MTL_DEBUG_LAYER": null
+          }
+        }
+      }
+    },
+    "critical": {
+      "input": {
+        "source_sha256": {
+          "chromium/prototype/arc_importer.cc": "e3c6aa5d0876a9d1c29305136d225eba78a8d8b95c3267cabf5d8a96d5d9ecf4",
+          "chromium/prototype/arc_importer.h": "b5cb4ccc4871c9ad7af3e578763bc3d8347fc9adc394c05624f1653b342ea2fc",
+          "chromium/prototype/browser_data.h": "243b1d34847d4358041190ed42ee0c0600a21257003b54c056c59f4ef764a747",
+          "chromium/prototype/browser_import_data.cc": "c6d7d1750ab9be441a264691382928417cdea7e0959b2b86cb2ce5bd4fbbb37c",
+          "chromium/prototype/browser_import_data.h": "35039b3013e0754f88be9f021428160eacbbe65de8f61eef2983a65ca0291b7b",
+          "chromium/prototype/browser_import_key_mac.mm": "65d0b914b43a7268a54d309f021a5a6c7ead871dbe68c0fb2581005456af1bd1",
+          "chromium/prototype/browser_preferences.cc": "34fafbb418688d581d581599e57d68a3d572c6fbfa311f1a8525c67340a77c48",
+          "chromium/prototype/browser_preferences.h": "63a931a276df3c05f49e098c6977d99b14112ad20f4df4dc9ab8a513c96f6f68",
+          "chromium/prototype/browser_tools.cc": "62964f8f594011af7a60983890a33027ebacddd7faa3642e77bd59e4a635a62e",
+          "chromium/prototype/browser_tools.h": "ef83716f8bb01fe5b3b770f9136288a39aefedfe4b299e305b1dd1f740b1ad6a",
+          "chromium/prototype/download_panel.cc": "45fc11c2d04990baa9c2c5e3d2b7bac4d9854867145acf12a1dc958b21186c74",
+          "chromium/prototype/download_panel.h": "1db13545467abf4729b4c340323997bed4a0af4bb232670755ff20e0d37eaa50",
+          "chromium/prototype/editor_control.h": "6a7d417696dadff55daaa05581be0cc71a825cfbbc934921fcd3616d872275f3",
+          "chromium/prototype/editor_text_layout.h": "35a72c6965037f684ee5f88338f71aa07b41842de4e7417ab6af1df7300c26cb",
+          "chromium/prototype/editor_text_layout_mac.inc": "13f2fddef229486fb25f42fb275cc0d7256bebe6d9599356822ff4b11db81984",
+          "chromium/prototype/editor_text_layout_test.mm": "a0bc7f9d485717b6a303b31952ad35ae8d3b3b021b016cb2b0ee8fc890726844",
+          "chromium/prototype/link_navigation.cc": "464f61fdd785d5cc3fc8d5551d8dce767f237a7338080d87e101a6a380855f13",
+          "chromium/prototype/link_navigation.h": "77c3df9a92f9038e7794c8c482f916114c84008bb3ddc02dd31a38ba073e9ff8",
+          "chromium/prototype/page_dialogs.cc": "a07e8aa92fc10fda84cc70fbd52a63a13f91716a8d9f929ef125d2cc6333af68",
+          "chromium/prototype/page_dialogs.h": "b778741cb8e1d6c53456b5e864808c2aa22ef5591417d77b1de5d854ddccf10e",
+          "chromium/prototype/page_file_access.cc": "26d797ddc42a17806f949540e628614779836b49c2d4f9d5ea199ff9a94f0a8c",
+          "chromium/prototype/page_file_access.h": "313f54266ef5051c52b654632273a1b7f84c8c09e53930bbecdee3b747d27888",
+          "chromium/prototype/page_file_access_browsertest.cc": "008833c70f884d045277409a5371d006ca1ddd851f0047584b3d0d0fb2b04f81",
+          "chromium/prototype/page_media_access.cc": "49a3f4a21f30a31f6559bf48b82837d72c87ab8148ea870cdd2f113a4b42473d",
+          "chromium/prototype/page_media_access.h": "224414fce67a836f34acffca609593e456ce00cc1d7d02ae003eb87a5484dacc",
+          "chromium/prototype/page_media_access_browsertest.cc": "7eedc13b1453308cb9db00c2445f896c031a0afb2a1dd18b8b0f4d85f8709493",
+          "chromium/prototype/page_services.cc": "701def23690ef2c6e6843b8c4bd16f76d09a066bdade34d9dfc45010283da9c2",
+          "chromium/prototype/page_services.h": "b031e317d2e96c4245ff019e5185c6f103f533b2f9efd3ea98132ddaef333d6d",
+          "chromium/prototype/profile_workspace_browsertest.cc": "0ebf006da4f2cddd4f6c00d9fdec18bd81b36707b6f2a4c9fc37d6ee78b6ca32",
+          "chromium/prototype/scene_editor.cc": "1750eabbc946da28efc519939e5de6db0c59813212feaae47716fd705bfb1c75",
+          "chromium/prototype/sidebar.metal": "844a08c8a905931a313126a2d3c96f22e25228da1fc149ec6c12e88fc9755cc5",
+          "chromium/prototype/sidebar_editor.rs": "963e52ae3fb70efd48e1d15ca059095ed02812fbaea3ddd1266d39188134c6de",
+          "chromium/prototype/sidebar_layout.cc": "23ba7bf07cc9837218c9a86877debc33584daa5178f311f288d7ae2c8c7ff757",
+          "chromium/prototype/sidebar_layout.h": "4493febfebb642634cbcba3e96c5acdd8f2cd872afb88ddd2a4de9828df553be",
+          "chromium/prototype/sidebar_metal.h": "9dd5c88c9caba13b675eef6d604d8ded8b41dd70facf8b51261d6c6720481e03",
+          "chromium/prototype/sidebar_metal.mm": "d10bcc4e2adc97bac0fcb897558a7992b0cbb06c6a738bdf3087738f74377a5d",
+          "chromium/prototype/sidebar_scene.rs": "499b0b02b2939d796521558f806e20c255ddddc44a89527fadffc1e17c9e2320",
+          "chromium/prototype/sidebar_tree.cc": "d72174ac4aac1f29b780a057b1b2773d5958fbd64904ee05dca7ce8d4109229b",
+          "chromium/prototype/sidebar_tree.h": "d59f6e86d9d44dce943e1a82591d6fda73b595fa6678a062ceed158342948e77",
+          "chromium/prototype/workspace_browser_settings.cc": "eef5a07c3857ddbe94f543293c367be7b3ef5fede5d6a1249ce8cd12ba22cf4b",
+          "chromium/prototype/workspace_commands.cc": "8b2b5f8406a9f72a971d68235ff1bf6b940bdf6968aa36bb1005380293554163",
+          "chromium/prototype/workspace_frame_mac.h": "dd234cbb65d673cd58ea4ea3a37d34111890b66b7a6f4b255304c97db6d61021",
+          "chromium/prototype/workspace_frame_mac.mm": "2827f43e3c08069d7de3002a192a5f7c6f912a9745153925326bbeca86db884e",
+          "chromium/prototype/workspace_keyboard_mac.h": "957a086998c824d72afc3a2fa12406771eb7f7d1439a3c1291cd404e8f6b3d25",
+          "chromium/prototype/workspace_keyboard_mac.mm": "54019c3030fd8029752c0bb55c4f5f0109bf30a34649bb78cc63c11df7193eed",
+          "chromium/prototype/workspace_lifecycle.cc": "e4d73972762ce21156a3a022de73f7edb5e9b520d15cfaf517df289128416c1b",
+          "chromium/prototype/workspace_preconnect.cc": "4b049f91fa11fb4ae523051a37a573c505ef0f1197935afaa6cdd22fa38e664c",
+          "chromium/prototype/workspace_preconnect_browsertest.cc": "5243272c30d25c9c39a5f413259227d4ce083294207326415ddf35da2a0a1e09",
+          "chromium/prototype/workspace_shell.cc": "9c5e6a9e33eb989f036b581b59e246e14e8133ad4405529e1752a24db586528f",
+          "chromium/prototype/workspace_shell.h": "cc126d0a316c5e4e0345aa70813c266a8370eff936b9cff64dc5133f4647fb04",
+          "chromium/prototype/workspace_time_machine.cc": "4ae4f979d80cd4ece460be3cea499257d18b95243ce6f0dad0f8d2fbdad15bae",
+          "chromium/prototype/workspace_window.cc": "9a4b7d30c8d0911c477a1d03ce965122b600e2b6a98f98486159bc5e137082f1",
+          "chromium/prototype/workspace_window.h": "f338147929b886ca719807513f463494b5b8601d55c9c664b3c7b8ced2f23189"
+        },
+        "binary_uuid": "4C4C441F-5555-3144-A146-155A37DCAF77",
+        "filter": "ZitterProfilesBrowserTest.*Split*:ZitterProfilesBrowserTest.ResizeHosts*:ZitterProfilesBrowserTest.HeaderAction*:ZitterProfilesBrowserTest.FooterAction*:ZitterProfilesBrowserTest.FooterViewport*:ZitterProfilesBrowserTest.MainSidebarViewport*:ZitterMetalSidebarBrowserTest.SplitPaneScenesDragOrientTitleAndClose:ZitterMetalSidebarBrowserTest.SplitTitleUpdatesWithoutNativePaint:ZitterMetalSidebarBrowserTest.LiveTabsKeyboardFoldersAndSplit:ZitterMetalSidebarBrowserTest.NavigationHeaderHistoryReloadAndIndependentVisibility:ZitterMetalSidebarBrowserTest.FooterSpacesScrollSelectPinAndSettings:ZitterMetalSidebarBrowserTest.SidebarGripDragAutoHideAndEdgeReveal",
+        "selected_tests": {
+          "metal": [
+            "ZitterProfilesBrowserTest.FooterViewportOwnershipResizeKeysAXAndShrink",
+            "ZitterProfilesBrowserTest.FooterActionHostsOwnershipEmojiMenuKeysAXAndClip",
+            "ZitterProfilesBrowserTest.FooterActionCallbackCanDeleteItsOwnHost",
+            "ZitterProfilesBrowserTest.SplitPaneActionHostsMenuKeyboardAXAndRetarget",
+            "ZitterProfilesBrowserTest.SplitPaneActionQueuedCloseSurvivesIndexShiftAndDeletion",
+            "ZitterProfilesBrowserTest.HeaderActionHostOwnershipKeyboardAXGestureAndCancel",
+            "ZitterProfilesBrowserTest.ResizeHostsOwnershipCursorAXAndCancelledInput",
+            "ZitterProfilesBrowserTest.MainSidebarViewportOwnershipResizeAndWorkspaceClamp",
+            "ZitterProfilesBrowserTest.CommandCenterMoveSplitAndLastPage",
+            "ZitterProfilesBrowserTest.SplitPairPersistsWhileAnotherTabIsShown",
+            "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation",
+            "ZitterProfilesBrowserTest.SplitViewSessionRestore",
+            "ZitterProfilesBrowserTest.SidebarSplitAndDeepFolderGeometry",
+            "ZitterMetalSidebarBrowserTest.FooterSpacesScrollSelectPinAndSettings",
+            "ZitterMetalSidebarBrowserTest.NavigationHeaderHistoryReloadAndIndependentVisibility",
+            "ZitterMetalSidebarBrowserTest.SidebarGripDragAutoHideAndEdgeReveal",
+            "ZitterMetalSidebarBrowserTest.SplitPaneScenesDragOrientTitleAndClose",
+            "ZitterMetalSidebarBrowserTest.SplitTitleUpdatesWithoutNativePaint",
+            "ZitterMetalSidebarBrowserTest.LiveTabsKeyboardFoldersAndSplit"
+          ],
+          "views": [
+            "ZitterProfilesBrowserTest.FooterViewportOwnershipResizeKeysAXAndShrink",
+            "ZitterProfilesBrowserTest.FooterActionHostsOwnershipEmojiMenuKeysAXAndClip",
+            "ZitterProfilesBrowserTest.FooterActionCallbackCanDeleteItsOwnHost",
+            "ZitterProfilesBrowserTest.SplitPaneActionHostsMenuKeyboardAXAndRetarget",
+            "ZitterProfilesBrowserTest.SplitPaneActionQueuedCloseSurvivesIndexShiftAndDeletion",
+            "ZitterProfilesBrowserTest.HeaderActionHostOwnershipKeyboardAXGestureAndCancel",
+            "ZitterProfilesBrowserTest.ResizeHostsOwnershipCursorAXAndCancelledInput",
+            "ZitterProfilesBrowserTest.MainSidebarViewportOwnershipResizeAndWorkspaceClamp",
+            "ZitterProfilesBrowserTest.CommandCenterMoveSplitAndLastPage",
+            "ZitterProfilesBrowserTest.SplitPairPersistsWhileAnotherTabIsShown",
+            "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation",
+            "ZitterProfilesBrowserTest.SplitViewSessionRestore",
+            "ZitterProfilesBrowserTest.SidebarSplitAndDeepFolderGeometry"
+          ]
+        }
+      },
+      "runs": {
+        "metal": {
+          "counts": {
+            "SUCCESS": 19
+          },
+          "results": {
+            "ZitterMetalSidebarBrowserTest.FooterSpacesScrollSelectPinAndSettings": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.LiveTabsKeyboardFoldersAndSplit": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.NavigationHeaderHistoryReloadAndIndependentVisibility": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.SidebarGripDragAutoHideAndEdgeReveal": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.SplitPaneScenesDragOrientTitleAndClose": "SUCCESS",
+            "ZitterMetalSidebarBrowserTest.SplitTitleUpdatesWithoutNativePaint": "SUCCESS",
+            "ZitterProfilesBrowserTest.CommandCenterMoveSplitAndLastPage": "SUCCESS",
+            "ZitterProfilesBrowserTest.FooterActionCallbackCanDeleteItsOwnHost": "SUCCESS",
+            "ZitterProfilesBrowserTest.FooterActionHostsOwnershipEmojiMenuKeysAXAndClip": "SUCCESS",
+            "ZitterProfilesBrowserTest.FooterViewportOwnershipResizeKeysAXAndShrink": "SUCCESS",
+            "ZitterProfilesBrowserTest.HeaderActionHostOwnershipKeyboardAXGestureAndCancel": "SUCCESS",
+            "ZitterProfilesBrowserTest.MainSidebarViewportOwnershipResizeAndWorkspaceClamp": "SUCCESS",
+            "ZitterProfilesBrowserTest.ResizeHostsOwnershipCursorAXAndCancelledInput": "SUCCESS",
+            "ZitterProfilesBrowserTest.SidebarSplitAndDeepFolderGeometry": "SUCCESS",
+            "ZitterProfilesBrowserTest.SplitPairPersistsWhileAnotherTabIsShown": "SUCCESS",
+            "ZitterProfilesBrowserTest.SplitPaneActionHostsMenuKeyboardAXAndRetarget": "SUCCESS",
+            "ZitterProfilesBrowserTest.SplitPaneActionQueuedCloseSurvivesIndexShiftAndDeletion": "SUCCESS",
+            "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation": "SUCCESS",
+            "ZitterProfilesBrowserTest.SplitViewSessionRestore": "SUCCESS"
+          },
+          "summary": "/Users/papaj/Projects/zitter/build/split-action-critical/metal.json",
+          "summary_sha256": "3d7d764f5df2f478f0e0017a7e498a74c67642ff804ca2a6fe2b98e57ff36557",
+          "log": "/Users/papaj/Projects/zitter/build/split-action-critical/metal.log",
+          "log_sha256": "f74ef69ff9fe488f4f6b3f94ced3c234a229ade8513df4b557ed47afabcccd72",
+          "command": [
+            "/Users/papaj/Projects/zitter/.chromium/src/out/ZitterOptimized/zitter_prototype_ui_lab",
+            "--gtest_filter=ZitterProfilesBrowserTest.*Split*:ZitterProfilesBrowserTest.ResizeHosts*:ZitterProfilesBrowserTest.HeaderAction*:ZitterProfilesBrowserTest.FooterAction*:ZitterProfilesBrowserTest.FooterViewport*:ZitterProfilesBrowserTest.MainSidebarViewport*:ZitterMetalSidebarBrowserTest.SplitPaneScenesDragOrientTitleAndClose:ZitterMetalSidebarBrowserTest.SplitTitleUpdatesWithoutNativePaint:ZitterMetalSidebarBrowserTest.LiveTabsKeyboardFoldersAndSplit:ZitterMetalSidebarBrowserTest.NavigationHeaderHistoryReloadAndIndependentVisibility:ZitterMetalSidebarBrowserTest.FooterSpacesScrollSelectPinAndSettings:ZitterMetalSidebarBrowserTest.SidebarGripDragAutoHideAndEdgeReveal",
+            "--test-launcher-jobs=1",
+            "--test-launcher-retry-limit=0",
+            "--test-launcher-summary-output=/Users/papaj/Projects/zitter/build/split-action-critical/metal.json",
+            "--disable-component-update",
+            "--zitter-sidebar=rust-metal"
+          ],
+          "environment_overrides": {
+            "MTL_DEBUG_LAYER": "1"
+          }
+        },
+        "views": {
+          "counts": {
+            "SUCCESS": 13
+          },
+          "results": {
+            "ZitterProfilesBrowserTest.CommandCenterMoveSplitAndLastPage": "SUCCESS",
+            "ZitterProfilesBrowserTest.FooterActionCallbackCanDeleteItsOwnHost": "SUCCESS",
+            "ZitterProfilesBrowserTest.FooterActionHostsOwnershipEmojiMenuKeysAXAndClip": "SUCCESS",
+            "ZitterProfilesBrowserTest.FooterViewportOwnershipResizeKeysAXAndShrink": "SUCCESS",
+            "ZitterProfilesBrowserTest.HeaderActionHostOwnershipKeyboardAXGestureAndCancel": "SUCCESS",
+            "ZitterProfilesBrowserTest.MainSidebarViewportOwnershipResizeAndWorkspaceClamp": "SUCCESS",
+            "ZitterProfilesBrowserTest.ResizeHostsOwnershipCursorAXAndCancelledInput": "SUCCESS",
+            "ZitterProfilesBrowserTest.SidebarSplitAndDeepFolderGeometry": "SUCCESS",
+            "ZitterProfilesBrowserTest.SplitPairPersistsWhileAnotherTabIsShown": "SUCCESS",
+            "ZitterProfilesBrowserTest.SplitPaneActionHostsMenuKeyboardAXAndRetarget": "SUCCESS",
+            "ZitterProfilesBrowserTest.SplitPaneActionQueuedCloseSurvivesIndexShiftAndDeletion": "SUCCESS",
+            "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation": "SUCCESS",
+            "ZitterProfilesBrowserTest.SplitViewSessionRestore": "SUCCESS"
+          },
+          "summary": "/Users/papaj/Projects/zitter/build/split-action-critical/views.json",
+          "summary_sha256": "f6a8b679fa714b1a78f1cf468ef01fd169c72c95a4c15bdecc06ad388ec0facd",
+          "log": "/Users/papaj/Projects/zitter/build/split-action-critical/views.log",
+          "log_sha256": "78d66932c18ec84359608aaeb35e942e280a2ec914ac2c840239b5a93f120b3b",
+          "command": [
+            "/Users/papaj/Projects/zitter/.chromium/src/out/ZitterOptimized/zitter_prototype_ui_lab",
+            "--gtest_filter=ZitterProfilesBrowserTest.*Split*:ZitterProfilesBrowserTest.ResizeHosts*:ZitterProfilesBrowserTest.HeaderAction*:ZitterProfilesBrowserTest.FooterAction*:ZitterProfilesBrowserTest.FooterViewport*:ZitterProfilesBrowserTest.MainSidebarViewport*:ZitterMetalSidebarBrowserTest.SplitPaneScenesDragOrientTitleAndClose:ZitterMetalSidebarBrowserTest.SplitTitleUpdatesWithoutNativePaint:ZitterMetalSidebarBrowserTest.LiveTabsKeyboardFoldersAndSplit:ZitterMetalSidebarBrowserTest.NavigationHeaderHistoryReloadAndIndependentVisibility:ZitterMetalSidebarBrowserTest.FooterSpacesScrollSelectPinAndSettings:ZitterMetalSidebarBrowserTest.SidebarGripDragAutoHideAndEdgeReveal-ZitterMetalSidebarBrowserTest.*",
+            "--test-launcher-jobs=1",
+            "--test-launcher-retry-limit=0",
+            "--test-launcher-summary-output=/Users/papaj/Projects/zitter/build/split-action-critical/views.json",
+            "--disable-component-update"
+          ],
+          "environment_overrides": {
+            "MTL_DEBUG_LAYER": null
+          }
+        }
+      }
+    }
+  },
+  "contracts": [
+    "Split pane menu and close controls use RustActionView plain View hosts without Button/ButtonController instances. Metal scene items consume the shared Rust action snapshot; fallback retains the shared glyph painter. Native comparison remains SceneGlyphButton.",
+    "Both pane bars revoke pending Rust input when pane View pointers or orientation change. Domain workspace/index/128-bit identity/visibility changes also revoke input; ordinary title/focus updates preserve the target. Native input, focus, accessibility, menu and window adapters remain.",
+    "CloseSplitPane deferred callbacks capture an opaque tab identity, resolve its current index at execution, and ignore deleted targets or changed workspaces. This correction applies to both backends.",
+    "The shared ownership case checks all four hosts, AX roles/names, geometry, disabled rejection, the real Cocoa menu, physical main-window Space, and Rust late release after swap, orientation, unsplit/replacement and hide/restore. A second case verifies queued close after a lower-index deletion and queued close of an already-deleted target.",
+    "Existing native mouse/gesture divider, split orientation/title/fallback/close, split lifecycle/persistence/isolation and control-family regressions retain their semantic assertions. No dependency, store, persistence or browser service policy changed."
+  ],
+  "previous_full_checkpoint": {
+    "report": "rust-footer-action-checkpoint-2026-10-26.json",
+    "source_commit": "c8e219585d9d7652d829e64bb2c1eb71e34cb84e",
+    "counts": {
+      "metal": {
+        "SUCCESS": 200,
+        "SKIPPED": 6
+      },
+      "views": {
+        "SUCCESS": 152,
+        "SKIPPED": 6
+      }
+    },
+    "scope": "The previous full checkpoint predates this split-pane action migration. This source has targeted acceptance only."
+  },
+  "remaining": [
+    "Other action/button/row/control/node/container/menu/input/window ownership, stable Rust node identity and complete functional/manual/release parity remain open.",
+    "Manual hardware trackpad, IME candidates, VoiceOver, global RTL, scale/theme and GPU recovery remain open.",
+    "No controlled CPU/GPU/drawable-presentation/input-latency/memory gain established.",
+    "Current-main combined network policy and final shipped dependency/license/notice acceptance remain outside this frozen UI lab."
+  ],
+  "initial_probe": {
+    "input": {
+      "source_sha256": {
+        "chromium/prototype/arc_importer.cc": "e3c6aa5d0876a9d1c29305136d225eba78a8d8b95c3267cabf5d8a96d5d9ecf4",
+        "chromium/prototype/arc_importer.h": "b5cb4ccc4871c9ad7af3e578763bc3d8347fc9adc394c05624f1653b342ea2fc",
+        "chromium/prototype/browser_data.h": "243b1d34847d4358041190ed42ee0c0600a21257003b54c056c59f4ef764a747",
+        "chromium/prototype/browser_import_data.cc": "c6d7d1750ab9be441a264691382928417cdea7e0959b2b86cb2ce5bd4fbbb37c",
+        "chromium/prototype/browser_import_data.h": "35039b3013e0754f88be9f021428160eacbbe65de8f61eef2983a65ca0291b7b",
+        "chromium/prototype/browser_import_key_mac.mm": "65d0b914b43a7268a54d309f021a5a6c7ead871dbe68c0fb2581005456af1bd1",
+        "chromium/prototype/browser_preferences.cc": "34fafbb418688d581d581599e57d68a3d572c6fbfa311f1a8525c67340a77c48",
+        "chromium/prototype/browser_preferences.h": "63a931a276df3c05f49e098c6977d99b14112ad20f4df4dc9ab8a513c96f6f68",
+        "chromium/prototype/browser_tools.cc": "62964f8f594011af7a60983890a33027ebacddd7faa3642e77bd59e4a635a62e",
+        "chromium/prototype/browser_tools.h": "ef83716f8bb01fe5b3b770f9136288a39aefedfe4b299e305b1dd1f740b1ad6a",
+        "chromium/prototype/download_panel.cc": "45fc11c2d04990baa9c2c5e3d2b7bac4d9854867145acf12a1dc958b21186c74",
+        "chromium/prototype/download_panel.h": "1db13545467abf4729b4c340323997bed4a0af4bb232670755ff20e0d37eaa50",
+        "chromium/prototype/editor_control.h": "6a7d417696dadff55daaa05581be0cc71a825cfbbc934921fcd3616d872275f3",
+        "chromium/prototype/editor_text_layout.h": "35a72c6965037f684ee5f88338f71aa07b41842de4e7417ab6af1df7300c26cb",
+        "chromium/prototype/editor_text_layout_mac.inc": "13f2fddef229486fb25f42fb275cc0d7256bebe6d9599356822ff4b11db81984",
+        "chromium/prototype/editor_text_layout_test.mm": "a0bc7f9d485717b6a303b31952ad35ae8d3b3b021b016cb2b0ee8fc890726844",
+        "chromium/prototype/link_navigation.cc": "464f61fdd785d5cc3fc8d5551d8dce767f237a7338080d87e101a6a380855f13",
+        "chromium/prototype/link_navigation.h": "77c3df9a92f9038e7794c8c482f916114c84008bb3ddc02dd31a38ba073e9ff8",
+        "chromium/prototype/page_dialogs.cc": "a07e8aa92fc10fda84cc70fbd52a63a13f91716a8d9f929ef125d2cc6333af68",
+        "chromium/prototype/page_dialogs.h": "b778741cb8e1d6c53456b5e864808c2aa22ef5591417d77b1de5d854ddccf10e",
+        "chromium/prototype/page_file_access.cc": "26d797ddc42a17806f949540e628614779836b49c2d4f9d5ea199ff9a94f0a8c",
+        "chromium/prototype/page_file_access.h": "313f54266ef5051c52b654632273a1b7f84c8c09e53930bbecdee3b747d27888",
+        "chromium/prototype/page_file_access_browsertest.cc": "008833c70f884d045277409a5371d006ca1ddd851f0047584b3d0d0fb2b04f81",
+        "chromium/prototype/page_media_access.cc": "49a3f4a21f30a31f6559bf48b82837d72c87ab8148ea870cdd2f113a4b42473d",
+        "chromium/prototype/page_media_access.h": "224414fce67a836f34acffca609593e456ce00cc1d7d02ae003eb87a5484dacc",
+        "chromium/prototype/page_media_access_browsertest.cc": "7eedc13b1453308cb9db00c2445f896c031a0afb2a1dd18b8b0f4d85f8709493",
+        "chromium/prototype/page_services.cc": "701def23690ef2c6e6843b8c4bd16f76d09a066bdade34d9dfc45010283da9c2",
+        "chromium/prototype/page_services.h": "b031e317d2e96c4245ff019e5185c6f103f533b2f9efd3ea98132ddaef333d6d",
+        "chromium/prototype/profile_workspace_browsertest.cc": "53228929ac2764e17978ac6dcae1a872f417bbcb1865d3aad93b4231b31bacb8",
+        "chromium/prototype/scene_editor.cc": "1750eabbc946da28efc519939e5de6db0c59813212feaae47716fd705bfb1c75",
+        "chromium/prototype/sidebar.metal": "844a08c8a905931a313126a2d3c96f22e25228da1fc149ec6c12e88fc9755cc5",
+        "chromium/prototype/sidebar_editor.rs": "963e52ae3fb70efd48e1d15ca059095ed02812fbaea3ddd1266d39188134c6de",
+        "chromium/prototype/sidebar_layout.cc": "23ba7bf07cc9837218c9a86877debc33584daa5178f311f288d7ae2c8c7ff757",
+        "chromium/prototype/sidebar_layout.h": "4493febfebb642634cbcba3e96c5acdd8f2cd872afb88ddd2a4de9828df553be",
+        "chromium/prototype/sidebar_metal.h": "9dd5c88c9caba13b675eef6d604d8ded8b41dd70facf8b51261d6c6720481e03",
+        "chromium/prototype/sidebar_metal.mm": "d10bcc4e2adc97bac0fcb897558a7992b0cbb06c6a738bdf3087738f74377a5d",
+        "chromium/prototype/sidebar_scene.rs": "499b0b02b2939d796521558f806e20c255ddddc44a89527fadffc1e17c9e2320",
+        "chromium/prototype/sidebar_tree.cc": "d72174ac4aac1f29b780a057b1b2773d5958fbd64904ee05dca7ce8d4109229b",
+        "chromium/prototype/sidebar_tree.h": "d59f6e86d9d44dce943e1a82591d6fda73b595fa6678a062ceed158342948e77",
+        "chromium/prototype/workspace_browser_settings.cc": "eef5a07c3857ddbe94f543293c367be7b3ef5fede5d6a1249ce8cd12ba22cf4b",
+        "chromium/prototype/workspace_commands.cc": "8b2b5f8406a9f72a971d68235ff1bf6b940bdf6968aa36bb1005380293554163",
+        "chromium/prototype/workspace_frame_mac.h": "dd234cbb65d673cd58ea4ea3a37d34111890b66b7a6f4b255304c97db6d61021",
+        "chromium/prototype/workspace_frame_mac.mm": "2827f43e3c08069d7de3002a192a5f7c6f912a9745153925326bbeca86db884e",
+        "chromium/prototype/workspace_keyboard_mac.h": "957a086998c824d72afc3a2fa12406771eb7f7d1439a3c1291cd404e8f6b3d25",
+        "chromium/prototype/workspace_keyboard_mac.mm": "54019c3030fd8029752c0bb55c4f5f0109bf30a34649bb78cc63c11df7193eed",
+        "chromium/prototype/workspace_lifecycle.cc": "e4d73972762ce21156a3a022de73f7edb5e9b520d15cfaf517df289128416c1b",
+        "chromium/prototype/workspace_preconnect.cc": "4b049f91fa11fb4ae523051a37a573c505ef0f1197935afaa6cdd22fa38e664c",
+        "chromium/prototype/workspace_preconnect_browsertest.cc": "5243272c30d25c9c39a5f413259227d4ce083294207326415ddf35da2a0a1e09",
+        "chromium/prototype/workspace_shell.cc": "9c5e6a9e33eb989f036b581b59e246e14e8133ad4405529e1752a24db586528f",
+        "chromium/prototype/workspace_shell.h": "cc126d0a316c5e4e0345aa70813c266a8370eff936b9cff64dc5133f4647fb04",
+        "chromium/prototype/workspace_time_machine.cc": "4ae4f979d80cd4ece460be3cea499257d18b95243ce6f0dad0f8d2fbdad15bae",
+        "chromium/prototype/workspace_window.cc": "9a4b7d30c8d0911c477a1d03ce965122b600e2b6a98f98486159bc5e137082f1",
+        "chromium/prototype/workspace_window.h": "f338147929b886ca719807513f463494b5b8601d55c9c664b3c7b8ced2f23189"
+      },
+      "binary_uuid": "4C4C4451-5555-3144-A19F-BCA610EEA284",
+      "filter": "ZitterProfilesBrowserTest.SplitPaneAction*:ZitterProfilesBrowserTest.SplitPair*:ZitterProfilesBrowserTest.SplitView*:ZitterProfilesBrowserTest.ResizeHosts*:ZitterMetalSidebarBrowserTest.SplitPaneScenesDragOrientTitleAndClose:ZitterMetalSidebarBrowserTest.SplitTitleUpdatesWithoutNativePaint",
+      "selected_tests": {
+        "metal": [
+          "ZitterProfilesBrowserTest.SplitPaneActionHostsMenuKeyboardAXAndRetarget",
+          "ZitterProfilesBrowserTest.SplitPaneActionQueuedCloseSurvivesIndexShiftAndDeletion",
+          "ZitterProfilesBrowserTest.ResizeHostsOwnershipCursorAXAndCancelledInput",
+          "ZitterProfilesBrowserTest.SplitPairPersistsWhileAnotherTabIsShown",
+          "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation",
+          "ZitterProfilesBrowserTest.SplitViewSessionRestore",
+          "ZitterMetalSidebarBrowserTest.SplitPaneScenesDragOrientTitleAndClose",
+          "ZitterMetalSidebarBrowserTest.SplitTitleUpdatesWithoutNativePaint"
+        ],
+        "views": [
+          "ZitterProfilesBrowserTest.SplitPaneActionHostsMenuKeyboardAXAndRetarget",
+          "ZitterProfilesBrowserTest.SplitPaneActionQueuedCloseSurvivesIndexShiftAndDeletion",
+          "ZitterProfilesBrowserTest.ResizeHostsOwnershipCursorAXAndCancelledInput",
+          "ZitterProfilesBrowserTest.SplitPairPersistsWhileAnotherTabIsShown",
+          "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation",
+          "ZitterProfilesBrowserTest.SplitViewSessionRestore"
+        ]
+      }
+    },
+    "source": {
+      "base_commit": "3363c4defe0ee84f865a828cddfb48bbaff28828",
+      "modified_sha256": {
+        "chromium/prototype/workspace_shell.cc": "9c5e6a9e33eb989f036b581b59e246e14e8133ad4405529e1752a24db586528f",
+        "chromium/prototype/workspace_shell.h": "cc126d0a316c5e4e0345aa70813c266a8370eff936b9cff64dc5133f4647fb04",
+        "chromium/prototype/profile_workspace_browsertest.cc": "53228929ac2764e17978ac6dcae1a872f417bbcb1865d3aad93b4231b31bacb8"
+      }
+    },
+    "source_directory": "/Users/papaj/Projects/zitter/build/split-action-first-source",
+    "runs": {
+      "metal": {
+        "counts": {
+          "SUCCESS": 7,
+          "FAILURE": 1
+        },
+        "results": {
+          "ZitterMetalSidebarBrowserTest.SplitPaneScenesDragOrientTitleAndClose": "SUCCESS",
+          "ZitterMetalSidebarBrowserTest.SplitTitleUpdatesWithoutNativePaint": "SUCCESS",
+          "ZitterProfilesBrowserTest.ResizeHostsOwnershipCursorAXAndCancelledInput": "SUCCESS",
+          "ZitterProfilesBrowserTest.SplitPairPersistsWhileAnotherTabIsShown": "SUCCESS",
+          "ZitterProfilesBrowserTest.SplitPaneActionHostsMenuKeyboardAXAndRetarget": "SUCCESS",
+          "ZitterProfilesBrowserTest.SplitPaneActionQueuedCloseSurvivesIndexShiftAndDeletion": "FAILURE",
+          "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation": "SUCCESS",
+          "ZitterProfilesBrowserTest.SplitViewSessionRestore": "SUCCESS"
+        },
+        "summary": "/Users/papaj/Projects/zitter/build/split-action-first-probe/metal.json",
+        "summary_sha256": "7ce35609e1e49c99baebc3d64d3bad2b52c1ff1f71f53102c4520587409e4a1b",
+        "log": "/Users/papaj/Projects/zitter/build/split-action-first-probe/metal.log",
+        "log_sha256": "a839f0e2eee51c2a996050cf49150b53c26ffb74fa40720943c6cde1ea0ca8b5"
+      },
+      "views": {
+        "counts": {
+          "SUCCESS": 5,
+          "FAILURE": 1
+        },
+        "results": {
+          "ZitterProfilesBrowserTest.ResizeHostsOwnershipCursorAXAndCancelledInput": "SUCCESS",
+          "ZitterProfilesBrowserTest.SplitPairPersistsWhileAnotherTabIsShown": "SUCCESS",
+          "ZitterProfilesBrowserTest.SplitPaneActionHostsMenuKeyboardAXAndRetarget": "SUCCESS",
+          "ZitterProfilesBrowserTest.SplitPaneActionQueuedCloseSurvivesIndexShiftAndDeletion": "FAILURE",
+          "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation": "SUCCESS",
+          "ZitterProfilesBrowserTest.SplitViewSessionRestore": "SUCCESS"
+        },
+        "summary": "/Users/papaj/Projects/zitter/build/split-action-first-probe/views.json",
+        "summary_sha256": "12dec1b60226ee304c30b077065fd0a44c4187323714d7d28dcb8502cf2659df",
+        "log": "/Users/papaj/Projects/zitter/build/split-action-first-probe/views.log",
+        "log_sha256": "4d82d6a9783bbf687b138bac2508958fdffd543369dae9f4b6b0f99b4b5beba0"
+      }
+    },
+    "note": "Both modes passed the menu/keyboard/retarget host case and existing split cases. The queued-close case reached expected tab counts but compared LastCommittedURL before its setup navigation committed. The final fixture waits for each setup navigation before constructing the close/index-shift race. Original failing sources/logs retained; no product change followed this probe."
+  },
+  "gpu_log_diagnostics": {
+    "focus": {
+      "metal": {
+        "invalid_mailbox": 5,
+        "missing_overlay": 5
+      },
+      "views": {
+        "invalid_mailbox": 0,
+        "missing_overlay": 0
+      }
+    },
+    "critical": {
+      "metal": {
+        "invalid_mailbox": 2,
+        "missing_overlay": 2
+      },
+      "views": {
+        "invalid_mailbox": 0,
+        "missing_overlay": 0
+      }
+    }
+  },
+  "gpu_log_diagnostics_note": "Raw diagnostic substring counts, not a performance metric; any nonfatal compositor mailbox diagnostics remain unresolved.",
+  "compiled_inventory": {
+    "count": 208,
+    "log": "/Users/papaj/Projects/zitter/build/split-action-focus/inventory.log",
+    "sha256": "f15f1ba442773f9c6ce89b86e5056278869b2b35982bd17e3bf522e0759d5a0d"
+  }
+}

@@ -3,6 +3,51 @@
 This is a work plan, not a claim of complete functional parity. The detailed
 inventory is [the parity checklist](rust-metal-parity.md).
 
+## Latest targeted follow-up: Split View pane actions
+
+UI source `f59b05523e18740e7063404089995321bafae867` moves both pane menu and close controls to
+plain RustActionView hosts without Button/ButtonController instances. Metal
+consumes the shared Rust action snapshot; fallback retains the common glyph
+painter. Native focus, AX, input, window and real Cocoa menus remain adapters.
+Other action/row/control/container families still require migration.
+
+Pending Rust input is canceled when pane views, orientation, workspace, tab
+index/128-bit identity or visibility change. Title/focus updates keep the same
+target. Deferred close callbacks capture tab identity and resolve its current
+index at execution: deleting an earlier tab cannot redirect the close, and an
+already-deleted target is ignored. The close correction applies to both backends.
+
+Focus passed **8 Metal / 6 Views**; affected regressions passed
+**19 Metal / 13 Views**, serial, retry zero. The new shared tests check all four
+host types, AX role/name, geometry, disabled activation, real Cocoa menu tracking,
+physical main-window Space, queued close across index shifts/deletion, and Rust
+late release after swap, orientation, unsplit/replacement and hide/restore.
+Existing real mouse/gesture divider, split title/fallback/close, lifecycle,
+persistence/isolation and header/footer/viewport checks retain their assertions.
+
+Checks passed **284 Rust**, **68 live and 68 clean-archive Python**, scoped GN/
+boundaries and final Ninja no-op. All 53 committed/live/staged prototype inputs
+and compiled/frozen-bootstrap/native-engine identities were checked. Unchanged
+CoreText sources inherit the preceding 180 SDK font/direction cases plus raster;
+that harness was not rerun for this adapter change.
+[Targeted split-action report](benchmarks/rust-split-action-targeted-2026-10-26.json).
+
+The retained first probe exposed an asynchronous fixture issue: expected tab
+counts were correct, but URL assertions ran before setup navigations committed.
+The final race fixture waits for those navigations; production code was unchanged.
+
+The retained final logs contain nonfatal Chromium compositor diagnostics: five
+invalid-mailbox/missing-overlay pairs in Metal focus and two in Metal affected
+regressions; none in the corresponding Views runs. All cases passed; the
+diagnostics remain unresolved and these counts do not establish a performance gain.
+
+Per user cadence, this control family has targeted acceptance. The full checkpoint
+below predates this change and is not a full matrix of the current source. Manual
+trackpad/IME/VoiceOver/RTL/scale/theme/GPU recovery, remaining native ownership,
+controlled CPU/GPU/presentation/input-latency/memory comparisons and release/
+license/notice acceptance remain open. Current-main network policy is excluded
+from the frozen UI lab. No complete parity or performance gain is claimed.
+
 ## Latest full checkpoint
 
 UI source `c8e219585d9d7652d829e64bb2c1eb71e34cb84e` moves footer pin/settings and all

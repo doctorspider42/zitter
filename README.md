@@ -813,6 +813,10 @@ retaining emoji, context menus, selection and safe clipped-input cancellation.
 passed 200 Metal / 152 Views regular cases, six explicit optional skips each,
 and 284 Rust cases. Other button/row/control ownership and final manual/
 performance/release acceptance remain open.
+Split View menu/close actions now also use Rust hosts. Queued close resolves
+stable tab identity after index shifts or deletion.
+[Targeted split-action acceptance](docs/benchmarks/rust-split-action-targeted-2026-10-26.json)
+passed 19 Metal / 13 Views affected cases; full matrices remain reserved for larger blocks.
 [Editor contracts and acceptance](docs/rust-metal-editor.md).
 Model updates refresh the scene independently of
 native painting. Rust also owns row
