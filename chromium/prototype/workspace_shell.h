@@ -489,7 +489,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void SetHistoryMoreVisible(bool visible);
   void RefreshKeyRegistrations();
   void SaveTools();
-  void ToolsAction(int action,std::optional<std::string> timeline_key=std::nullopt);
+  void ToolsAction(int action,std::optional<std::string> choice_key=std::nullopt);
   BrowserTools tools_;
   bool tools_ready_ = false;
   bool keys_dirty_ = false, engines_dirty_ = false;
@@ -529,6 +529,7 @@ class WorkspaceShell final : public ui::EventHandler,
   std::u16string timeline_query_;
   void ToolsEditorEdited(EditorControl* sender);
   void PostToolsAction(int action);
+  void RefreshToolsChoiceFields();
   void SetShortcutRecording(bool recording);
   std::unique_ptr<views::WidgetDelegate> tools_delegate_;
   std::unique_ptr<views::Widget> tools_widget_;

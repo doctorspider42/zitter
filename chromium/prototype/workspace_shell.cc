@@ -6943,6 +6943,14 @@ void WorkspaceShell::RefreshTools() {
     auto* control = parent->AddChildView(std::make_unique<views::Combobox>(std::make_unique<ui::SimpleComboboxModel>(items)));
     control->SetTooltipTextAndAccessibleName(name); control->SetSelectedIndex(0); return control;
   };
+#if BUILDFLAG(IS_MAC)
+  auto units=[](const std::u16string& text){rust::Vec<uint16_t> value;value.reserve(text.size());for(char16_t unit:text)value.push_back(unit);return value;};
+  auto form_picker=[&](std::u16string name,const sidebar::ToolsFormChoices& projection)->views::View*{
+    auto* control=tools_body_->AddChildView(std::make_unique<SceneSelect>(std::vector<std::u16string>(),std::move(name),base::RepeatingClosure()));
+    std::vector<std::pair<std::string,std::u16string>> choices;choices.reserve(projection.choices.size());for(const auto& choice:projection.choices)choices.emplace_back(std::string(choice.key),std::u16string(choice.label.begin(),choice.label.end()));
+    control->SetOptions(choices);control->SetSelectedIndex(0);control->SetEnabled(projection.enabled);return control;
+  };
+#endif
   if (ToolsPage() == 0) {
     SetPanelText(tools_title_,workspace_form_?form_title:u"Time Machine · " + state_.workspace_name);
     hint(workspace_form_?form_intro:u"Snapshot zapisuje karty, foldery i Split View w tej przestrzeni. Przywrócenie przeładuje strony; formularze i historia Wstecz nie są częścią snapshotu. Poprzedni układ otrzyma punkt przywracania.");
@@ -6963,13 +6971,25 @@ void WorkspaceShell::RefreshTools() {
   } else if (ToolsPage() == 1) {
     SetPanelText(tools_title_,workspace_form_?form_title:u"Skróty klawiszowe");
     hint(workspace_form_?form_intro:u"Schemat inspirowany Arc. Wybierz akcję, nagraj kombinację lub wpisz np. Cmd+Shift+J. Puste pole wyłącza skrót. Escape, skróty edycji tekstu i systemowe pozostają zarezerwowane.");
+#if BUILDFLAG(IS_MAC)
+    if(tools_form_){
+      rust::Vec<sidebar::ToolsShortcutItem> metadata;for(const auto& shortcut:tools_.shortcuts)metadata.push_back({shortcut.id,units(shortcut.title),units(base::UTF8ToUTF16(FormatShortcut(shortcut.accelerator)))});
+      const auto projection=tools_form_->form->tools_shortcut_choices(std::move(metadata));tools_picker_=form_picker(text(pickers,0,u"Akcja skrótu"),projection);
+      shortcut_chord_=input(text(fields,0,u"Kombinacja, np. Cmd+Shift+J"));RefreshToolsChoiceFields();
+    }else
+#endif
+    {
     std::vector<std::u16string> choices;
     for (const auto& shortcut : tools_.shortcuts) choices.push_back(shortcut.title + u" — " + base::UTF8ToUTF16(FormatShortcut(shortcut.accelerator)));
     tools_picker_ = picker(text(pickers,0,u"Akcja skrótu"), choices);
     shortcut_chord_ = input(text(fields,0,u"Kombinacja, np. Cmd+Shift+J"));
     shortcut_chord_->SetText(base::UTF8ToUTF16(FormatShortcut(tools_.shortcuts.front().accelerator)));
+    }
     SetPickerCallback(tools_picker_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
       if (!shell || !shell->shortcut_chord_) return;
+#if BUILDFLAG(IS_MAC)
+      if(shell->tools_form_){shell->RefreshToolsChoiceFields();return;}
+#endif
       const size_t i = PickerIndex(shell->tools_picker_).value_or(0);
       if (i < shell->tools_.shortcuts.size()) shell->shortcut_chord_->SetText(base::UTF8ToUTF16(FormatShortcut(shell->tools_.shortcuts[i].accelerator)));
       shell->SetShortcutRecording(false);
@@ -6980,12 +7000,24 @@ void WorkspaceShell::RefreshTools() {
   } else if (ToolsPage() == 2) {
     SetPanelText(tools_title_,workspace_form_?form_title:u"Wyszukiwarki i prefiksy");
     hint(workspace_form_?form_intro:u"W pasku adresu wpisz prefiks i zapytanie, np. g koty lub w Warszawa. Szablon musi być adresem HTTP(S) z jednym znacznikiem {query}. Zapytania są kodowane automatycznie.");
+#if BUILDFLAG(IS_MAC)
+    if(tools_form_){
+      rust::Vec<sidebar::ToolsProviderItem> metadata;for(const auto& provider:tools_.providers)metadata.push_back({provider.keyword,units(base::UTF8ToUTF16(provider.name)),units(base::UTF8ToUTF16(provider.keyword)),units(base::UTF8ToUTF16(provider.url)),provider.keyword==tools_.default_keyword});
+      const auto projection=tools_form_->form->tools_provider_choices(std::move(metadata));tools_picker_=form_picker(text(pickers,0,u"Wyszukiwarka do edycji"),projection);
+      provider_name_=input(text(fields,0,u"Nazwa wyszukiwarki"));provider_keyword_=input(text(fields,1,u"Prefiks (a–z, 0–9)"));provider_url_=input(text(fields,2,u"Adres z {query}"));RefreshToolsChoiceFields();
+    }else
+#endif
+    {
     std::vector<std::u16string> provider_choices{workspace_form_?std::move(form_choices.at(0)):u"Dodaj nową wyszukiwarkę…"};
     for (const auto& provider : tools_.providers) provider_choices.push_back(base::UTF8ToUTF16(provider.keyword + " · " + provider.name + (provider.keyword == tools_.default_keyword ? " · domyślna" : "")));
     tools_picker_ = picker(text(pickers,0,u"Wyszukiwarka do edycji"), provider_choices);
     provider_name_ = input(text(fields,0,u"Nazwa wyszukiwarki")); provider_keyword_ = input(text(fields,1,u"Prefiks (a–z, 0–9)")); provider_url_ = input(text(fields,2,u"Adres z {query}"));
+    }
     SetPickerCallback(tools_picker_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
       if (!shell || !shell->provider_name_) return;
+#if BUILDFLAG(IS_MAC)
+      if(shell->tools_form_){shell->RefreshToolsChoiceFields();return;}
+#endif
       const size_t i = PickerIndex(shell->tools_picker_).value_or(0);
       SearchProvider provider;
       if (i > 0 && i <= shell->tools_.providers.size()) provider = shell->tools_.providers[i - 1];
@@ -7016,19 +7048,29 @@ void WorkspaceShell::RefreshTools() {
   PreparePanelText(tools_widget_->GetRootView()); tools_body_->InvalidateLayout();
   if (history_visible()) RefreshHistory();
 }
-void WorkspaceShell::PostToolsAction(int action) {
-  std::optional<std::string> timeline_key;
+void WorkspaceShell::RefreshToolsChoiceFields(){
 #if BUILDFLAG(IS_MAC)
-  if(tools_form_&&(action==2||action==3||action==4)){
+  if(!tools_form_)return;auto* scene=views::AsViewClass<SceneSelect>(tools_picker_);if(!scene)return;
+  const auto draft=tools_form_->form->tools_choice_select(scene->SelectedKey());if(!draft.valid)return;
+  auto text=[](const auto& units){return std::u16string(units.begin(),units.end());};
+  if(draft.page==1&&shortcut_chord_)shortcut_chord_->SetText(text(draft.chord));
+  if(draft.page==2&&provider_name_&&provider_keyword_&&provider_url_){provider_name_->SetText(text(draft.name));provider_keyword_->SetText(text(draft.keyword));provider_url_->SetText(text(draft.url));}
+  if(draft.stop_recording){SetShortcutRecording(false);RefreshKeyRegistrations();}
+#endif
+}
+void WorkspaceShell::PostToolsAction(int action) {
+  std::optional<std::string> choice_key;
+#if BUILDFLAG(IS_MAC)
+  if(tools_form_&&(action==2||action==3||action==4||action==11||action==12||(action>=20&&action<=22))){
     auto* picker=action==4?closed_picker_.get():tools_picker_.get();auto* scene=views::AsViewClass<SceneSelect>(picker);
-    timeline_key=scene?scene->SelectedKey():std::string();
+    choice_key=scene?scene->SelectedKey():std::string();
   }
 #endif
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(
       [](base::WeakPtr<WorkspaceShell> shell,uint64_t generation,std::string workspace,std::string profile,int action,std::optional<std::string> key){
         if(shell&&shell->tools_generation_==generation&&shell->state_.workspace_id==workspace&&shell->state_.profile_id==profile)
           shell->ToolsAction(action,std::move(key));
-      },weak_factory_.GetWeakPtr(),tools_generation_,state_.workspace_id,state_.profile_id,action,std::move(timeline_key)));
+      },weak_factory_.GetWeakPtr(),tools_generation_,state_.workspace_id,state_.profile_id,action,std::move(choice_key)));
 }
 void WorkspaceShell::SetShortcutRecording(bool recording) {
   if(recording&&shortcut_chord_)shortcut_chord_->ClearCompositionText();
@@ -7038,23 +7080,28 @@ void WorkspaceShell::SetShortcutRecording(bool recording) {
   recording_shortcut_=recording;
   if(shortcut_chord_)shortcut_chord_->SetReadOnly(recording);
 }
-void WorkspaceShell::ToolsAction(int action,std::optional<std::string> timeline_key) {
+void WorkspaceShell::ToolsAction(int action,std::optional<std::string> choice_key) {
   if (!tools_widget_ || !tools_widget_->IsVisible()) return;
   const size_t index = tools_picker_ ? PickerIndex(tools_picker_).value_or(0) : 0;
   std::u16string record_status;
-  bool rust_timeline=false;std::string snapshot_target,closed_target;
+  bool rust_timeline=false;bool valid_form_choice=false;std::string snapshot_target,closed_target,form_target;
 #if BUILDFLAG(IS_MAC)
   if(tools_form_){
     rust_timeline=true;
     if(ToolsPage()==0){
-      auto target=[&](views::View* picker,bool closed){auto* scene=views::AsViewClass<SceneSelect>(picker);return scene?std::string(tools_form_->form->tools_timeline_target(closed,timeline_key?*timeline_key:scene->SelectedKey())):std::string();};
+      auto target=[&](views::View* picker,bool closed){auto* scene=views::AsViewClass<SceneSelect>(picker);return scene?std::string(tools_form_->form->tools_timeline_target(closed,choice_key?*choice_key:scene->SelectedKey())):std::string();};
       snapshot_target=target(tools_picker_,false);closed_target=target(closed_picker_,true);
+    }
+    if(ToolsPage()==1||ToolsPage()==2){
+      if(auto* scene=views::AsViewClass<SceneSelect>(tools_picker_)){
+        const auto draft=tools_form_->form->tools_choice_draft(choice_key?*choice_key:scene->SelectedKey());valid_form_choice=draft.valid;form_target=std::string(draft.target);
+      }
     }
     sidebar::ToolsActionContext context{};
     context.snapshot_field=bool(snapshot_name_);context.shortcut_field=bool(shortcut_chord_);context.provider_field=bool(provider_name_);
     context.snapshot_composing=snapshot_name_&&snapshot_name_->IsIMEComposing();context.shortcut_composing=shortcut_chord_&&shortcut_chord_->IsIMEComposing();
     for(auto* field:{provider_name_.get(),provider_keyword_.get(),provider_url_.get()})if(field&&field->IsIMEComposing())context.provider_composing=true;
-    context.snapshot_selected=!snapshot_target.empty();context.closed_selected=!closed_target.empty();context.shortcut_selected=index<tools_.shortcuts.size();
+    context.snapshot_selected=!snapshot_target.empty();context.closed_selected=!closed_target.empty();context.shortcut_selected=ToolsPage()==1&&valid_form_choice;context.provider_selected=ToolsPage()==2&&valid_form_choice;
     const auto plan=tools_form_->form->tools_dispatch(action,context);if(!plan.admitted)return;
     if(plan.sync_recording){SetShortcutRecording(plan.recording);RefreshKeyRegistrations();}
     action=plan.action;record_status=base::UTF8ToUTF16(std::string(plan.record_status));
@@ -7083,12 +7130,12 @@ void WorkspaceShell::ToolsAction(int action,std::optional<std::string> timeline_
     if(!tools_form_){SetShortcutRecording(true);RefreshKeyRegistrations();}
     shortcut_chord_->RequestFocus();
     SetPanelText(tools_status_,tools_form_?record_status:u"Naciśnij kombinację. Escape anuluje nagrywanie."); return;
-  } else if ((action == 11 || action == 12) && index < tools_.shortcuts.size() && shortcut_chord_) {
-    ok = SetShortcut(tools_.shortcuts[index].id, action == 12 ? "" : base::UTF16ToUTF8(shortcut_chord_->GetText()));
+  } else if ((action == 11 || action == 12) && shortcut_chord_ && (rust_timeline?valid_form_choice:index<tools_.shortcuts.size())) {
+    ok = SetShortcut(rust_timeline?form_target:tools_.shortcuts[index].id, action == 12 ? "" : base::UTF16ToUTF8(shortcut_chord_->GetText()));
   } else if (action == 13) {
     tools_.shortcuts = ArcShortcuts(); keys_dirty_ = true; RefreshKeyRegistrations(); SaveTools(); ok = true;
   } else if (action >= 20 && action <= 22 && provider_name_) {
-    const std::string previous = index > 0 && index <= tools_.providers.size() ? tools_.providers[index - 1].keyword : "";
+    const std::string previous=rust_timeline?form_target:(index>0&&index<=tools_.providers.size()?tools_.providers[index-1].keyword:"");
     if (action == 20) ok = UpsertSearchProvider({base::UTF16ToUTF8(provider_name_->GetText()), base::UTF16ToUTF8(provider_keyword_->GetText()), base::UTF16ToUTF8(provider_url_->GetText())}, previous);
     if (action == 21) ok = SetDefaultSearchProvider(previous);
     if (action == 22) ok = RemoveSearchProvider(previous);

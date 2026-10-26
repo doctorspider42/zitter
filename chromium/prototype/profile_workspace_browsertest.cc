@@ -1224,6 +1224,18 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsChoicesCocoaPrefixCallbac
   EXPECT_EQ(ax::mojom::Role::kComboBoxSelect,ax.role);EXPECT_EQ(u"Cały okres",ax.GetString16Attribute(ax::mojom::StringAttribute::kValue));
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsChoicesShortcutProviderProjectionAndDrafts) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready()&&shell->appearance_ready();}));shell->OpenTools(1);
+  const auto shortcuts=shell->browser_tools().shortcuts;ASSERT_FALSE(shortcuts.empty());ASSERT_EQ(shortcuts.size(),shell->tools_choice_count_for_testing("selection"));
+  for(size_t i=0;i<shortcuts.size();++i){SCOPED_TRACE(i);EXPECT_EQ(shortcuts[i].title+u" — "+base::UTF8ToUTF16(FormatShortcut(shortcuts[i].accelerator)),shell->tools_choice_label_for_testing("selection",i));shell->ActivateToolsChoiceForTesting("selection",i);EXPECT_EQ(base::UTF8ToUTF16(FormatShortcut(shortcuts[i].accelerator)),shell->shortcut_input()->GetText());}
+  ASSERT_TRUE(shell->UpsertSearchProvider({"Projection duplicate 🦀","zproja","https://projection.test/a?q={query}"}));ASSERT_TRUE(shell->UpsertSearchProvider({"Projection duplicate 🦀","zprojb","https://projection.test/b?q={query}"}));ASSERT_TRUE(shell->SetDefaultSearchProvider("zprojb"));shell->OpenTools(2);
+  const auto providers=shell->browser_tools().providers;ASSERT_EQ(providers.size()+1,shell->tools_choice_count_for_testing("selection"));EXPECT_EQ(u"Dodaj nową wyszukiwarkę…",shell->tools_choice_label_for_testing("selection",0));
+  for(size_t field=0;field<3;++field)EXPECT_TRUE(shell->provider_input(field)->GetText().empty());
+  for(size_t i=0;i<providers.size();++i){SCOPED_TRACE(i);const auto& item=providers[i];EXPECT_EQ(base::UTF8ToUTF16(item.keyword+" · "+item.name+(item.keyword==shell->browser_tools().default_keyword?" · domyślna":"")),shell->tools_choice_label_for_testing("selection",i+1));shell->ActivateToolsChoiceForTesting("selection",i+1);EXPECT_EQ(base::UTF8ToUTF16(item.name),shell->provider_input(0)->GetText());EXPECT_EQ(base::UTF8ToUTF16(item.keyword),shell->provider_input(1)->GetText());EXPECT_EQ(base::UTF8ToUTF16(item.url),shell->provider_input(2)->GetText());}
+  shell->ActivateToolsChoiceForTesting("selection",0);for(size_t field=0;field<3;++field)EXPECT_TRUE(shell->provider_input(field)->GetText().empty());
+  if(shell->workspace_input()->rust_editor()){auto* picker=shell->tools_selection();picker->ScrollRectToVisible(picker->GetLocalBounds());ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_choice_metal_visible_for_testing("selection");}));}
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsChoicesTimelineIdentityFilteringAndEmptyState) {
   ASSERT_TRUE(window_->Select("work"));auto* shell=window_->shell();
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready()&&shell->appearance_ready();}));
@@ -4936,6 +4948,16 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, PageDialogSceneScrollPromp
   widget->SetColorModeOverride(ui::ColorProviderKey::ColorMode::kLight);ASSERT_TRUE(base::test::RunUntil([&]{return manager->scene_order_correct_for_testing()&&manager->scene_contains_text_for_testing("Dialog end 🦀");}));
   auto lifetime=field->input_client()->AsWeakPtr();widget->CloseNow();ASSERT_TRUE(base::test::RunUntil([&]{return !manager->dialog()&&!lifetime&&closed==1;}));EXPECT_FALSE(manager->scene_visible_for_testing());
   open(u"Fresh dialog 🦀");ASSERT_TRUE(base::test::RunUntil([&]{return manager->scene_contains_text_for_testing("Fresh dialog 🦀");}));EXPECT_FALSE(manager->scene_contains_text_for_testing("Dialog end 🦀"));manager->CancelDialogs(page,true);ASSERT_TRUE(base::test::RunUntil([&]{return !manager->dialog()&&closed==2;}));EXPECT_FALSE(manager->scene_visible_for_testing());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsChoicesPostedActionsRejectChangedSelection) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready()&&shell->appearance_ready();}));
+  ASSERT_TRUE(shell->UpsertSearchProvider({"Choice A","zchoicea","https://choice.test/a?q={query}"}));ASSERT_TRUE(shell->UpsertSearchProvider({"Choice B","zchoiceb","https://choice.test/b?q={query}"}));shell->OpenTools(2);
+  auto provider_index=[&](std::string key){const auto& values=shell->browser_tools().providers;auto found=std::find_if(values.begin(),values.end(),[&](const auto& item){return item.keyword==key;});return found==values.end()?size_t(0):size_t(found-values.begin()+1);};
+  auto a=provider_index("zchoicea"),b=provider_index("zchoiceb");ASSERT_GT(a,0u);ASSERT_GT(b,0u);shell->ActivateToolsChoiceForTesting("selection",a);auto* remove=FindButton(shell->tools_widget()->GetContentsView(),u"Usuń wyszukiwarkę");ASSERT_TRUE(remove);views::test::ButtonTestApi(remove).NotifyDefaultMouseClick();shell->ActivateToolsChoiceForTesting("selection",b);base::RunLoop().RunUntilIdle();EXPECT_GT(provider_index("zchoicea"),0u);EXPECT_GT(provider_index("zchoiceb"),0u);
+  views::test::ButtonTestApi(remove).NotifyDefaultMouseClick();ASSERT_TRUE(base::test::RunUntil([&]{return provider_index("zchoiceb")==0;}));EXPECT_GT(provider_index("zchoicea"),0u);
+  shell->OpenTools(1);const auto shortcuts=shell->browser_tools().shortcuts;ASSERT_GE(shortcuts.size(),2u);shell->ActivateToolsChoiceForTesting("selection",0);auto* disable=FindButton(shell->tools_widget()->GetContentsView(),u"Wyłącz wybrany skrót");ASSERT_TRUE(disable);views::test::ButtonTestApi(disable).NotifyDefaultMouseClick();shell->ActivateToolsChoiceForTesting("selection",1);base::RunLoop().RunUntilIdle();EXPECT_EQ(shortcuts[0].accelerator,shell->browser_tools().shortcuts[0].accelerator);EXPECT_EQ(shortcuts[1].accelerator,shell->browser_tools().shortcuts[1].accelerator);
+  views::test::ButtonTestApi(disable).NotifyDefaultMouseClick();ASSERT_TRUE(base::test::RunUntil([&]{return shell->browser_tools().shortcuts[1].accelerator.key_code()==ui::VKEY_UNKNOWN;}));EXPECT_EQ(shortcuts[0].accelerator,shell->browser_tools().shortcuts[0].accelerator);
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsTimelinePostedDeleteCannotBorrowFilteredTarget) {

@@ -20,9 +20,14 @@ mod ffi {
     struct SelectOption { key: String, label: String, search: String }
     struct ToolsCopy { title: String, intro: String, tail: String, initial_status: String, fields: Vec<String>, pickers: Vec<String>, headings: Vec<String>, actions: Vec<String>, choices: Vec<String> }
     struct PageDialogCopy { title: String, identity: String, message: Vec<u16>, accept: String, cancel: String, show_cancel: bool, default_cancel: bool, prompt: bool }
-    struct ToolsActionContext { snapshot_field: bool, shortcut_field: bool, provider_field: bool, snapshot_composing: bool, shortcut_composing: bool, provider_composing: bool, snapshot_selected: bool, closed_selected: bool, shortcut_selected: bool }
+    struct ToolsActionContext { snapshot_field: bool, shortcut_field: bool, provider_field: bool, provider_selected: bool, snapshot_composing: bool, shortcut_composing: bool, provider_composing: bool, snapshot_selected: bool, closed_selected: bool, shortcut_selected: bool }
     struct ToolsDispatch { admitted: bool, action: i32, recording: bool, sync_recording: bool, record_status: String }
     struct ToolsOutcome { refresh: bool, status: String }
+    struct ToolsShortcutItem { id: String, title: Vec<u16>, chord: Vec<u16> }
+    struct ToolsProviderItem { id: String, name: Vec<u16>, keyword: Vec<u16>, url: Vec<u16>, default_provider: bool }
+    struct ToolsFormChoice { key: String, label: Vec<u16> }
+    struct ToolsFormChoices { choices: Vec<ToolsFormChoice>, enabled: bool }
+    struct ToolsChoiceDraft { valid: bool, page: usize, create: bool, target: String, chord: Vec<u16>, name: Vec<u16>, keyword: Vec<u16>, url: Vec<u16>, stop_recording: bool }
     struct ToolsTimelineItem { id: String, title: Vec<u16>, detail: Vec<u16>, search: Vec<u16> }
     struct ToolsTimelineChoice { key: String, label: Vec<u16> }
     struct ToolsTimelineList { choices: Vec<ToolsTimelineChoice>, enabled: bool }
@@ -177,6 +182,10 @@ mod ffi {
         fn tools_history_loaded(self: &ToolsForm) -> bool;
         fn tools_timeline_edit(self: &mut ToolsForm, query: Vec<u16>);
         fn tools_timeline_query(self: &ToolsForm) -> Vec<u16>;
+        fn tools_shortcut_choices(self: &mut ToolsForm, items: Vec<ToolsShortcutItem>) -> ToolsFormChoices;
+        fn tools_provider_choices(self: &mut ToolsForm, items: Vec<ToolsProviderItem>) -> ToolsFormChoices;
+        fn tools_choice_select(self: &mut ToolsForm, key: &str) -> ToolsChoiceDraft;
+        fn tools_choice_draft(self: &ToolsForm, key: &str) -> ToolsChoiceDraft;
         fn tools_timeline_project(self: &mut ToolsForm, closed: bool, items: Vec<ToolsTimelineItem>) -> ToolsTimelineList;
         fn tools_timeline_target(self: &ToolsForm, closed: bool, key: &str) -> String;
         type PreferencesForm;
@@ -625,7 +634,7 @@ fn tools_copy(page:usize,context:&str)->ffi::ToolsCopy{
     match page.min(3){
         0=>ffi::ToolsCopy{title:if context.is_empty(){"Time Machine".into()}else{format!("Time Machine · {}",context)},intro:"Snapshot zapisuje karty, foldery i Split View w tej przestrzeni. Przywrócenie przeładuje strony; formularze i historia Wstecz nie są częścią snapshotu. Poprzedni układ otrzyma punkt przywracania.".into(),tail:"Uśpienie zwalnia strony tej przestrzeni z pamięci i przełącza do innej. Kliknięcie jej kropki wznowi układ. Niezapisane formularze zostaną utracone.".into(),initial_status:"Użyj przycisków poniżej pól lub Enter, aby zatwierdzić zmiany. Dane są zapisywane lokalnie.".into(),fields:vec!["Nazwa snapshotu, np. Research przed deployem".into(),"Szukaj snapshotów i zamkniętych kart".into()],pickers:vec!["Zapisane snapshoty".into(),"Zamknięte karty".into()],headings:vec!["Snapshoty · 30 własnych + 30 automatycznych".into(),"Ostatnio zamknięte · do 100 kart".into()],actions:vec!["Zapisz snapshot".into(),"Przywróć wybrany układ".into(),"Usuń wybrany snapshot".into(),"Przywróć wybraną kartę".into(),"Uśpij tę przestrzeń".into()],choices:vec![]},
         1=>ffi::ToolsCopy{title:"Skróty klawiszowe".into(),intro:"Schemat inspirowany Arc. Wybierz akcję, nagraj kombinację lub wpisz np. Cmd+Shift+J. Puste pole wyłącza skrót. Escape, skróty edycji tekstu i systemowe pozostają zarezerwowane.".into(),tail:"".into(),initial_status:"Użyj przycisków poniżej pól lub Enter, aby zatwierdzić zmiany. Dane są zapisywane lokalnie.".into(),fields:vec!["Kombinacja, np. Cmd+Shift+J".into()],pickers:vec!["Akcja skrótu".into()],headings:vec![],actions:vec!["Nagraj kombinację…".into(),"Zapisz skrót".into(),"Wyłącz wybrany skrót".into(),"Przywróć schemat Arc".into()],choices:vec![]},
-        2=>ffi::ToolsCopy{title:"Wyszukiwarki i prefiksy".into(),intro:"W pasku adresu wpisz prefiks i zapytanie, np. g koty lub w Warszawa. Szablon musi być adresem HTTP(S) z jednym znacznikiem {query}. Zapytania są kodowane automatycznie.".into(),tail:"".into(),initial_status:"Użyj przycisków poniżej pól lub Enter, aby zatwierdzić zmiany. Dane są zapisywane lokalnie.".into(),fields:vec!["Nazwa wyszukiwarki".into(),"Prefiks (a–z, 0–9)".into(),"Adres z {query}".into()],pickers:vec!["Wyszukiwarka do edycji".into()],headings:vec![],actions:vec!["Zapisz wyszukiwarkę".into(),"Ustaw jako domyślną".into(),"Usuń wyszukiwarkę".into()],choices:vec!["Dodaj nową wyszukiwarkę…".into()]},
+        2=>ffi::ToolsCopy{title:"Wyszukiwarki i prefiksy".into(),intro:"W pasku adresu wpisz prefiks i zapytanie, np. g koty lub w Warszawa. Szablon musi być adresem HTTP(S) z jednym znacznikiem {query}. Zapytania są kodowane automatycznie.".into(),tail:"".into(),initial_status:"Użyj przycisków poniżej pól lub Enter, aby zatwierdzić zmiany. Dane są zapisywane lokalnie.".into(),fields:vec!["Nazwa wyszukiwarki".into(),"Prefiks (a–z, 0–9)".into(),"Adres z {query}".into()],pickers:vec!["Wyszukiwarka do edycji".into()],headings:vec![],actions:vec!["Zapisz wyszukiwarkę".into(),"Ustaw jako domyślną".into(),"Usuń wyszukiwarkę".into()],choices:vec![TOOLS_NEW_PROVIDER.into()]},
         3=>ffi::ToolsCopy{title:"Historia przeglądania".into(),intro:format!("Profil: {}",context),tail:"".into(),initial_status:"Odczytywanie historii…".into(),fields:vec!["Szukaj w historii".into()],pickers:vec!["Zakres czyszczenia historii".into()],headings:vec![],actions:vec!["Wyczyść historię…".into(),"Pokaż więcej".into()],choices:vec!["Ostatnia godzina".into(),"Ostatnie 24 godziny".into(),"Ostatnie 7 dni".into(),"Cały okres".into()]},
         _=>unreachable!(),
     }
@@ -637,12 +646,20 @@ fn tools_clear_controls(busy:bool)->ffi::ToolsClearControls{ffi::ToolsClearContr
 // visibility/profile authorization, timers, IME and all browser-service calls.
 // Reconstructing a page clears its transient query/recording state. The history
 // limit is reset by a fresh request, as in Views, not by page reconstruction.
+struct ToolShortcutChoice { key:String, id:String, chord:Vec<u16> }
+struct ToolProviderChoice { key:String, item:Option<ffi::ToolsProviderItem> }
+fn tools_invalid_choice()->ffi::ToolsChoiceDraft {ffi::ToolsChoiceDraft{valid:false,page:0,create:false,target:String::new(),chord:vec![],name:vec![],keyword:vec![],url:vec![],stop_recording:false}}
+const TOOLS_NEW_PROVIDER:&str="Dodaj nową wyszukiwarkę…";
 pub struct ToolsForm {
     page: usize,
     recording: bool,
     history_query: Vec<u16>,
     timeline_query: Vec<u16>,
     timeline_epoch: u64,
+    choice_epoch: u64,
+    active_choice: String,
+    shortcut_choices: Vec<ToolShortcutChoice>,
+    provider_choices: Vec<ToolProviderChoice>,
     timeline_snapshots: Vec<(String,String)>,
     timeline_closed: Vec<(String,String)>,
     history_limit: usize,
@@ -650,12 +667,12 @@ pub struct ToolsForm {
 }
 fn new_tools_form() -> Box<ToolsForm> {
     Box::new(ToolsForm { page: 0, recording: false, history_query: vec![],
-        timeline_query: vec![], timeline_epoch: 0, timeline_snapshots: vec![], timeline_closed: vec![], history_limit: 200, history_loaded: false })
+        timeline_query: vec![], choice_epoch: 0, active_choice:String::new(), shortcut_choices:vec![], provider_choices:vec![], timeline_epoch: 0, timeline_snapshots: vec![], timeline_closed: vec![], history_limit: 200, history_loaded: false })
 }
 impl ToolsForm {
     fn tools_select(&mut self, page: usize) {
         let page=page.min(3);
-        if self.page!=page{self.timeline_snapshots.clear();self.timeline_closed.clear();}
+        if self.page!=page{self.timeline_snapshots.clear();self.timeline_closed.clear();self.shortcut_choices.clear();self.provider_choices.clear();self.active_choice.clear();}
         self.page=page;
     }
     fn tools_page(&self) -> usize { self.page }
@@ -663,6 +680,7 @@ impl ToolsForm {
         self.recording = false;
         self.history_query.clear(); self.timeline_query.clear();
         self.timeline_snapshots.clear(); self.timeline_closed.clear();
+        self.shortcut_choices.clear();self.provider_choices.clear();self.active_choice.clear();
         self.history_loaded = false;
     }
     fn tools_record(&mut self, recording: bool) { self.recording = recording; }
@@ -676,7 +694,7 @@ impl ToolsForm {
         let allowed=match action {
             1=>c.snapshot_field,2|3=>c.snapshot_selected,4=>c.closed_selected,
             5|13=>true,10=>c.shortcut_field,11|12=>c.shortcut_field&&c.shortcut_selected,
-            20..=22=>c.provider_field,_=>false,
+            20..=22=>c.provider_field&&c.provider_selected,_=>false,
         };
         let command=if allowed{action}else{0};
         let sync_recording=(action!=10&&self.recording)||command==10;
@@ -707,6 +725,34 @@ impl ToolsForm {
         self.history_loaded = true; true
     }
     fn tools_history_loaded(&self) -> bool { self.history_loaded }
+    fn tools_shortcut_choices(&mut self,items:Vec<ffi::ToolsShortcutItem>)->ffi::ToolsFormChoices {
+        self.shortcut_choices.clear();self.active_choice.clear();let mut choices=vec![];
+        if let Some(epoch)=self.choice_epoch.checked_add(1){self.choice_epoch=epoch;
+            for item in items {let key=format!("form:{}:1:{}",epoch,choices.len());let mut label=item.title;label.extend(" — ".encode_utf16());label.extend_from_slice(&item.chord);self.shortcut_choices.push(ToolShortcutChoice{key:key.clone(),id:item.id,chord:item.chord});choices.push(ffi::ToolsFormChoice{key,label});}
+        }
+        let enabled=!choices.is_empty();if enabled{self.active_choice=choices[0].key.clone();}else{choices.push(ffi::ToolsFormChoice{key:"empty".into(),label:"Brak pozycji".encode_utf16().collect()});}
+        ffi::ToolsFormChoices{choices,enabled}
+    }
+    fn tools_provider_choices(&mut self,items:Vec<ffi::ToolsProviderItem>)->ffi::ToolsFormChoices {
+        self.provider_choices.clear();self.active_choice.clear();let mut choices=vec![];
+        if let Some(epoch)=self.choice_epoch.checked_add(1){self.choice_epoch=epoch;
+            let key=format!("form:{}:2:0",epoch);self.provider_choices.push(ToolProviderChoice{key:key.clone(),item:None});choices.push(ffi::ToolsFormChoice{key,label:TOOLS_NEW_PROVIDER.encode_utf16().collect()});
+            for item in items {let key=format!("form:{}:2:{}",epoch,choices.len());let mut label=item.keyword.clone();label.extend(" · ".encode_utf16());label.extend_from_slice(&item.name);if item.default_provider{label.extend(" · domyślna".encode_utf16());}self.provider_choices.push(ToolProviderChoice{key:key.clone(),item:Some(item)});choices.push(ffi::ToolsFormChoice{key,label});}
+        }
+        let enabled=!choices.is_empty();if enabled{self.active_choice=choices[0].key.clone();}else{choices.push(ffi::ToolsFormChoice{key:"empty".into(),label:"Brak pozycji".encode_utf16().collect()});}
+        ffi::ToolsFormChoices{choices,enabled}
+    }
+    fn tools_choice_select(&mut self,key:&str)->ffi::ToolsChoiceDraft {
+        let known=match self.page{1=>self.shortcut_choices.iter().any(|row|row.key==key),2=>self.provider_choices.iter().any(|row|row.key==key),_=>false};
+        if !known{return tools_invalid_choice();}self.active_choice=key.into();
+        let draft=self.tools_choice_draft(key);if draft.stop_recording{self.recording=false;}draft
+    }
+    fn tools_choice_draft(&self,key:&str)->ffi::ToolsChoiceDraft {
+        if key.is_empty()||self.active_choice!=key{return tools_invalid_choice();}
+        if self.page==1 {if let Some(row)=self.shortcut_choices.iter().find(|row|row.key==key&&!row.id.is_empty()) {return ffi::ToolsChoiceDraft{valid:true,page:1,create:false,target:row.id.clone(),chord:row.chord.clone(),name:vec![],keyword:vec![],url:vec![],stop_recording:true};}}
+        if self.page==2 {if let Some(row)=self.provider_choices.iter().find(|row|row.key==key) {return match &row.item{None=>ffi::ToolsChoiceDraft{valid:true,page:2,create:true,..tools_invalid_choice()},Some(item) if !item.id.is_empty()=>ffi::ToolsChoiceDraft{valid:true,page:2,create:false,target:item.id.clone(),name:item.name.clone(),keyword:item.keyword.clone(),url:item.url.clone(),chord:vec![],stop_recording:false},_=>tools_invalid_choice()};}}
+        tools_invalid_choice()
+    }
     fn tools_timeline_edit(&mut self, query: Vec<u16>) {
         self.timeline_query=query;
         self.timeline_snapshots.clear();self.timeline_closed.clear();
@@ -2243,7 +2289,34 @@ mod tests {
     #[test] fn tools_timeline_epoch_exhaustion_fails_closed_without_reusing_keys(){
         let mut f=new_tools_form();let p=f.tools_timeline_project(false,vec![timeline_text("a","A","")]);let key=p.choices[0].key.clone();f.timeline_epoch=u64::MAX;let p=f.tools_timeline_project(false,vec![timeline_text("b","B","")]);assert!(!p.enabled);assert!(f.tools_timeline_target(false,&key).is_empty());f.tools_reset();let p=f.tools_timeline_project(false,vec![timeline_text("b","B","")]);assert!(!p.enabled);
     }
-    fn tools_context()->ffi::ToolsActionContext {ffi::ToolsActionContext{snapshot_field:true,shortcut_field:true,provider_field:true,snapshot_composing:false,shortcut_composing:false,provider_composing:false,snapshot_selected:true,closed_selected:true,shortcut_selected:true}}
+    fn form_shortcut(id:&str,title:&str,chord:&str)->ffi::ToolsShortcutItem{ffi::ToolsShortcutItem{id:id.into(),title:title.encode_utf16().collect(),chord:chord.encode_utf16().collect()}}
+    fn form_provider(id:&str,name:&str,default_provider:bool)->ffi::ToolsProviderItem{ffi::ToolsProviderItem{id:id.into(),name:name.encode_utf16().collect(),keyword:id.encode_utf16().collect(),url:format!("https://{}.test/?q={{query}}",id).encode_utf16().collect(),default_provider}}
+    #[test] fn tools_shortcut_projection_and_selection_own_labels_chords_and_record_cancellation(){
+        let mut f=new_tools_form();f.tools_select(1);let p=f.tools_shortcut_choices(vec![form_shortcut("a","Same 🦀","Cmd+J"),form_shortcut("b","Same 🦀","")]);assert!(p.enabled);assert_eq!(String::from_utf16(&p.choices[0].label).unwrap(),"Same 🦀 — Cmd+J");assert_ne!(p.choices[0].key,p.choices[1].key);
+        let first=f.tools_choice_draft(&p.choices[0].key);assert!(first.valid&&first.stop_recording);assert_eq!(first.target,"a");assert_eq!(String::from_utf16(&first.chord).unwrap(),"Cmd+J");
+        f.tools_record(true);let draft=f.tools_choice_select(&p.choices[1].key);assert!(draft.valid);assert_eq!(draft.target,"b");assert!(draft.chord.is_empty());assert!(!f.tools_recording());assert!(!f.tools_choice_draft(&p.choices[0].key).valid);
+    }
+    #[test] fn tools_provider_projection_create_and_default_markers_preserve_native_fields(){
+        let mut f=new_tools_form();f.tools_select(2);let p=f.tools_provider_choices(vec![form_provider("a","Same 🦀",false),form_provider("b","Same 🦀",true)]);assert!(p.enabled);assert_eq!(p.choices.len(),3);assert_eq!(String::from_utf16(&p.choices[0].label).unwrap(),tools_copy(2,"").choices[0]);assert_eq!(String::from_utf16(&p.choices[2].label).unwrap(),"b · Same 🦀 · domyślna");
+        let create=f.tools_choice_draft(&p.choices[0].key);assert!(create.valid&&create.create);assert!(create.target.is_empty()&&create.name.is_empty()&&create.keyword.is_empty()&&create.url.is_empty());
+        let draft=f.tools_choice_select(&p.choices[2].key);assert!(draft.valid&&!draft.create&&!draft.stop_recording);assert_eq!(draft.target,"b");assert_eq!(String::from_utf16(&draft.name).unwrap(),"Same 🦀");assert_eq!(String::from_utf16(&draft.keyword).unwrap(),"b");assert_eq!(String::from_utf16(&draft.url).unwrap(),"https://b.test/?q={query}");assert!(!f.tools_choice_draft(&p.choices[0].key).valid);
+    }
+    #[test] fn tools_choice_reprojection_reset_page_and_wrong_role_invalidate_old_drafts(){
+        let mut f=new_tools_form();f.tools_select(1);let p=f.tools_shortcut_choices(vec![form_shortcut("a","A","Cmd+J")]);let key=p.choices[0].key.clone();let p=f.tools_shortcut_choices(vec![form_shortcut("a","Renamed","Cmd+K")]);assert!(!f.tools_choice_draft(&key).valid);assert!(f.tools_choice_draft(&p.choices[0].key).valid);let key=p.choices[0].key.clone();f.tools_reset();assert!(!f.tools_choice_draft(&key).valid);
+        let p=f.tools_shortcut_choices(vec![form_shortcut("a","A","")]);let key=p.choices[0].key.clone();f.tools_select(2);let p=f.tools_provider_choices(vec![]);assert!(!f.tools_choice_select(&key).valid);assert!(f.tools_choice_draft(&p.choices[0].key).valid);f.tools_select(1);assert!(!f.tools_choice_select(&key).valid);
+    }
+    #[test] fn tools_choice_raw_utf16_empty_ids_and_duplicate_ids_are_not_control_keys(){
+        let mut f=new_tools_form();f.tools_select(1);let p=f.tools_shortcut_choices(vec![ffi::ToolsShortcutItem{id:"a".into(),title:vec![0xd800],chord:vec![0xdfff]}]);assert_eq!(p.choices[0].label,vec![0xd800,0x20,0x2014,0x20,0xdfff]);assert_eq!(f.tools_choice_draft(&p.choices[0].key).chord,vec![0xdfff]);
+        let p=f.tools_shortcut_choices(vec![form_shortcut("same","Same",""),form_shortcut("same","Same","")]);assert_ne!(p.choices[0].key,p.choices[1].key);assert_eq!(f.tools_choice_select(&p.choices[1].key).target,"same");
+        let p=f.tools_shortcut_choices(vec![form_shortcut("","Invalid","")]);assert!(!f.tools_choice_draft(&p.choices[0].key).valid);let p=f.tools_shortcut_choices(vec![]);assert!(!p.enabled);assert!(!f.tools_choice_select(&p.choices[0].key).valid);
+    }
+    #[test] fn tools_choice_epoch_exhaustion_does_not_resurrect_old_or_create_targets(){
+        let mut f=new_tools_form();f.tools_select(2);let p=f.tools_provider_choices(vec![]);let key=p.choices[0].key.clone();f.choice_epoch=u64::MAX;let p=f.tools_provider_choices(vec![form_provider("a","A",false)]);assert!(!p.enabled);assert!(!f.tools_choice_draft(&key).valid);f.tools_reset();let p=f.tools_provider_choices(vec![]);assert!(!p.enabled);assert!(!f.tools_choice_select(&p.choices[0].key).valid);
+    }
+    #[test] fn tools_provider_dispatch_requires_current_choice_as_well_as_native_fields(){
+        let mut f=new_tools_form();let mut c=tools_context();c.provider_selected=false;for action in [20,21,22]{assert_eq!(f.tools_dispatch(action,&c).action,0);}c.provider_selected=true;for action in [20,21,22]{assert_eq!(f.tools_dispatch(action,&c).action,action);}c.provider_composing=true;assert!(!f.tools_dispatch(20,&c).admitted);
+    }
+    fn tools_context()->ffi::ToolsActionContext {ffi::ToolsActionContext{snapshot_field:true,shortcut_field:true,provider_field:true,provider_selected:true,snapshot_composing:false,shortcut_composing:false,provider_composing:false,snapshot_selected:true,closed_selected:true,shortcut_selected:true}}
     #[test] fn tools_dispatch_preserves_command_and_composition_admission() {
         let mut form=new_tools_form();let mut c=tools_context();
         for action in [1,2,3,4,5,10,11,12,13,20,21,22] {let p=form.tools_dispatch(action,&c);assert!(p.admitted);assert_eq!(p.action,action);}
