@@ -653,6 +653,8 @@ class RustActionView final : public views::View {
       :callback_(std::move(callback)),glyph_(glyph),icon_(icon),visible_(std::move(visible)),changed_(std::move(changed)){
     SetTooltipText(name);auto& ax=GetViewAccessibility();ax.SetName(name);ax.SetRole(ax::mojom::Role::kButton);ax.SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kPress);SetFocusBehavior(views::PlatformStyle::kDefaultFocusBehavior);views::FocusRing::Install(this);
   }
+  void SetCallback(views::Button::PressedCallback callback){Cancel();callback_=std::move(callback);}
+  void CancelInput(){Cancel();}
   void SetOn(bool on){if(state_->action_on(on))SchedulePaint();}
   void SetLabel(std::u16string label){if(label_==label)return;label_=std::move(label);PreferredSizeChanged();SchedulePaint();}
   void SyncViewportVisibility(){if(!Interactive())Cancel();}
@@ -698,6 +700,17 @@ std::unique_ptr<views::View> CreateSceneAction(views::Button::PressedCallback ca
   return std::make_unique<SceneGlyphButton>(std::move(callback),std::move(name),glyph,icon,std::move(visible),std::move(changed));
 }
 
+void SetActionCallback(views::View* view,views::Button::PressedCallback callback){
+#if BUILDFLAG(IS_MAC)
+  if(auto* control=views::AsViewClass<RustActionView>(view)){control->SetCallback(std::move(callback));return;}
+#endif
+  static_cast<views::Button*>(view)->SetCallback(std::move(callback));
+}
+void CancelActionInput(views::View* view){
+#if BUILDFLAG(IS_MAC)
+  if(auto* control=views::AsViewClass<RustActionView>(view))control->CancelInput();
+#endif
+}
 void SetActionOn(views::View* view,bool on){
 #if BUILDFLAG(IS_MAC)
   if(auto* control=views::AsViewClass<RustActionView>(view)){control->SetOn(on);return;}
@@ -2754,8 +2767,16 @@ class PaneBar final : public views::View {
       layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
       title_=Label(this,u"",kMuted,Font(-1));title_->SetElideBehavior(gfx::ELIDE_TAIL);title_->SetHorizontalAlignment(gfx::ALIGN_LEFT);layout->SetFlexForView(title_,1);
     } else GetViewAccessibility().SetRole(ax::mojom::Role::kGroup);
-    menu_=AddChildView(std::make_unique<SceneGlyphButton>(std::move(menu),u"Opcje Split View",GlyphButton::Glyph::kMore,nullptr,visible_));
-    close_=AddChildView(std::make_unique<SceneGlyphButton>(std::move(close),u"Zamknij kartę w Split View",GlyphButton::Glyph::kVector,&vector_icons::kCloseSmallIcon,visible_));
+    menu_=AddChildView(CreateSceneAction(std::move(menu),u"Opcje Split View",ControlGlyph::kMore,nullptr,visible_,painted_));
+    close_=AddChildView(CreateSceneAction(std::move(close),u"Zamknij kartę w Split View",ControlGlyph::kVector,&vector_icons::kCloseSmallIcon,visible_,painted_));
+  }
+  void CancelInput(){CancelActionInput(menu_);CancelActionInput(close_);}
+  // A bar survives tab replacement and index reuse. Revoke pending input when
+  // its domain target changes; title/focus updates keep an ordinary click alive.
+  void SetTarget(const std::string& workspace,std::optional<size_t> index,
+                 std::array<uint64_t,2> identity,bool visible){
+    if(workspace_==workspace&&index_==index&&identity_==identity&&target_visible_==visible)return;
+    CancelInput();workspace_=workspace;index_=index;identity_=identity;target_visible_=visible;
   }
   void SetTitle(std::u16string title,bool active) {
     if(text_==title && active_==active)return;
@@ -2782,8 +2803,8 @@ class PaneBar final : public views::View {
     canvas->DrawStringRectWithFlags(text_,Font(-1),Tone(this,active_?kInk:kMuted),gfx::Rect(g.title.x,g.title.y,g.title.width,g.title.height),gfx::Canvas::TEXT_ALIGN_LEFT);
 #endif
   }
-  views::Button* menu() const { return menu_; }
-  views::Button* close() const { return close_; }
+  views::View* menu() const { return menu_; }
+  views::View* close() const { return close_; }
  private:
   bool scene_=false,active_=false;
   std::u16string text_;
@@ -2791,8 +2812,12 @@ class PaneBar final : public views::View {
   base::RepeatingClosure painted_;
   base::RepeatingCallback<bool()> visible_;
   raw_ptr<views::Label> title_ = nullptr;
-  raw_ptr<views::Button> menu_ = nullptr;
-  raw_ptr<views::Button> close_ = nullptr;
+  raw_ptr<views::View> menu_ = nullptr;
+  raw_ptr<views::View> close_ = nullptr;
+  std::string workspace_;
+  std::optional<size_t> index_;
+  std::array<uint64_t,2> identity_{};
+  bool target_visible_=false;
 };
 BEGIN_METADATA(PaneBar)
 END_METADATA
@@ -2822,7 +2847,7 @@ class PaneHost final : public views::View, public views::ResizeAreaDelegate {
     for (bool right : {false, true}) {
       auto* bar = AddChildView(std::make_unique<PaneBar>(views::Button::PressedCallback(),
                                                          base::BindRepeating(close, right),painted_,base::BindRepeating(visible,size_t{right})));
-      bar->menu()->SetCallback(base::BindRepeating(menu, right, base::Unretained(bar->menu())));
+      SetActionCallback(bar->menu(),base::BindRepeating(menu,right,base::Unretained(bar->menu())));
       bar->SetVisible(false);
       bars_[right] = bar;
     }
@@ -2833,7 +2858,7 @@ class PaneHost final : public views::View, public views::ResizeAreaDelegate {
   void SetPanes(views::View* left, views::View* right, double ratio, bool vertical) {
     if (left_ == left && right_ == right && ratio_ == ratio &&
         vertical_ == vertical) return;
-    if(left_!=left || right_!=right || vertical_!=vertical)divider_handle_->CancelDrag();
+    if(left_!=left || right_!=right || vertical_!=vertical){divider_handle_->CancelDrag();for(auto& bar:bars_)bar->CancelInput();}
     left_ = left; right_ = right; ratio_ = ratio; vertical_ = vertical;
     divider_handle_->SetVertical(vertical);
     divider_->SetVisible(right != nullptr);
@@ -4201,8 +4226,11 @@ void WorkspaceShell::Update(ShellState state) {
       blank ? u"" : base::UTF8ToUTF16(path), blank, !blank && state_.url.SchemeIs("https"));
   for (bool right : {false, true}) {
     std::u16string title;
-    for (const auto& tab : state_.tabs) if (state_.split_tabs[right] == tab.index) title = tab.title;
-    static_cast<PaneHost*>(content_host_.get())->bar(right)->SetTitle(title, state_.right_active == right);
+    std::array<uint64_t,2> identity{};
+    for (const auto& tab : state_.tabs) if (state_.split_tabs[right] == tab.index){title=tab.title;identity=tab.identity;}
+    auto* bar=static_cast<PaneHost*>(content_host_.get())->bar(right);
+    bar->SetTarget(state_.workspace_id,state_.split_tabs[right],identity,state_.split_visible);
+    bar->SetTitle(title,state_.right_active==right);
   }
   nav_buttons_[0]->SetEnabled(state_.can_go_back);
   nav_buttons_[1]->SetEnabled(state_.can_go_forward);
@@ -4436,7 +4464,7 @@ void WorkspaceShell::UpdateMetalSplit() {
       title.title=base::UTF16ToUTF8(bar->text());title.title_width=bar->text_width();title.ink=Tone(bar,bar->active()?kInk:kMuted);title.font_size=Font(-1).GetFontSize();items.push_back(std::move(title));
       for(auto* button:{bar->menu(),bar->close()}) {
         auto box=gfx::RectF(button->GetBoundsInScreen());box.Offset(-bounds.x(),-bounds.y());
-        items.push_back(GlyphSceneItem(static_cast<GlyphButton*>(button),box,gfx::RectF(gfx::Rect(bounds.size()))));
+        items.push_back(ActionSceneItem(button,box,gfx::RectF(gfx::Rect(bounds.size()))));
       }
     } else {
       sidebar::Item item{};item.kind=9;item.x=rect.x();item.y=rect.y();item.width=rect.width();item.height=rect.height();item.clip=clip;
@@ -5505,13 +5533,16 @@ void WorkspaceShell::ShowSplitPaneMenu(bool right, gfx::Point point) {
 
 void WorkspaceShell::CloseSplitPane(bool right) {
   if (!state_.split_visible || !state_.split_tabs[right]) return;
+  std::array<uint64_t,2> identity{};
+  for(const auto& tab:state_.tabs)if(tab.index==*state_.split_tabs[right]){identity=tab.identity;break;}
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(
-      [](base::WeakPtr<WorkspaceShell> shell, std::string workspace, size_t tab) {
-        if (shell && shell->state_.workspace_id == workspace) shell->callbacks_.close_tab.Run(tab);
-      }, weak_factory_.GetWeakPtr(), state_.workspace_id, *state_.split_tabs[right]));
+      [](base::WeakPtr<WorkspaceShell> shell,std::string workspace,std::array<uint64_t,2> identity){
+        if(!shell||shell->state_.workspace_id!=workspace||identity==std::array<uint64_t,2>{})return;
+        for(const auto& tab:shell->state_.tabs)if(tab.identity==identity){shell->callbacks_.close_tab.Run(tab.index);return;}
+      },weak_factory_.GetWeakPtr(),state_.workspace_id,identity));
 }
 
-views::Button* WorkspaceShell::split_pane_button(bool right, bool close) const {
+views::View* WorkspaceShell::split_pane_button(bool right, bool close) const {
   auto* bar = static_cast<PaneHost*>(content_host_.get())->bar(right);
   return close ? bar->close() : bar->menu();
 }

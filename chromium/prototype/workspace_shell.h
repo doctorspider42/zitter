@@ -186,7 +186,7 @@ class WorkspaceShell final : public ui::EventHandler,
   // Header buttons above each half of a visible split.
   void ShowSplitPaneMenu(bool right, gfx::Point screen_point);
   void CloseSplitPane(bool right);
-  views::Button* split_pane_button(bool right, bool close) const;
+  views::View* split_pane_button(bool right, bool close) const;
   views::View* peek_host() const { return peek_host_; }
   views::Widget* peek_widget() const { return peek_widget_.get(); }
   void ShowPeek(std::u16string title);

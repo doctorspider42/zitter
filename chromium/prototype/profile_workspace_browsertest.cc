@@ -1240,6 +1240,43 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FooterActionCallbackCanDeleteI
   views::Widget::InitParams params(views::Widget::InitParams::CLIENT_OWNS_WIDGET,views::Widget::InitParams::TYPE_BUBBLE);params.delegate=delegate.get();params.SetParent(window_->widget());auto widget=std::make_unique<views::Widget>();widget->Init(std::move(params));widget->SetBounds(gfx::Rect(40,40,200,120));widget->Show();ui::MouseEvent press(ui::EventType::kMousePressed,gfx::Point(10,10),gfx::Point(10,10),base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent release(ui::EventType::kMouseReleased,gfx::Point(10,10),gfx::Point(10,10),base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ASSERT_TRUE(action->OnMousePressed(press));action->OnMouseReleased(release);EXPECT_EQ(1,calls);EXPECT_FALSE(tracked.view());widget->CloseNow();
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitPaneActionHostsMenuKeyboardAXAndRetarget) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
+  const auto url=embedded_test_server()->GetURL("/storage_probe.html?split-actions");
+  ASSERT_TRUE(window_->NavigateFromBar(url,false));ASSERT_TRUE(window_->NavigateFromBar(url,true));ASSERT_TRUE(window_->NavigateFromBar(url,true));
+  window_->SelectTab(0);ASSERT_TRUE(window_->SplitTab(1));window_->widget()->LayoutRootViewIfNecessary();const bool rust=shell->workspace_input()->rust_editor();
+  for(bool right:{false,true})for(bool close:{false,true}){auto* view=shell->split_pane_button(right,close);ASSERT_TRUE(view);EXPECT_EQ(!rust,views::AsViewClass<views::Button>(view)!=nullptr);ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kButton,ax.role);EXPECT_EQ(close?u"Zamknij kartę w Split View":u"Opcje Split View",ax.GetString16Attribute(ax::mojom::StringAttribute::kName));EXPECT_EQ(gfx::Size(32,32),view->GetPreferredSize());}
+#if BUILDFLAG(IS_MAC)
+  bool inspected=false;
+  EXPECT_TRUE(RunWithNativeMenuInspectionForTesting(base::BindOnce([](views::View* view){ui::AXActionData action;action.action=ax::mojom::Action::kDoDefault;EXPECT_TRUE(view->HandleAccessibleAction(action));},base::Unretained(shell->split_pane_button(true,false))),base::BindRepeating([](WorkspaceShell* shell,bool* inspected){EXPECT_TRUE(shell->workspace_context_menu_running_for_testing());auto* menu=shell->workspace_menu();EXPECT_TRUE(menu);if(menu)EXPECT_GT(menu->GetItemCount(),3u);*inspected=true;},base::Unretained(shell),&inspected)));
+  EXPECT_TRUE(inspected);EXPECT_FALSE(shell->workspace_context_menu_running_for_testing());EXPECT_EQ(3u,window_->tab_count("work"));
+#endif
+  auto* close=shell->split_pane_button(true,true);ui::AXActionData activate;activate.action=ax::mojom::Action::kDoDefault;close->SetEnabled(false);close->HandleAccessibleAction(activate);base::RunLoop().RunUntilIdle();EXPECT_EQ(3u,window_->tab_count("work"));close->SetEnabled(true);
+  if(rust){
+    auto press=[&]{const auto point=close->GetLocalBounds().CenterPoint();ui::MouseEvent event(ui::EventType::kMousePressed,point,point,base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);return close->OnMousePressed(event);};
+    auto release=[&]{const auto point=close->GetLocalBounds().CenterPoint();ui::MouseEvent event(ui::EventType::kMouseReleased,point,point,base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);close->OnMouseReleased(event);base::RunLoop().RunUntilIdle();EXPECT_EQ(3u,window_->tab_count("work"));};
+    ASSERT_TRUE(press());window_->SwapSplit();window_->widget()->LayoutRootViewIfNecessary();release();
+    ASSERT_TRUE(press());window_->SetSplitVertical(true);window_->widget()->LayoutRootViewIfNecessary();release();
+    ASSERT_TRUE(press());window_->Unsplit(0);window_->SelectTab(0);ASSERT_TRUE(window_->SplitTab(2));window_->widget()->LayoutRootViewIfNecessary();release();
+    ASSERT_TRUE(press());window_->SelectTab(1);window_->SelectTab(0);window_->widget()->LayoutRootViewIfNecessary();release();
+  }
+  // This host lives in the activatable main window: verify actual Cocoa Space
+  // delivery as well as AX activation above and the existing physical mouse case.
+  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));close->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);close->RequestFocus();ASSERT_TRUE(base::test::RunUntil([&]{return close->HasFocus();}));
+  base::test::TestFuture<void> presented;auto* compositor=window_->widget()->GetCompositor();ASSERT_TRUE(compositor);window_->widget()->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(window_->widget()->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));ASSERT_TRUE(base::test::RunUntil([&]{return window_->tab_count("work")==2&&!window_->split();}));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitPaneActionQueuedCloseSurvivesIndexShiftAndDeletion) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
+  const auto a=embedded_test_server()->GetURL("/storage_probe.html?queue-a"),b=embedded_test_server()->GetURL("/storage_probe.html?queue-b"),c=embedded_test_server()->GetURL("/storage_probe.html?queue-c");
+  ASSERT_TRUE(window_->NavigateFromBar(a,false));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));ASSERT_TRUE(window_->NavigateFromBar(b,true));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));ASSERT_TRUE(window_->NavigateFromBar(c,true));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));window_->SelectTab(1);ASSERT_TRUE(window_->SplitTab(2));window_->widget()->LayoutRootViewIfNecessary();
+  ui::AXActionData activate;activate.action=ax::mojom::Action::kDoDefault;EXPECT_TRUE(shell->split_pane_button(true,true)->HandleAccessibleAction(activate));window_->CloseTab(0);
+  ASSERT_TRUE(base::test::RunUntil([&]{return window_->tab_count("work")==1;}));EXPECT_EQ(b,window_->contents("work")->GetLastCommittedURL());
+  ASSERT_TRUE(window_->NavigateFromBar(a,true));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));ASSERT_TRUE(window_->NavigateFromBar(c,true));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));window_->SelectTab(0);ASSERT_TRUE(window_->SplitTab(1));window_->widget()->LayoutRootViewIfNecessary();
+  EXPECT_TRUE(shell->split_pane_button(true,true)->HandleAccessibleAction(activate));window_->CloseTab(1);base::RunLoop().RunUntilIdle();EXPECT_EQ(2u,window_->tab_count("work"));window_->SelectTab(1);EXPECT_EQ(c,window_->contents("work")->GetLastCommittedURL());
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, HeaderActionHostOwnershipKeyboardAXGestureAndCancel) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);const bool rust=shell->workspace_input()->rust_editor();
   const std::array<std::u16string,4> names={u"Pokaż lub ukryj karty",u"Wstecz",u"Dalej",u"Odśwież"};for(size_t i=0;i<4;++i){auto* view=shell->header_action_for_testing(i);ASSERT_TRUE(view);EXPECT_EQ(!rust,views::AsViewClass<views::Button>(view)!=nullptr);ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kButton,ax.role);EXPECT_EQ(names[i],ax.GetString16Attribute(ax::mojom::StringAttribute::kName));}
@@ -3563,7 +3600,8 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitPairPersistsWhileAnotherT
   // The header sits above the right page, not over it.
   EXPECT_LE(close->GetBoundsInScreen().bottom(), c->GetContainerBounds().y());
   EXPECT_GT(close->GetBoundsInScreen().x(), shell->split_pane_button(false, true)->GetBoundsInScreen().x());
-  views::test::ButtonTestApi(close).NotifyDefaultMouseClick();
+  ui::AXActionData activate;activate.action=ax::mojom::Action::kDoDefault;
+  EXPECT_TRUE(close->HandleAccessibleAction(activate));
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->tab_count("work") == 1; }));
   EXPECT_EQ(b, window_->contents("work"));
   EXPECT_FALSE(window_->split());
