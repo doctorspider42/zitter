@@ -682,7 +682,7 @@ Color/emoji preset rows now use Rust
 geometry, selection and input with batched Metal canvases excluding native editors.
 Nine workspace/profile form actions also use Rust layout/input and scene text
 without native button Labels, batched into four Metal groups. These newer stages pass the
-[latest full automated GUI checkpoint](docs/benchmarks/rust-main-viewport-checkpoint-2026-10-26.json);
+[latest full automated GUI checkpoint](docs/benchmarks/rust-footer-viewport-checkpoint-2026-10-26.json);
 manual signed-app and performance acceptance remain pending. Import also uses a Rust form controller for
 option snapshots, debounce/admission and control locks, with Metal static/status
 text and Apply drawing. Four import checkboxes now share a Metal canvas with Rust
@@ -792,8 +792,13 @@ and 278 Rust cases.
 Palette suggestions now also use the Rust-owned viewport with dynamic height
 caps, existing scrollbar and keyboard/IME behavior.
 [Targeted palette acceptance](docs/benchmarks/rust-palette-viewport-targeted-2026-10-26.json)
-passed 18 Metal / 13 Views affected cases. Horizontal footer scrolling and
-remaining native node/input ownership remain open.
+passed 18 Metal / 13 Views affected cases.
+The horizontal workspace footer now also uses the Rust-owned viewport, including
+primary-axis allocation/offset/reveal and the existing custom scrollbar.
+[Full footer checkpoint](docs/benchmarks/rust-footer-viewport-checkpoint-2026-10-26.json)
+passed 196 Metal / 148 Views regular cases, six explicit optional skips each,
+and 280 Rust cases. Remaining native node/control/input ownership and manual/
+performance/release acceptance remain open.
 [Editor contracts and acceptance](docs/rust-metal-editor.md).
 Model updates refresh the scene independently of
 native painting. Rust also owns row

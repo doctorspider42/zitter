@@ -6,45 +6,69 @@ application/domain commands; preserve profile/session isolation. Push verified
 milestones to `origin/main` as they land. The opt-in switch remains
 `--zitter-sidebar=rust-metal` until the migration and comparison are complete.
 
-## Latest targeted follow-up
+## Latest full checkpoint
 
-UI source `6e61945bff6e40a092f91c605ca2f01fb60bf395` moves palette suggestion scrolling to
-Rust-owned extent/allocation, fractional offset, reveal and clamp. The existing
-custom Rust-backed scrollbar and Metal projection remain; palette-specific
-ScrollView synchronization/subscriptions are removed. A shared height-range
-setter keeps the dynamic 90..300px result cap. Separate overflow-indicator policy
-preserves edge indicators without imposing a dialog background. Views retains
-its native ScrollView and existing contents-preferred-size behavior.
+UI source `d44351ca2ad2c3d4125139e35e2354096dca7899` moves the horizontal workspace footer
+viewport to Rust. Together with the main sidebar and palette, all three shell
+scroll surfaces now use Rust-owned extent/allocation, authoritative fractional
+primary-axis offset, reveal and clamp in the opt-in backend. The injected custom
+Rust-backed horizontal scrollbar keeps thumb/track/key/AX and Metal rendering.
+WorkspaceShell no longer owns ScrollView subscriptions/synchronizers or concrete
+ScrollView hosts; Views retains native ScrollView through the common adapter.
+Native control/node identity, measurement, global gesture arbitration, event/
+focus/AX/window/frame/bar and animation adapters remain.
 
-The new shared actual-palette case injects 30 Unicode results, checks ownership,
-compact/wide height caps, bottom/first-row reveal, keyboard wrapping and selected
-row visibility, shrinking to one result, no-result hiding and reopening. Existing
-palette cases retain async/stable-selection, stale query/profile, IME, actual
-mouse activation after scroll, text/error/theme/fallback and editor contracts.
-Focus passed **5 Metal / 2 Views**; affected regressions
-**18 Metal / 13 Views**, single attempt, retry limit zero.
-Checks passed **278 Rust**, **68 live and 68 clean-archive Python**, scoped
-GN/boundaries and final Ninja no-op. All 53 committed/live/staged prototype inputs
-and compiled/frozen-bootstrap/native-engine identities were checked. Unchanged
-CoreText sources retain the prior full checkpoint's 180 SDK cases plus raster;
-that harness was not rerun for this adapter change.
-[Targeted palette viewport report](benchmarks/rust-palette-viewport-targeted-2026-10-26.json).
+The full compiled inventory has **202 cases**. Metal passed **196 regular
+cases**, Views **148 regular cases**; each explicitly skipped the same six
+optional manual/live-import/performance scenarios. One launcher job, retry zero,
+no failures/crashes/timeouts. Dedicated Metal fixture cases are excluded from
+Views. Focus passed **6 Metal / 3 Views**. The full matrix also covers the
+vertical viewport/palette/editor regressions. Checks passed **280 Rust**, **180 SDK font/direction
+cases plus raster**, **68 live and 68 clean-archive Python**, scoped GN/boundaries
+and final Ninja no-op. All 53 committed/live/staged prototype inputs and compiled/
+frozen-bootstrap/native-engine identities were checked.
+[Full footer viewport report](benchmarks/rust-footer-viewport-checkpoint-2026-10-26.json).
 
-Initial failing probe sources/logs are retained in the report. Final acceptance
-waits for real debounced search before injecting data, checks minimal row reveal
-below the 9px top inset, and waits for queued Metal scene visibility updates.
-No production behavior changed for those fixture corrections.
+The horizontal native oracle compares extent, offsets/clamps and minimum/
+oversized-target reveal at multiple sizes. The actual shared footer case checks
+ownership and sidebar width changes, derives native extent from live geometry,
+and exercises reveal/Home/End/AX for positive ranges. Metal must retain full-dot
+overflow at both widths; fitted native ranges retain zero offset/no bar. Both check
+clamp after removing ten workspaces. A separate Widget routes fractional/momentum horizontal raw events, checks exact
+pixels, vertical propagation, velocity rejection, both clamps and collapse.
+The real-footer mouse thumb drag, emoji projection, click selection, settings,
+pinning and fallback cases retain their assertions. Two new Rust cases cover
+horizontal bar reservation/overlay, edge geometry, reveal/resize/empty extents.
 
-Per user cadence this stage has targeted acceptance. The earlier full matrix
-below predates this source. Horizontal footer scrolling, native control/node/
-container/menu/input ownership, manual hardware trackpad/IME/VoiceOver/RTL/scale/
-theme/GPU-recovery acceptance, controlled CPU/GPU/drawable-presentation/input-
-latency/memory comparison and release/license/notice checks remain open. The lab
-retains frozen bootstrap/network inputs; current-main network policy is outside
-this binary's acceptance. No complete parity or controlled performance gain is
-claimed; no dependency, service/store/admission or persistence change.
+A source audit confines typed ScrollView references in product prototype C++ to
+the native comparison adapter. Chromium compositor mailbox diagnostics remain
+in both backend logs (6 Metal / 2 Views invalid-mailbox messages); the drag/width
+cases and launchers passed, but those messages are not diagnosed or resolved here.
 
-## Latest full checkpoint (before palette migration)
+Initial probes passed all six Metal cases but exposed overstrict assumptions in
+the new real-footer Views oracle: native contents-preferred-size=false may fit
+or retain an overflowing content width after resize. Final acceptance derives
+the native range from live geometry and still requires full-dot Metal overflow
+at both widths. Failing sources/logs are retained; no production behavior changed
+for these fixture corrections.
+
+This full source includes the preceding palette migration and its
+[targeted acceptance](benchmarks/rust-palette-viewport-targeted-2026-10-26.json),
+main-sidebar migration and earlier shared raw-trackpad/capture corrections.
+The lab retains frozen bootstrap/network inputs from `d23f232`; current-main
+network policy is outside this binary's acceptance. No dependency, browser
+service/store/admission or persistence policy changed.
+
+Remaining native control/node/container/menu/input/window ownership, manual
+hardware trackpad/IME candidates/VoiceOver/global RTL/scale/theme/GPU recovery,
+controlled CPU/GPU/drawable-presentation/input-latency/memory comparison and
+release/license/notice acceptance remain open. Global workspace swipe arbitration
+still belongs to the shell adapter; the isolated horizontal raw-event test does
+not establish physical trackpad acceptance. No complete functional parity or
+controlled performance gain is claimed. Full matrices remain reserved for larger
+blocks, per user cadence.
+
+## Previous full checkpoint: main sidebar viewport
 
 UI source `9037db7bb4caf3d187145e410224d6c791ca6fcc` moves the main tab/tree sidebar viewport to
 Rust in the opt-in backend. Rust owns extent/allocation, fractional offset,
