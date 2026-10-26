@@ -329,6 +329,8 @@ class WorkspaceShell final : public ui::EventHandler,
   PanelViewport* workspace_viewport() const{return workspace_scroll_;}
   bool metal_sidebar_visible() const;
   bool metal_sidebar_grip_visible() const;
+  views::View* sidebar_grip_for_testing() const;
+  views::View* split_divider_for_testing() const;
   bool metal_split_visible(size_t index) const;
   bool metal_split_contains_text_for_testing(size_t index,std::string_view text) const;
   gfx::Rect metal_split_screen_bounds_for_testing(size_t index) const;

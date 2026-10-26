@@ -51,6 +51,7 @@
 #include "ui/views/controls/scroll_view.h"
 #include "ui/views/controls/scrollbar/scroll_bar.h"
 #include "ui/views/controls/resize_area.h"
+#include "ui/base/cursor/cursor.h"
 #include "ui/views/controls/resize_area_delegate.h"
 #include "ui/views/view_class_properties.h"
 #include "ui/views/controls/menu/menu_runner.h"
@@ -2261,89 +2262,127 @@ BEGIN_METADATA(EdgeView)
 END_METADATA
 
 // Right-edge handle that resizes the sidebar; it lights up while hovered.
-class SidebarGrip final : public views::ResizeArea, public views::ResizeAreaDelegate {
-  METADATA_HEADER(SidebarGrip, views::ResizeArea)
+// Controls own their behavior; Views supplies event/window/accessibility delivery.
+class ResizeHandle {
  public:
-  SidebarGrip(base::RepeatingCallback<void(int,bool)> resized,base::RepeatingCallback<int()> width,
-      base::RepeatingCallback<void(int,bool)> applied,base::RepeatingClosure painted,base::RepeatingCallback<bool()> visible)
-      : views::ResizeArea(this),resized_(std::move(resized)),width_(std::move(width)),applied_(std::move(applied)),painted_(std::move(painted)),visible_(std::move(visible)) {
+  virtual ~ResizeHandle()=default;
+  virtual views::View* view()=0;
+  virtual bool hovered() const=0;
+  virtual bool active() const{return false;}
+  virtual void SetVertical(bool){}
+  virtual void CancelDrag(){}
+};
+class NativeSidebarGrip final : public views::ResizeArea, public views::ResizeAreaDelegate,public ResizeHandle {
+  METADATA_HEADER(NativeSidebarGrip, views::ResizeArea)
+ public:
+  NativeSidebarGrip(base::RepeatingCallback<void(int,bool)> resized,base::RepeatingClosure painted,base::RepeatingCallback<bool()> visible)
+      :views::ResizeArea(this),resized_(std::move(resized)),painted_(std::move(painted)),visible_(std::move(visible)) {
     GetViewAccessibility().SetName(u"Zmień szerokość panelu bocznego");SetProperty(views::kViewIgnoredByLayoutKey,true);
-#if BUILDFLAG(IS_MAC)
-    if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal")drag_.emplace(sidebar::new_sidebar_drag());
-#endif
   }
-  bool active() const{return active_;} bool hovered() const{return hovered_;}
+  views::View* view() override{return this;}
+  bool active() const override{return active_;} bool hovered() const override{return hovered_;}
   void OnResize(int amount,bool done) override{active_=!done;SchedulePaint();resized_.Run(amount,done);}
   void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);painted_.Run();}
   void OnMouseEntered(const ui::MouseEvent&) override{hovered_=true;SchedulePaint();}
   void OnMouseExited(const ui::MouseEvent&) override{hovered_=false;SchedulePaint();}
   bool OnMousePressed(const ui::MouseEvent& event) override {
-#if BUILDFLAG(IS_MAC)
-    if(drag_){if(!event.IsOnlyLeftMouseButton()||!GetEnabledInViewsSubtree())return false;(*drag_)->begin(width_.Run(),Pointer(event.location()));active_=true;SchedulePaint();return true;}
-#endif
     return ResizeArea::OnMousePressed(event);
   }
   bool OnMouseDragged(const ui::MouseEvent& event) override {
-#if BUILDFLAG(IS_MAC)
-    if(drag_){if(!event.IsLeftMouseButton()||!GetEnabledInViewsSubtree())return false;Apply((*drag_)->update(Pointer(event.location()),base::i18n::IsRTL()),false);return true;}
-#endif
     return ResizeArea::OnMouseDragged(event);
   }
   void OnMouseReleased(const ui::MouseEvent& event) override {
-#if BUILDFLAG(IS_MAC)
-    if(drag_){if(GetEnabledInViewsSubtree())static_cast<void>((*drag_)->update(Pointer(event.location()),base::i18n::IsRTL()));active_=false;SchedulePaint();Apply((*drag_)->end(),true);return;}
-#endif
     ResizeArea::OnMouseReleased(event);
   }
   void OnMouseCaptureLost() override {
-#if BUILDFLAG(IS_MAC)
-    if(drag_){active_=false;SchedulePaint();Apply((*drag_)->end(),true);return;}
-#endif
     ResizeArea::OnMouseCaptureLost();
   }
   void VisibilityChanged(views::View* view,bool visible) override {
     ResizeArea::VisibilityChanged(view,visible);
-#if BUILDFLAG(IS_MAC)
-    if(drag_&&!visible){(*drag_)->cancel();active_=false;}
-#endif
   }
   void OnGestureEvent(ui::GestureEvent* event) override {
-#if BUILDFLAG(IS_MAC)
-    if(drag_){
-      if(!GetEnabledInViewsSubtree())return;
-      if(event->type()==ui::EventType::kGestureTapDown||event->type()==ui::EventType::kGestureScrollBegin){if(!(*drag_)->active())(*drag_)->begin(width_.Run(),Pointer(event->location()));active_=true;SchedulePaint();}
-      else if(event->type()==ui::EventType::kGestureScrollUpdate)Apply((*drag_)->delta(event->details().scroll_x(),base::i18n::IsRTL()),false);
-      else if(event->type()==ui::EventType::kGestureEnd){active_=false;SchedulePaint();Apply((*drag_)->end(),true);}
-      else if(event->type()==ui::EventType::kGestureTapCancel){(*drag_)->cancel();active_=false;SchedulePaint();}
-      else return;
-      event->SetHandled();return;
-    }
-#endif
     ResizeArea::OnGestureEvent(event);
   }
   void OnPaint(gfx::Canvas* canvas) override {
     if(visible_&&visible_.Run())return;
     if(!hovered_&&!active_)return;
-#if BUILDFLAG(IS_MAC)
-    if(drag_){sidebar::Item item{};item.kind=11;item.width=width();item.height=height();item.active=active_;item.hovered=hovered_;item.ink=SkColorSetA(Tone(this,kInk),active_?0x40:0x26);item.clip={0,0,float(width()),float(height())};const auto ops=sidebar::layout(rust::Slice<const sidebar::Item>(&item,1));for(const auto& op:ops)FillRound(canvas,gfx::Rect(op.x,op.y,op.width,op.height),op.radius,op.color);return;}
-#endif
     FillRound(canvas,gfx::Rect(width()-3,8,2,std::max(0,height()-16)),1,SkColorSetA(Tone(this,kInk),active_?0x40:0x26));
   }
  private:
-#if BUILDFLAG(IS_MAC)
-  double Pointer(gfx::Point point){views::View::ConvertPointToScreen(this,&point);return point.x();}
-  void Apply(const sidebar::WidthChange& change,bool done){if(change.changed)applied_.Run(change.width,done);}
-  std::optional<rust::Box<sidebar::SidebarDrag>> drag_;
-#endif
   base::RepeatingCallback<void(int,bool)> resized_;
-  base::RepeatingCallback<int()> width_;
-  base::RepeatingCallback<void(int,bool)> applied_;
   base::RepeatingClosure painted_;
   base::RepeatingCallback<bool()> visible_;
   bool hovered_=false,active_=false;
 };
-BEGIN_METADATA(SidebarGrip)
+BEGIN_METADATA(NativeSidebarGrip)
 END_METADATA
+
+#if BUILDFLAG(IS_MAC)
+class RustResizeHandle final : public views::View,public ResizeHandle {
+  METADATA_HEADER(RustResizeHandle,views::View)
+ public:
+  RustResizeHandle(base::RepeatingCallback<int()> width,base::RepeatingCallback<void(int,bool)> applied,base::RepeatingClosure painted,base::RepeatingCallback<bool()> visible)
+      :width_(std::move(width)),applied_(std::move(applied)),painted_(std::move(painted)),visible_(std::move(visible)){width_drag_.emplace(sidebar::new_sidebar_drag());Init();GetViewAccessibility().SetName(u"Zmień szerokość panelu bocznego");SetProperty(views::kViewIgnoredByLayoutKey,true);}
+  RustResizeHandle(base::RepeatingCallback<double()> ratio,base::RepeatingCallback<int()> extent,base::RepeatingCallback<void(double,bool)> changed,base::RepeatingClosure painted,base::RepeatingCallback<bool()> visible)
+      :ratio_(std::move(ratio)),extent_(std::move(extent)),changed_(std::move(changed)),painted_(std::move(painted)),visible_(std::move(visible)){split_drag_.emplace(sidebar::new_split_drag());Init();}
+  views::View* view() override{return this;}
+  bool hovered() const override{return hovered_;}
+  bool active() const override{return width_drag_?(*width_drag_)->active():(*split_drag_)->active();}
+  void SetVertical(bool vertical) override{vertical_=vertical;}
+  void CancelDrag() override{if(width_drag_)(*width_drag_)->cancel();else (*split_drag_)->cancel();SchedulePaint();}
+  ui::Cursor GetCursor(const ui::MouseEvent&) override{return GetEnabled()?ui::Cursor(vertical_?ui::mojom::CursorType::kNorthSouthResize:ui::mojom::CursorType::kEastWestResize):ui::Cursor();}
+  void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);painted_.Run();}
+  void OnMouseEntered(const ui::MouseEvent&) override{hovered_=true;SchedulePaint();}
+  void OnMouseExited(const ui::MouseEvent&) override{hovered_=false;SchedulePaint();}
+  bool OnMousePressed(const ui::MouseEvent& event) override{if(!event.IsOnlyLeftMouseButton()||!GetEnabledInViewsSubtree())return false;Begin(event.location());return true;}
+  bool OnMouseDragged(const ui::MouseEvent& event) override{if(!event.IsLeftMouseButton()||!GetEnabledInViewsSubtree())return false;Update(event.location());return true;}
+  void OnMouseReleased(const ui::MouseEvent& event) override{if(GetEnabledInViewsSubtree()&&(width_drag_||(*split_drag_)->moved()))Update(event.location());End();}
+  void OnMouseCaptureLost() override{End();}
+  void VisibilityChanged(views::View* starting,bool visible) override{views::View::VisibilityChanged(starting,visible);if(!visible)CancelDrag();}
+  void OnGestureEvent(ui::GestureEvent* event) override{
+    if(!GetEnabledInViewsSubtree())return;
+    if(event->type()==ui::EventType::kGestureTapDown||event->type()==ui::EventType::kGestureScrollBegin){if(!active())Begin(event->location());}
+    else if(event->type()==ui::EventType::kGestureScrollUpdate){const double delta=vertical_?event->details().scroll_y():event->details().scroll_x();if(width_drag_)Apply((*width_drag_)->delta(delta,Reverse()),false);else Apply((*split_drag_)->delta(delta,extent_.Run(),Reverse()),false);}
+    else if(event->type()==ui::EventType::kGestureEnd)End();
+    else if(event->type()==ui::EventType::kGestureTapCancel)CancelDrag();
+    else return;
+    event->SetHandled();
+  }
+  void OnPaint(gfx::Canvas* canvas) override{
+    if(visible_&&visible_.Run())return;
+    if(width_drag_&&!hovered_&&!active())return;
+    if(split_drag_)canvas->FillRect(GetLocalBounds(),Tone(this,kChip));
+    sidebar::Item item{};item.kind=width_drag_?11:9;item.width=width();item.height=height();item.active=active();item.hovered=hovered_;item.ink=width_drag_?SkColorSetA(Tone(this,kInk),active()?0x40:0x26):Tone(this,hovered_?kSubtle:kDisabled);item.clip={0,0,float(width()),float(height())};const auto ops=sidebar::layout(rust::Slice<const sidebar::Item>(&item,1));for(const auto& op:ops){cc::PaintFlags flags;flags.setAntiAlias(true);flags.setColor(op.color);canvas->DrawRoundRect(gfx::RectF(op.x,op.y,op.width,op.height),op.radius,flags);}
+  }
+ private:
+  void Init(){GetViewAccessibility().SetRole(ax::mojom::Role::kSplitter);}
+  double Pointer(gfx::Point point){views::View::ConvertPointToScreen(this,&point);return vertical_?point.y():point.x();}
+  bool Reverse() const{return !vertical_&&base::i18n::IsRTL();}
+  void Begin(gfx::Point point){if(width_drag_)(*width_drag_)->begin(width_.Run(),Pointer(point));else (*split_drag_)->begin(ratio_.Run(),Pointer(point));SchedulePaint();}
+  void Update(gfx::Point point){if(width_drag_)Apply((*width_drag_)->update(Pointer(point),Reverse()),false);else Apply((*split_drag_)->update(Pointer(point),extent_.Run(),Reverse()),false);}
+  void End(){if(width_drag_)Apply((*width_drag_)->end(),true);else Apply((*split_drag_)->end(),true);SchedulePaint();}
+  void Apply(const sidebar::WidthChange& change,bool done){if(change.changed)applied_.Run(change.width,done);}
+  void Apply(const sidebar::DragRatio& change,bool done){if(change.changed)changed_.Run(change.ratio,done);}
+  std::optional<rust::Box<sidebar::SidebarDrag>> width_drag_;
+  std::optional<rust::Box<sidebar::SplitDrag>> split_drag_;
+  bool vertical_=false,hovered_=false;
+  base::RepeatingCallback<int()> width_;
+  base::RepeatingCallback<void(int,bool)> applied_;
+  base::RepeatingCallback<double()> ratio_;
+  base::RepeatingCallback<int()> extent_;
+  base::RepeatingCallback<void(double,bool)> changed_;
+  base::RepeatingClosure painted_;
+  base::RepeatingCallback<bool()> visible_;
+};
+BEGIN_METADATA(RustResizeHandle)
+END_METADATA
+#endif
+std::unique_ptr<views::View> CreateSidebarGrip(ResizeHandle** handle,base::RepeatingCallback<void(int,bool)> resized,base::RepeatingCallback<int()> width,base::RepeatingCallback<void(int,bool)> applied,base::RepeatingClosure painted,base::RepeatingCallback<bool()> visible){
+#if BUILDFLAG(IS_MAC)
+  if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal"){auto view=std::make_unique<RustResizeHandle>(std::move(width),std::move(applied),std::move(painted),std::move(visible));*handle=view.get();return view;}
+#endif
+  auto view=std::make_unique<NativeSidebarGrip>(std::move(resized),std::move(painted),std::move(visible));*handle=view.get();return view;
+}
 
 // A ScrollView may paint on a separate layer from the outer sidebar. Forward
 // invalidations before rasterization: Metal must update even if the compositor
@@ -2402,6 +2441,7 @@ class SidebarView final : public views::View {
   }
   base::RepeatingClosure painted;
   raw_ptr<views::View> grip = nullptr;
+  raw_ptr<ResizeHandle> grip_handle = nullptr;
  private:
   base::RepeatingCallback<void(bool,bool)> leave_;
 };
@@ -2578,88 +2618,32 @@ END_METADATA
 #endif
 
 // Split View divider with a visible grip so the pane boundary reads as draggable.
-class SplitDivider final : public views::ResizeArea {
-  METADATA_HEADER(SplitDivider, views::ResizeArea)
+class NativeSplitDivider final : public views::ResizeArea,public ResizeHandle {
+  METADATA_HEADER(NativeSplitDivider, views::ResizeArea)
  public:
-  SplitDivider(views::ResizeAreaDelegate* delegate,base::RepeatingCallback<double()> ratio,
-      base::RepeatingCallback<int()> extent,base::RepeatingCallback<void(double,bool)> changed,
-      base::RepeatingClosure painted,base::RepeatingCallback<bool()> visible)
-      : ResizeArea(delegate),ratio_(std::move(ratio)),extent_(std::move(extent)),changed_(std::move(changed)),
-        painted_(std::move(painted)),visible_(std::move(visible)) {
-#if BUILDFLAG(IS_MAC)
-    if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal") drag_.emplace(sidebar::new_split_drag());
-#endif
-  }
-  bool hovered() const {return hovered_;}
-  void CancelDrag() {
-#if BUILDFLAG(IS_MAC)
-    if(drag_)(*drag_)->cancel();
-#endif
-  }
+  NativeSplitDivider(views::ResizeAreaDelegate* delegate,base::RepeatingClosure painted):ResizeArea(delegate),painted_(std::move(painted)){}
+  views::View* view() override{return this;}
+  void SetVertical(bool vertical) override{set_axis(vertical?Axis::kVertical:Axis::kHorizontal);}
+  bool hovered() const override {return hovered_;}
   void OnDidSchedulePaint(const gfx::Rect& rect) override {views::View::OnDidSchedulePaint(rect);painted_.Run();}
   void OnMouseEntered(const ui::MouseEvent&) override { hovered_ = true; SchedulePaint(); }
   void OnMouseExited(const ui::MouseEvent&) override { hovered_ = false; SchedulePaint(); }
   bool OnMousePressed(const ui::MouseEvent& event) override {
-#if BUILDFLAG(IS_MAC)
-    if(drag_) {
-      if(!event.IsOnlyLeftMouseButton() || !GetEnabledInViewsSubtree())return false;
-      (*drag_)->begin(ratio_.Run(),Pointer(event.location()));return true;
-    }
-#endif
     return ResizeArea::OnMousePressed(event);
   }
   bool OnMouseDragged(const ui::MouseEvent& event) override {
-#if BUILDFLAG(IS_MAC)
-    if(drag_) {
-      if(!event.IsLeftMouseButton() || !GetEnabledInViewsSubtree())return false;
-      Apply((*drag_)->update(Pointer(event.location()),extent_.Run(),Reverse()),false);return true;
-    }
-#endif
     return ResizeArea::OnMouseDragged(event);
   }
   void OnMouseReleased(const ui::MouseEvent& event) override {
-#if BUILDFLAG(IS_MAC)
-    if(drag_) {
-      if((*drag_)->moved() && GetEnabledInViewsSubtree()) static_cast<void>((*drag_)->update(Pointer(event.location()),extent_.Run(),Reverse()));
-      Apply((*drag_)->end(),true);return;
-    }
-#endif
     ResizeArea::OnMouseReleased(event);
   }
   void OnMouseCaptureLost() override {
-#if BUILDFLAG(IS_MAC)
-    if(drag_) {Apply((*drag_)->end(),true);return;}
-#endif
     ResizeArea::OnMouseCaptureLost();
   }
   void OnGestureEvent(ui::GestureEvent* event) override {
-#if BUILDFLAG(IS_MAC)
-    if(drag_) {
-      if(!GetEnabledInViewsSubtree())return;
-      if(event->type()==ui::EventType::kGestureTapDown || event->type()==ui::EventType::kGestureScrollBegin) {
-        if(!(*drag_)->active())(*drag_)->begin(ratio_.Run(),Pointer(event->location()));
-      } else if(event->type()==ui::EventType::kGestureScrollUpdate) {
-        Apply((*drag_)->delta(axis()==Axis::kVertical ? event->details().scroll_y() : event->details().scroll_x(),extent_.Run(),Reverse()),false);
-      } else if(event->type()==ui::EventType::kGestureEnd) Apply((*drag_)->end(),true);
-      else if(event->type()==ui::EventType::kGestureTapCancel)(*drag_)->cancel();
-      else return;
-      event->SetHandled();return;
-    }
-#endif
     ResizeArea::OnGestureEvent(event);
   }
   void OnPaint(gfx::Canvas* canvas) override {
-#if BUILDFLAG(IS_MAC)
-    if(drag_) {
-      if(visible_ && visible_.Run())return;
-      canvas->FillRect(GetLocalBounds(),Tone(this,kChip));
-      sidebar::Item item{};item.kind=9;item.width=width();item.height=height();item.ink=Tone(this,hovered_?kSubtle:kDisabled);
-      item.clip={0,0,float(width()),float(height())};
-      const auto ops=sidebar::layout(rust::Slice<const sidebar::Item>(&item,1));
-      for(const auto& op:ops){cc::PaintFlags flags;flags.setAntiAlias(true);flags.setColor(op.color);canvas->DrawRoundRect(gfx::RectF(op.x,op.y,op.width,op.height),op.radius,flags);}
-      return;
-    }
-#endif
     views::ResizeArea::OnPaint(canvas);
     const bool across = width() > height();
     const int grip = std::min(40, (across ? width() : height()) / 4);
@@ -2668,21 +2652,18 @@ class SplitDivider final : public views::ResizeArea {
     FillRound(canvas, bar, 2, Tone(this, hovered_ ? kSubtle : kDisabled));
   }
  private:
-#if BUILDFLAG(IS_MAC)
-  double Pointer(gfx::Point point) {views::View::ConvertPointToScreen(this,&point);return axis()==Axis::kVertical ? point.y() : point.x();}
-  bool Reverse() const {return axis()==Axis::kHorizontal && base::i18n::IsRTL();}
-  void Apply(const sidebar::DragRatio& result,bool done) {if(result.changed)changed_.Run(result.ratio,done);}
-  std::optional<rust::Box<sidebar::SplitDrag>> drag_;
-#endif
   bool hovered_ = false;
-  base::RepeatingCallback<double()> ratio_;
-  base::RepeatingCallback<int()> extent_;
-  base::RepeatingCallback<void(double,bool)> changed_;
   base::RepeatingClosure painted_;
-  base::RepeatingCallback<bool()> visible_;
 };
-BEGIN_METADATA(SplitDivider)
+BEGIN_METADATA(NativeSplitDivider)
 END_METADATA
+
+std::unique_ptr<views::View> CreateSplitDivider(ResizeHandle** handle,views::ResizeAreaDelegate* delegate,base::RepeatingCallback<double()> ratio,base::RepeatingCallback<int()> extent,base::RepeatingCallback<void(double,bool)> changed,base::RepeatingClosure painted,base::RepeatingCallback<bool()> visible){
+#if BUILDFLAG(IS_MAC)
+  if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal"){auto view=std::make_unique<RustResizeHandle>(std::move(ratio),std::move(extent),std::move(changed),std::move(painted),std::move(visible));*handle=view.get();return view;}
+#endif
+  auto view=std::make_unique<NativeSplitDivider>(delegate,std::move(painted));*handle=view.get();return view;
+}
 
 // Slim header above each half of a split: page title, pane menu and close.
 class PaneBar final : public views::View {
@@ -2755,10 +2736,12 @@ class PaneHost final : public views::View, public views::ResizeAreaDelegate {
 #if BUILDFLAG(IS_MAC)
     rust_=base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal";
 #endif
-    divider_=AddChildView(std::make_unique<SplitDivider>(this,
+    ResizeHandle* divider_handle=nullptr;
+    divider_=AddChildView(CreateSplitDivider(&divider_handle,this,
         base::BindRepeating([](PaneHost* host){return host->ratio_;},base::Unretained(this)),
         base::BindRepeating([](PaneHost* host){return host->vertical_?host->height():host->width();},base::Unretained(this)),
         base::BindRepeating(&PaneHost::ApplyRustRatio,base::Unretained(this)),painted_,base::BindRepeating(visible,size_t{2})));
+    divider_handle_=divider_handle;
     if(!rust_)divider_->SetBackground(views::CreateSolidBackground(kChip));
     divider_->GetViewAccessibility().SetName(u"Zmień szerokość paneli");
     divider_->SetVisible(false);
@@ -2771,13 +2754,14 @@ class PaneHost final : public views::View, public views::ResizeAreaDelegate {
     }
   }
   PaneBar* bar(bool right) const { return bars_[right]; }
-  SplitDivider* divider() const{return static_cast<SplitDivider*>(divider_.get());}
+  views::View* divider() const{return divider_;}
+  ResizeHandle* divider_handle() const{return divider_handle_;}
   void SetPanes(views::View* left, views::View* right, double ratio, bool vertical) {
     if (left_ == left && right_ == right && ratio_ == ratio &&
         vertical_ == vertical) return;
-    if(left_!=left || right_!=right || vertical_!=vertical)divider()->CancelDrag();
+    if(left_!=left || right_!=right || vertical_!=vertical)divider_handle_->CancelDrag();
     left_ = left; right_ = right; ratio_ = ratio; vertical_ = vertical;
-    divider_->set_axis(vertical ? views::ResizeArea::Axis::kVertical : views::ResizeArea::Axis::kHorizontal);
+    divider_handle_->SetVertical(vertical);
     divider_->SetVisible(right != nullptr);
     for (auto& bar : bars_) bar->SetVisible(right != nullptr);
     InvalidateLayout();
@@ -2838,7 +2822,8 @@ class PaneHost final : public views::View, public views::ResizeAreaDelegate {
   base::RepeatingClosure painted_;
   raw_ptr<views::View> left_ = nullptr;
   raw_ptr<views::View> right_ = nullptr;
-  raw_ptr<views::ResizeArea> divider_ = nullptr;
+  raw_ptr<views::View> divider_ = nullptr;
+  raw_ptr<ResizeHandle> divider_handle_=nullptr;
   std::array<raw_ptr<PaneBar>, 2> bars_ = {};
   base::RepeatingCallback<void(double, bool)> changed_;
   double ratio_ = 0.5;
@@ -3111,12 +3096,14 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   sidebar_root_ = sidebar.get();
   sidebar->AddPreTargetHandler(this);
   sidebar->set_context_menu_controller(this);
-  sidebar->grip = sidebar->AddChildView(std::make_unique<SidebarGrip>(
+  ResizeHandle* sidebar_handle=nullptr;
+  sidebar->grip = sidebar->AddChildView(CreateSidebarGrip(&sidebar_handle,
       base::BindRepeating(&WorkspaceShell::ResizeSidebar,weak),
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell?shell->sidebar_width_:248;},weak),
       base::BindRepeating(&WorkspaceShell::ApplySidebarWidth,weak),
       base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_sidebar_grip_visible();},weak)));
+  sidebar->grip_handle=sidebar_handle;
   auto* layout = sidebar->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kVertical, gfx::Insets::TLBR(2, 4, 8, 4), 2));
   auto* pill = sidebar->AddChildView(std::make_unique<UrlPill>(
@@ -4329,6 +4316,8 @@ size_t WorkspaceShell::native_sidebar_paint_count() const {
 size_t WorkspaceShell::metal_sidebar_paint_count() const {
   return tab_list_ ? static_cast<SidebarListView*>(tab_list_.get())->metal_paints() : 0;
 }
+views::View* WorkspaceShell::sidebar_grip_for_testing() const{return sidebar_root_?static_cast<SidebarView*>(sidebar_root_.get())->grip.get():nullptr;}
+views::View* WorkspaceShell::split_divider_for_testing() const{return content_host_?static_cast<PaneHost*>(content_host_.get())->divider():nullptr;}
 bool WorkspaceShell::metal_sidebar_grip_visible() const{return metal_sidebar_grip_&&metal_sidebar_grip_->visible();}
 void WorkspaceShell::HideMetalSidebarGrip() {
   if(!metal_sidebar_grip_)return;
@@ -4374,7 +4363,7 @@ void WorkspaceShell::UpdateMetalSplit() {
       }
     } else {
       sidebar::Item item{};item.kind=9;item.x=rect.x();item.y=rect.y();item.width=rect.width();item.height=rect.height();item.clip=clip;
-      item.ink=Tone(view,host->divider()->hovered()?kSubtle:kDisabled);items.push_back(std::move(item));
+      item.ink=Tone(view,host->divider_handle()->hovered()?kSubtle:kDisabled);items.push_back(std::move(item));
     }
     surface->Update(widget_->GetNativeWindow(),bounds,items,index<2 ? FrameTint(workspace_color(state_.workspace_id),root_) : Tone(view,kChip));
     if(was!=surface->visible())view->SchedulePaint();
@@ -4639,12 +4628,12 @@ void WorkspaceShell::UpdateMetalSidebar() {
     items.push_back(std::move(item));
   }
   const SkColor tint = FrameTint(workspace_color(state_.workspace_id), root_);
-  auto* grip=static_cast<SidebarGrip*>(static_cast<SidebarView*>(sidebar_root_.get())->grip.get());
+  auto* sidebar=static_cast<SidebarView*>(sidebar_root_.get());auto* grip=sidebar->grip.get();auto* handle=sidebar->grip_handle.get();
   if(!metal_sidebar_grip_)metal_sidebar_grip_=CreateSidebarMetal();
   if(metal_sidebar_grip_) {
     const bool before=metal_sidebar_grip_->visible();auto frame=grip->GetBoundsInScreen();frame.Inset(gfx::Insets::TLBR(8,3,8,1));
     sidebar::Item item{};item.kind=11;item.x=-3;item.y=-8;item.width=grip->width();item.height=grip->height();item.clip={0,0,float(frame.width()),float(frame.height())};
-    item.active=grip->active();item.hovered=grip->hovered();item.ink=SkColorSetA(Tone(grip,kInk),item.active?0x40:0x26);
+    item.active=handle->active();item.hovered=handle->hovered();item.ink=SkColorSetA(Tone(grip,kInk),item.active?0x40:0x26);
     metal_sidebar_grip_->Update(sidebar_widget_->GetNativeWindow(),frame,{item},pinned_?tint:Mix(tint,Tone(root_,kCard),70));
     if(before!=metal_sidebar_grip_->visible())grip->SchedulePaint();
   }

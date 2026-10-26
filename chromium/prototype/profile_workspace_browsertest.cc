@@ -153,6 +153,7 @@
 #include "ui/views/test/views_drawing_test_utils.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/views/controls/resize_area.h"
+#include "ui/base/cursor/cursor.h"
 #include "ui/base/ime/composition_text.h"
 #include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/controls/combobox/combobox.h"
@@ -1213,6 +1214,22 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ServiceViewportModalBodyOwners
   viewport->ScrollTo(viewport->maximum());EXPECT_GT(viewport->offset(),0);viewport->contents()->ScrollRectToVisible(gfx::Rect(0,0,1,1));EXPECT_EQ(0,viewport->offset());
   for(auto mode:{ui::ColorProviderKey::ColorMode::kDark,ui::ColorProviderKey::ColorMode::kLight}){widget->SetColorModeOverride(mode);widget->LayoutRootViewIfNecessary();viewport->ScrollTo(viewport->maximum());EXPECT_LE(viewport->offset(),viewport->maximum());}
   widget->CloseNow();widget.reset();delegate.reset();
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ResizeHostsOwnershipCursorAXAndCancelledInput) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->SetPinned(true);shell->ShowSidebar();const bool rust=shell->workspace_input()->rust_editor();auto* grip=shell->sidebar_grip_for_testing();ASSERT_TRUE(grip);EXPECT_EQ(!rust,views::AsViewClass<views::ResizeArea>(grip)!=nullptr);
+  ui::MouseEvent move(ui::EventType::kMouseMoved,gfx::Point(3,20),gfx::Point(3,20),base::TimeTicks::Now(),0,0);auto check=[&](views::View* view,ui::mojom::CursorType cursor){ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kSplitter,ax.role);EXPECT_FALSE(ax.GetString16Attribute(ax::mojom::StringAttribute::kName).empty());EXPECT_EQ(cursor,view->GetCursor(move).type());view->SetEnabled(false);EXPECT_EQ(ui::mojom::CursorType::kNull,view->GetCursor(move).type());view->SetEnabled(true);};
+  ASSERT_NO_FATAL_FAILURE(check(grip,ui::mojom::CursorType::kEastWestResize));
+  const auto url=embedded_test_server()->GetURL("/storage_probe.html?resize-host");ASSERT_TRUE(window_->NavigateFromBar(url,false));ASSERT_TRUE(window_->NavigateFromBar(url,true));window_->SelectTab(0);ASSERT_TRUE(window_->SplitTab(1));window_->widget()->LayoutRootViewIfNecessary();auto* divider=shell->split_divider_for_testing();ASSERT_TRUE(divider);EXPECT_EQ(!rust,views::AsViewClass<views::ResizeArea>(divider)!=nullptr);
+  ASSERT_NO_FATAL_FAILURE(check(divider,ui::mojom::CursorType::kEastWestResize));
+  window_->SetSplitVertical(true);window_->widget()->LayoutRootViewIfNecessary();
+  ASSERT_NO_FATAL_FAILURE(check(divider,ui::mojom::CursorType::kNorthSouthResize));
+  if(rust){
+    ui::MouseEvent press(ui::EventType::kMousePressed,gfx::Point(3,3),gfx::Point(3,3),base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent late(ui::EventType::kMouseDragged,gfx::Point(3,90),gfx::Point(3,90),base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,0);
+    const double ratio=window_->split_ratio();ASSERT_TRUE(divider->OnMousePressed(press));divider->SetVisible(false);divider->SetVisible(true);EXPECT_TRUE(divider->OnMouseDragged(late));divider->OnMouseCaptureLost();EXPECT_DOUBLE_EQ(ratio,window_->split_ratio());
+    ASSERT_TRUE(divider->OnMousePressed(press));window_->SetSplitVertical(false);EXPECT_TRUE(divider->OnMouseDragged(late));divider->OnMouseCaptureLost();EXPECT_DOUBLE_EQ(ratio,window_->split_ratio());
+    const int width=shell->sidebar_width();ASSERT_TRUE(grip->OnMousePressed(press));grip->SetVisible(false);grip->SetVisible(true);ui::MouseEvent lateral(ui::EventType::kMouseDragged,gfx::Point(90,3),gfx::Point(90,3),base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,0);EXPECT_TRUE(grip->OnMouseDragged(lateral));grip->OnMouseCaptureLost();EXPECT_EQ(width,shell->sidebar_width());
+  }
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, MainSidebarViewportOwnershipResizeAndWorkspaceClamp) {
@@ -3558,7 +3575,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitViewLifecycleAndIsolation
   EXPECT_GT(left->GetContainerBounds().width(), 100);
   EXPECT_GT(right->GetContainerBounds().width(), 100);
   auto* pane_host = window_->shell()->content_host();
-  auto* divider = views::AsViewClass<views::ResizeArea>(pane_host->children().front().get());
+  auto* divider = shell->split_divider_for_testing();
   ASSERT_TRUE(divider);
   EXPECT_EQ(divider, pane_host->GetEventHandlerForPoint(divider->bounds().CenterPoint()));
   ui::MouseEvent press(ui::EventType::kMousePressed, gfx::Point(4, 10), gfx::Point(4, 10),
@@ -6238,8 +6255,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, SidebarGripDragAutoHideAnd
   shell->SetWorkspaceAnimations(false);shell->CloseOverlays(true);shell->SetPinned(true);shell->ShowSidebar();
   shell->ResizeSidebar(248-shell->sidebar_width(),true);
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->metal_sidebar_visible()&&shell->metal_sidebar_grip_visible();}));
-  auto find=[&](auto&& self,views::View* view)->views::ResizeArea*{if(auto* area=views::AsViewClass<views::ResizeArea>(view))return area;for(const auto& child:view->children())if(auto* result=self(self,child.get()))return result;return nullptr;};
-  auto* grip=find(find,shell->sidebar_view());ASSERT_TRUE(grip);
+  auto* grip=shell->sidebar_grip_for_testing();ASSERT_TRUE(grip);EXPECT_FALSE(views::AsViewClass<views::ResizeArea>(grip));
   ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
   auto move=[&](gfx::Point point,views::Widget* widget){base::test::TestFuture<void> done;return ui_controls::SendMouseMoveNotifyWhenDone(point.x(),point.y(),done.GetCallback(),widget->GetNativeWindow())&&done.Wait();};
   auto mouse=[&](int state){base::test::TestFuture<void> done;return ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT,state,done.GetCallback(),ui_controls::kNoAccelerator,shell->sidebar_widget()->GetNativeWindow())&&done.Wait();};
@@ -6285,7 +6301,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, SplitPaneScenesDragOrientT
   window_->SelectTab(0);ASSERT_TRUE(window_->SplitTab(1));shell->SetPinned(true);shell->ShowSidebar();
   auto ready=[&]{return shell->metal_split_visible(0)&&shell->metal_split_visible(1)&&shell->metal_split_visible(2);};
   ASSERT_TRUE(base::test::RunUntil(ready));
-  auto* host=shell->content_host();auto* divider=views::AsViewClass<views::ResizeArea>(host->children().front().get());ASSERT_TRUE(divider);
+  auto* host=shell->content_host();auto* divider=shell->split_divider_for_testing();ASSERT_TRUE(divider);EXPECT_FALSE(views::AsViewClass<views::ResizeArea>(divider));
   auto* bar=shell->split_pane_button(true,false)->parent();
   auto no_labels=[&](auto&& self,views::View* view)->void{EXPECT_FALSE(views::AsViewClass<views::Label>(view));for(const auto& child:view->children())self(self,child.get());};
   no_labels(no_labels,bar);
