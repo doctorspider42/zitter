@@ -229,6 +229,9 @@ mod ffi {
         fn can_choose(self: &SelectState, token: u64, key: &str, enabled: bool) -> bool;
         fn choose_key(self: &mut SelectState, token: u64, key: &str, enabled: bool) -> bool;
         fn close_menu(self: &mut SelectState, token: u64) -> bool;
+        fn close_menu_at(self: &mut SelectState, token: u64, now_us: u64) -> bool;
+        fn dismiss_popup(self: &mut SelectState, now_us: u64, popup_present: bool);
+        fn open_pointer(self: &mut SelectState, enabled: bool, now_us: u64, guard_us: u64) -> u64;
         fn select_index(self: &mut SelectState, index: usize) -> bool;
         fn clear_selection(self: &mut SelectState);
         fn open(self: &mut SelectState, enabled: bool) -> u64;
@@ -422,6 +425,7 @@ mod ffi {
         fn action_snapshot(self: &ActionControl) -> ActionSnapshot;
         fn action_pointer(self: &mut ActionControl, phase: PointerPhase, x: i32, y: i32, inside: bool, trigger: bool, visible: bool) -> RowInputResult;
         fn action_default(self: &mut ActionControl, value: bool) -> bool;
+        fn action_on_press(self: &mut ActionControl, value: bool) -> bool;
         fn action_accelerator(self: &mut ActionControl, key: u32, modified: bool, visible: bool) -> RowInputResult;
         fn action_pending(self: &ActionControl) -> bool;
         fn action_row_pointer(self: &mut ActionControl, phase: PointerPhase, x: i32, y: i32, inside: bool, trigger: bool, visible: bool, drop: bool) -> RowInputResult;
@@ -628,8 +632,8 @@ fn paragraph_layout(width:i32,line_height:i32,count:usize)->ffi::ColumnLayout{le
 
 // Stable UI keys retain selection through model changes. Popup generations and
 // captured keys reject stale native callbacks. No browser data crosses.
-pub struct SelectState { options: Vec<ffi::SelectOption>, selected: usize, epoch: u64, expanded: bool, prefix: String, last_input: Option<u64> }
-fn new_select_state(options: Vec<ffi::SelectOption>) -> Box<SelectState> {let mut state=Box::new(SelectState {options:vec![],selected:0,epoch:0,expanded:false,prefix:String::new(),last_input:None});state.replace_options(options,false,false);state}
+pub struct SelectState { options: Vec<ffi::SelectOption>, selected: usize, epoch: u64, expanded: bool, prefix: String, last_input: Option<u64>, last_close: Option<u64> }
+fn new_select_state(options: Vec<ffi::SelectOption>) -> Box<SelectState> {let mut state=Box::new(SelectState {options:vec![],selected:0,epoch:0,expanded:false,prefix:String::new(),last_input:None,last_close:None});state.replace_options(options,false,false);state}
 impl SelectState {
     fn selected(&self)->usize {self.selected}
     fn has_selection(&self)->bool {self.selected<self.options.len()}
@@ -645,6 +649,12 @@ impl SelectState {
     fn can_choose(&self,token:u64,key:&str,enabled:bool)->bool {enabled&&self.expanded&&token!=0&&token==self.epoch&&self.options.iter().any(|option|option.key==key)}
     fn choose_key(&mut self,token:u64,key:&str,enabled:bool)->bool {if !self.can_choose(token,key,enabled){return false;}self.selected=self.options.iter().position(|option|option.key==key).unwrap();self.expanded=false;true}
     fn close_menu(&mut self,token:u64)->bool {if token==0||token!=self.epoch{return false;}self.dismiss();true}
+    fn close_menu_at(&mut self,token:u64,now_us:u64)->bool {if !self.close_menu(token){return false;}self.last_close=Some(now_us);true}
+    fn dismiss_popup(&mut self,now_us:u64,popup_present:bool){if self.expanded||popup_present{self.last_close=Some(now_us);}self.dismiss();}
+    fn open_pointer(&mut self,enabled:bool,now_us:u64,guard_us:u64)->u64 {
+        if self.last_close.is_some_and(|closed|now_us.saturating_sub(closed)<=guard_us){return 0;}
+        self.open(enabled)
+    }
     fn clear_selection(&mut self){self.dismiss();self.reset_prefix();self.selected=usize::MAX;}
     fn select_index(&mut self,index:usize)->bool {if index>=self.options.len(){return false;}self.dismiss();self.reset_prefix();self.selected=index;true}
     fn open(&mut self,enabled:bool)->u64 {if !enabled||self.options.is_empty(){return 0;}self.dismiss();self.reset_prefix();self.expanded=true;self.epoch}
@@ -1688,8 +1698,8 @@ impl RowPointer {
     }
 }
 // An action's state outlives individual native events; no Button state is read.
-struct ActionControl { pointer:RowPointer, enabled:bool, focused:bool, on:bool, is_default:bool, visual:ffi::RowVisual }
-fn new_action_control()->Box<ActionControl>{Box::new(ActionControl{pointer:RowPointer::default(),enabled:true,focused:false,on:false,is_default:false,visual:ffi::RowVisual::Normal})}
+struct ActionControl { pointer:RowPointer, enabled:bool, focused:bool, on:bool, is_default:bool, on_press:bool, visual:ffi::RowVisual }
+fn new_action_control()->Box<ActionControl>{Box::new(ActionControl{pointer:RowPointer::default(),enabled:true,focused:false,on:false,is_default:false,on_press:false,visual:ffi::RowVisual::Normal})}
 fn action_preferred_size(dot:bool,label:bool)->ffi::Rect{ffi::Rect{x:0,y:0,width:if dot{if label{30}else{24}}else{32},height:if dot{28}else{32}}}
 impl ActionControl {
     fn action_cancel(&mut self)->bool{let visual=if self.enabled{ffi::RowVisual::Normal}else{ffi::RowVisual::Disabled};let changed=self.pointer.origin.is_some()||self.pointer.hovered||self.pointer.key_armed||self.visual!=visual;self.pointer.cancel();self.visual=visual;changed}
@@ -1699,13 +1709,18 @@ impl ActionControl {
     fn action_snapshot(&self)->ffi::ActionSnapshot{ffi::ActionSnapshot{enabled:self.enabled,focused:self.focused,on:self.on,is_default:self.is_default,visual:self.visual}}
     fn reject(&mut self)->ffi::RowInputResult{self.action_cancel();ffi::RowInputResult{visual:self.visual,action:ffi::RowAction::None,handled:false}}
     fn action_default(&mut self,value:bool)->bool{let changed=self.is_default!=value;self.is_default=value;changed}
+    fn action_on_press(&mut self,value:bool)->bool{if self.on_press==value{return false;}self.action_cancel();self.on_press=value;true}
     fn action_accelerator(&mut self,key:u32,modified:bool,visible:bool)->ffi::RowInputResult{
         if key!=2||modified||!self.is_default||!self.enabled||!visible{return self.reject();}
         self.action_cancel();ffi::RowInputResult{visual:self.visual,action:ffi::RowAction::Activate,handled:true}
     }
     fn action_pending(&self)->bool{self.pointer.origin.is_some()||self.pointer.key_armed}
     fn action_pointer(&mut self,phase:ffi::PointerPhase,x:i32,y:i32,inside:bool,trigger:bool,visible:bool)->ffi::RowInputResult{
-        self.action_row_pointer(phase,x,y,inside,trigger,visible,false)
+        let result=self.action_row_pointer(phase,x,y,inside,trigger,visible,false);
+        if self.on_press&&phase==ffi::PointerPhase::Press&&self.enabled&&visible&&inside&&trigger {
+            self.action_cancel();return ffi::RowInputResult{visual:self.visual,action:ffi::RowAction::Activate,handled:true};
+        }
+        result
     }
     fn action_row_pointer(&mut self,phase:ffi::PointerPhase,x:i32,y:i32,inside:bool,trigger:bool,visible:bool,drop:bool)->ffi::RowInputResult{
         if !visible{return self.reject();}let r=self.pointer.pointer_event(phase,x,y,inside,self.enabled,trigger,drop);self.visual=r.visual;r
@@ -2924,6 +2939,24 @@ mod tests {
     }
     #[test] fn action_geometry_preserves_workspace_emoji_and_chrome_metrics() {
         for (dot,label,w,h) in [(false,false,32,32),(false,true,32,32),(true,false,24,28),(true,true,30,28)]{let r=action_preferred_size(dot,label);assert_eq!((r.width,r.height),(w,h));}
+    }
+    #[test] fn action_press_activation_consumes_release_and_keeps_default_release_policy() {
+        use ffi::{PointerPhase as P,RowAction as A};let mut ordinary=new_action_control();assert!(ordinary.action_pointer(P::Press,2,2,true,true,true).action==A::None);assert!(ordinary.action_pointer(P::Release,2,2,true,true,true).action==A::Activate);
+        let mut menu=new_action_control();assert!(menu.action_on_press(true));assert!(!menu.action_on_press(true));assert!(menu.action_pointer(P::Press,2,2,true,true,true).action==A::Activate);assert!(!menu.action_pending());assert!(menu.action_pointer(P::Release,2,2,true,true,true).action!=A::Activate);assert!(menu.action_pointer(P::Drag,3,3,true,true,true).action==A::None);
+    }
+    #[test] fn action_press_activation_obeys_admission_and_mode_change_cancels_pending_input() {
+        use ffi::{PointerPhase as P,RowAction as A};let mut menu=new_action_control();menu.action_on_press(true);
+        for (inside,trigger,visible,enabled) in [(false,true,true,true),(true,false,true,true),(true,true,false,true),(true,true,true,false)] {menu.action_enabled(enabled);assert!(menu.action_pointer(P::Press,1,1,inside,trigger,visible).action==A::None);assert!(!menu.action_pending());}
+        menu.action_enabled(true);menu.action_on_press(false);menu.action_pointer(P::Press,1,1,true,true,true);assert!(menu.action_pending());menu.action_on_press(true);assert!(!menu.action_pending());assert!(menu.action_pointer(P::Release,1,1,true,true,true).action!=A::Activate);
+    }
+    #[test] fn select_pointer_reopen_guard_is_strict_monotonic_and_keyboard_bypasses_it() {
+        let mut s=select_fixture();let first=s.open_pointer(true,1000,100000);assert_ne!(0,first);assert!(s.close_menu_at(first,2000));for now in [0,1999,2000,101999,102000]{assert_eq!(0,s.open_pointer(true,now,100000));}assert_ne!(0,s.open_pointer(true,102001,100000));let keyboard=s.open(true);assert_ne!(0,keyboard);assert!(s.can_choose(keyboard,"Arc",true));
+    }
+    #[test] fn select_stale_close_cannot_change_new_popup_or_its_pointer_guard() {
+        let mut s=select_fixture();let old=s.open(true);s.dismiss_popup(1000,true);let next=s.open(true);assert!(!s.close_menu_at(old,1000000));assert!(s.can_choose(next,"Arc",true));assert!(s.close_menu_at(next,2000));assert_eq!(0,s.open_pointer(true,102000,100000));assert_ne!(0,s.open_pointer(true,102001,100000));
+    }
+    #[test] fn select_popup_dismiss_tracks_chosen_native_popup_without_blocking_initial_open() {
+        let mut s=select_fixture();s.dismiss_popup(5000,false);assert_ne!(0,s.open_pointer(true,5000,100000));let token=s.open(true);assert!(s.choose_key(token,"Brave",true));s.dismiss_popup(6000,true);assert_eq!("Brave",s.selected_key());assert_eq!(0,s.open_pointer(true,106000,100000));assert_ne!(0,s.open_pointer(true,106001,100000));let token=s.open(true);assert!(s.close_menu_at(token,200000));s.dismiss_popup(999999,false);assert_ne!(0,s.open_pointer(true,300001,100000));
     }
     #[test] fn default_action_accelerator_requires_default_enabled_visible_unmodified_return() {
         use ffi::RowAction as A;let mut c=new_action_control();assert!(!c.action_snapshot().is_default);assert!(!c.action_accelerator(2,false,true).handled);assert!(c.action_default(true));assert!(!c.action_default(true));assert!(c.action_snapshot().is_default);

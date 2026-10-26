@@ -4059,6 +4059,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest,
                              ui::EF_LEFT_MOUSE_BUTTON);
       // Opening a menu on press clears RootView capture in the native combobox.
       root->OnMousePressed(press);
+      EXPECT_TRUE(views::MenuController::GetActiveInstance());
       root->OnMouseReleased(release);
     }
     ASSERT_TRUE(views::MenuController::GetActiveInstance());
@@ -4076,16 +4077,16 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest,
   }
   if (rust) {
     const auto point = picker->GetLocalBounds().CenterPoint();
-    ui::MouseEvent press(ui::EventType::kMousePressed, point, point,
-                         base::TimeTicks(), ui::EF_LEFT_MOUSE_BUTTON,
-                         ui::EF_LEFT_MOUSE_BUTTON);
     ui::MouseEvent release(ui::EventType::kMouseReleased, point, point,
                            base::TimeTicks(), ui::EF_LEFT_MOUSE_BUTTON,
                            ui::EF_LEFT_MOUSE_BUTTON);
     auto* scroll = shell->preference_viewport_for_testing();
     const auto offset = scroll->offset();
     ASSERT_GT(scroll->maximum(), 0);
-    ASSERT_TRUE(picker->OnMousePressed(press));
+    // Keyboard bypasses the close-time click guard, opening a real anchored popup.
+    ui::KeyEvent down(ui::EventType::kKeyPressed, ui::VKEY_DOWN, ui::EF_NONE);
+    ASSERT_TRUE(picker->OnKeyPressed(down));
+    ASSERT_TRUE(views::MenuController::GetActiveInstance());
     scroll->ScrollTo(scroll->maximum());
     EXPECT_TRUE(picker->GetVisibleBounds().IsEmpty());
     scroll->ScrollTo(offset);
@@ -4094,6 +4095,18 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest,
     EXPECT_TRUE(data(picker).HasState(ax::mojom::State::kCollapsed));
     EXPECT_EQ(original, data(picker).GetString16Attribute(
                             ax::mojom::StringAttribute::kValue));
+    scroll->ScrollTo(scroll->maximum());
+    EXPECT_TRUE(picker->GetVisibleBounds().IsEmpty());
+    EXPECT_TRUE(picker->HandleAccessibleAction(activate));
+    EXPECT_FALSE(picker->GetVisibleBounds().IsEmpty());
+    ASSERT_TRUE(views::MenuController::GetActiveInstance());
+    EXPECT_TRUE(data(picker).HasState(ax::mojom::State::kExpanded));
+    views::MenuController::GetActiveInstance()->Cancel(
+        views::MenuController::ExitType::kAll);
+    ASSERT_TRUE(base::test::RunUntil([&] {
+      return !views::MenuController::GetActiveInstance() &&
+             data(picker).HasState(ax::mojom::State::kCollapsed);
+    }));
   }
 }
 
