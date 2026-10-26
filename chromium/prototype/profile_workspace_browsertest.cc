@@ -1216,6 +1216,17 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ServiceViewportModalBodyOwners
   widget->CloseNow();widget.reset();delegate.reset();
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, HeaderActionHostOwnershipKeyboardAXGestureAndCancel) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);const bool rust=shell->workspace_input()->rust_editor();
+  const std::array<std::u16string,4> names={u"Pokaż lub ukryj karty",u"Wstecz",u"Dalej",u"Odśwież"};for(size_t i=0;i<4;++i){auto* view=shell->header_action_for_testing(i);ASSERT_TRUE(view);EXPECT_EQ(!rust,views::AsViewClass<views::Button>(view)!=nullptr);ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kButton,ax.role);EXPECT_EQ(names[i],ax.GetString16Attribute(ax::mojom::StringAttribute::kName));}
+  auto reset=[&]{shell->SetPinned(true);shell->ShowSidebar();};reset();auto* action=shell->header_action_for_testing(0);ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));action->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);action->RequestFocus();ASSERT_TRUE(base::test::RunUntil([&]{return action->HasFocus();}));
+  base::test::TestFuture<void> presented;auto* compositor=window_->widget()->GetCompositor();ASSERT_TRUE(compositor);window_->widget()->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(window_->widget()->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));EXPECT_FALSE(shell->sidebar_visible());reset();ui::KeyEvent enter(ui::EventType::kKeyPressed,ui::VKEY_RETURN,0);EXPECT_FALSE(action->OnKeyPressed(enter));EXPECT_TRUE(shell->sidebar_visible());
+  ui::AXActionData activate;activate.action=ax::mojom::Action::kDoDefault;EXPECT_TRUE(action->HandleAccessibleAction(activate));EXPECT_FALSE(shell->sidebar_visible());reset();action->SetEnabled(false);ui::AXNodeData disabled;action->GetViewAccessibility().GetAccessibleNodeData(&disabled);EXPECT_FALSE(disabled.HasIntAttribute(ax::mojom::IntAttribute::kDefaultActionVerb));action->HandleAccessibleAction(activate);EXPECT_TRUE(shell->sidebar_visible());action->SetEnabled(true);
+  const auto point=action->GetLocalBounds().CenterPoint();auto gesture=[&](ui::EventType type){ui::GestureEvent event(point.x(),point.y(),0,base::TimeTicks::Now(),ui::GestureEventDetails(type));action->OnGestureEvent(&event);EXPECT_EQ(type!=ui::EventType::kGestureEnd&&type!=ui::EventType::kGestureTapCancel,event.handled());};gesture(ui::EventType::kGestureTapDown);gesture(ui::EventType::kGestureTap);gesture(ui::EventType::kGestureEnd);EXPECT_FALSE(shell->sidebar_visible());reset();
+  if(rust){ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ASSERT_TRUE(action->OnMousePressed(press));action->SetVisible(false);action->SetVisible(true);action->OnMouseReleased(release);EXPECT_TRUE(shell->sidebar_visible());ASSERT_TRUE(action->OnMousePressed(press));action->SetEnabled(false);action->SetEnabled(true);action->OnMouseReleased(release);EXPECT_TRUE(shell->sidebar_visible());ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html?hidden-header-action"),false));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));ASSERT_TRUE(content::ExecJs(window_->contents("work"),"window.header_hidden_marker=42;"));window_->widget()->Hide();shell->header_action_for_testing(3)->HandleAccessibleAction(activate);window_->widget()->Show();ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));EXPECT_EQ(42,content::EvalJs(window_->contents("work"),"window.header_hidden_marker"));}
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ResizeHostsOwnershipCursorAXAndCancelledInput) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->SetPinned(true);shell->ShowSidebar();const bool rust=shell->workspace_input()->rust_editor();auto* grip=shell->sidebar_grip_for_testing();ASSERT_TRUE(grip);EXPECT_EQ(!rust,views::AsViewClass<views::ResizeArea>(grip)!=nullptr);
   ui::MouseEvent move(ui::EventType::kMouseMoved,gfx::Point(3,20),gfx::Point(3,20),base::TimeTicks::Now(),0,0);auto check=[&](views::View* view,ui::mojom::CursorType cursor){ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kSplitter,ax.role);EXPECT_FALSE(ax.GetString16Attribute(ax::mojom::StringAttribute::kName).empty());EXPECT_EQ(cursor,view->GetCursor(move).type());view->SetEnabled(false);EXPECT_EQ(ui::mojom::CursorType::kNull,view->GetCursor(move).type());view->SetEnabled(true);};
@@ -6133,9 +6144,8 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NavigationHeaderHistoryRel
   const auto second=embedded_test_server()->GetURL("/storage_probe.html?header-second");
   ASSERT_TRUE(window_->NavigateFromBar(first,false));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
   ASSERT_TRUE(window_->NavigateFromBar(second,false));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
-  auto* root=window_->widget()->GetContentsView();
-  auto* back=SidebarNamedButton(root,u"Wstecz");auto* forward=SidebarNamedButton(root,u"Dalej");
-  auto* reload=SidebarNamedButton(root,u"Odśwież");auto* toggle=SidebarNamedButton(root,u"Pokaż lub ukryj karty");
+  auto* back=shell->header_action_for_testing(1);auto* forward=shell->header_action_for_testing(2);
+  auto* reload=shell->header_action_for_testing(3);auto* toggle=shell->header_action_for_testing(0);
   ASSERT_TRUE(back);ASSERT_TRUE(forward);ASSERT_TRUE(reload);ASSERT_TRUE(toggle);
   auto* header=back->parent();EXPECT_EQ(134,header->width());EXPECT_EQ(102,reload->x());
   ASSERT_TRUE(base::test::RunUntil([&] {return shell->metal_header_visible() && back->GetEnabled() && !forward->GetEnabled();}));
@@ -6151,7 +6161,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NavigationHeaderHistoryRel
   ASSERT_TRUE(base::test::RunUntil([&] {return reload->HasFocus() && shell->metal_header_frame_count()>before_focus;}));
   EXPECT_FALSE(native_ink()); // Includes the native focus-ring child.
   ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
-  auto click=[&](views::Button* button) {
+  auto click=[&](views::View* button) {
     const auto point=button->GetBoundsInScreen().CenterPoint();base::test::TestFuture<void> moved,pressed;
     return ui_controls::SendMouseMoveNotifyWhenDone(point.x(),point.y(),moved.GetCallback(),window_->widget()->GetNativeWindow()) && moved.Wait() &&
         ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT,ui_controls::DOWN|ui_controls::UP,pressed.GetCallback(),ui_controls::kNoAccelerator,window_->widget()->GetNativeWindow()) && pressed.Wait();

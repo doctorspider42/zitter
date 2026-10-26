@@ -127,6 +127,7 @@ mod ffi {
     enum RowVisual { Normal, Hovered, Pressed, Disabled }
     enum RowAction { None, Activate, Drop, Cancel }
     struct RowInputResult { visual: RowVisual, action: RowAction, handled: bool }
+    struct ActionSnapshot { enabled: bool, focused: bool, on: bool, visual: RowVisual }
     struct Rect { x: i32, y: i32, width: i32, height: i32 }
     struct RowLayout { title: Rect, detail: Rect, close: Rect }
     struct ColumnChild { width: i32, height: i32, top: i32, left: i32, bottom: i32, right: i32 }
@@ -411,6 +412,16 @@ mod ffi {
         fn set_collapsed(self: &mut SidebarTree, workspace: &str, id: &str, value: bool);
         fn toggle(self: &mut SidebarTree, workspace: &str, id: &str) -> bool;
         fn forget_workspace(self: &mut SidebarTree, workspace: &str);
+        type ActionControl;
+        fn new_action_control() -> Box<ActionControl>;
+        fn action_enabled(self: &mut ActionControl, enabled: bool) -> bool;
+        fn action_focus(self: &mut ActionControl, focused: bool);
+        fn action_on(self: &mut ActionControl, on: bool) -> bool;
+        fn action_cancel(self: &mut ActionControl);
+        fn action_snapshot(self: &ActionControl) -> ActionSnapshot;
+        fn action_pointer(self: &mut ActionControl, phase: PointerPhase, x: i32, y: i32, inside: bool, trigger: bool, visible: bool) -> RowInputResult;
+        fn action_key(self: &mut ActionControl, pressed: bool, key: u32, mac: bool, visible: bool) -> RowInputResult;
+        fn action_gesture(self: &mut ActionControl, kind: u32, visible: bool) -> RowInputResult;
         type RowPointer;
         fn new_row_pointer() -> Box<RowPointer>;
         fn press(self: &mut RowPointer, x: i32, y: i32);
@@ -1671,6 +1682,29 @@ impl RowPointer {
         ffi::RowInputResult {visual, action, handled}
     }
 }
+// An action's state outlives individual native events; no Button state is read.
+struct ActionControl { pointer:RowPointer, enabled:bool, focused:bool, on:bool, visual:ffi::RowVisual }
+fn new_action_control()->Box<ActionControl>{Box::new(ActionControl{pointer:RowPointer::default(),enabled:true,focused:false,on:false,visual:ffi::RowVisual::Normal})}
+impl ActionControl {
+    fn action_cancel(&mut self){self.pointer.cancel();self.visual=if self.enabled{ffi::RowVisual::Normal}else{ffi::RowVisual::Disabled};}
+    fn action_enabled(&mut self,enabled:bool)->bool{if self.enabled==enabled{return false;}self.enabled=enabled;self.action_cancel();true}
+    fn action_focus(&mut self,focused:bool){self.focused=focused;if !focused{self.action_cancel();}}
+    fn action_on(&mut self,on:bool)->bool{let changed=self.on!=on;self.on=on;changed}
+    fn action_snapshot(&self)->ffi::ActionSnapshot{ffi::ActionSnapshot{enabled:self.enabled,focused:self.focused,on:self.on,visual:self.visual}}
+    fn reject(&mut self)->ffi::RowInputResult{self.action_cancel();ffi::RowInputResult{visual:self.visual,action:ffi::RowAction::None,handled:false}}
+    fn action_pointer(&mut self,phase:ffi::PointerPhase,x:i32,y:i32,inside:bool,trigger:bool,visible:bool)->ffi::RowInputResult{
+        if !visible{return self.reject();}let r=self.pointer.pointer_event(phase,x,y,inside,self.enabled,trigger,false);self.visual=r.visual;r
+    }
+    fn action_key(&mut self,pressed:bool,key:u32,mac:bool,visible:bool)->ffi::RowInputResult{
+        if !visible{return self.reject();}let r=self.pointer.key_event(pressed,key_policy(key,mac),self.enabled);self.visual=r.visual;r
+    }
+    // 0 tap-down, 1 tap, 2 cancel/end; activation is independent of tap-down.
+    fn action_gesture(&mut self,kind:u32,visible:bool)->ffi::RowInputResult{
+        use ffi::{RowVisual as V,RowAction as A};if !visible||!self.enabled{return self.reject();}
+        let (visual,action,handled)=match kind{0=>{self.pointer.press(0,0);(V::Pressed,A::None,true)},1=>{self.pointer.cancel();(V::Hovered,A::Activate,true)},2=>{self.pointer.cancel();(V::Normal,A::None,false)},_=>(self.visual,A::None,false)};self.visual=visual;ffi::RowInputResult{visual,action,handled}
+    }
+}
+
 // Shared by the native input/accessibility adapter and the GPU display list.
 // Widths are logical pixels; CoreText still owns font shaping and measurement.
 // Geometry for an ordered visible list. Hidden/collapsed children are omitted
@@ -2872,6 +2906,18 @@ mod tests {
     }
     #[test] fn appearance_emoji_scene_uses_centered_text_and_selection_wash() {
         let mut emoji=row(30.0);emoji.kind=7;emoji.glyph=1;emoji.monogram="🚀".into();emoji.fill=0x1f1b1a22;let ops=layout(&[emoji]);assert_eq!(ops.len(),2);assert_eq!(ops[0].radius,7.0);assert_eq!(ops[1].text,"🚀");assert!(ops[1].center);
+    }
+    #[test] fn action_control_pointer_disabled_hidden_and_cancel_never_dispatch_stale_presses() {
+        use ffi::{PointerPhase as P,RowAction as A,RowVisual as V};let mut c=new_action_control();c.action_pointer(P::Press,2,2,true,true,true);assert!(matches!(c.action_snapshot().visual,V::Pressed));assert!(matches!(c.action_pointer(P::Release,2,2,true,true,true).action,A::Activate));
+        c.action_pointer(P::Press,2,2,true,true,true);c.action_enabled(false);assert!(matches!(c.action_snapshot().visual,V::Disabled));assert!(matches!(c.action_pointer(P::Release,2,2,true,true,true).action,A::None));c.action_enabled(true);
+        c.action_pointer(P::Press,2,2,true,true,true);assert!(!c.action_pointer(P::Move,2,2,true,false,false).handled);assert!(!matches!(c.action_pointer(P::Release,2,2,true,true,true).action,A::Activate));
+        c.action_pointer(P::Press,2,2,true,true,true);c.action_cancel();assert!(!matches!(c.action_pointer(P::Release,2,2,true,true,true).action,A::Activate));
+    }
+    #[test] fn action_control_platform_keys_gestures_focus_and_selection_are_authoritative() {
+        use ffi::{RowAction as A,RowVisual as V};let mut c=new_action_control();c.action_focus(true);assert!(c.action_snapshot().focused);assert!(c.action_on(true));assert!(!c.action_on(true));assert!(c.action_snapshot().on);
+        assert!(matches!(c.action_key(true,1,true,true).action,A::Activate));assert!(!c.action_key(false,1,true,true).handled);assert!(!c.action_key(true,2,true,true).handled);
+        assert!(c.action_key(true,1,false,true).handled);assert!(matches!(c.action_snapshot().visual,V::Pressed));c.action_focus(false);assert!(!matches!(c.action_key(false,1,false,true).action,A::Activate));assert!(!c.action_snapshot().focused);
+        c.action_key(true,1,false,true);assert!(matches!(c.action_key(false,1,false,true).action,A::Activate));assert!(matches!(c.action_gesture(1,true).action,A::Activate));c.action_gesture(0,true);assert!(!c.action_gesture(2,true).handled);assert!(matches!(c.action_snapshot().visual,V::Normal));c.action_enabled(false);assert!(!c.action_gesture(1,true).handled);c.action_enabled(true);assert!(!c.action_gesture(1,false).handled);assert!(!c.action_key(true,1,true,false).handled);assert!(!c.action_gesture(99,true).handled);
     }
     #[test] fn appearance_input_reuses_cancel_disabled_and_platform_key_policy() {
         let mut p=new_row_pointer();p.pointer_event(ffi::PointerPhase::Press,10,10,true,true,true,false);p.cancel();assert!(matches!(p.pointer_event(ffi::PointerPhase::Release,10,10,true,true,true,false).action,ffi::RowAction::Cancel));

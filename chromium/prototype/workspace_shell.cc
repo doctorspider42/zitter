@@ -98,6 +98,7 @@
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/focus/focus_manager.h"
+#include "ui/views/controls/focus_ring.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/view.h"
@@ -380,11 +381,57 @@ std::u16string HostLabel(const GURL& url) {
   return base::UTF8ToUTF16(host);
 }
 
+enum class ControlGlyph { kVector, kSidebar, kDot, kSwatch, kMore };
+void PaintGlyphControl(views::View* view,ControlGlyph glyph,const gfx::VectorIcon* icon,SkColor color,bool on,const std::u16string& label,views::Button::ButtonState state,gfx::Canvas* canvas){
+    const auto bounds = view->GetLocalBounds();
+    if (glyph != ControlGlyph::kDot && glyph != ControlGlyph::kSwatch && view->GetEnabled() &&
+        (state == views::Button::STATE_HOVERED || state == views::Button::STATE_PRESSED)) {
+      FillRound(canvas, bounds, 8, HoverWash(view));
+    }
+    const SkColor ink = view->GetEnabled() ? Tone(view, color) : Tone(view, kDisabled);
+    const auto center = bounds.CenterPoint();
+    switch (glyph) {
+      case ControlGlyph::kVector:
+        PaintIcon(canvas, *icon, bounds, 16, ink);
+        break;
+      case ControlGlyph::kSidebar: {
+        const gfx::Rect frame(center.x() - 8, center.y() - 7, 16, 14);
+        StrokeRound(canvas, frame, 3, ink);
+        canvas->FillRect(gfx::Rect(frame.x() + 5, frame.y(), 1, frame.height()), ink);
+        if (on) canvas->FillRect(gfx::Rect(frame.x() + 1, frame.y() + 1, 4, frame.height() - 2),
+                                  SkColorSetA(ink, 0x55));
+        break;
+      }
+      case ControlGlyph::kDot: {
+        if (!label.empty()) {
+          const gfx::Rect tile(center.x() - 13, center.y() - 13, 26, 26);
+          if (on) FillRound(canvas, tile, 7, SkColorSetA(Tone(view, kInk), 0x1F));
+          else if (state == views::Button::STATE_HOVERED) FillRound(canvas, tile, 7, HoverWash(view));
+          canvas->DrawStringRectWithFlags(label, Font(3), Tone(view, kInk), tile,
+                                          gfx::Canvas::TEXT_ALIGN_CENTER);
+          break;
+        }
+        const gfx::Rect dot(center.x() - 4, center.y() - 4, 8, 8);
+        if (on) FillRound(canvas, dot, 4, Tone(view, kInk));
+        else StrokeRound(canvas, dot, 4, state == views::Button::STATE_HOVERED ? Tone(view, kInk) : Tone(view, kMuted));
+        break;
+      }
+      case ControlGlyph::kMore:
+        for (int dx : {-5, 0, 5}) FillRound(canvas, gfx::Rect(center.x() + dx - 1, center.y() - 1, 3, 3), 2, ink);
+        break;
+      case ControlGlyph::kSwatch: {
+        const gfx::Rect ring(center.x() - 10, center.y() - 10, 20, 20);
+        if (on || state == views::Button::STATE_HOVERED) StrokeRound(canvas, ring, 10, on ? Tone(view, kInk) : Tone(view, kMuted));
+        FillRound(canvas, gfx::Rect(center.x() - 7, center.y() - 7, 14, 14), 7, color);
+        break;
+      }
+    }
+}
 // 32×32 icon button with a soft hover wash, used for chrome-level commands.
 class GlyphButton : public views::Button {
   METADATA_HEADER(GlyphButton, views::Button)
  public:
-  enum class Glyph { kVector, kSidebar, kDot, kSwatch, kMore };
+  using Glyph=ControlGlyph;
   GlyphButton(PressedCallback callback, std::u16string name, Glyph glyph,
               const gfx::VectorIcon* icon = nullptr)
       : views::Button(std::move(callback)), glyph_(glyph), icon_(icon) {
@@ -405,51 +452,7 @@ class GlyphButton : public views::Button {
     return gfx::Size(32, 32);
   }
   void StateChanged(ButtonState) override { SchedulePaint(); }
-  void PaintButtonContents(gfx::Canvas* canvas) override {
-    const auto bounds = GetLocalBounds();
-    if (glyph_ != Glyph::kDot && glyph_ != Glyph::kSwatch && GetEnabled() &&
-        (GetState() == STATE_HOVERED || GetState() == STATE_PRESSED)) {
-      FillRound(canvas, bounds, 8, HoverWash(this));
-    }
-    const SkColor ink = GetEnabled() ? Tone(this, color_) : Tone(this, kDisabled);
-    const auto center = bounds.CenterPoint();
-    switch (glyph_) {
-      case Glyph::kVector:
-        PaintIcon(canvas, *icon_, bounds, 16, ink);
-        break;
-      case Glyph::kSidebar: {
-        const gfx::Rect frame(center.x() - 8, center.y() - 7, 16, 14);
-        StrokeRound(canvas, frame, 3, ink);
-        canvas->FillRect(gfx::Rect(frame.x() + 5, frame.y(), 1, frame.height()), ink);
-        if (on_) canvas->FillRect(gfx::Rect(frame.x() + 1, frame.y() + 1, 4, frame.height() - 2),
-                                  SkColorSetA(ink, 0x55));
-        break;
-      }
-      case Glyph::kDot: {
-        if (!label_.empty()) {
-          const gfx::Rect tile(center.x() - 13, center.y() - 13, 26, 26);
-          if (on_) FillRound(canvas, tile, 7, SkColorSetA(Tone(this, kInk), 0x1F));
-          else if (GetState() == STATE_HOVERED) FillRound(canvas, tile, 7, HoverWash(this));
-          canvas->DrawStringRectWithFlags(label_, Font(3), Tone(this, kInk), tile,
-                                          gfx::Canvas::TEXT_ALIGN_CENTER);
-          break;
-        }
-        const gfx::Rect dot(center.x() - 4, center.y() - 4, 8, 8);
-        if (on_) FillRound(canvas, dot, 4, Tone(this, kInk));
-        else StrokeRound(canvas, dot, 4, GetState() == STATE_HOVERED ? Tone(this, kInk) : Tone(this, kMuted));
-        break;
-      }
-      case Glyph::kMore:
-        for (int dx : {-5, 0, 5}) FillRound(canvas, gfx::Rect(center.x() + dx - 1, center.y() - 1, 3, 3), 2, ink);
-        break;
-      case Glyph::kSwatch: {
-        const gfx::Rect ring(center.x() - 10, center.y() - 10, 20, 20);
-        if (on_ || GetState() == STATE_HOVERED) StrokeRound(canvas, ring, 10, on_ ? Tone(this, kInk) : Tone(this, kMuted));
-        FillRound(canvas, gfx::Rect(center.x() - 7, center.y() - 7, 14, 14), 7, color_);
-        break;
-      }
-    }
-  }
+  void PaintButtonContents(gfx::Canvas* canvas) override {PaintGlyphControl(this,glyph_,icon_,color_,on_,label_,GetState(),canvas);}
  private:
   Glyph glyph_;
   raw_ptr<const gfx::VectorIcon> icon_;
@@ -608,22 +611,23 @@ BEGIN_METADATA(SceneGlyphButton)
 END_METADATA
 
 #if BUILDFLAG(IS_MAC)
-sidebar::Item GlyphSceneItem(GlyphButton* button,gfx::RectF rect,gfx::RectF clip) {
+sidebar::Item GlyphSceneData(views::View* view,ControlGlyph glyph,const gfx::VectorIcon* icon,bool on,const std::u16string& label,SkColor color,bool hovered,bool focused,gfx::RectF rect,gfx::RectF clip){
   sidebar::Item item{}; item.kind=7;
   item.x=rect.x(); item.y=rect.y(); item.width=rect.width(); item.height=rect.height();
   item.clip={clip.x(),clip.y(),clip.width(),clip.height()};
-  item.glyph=button->glyph()==GlyphButton::Glyph::kSidebar ? 0 : button->glyph()==GlyphButton::Glyph::kDot ? 1 : button->glyph()==GlyphButton::Glyph::kMore ? 6
-      : button->icon()==&vector_icons::kArrowBackIcon ? 3 : button->icon()==&vector_icons::kArrowForwardIcon ? 4
-      : button->icon()==&vector_icons::kReloadCustomIcon ? 5 : button->icon()==&vector_icons::kCloseSmallIcon ? 7 : button->icon()==&vector_icons::kSearchIcon ? 8 : 2;
-  item.active=button->on(); item.focused=button->HasFocus();
-  item.hovered=button->GetEnabledInViewsSubtree() && (button->GetState()==views::Button::STATE_HOVERED || button->GetState()==views::Button::STATE_PRESSED);
-  item.ink=Tone(button,!button->GetEnabledInViewsSubtree() ? kDisabled : item.glyph==1 ? item.active || item.hovered ? kInk : kMuted : kSubtle);
-  item.monogram=base::UTF16ToUTF8(button->label()); item.font_size=Font(3).GetFontSize();
-  item.fill=item.glyph==1 ? item.active && !item.monogram.empty() ? SkColorSetA(Tone(button,kInk),0x1f) : item.hovered ? HoverWash(button) : SK_ColorTRANSPARENT
-      : item.hovered ? HoverWash(button) : SK_ColorTRANSPARENT;
-  if(button->glyph()==GlyphButton::Glyph::kSwatch){item.kind=18;item.badge=button->color();item.ink=Tone(button,!button->GetEnabledInViewsSubtree()?kDisabled:item.active?kInk:kMuted);}
+  item.glyph=glyph==GlyphButton::Glyph::kSidebar ? 0 : glyph==GlyphButton::Glyph::kDot ? 1 : glyph==GlyphButton::Glyph::kMore ? 6
+      : icon==&vector_icons::kArrowBackIcon ? 3 : icon==&vector_icons::kArrowForwardIcon ? 4
+      : icon==&vector_icons::kReloadCustomIcon ? 5 : icon==&vector_icons::kCloseSmallIcon ? 7 : icon==&vector_icons::kSearchIcon ? 8 : 2;
+  item.active=on; item.focused=focused;
+  item.hovered=hovered;
+  item.ink=Tone(view,!view->GetEnabledInViewsSubtree() ? kDisabled : item.glyph==1 ? item.active || item.hovered ? kInk : kMuted : kSubtle);
+  item.monogram=base::UTF16ToUTF8(label); item.font_size=Font(3).GetFontSize();
+  item.fill=item.glyph==1 ? item.active && !item.monogram.empty() ? SkColorSetA(Tone(view,kInk),0x1f) : item.hovered ? HoverWash(view) : SK_ColorTRANSPARENT
+      : item.hovered ? HoverWash(view) : SK_ColorTRANSPARENT;
+  if(glyph==GlyphButton::Glyph::kSwatch){item.kind=18;item.badge=color;item.ink=Tone(view,!view->GetEnabledInViewsSubtree()?kDisabled:item.active?kInk:kMuted);}
   return item;
 }
+sidebar::Item GlyphSceneItem(GlyphButton* button,gfx::RectF rect,gfx::RectF clip){return GlyphSceneData(button,button->glyph(),button->icon(),button->on(),button->label(),button->color(),button->GetEnabledInViewsSubtree()&&(button->GetState()==views::Button::STATE_HOVERED||button->GetState()==views::Button::STATE_PRESSED),button->HasFocus(),rect,clip);}
 // Rasterization behind the native editor and GPU fallback consume the same
 // Rust recipe; no Views background, border or hidden text layout is required.
 void PaintSceneRecipe(gfx::Canvas* canvas,const sidebar::Item& item,const gfx::FontList& font,bool styled_text=false) {
@@ -639,6 +643,56 @@ void PaintSceneRecipe(gfx::Canvas* canvas,const sidebar::Item& item,const gfx::F
   }
 }
 #endif
+
+#if BUILDFLAG(IS_MAC)
+// Event/focus/AX delivery remains native; state and activation live in Rust.
+class RustActionView final : public views::View {
+  METADATA_HEADER(RustActionView,views::View)
+ public:
+  RustActionView(views::Button::PressedCallback callback,std::u16string name,ControlGlyph glyph,const gfx::VectorIcon* icon,base::RepeatingCallback<bool()> visible,base::RepeatingClosure changed)
+      :callback_(std::move(callback)),glyph_(glyph),icon_(icon),visible_(std::move(visible)),changed_(std::move(changed)){
+    SetTooltipText(name);auto& ax=GetViewAccessibility();ax.SetName(name);ax.SetRole(ax::mojom::Role::kButton);ax.SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kPress);SetFocusBehavior(views::PlatformStyle::kDefaultFocusBehavior);views::FocusRing::Install(this);
+  }
+  void SetOn(bool on){if(state_->action_on(on))SchedulePaint();}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(32,32);}
+  sidebar::Item SceneItem(gfx::RectF rect,gfx::RectF clip){SyncEnabled();const auto s=state_->action_snapshot();return GlyphSceneData(this,glyph_,icon_,s.on,u"",kSubtle,s.enabled&&(s.visual==sidebar::RowVisual::Hovered||s.visual==sidebar::RowVisual::Pressed),s.focused,rect,clip);}
+  void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);if(changed_)changed_.Run();}
+  bool OnMousePressed(const ui::MouseEvent& event) override{return Pointer(sidebar::PointerPhase::Press,event);}
+  bool OnMouseDragged(const ui::MouseEvent& event) override{return Pointer(sidebar::PointerPhase::Drag,event);}
+  void OnMouseReleased(const ui::MouseEvent& event) override{Pointer(sidebar::PointerPhase::Release,event);}
+  void OnMouseEntered(const ui::MouseEvent& event) override{Pointer(sidebar::PointerPhase::Enter,event);}
+  void OnMouseExited(const ui::MouseEvent& event) override{Pointer(sidebar::PointerPhase::Exit,event);}
+  void OnMouseMoved(const ui::MouseEvent& event) override{Pointer(sidebar::PointerPhase::Move,event);}
+  bool OnKeyPressed(const ui::KeyEvent& event) override{return Key(true,event);}
+  bool OnKeyReleased(const ui::KeyEvent& event) override{return Key(false,event);}
+  void OnGestureEvent(ui::GestureEvent* event) override{SyncEnabled();const uint32_t kind=event->type()==ui::EventType::kGestureTapDown?0:event->type()==ui::EventType::kGestureTap?1:event->type()==ui::EventType::kGestureTapCancel||event->type()==ui::EventType::kGestureEnd?2:99;const auto r=state_->action_gesture(kind,SceneIsVisible(this)&&(kind==2||HitTestPoint(event->location())));if(r.handled)event->SetHandled();Apply(r,*event);}
+  void OnFocus() override{views::View::OnFocus();state_->action_focus(true);SchedulePaint();}
+  void OnBlur() override{state_->action_focus(false);views::View::OnBlur();SchedulePaint();}
+  void OnMouseCaptureLost() override{Cancel();}
+  void EnabledChanged(){SyncEnabled();SchedulePaint();}
+  void VisibilityChanged(views::View* starting,bool visible) override{views::View::VisibilityChanged(starting,visible);if(!SceneIsVisible(this))Cancel();}
+  void AddedToWidget() override{views::View::AddedToWidget();window_.Observe(GetWidget());}
+  void RemovedFromWidget() override{window_.Observe(nullptr);Cancel();views::View::RemovedFromWidget();}
+  void PaintChildren(const views::PaintInfo& info) override{if(!visible_||!visible_.Run())views::View::PaintChildren(info);}
+  void OnPaint(gfx::Canvas* canvas) override{if(visible_&&visible_.Run())return;SyncEnabled();const auto v=state_->action_snapshot();const auto paint=v.visual==sidebar::RowVisual::Disabled?views::Button::STATE_DISABLED:v.visual==sidebar::RowVisual::Pressed?views::Button::STATE_PRESSED:v.visual==sidebar::RowVisual::Hovered?views::Button::STATE_HOVERED:views::Button::STATE_NORMAL;PaintGlyphControl(this,glyph_,icon_,kSubtle,v.on,u"",paint,canvas);}
+ private:
+  void SyncEnabled(){const bool enabled=GetEnabledInViewsSubtree();if(!state_->action_enabled(enabled))return;auto& ax=GetViewAccessibility();if(enabled)ax.SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kPress);else ax.RemoveDefaultActionVerb();}
+  void Cancel(){state_->action_cancel();SchedulePaint();}
+  void WindowChanged(){Cancel();state_->action_focus(HasFocus());}
+  bool Pointer(sidebar::PointerPhase phase,const ui::MouseEvent& event){SyncEnabled();return Apply(state_->action_pointer(phase,event.x(),event.y(),phase!=sidebar::PointerPhase::Exit&&HitTestPoint(event.location()),event.IsLeftMouseButton(),SceneIsVisible(this)),event);}
+  bool Key(bool pressed,const ui::KeyEvent& event){SyncEnabled();const uint32_t key=event.key_code()==ui::VKEY_SPACE?1:event.key_code()==ui::VKEY_RETURN?2:0;return Apply(state_->action_key(pressed,key,true,SceneIsVisible(this)),event);}
+  bool Apply(const sidebar::RowInputResult& result,const ui::Event& event){const bool handled=result.handled;SchedulePaint();if(result.action==sidebar::RowAction::Activate&&callback_){callback_.Run(event);return handled;}return handled;}
+  views::Button::PressedCallback callback_;ControlGlyph glyph_;raw_ptr<const gfx::VectorIcon> icon_;base::RepeatingCallback<bool()> visible_;base::RepeatingClosure changed_;rust::Box<sidebar::ActionControl> state_=sidebar::new_action_control();SceneWindowObserver window_{base::BindRepeating(&RustActionView::WindowChanged,base::Unretained(this))};base::CallbackListSubscription enabled_changed_{AddEnabledInViewsSubtreeChangedCallback(base::BindRepeating(&RustActionView::EnabledChanged,base::Unretained(this)))};
+};
+BEGIN_METADATA(RustActionView)
+END_METADATA
+#endif
+std::unique_ptr<views::View> CreateHeaderAction(views::Button::PressedCallback callback,std::u16string name,ControlGlyph glyph,const gfx::VectorIcon* icon,base::RepeatingCallback<bool()> visible,base::RepeatingClosure changed){
+#if BUILDFLAG(IS_MAC)
+  if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal")return std::make_unique<RustActionView>(std::move(callback),std::move(name),glyph,icon,std::move(visible),std::move(changed));
+#endif
+  return std::make_unique<SceneGlyphButton>(std::move(callback),std::move(name),glyph,icon,std::move(visible),std::move(changed));
+}
 
 #if BUILDFLAG(IS_MAC)
 // Rust lays out preset controls and the native editor separately. The canvas
@@ -3025,17 +3079,17 @@ std::unique_ptr<views::View> WorkspaceShell::Build() {
   auto header_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
     return shell && shell->metal_header_visible();
   },weak);
-  header_sidebar_button_=header->AddChildView(std::make_unique<SceneGlyphButton>(
+  header_sidebar_button_=header->AddChildView(CreateHeaderAction(
       base::BindRepeating(&WorkspaceShell::ToggleSidebar,weak),u"Pokaż lub ukryj karty",
-      GlyphButton::Glyph::kSidebar,nullptr,header_visible));
+      GlyphButton::Glyph::kSidebar,nullptr,header_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalHeader,weak)));
   const std::array<std::pair<const gfx::VectorIcon*, std::u16string>, 3> commands = {{
       {&vector_icons::kArrowBackIcon, u"Wstecz"},
       {&vector_icons::kArrowForwardIcon, u"Dalej"},
       {&vector_icons::kReloadCustomIcon, u"Odśwież"}}};
   for (size_t i = 0; i < commands.size(); ++i) {
-    nav_buttons_[i] = header->AddChildView(std::make_unique<SceneGlyphButton>(
+    nav_buttons_[i] = header->AddChildView(CreateHeaderAction(
         base::BindRepeating(callbacks_.page_command, static_cast<PageCommand>(i)),
-        commands[i].second, GlyphButton::Glyph::kVector, commands[i].first,header_visible));
+        commands[i].second, GlyphButton::Glyph::kVector, commands[i].first,header_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalHeader,weak)));
   }
   content_host_ = root->AddChildView(std::make_unique<PaneHost>(callbacks_.split_ratio,
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, bool right, views::View* anchor) {
@@ -4316,6 +4370,7 @@ size_t WorkspaceShell::native_sidebar_paint_count() const {
 size_t WorkspaceShell::metal_sidebar_paint_count() const {
   return tab_list_ ? static_cast<SidebarListView*>(tab_list_.get())->metal_paints() : 0;
 }
+views::View* WorkspaceShell::header_action_for_testing(size_t index) const{return header_view_&&index<header_view_->children().size()?header_view_->children()[index].get():nullptr;}
 views::View* WorkspaceShell::sidebar_grip_for_testing() const{return sidebar_root_?static_cast<SidebarView*>(sidebar_root_.get())->grip.get():nullptr;}
 views::View* WorkspaceShell::split_divider_for_testing() const{return content_host_?static_cast<PaneHost*>(content_host_.get())->divider():nullptr;}
 bool WorkspaceShell::metal_sidebar_grip_visible() const{return metal_sidebar_grip_&&metal_sidebar_grip_->visible();}
@@ -4389,11 +4444,11 @@ void WorkspaceShell::UpdateMetalHeader() {
   const auto visible=header_view_->GetVisibleBounds();
   if (visible.IsEmpty()) {metal_header_->Hide();if(was_visible)header_view_->SchedulePaint();return;}
   auto bounds=header_view_->GetBoundsInScreen();bounds.Offset(visible.x(),visible.y());bounds.set_size(visible.size());
-  static_cast<GlyphButton*>(header_sidebar_button_.get())->set_on(sidebar_visible());
+  if(auto* control=views::AsViewClass<RustActionView>(header_sidebar_button_))control->SetOn(sidebar_visible());else static_cast<GlyphButton*>(header_sidebar_button_.get())->set_on(sidebar_visible());
   std::vector<sidebar::Item> items;items.reserve(header_view_->children().size());
   for (const auto& child : header_view_->children()) {
     auto rect=gfx::RectF(child->GetBoundsInScreen());rect.Offset(-bounds.x(),-bounds.y());
-    items.push_back(GlyphSceneItem(static_cast<GlyphButton*>(child.get()),rect,gfx::RectF(gfx::Rect(bounds.size()))));
+    if(auto* control=views::AsViewClass<RustActionView>(child.get()))items.push_back(control->SceneItem(rect,gfx::RectF(gfx::Rect(bounds.size()))));else items.push_back(GlyphSceneItem(static_cast<GlyphButton*>(child.get()),rect,gfx::RectF(gfx::Rect(bounds.size()))));
   }
   metal_header_->Update(widget_->GetNativeWindow(),bounds,items,FrameTint(workspace_color(state_.workspace_id),root_));
   if (was_visible!=metal_header_->visible()) header_view_->SchedulePaint();

@@ -329,6 +329,7 @@ class WorkspaceShell final : public ui::EventHandler,
   PanelViewport* workspace_viewport() const{return workspace_scroll_;}
   bool metal_sidebar_visible() const;
   bool metal_sidebar_grip_visible() const;
+  views::View* header_action_for_testing(size_t index) const;
   views::View* sidebar_grip_for_testing() const;
   views::View* split_divider_for_testing() const;
   bool metal_split_visible(size_t index) const;
@@ -480,7 +481,7 @@ class WorkspaceShell final : public ui::EventHandler,
   std::unique_ptr<SidebarMetal> metal_header_;
   bool metal_header_pending_=false;
   raw_ptr<views::View> header_view_=nullptr;
-  raw_ptr<views::Button> header_sidebar_button_=nullptr;
+  raw_ptr<views::View> header_sidebar_button_=nullptr;
   std::unique_ptr<SidebarMetal> metal_sidebar_;
   bool metal_sidebar_pending_ = false;
   int ToolsPage() const;
@@ -727,7 +728,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> workspace_name_ = nullptr;
   raw_ptr<views::View> profile_name_ = nullptr;
   raw_ptr<views::Button> pin_button_ = nullptr;
-  std::array<raw_ptr<views::Button>, 3> nav_buttons_ = {};
+  std::array<raw_ptr<views::View>, 3> nav_buttons_ = {};
   raw_ptr<views::View> sidebar_footer_=nullptr;
   raw_ptr<PanelViewport> workspace_scroll_=nullptr;
   raw_ptr<views::Button> workspace_settings_button_=nullptr;
