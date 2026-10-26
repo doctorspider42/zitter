@@ -782,6 +782,9 @@ and 276 Rust cases. Platform adapters and remaining native node ownership remain
 A [targeted follow-up](docs/benchmarks/rust-service-capture-targeted-2026-10-26.json)
 checks cancellation of pressed download actions when scrolling them offscreen;
 affected regressions passed 40 Metal / 33 Views.
+A [trackpad correction](docs/benchmarks/rust-viewport-trackpad-targeted-2026-10-26.json)
+now applies raw fractional/momentum pixel deltas to Rust viewport state and keeps
+horizontal-only events available to ancestors. Main-sidebar migration remains open.
 [Editor contracts and acceptance](docs/rust-metal-editor.md).
 Model updates refresh the scene independently of
 native painting. Rust also owns row

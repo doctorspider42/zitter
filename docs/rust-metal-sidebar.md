@@ -2395,3 +2395,36 @@ Per the user's cadence, this small follow-up has targeted acceptance. The full
 matrix below belongs to source `bde6809`, before the explicit capture refresh and
 new assertion; it is not counted as a full pass of this source. Frozen lab network
 scope, platform adapters, manual/performance/release/license limitations remain.
+
+## Shared viewport trackpad — targeted follow-up, 2026-10-26
+
+UI source `c1218949b559690373981036b89316f159531080` corrects raw trackpad input in the shared Rust
+viewport. ScrollBar::ObserveScrollEvent updates feedback, not content position;
+the adapter now sends finite kScroll pixel deltas to Rust-owned offset/clamp
+state. Fractional pixels and Cocoa momentum updates are retained. Fling-start
+velocities are not treated as position deltas. Horizontal-only ScrollEvent and
+MouseWheelEvent remain unconsumed by a vertical viewport; handled vertical raw
+events are not applied again by Widget's synthesized wheel fallback.
+
+A dedicated case sends fractional and momentum updates through the real
+Widget::OnScrollEvent path after successful compositor presentation, then checks
+axis routing, velocity rejection, both clamps and content collapse. Focus passed
+**3 Metal / 2 Views**, affected regressions **41 Metal / 33 Views**, single attempt,
+retry limit zero. Checks passed **278 Rust**, **180 SDK font/direction cases plus
+raster**, **68 live and 68 clean-archive Python**, scoped GN/boundaries and final
+Ninja no-op. All 53 committed/live/staged prototype inputs and binary/frozen-
+bootstrap/native-engine identities were checked.
+[Targeted trackpad report](benchmarks/rust-viewport-trackpad-targeted-2026-10-26.json).
+
+This prerequisite was found while auditing the main sidebar. Its native
+ScrollView has not yet been migrated. That stage must retain the existing custom
+Rust scrollbar, fractional scene projection/native hit testing, track/thumb/key/
+AX behavior, workspace swipe and animation contracts. Native control/node
+ownership and final manual/performance/release/license acceptance remain open.
+
+Per user cadence, this small correction has targeted acceptance; the earlier
+full matrix below is not counted as a full pass of this source. Physical hardware
+trackpad behavior still needs manual acceptance. The earlier
+[capture cancellation report](benchmarks/rust-service-capture-targeted-2026-10-26.json)
+retains the preceding follow-up's evidence. No dependency, service/store/admission
+or persistence change; no controlled performance gain is claimed.
