@@ -19,6 +19,7 @@ class PanelViewport {
   virtual views::ScrollBar* vertical_scroll_bar()=0;
   virtual void SetPanelContents(std::unique_ptr<views::View> contents)=0;
   virtual void SetViewportBackground(unsigned color)=0;
+  virtual void SetHeightRange(int minimum,int maximum)=0;
   virtual gfx::Rect visible_rect() const=0;
   virtual double offset() const=0;
   virtual int maximum() const=0;
@@ -31,6 +32,7 @@ struct PanelViewportOptions {
   bool use_contents_preferred_size = true;
   bool dialog_style = false;
   bool horizontal_scroll_enabled = false;
+  bool overflow_indicators = false;
 };
 std::unique_ptr<views::View> CreatePanelViewport(PanelViewport** adapter,base::RepeatingClosure changed,PanelViewportOptions options = {});
 std::unique_ptr<views::View> CreatePanelViewport(PanelViewport** adapter,base::RepeatingClosure changed,PanelViewportOptions options,std::unique_ptr<views::ScrollBar> vertical_bar);

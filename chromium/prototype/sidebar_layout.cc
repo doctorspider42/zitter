@@ -37,12 +37,13 @@ class NativePanelViewport final : public views::ScrollView,public PanelViewport 
   METADATA_HEADER(NativePanelViewport,views::ScrollView)
  public:
   // Views paints itself; retain its original path without a Metal observer.
-  explicit NativePanelViewport(base::RepeatingClosure,PanelViewportOptions options,std::unique_ptr<views::ScrollBar> vertical_bar){if(vertical_bar)SetVerticalScrollBar(std::move(vertical_bar));if(options.minimum_height>=0&&options.maximum_height>=options.minimum_height)ClipHeightTo(options.minimum_height,options.maximum_height);SetUseContentsPreferredSize(options.use_contents_preferred_size);if(!options.dialog_style)SetBackgroundColor(std::nullopt);SetDrawOverflowIndicator(options.dialog_style);SetHorizontalScrollBarMode(options.horizontal_scroll_enabled?ScrollBarMode::kEnabled:ScrollBarMode::kDisabled);}
+  explicit NativePanelViewport(base::RepeatingClosure,PanelViewportOptions options,std::unique_ptr<views::ScrollBar> vertical_bar){if(vertical_bar)SetVerticalScrollBar(std::move(vertical_bar));if(options.minimum_height>=0&&options.maximum_height>=options.minimum_height)ClipHeightTo(options.minimum_height,options.maximum_height);SetUseContentsPreferredSize(options.use_contents_preferred_size);if(!options.dialog_style)SetBackgroundColor(std::nullopt);SetDrawOverflowIndicator(options.dialog_style||options.overflow_indicators);SetHorizontalScrollBarMode(options.horizontal_scroll_enabled?ScrollBarMode::kEnabled:ScrollBarMode::kDisabled);}
   views::View* view() override{return this;}
   views::View* contents() const override{return const_cast<views::View*>(views::ScrollView::contents());}
   views::ScrollBar* vertical_scroll_bar() override{return views::ScrollView::vertical_scroll_bar();}
   void SetPanelContents(std::unique_ptr<views::View> value) override{SetContents(std::move(value));}
   void SetViewportBackground(unsigned color) override{SetBackgroundColor(color);}
+  void SetHeightRange(int minimum,int maximum) override{ClipHeightTo(minimum,maximum);}
   gfx::Rect visible_rect() const override{return GetVisibleRect();}
   double offset() const override{return CurrentOffset().y();}
   int maximum() const override{return contents()?std::max(0,contents()->height()-GetVisibleRect().height()):0;}
@@ -68,7 +69,7 @@ class RustPanelViewport final : public views::View,public PanelViewport,public v
   explicit RustPanelViewport(base::RepeatingClosure changed,PanelViewportOptions options,std::unique_ptr<views::ScrollBar> vertical_bar):changed_(std::move(changed)),options_(options){
     clip_=AddChildView(std::make_unique<RustViewportClip>(base::BindRepeating(&RustPanelViewport::Reveal,weak_factory_.GetWeakPtr())));
     bar_=AddChildView(vertical_bar?std::move(vertical_bar):views::PlatformStyle::CreateScrollBar(views::ScrollBar::Orientation::kVertical));bar_->set_controller(this);bar_->SetVisible(false);bar_->GetViewAccessibility().SetIsIgnored(true);bar_->GetViewAccessibility().SetIsLeaf(true);
-    if(options_.dialog_style){top_=AddChildView(std::make_unique<views::Separator>());bottom_=AddChildView(std::make_unique<views::Separator>());top_->SetVisible(false);bottom_->SetVisible(false);}
+    if(options_.dialog_style||options_.overflow_indicators){top_=AddChildView(std::make_unique<views::Separator>());bottom_=AddChildView(std::make_unique<views::Separator>());top_->SetVisible(false);bottom_->SetVisible(false);}
     auto& ax=GetViewAccessibility();ax.SetRole(ax::mojom::Role::kScrollView);ax.SetIsScrollable(true);ax.SetScrollXMin(0);ax.SetScrollXMax(0);ax.SetScrollYMin(0);ax.SetScrollYMax(0);
   }
   ~RustPanelViewport() override{bar_->set_controller(nullptr);}
@@ -77,6 +78,7 @@ class RustPanelViewport final : public views::View,public PanelViewport,public v
   views::ScrollBar* vertical_scroll_bar() override{return bar_;}
   void SetPanelContents(std::unique_ptr<views::View> value) override{clip_->RemoveAllChildViews();contents_=clip_->AddChildView(std::move(value));contents_->SetPaintToLayer();contents_->layer()->SetFillsBoundsOpaquely(false);ApplyBackground();InvalidateLayout();}
   void SetViewportBackground(unsigned color) override{background_=color;ApplyBackground();}
+  void SetHeightRange(int minimum,int maximum) override{if(options_.minimum_height==minimum&&options_.maximum_height==maximum)return;options_.minimum_height=minimum;options_.maximum_height=maximum;PreferredSizeChanged();}
   gfx::Rect visible_rect() const override{return contents_?gfx::Rect(0,static_cast<int>(offset()),clip_->width(),clip_->height()):gfx::Rect();}
   double offset() const override{return state_->viewport_offset();}
   int maximum() const override{return state_->viewport_maximum();}

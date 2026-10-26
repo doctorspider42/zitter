@@ -327,7 +327,7 @@ class WorkspaceShell final : public ui::EventHandler,
   gfx::Rect metal_palette_screen_bounds_for_testing() const;
   size_t palette_selection_for_testing() const;
   views::View* palette_results_view() const{return suggestion_list_;}
-  views::ScrollView* palette_scroll_view() const{return suggestion_scroll_;}
+  PanelViewport* palette_viewport() const{return suggestion_scroll_;}
   bool metal_sidebar_visible() const;
   bool metal_sidebar_grip_visible() const;
   bool metal_split_visible(size_t index) const;
@@ -471,8 +471,6 @@ class WorkspaceShell final : public ui::EventHandler,
   std::array<raw_ptr<views::View>,4> palette_chrome_views_={};
   std::unique_ptr<SidebarMetal> metal_palette_;
   bool metal_palette_pending_=false;
-  base::CallbackListSubscription metal_palette_scroll_subscription_;
-  std::unique_ptr<views::ScrollView::ScopedScrollSynchronizer> metal_palette_scroll_synchronizer_;
   void ScheduleMetalSidebar();
   void UpdateMetalSidebar();
   std::array<std::unique_ptr<SidebarMetal>,3> metal_split_;
@@ -725,7 +723,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> tab_list_ = nullptr;
   raw_ptr<PanelViewport> tab_scroll_ = nullptr;
   raw_ptr<views::View> suggestion_list_ = nullptr;
-  raw_ptr<views::ScrollView> suggestion_scroll_ = nullptr;
+  raw_ptr<PanelViewport> suggestion_scroll_ = nullptr;
   raw_ptr<views::Button> url_pill_ = nullptr;
   raw_ptr<views::View> workspace_name_ = nullptr;
   raw_ptr<views::View> profile_name_ = nullptr;

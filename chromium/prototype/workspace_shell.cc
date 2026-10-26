@@ -3388,12 +3388,18 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   if(metal_palette_){palette->SetLayoutManager(CreateSidebarColumnLayout());input_row->SetLayoutManager(CreatePaletteInputLayout());}
   address_error_=palette_text(palette.get(),u"",2,3);palette_chrome_views_[3]=address_error_;
   address_error_->SetVisible(false);
-  suggestion_scroll_ = palette->AddChildView(std::make_unique<views::ScrollView>());
-  suggestion_scroll_->ClipHeightTo(0, 300);
-  suggestion_scroll_->SetHorizontalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);
-  suggestion_list_=suggestion_scroll_->SetContents(std::make_unique<SidebarListView>(
+  std::unique_ptr<views::ScrollBar> palette_bar;
+#if BUILDFLAG(IS_MAC)
+  if(metal_palette_)palette_bar=CreateSidebarScrollBar(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_palette_visible();},weak));
+#endif
+  PanelViewport* palette_viewport=nullptr;
+  palette->AddChildView(CreatePanelViewport(&palette_viewport,base::BindRepeating(&WorkspaceShell::ScheduleMetalPalette,weak),{0,300,metal_palette_!=nullptr,false,false,true},std::move(palette_bar)));
+  suggestion_scroll_=palette_viewport;
+  auto suggestion_list=std::make_unique<SidebarListView>(
       base::BindRepeating(&WorkspaceShell::ScheduleMetalPalette,weak),
-      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_palette_visible();},weak)));
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_palette_visible();},weak));
+  suggestion_list_=suggestion_list.get();
+  suggestion_scroll_->SetPanelContents(std::move(suggestion_list));
   suggestion_list_->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kVertical, gfx::Insets(8), 2));
   suggestion_list_->SetBorder(views::CreateSolidSidedBorder(gfx::Insets::TLBR(1, 0, 0, 0), Hairline(root_)));
@@ -3401,10 +3407,6 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   if(metal_palette_) {
     suggestion_list_->SetLayoutManager(CreateSidebarColumnLayout(2));
     suggestion_list_->SetBorder(views::CreatePaddedBorder(views::CreateSolidSidedBorder(gfx::Insets::TLBR(1,0,0,0),Hairline(root_)),gfx::Insets(8)));
-    suggestion_scroll_->SetUseContentsPreferredSize(true);
-    suggestion_scroll_->SetVerticalScrollBar(CreateSidebarScrollBar(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_palette_visible();},weak)));
-    metal_palette_scroll_synchronizer_=suggestion_scroll_->EnableScrollSynchronization();
-    metal_palette_scroll_subscription_=suggestion_scroll_->AddContentsScrolledCallback(base::BindRepeating(&WorkspaceShell::ScheduleMetalPalette,weak));
   }
 #endif
   palette_chrome_views_[2]=palette_text(palette.get(),u"↑↓ wybierz     ↵ wykonaj / otwórz     > polecenia",1,2);
@@ -3940,7 +3942,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 void WorkspaceShell::Detach() {
   preferences_chrome_.reset();tools_chrome_.reset();
   for(auto& surface:metal_palette_chrome_)surface.reset();palette_chrome_views_.fill(nullptr);
-  metal_palette_scroll_subscription_={};metal_palette_scroll_synchronizer_.reset();metal_palette_.reset();metal_palette_pending_=false;
+  metal_palette_.reset();metal_palette_pending_=false;
   metal_sidebar_grip_.reset();
   for(auto& surface:metal_split_)surface.reset();metal_split_pending_=false;
   metal_header_.reset();metal_header_pending_=false;header_view_=nullptr;header_sidebar_button_=nullptr;
@@ -4449,7 +4451,7 @@ void WorkspaceShell::UpdateMetalPalette() {
   if(!metal_palette_||!address_widget_||!suggestion_list_)return;
   UpdateMetalPaletteChrome();
   const bool was_visible=metal_palette_->visible();
-  if(!address_visible()||!suggestion_scroll_->IsDrawn()) {
+  if(!address_visible()||!suggestion_scroll_->view()->IsDrawn()) {
     metal_palette_->Hide();if(was_visible){suggestion_list_->SchedulePaint();suggestion_scroll_->vertical_scroll_bar()->SchedulePaint();}return;
   }
   address_widget_->LayoutRootViewIfNecessary();
@@ -4459,8 +4461,9 @@ void WorkspaceShell::UpdateMetalPalette() {
   auto bounds=viewport_bounds;if(scroller.visible)bounds.Union(scroller.bounds);
   std::vector<SidebarViewportNode> nodes{{SidebarTree::kRoot,gfx::Rect(suggestion_list_->size()),true}};
   for(const auto& row:suggestion_list_->children())nodes.push_back({0,row->GetMirroredBounds(),row->GetVisible()});
-  const auto projection=metal_palette_->Project(suggestion_list_->size(),viewport_bounds.size(),suggestion_scroll_->CurrentOffset(),nodes);
-  if(projection.offset!=suggestion_scroll_->CurrentOffset()){suggestion_scroll_->ScrollToOffset(projection.offset);ScheduleMetalPalette();return;}
+  const gfx::PointF requested(0,static_cast<float>(suggestion_scroll_->offset()));
+  const auto projection=metal_palette_->Project(suggestion_list_->size(),viewport_bounds.size(),requested,nodes);
+  if(projection.offset!=requested){suggestion_scroll_->ScrollTo(projection.offset.y());ScheduleMetalPalette();return;}
   const gfx::Vector2dF origin(viewport_bounds.x()-bounds.x(),viewport_bounds.y()-bounds.y());
   std::vector<sidebar::Item> items;
   for(const auto& node:projection.nodes) {
@@ -5713,7 +5716,7 @@ void WorkspaceShell::RebuildSuggestions() {
         std::move(spec)));
   }
   suggestion_list_->SetVisible(!suggestions_.empty());
-  suggestion_scroll_->SetVisible(!suggestions_.empty());
+  suggestion_scroll_->view()->SetVisible(!suggestions_.empty());
   PositionPanels();
   address_widget_->LayoutRootViewIfNecessary();
   if (!suggestions_.empty()) suggestion_list_->children()[palette->selected()]->ScrollViewToVisible();
@@ -6573,7 +6576,7 @@ void WorkspaceShell::PositionPanels() {
 #if BUILDFLAG(IS_MAC)
   if(metal_palette_)results_height=sidebar::palette_results_height(content.height());
 #endif
-  suggestion_scroll_->ClipHeightTo(0,results_height);
+  suggestion_scroll_->SetHeightRange(0,results_height);
   const int height = palette_root_->GetHeightForWidth(palette_width);
   auto palette_bounds=gfx::Rect(content.CenterPoint().x()-palette_width/2,content.y()+std::min(132,content.height()/6),palette_width,height);
 #if BUILDFLAG(IS_MAC)
