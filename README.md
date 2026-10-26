@@ -682,7 +682,7 @@ Color/emoji preset rows now use Rust
 geometry, selection and input with batched Metal canvases excluding native editors.
 Nine workspace/profile form actions also use Rust layout/input and scene text
 without native button Labels, batched into four Metal groups. These newer stages pass the
-[latest full automated GUI checkpoint](docs/benchmarks/rust-preference-layout-checkpoint-2026-10-26.json);
+[latest full automated GUI checkpoint](docs/benchmarks/rust-tools-viewport-checkpoint-2026-10-26.json);
 manual signed-app and performance acceptance remain pending. Import also uses a Rust form controller for
 option snapshots, debounce/admission and control locks, with Metal static/status
 text and Apply drawing. Four import checkboxes now share a Metal canvas with Rust
@@ -763,6 +763,10 @@ Preference root/columns and centered row allocation now also use Rust, including
 wrapped label remeasurement and saved-rule rows. Native BoxLayout oracles check
 1260 constraint combinations and real controls across every category at two sizes;
 native interaction/scroll/window identity and remaining chrome still need work.
+The opt-in tools panel now uses a Rust-owned viewport instead of Views ScrollView.
+Rust owns extent, offset, clamp and reveal state; native adapters retain clipping,
+platform scrollbar/input/AX delivery and window integration. Other scroll surfaces
+and remaining interaction/container identity still need migration.
 [Editor contracts and acceptance](docs/rust-metal-editor.md).
 Model updates refresh the scene independently of
 native painting. Rust also owns row

@@ -44,5 +44,6 @@
   "build_scope": "Isolated zitter_ui_lab built with frozen baseline build/bootstrap/network inputs; simultaneous network-policy changes are not covered by these UI binary results.",
   "initial_probe": "One range assertion failed on both backends because an invisible Chromium scrollbar retained its previous maximum. The corrected oracle uses live content/viewport extents and checks scrollbar maximum when visible; all four sizes and 80 requests remain. Initial logs/source are retained locally in build/tools-viewport-first-probe and build/tools-viewport-first-probe-sources.",
   "remaining_work": "docs/rust-metal-next-steps-2026-10-23.md",
-  "migration_goal": "Remains paused at the requested weekly quota threshold; this commit does not establish full functional/performance/release parity."
+  "migration_goal": "Remains paused at the requested weekly quota threshold; this commit does not establish full functional/performance/release parity.",
+  "superseded_by_full_ui_checkpoint": "rust-tools-viewport-checkpoint-2026-10-26.json"
 }

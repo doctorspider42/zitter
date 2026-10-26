@@ -2188,3 +2188,77 @@ manual platform acceptance, controlled profiling and release/license checks stay
 open. Normal installed apps/profiles were untouched; no bundle was signed.
 [Previous catalogue checkpoint](benchmarks/rust-preference-catalogue-checkpoint-2026-10-26.json).
 The earlier AppKit startup stall is not claimed fixed by this migration.
+
+
+## Tools viewport ownership checkpoint (2026-10-26)
+
+UI source `d23f2326fea4902aedeee786585ab11c45558359`, 2026-10-26, passed the full compiled
+regression inventory with one launcher job, no automatic retries and temporary
+profiles:
+
+| Backend | Regular matrix passed | Regular skips | Failed / crashed / timed out |
+| --- | ---: | ---: | ---: |
+| Rust + Metal | 184 | 6 | 0 |
+| Views | 138 | 6 | 0 |
+
+The inventory contains 190 cases; Views excludes 46 dedicated Metal cases
+(144 applicable cases). Four opt-in performance scenarios, real-user Arc import
+and the interactive manual window are skipped per backend. Earlier optional
+performance scenarios remain historical evidence, not current-commit passes.
+Metal API validation remained enabled. No controlled CPU/GPU/presentation or
+memory improvement is established.
+
+The preference/tools/timeline/Time-Machine/restored-tab/media/password/download/
+modal/shared-chrome gate passed **90 Metal / 72 Views**; the focused viewport
+gate passed **2 Metal / 2 Views**. Checks passed **272 Rust tests**,
+**180 SDK font/direction cases plus raster**, **66 clean-archive Python tests**,
+scoped GN/boundaries and optimized compilation. The live checkout passed 68 Python
+tests, including two concurrent cases outside this UI commit. Final Ninja reported
+no work to do. All 53 tracked prototype files match committed source and the staged
+overlay. [Source/binary identities, commands and results](benchmarks/rust-tools-viewport-checkpoint-2026-10-26.json).
+
+This is the frozen UI-lab build of UI commit `d23f232`, with recorded baseline
+bootstrap/network inputs. Later current-main network-policy changes are not
+covered by this binary or its UI acceptance.
+
+The opt-in tools panel now replaces Views ScrollView with a Rust-owned viewport
+and a native clipping/event/window adapter. Rust owns viewport/content/bar
+allocation, overlay versus reserved width, extent, authoritative offset and
+maximum, resize/rebuild clamps and minimum-movement reveal policy. Native Views
+mode keeps ScrollView through the same interface and its original paint path,
+without an extra Metal refresh observer. The existing platform scrollbar
+keeps appearance and wheel/trackpad/momentum/key/AX delivery; its position requests
+are admitted and applied by Rust. Platform scrollbar and per-control View identity
+remain explicit future ownership work, not migrated claims.
+
+Native adapters supply preferred metrics and scrollbar style facts, translate
+content, clip descendants and refresh the existing Metal control canvases. The
+tools shell no longer owns ScrollView synchronization/subscription state. Browser
+stores, profile/workspace/generation/captured-key admission, confirmation, timers,
+form/catalogue/geometry/input state and persistence remain unchanged. Preferences
+and other scroll surfaces remain native.
+
+Five Rust cases cover overlay/reserved geometry, resize/rebuild clamp, native
+minimum-movement and oversized reveal rules, fractional/nonfinite requests and
+empty/tiny/extreme metrics. A shared browser oracle compares real ScrollView
+extents, offsets and visible rectangles at four sizes with 20 position and 60
+reveal requests, including wrapped content and transition to no overflow. Another
+checks actual tools ownership, absence of ScrollView in the opt-in host, wheel/
+Home/accessible page commands, clipping, editor reveal, AX range and reopen bounds.
+Existing tools resize, history-row, action and selector clipping/capture cases
+retain their semantic assertions through the viewport interface. Actual Cocoa
+keyboard/IME and presentation-backed scene regressions also pass.
+
+The first probe passed wheel/key/AX/reveal on both backends but failed one range
+assertion after overflow disappeared. Chromium retains a hidden scrollbar's old
+maximum; the effective live content/viewport range is zero. The oracle now checks
+live extents and also the scrollbar maximum whenever visible. All four sizes and
+80 requests remain. Initial source/binary identities and failed logs are retained
+separately and are not counted as current passes.
+
+No dependency was added. Preferences/other scrolling, platform scrollbar/event/
+AX/window adapters, stable Rust interaction/node ownership, remaining chrome/
+service coordination, manual acceptance, controlled profiling and release/license
+checks remain open. Normal installed apps/profiles were untouched; no bundle was
+signed. [Previous allocation checkpoint](benchmarks/rust-preference-layout-checkpoint-2026-10-26.json).
+The earlier AppKit startup stall is not claimed fixed by this migration.
