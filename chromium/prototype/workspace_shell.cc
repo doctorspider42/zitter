@@ -649,10 +649,12 @@ void PaintSceneRecipe(gfx::Canvas* canvas,const sidebar::Item& item,const gfx::F
 class RustActionView final : public views::View {
   METADATA_HEADER(RustActionView,views::View)
  public:
-  RustActionView(views::Button::PressedCallback callback,std::u16string name,ControlGlyph glyph,const gfx::VectorIcon* icon,base::RepeatingCallback<bool()> visible,base::RepeatingClosure changed)
+  RustActionView(views::Button::PressedCallback callback,std::u16string name,ControlGlyph glyph,const gfx::VectorIcon* icon,base::RepeatingCallback<bool()> visible,base::RepeatingClosure changed,bool native_focus_ring)
       :callback_(std::move(callback)),glyph_(glyph),icon_(icon),visible_(std::move(visible)),changed_(std::move(changed)){
-    SetTooltipText(name);auto& ax=GetViewAccessibility();ax.SetName(name);ax.SetRole(ax::mojom::Role::kButton);ax.SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kPress);SetFocusBehavior(views::PlatformStyle::kDefaultFocusBehavior);views::FocusRing::Install(this);
+    SetTooltipText(name);auto& ax=GetViewAccessibility();ax.SetName(name);ax.SetRole(ax::mojom::Role::kButton);ax.SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kPress);SetFocusBehavior(views::PlatformStyle::kDefaultFocusBehavior);if(native_focus_ring)views::FocusRing::Install(this);
   }
+  void OnTooltipTextChanged(const std::u16string& previous) override{views::View::OnTooltipTextChanged(previous);auto& ax=GetViewAccessibility();if((ax.GetCachedName().empty()||ax.GetCachedName()==previous)&&!GetTooltipText().empty())ax.SetName(GetTooltipText());}
+  void SetColor(SkColor color){if(color_==color)return;color_=color;SchedulePaint();}
   void SetCallback(views::Button::PressedCallback callback){Cancel();callback_=std::move(callback);}
   void CancelInput(){Cancel();}
   bool Pending() const{return state_->action_pending();}
@@ -661,7 +663,7 @@ class RustActionView final : public views::View {
   void SyncViewportVisibility(){if(!Interactive())Cancel();}
   bool HandleAccessibleAction(const ui::AXActionData& action) override{if(action.action==ax::mojom::Action::kDoDefault&&SceneIsVisible(this)&&GetEnabledInViewsSubtree())ScrollViewToVisible();return views::View::HandleAccessibleAction(action);}
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{const auto r=sidebar::action_preferred_size(glyph_==ControlGlyph::kDot,!label_.empty());return gfx::Size(r.width,r.height);}
-  sidebar::Item SceneItem(gfx::RectF rect,gfx::RectF clip){SyncEnabled();const auto s=state_->action_snapshot();return GlyphSceneData(this,glyph_,icon_,s.on,label_,kSubtle,s.enabled&&(s.visual==sidebar::RowVisual::Hovered||s.visual==sidebar::RowVisual::Pressed),s.focused,rect,clip);}
+  sidebar::Item SceneItem(gfx::RectF rect,gfx::RectF clip){SyncEnabled();const auto s=state_->action_snapshot();return GlyphSceneData(this,glyph_,icon_,s.on,label_,color_,s.enabled&&(s.visual==sidebar::RowVisual::Hovered||s.visual==sidebar::RowVisual::Pressed),s.focused,rect,clip);}
   void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);if(changed_)changed_.Run();}
   bool OnMousePressed(const ui::MouseEvent& event) override{return Pointer(sidebar::PointerPhase::Press,event);}
   bool OnMouseDragged(const ui::MouseEvent& event) override{return Pointer(sidebar::PointerPhase::Drag,event);}
@@ -680,7 +682,7 @@ class RustActionView final : public views::View {
   void AddedToWidget() override{views::View::AddedToWidget();window_.Observe(GetWidget());}
   void RemovedFromWidget() override{window_.Observe(nullptr);Cancel();views::View::RemovedFromWidget();}
   void PaintChildren(const views::PaintInfo& info) override{if(!visible_||!visible_.Run())views::View::PaintChildren(info);}
-  void OnPaint(gfx::Canvas* canvas) override{if(visible_&&visible_.Run())return;SyncEnabled();const auto v=state_->action_snapshot();const auto paint=v.visual==sidebar::RowVisual::Disabled?views::Button::STATE_DISABLED:v.visual==sidebar::RowVisual::Pressed?views::Button::STATE_PRESSED:v.visual==sidebar::RowVisual::Hovered?views::Button::STATE_HOVERED:views::Button::STATE_NORMAL;PaintGlyphControl(this,glyph_,icon_,kSubtle,v.on,label_,paint,canvas);}
+  void OnPaint(gfx::Canvas* canvas) override{if(visible_&&visible_.Run())return;SyncEnabled();const auto v=state_->action_snapshot();const auto paint=v.visual==sidebar::RowVisual::Disabled?views::Button::STATE_DISABLED:v.visual==sidebar::RowVisual::Pressed?views::Button::STATE_PRESSED:v.visual==sidebar::RowVisual::Hovered?views::Button::STATE_HOVERED:views::Button::STATE_NORMAL;PaintGlyphControl(this,glyph_,icon_,color_,v.on,label_,paint,canvas);}
  private:
   void SyncEnabled(){const bool enabled=GetEnabledInViewsSubtree();if(!state_->action_enabled(enabled))return;auto& ax=GetViewAccessibility();if(enabled)ax.SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kPress);else ax.RemoveDefaultActionVerb();}
   bool Interactive() const{return SceneIsVisible(this)&&!GetVisibleBounds().IsEmpty();}
@@ -689,16 +691,28 @@ class RustActionView final : public views::View {
   bool Pointer(sidebar::PointerPhase phase,const ui::MouseEvent& event){SyncEnabled();return Apply(state_->action_pointer(phase,event.x(),event.y(),phase!=sidebar::PointerPhase::Exit&&HitTestPoint(event.location())&&GetVisibleBounds().Contains(event.location()),event.IsLeftMouseButton(),Interactive()),event);}
   bool Key(bool pressed,const ui::KeyEvent& event){SyncEnabled();const uint32_t key=event.key_code()==ui::VKEY_SPACE?1:event.key_code()==ui::VKEY_RETURN?2:0;return Apply(state_->action_key(pressed,key,true,Interactive()),event);}
   bool Apply(const sidebar::RowInputResult& result,const ui::Event& event){const bool handled=result.handled;SchedulePaint();if(result.action==sidebar::RowAction::Activate&&callback_){callback_.Run(event);return handled;}return handled;}
-  std::u16string label_;views::Button::PressedCallback callback_;ControlGlyph glyph_;raw_ptr<const gfx::VectorIcon> icon_;base::RepeatingCallback<bool()> visible_;base::RepeatingClosure changed_;rust::Box<sidebar::ActionControl> state_=sidebar::new_action_control();SceneWindowObserver window_{base::BindRepeating(&RustActionView::WindowChanged,base::Unretained(this))};base::CallbackListSubscription enabled_changed_{AddEnabledInViewsSubtreeChangedCallback(base::BindRepeating(&RustActionView::EnabledChanged,base::Unretained(this)))};
+  SkColor color_=kSubtle;std::u16string label_;views::Button::PressedCallback callback_;ControlGlyph glyph_;raw_ptr<const gfx::VectorIcon> icon_;base::RepeatingCallback<bool()> visible_;base::RepeatingClosure changed_;rust::Box<sidebar::ActionControl> state_=sidebar::new_action_control();SceneWindowObserver window_{base::BindRepeating(&RustActionView::WindowChanged,base::Unretained(this))};base::CallbackListSubscription enabled_changed_{AddEnabledInViewsSubtreeChangedCallback(base::BindRepeating(&RustActionView::EnabledChanged,base::Unretained(this)))};
 };
 BEGIN_METADATA(RustActionView)
 END_METADATA
 #endif
-std::unique_ptr<views::View> CreateSceneAction(views::Button::PressedCallback callback,std::u16string name,ControlGlyph glyph,const gfx::VectorIcon* icon,base::RepeatingCallback<bool()> visible,base::RepeatingClosure changed){
+std::unique_ptr<views::View> CreateSceneAction(views::Button::PressedCallback callback,std::u16string name,ControlGlyph glyph,const gfx::VectorIcon* icon,base::RepeatingCallback<bool()> visible,base::RepeatingClosure changed,bool native_focus_ring=true){
 #if BUILDFLAG(IS_MAC)
-  if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal")return std::make_unique<RustActionView>(std::move(callback),std::move(name),glyph,icon,std::move(visible),std::move(changed));
+  if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal")return std::make_unique<RustActionView>(std::move(callback),std::move(name),glyph,icon,std::move(visible),std::move(changed),native_focus_ring);
 #endif
-  return std::make_unique<SceneGlyphButton>(std::move(callback),std::move(name),glyph,icon,std::move(visible),std::move(changed));
+  auto view=std::make_unique<SceneGlyphButton>(std::move(callback),std::move(name),glyph,icon,std::move(visible),std::move(changed));if(!native_focus_ring){view->SetInstallFocusRingOnFocus(false);view->SetHasInkDropActionOnClick(false);}return view;
+}
+void SetActionColor(views::View* view,SkColor color){
+#if BUILDFLAG(IS_MAC)
+  if(auto* control=views::AsViewClass<RustActionView>(view)){control->SetColor(color);return;}
+#endif
+  static_cast<GlyphButton*>(view)->set_color(color);
+}
+bool IsGlyphAction(views::View* view){
+#if BUILDFLAG(IS_MAC)
+  if(views::AsViewClass<RustActionView>(view))return true;
+#endif
+  return views::AsViewClass<GlyphButton>(view)!=nullptr;
 }
 
 void SetActionCallback(views::View* view,views::Button::PressedCallback callback){
@@ -737,11 +751,11 @@ class AppearanceRow final : public views::View {
   void SyncWindowVisibility(){CancelInput();if(!SceneIsVisible(this)&&surface_)surface_->Hide();Schedule();}
 
   explicit AppearanceRow(bool emoji):emoji_(emoji) {}
-  GlyphButton* AddPicker(views::Button::PressedCallback callback,std::u16string label,GlyphButton::Glyph glyph) {
-    auto* button=AddChildView(std::make_unique<SceneGlyphButton>(std::move(callback),std::move(label),glyph,nullptr,
-        base::BindRepeating([]{return true;}),base::BindRepeating(&AppearanceRow::Schedule,weak_factory_.GetWeakPtr())));
-    button->SetInstallFocusRingOnFocus(false);button->SetHasInkDropActionOnClick(false);return button;
+  views::View* AddPicker(views::Button::PressedCallback callback,std::u16string label,GlyphButton::Glyph glyph) {
+    return AddChildView(CreateSceneAction(std::move(callback),std::move(label),glyph,nullptr,
+        base::BindRepeating([]{return true;}),base::BindRepeating(&AppearanceRow::Schedule,weak_factory_.GetWeakPtr()),false));
   }
+  void SyncViewport(){if(children().size()!=Count()+2)return;for(size_t i=0;i<Count();++i)if(auto* control=views::AsViewClass<RustActionView>(children()[i].get()))control->SyncViewportVisibility();}
   void CancelInput(){if(children().size()!=Count()+2)return;for(size_t i=0;i<Count();++i)children()[i]->OnMouseCaptureLost();}
   bool metal_visible() const{return surface_&&surface_->visible();}
   bool contains_text(std::string_view text) const{return metal_visible()&&surface_->contains_text_for_testing(text);}
@@ -761,9 +775,9 @@ class AppearanceRow final : public views::View {
   gfx::Rect Controls() const {return children().size()==Count()+2?gfx::Rect(0,0,children()[Count()-1]->bounds().right(),height()):gfx::Rect();}
   std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const {
     std::vector<sidebar::Item> items;if(children().size()!=Count()+2)return items;
-    for(size_t i=0;i<Count();++i){auto* button=static_cast<GlyphButton*>(children()[i].get());auto bounds=gfx::RectF(button->bounds());bounds.Offset(dx,dy);auto child_clip=bounds;child_clip.Intersect(clip);items.push_back(GlyphSceneItem(button,bounds,child_clip));}return items;
+    for(size_t i=0;i<Count();++i){auto* button=children()[i].get();auto bounds=gfx::RectF(button->bounds());bounds.Offset(dx,dy);auto child_clip=bounds;child_clip.Intersect(clip);items.push_back(ActionSceneItem(button,bounds,child_clip));}return items;
   }
-  void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&AppearanceRow::UpdateMetal,weak_factory_.GetWeakPtr()));}
+  void Schedule(){SyncViewport();if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&AppearanceRow::UpdateMetal,weak_factory_.GetWeakPtr()));}
   void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();auto local=GetVisibleBounds();local.Intersect(Controls());
     if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();frame_={};if(was)SchedulePaint();return;}
     if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;
@@ -775,7 +789,7 @@ class AppearanceRow final : public views::View {
 BEGIN_METADATA(AppearanceRow)
 END_METADATA
 #endif
-GlyphButton* AppearancePicker(views::View* parent,views::Button::PressedCallback callback,std::u16string label,GlyphButton::Glyph glyph) {
+views::View* AppearancePicker(views::View* parent,views::Button::PressedCallback callback,std::u16string label,GlyphButton::Glyph glyph) {
 #if BUILDFLAG(IS_MAC)
   if(auto* row=views::AsViewClass<AppearanceRow>(parent))return row->AddPicker(std::move(callback),std::move(label),glyph);
 #endif
@@ -3384,7 +3398,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, SkColor value) {
           if (shell) shell->SetWorkspaceColor(shell->state_.workspace_id, value);
         }, weak, color), label, GlyphButton::Glyph::kSwatch);
-    swatch->set_color(color);
+    SetActionColor(swatch,color);
   }
   Spacer(color_row, 1)->SetPreferredSize(gfx::Size(8, 1));
   color_input_ = AddEditor(color_row,bool(workspace_form_));
@@ -3412,7 +3426,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, std::u16string value) {
           if (shell) shell->SetWorkspaceEmoji(shell->state_.workspace_id, value);
         }, weak, std::u16string(emoji)), label, GlyphButton::Glyph::kDot);
-    pick->set_label(emoji);
+    SetActionLabel(pick,emoji);
   }
   Spacer(emoji_row, 1)->SetPreferredSize(gfx::Size(8, 1));
   emoji_input_ = AddEditor(emoji_row,bool(workspace_form_));
@@ -6282,6 +6296,7 @@ void WorkspaceShell::RefreshFormViewports(){
   auto refresh=[&](auto&& self,views::View* view)->void{
 #if BUILDFLAG(IS_MAC)
     if(auto* paragraph=views::AsViewClass<SceneParagraph>(view))paragraph->OnVisibleBoundsChanged();
+    if(auto* row=views::AsViewClass<AppearanceRow>(view))row->SyncViewport();
 #endif
     for(const auto& child:view->children())self(self,child.get());};
   for(auto* root:{settings_root_.get(),import_root_.get()})if(root){RefreshChoiceViewports(root);refresh(refresh,root);root->SchedulePaint();}
@@ -6664,11 +6679,11 @@ void WorkspaceShell::ApplyAppearance(bool refresh_theme) {
   size_t color_index=0;
 #endif
   for (auto& child : color_input_->view()->parent()->children()) {
-    if (auto* swatch = views::AsViewClass<GlyphButton>(child.get())) {
+    if (auto* swatch=child.get();IsGlyphAction(swatch)) {
 #if BUILDFLAG(IS_MAC)
-      if(workspace_form_){swatch->set_on(sidebar::appearance_selected(false,color_index++,color,{}));continue;}
+      if(workspace_form_){SetActionOn(swatch,sidebar::appearance_selected(false,color_index++,color,{}));continue;}
 #endif
-      swatch->set_on(swatch->GetTooltipText() == base::UTF8ToUTF16(Hex(color)));
+      SetActionOn(swatch,swatch->GetTooltipText()==base::UTF8ToUTF16(Hex(color)));
     }
   }
   const auto emoji = workspace_emoji(state_.workspace_id);
@@ -6677,11 +6692,11 @@ void WorkspaceShell::ApplyAppearance(bool refresh_theme) {
   size_t emoji_index=0;
 #endif
   for (auto& child : emoji_input_->view()->parent()->children()) {
-    if (auto* pick = views::AsViewClass<GlyphButton>(child.get())) {
+    if (auto* pick=child.get();IsGlyphAction(pick)) {
 #if BUILDFLAG(IS_MAC)
-      if(workspace_form_){pick->set_on(sidebar::appearance_selected(true,emoji_index++,color,base::UTF16ToUTF8(emoji)));continue;}
+      if(workspace_form_){SetActionOn(pick,sidebar::appearance_selected(true,emoji_index++,color,base::UTF16ToUTF8(emoji)));continue;}
 #endif
-      pick->set_on(!emoji.empty() && pick->GetTooltipText() == u"Emoji " + emoji);
+      SetActionOn(pick,!emoji.empty()&&pick->GetTooltipText()==u"Emoji "+emoji);
     }
   }
   auto* pin = pin_button_.get();
