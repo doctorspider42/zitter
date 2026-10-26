@@ -3,40 +3,60 @@
 This is a work plan, not a claim of complete functional parity. The detailed
 inventory is [the parity checklist](rust-metal-parity.md).
 
-## Latest targeted follow-up
-
-UI source `c1218949b559690373981036b89316f159531080` corrects raw trackpad input in the shared Rust
-viewport. ScrollBar::ObserveScrollEvent updates feedback, not content position;
-the adapter now sends finite kScroll pixel deltas to Rust-owned offset/clamp
-state. Fractional pixels and Cocoa momentum updates are retained. Fling-start
-velocities are not treated as position deltas. Horizontal-only ScrollEvent and
-MouseWheelEvent remain unconsumed by a vertical viewport; handled vertical raw
-events are not applied again by Widget's synthesized wheel fallback.
-
-A dedicated case sends fractional and momentum updates through the real
-Widget::OnScrollEvent path after successful compositor presentation, then checks
-axis routing, velocity rejection, both clamps and content collapse. Focus passed
-**3 Metal / 2 Views**, affected regressions **41 Metal / 33 Views**, single attempt,
-retry limit zero. Checks passed **278 Rust**, **180 SDK font/direction cases plus
-raster**, **68 live and 68 clean-archive Python**, scoped GN/boundaries and final
-Ninja no-op. All 53 committed/live/staged prototype inputs and binary/frozen-
-bootstrap/native-engine identities were checked.
-[Targeted trackpad report](benchmarks/rust-viewport-trackpad-targeted-2026-10-26.json).
-
-This prerequisite was found while auditing the main sidebar. Its native
-ScrollView has not yet been migrated. That stage must retain the existing custom
-Rust scrollbar, fractional scene projection/native hit testing, track/thumb/key/
-AX behavior, workspace swipe and animation contracts. Native control/node
-ownership and final manual/performance/release/license acceptance remain open.
-
-Per user cadence, this small correction has targeted acceptance; the earlier
-full matrix below is not counted as a full pass of this source. Physical hardware
-trackpad behavior still needs manual acceptance. The earlier
-[capture cancellation report](benchmarks/rust-service-capture-targeted-2026-10-26.json)
-retains the preceding follow-up's evidence. No dependency, service/store/admission
-or persistence change; no controlled performance gain is claimed.
-
 ## Latest full checkpoint
+
+UI source `9037db7bb4caf3d187145e410224d6c791ca6fcc` moves the main tab/tree sidebar viewport to
+Rust in the opt-in backend. Rust owns extent/allocation, fractional offset,
+reveal and clamp. The existing Rust-backed sidebar scrollbar is injected into
+the shared viewport, retaining thumb/track/key/AX state and Metal presentation.
+Native ScrollView subscriptions/synchronization for this surface are removed.
+Views retains its bounded ScrollView path. Native View/node identity, measurement,
+input/focus/AX/window/frame and animation adapters remain.
+
+The full compiled inventory has **198 cases**. Metal passed **192 regular
+cases**, Views passed **145 regular cases**; both explicitly skipped the same
+six optional manual/live-import/performance scenarios. One launcher job, retry
+limit zero, no failures/crashes/timeouts. Dedicated Metal fixture cases are
+excluded from Views. Focus passed **5 Metal / 2 Views**; affected regressions
+**76 Metal / 29 Views**. Checks passed **278 Rust**, **180 SDK font/direction
+cases plus raster**, **68 live and 68 clean-archive Python**, scoped GN/boundaries
+and final Ninja no-op. All 53 committed/live/staged prototype inputs and binary/
+frozen-bootstrap/native-engine identities were checked.
+[Full main-sidebar viewport report](benchmarks/rust-main-viewport-checkpoint-2026-10-26.json).
+
+The new shared case covers actual host ownership/AX, compact/wide bounds, bottom
+scroll and first-row reveal, workspace shrink and return. The existing fractional
+projection case now sends an actual ScrollEvent through the sidebar Widget,
+then checks exact fractional clipping and native mouse hit testing. Existing
+thumb/track/key/AX, real-tab wheel, folder/tree, live-tab/split, swipe/repeat and
+presented-Metal/native-fallback animation contracts retain their assertions.
+
+Chromium compositor mailbox diagnostics remain in both backend logs (4 Metal /
+14 Views invalid-mailbox messages). The drag/width cases and full launchers
+succeeded; this checkpoint does not diagnose or resolve those messages.
+
+The initial probe passed all five Metal cases but exposed the native layer's
+pre-commit resize limitation in the new Views test (live maximum 590, offset 430).
+The final fixture requires successful presentation of resized geometry before
+scrolling to the bottom. The failing probe is retained; no production behavior
+was changed for that fixture correction.
+
+This full source includes the earlier shared-viewport capture cancellation and
+raw-trackpad corrections. Their historical
+[capture](benchmarks/rust-service-capture-targeted-2026-10-26.json) and
+[trackpad](benchmarks/rust-viewport-trackpad-targeted-2026-10-26.json) reports retain
+their original scope. The lab retains frozen bootstrap/network inputs from
+`d23f232`; current-main network policy is outside this binary's acceptance.
+
+Footer workspace dots and palette suggestions still use native ScrollView.
+These and remaining native control/node/container/menu/input ownership must
+continue migrating. Manual hardware trackpad, IME candidates, VoiceOver, global
+RTL, scale/theme and GPU recovery acceptance, controlled CPU/GPU/drawable-
+presentation/input-latency/memory comparison and release/license/notice checks
+remain open. No complete functional parity or controlled performance gain is
+claimed. Full UI matrices remain reserved for larger blocks, per user cadence.
+
+## Previous full checkpoint: service viewports
 
 UI source `bde6809f25e1499aa6241bfe7492c27a5e7e44f4` moves downloads, page JavaScript/beforeunload
 message bodies and shared scene modal bodies to the Rust-owned viewport.
@@ -155,9 +175,9 @@ The earlier AppKit startup stall is not claimed fixed by this migration.
 ## Immediate preference work still remaining
 
 Preference root/column/centered-row allocation now uses Rust and matches the
-native BoxLayout oracles. Tools, preferences, workspace settings, import, downloads,
-page message bodies and scene modal bodies use Rust-owned viewports without
-ScrollView. Next, migrate other scroll surfaces and remaining
+native BoxLayout oracles. The main sidebar, tools, preferences, workspace settings, import, downloads,
+page message bodies and scene modal bodies use Rust-owned viewports. Next,
+migrate footer/palette scrolling and remaining
 interaction/container identity to Rust node ownership, retaining explicit
 platform window/event/AX adapters. Finish header/profile/status/managed-state
 copy, responsive placement and service coordination alongside that work.

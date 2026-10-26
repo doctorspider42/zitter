@@ -682,7 +682,7 @@ Color/emoji preset rows now use Rust
 geometry, selection and input with batched Metal canvases excluding native editors.
 Nine workspace/profile form actions also use Rust layout/input and scene text
 without native button Labels, batched into four Metal groups. These newer stages pass the
-[latest full automated GUI checkpoint](docs/benchmarks/rust-service-viewport-checkpoint-2026-10-26.json);
+[latest full automated GUI checkpoint](docs/benchmarks/rust-main-viewport-checkpoint-2026-10-26.json);
 manual signed-app and performance acceptance remain pending. Import also uses a Rust form controller for
 option snapshots, debounce/admission and control locks, with Metal static/status
 text and Apply drawing. Four import checkboxes now share a Metal canvas with Rust
@@ -784,7 +784,12 @@ checks cancellation of pressed download actions when scrolling them offscreen;
 affected regressions passed 40 Metal / 33 Views.
 A [trackpad correction](docs/benchmarks/rust-viewport-trackpad-targeted-2026-10-26.json)
 now applies raw fractional/momentum pixel deltas to Rust viewport state and keeps
-horizontal-only events available to ancestors. Main-sidebar migration remains open.
+horizontal-only events available to ancestors.
+The main tab/tree sidebar now uses the Rust-owned viewport with its existing
+custom Rust scrollbar. [Full main-sidebar checkpoint](docs/benchmarks/rust-main-viewport-checkpoint-2026-10-26.json)
+passed 192 Metal / 145 Views regular cases, six explicit optional skips each,
+and 278 Rust cases. Footer/palette scrolling and remaining native node/input
+ownership remain open.
 [Editor contracts and acceptance](docs/rust-metal-editor.md).
 Model updates refresh the scene independently of
 native painting. Rust also owns row
