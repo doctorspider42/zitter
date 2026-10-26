@@ -88,9 +88,14 @@ class RustPanelViewport final : public views::View,public PanelViewport,public v
     auto rect=[](const auto& r){return gfx::Rect(r.x,r.y,r.width,r.height);};clip_->SetBoundsRect(rect(plan.viewport));contents_->SetBoundsRect(rect(plan.content));bar_->SetBoundsRect(rect(plan.bar));bar_->SetVisible(plan.show_bar);contents_->DeprecatedLayoutImmediately();Apply(previous!=offset());
   }
   void OnThemeChanged() override{views::View::OnThemeChanged();ApplyBackground();}
-  bool OnMouseWheel(const ui::MouseWheelEvent& event) override{return maximum()>0&&bar_->OnMouseWheel(event);}
+  bool OnMouseWheel(const ui::MouseWheelEvent& event) override{return maximum()>0&&event.y_offset()!=0&&bar_->OnMouseWheel(event);}
   bool OnKeyPressed(const ui::KeyEvent& event) override{return maximum()>0&&bar_->OnKeyPressed(event);}
-  void OnScrollEvent(ui::ScrollEvent* event) override{if(maximum()<=0)return;bar_->ObserveScrollEvent(*event);if(event->y_offset()!=0){event->SetHandled();event->StopPropagation();}}
+  void OnScrollEvent(ui::ScrollEvent* event) override{
+    if(maximum()<=0)return;bar_->ObserveScrollEvent(*event);
+    // ObserveScrollEvent updates scrollbar feedback only. Cocoa supplies pixel
+    // deltas, including momentum; fling-start values are velocities, not deltas.
+    if(event->type()==ui::EventType::kScroll&&std::isfinite(event->y_offset())&&event->y_offset()!=0){if(state_->viewport_scroll_delta(event->y_offset()))Apply(true);event->SetHandled();event->StopPropagation();}
+  }
   void OnGestureEvent(ui::GestureEvent* event) override{if(maximum()>0)bar_->OnGestureEvent(event);}
   bool HandleAccessibleAction(const ui::AXActionData& action) override{
     switch(action.action){case ax::mojom::Action::kScrollUp:return bar_->ScrollByAmount(views::ScrollBar::ScrollAmount::kPrevPage);case ax::mojom::Action::kScrollDown:return bar_->ScrollByAmount(views::ScrollBar::ScrollAmount::kNextPage);case ax::mojom::Action::kSetScrollOffset:ScrollTo(action.target_point.y());return true;default:return views::View::HandleAccessibleAction(action);}

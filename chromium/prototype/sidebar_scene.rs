@@ -382,6 +382,7 @@ mod ffi {
         fn viewport_measure_width(width: i32, height: i32, full_height: i32, thickness: i32, overlay: bool) -> i32;
         fn viewport_configure(self: &mut ScrollViewportState, width: i32, height: i32, preferred_width: i32, preferred_height: i32, thickness: i32, overlay: bool) -> ScrollViewportLayout;
         fn viewport_scroll_to(self: &mut ScrollViewportState, offset: f64) -> bool;
+        fn viewport_scroll_delta(self: &mut ScrollViewportState, delta: f64) -> bool;
         fn viewport_reveal(self: &mut ScrollViewportState, y: i32, height: i32) -> bool;
         fn viewport_edges(self: &ScrollViewportState, width: i32) -> ScrollViewportEdges;
         fn viewport_offset(self: &ScrollViewportState) -> f64;
@@ -1397,6 +1398,9 @@ impl ScrollViewportState {
     fn viewport_scroll_to(&mut self,offset:f64)->bool {
         if !offset.is_finite(){return false;}let next=offset.clamp(0.0,f64::from(self.maximum));let changed=next!=self.offset;self.offset=next;changed
     }
+    fn viewport_scroll_delta(&mut self,delta:f64)->bool {
+        if !delta.is_finite(){return false;}self.viewport_scroll_to(self.offset-delta)
+    }
     fn viewport_reveal(&mut self,y:i32,height:i32)->bool {
         if self.maximum==0||self.height==0{return false;}let start=y.clamp(0,self.content);let end=(i64::from(start)+i64::from(height.max(0).min(self.height))).min(i64::from(self.content)) as i32;
         let visible=self.offset as i32;if start>=visible&&end<=visible.saturating_add(self.height){return false;}
@@ -2194,6 +2198,16 @@ mod tests {
         let empty=panel_layout(&s,&[],&[]);assert_eq!((empty.width,empty.height),(8,8));
         let mut margin=child(80,20);margin.top=2;margin.left=3;margin.bottom=4;margin.right=5;let g=panel_layout(&s,&[margin],&[]);assert_eq!((g.width,g.height),(96,34));assert_eq!((g.children[0].x,g.children[0].y,g.children[0].width),(3,2,84));
         let huge=ffi::PanelStyle{width:i32::MAX,height:i32::MAX,spacing:i32::MAX,..s};let g=panel_layout(&huge,&[child(i32::MAX,i32::MAX),child(i32::MAX,i32::MAX)],&[]);assert_eq!(g.height,i32::MAX);assert!(g.children.iter().all(|r|r.width>=0&&r.height>=0));
+    }
+    #[test] fn viewport_scroll_delta_retains_fractional_pixels_and_clamps_both_edges() {
+        let mut v=new_scroll_viewport();v.viewport_configure(300,200,300,900,15,true);
+        for _ in 0..10{assert!(v.viewport_scroll_delta(-0.125));}assert_eq!(v.viewport_offset(),1.25);
+        assert!(v.viewport_scroll_delta(0.5));assert_eq!(v.viewport_offset(),0.75);assert!(v.viewport_scroll_delta(-1e9));assert_eq!(v.viewport_offset(),700.0);assert!(!v.viewport_scroll_delta(-1.0));assert!(v.viewport_scroll_delta(1e9));assert_eq!(v.viewport_offset(),0.0);assert!(!v.viewport_scroll_delta(1.0));
+    }
+    #[test] fn viewport_scroll_delta_rejects_invalid_input_and_empty_extents() {
+        let mut v=new_scroll_viewport();assert!(!v.viewport_scroll_delta(-50.0));v.viewport_configure(300,200,300,900,15,true);v.viewport_scroll_to(25.25);
+        for delta in [f64::NAN,f64::INFINITY,f64::NEG_INFINITY,0.0]{assert!(!v.viewport_scroll_delta(delta));assert_eq!(v.viewport_offset(),25.25);}
+        v.viewport_configure(300,200,300,100,15,true);assert!(!v.viewport_scroll_delta(-100.0));assert_eq!(v.viewport_offset(),0.0);
     }
     #[test] fn viewport_overflow_edges_follow_top_middle_bottom_and_content_shrink() {
         let mut v=new_scroll_viewport();v.viewport_configure(300,200,300,900,15,true);let e=v.viewport_edges(300);assert!(!e.show_top&&e.show_bottom);assert_eq!((e.top.y,e.bottom.y,e.bottom.height),(0,199,1));
