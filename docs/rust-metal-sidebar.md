@@ -2832,3 +2832,65 @@ controlled CPU/GPU/drawable-presentation/input-latency/memory comparison and fin
 release/license/notice acceptance remain open. No complete functional parity or
 controlled performance gain is claimed. Full matrices remain reserved for larger
 blocks; this sidebar ownership family is such a checkpoint.
+
+## Address and result row hosts — full checkpoint, 2026-10-26
+
+UI source `ea549864ae1a4c5a1a043ae336910a472c4c55e3` extends the common plain View row host,
+now named RustRowView, to palette suggestions, two-line history results and the
+sidebar address pill. Sidebar tab/pin/folder/New Tab rows retain that same host.
+These production paths construct no Button/ButtonController instances. Native
+comparison retains RowButton/Label policy; remaining preference fallback rows and
+other control families are separately inventoried.
+
+Palette chip and address geometry/metrics/fallback fonts retain the existing Rust
+row/address recipes and native font/vector adapters. History keeps its kind-25
+shared-canvas recipe and no Label/FocusRing children. SceneHistoryRow and UrlPill
+subclasses are removed. The native tooltip-to-AX-name rule is preserved: tooltip
+updates replace an empty name or one equal to the previous tooltip, while custom
+names remain. History keeps URL names and date/URL descriptions; palette chips
+keep detail descriptions; address updates retain their named AX adapter and
+host/path description.
+
+One pending-input watch registry now serves sidebar, palette and tools. Each
+viewport callback checks only pending row/close input synchronously before GPU
+coalescing, permits reentrant cancellation and removes destroyed watches. This
+replaces the history whole-tree scan. Rust input policy is unchanged; unchanged
+pointer visuals retain the previous no-repaint behavior. Native row/spec/domain
+identity, font/AX/window/capture adapters, preferred-size constants and browser
+commands remain explicit adapters or remaining ownership work.
+
+The compiled inventory contains **212 cases**. Metal passed **206 regular
+cases**, Views **158 regular cases**, with the same **six optional skips** each.
+One launcher job, retry zero, no failures/crashes/timeouts. Dedicated Metal cases
+are excluded from Views. Focus passed **10 Metal / 6 Views**. Checks passed
+**286 Rust**, **180 SDK font/direction cases plus raster**, **68 live and 68
+clean-archive Python**, scoped GN/boundaries and final Ninja no-op. All 53
+committed/live/staged prototype inputs and compiled/frozen-bootstrap/native-
+engine identities were checked.
+[Full result-row report](benchmarks/rust-result-row-checkpoint-2026-10-26.json).
+
+New shared tests verify host types/AX metadata and offscreen AX dispatch to the
+intended URL. Rust-specific branches cover palette/history immediate scroll
+out/back, widget hide, palette disable and replacement at a reused result index.
+Existing physical Cocoa history Space, palette keyboard/IME/selection/mouse,
+shared history canvas/fallback and sidebar tests retain their original outcomes
+through View adapters. Views does not exercise Rust-only cancellation branches.
+
+Retained full logs contain **9 Metal / 7 Views invalid-mailbox diagnostics**
+with matching missing-overlay counts. All cases passed; these Chromium compositor
+diagnostics remain unresolved. No controlled CPU/GPU/presentation/input-latency/
+memory gain is established by this automated acceptance.
+
+This full source includes the preceding
+[sidebar row checkpoint](benchmarks/rust-sidebar-row-checkpoint-2026-10-26.json)
+and earlier split/header/footer/resize/viewport work. Frozen UI-lab bootstrap/
+network inputs remain from `d23f232`; current-main network policy is outside this
+binary's acceptance. No dependency, browser admission/store or persistence policy
+changed.
+
+Remaining control/container/menu/window/input ownership, stable Rust node identity,
+UI coordination/placement, manual hardware trackpad/IME candidates/VoiceOver/RTL/
+scale/theme/GPU recovery, controlled performance comparison and release/license/
+notice acceptance remain open. No complete functional parity is claimed. Full
+matrices remain reserved for larger blocks; this closes the address/result-row
+host family.

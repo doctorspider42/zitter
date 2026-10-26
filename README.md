@@ -822,6 +822,11 @@ control hosts, retaining native input/focus/AX/menu adapters.
 [Full sidebar-row checkpoint](docs/benchmarks/rust-sidebar-row-checkpoint-2026-10-26.json)
 passed 204 Metal / 156 Views regular cases plus six optional skips each, 286 Rust,
 180 SDK font/direction cases plus raster and 68 live/clean-archive Python tests.
+Palette/history results and the address pill now share the plain Rust row host;
+history retains its shared canvas and existing accessibility/keyboard behavior.
+[Full result-row checkpoint](docs/benchmarks/rust-result-row-checkpoint-2026-10-26.json)
+passed 206 Metal / 158 Views regular cases plus six optional skips each, 286 Rust,
+180 SDK font/direction cases plus raster and 68 live/clean-archive Python tests.
 [Editor contracts and acceptance](docs/rust-metal-editor.md).
 Model updates refresh the scene independently of
 native painting. Rust also owns row
