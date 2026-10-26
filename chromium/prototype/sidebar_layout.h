@@ -24,7 +24,12 @@ class PanelViewport {
   virtual void ScrollTo(double position)=0;
   virtual bool rust_owned() const=0;
 };
-std::unique_ptr<views::View> CreatePanelViewport(PanelViewport** adapter,base::RepeatingClosure changed);
+struct PanelViewportOptions {
+  int minimum_height = -1;
+  int maximum_height = -1;
+  bool use_contents_preferred_size = true;
+};
+std::unique_ptr<views::View> CreatePanelViewport(PanelViewport** adapter,base::RepeatingClosure changed,PanelViewportOptions options = {});
 struct WorkspaceSwipeUpdate { bool started, preview, finish, handled; };
 struct WorkspaceSwipePage { int index; double x; };
 struct WorkspaceSwipeLayout { int center; std::vector<WorkspaceSwipePage> pages; };

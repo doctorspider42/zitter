@@ -391,6 +391,8 @@ class WorkspaceShell final : public ui::EventHandler,
   std::u16string workspace_notice_error_for_testing() const;
   size_t workspace_notice_line_count_for_testing() const;
   views::Widget* settings_widget() const { return settings_widget_.get(); }
+  PanelViewport* workspace_viewport_for_testing() const{return settings_scroll_;}
+  PanelViewport* import_viewport_for_testing() const{return import_scroll_;}
   bool pinned() const { return pinned_; }
   void SetWorkspaceColor(std::string_view id, SkColor color);
   SkColor workspace_color(std::string_view id) const;
@@ -543,6 +545,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void ApplyTheme();
   void RefreshGeneralControls();
   void RefreshPreferenceViewport();
+  void RefreshFormViewports();
   void FilterPreferences();
   void SelectPreferenceCategory(size_t category);
   void WritePreference(std::string key, int value);
@@ -716,6 +719,7 @@ class WorkspaceShell final : public ui::EventHandler,
   std::string folder_parent_id_;
   raw_ptr<views::View> sidebar_root_ = nullptr;
   raw_ptr<views::View> palette_root_ = nullptr;
+  raw_ptr<PanelViewport> settings_scroll_ = nullptr;
   raw_ptr<views::View> settings_root_ = nullptr;
   raw_ptr<views::View> settings_title_ = nullptr;
   raw_ptr<views::View> tab_list_ = nullptr;
@@ -768,6 +772,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::Button> edit_workspace_ = nullptr;
   raw_ptr<views::Button> remove_workspace_ = nullptr;
   raw_ptr<views::View> configuration_error_ = nullptr;
+  raw_ptr<PanelViewport> import_scroll_ = nullptr;
   raw_ptr<views::View> import_root_ = nullptr;
   raw_ptr<views::View> import_status_ = nullptr;
   std::unique_ptr<ImportFormState> import_form_;

@@ -2073,6 +2073,44 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceCatalogueToolsRoutes
   for(const auto& [title,page]:routes){SCOPED_TRACE(page);shell->OpenGeneralSettings();auto* query=shell->preferences_search();query->SelectRange(gfx::Range(0,query->GetText().size()));query->input_client()->InsertText(title,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();auto* button=FindButton(shell->general_widget()->GetContentsView(),title);ASSERT_TRUE(button&&button->IsDrawn());views::test::ButtonTestApi(button).NotifyDefaultMouseClick();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_widget()->IsVisible();}));EXPECT_FALSE(shell->general_widget()->IsVisible());EXPECT_EQ(page==0,shell->snapshot_input()!=nullptr);EXPECT_EQ(page==1,shell->shortcut_input()!=nullptr);EXPECT_EQ(page==2,shell->provider_input(0)!=nullptr);EXPECT_EQ(page==3,shell->history_visible());}
 }
 
+// Add deterministic overflow without inflating the native window minimum.
+// View::GetMinimumSize asks for preferred size at zero available width.
+class FormOverflowProbeView final : public views::View {
+  METADATA_HEADER(FormOverflowProbeView,views::View)
+ public:
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& bounds) const override {
+    return gfx::Size(1,bounds.width().is_bounded()&&bounds.width().value()==0?0:900);
+  }
+};
+BEGIN_METADATA(FormOverflowProbeView)
+END_METADATA
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FormViewportRevealResizeAndReflow) {
+  window_->widget()->Show();auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
+  for(bool importing:{false,true}){
+    SCOPED_TRACE(importing?"import":"workspace");
+    shell->CloseOverlays();window_->widget()->SetBounds(gfx::Rect(40,40,700,660));if(importing)shell->OpenImport();else shell->OpenWorkspaceSettings();
+    auto* viewport=importing?shell->import_viewport_for_testing():shell->workspace_viewport_for_testing();auto* widget=importing?shell->import_widget():shell->settings_widget();ASSERT_TRUE(viewport);ASSERT_TRUE(widget);widget->LayoutRootViewIfNecessary();
+    EXPECT_EQ(shell->workspace_input()->rust_editor(),viewport->rust_owned());if(viewport->rust_owned())EXPECT_FALSE(views::AsViewClass<views::ScrollView>(viewport->view()));
+    auto* body=viewport->contents();ASSERT_TRUE(body);auto* first=body->children().front().get();auto* overflow=body->AddChildViewAt(std::make_unique<FormOverflowProbeView>(),1);widget->LayoutRootViewIfNecessary();
+    ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
+    ASSERT_GT(viewport->maximum(),0)<<" widget="<<widget->GetWindowBoundsInScreen().ToString()<<" host="<<viewport->view()->bounds().ToString()<<" body="<<viewport->contents()->bounds().ToString()<<" preferred="<<viewport->contents()->GetPreferredSize().ToString();viewport->ScrollTo(viewport->maximum());ASSERT_TRUE(base::test::RunUntil([&]{return first->GetVisibleBounds().IsEmpty();}));first->ScrollRectToVisible(first->GetLocalBounds());ASSERT_TRUE(base::test::RunUntil([&]{return !first->GetVisibleBounds().IsEmpty();}));
+    for(int width:{320,440,520}){widget->SetBounds(gfx::Rect(40,40,width,360));widget->LayoutRootViewIfNecessary();EXPECT_EQ(body->GetHeightForWidth(body->width()),body->height());EXPECT_EQ(std::max(0,body->height()-viewport->visible_rect().height()),viewport->maximum());viewport->ScrollTo(viewport->maximum());EXPECT_LE(viewport->offset(),viewport->maximum());}
+    body->RemoveChildViewT(overflow);widget->LayoutRootViewIfNecessary();EXPECT_LE(viewport->offset(),viewport->maximum());first->ScrollRectToVisible(first->GetLocalBounds());EXPECT_FALSE(first->GetVisibleBounds().IsEmpty());
+  }
+}
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FormViewportWheelAXAndDraftPreservation) {
+  window_->widget()->Show();auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
+  for(bool importing:{false,true}){
+    SCOPED_TRACE(importing?"import":"workspace");
+    shell->CloseOverlays();window_->widget()->SetBounds(gfx::Rect(40,40,700,660));if(importing)shell->OpenImport();else shell->OpenWorkspaceSettings();auto* viewport=importing?shell->import_viewport_for_testing():shell->workspace_viewport_for_testing();auto* widget=importing?shell->import_widget():shell->settings_widget();ASSERT_TRUE(viewport);ASSERT_TRUE(widget);
+    auto* spacer=viewport->contents()->AddChildViewAt(std::make_unique<FormOverflowProbeView>(),1);widget->SetBounds(gfx::Rect(40,40,440,360));widget->LayoutRootViewIfNecessary();
+    ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());widget->LayoutRootViewIfNecessary();ASSERT_GT(viewport->maximum(),0)<<" widget="<<widget->GetWindowBoundsInScreen().ToString()<<" host="<<viewport->view()->bounds().ToString()<<" body="<<viewport->contents()->bounds().ToString()<<" preferred="<<viewport->contents()->GetPreferredSize().ToString();
+    if(!importing)shell->workspace_input()->SetText(u"Niezapisany szkic 日本語");const auto draft=shell->workspace_input()->GetText();viewport->ScrollTo(0);ui::MouseWheelEvent wheel(gfx::Vector2d(0,-120),gfx::PointF(10,10),gfx::PointF(10,10),base::TimeTicks::Now(),0,0);EXPECT_TRUE(viewport->view()->OnMouseWheel(wheel));EXPECT_GT(viewport->offset(),0);
+    ui::AXActionData down;down.action=ax::mojom::Action::kScrollDown;EXPECT_TRUE(viewport->view()->HandleAccessibleAction(down));ui::AXNodeData ax;viewport->view()->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kScrollView,ax.role);EXPECT_EQ(viewport->maximum(),ax.GetIntAttribute(ax::mojom::IntAttribute::kScrollYMax));EXPECT_EQ(draft,shell->workspace_input()->GetText());
+    viewport->contents()->RemoveChildViewT(spacer);widget->LayoutRootViewIfNecessary();EXPECT_LE(viewport->offset(),viewport->maximum());
+  }
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceViewportFilterRevealAndResize) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));window_->widget()->SetBounds(gfx::Rect(40,40,700,660));shell->OpenGeneralSettings();auto* viewport=shell->preference_viewport_for_testing();ASSERT_TRUE(viewport);EXPECT_EQ(shell->workspace_input()->rust_editor(),viewport->rust_owned());if(viewport->rust_owned())EXPECT_FALSE(views::AsViewClass<views::ScrollView>(viewport->view()));
   auto filter=[&](std::u16string text){auto* field=shell->preferences_search();field->SelectRange(gfx::Range(0,field->GetText().size()));field->input_client()->InsertText(text,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();};

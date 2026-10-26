@@ -377,6 +377,8 @@ mod ffi {
         fn pane_bar_layout(width: i32, height: i32) -> PaneBarLayout;
         type ScrollViewportState;
         fn new_scroll_viewport() -> Box<ScrollViewportState>;
+        fn viewport_preferred_size(width: i32, height: i32, minimum: i32, maximum: i32) -> Rect;
+        fn viewport_measure_width(width: i32, height: i32, full_height: i32, thickness: i32, overlay: bool) -> i32;
         fn viewport_configure(self: &mut ScrollViewportState, width: i32, height: i32, preferred_width: i32, preferred_height: i32, thickness: i32, overlay: bool) -> ScrollViewportLayout;
         fn viewport_scroll_to(self: &mut ScrollViewportState, offset: f64) -> bool;
         fn viewport_reveal(self: &mut ScrollViewportState, y: i32, height: i32) -> bool;
@@ -1371,6 +1373,14 @@ impl SplitDrag {
 
 // Owns the vertical viewport, extent, offset and reveal policy. Native code
 // supplies preferred metrics and platform event/scrollbar requests, never state.
+// Native adapters supply text measurements; Rust owns clipping and reflow policy.
+fn viewport_preferred_size(width:i32,height:i32,minimum:i32,maximum:i32)->ffi::Rect {
+    let height=height.max(0);let height=if minimum>=0&&maximum>=minimum{height.clamp(minimum,maximum)}else{height};
+    ffi::Rect{x:0,y:0,width:width.max(0),height}
+}
+fn viewport_measure_width(width:i32,height:i32,full_height:i32,thickness:i32,overlay:bool)->i32 {
+    let width=width.max(0);width-if full_height>height.max(0)&&!overlay{thickness.clamp(0,width)}else{0}
+}
 #[derive(Default)]
 pub struct ScrollViewportState { height:i32, content:i32, maximum:i32, offset:f64 }
 fn new_scroll_viewport()->Box<ScrollViewportState>{Box::new(ScrollViewportState::default())}
@@ -2178,6 +2188,16 @@ mod tests {
         let empty=panel_layout(&s,&[],&[]);assert_eq!((empty.width,empty.height),(8,8));
         let mut margin=child(80,20);margin.top=2;margin.left=3;margin.bottom=4;margin.right=5;let g=panel_layout(&s,&[margin],&[]);assert_eq!((g.width,g.height),(96,34));assert_eq!((g.children[0].x,g.children[0].y,g.children[0].width),(3,2,84));
         let huge=ffi::PanelStyle{width:i32::MAX,height:i32::MAX,spacing:i32::MAX,..s};let g=panel_layout(&huge,&[child(i32::MAX,i32::MAX),child(i32::MAX,i32::MAX)],&[]);assert_eq!(g.height,i32::MAX);assert!(g.children.iter().all(|r|r.width>=0&&r.height>=0));
+    }
+    #[test] fn bounded_viewport_clips_preferred_height_without_changing_width() {
+        for (height,expected) in [(0,100),(60,100),(240,240),(900,480)]{let size=viewport_preferred_size(560,height,100,480);assert_eq!((size.width,size.height),(560,expected));}
+        for (min,max) in [(-1,-1),(200,100)]{assert_eq!(viewport_preferred_size(560,900,min,max).height,900);}
+        assert_eq!(viewport_preferred_size(-1,-1,0,220).height,0);
+    }
+    #[test] fn bounded_viewport_remeasures_wrapping_only_when_scrollbar_reserves_width() {
+        for overlay in [false,true]{for full_height in [100,200,201,900]{assert_eq!(viewport_measure_width(300,200,full_height,15,overlay),if full_height>200&&!overlay{285}else{300});}}
+        assert_eq!(viewport_measure_width(1,1,900,15,false),0);assert_eq!(viewport_measure_width(-1,-1,900,15,false),0);
+        let mut state=new_scroll_viewport();let width=viewport_measure_width(300,200,900,15,false);let g=state.viewport_configure(300,200,width,960,15,false);assert_eq!((g.viewport.width,g.content.width,g.max_offset),(285,285,760));
     }
     #[test] fn scroll_viewport_geometry_preserves_overlay_and_reserved_scrollbar_contract() {
         for overlay in [false,true]{let mut v=new_scroll_viewport();let g=v.viewport_configure(300,200,280,900,15,overlay);assert!(g.show_bar);assert_eq!(g.viewport.width,if overlay{300}else{285});assert_eq!((g.content.width,g.content.height,g.bar.x,g.bar.width),(if overlay{300}else{285},900,285,15));assert_eq!(g.max_offset,700);}

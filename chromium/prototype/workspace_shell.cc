@@ -2199,6 +2199,7 @@ class SceneParagraph final : public views::View {
   }
   gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override{const auto g=Geometry(available.width().is_bounded()?available.width().value():200);return gfx::Size(g.width,g.height);}
   void OnThemeChanged() override{views::View::OnThemeChanged();measured_width_=-1;PreferredSizeChanged();Schedule();}
+  void OnVisibleBoundsChanged() override{Schedule();}
   void OnBoundsChanged(const gfx::Rect& previous) override{views::View::OnBoundsChanged(previous);Schedule();}
   void AddedToWidget() override{views::View::AddedToWidget();window_visibility_.Observe(GetWidget());Schedule();}
   void RemovedFromWidget() override{window_visibility_.Observe(nullptr);surface_.reset();views::View::RemovedFromWidget();}
@@ -3902,20 +3903,14 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   };
   make_panel(std::move(sidebar), sidebar_delegate_, sidebar_widget_, u"Zitter — Karty", false);
   make_panel(std::move(palette), address_delegate_, address_widget_, u"Zitter — Paleta poleceń");
-  auto settings_scroll = std::make_unique<views::ScrollView>();
-  settings_scroll->ClipHeightTo(0, 10000);
-  settings_scroll->SetBackgroundColor(std::nullopt);
-  settings_scroll->SetDrawOverflowIndicator(false);
-  settings_scroll->SetHorizontalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);
-  settings_scroll->SetContents(std::move(settings));
+  PanelViewport* settings_viewport=nullptr;
+  auto settings_scroll=CreatePanelViewport(&settings_viewport,base::BindRepeating(&WorkspaceShell::RefreshFormViewports,weak),{0,10000,false});
+  settings_scroll_=settings_viewport;settings_viewport->SetPanelContents(std::move(settings));
   make_panel(std::move(settings_scroll), settings_delegate_, settings_widget_, u"Zitter — Ustawienia przestrzeni");
   make_panel(std::move(profiles_panel), profiles_delegate_, profiles_widget_, u"Zitter — Profile");
-  auto import_scroll = std::make_unique<views::ScrollView>();
-  import_scroll->ClipHeightTo(0, 10000);
-  import_scroll->SetBackgroundColor(std::nullopt);
-  import_scroll->SetDrawOverflowIndicator(false);
-  import_scroll->SetHorizontalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);
-  import_scroll->SetContents(std::move(import_panel));
+  PanelViewport* import_viewport=nullptr;
+  auto import_scroll=CreatePanelViewport(&import_viewport,base::BindRepeating(&WorkspaceShell::RefreshFormViewports,weak),{0,10000,false});
+  import_scroll_=import_viewport;import_viewport->SetPanelContents(std::move(import_panel));
   make_panel(std::move(import_scroll), import_delegate_, import_widget_, u"Zitter — Import danych");
   make_panel(std::move(peek), peek_delegate_, peek_widget_, u"Zitter — Peek");
   make_panel(std::move(general), general_delegate_, general_widget_, u"Zitter — Ustawienia");
@@ -3999,6 +3994,7 @@ void WorkspaceShell::Detach() {
   preferences_search_->SetCallbacks({},{});
   site_origin_->SetCallbacks({},{});
   for(const auto& [key,field]:preference_textfields_)field->SetCallbacks({},{});
+  import_scroll_ = nullptr;
   import_root_ = nullptr;
   import_status_ = nullptr;import_form_.reset();
   import_browser_picker_ = nullptr;
@@ -4029,6 +4025,7 @@ void WorkspaceShell::Detach() {
   profile_name_ = nullptr;
   settings_title_ = nullptr;
   workspace_appearance_ = nullptr;
+  settings_scroll_ = nullptr;
   settings_root_ = nullptr;
   pin_button_ = nullptr;
   nav_buttons_.fill(nullptr);
@@ -6116,6 +6113,14 @@ void WorkspaceShell::ActivatePreferenceChoiceForTesting(std::string_view key,siz
   if(auto* scene=views::AsViewClass<SceneSelect>(picker)){scene->SelectForTesting(index);return;}
 #endif
   static_cast<views::Combobox*>(picker)->MenuSelectionAt(index);
+}
+void WorkspaceShell::RefreshFormViewports(){
+  auto refresh=[&](auto&& self,views::View* view)->void{
+#if BUILDFLAG(IS_MAC)
+    if(auto* paragraph=views::AsViewClass<SceneParagraph>(view))paragraph->OnVisibleBoundsChanged();
+#endif
+    for(const auto& child:view->children())self(self,child.get());};
+  for(auto* root:{settings_root_.get(),import_root_.get()})if(root){RefreshChoiceViewports(root);refresh(refresh,root);root->SchedulePaint();}
 }
 void WorkspaceShell::RefreshPreferenceViewport(){
   SchedulePreferenceChrome();

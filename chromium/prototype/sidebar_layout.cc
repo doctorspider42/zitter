@@ -34,7 +34,7 @@ class NativePanelViewport final : public views::ScrollView,public PanelViewport 
   METADATA_HEADER(NativePanelViewport,views::ScrollView)
  public:
   // Views paints itself; retain its original path without a Metal observer.
-  explicit NativePanelViewport(base::RepeatingClosure){SetUseContentsPreferredSize(true);SetBackgroundColor(std::nullopt);SetDrawOverflowIndicator(false);SetHorizontalScrollBarMode(ScrollBarMode::kDisabled);}
+  explicit NativePanelViewport(base::RepeatingClosure,PanelViewportOptions options){if(options.minimum_height>=0&&options.maximum_height>=options.minimum_height)ClipHeightTo(options.minimum_height,options.maximum_height);SetUseContentsPreferredSize(options.use_contents_preferred_size);SetBackgroundColor(std::nullopt);SetDrawOverflowIndicator(false);SetHorizontalScrollBarMode(ScrollBarMode::kDisabled);}
   views::View* view() override{return this;}
   views::View* contents() const override{return const_cast<views::View*>(views::ScrollView::contents());}
   void SetPanelContents(std::unique_ptr<views::View> value) override{SetContents(std::move(value));}
@@ -61,7 +61,7 @@ END_METADATA
 class RustPanelViewport final : public views::View,public PanelViewport,public views::ScrollBarController {
   METADATA_HEADER(RustPanelViewport,views::View)
  public:
-  explicit RustPanelViewport(base::RepeatingClosure changed):changed_(std::move(changed)){
+  explicit RustPanelViewport(base::RepeatingClosure changed,PanelViewportOptions options):changed_(std::move(changed)),options_(options){
     clip_=AddChildView(std::make_unique<RustViewportClip>(base::BindRepeating(&RustPanelViewport::Reveal,weak_factory_.GetWeakPtr())));
     bar_=AddChildView(views::PlatformStyle::CreateScrollBar(views::ScrollBar::Orientation::kVertical));bar_->set_controller(this);bar_->SetVisible(false);bar_->GetViewAccessibility().SetIsIgnored(true);bar_->GetViewAccessibility().SetIsLeaf(true);
     auto& ax=GetViewAccessibility();ax.SetRole(ax::mojom::Role::kScrollView);ax.SetIsScrollable(true);ax.SetScrollXMin(0);ax.SetScrollXMax(0);ax.SetScrollYMin(0);ax.SetScrollYMax(0);
@@ -76,9 +76,11 @@ class RustPanelViewport final : public views::View,public PanelViewport,public v
   int maximum() const override{return state_->viewport_maximum();}
   bool rust_owned() const override{return true;}
   void ScrollTo(double position) override{if(state_->viewport_scroll_to(position))Apply(true);}
-  gfx::Size CalculatePreferredSize(const views::SizeBounds& bounds) const override{return contents_?contents_->GetPreferredSize(bounds):gfx::Size();}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& bounds) const override{const auto measured=contents_?contents_->GetPreferredSize(bounds):gfx::Size();const auto size=sidebar::viewport_preferred_size(measured.width(),measured.height(),options_.minimum_height,options_.maximum_height);return gfx::Size(size.width,size.height);}
   void Layout(PassKey) override{
-    if(!contents_)return;const auto preferred=contents_->GetPreferredSize(views::SizeBounds(width(),height()));const double previous=offset();const auto plan=state_->viewport_configure(width(),height(),preferred.width(),preferred.height(),bar_->GetThickness(),bar_->OverlapsContent());
+    if(!contents_)return;auto preferred=contents_->GetPreferredSize(views::SizeBounds(width(),height()));
+    if(!options_.use_contents_preferred_size){const int full_height=contents_->GetHeightForWidth(width());const int measured_width=sidebar::viewport_measure_width(width(),height(),full_height,bar_->GetThickness(),bar_->OverlapsContent());preferred=gfx::Size(measured_width,contents_->GetHeightForWidth(measured_width));}
+    const double previous=offset();const auto plan=state_->viewport_configure(width(),height(),preferred.width(),preferred.height(),bar_->GetThickness(),bar_->OverlapsContent());
     auto rect=[](const auto& r){return gfx::Rect(r.x,r.y,r.width,r.height);};clip_->SetBoundsRect(rect(plan.viewport));contents_->SetBoundsRect(rect(plan.content));bar_->SetBoundsRect(rect(plan.bar));bar_->SetVisible(plan.show_bar);contents_->DeprecatedLayoutImmediately();Apply(previous!=offset());
   }
   bool OnMouseWheel(const ui::MouseWheelEvent& event) override{return maximum()>0&&bar_->OnMouseWheel(event);}
@@ -96,7 +98,7 @@ class RustPanelViewport final : public views::View,public PanelViewport,public v
   void Apply(bool moved){
     if(!contents_)return;contents_->SetTransform(gfx::Transform::MakeTranslation(0,-static_cast<float>(offset())));bar_->Update(clip_->height(),contents_->height(),static_cast<int>(offset()));auto& ax=GetViewAccessibility();ax.SetScrollY(static_cast<int>(offset()));ax.SetScrollYMax(maximum());changed_.Run();if(moved)ax.NotifyEvent(ax::mojom::Event::kScrollPositionChanged,true);
   }
-  base::RepeatingClosure changed_;std::optional<unsigned> background_;
+  base::RepeatingClosure changed_;PanelViewportOptions options_;std::optional<unsigned> background_;
   rust::Box<sidebar::ScrollViewportState> state_=sidebar::new_scroll_viewport();
   raw_ptr<RustViewportClip> clip_=nullptr;raw_ptr<views::View> contents_=nullptr;raw_ptr<views::ScrollBar> bar_=nullptr;
   base::WeakPtrFactory<RustPanelViewport> weak_factory_{this};
@@ -283,11 +285,11 @@ class RustColumnLayout final : public views::LayoutManager {
 };
 #endif
 }
-std::unique_ptr<views::View> CreatePanelViewport(PanelViewport** adapter,base::RepeatingClosure changed){
+std::unique_ptr<views::View> CreatePanelViewport(PanelViewport** adapter,base::RepeatingClosure changed,PanelViewportOptions options){
 #if BUILDFLAG(IS_MAC)
-  if(RustLayoutEnabled()){auto host=std::make_unique<RustPanelViewport>(std::move(changed));*adapter=host.get();return host;}
+  if(RustLayoutEnabled()){auto host=std::make_unique<RustPanelViewport>(std::move(changed),options);*adapter=host.get();return host;}
 #endif
-  auto host=std::make_unique<NativePanelViewport>(std::move(changed));*adapter=host.get();return host;
+  auto host=std::make_unique<NativePanelViewport>(std::move(changed),options);*adapter=host.get();return host;
 }
 void SetSidebarPanelLayout(views::View* host,bool vertical,gfx::Insets insets,int spacing,views::View* flex,bool center){
 #if BUILDFLAG(IS_MAC)
