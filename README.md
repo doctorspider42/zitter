@@ -682,7 +682,7 @@ Color/emoji preset rows now use Rust
 geometry, selection and input with batched Metal canvases excluding native editors.
 Nine workspace/profile form actions also use Rust layout/input and scene text
 without native button Labels, batched into four Metal groups. These newer stages pass the
-[latest full automated GUI checkpoint](docs/benchmarks/rust-media-scene-checkpoint-2026-10-26.json);
+[latest full automated GUI checkpoint](docs/benchmarks/rust-tools-timeline-checkpoint-2026-10-26.json);
 manual signed-app and performance acceptance remain pending. Import also uses a Rust form controller for
 option snapshots, debounce/admission and control locks, with Metal static/status
 text and Apply drawing. Four import checkboxes now share a Metal canvas with Rust
@@ -744,6 +744,10 @@ Permission consent and capture-stop controls now also use scene text/actions and
 Rust body layout. Native permission decisions, device/OS checks and Stop remain
 synchronous; adapter destruction is deferred off decision/button callbacks. Capture
 controls retain their nonmodal native close button and background availability.
+Time Machine list filtering, labels, empty state and current target maps now also
+use Rust. Timeline buttons capture their projection key before posting, so a filter
+change cannot redirect an older action. Native Unicode normalization, snapshot/
+session validation, profile/workspace scope and persistence remain adapters.
 [Editor contracts and acceptance](docs/rust-metal-editor.md).
 Model updates refresh the scene independently of
 native painting. Rust also owns row

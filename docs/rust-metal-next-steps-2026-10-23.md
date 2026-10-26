@@ -5,73 +5,76 @@ inventory is [the parity checklist](rust-metal-parity.md).
 
 ## Current checkpoint
 
-UI source `5b3eff639e405e703b92d6b48003686e59870dd4`, 2026-10-26, passed the full compiled
+UI source `3d5131c5e9887fdedc0e56ec2100bdd0c73338df`, 2026-10-26, passed the full compiled
 regression inventory with one launcher job, no automatic retries and temporary
 profiles:
 
 | Backend | Regular matrix passed | Regular skips | Failed / crashed / timed out |
 | --- | ---: | ---: | ---: |
-| Rust + Metal | 173 | 6 | 0 |
-| Views | 129 | 6 | 0 |
+| Rust + Metal | 175 | 6 | 0 |
+| Views | 130 | 6 | 0 |
 
-The inventory contains 179 cases; Views excludes 44 dedicated Metal cases
-(135 applicable cases). Four opt-in performance scenarios, real-user Arc import
+The inventory contains 181 cases; Views excludes 45 dedicated Metal cases
+(136 applicable cases). Four opt-in performance scenarios, real-user Arc import
 and the interactive manual window are skipped per backend. Earlier optional
 performance scenarios remain historical evidence, not current-commit passes.
 Metal API validation remained enabled. No controlled CPU/GPU/presentation or
 memory improvement is established.
 
-The media/password/download/modal/folder/workspace/page-dialog/shared-chrome gate
-passed **48 Metal / 39 Views**. Checks passed **245 Rust tests**,
+The tools/timeline/Time-Machine/restored-tab/media/password/download/modal/shared-
+chrome gate passed **65 Metal / 52 Views**. Checks passed **249 Rust tests**,
 **180 SDK font/direction cases plus raster**, **66 clean-archive Python tests**,
 scoped GN/boundaries and optimized compilation. The live checkout passed 68 Python
 tests, including two concurrent cases outside this UI commit. Final Ninja reported
 no work to do. All 53 tracked prototype files match committed source and the staged
-overlay. [Source/binary identities, commands and results](benchmarks/rust-media-scene-checkpoint-2026-10-26.json).
+overlay. [Source/binary identities, commands and results](benchmarks/rust-tools-timeline-checkpoint-2026-10-26.json).
 
-Permission consent now uses shared scene paragraphs, Rust panel allocation and
-common Rust/Metal dialog actions. Original requesting/permission/embedding origins,
-capability strings, profile metadata, temporary-grant eligibility, default Cancel
-and tab-switch policy remain native inputs. Chromium PermissionRequestManager,
-device/OS checks, stores and State::Decide remain authoritative; rendering never
-grants a request. Views keeps its original DialogModelHost and controls.
+Rust ToolsForm now owns snapshot/closed-tab filtering, title/em-dash/detail label
+projection, empty copy, enabled state and current control-key-to-opaque-ID maps.
+The opt-in path no longer builds native SimpleComboboxModel items or fills the
+parallel C++ snapshot_ids_/closed_ids_ arrays. Original source order and reset-to-
+first selection remain. SceneSelect retains Rust prefix/menu/input state and
+Metal drawing, with native metric/event/focus/AX/menu adapters.
 
-Capture controls also use Rust/Metal paragraphs/actions and body allocation. The
-common scene bubble now supports the original nonmodal mode: native close button,
-fixed width, no close-on-deactivate and no modal scroll wrapper. Modal mode retains
-its existing scroll workaround and margins for passwords/folders/workspaces.
-Native titles/frames, window/focus/AX/event services and the close affordance remain
-adapters. Both backends use the existing registered Cocoa dialog key routing.
+ICU normalization stays native. Rust matches raw UTF-16 units against the original
+title/space/detail search text, preserving partial surrogates, dotted I and other
+Unicode behavior; it does not search the rendered em dash or trim input. Display
+metadata can include formatted URLs, but browser URL objects, stores, profile/
+workspace validation and operations remain native.
 
-A client-owned adapter bundle destroys its scene before closing and defers widget/
-delegate destruction off the executing decision/button callback stack. Permission
-decisions and native Stop remain synchronous. Capture callbacks retain their weak
-page target and active generation token; programmatic refresh/close disarms Stop
-first, and old close callbacks cannot clear a newer indicator.
+Projection keys include group/epoch/index and are independent of display labels
+and native IDs. Filtering, reprojection, reset and page changes invalidate old
+keys; duplicate labels/IDs have distinct control keys and groups cannot borrow
+one another's targets. Epoch exhaustion fails closed. Buttons capture a selected
+key before posting, and Rust resolves that captured key at admission, so an older
+click cannot operate on a newer filter's index-zero item. Native visibility,
+workspace/profile/form-generation checks, beforeunload, persistence, validation
+and rollback remain authoritative. Views retains its original arrays, filtering
+and native model baseline.
 
-The initial media gate is retained: the new case inspected native frame title
-Labels outside the managed body and could close capture before the page installed
-ended listeners. Only the new test changed: body-only inspection, a page-running
-precondition before stopping and a stricter stage-reporting timeout. Production
-source was unchanged after that probe; the corrected gates and full matrices are
-recorded separately.
+Four Rust cases cover UTF-16/native search boundaries, stale/reordered/reset/page/
+cross-group keys, independent lists/duplicate/empty IDs and epoch exhaustion.
+A new shared browser case compares both lists with the original native ICU/filter/
+label/AX oracle for Greek, dotted I, emoji, a partial surrogate, empty and no-match
+queries, then uses actual Cocoa Space after successful presentation to reopen a
+real closed tab and restore a real snapshot. A dedicated Metal case changes the
+filter while deletion is queued, requires both targets to survive, and verifies a
+fresh delete succeeds. Existing duplicate-title deletion/identity, empty/disabled/
+hidden picker, tools action/editor/choice and native Time Machine tests also pass.
 
-A new shared browser case verifies default Cancel and unbound macOS Return, actual
-Cocoa Escape denial and Space allow after successful presentation, visible origin
-text, childless controls, nonmodal close affordance, forced close ending synthetic
-tracks, fresh same-origin capture and Space stop. The original combined camera/
-microphone/profile/one-time-grant test now also verifies the capture scene remains
-visible across workspace switching and stops it using Cocoa Space. Existing
-navigation teardown, cross-origin attribution, desktop picker cancel/filter/
-document lifetime and OS-denial regressions remain covered. Devices are synthetic;
-the permission manager and UI are real.
+The first focused probe is retained. Its new helper treated empty InsertText as
+clear-selection, which is a no-op; it now uses explicit range deletion. Integration
+review also added the captured-key admission check and its stale-action case
+before final validation. Compile diagnostics and intermediate source/binary
+identities are retained separately from final passing runs.
 
-Native control/container ownership, remaining permission copy/coordination, other
-service panels and forms, manual platform acceptance, controlled profiling and
-final release/license checks remain open. Normal installed apps/profiles were
-untouched; no bundle was signed and no dependency was added. The earlier AppKit
-startup timeout remains recorded in the [password checkpoint](benchmarks/rust-password-scene-checkpoint-2026-10-25.json);
-its underlying cause is not established or fixed.
+Other tools/preferences form construction, service wording, native node/container
+ownership, manual platform acceptance, controlled profiling and release/license
+checks remain open. Normal installed apps/profiles were untouched; no bundle was
+signed and no dependency was added. Prior permission/capture work remains in
+[its checkpoint](benchmarks/rust-media-scene-checkpoint-2026-10-26.json). The earlier
+AppKit startup stall remains recorded in the password checkpoint and is not claimed
+fixed by this migration.
 
 ## Immediate preference work still remaining
 
@@ -83,7 +86,8 @@ Tools page copy, static/dynamic copy rendering, pickers, fourteen actions and
 dismiss are migrated. Rust also owns tools page/recording/query/pagination/
 loaded state. Rust now also owns command/IME admission, recording transitions,
 action outcomes, history result presentation and the clear-busy UI projection.
-Remaining option-to-field/form construction and popup/empty-item/service/progress
+Timeline choice filtering/labels/empty state and target maps now also use Rust.
+Remaining other option-to-field/form construction and service/progress
 wording remain, alongside other panels. History result text/backing and column
 placement use Rust/Metal; native row interaction/AX and scrolling remain adapters.
 Tools panel/header/body/clear geometry also uses Rust; their Views mode retains
@@ -118,8 +122,8 @@ adapters and outer placement still require ownership migration and verification.
 4. **Browser service panels.** Finish history native interaction/list/scroll
    ownership and remaining service coordination. Result text/backing and column
    layout use Rust/Metal. Finish download presentation/interaction ownership;
-   finish password/permission presentation and interaction ownership and migrate
-   Time Machine previews/restore. Preserve
+   finish password/permission and Time Machine presentation/interaction ownership.
+   Snapshot/closed-tab choice projection and scoped targets now use Rust. Preserve
    real service data, stale-response handling,
    confirmation and failure/rollback behavior.
    Download text/progress/actions and row/body allocation now use Rust/Metal on

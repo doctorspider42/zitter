@@ -1860,3 +1860,77 @@ final release/license checks remain open. Normal installed apps/profiles were
 untouched; no bundle was signed and no dependency was added. The earlier AppKit
 startup timeout remains recorded in the [password checkpoint](benchmarks/rust-password-scene-checkpoint-2026-10-25.json);
 its underlying cause is not established or fixed.
+
+
+## Tools timeline projection checkpoint (2026-10-26)
+
+UI source `3d5131c5e9887fdedc0e56ec2100bdd0c73338df`, 2026-10-26, passed the full compiled
+regression inventory with one launcher job, no automatic retries and temporary
+profiles:
+
+| Backend | Regular matrix passed | Regular skips | Failed / crashed / timed out |
+| --- | ---: | ---: | ---: |
+| Rust + Metal | 175 | 6 | 0 |
+| Views | 130 | 6 | 0 |
+
+The inventory contains 181 cases; Views excludes 45 dedicated Metal cases
+(136 applicable cases). Four opt-in performance scenarios, real-user Arc import
+and the interactive manual window are skipped per backend. Earlier optional
+performance scenarios remain historical evidence, not current-commit passes.
+Metal API validation remained enabled. No controlled CPU/GPU/presentation or
+memory improvement is established.
+
+The tools/timeline/Time-Machine/restored-tab/media/password/download/modal/shared-
+chrome gate passed **65 Metal / 52 Views**. Checks passed **249 Rust tests**,
+**180 SDK font/direction cases plus raster**, **66 clean-archive Python tests**,
+scoped GN/boundaries and optimized compilation. The live checkout passed 68 Python
+tests, including two concurrent cases outside this UI commit. Final Ninja reported
+no work to do. All 53 tracked prototype files match committed source and the staged
+overlay. [Source/binary identities, commands and results](benchmarks/rust-tools-timeline-checkpoint-2026-10-26.json).
+
+Rust ToolsForm now owns snapshot/closed-tab filtering, title/em-dash/detail label
+projection, empty copy, enabled state and current control-key-to-opaque-ID maps.
+The opt-in path no longer builds native SimpleComboboxModel items or fills the
+parallel C++ snapshot_ids_/closed_ids_ arrays. Original source order and reset-to-
+first selection remain. SceneSelect retains Rust prefix/menu/input state and
+Metal drawing, with native metric/event/focus/AX/menu adapters.
+
+ICU normalization stays native. Rust matches raw UTF-16 units against the original
+title/space/detail search text, preserving partial surrogates, dotted I and other
+Unicode behavior; it does not search the rendered em dash or trim input. Display
+metadata can include formatted URLs, but browser URL objects, stores, profile/
+workspace validation and operations remain native.
+
+Projection keys include group/epoch/index and are independent of display labels
+and native IDs. Filtering, reprojection, reset and page changes invalidate old
+keys; duplicate labels/IDs have distinct control keys and groups cannot borrow
+one another's targets. Epoch exhaustion fails closed. Buttons capture a selected
+key before posting, and Rust resolves that captured key at admission, so an older
+click cannot operate on a newer filter's index-zero item. Native visibility,
+workspace/profile/form-generation checks, beforeunload, persistence, validation
+and rollback remain authoritative. Views retains its original arrays, filtering
+and native model baseline.
+
+Four Rust cases cover UTF-16/native search boundaries, stale/reordered/reset/page/
+cross-group keys, independent lists/duplicate/empty IDs and epoch exhaustion.
+A new shared browser case compares both lists with the original native ICU/filter/
+label/AX oracle for Greek, dotted I, emoji, a partial surrogate, empty and no-match
+queries, then uses actual Cocoa Space after successful presentation to reopen a
+real closed tab and restore a real snapshot. A dedicated Metal case changes the
+filter while deletion is queued, requires both targets to survive, and verifies a
+fresh delete succeeds. Existing duplicate-title deletion/identity, empty/disabled/
+hidden picker, tools action/editor/choice and native Time Machine tests also pass.
+
+The first focused probe is retained. Its new helper treated empty InsertText as
+clear-selection, which is a no-op; it now uses explicit range deletion. Integration
+review also added the captured-key admission check and its stale-action case
+before final validation. Compile diagnostics and intermediate source/binary
+identities are retained separately from final passing runs.
+
+Other tools/preferences form construction, service wording, native node/container
+ownership, manual platform acceptance, controlled profiling and release/license
+checks remain open. Normal installed apps/profiles were untouched; no bundle was
+signed and no dependency was added. Prior permission/capture work remains in
+[its checkpoint](benchmarks/rust-media-scene-checkpoint-2026-10-26.json). The earlier
+AppKit startup stall remains recorded in the password checkpoint and is not claimed
+fixed by this migration.
