@@ -1275,6 +1275,22 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FooterActionCallbackCanDeleteI
   views::Widget::InitParams params(views::Widget::InitParams::CLIENT_OWNS_WIDGET,views::Widget::InitParams::TYPE_BUBBLE);params.delegate=delegate.get();params.SetParent(window_->widget());auto widget=std::make_unique<views::Widget>();widget->Init(std::move(params));widget->SetBounds(gfx::Rect(40,40,200,120));widget->Show();ui::MouseEvent press(ui::EventType::kMousePressed,gfx::Point(10,10),gfx::Point(10,10),base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent release(ui::EventType::kMouseReleased,gfx::Point(10,10),gfx::Point(10,10),base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ASSERT_TRUE(action->OnMousePressed(press));action->OnMouseReleased(release);EXPECT_EQ(1,calls);EXPECT_FALSE(tracked.view());widget->CloseNow();
 }
 
+// Compile only: runtime acceptance remains deferred to the bulk UI checkpoint.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitPaneLogicalNodesFollowTabIdentityAndRetireWhenHidden) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
+  const auto url=embedded_test_server()->GetURL("/storage_probe.html?split-node");for(int i=0;i<3;++i){ASSERT_TRUE(window_->NavigateFromBar(url,i!=0));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));}
+  window_->SelectTab(1);ASSERT_TRUE(window_->SplitTab(2));window_->widget()->LayoutRootViewIfNecessary();const bool rust=shell->workspace_input()->rust_editor();
+  auto* menu=shell->split_pane_button(true,false);auto* close=shell->split_pane_button(true,true);ASSERT_TRUE(menu);ASSERT_TRUE(close);const auto menu_id=shell->sidebar_node_id_for_testing(menu),close_id=shell->sidebar_node_id_for_testing(close);
+  if(rust){EXPECT_NE(0u,menu_id);EXPECT_NE(0u,close_id);EXPECT_NE(menu_id,close_id);}else EXPECT_EQ(0u,close_id);
+  ASSERT_TRUE(content::ExecJs(window_->contents("work"),"document.title='Split logical title';"));ASSERT_TRUE(base::test::RunUntil([&]{return shell->tab_button(1)->GetTooltipText()==u"Split logical title"||shell->tab_button(2)->GetTooltipText()==u"Split logical title";}));EXPECT_EQ(menu_id,shell->sidebar_node_id_for_testing(menu));EXPECT_EQ(close_id,shell->sidebar_node_id_for_testing(close));
+  const auto point=close->GetLocalBounds().CenterPoint();if(rust){ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ASSERT_TRUE(close->OnMousePressed(press));}
+  window_->CloseTab(0);ASSERT_TRUE(base::test::RunUntil([&]{return window_->tab_count("work")==2&&window_->split();}));window_->widget()->LayoutRootViewIfNecessary();EXPECT_EQ(close,shell->split_pane_button(true,true));EXPECT_EQ(close_id,shell->sidebar_node_id_for_testing(close));
+  if(rust){ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);close->OnMouseReleased(release);base::RunLoop().RunUntilIdle();EXPECT_EQ(2u,window_->tab_count("work"));}
+  window_->SwapSplit();window_->widget()->LayoutRootViewIfNecessary();const auto swapped=shell->sidebar_node_id_for_testing(close);if(rust){EXPECT_NE(0u,swapped);EXPECT_NE(close_id,swapped);}
+  window_->Unsplit(0);window_->widget()->LayoutRootViewIfNecessary();EXPECT_EQ(0u,shell->sidebar_node_id_for_testing(menu));EXPECT_EQ(0u,shell->sidebar_node_id_for_testing(close));
+  window_->SelectTab(0);ASSERT_TRUE(window_->SplitTab(1));window_->widget()->LayoutRootViewIfNecessary();if(rust){EXPECT_NE(0u,shell->sidebar_node_id_for_testing(close));EXPECT_NE(swapped,shell->sidebar_node_id_for_testing(close));}
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitPaneActionHostsMenuKeyboardAXAndRetarget) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
   const auto url=embedded_test_server()->GetURL("/storage_probe.html?split-actions");

@@ -1751,6 +1751,7 @@ type ActionNodeIdentity=(u32,u64,u64,String);
 fn action_node_key(key:&ffi::ActionNodeKey)->Option<ActionNodeIdentity>{
     match key.kind {
         kind @ (1|10) if (key.high!=0||key.low!=0)&&key.name.is_empty()=>Some((kind,key.high,key.low,String::new())),
+        kind @ (7|8) if (key.high!=0||key.low!=0)&&!key.name.is_empty()=>Some((kind,key.high,key.low,key.name.clone())),
         kind @ (2|3|4|5|6) if key.high==0&&key.low==0&&!key.name.is_empty()=>Some((kind,0,0,key.name.clone())),
         _=>None,
     }
@@ -1765,6 +1766,7 @@ impl ActionGraph {
         let unique=identities.iter().cloned().collect::<BTreeSet<_>>();
         if unique.len()!=identities.len(){return self.rejected();}
         if unique.iter().any(|key|key.0==10&&!unique.contains(&(1,key.1,key.2,String::new()))){return self.rejected();}
+        if unique.iter().any(|key|matches!(key.0,7|8)&&!unique.contains(&(if key.0==7{8}else{7},key.1,key.2,key.3.clone()))){return self.rejected();}
         let created=identities.iter().filter(|key|!self.nodes.contains_key(*key)).count();
         if self.next_id.checked_add(created as u64).is_none(){return self.rejected();}
         let mut retired=0;
@@ -3016,6 +3018,26 @@ mod tests {
     fn node_pin(name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:2,high:0,low:0,name:name.into()}}
     fn node_close(low:u64)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:10,high:7,low,name:String::new()}}
     fn node_named(kind:u32,name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind,high:0,low:0,name:name.into()}}
+    fn node_pane(kind:u32,workspace:&str,low:u64)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind,high:7,low,name:workspace.into()}}
+    #[test] fn action_graph_pane_actions_are_paired_and_keep_ids_on_same_target_refresh(){
+        let mut g=new_action_graph();let p=g.reconcile(vec![node_pane(7,"work",1),node_pane(8,"work",1)]);assert!(p.admitted);assert_ne!(p.ids[0],p.ids[1]);
+        let q=g.reconcile(vec![node_pane(8,"work",1),node_pane(7,"work",1)]);assert_eq!(q.ids,vec![p.ids[1],p.ids[0]]);assert_eq!((q.created,q.retired),(0,0));
+    }
+    #[test] fn action_graph_pane_incomplete_or_invalid_target_is_transactional(){
+        let mut g=new_action_graph();let ids=g.reconcile(vec![node_pane(7,"work",1),node_pane(8,"work",1)]).ids;
+        for keys in [vec![node_pane(7,"work",1)],vec![node_pane(8,"work",1)],vec![node_pane(7,"work",1),node_pane(8,"other",1)],vec![node_pane(7,"",1),node_pane(8,"",1)],vec![ffi::ActionNodeKey{kind:7,high:0,low:0,name:"work".into()}]]{let rejected=g.reconcile(keys);assert!(!rejected.admitted);assert_eq!(rejected.ids,ids);}
+    }
+    #[test] fn action_graph_pane_retarget_hide_and_workspace_change_revoke_old_handles(){
+        let mut g=new_action_graph();let p=g.reconcile(vec![node_pane(7,"work",1),node_pane(8,"work",1)]);let mut old=g.acquire(&node_pane(8,"work",1));old.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);
+        let q=g.reconcile(vec![node_pane(7,"work",2),node_pane(8,"work",2)]);assert_eq!((q.created,q.retired),(2,2));assert!(q.ids[0]>p.ids[1]);assert_eq!(old.action_node_id(),0);assert!(!old.action_pointer(ffi::PointerPhase::Release,1,1,true,true,true).handled);
+        let next=g.acquire(&node_pane(8,"work",2));g.reconcile(vec![node_pane(7,"personal",2),node_pane(8,"personal",2)]);assert_eq!(next.action_node_id(),0);
+        let hidden=g.acquire(&node_pane(7,"personal",2));assert_eq!(g.reconcile(vec![]).retired,2);assert_eq!(hidden.action_node_id(),0);
+    }
+    #[test] fn action_graph_pane_adapter_rebind_cancels_press_without_changing_target_identity(){
+        let mut g=new_action_graph();g.reconcile(vec![node_pane(7,"work",1),node_pane(8,"work",1)]);let mut old=g.acquire(&node_pane(8,"work",1));let id=old.action_node_id();old.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);
+        let next=g.acquire(&node_pane(8,"work",1));assert_eq!(next.action_node_id(),id);assert!(!next.action_pending());assert_eq!(old.action_node_id(),0);assert!(!old.action_key(true,1,true,true).handled);
+        let mut inactive=g.acquire(&ffi::ActionNodeKey{kind:0,high:0,low:0,name:String::new()});assert_eq!(inactive.action_node_id(),0);assert!(!inactive.action_gesture(1,true).handled);
+    }
     #[test] fn action_graph_palette_targets_reorder_and_old_index_leases_cannot_activate(){
         let mut g=new_action_graph();let p=g.reconcile(vec![node_named(6,"context/target-a/0"),node_named(6,"context/target-b/0")]);let mut old=g.acquire(&node_named(6,"context/target-a/0"));old.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);
         let q=g.reconcile(vec![node_named(6,"context/target-b/0"),node_named(6,"context/target-a/0")]);assert_eq!(q.ids,vec![p.ids[1],p.ids[0]]);let next=g.acquire(&node_named(6,"context/target-a/0"));assert_eq!(next.action_node_id(),p.ids[0]);assert!(!next.action_pending());assert!(!old.action_pointer(ffi::PointerPhase::Release,1,1,true,true,true).handled);

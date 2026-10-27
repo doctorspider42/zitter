@@ -126,7 +126,8 @@ struct SidebarNodeBinding {std::shared_ptr<SidebarNodeGraphState> scope;uint32_t
 #if BUILDFLAG(IS_MAC)
 rust::Box<sidebar::ActionControl> AcquireSidebarInput(const SidebarNodeBinding& binding){
   auto state=binding.scope?binding.scope->graph->acquire({binding.kind,binding.identity[0],binding.identity[1],binding.name}):sidebar::new_action_control();
-  CHECK(!binding.scope||state->action_node_id()!=0)<<"Unreconciled sidebar node";return state;
+  // Kind zero in a scope is an intentionally inactive adapter, with a retired handle.
+  CHECK(!binding.scope||binding.kind==0||state->action_node_id()!=0)<<"Unreconciled sidebar node";return state;
 }
 #endif
 class ImportFormState {
@@ -688,6 +689,11 @@ class RustActionView : public views::View {
   }
   void OnTooltipTextChanged(const std::u16string& previous) override{views::View::OnTooltipTextChanged(previous);auto& ax=GetViewAccessibility();if((ax.GetCachedName().empty()||ax.GetCachedName()==previous)&&!GetTooltipText().empty())ax.SetName(GetTooltipText());}
   uint64_t LogicalNodeId() const{return state_->action_node_id();}
+  void BindNodeInput(const SidebarNodeBinding& binding){
+    state_=AcquireSidebarInput(binding);state_->action_focus(HasFocus());SyncEnabled();
+    auto& ax=GetViewAccessibility();if(state_->action_snapshot().enabled)ax.SetDefaultActionVerb(ActionVerb());else ax.RemoveDefaultActionVerb();
+    SchedulePaint();
+  }
   sidebar::ActionSnapshot Snapshot() const{return state_->action_snapshot();}
   void SetActivationOnPress(bool value){if(state_->action_on_press(value))SchedulePaint();}
   void SetDefault(bool value){if(!state_->action_default(value))return;GetViewAccessibility().SetIsDefault(value);const ui::Accelerator enter(ui::VKEY_RETURN,ui::EF_NONE);if(value)AddAccelerator(enter);else RemoveAccelerator(enter);}
@@ -2881,14 +2887,15 @@ class PaneBar final : public views::View {
       : painted_(std::move(painted)),visible_(std::move(visible)) {
 #if BUILDFLAG(IS_MAC)
     scene_=base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal";
+    if(scene_)node_graph_=std::make_shared<SidebarNodeGraphState>();
 #endif
     if(!scene_) {
       auto* layout=SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal,gfx::Insets::TLBR(0,12,0,4),0));
       layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
       title_=Label(this,u"",kMuted,Font(-1));title_->SetElideBehavior(gfx::ELIDE_TAIL);title_->SetHorizontalAlignment(gfx::ALIGN_LEFT);layout->SetFlexForView(title_,1);
     } else GetViewAccessibility().SetRole(ax::mojom::Role::kGroup);
-    menu_=AddChildView(CreateSceneAction(std::move(menu),u"Opcje Split View",ControlGlyph::kMore,nullptr,visible_,painted_));
-    close_=AddChildView(CreateSceneAction(std::move(close),u"Zamknij kartę w Split View",ControlGlyph::kVector,&vector_icons::kCloseSmallIcon,visible_,painted_));
+    menu_=AddChildView(CreateSceneAction(std::move(menu),u"Opcje Split View",ControlGlyph::kMore,nullptr,visible_,painted_,true,{node_graph_}));
+    close_=AddChildView(CreateSceneAction(std::move(close),u"Zamknij kartę w Split View",ControlGlyph::kVector,&vector_icons::kCloseSmallIcon,visible_,painted_,true,{node_graph_}));
   }
   void CancelInput(){CancelActionInput(menu_);CancelActionInput(close_);}
   // A bar survives tab replacement and index reuse. Revoke pending input when
@@ -2897,6 +2904,17 @@ class PaneBar final : public views::View {
                  std::array<uint64_t,2> identity,bool visible){
     if(workspace_==workspace&&index_==index&&identity_==identity&&target_visible_==visible)return;
     CancelInput();workspace_=workspace;index_=index;identity_=identity;target_visible_=visible;
+#if BUILDFLAG(IS_MAC)
+    if(scene_){
+      const bool live=visible&&index.has_value()&&!workspace.empty()&&(identity[0]!=0||identity[1]!=0);
+      rust::Vec<sidebar::ActionNodeKey> keys;if(live){keys.push_back({7,identity[0],identity[1],workspace});keys.push_back({8,identity[0],identity[1],workspace});}
+      CHECK(node_graph_->graph->reconcile(std::move(keys)).admitted)<<"Invalid split-pane logical node projection";
+      // The native adapters survive retargeting. Renew leases even when only the
+      // domain index changed, so a pending press cannot follow an index shift.
+      static_cast<RustActionView*>(menu_.get())->BindNodeInput({node_graph_,live?7u:0u,identity,workspace});
+      static_cast<RustActionView*>(close_.get())->BindNodeInput({node_graph_,live?8u:0u,identity,workspace});
+    }
+#endif
   }
   void SetTitle(std::u16string title,bool active) {
     if(text_==title && active_==active)return;
@@ -2926,6 +2944,7 @@ class PaneBar final : public views::View {
   views::View* menu() const { return menu_; }
   views::View* close() const { return close_; }
  private:
+  std::shared_ptr<SidebarNodeGraphState> node_graph_;
   bool scene_=false,active_=false;
   std::u16string text_;
   mutable std::optional<int> measured_;
