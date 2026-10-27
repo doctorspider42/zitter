@@ -14,7 +14,37 @@ for a later bulk checkpoint. Build, Rust/Python and SDK checks without windows
 remain enabled. No shutdown is triggered by the former weekly threshold.
 The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 
-## Latest headless implementation: split-pane action nodes
+## Latest headless implementation: form action groups
+
+Source `8fd2268` gives text action groups, preference navigation/dismiss groups
+and appearance preset rows local Rust membership scopes. Rust allocates fresh
+monotonic IDs and input leases with append_form_action; retire_form_action only
+removes private form members. External projections cannot inject/reacquire those
+private keys or use the removal API to break tab/split invariants.
+
+Preference/workspace/profile/import text actions, category/dismiss actions and
+color/emoji presets construct graph-owned controls directly. The shared path
+also covers existing tools/dialog action groups. Direct-child removal retires a
+member even when its adapter survives. Native pointer-to-ID registration avoids
+reading child state during destruction; group destruction retires its scope.
+Text/busy/selection refresh and native reorder retain IDs. IDs describe local UI
+roles, not profile/workspace/import authorization. Existing form-context
+cancellation, callback/IME/store/managed checks and native services remain.
+
+Both app and browser-test binaries compile. **321 Rust**, **180 SDK cases plus
+raster**, **68 live and 68 clean-archive Python**, scoped GN/boundaries and final
+Ninja no-op passed; all 53 committed/live/staged prototype inputs match. **No UI
+tests ran.** Two compiled-only cases cover actions in all four forms, busy/text/
+creation-mode refresh, navigation/presets, reorder, disabled import close and
+actual dialog member removal/destruction.
+[Headless evidence](benchmarks/rust-form-action-node-headless-2026-10-27.json).
+
+Actual GUI/default/AX/focus behavior remains deferred. The preview was not
+repackaged. Workspace header dismiss remains a GlyphButton in this source and
+is the immediate follow-up. Checked/selector/editor model ownership, full form
+properties/parenting and native View containers are still outside this registry.
+
+## Earlier headless implementation: split-pane action nodes
 
 Source `a9f068e` moves split-pane menu/close input into a Rust scope per native
 pane bar. Paired roles use workspace and the existing opaque 128-bit tab ID;
