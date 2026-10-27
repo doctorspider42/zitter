@@ -25,18 +25,21 @@ below. Headless validation is current; GUI acceptance is deferred by instruction
    Selector handoff cancels transient interaction while preserving retained-node
    values/options and rehydrating native label projections. Next move editor/text
    models and control properties, parent/child relationships, lifetime and layout
-   coordination into Rust. The current ActionGraph owns
+   coordination into Rust. The workspace switcher now has an actual Rust-owned
+   parent/children/properties subtree with incremental native adapter reuse.
+   The current ActionGraph owns
    logical identities/input leases for sidebar rows, window chrome, history, palette results, split-pane actions, form action groups and checked/selector input;
    native View trees still own containers and most scene-property projection.
-3. **Reconcile adapters incrementally.** Reuse/reorder native adapters by Rust ID
-   instead of clearing lists on structural changes. Explicitly preserve focus,
+3. **Expand incremental adapter reconciliation.** Workspace-switcher adapters now
+   reuse/reorder by Rust ID. Apply this to form/sidebar/palette/history trees
+   instead of clearing their lists on structural changes. Explicitly preserve focus,
    focus order, scroll/reveal and AX identity, while cancelling presses/drag/capture
    when their target or visibility changes. Current logical IDs alone do not do this.
 4. **Finish panel coordination.** Move remaining status/progress/managed-state
    copy and form/busy state into Rust; finish outer dialog/palette/container
    placement. Keep native window, IME, clipboard, AX and popup/menu services explicit.
 5. **Run the deferred bulk UI checkpoint when requested.** Include all newly
-   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node, palette-node, split-node, form-action-node, workspace-dismiss-node, activation-observer, checked-selector-node, Peek-toolbar, checked-model and selector-model
+   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node, palette-node, split-node, form-action-node, workspace-dismiss-node, activation-observer, checked-selector-node, Peek-toolbar, checked-model, selector-model and workspace-scene
    cases, the full Rust/Metal and Views matrices, and actual pointer/keyboard/
    capture/AX/focus/drag/profile/session regressions. The last completed full matrix
    remains the text-action checkpoint; the later selector full run was interrupted.
@@ -48,7 +51,43 @@ below. Headless validation is current; GUI acceptance is deferred by instruction
    profile persistence/rollback, regenerate the shipped dependency/license manifest
    and Apache-2.0/upstream notices. Keep Rust/Metal opt-in until acceptance is complete.
 
-## Latest headless implementation: node-owned selector models
+## Latest headless implementation: Rust workspace scene and adapter reuse
+
+Source `adecc8a` gives the workspace switcher a Rust-owned structural root, ordered children,
+parent edges and typed presentation: UTF-16 accessible names/emoji and selected/
+enabled properties. Rust builds fixed chrome membership and this subtree from
+native domain display data. The structural root cannot acquire input. Graph
+reconciliation rejects retained children with a missing parent; whole-subtree
+removal is valid and clears retired payloads and parent edges.
+
+The Rust/Metal adapter consumes that scene, matches actual child Views by Rust
+node ID and reuses/reorders retained adapters. It creates only missing children
+and removes stale/deleted children. Name/selection refresh keeps pending input;
+order/membership or emoji geometry changes cancel workspace presses while
+retaining surviving IDs and focus state. The native pointer cache is cleared
+before child deletion, and projection explicitly invalidates the canvas fallback
+after Rust visual-state updates. Follow-up `3ad6cf4` makes AX default-action
+projection independent of Rust input-state deltas, including ancestor disable/
+re-enable. The Views baseline retains its rebuild path.
+
+This is one real scene subtree and one incremental consumer. Forms, sidebar
+rows, palette/history trees, editor/text models and full window/container lifetime
+coordination still need migration. Native swipe preview still projects temporary
+selected-state visuals. Native views, window/IME/AX/font/Metal services and browser
+command authorization remain explicit boundaries. No performance gain is claimed.
+
+Validation: **353 Rust**, **68 live + 68 clean-archive Python**, **180 CoreText SDK
+cases plus raster**, scoped GN/header and boundary checks. Both app/test binaries
+compile, all **53 committed/live/staged prototype inputs** match and the final
+three-target Ninja check reports no work. Ten Rust cases cover tree/parent/input
+invariants. Two new compiled browser cases cover native identity/focus/AX across
+rename/emoji/add/remove, ancestor enablement and sibling press cancellation; the existing footer case
+now expects Rust adapters to survive emoji changes. **No UI tests were run**;
+actual focus/AX/scroll/reveal and visual acceptance remain deferred. The running
+preview was left unchanged.
+Evidence: [workspace-scene report](benchmarks/rust-workspace-scene-headless-2026-10-27.json).
+
+## Previous headless implementation: node-owned selector models
 
 Source `f0f0680` moves selector options, selection, prefix state, popup generation
 and close-time guard into Rust ActionNodeRecord typed payloads. SceneSelect keeps

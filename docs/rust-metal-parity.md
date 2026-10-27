@@ -14,7 +14,43 @@ accumulate compiled cases for a later bulk checkpoint. Build, Rust/Python and SD
 checks without windows remain enabled. No computer shutdown is requested.
 The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 
-## Latest headless implementation: node-owned selector models
+## Latest headless implementation: Rust workspace scene and adapter reuse
+
+Source `adecc8a` gives the workspace switcher a Rust-owned structural root, ordered children,
+parent edges and typed presentation: UTF-16 accessible names/emoji and selected/
+enabled properties. Rust builds fixed chrome membership and this subtree from
+native domain display data. The structural root cannot acquire input. Graph
+reconciliation rejects retained children with a missing parent; whole-subtree
+removal is valid and clears retired payloads and parent edges.
+
+The Rust/Metal adapter consumes that scene, matches actual child Views by Rust
+node ID and reuses/reorders retained adapters. It creates only missing children
+and removes stale/deleted children. Name/selection refresh keeps pending input;
+order/membership or emoji geometry changes cancel workspace presses while
+retaining surviving IDs and focus state. The native pointer cache is cleared
+before child deletion, and projection explicitly invalidates the canvas fallback
+after Rust visual-state updates. Follow-up `3ad6cf4` makes AX default-action
+projection independent of Rust input-state deltas, including ancestor disable/
+re-enable. The Views baseline retains its rebuild path.
+
+This is one real scene subtree and one incremental consumer. Forms, sidebar
+rows, palette/history trees, editor/text models and full window/container lifetime
+coordination still need migration. Native swipe preview still projects temporary
+selected-state visuals. Native views, window/IME/AX/font/Metal services and browser
+command authorization remain explicit boundaries. No performance gain is claimed.
+
+Validation: **353 Rust**, **68 live + 68 clean-archive Python**, **180 CoreText SDK
+cases plus raster**, scoped GN/header and boundary checks. Both app/test binaries
+compile, all **53 committed/live/staged prototype inputs** match and the final
+three-target Ninja check reports no work. Ten Rust cases cover tree/parent/input
+invariants. Two new compiled browser cases cover native identity/focus/AX across
+rename/emoji/add/remove, ancestor enablement and sibling press cancellation; the existing footer case
+now expects Rust adapters to survive emoji changes. **No UI tests were run**;
+actual focus/AX/scroll/reveal and visual acceptance remain deferred. The running
+preview was left unchanged.
+Evidence: [workspace-scene report](benchmarks/rust-workspace-scene-headless-2026-10-27.json).
+
+## Previous headless implementation: node-owned selector models
 
 Source `f0f0680` moves selector options, selection, prefix state, popup generation
 and close-time guard into Rust ActionNodeRecord typed payloads. SceneSelect keeps
