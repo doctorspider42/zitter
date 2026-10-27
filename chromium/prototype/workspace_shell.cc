@@ -2003,6 +2003,7 @@ class RustRowView final : public views::View {
   void RestoreFocusPart(uint32_t part){if(part==2&&AttachedClose())close_->RequestFocus();else RequestFocus();}
   void ProjectTabSpec(SidebarNodeGraphState& scope,Spec spec){CHECK(!spec_.history&&!spec_.chip&&!spec_.address);CancelInput();const auto update=scope.graph->project_tab(*state_,SceneUtf16(spec.title),SceneUtf16(spec.monogram),spec.monogram_color,spec.tile);CHECK(update.admitted);ClearSidebarVisuals(spec);spec_=std::move(spec);measured_.reset();if(update.title_changed)SyncSidebarAX();if(update.geometry_changed)PreferredSizeChanged();UpdateClose();SchedulePaint();}
   void ProjectPinAdapter(Spec spec){CHECK(PinBinding().valid);CancelInput();ClearSidebarVisuals(spec);spec_=std::move(spec);SyncSidebarAX();PreferredSizeChanged();SchedulePaint();}
+  void RefreshPinProperties(){CHECK(PinBinding().valid);CancelInput();SyncSidebarAX();SchedulePaint();}
   Spec SidebarSnapshot() const{Spec spec;spec.sidebar_row=true;const auto presentation=state_->sidebar_presentation();if(presentation.valid){spec.title=std::u16string(presentation.title.begin(),presentation.title.end());spec.monogram=std::u16string(presentation.monogram.begin(),presentation.monogram.end());spec.monogram_color=presentation.color;spec.icon=presentation.folder?&vector_icons::kFolderFilledIcon:nullptr;spec.tile=presentation.tile;spec.height=presentation.height;spec.active=state_->action_snapshot().on;}return spec;}
   sidebar::SidebarRowScene SidebarScene(gfx::RectF bounds,gfx::RectF clip) const{return state_->sidebar_scene({bounds.x(),bounds.y(),bounds.width(),bounds.height()},{clip.x(),clip.y(),clip.width(),clip.height()},{float(Font(0).GetFontSize()),Tone(this,kInk),Tone(this,kCard),HoverWash(this)},has_close_button(),close_button_visible());}
   void ConfigureTabClose(bool wanted,views::Button::PressedCallback callback,const SidebarNodeBinding& binding){
@@ -2086,6 +2087,7 @@ class ScenePinGroup final : public views::View {
   METADATA_HEADER(ScenePinGroup,views::View)
  public:
   ScenePinGroup(const std::shared_ptr<SidebarNodeGraphState>& scope,uint64_t id):scope_(scope),id_(id){}
+  uint64_t AdapterId() const{return id_;}
   bool Matches(const std::shared_ptr<SidebarNodeGraphState>& scope,uint64_t id) const{return scope_.lock()==scope&&id_==id;}
   uint64_t NodeId() const{const auto scope=scope_.lock();if(!scope)return 0;for(const auto& entry:scope->graph->pin_tree().entries)if(entry.group==id_)return id_;return 0;}
   uint64_t ParentId() const{const auto scope=scope_.lock();if(!scope)return 0;for(const auto& entry:scope->graph->pin_tree().entries)if(entry.group==id_)return entry.parent;return 0;}
@@ -4693,21 +4695,42 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
           [](const ShellTab& a, const ShellTab& b) {
             return a.index == b.index && a.pin_id == b.pin_id && a.identity == b.identity;
           });
-  if(!same_structure)ReconcileSidebarNodes(cache,state_.workspace_id,state_.pins,state_.tabs);
 #if BUILDFLAG(IS_MAC)
+  std::optional<sidebar::SidebarPinTree> previous_pin_tree;
+  if(pins_changed&&cache.node_graph)previous_pin_tree.emplace(cache.node_graph->graph->pin_tree());
+#endif
+  if(!same_structure)ReconcileSidebarNodes(cache,state_.workspace_id,state_.pins,state_.tabs);
+  bool rebuild_pins=pins_changed;
+#if BUILDFLAG(IS_MAC)
+  if(previous_pin_tree&&cache.pins.empty()==state_.pins.empty()){
+    const auto next=cache.node_graph->graph->pin_tree();const auto& previous=*previous_pin_tree;
+    bool same=next.root==previous.root&&next.entries.size()==previous.entries.size();
+    if(same)for(size_t i=0;i<next.entries.size();++i){const auto& a=previous.entries[i];const auto& b=next.entries[i];if(a.id!=b.id||a.parent!=b.parent||a.group!=b.group||a.depth!=b.depth||a.collapsed!=b.collapsed||a.visible!=b.visible){same=false;break;}}
+    // A matching model is insufficient if observers removed/reparented an
+    // adapter. Inventory the actual tree before retaining native containers.
+    if(same){
+      std::map<uint64_t,RustRowView*> rows;std::map<uint64_t,ScenePinGroup*> groups;bool valid=true;
+      auto inspect=[&](auto&& self,views::View* view)->void{if(auto* row=views::AsViewClass<RustRowView>(view)){const auto pin=row->PinBinding();if(pin.valid){if(!row->BelongsTo(*cache.node_graph)||!rows.emplace(pin.id,row).second)valid=false;}else if(!row->TabBinding().valid)valid=false;}if(auto* group=views::AsViewClass<ScenePinGroup>(view)){if(!group->Matches(cache.node_graph,group->AdapterId())||!groups.emplace(group->AdapterId(),group).second)valid=false;}for(const auto& child:view->children())self(self,child.get());};inspect(inspect,cache.pins_root);
+      const size_t group_count=std::count_if(next.entries.begin(),next.entries.end(),[](const auto& entry){return entry.group!=0;});
+      valid=valid&&rows.size()==next.entries.size()&&groups.size()==group_count&&cache.pin_buttons.size()==next.entries.size()&&cache.pins_root->children().size()==1;
+      if(valid)for(const auto& entry:next.entries){const auto found=rows.find(entry.id);const auto cached=cache.pin_buttons.find(std::string(entry.key));if(found==rows.end()||cached==cache.pin_buttons.end()||cached->second!=found->second||found->second->GetWidget()!=sidebar_widget_.get()){valid=false;break;}auto* holder=found->second->parent();views::View* parent=cache.pins_root->children().front().get();if(entry.parent!=next.root){const auto group=groups.find(entry.parent);if(group==groups.end()){valid=false;break;}parent=group->second;}if(!holder||holder->parent()!=parent){valid=false;break;}if(entry.group){const auto group=groups.find(entry.group);const auto index=parent->GetIndexOf(holder);if(group==groups.end()||!index||*index+1>=parent->children().size()||parent->children()[*index+1].get()!=group->second||group->second->GetVisible()==entry.collapsed){valid=false;break;}}}
+      if(valid){rebuild_pins=false;for(const auto& [id,row]:rows)row->RefreshPinProperties();cache.pins=state_.pins;}
+    }
+  }
+
   std::map<std::array<uint64_t,2>,std::unique_ptr<views::View>> retained_tabs;std::map<std::string,std::unique_ptr<views::View>> retained_pins;std::optional<std::string> retained_pin_focus;std::optional<std::array<uint64_t,2>> retained_focus;uint32_t retained_focus_part=0;
   const bool retain=!same_structure&&cache.node_graph;const double retained_offset=tab_scroll_->offset();
   if(retain){
-    cache.tab_buttons.clear();if(pins_changed)cache.pin_buttons.clear();const auto* focused=cache.root->GetFocusManager()?cache.root->GetFocusManager()->GetFocusedView():nullptr;
+    cache.tab_buttons.clear();if(rebuild_pins)cache.pin_buttons.clear();const auto* focused=cache.root->GetFocusManager()?cache.root->GetFocusManager()->GetFocusedView():nullptr;
     // Traverse actual adapters, not a cache that may contain detached views.
     auto extract=[&](auto&& self,views::View* view)->void{
       if(auto* row=views::AsViewClass<RustRowView>(view)){const auto binding=row->TabBinding();if(binding.valid&&row->BelongsTo(*cache.node_graph)&&row->parent()){
         const std::array<uint64_t,2> identity{binding.high,binding.low};if(const auto part=row->RetainedFocusPart(focused)){retained_focus=identity;retained_focus_part=part;}row->CancelInput();auto owned=row->parent()->RemoveChildViewT(row);CHECK(retained_tabs.emplace(identity,std::move(owned)).second);return;
-      }if(pins_changed){const auto pin=row->PinBinding();if(pin.valid&&row->BelongsTo(*cache.node_graph)&&row->parent()){if(row->RetainedFocusPart(focused))retained_pin_focus=std::string(pin.key);row->CancelInput();auto owned=row->parent()->RemoveChildViewT(row);CHECK(retained_pins.emplace(std::string(pin.key),std::move(owned)).second);return;}}}std::vector<views::View*> children;for(const auto& child:view->children())children.push_back(child.get());for(auto* child:children)self(self,child);
+      }if(rebuild_pins){const auto pin=row->PinBinding();if(pin.valid&&row->BelongsTo(*cache.node_graph)&&row->parent()){if(row->RetainedFocusPart(focused))retained_pin_focus=std::string(pin.key);row->CancelInput();auto owned=row->parent()->RemoveChildViewT(row);CHECK(retained_pins.emplace(std::string(pin.key),std::move(owned)).second);return;}}}std::vector<views::View*> children;for(const auto& child:view->children())children.push_back(child.get());for(auto* child:children)self(self,child);
     };extract(extract,cache.root);
   }
 #endif
-  if (pins_changed) {
+  if (rebuild_pins) {
     ++pinned_list_build_count_;
     cache.pin_buttons.clear();
     cache.pins_root->RemoveAllChildViews();
