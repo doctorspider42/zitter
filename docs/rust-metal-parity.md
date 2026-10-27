@@ -14,6 +14,53 @@ accumulate compiled cases for a later bulk checkpoint. Build, Rust/Python and SD
 checks without windows remain enabled. No computer shutdown is requested.
 The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 
+## Latest headless implementation: Rust-owned tab presentation
+
+Sources `067650c` and `29001aa` move typed tab title/monogram UTF-16, cached UTF-8
+scene text, monogram color and normal/split variant into SidebarTabModel. Rust
+derives row height and builds the live Metal Item from that presentation and its
+input/selection state. Native geometry, theme/font metrics and actual close-adapter
+presence remain facts supplied by platform adapters; the close shape also requires
+Rust cardinality permission. Native backend/cache facts, URL/locale/host-color
+formatting and AX/tooltip strings retain their necessary native projections.
+
+Projection requires a current owned lease. Identical data keeps input; title and
+monogram changes preserve pending input and current target identity. Geometry/tile
+changes cancel both main and paired close state. Disabled live controls still accept
+service projection; stale/retired/foreign/wrong-model handles cannot retrieve or
+project the typed presentation. Rust stores raw UTF-16 for exact platform projection
+and prepared UTF-8 for repeated scene emission.
+
+RustRowView releases durable legacy Spec title/monogram buffers and clears native
+color/active/tile/height copies for typed tabs. Live Metal collection consumes the
+Rust Item directly. Fallback and workspace preview consumers obtain temporary Rust
+snapshots; they do not keep a second persistent tab presentation in Spec. Native
+fallback still applies its established decorations/raster policy to that snapshot;
+full Rust primitive parity for fallback remains open. Non-tab roles keep their
+existing rendering paths and Views keeps its native Spec references.
+
+While Metal owns the visible canvas, tab adapters skip native fallback/child paint.
+The list is invalidated when GPU ownership starts and when it fails or ends, so
+fallback can repaint. This is source-verified paint ownership, not a measured
+CPU/GPU/presentation improvement. Drawable recovery and visual equivalence need GUI
+acceptance; combined string/cache/snapshot/paint costs remain unmeasured.
+
+Validation: **439 Rust** cases (ten new property/projection/scene/lifetime cases),
+**68 live + 68 clean-archive Python**, **180 CoreText SDK cases plus raster**, scoped
+GN/header and boundary checks. App and browser-test binaries compile; all **53
+committed/live/staged prototype inputs** match; final three-target Ninja check
+reports no work. Two new browser cases compile for title/AX/height through split/
+reindex and changed-title propagation into live/swipe scenes. **No UI tests ran**;
+preview and packaged bundle were unchanged.
+[Evidence](benchmarks/rust-tab-properties-headless-2026-10-27.json).
+
+Remaining: pin/non-tab property models, complete folder/split scene parenting and
+keyed form/sidebar reconciliation, native outer containers/windows/interaction,
+fallback primitive ownership and broader editor/text models. Bulk GUI/manual,
+Unicode/theme/scale/fallback recovery, compositor diagnosis, real presentation
+profiling and release/license acceptance remain deferred. No dependencies, target
+edges or license inputs changed.
+
 ## Latest headless implementation: retained sidebar tab adapters
 
 Source `27c0e4f` gives sidebar tabs typed Rust identity/backend-index/close-cardinality
