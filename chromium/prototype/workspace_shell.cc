@@ -755,7 +755,8 @@ class RustActionView : public views::View {
   bool SkipDefaultKeyEventProcessing(const ui::KeyEvent& event) override{return sidebar::key_policy(event.key_code()==ui::VKEY_SPACE?1:event.key_code()==ui::VKEY_RETURN?2:0,true)!=0;}
   bool AcceleratorPressed(const ui::Accelerator& accelerator) override{SyncEnabled();const auto before=Snapshot().visual;const bool pending=Pending();return Apply(state_->action_accelerator(accelerator.key_code()==ui::VKEY_RETURN?2:0,accelerator.modifiers()!=ui::EF_NONE,SceneIsVisible(this)),accelerator.ToKeyEvent(),before,pending);}
   void SetColor(SkColor color){if(color_==color)return;color_=color;SchedulePaint();}
-  void SetCallback(views::Button::PressedCallback callback){Cancel();callback_=std::move(callback);}
+  void SetCallback(views::Button::PressedCallback callback){Cancel();command_callback_.Reset();callback_=std::move(callback);}
+  void SetFormCommand(sidebar::FormCommand command,const std::string& key,base::RepeatingCallback<void(sidebar::FormCommandBinding)> callback){CHECK(state_->node_form_command_init(command,key));Cancel();callback_=views::Button::PressedCallback();command_callback_=std::move(callback);}
   void CancelInput(){Cancel();}
   bool Pending() const{return state_->action_pending();}
   void SetOn(bool on){if(state_->action_on(on))SchedulePaint();}
@@ -788,6 +789,7 @@ class RustActionView : public views::View {
   const sidebar::ActionControl& NodeControl() const{return *state_;}
   virtual ax::mojom::DefaultActionVerb ActionVerb() const{return ax::mojom::DefaultActionVerb::kPress;}
   virtual void ActivateAction(const ui::Event& event){
+    const auto epoch=state_->action_admission_epoch();
     const auto id=GetProperty(views::kElementIdentifierKey);
     if(id){
       const auto node=state_->action_node_id();views::ViewTracker alive(this);
@@ -797,6 +799,10 @@ class RustActionView : public views::View {
       // Object lifetime alone does not keep the graph-authorized action valid.
       if(node&&(state_->action_node_id()!=node||!state_->action_snapshot().enabled))return;
     }
+    // Observers can hide/detach an ancestor, disable then reenable, or refresh
+    // a form context without deleting the adapter or changing its logical ID.
+    if(!state_->action_admits(epoch)||!Interactive()||!GetWidget()||!GetEnabledInViewsSubtree())return;
+    if(command_callback_){auto command=state_->node_form_command();if(command.command!=sidebar::FormCommand::None)command_callback_.Run(std::move(command));return;}
     if(callback_)callback_.Run(event);
   }
  private:
@@ -814,7 +820,7 @@ class RustActionView : public views::View {
   bool Pointer(sidebar::PointerPhase phase,const ui::MouseEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;const bool pending=state_->action_pending();return Apply(state_->action_pointer(phase,event.x(),event.y(),phase!=sidebar::PointerPhase::Exit&&HitTestPoint(event.location())&&GetVisibleBounds().Contains(event.location()),event.IsLeftMouseButton(),Interactive()),event,before,pending);}
   bool Key(bool pressed,const ui::KeyEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;const bool pending=state_->action_pending();const uint32_t key=event.key_code()==ui::VKEY_SPACE?1:event.key_code()==ui::VKEY_RETURN?2:0;return Apply(state_->action_key(pressed,key,true,Interactive()),event,before,pending);}
   bool Apply(const sidebar::RowInputResult& result,const ui::Event& event,sidebar::RowVisual before,bool pending){const bool handled=result.handled;if(result.visual!=before)SchedulePaint();else if(pending!=state_->action_pending()&&changed_)changed_.Run();if(result.action==sidebar::RowAction::Activate){ActivateAction(event);return handled;}return handled;}
-  SkColor color_=kSubtle;std::u16string label_;views::Button::PressedCallback callback_;ControlGlyph glyph_;raw_ptr<const gfx::VectorIcon> icon_;base::RepeatingCallback<bool()> visible_;base::RepeatingClosure changed_;rust::Box<sidebar::ActionControl> state_;SceneWindowObserver window_{base::BindRepeating(&RustActionView::WindowChanged,base::Unretained(this))};base::CallbackListSubscription enabled_changed_{AddEnabledInViewsSubtreeChangedCallback(base::BindRepeating(&RustActionView::EnabledChanged,base::Unretained(this)))};
+  SkColor color_=kSubtle;std::u16string label_;base::RepeatingCallback<void(sidebar::FormCommandBinding)> command_callback_;views::Button::PressedCallback callback_;ControlGlyph glyph_;raw_ptr<const gfx::VectorIcon> icon_;base::RepeatingCallback<bool()> visible_;base::RepeatingClosure changed_;rust::Box<sidebar::ActionControl> state_;SceneWindowObserver window_{base::BindRepeating(&RustActionView::WindowChanged,base::Unretained(this))};base::CallbackListSubscription enabled_changed_{AddEnabledInViewsSubtreeChangedCallback(base::BindRepeating(&RustActionView::EnabledChanged,base::Unretained(this)))};
 };
 BEGIN_METADATA(RustActionView)
 END_METADATA
@@ -3643,6 +3649,9 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   add_workspace_ = AddAction(actions,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
         if(shell)shell->ToggleWorkspaceCreation();
       }, weak),u"Nowa przestrzeń…");
+#if BUILDFLAG(IS_MAC)
+  if(workspace_form_){BindFormCommand(edit_workspace_,sidebar::FormCommand::WorkspaceSave);BindFormCommand(add_workspace_,sidebar::FormCommand::WorkspaceToggle);}
+#endif
   configuration_error_ = settings_text(settings.get(),u"",kError,-2,gfx::Font::Weight::NORMAL,true);
   configuration_error_->SetVisible(false);
   auto* appearance = settings->AddChildView(std::make_unique<views::View>());
@@ -3720,14 +3729,17 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   Spacer(appearance, 8);
   settings_text(appearance,workspace_copy[13],kInk,0,gfx::Font::Weight::SEMIBOLD);
   auto* more_actions=ActionGroup(appearance,bool(workspace_form_),true,8);
-  AddAction(more_actions,
+  [[maybe_unused]] auto* workspace_profiles=AddAction(more_actions,
       base::BindRepeating(&WorkspaceShell::OpenProfiles, weak, std::string(), std::string()), workspace_copy[14],ui::ButtonStyle::kText);
-  AddAction(more_actions,
+  [[maybe_unused]] auto* workspace_import=AddAction(more_actions,
       base::BindRepeating(&WorkspaceShell::OpenImport, weak), workspace_copy[15],ui::ButtonStyle::kText);
   remove_workspace_ = AddAction(more_actions,
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
         if (shell) shell->ConfirmRemoveWorkspace(shell->state_.workspace_id);
       }, weak), workspace_copy[16],ui::ButtonStyle::kText);
+#if BUILDFLAG(IS_MAC)
+  if(workspace_form_){BindFormCommand(remove_workspace_,sidebar::FormCommand::WorkspaceRemove);BindFormCommand(workspace_profiles,sidebar::FormCommand::WorkspaceProfiles);BindFormCommand(workspace_import,sidebar::FormCommand::WorkspaceImport);}
+#endif
 
   if(workspace_form_){settings->SetLayoutManager(CreateSidebarColumnLayout(8));settings->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(20)));appearance->SetLayoutManager(CreateSidebarColumnLayout(8));}
 
@@ -3882,7 +3894,10 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto* profile_delete_actions=ActionGroup(profiles_panel.get(),bool(profile_form_),true,10);
   delete_profile_ = AddAction(profile_delete_actions,
       base::BindRepeating(&WorkspaceShell::DeleteSelectedProfile, weak), profile_copy[9]);
-  AddAction(profile_delete_actions,base::BindRepeating(&WorkspaceShell::OpenWorkspaceSettings, weak), profile_copy[11]);
+  [[maybe_unused]] auto* profile_back=AddAction(profile_delete_actions,base::BindRepeating(&WorkspaceShell::OpenWorkspaceSettings, weak), profile_copy[11]);
+#if BUILDFLAG(IS_MAC)
+  if(profile_form_){BindFormCommand(create_profile_,sidebar::FormCommand::ProfileCreate);BindFormCommand(rename_profile_,sidebar::FormCommand::ProfileRename);BindFormCommand(delete_profile_,sidebar::FormCommand::ProfileDelete);BindFormCommand(profile_back,sidebar::FormCommand::ProfileBack);}
+#endif
 
   if(profile_form_){profiles_panel->SetLayoutManager(CreateSidebarColumnLayout(10));profiles_panel->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(20)));}
 
@@ -3951,6 +3966,9 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   import_status_->SetVisible(false);
   auto* import_actions=ActionGroup(import_panel.get(),bool(import_form_),true,0);
   apply_import_ = AddAction(import_actions,base::BindRepeating(&WorkspaceShell::SubmitImport,weak),import_copy[9]);
+#if BUILDFLAG(IS_MAC)
+  if(import_form_)BindFormCommand(apply_import_,sidebar::FormCommand::ImportApply);
+#endif
   apply_import_->SetEnabled(false);
 #if BUILDFLAG(IS_MAC)
   if(import_form_){const auto d=sidebar::import_defaults();SetCheckValue(import_profiles_,d.separate_profiles);SetCheckValue(import_bookmarks_,d.bookmarks);SetCheckValue(import_history_,d.history);SetCheckValue(import_cookies_,d.cookies);import_panel->SetLayoutManager(CreateSidebarColumnLayout(12));import_panel->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(20)));}
@@ -4517,7 +4535,7 @@ void WorkspaceShell::Update(ShellState state) {
   state_ = std::move(state);
   if (!widget_) return;
 #if BUILDFLAG(IS_MAC)
-  if(selected&&workspace_form_){for(auto* field:{color_input_.get(),emoji_input_.get()})if(auto* row=views::AsViewClass<AppearanceRow>(field->view()->parent()))row->CancelInput();CancelSceneActions(settings_root_);CancelSceneActions(profiles_root_);}
+  if(selected&&workspace_form_){for(auto* field:{color_input_.get(),emoji_input_.get()})if(auto* row=views::AsViewClass<AppearanceRow>(field->view()->parent()))row->CancelInput();CancelSceneActions(settings_root_);CancelSceneActions(profiles_root_);CancelSceneActions(general_root_);}
   if(profiles_changed&&profile_form_)CancelSceneActions(profiles_root_);
 #endif
   if((selected||history_profile_changed)&&tools_root_)CancelChoiceInteractions(tools_root_);
@@ -6751,39 +6769,40 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
     if(spec.kind==Kind::Text){
       auto* field=AddEditor(row->children().front(),true);field->GetViewAccessibility().SetName(title);field->SetPlaceholderText(text(spec.placeholder));
       field->SetCallbacks(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::string key){if(shell)shell->PreferenceTextEdited(key);},weak,key),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,EditorControl* field,const ui::KeyEvent& event){return shell&&shell->HandlePreferenceEditorKey(field,event);},weak,base::Unretained(field)));field->view()->SetPreferredSize(gfx::Size(240,36));preference_textfields_[key]=field;
-      auto* save=PreferenceAction(row,true,base::BindRepeating(&WorkspaceShell::SaveTextPreference,weak,key),text(spec.button));save->SetTooltipText(text(spec.button_ax));save->GetViewAccessibility().SetName(text(spec.button_ax));preference_save_buttons_[key]=save;continue;
+      auto* save=PreferenceAction(row,true,{},text(spec.button));BindFormCommand(save,sidebar::FormCommand::PreferenceText,key);save->SetTooltipText(text(spec.button_ax));save->GetViewAccessibility().SetName(text(spec.button_ax));preference_save_buttons_[key]=save;continue;
     }
     switch(spec.kind){
       case Kind::Action:{
-        base::RepeatingClosure callback;
+        using Command=sidebar::FormCommand;Command command=Command::None;
         switch(spec.action){
-          case Action::History:callback=base::BindRepeating(&WorkspaceShell::OpenTools,weak,3);break;
-          case Action::Workspace:callback=base::BindRepeating(&WorkspaceShell::OpenWorkspaceSettings,weak);break;
-          case Action::Passwords:callback=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell){shell->CloseOverlays();shell->callbacks_.passwords.Run();}},weak);break;
-          case Action::Profiles:callback=base::BindRepeating(&WorkspaceShell::OpenProfiles,weak,std::string(),std::string());break;
-          case Action::Import:callback=base::BindRepeating(&WorkspaceShell::OpenImport,weak);break;
-          case Action::Proxy:case Action::Certificates:callback=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,bool certificates){if(shell&&shell->callbacks_.system_settings)shell->callbacks_.system_settings.Run(certificates);},weak,spec.action==Action::Certificates);break;
-          case Action::Providers:callback=base::BindRepeating(&WorkspaceShell::OpenTools,weak,2);break;
-          case Action::Shortcuts:callback=base::BindRepeating(&WorkspaceShell::OpenTools,weak,1);break;
-          case Action::TimeMachine:callback=base::BindRepeating(&WorkspaceShell::OpenTools,weak,0);break;
+          case Action::History:command=Command::History;break;
+          case Action::Workspace:command=Command::Workspace;break;
+          case Action::Passwords:command=Command::Passwords;break;
+          case Action::Profiles:command=Command::Profiles;break;
+          case Action::Import:command=Command::Import;break;
+          case Action::Proxy:command=Command::Proxy;break;
+          case Action::Certificates:command=Command::Certificates;break;
+          case Action::Providers:command=Command::Providers;break;
+          case Action::Shortcuts:command=Command::Shortcuts;break;
+          case Action::TimeMachine:command=Command::TimeMachine;break;
           default:CHECK(false);
         }
-        auto* button=PreferenceAction(row,true,std::move(callback),text(spec.button));button->SetTooltipText(text(spec.button_ax));button->GetViewAccessibility().SetName(text(spec.button_ax));break;
+        auto* button=PreferenceAction(row,true,{},text(spec.button));BindFormCommand(button,command);button->SetTooltipText(text(spec.button_ax));button->GetViewAccessibility().SetName(text(spec.button_ax));break;
       }
       case Kind::Directory:
-        download_directory_button_=PreferenceAction(row,true,callbacks_.choose_download_directory,text(spec.button));download_directory_button_->SetTooltipText(text(spec.button_ax));download_directory_button_->GetViewAccessibility().SetName(text(spec.button_ax));download_directory_label_=copy(row->children().front().get(),u"",kMuted,-1,gfx::Font::Weight::NORMAL,true);break;
+        download_directory_button_=PreferenceAction(row,true,{},text(spec.button));BindFormCommand(download_directory_button_,sidebar::FormCommand::PreferenceDirectory);download_directory_button_->SetTooltipText(text(spec.button_ax));download_directory_button_->GetViewAccessibility().SetName(text(spec.button_ax));download_directory_label_=copy(row->children().front().get(),u"",kMuted,-1,gfx::Font::Weight::NORMAL,true);break;
       case Kind::SiteEditor:{
         const auto& site=catalogue.site;auto* fields=row->children().front().get();site_origin_=AddEditor(fields,true);site_origin_->GetViewAccessibility().SetName(text(site.origin_ax));site_origin_->SetPlaceholderText(text(site.placeholder));site_origin_->SetCallbacks({},base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,EditorControl* field,const ui::KeyEvent& event){return shell&&shell->HandlePreferenceEditorKey(field,event);},weak,base::Unretained(site_origin_.get())));
         site_type_=ChoicePicker(fields,text(site.type_ax),strings(site.types),true);site_policy_=ChoicePicker(fields,text(site.policy_ax),strings(sidebar::preference_site_policies(0)),true);
         SetPickerCallback(site_type_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(!shell)return;std::vector<std::u16string> choices;for(const auto& choice:sidebar::preference_site_policies(PickerIndex(shell->site_type_).value_or(0)))choices.push_back(base::UTF8ToUTF16(std::string(choice)));ReplacePickerLabels(shell->site_policy_,choices);},weak));
-        PreferenceAction(row,true,base::BindRepeating(&WorkspaceShell::SaveSitePreference,weak),text(site.save));break;
+        BindFormCommand(PreferenceAction(row,true,{},text(site.save)),sidebar::FormCommand::PreferenceSite);break;
       }
       case Kind::SiteRules:
         site_rules_card_=row;site_rules_list_=row->children().front()->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(site_rules_list_,true,gfx::Insets(),8);break;
       case Kind::ClearData:{
         const auto& clear=catalogue.clear;auto* fields=row->children().front().get();clear_data_period_=ChoicePicker(fields,text(clear.period_ax),strings(clear.periods),true);auto* checks=fields->AddChildView(std::make_unique<SceneCheckboxGroup>(8));CHECK_EQ(clear.checks.size(),3u);
         clear_history_=AddImportCheck(checks,text(clear.checks[0]),{});clear_cookies_=AddImportCheck(checks,text(clear.checks[1]),{});clear_cache_=AddImportCheck(checks,text(clear.checks[2]),{});SetCheckValue(clear_cache_,true);
-        clear_data_button_=PreferenceAction(row,true,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(!shell||!shell->callbacks_.clear_browsing_data)return;shell->callbacks_.clear_browsing_data.Run({static_cast<int>(PickerIndex(shell->clear_data_period_).value_or(0)),CheckValue(shell->clear_history_),CheckValue(shell->clear_cookies_),CheckValue(shell->clear_cache_)});},weak),text(clear.action));break;
+        clear_data_button_=PreferenceAction(row,true,{},text(clear.action));BindFormCommand(clear_data_button_,sidebar::FormCommand::PreferenceClear);break;
       }
       case Kind::ShortcutHint:row->SetTooltipText(text(spec.tooltip));break;
       default:CHECK(false);
@@ -6799,7 +6818,11 @@ void WorkspaceShell::RefreshGeneralControls() {
   else
 #endif
   {profile_changed=preferences_profile_id_!=state_.profile_id;if(profile_changed){preferences_profile_id_=state_.profile_id;preference_text_dirty_.clear();}}
-  if(profile_changed)CancelChoiceInteractions(general_widget_->GetContentsView());
+  if(profile_changed){CancelChoiceInteractions(general_widget_->GetContentsView());
+#if BUILDFLAG(IS_MAC)
+    CancelSceneActions(general_widget_->GetContentsView());
+#endif
+  }
   SyncPickerIndex(theme_picker_,static_cast<size_t>(theme_mode_));
   std::vector<std::pair<std::string,std::u16string>> provider_choices;
   size_t provider_index=0;
@@ -8223,6 +8246,46 @@ void WorkspaceShell::ConfirmRemoveWorkspace(std::string id) {
   prompt->Show();
 }
 
+// Rust owns each form member's semantic command and key. Native dispatch keeps
+// service authorization, stores, composition and the existing form coordinators.
+void WorkspaceShell::BindFormCommand(views::View* view,sidebar::FormCommand command,std::string key){
+#if BUILDFLAG(IS_MAC)
+  auto* control=views::AsViewClass<RustActionView>(view);CHECK(control);
+  control->SetFormCommand(command,key,base::BindRepeating(&WorkspaceShell::DispatchFormCommand,weak_factory_.GetWeakPtr()));
+#endif
+}
+void WorkspaceShell::DispatchFormCommand(sidebar::FormCommandBinding binding){
+#if BUILDFLAG(IS_MAC)
+  using C=sidebar::FormCommand;const auto command=binding.command;
+  const bool workspace=command==C::WorkspaceSave||command==C::WorkspaceToggle||command==C::WorkspaceRemove||command==C::WorkspaceProfiles||command==C::WorkspaceImport;
+  const bool profile=command==C::ProfileCreate||command==C::ProfileRename||command==C::ProfileDelete||command==C::ProfileBack;
+  const auto* panel=workspace?settings_widget_.get():profile?profiles_widget_.get():command==C::ImportApply?import_widget_.get():general_widget_.get();
+  if(!panel||!panel->IsVisible())return;
+  switch(command){
+    case C::WorkspaceSave:SubmitWorkspace(creating_workspace_);break;
+    case C::WorkspaceToggle:ToggleWorkspaceCreation();break;
+    case C::WorkspaceRemove:ConfirmRemoveWorkspace(state_.workspace_id);break;
+    case C::ProfileCreate:SubmitProfile();break;
+    case C::ProfileRename:RenameSelectedProfile();break;
+    case C::ProfileDelete:DeleteSelectedProfile();break;
+    case C::ProfileBack:case C::Workspace:OpenWorkspaceSettings();break;
+    case C::ImportApply:SubmitImport();break;
+    case C::PreferenceText:SaveTextPreference(std::string(binding.key));break;
+    case C::PreferenceSite:SaveSitePreference();break;
+    case C::PreferenceClear:if(callbacks_.clear_browsing_data)callbacks_.clear_browsing_data.Run({static_cast<int>(PickerIndex(clear_data_period_).value_or(0)),CheckValue(clear_history_),CheckValue(clear_cookies_),CheckValue(clear_cache_)});break;
+    case C::PreferenceDirectory:if(callbacks_.choose_download_directory)callbacks_.choose_download_directory.Run();break;
+    case C::History:OpenTools(3);break;
+    case C::Passwords:CloseOverlays();callbacks_.passwords.Run();break;
+    case C::WorkspaceProfiles:case C::Profiles:OpenProfiles({},{});break;
+    case C::WorkspaceImport:case C::Import:OpenImport();break;
+    case C::Proxy:case C::Certificates:if(callbacks_.system_settings)callbacks_.system_settings.Run(command==C::Certificates);break;
+    case C::Providers:OpenTools(2);break;
+    case C::Shortcuts:OpenTools(1);break;
+    case C::TimeMachine:OpenTools(0);break;
+    default:break;
+  }
+#endif
+}
 void WorkspaceShell::SubmitWorkspace(bool add) {
 #if BUILDFLAG(IS_MAC)
   if(workspace_form_){

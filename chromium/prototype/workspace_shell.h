@@ -35,7 +35,7 @@
 #include "ui/native_theme/native_theme_observer.h"
 #include "url/gurl.h"
 
-namespace zitter::sidebar { struct Item; struct PreferenceCatalogue; }
+namespace zitter::sidebar { struct Item; struct PreferenceCatalogue; enum class FormCommand : uint32_t; struct FormCommandBinding; }
 namespace ui { class AcceleratorTarget; }
 namespace views {
 class DialogDelegate;
@@ -622,6 +622,8 @@ class WorkspaceShell final : public ui::EventHandler,
   std::optional<size_t> context_tab_;
   std::array<uint64_t,2> context_tab_identity_{};
   std::string context_pin_;
+  void BindFormCommand(views::View* view,sidebar::FormCommand command,std::string key={});
+  void DispatchFormCommand(sidebar::FormCommandBinding command);
   void SubmitWorkspace(bool add);
   void ImportSelectionChanged();
   void RefreshRustImportControls();

@@ -40,6 +40,10 @@ mod ffi {
     struct ToolsHistoryView { empty: String, status: String, more_visible: bool, more_enabled: bool }
     struct ToolsClearControls { label: String, enabled: bool }
     enum PreferenceRowKind { Theme, Pinned, Animations, Search, Toggle, Text, Picker, Action, Directory, SiteEditor, SiteRules, ClearData, ShortcutHint }
+    #[repr(u32)]
+    #[derive(Debug)]
+    enum FormCommand { None, WorkspaceSave, WorkspaceToggle, WorkspaceRemove, WorkspaceProfiles, WorkspaceImport, ProfileCreate, ProfileRename, ProfileDelete, ProfileBack, ImportApply, PreferenceText, PreferenceSite, PreferenceClear, PreferenceDirectory, History, Workspace, Passwords, Profiles, Import, Proxy, Certificates, Providers, Shortcuts, TimeMachine }
+    struct FormCommandBinding { command: FormCommand, key: String }
     enum PreferenceActionKind { None, History, Workspace, Passwords, Profiles, Import, Proxy, Certificates, Providers, Shortcuts, TimeMachine }
     struct PreferenceSpec { category: usize, kind: PreferenceRowKind, key: String, title: String, detail: String, choices: Vec<String>, placeholder: String, action: PreferenceActionKind, button: String, button_ax: String, tooltip: String }
     struct PreferenceSiteCopy { origin_ax: String, placeholder: String, type_ax: String, policy_ax: String, save: String, types: Vec<String> }
@@ -452,6 +456,10 @@ mod ffi {
         fn retire_form_action(self: &mut ActionGraph, id: u64) -> bool;
         type ActionControl;
         fn action_node_id(self: &ActionControl) -> u64;
+        fn node_form_command_init(self: &mut ActionControl, command: FormCommand, key: &str) -> bool;
+        fn node_form_command(self: &ActionControl) -> FormCommandBinding;
+        fn action_admission_epoch(self: &ActionControl) -> u64;
+        fn action_admits(self: &ActionControl, epoch: u64) -> bool;
         fn node_model_kind(self: &ActionControl) -> u32;
         fn node_checkbox_init(self: &mut ActionControl, checked: bool) -> bool;
         fn node_checked(self: &ActionControl) -> bool;
@@ -1757,12 +1765,12 @@ impl RowPointer {
     }
 }
 // An action's state outlives individual native events; no Button state is read.
-struct ActionState { pointer:RowPointer, enabled:bool, focused:bool, on:bool, is_default:bool, on_press:bool, visual:ffi::RowVisual }
-fn initial_action_state()->ActionState{ActionState{pointer:RowPointer::default(),enabled:true,focused:false,on:false,is_default:false,on_press:false,visual:ffi::RowVisual::Normal}}
+struct ActionState { admission_epoch:u64, pointer:RowPointer, enabled:bool, focused:bool, on:bool, is_default:bool, on_press:bool, visual:ffi::RowVisual }
+fn initial_action_state()->ActionState{ActionState{admission_epoch:1,pointer:RowPointer::default(),enabled:true,focused:false,on:false,is_default:false,on_press:false,visual:ffi::RowVisual::Normal}}
 fn new_action_control()->Box<ActionControl>{Box::new(ActionControl{storage:ActionStorage::Standalone(initial_action_state())})}
 fn action_preferred_size(dot:bool,label:bool)->ffi::Rect{ffi::Rect{x:0,y:0,width:if dot{if label{30}else{24}}else{32},height:if dot{28}else{32}}}
 impl ActionState {
-    fn action_cancel(&mut self)->bool{let visual=if self.enabled{ffi::RowVisual::Normal}else{ffi::RowVisual::Disabled};let changed=self.pointer.origin.is_some()||self.pointer.hovered||self.pointer.key_armed||self.visual!=visual;self.pointer.cancel();self.visual=visual;changed}
+    fn action_cancel(&mut self)->bool{self.admission_epoch=if self.admission_epoch==0{0}else{self.admission_epoch.checked_add(1).unwrap_or(0)};let visual=if self.enabled{ffi::RowVisual::Normal}else{ffi::RowVisual::Disabled};let changed=self.pointer.origin.is_some()||self.pointer.hovered||self.pointer.key_armed||self.visual!=visual;self.pointer.cancel();self.visual=visual;changed}
     fn action_enabled(&mut self,enabled:bool)->bool{if self.enabled==enabled{return false;}self.enabled=enabled;self.action_cancel();true}
     fn action_focus(&mut self,focused:bool){self.focused=focused;if !focused{self.action_cancel();}}
     fn action_on(&mut self,on:bool)->bool{let changed=self.on!=on;self.on=on;changed}
@@ -1815,19 +1823,21 @@ struct HistoryPresentation {title:Vec<u16>,detail:Vec<u16>,url:Vec<u16>,cancel_i
 struct PalettePresentation {title:Vec<u16>,detail:Vec<u16>,icon:u32,index:usize,cancel_input:bool}
 struct PaletteSceneState {selection:PaletteSelection,dirty:bool}
 struct SiteRulePresentation {detail:Vec<u16>,editable:bool,source_index:usize,cancel_input:bool}
-enum NodeModel { Checkbox(CheckboxState), Toggle(ToggleState), Select(SelectState), Workspace(WorkspacePresentation), History(HistoryPresentation), Palette(PalettePresentation), PaletteRoot(PaletteSceneState), FormRoot(ffi::FormGroupStyle), SiteRule(SiteRulePresentation) }
+struct FormCommandModel {command:ffi::FormCommand,key:String}
+fn valid_form_command(command:ffi::FormCommand,key:&str)->bool{use ffi::FormCommand as C;match command{C::PreferenceText=>!key.is_empty(),C::WorkspaceSave|C::WorkspaceToggle|C::WorkspaceRemove|C::WorkspaceProfiles|C::WorkspaceImport|C::ProfileCreate|C::ProfileRename|C::ProfileDelete|C::ProfileBack|C::ImportApply|C::PreferenceSite|C::PreferenceClear|C::PreferenceDirectory|C::History|C::Workspace|C::Passwords|C::Profiles|C::Import|C::Proxy|C::Certificates|C::Providers|C::Shortcuts|C::TimeMachine=>key.is_empty(),_=>false}}
+enum NodeModel { FormCommand(FormCommandModel), Checkbox(CheckboxState), Toggle(ToggleState), Select(SelectState), Workspace(WorkspacePresentation), History(HistoryPresentation), Palette(PalettePresentation), PaletteRoot(PaletteSceneState), FormRoot(ffi::FormGroupStyle), SiteRule(SiteRulePresentation) }
 impl NodeModel {
     // Popup tokens and IME prefix belong to one input lease, unlike selection.
     fn detach_input(&mut self){if let Self::Select(s)=self{s.dismiss();s.reset_prefix();s.last_close=None;}}
 }
-struct ActionNodeRecord { owner:Rc<()>, id:u64, parent:u64, lease:u64, attached:bool, alive:bool, state:ActionState, model:Option<Box<NodeModel>> }
+struct ActionNodeRecord { kind:u32, owner:Rc<()>, id:u64, parent:u64, lease:u64, attached:bool, alive:bool, state:ActionState, model:Option<Box<NodeModel>> }
 impl ActionNodeRecord {fn retire(&mut self){self.alive=false;self.attached=false;self.state.action_focus(false);self.state.action_cancel();self.model=None;self.parent=0;}}
 pub struct ActionGraph { owner:Rc<()>, nodes:BTreeMap<ActionNodeIdentity,Rc<RefCell<ActionNodeRecord>>>, order:Vec<u64>, next_id:u64 }
 fn new_action_graph()->Box<ActionGraph>{Box::new(ActionGraph{owner:Rc::new(()),nodes:BTreeMap::new(),order:vec![],next_id:1})}
 fn new_palette_graph()->Box<ActionGraph>{let mut graph=new_action_graph();assert!(graph.reconcile_palette(vec![]).admitted);graph}
 
 fn default_form_style()->ffi::FormGroupStyle{ffi::FormGroupStyle{vertical:false,spacing:0,intrinsic:false,dialog:false,shared:false}}
-fn new_form_graph(vertical:bool,spacing:i32,intrinsic:bool,dialog:bool)->Box<ActionGraph>{let mut graph=new_action_graph();let root=graph.next_id;graph.next_id+=1;graph.nodes.insert((12,0,0,String::new()),Rc::new(RefCell::new(ActionNodeRecord{owner:graph.owner.clone(),id:root,parent:0,lease:0,attached:false,alive:true,state:initial_action_state(),model:Some(Box::new(NodeModel::FormRoot(ffi::FormGroupStyle{vertical,spacing,intrinsic,dialog,shared:false})))})));graph.order.push(root);graph}
+fn new_form_graph(vertical:bool,spacing:i32,intrinsic:bool,dialog:bool)->Box<ActionGraph>{let mut graph=new_action_graph();let root=graph.next_id;graph.next_id+=1;graph.nodes.insert((12,0,0,String::new()),Rc::new(RefCell::new(ActionNodeRecord{kind:12,owner:graph.owner.clone(),id:root,parent:0,lease:0,attached:false,alive:true,state:initial_action_state(),model:Some(Box::new(NodeModel::FormRoot(ffi::FormGroupStyle{vertical,spacing,intrinsic,dialog,shared:false})))})));graph.order.push(root);graph}
 
 impl ActionGraph {
     fn rejected(&self)->ffi::ActionNodePlan{ffi::ActionNodePlan{admitted:false,ids:self.order.clone(),created:0,retired:0}}
@@ -1849,7 +1859,7 @@ impl ActionGraph {
         self.nodes.retain(|key,node|{if unique.contains(key){return true;}let mut node=node.borrow_mut();node.retire();retired+=1;false});
         let mut order=Vec::with_capacity(identities.len());
         for key in identities {
-            let node=self.nodes.entry(key).or_insert_with(||{let id=self.next_id;self.next_id+=1;Rc::new(RefCell::new(ActionNodeRecord{owner:self.owner.clone(),id,parent:0,lease:0,attached:false,alive:true,state:initial_action_state(),model:None}))});
+            let kind=key.0;let node=self.nodes.entry(key).or_insert_with(||{let id=self.next_id;self.next_id+=1;Rc::new(RefCell::new(ActionNodeRecord{kind,owner:self.owner.clone(),id,parent:0,lease:0,attached:false,alive:true,state:initial_action_state(),model:None}))});
             order.push(node.borrow().id);
         }
         self.order=order.clone();ffi::ActionNodePlan{admitted:true,ids:order,created,retired}
@@ -1861,9 +1871,9 @@ impl ActionGraph {
         // Reserve both root and member before mutation so ID exhaustion cannot
         // leave a partial scene behind. A live empty group retains its root.
         let Some(next)=self.next_id.checked_add(if missing{2}else{1}) else{return Box::new(ActionControl{storage:ActionStorage::Retired});};
-        if missing{let root=self.next_id;self.next_id+=1;self.nodes.insert(group.clone(),Rc::new(RefCell::new(ActionNodeRecord{owner:self.owner.clone(),id:root,parent:0,lease:0,attached:false,alive:true,state:initial_action_state(),model:Some(Box::new(NodeModel::FormRoot(default_form_style())))})));self.order.push(root);}
+        if missing{let root=self.next_id;self.next_id+=1;self.nodes.insert(group.clone(),Rc::new(RefCell::new(ActionNodeRecord{kind:12,owner:self.owner.clone(),id:root,parent:0,lease:0,attached:false,alive:true,state:initial_action_state(),model:Some(Box::new(NodeModel::FormRoot(default_form_style())))})));self.order.push(root);}
         let parent={let mut root=self.nodes[&group].borrow_mut();if root.model.is_none(){root.model=Some(Box::new(NodeModel::FormRoot(default_form_style())));}root.id};let id=self.next_id;
-        let node=Rc::new(RefCell::new(ActionNodeRecord{owner:self.owner.clone(),id,parent,lease:1,attached:true,alive:true,state:initial_action_state(),model:None}));
+        let node=Rc::new(RefCell::new(ActionNodeRecord{kind:9,owner:self.owner.clone(),id,parent,lease:1,attached:true,alive:true,state:initial_action_state(),model:None}));
         self.nodes.insert((9,id,0,String::new()),node.clone());self.order.push(id);self.next_id=next;
         Box::new(ActionControl{storage:ActionStorage::Shared{node,lease:1}})
     }
@@ -2022,7 +2032,7 @@ impl ActionControl {
     fn node_select_reset_prefix(&mut self)->(){self.write_node(|r|{if let Some(NodeModel::Select(s))=r.model.as_deref_mut(){s.reset_prefix()}else{()}}).unwrap_or_else(||())}
     fn node_select_input(&mut self,lower_text: &str, now_ms: u64, enabled: bool)->bool{self.write_node(|r|{let gate=r.state.enabled;if let Some(NodeModel::Select(s))=r.model.as_deref_mut(){s.input(lower_text,now_ms,enabled&&gate)}else{false}}).unwrap_or_else(||false)}
     fn node_parent_id(&self)->u64{self.read_node(|node|node.parent).unwrap_or(0)}
-    fn node_model_kind(&self)->u32{self.read_node(|r|match r.model.as_deref(){Some(NodeModel::Checkbox(_))=>1,Some(NodeModel::Toggle(_))=>2,Some(NodeModel::Select(_))=>3,Some(NodeModel::Workspace(_))=>4,Some(NodeModel::History(_))=>5,Some(NodeModel::Palette(_))=>6,Some(NodeModel::SiteRule(_))=>7,Some(NodeModel::PaletteRoot(_))|Some(NodeModel::FormRoot(_))|None=>0}).unwrap_or(0)}
+    fn node_model_kind(&self)->u32{self.read_node(|r|match r.model.as_deref(){Some(NodeModel::FormCommand(_))=>8,Some(NodeModel::Checkbox(_))=>1,Some(NodeModel::Toggle(_))=>2,Some(NodeModel::Select(_))=>3,Some(NodeModel::Workspace(_))=>4,Some(NodeModel::History(_))=>5,Some(NodeModel::Palette(_))=>6,Some(NodeModel::SiteRule(_))=>7,Some(NodeModel::PaletteRoot(_))|Some(NodeModel::FormRoot(_))|None=>0}).unwrap_or(0)}
     fn node_checkbox_init(&mut self,checked:bool)->bool{self.write_node(|r|match r.model.as_deref(){Some(NodeModel::Checkbox(_))=>true,Some(_)=>false,None=>{r.model=Some(Box::new(NodeModel::Checkbox(CheckboxState{checked})));true}}).unwrap_or(false)}
     fn node_checked(&self)->bool{self.read_node(|r|matches!(r.model.as_deref(),Some(NodeModel::Checkbox(s)) if s.checked())).unwrap_or(false)}
     fn node_set_checked(&mut self,checked:bool)->bool{self.write_node(|r|if let Some(NodeModel::Checkbox(s))=r.model.as_deref_mut(){s.set_checked(checked)}else{false}).unwrap_or(false)}
@@ -2036,6 +2046,17 @@ impl ActionControl {
     fn node_toggle_view(&self,now:u64)->ffi::NodeToggleView{self.read_node(|r|if let Some(NodeModel::Toggle(s))=r.model.as_deref(){Some(ffi::NodeToggleView{checked:s.toggle_checked(),progress:s.toggle_progress(now),hover:s.toggle_hover_progress(now),animating:s.toggle_animating(now)})}else{None}).flatten().unwrap_or(ffi::NodeToggleView{checked:false,progress:0.0,hover:0.0,animating:false})}
     fn retired_input()->ffi::RowInputResult{ffi::RowInputResult{visual:ffi::RowVisual::Disabled,action:ffi::RowAction::None,handled:false}}
     fn action_node_id(&self)->u64{match &self.storage{ActionStorage::Shared{node,lease}=>{let record=node.borrow();if record.alive&&record.attached&&record.lease==*lease{record.id}else{0}},_=>0}}
+    // Semantic commands belong to private form members, never display labels.
+    // Rebinding to another command requires a new node; stale adapters fail shut.
+    fn node_form_command_init(&mut self,command:ffi::FormCommand,key:&str)->bool{
+        if !valid_form_command(command,key){return false;}
+        self.write_node(|r|{if r.kind!=9{return false;}match r.model.as_deref(){Some(NodeModel::FormCommand(m))=>m.command==command&&m.key==key,Some(_)=>false,None=>{r.model=Some(Box::new(NodeModel::FormCommand(FormCommandModel{command,key:key.into()})));true}}}).unwrap_or(false)
+    }
+    fn node_form_command(&self)->ffi::FormCommandBinding{
+        self.read_node(|r|{if !r.state.enabled||r.state.admission_epoch==0{return None;}if let Some(NodeModel::FormCommand(m))=r.model.as_deref(){Some(ffi::FormCommandBinding{command:m.command,key:m.key.clone()})}else{None}}).flatten().unwrap_or(ffi::FormCommandBinding{command:ffi::FormCommand::None,key:String::new()})
+    }
+    fn action_admission_epoch(&self)->u64{self.read(|s|s.admission_epoch).unwrap_or(0)}
+    fn action_admits(&self,epoch:u64)->bool{epoch!=0&&self.read(|s|s.enabled&&s.admission_epoch==epoch).unwrap_or(false)}
     fn action_enabled(&mut self,value:bool)->bool{self.write(|s|s.action_enabled(value)).unwrap_or(false)}
     fn action_focus(&mut self,value:bool){self.write(|s|s.action_focus(value));}
     fn action_on(&mut self,value:bool)->bool{self.write(|s|s.action_on(value)).unwrap_or(false)}
@@ -3279,6 +3300,33 @@ mod tests {
     fn node_pin(name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:2,high:0,low:0,name:name.into()}}
     fn node_close(low:u64)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:10,high:7,low,name:String::new()}}
     fn node_named(kind:u32,name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind,high:0,low:0,name:name.into()}}
+    #[test] fn form_commands_own_semantics_and_keys_independently_of_labels(){
+        let mut g=new_form_graph(false,8,false,false);let mut a=g.append_form_action();assert!(a.node_form_command_init(ffi::FormCommand::PreferenceText,"accept_languages"));assert_eq!(a.node_model_kind(),8);assert_eq!(a.node_form_command().command,ffi::FormCommand::PreferenceText);assert_eq!(a.node_form_command().key,"accept_languages");assert!(a.node_form_command_init(ffi::FormCommand::PreferenceText,"accept_languages"));assert!(!a.node_form_command_init(ffi::FormCommand::PreferenceText,"dns_templates"));assert!(!a.node_form_command_init(ffi::FormCommand::ProfileDelete,""));assert_eq!(a.node_form_command().key,"accept_languages");
+    }
+    #[test] fn form_commands_reject_invalid_domains_and_typed_model_collisions(){
+        let mut g=new_form_graph(false,0,false,false);let mut a=g.append_form_action();for (c,k) in [(ffi::FormCommand::None,""),(ffi::FormCommand::PreferenceText,""),(ffi::FormCommand::ImportApply,"extra")]{assert!(!a.node_form_command_init(c,k));assert_eq!(a.node_model_kind(),0);}assert!(a.node_checkbox_init(true));assert!(!a.node_form_command_init(ffi::FormCommand::ProfileDelete,""));let mut standalone=new_action_control();assert!(!standalone.node_form_command_init(ffi::FormCommand::ProfileDelete,""));let mut other=new_action_graph();other.reconcile(vec![node_tab(1)]);let mut tab=other.acquire(&node_tab(1));assert!(!tab.node_form_command_init(ffi::FormCommand::ImportApply,""));
+    }
+    #[test] fn form_commands_cover_all_production_semantics(){
+        use ffi::FormCommand as C;let commands=[C::WorkspaceSave,C::WorkspaceToggle,C::WorkspaceRemove,C::WorkspaceProfiles,C::WorkspaceImport,C::ProfileCreate,C::ProfileRename,C::ProfileDelete,C::ProfileBack,C::ImportApply,C::PreferenceSite,C::PreferenceClear,C::PreferenceDirectory,C::History,C::Workspace,C::Passwords,C::Profiles,C::Import,C::Proxy,C::Certificates,C::Providers,C::Shortcuts,C::TimeMachine];let mut g=new_form_graph(false,0,false,false);for command in commands{let mut a=g.append_form_action();assert!(a.node_form_command_init(command,""));assert_eq!(a.node_form_command().command,command);assert!(a.node_form_command().key.is_empty());}
+    }
+    #[test] fn form_commands_disabled_retired_and_owner_drop_fail_closed(){
+        let mut g=new_form_graph(false,0,false,false);let mut a=g.append_form_action();a.node_form_command_init(ffi::FormCommand::ProfileDelete,"");let id=a.action_node_id();a.action_enabled(false);assert_eq!(a.node_form_command().command,ffi::FormCommand::None);a.action_enabled(true);assert_eq!(a.node_form_command().command,ffi::FormCommand::ProfileDelete);assert!(g.retire_form_action(id));assert_eq!(a.node_form_command().command,ffi::FormCommand::None);let mut b=g.append_form_action();b.node_form_command_init(ffi::FormCommand::ImportApply,"");drop(g);assert_eq!(b.node_form_command().command,ffi::FormCommand::None);
+    }
+    #[test] fn form_admission_cancellation_invalidates_even_an_idle_activation(){
+        let mut g=new_form_graph(false,0,false,false);let mut a=g.append_form_action();let epoch=a.action_admission_epoch();assert!(a.action_admits(epoch));assert!(!a.action_cancel());assert!(!a.action_admits(epoch));assert!(a.action_admits(a.action_admission_epoch()));assert!(!a.action_admits(0));
+    }
+    #[test] fn form_admission_disable_reenable_and_focus_loss_do_not_resurrect_events(){
+        let mut a=new_action_control();let epoch=a.action_admission_epoch();a.action_enabled(false);a.action_enabled(true);assert!(!a.action_admits(epoch));let epoch=a.action_admission_epoch();a.action_focus(false);assert!(!a.action_admits(epoch));
+    }
+    #[test] fn form_admission_read_projection_preserves_valid_events(){
+        let mut g=new_form_graph(false,8,false,false);let mut a=g.append_form_action();a.node_form_command_init(ffi::FormCommand::WorkspaceSave,"");let epoch=a.action_admission_epoch();a.action_snapshot();a.node_form_command();g.form_scene();g.form_style();assert!(a.action_admits(epoch));g.reorder_form_actions(vec![a.action_node_id()]);assert!(a.action_admits(epoch));
+    }
+    #[test] fn form_admission_reorder_cancels_but_preserves_semantic_model(){
+        let mut g=new_form_graph(false,8,false,false);let mut a=g.append_form_action();let b=g.append_form_action();a.node_form_command_init(ffi::FormCommand::ProfileRename,"");let epoch=a.action_admission_epoch();assert!(g.reorder_form_actions(vec![b.action_node_id(),a.action_node_id()]));assert!(!a.action_admits(epoch));assert_eq!(a.node_form_command().command,ffi::FormCommand::ProfileRename);
+    }
+    #[test] fn form_admission_retirement_and_epoch_exhaustion_never_revalidate(){
+        let mut g=new_form_graph(false,0,false,false);let a=g.append_form_action();let epoch=a.action_admission_epoch();g.retire_form_action(a.action_node_id());assert_eq!(a.action_admission_epoch(),0);assert!(!a.action_admits(epoch));let mut b=new_action_control();b.write(|s|s.admission_epoch=u64::MAX);b.action_cancel();assert_eq!(b.action_admission_epoch(),0);b.action_cancel();assert!(!b.action_admits(0));assert!(!b.action_admits(1));
+    }
     fn site_rule(key:&str,detail:&str,editable:bool,source_index:usize)->ffi::SiteRuleSceneInput{ffi::SiteRuleSceneInput{key:key.into(),detail:detail.encode_utf16().collect(),editable,source_index}}
     fn site_tree()->Box<ActionGraph>{let mut g=new_action_graph();assert!(g.reconcile_site_rules(vec![site_rule("a","First",true,3),site_rule("b","Managed",false,7)]).admitted);g}
     #[test] fn site_rule_tree_owns_parent_order_copy_editability_and_scope(){
