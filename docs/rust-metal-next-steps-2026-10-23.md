@@ -5,14 +5,9 @@ inventory is [the parity checklist](rust-metal-parity.md).
 
 ## Current workflow — 2026-10-27
 
-**Paused by user request on 2026-10-27.** No further migration or UI execution
-until resumed. See [the saved status and remaining work](rust-metal-status-2026-10-27.md).
-
-When resumed, the goal stops and summarizes when weekly remaining usage falls
-below 50%; the former 70% threshold is superseded. Do not run browser UI tests;
-accumulate compiled cases for a later bulk checkpoint. Build, Rust/Python and SDK
-checks without windows remain enabled. No computer shutdown is requested.
-The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
+**Resumed on 2026-10-27 (evening).** The goal ends at full migration or when weekly
+usage exceeds 25%. UI tests run only after larger milestones. Build only with
+`.chromium/src/third_party/ninja/ninja`. See [status](rust-metal-status-2026-10-27.md).
 
 ## Current remaining implementation queue — 2026-10-27
 
@@ -94,6 +89,15 @@ color/label/AX projection remain. Headless: 481 Rust, 68 live/archive Python and
 180 SDK plus raster; both binaries compile. Two additional browser cases cover all
 presets and workspace-switch observer cancellation; execution remains deferred.
 [Details](rust-metal-parity.md#latest-headless-implementation-semantic-workspace-appearance-preset-actions).
+
+The split-pair checkpoint gives the sidebar a Rust `sidebar.pair` node (key kind 15)
+whose parent is the anchoring pin's folder group or the tab root, with both member
+tabs as children. Pins represented by a tab are hidden in Rust; pair visibility follows
+folder collapse and revokes member targets/input. Native Rust-mode `RebuildTabs` projects
+slots and pin visibility from `sidebar_tabs()`. The status checkpoint moves preference
+write outcomes (`PreferenceOutcome`), shortcut capture transitions (`tools_capture`) and
+history/write status copy (`tools_status`) into Rust forms. Headless: 487 Rust,
+68 Python, boundaries; both binaries compile. One new browser case is deferred.
 
 1. **Audit residual native action hosts and service/popup boundaries.** Peek's
    toolbar is now migrated; download row buttons already use Rust-owned groups.

@@ -7418,6 +7418,49 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarPinnedPairFollowsPaneOr
   EXPECT_TRUE(a->IsDrawn()); EXPECT_TRUE(b->IsDrawn());
   EXPECT_EQ(a_x, a->GetBoundsInScreen().x()); EXPECT_EQ(b_x, b->GetBoundsInScreen().x());
 }
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarPairRustNodeOwnsMembersAnchorAndFolderVisibility) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  if (!shell->workspace_input()->rust_editor()) return;
+  shell->SetWorkspaceAnimations(false);
+  base::FilePath source;
+  ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &source));
+  window_->PreviewArcImport(source.AppendASCII("zitter/testdata/arc"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->import_ready(); }));
+  ASSERT_TRUE(window_->ApplyArcImport());
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  ASSERT_TRUE(window_->Select("arc-space-space-a"));
+  shell->CloseOverlays(true); shell->SetPinned(true); shell->ShowSidebar();
+  window_->OpenPinnedItem("tab-a"); window_->OpenPinnedItem("tab-b");
+  ASSERT_EQ(3u, window_->tab_count("arc-space-space-a"));
+  EXPECT_EQ(0u, shell->sidebar_pair_for_testing()[0]);
+  const auto root = shell->scene_parent_id_for_testing(shell->tab_button(0));
+  ASSERT_TRUE(window_->SplitTab(1));
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  auto pair = shell->sidebar_pair_for_testing();
+  ASSERT_NE(0u, pair[0]); EXPECT_EQ(1u, pair[2]);
+  EXPECT_NE(root, pair[1]);  // Anchored inside the pinned page's folder group.
+  EXPECT_EQ(pair[0], shell->scene_parent_id_for_testing(shell->tab_button(1)));
+  EXPECT_EQ(pair[0], shell->scene_parent_id_for_testing(shell->tab_button(2)));
+  EXPECT_EQ(root, shell->scene_parent_id_for_testing(shell->tab_button(0)));
+  const auto first = shell->sidebar_node_id_for_testing(shell->tab_button(1));
+  auto* nested = SidebarNamedButton(shell->sidebar_view(), u"▾ Projekt");
+  ASSERT_TRUE(nested); ActivateSidebarRow(nested);
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  EXPECT_EQ(0u, shell->sidebar_pair_for_testing()[2]);
+  EXPECT_FALSE(shell->tab_button(2)->IsDrawn());
+  ActivateSidebarRow(SidebarNamedButton(shell->sidebar_view(), u"▸ Projekt"));
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  EXPECT_EQ(1u, shell->sidebar_pair_for_testing()[2]);
+  EXPECT_TRUE(shell->tab_button(2)->IsDrawn());
+  window_->Unsplit(1);
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  EXPECT_EQ(0u, shell->sidebar_pair_for_testing()[0]);
+  if (auto* row = shell->tab_button(1)) {
+    EXPECT_EQ(root, shell->scene_parent_id_for_testing(row));
+    EXPECT_EQ(first, shell->sidebar_node_id_for_testing(row));
+  }
+}
 // Exercise Rust-owned gesture state and row geometry through native events,
 // rather than invoking the command callbacks or asserting implementation data.
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeDragAndCloseAtWidthLimits) {

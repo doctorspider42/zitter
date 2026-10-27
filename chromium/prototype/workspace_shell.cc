@@ -4653,16 +4653,18 @@ void WorkspaceShell::Update(ShellState state) {
   RebuildTabs(previous_workspace, changed);
 }
 
-void WorkspaceShell::ReconcileSidebarNodes(TabListCache& cache,std::string_view workspace,const std::vector<PinnedItem>& pins,const std::vector<ShellTab>& tabs){
+void WorkspaceShell::ReconcileSidebarNodes(TabListCache& cache,std::string_view workspace,const std::vector<PinnedItem>& pins,const std::vector<ShellTab>& tabs,std::array<std::optional<size_t>,2> split_tabs,bool split){
 #if BUILDFLAG(IS_MAC)
   if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")!="rust-metal")return;
   // Titles, URLs and active selection do not alter logical node membership.
   // Keep the fast refresh path allocation-free when identities/order are equal.
-  if(cache.node_graph&&cache.pins==pins&&cache.tabs.size()==tabs.size()&&
-      std::equal(cache.tabs.begin(),cache.tabs.end(),tabs.begin(),[](const auto& a,const auto& b){return a.identity==b.identity&&a.index==b.index;}))return;
+  if(cache.node_graph&&cache.pins==pins&&cache.split_tabs==split_tabs&&cache.split==split&&cache.tabs.size()==tabs.size()&&
+      std::equal(cache.tabs.begin(),cache.tabs.end(),tabs.begin(),[](const auto& a,const auto& b){return a.identity==b.identity&&a.index==b.index&&a.pin_id==b.pin_id;}))return;
   if(!cache.node_graph)cache.node_graph=std::make_shared<SidebarNodeGraphState>();
-  rust::Vec<sidebar::SidebarPinInput> pin_ids;for(const auto& pin:pins){const auto title=base::UTF8ToUTF16(pin.title);const auto monogram=pin.folder?std::u16string():base::i18n::ToUpper(title.substr(0,1));const auto color=pin.folder?SK_ColorTRANSPARENT:kMonogramColors[base::FastHash(pin.url.host())%kMonogramColors.size()];pin_ids.push_back({pin.id,pin.parent_id,SceneUtf16(title),SceneUtf16(monogram),color,pin.folder,pin.folder&&sidebar_tree_.Collapsed(workspace,pin.id)});}rust::Vec<sidebar::SidebarTabInput> tab_ids;for(const auto& tab:tabs)tab_ids.push_back({tab.identity[0],tab.identity[1],tab.index});
-  const auto plan=cache.node_graph->graph->reconcile_sidebar(std::move(pin_ids),std::move(tab_ids));
+  rust::Vec<sidebar::SidebarPinInput> pin_ids;for(const auto& pin:pins){const auto title=base::UTF8ToUTF16(pin.title);const auto monogram=pin.folder?std::u16string():base::i18n::ToUpper(title.substr(0,1));const auto color=pin.folder?SK_ColorTRANSPARENT:kMonogramColors[base::FastHash(pin.url.host())%kMonogramColors.size()];pin_ids.push_back({pin.id,pin.parent_id,SceneUtf16(title),SceneUtf16(monogram),color,pin.folder,pin.folder&&sidebar_tree_.Collapsed(workspace,pin.id)});}rust::Vec<sidebar::SidebarTabInput> tab_ids;for(const auto& tab:tabs)tab_ids.push_back({tab.identity[0],tab.identity[1],tab.index,tab.pin_id});
+  // Rust owns the split pair node, its pin anchor/parent and member visibility.
+  const auto plan=cache.node_graph->graph->reconcile_sidebar_layout(std::move(pin_ids),std::move(tab_ids),
+      split_tabs[0].value_or(SidebarTree::kRoot),split_tabs[1].value_or(SidebarTree::kRoot),split);
   CHECK(plan.admitted)<<"Invalid sidebar logical node projection";
 #endif
 }
@@ -4696,7 +4698,7 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
   // Titles/URLs can change several times during a single navigation. Keep the
   // native rows, callbacks, hover/focus and accessibility nodes in that case.
   const bool same_structure = !pins_changed && cache.tabs.size() == state_.tabs.size() &&
-      cache.split_tabs == state_.split_tabs &&
+      cache.split_tabs == state_.split_tabs && cache.split == state_.split &&
       std::equal(cache.tabs.begin(), cache.tabs.end(), state_.tabs.begin(),
           [](const ShellTab& a, const ShellTab& b) {
             return a.index == b.index && a.pin_id == b.pin_id && a.identity == b.identity;
@@ -4705,7 +4707,7 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
   std::optional<sidebar::SidebarPinTree> previous_pin_tree;
   if(pins_changed&&cache.node_graph)previous_pin_tree.emplace(cache.node_graph->graph->pin_tree());
 #endif
-  if(!same_structure)ReconcileSidebarNodes(cache,state_.workspace_id,state_.pins,state_.tabs);
+  if(!same_structure)ReconcileSidebarNodes(cache,state_.workspace_id,state_.pins,state_.tabs,state_.split_tabs,state_.split);
   bool rebuild_pins=pins_changed;
 #if BUILDFLAG(IS_MAC)
   if(previous_pin_tree&&cache.pins.empty()==state_.pins.empty()){
@@ -4805,6 +4807,15 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
     pin_nodes.reserve(state_.pins.size()); tab_nodes.reserve(state_.tabs.size());
     for (const auto& pin : state_.pins) pin_nodes.push_back({pin.id, pin.parent_id, pin.folder});
     for (const auto& tab : state_.tabs) tab_nodes.push_back({tab.index, tab.pin_id});
+#if BUILDFLAG(IS_MAC)
+    if (cache.node_graph) {
+      // The Rust graph reconciled this exact layout above; project its slots.
+      const auto tree = cache.node_graph->graph->sidebar_tabs();
+      cache.tab_plan = {};
+      for (const auto& slot : tree.slots) cache.tab_plan.slots.push_back({slot.first, slot.second, slot.pin, slot.pair});
+      for (const auto& pin : tree.pins) cache.tab_plan.pins.push_back({pin.index, pin.visible});
+    } else
+#endif
     cache.tab_plan = sidebar_tree_.Tabs(state_.workspace_id, pin_nodes, tab_nodes,
         state_.split_tabs[0].value_or(SidebarTree::kRoot),
         state_.split_tabs[1].value_or(SidebarTree::kRoot), state_.split);
@@ -4826,6 +4837,7 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
     cache.tabs_root->AddChildView(std::move(contents));
     cache.tabs = state_.tabs;
     cache.split_tabs = state_.split_tabs;
+    cache.split = state_.split;
   } else if (cache.tabs != state_.tabs) {
     for (size_t i = 0; i < state_.tabs.size(); ++i) {
       const auto& tab = state_.tabs[i];
@@ -5653,6 +5665,13 @@ uint64_t WorkspaceShell::sidebar_node_id_for_testing(views::View* row) const{
 #else
   return 0;
 #endif
+}
+std::array<uint64_t,3> WorkspaceShell::sidebar_pair_for_testing() const{
+#if BUILDFLAG(IS_MAC)
+  auto cache=tab_lists_.find(state_.workspace_id);
+  if(cache!=tab_lists_.end()&&cache->second.node_graph){const auto tree=cache->second.node_graph->graph->sidebar_tabs();return {tree.pair,tree.parent,tree.visible?1u:0u};}
+#endif
+  return {};
 }
 uint64_t WorkspaceShell::scene_parent_id_for_testing(views::View* view) const{
 #if BUILDFLAG(IS_MAC)
@@ -7036,6 +7055,18 @@ void WorkspaceShell::SetBrowsingDataBusy(bool busy) {
   clear_data_button_->SetEnabled(!busy);
   SetActionText(clear_data_button_,busy ? u"Czyszczenie…" : u"Wyczyść…");
 }
+void WorkspaceShell::ReportPreferenceOutcome(int outcome, const std::string& key, bool ok, std::u16string native) {
+  bool error = !ok;
+#if BUILDFLAG(IS_MAC)
+  if (preferences_form_) {
+    const auto status = preferences_form_->form->preference_outcome(sidebar::PreferenceOutcome{static_cast<uint8_t>(outcome)}, key, ok);
+    native = base::UTF8ToUTF16(std::string(status.text)); error = status.error;
+  }
+#endif
+  if (outcome != 4) { SetPreferencesStatus(std::move(native), error); return; }
+  if (!general_status_) return;
+  SetPanelText(general_status_, native); SetPreferenceCopyTone(general_status_, error ? kError : kMuted);
+}
 void WorkspaceShell::SetPreferencesStatus(std::u16string text, bool error) {
   if (history_visible()) SetPanelText(tools_status_,text);
   if (!general_status_) return;
@@ -7091,10 +7122,10 @@ void WorkspaceShell::SaveTextPreference(std::string key) {
   const bool ok = callbacks_.write_text_preference && callbacks_.write_text_preference.Run(key, base::UTF16ToUTF8(it->second->GetText()));
   PreferenceTextSaved(key,ok);
   RefreshGeneralControls();
-  SetPreferencesStatus(ok ? u"Zapisano. Witryna może wymagać odświeżenia, aby zastosować zmianę." :
+  ReportPreferenceOutcome(0, key, ok, ok ? u"Zapisano. Witryna może wymagać odświeżenia, aby zastosować zmianę." :
       key == "accept_languages" ? u"Podaj poprawne kody języków oddzielone przecinkami, np. pl, en-US, en." :
       key == "dns_templates" ? u"Podaj poprawny szablon DNS-over-HTTPS. W trybie ścisłym adres nie może być pusty." :
-      u"Nie udało się zapisać. Podaj nazwę rodziny czcionki (do 128 znaków). Ustawienie może być zarządzane.", !ok);
+      u"Nie udało się zapisać. Podaj nazwę rodziny czcionki (do 128 znaków). Ustawienie może być zarządzane.");
 }
 void WorkspaceShell::SaveSitePreference() {
   if(!site_origin_||site_origin_->IsIMEComposing())return;
@@ -7104,12 +7135,12 @@ void WorkspaceShell::SaveSitePreference() {
   const bool ok = callbacks_.write_site_preference && callbacks_.write_site_preference.Run(
       base::UTF16ToUTF8(site_origin_->GetText()), kSitePreferenceKeys[type], static_cast<int>(policy));
   if (ok) { RefreshSitePreferences(); FilterPreferences(); }
-  SetPreferencesStatus(ok ? u"Zapisano wyjątek w tym profilu. Odśwież witrynę, aby zastosować zmianę." :
-      u"Nie zapisano wyjątku. Podaj adres HTTP(S) bez ścieżki i danych logowania. Sprawdź wybraną politykę; reguły zarządzane nie mogą być zmieniane.", !ok);
+  ReportPreferenceOutcome(1, "", ok, ok ? u"Zapisano wyjątek w tym profilu. Odśwież witrynę, aby zastosować zmianę." :
+      u"Nie zapisano wyjątku. Podaj adres HTTP(S) bez ścieżki i danych logowania. Sprawdź wybraną politykę; reguły zarządzane nie mogą być zmieniane.");
 }
 void WorkspaceShell::PostRemoveSiteRule(SitePreferenceRule rule,std::string profile_id){
   // Retain the click's exact backend value and profile through the deferred task.
-  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,SitePreferenceRule rule,std::string profile_id){if(!shell||shell->state_.profile_id!=profile_id)return;const bool ok=shell->callbacks_.remove_site_preference&&shell->callbacks_.remove_site_preference.Run(std::move(rule));shell->RefreshSitePreferences();shell->FilterPreferences();shell->SetPreferencesStatus(ok?u"Usunięto wyjątek. Witryna wróci do ustawień domyślnych.":u"Nie udało się usunąć wyjątku. Reguła może być zarządzana.",!ok);},weak_factory_.GetWeakPtr(),std::move(rule),std::move(profile_id)));
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,SitePreferenceRule rule,std::string profile_id){if(!shell||shell->state_.profile_id!=profile_id)return;const bool ok=shell->callbacks_.remove_site_preference&&shell->callbacks_.remove_site_preference.Run(std::move(rule));shell->RefreshSitePreferences();shell->FilterPreferences();shell->ReportPreferenceOutcome(2,"",ok,ok?u"Usunięto wyjątek. Witryna wróci do ustawień domyślnych.":u"Nie udało się usunąć wyjątku. Reguła może być zarządzana.");},weak_factory_.GetWeakPtr(),std::move(rule),std::move(profile_id)));
 }
 void WorkspaceShell::RefreshSitePreferences(bool reload) {
   if(!site_rules_list_)return;
@@ -7157,9 +7188,9 @@ void WorkspaceShell::RefreshSitePreferences(bool reload) {
 void WorkspaceShell::WritePreference(std::string key, int value) {
   const bool ok = callbacks_.write_preference && callbacks_.write_preference.Run(key, value);
   RefreshGeneralControls();
-  SetPreferencesStatus(ok ? (key == "hardware_acceleration" ? u"Zapisano. Uruchom ponownie Zitter, aby zmienić akcelerację sprzętową." : u"Zapisano. Jeśli strona nie zastosowała zmiany, odśwież ją.") :
+  ReportPreferenceOutcome(3, key, ok, ok ? (key == "hardware_acceleration" ? u"Zapisano. Uruchom ponownie Zitter, aby zmienić akcelerację sprzętową." : u"Zapisano. Jeśli strona nie zastosowała zmiany, odśwież ją.") :
       key == "dns_mode" ? u"Nie zapisano trybu DNS. Tryb ścisły wymaga poprawnego adresu DNS-over-HTTPS; ustawienie może też być zarządzane." :
-      u"Nie udało się zmienić ustawienia. Profil może być zarządzany lub niedostępny.", !ok);
+      u"Nie udało się zmienić ustawienia. Profil może być zarządzany lub niedostępny.");
 }
 void WorkspaceShell::OpenGeneralSettings() {
   if (!widget_ || !widget_->IsVisible()) return;
@@ -7193,8 +7224,7 @@ void WorkspaceShell::SaveGeneralPatch(std::optional<ThemeMode> theme, std::optio
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
         if (!shell) return;
         --shell->pending_writes_;
-        SetPanelText(shell->general_status_,ok ? u"Przełączniki zapisują się automatycznie. Pola tekstowe zatwierdź przyciskiem Zapisz lub Enter." : u"Nie udało się zapisać ustawień. Spróbuj ponownie.");
-        shell->SetPreferenceCopyTone(shell->general_status_,ok?kMuted:kError);
+        shell->ReportPreferenceOutcome(4, "", ok, ok ? u"Przełączniki zapisują się automatycznie. Pola tekstowe zatwierdź przyciskiem Zapisz lub Enter." : u"Nie udało się zapisać ustawień. Spróbuj ponownie.");
       }, weak_factory_.GetWeakPtr()));
 }
 
@@ -7369,6 +7399,20 @@ bool WorkspaceShell::SetShortcut(std::string id, std::string chord) {
 }
 bool WorkspaceShell::CaptureShortcut(const ui::Accelerator& accelerator) {
   if (!ToolsRecording() || !tools_widget_ || !tools_widget_->IsVisible()) return false;
+#if BUILDFLAG(IS_MAC)
+  if (tools_form_) {
+    const auto capture = accelerator.key_code() == ui::VKEY_ESCAPE ? sidebar::ToolsCapture::Escape :
+        !ValidShortcut(accelerator) || accelerator.key_code() == ui::VKEY_UNKNOWN ? sidebar::ToolsCapture::Invalid : sidebar::ToolsCapture::Valid;
+    const auto result = tools_form_->form->tools_capture(capture);
+    if (!result.admitted) return false;
+    if (result.accept_chord && shortcut_chord_) shortcut_chord_->SetText(base::UTF8ToUTF16(FormatShortcut(accelerator)));
+    if (result.stop_recording) {
+      SetShortcutRecording(false);
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(&WorkspaceShell::RefreshKeyRegistrations, weak_factory_.GetWeakPtr()));
+    }
+    SetPanelText(tools_status_, base::UTF8ToUTF16(std::string(result.status))); return true;
+  }
+#endif
   if (accelerator.key_code() == ui::VKEY_ESCAPE) {
     SetShortcutRecording(false);
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(&WorkspaceShell::RefreshKeyRegistrations, weak_factory_.GetWeakPtr()));
@@ -7443,7 +7487,7 @@ void WorkspaceShell::SaveTools() {
     return base::JSONWriter::Write(merged, &output) && base::ImportantFileWriter::WriteFileAtomically(path, output);
   }, settings_path_.DirName().AppendASCII("ZitterTools.json"), std::move(json), keys_dirty_, engines_dirty_), base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
     if (!shell) return;
-    --shell->pending_writes_; if (!ok && shell->tools_status_) SetPanelText(shell->tools_status_,u"Nie udało się zapisać ustawień na dysku.");
+    --shell->pending_writes_; if (!ok && shell->tools_status_) SetPanelText(shell->tools_status_,shell->ToolsStatusText(2,u"Nie udało się zapisać ustawień na dysku."));
   }, weak_factory_.GetWeakPtr()));
 }
 int WorkspaceShell::ToolsPage() const {
@@ -7451,6 +7495,12 @@ int WorkspaceShell::ToolsPage() const {
   if(tools_form_)return static_cast<int>(tools_form_->form->tools_page());
 #endif
   return tools_page_;
+}
+std::u16string WorkspaceShell::ToolsStatusText(int status, std::u16string native) const {
+#if BUILDFLAG(IS_MAC)
+  if (tools_form_) return base::UTF8ToUTF16(std::string(sidebar::tools_status(sidebar::ToolsStatus{static_cast<uint8_t>(status)})));
+#endif
+  return native;
 }
 bool WorkspaceShell::ToolsRecording() const {
 #if BUILDFLAG(IS_MAC)
@@ -7508,7 +7558,7 @@ void WorkspaceShell::RefreshHistory(bool more) {
 #endif
   {history_limit_=more?history_limit_+200:200;history_loaded_=false;limit=history_limit_;}
   history_more_->SetEnabled(false);
-  SetPanelText(tools_status_,u"Odczytywanie historii…");
+  SetPanelText(tools_status_,ToolsStatusText(0,u"Odczytywanie historii…"));
   callbacks_.query_history.Run(ToolsHistoryQuery(),limit);
 }
 void WorkspaceShell::SetHistoryResults(std::u16string query, std::string profile_id, size_t limit,
@@ -8847,7 +8897,7 @@ void WorkspaceShell::ToolsEditorEdited(EditorControl* sender) {
     if(history_node_graph_)history_node_graph_->graph->reconcile({});
 #endif
     if(history_list_)history_list_->RemoveAllChildViews();
-    SetPanelText(tools_status_,u"Wyszukiwanie historii…");
+    SetPanelText(tools_status_,ToolsStatusText(1,u"Wyszukiwanie historii…"));
     if(history_more_)history_more_->SetEnabled(false);
     history_timer_.Start(FROM_HERE,base::Milliseconds(150),base::BindOnce(&WorkspaceShell::RefreshHistory,weak_factory_.GetWeakPtr(),false));
   }else if(sender==timeline_filter_){

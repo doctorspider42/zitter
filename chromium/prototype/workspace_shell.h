@@ -280,6 +280,9 @@ class WorkspaceShell final : public ui::EventHandler,
   bool workspace_swipe_contains_scene_text(std::string_view text) const;
   views::Widget* general_widget() const { return general_widget_.get(); }
   void SetPreferencesStatus(std::u16string text, bool error = false);
+  // Rust forms own outcome copy/tone; `native` is the Views fallback text.
+  // outcome is sidebar::PreferenceOutcome; general updates only the settings status.
+  void ReportPreferenceOutcome(int outcome, const std::string& key, bool ok, std::u16string native);
   void SetOperationStatus(std::u16string text);
   void SetBrowsingDataBusy(bool busy);
   EditorControl* preference_textfield(std::string key) const { return preference_textfields_.at(key); }
@@ -425,6 +428,8 @@ class WorkspaceShell final : public ui::EventHandler,
   views::Widget* address_widget() const { return address_widget_.get(); }
   views::View* tab_button(size_t index) const;
   uint64_t sidebar_node_id_for_testing(views::View* row) const;
+  // Rust split pair node: {id, parent id, visible}; zeros without a Rust graph.
+  std::array<uint64_t, 3> sidebar_pair_for_testing() const;
   views::Widget* sidebar_widget() const { return sidebar_widget_.get(); }
   EditorControl* workspace_input() const { return workspace_input_; }
   views::View* workspace_button(std::string_view id) const;
@@ -508,6 +513,8 @@ class WorkspaceShell final : public ui::EventHandler,
   bool metal_sidebar_pending_ = false;
   int ToolsPage() const;
   bool ToolsRecording() const;
+  // status is sidebar::ToolsStatus; Rust owns the copy when the tools form exists.
+  std::u16string ToolsStatusText(int status, std::u16string native) const;
   std::u16string ToolsHistoryQuery() const;
   std::u16string ToolsTimelineQuery() const;
   void ResetToolsForm();
@@ -595,12 +602,14 @@ class WorkspaceShell final : public ui::EventHandler,
     std::vector<ShellTab> tabs;
     SidebarTabPlan tab_plan;
     std::array<std::optional<size_t>, 2> split_tabs;
+    bool split = false;
     std::map<std::string, raw_ptr<views::View>> pin_buttons;
     std::map<size_t, raw_ptr<views::View>> tab_buttons;
     raw_ptr<views::View> pin_pair = nullptr;  // A split placed among the pins.
     std::string active_pin;
   };
-  void ReconcileSidebarNodes(TabListCache& cache, std::string_view workspace, const std::vector<PinnedItem>& pins, const std::vector<ShellTab>& tabs);
+  void ReconcileSidebarNodes(TabListCache& cache, std::string_view workspace, const std::vector<PinnedItem>& pins, const std::vector<ShellTab>& tabs,
+                             std::array<std::optional<size_t>, 2> split_tabs = {}, bool split = false);
   void AppendPinnedItems(views::View* root, const std::vector<PinnedItem>& pins,
                          TabListCache& cache, const std::string& workspace,
                          std::map<std::string,std::unique_ptr<views::View>>* retained=nullptr);

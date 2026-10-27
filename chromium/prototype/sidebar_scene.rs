@@ -24,6 +24,11 @@ mod ffi {
     struct ToolsActionContext { snapshot_field: bool, shortcut_field: bool, provider_field: bool, provider_selected: bool, snapshot_composing: bool, shortcut_composing: bool, provider_composing: bool, snapshot_selected: bool, closed_selected: bool, shortcut_selected: bool }
     struct ToolsDispatch { admitted: bool, action: i32, recording: bool, sync_recording: bool, record_status: String }
     struct ToolsOutcome { refresh: bool, status: String }
+    enum ToolsCapture { Escape, Invalid, Valid }
+    struct ToolsCaptureResult { admitted: bool, stop_recording: bool, accept_chord: bool, status: String }
+    enum ToolsStatus { HistoryReading, HistorySearching, WriteFailed }
+    enum PreferenceOutcome { Text, Site, SiteRemove, Value, General }
+    struct PreferenceStatus { text: String, error: bool }
     enum ToolsNodeKind { Hint, Heading, Editor, Choice, Action, BeginRow, EndRow, Rows, BeginActions, EndActions }
     enum ToolsNodeRole { None, SnapshotName, TimelineFilter, SnapshotChoice, ClosedChoice, ShortcutChoice, ShortcutChord, ProviderChoice, ProviderName, ProviderKeyword, ProviderUrl, HistoryQuery, HistoryPeriod, HistoryClear, HistoryRows, HistoryMore }
     struct ToolsSleepingCopy { title: Vec<u16>, detail: Vec<u16> }
@@ -170,8 +175,9 @@ mod ffi {
     struct SidebarPinTarget { valid: bool, folder: bool, collapsed: bool, group: u64 }
     struct SidebarPinTreeEntry { index: usize, key: String, id: u64, parent: u64, group: u64, depth: i32, collapsed: bool, visible: bool }
     struct SidebarPinTree { root: u64, entries: Vec<SidebarPinTreeEntry> }
-    struct SidebarTabInput { high: u64, low: u64, index: usize }
+    struct SidebarTabInput { high: u64, low: u64, index: usize, pin: String }
     struct SidebarTabBinding { valid: bool, id: u64, high: u64, low: u64, index: usize, can_close: bool }
+    struct SidebarTabTree { root: u64, pair: u64, parent: u64, visible: bool, slots: Vec<TabSlot>, pins: Vec<PinVisibility> }
     struct SidebarTabTarget { valid: bool, index: usize }
     struct SidebarRowVisual { valid: bool, tile: bool, height: i32 }
     struct SidebarRowPresentation { valid: bool, title: Vec<u16>, monogram: Vec<u16>, color: u32, tile: bool, folder: bool, height: i32 }
@@ -234,6 +240,8 @@ mod ffi {
         fn tools_reset(self: &mut ToolsForm);
         fn tools_record(self: &mut ToolsForm, recording: bool);
         fn tools_recording(self: &ToolsForm) -> bool;
+        fn tools_capture(self: &mut ToolsForm, capture: ToolsCapture) -> ToolsCaptureResult;
+        fn tools_status(status: ToolsStatus) -> String;
         fn tools_dispatch(self: &mut ToolsForm, action: i32, context: &ToolsActionContext) -> ToolsDispatch;
         fn tools_outcome(self: &ToolsForm, ok: bool, pending: bool) -> ToolsOutcome;
         fn tools_history_view(self: &ToolsForm, count: usize, more: bool, error: bool) -> ToolsHistoryView;
@@ -264,6 +272,8 @@ mod ffi {
         fn preference_saved(self: &mut PreferencesForm, key: &str, ok: bool);
         fn preference_sync_text(self: &mut PreferencesForm, key: &str, present: bool, editable: bool, composing: bool, profile_changed: bool) -> bool;
         fn preference_can_save(self: &PreferencesForm, enabled: bool, composing: bool) -> bool;
+        fn preference_outcome(self: &mut PreferencesForm, outcome: PreferenceOutcome, key: &str, ok: bool) -> PreferenceStatus;
+        fn preference_status(self: &PreferencesForm) -> PreferenceStatus;
         fn preference_reset_rules(self: &mut PreferencesForm);
         fn preference_more_rules(self: &mut PreferencesForm);
         fn preference_rule_limit(self: &PreferencesForm) -> usize;
@@ -472,6 +482,8 @@ mod ffi {
         fn site_rule_scene(self: &ActionGraph) -> SiteRuleScene;
         fn site_rule_target(self: &ActionGraph, key: &str, id: u64) -> SiteRuleTarget;
         fn reconcile_sidebar(self: &mut ActionGraph, pins: Vec<SidebarPinInput>, tabs: Vec<SidebarTabInput>) -> ActionNodePlan;
+        fn reconcile_sidebar_layout(self: &mut ActionGraph, pins: Vec<SidebarPinInput>, tabs: Vec<SidebarTabInput>, first: usize, second: usize, split: bool) -> ActionNodePlan;
+        fn sidebar_tabs(self: &ActionGraph) -> SidebarTabTree;
         fn tab_binding(self: &ActionControl) -> SidebarTabBinding;
         fn pin_binding(self: &ActionControl) -> SidebarPinBinding;
         fn pin_tree(self: &ActionGraph) -> SidebarPinTree;
@@ -821,6 +833,10 @@ pub struct ToolsForm {
     history_limit: usize,
     history_loaded: bool,
 }
+fn tools_status(status: ffi::ToolsStatus) -> String {
+    use ffi::ToolsStatus as S;
+    match status {S::HistoryReading=>"Odczytywanie historii…",S::HistorySearching=>"Wyszukiwanie historii…",S::WriteFailed=>"Nie udało się zapisać ustawień na dysku.",_=>""}.into()
+}
 fn new_tools_form() -> Box<ToolsForm> {
     Box::new(ToolsForm { page: 0, recording: false, history_query: vec![],
         timeline_query: vec![], choice_epoch: 0, active_choice:String::new(), shortcut_choices:vec![], provider_choices:vec![], timeline_epoch: 0, timeline_snapshots: vec![], timeline_closed: vec![], history_limit: 200, history_loaded: false })
@@ -851,6 +867,21 @@ impl ToolsForm {
     }
     fn tools_record(&mut self, recording: bool) { self.recording = recording; }
     fn tools_recording(&self) -> bool { self.recording }
+    // A captured chord is admitted only while recording; Escape and a valid
+    // chord end recording, an invalid chord keeps it for another attempt.
+    fn tools_capture(&mut self, capture: ffi::ToolsCapture) -> ffi::ToolsCaptureResult {
+        use ffi::ToolsCapture as C;
+        let rejected=||ffi::ToolsCaptureResult{admitted:false,stop_recording:false,accept_chord:false,status:String::new()};
+        if !self.recording {return rejected();}
+        let (stop,accept,status)=match capture {
+            C::Escape=>(true,false,"Nagrywanie anulowane."),
+            C::Invalid=>(false,false,"Użyj Cmd / Ctrl / Alt i klawisza. Skróty edycji tekstu oraz systemowe są zarezerwowane."),
+            C::Valid=>(true,true,"Kombinacja przechwycona. Wybierz Zapisz skrót."),
+            _=>return rejected(),
+        };
+        if stop {self.recording=false;}
+        ffi::ToolsCaptureResult{admitted:true,stop_recording:stop,accept_chord:accept,status:status.into()}
+    }
     // These are UI command IDs and field/selection facts, never domain handles.
     // Native visibility/profile/workspace/generation checks and bounds checks
     // remain mandatory before applying a command to real browser services.
@@ -1051,8 +1082,27 @@ fn preference_catalogue(system_certificates:bool)->ffi::PreferenceCatalogue {
         clear:ffi::PreferenceClearCopy{period_ax:"Zakres czasu czyszczenia danych".into(),periods:vec!["Ostatnia godzina".into(),"Ostatnie 24 godziny".into(),"Ostatnie 7 dni".into(),"Cały okres".into()],checks:vec!["Historia przeglądania".into(),"Cookies i dane witryn (może wylogować)".into(),"Pamięć podręczna".into()],action:"Wyczyść…".into()}
     }
 }
-pub struct PreferencesForm { categories: usize, selected: usize, query: Vec<u16>, profile: String, dirty: std::collections::BTreeSet<String>, rule_limit: usize }
-fn new_preferences_form(categories:usize)->Box<PreferencesForm>{Box::new(PreferencesForm{categories,selected:0,query:vec![],profile:String::new(),dirty:Default::default(),rule_limit:50})}
+pub struct PreferencesForm { categories: usize, selected: usize, query: Vec<u16>, profile: String, dirty: std::collections::BTreeSet<String>, rule_limit: usize, status: (&'static str, bool) }
+fn new_preferences_form(categories:usize)->Box<PreferencesForm>{Box::new(PreferencesForm{categories,selected:0,query:vec![],profile:String::new(),dirty:Default::default(),rule_limit:50,status:(PREFERENCE_IDLE,false)})}
+const PREFERENCE_IDLE:&str="Przełączniki zapisują się automatycznie. Pola tekstowe zatwierdź przyciskiem Zapisz lub Enter.";
+// Outcome copy is keyed by the semantic write and its backend result; native
+// code only reports what it attempted and projects the returned text/tone.
+fn preference_outcome_text(outcome:ffi::PreferenceOutcome,key:&str,ok:bool)->&'static str {
+    use ffi::PreferenceOutcome as O;
+    match (outcome,ok) {
+        (O::Text,true)=>"Zapisano. Witryna może wymagać odświeżenia, aby zastosować zmianę.",
+        (O::Text,false)=>match key {"accept_languages"=>"Podaj poprawne kody języków oddzielone przecinkami, np. pl, en-US, en.","dns_templates"=>"Podaj poprawny szablon DNS-over-HTTPS. W trybie ścisłym adres nie może być pusty.",_=>"Nie udało się zapisać. Podaj nazwę rodziny czcionki (do 128 znaków). Ustawienie może być zarządzane."},
+        (O::Site,true)=>"Zapisano wyjątek w tym profilu. Odśwież witrynę, aby zastosować zmianę.",
+        (O::Site,false)=>"Nie zapisano wyjątku. Podaj adres HTTP(S) bez ścieżki i danych logowania. Sprawdź wybraną politykę; reguły zarządzane nie mogą być zmieniane.",
+        (O::SiteRemove,true)=>"Usunięto wyjątek. Witryna wróci do ustawień domyślnych.",
+        (O::SiteRemove,false)=>"Nie udało się usunąć wyjątku. Reguła może być zarządzana.",
+        (O::Value,true)=>if key=="hardware_acceleration"{"Zapisano. Uruchom ponownie Zitter, aby zmienić akcelerację sprzętową."}else{"Zapisano. Jeśli strona nie zastosowała zmiany, odśwież ją."},
+        (O::Value,false)=>if key=="dns_mode"{"Nie zapisano trybu DNS. Tryb ścisły wymaga poprawnego adresu DNS-over-HTTPS; ustawienie może też być zarządzane."}else{"Nie udało się zmienić ustawienia. Profil może być zarządzany lub niedostępny."},
+        (O::General,true)=>PREFERENCE_IDLE,
+        (O::General,false)=>"Nie udało się zapisać ustawień. Spróbuj ponownie.",
+        _=>"",
+    }
+}
 impl PreferencesForm {
     fn bind_category(&self,input:&mut ActionControl,category:usize)->bool{category<self.categories&&input.init_form_command(ffi::FormCommand::PreferenceCategory,"",category)}
     fn preference_select(&mut self,category:usize)->bool{if category>=self.categories{return false;}self.selected=category;self.query.clear();true}
@@ -1068,6 +1118,10 @@ impl PreferencesForm {
         if replace{self.dirty.remove(key);}replace
     }
     fn preference_can_save(&self,enabled:bool,composing:bool)->bool{enabled&&!composing}
+    fn preference_outcome(&mut self,outcome:ffi::PreferenceOutcome,key:&str,ok:bool)->ffi::PreferenceStatus{
+        let text=preference_outcome_text(outcome,key,ok);if !text.is_empty(){self.status=(text,!ok);}self.preference_status()
+    }
+    fn preference_status(&self)->ffi::PreferenceStatus{ffi::PreferenceStatus{text:self.status.0.into(),error:self.status.1}}
     fn preference_reset_rules(&mut self){self.rule_limit=50;}
     fn preference_more_rules(&mut self){self.rule_limit=self.rule_limit.saturating_add(50);}
     fn preference_rule_limit(&self)->usize{self.rule_limit}
@@ -1859,6 +1913,7 @@ fn action_node_key(key:&ffi::ActionNodeKey)->Option<ActionNodeIdentity>{
     match key.kind {
         kind @ (1|10) if (key.high!=0||key.low!=0)&&key.name.is_empty()=>Some((kind,key.high,key.low,String::new())),
         kind @ (7|8) if (key.high!=0||key.low!=0)&&!key.name.is_empty()=>Some((kind,key.high,key.low,key.name.clone())),
+        15 if key.high==0&&key.low==0&&key.name=="sidebar.pair"=>Some((15,0,0,key.name.clone())),
         12 if key.high==0&&key.low==0&&key.name.is_empty()=>Some((12,0,0,String::new())),
         11 if key.high==0&&key.low==0&&matches!(key.name.as_str(),"chrome.workspaces"|"tools.history"|"palette.results"|"preferences.site-rules"|"sidebar.tabs"|"sidebar.pins")=>Some((11,0,0,key.name.clone())),
         kind @ (2|3|4|5|6|13|14) if key.high==0&&key.low==0&&!key.name.is_empty()=>Some((kind,0,0,key.name.clone())),
@@ -1874,12 +1929,12 @@ struct PaletteSceneState {selection:PaletteSelection,dirty:bool}
 struct SiteRulePresentation {detail:Vec<u16>,editable:bool,source_index:usize,cancel_input:bool}
 struct SidebarRowPresentation {title:Vec<u16>,monogram:Vec<u16>,title_utf8:String,monogram_utf8:String,color:u32,tile:bool,folder:bool}
 impl SidebarRowPresentation {fn height(&self)->i32{if self.tile{38}else{34}}}
-struct SidebarTabModel {high:u64,low:u64,index:usize,can_close:bool,presentation:Option<SidebarRowPresentation>}
-struct SidebarPinModel {key:String,parent_key:String,index:usize,rank:usize,depth:i32,reachable:bool,visible:bool,group:u64,base_title:Vec<u16>,collapsed:bool,presentation:SidebarRowPresentation}
+struct SidebarTabModel {high:u64,low:u64,index:usize,pin:String,pair:u64,visible:bool,can_close:bool,presentation:Option<SidebarRowPresentation>}
+struct SidebarPinModel {row_shown:bool,key:String,parent_key:String,index:usize,rank:usize,depth:i32,reachable:bool,visible:bool,group:u64,base_title:Vec<u16>,collapsed:bool,presentation:SidebarRowPresentation}
 struct SidebarPinGroupModel {owner:u64,visible:bool}
 fn pin_title(base:&[u16],folder:bool,collapsed:bool)->Vec<u16>{if !folder{return base.to_vec();}let mut title=Vec::with_capacity(base.len()+2);title.extend_from_slice(&[if collapsed{0x25b8}else{0x25be},0x20]);title.extend_from_slice(base);title}
 impl SidebarPinModel {
-    fn from_input(input:ffi::SidebarPinInput)->Self{let title=pin_title(&input.title,input.folder,input.collapsed);Self{key:input.id,parent_key:input.parent,index:0,rank:usize::MAX,depth:0,reachable:false,visible:false,group:0,base_title:if input.folder{input.title}else{vec![]},collapsed:input.collapsed,presentation:SidebarRowPresentation{title_utf8:String::from_utf16_lossy(&title),monogram_utf8:if input.folder{"📁".into()}else{String::from_utf16_lossy(&input.monogram)},title,monogram:input.monogram,color:input.color,tile:false,folder:input.folder}}}
+    fn from_input(input:ffi::SidebarPinInput)->Self{let title=pin_title(&input.title,input.folder,input.collapsed);Self{row_shown:true,key:input.id,parent_key:input.parent,index:0,rank:usize::MAX,depth:0,reachable:false,visible:false,group:0,base_title:if input.folder{input.title}else{vec![]},collapsed:input.collapsed,presentation:SidebarRowPresentation{title_utf8:String::from_utf16_lossy(&title),monogram_utf8:if input.folder{"📁".into()}else{String::from_utf16_lossy(&input.monogram)},title,monogram:input.monogram,color:input.color,tile:false,folder:input.folder}}}
 }
 #[cfg(test)] impl From<&str> for ffi::SidebarPinInput{fn from(id:&str)->Self{Self{id:id.into(),parent:String::new(),title:id.encode_utf16().collect(),monogram:vec![],color:0,folder:false,collapsed:false}}}
 
@@ -1898,7 +1953,9 @@ fn form_command_panel(command:ffi::FormCommand)->ffi::FormPanel {
 }
 
 fn valid_form_command(command:ffi::FormCommand,key:&str)->bool{use ffi::FormCommand as C;match command{C::PreferenceText=>!key.is_empty(),C::WorkspaceSave|C::WorkspaceToggle|C::WorkspaceRemove|C::WorkspaceProfiles|C::WorkspaceImport|C::ProfileCreate|C::ProfileRename|C::ProfileDelete|C::ProfileBack|C::ImportApply|C::PreferenceSite|C::PreferenceClear|C::PreferenceDirectory|C::History|C::Workspace|C::Passwords|C::Profiles|C::Import|C::Proxy|C::Certificates|C::Providers|C::Shortcuts|C::TimeMachine|C::WorkspaceDismiss|C::PreferencesDismiss|C::ImportDismiss|C::ToolsDismiss|C::PreferenceMore=>key.is_empty(),_=>false}}
-enum NodeModel { SidebarPinGroup(SidebarPinGroupModel), SidebarPin(SidebarPinModel), FormCommand(FormCommandModel), Checkbox(CheckboxState), Toggle(ToggleState), Select(SelectState), Workspace(WorkspacePresentation), History(HistoryPresentation), Palette(PalettePresentation), PaletteRoot(PaletteSceneState), FormRoot(ffi::FormGroupStyle), SiteRule(SiteRulePresentation), SidebarTab(SidebarTabModel) }
+struct SidebarTabsModel {first:usize,second:usize,split:bool,plan:ffi::TabPlan}
+struct SidebarPairModel {first:(u64,u64),second:(u64,u64),visible:bool}
+enum NodeModel { SidebarTabs(SidebarTabsModel), SidebarPair(SidebarPairModel), SidebarPinGroup(SidebarPinGroupModel), SidebarPin(SidebarPinModel), FormCommand(FormCommandModel), Checkbox(CheckboxState), Toggle(ToggleState), Select(SelectState), Workspace(WorkspacePresentation), History(HistoryPresentation), Palette(PalettePresentation), PaletteRoot(PaletteSceneState), FormRoot(ffi::FormGroupStyle), SiteRule(SiteRulePresentation), SidebarTab(SidebarTabModel) }
 impl NodeModel {
     fn row_presentation(&self)->Option<&SidebarRowPresentation>{match self{Self::SidebarTab(model)=>model.presentation.as_ref(),Self::SidebarPin(model)=>Some(&model.presentation),_=>None}}
     fn row_presentation_mut(&mut self)->Option<&mut SidebarRowPresentation>{match self{Self::SidebarTab(model)=>model.presentation.as_mut(),Self::SidebarPin(model)=>Some(&mut model.presentation),_=>None}}
@@ -1925,6 +1982,8 @@ impl ActionGraph {
         if unique.iter().any(|key|key.0==10&&!unique.contains(&(1,key.1,key.2,String::new()))){return self.rejected();}
         if unique.iter().any(|key|matches!(key.0,7|8)&&!unique.contains(&(if key.0==7{8}else{7},key.1,key.2,key.3.clone()))){return self.rejected();}
         if unique.iter().any(|key|key.0==14&&!unique.contains(&(2,0,0,key.3.clone()))){return self.rejected();}
+        if unique.contains(&(15,0,0,"sidebar.pair".into()))&&!unique.contains(&(11,0,0,"sidebar.tabs".into())){return self.rejected();}
+        if parents.is_none(){if let Some(node)=self.nodes.get(&(15,0,0,"sidebar.pair".into())){if unique.contains(&(15,0,0,"sidebar.pair".into())){if let Some(NodeModel::SidebarPair(pair))=node.borrow().model.as_deref(){if [pair.first,pair.second].iter().any(|&(high,low)|!unique.contains(&(1,high,low,String::new()))){return self.rejected();}}}}}
         if parents.is_none()&&unique.iter().any(|key|key.0==2&&self.nodes.get(key).is_some_and(|node|matches!(node.borrow().model.as_deref(),Some(NodeModel::SidebarPin(p)) if p.presentation.folder))&&!unique.contains(&(14,0,0,key.3.clone()))){return self.rejected();}
         // A retained logical child cannot outlive its Rust-owned parent. Whole
         // subtree removal is valid; dangling retained edges reject atomically.
@@ -2074,22 +2133,32 @@ impl ActionGraph {
     fn site_rule_target(&self,key:&str,id:u64)->ffi::SiteRuleTarget{
         let invalid=||ffi::SiteRuleTarget{valid:false,index:0};let Some(node)=self.nodes.get(&(13,0,0,key.to_owned())) else{return invalid();};let node=node.borrow();if !node.alive||!node.attached||!node.state.enabled||id==0||id!=node.id{return invalid();}if let Some(NodeModel::SiteRule(p))=node.model.as_deref(){if p.editable{return ffi::SiteRuleTarget{valid:true,index:p.source_index};}}invalid()
     }
-    fn reconcile_sidebar(&mut self,pins:Vec<ffi::SidebarPinInput>,tabs:Vec<ffi::SidebarTabInput>)->ffi::ActionNodePlan{
+    fn reconcile_sidebar(&mut self,pins:Vec<ffi::SidebarPinInput>,tabs:Vec<ffi::SidebarTabInput>)->ffi::ActionNodePlan{self.reconcile_sidebar_layout(pins,tabs,usize::MAX,usize::MAX,false)}
+    fn reconcile_sidebar_layout(&mut self,pins:Vec<ffi::SidebarPinInput>,tabs:Vec<ffi::SidebarTabInput>,first:usize,second:usize,split:bool)->ffi::ActionNodePlan{
         if pins.iter().any(|pin|(pin.collapsed&&!pin.folder)||self.nodes.get(&(2,0,0,pin.id.clone())).is_some_and(|node|node.borrow().model.as_deref().is_some_and(|m|!matches!(m,NodeModel::SidebarPin(_))))||self.nodes.get(&(14,0,0,pin.id.clone())).is_some_and(|node|node.borrow().model.as_deref().is_some_and(|m|!matches!(m,NodeModel::SidebarPinGroup(_)))))||tabs.iter().any(|tab|self.nodes.get(&(10,tab.high,tab.low,String::new())).is_some_and(|node|node.borrow().model.is_some())){return self.rejected();}
         let mut indices=BTreeSet::new();if tabs.iter().any(|tab|!indices.insert(tab.index)||self.nodes.get(&(1,tab.high,tab.low,String::new())).is_some_and(|node|node.borrow().model.as_deref().is_some_and(|m|!matches!(m,NodeModel::SidebarTab(_))))){return self.rejected();}
-        let nodes=pins.iter().map(|p|ffi::TreeNode{id:p.id.clone(),parent:p.parent.clone(),folder:p.folder}).collect::<Vec<_>>();let mut tree=new_sidebar_tree();for pin in &pins{if pin.folder&&pin.collapsed{tree.set_collapsed("",&pin.id,true);}}let layout=tree.tree_plan("",&nodes);let positions=layout.iter().enumerate().map(|(rank,e)|(e.index,(rank,e))).collect::<BTreeMap<_,_>>();
+        if self.nodes.get(&(11,0,0,"sidebar.tabs".into())).is_some_and(|n|n.borrow().model.as_deref().is_some_and(|m|!matches!(m,NodeModel::SidebarTabs(_))))||self.nodes.get(&(15,0,0,"sidebar.pair".into())).is_some_and(|n|n.borrow().model.as_deref().is_some_and(|m|!matches!(m,NodeModel::SidebarPair(_)))){return self.rejected();}
+        let old_layout=self.nodes.get(&(11,0,0,"sidebar.tabs".into())).and_then(|n|{let n=n.borrow();if let Some(NodeModel::SidebarTabs(m))=n.model.as_deref(){Some((m.first,m.second,m.split))}else{None}});let old_pair_parent=self.nodes.get(&(15,0,0,"sidebar.pair".into())).map(|n|n.borrow().parent);
+        let nodes=pins.iter().map(|p|ffi::TreeNode{id:p.id.clone(),parent:p.parent.clone(),folder:p.folder}).collect::<Vec<_>>();let mut tree=new_sidebar_tree();for pin in &pins{if pin.folder&&pin.collapsed{tree.set_collapsed("",&pin.id,true);}}let tab_nodes=tabs.iter().map(|t|ffi::TabNode{index:t.index,pin:t.pin.clone()}).collect::<Vec<_>>();let tab_plan=tree.tab_plan("",&nodes,&tab_nodes,first,second,split);let pair_slot=tab_plan.slots.iter().find(|slot|slot.pair).map(|slot|(slot.first,slot.second,slot.pin));let pin_shown=tab_plan.pins.iter().map(|p|(p.index,p.visible)).collect::<BTreeMap<_,_>>();let layout=tree.tree_plan("",&nodes);let positions=layout.iter().enumerate().map(|(rank,e)|(e.index,(rank,e))).collect::<BTreeMap<_,_>>();
         let tab_root=(11,0,0,"sidebar.tabs".to_owned());let pin_root=(11,0,0,"sidebar.pins".to_owned());let mut keys=Vec::with_capacity(2+pins.len()*2+tabs.len()*2);let mut edges=BTreeMap::new();
         for root in [&tab_root,&pin_root]{keys.push(ffi::ActionNodeKey{kind:11,high:0,low:0,name:root.3.clone()});edges.insert(root.clone(),None);}
         for (index,pin) in pins.iter().enumerate(){let parent=positions.get(&index).map(|(_,entry)|if entry.parent==usize::MAX{pin_root.clone()}else{(14,0,0,pins[entry.parent].id.clone())});let key=(2,0,0,pin.id.clone());keys.push(ffi::ActionNodeKey{kind:2,high:0,low:0,name:pin.id.clone()});edges.insert(key,parent.clone());if pin.folder{keys.push(ffi::ActionNodeKey{kind:14,high:0,low:0,name:pin.id.clone()});edges.insert((14,0,0,pin.id.clone()),parent);}}
-        let can_close=tabs.len()>1;for tab in &tabs{let key=(1,tab.high,tab.low,String::new());keys.push(ffi::ActionNodeKey{kind:1,high:tab.high,low:tab.low,name:String::new()});edges.insert(key.clone(),Some(tab_root.clone()));if can_close{keys.push(ffi::ActionNodeKey{kind:10,high:tab.high,low:tab.low,name:String::new()});edges.insert((10,tab.high,tab.low,String::new()),Some(key));}}
-        let old_order=self.order.clone();let plan=self.reconcile_with_parents(keys,Some(&edges));if !plan.admitted{return plan;}let mut invalidated=old_order!=plan.ids;
-        for (index,pin) in pins.into_iter().enumerate(){let key=(2,0,0,pin.id.clone());let group=if pin.folder{self.nodes[&(14,0,0,pin.id.clone())].borrow().id}else{0};let mut next=SidebarPinModel::from_input(pin);next.index=index;next.group=group;if let Some((rank,entry))=positions.get(&index){next.rank=*rank;next.depth=entry.depth;next.reachable=true;next.visible=entry.visible;}
-            let mut node=self.nodes[&key].borrow_mut();let changed=match node.model.as_deref(){Some(NodeModel::SidebarPin(p))=>p.parent_key!=next.parent_key||p.rank!=next.rank||p.visible!=next.visible||p.collapsed!=next.collapsed||p.presentation.title!=next.presentation.title||p.presentation.monogram!=next.presentation.monogram||p.presentation.color!=next.presentation.color||p.presentation.folder!=next.presentation.folder,_=>true};if group!=0{self.nodes[&(14,0,0,next.key.clone())].borrow_mut().model=Some(Box::new(NodeModel::SidebarPinGroup(SidebarPinGroupModel{owner:node.id,visible:next.visible&&!next.collapsed})));}node.model=Some(Box::new(NodeModel::SidebarPin(next)));if changed{node.state.action_cancel();}}
-        for tab in tabs{let mut node=self.nodes[&(1,tab.high,tab.low,String::new())].borrow_mut();invalidated|=matches!(node.model.as_deref(),Some(NodeModel::SidebarTab(p)) if p.index!=tab.index||p.can_close!=can_close);if let Some(NodeModel::SidebarTab(p))=node.model.as_deref_mut(){p.index=tab.index;p.can_close=can_close;}else{node.model=Some(Box::new(NodeModel::SidebarTab(SidebarTabModel{high:tab.high,low:tab.low,index:tab.index,can_close,presentation:None})));}}
+        let pair_key=(15,0,0,"sidebar.pair".to_owned());let pair_parent=pair_slot.map(|(_,_,pin)|if pin==usize::MAX{tab_root.clone()}else{edges[&(2,0,0,pins[pin].id.clone())].clone().unwrap_or_else(||pin_root.clone())});
+        if let Some(parent)=&pair_parent{keys.push(ffi::ActionNodeKey{kind:15,high:0,low:0,name:"sidebar.pair".into()});edges.insert(pair_key.clone(),Some(parent.clone()));}
+        let can_close=tabs.len()>1;for (position,tab) in tabs.iter().enumerate(){let key=(1,tab.high,tab.low,String::new());keys.push(ffi::ActionNodeKey{kind:1,high:tab.high,low:tab.low,name:String::new()});edges.insert(key.clone(),Some(if pair_slot.is_some_and(|(a,b,_)|position==a||position==b){pair_key.clone()}else{tab_root.clone()}));if can_close{keys.push(ffi::ActionNodeKey{kind:10,high:tab.high,low:tab.low,name:String::new()});edges.insert((10,tab.high,tab.low,String::new()),Some(key));}}
+        let old_order=self.order.clone();let plan=self.reconcile_with_parents(keys,Some(&edges));if !plan.admitted{return plan;}let mut invalidated=old_order!=plan.ids||old_layout!=Some((first,second,split));
+        for (index,pin) in pins.into_iter().enumerate(){let key=(2,0,0,pin.id.clone());let group=if pin.folder{self.nodes[&(14,0,0,pin.id.clone())].borrow().id}else{0};let mut next=SidebarPinModel::from_input(pin);next.index=index;next.group=group;next.row_shown=pin_shown.get(&index).copied().unwrap_or(true);if let Some((rank,entry))=positions.get(&index){next.rank=*rank;next.depth=entry.depth;next.reachable=true;next.visible=entry.visible&&next.row_shown;}
+            let mut node=self.nodes[&key].borrow_mut();let changed=match node.model.as_deref(){Some(NodeModel::SidebarPin(p))=>p.parent_key!=next.parent_key||p.rank!=next.rank||p.visible!=next.visible||p.collapsed!=next.collapsed||p.presentation.title!=next.presentation.title||p.presentation.monogram!=next.presentation.monogram||p.presentation.color!=next.presentation.color||p.presentation.folder!=next.presentation.folder,_=>true};if group!=0{self.nodes[&(14,0,0,next.key.clone())].borrow_mut().model=Some(Box::new(NodeModel::SidebarPinGroup(SidebarPinGroupModel{owner:node.id,visible:positions.get(&index).is_some_and(|(_,entry)|entry.visible)&&!next.collapsed})));}node.model=Some(Box::new(NodeModel::SidebarPin(next)));if changed{node.state.action_cancel();}}
+        let pair_id=pair_slot.map_or(0,|_|self.nodes[&pair_key].borrow().id);let pair_visible=pair_slot.is_none_or(|(_,_,pin)|pin==usize::MAX||positions.get(&pin).is_some_and(|(_,entry)|entry.visible));
+        if let Some((a,b,_))=pair_slot{let mut pair=self.nodes[&pair_key].borrow_mut();invalidated|=old_pair_parent!=Some(pair.parent);pair.model=Some(Box::new(NodeModel::SidebarPair(SidebarPairModel{first:(tabs[a].high,tabs[a].low),second:(tabs[b].high,tabs[b].low),visible:pair_visible})));}
+        for (position,tab) in tabs.into_iter().enumerate(){let pair=if pair_slot.is_some_and(|(a,b,_)|position==a||position==b){pair_id}else{0};let visible=pair==0||pair_visible;let mut node=self.nodes[&(1,tab.high,tab.low,String::new())].borrow_mut();invalidated|=matches!(node.model.as_deref(),Some(NodeModel::SidebarTab(p)) if p.index!=tab.index||p.pin!=tab.pin||p.pair!=pair||p.visible!=visible||p.can_close!=can_close);if let Some(NodeModel::SidebarTab(p))=node.model.as_deref_mut(){p.index=tab.index;p.pin=tab.pin;p.pair=pair;p.visible=visible;p.can_close=can_close;}else{node.model=Some(Box::new(NodeModel::SidebarTab(SidebarTabModel{high:tab.high,low:tab.low,index:tab.index,pin:tab.pin,pair,visible,can_close,presentation:None})));}}
+        self.nodes[&tab_root].borrow_mut().model=Some(Box::new(NodeModel::SidebarTabs(SidebarTabsModel{first,second,split,plan:tab_plan})));
         if invalidated{for (key,node) in &self.nodes{if matches!(key.0,1|2|10){node.borrow_mut().state.action_cancel();}}}plan
     }
+    fn sidebar_tabs(&self)->ffi::SidebarTabTree{let root=self.nodes.get(&(11,0,0,"sidebar.tabs".into())).map_or(0,|n|n.borrow().id);let pair=self.nodes.get(&(15,0,0,"sidebar.pair".into())).map(|n|n.borrow());let mut result=ffi::SidebarTabTree{root,pair:pair.as_ref().map_or(0,|p|p.id),parent:pair.as_ref().map_or(0,|p|p.parent),visible:pair.as_ref().is_none_or(|p|matches!(p.model.as_deref(),Some(NodeModel::SidebarPair(m)) if m.visible)),slots:vec![],pins:vec![]};if let Some(node)=self.nodes.get(&(11,0,0,"sidebar.tabs".into())){if let Some(NodeModel::SidebarTabs(m))=node.borrow().model.as_deref(){result.slots=m.plan.slots.iter().map(|s|ffi::TabSlot{first:s.first,second:s.second,pin:s.pin,pair:s.pair}).collect();result.pins=m.plan.pins.iter().map(|p|ffi::PinVisibility{index:p.index,visible:p.visible}).collect();}}result}
+    fn refresh_pair_visibility(&mut self){let Some(pair)=self.nodes.get(&(15,0,0,"sidebar.pair".into())).cloned() else{return;};let parent=pair.borrow().parent;let visible=self.nodes.values().find_map(|node|{let node=node.borrow();if node.id!=parent{return None;}Some(match node.model.as_deref(){Some(NodeModel::SidebarPinGroup(m))=>m.visible,_=>true})}).unwrap_or(false);let (id,members)={let mut pair=pair.borrow_mut();let id=pair.id;let Some(NodeModel::SidebarPair(m))=pair.model.as_deref_mut() else{return;};m.visible=visible;(id,[m.first,m.second])};for (high,low) in members{if let Some(node)=self.nodes.get(&(1,high,low,String::new())){let mut node=node.borrow_mut();if let Some(NodeModel::SidebarTab(m))=node.model.as_deref_mut(){if m.pair==id&&m.visible!=visible{m.visible=visible;node.state.action_cancel();if let Some(close)=self.nodes.get(&(10,high,low,String::new())){close.borrow_mut().state.action_cancel();}}}}}}
     fn pin_tree(&self)->ffi::SidebarPinTree{let root=self.nodes.get(&(11,0,0,"sidebar.pins".into())).map_or(0,|n|n.borrow().id);let mut ordered=self.nodes.values().filter_map(|node|{let node=node.borrow();if let Some(NodeModel::SidebarPin(p))=node.model.as_deref(){if p.reachable{return Some((p.rank,ffi::SidebarPinTreeEntry{index:p.index,key:p.key.clone(),id:node.id,parent:node.parent,group:p.group,depth:p.depth,collapsed:p.collapsed,visible:p.visible}));}}None}).collect::<Vec<_>>();ordered.sort_by_key(|(rank,_)|*rank);ffi::SidebarPinTree{root,entries:ordered.into_iter().map(|(_,entry)|entry).collect()}}
-    fn refresh_pin_visibility(&mut self){let tree=self.pin_tree();let mut visible=BTreeMap::from([(tree.root,true)]);for entry in tree.entries{let shown=visible.get(&entry.parent).copied().unwrap_or(false);let mut row=self.nodes[&(2,0,0,entry.key.clone())].borrow_mut();if let Some(NodeModel::SidebarPin(p))=row.model.as_deref_mut(){let changed=p.visible!=shown;p.visible=shown;if changed{row.state.action_cancel();}}if entry.group!=0{let mut group=self.nodes[&(14,0,0,entry.key)].borrow_mut();if let Some(NodeModel::SidebarPinGroup(p))=group.model.as_deref_mut(){p.visible=shown&&!entry.collapsed;visible.insert(entry.group,p.visible);}}}}
+    fn refresh_pin_visibility(&mut self){let tree=self.pin_tree();let mut visible=BTreeMap::from([(tree.root,true)]);for entry in tree.entries{let shown=visible.get(&entry.parent).copied().unwrap_or(false);let mut row=self.nodes[&(2,0,0,entry.key.clone())].borrow_mut();if let Some(NodeModel::SidebarPin(p))=row.model.as_deref_mut(){let next=shown&&p.row_shown;let changed=p.visible!=next;p.visible=next;if changed{row.state.action_cancel();}}if entry.group!=0{let mut group=self.nodes[&(14,0,0,entry.key)].borrow_mut();if let Some(NodeModel::SidebarPinGroup(p))=group.model.as_deref_mut(){p.visible=shown&&!entry.collapsed;visible.insert(entry.group,p.visible);}}}self.refresh_pair_visibility();}
     fn pin_target(&self,key:&str,id:u64)->ffi::SidebarPinTarget{let invalid=||ffi::SidebarPinTarget{valid:false,folder:false,collapsed:false,group:0};let Some(node)=self.nodes.get(&(2,0,0,key.into())) else{return invalid();};let node=node.borrow();if !node.alive||!node.attached||!node.state.enabled||id==0||node.id!=id{return invalid();}if let Some(NodeModel::SidebarPin(pin))=node.model.as_deref(){if !pin.reachable||!pin.visible{return invalid();}if pin.presentation.folder{let Some(group)=self.nodes.get(&(14,0,0,key.into())) else{return invalid();};let group=group.borrow();if !matches!(group.model.as_deref(),Some(NodeModel::SidebarPinGroup(p)) if p.owner==id)||group.id!=pin.group||group.parent!=node.parent{return invalid();}}ffi::SidebarPinTarget{valid:true,folder:pin.presentation.folder,collapsed:pin.collapsed,group:pin.group}}else{invalid()}}
     fn set_pin_collapsed(&mut self,input:&ActionControl,collapsed:bool)->bool{if !self.owns_input(input){return false;}let binding=input.pin_binding();if !binding.valid||!binding.folder{return false;}{let Some(node)=self.nodes.get(&(2,0,0,binding.key)) else{return false;};let mut node=node.borrow_mut();let Some(NodeModel::SidebarPin(pin))=node.model.as_deref_mut() else{return false;};if pin.collapsed!=collapsed{pin.collapsed=collapsed;pin.presentation.title=pin_title(&pin.base_title,true,collapsed);pin.presentation.title_utf8=String::from_utf16_lossy(&pin.presentation.title);}}self.refresh_pin_visibility();true}
     fn project_tab(&mut self,input:&ActionControl,title:Vec<u16>,monogram:Vec<u16>,color:u32,tile:bool)->ffi::SidebarTabUpdate{
@@ -2104,13 +2173,13 @@ impl ActionGraph {
         ffi::SidebarTabUpdate{admitted:true,changed,title_changed,geometry_changed}
     }
     fn tab_target(&self,high:u64,low:u64,id:u64,close:bool)->ffi::SidebarTabTarget{
-        let invalid=||ffi::SidebarTabTarget{valid:false,index:0};let Some(node)=self.nodes.get(&(1,high,low,String::new())) else{return invalid();};let node=node.borrow();if !node.alive||!node.attached||!node.state.enabled||id==0||node.id!=id{return invalid();}let Some(NodeModel::SidebarTab(model))=node.model.as_deref() else{return invalid();};if close{if !model.can_close{return invalid();}let Some(button)=self.nodes.get(&(10,high,low,String::new())) else{return invalid();};let button=button.borrow();if !button.alive||!button.attached||!button.state.enabled||button.parent!=id{return invalid();}}ffi::SidebarTabTarget{valid:true,index:model.index}
+        let invalid=||ffi::SidebarTabTarget{valid:false,index:0};let Some(node)=self.nodes.get(&(1,high,low,String::new())) else{return invalid();};let node=node.borrow();if !node.alive||!node.attached||!node.state.enabled||id==0||node.id!=id{return invalid();}let Some(NodeModel::SidebarTab(model))=node.model.as_deref() else{return invalid();};if !model.visible{return invalid();}if close{if !model.can_close{return invalid();}let Some(button)=self.nodes.get(&(10,high,low,String::new())) else{return invalid();};let button=button.borrow();if !button.alive||!button.attached||!button.state.enabled||button.parent!=id{return invalid();}}ffi::SidebarTabTarget{valid:true,index:model.index}
     }
     // IDs are scope-local. Compare a live lease's owner token in O(1), never
     // infer ownership from numeric IDs or a graph allocation's reusable address.
     fn owns_input(&self,input:&ActionControl)->bool{input.read_node(|node|Rc::ptr_eq(&self.owner,&node.owner)).unwrap_or(false)}
     fn acquire(&mut self,key:&ffi::ActionNodeKey)->Box<ActionControl>{
-        if matches!(key.kind,11|12|14){return Box::new(ActionControl{storage:ActionStorage::Retired});}
+        if matches!(key.kind,11|12|14|15){return Box::new(ActionControl{storage:ActionStorage::Retired});}
         let node=action_node_key(key).and_then(|key|self.nodes.get(&key)).cloned();
         let Some(node)=node else{return Box::new(ActionControl{storage:ActionStorage::Retired});};
         let lease={let mut record=node.borrow_mut();let Some(lease)=record.lease.checked_add(1) else{return Box::new(ActionControl{storage:ActionStorage::Retired});};if let Some(model)=record.model.as_deref_mut(){model.detach_input();}record.lease=lease;record.attached=true;if !matches!(record.model.as_deref(),Some(NodeModel::Workspace(_))){record.state.action_enabled(true);}record.state.action_focus(false);record.state.action_cancel();lease};
@@ -2185,7 +2254,7 @@ impl ActionControl {
         ffi::SidebarRowScene{valid,item}
     }
     fn tab_binding(&self)->ffi::SidebarTabBinding{self.read_node(|node|if let Some(NodeModel::SidebarTab(p))=node.model.as_deref(){Some(ffi::SidebarTabBinding{valid:true,id:node.id,high:p.high,low:p.low,index:p.index,can_close:p.can_close})}else{None}).flatten().unwrap_or(ffi::SidebarTabBinding{valid:false,id:0,high:0,low:0,index:0,can_close:false})}
-    fn node_model_kind(&self)->u32{self.read_node(|r|match r.model.as_deref(){Some(NodeModel::SidebarPin(_))=>10,Some(NodeModel::SidebarTab(_))=>9,Some(NodeModel::FormCommand(_))=>8,Some(NodeModel::Checkbox(_))=>1,Some(NodeModel::Toggle(_))=>2,Some(NodeModel::Select(_))=>3,Some(NodeModel::Workspace(_))=>4,Some(NodeModel::History(_))=>5,Some(NodeModel::Palette(_))=>6,Some(NodeModel::SiteRule(_))=>7,Some(NodeModel::SidebarPinGroup(_))|Some(NodeModel::PaletteRoot(_))|Some(NodeModel::FormRoot(_))|None=>0}).unwrap_or(0)}
+    fn node_model_kind(&self)->u32{self.read_node(|r|match r.model.as_deref(){Some(NodeModel::SidebarPin(_))=>10,Some(NodeModel::SidebarTab(_))=>9,Some(NodeModel::FormCommand(_))=>8,Some(NodeModel::Checkbox(_))=>1,Some(NodeModel::Toggle(_))=>2,Some(NodeModel::Select(_))=>3,Some(NodeModel::Workspace(_))=>4,Some(NodeModel::History(_))=>5,Some(NodeModel::Palette(_))=>6,Some(NodeModel::SiteRule(_))=>7,Some(NodeModel::SidebarTabs(_))|Some(NodeModel::SidebarPair(_))|Some(NodeModel::SidebarPinGroup(_))|Some(NodeModel::PaletteRoot(_))|Some(NodeModel::FormRoot(_))|None=>0}).unwrap_or(0)}
     fn node_checkbox_init(&mut self,checked:bool)->bool{self.write_node(|r|match r.model.as_deref(){Some(NodeModel::Checkbox(_))=>true,Some(_)=>false,None=>{r.model=Some(Box::new(NodeModel::Checkbox(CheckboxState{checked})));true}}).unwrap_or(false)}
     fn node_checked(&self)->bool{self.read_node(|r|matches!(r.model.as_deref(),Some(NodeModel::Checkbox(s)) if s.checked())).unwrap_or(false)}
     fn node_set_checked(&mut self,checked:bool)->bool{self.write_node(|r|if let Some(NodeModel::Checkbox(s))=r.model.as_deref_mut(){s.set_checked(checked)}else{false}).unwrap_or(false)}
@@ -3165,6 +3234,21 @@ mod tests {
         c=tools_context();c.snapshot_field=false;c.shortcut_field=false;c.provider_field=false;c.snapshot_selected=false;c.closed_selected=false;c.shortcut_selected=false;
         for action in [1,2,3,4,10,11,12,20,21,22,-1,99] {assert_eq!(form.tools_dispatch(action,&c).action,0);}
     }
+    #[test] fn tools_capture_owns_recording_transitions_and_status_copy() {
+        let mut f=new_tools_form();f.tools_select(1);assert!(!f.tools_capture(ffi::ToolsCapture::Valid).admitted);
+        f.tools_record(true);let invalid=f.tools_capture(ffi::ToolsCapture::Invalid);assert!(invalid.admitted&&!invalid.stop_recording&&!invalid.accept_chord);assert!(invalid.status.starts_with("Użyj Cmd"));assert!(f.tools_recording());
+        let valid=f.tools_capture(ffi::ToolsCapture::Valid);assert!(valid.admitted&&valid.stop_recording&&valid.accept_chord);assert_eq!(valid.status,"Kombinacja przechwycona. Wybierz Zapisz skrót.");assert!(!f.tools_recording());assert!(!f.tools_capture(ffi::ToolsCapture::Escape).admitted);
+        f.tools_record(true);let escape=f.tools_capture(ffi::ToolsCapture::Escape);assert!(escape.admitted&&escape.stop_recording&&!escape.accept_chord);assert_eq!(escape.status,"Nagrywanie anulowane.");assert!(!f.tools_recording());
+        f.tools_record(true);f.tools_reset();assert!(!f.tools_capture(ffi::ToolsCapture::Valid).admitted);
+        assert_eq!(tools_status(ffi::ToolsStatus::HistoryReading),"Odczytywanie historii…");assert_eq!(tools_status(ffi::ToolsStatus::HistorySearching),"Wyszukiwanie historii…");assert_eq!(tools_status(ffi::ToolsStatus::WriteFailed),"Nie udało się zapisać ustawień na dysku.");
+    }
+    #[test] fn preference_outcomes_own_status_copy_tone_and_key_specific_errors() {
+        use ffi::PreferenceOutcome as O;let mut f=new_preferences_form(3);let idle=f.preference_status();assert_eq!(idle.text,PREFERENCE_IDLE);assert!(!idle.error);
+        let cases=[(O::Text,"font",true,"Zapisano. Witryna może wymagać"),(O::Text,"accept_languages",false,"Podaj poprawne kody języków"),(O::Text,"dns_templates",false,"Podaj poprawny szablon DNS"),(O::Text,"font",false,"Nie udało się zapisać. Podaj nazwę rodziny"),(O::Site,"",true,"Zapisano wyjątek"),(O::Site,"",false,"Nie zapisano wyjątku"),(O::SiteRemove,"",true,"Usunięto wyjątek"),(O::SiteRemove,"",false,"Nie udało się usunąć wyjątku"),(O::Value,"hardware_acceleration",true,"Zapisano. Uruchom ponownie"),(O::Value,"x",true,"Zapisano. Jeśli strona"),(O::Value,"dns_mode",false,"Nie zapisano trybu DNS"),(O::Value,"x",false,"Nie udało się zmienić ustawienia"),(O::General,"",false,"Nie udało się zapisać ustawień")];
+        for (outcome,key,ok,prefix) in cases{let status=f.preference_outcome(outcome,key,ok);assert!(status.text.starts_with(prefix),"{prefix}");assert_eq!(status.error,!ok);assert_eq!(f.preference_status().text,status.text);}
+        let status=f.preference_outcome(O::General,"",true);assert_eq!((status.text.as_str(),status.error),(PREFERENCE_IDLE,false));
+        f.preference_outcome(O::Site,"",false);let kept=f.preference_outcome(ffi::PreferenceOutcome{repr:99},"",true);assert!(kept.error&&kept.text.starts_with("Nie zapisano wyjątku"));f.preference_profile("other");assert!(f.preference_status().error);
+    }
     #[test] fn tools_dispatch_recording_and_outcomes_follow_native_flow() {
         let mut form=new_tools_form();let c=tools_context();
         for _ in 0..2 {let p=form.tools_dispatch(10,&c);assert!(p.recording&&p.sync_recording);assert!(!p.record_status.is_empty());}
@@ -3486,6 +3570,31 @@ mod tests {
     fn node_close(low:u64)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:10,high:7,low,name:String::new()}}
     fn node_named(kind:u32,name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind,high:0,low:0,name:name.into()}}
     fn nested_pin(id:&str,parent:&str,folder:bool,collapsed:bool)->ffi::SidebarPinInput{let mut pin=pin_input(id,id,folder,collapsed);pin.parent=parent.into();pin}
+    fn pinned_tab(low:u64,index:usize,pin:&str)->ffi::SidebarTabInput{ffi::SidebarTabInput{high:7,low,index,pin:pin.into()}}
+    #[test] fn sidebar_split_pair_owns_member_parents_slots_and_retires_on_unsplit(){
+        let tabs=||vec![sidebar_tab(1,0),sidebar_tab(2,1),sidebar_tab(3,2)];let mut g=new_action_graph();assert!(g.reconcile_sidebar_layout(vec![],tabs(),2,0,true).admitted);let a=g.acquire(&node_tab(1));let b=g.acquire(&node_tab(2));let c=g.acquire(&node_tab(3));let tree=g.sidebar_tabs();assert_ne!(tree.pair,0);assert_eq!(tree.parent,tree.root);assert!(tree.visible);assert_eq!((a.node_parent_id(),c.node_parent_id(),b.node_parent_id()),(tree.pair,tree.pair,tree.root));
+        assert_eq!(tree.slots.iter().map(|s|(s.first,s.second,s.pin,s.pair)).collect::<Vec<_>>(),vec![(2,0,usize::MAX,true),(1,usize::MAX,usize::MAX,false)]);assert_eq!(g.acquire(&node_named(15,"sidebar.pair")).action_node_id(),0);let ids=(a.action_node_id(),c.action_node_id());
+        assert!(g.reconcile_sidebar_layout(vec![],tabs(),usize::MAX,usize::MAX,false).admitted);let tree=g.sidebar_tabs();assert_eq!(tree.pair,0);assert!(tree.slots.iter().all(|s|!s.pair));assert_eq!((a.node_parent_id(),c.node_parent_id()),(tree.root,tree.root));assert_eq!((a.action_node_id(),c.action_node_id()),ids);assert!(g.tab_target(7,1,ids.0,false).valid);
+    }
+    #[test] fn sidebar_split_pair_layout_change_cancels_input_and_identical_layout_preserves_it(){
+        let tabs=||vec![sidebar_tab(1,0),sidebar_tab(2,1),sidebar_tab(3,2)];let mut g=new_action_graph();g.reconcile_sidebar_layout(vec![],tabs(),0,1,true);let mut a=g.acquire(&node_tab(1));let b=g.acquire(&node_tab(2));let c=g.acquire(&node_tab(3));let pair=g.sidebar_tabs().pair;a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);let epoch=a.action_admission_epoch();
+        let plan=g.reconcile_sidebar_layout(vec![],tabs(),0,1,true);assert_eq!((plan.created,plan.retired),(0,0));assert!(a.action_pending()&&a.action_admits(epoch));
+        assert!(g.reconcile_sidebar_layout(vec![],tabs(),0,2,true).admitted);assert!(!a.action_pending());let tree=g.sidebar_tabs();assert_eq!(tree.pair,pair);assert_eq!((b.node_parent_id(),c.node_parent_id()),(tree.root,pair));assert_eq!(tree.slots[0].second,2);
+        assert!(g.reconcile_sidebar_layout(vec![],tabs(),0,0,true).admitted);assert_eq!(g.sidebar_tabs().pair,0);assert!(g.reconcile_sidebar_layout(vec![],tabs(),0,9,true).admitted);assert_eq!(g.sidebar_tabs().pair,0);
+    }
+    #[test] fn sidebar_split_pair_anchors_to_pin_group_and_follows_folder_visibility(){
+        let pins=||vec![nested_pin("f","",true,false),nested_pin("p","f",false,false),nested_pin("q","f",false,false)];let tabs=||vec![pinned_tab(1,0,"p"),sidebar_tab(2,1)];let mut g=new_action_graph();assert!(g.reconcile_sidebar_layout(pins(),tabs(),0,1,true).admitted);let folder=g.acquire(&node_named(2,"f"));let p=g.acquire(&node_named(2,"p"));let q=g.acquire(&node_named(2,"q"));let mut a=g.acquire(&node_tab(1));let b=g.acquire(&node_tab(2));
+        let tree=g.sidebar_tabs();let pin_tree=g.pin_tree();let group=pin_tree.entries[0].group;assert_eq!(tree.parent,group);assert_eq!(tree.slots[0].pin,1);assert!(tree.visible);assert_eq!((a.node_parent_id(),b.node_parent_id()),(tree.pair,tree.pair));assert_eq!(tree.pins.iter().map(|v|(v.index,v.visible)).collect::<Vec<_>>(),vec![(0,true),(1,false),(2,true)]);
+        assert!(!g.pin_target("p",p.action_node_id()).valid&&g.pin_target("q",q.action_node_id()).valid);assert!(g.tab_target(7,1,a.action_node_id(),false).valid);a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);
+        assert!(g.set_pin_collapsed(&folder,true));assert!(!g.sidebar_tabs().visible);assert!(!a.action_pending());assert!(!g.tab_target(7,1,a.action_node_id(),false).valid&&!g.tab_target(7,2,b.action_node_id(),false).valid);assert!(!g.pin_target("q",q.action_node_id()).valid);
+        assert!(g.set_pin_collapsed(&folder,false));assert!(g.sidebar_tabs().visible&&g.tab_target(7,2,b.action_node_id(),false).valid);assert!(!g.pin_target("p",p.action_node_id()).valid);
+        assert!(g.reconcile_sidebar_layout(pins(),tabs(),usize::MAX,usize::MAX,false).admitted);let tree=g.sidebar_tabs();assert_eq!((tree.pair,a.node_parent_id()),(0,tree.root));assert!(!g.pin_target("p",p.action_node_id()).valid);
+        assert!(g.reconcile_sidebar_layout(pins(),vec![sidebar_tab(1,0),sidebar_tab(2,1)],usize::MAX,usize::MAX,false).admitted);assert!(g.pin_target("p",p.action_node_id()).valid);
+    }
+    #[test] fn sidebar_split_pair_in_collapsed_folder_starts_hidden_and_unreachable_pin_falls_back_to_root(){
+        let mut g=new_action_graph();assert!(g.reconcile_sidebar_layout(vec![nested_pin("f","",true,true),nested_pin("p","f",false,false)],vec![pinned_tab(1,0,"p"),sidebar_tab(2,1)],0,1,true).admitted);g.acquire(&node_tab(1));let tree=g.sidebar_tabs();assert!(!tree.visible);assert!(!g.tab_target(7,1,g.nodes[&(1,7,1,String::new())].borrow().id,false).valid);
+        let mut g=new_action_graph();assert!(g.reconcile_sidebar_layout(vec![nested_pin("p","missing",false,false)],vec![pinned_tab(1,0,"p"),sidebar_tab(2,1)],0,1,true).admitted);let tree=g.sidebar_tabs();assert_eq!(tree.parent,tree.root);assert!(tree.visible);assert_eq!(tree.slots[0].pin,usize::MAX);
+    }
     #[test] fn pin_tree_models_folder_groups_and_actual_parent_edges_in_preorder(){
         let mut g=new_action_graph();g.reconcile_sidebar(vec![nested_pin("leaf","nested",false,false),nested_pin("outer","",true,false),nested_pin("nested","outer",true,false)],vec![]);let tree=g.pin_tree();assert_eq!(tree.entries.iter().map(|e|e.key.as_str()).collect::<Vec<_>>(),vec!["outer","nested","leaf"]);let outer=&tree.entries[0];let nested=&tree.entries[1];let leaf=&tree.entries[2];assert_eq!((outer.index,nested.index,leaf.index),(1,2,0));assert_eq!(outer.parent,tree.root);assert_eq!(nested.parent,outer.group);assert_eq!(leaf.parent,nested.group);assert_ne!(outer.id,outer.group);assert_ne!(nested.id,nested.group);assert_eq!((outer.depth,nested.depth,leaf.depth),(0,1,2));let input=g.acquire(&node_named(2,"leaf"));assert_eq!(input.node_parent_id(),nested.group);assert_eq!(g.acquire(&node_named(14,"outer")).action_node_id(),0);
     }
@@ -3593,7 +3702,7 @@ mod tests {
     #[test] fn tab_properties_scene_recipe_uses_stored_title_monogram_and_reserved_close_area(){
         let (_g,input)=projected_tab();let scene=input.sidebar_scene(tab_box(),tab_box(),tab_style(),true,true);let ops=layout(&[scene.item]);let title=ops.iter().find(|op|op.text=="Żółć 日本語 🦀").unwrap();assert_eq!(title.x,39.0);assert_eq!(title.width,132.0);assert!(ops.iter().any(|op|op.text=="Z"));assert!(ops.iter().any(|op|op.text=="×"));
     }
-    fn sidebar_tab(low:u64,index:usize)->ffi::SidebarTabInput{ffi::SidebarTabInput{high:7,low,index}}
+    fn sidebar_tab(low:u64,index:usize)->ffi::SidebarTabInput{ffi::SidebarTabInput{high:7,low,index,pin:String::new()}}
     fn tab_scene_fixture()->Box<ActionGraph>{let mut g=new_action_graph();assert!(g.reconcile_sidebar(vec!["folder".into()],vec![sidebar_tab(1,4),sidebar_tab(2,41)]).admitted);g}
     #[test] fn sidebar_scene_owns_collection_parents_tab_payload_and_close_edges(){
         let mut g=tab_scene_fixture();let a=g.acquire(&node_tab(1));let close=g.acquire(&node_close(1));let pin=g.acquire(&node_named(2,"folder"));let root=g.nodes[&(11,0,0,"sidebar.tabs".into())].borrow().id;let pins=g.nodes[&(11,0,0,"sidebar.pins".into())].borrow().id;assert_ne!(root,pins);assert_eq!(a.node_parent_id(),root);assert_eq!(pin.node_parent_id(),pins);assert_eq!(close.node_parent_id(),a.action_node_id());assert_eq!(a.node_model_kind(),9);assert_eq!(a.tab_binding().index,4);assert!(a.tab_binding().can_close);assert!(!pin.tab_binding().valid&&!close.tab_binding().valid);assert_eq!(g.acquire(&node_named(11,"sidebar.tabs")).action_node_id(),0);
@@ -3605,7 +3714,7 @@ mod tests {
         let mut g=new_action_graph();g.reconcile_sidebar(vec![],vec![sidebar_tab(1,8)]);let a=g.acquire(&node_tab(1));let id=a.action_node_id();assert!(!a.tab_binding().can_close);g.reconcile_sidebar(vec![],vec![sidebar_tab(1,8),sidebar_tab(2,12)]);let close=g.acquire(&node_close(1));let close_id=close.action_node_id();assert!(a.tab_binding().can_close&&g.tab_target(7,1,id,true).valid);g.reconcile_sidebar(vec![],vec![sidebar_tab(1,8)]);assert_eq!(a.action_node_id(),id);assert_eq!(close.action_node_id(),0);g.reconcile_sidebar(vec![],vec![sidebar_tab(1,8),sidebar_tab(2,12)]);let next=g.acquire(&node_close(1));assert_ne!(next.action_node_id(),close_id);assert_eq!(a.action_node_id(),id);assert!(g.tab_target(7,1,id,true).valid);
     }
     #[test] fn sidebar_invalid_identity_pin_and_source_collisions_reject_atomically(){
-        let mut g=tab_scene_fixture();let mut a=g.acquire(&node_tab(1));a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);let before=g.order.clone();for (pins,tabs) in [(vec!["folder".into()],vec![sidebar_tab(1,4),sidebar_tab(1,41)]),(vec!["folder".into()],vec![sidebar_tab(1,4),sidebar_tab(2,4)]),(vec!["folder".into()],vec![ffi::SidebarTabInput{high:0,low:0,index:0}]),(vec!["".into()],vec![sidebar_tab(1,4)]),(vec!["folder".into(),"folder".into()],vec![sidebar_tab(1,4)])]{assert!(!g.reconcile_sidebar(pins,tabs).admitted);assert_eq!(g.order,before);assert!(a.action_pending());assert_eq!(a.tab_binding().index,4);}
+        let mut g=tab_scene_fixture();let mut a=g.acquire(&node_tab(1));a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);let before=g.order.clone();for (pins,tabs) in [(vec!["folder".into()],vec![sidebar_tab(1,4),sidebar_tab(1,41)]),(vec!["folder".into()],vec![sidebar_tab(1,4),sidebar_tab(2,4)]),(vec!["folder".into()],vec![ffi::SidebarTabInput{high:0,low:0,index:0,pin:String::new()}]),(vec!["".into()],vec![sidebar_tab(1,4)]),(vec!["folder".into(),"folder".into()],vec![sidebar_tab(1,4)])]{assert!(!g.reconcile_sidebar(pins,tabs).admitted);assert_eq!(g.order,before);assert!(a.action_pending());assert_eq!(a.tab_binding().index,4);}
     }
     #[test] fn sidebar_identical_projection_preserves_input_focus_selection_and_epoch(){
         let mut g=tab_scene_fixture();let mut a=g.acquire(&node_tab(1));a.action_focus(true);a.action_on(true);a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);let epoch=a.action_admission_epoch();let id=a.action_node_id();let p=g.reconcile_sidebar(vec!["folder".into()],vec![sidebar_tab(1,4),sidebar_tab(2,41)]);assert_eq!((p.created,p.retired),(0,0));assert!(a.action_pending()&&a.action_snapshot().focused&&a.action_snapshot().on&&a.action_admits(epoch));assert_eq!(a.action_node_id(),id);
@@ -3617,7 +3726,7 @@ mod tests {
         let mut g=tab_scene_fixture();let id=g.nodes[&(1,7,1,String::new())].borrow().id;assert!(!g.tab_target(7,1,id,false).valid);let mut a=g.acquire(&node_tab(1));assert!(g.tab_target(7,1,id,false).valid);assert!(!g.tab_target(7,1,id,true).valid);let mut close=g.acquire(&node_close(1));assert!(g.tab_target(7,1,id,true).valid);close.action_enabled(false);assert!(!g.tab_target(7,1,id,true).valid);assert!(g.tab_target(7,1,id,false).valid);close.action_enabled(true);a.action_enabled(false);assert!(!g.tab_target(7,1,id,false).valid&&!g.tab_target(7,1,id,true).valid);a.action_enabled(true);assert!(!g.tab_target(7,1,0,false).valid&&!g.tab_target(7,1,id+1,false).valid&&!g.tab_target(7,99,id,false).valid);drop(close);assert!(!g.tab_target(7,1,id,true).valid);drop(a);assert!(!g.tab_target(7,1,id,false).valid);
     }
     #[test] fn sidebar_full_128_bit_identity_does_not_alias_equal_low_words(){
-        let mut g=new_action_graph();g.reconcile_sidebar(vec![],vec![ffi::SidebarTabInput{high:7,low:1,index:5},ffi::SidebarTabInput{high:8,low:1,index:99}]);let a=g.acquire(&node_tab(1));let other=ffi::ActionNodeKey{kind:1,high:8,low:1,name:String::new()};let b=g.acquire(&other);assert_ne!(a.action_node_id(),b.action_node_id());assert_eq!((a.tab_binding().high,b.tab_binding().high),(7,8));assert_eq!(g.tab_target(8,1,b.action_node_id(),false).index,99);assert!(!g.tab_target(8,1,a.action_node_id(),false).valid);
+        let mut g=new_action_graph();g.reconcile_sidebar(vec![],vec![ffi::SidebarTabInput{high:7,low:1,index:5,pin:String::new()},ffi::SidebarTabInput{high:8,low:1,index:99,pin:String::new()}]);let a=g.acquire(&node_tab(1));let other=ffi::ActionNodeKey{kind:1,high:8,low:1,name:String::new()};let b=g.acquire(&other);assert_ne!(a.action_node_id(),b.action_node_id());assert_eq!((a.tab_binding().high,b.tab_binding().high),(7,8));assert_eq!(g.tab_target(8,1,b.action_node_id(),false).index,99);assert!(!g.tab_target(8,1,a.action_node_id(),false).valid);
     }
     #[test] fn sidebar_replacement_lease_revokes_old_binding_without_old_drop_mutating_new(){
         let mut g=tab_scene_fixture();let old=g.acquire(&node_tab(1));let id=old.action_node_id();let mut next=g.acquire(&node_tab(1));assert!(!old.tab_binding().valid);assert_eq!(next.tab_binding().id,id);next.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);drop(old);assert!(next.action_pending());assert!(g.owns_input(&next));

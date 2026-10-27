@@ -1,8 +1,8 @@
 # Rust + Metal — stan i pozostałe prace
 
-Stan na 2026-10-27. **Cel wstrzymany na prośbę użytkownika.** Nie kontynuować
-migracji ani nie uruchamiać testów UI bez wznowienia. Kod ostatniego etapu:
-`733f04f`, wypushowany na `origin/main`. Wstrzymanie nie oznacza ukończenia celu.
+Stan na 2026-10-27 (wieczór). **Migracja wznowiona** na prośbę użytkownika: cel
+kończy się przy pełnym przeniesieniu implementacji albo gdy tygodniowe zużycie
+przekroczy 25%. Testy UI uruchamiamy tylko po większych etapach.
 
 ## Gdzie jesteśmy
 
@@ -25,6 +25,17 @@ Ostatnie etapy obejmują:
   paginacja wyjątków stron. Bilety nie utrzymują węzłów ani adapterów przy życiu.
 - Komendy wszystkich czterech presetów koloru i sześciu presetów emoji przestrzeni,
   z walidacją indeksu i rozwiązywaniem wartości przez katalog Rust.
+- **Para splitu w grafie Rust** (punkt 2 poniżej): węzeł `sidebar.pair`, jego
+  kotwica wśród przypięć (rzeczywisty rodzic: grupa folderu lub korzeń kart),
+  członkowie jako dzieci pary, widoczność zależna od zwinięcia folderu oraz ukrycie
+  przypięcia reprezentowanego przez kartę. Natywny `RebuildTabs` w trybie Rust bierze
+  sloty i widoczność przypięć z grafu zamiast z `SidebarTree::Tabs`. Zmiana układu
+  anuluje naciśnięcia; identyczny układ zachowuje wejście i ID.
+- **Statusy formularzy w Ruście**: wyniki zapisu preferencji (tekst, wyjątki stron,
+  usuwanie wyjątku, wartości, przełączniki) są typowanym `PreferenceOutcome` z
+  tekstem/tonem w `PreferencesForm`; przechwytywanie skrótu (Escape/niepoprawny/
+  poprawny) jest przejściem stanu `ToolsForm::tools_capture`; komunikaty wczytywania
+  historii i błędu zapisu pochodzą z `tools_status`. Views zachowuje dotychczasowe teksty.
 
 Natywne usługi okien, IME, schowka, dostępności i menu oraz autoryzacja operacji
 Chromium/profili/magazynów pozostają potrzebnymi granicami integracji. Celem nie jest
@@ -39,12 +50,9 @@ Kolejność jest propozycją na wznowienie; testy z oknami pozostają odłożone
    komunikaty statusu/błędów/postępu, stan busy/managed i koordynację paneli do
    wspólnych modeli. Nie przepisywać ponownie już działających kontrolerów walidacji.
    Zachować walidację IME, wybór profilu, stan importu i autoryzację zapisów.
-2. **Domknąć graf sidebara.** Odwzorować parę kart splitu, jej zakotwiczenie wśród
-   przypięć, rzeczywistych rodziców i widoczność w grafie Rust. Obecne logiczne
-   kolekcje kart i folderów nie opisują jeszcze całego fizycznego drzewa.
-   Niedokończony eksperyment jest wyłącznie lokalnie w
-   `build/sidebar-pair-deferred-2026-10-27.patch`; nie jest częścią commita,
-   nie jest zweryfikowany i nie należy go stosować bez przeglądu względem HEAD.
+2. **Graf sidebara — zrobione headless.** Para splitu, kotwica i widoczność są w
+   Ruście (patrz wyżej). Pozostaje akceptacja GUI (`SidebarPairRustNodeOwnsMembersAnchorAndFolderVisibility`
+   jest tylko kompilowany) oraz dalsze ograniczenie przebudowy kontenerów.
 3. **Poszerzyć przyrostowe uzgadnianie drzew.** Wykorzystać istniejące zachowywanie
    wierszy kart/przypięć, zamiast je pisać od nowa. Ograniczyć przebudowę kontenerów
    przy zmianie topologii i rozszerzyć ponowne użycie na pozostałe drzewa formularzy.
@@ -78,6 +86,10 @@ Kolejność jest propozycją na wznowienie; testy z oknami pozostają odłożone
 
 ## Co jest sprawdzone, a co odłożone
 
+Dla etapów pary splitu i statusów: **487 testów Rust**, **68 testów Python**,
+kontrola granic zależności; `sidebar_scene_unittests`, `zitter_ui_lab` i
+`zitter_prototype_ui_lab` skompilowane. Testy UI nie były uruchamiane.
+
 Dla kodu `733f04f`: **481 testów Rust**, **68 testów Python w drzewie roboczym
 oraz 68 z czystego archiwum commita**, **180 przypadków CoreText plus rasteryzacja**,
 kontrola granic zależności i nagłówków GN. Najnowsze przypadki UI są tylko kompilowane.
@@ -101,6 +113,6 @@ akceptacji wszystkich niezależnych zmian bieżącego Chromium/network bootstrap
 - [Raport hierarchii przypięć](benchmarks/rust-pin-tree-headless-2026-10-27.json).
 - [Ostatni pełny checkpoint UI](benchmarks/rust-text-action-checkpoint-2026-10-26.json).
 
-Po wznowieniu najpierw odczytać stan repo, celu i limitu. Warunek zatrzymania przy
-spadku pozostałego limitu tygodniowego poniżej 50% pozostaje zapisany w celu;
-aktualna pauza wynika z bezpośredniej prośby użytkownika.
+Po wznowieniu najpierw odczytać stan repo, celu i limitu. Budować wyłącznie
+`.chromium/src/third_party/ninja/ninja` (1.12); ninja z Homebrew (1.13) odrzuca
+log v6 i wymusza pełną przebudowę Chromium.
