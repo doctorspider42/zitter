@@ -42,8 +42,9 @@ mod ffi {
     enum PreferenceRowKind { Theme, Pinned, Animations, Search, Toggle, Text, Picker, Action, Directory, SiteEditor, SiteRules, ClearData, ShortcutHint }
     #[repr(u32)]
     #[derive(Debug)]
-    enum FormCommand { None, WorkspaceSave, WorkspaceToggle, WorkspaceRemove, WorkspaceProfiles, WorkspaceImport, ProfileCreate, ProfileRename, ProfileDelete, ProfileBack, ImportApply, PreferenceText, PreferenceSite, PreferenceClear, PreferenceDirectory, History, Workspace, Passwords, Profiles, Import, Proxy, Certificates, Providers, Shortcuts, TimeMachine }
-    struct FormCommandBinding { command: FormCommand, key: String }
+    enum FormCommand { None, WorkspaceSave, WorkspaceToggle, WorkspaceRemove, WorkspaceProfiles, WorkspaceImport, ProfileCreate, ProfileRename, ProfileDelete, ProfileBack, ImportApply, PreferenceText, PreferenceSite, PreferenceClear, PreferenceDirectory, History, Workspace, Passwords, Profiles, Import, Proxy, Certificates, Providers, Shortcuts, TimeMachine, WorkspaceDismiss, PreferencesDismiss, ImportDismiss, ToolsDismiss, PreferenceCategory }
+    struct FormCommandBinding { command: FormCommand, key: String, index: usize }
+    struct FormCommandView { bound: bool, dismiss: bool, index: usize }
     enum PreferenceActionKind { None, History, Workspace, Passwords, Profiles, Import, Proxy, Certificates, Providers, Shortcuts, TimeMachine }
     struct PreferenceSpec { category: usize, kind: PreferenceRowKind, key: String, title: String, detail: String, choices: Vec<String>, placeholder: String, action: PreferenceActionKind, button: String, button_ax: String, tooltip: String }
     struct PreferenceSiteCopy { origin_ax: String, placeholder: String, type_ax: String, policy_ax: String, save: String, types: Vec<String> }
@@ -238,6 +239,7 @@ mod ffi {
         fn preference_site_policies(index: usize) -> Vec<String>;
         type PreferencesForm;
         fn new_preferences_form(categories: usize) -> Box<PreferencesForm>;
+        fn bind_category(self: &PreferencesForm, input: &mut ActionControl, category: usize) -> bool;
         fn preference_select(self: &mut PreferencesForm, category: usize) -> bool;
         fn preference_current(self: &PreferencesForm) -> usize;
         fn preference_profile(self: &mut PreferencesForm, profile: &str) -> bool;
@@ -458,6 +460,7 @@ mod ffi {
         fn action_node_id(self: &ActionControl) -> u64;
         fn node_form_command_init(self: &mut ActionControl, command: FormCommand, key: &str) -> bool;
         fn node_form_command(self: &ActionControl) -> FormCommandBinding;
+        fn node_form_view(self: &ActionControl) -> FormCommandView;
         fn action_admission_epoch(self: &ActionControl) -> u64;
         fn action_admits(self: &ActionControl, epoch: u64) -> bool;
         fn node_model_kind(self: &ActionControl) -> u32;
@@ -1016,6 +1019,7 @@ fn preference_catalogue(system_certificates:bool)->ffi::PreferenceCatalogue {
 pub struct PreferencesForm { categories: usize, selected: usize, query: Vec<u16>, profile: String, dirty: std::collections::BTreeSet<String>, rule_limit: usize }
 fn new_preferences_form(categories:usize)->Box<PreferencesForm>{Box::new(PreferencesForm{categories,selected:0,query:vec![],profile:String::new(),dirty:Default::default(),rule_limit:50})}
 impl PreferencesForm {
+    fn bind_category(&self,input:&mut ActionControl,category:usize)->bool{category<self.categories&&input.init_form_command(ffi::FormCommand::PreferenceCategory,"",category)}
     fn preference_select(&mut self,category:usize)->bool{if category>=self.categories{return false;}self.selected=category;self.query.clear();true}
     fn preference_current(&self)->usize{self.selected}
     fn preference_profile(&mut self,profile:&str)->bool {
@@ -1823,8 +1827,8 @@ struct HistoryPresentation {title:Vec<u16>,detail:Vec<u16>,url:Vec<u16>,cancel_i
 struct PalettePresentation {title:Vec<u16>,detail:Vec<u16>,icon:u32,index:usize,cancel_input:bool}
 struct PaletteSceneState {selection:PaletteSelection,dirty:bool}
 struct SiteRulePresentation {detail:Vec<u16>,editable:bool,source_index:usize,cancel_input:bool}
-struct FormCommandModel {command:ffi::FormCommand,key:String}
-fn valid_form_command(command:ffi::FormCommand,key:&str)->bool{use ffi::FormCommand as C;match command{C::PreferenceText=>!key.is_empty(),C::WorkspaceSave|C::WorkspaceToggle|C::WorkspaceRemove|C::WorkspaceProfiles|C::WorkspaceImport|C::ProfileCreate|C::ProfileRename|C::ProfileDelete|C::ProfileBack|C::ImportApply|C::PreferenceSite|C::PreferenceClear|C::PreferenceDirectory|C::History|C::Workspace|C::Passwords|C::Profiles|C::Import|C::Proxy|C::Certificates|C::Providers|C::Shortcuts|C::TimeMachine=>key.is_empty(),_=>false}}
+struct FormCommandModel {command:ffi::FormCommand,key:String,index:usize}
+fn valid_form_command(command:ffi::FormCommand,key:&str)->bool{use ffi::FormCommand as C;match command{C::PreferenceText=>!key.is_empty(),C::WorkspaceSave|C::WorkspaceToggle|C::WorkspaceRemove|C::WorkspaceProfiles|C::WorkspaceImport|C::ProfileCreate|C::ProfileRename|C::ProfileDelete|C::ProfileBack|C::ImportApply|C::PreferenceSite|C::PreferenceClear|C::PreferenceDirectory|C::History|C::Workspace|C::Passwords|C::Profiles|C::Import|C::Proxy|C::Certificates|C::Providers|C::Shortcuts|C::TimeMachine|C::WorkspaceDismiss|C::PreferencesDismiss|C::ImportDismiss|C::ToolsDismiss=>key.is_empty(),_=>false}}
 enum NodeModel { FormCommand(FormCommandModel), Checkbox(CheckboxState), Toggle(ToggleState), Select(SelectState), Workspace(WorkspacePresentation), History(HistoryPresentation), Palette(PalettePresentation), PaletteRoot(PaletteSceneState), FormRoot(ffi::FormGroupStyle), SiteRule(SiteRulePresentation) }
 impl NodeModel {
     // Popup tokens and IME prefix belong to one input lease, unlike selection.
@@ -2048,12 +2052,17 @@ impl ActionControl {
     fn action_node_id(&self)->u64{match &self.storage{ActionStorage::Shared{node,lease}=>{let record=node.borrow();if record.alive&&record.attached&&record.lease==*lease{record.id}else{0}},_=>0}}
     // Semantic commands belong to private form members, never display labels.
     // Rebinding to another command requires a new node; stale adapters fail shut.
-    fn node_form_command_init(&mut self,command:ffi::FormCommand,key:&str)->bool{
-        if !valid_form_command(command,key){return false;}
-        self.write_node(|r|{if r.kind!=9{return false;}match r.model.as_deref(){Some(NodeModel::FormCommand(m))=>m.command==command&&m.key==key,Some(_)=>false,None=>{r.model=Some(Box::new(NodeModel::FormCommand(FormCommandModel{command,key:key.into()})));true}}}).unwrap_or(false)
+    fn init_form_command(&mut self,command:ffi::FormCommand,key:&str,index:usize)->bool{
+        self.write_node(|r|{if r.kind!=9{return false;}match r.model.as_deref(){Some(NodeModel::FormCommand(m))=>m.command==command&&m.key==key&&m.index==index,Some(_)=>false,None=>{r.model=Some(Box::new(NodeModel::FormCommand(FormCommandModel{command,key:key.into(),index})));true}}}).unwrap_or(false)
     }
+    fn node_form_command_init(&mut self,command:ffi::FormCommand,key:&str)->bool{valid_form_command(command,key)&&self.init_form_command(command,key,0)}
     fn node_form_command(&self)->ffi::FormCommandBinding{
-        self.read_node(|r|{if !r.state.enabled||r.state.admission_epoch==0{return None;}if let Some(NodeModel::FormCommand(m))=r.model.as_deref(){Some(ffi::FormCommandBinding{command:m.command,key:m.key.clone()})}else{None}}).flatten().unwrap_or(ffi::FormCommandBinding{command:ffi::FormCommand::None,key:String::new()})
+        self.read_node(|r|{if !r.state.enabled||r.state.admission_epoch==0{return None;}if let Some(NodeModel::FormCommand(m))=r.model.as_deref(){Some(ffi::FormCommandBinding{command:m.command,key:m.key.clone(),index:m.index})}else{None}}).flatten().unwrap_or(ffi::FormCommandBinding{command:ffi::FormCommand::None,key:String::new(),index:0})
+    }
+    // Presentation stays available for a disabled live adapter; it never admits
+    // an operation. No strings/collections are cloned on this paint/measure path.
+    fn node_form_view(&self)->ffi::FormCommandView{
+        self.read_node(|r|if let Some(NodeModel::FormCommand(m))=r.model.as_deref(){Some(ffi::FormCommandView{bound:true,dismiss:matches!(m.command,ffi::FormCommand::WorkspaceDismiss|ffi::FormCommand::PreferencesDismiss|ffi::FormCommand::ImportDismiss|ffi::FormCommand::ToolsDismiss),index:m.index})}else{None}).flatten().unwrap_or(ffi::FormCommandView{bound:false,dismiss:false,index:0})
     }
     fn action_admission_epoch(&self)->u64{self.read(|s|s.admission_epoch).unwrap_or(0)}
     fn action_admits(&self,epoch:u64)->bool{epoch!=0&&self.read(|s|s.enabled&&s.admission_epoch==epoch).unwrap_or(false)}
@@ -3300,6 +3309,33 @@ mod tests {
     fn node_pin(name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:2,high:0,low:0,name:name.into()}}
     fn node_close(low:u64)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:10,high:7,low,name:String::new()}}
     fn node_named(kind:u32,name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind,high:0,low:0,name:name.into()}}
+    #[test] fn panel_categories_bind_indices_from_the_owning_form_count(){
+        let form=new_preferences_form(10);let mut graph=new_form_graph(true,6,false,false);for category in 0..10{let mut input=graph.append_form_action();assert!(form.bind_category(&mut input,category));assert_eq!(input.node_model_kind(),8);let command=input.node_form_command();assert_eq!(command.command,ffi::FormCommand::PreferenceCategory);assert_eq!(command.index,category);assert!(command.key.is_empty());let view=input.node_form_view();assert!(view.bound&&!view.dismiss);assert_eq!(view.index,category);}
+    }
+    #[test] fn panel_categories_reject_out_of_range_and_unbound_command_bypass(){
+        let form=new_preferences_form(3);let mut graph=new_form_graph(true,6,false,false);let mut input=graph.append_form_action();for category in [3,usize::MAX]{assert!(!form.bind_category(&mut input,category));assert!(!input.node_form_view().bound);}assert!(!new_preferences_form(0).bind_category(&mut input,0));assert!(!input.node_form_command_init(ffi::FormCommand::PreferenceCategory,""));assert!(!input.node_form_command_init(ffi::FormCommand::PreferenceCategory,"1"));assert!(form.bind_category(&mut input,2));assert!(!form.bind_category(&mut input,3));assert_eq!(input.node_form_command().index,2);
+    }
+    #[test] fn panel_category_targets_are_immutable_and_independent_of_selection(){
+        let mut form=new_preferences_form(10);let mut graph=new_form_graph(true,6,false,false);let mut input=graph.append_form_action();assert!(form.bind_category(&mut input,7));assert!(form.bind_category(&mut input,7));assert!(!form.bind_category(&mut input,2));assert!(form.preference_select(4));assert_eq!(input.node_form_command().index,7);assert!(!input.node_form_command_init(ffi::FormCommand::PreferencesDismiss,""));assert_eq!(input.node_form_command().command,ffi::FormCommand::PreferenceCategory);
+    }
+    #[test] fn panel_category_presentation_survives_disabling_without_admitting_actions(){
+        let form=new_preferences_form(10);let mut graph=new_form_graph(true,6,false,false);let mut input=graph.append_form_action();form.bind_category(&mut input,6);input.action_enabled(false);assert_eq!(input.node_form_command().command,ffi::FormCommand::None);let view=input.node_form_view();assert!(view.bound&&!view.dismiss);assert_eq!(view.index,6);input.action_enabled(true);assert_eq!(input.node_form_command().index,6);
+    }
+    #[test] fn panel_dismiss_commands_share_rust_presentation_and_keep_distinct_targets(){
+        let mut graph=new_form_graph(false,0,false,false);for command in [ffi::FormCommand::WorkspaceDismiss,ffi::FormCommand::PreferencesDismiss,ffi::FormCommand::ImportDismiss,ffi::FormCommand::ToolsDismiss]{let mut input=graph.append_form_action();assert!(input.node_form_command_init(command,""));assert_eq!(input.node_form_command().command,command);assert!(input.node_form_view().bound&&input.node_form_view().dismiss);input.action_enabled(false);assert!(input.node_form_view().dismiss);assert_eq!(input.node_form_command().command,ffi::FormCommand::None);assert!(!input.node_form_command_init(command,"unexpected"));}
+    }
+    #[test] fn panel_commands_retirement_releases_category_presentation_and_payload(){
+        let form=new_preferences_form(10);let mut graph=new_form_graph(true,6,false,false);let mut input=graph.append_form_action();form.bind_category(&mut input,8);let epoch=input.action_admission_epoch();assert!(graph.retire_form_action(input.action_node_id()));assert!(!input.node_form_view().bound);assert_eq!(input.node_form_command().command,ffi::FormCommand::None);assert!(!input.action_admits(epoch));assert!(!form.bind_category(&mut input,8));
+    }
+    #[test] fn panel_presentation_reads_preserve_pending_input_and_admission_epoch(){
+        let form=new_preferences_form(10);let mut graph=new_form_graph(true,6,false,false);let mut input=graph.append_form_action();form.bind_category(&mut input,2);input.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);let epoch=input.action_admission_epoch();for _ in 0..32{let view=input.node_form_view();assert!(view.bound);assert_eq!(view.index,2);}assert!(input.action_pending()&&input.action_admits(epoch));assert!(input.action_pointer(ffi::PointerPhase::Release,1,1,true,true,true).action==ffi::RowAction::Activate);
+    }
+    #[test] fn panel_category_binding_rejects_wrong_typed_and_non_form_models(){
+        let form=new_preferences_form(10);let mut graph=new_form_graph(true,6,false,false);let mut input=graph.append_form_action();input.node_toggle_init();assert!(!form.bind_category(&mut input,0));assert_eq!(input.node_model_kind(),2);assert!(!input.node_form_view().bound);let mut standalone=new_action_control();assert!(!form.bind_category(&mut standalone,0));let mut other=new_action_graph();other.reconcile(vec![node_tab(1)]);assert!(!form.bind_category(&mut other.acquire(&node_tab(1)),0));
+    }
+    #[test] fn panel_dismiss_owner_drop_and_context_cancellation_revoke_dispatch(){
+        let mut graph=new_form_graph(false,0,false,false);let mut input=graph.append_form_action();input.node_form_command_init(ffi::FormCommand::ImportDismiss,"");let epoch=input.action_admission_epoch();input.action_cancel();assert!(!input.action_admits(epoch));assert!(input.node_form_view().dismiss);drop(graph);assert!(!input.node_form_view().bound);assert_eq!(input.node_form_command().command,ffi::FormCommand::None);
+    }
     #[test] fn form_commands_own_semantics_and_keys_independently_of_labels(){
         let mut g=new_form_graph(false,8,false,false);let mut a=g.append_form_action();assert!(a.node_form_command_init(ffi::FormCommand::PreferenceText,"accept_languages"));assert_eq!(a.node_model_kind(),8);assert_eq!(a.node_form_command().command,ffi::FormCommand::PreferenceText);assert_eq!(a.node_form_command().key,"accept_languages");assert!(a.node_form_command_init(ffi::FormCommand::PreferenceText,"accept_languages"));assert!(!a.node_form_command_init(ffi::FormCommand::PreferenceText,"dns_templates"));assert!(!a.node_form_command_init(ffi::FormCommand::ProfileDelete,""));assert_eq!(a.node_form_command().key,"accept_languages");
     }
