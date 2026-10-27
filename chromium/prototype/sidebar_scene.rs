@@ -421,6 +421,8 @@ mod ffi {
         fn new_action_graph() -> Box<ActionGraph>;
         fn reconcile(self: &mut ActionGraph, keys: Vec<ActionNodeKey>) -> ActionNodePlan;
         fn acquire(self: &mut ActionGraph, key: &ActionNodeKey) -> Box<ActionControl>;
+        fn append_form_action(self: &mut ActionGraph) -> Box<ActionControl>;
+        fn retire_form_action(self: &mut ActionGraph, id: u64) -> bool;
         type ActionControl;
         fn action_node_id(self: &ActionControl) -> u64;
         fn new_action_control() -> Box<ActionControl>;
@@ -1757,6 +1759,7 @@ fn action_node_key(key:&ffi::ActionNodeKey)->Option<ActionNodeIdentity>{
     }
 }
 struct ActionNodeRecord { id:u64, lease:u64, attached:bool, alive:bool, state:ActionState }
+impl ActionNodeRecord {fn retire(&mut self){self.alive=false;self.attached=false;self.state.action_focus(false);self.state.action_cancel();}}
 pub struct ActionGraph { nodes:BTreeMap<ActionNodeIdentity,Rc<RefCell<ActionNodeRecord>>>, order:Vec<u64>, next_id:u64 }
 fn new_action_graph()->Box<ActionGraph>{Box::new(ActionGraph{nodes:BTreeMap::new(),order:vec![],next_id:1})}
 impl ActionGraph {
@@ -1770,13 +1773,25 @@ impl ActionGraph {
         let created=identities.iter().filter(|key|!self.nodes.contains_key(*key)).count();
         if self.next_id.checked_add(created as u64).is_none(){return self.rejected();}
         let mut retired=0;
-        self.nodes.retain(|key,node|{if unique.contains(key){return true;}let mut node=node.borrow_mut();node.alive=false;node.attached=false;node.state.action_focus(false);node.state.action_cancel();retired+=1;false});
+        self.nodes.retain(|key,node|{if unique.contains(key){return true;}let mut node=node.borrow_mut();node.retire();retired+=1;false});
         let mut order=Vec::with_capacity(identities.len());
         for key in identities {
             let node=self.nodes.entry(key).or_insert_with(||{let id=self.next_id;self.next_id+=1;Rc::new(RefCell::new(ActionNodeRecord{id,lease:0,attached:false,alive:true,state:initial_action_state()}))});
             order.push(node.borrow().id);
         }
         self.order=order.clone();ffi::ActionNodePlan{admitted:true,ids:order,created,retired}
+    }
+    // Kind 9 is private to form membership: native projections cannot create or
+    // acquire these keys. The group receives one lease with its fresh Rust ID.
+    fn append_form_action(&mut self)->Box<ActionControl>{
+        let Some(next)=self.next_id.checked_add(1) else{return Box::new(ActionControl{storage:ActionStorage::Retired});};
+        let id=self.next_id;let node=Rc::new(RefCell::new(ActionNodeRecord{id,lease:1,attached:true,alive:true,state:initial_action_state()}));
+        self.nodes.insert((9,id,0,String::new()),node.clone());self.order.push(id);self.next_id=next;
+        Box::new(ActionControl{storage:ActionStorage::Shared{node,lease:1}})
+    }
+    fn retire_form_action(&mut self,id:u64)->bool{
+        let Some(node)=self.nodes.remove(&(9,id,0,String::new())) else{return false;};
+        node.borrow_mut().retire();self.order.retain(|old|*old!=id);true
     }
     fn acquire(&mut self,key:&ffi::ActionNodeKey)->Box<ActionControl>{
         let node=action_node_key(key).and_then(|key|self.nodes.get(&key)).cloned();
@@ -1785,7 +1800,7 @@ impl ActionGraph {
         Box::new(ActionControl{storage:ActionStorage::Shared{node,lease}})
     }
 }
-impl Drop for ActionGraph {fn drop(&mut self){for node in self.nodes.values(){let mut record=node.borrow_mut();record.alive=false;record.attached=false;record.state.action_focus(false);record.state.action_cancel();}}}
+impl Drop for ActionGraph {fn drop(&mut self){for node in self.nodes.values(){let mut record=node.borrow_mut();record.retire();}}}
 enum ActionStorage { Standalone(ActionState), Shared{node:Rc<RefCell<ActionNodeRecord>>,lease:u64}, Retired }
 struct ActionControl { storage:ActionStorage }
 impl ActionControl {
@@ -3018,6 +3033,27 @@ mod tests {
     fn node_pin(name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:2,high:0,low:0,name:name.into()}}
     fn node_close(low:u64)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:10,high:7,low,name:String::new()}}
     fn node_named(kind:u32,name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind,high:0,low:0,name:name.into()}}
+    #[test] fn form_action_membership_allocates_unique_ids_without_native_keys(){
+        let mut g=new_action_graph();let mut a=g.append_form_action();let b=g.append_form_action();assert_ne!(a.action_node_id(),0);assert_ne!(a.action_node_id(),b.action_node_id());assert_eq!(g.order,vec![a.action_node_id(),b.action_node_id()]);
+        a.action_on(true);a.action_default(true);assert!(a.action_snapshot().on);assert!(a.action_snapshot().is_default);assert!(!b.action_snapshot().on);assert_eq!(g.nodes.len(),2);
+    }
+    #[test] fn form_action_removal_retires_retained_input_and_new_members_never_reuse_ids(){
+        let mut g=new_action_graph();let mut a=g.append_form_action();let b=g.append_form_action();let id=a.action_node_id();a.action_focus(true);a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);
+        assert!(g.retire_form_action(id));assert_eq!(a.action_node_id(),0);assert!(!a.action_snapshot().enabled);assert!(!a.action_pointer(ffi::PointerPhase::Release,1,1,true,true,true).handled);assert!(!a.action_key(true,1,true,true).handled);assert!(!g.retire_form_action(id));assert_eq!(g.order,vec![b.action_node_id()]);assert_eq!(g.nodes.len(),1);
+        let c=g.append_form_action();assert!(c.action_node_id()>b.action_node_id());assert_ne!(c.action_node_id(),id);
+    }
+    #[test] fn form_action_owner_drop_invalidates_adapters_that_outlive_group(){
+        let mut a={let mut g=new_action_graph();g.append_form_action()};assert_eq!(a.action_node_id(),0);assert!(!a.action_enabled(true));assert!(!a.action_gesture(1,true).handled);
+    }
+    #[test] fn form_action_id_exhaustion_is_transactional_and_retirement_still_works(){
+        let mut g=new_action_graph();let a=g.append_form_action();let id=a.action_node_id();g.next_id=u64::MAX;let rejected=g.append_form_action();assert_eq!(rejected.action_node_id(),0);assert_eq!(g.order,vec![id]);assert_eq!(g.nodes.len(),1);assert!(g.retire_form_action(id));assert!(g.nodes.is_empty());
+    }
+    #[test] fn form_action_private_keys_cannot_be_injected_or_reacquired_by_projection(){
+        let mut g=new_action_graph();let a=g.append_form_action();let id=a.action_node_id();let key=ffi::ActionNodeKey{kind:9,high:id,low:0,name:String::new()};let rejected=g.reconcile(vec![ffi::ActionNodeKey{kind:9,high:id,low:0,name:String::new()}]);assert!(!rejected.admitted);assert_eq!(a.action_node_id(),id);assert_eq!(g.acquire(&key).action_node_id(),0);assert_eq!(a.action_node_id(),id);
+    }
+    #[test] fn form_action_retirement_cannot_remove_projected_tabs_or_split_pairs(){
+        let mut g=new_action_graph();let p=g.reconcile(vec![node_tab(1),node_pane(7,"work",1),node_pane(8,"work",1)]);for id in p.ids.iter().copied(){assert!(!g.retire_form_action(id));}assert_eq!(g.order,p.ids);assert!(!g.retire_form_action(0));
+    }
     fn node_pane(kind:u32,workspace:&str,low:u64)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind,high:7,low,name:workspace.into()}}
     #[test] fn action_graph_pane_actions_are_paired_and_keep_ids_on_same_target_refresh(){
         let mut g=new_action_graph();let p=g.reconcile(vec![node_pane(7,"work",1),node_pane(8,"work",1)]);assert!(p.admitted);assert_ne!(p.ids[0],p.ids[1]);
