@@ -6548,6 +6548,28 @@ void WorkspaceShell::RebuildSuggestions() {
   suggestions_text_ = address_->GetText();
   const auto text = base::UTF16ToUTF8(base::TrimWhitespace(address_->GetText(), base::TRIM_ALL));
   const bool commands_only = command_palette_ && text.starts_with(">");
+#if BUILDFLAG(IS_MAC)
+  if (metal_sidebar_) {
+    // Native services resolve input and supply results/commands; Rust orders them.
+    sidebar::PalettePlanInput input{};input.text=text;input.command_palette=command_palette_;input.results=search_results_.size();
+    std::u16string provider_name;GURL url;
+    if (!text.empty() && !commands_only) url = ResolveInput(text, &provider_name);
+    input.provider=base::UTF16ToUTF8(provider_name);input.resolved=url.is_valid()?url.spec():text;
+    for (const auto& provider : tools_.providers) input.keywords.push_back(provider.keyword);
+    std::vector<Suggestion> commands;
+    if (command_palette_ && callbacks_.commands) commands = callbacks_.commands.Run(base::UTF8ToUTF16(text));
+    input.commands=commands.size();
+    const auto plan = sidebar::palette_plan(input);
+    for (const auto& slot : plan.slots) {
+      switch (slot.source) {
+        case sidebar::PaletteSource::Primary: suggestions_.push_back({base::UTF8ToUTF16(std::string(plan.primary_title)),base::UTF8ToUTF16(std::string(plan.primary_detail)),url,std::nullopt});break;
+        case sidebar::PaletteSource::Result: suggestions_.push_back(search_results_.at(slot.index));break;
+        default: suggestions_.push_back(commands.at(slot.index));break;
+      }
+    }
+  } else
+#endif
+  {
   if (!text.empty() && !commands_only) {
     std::u16string provider_name;
     const GURL url = ResolveInput(text, &provider_name);
@@ -6568,6 +6590,7 @@ void WorkspaceShell::RebuildSuggestions() {
     // Explicit provider prefixes always retain their search action first.
     const auto position = keyword_search && !suggestions_.empty() ? suggestions_.begin() + 1 : suggestions_.begin();
     suggestions_.insert(position, commands.begin(), commands.end());
+  }
   }
   size_t preserved=0;bool found_selected=false;
   if(selected){auto found=std::find(suggestions_.begin(),suggestions_.end(),*selected);if(found!=suggestions_.end()){preserved=found-suggestions_.begin();found_selected=true;}}

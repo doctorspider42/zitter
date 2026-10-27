@@ -111,6 +111,11 @@ mod ffi {
     enum LinkMenuCommand { None, Peek, NewTab, Split, SetRule, RemoveRule }
     struct LinkMenuAction { command: LinkMenuCommand, workspace: String }
     struct FolderMenuState { ready: bool, busy: bool, workspace: String, folder: String }
+    struct PalettePlanInput { text: String, command_palette: bool, provider: String, resolved: String, keywords: Vec<String>, results: usize, commands: usize }
+    #[derive(Debug)]
+    enum PaletteSource { Primary, Result, Command }
+    struct PaletteSlot { source: PaletteSource, index: usize }
+    struct PalettePlan { commands_only: bool, keyword_search: bool, primary_title: String, primary_detail: String, primary_icon: u32, slots: Vec<PaletteSlot> }
     struct FolderMenuEntry { command: i32, label: String }
     #[derive(Debug)]
     enum FolderMenuCommand { None, Create, Rename, Delete }
@@ -405,6 +410,7 @@ mod ffi {
         fn link_menu_checked(command: i32, state: &LinkMenuState) -> bool;
         fn link_menu_action(command: i32, state: &LinkMenuState) -> LinkMenuAction;
         fn folder_context_menu(state: &FolderMenuState) -> Vec<FolderMenuEntry>;
+        fn palette_plan(input: &PalettePlanInput) -> PalettePlan;
         fn folder_menu_enabled(command: i32, state: &FolderMenuState) -> bool;
         fn folder_menu_action(command: i32, state: &FolderMenuState) -> FolderMenuAction;
         fn workspace_context_menu(state: &WorkspaceMenuState) -> Vec<WorkspaceMenuEntry>;
@@ -1503,6 +1509,21 @@ fn link_menu_action(command:i32,s:&ffi::LinkMenuState)->ffi::LinkMenuAction{
     use ffi::LinkMenuCommand as C;let action=|command,workspace:&str|ffi::LinkMenuAction{command,workspace:workspace.into()};
     if !link_menu_enabled(command,s){return action(C::None,"");}
     match command{LINK_PEEK=>action(C::Peek,&s.source),LINK_NEW_TAB=>action(C::NewTab,&s.source),LINK_SPLIT=>action(C::Split,&s.source),LINK_RULE_HERE=>action(C::SetRule,&s.source),LINK_REMOVE_RULE=>action(C::RemoveRule,""),_=>match link_route(command,s){Some(route)=>action(C::SetRule,&route.id),None=>action(C::None,"")}}
+}
+
+// Address/command palette ordering. Native services resolve URLs/providers and
+// supply results/commands; Rust decides the primary entry and the final order.
+fn palette_plan(p:&ffi::PalettePlanInput)->ffi::PalettePlan{
+    use ffi::PaletteSource as S;let text=p.text.as_str();
+    let commands_only=p.command_palette&&text.starts_with('>');
+    let keyword_search=text.find([' ','\t']).is_some_and(|end|{let keyword=text[..end].to_ascii_lowercase();p.keywords.iter().any(|k|*k==keyword)});
+    let mut slots=Vec::new();let primary=!text.is_empty()&&!commands_only;
+    if primary{slots.push(ffi::PaletteSlot{source:S::Primary,index:0});}
+    if !commands_only{slots.extend((0..p.results).map(|index|ffi::PaletteSlot{source:S::Result,index}));}
+    if p.command_palette&&!commands_only&&!keyword_search&&!text.is_empty()&&p.results>0{slots.rotate_left(1);}
+    if p.command_palette{let position=if keyword_search&&!slots.is_empty(){1}else{0};let commands=(0..p.commands).map(|index|ffi::PaletteSlot{source:S::Command,index}).collect::<Vec<_>>();slots.splice(position..position,commands);}
+    let search=!p.provider.is_empty();
+    ffi::PalettePlan{commands_only,keyword_search,primary_title:if !primary{String::new()}else if search{format!("Szukaj w {}",p.provider)}else{"Otwórz".into()},primary_detail:if !primary{String::new()}else if search{p.text.clone()}else{p.resolved.clone()},primary_icon:if primary&&!search{1}else{0},slots}
 }
 
 // Folder menu IDs follow the native menu delegate contract; an empty folder is the root.
@@ -4580,6 +4601,19 @@ mod tests {
         let a=folder_menu_action(36,&state(""));assert_eq!((a.command,a.folder.as_str()),(C::Create,""));
         let mut busy=state("f");busy.busy=true;let mut stale=state("f");stale.ready=false;let mut gone=state("f");gone.workspace.clear();
         for s in [busy,stale,gone]{for command in [36,37,38]{assert_eq!(folder_menu_action(command,&s).command,C::None);}}
+    }
+    fn palette_input(text:&str,command:bool,provider:&str,results:usize,commands:usize)->ffi::PalettePlanInput{ffi::PalettePlanInput{text:text.into(),command_palette:command,provider:provider.into(),resolved:"https://resolved.test/".into(),keywords:vec!["g".into(),"ddg".into()],results,commands}}
+    fn palette_order(p:&ffi::PalettePlan)->Vec<(u8,usize)>{p.slots.iter().map(|s|(match s.source{ffi::PaletteSource::Primary=>0,ffi::PaletteSource::Result=>1,_=>2},s.index)).collect()}
+    #[test] fn palette_plan_orders_primary_results_and_commands_like_native() {
+        let p=palette_plan(&palette_input("kot",false,"Google",2,0));assert_eq!(palette_order(&p),vec![(0,0),(1,0),(1,1)]);assert_eq!((p.primary_title.as_str(),p.primary_detail.as_str(),p.primary_icon),("Szukaj w Google","kot",0));
+        let p=palette_plan(&palette_input("example.com",false,"",0,0));assert_eq!((p.primary_title.as_str(),p.primary_detail.as_str(),p.primary_icon),("Otwórz","https://resolved.test/",1));
+        let p=palette_plan(&palette_input("kot",true,"Google",2,2));assert_eq!(palette_order(&p),vec![(2,0),(2,1),(1,0),(1,1),(0,0)]);assert!(!p.keyword_search);
+        let p=palette_plan(&palette_input("G kot",true,"Google",1,2));assert!(p.keyword_search);assert_eq!(palette_order(&p),vec![(0,0),(2,0),(2,1),(1,0)]);
+        let p=palette_plan(&palette_input("gx kot",true,"Google",1,0));assert!(!p.keyword_search);assert_eq!(palette_order(&p),vec![(1,0),(0,0)]);
+        let p=palette_plan(&palette_input(">split",true,"",3,1));assert!(p.commands_only);assert_eq!(palette_order(&p),vec![(2,0)]);assert!(p.primary_title.is_empty());
+        let p=palette_plan(&palette_input("",true,"",3,1));assert_eq!(palette_order(&p),vec![(2,0),(1,0),(1,1),(1,2)]);
+        let p=palette_plan(&palette_input(">x",false,"",1,5));assert!(!p.commands_only);assert_eq!(palette_order(&p),vec![(0,0),(1,0)]);
+        let p=palette_plan(&palette_input("ddg\tkot",true,"DuckDuckGo",0,1));assert!(p.keyword_search);assert_eq!(palette_order(&p),vec![(0,0),(2,0)]);
     }
     #[test] fn tab_menu_preserves_order_labels_and_orientation() {
         let mut s=menu_state();let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,0,20,7,8,0,9,0,6,10,0,23,24]);assert_eq!(entries[3].label,"Przesuń w lewo");

@@ -111,6 +111,12 @@ okna dialogowe folderów i zapis. Testy Rust 492; podzbiór UI folderów/przypi�
 osadzenie, „Zarządzane”) i tekst pustej listy. Testy Rust 494; podzbiór UI preferencji
 i wyjątków 38 Metal / 32 Views zaliczony.
 
+**Plan palety w Ruście:** sugestia główna (tytuł/szczegół/ikona), wykrywanie prefiksu
+słowa kluczowego, tryb samych komend oraz kolejność głównej/wyników/komend (rotacja,
+wstawienie komend) są w `palette_plan`; natywnie zostaje rozwiązywanie adresu,
+wyszukiwanie i komendy aplikacji. Testy Rust 495; podzbiór UI palety/adresu 33 Metal /
+30 Views zaliczony.
+
 **Pełny checkpoint UI 2026-10-27:** po poprawkach **273/273 Metal i 224/224 Views**
 (pierwszy przebieg: 6 niepowodzeń Metal, 1 Views — trzy crashe testów na odłączonych
 widokach, brakująca komenda Rust `HistoryMore`, tooltip tytułu Peek, wyścig tytułu
