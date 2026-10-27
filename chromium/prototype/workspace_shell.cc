@@ -1990,6 +1990,19 @@ class RustRowView final : public views::View {
     if(spec_.height!=child.height){spec_.height=child.height;PreferredSizeChanged();}
     GetViewAccessibility().SetName(spec_.title);GetViewAccessibility().SetDescription(spec_.detail);SchedulePaint();
   }
+  sidebar::SidebarTabBinding TabBinding() const{return state_->tab_binding();}
+  base::WeakPtr<RustRowView> GetWeakPtr(){return weak_factory_.GetWeakPtr();}
+  bool AttachedClose() const{return close_&&close_->parent()==this&&close_->GetVisible()&&close_->GetEnabledInViewsSubtree();}
+  uint32_t RetainedFocusPart(const views::View* focused) const{return focused==this?1:close_&&focused==close_?2:0;}
+  bool TabCloseNeedsCallback(const SidebarNodeGraphState& scope) const{if(!close_)return true;auto* control=views::AsViewClass<RustActionView>(close_.get());return !control||!control->BelongsTo(scope)||!control->LogicalNodeId();}
+  void RestoreFocusPart(uint32_t part){if(part==2&&AttachedClose())close_->RequestFocus();else RequestFocus();}
+  void ProjectTabSpec(Spec spec){CHECK(!spec_.history&&!spec_.chip&&!spec_.address);CancelInput();spec.active=state_->action_snapshot().on;spec_=std::move(spec);measured_.reset();SetTooltipText(spec_.title);GetViewAccessibility().SetName(spec_.title);PreferredSizeChanged();UpdateClose();SchedulePaint();}
+  void ConfigureTabClose(bool wanted,views::Button::PressedCallback callback,const SidebarNodeBinding& binding){
+    if(close_){auto* control=views::AsViewClass<RustActionView>(close_.get());if(!wanted||!control||!binding.scope||!control->BelongsTo(*binding.scope)||!control->LogicalNodeId()){auto* old=close_.get();close_=nullptr;RemoveChildViewT(old);}}
+    if(wanted&&!close_){CHECK(callback);close_=AddChildView(CreateSceneAction(std::move(callback),u"Zamknij kartę",ControlGlyph::kVector,&vector_icons::kCloseSmallIcon,{},base::BindRepeating(&RustRowView::ChildChanged,weak_factory_.GetWeakPtr()),true,binding));}
+    UpdateClose();InvalidateLayout();SchedulePaint();
+  }
+  void ViewHierarchyChanged(const views::ViewHierarchyChangedDetails& details) override{if(!details.is_add&&details.parent==this&&details.child==close_)close_=nullptr;views::View::ViewHierarchyChanged(details);}
   const Spec& preview_spec() const{return spec_;}
   void SetCallback(views::Button::PressedCallback callback){CancelInput();callback_=std::move(callback);}
   void SetActive(bool active){if(!state_->action_on(active))return;spec_.active=active;measured_.reset();UpdateClose();SchedulePaint();}
@@ -4610,12 +4623,10 @@ void WorkspaceShell::ReconcileSidebarNodes(TabListCache& cache,const std::vector
   // Keep the fast refresh path allocation-free when identities/order are equal.
   if(cache.node_graph&&cache.pins.size()==pins.size()&&cache.tabs.size()==tabs.size()&&
       std::equal(cache.pins.begin(),cache.pins.end(),pins.begin(),[](const auto& a,const auto& b){return a.id==b.id;})&&
-      std::equal(cache.tabs.begin(),cache.tabs.end(),tabs.begin(),[](const auto& a,const auto& b){return a.identity==b.identity;}))return;
+      std::equal(cache.tabs.begin(),cache.tabs.end(),tabs.begin(),[](const auto& a,const auto& b){return a.identity==b.identity&&a.index==b.index;}))return;
   if(!cache.node_graph)cache.node_graph=std::make_shared<SidebarNodeGraphState>();
-  rust::Vec<sidebar::ActionNodeKey> keys;keys.reserve(pins.size()+tabs.size()*(tabs.size()>1?2:1));
-  for(const auto& pin:pins)keys.push_back({2,0,0,pin.id});
-  for(const auto& tab:tabs){keys.push_back({1,tab.identity[0],tab.identity[1],{}});if(tabs.size()>1)keys.push_back({10,tab.identity[0],tab.identity[1],{}});}
-  const auto plan=cache.node_graph->graph->reconcile(std::move(keys));
+  rust::Vec<rust::String> pin_ids;for(const auto& pin:pins)pin_ids.push_back(pin.id);rust::Vec<sidebar::SidebarTabInput> tab_ids;for(const auto& tab:tabs)tab_ids.push_back({tab.identity[0],tab.identity[1],tab.index});
+  const auto plan=cache.node_graph->graph->reconcile_sidebar(std::move(pin_ids),std::move(tab_ids));
   CHECK(plan.admitted)<<"Invalid sidebar logical node projection";
 #endif
 }
@@ -4655,6 +4666,19 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
             return a.index == b.index && a.pin_id == b.pin_id && a.identity == b.identity;
           });
   if(!same_structure)ReconcileSidebarNodes(cache,state_.pins,state_.tabs);
+#if BUILDFLAG(IS_MAC)
+  std::map<std::array<uint64_t,2>,std::unique_ptr<views::View>> retained_tabs;std::optional<std::array<uint64_t,2>> retained_focus;uint32_t retained_focus_part=0;
+  const bool retain=!same_structure&&cache.node_graph;const double retained_offset=tab_scroll_->offset();
+  if(retain){
+    cache.tab_buttons.clear();const auto* focused=cache.root->GetFocusManager()?cache.root->GetFocusManager()->GetFocusedView():nullptr;
+    // Traverse actual adapters, not a cache that may contain detached views.
+    auto extract=[&](auto&& self,views::View* view)->void{
+      if(auto* row=views::AsViewClass<RustRowView>(view)){const auto binding=row->TabBinding();if(binding.valid&&row->BelongsTo(*cache.node_graph)&&row->parent()){
+        const std::array<uint64_t,2> identity{binding.high,binding.low};if(const auto part=row->RetainedFocusPart(focused)){retained_focus=identity;retained_focus_part=part;}row->CancelInput();auto owned=row->parent()->RemoveChildViewT(row);CHECK(retained_tabs.emplace(identity,std::move(owned)).second);return;
+      }}std::vector<views::View*> children;for(const auto& child:view->children())children.push_back(child.get());for(auto* child:children)self(self,child);
+    };extract(extract,cache.root);
+  }
+#endif
   if (pins_changed) {
     ++pinned_list_build_count_;
     cache.pin_buttons.clear();
@@ -4695,6 +4719,17 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
       spec.drop=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::string workspace,size_t index,std::array<uint64_t,2> identity,gfx::Point point){
         if(shell)shell->HandleSidebarDrop(std::move(workspace),index,std::move(identity),{},point);
       },weak_factory_.GetWeakPtr(),state_.workspace_id,tab.index,tab.identity);
+#if BUILDFLAG(IS_MAC)
+      if(cache.node_graph){
+        auto found=retained_tabs.find(tab.identity);const bool fresh=found==retained_tabs.end();std::unique_ptr<views::View> adapter;
+        if(found!=retained_tabs.end()){adapter=std::move(found->second);retained_tabs.erase(found);static_cast<RustRowView*>(adapter.get())->ProjectTabSpec(std::move(spec));}
+        else adapter=CreateSceneRow({},std::move(spec),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak_factory_.GetWeakPtr()),{cache.node_graph,1,tab.identity,{}});
+        auto* row=views::AsViewClass<RustRowView>(adapter.get());CHECK(row);const auto binding=row->TabBinding();CHECK(binding.valid);
+        auto callback=[&](bool close){return base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,base::WeakPtr<RustRowView> row,std::weak_ptr<SidebarNodeGraphState> owner,std::string workspace,std::array<uint64_t,2> identity,uint64_t id,bool close){const auto scope=owner.lock();if(!shell||!row||!scope||shell->state_.workspace_id!=workspace||row->GetWidget()!=shell->sidebar_widget_.get()||!SceneIsVisible(row.get())||!row->GetEnabledInViewsSubtree())return;auto cache=shell->tab_lists_.find(workspace);if(cache==shell->tab_lists_.end()||cache->second.node_graph!=scope||!cache->second.root||!cache->second.root->Contains(row.get())||row->LogicalNodeId()!=id||!row->BelongsTo(*scope)||(close&&!row->AttachedClose()))return;const auto target=scope->graph->tab_target(identity[0],identity[1],id,close);if(!target.valid)return;const auto projected=std::find_if(shell->state_.tabs.begin(),shell->state_.tabs.end(),[&](const ShellTab& tab){return tab.index==target.index&&tab.identity==identity;});if(projected==shell->state_.tabs.end())return;if(close)shell->callbacks_.close_tab.Run(target.index);else shell->callbacks_.select_tab.Run(target.index);},weak_factory_.GetWeakPtr(),row->GetWeakPtr(),std::weak_ptr<SidebarNodeGraphState>(cache.node_graph),state_.workspace_id,tab.identity,binding.id,close);};
+        if(fresh)row->SetCallback(callback(false));views::Button::PressedCallback close_callback;if(state_.tabs.size()>1&&row->TabCloseNeedsCallback(*cache.node_graph))close_callback=callback(true);row->ConfigureTabClose(state_.tabs.size()>1,std::move(close_callback),{cache.node_graph,10,tab.identity,{}});
+        auto* attached=parent->AddChildView(std::move(adapter));cache.tab_buttons[tab.index]=attached;attached->set_context_menu_controller(this);return attached;
+      }
+#endif
       if (state_.tabs.size() > 1) spec.close = base::BindRepeating(callbacks_.close_tab, tab.index);
       cache.tab_buttons[tab.index] = parent->AddChildView(CreateSceneRow(
           base::BindRepeating(callbacks_.select_tab,tab.index),std::move(spec),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak_factory_.GetWeakPtr()),{cache.node_graph,1,tab.identity,{}}));
@@ -4762,6 +4797,9 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
     if (auto old = tab_lists_.find(std::string(previous_workspace)); old != tab_lists_.end()) old->second.root->SetVisible(false);
   }
   cache.root->SetVisible(true);
+#if BUILDFLAG(IS_MAC)
+  if(retain){if(auto* widget=cache.root->GetWidget())widget->LayoutRootViewIfNecessary();if(previous_workspace==state_.workspace_id)tab_scroll_->ScrollTo(retained_offset);if(retained_focus){for(const auto& [index,view]:cache.tab_buttons){auto* row=views::AsViewClass<RustRowView>(view.get());if(!row)continue;const auto binding=row->TabBinding();if(binding.valid&&std::array<uint64_t,2>{binding.high,binding.low}==*retained_focus){row->ScrollViewToVisible();row->RestoreFocusPart(retained_focus_part);break;}}}}
+#endif
   // Install controllers only for new trees. A normal switch must not walk all
   // cached workspaces and their label/layout descendants again.
   if (catalogue_changed) ConfigureSidebarContextMenus(sidebar_root_);

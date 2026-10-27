@@ -162,6 +162,9 @@ mod ffi {
     struct SiteRuleSceneChild { id: u64, parent: u64, key: String, detail: Vec<u16>, editable: bool, cancel_input: bool }
     struct SiteRuleScene { root: u64, children: Vec<SiteRuleSceneChild> }
     struct SiteRuleTarget { valid: bool, index: usize }
+    struct SidebarTabInput { high: u64, low: u64, index: usize }
+    struct SidebarTabBinding { valid: bool, id: u64, high: u64, low: u64, index: usize, can_close: bool }
+    struct SidebarTabTarget { valid: bool, index: usize }
     struct ColumnChild { width: i32, height: i32, top: i32, left: i32, bottom: i32, right: i32 }
     struct ColumnLayout { width: i32, height: i32, children: Vec<Rect> }
     struct PanelStyle { width: i32, height: i32, vertical: bool, spacing: i32, top: i32, left: i32, bottom: i32, right: i32, flex: usize }
@@ -454,6 +457,9 @@ mod ffi {
         fn reconcile_site_rules(self: &mut ActionGraph, items: Vec<SiteRuleSceneInput>) -> ActionNodePlan;
         fn site_rule_scene(self: &ActionGraph) -> SiteRuleScene;
         fn site_rule_target(self: &ActionGraph, key: &str, id: u64) -> SiteRuleTarget;
+        fn reconcile_sidebar(self: &mut ActionGraph, pins: Vec<String>, tabs: Vec<SidebarTabInput>) -> ActionNodePlan;
+        fn tab_binding(self: &ActionControl) -> SidebarTabBinding;
+        fn tab_target(self: &ActionGraph, high: u64, low: u64, id: u64, close: bool) -> SidebarTabTarget;
         fn append_form_action(self: &mut ActionGraph) -> Box<ActionControl>;
         fn retire_form_action(self: &mut ActionGraph, id: u64) -> bool;
         type ActionControl;
@@ -1815,7 +1821,7 @@ fn action_node_key(key:&ffi::ActionNodeKey)->Option<ActionNodeIdentity>{
         kind @ (1|10) if (key.high!=0||key.low!=0)&&key.name.is_empty()=>Some((kind,key.high,key.low,String::new())),
         kind @ (7|8) if (key.high!=0||key.low!=0)&&!key.name.is_empty()=>Some((kind,key.high,key.low,key.name.clone())),
         12 if key.high==0&&key.low==0&&key.name.is_empty()=>Some((12,0,0,String::new())),
-        11 if key.high==0&&key.low==0&&matches!(key.name.as_str(),"chrome.workspaces"|"tools.history"|"palette.results"|"preferences.site-rules")=>Some((11,0,0,key.name.clone())),
+        11 if key.high==0&&key.low==0&&matches!(key.name.as_str(),"chrome.workspaces"|"tools.history"|"palette.results"|"preferences.site-rules"|"sidebar.tabs"|"sidebar.pins")=>Some((11,0,0,key.name.clone())),
         kind @ (2|3|4|5|6|13) if key.high==0&&key.low==0&&!key.name.is_empty()=>Some((kind,0,0,key.name.clone())),
         _=>None,
     }
@@ -1827,9 +1833,10 @@ struct HistoryPresentation {title:Vec<u16>,detail:Vec<u16>,url:Vec<u16>,cancel_i
 struct PalettePresentation {title:Vec<u16>,detail:Vec<u16>,icon:u32,index:usize,cancel_input:bool}
 struct PaletteSceneState {selection:PaletteSelection,dirty:bool}
 struct SiteRulePresentation {detail:Vec<u16>,editable:bool,source_index:usize,cancel_input:bool}
+struct SidebarTabModel {high:u64,low:u64,index:usize,can_close:bool}
 struct FormCommandModel {command:ffi::FormCommand,key:String,index:usize}
 fn valid_form_command(command:ffi::FormCommand,key:&str)->bool{use ffi::FormCommand as C;match command{C::PreferenceText=>!key.is_empty(),C::WorkspaceSave|C::WorkspaceToggle|C::WorkspaceRemove|C::WorkspaceProfiles|C::WorkspaceImport|C::ProfileCreate|C::ProfileRename|C::ProfileDelete|C::ProfileBack|C::ImportApply|C::PreferenceSite|C::PreferenceClear|C::PreferenceDirectory|C::History|C::Workspace|C::Passwords|C::Profiles|C::Import|C::Proxy|C::Certificates|C::Providers|C::Shortcuts|C::TimeMachine|C::WorkspaceDismiss|C::PreferencesDismiss|C::ImportDismiss|C::ToolsDismiss=>key.is_empty(),_=>false}}
-enum NodeModel { FormCommand(FormCommandModel), Checkbox(CheckboxState), Toggle(ToggleState), Select(SelectState), Workspace(WorkspacePresentation), History(HistoryPresentation), Palette(PalettePresentation), PaletteRoot(PaletteSceneState), FormRoot(ffi::FormGroupStyle), SiteRule(SiteRulePresentation) }
+enum NodeModel { FormCommand(FormCommandModel), Checkbox(CheckboxState), Toggle(ToggleState), Select(SelectState), Workspace(WorkspacePresentation), History(HistoryPresentation), Palette(PalettePresentation), PaletteRoot(PaletteSceneState), FormRoot(ffi::FormGroupStyle), SiteRule(SiteRulePresentation), SidebarTab(SidebarTabModel) }
 impl NodeModel {
     // Popup tokens and IME prefix belong to one input lease, unlike selection.
     fn detach_input(&mut self){if let Self::Select(s)=self{s.dismiss();s.reset_prefix();s.last_close=None;}}
@@ -1991,6 +1998,21 @@ impl ActionGraph {
     fn site_rule_target(&self,key:&str,id:u64)->ffi::SiteRuleTarget{
         let invalid=||ffi::SiteRuleTarget{valid:false,index:0};let Some(node)=self.nodes.get(&(13,0,0,key.to_owned())) else{return invalid();};let node=node.borrow();if !node.alive||!node.attached||!node.state.enabled||id==0||id!=node.id{return invalid();}if let Some(NodeModel::SiteRule(p))=node.model.as_deref(){if p.editable{return ffi::SiteRuleTarget{valid:true,index:p.source_index};}}invalid()
     }
+    fn reconcile_sidebar(&mut self,pins:Vec<String>,tabs:Vec<ffi::SidebarTabInput>)->ffi::ActionNodePlan{
+        // Backend indices may be sparse: pinned-only pages are not tab rows.
+        // Reject collisions without interpreting an index as a display position.
+        if pins.iter().any(|pin|self.nodes.get(&(2,0,0,pin.clone())).is_some_and(|node|node.borrow().model.is_some()))||tabs.iter().any(|tab|self.nodes.get(&(10,tab.high,tab.low,String::new())).is_some_and(|node|node.borrow().model.is_some())){return self.rejected();}
+        let mut indices=BTreeSet::new();if tabs.iter().any(|tab|!indices.insert(tab.index)||self.nodes.get(&(1,tab.high,tab.low,String::new())).is_some_and(|node|node.borrow().model.as_deref().is_some_and(|m|!matches!(m,NodeModel::SidebarTab(_))))){return self.rejected();}
+        let old_order=self.order.clone();let tab_root=(11,0,0,"sidebar.tabs".to_owned());let pin_root=(11,0,0,"sidebar.pins".to_owned());let mut keys=Vec::with_capacity(2+pins.len()+tabs.len()*2);keys.push(ffi::ActionNodeKey{kind:11,high:0,low:0,name:tab_root.3.clone()});keys.push(ffi::ActionNodeKey{kind:11,high:0,low:0,name:pin_root.3.clone()});
+        for pin in &pins{keys.push(ffi::ActionNodeKey{kind:2,high:0,low:0,name:pin.clone()});}let can_close=tabs.len()>1;for tab in &tabs{keys.push(ffi::ActionNodeKey{kind:1,high:tab.high,low:tab.low,name:String::new()});if can_close{keys.push(ffi::ActionNodeKey{kind:10,high:tab.high,low:tab.low,name:String::new()});}}
+        let plan=self.reconcile(keys);if !plan.admitted{return plan;}let mut invalidated=old_order!=plan.ids;let tab_parent=self.nodes[&tab_root].borrow().id;let pin_parent=self.nodes[&pin_root].borrow().id;
+        for pin in pins{self.nodes[&(2,0,0,pin)].borrow_mut().parent=pin_parent;}
+        for tab in tabs{let id={let mut node=self.nodes[&(1,tab.high,tab.low,String::new())].borrow_mut();invalidated|=matches!(node.model.as_deref(),Some(NodeModel::SidebarTab(p)) if p.index!=tab.index||p.can_close!=can_close);node.parent=tab_parent;if let Some(NodeModel::SidebarTab(p))=node.model.as_deref_mut(){p.index=tab.index;p.can_close=can_close;}else{node.model=Some(Box::new(NodeModel::SidebarTab(SidebarTabModel{high:tab.high,low:tab.low,index:tab.index,can_close})));}node.id};if can_close{self.nodes[&(10,tab.high,tab.low,String::new())].borrow_mut().parent=id;}}
+        if invalidated{for (key,node) in &self.nodes{if matches!(key.0,1|10){node.borrow_mut().state.action_cancel();}}}plan
+    }
+    fn tab_target(&self,high:u64,low:u64,id:u64,close:bool)->ffi::SidebarTabTarget{
+        let invalid=||ffi::SidebarTabTarget{valid:false,index:0};let Some(node)=self.nodes.get(&(1,high,low,String::new())) else{return invalid();};let node=node.borrow();if !node.alive||!node.attached||!node.state.enabled||id==0||node.id!=id{return invalid();}let Some(NodeModel::SidebarTab(model))=node.model.as_deref() else{return invalid();};if close{if !model.can_close{return invalid();}let Some(button)=self.nodes.get(&(10,high,low,String::new())) else{return invalid();};let button=button.borrow();if !button.alive||!button.attached||!button.state.enabled||button.parent!=id{return invalid();}}ffi::SidebarTabTarget{valid:true,index:model.index}
+    }
     // IDs are scope-local. Compare a live lease's owner token in O(1), never
     // infer ownership from numeric IDs or a graph allocation's reusable address.
     fn owns_input(&self,input:&ActionControl)->bool{input.read_node(|node|Rc::ptr_eq(&self.owner,&node.owner)).unwrap_or(false)}
@@ -2036,7 +2058,8 @@ impl ActionControl {
     fn node_select_reset_prefix(&mut self)->(){self.write_node(|r|{if let Some(NodeModel::Select(s))=r.model.as_deref_mut(){s.reset_prefix()}else{()}}).unwrap_or_else(||())}
     fn node_select_input(&mut self,lower_text: &str, now_ms: u64, enabled: bool)->bool{self.write_node(|r|{let gate=r.state.enabled;if let Some(NodeModel::Select(s))=r.model.as_deref_mut(){s.input(lower_text,now_ms,enabled&&gate)}else{false}}).unwrap_or_else(||false)}
     fn node_parent_id(&self)->u64{self.read_node(|node|node.parent).unwrap_or(0)}
-    fn node_model_kind(&self)->u32{self.read_node(|r|match r.model.as_deref(){Some(NodeModel::FormCommand(_))=>8,Some(NodeModel::Checkbox(_))=>1,Some(NodeModel::Toggle(_))=>2,Some(NodeModel::Select(_))=>3,Some(NodeModel::Workspace(_))=>4,Some(NodeModel::History(_))=>5,Some(NodeModel::Palette(_))=>6,Some(NodeModel::SiteRule(_))=>7,Some(NodeModel::PaletteRoot(_))|Some(NodeModel::FormRoot(_))|None=>0}).unwrap_or(0)}
+    fn tab_binding(&self)->ffi::SidebarTabBinding{self.read_node(|node|if let Some(NodeModel::SidebarTab(p))=node.model.as_deref(){Some(ffi::SidebarTabBinding{valid:true,id:node.id,high:p.high,low:p.low,index:p.index,can_close:p.can_close})}else{None}).flatten().unwrap_or(ffi::SidebarTabBinding{valid:false,id:0,high:0,low:0,index:0,can_close:false})}
+    fn node_model_kind(&self)->u32{self.read_node(|r|match r.model.as_deref(){Some(NodeModel::SidebarTab(_))=>9,Some(NodeModel::FormCommand(_))=>8,Some(NodeModel::Checkbox(_))=>1,Some(NodeModel::Toggle(_))=>2,Some(NodeModel::Select(_))=>3,Some(NodeModel::Workspace(_))=>4,Some(NodeModel::History(_))=>5,Some(NodeModel::Palette(_))=>6,Some(NodeModel::SiteRule(_))=>7,Some(NodeModel::PaletteRoot(_))|Some(NodeModel::FormRoot(_))|None=>0}).unwrap_or(0)}
     fn node_checkbox_init(&mut self,checked:bool)->bool{self.write_node(|r|match r.model.as_deref(){Some(NodeModel::Checkbox(_))=>true,Some(_)=>false,None=>{r.model=Some(Box::new(NodeModel::Checkbox(CheckboxState{checked})));true}}).unwrap_or(false)}
     fn node_checked(&self)->bool{self.read_node(|r|matches!(r.model.as_deref(),Some(NodeModel::Checkbox(s)) if s.checked())).unwrap_or(false)}
     fn node_set_checked(&mut self,checked:bool)->bool{self.write_node(|r|if let Some(NodeModel::Checkbox(s))=r.model.as_deref_mut(){s.set_checked(checked)}else{false}).unwrap_or(false)}
@@ -3309,6 +3332,44 @@ mod tests {
     fn node_pin(name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:2,high:0,low:0,name:name.into()}}
     fn node_close(low:u64)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:10,high:7,low,name:String::new()}}
     fn node_named(kind:u32,name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind,high:0,low:0,name:name.into()}}
+    fn sidebar_tab(low:u64,index:usize)->ffi::SidebarTabInput{ffi::SidebarTabInput{high:7,low,index}}
+    fn tab_scene_fixture()->Box<ActionGraph>{let mut g=new_action_graph();assert!(g.reconcile_sidebar(vec!["folder".into()],vec![sidebar_tab(1,4),sidebar_tab(2,41)]).admitted);g}
+    #[test] fn sidebar_scene_owns_collection_parents_tab_payload_and_close_edges(){
+        let mut g=tab_scene_fixture();let a=g.acquire(&node_tab(1));let close=g.acquire(&node_close(1));let pin=g.acquire(&node_named(2,"folder"));let root=g.nodes[&(11,0,0,"sidebar.tabs".into())].borrow().id;let pins=g.nodes[&(11,0,0,"sidebar.pins".into())].borrow().id;assert_ne!(root,pins);assert_eq!(a.node_parent_id(),root);assert_eq!(pin.node_parent_id(),pins);assert_eq!(close.node_parent_id(),a.action_node_id());assert_eq!(a.node_model_kind(),9);assert_eq!(a.tab_binding().index,4);assert!(a.tab_binding().can_close);assert!(!pin.tab_binding().valid&&!close.tab_binding().valid);assert_eq!(g.acquire(&node_named(11,"sidebar.tabs")).action_node_id(),0);
+    }
+    #[test] fn sidebar_targets_use_sparse_backend_indices_and_retarget_surviving_identity(){
+        let mut g=tab_scene_fixture();let a=g.acquire(&node_tab(2));let _close=g.acquire(&node_close(2));let id=a.action_node_id();assert_eq!(g.tab_target(7,2,id,false).index,41);assert!(g.tab_target(7,2,id,true).valid);g.reconcile_sidebar(vec!["folder".into()],vec![sidebar_tab(2,40)]);assert_eq!(a.action_node_id(),id);assert_eq!(a.tab_binding().index,40);assert_eq!(g.tab_target(7,2,id,false).index,40);assert!(!g.tab_target(7,2,id,true).valid);g.reconcile_sidebar(vec!["folder".into()],vec![sidebar_tab(2,99)]);assert_eq!(g.tab_target(7,2,id,false).index,99);
+    }
+    #[test] fn sidebar_close_cardinality_retires_and_recreates_only_close_identity(){
+        let mut g=new_action_graph();g.reconcile_sidebar(vec![],vec![sidebar_tab(1,8)]);let a=g.acquire(&node_tab(1));let id=a.action_node_id();assert!(!a.tab_binding().can_close);g.reconcile_sidebar(vec![],vec![sidebar_tab(1,8),sidebar_tab(2,12)]);let close=g.acquire(&node_close(1));let close_id=close.action_node_id();assert!(a.tab_binding().can_close&&g.tab_target(7,1,id,true).valid);g.reconcile_sidebar(vec![],vec![sidebar_tab(1,8)]);assert_eq!(a.action_node_id(),id);assert_eq!(close.action_node_id(),0);g.reconcile_sidebar(vec![],vec![sidebar_tab(1,8),sidebar_tab(2,12)]);let next=g.acquire(&node_close(1));assert_ne!(next.action_node_id(),close_id);assert_eq!(a.action_node_id(),id);assert!(g.tab_target(7,1,id,true).valid);
+    }
+    #[test] fn sidebar_invalid_identity_pin_and_source_collisions_reject_atomically(){
+        let mut g=tab_scene_fixture();let mut a=g.acquire(&node_tab(1));a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);let before=g.order.clone();for (pins,tabs) in [(vec!["folder".into()],vec![sidebar_tab(1,4),sidebar_tab(1,41)]),(vec!["folder".into()],vec![sidebar_tab(1,4),sidebar_tab(2,4)]),(vec!["folder".into()],vec![ffi::SidebarTabInput{high:0,low:0,index:0}]),(vec!["".into()],vec![sidebar_tab(1,4)]),(vec!["folder".into(),"folder".into()],vec![sidebar_tab(1,4)])]{assert!(!g.reconcile_sidebar(pins,tabs).admitted);assert_eq!(g.order,before);assert!(a.action_pending());assert_eq!(a.tab_binding().index,4);}
+    }
+    #[test] fn sidebar_identical_projection_preserves_input_focus_selection_and_epoch(){
+        let mut g=tab_scene_fixture();let mut a=g.acquire(&node_tab(1));a.action_focus(true);a.action_on(true);a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);let epoch=a.action_admission_epoch();let id=a.action_node_id();let p=g.reconcile_sidebar(vec!["folder".into()],vec![sidebar_tab(1,4),sidebar_tab(2,41)]);assert_eq!((p.created,p.retired),(0,0));assert!(a.action_pending()&&a.action_snapshot().focused&&a.action_snapshot().on&&a.action_admits(epoch));assert_eq!(a.action_node_id(),id);
+    }
+    #[test] fn sidebar_membership_order_and_index_changes_cancel_all_retained_input(){
+        let mut g=tab_scene_fixture();let mut a=g.acquire(&node_tab(1));let mut close=g.acquire(&node_close(2));a.action_focus(true);a.action_on(true);a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);close.action_key(true,1,false,true);assert!(close.action_pending());let epoch=a.action_admission_epoch();g.reconcile_sidebar(vec!["folder".into()],vec![sidebar_tab(2,41),sidebar_tab(1,4)]);assert!(!a.action_pending()&&!close.action_pending()&&!a.action_admits(epoch));assert!(a.action_snapshot().focused&&a.action_snapshot().on);a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);g.reconcile_sidebar(vec!["folder".into()],vec![sidebar_tab(2,41),sidebar_tab(1,5)]);assert!(!a.action_pending());assert_eq!(a.tab_binding().index,5);
+    }
+    #[test] fn sidebar_targets_gate_live_main_and_close_leases_enabled_and_current_ids(){
+        let mut g=tab_scene_fixture();let id=g.nodes[&(1,7,1,String::new())].borrow().id;assert!(!g.tab_target(7,1,id,false).valid);let mut a=g.acquire(&node_tab(1));assert!(g.tab_target(7,1,id,false).valid);assert!(!g.tab_target(7,1,id,true).valid);let mut close=g.acquire(&node_close(1));assert!(g.tab_target(7,1,id,true).valid);close.action_enabled(false);assert!(!g.tab_target(7,1,id,true).valid);assert!(g.tab_target(7,1,id,false).valid);close.action_enabled(true);a.action_enabled(false);assert!(!g.tab_target(7,1,id,false).valid&&!g.tab_target(7,1,id,true).valid);a.action_enabled(true);assert!(!g.tab_target(7,1,0,false).valid&&!g.tab_target(7,1,id+1,false).valid&&!g.tab_target(7,99,id,false).valid);drop(close);assert!(!g.tab_target(7,1,id,true).valid);drop(a);assert!(!g.tab_target(7,1,id,false).valid);
+    }
+    #[test] fn sidebar_full_128_bit_identity_does_not_alias_equal_low_words(){
+        let mut g=new_action_graph();g.reconcile_sidebar(vec![],vec![ffi::SidebarTabInput{high:7,low:1,index:5},ffi::SidebarTabInput{high:8,low:1,index:99}]);let a=g.acquire(&node_tab(1));let other=ffi::ActionNodeKey{kind:1,high:8,low:1,name:String::new()};let b=g.acquire(&other);assert_ne!(a.action_node_id(),b.action_node_id());assert_eq!((a.tab_binding().high,b.tab_binding().high),(7,8));assert_eq!(g.tab_target(8,1,b.action_node_id(),false).index,99);assert!(!g.tab_target(8,1,a.action_node_id(),false).valid);
+    }
+    #[test] fn sidebar_replacement_lease_revokes_old_binding_without_old_drop_mutating_new(){
+        let mut g=tab_scene_fixture();let old=g.acquire(&node_tab(1));let id=old.action_node_id();let mut next=g.acquire(&node_tab(1));assert!(!old.tab_binding().valid);assert_eq!(next.tab_binding().id,id);next.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);drop(old);assert!(next.action_pending());assert!(g.owns_input(&next));
+    }
+    #[test] fn sidebar_parent_orphan_rejects_and_whole_scene_retirement_drops_payloads(){
+        let mut g=tab_scene_fixture();let a=g.acquire(&node_tab(1));let record=if let ActionStorage::Shared{node,..}=&a.storage{node.clone()}else{panic!("missing record")};let before=g.order.clone();assert!(!g.reconcile(vec![node_tab(1),node_close(1)]).admitted);assert_eq!(g.order,before);assert!(g.reconcile(vec![]).admitted);assert!(!a.tab_binding().valid);assert!(record.borrow().model.is_none());assert_eq!(a.node_parent_id(),0);
+    }
+    #[test] fn sidebar_empty_collections_keep_roots_and_foreign_owner_never_matches(){
+        let mut g=tab_scene_fixture();let a=g.acquire(&node_tab(1));let mut foreign=tab_scene_fixture();assert!(!foreign.owns_input(&a));let roots=[g.nodes[&(11,0,0,"sidebar.tabs".into())].borrow().id,g.nodes[&(11,0,0,"sidebar.pins".into())].borrow().id];let empty=g.reconcile_sidebar(vec![],vec![]);assert_eq!(empty.ids,roots);assert!(!a.tab_binding().valid);assert_eq!(g.reconcile_sidebar(vec![],vec![]).created,0);let b=foreign.acquire(&node_tab(1));drop(foreign);assert!(!b.tab_binding().valid);
+    }
+    #[test] fn sidebar_reconciliation_rejects_typed_payload_collisions_for_rows_pins_and_close(){
+        for key in [node_tab(1),node_close(1),node_named(2,"folder")]{let mut g=new_action_graph();g.reconcile(vec![node_tab(1),node_close(1),node_named(2,"folder")]);let mut typed=g.acquire(&key);assert!(typed.node_checkbox_init(true));let before=g.order.clone();assert!(!g.reconcile_sidebar(vec!["folder".into()],vec![sidebar_tab(1,4),sidebar_tab(2,41)]).admitted);assert_eq!(g.order,before);assert!(typed.node_checked());}
+    }
     #[test] fn panel_categories_bind_indices_from_the_owning_form_count(){
         let form=new_preferences_form(10);let mut graph=new_form_graph(true,6,false,false);for category in 0..10{let mut input=graph.append_form_action();assert!(form.bind_category(&mut input,category));assert_eq!(input.node_model_kind(),8);let command=input.node_form_command();assert_eq!(command.command,ffi::FormCommand::PreferenceCategory);assert_eq!(command.index,category);assert!(command.key.is_empty());let view=input.node_form_view();assert!(view.bound&&!view.dismiss);assert_eq!(view.index,category);}
     }
