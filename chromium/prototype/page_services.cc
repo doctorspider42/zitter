@@ -228,7 +228,7 @@ void PageServices::OnGetPasswordStoreResultsOrErrorFrom(password_manager::Passwo
     std::vector<std::u16string> labels;
     for(const auto& credential:*results)
       labels.push_back(base::UTF8ToUTF16(url::Origin::Create(credential.url).Serialize())+u" · "+credential.username_value);
-    if(password_scene_)content->AddChildView(password_scene_->MakeSelect(std::move(labels),u"Zapisane konta"));
+    if(password_scene_)content->AddChildView(password_scene_->MakeSelect(content.get(),std::move(labels),u"Zapisane konta"));
     else{
       std::vector<ui::SimpleComboboxModel::Item> accounts;
       for(auto& label:labels)accounts.emplace_back(std::move(label));

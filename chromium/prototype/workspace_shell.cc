@@ -3,6 +3,8 @@
 #include "ui/views/mouse_constants.h"
 #include "ui/views/interaction/element_tracker_views.h"
 #include "ui/views/view_tracker.h"
+#include "ui/views/view_observer.h"
+#include "ui/base/class_property.h"
 #include "ui/views/window/dialog_client_view.h"
 #include "chromium/prototype/page_dialogs.h"
 #include "base/i18n/time_formatting.h"
@@ -115,6 +117,11 @@
 #include "chromium/prototype/workspace_frame_mac.h"
 #endif
 
+#if BUILDFLAG(IS_MAC)
+namespace zitter::prototype {class SceneParentNodes;}
+DEFINE_UI_CLASS_PROPERTY_TYPE(zitter::prototype::SceneParentNodes*)
+#endif
+
 namespace zitter::prototype {
 class SidebarNodeGraphState {
  public:
@@ -163,6 +170,41 @@ class ProfileFormState {
   rust::Box<sidebar::ProfileForm> form=sidebar::new_profile_form();
 #endif
 };
+#if BUILDFLAG(IS_MAC)
+// Rust owns form action membership. Native pointers only identify adapters for
+// removal notifications; never read a child state while its destructor runs.
+class SceneGroupNodes {
+ public:
+  template<class T,class... Args> std::unique_ptr<T> Make(Args&&... args){
+    auto input=graph_->append_form_action();const auto id=input->action_node_id();CHECK_NE(id,0u);
+    auto view=std::make_unique<T>(std::forward<Args>(args)...,std::move(input));
+    CHECK(members_.emplace(view.get(),id).second);return view;
+  }
+  void RetireAll(){graph_->reconcile({});members_.clear();}
+  void HierarchyChanged(views::View* owner,const views::ViewHierarchyChangedDetails& details){
+    if(details.is_add||details.parent!=owner)return;
+    const auto found=members_.find(details.child.get());if(found==members_.end())return;
+    CHECK(graph_->retire_form_action(found->second));members_.erase(found);
+  }
+ private:
+  rust::Box<sidebar::ActionGraph> graph_=sidebar::new_action_graph();
+  std::map<const views::View*,uint64_t> members_;
+};
+
+// A property owns the scope; hierarchy observation revokes direct members
+// without replacing the existing parent, layout or accessibility hierarchy.
+class SceneParentNodes final : public views::ViewObserver {
+ public:
+  explicit SceneParentNodes(views::View* parent){observation_.Observe(parent);}
+  template<class T,class... Args> std::unique_ptr<T> Make(Args&&... args){return nodes_.Make<T>(std::forward<Args>(args)...);}
+  void OnViewHierarchyChanged(views::View* parent,const views::ViewHierarchyChangedDetails& details) override{nodes_.HierarchyChanged(parent,details);}
+  void OnViewIsDeleting(views::View*) override{nodes_.RetireAll();observation_.Reset();}
+ private:
+  SceneGroupNodes nodes_;
+  base::ScopedObservation<views::View,views::ViewObserver> observation_{this};
+};
+#endif
+
 namespace {
 DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kFolderNameField);
 // Light "frame + card" palette from the Zitter design canvas.
@@ -802,24 +844,12 @@ sidebar::Item ActionSceneItem(views::View* view,gfx::RectF rect,gfx::RectF clip)
 #endif
 
 #if BUILDFLAG(IS_MAC)
-// Rust owns form action membership. Native pointers only identify adapters for
-// removal notifications; never read a child state while its destructor runs.
-class SceneGroupNodes {
- public:
-  template<class T,class... Args> std::unique_ptr<T> Make(Args&&... args){
-    auto input=graph_->append_form_action();const auto id=input->action_node_id();CHECK_NE(id,0u);
-    auto view=std::make_unique<T>(std::forward<Args>(args)...,std::move(input));
-    CHECK(members_.emplace(view.get(),id).second);return view;
-  }
-  void HierarchyChanged(views::View* owner,const views::ViewHierarchyChangedDetails& details){
-    if(details.is_add||details.parent!=owner)return;
-    const auto found=members_.find(details.child.get());if(found==members_.end())return;
-    CHECK(graph_->retire_form_action(found->second));members_.erase(found);
-  }
- private:
-  rust::Box<sidebar::ActionGraph> graph_=sidebar::new_action_graph();
-  std::map<const views::View*,uint64_t> members_;
-};
+DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(SceneParentNodes,kSceneParentNodes)
+template<class T,class... Args> std::unique_ptr<T> MakeParentSceneControl(views::View* parent,Args&&... args){
+  auto* scope=parent->GetProperty(kSceneParentNodes);
+  if(!scope)scope=parent->SetProperty(kSceneParentNodes,std::make_unique<SceneParentNodes>(parent));
+  return scope->Make<T>(std::forward<Args>(args)...);
+}
 
 // Rust lays out preset controls and the native editor separately. The canvas
 // covers only preset bounds; fallback consumes the same Rust scene recipe.
@@ -998,7 +1028,7 @@ void CancelSceneActions(views::View* root){if(!root)return;if(auto* group=views:
 class SceneToggle final : public RustActionView {
   METADATA_HEADER(SceneToggle,RustActionView)
  public:
-  explicit SceneToggle(std::u16string name):RustActionView({},std::move(name),ControlGlyph::kMore,nullptr,base::BindRepeating([]{return true;}),{},false),state_(sidebar::new_toggle_state()){
+  SceneToggle(std::u16string name,rust::Box<sidebar::ActionControl> input):RustActionView({},std::move(name),ControlGlyph::kMore,nullptr,base::BindRepeating([]{return true;}),{},false,std::move(input)),state_(sidebar::new_toggle_state()){
     GetViewAccessibility().SetRole(ax::mojom::Role::kSwitch);RefreshAX();
   }
   bool On() const{return state_->toggle_checked();}
@@ -1020,7 +1050,7 @@ class SceneToggle final : public RustActionView {
   void OnDidSchedulePaint(const gfx::Rect& rect) override{RustActionView::OnDidSchedulePaint(rect);const auto input=Snapshot();state_->toggle_hover(input.enabled&&(input.visual==sidebar::RowVisual::Hovered||input.visual==sidebar::RowVisual::Pressed),Now(),gfx::Animation::ShouldRenderRichAnimation());Schedule();}
   void OnPaint(gfx::Canvas* canvas) override{if(!metal_visible()){auto scene=Scene();PaintEditorSceneFallback(canvas,UNSAFE_BUFFERS(base::span<const sidebar::Primitive>(scene.data(),scene.size())));}Schedule();}
  protected:
-  void ActivateAction(const ui::Event& event) override{if(!state_->toggle_flip(GetEnabledInViewsSubtree()&&SceneIsVisible(this),Now(),gfx::Animation::ShouldRenderRichAnimation()))return;RefreshAX();Schedule();RustActionView::ActivateAction(event);}
+  void ActivateAction(const ui::Event& event) override{if(!state_->toggle_flip(Snapshot().enabled&&GetEnabledInViewsSubtree()&&SceneIsVisible(this),Now(),gfx::Animation::ShouldRenderRichAnimation()))return;RefreshAX();Schedule();RustActionView::ActivateAction(event);}
  private:
   static uint64_t Now(){return (base::TimeTicks::Now()-base::TimeTicks()).InMilliseconds();}
   void RefreshAX(){GetViewAccessibility().SetCheckedState(On()?ax::mojom::CheckedState::kTrue:ax::mojom::CheckedState::kFalse);}
@@ -1050,7 +1080,7 @@ void SetToggleOn(views::View* control,bool value){
 }
 views::View* PreferenceToggle(views::View* parent,std::u16string name,bool scene){
 #if BUILDFLAG(IS_MAC)
-  if(scene)return parent->AddChildView(std::make_unique<SceneToggle>(std::move(name)));
+  if(scene)return parent->AddChildView(MakeParentSceneControl<SceneToggle>(parent,std::move(name)));
 #endif
   auto* toggle=parent->AddChildView(std::make_unique<views::ToggleButton>());toggle->GetViewAccessibility().SetName(name);toggle->SetTrackOnColor(SkColorSetRGB(110,86,207));return toggle;
 }
@@ -1059,8 +1089,8 @@ views::View* PreferenceToggle(views::View* parent,std::u16string name,bool scene
 class SceneCheckbox final : public RustActionView {
   METADATA_HEADER(SceneCheckbox,RustActionView)
  public:
-  SceneCheckbox(views::Button::PressedCallback callback,std::u16string text,base::RepeatingClosure painted)
-      :RustActionView(std::move(callback),text,ControlGlyph::kMore,nullptr,base::BindRepeating([]{return true;}),std::move(painted),false),state_(sidebar::new_checkbox_state(false)),text_(std::move(text)) {
+  SceneCheckbox(views::Button::PressedCallback callback,std::u16string text,base::RepeatingClosure painted,rust::Box<sidebar::ActionControl> input)
+      :RustActionView(std::move(callback),text,ControlGlyph::kMore,nullptr,base::BindRepeating([]{return true;}),std::move(painted),false,std::move(input)),state_(sidebar::new_checkbox_state(false)),text_(std::move(text)) {
     GetViewAccessibility().SetRole(ax::mojom::Role::kCheckBox);RefreshAX();
   }
   bool Checked() const{return state_->checked();}
@@ -1077,7 +1107,7 @@ class SceneCheckbox final : public RustActionView {
   }
  protected:
   ax::mojom::DefaultActionVerb ActionVerb() const override{return Checked()?ax::mojom::DefaultActionVerb::kUncheck:ax::mojom::DefaultActionVerb::kCheck;}
-  void ActivateAction(const ui::Event& event) override {if(!state_->toggle(GetEnabledInViewsSubtree()&&SceneIsVisible(this)))return;RefreshAX();SchedulePaint();RustActionView::ActivateAction(event);}
+  void ActivateAction(const ui::Event& event) override {if(!state_->toggle(Snapshot().enabled&&GetEnabledInViewsSubtree()&&SceneIsVisible(this)))return;RefreshAX();SchedulePaint();RustActionView::ActivateAction(event);}
  private:
   void RefreshAX(){if(GetEnabledInViewsSubtree())GetViewAccessibility().SetDefaultActionVerb(ActionVerb());else GetViewAccessibility().RemoveDefaultActionVerb();GetViewAccessibility().SetCheckedState(Checked()?ax::mojom::CheckedState::kTrue:ax::mojom::CheckedState::kFalse);}
   sidebar::CheckboxLayout Geometry(int requested) const {
@@ -1097,7 +1127,7 @@ class SceneCheckboxGroup final : public views::View {
   bool GetNeedsNotificationWhenVisibleBoundsChange() const override{return true;}
   void OnVisibleBoundsChanged() override{Schedule();}
   explicit SceneCheckboxGroup(int spacing){SetLayoutManager(CreateSidebarColumnLayout(spacing));}
-  views::View* AddChoice(views::Button::PressedCallback callback,std::u16string text){return AddChildView(std::make_unique<SceneCheckbox>(std::move(callback),std::move(text),base::BindRepeating(&SceneCheckboxGroup::Schedule,weak_factory_.GetWeakPtr())));}
+  views::View* AddChoice(views::Button::PressedCallback callback,std::u16string text){return AddChildView(nodes_.Make<SceneCheckbox>(std::move(callback),std::move(text),base::BindRepeating(&SceneCheckboxGroup::Schedule,weak_factory_.GetWeakPtr())));}
   bool metal_visible() const{return surface_&&surface_->visible();}
   bool contains_text(std::string_view text) const{return metal_visible()&&surface_->contains_text_for_testing(text);}
   void CancelInput(){for(const auto& child:children())child->OnMouseCaptureLost();}
@@ -1109,7 +1139,9 @@ class SceneCheckboxGroup final : public views::View {
   void VisibilityChanged(views::View* changed,bool visible) override {views::View::VisibilityChanged(changed,visible);if(!SceneIsVisible(this)){CancelInput();if(surface_)surface_->Hide();}Schedule();}
   void OnDidSchedulePaint(const gfx::Rect& rect) override {views::View::OnDidSchedulePaint(rect);Schedule();}
   void OnPaint(gfx::Canvas* canvas) override {if(!metal_visible())for(const auto& item:Items(0,0,gfx::RectF(GetLocalBounds())))PaintSceneRecipe(canvas,item,SceneCheckbox::TextFont());Schedule();}
+  void ViewHierarchyChanged(const views::ViewHierarchyChangedDetails& details) override{nodes_.HierarchyChanged(this,details);views::View::ViewHierarchyChanged(details);}
  private:
+  SceneGroupNodes nodes_;
   std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const {std::vector<sidebar::Item> out;for(const auto& child:children())if(child->GetVisible()){auto bounds=gfx::RectF(child->bounds());bounds.Offset(dx,dy);auto local=bounds;local.Intersect(clip);auto items=static_cast<SceneCheckbox*>(child.get())->Scene(bounds,local);for(auto& item:items)out.push_back(std::move(item));}return out;}
   void Schedule(){for(const auto& child:children())static_cast<SceneCheckbox*>(child.get())->SyncViewportVisibility();if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneCheckboxGroup::UpdateMetal,weak_factory_.GetWeakPtr()));}
   void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
@@ -1148,8 +1180,8 @@ class SceneSelect final : public RustActionView {
  public:
   void SyncWindowVisibility(){OnMouseCaptureLost();if(!SceneIsVisible(this)){CancelMenu();if(surface_)surface_->Hide();}Schedule();}
 
-  SceneSelect(std::vector<std::u16string> labels,std::u16string name,base::RepeatingClosure changed)
-      :RustActionView({},std::move(name),ControlGlyph::kMore,nullptr,base::BindRepeating([]{return true;}),{},false),labels_(std::move(labels)),state_(MakeState(labels_)),changed_(std::move(changed)),input_(this,base::BindRepeating(&SceneSelect::Input,base::Unretained(this)),base::BindRepeating(&SceneSelect::ResetPrefix,base::Unretained(this))) {
+  SceneSelect(std::vector<std::u16string> labels,std::u16string name,base::RepeatingClosure changed,rust::Box<sidebar::ActionControl> input)
+      :RustActionView({},std::move(name),ControlGlyph::kMore,nullptr,base::BindRepeating([]{return true;}),{},false,std::move(input)),labels_(std::move(labels)),state_(MakeState(labels_)),changed_(std::move(changed)),input_(this,base::BindRepeating(&SceneSelect::Input,base::Unretained(this)),base::BindRepeating(&SceneSelect::ResetPrefix,base::Unretained(this))) {
     SetActivationOnPress(true);GetViewAccessibility().SetRole(ax::mojom::Role::kComboBoxSelect);GetViewAccessibility().SetHasPopup(ax::mojom::HasPopup::kMenu);GetViewAccessibility().SetDefaultActionVerb(ActionVerb());RefreshAX();
   }
   ~SceneSelect() override {if(GetInputMethod())GetInputMethod()->DetachTextInputClient(&input_);}
@@ -1175,15 +1207,15 @@ class SceneSelect final : public RustActionView {
     if(!state_->replace_options(std::move(options),fallback_last,select_last))return;
     labels_=std::move(labels);RefreshAX();PreferredSizeChanged();Schedule();
   }
-  void SelectForTesting(size_t index){if(index>=Count()||!GetEnabledInViewsSubtree()||!SceneIsVisible(this))return;CancelMenu();const auto token=state_->open(true);if(!state_->choose(token,index,true))return;RefreshAX();Schedule();if(changed_)changed_.Run();}
+  void SelectForTesting(size_t index){if(index>=Count()||!Snapshot().enabled||!GetEnabledInViewsSubtree()||!SceneIsVisible(this))return;CancelMenu();const auto token=state_->open(true);if(!state_->choose(token,index,true))return;RefreshAX();Schedule();if(changed_)changed_.Run();}
   bool metal_visible() const{return surface_&&surface_->visible();}
   bool contains_text(std::string_view text) const{return metal_visible()&&surface_->contains_text_for_testing(text);}
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {int widest=0;for(const auto& text:labels_)widest=std::max(widest,gfx::GetStringWidth(text,TextFont()));const auto g=sidebar::select_layout(-1,-1,widest,views::LayoutProvider::GetControlHeightForFont(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY,TextFont()),false);return gfx::Size(g.width,g.height);}
-  bool OnKeyPressed(const ui::KeyEvent& event) override {if(!GetEnabledInViewsSubtree())return false;if(!sidebar::select_menu_key(event.key_code()))return false;ShowMenu(ui::mojom::MenuSourceType::kKeyboard);return true;}
+  bool OnKeyPressed(const ui::KeyEvent& event) override {if(!Snapshot().enabled||!GetEnabledInViewsSubtree())return false;if(!sidebar::select_menu_key(event.key_code()))return false;ShowMenu(ui::mojom::MenuSourceType::kKeyboard);return true;}
   bool OnKeyReleased(const ui::KeyEvent&) override {return false;}
   void OnFocus() override {RustActionView::OnFocus();if(GetInputMethod())GetInputMethod()->SetFocusedTextInputClient(&input_);}
   void OnBlur() override {if(GetInputMethod())GetInputMethod()->DetachTextInputClient(&input_);ResetPrefix();RustActionView::OnBlur();}
-  bool HandleAccessibleAction(const ui::AXActionData& action) override {if(action.action==ax::mojom::Action::kDoDefault&&GetEnabledInViewsSubtree()){ShowMenu(ui::mojom::MenuSourceType::kKeyboard);return true;}return RustActionView::HandleAccessibleAction(action);}
+  bool HandleAccessibleAction(const ui::AXActionData& action) override {if(action.action==ax::mojom::Action::kDoDefault&&Snapshot().enabled&&GetEnabledInViewsSubtree()){ShowMenu(ui::mojom::MenuSourceType::kKeyboard);return true;}return RustActionView::HandleAccessibleAction(action);}
   void VisibilityChanged(views::View* changed,bool visible) override {RustActionView::VisibilityChanged(changed,visible);if(!SceneIsVisible(this)){OnMouseCaptureLost();CancelMenu();if(surface_)surface_->Hide();}Schedule();}
   void AddedToWidget() override {RustActionView::AddedToWidget();window_visibility_.Observe(GetWidget());Schedule();}
   void RemovedFromWidget() override {window_visibility_.Observe(nullptr);if(GetInputMethod())GetInputMethod()->DetachTextInputClient(&input_);CancelMenu();surface_.reset();RustActionView::RemovedFromWidget();}
@@ -1196,20 +1228,20 @@ class SceneSelect final : public RustActionView {
   void OnPaint(gfx::Canvas* canvas) override {if(!metal_visible())PaintSceneRecipe(canvas,Scene(0,0,gfx::RectF(GetLocalBounds())),TextFont());Schedule();}
  protected:
   ax::mojom::DefaultActionVerb ActionVerb() const override{return ax::mojom::DefaultActionVerb::kOpen;}
-  void ActivateAction(const ui::Event& event) override {if(GetEnabledInViewsSubtree()&&SceneIsVisible(this))ShowMenu(ui::GetMenuSourceTypeForEvent(event));}
+  void ActivateAction(const ui::Event& event) override {if(Snapshot().enabled&&GetEnabledInViewsSubtree()&&SceneIsVisible(this))ShowMenu(ui::GetMenuSourceTypeForEvent(event));}
  private:
   static rust::Box<sidebar::SelectState> MakeState(const std::vector<std::u16string>& labels){rust::Vec<sidebar::SelectOption> options;for(size_t i=0;i<labels.size();++i)options.push_back({base::NumberToString(i),base::UTF16ToUTF8(labels[i]),base::UTF16ToUTF8(base::i18n::ToLower(labels[i]))});return sidebar::new_select_state(std::move(options));}
   static gfx::FontList TextFont(){return views::TypographyProvider::Get().GetFont(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY);}
   void ResetPrefix(){state_->reset_prefix();}
-  void Input(std::u16string text){if(!SceneIsVisible(this)||!HasFocus())return;const auto lower=base::UTF16ToUTF8(base::i18n::ToLower(text));if(!state_->input(lower,(base::TimeTicks::Now()-base::TimeTicks()).InMilliseconds(),GetEnabledInViewsSubtree()))return;RefreshAX();Schedule();if(changed_)changed_.Run();}
+  void Input(std::u16string text){if(!Snapshot().enabled||!SceneIsVisible(this)||!HasFocus())return;const auto lower=base::UTF16ToUTF8(base::i18n::ToLower(text));if(!state_->input(lower,(base::TimeTicks::Now()-base::TimeTicks()).InMilliseconds(),GetEnabledInViewsSubtree()))return;RefreshAX();Schedule();if(changed_)changed_.Run();}
   void RefreshAX(){const auto selected=Selected();GetViewAccessibility().SetValue(selected?labels_[*selected]:std::u16string());if(state_->expanded())GetViewAccessibility().SetIsExpanded();else GetViewAccessibility().SetIsCollapsed();}
   static uint64_t Now(){return (base::TimeTicks::Now()-base::TimeTicks()).InMicroseconds();}
   void CancelMenu(){state_->dismiss_popup(Now(),bool(runner_));ResetPrefix();RefreshAX();auto old=std::move(runner_);old.reset();}
   void Closed(uint64_t token){if(!state_->close_menu_at(token,Now()))return;runner_.reset();RefreshAX();Schedule();}
-  bool CanChoose(uint64_t token,const std::string& key) const {return state_->can_choose(token,key,GetEnabledInViewsSubtree()&&SceneIsVisible(this));}
-  void Choose(uint64_t token,const std::string& key){if(!state_->choose_key(token,key,GetEnabledInViewsSubtree()&&SceneIsVisible(this)))return;RefreshAX();Schedule();if(changed_)changed_.Run();}
+  bool CanChoose(uint64_t token,const std::string& key) const {return state_->can_choose(token,key,Snapshot().enabled&&GetEnabledInViewsSubtree()&&SceneIsVisible(this));}
+  void Choose(uint64_t token,const std::string& key){if(!state_->choose_key(token,key,Snapshot().enabled&&GetEnabledInViewsSubtree()&&SceneIsVisible(this)))return;RefreshAX();Schedule();if(changed_)changed_.Run();}
   void ShowMenu(ui::mojom::MenuSourceType source){
-    if(!GetWidget()||!SceneIsVisible(this)||!GetEnabledInViewsSubtree())return;if(GetVisibleBounds().IsEmpty())ScrollViewToVisible();if(GetVisibleBounds().IsEmpty())return;CancelMenu();const auto token=source==ui::mojom::MenuSourceType::kKeyboard?state_->open(true):state_->open_pointer(true,Now(),views::kMinimumTimeBetweenButtonClicks.InMicroseconds());if(!token)return;
+    if(!Snapshot().enabled||!GetWidget()||!SceneIsVisible(this)||!GetEnabledInViewsSubtree())return;if(GetVisibleBounds().IsEmpty())ScrollViewToVisible();if(GetVisibleBounds().IsEmpty())return;CancelMenu();const auto token=source==ui::mojom::MenuSourceType::kKeyboard?state_->open(true):state_->open_pointer(true,Now(),views::kMinimumTimeBetweenButtonClicks.InMicroseconds());if(!token)return;
     std::vector<std::pair<std::string,std::u16string>> items;for(size_t i=0;i<labels_.size();++i)items.emplace_back(std::string(state_->option_key(i)),labels_[i]);
     const auto weak=weak_factory_.GetWeakPtr();menu_=std::make_unique<SceneSelectMenu>(std::move(items),std::string(state_->selected_key()),token,base::BindRepeating([](base::WeakPtr<SceneSelect> owner,uint64_t epoch,const std::string& key){return owner&&owner->CanChoose(epoch,key);},weak),base::BindRepeating(&SceneSelect::Choose,weak));
     runner_=std::make_unique<views::MenuRunner>(menu_.get(),views::MenuRunner::COMBOBOX,base::BindRepeating(&SceneSelect::Closed,weak,token));RefreshAX();Schedule();if(runner_&&state_->expanded())runner_->RunMenuAt(GetWidget(),nullptr,GetBoundsInScreen(),views::MenuAnchorPosition::kTopLeft,source);
@@ -1276,7 +1308,7 @@ void SetPickerCallback(views::View* picker,base::RepeatingClosure callback){
 }
 views::View* ChoicePicker(views::View* parent,std::u16string name,std::vector<std::u16string> labels,bool scene){
 #if BUILDFLAG(IS_MAC)
-  if(scene)return parent->AddChildView(std::make_unique<SceneSelect>(std::move(labels),std::move(name),base::RepeatingClosure()));
+  if(scene)return parent->AddChildView(MakeParentSceneControl<SceneSelect>(parent,std::move(labels),std::move(name),base::RepeatingClosure()));
 #endif
   std::vector<ui::SimpleComboboxModel::Item> items;for(const auto& label:labels)items.emplace_back(label);
 #if BUILDFLAG(IS_MAC)
@@ -1325,7 +1357,7 @@ void CancelChoiceInteractions(views::View* root){
 }
 views::View* ProfilePicker(views::View* parent,std::u16string name,bool scene,base::RepeatingClosure changed){
 #if BUILDFLAG(IS_MAC)
-  if(scene)return parent->AddChildView(std::make_unique<SceneSelect>(std::vector<std::u16string>(),std::move(name),std::move(changed)));
+  if(scene)return parent->AddChildView(MakeParentSceneControl<SceneSelect>(parent,std::vector<std::u16string>(),std::move(name),std::move(changed)));
 #endif
   auto* picker=parent->AddChildView(std::make_unique<views::Combobox>());picker->SetTooltipTextAndAccessibleName(name);picker->SetCallback(std::move(changed));return picker;
 }
@@ -2409,7 +2441,7 @@ class PanelSceneImpl final : public PanelScene {
   std::unique_ptr<views::View> MakeText(std::u16string text,bool multiline,bool center,int fixed_width) override{
     return std::make_unique<PreferenceCopy>(std::move(text),kInk,0,gfx::Font::Weight::NORMAL,multiline,base::BindRepeating(&PanelSceneImpl::Schedule,weak_factory_.GetWeakPtr()),base::BindRepeating([](base::WeakPtr<PanelSceneImpl> self){return self&&self->visible();},weak_factory_.GetWeakPtr()),true,center,fixed_width);
   }
-  std::unique_ptr<views::View> MakeSelect(std::vector<std::u16string> labels,std::u16string name) override{return std::make_unique<SceneSelect>(std::move(labels),std::move(name),base::RepeatingClosure());}
+  std::unique_ptr<views::View> MakeSelect(views::View* parent,std::vector<std::u16string> labels,std::u16string name) override{return MakeParentSceneControl<SceneSelect>(parent,std::move(labels),std::move(name),base::RepeatingClosure());}
   void SetText(views::View* view,std::u16string text) override{static_cast<PreferenceCopy*>(view)->SetText(std::move(text));}
   std::unique_ptr<views::View> MakeActions(int spacing) override{auto group=std::make_unique<SceneActionGroup>(false,spacing);group->Share(base::BindRepeating([](base::WeakPtr<PanelSceneImpl> self){return self&&self->visible();},weak_factory_.GetWeakPtr()),base::BindRepeating(&PanelSceneImpl::Schedule,weak_factory_.GetWeakPtr()));return group;}
   views::View* AddAction(views::View* group,base::RepeatingClosure callback,std::u16string text) override{return static_cast<SceneActionGroup*>(group)->AddAction(std::move(callback),std::move(text),ui::ButtonStyle::kDefault);}
@@ -3763,7 +3795,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   import_text(import_panel.get(),import_copy[3],kSubtle,-1);
   auto source_changed=base::BindRepeating(&WorkspaceShell::ImportSelectionChanged,weak);
 #if BUILDFLAG(IS_MAC)
-  if(import_form_)import_browser_picker_=import_panel->AddChildView(std::make_unique<SceneSelect>(import_browsers,import_copy[4],source_changed));else
+  if(import_form_)import_browser_picker_=import_panel->AddChildView(MakeParentSceneControl<SceneSelect>(import_panel.get(),import_browsers,import_copy[4],source_changed));else
 #endif
   {
     std::vector<ui::SimpleComboboxModel::Item> items;for(const auto& b:import_browsers)items.emplace_back(b);
@@ -7334,7 +7366,7 @@ void WorkspaceShell::BuildRustToolsForm(){
   struct Host {raw_ptr<views::View> view=nullptr;bool row=false;raw_ptr<views::View> flex=nullptr;int spacing=0;};
   std::vector<Host> hosts{{tools_body_,false,nullptr,0}};bool timeline=false;
   auto form_picker=[&](views::View* parent,std::u16string name,const sidebar::ToolsFormChoices& projection)->views::View*{
-    auto* control=parent->AddChildView(std::make_unique<SceneSelect>(std::vector<std::u16string>(),std::move(name),base::RepeatingClosure()));std::vector<std::pair<std::string,std::u16string>> choices;choices.reserve(projection.choices.size());for(const auto& choice:projection.choices)choices.emplace_back(std::string(choice.key),text(choice.label));control->SetOptions(choices);control->SetSelectedIndex(0);control->SetEnabled(projection.enabled);return control;
+    auto* control=parent->AddChildView(MakeParentSceneControl<SceneSelect>(parent,std::vector<std::u16string>(),std::move(name),base::RepeatingClosure()));std::vector<std::pair<std::string,std::u16string>> choices;choices.reserve(projection.choices.size());for(const auto& choice:projection.choices)choices.emplace_back(std::string(choice.key),text(choice.label));control->SetOptions(choices);control->SetSelectedIndex(0);control->SetEnabled(projection.enabled);return control;
   };
   for(const auto& node:plan.nodes){auto* parent=hosts.back().view.get();const auto label=text(node.text);views::View* control=nullptr;
     switch(node.kind){
@@ -7445,7 +7477,7 @@ void WorkspaceShell::RefreshTools() {
 #if BUILDFLAG(IS_MAC)
   auto units=[](const std::u16string& text){rust::Vec<uint16_t> value;value.reserve(text.size());for(char16_t unit:text)value.push_back(unit);return value;};
   auto form_picker=[&](std::u16string name,const sidebar::ToolsFormChoices& projection)->views::View*{
-    auto* control=tools_body_->AddChildView(std::make_unique<SceneSelect>(std::vector<std::u16string>(),std::move(name),base::RepeatingClosure()));
+    auto* control=tools_body_->AddChildView(MakeParentSceneControl<SceneSelect>(tools_body_.get(),std::vector<std::u16string>(),std::move(name),base::RepeatingClosure()));
     std::vector<std::pair<std::string,std::u16string>> choices;choices.reserve(projection.choices.size());for(const auto& choice:projection.choices)choices.emplace_back(std::string(choice.key),std::u16string(choice.label.begin(),choice.label.end()));
     control->SetOptions(choices);control->SetSelectedIndex(0);control->SetEnabled(projection.enabled);return control;
   };

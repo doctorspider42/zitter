@@ -25,7 +25,7 @@ class PanelScene {
  public:
   virtual ~PanelScene()=default;
   virtual std::unique_ptr<views::View> MakeText(std::u16string text,bool multiline,bool center,int fixed_width)=0;
-  virtual std::unique_ptr<views::View> MakeSelect(std::vector<std::u16string> labels,std::u16string name)=0;
+  virtual std::unique_ptr<views::View> MakeSelect(views::View* parent,std::vector<std::u16string> labels,std::u16string name)=0;
   virtual void SetText(views::View* view,std::u16string text)=0;
   virtual std::unique_ptr<views::View> MakeActions(int spacing)=0;
   virtual views::View* AddAction(views::View* group,base::RepeatingClosure callback,std::u16string text)=0;

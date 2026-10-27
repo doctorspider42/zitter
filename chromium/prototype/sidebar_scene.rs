@@ -3033,6 +3033,13 @@ mod tests {
     fn node_pin(name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:2,high:0,low:0,name:name.into()}}
     fn node_close(low:u64)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:10,high:7,low,name:String::new()}}
     fn node_named(kind:u32,name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind,high:0,low:0,name:name.into()}}
+    #[test] fn form_action_selector_press_policy_is_scoped_and_retirement_cannot_reopen(){
+        let mut g=new_action_graph();let mut select=g.append_form_action();let mut ordinary=g.append_form_action();select.action_on_press(true);let id=select.action_node_id();
+        assert!(select.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true).action==ffi::RowAction::Activate);
+        assert!(ordinary.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true).action==ffi::RowAction::None);
+        assert!(g.retire_form_action(id));assert!(select.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true).action==ffi::RowAction::None);assert!(!select.action_snapshot().enabled);
+        assert!(ordinary.action_pointer(ffi::PointerPhase::Release,1,1,true,true,true).action==ffi::RowAction::Activate);
+    }
     #[test] fn form_action_membership_allocates_unique_ids_without_native_keys(){
         let mut g=new_action_graph();let mut a=g.append_form_action();let b=g.append_form_action();assert_ne!(a.action_node_id(),0);assert_ne!(a.action_node_id(),b.action_node_id());assert_eq!(g.order,vec![a.action_node_id(),b.action_node_id()]);
         a.action_on(true);a.action_default(true);assert!(a.action_snapshot().on);assert!(a.action_snapshot().is_default);assert!(!b.action_snapshot().on);assert_eq!(g.nodes.len(),2);

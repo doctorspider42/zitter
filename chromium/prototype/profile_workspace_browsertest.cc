@@ -4208,6 +4208,24 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest,
   }
 }
 
+// Compile only: checkbox/switch/selector behavior awaits the bulk checkpoint.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CheckedAndSelectorNodesCoverLiveFormsAndRetainProjectionIdentity) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready()&&shell->tools_ready();}));const bool rust=shell->workspace_input()->rust_editor();
+  auto id=[&](views::View* view){EXPECT_TRUE(view);if(!view)return uint64_t{0};const auto value=shell->sidebar_node_id_for_testing(view);if(rust)EXPECT_NE(0u,value);else EXPECT_EQ(0u,value);return value;};
+  shell->OpenGeneralSettings();for(const auto* key:{"camera","javascript","hardware_acceleration","sidebar","animations"}){auto* view=shell->preference_switch_for_testing(key);const auto before=id(view);const bool enabled=view->GetEnabled();view->SetEnabled(false);view->SetEnabled(enabled);EXPECT_EQ(before,id(view));}
+  for(const auto* key:{"theme","search","category","zoom","font_size","minimum_font_size","fixed_font_size","dns_mode","site_type","site_policy","clear_period"}){auto* view=shell->preference_choice_for_testing(key);const auto before=id(view);const auto selected=shell->preference_choice_selection_for_testing(key);const bool enabled=view->GetEnabled();view->SetEnabled(false);view->SetEnabled(enabled);EXPECT_EQ(before,id(view));EXPECT_EQ(selected,shell->preference_choice_selection_for_testing(key));}
+  std::vector<uint64_t> checks;for(size_t i=0;i<3;++i)checks.push_back(id(shell->clear_checkbox_for_testing(i)));if(rust)for(size_t i=0;i<checks.size();++i)for(size_t j=0;j<i;++j)EXPECT_NE(checks[i],checks[j]);
+  shell->OpenProfiles();auto* profiles=shell->managed_profile_picker();const auto profile_id=id(profiles);shell->SetProfilePickerSelectionForTesting(true,0);EXPECT_EQ(profile_id,id(profiles));
+  shell->OpenImport();id(shell->import_browser_picker());std::vector<views::View*> options={shell->import_profiles(),shell->import_bookmarks(),shell->import_history(),shell->import_cookies()};checks.clear();for(auto* view:options)checks.push_back(id(view));if(rust)for(size_t i=0;i<checks.size();++i)for(size_t j=0;j<i;++j)EXPECT_NE(checks[i],checks[j]);shell->SetImportStatus(u"Scoped busy",false,true,true);for(size_t i=0;i<options.size();++i)EXPECT_EQ(checks[i],id(options[i]));shell->SetImportStatus(u"Scoped ready",false,false,false);
+}
+
+// A retained selector bypasses base-button input for keys and AX; both must reject retirement.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, RetiredSelectorRejectsKeyboardAndPopupAfterToolsRebuild) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));shell->OpenTools(1);auto* picker=shell->tools_choice_for_testing("selection");ASSERT_TRUE(picker);const bool rust=shell->workspace_input()->rust_editor();const auto id=shell->sidebar_node_id_for_testing(picker);if(rust)EXPECT_NE(0u,id);else EXPECT_EQ(0u,id);
+  auto held=picker->parent()->RemoveChildViewT(picker);if(rust){EXPECT_EQ(0u,shell->sidebar_node_id_for_testing(held.get()));ui::KeyEvent down(ui::EventType::kKeyPressed,ui::VKEY_DOWN,0);EXPECT_FALSE(held->OnKeyPressed(down));ui::AXActionData open;open.action=ax::mojom::Action::kDoDefault;held->HandleAccessibleAction(open);EXPECT_FALSE(views::MenuController::GetActiveInstance());}
+  shell->OpenTools(2);ASSERT_TRUE(shell->tools_choice_for_testing("selection"));if(rust){EXPECT_NE(0u,shell->sidebar_node_id_for_testing(shell->tools_choice_for_testing("selection")));EXPECT_EQ(0u,shell->sidebar_node_id_for_testing(held.get()));}
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CheckedActionHostsAXAndViewportCancellation) {
   ASSERT_NO_FATAL_FAILURE(NavigateBoth());auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenGeneralSettings();const bool rust=shell->workspace_input()->rust_editor();
   auto filter=[&](std::u16string text){auto* field=shell->preferences_search();field->SelectRange(gfx::Range(0,field->GetText().size()));field->input_client()->InsertText(text,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();};
