@@ -367,7 +367,8 @@ class WorkspaceShell final : public ui::EventHandler,
   BrowserImportOptions import_options() const;
   views::View* import_browser_picker() const { return import_browser_picker_; }
   views::View* import_bookmarks() const { return import_bookmarks_; }
-  views::Button* import_close() const { return dismiss_import_; }
+  views::View* import_close() const { return dismiss_import_; }
+  bool import_close_metal_visible_for_testing() const;
   views::View* import_history() const { return import_history_; }
   views::View* import_cookies() const { return import_cookies_; }
   views::View* import_profiles() const { return import_profiles_; }
@@ -787,7 +788,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> import_history_ = nullptr;
   raw_ptr<views::View> import_cookies_ = nullptr;
   raw_ptr<views::View> apply_import_ = nullptr;
-  raw_ptr<views::Button> dismiss_import_ = nullptr;
+  raw_ptr<views::View> dismiss_import_ = nullptr;
   bool import_can_apply_ = false;
   bool import_busy_ = false;
   bool import_applying_ = false;

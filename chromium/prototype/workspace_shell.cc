@@ -648,6 +648,23 @@ void PaintSceneRecipe(gfx::Canvas* canvas,const sidebar::Item& item,const gfx::F
 #endif
 
 #if BUILDFLAG(IS_MAC)
+// A decorative image has no action controller, capture, focus ring or input state.
+class SceneSearchIcon final : public views::View {
+  METADATA_HEADER(SceneSearchIcon,views::View)
+ public:
+  explicit SceneSearchIcon(base::RepeatingCallback<bool()> visible):visible_(std::move(visible)) {
+    SetTooltipText(u"Szukaj");GetViewAccessibility().SetName(u"Szukaj");GetViewAccessibility().SetRole(ax::mojom::Role::kImage);
+    SetFocusBehavior(FocusBehavior::NEVER);SetCanProcessEventsWithinSubtree(false);
+  }
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {const auto r=sidebar::action_preferred_size(false,false);return gfx::Size(r.width,r.height);}
+  sidebar::Item SceneItem(gfx::RectF bounds,gfx::RectF clip) {return GlyphSceneData(this,ControlGlyph::kVector,&vector_icons::kSearchIcon,false,{},kSubtle,false,false,bounds,clip);}
+  void OnPaint(gfx::Canvas* canvas) override {if(visible_&&visible_.Run())return;PaintGlyphControl(this,ControlGlyph::kVector,&vector_icons::kSearchIcon,kSubtle,false,{},views::Button::STATE_NORMAL,canvas);}
+ private:
+  base::RepeatingCallback<bool()> visible_;
+};
+BEGIN_METADATA(SceneSearchIcon)
+END_METADATA
+
 // Event/focus/AX delivery remains native; state and activation live in Rust.
 class RustActionView : public views::View {
   METADATA_HEADER(RustActionView,views::View)
@@ -3542,9 +3559,9 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       views::BoxLayout::Orientation::kHorizontal, gfx::Insets::VH(0, 18), 12));
   input_layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
   input_row->SetPreferredSize(gfx::Size(560, 56));
-  std::unique_ptr<GlyphButton> search_control;
+  std::unique_ptr<views::View> search_control;
 #if BUILDFLAG(IS_MAC)
-  if(palette->scene())search_control=std::make_unique<SceneGlyphButton>(views::Button::PressedCallback(),u"Szukaj",GlyphButton::Glyph::kVector,&vector_icons::kSearchIcon,chrome_visible(0));
+  if(palette->scene())search_control=std::make_unique<SceneSearchIcon>(chrome_visible(0));
   else
 #endif
     search_control=std::make_unique<GlyphButton>(views::Button::PressedCallback(),u"Szukaj",GlyphButton::Glyph::kVector,&vector_icons::kSearchIcon);
@@ -3651,13 +3668,16 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 8));
   auto* import_title = import_text(import_header,import_copy[0],kInk,4,gfx::Font::Weight::SEMIBOLD);
   import_header_layout->SetFlexForView(import_title, 1);
-  dismiss_import_ = import_header->AddChildView(std::make_unique<GlyphButton>(
-      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
-        if (!shell || shell->import_applying_) return;
-        shell->callbacks_.dismiss_import.Run();
-        shell->CloseOverlays();
-        shell->RestorePageFocus();
-      }, weak), import_copy[1], GlyphButton::Glyph::kVector, &vector_icons::kCloseSmallIcon));
+  auto dismiss_import = base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+    if (!shell || shell->import_applying_) return;
+    shell->callbacks_.dismiss_import.Run();
+    shell->CloseOverlays();
+    shell->RestorePageFocus();
+  }, weak);
+#if BUILDFLAG(IS_MAC)
+  if(import_form_){auto* controls=import_header->AddChildView(std::make_unique<ScenePreferenceControls>(true));dismiss_import_=controls->AddControl(dismiss_import,import_copy[1],0);}else
+#endif
+  dismiss_import_=import_header->AddChildView(std::make_unique<GlyphButton>(dismiss_import,import_copy[1],GlyphButton::Glyph::kVector,&vector_icons::kCloseSmallIcon));
   import_text(import_panel.get(),import_copy[2],kMuted,-1,gfx::Font::Weight::NORMAL,true);
   import_text(import_panel.get(),import_copy[3],kSubtle,-1);
   auto source_changed=base::BindRepeating(&WorkspaceShell::ImportSelectionChanged,weak);
@@ -4615,7 +4635,7 @@ void WorkspaceShell::UpdateMetalPaletteChrome() {
     auto bounds=view->GetBoundsInScreen();bounds.Offset(local.x(),local.y());bounds.set_size(local.size());
     auto full=gfx::RectF(view->GetBoundsInScreen());full.Offset(-bounds.x(),-bounds.y());const auto clip=gfx::RectF(gfx::Rect(bounds.size()));
     std::vector<sidebar::Item> items;
-    if(i==0)items.push_back(GlyphSceneItem(static_cast<GlyphButton*>(view),full,clip));
+    if(i==0)items.push_back(static_cast<SceneSearchIcon*>(view)->SceneItem(full,clip));
     else items.push_back(static_cast<PaletteText*>(view)->SceneItem(full,clip));
     surface->Update(address_widget_->GetNativeWindow(),bounds,items,Tone(palette_root_,kCard));if(was!=surface->visible())view->SchedulePaint();
   }
@@ -7879,6 +7899,13 @@ bool WorkspaceShell::import_source_metal_visible() const {
 }
 void WorkspaceShell::SetImportOptionCheckedForTesting(size_t option,bool checked) {
   const std::array<views::View*,4> controls={import_profiles_,import_bookmarks_,import_history_,import_cookies_};if(option<controls.size()&&controls[option])SetCheckValue(controls[option],checked);
+}
+bool WorkspaceShell::import_close_metal_visible_for_testing() const {
+#if BUILDFLAG(IS_MAC)
+  auto* group=dismiss_import_?views::AsViewClass<ScenePreferenceControls>(dismiss_import_->parent()):nullptr;return group&&group->metal_visible();
+#else
+  return false;
+#endif
 }
 bool WorkspaceShell::import_choices_metal_visible() const {
 #if BUILDFLAG(IS_MAC)

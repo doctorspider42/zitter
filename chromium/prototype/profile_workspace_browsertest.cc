@@ -3994,6 +3994,37 @@ class SceneModalBodyOracle final : public views::View {
 BEGIN_METADATA(SceneModalBodyOracle)
 END_METADATA
 }  // namespace
+// Compiled for the next bulk UI checkpoint; not executed by headless gates.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ResidualGlyphHostsImageAndImportDismiss) {
+  base::ScopedAllowBlockingForTesting files; base::ScopedTempDir source;
+  ASSERT_TRUE(source.CreateUniqueTempDir());base::FilePath root;
+  ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT,&root));
+  ASSERT_TRUE(base::CopyDirectory(root.AppendASCII("zitter/testdata/arc"),source.GetPath().AppendASCII("Arc"),true));
+  base::ScopedPathOverride app_data(base::DIR_APP_DATA,source.GetPath());
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
+  const bool rust=shell->workspace_input()->rust_editor();window_->FocusAddressBar();
+  auto* icon=shell->palette_chrome_view_for_testing(0);ASSERT_TRUE(icon);
+  EXPECT_EQ(!rust,views::AsViewClass<views::Button>(icon)!=nullptr);
+  EXPECT_EQ(gfx::Size(32,32),icon->GetPreferredSize());
+  EXPECT_EQ(views::View::FocusBehavior::NEVER,icon->GetFocusBehavior());
+  EXPECT_FALSE(icon->GetCanProcessEventsWithinSubtree());
+  ui::AXNodeData image;icon->GetViewAccessibility().GetAccessibleNodeData(&image);
+  EXPECT_EQ(rust?ax::mojom::Role::kImage:ax::mojom::Role::kButton,image.role);
+  EXPECT_EQ(u"Szukaj",image.GetString16Attribute(ax::mojom::StringAttribute::kName));
+  if(rust){EXPECT_TRUE(icon->children().empty());EXPECT_FALSE(image.HasIntAttribute(ax::mojom::IntAttribute::kDefaultActionVerb));}
+  shell->CloseOverlays();shell->OpenImport();
+  ASSERT_TRUE(base::test::RunUntil([&]{return window_->import_ready();}));
+  auto* close=shell->import_close();ASSERT_TRUE(close);
+  EXPECT_EQ(!rust,views::AsViewClass<views::Button>(close)!=nullptr);
+  if(rust){EXPECT_TRUE(close->children().empty());ASSERT_TRUE(base::test::RunUntil([&]{return shell->import_close_metal_visible_for_testing();}));}
+  ui::AXActionData activate;activate.action=ax::mojom::Action::kDoDefault;
+  shell->SetImportStatus(u"Importowanie…",false,true,true);EXPECT_FALSE(close->GetEnabled());
+  close->HandleAccessibleAction(activate);EXPECT_TRUE(shell->import_visible());
+  shell->SetImportStatus(u"Gotowe",true);EXPECT_TRUE(close->GetEnabled());
+  close->HandleAccessibleAction(activate);EXPECT_FALSE(shell->import_visible());
+  if(rust)ASSERT_TRUE(base::test::RunUntil([&]{return !shell->import_close_metal_visible_for_testing();}));
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest,
                        SelectActionHostsPopupMenuAndClippedPress) {
   auto* shell = window_->shell();
