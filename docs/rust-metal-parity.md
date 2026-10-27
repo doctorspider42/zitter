@@ -14,6 +14,41 @@ accumulate compiled cases for a later bulk checkpoint. Build, Rust/Python and SD
 checks without windows remain enabled. No computer shutdown is requested.
 The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 
+## Latest headless implementation: panel header and category commands
+
+Source `334ec12` extends semantic commands to all ten preference categories and
+workspace/preferences/import/tools dismissal. PreferencesForm binds an immutable
+category target against its own category count; generic command initialization
+cannot bypass that bound. Rust supplies a small string-free presentation snapshot
+for category glyphs and dismiss shape, including disabled live controls. Native
+ScenePreferenceButton no longer stores category/dismiss copies; control-group
+orientation and spacing now come from the Rust form root. Text labels and native
+AX/event/window adapters remain.
+
+The common weak dispatcher now receives the source adapter and verifies that its
+widget and actual contents-tree membership match the relevant visible panel.
+Native category changes, workspace/overlay dismissal, shortcut recording teardown,
+focus delivery and import applying-state guards retain existing behavior. Import
+dismissal checks shell lifetime after the service callback. Context cancellation
+now includes ScenePreferenceControls, preventing a header/category event from
+crossing a profile/workspace change. These UI gates retain native backend authority.
+
+Validation: **417 Rust** cases (nine new category/header cases), **68 live + 68
+clean-archive Python**, **180 CoreText SDK cases plus raster**, scoped GN/header
+and boundary checks; app and browser-test binaries compile. All **53 committed/
+live/staged prototype inputs** match and the final three-target Ninja check reports
+no work. Four new browser cases compile for category/close behavior, a hide-show
+observer, import applying-state dismissal and foreign-widget reparenting.
+**No UI tests were run**; preview and packaged app were left untouched.
+[Evidence](benchmarks/rust-panel-commands-headless-2026-10-27.json).
+
+Remaining: auxiliary dynamic command models, other inventoried popup/header controls,
+full keyed form/sidebar reconciliation, editor/text/property models and native outer
+container/window ownership, followed by bulk GUI/manual and presentation profiling.
+The preserved sidebar tab-reuse WIP remains separate. No CPU/GPU/presentation or
+memory gain is claimed; model/projection/native-fence costs remain unmeasured.
+No target, third-party dependency or license input changed.
+
 ## Latest headless implementation: semantic form action commands
 
 Source `0cfa812` with boundary follow-up `df8dac2` moves 24 semantic command kinds plus text-preference keys into

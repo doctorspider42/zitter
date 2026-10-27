@@ -21,7 +21,12 @@ actions Rust-owned semantic targets and keys, with cancellation epochs and a
 visible-panel native dispatcher. Validation: 408 Rust, 68 live/archive Python,
 180 SDK cases plus raster, both binaries compiled; UI execution deferred.
 [Details](rust-metal-parity.md#latest-headless-implementation-semantic-form-action-commands).
-Header/category/dismiss semantics and auxiliary dynamic commands remain to migrate.
+Covered panel header/category/dismiss semantics are now Rust-owned (`334ec12`),
+with native source-widget/tree fencing. Headless validation is 417 Rust,
+68 live/archive Python and 180 SDK cases plus raster. Four additional UI cases
+compile but remain deferred. Auxiliary dynamic commands and residual popup/header
+controls remain to inventory and migrate.
+[Latest details](rust-metal-parity.md#latest-headless-implementation-panel-header-and-category-commands).
 
 1. **Audit residual native action hosts and service/popup boundaries.** Peek's
    toolbar is now migrated; download row buttons already use Rust-owned groups.
@@ -49,7 +54,7 @@ Header/category/dismiss semantics and auxiliary dynamic commands remain to migra
    copy and form/busy state into Rust; finish outer dialog/palette/container
    placement. Keep native window, IME, clipboard, AX and popup/menu services explicit.
 5. **Run the deferred bulk UI checkpoint when requested.** Include all newly
-   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node, palette-node, split-node, form-action-node, workspace-dismiss-node, activation-observer, checked-selector-node, Peek-toolbar, checked-model, selector-model, workspace-scene, history-scene, palette-scene, form-scene, site-rule-scene and semantic form-command
+   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node, palette-node, split-node, form-action-node, workspace-dismiss-node, activation-observer, checked-selector-node, Peek-toolbar, checked-model, selector-model, workspace-scene, history-scene, palette-scene, form-scene, site-rule-scene, semantic form-command and panel/category-command
    cases, the full Rust/Metal and Views matrices, and actual pointer/keyboard/
    capture/AX/focus/drag/profile/session regressions. The last completed full matrix
    remains the text-action checkpoint; the later selector full run was interrupted.
