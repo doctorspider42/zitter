@@ -1224,6 +1224,21 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ServiceViewportModalBodyOwners
   widget->CloseNow();widget.reset();delegate.reset();
 }
 
+// Compiled only: runtime acceptance is deferred to the bulk UI checkpoint.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FooterLogicalNodesSurviveEmojiReplacementAndRejectStaleAdapter) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->SetPinned(true);shell->ShowSidebar();
+  const bool rust=shell->workspace_input()->rust_editor();auto* personal=shell->workspace_button("personal");ASSERT_TRUE(personal);
+  auto* pin=shell->footer_action_for_testing(0);auto* settings=shell->footer_action_for_testing(1);ASSERT_TRUE(pin);ASSERT_TRUE(settings);
+  const auto logical=shell->sidebar_node_id_for_testing(personal),pin_id=shell->sidebar_node_id_for_testing(pin),settings_id=shell->sidebar_node_id_for_testing(settings);
+  if(rust){EXPECT_NE(0u,logical);EXPECT_NE(0u,pin_id);EXPECT_NE(0u,settings_id);EXPECT_NE(logical,pin_id);EXPECT_NE(pin_id,settings_id);}else EXPECT_EQ(0u,logical);
+  auto held=personal->parent()->RemoveChildViewT(personal);
+  shell->SetWorkspaceEmoji("personal",u"🚀");auto* replacement=shell->workspace_button("personal");ASSERT_TRUE(replacement);EXPECT_NE(held.get(),replacement);
+  EXPECT_EQ(logical,shell->sidebar_node_id_for_testing(replacement));EXPECT_EQ(pin_id,shell->sidebar_node_id_for_testing(pin));EXPECT_EQ(settings_id,shell->sidebar_node_id_for_testing(settings));
+  if(rust){EXPECT_EQ(0u,shell->sidebar_node_id_for_testing(held.get()));ui::AXActionData activate;activate.action=ax::mojom::Action::kDoDefault;held->HandleAccessibleAction(activate);EXPECT_EQ("work",window_->active_id());}
+  ASSERT_TRUE(window_->Select("personal"));shell->ShowSidebar();EXPECT_EQ(logical,shell->sidebar_node_id_for_testing(shell->workspace_button("personal")));
+  shell->SetWorkspaceEmoji("personal",u"");EXPECT_EQ(logical,shell->sidebar_node_id_for_testing(shell->workspace_button("personal")));
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FooterActionHostsOwnershipEmojiMenuKeysAXAndClip) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->SetPinned(true);shell->ShowSidebar();const bool rust=shell->workspace_input()->rust_editor();
   for(auto* view:{shell->footer_action_for_testing(0),shell->footer_action_for_testing(1),shell->workspace_button("work"),shell->workspace_button("personal")}){ASSERT_TRUE(view);EXPECT_EQ(!rust,views::AsViewClass<views::Button>(view)!=nullptr);ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kButton,ax.role);EXPECT_FALSE(ax.GetString16Attribute(ax::mojom::StringAttribute::kName).empty());}

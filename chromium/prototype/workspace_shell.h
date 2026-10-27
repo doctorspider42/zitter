@@ -589,6 +589,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void ReconcileSidebarNodes(TabListCache& cache, const std::vector<PinnedItem>& pins, const std::vector<ShellTab>& tabs);
   void AppendPinnedItems(views::View* root, const std::vector<PinnedItem>& pins,
                          TabListCache& cache, const std::string& workspace);
+  void ReconcileFooterNodes();
   void RebuildWorkspaceDots();
   void ShowContextMenuForViewImpl(views::View*, const gfx::Point&, ui::mojom::MenuSourceType) override;
   bool IsCommandIdChecked(int command_id) const override;
@@ -739,6 +740,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> url_pill_ = nullptr;
   raw_ptr<views::View> workspace_name_ = nullptr;
   raw_ptr<views::View> profile_name_ = nullptr;
+  std::shared_ptr<SidebarNodeGraphState> footer_node_graph_;
   raw_ptr<views::View> pin_button_ = nullptr;
   std::array<raw_ptr<views::View>, 3> nav_buttons_ = {};
   raw_ptr<views::View> sidebar_footer_=nullptr;

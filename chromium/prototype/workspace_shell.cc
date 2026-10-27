@@ -3516,10 +3516,11 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto* footer_layout = footer->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 0));
   footer_layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
+  ReconcileFooterNodes();
   pin_button_ = footer->AddChildView(CreateSceneAction(
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
         if (shell) shell->SetPinned(!shell->pinned_);
-      }, weak), u"Przypnij panel", GlyphButton::Glyph::kSidebar,nullptr,footer_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak)));
+      }, weak), u"Przypnij panel", GlyphButton::Glyph::kSidebar,nullptr,footer_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),true,{footer_node_graph_,4,{},"pin"}));
   Spacer(footer, 1);
   std::unique_ptr<views::ScrollBar> workspace_bar;
 #if BUILDFLAG(IS_MAC)
@@ -3544,7 +3545,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   Spacer(footer, 1);
   workspace_settings_button_=footer->AddChildView(CreateSceneAction(
       base::BindRepeating(&WorkspaceShell::OpenWorkspaceSettings, weak),
-      u"Ustawienia przestrzeni", GlyphButton::Glyph::kVector, &vector_icons::kTuneIcon,footer_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak)));
+      u"Ustawienia przestrzeni", GlyphButton::Glyph::kVector, &vector_icons::kTuneIcon,footer_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),true,{footer_node_graph_,4,{},"settings"}));
 #if BUILDFLAG(IS_MAC)
   if (metal_sidebar_) footer->SetLayoutManager(CreateSidebarFooterLayout());
 #endif
@@ -4225,6 +4226,7 @@ void WorkspaceShell::Detach() {
   workspace_appearance_ = nullptr;
   settings_scroll_ = nullptr;
   settings_root_ = nullptr;
+  footer_node_graph_.reset();
   pin_button_ = nullptr;
   nav_buttons_.fill(nullptr);
   workspace_buttons_.clear();
@@ -5308,14 +5310,25 @@ views::View* WorkspaceShell::workspace_button(std::string_view id) const {
   return it == workspace_buttons_.end() ? nullptr : it->second.get();
 }
 
+void WorkspaceShell::ReconcileFooterNodes() {
+#if BUILDFLAG(IS_MAC)
+  if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")!="rust-metal")return;
+  if(!footer_node_graph_)footer_node_graph_=std::make_shared<SidebarNodeGraphState>();
+  rust::Vec<sidebar::ActionNodeKey> keys;keys.reserve(2+state_.workspaces.size());
+  keys.push_back({4,0,0,"pin"});keys.push_back({4,0,0,"settings"});
+  for(const auto& workspace:state_.workspaces)keys.push_back({3,0,0,workspace.id});
+  CHECK(footer_node_graph_->graph->reconcile(std::move(keys)).admitted)<<"Invalid footer logical node projection";
+#endif
+}
 void WorkspaceShell::RebuildWorkspaceDots() {
+  ReconcileFooterNodes();
   workspace_buttons_.clear();
   workspace_dots_->RemoveAllChildViews();
   for (const auto& workspace : state_.workspaces) {
     auto* button = workspace_dots_->AddChildView(CreateSceneAction(
         base::BindRepeating(callbacks_.select_workspace, workspace.id),
         u"Przestrzeń: " + base::UTF8ToUTF16(workspace.name) + (state_.sleeping_workspaces.contains(workspace.id) ? u" · uśpiona" : u""), GlyphButton::Glyph::kDot,nullptr,
-        base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {return shell && shell->metal_sidebar_visible();},weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak_factory_.GetWeakPtr())));
+        base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {return shell && shell->metal_sidebar_visible();},weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak_factory_.GetWeakPtr()),true,{footer_node_graph_,3,{},workspace.id}));
     SetActionLabel(button,workspace_emoji(workspace.id));
     SetActionOn(button,workspace.id == state_.workspace_id);
     button->set_context_menu_controller(this);

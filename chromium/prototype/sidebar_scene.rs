@@ -1745,13 +1745,13 @@ impl ActionState {
     }
 }
 
-// Logical row nodes belong to a Rust scope, not the lifetime of a native View.
+// Logical action nodes belong to a Rust scope, not the lifetime of a native View.
 // Domain keys are opaque projections; they never authorize a browser operation.
 type ActionNodeIdentity=(u32,u64,u64,String);
 fn action_node_key(key:&ffi::ActionNodeKey)->Option<ActionNodeIdentity>{
     match key.kind {
         kind @ (1|10) if (key.high!=0||key.low!=0)&&key.name.is_empty()=>Some((kind,key.high,key.low,String::new())),
-        2 if key.high==0&&key.low==0&&!key.name.is_empty()=>Some((2,0,0,key.name.clone())),
+        kind @ (2|3|4) if key.high==0&&key.low==0&&!key.name.is_empty()=>Some((kind,0,0,key.name.clone())),
         _=>None,
     }
 }
@@ -3015,6 +3015,24 @@ mod tests {
     fn node_tab(low:u64)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:1,high:7,low,name:String::new()}}
     fn node_pin(name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:2,high:0,low:0,name:name.into()}}
     fn node_close(low:u64)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:10,high:7,low,name:String::new()}}
+    fn node_named(kind:u32,name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind,high:0,low:0,name:name.into()}}
+    #[test] fn action_graph_footer_namespaces_do_not_alias_domain_ids(){
+        let mut g=new_action_graph();let p=g.reconcile(vec![node_pin("pin"),node_named(3,"pin"),node_named(4,"pin"),node_named(4,"settings")]);
+        assert!(p.admitted);assert_eq!(p.ids.iter().copied().collect::<BTreeSet<_>>().len(),4);
+        let mut space=g.acquire(&node_named(3,"pin"));let chrome=g.acquire(&node_named(4,"pin"));space.action_on(true);assert!(!chrome.action_snapshot().on);
+    }
+    #[test] fn action_graph_footer_reorder_and_replacement_keep_identity_but_retire_removed_space(){
+        let mut g=new_action_graph();let p=g.reconcile(vec![node_named(4,"pin"),node_named(4,"settings"),node_named(3,"work"),node_named(3,"personal")]);
+        let mut old=g.acquire(&node_named(3,"personal"));old.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);
+        let q=g.reconcile(vec![node_named(4,"pin"),node_named(4,"settings"),node_named(3,"personal"),node_named(3,"work")]);assert_eq!(q.ids,vec![p.ids[0],p.ids[1],p.ids[3],p.ids[2]]);
+        let next=g.acquire(&node_named(3,"personal"));assert_eq!(next.action_node_id(),p.ids[3]);assert!(!next.action_pending());assert!(!old.action_key(true,1,true,true).handled);
+        let removed=g.reconcile(vec![node_named(4,"pin"),node_named(4,"settings"),node_named(3,"work")]);assert_eq!(removed.retired,1);assert_eq!(next.action_node_id(),0);
+        let reinsert=g.reconcile(vec![node_named(4,"pin"),node_named(4,"settings"),node_named(3,"work"),node_named(3,"personal")]);assert!(reinsert.ids[3]>p.ids[3]);
+    }
+    #[test] fn action_graph_footer_invalid_projection_cannot_retire_live_controls(){
+        let mut g=new_action_graph();let ids=g.reconcile(vec![node_named(4,"pin"),node_named(3,"work")]).ids;
+        for key in [node_named(3,""),node_named(4,""),ffi::ActionNodeKey{kind:3,high:1,low:0,name:"work".into()}]{let rejected=g.reconcile(vec![key]);assert!(!rejected.admitted);assert_eq!(rejected.ids,ids);}
+    }
     #[test] fn action_graph_close_children_follow_parent_identity_and_retire_with_affordance(){let mut g=new_action_graph();let p=g.reconcile(vec![node_tab(1),node_close(1),node_tab(2),node_close(2)]);assert!(p.admitted);let old=g.acquire(&node_close(2));let q=g.reconcile(vec![node_tab(2),node_close(2),node_tab(1),node_close(1)]);assert_eq!(q.ids,vec![p.ids[2],p.ids[3],p.ids[0],p.ids[1]]);let one=g.reconcile(vec![node_tab(2)]);assert_eq!((one.created,one.retired),(0,3));assert_eq!(one.ids,vec![p.ids[2]]);assert_eq!(old.action_node_id(),0);}
     #[test] fn action_graph_orphan_close_is_rejected_without_retiring_live_nodes(){let mut g=new_action_graph();let p=g.reconcile(vec![node_tab(1),node_close(1)]);let node=g.acquire(&node_tab(1));let failed=g.reconcile(vec![node_tab(2),node_close(1)]);assert!(!failed.admitted);assert_eq!(failed.ids,p.ids);assert_ne!(0,node.action_node_id());}
     #[test] fn action_graph_reorders_without_replacing_logical_nodes(){let mut g=new_action_graph();let p=g.reconcile(vec![node_tab(1),node_tab(2),node_pin("folder")]);assert!(p.admitted);assert_eq!(p.created,3);let q=g.reconcile(vec![node_pin("folder"),node_tab(2),node_tab(1)]);assert!(q.admitted);assert_eq!(q.ids,vec![p.ids[2],p.ids[1],p.ids[0]]);assert_eq!((q.created,q.retired),(0,0));}
