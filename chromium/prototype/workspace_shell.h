@@ -337,7 +337,7 @@ class WorkspaceShell final : public ui::EventHandler,
   PanelViewport* workspace_viewport() const{return workspace_scroll_;}
   bool metal_sidebar_visible() const;
   bool metal_sidebar_grip_visible() const;
-  // 0 untyped/retired, 1 checkbox, 2 switch, 3 selector, 4 workspace, 5 history row, 6 palette row, 7 site-rule row, 8 form command, 9 tab row; local graph model diagnostics.
+  // 0 untyped/retired, 1 checkbox, 2 switch, 3 selector, 4 workspace, 5 history row, 6 palette row, 7 site-rule row, 8 form command, 9 tab row, 10 pin row; local graph model diagnostics.
   views::View* site_rule_results_for_testing() const{return site_rules_list_;}
   void RefreshSiteRulesForTesting(bool reload=true){RefreshSitePreferences(reload);}
   uint32_t control_model_kind_for_testing(views::View* view) const;
@@ -600,7 +600,7 @@ class WorkspaceShell final : public ui::EventHandler,
     raw_ptr<views::View> pin_pair = nullptr;  // A split placed among the pins.
     std::string active_pin;
   };
-  void ReconcileSidebarNodes(TabListCache& cache, const std::vector<PinnedItem>& pins, const std::vector<ShellTab>& tabs);
+  void ReconcileSidebarNodes(TabListCache& cache, std::string_view workspace, const std::vector<PinnedItem>& pins, const std::vector<ShellTab>& tabs);
   void AppendPinnedItems(views::View* root, const std::vector<PinnedItem>& pins,
                          TabListCache& cache, const std::string& workspace);
   void ReconcileChromeNodes();
