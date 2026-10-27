@@ -14,7 +14,49 @@ accumulate compiled cases for a later bulk checkpoint. Build, Rust/Python and SD
 checks without windows remain enabled. No computer shutdown is requested.
 The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 
-## Latest headless implementation: graph-owned palette selection and results
+## Latest headless implementation: form roots and action-group layout policy
+
+Source `40e74fb` gives every production SceneGroupNodes scope a Rust structural
+form root and ordered private control membership. Checkbox/switch/selector/action
+records now have real parent edges. Empty live groups retain their root; root and
+member ID reservation is atomic on exhaustion. Structural roots cannot acquire
+input or be retired through the member-removal API.
+
+SceneActionGroup no longer stores vertical/spacing/intrinsic/dialog policy fields.
+Rust FormRoot owns them plus shared mode and selects standalone/dialog geometry.
+Native adapters supply visible member IDs, preferred sizes and platform inset/link
+metrics. Rust accepts only an ordered visible subsequence and returns rectangles
+with IDs; native placement checks those IDs. Shared-canvas groups retain their
+existing RustPanelLayout adapter and receive spacing from the root.
+
+A scoped ViewObserver replaces per-group hierarchy hooks. Direct removal retires
+by cached ID without reading a child in its base destructor. Owner deletion retires
+the subtree; native reorder intent is validated into Rust order. Reorder cancels
+presses/menu generations/prefix input while preserving values, IDs and focus state.
+Type-specific function pointers close native selector popups; other controls use
+capture-loss cancellation. No per-control cancellation closure allocation is added.
+Native paint invalidation covers input already cancelled inside Rust.
+
+Validation: **389 Rust**, **68 live + 68 clean-archive Python**, **180 CoreText SDK
+cases plus raster**, scoped GN/header and boundary checks. Both app/test binaries
+compile, all **53 committed/live/staged prototype inputs** match and the final
+three-target Ninja check reports no work. Ten new Rust cases include **1536**
+geometry comparisons with the established action/dialog recipes. Two new compiled
+browser cases cover dialog parents/reorder/focus/cancellation and selector popup
+closure/model retention; the actual-form inventory also checks nonzero parents.
+**No UI tests were run**, and the running preview was left unchanged.
+
+These roots cover registered interactive controls, not complete labels/editor/
+outer-form/window trees. Membership still follows admitted native add/remove/
+reorder events. Full form rebuilds still retire scopes; stable keyed reconciliation
+and adapter reuse across those rebuilds remain open. Non-action group layouts keep
+their existing adapters. Native focus/menu/AX/IME/scroll/rendering acceptance,
+CPU/GPU/presentation profiling, compositor diagnostics and release/license checks
+remain deferred. Additional root/observer/geometry costs have not been benchmarked;
+no memory or timing gain is claimed.
+Evidence: [form-scene report](benchmarks/rust-form-scene-headless-2026-10-27.json).
+
+## Previous headless implementation: graph-owned palette selection and results
 
 Source `9bad459` gives the palette a Rust-owned structural root and typed result
 children (UTF-16 title/detail, icon, target index, 44px height). The root also owns
