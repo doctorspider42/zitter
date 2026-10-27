@@ -28,6 +28,8 @@ mod ffi {
     struct ToolsCaptureResult { admitted: bool, stop_recording: bool, accept_chord: bool, status: String }
     enum ToolsStatus { HistoryReading, HistorySearching, WriteFailed }
     enum PreferenceOutcome { Text, Site, SiteRemove, Value, General }
+    enum PreferenceControlKind { Text, Toggle }
+    struct PreferenceControlView { enabled: bool, tooltip: String }
     struct PreferenceStatus { text: String, error: bool }
     enum ToolsNodeKind { Hint, Heading, Editor, Choice, Action, BeginRow, EndRow, Rows, BeginActions, EndActions }
     enum ToolsNodeRole { None, SnapshotName, TimelineFilter, SnapshotChoice, ClosedChoice, ShortcutChoice, ShortcutChord, ProviderChoice, ProviderName, ProviderKeyword, ProviderUrl, HistoryQuery, HistoryPeriod, HistoryClear, HistoryRows, HistoryMore }
@@ -293,6 +295,10 @@ mod ffi {
         fn preference_can_save(self: &PreferencesForm, enabled: bool, composing: bool) -> bool;
         fn preference_outcome(self: &mut PreferencesForm, outcome: PreferenceOutcome, key: &str, ok: bool) -> PreferenceStatus;
         fn preference_status(self: &PreferencesForm) -> PreferenceStatus;
+        fn preference_control_view(kind: PreferenceControlKind, present: bool, editable: bool) -> PreferenceControlView;
+        fn preferences_profile_banner(profile: &str) -> String;
+        fn site_rule_detail(primary: &str, name: &str, setting: i32, secondary: &str, editable: bool) -> String;
+        fn site_rules_empty(saved: bool) -> String;
         fn preference_reset_rules(self: &mut PreferencesForm);
         fn preference_more_rules(self: &mut PreferencesForm);
         fn preference_rule_limit(self: &PreferencesForm) -> usize;
@@ -1115,6 +1121,18 @@ fn preference_catalogue(system_certificates:bool)->ffi::PreferenceCatalogue {
 }
 pub struct PreferencesForm { categories: usize, selected: usize, query: Vec<u16>, profile: String, dirty: std::collections::BTreeSet<String>, rule_limit: usize, status: (&'static str, bool) }
 fn new_preferences_form(categories:usize)->Box<PreferencesForm>{Box::new(PreferencesForm{categories,selected:0,query:vec![],profile:String::new(),dirty:Default::default(),rule_limit:50,status:(PREFERENCE_IDLE,false)})}
+// Availability and managed-state copy for profile-scoped preference controls.
+fn preference_control_view(kind:ffi::PreferenceControlKind,present:bool,editable:bool)->ffi::PreferenceControlView{
+    use ffi::PreferenceControlKind as K;let toggle=kind==K::Toggle;
+    let tooltip=if !present{if toggle{"Profil nie jest jeszcze gotowy"}else{"Ustawienie jest niedostępne"}}else if !editable{"To ustawienie jest zarządzane"}else if toggle{"Dotyczy aktywnego profilu"}else{"Zapisz przyciskiem lub klawiszem Enter"};
+    ffi::PreferenceControlView{enabled:present&&editable,tooltip:tooltip.into()}
+}
+fn preferences_profile_banner(profile:&str)->String{format!("Profil: {profile} · Ustawienia wspólne dla aplikacji są oznaczone w opisach.")}
+fn site_rule_detail(primary:&str,name:&str,setting:i32,secondary:&str,editable:bool)->String{
+    let policy=match setting{1=>"Zezwalaj",2=>"Blokuj",3=>"Pytaj",_=>"Inna polityka"};let mut detail=format!("{primary} · {name} · {policy}");
+    if secondary!="*"{detail.push_str(" · Osadzenie: ");detail.push_str(secondary);}if !editable{detail.push_str(" · Zarządzane");}detail
+}
+fn site_rules_empty(saved:bool)->String{if saved{"Brak wyjątków pasujących do wyszukiwania."}else{"Nie masz jeszcze zapisanych wyjątków."}.into()}
 const PREFERENCE_IDLE:&str="Przełączniki zapisują się automatycznie. Pola tekstowe zatwierdź przyciskiem Zapisz lub Enter.";
 // Outcome copy is keyed by the semantic write and its backend result; native
 // code only reports what it attempted and projects the returned text/tone.
@@ -3350,6 +3368,17 @@ mod tests {
         f.tools_record(true);let escape=f.tools_capture(ffi::ToolsCapture::Escape);assert!(escape.admitted&&escape.stop_recording&&!escape.accept_chord);assert_eq!(escape.status,"Nagrywanie anulowane.");assert!(!f.tools_recording());
         f.tools_record(true);f.tools_reset();assert!(!f.tools_capture(ffi::ToolsCapture::Valid).admitted);
         assert_eq!(tools_status(ffi::ToolsStatus::HistoryReading),"Odczytywanie historii…");assert_eq!(tools_status(ffi::ToolsStatus::HistorySearching),"Wyszukiwanie historii…");assert_eq!(tools_status(ffi::ToolsStatus::WriteFailed),"Nie udało się zapisać ustawień na dysku.");
+    }
+    #[test] fn preference_control_views_cover_missing_managed_and_editable_states() {
+        use ffi::PreferenceControlKind as K;
+        for (kind,present,editable,enabled,tooltip) in [(K::Text,false,false,false,"Ustawienie jest niedostępne"),(K::Text,true,false,false,"To ustawienie jest zarządzane"),(K::Text,true,true,true,"Zapisz przyciskiem lub klawiszem Enter"),(K::Toggle,false,true,false,"Profil nie jest jeszcze gotowy"),(K::Toggle,true,false,false,"To ustawienie jest zarządzane"),(K::Toggle,true,true,true,"Dotyczy aktywnego profilu")]{let v=preference_control_view(kind,present,editable);assert_eq!((v.enabled,v.tooltip.as_str()),(enabled,tooltip));}
+        assert_eq!(preferences_profile_banner("Żółć 🦀"),"Profil: Żółć 🦀 · Ustawienia wspólne dla aplikacji są oznaczone w opisach.");
+    }
+    #[test] fn site_rule_detail_and_empty_copy_preserve_policy_embedding_and_managed_state() {
+        assert_eq!(site_rule_detail("https://a.test","JavaScript",1,"*",true),"https://a.test · JavaScript · Zezwalaj");
+        assert_eq!(site_rule_detail("https://a.test","Kamera",2,"https://b.test",false),"https://a.test · Kamera · Blokuj · Osadzenie: https://b.test · Zarządzane");
+        assert_eq!(site_rule_detail("x","y",3,"*",true),"x · y · Pytaj");for setting in [0,4,-1]{assert!(site_rule_detail("x","y",setting,"*",true).ends_with("Inna polityka"));}
+        assert_eq!(site_rules_empty(false),"Nie masz jeszcze zapisanych wyjątków.");assert_eq!(site_rules_empty(true),"Brak wyjątków pasujących do wyszukiwania.");
     }
     #[test] fn preference_outcomes_own_status_copy_tone_and_key_specific_errors() {
         use ffi::PreferenceOutcome as O;let mut f=new_preferences_form(3);let idle=f.preference_status();assert_eq!(idle.text,PREFERENCE_IDLE);assert!(!idle.error);

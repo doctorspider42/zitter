@@ -7138,6 +7138,23 @@ void WorkspaceShell::RefreshGeneralControls() {
     ResetPreferenceRuleLimit();
     RefreshSitePreferences();
   }
+  // Rust owns availability/managed copy; Views keeps its original strings.
+  const bool rust_copy =
+#if BUILDFLAG(IS_MAC)
+      bool(preferences_form_);
+#else
+      false;
+#endif
+  auto control_view = [&](bool toggle, bool present, bool editable, std::u16string native) {
+#if BUILDFLAG(IS_MAC)
+    if (rust_copy) return base::UTF8ToUTF16(std::string(sidebar::preference_control_view(toggle ? sidebar::PreferenceControlKind::Toggle : sidebar::PreferenceControlKind::Text, present, editable).tooltip));
+#endif
+    return native;
+  };
+#if BUILDFLAG(IS_MAC)
+  if (rust_copy) SetPanelText(preferences_profile_,base::UTF8ToUTF16(std::string(sidebar::preferences_profile_banner(base::UTF16ToUTF8(state_.profile_name)))));
+  else
+#endif
   SetPanelText(preferences_profile_,u"Profil: " + state_.profile_name + u" · Ustawienia wspólne dla aplikacji są oznaczone w opisach.");
   const auto values = callbacks_.read_preferences ? callbacks_.read_preferences.Run() : BrowserPreferences();
   SetPanelText(download_directory_label_,callbacks_.download_directory ? callbacks_.download_directory.Run() : u"");
@@ -7149,7 +7166,7 @@ void WorkspaceShell::RefreshGeneralControls() {
     if (SyncPreferenceText(key,it!=values.end(),enabled,field->IsIMEComposing(),profile_changed)) {
       field->SetText(base::UTF8ToUTF16(it->second.text));
     }
-    field->view()->SetTooltipText(it == values.end() ? u"Ustawienie jest niedostępne" : !enabled ? u"To ustawienie jest zarządzane" : u"Zapisz przyciskiem lub klawiszem Enter");
+    field->view()->SetTooltipText(control_view(false, it != values.end(), enabled, it == values.end() ? u"Ustawienie jest niedostępne" : !enabled ? u"To ustawienie jest zarządzane" : u"Zapisz przyciskiem lub klawiszem Enter"));
   }
   auto directory = values.find("download_directory");
   download_directory_button_->SetEnabled(directory != values.end() && directory->second.editable);
@@ -7157,8 +7174,8 @@ void WorkspaceShell::RefreshGeneralControls() {
     auto it = values.find(key);
     control->SetEnabled(it != values.end() && it->second.editable);
     if (it != values.end()) SetToggleOn(control,it->second.value != 0);
-    control->SetTooltipText(it == values.end() ? u"Profil nie jest jeszcze gotowy" :
-        !it->second.editable ? u"To ustawienie jest zarządzane" : u"Dotyczy aktywnego profilu");
+    control->SetTooltipText(control_view(true, it != values.end(), it != values.end() && it->second.editable, it == values.end() ? u"Profil nie jest jeszcze gotowy" :
+        !it->second.editable ? u"To ustawienie jest zarządzane" : u"Dotyczy aktywnego profilu"));
   }
   for (const auto& [key, control] : preference_pickers_) {
     auto it = values.find(key);
@@ -7313,6 +7330,9 @@ void WorkspaceShell::RefreshSitePreferences(bool reload) {
   [[maybe_unused]] std::map<std::string,size_t> occurrences;
   for(size_t source=0;source<site_preference_rules_.size();++source){const auto& rule=site_preference_rules_[source];auto it=std::find(kSitePreferenceKeys.begin(),kSitePreferenceKeys.end(),rule.key);const auto name=it==kSitePreferenceKeys.end()?base::UTF8ToUTF16(rule.key):kSitePreferenceNames[it-kSitePreferenceKeys.begin()];const auto* policy=rule.setting==1?u"Zezwalaj":rule.setting==2?u"Blokuj":rule.setting==3?u"Pytaj":u"Inna polityka";
     auto detail=base::UTF8ToUTF16(rule.primary)+u" · "+name+u" · "+policy;if(rule.secondary!="*")detail+=u" · Osadzenie: "+base::UTF8ToUTF16(rule.secondary);if(!rule.editable)detail+=u" · Zarządzane";
+#if BUILDFLAG(IS_MAC)
+    if(preferences_form_)detail=base::UTF8ToUTF16(std::string(sidebar::site_rule_detail(rule.primary,base::UTF16ToUTF8(name),rule.setting,rule.secondary,rule.editable)));
+#endif
     std::string key;
 #if BUILDFLAG(IS_MAC)
     if(workspace_form_){base::ListValue identity;identity.Append(state_.profile_id);identity.Append(rule.key);identity.Append(rule.primary);identity.Append(rule.secondary);std::string target;CHECK(base::JSONWriter::Write(identity,&target));identity.Append(base::NumberToString(occurrences[target]++));CHECK(base::JSONWriter::Write(identity,&key));}
@@ -7334,7 +7354,11 @@ void WorkspaceShell::RefreshSitePreferences(bool reload) {
   }else
 #endif
   {site_rules_list_->RemoveAllChildViews();for(const auto& projection:visible){const auto& rule=site_preference_rules_[projection.source];auto* row=site_rules_list_->AddChildView(std::make_unique<views::View>());auto* label=AddPreferenceCopy(row,projection.detail,kSubtle,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);SetSidebarPanelLayout(row,false,gfx::Insets::VH(4,0),12,label,true);auto* remove=PreferenceAction(row,false,base::BindRepeating(&WorkspaceShell::PostRemoveSiteRule,weak_factory_.GetWeakPtr(),rule,state_.profile_id),u"Usuń");remove->SetEnabled(rule.editable);remove->GetViewAccessibility().SetName(u"Usuń wyjątek: "+projection.detail);}}
-  if(!matching)AddPreferenceCopy(site_rules_list_,site_preference_rules_.empty()?u"Nie masz jeszcze zapisanych wyjątków.":u"Brak wyjątków pasujących do wyszukiwania.",kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
+  if(!matching)AddPreferenceCopy(site_rules_list_,
+#if BUILDFLAG(IS_MAC)
+      preferences_form_?base::UTF8ToUTF16(std::string(sidebar::site_rules_empty(!site_preference_rules_.empty()))):
+#endif
+      std::u16string(site_preference_rules_.empty()?u"Nie masz jeszcze zapisanych wyjątków.":u"Brak wyjątków pasujących do wyszukiwania."),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
   else if(matching>visible.size()){
 #if BUILDFLAG(IS_MAC)
     if(workspace_form_){BindFormCommand(PreferenceAction(site_rules_list_,true,{},u"Pokaż kolejne wyjątki…",true),sidebar::FormCommand::PreferenceMore);}

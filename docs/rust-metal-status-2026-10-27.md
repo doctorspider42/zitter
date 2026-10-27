@@ -106,6 +106,11 @@ dostępność i typowane akcje z przechwyconą przestrzenią/folderem; natywnie 
 okna dialogowe folderów i zapis. Testy Rust 492; podzbiór UI folderów/przypięć
 22 Metal / 19 Views zaliczony.
 
+**Teksty stanu zarządzanego w Ruście:** dostępność i podpowiedzi kontrolek preferencji
+(niedostępne/zarządzane/edytowalne), baner profilu, opis reguł wyjątków (polityka,
+osadzenie, „Zarządzane”) i tekst pustej listy. Testy Rust 494; podzbiór UI preferencji
+i wyjątków 38 Metal / 32 Views zaliczony.
+
 **Pełny checkpoint UI 2026-10-27:** po poprawkach **273/273 Metal i 224/224 Views**
 (pierwszy przebieg: 6 niepowodzeń Metal, 1 Views — trzy crashe testów na odłączonych
 widokach, brakująca komenda Rust `HistoryMore`, tooltip tytułu Peek, wyścig tytułu
