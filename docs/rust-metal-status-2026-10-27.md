@@ -101,6 +101,11 @@ dostępności oraz typowane akcje (profil, kolor, emoji, ustawienia, usunięcie)
 celem przechwyconym w Ruście. Testy Rust 491; podzbiór UI menu przestrzeni zaliczony
 w obu trybach.
 
+**Menu folderów w Ruście:** kompozycja (folder/podfolder, zmiana nazwy, usunięcie),
+dostępność i typowane akcje z przechwyconą przestrzenią/folderem; natywnie zostają
+okna dialogowe folderów i zapis. Testy Rust 492; podzbiór UI folderów/przypięć
+22 Metal / 19 Views zaliczony.
+
 **Pełny checkpoint UI 2026-10-27:** po poprawkach **273/273 Metal i 224/224 Views**
 (pierwszy przebieg: 6 niepowodzeń Metal, 1 Views — trzy crashe testów na odłączonych
 widokach, brakująca komenda Rust `HistoryMore`, tooltip tytułu Peek, wyścig tytułu

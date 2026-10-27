@@ -108,6 +108,11 @@ mod ffi {
     #[derive(Debug)]
     enum LinkMenuCommand { None, Peek, NewTab, Split, SetRule, RemoveRule }
     struct LinkMenuAction { command: LinkMenuCommand, workspace: String }
+    struct FolderMenuState { ready: bool, busy: bool, workspace: String, folder: String }
+    struct FolderMenuEntry { command: i32, label: String }
+    #[derive(Debug)]
+    enum FolderMenuCommand { None, Create, Rename, Delete }
+    struct FolderMenuAction { command: FolderMenuCommand, workspace: String, folder: String }
     struct WorkspaceMenuProfile { id: String, name: String }
     struct WorkspaceMenuState { ready: bool, busy: bool, workspace: String, workspace_count: usize, profile: String, profiles: Vec<WorkspaceMenuProfile>, color: u32, emoji: String }
     // group: 0 main, 1 profile, 2 color, 3 emoji submenu; kind: 0 item, 1 separator, 2 submenu header, 3 radio, 4 check.
@@ -393,6 +398,9 @@ mod ffi {
         fn link_menu_enabled(command: i32, state: &LinkMenuState) -> bool;
         fn link_menu_checked(command: i32, state: &LinkMenuState) -> bool;
         fn link_menu_action(command: i32, state: &LinkMenuState) -> LinkMenuAction;
+        fn folder_context_menu(state: &FolderMenuState) -> Vec<FolderMenuEntry>;
+        fn folder_menu_enabled(command: i32, state: &FolderMenuState) -> bool;
+        fn folder_menu_action(command: i32, state: &FolderMenuState) -> FolderMenuAction;
         fn workspace_context_menu(state: &WorkspaceMenuState) -> Vec<WorkspaceMenuEntry>;
         fn workspace_menu_command(command: i32, profiles: usize) -> bool;
         fn workspace_menu_enabled(command: i32, state: &WorkspaceMenuState) -> bool;
@@ -1477,6 +1485,22 @@ fn link_menu_action(command:i32,s:&ffi::LinkMenuState)->ffi::LinkMenuAction{
     use ffi::LinkMenuCommand as C;let action=|command,workspace:&str|ffi::LinkMenuAction{command,workspace:workspace.into()};
     if !link_menu_enabled(command,s){return action(C::None,"");}
     match command{LINK_PEEK=>action(C::Peek,&s.source),LINK_NEW_TAB=>action(C::NewTab,&s.source),LINK_SPLIT=>action(C::Split,&s.source),LINK_RULE_HERE=>action(C::SetRule,&s.source),LINK_REMOVE_RULE=>action(C::RemoveRule,""),_=>match link_route(command,s){Some(route)=>action(C::SetRule,&route.id),None=>action(C::None,"")}}
+}
+
+// Folder menu IDs follow the native menu delegate contract; an empty folder is the root.
+const FOLDER_NEW:i32=36;const FOLDER_RENAME:i32=37;const FOLDER_DELETE:i32=38;
+fn folder_context_menu(s:&ffi::FolderMenuState)->Vec<ffi::FolderMenuEntry>{
+    let entry=|command,label:&str|ffi::FolderMenuEntry{command,label:label.into()};
+    let mut entries=vec![entry(FOLDER_NEW,if s.folder.is_empty(){"Nowy folder…"}else{"Nowy podfolder…"})];
+    if !s.folder.is_empty(){entries.extend([entry(0,""),entry(FOLDER_RENAME,"Zmień nazwę…"),entry(FOLDER_DELETE,"Usuń folder…")]);}entries
+}
+fn folder_menu_enabled(command:i32,s:&ffi::FolderMenuState)->bool{
+    s.ready&&!s.busy&&!s.workspace.is_empty()&&match command{FOLDER_NEW=>true,FOLDER_RENAME|FOLDER_DELETE=>!s.folder.is_empty(),_=>false}
+}
+fn folder_menu_action(command:i32,s:&ffi::FolderMenuState)->ffi::FolderMenuAction{
+    use ffi::FolderMenuCommand as C;
+    if !folder_menu_enabled(command,s){return ffi::FolderMenuAction{command:C::None,workspace:String::new(),folder:String::new()};}
+    ffi::FolderMenuAction{command:match command{FOLDER_NEW=>C::Create,FOLDER_RENAME=>C::Rename,_=>C::Delete},workspace:s.workspace.clone(),folder:s.folder.clone()}
 }
 
 // Workspace menu IDs follow the native menu delegate contract.
@@ -4517,6 +4541,16 @@ mod tests {
         let mut busy=workspace_menu_state();busy.busy=true;assert!(!workspace_menu_enabled(30,&busy)&&workspace_menu_enabled(40,&busy));
         let mut stale=workspace_menu_state();stale.ready=false;for command in [2,3,4,30,40,50,100]{assert_eq!(workspace_menu_action(command,&stale).command,C::None);}
         let mut gone=workspace_menu_state();gone.workspace.clear();assert_eq!(workspace_menu_action(4,&gone).command,C::None);
+    }
+    #[test] fn folder_menu_labels_enablement_and_captured_targets() {
+        use ffi::FolderMenuCommand as C;let state=|folder:&str|ffi::FolderMenuState{ready:true,busy:false,workspace:"work".into(),folder:folder.into()};
+        let root=folder_context_menu(&state(""));assert_eq!(root.iter().map(|e|(e.command,e.label.as_str())).collect::<Vec<_>>(),vec![(36,"Nowy folder…")]);
+        let nested=folder_context_menu(&state("f"));assert_eq!(nested.iter().map(|e|(e.command,e.label.as_str())).collect::<Vec<_>>(),vec![(36,"Nowy podfolder…"),(0,""),(37,"Zmień nazwę…"),(38,"Usuń folder…")]);
+        assert!(folder_menu_enabled(36,&state(""))&&!folder_menu_enabled(37,&state(""))&&!folder_menu_enabled(38,&state(""))&&folder_menu_enabled(38,&state("f"))&&!folder_menu_enabled(30,&state("f")));
+        for (command,expected) in [(36,C::Create),(37,C::Rename),(38,C::Delete),(35,C::None)]{let a=folder_menu_action(command,&state("f"));assert_eq!(a.command,expected);if expected!=C::None{assert_eq!((a.workspace.as_str(),a.folder.as_str()),("work","f"));}else{assert!(a.workspace.is_empty());}}
+        let a=folder_menu_action(36,&state(""));assert_eq!((a.command,a.folder.as_str()),(C::Create,""));
+        let mut busy=state("f");busy.busy=true;let mut stale=state("f");stale.ready=false;let mut gone=state("f");gone.workspace.clear();
+        for s in [busy,stale,gone]{for command in [36,37,38]{assert_eq!(folder_menu_action(command,&s).command,C::None);}}
     }
     #[test] fn tab_menu_preserves_order_labels_and_orientation() {
         let mut s=menu_state();let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,0,20,7,8,0,9,0,6,10,0,23,24]);assert_eq!(entries[3].label,"Przesuń w lewo");

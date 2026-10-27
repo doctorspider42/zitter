@@ -5969,6 +5969,15 @@ void WorkspaceShell::BuildFolderMenu(std::string parent) {
   workspace_menu_ = std::make_unique<ui::SimpleMenuModel>(this);
   folder_parent_id_ = std::move(parent);
   context_workspace_id_ = state_.workspace_id;
+#if BUILDFLAG(IS_MAC)
+  if (metal_sidebar_) {
+    for (const auto& entry : sidebar::folder_context_menu(RustFolderMenuState())) {
+      if (entry.command == 0) workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
+      else workspace_menu_->AddItem(entry.command, base::UTF8ToUTF16(std::string(entry.label)));
+    }
+    return;
+  }
+#endif
   workspace_menu_->AddItem(kNewFolder, folder_parent_id_.empty() ? u"Nowy folder…" : u"Nowy podfolder…");
   if (!folder_parent_id_.empty()) {
     workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
@@ -6288,6 +6297,11 @@ void WorkspaceShell::ShowTabMenu(gfx::Point point,ui::mojom::MenuSourceType sour
 }
 
 #if BUILDFLAG(IS_MAC)
+sidebar::FolderMenuState WorkspaceShell::RustFolderMenuState() const {
+  sidebar::FolderMenuState out{};out.ready=state_.configuration_ready;out.busy=state_.profiles_busy;out.folder=folder_parent_id_;
+  for(const auto& item:state_.workspaces)if(item.id==context_workspace_id_)out.workspace=context_workspace_id_;
+  return out;
+}
 sidebar::WorkspaceMenuState WorkspaceShell::RustWorkspaceMenuState() const {
   return WorkspaceMenuStateFor(state_, context_workspace_id_, menu_profiles_, workspace_color(context_workspace_id_), workspace_emoji(context_workspace_id_));
 }
@@ -6318,6 +6332,7 @@ bool WorkspaceShell::IsCommandIdEnabled(int command_id) const {
 #if BUILDFLAG(IS_MAC)
   if(metal_sidebar_&&command_id>=kOpenSplit&&command_id<=kCloseTab)return RustTabCommandEnabled(command_id);
   if(metal_sidebar_&&sidebar::workspace_menu_command(command_id,menu_profiles_.size()))return sidebar::workspace_menu_enabled(command_id,RustWorkspaceMenuState());
+  if(metal_sidebar_&&command_id>=kNewFolder&&command_id<=kDeleteFolder)return sidebar::folder_menu_enabled(command_id,RustFolderMenuState());
   if(metal_sidebar_&&((command_id>=kLinkPeek&&command_id<=kRouteSubmenu)||(command_id>=kRouteBase&&command_id<kRouteBase+static_cast<int>(route_workspaces_.size()))))
     return sidebar::link_menu_enabled(command_id,LinkMenuStateFor(state_,context_url_,link_source_workspace_,route_workspaces_));
 #endif
@@ -6398,6 +6413,14 @@ void WorkspaceShell::QueueSplit(std::optional<size_t> tab, std::string pin) {
 void WorkspaceShell::ExecuteCommand(int command_id, int) {
 #if BUILDFLAG(IS_MAC)
   if(metal_sidebar_&&command_id>=kOpenSplit&&command_id<=kCloseTab){QueueTabCommand(command_id);return;}
+  if(metal_sidebar_&&command_id>=kNewFolder&&command_id<=kDeleteFolder){
+    // Rust revalidates readiness and captures the workspace/folder target.
+    const auto action=sidebar::folder_menu_action(command_id,RustFolderMenuState());using C=sidebar::FolderMenuCommand;
+    if(action.command==C::None)return;
+    const auto request=action.command==C::Create?&WorkspaceShell::RequestNewFolder:action.command==C::Rename?&WorkspaceShell::RequestRenameFolder:&WorkspaceShell::RequestDeleteFolder;
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(request,weak_factory_.GetWeakPtr(),std::string(action.workspace),std::string(action.folder)));
+    return;
+  }
 #endif
   if (command_id == kRenameFolder || command_id == kDeleteFolder) {
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
