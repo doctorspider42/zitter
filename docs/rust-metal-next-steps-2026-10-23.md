@@ -16,6 +16,13 @@ The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 This queue supersedes implementation suggestions in the historical checkpoints
 below. Headless validation is current; GUI acceptance is deferred by instruction.
 
+The form-command checkpoint (`0cfa812`, `df8dac2`) gives preference/workspace/profile/import
+actions Rust-owned semantic targets and keys, with cancellation epochs and a
+visible-panel native dispatcher. Validation: 408 Rust, 68 live/archive Python,
+180 SDK cases plus raster, both binaries compiled; UI execution deferred.
+[Details](rust-metal-parity.md#latest-headless-implementation-semantic-form-action-commands).
+Header/category/dismiss semantics and auxiliary dynamic commands remain to migrate.
+
 1. **Audit residual native action hosts and service/popup boundaries.** Peek's
    toolbar is now migrated; download row buttons already use Rust-owned groups.
    Preserve native profile/GUID/store authorization and document explicit platform
@@ -42,7 +49,7 @@ below. Headless validation is current; GUI acceptance is deferred by instruction
    copy and form/busy state into Rust; finish outer dialog/palette/container
    placement. Keep native window, IME, clipboard, AX and popup/menu services explicit.
 5. **Run the deferred bulk UI checkpoint when requested.** Include all newly
-   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node, palette-node, split-node, form-action-node, workspace-dismiss-node, activation-observer, checked-selector-node, Peek-toolbar, checked-model, selector-model, workspace-scene, history-scene, palette-scene, form-scene and site-rule-scene
+   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node, palette-node, split-node, form-action-node, workspace-dismiss-node, activation-observer, checked-selector-node, Peek-toolbar, checked-model, selector-model, workspace-scene, history-scene, palette-scene, form-scene, site-rule-scene and semantic form-command
    cases, the full Rust/Metal and Views matrices, and actual pointer/keyboard/
    capture/AX/focus/drag/profile/session regressions. The last completed full matrix
    remains the text-action checkpoint; the later selector full run was interrupted.

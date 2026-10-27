@@ -14,6 +14,46 @@ accumulate compiled cases for a later bulk checkpoint. Build, Rust/Python and SD
 checks without windows remain enabled. No computer shutdown is requested.
 The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 
+## Latest headless implementation: semantic form action commands
+
+Source `0cfa812` with boundary follow-up `df8dac2` moves 24 semantic command kinds plus text-preference keys into
+Rust-owned private form-member payloads. This covers preference text/site saves,
+clear-data and directory actions, preference navigation, workspace save/create-mode/
+remove/profile/import actions, profile create/rename/delete/back and import apply.
+A command is independent of its caption; another command/key requires a new node.
+Typed-model collisions, non-form members and invalid command/key pairs reject.
+Disabled, retired and dropped-owner adapters cannot retrieve a usable command.
+
+Native adapters now dispatch through one weak WorkspaceShell command entry point,
+which accepts a borrowed command snapshot, checks the relevant visible panel and
+retains existing native form controllers,
+IME validation, profile/store authorization, confirmations and import coordination.
+Native Views keeps its existing callbacks. Rust owns semantic UI targets, not backend
+permission to perform an operation. Dynamic site-rule removal keeps its separately
+migrated keyed resolver and exact deferred rule/profile checks.
+
+Rust admission epochs invalidate an activation across cancellation, including idle
+cancellation during an ElementTracker notification. Disable/reenable, context refresh,
+retirement and epoch exhaustion cannot resurrect an old activation. After observer
+notification the native adapter checks the epoch, visibility/clipping, widget and
+ancestor enabled state. Workspace/profile transitions cancel affected form actions;
+preference profile changes now cancel native action adapters as well as choices.
+
+Validation: **408 Rust** cases, including nine new command/admission cases;
+**68 live + 68 clean-archive Python** cases; **180 CoreText SDK cases plus raster**;
+scoped GN/header and boundary checks. App and browser-test binaries compile; all
+**53 committed/live/staged prototype inputs** match; final three-target Ninja check
+reports no work. Three additional browser cases compile for semantic model coverage,
+disable/reenable during notification and retained ancestor detachment. **No UI tests
+were run**, and the preview was left unchanged. [Evidence](benchmarks/rust-form-commands-headless-2026-10-27.json).
+
+Remaining: native event/focus/AX acceptance, header/category/dismiss command models,
+dynamic auxiliary commands, complete keyed form/sidebar reconciliation, editor/text
+models and native container/window ownership. The incomplete sidebar tab-reuse work
+was preserved separately in a local WIP stash for a later implementation stage.
+No CPU/GPU/presentation or memory improvement is claimed; model/epoch/dispatch costs
+remain unmeasured. No dependencies or license inputs changed.
+
 ## Latest headless implementation: retained site-permission rule rows
 
 Source `add4870` gives visible site-rule rows a Rust structural root, ordered
