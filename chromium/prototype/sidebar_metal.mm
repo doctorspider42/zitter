@@ -326,7 +326,7 @@ class Surface final : public SidebarMetal {
     for (const auto& op : ops) signature << '|' << op.x << ',' << op.y << ',' << op.width << ','
         << op.height << ',' << op.clip.x << ',' << op.clip.y << ',' << op.clip.width << ',' << op.clip.height
         << ',' << op.radius << ',' << op.color << ',' << op.font_size << ',' << op.font_weight << ','
-        << op.shape << ',' << op.stroke << ',' << op.bold << ',' << op.middle << ',' << op.center << ',' << op.editor << ',' << op.text_x << ',' << op.baseline << ',' << op.text_direction << ':' << op.text.size() << ':' << std::string(op.text);
+        << op.shape << ',' << op.stroke << ',' << op.bold << ',' << op.middle << ',' << op.center << ',' << op.right_align << ',' << op.editor << ',' << op.text_x << ',' << op.baseline << ',' << op.text_direction << ':' << op.text.size() << ':' << std::string(op.text);
     for(const auto& op:ops)if(op.editor){signature << ':' << op.utf16.size();for(uint16_t c:op.utf16)signature << ',' << c;}
     std::string fingerprint = signature.str();
     if (fingerprint == last_frame_ && !view_.hidden && !next_presentation_) return;
@@ -385,7 +385,7 @@ class Surface final : public SidebarMetal {
   id<MTLTexture> Text(const sidebar::Primitive& op, double scale) {
     std::ostringstream key;
     key << op.width << ',' << op.height << ',' << op.font_size << ',' << op.font_weight << ',' << scale << ','
-        << op.color << ',' << op.shape << ',' << op.stroke << ',' << op.bold << ',' << op.middle << ',' << op.center << ',' << op.editor << ',' << op.text_x << ',' << op.baseline << ',' << op.text_direction << ':' << std::string(op.text);
+        << op.color << ',' << op.shape << ',' << op.stroke << ',' << op.bold << ',' << op.middle << ',' << op.center << ',' << op.right_align << ',' << op.editor << ',' << op.text_x << ',' << op.baseline << ',' << op.text_direction << ':' << std::string(op.text);
     if(op.editor){key << ':' << op.utf16.size();for(uint16_t c:op.utf16)key << ',' << c;}
     auto found = text_.find(key.str());
     if (found != text_.end()) return found->second.texture;
@@ -422,7 +422,7 @@ class Surface final : public SidebarMetal {
     CGFloat ascent = 0, descent = 0;
     CTLineRef draw = truncated ? truncated.get() : line.get();
     CTLineGetTypographicBounds(draw, &ascent, &descent, nullptr);
-    CGContextSetTextPosition(context.get(), op.center ? std::max(0.0, (op.width-CTLineGetTypographicBounds(draw,nullptr,nullptr,nullptr))/2.0) : 0, (op.height - ascent - descent) / 2 + descent);
+    CGContextSetTextPosition(context.get(), (op.center||op.right_align) ? std::max(0.0, (op.width-CTLineGetTypographicBounds(draw,nullptr,nullptr,nullptr))/(op.center?2.0:1.0)) : 0, (op.height - ascent - descent) / 2 + descent);
     CTLineDraw(draw, context.get());
     }
     MTLTextureDescriptor* descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm

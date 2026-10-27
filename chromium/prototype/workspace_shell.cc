@@ -696,7 +696,7 @@ void PaintSceneRecipe(gfx::Canvas* canvas,const sidebar::Item& item,const gfx::F
     if(op.text.size()){
       auto text=base::UTF8ToUTF16(std::string(op.text));auto text_font=font;
       if(styled_text){text_font=font.DeriveWithSizeDelta(std::max(1,static_cast<int>(op.font_size))-font.GetFontSize());text=gfx::ElideText(text,text_font,op.width,op.middle?gfx::ELIDE_MIDDLE:gfx::ELIDE_TAIL);}
-      canvas->DrawStringRectWithFlags(text,text_font,op.color,gfx::Rect(op.x,op.y,op.width,op.height),op.center?gfx::Canvas::TEXT_ALIGN_CENTER:gfx::Canvas::TEXT_ALIGN_LEFT);
+      canvas->DrawStringRectWithFlags(text,text_font,op.color,gfx::Rect(op.x,op.y,op.width,op.height),op.center?gfx::Canvas::TEXT_ALIGN_CENTER:op.right_align?gfx::Canvas::TEXT_ALIGN_RIGHT:gfx::Canvas::TEXT_ALIGN_LEFT);
     }
     else {cc::PaintFlags flags;flags.setAntiAlias(true);flags.setColor(op.color);if(op.stroke>0){flags.setStyle(cc::PaintFlags::kStroke_Style);flags.setStrokeWidth(op.stroke);}canvas->DrawRoundRect(gfx::RectF(op.x,op.y,op.width,op.height),op.radius,flags);}
   }
@@ -1023,6 +1023,66 @@ class SceneActionGroup final : public views::View {
 BEGIN_METADATA(SceneActionGroup)
 END_METADATA
 void CancelSceneActions(views::View* root){if(!root)return;if(auto* group=views::AsViewClass<SceneActionGroup>(root)){group->CancelInput();return;}for(const auto& child:root->children())CancelSceneActions(child.get());}
+#endif
+#if BUILDFLAG(IS_MAC)
+// Font shaping stays a platform service; no Label is constructed for the scene.
+class ScenePeekTitle final : public views::View {
+  METADATA_HEADER(ScenePeekTitle,views::View)
+ public:
+  ScenePeekTitle(std::u16string text,base::RepeatingClosure changed):text_(std::move(text)),changed_(std::move(changed)){GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);GetViewAccessibility().SetName(text_);SetFocusBehavior(FocusBehavior::NEVER);}
+  void SetText(std::u16string text){if(text_==text)return;text_=std::move(text);natural_.reset();GetViewAccessibility().SetName(text_);UpdateTooltip();PreferredSizeChanged();SchedulePaint();}
+  static gfx::FontList TextFont(){return Font(-1,gfx::Font::Weight::SEMIBOLD);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return NaturalSize();}
+  gfx::Size GetMinimumSize() const override{return gfx::Size(std::min(NaturalSize().width(),gfx::GetStringWidth(gfx::kEllipsisUTF16,TextFont())),LineHeight());}
+  sidebar::Item Scene(gfx::RectF bounds,gfx::RectF clip) const{sidebar::Item i{};i.kind=27;i.x=bounds.x();i.y=bounds.y();i.width=bounds.width();i.height=bounds.height();i.title=base::UTF16ToUTF8(text_);i.font_size=TextFont().GetFontSize();i.font_weight=static_cast<int>(gfx::Font::Weight::SEMIBOLD);i.active=true;i.tile=base::i18n::IsRTL();i.ink=Tone(this,GetEnabledInViewsSubtree()?kInk:kDisabled);i.clip={clip.x(),clip.y(),clip.width(),clip.height()};return i;}
+  void OnBoundsChanged(const gfx::Rect& old) override{views::View::OnBoundsChanged(old);UpdateTooltip();}
+  void OnThemeChanged() override{views::View::OnThemeChanged();natural_.reset();PreferredSizeChanged();UpdateTooltip();changed_.Run();}
+  void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);changed_.Run();}
+ private:
+  static int LineHeight(){return std::max(TextFont().GetHeight(),views::TypographyProvider::Get().GetLineHeight(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY));}
+  gfx::Size NaturalSize() const{if(!natural_){auto shaped=gfx::RenderText::CreateRenderText();shaped->SetFontList(TextFont());shaped->SetCursorEnabled(false);shaped->SetWordWrapBehavior(gfx::TRUNCATE_LONG_WORDS);shaped->SetMinLineHeight(LineHeight());shaped->SetDirectionalityMode(gfx::DIRECTIONALITY_FROM_TEXT);shaped->SetText(text_);natural_=shaped->GetStringSize();natural_->set_height(std::max(natural_->height(),LineHeight()));}return *natural_;}
+  void UpdateTooltip(){const auto size=NaturalSize();SetTooltipText(size.width()>width()||size.height()>height()?text_:std::u16string());}
+  std::u16string text_;base::RepeatingClosure changed_;mutable std::optional<gfx::Size> natural_;
+};
+BEGIN_METADATA(ScenePeekTitle)
+END_METADATA
+class ScenePeekToolbar final : public views::View {
+  METADATA_HEADER(ScenePeekToolbar,views::View)
+ public:
+  explicit ScenePeekToolbar(std::array<views::Button::PressedCallback,5> callbacks){
+    const auto c=sidebar::peek_copy();const auto changed=base::BindRepeating(&ScenePeekToolbar::Schedule,weak_factory_.GetWeakPtr());
+    auto glyph=[&](size_t index,const rust::String& name,const gfx::VectorIcon* icon){AddChildView(nodes_.Make<RustActionView>(std::move(callbacks[index]),base::UTF8ToUTF16(std::string(name)),ControlGlyph::kVector,icon,base::BindRepeating([]{return true;}),changed,false));};
+    glyph(0,c.back,&vector_icons::kArrowBackIcon);glyph(1,c.forward,&vector_icons::kArrowForwardIcon);
+    title_=AddChildView(std::make_unique<ScenePeekTitle>(base::UTF8ToUTF16(std::string(c.initial)),changed));
+    for(size_t index:{2u,3u}){auto* action=AddChildView(nodes_.Make<SceneTextButton>(std::move(callbacks[index]),base::UTF8ToUTF16(std::string(index==2?c.promote:c.split)),ui::ButtonStyle::kDefault,changed));action->UseNativeMinimum();}
+    glyph(4,c.close,&vector_icons::kCloseIcon);SetSidebarPanelLayout(this,false,gfx::Insets(),6,title_,true);
+  }
+  views::View* title() const{return title_;}
+  void SetTitle(std::u16string title){const auto units=sidebar::peek_title(rust::Slice<const uint16_t>(reinterpret_cast<const uint16_t*>(title.data()),title.size()));title_->SetText(std::u16string(units.begin(),units.end()));}
+  bool metal_visible() const{return surface_&&surface_->visible();}
+  bool contains_text(std::string_view text) const{return metal_visible()&&surface_->contains_text_for_testing(text);}
+  gfx::Rect scene_bounds() const{return metal_visible()?surface_->screen_bounds_for_testing():gfx::Rect();}
+  void CancelInput(){for(const auto& child:children())if(auto* action=views::AsViewClass<RustActionView>(child.get()))action->CancelInput();}
+  void Layout(PassKey) override{LayoutSuperclass<views::View>(this);Schedule();}
+  void AddedToWidget() override{views::View::AddedToWidget();window_.Observe(GetWidget());Schedule();}
+  void RemovedFromWidget() override{window_.Observe(nullptr);CancelInput();surface_.reset();views::View::RemovedFromWidget();}
+  void OnBoundsChanged(const gfx::Rect& old) override{views::View::OnBoundsChanged(old);Schedule();}
+  void OnThemeChanged() override{views::View::OnThemeChanged();PreferredSizeChanged();Schedule();}
+  void VisibilityChanged(views::View* changed,bool visible) override{views::View::VisibilityChanged(changed,visible);if(!SceneIsVisible(this)){CancelInput();if(surface_)surface_->Hide();}Schedule();}
+  bool GetNeedsNotificationWhenVisibleBoundsChange() const override{return true;}
+  void OnVisibleBoundsChanged() override{Schedule();}
+  void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);Schedule();}
+  void OnPaint(gfx::Canvas* canvas) override{if(!metal_visible())for(const auto& item:Items(0,0,gfx::RectF(GetLocalBounds())))PaintSceneRecipe(canvas,item,item.kind==27?ScenePeekTitle::TextFont():SceneTextButton::TextFont(),true);}
+  void ViewHierarchyChanged(const views::ViewHierarchyChangedDetails& details) override{nodes_.HierarchyChanged(this,details);views::View::ViewHierarchyChanged(details);}
+ private:
+  std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const{std::vector<sidebar::Item> items;for(const auto& child:children())if(child->GetVisible()){auto box=gfx::RectF(child->GetMirroredBounds());box.Offset(dx,dy);auto visible=box;visible.Intersect(clip);if(visible.IsEmpty())continue;if(auto* title=views::AsViewClass<ScenePeekTitle>(child.get()))items.push_back(title->Scene(box,visible));else if(auto* text=views::AsViewClass<SceneTextButton>(child.get()))items.push_back(text->Scene(box,visible));else items.push_back(static_cast<RustActionView*>(child.get())->SceneItem(box,visible));}return items;}
+  void WindowChanged(){CancelInput();if(!SceneIsVisible(this)&&surface_)surface_->Hide();Schedule();}
+  void Schedule(){for(const auto& child:children())if(auto* action=views::AsViewClass<RustActionView>(child.get()))action->SyncViewportVisibility();if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&ScenePeekToolbar::UpdateMetal,weak_factory_.GetWeakPtr()));}
+  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(surface_){auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(local.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,kCard));}if(was!=metal_visible())SchedulePaint();}
+  SceneGroupNodes nodes_;raw_ptr<ScenePeekTitle> title_=nullptr;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_{base::BindRepeating(&ScenePeekToolbar::WindowChanged,base::Unretained(this))};base::WeakPtrFactory<ScenePeekToolbar> weak_factory_{this};
+};
+BEGIN_METADATA(ScenePeekToolbar)
+END_METADATA
 #endif
 #if BUILDFLAG(IS_MAC)
 class SceneToggle final : public RustActionView {
@@ -4116,40 +4176,28 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   general_status_ = copy(main, u"Przełączniki zapisują się automatycznie. Pola tekstowe zatwierdź przyciskiem Zapisz lub Enter.", kMuted,-2,gfx::Font::Weight::NORMAL,true);
   FilterPreferences();
   auto peek = std::make_unique<views::View>();
-  auto* peek_layout = peek->SetLayoutManager(std::make_unique<views::BoxLayout>(
-      views::BoxLayout::Orientation::kVertical, gfx::Insets(8), 8));
-  peek->SetBackground(views::CreateRoundedRectBackground(kCard, 12));
-  peek->SetBorder(views::CreateRoundedRectBorder(1, 12, Hairline(root_)));
-  auto* peek_toolbar = peek->AddChildView(std::make_unique<views::View>());
-  auto* toolbar_layout = peek_toolbar->SetLayoutManager(std::make_unique<views::BoxLayout>(
-      views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 6));
-  toolbar_layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
-  peek_toolbar->AddChildView(std::make_unique<GlyphButton>(
-      base::BindRepeating(callbacks_.page_command, PageCommand::kBack), u"Wstecz", GlyphButton::Glyph::kVector, &vector_icons::kArrowBackIcon));
-  peek_toolbar->AddChildView(std::make_unique<GlyphButton>(
-      base::BindRepeating(callbacks_.page_command, PageCommand::kForward), u"Dalej", GlyphButton::Glyph::kVector, &vector_icons::kArrowForwardIcon));
-  peek_title_ = Label(peek_toolbar, u"Peek", kInk, Font(-1, gfx::Font::Weight::SEMIBOLD));
-  peek_title_->SetElideBehavior(gfx::ELIDE_MIDDLE);
-  toolbar_layout->SetFlexForView(peek_title_, 1);
-  for (bool split : {false, true}) peek_toolbar->AddChildView(std::make_unique<views::MdTextButton>(
-      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, bool split) {
-        if (!shell) return;
-        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
-            base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool split) {
-              if (shell) shell->callbacks_.promote_peek.Run(split);
-            }, shell, split));
-      }, weak, split), split ? u"Split View" : u"Otwórz jako kartę"));
-  peek_toolbar->AddChildView(std::make_unique<GlyphButton>(base::BindRepeating(
-      [](base::WeakPtr<WorkspaceShell> shell) {
-        if (!shell) return;
-        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
-            base::BindOnce([](base::WeakPtr<WorkspaceShell> shell) {
-              if (shell) shell->callbacks_.close_peek.Run();
-            }, shell));
-      }, weak), u"Zamknij podgląd (Escape)", GlyphButton::Glyph::kVector, &vector_icons::kCloseIcon));
-  peek_host_ = peek->AddChildView(std::make_unique<views::View>());
-  peek_host_->SetLayoutManager(std::make_unique<views::FillLayout>());
-  peek_layout->SetFlexForView(peek_host_, 1);
+  peek->SetBackground(views::CreateRoundedRectBackground(kCard,12));peek->SetBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)));
+  std::array<views::Button::PressedCallback,5> peek_actions;
+  peek_actions[0]=base::BindRepeating(callbacks_.page_command,PageCommand::kBack);peek_actions[1]=base::BindRepeating(callbacks_.page_command,PageCommand::kForward);
+  for(bool split:{false,true})peek_actions[split?3:2]=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,bool split){
+    if(!shell)return;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,bool split){if(shell)shell->callbacks_.promote_peek.Run(split);},shell,split));
+  },weak,split);
+  peek_actions[4]=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(!shell)return;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->callbacks_.close_peek.Run();},shell));},weak);
+#if BUILDFLAG(IS_MAC)
+  if(workspace_form_){auto toolbar=std::make_unique<ScenePeekToolbar>(std::move(peek_actions));peek_title_=toolbar->title();peek_toolbar_=peek->AddChildView(std::move(toolbar));}
+  else
+#endif
+  {
+    auto* toolbar=peek->AddChildView(std::make_unique<views::View>());peek_toolbar_=toolbar;
+    toolbar->AddChildView(std::make_unique<GlyphButton>(std::move(peek_actions[0]),u"Wstecz",GlyphButton::Glyph::kVector,&vector_icons::kArrowBackIcon));
+    toolbar->AddChildView(std::make_unique<GlyphButton>(std::move(peek_actions[1]),u"Dalej",GlyphButton::Glyph::kVector,&vector_icons::kArrowForwardIcon));
+    auto* title=Label(toolbar,u"Peek",kInk,Font(-1,gfx::Font::Weight::SEMIBOLD));title->SetElideBehavior(gfx::ELIDE_MIDDLE);peek_title_=title;
+    for(size_t index:{2u,3u})toolbar->AddChildView(std::make_unique<views::MdTextButton>(std::move(peek_actions[index]),index==2?u"Otwórz jako kartę":u"Split View"));
+    toolbar->AddChildView(std::make_unique<GlyphButton>(std::move(peek_actions[4]),u"Zamknij podgląd (Escape)",GlyphButton::Glyph::kVector,&vector_icons::kCloseIcon));
+    SetSidebarPanelLayout(toolbar,false,gfx::Insets(),6,title,true);
+  }
+  peek_host_=peek->AddChildView(std::make_unique<views::View>());peek_host_->SetLayoutManager(std::make_unique<views::FillLayout>());
+  SetSidebarPanelLayout(peek.get(),true,gfx::Insets(8),8,peek_host_);
 
   auto tools_panel = std::make_unique<views::View>();
   tools_root_ = tools_panel.get();
@@ -4355,7 +4403,7 @@ void WorkspaceShell::Detach() {
   history_more_ = nullptr; history_clear_ = nullptr;
   tools_widget_.reset(); tools_delegate_.reset();
   general_widget_.reset(); general_delegate_.reset();
-  peek_host_ = nullptr; peek_title_ = nullptr;
+  peek_host_ = nullptr; peek_title_ = nullptr;peek_toolbar_=nullptr;
   peek_widget_.reset(); peek_delegate_.reset();
   import_widget_.reset();
   import_delegate_.reset();
@@ -5475,7 +5523,30 @@ sidebar::TabMenuState RowMenuState(const ShellState& state,std::optional<size_t>
 #endif
 }
 
-void WorkspaceShell::SetPeekTitle(std::u16string title) { peek_title_->SetText(u"Peek · " + title); }
+bool WorkspaceShell::peek_toolbar_metal_visible_for_testing() const{
+#if BUILDFLAG(IS_MAC)
+  if(auto* toolbar=views::AsViewClass<ScenePeekToolbar>(peek_toolbar_))return toolbar->metal_visible();
+#endif
+  return false;
+}
+bool WorkspaceShell::peek_toolbar_contains_text_for_testing(std::string_view text) const{
+#if BUILDFLAG(IS_MAC)
+  if(auto* toolbar=views::AsViewClass<ScenePeekToolbar>(peek_toolbar_))return toolbar->contains_text(text);
+#endif
+  return false;
+}
+gfx::Rect WorkspaceShell::peek_toolbar_scene_bounds_for_testing() const{
+#if BUILDFLAG(IS_MAC)
+  if(auto* toolbar=views::AsViewClass<ScenePeekToolbar>(peek_toolbar_))return toolbar->scene_bounds();
+#endif
+  return {};
+}
+void WorkspaceShell::SetPeekTitle(std::u16string title) {
+#if BUILDFLAG(IS_MAC)
+  if(auto* toolbar=views::AsViewClass<ScenePeekToolbar>(peek_toolbar_)){toolbar->SetTitle(std::move(title));return;}
+#endif
+  static_cast<views::Label*>(peek_title_.get())->SetText(u"Peek · "+title);
+}
 void WorkspaceShell::ShowPeek(std::u16string title) {
   CloseOverlays();
   SetPeekTitle(std::move(title));

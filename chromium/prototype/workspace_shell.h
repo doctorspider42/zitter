@@ -190,6 +190,12 @@ class WorkspaceShell final : public ui::EventHandler,
   views::View* split_pane_button(bool right, bool close) const;
   views::View* peek_host() const { return peek_host_; }
   views::Widget* peek_widget() const { return peek_widget_.get(); }
+  views::View* peek_toolbar_for_testing() const{return peek_toolbar_;}
+  views::View* peek_title_for_testing() const{return peek_title_;}
+  views::View* peek_action_for_testing(size_t index) const{constexpr std::array<size_t,5> positions={0,1,3,4,5};return peek_toolbar_&&index<positions.size()&&peek_toolbar_->children().size()==6?peek_toolbar_->children()[positions[index]].get():nullptr;}
+  bool peek_toolbar_metal_visible_for_testing() const;
+  bool peek_toolbar_contains_text_for_testing(std::string_view text) const;
+  gfx::Rect peek_toolbar_scene_bounds_for_testing() const;
   void ShowPeek(std::u16string title);
   void SetPeekTitle(std::u16string title);
   void HidePeek();
@@ -716,7 +722,8 @@ class WorkspaceShell final : public ui::EventHandler,
   std::set<std::string> general_dirty_;
   bool applying_theme_ = false;
   raw_ptr<views::View> peek_host_ = nullptr;
-  raw_ptr<views::Label> peek_title_ = nullptr;
+  raw_ptr<views::View> peek_title_ = nullptr;
+  raw_ptr<views::View> peek_toolbar_ = nullptr;
   std::unique_ptr<views::WidgetDelegate> peek_delegate_;
   std::unique_ptr<views::Widget> peek_widget_;
   std::unique_ptr<ui::SimpleMenuModel> link_menu_;
