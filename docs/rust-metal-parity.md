@@ -14,7 +14,26 @@ for a later bulk checkpoint. Build, Rust/Python and SDK checks without windows
 remain enabled. No shutdown is triggered by the former weekly threshold.
 The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 
-## Latest headless implementation: window chrome nodes
+## Latest headless implementation: history result nodes
+
+Source `205d289` scopes history row identities/input leases to the live tools
+form in Rust. Profile ID, URL, exact visit time and duplicate occurrence use
+unambiguous JSON keys; titles and list positions are display data. Accepted
+refreshes reconcile before native row replacement. Query edits retire cleared
+rows; tools-form refresh and shell detach retire the scope. Native request/
+query/profile/limit/IME admission and navigation callbacks remain unchanged.
+
+Both binaries compile. **309 Rust**, **180 SDK cases plus raster**, **68 live and
+68 clean-archive Python**, scoped GN/boundaries and final Ninja no-op passed;
+all 53 committed/live/staged prototype inputs match. **No UI tests ran.** The new
+compiled case covers retained adapters, title/order changes, removal/reinsertion
+and duplicate identities. [Headless evidence](benchmarks/rust-history-node-headless-2026-10-27.json).
+
+The live preview was not replaced. Native history Views still rebuild, and IDs
+are local to the tools form. GUI behavior, focus preservation and presentation
+performance remain unverified for this source.
+
+## Earlier headless implementation: window chrome nodes
 
 Source `871dc78` extends the window Rust registry to header sidebar/back/forward/
 reload and sidebar address/new-tab actions. Eight static nodes reconcile before

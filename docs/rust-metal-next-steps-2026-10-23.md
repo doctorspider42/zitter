@@ -11,7 +11,60 @@ for a later bulk checkpoint. Build, Rust/Python and SDK checks without windows
 remain enabled. No shutdown is triggered by the former weekly threshold.
 The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 
-## Latest headless implementation: window chrome nodes
+## Current remaining implementation queue — 2026-10-27
+
+This queue supersedes implementation suggestions in the historical checkpoints
+below. Headless validation is current; GUI acceptance is deferred by instruction.
+
+1. **Complete action-node scopes.** Extend registry ownership to palette results,
+   split-pane actions, preference/workspace/profile/import form actions and
+   download/service-panel controls. Define keys from actual target identity and
+   scope, and retire nodes when lists/forms/profile contexts disappear. Preserve
+   browser/store authorization in native services.
+2. **Own the scene tree.** Move control properties, parent/child relationships,
+   lifetime and layout coordination into Rust. The current ActionGraph owns
+   logical identities/input leases for sidebar rows, window chrome and history;
+   native View trees still own containers and most scene-property projection.
+3. **Reconcile adapters incrementally.** Reuse/reorder native adapters by Rust ID
+   instead of clearing lists on structural changes. Explicitly preserve focus,
+   focus order, scroll/reveal and AX identity, while cancelling presses/drag/capture
+   when their target or visibility changes. Current logical IDs alone do not do this.
+4. **Finish panel coordination.** Move remaining status/progress/managed-state
+   copy and form/busy state into Rust; finish outer dialog/palette/container
+   placement. Keep native window, IME, clipboard, AX and popup/menu services explicit.
+5. **Run the deferred bulk UI checkpoint when requested.** Include all newly
+   compiled residual-glyph, sidebar-node, footer-node, chrome-node and history-node
+   cases, the full Rust/Metal and Views matrices, and actual pointer/keyboard/
+   capture/AX/focus/drag/profile/session regressions. The last completed full matrix
+   remains the text-action checkpoint; the later selector full run was interrupted.
+6. **Manual and performance acceptance.** Verify IME candidate windows, bidi/RTL,
+   VoiceOver, trackpad/gestures, scaling/themes, hidden/missing-drawable/GPU recovery.
+   Profile equivalent real Views and Rust/Metal workloads with separate CPU/GPU
+   and actual presentation measurements. Resolve compositor/mailbox diagnostics.
+7. **Release.** Build/sign/inspect a matching isolated bundle, confirm session and
+   profile persistence/rollback, regenerate the shipped dependency/license manifest
+   and Apache-2.0/upstream notices. Keep Rust/Metal opt-in until acceptance is complete.
+
+## Latest headless implementation: history result nodes
+
+Source `205d289` scopes history row identities/input leases to the live tools
+form in Rust. Profile ID, URL, exact visit time and duplicate occurrence use
+unambiguous JSON keys; titles and list positions are display data. Accepted
+refreshes reconcile before native row replacement. Query edits retire cleared
+rows; tools-form refresh and shell detach retire the scope. Native request/
+query/profile/limit/IME admission and navigation callbacks remain unchanged.
+
+Both binaries compile. **309 Rust**, **180 SDK cases plus raster**, **68 live and
+68 clean-archive Python**, scoped GN/boundaries and final Ninja no-op passed;
+all 53 committed/live/staged prototype inputs match. **No UI tests ran.** The new
+compiled case covers retained adapters, title/order changes, removal/reinsertion
+and duplicate identities. [Headless evidence](benchmarks/rust-history-node-headless-2026-10-27.json).
+
+The live preview was not replaced. Native history Views still rebuild, and IDs
+are local to the tools form. GUI behavior, focus preservation and presentation
+performance remain unverified for this source.
+
+## Earlier headless implementation: window chrome nodes
 
 Source `871dc78` extends the window Rust registry to header sidebar/back/forward/
 reload and sidebar address/new-tab actions. Eight static nodes reconcile before
