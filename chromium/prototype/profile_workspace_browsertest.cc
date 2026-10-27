@@ -2425,6 +2425,19 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceMoreCommandCannotPag
   auto* more=FindButton(shell->general_widget()->GetContentsView(),u"Pokaż kolejne wyjątki…");ASSERT_TRUE(more);more->ScrollViewToVisible();ClickControl(more);ASSERT_TRUE(window_->Select("personal"));shell->OpenGeneralSettings();base::RunLoop().RunUntilIdle();shell->RefreshSiteRulesForTesting(false);EXPECT_TRUE(FindButton(shell->general_widget()->GetContentsView(),u"Pokaż kolejne wyjątki…"));EXPECT_EQ(55u,window_->ReadSitePreferences().size());
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceMoreTicketRejectsHideAndReopenBeforeQueuedExecution) {
+  ASSERT_TRUE(window_->Select("work"));auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));if(!shell->workspace_input()->rust_editor())return;
+  for(int i=0;i<55;++i)ASSERT_TRUE(window_->WriteSitePreference("https://hidden-more"+std::to_string(i)+".test","javascript",2));
+  shell->OpenGeneralSettings();auto* query=shell->preferences_search();query->SelectRange(gfx::Range(0,query->GetText().size()));query->input_client()->InsertText(u"Zapisane wyjątki",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
+  auto* more=FindButton(shell->general_widget()->GetContentsView(),u"Pokaż kolejne wyjątki…");ASSERT_TRUE(more);EXPECT_EQ(8u,shell->control_model_kind_for_testing(more));views::ViewTracker alive(more);more->ScrollViewToVisible();ClickControl(more);shell->general_widget()->Hide();shell->general_widget()->Show();base::RunLoop().RunUntilIdle();EXPECT_EQ(more,alive.view());shell->OpenGeneralSettings();shell->RefreshSiteRulesForTesting(false);EXPECT_TRUE(FindButton(shell->general_widget()->GetContentsView(),u"Pokaż kolejne wyjątki…"));
+}
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceMoreTicketRejectsProfileLeaveAndReturnBeforeQueuedExecution) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));if(!shell->workspace_input()->rust_editor())return;
+  for(auto workspace:{"work","personal"}){ASSERT_TRUE(window_->Select(workspace));for(int i=0;i<55;++i)ASSERT_TRUE(window_->WriteSitePreference("https://profile-more"+std::to_string(i)+".test","javascript",2));}
+  ASSERT_TRUE(window_->Select("work"));shell->OpenGeneralSettings();auto* query=shell->preferences_search();query->SelectRange(gfx::Range(0,query->GetText().size()));query->input_client()->InsertText(u"Zapisane wyjątki",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
+  auto* more=FindButton(shell->general_widget()->GetContentsView(),u"Pokaż kolejne wyjątki…");ASSERT_TRUE(more);more->ScrollViewToVisible();ClickControl(more);ASSERT_TRUE(window_->Select("personal"));ASSERT_TRUE(window_->Select("work"));shell->OpenGeneralSettings();base::RunLoop().RunUntilIdle();shell->RefreshSiteRulesForTesting(false);EXPECT_TRUE(FindButton(shell->general_widget()->GetContentsView(),u"Pokaż kolejne wyjątki…"));EXPECT_EQ(55u,window_->ReadSitePreferences().size());
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceActionsSiteRulePaginationAndDeferredProfileBinding) {
   ASSERT_TRUE(window_->Select("work"));auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
   for(int i=0;i<55;++i)ASSERT_TRUE(window_->WriteSitePreference("https://action-rule"+std::to_string(i)+".test","javascript",2));ASSERT_EQ(55u,window_->ReadSitePreferences().size());

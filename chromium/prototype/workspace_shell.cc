@@ -758,6 +758,7 @@ class RustActionView : public views::View {
   void SetCallback(views::Button::PressedCallback callback){Cancel();command_callback_.Reset();callback_=std::move(callback);}
   void SetFormCommand(sidebar::FormCommand command,const std::string& key,base::RepeatingCallback<void(views::View*,const sidebar::FormCommandBinding&)> callback){CHECK(state_->node_form_command_init(command,key));Cancel();callback_=views::Button::PressedCallback();command_callback_=std::move(callback);PreferredSizeChanged();SchedulePaint();}
   void SetPreferenceCategory(const sidebar::PreferencesForm& form,size_t category,base::RepeatingCallback<void(views::View*,const sidebar::FormCommandBinding&)> callback){CHECK(form.bind_category(*state_,category));Cancel();callback_=views::Button::PressedCallback();command_callback_=std::move(callback);PreferredSizeChanged();SchedulePaint();}
+  rust::Box<sidebar::FormCommandTicket> DeferFormCommand() const{return state_->defer_form_command();}
   void CancelInput(){Cancel();}
   bool Pending() const{return state_->action_pending();}
   void SetOn(bool on){if(state_->action_on(on))SchedulePaint();}
@@ -8394,12 +8395,14 @@ void WorkspaceShell::DispatchFormCommand(views::View* source,const sidebar::Form
   switch(command){
     case C::PreferenceCategory:SelectPreferenceCategory(binding.index);break;
     case C::PreferenceMore:{
-      // Rebuilding the rule list destroys this action; defer without retaining it.
-      // A queued click may not paginate a different profile or a hidden panel.
-      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,std::string profile){
+      // Rebuilding the list destroys this adapter. The Rust ticket holds only
+      // a weak record and rejects cancellation, retirement or a new input lease.
+      auto* action=views::AsViewClass<RustActionView>(source);if(!action)return;
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,std::string profile,rust::Box<sidebar::FormCommandTicket> ticket){
         if(!shell||shell->state_.profile_id!=profile||!shell->general_widget_||!shell->general_widget_->IsVisible())return;
+        const auto command=ticket->take_command();if(command.command!=sidebar::FormCommand::PreferenceMore||command.panel!=sidebar::FormPanel::Preferences)return;
         shell->MorePreferenceRules();shell->RefreshSitePreferences(false);
-      },weak_factory_.GetWeakPtr(),state_.profile_id));break;
+      },weak_factory_.GetWeakPtr(),state_.profile_id,action->DeferFormCommand()));break;
     }
     case C::WorkspaceDismiss:settings_widget_->Hide();RestorePageFocus();break;
     case C::PreferencesDismiss:CloseOverlays();RestorePageFocus();break;

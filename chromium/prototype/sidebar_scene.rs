@@ -485,7 +485,10 @@ mod ffi {
         fn tab_target(self: &ActionGraph, high: u64, low: u64, id: u64, close: bool) -> SidebarTabTarget;
         fn append_form_action(self: &mut ActionGraph) -> Box<ActionControl>;
         fn retire_form_action(self: &mut ActionGraph, id: u64) -> bool;
+        type FormCommandTicket;
+        fn take_command(self: &mut FormCommandTicket) -> FormCommandBinding;
         type ActionControl;
+        fn defer_form_command(self: &ActionControl) -> Box<FormCommandTicket>;
         fn action_node_id(self: &ActionControl) -> u64;
         fn node_form_command_init(self: &mut ActionControl, command: FormCommand, key: &str) -> bool;
         fn node_form_command(self: &ActionControl) -> FormCommandBinding;
@@ -2104,6 +2107,28 @@ impl ActionGraph {
 impl Drop for ActionGraph {fn drop(&mut self){for node in self.nodes.values(){let mut record=node.borrow_mut();record.retire();}}}
 enum ActionStorage { Standalone(ActionState), Shared{node:Rc<RefCell<ActionNodeRecord>>,lease:u64}, Retired }
 struct ActionControl { storage:ActionStorage }
+// A queued command holds no node or native adapter alive. Lease and cancellation
+// epoch distinguish a new attachment/context even if numeric IDs are unchanged.
+struct FormCommandTicket { source:Option<(std::rc::Weak<RefCell<ActionNodeRecord>>,u64,u64)> }
+fn empty_form_command()->ffi::FormCommandBinding{ffi::FormCommandBinding{command:ffi::FormCommand::None,panel:ffi::FormPanel::None,key:String::new(),index:0}}
+fn record_form_command(record:&ActionNodeRecord)->ffi::FormCommandBinding{
+    if record.alive&&record.attached&&record.state.enabled&&record.state.admission_epoch!=0{
+        if let Some(NodeModel::FormCommand(model))=record.model.as_deref(){return ffi::FormCommandBinding{command:model.command,panel:form_command_panel(model.command),key:model.key.clone(),index:model.index};}
+    }
+    empty_form_command()
+}
+impl FormCommandTicket {
+    fn take_command(&mut self)->ffi::FormCommandBinding{
+        let Some((source,lease,epoch))=self.source.take() else{return empty_form_command();};
+        let Some(node)=source.upgrade() else{return empty_form_command();};let mut record=node.borrow_mut();
+        if record.lease!=lease||record.state.admission_epoch!=epoch{return empty_form_command();}
+        let command=record_form_command(&record);
+        // Consume sibling tickets issued in the same context as well as this Box.
+        if command.command!=ffi::FormCommand::None{record.state.action_cancel();}
+        command
+    }
+}
+
 impl ActionControl {
     fn read<R>(&self,f:impl FnOnce(&ActionState)->R)->Option<R>{match &self.storage{ActionStorage::Standalone(state)=>Some(f(state)),ActionStorage::Shared{node,lease}=>{let record=node.borrow();(record.alive&&record.attached&&record.lease==*lease).then(||f(&record.state))},ActionStorage::Retired=>None}}
     fn write<R>(&mut self,f:impl FnOnce(&mut ActionState)->R)->Option<R>{match &mut self.storage{ActionStorage::Standalone(state)=>Some(f(state)),ActionStorage::Shared{node,lease}=>{let mut record=node.borrow_mut();if !record.alive||!record.attached||record.lease!=*lease{return None;}Some(f(&mut record.state))},ActionStorage::Retired=>None}}
@@ -2167,11 +2192,15 @@ impl ActionControl {
         self.write_node(|r|{if r.kind!=9{return false;}match r.model.as_deref(){Some(NodeModel::FormCommand(m))=>m.command==command&&m.key==key&&m.index==index,Some(_)=>false,None=>{r.model=Some(Box::new(NodeModel::FormCommand(FormCommandModel{command,key:key.into(),index})));true}}}).unwrap_or(false)
     }
     fn node_form_command_init(&mut self,command:ffi::FormCommand,key:&str)->bool{valid_form_command(command,key)&&self.init_form_command(command,key,0)}
-    fn node_form_command(&self)->ffi::FormCommandBinding{
-        self.read_node(|r|{if !r.state.enabled||r.state.admission_epoch==0{return None;}if let Some(NodeModel::FormCommand(m))=r.model.as_deref(){Some(ffi::FormCommandBinding{command:m.command,panel:form_command_panel(m.command),key:m.key.clone(),index:m.index})}else{None}}).flatten().unwrap_or(ffi::FormCommandBinding{command:ffi::FormCommand::None,panel:ffi::FormPanel::None,key:String::new(),index:0})
+    fn node_form_command(&self)->ffi::FormCommandBinding{self.read_node(record_form_command).unwrap_or_else(empty_form_command)}
+    fn defer_form_command(&self)->Box<FormCommandTicket>{
+        let source=match &self.storage{
+            ActionStorage::Shared{node,lease} if self.node_form_command().command!=ffi::FormCommand::None=>Some((Rc::downgrade(node),*lease,self.action_admission_epoch())),
+            _=>None,
+        };
+        Box::new(FormCommandTicket{source})
     }
-    // Presentation stays available for a disabled live adapter; it never admits
-    // an operation. No strings/collections are cloned on this paint/measure path.
+
     fn node_form_view(&self)->ffi::FormCommandView{
         self.read_node(|r|if let Some(NodeModel::FormCommand(m))=r.model.as_deref(){Some(ffi::FormCommandView{bound:true,dismiss:matches!(m.command,ffi::FormCommand::WorkspaceDismiss|ffi::FormCommand::PreferencesDismiss|ffi::FormCommand::ImportDismiss|ffi::FormCommand::ToolsDismiss),index:m.index})}else{None}).flatten().unwrap_or(ffi::FormCommandView{bound:false,dismiss:false,index:0})
     }
@@ -3592,6 +3621,31 @@ mod tests {
     }
     #[test] fn panel_dismiss_owner_drop_and_context_cancellation_revoke_dispatch(){
         let mut graph=new_form_graph(false,0,false,false);let mut input=graph.append_form_action();input.node_form_command_init(ffi::FormCommand::ImportDismiss,"");let epoch=input.action_admission_epoch();input.action_cancel();assert!(!input.action_admits(epoch));assert!(input.node_form_view().dismiss);drop(graph);assert!(!input.node_form_view().bound);assert_eq!(input.node_form_command().command,ffi::FormCommand::None);
+    }
+    fn queued_form_command(command:ffi::FormCommand)->(Box<ActionGraph>,Box<ActionControl>,Box<FormCommandTicket>){let mut graph=new_form_graph(false,0,false,false);let mut input=graph.append_form_action();assert!(input.node_form_command_init(command,""));let ticket=input.defer_form_command();(graph,input,ticket)}
+    #[test] fn deferred_form_command_is_single_use_and_consumes_siblings(){
+        let (_graph,input,mut ticket)=queued_form_command(ffi::FormCommand::PreferenceMore);let mut sibling=input.defer_form_command();let epoch=input.action_admission_epoch();assert_eq!(ticket.take_command().command,ffi::FormCommand::PreferenceMore);assert!(!input.action_admits(epoch));assert_eq!(ticket.take_command().command,ffi::FormCommand::None);assert_eq!(sibling.take_command().command,ffi::FormCommand::None);assert_eq!(input.defer_form_command().take_command().command,ffi::FormCommand::PreferenceMore);
+    }
+    #[test] fn deferred_form_command_idle_cancel_rejects_return_to_same_context(){
+        let (_graph,mut input,mut ticket)=queued_form_command(ffi::FormCommand::PreferenceMore);assert!(!input.action_cancel());assert_eq!(input.node_form_command().command,ffi::FormCommand::PreferenceMore);assert_eq!(ticket.take_command().command,ffi::FormCommand::None);
+    }
+    #[test] fn deferred_form_command_disable_reenable_and_terminal_epoch_fail_closed(){
+        let (_graph,mut input,mut ticket)=queued_form_command(ffi::FormCommand::ImportApply);input.action_enabled(false);input.action_enabled(true);assert_eq!(ticket.take_command().command,ffi::FormCommand::None);input.write(|state|state.admission_epoch=u64::MAX);let mut ticket=input.defer_form_command();input.action_cancel();assert_eq!(ticket.take_command().command,ffi::FormCommand::None);assert_eq!(input.defer_form_command().take_command().command,ffi::FormCommand::None);
+    }
+    #[test] fn deferred_form_command_rejects_retired_and_replaced_input_leases(){
+        let (mut graph,input,mut ticket)=queued_form_command(ffi::FormCommand::ProfileDelete);let id=input.action_node_id();let node=graph.nodes[&(9,id,0,String::new())].clone();node.borrow_mut().lease+=1;let replacement=ActionControl{storage:ActionStorage::Shared{node,lease:2}};drop(input);assert_eq!(replacement.action_node_id(),id);assert_eq!(ticket.take_command().command,ffi::FormCommand::None);let mut ticket=replacement.defer_form_command();graph.retire_form_action(id);assert_eq!(ticket.take_command().command,ffi::FormCommand::None);
+    }
+    #[test] fn deferred_form_command_graph_drop_and_same_numeric_ids_are_isolated(){
+        let (graph,input,mut ticket)=queued_form_command(ffi::FormCommand::WorkspaceSave);let (_other_graph,other,mut other_ticket)=queued_form_command(ffi::FormCommand::WorkspaceSave);assert_eq!(input.action_node_id(),other.action_node_id());drop(graph);assert_eq!(ticket.take_command().command,ffi::FormCommand::None);assert_eq!(other_ticket.take_command().command,ffi::FormCommand::WorkspaceSave);
+    }
+    #[test] fn deferred_form_command_ticket_does_not_retain_node_or_model(){
+        let (graph,input,mut ticket)=queued_form_command(ffi::FormCommand::ProfileRename);let weak=ticket.source.as_ref().unwrap().0.clone();assert_eq!(weak.strong_count(),2);drop(input);drop(graph);assert_eq!(weak.strong_count(),0);assert_eq!(ticket.take_command().command,ffi::FormCommand::None);
+    }
+    #[test] fn deferred_form_command_rejects_unbound_standalone_and_other_models(){
+        let mut graph=new_form_graph(false,0,false,false);let mut input=graph.append_form_action();assert_eq!(input.defer_form_command().take_command().command,ffi::FormCommand::None);input.node_checkbox_init(true);assert_eq!(input.defer_form_command().take_command().command,ffi::FormCommand::None);assert_eq!(new_action_control().defer_form_command().take_command().command,ffi::FormCommand::None);
+    }
+    #[test] fn deferred_form_command_preserves_category_and_preference_key_without_borrow(){
+        let mut graph=new_form_graph(false,0,false,false);let mut input=graph.append_form_action();input.node_form_command_init(ffi::FormCommand::PreferenceText,"font_standard");let result=input.defer_form_command().take_command();assert_eq!(result.key,"font_standard");assert_eq!(result.panel,ffi::FormPanel::Preferences);assert_eq!(input.node_form_command().key,"font_standard");let mut category=graph.append_form_action();new_preferences_form(10).bind_category(&mut category,7);assert_eq!(category.defer_form_command().take_command().index,7);
     }
     #[test] fn form_command_panels_cover_workspace_profile_and_import_actions(){
         use ffi::{FormCommand as C,FormPanel as P};let mut g=new_form_graph(false,0,false,false);
