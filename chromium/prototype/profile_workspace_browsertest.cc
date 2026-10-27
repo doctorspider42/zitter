@@ -1224,6 +1224,20 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ServiceViewportModalBodyOwners
   widget->CloseNow();widget.reset();delegate.reset();
 }
 
+// Compile-only until the next bulk checkpoint: static chrome shares window scope.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ChromeLogicalNodesRemainDistinctAcrossWorkspaceAndEmojiRefresh) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->SetPinned(true);shell->ShowSidebar();
+  const bool rust=shell->workspace_input()->rust_editor();std::vector<views::View*> controls;
+  for(size_t i=0;i<4;++i)controls.push_back(shell->header_action_for_testing(i));
+  for(size_t i=0;i<2;++i){controls.push_back(shell->sidebar_action_for_testing(i));controls.push_back(shell->footer_action_for_testing(i));}
+  std::vector<uint64_t> ids;for(auto* view:controls){ASSERT_TRUE(view);ids.push_back(shell->sidebar_node_id_for_testing(view));if(rust)EXPECT_NE(0u,ids.back());else EXPECT_EQ(0u,ids.back());}
+  if(rust)for(size_t i=0;i<ids.size();++i)for(size_t j=0;j<i;++j)EXPECT_NE(ids[i],ids[j]);
+  ASSERT_TRUE(window_->Select("personal"));shell->SetWorkspaceEmoji("personal",u"🚀");shell->ShowSidebar();
+  for(size_t i=0;i<controls.size();++i)EXPECT_EQ(ids[i],shell->sidebar_node_id_for_testing(controls[i]));
+  ASSERT_TRUE(window_->Select("work"));shell->ShowSidebar();
+  for(size_t i=0;i<controls.size();++i)EXPECT_EQ(ids[i],shell->sidebar_node_id_for_testing(controls[i]));
+}
+
 // Compiled only: runtime acceptance is deferred to the bulk UI checkpoint.
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FooterLogicalNodesSurviveEmojiReplacementAndRejectStaleAdapter) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->SetPinned(true);shell->ShowSidebar();

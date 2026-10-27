@@ -332,6 +332,7 @@ class WorkspaceShell final : public ui::EventHandler,
   bool metal_sidebar_visible() const;
   bool metal_sidebar_grip_visible() const;
   views::View* header_action_for_testing(size_t index) const;
+  views::View* sidebar_action_for_testing(size_t index) const{return index==0?url_pill_.get():index==1?new_tab_button_.get():nullptr;}
   views::View* footer_action_for_testing(size_t index) const{return index==0?pin_button_.get():index==1?workspace_settings_button_.get():nullptr;}
   std::unique_ptr<views::View> CreateWorkspaceActionForTesting(base::RepeatingClosure callback) const;
   views::View* sidebar_grip_for_testing() const;
@@ -589,7 +590,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void ReconcileSidebarNodes(TabListCache& cache, const std::vector<PinnedItem>& pins, const std::vector<ShellTab>& tabs);
   void AppendPinnedItems(views::View* root, const std::vector<PinnedItem>& pins,
                          TabListCache& cache, const std::string& workspace);
-  void ReconcileFooterNodes();
+  void ReconcileChromeNodes();
   void RebuildWorkspaceDots();
   void ShowContextMenuForViewImpl(views::View*, const gfx::Point&, ui::mojom::MenuSourceType) override;
   bool IsCommandIdChecked(int command_id) const override;
@@ -740,7 +741,8 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> url_pill_ = nullptr;
   raw_ptr<views::View> workspace_name_ = nullptr;
   raw_ptr<views::View> profile_name_ = nullptr;
-  std::shared_ptr<SidebarNodeGraphState> footer_node_graph_;
+  std::shared_ptr<SidebarNodeGraphState> chrome_node_graph_;
+  std::vector<std::string> chrome_workspace_ids_;
   raw_ptr<views::View> pin_button_ = nullptr;
   std::array<raw_ptr<views::View>, 3> nav_buttons_ = {};
   raw_ptr<views::View> sidebar_footer_=nullptr;

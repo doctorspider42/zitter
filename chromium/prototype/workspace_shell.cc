@@ -1936,9 +1936,9 @@ BEGIN_METADATA(SplitPair)
 END_METADATA
 
 // Address chrome uses the shared row host and the same named AX adapter.
-std::unique_ptr<views::View> CreateAddressRow(views::Button::PressedCallback callback,base::RepeatingCallback<bool()> visible,base::RepeatingClosure changed,base::RepeatingCallback<void(views::View*,base::RepeatingClosure)> watch){
+std::unique_ptr<views::View> CreateAddressRow(views::Button::PressedCallback callback,base::RepeatingCallback<bool()> visible,base::RepeatingClosure changed,base::RepeatingCallback<void(views::View*,base::RepeatingClosure)> watch,SidebarNodeBinding binding={}){
   RowButton::Spec spec;spec.address=true;spec.sidebar_row=true;spec.height=40;spec.scene_visible=std::move(visible);
-  auto row=CreateSceneRow(std::move(callback),std::move(spec),std::move(changed),std::move(watch));row->GetViewAccessibility().SetName(u"Adres strony");row->SetTooltipText(u"Szukaj lub wpisz adres");return row;
+  auto row=CreateSceneRow(std::move(callback),std::move(spec),std::move(changed),std::move(watch),std::move(binding));row->GetViewAccessibility().SetName(u"Adres strony");row->SetTooltipText(u"Szukaj lub wpisz adres");return row;
 }
 
 // Scene-owned text with one native static-text accessibility node. The Views
@@ -3233,6 +3233,7 @@ views::WidgetDelegate::ClientViewFactory WorkspaceShell::ClientViewFactory() {
 }
 
 std::unique_ptr<views::View> WorkspaceShell::Build() {
+  ReconcileChromeNodes();
   auto root = std::make_unique<ShellRoot>();
   root_ = root.get();
   root->SetBackground(views::CreateSolidBackground(FrameTint(workspace_color("work"), root_)));
@@ -3252,15 +3253,16 @@ std::unique_ptr<views::View> WorkspaceShell::Build() {
   },weak);
   header_sidebar_button_=header->AddChildView(CreateSceneAction(
       base::BindRepeating(&WorkspaceShell::ToggleSidebar,weak),u"Pokaż lub ukryj karty",
-      GlyphButton::Glyph::kSidebar,nullptr,header_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalHeader,weak)));
+      GlyphButton::Glyph::kSidebar,nullptr,header_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalHeader,weak),true,{chrome_node_graph_,4,{},"header.sidebar"}));
   const std::array<std::pair<const gfx::VectorIcon*, std::u16string>, 3> commands = {{
       {&vector_icons::kArrowBackIcon, u"Wstecz"},
       {&vector_icons::kArrowForwardIcon, u"Dalej"},
       {&vector_icons::kReloadCustomIcon, u"Odśwież"}}};
+  const std::array<const char*,3> command_nodes={"header.back","header.forward","header.reload"};
   for (size_t i = 0; i < commands.size(); ++i) {
     nav_buttons_[i] = header->AddChildView(CreateSceneAction(
         base::BindRepeating(callbacks_.page_command, static_cast<PageCommand>(i)),
-        commands[i].second, GlyphButton::Glyph::kVector, commands[i].first,header_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalHeader,weak)));
+        commands[i].second, GlyphButton::Glyph::kVector, commands[i].first,header_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalHeader,weak),true,{chrome_node_graph_,4,{},command_nodes[i]}));
   }
   content_host_ = root->AddChildView(std::make_unique<PaneHost>(callbacks_.split_ratio,
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, bool right, views::View* anchor) {
@@ -3335,7 +3337,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       base::BindRepeating(&WorkspaceShell::OpenAddress, weak, false),
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
         return shell && shell->metal_sidebar_visible();
-      },weak),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak)));
+      },weak),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak),{chrome_node_graph_,4,{},"sidebar.address"}));
   url_pill_ = pill;
   pill->set_context_menu_controller(this);
   Spacer(sidebar.get(), 12);
@@ -3357,7 +3359,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   }, weak);
   new_tab.icon = &vector_icons::kAdd2Icon;
   new_tab_button_ = sidebar->AddChildView(CreateSceneRow(
-      base::BindRepeating(&WorkspaceShell::OpenAddress,weak,true),std::move(new_tab),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak)));
+      base::BindRepeating(&WorkspaceShell::OpenAddress,weak,true),std::move(new_tab),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak),{chrome_node_graph_,4,{},"sidebar.new-tab"}));
   std::unique_ptr<views::ScrollBar> vertical_bar;
 #if BUILDFLAG(IS_MAC)
   if(metal_sidebar_)vertical_bar=CreateSidebarScrollBar(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_sidebar_visible();},weak));
@@ -3516,11 +3518,11 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto* footer_layout = footer->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 0));
   footer_layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
-  ReconcileFooterNodes();
+  ReconcileChromeNodes();
   pin_button_ = footer->AddChildView(CreateSceneAction(
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
         if (shell) shell->SetPinned(!shell->pinned_);
-      }, weak), u"Przypnij panel", GlyphButton::Glyph::kSidebar,nullptr,footer_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),true,{footer_node_graph_,4,{},"pin"}));
+      }, weak), u"Przypnij panel", GlyphButton::Glyph::kSidebar,nullptr,footer_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),true,{chrome_node_graph_,4,{},"pin"}));
   Spacer(footer, 1);
   std::unique_ptr<views::ScrollBar> workspace_bar;
 #if BUILDFLAG(IS_MAC)
@@ -3545,7 +3547,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   Spacer(footer, 1);
   workspace_settings_button_=footer->AddChildView(CreateSceneAction(
       base::BindRepeating(&WorkspaceShell::OpenWorkspaceSettings, weak),
-      u"Ustawienia przestrzeni", GlyphButton::Glyph::kVector, &vector_icons::kTuneIcon,footer_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),true,{footer_node_graph_,4,{},"settings"}));
+      u"Ustawienia przestrzeni", GlyphButton::Glyph::kVector, &vector_icons::kTuneIcon,footer_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),true,{chrome_node_graph_,4,{},"settings"}));
 #if BUILDFLAG(IS_MAC)
   if (metal_sidebar_) footer->SetLayoutManager(CreateSidebarFooterLayout());
 #endif
@@ -4226,7 +4228,7 @@ void WorkspaceShell::Detach() {
   workspace_appearance_ = nullptr;
   settings_scroll_ = nullptr;
   settings_root_ = nullptr;
-  footer_node_graph_.reset();
+  chrome_node_graph_.reset();chrome_workspace_ids_.clear();
   pin_button_ = nullptr;
   nav_buttons_.fill(nullptr);
   workspace_buttons_.clear();
@@ -5310,25 +5312,28 @@ views::View* WorkspaceShell::workspace_button(std::string_view id) const {
   return it == workspace_buttons_.end() ? nullptr : it->second.get();
 }
 
-void WorkspaceShell::ReconcileFooterNodes() {
+void WorkspaceShell::ReconcileChromeNodes() {
 #if BUILDFLAG(IS_MAC)
   if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")!="rust-metal")return;
-  if(!footer_node_graph_)footer_node_graph_=std::make_shared<SidebarNodeGraphState>();
-  rust::Vec<sidebar::ActionNodeKey> keys;keys.reserve(2+state_.workspaces.size());
-  keys.push_back({4,0,0,"pin"});keys.push_back({4,0,0,"settings"});
+  if(chrome_node_graph_&&chrome_workspace_ids_.size()==state_.workspaces.size()&&std::equal(chrome_workspace_ids_.begin(),chrome_workspace_ids_.end(),state_.workspaces.begin(),[](const auto& id,const auto& workspace){return id==workspace.id;}))return;
+  if(!chrome_node_graph_)chrome_node_graph_=std::make_shared<SidebarNodeGraphState>();
+  rust::Vec<sidebar::ActionNodeKey> keys;keys.reserve(8+state_.workspaces.size());
+  for(const auto* name:{"pin","settings","header.sidebar","header.back","header.forward","header.reload","sidebar.address","sidebar.new-tab"})keys.push_back({4,0,0,name});
   for(const auto& workspace:state_.workspaces)keys.push_back({3,0,0,workspace.id});
-  CHECK(footer_node_graph_->graph->reconcile(std::move(keys)).admitted)<<"Invalid footer logical node projection";
+  CHECK(chrome_node_graph_->graph->reconcile(std::move(keys)).admitted)<<"Invalid window chrome logical node projection";
+  chrome_workspace_ids_.clear();chrome_workspace_ids_.reserve(state_.workspaces.size());
+  for(const auto& workspace:state_.workspaces)chrome_workspace_ids_.push_back(workspace.id);
 #endif
 }
 void WorkspaceShell::RebuildWorkspaceDots() {
-  ReconcileFooterNodes();
+  ReconcileChromeNodes();
   workspace_buttons_.clear();
   workspace_dots_->RemoveAllChildViews();
   for (const auto& workspace : state_.workspaces) {
     auto* button = workspace_dots_->AddChildView(CreateSceneAction(
         base::BindRepeating(callbacks_.select_workspace, workspace.id),
         u"Przestrzeń: " + base::UTF8ToUTF16(workspace.name) + (state_.sleeping_workspaces.contains(workspace.id) ? u" · uśpiona" : u""), GlyphButton::Glyph::kDot,nullptr,
-        base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {return shell && shell->metal_sidebar_visible();},weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak_factory_.GetWeakPtr()),true,{footer_node_graph_,3,{},workspace.id}));
+        base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {return shell && shell->metal_sidebar_visible();},weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak_factory_.GetWeakPtr()),true,{chrome_node_graph_,3,{},workspace.id}));
     SetActionLabel(button,workspace_emoji(workspace.id));
     SetActionOn(button,workspace.id == state_.workspace_id);
     button->set_context_menu_controller(this);
