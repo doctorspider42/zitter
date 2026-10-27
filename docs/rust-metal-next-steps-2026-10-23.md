@@ -16,7 +16,7 @@ The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 This queue supersedes implementation suggestions in the historical checkpoints
 below. Headless validation is current; GUI acceptance is deferred by instruction.
 
-1. **Complete action-node scopes.** Finish the workspace header dismiss, then
+1. **Complete action-node scopes.** Extend registry ownership to
    download/service-panel controls and remaining checked/selector input nodes. Define keys from actual target identity and
    scope, and retire nodes when lists/forms/profile contexts disappear. Preserve
    browser/store authorization in native services.
@@ -32,7 +32,7 @@ below. Headless validation is current; GUI acceptance is deferred by instruction
    copy and form/busy state into Rust; finish outer dialog/palette/container
    placement. Keep native window, IME, clipboard, AX and popup/menu services explicit.
 5. **Run the deferred bulk UI checkpoint when requested.** Include all newly
-   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node, palette-node, split-node and form-action-node
+   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node, palette-node, split-node, form-action-node and workspace-dismiss-node
    cases, the full Rust/Metal and Views matrices, and actual pointer/keyboard/
    capture/AX/focus/drag/profile/session regressions. The last completed full matrix
    remains the text-action checkpoint; the later selector full run was interrupted.
@@ -44,7 +44,29 @@ below. Headless validation is current; GUI acceptance is deferred by instruction
    profile persistence/rollback, regenerate the shipped dependency/license manifest
    and Apache-2.0/upstream notices. Keep Rust/Metal opt-in until acceptance is complete.
 
-## Latest headless implementation: form action groups
+## Latest headless implementation: workspace dismiss completes form button paths
+
+Source `627946d` replaces the remaining workspace settings header GlyphButton
+with ScenePreferenceControls in the Rust backend. Its graph-owned action uses
+the shared Metal close recipe. Views retains GlyphButton. The existing callback
+still hides settings and restores page focus. Together with the preceding form
+membership change, preference/workspace/profile/import text, navigation/dismiss
+and appearance preset buttons use group-owned Rust input state.
+
+Both app and browser-test binaries compile. **321 Rust**, **180 SDK cases plus
+raster**, **68 live and 68 clean-archive Python**, scoped GN/boundaries and final
+Ninja no-op passed; all 53 committed/live/staged prototype inputs match. **No UI
+tests ran.** The new compiled case checks 32x32 host shape, AX/name, disabled close
+admission, AX/Space close and stable ID after reopening. Actual canvas/focus/AX
+acceptance is deferred with the two new form-group cases and existing regressions.
+[Headless evidence](benchmarks/rust-workspace-dismiss-node-headless-2026-10-27.json).
+
+The running preview was not repackaged. IDs belong to each action group and do
+not authorize operations on a profile/workspace/import target. Native validation,
+IME, stores and callbacks remain authoritative. Full form properties/parenting,
+checked/selector/editor lifetime, View containers and final acceptance remain open.
+
+## Earlier headless implementation: form action groups
 
 Source `8fd2268` gives text action groups, preference navigation/dismiss groups
 and appearance preset rows local Rust membership scopes. Rust allocates fresh
