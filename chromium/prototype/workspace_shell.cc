@@ -730,7 +730,18 @@ class RustActionView : public views::View {
   void OnPaint(gfx::Canvas* canvas) override{if(visible_&&visible_.Run())return;SyncEnabled();const auto v=state_->action_snapshot();const auto paint=v.visual==sidebar::RowVisual::Disabled?views::Button::STATE_DISABLED:v.visual==sidebar::RowVisual::Pressed?views::Button::STATE_PRESSED:v.visual==sidebar::RowVisual::Hovered?views::Button::STATE_HOVERED:views::Button::STATE_NORMAL;PaintGlyphControl(this,glyph_,icon_,color_,v.on,label_,paint,canvas);}
  protected:
   virtual ax::mojom::DefaultActionVerb ActionVerb() const{return ax::mojom::DefaultActionVerb::kPress;}
-  virtual void ActivateAction(const ui::Event& event){const auto id=GetProperty(views::kElementIdentifierKey);if(id){views::ViewTracker alive(this);views::ElementTrackerViews::GetInstance()->NotifyViewActivated(id,this);if(!alive.view())return;}if(callback_)callback_.Run(event);}
+  virtual void ActivateAction(const ui::Event& event){
+    const auto id=GetProperty(views::kElementIdentifierKey);
+    if(id){
+      const auto node=state_->action_node_id();views::ViewTracker alive(this);
+      views::ElementTrackerViews::GetInstance()->NotifyViewActivated(id,this);
+      if(!alive.view())return;
+      // An observer may retain an adapter after removing it, or retarget it.
+      // Object lifetime alone does not keep the graph-authorized action valid.
+      if(node&&(state_->action_node_id()!=node||!state_->action_snapshot().enabled))return;
+    }
+    if(callback_)callback_.Run(event);
+  }
  private:
   void SyncEnabled(){const bool enabled=GetEnabledInViewsSubtree();if(!state_->action_enabled(enabled))return;auto& ax=GetViewAccessibility();if(enabled)ax.SetDefaultActionVerb(ActionVerb());else ax.RemoveDefaultActionVerb();}
   bool Interactive() const{return SceneIsVisible(this)&&!GetVisibleBounds().IsEmpty();}
