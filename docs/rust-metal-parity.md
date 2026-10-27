@@ -14,7 +14,41 @@ accumulate compiled cases for a later bulk checkpoint. Build, Rust/Python and SD
 checks without windows remain enabled. No computer shutdown is requested.
 The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 
-## Latest headless implementation: semantic form panel domains and rule pagination
+## Latest headless implementation: cancellable deferred form command tickets
+
+Source `b778b91` adds an opaque Rust FormCommandTicket for queued semantic form
+commands. It captures a weak graph record, the original input lease and cancellation
+epoch. Consumption requires the original live attached enabled record and matching
+lease/epoch; it returns typed command/panel/key/category data after releasing the
+borrow. Consumption is single use and advances cancellation so sibling tickets from
+the same context cannot repeat the action. Tickets keep neither the native adapter
+nor its graph record/model alive. Terminal epochs fail closed.
+
+Deferred PreferenceMore now captures this Rust Box plus the weak shell. Existing
+profile equality and visible-widget checks remain; ticket consumption precedes
+rule-limit mutation and list rebuild. Existing native window/visibility/profile/
+form cancellation hooks revoke queued work even if the panel is reopened or the
+user returns to the same profile before execution. This supersedes the previous
+checkpoint's current-state-only limitation. Native cancellation delivery itself
+still requires the deferred UI checkpoint; Rust tests prove behavior once cancelled.
+Other service/domain async operations retain their existing semantics. Site-rule
+removal intentionally preserves the exact clicked rule with its own profile guard.
+
+Validation: **475 Rust**, **68 live + 68 clean-archive Python**, **180 CoreText SDK
+cases plus raster**, scoped GN/header and boundary checks. Both app/test binaries
+compile, all **53 committed/live/staged prototype inputs** match, and final Ninja
+reports no work. Eight new Rust cases cover one-shot/sibling consumption, idle
+cancellation, disable/re-enable, lease/graph replacement, terminal epochs, weak
+lifetime, invalid models and metadata. Two new browser cases cover hide/reopen and
+profile leave/return before queued execution. **No UI tests were run**; preview and
+packaging were left unchanged. No performance or memory improvement is claimed.
+Evidence: [form-ticket report](benchmarks/rust-form-ticket-headless-2026-10-27.json).
+
+Complete form/window/editor ownership, residual popup/action inventory, status/
+busy/managed presentation and wider reconciliation remain open alongside bulk
+GUI/manual/performance/release acceptance. No dependency/license input changed.
+
+## Previous headless implementation: semantic form panel domains and rule pagination
 
 Source `23c6ecb` moves command-to-panel policy into Rust. Command bindings
 carry an explicit FormPanel for workspace save/create/remove/navigation/dismiss,
