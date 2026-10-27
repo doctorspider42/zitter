@@ -20,12 +20,12 @@ below. Headless validation is current; GUI acceptance is deferred by instruction
    toolbar is now migrated; download row buttons already use Rust-owned groups.
    Preserve native profile/GUID/store authorization and document explicit platform
    adapters. Runtime inventory and GUI acceptance remain pending.
-2. **Own the scene tree and remaining typed models.** Checkbox/switch values
-   and transitions are now graph-owned. Next move selector options/selection/
-   prefix/popup-token state, then editor/text models and control properties,
-   parent/child relationships, lifetime and layout coordination into Rust.
-   Selector handoff must invalidate old menu/prefix interaction while retaining
-   selected values/options, and rehydrate native label projections from the model. The current ActionGraph owns
+2. **Own the scene tree and remaining typed models.** Checkbox/switch values,
+   transitions and selector options/selection/prefix/popup state are now graph-owned.
+   Selector handoff cancels transient interaction while preserving retained-node
+   values/options and rehydrating native label projections. Next move editor/text
+   models and control properties, parent/child relationships, lifetime and layout
+   coordination into Rust. The current ActionGraph owns
    logical identities/input leases for sidebar rows, window chrome, history, palette results, split-pane actions, form action groups and checked/selector input;
    native View trees still own containers and most scene-property projection.
 3. **Reconcile adapters incrementally.** Reuse/reorder native adapters by Rust ID
@@ -36,7 +36,7 @@ below. Headless validation is current; GUI acceptance is deferred by instruction
    copy and form/busy state into Rust; finish outer dialog/palette/container
    placement. Keep native window, IME, clipboard, AX and popup/menu services explicit.
 5. **Run the deferred bulk UI checkpoint when requested.** Include all newly
-   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node, palette-node, split-node, form-action-node, workspace-dismiss-node, activation-observer, checked-selector-node, Peek-toolbar and checked-model
+   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node, palette-node, split-node, form-action-node, workspace-dismiss-node, activation-observer, checked-selector-node, Peek-toolbar, checked-model and selector-model
    cases, the full Rust/Metal and Views matrices, and actual pointer/keyboard/
    capture/AX/focus/drag/profile/session regressions. The last completed full matrix
    remains the text-action checkpoint; the later selector full run was interrupted.
@@ -48,7 +48,39 @@ below. Headless validation is current; GUI acceptance is deferred by instruction
    profile persistence/rollback, regenerate the shipped dependency/license manifest
    and Apache-2.0/upstream notices. Keep Rust/Metal opt-in until acceptance is complete.
 
-## Latest headless implementation: node-owned checkbox and switch models
+## Latest headless implementation: node-owned selector models
+
+Source `f0f0680` moves selector options, selection, prefix state, popup generation
+and close-time guard into Rust ActionNodeRecord typed payloads. SceneSelect keeps
+its input lease, native popup/IME/AX/Metal services and a projected label cache.
+The SelectState C++ bridge type and constructor are removed; the standalone
+constructor exists only for Rust reducer oracles.
+
+Same-kind initialization preserves values/options for a retained logical node.
+Native initialization rehydrates labels from that model before constructing its
+IME adapter. Lease handoff and current-handle drop invalidate popup generations,
+clear prefix input and clear the previous adapter's close-time guard. Old close
+and choose callbacks cannot alter a newer lease. Same-adapter popup timing and
+prefix matching still delegate to the established reducers. User mutations require
+graph and native admission; backend projection remains possible while disabled.
+
+Preservation on rebind is an API guarantee for a retained logical node. Current
+native group removal/rebuild still retires membership. Live incremental adapter
+reuse, scene properties/parenting and Rust-owned hierarchy/layout remain open.
+Owned FFI string/options snapshots keep RefCell borrows inside Rust; their cost
+has not been benchmarked.
+
+Validation: **343 Rust**, **68 live + 68 clean-archive Python**, **180 CoreText SDK
+cases plus raster**, scoped GN/header and boundary checks. App and browser test
+binaries compile; all **53 prototype inputs** match committed/live/staged files,
+and the final three-target Ninja check reports no work. One new compiled browser
+case covers selector model kinds across preferences, spaces, profiles, import and
+tools; the retained-selector regression also checks payload retirement.
+**No UI tests were run**, and the running preview was left unchanged.
+Evidence: [selector-model report](benchmarks/rust-selector-model-headless-2026-10-27.json).
+
+
+## Previous headless implementation: node-owned checkbox and switch models
 
 Source `66be7f5` moves checkbox values and switch checked/slide/hover transitions
 into optional typed payloads on Rust ActionNodeRecord. Native controls retain
