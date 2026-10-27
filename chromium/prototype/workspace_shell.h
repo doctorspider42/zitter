@@ -623,7 +623,7 @@ class WorkspaceShell final : public ui::EventHandler,
   std::array<uint64_t,2> context_tab_identity_{};
   std::string context_pin_;
   void BindFormCommand(views::View* view,sidebar::FormCommand command,std::string key={});
-  void DispatchFormCommand(sidebar::FormCommandBinding command);
+  void DispatchFormCommand(const sidebar::FormCommandBinding& command);
   void SubmitWorkspace(bool add);
   void ImportSelectionChanged();
   void RefreshRustImportControls();

@@ -756,7 +756,7 @@ class RustActionView : public views::View {
   bool AcceleratorPressed(const ui::Accelerator& accelerator) override{SyncEnabled();const auto before=Snapshot().visual;const bool pending=Pending();return Apply(state_->action_accelerator(accelerator.key_code()==ui::VKEY_RETURN?2:0,accelerator.modifiers()!=ui::EF_NONE,SceneIsVisible(this)),accelerator.ToKeyEvent(),before,pending);}
   void SetColor(SkColor color){if(color_==color)return;color_=color;SchedulePaint();}
   void SetCallback(views::Button::PressedCallback callback){Cancel();command_callback_.Reset();callback_=std::move(callback);}
-  void SetFormCommand(sidebar::FormCommand command,const std::string& key,base::RepeatingCallback<void(sidebar::FormCommandBinding)> callback){CHECK(state_->node_form_command_init(command,key));Cancel();callback_=views::Button::PressedCallback();command_callback_=std::move(callback);}
+  void SetFormCommand(sidebar::FormCommand command,const std::string& key,base::RepeatingCallback<void(const sidebar::FormCommandBinding&)> callback){CHECK(state_->node_form_command_init(command,key));Cancel();callback_=views::Button::PressedCallback();command_callback_=std::move(callback);}
   void CancelInput(){Cancel();}
   bool Pending() const{return state_->action_pending();}
   void SetOn(bool on){if(state_->action_on(on))SchedulePaint();}
@@ -820,7 +820,7 @@ class RustActionView : public views::View {
   bool Pointer(sidebar::PointerPhase phase,const ui::MouseEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;const bool pending=state_->action_pending();return Apply(state_->action_pointer(phase,event.x(),event.y(),phase!=sidebar::PointerPhase::Exit&&HitTestPoint(event.location())&&GetVisibleBounds().Contains(event.location()),event.IsLeftMouseButton(),Interactive()),event,before,pending);}
   bool Key(bool pressed,const ui::KeyEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;const bool pending=state_->action_pending();const uint32_t key=event.key_code()==ui::VKEY_SPACE?1:event.key_code()==ui::VKEY_RETURN?2:0;return Apply(state_->action_key(pressed,key,true,Interactive()),event,before,pending);}
   bool Apply(const sidebar::RowInputResult& result,const ui::Event& event,sidebar::RowVisual before,bool pending){const bool handled=result.handled;if(result.visual!=before)SchedulePaint();else if(pending!=state_->action_pending()&&changed_)changed_.Run();if(result.action==sidebar::RowAction::Activate){ActivateAction(event);return handled;}return handled;}
-  SkColor color_=kSubtle;std::u16string label_;base::RepeatingCallback<void(sidebar::FormCommandBinding)> command_callback_;views::Button::PressedCallback callback_;ControlGlyph glyph_;raw_ptr<const gfx::VectorIcon> icon_;base::RepeatingCallback<bool()> visible_;base::RepeatingClosure changed_;rust::Box<sidebar::ActionControl> state_;SceneWindowObserver window_{base::BindRepeating(&RustActionView::WindowChanged,base::Unretained(this))};base::CallbackListSubscription enabled_changed_{AddEnabledInViewsSubtreeChangedCallback(base::BindRepeating(&RustActionView::EnabledChanged,base::Unretained(this)))};
+  SkColor color_=kSubtle;std::u16string label_;base::RepeatingCallback<void(const sidebar::FormCommandBinding&)> command_callback_;views::Button::PressedCallback callback_;ControlGlyph glyph_;raw_ptr<const gfx::VectorIcon> icon_;base::RepeatingCallback<bool()> visible_;base::RepeatingClosure changed_;rust::Box<sidebar::ActionControl> state_;SceneWindowObserver window_{base::BindRepeating(&RustActionView::WindowChanged,base::Unretained(this))};base::CallbackListSubscription enabled_changed_{AddEnabledInViewsSubtreeChangedCallback(base::BindRepeating(&RustActionView::EnabledChanged,base::Unretained(this)))};
 };
 BEGIN_METADATA(RustActionView)
 END_METADATA
@@ -8254,7 +8254,7 @@ void WorkspaceShell::BindFormCommand(views::View* view,sidebar::FormCommand comm
   control->SetFormCommand(command,key,base::BindRepeating(&WorkspaceShell::DispatchFormCommand,weak_factory_.GetWeakPtr()));
 #endif
 }
-void WorkspaceShell::DispatchFormCommand(sidebar::FormCommandBinding binding){
+void WorkspaceShell::DispatchFormCommand(const sidebar::FormCommandBinding& binding){
 #if BUILDFLAG(IS_MAC)
   using C=sidebar::FormCommand;const auto command=binding.command;
   const bool workspace=command==C::WorkspaceSave||command==C::WorkspaceToggle||command==C::WorkspaceRemove||command==C::WorkspaceProfiles||command==C::WorkspaceImport;
