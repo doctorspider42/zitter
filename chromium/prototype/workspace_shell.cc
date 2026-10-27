@@ -732,6 +732,7 @@ class RustActionView : public views::View {
   void OnTooltipTextChanged(const std::u16string& previous) override{views::View::OnTooltipTextChanged(previous);auto& ax=GetViewAccessibility();if((ax.GetCachedName().empty()||ax.GetCachedName()==previous)&&!GetTooltipText().empty())ax.SetName(GetTooltipText());}
   uint64_t LogicalNodeId() const{return state_->action_node_id();}
   uint32_t ModelKind() const{return state_->node_model_kind();}
+  uint64_t LogicalParentId() const{return state_->node_parent_id();}
   void BindNodeInput(const SidebarNodeBinding& binding){
     state_=AcquireSidebarInput(binding);state_->action_focus(HasFocus());SyncEnabled();
     auto& ax=GetViewAccessibility();if(state_->action_snapshot().enabled)ax.SetDefaultActionVerb(ActionVerb());else ax.RemoveDefaultActionVerb();
@@ -4372,7 +4373,7 @@ void WorkspaceShell::Detach() {
   workspace_appearance_ = nullptr;
   settings_scroll_ = nullptr;
   settings_root_ = nullptr;
-  chrome_node_graph_.reset();chrome_workspace_ids_.clear();history_node_graph_.reset();palette_node_graph_.reset();
+  chrome_node_graph_.reset();history_node_graph_.reset();palette_node_graph_.reset();
   pin_button_ = nullptr;
   nav_buttons_.fill(nullptr);
   workspace_buttons_.clear();
@@ -4457,7 +4458,11 @@ void WorkspaceShell::Update(ShellState state) {
 #endif
   if((selected||history_profile_changed)&&tools_root_)CancelChoiceInteractions(tools_root_);
   if (history_profile_changed && history_visible()) RefreshTools();
-  if (changed || profiles_changed) RebuildWorkspaceDots();
+  bool refresh_dots=changed||profiles_changed;
+#if BUILDFLAG(IS_MAC)
+  refresh_dots=refresh_dots||(chrome_node_graph_&&(selected||ready_changed));
+#endif
+  if(refresh_dots)RebuildWorkspaceDots();
   for (const auto& [id, button] : workspace_buttons_) {
     SetActionOn(button,id == state_.workspace_id);
     button->SetEnabled(state_.configuration_ready);
@@ -5450,6 +5455,12 @@ uint64_t WorkspaceShell::sidebar_node_id_for_testing(views::View* row) const{
   return 0;
 #endif
 }
+uint64_t WorkspaceShell::workspace_scene_parent_for_testing(views::View* view) const{
+#if BUILDFLAG(IS_MAC)
+  if(auto* action=views::AsViewClass<RustActionView>(view))return action->LogicalParentId();
+#endif
+  return 0;
+}
 views::View* WorkspaceShell::tab_button(size_t index) const {
   auto cache = tab_lists_.find(state_.workspace_id);
   if (cache == tab_lists_.end()) return nullptr;
@@ -5465,18 +5476,39 @@ views::View* WorkspaceShell::workspace_button(std::string_view id) const {
 void WorkspaceShell::ReconcileChromeNodes() {
 #if BUILDFLAG(IS_MAC)
   if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")!="rust-metal")return;
-  if(chrome_node_graph_&&chrome_workspace_ids_.size()==state_.workspaces.size()&&std::equal(chrome_workspace_ids_.begin(),chrome_workspace_ids_.end(),state_.workspaces.begin(),[](const auto& id,const auto& workspace){return id==workspace.id;}))return;
   if(!chrome_node_graph_)chrome_node_graph_=std::make_shared<SidebarNodeGraphState>();
-  rust::Vec<sidebar::ActionNodeKey> keys;keys.reserve(8+state_.workspaces.size());
-  for(const auto* name:{"pin","settings","header.sidebar","header.back","header.forward","header.reload","sidebar.address","sidebar.new-tab"})keys.push_back({4,0,0,name});
-  for(const auto& workspace:state_.workspaces)keys.push_back({3,0,0,workspace.id});
-  CHECK(chrome_node_graph_->graph->reconcile(std::move(keys)).admitted)<<"Invalid window chrome logical node projection";
-  chrome_workspace_ids_.clear();chrome_workspace_ids_.reserve(state_.workspaces.size());
-  for(const auto& workspace:state_.workspaces)chrome_workspace_ids_.push_back(workspace.id);
+  auto units=[](const std::u16string& text){rust::Vec<uint16_t> result;for(char16_t unit:text)result.push_back(unit);return result;};
+  rust::Vec<sidebar::WorkspaceSceneInput> items;items.reserve(state_.workspaces.size());
+  for(const auto& workspace:state_.workspaces)items.push_back({workspace.id,units(base::UTF8ToUTF16(workspace.name)),units(workspace_emoji(workspace.id)),state_.sleeping_workspaces.contains(workspace.id),workspace.id==state_.workspace_id,state_.configuration_ready});
+  CHECK(chrome_node_graph_->graph->reconcile_chrome(std::move(items)).admitted)<<"Invalid window chrome scene projection";
 #endif
 }
 void WorkspaceShell::RebuildWorkspaceDots() {
   ReconcileChromeNodes();
+#if BUILDFLAG(IS_MAC)
+  if(chrome_node_graph_){
+    const auto scene=chrome_node_graph_->graph->workspace_scene();CHECK_NE(scene.root,0u);
+    std::map<uint64_t,views::View*> existing;std::set<uint64_t> wanted;
+    for(const auto& child:scene.children){CHECK_EQ(child.parent,scene.root);wanted.insert(child.id);}
+    std::vector<views::View*> removed;
+    // Inspect actual children, never stale cached pointers to detached adapters.
+    for(const auto& child:workspace_dots_->children()){auto* adapter=views::AsViewClass<RustActionView>(child.get());const auto id=adapter?adapter->LogicalNodeId():0;if(id&&wanted.contains(id))existing.emplace(id,child.get());else removed.push_back(child.get());}
+    workspace_buttons_.clear();
+    for(auto* child:removed)workspace_dots_->RemoveChildViewT(child);
+    size_t index=0;
+    auto text=[](const rust::Vec<uint16_t>& units){return std::u16string(units.begin(),units.end());};
+    for(const auto& child:scene.children){const std::string key(child.key);auto found=existing.find(child.id);views::View* button=nullptr;
+      if(found!=existing.end())button=found->second;
+      else button=workspace_dots_->AddChildView(CreateSceneAction(base::BindRepeating(callbacks_.select_workspace,key),text(child.name),GlyphButton::Glyph::kDot,nullptr,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_sidebar_visible();},weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak_factory_.GetWeakPtr()),true,{chrome_node_graph_,3,{},key}));
+      if(child.cancel_input)CancelActionInput(button);
+      workspace_dots_->ReorderChildView(button,index++);button->SetTooltipText(text(child.name));button->GetViewAccessibility().SetName(text(child.name));SetActionLabel(button,text(child.label));SetActionOn(button,child.active);button->SetEnabled(child.enabled);
+      // Rust updated input visuals before native projection; invalidate the
+      // canvas fallback even when SetOn/CancelInput now see no state delta.
+      button->SchedulePaint();button->set_context_menu_controller(this);workspace_buttons_[key]=button;
+    }
+    ScheduleMetalSidebar();return;
+  }
+#endif
   workspace_buttons_.clear();
   workspace_dots_->RemoveAllChildViews();
   for (const auto& workspace : state_.workspaces) {

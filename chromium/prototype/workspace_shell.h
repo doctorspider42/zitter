@@ -337,8 +337,9 @@ class WorkspaceShell final : public ui::EventHandler,
   PanelViewport* workspace_viewport() const{return workspace_scroll_;}
   bool metal_sidebar_visible() const;
   bool metal_sidebar_grip_visible() const;
-  // 0 untyped/retired, 1 checkbox, 2 switch, 3 selector; local graph model diagnostics.
+  // 0 untyped/retired, 1 checkbox, 2 switch, 3 selector, 4 workspace; local graph model diagnostics.
   uint32_t control_model_kind_for_testing(views::View* view) const;
+  uint64_t workspace_scene_parent_for_testing(views::View* view) const;
   views::View* header_action_for_testing(size_t index) const;
   views::View* sidebar_action_for_testing(size_t index) const{return index==0?url_pill_.get():index==1?new_tab_button_.get():nullptr;}
   views::View* footer_action_for_testing(size_t index) const{return index==0?pin_button_.get():index==1?workspace_settings_button_.get():nullptr;}
@@ -752,7 +753,6 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> workspace_name_ = nullptr;
   raw_ptr<views::View> profile_name_ = nullptr;
   std::shared_ptr<SidebarNodeGraphState> chrome_node_graph_;
-  std::vector<std::string> chrome_workspace_ids_;
   raw_ptr<views::View> pin_button_ = nullptr;
   std::array<raw_ptr<views::View>, 3> nav_buttons_ = {};
   raw_ptr<views::View> sidebar_footer_=nullptr;

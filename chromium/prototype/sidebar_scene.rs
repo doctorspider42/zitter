@@ -131,6 +131,10 @@ mod ffi {
     struct RowInputResult { visual: RowVisual, action: RowAction, handled: bool }
     struct ActionNodeKey { kind: u32, high: u64, low: u64, name: String }
     struct ActionNodePlan { admitted: bool, ids: Vec<u64>, created: usize, retired: usize }
+    struct WorkspaceSceneInput { key: String, name: Vec<u16>, label: Vec<u16>, sleeping: bool, active: bool, enabled: bool }
+    struct WorkspaceSceneChild { id: u64, parent: u64, key: String, name: Vec<u16>, label: Vec<u16>, active: bool, enabled: bool, cancel_input: bool }
+    struct WorkspaceScene { root: u64, children: Vec<WorkspaceSceneChild> }
+
     struct ActionSnapshot { enabled: bool, focused: bool, on: bool, is_default: bool, visual: RowVisual }
     struct Rect { x: i32, y: i32, width: i32, height: i32 }
     struct RowLayout { title: Rect, detail: Rect, close: Rect }
@@ -407,6 +411,9 @@ mod ffi {
         type ActionGraph;
         fn new_action_graph() -> Box<ActionGraph>;
         fn reconcile(self: &mut ActionGraph, keys: Vec<ActionNodeKey>) -> ActionNodePlan;
+        fn reconcile_chrome(self: &mut ActionGraph, items: Vec<WorkspaceSceneInput>) -> ActionNodePlan;
+        fn workspace_scene(self: &ActionGraph) -> WorkspaceScene;
+        fn node_parent_id(self: &ActionControl) -> u64;
         fn acquire(self: &mut ActionGraph, key: &ActionNodeKey) -> Box<ActionControl>;
         fn append_form_action(self: &mut ActionGraph) -> Box<ActionControl>;
         fn retire_form_action(self: &mut ActionGraph, id: u64) -> bool;
@@ -1761,19 +1768,21 @@ fn action_node_key(key:&ffi::ActionNodeKey)->Option<ActionNodeIdentity>{
     match key.kind {
         kind @ (1|10) if (key.high!=0||key.low!=0)&&key.name.is_empty()=>Some((kind,key.high,key.low,String::new())),
         kind @ (7|8) if (key.high!=0||key.low!=0)&&!key.name.is_empty()=>Some((kind,key.high,key.low,key.name.clone())),
+        11 if key.high==0&&key.low==0&&key.name=="chrome.workspaces"=>Some((11,0,0,key.name.clone())),
         kind @ (2|3|4|5|6) if key.high==0&&key.low==0&&!key.name.is_empty()=>Some((kind,0,0,key.name.clone())),
         _=>None,
     }
 }
 // Typed payloads belong to the graph record, not the native adapter's Box.
 // Optional indirection keeps ordinary action records from embedding large models.
-enum NodeModel { Checkbox(CheckboxState), Toggle(ToggleState), Select(SelectState) }
+struct WorkspacePresentation {name:Vec<u16>,label:Vec<u16>,cancel_input:bool}
+enum NodeModel { Checkbox(CheckboxState), Toggle(ToggleState), Select(SelectState), Workspace(WorkspacePresentation) }
 impl NodeModel {
     // Popup tokens and IME prefix belong to one input lease, unlike selection.
     fn detach_input(&mut self){if let Self::Select(s)=self{s.dismiss();s.reset_prefix();s.last_close=None;}}
 }
-struct ActionNodeRecord { id:u64, lease:u64, attached:bool, alive:bool, state:ActionState, model:Option<Box<NodeModel>> }
-impl ActionNodeRecord {fn retire(&mut self){self.alive=false;self.attached=false;self.state.action_focus(false);self.state.action_cancel();self.model=None;}}
+struct ActionNodeRecord { id:u64, parent:u64, lease:u64, attached:bool, alive:bool, state:ActionState, model:Option<Box<NodeModel>> }
+impl ActionNodeRecord {fn retire(&mut self){self.alive=false;self.attached=false;self.state.action_focus(false);self.state.action_cancel();self.model=None;self.parent=0;}}
 pub struct ActionGraph { nodes:BTreeMap<ActionNodeIdentity,Rc<RefCell<ActionNodeRecord>>>, order:Vec<u64>, next_id:u64 }
 fn new_action_graph()->Box<ActionGraph>{Box::new(ActionGraph{nodes:BTreeMap::new(),order:vec![],next_id:1})}
 impl ActionGraph {
@@ -1784,13 +1793,19 @@ impl ActionGraph {
         if unique.len()!=identities.len(){return self.rejected();}
         if unique.iter().any(|key|key.0==10&&!unique.contains(&(1,key.1,key.2,String::new()))){return self.rejected();}
         if unique.iter().any(|key|matches!(key.0,7|8)&&!unique.contains(&(if key.0==7{8}else{7},key.1,key.2,key.3.clone()))){return self.rejected();}
+        // A retained logical child cannot outlive its Rust-owned parent. Whole
+        // subtree removal is valid; dangling retained edges reject atomically.
+        if self.nodes.values().any(|node|node.borrow().parent!=0){
+            let retained_ids=unique.iter().filter_map(|key|self.nodes.get(key).map(|n|n.borrow().id)).collect::<BTreeSet<_>>();
+            if unique.iter().any(|key|self.nodes.get(key).is_some_and(|node|{let node=node.borrow();node.parent!=0&&!retained_ids.contains(&node.parent)})){return self.rejected();}
+        }
         let created=identities.iter().filter(|key|!self.nodes.contains_key(*key)).count();
         if self.next_id.checked_add(created as u64).is_none(){return self.rejected();}
         let mut retired=0;
         self.nodes.retain(|key,node|{if unique.contains(key){return true;}let mut node=node.borrow_mut();node.retire();retired+=1;false});
         let mut order=Vec::with_capacity(identities.len());
         for key in identities {
-            let node=self.nodes.entry(key).or_insert_with(||{let id=self.next_id;self.next_id+=1;Rc::new(RefCell::new(ActionNodeRecord{id,lease:0,attached:false,alive:true,state:initial_action_state(),model:None}))});
+            let node=self.nodes.entry(key).or_insert_with(||{let id=self.next_id;self.next_id+=1;Rc::new(RefCell::new(ActionNodeRecord{id,parent:0,lease:0,attached:false,alive:true,state:initial_action_state(),model:None}))});
             order.push(node.borrow().id);
         }
         self.order=order.clone();ffi::ActionNodePlan{admitted:true,ids:order,created,retired}
@@ -1799,7 +1814,7 @@ impl ActionGraph {
     // acquire these keys. The group receives one lease with its fresh Rust ID.
     fn append_form_action(&mut self)->Box<ActionControl>{
         let Some(next)=self.next_id.checked_add(1) else{return Box::new(ActionControl{storage:ActionStorage::Retired});};
-        let id=self.next_id;let node=Rc::new(RefCell::new(ActionNodeRecord{id,lease:1,attached:true,alive:true,state:initial_action_state(),model:None}));
+        let id=self.next_id;let node=Rc::new(RefCell::new(ActionNodeRecord{id,parent:0,lease:1,attached:true,alive:true,state:initial_action_state(),model:None}));
         self.nodes.insert((9,id,0,String::new()),node.clone());self.order.push(id);self.next_id=next;
         Box::new(ActionControl{storage:ActionStorage::Shared{node,lease:1}})
     }
@@ -1807,10 +1822,32 @@ impl ActionGraph {
         let Some(node)=self.nodes.remove(&(9,id,0,String::new())) else{return false;};
         node.borrow_mut().retire();self.order.retain(|old|*old!=id);true
     }
+    fn reconcile_chrome(&mut self,items:Vec<ffi::WorkspaceSceneInput>)->ffi::ActionNodePlan{
+        let group=(11,0,0,"chrome.workspaces".to_owned());
+        if items.iter().any(|item|self.nodes.get(&(3,0,0,item.key.clone())).is_some_and(|node|node.borrow().model.as_deref().is_some_and(|m|!matches!(m,NodeModel::Workspace(_))))){return self.rejected();}
+        let previous_by_id=self.nodes.iter().filter(|(key,_)|key.0==3).map(|(key,node)|(node.borrow().id,key.3.as_str())).collect::<BTreeMap<_,_>>();
+        let previous=self.order.iter().filter_map(|id|previous_by_id.get(id).copied()).collect::<Vec<_>>();
+        let geometry_changed=previous.into_iter().ne(items.iter().map(|i|i.key.as_str()))||items.iter().any(|item|self.nodes.get(&(3,0,0,item.key.clone())).is_some_and(|node|{let n=node.borrow();matches!(n.model.as_deref(),Some(NodeModel::Workspace(p)) if p.label!=item.label)}));
+        let mut keys=Vec::with_capacity(9+items.len());
+        for name in ["pin","settings","header.sidebar","header.back","header.forward","header.reload","sidebar.address","sidebar.new-tab"]{keys.push(ffi::ActionNodeKey{kind:4,high:0,low:0,name:name.into()});}
+        keys.push(ffi::ActionNodeKey{kind:11,high:0,low:0,name:group.3.clone()});
+        for item in &items{keys.push(ffi::ActionNodeKey{kind:3,high:0,low:0,name:item.key.clone()});}
+        let plan=self.reconcile(keys);if !plan.admitted{return plan;}
+        let root=self.nodes[&group].borrow().id;
+        for item in items{let mut node=self.nodes[&(3,0,0,item.key)].borrow_mut();let mut name="Przestrzeń: ".encode_utf16().collect::<Vec<_>>();name.extend(item.name);if item.sleeping{name.extend(" · uśpiona".encode_utf16());}node.parent=root;node.state.action_on(item.active);node.state.action_enabled(item.enabled);if geometry_changed{node.state.action_cancel();}if let Some(NodeModel::Workspace(p))=node.model.as_deref_mut(){p.name=name;p.label=item.label;p.cancel_input=geometry_changed;}else{node.model=Some(Box::new(NodeModel::Workspace(WorkspacePresentation{name,label:item.label,cancel_input:geometry_changed})));}}
+        plan
+    }
+    fn workspace_scene(&self)->ffi::WorkspaceScene{
+        let root=self.nodes.get(&(11,0,0,"chrome.workspaces".into())).map_or(0,|node|node.borrow().id);
+        let by_id=self.nodes.iter().map(|(key,node)|(node.borrow().id,(key,node))).collect::<BTreeMap<_,_>>();
+        let children=self.order.iter().filter_map(|id|{let (key,node)=by_id.get(id)?;let node=node.borrow();let Some(NodeModel::Workspace(p))=node.model.as_deref() else{return None;};if root==0||node.parent!=root{return None;}Some(ffi::WorkspaceSceneChild{id:node.id,parent:node.parent,key:key.3.clone(),name:p.name.clone(),label:p.label.clone(),active:node.state.on,enabled:node.state.enabled,cancel_input:p.cancel_input})}).collect();
+        ffi::WorkspaceScene{root,children}
+    }
     fn acquire(&mut self,key:&ffi::ActionNodeKey)->Box<ActionControl>{
+        if key.kind==11{return Box::new(ActionControl{storage:ActionStorage::Retired});}
         let node=action_node_key(key).and_then(|key|self.nodes.get(&key)).cloned();
         let Some(node)=node else{return Box::new(ActionControl{storage:ActionStorage::Retired});};
-        let lease={let mut record=node.borrow_mut();let Some(lease)=record.lease.checked_add(1) else{return Box::new(ActionControl{storage:ActionStorage::Retired});};if let Some(model)=record.model.as_deref_mut(){model.detach_input();}record.lease=lease;record.attached=true;record.state.action_enabled(true);record.state.action_focus(false);record.state.action_cancel();lease};
+        let lease={let mut record=node.borrow_mut();let Some(lease)=record.lease.checked_add(1) else{return Box::new(ActionControl{storage:ActionStorage::Retired});};if let Some(model)=record.model.as_deref_mut(){model.detach_input();}record.lease=lease;record.attached=true;if !matches!(record.model.as_deref(),Some(NodeModel::Workspace(_))){record.state.action_enabled(true);}record.state.action_focus(false);record.state.action_cancel();lease};
         Box::new(ActionControl{storage:ActionStorage::Shared{node,lease}})
     }
 }
@@ -1847,7 +1884,8 @@ impl ActionControl {
     fn node_select_choose(&mut self,token: u64, index: usize, enabled: bool)->bool{self.write_node(|r|{let gate=r.state.enabled;if let Some(NodeModel::Select(s))=r.model.as_deref_mut(){s.choose(token,index,enabled&&gate)}else{false}}).unwrap_or_else(||false)}
     fn node_select_reset_prefix(&mut self)->(){self.write_node(|r|{if let Some(NodeModel::Select(s))=r.model.as_deref_mut(){s.reset_prefix()}else{()}}).unwrap_or_else(||())}
     fn node_select_input(&mut self,lower_text: &str, now_ms: u64, enabled: bool)->bool{self.write_node(|r|{let gate=r.state.enabled;if let Some(NodeModel::Select(s))=r.model.as_deref_mut(){s.input(lower_text,now_ms,enabled&&gate)}else{false}}).unwrap_or_else(||false)}
-    fn node_model_kind(&self)->u32{self.read_node(|r|match r.model.as_deref(){Some(NodeModel::Checkbox(_))=>1,Some(NodeModel::Toggle(_))=>2,Some(NodeModel::Select(_))=>3,None=>0}).unwrap_or(0)}
+    fn node_parent_id(&self)->u64{self.read_node(|node|node.parent).unwrap_or(0)}
+    fn node_model_kind(&self)->u32{self.read_node(|r|match r.model.as_deref(){Some(NodeModel::Checkbox(_))=>1,Some(NodeModel::Toggle(_))=>2,Some(NodeModel::Select(_))=>3,Some(NodeModel::Workspace(_))=>4,None=>0}).unwrap_or(0)}
     fn node_checkbox_init(&mut self,checked:bool)->bool{self.write_node(|r|match r.model.as_deref(){Some(NodeModel::Checkbox(_))=>true,Some(_)=>false,None=>{r.model=Some(Box::new(NodeModel::Checkbox(CheckboxState{checked})));true}}).unwrap_or(false)}
     fn node_checked(&self)->bool{self.read_node(|r|matches!(r.model.as_deref(),Some(NodeModel::Checkbox(s)) if s.checked())).unwrap_or(false)}
     fn node_set_checked(&mut self,checked:bool)->bool{self.write_node(|r|if let Some(NodeModel::Checkbox(s))=r.model.as_deref_mut(){s.set_checked(checked)}else{false}).unwrap_or(false)}
@@ -3104,6 +3142,38 @@ mod tests {
     fn node_pin(name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:2,high:0,low:0,name:name.into()}}
     fn node_close(low:u64)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:10,high:7,low,name:String::new()}}
     fn node_named(kind:u32,name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind,high:0,low:0,name:name.into()}}
+    fn space(key:&str,name:&str,label:&str)->ffi::WorkspaceSceneInput{ffi::WorkspaceSceneInput{key:key.into(),name:name.encode_utf16().collect(),label:label.encode_utf16().collect(),sleeping:false,active:false,enabled:true}}
+    fn workspace_tree()->Box<ActionGraph>{let mut g=new_action_graph();assert!(g.reconcile_chrome(vec![space("work","Praca",""),space("personal","Prywatne","")]).admitted);g}
+    #[test] fn workspace_tree_owns_parent_order_and_utf16_presentation(){
+        let mut g=new_action_graph();let mut item=space("w","日本語 🦀","🚀");item.sleeping=true;item.active=true;item.name.push(0xd800);assert!(g.reconcile_chrome(vec![item]).admitted);let tree=g.workspace_scene();assert_ne!(tree.root,0);assert_eq!(tree.children.len(),1);let child=&tree.children[0];assert_eq!(child.parent,tree.root);assert_ne!(child.id,tree.root);assert_eq!(child.key,"w");let mut name="Przestrzeń: 日本語 🦀".encode_utf16().collect::<Vec<_>>();name.push(0xd800);name.extend(" · uśpiona".encode_utf16());assert_eq!(child.name,name);assert_eq!(child.label,"🚀".encode_utf16().collect::<Vec<_>>());assert!(child.active&&child.enabled);let a=g.acquire(&node_named(3,"w"));assert_eq!(a.node_parent_id(),tree.root);assert_eq!(a.node_model_kind(),4);
+    }
+    #[test] fn workspace_container_cannot_acquire_input_or_arbitrary_identity(){
+        let mut g=workspace_tree();let root=g.acquire(&node_named(11,"chrome.workspaces"));assert_eq!(root.action_node_id(),0);assert!(!root.action_snapshot().enabled);let old=g.workspace_scene().root;assert!(!g.reconcile(vec![node_named(11,"forged")]).admitted);assert_eq!(g.workspace_scene().root,old);
+    }
+    #[test] fn workspace_invalid_projection_is_atomic_for_tree_properties_and_input(){
+        let mut g=workspace_tree();let old=g.workspace_scene();let mut a=g.acquire(&node_named(3,"work"));a.action_focus(true);a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);assert!(a.action_pending());for items in [vec![space("work","Changed","🚀"),space("work","Duplicate","")],vec![space("","Empty","")]]{assert!(!g.reconcile_chrome(items).admitted);let tree=g.workspace_scene();assert_eq!(tree.root,old.root);assert_eq!(tree.children[0].name,old.children[0].name);assert_eq!(tree.children[0].id,old.children[0].id);assert!(a.action_pending()&&a.action_snapshot().focused);}
+    }
+    #[test] fn workspace_removal_retires_payload_and_parent_for_retained_adapter(){
+        let mut g=workspace_tree();let mut a=g.acquire(&node_named(3,"personal"));let record=if let ActionStorage::Shared{node,..}=&a.storage{node.clone()}else{panic!("missing record")};let id=a.action_node_id();assert!(g.reconcile_chrome(vec![space("work","Praca","")]).admitted);assert_eq!(g.workspace_scene().children.len(),1);assert_eq!(a.action_node_id(),0);assert_eq!(a.node_parent_id(),0);assert!(record.borrow().model.is_none());assert!(!a.action_key(true,1,true,true).handled);assert!(g.reconcile_chrome(vec![space("work","Praca",""),space("personal","Again","")]).admitted);assert_ne!(g.workspace_scene().children[1].id,id);
+    }
+    #[test] fn workspace_name_selection_refresh_preserves_focus_and_pending_input(){
+        let mut g=workspace_tree();let tree=g.workspace_scene();let mut a=g.acquire(&node_named(3,"work"));a.action_focus(true);assert!(a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true).handled);let mut work=space("work","Renamed","");work.active=true;work.sleeping=true;let plan=g.reconcile_chrome(vec![work,space("personal","Prywatne","")]);assert_eq!((plan.created,plan.retired),(0,0));let next=g.workspace_scene();assert_eq!(tree.root,next.root);assert_eq!(tree.children[0].id,next.children[0].id);assert!(!next.children[0].cancel_input);assert!(a.action_pending()&&a.action_snapshot().focused&&a.action_snapshot().on);assert!(a.action_pointer(ffi::PointerPhase::Release,1,1,true,true,true).action==ffi::RowAction::Activate);
+    }
+    #[test] fn workspace_reorder_cancels_press_preserves_focus_ids_and_parent(){
+        let mut g=workspace_tree();let tree=g.workspace_scene();let mut a=g.acquire(&node_named(3,"work"));a.action_focus(true);a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);assert!(a.action_pending());g.reconcile_chrome(vec![space("personal","Prywatne",""),space("work","Praca","")]);let next=g.workspace_scene();assert_eq!(next.root,tree.root);assert_eq!(next.children[1].id,tree.children[0].id);assert!(next.children.iter().all(|n|n.parent==tree.root&&n.cancel_input));assert!(!a.action_pending());assert!(a.action_snapshot().focused);assert!(a.action_pointer(ffi::PointerPhase::Release,1,1,true,true,true).action!=ffi::RowAction::Activate);
+    }
+    #[test] fn workspace_emoji_geometry_change_cancels_sibling_press(){
+        let mut g=workspace_tree();let mut a=g.acquire(&node_named(3,"personal"));a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);assert!(a.action_pending());g.reconcile_chrome(vec![space("work","Praca","🚀"),space("personal","Prywatne","")]);assert!(g.workspace_scene().children.iter().all(|n|n.cancel_input));assert!(!a.action_pending());assert!(a.action_pointer(ffi::PointerPhase::Release,1,1,true,true,true).action!=ffi::RowAction::Activate);
+    }
+    #[test] fn workspace_readiness_survives_adapter_acquisition_and_reenable(){
+        let mut g=new_action_graph();let mut item=space("work","Praca","");item.enabled=false;g.reconcile_chrome(vec![item]);let mut a=g.acquire(&node_named(3,"work"));assert!(!a.action_snapshot().enabled);assert!(!a.action_key(true,1,true,true).handled);assert!(!g.workspace_scene().children[0].enabled);g.reconcile_chrome(vec![space("work","Praca","")]);assert!(a.action_snapshot().enabled);assert!(a.action_key(true,1,true,true).handled);
+    }
+    #[test] fn workspace_orphan_projection_rejects_but_whole_subtree_can_retire(){
+        let mut g=workspace_tree();let tree=g.workspace_scene();let mut a=g.acquire(&node_named(3,"work"));assert!(!g.reconcile(vec![node_named(3,"work")]).admitted);assert_eq!(a.node_parent_id(),tree.root);assert!(g.reconcile(vec![]).admitted);assert_eq!(a.node_parent_id(),0);assert_eq!(g.workspace_scene().root,0);assert!(g.workspace_scene().children.is_empty());assert!(!a.action_key(true,1,true,true).handled);
+    }
+    #[test] fn workspace_rebind_keeps_tree_properties_and_rejects_stale_adapter(){
+        let mut g=workspace_tree();let mut a=g.acquire(&node_named(3,"work"));let id=a.action_node_id();let root=a.node_parent_id();a.action_key(true,1,true,true);let b=g.acquire(&node_named(3,"work"));assert_eq!(b.action_node_id(),id);assert_eq!(b.node_parent_id(),root);assert_eq!(b.node_model_kind(),4);assert!(!a.action_key(false,1,true,true).handled);assert_eq!(a.node_parent_id(),0);assert_eq!(g.workspace_scene().children[0].name,"Przestrzeń: Praca".encode_utf16().collect::<Vec<_>>());drop(a);assert_eq!(b.node_parent_id(),root);
+    }
     fn selector_node()->(Box<ActionGraph>,Box<ActionControl>){let mut g=new_action_graph();g.reconcile(vec![node_pin("select")]);let mut a=g.acquire(&node_pin("select"));assert!(a.node_select_init(keyed_options(&[("a","Alpha"),("b","Beta"),("c","日本語 🦀")])));(g,a)}
     #[test] fn node_selector_preserves_options_selection_and_id_on_rebind(){
         let (mut g,mut old)=selector_node();let id=old.action_node_id();assert!(old.node_select_select_index(2));let mut next=g.acquire(&node_pin("select"));assert!(next.node_select_init(keyed_options(&[("x","Ignored defaults")])));assert_eq!(next.node_model_kind(),3);assert_eq!(next.action_node_id(),id);assert_eq!(next.node_select_selected(),2);assert_eq!(next.node_select_selected_key(),"c");assert_eq!(next.node_select_options()[2].label,"日本語 🦀");assert!(!old.node_select_select_index(0));drop(old);assert_eq!(next.node_select_selected_key(),"c");
