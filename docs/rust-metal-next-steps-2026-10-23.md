@@ -25,13 +25,14 @@ below. Headless validation is current; GUI acceptance is deferred by instruction
    Selector handoff cancels transient interaction while preserving retained-node
    values/options and rehydrating native label projections. Next move editor/text
    models and control properties, parent/child relationships, lifetime and layout
-   coordination into Rust. Workspace-switcher and history-row subtrees now have actual Rust-owned
-   parent/children/properties and incremental native adapter reuse.
+   coordination into Rust. Workspace-switcher, history-row and palette-result subtrees now have actual Rust-owned
+   parent/children/properties and incremental native adapter reuse; palette selection
+   is owned by its Rust root.
    The current ActionGraph owns
    logical identities/input leases for sidebar rows, window chrome, history, palette results, split-pane actions, form action groups and checked/selector input;
    native View trees still own containers and most scene-property projection.
-3. **Expand incremental adapter reconciliation.** Workspace-switcher and history-row adapters now
-   reuse/reorder by Rust ID and owner. Apply this to form/sidebar/palette trees
+3. **Expand incremental adapter reconciliation.** Workspace-switcher, history-row and palette-result adapters now
+   reuse/reorder by Rust ID and owner. Apply this to form/sidebar trees
    instead of clearing their lists on structural changes. Explicitly preserve focus,
    focus order, scroll/reveal and AX identity, while cancelling presses/drag/capture
    when their target or visibility changes. Current logical IDs alone do not do this.
@@ -39,7 +40,7 @@ below. Headless validation is current; GUI acceptance is deferred by instruction
    copy and form/busy state into Rust; finish outer dialog/palette/container
    placement. Keep native window, IME, clipboard, AX and popup/menu services explicit.
 5. **Run the deferred bulk UI checkpoint when requested.** Include all newly
-   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node, palette-node, split-node, form-action-node, workspace-dismiss-node, activation-observer, checked-selector-node, Peek-toolbar, checked-model, selector-model, workspace-scene and history-scene
+   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node, palette-node, split-node, form-action-node, workspace-dismiss-node, activation-observer, checked-selector-node, Peek-toolbar, checked-model, selector-model, workspace-scene, history-scene and palette-scene
    cases, the full Rust/Metal and Views matrices, and actual pointer/keyboard/
    capture/AX/focus/drag/profile/session regressions. The last completed full matrix
    remains the text-action checkpoint; the later selector full run was interrupted.
@@ -51,7 +52,49 @@ below. Headless validation is current; GUI acceptance is deferred by instruction
    profile persistence/rollback, regenerate the shipped dependency/license manifest
    and Apache-2.0/upstream notices. Keep Rust/Metal opt-in until acceptance is complete.
 
-## Latest headless implementation: Rust history scene and scoped adapter reuse
+## Latest headless implementation: graph-owned palette selection and results
+
+Source `9bad459` gives the palette a Rust-owned structural root and typed result
+children (UTF-16 title/detail, icon, target index, 44px height). The root also owns
+PaletteSelection index/moved state. Native PaletteView retains a scene-scope
+adapter instead of a separate selection-model Box; the old C++ bridge type and
+constructor are removed. Its standalone constructor is now test-only for oracles.
+
+The Rust/Metal consumer matches actual native rows by ID and live owner, reuses/
+reorders them and creates/deletes only missing/stale rows. Retained callbacks bind
+a key/ID and a weak scope, then resolve the current Rust index at activation before
+calling the unchanged native RunSuggestion dispatcher. They do not capture stale
+list indices or retain a scene/view callback cycle. Removed/stale/unattached/
+disabled targets fail resolution; current scope and visible-panel checks remain.
+Native query/profile/IME admission, command production and domain routing remain.
+
+Keyboard selection/reset cancels palette input. Content/icon, membership or order
+changes cancel presses across the whole batch, including an unchanged synthetic
+Open row. Identical batches preserve leases/focus/pending input. Native projection
+updates highlight, text, icon, AX and canvas invalidation from Rust snapshots.
+Committed scenes clamp selection to their actual count; selection wrappers retain
+the legacy reducer's index/moved policy and native selected-item matching.
+
+Validation: **379 Rust**, **68 live + 68 clean-archive Python**, **180 CoreText SDK
+cases plus raster**, scoped GN/header and boundary checks. Both app/test binaries
+compile, all **53 committed/live/staged prototype inputs** match and the final
+three-target Ninja check reports no work. Fourteen new Rust cases cover selection
+oracles, tree/properties/lifetime, batch cancellation and live target resolution.
+Two new compiled browser cases cover native identity/focus/AX, keyboard selection,
+duplicates/query retirement and reordered callbacks. The pending-replacement
+regression now expects a retained View with cancelled input. **No UI tests were
+run**; the running preview was left unchanged.
+
+Workspace, history and palette subtrees now have Rust parent/properties/order and
+incremental native consumers. Complete forms/sidebar/editor/text ownership and
+whole-window lifetime/layout remain open. Native PaletteView still owns the scope
+adapter lifetime, and platform window/IME/AX/font/menu/clipboard/Metal services
+remain explicit. Native routing and focus/AX/scroll/IME/rendering acceptance,
+CPU/GPU/presentation profiling, compositor diagnostics and release/license checks
+remain deferred. No memory or timing gain is claimed.
+Evidence: [palette-scene report](benchmarks/rust-palette-scene-headless-2026-10-27.json).
+
+## Previous headless implementation: Rust history scene and scoped adapter reuse
 
 Source `dbad24b` gives history results a Rust-owned structural root, ordered
 children, parent edges and typed row properties (UTF-16 title/detail/display URL,

@@ -14,7 +14,49 @@ accumulate compiled cases for a later bulk checkpoint. Build, Rust/Python and SD
 checks without windows remain enabled. No computer shutdown is requested.
 The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 
-## Latest headless implementation: Rust history scene and scoped adapter reuse
+## Latest headless implementation: graph-owned palette selection and results
+
+Source `9bad459` gives the palette a Rust-owned structural root and typed result
+children (UTF-16 title/detail, icon, target index, 44px height). The root also owns
+PaletteSelection index/moved state. Native PaletteView retains a scene-scope
+adapter instead of a separate selection-model Box; the old C++ bridge type and
+constructor are removed. Its standalone constructor is now test-only for oracles.
+
+The Rust/Metal consumer matches actual native rows by ID and live owner, reuses/
+reorders them and creates/deletes only missing/stale rows. Retained callbacks bind
+a key/ID and a weak scope, then resolve the current Rust index at activation before
+calling the unchanged native RunSuggestion dispatcher. They do not capture stale
+list indices or retain a scene/view callback cycle. Removed/stale/unattached/
+disabled targets fail resolution; current scope and visible-panel checks remain.
+Native query/profile/IME admission, command production and domain routing remain.
+
+Keyboard selection/reset cancels palette input. Content/icon, membership or order
+changes cancel presses across the whole batch, including an unchanged synthetic
+Open row. Identical batches preserve leases/focus/pending input. Native projection
+updates highlight, text, icon, AX and canvas invalidation from Rust snapshots.
+Committed scenes clamp selection to their actual count; selection wrappers retain
+the legacy reducer's index/moved policy and native selected-item matching.
+
+Validation: **379 Rust**, **68 live + 68 clean-archive Python**, **180 CoreText SDK
+cases plus raster**, scoped GN/header and boundary checks. Both app/test binaries
+compile, all **53 committed/live/staged prototype inputs** match and the final
+three-target Ninja check reports no work. Fourteen new Rust cases cover selection
+oracles, tree/properties/lifetime, batch cancellation and live target resolution.
+Two new compiled browser cases cover native identity/focus/AX, keyboard selection,
+duplicates/query retirement and reordered callbacks. The pending-replacement
+regression now expects a retained View with cancelled input. **No UI tests were
+run**; the running preview was left unchanged.
+
+Workspace, history and palette subtrees now have Rust parent/properties/order and
+incremental native consumers. Complete forms/sidebar/editor/text ownership and
+whole-window lifetime/layout remain open. Native PaletteView still owns the scope
+adapter lifetime, and platform window/IME/AX/font/menu/clipboard/Metal services
+remain explicit. Native routing and focus/AX/scroll/IME/rendering acceptance,
+CPU/GPU/presentation profiling, compositor diagnostics and release/license checks
+remain deferred. No memory or timing gain is claimed.
+Evidence: [palette-scene report](benchmarks/rust-palette-scene-headless-2026-10-27.json).
+
+## Previous headless implementation: Rust history scene and scoped adapter reuse
 
 Source `dbad24b` gives history results a Rust-owned structural root, ordered
 children, parent edges and typed row properties (UTF-16 title/detail/display URL,
