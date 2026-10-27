@@ -28,12 +28,13 @@ below. Headless validation is current; GUI acceptance is deferred by instruction
    coordination into Rust. Workspace-switcher, history-row and palette-result subtrees now have actual Rust-owned
    parent/children/properties and incremental native adapter reuse; palette selection
    is owned by its Rust root. Registered form controls now have Rust parents/order,
-   and standalone/dialog action-group layout policy lives in Rust.
+   and standalone/dialog action-group layout policy lives in Rust. Visible site-rule
+   composites also retain their text/action adapters across data refreshes.
    The current ActionGraph owns
    logical identities/input leases for sidebar rows, window chrome, history, palette results, split-pane actions, form action groups and checked/selector input;
    native View trees still own containers and most scene-property projection.
-3. **Expand incremental adapter reconciliation.** Workspace-switcher, history-row and palette-result adapters now
-   reuse/reorder by Rust ID and owner. Apply this to form/sidebar trees
+3. **Expand incremental adapter reconciliation.** Workspace-switcher, history-row, palette-result and site-rule composite adapters now
+   reuse/reorder by Rust ID and owner. Expand this to the remaining form/sidebar trees
    instead of clearing their lists on structural changes. Explicitly preserve focus,
    focus order, scroll/reveal and AX identity, while cancelling presses/drag/capture
    when their target or visibility changes. Current logical IDs alone do not do this.
@@ -41,7 +42,7 @@ below. Headless validation is current; GUI acceptance is deferred by instruction
    copy and form/busy state into Rust; finish outer dialog/palette/container
    placement. Keep native window, IME, clipboard, AX and popup/menu services explicit.
 5. **Run the deferred bulk UI checkpoint when requested.** Include all newly
-   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node, palette-node, split-node, form-action-node, workspace-dismiss-node, activation-observer, checked-selector-node, Peek-toolbar, checked-model, selector-model, workspace-scene, history-scene, palette-scene and form-scene
+   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node, palette-node, split-node, form-action-node, workspace-dismiss-node, activation-observer, checked-selector-node, Peek-toolbar, checked-model, selector-model, workspace-scene, history-scene, palette-scene, form-scene and site-rule-scene
    cases, the full Rust/Metal and Views matrices, and actual pointer/keyboard/
    capture/AX/focus/drag/profile/session regressions. The last completed full matrix
    remains the text-action checkpoint; the later selector full run was interrupted.
@@ -53,7 +54,49 @@ below. Headless validation is current; GUI acceptance is deferred by instruction
    profile persistence/rollback, regenerate the shipped dependency/license manifest
    and Apache-2.0/upstream notices. Keep Rust/Metal opt-in until acceptance is complete.
 
-## Latest headless implementation: form roots and action-group layout policy
+## Latest headless implementation: retained site-permission rule rows
+
+Source `add4870` gives visible site-rule rows a Rust structural root, ordered
+identities and typed detail/editability/backend-source-index payloads. Keys frame
+profile, permission key, primary/secondary pattern and duplicate occurrence;
+occurrence is assigned before filtering. Native formatting/filter/limit/keyword
+projection remains unchanged.
+
+The Rust preference consumer reuses actual composite row Views by node ID and
+live owner. Existing text and inner action-group/button adapters survive refresh,
+setting changes and list reorder. Identical batches keep leases and inner input;
+content/editability/source-index/order/membership changes cancel batch presses.
+Native projection updates text, enabled state, AX and paint invalidation.
+
+Weak row/scope callbacks resolve the current Rust source index at activation.
+They require the opening profile/current scope, a live owned row, a visible
+preferences widget and the active native parent list. This last guard covers an
+activation observer detaching the entire composite while the inner button remains
+alive. Native source bounds and deferred profile guards preserve exact backend
+rule dispatch; actual permission/managed-rule authorization stays in Chromium.
+A common PostRemoveSiteRule helper retains the original deferred operation,
+refresh/filter and status messages. Views keeps its rebuild path.
+
+Validation: **399 Rust**, **68 live + 68 clean-archive Python**, **180 CoreText SDK
+cases plus raster**, scoped GN/header and boundary checks. Both app/test binaries
+compile, all **53 committed/live/staged prototype inputs** match and the final
+three-target Ninja check reports no work. Ten new Rust cases cover row payloads,
+source retargeting, editable/stale admission, invalid projection, replacement and
+lifetime. Three new compiled browser cases cover composite/control reuse, insertion
+and correct removal, plus observer-driven retained ancestor detachment. Existing
+pagination and deferred-profile binding tests remain in the bulk checkpoint.
+**No UI tests were run**, and the running preview was left unchanged.
+
+This migrates visible site-rule composites, not the whole preferences tree. Inner
+text/action-group scopes remain separate existing adapters. Empty/more controls
+are recreated; filtering a rule out retires its model. Complete forms/sidebar/
+editor/text/window ownership, wider keyed reconciliation and native focus/AX/menu/
+scroll/observer acceptance remain open. CPU/GPU/presentation profiling, compositor
+diagnostics and release/license checks are deferred. Added storage/identity/
+snapshot costs are unmeasured; no memory or timing gain is claimed.
+Evidence: [site-rule-scene report](benchmarks/rust-site-rule-scene-headless-2026-10-27.json).
+
+## Previous headless implementation: form roots and action-group layout policy
 
 Source `40e74fb` gives every production SceneGroupNodes scope a Rust structural
 form root and ordered private control membership. Checkbox/switch/selector/action

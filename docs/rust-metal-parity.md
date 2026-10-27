@@ -14,7 +14,49 @@ accumulate compiled cases for a later bulk checkpoint. Build, Rust/Python and SD
 checks without windows remain enabled. No computer shutdown is requested.
 The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 
-## Latest headless implementation: form roots and action-group layout policy
+## Latest headless implementation: retained site-permission rule rows
+
+Source `add4870` gives visible site-rule rows a Rust structural root, ordered
+identities and typed detail/editability/backend-source-index payloads. Keys frame
+profile, permission key, primary/secondary pattern and duplicate occurrence;
+occurrence is assigned before filtering. Native formatting/filter/limit/keyword
+projection remains unchanged.
+
+The Rust preference consumer reuses actual composite row Views by node ID and
+live owner. Existing text and inner action-group/button adapters survive refresh,
+setting changes and list reorder. Identical batches keep leases and inner input;
+content/editability/source-index/order/membership changes cancel batch presses.
+Native projection updates text, enabled state, AX and paint invalidation.
+
+Weak row/scope callbacks resolve the current Rust source index at activation.
+They require the opening profile/current scope, a live owned row, a visible
+preferences widget and the active native parent list. This last guard covers an
+activation observer detaching the entire composite while the inner button remains
+alive. Native source bounds and deferred profile guards preserve exact backend
+rule dispatch; actual permission/managed-rule authorization stays in Chromium.
+A common PostRemoveSiteRule helper retains the original deferred operation,
+refresh/filter and status messages. Views keeps its rebuild path.
+
+Validation: **399 Rust**, **68 live + 68 clean-archive Python**, **180 CoreText SDK
+cases plus raster**, scoped GN/header and boundary checks. Both app/test binaries
+compile, all **53 committed/live/staged prototype inputs** match and the final
+three-target Ninja check reports no work. Ten new Rust cases cover row payloads,
+source retargeting, editable/stale admission, invalid projection, replacement and
+lifetime. Three new compiled browser cases cover composite/control reuse, insertion
+and correct removal, plus observer-driven retained ancestor detachment. Existing
+pagination and deferred-profile binding tests remain in the bulk checkpoint.
+**No UI tests were run**, and the running preview was left unchanged.
+
+This migrates visible site-rule composites, not the whole preferences tree. Inner
+text/action-group scopes remain separate existing adapters. Empty/more controls
+are recreated; filtering a rule out retires its model. Complete forms/sidebar/
+editor/text/window ownership, wider keyed reconciliation and native focus/AX/menu/
+scroll/observer acceptance remain open. CPU/GPU/presentation profiling, compositor
+diagnostics and release/license checks are deferred. Added storage/identity/
+snapshot costs are unmeasured; no memory or timing gain is claimed.
+Evidence: [site-rule-scene report](benchmarks/rust-site-rule-scene-headless-2026-10-27.json).
+
+## Previous headless implementation: form roots and action-group layout policy
 
 Source `40e74fb` gives every production SceneGroupNodes scope a Rust structural
 form root and ordered private control membership. Checkbox/switch/selector/action
