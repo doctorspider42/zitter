@@ -1,0 +1,152 @@
+{
+  "date": "2026-10-27",
+  "status": "HEADLESS_ONLY_UI_DEFERRED",
+  "tested_ui_source_commit": "93df19c3831d0932a3eaf74d36bb4ba10c277e35",
+  "source_inputs": {
+    "source_commit": "93df19c3831d0932a3eaf74d36bb4ba10c277e35",
+    "count": 53,
+    "source_sha256": {
+      "chromium/prototype/arc_importer.cc": "e3c6aa5d0876a9d1c29305136d225eba78a8d8b95c3267cabf5d8a96d5d9ecf4",
+      "chromium/prototype/arc_importer.h": "b5cb4ccc4871c9ad7af3e578763bc3d8347fc9adc394c05624f1653b342ea2fc",
+      "chromium/prototype/browser_data.h": "243b1d34847d4358041190ed42ee0c0600a21257003b54c056c59f4ef764a747",
+      "chromium/prototype/browser_import_data.cc": "c6d7d1750ab9be441a264691382928417cdea7e0959b2b86cb2ce5bd4fbbb37c",
+      "chromium/prototype/browser_import_data.h": "35039b3013e0754f88be9f021428160eacbbe65de8f61eef2983a65ca0291b7b",
+      "chromium/prototype/browser_import_key_mac.mm": "65d0b914b43a7268a54d309f021a5a6c7ead871dbe68c0fb2581005456af1bd1",
+      "chromium/prototype/browser_preferences.cc": "34fafbb418688d581d581599e57d68a3d572c6fbfa311f1a8525c67340a77c48",
+      "chromium/prototype/browser_preferences.h": "63a931a276df3c05f49e098c6977d99b14112ad20f4df4dc9ab8a513c96f6f68",
+      "chromium/prototype/browser_tools.cc": "62964f8f594011af7a60983890a33027ebacddd7faa3642e77bd59e4a635a62e",
+      "chromium/prototype/browser_tools.h": "ef83716f8bb01fe5b3b770f9136288a39aefedfe4b299e305b1dd1f740b1ad6a",
+      "chromium/prototype/download_panel.cc": "0a3e3206a6d782a12599b8c6d0913e9b43b31ae3849be5effab9a1a60118f197",
+      "chromium/prototype/download_panel.h": "1db13545467abf4729b4c340323997bed4a0af4bb232670755ff20e0d37eaa50",
+      "chromium/prototype/editor_control.h": "6a7d417696dadff55daaa05581be0cc71a825cfbbc934921fcd3616d872275f3",
+      "chromium/prototype/editor_text_layout.h": "35a72c6965037f684ee5f88338f71aa07b41842de4e7417ab6af1df7300c26cb",
+      "chromium/prototype/editor_text_layout_mac.inc": "13f2fddef229486fb25f42fb275cc0d7256bebe6d9599356822ff4b11db81984",
+      "chromium/prototype/editor_text_layout_test.mm": "a0bc7f9d485717b6a303b31952ad35ae8d3b3b021b016cb2b0ee8fc890726844",
+      "chromium/prototype/link_navigation.cc": "464f61fdd785d5cc3fc8d5551d8dce767f237a7338080d87e101a6a380855f13",
+      "chromium/prototype/link_navigation.h": "77c3df9a92f9038e7794c8c482f916114c84008bb3ddc02dd31a38ba073e9ff8",
+      "chromium/prototype/page_dialogs.cc": "5c38cc385307fd74367f0c3a06ce046d4bb31627569811824800960268931768",
+      "chromium/prototype/page_dialogs.h": "25127bc2396ade18c6dab4c3604fe48c74fdd90e5b3c7f0d50f136faab079157",
+      "chromium/prototype/page_file_access.cc": "26d797ddc42a17806f949540e628614779836b49c2d4f9d5ea199ff9a94f0a8c",
+      "chromium/prototype/page_file_access.h": "313f54266ef5051c52b654632273a1b7f84c8c09e53930bbecdee3b747d27888",
+      "chromium/prototype/page_file_access_browsertest.cc": "008833c70f884d045277409a5371d006ca1ddd851f0047584b3d0d0fb2b04f81",
+      "chromium/prototype/page_media_access.cc": "49a3f4a21f30a31f6559bf48b82837d72c87ab8148ea870cdd2f113a4b42473d",
+      "chromium/prototype/page_media_access.h": "224414fce67a836f34acffca609593e456ce00cc1d7d02ae003eb87a5484dacc",
+      "chromium/prototype/page_media_access_browsertest.cc": "7eedc13b1453308cb9db00c2445f896c031a0afb2a1dd18b8b0f4d85f8709493",
+      "chromium/prototype/page_services.cc": "701def23690ef2c6e6843b8c4bd16f76d09a066bdade34d9dfc45010283da9c2",
+      "chromium/prototype/page_services.h": "b031e317d2e96c4245ff019e5185c6f103f533b2f9efd3ea98132ddaef333d6d",
+      "chromium/prototype/profile_workspace_browsertest.cc": "7c8192be2d789d2df14b5e35ad340278c5c9f700185a7ec5745e141230ffc470",
+      "chromium/prototype/scene_editor.cc": "1750eabbc946da28efc519939e5de6db0c59813212feaae47716fd705bfb1c75",
+      "chromium/prototype/sidebar.metal": "844a08c8a905931a313126a2d3c96f22e25228da1fc149ec6c12e88fc9755cc5",
+      "chromium/prototype/sidebar_editor.rs": "963e52ae3fb70efd48e1d15ca059095ed02812fbaea3ddd1266d39188134c6de",
+      "chromium/prototype/sidebar_layout.cc": "23ba7bf07cc9837218c9a86877debc33584daa5178f311f288d7ae2c8c7ff757",
+      "chromium/prototype/sidebar_layout.h": "4493febfebb642634cbcba3e96c5acdd8f2cd872afb88ddd2a4de9828df553be",
+      "chromium/prototype/sidebar_metal.h": "aaec1f74aa15b73a2d524676c8e961b7a7c4c4a55e5092127f1d79586c3b158a",
+      "chromium/prototype/sidebar_metal.mm": "d10bcc4e2adc97bac0fcb897558a7992b0cbb06c6a738bdf3087738f74377a5d",
+      "chromium/prototype/sidebar_scene.rs": "5e4849b7d7e599a244ccc88e06c2353327bb75ac44461279e90c0492a35cb51a",
+      "chromium/prototype/sidebar_tree.cc": "d72174ac4aac1f29b780a057b1b2773d5958fbd64904ee05dca7ce8d4109229b",
+      "chromium/prototype/sidebar_tree.h": "d59f6e86d9d44dce943e1a82591d6fda73b595fa6678a062ceed158342948e77",
+      "chromium/prototype/workspace_browser_settings.cc": "eef5a07c3857ddbe94f543293c367be7b3ef5fede5d6a1249ce8cd12ba22cf4b",
+      "chromium/prototype/workspace_commands.cc": "8b2b5f8406a9f72a971d68235ff1bf6b940bdf6968aa36bb1005380293554163",
+      "chromium/prototype/workspace_frame_mac.h": "dd234cbb65d673cd58ea4ea3a37d34111890b66b7a6f4b255304c97db6d61021",
+      "chromium/prototype/workspace_frame_mac.mm": "2827f43e3c08069d7de3002a192a5f7c6f912a9745153925326bbeca86db884e",
+      "chromium/prototype/workspace_keyboard_mac.h": "957a086998c824d72afc3a2fa12406771eb7f7d1439a3c1291cd404e8f6b3d25",
+      "chromium/prototype/workspace_keyboard_mac.mm": "54019c3030fd8029752c0bb55c4f5f0109bf30a34649bb78cc63c11df7193eed",
+      "chromium/prototype/workspace_lifecycle.cc": "e4d73972762ce21156a3a022de73f7edb5e9b520d15cfaf517df289128416c1b",
+      "chromium/prototype/workspace_preconnect.cc": "4b049f91fa11fb4ae523051a37a573c505ef0f1197935afaa6cdd22fa38e664c",
+      "chromium/prototype/workspace_preconnect_browsertest.cc": "5243272c30d25c9c39a5f413259227d4ce083294207326415ddf35da2a0a1e09",
+      "chromium/prototype/workspace_shell.cc": "de83dcc7a9de4a07e279b2f3de89bbf644f353500f4c8209a44f5f328ce6950f",
+      "chromium/prototype/workspace_shell.h": "37f7f6d7570cdc77e4f6ccab918e6cb8a3146e0ccfa62eab573266496b03d59c",
+      "chromium/prototype/workspace_time_machine.cc": "4ae4f979d80cd4ece460be3cea499257d18b95243ce6f0dad0f8d2fbdad15bae",
+      "chromium/prototype/workspace_window.cc": "9a4b7d30c8d0911c477a1d03ce965122b600e2b6a98f98486159bc5e137082f1",
+      "chromium/prototype/workspace_window.h": "f338147929b886ca719807513f463494b5b8601d55c9c664b3c7b8ced2f23189"
+    }
+  },
+  "compiled_browser_test_uuid": "4C4C446E-5555-3144-A1A3-7DBA072572CB",
+  "compiled_app_uuid": "4C4C44BE-5555-3144-A133-EB417DDDFF10",
+  "compiled_framework_uuid": "4C4C44A2-5555-3144-A110-FFEEFE0D5D89",
+  "build_input_snapshot": {
+    "frozen_base": "a3afc206f742f0a59da6e65d609ddf1df3c7326d",
+    "gn_delta": "No target/dependency change. Rust node-key policy and native footer bindings/tests changed; root network policy remains excluded.",
+    "method": "Frozen UI base a3afc206f742f0a59da6e65d609ddf1df3c7326d plus 26 explicit live override paths and frozen installer/stager hooks; all 53 prototype inputs match committed/live/staged content.",
+    "staged_build_gn_sha256": "711f7d01a8d55c4046a9dc297a30f7724d414d7682d8c8b6759397bac28cfdd7",
+    "staged_main_cc_sha256": "61dea81d0e263778c386eb6435429a8d90c4daa51f1dd787563facf7ddffa5d1",
+    "global_component_updater_sha256": "df5664ec70774c448137a2c4c7fa0503de084098932552d9d278f63e19d910ac",
+    "global_component_updater_matches_previous_checkpoint": true,
+    "build_tools_sha256": {
+      "tools/editor_service_patch.py": "73a4e43cfd4edb0dd919c7bec97392f1ceabe063ebc500aa289b1c030f90f9b8",
+      "tools/install_chromium_overlay.py": "a32bc13189118b9d4bbb56a4c8023b19ce94dfeefeb8fd42dc31a7d36de7b5d0",
+      "tools/stage_performance_candidate.py": "2e8482b94a72ac37c50aead85de00253afba581c22daabfce2053f10b7c550ed"
+    }
+  },
+  "native_service_patch": {
+    "chromium_revision": "1a732fcc23b20dd0bcf38f35d72c1fe1ec799d35",
+    "files": {
+      "ui/views/controls/textfield/text_edit_kill_buffer.h": {
+        "sha256": "0bacacfdd8480cb991ab9b041f15a6aee8775e358f901e2774f04c0a9e6e37c0",
+        "pinned_original_sha256": null
+      },
+      "ui/views/controls/textfield/textfield_model.cc": {
+        "sha256": "7884c624f8d5a075891d5b059b16ff686956ca8e9158be0c23444744c47716fd",
+        "pinned_original_sha256": "3f7df6d86aeabe0f2b43e9d3312eb0f07838c55f69cd3a0a05af9a02755eb9a7"
+      },
+      "ui/views/BUILD.gn": {
+        "sha256": "8fc448fd6e0513f8bfe25d479531d1739fe21620d1ec4ec3253ba7dc80a8dd91",
+        "pinned_original_sha256": "fee5303f268675f877649144c07d4dda788a21068bc620f16e73efae5d674c70"
+      }
+    },
+    "only_expected_upstream_edits": true,
+    "model_instance_created_by_service": false,
+    "license": "Generated Chromium header and source hook retain the Chromium BSD-style license; project adapter/tool/model changes use Apache-2.0."
+  },
+  "checks": {
+    "rust": {
+      "path": "/Users/papaj/Projects/zitter/build/footer-node-rust.log",
+      "sha256": "93c5b97cda3d05b9e724bf356ec28c4f627b40a4e51c3d89fb978291fde6fe5e"
+    },
+    "gn": {
+      "path": "/Users/papaj/Projects/zitter/build/footer-node-gn.log",
+      "sha256": "758efd67ba4374faadfea3be2227cf65809c7c37f9e1e304dda137f152db50ed"
+    },
+    "boundaries": {
+      "path": "/Users/papaj/Projects/zitter/build/footer-node-boundaries.log",
+      "sha256": "2734f2795db1562441bedd4b056c447b4e3c3cc848e6ff6bf5014befe98c3984"
+    },
+    "noop": {
+      "path": "/Users/papaj/Projects/zitter/build/footer-node-noop.log",
+      "sha256": "0e45b11aa4c9cc3cf65105ab14996d4c61b50ced60e5c9281d929e306cd70c17"
+    },
+    "coretext": {
+      "cases": 180,
+      "raster": true,
+      "path": "/Users/papaj/Projects/zitter/build/footer-node-sdk.log",
+      "sha256": "e318e6319c1fac17bedeb24a5f3a4a4a5a1ff9532049292973e04a9eb3f1276f"
+    },
+    "python": {
+      "passed": 68,
+      "path": "/Users/papaj/Projects/zitter/build/footer-node-python.log",
+      "sha256": "733b2df6925818f9f78185598cb532a1484b791460cef79c102301225ac0dd60"
+    },
+    "committed-python": {
+      "passed": 68,
+      "path": "/Users/papaj/Projects/zitter/build/footer-node-committed-python.log",
+      "sha256": "69a73f9ec2790ad40f536ee38f89cc73b4e66d66e888b0f0b4b74758f935f4bc"
+    }
+  },
+  "ui_tests_run": false,
+  "changes": [
+    "Workspace footer actions now acquire Rust graph-owned controls: kind 3 is an opaque workspace ID and kind 4 is fixed footer chrome (pin/settings). Separate namespaces cannot alias pin or workspace domain IDs.",
+    "Reconcile the complete footer snapshot before native button replacement. Emoji/name/profile/catalogue rebuilds preserve logical IDs; old adapters lose their lease, removed workspaces retire and reinsertions allocate fresh IDs. Pin/settings are not rebound by workspace-dot refresh. Detaching the shell drops the scope and invalidates any retained handles.",
+    "Three new pure Rust tests cover footer namespaces, reorder/replacement/retirement/reinsertion and transactional invalid snapshots. A compiled-only browser case retains an old workspace adapter, changes its emoji, checks logical identity and stale AX rejection, then changes selection and clears the emoji."
+  ],
+  "deferred_gui_cases": [
+    "ZitterProfilesBrowserTest.FooterLogicalNodesSurviveEmojiReplacementAndRejectStaleAdapter",
+    "ZitterProfilesBrowserTest.FooterActionHostsOwnershipEmojiMenuKeysAXAndClip",
+    "ZitterProfilesBrowserTest.SidebarLogicalNodesSurviveIndexShiftAndAdapterReplacement"
+  ],
+  "limits": [
+    "No browser UI tests or manual acceptance were run, per current user instruction. Compilation and headless checks do not establish GUI parity.",
+    "Existing preview was left running and not repackaged. Workspace dot Views are still rebuilt; logical IDs alone do not restore native keyboard focus. Static header, address, new-tab, result and form controls remain standalone.",
+    "Full scene properties/parenting, incremental native adapter reconciliation/focus, View containers/layout, native popup menus, controlled performance, compositor diagnostics, manual input/IME/VoiceOver/RTL/GPU recovery and release/license acceptance remain open.",
+    "Frozen UI-lab bootstrap/network inputs exclude current-main network policy."
+  ]
+}

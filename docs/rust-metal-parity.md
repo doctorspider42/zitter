@@ -14,7 +14,22 @@ for a later bulk checkpoint. Build, Rust/Python and SDK checks without windows
 remain enabled. No shutdown is triggered by the former weekly threshold.
 The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 
-## Latest headless implementation: stable sidebar nodes
+## Latest headless implementation: stable footer nodes
+
+Source `93df19c` extends Rust registry ownership to workspace switchers and footer
+pin/settings controls. Workspace IDs and static chrome have distinct key kinds.
+Rebuilds preserve logical IDs; leases reject replaced adapters, deletion retires
+nodes and reinsertion gets a fresh ID. Detaching the shell invalidates its scope.
+Native workspace buttons still rebuild; keyboard focus restoration remains open.
+
+Both binaries compile. **307 Rust**, **180 SDK cases plus raster**, **68 live and
+68 clean-archive Python**, scoped GN/boundaries and final Ninja no-op passed.
+All 53 committed/live/staged prototype inputs match. **No UI tests ran.** The
+retained-adapter/emoji/AX/selection case is compiled for the later bulk checkpoint.
+[Headless evidence](benchmarks/rust-footer-node-headless-2026-10-27.json).
+The existing preview remains unchanged; this establishes no GUI parity or speedup.
+
+## Earlier headless implementation: stable sidebar nodes
 
 Source `22e2c1b` moves sidebar tab, pin and tab-close logical identities and input
 state into a workspace-scoped Rust registry. Native adapter replacement keeps
