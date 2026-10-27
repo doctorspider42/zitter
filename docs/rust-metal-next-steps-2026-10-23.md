@@ -16,13 +16,13 @@ The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 This queue supersedes implementation suggestions in the historical checkpoints
 below. Headless validation is current; GUI acceptance is deferred by instruction.
 
-1. **Complete action-node scopes.** Extend registry ownership to split-pane actions, preference/workspace/profile/import form actions and
+1. **Complete action-node scopes.** Extend registry ownership to preference/workspace/profile/import form actions and
    download/service-panel controls. Define keys from actual target identity and
    scope, and retire nodes when lists/forms/profile contexts disappear. Preserve
    browser/store authorization in native services.
 2. **Own the scene tree.** Move control properties, parent/child relationships,
    lifetime and layout coordination into Rust. The current ActionGraph owns
-   logical identities/input leases for sidebar rows, window chrome, history and palette results;
+   logical identities/input leases for sidebar rows, window chrome, history, palette results and split-pane actions;
    native View trees still own containers and most scene-property projection.
 3. **Reconcile adapters incrementally.** Reuse/reorder native adapters by Rust ID
    instead of clearing lists on structural changes. Explicitly preserve focus,
@@ -32,7 +32,7 @@ below. Headless validation is current; GUI acceptance is deferred by instruction
    copy and form/busy state into Rust; finish outer dialog/palette/container
    placement. Keep native window, IME, clipboard, AX and popup/menu services explicit.
 5. **Run the deferred bulk UI checkpoint when requested.** Include all newly
-   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node and palette-node
+   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node, palette-node and split-node
    cases, the full Rust/Metal and Views matrices, and actual pointer/keyboard/
    capture/AX/focus/drag/profile/session regressions. The last completed full matrix
    remains the text-action checkpoint; the later selector full run was interrupted.
@@ -44,7 +44,36 @@ below. Headless validation is current; GUI acceptance is deferred by instruction
    profile persistence/rollback, regenerate the shipped dependency/license manifest
    and Apache-2.0/upstream notices. Keep Rust/Metal opt-in until acceptance is complete.
 
-## Latest headless implementation: palette result nodes
+## Latest headless implementation: split-pane action nodes
+
+Source `a9f068e` moves split-pane menu/close input into a Rust scope per native
+pane bar. Paired roles use workspace and the existing opaque 128-bit tab ID;
+title, active display and current index do not define identity. Rust rejects
+incomplete/mismatched pairs transactionally. A missing or hidden target retires
+both nodes and binds noninteractive handles; later reopening gets fresh IDs.
+
+The existing native adapters survive index changes. Rebinding renews leases and
+cancels pending pointer input even when the same tab merely shifts index; native
+focus/enabled state is projected into the new handle and its AX action verb is
+refreshed. Title/active-only refresh skips reconciliation/rebinding. Native popup,
+keyboard/window/AX delivery, focus management and queued browser target checks
+remain. IDs are local to each pane, not globally comparable authorization.
+
+Both app and browser-test binaries compile. **315 Rust**, **180 SDK cases plus
+raster**, **68 live and 68 clean-archive Python**, scoped GN/boundaries and final
+Ninja no-op passed; all 53 committed/live/staged prototype inputs match. **No UI
+tests ran.** The new compiled case covers title/index-shift stability, late pointer
+release, adapter reuse, swap and hide/reopen retirement. Existing split action,
+menu/AX/keyboard and queued-close cases remain deferred with the bulk checkpoint.
+[Headless evidence](benchmarks/rust-split-node-headless-2026-10-27.json).
+
+Actual focus/AX/menu behavior and presentation performance remain unverified for
+this source. Native View containers/layout remain, and this is not tree-wide
+focus restoration. The running preview was not repackaged. Form/download/service
+scopes, full scene ownership, incremental reconciliation and final acceptance
+remain open. Frozen UI-lab inputs exclude current-main network policy.
+
+## Earlier headless implementation: palette result nodes
 
 Source `358b96e` puts address/command-palette result input identities and leases
 in the Rust registry. JSON-framed keys contain profile/workspace/query/mode/
