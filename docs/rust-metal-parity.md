@@ -14,7 +14,46 @@ accumulate compiled cases for a later bulk checkpoint. Build, Rust/Python and SD
 checks without windows remain enabled. No computer shutdown is requested.
 The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 
-## Latest headless implementation: Rust workspace scene and adapter reuse
+## Latest headless implementation: Rust history scene and scoped adapter reuse
+
+Source `dbad24b` gives history results a Rust-owned structural root, ordered
+children, parent edges and typed row properties (UTF-16 title/detail/display URL,
+60px height). The native date formatter supplies display copy; existing
+profile/query/limit admission and posted navigation authorization remain native.
+The profile/URL/exact-visit/duplicate key remains stable through title/order changes.
+
+The Rust/Metal consumer matches actual native children by ID **and live graph
+owner**, updates/reorders retained RustRowView adapters and creates/deletes only
+missing/stale rows. Retained rows skip callback and RowButton::Spec reconstruction.
+Identical batches preserve pending input and focus state. Content changes cancel
+the affected row's press; order/membership changes cancel all history presses.
+Native projection invalidates the canvas fallback after Rust cancellation and
+preserves the existing Rust URL tooltip/AX-name and detail-description convention.
+
+Graphs/records now carry owner tokens, and O(1) ownership checks distinguish
+matching numeric IDs from different windows/scopes. Workspace-switcher reuse also
+uses that check. No graph address is used as identity. Replaced/retired/unbound
+leases cannot claim ownership; Rust borrows do not cross native callbacks.
+
+Validation: **365 Rust**, **68 live + 68 clean-archive Python**, **180 CoreText SDK
+cases plus raster**, scoped GN/header and boundary checks. Both app/test binaries
+compile, all **53 committed/live/staged prototype inputs** match and the final
+three-target Ninja check reports no work. Twelve new Rust cases cover history
+properties/lifetime/input and cross-scope ownership. Two new compiled browser
+cases cover native reuse/focus/AX and reordered callback targets; the prior
+replacement regression now expects a retained View with cancelled input.
+**No UI tests were run**, and the running preview was left unchanged.
+
+This covers workspace-switcher and history-row subtrees. Empty-state/status text
+still uses existing ToolsForm projections; query edits/full tools-page rebuilds
+still retire history membership. Complete forms/sidebar/palette trees, editor/
+text ownership and wider scene lifetime/layout remain open. Native focus/AX/
+scroll/reveal acceptance, CPU/GPU/presentation profiling, compositor diagnostics
+and release/license acceptance remain deferred. Owner-token storage and snapshot
+costs have not been benchmarked; no performance gain is claimed.
+Evidence: [history-scene report](benchmarks/rust-history-scene-headless-2026-10-27.json).
+
+## Previous headless implementation: Rust workspace scene and adapter reuse
 
 Source `adecc8a` gives the workspace switcher a Rust-owned structural root, ordered children,
 parent edges and typed presentation: UTF-16 accessible names/emoji and selected/
