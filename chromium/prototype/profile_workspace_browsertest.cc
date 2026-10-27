@@ -4232,6 +4232,21 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest,
   }
 }
 
+// Compile only: model ownership is checked headlessly; actual AX/events await the bulk checkpoint.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CheckedModelsBelongToNodesAcrossProjectionAndDisabledRefresh) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));const bool rust=shell->workspace_input()->rust_editor();shell->OpenGeneralSettings();
+  for(const auto* key:{"camera","javascript","hardware_acceleration","sidebar","animations"}){auto* view=shell->preference_switch_for_testing(key);ASSERT_TRUE(view);const auto id=shell->sidebar_node_id_for_testing(view);EXPECT_EQ(rust?2u:0u,shell->control_model_kind_for_testing(view));const bool enabled=view->GetEnabled();view->SetEnabled(false);view->SetEnabled(enabled);EXPECT_EQ(id,shell->sidebar_node_id_for_testing(view));EXPECT_EQ(rust?2u:0u,shell->control_model_kind_for_testing(view));}
+  for(size_t i=0;i<3;++i){auto* view=shell->clear_checkbox_for_testing(i);ASSERT_TRUE(view);EXPECT_EQ(rust?1u:0u,shell->control_model_kind_for_testing(view));}
+  shell->OpenImport();auto* view=shell->import_profiles();ASSERT_TRUE(view);const auto id=shell->sidebar_node_id_for_testing(view);shell->SetImportOptionCheckedForTesting(0,false);ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::CheckedState::kFalse,ax.GetCheckedState());shell->SetImportOptionCheckedForTesting(0,true);view->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::CheckedState::kTrue,ax.GetCheckedState());shell->SetImportStatus(u"Model busy",false,true,true);EXPECT_EQ(id,shell->sidebar_node_id_for_testing(view));EXPECT_EQ(rust?1u:0u,shell->control_model_kind_for_testing(view));shell->SetImportStatus(u"Model ready",false,false,false);
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CheckedModelRetiresDuringObserverBeforeImportCallback) {
+  base::ScopedAllowBlockingForTesting files;base::ScopedTempDir app_data;ASSERT_TRUE(app_data.CreateUniqueTempDir());base::ScopedPathOverride isolated_data(base::DIR_APP_DATA,app_data.GetPath());auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));if(!shell->workspace_input()->rust_editor())return;shell->OpenImport();auto* check=shell->import_history();ASSERT_TRUE(check);EXPECT_EQ(1u,shell->control_model_kind_for_testing(check));ASSERT_FALSE(shell->import_options().history);check->SetProperty(views::kElementIdentifierKey,views::DialogClientView::kOkButtonElementId);int notified=0;bool observed_checked=false;std::unique_ptr<views::View> held;
+  auto observer=ui::ElementTracker::GetElementTracker()->AddElementActivatedCallback(views::DialogClientView::kOkButtonElementId,views::ElementTrackerViews::GetContextForWidget(shell->import_widget()),base::BindRepeating([](views::View* view,std::unique_ptr<views::View>* held,int* notified,bool* checked,ui::TrackedElement*){++*notified;ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);*checked=ax.GetCheckedState()==ax::mojom::CheckedState::kTrue;*held=view->parent()->RemoveChildViewT(view);},base::Unretained(check),&held,&notified,&observed_checked));ClickControl(check);EXPECT_EQ(1,notified);EXPECT_TRUE(observed_checked);ASSERT_TRUE(held);EXPECT_EQ(0u,shell->control_model_kind_for_testing(held.get()));EXPECT_EQ(0u,shell->sidebar_node_id_for_testing(held.get()));EXPECT_FALSE(shell->import_options().history);
+  // Keep the retired adapter alive through controller teardown, without a dangling form field.
+  window_.reset();ui::KeyEvent space(ui::EventType::kKeyPressed,ui::VKEY_SPACE,0);EXPECT_FALSE(held->OnKeyPressed(space));
+}
+
 // Compile only: checkbox/switch/selector behavior awaits the bulk checkpoint.
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CheckedAndSelectorNodesCoverLiveFormsAndRetainProjectionIdentity) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready()&&shell->tools_ready();}));const bool rust=shell->workspace_input()->rust_editor();

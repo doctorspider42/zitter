@@ -731,6 +731,7 @@ class RustActionView : public views::View {
   }
   void OnTooltipTextChanged(const std::u16string& previous) override{views::View::OnTooltipTextChanged(previous);auto& ax=GetViewAccessibility();if((ax.GetCachedName().empty()||ax.GetCachedName()==previous)&&!GetTooltipText().empty())ax.SetName(GetTooltipText());}
   uint64_t LogicalNodeId() const{return state_->action_node_id();}
+  uint32_t ModelKind() const{return state_->node_model_kind();}
   void BindNodeInput(const SidebarNodeBinding& binding){
     state_=AcquireSidebarInput(binding);state_->action_focus(HasFocus());SyncEnabled();
     auto& ax=GetViewAccessibility();if(state_->action_snapshot().enabled)ax.SetDefaultActionVerb(ActionVerb());else ax.RemoveDefaultActionVerb();
@@ -771,6 +772,8 @@ class RustActionView : public views::View {
   void PaintChildren(const views::PaintInfo& info) override{if(!visible_||!visible_.Run())views::View::PaintChildren(info);}
   void OnPaint(gfx::Canvas* canvas) override{if(visible_&&visible_.Run())return;SyncEnabled();const auto v=state_->action_snapshot();const auto paint=v.visual==sidebar::RowVisual::Disabled?views::Button::STATE_DISABLED:v.visual==sidebar::RowVisual::Pressed?views::Button::STATE_PRESSED:v.visual==sidebar::RowVisual::Hovered?views::Button::STATE_HOVERED:views::Button::STATE_NORMAL;PaintGlyphControl(this,glyph_,icon_,color_,v.on,label_,paint,canvas);}
  protected:
+  sidebar::ActionControl& NodeControl(){return *state_;}
+  const sidebar::ActionControl& NodeControl() const{return *state_;}
   virtual ax::mojom::DefaultActionVerb ActionVerb() const{return ax::mojom::DefaultActionVerb::kPress;}
   virtual void ActivateAction(const ui::Event& event){
     const auto id=GetProperty(views::kElementIdentifierKey);
@@ -1088,14 +1091,15 @@ END_METADATA
 class SceneToggle final : public RustActionView {
   METADATA_HEADER(SceneToggle,RustActionView)
  public:
-  SceneToggle(std::u16string name,rust::Box<sidebar::ActionControl> input):RustActionView({},std::move(name),ControlGlyph::kMore,nullptr,base::BindRepeating([]{return true;}),{},false,std::move(input)),state_(sidebar::new_toggle_state()){
+  SceneToggle(std::u16string name,rust::Box<sidebar::ActionControl> input):RustActionView({},std::move(name),ControlGlyph::kMore,nullptr,base::BindRepeating([]{return true;}),{},false,std::move(input)){
+    CHECK(NodeControl().node_toggle_init());
     GetViewAccessibility().SetRole(ax::mojom::Role::kSwitch);RefreshAX();
   }
-  bool On() const{return state_->toggle_checked();}
-  void SetOn(bool value){state_->toggle_set(value);RefreshAX();Schedule();}
+  bool On() const{return NodeControl().node_toggle_checked();}
+  void SetOn(bool value){NodeControl().node_toggle_set(value);RefreshAX();Schedule();}
   bool metal_visible() const{return surface_&&surface_->visible();}
   bool timer_running_for_testing() const{return timer_.IsRunning();}
-  void CancelInteraction(){OnMouseCaptureLost();state_->toggle_finish();timer_.Stop();Schedule();}
+  void CancelInteraction(){OnMouseCaptureLost();NodeControl().node_toggle_finish();timer_.Stop();Schedule();}
   void SyncWindowVisibility(){if(!SceneIsVisible(this)){CancelInteraction();if(surface_)surface_->Hide();}Schedule();}
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(38,28);}
   bool GetNeedsNotificationWhenVisibleBoundsChange() const override{return true;}
@@ -1107,21 +1111,21 @@ class SceneToggle final : public RustActionView {
   void VisibilityChanged(views::View* changed,bool visible) override{RustActionView::VisibilityChanged(changed,visible);SyncWindowVisibility();}
   void OnFocus() override{RustActionView::OnFocus();Schedule();}
   void OnBlur() override{RustActionView::OnBlur();Schedule();}
-  void OnDidSchedulePaint(const gfx::Rect& rect) override{RustActionView::OnDidSchedulePaint(rect);const auto input=Snapshot();state_->toggle_hover(input.enabled&&(input.visual==sidebar::RowVisual::Hovered||input.visual==sidebar::RowVisual::Pressed),Now(),gfx::Animation::ShouldRenderRichAnimation());Schedule();}
+  void OnDidSchedulePaint(const gfx::Rect& rect) override{RustActionView::OnDidSchedulePaint(rect);const auto input=Snapshot();NodeControl().node_toggle_hover(input.enabled&&(input.visual==sidebar::RowVisual::Hovered||input.visual==sidebar::RowVisual::Pressed),Now(),gfx::Animation::ShouldRenderRichAnimation());Schedule();}
   void OnPaint(gfx::Canvas* canvas) override{if(!metal_visible()){auto scene=Scene();PaintEditorSceneFallback(canvas,UNSAFE_BUFFERS(base::span<const sidebar::Primitive>(scene.data(),scene.size())));}Schedule();}
  protected:
-  void ActivateAction(const ui::Event& event) override{if(!state_->toggle_flip(Snapshot().enabled&&GetEnabledInViewsSubtree()&&SceneIsVisible(this),Now(),gfx::Animation::ShouldRenderRichAnimation()))return;RefreshAX();Schedule();RustActionView::ActivateAction(event);}
+  void ActivateAction(const ui::Event& event) override{if(!NodeControl().node_toggle_flip(Snapshot().enabled&&GetEnabledInViewsSubtree()&&SceneIsVisible(this),Now(),gfx::Animation::ShouldRenderRichAnimation()))return;RefreshAX();Schedule();RustActionView::ActivateAction(event);}
  private:
   static uint64_t Now(){return (base::TimeTicks::Now()-base::TimeTicks()).InMilliseconds();}
   void RefreshAX(){GetViewAccessibility().SetCheckedState(On()?ax::mojom::CheckedState::kTrue:ax::mojom::CheckedState::kFalse);}
   rust::Vec<sidebar::Primitive> Scene() const{
-    const auto* colors=GetColorProvider();const auto input=Snapshot();const bool enabled=input.enabled;sidebar::ToggleStyle s{};s.width=width();s.height=height();s.checked=On();s.pressed=input.visual==sidebar::RowVisual::Pressed;s.focused=input.focused;s.rtl=base::i18n::IsRTL();s.progress=state_->toggle_progress(Now());s.hover=state_->toggle_hover_progress(Now());
+    const auto* colors=GetColorProvider();const auto input=Snapshot();const auto model=NodeControl().node_toggle_view(Now());const bool enabled=input.enabled;sidebar::ToggleStyle s{};s.width=width();s.height=height();s.checked=model.checked;s.pressed=input.visual==sidebar::RowVisual::Pressed;s.focused=input.focused;s.rtl=base::i18n::IsRTL();s.progress=model.progress;s.hover=model.hover;
     s.track_on=SkColorSetRGB(110,86,207);s.track_off=colors->GetColor(enabled?ui::kColorToggleButtonTrackOff:ui::kColorToggleButtonTrackOffDisabled);s.thumb_on=colors->GetColor(enabled?ui::kColorToggleButtonThumbOn:ui::kColorToggleButtonThumbOnDisabled);s.thumb_off=colors->GetColor(enabled?ui::kColorToggleButtonThumbOff:ui::kColorToggleButtonThumbOffDisabled);s.thumb_hover=colors->GetColor(ui::kColorToggleButtonThumbOnHover);s.halo=colors->GetColor(s.pressed?ui::kColorToggleButtonPressed:ui::kColorToggleButtonHover);s.focus=colors->GetColor(ui::kColorFocusableBorderFocused);s.border=colors->GetColor(ui::kColorToggleButtonShadow);s.clip={0,0,float(width()),float(height())};return sidebar::toggle_scene(s);
   }
   void Schedule(){SyncViewportVisibility();if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneToggle::UpdateMetal,weak_factory_.GetWeakPtr()));}
   void Tick(){if(!metal_visible())SchedulePaint();Schedule();}
-  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){timer_.Stop();if(surface_)surface_->Hide();return;}auto scene=Scene();for(auto& op:scene){op.x-=local.x();op.y-=local.y();op.clip={0,0,float(local.width()),float(local.height())};}if(!surface_)surface_=CreateSidebarMetal();const bool was=metal_visible();if(surface_){auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());surface_->UpdateScene(GetWidget()->GetNativeWindow(),frame,UNSAFE_BUFFERS(base::span<const sidebar::Primitive>(scene.data(),scene.size())),Tone(this,kCard));}if(was!=metal_visible())SchedulePaint();if(state_->toggle_animating(Now())){if(!timer_.IsRunning())timer_.Start(FROM_HERE,base::Milliseconds(16),this,&SceneToggle::Tick);}else timer_.Stop();}
-  rust::Box<sidebar::ToggleState> state_;base::RepeatingTimer timer_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneToggle::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneToggle> weak_factory_{this};
+  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){timer_.Stop();if(surface_)surface_->Hide();return;}auto scene=Scene();for(auto& op:scene){op.x-=local.x();op.y-=local.y();op.clip={0,0,float(local.width()),float(local.height())};}if(!surface_)surface_=CreateSidebarMetal();const bool was=metal_visible();if(surface_){auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());surface_->UpdateScene(GetWidget()->GetNativeWindow(),frame,UNSAFE_BUFFERS(base::span<const sidebar::Primitive>(scene.data(),scene.size())),Tone(this,kCard));}if(was!=metal_visible())SchedulePaint();if(NodeControl().node_toggle_view(Now()).animating){if(!timer_.IsRunning())timer_.Start(FROM_HERE,base::Milliseconds(16),this,&SceneToggle::Tick);}else timer_.Stop();}
+  base::RepeatingTimer timer_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneToggle::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneToggle> weak_factory_{this};
 };
 BEGIN_METADATA(SceneToggle)
 END_METADATA
@@ -1150,11 +1154,11 @@ class SceneCheckbox final : public RustActionView {
   METADATA_HEADER(SceneCheckbox,RustActionView)
  public:
   SceneCheckbox(views::Button::PressedCallback callback,std::u16string text,base::RepeatingClosure painted,rust::Box<sidebar::ActionControl> input)
-      :RustActionView(std::move(callback),text,ControlGlyph::kMore,nullptr,base::BindRepeating([]{return true;}),std::move(painted),false,std::move(input)),state_(sidebar::new_checkbox_state(false)),text_(std::move(text)) {
-    GetViewAccessibility().SetRole(ax::mojom::Role::kCheckBox);RefreshAX();
+      :RustActionView(std::move(callback),text,ControlGlyph::kMore,nullptr,base::BindRepeating([]{return true;}),std::move(painted),false,std::move(input)),text_(std::move(text)) {
+    CHECK(NodeControl().node_checkbox_init(false));GetViewAccessibility().SetRole(ax::mojom::Role::kCheckBox);RefreshAX();
   }
-  bool Checked() const{return state_->checked();}
-  void SetChecked(bool checked){if(!state_->set_checked(checked))return;RefreshAX();SchedulePaint();}
+  bool Checked() const{return NodeControl().node_checked();}
+  void SetChecked(bool checked){if(!NodeControl().node_set_checked(checked))return;RefreshAX();SchedulePaint();}
   void SetText(std::u16string text){if(text==text_)return;OnMouseCaptureLost();text_=std::move(text);measured_width_=-1;GetViewAccessibility().SetName(text_);SetTooltipText(text_);PreferredSizeChanged();SchedulePaint();}
   static gfx::FontList TextFont(){return views::TypographyProvider::Get().GetFont(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY);}
   gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override {const auto g=Geometry(available.width().is_bounded()?available.width().value():-1);return gfx::Size(g.width,g.height);}
@@ -1167,7 +1171,7 @@ class SceneCheckbox final : public RustActionView {
   }
  protected:
   ax::mojom::DefaultActionVerb ActionVerb() const override{return Checked()?ax::mojom::DefaultActionVerb::kUncheck:ax::mojom::DefaultActionVerb::kCheck;}
-  void ActivateAction(const ui::Event& event) override {if(!state_->toggle(Snapshot().enabled&&GetEnabledInViewsSubtree()&&SceneIsVisible(this)))return;RefreshAX();SchedulePaint();RustActionView::ActivateAction(event);}
+  void ActivateAction(const ui::Event& event) override {if(!NodeControl().node_flip_checked(Snapshot().enabled&&GetEnabledInViewsSubtree()&&SceneIsVisible(this)))return;RefreshAX();SchedulePaint();RustActionView::ActivateAction(event);}
  private:
   void RefreshAX(){if(GetEnabledInViewsSubtree())GetViewAccessibility().SetDefaultActionVerb(ActionVerb());else GetViewAccessibility().RemoveDefaultActionVerb();GetViewAccessibility().SetCheckedState(Checked()?ax::mojom::CheckedState::kTrue:ax::mojom::CheckedState::kFalse);}
   sidebar::CheckboxLayout Geometry(int requested) const {
@@ -1175,7 +1179,7 @@ class SceneCheckbox final : public RustActionView {
     if(measured_width_!=label_width||measured_font_!=font.GetFontSize()){lines_=ShapeSidebarParagraph(base::UTF16ToUTF8(text_),font.GetFontSize(),label_width,font.GetFontWeight()>=gfx::Font::Weight::MEDIUM);measured_width_=label_width;measured_font_=font.GetFontSize();}
     return sidebar::checkbox_layout(width,font.GetHeight(),lines_.size(),padding.left(),padding.top(),padding.right(),padding.bottom(),base::i18n::IsRTL());
   }
-  rust::Box<sidebar::CheckboxState> state_;std::u16string text_;mutable std::vector<std::string> lines_;mutable int measured_width_=-1,measured_font_=0;
+  std::u16string text_;mutable std::vector<std::string> lines_;mutable int measured_width_=-1,measured_font_=0;
 };
 BEGIN_METADATA(SceneCheckbox)
 END_METADATA
@@ -4709,6 +4713,12 @@ size_t WorkspaceShell::metal_sidebar_paint_count() const {
 }
 bool WorkspaceShell::workspace_context_menu_running_for_testing() const{return workspace_menu_runner_&&workspace_menu_runner_->IsRunning();}
 std::unique_ptr<views::View> WorkspaceShell::CreateWorkspaceActionForTesting(base::RepeatingClosure callback) const{return CreateSceneAction(std::move(callback),u"Test workspace",ControlGlyph::kDot,nullptr,{},base::DoNothing());}
+uint32_t WorkspaceShell::control_model_kind_for_testing(views::View* view) const{
+#if BUILDFLAG(IS_MAC)
+  if(auto* action=views::AsViewClass<RustActionView>(view))return action->ModelKind();
+#endif
+  return 0;
+}
 views::View* WorkspaceShell::header_action_for_testing(size_t index) const{return header_view_&&index<header_view_->children().size()?header_view_->children()[index].get():nullptr;}
 views::View* WorkspaceShell::sidebar_grip_for_testing() const{return sidebar_root_?static_cast<SidebarView*>(sidebar_root_.get())->grip.get():nullptr;}
 views::View* WorkspaceShell::split_divider_for_testing() const{return content_host_?static_cast<PaneHost*>(content_host_.get())->divider():nullptr;}

@@ -16,6 +16,7 @@ mod ffi {
     struct EditorInfo { revision: u64, anchor: usize, focus: usize, secondary: bool, directed: bool, enabled: bool, read_only: bool, composing: bool, composition_start: usize, composition_end: usize, composition_token: u64, can_undo: bool, can_redo: bool, boundaries_ready: bool }
     struct EditorKill { update: EditorUpdate, start: usize, end: usize, before_revision: u64 }
     struct EditorUpdate { admitted: bool, text_changed: bool, selection_changed: bool, composition_changed: bool, committed: bool, info: EditorInfo }
+    struct NodeToggleView { checked: bool, progress: f32, hover: f32, animating: bool }
     struct SelectLayout { width: i32, height: i32, label: Rect, arrow: Rect }
     struct SelectOption { key: String, label: String, search: String }
     struct ToolsCopy { title: String, intro: String, tail: String, initial_status: String, fields: Vec<String>, pickers: Vec<String>, headings: Vec<String>, actions: Vec<String>, choices: Vec<String> }
@@ -245,22 +246,7 @@ mod ffi {
         fn input(self: &mut SelectState, lower_text: &str, now_ms: u64, enabled: bool) -> bool;
         fn select_menu_key(key: u32) -> bool;
         fn select_layout(width: i32, height: i32, text_width: i32, control_height: i32, rtl: bool) -> SelectLayout;
-        type ToggleState;
-        fn new_toggle_state() -> Box<ToggleState>;
-        fn toggle_checked(self: &ToggleState) -> bool;
-        fn toggle_set(self: &mut ToggleState, checked: bool);
-        fn toggle_flip(self: &mut ToggleState, enabled: bool, now: u64, animate: bool) -> bool;
-        fn toggle_hover(self: &mut ToggleState, hovered: bool, now: u64, animate: bool);
-        fn toggle_progress(self: &ToggleState, now: u64) -> f32;
-        fn toggle_hover_progress(self: &ToggleState, now: u64) -> f32;
-        fn toggle_animating(self: &ToggleState, now: u64) -> bool;
-        fn toggle_finish(self: &mut ToggleState);
         fn toggle_scene(style: &ToggleStyle) -> Vec<Primitive>;
-        type CheckboxState;
-        fn new_checkbox_state(checked: bool) -> Box<CheckboxState>;
-        fn checked(self: &CheckboxState) -> bool;
-        fn set_checked(self: &mut CheckboxState, checked: bool) -> bool;
-        fn toggle(self: &mut CheckboxState, enabled: bool) -> bool;
         fn checkbox_layout(width: i32, line_height: i32, line_count: usize, left: i32, top: i32, right: i32, bottom: i32, rtl: bool) -> CheckboxLayout;
         type ImportForm;
         fn new_import_form() -> Box<ImportForm>;
@@ -428,6 +414,18 @@ mod ffi {
         fn retire_form_action(self: &mut ActionGraph, id: u64) -> bool;
         type ActionControl;
         fn action_node_id(self: &ActionControl) -> u64;
+        fn node_model_kind(self: &ActionControl) -> u32;
+        fn node_checkbox_init(self: &mut ActionControl, checked: bool) -> bool;
+        fn node_checked(self: &ActionControl) -> bool;
+        fn node_set_checked(self: &mut ActionControl, checked: bool) -> bool;
+        fn node_flip_checked(self: &mut ActionControl, enabled: bool) -> bool;
+        fn node_toggle_init(self: &mut ActionControl) -> bool;
+        fn node_toggle_checked(self: &ActionControl) -> bool;
+        fn node_toggle_set(self: &mut ActionControl, checked: bool) -> bool;
+        fn node_toggle_flip(self: &mut ActionControl, enabled: bool, now: u64, animate: bool) -> bool;
+        fn node_toggle_hover(self: &mut ActionControl, hovered: bool, now: u64, animate: bool) -> bool;
+        fn node_toggle_finish(self: &mut ActionControl) -> bool;
+        fn node_toggle_view(self: &ActionControl, now: u64) -> NodeToggleView;
         fn new_action_control() -> Box<ActionControl>;
         fn action_preferred_size(dot: bool, label: bool) -> Rect;
         fn action_enabled(self: &mut ActionControl, enabled: bool) -> bool;
@@ -1001,8 +999,10 @@ impl ToggleTransition {
  fn animate(&mut self,target:bool,now:u64,animate:bool){if target==self.target{return;}self.from=self.progress(now);self.target=target;self.started=if animate{Some(now)}else{None};}
  fn animating(&self,now:u64)->bool {self.started.is_some_and(|start|now.saturating_sub(start)<self.duration)}
 }
-pub struct ToggleState { slide:ToggleTransition, hover:ToggleTransition }
-fn new_toggle_state()->Box<ToggleState>{Box::new(ToggleState{slide:ToggleTransition{from:0.0,target:false,started:None,duration:80},hover:ToggleTransition{from:0.0,target:false,started:None,duration:250}})}
+struct ToggleState { slide:ToggleTransition, hover:ToggleTransition }
+fn initial_toggle_state()->ToggleState{ToggleState{slide:ToggleTransition{from:0.0,target:false,started:None,duration:80},hover:ToggleTransition{from:0.0,target:false,started:None,duration:250}}}
+#[cfg(test)]
+fn new_toggle_state()->Box<ToggleState>{Box::new(initial_toggle_state())}
 impl ToggleState {
  fn toggle_checked(&self)->bool{self.slide.target}
  fn toggle_set(&mut self,checked:bool){self.slide.set(checked);}
@@ -1029,7 +1029,8 @@ fn toggle_scene(s:&ffi::ToggleStyle)->Vec<ffi::Primitive>{
  ops
 }
 
-pub struct CheckboxState { checked: bool }
+struct CheckboxState { checked: bool }
+#[cfg(test)]
 fn new_checkbox_state(checked: bool) -> Box<CheckboxState> {Box::new(CheckboxState {checked})}
 impl CheckboxState {
     fn checked(&self) -> bool {self.checked}
@@ -1764,8 +1765,11 @@ fn action_node_key(key:&ffi::ActionNodeKey)->Option<ActionNodeIdentity>{
         _=>None,
     }
 }
-struct ActionNodeRecord { id:u64, lease:u64, attached:bool, alive:bool, state:ActionState }
-impl ActionNodeRecord {fn retire(&mut self){self.alive=false;self.attached=false;self.state.action_focus(false);self.state.action_cancel();}}
+// Typed payloads belong to the graph record, not the native adapter's Box.
+// Optional indirection keeps ordinary action records from embedding large models.
+enum NodeModel { Checkbox(CheckboxState), Toggle(ToggleState) }
+struct ActionNodeRecord { id:u64, lease:u64, attached:bool, alive:bool, state:ActionState, model:Option<Box<NodeModel>> }
+impl ActionNodeRecord {fn retire(&mut self){self.alive=false;self.attached=false;self.state.action_focus(false);self.state.action_cancel();self.model=None;}}
 pub struct ActionGraph { nodes:BTreeMap<ActionNodeIdentity,Rc<RefCell<ActionNodeRecord>>>, order:Vec<u64>, next_id:u64 }
 fn new_action_graph()->Box<ActionGraph>{Box::new(ActionGraph{nodes:BTreeMap::new(),order:vec![],next_id:1})}
 impl ActionGraph {
@@ -1782,7 +1786,7 @@ impl ActionGraph {
         self.nodes.retain(|key,node|{if unique.contains(key){return true;}let mut node=node.borrow_mut();node.retire();retired+=1;false});
         let mut order=Vec::with_capacity(identities.len());
         for key in identities {
-            let node=self.nodes.entry(key).or_insert_with(||{let id=self.next_id;self.next_id+=1;Rc::new(RefCell::new(ActionNodeRecord{id,lease:0,attached:false,alive:true,state:initial_action_state()}))});
+            let node=self.nodes.entry(key).or_insert_with(||{let id=self.next_id;self.next_id+=1;Rc::new(RefCell::new(ActionNodeRecord{id,lease:0,attached:false,alive:true,state:initial_action_state(),model:None}))});
             order.push(node.borrow().id);
         }
         self.order=order.clone();ffi::ActionNodePlan{admitted:true,ids:order,created,retired}
@@ -1791,7 +1795,7 @@ impl ActionGraph {
     // acquire these keys. The group receives one lease with its fresh Rust ID.
     fn append_form_action(&mut self)->Box<ActionControl>{
         let Some(next)=self.next_id.checked_add(1) else{return Box::new(ActionControl{storage:ActionStorage::Retired});};
-        let id=self.next_id;let node=Rc::new(RefCell::new(ActionNodeRecord{id,lease:1,attached:true,alive:true,state:initial_action_state()}));
+        let id=self.next_id;let node=Rc::new(RefCell::new(ActionNodeRecord{id,lease:1,attached:true,alive:true,state:initial_action_state(),model:None}));
         self.nodes.insert((9,id,0,String::new()),node.clone());self.order.push(id);self.next_id=next;
         Box::new(ActionControl{storage:ActionStorage::Shared{node,lease:1}})
     }
@@ -1812,6 +1816,26 @@ struct ActionControl { storage:ActionStorage }
 impl ActionControl {
     fn read<R>(&self,f:impl FnOnce(&ActionState)->R)->Option<R>{match &self.storage{ActionStorage::Standalone(state)=>Some(f(state)),ActionStorage::Shared{node,lease}=>{let record=node.borrow();(record.alive&&record.attached&&record.lease==*lease).then(||f(&record.state))},ActionStorage::Retired=>None}}
     fn write<R>(&mut self,f:impl FnOnce(&mut ActionState)->R)->Option<R>{match &mut self.storage{ActionStorage::Standalone(state)=>Some(f(state)),ActionStorage::Shared{node,lease}=>{let mut record=node.borrow_mut();if !record.alive||!record.attached||record.lease!=*lease{return None;}Some(f(&mut record.state))},ActionStorage::Retired=>None}}
+    fn read_node<R>(&self,f:impl FnOnce(&ActionNodeRecord)->R)->Option<R>{
+        let ActionStorage::Shared{node,lease}=&self.storage else{return None;};let record=node.borrow();
+        (record.alive&&record.attached&&record.lease==*lease).then(||f(&record))
+    }
+    fn write_node<R>(&mut self,f:impl FnOnce(&mut ActionNodeRecord)->R)->Option<R>{
+        let ActionStorage::Shared{node,lease}=&self.storage else{return None;};let mut record=node.borrow_mut();
+        if !record.alive||!record.attached||record.lease!=*lease{return None;}Some(f(&mut record))
+    }
+    fn node_model_kind(&self)->u32{self.read_node(|r|match r.model.as_deref(){Some(NodeModel::Checkbox(_))=>1,Some(NodeModel::Toggle(_))=>2,None=>0}).unwrap_or(0)}
+    fn node_checkbox_init(&mut self,checked:bool)->bool{self.write_node(|r|match r.model.as_deref(){Some(NodeModel::Checkbox(_))=>true,Some(_)=>false,None=>{r.model=Some(Box::new(NodeModel::Checkbox(CheckboxState{checked})));true}}).unwrap_or(false)}
+    fn node_checked(&self)->bool{self.read_node(|r|matches!(r.model.as_deref(),Some(NodeModel::Checkbox(s)) if s.checked())).unwrap_or(false)}
+    fn node_set_checked(&mut self,checked:bool)->bool{self.write_node(|r|if let Some(NodeModel::Checkbox(s))=r.model.as_deref_mut(){s.set_checked(checked)}else{false}).unwrap_or(false)}
+    fn node_flip_checked(&mut self,enabled:bool)->bool{self.write_node(|r|if let Some(NodeModel::Checkbox(s))=r.model.as_deref_mut(){s.toggle(enabled&&r.state.enabled)}else{false}).unwrap_or(false)}
+    fn node_toggle_init(&mut self)->bool{self.write_node(|r|match r.model.as_deref(){Some(NodeModel::Toggle(_))=>true,Some(_)=>false,None=>{r.model=Some(Box::new(NodeModel::Toggle(initial_toggle_state())));true}}).unwrap_or(false)}
+    fn node_toggle_checked(&self)->bool{self.read_node(|r|matches!(r.model.as_deref(),Some(NodeModel::Toggle(s)) if s.toggle_checked())).unwrap_or(false)}
+    fn node_toggle_set(&mut self,checked:bool)->bool{self.write_node(|r|if let Some(NodeModel::Toggle(s))=r.model.as_deref_mut(){s.toggle_set(checked);true}else{false}).unwrap_or(false)}
+    fn node_toggle_flip(&mut self,enabled:bool,now:u64,animate:bool)->bool{self.write_node(|r|if let Some(NodeModel::Toggle(s))=r.model.as_deref_mut(){s.toggle_flip(enabled&&r.state.enabled,now,animate)}else{false}).unwrap_or(false)}
+    fn node_toggle_hover(&mut self,hovered:bool,now:u64,animate:bool)->bool{self.write_node(|r|if let Some(NodeModel::Toggle(s))=r.model.as_deref_mut(){s.toggle_hover(hovered,now,animate);true}else{false}).unwrap_or(false)}
+    fn node_toggle_finish(&mut self)->bool{self.write_node(|r|if let Some(NodeModel::Toggle(s))=r.model.as_deref_mut(){s.toggle_finish();true}else{false}).unwrap_or(false)}
+    fn node_toggle_view(&self,now:u64)->ffi::NodeToggleView{self.read_node(|r|if let Some(NodeModel::Toggle(s))=r.model.as_deref(){Some(ffi::NodeToggleView{checked:s.toggle_checked(),progress:s.toggle_progress(now),hover:s.toggle_hover_progress(now),animating:s.toggle_animating(now)})}else{None}).flatten().unwrap_or(ffi::NodeToggleView{checked:false,progress:0.0,hover:0.0,animating:false})}
     fn retired_input()->ffi::RowInputResult{ffi::RowInputResult{visual:ffi::RowVisual::Disabled,action:ffi::RowAction::None,handled:false}}
     fn action_node_id(&self)->u64{match &self.storage{ActionStorage::Shared{node,lease}=>{let record=node.borrow();if record.alive&&record.attached&&record.lease==*lease{record.id}else{0}},_=>0}}
     fn action_enabled(&mut self,value:bool)->bool{self.write(|s|s.action_enabled(value)).unwrap_or(false)}
@@ -3057,6 +3081,36 @@ mod tests {
     fn node_pin(name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:2,high:0,low:0,name:name.into()}}
     fn node_close(low:u64)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:10,high:7,low,name:String::new()}}
     fn node_named(kind:u32,name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind,high:0,low:0,name:name.into()}}
+    #[test] fn node_checkbox_model_survives_adapter_drop_and_reacquire(){
+        let mut g=new_action_graph();g.reconcile(vec![node_pin("checked")]);let id;
+        {let mut a=g.acquire(&node_pin("checked"));id=a.action_node_id();assert!(a.node_checkbox_init(false));assert!(a.node_set_checked(true));}
+        assert!(g.nodes.values().next().unwrap().borrow().model.is_some());let mut b=g.acquire(&node_pin("checked"));assert_eq!(b.action_node_id(),id);assert!(b.node_checkbox_init(false));assert!(b.node_checked());assert_eq!(b.node_model_kind(),1);
+    }
+    #[test] fn node_toggle_model_keeps_target_and_animation_on_rebind(){
+        let mut g=new_action_graph();g.reconcile(vec![node_pin("toggle")]);let mut old=g.acquire(&node_pin("toggle"));assert!(old.node_toggle_init());assert!(old.node_toggle_flip(true,100,true));old.node_toggle_hover(true,100,true);let p=old.node_toggle_view(120);assert!(p.checked&&p.animating);assert!(p.progress>0.0&&p.progress<1.0);
+        let mut next=g.acquire(&node_pin("toggle"));assert!(next.node_toggle_init());let q=next.node_toggle_view(120);assert_eq!((q.checked,q.progress,q.hover,q.animating),(p.checked,p.progress,p.hover,p.animating));assert_eq!(old.node_model_kind(),0);assert!(!old.node_toggle_set(false));assert!(next.node_toggle_checked());
+    }
+    #[test] fn node_model_binding_rejects_wrong_kind_standalone_and_retired(){
+        let mut plain=new_action_control();assert!(!plain.node_checkbox_init(true));assert!(!plain.node_toggle_init());let mut g=new_action_graph();let mut a=g.append_form_action();assert!(a.node_checkbox_init(true));assert!(!a.node_toggle_init());assert!(a.node_checked());let mut b=g.append_form_action();assert!(b.node_toggle_init());assert!(!b.node_checkbox_init(true));assert_eq!(b.node_model_kind(),2);let id=a.action_node_id();g.retire_form_action(id);assert!(!a.node_checkbox_init(true));assert!(!a.node_toggle_init());
+    }
+    #[test] fn node_checked_user_mutation_requires_enabled_lease_but_projection_is_allowed(){
+        let mut g=new_action_graph();let mut a=g.append_form_action();a.node_checkbox_init(false);a.action_enabled(false);assert!(!a.node_flip_checked(true));assert!(a.node_set_checked(true));assert!(a.node_checked());a.action_enabled(true);assert!(!a.node_flip_checked(false));assert!(a.node_flip_checked(true));assert!(!a.node_checked());
+        let mut b=g.append_form_action();b.node_toggle_init();b.action_enabled(false);assert!(!b.node_toggle_flip(true,0,true));assert!(b.node_toggle_set(true));assert!(b.node_toggle_checked());b.action_enabled(true);assert!(!b.node_toggle_flip(false,0,true));assert!(b.node_toggle_flip(true,0,false));assert!(!b.node_toggle_checked());
+    }
+    #[test] fn node_model_retirement_releases_payload_while_adapter_is_retained(){
+        let mut g=new_action_graph();let mut a=g.append_form_action();a.node_checkbox_init(true);let record=if let ActionStorage::Shared{node,..}=&a.storage{node.clone()}else{panic!("missing record")};assert!(record.borrow().model.is_some());assert!(g.retire_form_action(a.action_node_id()));assert!(record.borrow().model.is_none());assert_eq!(a.node_model_kind(),0);assert!(!a.node_checked());
+        let mut b=g.append_form_action();b.node_toggle_init();b.node_toggle_flip(true,0,true);let record=if let ActionStorage::Shared{node,..}=&b.storage{node.clone()}else{panic!("missing record")};drop(g);assert!(record.borrow().model.is_none());assert_eq!(b.node_model_kind(),0);assert!(!b.node_toggle_view(20).animating);assert!(!b.node_toggle_init());
+    }
+    #[test] fn node_toggle_snapshot_matches_legacy_reducer_across_interruption_and_clocks(){
+        let mut g=new_action_graph();let mut a=g.append_form_action();a.node_toggle_init();let mut old=new_toggle_state();
+        for (now,animate,hover) in [(100,true,true),(120,true,false),(125,true,true),(200,false,false),(50,true,true)]{assert_eq!(a.node_toggle_flip(true,now,animate),old.toggle_flip(true,now,animate));a.node_toggle_hover(hover,now,animate);old.toggle_hover(hover,now,animate);for time in [now,now+20,now+300]{let p=a.node_toggle_view(time);assert_eq!((p.checked,p.progress,p.hover,p.animating),(old.toggle_checked(),old.toggle_progress(time),old.toggle_hover_progress(time),old.toggle_animating(time)));}}
+    }
+    #[test] fn node_models_are_isolated_and_invalid_reconciliation_keeps_payloads(){
+        let mut g=new_action_graph();g.reconcile(vec![node_pin("a"),node_pin("b")]);let mut a=g.acquire(&node_pin("a"));let mut b=g.acquire(&node_pin("b"));a.node_checkbox_init(true);b.node_toggle_init();b.node_toggle_set(true);let rejected=g.reconcile(vec![node_pin("a"),node_pin("a")]);assert!(!rejected.admitted);assert!(a.node_checked());assert!(b.node_toggle_checked());a.node_set_checked(false);assert!(b.node_toggle_checked());assert!(!a.node_toggle_set(false));assert!(!b.node_set_checked(false));
+    }
+    #[test] fn node_toggle_finish_stops_both_transitions_and_retirement_cannot_restart(){
+        let mut g=new_action_graph();let mut a=g.append_form_action();a.node_toggle_init();a.node_toggle_flip(true,100,true);a.node_toggle_hover(true,100,true);assert!(a.node_toggle_view(120).animating);assert!(a.node_toggle_finish());let p=a.node_toggle_view(120);assert_eq!((p.checked,p.progress,p.hover,p.animating),(true,1.0,0.0,false));g.retire_form_action(a.action_node_id());assert!(!a.node_toggle_finish());assert!(!a.node_toggle_set(true));assert!(!a.node_toggle_hover(true,200,true));let p=a.node_toggle_view(220);assert_eq!((p.checked,p.progress,p.hover,p.animating),(false,0.0,0.0,false));
+    }
     #[test] fn form_action_selector_press_policy_is_scoped_and_retirement_cannot_reopen(){
         let mut g=new_action_graph();let mut select=g.append_form_action();let mut ordinary=g.append_form_action();select.action_on_press(true);let id=select.action_node_id();
         assert!(select.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true).action==ffi::RowAction::Activate);
