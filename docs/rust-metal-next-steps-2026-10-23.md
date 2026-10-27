@@ -5,10 +5,10 @@ inventory is [the parity checklist](rust-metal-parity.md).
 
 ## Current workflow — 2026-10-27
 
-Implementation resumed by user instruction. The weekly 70% stop threshold is
-revoked for this round. Do not run browser UI tests; accumulate compiled cases
-for a later bulk checkpoint. Build, Rust/Python and SDK checks without windows
-remain enabled. No shutdown is triggered by the former weekly threshold.
+The active goal now stops and summarizes when weekly remaining usage falls
+below 50%; the former 70% threshold is superseded. Do not run browser UI tests;
+accumulate compiled cases for a later bulk checkpoint. Build, Rust/Python and SDK
+checks without windows remain enabled. No computer shutdown is requested.
 The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 
 ## Current remaining implementation queue — 2026-10-27
@@ -16,13 +16,14 @@ The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 This queue supersedes implementation suggestions in the historical checkpoints
 below. Headless validation is current; GUI acceptance is deferred by instruction.
 
-1. **Complete action-node scopes.** Extend registry ownership to
-   download/service-panel controls and remaining checked/selector input nodes. Define keys from actual target identity and
-   scope, and retire nodes when lists/forms/profile contexts disappear. Preserve
-   browser/store authorization in native services.
-2. **Own the scene tree.** Move control properties, parent/child relationships,
-   lifetime and layout coordination into Rust. The current ActionGraph owns
-   logical identities/input leases for sidebar rows, window chrome, history, palette results, split-pane actions and form action groups;
+1. **Finish residual action surfaces.** Migrate the remaining Peek/service
+   toolbar controls and audit residual native action hosts. Download row buttons
+   already use Rust-owned action groups; their GUI acceptance remains pending.
+   Preserve native profile/GUID/store authorization.
+2. **Own the scene tree and typed models.** Move control properties, checked/
+   selector/editor models, parent/child relationships, lifetime and layout
+   coordination into Rust. The current ActionGraph owns
+   logical identities/input leases for sidebar rows, window chrome, history, palette results, split-pane actions, form action groups and checked/selector input;
    native View trees still own containers and most scene-property projection.
 3. **Reconcile adapters incrementally.** Reuse/reorder native adapters by Rust ID
    instead of clearing lists on structural changes. Explicitly preserve focus,
@@ -32,7 +33,7 @@ below. Headless validation is current; GUI acceptance is deferred by instruction
    copy and form/busy state into Rust; finish outer dialog/palette/container
    placement. Keep native window, IME, clipboard, AX and popup/menu services explicit.
 5. **Run the deferred bulk UI checkpoint when requested.** Include all newly
-   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node, palette-node, split-node, form-action-node, workspace-dismiss-node and activation-observer
+   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node, palette-node, split-node, form-action-node, workspace-dismiss-node, activation-observer and checked-selector-node
    cases, the full Rust/Metal and Views matrices, and actual pointer/keyboard/
    capture/AX/focus/drag/profile/session regressions. The last completed full matrix
    remains the text-action checkpoint; the later selector full run was interrupted.
@@ -44,7 +45,37 @@ below. Headless validation is current; GUI acceptance is deferred by instruction
    profile persistence/rollback, regenerate the shipped dependency/license manifest
    and Apache-2.0/upstream notices. Keep Rust/Metal opt-in until acceptance is complete.
 
-## Latest headless follow-up: activation observer retirement
+## Latest headless implementation: checked and selector input nodes
+
+Source `4e9c5c1` gives checkbox groups, switches and selectors graph-owned Rust
+input. Checkbox groups reuse SceneGroupNodes. Switches/selectors use a scope
+stored on the actual existing parent View; hierarchy observation retires removed
+members and parent deletion retires the scope. No wrapper View, container, layout
+or AX hierarchy was added. The bridge uses pointer-to-ID registration without
+reading child fields during destruction. IDs remain local UI roles.
+
+All selector factories are covered, including import source, tools plans/fallback
+and the password account panel. PanelScene::MakeSelect now requires the actual
+parent explicitly. Selector keys/AX/prefix/menu open/menu choose/programmatic
+activation check graph admission, as do checked-control mutations. The existing
+selected/checked/animation/prefix/popup model boxes and native browser admission
+remain; this is input lifetime ownership, not full typed scene/model ownership.
+
+Both binaries compile. **322 Rust**, **180 SDK cases plus raster**, **68 live and
+68 clean-archive Python**, scoped GN/boundaries and final Ninja no-op passed;
+all 53 committed/live/staged prototype inputs match. **No UI tests ran.** Two new
+compiled cases cover form input IDs/projection and retained-selector keyboard/
+menu rejection after tools rebuild. The first compile exposed four additional
+selector factories; all were corrected and the failed probe is retained.
+[Headless evidence](benchmarks/rust-checked-selector-node-headless-2026-10-27.json).
+
+Inspection also confirms download row buttons already use the group-owned
+SceneActionGroup path introduced in the form milestone; native GUID/profile
+command admission is unchanged. Actual downloads/password/popup/IME/AX/focus and
+parent-destruction behavior remain for the bulk GUI checkpoint. The preview was
+not replaced. Full scene ownership and presentation-performance acceptance remain open.
+
+## Earlier headless follow-up: activation observer retirement
 
 Source `093adc4` revalidates a scoped action node after ElementTracker activation
 observers run and before its callback. An observer can remove and retain a View:
