@@ -108,6 +108,13 @@ mod ffi {
     #[derive(Debug)]
     enum LinkMenuCommand { None, Peek, NewTab, Split, SetRule, RemoveRule }
     struct LinkMenuAction { command: LinkMenuCommand, workspace: String }
+    struct WorkspaceMenuProfile { id: String, name: String }
+    struct WorkspaceMenuState { ready: bool, busy: bool, workspace: String, workspace_count: usize, profile: String, profiles: Vec<WorkspaceMenuProfile>, color: u32, emoji: String }
+    // group: 0 main, 1 profile, 2 color, 3 emoji submenu; kind: 0 item, 1 separator, 2 submenu header, 3 radio, 4 check.
+    struct WorkspaceMenuEntry { command: i32, label: String, kind: u32, group: u32 }
+    #[derive(Debug)]
+    enum WorkspaceMenuCommand { None, AssignProfile, NewProfile, EditProfile, Settings, Remove, Color, Emoji, ClearEmoji, CustomColor, CustomEmoji }
+    struct WorkspaceMenuAction { command: WorkspaceMenuCommand, workspace: String, profile: String, color: u32, emoji: String }
     enum SidebarAction { None, OpenSplit, CloseSplit, MoveFirst, MoveSecond, ToggleOrientation, CloseTab }
     // kind: 0 row, 1 section label, 2 split pair (three consecutive items), 3 gap.
     struct PreviewRow { index: usize, kind: u32, depth: i32, height: i32 }
@@ -386,6 +393,11 @@ mod ffi {
         fn link_menu_enabled(command: i32, state: &LinkMenuState) -> bool;
         fn link_menu_checked(command: i32, state: &LinkMenuState) -> bool;
         fn link_menu_action(command: i32, state: &LinkMenuState) -> LinkMenuAction;
+        fn workspace_context_menu(state: &WorkspaceMenuState) -> Vec<WorkspaceMenuEntry>;
+        fn workspace_menu_command(command: i32, profiles: usize) -> bool;
+        fn workspace_menu_enabled(command: i32, state: &WorkspaceMenuState) -> bool;
+        fn workspace_menu_checked(command: i32, state: &WorkspaceMenuState) -> bool;
+        fn workspace_menu_action(command: i32, state: &WorkspaceMenuState) -> WorkspaceMenuAction;
         fn tab_menu_enabled(command: u32, state: &TabMenuState) -> bool;
         fn tab_menu_action(command: u32, state: &TabMenuState) -> SidebarAction;
         type WorkspaceSwipe;
@@ -1465,6 +1477,47 @@ fn link_menu_action(command:i32,s:&ffi::LinkMenuState)->ffi::LinkMenuAction{
     use ffi::LinkMenuCommand as C;let action=|command,workspace:&str|ffi::LinkMenuAction{command,workspace:workspace.into()};
     if !link_menu_enabled(command,s){return action(C::None,"");}
     match command{LINK_PEEK=>action(C::Peek,&s.source),LINK_NEW_TAB=>action(C::NewTab,&s.source),LINK_SPLIT=>action(C::Split,&s.source),LINK_RULE_HERE=>action(C::SetRule,&s.source),LINK_REMOVE_RULE=>action(C::RemoveRule,""),_=>match link_route(command,s){Some(route)=>action(C::SetRule,&route.id),None=>action(C::None,"")}}
+}
+
+// Workspace menu IDs follow the native menu delegate contract.
+const WS_SET_PROFILE:i32=1;const WS_NEW_PROFILE:i32=2;const WS_EDIT_PROFILE:i32=3;const WS_SETTINGS:i32=4;const WS_REMOVE:i32=30;const WS_COLOR_MENU:i32=31;const WS_EMOJI_MENU:i32=32;const WS_CUSTOM_COLOR:i32=33;const WS_CUSTOM_EMOJI:i32=34;const WS_CLEAR_EMOJI:i32=35;const WS_COLOR_BASE:i32=40;const WS_EMOJI_BASE:i32=50;const WS_PROFILE_BASE:i32=100;
+const WORKSPACE_COLOR_NAMES:[&str;4]=["Lawendowy","Szałwiowy","Brzoskwiniowy","Niebieski"];
+fn indexed(command:i32,base:i32,count:usize)->Option<usize>{(command>=base&&((command-base) as usize)<count).then(||(command-base) as usize)}
+fn workspace_menu_command(command:i32,profiles:usize)->bool{
+    matches!(command,WS_SET_PROFILE..=WS_SETTINGS|WS_REMOVE..=WS_CLEAR_EMOJI)||indexed(command,WS_COLOR_BASE,APPEARANCE_COLORS.len()).is_some()||indexed(command,WS_EMOJI_BASE,APPEARANCE_EMOJIS.len()).is_some()||indexed(command,WS_PROFILE_BASE,profiles).is_some()
+}
+fn workspace_context_menu(s:&ffi::WorkspaceMenuState)->Vec<ffi::WorkspaceMenuEntry>{
+    let mut entries=Vec::new();let mut add=|command:i32,label:&str,kind:u32,group:u32|entries.push(ffi::WorkspaceMenuEntry{command,label:label.into(),kind,group});
+    for (index,profile) in s.profiles.iter().enumerate(){add(WS_PROFILE_BASE+index as i32,&profile.name,3,1);}
+    add(0,"",1,1);add(WS_EDIT_PROFILE,"Edytuj profil…",0,1);add(WS_NEW_PROFILE,"Dodaj nowy profil…",0,1);
+    for (index,name) in WORKSPACE_COLOR_NAMES.iter().enumerate(){add(WS_COLOR_BASE+index as i32,name,4,2);}
+    add(0,"",1,2);add(WS_CUSTOM_COLOR,"Własny kolor…",0,2);
+    for (index,emoji) in APPEARANCE_EMOJIS.iter().enumerate(){add(WS_EMOJI_BASE+index as i32,emoji,4,3);}
+    add(0,"",1,3);add(WS_CUSTOM_EMOJI,"Własna ikonka…",0,3);add(WS_CLEAR_EMOJI,"Bez ikonki (kropka)",4,3);
+    add(WS_SET_PROFILE,"Profil przeglądania",2,0);add(WS_COLOR_MENU,"Kolor przestrzeni",2,0);add(WS_EMOJI_MENU,"Ikonka przestrzeni",2,0);add(0,"",1,0);
+    add(WS_SETTINGS,"Nazwa i ustawienia…",0,0);add(WS_REMOVE,"Usuń przestrzeń…",0,0);entries
+}
+fn workspace_menu_enabled(command:i32,s:&ffi::WorkspaceMenuState)->bool{
+    if !s.ready||s.workspace.is_empty()||!workspace_menu_command(command,s.profiles.len()){return false;}
+    if command==WS_REMOVE{return !s.busy&&s.workspace_count>1;}true
+}
+fn workspace_menu_checked(command:i32,s:&ffi::WorkspaceMenuState)->bool{
+    if let Some(index)=indexed(command,WS_PROFILE_BASE,s.profiles.len()){return s.profiles[index].id==s.profile;}
+    if let Some(index)=indexed(command,WS_COLOR_BASE,APPEARANCE_COLORS.len()){return s.color==APPEARANCE_COLORS[index];}
+    if let Some(index)=indexed(command,WS_EMOJI_BASE,APPEARANCE_EMOJIS.len()){return s.emoji==APPEARANCE_EMOJIS[index];}
+    command==WS_CLEAR_EMOJI&&s.emoji.is_empty()
+}
+fn workspace_menu_action(command:i32,s:&ffi::WorkspaceMenuState)->ffi::WorkspaceMenuAction{
+    use ffi::WorkspaceMenuCommand as C;let mut action=ffi::WorkspaceMenuAction{command:C::None,workspace:s.workspace.clone(),profile:String::new(),color:0,emoji:String::new()};
+    if !workspace_menu_enabled(command,s){action.workspace.clear();return action;}
+    action.command=match command{
+        WS_NEW_PROFILE=>C::NewProfile,WS_EDIT_PROFILE=>{action.profile=s.profile.clone();C::EditProfile},WS_SETTINGS=>C::Settings,WS_REMOVE=>C::Remove,WS_CUSTOM_COLOR=>C::CustomColor,WS_CUSTOM_EMOJI=>C::CustomEmoji,WS_CLEAR_EMOJI=>C::ClearEmoji,
+        _=>if let Some(index)=indexed(command,WS_PROFILE_BASE,s.profiles.len()){action.profile=s.profiles[index].id.clone();C::AssignProfile}
+           else if let Some(index)=indexed(command,WS_COLOR_BASE,APPEARANCE_COLORS.len()){action.color=APPEARANCE_COLORS[index];C::Color}
+           else if let Some(index)=indexed(command,WS_EMOJI_BASE,APPEARANCE_EMOJIS.len()){action.emoji=APPEARANCE_EMOJIS[index].into();C::Emoji}
+           else{C::None},
+    };
+    if action.command==C::None{action.workspace.clear();}action
 }
 
 fn workspace_switch_motion(previous:i32,current:i32,visible:bool,enabled:bool,reduced:bool)->ffi::WorkspaceMotion {
@@ -4443,6 +4496,27 @@ mod tests {
         for (command,expected,workspace) in [(20,C::Peek,"work"),(21,C::NewTab,"work"),(22,C::Split,"work"),(23,C::SetRule,"work"),(24,C::RemoveRule,""),(1000,C::SetRule,"work"),(1001,C::SetRule,"home"),(1002,C::None,""),(25,C::None,""),(5,C::None,"")]{let a=link_menu_action(command,&s);assert_eq!(a.command,expected,"{command}");assert_eq!(a.workspace,workspace);}
         let mut busy=link_state();busy.ready=false;for command in [20,21,22,23,24,1000]{assert_eq!(link_menu_action(command,&busy).command,C::None);assert!(!link_menu_enabled(command,&busy));}
         let mut ruleless=link_state();ruleless.has_rule=false;assert_eq!(link_menu_action(24,&ruleless).command,C::None);
+    }
+    fn workspace_menu_state()->ffi::WorkspaceMenuState{ffi::WorkspaceMenuState{ready:true,busy:false,workspace:"work".into(),workspace_count:2,profile:"p2".into(),profiles:vec![ffi::WorkspaceMenuProfile{id:"p1".into(),name:"Główny".into()},ffi::WorkspaceMenuProfile{id:"p2".into(),name:"Praca".into()}],color:APPEARANCE_COLORS[1],emoji:"🚀".into()}}
+    #[test] fn workspace_menu_preserves_structure_labels_groups_and_checks() {
+        let s=workspace_menu_state();let menu=workspace_context_menu(&s);let group=|g:u32|menu.iter().filter(|e|e.group==g).map(|e|(e.command,e.kind)).collect::<Vec<_>>();
+        assert_eq!(group(0),vec![(1,2),(31,2),(32,2),(0,1),(4,0),(30,0)]);assert_eq!(group(1),vec![(100,3),(101,3),(0,1),(3,0),(2,0)]);assert_eq!(group(2),vec![(40,4),(41,4),(42,4),(43,4),(0,1),(33,0)]);assert_eq!(group(3),vec![(50,4),(51,4),(52,4),(53,4),(54,4),(55,4),(0,1),(34,0),(35,4)]);
+        assert_eq!(menu.iter().find(|e|e.command==41).unwrap().label,"Szałwiowy");assert_eq!(menu.iter().find(|e|e.command==101).unwrap().label,"Praca");assert_eq!(menu.iter().find(|e|e.command==52).unwrap().label,"🚀");
+        assert!(workspace_menu_checked(101,&s)&&!workspace_menu_checked(100,&s)&&workspace_menu_checked(41,&s)&&!workspace_menu_checked(40,&s)&&workspace_menu_checked(52,&s)&&!workspace_menu_checked(35,&s)&&!workspace_menu_checked(102,&s));
+        let mut plain=workspace_menu_state();plain.emoji.clear();assert!(workspace_menu_checked(35,&plain)&&!workspace_menu_checked(52,&plain));
+        assert!(workspace_menu_command(1,0)&&workspace_menu_command(43,0)&&!workspace_menu_command(44,0)&&workspace_menu_command(55,0)&&!workspace_menu_command(56,0)&&!workspace_menu_command(100,0)&&workspace_menu_command(101,2)&&!workspace_menu_command(5,9)&&!workspace_menu_command(20,9)&&!workspace_menu_command(36,9));
+    }
+    #[test] fn workspace_menu_actions_resolve_targets_and_revalidate_state() {
+        use ffi::WorkspaceMenuCommand as C;let s=workspace_menu_state();
+        let a=workspace_menu_action(100,&s);assert_eq!((a.command,a.workspace.as_str(),a.profile.as_str()),(C::AssignProfile,"work","p1"));
+        let a=workspace_menu_action(3,&s);assert_eq!((a.command,a.profile.as_str()),(C::EditProfile,"p2"));
+        let a=workspace_menu_action(43,&s);assert_eq!((a.command,a.color),(C::Color,APPEARANCE_COLORS[3]));
+        let a=workspace_menu_action(50,&s);assert_eq!((a.command,a.emoji.as_str()),(C::Emoji,"💼"));
+        for (command,expected) in [(2,C::NewProfile),(4,C::Settings),(30,C::Remove),(33,C::CustomColor),(34,C::CustomEmoji),(35,C::ClearEmoji),(1,C::None),(31,C::None),(102,C::None),(46,C::None),(5,C::None)]{let a=workspace_menu_action(command,&s);assert_eq!(a.command,expected,"{command}");assert_eq!(a.workspace.is_empty(),expected==C::None);}
+        let mut single=workspace_menu_state();single.workspace_count=1;assert_eq!(workspace_menu_action(30,&single).command,C::None);assert!(workspace_menu_enabled(4,&single));
+        let mut busy=workspace_menu_state();busy.busy=true;assert!(!workspace_menu_enabled(30,&busy)&&workspace_menu_enabled(40,&busy));
+        let mut stale=workspace_menu_state();stale.ready=false;for command in [2,3,4,30,40,50,100]{assert_eq!(workspace_menu_action(command,&stale).command,C::None);}
+        let mut gone=workspace_menu_state();gone.workspace.clear();assert_eq!(workspace_menu_action(4,&gone).command,C::None);
     }
     #[test] fn tab_menu_preserves_order_labels_and_orientation() {
         let mut s=menu_state();let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,0,20,7,8,0,9,0,6,10,0,23,24]);assert_eq!(entries[3].label,"Przesuń w lewo");

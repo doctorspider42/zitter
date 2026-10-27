@@ -96,6 +96,11 @@ oraz rozwiązywanie komendy i docelowej przestrzeni są w Ruście; natywnie zost
 `SimpleMenuModel`/runner i usługi routingu. Testy Rust 489; podzbiory UI linków/
 menu/Peek i `DomainRoutingAndPersistence` zaliczone w obu trybach.
 
+**Menu przestrzeni w Ruście:** podmenu profilu/koloru/ikonki, stan zaznaczenia i
+dostępności oraz typowane akcje (profil, kolor, emoji, ustawienia, usunięcie) z
+celem przechwyconym w Ruście. Testy Rust 491; podzbiór UI menu przestrzeni zaliczony
+w obu trybach.
+
 **Pełny checkpoint UI 2026-10-27:** po poprawkach **273/273 Metal i 224/224 Views**
 (pierwszy przebieg: 6 niepowodzeń Metal, 1 Views — trzy crashe testów na odłączonych
 widokach, brakująca komenda Rust `HistoryMore`, tooltip tytułu Peek, wyścig tytułu

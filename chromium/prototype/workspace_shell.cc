@@ -5809,6 +5809,13 @@ constexpr int kProfileCommandBase = 100;
 // Rust plans use the established application command IDs; fail compilation if
 // the native IDs change without updating the Rust UI contract.
 static_assert(kOpenSplit==5&&kCloseSplit==6&&kMoveLeft==7&&kMoveRight==8&&kToggleVertical==9&&kCloseTab==10&&kLinkPeek==20&&kRuleHere==23&&kRemoveRule==24&&kNewFolder==36);
+// Snapshot for the Rust workspace menu, captured when the menu is built/queried.
+sidebar::WorkspaceMenuState WorkspaceMenuStateFor(const ShellState& state,const std::string& workspace,const std::vector<ProfileInfo>& profiles,SkColor color,const std::u16string& emoji) {
+  sidebar::WorkspaceMenuState out{};out.ready=state.configuration_ready;out.busy=state.profiles_busy;out.workspace_count=state.workspaces.size();out.color=color;out.emoji=base::UTF16ToUTF8(emoji);
+  for(const auto& item:state.workspaces)if(item.id==workspace){out.workspace=workspace;out.profile=item.profile_id;}
+  for(const auto& profile:profiles)out.profiles.push_back({profile.id,profile.name});
+  return out;
+}
 // Snapshot for the Rust link/route menu: labels, enabled/checked and routing.
 sidebar::LinkMenuState LinkMenuStateFor(const ShellState& state,const GURL& url,const std::string& source,const std::vector<Workspace>& routes) {
   sidebar::LinkMenuState out{};out.ready=state.configuration_ready;out.host=std::string(url.host());out.source=source;
@@ -5908,6 +5915,28 @@ void WorkspaceShell::BuildWorkspaceMenu(std::string id) {
   context_workspace_id_ = std::move(id);
   menu_profiles_ = state_.profiles;
   profile_menu_ = std::make_unique<ui::SimpleMenuModel>(this);
+#if BUILDFLAG(IS_MAC)
+  if (metal_sidebar_) {
+    color_menu_ = std::make_unique<ui::SimpleMenuModel>(this);
+    emoji_menu_ = std::make_unique<ui::SimpleMenuModel>(this);
+    workspace_menu_ = std::make_unique<ui::SimpleMenuModel>(this);
+    const auto entries = sidebar::workspace_context_menu(RustWorkspaceMenuState());
+    // Fill submenus first; their headers in the main menu reference them.
+    for (uint32_t pass : {1u, 0u}) for (const auto& entry : entries) {
+      if ((entry.group == 0) != (pass == 0)) continue;
+      auto* model = entry.group == 1 ? profile_menu_.get() : entry.group == 2 ? color_menu_.get() : entry.group == 3 ? emoji_menu_.get() : workspace_menu_.get();
+      const auto label = base::UTF8ToUTF16(std::string(entry.label));
+      switch (entry.kind) {
+        case 1: model->AddSeparator(ui::NORMAL_SEPARATOR); break;
+        case 2: model->AddSubMenu(entry.command, label, entry.command == kSetProfile ? profile_menu_.get() : entry.command == kColorMenu ? color_menu_.get() : emoji_menu_.get()); break;
+        case 3: model->AddRadioItem(entry.command, label, 1); break;
+        case 4: model->AddCheckItem(entry.command, label); break;
+        default: model->AddItem(entry.command, label);
+      }
+    }
+    return;
+  }
+#endif
   for (size_t i = 0; i < menu_profiles_.size(); ++i)
     profile_menu_->AddRadioItem(kProfileCommandBase + i, base::UTF8ToUTF16(menu_profiles_[i].name), 1);
   profile_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
@@ -6258,7 +6287,16 @@ void WorkspaceShell::ShowTabMenu(gfx::Point point,ui::mojom::MenuSourceType sour
   workspace_menu_runner_->RunMenuAt(widget_,nullptr,gfx::Rect(point,gfx::Size()),views::MenuAnchorPosition::kTopLeft,source_type);
 }
 
+#if BUILDFLAG(IS_MAC)
+sidebar::WorkspaceMenuState WorkspaceShell::RustWorkspaceMenuState() const {
+  return WorkspaceMenuStateFor(state_, context_workspace_id_, menu_profiles_, workspace_color(context_workspace_id_), workspace_emoji(context_workspace_id_));
+}
+#endif
 bool WorkspaceShell::IsCommandIdChecked(int command_id) const {
+#if BUILDFLAG(IS_MAC)
+  if (metal_sidebar_ && sidebar::workspace_menu_command(command_id, menu_profiles_.size()))
+    return sidebar::workspace_menu_checked(command_id, RustWorkspaceMenuState());
+#endif
   if (command_id >= kColorBase && command_id < kColorBase + static_cast<int>(kWorkspaceColors.size()))
     return workspace_color(context_workspace_id_) == kWorkspaceColors[command_id - kColorBase];
   if (command_id >= kEmojiBase && command_id < kEmojiBase + static_cast<int>(kWorkspaceEmojis.size()))
@@ -6279,6 +6317,7 @@ bool WorkspaceShell::IsCommandIdChecked(int command_id) const {
 bool WorkspaceShell::IsCommandIdEnabled(int command_id) const {
 #if BUILDFLAG(IS_MAC)
   if(metal_sidebar_&&command_id>=kOpenSplit&&command_id<=kCloseTab)return RustTabCommandEnabled(command_id);
+  if(metal_sidebar_&&sidebar::workspace_menu_command(command_id,menu_profiles_.size()))return sidebar::workspace_menu_enabled(command_id,RustWorkspaceMenuState());
   if(metal_sidebar_&&((command_id>=kLinkPeek&&command_id<=kRouteSubmenu)||(command_id>=kRouteBase&&command_id<kRouteBase+static_cast<int>(route_workspaces_.size()))))
     return sidebar::link_menu_enabled(command_id,LinkMenuStateFor(state_,context_url_,link_source_workspace_,route_workspaces_));
 #endif
@@ -6424,6 +6463,33 @@ void WorkspaceShell::ExecuteCommand(int command_id, int) {
         }, weak_factory_.GetWeakPtr(), state_.workspace_id, *context_tab_));
     return;
   }
+#if BUILDFLAG(IS_MAC)
+  if (metal_sidebar_ && sidebar::workspace_menu_command(command_id, menu_profiles_.size())) {
+    const auto action = sidebar::workspace_menu_action(command_id, RustWorkspaceMenuState());
+    if (action.command == sidebar::WorkspaceMenuCommand::None) return;
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(
+        [](base::WeakPtr<WorkspaceShell> shell, sidebar::WorkspaceMenuCommand command, std::string target, std::string profile, SkColor color, std::u16string emoji) {
+          if (!shell) return;
+          using C = sidebar::WorkspaceMenuCommand;
+          switch (command) {
+            case C::AssignProfile: shell->callbacks_.assign_profile.Run(target, profile); break;
+            case C::NewProfile: shell->OpenProfiles({}, target); break;
+            case C::EditProfile: shell->OpenProfiles(profile); break;
+            case C::Remove: shell->ConfirmRemoveWorkspace(target); break;
+            case C::Color: shell->SetWorkspaceColor(target, color); break;
+            case C::Emoji: case C::ClearEmoji: shell->SetWorkspaceEmoji(target, emoji); break;
+            case C::Settings: case C::CustomColor: case C::CustomEmoji:
+              shell->callbacks_.select_workspace.Run(target);
+              shell->OpenWorkspaceSettings();
+              if (command == C::CustomColor) shell->color_input_->RequestFocus();
+              if (command == C::CustomEmoji) shell->emoji_input_->RequestFocus();
+              break;
+            default: break;
+          }
+        }, weak_factory_.GetWeakPtr(), action.command, std::string(action.workspace), std::string(action.profile), static_cast<SkColor>(action.color), base::UTF8ToUTF16(std::string(action.emoji))));
+    return;
+  }
+#endif
   const auto target = context_workspace_id_;
   std::string profile;
   for (const auto& workspace : state_.workspaces) if (workspace.id == target) profile = workspace.profile_id;
