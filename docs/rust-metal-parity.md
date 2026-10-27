@@ -14,6 +14,59 @@ accumulate compiled cases for a later bulk checkpoint. Build, Rust/Python and SD
 checks without windows remain enabled. No computer shutdown is requested.
 The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 
+## Latest headless implementation: pinned-row models and scoped folder actions
+
+Source `c64e203` adds SidebarPinModel (kind 10), distinct from tabs (9) and form
+commands (8). Rust owns the pin/folder role, opaque key, current folder base title,
+collapse projection and shared sidebar presentation. UTF-16 display text, cached
+UTF-8, monogram/color and folder glyph/badge policy now use the common Rust
+presentation/scene APIs for tabs and pins. Native URL/locale/host/palette formatting
+continues to supply display facts. Backend and platform AX/tooltip projections retain
+their necessary native copies.
+
+Typed pin reconciliation validates IDs, role/collapse state and model kinds before
+mutation, keeps IDs across metadata/role changes, and cancels changed/reordered
+input. Folder prefixes are built in Rust and use the current base title after a
+rename; callbacks no longer keep an old title. Disabled live controls accept service
+projection, while user target lookup requires a current enabled record. Active and
+warm sidebar projection receive the actual workspace identity and consult the
+existing Rust SidebarTree for that workspace's collapse state. The fast path now
+checks complete pin backend facts, not only IDs.
+
+RustRowView clears durable native Spec icon/title/monogram/color/active/tile/height
+for both pin and tab roles. Live Metal Items come from Rust; workspace previews,
+AX/tooltip and fallback use current Rust-backed snapshots/projection. Pin rows use
+the same GPU-visible native-paint gate and fallback invalidation as tabs. Native
+fallback raster/decorations and native event/window/AX adapters remain explicit;
+Views retains its existing presentation and callbacks.
+
+Rust-path pin actions use weak row/scope plus workspace/key/node ID, checking the
+current widget, visibility/enabled state, cache owner/adapter, live lease, actual
+workspace-root membership and backend key/role. Folder actions resolve the actual
+adjacent ScenePinGroup tagged with scope/ID before changing tree/presentation state.
+They do not retain unowned group/button pointers or a copied folder title. Native
+backend commands keep actual domain/profile/store authorization.
+
+Validation: **451 Rust** cases (12 new pin cases), **68 live + 68 clean-archive
+Python**, **180 CoreText SDK cases plus raster**, scoped GN/header and boundary
+checks. App and browser-test binaries compile; all **53 committed/live/staged
+prototype inputs** match; final three-target Ninja check reports no work. Three
+new browser cases compile for rename/collapse/AX/live scene, missing actual group
+and a leaf adapter moved outside its current workspace root. **No UI tests ran**;
+preview and packaged bundle were left unchanged.
+[Evidence](benchmarks/rust-pin-model-headless-2026-10-27.json).
+
+Pin adapters and folder/list/split containers still rebuild. ScenePinGroup is a
+native delivery adapter with opaque scope/ID metadata, not a Rust-owned physical
+group node. Rust SidebarTree owns collapse decisions and ActionGraph owns their
+row presentation projection; native visibility still delivers descendant input
+cancellation. Complete tree/visibility ownership and keyed reconciliation remain,
+alongside other UI/editor/text models and native outer containers/windows. GUI/
+manual/Unicode/theme/fallback recovery, compositor diagnosis, actual presentation
+profiling and release/license acceptance remain deferred. No CPU/GPU/presentation
+or memory gain is claimed; model/string/lookup/weak-group/rebuild costs remain
+unmeasured. No dependencies, target edges or license inputs changed.
+
 ## Latest headless implementation: Rust-owned tab presentation
 
 Sources `067650c` and `29001aa` move typed tab title/monogram UTF-16, cached UTF-8
