@@ -127,6 +127,8 @@ mod ffi {
     enum RowVisual { Normal, Hovered, Pressed, Disabled }
     enum RowAction { None, Activate, Drop, Cancel }
     struct RowInputResult { visual: RowVisual, action: RowAction, handled: bool }
+    struct ActionNodeKey { kind: u32, high: u64, low: u64, name: String }
+    struct ActionNodePlan { admitted: bool, ids: Vec<u64>, created: usize, retired: usize }
     struct ActionSnapshot { enabled: bool, focused: bool, on: bool, is_default: bool, visual: RowVisual }
     struct Rect { x: i32, y: i32, width: i32, height: i32 }
     struct RowLayout { title: Rect, detail: Rect, close: Rect }
@@ -415,7 +417,12 @@ mod ffi {
         fn set_collapsed(self: &mut SidebarTree, workspace: &str, id: &str, value: bool);
         fn toggle(self: &mut SidebarTree, workspace: &str, id: &str) -> bool;
         fn forget_workspace(self: &mut SidebarTree, workspace: &str);
+        type ActionGraph;
+        fn new_action_graph() -> Box<ActionGraph>;
+        fn reconcile(self: &mut ActionGraph, keys: Vec<ActionNodeKey>) -> ActionNodePlan;
+        fn acquire(self: &mut ActionGraph, key: &ActionNodeKey) -> Box<ActionControl>;
         type ActionControl;
+        fn action_node_id(self: &ActionControl) -> u64;
         fn new_action_control() -> Box<ActionControl>;
         fn action_preferred_size(dot: bool, label: bool) -> Rect;
         fn action_enabled(self: &mut ActionControl, enabled: bool) -> bool;
@@ -1549,6 +1556,8 @@ impl Viewport {
 // commands stay in the application. State survives reconstruction and rename
 // because it is keyed by workspace and item IDs, never by native View pointers.
 use std::collections::{BTreeMap, BTreeSet};
+use std::cell::RefCell;
+use std::rc::Rc;
 #[derive(Default)]
 struct SidebarTree { collapsed: BTreeMap<String, BTreeSet<String>> }
 fn new_sidebar_tree() -> Box<SidebarTree> { Box::new(SidebarTree::default()) }
@@ -1698,10 +1707,11 @@ impl RowPointer {
     }
 }
 // An action's state outlives individual native events; no Button state is read.
-struct ActionControl { pointer:RowPointer, enabled:bool, focused:bool, on:bool, is_default:bool, on_press:bool, visual:ffi::RowVisual }
-fn new_action_control()->Box<ActionControl>{Box::new(ActionControl{pointer:RowPointer::default(),enabled:true,focused:false,on:false,is_default:false,on_press:false,visual:ffi::RowVisual::Normal})}
+struct ActionState { pointer:RowPointer, enabled:bool, focused:bool, on:bool, is_default:bool, on_press:bool, visual:ffi::RowVisual }
+fn initial_action_state()->ActionState{ActionState{pointer:RowPointer::default(),enabled:true,focused:false,on:false,is_default:false,on_press:false,visual:ffi::RowVisual::Normal}}
+fn new_action_control()->Box<ActionControl>{Box::new(ActionControl{storage:ActionStorage::Standalone(initial_action_state())})}
 fn action_preferred_size(dot:bool,label:bool)->ffi::Rect{ffi::Rect{x:0,y:0,width:if dot{if label{30}else{24}}else{32},height:if dot{28}else{32}}}
-impl ActionControl {
+impl ActionState {
     fn action_cancel(&mut self)->bool{let visual=if self.enabled{ffi::RowVisual::Normal}else{ffi::RowVisual::Disabled};let changed=self.pointer.origin.is_some()||self.pointer.hovered||self.pointer.key_armed||self.visual!=visual;self.pointer.cancel();self.visual=visual;changed}
     fn action_enabled(&mut self,enabled:bool)->bool{if self.enabled==enabled{return false;}self.enabled=enabled;self.action_cancel();true}
     fn action_focus(&mut self,focused:bool){self.focused=focused;if !focused{self.action_cancel();}}
@@ -1734,6 +1744,68 @@ impl ActionControl {
         let (visual,action,handled)=match kind{0=>{self.pointer.press(0,0);(V::Pressed,A::None,true)},1=>{self.pointer.cancel();(V::Hovered,A::Activate,true)},2=>{self.pointer.cancel();(V::Normal,A::None,false)},_=>(self.visual,A::None,false)};self.visual=visual;ffi::RowInputResult{visual,action,handled}
     }
 }
+
+// Logical row nodes belong to a Rust scope, not the lifetime of a native View.
+// Domain keys are opaque projections; they never authorize a browser operation.
+type ActionNodeIdentity=(u32,u64,u64,String);
+fn action_node_key(key:&ffi::ActionNodeKey)->Option<ActionNodeIdentity>{
+    match key.kind {
+        kind @ (1|10) if (key.high!=0||key.low!=0)&&key.name.is_empty()=>Some((kind,key.high,key.low,String::new())),
+        2 if key.high==0&&key.low==0&&!key.name.is_empty()=>Some((2,0,0,key.name.clone())),
+        _=>None,
+    }
+}
+struct ActionNodeRecord { id:u64, lease:u64, attached:bool, alive:bool, state:ActionState }
+pub struct ActionGraph { nodes:BTreeMap<ActionNodeIdentity,Rc<RefCell<ActionNodeRecord>>>, order:Vec<u64>, next_id:u64 }
+fn new_action_graph()->Box<ActionGraph>{Box::new(ActionGraph{nodes:BTreeMap::new(),order:vec![],next_id:1})}
+impl ActionGraph {
+    fn rejected(&self)->ffi::ActionNodePlan{ffi::ActionNodePlan{admitted:false,ids:self.order.clone(),created:0,retired:0}}
+    fn reconcile(&mut self,keys:Vec<ffi::ActionNodeKey>)->ffi::ActionNodePlan{
+        let Some(identities)=keys.iter().map(action_node_key).collect::<Option<Vec<_>>>() else{return self.rejected();};
+        let unique=identities.iter().cloned().collect::<BTreeSet<_>>();
+        if unique.len()!=identities.len(){return self.rejected();}
+        if unique.iter().any(|key|key.0==10&&!unique.contains(&(1,key.1,key.2,String::new()))){return self.rejected();}
+        let created=identities.iter().filter(|key|!self.nodes.contains_key(*key)).count();
+        if self.next_id.checked_add(created as u64).is_none(){return self.rejected();}
+        let mut retired=0;
+        self.nodes.retain(|key,node|{if unique.contains(key){return true;}let mut node=node.borrow_mut();node.alive=false;node.attached=false;node.state.action_focus(false);node.state.action_cancel();retired+=1;false});
+        let mut order=Vec::with_capacity(identities.len());
+        for key in identities {
+            let node=self.nodes.entry(key).or_insert_with(||{let id=self.next_id;self.next_id+=1;Rc::new(RefCell::new(ActionNodeRecord{id,lease:0,attached:false,alive:true,state:initial_action_state()}))});
+            order.push(node.borrow().id);
+        }
+        self.order=order.clone();ffi::ActionNodePlan{admitted:true,ids:order,created,retired}
+    }
+    fn acquire(&mut self,key:&ffi::ActionNodeKey)->Box<ActionControl>{
+        let node=action_node_key(key).and_then(|key|self.nodes.get(&key)).cloned();
+        let Some(node)=node else{return Box::new(ActionControl{storage:ActionStorage::Retired});};
+        let lease={let mut record=node.borrow_mut();let Some(lease)=record.lease.checked_add(1) else{return Box::new(ActionControl{storage:ActionStorage::Retired});};record.lease=lease;record.attached=true;record.state.action_enabled(true);record.state.action_focus(false);record.state.action_cancel();lease};
+        Box::new(ActionControl{storage:ActionStorage::Shared{node,lease}})
+    }
+}
+impl Drop for ActionGraph {fn drop(&mut self){for node in self.nodes.values(){let mut record=node.borrow_mut();record.alive=false;record.attached=false;record.state.action_focus(false);record.state.action_cancel();}}}
+enum ActionStorage { Standalone(ActionState), Shared{node:Rc<RefCell<ActionNodeRecord>>,lease:u64}, Retired }
+struct ActionControl { storage:ActionStorage }
+impl ActionControl {
+    fn read<R>(&self,f:impl FnOnce(&ActionState)->R)->Option<R>{match &self.storage{ActionStorage::Standalone(state)=>Some(f(state)),ActionStorage::Shared{node,lease}=>{let record=node.borrow();(record.alive&&record.attached&&record.lease==*lease).then(||f(&record.state))},ActionStorage::Retired=>None}}
+    fn write<R>(&mut self,f:impl FnOnce(&mut ActionState)->R)->Option<R>{match &mut self.storage{ActionStorage::Standalone(state)=>Some(f(state)),ActionStorage::Shared{node,lease}=>{let mut record=node.borrow_mut();if !record.alive||!record.attached||record.lease!=*lease{return None;}Some(f(&mut record.state))},ActionStorage::Retired=>None}}
+    fn retired_input()->ffi::RowInputResult{ffi::RowInputResult{visual:ffi::RowVisual::Disabled,action:ffi::RowAction::None,handled:false}}
+    fn action_node_id(&self)->u64{match &self.storage{ActionStorage::Shared{node,lease}=>{let record=node.borrow();if record.alive&&record.attached&&record.lease==*lease{record.id}else{0}},_=>0}}
+    fn action_enabled(&mut self,value:bool)->bool{self.write(|s|s.action_enabled(value)).unwrap_or(false)}
+    fn action_focus(&mut self,value:bool){self.write(|s|s.action_focus(value));}
+    fn action_on(&mut self,value:bool)->bool{self.write(|s|s.action_on(value)).unwrap_or(false)}
+    fn action_cancel(&mut self)->bool{self.write(ActionState::action_cancel).unwrap_or(false)}
+    fn action_snapshot(&self)->ffi::ActionSnapshot{self.read(ActionState::action_snapshot).unwrap_or(ffi::ActionSnapshot{enabled:false,focused:false,on:false,is_default:false,visual:ffi::RowVisual::Disabled})}
+    fn action_default(&mut self,value:bool)->bool{self.write(|s|s.action_default(value)).unwrap_or(false)}
+    fn action_on_press(&mut self,value:bool)->bool{self.write(|s|s.action_on_press(value)).unwrap_or(false)}
+    fn action_pending(&self)->bool{self.read(ActionState::action_pending).unwrap_or(false)}
+    fn action_accelerator(&mut self,key:u32,modified:bool,visible:bool)->ffi::RowInputResult{self.write(|s|s.action_accelerator(key,modified,visible)).unwrap_or_else(Self::retired_input)}
+    fn action_pointer(&mut self,phase:ffi::PointerPhase,x:i32,y:i32,inside:bool,trigger:bool,visible:bool)->ffi::RowInputResult{self.write(|s|s.action_pointer(phase,x,y,inside,trigger,visible)).unwrap_or_else(Self::retired_input)}
+    fn action_row_pointer(&mut self,phase:ffi::PointerPhase,x:i32,y:i32,inside:bool,trigger:bool,visible:bool,drop:bool)->ffi::RowInputResult{self.write(|s|s.action_row_pointer(phase,x,y,inside,trigger,visible,drop)).unwrap_or_else(Self::retired_input)}
+    fn action_key(&mut self,pressed:bool,key:u32,mac:bool,visible:bool)->ffi::RowInputResult{self.write(|s|s.action_key(pressed,key,mac,visible)).unwrap_or_else(Self::retired_input)}
+    fn action_gesture(&mut self,kind:u32,visible:bool)->ffi::RowInputResult{self.write(|s|s.action_gesture(kind,visible)).unwrap_or_else(Self::retired_input)}
+}
+impl Drop for ActionControl {fn drop(&mut self){if let ActionStorage::Shared{node,lease}=&self.storage{let mut record=node.borrow_mut();if record.alive&&record.lease==*lease{record.attached=false;record.state.action_focus(false);record.state.action_cancel();}}}}
 
 // Shared by the native input/accessibility adapter and the GPU display list.
 // Widths are logical pixels; CoreText still owns font shaping and measurement.
@@ -2940,6 +3012,20 @@ mod tests {
     #[test] fn action_geometry_preserves_workspace_emoji_and_chrome_metrics() {
         for (dot,label,w,h) in [(false,false,32,32),(false,true,32,32),(true,false,24,28),(true,true,30,28)]{let r=action_preferred_size(dot,label);assert_eq!((r.width,r.height),(w,h));}
     }
+    fn node_tab(low:u64)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:1,high:7,low,name:String::new()}}
+    fn node_pin(name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:2,high:0,low:0,name:name.into()}}
+    fn node_close(low:u64)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:10,high:7,low,name:String::new()}}
+    #[test] fn action_graph_close_children_follow_parent_identity_and_retire_with_affordance(){let mut g=new_action_graph();let p=g.reconcile(vec![node_tab(1),node_close(1),node_tab(2),node_close(2)]);assert!(p.admitted);let old=g.acquire(&node_close(2));let q=g.reconcile(vec![node_tab(2),node_close(2),node_tab(1),node_close(1)]);assert_eq!(q.ids,vec![p.ids[2],p.ids[3],p.ids[0],p.ids[1]]);let one=g.reconcile(vec![node_tab(2)]);assert_eq!((one.created,one.retired),(0,3));assert_eq!(one.ids,vec![p.ids[2]]);assert_eq!(old.action_node_id(),0);}
+    #[test] fn action_graph_orphan_close_is_rejected_without_retiring_live_nodes(){let mut g=new_action_graph();let p=g.reconcile(vec![node_tab(1),node_close(1)]);let node=g.acquire(&node_tab(1));let failed=g.reconcile(vec![node_tab(2),node_close(1)]);assert!(!failed.admitted);assert_eq!(failed.ids,p.ids);assert_ne!(0,node.action_node_id());}
+    #[test] fn action_graph_reorders_without_replacing_logical_nodes(){let mut g=new_action_graph();let p=g.reconcile(vec![node_tab(1),node_tab(2),node_pin("folder")]);assert!(p.admitted);assert_eq!(p.created,3);let q=g.reconcile(vec![node_pin("folder"),node_tab(2),node_tab(1)]);assert!(q.admitted);assert_eq!(q.ids,vec![p.ids[2],p.ids[1],p.ids[0]]);assert_eq!((q.created,q.retired),(0,0));}
+    #[test] fn action_graph_native_adapter_replacement_retains_id_and_value_but_not_pending_input(){let mut g=new_action_graph();let id=g.reconcile(vec![node_tab(1)]).ids[0];{let mut first=g.acquire(&node_tab(1));first.action_on(true);first.action_focus(true);first.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);assert!(first.action_pending());}let next=g.acquire(&node_tab(1));assert_eq!(next.action_node_id(),id);assert!(next.action_snapshot().on);assert!(!next.action_snapshot().focused);assert!(!next.action_pending());}
+    #[test] fn action_graph_retirement_reinsertion_never_reuses_or_resurrects_old_handles(){let mut g=new_action_graph();let id=g.reconcile(vec![node_tab(1)]).ids[0];let mut old=g.acquire(&node_tab(1));assert_eq!(g.reconcile(vec![]).retired,1);assert_eq!(old.action_node_id(),0);assert!(!old.action_enabled(true));assert!(!old.action_key(true,1,true,true).handled);let next=g.reconcile(vec![node_tab(1)]);assert!(next.ids[0]>id);assert_eq!(old.action_node_id(),0);}
+    #[test] fn action_graph_rebinding_invalidates_old_lease_and_old_drop_cannot_cancel_new_input(){let mut g=new_action_graph();g.reconcile(vec![node_tab(1)]);let old=g.acquire(&node_tab(1));let id=old.action_node_id();let mut next=g.acquire(&node_tab(1));assert_eq!(next.action_node_id(),id);assert_eq!(old.action_node_id(),0);next.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);drop(old);assert!(next.action_pending());assert!(next.action_pointer(ffi::PointerPhase::Release,1,1,true,true,true).action==ffi::RowAction::Activate);}
+    #[test] fn action_graph_scope_isolation_does_not_alias_identical_keys(){let mut a=new_action_graph();let mut b=new_action_graph();a.reconcile(vec![node_pin("same")]);b.reconcile(vec![node_pin("same")]);let mut x=a.acquire(&node_pin("same"));let y=b.acquire(&node_pin("same"));x.action_on(true);a.reconcile(vec![]);assert!(!y.action_snapshot().on);assert!(y.action_snapshot().enabled);assert_ne!(0,y.action_node_id());}
+    #[test] fn action_graph_invalid_snapshots_are_transactional(){let mut g=new_action_graph();let ids=g.reconcile(vec![node_tab(1)]).ids;let mut node=g.acquire(&node_tab(1));node.action_on(true);for keys in [vec![node_tab(2),node_tab(2)],vec![node_pin("")],vec![ffi::ActionNodeKey{kind:1,high:0,low:0,name:String::new()}],vec![ffi::ActionNodeKey{kind:99,high:0,low:0,name:"x".into()}]]{let p=g.reconcile(keys);assert!(!p.admitted);assert_eq!(p.ids,ids);assert!(node.action_snapshot().on);assert!(node.action_node_id()!=0);}}
+    #[test] fn action_graph_owner_drop_retires_retained_native_adapter(){let mut node={let mut g=new_action_graph();g.reconcile(vec![node_tab(1)]);g.acquire(&node_tab(1))};assert_eq!(node.action_node_id(),0);assert!(!node.action_gesture(1,true).handled);assert!(!node.action_snapshot().enabled);}
+    #[test] fn action_graph_id_exhaustion_is_transactional_and_cleanup_still_works(){let mut g=new_action_graph();let ids=g.reconcile(vec![node_tab(1)]).ids;g.next_id=u64::MAX;let failed=g.reconcile(vec![node_tab(2)]);assert!(!failed.admitted);assert_eq!(failed.ids,ids);assert_eq!(g.reconcile(vec![]).retired,1);}
+    #[test] fn action_graph_invalid_acquire_never_creates_an_authorized_node(){let mut g=new_action_graph();let mut node=g.acquire(&node_tab(1));assert_eq!(node.action_node_id(),0);assert!(!node.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true).handled);assert!(!node.action_on(true));assert_eq!(g.reconcile(vec![node_tab(1)]).created,1);}
     #[test] fn action_press_activation_consumes_release_and_keeps_default_release_policy() {
         use ffi::{PointerPhase as P,RowAction as A};let mut ordinary=new_action_control();assert!(ordinary.action_pointer(P::Press,2,2,true,true,true).action==A::None);assert!(ordinary.action_pointer(P::Release,2,2,true,true,true).action==A::Activate);
         let mut menu=new_action_control();assert!(menu.action_on_press(true));assert!(!menu.action_on_press(true));assert!(menu.action_pointer(P::Press,2,2,true,true,true).action==A::Activate);assert!(!menu.action_pending());assert!(menu.action_pointer(P::Release,2,2,true,true,true).action!=A::Activate);assert!(menu.action_pointer(P::Drag,3,3,true,true,true).action==A::None);

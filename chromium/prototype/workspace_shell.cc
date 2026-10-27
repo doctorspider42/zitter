@@ -116,6 +116,19 @@
 #endif
 
 namespace zitter::prototype {
+class SidebarNodeGraphState {
+ public:
+#if BUILDFLAG(IS_MAC)
+  rust::Box<sidebar::ActionGraph> graph=sidebar::new_action_graph();
+#endif
+};
+struct SidebarNodeBinding {std::shared_ptr<SidebarNodeGraphState> scope;uint32_t kind=0;std::array<uint64_t,2> identity{};std::string name;};
+#if BUILDFLAG(IS_MAC)
+rust::Box<sidebar::ActionControl> AcquireSidebarInput(const SidebarNodeBinding& binding){
+  auto state=binding.scope?binding.scope->graph->acquire({binding.kind,binding.identity[0],binding.identity[1],binding.name}):sidebar::new_action_control();
+  CHECK(!binding.scope||state->action_node_id()!=0)<<"Unreconciled sidebar node";return state;
+}
+#endif
 class ImportFormState {
  public:
 #if BUILDFLAG(IS_MAC)
@@ -669,11 +682,12 @@ END_METADATA
 class RustActionView : public views::View {
   METADATA_HEADER(RustActionView,views::View)
  public:
-  RustActionView(views::Button::PressedCallback callback,std::u16string name,ControlGlyph glyph,const gfx::VectorIcon* icon,base::RepeatingCallback<bool()> visible,base::RepeatingClosure changed,bool native_focus_ring)
-      :callback_(std::move(callback)),glyph_(glyph),icon_(icon),visible_(std::move(visible)),changed_(std::move(changed)){
+  RustActionView(views::Button::PressedCallback callback,std::u16string name,ControlGlyph glyph,const gfx::VectorIcon* icon,base::RepeatingCallback<bool()> visible,base::RepeatingClosure changed,bool native_focus_ring,rust::Box<sidebar::ActionControl> state=sidebar::new_action_control())
+      :callback_(std::move(callback)),glyph_(glyph),icon_(icon),visible_(std::move(visible)),changed_(std::move(changed)),state_(std::move(state)){
     SetTooltipText(name);auto& ax=GetViewAccessibility();ax.SetName(name);ax.SetRole(ax::mojom::Role::kButton);ax.SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kPress);SetFocusBehavior(views::PlatformStyle::kDefaultFocusBehavior);if(native_focus_ring)views::FocusRing::Install(this);
   }
   void OnTooltipTextChanged(const std::u16string& previous) override{views::View::OnTooltipTextChanged(previous);auto& ax=GetViewAccessibility();if((ax.GetCachedName().empty()||ax.GetCachedName()==previous)&&!GetTooltipText().empty())ax.SetName(GetTooltipText());}
+  uint64_t LogicalNodeId() const{return state_->action_node_id();}
   sidebar::ActionSnapshot Snapshot() const{return state_->action_snapshot();}
   void SetActivationOnPress(bool value){if(state_->action_on_press(value))SchedulePaint();}
   void SetDefault(bool value){if(!state_->action_default(value))return;GetViewAccessibility().SetIsDefault(value);const ui::Accelerator enter(ui::VKEY_RETURN,ui::EF_NONE);if(value)AddAccelerator(enter);else RemoveAccelerator(enter);}
@@ -719,14 +733,14 @@ class RustActionView : public views::View {
   bool Pointer(sidebar::PointerPhase phase,const ui::MouseEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;const bool pending=state_->action_pending();return Apply(state_->action_pointer(phase,event.x(),event.y(),phase!=sidebar::PointerPhase::Exit&&HitTestPoint(event.location())&&GetVisibleBounds().Contains(event.location()),event.IsLeftMouseButton(),Interactive()),event,before,pending);}
   bool Key(bool pressed,const ui::KeyEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;const bool pending=state_->action_pending();const uint32_t key=event.key_code()==ui::VKEY_SPACE?1:event.key_code()==ui::VKEY_RETURN?2:0;return Apply(state_->action_key(pressed,key,true,Interactive()),event,before,pending);}
   bool Apply(const sidebar::RowInputResult& result,const ui::Event& event,sidebar::RowVisual before,bool pending){const bool handled=result.handled;if(result.visual!=before)SchedulePaint();else if(pending!=state_->action_pending()&&changed_)changed_.Run();if(result.action==sidebar::RowAction::Activate){ActivateAction(event);return handled;}return handled;}
-  SkColor color_=kSubtle;std::u16string label_;views::Button::PressedCallback callback_;ControlGlyph glyph_;raw_ptr<const gfx::VectorIcon> icon_;base::RepeatingCallback<bool()> visible_;base::RepeatingClosure changed_;rust::Box<sidebar::ActionControl> state_=sidebar::new_action_control();SceneWindowObserver window_{base::BindRepeating(&RustActionView::WindowChanged,base::Unretained(this))};base::CallbackListSubscription enabled_changed_{AddEnabledInViewsSubtreeChangedCallback(base::BindRepeating(&RustActionView::EnabledChanged,base::Unretained(this)))};
+  SkColor color_=kSubtle;std::u16string label_;views::Button::PressedCallback callback_;ControlGlyph glyph_;raw_ptr<const gfx::VectorIcon> icon_;base::RepeatingCallback<bool()> visible_;base::RepeatingClosure changed_;rust::Box<sidebar::ActionControl> state_;SceneWindowObserver window_{base::BindRepeating(&RustActionView::WindowChanged,base::Unretained(this))};base::CallbackListSubscription enabled_changed_{AddEnabledInViewsSubtreeChangedCallback(base::BindRepeating(&RustActionView::EnabledChanged,base::Unretained(this)))};
 };
 BEGIN_METADATA(RustActionView)
 END_METADATA
 #endif
-std::unique_ptr<views::View> CreateSceneAction(views::Button::PressedCallback callback,std::u16string name,ControlGlyph glyph,const gfx::VectorIcon* icon,base::RepeatingCallback<bool()> visible,base::RepeatingClosure changed,bool native_focus_ring=true){
+std::unique_ptr<views::View> CreateSceneAction(views::Button::PressedCallback callback,std::u16string name,ControlGlyph glyph,const gfx::VectorIcon* icon,base::RepeatingCallback<bool()> visible,base::RepeatingClosure changed,bool native_focus_ring=true,SidebarNodeBinding binding={}){
 #if BUILDFLAG(IS_MAC)
-  if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal")return std::make_unique<RustActionView>(std::move(callback),std::move(name),glyph,icon,std::move(visible),std::move(changed),native_focus_ring);
+  if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal")return std::make_unique<RustActionView>(std::move(callback),std::move(name),glyph,icon,std::move(visible),std::move(changed),native_focus_ring,AcquireSidebarInput(binding));
 #endif
   auto view=std::make_unique<SceneGlyphButton>(std::move(callback),std::move(name),glyph,icon,std::move(visible),std::move(changed));if(!native_focus_ring){view->SetInstallFocusRingOnFocus(false);view->SetHasInkDropActionOnClick(false);}return view;
 }
@@ -1783,12 +1797,13 @@ class RustRowView final : public views::View {
  public:
   using Spec=RowButton::Spec;
   using Watch=base::RepeatingCallback<void(views::View*,base::RepeatingClosure)>;
-  RustRowView(views::Button::PressedCallback callback,Spec spec,base::RepeatingClosure changed,Watch watch)
-      :spec_(std::move(spec)),callback_(std::move(callback)),changed_(std::move(changed)),watch_(std::move(watch)){
+  RustRowView(views::Button::PressedCallback callback,Spec spec,base::RepeatingClosure changed,Watch watch,rust::Box<sidebar::ActionControl> state,SidebarNodeBinding close_binding)
+      :spec_(std::move(spec)),callback_(std::move(callback)),changed_(std::move(changed)),watch_(std::move(watch)),state_(std::move(state)){
     SetNotifyEnterExitOnChild(true);SetTooltipText(spec_.title);auto& ax=GetViewAccessibility();ax.SetName(spec_.title);ax.SetRole(ax::mojom::Role::kButton);ax.SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kPress);SetFocusBehavior(views::PlatformStyle::kDefaultFocusBehavior);if(!spec_.history)views::FocusRing::Install(this);state_->action_on(spec_.active);if(spec_.chip)ax.SetDescription(spec_.detail);
-    if(spec_.close){close_=AddChildView(CreateSceneAction(std::move(spec_.close),u"Zamknij kartę",ControlGlyph::kVector,&vector_icons::kCloseSmallIcon,{},base::BindRepeating(&RustRowView::ChildChanged,weak_factory_.GetWeakPtr())));UpdateClose();}
+    if(spec_.close){close_=AddChildView(CreateSceneAction(std::move(spec_.close),u"Zamknij kartę",ControlGlyph::kVector,&vector_icons::kCloseSmallIcon,{},base::BindRepeating(&RustRowView::ChildChanged,weak_factory_.GetWeakPtr()),true,std::move(close_binding)));UpdateClose();}
   }
   ~RustRowView() override{if(watch_)watch_.Run(this,{});}
+  uint64_t LogicalNodeId() const{return state_->action_node_id();}
   const Spec& preview_spec() const{return spec_;}
   void SetCallback(views::Button::PressedCallback callback){CancelInput();callback_=std::move(callback);}
   void SetActive(bool active){if(!state_->action_on(active))return;spec_.active=active;measured_.reset();UpdateClose();SchedulePaint();}
@@ -1854,14 +1869,18 @@ class RustRowView final : public views::View {
   bool Pointer(sidebar::PointerPhase phase,const ui::MouseEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;return Apply(state_->action_row_pointer(phase,event.x(),event.y(),phase!=sidebar::PointerPhase::Exit&&HitTestPoint(event.location())&&GetVisibleBounds().Contains(event.location()),event.IsLeftMouseButton(),Interactive(),!spec_.drop.is_null()),event,before);}
   bool Key(bool pressed,const ui::KeyEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;return Apply(state_->action_key(pressed,event.key_code()==ui::VKEY_SPACE?1:event.key_code()==ui::VKEY_RETURN?2:0,true,Interactive()),event,before);}
   bool Apply(const sidebar::RowInputResult& result,const ui::Event& event,sidebar::RowVisual before){UpdateClose();UpdateWatch();if(result.visual!=before)SchedulePaint();const bool handled=result.handled;if(result.action==sidebar::RowAction::Activate&&callback_){callback_.Run(event);return handled;}if(result.action==sidebar::RowAction::Drop&&spec_.drop){auto drop=spec_.drop;drop.Run(display::Screen::Get()->GetCursorScreenPoint());return handled;}return handled;}
-  Spec spec_;views::Button::PressedCallback callback_;base::RepeatingClosure changed_;Watch watch_;raw_ptr<views::View> close_=nullptr;mutable std::optional<int> measured_;rust::Box<sidebar::ActionControl> state_=sidebar::new_action_control();SceneWindowObserver window_{base::BindRepeating(&RustRowView::WindowChanged,base::Unretained(this))};base::CallbackListSubscription enabled_changed_{AddEnabledInViewsSubtreeChangedCallback(base::BindRepeating(&RustRowView::EnabledChanged,base::Unretained(this)))};base::WeakPtrFactory<RustRowView> weak_factory_{this};
+  Spec spec_;views::Button::PressedCallback callback_;base::RepeatingClosure changed_;Watch watch_;raw_ptr<views::View> close_=nullptr;mutable std::optional<int> measured_;rust::Box<sidebar::ActionControl> state_;SceneWindowObserver window_{base::BindRepeating(&RustRowView::WindowChanged,base::Unretained(this))};base::CallbackListSubscription enabled_changed_{AddEnabledInViewsSubtreeChangedCallback(base::BindRepeating(&RustRowView::EnabledChanged,base::Unretained(this)))};base::WeakPtrFactory<RustRowView> weak_factory_{this};
 };
 BEGIN_METADATA(RustRowView)
 END_METADATA
 #endif
-std::unique_ptr<views::View> CreateSceneRow(views::Button::PressedCallback callback,RowButton::Spec spec,base::RepeatingClosure changed,base::RepeatingCallback<void(views::View*,base::RepeatingClosure)> watch){
+std::unique_ptr<views::View> CreateSceneRow(views::Button::PressedCallback callback,RowButton::Spec spec,base::RepeatingClosure changed,base::RepeatingCallback<void(views::View*,base::RepeatingClosure)> watch,SidebarNodeBinding binding={}){
 #if BUILDFLAG(IS_MAC)
-  if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal")return std::make_unique<RustRowView>(std::move(callback),std::move(spec),std::move(changed),std::move(watch));
+  if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal"){
+    auto state=AcquireSidebarInput(binding);SidebarNodeBinding close_binding;
+    if(binding.scope&&spec.close){CHECK_EQ(binding.kind,1u);close_binding={binding.scope,10,binding.identity,{}};}
+    return std::make_unique<RustRowView>(std::move(callback),std::move(spec),std::move(changed),std::move(watch),std::move(state),std::move(close_binding));
+  }
 #endif
   return std::make_unique<RowButton>(std::move(callback),std::move(spec));
 }
@@ -4348,6 +4367,22 @@ void WorkspaceShell::Update(ShellState state) {
   RebuildTabs(previous_workspace, changed);
 }
 
+void WorkspaceShell::ReconcileSidebarNodes(TabListCache& cache,const std::vector<PinnedItem>& pins,const std::vector<ShellTab>& tabs){
+#if BUILDFLAG(IS_MAC)
+  if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")!="rust-metal")return;
+  // Titles, URLs and active selection do not alter logical node membership.
+  // Keep the fast refresh path allocation-free when identities/order are equal.
+  if(cache.node_graph&&cache.pins.size()==pins.size()&&cache.tabs.size()==tabs.size()&&
+      std::equal(cache.pins.begin(),cache.pins.end(),pins.begin(),[](const auto& a,const auto& b){return a.id==b.id;})&&
+      std::equal(cache.tabs.begin(),cache.tabs.end(),tabs.begin(),[](const auto& a,const auto& b){return a.identity==b.identity;}))return;
+  if(!cache.node_graph)cache.node_graph=std::make_shared<SidebarNodeGraphState>();
+  rust::Vec<sidebar::ActionNodeKey> keys;keys.reserve(pins.size()+tabs.size()*(tabs.size()>1?2:1));
+  for(const auto& pin:pins)keys.push_back({2,0,0,pin.id});
+  for(const auto& tab:tabs){keys.push_back({1,tab.identity[0],tab.identity[1],{}});if(tabs.size()>1)keys.push_back({10,tab.identity[0],tab.identity[1],{}});}
+  const auto plan=cache.node_graph->graph->reconcile(std::move(keys));
+  CHECK(plan.admitted)<<"Invalid sidebar logical node projection";
+#endif
+}
 void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catalogue_changed) {
   if (state_.workspace_id.empty()) return;
   // Keep one native tree per workspace. Switching never recreates its rows.
@@ -4375,6 +4410,15 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
     tab_list_->AddChildView(std::move(root));
   }
   const bool pins_changed = cache.pins != state_.pins;
+  // Titles/URLs can change several times during a single navigation. Keep the
+  // native rows, callbacks, hover/focus and accessibility nodes in that case.
+  const bool same_structure = !pins_changed && cache.tabs.size() == state_.tabs.size() &&
+      cache.split_tabs == state_.split_tabs &&
+      std::equal(cache.tabs.begin(), cache.tabs.end(), state_.tabs.begin(),
+          [](const ShellTab& a, const ShellTab& b) {
+            return a.index == b.index && a.pin_id == b.pin_id && a.identity == b.identity;
+          });
+  if(!same_structure)ReconcileSidebarNodes(cache,state_.pins,state_.tabs);
   if (pins_changed) {
     ++pinned_list_build_count_;
     cache.pin_buttons.clear();
@@ -4394,14 +4438,6 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
     cache.tabs.clear();
     cache.tab_buttons.clear();
   }
-  // Titles/URLs can change several times during a single navigation. Keep the
-  // native rows, callbacks, hover/focus and accessibility nodes in that case.
-  const bool same_structure = !pins_changed && cache.tabs.size() == state_.tabs.size() &&
-      cache.split_tabs == state_.split_tabs &&
-      std::equal(cache.tabs.begin(), cache.tabs.end(), state_.tabs.begin(),
-          [](const ShellTab& a, const ShellTab& b) {
-            return a.index == b.index && a.pin_id == b.pin_id && a.identity == b.identity;
-          });
   if (!same_structure) {
     if (cache.pin_pair) {
       cache.pin_pair->parent()->RemoveChildViewT(cache.pin_pair.get());
@@ -4425,7 +4461,7 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
       },weak_factory_.GetWeakPtr(),state_.workspace_id,tab.index,tab.identity);
       if (state_.tabs.size() > 1) spec.close = base::BindRepeating(callbacks_.close_tab, tab.index);
       cache.tab_buttons[tab.index] = parent->AddChildView(CreateSceneRow(
-          base::BindRepeating(callbacks_.select_tab,tab.index),std::move(spec),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak_factory_.GetWeakPtr())));
+          base::BindRepeating(callbacks_.select_tab,tab.index),std::move(spec),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak_factory_.GetWeakPtr()),{cache.node_graph,1,tab.identity,{}}));
       cache.tab_buttons[tab.index]->set_context_menu_controller(this);
       return cache.tab_buttons[tab.index].get();
     };
@@ -4884,7 +4920,7 @@ void WorkspaceShell::UpdateMetalSidebar() {
 void WorkspaceShell::ConfigureSidebarContextMenus(views::View* view) {
   ++sidebar_context_visit_count_;
   if (!view->context_menu_controller()) view->set_context_menu_controller(this);
-  if (views::AsViewClass<views::Button>(view)) return;
+  if (IsRow(view)||IsGlyphAction(view)||views::AsViewClass<views::Button>(view)) return;
   for (const auto& child : view->children()) ConfigureSidebarContextMenus(child.get());
 }
 
@@ -4906,6 +4942,7 @@ void WorkspaceShell::WarmNextSidebar() {
   const bool exists = std::ranges::any_of(state_.workspaces, [&](const auto& item) { return item.id == workspace; });
   if (exists && !tab_lists_.contains(workspace) && workspace != state_.workspace_id) {
     auto& cache = tab_lists_[workspace];
+    ReconcileSidebarNodes(cache,pins,{});
     auto root = std::make_unique<views::View>();
     root->SetLayoutManager(CreateSidebarColumnLayout());
     root->SetVisible(false); root->set_context_menu_controller(this); cache.root = root.get();
@@ -5230,7 +5267,7 @@ void WorkspaceShell::AppendPinnedItems(views::View* root, const std::vector<Pinn
     auto* row = parent->AddChildView(std::make_unique<views::View>());
     row->SetLayoutManager(CreateSidebarPinnedRowLayout());
     row->SetBorder(views::CreateEmptyBorder(gfx::Insets::TLBR(0, SidebarFolderIndent(entry.depth), 0, 0)));
-    auto* button = row->AddChildView(CreateSceneRow(views::Button::PressedCallback(),std::move(spec),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak_factory_.GetWeakPtr())));
+    auto* button = row->AddChildView(CreateSceneRow(views::Button::PressedCallback(),std::move(spec),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak_factory_.GetWeakPtr()),{cache.node_graph,2,{},pin->id}));
     if (pin->folder) {
       auto* group = parent->AddChildView(std::make_unique<views::View>());
       group->SetLayoutManager(CreateSidebarColumnLayout(2));
@@ -5252,6 +5289,13 @@ void WorkspaceShell::AppendPinnedItems(views::View* root, const std::vector<Pinn
   }
 }
 
+uint64_t WorkspaceShell::sidebar_node_id_for_testing(views::View* row) const{
+#if BUILDFLAG(IS_MAC)
+  if(auto* host=views::AsViewClass<RustRowView>(row))return host->LogicalNodeId();if(auto* action=views::AsViewClass<RustActionView>(row))return action->LogicalNodeId();return 0;
+#else
+  return 0;
+#endif
+}
 views::View* WorkspaceShell::tab_button(size_t index) const {
   auto cache = tab_lists_.find(state_.workspace_id);
   if (cache == tab_lists_.end()) return nullptr;

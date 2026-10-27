@@ -3994,6 +3994,28 @@ class SceneModalBodyOracle final : public views::View {
 BEGIN_METADATA(SceneModalBodyOracle)
 END_METADATA
 }  // namespace
+// Deferred: compile only until the requested bulk UI checkpoint.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarLogicalNodesSurviveIndexShiftAndAdapterReplacement) {
+  ASSERT_NO_FATAL_FAILURE(NavigateBoth());ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html?logical-node"),true));
+  auto* target=window_->contents("work");ASSERT_TRUE(content::WaitForLoadStop(target));
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tab_button(1)!=nullptr;}));auto* old=shell->tab_button(1);ASSERT_TRUE(old);
+  const bool rust=shell->workspace_input()->rust_editor();const auto logical=shell->sidebar_node_id_for_testing(old);
+  if(rust)EXPECT_NE(0u,logical);else EXPECT_EQ(0u,logical);
+  auto* old_close=FindButton(old,u"Zamknij kartę");if(rust){ASSERT_TRUE(old_close);EXPECT_NE(0u,shell->sidebar_node_id_for_testing(old_close));EXPECT_NE(logical,shell->sidebar_node_id_for_testing(old_close));}
+  // Retain the detached adapter so the test can inspect an old lease safely.
+  auto held=old->parent()->RemoveChildViewT(old);
+  window_->CloseTab(0);ASSERT_EQ(target,window_->contents("work"));
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->tab_button(0)&&shell->tab_button(0)!=old;}));
+  auto* replacement=shell->tab_button(0);ASSERT_TRUE(replacement);EXPECT_NE(old,replacement);
+  if(rust){EXPECT_EQ(logical,shell->sidebar_node_id_for_testing(replacement));EXPECT_EQ(0u,shell->sidebar_node_id_for_testing(held.get()));EXPECT_EQ(0u,shell->sidebar_node_id_for_testing(old_close));EXPECT_FALSE(FindButton(replacement,u"Zamknij kartę"));}
+  ui::KeyEvent space(ui::EventType::kKeyPressed,ui::VKEY_SPACE,ui::EF_NONE);
+  if(rust)held->OnKeyPressed(space);EXPECT_EQ(target,window_->contents("work"));
+  ASSERT_TRUE(content::ExecJs(target,"document.title='Logical node renamed';"));
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->tab_button(0)->GetTooltipText()==u"Logical node renamed";}));
+  if(rust)EXPECT_EQ(logical,shell->sidebar_node_id_for_testing(shell->tab_button(0)));
+}
+
 // Compiled for the next bulk UI checkpoint; not executed by headless gates.
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ResidualGlyphHostsImageAndImportDismiss) {
   base::ScopedAllowBlockingForTesting files; base::ScopedTempDir source;

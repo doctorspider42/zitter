@@ -60,6 +60,7 @@ class PreferencesFormState;
 class ToolsFormState;
 class PreferenceChromeState;
 class ImportFormState;
+class SidebarNodeGraphState;
 
 // Top band above the sidebar; its first 28 px align with macOS's titlebar,
 // where the native traffic lights sit.
@@ -411,6 +412,7 @@ class WorkspaceShell final : public ui::EventHandler,
   bool appearance_saved() const { return pending_writes_ == 0; }
   views::Widget* address_widget() const { return address_widget_.get(); }
   views::View* tab_button(size_t index) const;
+  uint64_t sidebar_node_id_for_testing(views::View* row) const;
   views::Widget* sidebar_widget() const { return sidebar_widget_.get(); }
   EditorControl* workspace_input() const { return workspace_input_; }
   views::View* workspace_button(std::string_view id) const;
@@ -571,6 +573,7 @@ class WorkspaceShell final : public ui::EventHandler,
   std::vector<sidebar::Item> CaptureWorkspaceScene(std::string_view id,gfx::Size size,int offset,bool source);
   void ConfigureSidebarContextMenus(views::View* root);
   struct TabListCache {
+    std::shared_ptr<SidebarNodeGraphState> node_graph;
     raw_ptr<views::View> root = nullptr;
     raw_ptr<views::View> pins_root = nullptr;
     raw_ptr<views::View> tabs_root = nullptr;
@@ -583,6 +586,7 @@ class WorkspaceShell final : public ui::EventHandler,
     raw_ptr<views::View> pin_pair = nullptr;  // A split placed among the pins.
     std::string active_pin;
   };
+  void ReconcileSidebarNodes(TabListCache& cache, const std::vector<PinnedItem>& pins, const std::vector<ShellTab>& tabs);
   void AppendPinnedItems(views::View* root, const std::vector<PinnedItem>& pins,
                          TabListCache& cache, const std::string& workspace);
   void RebuildWorkspaceDots();
