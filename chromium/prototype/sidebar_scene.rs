@@ -165,6 +165,11 @@ mod ffi {
     struct SidebarTabInput { high: u64, low: u64, index: usize }
     struct SidebarTabBinding { valid: bool, id: u64, high: u64, low: u64, index: usize, can_close: bool }
     struct SidebarTabTarget { valid: bool, index: usize }
+    struct SidebarTabVisual { valid: bool, tile: bool, height: i32 }
+    struct SidebarTabPresentation { valid: bool, title: Vec<u16>, monogram: Vec<u16>, color: u32, tile: bool, height: i32 }
+    struct SidebarTabUpdate { admitted: bool, changed: bool, title_changed: bool, geometry_changed: bool }
+    struct SidebarTabStyle { font_size: f32, ink: u32, card: u32, hover: u32 }
+    struct SidebarTabScene { valid: bool, item: Item }
     struct ColumnChild { width: i32, height: i32, top: i32, left: i32, bottom: i32, right: i32 }
     struct ColumnLayout { width: i32, height: i32, children: Vec<Rect> }
     struct PanelStyle { width: i32, height: i32, vertical: bool, spacing: i32, top: i32, left: i32, bottom: i32, right: i32, flex: usize }
@@ -459,6 +464,13 @@ mod ffi {
         fn site_rule_target(self: &ActionGraph, key: &str, id: u64) -> SiteRuleTarget;
         fn reconcile_sidebar(self: &mut ActionGraph, pins: Vec<String>, tabs: Vec<SidebarTabInput>) -> ActionNodePlan;
         fn tab_binding(self: &ActionControl) -> SidebarTabBinding;
+        fn project_tab(self: &mut ActionGraph, input: &ActionControl, title: Vec<u16>, monogram: Vec<u16>, color: u32, tile: bool) -> SidebarTabUpdate;
+        fn tab_visual(self: &ActionControl) -> SidebarTabVisual;
+        fn tab_presentation(self: &ActionControl) -> SidebarTabPresentation;
+        fn tab_title(self: &ActionControl) -> Vec<u16>;
+        fn tab_set_title(self: &mut ActionControl, title: Vec<u16>) -> bool;
+        fn tab_set_monogram(self: &mut ActionControl, monogram: Vec<u16>, color: u32) -> bool;
+        fn tab_scene(self: &ActionControl, bounds: FloatRect, clip: FloatRect, style: SidebarTabStyle, close: bool, close_visible: bool) -> SidebarTabScene;
         fn tab_target(self: &ActionGraph, high: u64, low: u64, id: u64, close: bool) -> SidebarTabTarget;
         fn append_form_action(self: &mut ActionGraph) -> Box<ActionControl>;
         fn retire_form_action(self: &mut ActionGraph, id: u64) -> bool;
@@ -1833,7 +1845,9 @@ struct HistoryPresentation {title:Vec<u16>,detail:Vec<u16>,url:Vec<u16>,cancel_i
 struct PalettePresentation {title:Vec<u16>,detail:Vec<u16>,icon:u32,index:usize,cancel_input:bool}
 struct PaletteSceneState {selection:PaletteSelection,dirty:bool}
 struct SiteRulePresentation {detail:Vec<u16>,editable:bool,source_index:usize,cancel_input:bool}
-struct SidebarTabModel {high:u64,low:u64,index:usize,can_close:bool}
+struct SidebarTabPresentation {title:Vec<u16>,monogram:Vec<u16>,title_utf8:String,monogram_utf8:String,color:u32,tile:bool}
+impl SidebarTabPresentation {fn height(&self)->i32{if self.tile{38}else{34}}}
+struct SidebarTabModel {high:u64,low:u64,index:usize,can_close:bool,presentation:Option<SidebarTabPresentation>}
 struct FormCommandModel {command:ffi::FormCommand,key:String,index:usize}
 fn valid_form_command(command:ffi::FormCommand,key:&str)->bool{use ffi::FormCommand as C;match command{C::PreferenceText=>!key.is_empty(),C::WorkspaceSave|C::WorkspaceToggle|C::WorkspaceRemove|C::WorkspaceProfiles|C::WorkspaceImport|C::ProfileCreate|C::ProfileRename|C::ProfileDelete|C::ProfileBack|C::ImportApply|C::PreferenceSite|C::PreferenceClear|C::PreferenceDirectory|C::History|C::Workspace|C::Passwords|C::Profiles|C::Import|C::Proxy|C::Certificates|C::Providers|C::Shortcuts|C::TimeMachine|C::WorkspaceDismiss|C::PreferencesDismiss|C::ImportDismiss|C::ToolsDismiss=>key.is_empty(),_=>false}}
 enum NodeModel { FormCommand(FormCommandModel), Checkbox(CheckboxState), Toggle(ToggleState), Select(SelectState), Workspace(WorkspacePresentation), History(HistoryPresentation), Palette(PalettePresentation), PaletteRoot(PaletteSceneState), FormRoot(ffi::FormGroupStyle), SiteRule(SiteRulePresentation), SidebarTab(SidebarTabModel) }
@@ -2007,8 +2021,19 @@ impl ActionGraph {
         for pin in &pins{keys.push(ffi::ActionNodeKey{kind:2,high:0,low:0,name:pin.clone()});}let can_close=tabs.len()>1;for tab in &tabs{keys.push(ffi::ActionNodeKey{kind:1,high:tab.high,low:tab.low,name:String::new()});if can_close{keys.push(ffi::ActionNodeKey{kind:10,high:tab.high,low:tab.low,name:String::new()});}}
         let plan=self.reconcile(keys);if !plan.admitted{return plan;}let mut invalidated=old_order!=plan.ids;let tab_parent=self.nodes[&tab_root].borrow().id;let pin_parent=self.nodes[&pin_root].borrow().id;
         for pin in pins{self.nodes[&(2,0,0,pin)].borrow_mut().parent=pin_parent;}
-        for tab in tabs{let id={let mut node=self.nodes[&(1,tab.high,tab.low,String::new())].borrow_mut();invalidated|=matches!(node.model.as_deref(),Some(NodeModel::SidebarTab(p)) if p.index!=tab.index||p.can_close!=can_close);node.parent=tab_parent;if let Some(NodeModel::SidebarTab(p))=node.model.as_deref_mut(){p.index=tab.index;p.can_close=can_close;}else{node.model=Some(Box::new(NodeModel::SidebarTab(SidebarTabModel{high:tab.high,low:tab.low,index:tab.index,can_close})));}node.id};if can_close{self.nodes[&(10,tab.high,tab.low,String::new())].borrow_mut().parent=id;}}
+        for tab in tabs{let id={let mut node=self.nodes[&(1,tab.high,tab.low,String::new())].borrow_mut();invalidated|=matches!(node.model.as_deref(),Some(NodeModel::SidebarTab(p)) if p.index!=tab.index||p.can_close!=can_close);node.parent=tab_parent;if let Some(NodeModel::SidebarTab(p))=node.model.as_deref_mut(){p.index=tab.index;p.can_close=can_close;}else{node.model=Some(Box::new(NodeModel::SidebarTab(SidebarTabModel{high:tab.high,low:tab.low,index:tab.index,can_close,presentation:None})));}node.id};if can_close{self.nodes[&(10,tab.high,tab.low,String::new())].borrow_mut().parent=id;}}
         if invalidated{for (key,node) in &self.nodes{if matches!(key.0,1|10){node.borrow_mut().state.action_cancel();}}}plan
+    }
+    fn project_tab(&mut self,input:&ActionControl,title:Vec<u16>,monogram:Vec<u16>,color:u32,tile:bool)->ffi::SidebarTabUpdate{
+        let rejected=||ffi::SidebarTabUpdate{admitted:false,changed:false,title_changed:false,geometry_changed:false};
+        if !self.owns_input(input){return rejected();}let binding=input.tab_binding();if !binding.valid{return rejected();}
+        let key=(1,binding.high,binding.low,String::new());let Some(record)=self.nodes.get(&key) else{return rejected();};
+        let mut record=record.borrow_mut();if record.id!=binding.id{return rejected();}let Some(NodeModel::SidebarTab(model))=record.model.as_deref_mut() else{return rejected();};
+        let title_changed=model.presentation.as_ref().is_none_or(|p|p.title!=title);let geometry_changed=model.presentation.as_ref().is_none_or(|p|p.tile!=tile);
+        let changed=title_changed||geometry_changed||model.presentation.as_ref().is_none_or(|p|p.monogram!=monogram||p.color!=color);
+        if changed{model.presentation=Some(SidebarTabPresentation{title_utf8:String::from_utf16_lossy(&title),monogram_utf8:String::from_utf16_lossy(&monogram),title,monogram,color,tile});}
+        if geometry_changed{record.state.action_cancel();drop(record);if let Some(close)=self.nodes.get(&(10,binding.high,binding.low,String::new())){close.borrow_mut().state.action_cancel();}}
+        ffi::SidebarTabUpdate{admitted:true,changed,title_changed,geometry_changed}
     }
     fn tab_target(&self,high:u64,low:u64,id:u64,close:bool)->ffi::SidebarTabTarget{
         let invalid=||ffi::SidebarTabTarget{valid:false,index:0};let Some(node)=self.nodes.get(&(1,high,low,String::new())) else{return invalid();};let node=node.borrow();if !node.alive||!node.attached||!node.state.enabled||id==0||node.id!=id{return invalid();}let Some(NodeModel::SidebarTab(model))=node.model.as_deref() else{return invalid();};if close{if !model.can_close{return invalid();}let Some(button)=self.nodes.get(&(10,high,low,String::new())) else{return invalid();};let button=button.borrow();if !button.alive||!button.attached||!button.state.enabled||button.parent!=id{return invalid();}}ffi::SidebarTabTarget{valid:true,index:model.index}
@@ -2058,6 +2083,16 @@ impl ActionControl {
     fn node_select_reset_prefix(&mut self)->(){self.write_node(|r|{if let Some(NodeModel::Select(s))=r.model.as_deref_mut(){s.reset_prefix()}else{()}}).unwrap_or_else(||())}
     fn node_select_input(&mut self,lower_text: &str, now_ms: u64, enabled: bool)->bool{self.write_node(|r|{let gate=r.state.enabled;if let Some(NodeModel::Select(s))=r.model.as_deref_mut(){s.input(lower_text,now_ms,enabled&&gate)}else{false}}).unwrap_or_else(||false)}
     fn node_parent_id(&self)->u64{self.read_node(|node|node.parent).unwrap_or(0)}
+    fn tab_visual(&self)->ffi::SidebarTabVisual{self.read_node(|r|if let Some(NodeModel::SidebarTab(m))=r.model.as_deref(){m.presentation.as_ref().map(|p|ffi::SidebarTabVisual{valid:true,tile:p.tile,height:p.height()})}else{None}).flatten().unwrap_or(ffi::SidebarTabVisual{valid:false,tile:false,height:0})}
+    fn tab_presentation(&self)->ffi::SidebarTabPresentation{self.read_node(|r|if let Some(NodeModel::SidebarTab(m))=r.model.as_deref(){m.presentation.as_ref().map(|p|ffi::SidebarTabPresentation{valid:true,title:p.title.clone(),monogram:p.monogram.clone(),color:p.color,tile:p.tile,height:p.height()})}else{None}).flatten().unwrap_or(ffi::SidebarTabPresentation{valid:false,title:vec![],monogram:vec![],color:0,tile:false,height:0})}
+    fn tab_title(&self)->Vec<u16>{self.read_node(|r|if let Some(NodeModel::SidebarTab(m))=r.model.as_deref(){m.presentation.as_ref().map(|p|p.title.clone())}else{None}).flatten().unwrap_or_default()}
+    fn tab_set_title(&mut self,title:Vec<u16>)->bool{self.write_node(|r|{let Some(NodeModel::SidebarTab(m))=r.model.as_deref_mut() else{return false;};let Some(p)=m.presentation.as_mut() else{return false;};if p.title==title{return false;}p.title_utf8=String::from_utf16_lossy(&title);p.title=title;true}).unwrap_or(false)}
+    fn tab_set_monogram(&mut self,monogram:Vec<u16>,color:u32)->bool{self.write_node(|r|{let Some(NodeModel::SidebarTab(m))=r.model.as_deref_mut() else{return false;};let Some(p)=m.presentation.as_mut() else{return false;};if p.monogram==monogram&&p.color==color{return false;}p.monogram_utf8=String::from_utf16_lossy(&monogram);p.monogram=monogram;p.color=color;true}).unwrap_or(false)}
+    fn tab_scene(&self,bounds:ffi::FloatRect,clip:ffi::FloatRect,style:ffi::SidebarTabStyle,close:bool,close_visible:bool)->ffi::SidebarTabScene{
+        let mut item=ffi::Item{x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height,kind:0,glyph:0,title:String::new(),monogram:String::new(),detail:String::new(),title_width:0.0,detail_ink:0,detail_font_size:0.0,ink:style.ink,fill:0,badge:0,active:false,hovered:false,tile:false,close,close_visible:close&&close_visible,focused:false,font_size:style.font_size,font_height:0.0,font_weight:0,clip};
+        let valid=self.read_node(|r|{let Some(NodeModel::SidebarTab(m))=r.model.as_deref() else{return false;};let Some(p)=m.presentation.as_ref() else{return false;};let hovered=r.state.enabled&&matches!(r.state.visual,ffi::RowVisual::Hovered|ffi::RowVisual::Pressed);item.title=p.title_utf8.clone();item.monogram=p.monogram_utf8.clone();item.badge=p.color;item.active=r.state.on;item.hovered=hovered;item.tile=p.tile;item.focused=r.state.focused;item.fill=if p.tile{(style.card&0xffffff)|((if r.state.on{0xff}else if hovered{0x8c}else{0x59})<<24)}else if r.state.on{style.card}else if hovered{style.hover}else{0};true}).unwrap_or(false);
+        ffi::SidebarTabScene{valid,item}
+    }
     fn tab_binding(&self)->ffi::SidebarTabBinding{self.read_node(|node|if let Some(NodeModel::SidebarTab(p))=node.model.as_deref(){Some(ffi::SidebarTabBinding{valid:true,id:node.id,high:p.high,low:p.low,index:p.index,can_close:p.can_close})}else{None}).flatten().unwrap_or(ffi::SidebarTabBinding{valid:false,id:0,high:0,low:0,index:0,can_close:false})}
     fn node_model_kind(&self)->u32{self.read_node(|r|match r.model.as_deref(){Some(NodeModel::SidebarTab(_))=>9,Some(NodeModel::FormCommand(_))=>8,Some(NodeModel::Checkbox(_))=>1,Some(NodeModel::Toggle(_))=>2,Some(NodeModel::Select(_))=>3,Some(NodeModel::Workspace(_))=>4,Some(NodeModel::History(_))=>5,Some(NodeModel::Palette(_))=>6,Some(NodeModel::SiteRule(_))=>7,Some(NodeModel::PaletteRoot(_))|Some(NodeModel::FormRoot(_))|None=>0}).unwrap_or(0)}
     fn node_checkbox_init(&mut self,checked:bool)->bool{self.write_node(|r|match r.model.as_deref(){Some(NodeModel::Checkbox(_))=>true,Some(_)=>false,None=>{r.model=Some(Box::new(NodeModel::Checkbox(CheckboxState{checked})));true}}).unwrap_or(false)}
@@ -3332,6 +3367,36 @@ mod tests {
     fn node_pin(name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:2,high:0,low:0,name:name.into()}}
     fn node_close(low:u64)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:10,high:7,low,name:String::new()}}
     fn node_named(kind:u32,name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind,high:0,low:0,name:name.into()}}
+    fn projected_tab()->(Box<ActionGraph>,Box<ActionControl>){let mut g=tab_scene_fixture();let input=g.acquire(&node_tab(1));assert!(g.project_tab(&input,"Żółć 日本語 🦀".encode_utf16().collect(),vec![b'Z' as u16],0xff123456,false).admitted);(g,input)}
+    fn tab_style()->ffi::SidebarTabStyle{ffi::SidebarTabStyle{font_size:13.0,ink:0xff112233,card:0xff778899,hover:0x22112233}}
+    fn tab_box()->ffi::FloatRect{ffi::FloatRect{x:3.0,y:5.0,width:200.0,height:34.0}}
+    #[test] fn tab_properties_own_raw_utf16_and_prepare_utf8_scene_text(){
+        let (g,input)=projected_tab();let p=input.tab_presentation();assert!(p.valid&&!p.tile);assert_eq!(p.title,"Żółć 日本語 🦀".encode_utf16().collect::<Vec<_>>());assert_eq!(p.monogram,vec![b'Z' as u16]);assert_eq!((p.color,p.height),(0xff123456,34));let scene=input.tab_scene(tab_box(),tab_box(),tab_style(),true,false);assert!(scene.valid);assert_eq!(scene.item.title,"Żółć 日本語 🦀");assert_eq!(scene.item.monogram,"Z");assert_eq!(scene.item.badge,0xff123456);assert_eq!(g.tab_target(7,1,input.action_node_id(),false).index,4);
+    }
+    #[test] fn tab_properties_title_and_monogram_updates_preserve_input_selection_and_target(){
+        let (g,mut input)=projected_tab();input.action_on(true);input.action_focus(true);input.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);let epoch=input.action_admission_epoch();assert!(input.tab_set_title("Changed".encode_utf16().collect()));assert!(input.tab_set_monogram(vec![0xd83e,0xdd80],0xffaabbcc));assert!(input.action_pending()&&input.action_admits(epoch)&&input.action_snapshot().focused&&input.action_snapshot().on);let scene=input.tab_scene(tab_box(),tab_box(),tab_style(),true,true);assert_eq!(scene.item.title,"Changed");assert_eq!(scene.item.monogram,"🦀");assert_eq!(scene.item.fill,tab_style().card);assert_eq!(g.tab_target(7,1,input.action_node_id(),false).index,4);
+    }
+    #[test] fn tab_properties_identical_projection_is_idle_and_tile_changes_cancel_both_leases(){
+        let (mut g,mut input)=projected_tab();let mut close=g.acquire(&node_close(1));input.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);close.action_key(true,1,false,true);let epoch=input.action_admission_epoch();let same=g.project_tab(&input,input.tab_title(),vec![b'Z' as u16],0xff123456,false);assert!(same.admitted&&!same.changed&&!same.title_changed&&!same.geometry_changed);assert!(input.action_pending()&&close.action_pending()&&input.action_admits(epoch));let tile=g.project_tab(&input,input.tab_title(),vec![b'Z' as u16],0xff123456,true);assert!(tile.admitted&&tile.changed&&!tile.title_changed&&tile.geometry_changed);assert!(!input.action_pending()&&!close.action_pending()&&!input.action_admits(epoch));assert_eq!(input.tab_visual().height,38);assert!(input.tab_visual().tile);
+    }
+    #[test] fn tab_properties_snapshots_are_owned_and_disabled_projection_stays_available(){
+        let (mut g,mut input)=projected_tab();let mut snapshot=input.tab_presentation();snapshot.title.clear();snapshot.monogram.clear();assert!(!input.tab_title().is_empty());input.action_enabled(false);let changed=g.project_tab(&input,"Managed title".encode_utf16().collect(),vec![b'M' as u16],0xffaabbcc,false);assert!(changed.admitted&&changed.title_changed);assert!(input.tab_visual().valid);assert_eq!(input.tab_title(),"Managed title".encode_utf16().collect::<Vec<_>>());assert!(!g.tab_target(7,1,input.action_node_id(),false).valid);let scene=input.tab_scene(tab_box(),tab_box(),tab_style(),true,true);assert!(scene.valid&&!scene.item.hovered);assert_eq!(scene.item.title,"Managed title");
+    }
+    #[test] fn tab_properties_retired_stale_foreign_and_wrong_models_cannot_project(){
+        let (mut g,mut input)=projected_tab();let mut foreign=tab_scene_fixture();assert!(!foreign.project_tab(&input,vec![],vec![],0,false).admitted);let replacement=g.acquire(&node_tab(1));assert!(!input.tab_presentation().valid);assert!(!input.tab_scene(tab_box(),tab_box(),tab_style(),false,false).valid);assert!(!input.tab_set_title(vec![1]));assert!(!g.project_tab(&input,vec![],vec![],0,false).admitted);assert!(replacement.tab_presentation().valid);let mut wrong=g.acquire(&node_named(2,"folder"));assert!(!g.project_tab(&wrong,vec![],vec![],0,false).admitted);assert!(!wrong.tab_set_monogram(vec![1],0));drop(g);assert!(!replacement.tab_visual().valid);
+    }
+    #[test] fn tab_properties_preserve_unpaired_surrogates_and_refresh_utf8_cache(){
+        let (mut g,mut input)=projected_tab();let raw=vec![0xd800,b'a' as u16,0xdc00];g.project_tab(&input,raw.clone(),vec![0xdfff],0xff123456,false);assert_eq!(input.tab_title(),raw);let scene=input.tab_scene(tab_box(),tab_box(),tab_style(),false,true);assert_eq!(scene.item.title,"�a�");assert_eq!(scene.item.monogram,"�");assert!(!scene.item.close_visible);assert!(input.tab_set_title("Normal".encode_utf16().collect()));assert_eq!(input.tab_scene(tab_box(),tab_box(),tab_style(),false,false).item.title,"Normal");
+    }
+    #[test] fn tab_properties_rust_scene_matches_normal_tile_active_hover_and_focus_policy(){
+        let (mut g,mut input)=projected_tab();let normal=input.tab_scene(tab_box(),tab_box(),tab_style(),true,false);assert_eq!(normal.item.fill,0);input.action_pointer(ffi::PointerPhase::Enter,1,1,true,true,true);assert_eq!(input.tab_scene(tab_box(),tab_box(),tab_style(),true,true).item.fill,tab_style().hover);g.project_tab(&input,input.tab_title(),vec![b'Z' as u16],0xff123456,true);assert_eq!(input.tab_scene(tab_box(),tab_box(),tab_style(),true,false).item.fill,0x59778899);input.action_pointer(ffi::PointerPhase::Enter,1,1,true,true,true);assert_eq!(input.tab_scene(tab_box(),tab_box(),tab_style(),true,true).item.fill,0x8c778899);input.action_on(true);input.action_focus(true);let active=input.tab_scene(tab_box(),tab_box(),tab_style(),true,true);assert_eq!(active.item.fill,0xff778899);assert!(active.item.tile&&active.item.active&&active.item.focused&&active.item.close&&active.item.close_visible);assert_eq!((active.item.x,active.item.y,active.item.width,active.item.height),(3.0,5.0,200.0,34.0));
+    }
+    #[test] fn tab_properties_model_survives_backend_reindex_and_readmission_releases_old_text(){
+        let (mut g,input)=projected_tab();let id=input.action_node_id();g.reconcile_sidebar(vec!["folder".into()],vec![sidebar_tab(1,99),sidebar_tab(2,101)]);assert_eq!(input.tab_title(),"Żółć 日本語 🦀".encode_utf16().collect::<Vec<_>>());assert_eq!(g.tab_target(7,1,id,false).index,99);g.reconcile_sidebar(vec![],vec![]);assert!(input.tab_title().is_empty());g.reconcile_sidebar(vec![],vec![sidebar_tab(1,0)]);let next=g.acquire(&node_tab(1));assert_ne!(next.action_node_id(),id);assert!(!next.tab_visual().valid);assert!(!next.tab_presentation().valid);
+    }
+    #[test] fn tab_properties_scene_recipe_uses_stored_title_monogram_and_reserved_close_area(){
+        let (_g,input)=projected_tab();let scene=input.tab_scene(tab_box(),tab_box(),tab_style(),true,true);let ops=layout(&[scene.item]);let title=ops.iter().find(|op|op.text=="Żółć 日本語 🦀").unwrap();assert_eq!(title.x,39.0);assert_eq!(title.width,132.0);assert!(ops.iter().any(|op|op.text=="Z"));assert!(ops.iter().any(|op|op.text=="×"));
+    }
     fn sidebar_tab(low:u64,index:usize)->ffi::SidebarTabInput{ffi::SidebarTabInput{high:7,low,index}}
     fn tab_scene_fixture()->Box<ActionGraph>{let mut g=new_action_graph();assert!(g.reconcile_sidebar(vec!["folder".into()],vec![sidebar_tab(1,4),sidebar_tab(2,41)]).admitted);g}
     #[test] fn sidebar_scene_owns_collection_parents_tab_payload_and_close_edges(){
