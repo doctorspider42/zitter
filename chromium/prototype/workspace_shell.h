@@ -337,7 +337,7 @@ class WorkspaceShell final : public ui::EventHandler,
   PanelViewport* workspace_viewport() const{return workspace_scroll_;}
   bool metal_sidebar_visible() const;
   bool metal_sidebar_grip_visible() const;
-  // 0 untyped/retired, 1 checkbox, 2 switch; local graph model diagnostics.
+  // 0 untyped/retired, 1 checkbox, 2 switch, 3 selector; local graph model diagnostics.
   uint32_t control_model_kind_for_testing(views::View* view) const;
   views::View* header_action_for_testing(size_t index) const;
   views::View* sidebar_action_for_testing(size_t index) const{return index==0?url_pill_.get():index==1?new_tab_button_.get():nullptr;}

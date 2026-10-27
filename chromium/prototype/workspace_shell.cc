@@ -1245,33 +1245,33 @@ class SceneSelect final : public RustActionView {
   void SyncWindowVisibility(){OnMouseCaptureLost();if(!SceneIsVisible(this)){CancelMenu();if(surface_)surface_->Hide();}Schedule();}
 
   SceneSelect(std::vector<std::u16string> labels,std::u16string name,base::RepeatingClosure changed,rust::Box<sidebar::ActionControl> input)
-      :RustActionView({},std::move(name),ControlGlyph::kMore,nullptr,base::BindRepeating([]{return true;}),{},false,std::move(input)),labels_(std::move(labels)),state_(MakeState(labels_)),changed_(std::move(changed)),input_(this,base::BindRepeating(&SceneSelect::Input,base::Unretained(this)),base::BindRepeating(&SceneSelect::ResetPrefix,base::Unretained(this))) {
+      :RustActionView({},std::move(name),ControlGlyph::kMore,nullptr,base::BindRepeating([]{return true;}),{},false,InitInput(labels,std::move(input))),labels_(ReadLabels(NodeControl())),changed_(std::move(changed)),input_(this,base::BindRepeating(&SceneSelect::Input,base::Unretained(this)),base::BindRepeating(&SceneSelect::ResetPrefix,base::Unretained(this))) {
     SetActivationOnPress(true);GetViewAccessibility().SetRole(ax::mojom::Role::kComboBoxSelect);GetViewAccessibility().SetHasPopup(ax::mojom::HasPopup::kMenu);GetViewAccessibility().SetDefaultActionVerb(ActionVerb());RefreshAX();
   }
   ~SceneSelect() override {if(GetInputMethod())GetInputMethod()->DetachTextInputClient(&input_);}
-  std::optional<size_t> Selected() const {return state_->has_selection()?std::optional<size_t>(state_->selected()):std::nullopt;}
-  std::string SelectedKey() const{return std::string(state_->selected_key());}
+  std::optional<size_t> Selected() const {return NodeControl().node_select_has_selection()?std::optional<size_t>(NodeControl().node_select_selected()):std::nullopt;}
+  std::string SelectedKey() const{return std::string(NodeControl().node_select_selected_key());}
   size_t Count() const {return labels_.size();}
   std::u16string LabelAt(size_t index) const{return index<labels_.size()?labels_[index]:std::u16string();}
-  void SetSelectedIndex(std::optional<size_t> index){if(index&&*index>=Count())return;OnMouseCaptureLost();CancelMenu();if(index)state_->select_index(*index);else state_->clear_selection();RefreshAX();Schedule();}
+  void SetSelectedIndex(std::optional<size_t> index){if(index&&*index>=Count())return;OnMouseCaptureLost();CancelMenu();if(index)NodeControl().node_select_select_index(*index);else NodeControl().node_select_clear_selection();RefreshAX();Schedule();}
   void SetChangedCallback(base::RepeatingClosure changed){changed_=std::move(changed);}
   void CancelInteraction(){OnMouseCaptureLost();CancelMenu();Schedule();}
   void SetOptions(const std::vector<std::pair<std::string,std::u16string>>& choices){
     bool same=choices.size()==labels_.size();
-    for(size_t i=0;same&&i<choices.size();++i)same=choices[i].first==std::string(state_->option_key(i))&&choices[i].second==labels_[i];
+    for(size_t i=0;same&&i<choices.size();++i)same=choices[i].first==std::string(NodeControl().node_select_option_key(i))&&choices[i].second==labels_[i];
     if(same)return;
     OnMouseCaptureLost();CancelMenu();rust::Vec<sidebar::SelectOption> options;std::vector<std::u16string> labels;
     for(const auto& [key,label]:choices){options.push_back({key,base::UTF16ToUTF8(label),base::UTF16ToUTF8(base::i18n::ToLower(label))});labels.push_back(label);}
-    if(!state_->replace_options(std::move(options),false,false))return;
+    if(!NodeControl().node_select_replace_options(std::move(options),false,false))return;
     labels_=std::move(labels);RefreshAX();PreferredSizeChanged();Schedule();
   }
   void SetProfiles(const std::vector<ProfileInfo>& profiles,bool fallback_last,bool select_last){
     OnMouseCaptureLost();CancelMenu();rust::Vec<sidebar::SelectOption> options;std::vector<std::u16string> labels;
     for(const auto& profile:profiles){auto label=base::UTF8ToUTF16(profile.name);options.push_back({profile.id,profile.name,base::UTF16ToUTF8(base::i18n::ToLower(label))});labels.push_back(std::move(label));}
-    if(!state_->replace_options(std::move(options),fallback_last,select_last))return;
+    if(!NodeControl().node_select_replace_options(std::move(options),fallback_last,select_last))return;
     labels_=std::move(labels);RefreshAX();PreferredSizeChanged();Schedule();
   }
-  void SelectForTesting(size_t index){if(index>=Count()||!Snapshot().enabled||!GetEnabledInViewsSubtree()||!SceneIsVisible(this))return;CancelMenu();const auto token=state_->open(true);if(!state_->choose(token,index,true))return;RefreshAX();Schedule();if(changed_)changed_.Run();}
+  void SelectForTesting(size_t index){if(index>=Count()||!Snapshot().enabled||!GetEnabledInViewsSubtree()||!SceneIsVisible(this))return;CancelMenu();const auto token=NodeControl().node_select_open(true);if(!NodeControl().node_select_choose(token,index,true))return;RefreshAX();Schedule();if(changed_)changed_.Run();}
   bool metal_visible() const{return surface_&&surface_->visible();}
   bool contains_text(std::string_view text) const{return metal_visible()&&surface_->contains_text_for_testing(text);}
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {int widest=0;for(const auto& text:labels_)widest=std::max(widest,gfx::GetStringWidth(text,TextFont()));const auto g=sidebar::select_layout(-1,-1,widest,views::LayoutProvider::GetControlHeightForFont(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY,TextFont()),false);return gfx::Size(g.width,g.height);}
@@ -1294,26 +1294,27 @@ class SceneSelect final : public RustActionView {
   ax::mojom::DefaultActionVerb ActionVerb() const override{return ax::mojom::DefaultActionVerb::kOpen;}
   void ActivateAction(const ui::Event& event) override {if(Snapshot().enabled&&GetEnabledInViewsSubtree()&&SceneIsVisible(this))ShowMenu(ui::GetMenuSourceTypeForEvent(event));}
  private:
-  static rust::Box<sidebar::SelectState> MakeState(const std::vector<std::u16string>& labels){rust::Vec<sidebar::SelectOption> options;for(size_t i=0;i<labels.size();++i)options.push_back({base::NumberToString(i),base::UTF16ToUTF8(labels[i]),base::UTF16ToUTF8(base::i18n::ToLower(labels[i]))});return sidebar::new_select_state(std::move(options));}
+  static rust::Box<sidebar::ActionControl> InitInput(const std::vector<std::u16string>& labels,rust::Box<sidebar::ActionControl> input){rust::Vec<sidebar::SelectOption> options;for(size_t i=0;i<labels.size();++i)options.push_back({base::NumberToString(i),base::UTF16ToUTF8(labels[i]),base::UTF16ToUTF8(base::i18n::ToLower(labels[i]))});CHECK(input->node_select_init(std::move(options)));return input;}
+  static std::vector<std::u16string> ReadLabels(const sidebar::ActionControl& input){std::vector<std::u16string> labels;for(const auto& option:input.node_select_options())labels.push_back(base::UTF8ToUTF16(std::string(option.label)));return labels;}
   static gfx::FontList TextFont(){return views::TypographyProvider::Get().GetFont(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY);}
-  void ResetPrefix(){state_->reset_prefix();}
-  void Input(std::u16string text){if(!Snapshot().enabled||!SceneIsVisible(this)||!HasFocus())return;const auto lower=base::UTF16ToUTF8(base::i18n::ToLower(text));if(!state_->input(lower,(base::TimeTicks::Now()-base::TimeTicks()).InMilliseconds(),GetEnabledInViewsSubtree()))return;RefreshAX();Schedule();if(changed_)changed_.Run();}
-  void RefreshAX(){const auto selected=Selected();GetViewAccessibility().SetValue(selected?labels_[*selected]:std::u16string());if(state_->expanded())GetViewAccessibility().SetIsExpanded();else GetViewAccessibility().SetIsCollapsed();}
+  void ResetPrefix(){NodeControl().node_select_reset_prefix();}
+  void Input(std::u16string text){if(!Snapshot().enabled||!SceneIsVisible(this)||!HasFocus())return;const auto lower=base::UTF16ToUTF8(base::i18n::ToLower(text));if(!NodeControl().node_select_input(lower,(base::TimeTicks::Now()-base::TimeTicks()).InMilliseconds(),GetEnabledInViewsSubtree()))return;RefreshAX();Schedule();if(changed_)changed_.Run();}
+  void RefreshAX(){const auto selected=Selected();GetViewAccessibility().SetValue(selected?labels_[*selected]:std::u16string());if(NodeControl().node_select_expanded())GetViewAccessibility().SetIsExpanded();else GetViewAccessibility().SetIsCollapsed();}
   static uint64_t Now(){return (base::TimeTicks::Now()-base::TimeTicks()).InMicroseconds();}
-  void CancelMenu(){state_->dismiss_popup(Now(),bool(runner_));ResetPrefix();RefreshAX();auto old=std::move(runner_);old.reset();}
-  void Closed(uint64_t token){if(!state_->close_menu_at(token,Now()))return;runner_.reset();RefreshAX();Schedule();}
-  bool CanChoose(uint64_t token,const std::string& key) const {return state_->can_choose(token,key,Snapshot().enabled&&GetEnabledInViewsSubtree()&&SceneIsVisible(this));}
-  void Choose(uint64_t token,const std::string& key){if(!state_->choose_key(token,key,Snapshot().enabled&&GetEnabledInViewsSubtree()&&SceneIsVisible(this)))return;RefreshAX();Schedule();if(changed_)changed_.Run();}
+  void CancelMenu(){NodeControl().node_select_dismiss_popup(Now(),bool(runner_));ResetPrefix();RefreshAX();auto old=std::move(runner_);old.reset();}
+  void Closed(uint64_t token){if(!NodeControl().node_select_close_menu_at(token,Now()))return;runner_.reset();RefreshAX();Schedule();}
+  bool CanChoose(uint64_t token,const std::string& key) const {return NodeControl().node_select_can_choose(token,key,Snapshot().enabled&&GetEnabledInViewsSubtree()&&SceneIsVisible(this));}
+  void Choose(uint64_t token,const std::string& key){if(!NodeControl().node_select_choose_key(token,key,Snapshot().enabled&&GetEnabledInViewsSubtree()&&SceneIsVisible(this)))return;RefreshAX();Schedule();if(changed_)changed_.Run();}
   void ShowMenu(ui::mojom::MenuSourceType source){
-    if(!Snapshot().enabled||!GetWidget()||!SceneIsVisible(this)||!GetEnabledInViewsSubtree())return;if(GetVisibleBounds().IsEmpty())ScrollViewToVisible();if(GetVisibleBounds().IsEmpty())return;CancelMenu();const auto token=source==ui::mojom::MenuSourceType::kKeyboard?state_->open(true):state_->open_pointer(true,Now(),views::kMinimumTimeBetweenButtonClicks.InMicroseconds());if(!token)return;
-    std::vector<std::pair<std::string,std::u16string>> items;for(size_t i=0;i<labels_.size();++i)items.emplace_back(std::string(state_->option_key(i)),labels_[i]);
-    const auto weak=weak_factory_.GetWeakPtr();menu_=std::make_unique<SceneSelectMenu>(std::move(items),std::string(state_->selected_key()),token,base::BindRepeating([](base::WeakPtr<SceneSelect> owner,uint64_t epoch,const std::string& key){return owner&&owner->CanChoose(epoch,key);},weak),base::BindRepeating(&SceneSelect::Choose,weak));
-    runner_=std::make_unique<views::MenuRunner>(menu_.get(),views::MenuRunner::COMBOBOX,base::BindRepeating(&SceneSelect::Closed,weak,token));RefreshAX();Schedule();if(runner_&&state_->expanded())runner_->RunMenuAt(GetWidget(),nullptr,GetBoundsInScreen(),views::MenuAnchorPosition::kTopLeft,source);
+    if(!Snapshot().enabled||!GetWidget()||!SceneIsVisible(this)||!GetEnabledInViewsSubtree())return;if(GetVisibleBounds().IsEmpty())ScrollViewToVisible();if(GetVisibleBounds().IsEmpty())return;CancelMenu();const auto token=source==ui::mojom::MenuSourceType::kKeyboard?NodeControl().node_select_open(true):NodeControl().node_select_open_pointer(true,Now(),views::kMinimumTimeBetweenButtonClicks.InMicroseconds());if(!token)return;
+    std::vector<std::pair<std::string,std::u16string>> items;for(size_t i=0;i<labels_.size();++i)items.emplace_back(std::string(NodeControl().node_select_option_key(i)),labels_[i]);
+    const auto weak=weak_factory_.GetWeakPtr();menu_=std::make_unique<SceneSelectMenu>(std::move(items),std::string(NodeControl().node_select_selected_key()),token,base::BindRepeating([](base::WeakPtr<SceneSelect> owner,uint64_t epoch,const std::string& key){return owner&&owner->CanChoose(epoch,key);},weak),base::BindRepeating(&SceneSelect::Choose,weak));
+    runner_=std::make_unique<views::MenuRunner>(menu_.get(),views::MenuRunner::COMBOBOX,base::BindRepeating(&SceneSelect::Closed,weak,token));RefreshAX();Schedule();if(runner_&&NodeControl().node_select_expanded())runner_->RunMenuAt(GetWidget(),nullptr,GetBoundsInScreen(),views::MenuAnchorPosition::kTopLeft,source);
   }
-  sidebar::Item Scene(float dx,float dy,gfx::RectF clip) const {sidebar::Item item{};item.kind=21;item.x=dx;item.y=dy;item.width=width();item.height=height();if(const auto selected=Selected())item.title=base::UTF16ToUTF8(labels_[*selected]);const auto* colors=GetColorProvider();const auto input=Snapshot();const bool enabled=input.enabled;item.font_size=TextFont().GetFontSize();item.active=TextFont().GetFontWeight()>=gfx::Font::Weight::MEDIUM;item.tile=base::i18n::IsRTL();item.focused=input.focused;item.hovered=enabled&&(input.visual==sidebar::RowVisual::Hovered||state_->expanded());item.ink=colors->GetColor(views::TypographyProvider::Get().GetColorId(views::style::CONTEXT_LABEL,enabled?views::style::STYLE_PRIMARY:views::style::STYLE_DISABLED));item.fill=colors->GetColor(enabled?ui::kColorComboboxBackground:ui::kColorComboboxBackgroundDisabled);item.badge=colors->GetColor(input.focused?ui::kColorFocusableBorderFocused:enabled?ui::kColorButtonBorder:ui::kColorButtonBorderDisabled);item.detail_ink=colors->GetColor(ui::kColorSysStateHoverOnSubtle);item.clip={clip.x(),clip.y(),clip.width(),clip.height()};return item;}
-  void Schedule(){SyncViewportVisibility();if((runner_||state_->expanded())&&(!SceneIsVisible(this)||GetVisibleBounds().IsEmpty()))CancelMenu();if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneSelect::UpdateMetal,weak_factory_.GetWeakPtr()));}
+  sidebar::Item Scene(float dx,float dy,gfx::RectF clip) const {sidebar::Item item{};item.kind=21;item.x=dx;item.y=dy;item.width=width();item.height=height();if(const auto selected=Selected())item.title=base::UTF16ToUTF8(labels_[*selected]);const auto* colors=GetColorProvider();const auto input=Snapshot();const bool enabled=input.enabled;item.font_size=TextFont().GetFontSize();item.active=TextFont().GetFontWeight()>=gfx::Font::Weight::MEDIUM;item.tile=base::i18n::IsRTL();item.focused=input.focused;item.hovered=enabled&&(input.visual==sidebar::RowVisual::Hovered||NodeControl().node_select_expanded());item.ink=colors->GetColor(views::TypographyProvider::Get().GetColorId(views::style::CONTEXT_LABEL,enabled?views::style::STYLE_PRIMARY:views::style::STYLE_DISABLED));item.fill=colors->GetColor(enabled?ui::kColorComboboxBackground:ui::kColorComboboxBackgroundDisabled);item.badge=colors->GetColor(input.focused?ui::kColorFocusableBorderFocused:enabled?ui::kColorButtonBorder:ui::kColorButtonBorderDisabled);item.detail_ink=colors->GetColor(ui::kColorSysStateHoverOnSubtle);item.clip={clip.x(),clip.y(),clip.width(),clip.height()};return item;}
+  void Schedule(){SyncViewportVisibility();if((runner_||NodeControl().node_select_expanded())&&(!SceneIsVisible(this)||GetVisibleBounds().IsEmpty()))CancelMenu();if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneSelect::UpdateMetal,weak_factory_.GetWeakPtr()));}
   void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());std::vector<sidebar::Item> items;items.push_back(Scene(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size()))));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
-  std::vector<std::u16string> labels_;rust::Box<sidebar::SelectState> state_;base::RepeatingClosure changed_;SceneSelectInput input_;std::unique_ptr<SceneSelectMenu> menu_;std::unique_ptr<views::MenuRunner> runner_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneSelect::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneSelect> weak_factory_{this};
+  std::vector<std::u16string> labels_;base::RepeatingClosure changed_;SceneSelectInput input_;std::unique_ptr<SceneSelectMenu> menu_;std::unique_ptr<views::MenuRunner> runner_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneSelect::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneSelect> weak_factory_{this};
 };
 BEGIN_METADATA(SceneSelect)
 END_METADATA

@@ -223,27 +223,25 @@ mod ffi {
         fn preference_more_rules(self: &mut PreferencesForm);
         fn preference_rule_limit(self: &PreferencesForm) -> usize;
         fn preference_filter(self: &mut PreferencesForm, query: Vec<u16>, rows: &[PreferenceRow]) -> PreferenceVisibility;
-        type SelectState;
-        fn new_select_state(options: Vec<SelectOption>) -> Box<SelectState>;
-        fn selected(self: &SelectState) -> usize;
-        fn has_selection(self: &SelectState) -> bool;
-        fn selected_key(self: &SelectState) -> &str;
-        fn option_key(self: &SelectState, index: usize) -> &str;
-        fn replace_options(self: &mut SelectState, options: Vec<SelectOption>, fallback_last: bool, select_last: bool) -> bool;
-        fn can_choose(self: &SelectState, token: u64, key: &str, enabled: bool) -> bool;
-        fn choose_key(self: &mut SelectState, token: u64, key: &str, enabled: bool) -> bool;
-        fn close_menu(self: &mut SelectState, token: u64) -> bool;
-        fn close_menu_at(self: &mut SelectState, token: u64, now_us: u64) -> bool;
-        fn dismiss_popup(self: &mut SelectState, now_us: u64, popup_present: bool);
-        fn open_pointer(self: &mut SelectState, enabled: bool, now_us: u64, guard_us: u64) -> u64;
-        fn select_index(self: &mut SelectState, index: usize) -> bool;
-        fn clear_selection(self: &mut SelectState);
-        fn open(self: &mut SelectState, enabled: bool) -> u64;
-        fn expanded(self: &SelectState) -> bool;
-        fn choose(self: &mut SelectState, token: u64, index: usize, enabled: bool) -> bool;
-        fn dismiss(self: &mut SelectState);
-        fn reset_prefix(self: &mut SelectState);
-        fn input(self: &mut SelectState, lower_text: &str, now_ms: u64, enabled: bool) -> bool;
+        fn node_select_selected(self: &ActionControl) -> usize;
+        fn node_select_has_selection(self: &ActionControl) -> bool;
+        fn node_select_selected_key(self: &ActionControl) -> String;
+        fn node_select_option_key(self: &ActionControl, index: usize) -> String;
+        fn node_select_replace_options(self: &mut ActionControl, options: Vec<SelectOption>, fallback_last: bool, select_last: bool) -> bool;
+        fn node_select_can_choose(self: &ActionControl, token: u64, key: &str, enabled: bool) -> bool;
+        fn node_select_choose_key(self: &mut ActionControl, token: u64, key: &str, enabled: bool) -> bool;
+        fn node_select_close_menu_at(self: &mut ActionControl, token: u64, now_us: u64) -> bool;
+        fn node_select_dismiss_popup(self: &mut ActionControl, now_us: u64, popup_present: bool);
+        fn node_select_open_pointer(self: &mut ActionControl, enabled: bool, now_us: u64, guard_us: u64) -> u64;
+        fn node_select_select_index(self: &mut ActionControl, index: usize) -> bool;
+        fn node_select_clear_selection(self: &mut ActionControl);
+        fn node_select_open(self: &mut ActionControl, enabled: bool) -> u64;
+        fn node_select_expanded(self: &ActionControl) -> bool;
+        fn node_select_choose(self: &mut ActionControl, token: u64, index: usize, enabled: bool) -> bool;
+        fn node_select_reset_prefix(self: &mut ActionControl);
+        fn node_select_input(self: &mut ActionControl, lower_text: &str, now_ms: u64, enabled: bool) -> bool;
+        fn node_select_init(self: &mut ActionControl, options: Vec<SelectOption>) -> bool;
+        fn node_select_options(self: &ActionControl) -> Vec<SelectOption>;
         fn select_menu_key(key: u32) -> bool;
         fn select_layout(width: i32, height: i32, text_width: i32, control_height: i32, rtl: bool) -> SelectLayout;
         fn toggle_scene(style: &ToggleStyle) -> Vec<Primitive>;
@@ -645,8 +643,10 @@ fn paragraph_layout(width:i32,line_height:i32,count:usize)->ffi::ColumnLayout{le
 
 // Stable UI keys retain selection through model changes. Popup generations and
 // captured keys reject stale native callbacks. No browser data crosses.
-pub struct SelectState { options: Vec<ffi::SelectOption>, selected: usize, epoch: u64, expanded: bool, prefix: String, last_input: Option<u64>, last_close: Option<u64> }
-fn new_select_state(options: Vec<ffi::SelectOption>) -> Box<SelectState> {let mut state=Box::new(SelectState {options:vec![],selected:0,epoch:0,expanded:false,prefix:String::new(),last_input:None,last_close:None});state.replace_options(options,false,false);state}
+struct SelectState { options: Vec<ffi::SelectOption>, selected: usize, epoch: u64, expanded: bool, prefix: String, last_input: Option<u64>, last_close: Option<u64> }
+fn initial_select_state()->SelectState {SelectState{options:vec![],selected:0,epoch:0,expanded:false,prefix:String::new(),last_input:None,last_close:None}}
+#[cfg(test)]
+fn new_select_state(options: Vec<ffi::SelectOption>) -> Box<SelectState> {let mut state=Box::new(initial_select_state());state.replace_options(options,false,false);state}
 impl SelectState {
     fn selected(&self)->usize {self.selected}
     fn has_selection(&self)->bool {self.selected<self.options.len()}
@@ -1767,7 +1767,11 @@ fn action_node_key(key:&ffi::ActionNodeKey)->Option<ActionNodeIdentity>{
 }
 // Typed payloads belong to the graph record, not the native adapter's Box.
 // Optional indirection keeps ordinary action records from embedding large models.
-enum NodeModel { Checkbox(CheckboxState), Toggle(ToggleState) }
+enum NodeModel { Checkbox(CheckboxState), Toggle(ToggleState), Select(SelectState) }
+impl NodeModel {
+    // Popup tokens and IME prefix belong to one input lease, unlike selection.
+    fn detach_input(&mut self){if let Self::Select(s)=self{s.dismiss();s.reset_prefix();s.last_close=None;}}
+}
 struct ActionNodeRecord { id:u64, lease:u64, attached:bool, alive:bool, state:ActionState, model:Option<Box<NodeModel>> }
 impl ActionNodeRecord {fn retire(&mut self){self.alive=false;self.attached=false;self.state.action_focus(false);self.state.action_cancel();self.model=None;}}
 pub struct ActionGraph { nodes:BTreeMap<ActionNodeIdentity,Rc<RefCell<ActionNodeRecord>>>, order:Vec<u64>, next_id:u64 }
@@ -1806,7 +1810,7 @@ impl ActionGraph {
     fn acquire(&mut self,key:&ffi::ActionNodeKey)->Box<ActionControl>{
         let node=action_node_key(key).and_then(|key|self.nodes.get(&key)).cloned();
         let Some(node)=node else{return Box::new(ActionControl{storage:ActionStorage::Retired});};
-        let lease={let mut record=node.borrow_mut();let Some(lease)=record.lease.checked_add(1) else{return Box::new(ActionControl{storage:ActionStorage::Retired});};record.lease=lease;record.attached=true;record.state.action_enabled(true);record.state.action_focus(false);record.state.action_cancel();lease};
+        let lease={let mut record=node.borrow_mut();let Some(lease)=record.lease.checked_add(1) else{return Box::new(ActionControl{storage:ActionStorage::Retired});};if let Some(model)=record.model.as_deref_mut(){model.detach_input();}record.lease=lease;record.attached=true;record.state.action_enabled(true);record.state.action_focus(false);record.state.action_cancel();lease};
         Box::new(ActionControl{storage:ActionStorage::Shared{node,lease}})
     }
 }
@@ -1824,7 +1828,26 @@ impl ActionControl {
         let ActionStorage::Shared{node,lease}=&self.storage else{return None;};let mut record=node.borrow_mut();
         if !record.alive||!record.attached||record.lease!=*lease{return None;}Some(f(&mut record))
     }
-    fn node_model_kind(&self)->u32{self.read_node(|r|match r.model.as_deref(){Some(NodeModel::Checkbox(_))=>1,Some(NodeModel::Toggle(_))=>2,None=>0}).unwrap_or(0)}
+    fn node_select_init(&mut self,options:Vec<ffi::SelectOption>)->bool{self.write_node(|r|match r.model.as_deref(){Some(NodeModel::Select(_))=>true,Some(_)=>false,None=>{let mut state=initial_select_state();if !state.replace_options(options,false,false){return false;}r.model=Some(Box::new(NodeModel::Select(state)));true}}).unwrap_or(false)}
+    fn node_select_options(&self)->Vec<ffi::SelectOption>{self.read_node(|r|if let Some(NodeModel::Select(s))=r.model.as_deref(){s.options.iter().map(|o|ffi::SelectOption{key:o.key.clone(),label:o.label.clone(),search:o.search.clone()}).collect()}else{vec![]}).unwrap_or_default()}
+    fn node_select_selected(&self)->usize{self.read_node(|r|{if let Some(NodeModel::Select(s))=r.model.as_deref(){s.selected()}else{usize::MAX}}).unwrap_or_else(||usize::MAX)}
+    fn node_select_has_selection(&self)->bool{self.read_node(|r|{if let Some(NodeModel::Select(s))=r.model.as_deref(){s.has_selection()}else{false}}).unwrap_or_else(||false)}
+    fn node_select_selected_key(&self)->String{self.read_node(|r|{if let Some(NodeModel::Select(s))=r.model.as_deref(){s.selected_key().to_owned()}else{String::new()}}).unwrap_or_else(||String::new())}
+    fn node_select_option_key(&self,index: usize)->String{self.read_node(|r|{if let Some(NodeModel::Select(s))=r.model.as_deref(){s.option_key(index).to_owned()}else{String::new()}}).unwrap_or_else(||String::new())}
+    fn node_select_replace_options(&mut self,options: Vec<ffi::SelectOption>, fallback_last: bool, select_last: bool)->bool{self.write_node(|r|{if let Some(NodeModel::Select(s))=r.model.as_deref_mut(){s.replace_options(options,fallback_last,select_last)}else{false}}).unwrap_or_else(||false)}
+    fn node_select_can_choose(&self,token: u64, key: &str, enabled: bool)->bool{self.read_node(|r|{let gate=r.state.enabled;if let Some(NodeModel::Select(s))=r.model.as_deref(){s.can_choose(token,key,enabled&&gate)}else{false}}).unwrap_or_else(||false)}
+    fn node_select_choose_key(&mut self,token: u64, key: &str, enabled: bool)->bool{self.write_node(|r|{let gate=r.state.enabled;if let Some(NodeModel::Select(s))=r.model.as_deref_mut(){s.choose_key(token,key,enabled&&gate)}else{false}}).unwrap_or_else(||false)}
+    fn node_select_close_menu_at(&mut self,token: u64, now_us: u64)->bool{self.write_node(|r|{if let Some(NodeModel::Select(s))=r.model.as_deref_mut(){s.close_menu_at(token,now_us)}else{false}}).unwrap_or_else(||false)}
+    fn node_select_dismiss_popup(&mut self,now_us: u64, popup_present: bool)->(){self.write_node(|r|{if let Some(NodeModel::Select(s))=r.model.as_deref_mut(){s.dismiss_popup(now_us,popup_present)}else{()}}).unwrap_or_else(||())}
+    fn node_select_open_pointer(&mut self,enabled: bool, now_us: u64, guard_us: u64)->u64{self.write_node(|r|{let gate=r.state.enabled;if let Some(NodeModel::Select(s))=r.model.as_deref_mut(){s.open_pointer(enabled&&gate,now_us,guard_us)}else{0}}).unwrap_or_else(||0)}
+    fn node_select_select_index(&mut self,index: usize)->bool{self.write_node(|r|{if let Some(NodeModel::Select(s))=r.model.as_deref_mut(){s.select_index(index)}else{false}}).unwrap_or_else(||false)}
+    fn node_select_clear_selection(&mut self)->(){self.write_node(|r|{if let Some(NodeModel::Select(s))=r.model.as_deref_mut(){s.clear_selection()}else{()}}).unwrap_or_else(||())}
+    fn node_select_open(&mut self,enabled: bool)->u64{self.write_node(|r|{let gate=r.state.enabled;if let Some(NodeModel::Select(s))=r.model.as_deref_mut(){s.open(enabled&&gate)}else{0}}).unwrap_or_else(||0)}
+    fn node_select_expanded(&self)->bool{self.read_node(|r|{if let Some(NodeModel::Select(s))=r.model.as_deref(){s.expanded()}else{false}}).unwrap_or_else(||false)}
+    fn node_select_choose(&mut self,token: u64, index: usize, enabled: bool)->bool{self.write_node(|r|{let gate=r.state.enabled;if let Some(NodeModel::Select(s))=r.model.as_deref_mut(){s.choose(token,index,enabled&&gate)}else{false}}).unwrap_or_else(||false)}
+    fn node_select_reset_prefix(&mut self)->(){self.write_node(|r|{if let Some(NodeModel::Select(s))=r.model.as_deref_mut(){s.reset_prefix()}else{()}}).unwrap_or_else(||())}
+    fn node_select_input(&mut self,lower_text: &str, now_ms: u64, enabled: bool)->bool{self.write_node(|r|{let gate=r.state.enabled;if let Some(NodeModel::Select(s))=r.model.as_deref_mut(){s.input(lower_text,now_ms,enabled&&gate)}else{false}}).unwrap_or_else(||false)}
+    fn node_model_kind(&self)->u32{self.read_node(|r|match r.model.as_deref(){Some(NodeModel::Checkbox(_))=>1,Some(NodeModel::Toggle(_))=>2,Some(NodeModel::Select(_))=>3,None=>0}).unwrap_or(0)}
     fn node_checkbox_init(&mut self,checked:bool)->bool{self.write_node(|r|match r.model.as_deref(){Some(NodeModel::Checkbox(_))=>true,Some(_)=>false,None=>{r.model=Some(Box::new(NodeModel::Checkbox(CheckboxState{checked})));true}}).unwrap_or(false)}
     fn node_checked(&self)->bool{self.read_node(|r|matches!(r.model.as_deref(),Some(NodeModel::Checkbox(s)) if s.checked())).unwrap_or(false)}
     fn node_set_checked(&mut self,checked:bool)->bool{self.write_node(|r|if let Some(NodeModel::Checkbox(s))=r.model.as_deref_mut(){s.set_checked(checked)}else{false}).unwrap_or(false)}
@@ -1852,7 +1875,7 @@ impl ActionControl {
     fn action_key(&mut self,pressed:bool,key:u32,mac:bool,visible:bool)->ffi::RowInputResult{self.write(|s|s.action_key(pressed,key,mac,visible)).unwrap_or_else(Self::retired_input)}
     fn action_gesture(&mut self,kind:u32,visible:bool)->ffi::RowInputResult{self.write(|s|s.action_gesture(kind,visible)).unwrap_or_else(Self::retired_input)}
 }
-impl Drop for ActionControl {fn drop(&mut self){if let ActionStorage::Shared{node,lease}=&self.storage{let mut record=node.borrow_mut();if record.alive&&record.lease==*lease{record.attached=false;record.state.action_focus(false);record.state.action_cancel();}}}}
+impl Drop for ActionControl {fn drop(&mut self){if let ActionStorage::Shared{node,lease}=&self.storage{let mut record=node.borrow_mut();if record.alive&&record.lease==*lease{record.attached=false;record.state.action_focus(false);record.state.action_cancel();if let Some(model)=record.model.as_deref_mut(){model.detach_input();}}}}}
 
 // Shared by the native input/accessibility adapter and the GPU display list.
 // Widths are logical pixels; CoreText still owns font shaping and measurement.
@@ -3081,6 +3104,34 @@ mod tests {
     fn node_pin(name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:2,high:0,low:0,name:name.into()}}
     fn node_close(low:u64)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:10,high:7,low,name:String::new()}}
     fn node_named(kind:u32,name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind,high:0,low:0,name:name.into()}}
+    fn selector_node()->(Box<ActionGraph>,Box<ActionControl>){let mut g=new_action_graph();g.reconcile(vec![node_pin("select")]);let mut a=g.acquire(&node_pin("select"));assert!(a.node_select_init(keyed_options(&[("a","Alpha"),("b","Beta"),("c","日本語 🦀")])));(g,a)}
+    #[test] fn node_selector_preserves_options_selection_and_id_on_rebind(){
+        let (mut g,mut old)=selector_node();let id=old.action_node_id();assert!(old.node_select_select_index(2));let mut next=g.acquire(&node_pin("select"));assert!(next.node_select_init(keyed_options(&[("x","Ignored defaults")])));assert_eq!(next.node_model_kind(),3);assert_eq!(next.action_node_id(),id);assert_eq!(next.node_select_selected(),2);assert_eq!(next.node_select_selected_key(),"c");assert_eq!(next.node_select_options()[2].label,"日本語 🦀");assert!(!old.node_select_select_index(0));drop(old);assert_eq!(next.node_select_selected_key(),"c");
+    }
+    #[test] fn node_selector_handoff_cancels_popup_and_prefix_not_value(){
+        let (mut g,mut old)=selector_node();let token=old.node_select_open(true);assert!(old.node_select_expanded());assert!(old.node_select_input("b",10,true));let mut next=g.acquire(&node_pin("select"));assert!(!next.node_select_expanded());assert_eq!(next.node_select_selected_key(),"b");assert!(next.node_select_input("a",11,true));assert_eq!(next.node_select_selected_key(),"a");assert!(!old.node_select_close_menu_at(token,900));assert!(!next.node_select_choose_key(token,"c",true));let current=next.node_select_open(true);assert_ne!(current,token);assert!(!next.node_select_close_menu_at(token,901));assert!(next.node_select_can_choose(current,"c",true));
+    }
+    #[test] fn node_selector_drop_cancels_transients_and_resets_old_popup_guard(){
+        let (mut g,mut a)=selector_node();a.node_select_select_index(1);let t=a.node_select_open(true);assert!(a.node_select_close_menu_at(t,100));let t=a.node_select_open(true);drop(a);let record=g.nodes.values().next().unwrap().borrow();let Some(NodeModel::Select(s))=record.model.as_deref() else{panic!("model lost")};assert!(!s.expanded());assert!(s.prefix.is_empty());assert_eq!(s.last_close,None);drop(record);let mut b=g.acquire(&node_pin("select"));assert_eq!(b.node_select_selected_key(),"b");assert!(!b.node_select_choose(t,0,true));assert_ne!(b.node_select_open_pointer(true,101,100),0);
+    }
+    #[test] fn node_selector_disabled_input_rejects_all_user_routes_allows_projection(){
+        let (_g,mut a)=selector_node();let token=a.node_select_open(true);a.action_enabled(false);assert!(!a.node_select_can_choose(token,"b",true));assert!(!a.node_select_choose_key(token,"b",true));assert!(!a.node_select_choose(token,1,true));assert!(!a.node_select_input("b",0,true));assert_eq!(a.node_select_open(true),0);assert_eq!(a.node_select_open_pointer(true,1000,100),0);assert!(a.node_select_select_index(1));assert!(a.node_select_replace_options(keyed_options(&[("b","Updated"),("d","Delta")]),false,false));assert_eq!(a.node_select_selected_key(),"b");a.node_select_clear_selection();assert!(!a.node_select_has_selection());a.action_enabled(true);assert_eq!(a.node_select_open(false),0);assert!(!a.node_select_input("d",0,false));
+    }
+    #[test] fn node_selector_rejects_wrong_kind_standalone_and_invalid_initial_options(){
+        let mut plain=new_action_control();assert!(!plain.node_select_init(vec![]));let mut g=new_action_graph();let mut a=g.append_form_action();assert!(!a.node_select_init(keyed_options(&[("x","One"),("x","Two")])));assert_eq!(a.node_model_kind(),0);assert!(a.node_checkbox_init(true));assert!(!a.node_select_init(vec![]));let mut b=g.append_form_action();assert!(b.node_select_init(vec![]));assert_eq!(b.node_model_kind(),3);assert!(!b.node_checkbox_init(true));assert!(!b.node_toggle_init());assert_eq!(b.node_select_open(true),0);
+    }
+    #[test] fn node_selector_retirement_frees_options_despite_retained_adapter(){
+        let (mut g,mut a)=selector_node();let token=a.node_select_open(true);let record=if let ActionStorage::Shared{node,..}=&a.storage{node.clone()}else{panic!("record missing")};g.reconcile(vec![]);assert!(record.borrow().model.is_none());assert_eq!(a.node_model_kind(),0);assert!(!a.node_select_init(vec![]));assert!(a.node_select_options().is_empty());assert!(!a.node_select_has_selection());assert_eq!(a.node_select_selected(),usize::MAX);assert!(!a.node_select_choose_key(token,"b",true));assert!(!a.node_select_replace_options(keyed_options(&[("a","Alpha")]),false,false));
+    }
+    #[test] fn node_selector_invalid_replacement_preserves_opening_and_siblings(){
+        let (_g,mut a)=selector_node();let token=a.node_select_open(true);assert!(!a.node_select_replace_options(keyed_options(&[("","Empty")]),false,false));assert!(!a.node_select_replace_options(keyed_options(&[("x","One"),("x","Two")]),false,false));assert!(a.node_select_can_choose(token,"b",true));let mut g=new_action_graph();let mut b=g.append_form_action();b.node_select_init(keyed_options(&[("z","Other")]));assert!(a.node_select_choose_key(token,"b",true));assert_eq!(b.node_select_selected_key(),"z");
+    }
+    #[test] fn node_selector_pointer_guard_and_replacement_match_legacy_reducer(){
+        let (_g,mut a)=selector_node();let mut oracle=new_select_state(keyed_options(&[("a","Alpha"),("b","Beta"),("c","日本語 🦀")]));let t=a.node_select_open(true);assert_eq!(t,oracle.open(true));assert_eq!(a.node_select_close_menu_at(t,1000),oracle.close_menu_at(t,1000));for now in [999,1000,1100,1101]{assert_eq!(a.node_select_open_pointer(true,now,100),oracle.open_pointer(true,now,100));assert_eq!(a.node_select_expanded(),oracle.expanded());}a.node_select_dismiss_popup(1200,true);oracle.dismiss_popup(1200,true);assert_eq!(a.node_select_open_pointer(true,1300,100),oracle.open_pointer(true,1300,100));assert!(a.node_select_replace_options(keyed_options(&[("b","Beta renamed"),("a","Alpha")]),true,true));oracle.replace_options(keyed_options(&[("b","Beta renamed"),("a","Alpha")]),true,true);assert_eq!(a.node_select_selected_key(),oracle.selected_key());assert_eq!(a.node_select_option_key(99),"");
+    }
+    #[test] fn node_selector_prefix_matches_legacy_across_timeout_and_backward_clock(){
+        let (_g,mut a)=selector_node();let mut oracle=new_select_state(keyed_options(&[("a","Alpha"),("b","Beta"),("c","日本語 🦀")]));for (text,now) in [("b",10),("e",11),("日",1011),("本",1012),("a",5),("\n",6),("",7)]{assert_eq!(a.node_select_input(text,now,true),oracle.input(text,now,true));assert_eq!(a.node_select_selected_key(),oracle.selected_key());}a.node_select_reset_prefix();oracle.reset_prefix();assert_eq!(a.node_select_input("b",8,true),oracle.input("b",8,true));
+    }
     #[test] fn node_checkbox_model_survives_adapter_drop_and_reacquire(){
         let mut g=new_action_graph();g.reconcile(vec![node_pin("checked")]);let id;
         {let mut a=g.acquire(&node_pin("checked"));id=a.action_node_id();assert!(a.node_checkbox_init(false));assert!(a.node_set_checked(true));}
