@@ -789,7 +789,14 @@ class RustActionView : public views::View {
     if(callback_)callback_.Run(event);
   }
  private:
-  void SyncEnabled(){const bool enabled=GetEnabledInViewsSubtree();if(!state_->action_enabled(enabled))return;auto& ax=GetViewAccessibility();if(enabled)ax.SetDefaultActionVerb(ActionVerb());else ax.RemoveDefaultActionVerb();}
+  void SyncEnabled(){
+    const bool enabled=GetEnabledInViewsSubtree();state_->action_enabled(enabled);
+    auto& ax=GetViewAccessibility();const auto verb=enabled?ActionVerb():ax::mojom::DefaultActionVerb::kNone;
+    // Rust input and native AX projections can be updated independently. A
+    // matching input state alone does not prove the AX verb is synchronized.
+    if(ax.GetDefaultActionVerb()==verb)return;
+    if(enabled)ax.SetDefaultActionVerb(verb);else ax.RemoveDefaultActionVerb();
+  }
   bool Interactive() const{return SceneIsVisible(this)&&!GetVisibleBounds().IsEmpty();}
   void Cancel(){if(state_->action_cancel())SchedulePaint();}
   void WindowChanged(){Cancel();state_->action_focus(HasFocus());SchedulePaint();}
@@ -5502,6 +5509,9 @@ void WorkspaceShell::RebuildWorkspaceDots() {
       else button=workspace_dots_->AddChildView(CreateSceneAction(base::BindRepeating(callbacks_.select_workspace,key),text(child.name),GlyphButton::Glyph::kDot,nullptr,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_sidebar_visible();},weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak_factory_.GetWeakPtr()),true,{chrome_node_graph_,3,{},key}));
       if(child.cancel_input)CancelActionInput(button);
       workspace_dots_->ReorderChildView(button,index++);button->SetTooltipText(text(child.name));button->GetViewAccessibility().SetName(text(child.name));SetActionLabel(button,text(child.label));SetActionOn(button,child.active);button->SetEnabled(child.enabled);
+      // Rust may update input enablement before the native setter sees a delta.
+      // AX also follows native ancestor enablement, not just the local property.
+      if(button->GetEnabledInViewsSubtree())button->GetViewAccessibility().SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kPress);else button->GetViewAccessibility().RemoveDefaultActionVerb();
       // Rust updated input visuals before native projection; invalidate the
       // canvas fallback even when SetOn/CancelInput now see no state delta.
       button->SchedulePaint();button->set_context_menu_controller(this);workspace_buttons_[key]=button;
