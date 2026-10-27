@@ -2002,6 +2002,7 @@ class RustRowView final : public views::View {
   bool TabCloseNeedsCallback(const SidebarNodeGraphState& scope) const{if(!close_)return true;auto* control=views::AsViewClass<RustActionView>(close_.get());return !control||!control->BelongsTo(scope)||!control->LogicalNodeId();}
   void RestoreFocusPart(uint32_t part){if(part==2&&AttachedClose())close_->RequestFocus();else RequestFocus();}
   void ProjectTabSpec(SidebarNodeGraphState& scope,Spec spec){CHECK(!spec_.history&&!spec_.chip&&!spec_.address);CancelInput();const auto update=scope.graph->project_tab(*state_,SceneUtf16(spec.title),SceneUtf16(spec.monogram),spec.monogram_color,spec.tile);CHECK(update.admitted);ClearSidebarVisuals(spec);spec_=std::move(spec);measured_.reset();if(update.title_changed)SyncSidebarAX();if(update.geometry_changed)PreferredSizeChanged();UpdateClose();SchedulePaint();}
+  void ProjectPinAdapter(Spec spec){CHECK(PinBinding().valid);CancelInput();ClearSidebarVisuals(spec);spec_=std::move(spec);SyncSidebarAX();PreferredSizeChanged();SchedulePaint();}
   Spec SidebarSnapshot() const{Spec spec;spec.sidebar_row=true;const auto presentation=state_->sidebar_presentation();if(presentation.valid){spec.title=std::u16string(presentation.title.begin(),presentation.title.end());spec.monogram=std::u16string(presentation.monogram.begin(),presentation.monogram.end());spec.monogram_color=presentation.color;spec.icon=presentation.folder?&vector_icons::kFolderFilledIcon:nullptr;spec.tile=presentation.tile;spec.height=presentation.height;spec.active=state_->action_snapshot().on;}return spec;}
   sidebar::SidebarRowScene SidebarScene(gfx::RectF bounds,gfx::RectF clip) const{return state_->sidebar_scene({bounds.x(),bounds.y(),bounds.width(),bounds.height()},{clip.x(),clip.y(),clip.width(),clip.height()},{float(Font(0).GetFontSize()),Tone(this,kInk),Tone(this,kCard),HoverWash(this)},has_close_button(),close_button_visible());}
   void ConfigureTabClose(bool wanted,views::Button::PressedCallback callback,const SidebarNodeBinding& binding){
@@ -2086,6 +2087,8 @@ class ScenePinGroup final : public views::View {
  public:
   ScenePinGroup(const std::shared_ptr<SidebarNodeGraphState>& scope,uint64_t id):scope_(scope),id_(id){}
   bool Matches(const std::shared_ptr<SidebarNodeGraphState>& scope,uint64_t id) const{return scope_.lock()==scope&&id_==id;}
+  uint64_t NodeId() const{const auto scope=scope_.lock();if(!scope)return 0;for(const auto& entry:scope->graph->pin_tree().entries)if(entry.group==id_)return id_;return 0;}
+  uint64_t ParentId() const{const auto scope=scope_.lock();if(!scope)return 0;for(const auto& entry:scope->graph->pin_tree().entries)if(entry.group==id_)return entry.parent;return 0;}
  private:
   std::weak_ptr<SidebarNodeGraphState> scope_;uint64_t id_;
 };
@@ -4650,7 +4653,7 @@ void WorkspaceShell::ReconcileSidebarNodes(TabListCache& cache,std::string_view 
   if(cache.node_graph&&cache.pins==pins&&cache.tabs.size()==tabs.size()&&
       std::equal(cache.tabs.begin(),cache.tabs.end(),tabs.begin(),[](const auto& a,const auto& b){return a.identity==b.identity&&a.index==b.index;}))return;
   if(!cache.node_graph)cache.node_graph=std::make_shared<SidebarNodeGraphState>();
-  rust::Vec<sidebar::SidebarPinInput> pin_ids;for(const auto& pin:pins){const auto title=base::UTF8ToUTF16(pin.title);const auto monogram=pin.folder?std::u16string():base::i18n::ToUpper(title.substr(0,1));const auto color=pin.folder?SK_ColorTRANSPARENT:kMonogramColors[base::FastHash(pin.url.host())%kMonogramColors.size()];pin_ids.push_back({pin.id,SceneUtf16(title),SceneUtf16(monogram),color,pin.folder,pin.folder&&sidebar_tree_.Collapsed(workspace,pin.id)});}rust::Vec<sidebar::SidebarTabInput> tab_ids;for(const auto& tab:tabs)tab_ids.push_back({tab.identity[0],tab.identity[1],tab.index});
+  rust::Vec<sidebar::SidebarPinInput> pin_ids;for(const auto& pin:pins){const auto title=base::UTF8ToUTF16(pin.title);const auto monogram=pin.folder?std::u16string():base::i18n::ToUpper(title.substr(0,1));const auto color=pin.folder?SK_ColorTRANSPARENT:kMonogramColors[base::FastHash(pin.url.host())%kMonogramColors.size()];pin_ids.push_back({pin.id,pin.parent_id,SceneUtf16(title),SceneUtf16(monogram),color,pin.folder,pin.folder&&sidebar_tree_.Collapsed(workspace,pin.id)});}rust::Vec<sidebar::SidebarTabInput> tab_ids;for(const auto& tab:tabs)tab_ids.push_back({tab.identity[0],tab.identity[1],tab.index});
   const auto plan=cache.node_graph->graph->reconcile_sidebar(std::move(pin_ids),std::move(tab_ids));
   CHECK(plan.admitted)<<"Invalid sidebar logical node projection";
 #endif
@@ -4692,15 +4695,15 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
           });
   if(!same_structure)ReconcileSidebarNodes(cache,state_.workspace_id,state_.pins,state_.tabs);
 #if BUILDFLAG(IS_MAC)
-  std::map<std::array<uint64_t,2>,std::unique_ptr<views::View>> retained_tabs;std::optional<std::array<uint64_t,2>> retained_focus;uint32_t retained_focus_part=0;
+  std::map<std::array<uint64_t,2>,std::unique_ptr<views::View>> retained_tabs;std::map<std::string,std::unique_ptr<views::View>> retained_pins;std::optional<std::string> retained_pin_focus;std::optional<std::array<uint64_t,2>> retained_focus;uint32_t retained_focus_part=0;
   const bool retain=!same_structure&&cache.node_graph;const double retained_offset=tab_scroll_->offset();
   if(retain){
-    cache.tab_buttons.clear();const auto* focused=cache.root->GetFocusManager()?cache.root->GetFocusManager()->GetFocusedView():nullptr;
+    cache.tab_buttons.clear();if(pins_changed)cache.pin_buttons.clear();const auto* focused=cache.root->GetFocusManager()?cache.root->GetFocusManager()->GetFocusedView():nullptr;
     // Traverse actual adapters, not a cache that may contain detached views.
     auto extract=[&](auto&& self,views::View* view)->void{
       if(auto* row=views::AsViewClass<RustRowView>(view)){const auto binding=row->TabBinding();if(binding.valid&&row->BelongsTo(*cache.node_graph)&&row->parent()){
         const std::array<uint64_t,2> identity{binding.high,binding.low};if(const auto part=row->RetainedFocusPart(focused)){retained_focus=identity;retained_focus_part=part;}row->CancelInput();auto owned=row->parent()->RemoveChildViewT(row);CHECK(retained_tabs.emplace(identity,std::move(owned)).second);return;
-      }}std::vector<views::View*> children;for(const auto& child:view->children())children.push_back(child.get());for(auto* child:children)self(self,child);
+      }if(pins_changed){const auto pin=row->PinBinding();if(pin.valid&&row->BelongsTo(*cache.node_graph)&&row->parent()){if(row->RetainedFocusPart(focused))retained_pin_focus=std::string(pin.key);row->CancelInput();auto owned=row->parent()->RemoveChildViewT(row);CHECK(retained_pins.emplace(std::string(pin.key),std::move(owned)).second);return;}}}std::vector<views::View*> children;for(const auto& child:view->children())children.push_back(child.get());for(auto* child:children)self(self,child);
     };extract(extract,cache.root);
   }
 #endif
@@ -4712,7 +4715,11 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
     contents->SetLayoutManager(CreateSidebarColumnLayout(2));
     if (!state_.pins.empty()) {
       Label(contents.get(), u"PRZYPIĘTE", kMuted, Font(-2));
-      AppendPinnedItems(contents.get(), state_.pins, cache, state_.workspace_id);
+      AppendPinnedItems(contents.get(),state_.pins,cache,state_.workspace_id
+#if BUILDFLAG(IS_MAC)
+          ,&retained_pins
+#endif
+      );
       Spacer(contents.get(), 8);
     }
     cache.pins_root->AddChildView(std::move(contents));
@@ -4826,7 +4833,7 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
   }
   cache.root->SetVisible(true);
 #if BUILDFLAG(IS_MAC)
-  if(retain){if(auto* widget=cache.root->GetWidget())widget->LayoutRootViewIfNecessary();if(previous_workspace==state_.workspace_id)tab_scroll_->ScrollTo(retained_offset);if(retained_focus){for(const auto& [index,view]:cache.tab_buttons){auto* row=views::AsViewClass<RustRowView>(view.get());if(!row)continue;const auto binding=row->TabBinding();if(binding.valid&&std::array<uint64_t,2>{binding.high,binding.low}==*retained_focus){row->ScrollViewToVisible();row->RestoreFocusPart(retained_focus_part);break;}}}}
+  if(retain){if(auto* widget=cache.root->GetWidget())widget->LayoutRootViewIfNecessary();if(previous_workspace==state_.workspace_id)tab_scroll_->ScrollTo(retained_offset);if(retained_focus){for(const auto& [index,view]:cache.tab_buttons){auto* row=views::AsViewClass<RustRowView>(view.get());if(!row)continue;const auto binding=row->TabBinding();if(binding.valid&&std::array<uint64_t,2>{binding.high,binding.low}==*retained_focus){row->ScrollViewToVisible();row->RestoreFocusPart(retained_focus_part);break;}}}if(retained_pin_focus){const auto found=cache.pin_buttons.find(*retained_pin_focus);if(found!=cache.pin_buttons.end()&&SceneIsVisible(found->second.get())){found->second->ScrollViewToVisible();found->second->RequestFocus();}}}
 #endif
   // Install controllers only for new trees. A normal switch must not walk all
   // cached workspaces and their label/layout descendants again.
@@ -5553,15 +5560,15 @@ void WorkspaceShell::OnMouseEvent(ui::MouseEvent* input) {
 }
 
 void WorkspaceShell::AppendPinnedItems(views::View* root, const std::vector<PinnedItem>& pins,
-    TabListCache& cache, const std::string& workspace) {
-  std::vector<SidebarTreeNode> nodes;
-  nodes.reserve(pins.size());
-  for (const auto& pin : pins) nodes.push_back({pin.id, pin.parent_id, pin.folder});
-  const auto plan = sidebar_tree_.Plan(workspace, nodes);
-  std::map<size_t, views::View*> groups;
-  for (const auto& entry : plan) {
-    const auto* pin = &pins[entry.index];
-    auto* parent = entry.parent == SidebarTree::kRoot ? root : groups.at(entry.parent);
+    TabListCache& cache,const std::string& workspace,std::map<std::string,std::unique_ptr<views::View>>* retained) {
+  struct Entry {size_t index;uint64_t parent,group;int depth;bool collapsed,visible;};std::vector<Entry> plan;
+#if BUILDFLAG(IS_MAC)
+  if(cache.node_graph){const auto tree=cache.node_graph->graph->pin_tree();for(const auto& entry:tree.entries){CHECK_LT(entry.index,pins.size());CHECK_EQ(pins[entry.index].id,std::string(entry.key));plan.push_back({entry.index,entry.parent==tree.root?0:entry.parent,entry.group,entry.depth,entry.collapsed,entry.visible});}}else
+#endif
+  {std::vector<SidebarTreeNode> nodes;for(const auto& pin:pins)nodes.push_back({pin.id,pin.parent_id,pin.folder});for(const auto& entry:sidebar_tree_.Plan(workspace,nodes))plan.push_back({entry.index,entry.parent==SidebarTree::kRoot?0:entry.parent+1,pins[entry.index].folder?entry.index+1:0,entry.depth,entry.collapsed,entry.visible});}
+  std::map<uint64_t,views::View*> groups{{0,root}};
+  for(const auto& entry:plan){
+    const auto* pin=&pins[entry.index];auto* parent=groups.at(entry.parent);
     RowButton::Spec spec;
     spec.sidebar_row = true;
     if(!cache.node_graph){spec.title=base::UTF8ToUTF16(pin->title);if(pin->folder){spec.icon=&vector_icons::kFolderFilledIcon;spec.title=(entry.collapsed?u"▸ ":u"▾ ")+spec.title;}}
@@ -5577,24 +5584,29 @@ void WorkspaceShell::AppendPinnedItems(views::View* root, const std::vector<Pinn
     auto* row = parent->AddChildView(std::make_unique<views::View>());
     row->SetLayoutManager(CreateSidebarPinnedRowLayout());
     row->SetBorder(views::CreateEmptyBorder(gfx::Insets::TLBR(0, SidebarFolderIndent(entry.depth), 0, 0)));
-    auto* button = row->AddChildView(CreateSceneRow(views::Button::PressedCallback(),std::move(spec),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak_factory_.GetWeakPtr()),{cache.node_graph,2,{},pin->id}));
+    std::unique_ptr<views::View> adapter;[[maybe_unused]] bool fresh=true;
+#if BUILDFLAG(IS_MAC)
+    if(cache.node_graph&&retained){auto found=retained->find(pin->id);if(found!=retained->end()){fresh=false;adapter=std::move(found->second);retained->erase(found);auto* control=views::AsViewClass<RustRowView>(adapter.get());CHECK(control);control->ProjectPinAdapter(std::move(spec));}}
+#endif
+    if(!adapter)adapter=CreateSceneRow({},std::move(spec),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak_factory_.GetWeakPtr()),{cache.node_graph,2,{},pin->id});
+    auto* button=row->AddChildView(std::move(adapter));
     views::View* folder_group=nullptr;
     if(pin->folder){
 #if BUILDFLAG(IS_MAC)
-      if(cache.node_graph){auto* control=views::AsViewClass<RustRowView>(button);CHECK(control);folder_group=parent->AddChildView(std::make_unique<ScenePinGroup>(cache.node_graph,control->LogicalNodeId()));}else
+      if(cache.node_graph){auto* control=views::AsViewClass<RustRowView>(button);CHECK(control);folder_group=parent->AddChildView(std::make_unique<ScenePinGroup>(cache.node_graph,entry.group));}else
 #endif
       folder_group=parent->AddChildView(std::make_unique<views::View>());
-      folder_group->SetLayoutManager(CreateSidebarColumnLayout(2));groups[entry.index]=folder_group;folder_group->SetVisible(!entry.collapsed);
+      folder_group->SetLayoutManager(CreateSidebarColumnLayout(2));groups[entry.group]=folder_group;folder_group->SetVisible(!entry.collapsed);
     }
 #if BUILDFLAG(IS_MAC)
     if(cache.node_graph){
       auto* control=views::AsViewClass<RustRowView>(button);CHECK(control);const auto binding=control->PinBinding();CHECK(binding.valid&&binding.folder==pin->folder);
-      control->SetCallback(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,base::WeakPtr<RustRowView> row,std::weak_ptr<SidebarNodeGraphState> owner,std::string workspace,std::string key,uint64_t id){
+      if(fresh)control->SetCallback(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,base::WeakPtr<RustRowView> row,std::weak_ptr<SidebarNodeGraphState> owner,std::string workspace,std::string key,uint64_t id){
         const auto scope=owner.lock();if(!shell||!row||!scope||shell->state_.workspace_id!=workspace||row->GetWidget()!=shell->sidebar_widget_.get()||!SceneIsVisible(row.get())||!row->GetEnabledInViewsSubtree()||row->LogicalNodeId()!=id||!row->BelongsTo(*scope))return;
         const auto cache=shell->tab_lists_.find(workspace);if(cache==shell->tab_lists_.end()||cache->second.node_graph!=scope||!cache->second.root||!cache->second.root->Contains(row.get()))return;const auto cached=cache->second.pin_buttons.find(key);if(cached==cache->second.pin_buttons.end()||cached->second!=row.get())return;
         const auto target=scope->graph->pin_target(key,id);if(!target.valid)return;const auto pin=std::find_if(shell->state_.pins.begin(),shell->state_.pins.end(),[&](const PinnedItem& item){return item.id==key&&item.folder==target.folder;});if(pin==shell->state_.pins.end())return;
         if(!target.folder){shell->callbacks_.open_pin.Run(key);return;}
-        auto* holder=row->parent();auto* container=holder?holder->parent():nullptr;if(!container)return;const auto index=container->GetIndexOf(holder);if(!index||*index+1>=container->children().size())return;auto* group=views::AsViewClass<ScenePinGroup>(container->children()[*index+1].get());if(!group||!group->Matches(scope,id)||group->GetWidget()!=shell->sidebar_widget_.get()||!cache->second.root->Contains(group))return;
+        auto* holder=row->parent();auto* container=holder?holder->parent():nullptr;if(!container)return;const auto index=container->GetIndexOf(holder);if(!index||*index+1>=container->children().size())return;auto* group=views::AsViewClass<ScenePinGroup>(container->children()[*index+1].get());if(!group||!group->Matches(scope,target.group)||group->GetWidget()!=shell->sidebar_widget_.get()||!cache->second.root->Contains(group))return;
         const bool collapsed=shell->sidebar_tree_.Toggle(workspace,key);if(!row->ProjectPinCollapsed(*scope,collapsed)){shell->sidebar_tree_.SetCollapsed(workspace,key,target.collapsed);return;}group->SetVisible(!collapsed);shell->ScheduleMetalSidebar();
       },weak_factory_.GetWeakPtr(),control->GetWeakPtr(),std::weak_ptr<SidebarNodeGraphState>(cache.node_graph),workspace,pin->id,binding.id));
     }else
@@ -5608,13 +5620,14 @@ void WorkspaceShell::AppendPinnedItems(views::View* root, const std::vector<Pinn
 
 uint64_t WorkspaceShell::sidebar_node_id_for_testing(views::View* row) const{
 #if BUILDFLAG(IS_MAC)
-  if(auto* host=views::AsViewClass<RustRowView>(row))return host->LogicalNodeId();if(auto* action=views::AsViewClass<RustActionView>(row))return action->LogicalNodeId();if(auto* site=views::AsViewClass<SiteRuleSceneRow>(row))return site->NodeId();return 0;
+  if(auto* group=views::AsViewClass<ScenePinGroup>(row))return group->NodeId();if(auto* host=views::AsViewClass<RustRowView>(row))return host->LogicalNodeId();if(auto* action=views::AsViewClass<RustActionView>(row))return action->LogicalNodeId();if(auto* site=views::AsViewClass<SiteRuleSceneRow>(row))return site->NodeId();return 0;
 #else
   return 0;
 #endif
 }
 uint64_t WorkspaceShell::scene_parent_id_for_testing(views::View* view) const{
 #if BUILDFLAG(IS_MAC)
+  if(auto* group=views::AsViewClass<ScenePinGroup>(view))return group->ParentId();
   if(auto* action=views::AsViewClass<RustActionView>(view))return action->LogicalParentId();
   if(auto* row=views::AsViewClass<RustRowView>(view))return row->LogicalParentId();
   if(auto* row=views::AsViewClass<SiteRuleSceneRow>(view))return row->ParentId();

@@ -602,7 +602,8 @@ class WorkspaceShell final : public ui::EventHandler,
   };
   void ReconcileSidebarNodes(TabListCache& cache, std::string_view workspace, const std::vector<PinnedItem>& pins, const std::vector<ShellTab>& tabs);
   void AppendPinnedItems(views::View* root, const std::vector<PinnedItem>& pins,
-                         TabListCache& cache, const std::string& workspace);
+                         TabListCache& cache, const std::string& workspace,
+                         std::map<std::string,std::unique_ptr<views::View>>* retained=nullptr);
   void ReconcileChromeNodes();
   void RebuildWorkspaceDots();
   void ShowContextMenuForViewImpl(views::View*, const gfx::Point&, ui::mojom::MenuSourceType) override;

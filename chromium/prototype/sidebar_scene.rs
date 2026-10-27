@@ -162,9 +162,11 @@ mod ffi {
     struct SiteRuleSceneChild { id: u64, parent: u64, key: String, detail: Vec<u16>, editable: bool, cancel_input: bool }
     struct SiteRuleScene { root: u64, children: Vec<SiteRuleSceneChild> }
     struct SiteRuleTarget { valid: bool, index: usize }
-    struct SidebarPinInput { id: String, title: Vec<u16>, monogram: Vec<u16>, color: u32, folder: bool, collapsed: bool }
-    struct SidebarPinBinding { valid: bool, id: u64, key: String, folder: bool, collapsed: bool }
-    struct SidebarPinTarget { valid: bool, folder: bool, collapsed: bool }
+    struct SidebarPinInput { id: String, parent: String, title: Vec<u16>, monogram: Vec<u16>, color: u32, folder: bool, collapsed: bool }
+    struct SidebarPinBinding { valid: bool, id: u64, key: String, folder: bool, collapsed: bool, group: u64 }
+    struct SidebarPinTarget { valid: bool, folder: bool, collapsed: bool, group: u64 }
+    struct SidebarPinTreeEntry { index: usize, key: String, id: u64, parent: u64, group: u64, depth: i32, collapsed: bool, visible: bool }
+    struct SidebarPinTree { root: u64, entries: Vec<SidebarPinTreeEntry> }
     struct SidebarTabInput { high: u64, low: u64, index: usize }
     struct SidebarTabBinding { valid: bool, id: u64, high: u64, low: u64, index: usize, can_close: bool }
     struct SidebarTabTarget { valid: bool, index: usize }
@@ -468,6 +470,7 @@ mod ffi {
         fn reconcile_sidebar(self: &mut ActionGraph, pins: Vec<SidebarPinInput>, tabs: Vec<SidebarTabInput>) -> ActionNodePlan;
         fn tab_binding(self: &ActionControl) -> SidebarTabBinding;
         fn pin_binding(self: &ActionControl) -> SidebarPinBinding;
+        fn pin_tree(self: &ActionGraph) -> SidebarPinTree;
         fn pin_target(self: &ActionGraph, key: &str, id: u64) -> SidebarPinTarget;
         fn set_pin_collapsed(self: &mut ActionGraph, input: &ActionControl, collapsed: bool) -> bool;
         fn project_tab(self: &mut ActionGraph, input: &ActionControl, title: Vec<u16>, monogram: Vec<u16>, color: u32, tile: bool) -> SidebarTabUpdate;
@@ -1840,7 +1843,7 @@ fn action_node_key(key:&ffi::ActionNodeKey)->Option<ActionNodeIdentity>{
         kind @ (7|8) if (key.high!=0||key.low!=0)&&!key.name.is_empty()=>Some((kind,key.high,key.low,key.name.clone())),
         12 if key.high==0&&key.low==0&&key.name.is_empty()=>Some((12,0,0,String::new())),
         11 if key.high==0&&key.low==0&&matches!(key.name.as_str(),"chrome.workspaces"|"tools.history"|"palette.results"|"preferences.site-rules"|"sidebar.tabs"|"sidebar.pins")=>Some((11,0,0,key.name.clone())),
-        kind @ (2|3|4|5|6|13) if key.high==0&&key.low==0&&!key.name.is_empty()=>Some((kind,0,0,key.name.clone())),
+        kind @ (2|3|4|5|6|13|14) if key.high==0&&key.low==0&&!key.name.is_empty()=>Some((kind,0,0,key.name.clone())),
         _=>None,
     }
 }
@@ -1854,16 +1857,17 @@ struct SiteRulePresentation {detail:Vec<u16>,editable:bool,source_index:usize,ca
 struct SidebarRowPresentation {title:Vec<u16>,monogram:Vec<u16>,title_utf8:String,monogram_utf8:String,color:u32,tile:bool,folder:bool}
 impl SidebarRowPresentation {fn height(&self)->i32{if self.tile{38}else{34}}}
 struct SidebarTabModel {high:u64,low:u64,index:usize,can_close:bool,presentation:Option<SidebarRowPresentation>}
-struct SidebarPinModel {key:String,base_title:Vec<u16>,collapsed:bool,presentation:SidebarRowPresentation}
+struct SidebarPinModel {key:String,parent_key:String,index:usize,rank:usize,depth:i32,reachable:bool,visible:bool,group:u64,base_title:Vec<u16>,collapsed:bool,presentation:SidebarRowPresentation}
+struct SidebarPinGroupModel {owner:u64,visible:bool}
 fn pin_title(base:&[u16],folder:bool,collapsed:bool)->Vec<u16>{if !folder{return base.to_vec();}let mut title=Vec::with_capacity(base.len()+2);title.extend_from_slice(&[if collapsed{0x25b8}else{0x25be},0x20]);title.extend_from_slice(base);title}
 impl SidebarPinModel {
-    fn from_input(input:ffi::SidebarPinInput)->Self{let title=pin_title(&input.title,input.folder,input.collapsed);Self{key:input.id,base_title:if input.folder{input.title}else{vec![]},collapsed:input.collapsed,presentation:SidebarRowPresentation{title_utf8:String::from_utf16_lossy(&title),monogram_utf8:if input.folder{"📁".into()}else{String::from_utf16_lossy(&input.monogram)},title,monogram:input.monogram,color:input.color,tile:false,folder:input.folder}}}
+    fn from_input(input:ffi::SidebarPinInput)->Self{let title=pin_title(&input.title,input.folder,input.collapsed);Self{key:input.id,parent_key:input.parent,index:0,rank:usize::MAX,depth:0,reachable:false,visible:false,group:0,base_title:if input.folder{input.title}else{vec![]},collapsed:input.collapsed,presentation:SidebarRowPresentation{title_utf8:String::from_utf16_lossy(&title),monogram_utf8:if input.folder{"📁".into()}else{String::from_utf16_lossy(&input.monogram)},title,monogram:input.monogram,color:input.color,tile:false,folder:input.folder}}}
 }
-#[cfg(test)] impl From<&str> for ffi::SidebarPinInput{fn from(id:&str)->Self{Self{id:id.into(),title:id.encode_utf16().collect(),monogram:vec![],color:0,folder:false,collapsed:false}}}
+#[cfg(test)] impl From<&str> for ffi::SidebarPinInput{fn from(id:&str)->Self{Self{id:id.into(),parent:String::new(),title:id.encode_utf16().collect(),monogram:vec![],color:0,folder:false,collapsed:false}}}
 
 struct FormCommandModel {command:ffi::FormCommand,key:String,index:usize}
 fn valid_form_command(command:ffi::FormCommand,key:&str)->bool{use ffi::FormCommand as C;match command{C::PreferenceText=>!key.is_empty(),C::WorkspaceSave|C::WorkspaceToggle|C::WorkspaceRemove|C::WorkspaceProfiles|C::WorkspaceImport|C::ProfileCreate|C::ProfileRename|C::ProfileDelete|C::ProfileBack|C::ImportApply|C::PreferenceSite|C::PreferenceClear|C::PreferenceDirectory|C::History|C::Workspace|C::Passwords|C::Profiles|C::Import|C::Proxy|C::Certificates|C::Providers|C::Shortcuts|C::TimeMachine|C::WorkspaceDismiss|C::PreferencesDismiss|C::ImportDismiss|C::ToolsDismiss=>key.is_empty(),_=>false}}
-enum NodeModel { SidebarPin(SidebarPinModel), FormCommand(FormCommandModel), Checkbox(CheckboxState), Toggle(ToggleState), Select(SelectState), Workspace(WorkspacePresentation), History(HistoryPresentation), Palette(PalettePresentation), PaletteRoot(PaletteSceneState), FormRoot(ffi::FormGroupStyle), SiteRule(SiteRulePresentation), SidebarTab(SidebarTabModel) }
+enum NodeModel { SidebarPinGroup(SidebarPinGroupModel), SidebarPin(SidebarPinModel), FormCommand(FormCommandModel), Checkbox(CheckboxState), Toggle(ToggleState), Select(SelectState), Workspace(WorkspacePresentation), History(HistoryPresentation), Palette(PalettePresentation), PaletteRoot(PaletteSceneState), FormRoot(ffi::FormGroupStyle), SiteRule(SiteRulePresentation), SidebarTab(SidebarTabModel) }
 impl NodeModel {
     fn row_presentation(&self)->Option<&SidebarRowPresentation>{match self{Self::SidebarTab(model)=>model.presentation.as_ref(),Self::SidebarPin(model)=>Some(&model.presentation),_=>None}}
     fn row_presentation_mut(&mut self)->Option<&mut SidebarRowPresentation>{match self{Self::SidebarTab(model)=>model.presentation.as_mut(),Self::SidebarPin(model)=>Some(&mut model.presentation),_=>None}}
@@ -1882,17 +1886,27 @@ fn new_form_graph(vertical:bool,spacing:i32,intrinsic:bool,dialog:bool)->Box<Act
 
 impl ActionGraph {
     fn rejected(&self)->ffi::ActionNodePlan{ffi::ActionNodePlan{admitted:false,ids:self.order.clone(),created:0,retired:0}}
-    fn reconcile(&mut self,keys:Vec<ffi::ActionNodeKey>)->ffi::ActionNodePlan{
+    fn reconcile(&mut self,keys:Vec<ffi::ActionNodeKey>)->ffi::ActionNodePlan{self.reconcile_with_parents(keys,None)}
+    fn reconcile_with_parents(&mut self,keys:Vec<ffi::ActionNodeKey>,parents:Option<&BTreeMap<ActionNodeIdentity,Option<ActionNodeIdentity>>>)->ffi::ActionNodePlan{
         let Some(identities)=keys.iter().map(action_node_key).collect::<Option<Vec<_>>>() else{return self.rejected();};
         let unique=identities.iter().cloned().collect::<BTreeSet<_>>();
         if unique.len()!=identities.len(){return self.rejected();}
         if unique.iter().any(|key|key.0==10&&!unique.contains(&(1,key.1,key.2,String::new()))){return self.rejected();}
         if unique.iter().any(|key|matches!(key.0,7|8)&&!unique.contains(&(if key.0==7{8}else{7},key.1,key.2,key.3.clone()))){return self.rejected();}
+        if unique.iter().any(|key|key.0==14&&!unique.contains(&(2,0,0,key.3.clone()))){return self.rejected();}
+        if parents.is_none()&&unique.iter().any(|key|key.0==2&&self.nodes.get(key).is_some_and(|node|matches!(node.borrow().model.as_deref(),Some(NodeModel::SidebarPin(p)) if p.presentation.folder))&&!unique.contains(&(14,0,0,key.3.clone()))){return self.rejected();}
         // A retained logical child cannot outlive its Rust-owned parent. Whole
         // subtree removal is valid; dangling retained edges reject atomically.
         if self.nodes.values().any(|node|node.borrow().parent!=0){
             let retained_ids=unique.iter().filter_map(|key|self.nodes.get(key).map(|n|n.borrow().id)).collect::<BTreeSet<_>>();
-            if unique.iter().any(|key|self.nodes.get(key).is_some_and(|node|{let node=node.borrow();node.parent!=0&&!retained_ids.contains(&node.parent)})){return self.rejected();}
+            if unique.iter().any(|key|self.nodes.get(key).is_some_and(|node|{let node=node.borrow();node.parent!=0&&!retained_ids.contains(&node.parent)&&parents.is_none_or(|edges|!edges.contains_key(key))})){return self.rejected();}
+        }
+        if let Some(edges)=parents{
+            if edges.keys().any(|key|!unique.contains(key)){return self.rejected();}
+            let by_id=self.nodes.iter().filter(|(key,_)|unique.contains(*key)).map(|(key,node)|(node.borrow().id,key.clone())).collect::<BTreeMap<_,_>>();
+            let mut effective=BTreeMap::new();
+            for key in &unique{let parent=if let Some(parent)=edges.get(key){parent.clone()}else if let Some(node)=self.nodes.get(key){let id=node.borrow().parent;if id==0{None}else{let Some(parent)=by_id.get(&id) else{return self.rejected();};Some(parent.clone())}}else{None};if parent.as_ref().is_some_and(|p|!unique.contains(p)){return self.rejected();}effective.insert(key.clone(),parent);}
+            for key in &unique{let mut visited=BTreeSet::new();let mut cursor=key;while let Some(Some(parent))=effective.get(cursor){if !visited.insert(cursor){return self.rejected();}cursor=parent;}}
         }
         let created=identities.iter().filter(|key|!self.nodes.contains_key(*key)).count();
         if self.next_id.checked_add(created as u64).is_none(){return self.rejected();}
@@ -1903,6 +1917,7 @@ impl ActionGraph {
             let kind=key.0;let node=self.nodes.entry(key).or_insert_with(||{let id=self.next_id;self.next_id+=1;Rc::new(RefCell::new(ActionNodeRecord{kind,owner:self.owner.clone(),id,parent:0,lease:0,attached:false,alive:true,state:initial_action_state(),model:None}))});
             order.push(node.borrow().id);
         }
+        if let Some(edges)=parents{for (key,parent) in edges{let id=parent.as_ref().map_or(0,|key|self.nodes[key].borrow().id);self.nodes[key].borrow_mut().parent=id;}}
         self.order=order.clone();ffi::ActionNodePlan{admitted:true,ids:order,created,retired}
     }
     // Kind 9 is private to form membership: native projections cannot create or
@@ -2029,19 +2044,23 @@ impl ActionGraph {
         let invalid=||ffi::SiteRuleTarget{valid:false,index:0};let Some(node)=self.nodes.get(&(13,0,0,key.to_owned())) else{return invalid();};let node=node.borrow();if !node.alive||!node.attached||!node.state.enabled||id==0||id!=node.id{return invalid();}if let Some(NodeModel::SiteRule(p))=node.model.as_deref(){if p.editable{return ffi::SiteRuleTarget{valid:true,index:p.source_index};}}invalid()
     }
     fn reconcile_sidebar(&mut self,pins:Vec<ffi::SidebarPinInput>,tabs:Vec<ffi::SidebarTabInput>)->ffi::ActionNodePlan{
-        // Backend indices may be sparse: pinned-only pages are not tab rows.
-        // Reject collisions without interpreting an index as a display position.
-        if pins.iter().any(|pin|(pin.collapsed&&!pin.folder)||self.nodes.get(&(2,0,0,pin.id.clone())).is_some_and(|node|node.borrow().model.as_deref().is_some_and(|m|!matches!(m,NodeModel::SidebarPin(_)))))||tabs.iter().any(|tab|self.nodes.get(&(10,tab.high,tab.low,String::new())).is_some_and(|node|node.borrow().model.is_some())){return self.rejected();}
+        if pins.iter().any(|pin|(pin.collapsed&&!pin.folder)||self.nodes.get(&(2,0,0,pin.id.clone())).is_some_and(|node|node.borrow().model.as_deref().is_some_and(|m|!matches!(m,NodeModel::SidebarPin(_))))||self.nodes.get(&(14,0,0,pin.id.clone())).is_some_and(|node|node.borrow().model.as_deref().is_some_and(|m|!matches!(m,NodeModel::SidebarPinGroup(_)))))||tabs.iter().any(|tab|self.nodes.get(&(10,tab.high,tab.low,String::new())).is_some_and(|node|node.borrow().model.is_some())){return self.rejected();}
         let mut indices=BTreeSet::new();if tabs.iter().any(|tab|!indices.insert(tab.index)||self.nodes.get(&(1,tab.high,tab.low,String::new())).is_some_and(|node|node.borrow().model.as_deref().is_some_and(|m|!matches!(m,NodeModel::SidebarTab(_))))){return self.rejected();}
-        let old_order=self.order.clone();let tab_root=(11,0,0,"sidebar.tabs".to_owned());let pin_root=(11,0,0,"sidebar.pins".to_owned());let mut keys=Vec::with_capacity(2+pins.len()+tabs.len()*2);keys.push(ffi::ActionNodeKey{kind:11,high:0,low:0,name:tab_root.3.clone()});keys.push(ffi::ActionNodeKey{kind:11,high:0,low:0,name:pin_root.3.clone()});
-        for pin in &pins{keys.push(ffi::ActionNodeKey{kind:2,high:0,low:0,name:pin.id.clone()});}let can_close=tabs.len()>1;for tab in &tabs{keys.push(ffi::ActionNodeKey{kind:1,high:tab.high,low:tab.low,name:String::new()});if can_close{keys.push(ffi::ActionNodeKey{kind:10,high:tab.high,low:tab.low,name:String::new()});}}
-        let plan=self.reconcile(keys);if !plan.admitted{return plan;}let mut invalidated=old_order!=plan.ids;let tab_parent=self.nodes[&tab_root].borrow().id;let pin_parent=self.nodes[&pin_root].borrow().id;
-        for pin in pins{let mut node=self.nodes[&(2,0,0,pin.id.clone())].borrow_mut();let next=SidebarPinModel::from_input(pin);let changed=match node.model.as_deref(){Some(NodeModel::SidebarPin(p))=>p.collapsed!=next.collapsed||p.presentation.title!=next.presentation.title||p.presentation.monogram!=next.presentation.monogram||p.presentation.color!=next.presentation.color||p.presentation.folder!=next.presentation.folder,_=>true};node.parent=pin_parent;if changed{node.model=Some(Box::new(NodeModel::SidebarPin(next)));node.state.action_cancel();}}
-        for tab in tabs{let id={let mut node=self.nodes[&(1,tab.high,tab.low,String::new())].borrow_mut();invalidated|=matches!(node.model.as_deref(),Some(NodeModel::SidebarTab(p)) if p.index!=tab.index||p.can_close!=can_close);node.parent=tab_parent;if let Some(NodeModel::SidebarTab(p))=node.model.as_deref_mut(){p.index=tab.index;p.can_close=can_close;}else{node.model=Some(Box::new(NodeModel::SidebarTab(SidebarTabModel{high:tab.high,low:tab.low,index:tab.index,can_close,presentation:None})));}node.id};if can_close{self.nodes[&(10,tab.high,tab.low,String::new())].borrow_mut().parent=id;}}
+        let nodes=pins.iter().map(|p|ffi::TreeNode{id:p.id.clone(),parent:p.parent.clone(),folder:p.folder}).collect::<Vec<_>>();let mut tree=new_sidebar_tree();for pin in &pins{if pin.folder&&pin.collapsed{tree.set_collapsed("",&pin.id,true);}}let layout=tree.tree_plan("",&nodes);let positions=layout.iter().enumerate().map(|(rank,e)|(e.index,(rank,e))).collect::<BTreeMap<_,_>>();
+        let tab_root=(11,0,0,"sidebar.tabs".to_owned());let pin_root=(11,0,0,"sidebar.pins".to_owned());let mut keys=Vec::with_capacity(2+pins.len()*2+tabs.len()*2);let mut edges=BTreeMap::new();
+        for root in [&tab_root,&pin_root]{keys.push(ffi::ActionNodeKey{kind:11,high:0,low:0,name:root.3.clone()});edges.insert(root.clone(),None);}
+        for (index,pin) in pins.iter().enumerate(){let parent=positions.get(&index).map(|(_,entry)|if entry.parent==usize::MAX{pin_root.clone()}else{(14,0,0,pins[entry.parent].id.clone())});let key=(2,0,0,pin.id.clone());keys.push(ffi::ActionNodeKey{kind:2,high:0,low:0,name:pin.id.clone()});edges.insert(key,parent.clone());if pin.folder{keys.push(ffi::ActionNodeKey{kind:14,high:0,low:0,name:pin.id.clone()});edges.insert((14,0,0,pin.id.clone()),parent);}}
+        let can_close=tabs.len()>1;for tab in &tabs{let key=(1,tab.high,tab.low,String::new());keys.push(ffi::ActionNodeKey{kind:1,high:tab.high,low:tab.low,name:String::new()});edges.insert(key.clone(),Some(tab_root.clone()));if can_close{keys.push(ffi::ActionNodeKey{kind:10,high:tab.high,low:tab.low,name:String::new()});edges.insert((10,tab.high,tab.low,String::new()),Some(key));}}
+        let old_order=self.order.clone();let plan=self.reconcile_with_parents(keys,Some(&edges));if !plan.admitted{return plan;}let mut invalidated=old_order!=plan.ids;
+        for (index,pin) in pins.into_iter().enumerate(){let key=(2,0,0,pin.id.clone());let group=if pin.folder{self.nodes[&(14,0,0,pin.id.clone())].borrow().id}else{0};let mut next=SidebarPinModel::from_input(pin);next.index=index;next.group=group;if let Some((rank,entry))=positions.get(&index){next.rank=*rank;next.depth=entry.depth;next.reachable=true;next.visible=entry.visible;}
+            let mut node=self.nodes[&key].borrow_mut();let changed=match node.model.as_deref(){Some(NodeModel::SidebarPin(p))=>p.parent_key!=next.parent_key||p.rank!=next.rank||p.visible!=next.visible||p.collapsed!=next.collapsed||p.presentation.title!=next.presentation.title||p.presentation.monogram!=next.presentation.monogram||p.presentation.color!=next.presentation.color||p.presentation.folder!=next.presentation.folder,_=>true};if group!=0{self.nodes[&(14,0,0,next.key.clone())].borrow_mut().model=Some(Box::new(NodeModel::SidebarPinGroup(SidebarPinGroupModel{owner:node.id,visible:next.visible&&!next.collapsed})));}node.model=Some(Box::new(NodeModel::SidebarPin(next)));if changed{node.state.action_cancel();}}
+        for tab in tabs{let mut node=self.nodes[&(1,tab.high,tab.low,String::new())].borrow_mut();invalidated|=matches!(node.model.as_deref(),Some(NodeModel::SidebarTab(p)) if p.index!=tab.index||p.can_close!=can_close);if let Some(NodeModel::SidebarTab(p))=node.model.as_deref_mut(){p.index=tab.index;p.can_close=can_close;}else{node.model=Some(Box::new(NodeModel::SidebarTab(SidebarTabModel{high:tab.high,low:tab.low,index:tab.index,can_close,presentation:None})));}}
         if invalidated{for (key,node) in &self.nodes{if matches!(key.0,1|2|10){node.borrow_mut().state.action_cancel();}}}plan
     }
-    fn pin_target(&self,key:&str,id:u64)->ffi::SidebarPinTarget{let invalid=||ffi::SidebarPinTarget{valid:false,folder:false,collapsed:false};let Some(node)=self.nodes.get(&(2,0,0,key.into())) else{return invalid();};let node=node.borrow();if !node.alive||!node.attached||!node.state.enabled||id==0||node.id!=id{return invalid();}if let Some(NodeModel::SidebarPin(pin))=node.model.as_deref(){ffi::SidebarPinTarget{valid:true,folder:pin.presentation.folder,collapsed:pin.collapsed}}else{invalid()}}
-    fn set_pin_collapsed(&mut self,input:&ActionControl,collapsed:bool)->bool{if !self.owns_input(input){return false;}input.read_node(|node|matches!(node.model.as_deref(),Some(NodeModel::SidebarPin(p)) if p.presentation.folder)).unwrap_or(false)&&{let binding=input.pin_binding();let Some(node)=self.nodes.get(&(2,0,0,binding.key)) else{return false;};let mut node=node.borrow_mut();let Some(NodeModel::SidebarPin(pin))=node.model.as_deref_mut() else{return false;};if pin.collapsed!=collapsed{pin.collapsed=collapsed;pin.presentation.title=pin_title(&pin.base_title,true,collapsed);pin.presentation.title_utf8=String::from_utf16_lossy(&pin.presentation.title);}true}}
+    fn pin_tree(&self)->ffi::SidebarPinTree{let root=self.nodes.get(&(11,0,0,"sidebar.pins".into())).map_or(0,|n|n.borrow().id);let mut ordered=self.nodes.values().filter_map(|node|{let node=node.borrow();if let Some(NodeModel::SidebarPin(p))=node.model.as_deref(){if p.reachable{return Some((p.rank,ffi::SidebarPinTreeEntry{index:p.index,key:p.key.clone(),id:node.id,parent:node.parent,group:p.group,depth:p.depth,collapsed:p.collapsed,visible:p.visible}));}}None}).collect::<Vec<_>>();ordered.sort_by_key(|(rank,_)|*rank);ffi::SidebarPinTree{root,entries:ordered.into_iter().map(|(_,entry)|entry).collect()}}
+    fn refresh_pin_visibility(&mut self){let tree=self.pin_tree();let mut visible=BTreeMap::from([(tree.root,true)]);for entry in tree.entries{let shown=visible.get(&entry.parent).copied().unwrap_or(false);let mut row=self.nodes[&(2,0,0,entry.key.clone())].borrow_mut();if let Some(NodeModel::SidebarPin(p))=row.model.as_deref_mut(){let changed=p.visible!=shown;p.visible=shown;if changed{row.state.action_cancel();}}if entry.group!=0{let mut group=self.nodes[&(14,0,0,entry.key)].borrow_mut();if let Some(NodeModel::SidebarPinGroup(p))=group.model.as_deref_mut(){p.visible=shown&&!entry.collapsed;visible.insert(entry.group,p.visible);}}}}
+    fn pin_target(&self,key:&str,id:u64)->ffi::SidebarPinTarget{let invalid=||ffi::SidebarPinTarget{valid:false,folder:false,collapsed:false,group:0};let Some(node)=self.nodes.get(&(2,0,0,key.into())) else{return invalid();};let node=node.borrow();if !node.alive||!node.attached||!node.state.enabled||id==0||node.id!=id{return invalid();}if let Some(NodeModel::SidebarPin(pin))=node.model.as_deref(){if !pin.reachable||!pin.visible{return invalid();}if pin.presentation.folder{let Some(group)=self.nodes.get(&(14,0,0,key.into())) else{return invalid();};let group=group.borrow();if !matches!(group.model.as_deref(),Some(NodeModel::SidebarPinGroup(p)) if p.owner==id)||group.id!=pin.group||group.parent!=node.parent{return invalid();}}ffi::SidebarPinTarget{valid:true,folder:pin.presentation.folder,collapsed:pin.collapsed,group:pin.group}}else{invalid()}}
+    fn set_pin_collapsed(&mut self,input:&ActionControl,collapsed:bool)->bool{if !self.owns_input(input){return false;}let binding=input.pin_binding();if !binding.valid||!binding.folder{return false;}{let Some(node)=self.nodes.get(&(2,0,0,binding.key)) else{return false;};let mut node=node.borrow_mut();let Some(NodeModel::SidebarPin(pin))=node.model.as_deref_mut() else{return false;};if pin.collapsed!=collapsed{pin.collapsed=collapsed;pin.presentation.title=pin_title(&pin.base_title,true,collapsed);pin.presentation.title_utf8=String::from_utf16_lossy(&pin.presentation.title);}}self.refresh_pin_visibility();true}
     fn project_tab(&mut self,input:&ActionControl,title:Vec<u16>,monogram:Vec<u16>,color:u32,tile:bool)->ffi::SidebarTabUpdate{
         let rejected=||ffi::SidebarTabUpdate{admitted:false,changed:false,title_changed:false,geometry_changed:false};
         if !self.owns_input(input){return rejected();}let binding=input.tab_binding();if !binding.valid{return rejected();}
@@ -2060,7 +2079,7 @@ impl ActionGraph {
     // infer ownership from numeric IDs or a graph allocation's reusable address.
     fn owns_input(&self,input:&ActionControl)->bool{input.read_node(|node|Rc::ptr_eq(&self.owner,&node.owner)).unwrap_or(false)}
     fn acquire(&mut self,key:&ffi::ActionNodeKey)->Box<ActionControl>{
-        if matches!(key.kind,11|12){return Box::new(ActionControl{storage:ActionStorage::Retired});}
+        if matches!(key.kind,11|12|14){return Box::new(ActionControl{storage:ActionStorage::Retired});}
         let node=action_node_key(key).and_then(|key|self.nodes.get(&key)).cloned();
         let Some(node)=node else{return Box::new(ActionControl{storage:ActionStorage::Retired});};
         let lease={let mut record=node.borrow_mut();let Some(lease)=record.lease.checked_add(1) else{return Box::new(ActionControl{storage:ActionStorage::Retired});};if let Some(model)=record.model.as_deref_mut(){model.detach_input();}record.lease=lease;record.attached=true;if !matches!(record.model.as_deref(),Some(NodeModel::Workspace(_))){record.state.action_enabled(true);}record.state.action_focus(false);record.state.action_cancel();lease};
@@ -2101,7 +2120,7 @@ impl ActionControl {
     fn node_select_reset_prefix(&mut self)->(){self.write_node(|r|{if let Some(NodeModel::Select(s))=r.model.as_deref_mut(){s.reset_prefix()}else{()}}).unwrap_or_else(||())}
     fn node_select_input(&mut self,lower_text: &str, now_ms: u64, enabled: bool)->bool{self.write_node(|r|{let gate=r.state.enabled;if let Some(NodeModel::Select(s))=r.model.as_deref_mut(){s.input(lower_text,now_ms,enabled&&gate)}else{false}}).unwrap_or_else(||false)}
     fn node_parent_id(&self)->u64{self.read_node(|node|node.parent).unwrap_or(0)}
-    fn pin_binding(&self)->ffi::SidebarPinBinding{self.read_node(|node|if let Some(NodeModel::SidebarPin(pin))=node.model.as_deref(){Some(ffi::SidebarPinBinding{valid:true,id:node.id,key:pin.key.clone(),folder:pin.presentation.folder,collapsed:pin.collapsed})}else{None}).flatten().unwrap_or(ffi::SidebarPinBinding{valid:false,id:0,key:String::new(),folder:false,collapsed:false})}
+    fn pin_binding(&self)->ffi::SidebarPinBinding{self.read_node(|node|if let Some(NodeModel::SidebarPin(pin))=node.model.as_deref(){Some(ffi::SidebarPinBinding{valid:true,id:node.id,key:pin.key.clone(),folder:pin.presentation.folder,collapsed:pin.collapsed,group:pin.group})}else{None}).flatten().unwrap_or(ffi::SidebarPinBinding{valid:false,id:0,key:String::new(),folder:false,collapsed:false,group:0})}
     fn sidebar_visual(&self)->ffi::SidebarRowVisual{self.read_node(|r|r.model.as_deref().and_then(NodeModel::row_presentation).map(|p|ffi::SidebarRowVisual{valid:true,tile:p.tile,height:p.height()})).flatten().unwrap_or(ffi::SidebarRowVisual{valid:false,tile:false,height:0})}
     fn sidebar_presentation(&self)->ffi::SidebarRowPresentation{self.read_node(|r|r.model.as_deref().and_then(NodeModel::row_presentation).map(|p|ffi::SidebarRowPresentation{valid:true,title:p.title.clone(),monogram:p.monogram.clone(),color:p.color,tile:p.tile,folder:p.folder,height:p.height()})).flatten().unwrap_or(ffi::SidebarRowPresentation{valid:false,title:vec![],monogram:vec![],color:0,tile:false,folder:false,height:0})}
     fn sidebar_title(&self)->Vec<u16>{self.read_node(|r|r.model.as_deref().and_then(NodeModel::row_presentation).map(|p|p.title.clone())).flatten().unwrap_or_default()}
@@ -2113,7 +2132,7 @@ impl ActionControl {
         ffi::SidebarRowScene{valid,item}
     }
     fn tab_binding(&self)->ffi::SidebarTabBinding{self.read_node(|node|if let Some(NodeModel::SidebarTab(p))=node.model.as_deref(){Some(ffi::SidebarTabBinding{valid:true,id:node.id,high:p.high,low:p.low,index:p.index,can_close:p.can_close})}else{None}).flatten().unwrap_or(ffi::SidebarTabBinding{valid:false,id:0,high:0,low:0,index:0,can_close:false})}
-    fn node_model_kind(&self)->u32{self.read_node(|r|match r.model.as_deref(){Some(NodeModel::SidebarPin(_))=>10,Some(NodeModel::SidebarTab(_))=>9,Some(NodeModel::FormCommand(_))=>8,Some(NodeModel::Checkbox(_))=>1,Some(NodeModel::Toggle(_))=>2,Some(NodeModel::Select(_))=>3,Some(NodeModel::Workspace(_))=>4,Some(NodeModel::History(_))=>5,Some(NodeModel::Palette(_))=>6,Some(NodeModel::SiteRule(_))=>7,Some(NodeModel::PaletteRoot(_))|Some(NodeModel::FormRoot(_))|None=>0}).unwrap_or(0)}
+    fn node_model_kind(&self)->u32{self.read_node(|r|match r.model.as_deref(){Some(NodeModel::SidebarPin(_))=>10,Some(NodeModel::SidebarTab(_))=>9,Some(NodeModel::FormCommand(_))=>8,Some(NodeModel::Checkbox(_))=>1,Some(NodeModel::Toggle(_))=>2,Some(NodeModel::Select(_))=>3,Some(NodeModel::Workspace(_))=>4,Some(NodeModel::History(_))=>5,Some(NodeModel::Palette(_))=>6,Some(NodeModel::SiteRule(_))=>7,Some(NodeModel::SidebarPinGroup(_))|Some(NodeModel::PaletteRoot(_))|Some(NodeModel::FormRoot(_))|None=>0}).unwrap_or(0)}
     fn node_checkbox_init(&mut self,checked:bool)->bool{self.write_node(|r|match r.model.as_deref(){Some(NodeModel::Checkbox(_))=>true,Some(_)=>false,None=>{r.model=Some(Box::new(NodeModel::Checkbox(CheckboxState{checked})));true}}).unwrap_or(false)}
     fn node_checked(&self)->bool{self.read_node(|r|matches!(r.model.as_deref(),Some(NodeModel::Checkbox(s)) if s.checked())).unwrap_or(false)}
     fn node_set_checked(&mut self,checked:bool)->bool{self.write_node(|r|if let Some(NodeModel::Checkbox(s))=r.model.as_deref_mut(){s.set_checked(checked)}else{false}).unwrap_or(false)}
@@ -3386,7 +3405,44 @@ mod tests {
     fn node_pin(name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:2,high:0,low:0,name:name.into()}}
     fn node_close(low:u64)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:10,high:7,low,name:String::new()}}
     fn node_named(kind:u32,name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind,high:0,low:0,name:name.into()}}
-    fn pin_input(id:&str,title:&str,folder:bool,collapsed:bool)->ffi::SidebarPinInput{ffi::SidebarPinInput{id:id.into(),title:title.encode_utf16().collect(),monogram:vec![b'P' as u16],color:0xff123456,folder,collapsed}}
+    fn nested_pin(id:&str,parent:&str,folder:bool,collapsed:bool)->ffi::SidebarPinInput{let mut pin=pin_input(id,id,folder,collapsed);pin.parent=parent.into();pin}
+    #[test] fn pin_tree_models_folder_groups_and_actual_parent_edges_in_preorder(){
+        let mut g=new_action_graph();g.reconcile_sidebar(vec![nested_pin("leaf","nested",false,false),nested_pin("outer","",true,false),nested_pin("nested","outer",true,false)],vec![]);let tree=g.pin_tree();assert_eq!(tree.entries.iter().map(|e|e.key.as_str()).collect::<Vec<_>>(),vec!["outer","nested","leaf"]);let outer=&tree.entries[0];let nested=&tree.entries[1];let leaf=&tree.entries[2];assert_eq!((outer.index,nested.index,leaf.index),(1,2,0));assert_eq!(outer.parent,tree.root);assert_eq!(nested.parent,outer.group);assert_eq!(leaf.parent,nested.group);assert_ne!(outer.id,outer.group);assert_ne!(nested.id,nested.group);assert_eq!((outer.depth,nested.depth,leaf.depth),(0,1,2));let input=g.acquire(&node_named(2,"leaf"));assert_eq!(input.node_parent_id(),nested.group);assert_eq!(g.acquire(&node_named(14,"outer")).action_node_id(),0);
+    }
+    #[test] fn pin_tree_collapse_revokes_descendant_targets_and_input_before_native_visibility(){
+        let mut g=new_action_graph();g.reconcile_sidebar(vec![nested_pin("outer","",true,false),nested_pin("inner","outer",true,false),nested_pin("leaf","inner",false,false)],vec![]);let outer=g.acquire(&node_named(2,"outer"));let mut inner=g.acquire(&node_named(2,"inner"));let mut leaf=g.acquire(&node_named(2,"leaf"));inner.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);leaf.action_key(true,1,false,true);assert!(g.pin_target("leaf",leaf.action_node_id()).valid);assert!(g.set_pin_collapsed(&outer,true));assert!(!inner.action_pending()&&!leaf.action_pending());assert!(!g.pin_target("inner",inner.action_node_id()).valid&&!g.pin_target("leaf",leaf.action_node_id()).valid);assert_eq!(g.pin_tree().entries.iter().map(|e|e.visible).collect::<Vec<_>>(),vec![true,false,false]);g.set_pin_collapsed(&outer,false);assert!(g.pin_target("leaf",leaf.action_node_id()).valid);
+    }
+    #[test] fn pin_tree_reopening_parent_preserves_nested_collapsed_state(){
+        let mut g=new_action_graph();g.reconcile_sidebar(vec![nested_pin("outer","",true,false),nested_pin("inner","outer",true,true),nested_pin("leaf","inner",false,false)],vec![]);let outer=g.acquire(&node_named(2,"outer"));g.set_pin_collapsed(&outer,true);g.set_pin_collapsed(&outer,false);let tree=g.pin_tree();assert!(tree.entries[0].visible&&tree.entries[1].visible&&!tree.entries[2].visible);assert!(tree.entries[1].collapsed);
+    }
+    #[test] fn pin_tree_reparent_off_deleted_group_preserves_child_id_and_lease(){
+        let mut g=new_action_graph();g.reconcile_sidebar(vec![nested_pin("folder","",true,false),nested_pin("leaf","folder",false,false)],vec![]);let mut leaf=g.acquire(&node_named(2,"leaf"));let id=leaf.action_node_id();let old_parent=leaf.node_parent_id();let group=g.nodes[&(14,0,0,"folder".into())].clone();leaf.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);assert!(g.reconcile_sidebar(vec![nested_pin("leaf","",false,false)],vec![]).admitted);assert_eq!(leaf.action_node_id(),id);assert_ne!(leaf.node_parent_id(),old_parent);assert_eq!(leaf.node_parent_id(),g.pin_tree().root);assert!(!leaf.action_pending());assert!(!group.borrow().alive&&group.borrow().model.is_none());assert!(g.pin_target("leaf",id).valid);
+    }
+    #[test] fn pin_tree_orphans_cycles_and_children_of_pages_stay_dormant_until_repaired(){
+        let mut g=new_action_graph();g.reconcile_sidebar(vec![nested_pin("a","b",true,false),nested_pin("b","a",true,false),nested_pin("missing","absent",false,false),nested_pin("page","",false,false),nested_pin("child","page",false,false)],vec![]);assert_eq!(g.pin_tree().entries.len(),1);let a=g.acquire(&node_named(2,"a"));let id=a.action_node_id();assert_eq!(a.node_parent_id(),0);assert!(!g.pin_target("a",id).valid);g.reconcile_sidebar(vec![nested_pin("a","",true,false),nested_pin("b","a",true,false)],vec![]);assert_eq!(a.action_node_id(),id);assert!(g.pin_target("a",id).valid);assert_eq!(g.pin_tree().entries.len(),2);
+    }
+    #[test] fn pin_tree_depth_bound_matches_existing_tree_plan_contract(){
+        let mut g=new_action_graph();let pins=(0..67).map(|i|nested_pin(&format!("folder-{i}"),&if i==0{String::new()}else{format!("folder-{}",i-1)},true,false)).collect();g.reconcile_sidebar(pins,vec![]);let tree=g.pin_tree();assert_eq!(tree.entries.len(),65);assert_eq!(tree.entries.last().unwrap().depth,64);let deep=g.acquire(&node_named(2,"folder-65"));assert_eq!(deep.node_parent_id(),0);assert!(!g.pin_target("folder-65",deep.action_node_id()).valid);
+    }
+    #[test] fn pin_tree_role_change_retires_group_and_moves_repaired_child_atomically(){
+        let mut g=new_action_graph();g.reconcile_sidebar(vec![nested_pin("owner","",true,false),nested_pin("child","owner",false,false)],vec![]);let owner=g.acquire(&node_named(2,"owner"));let child=g.acquire(&node_named(2,"child"));let group=owner.pin_binding().group;let child_id=child.action_node_id();assert!(g.reconcile_sidebar(vec![nested_pin("owner","",false,false),nested_pin("child","",false,false)],vec![]).admitted);assert_eq!(owner.pin_binding().group,0);assert_eq!(child.action_node_id(),child_id);assert_eq!(child.node_parent_id(),g.pin_tree().root);assert!(g.order.iter().all(|id|*id!=group));
+    }
+    #[test] fn pin_tree_generic_reconcile_cannot_remove_retained_folder_group_or_owner(){
+        let (mut g,input)=pin_fixture();let before=g.order.clone();assert!(!g.reconcile(vec![node_named(11,"sidebar.pins"),node_named(2,"folder")]).admitted);assert!(!g.reconcile(vec![node_named(11,"sidebar.pins"),node_named(14,"folder")]).admitted);assert_eq!(g.order,before);assert!(g.pin_target("folder",input.action_node_id()).valid);
+    }
+    #[test] fn parent_transaction_rejects_missing_nodes_and_cycles_without_mutation(){
+        let mut g=new_action_graph();let keys=||vec![node_named(4,"a"),node_named(4,"b")];g.reconcile(keys());let mut input=g.acquire(&node_named(4,"a"));input.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);let before=g.order.clone();let a=(4,0,0,"a".into());let b=(4,0,0,"b".into());let missing=(4,0,0,"missing".into());for edges in [BTreeMap::from([(a.clone(),Some(a.clone()))]),BTreeMap::from([(a.clone(),Some(b.clone())),(b.clone(),Some(a.clone()))]),BTreeMap::from([(a.clone(),Some(missing.clone()))]),BTreeMap::from([(missing,None)])]{assert!(!g.reconcile_with_parents(keys(),Some(&edges)).admitted);assert_eq!(g.order,before);assert_eq!(input.node_parent_id(),0);assert!(input.action_pending());}
+    }
+    #[test] fn parent_transaction_checks_cycles_through_unprojected_retained_edges(){
+        let mut g=new_action_graph();let keys=||vec![node_named(4,"a"),node_named(4,"b")];let a=(4,0,0,"a".into());let b=(4,0,0,"b".into());assert!(g.reconcile_with_parents(keys(),Some(&BTreeMap::from([(b.clone(),Some(a.clone()))]))).admitted);let input=g.acquire(&node_named(4,"b"));let parent=input.node_parent_id();assert!(!g.reconcile_with_parents(keys(),Some(&BTreeMap::from([(a,Some(b))]))).admitted);assert_eq!(input.node_parent_id(),parent);
+    }
+    #[test] fn parent_transaction_id_exhaustion_cannot_retire_or_reparent_existing_records(){
+        let (mut g,input)=pin_fixture();let id=input.action_node_id();let parent=input.node_parent_id();let before=g.order.clone();g.next_id=u64::MAX;assert!(!g.reconcile_sidebar(vec![nested_pin("folder","new",true,false),nested_pin("new","",true,false)],vec![]).admitted);assert_eq!(g.order,before);assert_eq!((input.action_node_id(),input.node_parent_id()),(id,parent));
+    }
+    #[test] fn pin_tree_snapshot_is_owned_and_group_identity_survives_rename(){
+        let (mut g,input)=pin_fixture();let group=input.pin_binding().group;let mut snapshot=g.pin_tree();snapshot.entries[0].key.clear();snapshot.entries.clear();assert_eq!(g.pin_tree().entries[0].key,"folder");g.reconcile_sidebar(vec![pin_input("folder","Renamed",true,false)],vec![]);assert_eq!(input.pin_binding().group,group);assert_eq!(g.pin_tree().entries[0].group,group);
+    }
+    fn pin_input(id:&str,title:&str,folder:bool,collapsed:bool)->ffi::SidebarPinInput{ffi::SidebarPinInput{id:id.into(),parent:String::new(),title:title.encode_utf16().collect(),monogram:vec![b'P' as u16],color:0xff123456,folder,collapsed}}
     fn pin_fixture()->(Box<ActionGraph>,Box<ActionControl>){let mut g=new_action_graph();assert!(g.reconcile_sidebar(vec![pin_input("folder","Dokumenty 日本語 🦀",true,false)],vec![]).admitted);let input=g.acquire(&node_named(2,"folder"));(g,input)}
     #[test] fn pin_model_owns_role_title_monogram_and_collection_parent(){
         let (g,input)=pin_fixture();assert_eq!(input.node_model_kind(),10);let binding=input.pin_binding();assert!(binding.valid&&binding.folder&&!binding.collapsed);assert_eq!(binding.key,"folder");assert_eq!(input.node_parent_id(),g.nodes[&(11,0,0,"sidebar.pins".into())].borrow().id);let p=input.sidebar_presentation();assert!(p.valid&&p.folder&&!p.tile);assert_eq!(p.height,34);assert_eq!(p.title,"▾ Dokumenty 日本語 🦀".encode_utf16().collect::<Vec<_>>());let scene=input.sidebar_scene(tab_box(),tab_box(),tab_style(),true,true);assert!(scene.valid);assert_eq!(scene.item.monogram,"📁");assert_eq!(scene.item.badge,0);assert!(!scene.item.close&&!scene.item.close_visible);
