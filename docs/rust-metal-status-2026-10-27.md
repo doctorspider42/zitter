@@ -86,6 +86,11 @@ Kolejność jest propozycją na wznowienie; testy z oknami pozostają odłożone
 
 ## Co jest sprawdzone, a co odłożone
 
+**Zachowanie kontenerów sidebara:** w trybie Rust kolumna kart i kontener `SplitPair`
+przeżywają przebudowę struktury, gdy rustowy węzeł `sidebar.pair` zachowuje ID
+(`SidebarTabColumnAndPairContainersSurviveStructuralRefresh`; podzbiór sidebar/split/
+pin/folder: 91 Metal, 42 Views zaliczone).
+
 **Pełny checkpoint UI 2026-10-27:** po poprawkach **273/273 Metal i 224/224 Views**
 (pierwszy przebieg: 6 niepowodzeń Metal, 1 Views — trzy crashe testów na odłączonych
 widokach, brakująca komenda Rust `HistoryMore`, tooltip tytułu Peek, wyścig tytułu

@@ -4764,14 +4764,35 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
     cache.tab_buttons.clear();
   }
   if (!same_structure) {
+    std::unique_ptr<views::View> kept_contents, kept_pair;
+#if BUILDFLAG(IS_MAC)
+    if (cache.node_graph) {
+      // Rows were extracted above. Keep the tab column and a pair container whose
+      // Rust node survived, so container identity follows the Rust graph.
+      const auto pair_id = cache.node_graph->graph->sidebar_tabs().pair;
+      views::View* old_pair = cache.pin_pair ? cache.pin_pair.get() : cache.root_pair.get();
+      if (old_pair && pair_id && pair_id == cache.pair_id && old_pair->parent() && old_pair->children().empty())
+        kept_pair = old_pair->parent()->RemoveChildViewT(old_pair);
+      if (kept_pair) cache.pin_pair = cache.root_pair = nullptr;
+      if (cache.tabs_root->children().size() == 1) {
+        kept_contents = cache.tabs_root->RemoveChildViewT(cache.tabs_root->children().front().get());
+        kept_contents->RemoveAllChildViews();
+      }
+      cache.pair_id = pair_id;
+    }
+#endif
     if (cache.pin_pair) {
       cache.pin_pair->parent()->RemoveChildViewT(cache.pin_pair.get());
       cache.pin_pair = nullptr;
     }
+    cache.root_pair = nullptr;
     cache.tab_buttons.clear();
     cache.tabs_root->RemoveAllChildViews();
-    auto contents = std::make_unique<views::View>();
-    contents->SetLayoutManager(CreateSidebarColumnLayout(2));
+    auto contents = std::move(kept_contents);
+    if (!contents) {
+      contents = std::make_unique<views::View>();
+      contents->SetLayoutManager(CreateSidebarColumnLayout(2));
+    }
     auto add_tab = [&](views::View* parent, const ShellTab& tab, bool tile = false) {
       RowButton::Spec spec;
       spec.title = tab.title;
@@ -4824,14 +4845,18 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
     for (const auto& slot : cache.tab_plan.slots) {
       if (!slot.pair) { add_tab(contents.get(), state_.tabs[slot.first]); continue; }
       SplitPair* pair = nullptr;
+      std::unique_ptr<SplitPair> pair_view = kept_pair ? base::WrapUnique(views::AsViewClass<SplitPair>(kept_pair.release())) : std::make_unique<SplitPair>();
+      CHECK(pair_view);
       if (slot.pin != SidebarTree::kRoot) {
         auto* pin_row = cache.pin_buttons.at(state_.pins[slot.pin].id)->parent();
         auto* group = pin_row->parent();
-        pair = group->AddChildViewAt(std::make_unique<SplitPair>(), *group->GetIndexOf(pin_row));
+        pair = group->AddChildViewAt(std::move(pair_view), *group->GetIndexOf(pin_row));
         pair->SetProperty(views::kMarginsKey, pin_row->GetInsets());
         cache.pin_pair = pair;
       } else {
-        pair = contents->AddChildView(std::make_unique<SplitPair>());
+        pair = contents->AddChildView(std::move(pair_view));
+        pair->ClearProperty(views::kMarginsKey);
+        cache.root_pair = pair;
       }
       add_tab(pair, state_.tabs[slot.first], true);
       add_tab(pair, state_.tabs[slot.second], true);

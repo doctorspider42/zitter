@@ -606,6 +606,8 @@ class WorkspaceShell final : public ui::EventHandler,
     std::map<std::string, raw_ptr<views::View>> pin_buttons;
     std::map<size_t, raw_ptr<views::View>> tab_buttons;
     raw_ptr<views::View> pin_pair = nullptr;  // A split placed among the pins.
+    raw_ptr<views::View> root_pair = nullptr;  // A split placed among the tabs.
+    uint64_t pair_id = 0;  // Rust sidebar.pair node the native pair adapter projects.
     std::string active_pin;
   };
   void ReconcileSidebarNodes(TabListCache& cache, std::string_view workspace, const std::vector<PinnedItem>& pins, const std::vector<ShellTab>& tabs,
