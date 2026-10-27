@@ -7136,7 +7136,15 @@ void WorkspaceShell::RefreshSitePreferences(bool reload) {
 #endif
   {site_rules_list_->RemoveAllChildViews();for(const auto& projection:visible){const auto& rule=site_preference_rules_[projection.source];auto* row=site_rules_list_->AddChildView(std::make_unique<views::View>());auto* label=AddPreferenceCopy(row,projection.detail,kSubtle,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);SetSidebarPanelLayout(row,false,gfx::Insets::VH(4,0),12,label,true);auto* remove=PreferenceAction(row,false,base::BindRepeating(&WorkspaceShell::PostRemoveSiteRule,weak_factory_.GetWeakPtr(),rule,state_.profile_id),u"Usuń");remove->SetEnabled(rule.editable);remove->GetViewAccessibility().SetName(u"Usuń wyjątek: "+projection.detail);}}
   if(!matching)AddPreferenceCopy(site_rules_list_,site_preference_rules_.empty()?u"Nie masz jeszcze zapisanych wyjątków.":u"Brak wyjątków pasujących do wyszukiwania.",kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
-  else if(matching>visible.size())PreferenceAction(site_rules_list_,bool(workspace_form_),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell){if(!shell)return;shell->MorePreferenceRules();shell->RefreshSitePreferences(false);},shell));},weak_factory_.GetWeakPtr()),u"Pokaż kolejne wyjątki…",true);
+  else if(matching>visible.size()){
+#if BUILDFLAG(IS_MAC)
+    if(workspace_form_){BindFormCommand(PreferenceAction(site_rules_list_,true,{},u"Pokaż kolejne wyjątki…",true),sidebar::FormCommand::PreferenceMore);}
+    else
+#endif
+    {
+    PreferenceAction(site_rules_list_,false,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell){if(!shell)return;shell->MorePreferenceRules();shell->RefreshSitePreferences(false);},shell));},weak_factory_.GetWeakPtr()),u"Pokaż kolejne wyjątki…",true);
+    }
+  }
   for(auto& row:preference_sections_[3].rows)if(row.view==site_rules_card_)row.keywords=keywords;site_rules_list_->InvalidateLayout();
 }
 
@@ -8373,12 +8381,26 @@ void WorkspaceShell::BindPreferenceCategory(views::View* view,size_t category){
 void WorkspaceShell::DispatchFormCommand(views::View* source,const sidebar::FormCommandBinding& binding){
 #if BUILDFLAG(IS_MAC)
   using C=sidebar::FormCommand;const auto command=binding.command;
-  const bool workspace=command==C::WorkspaceSave||command==C::WorkspaceToggle||command==C::WorkspaceRemove||command==C::WorkspaceProfiles||command==C::WorkspaceImport||command==C::WorkspaceDismiss;
-  const bool profile=command==C::ProfileCreate||command==C::ProfileRename||command==C::ProfileDelete||command==C::ProfileBack;
-  const auto* panel=workspace?settings_widget_.get():profile?profiles_widget_.get():(command==C::ImportApply||command==C::ImportDismiss)?import_widget_.get():command==C::ToolsDismiss?tools_widget_.get():general_widget_.get();
-  if(!source||!panel||!panel->IsVisible()||source->GetWidget()!=panel||!panel->GetContentsView()||!panel->GetContentsView()->Contains(source))return;
+  const views::Widget* panel=nullptr;
+  switch(binding.panel){
+    case sidebar::FormPanel::Workspace:panel=settings_widget_.get();break;
+    case sidebar::FormPanel::Profiles:panel=profiles_widget_.get();break;
+    case sidebar::FormPanel::Import:panel=import_widget_.get();break;
+    case sidebar::FormPanel::Preferences:panel=general_widget_.get();break;
+    case sidebar::FormPanel::Tools:panel=tools_widget_.get();break;
+    default:return;
+  }
+  if(!source||!panel||!panel->IsVisible()||!SceneIsVisible(source)||!source->GetEnabledInViewsSubtree()||source->GetWidget()!=panel||!panel->GetContentsView()||!panel->GetContentsView()->Contains(source))return;
   switch(command){
     case C::PreferenceCategory:SelectPreferenceCategory(binding.index);break;
+    case C::PreferenceMore:{
+      // Rebuilding the rule list destroys this action; defer without retaining it.
+      // A queued click may not paginate a different profile or a hidden panel.
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,std::string profile){
+        if(!shell||shell->state_.profile_id!=profile||!shell->general_widget_||!shell->general_widget_->IsVisible())return;
+        shell->MorePreferenceRules();shell->RefreshSitePreferences(false);
+      },weak_factory_.GetWeakPtr(),state_.profile_id));break;
+    }
     case C::WorkspaceDismiss:settings_widget_->Hide();RestorePageFocus();break;
     case C::PreferencesDismiss:CloseOverlays();RestorePageFocus();break;
     case C::ToolsDismiss:SetShortcutRecording(false);tools_widget_->Hide();RestorePageFocus();break;

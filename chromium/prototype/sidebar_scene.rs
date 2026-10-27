@@ -42,8 +42,10 @@ mod ffi {
     enum PreferenceRowKind { Theme, Pinned, Animations, Search, Toggle, Text, Picker, Action, Directory, SiteEditor, SiteRules, ClearData, ShortcutHint }
     #[repr(u32)]
     #[derive(Debug)]
-    enum FormCommand { None, WorkspaceSave, WorkspaceToggle, WorkspaceRemove, WorkspaceProfiles, WorkspaceImport, ProfileCreate, ProfileRename, ProfileDelete, ProfileBack, ImportApply, PreferenceText, PreferenceSite, PreferenceClear, PreferenceDirectory, History, Workspace, Passwords, Profiles, Import, Proxy, Certificates, Providers, Shortcuts, TimeMachine, WorkspaceDismiss, PreferencesDismiss, ImportDismiss, ToolsDismiss, PreferenceCategory }
-    struct FormCommandBinding { command: FormCommand, key: String, index: usize }
+    enum FormCommand { None, WorkspaceSave, WorkspaceToggle, WorkspaceRemove, WorkspaceProfiles, WorkspaceImport, ProfileCreate, ProfileRename, ProfileDelete, ProfileBack, ImportApply, PreferenceText, PreferenceSite, PreferenceClear, PreferenceDirectory, History, Workspace, Passwords, Profiles, Import, Proxy, Certificates, Providers, Shortcuts, TimeMachine, WorkspaceDismiss, PreferencesDismiss, ImportDismiss, ToolsDismiss, PreferenceCategory, PreferenceMore }
+    #[derive(Debug)]
+    enum FormPanel { None, Workspace, Profiles, Import, Preferences, Tools }
+    struct FormCommandBinding { command: FormCommand, panel: FormPanel, key: String, index: usize }
     struct FormCommandView { bound: bool, dismiss: bool, index: usize }
     enum PreferenceActionKind { None, History, Workspace, Passwords, Profiles, Import, Proxy, Certificates, Providers, Shortcuts, TimeMachine }
     struct PreferenceSpec { category: usize, kind: PreferenceRowKind, key: String, title: String, detail: String, choices: Vec<String>, placeholder: String, action: PreferenceActionKind, button: String, button_ax: String, tooltip: String }
@@ -1866,7 +1868,20 @@ impl SidebarPinModel {
 #[cfg(test)] impl From<&str> for ffi::SidebarPinInput{fn from(id:&str)->Self{Self{id:id.into(),parent:String::new(),title:id.encode_utf16().collect(),monogram:vec![],color:0,folder:false,collapsed:false}}}
 
 struct FormCommandModel {command:ffi::FormCommand,key:String,index:usize}
-fn valid_form_command(command:ffi::FormCommand,key:&str)->bool{use ffi::FormCommand as C;match command{C::PreferenceText=>!key.is_empty(),C::WorkspaceSave|C::WorkspaceToggle|C::WorkspaceRemove|C::WorkspaceProfiles|C::WorkspaceImport|C::ProfileCreate|C::ProfileRename|C::ProfileDelete|C::ProfileBack|C::ImportApply|C::PreferenceSite|C::PreferenceClear|C::PreferenceDirectory|C::History|C::Workspace|C::Passwords|C::Profiles|C::Import|C::Proxy|C::Certificates|C::Providers|C::Shortcuts|C::TimeMachine|C::WorkspaceDismiss|C::PreferencesDismiss|C::ImportDismiss|C::ToolsDismiss=>key.is_empty(),_=>false}}
+// The semantic command owns its panel; native code only resolves the widget.
+fn form_command_panel(command:ffi::FormCommand)->ffi::FormPanel {
+    use ffi::{FormCommand as C,FormPanel as P};
+    match command {
+        C::WorkspaceSave|C::WorkspaceToggle|C::WorkspaceRemove|C::WorkspaceProfiles|C::WorkspaceImport|C::WorkspaceDismiss=>P::Workspace,
+        C::ProfileCreate|C::ProfileRename|C::ProfileDelete|C::ProfileBack=>P::Profiles,
+        C::ImportApply|C::ImportDismiss=>P::Import,
+        C::ToolsDismiss=>P::Tools,
+        C::PreferenceText|C::PreferenceSite|C::PreferenceClear|C::PreferenceDirectory|C::History|C::Workspace|C::Passwords|C::Profiles|C::Import|C::Proxy|C::Certificates|C::Providers|C::Shortcuts|C::TimeMachine|C::PreferencesDismiss|C::PreferenceCategory|C::PreferenceMore=>P::Preferences,
+        _=>P::None,
+    }
+}
+
+fn valid_form_command(command:ffi::FormCommand,key:&str)->bool{use ffi::FormCommand as C;match command{C::PreferenceText=>!key.is_empty(),C::WorkspaceSave|C::WorkspaceToggle|C::WorkspaceRemove|C::WorkspaceProfiles|C::WorkspaceImport|C::ProfileCreate|C::ProfileRename|C::ProfileDelete|C::ProfileBack|C::ImportApply|C::PreferenceSite|C::PreferenceClear|C::PreferenceDirectory|C::History|C::Workspace|C::Passwords|C::Profiles|C::Import|C::Proxy|C::Certificates|C::Providers|C::Shortcuts|C::TimeMachine|C::WorkspaceDismiss|C::PreferencesDismiss|C::ImportDismiss|C::ToolsDismiss|C::PreferenceMore=>key.is_empty(),_=>false}}
 enum NodeModel { SidebarPinGroup(SidebarPinGroupModel), SidebarPin(SidebarPinModel), FormCommand(FormCommandModel), Checkbox(CheckboxState), Toggle(ToggleState), Select(SelectState), Workspace(WorkspacePresentation), History(HistoryPresentation), Palette(PalettePresentation), PaletteRoot(PaletteSceneState), FormRoot(ffi::FormGroupStyle), SiteRule(SiteRulePresentation), SidebarTab(SidebarTabModel) }
 impl NodeModel {
     fn row_presentation(&self)->Option<&SidebarRowPresentation>{match self{Self::SidebarTab(model)=>model.presentation.as_ref(),Self::SidebarPin(model)=>Some(&model.presentation),_=>None}}
@@ -2153,7 +2168,7 @@ impl ActionControl {
     }
     fn node_form_command_init(&mut self,command:ffi::FormCommand,key:&str)->bool{valid_form_command(command,key)&&self.init_form_command(command,key,0)}
     fn node_form_command(&self)->ffi::FormCommandBinding{
-        self.read_node(|r|{if !r.state.enabled||r.state.admission_epoch==0{return None;}if let Some(NodeModel::FormCommand(m))=r.model.as_deref(){Some(ffi::FormCommandBinding{command:m.command,key:m.key.clone(),index:m.index})}else{None}}).flatten().unwrap_or(ffi::FormCommandBinding{command:ffi::FormCommand::None,key:String::new(),index:0})
+        self.read_node(|r|{if !r.state.enabled||r.state.admission_epoch==0{return None;}if let Some(NodeModel::FormCommand(m))=r.model.as_deref(){Some(ffi::FormCommandBinding{command:m.command,panel:form_command_panel(m.command),key:m.key.clone(),index:m.index})}else{None}}).flatten().unwrap_or(ffi::FormCommandBinding{command:ffi::FormCommand::None,panel:ffi::FormPanel::None,key:String::new(),index:0})
     }
     // Presentation stays available for a disabled live adapter; it never admits
     // an operation. No strings/collections are cloned on this paint/measure path.
@@ -3577,6 +3592,21 @@ mod tests {
     }
     #[test] fn panel_dismiss_owner_drop_and_context_cancellation_revoke_dispatch(){
         let mut graph=new_form_graph(false,0,false,false);let mut input=graph.append_form_action();input.node_form_command_init(ffi::FormCommand::ImportDismiss,"");let epoch=input.action_admission_epoch();input.action_cancel();assert!(!input.action_admits(epoch));assert!(input.node_form_view().dismiss);drop(graph);assert!(!input.node_form_view().bound);assert_eq!(input.node_form_command().command,ffi::FormCommand::None);
+    }
+    #[test] fn form_command_panels_cover_workspace_profile_and_import_actions(){
+        use ffi::{FormCommand as C,FormPanel as P};let mut g=new_form_graph(false,0,false,false);
+        for (panel,commands) in [(P::Workspace,vec![C::WorkspaceSave,C::WorkspaceToggle,C::WorkspaceRemove,C::WorkspaceProfiles,C::WorkspaceImport,C::WorkspaceDismiss]),(P::Profiles,vec![C::ProfileCreate,C::ProfileRename,C::ProfileDelete,C::ProfileBack]),(P::Import,vec![C::ImportApply,C::ImportDismiss]),(P::Tools,vec![C::ToolsDismiss])]{for command in commands{let mut input=g.append_form_action();assert!(input.node_form_command_init(command,""));assert_eq!(input.node_form_command().panel,panel);}}
+    }
+    #[test] fn preference_command_panel_includes_navigation_and_dynamic_pagination(){
+        use ffi::{FormCommand as C,FormPanel as P};let mut g=new_form_graph(false,0,false,false);
+        for command in [C::PreferenceSite,C::PreferenceClear,C::PreferenceDirectory,C::History,C::Workspace,C::Passwords,C::Profiles,C::Import,C::Proxy,C::Certificates,C::Providers,C::Shortcuts,C::TimeMachine,C::PreferencesDismiss,C::PreferenceMore]{let mut input=g.append_form_action();assert!(input.node_form_command_init(command,""));assert_eq!(input.node_form_command().panel,P::Preferences);}
+        let mut input=g.append_form_action();assert!(input.node_form_command_init(C::PreferenceText,"dns_templates"));assert_eq!(input.node_form_command().panel,P::Preferences);let mut category=g.append_form_action();assert!(new_preferences_form(10).bind_category(&mut category,9));assert_eq!(category.node_form_command().panel,P::Preferences);
+    }
+    #[test] fn form_panel_is_revoked_with_input_admission(){
+        use ffi::{FormCommand as C,FormPanel as P};let mut g=new_form_graph(false,0,false,false);let mut input=g.append_form_action();assert_eq!(input.node_form_command().panel,P::None);assert!(input.node_form_command_init(C::ProfileCreate,""));input.action_enabled(false);assert_eq!(input.node_form_command().panel,P::None);input.action_enabled(true);assert_eq!(input.node_form_command().panel,P::Profiles);g.retire_form_action(input.action_node_id());assert_eq!(input.node_form_command().panel,P::None);
+    }
+    #[test] fn pagination_command_rejects_retargeting_and_cancels_on_retirement(){
+        use ffi::FormCommand as C;let mut g=new_form_graph(false,0,false,false);let mut input=g.append_form_action();assert!(!input.node_form_command_init(C::PreferenceMore,"profile"));assert!(input.node_form_command_init(C::PreferenceMore,""));assert!(!input.node_form_command_init(C::ImportApply,""));input.action_key(true,1,false,true);assert!(input.action_pending());g.retire_form_action(input.action_node_id());assert!(input.action_key(false,1,false,true).action==ffi::RowAction::None);assert_eq!(input.node_form_command().command,C::None);
     }
     #[test] fn form_commands_own_semantics_and_keys_independently_of_labels(){
         let mut g=new_form_graph(false,8,false,false);let mut a=g.append_form_action();assert!(a.node_form_command_init(ffi::FormCommand::PreferenceText,"accept_languages"));assert_eq!(a.node_model_kind(),8);assert_eq!(a.node_form_command().command,ffi::FormCommand::PreferenceText);assert_eq!(a.node_form_command().key,"accept_languages");assert!(a.node_form_command_init(ffi::FormCommand::PreferenceText,"accept_languages"));assert!(!a.node_form_command_init(ffi::FormCommand::PreferenceText,"dns_templates"));assert!(!a.node_form_command_init(ffi::FormCommand::ProfileDelete,""));assert_eq!(a.node_form_command().key,"accept_languages");
