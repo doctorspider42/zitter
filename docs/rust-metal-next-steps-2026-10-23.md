@@ -11,7 +11,22 @@ for a later bulk checkpoint. Build, Rust/Python and SDK checks without windows
 remain enabled. No shutdown is triggered by the former weekly threshold.
 The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 
-## Latest headless implementation: stable footer nodes
+## Latest headless implementation: window chrome nodes
+
+Source `871dc78` extends the window Rust registry to header sidebar/back/forward/
+reload and sidebar address/new-tab actions. Eight static nodes reconcile before
+root construction and share the footer scope. Unchanged workspace IDs/order skip
+registry work on display-only updates. Detach retires the complete window scope.
+
+Both binaries compile. **307 Rust**, **180 SDK cases plus raster**, **68 live and
+68 clean-archive Python**, scoped GN/boundaries and final Ninja no-op passed;
+all 53 committed/live/staged prototype inputs match. **No UI tests ran.** A new
+compiled case checks all eight IDs across workspace/emoji changes.
+[Headless evidence](benchmarks/rust-chrome-node-headless-2026-10-27.json).
+Native View/focus/AX/window adapters and browser services remain. This establishes
+neither GUI acceptance nor a measured speedup; the preview was not replaced.
+
+## Earlier headless implementation: stable footer nodes
 
 Source `93df19c` extends Rust registry ownership to workspace switchers and footer
 pin/settings controls. Workspace IDs and static chrome have distinct key kinds.
