@@ -4228,7 +4228,7 @@ void WorkspaceShell::Detach() {
   workspace_appearance_ = nullptr;
   settings_scroll_ = nullptr;
   settings_root_ = nullptr;
-  chrome_node_graph_.reset();chrome_workspace_ids_.clear();
+  chrome_node_graph_.reset();chrome_workspace_ids_.clear();history_node_graph_.reset();
   pin_button_ = nullptr;
   nav_buttons_.fill(nullptr);
   workspace_buttons_.clear();
@@ -7078,6 +7078,22 @@ void WorkspaceShell::SetHistoryResults(std::u16string query, std::string profile
 #endif
   {if(history_query_!=query||limit!=history_limit_)return;history_loaded_=true;}
   history_entries_ = std::move(entries);
+  std::vector<std::string> history_node_keys;
+#if BUILDFLAG(IS_MAC)
+  if(tools_form_){
+    if(!history_node_graph_)history_node_graph_=std::make_shared<SidebarNodeGraphState>();
+    rust::Vec<sidebar::ActionNodeKey> keys;keys.reserve(history_entries_.size());history_node_keys.reserve(history_entries_.size());
+    std::map<std::pair<std::string,int64_t>,size_t> occurrences;
+    for(const auto& entry:history_entries_){
+      const auto record=std::make_pair(entry.url.spec(),entry.visited.ToInternalValue());
+      // JSON array framing keeps arbitrary profile/URL strings unambiguous;
+      // duplicate records have independent occurrence identities. Titles are display data.
+      base::ListValue identity;identity.Append(profile_id);identity.Append(record.first);identity.Append(base::NumberToString(record.second));identity.Append(base::NumberToString(occurrences[record]++));
+      std::string name;CHECK(base::JSONWriter::Write(identity,&name));history_node_keys.push_back(name);keys.push_back({5,0,0,std::move(name)});
+    }
+    CHECK(history_node_graph_->graph->reconcile(std::move(keys)).admitted)<<"Invalid history logical node projection";
+  }
+#endif
   history_list_->RemoveAllChildViews();
   std::u16string empty_text,status_text;bool more_visible,more_enabled;
 #if BUILDFLAG(IS_MAC)
@@ -7085,6 +7101,7 @@ void WorkspaceShell::SetHistoryResults(std::u16string query, std::string profile
 #endif
   {empty_text=error?u"Nie udało się odczytać historii.":query.empty()?u"Brak historii przeglądania w tym profilu.":u"Brak wyników dla tego wyszukiwania.";status_text=error?u"Spróbuj ponownie otworzyć historię.":base::UTF8ToUTF16("Wyświetlono wpisów: "+std::to_string(history_entries_.size()));more_visible=more&&!error;more_enabled=!error;}
   if(history_entries_.empty())AddToolsCopy(history_list_,empty_text,kMuted,0,static_cast<int>(gfx::Font::Weight::NORMAL),true);
+  [[maybe_unused]] size_t history_node_index=0;
   for (const auto& entry : history_entries_) {
     RowButton::Spec row;
     row.title = entry.title.empty() ? base::UTF8ToUTF16(entry.url.spec()) : entry.title;
@@ -7103,10 +7120,11 @@ void WorkspaceShell::SetHistoryResults(std::u16string query, std::string profile
     if(tools_form_){
       row.sidebar_row=true;row.history=true;
       row.scene_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->ToolsChromeVisible();},weak_factory_.GetWeakPtr());
-      button=history_list_->AddChildView(CreateSceneRow(std::move(callback),std::move(row),base::BindRepeating(&WorkspaceShell::ScheduleToolsChrome,weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak_factory_.GetWeakPtr())));
+      button=history_list_->AddChildView(CreateSceneRow(std::move(callback),std::move(row),base::BindRepeating(&WorkspaceShell::ScheduleToolsChrome,weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak_factory_.GetWeakPtr()),{history_node_graph_,5,{},history_node_keys[history_node_index]}));
     }else
 #endif
     button=history_list_->AddChildView(std::make_unique<RowButton>(std::move(callback),std::move(row)));
+    ++history_node_index;
     button->SetTooltipText(base::UTF8ToUTF16(entry.url.spec()));
     button->GetViewAccessibility().SetDescription(base::TimeFormatShortDateAndTime(entry.visited) + u" · " + base::UTF8ToUTF16(entry.url.spec()));
   }
@@ -7286,7 +7304,7 @@ void WorkspaceShell::RefreshTools() {
   ResetToolsForm();
   history_timer_.Stop();
   history_search_ = nullptr; history_period_ = nullptr; history_list_ = nullptr;
-  history_more_ = nullptr; history_clear_ = nullptr; history_entries_.clear();
+  history_more_ = nullptr; history_clear_ = nullptr; history_entries_.clear();history_node_graph_.reset();
   snapshot_name_ = nullptr; timeline_filter_ = nullptr; shortcut_chord_ = nullptr;
   provider_name_ = nullptr; provider_keyword_ = nullptr; provider_url_ = nullptr; tools_picker_ = nullptr; closed_picker_ = nullptr;
   tools_body_->RemoveAllChildViews();
@@ -8292,6 +8310,9 @@ void WorkspaceShell::ToolsEditorEdited(EditorControl* sender) {
 #endif
     {history_query_=query;history_loaded_=false;}
     history_entries_.clear();
+#if BUILDFLAG(IS_MAC)
+    if(history_node_graph_)history_node_graph_->graph->reconcile({});
+#endif
     if(history_list_)history_list_->RemoveAllChildViews();
     SetPanelText(tools_status_,u"Wyszukiwanie historii…");
     if(history_more_)history_more_->SetEnabled(false);

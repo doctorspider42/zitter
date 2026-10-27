@@ -533,6 +533,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> history_list_ = nullptr;
   raw_ptr<views::View> history_more_ = nullptr;
   raw_ptr<views::View> history_clear_ = nullptr;
+  std::shared_ptr<SidebarNodeGraphState> history_node_graph_;
   std::vector<BrowsingHistoryEntry> history_entries_;
   // Views-only UI state; the opt-in backend reads/writes ToolsForm instead.
   size_t history_limit_ = 200;

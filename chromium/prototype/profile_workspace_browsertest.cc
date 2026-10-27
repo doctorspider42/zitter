@@ -4277,6 +4277,18 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ResultRowHostsAddressPaletteAX
   const auto expected=shell->suggestions().back().url;auto* last=list->children().back().get();ActivateSidebarRow(last);ASSERT_TRUE(base::test::RunUntil([&]{return !shell->address_visible();}));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));EXPECT_EQ(expected,window_->contents("work")->GetLastCommittedURL());
 }
 
+// Runtime deferred: compile this retained-adapter case for the bulk checkpoint.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, HistoryLogicalNodesSurviveTitleAndOrderRefreshThenRetire) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));shell->OpenTools(3);ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));
+  const bool rust=shell->workspace_input()->rust_editor();const auto visited=base::Time::Now()-base::Hours(1);
+  std::vector<BrowsingHistoryEntry> entries={{embedded_test_server()->GetURL("/storage_probe.html?history-node-a"),u"First",visited},{embedded_test_server()->GetURL("/storage_probe.html?history-node-b"),u"Second",visited-base::Minutes(1)}};
+  shell->SetHistoryResults(u"","work-profile",200,entries,false,false);auto* list=shell->history_results_view();ASSERT_EQ(2u,list->children().size());auto* first=list->children()[0].get();const auto id=shell->sidebar_node_id_for_testing(first);if(rust)EXPECT_NE(0u,id);else EXPECT_EQ(0u,id);
+  auto held=first->parent()->RemoveChildViewT(first);entries[0].title=u"Updated title";std::swap(entries[0],entries[1]);shell->SetHistoryResults(u"","work-profile",200,entries,false,false);ASSERT_EQ(2u,list->children().size());auto* replacement=list->children()[1].get();EXPECT_EQ(id,shell->sidebar_node_id_for_testing(replacement));
+  if(rust){EXPECT_EQ(0u,shell->sidebar_node_id_for_testing(held.get()));const auto tabs=window_->tab_count("work");ui::KeyEvent space(ui::EventType::kKeyPressed,ui::VKEY_SPACE,0);held->OnKeyPressed(space);base::RunLoop().RunUntilIdle();EXPECT_EQ(tabs,window_->tab_count("work"));}
+  auto held_replacement=replacement->parent()->RemoveChildViewT(replacement);shell->SetHistoryResults(u"","work-profile",200,{},false,false);if(rust)EXPECT_EQ(0u,shell->sidebar_node_id_for_testing(held_replacement.get()));
+  entries.push_back(entries[1]);shell->SetHistoryResults(u"","work-profile",200,entries,false,false);ASSERT_EQ(3u,list->children().size());if(rust){const auto a=shell->sidebar_node_id_for_testing(list->children()[1].get()),b=shell->sidebar_node_id_for_testing(list->children()[2].get());EXPECT_NE(0u,a);EXPECT_NE(a,b);EXPECT_NE(id,a);}
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ResultRowHostsHistoryAXClipAndReplacementTarget) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));const bool rust=shell->workspace_input()->rust_editor();history::URLRows seeds;
   for(int i=0;i<35;++i){history::URLRow row(embedded_test_server()->GetURL("/storage_probe.html?history-result-"+base::NumberToString(i)));row.set_title(u"Result history 日本語 "+base::NumberToString16(i));row.set_visit_count(1);row.set_last_visit(base::Time::Now()-base::Minutes(i+1));seeds.push_back(row);}HistoryServiceFactory::GetForProfile(work_,ServiceAccessType::EXPLICIT_ACCESS)->AddPagesWithDetails(seeds,history::SOURCE_OS_MIGRATION_IMPORTED);
