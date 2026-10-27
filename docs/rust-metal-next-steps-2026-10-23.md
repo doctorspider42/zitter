@@ -11,7 +11,28 @@ for a later bulk checkpoint. Build, Rust/Python and SDK checks without windows
 remain enabled. No shutdown is triggered by the former weekly threshold.
 The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 
-## Latest headless implementation: residual glyph hosts
+## Latest headless implementation: stable sidebar nodes
+
+Source `22e2c1b` moves sidebar tab, pin and tab-close logical identities and input
+state into a workspace-scoped Rust registry. Native adapter replacement keeps
+logical IDs; leases and retirement prevent detached or replaced adapters from
+activating nodes. Complete snapshots validate transactionally, including close
+children and their parents. Ordinary controls retain in-place state; unchanged
+tab structure skips registry work on title/URL refresh.
+
+Both app and browser-test targets compile. **304 Rust**, **180 SDK cases plus
+raster**, **68 live and 68 clean-archive Python**, GN/boundaries and final Ninja
+no-op passed; all 53 committed/live/staged prototype inputs match. **No UI tests
+ran.** The index-shift/replacement/stale-adapter case is compiled for the bulk
+checkpoint. [Headless evidence](benchmarks/rust-row-node-headless-2026-10-27.json).
+
+Native Views still rebuild on structural changes. Rebinding cancels transient
+press/hover/focus; logical IDs alone do not restore native keyboard focus. This
+registry does not yet own full scene properties, parenting or native layout.
+Footer, address, result and form controls remain to be scoped. Native services,
+popups, manual acceptance, performance and release checks remain open.
+
+## Earlier headless implementation: residual glyph hosts
 
 Source `f6e91e5f099dad3fa5188fb54976967336718c5a` replaces the palette search decoration with SceneSearchIcon,
 a plain image View without Button/ButtonController or an ActionControl allocation.
