@@ -3446,10 +3446,14 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 8));
   settings_title_ = settings_text(settings_header,u"Praca",kInk,2,gfx::Font::Weight::SEMIBOLD);
   settings_header_layout->SetFlexForView(settings_title_, 1);
-  settings_header->AddChildView(std::make_unique<GlyphButton>(
-      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
-        if (shell) { shell->settings_widget_->Hide(); shell->RestorePageFocus(); }
-      }, weak), workspace_copy[6], GlyphButton::Glyph::kVector, &vector_icons::kCloseSmallIcon));
+  auto dismiss_workspace=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+    if(shell){shell->settings_widget_->Hide();shell->RestorePageFocus();}
+  },weak);
+#if BUILDFLAG(IS_MAC)
+  if(workspace_form_){auto* controls=settings_header->AddChildView(std::make_unique<ScenePreferenceControls>(true));controls->AddControl(dismiss_workspace,workspace_copy[6],0);}
+  else
+#endif
+  settings_header->AddChildView(std::make_unique<GlyphButton>(dismiss_workspace,workspace_copy[6],GlyphButton::Glyph::kVector,&vector_icons::kCloseSmallIcon));
   profile_name_ = settings_text(settings.get(),u"",kMuted,-1);
   settings_text(settings.get(),workspace_copy[0],kSubtle,-1);
   workspace_input_ = AddEditor(settings.get(),bool(workspace_form_));

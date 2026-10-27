@@ -4220,6 +4220,13 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CheckedActionHostsAXAndViewpor
     filter(u"a");auto* top=shell->preference_switch_for_testing("sidebar");top->ScrollViewToVisible();const bool pinned=shell->pinned();const auto previous=viewport->offset();ASSERT_GT(viewport->maximum(),0);ASSERT_TRUE(top->OnMousePressed(press));viewport->ScrollTo(viewport->maximum());EXPECT_TRUE(top->GetVisibleBounds().IsEmpty());viewport->ScrollTo(previous);top->OnMouseReleased(release);EXPECT_EQ(pinned,shell->pinned());}
 }
 
+// Compiled for the deferred bulk checkpoint; do not run in the headless gate.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceDismissNodeUsesSceneGroupAndPreservesCloseAdmission) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenWorkspaceSettings();auto* close=FindButton(shell->workspace_panel_for_testing(),u"Zamknij ustawienia przestrzeni");ASSERT_TRUE(close);const bool rust=shell->workspace_input()->rust_editor();EXPECT_EQ(!rust,views::AsViewClass<views::Button>(close)!=nullptr);EXPECT_EQ(gfx::Size(32,32),close->GetPreferredSize());const auto id=shell->sidebar_node_id_for_testing(close);if(rust)EXPECT_NE(0u,id);else EXPECT_EQ(0u,id);
+  ui::AXNodeData ax;close->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kButton,ax.role);EXPECT_EQ(u"Zamknij ustawienia przestrzeni",ax.GetString16Attribute(ax::mojom::StringAttribute::kName));ui::AXActionData activate;activate.action=ax::mojom::Action::kDoDefault;close->SetEnabled(false);close->HandleAccessibleAction(activate);EXPECT_TRUE(shell->settings_visible());close->SetEnabled(true);EXPECT_EQ(id,shell->sidebar_node_id_for_testing(close));EXPECT_TRUE(close->HandleAccessibleAction(activate));EXPECT_FALSE(shell->settings_visible());
+  shell->OpenWorkspaceSettings();EXPECT_EQ(close,FindButton(shell->workspace_panel_for_testing(),u"Zamknij ustawienia przestrzeni"));EXPECT_EQ(id,shell->sidebar_node_id_for_testing(close));ui::KeyEvent space(ui::EventType::kKeyPressed,ui::VKEY_SPACE,0);EXPECT_TRUE(close->OnKeyPressed(space));EXPECT_FALSE(shell->settings_visible());
+}
+
 // Compiled only: all runtime GUI acceptance remains deferred by instruction.
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FormActionNodesCoverPreferencesWorkspaceProfilesAndImport) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);const bool rust=shell->workspace_input()->rust_editor();
