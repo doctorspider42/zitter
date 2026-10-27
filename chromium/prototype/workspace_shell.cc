@@ -126,7 +126,8 @@ namespace zitter::prototype {
 class SidebarNodeGraphState {
  public:
 #if BUILDFLAG(IS_MAC)
-  rust::Box<sidebar::ActionGraph> graph=sidebar::new_action_graph();
+  explicit SidebarNodeGraphState(bool palette=false):graph(palette?sidebar::new_palette_graph():sidebar::new_action_graph()){}
+  rust::Box<sidebar::ActionGraph> graph;
 #endif
 };
 struct SidebarNodeBinding {std::shared_ptr<SidebarNodeGraphState> scope;uint32_t kind=0;std::array<uint64_t,2> identity{};std::string name;};
@@ -1511,9 +1512,12 @@ class PaletteView final : public views::View {
  public:
   explicit PaletteView(base::RepeatingClosure painted):painted_(std::move(painted)) {
 #if BUILDFLAG(IS_MAC)
-    if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal")selection_.emplace(sidebar::new_palette_selection());
+    if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal")scope_=std::make_shared<SidebarNodeGraphState>(true);
 #endif
   }
+#if BUILDFLAG(IS_MAC)
+  const std::shared_ptr<SidebarNodeGraphState>& node_scope() const{return scope_;}
+#endif
   void SetEditor(views::View* editor){editor_=editor;}
   void OnDidSchedulePaint(const gfx::Rect& rect) override {
     views::View::OnDidSchedulePaint(rect);
@@ -1524,7 +1528,7 @@ class PaletteView final : public views::View {
   }
   bool scene() const {
 #if BUILDFLAG(IS_MAC)
-    return selection_.has_value();
+    return bool(scope_);
 #else
     return false;
 #endif
@@ -1537,37 +1541,37 @@ class PaletteView final : public views::View {
   }
   void Reset() {
 #if BUILDFLAG(IS_MAC)
-    if(selection_){(*selection_)->reset();return;}
+    if(scope_){scope_->graph->palette_reset();return;}
 #endif
     index_=0;moved_=false;
   }
   size_t selected() const {
 #if BUILDFLAG(IS_MAC)
-    if(selection_)return (*selection_)->selected();
+    if(scope_)return scope_->graph->palette_selected();
 #endif
     return index_;
   }
   bool moved() const {
 #if BUILDFLAG(IS_MAC)
-    if(selection_)return (*selection_)->moved();
+    if(scope_)return scope_->graph->palette_moved();
 #endif
     return moved_;
   }
   void Step(size_t count,bool backwards) {
 #if BUILDFLAG(IS_MAC)
-    if(selection_){static_cast<void>((*selection_)->step(count,backwards));return;}
+    if(scope_){static_cast<void>(scope_->graph->palette_step(count,backwards));return;}
 #endif
     if(count){moved_=true;index_=(index_+(backwards?count-1:1))%count;}
   }
   void Reconcile(size_t count,size_t preserved,bool found) {
 #if BUILDFLAG(IS_MAC)
-    if(selection_){(*selection_)->reconcile(count,preserved,found);return;}
+    if(scope_){scope_->graph->palette_reconcile_selection(count,preserved,found);return;}
 #endif
     if(found)index_=preserved;index_=std::min(index_,count?count-1:0);
   }
  private:
 #if BUILDFLAG(IS_MAC)
-  std::optional<rust::Box<sidebar::PaletteSelection>> selection_;
+  std::shared_ptr<SidebarNodeGraphState> scope_;
 #endif
   raw_ptr<views::View> editor_=nullptr;
   base::RepeatingClosure painted_;
@@ -1965,6 +1969,15 @@ class RustRowView final : public views::View {
     auto& ax=GetViewAccessibility();if(!same(ax.GetCachedName(),child.url)){auto url=text(child.url);SetTooltipText(url);ax.SetName(url);}ax.SetDescription(text(child.detail));
     // Rust can cancel input before the adapter sees a visual-state delta.
     SchedulePaint();
+  }
+  void ProjectPalette(const sidebar::PaletteSceneChild& child){
+    CHECK(spec_.chip&&!spec_.history);auto text=[](const rust::Vec<uint16_t>& units){return std::u16string(units.begin(),units.end());};
+    auto same=[](const std::u16string& value,const rust::Vec<uint16_t>& units){return value.size()==units.size()&&std::equal(value.begin(),value.end(),units.begin());};
+    if(child.cancel_input)CancelInput();
+    if(!same(spec_.title,child.title))SetTitle(text(child.title));if(!same(spec_.detail,child.detail))SetDetail(text(child.detail));
+    spec_.highlighted=child.highlighted;spec_.icon=child.icon==2?&vector_icons::kSettingsIcon:child.icon==1?&vector_icons::kArrowForwardIcon:&vector_icons::kSearchIcon;
+    if(spec_.height!=child.height){spec_.height=child.height;PreferredSizeChanged();}
+    GetViewAccessibility().SetName(spec_.title);GetViewAccessibility().SetDescription(spec_.detail);SchedulePaint();
   }
   const Spec& preview_spec() const{return spec_;}
   void SetCallback(views::Button::PressedCallback callback){CancelInput();callback_=std::move(callback);}
@@ -6213,11 +6226,12 @@ void WorkspaceShell::RebuildSuggestions() {
   size_t preserved=0;bool found_selected=false;
   if(selected){auto found=std::find(suggestions_.begin(),suggestions_.end(),*selected);if(found!=suggestions_.end()){preserved=found-suggestions_.begin();found_selected=true;}}
   palette->Reconcile(suggestions_.size(),preserved,found_selected);
-  std::vector<std::string> palette_node_keys;
 #if BUILDFLAG(IS_MAC)
+  sidebar::PaletteScene scene{};std::map<uint64_t,RustRowView*> retained_rows;
   if(palette->scene()){
-    if(!palette_node_graph_)palette_node_graph_=std::make_shared<SidebarNodeGraphState>();
-    rust::Vec<sidebar::ActionNodeKey> keys;keys.reserve(suggestions_.size());palette_node_keys.reserve(suggestions_.size());
+    palette_node_graph_=palette->node_scope();CHECK(palette_node_graph_);
+    auto units=[](const std::u16string& text){rust::Vec<uint16_t> result;for(char16_t unit:text)result.push_back(unit);return result;};
+    rust::Vec<sidebar::PaletteSceneInput> items;items.reserve(suggestions_.size());
     std::map<std::string,size_t> occurrences;
     for(const auto& item:suggestions_){
       // Frame the target projection, not its current list index or display text.
@@ -6225,13 +6239,28 @@ void WorkspaceShell::RebuildSuggestions() {
       base::ListValue identity;identity.Append(state_.profile_id);identity.Append(state_.workspace_id);identity.Append(base::UTF16ToUTF8(suggestions_text_));identity.Append(command_palette_);identity.Append(new_tab_);
       identity.Append(item.url.spec());identity.Append(item.tab?base::NumberToString(*item.tab):std::string());identity.Append(item.workspace_id);identity.Append(item.pin_id);identity.Append(item.workspace_only);identity.Append(item.command_id);identity.Append(item.target_workspace_id);identity.Append(item.command_page_id);
       std::string target;CHECK(base::JSONWriter::Write(identity,&target));identity.Append(base::NumberToString(occurrences[target]++));
-      std::string name;CHECK(base::JSONWriter::Write(identity,&name));palette_node_keys.push_back(name);keys.push_back({6,0,0,std::move(name)});
+      std::string name;CHECK(base::JSONWriter::Write(identity,&name));const uint32_t icon=!item.command_id.empty()?2:(item.tab||item.workspace_only||!item.pin_id.empty()||item.title==u"Otwórz")?1:0;items.push_back({std::move(name),units(item.title),units(item.detail),icon});
     }
-    CHECK(palette_node_graph_->graph->reconcile(std::move(keys)).admitted)<<"Invalid palette logical node projection";
-  }
+    CHECK(palette_node_graph_->graph->reconcile_palette(std::move(items)).admitted)<<"Invalid palette scene projection";scene=palette_node_graph_->graph->palette_scene();CHECK_NE(scene.root,0u);
+    std::set<uint64_t> wanted;for(const auto& child:scene.children){CHECK_EQ(child.parent,scene.root);wanted.insert(child.id);}
+    std::vector<views::View*> removed;for(const auto& child:suggestion_list_->children()){auto* row=views::AsViewClass<RustRowView>(child.get());const auto id=row?row->LogicalNodeId():0;if(id&&wanted.contains(id)&&row->BelongsTo(*palette_node_graph_))retained_rows.emplace(id,row);else removed.push_back(child.get());}
+    for(auto* child:removed)suggestion_list_->RemoveChildViewT(child);
+  }else
 #endif
   suggestion_list_->RemoveAllChildViews();
   for (size_t i = 0; i < suggestions_.size(); ++i) {
+#if BUILDFLAG(IS_MAC)
+    if(palette->scene()){
+      const auto& child=scene.children[i];auto found=retained_rows.find(child.id);RustRowView* adapter=nullptr;
+      if(found!=retained_rows.end())adapter=found->second;
+      else{
+        RowButton::Spec spec;spec.chip=true;spec.sidebar_row=metal_palette_!=nullptr;spec.height=child.height;spec.title=std::u16string(child.title.begin(),child.title.end());spec.detail=std::u16string(child.detail.begin(),child.detail.end());spec.scene_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_palette_visible();},weak_factory_.GetWeakPtr());
+        auto callback=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::weak_ptr<SidebarNodeGraphState> owner,std::string key,uint64_t id){const auto scope=owner.lock();if(!shell||!scope||shell->palette_node_graph_!=scope||!shell->address_visible())return;const auto target=scope->graph->palette_target(key,id);if(target.valid)shell->RunSuggestion(target.index);},weak_factory_.GetWeakPtr(),std::weak_ptr<SidebarNodeGraphState>(palette_node_graph_),std::string(child.key),child.id);
+        adapter=views::AsViewClass<RustRowView>(suggestion_list_->AddChildView(CreateSceneRow(std::move(callback),std::move(spec),base::BindRepeating(&WorkspaceShell::ScheduleMetalPalette,weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak_factory_.GetWeakPtr()),{palette_node_graph_,6,{},std::string(child.key)})));
+      }
+      CHECK(adapter);adapter->ProjectPalette(child);suggestion_list_->ReorderChildView(adapter,i);continue;
+    }
+#endif
     const auto& item = suggestions_[i];
     RowButton::Spec spec;
     spec.title = item.title;
@@ -6246,7 +6275,7 @@ void WorkspaceShell::RebuildSuggestions() {
               : item.title == u"Otwórz" ? &vector_icons::kArrowForwardIcon
                                         : &vector_icons::kSearchIcon;
     suggestion_list_->AddChildView(CreateSceneRow(
-        base::BindRepeating(&WorkspaceShell::RunSuggestion,weak_factory_.GetWeakPtr(),i),std::move(spec),base::BindRepeating(&WorkspaceShell::ScheduleMetalPalette,weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak_factory_.GetWeakPtr()),{palette_node_graph_,6,{},palette_node_graph_?palette_node_keys[i]:std::string()}));
+        base::BindRepeating(&WorkspaceShell::RunSuggestion,weak_factory_.GetWeakPtr(),i),std::move(spec),base::BindRepeating(&WorkspaceShell::ScheduleMetalPalette,weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak_factory_.GetWeakPtr()),{}));
   }
   suggestion_list_->SetVisible(!suggestions_.empty());
   suggestion_scroll_->view()->SetVisible(!suggestions_.empty());

@@ -137,6 +137,11 @@ mod ffi {
     struct HistorySceneInput { key: String, title: Vec<u16>, detail: Vec<u16>, url: Vec<u16> }
     struct HistorySceneChild { id: u64, parent: u64, key: String, title: Vec<u16>, detail: Vec<u16>, url: Vec<u16>, height: i32, cancel_input: bool }
     struct HistoryScene { root: u64, children: Vec<HistorySceneChild> }
+    struct PaletteSceneInput { key: String, title: Vec<u16>, detail: Vec<u16>, icon: u32 }
+    struct PaletteSceneChild { id: u64, parent: u64, key: String, title: Vec<u16>, detail: Vec<u16>, icon: u32, highlighted: bool, height: i32, cancel_input: bool }
+    struct PaletteScene { root: u64, children: Vec<PaletteSceneChild> }
+    struct PaletteTarget { valid: bool, index: usize }
+
 
 
     struct ActionSnapshot { enabled: bool, focused: bool, on: bool, is_default: bool, visual: RowVisual }
@@ -342,13 +347,15 @@ mod ffi {
         fn swipe_layout(position: f64, count: i32, width: i32) -> SwipeLayout;
         fn workspace_switch_motion(previous: i32, current: i32, visible: bool, enabled: bool, reduced: bool) -> WorkspaceMotion;
         fn workspace_preview_layout(width: i32, height: i32, offset: i32, rows: &[PreviewRow]) -> Vec<PreviewPlacement>;
-        type PaletteSelection;
-        fn new_palette_selection() -> Box<PaletteSelection>;
-        fn reset(self: &mut PaletteSelection);
-        fn selected(self: &PaletteSelection) -> usize;
-        fn moved(self: &PaletteSelection) -> bool;
-        fn step(self: &mut PaletteSelection, count: usize, backwards: bool) -> bool;
-        fn reconcile(self: &mut PaletteSelection, count: usize, preserved: usize, found: bool);
+        fn new_palette_graph() -> Box<ActionGraph>;
+        fn palette_reset(self: &mut ActionGraph);
+        fn palette_selected(self: &ActionGraph) -> usize;
+        fn palette_moved(self: &ActionGraph) -> bool;
+        fn palette_step(self: &mut ActionGraph, count: usize, backwards: bool) -> bool;
+        fn palette_reconcile_selection(self: &mut ActionGraph, count: usize, preserved: usize, found: bool);
+        fn reconcile_palette(self: &mut ActionGraph, items: Vec<PaletteSceneInput>) -> ActionNodePlan;
+        fn palette_scene(self: &ActionGraph) -> PaletteScene;
+        fn palette_target(self: &ActionGraph, key: &str, id: u64) -> PaletteTarget;
         fn palette_text_layout(kind: u32, width: i32, height: i32, text_width: i32, font_height: i32) -> ColumnLayout;
         fn palette_input_layout(width: i32, height: i32, icon: Rect, field_height: i32, hint: Rect) -> PaletteInputLayout;
         fn palette_width(window_width: i32) -> i32;
@@ -484,6 +491,7 @@ mod ffi {
 }
 #[derive(Default)]
 struct PaletteSelection { index:usize, moved:bool }
+#[cfg(test)]
 fn new_palette_selection()->Box<PaletteSelection>{Box::new(PaletteSelection::default())}
 impl PaletteSelection {
     fn reset(&mut self){self.index=0;self.moved=false;}
@@ -1775,7 +1783,7 @@ fn action_node_key(key:&ffi::ActionNodeKey)->Option<ActionNodeIdentity>{
     match key.kind {
         kind @ (1|10) if (key.high!=0||key.low!=0)&&key.name.is_empty()=>Some((kind,key.high,key.low,String::new())),
         kind @ (7|8) if (key.high!=0||key.low!=0)&&!key.name.is_empty()=>Some((kind,key.high,key.low,key.name.clone())),
-        11 if key.high==0&&key.low==0&&matches!(key.name.as_str(),"chrome.workspaces"|"tools.history")=>Some((11,0,0,key.name.clone())),
+        11 if key.high==0&&key.low==0&&matches!(key.name.as_str(),"chrome.workspaces"|"tools.history"|"palette.results")=>Some((11,0,0,key.name.clone())),
         kind @ (2|3|4|5|6) if key.high==0&&key.low==0&&!key.name.is_empty()=>Some((kind,0,0,key.name.clone())),
         _=>None,
     }
@@ -1784,7 +1792,9 @@ fn action_node_key(key:&ffi::ActionNodeKey)->Option<ActionNodeIdentity>{
 // Optional indirection keeps ordinary action records from embedding large models.
 struct WorkspacePresentation {name:Vec<u16>,label:Vec<u16>,cancel_input:bool}
 struct HistoryPresentation {title:Vec<u16>,detail:Vec<u16>,url:Vec<u16>,cancel_input:bool}
-enum NodeModel { Checkbox(CheckboxState), Toggle(ToggleState), Select(SelectState), Workspace(WorkspacePresentation), History(HistoryPresentation) }
+struct PalettePresentation {title:Vec<u16>,detail:Vec<u16>,icon:u32,index:usize,cancel_input:bool}
+struct PaletteSceneState {selection:PaletteSelection,dirty:bool}
+enum NodeModel { Checkbox(CheckboxState), Toggle(ToggleState), Select(SelectState), Workspace(WorkspacePresentation), History(HistoryPresentation), Palette(PalettePresentation), PaletteRoot(PaletteSceneState) }
 impl NodeModel {
     // Popup tokens and IME prefix belong to one input lease, unlike selection.
     fn detach_input(&mut self){if let Self::Select(s)=self{s.dismiss();s.reset_prefix();s.last_close=None;}}
@@ -1793,6 +1803,8 @@ struct ActionNodeRecord { owner:Rc<()>, id:u64, parent:u64, lease:u64, attached:
 impl ActionNodeRecord {fn retire(&mut self){self.alive=false;self.attached=false;self.state.action_focus(false);self.state.action_cancel();self.model=None;self.parent=0;}}
 pub struct ActionGraph { owner:Rc<()>, nodes:BTreeMap<ActionNodeIdentity,Rc<RefCell<ActionNodeRecord>>>, order:Vec<u64>, next_id:u64 }
 fn new_action_graph()->Box<ActionGraph>{Box::new(ActionGraph{owner:Rc::new(()),nodes:BTreeMap::new(),order:vec![],next_id:1})}
+fn new_palette_graph()->Box<ActionGraph>{let mut graph=new_action_graph();assert!(graph.reconcile_palette(vec![]).admitted);graph}
+
 impl ActionGraph {
     fn rejected(&self)->ffi::ActionNodePlan{ffi::ActionNodePlan{admitted:false,ids:self.order.clone(),created:0,retired:0}}
     fn reconcile(&mut self,keys:Vec<ffi::ActionNodeKey>)->ffi::ActionNodePlan{
@@ -1871,6 +1883,38 @@ impl ActionGraph {
         let children=self.order.iter().filter_map(|id|{let (key,node)=by_id.get(id)?;let node=node.borrow();let Some(NodeModel::History(p))=node.model.as_deref() else{return None;};if root==0||node.parent!=root{return None;}Some(ffi::HistorySceneChild{id:node.id,parent:node.parent,key:key.3.clone(),title:p.title.clone(),detail:p.detail.clone(),url:p.url.clone(),height:60,cancel_input:p.cancel_input})}).collect();
         ffi::HistoryScene{root,children}
     }
+    fn read_palette<R>(&self,f:impl FnOnce(&PaletteSceneState)->R)->Option<R>{let node=self.nodes.get(&(11,0,0,"palette.results".into()))?.borrow();if let Some(NodeModel::PaletteRoot(state))=node.model.as_deref(){Some(f(state))}else{None}}
+    fn write_palette<R>(&mut self,f:impl FnOnce(&mut PaletteSceneState)->R)->Option<R>{let mut node=self.nodes.get(&(11,0,0,"palette.results".into()))?.borrow_mut();if let Some(NodeModel::PaletteRoot(state))=node.model.as_deref_mut(){Some(f(state))}else{None}}
+    fn cancel_palette_input(&mut self){for node in self.nodes.values(){let mut node=node.borrow_mut();if let Some(NodeModel::Palette(p))=node.model.as_deref_mut(){p.cancel_input=true;node.state.action_cancel();}}}
+    fn palette_reset(&mut self){self.write_palette(|state|{state.selection.reset();state.dirty=true;});self.cancel_palette_input();}
+    fn palette_selected(&self)->usize{self.read_palette(|state|state.selection.selected()).unwrap_or(0)}
+    fn palette_moved(&self)->bool{self.read_palette(|state|state.selection.moved()).unwrap_or(false)}
+    fn palette_step(&mut self,count:usize,backwards:bool)->bool{let changed=self.write_palette(|state|{let changed=state.selection.step(count,backwards);state.dirty|=changed;changed}).unwrap_or(false);if changed{self.cancel_palette_input();}changed}
+    fn palette_reconcile_selection(&mut self,count:usize,preserved:usize,found:bool){let changed=self.write_palette(|state|{let before=state.selection.selected();state.selection.reconcile(count,preserved,found);let changed=before!=state.selection.selected();state.dirty|=changed;changed}).unwrap_or(false);if changed{self.cancel_palette_input();}}
+    fn reconcile_palette(&mut self,items:Vec<ffi::PaletteSceneInput>)->ffi::ActionNodePlan{
+        let group=(11,0,0,"palette.results".to_owned());
+        if self.nodes.get(&group).is_some_and(|n|n.borrow().model.as_deref().is_some_and(|m|!matches!(m,NodeModel::PaletteRoot(_)))){return self.rejected();}
+        if items.iter().any(|item|item.icon>2||self.nodes.get(&(6,0,0,item.key.clone())).is_some_and(|node|node.borrow().model.as_deref().is_some_and(|m|!matches!(m,NodeModel::Palette(_))))){return self.rejected();}
+        let previous_by_id=self.nodes.iter().filter(|(key,_)|key.0==6).map(|(key,node)|(node.borrow().id,key.3.as_str())).collect::<BTreeMap<_,_>>();
+        let order_changed=self.order.iter().filter_map(|id|previous_by_id.get(id).copied()).ne(items.iter().map(|i|i.key.as_str()));
+        let mut keys=Vec::with_capacity(1+items.len());keys.push(ffi::ActionNodeKey{kind:11,high:0,low:0,name:group.3.clone()});for item in &items{keys.push(ffi::ActionNodeKey{kind:6,high:0,low:0,name:item.key.clone()});}
+        let plan=self.reconcile(keys);if !plan.admitted{return plan;}
+        let root={let mut node=self.nodes[&group].borrow_mut();if node.model.is_none(){node.model=Some(Box::new(NodeModel::PaletteRoot(PaletteSceneState{selection:PaletteSelection::default(),dirty:false})));}node.id};
+        self.write_palette(|state|{let before=state.selection.selected();state.selection.reconcile(items.len(),0,false);state.dirty|=before!=state.selection.selected();});
+        let selection_changed=self.read_palette(|state|state.dirty).unwrap_or(false);let mut invalidated=order_changed||selection_changed;
+        for (index,item) in items.into_iter().enumerate(){let mut node=self.nodes[&(6,0,0,item.key)].borrow_mut();let content_changed=matches!(node.model.as_deref(),Some(NodeModel::Palette(p)) if p.title!=item.title||p.detail!=item.detail||p.icon!=item.icon);invalidated|=content_changed;let cancel_input=false;node.parent=root;
+            if let Some(NodeModel::Palette(p))=node.model.as_deref_mut(){p.title=item.title;p.detail=item.detail;p.icon=item.icon;p.index=index;p.cancel_input=cancel_input;}
+            else{node.model=Some(Box::new(NodeModel::Palette(PalettePresentation{title:item.title,detail:item.detail,icon:item.icon,index,cancel_input})));}
+        }if invalidated{self.cancel_palette_input();}self.write_palette(|state|state.dirty=false);plan
+    }
+    fn palette_scene(&self)->ffi::PaletteScene{
+        let root=self.nodes.get(&(11,0,0,"palette.results".into())).map_or(0,|n|n.borrow().id);let selected=self.palette_selected();
+        let by_id=self.nodes.iter().map(|(key,node)|(node.borrow().id,(key,node))).collect::<BTreeMap<_,_>>();
+        let children=self.order.iter().filter_map(|id|{let (key,node)=by_id.get(id)?;let node=node.borrow();let Some(NodeModel::Palette(p))=node.model.as_deref() else{return None;};if root==0||node.parent!=root{return None;}Some(ffi::PaletteSceneChild{id:node.id,parent:node.parent,key:key.3.clone(),title:p.title.clone(),detail:p.detail.clone(),icon:p.icon,highlighted:p.index==selected,height:44,cancel_input:p.cancel_input})}).collect();ffi::PaletteScene{root,children}
+    }
+    fn palette_target(&self,key:&str,id:u64)->ffi::PaletteTarget{
+        let invalid=||ffi::PaletteTarget{valid:false,index:0};let Some(node)=self.nodes.get(&(6,0,0,key.to_owned())) else{return invalid();};let node=node.borrow();if !node.alive||!node.attached||!node.state.enabled||id==0||id!=node.id{return invalid();}if let Some(NodeModel::Palette(p))=node.model.as_deref(){ffi::PaletteTarget{valid:true,index:p.index}}else{invalid()}
+    }
     // IDs are scope-local. Compare a live lease's owner token in O(1), never
     // infer ownership from numeric IDs or a graph allocation's reusable address.
     fn owns_input(&self,input:&ActionControl)->bool{input.read_node(|node|Rc::ptr_eq(&self.owner,&node.owner)).unwrap_or(false)}
@@ -1916,7 +1960,7 @@ impl ActionControl {
     fn node_select_reset_prefix(&mut self)->(){self.write_node(|r|{if let Some(NodeModel::Select(s))=r.model.as_deref_mut(){s.reset_prefix()}else{()}}).unwrap_or_else(||())}
     fn node_select_input(&mut self,lower_text: &str, now_ms: u64, enabled: bool)->bool{self.write_node(|r|{let gate=r.state.enabled;if let Some(NodeModel::Select(s))=r.model.as_deref_mut(){s.input(lower_text,now_ms,enabled&&gate)}else{false}}).unwrap_or_else(||false)}
     fn node_parent_id(&self)->u64{self.read_node(|node|node.parent).unwrap_or(0)}
-    fn node_model_kind(&self)->u32{self.read_node(|r|match r.model.as_deref(){Some(NodeModel::Checkbox(_))=>1,Some(NodeModel::Toggle(_))=>2,Some(NodeModel::Select(_))=>3,Some(NodeModel::Workspace(_))=>4,Some(NodeModel::History(_))=>5,None=>0}).unwrap_or(0)}
+    fn node_model_kind(&self)->u32{self.read_node(|r|match r.model.as_deref(){Some(NodeModel::Checkbox(_))=>1,Some(NodeModel::Toggle(_))=>2,Some(NodeModel::Select(_))=>3,Some(NodeModel::Workspace(_))=>4,Some(NodeModel::History(_))=>5,Some(NodeModel::Palette(_))=>6,Some(NodeModel::PaletteRoot(_))|None=>0}).unwrap_or(0)}
     fn node_checkbox_init(&mut self,checked:bool)->bool{self.write_node(|r|match r.model.as_deref(){Some(NodeModel::Checkbox(_))=>true,Some(_)=>false,None=>{r.model=Some(Box::new(NodeModel::Checkbox(CheckboxState{checked})));true}}).unwrap_or(false)}
     fn node_checked(&self)->bool{self.read_node(|r|matches!(r.model.as_deref(),Some(NodeModel::Checkbox(s)) if s.checked())).unwrap_or(false)}
     fn node_set_checked(&mut self,checked:bool)->bool{self.write_node(|r|if let Some(NodeModel::Checkbox(s))=r.model.as_deref_mut(){s.set_checked(checked)}else{false}).unwrap_or(false)}
@@ -3173,6 +3217,50 @@ mod tests {
     fn node_pin(name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:2,high:0,low:0,name:name.into()}}
     fn node_close(low:u64)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:10,high:7,low,name:String::new()}}
     fn node_named(kind:u32,name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind,high:0,low:0,name:name.into()}}
+    fn palette_item(key:&str,title:&str,icon:u32)->ffi::PaletteSceneInput{ffi::PaletteSceneInput{key:key.into(),title:title.encode_utf16().collect(),detail:"Detail 🦀".encode_utf16().collect(),icon}}
+    fn palette_tree()->Box<ActionGraph>{let mut g=new_palette_graph();assert!(g.reconcile_palette(vec![palette_item("a","First",0),palette_item("b","Second",1)]).admitted);g}
+    #[test] fn palette_root_owns_selection_and_structural_parent(){
+        let mut g=palette_tree();let scene=g.palette_scene();assert_ne!(scene.root,0);assert_eq!(scene.children.len(),2);assert!(scene.children.iter().all(|n|n.parent==scene.root&&n.height==44));assert!(scene.children[0].highlighted&&!scene.children[1].highlighted);let a=g.acquire(&node_named(6,"a"));assert_eq!(a.node_model_kind(),6);assert_eq!(a.node_parent_id(),scene.root);assert_eq!(g.acquire(&node_named(11,"palette.results")).action_node_id(),0);
+    }
+    #[test] fn palette_graph_selection_matches_legacy_across_steps_clamps_and_reset(){
+        let mut g=new_palette_graph();let mut oracle=new_palette_selection();for count in [0,1,4,usize::MAX,2,0]{for backwards in [false,true,false]{assert_eq!(g.palette_step(count,backwards),oracle.step(count,backwards));assert_eq!((g.palette_selected(),g.palette_moved()),(oracle.selected(),oracle.moved()));}for (index,found) in [(99,false),(1,true),(0,true)]{g.palette_reconcile_selection(count,index,found);oracle.reconcile(count,index,found);assert_eq!((g.palette_selected(),g.palette_moved()),(oracle.selected(),oracle.moved()));}}g.palette_reset();oracle.reset();assert_eq!((g.palette_selected(),g.palette_moved()),(oracle.selected(),oracle.moved()));
+    }
+    #[test] fn palette_identical_projection_keeps_focus_pending_input_and_lease(){
+        let mut g=palette_tree();let mut a=g.acquire(&node_named(6,"a"));let id=a.action_node_id();a.action_focus(true);a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);let plan=g.reconcile_palette(vec![palette_item("a","First",0),palette_item("b","Second",1)]);assert_eq!((plan.created,plan.retired),(0,0));assert_eq!(a.action_node_id(),id);assert!(a.action_snapshot().focused&&a.action_pending());assert!(g.palette_scene().children.iter().all(|n|!n.cancel_input));assert!(a.action_pointer(ffi::PointerPhase::Release,1,1,true,true,true).action==ffi::RowAction::Activate);
+    }
+    #[test] fn palette_target_resolves_current_index_after_reorder_without_rebinding(){
+        let mut g=palette_tree();let a=g.acquire(&node_named(6,"a"));let b=g.acquire(&node_named(6,"b"));let id=a.action_node_id();assert!(g.palette_target("a",id).valid);assert_eq!(g.palette_target("a",id).index,0);g.reconcile_palette(vec![palette_item("b","Second",1),palette_item("a","Updated",2)]);assert_eq!(a.action_node_id(),id);assert_eq!(g.palette_target("a",id).index,1);assert_eq!(g.palette_target("b",b.action_node_id()).index,0);assert_eq!(g.palette_scene().children[1].icon,2);
+    }
+    #[test] fn palette_batch_content_change_cancels_sibling_press_keeps_focus(){
+        let mut g=palette_tree();let mut a=g.acquire(&node_named(6,"a"));let mut b=g.acquire(&node_named(6,"b"));a.action_focus(true);for row in [&mut a,&mut b]{row.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);}g.reconcile_palette(vec![palette_item("a","Renamed",2),palette_item("b","Second",1)]);let scene=g.palette_scene();assert!(scene.children[0].cancel_input&&scene.children[1].cancel_input);assert!(!a.action_pending()&&!b.action_pending());assert!(a.action_snapshot().focused);
+    }
+    #[test] fn palette_reorder_cancels_all_presses_preserves_ids_and_focus(){
+        let mut g=palette_tree();let before=g.palette_scene();let mut a=g.acquire(&node_named(6,"a"));let mut b=g.acquire(&node_named(6,"b"));a.action_focus(true);for row in [&mut a,&mut b]{row.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);}g.reconcile_palette(vec![palette_item("b","Second",1),palette_item("a","First",0)]);let next=g.palette_scene();assert_eq!(next.root,before.root);assert_eq!(next.children[1].id,before.children[0].id);assert!(next.children.iter().all(|n|n.cancel_input));assert!(!a.action_pending()&&!b.action_pending());assert!(a.action_snapshot().focused);
+    }
+    #[test] fn palette_keyboard_selection_cancels_immediately_and_projects_highlight(){
+        let mut g=palette_tree();let mut a=g.acquire(&node_named(6,"a"));a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);assert!(g.palette_step(2,false));assert!(!a.action_pending());assert_eq!(g.palette_selected(),1);assert!(g.palette_moved());g.reconcile_palette(vec![palette_item("a","First",0),palette_item("b","Second",1)]);let scene=g.palette_scene();assert!(!scene.children[0].highlighted&&scene.children[1].highlighted);assert!(scene.children.iter().all(|n|n.cancel_input));g.reconcile_palette(vec![palette_item("a","First",0),palette_item("b","Second",1)]);assert!(g.palette_scene().children.iter().all(|n|!n.cancel_input));
+    }
+    #[test] fn palette_reset_cancels_input_and_keeps_root_and_rows(){
+        let mut g=palette_tree();let root=g.palette_scene().root;g.palette_step(2,false);let mut a=g.acquire(&node_named(6,"a"));let id=a.action_node_id();a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);g.palette_reset();assert!(!a.action_pending());assert_eq!((g.palette_selected(),g.palette_moved()),(0,false));g.reconcile_palette(vec![palette_item("a","First",0),palette_item("b","Second",1)]);assert_eq!(g.palette_scene().root,root);assert_eq!(a.action_node_id(),id);assert!(g.palette_scene().children[0].highlighted);
+    }
+    #[test] fn palette_target_rejects_unattached_disabled_missing_and_stale_ids(){
+        let mut g=palette_tree();let id=g.palette_scene().children[0].id;assert!(!g.palette_target("a",id).valid);let mut a=g.acquire(&node_named(6,"a"));assert!(g.palette_target("a",id).valid);for (key,id) in [("missing",id),("b",id),("a",0),("a",id+100)]{assert!(!g.palette_target(key,id).valid);}a.action_enabled(false);assert!(!g.palette_target("a",id).valid);a.action_enabled(true);assert!(g.palette_target("a",id).valid);g.reconcile_palette(vec![palette_item("b","Second",1)]);assert!(!g.palette_target("a",id).valid);g.reconcile_palette(vec![palette_item("a","New visit",0)]);let b=g.acquire(&node_named(6,"a"));assert_ne!(b.action_node_id(),id);assert!(!g.palette_target("a",id).valid);assert!(g.palette_target("a",b.action_node_id()).valid);
+    }
+    #[test] fn palette_invalid_projection_preserves_model_input_and_selection(){
+        let mut g=palette_tree();let mut a=g.acquire(&node_named(6,"a"));a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);let old=g.palette_scene();for items in [vec![palette_item("a","First",0),palette_item("a","Duplicate",1)],vec![palette_item("","Empty",0)],vec![palette_item("a","Wrong icon",3)]]{assert!(!g.reconcile_palette(items).admitted);assert!(a.action_pending());assert_eq!(g.palette_scene().children[0].title,old.children[0].title);assert_eq!(g.palette_selected(),0);assert!(g.palette_target("a",a.action_node_id()).valid);}
+    }
+    #[test] fn palette_snapshots_preserve_raw_utf16_and_are_owned(){
+        let mut g=new_palette_graph();let mut item=palette_item("a","日本語 🦀",2);item.title.push(0xd800);let title=item.title.clone();g.reconcile_palette(vec![item]);let mut snapshot=g.palette_scene();assert_eq!(snapshot.children[0].title,title);snapshot.children[0].title.clear();snapshot.children[0].detail.clear();assert_eq!(g.palette_scene().children[0].title,title);assert!(!g.palette_scene().children[0].detail.is_empty());
+    }
+    #[test] fn palette_empty_results_clamp_selection_preserve_root_and_retire_rows(){
+        let mut g=palette_tree();let mut a=g.acquire(&node_named(6,"a"));let root=g.palette_scene().root;g.palette_step(2,false);g.reconcile_palette(vec![]);assert_eq!(g.palette_selected(),0);assert_eq!(g.palette_scene().root,root);assert!(g.palette_scene().children.is_empty());assert_eq!(a.node_parent_id(),0);assert_eq!(a.node_model_kind(),0);assert!(!a.action_key(true,1,true,true).handled);g.reconcile_palette(vec![palette_item("c","New",0)]);assert!(g.palette_scene().children[0].highlighted);
+    }
+    #[test] fn palette_wrong_model_orphan_and_graph_retirement_reject_stale_input(){
+        let mut other=new_action_graph();other.reconcile(vec![node_named(6,"a")]);let mut old=other.acquire(&node_named(6,"a"));old.node_checkbox_init(true);assert!(!other.reconcile_palette(vec![palette_item("a","First",0)]).admitted);assert!(old.node_checked());let mut g=palette_tree();let mut a=g.acquire(&node_named(6,"a"));assert!(!g.reconcile(vec![node_named(6,"a")]).admitted);g.reconcile(vec![]);assert_eq!(g.palette_scene().root,0);assert!(!g.palette_step(3,false));assert_eq!(a.node_model_kind(),0);assert!(!a.action_key(true,1,true,true).handled);
+    }
+    #[test] fn palette_owner_checks_reject_foreign_graphs_with_equal_ids(){
+        let mut g=palette_tree();let mut other=palette_tree();let a=g.acquire(&node_named(6,"a"));let b=other.acquire(&node_named(6,"a"));assert_eq!(a.action_node_id(),b.action_node_id());assert_eq!(a.node_parent_id(),b.node_parent_id());assert!(g.owns_input(&a)&&other.owns_input(&b));assert!(!g.owns_input(&b)&&!other.owns_input(&a));drop(g);assert_eq!(a.node_parent_id(),0);
+    }
     #[test] fn scene_owner_tokens_reject_equal_ids_from_foreign_graphs(){
         let mut left=history_tree();let mut right=history_tree();let a=left.acquire(&node_named(5,"a"));let b=right.acquire(&node_named(5,"a"));assert_eq!(a.action_node_id(),b.action_node_id());assert_eq!(a.node_parent_id(),b.node_parent_id());assert!(left.owns_input(&a)&&right.owns_input(&b));assert!(!left.owns_input(&b)&&!right.owns_input(&a));let plain=new_action_control();assert!(!left.owns_input(&plain));left.reconcile(vec![]);assert!(!left.owns_input(&a));
     }
