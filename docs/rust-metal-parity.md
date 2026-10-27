@@ -14,7 +14,42 @@ accumulate compiled cases for a later bulk checkpoint. Build, Rust/Python and SD
 checks without windows remain enabled. No computer shutdown is requested.
 The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 
-## Latest headless implementation: checked and selector input nodes
+## Latest headless implementation: Peek toolbar and title
+
+Source `d2d81d0` replaces Peek's native action controls/title in Rust mode with
+ScenePeekToolbar: five graph-owned inputs, a plain static-text/AX adapter and one
+Metal canvas. Views retains GlyphButton, MdTextButton and Label. Existing page
+commands and posted weak-owner promotion/split/close callbacks are preserved;
+WebContents and profile/unsaved-page authorization stay in WorkspaceWindow.
+
+Rust supplies copy, a UTF-16-preserving title prefix and a title scene recipe
+with font weight, middle elision, clipping and physical right alignment for RTL.
+The new Primitive.right_align bit participates in both scene and text-texture
+cache keys and CoreText truncation/alignment. Canvas fallback uses the same
+alignment/elision policy; pixel equality between both paths remains unmeasured.
+RenderText serves only font measurement, with no hidden Label. Full AX text and
+truncation tooltip behavior are retained by the title adapter.
+
+Outer and toolbar allocation use the existing Rust panel allocator. Mirrored
+child bounds drive the display list; the canvas is scoped to the toolbar rather
+than the WebContents host. Visibility/window transitions cancel pending input;
+removal retires action membership. Native View/window/focus/AX adapters remain.
+
+Both binaries compile. **326 Rust**, **180 SDK cases plus raster**, **68 live and
+68 clean-archive Python**, scoped GN/boundaries and final Ninja no-op passed;
+all 53 committed/live/staged prototype inputs match. **No UI tests ran.** Two
+compiled cases cover host/AX/IDs, title metrics/tooltips/layout against native
+oracles, canvas frame isolation and actual toolbar navigation/promote/split/close
+admission. The first compiler probe rejected a C-array getter under Chromium's
+unsafe-buffer rule; std::array corrected it and the failed log is retained.
+[Headless evidence](benchmarks/rust-peek-toolbar-headless-2026-10-27.json).
+
+The preview was not replaced. Real rendering, metric/pixel equality, AX/focus/
+RTL/tooltips, physical clipping and presentation speedup remain unverified.
+Complete typed model/properties/parenting ownership, incremental reconciliation,
+compositor diagnostics, manual and final release acceptance remain open.
+
+## Earlier headless implementation: checked and selector input nodes
 
 Source `4e9c5c1` gives checkbox groups, switches and selectors graph-owned Rust
 input. Checkbox groups reuse SceneGroupNodes. Switches/selectors use a scope

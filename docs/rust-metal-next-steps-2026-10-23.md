@@ -16,10 +16,10 @@ The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 This queue supersedes implementation suggestions in the historical checkpoints
 below. Headless validation is current; GUI acceptance is deferred by instruction.
 
-1. **Finish residual action surfaces.** Migrate the remaining Peek/service
-   toolbar controls and audit residual native action hosts. Download row buttons
-   already use Rust-owned action groups; their GUI acceptance remains pending.
-   Preserve native profile/GUID/store authorization.
+1. **Audit residual native action hosts and service/popup boundaries.** Peek's
+   toolbar is now migrated; download row buttons already use Rust-owned groups.
+   Preserve native profile/GUID/store authorization and document explicit platform
+   adapters. Runtime inventory and GUI acceptance remain pending.
 2. **Own the scene tree and typed models.** Move control properties, checked/
    selector/editor models, parent/child relationships, lifetime and layout
    coordination into Rust. The current ActionGraph owns
@@ -33,7 +33,7 @@ below. Headless validation is current; GUI acceptance is deferred by instruction
    copy and form/busy state into Rust; finish outer dialog/palette/container
    placement. Keep native window, IME, clipboard, AX and popup/menu services explicit.
 5. **Run the deferred bulk UI checkpoint when requested.** Include all newly
-   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node, palette-node, split-node, form-action-node, workspace-dismiss-node, activation-observer and checked-selector-node
+   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node, palette-node, split-node, form-action-node, workspace-dismiss-node, activation-observer, checked-selector-node and Peek-toolbar
    cases, the full Rust/Metal and Views matrices, and actual pointer/keyboard/
    capture/AX/focus/drag/profile/session regressions. The last completed full matrix
    remains the text-action checkpoint; the later selector full run was interrupted.
@@ -45,7 +45,42 @@ below. Headless validation is current; GUI acceptance is deferred by instruction
    profile persistence/rollback, regenerate the shipped dependency/license manifest
    and Apache-2.0/upstream notices. Keep Rust/Metal opt-in until acceptance is complete.
 
-## Latest headless implementation: checked and selector input nodes
+## Latest headless implementation: Peek toolbar and title
+
+Source `d2d81d0` replaces Peek's native action controls/title in Rust mode with
+ScenePeekToolbar: five graph-owned inputs, a plain static-text/AX adapter and one
+Metal canvas. Views retains GlyphButton, MdTextButton and Label. Existing page
+commands and posted weak-owner promotion/split/close callbacks are preserved;
+WebContents and profile/unsaved-page authorization stay in WorkspaceWindow.
+
+Rust supplies copy, a UTF-16-preserving title prefix and a title scene recipe
+with font weight, middle elision, clipping and physical right alignment for RTL.
+The new Primitive.right_align bit participates in both scene and text-texture
+cache keys and CoreText truncation/alignment. Canvas fallback uses the same
+alignment/elision policy; pixel equality between both paths remains unmeasured.
+RenderText serves only font measurement, with no hidden Label. Full AX text and
+truncation tooltip behavior are retained by the title adapter.
+
+Outer and toolbar allocation use the existing Rust panel allocator. Mirrored
+child bounds drive the display list; the canvas is scoped to the toolbar rather
+than the WebContents host. Visibility/window transitions cancel pending input;
+removal retires action membership. Native View/window/focus/AX adapters remain.
+
+Both binaries compile. **326 Rust**, **180 SDK cases plus raster**, **68 live and
+68 clean-archive Python**, scoped GN/boundaries and final Ninja no-op passed;
+all 53 committed/live/staged prototype inputs match. **No UI tests ran.** Two
+compiled cases cover host/AX/IDs, title metrics/tooltips/layout against native
+oracles, canvas frame isolation and actual toolbar navigation/promote/split/close
+admission. The first compiler probe rejected a C-array getter under Chromium's
+unsafe-buffer rule; std::array corrected it and the failed log is retained.
+[Headless evidence](benchmarks/rust-peek-toolbar-headless-2026-10-27.json).
+
+The preview was not replaced. Real rendering, metric/pixel equality, AX/focus/
+RTL/tooltips, physical clipping and presentation speedup remain unverified.
+Complete typed model/properties/parenting ownership, incremental reconciliation,
+compositor diagnostics, manual and final release acceptance remain open.
+
+## Earlier headless implementation: checked and selector input nodes
 
 Source `4e9c5c1` gives checkbox groups, switches and selectors graph-owned Rust
 input. Checkbox groups reuse SceneGroupNodes. Switches/selectors use a scope
