@@ -174,35 +174,44 @@ class ProfileFormState {
 #if BUILDFLAG(IS_MAC)
 // Rust owns form action membership. Native pointers only identify adapters for
 // removal notifications; never read a child state while its destructor runs.
-class SceneGroupNodes {
+class SceneGroupNodes final : public views::ViewObserver {
  public:
+  explicit SceneGroupNodes(views::View* owner,bool vertical=false,int spacing=0,bool intrinsic=false,bool dialog=false):graph_(sidebar::new_form_graph(vertical,spacing,intrinsic,dialog)){observation_.Observe(owner);}
   template<class T,class... Args> std::unique_ptr<T> Make(Args&&... args){
     auto input=graph_->append_form_action();const auto id=input->action_node_id();CHECK_NE(id,0u);
     auto view=std::make_unique<T>(std::forward<Args>(args)...,std::move(input));
-    CHECK(members_.emplace(view.get(),id).second);return view;
+    CHECK(members_.emplace(view.get(),Member{id,+[](views::View* view){auto* typed=static_cast<T*>(view);if constexpr(requires{typed->CancelInteraction();})typed->CancelInteraction();else typed->OnMouseCaptureLost();}}).second);return view;
   }
+  uint64_t Id(const views::View* view) const{const auto found=members_.find(view);return found==members_.end()?0:found->second.id;}
+  sidebar::FormGroupStyle Style() const{return graph_->form_style();}
+  void Share(bool shared){if(graph_->form_set_shared(shared))CancelAdapters();}
+  sidebar::FormLayout Geometry(int width,int height,bool preferred,int link,int top,int left,int bottom,int right,const std::vector<sidebar::FormMeasure>& measured) const{return graph_->form_layout(width,height,preferred,link,top,left,bottom,right,rust::Slice<const sidebar::FormMeasure>(measured.data(),measured.size()));}
   void RetireAll(){graph_->reconcile({});members_.clear();}
-  void HierarchyChanged(views::View* owner,const views::ViewHierarchyChangedDetails& details){
+  void OnViewHierarchyChanged(views::View* owner,const views::ViewHierarchyChangedDetails& details) override{
     if(details.is_add||details.parent!=owner)return;
     const auto found=members_.find(details.child.get());if(found==members_.end())return;
-    CHECK(graph_->retire_form_action(found->second));members_.erase(found);
+    // The child may already be in its base destructor. Only the registered ID
+    // is safe here; cancellation callbacks are never invoked during removal.
+    CHECK(graph_->retire_form_action(found->second.id));members_.erase(found);
   }
+  void OnChildViewReordered(views::View* owner,views::View*) override{rust::Vec<uint64_t> ids;for(const auto& child:owner->children())if(const auto id=Id(child.get()))ids.push_back(id);CHECK(graph_->reorder_form_actions(std::move(ids)));CancelAdapters();}
+  void OnViewIsDeleting(views::View*) override{RetireAll();observation_.Reset();}
  private:
-  rust::Box<sidebar::ActionGraph> graph_=sidebar::new_action_graph();
-  std::map<const views::View*,uint64_t> members_;
+  void CancelAdapters(){if(!observation_.IsObserving())return;for(const auto& child:observation_.GetSource()->children()){const auto found=members_.find(child.get());if(found!=members_.end()){found->second.cancel(child.get());child->SchedulePaint();}}}
+  struct Member {uint64_t id;void(*cancel)(views::View*);};
+  rust::Box<sidebar::ActionGraph> graph_;
+  std::map<const views::View*,Member> members_;
+  base::ScopedObservation<views::View,views::ViewObserver> observation_{this};
 };
 
-// A property owns the scope; hierarchy observation revokes direct members
-// without replacing the existing parent, layout or accessibility hierarchy.
-class SceneParentNodes final : public views::ViewObserver {
+// A property owns the native scope adapter; Rust owns its structural root and
+// ordered control membership. The scope observes direct removal and reordering.
+class SceneParentNodes final {
  public:
-  explicit SceneParentNodes(views::View* parent){observation_.Observe(parent);}
+  explicit SceneParentNodes(views::View* parent):nodes_(parent){}
   template<class T,class... Args> std::unique_ptr<T> Make(Args&&... args){return nodes_.Make<T>(std::forward<Args>(args)...);}
-  void OnViewHierarchyChanged(views::View* parent,const views::ViewHierarchyChangedDetails& details) override{nodes_.HierarchyChanged(parent,details);}
-  void OnViewIsDeleting(views::View*) override{nodes_.RetireAll();observation_.Reset();}
  private:
   SceneGroupNodes nodes_;
-  base::ScopedObservation<views::View,views::ViewObserver> observation_{this};
 };
 #endif
 
@@ -890,9 +899,8 @@ class AppearanceRow final : public views::View {
   void VisibilityChanged(views::View* changed,bool visible) override {views::View::VisibilityChanged(changed,visible);if(!SceneIsVisible(this)){CancelInput();if(surface_)surface_->Hide();frame_={};}Schedule();}
   void OnDidSchedulePaint(const gfx::Rect& rect) override {views::View::OnDidSchedulePaint(rect);Schedule();}
   void OnPaint(gfx::Canvas* canvas) override {if(!metal_visible())for(const auto& item:Items(0,0,gfx::RectF(Controls())))PaintSceneRecipe(canvas,item,Font(3));Schedule();}
-  void ViewHierarchyChanged(const views::ViewHierarchyChangedDetails& details) override{nodes_.HierarchyChanged(this,details);views::View::ViewHierarchyChanged(details);}
  private:
-  SceneGroupNodes nodes_;
+  SceneGroupNodes nodes_{this};
   size_t Count() const{return emoji_?6:4;}
   sidebar::ColumnLayout Geometry(int width,int height) const {const auto field=children().size()==Count()+2?children().back()->GetPreferredSize():gfx::Size();return sidebar::appearance_row_layout(width,height,field.width(),field.height(),emoji_);}
   gfx::Rect Controls() const {return children().size()==Count()+2?gfx::Rect(0,0,children()[Count()-1]->bounds().right(),height()):gfx::Rect();}
@@ -958,9 +966,8 @@ class ScenePreferenceControls final : public views::View {
   void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);Schedule();}
   void VisibilityChanged(views::View* changed,bool visible) override{views::View::VisibilityChanged(changed,visible);SyncWindowVisibility();}
   void OnPaint(gfx::Canvas* canvas) override{if(!metal_visible())for(const auto& item:Items(0,0,gfx::RectF(GetLocalBounds())))PaintSceneRecipe(canvas,item,Font(0,item.active?gfx::Font::Weight::MEDIUM:gfx::Font::Weight::NORMAL));Schedule();}
-  void ViewHierarchyChanged(const views::ViewHierarchyChangedDetails& details) override{nodes_.HierarchyChanged(this,details);views::View::ViewHierarchyChanged(details);}
  private:
-  SceneGroupNodes nodes_;
+  SceneGroupNodes nodes_{this};
   sidebar::ColumnLayout Geometry(int width,int height) const{std::vector<sidebar::ColumnChild> measured;for(const auto& child:children()){auto size=child->GetPreferredSize();measured.push_back({size.width(),size.height(),0,0,0,0});}return sidebar::action_group_layout(width,height,!dismiss_,dismiss_?0:6,rust::Slice<const sidebar::ColumnChild>(measured.data(),measured.size()));}
   std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const{std::vector<sidebar::Item> items;for(const auto& child:children()){auto bounds=gfx::RectF(child->bounds());bounds.Offset(dx,dy);auto local=bounds;local.Intersect(clip);items.push_back(static_cast<ScenePreferenceButton*>(child.get())->Scene(bounds,local));}return items;}
   void Schedule(){SyncInput();if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&ScenePreferenceControls::UpdateMetal,weak_factory_.GetWeakPtr()));}
@@ -1005,8 +1012,8 @@ class SceneActionGroup final : public views::View {
 
   bool GetNeedsNotificationWhenVisibleBoundsChange() const override{return true;}
   void OnVisibleBoundsChanged() override{for(const auto& child:children())if(!child->GetVisible()||child->GetVisibleBounds().IsEmpty())child->OnMouseCaptureLost();Schedule();}
-  SceneActionGroup(bool vertical,int spacing,bool intrinsic=false,bool dialog=false):vertical_(vertical),spacing_(spacing),intrinsic_(intrinsic),dialog_(dialog) {}
-  void Share(base::RepeatingCallback<bool()> visible,base::RepeatingClosure changed){shared_visible_=std::move(visible);shared_changed_=std::move(changed);SetSidebarPanelLayout(this,false,gfx::Insets(),spacing_);}
+  SceneActionGroup(bool vertical,int spacing,bool intrinsic=false,bool dialog=false):nodes_(this,vertical,spacing,intrinsic,dialog) {}
+  void Share(base::RepeatingCallback<bool()> visible,base::RepeatingClosure changed){shared_visible_=std::move(visible);shared_changed_=std::move(changed);nodes_.Share(bool(shared_visible_));SetSidebarPanelLayout(this,false,gfx::Insets(),nodes_.Style().spacing);}
   bool shared() const{return bool(shared_visible_);}
   void Append(std::vector<sidebar::Item>& items,gfx::Point origin,gfx::Rect clip) const{auto next=Items(origin.x(),origin.y(),gfx::RectF(clip));items.insert(items.end(),std::make_move_iterator(next.begin()),std::make_move_iterator(next.end()));}
   views::View* AddAction(views::Button::PressedCallback callback,std::u16string text,ui::ButtonStyle style){auto* button=AddChildView(nodes_.Make<SceneTextButton>(std::move(callback),std::move(text),style,base::BindRepeating(&SceneActionGroup::Schedule,weak_factory_.GetWeakPtr())));if(shared())button->UseNativeMinimum();return button;}
@@ -1014,8 +1021,8 @@ class SceneActionGroup final : public views::View {
   gfx::Rect metal_bounds_for_testing() const{return surface_?surface_->screen_bounds_for_testing():gfx::Rect();}
   bool contains_text(std::string_view text) const{return surface_&&surface_->visible()&&surface_->contains_text_for_testing(text);}
   void CancelInput(){for(const auto& child:children())child->OnMouseCaptureLost();}
-  gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override {if(shared())return views::View::CalculatePreferredSize(available);const auto g=Geometry(!intrinsic_&&available.width().is_bounded()?available.width().value():-1,-1);return gfx::Size(g.width,g.height);}
-  void Layout(PassKey) override {if(shared()){LayoutSuperclass<views::View>(this);Schedule();return;}const auto g=Geometry(width(),height());size_t i=0;for(const auto& child:children())if(child->GetVisible()){const auto& r=g.children[i++];child->SetBounds(r.x,r.y,r.width,r.height);}Schedule();}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override {if(shared())return views::View::CalculatePreferredSize(available);const auto g=Geometry(available.width().is_bounded()?available.width().value():-1,-1,true);return gfx::Size(g.width,g.height);}
+  void Layout(PassKey) override {if(shared()){LayoutSuperclass<views::View>(this);Schedule();return;}const auto g=Geometry(width(),height());size_t i=0;for(const auto& child:children())if(child->GetVisible()){const auto& cell=g.children[i++];CHECK_EQ(nodes_.Id(child.get()),cell.id);const auto& r=cell.rect;child->SetBounds(r.x,r.y,r.width,r.height);}Schedule();}
   void OnBoundsChanged(const gfx::Rect& previous) override {views::View::OnBoundsChanged(previous);Schedule();}
   void AddedToWidget() override {views::View::AddedToWidget();window_visibility_.Observe(GetWidget());Schedule();}
   void RemovedFromWidget() override {window_visibility_.Observe(nullptr);surface_.reset();views::View::RemovedFromWidget();}
@@ -1023,15 +1030,14 @@ class SceneActionGroup final : public views::View {
   void VisibilityChanged(views::View* view,bool visible) override {views::View::VisibilityChanged(view,visible);if(!SceneIsVisible(this)){CancelInput();if(surface_)surface_->Hide();}Schedule();}
   void OnDidSchedulePaint(const gfx::Rect& rect) override {views::View::OnDidSchedulePaint(rect);Schedule();}
   void OnPaint(gfx::Canvas* canvas) override {if(!metal_visible())for(const auto& item:Items(0,0,gfx::RectF(GetLocalBounds())))PaintSceneRecipe(canvas,item,SceneTextButton::TextFont());Schedule();}
-  void ViewHierarchyChanged(const views::ViewHierarchyChangedDetails& details) override{nodes_.HierarchyChanged(this,details);views::View::ViewHierarchyChanged(details);}
  private:
-  SceneGroupNodes nodes_;
-  sidebar::ColumnLayout Geometry(int width,int height) const {std::vector<sidebar::ColumnChild> measured;for(const auto& child:children())if(child->GetVisible()){const auto size=child->GetPreferredSize();measured.push_back({size.width(),size.height(),0,0,0,0});}if(dialog_){auto* provider=views::LayoutProvider::Get();const auto insets=provider->GetInsetsMetric(views::INSETS_DIALOG_BUTTON_ROW);return sidebar::dialog_actions_layout(width,height,spacing_,provider->GetDistanceMetric(views::DISTANCE_BUTTON_MAX_LINKABLE_WIDTH),insets.top(),insets.left(),insets.bottom(),insets.right(),rust::Slice<const sidebar::ColumnChild>(measured.data(),measured.size()));}return sidebar::action_group_layout(width,height,vertical_,spacing_,rust::Slice<const sidebar::ColumnChild>(measured.data(),measured.size()));}
+  SceneGroupNodes nodes_{this};
+  sidebar::FormLayout Geometry(int width,int height,bool preferred=false) const {std::vector<sidebar::FormMeasure> measured;for(const auto& child:children())if(child->GetVisible()){const auto size=child->GetPreferredSize();measured.push_back({nodes_.Id(child.get()),size.width(),size.height()});}auto* provider=views::LayoutProvider::Get();const auto insets=provider->GetInsetsMetric(views::INSETS_DIALOG_BUTTON_ROW);auto geometry=nodes_.Geometry(width,height,preferred,provider->GetDistanceMetric(views::DISTANCE_BUTTON_MAX_LINKABLE_WIDTH),insets.top(),insets.left(),insets.bottom(),insets.right(),measured);CHECK(geometry.admitted);return geometry;}
   std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const {std::vector<sidebar::Item> out;for(const auto& child:children())if(child->GetVisible()){auto bounds=gfx::RectF(child->bounds());bounds.Offset(dx,dy);auto local=bounds;local.Intersect(clip);out.push_back(static_cast<SceneTextButton*>(child.get())->Scene(bounds,local));}return out;}
   void Schedule(){for(const auto& child:children())static_cast<SceneTextButton*>(child.get())->SyncViewportVisibility();if(shared()){shared_changed_.Run();return;}if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneActionGroup::UpdateMetal,weak_factory_.GetWeakPtr()));}
-  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,dialog_?GetColorProvider()->GetColor(ui::kColorDialogBackground):Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
+  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,nodes_.Style().dialog?GetColorProvider()->GetColor(ui::kColorDialogBackground):Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
   base::RepeatingCallback<bool()> shared_visible_;base::RepeatingClosure shared_changed_;
-  bool vertical_;int spacing_;bool intrinsic_;bool dialog_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneActionGroup::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneActionGroup> weak_factory_{this};
+  bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneActionGroup::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneActionGroup> weak_factory_{this};
 };
 BEGIN_METADATA(SceneActionGroup)
 END_METADATA
@@ -1086,13 +1092,12 @@ class ScenePeekToolbar final : public views::View {
   void OnVisibleBoundsChanged() override{Schedule();}
   void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);Schedule();}
   void OnPaint(gfx::Canvas* canvas) override{if(!metal_visible())for(const auto& item:Items(0,0,gfx::RectF(GetLocalBounds())))PaintSceneRecipe(canvas,item,item.kind==27?ScenePeekTitle::TextFont():SceneTextButton::TextFont(),true);}
-  void ViewHierarchyChanged(const views::ViewHierarchyChangedDetails& details) override{nodes_.HierarchyChanged(this,details);views::View::ViewHierarchyChanged(details);}
  private:
   std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const{std::vector<sidebar::Item> items;for(const auto& child:children())if(child->GetVisible()){auto box=gfx::RectF(child->GetMirroredBounds());box.Offset(dx,dy);auto visible=box;visible.Intersect(clip);if(visible.IsEmpty())continue;if(auto* title=views::AsViewClass<ScenePeekTitle>(child.get()))items.push_back(title->Scene(box,visible));else if(auto* text=views::AsViewClass<SceneTextButton>(child.get()))items.push_back(text->Scene(box,visible));else items.push_back(static_cast<RustActionView*>(child.get())->SceneItem(box,visible));}return items;}
   void WindowChanged(){CancelInput();if(!SceneIsVisible(this)&&surface_)surface_->Hide();Schedule();}
   void Schedule(){for(const auto& child:children())if(auto* action=views::AsViewClass<RustActionView>(child.get()))action->SyncViewportVisibility();if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&ScenePeekToolbar::UpdateMetal,weak_factory_.GetWeakPtr()));}
   void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(surface_){auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(local.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,kCard));}if(was!=metal_visible())SchedulePaint();}
-  SceneGroupNodes nodes_;raw_ptr<ScenePeekTitle> title_=nullptr;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_{base::BindRepeating(&ScenePeekToolbar::WindowChanged,base::Unretained(this))};base::WeakPtrFactory<ScenePeekToolbar> weak_factory_{this};
+  SceneGroupNodes nodes_{this};raw_ptr<ScenePeekTitle> title_=nullptr;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_{base::BindRepeating(&ScenePeekToolbar::WindowChanged,base::Unretained(this))};base::WeakPtrFactory<ScenePeekToolbar> weak_factory_{this};
 };
 BEGIN_METADATA(ScenePeekToolbar)
 END_METADATA
@@ -1213,9 +1218,8 @@ class SceneCheckboxGroup final : public views::View {
   void VisibilityChanged(views::View* changed,bool visible) override {views::View::VisibilityChanged(changed,visible);if(!SceneIsVisible(this)){CancelInput();if(surface_)surface_->Hide();}Schedule();}
   void OnDidSchedulePaint(const gfx::Rect& rect) override {views::View::OnDidSchedulePaint(rect);Schedule();}
   void OnPaint(gfx::Canvas* canvas) override {if(!metal_visible())for(const auto& item:Items(0,0,gfx::RectF(GetLocalBounds())))PaintSceneRecipe(canvas,item,SceneCheckbox::TextFont());Schedule();}
-  void ViewHierarchyChanged(const views::ViewHierarchyChangedDetails& details) override{nodes_.HierarchyChanged(this,details);views::View::ViewHierarchyChanged(details);}
  private:
-  SceneGroupNodes nodes_;
+  SceneGroupNodes nodes_{this};
   std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const {std::vector<sidebar::Item> out;for(const auto& child:children())if(child->GetVisible()){auto bounds=gfx::RectF(child->bounds());bounds.Offset(dx,dy);auto local=bounds;local.Intersect(clip);auto items=static_cast<SceneCheckbox*>(child.get())->Scene(bounds,local);for(auto& item:items)out.push_back(std::move(item));}return out;}
   void Schedule(){for(const auto& child:children())static_cast<SceneCheckbox*>(child.get())->SyncViewportVisibility();if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneCheckboxGroup::UpdateMetal,weak_factory_.GetWeakPtr()));}
   void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}

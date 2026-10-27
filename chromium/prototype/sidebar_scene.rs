@@ -147,6 +147,12 @@ mod ffi {
     struct ActionSnapshot { enabled: bool, focused: bool, on: bool, is_default: bool, visual: RowVisual }
     struct Rect { x: i32, y: i32, width: i32, height: i32 }
     struct RowLayout { title: Rect, detail: Rect, close: Rect }
+    #[derive(Clone, Copy)]
+    struct FormGroupStyle { vertical: bool, spacing: i32, intrinsic: bool, dialog: bool, shared: bool }
+    struct FormScene { root: u64, children: Vec<u64> }
+    struct FormMeasure { id: u64, width: i32, height: i32 }
+    struct FormCell { id: u64, rect: Rect }
+    struct FormLayout { admitted: bool, width: i32, height: i32, children: Vec<FormCell> }
     struct ColumnChild { width: i32, height: i32, top: i32, left: i32, bottom: i32, right: i32 }
     struct ColumnLayout { width: i32, height: i32, children: Vec<Rect> }
     struct PanelStyle { width: i32, height: i32, vertical: bool, spacing: i32, top: i32, left: i32, bottom: i32, right: i32, flex: usize }
@@ -429,6 +435,12 @@ mod ffi {
         fn node_parent_id(self: &ActionControl) -> u64;
         fn owns_input(self: &ActionGraph, input: &ActionControl) -> bool;
         fn acquire(self: &mut ActionGraph, key: &ActionNodeKey) -> Box<ActionControl>;
+        fn new_form_graph(vertical: bool, spacing: i32, intrinsic: bool, dialog: bool) -> Box<ActionGraph>;
+        fn form_scene(self: &ActionGraph) -> FormScene;
+        fn form_style(self: &ActionGraph) -> FormGroupStyle;
+        fn form_set_shared(self: &mut ActionGraph, shared: bool) -> bool;
+        fn reorder_form_actions(self: &mut ActionGraph, ids: Vec<u64>) -> bool;
+        fn form_layout(self: &ActionGraph, width: i32, height: i32, preferred: bool, link_limit: i32, top: i32, left: i32, bottom: i32, right: i32, children: &[FormMeasure]) -> FormLayout;
         fn append_form_action(self: &mut ActionGraph) -> Box<ActionControl>;
         fn retire_form_action(self: &mut ActionGraph, id: u64) -> bool;
         type ActionControl;
@@ -1783,6 +1795,7 @@ fn action_node_key(key:&ffi::ActionNodeKey)->Option<ActionNodeIdentity>{
     match key.kind {
         kind @ (1|10) if (key.high!=0||key.low!=0)&&key.name.is_empty()=>Some((kind,key.high,key.low,String::new())),
         kind @ (7|8) if (key.high!=0||key.low!=0)&&!key.name.is_empty()=>Some((kind,key.high,key.low,key.name.clone())),
+        12 if key.high==0&&key.low==0&&key.name.is_empty()=>Some((12,0,0,String::new())),
         11 if key.high==0&&key.low==0&&matches!(key.name.as_str(),"chrome.workspaces"|"tools.history"|"palette.results")=>Some((11,0,0,key.name.clone())),
         kind @ (2|3|4|5|6) if key.high==0&&key.low==0&&!key.name.is_empty()=>Some((kind,0,0,key.name.clone())),
         _=>None,
@@ -1794,7 +1807,7 @@ struct WorkspacePresentation {name:Vec<u16>,label:Vec<u16>,cancel_input:bool}
 struct HistoryPresentation {title:Vec<u16>,detail:Vec<u16>,url:Vec<u16>,cancel_input:bool}
 struct PalettePresentation {title:Vec<u16>,detail:Vec<u16>,icon:u32,index:usize,cancel_input:bool}
 struct PaletteSceneState {selection:PaletteSelection,dirty:bool}
-enum NodeModel { Checkbox(CheckboxState), Toggle(ToggleState), Select(SelectState), Workspace(WorkspacePresentation), History(HistoryPresentation), Palette(PalettePresentation), PaletteRoot(PaletteSceneState) }
+enum NodeModel { Checkbox(CheckboxState), Toggle(ToggleState), Select(SelectState), Workspace(WorkspacePresentation), History(HistoryPresentation), Palette(PalettePresentation), PaletteRoot(PaletteSceneState), FormRoot(ffi::FormGroupStyle) }
 impl NodeModel {
     // Popup tokens and IME prefix belong to one input lease, unlike selection.
     fn detach_input(&mut self){if let Self::Select(s)=self{s.dismiss();s.reset_prefix();s.last_close=None;}}
@@ -1804,6 +1817,9 @@ impl ActionNodeRecord {fn retire(&mut self){self.alive=false;self.attached=false
 pub struct ActionGraph { owner:Rc<()>, nodes:BTreeMap<ActionNodeIdentity,Rc<RefCell<ActionNodeRecord>>>, order:Vec<u64>, next_id:u64 }
 fn new_action_graph()->Box<ActionGraph>{Box::new(ActionGraph{owner:Rc::new(()),nodes:BTreeMap::new(),order:vec![],next_id:1})}
 fn new_palette_graph()->Box<ActionGraph>{let mut graph=new_action_graph();assert!(graph.reconcile_palette(vec![]).admitted);graph}
+
+fn default_form_style()->ffi::FormGroupStyle{ffi::FormGroupStyle{vertical:false,spacing:0,intrinsic:false,dialog:false,shared:false}}
+fn new_form_graph(vertical:bool,spacing:i32,intrinsic:bool,dialog:bool)->Box<ActionGraph>{let mut graph=new_action_graph();let root=graph.next_id;graph.next_id+=1;graph.nodes.insert((12,0,0,String::new()),Rc::new(RefCell::new(ActionNodeRecord{owner:graph.owner.clone(),id:root,parent:0,lease:0,attached:false,alive:true,state:initial_action_state(),model:Some(Box::new(NodeModel::FormRoot(ffi::FormGroupStyle{vertical,spacing,intrinsic,dialog,shared:false})))})));graph.order.push(root);graph}
 
 impl ActionGraph {
     fn rejected(&self)->ffi::ActionNodePlan{ffi::ActionNodePlan{admitted:false,ids:self.order.clone(),created:0,retired:0}}
@@ -1833,10 +1849,31 @@ impl ActionGraph {
     // Kind 9 is private to form membership: native projections cannot create or
     // acquire these keys. The group receives one lease with its fresh Rust ID.
     fn append_form_action(&mut self)->Box<ActionControl>{
-        let Some(next)=self.next_id.checked_add(1) else{return Box::new(ActionControl{storage:ActionStorage::Retired});};
-        let id=self.next_id;let node=Rc::new(RefCell::new(ActionNodeRecord{owner:self.owner.clone(),id,parent:0,lease:1,attached:true,alive:true,state:initial_action_state(),model:None}));
+        let group=(12,0,0,String::new());let missing=!self.nodes.contains_key(&group);
+        // Reserve both root and member before mutation so ID exhaustion cannot
+        // leave a partial scene behind. A live empty group retains its root.
+        let Some(next)=self.next_id.checked_add(if missing{2}else{1}) else{return Box::new(ActionControl{storage:ActionStorage::Retired});};
+        if missing{let root=self.next_id;self.next_id+=1;self.nodes.insert(group.clone(),Rc::new(RefCell::new(ActionNodeRecord{owner:self.owner.clone(),id:root,parent:0,lease:0,attached:false,alive:true,state:initial_action_state(),model:Some(Box::new(NodeModel::FormRoot(default_form_style())))})));self.order.push(root);}
+        let parent={let mut root=self.nodes[&group].borrow_mut();if root.model.is_none(){root.model=Some(Box::new(NodeModel::FormRoot(default_form_style())));}root.id};let id=self.next_id;
+        let node=Rc::new(RefCell::new(ActionNodeRecord{owner:self.owner.clone(),id,parent,lease:1,attached:true,alive:true,state:initial_action_state(),model:None}));
         self.nodes.insert((9,id,0,String::new()),node.clone());self.order.push(id);self.next_id=next;
         Box::new(ActionControl{storage:ActionStorage::Shared{node,lease:1}})
+    }
+    fn form_scene(&self)->ffi::FormScene{let root=self.nodes.get(&(12,0,0,String::new())).map_or(0,|node|node.borrow().id);let children=self.order.iter().copied().filter(|id|self.nodes.contains_key(&(9,*id,0,String::new()))).collect();ffi::FormScene{root,children}}
+    fn form_style(&self)->ffi::FormGroupStyle{self.nodes.get(&(12,0,0,String::new())).and_then(|node|{let node=node.borrow();if let Some(NodeModel::FormRoot(style))=node.model.as_deref(){Some(*style)}else{None}}).unwrap_or_else(default_form_style)}
+    fn cancel_form_input(&mut self){for (key,node) in &self.nodes{if key.0==9{let mut node=node.borrow_mut();node.state.action_cancel();if let Some(model)=node.model.as_deref_mut(){model.detach_input();}}}}
+    fn form_set_shared(&mut self,shared:bool)->bool{let changed={let Some(node)=self.nodes.get(&(12,0,0,String::new())) else{return false;};let mut node=node.borrow_mut();let Some(NodeModel::FormRoot(style))=node.model.as_deref_mut() else{return false;};if style.shared==shared{return false;}style.shared=shared;true};if changed{self.cancel_form_input();}changed}
+    fn reorder_form_actions(&mut self,ids:Vec<u64>)->bool{
+        let current=self.form_scene();if current.root==0||ids.len()!=current.children.len(){return false;}
+        let unique=ids.iter().copied().collect::<BTreeSet<_>>();if unique.len()!=ids.len()||unique.iter().any(|id|!self.nodes.contains_key(&(9,*id,0,String::new()))){return false;}
+        if current.children==ids{return true;}self.order.retain(|id|!unique.contains(id));self.order.extend(ids);self.cancel_form_input();true
+    }
+    fn form_layout(&self,width:i32,height:i32,preferred:bool,link_limit:i32,top:i32,left:i32,bottom:i32,right:i32,children:&[ffi::FormMeasure])->ffi::FormLayout{
+        let invalid=||ffi::FormLayout{admitted:false,width:0,height:0,children:vec![]};let Some(root)=self.nodes.get(&(12,0,0,String::new())) else{return invalid();};let root=root.borrow();let Some(NodeModel::FormRoot(style))=root.model.as_deref() else{return invalid();};if style.shared{return invalid();}
+        let mut cursor=0;let mut measured=Vec::with_capacity(children.len());
+        for child in children{let Some(record)=self.nodes.get(&(9,child.id,0,String::new())) else{return invalid();};if record.borrow().parent!=root.id{return invalid();}let Some(offset)=self.order[cursor..].iter().position(|id|*id==child.id) else{return invalid();};cursor+=offset+1;measured.push(ffi::ColumnChild{width:child.width,height:child.height,top:0,left:0,bottom:0,right:0});}
+        let width=if preferred&&style.intrinsic{-1}else{width};let layout=if style.dialog{dialog_actions_layout(width,height,style.spacing,link_limit,top,left,bottom,right,&measured)}else{action_group_layout(width,height,style.vertical,style.spacing,&measured)};
+        ffi::FormLayout{admitted:true,width:layout.width,height:layout.height,children:children.iter().zip(layout.children).map(|(child,rect)|ffi::FormCell{id:child.id,rect}).collect()}
     }
     fn retire_form_action(&mut self,id:u64)->bool{
         let Some(node)=self.nodes.remove(&(9,id,0,String::new())) else{return false;};
@@ -1919,7 +1956,7 @@ impl ActionGraph {
     // infer ownership from numeric IDs or a graph allocation's reusable address.
     fn owns_input(&self,input:&ActionControl)->bool{input.read_node(|node|Rc::ptr_eq(&self.owner,&node.owner)).unwrap_or(false)}
     fn acquire(&mut self,key:&ffi::ActionNodeKey)->Box<ActionControl>{
-        if key.kind==11{return Box::new(ActionControl{storage:ActionStorage::Retired});}
+        if matches!(key.kind,11|12){return Box::new(ActionControl{storage:ActionStorage::Retired});}
         let node=action_node_key(key).and_then(|key|self.nodes.get(&key)).cloned();
         let Some(node)=node else{return Box::new(ActionControl{storage:ActionStorage::Retired});};
         let lease={let mut record=node.borrow_mut();let Some(lease)=record.lease.checked_add(1) else{return Box::new(ActionControl{storage:ActionStorage::Retired});};if let Some(model)=record.model.as_deref_mut(){model.detach_input();}record.lease=lease;record.attached=true;if !matches!(record.model.as_deref(),Some(NodeModel::Workspace(_))){record.state.action_enabled(true);}record.state.action_focus(false);record.state.action_cancel();lease};
@@ -1960,7 +1997,7 @@ impl ActionControl {
     fn node_select_reset_prefix(&mut self)->(){self.write_node(|r|{if let Some(NodeModel::Select(s))=r.model.as_deref_mut(){s.reset_prefix()}else{()}}).unwrap_or_else(||())}
     fn node_select_input(&mut self,lower_text: &str, now_ms: u64, enabled: bool)->bool{self.write_node(|r|{let gate=r.state.enabled;if let Some(NodeModel::Select(s))=r.model.as_deref_mut(){s.input(lower_text,now_ms,enabled&&gate)}else{false}}).unwrap_or_else(||false)}
     fn node_parent_id(&self)->u64{self.read_node(|node|node.parent).unwrap_or(0)}
-    fn node_model_kind(&self)->u32{self.read_node(|r|match r.model.as_deref(){Some(NodeModel::Checkbox(_))=>1,Some(NodeModel::Toggle(_))=>2,Some(NodeModel::Select(_))=>3,Some(NodeModel::Workspace(_))=>4,Some(NodeModel::History(_))=>5,Some(NodeModel::Palette(_))=>6,Some(NodeModel::PaletteRoot(_))|None=>0}).unwrap_or(0)}
+    fn node_model_kind(&self)->u32{self.read_node(|r|match r.model.as_deref(){Some(NodeModel::Checkbox(_))=>1,Some(NodeModel::Toggle(_))=>2,Some(NodeModel::Select(_))=>3,Some(NodeModel::Workspace(_))=>4,Some(NodeModel::History(_))=>5,Some(NodeModel::Palette(_))=>6,Some(NodeModel::PaletteRoot(_))|Some(NodeModel::FormRoot(_))|None=>0}).unwrap_or(0)}
     fn node_checkbox_init(&mut self,checked:bool)->bool{self.write_node(|r|match r.model.as_deref(){Some(NodeModel::Checkbox(_))=>true,Some(_)=>false,None=>{r.model=Some(Box::new(NodeModel::Checkbox(CheckboxState{checked})));true}}).unwrap_or(false)}
     fn node_checked(&self)->bool{self.read_node(|r|matches!(r.model.as_deref(),Some(NodeModel::Checkbox(s)) if s.checked())).unwrap_or(false)}
     fn node_set_checked(&mut self,checked:bool)->bool{self.write_node(|r|if let Some(NodeModel::Checkbox(s))=r.model.as_deref_mut(){s.set_checked(checked)}else{false}).unwrap_or(false)}
@@ -3217,6 +3254,36 @@ mod tests {
     fn node_pin(name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:2,high:0,low:0,name:name.into()}}
     fn node_close(low:u64)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:10,high:7,low,name:String::new()}}
     fn node_named(kind:u32,name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind,high:0,low:0,name:name.into()}}
+    #[test] fn form_root_owns_parent_order_style_and_is_not_interactive(){
+        let mut g=new_form_graph(true,8,true,false);let a=g.append_form_action();let b=g.append_form_action();let scene=g.form_scene();assert_ne!(scene.root,0);assert_eq!(scene.children,vec![a.action_node_id(),b.action_node_id()]);assert_eq!(a.node_parent_id(),scene.root);assert_eq!(b.node_parent_id(),scene.root);let style=g.form_style();assert!(style.vertical&&style.intrinsic&&!style.dialog&&!style.shared);assert_eq!(style.spacing,8);let root=ffi::ActionNodeKey{kind:12,high:0,low:0,name:String::new()};assert_eq!(g.acquire(&root).action_node_id(),0);assert!(!g.retire_form_action(scene.root));
+    }
+    #[test] fn form_append_reserves_root_and_member_atomically_near_id_exhaustion(){
+        let mut g=new_action_graph();g.next_id=u64::MAX-1;assert_eq!(g.append_form_action().action_node_id(),0);assert!(g.nodes.is_empty()&&g.order.is_empty());g.next_id=u64::MAX-2;let a=g.append_form_action();let scene=g.form_scene();assert_eq!(scene.root,u64::MAX-2);assert_eq!(a.action_node_id(),u64::MAX-1);assert_eq!(g.append_form_action().action_node_id(),0);assert_eq!(g.form_scene().children,scene.children);assert!(g.retire_form_action(a.action_node_id()));assert_eq!(g.form_scene().root,scene.root);
+    }
+    #[test] fn form_reorder_preserves_models_focus_and_cancels_input(){
+        let mut g=new_form_graph(false,12,false,false);let mut a=g.append_form_action();let mut b=g.append_form_action();a.node_checkbox_init(true);b.node_select_init(keyed_options(&[("a","Alpha"),("b","Beta")]));let token=b.node_select_open(true);b.node_select_input("b",10,true);a.action_focus(true);a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);let aid=a.action_node_id();let bid=b.action_node_id();assert!(g.reorder_form_actions(vec![bid,aid]));assert_eq!(g.form_scene().children,vec![bid,aid]);assert!(a.node_checked()&&a.action_snapshot().focused);assert!(!a.action_pending());assert!(!b.node_select_expanded());assert_eq!(b.node_select_selected_key(),"b");assert!(!b.node_select_choose_key(token,"a",true));assert!(b.node_select_input("a",11,true));assert_eq!(b.node_select_selected_key(),"a");
+    }
+    #[test] fn form_invalid_reorder_is_atomic_and_identical_order_keeps_press(){
+        let mut g=new_form_graph(false,0,false,false);let mut a=g.append_form_action();let b=g.append_form_action();let before=g.form_scene();a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);for ids in [vec![],vec![a.action_node_id(),a.action_node_id()],vec![before.root,b.action_node_id()],vec![a.action_node_id(),u64::MAX]]{assert!(!g.reorder_form_actions(ids));assert_eq!(g.form_scene().children,before.children);assert!(a.action_pending());}assert!(g.reorder_form_actions(before.children));assert!(a.action_pending());
+    }
+    #[test] fn form_layout_matches_legacy_recipe_across_style_bounds_and_saturation(){
+        for vertical in [false,true]{for intrinsic in [false,true]{for dialog in [false,true]{for spacing in [-3,0,8,i32::MAX]{let mut g=new_form_graph(vertical,spacing,intrinsic,dialog);let handles=(0..3).map(|_|g.append_form_action()).collect::<Vec<_>>();let measures=handles.iter().zip([(40,30),(80,50),(10,20)]).map(|(a,(width,height))|ffi::FormMeasure{id:a.action_node_id(),width,height}).collect::<Vec<_>>();let columns=measures.iter().map(|m|ffi::ColumnChild{width:m.width,height:m.height,top:0,left:0,bottom:0,right:0}).collect::<Vec<_>>();for width in [-1,0,1,80,400,i32::MAX]{for height in [-1,0,50,i32::MAX]{for preferred in [false,true]{let actual=g.form_layout(width,height,preferred,90,8,12,10,12,&measures);assert!(actual.admitted);let expected_width=if preferred&&intrinsic{-1}else{width};let expected=if dialog{dialog_actions_layout(expected_width,height,spacing,90,8,12,10,12,&columns)}else{action_group_layout(expected_width,height,vertical,spacing,&columns)};assert_eq!((actual.width,actual.height),(expected.width,expected.height));assert_eq!(actual.children.len(),expected.children.len());for ((cell,rect),measure) in actual.children.iter().zip(expected.children.iter()).zip(measures.iter()){assert_eq!(cell.id,measure.id);assert_eq!((cell.rect.x,cell.rect.y,cell.rect.width,cell.rect.height),(rect.x,rect.y,rect.width,rect.height));}}}}}}}}
+    }
+    #[test] fn form_layout_accepts_hidden_subsequence_but_rejects_stale_duplicate_or_wrong_order(){
+        let mut g=new_form_graph(false,8,false,false);let a=g.append_form_action();let b=g.append_form_action();let c=g.append_form_action();let metric=|id|ffi::FormMeasure{id,width:40,height:30};let layout=g.form_layout(-1,-1,false,80,0,0,0,0,&[metric(a.action_node_id()),metric(c.action_node_id())]);assert!(layout.admitted);assert_eq!(layout.width,88);for ids in [[a.action_node_id(),a.action_node_id()],[c.action_node_id(),a.action_node_id()],[g.form_scene().root,b.action_node_id()],[a.action_node_id(),u64::MAX]]{assert!(!g.form_layout(400,40,false,80,0,0,0,0,&[metric(ids[0]),metric(ids[1])]).admitted);}assert!(g.retire_form_action(a.action_node_id()));assert!(!g.form_layout(400,40,false,80,0,0,0,0,&[metric(a.action_node_id())]).admitted);
+    }
+    #[test] fn form_shared_layout_retains_style_and_cancels_transient_selector_input(){
+        let mut g=new_form_graph(true,12,true,true);let mut a=g.append_form_action();a.node_select_init(keyed_options(&[("a","Alpha"),("b","Beta")]));a.node_select_open(true);a.node_select_select_index(1);a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);assert!(g.form_set_shared(true));let style=g.form_style();assert!(style.vertical&&style.intrinsic&&style.dialog&&style.shared);assert_eq!(style.spacing,12);assert!(!a.action_pending());assert_eq!(a.node_select_selected_key(),"b");assert!(!g.form_layout(400,40,false,80,0,0,0,0,&[]).admitted);assert!(!g.form_set_shared(true));assert!(g.form_set_shared(false));assert!(g.form_layout(400,40,false,80,0,0,0,0,&[]).admitted);
+    }
+    #[test] fn form_member_retirement_preserves_root_and_siblings_then_subtree_drop_revokes_all(){
+        let mut g=new_form_graph(false,0,false,false);let mut a=g.append_form_action();let mut b=g.append_form_action();a.node_checkbox_init(true);b.node_toggle_init();let root=g.form_scene().root;let aid=a.action_node_id();assert!(g.retire_form_action(aid));assert_eq!(a.node_parent_id(),0);assert_eq!(a.node_model_kind(),0);assert_eq!(b.node_parent_id(),root);assert_eq!(b.node_model_kind(),2);assert!(g.reconcile(vec![]).admitted);assert_eq!(g.form_scene().root,0);assert_eq!(b.node_parent_id(),0);assert!(!b.node_toggle_flip(true,0,true));assert!(!g.form_layout(100,40,false,80,0,0,0,0,&[]).admitted);
+    }
+    #[test] fn form_bare_append_initializes_a_projected_root_without_touching_other_nodes(){
+        let mut g=new_action_graph();assert!(g.reconcile(vec![node_pin("other"),ffi::ActionNodeKey{kind:12,high:0,low:0,name:String::new()}]).admitted);let mut other=g.acquire(&node_pin("other"));other.action_on(true);let a=g.append_form_action();assert_eq!(a.node_parent_id(),g.form_scene().root);assert!(other.action_snapshot().on);assert!(g.form_layout(100,40,false,80,0,0,0,0,&[ffi::FormMeasure{id:a.action_node_id(),width:30,height:20}]).admitted);
+    }
+    #[test] fn form_scene_snapshots_are_owned_and_roots_have_independent_owners(){
+        let mut left=new_form_graph(true,8,true,false);let mut right=new_form_graph(false,0,false,true);let a=left.append_form_action();let b=right.append_form_action();assert_eq!(a.action_node_id(),b.action_node_id());assert_eq!(a.node_parent_id(),b.node_parent_id());assert!(left.owns_input(&a)&&right.owns_input(&b));assert!(!left.owns_input(&b));let mut snapshot=left.form_scene();snapshot.children.clear();assert_eq!(left.form_scene().children.len(),1);assert!(left.form_style().vertical&&!right.form_style().vertical);drop(left);assert_eq!(a.node_parent_id(),0);
+    }
     fn palette_item(key:&str,title:&str,icon:u32)->ffi::PaletteSceneInput{ffi::PaletteSceneInput{key:key.into(),title:title.encode_utf16().collect(),detail:"Detail 🦀".encode_utf16().collect(),icon}}
     fn palette_tree()->Box<ActionGraph>{let mut g=new_palette_graph();assert!(g.reconcile_palette(vec![palette_item("a","First",0),palette_item("b","Second",1)]).admitted);g}
     #[test] fn palette_root_owns_selection_and_structural_parent(){
@@ -3397,19 +3464,19 @@ mod tests {
         assert!(ordinary.action_pointer(ffi::PointerPhase::Release,1,1,true,true,true).action==ffi::RowAction::Activate);
     }
     #[test] fn form_action_membership_allocates_unique_ids_without_native_keys(){
-        let mut g=new_action_graph();let mut a=g.append_form_action();let b=g.append_form_action();assert_ne!(a.action_node_id(),0);assert_ne!(a.action_node_id(),b.action_node_id());assert_eq!(g.order,vec![a.action_node_id(),b.action_node_id()]);
-        a.action_on(true);a.action_default(true);assert!(a.action_snapshot().on);assert!(a.action_snapshot().is_default);assert!(!b.action_snapshot().on);assert_eq!(g.nodes.len(),2);
+        let mut g=new_action_graph();let mut a=g.append_form_action();let b=g.append_form_action();assert_ne!(a.action_node_id(),0);assert_ne!(a.action_node_id(),b.action_node_id());assert_eq!(g.form_scene().children,vec![a.action_node_id(),b.action_node_id()]);
+        a.action_on(true);a.action_default(true);assert!(a.action_snapshot().on);assert!(a.action_snapshot().is_default);assert!(!b.action_snapshot().on);assert_eq!(g.nodes.len(),3);
     }
     #[test] fn form_action_removal_retires_retained_input_and_new_members_never_reuse_ids(){
         let mut g=new_action_graph();let mut a=g.append_form_action();let b=g.append_form_action();let id=a.action_node_id();a.action_focus(true);a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);
-        assert!(g.retire_form_action(id));assert_eq!(a.action_node_id(),0);assert!(!a.action_snapshot().enabled);assert!(!a.action_pointer(ffi::PointerPhase::Release,1,1,true,true,true).handled);assert!(!a.action_key(true,1,true,true).handled);assert!(!g.retire_form_action(id));assert_eq!(g.order,vec![b.action_node_id()]);assert_eq!(g.nodes.len(),1);
+        assert!(g.retire_form_action(id));assert_eq!(a.action_node_id(),0);assert!(!a.action_snapshot().enabled);assert!(!a.action_pointer(ffi::PointerPhase::Release,1,1,true,true,true).handled);assert!(!a.action_key(true,1,true,true).handled);assert!(!g.retire_form_action(id));assert_eq!(g.form_scene().children,vec![b.action_node_id()]);assert_eq!(g.nodes.len(),2);
         let c=g.append_form_action();assert!(c.action_node_id()>b.action_node_id());assert_ne!(c.action_node_id(),id);
     }
     #[test] fn form_action_owner_drop_invalidates_adapters_that_outlive_group(){
         let mut a={let mut g=new_action_graph();g.append_form_action()};assert_eq!(a.action_node_id(),0);assert!(!a.action_enabled(true));assert!(!a.action_gesture(1,true).handled);
     }
     #[test] fn form_action_id_exhaustion_is_transactional_and_retirement_still_works(){
-        let mut g=new_action_graph();let a=g.append_form_action();let id=a.action_node_id();g.next_id=u64::MAX;let rejected=g.append_form_action();assert_eq!(rejected.action_node_id(),0);assert_eq!(g.order,vec![id]);assert_eq!(g.nodes.len(),1);assert!(g.retire_form_action(id));assert!(g.nodes.is_empty());
+        let mut g=new_action_graph();let a=g.append_form_action();let id=a.action_node_id();g.next_id=u64::MAX;let rejected=g.append_form_action();assert_eq!(rejected.action_node_id(),0);assert_eq!(g.form_scene().children,vec![id]);assert_eq!(g.nodes.len(),2);assert!(g.retire_form_action(id));assert!(g.form_scene().children.is_empty());assert_ne!(g.form_scene().root,0);
     }
     #[test] fn form_action_private_keys_cannot_be_injected_or_reacquired_by_projection(){
         let mut g=new_action_graph();let a=g.append_form_action();let id=a.action_node_id();let key=ffi::ActionNodeKey{kind:9,high:id,low:0,name:String::new()};let rejected=g.reconcile(vec![ffi::ActionNodeKey{kind:9,high:id,low:0,name:String::new()}]);assert!(!rejected.admitted);assert_eq!(a.action_node_id(),id);assert_eq!(g.acquire(&key).action_node_id(),0);assert_eq!(a.action_node_id(),id);
