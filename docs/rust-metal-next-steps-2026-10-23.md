@@ -62,6 +62,17 @@ new UI cases are deferred. Arbitrary topology container diffing and pinned tab-p
 parent/visibility integration remain, alongside broader UI/native adapter ownership.
 [Latest details](rust-metal-parity.md#latest-headless-implementation-rust-pin-hierarchy-and-retained-containers).
 
+The form-panel checkpoint (`23c6ecb`) moves semantic command panel domains into
+Rust across preferences/workspace/profile/import and tools dismiss. Dynamic site-rule
+pagination now uses a typed Rust command with deferred native profile/visibility
+checks. Headless: 467 Rust, 68 live/archive Python and 180 SDK plus raster; both
+binaries compile. Two new browser cases remain deferred. Current-state guards do
+not detect leaving/returning to the same profile or hiding/reopening before a queued
+action executes. Native form/status/IME/window ownership and bulk GUI acceptance
+remain open. Partial sidebar split work is preserved locally in
+`build/sidebar-pair-deferred-2026-10-27.patch` and is not part of this checkpoint.
+[Details](rust-metal-parity.md#latest-headless-implementation-semantic-form-panel-domains-and-rule-pagination).
+
 1. **Audit residual native action hosts and service/popup boundaries.** Peek's
    toolbar is now migrated; download row buttons already use Rust-owned groups.
    Preserve native profile/GUID/store authorization and document explicit platform
@@ -90,7 +101,7 @@ parent/visibility integration remain, alongside broader UI/native adapter owners
    copy and form/busy state into Rust; finish outer dialog/palette/container
    placement. Keep native window, IME, clipboard, AX and popup/menu services explicit.
 5. **Run the deferred bulk UI checkpoint when requested.** Include all newly
-   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node, palette-node, split-node, form-action-node, workspace-dismiss-node, activation-observer, checked-selector-node, Peek-toolbar, checked-model, selector-model, workspace-scene, history-scene, palette-scene, form-scene, site-rule-scene, semantic form-command, panel/category-command, sidebar-tab-scene, tab-property, pin-model and pin-tree
+   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node, palette-node, split-node, form-action-node, workspace-dismiss-node, activation-observer, checked-selector-node, Peek-toolbar, checked-model, selector-model, workspace-scene, history-scene, palette-scene, form-scene, site-rule-scene, semantic form-command, panel/category-command, sidebar-tab-scene, tab-property, pin-model, pin-tree and form-panel/pagination
    cases, the full Rust/Metal and Views matrices, and actual pointer/keyboard/
    capture/AX/focus/drag/profile/session regressions. The last completed full matrix
    remains the text-action checkpoint; the later selector full run was interrupted.

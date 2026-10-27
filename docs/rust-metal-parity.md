@@ -14,7 +14,41 @@ accumulate compiled cases for a later bulk checkpoint. Build, Rust/Python and SD
 checks without windows remain enabled. No computer shutdown is requested.
 The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 
-## Latest headless implementation: Rust pin hierarchy and retained containers
+## Latest headless implementation: semantic form panel domains and rule pagination
+
+Source `23c6ecb` moves command-to-panel policy into Rust. Command bindings
+carry an explicit FormPanel for workspace save/create/remove/navigation/dismiss,
+profile create/rename/delete/back, import apply/dismiss, preferences and tools.
+Unknown/unbound/disabled/retired commands return no panel. Native dispatch resolves
+the widget and checks visibility, enabled source and actual widget/contents-tree
+membership. Existing form coordinators, IME, managed preferences, profile/store
+checks and backend operations retain their authority.
+
+The dynamic “Pokaż kolejne wyjątki…” action now has a Rust PreferenceMore model,
+using the common command and input admission path. Native list rebuilding remains
+deferred so it can destroy the originating adapter safely. The queued operation
+captures the profile and requires that profile and a visible preferences widget
+at execution. This checks current state, not navigation history: a hide/reopen or
+leave/return to the same profile before execution is not independently detected.
+Views retains its existing callback path.
+
+Validation: **467 Rust**, **68 live + 68 clean-archive Python**, **180 CoreText SDK
+cases plus raster**, scoped GN/header and boundary checks; app and browser-test
+binaries compile. All **53 committed/live/staged prototype inputs** match and the
+final three-target Ninja check reports no work. Four new Rust tests cover every
+panel domain, pagination validation/immutable target/retirement and admission
+revocation. Two new browser cases cover deferred pagination after hiding the panel
+or changing profile; existing pagination coverage requires a typed command model.
+**No UI tests were run**, and the preview was left unchanged.
+
+This is command/panel policy migration, not complete form ownership. Native input,
+window/AX/IME/layout adapters, status/busy/managed presentation and residual popup
+controls still need work, followed by the deferred bulk UI/manual checkpoint.
+Sidebar split hierarchy and broader keyed reconciliation remain open. No timing,
+GPU, memory or parity improvement is claimed. No dependency/license input changed.
+Evidence: [form-panel report](benchmarks/rust-form-panel-headless-2026-10-27.json).
+
+## Previous headless implementation: Rust pin hierarchy and retained containers
 
 Sources `b4e4b62` and `167ab08` add structural kind-14 folder-group records and an
 ordered Rust pin-tree projection with real logical parent IDs, group owners,
