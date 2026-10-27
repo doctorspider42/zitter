@@ -337,7 +337,9 @@ class WorkspaceShell final : public ui::EventHandler,
   PanelViewport* workspace_viewport() const{return workspace_scroll_;}
   bool metal_sidebar_visible() const;
   bool metal_sidebar_grip_visible() const;
-  // 0 untyped/retired, 1 checkbox, 2 switch, 3 selector, 4 workspace, 5 history row, 6 palette row; local graph model diagnostics.
+  // 0 untyped/retired, 1 checkbox, 2 switch, 3 selector, 4 workspace, 5 history row, 6 palette row, 7 site-rule row; local graph model diagnostics.
+  views::View* site_rule_results_for_testing() const{return site_rules_list_;}
+  void RefreshSiteRulesForTesting(bool reload=true){RefreshSitePreferences(reload);}
   uint32_t control_model_kind_for_testing(views::View* view) const;
   uint64_t scene_parent_id_for_testing(views::View* view) const;
   views::View* header_action_for_testing(size_t index) const;
@@ -575,6 +577,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void ResetPreferenceRuleLimit();
   void MorePreferenceRules();
   size_t PreferenceRuleLimit() const;
+  void PostRemoveSiteRule(SitePreferenceRule rule,std::string profile_id);
   void RefreshSitePreferences(bool reload = true);
   void SaveSitePreference();
   void SaveGeneralPatch(std::optional<ThemeMode> theme, std::optional<SearchEngine> search, std::optional<bool> animations);
@@ -707,6 +710,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<EditorControl> site_origin_ = nullptr;
   raw_ptr<views::View> site_type_ = nullptr;
   raw_ptr<views::View> site_policy_ = nullptr;
+  std::shared_ptr<SidebarNodeGraphState> site_rule_node_graph_;
   raw_ptr<views::View> site_rules_list_ = nullptr;
   raw_ptr<views::View> site_rules_card_ = nullptr;
   std::vector<SitePreferenceRule> site_preference_rules_;

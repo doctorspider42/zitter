@@ -2494,6 +2494,31 @@ class PreferenceCopy final : public views::View {
 };
 BEGIN_METADATA(PreferenceCopy)
 END_METADATA
+void SetPanelText(views::View* view,std::u16string text);
+// A composite adapter retains its existing text and inner action-group scopes.
+// The outer row lease belongs to the Rust site-rule list, never a rule backend.
+class SiteRuleSceneRow final : public views::View {
+  METADATA_HEADER(SiteRuleSceneRow,views::View)
+ public:
+  explicit SiteRuleSceneRow(rust::Box<sidebar::ActionControl> input):input_(std::move(input)){}
+  uint64_t NodeId() const{return input_->action_node_id();}
+  uint64_t ParentId() const{return input_->node_parent_id();}
+  uint32_t ModelKind() const{return input_->node_model_kind();}
+  bool BelongsTo(const SidebarNodeGraphState& scope) const{return scope.graph->owns_input(*input_);}
+  base::WeakPtr<SiteRuleSceneRow> GetWeakPtr(){return weak_factory_.GetWeakPtr();}
+  void SetParts(views::View* copy,views::View* remove){copy_=copy;remove_=remove;}
+  void Project(const sidebar::SiteRuleSceneChild& child){
+    CHECK(copy_&&remove_);if(child.cancel_input)remove_->OnMouseCaptureLost();
+    const std::u16string detail(child.detail.begin(),child.detail.end());SetPanelText(copy_,detail);remove_->SetEnabled(child.editable);remove_->GetViewAccessibility().SetName(u"Usuń wyjątek: "+detail);remove_->SchedulePaint();
+  }
+ private:
+  rust::Box<sidebar::ActionControl> input_;
+  raw_ptr<views::View> copy_=nullptr;raw_ptr<views::View> remove_=nullptr;
+  base::WeakPtrFactory<SiteRuleSceneRow> weak_factory_{this};
+};
+BEGIN_METADATA(SiteRuleSceneRow)
+END_METADATA
+
 class SceneProgress final : public views::View {
   METADATA_HEADER(SceneProgress,views::View)
  public:
@@ -4412,7 +4437,7 @@ void WorkspaceShell::Detach() {
   workspace_appearance_ = nullptr;
   settings_scroll_ = nullptr;
   settings_root_ = nullptr;
-  chrome_node_graph_.reset();history_node_graph_.reset();palette_node_graph_.reset();
+  chrome_node_graph_.reset();history_node_graph_.reset();palette_node_graph_.reset();site_rule_node_graph_.reset();
   pin_button_ = nullptr;
   nav_buttons_.fill(nullptr);
   workspace_buttons_.clear();
@@ -4762,6 +4787,7 @@ uint32_t WorkspaceShell::control_model_kind_for_testing(views::View* view) const
 #if BUILDFLAG(IS_MAC)
   if(auto* action=views::AsViewClass<RustActionView>(view))return action->ModelKind();
   if(auto* row=views::AsViewClass<RustRowView>(view))return row->ModelKind();
+  if(auto* row=views::AsViewClass<SiteRuleSceneRow>(view))return row->ModelKind();
 #endif
   return 0;
 }
@@ -5490,7 +5516,7 @@ void WorkspaceShell::AppendPinnedItems(views::View* root, const std::vector<Pinn
 
 uint64_t WorkspaceShell::sidebar_node_id_for_testing(views::View* row) const{
 #if BUILDFLAG(IS_MAC)
-  if(auto* host=views::AsViewClass<RustRowView>(row))return host->LogicalNodeId();if(auto* action=views::AsViewClass<RustActionView>(row))return action->LogicalNodeId();return 0;
+  if(auto* host=views::AsViewClass<RustRowView>(row))return host->LogicalNodeId();if(auto* action=views::AsViewClass<RustActionView>(row))return action->LogicalNodeId();if(auto* site=views::AsViewClass<SiteRuleSceneRow>(row))return site->NodeId();return 0;
 #else
   return 0;
 #endif
@@ -5499,6 +5525,7 @@ uint64_t WorkspaceShell::scene_parent_id_for_testing(views::View* view) const{
 #if BUILDFLAG(IS_MAC)
   if(auto* action=views::AsViewClass<RustActionView>(view))return action->LogicalParentId();
   if(auto* row=views::AsViewClass<RustRowView>(view))return row->LogicalParentId();
+  if(auto* row=views::AsViewClass<SiteRuleSceneRow>(view))return row->ParentId();
 #endif
   return 0;
 }
@@ -6941,58 +6968,43 @@ void WorkspaceShell::SaveSitePreference() {
   SetPreferencesStatus(ok ? u"Zapisano wyjątek w tym profilu. Odśwież witrynę, aby zastosować zmianę." :
       u"Nie zapisano wyjątku. Podaj adres HTTP(S) bez ścieżki i danych logowania. Sprawdź wybraną politykę; reguły zarządzane nie mogą być zmieniane.", !ok);
 }
+void WorkspaceShell::PostRemoveSiteRule(SitePreferenceRule rule,std::string profile_id){
+  // Retain the click's exact backend value and profile through the deferred task.
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,SitePreferenceRule rule,std::string profile_id){if(!shell||shell->state_.profile_id!=profile_id)return;const bool ok=shell->callbacks_.remove_site_preference&&shell->callbacks_.remove_site_preference.Run(std::move(rule));shell->RefreshSitePreferences();shell->FilterPreferences();shell->SetPreferencesStatus(ok?u"Usunięto wyjątek. Witryna wróci do ustawień domyślnych.":u"Nie udało się usunąć wyjątku. Reguła może być zarządzana.",!ok);},weak_factory_.GetWeakPtr(),std::move(rule),std::move(profile_id)));
+}
 void WorkspaceShell::RefreshSitePreferences(bool reload) {
-  if (!site_rules_list_) return;
-  if (reload) site_preference_rules_ = callbacks_.read_site_preferences ? callbacks_.read_site_preferences.Run() : std::vector<SitePreferenceRule>();
-  const auto query = base::i18n::ToLower(base::TrimWhitespace(preferences_search_->GetText(), base::TRIM_ALL));
-  std::u16string keywords = u"uprawnienia stron zapisane wyjątki witryny reguły domyślne zarządzane";
-  const bool show_all = query.empty() || keywords.find(query) != std::u16string::npos;
-  site_rules_list_->RemoveAllChildViews();
-  size_t matching = 0;
-  size_t shown = 0;
-  for (const auto& rule : site_preference_rules_) {
-    auto it = std::find(kSitePreferenceKeys.begin(), kSitePreferenceKeys.end(), rule.key);
-    const auto name = it == kSitePreferenceKeys.end() ? base::UTF8ToUTF16(rule.key) : kSitePreferenceNames[it - kSitePreferenceKeys.begin()];
-    const auto* policy = rule.setting == 1 ? u"Zezwalaj" : rule.setting == 2 ? u"Blokuj" : rule.setting == 3 ? u"Pytaj" : u"Inna polityka";
-    auto detail = base::UTF8ToUTF16(rule.primary) + u" · " + name + u" · " + policy;
-    if (rule.secondary != "*") detail += u" · Osadzenie: " + base::UTF8ToUTF16(rule.secondary);
-    if (!rule.editable) detail += u" · Zarządzane";
-    auto searchable = base::i18n::ToLower(detail);
-    keywords += u" " + searchable;
-    if (!show_all && searchable.find(query) == std::u16string::npos) continue;
-    ++matching;
-    if (shown >= PreferenceRuleLimit()) continue;
-    ++shown;
-    auto* row = site_rules_list_->AddChildView(std::make_unique<views::View>());
-    auto* label=AddPreferenceCopy(row,detail,kSubtle,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
-    SetSidebarPanelLayout(row,false,gfx::Insets::VH(4,0),12,label,true);
-    auto* remove = PreferenceAction(row,bool(workspace_form_),base::BindRepeating(
-        [](base::WeakPtr<WorkspaceShell> shell, SitePreferenceRule rule, std::string profile_id) {
-          // Rebuild on the next UI task, after the pressed button has returned.
-          base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(
-              [](base::WeakPtr<WorkspaceShell> shell, SitePreferenceRule rule, std::string profile_id) {
-                if (!shell || shell->state_.profile_id != profile_id) return;
-                const bool ok = shell->callbacks_.remove_site_preference && shell->callbacks_.remove_site_preference.Run(std::move(rule));
-                shell->RefreshSitePreferences(); shell->FilterPreferences();
-                shell->SetPreferencesStatus(ok ? u"Usunięto wyjątek. Witryna wróci do ustawień domyślnych." : u"Nie udało się usunąć wyjątku. Reguła może być zarządzana.", !ok);
-              }, shell, std::move(rule), std::move(profile_id)));
-        }, weak_factory_.GetWeakPtr(), rule, state_.profile_id), u"Usuń");
-    remove->SetEnabled(rule.editable);
-    remove->GetViewAccessibility().SetName(u"Usuń wyjątek: " + detail);
+  if(!site_rules_list_)return;
+  if(reload)site_preference_rules_=callbacks_.read_site_preferences?callbacks_.read_site_preferences.Run():std::vector<SitePreferenceRule>();
+  const auto query=base::i18n::ToLower(base::TrimWhitespace(preferences_search_->GetText(),base::TRIM_ALL));
+  std::u16string keywords=u"uprawnienia stron zapisane wyjątki witryny reguły domyślne zarządzane";const bool show_all=query.empty()||keywords.find(query)!=std::u16string::npos;
+  struct Projection {size_t source;std::u16string detail;std::string key;};std::vector<Projection> visible;size_t matching=0;
+  [[maybe_unused]] std::map<std::string,size_t> occurrences;
+  for(size_t source=0;source<site_preference_rules_.size();++source){const auto& rule=site_preference_rules_[source];auto it=std::find(kSitePreferenceKeys.begin(),kSitePreferenceKeys.end(),rule.key);const auto name=it==kSitePreferenceKeys.end()?base::UTF8ToUTF16(rule.key):kSitePreferenceNames[it-kSitePreferenceKeys.begin()];const auto* policy=rule.setting==1?u"Zezwalaj":rule.setting==2?u"Blokuj":rule.setting==3?u"Pytaj":u"Inna polityka";
+    auto detail=base::UTF8ToUTF16(rule.primary)+u" · "+name+u" · "+policy;if(rule.secondary!="*")detail+=u" · Osadzenie: "+base::UTF8ToUTF16(rule.secondary);if(!rule.editable)detail+=u" · Zarządzane";
+    std::string key;
+#if BUILDFLAG(IS_MAC)
+    if(workspace_form_){base::ListValue identity;identity.Append(state_.profile_id);identity.Append(rule.key);identity.Append(rule.primary);identity.Append(rule.secondary);std::string target;CHECK(base::JSONWriter::Write(identity,&target));identity.Append(base::NumberToString(occurrences[target]++));CHECK(base::JSONWriter::Write(identity,&key));}
+#endif
+    const auto searchable=base::i18n::ToLower(detail);keywords+=u" "+searchable;if(!show_all&&searchable.find(query)==std::u16string::npos)continue;++matching;if(visible.size()<PreferenceRuleLimit())visible.push_back({source,std::move(detail),std::move(key)});
   }
-  if (!matching) {
-    AddPreferenceCopy(site_rules_list_,site_preference_rules_.empty()?u"Nie masz jeszcze zapisanych wyjątków.":u"Brak wyjątków pasujących do wyszukiwania.",kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
-  } else if (matching > shown) {
-    PreferenceAction(site_rules_list_,bool(workspace_form_),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
-      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceShell> shell) {
-        if (!shell) return;
-        shell->MorePreferenceRules();
-        shell->RefreshSitePreferences(false);
-      }, shell));
-    }, weak_factory_.GetWeakPtr()), u"Pokaż kolejne wyjątki…",true);
-  }
-  for (auto& row : preference_sections_[3].rows) if (row.view == site_rules_card_) row.keywords = keywords;
-  site_rules_list_->InvalidateLayout();
+#if BUILDFLAG(IS_MAC)
+  if(workspace_form_){
+    if(!site_rule_node_graph_)site_rule_node_graph_=std::make_shared<SidebarNodeGraphState>();rust::Vec<sidebar::SiteRuleSceneInput> items;items.reserve(visible.size());for(const auto& row:visible){rust::Vec<uint16_t> detail;for(char16_t unit:row.detail)detail.push_back(unit);items.push_back({row.key,std::move(detail),site_preference_rules_[row.source].editable,row.source});}
+    CHECK(site_rule_node_graph_->graph->reconcile_site_rules(std::move(items)).admitted)<<"Invalid site-rule scene projection";const auto scene=site_rule_node_graph_->graph->site_rule_scene();std::set<uint64_t> wanted;for(const auto& child:scene.children){CHECK_EQ(child.parent,scene.root);wanted.insert(child.id);}
+    std::map<uint64_t,SiteRuleSceneRow*> retained;std::vector<views::View*> removed;for(const auto& child:site_rules_list_->children()){auto* row=views::AsViewClass<SiteRuleSceneRow>(child.get());const auto id=row?row->NodeId():0;if(id&&wanted.contains(id)&&row->BelongsTo(*site_rule_node_graph_))retained.emplace(id,row);else removed.push_back(child.get());}for(auto* child:removed)site_rules_list_->RemoveChildViewT(child);
+    for(size_t i=0;i<scene.children.size();++i){const auto& child=scene.children[i];auto found=retained.find(child.id);SiteRuleSceneRow* row=nullptr;
+      if(found!=retained.end())row=found->second;
+      else{row=site_rules_list_->AddChildView(std::make_unique<SiteRuleSceneRow>(site_rule_node_graph_->graph->acquire({13,0,0,std::string(child.key)})));auto* label=AddPreferenceCopy(row,std::u16string(child.detail.begin(),child.detail.end()),kSubtle,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);SetSidebarPanelLayout(row,false,gfx::Insets::VH(4,0),12,label,true);
+        auto callback=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::weak_ptr<SidebarNodeGraphState> owner,base::WeakPtr<SiteRuleSceneRow> row,std::string key,uint64_t id,std::string profile){const auto scope=owner.lock();if(!shell||!scope||!row||shell->site_rule_node_graph_!=scope||shell->state_.profile_id!=profile||!shell->general_widget_||!shell->general_widget_->IsVisible()||row->parent()!=shell->site_rules_list_||row->NodeId()!=id||!row->BelongsTo(*scope))return;const auto target=scope->graph->site_rule_target(key,id);if(target.valid&&target.index<shell->site_preference_rules_.size())shell->PostRemoveSiteRule(shell->site_preference_rules_[target.index],std::move(profile));},weak_factory_.GetWeakPtr(),std::weak_ptr<SidebarNodeGraphState>(site_rule_node_graph_),row->GetWeakPtr(),std::string(child.key),child.id,state_.profile_id);
+        auto* remove=PreferenceAction(row,true,std::move(callback),u"Usuń");row->SetParts(label,remove);
+      }row->Project(child);site_rules_list_->ReorderChildView(row,i);
+    }
+  }else
+#endif
+  {site_rules_list_->RemoveAllChildViews();for(const auto& projection:visible){const auto& rule=site_preference_rules_[projection.source];auto* row=site_rules_list_->AddChildView(std::make_unique<views::View>());auto* label=AddPreferenceCopy(row,projection.detail,kSubtle,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);SetSidebarPanelLayout(row,false,gfx::Insets::VH(4,0),12,label,true);auto* remove=PreferenceAction(row,false,base::BindRepeating(&WorkspaceShell::PostRemoveSiteRule,weak_factory_.GetWeakPtr(),rule,state_.profile_id),u"Usuń");remove->SetEnabled(rule.editable);remove->GetViewAccessibility().SetName(u"Usuń wyjątek: "+projection.detail);}}
+  if(!matching)AddPreferenceCopy(site_rules_list_,site_preference_rules_.empty()?u"Nie masz jeszcze zapisanych wyjątków.":u"Brak wyjątków pasujących do wyszukiwania.",kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
+  else if(matching>visible.size())PreferenceAction(site_rules_list_,bool(workspace_form_),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell){if(!shell)return;shell->MorePreferenceRules();shell->RefreshSitePreferences(false);},shell));},weak_factory_.GetWeakPtr()),u"Pokaż kolejne wyjątki…",true);
+  for(auto& row:preference_sections_[3].rows)if(row.view==site_rules_card_)row.keywords=keywords;site_rules_list_->InvalidateLayout();
 }
 
 void WorkspaceShell::WritePreference(std::string key, int value) {

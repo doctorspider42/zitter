@@ -153,6 +153,10 @@ mod ffi {
     struct FormMeasure { id: u64, width: i32, height: i32 }
     struct FormCell { id: u64, rect: Rect }
     struct FormLayout { admitted: bool, width: i32, height: i32, children: Vec<FormCell> }
+    struct SiteRuleSceneInput { key: String, detail: Vec<u16>, editable: bool, source_index: usize }
+    struct SiteRuleSceneChild { id: u64, parent: u64, key: String, detail: Vec<u16>, editable: bool, cancel_input: bool }
+    struct SiteRuleScene { root: u64, children: Vec<SiteRuleSceneChild> }
+    struct SiteRuleTarget { valid: bool, index: usize }
     struct ColumnChild { width: i32, height: i32, top: i32, left: i32, bottom: i32, right: i32 }
     struct ColumnLayout { width: i32, height: i32, children: Vec<Rect> }
     struct PanelStyle { width: i32, height: i32, vertical: bool, spacing: i32, top: i32, left: i32, bottom: i32, right: i32, flex: usize }
@@ -441,6 +445,9 @@ mod ffi {
         fn form_set_shared(self: &mut ActionGraph, shared: bool) -> bool;
         fn reorder_form_actions(self: &mut ActionGraph, ids: Vec<u64>) -> bool;
         fn form_layout(self: &ActionGraph, width: i32, height: i32, preferred: bool, link_limit: i32, top: i32, left: i32, bottom: i32, right: i32, children: &[FormMeasure]) -> FormLayout;
+        fn reconcile_site_rules(self: &mut ActionGraph, items: Vec<SiteRuleSceneInput>) -> ActionNodePlan;
+        fn site_rule_scene(self: &ActionGraph) -> SiteRuleScene;
+        fn site_rule_target(self: &ActionGraph, key: &str, id: u64) -> SiteRuleTarget;
         fn append_form_action(self: &mut ActionGraph) -> Box<ActionControl>;
         fn retire_form_action(self: &mut ActionGraph, id: u64) -> bool;
         type ActionControl;
@@ -1796,8 +1803,8 @@ fn action_node_key(key:&ffi::ActionNodeKey)->Option<ActionNodeIdentity>{
         kind @ (1|10) if (key.high!=0||key.low!=0)&&key.name.is_empty()=>Some((kind,key.high,key.low,String::new())),
         kind @ (7|8) if (key.high!=0||key.low!=0)&&!key.name.is_empty()=>Some((kind,key.high,key.low,key.name.clone())),
         12 if key.high==0&&key.low==0&&key.name.is_empty()=>Some((12,0,0,String::new())),
-        11 if key.high==0&&key.low==0&&matches!(key.name.as_str(),"chrome.workspaces"|"tools.history"|"palette.results")=>Some((11,0,0,key.name.clone())),
-        kind @ (2|3|4|5|6) if key.high==0&&key.low==0&&!key.name.is_empty()=>Some((kind,0,0,key.name.clone())),
+        11 if key.high==0&&key.low==0&&matches!(key.name.as_str(),"chrome.workspaces"|"tools.history"|"palette.results"|"preferences.site-rules")=>Some((11,0,0,key.name.clone())),
+        kind @ (2|3|4|5|6|13) if key.high==0&&key.low==0&&!key.name.is_empty()=>Some((kind,0,0,key.name.clone())),
         _=>None,
     }
 }
@@ -1807,7 +1814,8 @@ struct WorkspacePresentation {name:Vec<u16>,label:Vec<u16>,cancel_input:bool}
 struct HistoryPresentation {title:Vec<u16>,detail:Vec<u16>,url:Vec<u16>,cancel_input:bool}
 struct PalettePresentation {title:Vec<u16>,detail:Vec<u16>,icon:u32,index:usize,cancel_input:bool}
 struct PaletteSceneState {selection:PaletteSelection,dirty:bool}
-enum NodeModel { Checkbox(CheckboxState), Toggle(ToggleState), Select(SelectState), Workspace(WorkspacePresentation), History(HistoryPresentation), Palette(PalettePresentation), PaletteRoot(PaletteSceneState), FormRoot(ffi::FormGroupStyle) }
+struct SiteRulePresentation {detail:Vec<u16>,editable:bool,source_index:usize,cancel_input:bool}
+enum NodeModel { Checkbox(CheckboxState), Toggle(ToggleState), Select(SelectState), Workspace(WorkspacePresentation), History(HistoryPresentation), Palette(PalettePresentation), PaletteRoot(PaletteSceneState), FormRoot(ffi::FormGroupStyle), SiteRule(SiteRulePresentation) }
 impl NodeModel {
     // Popup tokens and IME prefix belong to one input lease, unlike selection.
     fn detach_input(&mut self){if let Self::Select(s)=self{s.dismiss();s.reset_prefix();s.last_close=None;}}
@@ -1952,6 +1960,23 @@ impl ActionGraph {
     fn palette_target(&self,key:&str,id:u64)->ffi::PaletteTarget{
         let invalid=||ffi::PaletteTarget{valid:false,index:0};let Some(node)=self.nodes.get(&(6,0,0,key.to_owned())) else{return invalid();};let node=node.borrow();if !node.alive||!node.attached||!node.state.enabled||id==0||id!=node.id{return invalid();}if let Some(NodeModel::Palette(p))=node.model.as_deref(){ffi::PaletteTarget{valid:true,index:p.index}}else{invalid()}
     }
+    fn reconcile_site_rules(&mut self,items:Vec<ffi::SiteRuleSceneInput>)->ffi::ActionNodePlan{
+        let mut sources=BTreeSet::new();if items.iter().any(|item|!sources.insert(item.source_index)||self.nodes.get(&(13,0,0,item.key.clone())).is_some_and(|node|node.borrow().model.as_deref().is_some_and(|m|!matches!(m,NodeModel::SiteRule(_))))){return self.rejected();}
+        let previous_by_id=self.nodes.iter().filter(|(key,_)|key.0==13).map(|(key,node)|(node.borrow().id,key.3.as_str())).collect::<BTreeMap<_,_>>();let mut invalidated=self.order.iter().filter_map(|id|previous_by_id.get(id).copied()).ne(items.iter().map(|i|i.key.as_str()));
+        let group=(11,0,0,"preferences.site-rules".to_owned());let mut keys=Vec::with_capacity(1+items.len());keys.push(ffi::ActionNodeKey{kind:11,high:0,low:0,name:group.3.clone()});for item in &items{keys.push(ffi::ActionNodeKey{kind:13,high:0,low:0,name:item.key.clone()});}let plan=self.reconcile(keys);if !plan.admitted{return plan;}
+        let root=self.nodes[&group].borrow().id;
+        for item in items{let mut node=self.nodes[&(13,0,0,item.key)].borrow_mut();invalidated|=matches!(node.model.as_deref(),Some(NodeModel::SiteRule(p)) if p.detail!=item.detail||p.editable!=item.editable||p.source_index!=item.source_index);node.parent=root;
+            if let Some(NodeModel::SiteRule(p))=node.model.as_deref_mut(){p.detail=item.detail;p.editable=item.editable;p.source_index=item.source_index;p.cancel_input=false;}else{node.model=Some(Box::new(NodeModel::SiteRule(SiteRulePresentation{detail:item.detail,editable:item.editable,source_index:item.source_index,cancel_input:false})));}
+        }
+        if invalidated{for node in self.nodes.values(){let mut node=node.borrow_mut();if let Some(NodeModel::SiteRule(p))=node.model.as_deref_mut(){p.cancel_input=true;node.state.action_cancel();}}}plan
+    }
+    fn site_rule_scene(&self)->ffi::SiteRuleScene{
+        let root=self.nodes.get(&(11,0,0,"preferences.site-rules".into())).map_or(0,|node|node.borrow().id);let by_id=self.nodes.iter().map(|(key,node)|(node.borrow().id,(key,node))).collect::<BTreeMap<_,_>>();
+        let children=self.order.iter().filter_map(|id|{let (key,node)=by_id.get(id)?;let node=node.borrow();let Some(NodeModel::SiteRule(p))=node.model.as_deref() else{return None;};if root==0||node.parent!=root{return None;}Some(ffi::SiteRuleSceneChild{id:node.id,parent:node.parent,key:key.3.clone(),detail:p.detail.clone(),editable:p.editable,cancel_input:p.cancel_input})}).collect();ffi::SiteRuleScene{root,children}
+    }
+    fn site_rule_target(&self,key:&str,id:u64)->ffi::SiteRuleTarget{
+        let invalid=||ffi::SiteRuleTarget{valid:false,index:0};let Some(node)=self.nodes.get(&(13,0,0,key.to_owned())) else{return invalid();};let node=node.borrow();if !node.alive||!node.attached||!node.state.enabled||id==0||id!=node.id{return invalid();}if let Some(NodeModel::SiteRule(p))=node.model.as_deref(){if p.editable{return ffi::SiteRuleTarget{valid:true,index:p.source_index};}}invalid()
+    }
     // IDs are scope-local. Compare a live lease's owner token in O(1), never
     // infer ownership from numeric IDs or a graph allocation's reusable address.
     fn owns_input(&self,input:&ActionControl)->bool{input.read_node(|node|Rc::ptr_eq(&self.owner,&node.owner)).unwrap_or(false)}
@@ -1997,7 +2022,7 @@ impl ActionControl {
     fn node_select_reset_prefix(&mut self)->(){self.write_node(|r|{if let Some(NodeModel::Select(s))=r.model.as_deref_mut(){s.reset_prefix()}else{()}}).unwrap_or_else(||())}
     fn node_select_input(&mut self,lower_text: &str, now_ms: u64, enabled: bool)->bool{self.write_node(|r|{let gate=r.state.enabled;if let Some(NodeModel::Select(s))=r.model.as_deref_mut(){s.input(lower_text,now_ms,enabled&&gate)}else{false}}).unwrap_or_else(||false)}
     fn node_parent_id(&self)->u64{self.read_node(|node|node.parent).unwrap_or(0)}
-    fn node_model_kind(&self)->u32{self.read_node(|r|match r.model.as_deref(){Some(NodeModel::Checkbox(_))=>1,Some(NodeModel::Toggle(_))=>2,Some(NodeModel::Select(_))=>3,Some(NodeModel::Workspace(_))=>4,Some(NodeModel::History(_))=>5,Some(NodeModel::Palette(_))=>6,Some(NodeModel::PaletteRoot(_))|Some(NodeModel::FormRoot(_))|None=>0}).unwrap_or(0)}
+    fn node_model_kind(&self)->u32{self.read_node(|r|match r.model.as_deref(){Some(NodeModel::Checkbox(_))=>1,Some(NodeModel::Toggle(_))=>2,Some(NodeModel::Select(_))=>3,Some(NodeModel::Workspace(_))=>4,Some(NodeModel::History(_))=>5,Some(NodeModel::Palette(_))=>6,Some(NodeModel::SiteRule(_))=>7,Some(NodeModel::PaletteRoot(_))|Some(NodeModel::FormRoot(_))|None=>0}).unwrap_or(0)}
     fn node_checkbox_init(&mut self,checked:bool)->bool{self.write_node(|r|match r.model.as_deref(){Some(NodeModel::Checkbox(_))=>true,Some(_)=>false,None=>{r.model=Some(Box::new(NodeModel::Checkbox(CheckboxState{checked})));true}}).unwrap_or(false)}
     fn node_checked(&self)->bool{self.read_node(|r|matches!(r.model.as_deref(),Some(NodeModel::Checkbox(s)) if s.checked())).unwrap_or(false)}
     fn node_set_checked(&mut self,checked:bool)->bool{self.write_node(|r|if let Some(NodeModel::Checkbox(s))=r.model.as_deref_mut(){s.set_checked(checked)}else{false}).unwrap_or(false)}
@@ -3254,6 +3279,38 @@ mod tests {
     fn node_pin(name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:2,high:0,low:0,name:name.into()}}
     fn node_close(low:u64)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:10,high:7,low,name:String::new()}}
     fn node_named(kind:u32,name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind,high:0,low:0,name:name.into()}}
+    fn site_rule(key:&str,detail:&str,editable:bool,source_index:usize)->ffi::SiteRuleSceneInput{ffi::SiteRuleSceneInput{key:key.into(),detail:detail.encode_utf16().collect(),editable,source_index}}
+    fn site_tree()->Box<ActionGraph>{let mut g=new_action_graph();assert!(g.reconcile_site_rules(vec![site_rule("a","First",true,3),site_rule("b","Managed",false,7)]).admitted);g}
+    #[test] fn site_rule_tree_owns_parent_order_copy_editability_and_scope(){
+        let mut g=site_tree();let tree=g.site_rule_scene();assert_ne!(tree.root,0);assert_eq!(tree.children.len(),2);assert!(tree.children.iter().all(|n|n.parent==tree.root));assert!(tree.children[0].editable&&!tree.children[1].editable);assert_eq!(tree.children[0].detail,"First".encode_utf16().collect::<Vec<_>>());let a=g.acquire(&node_named(13,"a"));assert_eq!(a.node_model_kind(),7);assert_eq!(a.node_parent_id(),tree.root);assert!(g.owns_input(&a));assert_eq!(g.acquire(&node_named(11,"preferences.site-rules")).action_node_id(),0);
+    }
+    #[test] fn site_rule_target_resolves_backend_index_after_display_order_and_source_shift(){
+        let mut g=site_tree();let a=g.acquire(&node_named(13,"a"));let id=a.action_node_id();assert_eq!(g.site_rule_target("a",id).index,3);assert!(g.site_rule_target("a",id).valid);g.reconcile_site_rules(vec![site_rule("b","Managed",false,0),site_rule("a","Updated",true,9)]);assert_eq!(g.site_rule_target("a",id).index,9);assert_eq!(g.site_rule_scene().children[1].id,id);assert!(g.site_rule_target("a",id).valid);
+    }
+    #[test] fn site_rule_target_rejects_managed_unbound_disabled_missing_and_stale_nodes(){
+        let mut g=site_tree();let raw=g.site_rule_scene();assert!(!g.site_rule_target("a",raw.children[0].id).valid);let mut a=g.acquire(&node_named(13,"a"));let b=g.acquire(&node_named(13,"b"));let id=a.action_node_id();assert!(!g.site_rule_target("b",b.action_node_id()).valid);assert!(!g.site_rule_target("missing",id).valid);assert!(!g.site_rule_target("a",0).valid);assert!(!g.site_rule_target("b",id).valid);a.action_enabled(false);assert!(!g.site_rule_target("a",id).valid);a.action_enabled(true);g.reconcile_site_rules(vec![site_rule("a","Managed now",false,3)]);assert!(!g.site_rule_target("a",id).valid);g.reconcile_site_rules(vec![]);assert!(!g.site_rule_target("a",id).valid);
+    }
+    #[test] fn site_rule_identical_projection_preserves_node_lease_and_pending_input(){
+        let mut g=site_tree();let mut a=g.acquire(&node_named(13,"a"));let id=a.action_node_id();a.action_focus(true);a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);let plan=g.reconcile_site_rules(vec![site_rule("a","First",true,3),site_rule("b","Managed",false,7)]);assert_eq!((plan.created,plan.retired),(0,0));assert_eq!(a.action_node_id(),id);assert!(a.action_pending()&&a.action_snapshot().focused);assert!(g.site_rule_scene().children.iter().all(|n|!n.cancel_input));
+    }
+    #[test] fn site_rule_batch_changes_cancel_sibling_input_preserve_values_ids_and_focus(){
+        let mut g=site_tree();let mut a=g.acquire(&node_named(13,"a"));let id=a.action_node_id();a.action_focus(true);a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);g.reconcile_site_rules(vec![site_rule("a","First",true,3),site_rule("b","Changed policy",true,7)]);assert!(!a.action_pending());assert!(a.action_snapshot().focused);assert_eq!(a.action_node_id(),id);assert!(g.site_rule_scene().children.iter().all(|n|n.cancel_input));
+    }
+    #[test] fn site_rule_invalid_keys_sources_and_model_kinds_reject_atomically(){
+        let mut g=site_tree();let mut a=g.acquire(&node_named(13,"a"));a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);let before=g.site_rule_scene();for items in [vec![site_rule("a","Changed",false,1),site_rule("a","Duplicate",true,2)],vec![site_rule("a","Changed",false,1),site_rule("c","Same source",true,1)],vec![site_rule("","Empty",true,0)]]{assert!(!g.reconcile_site_rules(items).admitted);assert!(a.action_pending());assert_eq!(g.site_rule_scene().children[0].detail,before.children[0].detail);assert_eq!(g.site_rule_target("a",a.action_node_id()).index,3);}let mut other=new_action_graph();other.reconcile(vec![node_named(13,"a")]);let mut checked=other.acquire(&node_named(13,"a"));checked.node_checkbox_init(true);assert!(!other.reconcile_site_rules(vec![site_rule("a","First",true,0)]).admitted);assert!(checked.node_checked());
+    }
+    #[test] fn site_rule_hidden_removal_releases_payload_and_reappearance_has_new_id(){
+        let mut g=site_tree();let a=g.acquire(&node_named(13,"a"));let id=a.action_node_id();let record=if let ActionStorage::Shared{node,..}=&a.storage{node.clone()}else{panic!("record missing")};g.reconcile_site_rules(vec![site_rule("b","Managed",false,7)]);assert_eq!(a.action_node_id(),0);assert_eq!(a.node_parent_id(),0);assert!(record.borrow().model.is_none());g.reconcile_site_rules(vec![site_rule("a","First",true,3),site_rule("b","Managed",false,7)]);assert_ne!(g.site_rule_scene().children[0].id,id);assert!(!g.site_rule_target("a",id).valid);
+    }
+    #[test] fn site_rule_replacement_lease_invalidates_old_adapter_but_keeps_projection(){
+        let mut g=site_tree();let mut old=g.acquire(&node_named(13,"a"));let id=old.action_node_id();let current=g.acquire(&node_named(13,"a"));assert_eq!(current.action_node_id(),id);assert!(!g.owns_input(&old));assert!(g.owns_input(&current));assert_eq!(old.action_node_id(),0);assert!(!old.action_key(true,1,true,true).handled);assert_eq!(g.site_rule_target("a",id).index,3);drop(old);assert!(g.owns_input(&current));
+    }
+    #[test] fn site_rule_snapshots_own_raw_utf16_and_roots_survive_empty_results(){
+        let mut g=new_action_graph();let mut item=site_rule("a","日本語 🦀",true,usize::MAX);item.detail.push(0xd800);let expected=item.detail.clone();g.reconcile_site_rules(vec![item]);let a=g.acquire(&node_named(13,"a"));let id=a.action_node_id();let mut snapshot=g.site_rule_scene();let root=snapshot.root;assert_eq!(snapshot.children[0].detail,expected);snapshot.children[0].detail.clear();assert_eq!(g.site_rule_scene().children[0].detail,expected);assert_eq!(g.site_rule_target("a",id).index,usize::MAX);g.reconcile_site_rules(vec![]);assert_eq!(g.site_rule_scene().root,root);assert!(g.site_rule_scene().children.is_empty());assert_eq!(a.node_model_kind(),0);
+    }
+    #[test] fn site_rule_parent_graph_retirement_and_equal_id_foreign_scopes_are_fenced(){
+        let mut left=site_tree();let mut right=site_tree();let mut a=left.acquire(&node_named(13,"a"));let b=right.acquire(&node_named(13,"a"));assert_eq!(a.action_node_id(),b.action_node_id());assert_eq!(a.node_parent_id(),b.node_parent_id());assert!(!left.owns_input(&b)&&!right.owns_input(&a));assert!(!left.reconcile(vec![node_named(13,"a")]).admitted);drop(left);assert_eq!(a.node_parent_id(),0);assert_eq!(a.node_model_kind(),0);assert!(!a.action_key(true,1,true,true).handled);assert!(right.owns_input(&b));
+    }
     #[test] fn form_root_owns_parent_order_style_and_is_not_interactive(){
         let mut g=new_form_graph(true,8,true,false);let a=g.append_form_action();let b=g.append_form_action();let scene=g.form_scene();assert_ne!(scene.root,0);assert_eq!(scene.children,vec![a.action_node_id(),b.action_node_id()]);assert_eq!(a.node_parent_id(),scene.root);assert_eq!(b.node_parent_id(),scene.root);let style=g.form_style();assert!(style.vertical&&style.intrinsic&&!style.dialog&&!style.shared);assert_eq!(style.spacing,8);let root=ffi::ActionNodeKey{kind:12,high:0,low:0,name:String::new()};assert_eq!(g.acquire(&root).action_node_id(),0);assert!(!g.retire_form_action(scene.root));
     }
