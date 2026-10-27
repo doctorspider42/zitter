@@ -4228,7 +4228,7 @@ void WorkspaceShell::Detach() {
   workspace_appearance_ = nullptr;
   settings_scroll_ = nullptr;
   settings_root_ = nullptr;
-  chrome_node_graph_.reset();chrome_workspace_ids_.clear();history_node_graph_.reset();
+  chrome_node_graph_.reset();chrome_workspace_ids_.clear();history_node_graph_.reset();palette_node_graph_.reset();
   pin_button_ = nullptr;
   nav_buttons_.fill(nullptr);
   workspace_buttons_.clear();
@@ -5981,6 +5981,23 @@ void WorkspaceShell::RebuildSuggestions() {
   size_t preserved=0;bool found_selected=false;
   if(selected){auto found=std::find(suggestions_.begin(),suggestions_.end(),*selected);if(found!=suggestions_.end()){preserved=found-suggestions_.begin();found_selected=true;}}
   palette->Reconcile(suggestions_.size(),preserved,found_selected);
+  std::vector<std::string> palette_node_keys;
+#if BUILDFLAG(IS_MAC)
+  if(palette->scene()){
+    if(!palette_node_graph_)palette_node_graph_=std::make_shared<SidebarNodeGraphState>();
+    rust::Vec<sidebar::ActionNodeKey> keys;keys.reserve(suggestions_.size());palette_node_keys.reserve(suggestions_.size());
+    std::map<std::string,size_t> occurrences;
+    for(const auto& item:suggestions_){
+      // Frame the target projection, not its current list index or display text.
+      // Native browser services remain authoritative for executing that target.
+      base::ListValue identity;identity.Append(state_.profile_id);identity.Append(state_.workspace_id);identity.Append(base::UTF16ToUTF8(suggestions_text_));identity.Append(command_palette_);identity.Append(new_tab_);
+      identity.Append(item.url.spec());identity.Append(item.tab?base::NumberToString(*item.tab):std::string());identity.Append(item.workspace_id);identity.Append(item.pin_id);identity.Append(item.workspace_only);identity.Append(item.command_id);identity.Append(item.target_workspace_id);identity.Append(item.command_page_id);
+      std::string target;CHECK(base::JSONWriter::Write(identity,&target));identity.Append(base::NumberToString(occurrences[target]++));
+      std::string name;CHECK(base::JSONWriter::Write(identity,&name));palette_node_keys.push_back(name);keys.push_back({6,0,0,std::move(name)});
+    }
+    CHECK(palette_node_graph_->graph->reconcile(std::move(keys)).admitted)<<"Invalid palette logical node projection";
+  }
+#endif
   suggestion_list_->RemoveAllChildViews();
   for (size_t i = 0; i < suggestions_.size(); ++i) {
     const auto& item = suggestions_[i];
@@ -5997,7 +6014,7 @@ void WorkspaceShell::RebuildSuggestions() {
               : item.title == u"Otwórz" ? &vector_icons::kArrowForwardIcon
                                         : &vector_icons::kSearchIcon;
     suggestion_list_->AddChildView(CreateSceneRow(
-        base::BindRepeating(&WorkspaceShell::RunSuggestion,weak_factory_.GetWeakPtr(),i),std::move(spec),base::BindRepeating(&WorkspaceShell::ScheduleMetalPalette,weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak_factory_.GetWeakPtr())));
+        base::BindRepeating(&WorkspaceShell::RunSuggestion,weak_factory_.GetWeakPtr(),i),std::move(spec),base::BindRepeating(&WorkspaceShell::ScheduleMetalPalette,weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak_factory_.GetWeakPtr()),{palette_node_graph_,6,{},palette_node_graph_?palette_node_keys[i]:std::string()}));
   }
   suggestion_list_->SetVisible(!suggestions_.empty());
   suggestion_scroll_->view()->SetVisible(!suggestions_.empty());

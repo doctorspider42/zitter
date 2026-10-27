@@ -1751,7 +1751,7 @@ type ActionNodeIdentity=(u32,u64,u64,String);
 fn action_node_key(key:&ffi::ActionNodeKey)->Option<ActionNodeIdentity>{
     match key.kind {
         kind @ (1|10) if (key.high!=0||key.low!=0)&&key.name.is_empty()=>Some((kind,key.high,key.low,String::new())),
-        kind @ (2|3|4|5) if key.high==0&&key.low==0&&!key.name.is_empty()=>Some((kind,0,0,key.name.clone())),
+        kind @ (2|3|4|5|6) if key.high==0&&key.low==0&&!key.name.is_empty()=>Some((kind,0,0,key.name.clone())),
         _=>None,
     }
 }
@@ -3016,6 +3016,15 @@ mod tests {
     fn node_pin(name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:2,high:0,low:0,name:name.into()}}
     fn node_close(low:u64)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind:10,high:7,low,name:String::new()}}
     fn node_named(kind:u32,name:&str)->ffi::ActionNodeKey{ffi::ActionNodeKey{kind,high:0,low:0,name:name.into()}}
+    #[test] fn action_graph_palette_targets_reorder_and_old_index_leases_cannot_activate(){
+        let mut g=new_action_graph();let p=g.reconcile(vec![node_named(6,"context/target-a/0"),node_named(6,"context/target-b/0")]);let mut old=g.acquire(&node_named(6,"context/target-a/0"));old.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);
+        let q=g.reconcile(vec![node_named(6,"context/target-b/0"),node_named(6,"context/target-a/0")]);assert_eq!(q.ids,vec![p.ids[1],p.ids[0]]);let next=g.acquire(&node_named(6,"context/target-a/0"));assert_eq!(next.action_node_id(),p.ids[0]);assert!(!next.action_pending());assert!(!old.action_pointer(ffi::PointerPhase::Release,1,1,true,true,true).handled);
+        g.reconcile(vec![node_named(6,"other-context/target-a/0")]);assert_eq!(next.action_node_id(),0);
+    }
+    #[test] fn action_graph_palette_duplicate_targets_and_result_namespaces_are_distinct(){
+        let mut g=new_action_graph();let p=g.reconcile(vec![node_named(6,"target/0"),node_named(6,"target/1"),node_named(5,"target/0")]);assert!(p.admitted);assert_eq!(p.ids.iter().copied().collect::<BTreeSet<_>>().len(),3);
+        let invalid=g.reconcile(vec![node_named(6,"")]);assert!(!invalid.admitted);assert_eq!(invalid.ids,p.ids);
+    }
     #[test] fn action_graph_history_records_keep_ids_across_refresh_and_retire_old_results(){
         let mut g=new_action_graph();let p=g.reconcile(vec![node_named(5,"profile-a/url/time/0"),node_named(5,"profile-a/url/time/1")]);assert!(p.admitted);assert_ne!(p.ids[0],p.ids[1]);
         let mut old=g.acquire(&node_named(5,"profile-a/url/time/0"));old.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);

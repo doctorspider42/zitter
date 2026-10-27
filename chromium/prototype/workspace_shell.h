@@ -828,6 +828,7 @@ class WorkspaceShell final : public ui::EventHandler,
   std::unique_ptr<views::Widget> settings_widget_;
   ShellState state_;
   std::vector<Suggestion> suggestions_;
+  std::shared_ptr<SidebarNodeGraphState> palette_node_graph_;
   std::vector<PaletteResult> search_results_;
   std::u16string search_query_;
   base::OneShotTimer search_timer_;

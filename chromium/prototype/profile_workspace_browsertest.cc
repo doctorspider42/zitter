@@ -4259,6 +4259,19 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AppearanceActionHostsKeyboardA
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_saved();}));
 }
 
+// Compile-only until the requested bulk UI checkpoint.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PaletteLogicalNodesFollowTargetsAcrossTitleOrderAndDuplicateRefresh) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));window_->FocusAddressBar();SetPaletteQuery(u"Palette nodes");
+  const bool rust=shell->workspace_input()->rust_editor();std::vector<PaletteResult> results;for(int i=0;i<2;++i){PaletteResult item;item.title=u"Target "+base::NumberToString16(i);item.url=embedded_test_server()->GetURL("/storage_probe.html?palette-node-"+base::NumberToString(i));results.push_back(std::move(item));}
+  shell->SetSearchResults(u"Palette nodes","work-profile",results);auto* list=shell->palette_results_view();
+  auto find=[&](const GURL& url)->views::View*{const auto& items=shell->suggestions();for(size_t i=0;i<items.size();++i)if(items[i].url==url)return list->children()[i].get();return nullptr;};
+  const auto target=results[0].url;auto* first=find(target);ASSERT_TRUE(first);const auto id=shell->sidebar_node_id_for_testing(first);if(rust)EXPECT_NE(0u,id);else EXPECT_EQ(0u,id);
+  auto held=first->parent()->RemoveChildViewT(first);results[0].title=u"Renamed target";std::swap(results[0],results[1]);shell->SetSearchResults(u"Palette nodes","work-profile",results);auto* replacement=find(target);ASSERT_TRUE(replacement);EXPECT_EQ(id,shell->sidebar_node_id_for_testing(replacement));
+  if(rust){EXPECT_EQ(0u,shell->sidebar_node_id_for_testing(held.get()));ui::KeyEvent space(ui::EventType::kKeyPressed,ui::VKEY_SPACE,0);held->OnKeyPressed(space);EXPECT_TRUE(shell->address_visible());}
+  results.push_back(results[1]);shell->SetSearchResults(u"Palette nodes","work-profile",results);std::vector<uint64_t> duplicates;for(size_t i=0;i<shell->suggestions().size();++i)if(shell->suggestions()[i].url==target)duplicates.push_back(shell->sidebar_node_id_for_testing(list->children()[i].get()));ASSERT_EQ(2u,duplicates.size());if(rust){EXPECT_EQ(id,duplicates[0]);EXPECT_NE(duplicates[0],duplicates[1]);}
+  auto* last=find(target);ASSERT_TRUE(last);auto held_last=last->parent()->RemoveChildViewT(last);SetPaletteQuery(u"Other query");if(rust)EXPECT_EQ(0u,shell->sidebar_node_id_for_testing(held_last.get()));
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ResultRowHostsAddressPaletteAXAndPendingReplacement) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
   const auto initial=embedded_test_server()->GetURL("/storage_probe.html?result-host");ASSERT_TRUE(window_->NavigateFromBar(initial,false));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));ASSERT_TRUE(content::ExecJs(window_->contents("work"),"document.title='Result host sentinel';"));shell->SetPinned(true);shell->ShowSidebar();shell->sidebar_widget()->LayoutRootViewIfNecessary();const bool rust=shell->workspace_input()->rust_editor();
