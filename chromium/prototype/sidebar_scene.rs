@@ -47,7 +47,7 @@ mod ffi {
     enum PreferenceRowKind { Theme, Pinned, Animations, Search, Toggle, Text, Picker, Action, Directory, SiteEditor, SiteRules, ClearData, ShortcutHint }
     #[repr(u32)]
     #[derive(Debug)]
-    enum FormCommand { None, WorkspaceSave, WorkspaceToggle, WorkspaceRemove, WorkspaceProfiles, WorkspaceImport, ProfileCreate, ProfileRename, ProfileDelete, ProfileBack, ImportApply, PreferenceText, PreferenceSite, PreferenceClear, PreferenceDirectory, History, Workspace, Passwords, Profiles, Import, Proxy, Certificates, Providers, Shortcuts, TimeMachine, WorkspaceDismiss, PreferencesDismiss, ImportDismiss, ToolsDismiss, PreferenceCategory, PreferenceMore, WorkspaceColorPreset, WorkspaceEmojiPreset }
+    enum FormCommand { None, WorkspaceSave, WorkspaceToggle, WorkspaceRemove, WorkspaceProfiles, WorkspaceImport, ProfileCreate, ProfileRename, ProfileDelete, ProfileBack, ImportApply, PreferenceText, PreferenceSite, PreferenceClear, PreferenceDirectory, History, Workspace, Passwords, Profiles, Import, Proxy, Certificates, Providers, Shortcuts, TimeMachine, WorkspaceDismiss, PreferencesDismiss, ImportDismiss, ToolsDismiss, PreferenceCategory, PreferenceMore, WorkspaceColorPreset, WorkspaceEmojiPreset, HistoryMore }
     #[derive(Debug)]
     enum FormPanel { None, Workspace, Profiles, Import, Preferences, Tools }
     struct FormCommandBinding { command: FormCommand, panel: FormPanel, key: String, index: usize }
@@ -1946,13 +1946,13 @@ fn form_command_panel(command:ffi::FormCommand)->ffi::FormPanel {
         C::WorkspaceSave|C::WorkspaceToggle|C::WorkspaceRemove|C::WorkspaceProfiles|C::WorkspaceImport|C::WorkspaceDismiss|C::WorkspaceColorPreset|C::WorkspaceEmojiPreset=>P::Workspace,
         C::ProfileCreate|C::ProfileRename|C::ProfileDelete|C::ProfileBack=>P::Profiles,
         C::ImportApply|C::ImportDismiss=>P::Import,
-        C::ToolsDismiss=>P::Tools,
+        C::ToolsDismiss|C::HistoryMore=>P::Tools,
         C::PreferenceText|C::PreferenceSite|C::PreferenceClear|C::PreferenceDirectory|C::History|C::Workspace|C::Passwords|C::Profiles|C::Import|C::Proxy|C::Certificates|C::Providers|C::Shortcuts|C::TimeMachine|C::PreferencesDismiss|C::PreferenceCategory|C::PreferenceMore=>P::Preferences,
         _=>P::None,
     }
 }
 
-fn valid_form_command(command:ffi::FormCommand,key:&str)->bool{use ffi::FormCommand as C;match command{C::PreferenceText=>!key.is_empty(),C::WorkspaceSave|C::WorkspaceToggle|C::WorkspaceRemove|C::WorkspaceProfiles|C::WorkspaceImport|C::ProfileCreate|C::ProfileRename|C::ProfileDelete|C::ProfileBack|C::ImportApply|C::PreferenceSite|C::PreferenceClear|C::PreferenceDirectory|C::History|C::Workspace|C::Passwords|C::Profiles|C::Import|C::Proxy|C::Certificates|C::Providers|C::Shortcuts|C::TimeMachine|C::WorkspaceDismiss|C::PreferencesDismiss|C::ImportDismiss|C::ToolsDismiss|C::PreferenceMore=>key.is_empty(),_=>false}}
+fn valid_form_command(command:ffi::FormCommand,key:&str)->bool{use ffi::FormCommand as C;match command{C::PreferenceText=>!key.is_empty(),C::WorkspaceSave|C::WorkspaceToggle|C::WorkspaceRemove|C::WorkspaceProfiles|C::WorkspaceImport|C::ProfileCreate|C::ProfileRename|C::ProfileDelete|C::ProfileBack|C::ImportApply|C::PreferenceSite|C::PreferenceClear|C::PreferenceDirectory|C::History|C::Workspace|C::Passwords|C::Profiles|C::Import|C::Proxy|C::Certificates|C::Providers|C::Shortcuts|C::TimeMachine|C::WorkspaceDismiss|C::PreferencesDismiss|C::ImportDismiss|C::ToolsDismiss|C::PreferenceMore|C::HistoryMore=>key.is_empty(),_=>false}}
 struct SidebarTabsModel {first:usize,second:usize,split:bool,plan:ffi::TabPlan}
 struct SidebarPairModel {first:(u64,u64),second:(u64,u64),visible:bool}
 enum NodeModel { SidebarTabs(SidebarTabsModel), SidebarPair(SidebarPairModel), SidebarPinGroup(SidebarPinGroupModel), SidebarPin(SidebarPinModel), FormCommand(FormCommandModel), Checkbox(CheckboxState), Toggle(ToggleState), Select(SelectState), Workspace(WorkspacePresentation), History(HistoryPresentation), Palette(PalettePresentation), PaletteRoot(PaletteSceneState), FormRoot(ffi::FormGroupStyle), SiteRule(SiteRulePresentation), SidebarTab(SidebarTabModel) }
@@ -3794,7 +3794,8 @@ mod tests {
     }
     #[test] fn form_command_panels_cover_workspace_profile_and_import_actions(){
         use ffi::{FormCommand as C,FormPanel as P};let mut g=new_form_graph(false,0,false,false);
-        for (panel,commands) in [(P::Workspace,vec![C::WorkspaceSave,C::WorkspaceToggle,C::WorkspaceRemove,C::WorkspaceProfiles,C::WorkspaceImport,C::WorkspaceDismiss]),(P::Profiles,vec![C::ProfileCreate,C::ProfileRename,C::ProfileDelete,C::ProfileBack]),(P::Import,vec![C::ImportApply,C::ImportDismiss]),(P::Tools,vec![C::ToolsDismiss])]{for command in commands{let mut input=g.append_form_action();assert!(input.node_form_command_init(command,""));assert_eq!(input.node_form_command().panel,panel);}}
+        for (panel,commands) in [(P::Workspace,vec![C::WorkspaceSave,C::WorkspaceToggle,C::WorkspaceRemove,C::WorkspaceProfiles,C::WorkspaceImport,C::WorkspaceDismiss]),(P::Profiles,vec![C::ProfileCreate,C::ProfileRename,C::ProfileDelete,C::ProfileBack]),(P::Import,vec![C::ImportApply,C::ImportDismiss]),(P::Tools,vec![C::ToolsDismiss,C::HistoryMore])]{for command in commands{let mut input=g.append_form_action();assert!(input.node_form_command_init(command,""));assert_eq!(input.node_form_command().panel,panel);}}
+        let mut keyed=g.append_form_action();assert!(!keyed.node_form_command_init(C::HistoryMore,"page"));assert_eq!(keyed.node_model_kind(),0);
     }
     #[test] fn preference_command_panel_includes_navigation_and_dynamic_pagination(){
         use ffi::{FormCommand as C,FormPanel as P};let mut g=new_form_graph(false,0,false,false);

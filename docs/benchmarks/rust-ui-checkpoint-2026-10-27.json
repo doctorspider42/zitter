@@ -1,0 +1,52 @@
+{
+  "date": "2026-10-27",
+  "status": "full-ui-matrix-passed",
+  "source_base_commit": "1bd220c7e8ca385d214b7790475117dfe8096bd4",
+  "note": "Binary built from the working tree that is committed together with this report (test fixes, Peek tooltip fix, HistoryMore command).",
+  "binary_uuid": "4C4C44A0-5555-3144-A1F3-DA46F7413553",
+  "commands": {
+    "metal": "MTL_DEBUG_LAYER=1 zitter_prototype_ui_lab --gtest_filter=* --test-launcher-jobs=1 --test-launcher-retry-limit=0 --disable-component-update --zitter-sidebar=rust-metal",
+    "views": "zitter_prototype_ui_lab --gtest_filter=*-ZitterMetalSidebarBrowserTest.* --test-launcher-jobs=1 --test-launcher-retry-limit=0 --disable-component-update"
+  },
+  "full_matrix": {
+    "metal": {
+      "counts": {
+        "SUCCESS": 273
+      },
+      "summary": "build/ui-checkpoint-20261027T223924Z/metal-summary.json",
+      "summary_sha256": "bf5437756953cdfcb91be335076684b79af464b1855ea63e7665de69cf84d16e",
+      "log": "build/ui-checkpoint-20261027T223924Z/metal.log",
+      "log_sha256": "d3f72fc4b1329efe94b5db7ac559aa4ddec4900af3a800525634b7d9c2752df2"
+    },
+    "views": {
+      "counts": {
+        "SUCCESS": 224
+      },
+      "summary": "build/ui-checkpoint-20261027T223924Z/views-summary.json",
+      "summary_sha256": "3455bf4d4c65c377cbdce999b5dd0211042cf6a09b0782e198b81411886d16dd",
+      "log": "build/ui-checkpoint-20261027T223924Z/views.log",
+      "log_sha256": "71eca0800af04dbd9a30d577dd1ecca34f36756bf5f344d78f2f93da26e74a14"
+    }
+  },
+  "first_pass": {
+    "metal": "267 passed, 3 failed, 3 crashed",
+    "views": "223 passed, 1 crashed",
+    "run": "build/ui-checkpoint-20261027T215327Z"
+  },
+  "fixes": [
+    "Detached-view default actions crashed in Views targeting without a widget; tests now install a ViewTargeter on the held adapter/oracle Label.",
+    "History \"Pokaż więcej\" is now the typed Rust FormCommand::HistoryMore (Tools panel), as the test expected.",
+    "ScenePeekTitle handles tooltips only when elided, matching views::Label.",
+    "Peek page retitles asynchronously; the frame-text probe re-applies its title while waiting.",
+    "Site-rule observer test lays out after scrolling before the synthetic click, like its passing sibling.",
+    "Context-menu background traversal skips event-transparent FocusRing decoration of Rust adapters."
+  ],
+  "headless": {
+    "rust": 487,
+    "python": 68,
+    "boundaries": "passed"
+  },
+  "limits": [
+    "No manual IME/VoiceOver/trackpad/scale acceptance, performance comparison or release packaging."
+  ]
+}

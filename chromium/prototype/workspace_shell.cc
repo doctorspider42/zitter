@@ -1064,6 +1064,8 @@ class ScenePeekTitle final : public views::View {
   gfx::Size GetMinimumSize() const override{return gfx::Size(std::min(NaturalSize().width(),gfx::GetStringWidth(gfx::kEllipsisUTF16,TextFont())),LineHeight());}
   sidebar::Item Scene(gfx::RectF bounds,gfx::RectF clip) const{sidebar::Item i{};i.kind=27;i.x=bounds.x();i.y=bounds.y();i.width=bounds.width();i.height=bounds.height();i.title=base::UTF16ToUTF8(text_);i.font_size=TextFont().GetFontSize();i.font_weight=static_cast<int>(gfx::Font::Weight::SEMIBOLD);i.active=true;i.tile=base::i18n::IsRTL();i.ink=Tone(this,GetEnabledInViewsSubtree()?kInk:kDisabled);i.clip={clip.x(),clip.y(),clip.width(),clip.height()};return i;}
   void OnBoundsChanged(const gfx::Rect& old) override{views::View::OnBoundsChanged(old);UpdateTooltip();}
+  // Like views::Label, only an elided title handles tooltips.
+  views::View* GetTooltipHandlerForPoint(const gfx::Point& point) override{return GetTooltipText().empty()?nullptr:views::View::GetTooltipHandlerForPoint(point);}
   void OnThemeChanged() override{views::View::OnThemeChanged();natural_.reset();PreferredSizeChanged();UpdateTooltip();changed_.Run();}
   void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);changed_.Run();}
  private:
@@ -7787,7 +7789,7 @@ void WorkspaceShell::BuildRustToolsForm(){
       case Kind::Action:{
         views::View* button;
         if(node.role==Role::HistoryClear){button=PreferenceAction(parent,true,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell&&shell->history_period_&&shell->callbacks_.clear_browsing_data)shell->callbacks_.clear_browsing_data.Run({static_cast<int>(PickerIndex(shell->history_period_).value_or(0)),true,false,false});},weak),label);history_clear_=button;}
-        else if(node.role==Role::HistoryMore){button=PreferenceAction(parent,true,base::BindRepeating(&WorkspaceShell::RefreshHistory,weak,true),label,true);history_more_=button;}
+        else if(node.role==Role::HistoryMore){button=PreferenceAction(parent,true,{},label,true);BindFormCommand(button,sidebar::FormCommand::HistoryMore);history_more_=button;}
         else button=AddAction(parent,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,int action){if(shell)shell->PostToolsAction(action);},weak,node.action),label);
         control=button;break;
       }
@@ -8468,6 +8470,7 @@ void WorkspaceShell::DispatchFormCommand(views::View* source,const sidebar::Form
     case C::WorkspaceDismiss:settings_widget_->Hide();RestorePageFocus();break;
     case C::PreferencesDismiss:CloseOverlays();RestorePageFocus();break;
     case C::ToolsDismiss:SetShortcutRecording(false);tools_widget_->Hide();RestorePageFocus();break;
+    case C::HistoryMore:if(history_more_==source)RefreshHistory(true);break;
     case C::ImportDismiss:{if(import_applying_)return;const auto alive=weak_factory_.GetWeakPtr();callbacks_.dismiss_import.Run();if(!alive)return;CloseOverlays();RestorePageFocus();break;}
     case C::WorkspaceColorPreset:case C::WorkspaceEmojiPreset:{
       const auto target=sidebar::appearance_command_target(command,binding.index);if(!target.valid)return;

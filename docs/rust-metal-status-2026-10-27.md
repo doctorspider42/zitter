@@ -86,6 +86,12 @@ Kolejność jest propozycją na wznowienie; testy z oknami pozostają odłożone
 
 ## Co jest sprawdzone, a co odłożone
 
+**Pełny checkpoint UI 2026-10-27:** po poprawkach **273/273 Metal i 224/224 Views**
+(pierwszy przebieg: 6 niepowodzeń Metal, 1 Views — trzy crashe testów na odłączonych
+widokach, brakująca komenda Rust `HistoryMore`, tooltip tytułu Peek, wyścig tytułu
+strony w Peek, synchronizacja układu w teście wyjątków, FocusRing w teście menu).
+[Raport](benchmarks/rust-ui-checkpoint-2026-10-27.json). To zastępuje checkpoint 10-26.
+
 Dla etapów pary splitu i statusów: **487 testów Rust**, **68 testów Python**,
 kontrola granic zależności; `sidebar_scene_unittests`, `zitter_ui_lab` i
 `zitter_prototype_ui_lab` skompilowane. Testy UI nie były uruchamiane.
