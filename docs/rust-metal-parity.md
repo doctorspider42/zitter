@@ -14,7 +14,42 @@ accumulate compiled cases for a later bulk checkpoint. Build, Rust/Python and SD
 checks without windows remain enabled. No computer shutdown is requested.
 The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 
-## Latest headless implementation: Peek toolbar and title
+## Latest headless implementation: node-owned checkbox and switch models
+
+Source `66be7f5` moves checkbox values and switch checked/slide/hover transitions
+into optional typed payloads on Rust ActionNodeRecord. Native controls retain
+only the input lease. Their old CheckboxState/ToggleState C++ bridge types and
+constructors are gone; standalone constructors remain only in Rust tests for
+legacy reducer oracles. Ordinary actions allocate no typed payload.
+
+Same-kind binding preserves the logical model when an adapter is replaced;
+wrong-kind, stale, standalone and retired handles reject model operations.
+Dropping an adapter leaves its model in the live graph. Node retirement or graph
+destruction releases the payload immediately, even if an old adapter still owns
+its input record. User flips require enabled graph input plus native admission;
+backend projection can refresh a disabled control. Native stores, managed-setting
+checks, profile/import admission and command callbacks remain authoritative.
+
+Switch rendering reads checked/progress/hover/animation at one timestamp through
+NodeToggleView. Existing reducers, transition durations and interruption/finish
+policy remain. C++ retains timers/window/Metal/AX adapters. No memory or timing
+improvement has been measured.
+
+Both binaries compile. **334 Rust**, **180 SDK cases plus raster**, **68 live and
+68 clean-archive Python**, scoped GN/boundaries and final Ninja no-op passed;
+all 53 committed/live/staged prototype inputs match. **No UI tests ran.** Eight
+new Rust cases cover ownership, replacement, lease/type admission, disabled
+projection, payload release, legacy animation parity and isolation. Two compiled
+browser cases cover actual model kinds/projection and checked-state notification,
+retirement and a retained adapter through controller teardown.
+[Headless evidence](benchmarks/rust-checked-model-headless-2026-10-27.json).
+
+The preview was not replaced. Native observer/focus/AX/rendering acceptance is
+still deferred. Selector/editor/text models, scene properties/parenting and
+incremental native adapter reconciliation remain to migrate; scoped IDs remain
+UI identity rather than browser authorization.
+
+## Earlier headless implementation: Peek toolbar and title
 
 Source `d2d81d0` replaces Peek's native action controls/title in Rust mode with
 ScenePeekToolbar: five graph-owned inputs, a plain static-text/AX adapter and one

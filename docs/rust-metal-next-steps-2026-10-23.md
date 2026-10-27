@@ -20,9 +20,12 @@ below. Headless validation is current; GUI acceptance is deferred by instruction
    toolbar is now migrated; download row buttons already use Rust-owned groups.
    Preserve native profile/GUID/store authorization and document explicit platform
    adapters. Runtime inventory and GUI acceptance remain pending.
-2. **Own the scene tree and typed models.** Move control properties, checked/
-   selector/editor models, parent/child relationships, lifetime and layout
-   coordination into Rust. The current ActionGraph owns
+2. **Own the scene tree and remaining typed models.** Checkbox/switch values
+   and transitions are now graph-owned. Next move selector options/selection/
+   prefix/popup-token state, then editor/text models and control properties,
+   parent/child relationships, lifetime and layout coordination into Rust.
+   Selector handoff must invalidate old menu/prefix interaction while retaining
+   selected values/options, and rehydrate native label projections from the model. The current ActionGraph owns
    logical identities/input leases for sidebar rows, window chrome, history, palette results, split-pane actions, form action groups and checked/selector input;
    native View trees still own containers and most scene-property projection.
 3. **Reconcile adapters incrementally.** Reuse/reorder native adapters by Rust ID
@@ -33,7 +36,7 @@ below. Headless validation is current; GUI acceptance is deferred by instruction
    copy and form/busy state into Rust; finish outer dialog/palette/container
    placement. Keep native window, IME, clipboard, AX and popup/menu services explicit.
 5. **Run the deferred bulk UI checkpoint when requested.** Include all newly
-   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node, palette-node, split-node, form-action-node, workspace-dismiss-node, activation-observer, checked-selector-node and Peek-toolbar
+   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node, palette-node, split-node, form-action-node, workspace-dismiss-node, activation-observer, checked-selector-node, Peek-toolbar and checked-model
    cases, the full Rust/Metal and Views matrices, and actual pointer/keyboard/
    capture/AX/focus/drag/profile/session regressions. The last completed full matrix
    remains the text-action checkpoint; the later selector full run was interrupted.
@@ -45,7 +48,42 @@ below. Headless validation is current; GUI acceptance is deferred by instruction
    profile persistence/rollback, regenerate the shipped dependency/license manifest
    and Apache-2.0/upstream notices. Keep Rust/Metal opt-in until acceptance is complete.
 
-## Latest headless implementation: Peek toolbar and title
+## Latest headless implementation: node-owned checkbox and switch models
+
+Source `66be7f5` moves checkbox values and switch checked/slide/hover transitions
+into optional typed payloads on Rust ActionNodeRecord. Native controls retain
+only the input lease. Their old CheckboxState/ToggleState C++ bridge types and
+constructors are gone; standalone constructors remain only in Rust tests for
+legacy reducer oracles. Ordinary actions allocate no typed payload.
+
+Same-kind binding preserves the logical model when an adapter is replaced;
+wrong-kind, stale, standalone and retired handles reject model operations.
+Dropping an adapter leaves its model in the live graph. Node retirement or graph
+destruction releases the payload immediately, even if an old adapter still owns
+its input record. User flips require enabled graph input plus native admission;
+backend projection can refresh a disabled control. Native stores, managed-setting
+checks, profile/import admission and command callbacks remain authoritative.
+
+Switch rendering reads checked/progress/hover/animation at one timestamp through
+NodeToggleView. Existing reducers, transition durations and interruption/finish
+policy remain. C++ retains timers/window/Metal/AX adapters. No memory or timing
+improvement has been measured.
+
+Both binaries compile. **334 Rust**, **180 SDK cases plus raster**, **68 live and
+68 clean-archive Python**, scoped GN/boundaries and final Ninja no-op passed;
+all 53 committed/live/staged prototype inputs match. **No UI tests ran.** Eight
+new Rust cases cover ownership, replacement, lease/type admission, disabled
+projection, payload release, legacy animation parity and isolation. Two compiled
+browser cases cover actual model kinds/projection and checked-state notification,
+retirement and a retained adapter through controller teardown.
+[Headless evidence](benchmarks/rust-checked-model-headless-2026-10-27.json).
+
+The preview was not replaced. Native observer/focus/AX/rendering acceptance is
+still deferred. Selector/editor/text models, scene properties/parenting and
+incremental native adapter reconciliation remain to migrate; scoped IDs remain
+UI identity rather than browser authorization.
+
+## Earlier headless implementation: Peek toolbar and title
 
 Source `d2d81d0` replaces Peek's native action controls/title in Rust mode with
 ScenePeekToolbar: five graph-owned inputs, a plain static-text/AX adapter and one
