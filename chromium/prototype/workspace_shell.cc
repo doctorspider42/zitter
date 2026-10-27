@@ -5809,6 +5809,14 @@ constexpr int kProfileCommandBase = 100;
 // Rust plans use the established application command IDs; fail compilation if
 // the native IDs change without updating the Rust UI contract.
 static_assert(kOpenSplit==5&&kCloseSplit==6&&kMoveLeft==7&&kMoveRight==8&&kToggleVertical==9&&kCloseTab==10&&kLinkPeek==20&&kRuleHere==23&&kRemoveRule==24&&kNewFolder==36);
+// Snapshot for the Rust link/route menu: labels, enabled/checked and routing.
+sidebar::LinkMenuState LinkMenuStateFor(const ShellState& state,const GURL& url,const std::string& source,const std::vector<Workspace>& routes) {
+  sidebar::LinkMenuState out{};out.ready=state.configuration_ready;out.host=std::string(url.host());out.source=source;
+  for(const auto& rule:state.link_rules)if(rule.host==url.host()){out.has_rule=true;out.rule_workspace=rule.workspace_id;break;}
+  for(const auto& workspace:routes){std::u16string profile;for(const auto& candidate:state.profiles)if(candidate.id==workspace.profile_id)profile=base::UTF8ToUTF16(candidate.name);
+    out.routes.push_back({workspace.id,base::UTF16ToUTF8(base::UTF8ToUTF16(workspace.name)+u" · "+profile)});}
+  return out;
+}
 sidebar::TabMenuState RowMenuState(const ShellState& state,std::optional<size_t> tab,bool valid,bool http) {
   sidebar::TabMenuState out{};out.ready=state.configuration_ready;out.busy=state.profiles_busy;out.valid=valid;out.tab=tab.value_or(0);out.has_tab=tab.has_value();
   out.split=state.split;out.first=state.split_tabs[0].value_or(0);out.has_first=state.split_tabs[0].has_value();out.second=state.split_tabs[1].value_or(0);out.has_second=state.split_tabs[1].has_value();
@@ -5853,6 +5861,21 @@ void WorkspaceShell::BuildLinkMenu(GURL url, std::string source_workspace) {
   context_url_ = std::move(url); link_source_workspace_ = std::move(source_workspace);
   route_workspaces_ = state_.workspaces;
   route_menu_ = std::make_unique<ui::SimpleMenuModel>(this);
+#if BUILDFLAG(IS_MAC)
+  if (metal_sidebar_) {
+    link_menu_ = std::make_unique<ui::SimpleMenuModel>(this);
+    for (const auto& entry : sidebar::link_context_menu(LinkMenuStateFor(state_, context_url_, link_source_workspace_, route_workspaces_))) {
+      const auto label = base::UTF8ToUTF16(std::string(entry.label));
+      switch (entry.kind) {
+        case 1: link_menu_->AddSeparator(ui::NORMAL_SEPARATOR); break;
+        case 2: link_menu_->AddSubMenu(entry.command, label, route_menu_.get()); break;
+        case 3: route_menu_->AddRadioItem(entry.command, label, 2); break;
+        default: link_menu_->AddItem(entry.command, label);
+      }
+    }
+    return;
+  }
+#endif
   for (size_t i = 0; i < route_workspaces_.size(); ++i) {
     std::u16string profile;
     for (const auto& candidate : state_.profiles)
@@ -6241,6 +6264,10 @@ bool WorkspaceShell::IsCommandIdChecked(int command_id) const {
   if (command_id >= kEmojiBase && command_id < kEmojiBase + static_cast<int>(kWorkspaceEmojis.size()))
     return workspace_emoji(context_workspace_id_) == kWorkspaceEmojis[command_id - kEmojiBase];
   if (command_id == kClearEmoji) return workspace_emoji(context_workspace_id_).empty();
+#if BUILDFLAG(IS_MAC)
+  if (metal_sidebar_ && command_id >= kRouteBase && command_id < kRouteBase + static_cast<int>(route_workspaces_.size()))
+    return sidebar::link_menu_checked(command_id, LinkMenuStateFor(state_, context_url_, link_source_workspace_, route_workspaces_));
+#endif
   if (command_id >= kRouteBase && command_id < kRouteBase + static_cast<int>(route_workspaces_.size()))
     for (const auto& rule : state_.link_rules) if (rule.host == context_url_.host())
       return rule.workspace_id == route_workspaces_[command_id - kRouteBase].id;
@@ -6252,6 +6279,8 @@ bool WorkspaceShell::IsCommandIdChecked(int command_id) const {
 bool WorkspaceShell::IsCommandIdEnabled(int command_id) const {
 #if BUILDFLAG(IS_MAC)
   if(metal_sidebar_&&command_id>=kOpenSplit&&command_id<=kCloseTab)return RustTabCommandEnabled(command_id);
+  if(metal_sidebar_&&((command_id>=kLinkPeek&&command_id<=kRouteSubmenu)||(command_id>=kRouteBase&&command_id<kRouteBase+static_cast<int>(route_workspaces_.size()))))
+    return sidebar::link_menu_enabled(command_id,LinkMenuStateFor(state_,context_url_,link_source_workspace_,route_workspaces_));
 #endif
   if (command_id == kNewFolder || command_id == kRenameFolder || command_id == kDeleteFolder) return state_.configuration_ready && !state_.profiles_busy;
   if (command_id == kRemoveWorkspace) return state_.configuration_ready && !state_.profiles_busy && state_.workspaces.size() > 1;
@@ -6342,6 +6371,23 @@ void WorkspaceShell::ExecuteCommand(int command_id, int) {
         base::BindOnce(&WorkspaceShell::RequestNewFolder, weak_factory_.GetWeakPtr(), context_workspace_id_, folder_parent_id_));
     return;
   }
+#if BUILDFLAG(IS_MAC)
+  if (metal_sidebar_ && ((command_id >= kLinkPeek && command_id <= kRemoveRule) ||
+      (command_id >= kRouteBase && command_id < kRouteBase + static_cast<int>(route_workspaces_.size())))) {
+    // Rust revalidates readiness/rule state and resolves the target workspace.
+    const auto action = sidebar::link_menu_action(command_id, LinkMenuStateFor(state_, context_url_, link_source_workspace_, route_workspaces_));
+    if (action.command == sidebar::LinkMenuCommand::None) return;
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(
+        [](base::WeakPtr<WorkspaceShell> shell, sidebar::LinkMenuCommand command, GURL url, std::string workspace) {
+          if (!shell) return;
+          using C = sidebar::LinkMenuCommand;
+          if (command == C::Peek) shell->callbacks_.peek.Run(url, workspace);
+          else if (command == C::NewTab || command == C::Split) shell->callbacks_.open_link.Run(url, workspace, true, command == C::Split);
+          else if (command == C::SetRule || command == C::RemoveRule) shell->callbacks_.set_link_rule.Run(url, workspace);
+        }, weak_factory_.GetWeakPtr(), action.command, context_url_, std::string(action.workspace)));
+    return;
+  }
+#endif
   if ((command_id >= kLinkPeek && command_id <= kRemoveRule) ||
       (command_id >= kRouteBase && command_id < kRouteBase + static_cast<int>(route_workspaces_.size()))) {
     const auto target = command_id >= kRouteBase ? route_workspaces_[command_id - kRouteBase].id : link_source_workspace_;

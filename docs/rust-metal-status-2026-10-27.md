@@ -91,6 +91,11 @@ przeżywają przebudowę struktury, gdy rustowy węzeł `sidebar.pair` zachowuje
 (`SidebarTabColumnAndPairContainersSurviveStructuralRefresh`; podzbiór sidebar/split/
 pin/folder: 91 Metal, 42 Views zaliczone).
 
+**Menu linków w Ruście:** kompozycja menu linku i podmenu tras, stan enabled/checked
+oraz rozwiązywanie komendy i docelowej przestrzeni są w Ruście; natywnie zostaje
+`SimpleMenuModel`/runner i usługi routingu. Testy Rust 489; podzbiory UI linków/
+menu/Peek i `DomainRoutingAndPersistence` zaliczone w obu trybach.
+
 **Pełny checkpoint UI 2026-10-27:** po poprawkach **273/273 Metal i 224/224 Views**
 (pierwszy przebieg: 6 niepowodzeń Metal, 1 Views — trzy crashe testów na odłączonych
 widokach, brakująca komenda Rust `HistoryMore`, tooltip tytułu Peek, wyścig tytułu

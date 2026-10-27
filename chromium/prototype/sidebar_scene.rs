@@ -101,6 +101,13 @@ mod ffi {
         vertical: bool, tab_count: usize, http: bool,
     }
     struct TabMenuEntry { command: u32, label: String }
+    struct LinkRoute { id: String, label: String }
+    struct LinkMenuState { ready: bool, host: String, source: String, has_rule: bool, rule_workspace: String, routes: Vec<LinkRoute> }
+    // kind: 0 item, 1 separator, 2 route submenu header, 3 route radio item (submenu member).
+    struct LinkMenuEntry { command: i32, label: String, kind: u32 }
+    #[derive(Debug)]
+    enum LinkMenuCommand { None, Peek, NewTab, Split, SetRule, RemoveRule }
+    struct LinkMenuAction { command: LinkMenuCommand, workspace: String }
     enum SidebarAction { None, OpenSplit, CloseSplit, MoveFirst, MoveSecond, ToggleOrientation, CloseTab }
     // kind: 0 row, 1 section label, 2 split pair (three consecutive items), 3 gap.
     struct PreviewRow { index: usize, kind: u32, depth: i32, height: i32 }
@@ -375,6 +382,10 @@ mod ffi {
         fn resolve_row_target(source: &str, current: &str, high: u64, low: u64, pin: &str, tabs: &[MenuTab], pins: &[TreeNode]) -> RowTarget;
         fn sidebar_drop_accepts(bounds: Rect, x: i32, y: i32, allowed: bool) -> bool;
         fn tab_context_menu(state: &TabMenuState) -> Vec<TabMenuEntry>;
+        fn link_context_menu(state: &LinkMenuState) -> Vec<LinkMenuEntry>;
+        fn link_menu_enabled(command: i32, state: &LinkMenuState) -> bool;
+        fn link_menu_checked(command: i32, state: &LinkMenuState) -> bool;
+        fn link_menu_action(command: i32, state: &LinkMenuState) -> LinkMenuAction;
         fn tab_menu_enabled(command: u32, state: &TabMenuState) -> bool;
         fn tab_menu_action(command: u32, state: &TabMenuState) -> SidebarAction;
         type WorkspaceSwipe;
@@ -1433,6 +1444,27 @@ fn tab_context_menu(s:&ffi::TabMenuState)->Vec<ffi::TabMenuEntry> {
     } else {add(5,"Otwórz obok w Split View");}
     if s.http{add(0,"");add(23,"Zawsze otwieraj tę domenę tutaj");add(24,"Usuń regułę dla tej domeny");}
     entries
+}
+
+// Link/route menu commands share IDs with the native menu delegate contract.
+const LINK_PEEK:i32=20;const LINK_NEW_TAB:i32=21;const LINK_SPLIT:i32=22;const LINK_RULE_HERE:i32=23;const LINK_REMOVE_RULE:i32=24;const LINK_ROUTES:i32=25;const LINK_ROUTE_BASE:i32=1000;
+fn link_route(command:i32,s:&ffi::LinkMenuState)->Option<&ffi::LinkRoute>{if command<LINK_ROUTE_BASE{return None;}s.routes.get((command-LINK_ROUTE_BASE) as usize)}
+fn link_context_menu(s:&ffi::LinkMenuState)->Vec<ffi::LinkMenuEntry>{
+    let mut entries=Vec::new();let mut add=|command,label:String,kind|entries.push(ffi::LinkMenuEntry{command,label,kind});
+    add(LINK_PEEK,"Otwórz w Peek".into(),0);add(LINK_NEW_TAB,"Otwórz w nowej karcie".into(),0);add(LINK_SPLIT,"Otwórz obok w Split View".into(),0);add(0,String::new(),1);
+    add(LINK_RULE_HERE,"Zawsze otwieraj tę domenę tutaj".into(),0);add(LINK_ROUTES,format!("Otwieraj {} w…",s.host),2);
+    for (index,route) in s.routes.iter().enumerate(){add(LINK_ROUTE_BASE+index as i32,route.label.clone(),3);}
+    add(LINK_REMOVE_RULE,"Usuń regułę dla tej domeny".into(),0);entries
+}
+fn link_menu_enabled(command:i32,s:&ffi::LinkMenuState)->bool{
+    if !s.ready{return false;}
+    match command{LINK_REMOVE_RULE=>s.has_rule,LINK_PEEK|LINK_NEW_TAB|LINK_SPLIT|LINK_RULE_HERE|LINK_ROUTES=>true,_=>link_route(command,s).is_some()}
+}
+fn link_menu_checked(command:i32,s:&ffi::LinkMenuState)->bool{s.has_rule&&link_route(command,s).is_some_and(|route|route.id==s.rule_workspace)}
+fn link_menu_action(command:i32,s:&ffi::LinkMenuState)->ffi::LinkMenuAction{
+    use ffi::LinkMenuCommand as C;let action=|command,workspace:&str|ffi::LinkMenuAction{command,workspace:workspace.into()};
+    if !link_menu_enabled(command,s){return action(C::None,"");}
+    match command{LINK_PEEK=>action(C::Peek,&s.source),LINK_NEW_TAB=>action(C::NewTab,&s.source),LINK_SPLIT=>action(C::Split,&s.source),LINK_RULE_HERE=>action(C::SetRule,&s.source),LINK_REMOVE_RULE=>action(C::RemoveRule,""),_=>match link_route(command,s){Some(route)=>action(C::SetRule,&route.id),None=>action(C::None,"")}}
 }
 
 fn workspace_switch_motion(previous:i32,current:i32,visible:bool,enabled:bool,reduced:bool)->ffi::WorkspaceMotion {
@@ -4398,6 +4430,19 @@ mod tests {
         assert!(!sidebar_drop_accepts(r(),81,79,true));assert!(!sidebar_drop_accepts(r(),30,80,true));assert!(!sidebar_drop_accepts(r(),30,29,true));assert!(!sidebar_drop_accepts(r(),30,30,false));
         assert!(!sidebar_drop_accepts(ffi::Rect{x:0,y:0,width:0,height:50},0,0,true));
         assert!(sidebar_drop_accepts(ffi::Rect{x:i32::MAX-20,y:0,width:100,height:20},i32::MAX,0,true)==false);
+    }
+    fn link_state()->ffi::LinkMenuState{ffi::LinkMenuState{ready:true,host:"example.com".into(),source:"work".into(),has_rule:true,rule_workspace:"home".into(),routes:vec![ffi::LinkRoute{id:"work".into(),label:"Praca · Główny".into()},ffi::LinkRoute{id:"home".into(),label:"Dom · Prywatny".into()}]}}
+    #[test] fn link_menu_preserves_order_labels_route_submenu_and_checks() {
+        let s=link_state();let menu=link_context_menu(&s);assert_eq!(menu.iter().map(|e|(e.command,e.kind)).collect::<Vec<_>>(),vec![(20,0),(21,0),(22,0),(0,1),(23,0),(25,2),(1000,3),(1001,3),(24,0)]);assert_eq!(menu[5].label,"Otwieraj example.com w…");assert_eq!(menu[7].label,"Dom · Prywatny");assert_eq!(menu[0].label,"Otwórz w Peek");
+        assert!(!link_menu_checked(1000,&s)&&link_menu_checked(1001,&s)&&!link_menu_checked(1002,&s)&&!link_menu_checked(24,&s));let mut none=link_state();none.has_rule=false;assert!(!link_menu_checked(1001,&none));
+        assert!(link_menu_enabled(24,&s)&&!link_menu_enabled(24,&none)&&link_menu_enabled(23,&none)&&link_menu_enabled(1001,&s)&&!link_menu_enabled(1002,&s)&&!link_menu_enabled(999,&s)&&!link_menu_enabled(0,&s));
+        let mut empty=link_state();empty.routes.clear();assert_eq!(link_context_menu(&empty).iter().filter(|e|e.kind==3).count(),0);
+    }
+    #[test] fn link_menu_actions_capture_source_route_and_revalidate_readiness() {
+        use ffi::LinkMenuCommand as C;let s=link_state();
+        for (command,expected,workspace) in [(20,C::Peek,"work"),(21,C::NewTab,"work"),(22,C::Split,"work"),(23,C::SetRule,"work"),(24,C::RemoveRule,""),(1000,C::SetRule,"work"),(1001,C::SetRule,"home"),(1002,C::None,""),(25,C::None,""),(5,C::None,"")]{let a=link_menu_action(command,&s);assert_eq!(a.command,expected,"{command}");assert_eq!(a.workspace,workspace);}
+        let mut busy=link_state();busy.ready=false;for command in [20,21,22,23,24,1000]{assert_eq!(link_menu_action(command,&busy).command,C::None);assert!(!link_menu_enabled(command,&busy));}
+        let mut ruleless=link_state();ruleless.has_rule=false;assert_eq!(link_menu_action(24,&ruleless).command,C::None);
     }
     #[test] fn tab_menu_preserves_order_labels_and_orientation() {
         let mut s=menu_state();let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,0,20,7,8,0,9,0,6,10,0,23,24]);assert_eq!(entries[3].label,"Przesuń w lewo");
