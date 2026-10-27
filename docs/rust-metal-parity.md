@@ -6,12 +6,38 @@ application/domain commands; preserve profile/session isolation. Push verified
 milestones to `origin/main` as they land. The opt-in switch remains
 `--zitter-sidebar=rust-metal` until the migration and comparison are complete.
 
-## Paused at weekly limit
+## Current workflow — 2026-10-27
 
-Weekly remaining fell to **69%**. The goal is paused by the user stop condition;
-shutdown was requested. Verified code/report are pushed. The combined full
-checkpoint was interrupted after Metal position 130/218; Views did not start.
-It is not full acceptance. [Handoff and remaining work](rust-metal-handoff-2026-10-26.md).
+Implementation resumed by user instruction. The weekly 70% stop threshold is
+revoked for this round. Do not run browser UI tests; accumulate compiled cases
+for a later bulk checkpoint. Build, Rust/Python and SDK checks without windows
+remain enabled. No shutdown is triggered by the former weekly threshold.
+The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
+
+## Latest headless implementation: residual glyph hosts
+
+Source `f6e91e5f099dad3fa5188fb54976967336718c5a` replaces the palette search decoration with SceneSearchIcon,
+a plain image View without Button/ButtonController or an ActionControl allocation.
+It retains 32x32 Rust glyph metrics, shared Metal search geometry and vector
+fallback. It exposes image/name metadata, no focus/events/default action.
+Import dismiss uses the existing RustActionView + ScenePreferenceControls shared
+Metal group; the Views baseline retains GlyphButton. Busy admission, dismiss and
+page-focus callbacks remain unchanged. Public control fields use View adapters.
+
+Both app and browser-test targets compile. **293 Rust**, **180 SDK direction/font
+cases plus raster**, **68 live and 68 clean-archive Python**, GN/boundaries and
+Ninja no-op passed; all 53 committed/live/staged prototype inputs and frozen
+engine/bootstrap identities match. **No UI cases were executed.** The new
+ResidualGlyphHostsImageAndImportDismiss case is compiled for the bulk checkpoint,
+along with palette chrome, first-run and import-form regressions.
+[Headless evidence](benchmarks/rust-residual-glyph-headless-2026-10-27.json).
+
+This establishes compilation and headless contracts only. Actual import canvas,
+AX/default action, disabled/close/capture/focus, search glyph/fallback/theme and
+real-tree Button inventory remain pending. Native View identity/layout and Views
+popup/menu ownership, manual acceptance, controlled performance, compositor
+issues and release/license/notices remain open. The existing preview bundle was
+not replaced. Frozen UI-lab inputs exclude current-main network policy.
 
 ## Latest targeted follow-up: selector pointer policy
 
