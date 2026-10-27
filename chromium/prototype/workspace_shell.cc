@@ -757,6 +757,7 @@ class RustActionView : public views::View {
   void SetColor(SkColor color){if(color_==color)return;color_=color;SchedulePaint();}
   void SetCallback(views::Button::PressedCallback callback){Cancel();command_callback_.Reset();callback_=std::move(callback);}
   void SetFormCommand(sidebar::FormCommand command,const std::string& key,base::RepeatingCallback<void(views::View*,const sidebar::FormCommandBinding&)> callback){CHECK(state_->node_form_command_init(command,key));Cancel();callback_=views::Button::PressedCallback();command_callback_=std::move(callback);PreferredSizeChanged();SchedulePaint();}
+  void SetAppearancePreset(bool emoji,size_t index,base::RepeatingCallback<void(views::View*,const sidebar::FormCommandBinding&)> callback){CHECK(state_->bind_appearance_preset(emoji,index));Cancel();callback_=views::Button::PressedCallback();command_callback_=std::move(callback);}
   void SetPreferenceCategory(const sidebar::PreferencesForm& form,size_t category,base::RepeatingCallback<void(views::View*,const sidebar::FormCommandBinding&)> callback){CHECK(form.bind_category(*state_,category));Cancel();callback_=views::Button::PressedCallback();command_callback_=std::move(callback);PreferredSizeChanged();SchedulePaint();}
   rust::Box<sidebar::FormCommandTicket> DeferFormCommand() const{return state_->defer_form_command();}
   void CancelInput(){Cancel();}
@@ -3719,11 +3720,13 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 #if BUILDFLAG(IS_MAC)
   if(workspace_form_){colors.clear();for(const auto& p:sidebar::appearance_presets(false))colors.emplace_back(p.color,base::UTF8ToUTF16(std::string(p.label)));}
 #endif
-  for (const auto& [color,label] : colors) {
-    auto* swatch = AppearancePicker(color_row,
-        base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, SkColor value) {
-          if (shell) shell->SetWorkspaceColor(shell->state_.workspace_id, value);
-        }, weak, color), label, GlyphButton::Glyph::kSwatch);
+  for(size_t preset=0;preset<colors.size();++preset){
+    const auto& [color,label]=colors[preset];views::Button::PressedCallback callback;
+    if(!workspace_form_)callback=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,SkColor value){if(shell)shell->SetWorkspaceColor(shell->state_.workspace_id,value);},weak,color);
+    auto* swatch=AppearancePicker(color_row,std::move(callback),label,GlyphButton::Glyph::kSwatch);
+#if BUILDFLAG(IS_MAC)
+    if(workspace_form_)BindAppearancePreset(swatch,false,preset);
+#endif
     SetActionColor(swatch,color);
   }
   Spacer(color_row, 1)->SetPreferredSize(gfx::Size(8, 1));
@@ -3747,11 +3750,13 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 #if BUILDFLAG(IS_MAC)
   if(workspace_form_){emojis.clear();for(const auto& p:sidebar::appearance_presets(true))emojis.emplace_back(base::UTF8ToUTF16(std::string(p.emoji)),base::UTF8ToUTF16(std::string(p.label)));}
 #endif
-  for (const auto& [emoji,label] : emojis) {
-    auto* pick = AppearancePicker(emoji_row,
-        base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, std::u16string value) {
-          if (shell) shell->SetWorkspaceEmoji(shell->state_.workspace_id, value);
-        }, weak, std::u16string(emoji)), label, GlyphButton::Glyph::kDot);
+  for(size_t preset=0;preset<emojis.size();++preset){
+    const auto& [emoji,label]=emojis[preset];views::Button::PressedCallback callback;
+    if(!workspace_form_)callback=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::u16string value){if(shell)shell->SetWorkspaceEmoji(shell->state_.workspace_id,value);},weak,std::u16string(emoji));
+    auto* pick=AppearancePicker(emoji_row,std::move(callback),label,GlyphButton::Glyph::kDot);
+#if BUILDFLAG(IS_MAC)
+    if(workspace_form_)BindAppearancePreset(pick,true,preset);
+#endif
     SetActionLabel(pick,emoji);
   }
   Spacer(emoji_row, 1)->SetPreferredSize(gfx::Size(8, 1));
@@ -8373,6 +8378,12 @@ void WorkspaceShell::BindFormCommand(views::View* view,sidebar::FormCommand comm
   control->SetFormCommand(command,key,base::BindRepeating(&WorkspaceShell::DispatchFormCommand,weak_factory_.GetWeakPtr()));
 #endif
 }
+void WorkspaceShell::BindAppearancePreset(views::View* view,bool emoji,size_t index){
+#if BUILDFLAG(IS_MAC)
+  auto* control=views::AsViewClass<RustActionView>(view);CHECK(control);
+  control->SetAppearancePreset(emoji,index,base::BindRepeating(&WorkspaceShell::DispatchFormCommand,weak_factory_.GetWeakPtr()));
+#endif
+}
 void WorkspaceShell::BindPreferenceCategory(views::View* view,size_t category){
 #if BUILDFLAG(IS_MAC)
   auto* control=views::AsViewClass<RustActionView>(view);CHECK(control);CHECK(preferences_form_);
@@ -8408,6 +8419,12 @@ void WorkspaceShell::DispatchFormCommand(views::View* source,const sidebar::Form
     case C::PreferencesDismiss:CloseOverlays();RestorePageFocus();break;
     case C::ToolsDismiss:SetShortcutRecording(false);tools_widget_->Hide();RestorePageFocus();break;
     case C::ImportDismiss:{if(import_applying_)return;const auto alive=weak_factory_.GetWeakPtr();callbacks_.dismiss_import.Run();if(!alive)return;CloseOverlays();RestorePageFocus();break;}
+    case C::WorkspaceColorPreset:case C::WorkspaceEmojiPreset:{
+      const auto target=sidebar::appearance_command_target(command,binding.index);if(!target.valid)return;
+      if(command==C::WorkspaceColorPreset)SetWorkspaceColor(state_.workspace_id,target.color);
+      else SetWorkspaceEmoji(state_.workspace_id,base::UTF8ToUTF16(std::string(target.emoji)));
+      break;
+    }
     case C::WorkspaceSave:SubmitWorkspace(creating_workspace_);break;
     case C::WorkspaceToggle:ToggleWorkspaceCreation();break;
     case C::WorkspaceRemove:ConfirmRemoveWorkspace(state_.workspace_id);break;

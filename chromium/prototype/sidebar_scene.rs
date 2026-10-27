@@ -42,7 +42,7 @@ mod ffi {
     enum PreferenceRowKind { Theme, Pinned, Animations, Search, Toggle, Text, Picker, Action, Directory, SiteEditor, SiteRules, ClearData, ShortcutHint }
     #[repr(u32)]
     #[derive(Debug)]
-    enum FormCommand { None, WorkspaceSave, WorkspaceToggle, WorkspaceRemove, WorkspaceProfiles, WorkspaceImport, ProfileCreate, ProfileRename, ProfileDelete, ProfileBack, ImportApply, PreferenceText, PreferenceSite, PreferenceClear, PreferenceDirectory, History, Workspace, Passwords, Profiles, Import, Proxy, Certificates, Providers, Shortcuts, TimeMachine, WorkspaceDismiss, PreferencesDismiss, ImportDismiss, ToolsDismiss, PreferenceCategory, PreferenceMore }
+    enum FormCommand { None, WorkspaceSave, WorkspaceToggle, WorkspaceRemove, WorkspaceProfiles, WorkspaceImport, ProfileCreate, ProfileRename, ProfileDelete, ProfileBack, ImportApply, PreferenceText, PreferenceSite, PreferenceClear, PreferenceDirectory, History, Workspace, Passwords, Profiles, Import, Proxy, Certificates, Providers, Shortcuts, TimeMachine, WorkspaceDismiss, PreferencesDismiss, ImportDismiss, ToolsDismiss, PreferenceCategory, PreferenceMore, WorkspaceColorPreset, WorkspaceEmojiPreset }
     #[derive(Debug)]
     enum FormPanel { None, Workspace, Profiles, Import, Preferences, Tools }
     struct FormCommandBinding { command: FormCommand, panel: FormPanel, key: String, index: usize }
@@ -66,6 +66,7 @@ mod ffi {
     struct ImportView { message: String, bookmarks_label: String, options_enabled: bool, close_enabled: bool, apply_enabled: bool, applying: bool, busy: bool, can_apply: bool }
     struct ActionButtonLayout { width: i32, height: i32, text: Rect }
     struct AppearancePreset { color: u32, emoji: String, label: String }
+    struct AppearanceTarget { valid: bool, color: u32, emoji: String }
     struct PeekCopy { initial: String, back: String, forward: String, promote: String, split: String, close: String }
     struct WorkspaceCopy { name_label: String, placeholder: String, profile_label: String, profile_ax: String, profile_hint: String, save_hint: String, close: String, appearance: String, color: String, color_ax: String, emoji: String, emoji_ax: String, emoji_placeholder: String, more: String, manage: String, import_label: String, remove_label: String }
     enum WorkspaceFormAction { None, Create, Edit }
@@ -306,6 +307,7 @@ mod ffi {
         fn action_button_layout(width: i32, height: i32, text_width: i32, control_height: i32, padding: i32, minimum_width: i32) -> ActionButtonLayout;
         fn dialog_actions_layout(width: i32, height: i32, spacing: i32, link_limit: i32, top: i32, left: i32, bottom: i32, right: i32, children: &[ColumnChild]) -> ColumnLayout;
         fn action_group_layout(width: i32, height: i32, vertical: bool, spacing: i32, children: &[ColumnChild]) -> ColumnLayout;
+        fn appearance_command_target(command: FormCommand, index: usize) -> AppearanceTarget;
         fn appearance_presets(emoji: bool) -> Vec<AppearancePreset>;
         fn appearance_selected(emoji: bool, index: usize, color: u32, current_emoji: &str) -> bool;
         fn appearance_row_layout(width: i32, height: i32, editor_width: i32, editor_height: i32, emoji: bool) -> ColumnLayout;
@@ -490,6 +492,7 @@ mod ffi {
         type ActionControl;
         fn defer_form_command(self: &ActionControl) -> Box<FormCommandTicket>;
         fn action_node_id(self: &ActionControl) -> u64;
+        fn bind_appearance_preset(self: &mut ActionControl, emoji: bool, index: usize) -> bool;
         fn node_form_command_init(self: &mut ActionControl, command: FormCommand, key: &str) -> bool;
         fn node_form_command(self: &ActionControl) -> FormCommandBinding;
         fn node_form_view(self: &ActionControl) -> FormCommandView;
@@ -1225,6 +1228,16 @@ fn appearance_presets(emoji: bool) -> Vec<ffi::AppearancePreset> {
     if emoji { APPEARANCE_EMOJIS.iter().map(|e|ffi::AppearancePreset { color:0, emoji:(*e).into(), label:format!("Emoji {}",e) }).collect() }
     else { APPEARANCE_COLORS.iter().map(|&c|ffi::AppearancePreset { color:c, emoji:String::new(), label:format!("#{:06X}",c&0xffffff) }).collect() }
 }
+fn appearance_command_target(command:ffi::FormCommand,index:usize)->ffi::AppearanceTarget{
+    use ffi::FormCommand as C;
+    match command {
+        C::WorkspaceColorPreset=>if let Some(&color)=APPEARANCE_COLORS.get(index){return ffi::AppearanceTarget{valid:true,color,emoji:String::new()};},
+        C::WorkspaceEmojiPreset=>if let Some(&emoji)=APPEARANCE_EMOJIS.get(index){return ffi::AppearanceTarget{valid:true,color:0,emoji:emoji.into()};},
+        _=>{},
+    }
+    ffi::AppearanceTarget{valid:false,color:0,emoji:String::new()}
+}
+
 fn appearance_selected(emoji: bool, index: usize, color: u32, current_emoji: &str) -> bool {
     if emoji { APPEARANCE_EMOJIS.get(index).map(|e|*e==current_emoji).unwrap_or(false) }
     else { APPEARANCE_COLORS.get(index).map(|c|c&0xffffff==color&0xffffff).unwrap_or(false) }
@@ -1875,7 +1888,7 @@ struct FormCommandModel {command:ffi::FormCommand,key:String,index:usize}
 fn form_command_panel(command:ffi::FormCommand)->ffi::FormPanel {
     use ffi::{FormCommand as C,FormPanel as P};
     match command {
-        C::WorkspaceSave|C::WorkspaceToggle|C::WorkspaceRemove|C::WorkspaceProfiles|C::WorkspaceImport|C::WorkspaceDismiss=>P::Workspace,
+        C::WorkspaceSave|C::WorkspaceToggle|C::WorkspaceRemove|C::WorkspaceProfiles|C::WorkspaceImport|C::WorkspaceDismiss|C::WorkspaceColorPreset|C::WorkspaceEmojiPreset=>P::Workspace,
         C::ProfileCreate|C::ProfileRename|C::ProfileDelete|C::ProfileBack=>P::Profiles,
         C::ImportApply|C::ImportDismiss=>P::Import,
         C::ToolsDismiss=>P::Tools,
@@ -2190,6 +2203,10 @@ impl ActionControl {
     // Rebinding to another command requires a new node; stale adapters fail shut.
     fn init_form_command(&mut self,command:ffi::FormCommand,key:&str,index:usize)->bool{
         self.write_node(|r|{if r.kind!=9{return false;}match r.model.as_deref(){Some(NodeModel::FormCommand(m))=>m.command==command&&m.key==key&&m.index==index,Some(_)=>false,None=>{r.model=Some(Box::new(NodeModel::FormCommand(FormCommandModel{command,key:key.into(),index})));true}}}).unwrap_or(false)
+    }
+    fn bind_appearance_preset(&mut self,emoji:bool,index:usize)->bool{
+        let command=if emoji{ffi::FormCommand::WorkspaceEmojiPreset}else{ffi::FormCommand::WorkspaceColorPreset};
+        appearance_command_target(command,index).valid&&self.init_form_command(command,"",index)
     }
     fn node_form_command_init(&mut self,command:ffi::FormCommand,key:&str)->bool{valid_form_command(command,key)&&self.init_form_command(command,key,0)}
     fn node_form_command(&self)->ffi::FormCommandBinding{self.read_node(record_form_command).unwrap_or_else(empty_form_command)}
@@ -3413,6 +3430,25 @@ mod tests {
     #[test] fn action_button_text_style_omits_empty_background_and_border() {
         let mut b=row(160.0);b.kind=19;b.fill=0;b.badge=0;b.active=false;b.title_width=16.0;let ops=layout(&[b]);assert_eq!(ops.len(),1);assert!(ops[0].center);assert!(!ops[0].bold);assert_eq!(ops[0].text,"Zażółć 日本語 🦀");
         let mut empty=row(160.0);empty.kind=19;empty.fill=0;empty.badge=0;empty.title.clear();assert!(layout(&[empty]).is_empty());
+    }
+    #[test] fn appearance_commands_resolve_exact_catalogue_targets_and_panel(){
+        let mut graph=new_form_graph(false,0,false,false);
+        for emoji in [false,true]{for (index,preset) in appearance_presets(emoji).iter().enumerate(){let mut input=graph.append_form_action();assert!(input.bind_appearance_preset(emoji,index));let binding=input.node_form_command();assert_eq!(binding.panel,ffi::FormPanel::Workspace);assert_eq!(binding.index,index);assert!(binding.key.is_empty());let target=appearance_command_target(binding.command,binding.index);assert!(target.valid);assert_eq!(target.color,preset.color);assert_eq!(target.emoji,preset.emoji);}}
+    }
+    #[test] fn appearance_commands_reject_invalid_index_and_generic_binding(){
+        let mut graph=new_form_graph(false,0,false,false);let mut input=graph.append_form_action();for (emoji,index) in [(false,4),(false,usize::MAX),(true,6),(true,usize::MAX)]{assert!(!input.bind_appearance_preset(emoji,index));assert_eq!(input.node_model_kind(),0);}for command in [ffi::FormCommand::WorkspaceColorPreset,ffi::FormCommand::WorkspaceEmojiPreset]{assert!(!input.node_form_command_init(command,""));assert!(!input.node_form_command_init(command,"2"));}assert!(input.bind_appearance_preset(true,2));assert_eq!(input.node_form_command().index,2);
+    }
+    #[test] fn appearance_commands_do_not_change_semantics_after_binding(){
+        let mut graph=new_form_graph(false,0,false,false);let mut input=graph.append_form_action();assert!(input.bind_appearance_preset(false,1));assert!(input.bind_appearance_preset(false,1));assert!(!input.bind_appearance_preset(false,2));assert!(!input.bind_appearance_preset(true,1));assert!(!input.node_form_command_init(ffi::FormCommand::WorkspaceSave,""));let target=appearance_command_target(input.node_form_command().command,input.node_form_command().index);assert!(target.valid);assert_eq!(target.color,0xff84b6a4);
+    }
+    #[test] fn appearance_commands_disabled_retired_and_wrong_models_fail_closed(){
+        let mut graph=new_form_graph(false,0,false,false);let mut input=graph.append_form_action();input.bind_appearance_preset(true,2);input.action_enabled(false);assert!(!appearance_command_target(input.node_form_command().command,2).valid);input.action_enabled(true);assert_eq!(appearance_command_target(input.node_form_command().command,2).emoji,"🚀");graph.retire_form_action(input.action_node_id());assert!(!appearance_command_target(input.node_form_command().command,2).valid);let mut checkbox=graph.append_form_action();checkbox.node_checkbox_init(false);assert!(!checkbox.bind_appearance_preset(false,0));assert!(!new_action_control().bind_appearance_preset(true,0));
+    }
+    #[test] fn appearance_command_target_rejects_unrelated_commands_and_out_of_bounds(){
+        for command in [ffi::FormCommand::None,ffi::FormCommand::WorkspaceSave,ffi::FormCommand::PreferenceMore,ffi::FormCommand::ImportApply]{for index in [0,1,usize::MAX]{let target=appearance_command_target(command,index);assert!(!target.valid);assert_eq!(target.color,0);assert!(target.emoji.is_empty());}}for command in [ffi::FormCommand::WorkspaceColorPreset,ffi::FormCommand::WorkspaceEmojiPreset]{assert!(!appearance_command_target(command,usize::MAX).valid);}
+    }
+    #[test] fn appearance_command_ticket_cancels_without_retaining_emoji_or_changing_binding(){
+        let mut graph=new_form_graph(false,0,false,false);let mut input=graph.append_form_action();input.bind_appearance_preset(true,5);let mut ticket=input.defer_form_command();input.action_cancel();assert_eq!(ticket.take_command().command,ffi::FormCommand::None);let binding=input.node_form_command();assert_eq!(appearance_command_target(binding.command,binding.index).emoji,"🎮");assert_eq!(input.defer_form_command().take_command().index,5);
     }
     #[test] fn appearance_presets_preserve_palette_order_labels_and_unicode() {
         let colors=appearance_presets(false);assert_eq!(colors.len(),4);assert_eq!(colors[0].color,0xff9e91dc);assert_eq!(colors[3].label,"#7FAACB");assert!(colors.iter().all(|p|p.emoji.is_empty()&&p.color>>24==255));

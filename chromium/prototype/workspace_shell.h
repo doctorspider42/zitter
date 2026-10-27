@@ -624,6 +624,7 @@ class WorkspaceShell final : public ui::EventHandler,
   std::array<uint64_t,2> context_tab_identity_{};
   std::string context_pin_;
   void BindFormCommand(views::View* view,sidebar::FormCommand command,std::string key={});
+  void BindAppearancePreset(views::View* view,bool emoji,size_t index);
   void BindPreferenceCategory(views::View* view,size_t category);
   void DispatchFormCommand(views::View* source,const sidebar::FormCommandBinding& command);
   void SubmitWorkspace(bool add);
