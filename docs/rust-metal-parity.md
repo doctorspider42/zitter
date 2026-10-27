@@ -14,6 +14,53 @@ accumulate compiled cases for a later bulk checkpoint. Build, Rust/Python and SD
 checks without windows remain enabled. No computer shutdown is requested.
 The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 
+## Latest headless implementation: retained sidebar tab adapters
+
+Source `27c0e4f` gives sidebar tabs typed Rust identity/backend-index/close-cardinality
+payloads, with separate logical tab/pin collection roots and tab-to-close edges.
+Tab model kind 9 stays distinct from form command kind 8. Native reconciliation
+walks actual live owned adapters, clears cached pointers before removal, and reuses
+surviving RustRowView objects by full 128-bit identity across index shifts, split
+changes and pin-tree rebuilds. It updates existing native text/monogram/tile/drop
+projection and retains eligible close children/callbacks. Removed cards retire;
+close cardinality transitions replace only the close child when needed.
+
+Weak row/scope callbacks check the active workspace, expected sidebar widget,
+visible/enabled adapter, current cache owner, native root membership and logical
+lease. Rust resolves the current backend index and close-child admission. Native
+code checks the exact index/identity pair in the current projection before calling
+the existing select/close service. Those indices can be sparse: pinned-only pages
+are omitted from the visible tab collection. Treating an index as a vector position
+would reject or mistarget real rows. Backend domain authorization remains native.
+
+Structural changes cancel input before reparenting. Identical Rust batches preserve
+leases, focus/on state and pending input. Native code snapshots focus by identity
+and row/close part, lays out the result, restores/clamps the prior same-workspace
+viewport offset, then attempts to reveal/focus the retained target. Platform focus
+and backend page-focus policy still apply; this path needs real UI acceptance.
+Close-child removal clears the cached native pointer without reading child state
+in its destructor.
+
+Validation: **429 Rust** cases (12 new sidebar cases), **68 live + 68 clean-archive
+Python**, **180 CoreText SDK cases plus raster**, scoped GN/header and boundary
+checks. App and browser-test binaries compile; all **53 committed/live/staged
+prototype inputs** match; final three-target Ninja check reports no work. Four
+new browser cases compile for retained rows/closes and shifted callbacks, split/
+pin-folder changes, sparse indices around hidden pins, and observer-retained
+rows. Existing late-release coverage now requires the surviving adapter to remain
+alive at its shifted index. **No UI tests ran**; preview/bundle stayed unchanged.
+[Evidence](benchmarks/rust-sidebar-tab-scene-headless-2026-10-27.json).
+
+This integrates and corrects the earlier deferred sidebar reuse WIP. It retains tab
+adapters, but still rebuilds list/split containers and pin-row adapters, and reparents
+surviving tabs. Collection parent edges do not model the complete native folder/
+split hierarchy. Tab visual properties remain native projections. Broader keyed
+form/sidebar reconciliation, editor/text/property models and native containers/
+windows remain open. Focus/scroll/AX/input acceptance, complete GUI matrices,
+compositor diagnosis, real presentation profiling and release/license checks are
+deferred. No CPU/GPU/presentation or memory gain is claimed; combined model/map/
+reparent/layout/AX costs remain unmeasured. No dependencies or license inputs changed.
+
 ## Latest headless implementation: panel header and category commands
 
 Source `334ec12` extends semantic commands to all ten preference categories and

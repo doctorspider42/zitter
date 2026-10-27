@@ -28,6 +28,13 @@ compile but remain deferred. Auxiliary dynamic commands and residual popup/heade
 controls remain to inventory and migrate.
 [Latest details](rust-metal-parity.md#latest-headless-implementation-panel-header-and-category-commands).
 
+The sidebar-tab checkpoint (`27c0e4f`) adds typed identity/backend-index metadata
+and retains actual tab/eligible-close adapters through structural changes. Callback
+admission handles sparse backend indices around hidden pinned pages. Headless:
+429 Rust, 68 live/archive Python, 180 SDK cases plus raster; both binaries compiled.
+Four added UI cases remain deferred. The earlier tab-reuse WIP is integrated.
+[Latest details](rust-metal-parity.md#latest-headless-implementation-retained-sidebar-tab-adapters).
+
 1. **Audit residual native action hosts and service/popup boundaries.** Peek's
    toolbar is now migrated; download row buttons already use Rust-owned groups.
    Preserve native profile/GUID/store authorization and document explicit platform
@@ -46,7 +53,9 @@ controls remain to inventory and migrate.
    logical identities/input leases for sidebar rows, window chrome, history, palette results, split-pane actions, form action groups and checked/selector input;
    native View trees still own containers and most scene-property projection.
 3. **Expand incremental adapter reconciliation.** Workspace-switcher, history-row, palette-result and site-rule composite adapters now
-   reuse/reorder by Rust ID and owner. Expand this to the remaining form/sidebar trees
+   reuse/reorder by Rust ID and owner. Sidebar tab adapters now survive structural
+   refreshes by identity, while containers/pin rows still rebuild and surviving
+   tabs reparent. Expand this to the remaining form/sidebar trees
    instead of clearing their lists on structural changes. Explicitly preserve focus,
    focus order, scroll/reveal and AX identity, while cancelling presses/drag/capture
    when their target or visibility changes. Current logical IDs alone do not do this.
@@ -54,7 +63,7 @@ controls remain to inventory and migrate.
    copy and form/busy state into Rust; finish outer dialog/palette/container
    placement. Keep native window, IME, clipboard, AX and popup/menu services explicit.
 5. **Run the deferred bulk UI checkpoint when requested.** Include all newly
-   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node, palette-node, split-node, form-action-node, workspace-dismiss-node, activation-observer, checked-selector-node, Peek-toolbar, checked-model, selector-model, workspace-scene, history-scene, palette-scene, form-scene, site-rule-scene, semantic form-command and panel/category-command
+   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node, palette-node, split-node, form-action-node, workspace-dismiss-node, activation-observer, checked-selector-node, Peek-toolbar, checked-model, selector-model, workspace-scene, history-scene, palette-scene, form-scene, site-rule-scene, semantic form-command, panel/category-command and sidebar-tab-scene
    cases, the full Rust/Metal and Views matrices, and actual pointer/keyboard/
    capture/AX/focus/drag/profile/session regressions. The last completed full matrix
    remains the text-action checkpoint; the later selector full run was interrupted.
