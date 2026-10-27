@@ -14,6 +14,59 @@ accumulate compiled cases for a later bulk checkpoint. Build, Rust/Python and SD
 checks without windows remain enabled. No computer shutdown is requested.
 The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 
+## Latest headless implementation: Rust pin hierarchy and retained containers
+
+Sources `b4e4b62` and `167ab08` add structural kind-14 folder-group records and an
+ordered Rust pin-tree projection with real logical parent IDs, group owners,
+preorder/rank/depth, reachability and relative visibility. Pin rows and their folder
+bodies are siblings under the parent folder group. Malformed, orphaned, cyclic or
+excess-depth pins retain dormant properties but have no active scene parent/target.
+Native Rust-mode attachment now consumes this plan instead of a second native
+folder plan. Structural records cannot acquire action input.
+
+A private parent transaction validates the entire effective edge set before mutation,
+including retained edges that were not explicitly projected. It rejects cycles,
+missing parents/sources/owners and exhausted IDs. The generic orphan guard stays
+in force; the explicit validated sidebar transaction can move a surviving child off
+a retired folder group. User target admission checks relative visibility and live
+group owner/parent facts. Collapsing a folder revokes hidden descendant targets and
+pending Rust input before native visibility delivery, preserving nested collapse.
+The existing Rust SidebarTree still supplies scoped controller collapse decisions.
+
+Structural refresh traverses actual owned adapters, clears cached pointers before
+detach and reuses pin Views/leases by opaque identity, along with retained tabs.
+Generic weak pin callbacks stay bound across rename/reparent and resolve the current
+group target; native drop/paint projection and AX text refresh from current Rust
+properties. Visible pin focus restoration is attempted after layout. Group tags and
+diagnostics now use structural group IDs, distinct from the folder row's ID.
+
+Metadata-only refresh keeps pin containers when the old/new Rust plans have the
+same IDs, parents, groups, depth, collapse and visibility and section presence.
+An actual-tree inventory checks live owned rows, widget/cache membership, actual
+parents, group tags/adjacency and visibility before reusing them. Missing, stale,
+foreign or moved adapters trigger structural repair. Tab planning still refreshes
+on pin data changes so backend source indices and pinned split anchors stay current.
+
+Validation: **463 Rust** cases (12 new hierarchy/transaction cases), **68 live + 68
+clean-archive Python**, **180 CoreText SDK cases plus raster**, scoped GN/header and
+boundary checks. App and browser-test binaries compile; all **53 committed/live/
+staged prototype inputs** match; final three-target Ninja check reports no work.
+Three new browser cases compile for metadata container retention, actual row/group
+parent identity and cancelled late release after collapse/reparent. Existing rename
+coverage now requires View retention. **No UI tests ran**; preview/bundle were left
+unchanged. [Evidence](benchmarks/rust-pin-tree-headless-2026-10-27.json).
+
+Structural topology edits still recreate outer wrappers and list/folder/split
+containers while retaining surviving row adapters. This is not a minimal keyed diff
+for arbitrary tree edits. Tab pairs physically anchored among pins still need full
+logical parent/visibility integration; their native visibility guards remain.
+Complete form/editor/text/window/interaction ownership, fallback primitive policy,
+GUI/manual focus/keyboard/AX/scroll/capture/recovery checks, compositor diagnosis,
+actual presentation profiling and release/license acceptance remain open. New parent
+validation, plans/snapshots, inventory and native layout/AX costs are unmeasured;
+no CPU/GPU/presentation or memory gain is claimed. No dependencies, target edges or
+license inputs changed.
+
 ## Latest headless implementation: pinned-row models and scoped folder actions
 
 Source `c64e203` adds SidebarPinModel (kind 10), distinct from tabs (9) and form
