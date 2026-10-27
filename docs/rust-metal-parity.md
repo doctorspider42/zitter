@@ -24,7 +24,10 @@ legacy reducer oracles. Ordinary actions allocate no typed payload.
 
 Same-kind binding preserves the logical model when an adapter is replaced;
 wrong-kind, stale, standalone and retired handles reject model operations.
-Dropping an adapter leaves its model in the live graph. Node retirement or graph
+Dropping a Rust input handle alone leaves its model in the live graph. Current
+native group removal/rebuild still retires membership; preserving values across
+live structural UI rebuilds needs the later scene-tree/incremental adapter work.
+The rebinding test proves the API for a retained logical node. Node retirement or graph
 destruction releases the payload immediately, even if an old adapter still owns
 its input record. User flips require enabled graph input plus native admission;
 backend projection can refresh a disabled control. Native stores, managed-setting
