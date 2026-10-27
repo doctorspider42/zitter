@@ -5,7 +5,10 @@ inventory is [the parity checklist](rust-metal-parity.md).
 
 ## Current workflow — 2026-10-27
 
-The active goal now stops and summarizes when weekly remaining usage falls
+**Paused by user request on 2026-10-27.** No further migration or UI execution
+until resumed. See [the saved status and remaining work](rust-metal-status-2026-10-27.md).
+
+When resumed, the goal stops and summarizes when weekly remaining usage falls
 below 50%; the former 70% threshold is superseded. Do not run browser UI tests;
 accumulate compiled cases for a later bulk checkpoint. Build, Rust/Python and SDK
 checks without windows remain enabled. No computer shutdown is requested.
@@ -83,6 +86,15 @@ Two more browser cases cover hide/reopen and profile leave/return; native event
 sequencing remains unverified until the bulk UI checkpoint.
 [Details](rust-metal-parity.md#latest-headless-implementation-cancellable-deferred-form-command-tickets).
 
+The appearance-command checkpoint (`733f04f`) migrates the four color/six emoji
+preset targets to validated indexed Rust semantic commands and Workspace panel
+ownership. Rust-mode adapters retain no preset value callback and use shared
+observer/epoch/widget/tree admission. Custom editor callbacks and native glyph/
+color/label/AX projection remain. Headless: 481 Rust, 68 live/archive Python and
+180 SDK plus raster; both binaries compile. Two additional browser cases cover all
+presets and workspace-switch observer cancellation; execution remains deferred.
+[Details](rust-metal-parity.md#latest-headless-implementation-semantic-workspace-appearance-preset-actions).
+
 1. **Audit residual native action hosts and service/popup boundaries.** Peek's
    toolbar is now migrated; download row buttons already use Rust-owned groups.
    Preserve native profile/GUID/store authorization and document explicit platform
@@ -102,8 +114,9 @@ sequencing remains unverified until the bulk UI checkpoint.
    native View trees still own containers and most scene-property projection.
 3. **Expand incremental adapter reconciliation.** Workspace-switcher, history-row, palette-result and site-rule composite adapters now
    reuse/reorder by Rust ID and owner. Sidebar tab adapters now survive structural
-   refreshes by identity, while containers/pin rows still rebuild and surviving
-   tabs reparent. Expand this to the remaining form/sidebar trees
+   refreshes by identity; pin rows also survive topology changes and validated
+   unchanged pin containers survive metadata refresh. Structural containers still
+   rebuild and surviving rows reparent. Expand this to the remaining form/sidebar trees
    instead of clearing their lists on structural changes. Explicitly preserve focus,
    focus order, scroll/reveal and AX identity, while cancelling presses/drag/capture
    when their target or visibility changes. Current logical IDs alone do not do this.
@@ -111,7 +124,7 @@ sequencing remains unverified until the bulk UI checkpoint.
    copy and form/busy state into Rust; finish outer dialog/palette/container
    placement. Keep native window, IME, clipboard, AX and popup/menu services explicit.
 5. **Run the deferred bulk UI checkpoint when requested.** Include all newly
-   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node, palette-node, split-node, form-action-node, workspace-dismiss-node, activation-observer, checked-selector-node, Peek-toolbar, checked-model, selector-model, workspace-scene, history-scene, palette-scene, form-scene, site-rule-scene, semantic form-command, panel/category-command, sidebar-tab-scene, tab-property, pin-model, pin-tree and form-panel/pagination/ticket
+   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node, palette-node, split-node, form-action-node, workspace-dismiss-node, activation-observer, checked-selector-node, Peek-toolbar, checked-model, selector-model, workspace-scene, history-scene, palette-scene, form-scene, site-rule-scene, semantic form-command, panel/category-command, sidebar-tab-scene, tab-property, pin-model, pin-tree and form-panel/pagination/ticket and appearance-command
    cases, the full Rust/Metal and Views matrices, and actual pointer/keyboard/
    capture/AX/focus/drag/profile/session regressions. The last completed full matrix
    remains the text-action checkpoint; the later selector full run was interrupted.

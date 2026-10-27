@@ -8,11 +8,47 @@ milestones to `origin/main` as they land. The opt-in switch remains
 
 ## Current workflow — 2026-10-27
 
-The active goal now stops and summarizes when weekly remaining usage falls
+**Paused by user request on 2026-10-27.** No further migration or UI execution
+until resumed. See [the saved status and remaining work](rust-metal-status-2026-10-27.md).
+
+When resumed, the goal stops and summarizes when weekly remaining usage falls
 below 50%; the former 70% threshold is superseded. Do not run browser UI tests;
 accumulate compiled cases for a later bulk checkpoint. Build, Rust/Python and SDK
 checks without windows remain enabled. No computer shutdown is requested.
 The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
+
+## Latest headless implementation: semantic workspace appearance preset actions
+
+Source `733f04f` moves the four color and six emoji preset action targets into
+Rust FormCommand nodes. Dedicated indexed binding validates against the canonical
+Rust catalogue and assigns Workspace panel ownership. Generic command initialization
+cannot bypass index validation; a bound node cannot change its command or index.
+The typed Rust target resolver returns only valid catalogue colors/Unicode emoji,
+rejecting unrelated commands and out-of-range indices.
+
+Rust-mode preset adapters retain no callback capturing the preset value. They use
+the common weak shell dispatcher, Rust input/cancellation/lease admission after
+activation observers, and visible settings-widget/actual-tree fencing before the
+native workspace appearance service. Views retains its callbacks. Selection,
+platform glyph/color/label/AX projection, custom editor validation and appearance
+persistence/normalization services retain their established paths.
+
+Validation: **481 Rust**, **68 live + 68 clean-archive Python**, **180 CoreText SDK
+cases plus raster**, scoped GN/header and boundary checks. Both binaries compile;
+all **53 committed/live/staged prototype inputs** match and final Ninja reports no
+work. Six new Rust tests cover catalogue/panel/metadata resolution, invalid index
+and generic-init rejection, immutable targets, disabled/retired/wrong-model admission,
+unrelated target commands and ticket cancellation. Two compiled browser cases cover
+all ten presets with stable node identity and observer-driven workspace retargeting.
+**No UI tests were run**, and preview/packaging were left unchanged.
+Evidence: [appearance-command report](benchmarks/rust-appearance-command-headless-2026-10-27.json).
+
+This migrates preset semantics, not the remaining AppearanceRow/native property
+adapters or custom editor callbacks. Native focus/AX/keyboard/observer delivery,
+persistence and visuals await the bulk UI checkpoint. Complete form status/busy/
+managed copy, editor/text models, residual popup/action inventory and broader scene
+ownership/reconciliation remain open. No timing/GPU/memory improvement is claimed;
+conversion/dispatch costs remain unmeasured. No dependency/license input changed.
 
 ## Latest headless implementation: cancellable deferred form command tickets
 
