@@ -16,14 +16,13 @@ The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 This queue supersedes implementation suggestions in the historical checkpoints
 below. Headless validation is current; GUI acceptance is deferred by instruction.
 
-1. **Complete action-node scopes.** Extend registry ownership to palette results,
-   split-pane actions, preference/workspace/profile/import form actions and
+1. **Complete action-node scopes.** Extend registry ownership to split-pane actions, preference/workspace/profile/import form actions and
    download/service-panel controls. Define keys from actual target identity and
    scope, and retire nodes when lists/forms/profile contexts disappear. Preserve
    browser/store authorization in native services.
 2. **Own the scene tree.** Move control properties, parent/child relationships,
    lifetime and layout coordination into Rust. The current ActionGraph owns
-   logical identities/input leases for sidebar rows, window chrome and history;
+   logical identities/input leases for sidebar rows, window chrome, history and palette results;
    native View trees still own containers and most scene-property projection.
 3. **Reconcile adapters incrementally.** Reuse/reorder native adapters by Rust ID
    instead of clearing lists on structural changes. Explicitly preserve focus,
@@ -33,7 +32,7 @@ below. Headless validation is current; GUI acceptance is deferred by instruction
    copy and form/busy state into Rust; finish outer dialog/palette/container
    placement. Keep native window, IME, clipboard, AX and popup/menu services explicit.
 5. **Run the deferred bulk UI checkpoint when requested.** Include all newly
-   compiled residual-glyph, sidebar-node, footer-node, chrome-node and history-node
+   compiled residual-glyph, sidebar-node, footer-node, chrome-node, history-node and palette-node
    cases, the full Rust/Metal and Views matrices, and actual pointer/keyboard/
    capture/AX/focus/drag/profile/session regressions. The last completed full matrix
    remains the text-action checkpoint; the later selector full run was interrupted.
@@ -45,7 +44,28 @@ below. Headless validation is current; GUI acceptance is deferred by instruction
    profile persistence/rollback, regenerate the shipped dependency/license manifest
    and Apache-2.0/upstream notices. Keep Rust/Metal opt-in until acceptance is complete.
 
-## Latest headless implementation: history result nodes
+## Latest headless implementation: palette result nodes
+
+Source `358b96e` puts address/command-palette result input identities and leases
+in the Rust registry. JSON-framed keys contain profile/workspace/query/mode/
+new-tab context and the complete projected target plus duplicate occurrence;
+title/detail and list position are excluded. Matching targets preserve IDs on
+title/order refresh; replacing native adapters revokes old leases. Query/target
+removal retires nodes, duplicates remain distinct, and detach retires the scope.
+Native IME/search admission, selection, domain validation and callbacks remain.
+A projected tab index is a UI key component, not new browser authorization.
+
+Both binaries compile. **311 Rust**, **180 SDK cases plus raster**, **68 live and
+68 clean-archive Python**, scoped GN/boundaries and final Ninja no-op passed;
+all 53 committed/live/staged prototype inputs match. **No UI tests ran.** The new
+compiled case covers retained adapters, title/order refresh, duplicate targets
+and query changes. [Headless evidence](benchmarks/rust-palette-node-headless-2026-10-27.json).
+
+Native result Views still rebuild. Logical IDs alone do not restore focus, own
+all scene properties or replace View containers/platform services. The preview
+was left running unchanged. GUI and presentation-performance acceptance remain open.
+
+## Earlier headless implementation: history result nodes
 
 Source `205d289` scopes history row identities/input leases to the live tools
 form in Rust. Profile ID, URL, exact visit time and duplicate occurrence use

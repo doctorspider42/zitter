@@ -14,7 +14,28 @@ for a later bulk checkpoint. Build, Rust/Python and SDK checks without windows
 remain enabled. No shutdown is triggered by the former weekly threshold.
 The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 
-## Latest headless implementation: history result nodes
+## Latest headless implementation: palette result nodes
+
+Source `358b96e` puts address/command-palette result input identities and leases
+in the Rust registry. JSON-framed keys contain profile/workspace/query/mode/
+new-tab context and the complete projected target plus duplicate occurrence;
+title/detail and list position are excluded. Matching targets preserve IDs on
+title/order refresh; replacing native adapters revokes old leases. Query/target
+removal retires nodes, duplicates remain distinct, and detach retires the scope.
+Native IME/search admission, selection, domain validation and callbacks remain.
+A projected tab index is a UI key component, not new browser authorization.
+
+Both binaries compile. **311 Rust**, **180 SDK cases plus raster**, **68 live and
+68 clean-archive Python**, scoped GN/boundaries and final Ninja no-op passed;
+all 53 committed/live/staged prototype inputs match. **No UI tests ran.** The new
+compiled case covers retained adapters, title/order refresh, duplicate targets
+and query changes. [Headless evidence](benchmarks/rust-palette-node-headless-2026-10-27.json).
+
+Native result Views still rebuild. Logical IDs alone do not restore focus, own
+all scene properties or replace View containers/platform services. The preview
+was left running unchanged. GUI and presentation-performance acceptance remain open.
+
+## Earlier headless implementation: history result nodes
 
 Source `205d289` scopes history row identities/input leases to the live tools
 form in Rust. Profile ID, URL, exact visit time and duplicate occurrence use
