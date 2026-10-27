@@ -733,6 +733,7 @@ class RustActionView : public views::View {
   uint64_t LogicalNodeId() const{return state_->action_node_id();}
   uint32_t ModelKind() const{return state_->node_model_kind();}
   uint64_t LogicalParentId() const{return state_->node_parent_id();}
+  bool BelongsTo(const SidebarNodeGraphState& scope) const{return scope.graph->owns_input(*state_);}
   void BindNodeInput(const SidebarNodeBinding& binding){
     state_=AcquireSidebarInput(binding);state_->action_focus(HasFocus());SyncEnabled();
     auto& ax=GetViewAccessibility();if(state_->action_snapshot().enabled)ax.SetDefaultActionVerb(ActionVerb());else ax.RemoveDefaultActionVerb();
@@ -1951,6 +1952,20 @@ class RustRowView final : public views::View {
   }
   ~RustRowView() override{if(watch_)watch_.Run(this,{});}
   uint64_t LogicalNodeId() const{return state_->action_node_id();}
+  uint64_t LogicalParentId() const{return state_->node_parent_id();}
+  bool BelongsTo(const SidebarNodeGraphState& scope) const{return scope.graph->owns_input(*state_);}
+  uint32_t ModelKind() const{return state_->node_model_kind();}
+  void ProjectHistory(const sidebar::HistorySceneChild& child){
+    CHECK(spec_.history);auto text=[](const rust::Vec<uint16_t>& units){return std::u16string(units.begin(),units.end());};
+    if(child.cancel_input)CancelInput();
+    auto same=[](const std::u16string& value,const rust::Vec<uint16_t>& units){return value.size()==units.size()&&std::equal(value.begin(),value.end(),units.begin());};
+    if(!same(spec_.title,child.title))SetTitle(text(child.title));
+    if(!same(spec_.detail,child.detail))SetDetail(text(child.detail));
+    if(spec_.height!=child.height){spec_.height=child.height;PreferredSizeChanged();}
+    auto& ax=GetViewAccessibility();if(!same(ax.GetCachedName(),child.url)){auto url=text(child.url);SetTooltipText(url);ax.SetName(url);}ax.SetDescription(text(child.detail));
+    // Rust can cancel input before the adapter sees a visual-state delta.
+    SchedulePaint();
+  }
   const Spec& preview_spec() const{return spec_;}
   void SetCallback(views::Button::PressedCallback callback){CancelInput();callback_=std::move(callback);}
   void SetActive(bool active){if(!state_->action_on(active))return;spec_.active=active;measured_.reset();UpdateClose();SchedulePaint();}
@@ -4729,6 +4744,7 @@ std::unique_ptr<views::View> WorkspaceShell::CreateWorkspaceActionForTesting(bas
 uint32_t WorkspaceShell::control_model_kind_for_testing(views::View* view) const{
 #if BUILDFLAG(IS_MAC)
   if(auto* action=views::AsViewClass<RustActionView>(view))return action->ModelKind();
+  if(auto* row=views::AsViewClass<RustRowView>(view))return row->ModelKind();
 #endif
   return 0;
 }
@@ -5462,9 +5478,10 @@ uint64_t WorkspaceShell::sidebar_node_id_for_testing(views::View* row) const{
   return 0;
 #endif
 }
-uint64_t WorkspaceShell::workspace_scene_parent_for_testing(views::View* view) const{
+uint64_t WorkspaceShell::scene_parent_id_for_testing(views::View* view) const{
 #if BUILDFLAG(IS_MAC)
   if(auto* action=views::AsViewClass<RustActionView>(view))return action->LogicalParentId();
+  if(auto* row=views::AsViewClass<RustRowView>(view))return row->LogicalParentId();
 #endif
   return 0;
 }
@@ -5499,7 +5516,7 @@ void WorkspaceShell::RebuildWorkspaceDots() {
     for(const auto& child:scene.children){CHECK_EQ(child.parent,scene.root);wanted.insert(child.id);}
     std::vector<views::View*> removed;
     // Inspect actual children, never stale cached pointers to detached adapters.
-    for(const auto& child:workspace_dots_->children()){auto* adapter=views::AsViewClass<RustActionView>(child.get());const auto id=adapter?adapter->LogicalNodeId():0;if(id&&wanted.contains(id))existing.emplace(id,child.get());else removed.push_back(child.get());}
+    for(const auto& child:workspace_dots_->children()){auto* adapter=views::AsViewClass<RustActionView>(child.get());const auto id=adapter?adapter->LogicalNodeId():0;if(id&&wanted.contains(id)&&adapter->BelongsTo(*chrome_node_graph_))existing.emplace(id,child.get());else removed.push_back(child.get());}
     workspace_buttons_.clear();
     for(auto* child:removed)workspace_dots_->RemoveChildViewT(child);
     size_t index=0;
@@ -7310,21 +7327,25 @@ void WorkspaceShell::SetHistoryResults(std::u16string query, std::string profile
 #endif
   {if(history_query_!=query||limit!=history_limit_)return;history_loaded_=true;}
   history_entries_ = std::move(entries);
-  std::vector<std::string> history_node_keys;
 #if BUILDFLAG(IS_MAC)
+  sidebar::HistoryScene scene{};std::map<uint64_t,RustRowView*> retained_rows;
   if(tools_form_){
     if(!history_node_graph_)history_node_graph_=std::make_shared<SidebarNodeGraphState>();
-    rust::Vec<sidebar::ActionNodeKey> keys;keys.reserve(history_entries_.size());history_node_keys.reserve(history_entries_.size());
-    std::map<std::pair<std::string,int64_t>,size_t> occurrences;
+    auto units=[](const std::u16string& text){rust::Vec<uint16_t> result;for(char16_t unit:text)result.push_back(unit);return result;};
+    rust::Vec<sidebar::HistorySceneInput> items;items.reserve(history_entries_.size());std::map<std::pair<std::string,int64_t>,size_t> occurrences;
     for(const auto& entry:history_entries_){
       const auto record=std::make_pair(entry.url.spec(),entry.visited.ToInternalValue());
-      // JSON array framing keeps arbitrary profile/URL strings unambiguous;
-      // duplicate records have independent occurrence identities. Titles are display data.
-      base::ListValue identity;identity.Append(profile_id);identity.Append(record.first);identity.Append(base::NumberToString(record.second));identity.Append(base::NumberToString(occurrences[record]++));
-      std::string name;CHECK(base::JSONWriter::Write(identity,&name));history_node_keys.push_back(name);keys.push_back({5,0,0,std::move(name)});
+      // The profile/URL/exact-visit/duplicate key stays opaque UI identity;
+      // native profile/query/limit and command admission remain authoritative.
+      base::ListValue identity;identity.Append(profile_id);identity.Append(record.first);identity.Append(base::NumberToString(record.second));identity.Append(base::NumberToString(occurrences[record]++));std::string key;CHECK(base::JSONWriter::Write(identity,&key));
+      auto url=base::UTF8ToUTF16(entry.url.spec());items.push_back({std::move(key),units(entry.title.empty()?url:entry.title),units(base::TimeFormatShortDateAndTime(entry.visited)+u" · "+url),units(url)});
     }
-    CHECK(history_node_graph_->graph->reconcile(std::move(keys)).admitted)<<"Invalid history logical node projection";
-  }
+    CHECK(history_node_graph_->graph->reconcile_history(std::move(items)).admitted)<<"Invalid history scene projection";scene=history_node_graph_->graph->history_scene();CHECK_NE(scene.root,0u);
+    std::set<uint64_t> wanted;for(const auto& child:scene.children){CHECK_EQ(child.parent,scene.root);wanted.insert(child.id);}
+    std::vector<views::View*> removed;
+    for(const auto& child:history_list_->children()){auto* row=views::AsViewClass<RustRowView>(child.get());const auto id=row?row->LogicalNodeId():0;if(id&&wanted.contains(id)&&row->BelongsTo(*history_node_graph_))retained_rows.emplace(id,row);else removed.push_back(child.get());}
+    for(auto* child:removed)history_list_->RemoveChildViewT(child);
+  }else
 #endif
   history_list_->RemoveAllChildViews();
   std::u16string empty_text,status_text;bool more_visible,more_enabled;
@@ -7335,30 +7356,39 @@ void WorkspaceShell::SetHistoryResults(std::u16string query, std::string profile
   if(history_entries_.empty())AddToolsCopy(history_list_,empty_text,kMuted,0,static_cast<int>(gfx::Font::Weight::NORMAL),true);
   [[maybe_unused]] size_t history_node_index=0;
   for (const auto& entry : history_entries_) {
+#if BUILDFLAG(IS_MAC)
+    if(tools_form_){const auto& child=scene.children[history_node_index];const auto found=retained_rows.find(child.id);if(found!=retained_rows.end()){auto* adapter=found->second;adapter->ProjectHistory(child);history_list_->ReorderChildView(adapter,history_node_index++);continue;}}
+#endif
     RowButton::Spec row;
-    row.title = entry.title.empty() ? base::UTF8ToUTF16(entry.url.spec()) : entry.title;
-    row.detail = base::TimeFormatShortDateAndTime(entry.visited) + u" · " + base::UTF8ToUTF16(entry.url.spec());
-    row.height = 60;
-    auto callback=base::BindRepeating(
+#if BUILDFLAG(IS_MAC)
+    if(tools_form_){const auto& child=scene.children[history_node_index];row.title=std::u16string(child.title.begin(),child.title.end());row.detail=std::u16string(child.detail.begin(),child.detail.end());row.height=child.height;}else
+#endif
+    {row.title=entry.title.empty()?base::UTF8ToUTF16(entry.url.spec()):entry.title;row.detail=base::TimeFormatShortDateAndTime(entry.visited)+u" · "+base::UTF8ToUTF16(entry.url.spec());row.height=60;}
+    // Retained keys keep the same profile/URL callback; avoid rebinding and
+    // cancelling input when an identical result batch is projected.
+    auto callback=[&]{return base::BindRepeating(
         [](base::WeakPtr<WorkspaceShell> shell, std::string profile_id, GURL url) {
           base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(
               [](base::WeakPtr<WorkspaceShell> shell, std::string profile_id, GURL url) {
                 if (!shell || shell->state_.profile_id != profile_id) return;
                 if (shell->callbacks_.navigate.Run(url, true)) { shell->CloseOverlays(); shell->RestorePageFocus(); }
               }, shell, profile_id, url));
-        }, weak_factory_.GetWeakPtr(), profile_id, entry.url);
+        }, weak_factory_.GetWeakPtr(), profile_id, entry.url);};
     views::View* button;
 #if BUILDFLAG(IS_MAC)
     if(tools_form_){
       row.sidebar_row=true;row.history=true;
       row.scene_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->ToolsChromeVisible();},weak_factory_.GetWeakPtr());
-      button=history_list_->AddChildView(CreateSceneRow(std::move(callback),std::move(row),base::BindRepeating(&WorkspaceShell::ScheduleToolsChrome,weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak_factory_.GetWeakPtr()),{history_node_graph_,5,{},history_node_keys[history_node_index]}));
+      const auto& child=scene.children[history_node_index];auto* adapter=views::AsViewClass<RustRowView>(history_list_->AddChildView(CreateSceneRow(callback(),std::move(row),base::BindRepeating(&WorkspaceShell::ScheduleToolsChrome,weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak_factory_.GetWeakPtr()),{history_node_graph_,5,{},std::string(child.key)})));
+      CHECK(adapter);adapter->ProjectHistory(child);history_list_->ReorderChildView(adapter,history_node_index);button=adapter;
     }else
 #endif
-    button=history_list_->AddChildView(std::make_unique<RowButton>(std::move(callback),std::move(row)));
+    button=history_list_->AddChildView(std::make_unique<RowButton>(callback(),std::move(row)));
     ++history_node_index;
-    button->SetTooltipText(base::UTF8ToUTF16(entry.url.spec()));
-    button->GetViewAccessibility().SetDescription(base::TimeFormatShortDateAndTime(entry.visited) + u" · " + base::UTF8ToUTF16(entry.url.spec()));
+#if BUILDFLAG(IS_MAC)
+    if(!tools_form_)
+#endif
+    {button->SetTooltipText(base::UTF8ToUTF16(entry.url.spec()));button->GetViewAccessibility().SetDescription(base::TimeFormatShortDateAndTime(entry.visited)+u" · "+base::UTF8ToUTF16(entry.url.spec()));}
   }
   SetHistoryMoreVisible(more_visible);
   history_more_->SetEnabled(more_enabled);
