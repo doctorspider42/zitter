@@ -14,7 +14,29 @@ for a later bulk checkpoint. Build, Rust/Python and SDK checks without windows
 remain enabled. No shutdown is triggered by the former weekly threshold.
 The previous pause is historical: [handoff](rust-metal-handoff-2026-10-26.md).
 
-## Latest headless implementation: workspace dismiss completes form button paths
+## Latest headless follow-up: activation observer retirement
+
+Source `093adc4` revalidates a scoped action node after ElementTracker activation
+observers run and before its callback. An observer can remove and retain a View:
+ViewTracker alone then reports an alive object although Rust has retired its
+lease. The new guard rejects a retired/changed node or disabled graph input;
+ViewTracker still handles deletion before any member access. Standalone action
+behavior and native domain authorization remain unchanged.
+
+Both binaries compile. **321 Rust**, **180 SDK cases plus raster**, **68 live and
+68 clean-archive Python**, scoped GN/boundaries and final Ninja no-op passed;
+all 53 committed/live/staged prototype inputs match. **No UI tests ran.** A new
+compiled dialog case removes and retains OK from its activation observer and
+asserts notification, object survival, retired ID and zero accept callbacks.
+[Headless evidence](benchmarks/rust-form-action-activation-headless-2026-10-27.json).
+
+This retains the form action membership and workspace dismiss milestones below.
+Four new browser cases in this round remain for the bulk checkpoint, including
+the existing default/ElementTracker, form/IME/profile/admission and panel focus
+regressions. The live preview was not replaced. Actual GUI behavior and speedup
+remain unverified; full form/tree and checked/selector/editor ownership remain open.
+
+## Earlier headless implementation: workspace dismiss completes form button paths
 
 Source `627946d` replaces the remaining workspace settings header GlyphButton
 with ScenePreferenceControls in the Rust backend. Its graph-owned action uses
