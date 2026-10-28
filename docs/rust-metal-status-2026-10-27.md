@@ -66,9 +66,14 @@ ramki dialogów, fokus/AX/IME, dostarczanie zdarzeń oraz usługi przeglądarki.
    procesie (odtworzony sondą); całe drzewo procesów +12%. Przewagi wydajnościowej
    Rust/Metal **nie** ma. Do zbadania: renderowanie przez proces GPU zamiast
    `MTLDevice` w procesie przeglądarki, tańsze odciski klatek/klucze tekstu.
-3. **Wydanie:** podpisany bundle odpowiadający zweryfikowanemu commitowi, sesje/profile,
-   rollback, manifest licencji i informacje upstream. Rust/Metal pozostaje opt-in do
-   zakończenia akceptacji.
+3. **Kandydat wydania — zbudowany i sprawdzony lokalnie.** `build/ZitterRustMetalRelease.app`
+   (package_app.py, podpis lokalną tożsamością, `codesign --verify --deep --strict` OK),
+   świeży audyt licencji: 326 komponentów, 0 niedopasowanych binariów, dołączone
+   `THIRD_PARTY_LICENSES.txt` identyczne z aktualnym składem. Test dymny na izolowanym
+   profilu: start Rust/Metal, zapis sesji, zamknięcie i odtworzenie (24 + 1 karty),
+   wycofanie do Views na tym samym profilu. [Raport](benchmarks/rust-metal-release-candidate-2026-10-28.json).
+   Otwarte: notaryzacja/przenośny instalator (bundle jest deweloperski, zależny od
+   checkoutu) oraz decyzja o domyślnym włączeniu po akceptacji ręcznej.
 4. **Opcjonalnie dalsza redukcja natywnych kontenerów** (zwykłe `views::View` z rustowym
    układem pełnią dziś rolę adapterów zdarzeń/fokusu/AX) — tylko jeśli akceptacja
    wykaże taką potrzebę.

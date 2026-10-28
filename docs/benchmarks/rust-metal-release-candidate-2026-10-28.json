@@ -1,0 +1,29 @@
+{
+  "date": "2026-10-28",
+  "source_commit": "ff3ae3acf5ddc1f0837fe4027437991728bf652a",
+  "bundle": "build/ZitterRustMetalRelease.app",
+  "executable_uuid": "4C4C4458-5555-3144-A198-E495B01F3137",
+  "codesign_verify": "passed",
+  "license_audit": {
+    "manifest": "build/license-audit/rust-metal-2026-10-28/manifest.json",
+    "components": 326,
+    "unmatched_binaries": 0,
+    "third_party_licenses_sha256": "3ed5d5a1fe0f9f749eedc4f57d754cc70d5c52cc29396618d954b21a3fdcd9b8",
+    "matches_bundled_notice": true
+  },
+  "smoke": {
+    "profile": "build/rust-metal-release-profile (isolated, owned)",
+    "rust_metal_launch": "ok",
+    "session_after_quit_and_relaunch": {
+      "work": 24,
+      "personal": 1
+    },
+    "views_rollback_on_same_profile": "ok, same session",
+    "crash_markers": "none"
+  },
+  "limits": [
+    "Local development bundle linked against this checkout (package_app.py), signed with the pinned local identity; not notarized or portable.",
+    "Rust/Metal remains opt-in (--zitter-sidebar=rust-metal).",
+    "No manual IME/VoiceOver/trackpad/scale acceptance."
+  ]
+}
