@@ -1,5 +1,6 @@
 #include "chromium/prototype/workspace_window.h"
 #include "chromium/prototype/page_media_access.h"
+#include "build/build_config.h"
 
 #include <algorithm>
 #include "base/functional/bind.h"
@@ -11,6 +12,10 @@
 #include "content/public/browser/navigation_controller.h"
 #include "components/sessions/content/session_tab_helper.h"
 #include "ui/views/controls/webview/webview.h"
+#if BUILDFLAG(IS_MAC)
+#include "base/command_line.h"
+#include "chromium/prototype/sidebar_scene.rs.h"
+#endif
 
 namespace zitter::prototype {
 namespace {
@@ -35,12 +40,10 @@ std::vector<PaletteResult> WorkspaceWindow::CommandResults(std::u16string query)
   if (only) query.erase(0, 1);
   query = Fold(std::u16string(base::TrimWhitespace(query, base::TRIM_ALL)));
   const auto words = base::SplitString(query, u" \t", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
-  auto add = [&](std::string id, std::u16string title, std::u16string detail,
-                 std::u16string aliases = {}, std::string target = {}) {
-    const auto haystack = Fold(title + u" " + detail + u" " + aliases);
-    if (!std::all_of(words.begin(), words.end(), [&](const auto& word) { return haystack.find(word) != std::u16string::npos; })) return;
+  // Binds an entry to the current page/tab and appends its configured chord.
+  auto bind = [&](std::string id, std::u16string title, std::u16string detail, std::string target) {
     PaletteResult result;
-    result.title = std::move(title); result.detail = u"Polecenie · " + detail;
+    result.title = std::move(title); result.detail = std::move(detail);
     result.workspace_id = source; result.command_id = std::move(id); result.target_workspace_id = std::move(target);
     // Bind page actions to the selected tab, so a delayed click cannot act on a replacement.
     for (const auto& host : hosts_) if (host.workspace_id == source) result.tab = host.active_tab;
@@ -53,6 +56,40 @@ std::vector<PaletteResult> WorkspaceWindow::CommandResults(std::u16string query)
       if (!chord.empty()) result.detail += u" · " + base::UTF8ToUTF16(chord);
     }
     results.push_back(std::move(result));
+  };
+  auto has_closed = [&] {
+    const auto* space_data = time_machine_.FindDict(source);
+    const auto* closed = space_data ? space_data->FindList("closed") : nullptr;
+    return closed && std::any_of(closed->begin(), closed->end(), [&](const auto& value) {
+      const auto* entry = value.GetIfDict();
+      const auto* profile = entry ? entry->FindString("profile_id") : nullptr;
+      return profile && *profile == model_.active()->profile_id;
+    });
+  };
+#if BUILDFLAG(IS_MAC)
+  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar") == "rust-metal") {
+    // Rust owns the catalogue, wording and matching; native code supplies facts.
+    sidebar::CommandContext context{};
+    context.page = page; context.http_page = page && page->GetVisibleURL().SchemeIsHTTPOrHTTPS(); context.split = split();
+    context.can_back = page && page->GetController().CanGoBack(); context.can_forward = page && page->GetController().CanGoForward();
+    context.tab_count = tab_count(source); context.reopen = has_closed();
+    for (const auto& workspace : model_.workspaces()) {
+      if (workspace.id == source) continue;
+      const auto pages = WorkspacePages(workspace.id);
+      context.workspaces.push_back({workspace.id, workspace.name, workspace_sleeping(workspace.id), workspace.profile_id == model_.active()->profile_id,
+          std::any_of(pages.begin(), pages.end(), [](auto* page) { return PageMediaAccess::IsCapturing(page) || page->IsBeingCaptured(); })});
+    }
+    std::u16string raw = only ? u">" + query : query;
+    for (const auto& entry : sidebar::command_catalogue(context, base::UTF16ToUTF8(raw)))
+      bind(std::string(entry.id), base::UTF8ToUTF16(std::string(entry.title)), base::UTF8ToUTF16(std::string(entry.detail)), std::string(entry.target));
+    return results;
+  }
+#endif
+  auto add = [&](std::string id, std::u16string title, std::u16string detail,
+                 std::u16string aliases = {}, std::string target = {}) {
+    const auto haystack = Fold(title + u" " + detail + u" " + aliases);
+    if (!std::all_of(words.begin(), words.end(), [&](const auto& word) { return haystack.find(word) != std::u16string::npos; })) return;
+    bind(std::move(id), std::move(title), u"Polecenie · " + detail, std::move(target));
   };
   add("new_tab", u"Nowa karta", u"Otwórz pasek nowej karty", u"new tab");
   add("save_snapshot", u"Zapisz snapshot przestrzeni", u"Szybki punkt przywracania w Time Machine", u"zapis sesji save snapshot backup");
@@ -78,13 +115,7 @@ std::vector<PaletteResult> WorkspaceWindow::CommandResults(std::u16string query)
       add("right_pane", u"Przejdź do prawej karty Split View", u"Ustaw aktywną stronę", u"focus right pane");
     }
   }
-  const auto* space_data = time_machine_.FindDict(source);
-  const auto* closed = space_data ? space_data->FindList("closed") : nullptr;
-  if (closed && std::any_of(closed->begin(), closed->end(), [&](const auto& value) {
-    const auto* entry = value.GetIfDict();
-    const auto* profile = entry ? entry->FindString("profile_id") : nullptr;
-    return profile && *profile == model_.active()->profile_id;
-  })) add("reopen", u"Przywróć zamkniętą kartę", u"Ostatnia karta w tym profilu i space", u"reopen closed tab");
+  if (has_closed()) add("reopen", u"Przywróć zamkniętą kartę", u"Ostatnia karta w tym profilu i space", u"reopen closed tab");
   bool awake_background = false;
   for (const auto& workspace : model_.workspaces()) {
     if (workspace.id == source) continue;

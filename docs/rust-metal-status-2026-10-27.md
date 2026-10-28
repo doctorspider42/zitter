@@ -127,6 +127,11 @@ cała klasa `ZitterProfilesBrowserTest` przeszła: 216 Metal / 208 Views.
 (`import_status_copy`), Views — natywny formatter. Testy Rust 497, Python 68;
 podzbiór UI importu 17 Metal / 14 Views zaliczony.
 
+**Katalog Command Center w Ruście:** lista komend warunkowa od strony/splitu/historii/
+przestrzeni, ich teksty, składanie diakrytyków, dopasowanie słów i skrócenie widoku
+startowego są w `command_catalogue`; natywnie zostaje wiązanie z kartą/stroną,
+skróty i wykonanie. Testy Rust 499; podzbiór UI 33 Metal / 29 Views zaliczony.
+
 **Pełny checkpoint UI 2026-10-27:** po poprawkach **273/273 Metal i 224/224 Views**
 (pierwszy przebieg: 6 niepowodzeń Metal, 1 Views — trzy crashe testów na odłączonych
 widokach, brakująca komenda Rust `HistoryMore`, tooltip tytułu Peek, wyścig tytułu

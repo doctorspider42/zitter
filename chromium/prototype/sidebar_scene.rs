@@ -115,6 +115,9 @@ mod ffi {
     enum LinkMenuCommand { None, Peek, NewTab, Split, SetRule, RemoveRule }
     struct LinkMenuAction { command: LinkMenuCommand, workspace: String }
     struct FolderMenuState { ready: bool, busy: bool, workspace: String, folder: String }
+    struct CommandWorkspace { id: String, name: String, asleep: bool, same_profile: bool, capturing: bool }
+    struct CommandContext { page: bool, http_page: bool, split: bool, can_back: bool, can_forward: bool, tab_count: usize, reopen: bool, workspaces: Vec<CommandWorkspace> }
+    struct CommandEntry { id: String, title: String, detail: String, target: String }
     struct PalettePlanInput { text: String, command_palette: bool, provider: String, resolved: String, keywords: Vec<String>, results: usize, commands: usize }
     #[derive(Debug)]
     enum PaletteSource { Primary, Result, Command }
@@ -417,6 +420,7 @@ mod ffi {
         fn link_menu_action(command: i32, state: &LinkMenuState) -> LinkMenuAction;
         fn folder_context_menu(state: &FolderMenuState) -> Vec<FolderMenuEntry>;
         fn palette_plan(input: &PalettePlanInput) -> PalettePlan;
+        fn command_catalogue(context: &CommandContext, query: &str) -> Vec<CommandEntry>;
         fn folder_menu_enabled(command: i32, state: &FolderMenuState) -> bool;
         fn folder_menu_action(command: i32, state: &FolderMenuState) -> FolderMenuAction;
         fn workspace_context_menu(state: &WorkspaceMenuState) -> Vec<WorkspaceMenuEntry>;
@@ -1565,6 +1569,38 @@ fn palette_plan(p:&ffi::PalettePlanInput)->ffi::PalettePlan{
     if p.command_palette{let position=if keyword_search&&!slots.is_empty(){1}else{0};let commands=(0..p.commands).map(|index|ffi::PaletteSlot{source:S::Command,index}).collect::<Vec<_>>();slots.splice(position..position,commands);}
     let search=!p.provider.is_empty();
     ffi::PalettePlan{commands_only,keyword_search,primary_title:if !primary{String::new()}else if search{format!("Szukaj w {}",p.provider)}else{"Otwórz".into()},primary_detail:if !primary{String::new()}else if search{p.text.clone()}else{p.resolved.clone()},primary_icon:if primary&&!search{1}else{0},slots}
+}
+
+// Command Center catalogue. Native code supplies page/workspace facts and binds
+// each entry to the current tab/page; Rust owns entries, wording and matching.
+fn command_fold(text:&str)->String{text.to_lowercase().chars().map(|c|match c{'ą'=>'a','ć'=>'c','ę'=>'e','ł'=>'l','ń'=>'n','ó'=>'o','ś'=>'s','ź'|'ż'=>'z',_=>c}).collect()}
+fn command_catalogue(c:&ffi::CommandContext,query:&str)->Vec<ffi::CommandEntry>{
+    let only=query.starts_with('>');let query=if only{&query[1..]}else{query};let query=command_fold(query.trim());
+    let words=query.split([' ','\t']).filter(|w|!w.is_empty()).collect::<Vec<_>>();
+    let mut out=Vec::new();
+    let mut add=|id:&str,title:String,detail:&str,aliases:&str,target:&str|{let haystack=command_fold(&format!("{title} {detail} {aliases}"));if words.iter().all(|w|haystack.contains(w)){out.push(ffi::CommandEntry{id:id.into(),title,detail:format!("Polecenie · {detail}"),target:target.into()});}};
+    for (id,title,detail,aliases) in [("new_tab","Nowa karta","Otwórz pasek nowej karty","new tab"),("save_snapshot","Zapisz snapshot przestrzeni","Szybki punkt przywracania w Time Machine","zapis sesji save snapshot backup"),("timeline","Time Machine","Snapshoty i zamknięte karty","przywróć restore historia sesji"),("settings","Ustawienia przeglądarki","Wygląd, prywatność i ustawienia profilu","settings preferences"),("shortcuts","Konfiguruj skróty klawiszowe","Nagraj lub zmień kombinacje klawiszy","keyboard shortcuts"),("engines","Konfiguruj wyszukiwarki","Prefiksy i domyślna wyszukiwarka","search engines"),("sidebar","Pokaż / ukryj panel boczny","Karty i przestrzenie","sidebar menu"),("spaces","Zarządzaj przestrzeniami","Dodaj lub edytuj space i przypisanie profilu","workspace spaces"),("profiles","Zarządzaj profilami","Dodaj profil i zarządzaj jego danymi","profile accounts"),("import","Importuj z przeglądarki","Wybierz przeglądarkę i zakres importu","import arc chrome edge brave zakladki profile"),("history","Historia przeglądania","Przeglądaj, szukaj i czyść historię profilu","history visited historia wyczysc"),("downloads","Pobrania","Postęp, pauza, wznowienie i Finder","downloads pobierz pliki transfer")]{add(id,title.into(),detail,aliases,"");}
+    if c.page{
+        add("split",(if c.split{"Zakończ Split View"}else{"Otwórz Split View"}).into(),"Dwie karty obok siebie","split podziel porównaj compare","");
+        add("reload","Odśwież kartę".into(),"Załaduj bieżącą stronę ponownie","reload refresh","");
+        if c.can_back{add("back","Wstecz".into(),"Poprzednia strona tej karty","back","");}
+        if c.can_forward{add("forward","Dalej".into(),"Następna strona tej karty","forward","");}
+        add("passwords","Hasła tego profilu".into(),"Zapisane logowania","passwords logins","");
+        if c.tab_count>1{add("close_tab","Zamknij bieżącą kartę".into(),"Możesz ją odzyskać w Time Machine","close tab","");}
+        if c.split{add("left_pane","Przejdź do lewej karty Split View".into(),"Ustaw aktywną stronę","focus left pane","");add("right_pane","Przejdź do prawej karty Split View".into(),"Ustaw aktywną stronę","focus right pane","");}
+    }
+    if c.reopen{add("reopen","Przywróć zamkniętą kartę".into(),"Ostatnia karta w tym profilu i space","reopen closed tab","");}
+    let mut awake_background=false;
+    for w in &c.workspaces{
+        add("select_space",format!("{}{}",if w.asleep{"Obudź przestrzeń: "}else{"Przełącz przestrzeń: "},w.name),if w.asleep{"Przywróć zapisany układ kart"}else{"Przejdź do space"},"switch space workspace wake",&w.id);
+        if c.page&&w.same_profile{add("move_tab",format!("Przenieś kartę do: {}",w.name),"Ten sam profil · zachowuje formularze i historię karty","move tab przenies karte",&w.id);}
+        else if c.page&&c.http_page{add("copy_tab",format!("Otwórz kopię karty w: {}",w.name),"Inny profil · nowe logowanie i dane strony","copy tab skopiuj karte",&w.id);}
+        awake_background|=!w.asleep&&!w.capturing;
+        if !w.asleep&&!w.capturing{add("sleep_space",format!("Uśpij przestrzeń: {}",w.name),"Zwolnij pamięć · strony przeładują się po obudzeniu; zapisz formularze","sleep space memory",&w.id);}
+    }
+    if awake_background{add("sleep_others","Uśpij pozostałe przestrzenie".into(),"Pomiń aktywne nagrywanie · inne strony przeładują się; zapisz formularze","sleep other spaces memory pamiec","");}
+    // The initial view stays compact; ">" reveals the full catalogue.
+    if query.is_empty()&&!only{out.truncate(6);}out
 }
 
 // Folder menu IDs follow the native menu delegate contract; an empty folder is the root.
@@ -4671,6 +4707,23 @@ mod tests {
         let p=palette_plan(&palette_input("",true,"",3,1));assert_eq!(palette_order(&p),vec![(2,0),(1,0),(1,1),(1,2)]);
         let p=palette_plan(&palette_input(">x",false,"",1,5));assert!(!p.commands_only);assert_eq!(palette_order(&p),vec![(0,0),(1,0)]);
         let p=palette_plan(&palette_input("ddg\tkot",true,"DuckDuckGo",0,1));assert!(p.keyword_search);assert_eq!(palette_order(&p),vec![(0,0),(2,0)]);
+    }
+    fn command_context()->ffi::CommandContext{ffi::CommandContext{page:true,http_page:true,split:false,can_back:true,can_forward:false,tab_count:2,reopen:true,workspaces:vec![ffi::CommandWorkspace{id:"home".into(),name:"Dom".into(),asleep:false,same_profile:true,capturing:false},ffi::CommandWorkspace{id:"club".into(),name:"Klub".into(),asleep:true,same_profile:false,capturing:false}]}}
+    #[test] fn command_catalogue_lists_conditional_entries_with_targets() {
+        let all=command_catalogue(&command_context(),">");let ids=all.iter().map(|e|e.id.as_str()).collect::<Vec<_>>();
+        assert_eq!(ids,vec!["new_tab","save_snapshot","timeline","settings","shortcuts","engines","sidebar","spaces","profiles","import","history","downloads","split","reload","back","passwords","close_tab","reopen","select_space","move_tab","sleep_space","select_space","copy_tab","sleep_others"]);
+        assert_eq!(all[0].detail,"Polecenie · Otwórz pasek nowej karty");assert_eq!(all[12].title,"Otwórz Split View");
+        let wake=all.iter().find(|e|e.target=="club"&&e.id=="select_space").unwrap();assert_eq!(wake.title,"Obudź przestrzeń: Klub");assert_eq!(all.iter().find(|e|e.id=="move_tab").unwrap().target,"home");
+        let mut split=command_context();split.split=true;split.can_forward=true;split.tab_count=1;split.reopen=false;split.page=true;let ids=command_catalogue(&split,">").into_iter().map(|e|e.id).collect::<Vec<_>>();
+        assert!(ids.contains(&"left_pane".into())&&ids.contains(&"forward".into())&&!ids.contains(&"close_tab".into())&&!ids.contains(&"reopen".into()));
+        let mut blank=command_context();blank.page=false;blank.workspaces[0].capturing=true;let ids=command_catalogue(&blank,">").into_iter().map(|e|e.id).collect::<Vec<_>>();
+        assert!(!ids.iter().any(|i|matches!(i.as_str(),"split"|"reload"|"move_tab"|"copy_tab"|"sleep_space"|"sleep_others")));
+    }
+    #[test] fn command_catalogue_matches_folded_words_and_compacts_initial_view() {
+        let c=command_context();assert_eq!(command_catalogue(&c,"").len(),6);assert_eq!(command_catalogue(&c,">").len(),24);
+        let found=command_catalogue(&c,"PRZYWROC  karte");assert_eq!(found.iter().map(|e|e.id.as_str()).collect::<Vec<_>>(),vec!["reopen"]);
+        let found=command_catalogue(&c,">  uśpij\tdom ");assert_eq!(found.iter().map(|e|(e.id.as_str(),e.target.as_str())).collect::<Vec<_>>(),vec![("sleep_space","home")]);
+        assert!(command_catalogue(&c,"nonexistent").is_empty());assert_eq!(command_fold("ĄĆĘŁŃÓŚŹŻ Żółć"),"acelnoszz zolc");
     }
     #[test] fn tab_menu_preserves_order_labels_and_orientation() {
         let mut s=menu_state();let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,0,20,7,8,0,9,0,6,10,0,23,24]);assert_eq!(entries[3].label,"Przesuń w lewo");
