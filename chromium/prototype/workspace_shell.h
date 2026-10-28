@@ -65,6 +65,8 @@ class SidebarNodeGraphState;
 // Top band above the sidebar; the native traffic lights and the page commands
 // are centered on its middle line.
 inline constexpr int kShellHeaderHeight = 38;
+// Split View shows at most this many pages side by side.
+inline constexpr size_t kMaxSplitPanes = 4;
 
 enum class ThemeMode { kSystem, kLight, kDark };
 enum class SearchEngine { kDuckDuckGo, kGoogle, kBing };
@@ -96,11 +98,11 @@ struct ShellState {
   GURL url;
   std::vector<ShellTab> tabs;
   size_t active_tab = 0;
-  bool split = false;          // A pair exists, even while another tab is shown.
-  bool split_visible = false;  // The pair is on screen.
+  bool split = false;          // A group exists, even while another tab is shown.
+  bool split_visible = false;  // The group is on screen.
   bool split_vertical = false;
-  bool right_active = false;
-  std::array<std::optional<size_t>, 2> split_tabs;
+  size_t active_pane = 0;      // Focused pane of a visible group.
+  std::vector<size_t> split_tabs;  // Group members in pane order.
   bool can_go_back = false;
   bool can_go_forward = false;
 };
@@ -166,14 +168,23 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingCallback<bool(const GURL&, std::string)> set_link_rule;
     base::RepeatingCallback<bool(const GURL&, std::string, bool, bool)> open_link;
     base::RepeatingClosure toggle_split;
-    base::RepeatingCallback<void(bool)> focus_pane;
-    base::RepeatingCallback<void(double, bool)> split_ratio;
+    base::RepeatingCallback<void(size_t)> focus_pane;
+    // Divider index, ratio of its two neighbouring panes, drag finished.
+    base::RepeatingCallback<void(size_t, double, bool)> split_ratio;
     base::RepeatingCallback<bool(size_t)> split_tab;
-    // Closes Split View, keeping the given tab of the pair on screen.
+    // Separates the whole group, keeping the given tab on screen.
     base::RepeatingCallback<void(size_t)> unsplit;
+    // Takes one tab out of the group.
+    base::RepeatingCallback<void(size_t)> leave_split;
+    base::RepeatingCallback<void(size_t, bool)> move_split_pane;
     base::RepeatingClosure swap_split;
     base::RepeatingCallback<void(bool)> split_vertical;
     base::RepeatingCallback<void(std::string)> split_pin;
+    // Sidebar drag and drop: reorder tabs and pins, pinning across sections.
+    base::RepeatingCallback<bool(size_t, size_t)> move_tab;
+    base::RepeatingCallback<bool(size_t, std::string, std::string)> pin_tab;
+    base::RepeatingCallback<bool(std::string, size_t)> unpin;
+    base::RepeatingCallback<bool(std::string, std::string, std::string)> move_pin;
   };
 
   WorkspaceShell(base::FilePath settings_path, Callbacks callbacks);
@@ -183,11 +194,12 @@ class WorkspaceShell final : public ui::EventHandler,
   std::unique_ptr<views::View> Build();
   views::View* content_host() const { return content_host_; }
   void Attach(views::Widget* widget, ui::AcceleratorTarget* target);
-  void SetPanes(views::View* left, views::View* right, double ratio, bool vertical = false);
-  // Header buttons above each half of a visible split.
-  void ShowSplitPaneMenu(bool right, gfx::Point screen_point);
-  void CloseSplitPane(bool right);
-  views::View* split_pane_button(bool right, bool close) const;
+  // Pages in pane order; fewer than two show the first page alone.
+  void SetPanes(std::vector<views::View*> panes, std::vector<double> weights, bool vertical = false);
+  // Header buttons above each pane of a visible split.
+  void ShowSplitPaneMenu(size_t pane, gfx::Point screen_point);
+  void CloseSplitPane(size_t pane);
+  views::View* split_pane_button(size_t pane, bool close) const;
   views::View* peek_host() const { return peek_host_; }
   views::Widget* peek_widget() const { return peek_widget_.get(); }
   views::View* peek_toolbar_for_testing() const{return peek_toolbar_;}
@@ -527,7 +539,7 @@ class WorkspaceShell final : public ui::EventHandler,
   std::map<views::View*,base::RepeatingClosure> scene_row_input_;
   void ScheduleMetalSidebar();
   void UpdateMetalSidebar();
-  std::array<std::unique_ptr<SidebarMetal>,3> metal_split_;
+  std::array<std::unique_ptr<SidebarMetal>,2*kMaxSplitPanes-1> metal_split_;
   bool metal_split_pending_=false;
   std::unique_ptr<SidebarMetal> metal_sidebar_grip_;
   std::unique_ptr<SidebarMetal> metal_header_;
@@ -618,7 +630,7 @@ class WorkspaceShell final : public ui::EventHandler,
     std::vector<PinnedItem> pins;
     std::vector<ShellTab> tabs;
     SidebarTabPlan tab_plan;
-    std::array<std::optional<size_t>, 2> split_tabs;
+    std::vector<size_t> split_tabs;
     bool split = false;
     std::map<std::string, raw_ptr<views::View>> pin_buttons;
     std::map<size_t, raw_ptr<views::View>> tab_buttons;
@@ -628,7 +640,7 @@ class WorkspaceShell final : public ui::EventHandler,
     std::string active_pin;
   };
   void ReconcileSidebarNodes(TabListCache& cache, std::string_view workspace, const std::vector<PinnedItem>& pins, const std::vector<ShellTab>& tabs,
-                             std::array<std::optional<size_t>, 2> split_tabs = {}, bool split = false);
+                             const std::vector<size_t>& split_tabs = {}, bool split = false);
   void AppendPinnedItems(views::View* root, const std::vector<PinnedItem>& pins,
                          TabListCache& cache, const std::string& workspace,
                          std::map<std::string,std::unique_ptr<views::View>>* retained=nullptr,
@@ -648,6 +660,18 @@ class WorkspaceShell final : public ui::EventHandler,
   struct ResolvedRowTarget { bool valid; std::optional<size_t> tab; std::string pin; };
   ResolvedRowTarget ResolveSidebarTarget(std::string_view workspace,std::array<uint64_t,2> identity,std::string_view pin) const;
   void HandleSidebarDrop(std::string workspace,std::optional<size_t> tab,std::array<uint64_t,2> identity,std::string pin,gfx::Point point);
+  // Where a row dragged within the sidebar would land, in screen coordinates.
+  struct SidebarReorder {
+    gfx::Rect indicator;
+    bool into_folder = false;
+    bool pinned = false;
+    std::string parent, before_pin;  // Pinned target: folder and next sibling ("" appends).
+    size_t before_tab = 0;           // Tab target: host tab index (or count to append).
+  };
+  std::optional<SidebarReorder> SidebarReorderAt(gfx::Point screen_point) const;
+  // Live drag feedback; nullopt ends the drag.
+  void HandleSidebarDrag(std::optional<gfx::Point> screen_point);
+  std::optional<SidebarReorder> sidebar_reorder_;
   void QueueTabCommand(int command);
   bool RustTabCommandEnabled(int command) const;
   // Menu for context_tab_/context_pin_, at a screen point.

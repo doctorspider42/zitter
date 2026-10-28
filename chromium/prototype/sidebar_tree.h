@@ -11,7 +11,8 @@
 namespace zitter::prototype {
 struct SidebarTreeNode { std::string id, parent; bool folder; };
 struct SidebarTabNode { size_t index; std::string pin; };
-struct SidebarTabSlot { size_t first, second, pin; bool pair; };
+// A Split View group lists every member position; first == members.front().
+struct SidebarTabSlot { size_t first; std::vector<size_t> members; size_t pin; bool pair; };
 struct SidebarPinVisibility { size_t index; bool visible; };
 struct SidebarTabPlan {
   std::vector<SidebarTabSlot> slots;
@@ -32,7 +33,7 @@ class SidebarTree {
   std::vector<SidebarTreeEntry> Plan(std::string_view workspace,
                                    base::span<const SidebarTreeNode> nodes) const;
   SidebarTabPlan Tabs(std::string_view workspace, base::span<const SidebarTreeNode> nodes,
-                      base::span<const SidebarTabNode> tabs, size_t first, size_t second, bool split) const;
+                      base::span<const SidebarTabNode> tabs, base::span<const size_t> members, bool split) const;
   bool Collapsed(std::string_view workspace, std::string_view id) const;
   void SetCollapsed(std::string_view workspace, std::string_view id, bool value);
   bool Toggle(std::string_view workspace, std::string_view id);

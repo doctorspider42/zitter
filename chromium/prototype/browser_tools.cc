@@ -56,6 +56,8 @@ std::vector<Shortcut> ArcShortcuts() {
   add("close_split", u"Zamknij Split View", ui::VKEY_OEM_MINUS, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN);
   add("left_pane", u"Aktywuj lewą stronę podziału", ui::VKEY_1, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN);
   add("right_pane", u"Aktywuj prawą stronę podziału", ui::VKEY_2, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN);
+  add("third_pane", u"Aktywuj trzeci panel podziału", ui::VKEY_3, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN);
+  add("fourth_pane", u"Aktywuj czwarty panel podziału", ui::VKEY_4, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN);
   add("back", u"Wstecz", ui::VKEY_LEFT, p);
   add("forward", u"Dalej", ui::VKEY_RIGHT, p);
   add("timeline", u"Time Machine przestrzeni", ui::VKEY_Y, p | ui::EF_SHIFT_DOWN);

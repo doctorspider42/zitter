@@ -5158,6 +5158,92 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarFolderFailedWriteRollsB
   ASSERT_TRUE(base::Move(backup, file));
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitViewGroupsMoreThanTwoTabsAndSeparates) {
+  std::vector<content::WebContents*> pages;
+  for (const char* query : {"/storage_probe.html?a", "/storage_probe.html?b", "/storage_probe.html?c"}) {
+    ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL(query), !pages.empty()));
+    pages.push_back(window_->contents("work"));
+    ASSERT_TRUE(content::WaitForLoadStop(pages.back()));
+  }
+  // NavigateFromBar on the first page reuses the initial tab.
+  ASSERT_EQ(3u, window_->tab_count("work"));
+  window_->SelectTab(0);
+  ASSERT_TRUE(window_->SplitTab(1));
+  ASSERT_TRUE(window_->SplitTab(2));
+  ASSERT_EQ(3u, window_->split_count());
+  for (size_t pane = 0; pane < 3; ++pane) EXPECT_EQ(pages[pane], window_->pane_contents(pane));
+  base::RunLoop().RunUntilIdle();
+  for (size_t pane = 0; pane + 1 < 3; ++pane)
+    EXPECT_LT(pages[pane]->GetContainerBounds().right(), pages[pane + 1]->GetContainerBounds().x());
+  EXPECT_TRUE(window_->shell()->split_pane_button(2, false)->parent()->GetVisible());
+  EXPECT_FALSE(window_->shell()->split_pane_button(3, false)->parent()->GetVisible());
+  // One sidebar group holds all three tiles on a single row.
+  auto* shell = window_->shell();
+  shell->ShowSidebar();
+  base::RunLoop().RunUntilIdle();
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  for (size_t tab = 1; tab < 3; ++tab) {
+    ASSERT_TRUE(shell->tab_button(tab));
+    EXPECT_EQ(shell->tab_button(0)->parent(), shell->tab_button(tab)->parent());
+    EXPECT_EQ(shell->tab_button(0)->y(), shell->tab_button(tab)->y());
+  }
+  // A middle pane moves both ways; dividers resize only their neighbours.
+  window_->MoveSplitPane(1, false);
+  EXPECT_EQ(pages[1], window_->pane_contents(0));
+  window_->MoveSplitPane(1, true);
+  EXPECT_EQ(pages[1], window_->pane_contents(1));
+  const int leading = window_->pane_contents(0)->GetContainerBounds().width();
+  const int middle = window_->pane_contents(1)->GetContainerBounds().width();
+  window_->SetDividerRatio(1, 0.7);
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(leading, window_->pane_contents(0)->GetContainerBounds().width());
+  EXPECT_GT(window_->pane_contents(1)->GetContainerBounds().width(), middle);
+  // Taking one tab out keeps the other two together.
+  window_->RemoveFromSplit(1);
+  EXPECT_EQ(2u, window_->split_count());
+  EXPECT_EQ(pages[2], window_->pane_contents(1));
+  // "Rozdziel" in the sidebar tab menu separates the whole group.
+  shell->BuildTabMenu(2);
+  auto* menu = shell->workspace_menu();
+  std::optional<size_t> separate;
+  for (size_t i = 0; i < menu->GetItemCount(); ++i) if (menu->GetLabelAt(i) == u"Rozdziel") separate = i;
+  ASSERT_TRUE(separate);
+  menu->ActivatedAt(*separate, 0);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->split(); }));
+  EXPECT_EQ(pages[2], window_->contents("work"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarMovesTabsAndPinsAcrossSections) {
+  const auto first = embedded_test_server()->GetURL("/storage_probe.html?first");
+  const auto second = embedded_test_server()->GetURL("/storage_probe.html?second");
+  ASSERT_TRUE(window_->NavigateFromBar(first, false));
+  auto* first_page = window_->contents("work");
+  ASSERT_TRUE(window_->NavigateFromBar(second, true));
+  auto* second_page = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(second_page));
+  ASSERT_TRUE(window_->MoveTab(1, 0));
+  window_->SelectTab(0);
+  EXPECT_EQ(second_page, window_->contents("work"));
+  // Dropping a tab among the pins pins it and keeps its page.
+  ASSERT_TRUE(window_->PinTab(0, "", ""));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  const auto& pins = window_->pinned_items("work");
+  const auto pin = std::ranges::find_if(pins, [&](const auto& item) { return item.url == second; });
+  ASSERT_NE(pin, pins.end());
+  const std::string id = pin->id;
+  EXPECT_EQ(second_page, window_->contents("work"));
+  EXPECT_FALSE(window_->shell()->tab_button(0));
+  // Dropping the pin back among the tabs unpins it after the other tab.
+  ASSERT_TRUE(window_->UnpinItem(id, 2));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  EXPECT_TRUE(std::ranges::none_of(window_->pinned_items("work"), [&](const auto& item) { return item.id == id; }));
+  EXPECT_TRUE(window_->shell()->tab_button(1));
+  window_->SelectTab(0);
+  EXPECT_EQ(first_page, window_->contents("work"));
+  window_->SelectTab(1);
+  EXPECT_EQ(second_page, window_->contents("work"));
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FolderRemovalKeepsOpenedPinsAsTabs) {
   base::FilePath root;
   ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &root));

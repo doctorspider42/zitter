@@ -109,10 +109,15 @@ mod ffi {
     struct FolderRequest { action: FolderAction, workspace: String, parent: String, folder: String, name: String, expand_parent: bool }
     struct FolderLayout { width: i32, height: i32, label: Rect, input: Rect, error: Rect }
     struct MenuTab { index: usize, high: u64, low: u64 }
+    // Visible sidebar rows in visual order; pinned rows come before tab rows.
+    struct ReorderRow { bounds: Rect, pinned: bool, folder: bool }
+    // row == usize::MAX appends to the pinned section (it has no rows yet).
+    struct ReorderTarget { valid: bool, row: usize, after: bool, into: bool, pinned: bool }
     struct RowTarget { valid: bool, has_tab: bool, tab: usize, pin: String }
     struct TabMenuState {
         ready: bool, busy: bool, valid: bool, tab: usize, has_tab: bool,
-        split: bool, first: usize, has_first: bool, second: usize, has_second: bool,
+        // members: the Split View group in pane order (tab indices).
+        split: bool, members: Vec<usize>,
         vertical: bool, tab_count: usize, http: bool,
     }
     struct TabMenuEntry { command: u32, label: String }
@@ -146,9 +151,10 @@ mod ffi {
     #[derive(Debug)]
     enum WorkspaceMenuCommand { None, AssignProfile, NewProfile, EditProfile, Settings, Remove, Color, Emoji, ClearEmoji, CustomColor, CustomEmoji }
     struct WorkspaceMenuAction { command: WorkspaceMenuCommand, workspace: String, profile: String, color: u32, emoji: String }
-    enum SidebarAction { None, OpenSplit, CloseSplit, MoveFirst, MoveSecond, ToggleOrientation, CloseTab }
+    enum SidebarAction { None, OpenSplit, CloseSplit, MoveEarlier, MoveLater, ToggleOrientation, CloseTab, Separate }
     // kind: 0 row, 1 section label, 2 split pair (three consecutive items), 3 gap.
-    struct PreviewRow { index: usize, kind: u32, depth: i32, height: i32 }
+    // A split group (kind 2) consumes 1 + members consecutive items.
+    struct PreviewRow { index: usize, kind: u32, depth: i32, height: i32, members: usize }
     struct PreviewPlacement { index: usize, bounds: Rect, clip: Rect }
     struct WorkspaceMotion { enabled: bool, offset: f64, duration_ms: u32 }
     struct SwipeUpdate { started: bool, preview: bool, finish: bool, handled: bool }
@@ -157,7 +163,8 @@ mod ffi {
     struct PaletteInputLayout { icon: Rect, input: Rect, hint: Rect }
     struct WidthChange { width: i32, changed: bool }
     struct ShellLayout { content: Rect, edge: Rect, sidebar: Rect }
-    struct PaneHostLayout { first: Rect, second: Rect, first_bar: Rect, second_bar: Rect, divider: Rect }
+    // One page and title bar per pane; dividers[i] sits between panes i and i + 1.
+    struct PaneHostLayout { pages: Vec<Rect>, bars: Vec<Rect>, dividers: Vec<Rect> }
     struct PaneBarLayout { title: Rect, menu: Rect, close: Rect }
     struct DragRatio { ratio: f64, changed: bool }
     struct ScrollMetrics { position: i32, length: i32, offset: i32, max_offset: i32 }
@@ -180,7 +187,8 @@ mod ffi {
     struct TreeNode { id: String, parent: String, folder: bool }
     struct TreeEntry { index: usize, parent: usize, depth: i32, collapsed: bool, visible: bool }
     struct TabNode { index: usize, pin: String }
-    struct TabSlot { first: usize, second: usize, pin: usize, pair: bool }
+    // A plain slot holds `first`; a split group holds all `members` (first == members[0]).
+    struct TabSlot { first: usize, members: Vec<usize>, pin: usize, pair: bool }
     struct PinVisibility { index: usize, visible: bool }
     struct TabPlan { slots: Vec<TabSlot>, pins: Vec<PinVisibility> }
     enum PointerPhase { Enter, Exit, Move, Press, Drag, Release }
@@ -432,6 +440,7 @@ mod ffi {
         fn folder_form_layout(width: i32, label_height: i32, input_height: i32, error_height: i32, error: bool) -> FolderLayout;
         fn resolve_row_target(source: &str, current: &str, high: u64, low: u64, pin: &str, tabs: &[MenuTab], pins: &[TreeNode]) -> RowTarget;
         fn sidebar_drop_accepts(bounds: Rect, x: i32, y: i32, allowed: bool) -> bool;
+        fn sidebar_reorder_target(rows: &[ReorderRow], y: i32) -> ReorderTarget;
         fn tab_context_menu(state: &TabMenuState) -> Vec<TabMenuEntry>;
         fn link_context_menu(state: &LinkMenuState) -> Vec<LinkMenuEntry>;
         fn link_menu_enabled(command: i32, state: &LinkMenuState) -> bool;
@@ -498,7 +507,10 @@ mod ffi {
         fn cancel(self: &mut SplitDrag);
         fn active(self: &SplitDrag) -> bool;
         fn moved(self: &SplitDrag) -> bool;
-        fn pane_host_layout(width: i32, height: i32, ratio: f64, vertical: bool, split: bool) -> PaneHostLayout;
+        fn pane_host_layout(width: i32, height: i32, weights: &[f64], vertical: bool) -> PaneHostLayout;
+        fn split_pair_ratio(weights: &[f64], divider: usize) -> f64;
+        fn split_apply_ratio(weights: &[f64], divider: usize, ratio: f64) -> Vec<f64>;
+        fn split_normalized(weights: &[f64], count: usize) -> Vec<f64>;
         fn pane_bar_layout(width: i32, height: i32) -> PaneBarLayout;
         type ScrollViewportState;
         fn new_scroll_viewport() -> Box<ScrollViewportState>;
@@ -530,7 +542,7 @@ mod ffi {
         fn new_sidebar_tree() -> Box<SidebarTree>;
         fn tree_plan(self: &SidebarTree, workspace: &str, nodes: &[TreeNode]) -> Vec<TreeEntry>;
         fn tab_plan(self: &SidebarTree, workspace: &str, nodes: &[TreeNode], tabs: &[TabNode],
-                    first: usize, second: usize, split: bool) -> TabPlan;
+                    members: &[usize], split: bool) -> TabPlan;
         fn collapsed(self: &SidebarTree, workspace: &str, id: &str) -> bool;
         fn set_collapsed(self: &mut SidebarTree, workspace: &str, id: &str, value: bool);
         fn toggle(self: &mut SidebarTree, workspace: &str, id: &str) -> bool;
@@ -555,7 +567,7 @@ mod ffi {
         fn site_rule_scene(self: &ActionGraph) -> SiteRuleScene;
         fn site_rule_target(self: &ActionGraph, key: &str, id: u64) -> SiteRuleTarget;
         fn reconcile_sidebar(self: &mut ActionGraph, pins: Vec<SidebarPinInput>, tabs: Vec<SidebarTabInput>) -> ActionNodePlan;
-        fn reconcile_sidebar_layout(self: &mut ActionGraph, pins: Vec<SidebarPinInput>, tabs: Vec<SidebarTabInput>, first: usize, second: usize, split: bool) -> ActionNodePlan;
+        fn reconcile_sidebar_layout(self: &mut ActionGraph, pins: Vec<SidebarPinInput>, tabs: Vec<SidebarTabInput>, members: Vec<usize>, split: bool) -> ActionNodePlan;
         fn sidebar_tabs(self: &ActionGraph) -> SidebarTabTree;
         fn tab_binding(self: &ActionControl) -> SidebarTabBinding;
         fn pin_binding(self: &ActionControl) -> SidebarPinBinding;
@@ -608,6 +620,7 @@ mod ffi {
         fn action_accelerator(self: &mut ActionControl, key: u32, modified: bool, visible: bool) -> RowInputResult;
         fn action_pending(self: &ActionControl) -> bool;
         fn action_row_pointer(self: &mut ActionControl, phase: PointerPhase, x: i32, y: i32, inside: bool, trigger: bool, visible: bool, drop: bool) -> RowInputResult;
+        fn action_row_dragging(self: &ActionControl) -> bool;
         fn action_key(self: &mut ActionControl, pressed: bool, key: u32, mac: bool, visible: bool) -> RowInputResult;
         fn action_gesture(self: &mut ActionControl, kind: u32, visible: bool) -> RowInputResult;
         type RowPointer;
@@ -1580,22 +1593,46 @@ fn sidebar_drop_accepts(bounds:ffi::Rect,x:i32,y:i32,allowed:bool)->bool {
     let left=bounds.x as i64;let top=bounds.y as i64;let x=x as i64;let y=y as i64;
     x>=left+bounds.width as i64/2 && x<left+bounds.width as i64 && y>=top && y<top+bounds.height as i64
 }
-fn tab_menu_paired(s:&ffi::TabMenuState)->bool{s.valid&&s.has_tab&&s.split&&((s.has_first&&s.first==s.tab)||(s.has_second&&s.second==s.tab))}
+// Pane position of the menu's tab inside the Split View group.
+fn sidebar_reorder_target(rows:&[ffi::ReorderRow],y:i32)->ffi::ReorderTarget {
+    let target=|row:usize,after:bool,into:bool|ffi::ReorderTarget{valid:true,row,after,into,pinned:rows[row].pinned};
+    let Some(first)=rows.first() else{return ffi::ReorderTarget{valid:false,row:0,after:false,into:false,pinned:false};};
+    let top=|r:&ffi::ReorderRow|i64::from(r.bounds.y);let bottom=|r:&ffi::ReorderRow|i64::from(r.bounds.y)+i64::from(r.bounds.height.max(0));
+    let y=i64::from(y);
+    if y<top(first) {
+        // Above the first tab with no pins yet: start the pinned section.
+        return if first.pinned{target(0,false,false)}else{ffi::ReorderTarget{valid:true,row:usize::MAX,after:true,into:false,pinned:true}};
+    }
+    for (index,row) in rows.iter().enumerate() {
+        let (start,end)=(top(row),bottom(row));
+        if y>=start&&y<end {
+            let height=end-start;
+            if row.folder&&y>=start+height/4&&y<end-height/4{return target(index,false,true);}
+            return target(index,y>=start+height/2,false);
+        }
+        // In the gap before the next row, the nearer edge wins.
+        if let Some(next)=rows.get(index+1){if y>=end&&y<top(next){return if y-end<top(next)-y{target(index,true,false)}else{target(index+1,false,false)};}}
+    }
+    target(rows.len()-1,true,false)
+}
+fn tab_menu_position(s:&ffi::TabMenuState)->Option<usize>{if !s.valid||!s.has_tab||!s.split||s.members.len()<2{return None;}s.members.iter().position(|&m|m==s.tab)}
 fn tab_menu_enabled(command:u32,s:&ffi::TabMenuState)->bool {
     if !s.valid||!s.ready||s.busy{return false;}
-    let paired=tab_menu_paired(s);
-    match command {5=>!paired,6|9=>paired,7=>paired&&s.has_second&&s.second==s.tab,8=>paired&&s.has_first&&s.first==s.tab,10=>s.has_tab&&s.tab_count>1,_=>false}
+    let position=tab_menu_position(s);let paired=position.is_some();
+    match command {5=>!paired,6|9|11=>paired,7=>position.is_some_and(|p|p>0),8=>position.is_some_and(|p|p+1<s.members.len()),10=>s.has_tab&&s.tab_count>1,_=>false}
 }
 fn tab_menu_action(command:u32,s:&ffi::TabMenuState)->ffi::SidebarAction {
     use ffi::SidebarAction as A;if !tab_menu_enabled(command,s){return A::None;}
-    match command{5=>A::OpenSplit,6=>A::CloseSplit,7=>A::MoveFirst,8=>A::MoveSecond,9=>A::ToggleOrientation,10=>A::CloseTab,_=>A::None}
+    match command{5=>A::OpenSplit,6=>A::CloseSplit,7=>A::MoveEarlier,8=>A::MoveLater,9=>A::ToggleOrientation,10=>A::CloseTab,11=>A::Separate,_=>A::None}
 }
 fn tab_context_menu(s:&ffi::TabMenuState)->Vec<ffi::TabMenuEntry> {
     let mut entries=Vec::new();let mut add=|command,label:&str|entries.push(ffi::TabMenuEntry{command,label:label.into()});
     add(36,"Nowy folder…");add(0,"");add(20,"Otwórz w Peek");
-    if tab_menu_paired(s){
+    if tab_menu_position(s).is_some(){
         add(7,if s.vertical{"Przesuń w górę"}else{"Przesuń w lewo"});add(8,if s.vertical{"Przesuń w dół"}else{"Przesuń w prawo"});add(0,"");
-        add(9,if s.vertical{"Podział poziomy (obok siebie)"}else{"Podział pionowy (jedna nad drugą)"});add(0,"");add(6,"Wyjmij kartę ze splitu");add(10,"Zamknij kartę");
+        add(9,if s.vertical{"Podział poziomy (obok siebie)"}else{"Podział pionowy (jedna nad drugą)"});add(0,"");add(11,"Rozdziel");
+        // With two panes, taking one out is the same as separating them.
+        if s.members.len()>2{add(6,"Wyjmij kartę ze splitu");}add(10,"Zamknij kartę");
     } else {add(5,"Otwórz obok w Split View");}
     if s.http{add(0,"");add(23,"Zawsze otwieraj tę domenę tutaj");add(24,"Usuń regułę dla tej domeny");}
     entries
@@ -1762,7 +1799,7 @@ fn workspace_preview_layout(width:i32,height:i32,offset:i32,rows:&[ffi::PreviewR
         let h=match row.kind{1=>row.height.max(0),2=>46,_=>34};
         emit(row.index,ffi::Rect{x,y,width:w,height:h});
         if row.kind==2 {
-            let g=split_layout(w,h,2);
+            let g=split_layout(w,h,row.members.max(2));
             for (i,r) in g.children.into_iter().enumerate(){emit(row.index.saturating_add(i+1),ffi::Rect{x:x.saturating_add(r.x),y:y.saturating_add(r.y),width:r.width,height:r.height});}
         }
         y=y.saturating_add(h).saturating_add(2);
@@ -1836,21 +1873,42 @@ fn pane_bar_layout(width: i32, height: i32) -> ffi::PaneBarLayout {
         close:ffi::Rect{x:close_x,y:(height-32).max(0)/2,width:close_width,height:32.min(height)},
     }
 }
-fn pane_host_layout(width: i32, height: i32, ratio: f64, vertical: bool, split: bool) -> ffi::PaneHostLayout {
+// Fewer than two weights is a single page without bars or dividers.
+fn pane_host_layout(width: i32, height: i32, weights: &[f64], vertical: bool) -> ffi::PaneHostLayout {
     let width=width.max(0);let height=height.max(0);
-    let empty=||ffi::Rect{x:0,y:0,width:0,height:0};
-    if !split {return ffi::PaneHostLayout{first:ffi::Rect{x:0,y:0,width,height},second:empty(),first_bar:empty(),second_bar:empty(),divider:empty()};}
-    let ratio=if ratio.is_finite(){ratio.clamp(0.0,1.0)}else{0.5};
-    let extent=if vertical{height}else{width};let gap=8.min(extent);let available=extent-gap;
-    let first=(f64::from(available)*ratio) as i32;let second=available-first;
-    let (a,b,d)=if vertical {
-        (ffi::Rect{x:0,y:0,width,height:first},ffi::Rect{x:0,y:first+gap,width,height:second},ffi::Rect{x:0,y:first,width,height:gap})
-    } else {
-        (ffi::Rect{x:0,y:0,width:first,height},ffi::Rect{x:first+gap,y:0,width:second,height},ffi::Rect{x:first,y:0,width:gap,height})
-    };
-    let bar=|r:&ffi::Rect|ffi::Rect{x:r.x,y:r.y,width:r.width,height:30.min(r.height)};
-    let page=|r:&ffi::Rect|ffi::Rect{x:r.x,y:r.y+30.min(r.height),width:r.width,height:(r.height-30).max(0)};
-    ffi::PaneHostLayout{first:page(&a),second:page(&b),first_bar:bar(&a),second_bar:bar(&b),divider:d}
+    if weights.len()<2 {return ffi::PaneHostLayout{pages:vec![ffi::Rect{x:0,y:0,width,height}],bars:vec![],dividers:vec![]};}
+    let weights=split_normalized(weights,weights.len());let count=weights.len();
+    let extent=if vertical{height}else{width};
+    let gaps=(8*(count as i32-1)).min(extent);let gap=gaps/(count as i32-1);let available=extent-gap*(count as i32-1);
+    let (mut pages,mut bars,mut dividers)=(Vec::with_capacity(count),Vec::with_capacity(count),Vec::with_capacity(count-1));
+    let (mut start,mut sum)=(0,0.0);
+    for (index,weight) in weights.iter().enumerate() {
+        sum+=weight;let end=if index+1==count{available}else{((f64::from(available)*sum) as i32).clamp(0,available)};
+        let offset=start+gap*index as i32;let size=(end-start).max(0);start=end.max(start);
+        let r=if vertical{ffi::Rect{x:0,y:offset,width,height:size}}else{ffi::Rect{x:offset,y:0,width:size,height}};
+        if index+1<count{dividers.push(if vertical{ffi::Rect{x:0,y:offset+size,width,height:gap}}else{ffi::Rect{x:offset+size,y:0,width:gap,height}});}
+        bars.push(ffi::Rect{x:r.x,y:r.y,width:r.width,height:30.min(r.height)});
+        pages.push(ffi::Rect{x:r.x,y:r.y+30.min(r.height),width:r.width,height:(r.height-30).max(0)});
+    }
+    ffi::PaneHostLayout{pages,bars,dividers}
+}
+// Pane weights always sum to one; invalid input becomes equal panes.
+fn split_normalized(weights: &[f64], count: usize) -> Vec<f64> {
+    if count==0 {return vec![];}
+    let valid=weights.len()==count&&weights.iter().all(|w|w.is_finite()&&*w>0.0);
+    let total:f64=if valid{weights.iter().sum()}else{0.0};
+    if !valid||total<=0.0 {return vec![1.0/count as f64;count];}
+    weights.iter().map(|w|w/total).collect()
+}
+// A divider drags only its two neighbours: their shared extent is the 0..1 range.
+fn split_pair_ratio(weights: &[f64], divider: usize) -> f64 {
+    let w=split_normalized(weights,weights.len());if divider+1>=w.len(){return 0.5;}
+    let pair=w[divider]+w[divider+1];if pair<=0.0{0.5}else{w[divider]/pair}
+}
+fn split_apply_ratio(weights: &[f64], divider: usize, ratio: f64) -> Vec<f64> {
+    let mut w=split_normalized(weights,weights.len());if divider+1>=w.len()||!ratio.is_finite(){return w;}
+    let pair=w[divider]+w[divider+1];let ratio=ratio.clamp(0.2,0.8);
+    w[divider]=pair*ratio;w[divider+1]=pair-w[divider];w
 }
 #[derive(Default)]
 struct SplitDrag { anchor: Option<f64>, initial: f64, pointer: f64, ratio: f64, moved: bool }
@@ -2047,7 +2105,7 @@ impl SidebarTree {
     }
     fn forget_workspace(&mut self, workspace: &str) {self.collapsed.remove(workspace);}
     fn tab_plan(&self, workspace: &str, nodes: &[ffi::TreeNode], tabs: &[ffi::TabNode],
-                first: usize, second: usize, split: bool) -> ffi::TabPlan {
+                members: &[usize], split: bool) -> ffi::TabPlan {
         let tree = self.tree_plan(workspace, nodes);
         let reachable: BTreeMap<&str, usize> = tree.iter().map(|e| (nodes[e.index].id.as_str(), e.index)).collect();
         let mut positions = BTreeMap::new(); let mut order = Vec::new();
@@ -2060,22 +2118,24 @@ impl SidebarTree {
         let pins = tree.iter().map(|e| ffi::PinVisibility {
             index: e.index, visible: !referenced.contains(nodes[e.index].id.as_str())
         }).collect();
-        let pair = if split && first != second {
-            positions.get(&first).zip(positions.get(&second)).map(|(&a, &b)| (a, b))
+        // A group needs two or more distinct, present tabs; anything else falls back to rows.
+        let distinct: BTreeSet<usize> = members.iter().copied().collect();
+        let group: Option<Vec<usize>> = if split && members.len() >= 2 && distinct.len() == members.len() {
+            members.iter().map(|m| positions.get(m).copied()).collect()
         } else {None};
         let mut slots = Vec::with_capacity(order.len()); let mut emitted = false;
         for index in order {
-            if let Some((a, b)) = pair {
-                if index == a || index == b {
+            if let Some(group) = &group {
+                if group.contains(&index) {
                     if !emitted {
-                        let pin = [a, b].iter().find_map(|&i| reachable.get(tabs[i].pin.as_str()).copied()).unwrap_or(usize::MAX);
-                        slots.push(ffi::TabSlot {first: a, second: b, pin, pair: true});
+                        let pin = group.iter().find_map(|&i| reachable.get(tabs[i].pin.as_str()).copied()).unwrap_or(usize::MAX);
+                        slots.push(ffi::TabSlot {first: group[0], members: group.clone(), pin, pair: true});
                         emitted = true;
                     }
                     continue;
                 }
             }
-            slots.push(ffi::TabSlot {first: index, second: usize::MAX, pin: usize::MAX, pair: false});
+            slots.push(ffi::TabSlot {first: index, members: vec![], pin: usize::MAX, pair: false});
         }
         ffi::TabPlan {slots, pins}
     }
@@ -2204,6 +2264,7 @@ impl ActionState {
     fn action_row_pointer(&mut self,phase:ffi::PointerPhase,x:i32,y:i32,inside:bool,trigger:bool,visible:bool,drop:bool)->ffi::RowInputResult{
         if !visible{return self.reject();}let r=self.pointer.pointer_event(phase,x,y,inside,self.enabled,trigger,drop);self.visual=r.visual;r
     }
+    fn action_row_dragging(&self)->bool{self.pointer.origin.is_some()&&self.pointer.dragging}
     fn action_key(&mut self,pressed:bool,key:u32,mac:bool,visible:bool)->ffi::RowInputResult{
         if !visible{return self.reject();}let r=self.pointer.key_event(pressed,key_policy(key,mac),self.enabled);self.visual=r.visual;r
     }
@@ -2261,8 +2322,8 @@ fn form_command_panel(command:ffi::FormCommand)->ffi::FormPanel {
 }
 
 fn valid_form_command(command:ffi::FormCommand,key:&str)->bool{use ffi::FormCommand as C;match command{C::PreferenceText=>!key.is_empty(),C::WorkspaceSave|C::WorkspaceToggle|C::WorkspaceRemove|C::WorkspaceProfiles|C::WorkspaceImport|C::ProfileCreate|C::ProfileRename|C::ProfileDelete|C::ProfileBack|C::ImportApply|C::PreferenceSite|C::PreferenceClear|C::PreferenceDirectory|C::History|C::Workspace|C::Passwords|C::Profiles|C::Import|C::Proxy|C::Certificates|C::Providers|C::Shortcuts|C::TimeMachine|C::WorkspaceDismiss|C::PreferencesDismiss|C::ImportDismiss|C::ToolsDismiss|C::PreferenceMore|C::HistoryMore=>key.is_empty(),_=>false}}
-struct SidebarTabsModel {first:usize,second:usize,split:bool,plan:ffi::TabPlan}
-struct SidebarPairModel {first:(u64,u64),second:(u64,u64),visible:bool}
+struct SidebarTabsModel {members:Vec<usize>,split:bool,plan:ffi::TabPlan}
+struct SidebarPairModel {members:Vec<(u64,u64)>,visible:bool}
 enum NodeModel { SidebarTabs(SidebarTabsModel), SidebarPair(SidebarPairModel), SidebarPinGroup(SidebarPinGroupModel), SidebarPin(SidebarPinModel), FormCommand(FormCommandModel), Checkbox(CheckboxState), Toggle(ToggleState), Select(SelectState), Workspace(WorkspacePresentation), History(HistoryPresentation), Palette(PalettePresentation), PaletteRoot(PaletteSceneState), FormRoot(ffi::FormGroupStyle), SiteRule(SiteRulePresentation), SidebarTab(SidebarTabModel) }
 impl NodeModel {
     fn row_presentation(&self)->Option<&SidebarRowPresentation>{match self{Self::SidebarTab(model)=>model.presentation.as_ref(),Self::SidebarPin(model)=>Some(&model.presentation),_=>None}}
@@ -2291,7 +2352,7 @@ impl ActionGraph {
         if unique.iter().any(|key|matches!(key.0,7|8)&&!unique.contains(&(if key.0==7{8}else{7},key.1,key.2,key.3.clone()))){return self.rejected();}
         if unique.iter().any(|key|key.0==14&&!unique.contains(&(2,0,0,key.3.clone()))){return self.rejected();}
         if unique.contains(&(15,0,0,"sidebar.pair".into()))&&!unique.contains(&(11,0,0,"sidebar.tabs".into())){return self.rejected();}
-        if parents.is_none(){if let Some(node)=self.nodes.get(&(15,0,0,"sidebar.pair".into())){if unique.contains(&(15,0,0,"sidebar.pair".into())){if let Some(NodeModel::SidebarPair(pair))=node.borrow().model.as_deref(){if [pair.first,pair.second].iter().any(|&(high,low)|!unique.contains(&(1,high,low,String::new()))){return self.rejected();}}}}}
+        if parents.is_none(){if let Some(node)=self.nodes.get(&(15,0,0,"sidebar.pair".into())){if unique.contains(&(15,0,0,"sidebar.pair".into())){if let Some(NodeModel::SidebarPair(pair))=node.borrow().model.as_deref(){if pair.members.iter().any(|&(high,low)|!unique.contains(&(1,high,low,String::new()))){return self.rejected();}}}}}
         if parents.is_none()&&unique.iter().any(|key|key.0==2&&self.nodes.get(key).is_some_and(|node|matches!(node.borrow().model.as_deref(),Some(NodeModel::SidebarPin(p)) if p.presentation.folder))&&!unique.contains(&(14,0,0,key.3.clone()))){return self.rejected();}
         // A retained logical child cannot outlive its Rust-owned parent. Whole
         // subtree removal is valid; dangling retained edges reject atomically.
@@ -2441,30 +2502,30 @@ impl ActionGraph {
     fn site_rule_target(&self,key:&str,id:u64)->ffi::SiteRuleTarget{
         let invalid=||ffi::SiteRuleTarget{valid:false,index:0};let Some(node)=self.nodes.get(&(13,0,0,key.to_owned())) else{return invalid();};let node=node.borrow();if !node.alive||!node.attached||!node.state.enabled||id==0||id!=node.id{return invalid();}if let Some(NodeModel::SiteRule(p))=node.model.as_deref(){if p.editable{return ffi::SiteRuleTarget{valid:true,index:p.source_index};}}invalid()
     }
-    fn reconcile_sidebar(&mut self,pins:Vec<ffi::SidebarPinInput>,tabs:Vec<ffi::SidebarTabInput>)->ffi::ActionNodePlan{self.reconcile_sidebar_layout(pins,tabs,usize::MAX,usize::MAX,false)}
-    fn reconcile_sidebar_layout(&mut self,pins:Vec<ffi::SidebarPinInput>,tabs:Vec<ffi::SidebarTabInput>,first:usize,second:usize,split:bool)->ffi::ActionNodePlan{
+    fn reconcile_sidebar(&mut self,pins:Vec<ffi::SidebarPinInput>,tabs:Vec<ffi::SidebarTabInput>)->ffi::ActionNodePlan{self.reconcile_sidebar_layout(pins,tabs,vec![],false)}
+    fn reconcile_sidebar_layout(&mut self,pins:Vec<ffi::SidebarPinInput>,tabs:Vec<ffi::SidebarTabInput>,members:Vec<usize>,split:bool)->ffi::ActionNodePlan{
         if pins.iter().any(|pin|(pin.collapsed&&!pin.folder)||self.nodes.get(&(2,0,0,pin.id.clone())).is_some_and(|node|node.borrow().model.as_deref().is_some_and(|m|!matches!(m,NodeModel::SidebarPin(_))))||self.nodes.get(&(14,0,0,pin.id.clone())).is_some_and(|node|node.borrow().model.as_deref().is_some_and(|m|!matches!(m,NodeModel::SidebarPinGroup(_)))))||tabs.iter().any(|tab|self.nodes.get(&(10,tab.high,tab.low,String::new())).is_some_and(|node|node.borrow().model.is_some())){return self.rejected();}
         let mut indices=BTreeSet::new();if tabs.iter().any(|tab|!indices.insert(tab.index)||self.nodes.get(&(1,tab.high,tab.low,String::new())).is_some_and(|node|node.borrow().model.as_deref().is_some_and(|m|!matches!(m,NodeModel::SidebarTab(_))))){return self.rejected();}
         if self.nodes.get(&(11,0,0,"sidebar.tabs".into())).is_some_and(|n|n.borrow().model.as_deref().is_some_and(|m|!matches!(m,NodeModel::SidebarTabs(_))))||self.nodes.get(&(15,0,0,"sidebar.pair".into())).is_some_and(|n|n.borrow().model.as_deref().is_some_and(|m|!matches!(m,NodeModel::SidebarPair(_)))){return self.rejected();}
-        let old_layout=self.nodes.get(&(11,0,0,"sidebar.tabs".into())).and_then(|n|{let n=n.borrow();if let Some(NodeModel::SidebarTabs(m))=n.model.as_deref(){Some((m.first,m.second,m.split))}else{None}});let old_pair_parent=self.nodes.get(&(15,0,0,"sidebar.pair".into())).map(|n|n.borrow().parent);
-        let nodes=pins.iter().map(|p|ffi::TreeNode{id:p.id.clone(),parent:p.parent.clone(),folder:p.folder}).collect::<Vec<_>>();let mut tree=new_sidebar_tree();for pin in &pins{if pin.folder&&pin.collapsed{tree.set_collapsed("",&pin.id,true);}}let tab_nodes=tabs.iter().map(|t|ffi::TabNode{index:t.index,pin:t.pin.clone()}).collect::<Vec<_>>();let tab_plan=tree.tab_plan("",&nodes,&tab_nodes,first,second,split);let pair_slot=tab_plan.slots.iter().find(|slot|slot.pair).map(|slot|(slot.first,slot.second,slot.pin));let pin_shown=tab_plan.pins.iter().map(|p|(p.index,p.visible)).collect::<BTreeMap<_,_>>();let layout=tree.tree_plan("",&nodes);let positions=layout.iter().enumerate().map(|(rank,e)|(e.index,(rank,e))).collect::<BTreeMap<_,_>>();
+        let old_layout=self.nodes.get(&(11,0,0,"sidebar.tabs".into())).and_then(|n|{let n=n.borrow();if let Some(NodeModel::SidebarTabs(m))=n.model.as_deref(){Some((m.members.clone(),m.split))}else{None}});let old_pair_parent=self.nodes.get(&(15,0,0,"sidebar.pair".into())).map(|n|n.borrow().parent);
+        let nodes=pins.iter().map(|p|ffi::TreeNode{id:p.id.clone(),parent:p.parent.clone(),folder:p.folder}).collect::<Vec<_>>();let mut tree=new_sidebar_tree();for pin in &pins{if pin.folder&&pin.collapsed{tree.set_collapsed("",&pin.id,true);}}let tab_nodes=tabs.iter().map(|t|ffi::TabNode{index:t.index,pin:t.pin.clone()}).collect::<Vec<_>>();let tab_plan=tree.tab_plan("",&nodes,&tab_nodes,&members,split);let pair_slot=tab_plan.slots.iter().find(|slot|slot.pair).map(|slot|(slot.members.clone(),slot.pin));let pin_shown=tab_plan.pins.iter().map(|p|(p.index,p.visible)).collect::<BTreeMap<_,_>>();let layout=tree.tree_plan("",&nodes);let positions=layout.iter().enumerate().map(|(rank,e)|(e.index,(rank,e))).collect::<BTreeMap<_,_>>();
         let tab_root=(11,0,0,"sidebar.tabs".to_owned());let pin_root=(11,0,0,"sidebar.pins".to_owned());let mut keys=Vec::with_capacity(2+pins.len()*2+tabs.len()*2);let mut edges=BTreeMap::new();
         for root in [&tab_root,&pin_root]{keys.push(ffi::ActionNodeKey{kind:11,high:0,low:0,name:root.3.clone()});edges.insert(root.clone(),None);}
         for (index,pin) in pins.iter().enumerate(){let parent=positions.get(&index).map(|(_,entry)|if entry.parent==usize::MAX{pin_root.clone()}else{(14,0,0,pins[entry.parent].id.clone())});let key=(2,0,0,pin.id.clone());keys.push(ffi::ActionNodeKey{kind:2,high:0,low:0,name:pin.id.clone()});edges.insert(key,parent.clone());if pin.folder{keys.push(ffi::ActionNodeKey{kind:14,high:0,low:0,name:pin.id.clone()});edges.insert((14,0,0,pin.id.clone()),parent);}}
-        let pair_key=(15,0,0,"sidebar.pair".to_owned());let pair_parent=pair_slot.map(|(_,_,pin)|if pin==usize::MAX{tab_root.clone()}else{edges[&(2,0,0,pins[pin].id.clone())].clone().unwrap_or_else(||pin_root.clone())});
+        let pair_key=(15,0,0,"sidebar.pair".to_owned());let pair_parent=pair_slot.as_ref().map(|(_,pin)|if *pin==usize::MAX{tab_root.clone()}else{edges[&(2,0,0,pins[*pin].id.clone())].clone().unwrap_or_else(||pin_root.clone())});
         if let Some(parent)=&pair_parent{keys.push(ffi::ActionNodeKey{kind:15,high:0,low:0,name:"sidebar.pair".into()});edges.insert(pair_key.clone(),Some(parent.clone()));}
-        let can_close=tabs.len()>1;for (position,tab) in tabs.iter().enumerate(){let key=(1,tab.high,tab.low,String::new());keys.push(ffi::ActionNodeKey{kind:1,high:tab.high,low:tab.low,name:String::new()});edges.insert(key.clone(),Some(if pair_slot.is_some_and(|(a,b,_)|position==a||position==b){pair_key.clone()}else{tab_root.clone()}));if can_close{keys.push(ffi::ActionNodeKey{kind:10,high:tab.high,low:tab.low,name:String::new()});edges.insert((10,tab.high,tab.low,String::new()),Some(key));}}
-        let old_order=self.order.clone();let plan=self.reconcile_with_parents(keys,Some(&edges));if !plan.admitted{return plan;}let mut invalidated=old_order!=plan.ids||old_layout!=Some((first,second,split));
+        let can_close=tabs.len()>1;for (position,tab) in tabs.iter().enumerate(){let key=(1,tab.high,tab.low,String::new());keys.push(ffi::ActionNodeKey{kind:1,high:tab.high,low:tab.low,name:String::new()});edges.insert(key.clone(),Some(if pair_slot.as_ref().is_some_and(|(group,_)|group.contains(&position)){pair_key.clone()}else{tab_root.clone()}));if can_close{keys.push(ffi::ActionNodeKey{kind:10,high:tab.high,low:tab.low,name:String::new()});edges.insert((10,tab.high,tab.low,String::new()),Some(key));}}
+        let old_order=self.order.clone();let plan=self.reconcile_with_parents(keys,Some(&edges));if !plan.admitted{return plan;}let mut invalidated=old_order!=plan.ids||old_layout.as_ref()!=Some(&(members.clone(),split));
         for (index,pin) in pins.into_iter().enumerate(){let key=(2,0,0,pin.id.clone());let group=if pin.folder{self.nodes[&(14,0,0,pin.id.clone())].borrow().id}else{0};let mut next=SidebarPinModel::from_input(pin);next.index=index;next.group=group;next.row_shown=pin_shown.get(&index).copied().unwrap_or(true);if let Some((rank,entry))=positions.get(&index){next.rank=*rank;next.depth=entry.depth;next.reachable=true;next.visible=entry.visible&&next.row_shown;}
             let mut node=self.nodes[&key].borrow_mut();let changed=match node.model.as_deref(){Some(NodeModel::SidebarPin(p))=>p.parent_key!=next.parent_key||p.rank!=next.rank||p.visible!=next.visible||p.collapsed!=next.collapsed||p.presentation.title!=next.presentation.title||p.presentation.monogram!=next.presentation.monogram||p.presentation.color!=next.presentation.color||p.presentation.folder!=next.presentation.folder,_=>true};if group!=0{self.nodes[&(14,0,0,next.key.clone())].borrow_mut().model=Some(Box::new(NodeModel::SidebarPinGroup(SidebarPinGroupModel{owner:node.id,visible:positions.get(&index).is_some_and(|(_,entry)|entry.visible)&&!next.collapsed})));}node.model=Some(Box::new(NodeModel::SidebarPin(next)));if changed{node.state.action_cancel();}}
-        let pair_id=pair_slot.map_or(0,|_|self.nodes[&pair_key].borrow().id);let pair_visible=pair_slot.is_none_or(|(_,_,pin)|pin==usize::MAX||positions.get(&pin).is_some_and(|(_,entry)|entry.visible));
-        if let Some((a,b,_))=pair_slot{let mut pair=self.nodes[&pair_key].borrow_mut();invalidated|=old_pair_parent!=Some(pair.parent);pair.model=Some(Box::new(NodeModel::SidebarPair(SidebarPairModel{first:(tabs[a].high,tabs[a].low),second:(tabs[b].high,tabs[b].low),visible:pair_visible})));}
-        for (position,tab) in tabs.into_iter().enumerate(){let pair=if pair_slot.is_some_and(|(a,b,_)|position==a||position==b){pair_id}else{0};let visible=pair==0||pair_visible;let mut node=self.nodes[&(1,tab.high,tab.low,String::new())].borrow_mut();invalidated|=matches!(node.model.as_deref(),Some(NodeModel::SidebarTab(p)) if p.index!=tab.index||p.pin!=tab.pin||p.pair!=pair||p.visible!=visible||p.can_close!=can_close);if let Some(NodeModel::SidebarTab(p))=node.model.as_deref_mut(){p.index=tab.index;p.pin=tab.pin;p.pair=pair;p.visible=visible;p.can_close=can_close;}else{node.model=Some(Box::new(NodeModel::SidebarTab(SidebarTabModel{high:tab.high,low:tab.low,index:tab.index,pin:tab.pin,pair,visible,can_close,presentation:None})));}}
-        self.nodes[&tab_root].borrow_mut().model=Some(Box::new(NodeModel::SidebarTabs(SidebarTabsModel{first,second,split,plan:tab_plan})));
+        let pair_id=pair_slot.as_ref().map_or(0,|_|self.nodes[&pair_key].borrow().id);let pair_visible=pair_slot.as_ref().is_none_or(|(_,pin)|*pin==usize::MAX||positions.get(pin).is_some_and(|(_,entry)|entry.visible));
+        if let Some((group,_))=&pair_slot{let mut pair=self.nodes[&pair_key].borrow_mut();invalidated|=old_pair_parent!=Some(pair.parent);pair.model=Some(Box::new(NodeModel::SidebarPair(SidebarPairModel{members:group.iter().map(|&i|(tabs[i].high,tabs[i].low)).collect(),visible:pair_visible})));}
+        for (position,tab) in tabs.into_iter().enumerate(){let pair=if pair_slot.as_ref().is_some_and(|(group,_)|group.contains(&position)){pair_id}else{0};let visible=pair==0||pair_visible;let mut node=self.nodes[&(1,tab.high,tab.low,String::new())].borrow_mut();invalidated|=matches!(node.model.as_deref(),Some(NodeModel::SidebarTab(p)) if p.index!=tab.index||p.pin!=tab.pin||p.pair!=pair||p.visible!=visible||p.can_close!=can_close);if let Some(NodeModel::SidebarTab(p))=node.model.as_deref_mut(){p.index=tab.index;p.pin=tab.pin;p.pair=pair;p.visible=visible;p.can_close=can_close;}else{node.model=Some(Box::new(NodeModel::SidebarTab(SidebarTabModel{high:tab.high,low:tab.low,index:tab.index,pin:tab.pin,pair,visible,can_close,presentation:None})));}}
+        self.nodes[&tab_root].borrow_mut().model=Some(Box::new(NodeModel::SidebarTabs(SidebarTabsModel{members,split,plan:tab_plan})));
         if invalidated{for (key,node) in &self.nodes{if matches!(key.0,1|2|10){node.borrow_mut().state.action_cancel();}}}plan
     }
-    fn sidebar_tabs(&self)->ffi::SidebarTabTree{let root=self.nodes.get(&(11,0,0,"sidebar.tabs".into())).map_or(0,|n|n.borrow().id);let pair=self.nodes.get(&(15,0,0,"sidebar.pair".into())).map(|n|n.borrow());let mut result=ffi::SidebarTabTree{root,pair:pair.as_ref().map_or(0,|p|p.id),parent:pair.as_ref().map_or(0,|p|p.parent),visible:pair.as_ref().is_none_or(|p|matches!(p.model.as_deref(),Some(NodeModel::SidebarPair(m)) if m.visible)),slots:vec![],pins:vec![]};if let Some(node)=self.nodes.get(&(11,0,0,"sidebar.tabs".into())){if let Some(NodeModel::SidebarTabs(m))=node.borrow().model.as_deref(){result.slots=m.plan.slots.iter().map(|s|ffi::TabSlot{first:s.first,second:s.second,pin:s.pin,pair:s.pair}).collect();result.pins=m.plan.pins.iter().map(|p|ffi::PinVisibility{index:p.index,visible:p.visible}).collect();}}result}
-    fn refresh_pair_visibility(&mut self){let Some(pair)=self.nodes.get(&(15,0,0,"sidebar.pair".into())).cloned() else{return;};let parent=pair.borrow().parent;let visible=self.nodes.values().find_map(|node|{let node=node.borrow();if node.id!=parent{return None;}Some(match node.model.as_deref(){Some(NodeModel::SidebarPinGroup(m))=>m.visible,_=>true})}).unwrap_or(false);let (id,members)={let mut pair=pair.borrow_mut();let id=pair.id;let Some(NodeModel::SidebarPair(m))=pair.model.as_deref_mut() else{return;};m.visible=visible;(id,[m.first,m.second])};for (high,low) in members{if let Some(node)=self.nodes.get(&(1,high,low,String::new())){let mut node=node.borrow_mut();if let Some(NodeModel::SidebarTab(m))=node.model.as_deref_mut(){if m.pair==id&&m.visible!=visible{m.visible=visible;node.state.action_cancel();if let Some(close)=self.nodes.get(&(10,high,low,String::new())){close.borrow_mut().state.action_cancel();}}}}}}
+    fn sidebar_tabs(&self)->ffi::SidebarTabTree{let root=self.nodes.get(&(11,0,0,"sidebar.tabs".into())).map_or(0,|n|n.borrow().id);let pair=self.nodes.get(&(15,0,0,"sidebar.pair".into())).map(|n|n.borrow());let mut result=ffi::SidebarTabTree{root,pair:pair.as_ref().map_or(0,|p|p.id),parent:pair.as_ref().map_or(0,|p|p.parent),visible:pair.as_ref().is_none_or(|p|matches!(p.model.as_deref(),Some(NodeModel::SidebarPair(m)) if m.visible)),slots:vec![],pins:vec![]};if let Some(node)=self.nodes.get(&(11,0,0,"sidebar.tabs".into())){if let Some(NodeModel::SidebarTabs(m))=node.borrow().model.as_deref(){result.slots=m.plan.slots.iter().map(|s|ffi::TabSlot{first:s.first,members:s.members.clone(),pin:s.pin,pair:s.pair}).collect();result.pins=m.plan.pins.iter().map(|p|ffi::PinVisibility{index:p.index,visible:p.visible}).collect();}}result}
+    fn refresh_pair_visibility(&mut self){let Some(pair)=self.nodes.get(&(15,0,0,"sidebar.pair".into())).cloned() else{return;};let parent=pair.borrow().parent;let visible=self.nodes.values().find_map(|node|{let node=node.borrow();if node.id!=parent{return None;}Some(match node.model.as_deref(){Some(NodeModel::SidebarPinGroup(m))=>m.visible,_=>true})}).unwrap_or(false);let (id,members)={let mut pair=pair.borrow_mut();let id=pair.id;let Some(NodeModel::SidebarPair(m))=pair.model.as_deref_mut() else{return;};m.visible=visible;(id,m.members.clone())};for (high,low) in members{if let Some(node)=self.nodes.get(&(1,high,low,String::new())){let mut node=node.borrow_mut();if let Some(NodeModel::SidebarTab(m))=node.model.as_deref_mut(){if m.pair==id&&m.visible!=visible{m.visible=visible;node.state.action_cancel();if let Some(close)=self.nodes.get(&(10,high,low,String::new())){close.borrow_mut().state.action_cancel();}}}}}}
     fn pin_tree(&self)->ffi::SidebarPinTree{let root=self.nodes.get(&(11,0,0,"sidebar.pins".into())).map_or(0,|n|n.borrow().id);let mut ordered=self.nodes.values().filter_map(|node|{let node=node.borrow();if let Some(NodeModel::SidebarPin(p))=node.model.as_deref(){if p.reachable{return Some((p.rank,ffi::SidebarPinTreeEntry{index:p.index,key:p.key.clone(),id:node.id,parent:node.parent,group:p.group,depth:p.depth,collapsed:p.collapsed,visible:p.visible}));}}None}).collect::<Vec<_>>();ordered.sort_by_key(|(rank,_)|*rank);ffi::SidebarPinTree{root,entries:ordered.into_iter().map(|(_,entry)|entry).collect()}}
     fn refresh_pin_visibility(&mut self){let tree=self.pin_tree();let mut visible=BTreeMap::from([(tree.root,true)]);for entry in tree.entries{let shown=visible.get(&entry.parent).copied().unwrap_or(false);let mut row=self.nodes[&(2,0,0,entry.key.clone())].borrow_mut();if let Some(NodeModel::SidebarPin(p))=row.model.as_deref_mut(){let next=shown&&p.row_shown;let changed=p.visible!=next;p.visible=next;if changed{row.state.action_cancel();}}if entry.group!=0{let mut group=self.nodes[&(14,0,0,entry.key)].borrow_mut();if let Some(NodeModel::SidebarPinGroup(p))=group.model.as_deref_mut(){p.visible=shown&&!entry.collapsed;visible.insert(entry.group,p.visible);}}}self.refresh_pair_visibility();}
     fn pin_target(&self,key:&str,id:u64)->ffi::SidebarPinTarget{let invalid=||ffi::SidebarPinTarget{valid:false,folder:false,collapsed:false,group:0};let Some(node)=self.nodes.get(&(2,0,0,key.into())) else{return invalid();};let node=node.borrow();if !node.alive||!node.attached||!node.state.enabled||id==0||node.id!=id{return invalid();}if let Some(NodeModel::SidebarPin(pin))=node.model.as_deref(){if !pin.reachable||!pin.visible{return invalid();}if pin.presentation.folder{let Some(group)=self.nodes.get(&(14,0,0,key.into())) else{return invalid();};let group=group.borrow();if !matches!(group.model.as_deref(),Some(NodeModel::SidebarPinGroup(p)) if p.owner==id)||group.id!=pin.group||group.parent!=node.parent{return invalid();}}ffi::SidebarPinTarget{valid:true,folder:pin.presentation.folder,collapsed:pin.collapsed,group:pin.group}}else{invalid()}}
@@ -2610,6 +2671,7 @@ impl ActionControl {
     fn action_pending(&self)->bool{self.read(ActionState::action_pending).unwrap_or(false)}
     fn action_accelerator(&mut self,key:u32,modified:bool,visible:bool)->ffi::RowInputResult{self.write(|s|s.action_accelerator(key,modified,visible)).unwrap_or_else(Self::retired_input)}
     fn action_pointer(&mut self,phase:ffi::PointerPhase,x:i32,y:i32,inside:bool,trigger:bool,visible:bool)->ffi::RowInputResult{self.write(|s|s.action_pointer(phase,x,y,inside,trigger,visible)).unwrap_or_else(Self::retired_input)}
+    fn action_row_dragging(&self)->bool{self.read(ActionState::action_row_dragging).unwrap_or(false)}
     fn action_row_pointer(&mut self,phase:ffi::PointerPhase,x:i32,y:i32,inside:bool,trigger:bool,visible:bool,drop:bool)->ffi::RowInputResult{self.write(|s|s.action_row_pointer(phase,x,y,inside,trigger,visible,drop)).unwrap_or_else(Self::retired_input)}
     fn action_key(&mut self,pressed:bool,key:u32,mac:bool,visible:bool)->ffi::RowInputResult{self.write(|s|s.action_key(pressed,key,mac,visible)).unwrap_or_else(Self::retired_input)}
     fn action_gesture(&mut self,kind:u32,visible:bool)->ffi::RowInputResult{self.write(|s|s.action_gesture(kind,visible)).unwrap_or_else(Self::retired_input)}
@@ -3396,7 +3458,7 @@ mod tests {
             assert!(ops.iter().all(|p|p.text.is_empty()));
         }
     }
-    fn menu_state()->ffi::TabMenuState{ffi::TabMenuState{ready:true,busy:false,valid:true,tab:7,has_tab:true,split:true,first:3,has_first:true,second:7,has_second:true,vertical:false,tab_count:3,http:true}}
+    fn menu_state()->ffi::TabMenuState{ffi::TabMenuState{ready:true,busy:false,valid:true,tab:7,has_tab:true,split:true,members:vec![3,7],vertical:false,tab_count:3,http:true}}
     fn select_fixture()->Box<SelectState> {new_select_state(vec![ffi::SelectOption{key:"Arc".into(),label:"Arc".into(),search:"arc".into()},ffi::SelectOption{key:"Google Chrome".into(),label:"Google Chrome".into(),search:"google chrome".into()},ffi::SelectOption{key:"Microsoft Edge".into(),label:"Microsoft Edge".into(),search:"microsoft edge".into()},ffi::SelectOption{key:"Brave".into(),label:"Brave".into(),search:"brave".into()}])}
     fn keyed_options(values:&[(&str,&str)])->Vec<ffi::SelectOption>{values.iter().map(|(key,label)|ffi::SelectOption{key:(*key).into(),label:(*label).into(),search:label.to_lowercase()}).collect()}
     #[test] fn select_none_cancels_old_popup_and_allows_first_item_prefix() {
@@ -3930,28 +3992,28 @@ mod tests {
     fn nested_pin(id:&str,parent:&str,folder:bool,collapsed:bool)->ffi::SidebarPinInput{let mut pin=pin_input(id,id,folder,collapsed);pin.parent=parent.into();pin}
     fn pinned_tab(low:u64,index:usize,pin:&str)->ffi::SidebarTabInput{ffi::SidebarTabInput{high:7,low,index,pin:pin.into()}}
     #[test] fn sidebar_split_pair_owns_member_parents_slots_and_retires_on_unsplit(){
-        let tabs=||vec![sidebar_tab(1,0),sidebar_tab(2,1),sidebar_tab(3,2)];let mut g=new_action_graph();assert!(g.reconcile_sidebar_layout(vec![],tabs(),2,0,true).admitted);let a=g.acquire(&node_tab(1));let b=g.acquire(&node_tab(2));let c=g.acquire(&node_tab(3));let tree=g.sidebar_tabs();assert_ne!(tree.pair,0);assert_eq!(tree.parent,tree.root);assert!(tree.visible);assert_eq!((a.node_parent_id(),c.node_parent_id(),b.node_parent_id()),(tree.pair,tree.pair,tree.root));
-        assert_eq!(tree.slots.iter().map(|s|(s.first,s.second,s.pin,s.pair)).collect::<Vec<_>>(),vec![(2,0,usize::MAX,true),(1,usize::MAX,usize::MAX,false)]);assert_eq!(g.acquire(&node_named(15,"sidebar.pair")).action_node_id(),0);let ids=(a.action_node_id(),c.action_node_id());
-        assert!(g.reconcile_sidebar_layout(vec![],tabs(),usize::MAX,usize::MAX,false).admitted);let tree=g.sidebar_tabs();assert_eq!(tree.pair,0);assert!(tree.slots.iter().all(|s|!s.pair));assert_eq!((a.node_parent_id(),c.node_parent_id()),(tree.root,tree.root));assert_eq!((a.action_node_id(),c.action_node_id()),ids);assert!(g.tab_target(7,1,ids.0,false).valid);
+        let tabs=||vec![sidebar_tab(1,0),sidebar_tab(2,1),sidebar_tab(3,2)];let mut g=new_action_graph();assert!(g.reconcile_sidebar_layout(vec![],tabs(),vec![2,0],true).admitted);let a=g.acquire(&node_tab(1));let b=g.acquire(&node_tab(2));let c=g.acquire(&node_tab(3));let tree=g.sidebar_tabs();assert_ne!(tree.pair,0);assert_eq!(tree.parent,tree.root);assert!(tree.visible);assert_eq!((a.node_parent_id(),c.node_parent_id(),b.node_parent_id()),(tree.pair,tree.pair,tree.root));
+        assert_eq!(tree.slots.iter().map(|s|(s.first,s.members.clone(),s.pin,s.pair)).collect::<Vec<_>>(),vec![(2,vec![2,0],usize::MAX,true),(1,vec![],usize::MAX,false)]);assert_eq!(g.acquire(&node_named(15,"sidebar.pair")).action_node_id(),0);let ids=(a.action_node_id(),c.action_node_id());
+        assert!(g.reconcile_sidebar_layout(vec![],tabs(),vec![],false).admitted);let tree=g.sidebar_tabs();assert_eq!(tree.pair,0);assert!(tree.slots.iter().all(|s|!s.pair));assert_eq!((a.node_parent_id(),c.node_parent_id()),(tree.root,tree.root));assert_eq!((a.action_node_id(),c.action_node_id()),ids);assert!(g.tab_target(7,1,ids.0,false).valid);
     }
     #[test] fn sidebar_split_pair_layout_change_cancels_input_and_identical_layout_preserves_it(){
-        let tabs=||vec![sidebar_tab(1,0),sidebar_tab(2,1),sidebar_tab(3,2)];let mut g=new_action_graph();g.reconcile_sidebar_layout(vec![],tabs(),0,1,true);let mut a=g.acquire(&node_tab(1));let b=g.acquire(&node_tab(2));let c=g.acquire(&node_tab(3));let pair=g.sidebar_tabs().pair;a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);let epoch=a.action_admission_epoch();
-        let plan=g.reconcile_sidebar_layout(vec![],tabs(),0,1,true);assert_eq!((plan.created,plan.retired),(0,0));assert!(a.action_pending()&&a.action_admits(epoch));
-        assert!(g.reconcile_sidebar_layout(vec![],tabs(),0,2,true).admitted);assert!(!a.action_pending());let tree=g.sidebar_tabs();assert_eq!(tree.pair,pair);assert_eq!((b.node_parent_id(),c.node_parent_id()),(tree.root,pair));assert_eq!(tree.slots[0].second,2);
-        assert!(g.reconcile_sidebar_layout(vec![],tabs(),0,0,true).admitted);assert_eq!(g.sidebar_tabs().pair,0);assert!(g.reconcile_sidebar_layout(vec![],tabs(),0,9,true).admitted);assert_eq!(g.sidebar_tabs().pair,0);
+        let tabs=||vec![sidebar_tab(1,0),sidebar_tab(2,1),sidebar_tab(3,2)];let mut g=new_action_graph();g.reconcile_sidebar_layout(vec![],tabs(),vec![0,1],true);let mut a=g.acquire(&node_tab(1));let b=g.acquire(&node_tab(2));let c=g.acquire(&node_tab(3));let pair=g.sidebar_tabs().pair;a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);let epoch=a.action_admission_epoch();
+        let plan=g.reconcile_sidebar_layout(vec![],tabs(),vec![0,1],true);assert_eq!((plan.created,plan.retired),(0,0));assert!(a.action_pending()&&a.action_admits(epoch));
+        assert!(g.reconcile_sidebar_layout(vec![],tabs(),vec![0,2],true).admitted);assert!(!a.action_pending());let tree=g.sidebar_tabs();assert_eq!(tree.pair,pair);assert_eq!((b.node_parent_id(),c.node_parent_id()),(tree.root,pair));assert_eq!(tree.slots[0].members,vec![0,2]);
+        assert!(g.reconcile_sidebar_layout(vec![],tabs(),vec![0,0],true).admitted);assert_eq!(g.sidebar_tabs().pair,0);assert!(g.reconcile_sidebar_layout(vec![],tabs(),vec![0,9],true).admitted);assert_eq!(g.sidebar_tabs().pair,0);
     }
     #[test] fn sidebar_split_pair_anchors_to_pin_group_and_follows_folder_visibility(){
-        let pins=||vec![nested_pin("f","",true,false),nested_pin("p","f",false,false),nested_pin("q","f",false,false)];let tabs=||vec![pinned_tab(1,0,"p"),sidebar_tab(2,1)];let mut g=new_action_graph();assert!(g.reconcile_sidebar_layout(pins(),tabs(),0,1,true).admitted);let folder=g.acquire(&node_named(2,"f"));let p=g.acquire(&node_named(2,"p"));let q=g.acquire(&node_named(2,"q"));let mut a=g.acquire(&node_tab(1));let b=g.acquire(&node_tab(2));
+        let pins=||vec![nested_pin("f","",true,false),nested_pin("p","f",false,false),nested_pin("q","f",false,false)];let tabs=||vec![pinned_tab(1,0,"p"),sidebar_tab(2,1)];let mut g=new_action_graph();assert!(g.reconcile_sidebar_layout(pins(),tabs(),vec![0,1],true).admitted);let folder=g.acquire(&node_named(2,"f"));let p=g.acquire(&node_named(2,"p"));let q=g.acquire(&node_named(2,"q"));let mut a=g.acquire(&node_tab(1));let b=g.acquire(&node_tab(2));
         let tree=g.sidebar_tabs();let pin_tree=g.pin_tree();let group=pin_tree.entries[0].group;assert_eq!(tree.parent,group);assert_eq!(tree.slots[0].pin,1);assert!(tree.visible);assert_eq!((a.node_parent_id(),b.node_parent_id()),(tree.pair,tree.pair));assert_eq!(tree.pins.iter().map(|v|(v.index,v.visible)).collect::<Vec<_>>(),vec![(0,true),(1,false),(2,true)]);
         assert!(!g.pin_target("p",p.action_node_id()).valid&&g.pin_target("q",q.action_node_id()).valid);assert!(g.tab_target(7,1,a.action_node_id(),false).valid);a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);
         assert!(g.set_pin_collapsed(&folder,true));assert!(!g.sidebar_tabs().visible);assert!(!a.action_pending());assert!(!g.tab_target(7,1,a.action_node_id(),false).valid&&!g.tab_target(7,2,b.action_node_id(),false).valid);assert!(!g.pin_target("q",q.action_node_id()).valid);
         assert!(g.set_pin_collapsed(&folder,false));assert!(g.sidebar_tabs().visible&&g.tab_target(7,2,b.action_node_id(),false).valid);assert!(!g.pin_target("p",p.action_node_id()).valid);
-        assert!(g.reconcile_sidebar_layout(pins(),tabs(),usize::MAX,usize::MAX,false).admitted);let tree=g.sidebar_tabs();assert_eq!((tree.pair,a.node_parent_id()),(0,tree.root));assert!(!g.pin_target("p",p.action_node_id()).valid);
-        assert!(g.reconcile_sidebar_layout(pins(),vec![sidebar_tab(1,0),sidebar_tab(2,1)],usize::MAX,usize::MAX,false).admitted);assert!(g.pin_target("p",p.action_node_id()).valid);
+        assert!(g.reconcile_sidebar_layout(pins(),tabs(),vec![],false).admitted);let tree=g.sidebar_tabs();assert_eq!((tree.pair,a.node_parent_id()),(0,tree.root));assert!(!g.pin_target("p",p.action_node_id()).valid);
+        assert!(g.reconcile_sidebar_layout(pins(),vec![sidebar_tab(1,0),sidebar_tab(2,1)],vec![],false).admitted);assert!(g.pin_target("p",p.action_node_id()).valid);
     }
     #[test] fn sidebar_split_pair_in_collapsed_folder_starts_hidden_and_unreachable_pin_falls_back_to_root(){
-        let mut g=new_action_graph();assert!(g.reconcile_sidebar_layout(vec![nested_pin("f","",true,true),nested_pin("p","f",false,false)],vec![pinned_tab(1,0,"p"),sidebar_tab(2,1)],0,1,true).admitted);g.acquire(&node_tab(1));let tree=g.sidebar_tabs();assert!(!tree.visible);assert!(!g.tab_target(7,1,g.nodes[&(1,7,1,String::new())].borrow().id,false).valid);
-        let mut g=new_action_graph();assert!(g.reconcile_sidebar_layout(vec![nested_pin("p","missing",false,false)],vec![pinned_tab(1,0,"p"),sidebar_tab(2,1)],0,1,true).admitted);let tree=g.sidebar_tabs();assert_eq!(tree.parent,tree.root);assert!(tree.visible);assert_eq!(tree.slots[0].pin,usize::MAX);
+        let mut g=new_action_graph();assert!(g.reconcile_sidebar_layout(vec![nested_pin("f","",true,true),nested_pin("p","f",false,false)],vec![pinned_tab(1,0,"p"),sidebar_tab(2,1)],vec![0,1],true).admitted);g.acquire(&node_tab(1));let tree=g.sidebar_tabs();assert!(!tree.visible);assert!(!g.tab_target(7,1,g.nodes[&(1,7,1,String::new())].borrow().id,false).valid);
+        let mut g=new_action_graph();assert!(g.reconcile_sidebar_layout(vec![nested_pin("p","missing",false,false)],vec![pinned_tab(1,0,"p"),sidebar_tab(2,1)],vec![0,1],true).admitted);let tree=g.sidebar_tabs();assert_eq!(tree.parent,tree.root);assert!(tree.visible);assert_eq!(tree.slots[0].pin,usize::MAX);
     }
     #[test] fn pin_tree_models_folder_groups_and_actual_parent_edges_in_preorder(){
         let mut g=new_action_graph();g.reconcile_sidebar(vec![nested_pin("leaf","nested",false,false),nested_pin("outer","",true,false),nested_pin("nested","outer",true,false)],vec![]);let tree=g.pin_tree();assert_eq!(tree.entries.iter().map(|e|e.key.as_str()).collect::<Vec<_>>(),vec!["outer","nested","leaf"]);let outer=&tree.entries[0];let nested=&tree.entries[1];let leaf=&tree.entries[2];assert_eq!((outer.index,nested.index,leaf.index),(1,2,0));assert_eq!(outer.parent,tree.root);assert_eq!(nested.parent,outer.group);assert_eq!(leaf.parent,nested.group);assert_ne!(outer.id,outer.group);assert_ne!(nested.id,nested.group);assert_eq!((outer.depth,nested.depth,leaf.depth),(0,1,2));let input=g.acquire(&node_named(2,"leaf"));assert_eq!(input.node_parent_id(),nested.group);assert_eq!(g.acquire(&node_named(14,"outer")).action_node_id(),0);
@@ -4843,14 +4905,35 @@ mod tests {
         assert!(command_catalogue(&c,"nonexistent").is_empty());assert_eq!(command_fold("ĄĆĘŁŃÓŚŹŻ Żółć"),"acelnoszz zolc");
     }
     #[test] fn tab_menu_preserves_order_labels_and_orientation() {
-        let mut s=menu_state();let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,0,20,7,8,0,9,0,6,10,0,23,24]);assert_eq!(entries[3].label,"Przesuń w lewo");
+        let mut s=menu_state();let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,0,20,7,8,0,9,0,11,10,0,23,24]);assert_eq!(entries[3].label,"Przesuń w lewo");assert_eq!(entries[8].label,"Rozdziel");
         s.vertical=true;let entries=tab_context_menu(&s);assert_eq!(entries[3].label,"Przesuń w górę");assert_eq!(entries[6].label,"Podział poziomy (obok siebie)");
+        // Three or more panes can also lose a single member.
+        s.members=vec![3,7,9];let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,0,20,7,8,0,9,0,11,6,10,0,23,24]);
         s.has_tab=false;s.http=false;let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,0,20,5]);
+    }
+    #[test] fn tab_menu_moves_middle_panes_both_ways_and_separates_groups() {
+        use ffi::SidebarAction as A;let mut s=menu_state();s.members=vec![3,7,9];
+        assert!(matches!(tab_menu_action(7,&s),A::MoveEarlier));assert!(matches!(tab_menu_action(8,&s),A::MoveLater));
+        assert!(matches!(tab_menu_action(11,&s),A::Separate));assert!(matches!(tab_menu_action(6,&s),A::CloseSplit));
+        s.tab=9;assert!(matches!(tab_menu_action(8,&s),A::None));s.tab=4;assert!(matches!(tab_menu_action(11,&s),A::None));assert!(matches!(tab_menu_action(5,&s),A::OpenSplit));
+        s.members=vec![4];assert!(matches!(tab_menu_action(11,&s),A::None));
+    }
+    #[test] fn reorder_target_picks_nearest_edge_folders_and_pin_section() {
+        let row=|y:i32,pinned:bool,folder:bool|ffi::ReorderRow{bounds:ffi::Rect{x:0,y,width:200,height:34},pinned,folder};
+        let rows=[row(10,true,true),row(46,true,false),row(100,false,false),row(136,false,false)];
+        let t=sidebar_reorder_target(&rows,0);assert!(t.valid&&t.pinned&&!t.after);assert_eq!(t.row,0);
+        let t=sidebar_reorder_target(&rows,27);assert!(t.into);assert_eq!(t.row,0);
+        let t=sidebar_reorder_target(&rows,12);assert!(!t.into&&!t.after);
+        let t=sidebar_reorder_target(&rows,70);assert_eq!((t.row,t.after,t.pinned),(1,true,true));
+        let t=sidebar_reorder_target(&rows,95);assert_eq!((t.row,t.after,t.pinned),(2,false,false));
+        let t=sidebar_reorder_target(&rows,500);assert_eq!((t.row,t.after,t.pinned),(3,true,false));
+        let tabs=[row(100,false,false)];let t=sidebar_reorder_target(&tabs,50);assert!(t.valid&&t.pinned);assert_eq!(t.row,usize::MAX);
+        assert!(!sidebar_reorder_target(&[],10).valid);
     }
     #[test] fn tab_menu_actions_revalidate_split_side_readiness_and_last_tab() {
         use ffi::SidebarAction as A;let mut s=menu_state();
-        assert!(matches!(tab_menu_action(7,&s),A::MoveFirst));assert!(matches!(tab_menu_action(8,&s),A::None));assert!(matches!(tab_menu_action(9,&s),A::ToggleOrientation));
-        s.tab=3;assert!(matches!(tab_menu_action(8,&s),A::MoveSecond));assert!(matches!(tab_menu_action(7,&s),A::None));
+        assert!(matches!(tab_menu_action(7,&s),A::MoveEarlier));assert!(matches!(tab_menu_action(8,&s),A::None));assert!(matches!(tab_menu_action(9,&s),A::ToggleOrientation));
+        s.tab=3;assert!(matches!(tab_menu_action(8,&s),A::MoveLater));assert!(matches!(tab_menu_action(7,&s),A::None));
         s.split=false;assert!(matches!(tab_menu_action(6,&s),A::None));assert!(matches!(tab_menu_action(5,&s),A::OpenSplit));
         s.tab_count=1;assert!(matches!(tab_menu_action(10,&s),A::None));s.tab_count=2;assert!(matches!(tab_menu_action(10,&s),A::CloseTab));
         for mode in 0..3 {s.valid=mode!=0;s.ready=mode!=1;s.busy=mode==2;for command in 5..=10 {assert!(matches!(tab_menu_action(command,&s),A::None));}}
@@ -4866,7 +4949,7 @@ mod tests {
         }
     }
     #[test] fn workspace_preview_rows_keep_order_gaps_indent_and_partial_clip() {
-        let rows=vec![ffi::PreviewRow{index:0,kind:1,depth:0,height:13},ffi::PreviewRow{index:1,kind:0,depth:2,height:34},ffi::PreviewRow{index:0,kind:3,depth:0,height:8},ffi::PreviewRow{index:2,kind:0,depth:0,height:34}];
+        let rows=vec![ffi::PreviewRow{index:0,kind:1,depth:0,height:13,members:0},ffi::PreviewRow{index:1,kind:0,depth:2,height:34,members:0},ffi::PreviewRow{index:0,kind:3,depth:0,height:8,members:0},ffi::PreviewRow{index:2,kind:0,depth:0,height:34,members:0}];
         let p=workspace_preview_layout(201,60,20,&rows);
         assert_eq!(p.iter().map(|p|p.index).collect::<Vec<_>>(),vec![1,2]);
         assert_eq!((p[0].bounds.x,p[0].bounds.y,p[0].bounds.width),(24,-5,177));
@@ -4874,28 +4957,30 @@ mod tests {
         assert_eq!((p[1].bounds.y,p[1].clip.height),(39,21));
     }
     #[test] fn workspace_preview_pairs_share_live_split_geometry_and_outer_clipping() {
-        let rows=vec![ffi::PreviewRow{index:5,kind:2,depth:1,height:0}];let p=workspace_preview_layout(201,40,3,&rows);
+        let rows=vec![ffi::PreviewRow{index:5,kind:2,depth:1,height:0,members:0}];let p=workspace_preview_layout(201,40,3,&rows);
         assert_eq!(p.iter().map(|p|p.index).collect::<Vec<_>>(),vec![5,6,7]);
         let g=split_layout(189,46,2);
         for (i,r) in g.children.iter().enumerate(){assert_eq!((p[i+1].bounds.x,p[i+1].bounds.y,p[i+1].bounds.width,p[i+1].bounds.height),(12+r.x,-3+r.y,r.width,r.height));}
         assert_eq!((p[0].clip.y,p[0].clip.height),(0,40));
+        let rows=vec![ffi::PreviewRow{index:5,kind:2,depth:0,height:0,members:3}];
+        assert_eq!(workspace_preview_layout(201,60,0,&rows).iter().map(|p|p.index).collect::<Vec<_>>(),vec![5,6,7,8]);
     }
     #[test] fn workspace_preview_large_source_scroll_culls_offscreen_rows() {
-        let rows:Vec<_>=(0..1000).map(|index|ffi::PreviewRow{index,kind:0,depth:0,height:0}).collect();
+        let rows:Vec<_>=(0..1000).map(|index|ffi::PreviewRow{index,kind:0,depth:0,height:0,members:0}).collect();
         let p=workspace_preview_layout(240,72,36*800,&rows);
         assert_eq!(p.iter().map(|p|p.index).collect::<Vec<_>>(),vec![800,801]);
         assert!(p.iter().all(|p|p.clip.y>=0&&p.clip.y+p.clip.height<=72));
     }
     #[test] fn workspace_preview_clamps_deep_narrow_and_saturated_input() {
-        let rows=vec![ffi::PreviewRow{index:0,kind:0,depth:99,height:34}];
+        let rows=vec![ffi::PreviewRow{index:0,kind:0,depth:99,height:34,members:0}];
         assert!(workspace_preview_layout(20,100,0,&rows).is_empty());
         let p=workspace_preview_layout(240,100,-5,&rows);assert_eq!((p[0].bounds.x,p[0].bounds.y),(96,0));
         assert!(workspace_preview_layout(0,0,0,&rows).is_empty());
-        let rows=vec![ffi::PreviewRow{index:0,kind:3,depth:0,height:i32::MAX},ffi::PreviewRow{index:1,kind:0,depth:0,height:34}];
+        let rows=vec![ffi::PreviewRow{index:0,kind:3,depth:0,height:i32::MAX,members:0},ffi::PreviewRow{index:1,kind:0,depth:0,height:34,members:0}];
         assert!(workspace_preview_layout(240,100,0,&rows).is_empty());
     }
     #[test] fn workspace_preview_uses_unicode_row_display_list_without_native_labels() {
-        let p=workspace_preview_layout(240,30,4,&[ffi::PreviewRow{index:0,kind:0,depth:0,height:34}]);
+        let p=workspace_preview_layout(240,30,4,&[ffi::PreviewRow{index:0,kind:0,depth:0,height:34,members:0}]);
         let mut item=row(240.0);item.title="Zażółć 日本語 مرحبا 🦀".into();item.x=p[0].bounds.x as f32;item.y=p[0].bounds.y as f32;
         let c=&p[0].clip;item.clip=ffi::FloatRect{x:c.x as f32,y:c.y as f32,width:c.width as f32,height:c.height as f32};
         let ops=layout(&[item]);assert!(ops.iter().any(|p|p.text=="Zażółć 日本語 مرحبا 🦀"));assert!(ops.iter().any(|p|p.text=="×"));
@@ -5006,16 +5091,26 @@ mod tests {
         for (p,b,i,d) in [(true,false,false,false),(false,true,false,false),(false,false,true,false),(false,false,false,true)] {assert!(!sidebar_auto_hide(p,b,i,d));}
     }
     #[test] fn pane_layout_separates_real_page_rects_in_both_orientations() {
-        let g=pane_host_layout(809,600,0.5,false,true);
-        assert_eq!((g.first.width,g.second.x,g.second.width,g.divider.width),(400,408,401,8));
-        assert_eq!((g.first.y,g.first.height),(30,570));
-        let v=pane_host_layout(600,809,0.5,true,true);
-        assert_eq!((v.first.height,v.second.y,v.second.height,v.divider.y),(370,438,371,400));
-        let single=pane_host_layout(600,809,0.5,false,false);assert_eq!(single.first.height,809);assert_eq!(single.first_bar.height,0);
+        let g=pane_host_layout(809,600,&[0.5,0.5],false);
+        assert_eq!((g.pages[0].width,g.pages[1].x,g.pages[1].width,g.dividers[0].width),(400,408,401,8));
+        assert_eq!((g.pages[0].y,g.pages[0].height),(30,570));
+        let v=pane_host_layout(600,809,&[0.5,0.5],true);
+        assert_eq!((v.pages[0].height,v.pages[1].y,v.pages[1].height,v.dividers[0].y),(370,438,371,400));
+        let single=pane_host_layout(600,809,&[1.0],false);assert_eq!(single.pages[0].height,809);assert!(single.bars.is_empty()&&single.dividers.is_empty());
         for width in [0,4,54,120] {
             let b=pane_bar_layout(width,30);assert!(b.menu.x+b.menu.width<=b.close.x);assert!(b.close.x+b.close.width<=width);
-            assert!(pane_host_layout(width,4,f64::NAN,true,true).second.height>=0);
+            assert!(pane_host_layout(width,4,&[f64::NAN,1.0],true).pages[1].height>=0);
+            let many=pane_host_layout(width,40,&[1.0,1.0,1.0,1.0],false);assert!(many.pages.iter().all(|p|p.width>=0&&p.x+p.width<=width));
         }
+    }
+    #[test] fn pane_layout_tiles_many_panes_and_dividers_resize_only_neighbours() {
+        let g=pane_host_layout(824,600,&[1.0,1.0,1.0],false);
+        assert_eq!(g.pages.iter().map(|p|(p.x,p.width)).collect::<Vec<_>>(),vec![(0,269),(277,269),(554,270)]);
+        assert_eq!(g.dividers.iter().map(|d|d.x).collect::<Vec<_>>(),vec![269,546]);
+        let w=split_apply_ratio(&[0.25,0.25,0.5],0,0.75);assert!((w[0]-0.375).abs()<1e-9&&(w[1]-0.125).abs()<1e-9&&(w[2]-0.5).abs()<1e-9);
+        assert!((split_pair_ratio(&w,0)-0.75).abs()<1e-9);assert!((split_pair_ratio(&w,1)-0.2).abs()<1e-9);
+        assert_eq!(split_apply_ratio(&[0.5,0.5],0,0.99)[0],0.8);assert_eq!(split_pair_ratio(&[0.5,0.5],7),0.5);
+        assert_eq!(split_normalized(&[0.0,1.0],2),vec![0.5,0.5]);assert_eq!(split_normalized(&[2.0,6.0],2),vec![0.25,0.75]);assert_eq!(split_normalized(&[1.0],3).len(),3);
     }
     #[test] fn split_drag_clamps_commits_and_rejects_stale_or_cancelled_events() {
         let mut drag=new_split_drag();drag.begin(0.5,100.0);
@@ -5122,9 +5217,9 @@ mod tests {
     #[test] fn tab_plan_groups_once_in_pane_order_and_preserves_other_tabs() {
         let tree = new_sidebar_tree();
         let tabs = [tab(3, ""), tab(7, ""), tab(9, ""), tab(12, "")];
-        let p = tree.tab_plan("work", &[], &tabs, 9, 3, true);
+        let p = tree.tab_plan("work", &[], &tabs, &[9, 3], true);
         assert_eq!(p.slots.len(), 3);
-        assert!(p.slots[0].pair); assert_eq!((p.slots[0].first, p.slots[0].second), (2, 0));
+        assert!(p.slots[0].pair); assert_eq!((p.slots[0].first, p.slots[0].members.clone()), (2, vec![2, 0]));
         assert_eq!(p.slots[0].pin, usize::MAX);
         assert_eq!((p.slots[1].first, p.slots[2].first), (1, 3));
         assert!(!p.slots[1].pair && !p.slots[2].pair);
@@ -5133,26 +5228,33 @@ mod tests {
         let mut tree = new_sidebar_tree(); tree.set_collapsed("work", "folder", true);
         let nodes = [node("folder", "", true), node("a", "folder", false), node("b", "", false)];
         let tabs = [tab(0, ""), tab(1, "a"), tab(2, "b")];
-        let p = tree.tab_plan("work", &nodes, &tabs, 1, 2, true);
+        let p = tree.tab_plan("work", &nodes, &tabs, &[1, 2], true);
         assert_eq!(p.slots.len(), 2); assert_eq!(p.slots[1].pin, 1);
         assert!(p.pins[0].visible && !p.pins[1].visible && !p.pins[2].visible);
-        let swapped = tree.tab_plan("work", &nodes, &tabs, 2, 1, true);
-        assert_eq!((swapped.slots[1].first, swapped.slots[1].second, swapped.slots[1].pin), (2, 1, 2));
-        let right_pinned = tree.tab_plan("work", &nodes, &tabs, 0, 1, true);
+        let swapped = tree.tab_plan("work", &nodes, &tabs, &[2, 1], true);
+        assert_eq!((swapped.slots[1].members.clone(), swapped.slots[1].pin), (vec![2, 1], 2));
+        let right_pinned = tree.tab_plan("work", &nodes, &tabs, &[0, 1], true);
         assert_eq!(right_pinned.slots[0].pin, 1);
+    }
+    #[test] fn tab_plan_groups_three_or_more_tabs_into_one_slot() {
+        let tree = new_sidebar_tree();
+        let tabs = [tab(3, ""), tab(7, ""), tab(9, ""), tab(12, "")];
+        let p = tree.tab_plan("work", &[], &tabs, &[12, 3, 9], true);
+        assert_eq!(p.slots.len(), 2); assert_eq!(p.slots[0].members, vec![3, 0, 2]); assert_eq!(p.slots[1].first, 1);
+        assert!(tree.tab_plan("work", &[], &tabs, &[12, 3, 12], true).slots.iter().all(|s| !s.pair));
     }
     #[test] fn tab_plan_falls_back_for_invalid_pairs_and_unreachable_pins() {
         let tree = new_sidebar_tree();
         let nodes = [node("orphan", "missing", false), node("good", "", false)];
         let tabs = [tab(5, "orphan"), tab(8, "good"), tab(8, "duplicate")];
-        let p = tree.tab_plan("work", &nodes, &tabs, 5, 8, true);
+        let p = tree.tab_plan("work", &nodes, &tabs, &[5, 8], true);
         assert_eq!(p.slots.len(), 1); assert_eq!(p.slots[0].pin, 1); assert_eq!(p.pins.len(), 1);
         for (first, second, split) in [(5, 8, false), (5, 5, true), (5, 100, true)] {
-            let p = tree.tab_plan("work", &nodes, &tabs, first, second, split);
+            let p = tree.tab_plan("work", &nodes, &tabs, &[first, second], split);
             assert_eq!(p.slots.len(), 2); assert!(p.slots.iter().all(|s| !s.pair));
             assert_eq!((p.slots[0].first, p.slots[1].first), (0, 1));
         }
-        assert!(tree.tab_plan("work", &[], &[], 0, 1, true).slots.is_empty());
+        assert!(tree.tab_plan("work", &[], &[], &[0, 1], true).slots.is_empty());
     }
     #[test] fn split_tiles_fill_odd_widths_and_respect_frame_and_order() {
         let natural = split_layout(-1, -1, 2);

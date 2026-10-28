@@ -2,6 +2,7 @@
 #include "chromium/prototype/page_media_access.h"
 #include <algorithm>
 #include <cmath>
+#include <set>
 #include "base/strings/string_util.h"
 #include "base/files/important_file_writer.h"
 #include "base/functional/bind.h"
@@ -22,14 +23,15 @@ std::string Stamp() { return base::UTF16ToUTF8(base::TimeFormatShortDateAndTime(
 base::DictValue WorkspaceWindow::CaptureHost(const Host& host) const {
   if (host.sleeping) return host.sleeping->Clone();
   base::DictValue entry;
-  entry.Set("profile_id", host.profile_id); entry.Set("ratio", host.ratio);
-  if (host.right && host.vertical) entry.Set("vertical", true);
+  entry.Set("profile_id", host.profile_id);
+  if (!host.split.empty() && host.vertical) entry.Set("vertical", true);
   entry.Set("active", static_cast<int>(host.active_tab));
-  int left = host.active_tab, right = -1; base::ListValue tabs;
+  base::ListValue tabs, split, weights;
+  for (const auto& member : host.split)
+    split.Append(static_cast<int>(std::find(host.tabs.begin(), host.tabs.end(), member) - host.tabs.begin()));
+  for (double weight : host.weights) weights.Append(weight);
   for (size_t i = 0; i < host.tabs.size(); ++i) {
     auto* view = host.tabs[i].get();
-    if (view == host.left) left = i;
-    if (view == host.right) right = i;
     const GURL url = TabUrl(host, view);
     base::DictValue tab;
     tab.Set("url", url.SchemeIsHTTPOrHTTPS() ? url.spec() : "");
@@ -37,13 +39,13 @@ base::DictValue WorkspaceWindow::CaptureHost(const Host& host) const {
     for (const auto& [id, pinned] : host.pin_tabs) if (pinned == view) tab.Set("pin", id);
     tabs.Append(std::move(tab));
   }
-  entry.Set("left", left); entry.Set("right", right); entry.Set("tabs", std::move(tabs));
+  entry.Set("split", std::move(split)); entry.Set("weights", std::move(weights)); entry.Set("tabs", std::move(tabs));
   return entry;
 }
 void WorkspaceWindow::ReleaseHost(Host& host) {
   const bool was_closing = closing_; closing_ = true;
-  if (host.workspace_id == active_id()) shell_->SetPanes(nullptr, nullptr, 0.5);
-  host.view = nullptr; host.left = nullptr; host.right = nullptr;
+  if (host.workspace_id == active_id()) shell_->SetPanes({}, {});
+  host.view = nullptr; host.split.clear(); host.weights.clear();
   host.pin_tabs.clear(); host.deferred_urls.clear(); host.deferred_titles.clear(); host.popup_tabs.clear();
   auto tabs = std::move(host.tabs); host.tabs.clear();
   for (const auto& view : tabs) shell_->content_host()->RemoveChildViewT(view.get());
@@ -72,15 +74,31 @@ bool WorkspaceWindow::RestoreHost(Host& host, const base::DictValue& entry) {
     }
   }
   const int count = host.tabs.size();
-  const int left = std::clamp(entry.FindInt("left").value_or(0), 0, count - 1);
-  const int right = entry.FindInt("right").value_or(-1);
-  host.left = host.tabs[left]; host.right = right >= 0 && right < count && right != left ? host.tabs[right].get() : nullptr;
-  size_t active = entry.FindInt("active").value_or(left);
-  if (active >= host.tabs.size()) active = left;
+  // Earlier snapshots stored a left/right pair and the left pane's ratio.
+  std::vector<int> members;
+  std::vector<double> weights;
+  if (const auto* split = entry.FindList("split")) {
+    for (const auto& value : *split) if (value.is_int()) members.push_back(value.GetInt());
+    if (const auto* stored = entry.FindList("weights"))
+      for (const auto& value : *stored) if (value.is_double() || value.is_int()) weights.push_back(value.GetDouble());
+  } else if (const int right = entry.FindInt("right").value_or(-1); right >= 0) {
+    const double ratio = entry.FindDouble("ratio").value_or(0.5);
+    members = {entry.FindInt("left").value_or(0), right};
+    weights = {ratio, 1.0 - ratio};
+  }
+  std::set<int> seen;
+  for (int member : members) {
+    if (member < 0 || member >= count || !seen.insert(member).second || host.split.size() == kMaxSplitPanes) { host.split.clear(); break; }
+    host.split.push_back(host.tabs[member]);
+  }
+  if (host.split.size() < 2) host.split.clear();
+  const auto normalized = sidebar::split_normalized(rust::Slice<const double>(weights.data(), weights.size()), host.split.size());
+  host.weights.assign(normalized.begin(), normalized.end());
+  const int fallback = host.split.empty() ? 0 : members.front();
+  size_t active = entry.FindInt("active").value_or(fallback);
+  if (active >= host.tabs.size()) active = fallback;
   host.active_tab = active; host.view = host.tabs[active];
-  const double ratio = entry.FindDouble("ratio").value_or(0.5);
-  host.ratio = std::isfinite(ratio) ? std::clamp(ratio, 0.2, 0.8) : 0.5;
-  host.vertical = host.right && entry.FindBool("vertical").value_or(false);
+  host.vertical = !host.split.empty() && entry.FindBool("vertical").value_or(false);
   closing_ = was_closing; return true;
 }
 bool WorkspaceWindow::SaveSnapshot(std::string name, bool automatic) {

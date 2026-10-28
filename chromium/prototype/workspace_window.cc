@@ -338,21 +338,27 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   callbacks.open_link = base::BindRepeating(&WorkspaceWindow::OpenLink, base::Unretained(this));
   callbacks.toggle_split = base::BindRepeating(&WorkspaceWindow::ToggleSplit, base::Unretained(this));
   callbacks.focus_pane = base::BindRepeating(&WorkspaceWindow::FocusPane, base::Unretained(this));
-  callbacks.split_ratio = base::BindRepeating(&WorkspaceWindow::SetSplitRatio, base::Unretained(this));
+  callbacks.split_ratio = base::BindRepeating(&WorkspaceWindow::SetDividerRatio, base::Unretained(this));
   callbacks.split_tab = base::BindRepeating(&WorkspaceWindow::SplitTab, base::Unretained(this));
   callbacks.unsplit = base::BindRepeating(&WorkspaceWindow::Unsplit, base::Unretained(this));
+  callbacks.leave_split = base::BindRepeating(&WorkspaceWindow::RemoveFromSplit, base::Unretained(this));
+  callbacks.move_split_pane = base::BindRepeating(&WorkspaceWindow::MoveSplitPane, base::Unretained(this));
+  callbacks.move_tab = base::BindRepeating(&WorkspaceWindow::MoveTab, base::Unretained(this));
+  callbacks.pin_tab = base::BindRepeating(&WorkspaceWindow::PinTab, base::Unretained(this));
+  callbacks.unpin = base::BindRepeating(&WorkspaceWindow::UnpinItem, base::Unretained(this));
+  callbacks.move_pin = base::BindRepeating(&WorkspaceWindow::MovePin, base::Unretained(this));
   callbacks.swap_split = base::BindRepeating(&WorkspaceWindow::SwapSplit, base::Unretained(this));
   callbacks.split_vertical = base::BindRepeating(&WorkspaceWindow::SetSplitVertical, base::Unretained(this));
   callbacks.split_pin = base::BindRepeating([](WorkspaceWindow* window, std::string id) {
-    auto* previous = window->pane_contents(false);
+    content::WebContents* previous = nullptr;
+    for (const auto& host : window->hosts_) if (host.workspace_id == window->active_id() && host.view) previous = host.view->web_contents();
     window->OpenPinnedItem(std::move(id));
     for (auto& host : window->hosts_) {
       if (host.workspace_id != window->active_id()) continue;
       const size_t index = host.active_tab;
-      // OpenPinnedItem normally replaces the focused pane. Keep the original
-      // left page when a pinned row is dropped into the right-hand pane.
-      // Opening the pin may have shown it alone; re-anchor on the page that was shown.
-      for (const auto& tab : host.tabs) if (previous && tab->web_contents() == previous) host.left = host.view = tab;
+      // Opening the pin may have shown it alone; re-anchor on the page that was
+      // focused so a shown group gains the pin as one more pane.
+      for (const auto& tab : host.tabs) if (previous && tab->web_contents() == previous) host.view = tab;
       window->SplitTab(index);
     }
   }, base::Unretained(this));
@@ -421,7 +427,7 @@ WorkspaceWindow::~WorkspaceWindow() {
   widget_->GetFocusManager()->UnregisterAccelerators(this);
   for (auto& host : hosts_) {
     host.view = nullptr;
-    host.left = nullptr; host.right = nullptr; host.deferred_urls.clear(); host.deferred_titles.clear(); host.popup_tabs.clear();
+    host.split.clear(); host.deferred_urls.clear(); host.deferred_titles.clear(); host.popup_tabs.clear();
     host.tabs.clear();
     host.pin_tabs.clear();
     host.profile = nullptr;
@@ -562,11 +568,7 @@ void WorkspaceWindow::UpdateShell() {
         if (view == host.view) state.active_pin = pin_id;
       }
       const size_t index = &view - host.tabs.data();
-      if (host.right) {
-        if (view == host.left) state.split_tabs[0] = index;
-        if (view == host.right) state.split_tabs[1] = index;
-      }
-      if (pin_id.empty() || (host.right && (view == host.left || view == host.right)))
+      if (pin_id.empty() || InSplit(host, view))
         state.tabs.push_back({title.empty() ? u"Nowa karta" : title, display_url, index, pin_id, static_cast<WorkspaceWebView*>(view.get())->sidebar_identity()});
     }
     auto& controller = host.view->GetWebContents()->GetController();
@@ -584,10 +586,13 @@ void WorkspaceWindow::UpdateShell() {
     state.configuration_ready = configuration_ready_ && !profiles_busy_ && !configuration_invalid_;
     state.url = host.view->GetWebContents()->GetVisibleURL();
     state.active_tab = host.active_tab;
-    state.split = host.right != nullptr;
+    for (const auto& member : host.split)
+      state.split_tabs.push_back(std::find(host.tabs.begin(), host.tabs.end(), member) - host.tabs.begin());
+    state.split = !host.split.empty();
     state.split_visible = SplitShown(host);
     state.split_vertical = host.vertical;
-    state.right_active = state.split_visible && host.view == host.right;
+    if (state.split_visible)
+      state.active_pane = std::find(host.split.begin(), host.split.end(), host.view) - host.split.begin();
     state.can_go_back = controller.CanGoBack();
     state.can_go_forward = controller.CanGoForward();
     if (downloads_) downloads_->SetProfile(host.profile);
@@ -623,14 +628,11 @@ bool WorkspaceWindow::Activate(std::string_view id,
     if (!RestoreHost(*selected, stored)) return false;
   }
   // The controller commits active_id after this callback returns.
-  if (!selected->left) selected->left = selected->view;
-  const auto selected_panes = VisiblePanes(*selected);
-  shell_->SetPanes(selected_panes.first, selected_panes.second, selected->ratio, selected->vertical);
+  ApplyPanes(*selected);
   for (auto& host : hosts_) {
-    if (!host.left) host.left = host.view;
     const auto panes = VisiblePanes(host);
     for (auto& tab : host.tabs) {
-      if (&host == selected && (tab == panes.first || tab == panes.second)) {
+      if (&host == selected && std::find(panes.begin(), panes.end(), tab) != panes.end()) {
         ShowPage(tab);
         host.deferred_titles.erase(tab);
         if (auto pending = host.deferred_urls.find(tab); pending != host.deferred_urls.end()) {
@@ -838,12 +840,13 @@ bool WorkspaceWindow::OpenLink(const GURL& url, std::string source_workspace, bo
       }, weak_factory_.GetWeakPtr(), url, source_workspace, new_tab, split))) return true;
   const bool switching = target != active_id();
   if (!Select(target)) return false;
-  auto* previous_left = pane_contents(false);
+  content::WebContents* previous = nullptr;
+  for (const auto& host : hosts_) if (host.workspace_id == active_id() && host.view) previous = host.view->web_contents();
   if (!NavigateFromBar(url, new_tab || split || switching)) return false;
   if (split) {
     for (auto& host : hosts_) if (host.workspace_id == active_id()) {
       const size_t index = host.active_tab;
-      for (const auto& tab : host.tabs) if (previous_left && tab->web_contents() == previous_left) host.left = host.view = tab;
+      for (const auto& tab : host.tabs) if (previous && tab->web_contents() == previous) host.view = tab;
       return SplitTab(index);
     }
   }
@@ -1056,9 +1059,8 @@ void WorkspaceWindow::SelectTab(size_t index) {
   for (auto& host : hosts_) {
     if (host.workspace_id != active_id() || index >= host.tabs.size()) continue;
     auto* selected = host.tabs[index].get();
-    // The pair stays together: a tab outside it is shown alone, and selecting
-    // either half of the pair brings the whole split back.
-    if (!host.right) host.left = selected;
+    // The group stays together: a tab outside it is shown alone, and selecting
+    // any member brings the whole split back.
     host.active_tab = index;
     host.view = selected;
     RefreshPanes();
@@ -1089,12 +1091,10 @@ void WorkspaceWindow::CloseWorkspaceTab(std::string_view workspace_id, size_t in
     views::WebView* closing = host.tabs[index];
     std::erase_if(host.pin_tabs, [closing](const auto& entry) { return entry.second == closing; });
     const bool was_active = closing == host.view;
-    if (host.workspace_id == active_id()) shell_->SetPanes(nullptr, nullptr, 0.5);
-    if (closing == host.left || closing == host.right) {
-      auto* survivor = closing == host.left ? host.right.get() : host.left.get();
-      host.left = survivor; host.right = nullptr;
-      // Closing half of a hidden pair must not pull its partner on screen.
-      if (survivor && was_active) host.view = survivor;
+    if (host.workspace_id == active_id()) shell_->SetPanes({}, {});
+    if (auto* survivor = LeaveSplit(host, closing)) {
+      // Closing a member of a hidden group must not pull its partners on screen.
+      if (was_active) host.view = survivor;
     }
     host.deferred_urls.erase(closing);
     host.deferred_titles.erase(closing);
@@ -1105,7 +1105,6 @@ void WorkspaceWindow::CloseWorkspaceTab(std::string_view workspace_id, size_t in
       if (host.view == closing || !host.view) host.view = host.tabs[host.active_tab];
     }
     host.active_tab = std::find(host.tabs.begin(), host.tabs.end(), host.view) - host.tabs.begin();
-    if (!host.left) host.left = host.view;
     shell_->content_host()->RemoveChildViewT(closing);
     RefreshPanes();
     UpdateShell();
@@ -1114,38 +1113,64 @@ void WorkspaceWindow::CloseWorkspaceTab(std::string_view workspace_id, size_t in
   }
 }
 
+namespace {
+std::vector<double> EqualWeights(size_t count) { return std::vector<double>(count, count ? 1.0 / count : 0.0); }
+}  // namespace
 bool WorkspaceWindow::split() const {
   for (const auto& host : hosts_) if (host.workspace_id == active_id()) return SplitShown(host);
   return false;
 }
-bool WorkspaceWindow::SplitShown(const Host& host) {
-  return host.right && (host.view == host.left || host.view == host.right);
+size_t WorkspaceWindow::split_count() const {
+  for (const auto& host : hosts_) if (host.workspace_id == active_id()) return SplitShown(host) ? host.split.size() : 1;
+  return 0;
 }
-std::pair<views::WebView*, views::WebView*> WorkspaceWindow::VisiblePanes(const Host& host) {
-  if (SplitShown(host)) return {host.left.get(), host.right.get()};
-  return {host.view.get(), nullptr};
+bool WorkspaceWindow::InSplit(const Host& host, const views::WebView* view) {
+  return view && std::find(host.split.begin(), host.split.end(), view) != host.split.end();
+}
+bool WorkspaceWindow::SplitShown(const Host& host) {
+  return host.split.size() >= 2 && InSplit(host, host.view);
+}
+std::vector<views::WebView*> WorkspaceWindow::VisiblePanes(const Host& host) {
+  if (SplitShown(host)) return {host.split.begin(), host.split.end()};
+  return {host.view.get()};
+}
+views::WebView* WorkspaceWindow::LeaveSplit(Host& host, views::WebView* view) {
+  const auto found = std::find(host.split.begin(), host.split.end(), view);
+  if (found == host.split.end()) return nullptr;
+  const size_t position = found - host.split.begin();
+  host.split.erase(found);
+  if (position < host.weights.size()) host.weights.erase(host.weights.begin() + position);
+  if (host.split.empty()) return nullptr;
+  views::WebView* next = host.split[std::min(position, host.split.size() - 1)];
+  if (host.split.size() < 2) { host.split.clear(); host.weights.clear(); host.vertical = false; }
+  else { auto normalized = sidebar::split_normalized(rust::Slice<const double>(host.weights.data(), host.weights.size()), host.split.size()); host.weights.assign(normalized.begin(), normalized.end()); }
+  return next;
+}
+void WorkspaceWindow::ApplyPanes(const Host& host) {
+  const bool shown = SplitShown(host);
+  const auto panes = VisiblePanes(host);
+  shell_->SetPanes({panes.begin(), panes.end()}, shown ? host.weights : std::vector<double>(), shown && host.vertical);
 }
 double WorkspaceWindow::split_ratio() const {
-  for (const auto& host : hosts_) if (host.workspace_id == active_id()) return host.ratio;
+  for (const auto& host : hosts_) if (host.workspace_id == active_id())
+    return sidebar::split_pair_ratio(rust::Slice<const double>(host.weights.data(), host.weights.size()), 0);
   return 0.5;
 }
-content::WebContents* WorkspaceWindow::pane_contents(bool right) const {
+content::WebContents* WorkspaceWindow::pane_contents(size_t pane) const {
   for (const auto& host : hosts_) {
     if (host.workspace_id != active_id()) continue;
     const auto panes = VisiblePanes(host);
-    auto* view = right ? panes.second : panes.first;
-    return view ? view->web_contents() : nullptr;
+    return pane < panes.size() && panes[pane] ? panes[pane]->web_contents() : nullptr;
   }
   return nullptr;
 }
 void WorkspaceWindow::RefreshPanes() {
   for (auto& host : hosts_) {
     if (host.workspace_id != active_id()) continue;
-    if (!host.left) host.left = host.view;
+    ApplyPanes(host);
     const auto panes = VisiblePanes(host);
-    shell_->SetPanes(panes.first, panes.second, host.ratio, host.vertical);
     for (auto& tab : host.tabs) {
-      if (tab == panes.first || tab == panes.second) {
+      if (std::find(panes.begin(), panes.end(), tab) != panes.end()) {
         ShowPage(tab);
         host.deferred_titles.erase(tab);
         if (auto pending = host.deferred_urls.find(tab); pending != host.deferred_urls.end()) {
@@ -1160,27 +1185,27 @@ void WorkspaceWindow::RefreshPanes() {
 void WorkspaceWindow::PageFocused(views::WebView* view) {
   if (closing_) return;
   for (auto& host : hosts_) {
-    if (host.workspace_id != active_id() || !SplitShown(host) || (view != host.left && view != host.right) || view == host.view) continue;
+    if (host.workspace_id != active_id() || !SplitShown(host) || !InSplit(host, view) || view == host.view) continue;
     host.view = view;
     host.active_tab = std::find(host.tabs.begin(), host.tabs.end(), view) - host.tabs.begin();
     UpdateShell();
   }
 }
-void WorkspaceWindow::FocusPane(bool right) {
+void WorkspaceWindow::FocusPane(size_t pane) {
   for (auto& host : hosts_) {
     if (host.workspace_id != active_id()) continue;
     const auto panes = VisiblePanes(host);
-    auto* view = right ? panes.second : panes.first;
+    auto* view = pane < panes.size() ? panes[pane] : nullptr;
     if (view) { PageFocused(view); view->RequestFocus(); }
   }
 }
-void WorkspaceWindow::SetSplitRatio(double ratio, bool done) {
+void WorkspaceWindow::SetDividerRatio(size_t divider, double ratio, bool done) {
   if (!std::isfinite(ratio)) return;
   for (auto& host : hosts_) {
-    if (host.workspace_id != active_id()) continue;
-    host.ratio = std::clamp(ratio, 0.2, 0.8);
-    const auto panes = VisiblePanes(host);
-    shell_->SetPanes(panes.first, panes.second, host.ratio, host.vertical);
+    if (host.workspace_id != active_id() || divider + 1 >= host.split.size()) continue;
+    auto weights = sidebar::split_apply_ratio(rust::Slice<const double>(host.weights.data(), host.weights.size()), divider, ratio);
+    host.weights.assign(weights.begin(), weights.end());
+    ApplyPanes(host);
     if (done) ScheduleSessionSave();
   }
 }
@@ -1189,20 +1214,27 @@ bool WorkspaceWindow::SplitTab(size_t index) {
   for (auto& host : hosts_) {
     if (host.workspace_id != active_id() || index >= host.tabs.size()) continue;
     SaveSnapshot("Przed zmianą podziału", true);
-    // A visible split replaces its right half; otherwise the shown page anchors a new pair.
-    if (!SplitShown(host)) { host.left = host.view; host.right = nullptr; host.vertical = false; }
-    if (host.tabs[index] == host.left) {
-      // Dropping the current page beside itself creates an independent copy;
+    // A visible group gains a pane; otherwise the shown page anchors a new pair.
+    if (!SplitShown(host)) { host.split = {host.view}; host.weights.clear(); host.vertical = false; }
+    if (InSplit(host, host.tabs[index])) {
+      // Dropping a shown page beside itself creates an independent copy;
       // a menu action on the current tab must not silently do nothing.
-      const auto pending = host.deferred_urls.find(host.left);
+      auto* source = host.tabs[index].get();
+      const auto pending = host.deferred_urls.find(source);
       const GURL url = pending == host.deferred_urls.end()
-          ? host.left->GetWebContents()->GetVisibleURL() : pending->second;
+          ? source->GetWebContents()->GetVisibleURL() : pending->second;
       host.tabs.push_back(CreatePage(host.profile));
       index = host.tabs.size() - 1;
       if (url.SchemeIsHTTPOrHTTPS()) host.deferred_urls[host.tabs[index]] = url;
     }
-    host.right = host.tabs[index];
-    host.view = host.right;
+    if (host.split.size() >= kMaxSplitPanes) {
+      // A full group replaces its focused pane.
+      *std::find(host.split.begin(), host.split.end(), host.view) = host.tabs[index];
+    } else {
+      host.split.push_back(host.tabs[index]);
+      host.weights = EqualWeights(host.split.size());
+    }
+    host.view = host.tabs[index];
     host.active_tab = index;
     RefreshPanes(); UpdateShell();
     shell_->CloseOverlays();
@@ -1214,23 +1246,54 @@ bool WorkspaceWindow::SplitTab(size_t index) {
 void WorkspaceWindow::Unsplit(size_t index) {
   if (!configuration_ready_ || profiles_busy_) return;
   for (auto& host : hosts_) {
-    if (host.workspace_id != active_id() || !host.right || index >= host.tabs.size()) continue;
+    if (host.workspace_id != active_id() || host.split.empty() || index >= host.tabs.size()) continue;
     auto* kept = host.tabs[index].get();
-    if (kept != host.left && kept != host.right) return;
+    if (!InSplit(host, kept)) return;
     SaveSnapshot("Przed zamknięciem podziału", true);
-    host.left = kept; host.right = nullptr;
+    host.split.clear(); host.weights.clear(); host.vertical = false;
     host.view = kept; host.active_tab = index;
     RefreshPanes(); UpdateShell();
     host.view->RequestFocus();
     return;
   }
 }
+void WorkspaceWindow::RemoveFromSplit(size_t index) {
+  if (!configuration_ready_ || profiles_busy_) return;
+  for (auto& host : hosts_) {
+    if (host.workspace_id != active_id() || index >= host.tabs.size() || !InSplit(host, host.tabs[index])) continue;
+    SaveSnapshot("Przed zmianą podziału", true);
+    const bool shown = SplitShown(host);
+    auto* leaving = host.tabs[index].get();
+    auto* next = LeaveSplit(host, leaving);
+    // The rest of a shown group stays on screen, focused beside the removed pane.
+    if (shown && host.view == leaving && next) host.view = next;
+    host.active_tab = std::find(host.tabs.begin(), host.tabs.end(), host.view) - host.tabs.begin();
+    RefreshPanes(); UpdateShell();
+    host.view->RequestFocus();
+    return;
+  }
+}
+void WorkspaceWindow::MoveSplitPane(size_t index, bool later) {
+  if (!configuration_ready_ || profiles_busy_) return;
+  for (auto& host : hosts_) {
+    if (host.workspace_id != active_id() || index >= host.tabs.size()) continue;
+    const auto found = std::find(host.split.begin(), host.split.end(), host.tabs[index]);
+    if (found == host.split.end()) return;
+    const size_t position = found - host.split.begin();
+    if (later ? position + 1 >= host.split.size() : position == 0) return;
+    const size_t other = later ? position + 1 : position - 1;
+    std::swap(host.split[position], host.split[other]);
+    if (other < host.weights.size() && position < host.weights.size()) std::swap(host.weights[position], host.weights[other]);
+    RefreshPanes(); UpdateShell();
+    return;
+  }
+}
 void WorkspaceWindow::SwapSplit() {
   if (!configuration_ready_ || profiles_busy_) return;
   for (auto& host : hosts_) {
-    if (host.workspace_id != active_id() || !host.right) continue;
-    std::swap(host.left, host.right);
-    host.ratio = 1.0 - host.ratio;
+    if (host.workspace_id != active_id() || host.split.empty()) continue;
+    std::reverse(host.split.begin(), host.split.end());
+    std::reverse(host.weights.begin(), host.weights.end());
     RefreshPanes(); UpdateShell();
     return;
   }
@@ -1238,14 +1301,14 @@ void WorkspaceWindow::SwapSplit() {
 void WorkspaceWindow::SetSplitVertical(bool vertical) {
   if (!configuration_ready_ || profiles_busy_) return;
   for (auto& host : hosts_) {
-    if (host.workspace_id != active_id() || !host.right || host.vertical == vertical) continue;
+    if (host.workspace_id != active_id() || host.split.empty() || host.vertical == vertical) continue;
     host.vertical = vertical;
     RefreshPanes(); UpdateShell();
     return;
   }
 }
 bool WorkspaceWindow::split_vertical() const {
-  for (const auto& host : hosts_) if (host.workspace_id == active_id()) return host.right && host.vertical;
+  for (const auto& host : hosts_) if (host.workspace_id == active_id()) return !host.split.empty() && host.vertical;
   return false;
 }
 void WorkspaceWindow::ToggleSplit() {
@@ -1254,17 +1317,32 @@ void WorkspaceWindow::ToggleSplit() {
     if (host.workspace_id != active_id()) continue;
     if (SplitShown(host)) {
       SaveSnapshot("Przed zamknięciem podziału", true);
-      host.left = host.view; host.right = nullptr;
+      host.split.clear(); host.weights.clear(); host.vertical = false;
       RefreshPanes(); UpdateShell(); host.view->RequestFocus();
       return;
     }
-    host.left = host.view; host.right = nullptr;
-    for (size_t i = 0; i < host.tabs.size(); ++i) if (host.tabs[i] != host.left) { SplitTab(i); return; }
+    host.split.clear(); host.weights.clear();
+    for (size_t i = 0; i < host.tabs.size(); ++i) if (host.tabs[i] != host.view) { SplitTab(i); return; }
     host.tabs.push_back(CreatePage(host.profile));
     SplitTab(host.tabs.size() - 1);
     shell_->OpenAddress(false);
     return;
   }
+}
+
+bool WorkspaceWindow::MoveTab(size_t index, size_t before) {
+  if (!configuration_ready_ || profiles_busy_) return false;
+  for (auto& host : hosts_) {
+    if (host.workspace_id != active_id() || index >= host.tabs.size() || before > host.tabs.size()) continue;
+    if (before == index || before == index + 1) return true;
+    auto* moving = host.tabs[index].get();
+    host.tabs.erase(host.tabs.begin() + index);
+    host.tabs.insert(host.tabs.begin() + (before > index ? before - 1 : before), moving);
+    host.active_tab = std::find(host.tabs.begin(), host.tabs.end(), host.view) - host.tabs.begin();
+    UpdateShell();
+    return true;
+  }
+  return false;
 }
 
 void WorkspaceWindow::CloseActiveTab() {
@@ -1362,7 +1440,9 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
   }
   if (id == "split") { ToggleSplit(); return true; }
   if (id == "close_split") { if (split()) ToggleSplit(); return true; }
-  if (id == "left_pane" || id == "right_pane") { FocusPane(id == "right_pane"); return true; }
+  if (id == "left_pane" || id == "right_pane" || id == "third_pane" || id == "fourth_pane") {
+    FocusPane(id == "left_pane" ? 0 : id == "right_pane" ? 1 : id == "third_pane" ? 2 : 3); return true;
+  }
   if (id == "timeline" || id == "snapshot") { shell_->OpenTools(0); return true; }
   if (id == "sleep") return SleepWorkspace(active_id());
   if (id == "next_tab" || id == "previous_tab") {
@@ -1470,8 +1550,8 @@ bool WorkspaceWindow::UpdateWorkspace(std::string id, std::string name, std::str
       if (peek_workspace_id_ == id) ClosePeek();
       // A live WebContents must never change its BrowserContext.
       closing_ = true;
-      if (id == active_id()) shell_->SetPanes(nullptr, nullptr, 0.5);
-      host.left = nullptr; host.right = nullptr; host.deferred_urls.clear(); host.deferred_titles.clear(); host.popup_tabs.clear();
+      if (id == active_id()) shell_->SetPanes({}, {});
+      host.split.clear(); host.weights.clear(); host.deferred_urls.clear(); host.deferred_titles.clear(); host.popup_tabs.clear();
       host.pin_tabs.clear();
       host.sleeping.reset();
       auto old_tabs = std::move(host.tabs);
@@ -1483,7 +1563,6 @@ bool WorkspaceWindow::UpdateWorkspace(std::string id, std::string name, std::str
       for (auto& tab : old_tabs) shell_->content_host()->RemoveChildViewT(tab.get());
       host.view = CreatePage(profile);
       host.tabs.push_back(host.view);
-      host.left = host.view;
       if (id == active_id()) RefreshPanes();
       closing_ = false;
     } else {
@@ -2018,7 +2097,6 @@ void WorkspaceWindow::FinishConfiguration() {
     host.profile = ProfileFor(workspace.profile_id);
     host.view = CreatePage(host.profile, nullptr, nullptr, false);
     host.tabs.push_back(host.view);
-    host.left = host.view;
   }
   RestoreSession();
   closing_ = false;
@@ -2060,6 +2138,79 @@ void WorkspaceWindow::OpenPinnedItem(std::string id) {
     NavigateFromBar(url, false);
     return;
   }
+}
+
+bool WorkspaceWindow::InsertPin(std::string workspace, PinnedItem item, std::string before) {
+  if (!configuration_ready_ || configuration_invalid_ || profiles_busy_ || !model_.Find(workspace)) return false;
+  auto& items = pins_[workspace];
+  // The parent must be a reachable folder that is not the item itself or one of its descendants.
+  for (std::string ancestor = item.parent_id; !ancestor.empty();) {
+    if (ancestor == item.id) return false;
+    auto it = std::find_if(items.begin(), items.end(), [&](const auto& other) { return other.id == ancestor && other.folder; });
+    if (it == items.end()) return false;
+    ancestor = it->parent_id;
+  }
+  auto previous = items;
+  std::erase_if(items, [&](const auto& other) { return other.id == item.id; });
+  // Siblings keep vector order; an empty `before` appends after the last one.
+  auto at = std::find_if(items.begin(), items.end(), [&](const auto& other) { return other.id == before && other.parent_id == item.parent_id; });
+  items.insert(at, std::move(item));
+  SaveFolderEdit(std::move(workspace), std::move(previous));
+  return true;
+}
+bool WorkspaceWindow::PinTab(size_t index, std::string parent, std::string before) {
+  for (auto& host : hosts_) {
+    if (host.workspace_id != active_id() || index >= host.tabs.size()) continue;
+    auto* view = host.tabs[index].get();
+    for (const auto& [id, pinned] : host.pin_tabs) if (pinned == view) return MovePin(id, std::move(parent), std::move(before));
+    const GURL url = TabUrl(host, view);
+    if (!url.SchemeIsHTTPOrHTTPS()) return false;
+    auto title = base::UTF16ToUTF8(TabTitle(host, view));
+    if (title.empty()) title = url.host();
+    PinnedItem item{"pin-" + base::Uuid::GenerateRandomV4().AsLowercaseString(), std::move(parent), std::move(title), url, false};
+    const auto id = item.id;
+    host.pin_tabs[id] = view;
+    if (InsertPin(host.workspace_id, std::move(item), std::move(before))) return true;
+    host.pin_tabs.erase(id);
+    return false;
+  }
+  return false;
+}
+bool WorkspaceWindow::UnpinItem(std::string id, size_t before) {
+  if (!configuration_ready_ || configuration_invalid_ || profiles_busy_) return false;
+  for (auto& host : hosts_) {
+    if (host.workspace_id != active_id() || before > host.tabs.size()) continue;
+    auto& items = pins_[host.workspace_id];
+    const auto pin = std::find_if(items.begin(), items.end(), [&](const auto& item) { return item.id == id && !item.folder; });
+    if (pin == items.end()) return false;
+    size_t index;
+    if (auto found = host.pin_tabs.find(id); found != host.pin_tabs.end()) {
+      // An opened pin keeps its page and simply becomes an ordinary tab.
+      index = std::find(host.tabs.begin(), host.tabs.end(), found->second) - host.tabs.begin();
+      host.pin_tabs.erase(found);
+    } else {
+      // A closed pin becomes a tab that loads when it is first shown.
+      auto* view = CreatePage(host.profile, nullptr, nullptr, false);
+      host.deferred_urls[view] = pin->url;
+      host.deferred_titles[view] = base::UTF8ToUTF16(pin->title);
+      host.tabs.push_back(view);
+      index = host.tabs.size() - 1;
+    }
+    MoveTab(index, before);
+    auto previous = items;
+    items.erase(pin);
+    SaveFolderEdit(host.workspace_id, std::move(previous), {id});
+    return true;
+  }
+  return false;
+}
+bool WorkspaceWindow::MovePin(std::string id, std::string parent, std::string before) {
+  const auto& items = pinned_items(active_id());
+  const auto pin = std::find_if(items.begin(), items.end(), [&](const auto& item) { return item.id == id; });
+  if (pin == items.end() || id == before) return false;
+  PinnedItem moved = *pin;
+  moved.parent_id = std::move(parent);
+  return InsertPin(active_id(), std::move(moved), std::move(before));
 }
 
 bool WorkspaceWindow::CreatePinnedFolder(std::string workspace, std::string parent, std::string name) {
@@ -2133,8 +2284,13 @@ void WorkspaceWindow::SaveFolderEdit(std::string workspace, std::vector<PinnedIt
       std::vector<PinnedItem> previous, std::set<std::string> removed, bool ok) {
     if (!window) return;
     if (!ok) window->pins_[workspace] = std::move(previous);
-    else for (auto& host : window->hosts_) if (host.workspace_id == workspace)
-      std::erase_if(host.pin_tabs, [&](const auto& item) { return removed.contains(item.first); });
+    for (auto& host : window->hosts_) if (host.workspace_id == workspace) {
+      // A rolled-back pin must not leave its page hidden behind a missing row.
+      const auto& items = window->pins_[workspace];
+      std::erase_if(host.pin_tabs, [&](const auto& item) {
+        return removed.contains(item.first) || std::none_of(items.begin(), items.end(), [&](const auto& pin) { return pin.id == item.first; });
+      });
+    }
     // Previously opened pins stay alive as ordinary tabs after unpinning.
     window->profiles_busy_ = false;
     window->UpdateShell();
@@ -2228,7 +2384,7 @@ void WorkspaceWindow::CommitArcImport() {
     auto host = std::find_if(hosts_.begin(), hosts_.end(), [&](const auto& h) { return h.workspace_id == starter_workspace_id_; });
     import_replaces_starter_ = starter && starter->name == "Moja przestrzeń" &&
         starter->profile_id == "personal-profile" && pinned_items(starter->id).empty() &&
-        host != hosts_.end() && host->tabs.size() == 1 && !host->right &&
+        host != hosts_.end() && host->tabs.size() == 1 && host->split.empty() &&
         !TabUrl(*host, host->view).SchemeIsHTTPOrHTTPS();
   }
   closing_ = true;
@@ -2280,7 +2436,7 @@ void WorkspaceWindow::CompleteArcImport(bool ok) {
       for (auto it = hosts_.begin(); it != hosts_.end(); ++it) {
         if (it->workspace_id != starter_workspace_id_) continue;
         auto tabs = std::move(it->tabs);
-        it->view = it->left = it->right = nullptr;
+        it->view = nullptr; it->split.clear();
         hosts_.erase(it);
         for (auto& tab : tabs) shell_->content_host()->RemoveChildViewT(tab.get());
         break;
