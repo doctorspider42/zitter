@@ -62,8 +62,8 @@ class PreferenceChromeState;
 class ImportFormState;
 class SidebarNodeGraphState;
 
-// Top band above the sidebar; its first 28 px align with macOS's titlebar,
-// where the native traffic lights sit.
+// Top band above the sidebar; the native traffic lights and the page commands
+// are centered on its middle line.
 inline constexpr int kShellHeaderHeight = 38;
 
 enum class ThemeMode { kSystem, kLight, kDark };

@@ -220,10 +220,13 @@ constexpr std::array<const char16_t*, 6> kWorkspaceEmojis = {
     u"💼", u"🏠", u"🚀", u"🎨", u"📚", u"🎮"};
 constexpr int kGap = 8;
 #if BUILDFLAG(IS_MAC)
-constexpr int kTrafficLightInset = 78;
+constexpr int kTrafficLightInset = 80;
 #else
 constexpr int kTrafficLightInset = 8;
 #endif
+// Compact header commands, centered with the traffic lights.
+constexpr int kHeaderButtonSize = 28;
+constexpr int kHeaderLightsGap = 14;
 constexpr std::array<SkColor, 7> kMonogramColors = {
     0xFF4F46E5, 0xFF2F6F5E, 0xFFB4532A, 0xFF3A6EA5,
     0xFF7A5C2E, 0xFF6B4FA0, 0xFF2E7D4F};
@@ -2509,8 +2512,15 @@ class ShellRoot final : public views::View {
   void Layout(PassKey) override {
     const int column = pinned ? SidebarColumn(sidebar_width, width()) + kGap : 0;
     const int header_width = header->GetPreferredSize().width();
-    // Centered on the 28 px macOS titlebar line, next to the traffic lights.
-    header->SetBounds(kTrafficLightInset, -2, header_width, 32);
+    // Traffic lights and page commands share one axis through the middle of
+    // the header band; the commands start a fixed gap after the lights.
+    constexpr int kAxis = kShellHeaderHeight / 2;
+    int header_x = kTrafficLightInset;
+#if BUILDFLAG(IS_MAC)
+    if (const auto lights = AlignWorkspaceWindowButtons(GetWidget(), kAxis); !lights.IsEmpty())
+      header_x = lights.right() + kHeaderLightsGap;
+#endif
+    header->SetBounds(header_x, kAxis - kHeaderButtonSize / 2, header_width, kHeaderButtonSize);
     const int top = kShellHeaderHeight;
     content->SetBounds(column + kGap, top, std::max(0, width() - column - 2 * kGap),
                        std::max(0, height() - top - kGap));
@@ -2683,6 +2693,7 @@ std::unique_ptr<views::View> WorkspaceShell::Build() {
         base::BindRepeating(callbacks_.page_command, static_cast<PageCommand>(i)),
         commands[i].second, GlyphButton::Glyph::kVector, commands[i].first,header_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalHeader,weak),true,{chrome_node_graph_,4,{},command_nodes[i]}));
   }
+  for (auto& child : header->children()) child->SetPreferredSize(gfx::Size(kHeaderButtonSize, kHeaderButtonSize));
   content_host_ = root->AddChildView(std::make_unique<PaneHost>(callbacks_.split_ratio,
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, bool right, views::View* anchor) {
         if (shell) shell->ShowSplitPaneMenu(right, anchor->GetBoundsInScreen().bottom_left());
