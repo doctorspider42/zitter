@@ -47,7 +47,7 @@ std::vector<PaletteResult> WorkspaceWindow::CommandResults(std::u16string query)
       result.command_page_id = sessions::SessionTabHelper::IdForTab(page).id();
     }
     for (const auto& shortcut : shell_->browser_tools().shortcuts) if (shortcut.id == result.command_id) {
-      const auto chord = FormatShortcut(shortcut.accelerator);
+      const auto chord = DisplayShortcut(shortcut.accelerator);
       if (!chord.empty()) result.detail += u" · " + base::UTF8ToUTF16(chord);
     }
     results.push_back(std::move(result));

@@ -251,7 +251,7 @@ mod ffi {
     struct SidebarRowVisual { valid: bool, tile: bool, height: i32 }
     struct SidebarRowPresentation { valid: bool, title: Vec<u16>, monogram: Vec<u16>, color: u32, tile: bool, folder: bool, height: i32 }
     struct SidebarTabUpdate { admitted: bool, changed: bool, title_changed: bool, geometry_changed: bool }
-    struct SidebarRowStyle { font_size: f32, ink: u32, card: u32, hover: u32, edge: u32, focus: u32 }
+    struct SidebarRowStyle { font_size: f32, ink: u32, card: u32, hover: u32, edge: u32, focus: u32, muted: u32 }
     struct SidebarRowScene { valid: bool, item: Item }
     struct ColumnChild { width: i32, height: i32, top: i32, left: i32, bottom: i32, right: i32 }
     struct ColumnLayout { width: i32, height: i32, children: Vec<Rect> }
@@ -1922,8 +1922,9 @@ fn palette_text_layout(kind:u32,width:i32,height:i32,text_width:i32,font_height:
     ffi::ColumnLayout{width,height,children:vec![ffi::Rect{x:left.min(width),y:top.min(height)+(inner_height-fh.min(inner_height))/2,width:tw.min(inner_width),height:fh.min(inner_height)}]}
 }
 
-fn palette_width(window_width:i32)->i32{window_width.saturating_sub(48).clamp(120,640)}
-fn palette_results_height(content_height:i32)->i32{content_height.saturating_sub(230).clamp(90,300)}
+// Command Center: 560 px, narrower only in a smaller window; at most 8 rows of 36 px.
+fn palette_width(window_width:i32)->i32{window_width.saturating_sub(48).clamp(120,560)}
+fn palette_results_height(content_height:i32)->i32{content_height.saturating_sub(230).clamp(90,8*36+7*2+16+1)}
 fn palette_frame(content:ffi::Rect,width:i32,height:i32)->ffi::Rect {
     ffi::Rect{x:content.x+content.width/2-width/2,y:content.y+132.min(content.height/6),width,height}
 }
@@ -2585,7 +2586,7 @@ impl ActionGraph {
     fn palette_scene(&self)->ffi::PaletteScene{
         let root=self.nodes.get(&(11,0,0,"palette.results".into())).map_or(0,|n|n.borrow().id);let selected=self.palette_selected();
         let by_id=self.nodes.iter().map(|(key,node)|(node.borrow().id,(key,node))).collect::<BTreeMap<_,_>>();
-        let children=self.order.iter().filter_map(|id|{let (key,node)=by_id.get(id)?;let node=node.borrow();let Some(NodeModel::Palette(p))=node.model.as_deref() else{return None;};if root==0||node.parent!=root{return None;}Some(ffi::PaletteSceneChild{id:node.id,parent:node.parent,key:key.3.clone(),title:p.title.clone(),detail:p.detail.clone(),icon:p.icon,highlighted:p.index==selected,height:44,cancel_input:p.cancel_input})}).collect();ffi::PaletteScene{root,children}
+        let children=self.order.iter().filter_map(|id|{let (key,node)=by_id.get(id)?;let node=node.borrow();let Some(NodeModel::Palette(p))=node.model.as_deref() else{return None;};if root==0||node.parent!=root{return None;}Some(ffi::PaletteSceneChild{id:node.id,parent:node.parent,key:key.3.clone(),title:p.title.clone(),detail:p.detail.clone(),icon:p.icon,highlighted:p.index==selected,height:36,cancel_input:p.cancel_input})}).collect();ffi::PaletteScene{root,children}
     }
     fn palette_target(&self,key:&str,id:u64)->ffi::PaletteTarget{
         let invalid=||ffi::PaletteTarget{valid:false,index:0};let Some(node)=self.nodes.get(&(6,0,0,key.to_owned())) else{return invalid();};let node=node.borrow();if !node.alive||!node.attached||!node.state.enabled||id==0||id!=node.id{return invalid();}if let Some(NodeModel::Palette(p))=node.model.as_deref(){ffi::PaletteTarget{valid:true,index:p.index}}else{invalid()}
@@ -2724,7 +2725,7 @@ impl ActionControl {
     fn sidebar_set_monogram(&mut self,monogram:Vec<u16>,color:u32)->bool{self.write_node(|r|{let Some(p)=r.model.as_deref_mut().and_then(NodeModel::row_presentation_mut) else{return false;};if p.monogram==monogram&&p.color==color{return false;}p.monogram_utf8=if p.folder{"📁".into()}else{String::from_utf16_lossy(&monogram)};p.monogram=monogram;p.color=color;true}).unwrap_or(false)}
     fn sidebar_scene(&self,bounds:ffi::FloatRect,clip:ffi::FloatRect,style:ffi::SidebarRowStyle,close:bool,close_visible:bool)->ffi::SidebarRowScene{
         let mut item=ffi::Item{x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height,kind:0,glyph:0,title:String::new(),monogram:String::new(),detail:String::new(),title_width:0.0,detail_ink:0,detail_font_size:0.0,ink:style.ink,fill:0,badge:0,edge:0,focus:style.focus,active:false,hovered:false,tile:false,close:false,close_visible:false,focused:false,font_size:style.font_size,font_height:0.0,font_weight:0,text_style:0,clip};
-        let valid=self.read_node(|r|{let Some(p)=r.model.as_deref().and_then(NodeModel::row_presentation) else{return false;};let hovered=r.state.enabled&&matches!(r.state.visual,ffi::RowVisual::Hovered|ffi::RowVisual::Pressed);item.title=p.title_utf8.clone();item.monogram=p.monogram_utf8.clone();item.badge=if p.folder{0}else{p.color};item.close=close&&matches!(r.model.as_deref(),Some(NodeModel::SidebarTab(m)) if m.can_close);item.close_visible=item.close&&close_visible;item.active=r.state.on;item.hovered=hovered;item.tile=p.tile;item.focused=r.state.focused;item.fill=if p.tile{(style.card&0xffffff)|((if r.state.on{0xff}else if hovered{0x8c}else{0x59})<<24)}else if r.state.on{style.card}else if hovered{style.hover}else{0};item.edge=if r.state.on&&!p.tile{style.edge}else{0};true}).unwrap_or(false);
+        let valid=self.read_node(|r|{let Some(p)=r.model.as_deref().and_then(NodeModel::row_presentation) else{return false;};let hovered=r.state.enabled&&matches!(r.state.visual,ffi::RowVisual::Hovered|ffi::RowVisual::Pressed);item.title=p.title_utf8.clone();item.monogram=p.monogram_utf8.clone();item.badge=if p.folder{0}else{p.color};item.close=close&&matches!(r.model.as_deref(),Some(NodeModel::SidebarTab(m)) if m.can_close);item.close_visible=item.close&&close_visible;item.active=r.state.on;item.hovered=hovered;if !r.state.on&&!hovered{item.ink=style.muted;}item.tile=p.tile;item.focused=r.state.focused;item.fill=if p.tile{(style.card&0xffffff)|((if r.state.on{0xff}else if hovered{0x8c}else{0x59})<<24)}else if r.state.on{style.card}else if hovered{style.hover}else{0};item.edge=if r.state.on&&!p.tile{style.edge}else{0};true}).unwrap_or(false);
         ffi::SidebarRowScene{valid,item}
     }
     fn tab_binding(&self)->ffi::SidebarTabBinding{self.read_node(|node|if let Some(NodeModel::SidebarTab(p))=node.model.as_deref(){Some(ffi::SidebarTabBinding{valid:true,id:node.id,high:p.high,low:p.low,index:p.index,can_close:p.can_close})}else{None}).flatten().unwrap_or(ffi::SidebarTabBinding{valid:false,id:0,high:0,low:0,index:0,can_close:false})}
@@ -2872,8 +2873,9 @@ fn split_layout(width: i32, height: i32, count: usize) -> ffi::ColumnLayout {
 
 fn folder_indent(depth: i32) -> i32 { depth.clamp(0, 8) * 12 }
 
-fn close_visible(active: bool, tile: bool, hovered: bool) -> bool {
-    (active && !tile) || hovered
+// The design system shows a tab's close button only on hover, active or not.
+fn close_visible(_active: bool, _tile: bool, hovered: bool) -> bool {
+    hovered
 }
 
 // Chrome action and list share one opaque Metal surface, leaving the native
@@ -3026,6 +3028,25 @@ fn apply_text_style(i: &ffi::Item, start: usize, out: &mut [ffi::Primitive]) {
         if caps { p.text = p.text.to_uppercase(); }
     }
 }
+// One text primitive in a design system style, leaving the item's other texts.
+fn style_text(p: &mut ffi::Primitive, id: u32) {
+    let Some((style, caps)) = design::text_style(id) else { return; };
+    p.family = design::family_id(style.family);
+    p.font_size = style.size;
+    p.font_weight = i32::from(style.weight);
+    p.bold = style.weight >= 600;
+    p.italic = style.italic;
+    p.tracking = style.letter_spacing;
+    if caps { p.text = p.text.to_uppercase(); }
+}
+// A monogram tile paints the stored workspace color as its palette `accent`
+// with `on-accent` text, in the scheme the row's ink belongs to (light ink: Noc).
+fn monogram_colors(seed: u32, ink: u32) -> (u32, u32) {
+    if seed >> 24 == 0 { return (0, ink); }
+    let dark = design::contrast(ink, 0xff000000) > design::contrast(ink, 0xffffffff);
+    let p = design_palette(dark, seed | 0xff000000);
+    (p.accent, p.on_accent)
+}
 fn design_text_style(id:u32)->ffi::DesignTextStyle{
     match design::text_style(id){
         Some((s,caps))=>ffi::DesignTextStyle{family:design::family_id(s.family),size:s.size,line_height:s.line_height,weight:i32::from(s.weight),italic:s.italic,tracking:s.letter_spacing,caps},
@@ -3060,6 +3081,15 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
         else{let t=i.detail_font_size.clamp(0.0,1.0);if t<0.5{slice(t/2.0,t*2.0);}else if t<0.75{slice(t*3.0-1.25,1.0);slice(0.0,t-0.5);}else{let left=(t-0.75)*4.0;slice(left,left+0.25-(t-0.75));}}
         return;
     }
+    if i.kind == 30 {
+        // Kbd: one key in mono 11/500 on `bg-hover`, `radius-xs`, with a 1 px
+        // `line` bottom edge.
+        emit(i.x,i.y,i.width,i.height,design_tokens::radius::XS,i.edge,"",0.0,false);
+        emit(i.x,i.y,i.width,i.height-1.0,design_tokens::radius::XS,i.fill,"",0.0,false);
+        emit(i.x,i.y,i.width,i.height-1.0,0.0,i.ink,&i.title,11.0,false);
+        for p in out[first_primitive..].iter_mut(){if !p.text.is_empty(){p.center=true;p.family=design::family_id(design_tokens::Family::Mono);p.font_weight=500;}}
+        return;
+    }
     if i.kind == 27 {
         if !i.title.is_empty(){emit(i.x,i.y,i.width,i.height,0.0,i.ink,&i.title,i.font_size,i.active);let p=out.last_mut().unwrap();p.font_weight=i.font_weight;p.middle=true;p.right_align=i.tile;}return;
     }
@@ -3087,17 +3117,26 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
     if i.kind == 14 {emit(i.x,i.y,i.width,i.height,0.0,i.fill,"",0.0,false);return;}
     if i.kind == 13 {
         let start=first_primitive;
-        emit(i.x+18.0,i.y+(i.height-16.0)/2.0,16.0,16.0,0.0,i.ink,"",0.0,false);
+        emit(i.x+12.0,i.y+(i.height-16.0)/2.0,16.0,16.0,0.0,i.ink,"",0.0,false);
         for p in out[start..].iter_mut(){p.shape=if i.glyph==1{3}else if i.glyph==2{6}else{7};}return;
     }
     if i.kind == 12 {
+        // Command Center row: icon, name in `body`, detail in `url` when it is an
+        // address, else `label`. A row without a chip colour has no icon tile.
+        let chip=i.badge>>24!=0;
         emit(i.x,i.y,i.width,i.height,design_tokens::radius::SM,i.fill,"",0.0,false);
-        emit(i.x+12.0,i.y+(i.height-28.0)/2.0,28.0,28.0,7.0,i.badge,"",0.0,false);
-        let g=row_layout(i.width as i32,i.height as i32,i.title_width as i32,!i.detail.is_empty(),true,false);
+        if chip {emit(i.x+12.0,i.y+(i.height-28.0)/2.0,28.0,28.0,7.0,i.badge,"",0.0,false);}
+        let g=row_layout(i.width as i32,i.height as i32,i.title_width as i32,!i.detail.is_empty(),chip,false);
         if i.focused{emit(i.x+2.0,i.y+i.height-3.0,(i.width-4.0).max(0.0),2.0,1.0,i.ink,"",0.0,false);}
         if !i.title.is_empty(){emit(i.x+g.title.x as f32,i.y,(g.title.width as f32).min(i.title_width.max(0.0)),i.height,0.0,i.ink,&i.title,i.font_size,true);}
         if !i.detail.is_empty(){emit(i.x+g.detail.x as f32,i.y,g.detail.width as f32,i.height,0.0,i.detail_ink,&i.detail,i.detail_font_size,false);}
-        for p in out[first_primitive..].iter_mut(){if !p.text.is_empty()&&!p.bold{p.middle=true;}}return;
+        let url=!i.detail.contains(' ');
+        for p in out[first_primitive..].iter_mut(){
+            if p.text.is_empty(){continue;}
+            if !p.bold{p.middle=true;if !chip{style_text(p,if url {design::TextStyleId::Url as u32} else {design::TextStyleId::Label as u32});}}
+            else if !chip{style_text(p,design::TextStyleId::Body as u32);}
+        }
+        return;
     }
     if i.kind == 11 {
         if i.active||i.hovered {emit(i.x+i.width-3.0,i.y+8.0,2.0,(i.height-16.0).max(0.0),1.0,i.ink,"",0.0,false);}return;
@@ -3172,9 +3211,35 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
     }
     if i.kind == 7 {
         let cx=i.x+i.width/2.0; let cy=i.y+i.height/2.0;
+        if i.glyph==1 && i.active && !i.title.is_empty() {
+            // The active workspace: a raised pill with its 10 px dot ringed in its
+            // own accent (or its emoji) and the name in `label` 600.
+            let h=22.0f32.min(i.height);let top=cy-h/2.0;
+            if i.fill>>24!=0 {emit(i.x,top,i.width,h,h/2.0,i.fill,"",0.0,false);}
+            if i.edge>>24!=0 {emit(i.x+0.5,top+0.5,i.width-1.0,h-1.0,h/2.0-0.5,i.edge,"",0.0,false);}
+            let name_x=if i.monogram.is_empty() {
+                emit(i.x+6.0,cy-7.0,14.0,14.0,7.0,i.badge,"",0.0,false);
+                emit(i.x+8.0,cy-5.0,10.0,10.0,5.0,i.badge,"",0.0,false);
+                i.x+26.0
+            } else {
+                emit(i.x+4.0,top,20.0,h,0.0,i.ink,&i.monogram,i.font_size.min(14.0),false);
+                i.x+28.0
+            };
+            emit(name_x,top,(i.x+i.width-name_x-10.0).max(0.0),h,0.0,i.detail_ink,&i.title,12.0,true);
+            for p in out[first_primitive..].iter_mut() {
+                if !p.text.is_empty() {
+                    if p.text==i.title && p.x==name_x {style_text(p,design::TextStyleId::Label as u32);p.font_weight=600;p.bold=true;} else {p.center=true;}
+                    continue;
+                }
+                if p.text.is_empty() && ((p.color==i.edge && p.x==i.x+0.5) || (p.width==14.0 && p.color==i.badge)) {p.stroke=if p.width==14.0 {1.5} else {1.0};}
+            }
+            return;
+        }
         if i.glyph==1 {
             if i.monogram.is_empty() {
-                emit(cx-4.0,cy-4.0,8.0,8.0,4.0,i.ink,"",0.0,false);
+                // An inactive workspace: its accent as a filled 8 px dot.
+                if i.fill>>24!=0 {emit(cx-10.0,cy-10.0,20.0,20.0,10.0,i.fill,"",0.0,false);}
+                emit(cx-4.0,cy-4.0,8.0,8.0,4.0,if i.badge>>24!=0 {i.badge} else {i.ink},"",0.0,false);
             } else {
                 if i.fill>>24!=0 {emit(cx-13.0,cy-13.0,26.0,26.0,7.0,i.fill,"",0.0,false);}
                 emit(cx-13.0,cy-13.0,26.0,26.0,0.0,i.ink,&i.monogram,i.font_size,false);
@@ -3203,7 +3268,6 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
             if i.glyph==7 && p.width==16.0 && p.height==16.0 {p.shape=5;}
             if i.glyph==8 && p.width==16.0 && p.height==16.0 {p.shape=7;}
             if i.glyph==0 && p.width==16.0 && p.height==14.0 {p.stroke=1.0;}
-            if i.glyph==1 && i.monogram.is_empty() && p.width==8.0 && p.height==8.0 && !i.active {p.stroke=1.0;}
         }
         return;
     }
@@ -3254,7 +3318,12 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
         }
         // No more emissions borrow out: attach analytic inset strokes.
         // Only the outline and icon ring are stroked; body/text stay filled.
+        // Host and path are set in the `url` style, the host at weight 600.
         for p in out[first_primitive..].iter_mut() {
+            if !p.text.is_empty() {
+                style_text(p, design::TextStyleId::Url as u32);
+                if p.text == i.title { p.font_weight = 600; p.bold = true; }
+            }
             if p.text.is_empty() {
                 if let Some((_, stroke)) = rings.iter().find(|(x, _)| *x == p.x) {
                     p.stroke = *stroke;
@@ -3277,13 +3346,14 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
         // primary title elides at the tail; date/URL detail in the middle.
         let g=row_layout(i.width as i32,i.height as i32,i.title_width as i32,!i.detail.is_empty(),false,false);
         emit(i.x+10.0,i.y+(i.height-16.0)/2.0,16.0,16.0,4.0,i.badge,"",0.0,false);
-        if !i.monogram.is_empty(){emit(i.x+10.0,i.y+(i.height-16.0)/2.0,16.0,16.0,0.0,0xffffffff,&i.monogram,10.0,true);}
+        if !i.monogram.is_empty(){emit(i.x+10.0,i.y+(i.height-16.0)/2.0,16.0,16.0,0.0,monogram_colors(i.badge,i.ink).1,&i.monogram,9.0,true);}
         if i.focused {emit(i.x+2.0,i.y+i.height-3.0,(i.width-4.0).max(0.0),2.0,1.0,i.ink,"",0.0,false);}
         emit(i.x+g.title.x as f32,i.y,g.title.width as f32,i.height,0.0,i.ink,&i.title,i.font_size,false);
         if !i.detail.is_empty() && g.detail.width>0 {
             emit(i.x+g.detail.x as f32,i.y,g.detail.width as f32,i.height,0.0,i.detail_ink,&i.detail,i.detail_font_size,false);
             out.last_mut().unwrap().middle=true;
         }
+        for p in out[first_primitive..].iter_mut(){if p.width==16.0&&!p.text.is_empty()&&p.text==i.monogram{p.center=true;}}
         return;
     }
     if i.focused {
@@ -3306,11 +3376,15 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
         }
         return;
     }
-    emit(i.x + 10.0, i.y + (i.height - 16.0) / 2.0, 16.0, 16.0,
-         4.0, i.badge, "", 0.0, false);
-    emit(i.x + 12.0, i.y + (i.height - 16.0) / 2.0, 14.0, 16.0,
-         0.0, if i.badge >> 24 != 0 { 0xffffffff } else { i.ink },
-         &i.monogram, 10.0, true);
+    // Favicon tile at `space-3`: the workspace color's `accent` with `on-accent`.
+    let (tile_fill, tile_ink) = monogram_colors(i.badge, i.ink);
+    emit(i.x + 12.0, i.y + (i.height - 16.0) / 2.0, 16.0, 16.0,
+         design_tokens::radius::XS, tile_fill, "", 0.0, false);
+    if !i.monogram.is_empty() {
+        emit(i.x + 12.0, i.y + (i.height - 16.0) / 2.0, 16.0, 16.0,
+             0.0, if i.badge >> 24 != 0 { tile_ink } else { i.ink },
+             &i.monogram, 9.0, true);
+    }
     // Keep a close-button hit area reserved whenever it exists, just as the
     // native interaction node does (including half-width split cards).
     let geometry = row_layout(i.width as i32, i.height as i32, 0, false, false, i.close);
@@ -3325,6 +3399,14 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
         for p in out[first_primitive..].iter_mut() {
             if p.text.is_empty() && p.color == i.edge && p.x == i.x + 0.5 && p.y == i.y + 0.5 {p.stroke = 1.0;}
         }
+    }
+    // Monogram in sans 9/700 centered on its tile; titles in `body`, the active
+    // tab in `body-strong`.
+    for p in out[first_primitive..].iter_mut() {
+        if p.text.is_empty() || p.text == "×" { continue; }
+        if p.width == 16.0 && p.x == i.x + 12.0 && p.text == i.monogram {
+            p.center = true; p.family = design::family_id(design_tokens::Family::Sans); p.font_weight = 700;
+        } else if p.text == i.title { style_text(p, if i.active {4} else {5}); }
     }
 }
 #[cfg(test)]
@@ -3354,7 +3436,7 @@ mod tests {
         let mut i=row(100.0);i.kind=27;i.title.clear();assert!(layout(&[i]).is_empty());
     }
     #[test] fn ordinary_control_primitives_keep_existing_alignment_defaults(){
-        for kind in [0,3,4,5,7,17,19,20,21,22,23,25,26]{let mut i=row(180.0);i.kind=kind;assert!(layout(&[i]).iter().all(|p|!p.right_align));}
+        for kind in [0,3,4,5,7,17,19,20,21,22,23,25,26,30]{let mut i=row(180.0);i.kind=kind;assert!(layout(&[i]).iter().all(|p|!p.right_align));}
     }
     #[test]
     fn download_progress_rounding_direction_and_clipping() {
@@ -3615,10 +3697,10 @@ mod tests {
         assert_eq!((dots.width,dots.children[1].x,dots.children[1].y),(78,24,2));
     }
     #[test] fn footer_scene_keeps_selected_plain_and_centered_emoji_variants() {
-        let mut item=row(30.0);item.kind=7;item.glyph=1;item.monogram="🚀".into();
+        let mut item=row(30.0);item.kind=7;item.glyph=1;item.monogram="🚀".into();item.title.clear();
         let ops=layout(&[item]);let text=ops.iter().find(|p|p.text=="🚀").unwrap();assert!(text.center);
-        let mut plain=row(24.0);plain.kind=7;plain.glyph=1;plain.monogram.clear();plain.active=false;
-        let ops=layout(&[plain]);assert_eq!(ops.len(),1);assert_eq!(ops[0].stroke,1.0);
+        let mut plain=row(24.0);plain.kind=7;plain.glyph=1;plain.monogram.clear();plain.active=false;plain.fill=0;
+        let badge=plain.badge;let ops=layout(&[plain]);assert_eq!(ops.len(),1);assert_eq!((ops[0].stroke,ops[0].color,ops[0].width),(0.0,badge,8.0));
         let mut horizontal=row(80.0);horizontal.kind=6;horizontal.tile=true;horizontal.height=15.0;
         let ops=layout(&[horizontal]);assert_eq!((ops[0].width,ops[0].height),(76.0,7.0));
     }
@@ -4219,8 +4301,21 @@ mod tests {
         let mut swatch=row(32.0);swatch.kind=18;swatch.height=32.0;swatch.active=false;swatch.badge=0xff84b6a4;let ops=layout(std::slice::from_ref(&swatch));assert_eq!(ops.len(),1);assert_eq!(ops[0].color,0xff84b6a4);assert_eq!(ops[0].radius,7.0);
         swatch.active=true;swatch.focused=true;let ops=layout(&[swatch]);assert_eq!(ops.len(),3);assert_eq!(ops[0].stroke,1.0);assert_eq!(ops[1].width,14.0);assert_eq!(ops[2].height,2.0);assert_eq!(ops[0].clip.width,32.0);
     }
+    #[test] fn kbd_key_is_a_mono_chip_with_a_bottom_edge() {
+        let mut k=row(18.0);k.kind=30;k.title="⌘".into();k.height=18.0;k.fill=0xff222222;k.edge=0xff444444;k.ink=0xffcccccc;
+        let ops=layout(&[k]);assert_eq!(ops.len(),3);
+        assert_eq!((ops[0].color,ops[0].height),(0xff444444,18.0));assert_eq!((ops[1].color,ops[1].height),(0xff222222,17.0));
+        assert_eq!((ops[2].family,ops[2].font_weight,ops[2].font_size,ops[2].center),(3,500,11.0,true));
+    }
+    #[test] fn active_workspace_is_a_raised_pill_with_ringed_dot_and_label() {
+        let mut pill=row(90.0);pill.kind=7;pill.glyph=1;pill.monogram.clear();pill.title="Praca".into();pill.height=28.0;pill.fill=0xff202020;pill.edge=0xff303030;pill.badge=0xff928fd4;pill.detail_ink=0xffeeeeee;
+        let ops=layout(&[pill]);
+        assert_eq!((ops[0].height,ops[0].radius,ops[0].color),(22.0,11.0,0xff202020));assert_eq!(ops[1].stroke,1.0);
+        assert_eq!((ops[2].width,ops[2].stroke),(14.0,1.5));assert_eq!((ops[3].width,ops[3].color),(10.0,0xff928fd4));
+        let name=ops.iter().find(|p|p.text=="Praca").unwrap();assert_eq!((name.font_weight,name.color,name.center),(600,0xffeeeeee,false));
+    }
     #[test] fn appearance_emoji_scene_uses_centered_text_and_selection_wash() {
-        let mut emoji=row(30.0);emoji.kind=7;emoji.glyph=1;emoji.monogram="🚀".into();emoji.fill=0x1f1b1a22;let ops=layout(&[emoji]);assert_eq!(ops.len(),2);assert_eq!(ops[0].radius,7.0);assert_eq!(ops[1].text,"🚀");assert!(ops[1].center);
+        let mut emoji=row(30.0);emoji.kind=7;emoji.glyph=1;emoji.monogram="🚀".into();emoji.title.clear();emoji.fill=0x1f1b1a22;let ops=layout(&[emoji]);assert_eq!(ops.len(),2);assert_eq!(ops[0].radius,7.0);assert_eq!(ops[1].text,"🚀");assert!(ops[1].center);
     }
     #[test] fn action_geometry_preserves_workspace_emoji_and_chrome_metrics() {
         for (dot,label,w,h) in [(false,false,32,32),(false,true,32,32),(true,false,24,28),(true,true,30,28)]{let r=action_preferred_size(dot,label);assert_eq!((r.width,r.height),(w,h));}
@@ -4330,7 +4425,7 @@ mod tests {
         let (mut g,mut input)=pin_fixture();let parent=input.node_parent_id();input.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);g.reconcile_sidebar(vec![pin_input("other","Other",false,false),pin_input("folder","Dokumenty 日本語 🦀",true,false)],vec![]);assert!(!input.action_pending());assert_eq!(input.node_parent_id(),parent);assert!(g.pin_target("folder",input.action_node_id()).valid);
     }
     fn projected_tab()->(Box<ActionGraph>,Box<ActionControl>){let mut g=tab_scene_fixture();let input=g.acquire(&node_tab(1));assert!(g.project_tab(&input,"Żółć 日本語 🦀".encode_utf16().collect(),vec![b'Z' as u16],0xff123456,false).admitted);(g,input)}
-    fn tab_style()->ffi::SidebarRowStyle{ffi::SidebarRowStyle{font_size:13.0,ink:0xff112233,card:0xff778899,hover:0x22112233,edge:0xff445566,focus:0xffd7ff3f}}
+    fn tab_style()->ffi::SidebarRowStyle{ffi::SidebarRowStyle{font_size:13.0,ink:0xff112233,card:0xff778899,hover:0x22112233,edge:0xff445566,focus:0xffd7ff3f,muted:0xff667788}}
     fn tab_box()->ffi::FloatRect{ffi::FloatRect{x:3.0,y:5.0,width:200.0,height:34.0}}
     #[test] fn tab_properties_own_raw_utf16_and_prepare_utf8_scene_text(){
         let (g,input)=projected_tab();let p=input.sidebar_presentation();assert!(p.valid&&!p.tile);assert_eq!(p.title,"Żółć 日本語 🦀".encode_utf16().collect::<Vec<_>>());assert_eq!(p.monogram,vec![b'Z' as u16]);assert_eq!((p.color,p.height),(0xff123456,34));let scene=input.sidebar_scene(tab_box(),tab_box(),tab_style(),true,false);assert!(scene.valid);assert_eq!(scene.item.title,"Żółć 日本語 🦀");assert_eq!(scene.item.monogram,"Z");assert_eq!(scene.item.badge,0xff123456);assert_eq!(g.tab_target(7,1,input.action_node_id(),false).index,4);
@@ -4560,7 +4655,7 @@ mod tests {
     fn palette_item(key:&str,title:&str,icon:u32)->ffi::PaletteSceneInput{ffi::PaletteSceneInput{key:key.into(),title:title.encode_utf16().collect(),detail:"Detail 🦀".encode_utf16().collect(),icon}}
     fn palette_tree()->Box<ActionGraph>{let mut g=new_palette_graph();assert!(g.reconcile_palette(vec![palette_item("a","First",0),palette_item("b","Second",1)]).admitted);g}
     #[test] fn palette_root_owns_selection_and_structural_parent(){
-        let mut g=palette_tree();let scene=g.palette_scene();assert_ne!(scene.root,0);assert_eq!(scene.children.len(),2);assert!(scene.children.iter().all(|n|n.parent==scene.root&&n.height==44));assert!(scene.children[0].highlighted&&!scene.children[1].highlighted);let a=g.acquire(&node_named(6,"a"));assert_eq!(a.node_model_kind(),6);assert_eq!(a.node_parent_id(),scene.root);assert_eq!(g.acquire(&node_named(11,"palette.results")).action_node_id(),0);
+        let mut g=palette_tree();let scene=g.palette_scene();assert_ne!(scene.root,0);assert_eq!(scene.children.len(),2);assert!(scene.children.iter().all(|n|n.parent==scene.root&&n.height==36));assert!(scene.children[0].highlighted&&!scene.children[1].highlighted);let a=g.acquire(&node_named(6,"a"));assert_eq!(a.node_model_kind(),6);assert_eq!(a.node_parent_id(),scene.root);assert_eq!(g.acquire(&node_named(11,"palette.results")).action_node_id(),0);
     }
     #[test] fn palette_graph_selection_matches_legacy_across_steps_clamps_and_reset(){
         let mut g=new_palette_graph();let mut oracle=new_palette_selection();for count in [0,1,4,usize::MAX,2,0]{for backwards in [false,true,false]{assert_eq!(g.palette_step(count,backwards),oracle.step(count,backwards));assert_eq!((g.palette_selected(),g.palette_moved()),(oracle.selected(),oracle.moved()));}for (index,found) in [(99,false),(1,true),(0,true)]{g.palette_reconcile_selection(count,index,found);oracle.reconcile(count,index,found);assert_eq!((g.palette_selected(),g.palette_moved()),(oracle.selected(),oracle.moved()));}}g.palette_reset();oracle.reset();assert_eq!((g.palette_selected(),g.palette_moved()),(oracle.selected(),oracle.moved()));
@@ -5312,7 +5407,7 @@ mod tests {
     #[test] fn palette_geometry_preserves_editor_space_and_anchor() {
         let g=palette_input_layout(640,56,ffi::Rect{x:0,y:0,width:32,height:32},22,ffi::Rect{x:0,y:0,width:20,height:16});
         assert_eq!((g.icon.x,g.input.x,g.input.width,g.hint.x),(18,62,528,602));
-        assert_eq!((palette_width(560),palette_results_height(560)),(512,300));
+        assert_eq!((palette_width(560),palette_results_height(560),palette_width(1200)),(512,319,560));
         let r=palette_frame(ffi::Rect{x:264,y:38,width:728,height:754},640,300);assert_eq!((r.x,r.y),(308,163));
     }
     #[test] fn palette_result_text_geometry_and_analytic_glyphs() {
@@ -5611,7 +5706,7 @@ mod tests {
         }
     }
     #[test] fn close_policy_preserves_hover_across_selection_changes() {
-        assert!(close_visible(true, false, false));
+        assert!(!close_visible(true, false, false));
         assert!(!close_visible(false, false, false));
         assert!(!close_visible(true, true, false));
         for active in [false, true] {

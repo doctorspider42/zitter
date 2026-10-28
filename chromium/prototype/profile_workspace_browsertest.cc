@@ -6873,7 +6873,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NewTabActionUsesSceneTextA
   ASSERT_TRUE(shell->SetShortcut("new_tab", "Cmd+Shift+U"));
   if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&] {
     return shell->metal_sidebar_contains_text_for_testing("Nowa karta") &&
-        shell->metal_sidebar_contains_text_for_testing("Cmd+Shift+U");
+        shell->metal_sidebar_contains_text_for_testing("⇧⌘U");
   }));
   const auto canvas = shell->metal_sidebar_screen_bounds_for_testing();
   const auto viewport = shell->tab_list_view()->parent()->GetBoundsInScreen();

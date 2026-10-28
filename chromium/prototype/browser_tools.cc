@@ -103,6 +103,30 @@ std::string FormatShortcut(const ui::Accelerator& accelerator) {
   else for (const auto& entry : kKeys) if (entry.code == key) { result += entry.name; break; }
   return result;
 }
+// The chord as the interface shows it in `Kbd`: macOS symbols in their system
+// order (⌃⌥⇧⌘), named keys as symbols or lowercase words.
+std::string DisplayShortcut(const ui::Accelerator& accelerator) {
+  if (accelerator.key_code() == ui::VKEY_UNKNOWN) return "";
+  std::string result;
+  const int mods = accelerator.modifiers();
+  if (mods & ui::EF_CONTROL_DOWN) result += "⌃";
+  if (mods & ui::EF_ALT_DOWN) result += "⌥";
+  if (mods & ui::EF_SHIFT_DOWN) result += "⇧";
+  if (mods & ui::EF_COMMAND_DOWN) result += "⌘";
+  const auto key = accelerator.key_code();
+  if ((key >= ui::VKEY_A && key <= ui::VKEY_Z) || (key >= ui::VKEY_0 && key <= ui::VKEY_9)) { result += static_cast<char>(key); return result; }
+  switch (key) {
+    case ui::VKEY_TAB: return result + "tab";
+    case ui::VKEY_LEFT: return result + "←";
+    case ui::VKEY_RIGHT: return result + "→";
+    case ui::VKEY_UP: return result + "↑";
+    case ui::VKEY_DOWN: return result + "↓";
+    case ui::VKEY_SPACE: return result + "space";
+    default: break;
+  }
+  for (const auto& entry : kKeys) if (entry.code == key) { result += entry.name; break; }
+  return result;
+}
 std::optional<ui::Accelerator> ParseShortcut(std::string text) {
   if (text.empty()) return ui::Accelerator(ui::VKEY_UNKNOWN, 0);
   const auto parts = base::SplitString(text, "+", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);

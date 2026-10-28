@@ -21,6 +21,7 @@ std::vector<Shortcut> ArcShortcuts();
 bool ValidSearchProvider(const SearchProvider& provider);
 std::optional<ui::Accelerator> ParseShortcut(std::string text);
 std::string FormatShortcut(const ui::Accelerator& accelerator);
+std::string DisplayShortcut(const ui::Accelerator& accelerator);
 bool ValidShortcut(const ui::Accelerator& accelerator);
 GURL SearchDestination(const SearchProvider& provider, std::string query);
 struct BrowserTools {

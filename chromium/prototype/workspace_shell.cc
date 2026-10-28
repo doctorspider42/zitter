@@ -232,9 +232,11 @@ constexpr int kTrafficLightInset = 8;
 // Compact header commands, centered with the traffic lights.
 constexpr int kHeaderButtonSize = 28;
 constexpr int kHeaderLightsGap = 14;
+// Monogram tiles take a workspace preset (violet, coral, sky, amber, rose, mint,
+// green); painting turns it into that color's palette `accent` and `on-accent`.
 constexpr std::array<SkColor, 7> kMonogramColors = {
-    0xFF4F46E5, 0xFF2F6F5E, 0xFFB4532A, 0xFF3A6EA5,
-    0xFF7A5C2E, 0xFF6B4FA0, 0xFF2E7D4F};
+    0xFF928FD4, 0xFFCC8463, 0xFF5AA0D0, 0xFFBC8F4D,
+    0xFFCB7E96, 0xFF55AC89, 0xFF7DA667};
 
 bool IsDark(const views::View* view) {
   return view && view->GetWidget() && view->GetWidget()->GetColorMode() == ui::ColorProviderKey::ColorMode::kDark;
@@ -289,6 +291,8 @@ SkColor Mix(SkColor a, SkColor b, int percent_a) {
 }
 // The workspace color tints the whole window; the frame and sidebar share bg_base.
 SkColor FrameTint(SkColor workspace, const views::View* view) { return Palette(view, workspace).bg_base; }
+// The window frame around the sidebar and the page: the deepest layer, `bg-void`.
+SkColor FrameVoid(SkColor workspace, const views::View* view) { return Palette(view, workspace).bg_void; }
 
 std::string Hex(SkColor color) { return base::StringPrintf("#%06X", color & 0xFFFFFF); }
 std::optional<SkColor> ParseColor(std::string_view text) {
@@ -470,7 +474,14 @@ void PaintGlyphControl(views::View* view,ControlGlyph glyph,const gfx::VectorIco
         (state == views::Button::STATE_HOVERED || state == views::Button::STATE_PRESSED)) {
       FillRound(canvas, bounds, 8, HoverWash(view));
     }
-    const SkColor ink = view->GetEnabled() ? Tone(view, color) : Tone(view, kDisabled);
+    // Icon buttons: `ink-muted` at rest, `ink` on hover, `accent-ink` on `accent-soft` when on.
+    const bool lit = state == views::Button::STATE_HOVERED || state == views::Button::STATE_PRESSED;
+    SkColor ink = view->GetEnabled() ? Tone(view, lit && glyph != ControlGlyph::kSwatch ? kInk : color) : Tone(view, kDisabled);
+    if (on && glyph == ControlGlyph::kSidebar && view->GetEnabled()) {
+      const auto p = Palette(view);
+      FillRound(canvas, bounds, 8, p.accent_soft);
+      ink = p.accent_ink;
+    }
     const auto center = bounds.CenterPoint();
     switch (glyph) {
       case ControlGlyph::kVector:
@@ -480,8 +491,7 @@ void PaintGlyphControl(views::View* view,ControlGlyph glyph,const gfx::VectorIco
         const gfx::Rect frame(center.x() - 8, center.y() - 7, 16, 14);
         StrokeRound(canvas, frame, 3, ink);
         canvas->FillRect(gfx::Rect(frame.x() + 5, frame.y(), 1, frame.height()), ink);
-        if (on) canvas->FillRect(gfx::Rect(frame.x() + 1, frame.y() + 1, 4, frame.height() - 2),
-                                  SkColorSetA(ink, 0x55));
+        if (on) canvas->FillRect(gfx::Rect(frame.x() + 1, frame.y() + 1, 4, frame.height() - 2), ink);
         break;
       }
       case ControlGlyph::kDot: {
@@ -509,6 +519,29 @@ void PaintGlyphControl(views::View* view,ControlGlyph glyph,const gfx::VectorIco
       }
     }
 }
+// The workspace switcher's rail: a recessed `bg-void` pill with an inner `line`
+// edge behind the dots (the Metal surface draws its own).
+class WorkspaceRail final : public views::View {
+  METADATA_HEADER(WorkspaceRail, views::View)
+ public:
+  explicit WorkspaceRail(base::RepeatingCallback<bool()> scene_visible) : scene_visible_(std::move(scene_visible)) {}
+  void OnPaint(gfx::Canvas* canvas) override {
+    if (scene_visible_ && scene_visible_.Run()) return;
+    if (children().empty()) return;
+    const auto p = Palette(this);
+    gfx::RectF rail(GetLocalBounds());
+    rail.Inset(gfx::InsetsF::VH(std::max(0.f, (rail.height() - 28) / 2), 0));
+    cc::PaintFlags flags; flags.setAntiAlias(true); flags.setColor(p.bg_void);
+    canvas->DrawRoundRect(rail, rail.height() / 2, flags);
+    rail.Inset(0.5f); flags.setStyle(cc::PaintFlags::kStroke_Style); flags.setStrokeWidth(1); flags.setColor(p.line);
+    canvas->DrawRoundRect(rail, rail.height() / 2, flags);
+  }
+ private:
+  base::RepeatingCallback<bool()> scene_visible_;
+};
+BEGIN_METADATA(WorkspaceRail)
+END_METADATA
+
 // 32×32 icon button with a soft hover wash, used for chrome-level commands.
 class GlyphButton : public views::Button {
   METADATA_HEADER(GlyphButton, views::Button)
@@ -559,6 +592,11 @@ class SceneWindowObserver final : public views::WidgetObserver {
 };
 
 
+// Active workspace pill: `space-2` inset, the 10 px dot (or emoji) and its name in
+// `label` 600, closing on `space-3`.
+int WorkspacePillWidth(const std::u16string& name,bool emoji){
+  return std::min(140,8+(emoji?18:10)+6+gfx::GetStringWidth(name,DesignFont(2,12,600,false))+12);
+}
 sidebar::Item GlyphSceneData(views::View* view,ControlGlyph glyph,const gfx::VectorIcon* icon,bool on,const std::u16string& label,SkColor color,bool hovered,bool focused,gfx::RectF rect,gfx::RectF clip){
   sidebar::Item item{}; item.kind=7;
   item.x=rect.x(); item.y=rect.y(); item.width=rect.width(); item.height=rect.height();
@@ -568,10 +606,18 @@ sidebar::Item GlyphSceneData(views::View* view,ControlGlyph glyph,const gfx::Vec
       : icon==&vector_icons::kReloadCustomIcon ? 5 : icon==&vector_icons::kCloseSmallIcon ? 7 : icon==&vector_icons::kSearchIcon ? 8 : 2;
   item.active=on; item.focused=focused; item.focus=Palette(view).focus;
   item.hovered=hovered;
-  item.ink=Tone(view,!view->GetEnabledInViewsSubtree() ? kDisabled : item.glyph==1 ? item.active || item.hovered ? kInk : kMuted : kSubtle);
+  item.ink=Tone(view,!view->GetEnabledInViewsSubtree() ? kDisabled : item.glyph==1 ? item.active || item.hovered ? kInk : kMuted : item.hovered ? kInk : kSubtle);
   item.monogram=base::UTF16ToUTF8(label); item.font_size=item.glyph==1&&rect.height()>=36?18:Font(3).GetFontSize();
-  item.fill=item.glyph==1 ? item.active && !item.monogram.empty() ? SkColorSetA(Tone(view,kInk),0x1f) : item.hovered ? HoverWash(view) : SK_ColorTRANSPARENT
-      : item.hovered ? HoverWash(view) : SK_ColorTRANSPARENT;
+  item.fill=item.glyph==1 ? SK_ColorTRANSPARENT : item.hovered ? HoverWash(view) : SK_ColorTRANSPARENT;
+  if(item.glyph==1){
+    // Each dot keeps its own workspace's accent; the active one is a raised pill.
+    const auto own=sidebar::design_palette(IsDark(view),color==kSubtle?kDefaultWorkspaceColor:color);const auto p=Palette(view);
+    item.badge=own.accent;item.detail_ink=p.ink;
+    if(item.active&&!item.monogram.empty())item.fill=SkColorSetA(p.ink,0x1f);else if(item.hovered)item.fill=HoverWash(view);
+  } else if(item.active&&item.glyph==0&&view->GetEnabledInViewsSubtree()){
+    // A pressed icon button: `accent-ink` on `accent-soft`.
+    const auto p=Palette(view);item.fill=p.accent_soft;item.ink=p.accent_ink;
+  }
   if(glyph==GlyphButton::Glyph::kSwatch){item.kind=18;item.badge=color;item.ink=Tone(view,!view->GetEnabledInViewsSubtree()?kDisabled:item.active?kInk:kMuted);
     // A preset pill: the color's name beside its dot, the selected one on accent_soft.
     const auto name=label.empty()?view->GetTooltipText():label;
@@ -588,7 +634,8 @@ void PaintSceneRecipe(gfx::Canvas* canvas,const sidebar::Item& item,const gfx::F
     gfx::ScopedCanvas clipped(canvas);canvas->ClipRect(gfx::Rect(op.clip.x,op.clip.y,op.clip.width,op.clip.height));
     if(op.text.size()){
       auto text=base::UTF8ToUTF16(std::string(op.text));auto text_font=op.family?DesignFont(op.family,op.font_size,op.font_weight,op.italic):font;
-      if(styled_text&&!op.family){text_font=font.DeriveWithSizeDelta(std::max(1,static_cast<int>(op.font_size))-font.GetFontSize());text=gfx::ElideText(text,text_font,op.width,op.middle?gfx::ELIDE_MIDDLE:gfx::ELIDE_TAIL);}
+      if(styled_text&&!op.family)text_font=font.DeriveWithSizeDelta(std::max(1,static_cast<int>(op.font_size))-font.GetFontSize());
+      if(styled_text)text=gfx::ElideText(text,text_font,op.width,op.middle?gfx::ELIDE_MIDDLE:gfx::ELIDE_TAIL);
       canvas->DrawStringRectWithFlags(text,text_font,op.color,gfx::Rect(op.x,op.y,op.width,op.height),op.center?gfx::Canvas::TEXT_ALIGN_CENTER:op.right_align?gfx::Canvas::TEXT_ALIGN_RIGHT:gfx::Canvas::TEXT_ALIGN_LEFT);
     }
     else {cc::PaintFlags flags;flags.setAntiAlias(true);flags.setColor(op.color);if(op.stroke>0){flags.setStyle(cc::PaintFlags::kStroke_Style);flags.setStrokeWidth(op.stroke);}canvas->DrawRoundRect(gfx::RectF(op.x,op.y,op.width,op.height),op.radius,flags);}
@@ -604,8 +651,11 @@ class SceneSearchIcon final : public views::View {
     SetFocusBehavior(FocusBehavior::NEVER);SetCanProcessEventsWithinSubtree(false);
   }
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {const auto r=sidebar::action_preferred_size(false,false);return gfx::Size(r.width,r.height);}
-  sidebar::Item SceneItem(gfx::RectF bounds,gfx::RectF clip) {return GlyphSceneData(this,ControlGlyph::kVector,&vector_icons::kSearchIcon,false,{},kSubtle,false,false,bounds,clip);}
-  void OnPaint(gfx::Canvas* canvas) override {if(visible_&&visible_.Run())return;PaintGlyphControl(this,ControlGlyph::kVector,&vector_icons::kSearchIcon,kSubtle,false,{},views::Button::STATE_NORMAL,canvas);}
+  // The Command Center field opens with the ket's italic stroke in `accent-ink`.
+  sidebar::Item SceneItem(gfx::RectF bounds,gfx::RectF clip) {
+    sidebar::Item item{};item.kind=17;item.glyph=1;item.x=bounds.x();item.y=bounds.y();item.width=bounds.width();item.height=bounds.height();
+    item.clip={clip.x(),clip.y(),clip.width(),clip.height()};item.title="|";item.ink=Palette(this).accent_ink;item.font_size=28;item.text_style=2;return item;}
+  void OnPaint(gfx::Canvas* canvas) override {if(visible_&&visible_.Run())return;canvas->DrawStringRectWithFlags(u"|",DesignFont(1,28,400,true),Palette(this).accent_ink,GetLocalBounds(),gfx::Canvas::TEXT_ALIGN_CENTER);}
  private:
   base::RepeatingCallback<bool()> visible_;
 };
@@ -643,12 +693,18 @@ class RustActionView : public views::View {
   rust::Box<sidebar::FormCommandTicket> DeferFormCommand() const{return state_->defer_form_command();}
   void CancelInput(){Cancel();}
   bool Pending() const{return state_->action_pending();}
-  void SetOn(bool on){if(state_->action_on(on))SchedulePaint();}
+  void SetOn(bool on){if(!state_->action_on(on))return;if(glyph_==ControlGlyph::kDot)PreferredSizeChanged();SchedulePaint();}
+  // The active workspace slides out of the rail as a pill with its name.
+  void SetPillName(std::u16string name){if(pill_name_==name)return;pill_name_=std::move(name);PreferredSizeChanged();SchedulePaint();}
+  const std::u16string& pill_name() const{return pill_name_;}
   void SetLabel(std::u16string label){if(label_==label)return;label_=std::move(label);PreferredSizeChanged();SchedulePaint();}
   void SyncViewportVisibility(){if(!Interactive())Cancel();}
   bool HandleAccessibleAction(const ui::AXActionData& action) override{if(action.action==ax::mojom::Action::kDoDefault&&SceneIsVisible(this)&&GetEnabledInViewsSubtree())ScrollViewToVisible();return views::View::HandleAccessibleAction(action);}
-  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{const auto r=sidebar::action_preferred_size(glyph_==ControlGlyph::kDot,!label_.empty());return gfx::Size(r.width,r.height);}
-  sidebar::Item SceneItem(gfx::RectF rect,gfx::RectF clip){SyncEnabled();const auto s=state_->action_snapshot();return GlyphSceneData(this,glyph_,icon_,s.on,label_,color_,s.enabled&&(s.visual==sidebar::RowVisual::Hovered||s.visual==sidebar::RowVisual::Pressed),s.focused,rect,clip);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{const auto r=sidebar::action_preferred_size(glyph_==ControlGlyph::kDot,!label_.empty());
+    if(glyph_==ControlGlyph::kDot&&!pill_name_.empty()&&state_->action_snapshot().on)return gfx::Size(WorkspacePillWidth(pill_name_,!label_.empty()),r.height);
+    return gfx::Size(r.width,r.height);}
+  sidebar::Item SceneItem(gfx::RectF rect,gfx::RectF clip){SyncEnabled();const auto s=state_->action_snapshot();auto item=GlyphSceneData(this,glyph_,icon_,s.on,label_,color_,s.enabled&&(s.visual==sidebar::RowVisual::Hovered||s.visual==sidebar::RowVisual::Pressed),s.focused,rect,clip);
+    if(glyph_==ControlGlyph::kDot&&s.on&&!pill_name_.empty()){const auto p=Palette(this);item.title=base::UTF16ToUTF8(pill_name_);item.fill=p.bg_raised;item.edge=p.line;}return item;}
   void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);if(changed_)changed_.Run();}
   bool OnMousePressed(const ui::MouseEvent& event) override{return Pointer(sidebar::PointerPhase::Press,event);}
   bool OnMouseDragged(const ui::MouseEvent& event) override{return Pointer(sidebar::PointerPhase::Drag,event);}
@@ -667,7 +723,10 @@ class RustActionView : public views::View {
   void AddedToWidget() override{views::View::AddedToWidget();window_.Observe(GetWidget());}
   void RemovedFromWidget() override{window_.Observe(nullptr);Cancel();views::View::RemovedFromWidget();}
   void PaintChildren(const views::PaintInfo& info) override{if(!visible_||!visible_.Run())views::View::PaintChildren(info);}
-  void OnPaint(gfx::Canvas* canvas) override{if(visible_&&visible_.Run())return;SyncEnabled();const auto v=state_->action_snapshot();const auto paint=v.visual==sidebar::RowVisual::Disabled?views::Button::STATE_DISABLED:v.visual==sidebar::RowVisual::Pressed?views::Button::STATE_PRESSED:v.visual==sidebar::RowVisual::Hovered?views::Button::STATE_HOVERED:views::Button::STATE_NORMAL;PaintGlyphControl(this,glyph_,icon_,color_,v.on,label_,paint,canvas);}
+  void OnPaint(gfx::Canvas* canvas) override{if(visible_&&visible_.Run())return;SyncEnabled();const auto v=state_->action_snapshot();const auto paint=v.visual==sidebar::RowVisual::Disabled?views::Button::STATE_DISABLED:v.visual==sidebar::RowVisual::Pressed?views::Button::STATE_PRESSED:v.visual==sidebar::RowVisual::Hovered?views::Button::STATE_HOVERED:views::Button::STATE_NORMAL;
+    // Workspace dots paint the Rust recipe (own accent, active pill); vector icons stay native.
+    if(glyph_==ControlGlyph::kDot){const auto bounds=gfx::RectF(GetLocalBounds());PaintSceneRecipe(canvas,SceneItem(bounds,bounds),Font(3),true);return;}
+    PaintGlyphControl(this,glyph_,icon_,color_,v.on,label_,paint,canvas);}
  protected:
   sidebar::ActionControl& NodeControl(){return *state_;}
   const sidebar::ActionControl& NodeControl() const{return *state_;}
@@ -704,7 +763,7 @@ class RustActionView : public views::View {
   bool Pointer(sidebar::PointerPhase phase,const ui::MouseEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;const bool pending=state_->action_pending();return Apply(state_->action_pointer(phase,event.x(),event.y(),phase!=sidebar::PointerPhase::Exit&&HitTestPoint(event.location())&&GetVisibleBounds().Contains(event.location()),event.IsLeftMouseButton(),Interactive()),event,before,pending);}
   bool Key(bool pressed,const ui::KeyEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;const bool pending=state_->action_pending();const uint32_t key=event.key_code()==ui::VKEY_SPACE?1:event.key_code()==ui::VKEY_RETURN?2:0;return Apply(state_->action_key(pressed,key,true,Interactive()),event,before,pending);}
   bool Apply(const sidebar::RowInputResult& result,const ui::Event& event,sidebar::RowVisual before,bool pending){const bool handled=result.handled;if(result.visual!=before)SchedulePaint();else if(pending!=state_->action_pending()&&changed_)changed_.Run();if(result.action==sidebar::RowAction::Activate){ActivateAction(event);return handled;}return handled;}
-  SkColor color_=kSubtle;std::u16string label_;base::RepeatingCallback<void(views::View*,const sidebar::FormCommandBinding&)> command_callback_;views::Button::PressedCallback callback_;ControlGlyph glyph_;raw_ptr<const gfx::VectorIcon> icon_;base::RepeatingCallback<bool()> visible_;base::RepeatingClosure changed_;rust::Box<sidebar::ActionControl> state_;SceneWindowObserver window_{base::BindRepeating(&RustActionView::WindowChanged,base::Unretained(this))};base::CallbackListSubscription enabled_changed_{AddEnabledInViewsSubtreeChangedCallback(base::BindRepeating(&RustActionView::EnabledChanged,base::Unretained(this)))};
+  SkColor color_=kSubtle;std::u16string label_;std::u16string pill_name_;base::RepeatingCallback<void(views::View*,const sidebar::FormCommandBinding&)> command_callback_;views::Button::PressedCallback callback_;ControlGlyph glyph_;raw_ptr<const gfx::VectorIcon> icon_;base::RepeatingCallback<bool()> visible_;base::RepeatingClosure changed_;rust::Box<sidebar::ActionControl> state_;SceneWindowObserver window_{base::BindRepeating(&RustActionView::WindowChanged,base::Unretained(this))};base::CallbackListSubscription enabled_changed_{AddEnabledInViewsSubtreeChangedCallback(base::BindRepeating(&RustActionView::EnabledChanged,base::Unretained(this)))};
 };
 BEGIN_METADATA(RustActionView)
 END_METADATA
@@ -1404,6 +1463,7 @@ struct RowRecipe {
     bool blank = false;
     bool tile = false;  // One half of a Split View pair: always a filled card.
     bool stacked = false;  // Two lines (title over detail) beside a large monogram.
+    bool kbd = false;  // The detail is a shortcut, drawn as Kbd keys after the title.
     int height = 34;
     views::Button::PressedCallback close;
     base::RepeatingCallback<void(gfx::Point)> drop;
@@ -1452,14 +1512,60 @@ struct RowRecipe {
     } else {
       const int size = spec.stacked ? 30 : 16;
       const gfx::Rect mono(10, (bounds.height() - size) / 2, size, size);
-      FillRound(canvas, mono, spec.stacked ? 8 : 4, spec.monogram_color);
+      const auto tile = sidebar::design_palette(IsDark(theme), spec.monogram_color);
+      FillRound(canvas, mono, spec.stacked ? 8 : 4, tile.accent);
       canvas->DrawStringRectWithFlags(spec.monogram, Font(spec.stacked ? 0 : -4, gfx::Font::Weight::SEMIBOLD),
-                                      SK_ColorWHITE, mono, gfx::Canvas::TEXT_ALIGN_CENTER);
+                                      tile.on_accent, mono, gfx::Canvas::TEXT_ALIGN_CENTER);
     }
   }
 };
 // Input, enabled/focus/visual state and drag admission live in Rust. This node
 // adapts native events, accessibility, capture, window visibility and font paint.
+// The address pill: `bg-raised` pill with a `line` edge, host and path in the
+// `url` style (host 600), and a secure page's lock in `ok`.
+sidebar::Item AddressRowItem(views::View* row,const RowRecipe::Spec& spec,gfx::RectF rect,gfx::RectF clip,int,bool hovered,bool focused){
+  sidebar::Item item{};const auto p=Palette(row);
+  item.x=rect.x(); item.y=rect.y(); item.width=rect.width(); item.height=rect.height();
+  item.clip={clip.x(),clip.y(),clip.width(),clip.height()};
+  item.kind=4; item.title=base::UTF16ToUTF8(spec.title); item.detail=base::UTF16ToUTF8(spec.detail);
+  item.title_width=gfx::GetStringWidth(spec.title,DesignFont(3,12,600,false));
+  item.font_size=12; item.detail_font_size=12; item.detail_ink=p.ink_muted;
+  item.ink=row->GetEnabledInViewsSubtree()&&!spec.blank?p.ink:p.ink_muted;
+  item.badge=spec.secure?p.ok:p.ink_muted; item.active=spec.secure; item.hovered=hovered;
+  item.fill=p.bg_raised; item.edge=p.line; item.focused=focused; item.focus=p.focus;
+  return item;
+}
+// A command row (icon, title) whose shortcut detail is a row of Kbd keys, one per
+// symbol, `space-2` after the title.
+std::vector<sidebar::Item> CommandRowItems(views::View* row,const RowRecipe::Spec& spec,gfx::RectF rect,gfx::RectF clip,bool hovered,bool focused){
+  const auto p=Palette(row);std::vector<sidebar::Item> items;
+  sidebar::Item item{};item.x=rect.x();item.y=rect.y();item.width=rect.width();item.height=rect.height();
+  item.clip={clip.x(),clip.y(),clip.width(),clip.height()};item.kind=3;item.title=base::UTF16ToUTF8(spec.title);
+  item.font_size=13;item.text_style=5;item.ink=row->GetEnabledInViewsSubtree()&&!spec.blank?p.ink:p.ink_muted;item.badge=hovered?p.ink:p.ink_muted;
+  item.hovered=hovered;item.fill=hovered?p.bg_hover:SK_ColorTRANSPARENT;item.focused=focused;item.focus=p.focus;
+  items.push_back(item);
+  float x=rect.x()+36+gfx::GetStringWidth(spec.title,DesignFont(2,13,400,false))+8;
+  const std::u16string keys=spec.detail;
+  for(size_t i=0;i<keys.size();){
+    size_t next=i+(base::IsAsciiAlpha(keys[i])&&i+1<keys.size()&&base::IsAsciiAlpha(keys[i+1])?keys.size()-i:1);  // "tab", "esc": one key.
+    sidebar::Item key{};key.kind=30;key.title=base::UTF16ToUTF8(keys.substr(i,next-i));
+    const float w=std::max(18.f,gfx::GetStringWidth(keys.substr(i,next-i),DesignFont(3,11,500,false))+10.f);
+    key.x=x;key.y=rect.y()+(rect.height()-18)/2;key.width=w;key.height=18;key.clip=item.clip;
+    key.fill=p.bg_hover;key.edge=p.line;key.ink=p.ink_muted;
+    if(x+w<=rect.right()-8)items.push_back(key);x+=w+2;i=next;
+  }
+  return items;
+}
+// A Command Center row: `accent-soft` with the name and icon in `accent-ink` when
+// selected, `bg-hover` on hover, no tile under the icon.
+sidebar::Item PaletteRowItem(views::View* row,const RowRecipe::Spec& spec,gfx::RectF rect,gfx::RectF clip,bool hovered,bool focused){
+  const auto p=Palette(row);sidebar::Item item{};item.kind=12;
+  item.x=rect.x();item.y=rect.y();item.width=rect.width();item.height=rect.height();item.clip={clip.x(),clip.y(),clip.width(),clip.height()};
+  item.title=base::UTF16ToUTF8(spec.title);item.detail=base::UTF16ToUTF8(spec.detail);item.title_width=gfx::GetStringWidth(spec.title,DesignFont(2,13,400,false))+2;
+  item.ink=spec.highlighted?p.accent_ink:p.ink;item.detail_ink=p.ink_muted;item.badge=SK_ColorTRANSPARENT;item.font_size=13;item.detail_font_size=12;
+  item.active=spec.highlighted;item.hovered=hovered;item.focused=focused;item.focus=p.focus;item.fill=spec.highlighted?p.accent_soft:hovered?p.bg_hover:SK_ColorTRANSPARENT;
+  return item;
+}
 rust::Vec<uint16_t> SceneUtf16(std::u16string_view text){rust::Vec<uint16_t> units;units.reserve(text.size());for(auto unit:text)units.push_back(unit);return units;}
 class RustRowView final : public views::View {
   METADATA_HEADER(RustRowView,views::View)
@@ -1510,7 +1616,7 @@ class RustRowView final : public views::View {
   void ProjectPinAdapter(Spec spec){CHECK(PinBinding().valid);CancelInput();ClearSidebarVisuals(spec);spec_=std::move(spec);SyncSidebarAX();PreferredSizeChanged();SchedulePaint();}
   void RefreshPinProperties(){CHECK(PinBinding().valid);CancelInput();SyncSidebarAX();SchedulePaint();}
   Spec SidebarSnapshot() const{Spec spec;spec.sidebar_row=true;const auto presentation=state_->sidebar_presentation();if(presentation.valid){spec.title=std::u16string(presentation.title.begin(),presentation.title.end());spec.monogram=std::u16string(presentation.monogram.begin(),presentation.monogram.end());spec.monogram_color=presentation.color;spec.icon=presentation.folder?&vector_icons::kFolderFilledIcon:nullptr;spec.tile=presentation.tile;spec.height=presentation.height;spec.active=state_->action_snapshot().on;}return spec;}
-  sidebar::SidebarRowScene SidebarScene(gfx::RectF bounds,gfx::RectF clip) const{return state_->sidebar_scene({bounds.x(),bounds.y(),bounds.width(),bounds.height()},{clip.x(),clip.y(),clip.width(),clip.height()},{float(Font(0).GetFontSize()),Tone(this,kInk),Tone(this,kCard),HoverWash(this),Hairline(this),Palette(this).focus},has_close_button(),close_button_visible());}
+  sidebar::SidebarRowScene SidebarScene(gfx::RectF bounds,gfx::RectF clip) const{return state_->sidebar_scene({bounds.x(),bounds.y(),bounds.width(),bounds.height()},{clip.x(),clip.y(),clip.width(),clip.height()},{float(Font(0).GetFontSize()),Tone(this,kInk),Tone(this,kCard),HoverWash(this),Hairline(this),Palette(this).focus,Tone(this,kMuted)},has_close_button(),close_button_visible());}
   void ConfigureTabClose(bool wanted,views::Button::PressedCallback callback,const SidebarNodeBinding& binding){
     if(close_){auto* control=views::AsViewClass<RustActionView>(close_.get());if(!wanted||!control||!binding.scope||!control->BelongsTo(*binding.scope)||!control->LogicalNodeId()){auto* old=close_.get();close_=nullptr;RemoveChildViewT(old);}}
     if(wanted&&!close_){CHECK(callback);close_=AddChildView(CreateSceneAction(std::move(callback),u"Zamknij kartę",ControlGlyph::kVector,&vector_icons::kCloseSmallIcon,{},base::BindRepeating(&RustRowView::ChildChanged,weak_factory_.GetWeakPtr()),true,binding));}
@@ -1566,7 +1672,21 @@ class RustRowView final : public views::View {
   void SyncViewport(){if(!Interactive())CancelInput();else if(close_){if(auto* close=views::AsViewClass<RustActionView>(close_.get()))close->SyncViewportVisibility();}}
   void PaintChildren(const views::PaintInfo& info) override{if(!spec_.scene_visible||!spec_.scene_visible.Run())views::View::PaintChildren(info);}
   void OnPaint(gfx::Canvas* canvas) override{
-    if(spec_.scene_visible&&spec_.scene_visible.Run())return;SyncEnabled();if(state_->sidebar_visual().valid){const auto spec=SidebarSnapshot();const auto visual=state_->action_snapshot().visual;RowRecipe::PaintDecorations(canvas,GetLocalBounds(),spec,this,visual==sidebar::RowVisual::Hovered||visual==sidebar::RowVisual::Pressed);const auto geometry=Geometry();const auto& title=geometry.title;canvas->DrawStringRectWithFlags(spec.title,Font(0,spec.active?gfx::Font::Weight::MEDIUM:gfx::Font::Weight::NORMAL),Tone(this,kInk),gfx::Rect(title.x,title.y,title.width,title.height),gfx::Canvas::TEXT_ALIGN_LEFT);return;}if(spec_.history){const auto bounds=gfx::RectF(GetLocalBounds());PaintSceneRecipe(canvas,Scene(bounds,bounds),Font(0),true);return;}const auto v=state_->action_snapshot().visual;RowRecipe::PaintDecorations(canvas,GetLocalBounds(),spec_,this,v==sidebar::RowVisual::Hovered||v==sidebar::RowVisual::Pressed);
+    if(spec_.scene_visible&&spec_.scene_visible.Run())return;SyncEnabled();if(state_->sidebar_visual().valid){
+      // The compositor raster paints the same Rust recipe as the Metal surface;
+      // the close child paints itself.
+      const auto bounds=gfx::RectF(GetLocalBounds());auto scene=SidebarScene(bounds,bounds);
+      if(scene.valid){if(scene.item.tile){const auto spec=SidebarSnapshot();const auto visual=state_->action_snapshot().visual;RowRecipe::PaintDecorations(canvas,GetLocalBounds(),spec,this,visual==sidebar::RowVisual::Hovered||visual==sidebar::RowVisual::Pressed);}
+        scene.item.close_visible=false;
+        // A folder shows the folder icon in the row's ink, never an emoji.
+        const bool folder=state_->sidebar_presentation().folder;if(folder)scene.item.monogram=rust::String();
+        if(!scene.item.tile){PaintSceneRecipe(canvas,scene.item,Font(0),true);if(folder)PaintIcon(canvas,vector_icons::kFolderFilledIcon,gfx::Rect(12,(height()-16)/2,16,16),16,scene.item.ink);}else{const auto geometry=Geometry();const auto& title=geometry.title;canvas->DrawStringRectWithFlags(SidebarSnapshot().title,DesignFont(2,13,scene.item.active?600:400,false),scene.item.ink,gfx::Rect(title.x,title.y,title.width,title.height),gfx::Canvas::TEXT_ALIGN_LEFT);}}
+      return;}
+    if(spec_.chip&&!spec_.address){const auto bounds=gfx::RectF(GetLocalBounds());const auto v=state_->action_snapshot();
+      PaintSceneRecipe(canvas,PaletteRowItem(this,spec_,bounds,bounds,v.visual==sidebar::RowVisual::Hovered||v.visual==sidebar::RowVisual::Pressed,HasFocus()),Font(0),true);
+      if(spec_.icon){const auto p=Palette(this);PaintIcon(canvas,*spec_.icon,gfx::Rect(12,0,16,height()),16,spec_.highlighted?p.accent_ink:p.ink_muted);}return;}
+    if(spec_.kbd){const auto bounds=gfx::RectF(GetLocalBounds());const auto v=state_->action_snapshot();for(const auto& item:CommandRowItems(this,spec_,bounds,bounds,v.visual==sidebar::RowVisual::Hovered||v.visual==sidebar::RowVisual::Pressed,HasFocus()))PaintSceneRecipe(canvas,item,Font(0),true);return;}
+    if(spec_.address){const auto bounds=gfx::RectF(GetLocalBounds());const auto v=state_->action_snapshot();PaintSceneRecipe(canvas,AddressRowItem(this,spec_,bounds,bounds,scene_title_width(),v.visual==sidebar::RowVisual::Hovered||v.visual==sidebar::RowVisual::Pressed,HasFocus()),Font(0),true);return;}if(spec_.history){const auto bounds=gfx::RectF(GetLocalBounds());PaintSceneRecipe(canvas,Scene(bounds,bounds),Font(0),true);return;}const auto v=state_->action_snapshot().visual;RowRecipe::PaintDecorations(canvas,GetLocalBounds(),spec_,this,v==sidebar::RowVisual::Hovered||v==sidebar::RowVisual::Pressed);
     const auto geometry=Geometry();const auto& r=geometry.title;canvas->DrawStringRectWithFlags(spec_.title,Font(0,spec_.active||spec_.chip||spec_.address?gfx::Font::Weight::MEDIUM:gfx::Font::Weight::NORMAL),Tone(this,spec_.blank?kMuted:kInk),gfx::Rect(r.x,r.y,r.width,r.height),gfx::Canvas::TEXT_ALIGN_LEFT);
     if(!spec_.detail.empty()){const auto& d=geometry.detail;canvas->DrawStringRectWithFlags(gfx::ElideText(spec_.detail,Font(spec_.address?0:-1),d.width,spec_.address||spec_.stacked?gfx::ELIDE_TAIL:gfx::ELIDE_MIDDLE),Font(spec_.address?0:-1),Tone(this,kMuted),gfx::Rect(d.x,d.y,d.width,d.height),gfx::Canvas::TEXT_ALIGN_LEFT);}
   }
@@ -1726,12 +1846,27 @@ class PaletteText final : public views::View {
     sidebar::Item item{};item.kind=15;item.glyph=kind_;item.x=rect.x();item.y=rect.y();item.width=rect.width();item.height=rect.height();item.clip={clip.x(),clip.y(),clip.width(),clip.height()};
     item.title=base::UTF16ToUTF8(text_);item.title_width=text_width();item.font_size=font_.GetFontSize();item.font_height=font_.GetHeight();item.ink=Tone(this,kind_==2?kError:kMuted);item.badge=Hairline(this);return item;
   }
+  // The footer (kind 1): `bg-base` under a `line`, then three shortcuts, each a
+  // row of Kbd keys and a verb in `label`.
+  std::vector<sidebar::Item> SceneItems(gfx::RectF rect,gfx::RectF clip) const {
+    if(kind_!=1)return {SceneItem(rect,clip)};
+    const auto p=Palette(this);std::vector<sidebar::Item> items;const sidebar::FloatRect c{clip.x(),clip.y(),clip.width(),clip.height()};
+    sidebar::Item fill{};fill.kind=14;fill.x=rect.x();fill.y=rect.y();fill.width=rect.width();fill.height=rect.height();fill.fill=p.bg_base;fill.clip=c;items.push_back(fill);
+    sidebar::Item line{};line.kind=14;line.x=rect.x();line.y=rect.y();line.width=rect.width();line.height=1;line.fill=p.line;line.clip=c;items.push_back(line);
+    float x=rect.x()+18;const float cy=rect.y()+rect.height()/2;
+    const std::array<std::pair<std::vector<std::u16string>,std::u16string>,3> hints{{{{u"↑",u"↓"},u"wybierz"},{{u"↵"},u"otwórz"},{{u"esc"},u"zamknij"}}};
+    for(const auto& [keys,word]:hints){
+      for(const auto& key:keys){sidebar::Item k{};k.kind=30;k.title=base::UTF16ToUTF8(key);k.width=std::max(18.f,gfx::GetStringWidth(key,DesignFont(3,11,500,false))+10.f);k.height=18;k.x=x;k.y=cy-9;k.fill=p.bg_hover;k.edge=p.line;k.ink=p.ink_muted;k.clip=c;items.push_back(k);x+=k.width+2;}
+      sidebar::Item w{};w.kind=17;w.title=base::UTF16ToUTF8(word);w.x=x+4;w.width=gfx::GetStringWidth(word,DesignFont(2,12,500,false))+2;w.y=rect.y();w.height=rect.height();w.ink=p.ink_muted;w.font_size=12;w.text_style=6;w.clip=c;items.push_back(w);
+      x=w.x+w.width+16;
+    }
+    return items;
+  }
   void OnThemeChanged() override{views::View::OnThemeChanged();measured_.reset();PreferredSizeChanged();painted_.Run();}
   void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);painted_.Run();}
   void OnPaint(gfx::Canvas* canvas) override {
-    if(kind_==1){sidebar::Item line{};line.kind=14;line.width=width();line.height=1;line.fill=Hairline(this);line.clip={0,0,float(width()),float(height())};PaintSceneRecipe(canvas,line,font_);}
     if(visible_&&visible_.Run())return;
-    const auto bounds=gfx::RectF(GetLocalBounds());PaintSceneRecipe(canvas,SceneItem(bounds,bounds),font_);
+    const auto bounds=gfx::RectF(GetLocalBounds());for(const auto& item:SceneItems(bounds,bounds))PaintSceneRecipe(canvas,item,font_,true);
   }
  private:
   std::u16string text_;uint32_t kind_;gfx::FontList font_;
@@ -2848,7 +2983,7 @@ std::unique_ptr<views::View> WorkspaceShell::Build() {
   ReconcileChromeNodes();
   auto root = std::make_unique<ShellRoot>();
   root_ = root.get();
-  root->SetBackground(views::CreateSolidBackground(FrameTint(workspace_color("work"), root_)));
+  root->SetBackground(views::CreateSolidBackground(FrameVoid(workspace_color("work"), root_)));
   auto weak = weak_factory_.GetWeakPtr();
   metal_header_=CreateSidebarMetal();
   auto* header = root->AddChildView(std::make_unique<ChromeHeaderView>(
@@ -2961,6 +3096,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     return shell && shell->metal_sidebar_visible();
   }, weak);
   new_tab.icon = &vector_icons::kAdd2Icon;
+  new_tab.kbd = true;
   new_tab_button_ = sidebar->AddChildView(CreateSceneRow(
       base::BindRepeating(&WorkspaceShell::OpenAddress,weak,true),std::move(new_tab),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak),{chrome_node_graph_,4,{},"sidebar.new-tab"}));
   std::unique_ptr<views::ScrollBar> vertical_bar;
@@ -3126,12 +3262,12 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto* dot_scroll=footer->AddChildView(CreatePanelViewport(&workspace_viewport,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),{-1,-1,true,false,false,false,true},std::move(workspace_bar)));
   workspace_scroll_=workspace_viewport;
   dot_scroll->SetPreferredSize(gfx::Size(0,32));
-  auto dots = std::make_unique<views::View>();
+  auto dots = std::make_unique<WorkspaceRail>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_sidebar_visible();},weak));
   dots->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 0));
   workspace_dots_=dots.get();
   workspace_scroll_->SetPanelContents(std::move(dots));
-  workspace_dots_->SetLayoutManager(CreateSidebarDotsLayout(6));
+  workspace_dots_->SetLayoutManager(CreateSidebarDotsLayout(4));
   footer_layout->SetFlexForView(dot_scroll, 1);
   Spacer(footer, 1);
   workspace_settings_button_=footer->AddChildView(CreateSceneAction(
@@ -3164,12 +3300,13 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   search_icon->SetCanProcessEventsWithinSubtree(false);
   address_ = AddEditor(input_row);
   address_->GetViewAccessibility().SetName(u"Szukaj lub wpisz adres");
-  address_->SetPlaceholderText(u"Szukaj lub wpisz adres…");
-  address_->SetPresentation(Font(3).GetFontSize(),0,false,Tone(root_,kCard));
+  address_->SetPlaceholderText(u"Szukaj lub wpisz adres");
+  address_->SetPresentation(17,0,false,Tone(root_,kCard));
   address_->SetCallbacks(base::BindRepeating(&WorkspaceShell::AddressEdited,weak),
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,const ui::KeyEvent& event){return shell&&shell->HandleAddressKey(event);},weak));
   palette->SetEditor(address_->view());input_layout->SetFlexForView(address_->view(),1);
   palette_chrome_views_[1]=palette_text(input_row,u"esc",0,1);
+  palette_chrome_views_[1]->SetVisible(false);  // esc lives in the footer.
   if(metal_palette_){palette->SetLayoutManager(CreateSidebarColumnLayout());input_row->SetLayoutManager(CreatePaletteInputLayout());}
   address_error_=palette_text(palette.get(),u"",2,3);palette_chrome_views_[3]=address_error_;
   address_error_->SetVisible(false);
@@ -3190,7 +3327,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     suggestion_list_->SetLayoutManager(CreateSidebarColumnLayout(2));
     suggestion_list_->SetBorder(views::CreatePaddedBorder(views::CreateSolidSidedBorder(gfx::Insets::TLBR(1,0,0,0),Hairline(root_)),gfx::Insets(8)));
   }
-  palette_chrome_views_[2]=palette_text(palette.get(),u"↑↓ wybierz     ↵ wykonaj / otwórz     > polecenia",1,2);
+  palette_chrome_views_[2]=palette_text(palette.get(),u"↑↓ wybierz, ↵ otwórz, esc zamknij",1,2);
 
   profile_form_=std::make_unique<ProfileFormState>();
   std::array<std::u16string,11> profile_copy;
@@ -3482,11 +3619,19 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         // only if the saved state differs, never as a side effect of loading.
         if (shell->pinned_ && !shell->sidebar_visible()) shell->ShowSidebar();
         if (!shell->pinned_ && shell->sidebar_visible()) shell->sidebar_widget_->Hide();
-        // Development: --zitter-open-panel=space opens the space panel once the
-        // window is up, so UI checks can screenshot it without driving the mouse.
-        if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-open-panel") == "space")
+        // Development: --zitter-open-panel=space|sidebar|palette|settings|profiles opens
+        // that view once the window is up, so UI checks can screenshot it without
+        // driving the mouse.
+        if (const std::string panel = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-open-panel"); !panel.empty())
           base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE,
-              base::BindOnce([](base::WeakPtr<WorkspaceShell> shell) { if (shell) shell->OpenWorkspaceSettings(); }, shell->weak_factory_.GetWeakPtr()),
+              base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, std::string panel) {
+                if (!shell) return;
+                if (panel == "space") shell->OpenWorkspaceSettings();
+                else if (panel == "sidebar") shell->ShowSidebar();
+                else if (panel == "palette") shell->OpenCommandPalette();
+                else if (panel == "settings") shell->OpenGeneralSettings();
+                else if (panel == "profiles") shell->OpenProfiles();
+              }, shell->weak_factory_.GetWeakPtr(), panel),
               base::Seconds(1));
       }, weak));
 }
@@ -4022,7 +4167,7 @@ void WorkspaceShell::UpdateMetalSplit() {
       sidebar::Item item{};item.kind=9;item.x=rect.x();item.y=rect.y();item.width=rect.width();item.height=rect.height();item.clip=clip;
       item.ink=Tone(view,host->divider_handle(index/2-1)->hovered()?kSubtle:kDisabled);items.push_back(std::move(item));
     }
-    surface->Update(widget_->GetNativeWindow(),bounds,items,is_bar ? FrameTint(workspace_color(state_.workspace_id),root_) : Tone(view,kChip));
+    surface->Update(widget_->GetNativeWindow(),bounds,items,is_bar ? FrameVoid(workspace_color(state_.workspace_id),root_) : Tone(view,kChip));
     if(was!=surface->visible())view->SchedulePaint();
   }
 }
@@ -4050,7 +4195,7 @@ void WorkspaceShell::UpdateMetalHeader() {
     auto rect=gfx::RectF(child->GetBoundsInScreen());rect.Offset(-bounds.x(),-bounds.y());
     if(auto* control=views::AsViewClass<RustActionView>(child.get()))items.push_back(control->SceneItem(rect,gfx::RectF(gfx::Rect(bounds.size()))));else items.push_back(GlyphSceneItem(static_cast<GlyphButton*>(child.get()),rect,gfx::RectF(gfx::Rect(bounds.size()))));
   }
-  metal_header_->Update(widget_->GetNativeWindow(),bounds,items,FrameTint(workspace_color(state_.workspace_id),root_));
+  metal_header_->Update(widget_->GetNativeWindow(),bounds,items,FrameVoid(workspace_color(state_.workspace_id),root_));
   if (was_visible!=metal_header_->visible()) header_view_->SchedulePaint();
 }
 bool WorkspaceShell::metal_palette_visible() const{return metal_palette_&&metal_palette_->visible();}
@@ -4067,14 +4212,14 @@ void WorkspaceShell::UpdateMetalPaletteChrome() {
   for(size_t i=0;i<palette_chrome_views_.size();++i) {
     auto* view=palette_chrome_views_[i].get();auto& surface=metal_palette_chrome_[i];const bool was=surface&&surface->visible();
     if(!view||!address_visible()||!view->IsDrawn()){if(surface)surface->Hide();if(was&&view)view->SchedulePaint();continue;}
-    auto local=view->GetVisibleBounds();if(i==2)local.Intersect(static_cast<PaletteText*>(view)->text_bounds());
+    auto local=view->GetVisibleBounds();
     if(local.IsEmpty()){if(surface)surface->Hide();if(was)view->SchedulePaint();continue;}
     if(!surface)surface=CreateSidebarMetal();if(!surface)continue;
     auto bounds=view->GetBoundsInScreen();bounds.Offset(local.x(),local.y());bounds.set_size(local.size());
     auto full=gfx::RectF(view->GetBoundsInScreen());full.Offset(-bounds.x(),-bounds.y());const auto clip=gfx::RectF(gfx::Rect(bounds.size()));
     std::vector<sidebar::Item> items;
     if(i==0)items.push_back(static_cast<SceneSearchIcon*>(view)->SceneItem(full,clip));
-    else items.push_back(static_cast<PaletteText*>(view)->SceneItem(full,clip));
+    else for(auto& item:static_cast<PaletteText*>(view)->SceneItems(full,clip))items.push_back(std::move(item));
     surface->Update(address_widget_->GetNativeWindow(),bounds,items,Tone(palette_root_,kCard));if(was!=surface->visible())view->SchedulePaint();
   }
 }
@@ -4108,13 +4253,9 @@ void WorkspaceShell::UpdateMetalPalette() {
     auto rect=node.bounds;rect.Offset(origin);auto clip=node.clip;clip.Offset(origin);
     if(node.index==0){sidebar::Item line{};line.kind=14;line.x=rect.x();line.y=rect.y();line.width=rect.width();line.height=1;line.fill=Hairline(suggestion_list_);line.clip={clip.x(),clip.y(),clip.width(),clip.height()};items.push_back(std::move(line));continue;}
     auto* row=suggestion_list_->children()[node.index-1].get();const auto& spec=RowSpec(row);
-    const bool hovered=RowHovered(row);
-    sidebar::Item item{};item.kind=12;item.x=rect.x();item.y=rect.y();item.width=rect.width();item.height=rect.height();item.clip={clip.x(),clip.y(),clip.width(),clip.height()};
-    item.title=base::UTF16ToUTF8(spec.title);item.detail=base::UTF16ToUTF8(spec.detail);item.title_width=RowTitleWidth(row);
-    item.ink=Tone(row,kInk);item.detail_ink=Tone(row,kMuted);item.badge=Tone(row,kChip);item.font_size=Font(0).GetFontSize();item.detail_font_size=Font(-1).GetFontSize();
-    item.active=spec.highlighted;item.hovered=hovered;item.focused=row->HasFocus();item.focus=Palette(row).focus;item.fill=spec.highlighted?Tone(row,kAccentWash):hovered?HoverWash(row):SK_ColorTRANSPARENT;
-    items.push_back(std::move(item));
-    sidebar::Item icon{};icon.kind=13;icon.x=rect.x();icon.y=rect.y();icon.width=rect.width();icon.height=rect.height();icon.clip={clip.x(),clip.y(),clip.width(),clip.height()};icon.ink=Tone(row,kSubtle);
+    items.push_back(PaletteRowItem(row,spec,rect,clip,RowHovered(row),row->HasFocus()));
+    const auto p=Palette(row);
+    sidebar::Item icon{};icon.kind=13;icon.x=rect.x();icon.y=rect.y();icon.width=rect.width();icon.height=rect.height();icon.clip={clip.x(),clip.y(),clip.width(),clip.height()};icon.ink=spec.highlighted?p.accent_ink:p.ink_muted;
     icon.glyph=spec.icon==&vector_icons::kSettingsIcon?2:spec.icon==&vector_icons::kArrowForwardIcon?1:0;items.push_back(std::move(icon));
   }
   if(scroller.visible){auto rect=scroller.thumb;rect.Offset(-bounds.x(),-bounds.y());auto clip=scroller.bounds;clip.Offset(-bounds.x(),-bounds.y());sidebar::Item thumb{};thumb.kind=6;thumb.x=rect.x();thumb.y=rect.y();thumb.width=rect.width();thumb.height=rect.height();thumb.fill=scroller.color;thumb.clip={float(clip.x()),float(clip.y()),float(clip.width()),float(clip.height())};items.push_back(std::move(thumb));}
@@ -4241,6 +4382,8 @@ void WorkspaceShell::UpdateMetalSidebar() {
     sidebar::Item item{};
     item.x=rect.x(); item.y=rect.y(); item.width=rect.width(); item.height=rect.height();
     item.clip={float(rect.x()), float(rect.y()), float(rect.width()), float(rect.height())};
+    if (spec.address) { items.push_back(AddressRowItem(row,spec,gfx::RectF(rect),gfx::RectF(rect),RowTitleWidth(row),RowHovered(row),row->HasFocus())); continue; }
+    if (spec.kbd) { for (auto& key : CommandRowItems(row,spec,gfx::RectF(rect),gfx::RectF(rect),RowHovered(row),row->HasFocus())) items.push_back(std::move(key)); continue; }
     item.kind=spec.address ? 4 : 3; item.title=base::UTF16ToUTF8(spec.title); item.detail=base::UTF16ToUTF8(spec.detail);
     item.title_width=RowTitleWidth(row); item.font_size=Font(0).GetFontSize();
     item.detail_font_size=Font(spec.address ? 0 : -1).GetFontSize(); item.detail_ink=Tone(row,kMuted);
@@ -4269,6 +4412,14 @@ void WorkspaceShell::UpdateMetalSidebar() {
     const auto rect=local_rect(button); append_glyph(button,rect,rect);
   }
   auto* dot_viewport=workspace_dots_->parent();
+  {
+    // The workspace rail: a recessed `bg-void` pill with an inner `line` edge.
+    auto rail=local_rect(dot_viewport);const float width=std::min<float>(rail.width(),workspace_dots_->width()+8);
+    rail=gfx::RectF(rail.x()+(rail.width()-width)/2,rail.y()+(rail.height()-28)/2,width,28);
+    sidebar::Item item{};item.kind=24;item.x=rail.x();item.y=rail.y();item.width=rail.width();item.height=rail.height();
+    item.clip={rail.x(),rail.y(),rail.width(),rail.height()};item.fill=Palette(dot_viewport).bg_void;item.ink=Hairline(dot_viewport);
+    if(workspace_dots_->width()>0)items.push_back(std::move(item));
+  }
   std::vector<SidebarViewportNode> dot_nodes{{SidebarTree::kRoot,gfx::Rect(workspace_dots_->size()),true}};
   for (const auto& child : workspace_dots_->children()) dot_nodes.push_back({0,child->GetMirroredBounds(),child->GetVisible()});
   // Nodes are physical (mirrored) content bounds; in RTL the visible window
@@ -4436,7 +4587,7 @@ std::vector<sidebar::Item> WorkspaceShell::CaptureWorkspaceScene(std::string_vie
   const SidebarTabSlot* pair_slot=nullptr;if(cache)for(const auto& slot:cache->tab_plan.slots)if(slot.pair){pair_slot=&slot;break;}
   std::vector<bool> visible(pins?pins->size():0,true);if(cache)for(const auto& pin:cache->tab_plan.pins)visible[pin.index]=pin.visible;
   if(pins&&!pins->empty()) {
-    rows.push_back({data.size(),1,0,Font(-2).GetHeight()});sidebar::Item label{};label.kind=1;label.title="PRZYPIĘTE";label.ink=Tone(shell->root_,kMuted);label.font_size=Font(-2).GetFontSize();data.push_back(std::move(label));
+    rows.push_back({data.size(),1,0,Font(-2).GetHeight()});sidebar::Item label{};label.kind=1;label.title="PRZYPIĘTE";label.ink=Tone(shell->root_,kMuted);label.font_size=Font(-2).GetFontSize();label.text_style=7;data.push_back(std::move(label));
     std::vector<SidebarTreeNode> nodes;for(const auto& pin:*pins)nodes.push_back({pin.id,pin.parent_id,pin.folder});
     const auto plan=shell->sidebar_tree_.Plan(id,nodes);std::vector<int> groups;
     for(const auto& entry:plan) {
@@ -4771,7 +4922,7 @@ void WorkspaceShell::RebuildWorkspaceDots() {
       if(found!=existing.end())button=found->second;
       else button=workspace_dots_->AddChildView(CreateSceneAction(base::BindRepeating(callbacks_.select_workspace,key),text(child.name),GlyphButton::Glyph::kDot,nullptr,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_sidebar_visible();},weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak_factory_.GetWeakPtr()),true,{chrome_node_graph_,3,{},key}));
       if(child.cancel_input)CancelActionInput(button);
-      workspace_dots_->ReorderChildView(button,index++);button->SetTooltipText(text(child.name));button->GetViewAccessibility().SetName(text(child.name));SetActionLabel(button,text(child.label));SetActionOn(button,child.active);button->SetEnabled(child.enabled);
+      workspace_dots_->ReorderChildView(button,index++);button->SetTooltipText(text(child.name));button->GetViewAccessibility().SetName(text(child.name));SetActionLabel(button,text(child.label));SetActionColor(button,workspace_color(key));if(auto* action=views::AsViewClass<RustActionView>(button)){std::u16string pill;for(const auto& w:state_.workspaces)if(w.id==key)pill=base::UTF8ToUTF16(w.name);action->SetPillName(std::move(pill));}SetActionOn(button,child.active);button->SetEnabled(child.enabled);
       // Rust may update input enablement before the native setter sees a delta.
       // AX also follows native ancestor enablement, not just the local property.
       if(button->GetEnabledInViewsSubtree())button->GetViewAccessibility().SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kPress);else button->GetViewAccessibility().RemoveDefaultActionVerb();
@@ -4789,6 +4940,8 @@ void WorkspaceShell::RebuildWorkspaceDots() {
         u"Przestrzeń: " + base::UTF8ToUTF16(workspace.name) + (state_.sleeping_workspaces.contains(workspace.id) ? u" · uśpiona" : u""), GlyphButton::Glyph::kDot,nullptr,
         base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {return shell && shell->metal_sidebar_visible();},weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak_factory_.GetWeakPtr()),true,{chrome_node_graph_,3,{},workspace.id}));
     SetActionLabel(button,workspace_emoji(workspace.id));
+    SetActionColor(button,workspace_color(workspace.id));
+    if(auto* action=views::AsViewClass<RustActionView>(button))action->SetPillName(base::UTF8ToUTF16(workspace.name));
     SetActionOn(button,workspace.id == state_.workspace_id);
     button->set_context_menu_controller(this);
     workspace_buttons_[workspace.id] = button;
@@ -5704,7 +5857,7 @@ void WorkspaceShell::RebuildSuggestions() {
     spec.title = item.title;
     spec.detail = item.detail;
     spec.chip = true;
-    spec.height = 44;
+    spec.height = 36;
     spec.highlighted=i==palette->selected();
     spec.sidebar_row=metal_palette_!=nullptr;
     spec.scene_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_palette_visible();},weak_factory_.GetWeakPtr());
@@ -5847,7 +6000,7 @@ void WorkspaceShell::ApplyTheme(bool refresh_controls) {
   if (preferences_search_) preferences_search_->SetPresentation(gfx::FontList().GetFontSize(),8,true,Tone(root_, kChip));
   for (const auto& [key, field] : preference_textfields_) field->SetPresentation(gfx::FontList().GetFontSize(),8,true,Tone(root_, kChip));
   if (site_origin_) site_origin_->SetPresentation(gfx::FontList().GetFontSize(),8,true,Tone(root_, kChip));
-  if (address_) address_->SetPresentation(Font(3).GetFontSize(),0,false,Tone(root_,kCard));
+  if (address_) address_->SetPresentation(17,0,false,Tone(root_,kCard));
   for(auto* editor:{emoji_input_.get()})if(editor)
     if(auto* native=views::AsViewClass<views::Textfield>(editor->view())){
       native->SetBackgroundColor(Tone(root_, kChip));
@@ -6331,8 +6484,8 @@ void WorkspaceShell::ApplyAppearance(bool refresh_theme) {
   if (refresh_theme) ApplyTheme();
   else if (repaint) ApplyTheme(/*refresh_controls=*/false);
   if (repaint && sidebar_root_) sidebar_root_->SchedulePaint();
+  root_->SetBackground(views::CreateSolidBackground(FrameVoid(color, root_)));
   const auto tint = FrameTint(color, root_);
-  root_->SetBackground(views::CreateSolidBackground(tint));
   root_->SchedulePaint();
   if (pinned_) {
     sidebar_root_->SetBackground(views::CreateSolidBackground(tint));
@@ -6453,7 +6606,7 @@ std::string WorkspaceShell::ShortcutFor(const ui::Accelerator& accelerator) cons
 void WorkspaceShell::RefreshKeyRegistrations() {
   if (!accelerator_target_ || !widget_) return;
   if (new_tab_button_) for (const auto& shortcut : tools_.shortcuts) if (shortcut.id == "new_tab")
-    SetRowDetail(new_tab_button_.get(),base::UTF8ToUTF16(FormatShortcut(shortcut.accelerator)));
+    SetRowDetail(new_tab_button_.get(),base::UTF8ToUTF16(DisplayShortcut(shortcut.accelerator)));
 #if BUILDFLAG(IS_MAC)
   UpdateWorkspaceMenuShortcuts(tools_.shortcuts);
 #endif
@@ -7025,7 +7178,7 @@ void WorkspaceShell::SetOperationStatus(std::u16string text) {
 }
 void WorkspaceShell::OpenAddress(bool new_tab) {
   command_palette_ = false;
-  address_->SetPlaceholderText(u"Szukaj lub wpisz adres…");
+  address_->SetPlaceholderText(u"Szukaj lub wpisz adres");
   address_->GetViewAccessibility().SetName(u"Szukaj lub wpisz adres");
   new_tab_ = new_tab;
   static_cast<PaletteView*>(palette_root_.get())->Reset();
@@ -7047,7 +7200,7 @@ void WorkspaceShell::OpenAddress(bool new_tab) {
 void WorkspaceShell::OpenCommandPalette() {
   OpenAddress(false);
   command_palette_ = true;
-  address_->SetPlaceholderText(u"Command Center · szukaj lub > polecenie…");
+  address_->SetPlaceholderText(u"Szukaj lub wpisz > i polecenie");
   address_->GetViewAccessibility().SetName(u"Command Center — karty, historia i polecenia");
   address_->SetText(u"");
   search_results_.clear();

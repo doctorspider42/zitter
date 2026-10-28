@@ -172,3 +172,28 @@ Moduł nie zależy od cxx, więc da się go sprawdzić bez budowania Chromium, s
    Panel przestrzeni na nich: nagłówek z kafelkiem, nazwą w DisplayLarge i profilem w
    Label; sekcje „Kolor przestrzeni”, „Ikona”, „Nazwa i profil” (nazwa | profil w dwóch
    kolumnach); marginesy `space-6`, odstęp sekcji 20 px.
+
+## Zgodność z design systemem (2026-10-28, noc)
+
+Raster kompozytora (domyślny) maluje teraz wiersze paska, pigułkę adresu, wiersz
+„Nowa karta”, kropki obszarów i wiersze Command Center tym samym przepisem Rust co
+Metal (`PaintSceneRecipe`), zamiast starego malowania Views.
+
+- Karty: nieaktywne w `ink_muted`, tytuł `body`/`body-strong`, zamknięcie tylko na
+  hover, monogramy z presetów obszarów (`accent` + `on_accent`), foldery z ikoną.
+- „PRZYPIĘTE” w `eyebrow`; adres w `url` (host 600), kłódka w `ok`.
+- Przełącznik obszarów: szyna `bg_void` z obrysem `line`, kropki w kolorze swojego
+  obszaru, aktywny jako pigułka `bg_raised` z kropką 10 px w pierścieniu i nazwą
+  w `label` 600.
+- Rama okna i nagłówek w `bg_void`; przyciski-ikony: `ink` na hover, `accent_ink` na
+  `accent_soft` gdy włączone.
+- Kbd (rodzaj sceny 30); skróty wyświetlane symbolami macOS (`DisplayShortcut`).
+- Command Center: 560 px, kreska ket `|` w `accent_ink`, pole 17 px, wiersze 36 px
+  bez kafelka, zaznaczony w `accent_ink`, stopka na `bg_base` z „↑↓ wybierz, ↵
+  otwórz, esc zamknij”.
+- `--zitter-open-panel` przyjmuje też `sidebar`, `palette`, `settings`, `profiles`.
+
+Zostaje: przyciski, przełącznik i dialogi z `recipe::*`, panele ustawień na `bg_base`,
+grupy w Command Center, tost, loader, strona nowej karty, strona Pobrane, tryb edycji
+adresu, głośnik grającej karty, para w podziale jako jeden wiersz, uchwyt podziału,
+terminologia „przestrzeń”/„obszar”.
