@@ -587,7 +587,9 @@ class WorkspaceShell final : public ui::EventHandler,
   std::unique_ptr<views::WidgetDelegate> tools_delegate_;
   std::unique_ptr<views::Widget> tools_widget_;
   void RequestFolderName(std::string workspace, std::string parent, std::string renamed);
-  void ApplyTheme();
+  // `refresh_controls` false only repaints: a new workspace color must not rebind
+  // or cancel the general settings controls.
+  void ApplyTheme(bool refresh_controls = true);
   void RefreshGeneralControls();
   void RefreshPreferenceViewport();
   void RefreshFormViewports();

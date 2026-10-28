@@ -757,7 +757,7 @@ class AppearanceRow final : public views::View {
   void OnPaint(gfx::Canvas* canvas) override {if(!metal_visible())for(const auto& item:Items(0,0,gfx::RectF(Controls())))PaintSceneRecipe(canvas,item,Font(3));Schedule();}
  private:
   SceneGroupNodes nodes_{this};
-  size_t Count() const{return emoji_?6:4;}
+  size_t Count() const{return emoji_?kWorkspaceEmojis.size():kWorkspacePresetCount;}
   sidebar::ColumnLayout Geometry(int width,int height) const {const auto field=children().size()==Count()+2?children().back()->GetPreferredSize():gfx::Size();return sidebar::appearance_row_layout(width,height,field.width(),field.height(),emoji_);}
   gfx::Rect Controls() const {return children().size()==Count()+2?GetMirroredRect(gfx::Rect(0,0,children()[Count()-1]->bounds().right(),height())):gfx::Rect();}
   std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const {
@@ -5448,7 +5448,7 @@ bool WorkspaceShell::workspace_animation_running() const {
       (tab_scroll_ && tab_scroll_->view()->layer() && tab_scroll_->view()->layer()->GetAnimator()->is_animating());
 }
 
-void WorkspaceShell::ApplyTheme() {
+void WorkspaceShell::ApplyTheme(bool refresh_controls) {
   if (!widget_ || applying_theme_) return;
   applying_theme_ = true;
   std::optional<ui::ColorProviderKey::ColorMode> mode;
@@ -5495,7 +5495,7 @@ void WorkspaceShell::ApplyTheme() {
     suggestion_list_->SetBorder(std::move(border));
   }
   ScheduleMetalPalette();
-  RefreshGeneralControls();
+  if (refresh_controls) RefreshGeneralControls();
   applying_theme_ = false;
 }
 void WorkspaceShell::OnNativeThemeUpdated(ui::NativeTheme*) {
@@ -5963,7 +5963,8 @@ void WorkspaceShell::ApplyAppearance(bool refresh_theme) {
   LastWorkspaceColor() = color;
   for (const auto* window : {widget_.get(), sidebar_widget_.get(), address_widget_.get()})
     if (window) WindowWorkspaceColors()[window->GetTopLevelWidget()] = color;
-  if (refresh_theme || repaint) ApplyTheme();
+  if (refresh_theme) ApplyTheme();
+  else if (repaint) ApplyTheme(/*refresh_controls=*/false);
   if (repaint && sidebar_root_) sidebar_root_->SchedulePaint();
   const auto tint = FrameTint(color, root_);
   root_->SetBackground(views::CreateSolidBackground(tint));

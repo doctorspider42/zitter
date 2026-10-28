@@ -4118,7 +4118,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceContextAppearanceAndD
   auto* colors = shell->workspace_menu()->GetSubmenuModelAt(1);
   ASSERT_TRUE(colors);
   colors->ActivatedAt(1, 0);
-  ASSERT_TRUE(base::test::RunUntil([&] { return shell->workspace_color("personal") == 0xFF55AC89u; }));
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->workspace_color("personal") == 0xFFCC8463u; }));
   EXPECT_EQ("work", window_->active_id());
   shell->BuildWorkspaceMenu("personal");
   EXPECT_TRUE(shell->workspace_menu()->GetSubmenuModelAt(1)->IsItemCheckedAt(1));
