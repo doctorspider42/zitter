@@ -178,6 +178,8 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingCallback<void(size_t)> unsplit;
     // Takes one tab out of the group.
     base::RepeatingCallback<void(size_t)> leave_split;
+    // Closes every tab of the group the given tab belongs to.
+    base::RepeatingCallback<void(size_t)> close_split_tabs;
     base::RepeatingCallback<void(size_t, bool)> move_split_pane;
     base::RepeatingClosure swap_split;
     base::RepeatingCallback<void(bool)> split_vertical;

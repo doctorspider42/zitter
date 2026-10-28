@@ -4653,6 +4653,7 @@ constexpr int kMoveRight = 8;
 constexpr int kToggleVertical = 9;
 constexpr int kCloseTab = 10;
 constexpr int kSeparateSplit = 11;
+constexpr int kCloseSplitTabs = 12;
 constexpr int kLinkPeek = 20;
 constexpr int kLinkNewTab = 21;
 constexpr int kLinkSplit = 22;
@@ -4674,7 +4675,7 @@ constexpr int kEmojiBase = 50;
 constexpr int kProfileCommandBase = 100;
 // Rust plans use the established application command IDs; fail compilation if
 // the native IDs change without updating the Rust UI contract.
-static_assert(kOpenSplit==5&&kCloseSplit==6&&kMoveLeft==7&&kMoveRight==8&&kToggleVertical==9&&kCloseTab==10&&kSeparateSplit==11&&kLinkPeek==20&&kRuleHere==23&&kRemoveRule==24&&kNewFolder==36);
+static_assert(kOpenSplit==5&&kCloseSplit==6&&kMoveLeft==7&&kMoveRight==8&&kToggleVertical==9&&kCloseTab==10&&kSeparateSplit==11&&kCloseSplitTabs==12&&kLinkPeek==20&&kRuleHere==23&&kRemoveRule==24&&kNewFolder==36);
 // Snapshot for the Rust workspace menu, captured when the menu is built/queried.
 sidebar::WorkspaceMenuState WorkspaceMenuStateFor(const ShellState& state,const std::string& workspace,const std::vector<ProfileInfo>& profiles,SkColor color,const std::u16string& emoji) {
   sidebar::WorkspaceMenuState out{};out.ready=state.configuration_ready;out.busy=state.profiles_busy;out.workspace_count=state.workspaces.size();out.color=color;out.emoji=base::UTF16ToUTF8(emoji);
@@ -5093,6 +5094,7 @@ void WorkspaceShell::BuildTabMenu(std::optional<size_t> target_tab,std::string t
       workspace_menu_->AddItem(kSeparateSplit, u"Rozdziel");
       if (state_.split_tabs.size() > 2) workspace_menu_->AddItem(kCloseSplit, u"Wyjmij kartę ze splitu");
       workspace_menu_->AddItem(kCloseTab, u"Zamknij kartę");
+      workspace_menu_->AddItem(kCloseSplitTabs, u"Zamknij wszystkie karty w splicie");
     } else {
       workspace_menu_->AddItem(kOpenSplit, u"Otwórz obok w Split View");
     }
@@ -5135,7 +5137,7 @@ bool WorkspaceShell::IsCommandIdChecked(int command_id) const {
   return false;
 }
 bool WorkspaceShell::IsCommandIdEnabled(int command_id) const {
-  if(metal_sidebar_&&command_id>=kOpenSplit&&command_id<=kSeparateSplit)return RustTabCommandEnabled(command_id);
+  if(metal_sidebar_&&command_id>=kOpenSplit&&command_id<=kCloseSplitTabs)return RustTabCommandEnabled(command_id);
   if(metal_sidebar_&&sidebar::workspace_menu_command(command_id,menu_profiles_.size()))return sidebar::workspace_menu_enabled(command_id,RustWorkspaceMenuState());
   if(metal_sidebar_&&command_id>=kNewFolder&&command_id<=kDeleteFolder)return sidebar::folder_menu_enabled(command_id,RustFolderMenuState());
   if(metal_sidebar_&&((command_id>=kLinkPeek&&command_id<=kRouteSubmenu)||(command_id>=kRouteBase&&command_id<kRouteBase+static_cast<int>(route_workspaces_.size()))))
@@ -5308,6 +5310,7 @@ void WorkspaceShell::QueueTabCommand(int command) {
       case sidebar::SidebarAction::OpenSplit:if(target.tab)shell->callbacks_.split_tab.Run(*target.tab);else shell->callbacks_.split_pin.Run(target.pin);break;
       case sidebar::SidebarAction::CloseSplit:shell->callbacks_.leave_split.Run(*target.tab);break;
       case sidebar::SidebarAction::Separate:shell->callbacks_.unsplit.Run(*target.tab);break;
+      case sidebar::SidebarAction::CloseGroup:shell->callbacks_.close_split_tabs.Run(*target.tab);break;
       case sidebar::SidebarAction::MoveEarlier:case sidebar::SidebarAction::MoveLater:shell->callbacks_.move_split_pane.Run(*target.tab,action==sidebar::SidebarAction::MoveLater);break;
       case sidebar::SidebarAction::ToggleOrientation:shell->callbacks_.split_vertical.Run(!shell->state_.split_vertical);break;
       case sidebar::SidebarAction::CloseTab:shell->callbacks_.close_tab.Run(*target.tab);break;
@@ -5331,7 +5334,7 @@ void WorkspaceShell::QueueSplit(std::optional<size_t> tab, std::string pin) {
 }
 
 void WorkspaceShell::ExecuteCommand(int command_id, int) {
-  if(metal_sidebar_&&command_id>=kOpenSplit&&command_id<=kSeparateSplit){QueueTabCommand(command_id);return;}
+  if(metal_sidebar_&&command_id>=kOpenSplit&&command_id<=kCloseSplitTabs){QueueTabCommand(command_id);return;}
   if(metal_sidebar_&&command_id>=kNewFolder&&command_id<=kDeleteFolder){
     // Rust revalidates readiness and captures the workspace/folder target.
     const auto action=sidebar::folder_menu_action(command_id,RustFolderMenuState());using C=sidebar::FolderMenuCommand;
@@ -5394,12 +5397,13 @@ void WorkspaceShell::ExecuteCommand(int command_id, int) {
         }, weak_factory_.GetWeakPtr(), state_.workspace_id, command_id, *context_tab_));
     return;
   }
-  if (command_id == kCloseSplit || command_id == kSeparateSplit) {
+  if (command_id == kCloseSplit || command_id == kSeparateSplit || command_id == kCloseSplitTabs) {
     if (!context_tab_) return;
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(
         [](base::WeakPtr<WorkspaceShell> shell, std::string workspace, int command, size_t tab) {
           if (!shell || shell->state_.workspace_id != workspace) return;
           if (command == kSeparateSplit) shell->callbacks_.unsplit.Run(tab);
+          else if (command == kCloseSplitTabs) shell->callbacks_.close_split_tabs.Run(tab);
           else shell->callbacks_.leave_split.Run(tab);
         }, weak_factory_.GetWeakPtr(), state_.workspace_id, command_id, *context_tab_));
     return;

@@ -154,7 +154,7 @@ mod ffi {
     #[derive(Debug)]
     enum WorkspaceMenuCommand { None, AssignProfile, NewProfile, EditProfile, Settings, Remove, Color, Emoji, ClearEmoji, CustomColor, CustomEmoji }
     struct WorkspaceMenuAction { command: WorkspaceMenuCommand, workspace: String, profile: String, color: u32, emoji: String }
-    enum SidebarAction { None, OpenSplit, CloseSplit, MoveEarlier, MoveLater, ToggleOrientation, CloseTab, Separate }
+    enum SidebarAction { None, OpenSplit, CloseSplit, MoveEarlier, MoveLater, ToggleOrientation, CloseTab, Separate, CloseGroup }
     // kind: 0 row, 1 section label, 2 split pair (three consecutive items), 3 gap.
     // A split group (kind 2) consumes 1 + members consecutive items.
     struct PreviewRow { index: usize, kind: u32, depth: i32, height: i32, members: usize }
@@ -1636,11 +1636,11 @@ fn tab_menu_position(s:&ffi::TabMenuState)->Option<usize>{if !s.valid||!s.has_ta
 fn tab_menu_enabled(command:u32,s:&ffi::TabMenuState)->bool {
     if !s.valid||!s.ready||s.busy{return false;}
     let position=tab_menu_position(s);let paired=position.is_some();
-    match command {5=>!paired,6|9|11=>paired,7=>position.is_some_and(|p|p>0),8=>position.is_some_and(|p|p+1<s.members.len()),10=>s.has_tab&&s.tab_count>1,_=>false}
+    match command {5=>!paired,6|9|11|12=>paired,7=>position.is_some_and(|p|p>0),8=>position.is_some_and(|p|p+1<s.members.len()),10=>s.has_tab&&s.tab_count>1,_=>false}
 }
 fn tab_menu_action(command:u32,s:&ffi::TabMenuState)->ffi::SidebarAction {
     use ffi::SidebarAction as A;if !tab_menu_enabled(command,s){return A::None;}
-    match command{5=>A::OpenSplit,6=>A::CloseSplit,7=>A::MoveEarlier,8=>A::MoveLater,9=>A::ToggleOrientation,10=>A::CloseTab,11=>A::Separate,_=>A::None}
+    match command{5=>A::OpenSplit,6=>A::CloseSplit,7=>A::MoveEarlier,8=>A::MoveLater,9=>A::ToggleOrientation,10=>A::CloseTab,11=>A::Separate,12=>A::CloseGroup,_=>A::None}
 }
 fn tab_context_menu(s:&ffi::TabMenuState)->Vec<ffi::TabMenuEntry> {
     let mut entries=Vec::new();let mut add=|command,label:&str|entries.push(ffi::TabMenuEntry{command,label:label.into()});
@@ -1649,7 +1649,7 @@ fn tab_context_menu(s:&ffi::TabMenuState)->Vec<ffi::TabMenuEntry> {
         add(7,if s.vertical{"Przesuń w górę"}else{"Przesuń w lewo"});add(8,if s.vertical{"Przesuń w dół"}else{"Przesuń w prawo"});add(0,"");
         add(9,if s.vertical{"Podział poziomy (obok siebie)"}else{"Podział pionowy (jedna nad drugą)"});add(0,"");add(11,"Rozdziel");
         // With two panes, taking one out is the same as separating them.
-        if s.members.len()>2{add(6,"Wyjmij kartę ze splitu");}add(10,"Zamknij kartę");
+        if s.members.len()>2{add(6,"Wyjmij kartę ze splitu");}add(10,"Zamknij kartę");add(12,"Zamknij wszystkie karty w splicie");
     } else {add(5,"Otwórz obok w Split View");}
     if s.http{add(0,"");add(23,"Zawsze otwieraj tę domenę tutaj");add(24,"Usuń regułę dla tej domeny");}
     entries
@@ -4931,17 +4931,17 @@ mod tests {
         assert!(command_catalogue(&c,"nonexistent").is_empty());assert_eq!(command_fold("ĄĆĘŁŃÓŚŹŻ Żółć"),"acelnoszz zolc");
     }
     #[test] fn tab_menu_preserves_order_labels_and_orientation() {
-        let mut s=menu_state();let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,0,20,7,8,0,9,0,11,10,0,23,24]);assert_eq!(entries[3].label,"Przesuń w lewo");assert_eq!(entries[8].label,"Rozdziel");
+        let mut s=menu_state();let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,0,20,7,8,0,9,0,11,10,12,0,23,24]);assert_eq!(entries[3].label,"Przesuń w lewo");assert_eq!(entries[8].label,"Rozdziel");assert_eq!(entries[10].label,"Zamknij wszystkie karty w splicie");
         s.vertical=true;let entries=tab_context_menu(&s);assert_eq!(entries[3].label,"Przesuń w górę");assert_eq!(entries[6].label,"Podział poziomy (obok siebie)");
         // Three or more panes can also lose a single member.
-        s.members=vec![3,7,9];let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,0,20,7,8,0,9,0,11,6,10,0,23,24]);
+        s.members=vec![3,7,9];let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,0,20,7,8,0,9,0,11,6,10,12,0,23,24]);
         s.has_tab=false;s.http=false;let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,0,20,5]);
     }
     #[test] fn tab_menu_moves_middle_panes_both_ways_and_separates_groups() {
         use ffi::SidebarAction as A;let mut s=menu_state();s.members=vec![3,7,9];
         assert!(matches!(tab_menu_action(7,&s),A::MoveEarlier));assert!(matches!(tab_menu_action(8,&s),A::MoveLater));
-        assert!(matches!(tab_menu_action(11,&s),A::Separate));assert!(matches!(tab_menu_action(6,&s),A::CloseSplit));
-        s.tab=9;assert!(matches!(tab_menu_action(8,&s),A::None));s.tab=4;assert!(matches!(tab_menu_action(11,&s),A::None));assert!(matches!(tab_menu_action(5,&s),A::OpenSplit));
+        assert!(matches!(tab_menu_action(11,&s),A::Separate));assert!(matches!(tab_menu_action(6,&s),A::CloseSplit));assert!(matches!(tab_menu_action(12,&s),A::CloseGroup));
+        s.tab=9;assert!(matches!(tab_menu_action(8,&s),A::None));s.tab=4;assert!(matches!(tab_menu_action(11,&s),A::None));assert!(matches!(tab_menu_action(12,&s),A::None));assert!(matches!(tab_menu_action(5,&s),A::OpenSplit));
         s.members=vec![4];assert!(matches!(tab_menu_action(11,&s),A::None));
     }
     #[test] fn reorder_target_picks_nearest_edge_folders_and_pin_section() {

@@ -33,6 +33,7 @@
 #include "components/prefs/pref_service.h"
 #include "third_party/blink/public/common/page/page_zoom.h"
 
+#include "base/auto_reset.h"
 #include "base/check.h"
 #include "base/files/file_util.h"
 #include "base/files/important_file_writer.h"
@@ -342,6 +343,7 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   callbacks.split_tab = base::BindRepeating(&WorkspaceWindow::SplitTab, base::Unretained(this));
   callbacks.unsplit = base::BindRepeating(&WorkspaceWindow::Unsplit, base::Unretained(this));
   callbacks.leave_split = base::BindRepeating(&WorkspaceWindow::RemoveFromSplit, base::Unretained(this));
+  callbacks.close_split_tabs = base::BindRepeating(&WorkspaceWindow::CloseSplitTabs, base::Unretained(this));
   callbacks.move_split_pane = base::BindRepeating(&WorkspaceWindow::MoveSplitPane, base::Unretained(this));
   callbacks.move_tab = base::BindRepeating(&WorkspaceWindow::MoveTab, base::Unretained(this));
   callbacks.pin_tab = base::BindRepeating(&WorkspaceWindow::PinTab, base::Unretained(this));
@@ -1085,7 +1087,7 @@ void WorkspaceWindow::CloseWorkspaceTab(std::string_view workspace_id, size_t in
         for (size_t i = 0; i < host.tabs.size(); ++i) if (host.tabs[i]->web_contents() == page.get()) { w->CloseWorkspaceTab(id, i); return; }
     }, weak_factory_.GetWeakPtr(), std::string(workspace_id), page->GetWeakPtr()))) return;
     if (configuration_ready_ && !restoring_session_ && !closing_) {
-      if (host.workspace_id == active_id()) SaveSnapshot("Przed zamknięciem karty", true);
+      if (host.workspace_id == active_id() && !closing_split_tabs_) SaveSnapshot("Przed zamknięciem karty", true);
       RecordClosedTab(host, index);
     }
     views::WebView* closing = host.tabs[index];
@@ -1270,6 +1272,27 @@ void WorkspaceWindow::RemoveFromSplit(size_t index) {
     host.active_tab = std::find(host.tabs.begin(), host.tabs.end(), host.view) - host.tabs.begin();
     RefreshPanes(); UpdateShell();
     host.view->RequestFocus();
+    return;
+  }
+}
+void WorkspaceWindow::CloseSplitTabs(size_t index) {
+  if (!configuration_ready_ || profiles_busy_) return;
+  for (auto& host : hosts_) {
+    if (host.workspace_id != active_id() || index >= host.tabs.size() || !InSplit(host, host.tabs[index])) continue;
+    // Every page with a beforeunload handler is asked once, before any closes.
+    std::vector<content::WebContents*> pages;
+    for (const auto& member : host.split) if (auto* page = member->web_contents()) pages.push_back(page);
+    if (GuardPages(pages, base::BindOnce(&WorkspaceWindow::CloseSplitTabs, weak_factory_.GetWeakPtr(), index))) return;
+    SaveSnapshot("Przed zamknięciem kart Split View", true);
+    const std::vector<views::WebView*> members(host.split.begin(), host.split.end());
+    const bool fresh = members.size() == host.tabs.size();
+    if (fresh) host.tabs.push_back(CreatePage(host.profile));
+    base::AutoReset<bool> quiet(&closing_split_tabs_, true);
+    for (auto* member : members) {
+      const auto found = std::find(host.tabs.begin(), host.tabs.end(), member);
+      if (found != host.tabs.end()) CloseWorkspaceTab(host.workspace_id, found - host.tabs.begin());
+    }
+    if (fresh) { SelectTab(host.tabs.size() - 1); shell_->OpenAddress(false); }
     return;
   }
 }

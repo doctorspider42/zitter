@@ -135,6 +135,9 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void Unsplit(size_t index);
   // Takes one tab out of the group; the remaining pages stay together.
   void RemoveFromSplit(size_t index);
+  // Closes every tab of the group containing `index` (a new tab remains if
+  // the group held them all).
+  void CloseSplitTabs(size_t index);
   // Moves a member one pane earlier or later (Arc's Move Left / Move Right).
   void MoveSplitPane(size_t index, bool later);
   // Reverses the pane order.
@@ -335,6 +338,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   // Shared across hosts: keydown can switch the destination of keyup.
   bool suppress_shortcut_char_ = false;
   bool closing_ = false;
+  bool closing_split_tabs_ = false;  // One snapshot covers the whole group.
   bool restoring_session_ = false;
   std::string session_json_;
   base::DictValue time_machine_;

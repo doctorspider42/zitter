@@ -5210,6 +5210,25 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitViewGroupsMoreThanTwoTabs
   menu->ActivatedAt(*separate, 0);
   ASSERT_TRUE(base::test::RunUntil([&] { return !window_->split(); }));
   EXPECT_EQ(pages[2], window_->contents("work"));
+  // Closing the whole group from the menu leaves the tab outside it.
+  window_->SelectTab(0);
+  ASSERT_TRUE(window_->SplitTab(1));
+  shell->BuildTabMenu(1);
+  menu = shell->workspace_menu();
+  std::optional<size_t> close_all;
+  for (size_t i = 0; i < menu->GetItemCount(); ++i) if (menu->GetLabelAt(i) == u"Zamknij wszystkie karty w splicie") close_all = i;
+  ASSERT_TRUE(close_all);
+  menu->ActivatedAt(*close_all, 0);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->tab_count("work") == 1; }));
+  EXPECT_FALSE(window_->split());
+  EXPECT_EQ(pages[2], window_->contents("work"));
+  // A group holding every tab leaves one new tab behind.
+  ASSERT_TRUE(window_->SplitTab(0));
+  ASSERT_EQ(2u, window_->tab_count("work"));
+  window_->CloseSplitTabs(0);
+  EXPECT_EQ(1u, window_->tab_count("work"));
+  EXPECT_FALSE(window_->split());
+  EXPECT_NE(pages[2], window_->contents("work"));
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarMovesTabsAndPinsAcrossSections) {
