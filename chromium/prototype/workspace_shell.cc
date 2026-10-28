@@ -1310,8 +1310,9 @@ struct RowRecipe {
     int height = 34;
     views::Button::PressedCallback close;
     base::RepeatingCallback<void(gfx::Point)> drop;
-    // Screen pointer while a drop-enabled row is dragged; nullopt when it ends.
-    base::RepeatingCallback<void(std::optional<gfx::Point>)> drag;
+    // Row, row-local grab point and screen pointer while a drop-enabled row is
+    // dragged; the pointer is nullopt when the drag ends.
+    base::RepeatingCallback<void(views::View*,gfx::Point,std::optional<gfx::Point>)> drag;
   };
   static void PaintPreview(gfx::Canvas* canvas, const gfx::Rect& rect, const Spec& spec, const views::View* theme) {
     gfx::ScopedCanvas scoped(canvas); canvas->Translate(rect.OffsetFromOrigin());
@@ -1483,13 +1484,15 @@ class RustRowView final : public views::View {
   void ChildChanged(){UpdateWatch();if(changed_)changed_.Run();}
   void UpdateWatch(){if(!watch_)return;bool pending=state_->action_pending();if(close_)if(auto* action=views::AsViewClass<RustActionView>(close_.get()))pending=pending||action->Pending();watch_.Run(this,pending?base::BindRepeating(&RustRowView::SyncViewport,weak_factory_.GetWeakPtr()):base::RepeatingClosure());}
   bool Pointer(sidebar::PointerPhase phase,const ui::MouseEvent& event){
+    if(phase==sidebar::PointerPhase::Press)grab_=event.location();
     const bool handled=PointerInput(phase,event);
-    if(phase==sidebar::PointerPhase::Drag&&spec_.drag&&state_->action_row_dragging()){dragging_=true;auto drag=spec_.drag;drag.Run(display::Screen::Get()->GetCursorScreenPoint());}
+    if(phase==sidebar::PointerPhase::Drag&&spec_.drag&&state_->action_row_dragging()){dragging_=true;auto drag=spec_.drag;drag.Run(this,grab_,display::Screen::Get()->GetCursorScreenPoint());}
     else if(phase==sidebar::PointerPhase::Release)EndDrag();
     return handled;
   }
-  void EndDrag(){if(!dragging_)return;dragging_=false;if(spec_.drag){auto drag=spec_.drag;drag.Run(std::nullopt);}}
+  void EndDrag(){if(!dragging_)return;dragging_=false;if(spec_.drag){auto drag=spec_.drag;drag.Run(this,grab_,std::nullopt);}}
   bool dragging_=false;
+  gfx::Point grab_;
   bool PointerInput(sidebar::PointerPhase phase,const ui::MouseEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;return Apply(state_->action_row_pointer(phase,event.x(),event.y(),phase!=sidebar::PointerPhase::Exit&&HitTestPoint(event.location())&&GetVisibleBounds().Contains(event.location()),event.IsLeftMouseButton(),Interactive(),!spec_.drop.is_null()),event,before);}
   bool Key(bool pressed,const ui::KeyEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;return Apply(state_->action_key(pressed,event.key_code()==ui::VKEY_SPACE?1:event.key_code()==ui::VKEY_RETURN?2:0,true,Interactive()),event,before);}
   bool Apply(const sidebar::RowInputResult& result,const ui::Event& event,sidebar::RowVisual before){UpdateClose();UpdateWatch();if(result.visual!=before)SchedulePaint();const bool handled=result.handled;if(result.action==sidebar::RowAction::Activate&&callback_){callback_.Run(event);return handled;}if(result.action==sidebar::RowAction::Drop&&spec_.drop){auto drop=spec_.drop;drop.Run(display::Screen::Get()->GetCursorScreenPoint());return handled;}return handled;}
@@ -4011,6 +4014,7 @@ void WorkspaceShell::UpdateMetalSidebar() {
   }
   std::vector<sidebar::Item> items;
   items.reserve(projection.nodes.size());
+  std::optional<size_t> dragged_item;
   for (const auto& projected : projection.nodes) {
     auto* view = native_views[projected.index];
     auto rect = projected.bounds; rect.Offset(list_origin);
@@ -4020,7 +4024,10 @@ void WorkspaceShell::UpdateMetalSidebar() {
     item.clip = {clip.x(), clip.y(), clip.width(), clip.height()};
     if (IsRow(view)) {
       auto* row=view;
-      if(auto* rust_row=views::AsViewClass<RustRowView>(row)){auto scene=rust_row->SidebarScene(rect,clip);if(scene.valid){items.push_back(std::move(scene.item));continue;}}
+      if(auto* rust_row=views::AsViewClass<RustRowView>(row)){auto scene=rust_row->SidebarScene(rect,clip);if(scene.valid){
+        // The row being dragged stays in place as a faded placeholder.
+        if(row==drag_row_.view()){dragged_item=items.size();auto& i=scene.item;i.ink=SkColorSetA(i.ink,0x59);i.badge=SkColorSetA(i.badge,0x59);i.fill=SkColorSetA(i.fill,SkColorGetA(i.fill)/3);i.close_visible=false;}
+        items.push_back(std::move(scene.item));continue;}}
       const auto& spec = RowSpec(row);
       const bool hovered=RowHovered(row);
       SkColor fill = SK_ColorTRANSPARENT;
@@ -4044,6 +4051,26 @@ void WorkspaceShell::UpdateMetalSidebar() {
       item.kind=2; item.fill=SkColorSetA(Tone(view,kCard),0x33);
       items.push_back(std::move(item));
     }
+  }
+  // Rows make room at the drop target, and the dragged row leaves its own slot
+  // (a Split View tile only fades: its group keeps the row).
+  std::optional<float> drop_gap;float gap_height=0;
+  if (sidebar_reorder_ && !sidebar_reorder_->into_folder && dragged_item && drag_point_) {
+    const bool tile=items[*dragged_item].tile;const float dragged_y=items[*dragged_item].y;
+    gap_height=(tile?34.f:items[*dragged_item].height)+2;
+    const float target=sidebar_reorder_->indicator.y()-bounds.y()+1;
+    const auto list=gfx::RectF(list_origin.x(),list_origin.y(),list_bounds.width(),list_bounds.height());
+    for (size_t i=0;i<items.size();++i) {
+      if (i==*dragged_item) continue;
+      auto& item=items[i];
+      const float shift=(!tile&&item.y>dragged_y?-gap_height:0.f)+(item.y>=target?gap_height:0.f);
+      if (!shift) continue;
+      item.y+=shift;
+      gfx::RectF clip(item.clip.x,item.clip.y+shift,item.clip.width,item.clip.height);clip.Intersect(list);
+      item.clip={clip.x(),clip.y(),clip.width(),clip.height()};
+    }
+    drop_gap=!tile&&target>dragged_y?target-gap_height:target;
+    if (!tile) items.erase(items.begin()+*dragged_item);
   }
   for (auto* control : {static_cast<views::View*>(url_pill_.get()),new_tab_button_.get()}) {
     if (!control->IsDrawn()) continue;
@@ -4113,13 +4140,29 @@ void WorkspaceShell::UpdateMetalSidebar() {
     items.push_back(std::move(item));
   }
   if (sidebar_reorder_) {
-    // Drop target: a line between rows, or a wash over the folder that receives the row.
-    auto rect=sidebar_reorder_->indicator;rect.Offset(-bounds.x(),-bounds.y());
+    // Drop target: the open slot where the row lands, a wash over the folder
+    // that receives it, or a line when the row has no slot to show.
+    auto rect=gfx::RectF(sidebar_reorder_->indicator);rect.Offset(-bounds.x(),-bounds.y());
+    if (drop_gap) rect=gfx::RectF(rect.x(),*drop_gap+1,rect.width(),gap_height-4);
     const auto list=gfx::RectF(list_origin.x(),list_origin.y(),list_bounds.width(),list_bounds.height());
-    sidebar::Item item{};item.kind=sidebar_reorder_->into_folder?24:14;item.active=true;
-    item.fill=SkColorSetA(workspace_color(state_.workspace_id),sidebar_reorder_->into_folder?0x40:0xFF);
+    sidebar::Item item{};item.kind=sidebar_reorder_->into_folder||drop_gap?24:14;item.active=true;
+    item.fill=SkColorSetA(workspace_color(state_.workspace_id),drop_gap?0x2E:sidebar_reorder_->into_folder?0x40:0xFF);
     item.x=rect.x();item.y=rect.y();item.width=rect.width();item.height=rect.height();
     item.clip={list.x(),list.y(),list.width(),list.height()};items.push_back(std::move(item));
+  }
+  if (auto* rust_row=views::AsViewClass<RustRowView>(drag_row_.view()); rust_row && drag_point_) {
+    // A lifted copy of the dragged row follows the pointer above everything else.
+    const gfx::Point origin=*drag_point_-drag_grab_.OffsetFromOrigin()-bounds.OffsetFromOrigin();
+    const gfx::RectF ghost(origin.x(),origin.y(),rust_row->width(),rust_row->height());
+    const gfx::RectF all(gfx::SizeF(bounds.size()));
+    auto scene=rust_row->SidebarScene(ghost,all);
+    if(scene.valid) {
+      sidebar::Item shadow{};shadow.kind=24;shadow.active=true;shadow.fill=SkColorSetA(SK_ColorBLACK,IsDark(root_)?0x59:0x1F);
+      shadow.x=ghost.x()+1;shadow.y=ghost.y()+3;shadow.width=ghost.width();shadow.height=ghost.height();shadow.clip={all.x(),all.y(),all.width(),all.height()};
+      items.push_back(std::move(shadow));
+      auto& i=scene.item;i.fill=SkColorSetA(Tone(root_,kCard),0xF2);i.active=true;i.hovered=false;i.focused=false;i.close_visible=false;
+      items.push_back(std::move(i));
+    }
   }
   const SkColor tint = FrameTint(workspace_color(state_.workspace_id), root_);
   auto* sidebar=static_cast<SidebarView*>(sidebar_root_.get());auto* grip=sidebar->grip.get();auto* handle=sidebar->grip_handle.get();
@@ -5169,11 +5212,10 @@ std::optional<WorkspaceShell::SidebarReorder> WorkspaceShell::SidebarReorderAt(g
   for(const auto& pin:state_.pins){if(pin.parent_id!=meta.parent)continue;if(next){out.before_pin=pin.id;break;}next=pin.id==meta.pin;}
   return out;
 }
-void WorkspaceShell::HandleSidebarDrag(std::optional<gfx::Point> point) {
-  auto next=point?SidebarReorderAt(*point):std::nullopt;
-  const bool changed=next.has_value()!=sidebar_reorder_.has_value()||(next&&(next->indicator!=sidebar_reorder_->indicator||next->into_folder!=sidebar_reorder_->into_folder));
-  sidebar_reorder_=std::move(next);
-  if(changed)ScheduleMetalSidebar();
+void WorkspaceShell::HandleSidebarDrag(views::View* row,gfx::Point grab,std::optional<gfx::Point> point) {
+  sidebar_reorder_=point?SidebarReorderAt(*point):std::nullopt;
+  drag_row_.SetView(point?row:nullptr);drag_grab_=grab;drag_point_=point;
+  ScheduleMetalSidebar();
 }
 void WorkspaceShell::HandleSidebarDrop(std::string workspace,std::optional<size_t> tab,std::array<uint64_t,2> identity,std::string pin,gfx::Point point) {
   if(workspace!=state_.workspace_id)return;

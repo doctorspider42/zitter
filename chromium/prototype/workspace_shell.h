@@ -33,6 +33,7 @@
 #include "ui/views/widget/widget_delegate.h"
 #include "ui/views/widget/widget_observer.h"
 #include "ui/native_theme/native_theme_observer.h"
+#include "ui/views/view_tracker.h"
 #include "url/gurl.h"
 
 namespace zitter::sidebar { struct Item; struct PreferenceCatalogue; struct WorkspaceMenuState; struct FolderMenuState; enum class FormCommand : uint32_t; struct FormCommandBinding; }
@@ -669,9 +670,13 @@ class WorkspaceShell final : public ui::EventHandler,
     size_t before_tab = 0;           // Tab target: host tab index (or count to append).
   };
   std::optional<SidebarReorder> SidebarReorderAt(gfx::Point screen_point) const;
-  // Live drag feedback; nullopt ends the drag.
-  void HandleSidebarDrag(std::optional<gfx::Point> screen_point);
+  // Live drag feedback for `row`, grabbed at `grab` (row-local); nullopt ends the drag.
+  void HandleSidebarDrag(views::View* row, gfx::Point grab, std::optional<gfx::Point> screen_point);
   std::optional<SidebarReorder> sidebar_reorder_;
+  // The dragged row follows the pointer as a lifted copy; the original dims.
+  views::ViewTracker drag_row_;
+  gfx::Point drag_grab_;
+  std::optional<gfx::Point> drag_point_;
   void QueueTabCommand(int command);
   bool RustTabCommandEnabled(int command) const;
   // Menu for context_tab_/context_pin_, at a screen point.
