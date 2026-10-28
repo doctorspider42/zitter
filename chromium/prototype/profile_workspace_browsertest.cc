@@ -505,8 +505,16 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PerformanceUiInteraction) {
     ActivateSidebarRow(folder); drain();
     if (trial >= 0) sample("ui_folder_toggle_ms", trial, (base::TimeTicks::Now() - start).InMillisecondsF());
     start = base::TimeTicks::Now();
-    shell->OpenCommandPalette(); drain();
+    shell->OpenCommandPalette();
+    const auto shown = base::TimeTicks::Now();
+    base::RunLoop().RunUntilIdle();
+    const auto idle = base::TimeTicks::Now();
+    drain();
     const auto opened = base::TimeTicks::Now();
+    if (trial >= 0) {
+      sample("ui_palette_open_call_ms", trial, (shown - start).InMillisecondsF());
+      sample("ui_palette_open_idle_ms", trial, (idle - shown).InMillisecondsF());
+    }
     SetPaletteQuery(u"przes"); drain();
     const auto queried = base::TimeTicks::Now();
     shell->CloseOverlays(true); drain();

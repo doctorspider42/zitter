@@ -57,16 +57,15 @@ ramki dialogów, fokus/AX/IME, dostarczanie zdarzeń oraz usługi przeglądarki.
 
 1. **Akceptacja ręczna (wymaga użytkownika):** IME i okna kandydatów, bidi/RTL,
    VoiceOver, trackpad/gesty, skala Retina, motywy, utrata drawable/GPU, fallback.
-2. **Porównanie wydajności — wykonane pierwsze, otwarte optymalizacje.** Nowy test
+2. **Porównanie wydajności — wykonane, otwarte optymalizacje.** Test
    `PerformanceUiInteraction` + `tools/benchmark_ui_interaction.py` (prawdziwa aplikacja,
-   naprzemienne rundy). Wynik ([raport](benchmarks/rust-ui-interaction-performance-2026-10-28.json)):
-   wybór karty i folder bez różnic; otwarcie palety +1 klatka; CPU procesu przeglądarki
-   +~24%; footprint przeglądarki ~260 vs ~113 MB, z czego ~106 MB to stały koszt
-   sterownika przy pierwszym przebiegu renderowania Metal w procesie (odtworzony sondą);
-   całe drzewo procesów +12%. Przewagi wydajnościowej Rust/Metal **nie** ma. Do zbadania:
-   źródło dodatkowej klatki przy otwarciu palety oraz renderowanie poza procesem
-   przeglądarki (proces GPU) lub ścieżka CPU dla małych powierzchni. Brak pomiaru
-   prezentacji WindowServer (wymaga zgody na nagrywanie ekranu).
+   naprzemienne rundy, [raport](benchmarks/rust-ui-interaction-performance-2026-10-28.json)):
+   mediany opóźnień identyczne we wszystkich operacjach (p95 otwarcia palety +1 klatka);
+   CPU procesu przeglądarki +~26%; footprint przeglądarki ~262 vs ~112 MB, z czego
+   ~106 MB to stały koszt sterownika przy pierwszym przebiegu renderowania Metal w
+   procesie (odtworzony sondą); całe drzewo procesów +12%. Przewagi wydajnościowej
+   Rust/Metal **nie** ma. Do zbadania: renderowanie przez proces GPU zamiast
+   `MTLDevice` w procesie przeglądarki, tańsze odciski klatek/klucze tekstu.
 3. **Wydanie:** podpisany bundle odpowiadający zweryfikowanemu commitowi, sesje/profile,
    rollback, manifest licencji i informacje upstream. Rust/Metal pozostaje opt-in do
    zakończenia akceptacji.

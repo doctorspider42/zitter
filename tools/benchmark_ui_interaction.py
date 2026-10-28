@@ -30,7 +30,7 @@ def run(binary, backend, iterations, tabs, log):
         raise SystemExit(f"{backend} run failed ({status}); see {log}")
     samples = [json.loads(m) for m in re.findall(r"ZITTER_PERF (\{[^\n]*\})", text)]
     resources = [json.loads(m) for m in re.findall(r"ZITTER_UI_RESOURCE (\{[^\n]*\})", text)]
-    if len(resources) != 1 or len(samples) != 7 * iterations:
+    if len(resources) != 1 or len(samples) != 9 * iterations:
         raise SystemExit(f"Unexpected sample count in {log}")
     return samples, resources[0]
 
