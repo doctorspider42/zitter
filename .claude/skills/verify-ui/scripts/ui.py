@@ -9,8 +9,8 @@
   ui.py open-space-panel            click the sidebar's settings button (prefer launch --open-panel)
   ui.py shot OUT.png [--window W]   capture one app window: main (default), sidebar, panel, or an id
 
-Screenshots capture only the app's own windows (screencapture -l), never the rest of
-the screen. Coordinates are macOS points; a Retina capture is 2x.
+Screenshots capture the app's own window (screencapture -l), or for a child panel
+just its area of the screen. Coordinates are macOS points; a Retina capture is 2x.
 """
 import argparse, json, os, subprocess, sys, time
 from pathlib import Path
@@ -97,20 +97,20 @@ def open_space_panel(_):
 
 def find(name):
     shown = [w for w in windows() if w["onscreen"]]
-    if name == "main":
-        return main_window()
-    if name == "sidebar":
-        return min((w for w in shown if w["width"] < 400 and w["height"] > 500), key=lambda w: w["x"], default=None)
-    if name == "panel":
-        return next((w for w in shown if w["width"] == 440), None)
-    return next((w for w in shown if str(w["id"]) == name), None)
+    # Window titles name the app's windows; sizes change with the main window.
+    titles = {"main": "Zitter", "sidebar": "Zitter — Karty", "panel": "Zitter — Ustawienia przestrzeni"}
+    return next((w for w in shown if w["title"] == titles.get(name) or str(w["id"]) == name), None)
 
 
 def shot(a):
     w = find(a.window)
     if not w:
         sys.exit(f"No {a.window} window on screen; list them with `ui.py windows`.")
-    subprocess.run(["screencapture", "-x", "-o", "-l", str(w["id"]), a.out], check=True)
+    # Some panels are child windows that -l cannot capture alone; then take their
+    # area of the screen (the app is frontmost after launch).
+    if subprocess.run(["screencapture", "-x", "-o", "-l", str(w["id"]), a.out], capture_output=True).returncode:
+        area = ",".join(str(round(w[k])) for k in ("x", "y", "width", "height"))
+        subprocess.run(["screencapture", "-x", "-R", area, a.out], check=True)
     print(a.out)
 
 
@@ -125,6 +125,6 @@ r = sub.add_parser("rightclick"); r.add_argument("x", type=float); r.add_argumen
 r.set_defaults(run=lambda a: (activate(), drive("rightclick", a.x, a.y)))
 sub.add_parser("open-space-panel").set_defaults(run=open_space_panel)
 s = sub.add_parser("shot"); s.add_argument("out"); s.add_argument("--window", default="main",
-    help="main, sidebar, panel (the 440 pt space panel) or a window id"); s.set_defaults(run=shot)
+    help="main, sidebar, panel (the space panel) or a window id"); s.set_defaults(run=shot)
 args = parser.parse_args()
 args.run(args)

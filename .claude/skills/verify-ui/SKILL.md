@@ -44,8 +44,8 @@ against the design, and fixed until it matches.
    - Synthetic clicks (`ui.py click X Y`) move the user's real mouse. They are dropped
      while the app is not frontmost, so use them only for what a switch can't reach.
      Keep in mind a stray click edits the test profile (an emoji, a selected tab).
-   - `shot` captures only the app's own window (`screencapture -l`), never the user's
-     other windows. Keep screenshots in `build/screens/`, which git ignores.
+   - `shot` captures only the app's own window (`screencapture -l`), or for a child
+     panel just its area of the screen; it never captures the whole screen. Keep screenshots in `build/screens/`, which git ignores.
 
 4. **Compare with the design. Read it, don't eyeball it.** Find the design first:
    - the artifact the user approved (for the space panel:
@@ -87,10 +87,15 @@ against the design, and fixed until it matches.
 
 ## Notes
 
+- A sleeping display makes every capture fail ("could not create image"). Check
+  `system_profiler SPDisplaysDataType | grep -i asleep`; `caffeinate -u -t 15 &`
+  wakes it for the shot.
+
 - Commit as part of the task when the user asked for the change; the screenshot stays
   out of git.
 - `ui.py windows` lists the app's windows with their ids and bounds in macOS points. A
-  Retina capture is 2× those numbers. The space panel is the 440 pt wide window.
+  Retina capture is 2× those numbers. Windows are found by title ("Zitter",
+  "Zitter — Karty", "Zitter — Ustawienia przestrzeni"); their sizes follow the main window.
 - Screen-reading is cheap; reading the design's source is what makes the comparison
   exact. When the design and the design-system tokens disagree, the approved design for
   that view wins; mention it so the tokens can be updated.

@@ -1,5 +1,5 @@
 // Lists the app's windows and clicks at screen points (macOS points, origin top-left).
-//   uidrive windows <owner>   one JSON object per window: id, onscreen, x, y, width, height
+//   uidrive windows <owner>   one JSON object per window: id, title, onscreen, x, y, width, height
 //   uidrive click <x> <y>     hover 0.6 s (hover states settle), then a left click
 //   uidrive rightclick <x> <y> the same with the right button (context menus)
 //   uidrive activate <pid>    bring the app to the front (an inactive app drops clicks)
@@ -17,7 +17,7 @@ case "windows":
   let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
   for w in list where (w[kCGWindowOwnerName as String] as? String) == owner {
     guard let b = w[kCGWindowBounds as String] as? [String: Double], (w[kCGWindowLayer as String] as? Int) == 0 else { continue }
-    let item: [String: Any] = ["id": w[kCGWindowNumber as String] as? Int ?? 0, "onscreen": w[kCGWindowIsOnscreen as String] as? Bool ?? false,
+    let item: [String: Any] = ["id": w[kCGWindowNumber as String] as? Int ?? 0, "title": w[kCGWindowName as String] as? String ?? "", "onscreen": w[kCGWindowIsOnscreen as String] as? Bool ?? false,
                                "x": b["X"] ?? 0, "y": b["Y"] ?? 0, "width": b["Width"] ?? 0, "height": b["Height"] ?? 0]
     print(String(data: try! JSONSerialization.data(withJSONObject: item, options: [.sortedKeys]), encoding: .utf8)!)
   }

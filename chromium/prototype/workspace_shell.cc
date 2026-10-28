@@ -3016,7 +3016,6 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   workspace_input_->SetPlaceholderText(workspace_copy[1]);
   PanelText(profile_column,workspace_copy[2],kLabelText,kMuted);
   profile_picker_=ProfilePicker(profile_column,workspace_copy[3],base::BindRepeating([]{}));profile_picker_->SetPreferredSize(gfx::Size(0,36));
-  PanelText(identity,workspace_copy[4],kLabelText,kMuted);
   auto* save_hint=settings_text(identity,workspace_copy[5],kMuted,-2,gfx::Font::Weight::NORMAL,true);
   auto* actions=ActionGroup(identity,false,8);
   edit_workspace_ = AddAction(actions,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
