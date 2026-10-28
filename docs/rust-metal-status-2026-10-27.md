@@ -142,6 +142,9 @@ statusy operacji (zajęte, brak wyboru, zakaz zasad, w toku, gotowe, błąd) jak
 zdarzenia z tekstem/tonem z Rusta. Testy Rust 501; testy UI czyszczenia/historii
 zaliczone w obu trybach.
 
+**Pełny checkpoint UI 2026-10-28 (`90c7e8b`):** 274/274 Metal i 225/225 Views.
+[Raport](benchmarks/rust-ui-checkpoint-2026-10-28.json).
+
 **Pełny checkpoint UI 2026-10-27:** po poprawkach **273/273 Metal i 224/224 Views**
 (pierwszy przebieg: 6 niepowodzeń Metal, 1 Views — trzy crashe testów na odłączonych
 widokach, brakująca komenda Rust `HistoryMore`, tooltip tytułu Peek, wyścig tytułu

@@ -1,0 +1,48 @@
+{
+  "date": "2026-10-28",
+  "status": "full-ui-matrix-passed",
+  "tested_ui_source_commit": "90c7e8b",
+  "binary_uuid": "4C4C445C-5555-3144-A11E-9F19CBB773AF",
+  "full_matrix": {
+    "metal": {
+      "counts": {
+        "SUCCESS": 274
+      },
+      "summary": "build/ui-checkpoint-20261028T003502Z/metal-summary.json",
+      "summary_sha256": "3a363db234e4cd67ba1d8d164f8f7a687ce6e285bf20ab8cef730fa474669ec6",
+      "log": "build/ui-checkpoint-20261028T003502Z/metal.log",
+      "log_sha256": "8ed676f56b334f3a6e9a1e03e20bdfe7c38e0bef1e098e9953f67640f3c6cd28"
+    },
+    "views": {
+      "counts": {
+        "SUCCESS": 225
+      },
+      "summary": "build/ui-checkpoint-20261028T003502Z/views-summary.json",
+      "summary_sha256": "7b560cd311cfa4a82d1e4b1e4219ebd34cac7b303465fa9a5adea5bb9f6ee93f",
+      "log": "build/ui-checkpoint-20261028T003502Z/views.log",
+      "log_sha256": "35cc8a8924a9ac526f03f93286e136f0728f2970933f219f1464f420dbb4deda"
+    }
+  },
+  "milestones_since_previous_full_matrix": [
+    "e6e8074 sidebar container retention",
+    "43b67c4 link/route menus",
+    "1a5017e workspace menus",
+    "1dd3b26 folder menus",
+    "6bc26de preference managed-state copy",
+    "68d161b palette plan",
+    "7156b3a profile status events",
+    "3be4ef8 import status reports",
+    "a373964 command catalogue",
+    "d885718 download status",
+    "90c7e8b clear-data copy"
+  ],
+  "headless": {
+    "rust": 501,
+    "python": 68,
+    "boundaries": "passed"
+  },
+  "limits": [
+    "No manual IME/VoiceOver/trackpad/scale acceptance, performance comparison or release packaging.",
+    "Native Views containers, focus/AX adapters and platform services remain."
+  ]
+}
