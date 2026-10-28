@@ -1,0 +1,231 @@
+{
+  "date": "2026-10-28T04:32:28.889045+00:00",
+  "test": "ZitterProfilesBrowserTest.PerformanceUiInteraction",
+  "binary": "/Users/papaj/Projects/zitter/.chromium/src/out/ZitterOptimized/zitter_prototype_ui_lab",
+  "iterations": 40,
+  "tabs": 20,
+  "rounds": 2,
+  "logs": "/Users/papaj/Projects/zitter/build/ui-interaction-performance/20261028T043151Z",
+  "limits": [
+    "Wall time ends when posted UI work has drained; WindowServer presentation is not captured.",
+    "Single machine, warm process; no GPU counters."
+  ],
+  "backends": {
+    "views": {
+      "operations": {
+        "ui_folder_toggle_ms": {
+          "n": 80,
+          "median": 17.741,
+          "p95": 18.142,
+          "mean": 17.6508375
+        },
+        "ui_iteration_ms": {
+          "n": 80,
+          "median": 99.9925,
+          "p95": 108.37,
+          "mean": 101.24583750000001
+        },
+        "ui_palette_close_part_ms": {
+          "n": 80,
+          "median": 16.726,
+          "p95": 25.083,
+          "mean": 19.1120625
+        },
+        "ui_palette_open_call_ms": {
+          "n": 80,
+          "median": 4.08,
+          "p95": 4.897,
+          "mean": 4.2248624999999995
+        },
+        "ui_palette_open_idle_ms": {
+          "n": 80,
+          "median": 14.203,
+          "p95": 15.68,
+          "mean": 13.5728375
+        },
+        "ui_palette_open_part_ms": {
+          "n": 80,
+          "median": 32.004999999999995,
+          "p95": 33.281,
+          "mean": 31.017787499999997
+        },
+        "ui_palette_query_ms": {
+          "n": 80,
+          "median": 65.49000000000001,
+          "p95": 73.899,
+          "mean": 66.7496
+        },
+        "ui_palette_type_part_ms": {
+          "n": 80,
+          "median": 16.679499999999997,
+          "p95": 16.7,
+          "mean": 16.683225
+        },
+        "ui_tab_select_ms": {
+          "n": 80,
+          "median": 16.599,
+          "p95": 16.642,
+          "mean": 16.594787500000002
+        }
+      },
+      "browser_cpu_ms_per_iteration": {
+        "n": 2,
+        "median": 23.630537500000003,
+        "p95": 22.954150000000002,
+        "mean": 23.630537500000003
+      },
+      "browser_footprint_mb": {
+        "n": 2,
+        "median": 112.76759338378906,
+        "p95": 110.40814971923828,
+        "mean": 112.76759338378906
+      }
+    },
+    "rust-metal": {
+      "operations": {
+        "ui_folder_toggle_ms": {
+          "n": 80,
+          "median": 17.582,
+          "p95": 17.956,
+          "mean": 17.4917125
+        },
+        "ui_iteration_ms": {
+          "n": 80,
+          "median": 108.3335,
+          "p95": 116.671,
+          "mean": 109.26643750000001
+        },
+        "ui_palette_close_part_ms": {
+          "n": 80,
+          "median": 16.7315,
+          "p95": 25.071,
+          "mean": 17.777324999999998
+        },
+        "ui_palette_open_call_ms": {
+          "n": 80,
+          "median": 9.2905,
+          "p95": 10.591,
+          "mean": 9.533199999999999
+        },
+        "ui_palette_open_idle_ms": {
+          "n": 80,
+          "median": 14.678,
+          "p95": 15.415,
+          "mean": 14.4753875
+        },
+        "ui_palette_open_part_ms": {
+          "n": 80,
+          "median": 40.6115,
+          "p95": 41.599,
+          "mean": 40.6710125
+        },
+        "ui_palette_query_ms": {
+          "n": 80,
+          "median": 73.985,
+          "p95": 82.254,
+          "mean": 75.05114999999999
+        },
+        "ui_palette_type_part_ms": {
+          "n": 80,
+          "median": 16.672,
+          "p95": 16.696,
+          "mean": 16.6642375
+        },
+        "ui_tab_select_ms": {
+          "n": 80,
+          "median": 16.591,
+          "p95": 16.637,
+          "mean": 16.4801875
+        }
+      },
+      "browser_cpu_ms_per_iteration": {
+        "n": 2,
+        "median": 30.016875000000002,
+        "p95": 29.878750000000004,
+        "mean": 30.016875000000002
+      },
+      "browser_footprint_mb": {
+        "n": 2,
+        "median": 259.8066215515137,
+        "p95": 259.73632049560547,
+        "mean": 259.8066215515137
+      }
+    },
+    "rust-compositor": {
+      "operations": {
+        "ui_folder_toggle_ms": {
+          "n": 80,
+          "median": 17.9115,
+          "p95": 18.289,
+          "mean": 17.832775
+        },
+        "ui_iteration_ms": {
+          "n": 80,
+          "median": 100.001,
+          "p95": 108.369,
+          "mean": 102.7042625
+        },
+        "ui_palette_close_part_ms": {
+          "n": 80,
+          "median": 16.7295,
+          "p95": 25.067,
+          "mean": 18.92475
+        },
+        "ui_palette_open_call_ms": {
+          "n": 80,
+          "median": 9.461,
+          "p95": 10.234,
+          "mean": 9.381975
+        },
+        "ui_palette_open_idle_ms": {
+          "n": 80,
+          "median": 9.837,
+          "p95": 14.755,
+          "mean": 9.985687500000001
+        },
+        "ui_palette_open_part_ms": {
+          "n": 80,
+          "median": 31.950499999999998,
+          "p95": 40.043,
+          "mean": 32.516725
+        },
+        "ui_palette_query_ms": {
+          "n": 80,
+          "median": 65.36099999999999,
+          "p95": 74.94,
+          "mean": 68.0410125
+        },
+        "ui_palette_type_part_ms": {
+          "n": 80,
+          "median": 16.681,
+          "p95": 16.704,
+          "mean": 16.681975
+        },
+        "ui_tab_select_ms": {
+          "n": 80,
+          "median": 16.5965,
+          "p95": 16.632,
+          "mean": 16.578425
+        }
+      },
+      "browser_cpu_ms_per_iteration": {
+        "n": 2,
+        "median": 29.848625000000002,
+        "p95": 29.469,
+        "mean": 29.848625000000002
+      },
+      "browser_footprint_mb": {
+        "n": 2,
+        "median": 110.91601943969727,
+        "p95": 110.51750183105469,
+        "mean": 110.91601943969727
+      }
+    }
+  },
+  "findings": [
+    "rust-compositor (--zitter-sidebar=rust-metal --zitter-rust-raster=compositor) keeps all Rust scene/layout/input/graph logic but paints adapter recipes through the Chromium compositor via an invisible CompositorSurface.",
+    "Latency and browser footprint match Views (palette ~65 ms both; ~111 vs ~113 MB); browser CPU matches Rust/Metal (~29.9 vs ~30.0 ms per iteration, Views ~23.6).",
+    "Therefore the ~26% CPU overhead comes from the Rust-mode adapter/projection layer, not Metal rasterization, and the ~150 MB footprint overhead comes only from in-process Metal.",
+    "Experimental: the full matrix in this mode passes 202/276; most failures wait for Metal layer visibility by design. Not a supported backend yet."
+  ]
+}

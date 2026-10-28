@@ -64,8 +64,14 @@ ramki dialogów, fokus/AX/IME, dostarczanie zdarzeń oraz usługi przeglądarki.
    CPU procesu przeglądarki +~26%; footprint przeglądarki ~262 vs ~112 MB, z czego
    ~106 MB to stały koszt sterownika przy pierwszym przebiegu renderowania Metal w
    procesie (odtworzony sondą); całe drzewo procesów +12%. Przewagi wydajnościowej
-   Rust/Metal **nie** ma. Do zbadania: renderowanie przez proces GPU zamiast
-   `MTLDevice` w procesie przeglądarki, tańsze odciski klatek/klucze tekstu.
+   Rust/Metal **nie** ma. Eksperymentalny tryb `--zitter-rust-raster=compositor`
+   (cała logika Rust, malowanie przepisów sceny przez kompozytor Chromium) ma opóźnienia
+   i pamięć jak Views, a CPU jak Rust/Metal — więc narzut CPU (+~26%) jest w warstwie
+   adapterów/projekcji Rust, a narzut pamięci wyłącznie w Metalu w procesie
+   ([raport](benchmarks/rust-ui-interaction-compositor-2026-10-28.json)). W tym trybie
+   pełna macierz przechodzi 202/276 (większość niepowodzeń czeka na widoczność warstw
+   Metal z założenia). Następne kroki: profil CPU warstwy adapterów; decyzja, czy
+   wspierać tryb kompozytora jako backend (wymaga dostosowania ~70 testów).
 3. **Kandydat wydania — zbudowany i sprawdzony lokalnie.** `build/ZitterRustMetalRelease.app`
    (package_app.py, podpis lokalną tożsamością, `codesign --verify --deep --strict` OK),
    świeży audyt licencji: 326 komponentów, 0 niedopasowanych binariów, dołączone

@@ -16,7 +16,8 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 TEST = "ZitterProfilesBrowserTest.PerformanceUiInteraction"
-BACKENDS = {"views": [], "rust-metal": ["--zitter-sidebar=rust-metal"]}
+BACKENDS = {"views": [], "rust-metal": ["--zitter-sidebar=rust-metal"],
+            "rust-compositor": ["--zitter-sidebar=rust-metal", "--zitter-rust-raster=compositor"]}
 
 
 def run(binary, backend, iterations, tabs, log):
@@ -47,14 +48,15 @@ def main():
     parser.add_argument("--iterations", type=int, default=40)
     parser.add_argument("--tabs", type=int, default=20)
     parser.add_argument("--rounds", type=int, default=3)
+    parser.add_argument("--backends", nargs="+", choices=list(BACKENDS), default=["views", "rust-metal"])
     parser.add_argument("--results", type=Path, default=ROOT / "build/ui-interaction-performance")
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
     folder = args.results / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     folder.mkdir(parents=True)
-    data = {backend: {"samples": {}, "resources": []} for backend in BACKENDS}
+    data = {backend: {"samples": {}, "resources": []} for backend in args.backends}
     for round_index in range(args.rounds):
-        order = list(BACKENDS) if round_index % 2 == 0 else list(reversed(BACKENDS))
+        order = list(args.backends) if round_index % 2 == 0 else list(reversed(args.backends))
         for backend in order:
             samples, resource = run(args.binary, backend, args.iterations, args.tabs, folder / f"{backend}-{round_index}.log")
             for sample in samples:

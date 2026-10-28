@@ -18,6 +18,8 @@
 #include <vector>
 #include "base/apple/scoped_cftyperef.h"
 #include "base/logging.h"
+#include "base/command_line.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/no_destructor.h"
 #include "third_party/abseil-cpp/absl/cleanup/cleanup.h"
 #include "base/time/time.h"
@@ -503,13 +505,52 @@ std::vector<std::string> ShapeSidebarParagraphWeight(std::string_view text,float
   }
   return lines;
 }
+// Keeps Rust viewport projection but never presents; adapters see an invisible
+// surface and paint their Rust scene recipe through the Chromium compositor.
+class CompositorSurface final : public SidebarMetal {
+ public:
+  SidebarViewportProjection Project(gfx::Size content, gfx::Size size, gfx::PointF offset,
+      base::span<const SidebarViewportNode> nodes) override {
+    std::vector<sidebar::ViewportNode> input;
+    input.reserve(nodes.size());
+    for (const auto& node : nodes) input.push_back({node.parent,
+        {float(node.bounds.x()), float(node.bounds.y()), float(node.bounds.width()), float(node.bounds.height())}, node.visible});
+    const auto result = viewport_->project(content.width(), content.height(), size.width(), size.height(),
+        offset.x(), offset.y(), rust::Slice<const sidebar::ViewportNode>(input.data(), input.size()));
+    SidebarViewportProjection out;
+    out.offset = gfx::PointF(result.x, result.y); out.nodes.reserve(result.nodes.size());
+    for (const auto& node : result.nodes) out.nodes.push_back({node.index,
+        gfx::RectF(node.bounds.x, node.bounds.y, node.bounds.width, node.bounds.height),
+        gfx::RectF(node.clip.x, node.clip.y, node.clip.width, node.clip.height)});
+    return out;
+  }
+  void Update(gfx::NativeWindow, gfx::Rect, base::span<const sidebar::Item>, unsigned) override {}
+  void UpdateScene(gfx::NativeWindow, gfx::Rect, base::span<const sidebar::Primitive>, unsigned) override {}
+  void UpdateUnderlay(gfx::NativeWindow, gfx::Rect, base::span<const sidebar::Primitive>) override {}
+  bool underlay_order_correct_for_testing() const override { return true; }
+  void UpdatePreview(gfx::NativeWindow, gfx::Rect, double, base::span<const sidebar::Item>, unsigned, bool, bool) override {}
+  void SetNextPresentationCallback(base::OnceClosure) override {}
+  void AnimatePreview(double, base::TimeDelta, base::OnceClosure done) override { if (done) base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, std::move(done)); }
+  void Hide() override {}
+  bool visible() const override { return false; }
+  size_t frame_count() const override { return 0; }
+  bool contains_text_for_testing(std::string_view) const override { return false; }
+  gfx::Rect screen_bounds_for_testing() const override { return {}; }
+  bool contains_rect_for_testing(gfx::RectF, gfx::RectF) const override { return false; }
+ private:
+  rust::Box<sidebar::Viewport> viewport_ = sidebar::new_viewport();
+};
 SidebarMetalStats GetSidebarMetalStatsForTesting() {
   SidebarMetalStats total;
   for (auto* surface : LiveSurfaces()) { const auto s = surface->Stats(); total.surfaces += s.surfaces; total.visible += s.visible; total.text_bytes += s.text_bytes; total.drawable_bytes += s.drawable_bytes; total.frames += s.frames; total.drawable_wait_ms += s.drawable_wait_ms; total.render_ms += s.render_ms; }
-  if (auto context = AcquireMetalContext()) total.device_bytes = context->device_.currentAllocatedSize;
+  if (total.surfaces) if (auto context = AcquireMetalContext()) total.device_bytes = context->device_.currentAllocatedSize;
   return total;
 }
 std::unique_ptr<SidebarMetal> CreateSidebarMetal() {
+  // Experimental: keep the Rust scene/layout/input but never present a Metal
+  // layer, so every adapter paints its Rust recipe in the Chromium compositor.
+  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-rust-raster") == "compositor")
+    return std::make_unique<CompositorSurface>();
   auto surface = std::make_unique<Surface>();
   return surface->Init() ? std::move(surface) : nullptr;
 }
