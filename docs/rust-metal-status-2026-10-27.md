@@ -1,8 +1,9 @@
 # Rust + Metal — stan i pozostałe prace
 
-Stan na 2026-10-27 (wieczór). **Migracja wznowiona** na prośbę użytkownika: cel
-kończy się przy pełnym przeniesieniu implementacji albo gdy tygodniowe zużycie
-przekroczy 25%. Testy UI uruchamiamy tylko po większych etapach.
+Stan na 2026-10-28. Migracja wznowiona 2026-10-27 na prośbę użytkownika (cel: pełne
+przeniesienie implementacji albo 25% tygodniowego zużycia; testy UI po większych
+etapach). Implementacja jest przeniesiona do granic platformy; otwarta pozostaje
+akceptacja (ręczna, wydajność, wydanie) — patrz lista niżej.
 
 ## Gdzie jesteśmy
 
@@ -43,46 +44,28 @@ zastąpienie usług systemowych własnymi implementacjami.
 
 ## Konkretna lista pozostałych prac
 
-Kolejność jest propozycją na wznowienie; testy z oknami pozostają odłożone.
+**Końcowy checkpoint sesji (`160960c`):** 275/275 Metal, 226/226 Views, 503 testy Rust,
+68 Python, granice zależności OK. [Raport](benchmarks/rust-ui-checkpoint-2026-10-28-final.json).
 
-1. **Dokończyć własność formularzy w Ruście.** Zinwentaryzować pozostałe akcje
-   pomocnicze, popupy i callbacki edytorów. Przenieść pozostałe właściwości kontrolek,
-   komunikaty statusu/błędów/postępu, stan busy/managed i koordynację paneli do
-   wspólnych modeli. Nie przepisywać ponownie już działających kontrolerów walidacji.
-   Zachować walidację IME, wybór profilu, stan importu i autoryzację zapisów.
-2. **Graf sidebara — zrobione headless.** Para splitu, kotwica i widoczność są w
-   Ruście (patrz wyżej). Pozostaje akceptacja GUI (`SidebarPairRustNodeOwnsMembersAnchorAndFolderVisibility`
-   jest tylko kompilowany) oraz dalsze ograniczenie przebudowy kontenerów.
-3. **Poszerzyć przyrostowe uzgadnianie drzew.** Wykorzystać istniejące zachowywanie
-   wierszy kart/przypięć, zamiast je pisać od nowa. Ograniczyć przebudowę kontenerów
-   przy zmianie topologii i rozszerzyć ponowne użycie na pozostałe drzewa formularzy.
-   Jawnie zachować focus, kolejność tabulacji, scroll/reveal i tożsamość AX;
-   anulować naciśnięcia, drag/capture i popupy przy zmianie celu lub widoczności.
-4. **Dokończyć modele tekstu, właściwości i układ sceny.** Włączyć pozostałe
-   modele/projekcje edytorów i tekstu do wspólnej własności oraz cyklu życia grafu.
-   Dokończyć koordynację zewnętrznych paneli, dialogów i palety. Ograniczyć kopie
-   właściwości w C++ tam, gdzie nie są potrzebne adapterowi. Uporządkować własność
-   prymitywów fallbacku CPU, zachowując poprawne działanie bez drawable/GPU.
-5. **Przeprowadzić zbiorczy checkpoint UI po osobnej zgodzie.** Najpierw zebrać
-   aktualny wykaz przypadków, włącznie ze wszystkimi przypadkami kompilowanymi po
-   ostatniej pełnej macierzy. Uruchomić odpowiednie macierze Rust/Metal i Views
-   na izolowanych profilach oraz regresje formularzy, splitu, drag/drop, sesji,
-   profili, przechwycenia wejścia, focusu i AX. Szczególnie sprawdzić obserwatorów
-   aktywacji oraz sekwencje hide/reopen i zmiana/powrót profilu. Kompilacja tych
-   przypadków nie jest wynikiem ich wykonania.
-6. **Wykonać akceptację ręczną.** IME i okna kandydatów, bidi/RTL, VoiceOver,
-   trackpad/gesty, skala Retina, motywy, clipping, przywracanie focusu i dostępności,
-   ukryte okna, utrata drawable i odzyskiwanie GPU. Zweryfikować także natywny fallback.
-7. **Powtórzyć porównanie wydajności Views ↔ Rust/Metal.** Użyć tego samego
-   rzeczywistego obciążenia i warunków. Zmierzyć osobno CPU, GPU, rzeczywistą
-   prezentację klatki oraz pamięć; uwzględnić layout, shaping/tekst, synchronizację,
-   przebudowy i koszty adapterów. Wyniki szybkich testów jednostkowych nie dowodzą
-   przyspieszenia interfejsu. Wyjaśnić pozostałe diagnostyki compositor/mailbox.
-8. **Przygotować wydanie.** Zbudować i podpisać bundle odpowiadający zweryfikowanemu
-   commitowi; sprawdzić profile, sesje, zapis/odtworzenie i rollback. Odświeżyć manifest
-   faktycznie dołączonych zależności/licencji oraz Apache-2.0 i wymagane informacje
-   upstream. Zweryfikować skład końcowej binarki. Utrzymać Rust/Metal jako opt-in
-   do czasu zamknięcia akceptacji, bez deklaracji pełnej zgodności na podstawie buildu.
+Stan po sesji 2026-10-27/28. Implementacja logiki UI jest w Ruście: modele kontrolek,
+graf węzłów sidebara (karty, para splitu, przypięcia, foldery), uzgadnianie z
+zachowaniem tożsamości adapterów i kontenerów, komendy formularzy, wszystkie menu
+kontekstowe, paleta i katalog Command Center, teksty statusów i komunikatów usług,
+układ kolumn/paneli. W trybie Rust natywne kontrolki Views powstają tylko w gałęziach
+Views. Natywne pozostają udokumentowane granice platformy: okna/widgety, runnery menu,
+ramki dialogów, fokus/AX/IME, dostarczanie zdarzeń oraz usługi przeglądarki.
+
+1. **Akceptacja ręczna (wymaga użytkownika):** IME i okna kandydatów, bidi/RTL,
+   VoiceOver, trackpad/gesty, skala Retina, motywy, utrata drawable/GPU, fallback.
+2. **Porównanie wydajności Views ↔ Rust/Metal na rzeczywistym obciążeniu.** Narzędzia
+   w `tools/benchmark_ui.py`/`profile_ui*.py` mierzą syntetyczne laboratorium; potrzebny
+   jest harness dla prawdziwej aplikacji (CPU, GPU, prezentacja, pamięć osobno).
+3. **Wydanie:** podpisany bundle odpowiadający zweryfikowanemu commitowi, sesje/profile,
+   rollback, manifest licencji i informacje upstream. Rust/Metal pozostaje opt-in do
+   zakończenia akceptacji.
+4. **Opcjonalnie dalsza redukcja natywnych kontenerów** (zwykłe `views::View` z rustowym
+   układem pełnią dziś rolę adapterów zdarzeń/fokusu/AX) — tylko jeśli akceptacja
+   wykaże taką potrzebę.
 
 ## Co jest sprawdzone, a co odłożone
 

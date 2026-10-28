@@ -1,0 +1,35 @@
+{
+  "date": "2026-10-28",
+  "status": "full-ui-matrix-passed",
+  "tested_ui_source_commit": "160960c",
+  "binary_uuid": "4C4C44A0-5555-3144-A182-7BF77ABBB940",
+  "full_matrix": {
+    "metal": {
+      "counts": {
+        "SUCCESS": 275
+      },
+      "summary": "build/ui-checkpoint-20261028T014443Z/metal-summary.json",
+      "summary_sha256": "27d6417c434a808f8437731cad23032f04bd01d836ff6c12b41fd315da335c31",
+      "log": "build/ui-checkpoint-20261028T014443Z/metal.log",
+      "log_sha256": "473fe987b40a379eb66f518373b439762d910ffb010d96f08669d8c6cdb061c6"
+    },
+    "views": {
+      "counts": {
+        "SUCCESS": 226
+      },
+      "summary": "build/ui-checkpoint-20261028T014443Z/views-summary.json",
+      "summary_sha256": "224c1a1616081d9bc8a5722e5e6afb96ce7b4437107103d1958cf5916d889cb0",
+      "log": "build/ui-checkpoint-20261028T014443Z/views.log",
+      "log_sha256": "4dcecfaf1d07168ab8e5524d1e457083cb5f3d46e6d905363c27ffc86489dc13"
+    }
+  },
+  "headless": {
+    "rust": 503,
+    "python": 68,
+    "boundaries": "passed"
+  },
+  "limits": [
+    "No manual IME/VoiceOver/trackpad/scale acceptance, real-workload performance comparison or signed release.",
+    "Remaining native code is the documented platform boundary: widgets, menu runners, dialog frames, focus/AX/IME, event delivery, browser services."
+  ]
+}

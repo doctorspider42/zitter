@@ -99,6 +99,18 @@ write outcomes (`PreferenceOutcome`), shortcut capture transitions (`tools_captu
 history/write status copy (`tools_status`) into Rust forms. Headless: 487 Rust,
 68 Python, boundaries; both binaries compile. One new browser case is deferred.
 
+**Session 2026-10-27/28 summary.** Beyond the split pair and form statuses: full UI
+checkpoints were run and fixed (273→274 Metal, 224→225 Views), then Rust took over
+link/route, workspace and folder menus; preference managed-state and site-rule copy;
+palette ordering and the Command Center catalogue; profile/import/clear-data/download/
+lifecycle/Time Machine/password/palette-provenance wording via typed events or facts;
+the sidebar column and panel headers moved to Rust panel layout; tab column, split pair,
+pin list, folder groups and row holders are retained by Rust identity. In Rust mode,
+native Views controls are only created on Views branches. What remains native is the
+documented platform boundary (widgets/windows, menu runners, dialog frames, focus/AX/IME,
+event delivery, browser services). Acceptance work (manual IME/VoiceOver/trackpad/scale,
+real-workload performance comparison, signed release) is still open.
+
 1. **Audit residual native action hosts and service/popup boundaries.** Peek's
    toolbar is now migrated; download row buttons already use Rust-owned groups.
    Preserve native profile/GUID/store authorization and document explicit platform
