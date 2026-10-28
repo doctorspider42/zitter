@@ -371,6 +371,20 @@ class WorkspaceShell final : public ui::EventHandler,
   void SetConfigurationError(bool error);
   void OpenProfiles(std::string profile_id = {}, std::string workspace_id = {});
   void OpenImport();
+  // Import service stage/counts; wording comes from Rust (or the Views formatter).
+  struct ImportStatusReport {
+    enum class Stage { kReading, kPreview, kImporting, kSavingBrowsingData, kFinished };
+    Stage stage = Stage::kPreview;
+    std::u16string browser;
+    std::string error;
+    size_t profiles = 0, spaces = 0, folders = 0, tabs = 0, skipped = 0;
+    bool ok = false;
+    size_t added_profiles = 0, added_spaces = 0;
+    bool browsing_data = false;
+    size_t history = 0, cookies = 0, data_skipped = 0;
+    bool data_failed = false;
+  };
+  void SetImportStatus(const ImportStatusReport& report, bool can_import, bool busy = false, bool applying = false);
   void SetImportStatus(std::u16string message, bool can_import, bool busy = false, bool applying = false);
   void BeginImportPreview(const BrowserImportOptions& options);
   bool import_panel_contains_scene_text(std::string_view text) const;

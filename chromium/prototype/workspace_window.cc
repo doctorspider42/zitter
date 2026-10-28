@@ -2149,20 +2149,17 @@ void WorkspaceWindow::PreviewBrowserImport(BrowserImportOptions options, base::F
   import_loading_ = true;
   pending_import_.reset();
   const auto generation = ++import_preview_generation_;
-  shell_->SetImportStatus(u"Odczytywanie danych z " + ImportBrowserName(options.browser) + u"…", false, true);
+  WorkspaceShell::ImportStatusReport reading;reading.stage=WorkspaceShell::ImportStatusReport::Stage::kReading;reading.browser=ImportBrowserName(options.browser);
+  shell_->SetImportStatus(reading, false, true);
   config_runner_->PostTaskAndReplyWithResult(FROM_HERE, base::BindOnce(ReadBrowserImport, options, directory),
       base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, size_t generation, ArcImport result) {
         if (!window) return;
         if (generation != window->import_preview_generation_) return;
         window->import_loading_ = false;
-        auto status = result.error.empty()
-            ? base::UTF8ToUTF16("Do importu: " + std::to_string(result.profiles.size()) + " profili, " +
-                std::to_string(result.spaces.size()) + " przestrzeni, " + std::to_string(result.folder_count) +
-                " folderów i " + std::to_string(result.tab_count) + " kart lub zakładek.")
-            : base::UTF8ToUTF16(result.error);
-        if (result.skipped_count) status += base::UTF8ToUTF16(" Pominięte elementy: " + std::to_string(result.skipped_count) + ".");
+        WorkspaceShell::ImportStatusReport report;report.error=result.error;report.profiles=result.profiles.size();report.spaces=result.spaces.size();
+        report.folders=result.folder_count;report.tabs=result.tab_count;report.skipped=result.skipped_count;
         window->pending_import_ = std::move(result);
-        window->shell_->SetImportStatus(status, window->pending_import_->error.empty());
+        window->shell_->SetImportStatus(report, window->pending_import_->error.empty());
       }, weak_factory_.GetWeakPtr(), generation));
 }
 
@@ -2172,7 +2169,8 @@ bool WorkspaceWindow::ApplyArcImport() {
   import_new_profile_ids_.clear();
   import_new_workspace_ids_.clear();
   UpdateShell();
-  shell_->SetImportStatus(u"Importowanie wybranych danych…", false, /*busy=*/true, /*applying=*/true);
+  WorkspaceShell::ImportStatusReport importing;importing.stage=WorkspaceShell::ImportStatusReport::Stage::kImporting;
+  shell_->SetImportStatus(importing, false, /*busy=*/true, /*applying=*/true);
   if (!pending_import_->options.history && !pending_import_->options.cookies) {
     ImportNextProfile(0);
   } else {
@@ -2183,7 +2181,8 @@ bool WorkspaceWindow::ApplyArcImport() {
           if (!data->error.empty()) {
             window->profiles_busy_ = false;
             window->UpdateShell();
-            window->shell_->SetImportStatus(base::UTF8ToUTF16(data->error), true);
+            WorkspaceShell::ImportStatusReport failed;failed.error=data->error;
+            window->shell_->SetImportStatus(failed, true);
             return;
           }
           window->import_browsing_data_ = std::move(data);
@@ -2292,28 +2291,25 @@ void WorkspaceWindow::CompleteArcImport(bool ok) {
   }
   import_replaces_starter_ = false;
   if (ok) SaveConfiguration();
-  const auto status = ok ? base::UTF8ToUTF16("Import zakończony. Dodano " + std::to_string(added_profiles) +
-      " profili i " + std::to_string(added_spaces) + " przestrzeni. Możesz wybrać je na liście przestrzeni.")
-      : u"Import się nie powiódł. Dotychczasowe przestrzenie pozostały bez zmian. Spróbuj ponownie.";
+  WorkspaceShell::ImportStatusReport status;status.stage=WorkspaceShell::ImportStatusReport::Stage::kFinished;status.ok=ok;status.added_profiles=added_profiles;status.added_spaces=added_spaces;
   if (ok && import_browsing_data_) {
     std::vector<Profile*> destinations;
     for (const auto& data : import_browsing_data_->profiles) destinations.push_back(ProfileFor(data.profile_id));
-    shell_->SetImportStatus(u"Zapisywanie historii i ciasteczek…", false, true, true);
+    WorkspaceShell::ImportStatusReport saving;saving.stage=WorkspaceShell::ImportStatusReport::Stage::kSavingBrowsingData;
+    shell_->SetImportStatus(saving, false, true, true);
     WriteBrowsingImportData(std::move(import_browsing_data_), std::move(destinations),
-        base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, std::u16string status, BrowsingImportResult result) {
+        base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, WorkspaceShell::ImportStatusReport status, BrowsingImportResult result) {
           if (!window) return;
-          status += base::UTF8ToUTF16(" Przeniesiono " + std::to_string(result.history) +
-              " stron historii i " + std::to_string(result.cookies) + " ciasteczek.");
-          if (result.skipped) status += base::UTF8ToUTF16(" Pominięto: " + std::to_string(result.skipped) + ".");
-          if (result.failed) status += u" Część danych nie została zapisana. Ponów import.";
-          window->FinishArcImport(std::move(status));
+          status.browsing_data = true;status.history = result.history;status.cookies = result.cookies;
+          status.data_skipped = result.skipped;status.data_failed = result.failed;
+          window->FinishArcImport(status);
         }, weak_factory_.GetWeakPtr(), status));
     return;
   }
   FinishArcImport(status);
 }
 
-void WorkspaceWindow::FinishArcImport(std::u16string status) {
+void WorkspaceWindow::FinishArcImport(const WorkspaceShell::ImportStatusReport& status) {
   import_browsing_data_.reset();
   pending_import_.reset();
   import_new_profile_ids_.clear();

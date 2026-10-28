@@ -8842,6 +8842,41 @@ void WorkspaceShell::ImportSelectionChanged() {
         if (shell && shell->import_visible()) shell->callbacks_.preview_import.Run(shell->import_options());
       }, weak_factory_.GetWeakPtr()));
 }
+void WorkspaceShell::SetImportStatus(const ImportStatusReport& report, bool can_import, bool busy, bool applying) {
+  using Stage = ImportStatusReport::Stage;
+#if BUILDFLAG(IS_MAC)
+  if (import_form_) {
+    sidebar::ImportStatusReport rust{};
+    rust.stage = sidebar::ImportStage{static_cast<uint8_t>(report.stage)};rust.browser = base::UTF16ToUTF8(report.browser);rust.error = report.error;
+    rust.profiles = report.profiles;rust.spaces = report.spaces;rust.folders = report.folders;rust.tabs = report.tabs;rust.skipped = report.skipped;
+    rust.ok = report.ok;rust.added_profiles = report.added_profiles;rust.added_spaces = report.added_spaces;
+    rust.browsing_data = report.browsing_data;rust.history = report.history;rust.cookies = report.cookies;rust.data_skipped = report.data_skipped;rust.data_failed = report.data_failed;
+    SetImportStatus(base::UTF8ToUTF16(std::string(sidebar::import_status_copy(rust))), can_import, busy, applying);
+    return;
+  }
+#endif
+  std::string text;
+  switch (report.stage) {
+    case Stage::kReading: SetImportStatus(u"Odczytywanie danych z " + report.browser + u"…", can_import, busy, applying); return;
+    case Stage::kImporting: text = "Importowanie wybranych danych…"; break;
+    case Stage::kSavingBrowsingData: text = "Zapisywanie historii i ciasteczek…"; break;
+    case Stage::kPreview:
+      text = report.error.empty() ? "Do importu: " + base::NumberToString(report.profiles) + " profili, " + base::NumberToString(report.spaces) + " przestrzeni, " +
+          base::NumberToString(report.folders) + " folderów i " + base::NumberToString(report.tabs) + " kart lub zakładek." : report.error;
+      if (report.skipped) text += " Pominięte elementy: " + base::NumberToString(report.skipped) + ".";
+      break;
+    case Stage::kFinished:
+      text = report.ok ? "Import zakończony. Dodano " + base::NumberToString(report.added_profiles) + " profili i " + base::NumberToString(report.added_spaces) +
+          " przestrzeni. Możesz wybrać je na liście przestrzeni." : "Import się nie powiódł. Dotychczasowe przestrzenie pozostały bez zmian. Spróbuj ponownie.";
+      if (report.browsing_data) {
+        text += " Przeniesiono " + base::NumberToString(report.history) + " stron historii i " + base::NumberToString(report.cookies) + " ciasteczek.";
+        if (report.data_skipped) text += " Pominięto: " + base::NumberToString(report.data_skipped) + ".";
+        if (report.data_failed) text += " Część danych nie została zapisana. Ponów import.";
+      }
+      break;
+  }
+  SetImportStatus(base::UTF8ToUTF16(text), can_import, busy, applying);
+}
 void WorkspaceShell::SetImportStatus(std::u16string message, bool can_import, bool busy, bool applying) {
   import_preview_timer_.Stop();if(!import_status_)return;
 #if BUILDFLAG(IS_MAC)

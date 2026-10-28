@@ -122,6 +122,11 @@ wyszukiwanie i komendy aplikacji. Testy Rust 495; podzbiór UI palety/adresu 33 
 pochodzi z Rusta (`profile_status_copy`); Views używa natywnej tabeli. Testy Rust 496;
 cała klasa `ZitterProfilesBrowserTest` przeszła: 216 Metal / 208 Views.
 
+**Statusy importu jako raporty:** warstwa aplikacji przekazuje `ImportStatusReport`
+(etap, liczniki, błąd usługi, wynik zapisu historii/ciasteczek); tekst formatuje Rust
+(`import_status_copy`), Views — natywny formatter. Testy Rust 497, Python 68;
+podzbiór UI importu 17 Metal / 14 Views zaliczony.
+
 **Pełny checkpoint UI 2026-10-27:** po poprawkach **273/273 Metal i 224/224 Views**
 (pierwszy przebieg: 6 niepowodzeń Metal, 1 Views — trzy crashe testów na odłączonych
 widokach, brakująca komenda Rust `HistoryMore`, tooltip tytułu Peek, wyścig tytułu

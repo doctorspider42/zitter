@@ -198,7 +198,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void CommitArcImport();
   void CompleteArcImport(bool ok);
   void SaveFolderEdit(std::string workspace, std::vector<PinnedItem> previous, std::set<std::string> removed = {});
-  void FinishArcImport(std::u16string status);
+  void FinishArcImport(const WorkspaceShell::ImportStatusReport& status);
   bool CanRemoveProfile(std::string_view id) const;
   void ScheduleProfileDeletion(const std::string& directory);
 

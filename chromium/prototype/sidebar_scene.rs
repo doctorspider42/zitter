@@ -29,6 +29,8 @@ mod ffi {
     enum ToolsStatus { HistoryReading, HistorySearching, WriteFailed }
     enum PreferenceOutcome { Text, Site, SiteRemove, Value, General }
     enum PreferenceControlKind { Text, Toggle }
+    enum ImportStage { Reading, Preview, Importing, SavingBrowsingData, Finished }
+    struct ImportStatusReport { stage: ImportStage, browser: String, error: String, profiles: usize, spaces: usize, folders: usize, tabs: usize, skipped: usize, ok: bool, added_profiles: usize, added_spaces: usize, browsing_data: bool, history: usize, cookies: usize, data_skipped: usize, data_failed: bool }
     #[derive(Debug)]
     enum ProfileStatusEvent { DuplicateName, Creating, CreateFailed, Created, CreateNotSaved, Renamed, RenameFailed, Deleting, Deleted, DeleteNotSaved, LoadFailed }
     struct PreferenceControlView { enabled: bool, tooltip: String }
@@ -305,6 +307,7 @@ mod ffi {
         fn preference_control_view(kind: PreferenceControlKind, present: bool, editable: bool) -> PreferenceControlView;
         fn preferences_profile_banner(profile: &str) -> String;
         fn profile_status_copy(event: ProfileStatusEvent) -> String;
+        fn import_status_copy(report: &ImportStatusReport) -> String;
         fn site_rule_detail(primary: &str, name: &str, setting: i32, secondary: &str, editable: bool) -> String;
         fn site_rules_empty(saved: bool) -> String;
         fn preference_reset_rules(self: &mut PreferencesForm);
@@ -1135,6 +1138,23 @@ fn preference_control_view(kind:ffi::PreferenceControlKind,present:bool,editable
     use ffi::PreferenceControlKind as K;let toggle=kind==K::Toggle;
     let tooltip=if !present{if toggle{"Profil nie jest jeszcze gotowy"}else{"Ustawienie jest niedostępne"}}else if !editable{"To ustawienie jest zarządzane"}else if toggle{"Dotyczy aktywnego profilu"}else{"Zapisz przyciskiem lub klawiszem Enter"};
     ffi::PreferenceControlView{enabled:present&&editable,tooltip:tooltip.into()}
+}
+// Import services report stages and counts; Rust owns the user-facing wording.
+// Service-provided errors are already localized and are shown verbatim.
+fn import_status_copy(r:&ffi::ImportStatusReport)->String{
+    use ffi::ImportStage as S;
+    match r.stage {
+        S::Reading=>format!("Odczytywanie danych z {}…",r.browser),
+        S::Preview=>{let mut text=if r.error.is_empty(){format!("Do importu: {} profili, {} przestrzeni, {} folderów i {} kart lub zakładek.",r.profiles,r.spaces,r.folders,r.tabs)}else{r.error.clone()};if r.skipped!=0{text.push_str(&format!(" Pominięte elementy: {}.",r.skipped));}text}
+        S::Importing=>"Importowanie wybranych danych…".into(),
+        S::SavingBrowsingData=>"Zapisywanie historii i ciasteczek…".into(),
+        S::Finished=>{
+            let mut text=if r.ok{format!("Import zakończony. Dodano {} profili i {} przestrzeni. Możesz wybrać je na liście przestrzeni.",r.added_profiles,r.added_spaces)}else{"Import się nie powiódł. Dotychczasowe przestrzenie pozostały bez zmian. Spróbuj ponownie.".into()};
+            if r.browsing_data{text.push_str(&format!(" Przeniesiono {} stron historii i {} ciasteczek.",r.history,r.cookies));if r.data_skipped!=0{text.push_str(&format!(" Pominięto: {}.",r.data_skipped));}if r.data_failed{text.push_str(" Część danych nie została zapisana. Ponów import.");}}
+            text
+        }
+        _=>String::new(),
+    }
 }
 // Profile service outcomes arrive as typed events; Rust owns their wording.
 fn profile_status_copy(event:ffi::ProfileStatusEvent)->String{
@@ -3410,6 +3430,18 @@ mod tests {
         f.tools_record(true);let escape=f.tools_capture(ffi::ToolsCapture::Escape);assert!(escape.admitted&&escape.stop_recording&&!escape.accept_chord);assert_eq!(escape.status,"Nagrywanie anulowane.");assert!(!f.tools_recording());
         f.tools_record(true);f.tools_reset();assert!(!f.tools_capture(ffi::ToolsCapture::Valid).admitted);
         assert_eq!(tools_status(ffi::ToolsStatus::HistoryReading),"Odczytywanie historii…");assert_eq!(tools_status(ffi::ToolsStatus::HistorySearching),"Wyszukiwanie historii…");assert_eq!(tools_status(ffi::ToolsStatus::WriteFailed),"Nie udało się zapisać ustawień na dysku.");
+    }
+    fn import_report(stage:ffi::ImportStage)->ffi::ImportStatusReport{ffi::ImportStatusReport{stage,browser:"Arc".into(),error:String::new(),profiles:2,spaces:3,folders:4,tabs:5,skipped:0,ok:true,added_profiles:1,added_spaces:2,browsing_data:false,history:0,cookies:0,data_skipped:0,data_failed:false}}
+    #[test] fn import_status_copy_formats_stages_counts_errors_and_browsing_data() {
+        use ffi::ImportStage as S;
+        assert_eq!(import_status_copy(&import_report(S::Reading)),"Odczytywanie danych z Arc…");
+        assert_eq!(import_status_copy(&import_report(S::Preview)),"Do importu: 2 profili, 3 przestrzeni, 4 folderów i 5 kart lub zakładek.");
+        let mut r=import_report(S::Preview);r.error="Nie znaleziono danych przeglądarki Arc.".into();r.skipped=7;assert_eq!(import_status_copy(&r),"Nie znaleziono danych przeglądarki Arc. Pominięte elementy: 7.");
+        assert_eq!(import_status_copy(&import_report(S::Importing)),"Importowanie wybranych danych…");assert_eq!(import_status_copy(&import_report(S::SavingBrowsingData)),"Zapisywanie historii i ciasteczek…");
+        assert_eq!(import_status_copy(&import_report(S::Finished)),"Import zakończony. Dodano 1 profili i 2 przestrzeni. Możesz wybrać je na liście przestrzeni.");
+        let mut r=import_report(S::Finished);r.browsing_data=true;r.history=10;r.cookies=20;r.data_skipped=3;r.data_failed=true;assert_eq!(import_status_copy(&r),"Import zakończony. Dodano 1 profili i 2 przestrzeni. Możesz wybrać je na liście przestrzeni. Przeniesiono 10 stron historii i 20 ciasteczek. Pominięto: 3. Część danych nie została zapisana. Ponów import.");
+        let mut r=import_report(S::Finished);r.ok=false;assert!(import_status_copy(&r).starts_with("Import się nie powiódł."));
+        assert!(import_status_copy(&import_report(S{repr:99})).is_empty());
     }
     #[test] fn profile_status_events_have_distinct_copy_and_unknown_is_empty() {
         use ffi::ProfileStatusEvent as E;let all=[E::DuplicateName,E::Creating,E::CreateFailed,E::Created,E::CreateNotSaved,E::Renamed,E::RenameFailed,E::Deleting,E::Deleted,E::DeleteNotSaved,E::LoadFailed];let copies=all.iter().map(|e|profile_status_copy(*e)).collect::<std::collections::BTreeSet<_>>();assert_eq!(copies.len(),all.len());assert!(copies.iter().all(|c|!c.is_empty()));
