@@ -56,7 +56,7 @@ Views. Natywne pozostają udokumentowane granice platformy: okna/widgety, runner
 ramki dialogów, fokus/AX/IME, dostarczanie zdarzeń oraz usługi przeglądarki.
 
 Wszystkie pozostałe punkty wymagają użytkownika lub jego decyzji: akceptacja ręczna,
-notaryzacja (poświadczenia Apple) i ewentualne wsparcie trybu kompozytora.
+notaryzacja (poświadczenia Apple) oraz wybór domyślnego backendu.
 
 0. **Automatyczna akceptacja skali i RTL (wykonana).** Skala 1× — 276/276 Metal.
    RTL: znalezione i naprawione 4 realne błędy w trybie Rust (kierunek przewijania
@@ -87,6 +87,12 @@ notaryzacja (poświadczenia Apple) i ewentualne wsparcie trybu kompozytora.
    Pełna macierz po zmianie: 276/276 Metal, 227/227 Views. Pozostała różnica CPU (~5 ms/iterację) jest
    rozproszona (planowanie odrysowań, skracanie tekstu, malowanie pól) bez jednego
    gorącego punktu w profilu.
+2a. **Tryb kompozytora — wspierany (opt-in).** `--zitter-sidebar=rust-metal
+   --zitter-rust-raster=compositor`: cała logika Rust, malowanie przepisów scen przez
+   kompozytor Chromium, bez `MTLDevice` w procesie przeglądarki (pamięć jak Views).
+   Testy sprawdzają wyrocznie prezentacji Metal tylko gdy Metal rysuje
+   (`MetalPresents()`); zestaw `ZitterMetalSidebarBrowserTest` jest pomijany jak w Views.
+   Pełne macierze: Metal 276/276, Views 227/227, kompozytor 227/227.
 3. **Kandydat wydania — zbudowany i sprawdzony lokalnie.** `build/ZitterRustMetalRelease.app`
    (package_app.py, podpis lokalną tożsamością, `codesign --verify --deep --strict` OK),
    świeży audyt licencji: 326 komponentów, 0 niedopasowanych binariów, dołączone

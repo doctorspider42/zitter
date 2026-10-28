@@ -63,6 +63,10 @@
 
 namespace zitter::prototype {
 namespace {
+// Metal presentation oracles apply only when Metal presents (not compositor raster).
+bool MetalPresents(){return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-rust-raster")!="compositor";}
+}  // namespace
+namespace {
 
 // Same embedded-service seam used by Chromium's AudioServiceBrowserTest. The
 // platform InputController otherwise queries native device parameters even
@@ -265,20 +269,20 @@ IN_PROC_BROWSER_TEST_F(ZitterMediaBrowserTest, ScenePermissionCocoaDefaultAndFor
   EXPECT_EQ(u"Zezwól tym razem",delegate->GetDialogButtonLabel(ui::mojom::DialogButton::kOk));
   if(rust()){
     EXPECT_TRUE(allow->children().empty());EXPECT_TRUE(deny->children().empty());EXPECT_FALSE(views::AsViewClass<views::MdTextButton>(allow));
-    ASSERT_TRUE(base::test::RunUntil([&]{return access()->permission_scene_contains_for_testing("Prosi o dostęp: "+origin);}));
+    if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return access()->permission_scene_contains_for_testing("Prosi o dostęp: "+origin);}));
     auto check=[&](auto&& self,views::View* view)->void{ui::AXNodeData node;view->GetViewAccessibility().GetAccessibleNodeData(&node);if(node.role==ax::mojom::Role::kStaticText)EXPECT_FALSE(views::AsViewClass<views::Label>(view));for(const auto& child:view->children())self(self,child.get());};check(check,delegate->GetContentsView());
   }
   // macOS deliberately does not bind Return to a default Cancel. It must
   // neither grant the request nor close the prompt as a side effect.
   stage="Return leaves default Cancel unbound";ASSERT_NO_FATAL_FAILURE(Press(widget,false,ui::VKEY_RETURN));base::RunLoop().RunUntilIdle();EXPECT_EQ(widget,access()->permission_prompt());EXPECT_FALSE(PageMediaAccess::IsCapturing(page()));
-  ASSERT_NO_FATAL_FAILURE(Press(widget,false,ui::VKEY_ESCAPE));ASSERT_TRUE(base::test::RunUntil([&]{return ResultIs("NotAllowedError");}));EXPECT_FALSE(access()->permission_prompt());EXPECT_FALSE(access()->permission_scene_contains_for_testing("Prosi o dostęp: "+origin));
+  ASSERT_NO_FATAL_FAILURE(Press(widget,false,ui::VKEY_ESCAPE));ASSERT_TRUE(base::test::RunUntil([&]{return ResultIs("NotAllowedError");}));EXPECT_FALSE(access()->permission_prompt());if(MetalPresents())EXPECT_FALSE(access()->permission_scene_contains_for_testing("Prosi o dostęp: "+origin));
   stage="allow and wait for page track listeners";SetCamera(work_,CONTENT_SETTING_ASK);Load("?scene-allow");Start();ASSERT_TRUE(base::test::RunUntil([&]{return access()->permission_prompt()!=nullptr;}));
   ASSERT_NO_FATAL_FAILURE(Press(access()->permission_prompt(),true));ASSERT_TRUE(base::test::RunUntil([&]{return ResultIs("running")&&PageMediaAccess::IsCapturing(page())&&access()->capture_prompt();}));
   widget=access()->capture_prompt();delegate=widget->widget_delegate()->AsDialogDelegate();EXPECT_EQ(ui::mojom::ModalType::kNone,delegate->GetModalType());EXPECT_TRUE(delegate->ShouldShowCloseButton());
   auto* stop=DialogActionButton(widget,false);ASSERT_TRUE(stop);EXPECT_FALSE(DialogActionButton(widget,true));
-  if(rust()){EXPECT_TRUE(stop->children().empty());ASSERT_TRUE(base::test::RunUntil([&]{return access()->capture_scene_contains_for_testing(origin);}));EXPECT_FALSE(views::AsViewClass<views::MdTextButton>(stop));}
+  if(rust()){EXPECT_TRUE(stop->children().empty());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return access()->capture_scene_contains_for_testing(origin);}));EXPECT_FALSE(views::AsViewClass<views::MdTextButton>(stop));}
   stage="forced close and page ended event";views::ViewTracker old(widget->GetContentsView());widget->CloseNow();ASSERT_TRUE(base::test::RunUntil([&]{return !PageMediaAccess::IsCapturing(page())&&!access()->capture_prompt()&&!old.view();}));
-  ASSERT_TRUE(base::test::RunUntil([&]{return content::EvalJs(page(),"captureResult === 'ended' && captureStream.getTracks().every(t => t.readyState === 'ended')").ExtractBool();}));EXPECT_FALSE(access()->capture_scene_contains_for_testing(origin));
+  ASSERT_TRUE(base::test::RunUntil([&]{return content::EvalJs(page(),"captureResult === 'ended' && captureStream.getTracks().every(t => t.readyState === 'ended')").ExtractBool();}));if(MetalPresents())EXPECT_FALSE(access()->capture_scene_contains_for_testing(origin));
   // A live same-origin one-time grant can start another stream. Stale close
   // callbacks from the old widget must not stop that new capture generation.
   stage="fresh capture";Start();ASSERT_TRUE(base::test::RunUntil([&]{return ResultIs("running")&&PageMediaAccess::IsCapturing(page())&&access()->capture_prompt();}));
@@ -366,7 +370,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMediaBrowserTest, PermissionConsentProfileIsolation
   auto* source_access = access();
   ASSERT_TRUE(window_->Select(spaces[1].id));
   EXPECT_TRUE(source_access->capture_prompt());
-  if(rust())ASSERT_TRUE(base::test::RunUntil([&]{return source_access->capture_scene_contains_for_testing("Zamknięcie tego okna zatrzyma przechwytywanie.");}));
+  if(rust())if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return source_access->capture_scene_contains_for_testing("Zamknięcie tego okna zatrzyma przechwytywanie.");}));
   ASSERT_NO_FATAL_FAILURE(Press(source_access->capture_prompt(),false));
   stage = "capture stops from background controls";
   ASSERT_TRUE(base::test::RunUntil([&] { return !PageMediaAccess::IsCapturing(source); }));
