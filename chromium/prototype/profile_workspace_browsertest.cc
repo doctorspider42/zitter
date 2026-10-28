@@ -183,9 +183,9 @@ namespace {
 // the right edge in RTL, and indentation grows away from it.
 int LeadingEdge(const views::View* view){const auto bounds=view->GetBoundsInScreen();return base::i18n::IsRTL()?bounds.right():bounds.x();}
 int Indent(int pixels){return base::i18n::IsRTL()?-pixels:pixels;}
-// Metal presentation oracles apply only when Metal presents; the compositor
-// raster mode keeps the Rust logic but paints recipes through Chromium.
-bool MetalPresents(){return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-rust-raster")!="compositor";}
+// Metal presentation oracles apply only with --zitter-rust-raster=metal; the
+// default compositor raster paints the same Rust recipes through Chromium.
+bool MetalPresents(){return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-rust-raster")=="metal";}
 // Paints a view alone at its parent's visual origin; in RTL logical x=0 is the
 // mirrored right edge, which would place the paint outside the bitmap.
 SkBitmap PaintAtLeadingOrigin(views::View* view){const auto saved=view->bounds();const int x=base::i18n::IsRTL()&&view->parent()?view->parent()->width()-view->width():0;view->SetBoundsRect(gfx::Rect(x,0,view->width(),view->height()));view->SchedulePaint();auto bitmap=views::test::PaintViewToBitmap(view);view->SetBoundsRect(saved);return bitmap;}
@@ -6077,6 +6077,7 @@ class ZitterMetalSidebarBrowserTest : public ZitterProfilesBrowserTest {
   void SetUpCommandLine(base::CommandLine* command_line) override {
     ZitterProfilesBrowserTest::SetUpCommandLine(command_line);
     command_line->AppendSwitchASCII("zitter-sidebar", "rust-metal");
+    command_line->AppendSwitchASCII("zitter-rust-raster", "metal");
   }
 };
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, DownloadsSharedSceneScrollThemeCloseAndProfile) {

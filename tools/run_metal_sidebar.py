@@ -57,7 +57,7 @@ def main():
     parser.add_argument("--profile", type=Path, default=ROOT / "build/rust-metal-profile")
     parser.add_argument("--backend", choices=["rust-metal", "views"], default="rust-metal")
     parser.add_argument("--port", type=int, default=8767)
-    parser.add_argument("--raster", choices=["metal", "compositor"], default="metal",
+    parser.add_argument("--raster", choices=["compositor", "metal"], default="compositor",
                         help="Rust backend painting: in-process Metal or the Chromium compositor")
     args = parser.parse_args()
     info = args.app.resolve() / "Contents/Info.plist"
@@ -70,7 +70,7 @@ def main():
         parser.error(str(error))
     server = ThreadingHTTPServer(("127.0.0.1", args.port), functools.partial(QuietHandler, directory=str(ROOT / "testdata")))
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    raster = [f"--zitter-rust-raster={args.raster}"] if args.backend == "rust-metal" and args.raster != "metal" else []
+    raster = [f"--zitter-rust-raster={args.raster}"] if args.backend == "rust-metal" and args.raster != "compositor" else []
     print(f"Sidebar: {args.backend} ({args.raster}); isolated profile: {args.profile.resolve()}", flush=True)
     try:
         return subprocess.call(["/usr/bin/open", "-W", "-n", str(args.app.resolve()), "--args",

@@ -64,8 +64,8 @@
 
 namespace zitter::prototype {
 namespace {
-// Metal presentation oracles apply only when Metal presents (not compositor raster).
-bool MetalPresents(){return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-rust-raster")!="compositor";}
+// Metal presentation oracles apply only with --zitter-rust-raster=metal.
+bool MetalPresents(){return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-rust-raster")=="metal";}
 }  // namespace
 namespace {
 

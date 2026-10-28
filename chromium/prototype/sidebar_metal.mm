@@ -547,9 +547,9 @@ SidebarMetalStats GetSidebarMetalStatsForTesting() {
   return total;
 }
 std::unique_ptr<SidebarMetal> CreateSidebarMetal() {
-  // Experimental: keep the Rust scene/layout/input but never present a Metal
-  // layer, so every adapter paints its Rust recipe in the Chromium compositor.
-  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-rust-raster") == "compositor")
+  // Adapters paint their Rust recipes in the Chromium compositor by default;
+  // --zitter-rust-raster=metal opts into the in-process Metal overlay.
+  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-rust-raster") != "metal")
     return std::make_unique<CompositorSurface>();
   auto surface = std::make_unique<Surface>();
   return surface->Init() ? std::move(surface) : nullptr;
