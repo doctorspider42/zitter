@@ -5,6 +5,11 @@
 // and WebContents remain native, and projected text never authorizes an operation.
 mod sidebar_editor;
 use sidebar_editor::EditorState;
+// The design system (docs/design-system): tokens, workspace palettes, recipes.
+// Not yet read by the scene; the shell switches over in the next step.
+#[allow(dead_code)]
+mod design;
+mod design_tokens;
 
 #[cxx::bridge(namespace = "zitter::sidebar")]
 mod ffi {
