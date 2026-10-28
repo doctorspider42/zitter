@@ -2,6 +2,10 @@
 #include "ui/views/controls/separator.h"
 #include "ui/views/background.h"
 #include "ui/views/view_targeter.h"
+#include "build/build_config.h"
+#if BUILDFLAG(IS_MAC)
+#include "chromium/prototype/sidebar_metal.h"
+#endif
 #include "ui/views/view_targeter_delegate.h"
 #include "ui/views/controls/focus_ring.h"
 #include "ui/views/layout/layout_provider.h"
@@ -454,6 +458,84 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PerformanceBaseline) {
   }
 }
 
+// Real-app UI interaction workload for Views vs Rust/Metal comparison: sidebar
+// tab selection, folder collapse and palette query, each measured until the
+// posted UI work (including Metal scene updates) has drained.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PerformanceUiInteraction) {
+  const auto* command = base::CommandLine::ForCurrentProcess();
+  if (!command->HasSwitch("zitter-benchmark")) GTEST_SKIP();
+  int iterations = 40, tabs = 20;
+  if (command->HasSwitch("zitter-perf-iterations"))
+    ASSERT_TRUE(base::StringToInt(command->GetSwitchValueASCII("zitter-perf-iterations"), &iterations));
+  if (command->HasSwitch("zitter-perf-tabs"))
+    ASSERT_TRUE(base::StringToInt(command->GetSwitchValueASCII("zitter-perf-tabs"), &tabs));
+  ASSERT_GE(iterations, 1); ASSERT_LE(iterations, 400);
+  ASSERT_GE(tabs, 2); ASSERT_LE(tabs, 100);
+  base::test::ScopedRunLoopTimeout timeout(FROM_HERE, base::Seconds(120));
+  ASSERT_TRUE(window_->Select("work"));
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->SetWorkspaceAnimations(false);
+  const auto url = embedded_test_server()->GetURL("/performance_probe.html");
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), url));
+  for (int i = 1; i < tabs; ++i) ASSERT_TRUE(window_->NavigateFromBar(url, true));
+  ASSERT_TRUE(window_->CreatePinnedFolder("work", "", "Perf folder"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  shell->SetPinned(true); shell->ShowSidebar();
+  auto drain = [&] { base::RunLoop().RunUntilIdle(); shell->sidebar_widget()->LayoutRootViewIfNecessary(); base::RunLoop().RunUntilIdle(); };
+  drain();
+  auto sample = [](const char* metric, int trial, double milliseconds) {
+    LOG(INFO) << "ZITTER_PERF {\"metric\":\"" << metric << "\",\"trial\":" << trial << ",\"ms\":" << milliseconds << "}";
+  };
+  auto metrics = base::ProcessMetrics::CreateCurrentProcessMetrics();
+  std::optional<base::TimeDelta> cpu_start;
+  for (int trial = -3; trial < iterations; ++trial) {
+    if (trial == 0) { const auto cpu = metrics->GetCumulativeCPUUsage(); ASSERT_TRUE(cpu.has_value()); cpu_start = *cpu; }
+    const auto wall = base::TimeTicks::Now();
+    auto* row = shell->tab_button(static_cast<size_t>((trial + 3) % tabs));
+    ASSERT_TRUE(row);
+    auto start = base::TimeTicks::Now();
+    ActivateSidebarRow(row); drain();
+    if (trial >= 0) sample("ui_tab_select_ms", trial, (base::TimeTicks::Now() - start).InMillisecondsF());
+    auto* folder = FindButton(shell->sidebar_view(), (trial % 2) ? u"▸ Perf folder" : u"▾ Perf folder");
+    if (!folder) folder = FindButton(shell->sidebar_view(), u"▸ Perf folder");
+    if (!folder) folder = FindButton(shell->sidebar_view(), u"▾ Perf folder");
+    ASSERT_TRUE(folder);
+    start = base::TimeTicks::Now();
+    ActivateSidebarRow(folder); drain();
+    if (trial >= 0) sample("ui_folder_toggle_ms", trial, (base::TimeTicks::Now() - start).InMillisecondsF());
+    start = base::TimeTicks::Now();
+    shell->OpenCommandPalette(); drain();
+    const auto opened = base::TimeTicks::Now();
+    SetPaletteQuery(u"przes"); drain();
+    const auto queried = base::TimeTicks::Now();
+    shell->CloseOverlays(true); drain();
+    if (trial >= 0) {
+      sample("ui_palette_query_ms", trial, (base::TimeTicks::Now() - start).InMillisecondsF());
+      sample("ui_palette_open_part_ms", trial, (opened - start).InMillisecondsF());
+      sample("ui_palette_type_part_ms", trial, (queried - opened).InMillisecondsF());
+      sample("ui_palette_close_part_ms", trial, (base::TimeTicks::Now() - queried).InMillisecondsF());
+    }
+    if (trial >= 0) sample("ui_iteration_ms", trial, (base::TimeTicks::Now() - wall).InMillisecondsF());
+  }
+  const auto cpu_end = metrics->GetCumulativeCPUUsage();
+  ASSERT_TRUE(cpu_end.has_value());
+  auto memory = metrics->GetMemoryInfo();
+  ASSERT_TRUE(memory.has_value());
+  uint64_t footprint = 0;
+#if BUILDFLAG(IS_APPLE)
+  footprint = memory->physical_footprint_bytes;
+#endif
+  LOG(INFO) << "ZITTER_UI_RESOURCE {\"iterations\":" << iterations << ",\"tabs\":" << tabs
+            << ",\"browser_cpu_ms\":" << (*cpu_end - *cpu_start).InMillisecondsF()
+            << ",\"browser_resident_bytes\":" << memory->resident_set_bytes
+            << ",\"browser_footprint_bytes\":" << footprint << "}";
+#if BUILDFLAG(IS_MAC)
+  const auto stats = GetSidebarMetalStatsForTesting();
+  LOG(INFO) << "ZITTER_UI_METAL {\"surfaces\":" << stats.surfaces << ",\"visible\":" << stats.visible
+            << ",\"text_bytes\":" << stats.text_bytes << ",\"drawable_bytes\":" << stats.drawable_bytes << ",\"device_bytes\":" << stats.device_bytes << ",\"frames\":" << stats.frames << ",\"drawable_wait_ms\":" << stats.drawable_wait_ms << ",\"render_ms\":" << stats.render_ms << "}";
+#endif
+}
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PerformanceRestoration) {
   const auto* command = base::CommandLine::ForCurrentProcess();
   if (!command->HasSwitch("zitter-benchmark")) GTEST_SKIP();

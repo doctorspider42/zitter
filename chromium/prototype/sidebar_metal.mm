@@ -13,11 +13,14 @@
 #include <cmath>
 #include <optional>
 #include <map>
+#include <set>
 #include <sstream>
 #include <vector>
 #include "base/apple/scoped_cftyperef.h"
 #include "base/logging.h"
 #include "base/no_destructor.h"
+#include "third_party/abseil-cpp/absl/cleanup/cleanup.h"
+#include "base/time/time.h"
 #include "base/task/bind_post_task.h"
 #include "base/strings/sys_string_conversions.h"
 #include "ui/views/controls/scrollbar/scroll_bar.h"
@@ -191,8 +194,12 @@ NSFont* ChromeFont(float size,int weight,bool medium=false){
   const CGFloat native_weight=weight>=900?NSFontWeightBlack:weight>=800?NSFontWeightHeavy:weight>=700?NSFontWeightBold:weight>=600?NSFontWeightSemibold:weight>=500?NSFontWeightMedium:weight>=400?NSFontWeightRegular:weight>=300?NSFontWeightLight:NSFontWeightThin;
   return [NSFont systemFontOfSize:std::isfinite(size)&&size>0?size:13 weight:native_weight];
 }
+class Surface;
+std::set<Surface*>& LiveSurfaces(){static base::NoDestructor<std::set<Surface*>> surfaces;return *surfaces;}
 class Surface final : public SidebarMetal {
  public:
+  Surface(){LiveSurfaces().insert(this);}
+  SidebarMetalStats Stats() const{const auto size=layer_?layer_.drawableSize:CGSizeZero;return {1,visible()?1u:0u,text_bytes_,size_t(size.width*size.height*4)*(layer_?layer_.maximumDrawableCount:0),0,frame_count_,drawable_wait_.InMillisecondsF(),render_time_.InMillisecondsF()};}
   bool Init() {
     context_=AcquireMetalContext();
     if (!context_) return false;
@@ -208,7 +215,7 @@ class Surface final : public SidebarMetal {
     view_.hidden = YES;
     return true;
   }
-  ~Surface() override { [view_.layer removeAnimationForKey:@"zitter-preview"]; [view_ removeFromSuperview]; [preview_clip_ removeFromSuperview]; }
+  ~Surface() override { LiveSurfaces().erase(this); [view_.layer removeAnimationForKey:@"zitter-preview"]; [view_ removeFromSuperview]; [preview_clip_ removeFromSuperview]; }
   void Hide() override { next_presentation_.Reset(); view_.hidden = YES; [view_.layer removeAnimationForKey:@"zitter-preview"]; last_frame_.clear(); last_bounds_ = {}; }
   bool visible() const override { return view_.superview && view_.window.isVisible && !view_.isHiddenOrHasHiddenAncestor; }
   size_t frame_count() const override { return frame_count_; }
@@ -320,6 +327,8 @@ class Surface final : public SidebarMetal {
   }
   void RenderScene(NSWindow* window,gfx::Rect bounds,NSRect frame,
       base::span<const sidebar::Primitive> ops,unsigned background) {
+    const auto render_start = base::TimeTicks::Now();
+    absl::Cleanup account = [&] { render_time_ += base::TimeTicks::Now() - render_start; };
     const double scale = window.backingScaleFactor ?: 1;
     std::ostringstream signature;
     signature << bounds.ToString() << ':' << scale << ':' << background;
@@ -337,7 +346,9 @@ class Surface final : public SidebarMetal {
       layer_.contentsScale = scale; layer_.drawableSize = pixels;
     }
     [CATransaction commit];
+    const auto wait_start = base::TimeTicks::Now();
     id<CAMetalDrawable> drawable = [layer_ nextDrawable];
+    drawable_wait_ += base::TimeTicks::Now() - wait_start;
     if (!drawable) { Hide(); return; }  // The live Views tree is a safe fallback.
     MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
     pass.colorAttachments[0].texture = drawable.texture;
@@ -436,6 +447,7 @@ class Surface final : public SidebarMetal {
   }
   std::map<std::string, TextTile> text_;
   size_t text_bytes_ = 0;
+  base::TimeDelta drawable_wait_, render_time_;
   rust::Box<sidebar::Viewport> viewport_ = sidebar::new_viewport();
   std::shared_ptr<SharedMetalContext> context_;
   base::OnceClosure next_presentation_;
@@ -490,6 +502,12 @@ std::vector<std::string> ShapeSidebarParagraphWeight(std::string_view text,float
     lines.push_back(base::SysNSStringToUTF8([string substringWithRange:NSMakeRange(offset,length)]));offset+=length;
   }
   return lines;
+}
+SidebarMetalStats GetSidebarMetalStatsForTesting() {
+  SidebarMetalStats total;
+  for (auto* surface : LiveSurfaces()) { const auto s = surface->Stats(); total.surfaces += s.surfaces; total.visible += s.visible; total.text_bytes += s.text_bytes; total.drawable_bytes += s.drawable_bytes; total.frames += s.frames; total.drawable_wait_ms += s.drawable_wait_ms; total.render_ms += s.render_ms; }
+  if (auto context = AcquireMetalContext()) total.device_bytes = context->device_.currentAllocatedSize;
+  return total;
 }
 std::unique_ptr<SidebarMetal> CreateSidebarMetal() {
   auto surface = std::make_unique<Surface>();

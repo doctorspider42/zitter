@@ -79,6 +79,10 @@ class SidebarMetal {
   virtual bool contains_rect_for_testing(gfx::RectF bounds, gfx::RectF clip) const = 0;
 };
 std::unique_ptr<SidebarMetal> CreateSidebarMetal();
+// Diagnostics for memory budgeting: live/visible surfaces, cached text tile
+// bytes and current drawable bytes (drawableSize x 4 x maximumDrawableCount).
+struct SidebarMetalStats { size_t surfaces = 0, visible = 0, text_bytes = 0, drawable_bytes = 0, device_bytes = 0, frames = 0; double drawable_wait_ms = 0, render_ms = 0; };
+SidebarMetalStats GetSidebarMetalStatsForTesting();
 // Same untruncated CoreText editor line for a missing-device/drawable fallback.
 void PaintEditorSceneFallback(gfx::Canvas* canvas,base::span<const sidebar::Primitive> scene);
 // CoreText typography adapter, matching the font used for GPU text tiles.

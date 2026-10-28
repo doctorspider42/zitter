@@ -1,0 +1,139 @@
+{
+  "date": "2026-10-28T02:44:18.380576+00:00",
+  "test": "ZitterProfilesBrowserTest.PerformanceUiInteraction",
+  "binary": "/Users/papaj/Projects/zitter/.chromium/src/out/ZitterOptimized/zitter_prototype_ui_lab",
+  "iterations": 40,
+  "tabs": 20,
+  "rounds": 3,
+  "logs": "/Users/papaj/Projects/zitter/build/ui-interaction-performance/20261028T024335Z",
+  "limits": [
+    "Wall time ends when posted UI work has drained; WindowServer presentation is not captured.",
+    "Single machine, warm process; no GPU counters."
+  ],
+  "backends": {
+    "views": {
+      "operations": {
+        "ui_folder_toggle_ms": {
+          "n": 120,
+          "median": 18.7935,
+          "p95": 19.417,
+          "mean": 17.961983333333333
+        },
+        "ui_iteration_ms": {
+          "n": 120,
+          "median": 91.65100000000001,
+          "p95": 100.054,
+          "mean": 90.69126666666666
+        },
+        "ui_palette_close_part_ms": {
+          "n": 120,
+          "median": 16.733,
+          "p95": 25.077,
+          "mean": 19.236749999999997
+        },
+        "ui_palette_open_part_ms": {
+          "n": 120,
+          "median": 16.646,
+          "p95": 30.292,
+          "mean": 19.710350000000002
+        },
+        "ui_palette_query_ms": {
+          "n": 120,
+          "median": 55.870999999999995,
+          "p95": 64.232,
+          "mean": 55.55085833333333
+        },
+        "ui_palette_type_part_ms": {
+          "n": 120,
+          "median": 16.665,
+          "p95": 16.689,
+          "mean": 16.669008333333334
+        },
+        "ui_tab_select_ms": {
+          "n": 120,
+          "median": 16.5895,
+          "p95": 16.658,
+          "mean": 16.921508333333332
+        }
+      },
+      "browser_cpu_ms_per_iteration": {
+        "n": 3,
+        "median": 24.327199999999998,
+        "p95": 24.327199999999998,
+        "mean": 24.22208333333333
+      },
+      "browser_footprint_mb": {
+        "n": 3,
+        "median": 112.64250183105469,
+        "p95": 112.64250183105469,
+        "mean": 112.57998657226562
+      }
+    },
+    "rust-metal": {
+      "operations": {
+        "ui_folder_toggle_ms": {
+          "n": 120,
+          "median": 18.317999999999998,
+          "p95": 19.316,
+          "mean": 17.783708333333333
+        },
+        "ui_iteration_ms": {
+          "n": 120,
+          "median": 99.9945,
+          "p95": 108.177,
+          "mean": 99.85309166666666
+        },
+        "ui_palette_close_part_ms": {
+          "n": 120,
+          "median": 16.713,
+          "p95": 16.83,
+          "mean": 16.854558333333333
+        },
+        "ui_palette_open_part_ms": {
+          "n": 120,
+          "median": 31.1265,
+          "p95": 33.31,
+          "mean": 31.457225
+        },
+        "ui_palette_query_ms": {
+          "n": 120,
+          "median": 64.4935,
+          "p95": 66.767,
+          "mean": 65.06440833333333
+        },
+        "ui_palette_type_part_ms": {
+          "n": 120,
+          "median": 16.67,
+          "p95": 16.7,
+          "mean": 16.817341666666668
+        },
+        "ui_tab_select_ms": {
+          "n": 120,
+          "median": 16.5955,
+          "p95": 16.631,
+          "mean": 16.76645
+        }
+      },
+      "browser_cpu_ms_per_iteration": {
+        "n": 3,
+        "median": 30.24425,
+        "p95": 30.24425,
+        "mean": 30.245083333333337
+      },
+      "browser_footprint_mb": {
+        "n": 3,
+        "median": 260.2362747192383,
+        "p95": 260.2362747192383,
+        "mean": 260.7414906819661
+      }
+    }
+  },
+  "findings": [
+    "Tab selection and folder toggle: no difference (vsync-quantized medians within 0.5 ms).",
+    "Palette open is one frame slower in Rust/Metal (median ~31 vs ~17 ms); typing and closing are equal. Total Metal render time is ~3.6 ms per iteration and nextDrawable waits are negligible, so the extra frame is a vsync-aligned wait outside the Metal render path (window show/Core Animation), not yet localized.",
+    "Browser-process CPU is ~24% higher in Rust/Metal (~30 vs ~24 ms per iteration); ~3.6 ms/iteration is in Metal scene rendering.",
+    "Browser-process footprint is ~260 vs ~113 MB. Our Metal resources are small (8 surfaces, ~2-7 MB text tiles, ~9-19 MB drawables, ~18-29 MB device allocations). ~106 MB is \"Owned physical footprint (unmapped) (graphics)\" that appears on the first render pass; a standalone probe reproduces ~110 MB after one 64x64 render pass on this GPU/OS, independent of buffer count or target size, so it is a fixed per-process driver cost of in-process Metal rendering.",
+    "Whole app process tree (browser+GPU+renderers): ~1300 vs ~1165 MB (+12%); the GPU process is similar (~508 vs ~523 MB).",
+    "Mitigations to evaluate: render through the GPU process/compositor instead of an in-process MTLDevice, or a CPU/IOSurface path for small static surfaces; neither is implemented."
+  ]
+}
