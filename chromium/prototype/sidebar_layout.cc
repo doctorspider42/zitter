@@ -1,4 +1,5 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
+#include "base/i18n/rtl.h"
 #include "chromium/prototype/sidebar_layout.h"
 #include <algorithm>
 #include <array>
@@ -117,7 +118,10 @@ class RustPanelViewport final : public views::View,public PanelViewport,public v
   void ApplyBackground(){std::optional<ui::ColorVariant> color;if(background_)color=*background_;else if(options_.dialog_style)color=ui::kColorDialogBackground;SetBackground(color?views::CreateSolidBackground(*color):nullptr);if(contents_){contents_->SetBackground(color?views::CreateSolidBackground(*color):nullptr);contents_->layer()->SetFillsBoundsOpaquely(background_?((*background_>>24)==0xff):options_.dialog_style);}}
   void Reveal(const gfx::Rect& rect){if(state_->viewport_reveal(options_.horizontal?rect.x():rect.y(),options_.horizontal?rect.width():rect.height()))Apply(true);}
   void Apply(bool moved){
-    if(!contents_)return;contents_->SetTransform(gfx::Transform::MakeTranslation(options_.horizontal?-static_cast<float>(offset()):0,options_.horizontal?0:-static_cast<float>(offset())));bar_->Update(options_.horizontal?clip_->width():clip_->height(),options_.horizontal?contents_->width():contents_->height(),static_cast<int>(offset()));auto& ax=GetViewAccessibility();if(options_.horizontal){ax.SetScrollX(static_cast<int>(offset()));ax.SetScrollXMax(maximum());}else{ax.SetScrollY(static_cast<int>(offset()));ax.SetScrollYMax(maximum());}if(top_){const auto e=state_->viewport_axis_edges(options_.horizontal?height():width(),options_.horizontal);top_->SetBounds(e.top.x,e.top.y,e.top.width,e.top.height);bottom_->SetBounds(e.bottom.x,e.bottom.y,e.bottom.width,e.bottom.height);top_->SetVisible(e.show_top);bottom_->SetVisible(e.show_bottom);}if(changed_)changed_.Run();if(moved)ax.NotifyEvent(ax::mojom::Event::kScrollPositionChanged,true);
+    if(!contents_)return;// Transforms are physical; in RTL the logical start is on the right, so a
+    // horizontal offset moves mirrored contents rightwards.
+    const float horizontal=(base::i18n::IsRTL()?1.f:-1.f)*static_cast<float>(offset());
+    contents_->SetTransform(gfx::Transform::MakeTranslation(options_.horizontal?horizontal:0,options_.horizontal?0:-static_cast<float>(offset())));bar_->Update(options_.horizontal?clip_->width():clip_->height(),options_.horizontal?contents_->width():contents_->height(),static_cast<int>(offset()));auto& ax=GetViewAccessibility();if(options_.horizontal){ax.SetScrollX(static_cast<int>(offset()));ax.SetScrollXMax(maximum());}else{ax.SetScrollY(static_cast<int>(offset()));ax.SetScrollYMax(maximum());}if(top_){const auto e=state_->viewport_axis_edges(options_.horizontal?height():width(),options_.horizontal);top_->SetBounds(e.top.x,e.top.y,e.top.width,e.top.height);bottom_->SetBounds(e.bottom.x,e.bottom.y,e.bottom.width,e.bottom.height);top_->SetVisible(e.show_top);bottom_->SetVisible(e.show_bottom);}if(changed_)changed_.Run();if(moved)ax.NotifyEvent(ax::mojom::Event::kScrollPositionChanged,true);
   }
   base::RepeatingClosure changed_;PanelViewportOptions options_;std::optional<unsigned> background_;
   rust::Box<sidebar::ScrollViewportState> state_=sidebar::new_scroll_viewport();

@@ -5267,10 +5267,14 @@ void WorkspaceShell::UpdateMetalSidebar() {
   auto* dot_viewport=workspace_dots_->parent();
   std::vector<SidebarViewportNode> dot_nodes{{SidebarTree::kRoot,gfx::Rect(workspace_dots_->size()),true}};
   for (const auto& child : workspace_dots_->children()) dot_nodes.push_back({0,child->GetMirroredBounds(),child->GetVisible()});
-  const gfx::PointF dot_requested(static_cast<float>(workspace_scroll_->offset()),0);
+  // Nodes are physical (mirrored) content bounds; in RTL the visible window
+  // starts at maximum-offset, so project with the physical offset.
+  const bool dot_rtl=base::i18n::IsRTL();const double dot_max=workspace_scroll_->maximum();
+  const auto dot_physical=[&](double offset){return dot_rtl?dot_max-offset:offset;};
+  const gfx::PointF dot_requested(static_cast<float>(dot_physical(workspace_scroll_->offset())),0);
   const auto dot_projection=metal_sidebar_->Project(workspace_dots_->size(),dot_viewport->size(),dot_requested,dot_nodes);
   if (dot_projection.offset!=dot_requested) {
-    workspace_scroll_->ScrollTo(dot_projection.offset.x()); ScheduleMetalSidebar(); return;
+    workspace_scroll_->ScrollTo(dot_physical(dot_projection.offset.x())); ScheduleMetalSidebar(); return;
   }
   const auto dot_origin=local_rect(dot_viewport).OffsetFromOrigin();
   for (const auto& node : dot_projection.nodes) if (node.index>0) {

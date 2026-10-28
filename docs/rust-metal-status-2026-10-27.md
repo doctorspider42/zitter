@@ -59,9 +59,10 @@ Wszystkie pozostałe punkty wymagają użytkownika lub jego decyzji: akceptacja 
 notaryzacja (poświadczenia Apple) i ewentualne wsparcie trybu kompozytora.
 
 0. **Automatyczna akceptacja skali i RTL (wykonana):** skala 1× — 276/276 Metal; RTL —
-   258/276, z czego 7 z 8 niepowodzeń profili występuje też w Views RTL, a sprawdzone
-   przypadki tylko-Metal zakładają geometrię LTR. Do sklasyfikowania: test stopki
-   (przechodzi w Views RTL) i kontrole koloru fallbacku. [Raport](benchmarks/rust-ui-rtl-scale-acceptance-2026-10-28.json).
+   259/276 po dwóch poprawkach RTL (kierunek przewijania poziomego `RustPanelViewport`,
+   projekcja sceny kropek stopki). Wszystkie 7 pozostałych niepowodzeń profili występuje
+   też w Views RTL, a sprawdzone przypadki tylko-Metal zakładają geometrię LTR. Do
+   sklasyfikowania: kontrole koloru fallbacku. [Raport](benchmarks/rust-ui-rtl-scale-acceptance-2026-10-28.json).
 1. **Akceptacja ręczna (wymaga użytkownika):** IME i okna kandydatów, bidi/RTL,
    VoiceOver, trackpad/gesty, skala Retina, motywy, utrata drawable/GPU, fallback.
 2. **Porównanie wydajności — wykonane, otwarte optymalizacje.** Test
