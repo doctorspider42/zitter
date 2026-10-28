@@ -1,0 +1,19 @@
+<!-- @dsCard group="Pages" height=300 subtitle="Side by side with the active pane, and stacked" -->
+<!doctype html>
+<html lang="pl">
+<head><meta charset="utf-8"><title>SplitView</title></head>
+<body>
+<div class="zt-stage" style="display:grid;grid-template-columns:2fr 1fr;gap:16px;align-items:stretch;height:260px;box-sizing:border-box">
+  <div class="zt-split" style="border-radius:var(--radius-md)">
+    <div class="zt-pane active"><div class="bar"><svg class="zt-icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="7" width="9" height="6.5" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg><span class="h">docs.zitter.app/split-view</span></div><div class="body"><i style="width:70%"></i><i style="width:90%"></i><i style="width:55%"></i></div></div>
+    <div class="zt-gutter" role="separator" aria-orientation="vertical" aria-label="Zmień proporcje" tabindex="0"></div>
+    <div class="zt-pane"><div class="bar"><svg class="zt-icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="7" width="9" height="6.5" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg><span class="h">figma.com/file/zitter</span></div><div class="body"><i style="width:60%"></i><i style="width:80%"></i></div></div>
+  </div>
+  <div class="zt-split stacked" style="border-radius:var(--radius-md)">
+    <div class="zt-pane"><div class="bar"><span class="h">mail.app</span></div><div class="body"><i style="width:70%"></i></div></div>
+    <div class="zt-gutter" role="separator" aria-orientation="horizontal" aria-label="Zmień proporcje" tabindex="0"></div>
+    <div class="zt-pane active"><div class="bar"><span class="h">calendar.app</span></div><div class="body"><i style="width:50%"></i></div></div>
+  </div>
+</div>
+</body>
+</html>

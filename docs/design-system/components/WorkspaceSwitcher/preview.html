@@ -1,0 +1,39 @@
+<!-- @dsCard group="Navigation" height=330 subtitle="Click a workspace: the whole window takes its color" -->
+<!doctype html>
+<html lang="pl">
+<head><meta charset="utf-8"><title>WorkspaceSwitcher</title></head>
+<body>
+<div class="zt-stage col">
+  <div class="zt-win" id="win" data-accent="violet" style="height:290px">
+    <div class="zt-win-side">
+      <div class="zt-tabs">
+        <div class="zt-eyebrow" style="padding-left:12px" id="wsname">Praca</div>
+        <div class="zt-tab active"><span class="fav">Z</span><span class="t">Zitter · Pull requests</span></div>
+        <div class="zt-tab"><span class="fav">L</span><span class="t">Linear · Sprint 42</span></div>
+        <div class="zt-tab"><span class="fav">F</span><span class="t">Figma · Design system</span></div>
+      </div>
+      <div style="flex:1"></div>
+      <div class="zt-wsbar" role="tablist" aria-label="Obszary robocze">
+        <button class="zt-ws active" role="tab" aria-selected="true" data-accent="violet" data-name="Praca"><span class="dot"></span><span class="n">Praca</span></button>
+        <button class="zt-ws" role="tab" aria-selected="false" aria-label="Dom" data-accent="mint" data-name="Dom"><span class="dot"></span><span class="n"></span></button>
+        <button class="zt-ws" role="tab" aria-selected="false" aria-label="Podróże" data-accent="sky" data-name="Podróże"><span class="emoji">🏔</span><span class="n"></span></button>
+        <button class="zt-ws" role="tab" aria-selected="false" aria-label="Badania" data-accent="coral" data-name="Badania"><span class="dot"></span><span class="n"></span></button>
+        <button class="zt-ws add" aria-label="Nowy obszar"><svg class="zt-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button>
+      </div>
+    </div>
+    <div class="zt-win-page"><i style="width:40%;height:10px"></i><i style="width:85%"></i><i style="width:70%"></i><i style="width:78%"></i><div style="flex:1"></div><div><button class="zt-btn zt-btn-primary">Otwórz w podziale</button></div></div>
+  </div>
+</div>
+<script>
+  var win = document.getElementById('win');
+  win.querySelectorAll('.zt-ws[data-name]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      win.querySelectorAll('.zt-ws[data-name]').forEach(function (o) { o.classList.remove('active'); o.setAttribute('aria-selected', 'false'); o.querySelector('.n').textContent = ''; });
+      b.classList.add('active'); b.setAttribute('aria-selected', 'true'); b.querySelector('.n').textContent = b.dataset.name;
+      win.dataset.accent = b.dataset.accent;
+      document.getElementById('wsname').textContent = b.dataset.name;
+    });
+  });
+</script>
+</body>
+</html>

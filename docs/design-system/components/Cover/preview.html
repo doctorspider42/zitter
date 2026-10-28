@@ -1,0 +1,99 @@
+<!-- @dsCard height=288 -->
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<title>Zitter</title>
+<style>
+  html, body { margin:0; height:100%; }
+  body { background:var(--bg-base); color:var(--ink); font-family:var(--font-sans); overflow:hidden; }
+  .cover { position:relative; width:960px; height:288px; overflow:hidden; }
+  .art { position:absolute; top:0; left:480px; width:480px; height:288px; }
+  .art svg { display:block; }
+  .ket { fill:var(--ket); }
+  .zing { fill:var(--zing); }
+  .soft { fill:var(--ket-soft); }
+  .blk { rx:var(--radius-md); }
+  .dot { fill:var(--ket); rx:2px; }
+  .bar { fill:var(--on-ket); rx:4px; }
+  .zbar { fill:var(--on-zing); rx:4px; }
+  .words { position:absolute; left:var(--space-12); bottom:var(--space-8); max-width:440px; }
+  .name { margin:0; font-family:var(--font-display); font-style:italic; font-weight:400; font-size:120px; line-height:.92; letter-spacing:-.02em; color:var(--ink); }
+  .tag { margin:var(--space-2) 0 0 6px; font-size:14px; line-height:20px; color:var(--ink-muted); }
+</style>
+</head>
+<body>
+<div class="cover">
+<div class="art" aria-hidden="true">
+<svg viewBox="0 0 480 288" width="480" height="288">
+<!--
+  blocks      ket 144x232 bled off the top (the brand, from the |z> icon) · zing 168x208 (the one extravagance, given a big block on purpose) · ket-soft 104 wide bleeding off right and bottom — about 40% of 960x288
+  arrangement one tall ket slab with a zing satellite stepped down space-12, the tint slab as a third, unequal band; gutters space-4
+  pattern     tremor dots: "Zitterbewegung, the trembling" gives a dot grid at space-4 pitch, each dot nudged ±2px (space-0-5); one pill in on-ket on the slab echoes the | of the ket; two on-zing pills on the lime block read as a page card's first lines
+  scales      pitch space-4, nudge space-0-5, gutters space-4; corners radius-md; dots and pills rx = half their 8px height
+-->
+<rect class="ket blk" x="24" y="-16" width="144" height="232" rx="12"/>
+<rect class="bar" x="56" y="40" width="8" height="128" rx="4"/>
+<rect class="zing blk" x="184" y="56" width="168" height="208" rx="12"/>
+<rect class="zbar" x="208" y="88" width="120" height="8" rx="4"/>
+<rect class="zbar" x="208" y="112" width="80" height="8" rx="4"/>
+<rect class="soft blk" x="368" y="24" width="128" height="280" rx="12"/>
+<rect class="dot" x="392" y="47" width="4" height="4" rx="2"/>
+<rect class="dot" x="409" y="46" width="4" height="4" rx="2"/>
+<rect class="dot" x="422" y="50" width="4" height="4" rx="2"/>
+<rect class="dot" x="438" y="48" width="4" height="4" rx="2"/>
+<rect class="dot" x="458" y="46" width="4" height="4" rx="2"/>
+<rect class="dot" x="394" y="63" width="4" height="4" rx="2"/>
+<rect class="dot" x="406" y="62" width="4" height="4" rx="2"/>
+<rect class="dot" x="425" y="65" width="4" height="4" rx="2"/>
+<rect class="dot" x="438" y="63" width="4" height="4" rx="2"/>
+<rect class="dot" x="454" y="66" width="4" height="4" rx="2"/>
+<rect class="dot" x="393" y="78" width="4" height="4" rx="2"/>
+<rect class="dot" x="410" y="78" width="4" height="4" rx="2"/>
+<rect class="dot" x="423" y="82" width="4" height="4" rx="2"/>
+<rect class="dot" x="438" y="82" width="4" height="4" rx="2"/>
+<rect class="dot" x="458" y="81" width="4" height="4" rx="2"/>
+<rect class="dot" x="390" y="95" width="4" height="4" rx="2"/>
+<rect class="dot" x="406" y="98" width="4" height="4" rx="2"/>
+<rect class="dot" x="423" y="96" width="4" height="4" rx="2"/>
+<rect class="dot" x="441" y="95" width="4" height="4" rx="2"/>
+<rect class="dot" x="458" y="94" width="4" height="4" rx="2"/>
+<rect class="dot" x="394" y="112" width="4" height="4" rx="2"/>
+<rect class="dot" x="410" y="111" width="4" height="4" rx="2"/>
+<rect class="dot" x="422" y="114" width="4" height="4" rx="2"/>
+<rect class="dot" x="442" y="111" width="4" height="4" rx="2"/>
+<rect class="dot" x="456" y="110" width="4" height="4" rx="2"/>
+<rect class="dot" x="394" y="126" width="4" height="4" rx="2"/>
+<rect class="dot" x="410" y="126" width="4" height="4" rx="2"/>
+<rect class="dot" x="426" y="127" width="4" height="4" rx="2"/>
+<rect class="dot" x="441" y="130" width="4" height="4" rx="2"/>
+<rect class="dot" x="457" y="128" width="4" height="4" rx="2"/>
+<rect class="dot" x="393" y="146" width="4" height="4" rx="2"/>
+<rect class="dot" x="409" y="144" width="4" height="4" rx="2"/>
+<rect class="dot" x="424" y="143" width="4" height="4" rx="2"/>
+<rect class="dot" x="439" y="143" width="4" height="4" rx="2"/>
+<rect class="dot" x="454" y="146" width="4" height="4" rx="2"/>
+<rect class="dot" x="392" y="162" width="4" height="4" rx="2"/>
+<rect class="dot" x="409" y="160" width="4" height="4" rx="2"/>
+<rect class="dot" x="425" y="160" width="4" height="4" rx="2"/>
+<rect class="dot" x="442" y="158" width="4" height="4" rx="2"/>
+<rect class="dot" x="454" y="162" width="4" height="4" rx="2"/>
+<rect class="dot" x="393" y="175" width="4" height="4" rx="2"/>
+<rect class="dot" x="408" y="175" width="4" height="4" rx="2"/>
+<rect class="dot" x="425" y="177" width="4" height="4" rx="2"/>
+<rect class="dot" x="438" y="174" width="4" height="4" rx="2"/>
+<rect class="dot" x="458" y="178" width="4" height="4" rx="2"/>
+<rect class="dot" x="392" y="192" width="4" height="4" rx="2"/>
+<rect class="dot" x="408" y="194" width="4" height="4" rx="2"/>
+<rect class="dot" x="425" y="194" width="4" height="4" rx="2"/>
+<rect class="dot" x="441" y="190" width="4" height="4" rx="2"/>
+<rect class="dot" x="454" y="192" width="4" height="4" rx="2"/>
+</svg>
+</div>
+<div class="words">
+  <h1 class="name">Zitter</h1>
+  <p class="tag">Okno w kolorze obszaru. Jedna limonkowa nuta. Lekkie drżenie.</p>
+</div>
+</div>
+</body>
+</html>
