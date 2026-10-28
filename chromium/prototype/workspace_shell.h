@@ -509,6 +509,7 @@ class WorkspaceShell final : public ui::EventHandler,
   bool workspace_context_menu_running_for_testing() const;
   views::View* profile_picker() const { return profile_picker_; }
   EditorControl* color_input() const { return color_input_; }
+  views::View* color_grid_row_for_testing(size_t axis) const { return color_grid_rows_[axis]; }
   EditorControl* address_input() const { return address_; }
   // Application key policy; the platform input method owns composing keys.
   bool HandleAddressKey(const ui::KeyEvent& event);
@@ -700,6 +701,7 @@ class WorkspaceShell final : public ui::EventHandler,
   std::string context_pin_;
   void BindFormCommand(views::View* view,sidebar::FormCommand command,std::string key={});
   void BindAppearancePreset(views::View* view,bool emoji,size_t index);
+  void BindAppearanceGrid(views::View* view,uint32_t axis,size_t index);
   void BindPreferenceCategory(views::View* view,size_t category);
   void DispatchFormCommand(views::View* source,const sidebar::FormCommandBinding& command);
   void SubmitWorkspace(bool add);
@@ -926,6 +928,8 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<EditorControl> emoji_input_ = nullptr;
   raw_ptr<views::View> address_error_ = nullptr;
   raw_ptr<views::View> color_error_ = nullptr;
+  // Workspace color picker rows: hue, saturation, tone.
+  std::array<raw_ptr<views::View>, 3> color_grid_rows_{};
   std::unique_ptr<views::WidgetDelegate> import_delegate_;
   std::unique_ptr<views::Widget> import_widget_;
   std::unique_ptr<views::WidgetDelegate> profiles_delegate_;

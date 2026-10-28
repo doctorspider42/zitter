@@ -628,6 +628,7 @@ class RustActionView : public views::View {
   void SetCallback(views::Button::PressedCallback callback){Cancel();command_callback_.Reset();callback_=std::move(callback);}
   void SetFormCommand(sidebar::FormCommand command,const std::string& key,base::RepeatingCallback<void(views::View*,const sidebar::FormCommandBinding&)> callback){CHECK(state_->node_form_command_init(command,key));Cancel();callback_=views::Button::PressedCallback();command_callback_=std::move(callback);PreferredSizeChanged();SchedulePaint();}
   void SetAppearancePreset(bool emoji,size_t index,base::RepeatingCallback<void(views::View*,const sidebar::FormCommandBinding&)> callback){CHECK(state_->bind_appearance_preset(emoji,index));Cancel();callback_=views::Button::PressedCallback();command_callback_=std::move(callback);}
+  void SetAppearanceGrid(uint32_t axis,size_t index,base::RepeatingCallback<void(views::View*,const sidebar::FormCommandBinding&)> callback){CHECK(state_->bind_appearance_grid(axis,index));Cancel();callback_=views::Button::PressedCallback();command_callback_=std::move(callback);}
   void SetPreferenceCategory(const sidebar::PreferencesForm& form,size_t category,base::RepeatingCallback<void(views::View*,const sidebar::FormCommandBinding&)> callback){CHECK(form.bind_category(*state_,category));Cancel();callback_=views::Button::PressedCallback();command_callback_=std::move(callback);PreferredSizeChanged();SchedulePaint();}
   rust::Box<sidebar::FormCommandTicket> DeferFormCommand() const{return state_->defer_form_command();}
   void CancelInput(){Cancel();}
@@ -741,6 +742,8 @@ class AppearanceRow final : public views::View {
   void SyncWindowVisibility(){CancelInput();if(!SceneIsVisible(this)&&surface_)surface_->Hide();Schedule();}
 
   explicit AppearanceRow(bool emoji):emoji_(emoji),count_(sidebar::appearance_presets(emoji).size()) {}
+  // A workspace color picker row (design.rs PickerAxis): swatches only.
+  AppearanceRow(uint32_t axis,size_t count):emoji_(false),axis_(axis),count_(count) {}
   views::View* AddPicker(views::Button::PressedCallback callback,std::u16string label,GlyphButton::Glyph glyph) {
     return AddChildView(nodes_.Make<RustActionView>(std::move(callback),std::move(label),glyph,nullptr,
         base::BindRepeating([]{return true;}),base::BindRepeating(&AppearanceRow::Schedule,weak_factory_.GetWeakPtr()),false));
@@ -762,7 +765,7 @@ class AppearanceRow final : public views::View {
  private:
   SceneGroupNodes nodes_{this};
   size_t Count() const{return count_;}
-  sidebar::ColumnLayout Geometry(int width,int height) const {const auto field=children().size()==Count()+2?children().back()->GetPreferredSize():gfx::Size();return sidebar::appearance_row_layout(width,height,field.width(),field.height(),emoji_);}
+  sidebar::ColumnLayout Geometry(int width,int height) const {if(axis_)return sidebar::appearance_grid_layout(width,height,*axis_);const auto field=children().size()==Count()+2?children().back()->GetPreferredSize():gfx::Size();return sidebar::appearance_row_layout(width,height,field.width(),field.height(),emoji_);}
   gfx::Rect Controls() const {return children().size()==Count()+2?GetMirroredRect(gfx::Rect(0,0,children()[Count()-1]->bounds().right(),height())):gfx::Rect();}
   std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const {
     std::vector<sidebar::Item> items;if(children().size()!=Count()+2)return items;
@@ -775,7 +778,7 @@ class AppearanceRow final : public views::View {
     frame_=GetBoundsInScreen();frame_.Offset(local.x(),local.y());frame_.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame_.size())));
     surface_->Update(GetWidget()->GetNativeWindow(),frame_,items,Tone(this,kCard));if(was!=metal_visible())SchedulePaint();
   }
-  bool emoji_;size_t count_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;gfx::Rect frame_;SceneWindowObserver window_visibility_{base::BindRepeating(&AppearanceRow::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<AppearanceRow> weak_factory_{this};
+  bool emoji_;std::optional<uint32_t> axis_;size_t count_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;gfx::Rect frame_;SceneWindowObserver window_visibility_{base::BindRepeating(&AppearanceRow::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<AppearanceRow> weak_factory_{this};
 };
 BEGIN_METADATA(AppearanceRow)
 END_METADATA
@@ -2935,6 +2938,18 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   if(color_layout)color_layout->SetFlexForView(color_input_->view(), 1);
   color_error_ = settings_text(appearance,u"",kError,-2,gfx::Font::Weight::NORMAL,true);
   color_error_->SetVisible(false);
+  // Any color, snapped to the design system grid: hue, saturation and tone rows
+  // show the current color moved along one axis.
+  settings_text(appearance,u"Barwa, nasycenie i jasność",kSubtle,-1,gfx::Font::Weight::MEDIUM);
+  for(uint32_t axis=0;axis<color_grid_rows_.size();++axis){
+    const auto swatches=sidebar::appearance_grid_swatches(axis,workspace_color(state_.workspace_id));
+    auto* row=appearance->AddChildView(std::make_unique<AppearanceRow>(axis,swatches.size()));color_grid_rows_[axis]=row;
+    for(size_t i=0;i<swatches.size();++i){
+      auto* swatch=AppearancePicker(row,views::Button::PressedCallback(),base::UTF8ToUTF16(std::string(swatches[i].label)),GlyphButton::Glyph::kSwatch);
+      BindAppearanceGrid(swatch,axis,i);SetActionColor(swatch,swatches[i].color);
+    }
+    row->AddChildView(std::make_unique<views::View>());row->AddChildView(std::make_unique<views::View>());
+  }
   Spacer(appearance, 6);
   settings_text(appearance,workspace_copy[10],kSubtle,-1,gfx::Font::Weight::MEDIUM);
   auto* emoji_row=appearance_row(true);views::BoxLayout* emoji_layout=nullptr;
@@ -6230,6 +6245,14 @@ void WorkspaceShell::ApplyAppearance(bool refresh_theme) {
       SetActionOn(swatch,preset&&sidebar::design_same_workspace_color(*preset,color));
     }
   }
+  for(uint32_t axis=0;axis<color_grid_rows_.size();++axis){
+    auto* row=color_grid_rows_[axis].get();if(!row)continue;
+    const auto swatches=sidebar::appearance_grid_swatches(axis,color);
+    for(size_t i=0;i<swatches.size()&&i<row->children().size();++i){
+      SetActionColor(row->children()[i].get(),swatches[i].color);SetActionOn(row->children()[i].get(),sidebar::appearance_grid_selected(axis,i,color));
+    }
+    row->SchedulePaint();
+  }
   const auto emoji = workspace_emoji(state_.workspace_id);
   if (!emoji_input_->HasFocus()) emoji_input_->SetText(emoji);
   size_t emoji_index=0;
@@ -7211,6 +7234,10 @@ void WorkspaceShell::BindAppearancePreset(views::View* view,bool emoji,size_t in
   auto* control=views::AsViewClass<RustActionView>(view);CHECK(control);
   control->SetAppearancePreset(emoji,index,base::BindRepeating(&WorkspaceShell::DispatchFormCommand,weak_factory_.GetWeakPtr()));
 }
+void WorkspaceShell::BindAppearanceGrid(views::View* view,uint32_t axis,size_t index){
+  auto* control=views::AsViewClass<RustActionView>(view);CHECK(control);
+  control->SetAppearanceGrid(axis,index,base::BindRepeating(&WorkspaceShell::DispatchFormCommand,weak_factory_.GetWeakPtr()));
+}
 void WorkspaceShell::BindPreferenceCategory(views::View* view,size_t category){
   auto* control=views::AsViewClass<RustActionView>(view);CHECK(control);CHECK(preferences_form_);
   control->SetPreferenceCategory(*preferences_form_->form,category,base::BindRepeating(&WorkspaceShell::DispatchFormCommand,weak_factory_.GetWeakPtr()));
@@ -7248,6 +7275,11 @@ void WorkspaceShell::DispatchFormCommand(views::View* source,const sidebar::Form
       const auto target=sidebar::appearance_command_target(command,binding.index);if(!target.valid)return;
       if(command==C::WorkspaceColorPreset)SetWorkspaceColor(state_.workspace_id,target.color);
       else SetWorkspaceEmoji(state_.workspace_id,base::UTF8ToUTF16(std::string(target.emoji)));
+      break;
+    }
+    case C::WorkspaceHue:case C::WorkspaceSaturation:case C::WorkspaceTone:{
+      const uint32_t axis=command==C::WorkspaceHue?0:command==C::WorkspaceSaturation?1:2;
+      if(const auto color=sidebar::appearance_grid_target(axis,binding.index,workspace_color(state_.workspace_id)))SetWorkspaceColor(state_.workspace_id,color);
       break;
     }
     case C::WorkspaceSave:SubmitWorkspace(creating_workspace_);break;

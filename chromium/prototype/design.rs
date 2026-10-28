@@ -266,6 +266,65 @@ impl WorkspaceColor {
     pub fn all() -> impl Iterator<Item = Self> {
         (0..Self::COUNT).filter_map(Self::from_index)
     }
+
+    /// The point the picker's `axis` row offers at `index`, the other two axes
+    /// held at `self`. A hue picked on graphite also restores full saturation,
+    /// so the choice is visible.
+    pub fn with_axis(self, axis: PickerAxis, index: u8) -> Option<Self> {
+        if usize::from(index) >= axis.len() {
+            return None;
+        }
+        Some(match axis {
+            PickerAxis::Hue => Self {
+                hue: index,
+                saturation: if self.saturation == 0 { Self::LEVELS - 1 } else { self.saturation },
+                ..self
+            },
+            PickerAxis::Saturation => Self { saturation: index, ..self },
+            PickerAxis::Tone => Self { tone: index, ..self },
+        })
+    }
+
+    /// Where `self` sits on a picker row.
+    pub fn axis_index(self, axis: PickerAxis) -> u8 {
+        match axis {
+            PickerAxis::Hue => self.hue,
+            PickerAxis::Saturation => self.saturation,
+            PickerAxis::Tone => self.tone,
+        }
+    }
+}
+
+/// One row of the workspace color picker.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PickerAxis {
+    Hue,
+    Saturation,
+    Tone,
+}
+
+impl PickerAxis {
+    pub const ALL: [Self; 3] = [Self::Hue, Self::Saturation, Self::Tone];
+
+    pub fn from_index(index: u32) -> Option<Self> {
+        Self::ALL.get(index as usize).copied()
+    }
+    /// Swatches in the row.
+    pub fn len(self) -> usize {
+        usize::from(match self {
+            Self::Hue => WorkspaceColor::HUES,
+            Self::Saturation | Self::Tone => WorkspaceColor::LEVELS,
+        })
+    }
+    /// The swatch's accessible name, in the picker's language.
+    pub fn label(self, index: u8) -> String {
+        let step = |levels: u8| u32::from(index) * 100 / u32::from(levels - 1);
+        match self {
+            Self::Hue => format!("Barwa {}°", u32::from(index) * 360 / u32::from(WorkspaceColor::HUES)),
+            Self::Saturation => format!("Nasycenie {}%", step(WorkspaceColor::LEVELS)),
+            Self::Tone => format!("Jasność {}%", step(WorkspaceColor::LEVELS)),
+        }
+    }
 }
 
 /// OKLCH chroma per saturation level: level 4 (0.14) is as vivid as the design
@@ -968,6 +1027,26 @@ mod tests {
         assert_eq!(WorkspaceColor::from_argb(0xff9e91dc).grid(), (19, 4, 2));
         assert_eq!(WorkspaceColor::from_argb(0xff84b6a4).grid(), (11, 2, 3));
         assert_eq!(hue_and_saturation(0xff808080), (WorkspaceColor::GRAPHITE.hue, 0));
+    }
+
+    #[test]
+    fn picker_rows_move_one_axis_and_keep_the_others() {
+        let c = WorkspaceColor::new(7, 2, 3).unwrap();
+        assert_eq!(c.with_axis(PickerAxis::Hue, 20).unwrap().grid(), (20, 2, 3));
+        assert_eq!(c.with_axis(PickerAxis::Saturation, 4).unwrap().grid(), (7, 4, 3));
+        assert_eq!(c.with_axis(PickerAxis::Tone, 0).unwrap().grid(), (7, 2, 0));
+        assert_eq!(c.with_axis(PickerAxis::Hue, 24), None);
+        assert_eq!(c.with_axis(PickerAxis::Tone, 5), None);
+        // A hue on graphite brings the color back.
+        assert_eq!(WorkspaceColor::GRAPHITE.with_axis(PickerAxis::Hue, 3).unwrap().grid(), (3, 4, 2));
+        for axis in PickerAxis::ALL {
+            assert_eq!(c.with_axis(axis, c.axis_index(axis)), Some(c));
+        }
+        assert_eq!(PickerAxis::ALL.map(PickerAxis::len), [24, 5, 5]);
+        assert_eq!(PickerAxis::Hue.label(14), "Barwa 210°");
+        assert_eq!(PickerAxis::Saturation.label(2), "Nasycenie 50%");
+        assert_eq!(PickerAxis::Tone.label(4), "Jasność 100%");
+        assert_eq!(PickerAxis::from_index(3), None);
     }
 
     #[test]

@@ -67,7 +67,7 @@ mod ffi {
     enum PreferenceRowKind { Theme, Pinned, Animations, Search, Toggle, Text, Picker, Action, Directory, SiteEditor, SiteRules, ClearData, ShortcutHint }
     #[repr(u32)]
     #[derive(Debug)]
-    enum FormCommand { None, WorkspaceSave, WorkspaceToggle, WorkspaceRemove, WorkspaceProfiles, WorkspaceImport, ProfileCreate, ProfileRename, ProfileDelete, ProfileBack, ImportApply, PreferenceText, PreferenceSite, PreferenceClear, PreferenceDirectory, History, Workspace, Passwords, Profiles, Import, Proxy, Certificates, Providers, Shortcuts, TimeMachine, WorkspaceDismiss, PreferencesDismiss, ImportDismiss, ToolsDismiss, PreferenceCategory, PreferenceMore, WorkspaceColorPreset, WorkspaceEmojiPreset, HistoryMore }
+    enum FormCommand { None, WorkspaceSave, WorkspaceToggle, WorkspaceRemove, WorkspaceProfiles, WorkspaceImport, ProfileCreate, ProfileRename, ProfileDelete, ProfileBack, ImportApply, PreferenceText, PreferenceSite, PreferenceClear, PreferenceDirectory, History, Workspace, Passwords, Profiles, Import, Proxy, Certificates, Providers, Shortcuts, TimeMachine, WorkspaceDismiss, PreferencesDismiss, ImportDismiss, ToolsDismiss, PreferenceCategory, PreferenceMore, WorkspaceColorPreset, WorkspaceEmojiPreset, HistoryMore, WorkspaceHue, WorkspaceSaturation, WorkspaceTone }
     #[derive(Debug)]
     enum FormPanel { None, Workspace, Profiles, Import, Preferences, Tools }
     struct FormCommandBinding { command: FormCommand, panel: FormPanel, key: String, index: usize }
@@ -403,6 +403,11 @@ mod ffi {
         fn design_same_workspace_color(a: u32, b: u32) -> bool;
         fn appearance_selected(emoji: bool, index: usize, color: u32, current_emoji: &str) -> bool;
         fn appearance_row_layout(width: i32, height: i32, editor_width: i32, editor_height: i32, emoji: bool) -> ColumnLayout;
+        // Workspace color picker rows: axis 0 hue, 1 saturation, 2 tone (design.rs PickerAxis).
+        fn appearance_grid_swatches(axis: u32, current: u32) -> Vec<AppearancePreset>;
+        fn appearance_grid_target(axis: u32, index: usize, current: u32) -> u32;
+        fn appearance_grid_selected(axis: u32, index: usize, current: u32) -> bool;
+        fn appearance_grid_layout(width: i32, height: i32, axis: u32) -> ColumnLayout;
         type WorkspaceNotice;
         fn new_workspace_notice(workspace: &str, title: &str) -> Box<WorkspaceNotice>;
         fn copy(self: &WorkspaceNotice) -> NoticeCopy;
@@ -609,6 +614,7 @@ mod ffi {
         fn defer_form_command(self: &ActionControl) -> Box<FormCommandTicket>;
         fn action_node_id(self: &ActionControl) -> u64;
         fn bind_appearance_preset(self: &mut ActionControl, emoji: bool, index: usize) -> bool;
+        fn bind_appearance_grid(self: &mut ActionControl, axis: u32, index: usize) -> bool;
         fn node_form_command_init(self: &mut ActionControl, command: FormCommand, key: &str) -> bool;
         fn node_form_command(self: &ActionControl) -> FormCommandBinding;
         fn node_form_view(self: &ActionControl) -> FormCommandView;
@@ -1512,6 +1518,33 @@ fn appearance_selected(emoji: bool, index: usize, color: u32, current_emoji: &st
     if emoji { APPEARANCE_EMOJIS.get(index).map(|e|*e==current_emoji).unwrap_or(false) }
     else { APPEARANCE_COLORS.get(index).map(|&c|design_same_workspace_color(c,color)).unwrap_or(false) }
 }
+fn grid_command(axis:u32)->Option<ffi::FormCommand>{
+    use ffi::FormCommand as C;[C::WorkspaceHue,C::WorkspaceSaturation,C::WorkspaceTone].get(axis as usize).copied()
+}
+// The picker rows show the current workspace color moved along one axis.
+fn appearance_grid_swatches(axis:u32,current:u32)->Vec<ffi::AppearancePreset>{
+    let Some(axis)=design::PickerAxis::from_index(axis) else{return vec![];};let c=design::WorkspaceColor::from_argb(current);
+    (0..axis.len() as u8).filter_map(|i|Some(ffi::AppearancePreset{color:c.with_axis(axis,i)?.to_argb(),emoji:String::new(),label:axis.label(i)})).collect()
+}
+// The stored color a picker swatch selects; 0 for an invalid axis or index.
+fn appearance_grid_target(axis:u32,index:usize,current:u32)->u32{
+    let Some(axis)=design::PickerAxis::from_index(axis) else{return 0;};let Ok(index)=u8::try_from(index) else{return 0;};
+    design::WorkspaceColor::from_argb(current).with_axis(axis,index).map_or(0,design::WorkspaceColor::to_argb)
+}
+fn appearance_grid_selected(axis:u32,index:usize,current:u32)->bool{
+    design::PickerAxis::from_index(axis).is_some_and(|a|usize::from(design::WorkspaceColor::from_argb(current).axis_index(a))==index&&index<a.len())
+}
+// Swatches only (16 px hue cells, 32 px level cells), then an empty spacer and field
+// slot, so a picker row keeps the appearance rows' child contract.
+fn appearance_grid_layout(width:i32,height:i32,axis:u32)->ffi::ColumnLayout{
+    let Some(a)=design::PickerAxis::from_index(axis) else{return ffi::ColumnLayout{width:0,height:0,children:vec![]};};
+    let count=a.len() as i32;let cell=if a==design::PickerAxis::Hue{16}else{32};let cell_height=28;
+    let width=if width<0{count*cell}else{width};let height=if height<0{cell_height}else{height};let control=width.min(count*cell);
+    let mut children=Vec::with_capacity(count as usize+2);let mut x=0;
+    for index in 0..count{let w=control/count+if index<control%count{1}else{0};let h=cell_height.min(height);children.push(ffi::Rect{x,y:(height-h)/2,width:w,height:h});x+=w;}
+    children.push(ffi::Rect{x,y:0,width:0,height});children.push(ffi::Rect{x,y:0,width:0,height});
+    ffi::ColumnLayout{width,height,children}
+}
 fn appearance_row_layout(width: i32, height: i32, editor_width: i32, editor_height: i32, emoji: bool) -> ffi::ColumnLayout {
     let count=if emoji {APPEARANCE_EMOJIS.len() as i32} else {APPEARANCE_COLORS.len() as i32};let button_width=if emoji {30} else {32};let button_height=if emoji {28} else {32};
     let editor_height=editor_height.max(0);let width=if width<0 {(count*button_width+8i32).saturating_add(editor_width.max(0))} else {width};
@@ -2349,7 +2382,7 @@ struct FormCommandModel {command:ffi::FormCommand,key:String,index:usize}
 fn form_command_panel(command:ffi::FormCommand)->ffi::FormPanel {
     use ffi::{FormCommand as C,FormPanel as P};
     match command {
-        C::WorkspaceSave|C::WorkspaceToggle|C::WorkspaceRemove|C::WorkspaceProfiles|C::WorkspaceImport|C::WorkspaceDismiss|C::WorkspaceColorPreset|C::WorkspaceEmojiPreset=>P::Workspace,
+        C::WorkspaceSave|C::WorkspaceToggle|C::WorkspaceRemove|C::WorkspaceProfiles|C::WorkspaceImport|C::WorkspaceDismiss|C::WorkspaceColorPreset|C::WorkspaceEmojiPreset|C::WorkspaceHue|C::WorkspaceSaturation|C::WorkspaceTone=>P::Workspace,
         C::ProfileCreate|C::ProfileRename|C::ProfileDelete|C::ProfileBack=>P::Profiles,
         C::ImportApply|C::ImportDismiss=>P::Import,
         C::ToolsDismiss|C::HistoryMore=>P::Tools,
@@ -2682,6 +2715,10 @@ impl ActionControl {
     fn bind_appearance_preset(&mut self,emoji:bool,index:usize)->bool{
         let command=if emoji{ffi::FormCommand::WorkspaceEmojiPreset}else{ffi::FormCommand::WorkspaceColorPreset};
         appearance_command_target(command,index).valid&&self.init_form_command(command,"",index)
+    }
+    fn bind_appearance_grid(&mut self,axis:u32,index:usize)->bool{
+        let Some(command)=grid_command(axis) else{return false;};
+        design::PickerAxis::from_index(axis).is_some_and(|a|index<a.len())&&self.init_form_command(command,"",index)
     }
     fn node_form_command_init(&mut self,command:ffi::FormCommand,key:&str)->bool{valid_form_command(command,key)&&self.init_form_command(command,key,0)}
     fn node_form_command(&self)->ffi::FormCommandBinding{self.read_node(record_form_command).unwrap_or_else(empty_form_command)}
@@ -3056,11 +3093,12 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
         return;
     }
     if i.kind == 18 {
-        let cx=i.x+i.width/2.0;let cy=i.y+i.height/2.0;
-        if i.active||i.hovered {emit(cx-10.0,cy-10.0,20.0,20.0,10.0,i.ink,"",0.0,false);}
-        emit(cx-7.0,cy-7.0,14.0,14.0,7.0,i.badge,"",0.0,false);
+        // 14 px dot and 20 px ring in a 32 px cell; both shrink in narrow picker cells.
+        let cx=i.x+i.width/2.0;let cy=i.y+i.height/2.0;let dot=(i.width.min(i.height)-6.0).clamp(6.0,14.0);let ring=dot+6.0;
+        if i.active||i.hovered {emit(cx-ring/2.0,cy-ring/2.0,ring,ring,ring/2.0,i.ink,"",0.0,false);}
+        emit(cx-dot/2.0,cy-dot/2.0,dot,dot,dot/2.0,i.badge,"",0.0,false);
         if i.focused {emit(i.x+2.0,i.y+i.height-3.0,(i.width-4.0).max(0.0),2.0,1.0,i.ink,"",0.0,false);}
-        for p in out[first_primitive..].iter_mut() {if p.width==20.0&&p.height==20.0 {p.stroke=1.0;}}
+        for p in out[first_primitive..].iter_mut() {if p.color==i.ink&&p.width==ring&&p.height==ring {p.stroke=1.0;}}
         return;
     }
     if i.kind == 7 {
@@ -4044,6 +4082,22 @@ mod tests {
         assert!(ops.iter().filter(|p|p.text.is_empty()&&p.color==card.fill).all(|p|p.stroke==0.0));
         card.edge=0;assert!(layout(&[card]).iter().all(|p|p.stroke==0.0||p.color!=0xff332211));
         let mut pill=row(200.0);pill.kind=4;pill.height=36.0;assert_eq!(layout(&[pill])[0].radius,18.0);
+    }
+    #[test] fn appearance_grid_rows_offer_the_current_color_along_one_axis() {
+        let current=design::WorkspaceColor::new(16,2,1).unwrap().to_argb();
+        let hues=appearance_grid_swatches(0,current);assert_eq!(hues.len(),24);assert_eq!(hues[14].label,"Barwa 210°");
+        assert_eq!(appearance_grid_swatches(1,current).len(),5);assert_eq!(appearance_grid_swatches(2,current).len(),5);assert!(appearance_grid_swatches(3,current).is_empty());
+        for (axis,index) in [(0u32,3usize),(1,4),(2,0)] {let t=appearance_grid_target(axis,index,current);assert_eq!(t,appearance_grid_swatches(axis,current)[index].color);assert!(appearance_grid_selected(axis,index,t));}
+        assert_eq!(design::WorkspaceColor::from_argb(appearance_grid_target(1,4,current)).grid(),(16,4,1));
+        assert!(appearance_grid_selected(0,16,current)&&appearance_grid_selected(1,2,current)&&appearance_grid_selected(2,1,current)&&!appearance_grid_selected(2,2,current));
+        assert_eq!((appearance_grid_target(0,24,current),appearance_grid_target(3,0,current),appearance_grid_target(1,usize::MAX,current)),(0,0,0));
+        let g=appearance_grid_layout(-1,-1,0);assert_eq!((g.width,g.height,g.children.len()),(384,28,26));assert_eq!(g.children[23].x,368);assert_eq!(g.children[25].width,0);
+        let g=appearance_grid_layout(300,40,0);assert!(g.children.iter().all(|r|r.x+r.width<=300&&r.width>=0));assert_eq!(appearance_grid_layout(-1,-1,2).width,160);
+        let mut graph=new_form_graph(false,0,false,false);let mut input=graph.append_form_action();assert!(!input.bind_appearance_grid(0,24));assert!(!input.bind_appearance_grid(3,0));assert!(input.bind_appearance_grid(1,4));
+        let b=input.node_form_command();assert_eq!((b.command,b.panel,b.index),(ffi::FormCommand::WorkspaceSaturation,ffi::FormPanel::Workspace,4));
+    }
+    #[test] fn narrow_swatch_cells_shrink_the_dot_and_ring() {
+        let mut s=row(16.0);s.kind=18;s.height=28.0;s.active=true;let ops=layout(&[s]);assert_eq!((ops[0].width,ops[0].stroke,ops[1].width),(16.0,1.0,10.0));
     }
     #[test] fn design_palette_bridge_carries_the_rust_palette() {
         let p=design_palette(true,APPEARANCE_COLORS[2]);let q=design::Palette::for_workspace(design::Scheme::Noc,design::WorkspaceColor::SKY);

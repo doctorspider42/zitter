@@ -132,8 +132,12 @@ Moduł nie zależy od cxx, więc da się go sprawdzić bez budowania Chromium, s
    `recipe::dialog` nie mają czego malować), cienie poza 1 px obrysem (scena nie ma
    rozmycia).
 2. Osobne `bg_void` dla ramy okna (dziś rama i pasek boczny mają wspólne `bg_base`).
-3. Picker koloru obszaru: barwa, nasycenie, jasność + presety (zapis
-   `WorkspaceColor::to_argb`).
+3. Picker koloru obszaru (zrobione): pod presetami trzy rzędy próbek — barwa (24),
+   nasycenie (5) i jasność (5). Każdy pokazuje aktualny kolor przesunięty wzdłuż jednej
+   osi siatki (`WorkspaceColor::with_axis`), klik zapisuje kanoniczny hex punktu;
+   barwa wybrana na grafit przywraca pełne nasycenie. Komendy `WorkspaceHue`,
+   `WorkspaceSaturation`, `WorkspaceTone` idą przez ten sam dyspozytor formularza co
+   presety.
 4. Kafelki monogramów (`kMonogramColors`) z presetów i `on_accent` zamiast białego
    tekstu w scenie.
 5. Fonty Instrument Serif, Schibsted Grotesk i JetBrains Mono (OFL) w pakiecie

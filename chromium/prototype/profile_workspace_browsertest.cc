@@ -4621,6 +4621,22 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceActionHostsAXSelecti
 }
 
 // Compiled only: semantic preset commands use the common Rust panel dispatcher.
+// The hue, saturation and tone rows each move the workspace color along one axis
+// of the design system grid and keep the other two (design.rs PickerAxis).
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceColorPickerRowsMoveOneAxis) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));if(!shell->workspace_input()->rust_editor())return;
+  shell->SetWorkspaceAnimations(false);shell->SetWorkspaceColor("work",0xFF5AA0D0);shell->OpenWorkspaceSettings();shell->settings_widget()->LayoutRootViewIfNecessary();
+  auto* hues=shell->color_grid_row_for_testing(0);auto* levels=shell->color_grid_row_for_testing(1);auto* tones=shell->color_grid_row_for_testing(2);
+  ASSERT_TRUE(hues&&levels&&tones);ASSERT_EQ(26u,hues->children().size());ASSERT_EQ(7u,levels->children().size());ASSERT_EQ(7u,tones->children().size());
+  ui::AXNodeData ax;hues->children()[14]->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(u"Barwa 210°",ax.GetString16Attribute(ax::mojom::StringAttribute::kName));
+  auto click=[&](views::View* row,size_t index){auto* swatch=row->children()[index].get();swatch->ScrollViewToVisible();ClickControl(swatch);};
+  click(levels,1);EXPECT_EQ(0xFF8B9BA6u,shell->workspace_color("work"));  // Saturation 1, same hue and tone.
+  click(hues,3);EXPECT_EQ(0xFFA6948Cu,shell->workspace_color("work"));    // Hue 3, saturation kept.
+  click(tones,4);EXPECT_EQ(0xFFC0ADA4u,shell->workspace_color("work"));   // Tone 4.
+  EXPECT_EQ(u"#C0ADA4",shell->color_input()->GetText());
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_saved();}));
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AppearanceCommandsResolveAllPresetsWithStableActionNodes) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));if(!shell->workspace_input()->rust_editor())return;shell->SetWorkspaceAnimations(false);shell->OpenWorkspaceSettings();
   auto* colors=shell->color_input()->view()->parent();const std::array<SkColor,8> expected_colors={0xff928fd4,0xffcc8463,0xff5aa0d0,0xffbc8f4d,0xffcb7e96,0xff55ac89,0xff7da667,0xff989898};
