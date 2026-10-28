@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the real workspace with Rust/Metal cards in an owned, isolated profile."""
+"""Run the real workspace with the Rust UI in an owned, isolated profile."""
 import argparse
 import functools
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -55,10 +55,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app", type=Path, default=ROOT / "build/ZitterRustMetal.app")
     parser.add_argument("--profile", type=Path, default=ROOT / "build/rust-metal-profile")
-    parser.add_argument("--backend", choices=["rust-metal", "views"], default="rust-metal")
     parser.add_argument("--port", type=int, default=8767)
     parser.add_argument("--raster", choices=["compositor", "metal"], default="compositor",
-                        help="Rust backend painting: in-process Metal or the Chromium compositor")
+                        help="Rust UI painting: the Chromium compositor or in-process Metal")
     args = parser.parse_args()
     info = args.app.resolve() / "Contents/Info.plist"
     binary = args.app.resolve() / "Contents/MacOS" / plistlib.loads(info.read_bytes())["CFBundleExecutable"] if info.is_file() else info
@@ -70,12 +69,12 @@ def main():
         parser.error(str(error))
     server = ThreadingHTTPServer(("127.0.0.1", args.port), functools.partial(QuietHandler, directory=str(ROOT / "testdata")))
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    raster = [f"--zitter-rust-raster={args.raster}"] if args.backend == "rust-metal" and args.raster != "compositor" else []
-    print(f"Sidebar: {args.backend} ({args.raster}); isolated profile: {args.profile.resolve()}", flush=True)
+    raster = [f"--zitter-rust-raster={args.raster}"] if args.raster != "compositor" else []
+    print(f"Rust UI raster: {args.raster}; isolated profile: {args.profile.resolve()}", flush=True)
     try:
         return subprocess.call(["/usr/bin/open", "-W", "-n", str(args.app.resolve()), "--args",
                                 f"--user-data-dir={args.profile.resolve()}",
-                                f"--zitter-sidebar={args.backend}", "--no-first-run",
+                                "--no-first-run",
                                 "--disable-component-update", "--disable-background-networking", "--enable-logging=stderr", *raster])
     except KeyboardInterrupt:
         return 130

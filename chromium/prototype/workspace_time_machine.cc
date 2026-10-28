@@ -1,4 +1,3 @@
-#include "chromium/prototype/sidebar_layout.h"
 #include "chromium/prototype/workspace_window.h"
 #include "chromium/prototype/page_media_access.h"
 #include <algorithm>
@@ -15,7 +14,6 @@
 #include "ui/views/controls/webview/webview.h"
 #include "ui/views/widget/widget.h"
 #include "build/build_config.h"
-#include "base/command_line.h"
 #include "chromium/prototype/sidebar_scene.rs.h"
 namespace zitter::prototype {
 namespace {
@@ -207,8 +205,6 @@ TimeMachineState WorkspaceWindow::TimeMachine() const {
   TimeMachineState result;
   if (!model_.active()) return result;
   const auto* space = time_machine_.FindDict(active_id());
-  [[maybe_unused]] const bool rust_copy =
-      RustUiEnabled();
   auto fill = [&](const char* key, std::vector<TimeMachineItem>& output) {
     const auto* list = space ? space->FindList(key) : nullptr; if (!list) return;
     for (auto it = list->rbegin(); it != list->rend(); ++it) {
@@ -216,33 +212,22 @@ TimeMachineState WorkspaceWindow::TimeMachine() const {
       const auto* id = entry->FindString("id"); if (!id) continue;
       const auto* name = entry->FindString(key == std::string_view("closed") ? "title" : "name");
       const auto* url = entry->FindString("url"); const auto* time = entry->FindString("time");
-      if (rust_copy) {
-        sidebar::TimeMachineFacts facts{};
-        if (name) facts.name = *name;
-        if (url) facts.url = *url;
-        if (time) facts.time = *time;
-        const auto* tabs = entry->FindList("tabs"); facts.tabs = tabs ? static_cast<int64_t>(tabs->size()) : -1;
-        facts.automatic = entry->FindBool("automatic").value_or(false);
-        const auto* profile = entry->FindString("profile_id"); facts.other_profile = profile && *profile != model_.active()->profile_id;
-        const auto copy = sidebar::time_machine_entry(facts);
-        output.push_back({*id, base::UTF8ToUTF16(std::string(copy.title)), base::UTF8ToUTF16(std::string(copy.detail))});
-        continue;
-      }
-      std::string title = name && !name->empty() ? *name : url && !url->empty() ? *url : "Nowa karta";
-      std::string detail = time ? *time : "";
-      if (url && !url->empty()) detail += " · " + *url;
-      if (const auto* tabs = entry->FindList("tabs")) detail += " · " + std::to_string(tabs->size()) + " kart";
-      if (entry->FindBool("automatic").value_or(false)) detail += " · automatyczny";
-      if (const auto* profile = entry->FindString("profile_id"); profile && *profile != model_.active()->profile_id) detail += " · inny profil";
-      output.push_back({*id, base::UTF8ToUTF16(title), base::UTF8ToUTF16(detail)});
+      sidebar::TimeMachineFacts facts{};
+      if (name) facts.name = *name;
+      if (url) facts.url = *url;
+      if (time) facts.time = *time;
+      const auto* tabs = entry->FindList("tabs"); facts.tabs = tabs ? static_cast<int64_t>(tabs->size()) : -1;
+      facts.automatic = entry->FindBool("automatic").value_or(false);
+      const auto* profile = entry->FindString("profile_id"); facts.other_profile = profile && *profile != model_.active()->profile_id;
+      const auto copy = sidebar::time_machine_entry(facts);
+      output.push_back({*id, base::UTF8ToUTF16(std::string(copy.title)), base::UTF8ToUTF16(std::string(copy.detail))});
     }
   };
   fill("snapshots", result.snapshots); fill("closed", result.closed);
   for (const auto& host : hosts_) if (host.sleeping) {
     const auto* workspace = model_.Find(host.workspace_id);
     if (!workspace) continue;
-    std::u16string detail = u"Uśpiona · kliknij przestrzeń, aby wznowić";
-    if (rust_copy) detail = base::UTF8ToUTF16(std::string(sidebar::time_machine_sleeping_detail()));
+    auto detail = base::UTF8ToUTF16(std::string(sidebar::time_machine_sleeping_detail()));
     result.sleeping.push_back({workspace->id, base::UTF8ToUTF16(workspace->name), std::move(detail)});
   }
   return result;

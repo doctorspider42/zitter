@@ -3,7 +3,6 @@
 #include "chromium/prototype/browser_data.h"
 #include "chromium/prototype/editor_control.h"
 #include "chromium/prototype/sidebar_layout.h"
-#include "base/command_line.h"
 #include "build/build_config.h"
 #include "chromium/prototype/sidebar_scene.rs.h"
 #if BUILDFLAG(IS_MAC)
@@ -22,7 +21,6 @@
 #include "content/public/browser/web_contents.h"
 #include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/base/mojom/ui_base_types.mojom-shared.h"
-#include "ui/views/controls/label.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/scroll_view.h"
 #include "ui/views/controls/textfield/textfield.h"
@@ -120,9 +118,7 @@ void PageDialogs::Show(content::RenderFrameHost* frame, content::JavaScriptDialo
   }
   const auto generation=++dialog_generation_;
   requesting_frame_ = frame; unload_dialog_ = unload; dialog_callback_ = std::move(callback);
-  std::unique_ptr<views::DialogDelegate> dialog;
-  if(RustUiEnabled())dialog=std::make_unique<PageDialogDelegate>();
-  if(!dialog)dialog=std::make_unique<views::DialogDelegate>();
+  std::unique_ptr<views::DialogDelegate> dialog=std::make_unique<PageDialogDelegate>();
   dialog->SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
   auto* body = dialog->SetContentsView(std::make_unique<views::View>());body_=body;
   scene_=CreatePageDialogScene(body);
@@ -130,20 +126,18 @@ void PageDialogs::Show(content::RenderFrameHost* frame, content::JavaScriptDialo
   auto* profile = Profile::FromBrowserContext(web_contents()->GetBrowserContext());
   std::u16string title=(unload?u"Opuścić stronę? · ":u"Strona: ")+base::UTF8ToUTF16(origin),identity_text=u"Profil: "+BrowsingProfileName(profile),message_text=message.substr(0,8192),accept=unload?u"Opuść stronę":u"OK",cancel=unload?u"Zostań":u"Anuluj";
   bool show_cancel=type!=content::JAVASCRIPT_DIALOG_TYPE_ALERT,default_cancel=unload,is_prompt=type==content::JAVASCRIPT_DIALOG_TYPE_PROMPT;
-  if(scene_){const auto copy=sidebar::page_dialog_copy(type==content::JAVASCRIPT_DIALOG_TYPE_ALERT?0:type==content::JAVASCRIPT_DIALOG_TYPE_PROMPT?2:1,unload,origin,base::UTF16ToUTF8(BrowsingProfileName(profile)),rust::Slice<const uint16_t>(reinterpret_cast<const uint16_t*>(message.data()),message.size()));title=base::UTF8ToUTF16(std::string(copy.title));identity_text=base::UTF8ToUTF16(std::string(copy.identity));message_text=std::u16string(copy.message.begin(),copy.message.end());accept=base::UTF8ToUTF16(std::string(copy.accept));cancel=base::UTF8ToUTF16(std::string(copy.cancel));show_cancel=copy.show_cancel;default_cancel=copy.default_cancel;is_prompt=copy.prompt;}
+  {const auto copy=sidebar::page_dialog_copy(type==content::JAVASCRIPT_DIALOG_TYPE_ALERT?0:type==content::JAVASCRIPT_DIALOG_TYPE_PROMPT?2:1,unload,origin,base::UTF16ToUTF8(BrowsingProfileName(profile)),rust::Slice<const uint16_t>(reinterpret_cast<const uint16_t*>(message.data()),message.size()));title=base::UTF8ToUTF16(std::string(copy.title));identity_text=base::UTF8ToUTF16(std::string(copy.identity));message_text=std::u16string(copy.message.begin(),copy.message.end());accept=base::UTF8ToUTF16(std::string(copy.accept));cancel=base::UTF8ToUTF16(std::string(copy.cancel));show_cancel=copy.show_cancel;default_cancel=copy.default_cancel;is_prompt=copy.prompt;}
   dialog->SetTitle(title);
   dialog->SetModalType(ui::mojom::ModalType::kWindow);
   dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk)|(show_cancel?static_cast<int>(ui::mojom::DialogButton::kCancel):0));
   dialog->SetButtonLabel(ui::mojom::DialogButton::kOk,accept);dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel,cancel);
   dialog->SetDefaultButton(static_cast<int>(default_cancel?ui::mojom::DialogButton::kCancel:ui::mojom::DialogButton::kOk));
   SetSidebarPanelLayout(body,true,gfx::Insets(20),12);
-  if(scene_)body->AddChildView(scene_->MakeText(identity_text,false,true,0));
-  else{auto* identity=body->AddChildView(std::make_unique<views::Label>(identity_text));identity->SetSubpixelRenderingEnabled(false);}
-  PanelViewport* viewport=nullptr;auto scroll=CreatePanelViewport(&viewport,scene_?scene_->ViewportChangedCallback():base::RepeatingClosure(),{0,220,false,true});viewport_=viewport;body->AddChildView(std::move(scroll));
-  if(scene_){auto copy=scene_->MakeText(message_text,true,false,440);copy->SizeToPreferredSize();viewport->SetPanelContents(std::move(copy));}
-  else{auto label=std::make_unique<views::Label>(message_text);label->SetSubpixelRenderingEnabled(false);label->SetMultiLine(true);label->SetHorizontalAlignment(gfx::ALIGN_LEFT);label->SizeToFit(440);viewport->SetPanelContents(std::move(label));}
+  body->AddChildView(scene_->MakeText(identity_text,false,true,0));
+  PanelViewport* viewport=nullptr;auto scroll=CreatePanelViewport(&viewport,scene_->ViewportChangedCallback(),{0,220,false,true});viewport_=viewport;body->AddChildView(std::move(scroll));
+  {auto copy=scene_->MakeText(message_text,true,false,440);copy->SizeToPreferredSize();viewport->SetPanelContents(std::move(copy));}
   if (is_prompt) {
-    prompt_ = AddEditor(body,RustUiEnabled());
+    prompt_ = AddEditor(body);
     prompt_->GetViewAccessibility().SetName(u"Odpowiedź dla strony");prompt_->SetText(initial);
     // Retain the native font metric; resolve the background from the live theme.
     prompt_->SetPresentation(views::Textfield::GetDefaultFontList().GetFontSize(),8,true,std::nullopt);
@@ -175,7 +169,7 @@ void PageDialogs::Show(content::RenderFrameHost* frame, content::JavaScriptDialo
 #if BUILDFLAG(IS_MAC)
   InstallWorkspaceKeyboardRouting(widget,true);
 #endif
-  widget->Show();if(scene_)scene_->Schedule();
+  widget->Show();scene_->Schedule();
 }
 bool PageDialogs::HandleJavaScriptDialog(content::WebContents* contents, bool accept,
     const std::u16string* override_text) {

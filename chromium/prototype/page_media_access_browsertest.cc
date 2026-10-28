@@ -239,7 +239,6 @@ class ZitterMediaBrowserTest : public InProcessBrowserTest {
     ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));button->RequestFocus();
     base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),key,false,false,false,false));
   }
-  bool rust() const{return RustUiEnabled();}
   void SetCamera(Profile* profile, ContentSetting setting) {
     auto origin = embedded_test_server()->GetURL("/");
     HostContentSettingsMapFactory::GetForProfile(profile)->SetContentSettingDefaultScope(
@@ -268,7 +267,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMediaBrowserTest, ScenePermissionCocoaDefaultAndFor
   EXPECT_EQ(ui::mojom::ModalType::kWindow,delegate->GetModalType());EXPECT_EQ(static_cast<int>(ui::mojom::DialogButton::kCancel),delegate->GetDefaultDialogButton());
   auto* allow=DialogActionButton(widget,true);auto* deny=DialogActionButton(widget,false);ASSERT_TRUE(allow);ASSERT_TRUE(deny);
   EXPECT_EQ(u"Zezwól tym razem",delegate->GetDialogButtonLabel(ui::mojom::DialogButton::kOk));
-  if(rust()){
+  {
     EXPECT_TRUE(allow->children().empty());EXPECT_TRUE(deny->children().empty());EXPECT_FALSE(views::AsViewClass<views::MdTextButton>(allow));
     if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return access()->permission_scene_contains_for_testing("Prosi o dostęp: "+origin);}));
     auto check=[&](auto&& self,views::View* view)->void{ui::AXNodeData node;view->GetViewAccessibility().GetAccessibleNodeData(&node);if(node.role==ax::mojom::Role::kStaticText)EXPECT_FALSE(views::AsViewClass<views::Label>(view));for(const auto& child:view->children())self(self,child.get());};check(check,delegate->GetContentsView());
@@ -281,7 +280,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMediaBrowserTest, ScenePermissionCocoaDefaultAndFor
   ASSERT_NO_FATAL_FAILURE(Press(access()->permission_prompt(),true));ASSERT_TRUE(base::test::RunUntil([&]{return ResultIs("running")&&PageMediaAccess::IsCapturing(page())&&access()->capture_prompt();}));
   widget=access()->capture_prompt();delegate=widget->widget_delegate()->AsDialogDelegate();EXPECT_EQ(ui::mojom::ModalType::kNone,delegate->GetModalType());EXPECT_TRUE(delegate->ShouldShowCloseButton());
   auto* stop=DialogActionButton(widget,false);ASSERT_TRUE(stop);EXPECT_FALSE(DialogActionButton(widget,true));
-  if(rust()){EXPECT_TRUE(stop->children().empty());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return access()->capture_scene_contains_for_testing(origin);}));EXPECT_FALSE(views::AsViewClass<views::MdTextButton>(stop));}
+  {EXPECT_TRUE(stop->children().empty());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return access()->capture_scene_contains_for_testing(origin);}));EXPECT_FALSE(views::AsViewClass<views::MdTextButton>(stop));}
   stage="forced close and page ended event";views::ViewTracker old(widget->GetContentsView());widget->CloseNow();ASSERT_TRUE(base::test::RunUntil([&]{return !PageMediaAccess::IsCapturing(page())&&!access()->capture_prompt()&&!old.view();}));
   ASSERT_TRUE(base::test::RunUntil([&]{return content::EvalJs(page(),"captureResult === 'ended' && captureStream.getTracks().every(t => t.readyState === 'ended')").ExtractBool();}));if(MetalPresents())EXPECT_FALSE(access()->capture_scene_contains_for_testing(origin));
   // A live same-origin one-time grant can start another stream. Stale close
@@ -371,7 +370,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMediaBrowserTest, PermissionConsentProfileIsolation
   auto* source_access = access();
   ASSERT_TRUE(window_->Select(spaces[1].id));
   EXPECT_TRUE(source_access->capture_prompt());
-  if(rust())if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return source_access->capture_scene_contains_for_testing("Zamknięcie tego okna zatrzyma przechwytywanie.");}));
+  if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return source_access->capture_scene_contains_for_testing("Zamknięcie tego okna zatrzyma przechwytywanie.");}));
   ASSERT_NO_FATAL_FAILURE(Press(source_access->capture_prompt(),false));
   stage = "capture stops from background controls";
   ASSERT_TRUE(base::test::RunUntil([&] { return !PageMediaAccess::IsCapturing(source); }));

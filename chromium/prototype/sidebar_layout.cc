@@ -7,18 +7,14 @@
 #include <optional>
 #include <limits>
 #include <vector>
-#include "base/command_line.h"
 #include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
-#include "ui/views/layout/box_layout.h"
 #include "ui/views/layout/layout_manager.h"
-#include "ui/views/layout/fill_layout.h"
 #include "ui/views/view.h"
 #include "ui/views/view_utils.h"
 #include "ui/views/background.h"
 #include "ui/views/controls/separator.h"
 #include "ui/color/color_id.h"
-#include "ui/views/controls/scroll_view.h"
 #include "ui/views/view_class_properties.h"
 #include "chromium/prototype/sidebar_scene.rs.h"
 #include "base/functional/bind.h"
@@ -32,28 +28,6 @@
 #include "ui/views/style/platform_style.h"
 namespace zitter::prototype {
 namespace {
-class NativePanelViewport final : public views::ScrollView,public PanelViewport {
-  METADATA_HEADER(NativePanelViewport,views::ScrollView)
- public:
-  // Views paints itself; retain its original path without a Metal observer.
-  explicit NativePanelViewport(base::RepeatingClosure,PanelViewportOptions options,std::unique_ptr<views::ScrollBar> primary_bar):horizontal_(options.horizontal){if(primary_bar){if(horizontal_)SetHorizontalScrollBar(std::move(primary_bar));else SetVerticalScrollBar(std::move(primary_bar));}if(options.minimum_height>=0&&options.maximum_height>=options.minimum_height)ClipHeightTo(options.minimum_height,options.maximum_height);SetUseContentsPreferredSize(options.use_contents_preferred_size);if(!options.dialog_style)SetBackgroundColor(std::nullopt);SetDrawOverflowIndicator(options.dialog_style||options.overflow_indicators);SetHorizontalScrollBarMode(horizontal_||options.horizontal_scroll_enabled?ScrollBarMode::kEnabled:ScrollBarMode::kDisabled);if(horizontal_)SetVerticalScrollBarMode(ScrollBarMode::kDisabled);}
-  views::View* view() override{return this;}
-  views::View* contents() const override{return const_cast<views::View*>(views::ScrollView::contents());}
-  views::ScrollBar* vertical_scroll_bar() override{return views::ScrollView::vertical_scroll_bar();}
-  views::ScrollBar* horizontal_scroll_bar() override{return views::ScrollView::horizontal_scroll_bar();}
-  void SetPanelContents(std::unique_ptr<views::View> value) override{SetContents(std::move(value));}
-  void SetViewportBackground(unsigned color) override{SetBackgroundColor(color);}
-  void SetHeightRange(int minimum,int maximum) override{ClipHeightTo(minimum,maximum);}
-  gfx::Rect visible_rect() const override{return GetVisibleRect();}
-  double offset() const override{return horizontal_?CurrentOffset().x():CurrentOffset().y();}
-  int maximum() const override{return contents()?std::max(0,horizontal_?contents()->width()-GetVisibleRect().width():contents()->height()-GetVisibleRect().height()):0;}
-  void ScrollTo(double position) override{if(std::isfinite(position))ScrollToPosition(horizontal_?horizontal_scroll_bar():vertical_scroll_bar(),static_cast<int>(std::clamp(position,0.0,double(maximum()))));}
-  bool rust_owned() const override{return false;}
- private:
-  bool horizontal_;
-};
-BEGIN_METADATA(NativePanelViewport)
-END_METADATA
 class RustViewportClip final : public views::View {
   METADATA_HEADER(RustViewportClip,views::View)
  public:
@@ -129,9 +103,6 @@ class RustPanelViewport final : public views::View,public PanelViewport,public v
 BEGIN_METADATA(RustPanelViewport)
 END_METADATA
 
-bool RustLayoutEnabled() {
-  return RustUiEnabled();
-}
 class RustPanelLayout final : public views::LayoutManager {
  public:
   RustPanelLayout(bool vertical,gfx::Insets insets,int spacing,views::View* flex,bool center):vertical_(vertical),insets_(insets),spacing_(spacing),flex_(flex),center_(center){}
@@ -306,49 +277,33 @@ class RustColumnLayout final : public views::LayoutManager {
 };
 }
 PanelViewport* PanelViewportForView(views::View* view){
-  if(auto* viewport=views::AsViewClass<RustPanelViewport>(view))return viewport;
-  return views::AsViewClass<NativePanelViewport>(view);
+  return views::AsViewClass<RustPanelViewport>(view);
 }
 std::unique_ptr<views::View> CreatePanelViewport(PanelViewport** adapter,base::RepeatingClosure changed,PanelViewportOptions options){return CreatePanelViewport(adapter,std::move(changed),options,{});}
 std::unique_ptr<views::View> CreatePanelViewport(PanelViewport** adapter,base::RepeatingClosure changed,PanelViewportOptions options,std::unique_ptr<views::ScrollBar> primary_bar){
-  if(RustLayoutEnabled()){auto host=std::make_unique<RustPanelViewport>(std::move(changed),options,std::move(primary_bar));*adapter=host.get();return host;}
-  auto host=std::make_unique<NativePanelViewport>(std::move(changed),options,std::move(primary_bar));*adapter=host.get();return host;
+  auto host=std::make_unique<RustPanelViewport>(std::move(changed),options,std::move(primary_bar));*adapter=host.get();return host;
 }
 void SetSidebarPanelLayout(views::View* host,bool vertical,gfx::Insets insets,int spacing,views::View* flex,bool center){
-  if(RustLayoutEnabled()){host->SetLayoutManager(std::make_unique<RustPanelLayout>(vertical,insets,spacing,flex,center));return;}
-  auto* layout=host->SetLayoutManager(std::make_unique<views::BoxLayout>(vertical?views::BoxLayout::Orientation::kVertical:views::BoxLayout::Orientation::kHorizontal,insets,spacing));if(flex)layout->SetFlexForView(flex,1);if(center)layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
+  host->SetLayoutManager(std::make_unique<RustPanelLayout>(vertical,insets,spacing,flex,center));
 }
 std::unique_ptr<views::LayoutManager> CreatePaletteInputLayout() {
-  if(RustLayoutEnabled())return std::make_unique<RustPaletteInputLayout>();
-  return std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal,gfx::Insets::VH(0,18),12);
+  return std::make_unique<RustPaletteInputLayout>();
 }
 std::unique_ptr<views::LayoutManager> CreateSidebarColumnLayout(int spacing) {
-  if (RustLayoutEnabled())
-    return std::make_unique<RustColumnLayout>(spacing);
-  return std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical,
-                                          gfx::Insets(), spacing);
+  return std::make_unique<RustColumnLayout>(spacing);
 }
 std::unique_ptr<views::LayoutManager> CreateSidebarSplitLayout() {
-  if (RustLayoutEnabled()) return std::make_unique<RustSplitLayout>();
-  auto layout = std::make_unique<views::BoxLayout>(
-      views::BoxLayout::Orientation::kHorizontal, gfx::Insets(4), 4);
-  layout->SetDefaultFlex(1);
-  return layout;
+  return std::make_unique<RustSplitLayout>();
 }
 gfx::Size SidebarSplitPreferredSize() {
-  if (RustLayoutEnabled()) {
-    const auto result = sidebar::split_layout(-1, -1, 0);
-    return gfx::Size(result.width, result.height);
-  }
-  return gfx::Size(200, 46);
+  const auto result = sidebar::split_layout(-1, -1, 0);
+  return gfx::Size(result.width, result.height);
 }
 std::unique_ptr<views::LayoutManager> CreateSidebarPinnedRowLayout() {
-  if (RustLayoutEnabled()) return std::make_unique<RustColumnLayout>(0);
-  return std::make_unique<views::FillLayout>();
+  return std::make_unique<RustColumnLayout>(0);
 }
 int SidebarFolderIndent(int depth) {
-  if (RustLayoutEnabled()) return sidebar::folder_indent(depth);
-  return std::clamp(depth, 0, 8) * 12;
+  return sidebar::folder_indent(depth);
 }
 
 std::unique_ptr<views::LayoutManager> CreateSidebarFooterLayout() {
@@ -359,59 +314,20 @@ std::unique_ptr<views::LayoutManager> CreateSidebarDotsLayout(int spacing) {
 }
 
 struct WorkspaceSwipeState::Impl {
-  std::optional<rust::Box<sidebar::WorkspaceSwipe>> rust;
-  float x=0,y=0;int axis=0,start=0,count=0;
-  bool tracking=false,closed=false,phase_less=false;double position=0;
+  rust::Box<sidebar::WorkspaceSwipe> rust=sidebar::new_workspace_swipe();
 };
-WorkspaceSwipeState::WorkspaceSwipeState():impl_(std::make_unique<Impl>()) {
-  if(RustLayoutEnabled())impl_->rust.emplace(sidebar::new_workspace_swipe());
-}
+WorkspaceSwipeState::WorkspaceSwipeState():impl_(std::make_unique<Impl>()) {}
 WorkspaceSwipeState::~WorkspaceSwipeState()=default;
 WorkspaceSwipeUpdate WorkspaceSwipeState::Event(float x,float y,int width,int index,int count,bool began,bool ended,bool momentum,bool phase_less) {
-  if(impl_->rust){const auto u=(*impl_->rust)->event(x,y,width,index,count,began,ended,momentum,phase_less);return {u.started,u.preview,u.finish,u.handled};}
-  auto& s=*impl_;const bool started=count>=2&&(began||(!s.tracking&&!momentum&&!ended&&(!s.closed||phase_less)));
-  if(started){s.x=s.y=0;s.axis=0;s.closed=false;s.tracking=true;s.phase_less=phase_less;s.start=index;s.count=count;s.position=index;}
-  WorkspaceSwipeUpdate out{started,false,false,s.axis==1};
-  if(momentum||!s.tracking){if(momentum&&s.tracking){Finish();out.finish=true;}return out;}
-  if(s.axis!=-1){
-    s.x+=x;s.y+=y;
-    if(!s.axis){if(std::abs(s.y)>=12&&std::abs(s.y)>std::abs(s.x))s.axis=-1;else if(std::abs(s.x)>=12&&std::abs(s.x)>=std::abs(s.y)*1.5f)s.axis=1;}
-    if(s.axis==1){const double p=s.start-s.x/static_cast<double>(std::max(1,width)),last=s.count-1;s.position=p<0?-std::min(0.22,-p*0.2):p>last?last+std::min(0.22,(p-last)*0.2):p;out.preview=true;}
-  }
-  out.handled=s.axis==1;if(ended){Finish();out.finish=true;}return out;
+  const auto u=impl_->rust->event(x,y,width,index,count,began,ended,momentum,phase_less);return {u.started,u.preview,u.finish,u.handled};
 }
-void WorkspaceSwipeState::Finish(){
-  if(impl_->rust){(*impl_->rust)->finish();return;}
-  impl_->tracking=false;impl_->closed=true;
-}
-void WorkspaceSwipeState::Cancel(){
-  if(impl_->rust){(*impl_->rust)->cancel();return;}
-  Finish();
-}
-bool WorkspaceSwipeState::tracking() const {
-  if(impl_->rust)return (*impl_->rust)->tracking();
-  return impl_->tracking;
-}
-bool WorkspaceSwipeState::phase_less() const {
-  if(impl_->rust)return (*impl_->rust)->phase_less();
-  return impl_->phase_less;
-}
-double WorkspaceSwipeState::position() const {
-  if(impl_->rust)return (*impl_->rust)->position();
-  return impl_->position;
-}
-int WorkspaceSwipeState::target(int count) const {
-  if(impl_->rust)return (*impl_->rust)->target(count);
-  return count>0?std::clamp(static_cast<int>(std::round(impl_->position)),0,count-1):-1;
-}
+void WorkspaceSwipeState::Finish(){impl_->rust->finish();}
+void WorkspaceSwipeState::Cancel(){impl_->rust->cancel();}
+bool WorkspaceSwipeState::tracking() const {return impl_->rust->tracking();}
+bool WorkspaceSwipeState::phase_less() const {return impl_->rust->phase_less();}
+double WorkspaceSwipeState::position() const {return impl_->rust->position();}
+int WorkspaceSwipeState::target(int count) const {return impl_->rust->target(count);}
 WorkspaceSwipeLayout SidebarSwipeLayout(double position,int count,int width) {
-  if(RustLayoutEnabled()){const auto g=sidebar::swipe_layout(position,count,width);WorkspaceSwipeLayout out{g.center,{}};for(const auto& p:g.pages)out.pages.push_back({p.index,p.x});return out;}
-  if(count<=0)return {-1,{}};
-  const int center=std::clamp(static_cast<int>(std::round(position)),0,count-1);WorkspaceSwipeLayout out{center,{}};
-  for(int i=std::max(0,center-1);i<=std::min(count-1,center+1);++i)out.pages.push_back({i,(i-position)*width});return out;
-}
-
-bool RustUiEnabled() {
-  return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar") != "views";
+  const auto g=sidebar::swipe_layout(position,count,width);WorkspaceSwipeLayout out{g.center,{}};for(const auto& p:g.pages)out.pages.push_back({p.index,p.x});return out;
 }
 }

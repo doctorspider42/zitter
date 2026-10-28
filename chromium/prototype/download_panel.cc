@@ -22,9 +22,6 @@
 #include "ui/views/border.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/views/accessibility/view_accessibility.h"
-#include "ui/views/controls/button/md_text_button.h"
-#include "ui/views/controls/label.h"
-#include "ui/views/controls/progress_bar.h"
 #include "ui/views/controls/scroll_view.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/window/dialog_delegate.h"
@@ -41,13 +38,6 @@ class DownloadListView final : public views::View {
 BEGIN_METADATA(DownloadListView)
 END_METADATA
 
-views::Label* Label(views::View* parent, std::u16string text) {
-  auto* label = parent->AddChildView(std::make_unique<views::Label>(text));
-  label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-  label->SetSubpixelRenderingEnabled(false);
-  label->SetMultiLine(true);
-  return label;
-}
 std::u16string Bytes(int64_t value) { return ui::FormatBytes(base::ByteSize(static_cast<uint64_t>(std::max<int64_t>(0, value)))); }
 bool Unsafe(Item* item) { return item->IsDangerous() || item->IsInsecure(); }
 // Facts for the Rust status wording; byte formatting stays with the locale service.
@@ -61,22 +51,6 @@ std::u16string RustStatus(Item* item) {
   if (item->CurrentSpeed() > 0) facts.speed = base::UTF16ToUTF8(Bytes(item->CurrentSpeed()));
   base::TimeDelta remaining; facts.remaining_seconds = item->TimeRemaining(&remaining) ? std::max<int64_t>(0, remaining.InSeconds()) : -1;
   return base::UTF8ToUTF16(std::string(sidebar::download_status(facts)));
-}
-std::u16string Status(Item* item) {
-  if (Unsafe(item)) return u"Zablokowane przez ochronę Chromium — plik nie jest gotowy do użycia.";
-  if (item->GetState() == Item::CANCELLED) return u"Anulowano";
-  if (item->GetState() == Item::COMPLETE)
-    return item->GetFileExternallyRemoved() ? u"Plik został przeniesiony lub usunięty" : u"Ukończono · " + Bytes(item->GetReceivedBytes());
-  if (item->GetState() == Item::INTERRUPTED)
-    return item->CanResume() ? u"Pobieranie przerwane — możesz wznowić" : u"Pobieranie przerwane — rozpocznij ponownie ze strony";
-  auto text = item->IsPaused() ? std::u16string(u"Wstrzymano · ") : std::u16string();
-  text += Bytes(item->GetReceivedBytes());
-  if (item->GetTotalBytes() > 0) text += u" / " + Bytes(item->GetTotalBytes());
-  if (!item->IsPaused() && item->CurrentSpeed() > 0) text += u" · " + Bytes(item->CurrentSpeed()) + u"/s";
-  base::TimeDelta remaining;
-  if (!item->IsPaused() && item->TimeRemaining(&remaining))
-    text += u" · pozostało " + base::UTF8ToUTF16(std::to_string(std::max<int64_t>(1, remaining.InSeconds()))) + u" s";
-  return text;
 }
 }  // namespace
 struct DownloadPanel::Row {
@@ -98,8 +72,8 @@ void DownloadPanel::CloseUI(){
   weak_factory_.InvalidateWeakPtrs();timer_.Stop();refresh_pending_=false;
   scene_.reset();rows_.clear();list_=nullptr;scroll_=nullptr;widget_.reset();delegate_.reset();
 }
-views::View* DownloadPanel::MakeLabel(views::View* parent,std::u16string text){return scene_?parent->AddChildView(scene_->MakeText(std::move(text),true,false,0)):Label(parent,std::move(text));}
-void DownloadPanel::SetText(views::View* view,std::u16string text){if(scene_)scene_->SetText(view,std::move(text));else static_cast<views::Label*>(view)->SetText(std::move(text));}
+views::View* DownloadPanel::MakeLabel(views::View* parent,std::u16string text){return parent->AddChildView(scene_->MakeText(std::move(text),true,false,0));}
+void DownloadPanel::SetText(views::View* view,std::u16string text){scene_->SetText(view,std::move(text));}
 bool DownloadPanel::scene_visible_for_testing() const{return scene_&&scene_->visible();}
 bool DownloadPanel::scene_contains_text_for_testing(std::string_view text) const{return scene_&&scene_->contains_text(text);}
 bool DownloadPanel::scene_animating_for_testing() const{return scene_&&scene_->animating();}
@@ -133,7 +107,7 @@ void DownloadPanel::Show(Profile* profile, views::Widget* parent) {
   scene_=CreatePanelScene(content.get());
   MakeLabel(content.get(), u"Pobrania tego profilu · ostatnie 200 i wszystkie aktywne");
   PanelViewport* viewport=nullptr;
-  auto scroll_host=CreatePanelViewport(&viewport,scene_?scene_->ViewportChangedCallback():base::RepeatingClosure(),{100,480,false,true,true});scroll_=viewport;
+  auto scroll_host=CreatePanelViewport(&viewport,scene_->ViewportChangedCallback(),{100,480,false,true,true});scroll_=viewport;
   auto* scroll=content->AddChildView(std::move(scroll_host));
   SetSidebarPanelLayout(content.get(),true,gfx::Insets(16),12,scroll);
   auto list = std::make_unique<DownloadListView>();
@@ -152,7 +126,7 @@ void DownloadPanel::Show(Profile* profile, views::Widget* parent) {
   bounds.set_origin(gfx::Point(parent->GetWindowBoundsInScreen().CenterPoint().x() - bounds.width()/2,
                               parent->GetWindowBoundsInScreen().CenterPoint().y() - bounds.height()/2));
   bounds.AdjustToFit(area); widget->SetBoundsConstrained(bounds);
-  Refresh(); widget->Show();if(scene_)scene_->Schedule();
+  Refresh(); widget->Show();scene_->Schedule();
   timer_.Start(FROM_HERE, base::Seconds(1), base::BindRepeating(&DownloadPanel::Refresh, weak_factory_.GetWeakPtr()));
 }
 void DownloadPanel::Observe(Item* item) {
@@ -191,13 +165,12 @@ void DownloadPanel::Refresh() {
       row.title=MakeLabel(box,u"");row.source=MakeLabel(box,u"");row.status=MakeLabel(box,u"");
       // Static copies skip event targeting by default; the filename keeps its
       // original full-path tooltip through the native hit-testing adapter.
-      if(scene_)row.title->SetCanProcessEventsWithinSubtree(true);
-      row.progress=box->AddChildView(scene_?scene_->MakeProgress():std::unique_ptr<views::View>(std::make_unique<views::ProgressBar>()));
-      auto* buttons=box->AddChildView(scene_?scene_->MakeActions(8):std::make_unique<views::View>());
-      if(!scene_)SetSidebarPanelLayout(buttons,false,gfx::Insets(),8);
+      row.title->SetCanProcessEventsWithinSubtree(true);
+      row.progress=box->AddChildView(scene_->MakeProgress());
+      auto* buttons=box->AddChildView(scene_->MakeActions(8));
       auto button=[&](std::u16string text,Action action)->views::View*{
         auto callback=base::BindRepeating([](base::WeakPtr<DownloadPanel> panel,std::string guid,Action action){if(panel)panel->Act(std::move(guid),action);},weak_factory_.GetWeakPtr(),guid,action);
-        return scene_?scene_->AddAction(buttons,std::move(callback),std::move(text)):buttons->AddChildView(std::make_unique<views::MdTextButton>(std::move(callback),text));
+        return scene_->AddAction(buttons,std::move(callback),std::move(text));
       };
       row.pause = button(u"Wstrzymaj", Action::kPauseResume);
       row.cancel = button(u"Anuluj", Action::kCancel);
@@ -211,20 +184,19 @@ void DownloadPanel::Refresh() {
     SetText(row.title,name.empty()?u"Przygotowywanie pliku…":name);
     row.title->SetTooltipText(item->GetTargetFilePath().LossyDisplayName());
     SetText(row.source,base::UTF8ToUTF16(item->GetURL().host()));
-    if (scene_) SetText(row.status, RustStatus(item)); else
-    SetText(row.status,Status(item));
+    SetText(row.status, RustStatus(item));
     const bool active = item->GetState() == Item::IN_PROGRESS;
     const bool safe = !Unsafe(item);
     row.progress->GetViewAccessibility().SetName(u"Postęp pobierania: " + name);
     row.progress->SetVisible(active);
-    const double value=item->PercentComplete()<0?-1.0:item->PercentComplete()/100.0;if(scene_)scene_->SetProgress(row.progress,value);else static_cast<views::ProgressBar*>(row.progress.get())->SetValue(value);
+    const double value=item->PercentComplete()<0?-1.0:item->PercentComplete()/100.0;scene_->SetProgress(row.progress,value);
     row.pause->SetVisible(safe && (active || item->CanResume()));
-    const std::u16string pause_label=item->IsPaused()||item->GetState()==Item::INTERRUPTED?u"Wznów":u"Wstrzymaj";if(scene_)scene_->SetActionText(row.pause,pause_label);else static_cast<views::MdTextButton*>(row.pause.get())->SetText(pause_label);
+    const std::u16string pause_label=item->IsPaused()||item->GetState()==Item::INTERRUPTED?u"Wznów":u"Wstrzymaj";scene_->SetActionText(row.pause,pause_label);
     row.pause->SetEnabled((active && !item->IsPaused()) || item->CanResume());
     row.cancel->SetVisible(active || item->GetState() == Item::INTERRUPTED);
     row.reveal->SetVisible(safe && item->GetState() == Item::COMPLETE && !item->GetFileExternallyRemoved());
   }
-  static_cast<DownloadListView*>(list_.get())->ContentsChanged();if(scene_)scene_->Schedule();
+  static_cast<DownloadListView*>(list_.get())->ContentsChanged();scene_->Schedule();
 }
 bool DownloadPanel::Act(std::string guid, Action action) {
   auto found = items_.find(guid);

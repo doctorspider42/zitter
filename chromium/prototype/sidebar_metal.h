@@ -80,6 +80,7 @@ class SidebarMetal {
   virtual bool contains_rect_for_testing(gfx::RectF bounds, gfx::RectF clip) const = 0;
 };
 // Compositor raster by default; Metal with --zitter-rust-raster=metal on macOS.
+// Never returns null.
 std::unique_ptr<SidebarMetal> CreateSidebarMetal();
 #if BUILDFLAG(IS_MAC)
 // The in-process Metal overlay; null when Metal is unavailable.

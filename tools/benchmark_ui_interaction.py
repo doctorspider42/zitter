@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare Views and Rust/Metal on the real app's UI interaction workload.
+"""Compare compositor and Metal raster on the real app's UI interaction workload.
 
 Runs ZitterProfilesBrowserTest.PerformanceUiInteraction in alternating rounds
 per backend and reports per-operation wall-time distributions plus browser
@@ -16,8 +16,7 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 TEST = "ZitterProfilesBrowserTest.PerformanceUiInteraction"
-BACKENDS = {"views": ["--zitter-sidebar=views"], "rust-metal": ["--zitter-rust-raster=metal"],
-            "rust-compositor": []}
+BACKENDS = {"rust-compositor": [], "rust-metal": ["--zitter-rust-raster=metal"]}
 
 
 def run(binary, backend, iterations, tabs, log):
@@ -48,7 +47,7 @@ def main():
     parser.add_argument("--iterations", type=int, default=40)
     parser.add_argument("--tabs", type=int, default=20)
     parser.add_argument("--rounds", type=int, default=3)
-    parser.add_argument("--backends", nargs="+", choices=list(BACKENDS), default=["views", "rust-metal"])
+    parser.add_argument("--backends", nargs="+", choices=list(BACKENDS), default=["rust-compositor", "rust-metal"])
     parser.add_argument("--results", type=Path, default=ROOT / "build/ui-interaction-performance")
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()

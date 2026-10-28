@@ -1,9 +1,9 @@
 # Rust editors and remaining service work
 
-Workspace/profile name, color/emoji, folder-name, address/palette, eight preferences fields, seven tools fields and page JavaScript prompts now use the Rust model and CoreText/Metal editor
-when `--zitter-sidebar=rust-metal` is selected. They have one native View for
-window/input/focus/AX services and no Textfield child/model/RenderText. The Views
-backend keeps one real native Textfield per field. Workspace/profile/appearance/
+Workspace/profile name, color/emoji, folder-name, address/palette, eight preferences fields, seven tools fields and page JavaScript prompts now use the Rust model and CoreText/Metal editor.
+They have one native View for window/input/focus/AX services and no Textfield
+child/model/RenderText. The Views backend and its native Textfield editor were
+removed on 2026-10-28. Workspace/profile/appearance/
 address/preferences/tools/page-prompt fields use `EditorControl`; the Views folder baseline retains its original DialogModel Textfield.
 Neither has a wrapper or second editing model. All declared WorkspaceShell editor roles are migrated. The page JavaScript prompt uses the same contract; its modal host controls still use Views.
 

@@ -45,13 +45,9 @@
 #include "ui/base/mojom/ui_base_types.mojom.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/controls/label.h"
-#include "ui/views/controls/combobox/combobox.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/window/dialog_delegate.h"
-#include "ui/views/bubble/bubble_dialog_model_host.h"
-#include "ui/base/models/dialog_model.h"
-#include "ui/base/models/simple_combobox_model.h"
 #include "url/origin.h"
 
 namespace zitter::prototype {
@@ -154,36 +150,19 @@ bool PageServices::OfferPassword(std::unique_ptr<FormManager> form, bool update)
   std::weak_ptr<PendingPassword> pending = pending_password_;
   auto body=std::make_unique<views::View>();
   password_scene_=CreatePanelScene(body.get());
-  std::unique_ptr<views::DialogDelegate> dialog;
-  if(password_scene_){
-    SetSidebarPanelLayout(body.get(),true,gfx::Insets(),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_UNRELATED_CONTROL_VERTICAL));
-    // The scene path takes its prompt copy from Rust.
-    const auto copy=sidebar::password_prompt_copy(update,base::UTF16ToUTF8(origin),base::UTF16ToUTF8(username),base::UTF16ToUTF8(BrowsingProfileName(profile)));
-    for(const auto& line:copy.lines)
-      body->AddChildView(password_scene_->MakeText(base::UTF8ToUTF16(std::string(line)),true,false,0));
-    dialog=CreateSceneModalDialog(std::move(body),false);
-    dialog->SetTitle(base::UTF8ToUTF16(std::string(copy.title)));
-    dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk)|static_cast<int>(ui::mojom::DialogButton::kCancel));
-    dialog->SetButtonLabel(ui::mojom::DialogButton::kOk,base::UTF8ToUTF16(std::string(copy.accept)));
-    dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel,base::UTF8ToUTF16(std::string(copy.cancel)));
-    dialog->SetAcceptCallback(base::BindOnce([](std::weak_ptr<PendingPassword> weak){if(auto value=weak.lock())value->Save();},pending));
-    dialog->SetCancelCallback(base::BindOnce([](std::weak_ptr<PendingPassword> weak){if(auto value=weak.lock())value->Decline();},pending));
-    dialog->SetCloseCallback(base::BindOnce([](std::weak_ptr<PendingPassword> weak){if(auto value=weak.lock())value->Ignore();},pending));
-  }else{
-    auto model = ui::DialogModel::Builder()
-      .SetTitle(update ? u"Zaktualizować hasło?" : u"Zapisać hasło?")
-      .AddParagraph(ui::DialogModelLabel(origin))
-      .AddParagraph(ui::DialogModelLabel(u"Użytkownik: " + username))
-      .AddParagraph(ui::DialogModelLabel(u"Profil: " + BrowsingProfileName(profile)))
-      .AddParagraph(ui::DialogModelLabel(u"Hasło będzie chronione w magazynie tego profilu."))
-      .AddOkButton(base::BindOnce([](std::weak_ptr<PendingPassword> weak) { if (auto value = weak.lock()) value->Save(); }, pending),
-          ui::DialogModel::Button::Params().SetLabel(update ? u"Zaktualizuj" : u"Zapisz hasło"))
-      .AddCancelButton(base::BindOnce([](std::weak_ptr<PendingPassword> weak) { if (auto value = weak.lock()) value->Decline(); }, pending),
-          ui::DialogModel::Button::Params().SetLabel(u"Nie teraz"))
-      .SetDialogDestroyingCallback(base::BindOnce([](std::weak_ptr<PendingPassword> weak) { if (auto value = weak.lock()) value->Ignore(); }, pending))
-      .Build();
-    dialog = views::BubbleDialogModelHost::CreateModal(std::move(model), ui::mojom::ModalType::kWindow,true,false);
-  }
+  SetSidebarPanelLayout(body.get(),true,gfx::Insets(),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_UNRELATED_CONTROL_VERTICAL));
+  // The scene path takes its prompt copy from Rust.
+  const auto copy=sidebar::password_prompt_copy(update,base::UTF16ToUTF8(origin),base::UTF16ToUTF8(username),base::UTF16ToUTF8(BrowsingProfileName(profile)));
+  for(const auto& line:copy.lines)
+    body->AddChildView(password_scene_->MakeText(base::UTF8ToUTF16(std::string(line)),true,false,0));
+  auto dialog=CreateSceneModalDialog(std::move(body),false);
+  dialog->SetTitle(base::UTF8ToUTF16(std::string(copy.title)));
+  dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk)|static_cast<int>(ui::mojom::DialogButton::kCancel));
+  dialog->SetButtonLabel(ui::mojom::DialogButton::kOk,base::UTF8ToUTF16(std::string(copy.accept)));
+  dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel,base::UTF8ToUTF16(std::string(copy.cancel)));
+  dialog->SetAcceptCallback(base::BindOnce([](std::weak_ptr<PendingPassword> weak){if(auto value=weak.lock())value->Save();},pending));
+  dialog->SetCancelCallback(base::BindOnce([](std::weak_ptr<PendingPassword> weak){if(auto value=weak.lock())value->Decline();},pending));
+  dialog->SetCloseCallback(base::BindOnce([](std::weak_ptr<PendingPassword> weak){if(auto value=weak.lock())value->Ignore();},pending));
   ShowPasswordWidget(std::move(dialog));
   return true;
 }
@@ -208,7 +187,7 @@ void PageServices::OnGetPasswordStoreResultsOrErrorFrom(password_manager::Passwo
   auto* profile = Profile::FromBrowserContext(web_contents()->GetBrowserContext());
   auto content=std::make_unique<views::View>();
   password_scene_=CreatePanelScene(content.get());
-  auto dialog=password_scene_?CreateSceneDialogDelegate():std::make_unique<views::DialogDelegate>();
+  auto dialog=CreateSceneDialogDelegate();
   dialog->SetTitle(u"Zapisane logowania");
   dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk));
   dialog->SetButtonLabel(ui::mojom::DialogButton::kOk, u"Zamknij");
@@ -217,10 +196,7 @@ void PageServices::OnGetPasswordStoreResultsOrErrorFrom(password_manager::Passwo
   dialog->SetCanResize(true);
   SetSidebarPanelLayout(content.get(),true,gfx::Insets(16),12);
   auto paragraph = [&](std::u16string text) {
-    if(password_scene_){content->AddChildView(password_scene_->MakeText(std::move(text),true,false,0));return;}
-    auto* label = content->AddChildView(std::make_unique<views::Label>(text));
-    label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-    label->SetMultiLine(true);
+    content->AddChildView(password_scene_->MakeText(std::move(text),true,false,0));
   };
   paragraph(u"Profil: " + BrowsingProfileName(profile));
   if (!results.has_value()) {
@@ -231,13 +207,7 @@ void PageServices::OnGetPasswordStoreResultsOrErrorFrom(password_manager::Passwo
     std::vector<std::u16string> labels;
     for(const auto& credential:*results)
       labels.push_back(base::UTF8ToUTF16(url::Origin::Create(credential.url).Serialize())+u" · "+credential.username_value);
-    if(password_scene_)content->AddChildView(password_scene_->MakeSelect(content.get(),std::move(labels),u"Zapisane konta"));
-    else{
-      std::vector<ui::SimpleComboboxModel::Item> accounts;
-      for(auto& label:labels)accounts.emplace_back(std::move(label));
-      auto* picker=content->AddChildView(std::make_unique<views::Combobox>(std::make_unique<ui::SimpleComboboxModel>(std::move(accounts))));
-      picker->GetViewAccessibility().SetName(u"Zapisane konta");
-    }
+    content->AddChildView(password_scene_->MakeSelect(content.get(),std::move(labels),u"Zapisane konta"));
     paragraph(u"Kliknij pole logowania na stronie, aby wybrać zapisane konto. Hasła nie są tu ujawniane.");
   }
   content->SetPreferredSize(gfx::Size(460, 180));
@@ -252,7 +222,7 @@ void PageServices::OnGetPasswordStoreResultsOrErrorFrom(password_manager::Passwo
   bounds.AdjustToFit(area);
   widget->SetBoundsConstrained(bounds);
   widget->Show();
-  if(password_scene_)password_scene_->Schedule();
+  password_scene_->Schedule();
 }
 bool PageServices::password_scene_visible_for_testing() const{return password_scene_&&password_scene_->visible();}
 bool PageServices::password_scene_contains_for_testing(std::string_view text) const{return password_scene_&&password_scene_->contains_text(text);}

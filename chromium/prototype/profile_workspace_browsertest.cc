@@ -2760,19 +2760,12 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarRemainsOpenWhileSpacesS
   EXPECT_FALSE(shell->pinned());
   EXPECT_TRUE(shell->workspace_animation_running());
   EXPECT_TRUE(shell->workspace_animation_pending());
-  if(RustUiEnabled()) {
-    if(MetalPresents())EXPECT_TRUE(shell->workspace_switch_metal_visible());
-    if(MetalPresents())EXPECT_FALSE(shell->tab_scroll_view()->layer());
-  } else {
-    if(MetalPresents())ASSERT_TRUE(shell->tab_scroll_view()->layer());
-    if(MetalPresents())EXPECT_LE(shell->tab_scroll_view()->layer()->bounds().height(),window_->widget()->GetWindowBoundsInScreen().height());
-  }
+  if(MetalPresents())EXPECT_TRUE(shell->workspace_switch_metal_visible());
+  if(MetalPresents())EXPECT_FALSE(shell->tab_scroll_view()->layer());
   for (const auto& list : shell->tab_list_view()->children()) EXPECT_FALSE(list->layer());
   ASSERT_TRUE(base::test::RunUntil([&] { return !shell->workspace_animation_pending(); }));
   // Metal presentation and completion can both arrive in the same task turn.
-  if(RustUiEnabled())
-    EXPECT_TRUE(shell->workspace_animation_running()||!shell->workspace_switch_metal_visible());
-  else EXPECT_TRUE(shell->workspace_animation_running());
+  EXPECT_TRUE(shell->workspace_animation_running()||!shell->workspace_switch_metal_visible());
   ASSERT_TRUE(base::test::RunUntil([&] { return !shell->workspace_animation_running(); }));
   ASSERT_TRUE(base::test::RunUntil([&] {
     return window_->contents("work")->GetContainerBounds().x() == shell->content_host()->GetBoundsInScreen().x();
@@ -6076,7 +6069,6 @@ class ZitterMetalSidebarBrowserTest : public ZitterProfilesBrowserTest {
  public:
   void SetUpCommandLine(base::CommandLine* command_line) override {
     ZitterProfilesBrowserTest::SetUpCommandLine(command_line);
-    command_line->AppendSwitchASCII("zitter-sidebar", "rust-metal");
     command_line->AppendSwitchASCII("zitter-rust-raster", "metal");
   }
 };
@@ -7608,8 +7600,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeDragAndCloseAtWidthLimit
   auto* original = window_->contents("work");
   shell->CloseOverlays(true); shell->SetPinned(true); shell->ShowSidebar();
   shell->sidebar_widget()->LayoutRootViewIfNecessary();
-  if (RustUiEnabled())
-    if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible(); }));
+  if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible(); }));
   ui_controls::EnableUIControls();
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
   const auto sidebar_window = shell->sidebar_widget()->GetNativeWindow();
@@ -7931,9 +7922,8 @@ class DeferredEditorClipboard final:public ui::TestClipboard {
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NameEditorsTypingUndoCompositionAndPersistence) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->OpenWorkspaceSettings();
   auto* field=shell->workspace_input();ASSERT_TRUE(field);auto* view=field->view();
-  const bool metal=RustUiEnabled();
-  EXPECT_EQ(metal,field->rust_editor());EXPECT_EQ(!metal,views::AsViewClass<views::Textfield>(view)!=nullptr);
-  if(metal){EXPECT_TRUE(view->children().empty());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return field->metal_visible();}));}
+  EXPECT_TRUE(field->rust_editor());EXPECT_FALSE(views::AsViewClass<views::Textfield>(view));
+  EXPECT_TRUE(view->children().empty());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return field->metal_visible();}));
   ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));view->RequestFocus();ASSERT_TRUE(base::test::RunUntil([&]{return view->HasFocus();}));
   auto key=[&](ui::KeyboardCode code,bool shift=false,bool command=false){return ui_test_utils::SendKeyPressToWindowSync(shell->settings_widget()->GetNativeWindow(),code,false,shift,false,command);};
   field->SetText(u"Praca");ASSERT_TRUE(key(ui::VKEY_A,false,true));ASSERT_TRUE(key(ui::VKEY_X));ASSERT_TRUE(base::test::RunUntil([&]{return field->GetText()==u"x";}));
@@ -7947,7 +7937,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NameEditorsTypingUndoCompositi
   ui::AXNodeData node;field->GetViewAccessibility().GetAccessibleNodeData(&node);EXPECT_EQ(ax::mojom::Role::kTextField,node.role);EXPECT_EQ(u"alpha",node.GetString16Attribute(ax::mojom::StringAttribute::kValue));
   std::u16string long_text(1000,u'x');long_text+=u"🦀";field->SetText(long_text);const auto caret=client->GetCaretBounds();EXPECT_GE(caret.x(),view->GetBoundsInScreen().x());EXPECT_LE(caret.right(),view->GetBoundsInScreen().right());
   field->SetText(u"Workspace 日本語");auto* save=FindButton(shell->workspace_panel_for_testing(),u"Zapisz nazwę i profil");ASSERT_TRUE(save);ClickControl(save);EXPECT_EQ("Workspace 日本語",window_->workspaces()[0].name);ASSERT_TRUE(base::test::RunUntil([&]{return window_->configuration_saved();}));
-  shell->OpenProfiles("work-profile");auto* profile=shell->profile_name_input();ASSERT_TRUE(profile);EXPECT_EQ(metal,profile->rust_editor());profile->SetText(u"Profil 日本語");auto* rename=FindButton(shell->profile_panel_for_testing(),u"Zapisz nazwę profilu");ASSERT_TRUE(rename&&rename->GetEnabled());ClickControl(rename);ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));EXPECT_EQ("Profil 日本語",window_->profiles()[0].name);
+  shell->OpenProfiles("work-profile");auto* profile=shell->profile_name_input();ASSERT_TRUE(profile);EXPECT_TRUE(profile->rust_editor());profile->SetText(u"Profil 日本語");auto* rename=FindButton(shell->profile_panel_for_testing(),u"Zapisz nazwę profilu");ASSERT_TRUE(rename&&rename->GetEnabled());ClickControl(rename);ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));EXPECT_EQ("Profil 日本語",window_->profiles()[0].name);
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NameEditorsAdmissionHideResetAndClipboard) {

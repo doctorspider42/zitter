@@ -1,11 +1,33 @@
 # Rust + Metal — stan i pozostałe prace
 
-Stan na 2026-10-28. **Rust/Metal jest backendem domyślnym** (decyzja użytkownika po
-teście ręcznym). Bazowe Views: `--zitter-sidebar=views`; Rust bez Metala w procesie:
-`--zitter-rust-raster=compositor`. Migracja wznowiona 2026-10-27 na prośbę użytkownika (cel: pełne
+Stan na 2026-10-28. **Jeden UI: Rust.** Backend Views i przełącznik `--zitter-sidebar`
+zostały usunięte (decyzja użytkownika, bez możliwości powrotu). Domyślne malowanie idzie
+przez kompozytor Chromium; nakładka Metal w procesie jest opcją
+`--zitter-rust-raster=metal` (tylko macOS, zachowana na przyszłość). Migracja wznowiona 2026-10-27 na prośbę użytkownika (cel: pełne
 przeniesienie implementacji albo 25% tygodniowego zużycia; testy UI po większych
 etapach). Implementacja jest przeniesiona do granic platformy; otwarta pozostaje
 akceptacja (ręczna, wydajność, wydanie) — patrz lista niżej.
+
+## Jeden UI (2026-10-28)
+
+- Usunięte: przełącznik `--zitter-sidebar`, `RustUiEnabled()`, gałęzie Views w
+  fabrykach układu, panelach, dialogach stron/haseł, pobraniach, preferencjach,
+  narzędziach i Time Machine oraz klasy tylko dla Views (`NativeEditor`, `RowButton`,
+  `SceneGlyphButton`, `NativeSidebarGrip`, `NativeSplitDivider`, `NativePanelViewport`,
+  `PreferenceCombobox`). Macierz testów Views znika; zostają macierze kompozytora
+  (domyślna) i Metal (`ZitterMetalSidebarBrowserTest` sam włącza Metal).
+- Framework Views pozostaje warstwą hosta: okna/widgety, `WebView`, ramki dialogów,
+  runnery menu, fokus/AX/IME i dostarczanie zdarzeń. Kontrolki Rust to adaptery
+  `views::View`.
+- Cross-platform: crate `sidebar_scene`, adaptery i układ nie są już za `is_mac`;
+  ścieżka kompozytora i adapter scrollbara są w przenośnym `sidebar_raster.cc`. Tylko
+  dla macOS zostają: Metal (`sidebar_metal.mm`), kształtowanie tekstu CoreText
+  (`ShapeSidebarParagraph*`, `PaintEditorSceneFallback`, `EditorTextLayout`), routing
+  klawiatury/menu i ramka okna. Inne platformy potrzebują własnych usług tekstu.
+- Pozostało: część warunków `if (tools_form_)`/`metal_sidebar_` itp. pełni dziś rolę
+  strażnika „po `Detach()`” i została; testy nadal zawierają gałęzie `rust_editor()`;
+  UI Lab (`--zitter-ui-lab`, `tools/benchmark_ui.py`) ma własny wariant Views jako
+  odniesienie pomiarowe.
 
 ## Gdzie jesteśmy
 

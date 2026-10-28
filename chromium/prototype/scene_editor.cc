@@ -61,51 +61,6 @@ class SceneWindowObserver final:public views::WidgetObserver {
  private:
   base::RepeatingClosure changed_;base::ScopedObservation<views::Widget,views::WidgetObserver> observation_{this};
 };
-class NativeEditor final : public views::Textfield, public EditorControl, private views::TextfieldController {
-  METADATA_HEADER(NativeEditor,views::Textfield)
- public:
-  ~NativeEditor() override{set_controller(nullptr);}
-  bool rust_editor() const override{return false;}
-  bool metal_visible() const override{return false;}
-  bool scene_contains(std::string_view) const override{return false;}
-  views::View* view() override{return this;}
-  std::u16string_view GetText() const override{return views::Textfield::GetText();}
-  void SetText(std::u16string_view value) override{views::Textfield::SetText(value);}
-  void SetPlaceholderText(std::u16string value) override{views::Textfield::SetPlaceholderText(std::move(value));}
-  bool IsIMEComposing() const override{return views::Textfield::IsIMEComposing();}
-  void SetCompositionText(const ui::CompositionText& value) override {
-    // Empty marked text terminates preedit; without preedit it is a no-op.
-    // Do not let the native model delete an idle service selection or publish
-    // its cancellation via ContentsChanged as a committed application edit.
-    if(value.text.empty()){ClearCompositionText();return;}
-    base::AutoReset<bool> suppress(&suppress_committed_,true);views::Textfield::SetCompositionText(value);
-  }
-  void ClearCompositionText() override{base::AutoReset<bool> suppress(&suppress_committed_,true);views::Textfield::ClearCompositionText();}
-  size_t ConfirmCompositionText(bool keep) override{return views::Textfield::ConfirmCompositionText(keep);}
-  gfx::Range GetSelectedRange() const override{return views::Textfield::GetSelectedRange();}
-  void SelectRange(const gfx::Range& range) override{views::Textfield::SetSelectedRange(range);}
-  ui::TextInputClient* input_client() override{return this;}
-  void SetReadOnly(bool value) override{views::Textfield::SetReadOnly(value);}
-  void SetPresentation(int font_size,float inset,bool framed,std::optional<SkColor> fill) override {
-    const auto fonts=gfx::FontList();SetFontList(fonts.DeriveWithSizeDelta(std::clamp(font_size,1,256)-fonts.GetFontSize()));
-    SetBackgroundColor(fill?std::optional<ui::ColorVariant>(*fill):std::nullopt);
-    const int padding=std::isfinite(inset)?static_cast<int>(std::clamp(inset,0.f,4096.f)):0;
-    if(framed)SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,5,GetColorProvider()?GetColorProvider()->GetColor(ui::kColorTextfieldOutline):SK_ColorGRAY),gfx::Insets::VH(4,padding)));
-    else SetBorder(views::CreateEmptyBorder(gfx::Insets::VH(0,padding)));
-  }
-  void SetCallbacks(base::RepeatingClosure committed,base::RepeatingCallback<bool(const ui::KeyEvent&)> key) override {
-    committed_=std::move(committed);key_=std::move(key);set_controller(committed_||key_?this:nullptr);
-  }
- private:
-  void ContentsChanged(views::Textfield*,const std::u16string&) override {
-    if(!suppress_committed_&&!IsIMEComposing()&&committed_){auto notify=committed_;notify.Run();}
-  }
-  bool HandleKeyEvent(views::Textfield*,const ui::KeyEvent& event) override {auto key=key_;return key&&key.Run(event);}
-  bool suppress_committed_=false;
-  base::RepeatingClosure committed_;base::RepeatingCallback<bool(const ui::KeyEvent&)> key_;
-};
-BEGIN_METADATA(NativeEditor)
-END_METADATA
 class SceneEditor final : public views::View, public EditorControl,
     public ui::TextInputClient, public views::ContextMenuController,
     public views::DragController, public views::WordLookupClient {
@@ -423,9 +378,8 @@ class SceneEditor final : public views::View, public EditorControl,
 BEGIN_METADATA(SceneEditor)
 END_METADATA
 }  // namespace
-EditorControl* AddEditor(views::View* parent,bool metal){
-  if(metal)return parent->AddChildView(std::make_unique<SceneEditor>());
-  return parent->AddChildView(std::make_unique<NativeEditor>());
+EditorControl* AddEditor(views::View* parent){
+  return parent->AddChildView(std::make_unique<SceneEditor>());
 }
 
 } // namespace zitter::prototype

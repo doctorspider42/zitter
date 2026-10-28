@@ -539,7 +539,7 @@ class WorkspaceShell final : public ui::EventHandler,
   int ToolsPage() const;
   bool ToolsRecording() const;
   // status is sidebar::ToolsStatus; Rust owns the copy when the tools form exists.
-  std::u16string ToolsStatusText(int status, std::u16string native) const;
+  std::u16string ToolsStatusText(int status) const;
   std::u16string ToolsHistoryQuery() const;
   std::u16string ToolsTimelineQuery() const;
   void ResetToolsForm();
@@ -570,7 +570,6 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> tools_picker_ = nullptr;
   raw_ptr<views::View> closed_picker_ = nullptr;
   raw_ptr<PanelViewport> tools_scroll_ = nullptr;
-  std::vector<std::string> snapshot_ids_, closed_ids_;
   raw_ptr<EditorControl> history_search_ = nullptr;
   raw_ptr<views::View> history_period_ = nullptr;
   raw_ptr<views::View> history_list_ = nullptr;
@@ -578,16 +577,9 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> history_clear_ = nullptr;
   std::shared_ptr<SidebarNodeGraphState> history_node_graph_;
   std::vector<BrowsingHistoryEntry> history_entries_;
-  // Views-only UI state; the opt-in backend reads/writes ToolsForm instead.
-  size_t history_limit_ = 200;
-  bool history_loaded_ = false;
   bool browsing_data_busy_ = false;
   base::OneShotTimer history_timer_;
-  int tools_page_ = 0;
-  bool recording_shortcut_ = false;
   uint64_t tools_generation_ = 0;
-  std::u16string history_query_;
-  std::u16string timeline_query_;
   void ToolsEditorEdited(EditorControl* sender);
   void PostToolsAction(int action);
   void RefreshToolsChoiceFields();
@@ -747,11 +739,9 @@ class WorkspaceShell final : public ui::EventHandler,
   std::vector<PreferenceSection> preference_sections_;
   std::map<std::string, raw_ptr<views::View>> preference_toggles_;
   std::map<std::string, raw_ptr<views::View>> preference_pickers_;
-  size_t preference_category_ = 0;
   std::map<std::string, raw_ptr<EditorControl>> preference_textfields_;
   std::map<std::string, raw_ptr<views::View>> preference_save_buttons_;
   std::set<std::string> preference_text_dirty_;
-  std::string preferences_profile_id_;
   raw_ptr<EditorControl> site_origin_ = nullptr;
   raw_ptr<views::View> site_type_ = nullptr;
   raw_ptr<views::View> site_policy_ = nullptr;

@@ -3,8 +3,8 @@
 Goal: match the original workspace UI, with Rust owning migrated control layout
 and behavior and Metal presenting it. Keep real Chromium WebContents and existing
 application/domain commands; preserve profile/session isolation. Push verified
-milestones to `origin/main` as they land. The opt-in switch remains
-`--zitter-sidebar=rust-metal` until the migration and comparison are complete.
+milestones to `origin/main` as they land. Since 2026-10-28 the Rust UI is the only
+UI; the Views backend and `--zitter-sidebar` are gone (see the status document).
 
 ## Current workflow — 2026-10-27
 

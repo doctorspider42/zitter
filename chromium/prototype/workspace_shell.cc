@@ -219,7 +219,6 @@ constexpr std::array<SkColor, 4> kWorkspaceColors = {
 constexpr std::array<const char16_t*, 6> kWorkspaceEmojis = {
     u"💼", u"🏠", u"🚀", u"🎨", u"📚", u"🎮"};
 constexpr int kGap = 8;
-constexpr int kPaneBarHeight = 30;
 #if BUILDFLAG(IS_MAC)
 constexpr int kTrafficLightInset = 78;
 #else
@@ -376,25 +375,23 @@ END_METADATA
 class PreferenceSurface final : public views::View {
   METADATA_HEADER(PreferenceSurface, views::View)
  public:
-  explicit PreferenceSurface(bool navigation=false,bool scene=false,base::RepeatingClosure changed={},base::RepeatingCallback<bool()> visible={}):navigation_(navigation),scene_(scene),changed_(std::move(changed)),visible_(std::move(visible)){}
-  bool scene() const{return scene_;}
+  explicit PreferenceSurface(bool navigation=false,base::RepeatingClosure changed={},base::RepeatingCallback<bool()> visible={}):navigation_(navigation),changed_(std::move(changed)),visible_(std::move(visible)){}
   sidebar::Item Scene(gfx::RectF bounds,gfx::RectF clip) const{sidebar::Item item{};item.kind=24;item.x=bounds.x();item.y=bounds.y();item.width=bounds.width();item.height=bounds.height();item.fill=Tone(this,navigation_?kFrameBase:kCard);item.ink=Hairline(this);item.active=navigation_;item.clip={clip.x(),clip.y(),clip.width(),clip.height()};return item;}
-  bool GetNeedsNotificationWhenVisibleBoundsChange() const override{return scene_;}
+  bool GetNeedsNotificationWhenVisibleBoundsChange() const override{return true;}
   void OnVisibleBoundsChanged() override{Notify();}
   void OnBoundsChanged(const gfx::Rect& previous) override{views::View::OnBoundsChanged(previous);Notify();}
   void AddedToWidget() override{views::View::AddedToWidget();Notify();}
   void VisibilityChanged(views::View* changed,bool visible) override{views::View::VisibilityChanged(changed,visible);Notify();}
   void OnPaint(gfx::Canvas* canvas) override{views::View::OnPaint(canvas);
-    if(scene_&&(navigation_||!visible_||!visible_.Run())){auto item=Scene(gfx::RectF(GetLocalBounds()),gfx::RectF(GetLocalBounds()));auto ops=sidebar::layout(rust::Slice<const sidebar::Item>(&item,1));PaintEditorSceneFallback(canvas,UNSAFE_BUFFERS(base::span<const sidebar::Primitive>(ops.data(),ops.size())));}
+    if(navigation_||!visible_||!visible_.Run()){auto item=Scene(gfx::RectF(GetLocalBounds()),gfx::RectF(GetLocalBounds()));auto ops=sidebar::layout(rust::Slice<const sidebar::Item>(&item,1));PaintEditorSceneFallback(canvas,UNSAFE_BUFFERS(base::span<const sidebar::Primitive>(ops.data(),ops.size())));}
   }
   void OnThemeChanged() override {
     views::View::OnThemeChanged();
-    if(scene_){SetBackground(nullptr);SetBorder(views::CreateEmptyBorder(navigation_?gfx::Insets():gfx::Insets(1)));Notify();}
-    else {SetBackground(views::CreateRoundedRectBackground(Tone(this,navigation_?kFrameBase:kCard),12));if(!navigation_)SetBorder(views::CreateRoundedRectBorder(1,12,Hairline(this)));}
+    SetBackground(nullptr);SetBorder(views::CreateEmptyBorder(navigation_?gfx::Insets():gfx::Insets(1)));Notify();
   }
  private:
   void Notify(){if(changed_)changed_.Run();}
-  bool navigation_;bool scene_;base::RepeatingClosure changed_;base::RepeatingCallback<bool()> visible_;
+  bool navigation_;base::RepeatingClosure changed_;base::RepeatingCallback<bool()> visible_;
 };
 BEGIN_METADATA(PreferenceSurface)
 END_METADATA
@@ -521,113 +518,6 @@ class SceneWindowObserver final : public views::WidgetObserver {
   base::RepeatingClosure changed_;base::ScopedObservation<views::Widget,views::WidgetObserver> observation_{this};
 };
 
-// Footer controls retain one native event/focus/AX node, while Rust owns
-// their pointer/key state and Metal owns their steady-state painting.
-class SceneGlyphButton : public GlyphButton {
-  METADATA_HEADER(SceneGlyphButton,GlyphButton)
- public:
-  SceneGlyphButton(PressedCallback callback, std::u16string name, Glyph glyph,
-      const gfx::VectorIcon* icon, base::RepeatingCallback<bool()> scene_visible,base::RepeatingClosure painted={})
-      : GlyphButton(std::move(callback),std::move(name),glyph,icon),scene_visible_(std::move(scene_visible)),painted_(std::move(painted)) {
-    if (RustUiEnabled())
-      rust_pointer_.emplace(sidebar::new_row_pointer());
-  }
-  void OnDidSchedulePaint(const gfx::Rect& rect) override {GlyphButton::OnDidSchedulePaint(rect);if(painted_)painted_.Run();}
-  void OnFocus() override {GlyphButton::OnFocus();SchedulePaint();}
-  bool OnMousePressed(const ui::MouseEvent& event) override {
-    if (rust_pointer_) {
-      const auto result = RustPointerEvent(sidebar::PointerPhase::Press, event);
-      if (GetEnabledInViewsSubtree()) RequestFocusFromEvent();
-      return ApplyRustInput(result, event);
-    }
-    return views::Button::OnMousePressed(event);
-  }
-  bool OnMouseDragged(const ui::MouseEvent& event) override {
-    if (rust_pointer_) return ApplyRustInput(RustPointerEvent(sidebar::PointerPhase::Drag, event), event);
-    return views::Button::OnMouseDragged(event);
-  }
-  void OnMouseReleased(const ui::MouseEvent& event) override {
-    if (rust_pointer_) { ApplyRustInput(RustPointerEvent(sidebar::PointerPhase::Release, event), event); return; }
-    views::Button::OnMouseReleased(event);
-  }
-  void OnMouseEntered(const ui::MouseEvent& event) override {
-    if (rust_pointer_) { ApplyRustInput(RustPointerEvent(sidebar::PointerPhase::Enter, event), event); return; }
-    views::Button::OnMouseEntered(event);
-  }
-  void OnMouseExited(const ui::MouseEvent& event) override {
-    if (rust_pointer_) { ApplyRustInput(RustPointerEvent(sidebar::PointerPhase::Exit, event), event); return; }
-    views::Button::OnMouseExited(event);
-  }
-  void OnMouseMoved(const ui::MouseEvent& event) override {
-    if (rust_pointer_) { ApplyRustInput(RustPointerEvent(sidebar::PointerPhase::Move, event), event); return; }
-    views::Button::OnMouseMoved(event);
-  }
-  bool OnKeyPressed(const ui::KeyEvent& event) override {
-    if (rust_pointer_) return ApplyRustInput((*rust_pointer_)->key_event(true, RustKeyPolicy(event), GetEnabledInViewsSubtree()), event);
-    return views::Button::OnKeyPressed(event);
-  }
-  bool OnKeyReleased(const ui::KeyEvent& event) override {
-    if (rust_pointer_) return ApplyRustInput((*rust_pointer_)->key_event(false, RustKeyPolicy(event), GetEnabledInViewsSubtree()), event);
-    return views::Button::OnKeyReleased(event);
-  }
-  void OnBlur() override {
-    if (rust_pointer_) (*rust_pointer_)->cancel();
-    views::Button::OnBlur();SchedulePaint();
-  }
-  void OnMouseCaptureLost() override {
-    if (rust_pointer_) (*rust_pointer_)->cancel();
-    views::Button::OnMouseCaptureLost();
-  }
-  void StateChanged(ButtonState state) override {
-    if (rust_pointer_ && GetState()==STATE_DISABLED) (*rust_pointer_)->cancel();
-    GlyphButton::StateChanged(state);
-  }
-  void PaintChildren(const views::PaintInfo& info) override {
-    if (scene_visible_ && scene_visible_.Run()) return;
-    views::Button::PaintChildren(info);
-  }
-  void PaintButtonContents(gfx::Canvas* canvas) override {
-    if (scene_visible_ && scene_visible_.Run()) return;
-    GlyphButton::PaintButtonContents(canvas);
-  }
- protected:
-  void NotifyClick(const ui::Event& event) override {if(GetEnabledInViewsSubtree()&&SceneIsVisible(this))GlyphButton::NotifyClick(event);}
- private:
-  sidebar::RowInputResult RustPointerEvent(sidebar::PointerPhase phase, const ui::MouseEvent& event) {
-    return (*rust_pointer_)->pointer_event(phase, event.x(), event.y(),
-        phase != sidebar::PointerPhase::Exit && HitTestPoint(event.location()),
-        GetEnabledInViewsSubtree(), event.IsLeftMouseButton(), false);
-  }
-  uint32_t RustKeyPolicy(const ui::KeyEvent& event) {
-    const uint32_t key = event.key_code() == ui::VKEY_SPACE ? 1 :
-        event.key_code() == ui::VKEY_RETURN ? 2 : 0;
-    return sidebar::key_policy(key, true);  // This adapter is macOS-only.
-  }
-  bool ApplyRustInput(const sidebar::RowInputResult& result, const ui::Event& event) {
-    switch (result.visual) {
-      case sidebar::RowVisual::Normal: SetState(STATE_NORMAL); break;
-      case sidebar::RowVisual::Hovered: SetState(STATE_HOVERED); break;
-      case sidebar::RowVisual::Pressed: SetState(STATE_PRESSED); break;
-      case sidebar::RowVisual::Disabled: SetState(STATE_DISABLED); break;
-    }
-    const bool handled = result.handled;
-    // Actions may delete this row or its owning palette. Do not touch members
-    // after calling a controller, including the native accessibility action.
-    switch (result.action) {
-      case sidebar::RowAction::Activate: NotifyClick(event); return handled;
-      case sidebar::RowAction::Drop: return handled;
-      case sidebar::RowAction::Cancel: OnClickCanceled(event); return handled;
-      case sidebar::RowAction::None: return handled;
-    }
-    return handled;
-  }
-  std::optional<rust::Box<sidebar::RowPointer>> rust_pointer_;
-  base::RepeatingCallback<bool()> scene_visible_;
-  base::RepeatingClosure painted_;
-};
-
-BEGIN_METADATA(SceneGlyphButton)
-END_METADATA
 
 sidebar::Item GlyphSceneData(views::View* view,ControlGlyph glyph,const gfx::VectorIcon* icon,bool on,const std::u16string& label,SkColor color,bool hovered,bool focused,gfx::RectF rect,gfx::RectF clip){
   sidebar::Item item{}; item.kind=7;
@@ -775,8 +665,7 @@ class RustActionView : public views::View {
 BEGIN_METADATA(RustActionView)
 END_METADATA
 std::unique_ptr<views::View> CreateSceneAction(views::Button::PressedCallback callback,std::u16string name,ControlGlyph glyph,const gfx::VectorIcon* icon,base::RepeatingCallback<bool()> visible,base::RepeatingClosure changed,bool native_focus_ring=true,SidebarNodeBinding binding={}){
-  if(RustUiEnabled())return std::make_unique<RustActionView>(std::move(callback),std::move(name),glyph,icon,std::move(visible),std::move(changed),native_focus_ring,AcquireSidebarInput(binding));
-  auto view=std::make_unique<SceneGlyphButton>(std::move(callback),std::move(name),glyph,icon,std::move(visible),std::move(changed));if(!native_focus_ring){view->SetInstallFocusRingOnFocus(false);view->SetHasInkDropActionOnClick(false);}return view;
+  return std::make_unique<RustActionView>(std::move(callback),std::move(name),glyph,icon,std::move(visible),std::move(changed),native_focus_ring,AcquireSidebarInput(binding));
 }
 void SetActionColor(views::View* view,SkColor color){
   if(auto* control=views::AsViewClass<RustActionView>(view)){control->SetColor(color);return;}
@@ -1075,16 +964,13 @@ class SceneToggle final : public RustActionView {
 BEGIN_METADATA(SceneToggle)
 END_METADATA
 bool ToggleOn(views::View* control){
-  if(auto* scene=views::AsViewClass<SceneToggle>(control))return scene->On();
-  return static_cast<views::ToggleButton*>(control)->GetIsOn();
+  auto* scene=views::AsViewClass<SceneToggle>(control);return scene->On();
 }
 void SetToggleOn(views::View* control,bool value){
-  if(auto* scene=views::AsViewClass<SceneToggle>(control)){scene->SetOn(value);return;}
-  static_cast<views::ToggleButton*>(control)->SetIsOn(value);
+  auto* scene=views::AsViewClass<SceneToggle>(control);scene->SetOn(value);
 }
-views::View* PreferenceToggle(views::View* parent,std::u16string name,bool scene){
-  if(scene)return parent->AddChildView(MakeParentSceneControl<SceneToggle>(parent,std::move(name)));
-  auto* toggle=parent->AddChildView(std::make_unique<views::ToggleButton>());toggle->GetViewAccessibility().SetName(name);toggle->SetTrackOnColor(SkColorSetRGB(110,86,207));return toggle;
+views::View* PreferenceToggle(views::View* parent,std::u16string name){
+  return parent->AddChildView(MakeParentSceneControl<SceneToggle>(parent,std::move(name)));
 }
 
 class SceneCheckbox final : public RustActionView {
@@ -1252,62 +1138,28 @@ class SceneSelect final : public RustActionView {
 };
 BEGIN_METADATA(SceneSelect)
 END_METADATA
-// Chromium paints a nonempty model with no selection, and its prefix service
-// supports it, but Combobox::OnKeyPressed CHECKs. Preserve the blank value and
-// delegate to the same native input/menu services instead of inventing a preset.
-class PreferenceCombobox final : public views::Combobox {
-  METADATA_HEADER(PreferenceCombobox,views::Combobox)
- public:
-  using views::Combobox::Combobox;
-  bool OnKeyPressed(const ui::KeyEvent& event) override {
-    if(!GetSelectedIndex()&&GetModel()->GetItemCount()){
-      if(event.key_code()==ui::VKEY_DOWN||event.key_code()==ui::VKEY_UP||event.key_code()==ui::VKEY_SPACE||event.key_code()==ui::VKEY_HOME||event.key_code()==ui::VKEY_END){
-        ui::AXActionData action;action.action=ax::mojom::Action::kDoDefault;
-        return HandleAccessibleAction(action);
-      }
-      return false;
-    }
-    return views::Combobox::OnKeyPressed(event);
-  }
-};
-BEGIN_METADATA(PreferenceCombobox)
-END_METADATA
 size_t ImportSourceIndex(views::View* view){
-  if(auto* scene=views::AsViewClass<SceneSelect>(view))return scene->Selected().value_or(0);
-  return static_cast<views::Combobox*>(view)->GetSelectedIndex().value_or(0);
+  auto* scene=views::AsViewClass<SceneSelect>(view);return scene->Selected().value_or(0);
 }
 std::optional<size_t> PickerIndex(views::View* picker){
-  if(auto* scene=views::AsViewClass<SceneSelect>(picker))return scene->Selected();
-  return static_cast<views::Combobox*>(picker)->GetSelectedIndex();
+  auto* scene=views::AsViewClass<SceneSelect>(picker);return scene->Selected();
 }
 size_t PickerCount(views::View* picker){
-  if(auto* scene=views::AsViewClass<SceneSelect>(picker))return scene->Count();
-  return static_cast<views::Combobox*>(picker)->GetModel()->GetItemCount();
+  auto* scene=views::AsViewClass<SceneSelect>(picker);return scene->Count();
 }
 void SetPickerIndex(views::View* picker,std::optional<size_t> index){
-  if(auto* scene=views::AsViewClass<SceneSelect>(picker)){scene->SetSelectedIndex(index);return;}
-  static_cast<views::Combobox*>(picker)->SetSelectedIndex(index);
+  auto* scene=views::AsViewClass<SceneSelect>(picker);scene->SetSelectedIndex(index);
 }
 // Programmatic refresh does not steal an unchanged popup/IME interaction.
 void SyncPickerIndex(views::View* picker,std::optional<size_t> index){if(PickerIndex(picker)!=index)SetPickerIndex(picker,index);}
 void SetPickerCallback(views::View* picker,base::RepeatingClosure callback){
-  if(auto* scene=views::AsViewClass<SceneSelect>(picker)){scene->SetChangedCallback(std::move(callback));return;}
-  static_cast<views::Combobox*>(picker)->SetCallback(std::move(callback));
+  auto* scene=views::AsViewClass<SceneSelect>(picker);scene->SetChangedCallback(std::move(callback));
 }
-views::View* ChoicePicker(views::View* parent,std::u16string name,std::vector<std::u16string> labels,bool scene){
-  if(scene)return parent->AddChildView(MakeParentSceneControl<SceneSelect>(parent,std::move(labels),std::move(name),base::RepeatingClosure()));
-  std::vector<ui::SimpleComboboxModel::Item> items;for(const auto& label:labels)items.emplace_back(label);
-  using NativeChoice=PreferenceCombobox;
-  auto* picker=parent->AddChildView(std::make_unique<NativeChoice>(std::make_unique<ui::SimpleComboboxModel>(std::move(items))));
-  picker->SetTooltipTextAndAccessibleName(name);return picker;
+views::View* ChoicePicker(views::View* parent,std::u16string name,std::vector<std::u16string> labels){
+  return parent->AddChildView(MakeParentSceneControl<SceneSelect>(parent,std::move(labels),std::move(name),base::RepeatingClosure()));
 }
 void ReplacePickerOptions(views::View* picker,const std::vector<std::pair<std::string,std::u16string>>& choices){
-  if(auto* scene=views::AsViewClass<SceneSelect>(picker)){scene->SetOptions(choices);return;}
-  auto* native=static_cast<views::Combobox*>(picker);bool same=native->GetModel()->GetItemCount()==choices.size();
-  for(size_t i=0;same&&i<choices.size();++i)same=native->GetModel()->GetItemAt(i)==choices[i].second;
-  if(same)return;
-  std::vector<ui::SimpleComboboxModel::Item> labels;for(const auto& choice:choices)labels.emplace_back(choice.second);
-  native->SetSelectedIndex(std::nullopt);native->SetOwnedModel(std::make_unique<ui::SimpleComboboxModel>(std::move(labels)));
+  views::AsViewClass<SceneSelect>(picker)->SetOptions(choices);
 }
 void ReplacePickerLabels(views::View* picker,const std::vector<std::u16string>& labels){
   std::vector<std::pair<std::string,std::u16string>> choices;
@@ -1331,57 +1183,41 @@ void CancelChoiceInteractions(views::View* root){
   if(auto* scene=views::AsViewClass<SceneSelect>(root)){scene->CancelInteraction();return;}
   for(const auto& child:root->children())CancelChoiceInteractions(child.get());
 }
-views::View* ProfilePicker(views::View* parent,std::u16string name,bool scene,base::RepeatingClosure changed){
-  if(scene)return parent->AddChildView(MakeParentSceneControl<SceneSelect>(parent,std::vector<std::u16string>(),std::move(name),std::move(changed)));
-  auto* picker=parent->AddChildView(std::make_unique<views::Combobox>());picker->SetTooltipTextAndAccessibleName(name);picker->SetCallback(std::move(changed));return picker;
+views::View* ProfilePicker(views::View* parent,std::u16string name,base::RepeatingClosure changed){
+  return parent->AddChildView(MakeParentSceneControl<SceneSelect>(parent,std::vector<std::u16string>(),std::move(name),std::move(changed)));
 }
 void ReplaceProfilePickerOptions(views::View* picker,const std::vector<ProfileInfo>& profiles,bool fallback_last,bool select_last){
-  if(auto* scene=views::AsViewClass<SceneSelect>(picker)){scene->SetProfiles(profiles,fallback_last,select_last);return;}
-  std::vector<ui::SimpleComboboxModel::Item> labels;for(const auto& profile:profiles)labels.emplace_back(base::UTF8ToUTF16(profile.name));static_cast<views::Combobox*>(picker)->SetOwnedModel(std::make_unique<ui::SimpleComboboxModel>(std::move(labels)));
+  views::AsViewClass<SceneSelect>(picker)->SetProfiles(profiles,fallback_last,select_last);
 }
 views::View* AddImportCheck(views::View* parent,std::u16string text,views::Button::PressedCallback callback) {
-  if(auto* group=views::AsViewClass<SceneCheckboxGroup>(parent))return group->AddChoice(std::move(callback),std::move(text));
-  return parent->AddChildView(std::make_unique<views::Checkbox>(std::move(text),std::move(callback)));
+  return views::AsViewClass<SceneCheckboxGroup>(parent)->AddChoice(std::move(callback),std::move(text));
 }
-bool CheckValue(views::View* button) {
-  if(auto* scene=views::AsViewClass<SceneCheckbox>(button))return scene->Checked();
-  return static_cast<views::Checkbox*>(button)->GetChecked();
-}
-void SetCheckValue(views::View* button,bool checked) {
-  if(auto* scene=views::AsViewClass<SceneCheckbox>(button)){scene->SetChecked(checked);return;}
-  static_cast<views::Checkbox*>(button)->SetChecked(checked);
-}
-void SetCheckText(views::View* button,std::u16string text) {
-  if(auto* scene=views::AsViewClass<SceneCheckbox>(button)){scene->SetText(std::move(text));return;}
-  static_cast<views::Checkbox*>(button)->SetText(text);
-}
+bool CheckValue(views::View* button) {return views::AsViewClass<SceneCheckbox>(button)->Checked();}
+void SetCheckValue(views::View* button,bool checked) {views::AsViewClass<SceneCheckbox>(button)->SetChecked(checked);}
+void SetCheckText(views::View* button,std::u16string text) {views::AsViewClass<SceneCheckbox>(button)->SetText(std::move(text));}
 
 struct ToolsClearPresentation {std::u16string label;bool enabled;};
-ToolsClearPresentation ToolsClearControls(bool scene,bool busy){
-  if(scene){const auto value=sidebar::tools_clear_controls(busy);return {base::UTF8ToUTF16(std::string(value.label)),value.enabled};}
-  return {busy?u"Czyszczenie…":u"Wyczyść historię…",!busy};
+ToolsClearPresentation ToolsClearControls(bool busy){
+  const auto value=sidebar::tools_clear_controls(busy);return {base::UTF8ToUTF16(std::string(value.label)),value.enabled};
 }
 
-views::View* ActionGroup(views::View* parent,bool scene,bool vertical,int spacing) {
-  if(scene)return parent->AddChildView(std::make_unique<SceneActionGroup>(vertical,spacing));
-  auto* group=parent->AddChildView(std::make_unique<views::View>());group->SetLayoutManager(std::make_unique<views::BoxLayout>(vertical?views::BoxLayout::Orientation::kVertical:views::BoxLayout::Orientation::kHorizontal,gfx::Insets(),spacing));return group;
+views::View* ActionGroup(views::View* parent,bool vertical,int spacing) {
+  return parent->AddChildView(std::make_unique<SceneActionGroup>(vertical,spacing));
 }
 views::View* AddAction(views::View* parent,views::Button::PressedCallback callback,std::u16string text,ui::ButtonStyle style=ui::ButtonStyle::kDefault) {
-  if(auto* group=views::AsViewClass<SceneActionGroup>(parent))return group->AddAction(std::move(callback),std::move(text),style);
-  auto* button=parent->AddChildView(std::make_unique<views::MdTextButton>(std::move(callback),std::move(text)));button->SetStyle(style);return button;
+  return views::AsViewClass<SceneActionGroup>(parent)->AddAction(std::move(callback),std::move(text),style);
 }
 void SetActionText(views::View* button,std::u16string text) {
-  if(auto* scene=views::AsViewClass<SceneTextButton>(button)){scene->SetText(std::move(text));return;}
-  static_cast<views::MdTextButton*>(button)->SetText(text);
+  views::AsViewClass<SceneTextButton>(button)->SetText(std::move(text));
 }
 
-// Preserve the native baseline hierarchy; scene buttons share the existing
-// action-group recipe and retain one native event/focus/accessibility adapter.
-views::View* PreferenceAction(views::View* parent,bool scene,views::Button::PressedCallback callback,std::u16string text,bool stretch=false) {
+// Scene buttons share the action-group recipe and retain one native
+// event/focus/accessibility adapter.
+views::View* PreferenceAction(views::View* parent,views::Button::PressedCallback callback,std::u16string text,bool stretch=false) {
   // A button in a horizontal preference row keeps its intrinsic width, even
   // when Views asks for its height at the full row width. Vertical list actions
   // retain the original stretch behavior.
-  if(scene)parent=parent->AddChildView(std::make_unique<SceneActionGroup>(stretch,0,!stretch));
+  parent=parent->AddChildView(std::make_unique<SceneActionGroup>(stretch,0,!stretch));
   return AddAction(parent,std::move(callback),std::move(text));
 }
 
@@ -1390,7 +1226,7 @@ class PaletteView final : public views::View {
   METADATA_HEADER(PaletteView,views::View)
  public:
   explicit PaletteView(base::RepeatingClosure painted):painted_(std::move(painted)) {
-    if(RustUiEnabled())scope_=std::make_shared<SidebarNodeGraphState>(true);
+    scope_=std::make_shared<SidebarNodeGraphState>(true);
   }
   const std::shared_ptr<SidebarNodeGraphState>& node_scope() const{return scope_;}
   void SetEditor(views::View* editor){editor_=editor;}
@@ -1450,9 +1286,8 @@ BEGIN_METADATA(ChromeHeaderView)
 END_METADATA
 
 // A sidebar tab, a "New tab" action or a palette suggestion.
-class RowButton : public views::Button {
-  METADATA_HEADER(RowButton, views::Button)
- public:
+// Row presentation shared by the Rust row adapter and native preview snapshots.
+struct RowRecipe {
   struct Spec {
     std::u16string title;
     std::u16string detail;
@@ -1470,181 +1305,9 @@ class RowButton : public views::Button {
     bool blank = false;
     bool tile = false;  // One half of a Split View pair: always a filled card.
     int height = 34;
-    PressedCallback close;
+    views::Button::PressedCallback close;
     base::RepeatingCallback<void(gfx::Point)> drop;
   };
-  RowButton(PressedCallback callback, Spec spec)
-      : views::Button(std::move(callback)), spec_(std::move(spec)) {
-    // The close affordance is a descendant: entering it must retain row hover.
-    SetNotifyEnterExitOnChild(true);
-    if (RustUiEnabled())
-      rust_pointer_.emplace(sidebar::new_row_pointer());
-    scene_text_ = rust_pointer_.has_value() && spec_.sidebar_row;
-    GetViewAccessibility().SetName(spec_.title);
-    if(scene_text_&&spec_.chip)GetViewAccessibility().SetDescription(spec_.detail);
-    SetTooltipText(spec_.title);
-    if (!scene_text_) {
-      title_ = Label(this, spec_.title, kInk,
-                     Font(0, spec_.active || spec_.chip || spec_.address ? gfx::Font::Weight::MEDIUM
-                                                        : gfx::Font::Weight::NORMAL));
-      title_->SetElideBehavior(gfx::ELIDE_TAIL);
-      title_->SetCanProcessEventsWithinSubtree(false);
-    }
-    if (!scene_text_ && (spec_.address || !spec_.detail.empty())) {
-      detail_ = Label(this, spec_.detail, kMuted, Font(spec_.address ? 0 : -1));
-      detail_->SetElideBehavior(spec_.address ? gfx::ELIDE_TAIL : gfx::ELIDE_MIDDLE);
-      detail_->SetCanProcessEventsWithinSubtree(false);
-    }
-    if (spec_.close) {
-      close_ = AddChildView(std::make_unique<SceneGlyphButton>(
-          std::move(spec_.close), u"Zamknij kartę", GlyphButton::Glyph::kVector,
-          &vector_icons::kCloseSmallIcon,base::RepeatingCallback<bool()>()));
-      close_->SetVisible(spec_.active && !spec_.tile);
-    }
-  }
-  bool OnMousePressed(const ui::MouseEvent& event) override {
-    if (rust_pointer_) {
-      const auto result = RustPointerEvent(sidebar::PointerPhase::Press, event);
-      if (GetEnabledInViewsSubtree()) RequestFocusFromEvent();
-      return ApplyRustInput(result, event);
-    }
-    drag_start_ = event.location(); dragging_ = false;
-    return views::Button::OnMousePressed(event);
-  }
-  bool OnMouseDragged(const ui::MouseEvent& event) override {
-    if (rust_pointer_) return ApplyRustInput(RustPointerEvent(sidebar::PointerPhase::Drag, event), event);
-    if (spec_.drop && (event.location() - drag_start_).LengthSquared() > 64) dragging_ = true;
-    return views::Button::OnMouseDragged(event);
-  }
-  void OnMouseReleased(const ui::MouseEvent& event) override {
-    if (rust_pointer_) { ApplyRustInput(RustPointerEvent(sidebar::PointerPhase::Release, event), event); return; }
-    if (dragging_ && spec_.drop) {
-      SetState(STATE_NORMAL);
-      auto callback = spec_.drop;
-      callback.Run(display::Screen::Get()->GetCursorScreenPoint());
-      return;
-    }
-    views::Button::OnMouseReleased(event);
-  }
-  void OnMouseEntered(const ui::MouseEvent& event) override {
-    if (rust_pointer_) { ApplyRustInput(RustPointerEvent(sidebar::PointerPhase::Enter, event), event); return; }
-    views::Button::OnMouseEntered(event);
-  }
-  void OnMouseExited(const ui::MouseEvent& event) override {
-    if (rust_pointer_) { ApplyRustInput(RustPointerEvent(sidebar::PointerPhase::Exit, event), event); return; }
-    views::Button::OnMouseExited(event);
-  }
-  void OnMouseMoved(const ui::MouseEvent& event) override {
-    if (rust_pointer_) { ApplyRustInput(RustPointerEvent(sidebar::PointerPhase::Move, event), event); return; }
-    views::Button::OnMouseMoved(event);
-  }
-  bool OnKeyPressed(const ui::KeyEvent& event) override {
-    if (rust_pointer_) return ApplyRustInput((*rust_pointer_)->key_event(true, RustKeyPolicy(event), GetEnabledInViewsSubtree()), event);
-    return views::Button::OnKeyPressed(event);
-  }
-  bool OnKeyReleased(const ui::KeyEvent& event) override {
-    if (rust_pointer_) return ApplyRustInput((*rust_pointer_)->key_event(false, RustKeyPolicy(event), GetEnabledInViewsSubtree()), event);
-    return views::Button::OnKeyReleased(event);
-  }
-  void OnBlur() override {
-    if (rust_pointer_) (*rust_pointer_)->cancel();
-    views::Button::OnBlur();
-  }
-  void OnMouseCaptureLost() override {
-    if (rust_pointer_) (*rust_pointer_)->cancel();
-    dragging_ = false;
-    views::Button::OnMouseCaptureLost();
-  }
-  void SetActive(bool active) {
-    if (spec_.active == active) return;
-    spec_.active = active;scene_title_width_cache_.reset();
-    if (title_) title_->SetFontList(Font(0, active ? gfx::Font::Weight::MEDIUM : gfx::Font::Weight::NORMAL));
-    UpdateCloseVisibility();
-    SchedulePaint();
-  }
-  void SetDetail(std::u16string detail) {
-    if (spec_.detail == detail) return;
-    spec_.detail = std::move(detail);
-    if (detail_) detail_->SetText(spec_.detail);
-    InvalidateLayout(); SchedulePaint();
-  }
-  int scene_title_width() const {
-    if(!spec_.address&&!spec_.chip&&spec_.detail.empty())return 0;
-    if(!scene_title_width_cache_)scene_title_width_cache_=gfx::GetStringWidth(spec_.title,
-        Font(0,spec_.active||spec_.chip||spec_.address?gfx::Font::Weight::MEDIUM:gfx::Font::Weight::NORMAL))+2;
-    return *scene_title_width_cache_;
-  }
-  void SetTitle(std::u16string title) {
-    if (spec_.title == title) return;
-    spec_.title = std::move(title);scene_title_width_cache_.reset();
-    if (title_) title_->SetText(spec_.title);
-    else SchedulePaint();
-    GetViewAccessibility().SetName(spec_.title);
-    SetTooltipText(spec_.title);
-  }
-  void SetMonogram(std::u16string monogram, SkColor color) {
-    if (spec_.monogram == monogram && spec_.monogram_color == color) return;
-    spec_.monogram = std::move(monogram);
-    spec_.monogram_color = color;
-    SchedulePaint();
-  }
-  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {
-    return gfx::Size(200, spec_.height);
-  }
-  void StateChanged(ButtonState) override {
-    if (rust_pointer_ && GetState() == STATE_DISABLED) (*rust_pointer_)->cancel();
-    // Half-width split tiles keep their title room; close appears on hover.
-    UpdateCloseVisibility();
-    SchedulePaint();
-  }
-  void Layout(PassKey) override {
-    if (rust_pointer_) {
-      const auto geometry = SceneGeometry();
-      auto rect = [](const sidebar::Rect& r) { return gfx::Rect(r.x, r.y, r.width, r.height); };
-      if (title_) title_->SetBoundsRect(rect(geometry.title));
-      if (detail_) detail_->SetBoundsRect(rect(geometry.detail));
-      if (close_) close_->SetBoundsRect(rect(geometry.close));
-      return;
-    }
-    if (spec_.address) {
-      const int available = std::max(0, width() - 46);
-      const int host_width = std::min(title_->GetPreferredSize().width(), available);
-      title_->SetBounds(34, 0, host_width, height());
-      if (detail_) detail_->SetBounds(34 + host_width, 0, available - host_width, height());
-      return;
-    }
-    const int lead = spec_.chip ? 52 : 36;
-    const int trail = close_ ? 32 : 10;
-    const int width = std::max(0, this->width() - lead - trail);
-    if (detail_) {
-      const int title_width = std::min(title_->GetPreferredSize().width(), width * 3 / 5);
-      title_->SetBounds(lead, 0, title_width, height());
-      detail_->SetBounds(lead + title_width + 10, 0,
-                         std::max(0, width - title_width - 10), height());
-    } else {
-      title_->SetBounds(lead, 0, width, height());
-    }
-    if (close_) close_->SetBounds(this->width() - 30, (height() - 24) / 2, 24, 24);
-  }
-  void SetAddress(std::u16string host, std::u16string path, bool blank, bool secure) {
-    SetTitle(std::move(host)); SetDetail(std::move(path));
-    spec_.blank = blank; spec_.secure = secure;
-    GetViewAccessibility().SetDescription(spec_.title + spec_.detail);
-    if (title_) static_cast<ThemedLabel*>(title_.get())->SetTone(blank ? kMuted : kInk);
-    GetViewAccessibility().SetName(u"Adres strony");
-    SetTooltipText(u"Szukaj lub wpisz adres");
-    InvalidateLayout(); SchedulePaint();
-  }
-  sidebar::RowLayout SceneGeometry() const {
-    if (spec_.address) return sidebar::address_layout(width(), height(), scene_title_width());
-    return sidebar::row_layout(width(), height(),
-        title_ ? title_->GetPreferredSize().width() : scene_title_width(),
-        !spec_.detail.empty(), spec_.chip, close_ != nullptr);
-  }
-  void OnThemeChanged() override{views::Button::OnThemeChanged();scene_title_width_cache_.reset();}
-  bool has_close_button() const { return close_ != nullptr; }
-  bool close_button_visible() const { return close_ && close_->GetVisible(); }
-  const Spec& preview_spec() const { return spec_; }
   static void PaintPreview(gfx::Canvas* canvas, const gfx::Rect& rect, const Spec& spec, const views::View* theme) {
     gfx::ScopedCanvas scoped(canvas); canvas->Translate(rect.OffsetFromOrigin());
     const gfx::Rect bounds(rect.size());
@@ -1656,24 +1319,6 @@ class RowButton : public views::Button {
         Tone(theme, kInk), gfx::Rect(lead, 0, std::max(0, rect.width() - lead - trail), rect.height()), gfx::Canvas::TEXT_ALIGN_LEFT);
     if (spec.close && spec.active && !spec.tile)
       PaintIcon(canvas, vector_icons::kCloseSmallIcon, gfx::Rect(rect.width() - 30, 0, 24, rect.height()), 14, Tone(theme, kSubtle));
-  }
-  void PaintButtonContents(gfx::Canvas* canvas) override {
-    if (scene_text_ && spec_.scene_visible && spec_.scene_visible.Run()) return;
-    PaintDecorations(canvas, GetLocalBounds(), spec_, this, GetState() == STATE_HOVERED || GetState() == STATE_PRESSED);
-    if (scene_text_) {
-      // Used only for GPU fallback and native animation snapshots. Steady Metal
-      // frames skip this subtree entirely; no hidden Label measures the title.
-      const auto geometry = SceneGeometry();
-      const auto& r = geometry.title;
-      canvas->DrawStringRectWithFlags(spec_.title,
-          Font(0, spec_.active || spec_.chip || spec_.address ? gfx::Font::Weight::MEDIUM : gfx::Font::Weight::NORMAL),
-          Tone(this, spec_.blank ? kMuted : kInk), gfx::Rect(r.x, r.y, r.width, r.height), gfx::Canvas::TEXT_ALIGN_LEFT);
-      if (!spec_.detail.empty()) {
-        const auto& d = geometry.detail;
-        canvas->DrawStringRectWithFlags(gfx::ElideText(spec_.detail, Font(spec_.address ? 0 : -1), d.width, spec_.address ? gfx::ELIDE_TAIL : gfx::ELIDE_MIDDLE),
-            Font(spec_.address ? 0 : -1), Tone(this, kMuted), gfx::Rect(d.x, d.y, d.width, d.height), gfx::Canvas::TEXT_ALIGN_LEFT);
-      }
-    }
   }
   static void PaintDecorations(gfx::Canvas* canvas, const gfx::Rect& bounds, const Spec& spec,
                                const views::View* theme, bool hovered) {
@@ -1708,67 +1353,14 @@ class RowButton : public views::Button {
                                       SK_ColorWHITE, mono, gfx::Canvas::TEXT_ALIGN_CENTER);
     }
   }
- private:
-  sidebar::RowInputResult RustPointerEvent(sidebar::PointerPhase phase, const ui::MouseEvent& event) {
-    return (*rust_pointer_)->pointer_event(phase, event.x(), event.y(),
-        phase != sidebar::PointerPhase::Exit && HitTestPoint(event.location()),
-        GetEnabledInViewsSubtree(), event.IsLeftMouseButton(), !spec_.drop.is_null());
-  }
-  uint32_t RustKeyPolicy(const ui::KeyEvent& event) {
-    const uint32_t key = event.key_code() == ui::VKEY_SPACE ? 1 :
-        event.key_code() == ui::VKEY_RETURN ? 2 : 0;
-    return sidebar::key_policy(key, true);  // This adapter is macOS-only.
-  }
-  bool ApplyRustInput(const sidebar::RowInputResult& result, const ui::Event& event) {
-    switch (result.visual) {
-      case sidebar::RowVisual::Normal: SetState(STATE_NORMAL); break;
-      case sidebar::RowVisual::Hovered: SetState(STATE_HOVERED); break;
-      case sidebar::RowVisual::Pressed: SetState(STATE_PRESSED); break;
-      case sidebar::RowVisual::Disabled: SetState(STATE_DISABLED); break;
-    }
-    const bool handled = result.handled;
-    // Actions may delete this row or its owning palette. Do not touch members
-    // after calling a controller, including the native accessibility action.
-    switch (result.action) {
-      case sidebar::RowAction::Activate: NotifyClick(event); return handled;
-      case sidebar::RowAction::Drop: {
-        auto callback = spec_.drop;
-        if (callback) callback.Run(display::Screen::Get()->GetCursorScreenPoint());
-        return handled;
-      }
-      case sidebar::RowAction::Cancel: OnClickCanceled(event); return handled;
-      case sidebar::RowAction::None: return handled;
-    }
-    return handled;
-  }
-  void UpdateCloseVisibility() {
-    if (!close_) return;
-    const bool hovered = GetState() == STATE_HOVERED || GetState() == STATE_PRESSED;
-    if (rust_pointer_) {
-      close_->SetVisible(sidebar::close_visible(spec_.active, spec_.tile, hovered));
-      return;
-    }
-    close_->SetVisible((spec_.active && !spec_.tile) || hovered);
-  }
-  std::optional<rust::Box<sidebar::RowPointer>> rust_pointer_;
-  bool scene_text_ = false;
-  mutable std::optional<int> scene_title_width_cache_;
-  gfx::Point drag_start_;
-  bool dragging_ = false;
-  Spec spec_;
-  raw_ptr<views::Label> title_ = nullptr;
-  raw_ptr<views::Label> detail_ = nullptr;
-  raw_ptr<GlyphButton> close_ = nullptr;
 };
-BEGIN_METADATA(RowButton)
-END_METADATA
 // Input, enabled/focus/visual state and drag admission live in Rust. This node
 // adapts native events, accessibility, capture, window visibility and font paint.
 rust::Vec<uint16_t> SceneUtf16(std::u16string_view text){rust::Vec<uint16_t> units;units.reserve(text.size());for(auto unit:text)units.push_back(unit);return units;}
 class RustRowView final : public views::View {
   METADATA_HEADER(RustRowView,views::View)
  public:
-  using Spec=RowButton::Spec;
+  using Spec=RowRecipe::Spec;
   using Watch=base::RepeatingCallback<void(views::View*,base::RepeatingClosure)>;
   RustRowView(views::Button::PressedCallback callback,Spec spec,base::RepeatingClosure changed,Watch watch,rust::Box<sidebar::ActionControl> state,SidebarNodeBinding close_binding)
       :spec_(std::move(spec)),callback_(std::move(callback)),changed_(std::move(changed)),watch_(std::move(watch)),state_(std::move(state)){
@@ -1870,7 +1462,7 @@ class RustRowView final : public views::View {
   void SyncViewport(){if(!Interactive())CancelInput();else if(close_){if(auto* close=views::AsViewClass<RustActionView>(close_.get()))close->SyncViewportVisibility();}}
   void PaintChildren(const views::PaintInfo& info) override{if(!spec_.scene_visible||!spec_.scene_visible.Run())views::View::PaintChildren(info);}
   void OnPaint(gfx::Canvas* canvas) override{
-    if(spec_.scene_visible&&spec_.scene_visible.Run())return;SyncEnabled();if(state_->sidebar_visual().valid){const auto spec=SidebarSnapshot();const auto visual=state_->action_snapshot().visual;RowButton::PaintDecorations(canvas,GetLocalBounds(),spec,this,visual==sidebar::RowVisual::Hovered||visual==sidebar::RowVisual::Pressed);const auto geometry=Geometry();const auto& title=geometry.title;canvas->DrawStringRectWithFlags(spec.title,Font(0,spec.active?gfx::Font::Weight::MEDIUM:gfx::Font::Weight::NORMAL),Tone(this,kInk),gfx::Rect(title.x,title.y,title.width,title.height),gfx::Canvas::TEXT_ALIGN_LEFT);return;}if(spec_.history){const auto bounds=gfx::RectF(GetLocalBounds());PaintSceneRecipe(canvas,Scene(bounds,bounds),Font(0),true);return;}const auto v=state_->action_snapshot().visual;RowButton::PaintDecorations(canvas,GetLocalBounds(),spec_,this,v==sidebar::RowVisual::Hovered||v==sidebar::RowVisual::Pressed);
+    if(spec_.scene_visible&&spec_.scene_visible.Run())return;SyncEnabled();if(state_->sidebar_visual().valid){const auto spec=SidebarSnapshot();const auto visual=state_->action_snapshot().visual;RowRecipe::PaintDecorations(canvas,GetLocalBounds(),spec,this,visual==sidebar::RowVisual::Hovered||visual==sidebar::RowVisual::Pressed);const auto geometry=Geometry();const auto& title=geometry.title;canvas->DrawStringRectWithFlags(spec.title,Font(0,spec.active?gfx::Font::Weight::MEDIUM:gfx::Font::Weight::NORMAL),Tone(this,kInk),gfx::Rect(title.x,title.y,title.width,title.height),gfx::Canvas::TEXT_ALIGN_LEFT);return;}if(spec_.history){const auto bounds=gfx::RectF(GetLocalBounds());PaintSceneRecipe(canvas,Scene(bounds,bounds),Font(0),true);return;}const auto v=state_->action_snapshot().visual;RowRecipe::PaintDecorations(canvas,GetLocalBounds(),spec_,this,v==sidebar::RowVisual::Hovered||v==sidebar::RowVisual::Pressed);
     const auto geometry=Geometry();const auto& r=geometry.title;canvas->DrawStringRectWithFlags(spec_.title,Font(0,spec_.active||spec_.chip||spec_.address?gfx::Font::Weight::MEDIUM:gfx::Font::Weight::NORMAL),Tone(this,spec_.blank?kMuted:kInk),gfx::Rect(r.x,r.y,r.width,r.height),gfx::Canvas::TEXT_ALIGN_LEFT);
     if(!spec_.detail.empty()){const auto& d=geometry.detail;canvas->DrawStringRectWithFlags(gfx::ElideText(spec_.detail,Font(spec_.address?0:-1),d.width,spec_.address?gfx::ELIDE_TAIL:gfx::ELIDE_MIDDLE),Font(spec_.address?0:-1),Tone(this,kMuted),gfx::Rect(d.x,d.y,d.width,d.height),gfx::Canvas::TEXT_ALIGN_LEFT);}
   }
@@ -1905,24 +1497,19 @@ class ScenePinGroup final : public views::View {
 };
 BEGIN_METADATA(ScenePinGroup)
 END_METADATA
-std::unique_ptr<views::View> CreateSceneRow(views::Button::PressedCallback callback,RowButton::Spec spec,base::RepeatingClosure changed,base::RepeatingCallback<void(views::View*,base::RepeatingClosure)> watch,SidebarNodeBinding binding={}){
-  if(RustUiEnabled()){
-    auto state=AcquireSidebarInput(binding);SidebarNodeBinding close_binding;
-    if(binding.scope&&state->tab_binding().valid){const auto update=binding.scope->graph->project_tab(*state,SceneUtf16(spec.title),SceneUtf16(spec.monogram),spec.monogram_color,spec.tile);CHECK(update.admitted);}
-    if(binding.scope&&spec.close){CHECK_EQ(binding.kind,1u);close_binding={binding.scope,10,binding.identity,{}};}
-    return std::make_unique<RustRowView>(std::move(callback),std::move(spec),std::move(changed),std::move(watch),std::move(state),std::move(close_binding));
-  }
-  return std::make_unique<RowButton>(std::move(callback),std::move(spec));
+std::unique_ptr<views::View> CreateSceneRow(views::Button::PressedCallback callback,RowRecipe::Spec spec,base::RepeatingClosure changed,base::RepeatingCallback<void(views::View*,base::RepeatingClosure)> watch,SidebarNodeBinding binding={}){
+  auto state=AcquireSidebarInput(binding);SidebarNodeBinding close_binding;
+  if(binding.scope&&state->tab_binding().valid){const auto update=binding.scope->graph->project_tab(*state,SceneUtf16(spec.title),SceneUtf16(spec.monogram),spec.monogram_color,spec.tile);CHECK(update.admitted);}
+  if(binding.scope&&spec.close){CHECK_EQ(binding.kind,1u);close_binding={binding.scope,10,binding.identity,{}};}
+  return std::make_unique<RustRowView>(std::move(callback),std::move(spec),std::move(changed),std::move(watch),std::move(state),std::move(close_binding));
 }
 template<typename Callback> decltype(auto) VisitRow(views::View* view,Callback callback){
-  if(auto* row=views::AsViewClass<RustRowView>(view))return callback(row);
-  return callback(static_cast<RowButton*>(view));
+  return callback(views::AsViewClass<RustRowView>(view));
 }
 bool IsRow(views::View* view){
-  if(views::AsViewClass<RustRowView>(view))return true;
-  return views::AsViewClass<RowButton>(view)!=nullptr;
+  return views::AsViewClass<RustRowView>(view)!=nullptr;
 }
-const RowButton::Spec& RowSpec(views::View* view){return VisitRow(view,[](auto* row)->const RowButton::Spec&{return row->preview_spec();});}
+const RowRecipe::Spec& RowSpec(views::View* view){return VisitRow(view,[](auto* row)->const RowRecipe::Spec&{return row->preview_spec();});}
 void SetRowActive(views::View* view,bool value){VisitRow(view,[value](auto* row){row->SetActive(value);});}
 void SetRowTitle(views::View* view,std::u16string value){VisitRow(view,[&value](auto* row){row->SetTitle(std::move(value));});}
 void SetRowDetail(views::View* view,std::u16string value){VisitRow(view,[&value](auto* row){row->SetDetail(std::move(value));});}
@@ -1938,8 +1525,7 @@ bool RowHasClose(views::View* view){return VisitRow(view,[](auto* row){return ro
 bool RowCloseVisible(views::View* view){return VisitRow(view,[](auto* row){return row->close_button_visible();});}
 void SetRowAddress(views::View* view,std::u16string host,std::u16string path,bool blank,bool secure){VisitRow(view,[&](auto* row){row->SetAddress(std::move(host),std::move(path),blank,secure);});}
 void SetPreferenceNavigationSelected(views::View* control,bool selected){
-  if(auto* button=views::AsViewClass<ScenePreferenceButton>(control)){button->SetSelected(selected);return;}
-  static_cast<RowButton*>(control)->SetActive(selected);
+  views::AsViewClass<ScenePreferenceButton>(control)->SetSelected(selected);
 }
 
 
@@ -1965,7 +1551,7 @@ END_METADATA
 
 // Address chrome uses the shared row host and the same named AX adapter.
 std::unique_ptr<views::View> CreateAddressRow(views::Button::PressedCallback callback,base::RepeatingCallback<bool()> visible,base::RepeatingClosure changed,base::RepeatingCallback<void(views::View*,base::RepeatingClosure)> watch,SidebarNodeBinding binding={}){
-  RowButton::Spec spec;spec.address=true;spec.sidebar_row=true;spec.height=40;spec.scene_visible=std::move(visible);
+  RowRecipe::Spec spec;spec.address=true;spec.sidebar_row=true;spec.height=40;spec.scene_visible=std::move(visible);
   auto row=CreateSceneRow(std::move(callback),std::move(spec),std::move(changed),std::move(watch),std::move(binding));row->GetViewAccessibility().SetName(u"Adres strony");row->SetTooltipText(u"Szukaj lub wpisz adres");return row;
 }
 
@@ -1976,34 +1562,25 @@ class WorkspaceHeading final : public views::View {
  public:
   explicit WorkspaceHeading(base::RepeatingCallback<bool()> visible) : visible_(std::move(visible)) {
     SetPreferredSize(gfx::Size(200, 24));
-    scene_ = RustUiEnabled();
-    if (scene_) GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);
-    else {
-      SetLayoutManager(std::make_unique<views::FillLayout>());
-      SetBorder(views::CreateEmptyBorder(gfx::Insets::VH(0, 8)));
-      label_ = Label(this, u"", kSubtle, Font(-1, gfx::Font::Weight::SEMIBOLD));
-    }
+    GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);
     SetText(u"Praca");
   }
   void SetText(std::u16string text) {
     if (text_ == text) return;
     text_ = std::move(text);
-    if (label_) label_->SetText(text_);
-    else GetViewAccessibility().SetName(text_);
+    GetViewAccessibility().SetName(text_);
     SchedulePaint();
   }
   const std::u16string& text() const { return text_; }
   void OnPaint(gfx::Canvas* canvas) override {
-    if (!scene_ || (visible_ && visible_.Run())) return;
+    if (visible_ && visible_.Run()) return;
     auto bounds = GetLocalBounds(); bounds.Inset(gfx::Insets::VH(0, 8));
     canvas->DrawStringRectWithFlags(text_, Font(-1, gfx::Font::Weight::SEMIBOLD),
         Tone(this, kSubtle), bounds, gfx::Canvas::TEXT_ALIGN_LEFT);
   }
  private:
-  bool scene_ = false;
   std::u16string text_;
   base::RepeatingCallback<bool()> visible_;
-  raw_ptr<views::Label> label_ = nullptr;
 };
 BEGIN_METADATA(WorkspaceHeading)
 END_METADATA
@@ -2088,7 +1665,7 @@ class FolderFormView final : public views::View {
     for(auto& part:parts_){part=AddChildView(std::make_unique<views::View>());part->GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);}
     parts_[1]->GetViewAccessibility().SetRole(ax::mojom::Role::kAlert);
     parts_[0]->GetViewAccessibility().SetName(base::UTF8ToUTF16(std::string(copy_.label)));parts_[1]->SetVisible(false);
-    field_=AddEditor(this,true);field_->GetViewAccessibility().SetName(base::UTF8ToUTF16(std::string(copy_.label)));
+    field_=AddEditor(this);field_->GetViewAccessibility().SetName(base::UTF8ToUTF16(std::string(copy_.label)));
     field_->SetText(initial);
     field_->SetCallbacks(base::BindRepeating([](base::WeakPtr<FolderFormView> form){
       if(form){form->form_->edit(base::UTF16ToUTF8(form->field_->GetText()));form->Refresh();}
@@ -2386,7 +1963,7 @@ class PreferenceChromeRenderer : public views::WidgetObserver {
   void OnWidgetDestroying(views::Widget*) override{timer_.Stop();observation_.Reset();if(surface_)surface_->Hide();}
  private:
   gfx::Rect Projected(views::View* view) const{auto rect=view->GetVisibleBounds();rect.Offset(view->GetBoundsInScreen().x()-root_->GetBoundsInScreen().x(),view->GetBoundsInScreen().y()-root_->GetBoundsInScreen().y());rect.Intersect(root_->GetLocalBounds());return rect;}
-  void Collect(views::View* view,std::vector<sidebar::Item>& backgrounds,std::vector<sidebar::Item>& text,std::vector<sidebar::FloatRect>& holes){if(!SceneIsVisible(view))return;auto clip=Projected(view);if(clip.IsEmpty())return;auto box=view->GetBoundsInScreen();box.Offset(-root_->GetBoundsInScreen().x(),-root_->GetBoundsInScreen().y());if(auto* progress=views::AsViewClass<SceneProgress>(view)){text.push_back(progress->Scene(box,clip));moving_|=progress->moving();return;}if(auto* actions=views::AsViewClass<SceneActionGroup>(view);actions&&actions->shared()){actions->Append(text,box.origin(),clip);return;}if(auto* copy=views::AsViewClass<PreferenceCopy>(view)){copy->Append(text,box.origin(),clip);return;}if(auto* row=views::AsViewClass<RustRowView>(view);row&&row->history()){text.push_back(row->Scene(gfx::RectF(box),gfx::RectF(clip)));return;}if(auto* surface=views::AsViewClass<PreferenceSurface>(view))if(surface->scene())backgrounds.push_back(surface->Scene(gfx::RectF(box),gfx::RectF(clip)));if(views::AsViewClass<SceneActionGroup>(view)||views::AsViewClass<SceneCheckboxGroup>(view)||views::AsViewClass<ScenePreferenceControls>(view)||views::AsViewClass<SceneSelect>(view)||views::AsViewClass<SceneToggle>(view)||views::AsViewClass<views::Button>(view)||view->GetViewAccessibility().GetCachedRole()==ax::mojom::Role::kTextField){holes.push_back({float(clip.x()),float(clip.y()),float(clip.width()),float(clip.height())});return;}for(const auto& child:view->children())Collect(child.get(),backgrounds,text,holes);}
+  void Collect(views::View* view,std::vector<sidebar::Item>& backgrounds,std::vector<sidebar::Item>& text,std::vector<sidebar::FloatRect>& holes){if(!SceneIsVisible(view))return;auto clip=Projected(view);if(clip.IsEmpty())return;auto box=view->GetBoundsInScreen();box.Offset(-root_->GetBoundsInScreen().x(),-root_->GetBoundsInScreen().y());if(auto* progress=views::AsViewClass<SceneProgress>(view)){text.push_back(progress->Scene(box,clip));moving_|=progress->moving();return;}if(auto* actions=views::AsViewClass<SceneActionGroup>(view);actions&&actions->shared()){actions->Append(text,box.origin(),clip);return;}if(auto* copy=views::AsViewClass<PreferenceCopy>(view)){copy->Append(text,box.origin(),clip);return;}if(auto* row=views::AsViewClass<RustRowView>(view);row&&row->history()){text.push_back(row->Scene(gfx::RectF(box),gfx::RectF(clip)));return;}if(auto* surface=views::AsViewClass<PreferenceSurface>(view))backgrounds.push_back(surface->Scene(gfx::RectF(box),gfx::RectF(clip)));if(views::AsViewClass<SceneActionGroup>(view)||views::AsViewClass<SceneCheckboxGroup>(view)||views::AsViewClass<ScenePreferenceControls>(view)||views::AsViewClass<SceneSelect>(view)||views::AsViewClass<SceneToggle>(view)||views::AsViewClass<views::Button>(view)||view->GetViewAccessibility().GetCachedRole()==ax::mojom::Role::kTextField){holes.push_back({float(clip.x()),float(clip.y()),float(clip.width()),float(clip.height())});return;}for(const auto& child:view->children())Collect(child.get(),backgrounds,text,holes);}
   void Update(){pending_=false;auto* widget=root_->GetWidget();if(!widget)return;if(observation_.GetSource()!=widget){observation_.Reset();observation_.Observe(widget);}widget->LayoutRootViewIfNecessary();const bool was=visible();if(!SceneIsVisible(root_)){timer_.Stop();if(surface_)surface_->Hide();return;}moving_=false;std::vector<sidebar::Item> backgrounds,text;std::vector<sidebar::FloatRect> holes;Collect(root_,backgrounds,text,holes);backgrounds.insert(backgrounds.end(),std::make_move_iterator(text.begin()),std::make_move_iterator(text.end()));last_ops_=sidebar::preference_chrome_scene(rust::Slice<const sidebar::Item>(backgrounds.data(),backgrounds.size()),rust::Slice<const sidebar::FloatRect>(holes.data(),holes.size()));if(!surface_)surface_=CreateSidebarMetal();if(surface_)surface_->UpdateUnderlay(widget->GetNativeWindow(),root_->GetBoundsInScreen(),UNSAFE_BUFFERS(base::span<const sidebar::Primitive>(last_ops_.data(),last_ops_.size())));if(was!=visible())root_->SchedulePaint();if(moving_){if(!timer_.IsRunning())timer_.Start(FROM_HERE,base::Milliseconds(16),base::BindRepeating(&PreferenceChromeRenderer::Tick,base::Unretained(this)));}else timer_.Stop();}
   void Tick(){if(!visible())root_->SchedulePaint();Schedule();}
   base::RepeatingTimer timer_;bool moving_=false;
@@ -2470,8 +2047,7 @@ BEGIN_METADATA(SceneParagraph)
 END_METADATA
 void SetPanelText(views::View* view,std::u16string text) {
   if(auto* copy=views::AsViewClass<PreferenceCopy>(view)){copy->SetText(std::move(text));return;}
-  if(auto* scene=views::AsViewClass<SceneParagraph>(view)){scene->SetText(std::move(text));return;}
-  static_cast<views::Label*>(view)->SetText(text);
+  auto* scene=views::AsViewClass<SceneParagraph>(view);scene->SetText(std::move(text));
 }
 sidebar::ImportSelection ImportUiSelection(const BrowserImportOptions& o){return {static_cast<uint32_t>(o.browser),o.separate_profiles,o.bookmarks,o.history,o.cookies};}
 BrowserImportOptions ImportServiceOptions(const sidebar::ImportSelection& s){BrowserImportOptions o;o.browser=static_cast<ImportBrowser>(s.browser);o.separate_profiles=s.separate_profiles;o.bookmarks=s.bookmarks;o.history=s.history;o.cookies=s.cookies;return o;}
@@ -2504,50 +2080,6 @@ class ResizeHandle {
   virtual void SetVertical(bool){}
   virtual void CancelDrag(){}
 };
-class NativeSidebarGrip final : public views::ResizeArea, public views::ResizeAreaDelegate,public ResizeHandle {
-  METADATA_HEADER(NativeSidebarGrip, views::ResizeArea)
- public:
-  NativeSidebarGrip(base::RepeatingCallback<void(int,bool)> resized,base::RepeatingClosure painted,base::RepeatingCallback<bool()> visible)
-      :views::ResizeArea(this),resized_(std::move(resized)),painted_(std::move(painted)),visible_(std::move(visible)) {
-    GetViewAccessibility().SetName(u"Zmień szerokość panelu bocznego");SetProperty(views::kViewIgnoredByLayoutKey,true);
-  }
-  views::View* view() override{return this;}
-  bool active() const override{return active_;} bool hovered() const override{return hovered_;}
-  void OnResize(int amount,bool done) override{active_=!done;SchedulePaint();resized_.Run(amount,done);}
-  void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);painted_.Run();}
-  void OnMouseEntered(const ui::MouseEvent&) override{hovered_=true;SchedulePaint();}
-  void OnMouseExited(const ui::MouseEvent&) override{hovered_=false;SchedulePaint();}
-  bool OnMousePressed(const ui::MouseEvent& event) override {
-    return ResizeArea::OnMousePressed(event);
-  }
-  bool OnMouseDragged(const ui::MouseEvent& event) override {
-    return ResizeArea::OnMouseDragged(event);
-  }
-  void OnMouseReleased(const ui::MouseEvent& event) override {
-    ResizeArea::OnMouseReleased(event);
-  }
-  void OnMouseCaptureLost() override {
-    ResizeArea::OnMouseCaptureLost();
-  }
-  void VisibilityChanged(views::View* view,bool visible) override {
-    ResizeArea::VisibilityChanged(view,visible);
-  }
-  void OnGestureEvent(ui::GestureEvent* event) override {
-    ResizeArea::OnGestureEvent(event);
-  }
-  void OnPaint(gfx::Canvas* canvas) override {
-    if(visible_&&visible_.Run())return;
-    if(!hovered_&&!active_)return;
-    FillRound(canvas,gfx::Rect(width()-3,8,2,std::max(0,height()-16)),1,SkColorSetA(Tone(this,kInk),active_?0x40:0x26));
-  }
- private:
-  base::RepeatingCallback<void(int,bool)> resized_;
-  base::RepeatingClosure painted_;
-  base::RepeatingCallback<bool()> visible_;
-  bool hovered_=false,active_=false;
-};
-BEGIN_METADATA(NativeSidebarGrip)
-END_METADATA
 
 class RustResizeHandle final : public views::View,public ResizeHandle {
   METADATA_HEADER(RustResizeHandle,views::View)
@@ -2608,8 +2140,7 @@ class RustResizeHandle final : public views::View,public ResizeHandle {
 BEGIN_METADATA(RustResizeHandle)
 END_METADATA
 std::unique_ptr<views::View> CreateSidebarGrip(ResizeHandle** handle,base::RepeatingCallback<void(int,bool)> resized,base::RepeatingCallback<int()> width,base::RepeatingCallback<void(int,bool)> applied,base::RepeatingClosure painted,base::RepeatingCallback<bool()> visible){
-  if(RustUiEnabled()){auto view=std::make_unique<RustResizeHandle>(std::move(width),std::move(applied),std::move(painted),std::move(visible));*handle=view.get();return view;}
-  auto view=std::make_unique<NativeSidebarGrip>(std::move(resized),std::move(painted),std::move(visible));*handle=view.get();return view;
+  auto view=std::make_unique<RustResizeHandle>(std::move(width),std::move(applied),std::move(painted),std::move(visible));*handle=view.get();return view;
 }
 
 // A ScrollView may paint on a separate layer from the outer sidebar. Forward
@@ -2653,8 +2184,7 @@ class SidebarView final : public views::View {
   void Layout(PassKey) override {
     LayoutSuperclass<views::View>(this);
     if (grip) {
-      if(RustUiEnabled()) {const auto r=sidebar::sidebar_grip_layout(width(),height());grip->SetBounds(r.x,r.y,r.width,r.height);return;}
-      grip->SetBounds(width()-6,0,6,height());
+      const auto r=sidebar::sidebar_grip_layout(width(),height());grip->SetBounds(r.x,r.y,r.width,r.height);
     }
   }
   void OnPaint(gfx::Canvas* canvas) override {
@@ -2825,50 +2355,9 @@ class WorkspaceSwitchPreview final : public views::View {
 BEGIN_METADATA(WorkspaceSwitchPreview)
 END_METADATA
 
-// Split View divider with a visible grip so the pane boundary reads as draggable.
-class NativeSplitDivider final : public views::ResizeArea,public ResizeHandle {
-  METADATA_HEADER(NativeSplitDivider, views::ResizeArea)
- public:
-  NativeSplitDivider(views::ResizeAreaDelegate* delegate,base::RepeatingClosure painted):ResizeArea(delegate),painted_(std::move(painted)){}
-  views::View* view() override{return this;}
-  void SetVertical(bool vertical) override{set_axis(vertical?Axis::kVertical:Axis::kHorizontal);}
-  bool hovered() const override {return hovered_;}
-  void OnDidSchedulePaint(const gfx::Rect& rect) override {views::View::OnDidSchedulePaint(rect);painted_.Run();}
-  void OnMouseEntered(const ui::MouseEvent&) override { hovered_ = true; SchedulePaint(); }
-  void OnMouseExited(const ui::MouseEvent&) override { hovered_ = false; SchedulePaint(); }
-  bool OnMousePressed(const ui::MouseEvent& event) override {
-    return ResizeArea::OnMousePressed(event);
-  }
-  bool OnMouseDragged(const ui::MouseEvent& event) override {
-    return ResizeArea::OnMouseDragged(event);
-  }
-  void OnMouseReleased(const ui::MouseEvent& event) override {
-    ResizeArea::OnMouseReleased(event);
-  }
-  void OnMouseCaptureLost() override {
-    ResizeArea::OnMouseCaptureLost();
-  }
-  void OnGestureEvent(ui::GestureEvent* event) override {
-    ResizeArea::OnGestureEvent(event);
-  }
-  void OnPaint(gfx::Canvas* canvas) override {
-    views::ResizeArea::OnPaint(canvas);
-    const bool across = width() > height();
-    const int grip = std::min(40, (across ? width() : height()) / 4);
-    const gfx::Rect bar = across ? gfx::Rect(width() / 2 - grip / 2, height() / 2 - 2, grip, 4)
-                                 : gfx::Rect(width() / 2 - 2, height() / 2 - grip / 2, 4, grip);
-    FillRound(canvas, bar, 2, Tone(this, hovered_ ? kSubtle : kDisabled));
-  }
- private:
-  bool hovered_ = false;
-  base::RepeatingClosure painted_;
-};
-BEGIN_METADATA(NativeSplitDivider)
-END_METADATA
 
 std::unique_ptr<views::View> CreateSplitDivider(ResizeHandle** handle,views::ResizeAreaDelegate* delegate,base::RepeatingCallback<double()> ratio,base::RepeatingCallback<int()> extent,base::RepeatingCallback<void(double,bool)> changed,base::RepeatingClosure painted,base::RepeatingCallback<bool()> visible){
-  if(RustUiEnabled()){auto view=std::make_unique<RustResizeHandle>(std::move(ratio),std::move(extent),std::move(changed),std::move(painted),std::move(visible));*handle=view.get();return view;}
-  auto view=std::make_unique<NativeSplitDivider>(delegate,std::move(painted));*handle=view.get();return view;
+  auto view=std::make_unique<RustResizeHandle>(std::move(ratio),std::move(extent),std::move(changed),std::move(painted),std::move(visible));*handle=view.get();return view;
 }
 
 // Slim header above each half of a split: page title, pane menu and close.
@@ -2878,13 +2367,8 @@ class PaneBar final : public views::View {
   PaneBar(views::Button::PressedCallback menu, views::Button::PressedCallback close,
       base::RepeatingClosure painted,base::RepeatingCallback<bool()> visible)
       : painted_(std::move(painted)),visible_(std::move(visible)) {
-    scene_=RustUiEnabled();
-    if(scene_)node_graph_=std::make_shared<SidebarNodeGraphState>();
-    if(!scene_) {
-      auto* layout=SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal,gfx::Insets::TLBR(0,12,0,4),0));
-      layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
-      title_=Label(this,u"",kMuted,Font(-1));title_->SetElideBehavior(gfx::ELIDE_TAIL);title_->SetHorizontalAlignment(gfx::ALIGN_LEFT);layout->SetFlexForView(title_,1);
-    } else GetViewAccessibility().SetRole(ax::mojom::Role::kGroup);
+    node_graph_=std::make_shared<SidebarNodeGraphState>();
+    GetViewAccessibility().SetRole(ax::mojom::Role::kGroup);
     menu_=AddChildView(CreateSceneAction(std::move(menu),u"Opcje Split View",ControlGlyph::kMore,nullptr,visible_,painted_,true,{node_graph_}));
     close_=AddChildView(CreateSceneAction(std::move(close),u"Zamknij kartę w Split View",ControlGlyph::kVector,&vector_icons::kCloseSmallIcon,visible_,painted_,true,{node_graph_}));
   }
@@ -2895,21 +2379,18 @@ class PaneBar final : public views::View {
                  std::array<uint64_t,2> identity,bool visible){
     if(workspace_==workspace&&index_==index&&identity_==identity&&target_visible_==visible)return;
     CancelInput();workspace_=workspace;index_=index;identity_=identity;target_visible_=visible;
-    if(scene_){
-      const bool live=visible&&index.has_value()&&!workspace.empty()&&(identity[0]!=0||identity[1]!=0);
-      rust::Vec<sidebar::ActionNodeKey> keys;if(live){keys.push_back({7,identity[0],identity[1],workspace});keys.push_back({8,identity[0],identity[1],workspace});}
-      CHECK(node_graph_->graph->reconcile(std::move(keys)).admitted)<<"Invalid split-pane logical node projection";
-      // The native adapters survive retargeting. Renew leases even when only the
-      // domain index changed, so a pending press cannot follow an index shift.
-      static_cast<RustActionView*>(menu_.get())->BindNodeInput({node_graph_,live?7u:0u,identity,workspace});
-      static_cast<RustActionView*>(close_.get())->BindNodeInput({node_graph_,live?8u:0u,identity,workspace});
-    }
+    const bool live=visible&&index.has_value()&&!workspace.empty()&&(identity[0]!=0||identity[1]!=0);
+    rust::Vec<sidebar::ActionNodeKey> keys;if(live){keys.push_back({7,identity[0],identity[1],workspace});keys.push_back({8,identity[0],identity[1],workspace});}
+    CHECK(node_graph_->graph->reconcile(std::move(keys)).admitted)<<"Invalid split-pane logical node projection";
+    // The native adapters survive retargeting. Renew leases even when only the
+    // domain index changed, so a pending press cannot follow an index shift.
+    static_cast<RustActionView*>(menu_.get())->BindNodeInput({node_graph_,live?7u:0u,identity,workspace});
+    static_cast<RustActionView*>(close_.get())->BindNodeInput({node_graph_,live?8u:0u,identity,workspace});
   }
   void SetTitle(std::u16string title,bool active) {
     if(text_==title && active_==active)return;
     if(text_!=title)measured_.reset();text_=std::move(title);active_=active;
-    if(title_){title_->SetText(text_);static_cast<ThemedLabel*>(title_.get())->SetTone(active?kInk:kMuted);}
-    else GetViewAccessibility().SetName(text_);
+    GetViewAccessibility().SetName(text_);
     SchedulePaint();painted_.Run();
   }
   const std::u16string& text() const{return text_;}
@@ -2918,11 +2399,10 @@ class PaneBar final : public views::View {
   void OnThemeChanged() override{views::View::OnThemeChanged();measured_.reset();painted_.Run();}
   void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);painted_.Run();}
   void Layout(PassKey) override {
-    if(scene_){const auto g=sidebar::pane_bar_layout(width(),height());menu_->SetBounds(g.menu.x,g.menu.y,g.menu.width,g.menu.height);close_->SetBounds(g.close.x,g.close.y,g.close.width,g.close.height);return;}
-    LayoutSuperclass<views::View>(this);
+    const auto g=sidebar::pane_bar_layout(width(),height());menu_->SetBounds(g.menu.x,g.menu.y,g.menu.width,g.menu.height);close_->SetBounds(g.close.x,g.close.y,g.close.width,g.close.height);
   }
   void OnPaint(gfx::Canvas* canvas) override {
-    if(!scene_ || (visible_ && visible_.Run()))return;
+    if(visible_ && visible_.Run())return;
     const auto g=sidebar::pane_bar_layout(width(),height());
     canvas->DrawStringRectWithFlags(text_,Font(-1),Tone(this,active_?kInk:kMuted),gfx::Rect(g.title.x,g.title.y,g.title.width,g.title.height),gfx::Canvas::TEXT_ALIGN_LEFT);
   }
@@ -2930,12 +2410,11 @@ class PaneBar final : public views::View {
   views::View* close() const { return close_; }
  private:
   std::shared_ptr<SidebarNodeGraphState> node_graph_;
-  bool scene_=false,active_=false;
+  bool active_=false;
   std::u16string text_;
   mutable std::optional<int> measured_;
   base::RepeatingClosure painted_;
   base::RepeatingCallback<bool()> visible_;
-  raw_ptr<views::Label> title_ = nullptr;
   raw_ptr<views::View> menu_ = nullptr;
   raw_ptr<views::View> close_ = nullptr;
   std::string workspace_;
@@ -2956,14 +2435,12 @@ class PaneHost final : public views::View, public views::ResizeAreaDelegate {
            base::RepeatingCallback<void(bool)> close,base::RepeatingClosure painted,
            base::RepeatingCallback<bool(size_t)> visible)
       : painted_(std::move(painted)),changed_(std::move(changed)) {
-    rust_=RustUiEnabled();
     ResizeHandle* divider_handle=nullptr;
     divider_=AddChildView(CreateSplitDivider(&divider_handle,this,
         base::BindRepeating([](PaneHost* host){return host->ratio_;},base::Unretained(this)),
         base::BindRepeating([](PaneHost* host){return host->vertical_?host->height():host->width();},base::Unretained(this)),
         base::BindRepeating(&PaneHost::ApplyRustRatio,base::Unretained(this)),painted_,base::BindRepeating(visible,size_t{2})));
     divider_handle_=divider_handle;
-    if(!rust_)divider_->SetBackground(views::CreateSolidBackground(kChip));
     divider_->GetViewAccessibility().SetName(u"Zmień szerokość paneli");
     divider_->SetVisible(false);
     for (bool right : {false, true}) {
@@ -2989,43 +2466,13 @@ class PaneHost final : public views::View, public views::ResizeAreaDelegate {
   }
   void OnThemeChanged() override {
     views::View::OnThemeChanged();
-    if(!rust_)divider_->SetBackground(views::CreateSolidBackground(Tone(this, kChip)));
     painted_.Run();
   }
   void Layout(PassKey) override {
-    if(rust_) {
-      const auto g=sidebar::pane_host_layout(width(),height(),ratio_,vertical_,right_!=nullptr);
-      auto set=[](views::View* view,const sidebar::Rect& r){if(view)view->SetBounds(r.x,r.y,r.width,r.height);};
-      set(left_,g.first);set(right_,g.second);set(bars_[0],g.first_bar);set(bars_[1],g.second_bar);set(divider_,g.divider);
-      LayoutSuperclass<views::View>(this);painted_.Run();return;
-    }
-    constexpr int offset = 0;
-    if (!right_) {
-      if (left_) left_->SetBounds(offset, 0, width(), height());
-      LayoutSuperclass<views::View>(this);
-      return;
-    }
-    // Each half: a header bar, then the page below it.
-    auto place = [&](views::View* page, PaneBar* bar, gfx::Rect area) {
-      bar->SetBoundsRect(gfx::Rect(area.x(), area.y(), area.width(), std::min(kPaneBarHeight, area.height())));
-      area.Inset(gfx::Insets::TLBR(std::min(kPaneBarHeight, area.height()), 0, 0, 0));
-      if (page) page->SetBoundsRect(area);
-    };
-    if (vertical_) {
-      // Top/bottom panes; the workspace slide still moves horizontally.
-      const int available = std::max(0, height() - 8);
-      const int top_height = std::clamp(static_cast<int>(available * ratio_), 0, available);
-      place(left_, bars_[0], gfx::Rect(offset, 0, width(), top_height));
-      divider_->SetBounds(offset, top_height, width(), 8);
-      place(right_, bars_[1], gfx::Rect(offset, top_height + 8, width(), available - top_height));
-    } else {
-      const int available = std::max(0, width() - 8);
-      const int left_width = std::clamp(static_cast<int>(available * ratio_), 0, available);
-      place(left_, bars_[0], gfx::Rect(offset, 0, left_width, height()));
-      divider_->SetBounds(left_width + offset, 0, 8, height());
-      place(right_, bars_[1], gfx::Rect(left_width + 8 + offset, 0, available - left_width, height()));
-    }
-    LayoutSuperclass<views::View>(this);
+    const auto g=sidebar::pane_host_layout(width(),height(),ratio_,vertical_,right_!=nullptr);
+    auto set=[](views::View* view,const sidebar::Rect& r){if(view)view->SetBounds(r.x,r.y,r.width,r.height);};
+    set(left_,g.first);set(right_,g.second);set(bars_[0],g.first_bar);set(bars_[1],g.second_bar);set(divider_,g.divider);
+    LayoutSuperclass<views::View>(this);painted_.Run();
   }
   void OnResize(int amount, bool done) override {
     if (!resizing_) { initial_ratio_ = ratio_; resizing_ = true; }
@@ -3037,7 +2484,6 @@ class PaneHost final : public views::View, public views::ResizeAreaDelegate {
   }
  private:
   void ApplyRustRatio(double ratio,bool done){ratio_=ratio;InvalidateLayout();painted_.Run();changed_.Run(ratio,done);}
-  bool rust_=false;
   base::RepeatingClosure painted_;
   raw_ptr<views::View> left_ = nullptr;
   raw_ptr<views::View> right_ = nullptr;
@@ -3070,11 +2516,9 @@ class ShellRoot final : public views::View {
                        std::max(0, height() - top - kGap));
     edge->SetBounds(0, kShellHeaderHeight, kGap, std::max(0, height() - kShellHeaderHeight));
     edge->SetVisible(!pinned);
-    if(RustUiEnabled()) {
-      const auto g=sidebar::shell_layout(width(),height(),sidebar_width,pinned);
-      content->SetBounds(g.content.x,g.content.y,g.content.width,g.content.height);
-      edge->SetBounds(g.edge.x,g.edge.y,g.edge.width,g.edge.height);
-    }
+    const auto g=sidebar::shell_layout(width(),height(),sidebar_width,pinned);
+    content->SetBounds(g.content.x,g.content.y,g.content.width,g.content.height);
+    edge->SetBounds(g.edge.x,g.edge.y,g.edge.width,g.edge.height);
     LayoutSuperclass<views::View>(this);
   }
   // Empty frame and header space moves the window, like a native titlebar.
@@ -3181,8 +2625,7 @@ std::unique_ptr<views::DialogDelegate> CreateSceneModalDialog(std::unique_ptr<vi
   return std::make_unique<SceneModalDialog>(std::move(body),control,modal);
 }
 std::unique_ptr<PanelScene> CreatePanelScene(views::View* root){
-  if(RustUiEnabled())return std::make_unique<PanelSceneImpl>(root);
-  return nullptr;
+  return std::make_unique<PanelSceneImpl>(root);
 }
 std::unique_ptr<PageDialogScene> CreatePageDialogScene(views::View* root){return CreatePanelScene(root);}
 class PreferenceChromeState final : public PreferenceChromeRenderer {public:using PreferenceChromeRenderer::PreferenceChromeRenderer;};
@@ -3216,7 +2659,7 @@ std::unique_ptr<views::View> WorkspaceShell::Build() {
   root_ = root.get();
   root->SetBackground(views::CreateSolidBackground(FrameTint(workspace_color("work"), root_)));
   auto weak = weak_factory_.GetWeakPtr();
-  if (RustUiEnabled()) metal_header_=CreateSidebarMetal();
+  metal_header_=CreateSidebarMetal();
   auto* header = root->AddChildView(std::make_unique<ChromeHeaderView>(
       base::BindRepeating(&WorkspaceShell::ScheduleMetalHeader,weak)));
   header_view_=header;
@@ -3288,10 +2731,8 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
           shell->RestorePageFocus();
         }
       }, weak));
-  if (RustUiEnabled()) {
-    metal_sidebar_ = CreateSidebarMetal();
-    sidebar->painted = base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar, weak);
-  }
+  metal_sidebar_ = CreateSidebarMetal();
+  sidebar->painted = base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar, weak);
   sidebar_root_ = sidebar.get();
   sidebar->AddPreTargetHandler(this);
   sidebar->set_context_menu_controller(this);
@@ -3320,7 +2761,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 #else
   const auto* new_tab_hint = u"Ctrl+T";
 #endif
-  RowButton::Spec new_tab;
+  RowRecipe::Spec new_tab;
   new_tab.title = u"Nowa karta";
   new_tab.detail = new_tab_hint;
   new_tab.sidebar_row = true;
@@ -3331,7 +2772,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   new_tab_button_ = sidebar->AddChildView(CreateSceneRow(
       base::BindRepeating(&WorkspaceShell::OpenAddress,weak,true),std::move(new_tab),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak),{chrome_node_graph_,4,{},"sidebar.new-tab"}));
   std::unique_ptr<views::ScrollBar> vertical_bar;
-  if(metal_sidebar_)vertical_bar=CreateSidebarScrollBar(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_sidebar_visible();},weak));
+  vertical_bar=CreateSidebarScrollBar(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_sidebar_visible();},weak));
   PanelViewport* tab_viewport=nullptr;
   auto viewport_host=CreatePanelViewport(&tab_viewport,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),{0,std::numeric_limits<int>::max(),false},std::move(vertical_bar));tab_scroll_=tab_viewport;
   auto* scroll=sidebar->AddChildView(std::move(viewport_host));scroll->set_context_menu_controller(this);scroll->SetPreferredSize(gfx::Size(200,0));
@@ -3347,12 +2788,11 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   SetSidebarPanelLayout(sidebar.get(), true, gfx::Insets::TLBR(2, 4, 8, 4), 2, scroll);
 
   // Workspace settings: profile and color live here, not in the sidebar.
-  if(metal_sidebar_){workspace_form_=std::make_unique<WorkspaceFormState>();tools_form_=std::make_unique<ToolsFormState>();}
+  workspace_form_=std::make_unique<WorkspaceFormState>();tools_form_=std::make_unique<ToolsFormState>();
   std::array<std::u16string,17> workspace_copy={u"Nazwa przestrzeni",u"Np. Projekt lub Klient",u"Profil przeglądania",u"Profil przestrzeni",u"Wspólny profil = wspólne logowanie i cookies.\nZmiana profilu zamknie karty tej przestrzeni.",u"Zapisz poniżej nazwę i profil. Wygląd zapisuje się od razu.",u"Zamknij ustawienia przestrzeni",u"Wygląd · zapis automatyczny",u"Kolor przestrzeni",u"Kolor przestrzeni #RRGGBB",u"Emoji przestrzeni",u"Emoji przestrzeni",u"Inne… (⌃⌘Spacja)",u"Więcej opcji",u"Zarządzaj profilami",u"Importuj z przeglądarki…",u"Usuń przestrzeń…"};
-  if(workspace_form_){const auto c=sidebar::workspace_copy();auto text=[](const rust::String& value){return base::UTF8ToUTF16(std::string(value));};workspace_copy={text(c.name_label),text(c.placeholder),text(c.profile_label),text(c.profile_ax),text(c.profile_hint),text(c.save_hint),text(c.close),text(c.appearance),text(c.color),text(c.color_ax),text(c.emoji),text(c.emoji_ax),text(c.emoji_placeholder),text(c.more),text(c.manage),text(c.import_label),text(c.remove_label)};}
+  {const auto c=sidebar::workspace_copy();auto text=[](const rust::String& value){return base::UTF8ToUTF16(std::string(value));};workspace_copy={text(c.name_label),text(c.placeholder),text(c.profile_label),text(c.profile_ax),text(c.profile_hint),text(c.save_hint),text(c.close),text(c.appearance),text(c.color),text(c.color_ax),text(c.emoji),text(c.emoji_ax),text(c.emoji_placeholder),text(c.more),text(c.manage),text(c.import_label),text(c.remove_label)};}
   auto settings_text=[&](views::View* parent,std::u16string text,SkColor ink,int delta=0,gfx::Font::Weight weight=gfx::Font::Weight::NORMAL,bool multiline=false)->views::View* {
-    if(workspace_form_)return parent->AddChildView(std::make_unique<SceneParagraph>(std::move(text),delta,weight!=gfx::Font::Weight::NORMAL,ink));
-    auto* label=Label(parent,std::move(text),ink,Font(delta,weight));label->SetMultiLine(multiline);return label;
+    return parent->AddChildView(std::make_unique<SceneParagraph>(std::move(text),delta,weight!=gfx::Font::Weight::NORMAL,ink));
   };
   auto settings = std::make_unique<views::View>();
   settings_root_ = settings.get();
@@ -3366,26 +2806,24 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto dismiss_workspace=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
     if(shell){shell->settings_widget_->Hide();shell->RestorePageFocus();}
   },weak);
-  if(workspace_form_){auto* controls=settings_header->AddChildView(std::make_unique<ScenePreferenceControls>(true));BindFormCommand(controls->AddControl({},workspace_copy[6]),sidebar::FormCommand::WorkspaceDismiss);}
-  else
-  settings_header->AddChildView(std::make_unique<GlyphButton>(dismiss_workspace,workspace_copy[6],GlyphButton::Glyph::kVector,&vector_icons::kCloseSmallIcon));
+  {auto* controls=settings_header->AddChildView(std::make_unique<ScenePreferenceControls>(true));BindFormCommand(controls->AddControl({},workspace_copy[6]),sidebar::FormCommand::WorkspaceDismiss);}
   profile_name_ = settings_text(settings.get(),u"",kMuted,-1);
   settings_text(settings.get(),workspace_copy[0],kSubtle,-1);
-  workspace_input_ = AddEditor(settings.get(),bool(workspace_form_));
+  workspace_input_ = AddEditor(settings.get());
   workspace_input_->GetViewAccessibility().SetName(workspace_copy[0]);
   workspace_input_->SetPlaceholderText(workspace_copy[1]);
   settings_text(settings.get(),workspace_copy[2],kSubtle,-1);
-  profile_picker_=ProfilePicker(settings.get(),workspace_copy[3],bool(workspace_form_),base::BindRepeating([]{}));
+  profile_picker_=ProfilePicker(settings.get(),workspace_copy[3],base::BindRepeating([]{}));
   settings_text(settings.get(),workspace_copy[4],kMuted,-2,gfx::Font::Weight::NORMAL,true);
   settings_text(settings.get(),workspace_copy[5],kMuted,-2,gfx::Font::Weight::NORMAL,true);
-  auto* actions=ActionGroup(settings.get(),bool(workspace_form_),false,8);
+  auto* actions=ActionGroup(settings.get(),false,8);
   edit_workspace_ = AddAction(actions,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
         if (shell) shell->SubmitWorkspace(shell->creating_workspace_);
       }, weak),u"Zapisz nazwę i profil",ui::ButtonStyle::kProminent);
   add_workspace_ = AddAction(actions,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
         if(shell)shell->ToggleWorkspaceCreation();
       }, weak),u"Nowa przestrzeń…");
-  if(workspace_form_){BindFormCommand(edit_workspace_,sidebar::FormCommand::WorkspaceSave);BindFormCommand(add_workspace_,sidebar::FormCommand::WorkspaceToggle);}
+  BindFormCommand(edit_workspace_,sidebar::FormCommand::WorkspaceSave);BindFormCommand(add_workspace_,sidebar::FormCommand::WorkspaceToggle);
   configuration_error_ = settings_text(settings.get(),u"",kError,-2,gfx::Font::Weight::NORMAL,true);
   configuration_error_->SetVisible(false);
   auto* appearance = settings->AddChildView(std::make_unique<views::View>());
@@ -3396,22 +2834,19 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   settings_text(appearance,workspace_copy[7],kInk,0,gfx::Font::Weight::SEMIBOLD);
   settings_text(appearance,workspace_copy[8],kSubtle,-1,gfx::Font::Weight::MEDIUM);
   auto appearance_row=[&](bool emoji)->views::View* {
-    if(workspace_form_)return appearance->AddChildView(std::make_unique<AppearanceRow>(emoji));
-    return appearance->AddChildView(std::make_unique<views::View>());
+    return appearance->AddChildView(std::make_unique<AppearanceRow>(emoji));
   };
   auto* color_row=appearance_row(false);views::BoxLayout* color_layout=nullptr;
-  if(!workspace_form_){color_layout=color_row->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal,gfx::Insets(),0));color_layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);}
   std::vector<std::pair<SkColor,std::u16string>> colors;for(const auto c:kWorkspaceColors)colors.emplace_back(c,base::UTF8ToUTF16(Hex(c)));
-  if(workspace_form_){colors.clear();for(const auto& p:sidebar::appearance_presets(false))colors.emplace_back(p.color,base::UTF8ToUTF16(std::string(p.label)));}
+  colors.clear();for(const auto& p:sidebar::appearance_presets(false))colors.emplace_back(p.color,base::UTF8ToUTF16(std::string(p.label)));
   for(size_t preset=0;preset<colors.size();++preset){
     const auto& [color,label]=colors[preset];views::Button::PressedCallback callback;
-    if(!workspace_form_)callback=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,SkColor value){if(shell)shell->SetWorkspaceColor(shell->state_.workspace_id,value);},weak,color);
     auto* swatch=AppearancePicker(color_row,std::move(callback),label,GlyphButton::Glyph::kSwatch);
-    if(workspace_form_)BindAppearancePreset(swatch,false,preset);
+    BindAppearancePreset(swatch,false,preset);
     SetActionColor(swatch,color);
   }
   Spacer(color_row, 1)->SetPreferredSize(gfx::Size(8, 1));
-  color_input_ = AddEditor(color_row,bool(workspace_form_));
+  color_input_ = AddEditor(color_row);
   color_input_->GetViewAccessibility().SetName(workspace_copy[9]);
   color_input_->SetPlaceholderText(u"#RRGGBB");
   if(auto* native=views::AsViewClass<views::Textfield>(color_input_->view())){
@@ -3426,18 +2861,16 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   Spacer(appearance, 6);
   settings_text(appearance,workspace_copy[10],kSubtle,-1,gfx::Font::Weight::MEDIUM);
   auto* emoji_row=appearance_row(true);views::BoxLayout* emoji_layout=nullptr;
-  if(!workspace_form_){emoji_layout=emoji_row->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal,gfx::Insets(),0));emoji_layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);}
   std::vector<std::pair<std::u16string,std::u16string>> emojis;for(const auto* e:kWorkspaceEmojis)emojis.emplace_back(e,u"Emoji "+std::u16string(e));
-  if(workspace_form_){emojis.clear();for(const auto& p:sidebar::appearance_presets(true))emojis.emplace_back(base::UTF8ToUTF16(std::string(p.emoji)),base::UTF8ToUTF16(std::string(p.label)));}
+  emojis.clear();for(const auto& p:sidebar::appearance_presets(true))emojis.emplace_back(base::UTF8ToUTF16(std::string(p.emoji)),base::UTF8ToUTF16(std::string(p.label)));
   for(size_t preset=0;preset<emojis.size();++preset){
     const auto& [emoji,label]=emojis[preset];views::Button::PressedCallback callback;
-    if(!workspace_form_)callback=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::u16string value){if(shell)shell->SetWorkspaceEmoji(shell->state_.workspace_id,value);},weak,std::u16string(emoji));
     auto* pick=AppearancePicker(emoji_row,std::move(callback),label,GlyphButton::Glyph::kDot);
-    if(workspace_form_)BindAppearancePreset(pick,true,preset);
+    BindAppearancePreset(pick,true,preset);
     SetActionLabel(pick,emoji);
   }
   Spacer(emoji_row, 1)->SetPreferredSize(gfx::Size(8, 1));
-  emoji_input_ = AddEditor(emoji_row,bool(workspace_form_));
+  emoji_input_ = AddEditor(emoji_row);
   emoji_input_->GetViewAccessibility().SetName(workspace_copy[11]);
   emoji_input_->SetPlaceholderText(workspace_copy[12]);
   if(auto* native=views::AsViewClass<views::Textfield>(emoji_input_->view())){
@@ -3456,7 +2889,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 
   Spacer(appearance, 8);
   settings_text(appearance,workspace_copy[13],kInk,0,gfx::Font::Weight::SEMIBOLD);
-  auto* more_actions=ActionGroup(appearance,bool(workspace_form_),true,8);
+  auto* more_actions=ActionGroup(appearance,true,8);
   [[maybe_unused]] auto* workspace_profiles=AddAction(more_actions,
       base::BindRepeating(&WorkspaceShell::OpenProfiles, weak, std::string(), std::string()), workspace_copy[14],ui::ButtonStyle::kText);
   [[maybe_unused]] auto* workspace_import=AddAction(more_actions,
@@ -3465,9 +2898,9 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
         if (shell) shell->ConfirmRemoveWorkspace(shell->state_.workspace_id);
       }, weak), workspace_copy[16],ui::ButtonStyle::kText);
-  if(workspace_form_){BindFormCommand(remove_workspace_,sidebar::FormCommand::WorkspaceRemove);BindFormCommand(workspace_profiles,sidebar::FormCommand::WorkspaceProfiles);BindFormCommand(workspace_import,sidebar::FormCommand::WorkspaceImport);}
+  BindFormCommand(remove_workspace_,sidebar::FormCommand::WorkspaceRemove);BindFormCommand(workspace_profiles,sidebar::FormCommand::WorkspaceProfiles);BindFormCommand(workspace_import,sidebar::FormCommand::WorkspaceImport);
 
-  if(workspace_form_){settings->SetLayoutManager(CreateSidebarColumnLayout(8));settings->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(20)));appearance->SetLayoutManager(CreateSidebarColumnLayout(8));}
+  settings->SetLayoutManager(CreateSidebarColumnLayout(8));settings->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(20)));appearance->SetLayoutManager(CreateSidebarColumnLayout(8));
 
   auto* footer = sidebar->AddChildView(std::make_unique<views::View>());
   sidebar_footer_=footer;
@@ -3484,9 +2917,9 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       }, weak), u"Przypnij panel", GlyphButton::Glyph::kSidebar,nullptr,footer_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),true,{chrome_node_graph_,4,{},"pin"}));
   Spacer(footer, 1);
   std::unique_ptr<views::ScrollBar> workspace_bar;
-  if(metal_sidebar_)workspace_bar=CreateSidebarScrollBar(footer_visible,true);
+  workspace_bar=CreateSidebarScrollBar(footer_visible,true);
   PanelViewport* workspace_viewport=nullptr;
-  auto* dot_scroll=footer->AddChildView(CreatePanelViewport(&workspace_viewport,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),{-1,-1,metal_sidebar_!=nullptr,false,false,false,true},std::move(workspace_bar)));
+  auto* dot_scroll=footer->AddChildView(CreatePanelViewport(&workspace_viewport,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),{-1,-1,true,false,false,false,true},std::move(workspace_bar)));
   workspace_scroll_=workspace_viewport;
   dot_scroll->SetPreferredSize(gfx::Size(0,32));
   auto dots = std::make_unique<views::View>();
@@ -3494,34 +2927,25 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 0));
   workspace_dots_=dots.get();
   workspace_scroll_->SetPanelContents(std::move(dots));
-  if (metal_sidebar_) {
-    workspace_dots_->SetLayoutManager(CreateSidebarDotsLayout());
-
-  }
+  workspace_dots_->SetLayoutManager(CreateSidebarDotsLayout());
   footer_layout->SetFlexForView(dot_scroll, 1);
   Spacer(footer, 1);
   workspace_settings_button_=footer->AddChildView(CreateSceneAction(
       base::BindRepeating(&WorkspaceShell::OpenWorkspaceSettings, weak),
       u"Ustawienia przestrzeni", GlyphButton::Glyph::kVector, &vector_icons::kTuneIcon,footer_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),true,{chrome_node_graph_,4,{},"settings"}));
-  if (metal_sidebar_) footer->SetLayoutManager(CreateSidebarFooterLayout());
+  footer->SetLayoutManager(CreateSidebarFooterLayout());
 
   // Command palette: input, suggestions, keyboard hints.
   auto palette=std::make_unique<PaletteView>(base::BindRepeating(&WorkspaceShell::ScheduleMetalPalette,weak));
-  if(metal_sidebar_)metal_palette_=CreateSidebarMetal();
+  metal_palette_=CreateSidebarMetal();
   palette_root_ = palette.get();
   palette->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kVertical, gfx::Insets(), 0));
-  if(palette->scene())palette->SetBorder(views::CreateEmptyBorder(1));
-  else {palette->SetBackground(views::CreateRoundedRectBackground(kCard,14));palette->SetBorder(views::CreateRoundedRectBorder(1,14,Hairline(root_)));}
+  palette->SetBorder(views::CreateEmptyBorder(1));
   auto chrome_visible=[weak](size_t index){return base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,size_t index){return shell&&shell->metal_palette_chrome_visible(index);},weak,index);};
   auto chrome_painted=base::BindRepeating(&WorkspaceShell::ScheduleMetalPalette,weak);
   auto palette_text=[&](views::View* parent,std::u16string text,uint32_t kind,[[maybe_unused]] size_t index)->views::View* {
-    if(palette->scene())return parent->AddChildView(std::make_unique<PaletteText>(std::move(text),kind,chrome_painted,chrome_visible(index)));
-    auto* label=Label(parent,std::move(text),kind==2?kError:kMuted,Font(kind==2?-1:-2));
-    if(kind==0)label->SetBorder(views::CreateRoundedRectBorder(1,5,Hairline(root_)));
-    else if(kind==1)label->SetBorder(views::CreatePaddedBorder(views::CreateSolidSidedBorder(gfx::Insets::TLBR(1,0,0,0),Hairline(root_)),gfx::Insets::TLBR(10,18,10,18)));
-    else label->SetBorder(views::CreateEmptyBorder(gfx::Insets::VH(8,18)));
-    return label;
+    return parent->AddChildView(std::make_unique<PaletteText>(std::move(text),kind,chrome_painted,chrome_visible(index)));
   };
   auto* input_row = palette->AddChildView(std::make_unique<views::View>());
   auto* input_layout = input_row->SetLayoutManager(std::make_unique<views::BoxLayout>(
@@ -3529,14 +2953,12 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   input_layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
   input_row->SetPreferredSize(gfx::Size(560, 56));
   std::unique_ptr<views::View> search_control;
-  if(palette->scene())search_control=std::make_unique<SceneSearchIcon>(chrome_visible(0));
-  else
-    search_control=std::make_unique<GlyphButton>(views::Button::PressedCallback(),u"Szukaj",GlyphButton::Glyph::kVector,&vector_icons::kSearchIcon);
+  search_control=std::make_unique<SceneSearchIcon>(chrome_visible(0));
   auto* search_icon=input_row->AddChildView(std::move(search_control));
   palette_chrome_views_[0]=search_icon;
   search_icon->SetFocusBehavior(views::View::FocusBehavior::NEVER);
   search_icon->SetCanProcessEventsWithinSubtree(false);
-  address_ = AddEditor(input_row,palette->scene());
+  address_ = AddEditor(input_row);
   address_->GetViewAccessibility().SetName(u"Szukaj lub wpisz adres");
   address_->SetPlaceholderText(u"Szukaj lub wpisz adres…");
   address_->SetPresentation(Font(3).GetFontSize(),0,false,Tone(root_,kCard));
@@ -3566,9 +2988,9 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   }
   palette_chrome_views_[2]=palette_text(palette.get(),u"↑↓ wybierz     ↵ wykonaj / otwórz     > polecenia",1,2);
 
-  if(metal_sidebar_)profile_form_=std::make_unique<ProfileFormState>();
+  profile_form_=std::make_unique<ProfileFormState>();
   std::array<std::u16string,12> profile_copy={u"Profile przeglądania",u"Każdy profil ma osobne logowania i dane stron.\nMożesz przypisać go do kilku przestrzeni.",u"Nazwa profilu",u"Nazwa nowego profilu",u"Np. Klient, Projekt, Konto testowe",u"Istniejące profile",u"Zarządzany profil",u"Utwórz profil",u"Zapisz nazwę profilu",u"Usuń profil i jego dane",u"Potwierdź usunięcie profilu i danych",u"Wróć do przestrzeni"};
-  if(profile_form_){const auto c=sidebar::profile_copy();auto text=[](const rust::String& value){return base::UTF8ToUTF16(std::string(value));};profile_copy={text(c.title),text(c.hint),text(c.name_label),text(c.name_ax),text(c.placeholder),text(c.existing),text(c.picker_ax),text(c.create),text(c.rename),text(c.remove_label),text(c.confirm_delete),text(c.back)};}
+  {const auto c=sidebar::profile_copy();auto text=[](const rust::String& value){return base::UTF8ToUTF16(std::string(value));};profile_copy={text(c.title),text(c.hint),text(c.name_label),text(c.name_ax),text(c.placeholder),text(c.existing),text(c.picker_ax),text(c.create),text(c.rename),text(c.remove_label),text(c.confirm_delete),text(c.back)};}
   auto profiles_panel = std::make_unique<views::View>();
   profiles_root_ = profiles_panel.get();
   profiles_panel->SetLayoutManager(std::make_unique<views::BoxLayout>(
@@ -3576,38 +2998,36 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   profiles_panel->SetBackground(views::CreateRoundedRectBackground(kCard, 12));
   profiles_panel->SetBorder(views::CreateRoundedRectBorder(1, 12, Hairline(root_)));
   auto profile_text=[&](std::u16string text,SkColor ink,int delta,gfx::Font::Weight weight=gfx::Font::Weight::NORMAL,bool multiline=false)->views::View* {
-    if(profile_form_)return profiles_panel->AddChildView(std::make_unique<SceneParagraph>(std::move(text),delta,weight!=gfx::Font::Weight::NORMAL,ink));
-    auto* label=Label(profiles_panel.get(),std::move(text),ink,Font(delta,weight));label->SetMultiLine(multiline);return label;
+    return profiles_panel->AddChildView(std::make_unique<SceneParagraph>(std::move(text),delta,weight!=gfx::Font::Weight::NORMAL,ink));
   };
   profile_text(profile_copy[0],kInk,3,gfx::Font::Weight::SEMIBOLD);
   profile_text(profile_copy[1],kMuted,-1,gfx::Font::Weight::NORMAL,true);
   profile_text(profile_copy[2],kSubtle,-1);
-  profile_name_input_ = AddEditor(profiles_panel.get(),bool(profile_form_));
+  profile_name_input_ = AddEditor(profiles_panel.get());
   profile_name_input_->GetViewAccessibility().SetName(profile_copy[3]);
   profile_name_input_->SetPlaceholderText(profile_copy[4]);
-  auto* profile_create_actions=ActionGroup(profiles_panel.get(),bool(profile_form_),true,10);
+  auto* profile_create_actions=ActionGroup(profiles_panel.get(),true,10);
   create_profile_ = AddAction(profile_create_actions,
       base::BindRepeating(&WorkspaceShell::SubmitProfile, weak), profile_copy[7]);
   rename_profile_ = AddAction(profile_create_actions,
       base::BindRepeating(&WorkspaceShell::RenameSelectedProfile, weak), profile_copy[8]);
   profile_text(profile_copy[5],kSubtle,-1);
-  managed_profile_picker_=ProfilePicker(profiles_panel.get(),profile_copy[6],bool(profile_form_),base::BindRepeating(&WorkspaceShell::ManagedProfileSelectionChanged,weak));
+  managed_profile_picker_=ProfilePicker(profiles_panel.get(),profile_copy[6],base::BindRepeating(&WorkspaceShell::ManagedProfileSelectionChanged,weak));
   profile_status_=profile_text(u"",kSubtle,-1,gfx::Font::Weight::NORMAL,true);
-  auto* profile_delete_actions=ActionGroup(profiles_panel.get(),bool(profile_form_),true,10);
+  auto* profile_delete_actions=ActionGroup(profiles_panel.get(),true,10);
   delete_profile_ = AddAction(profile_delete_actions,
       base::BindRepeating(&WorkspaceShell::DeleteSelectedProfile, weak), profile_copy[9]);
   [[maybe_unused]] auto* profile_back=AddAction(profile_delete_actions,base::BindRepeating(&WorkspaceShell::OpenWorkspaceSettings, weak), profile_copy[11]);
-  if(profile_form_){BindFormCommand(create_profile_,sidebar::FormCommand::ProfileCreate);BindFormCommand(rename_profile_,sidebar::FormCommand::ProfileRename);BindFormCommand(delete_profile_,sidebar::FormCommand::ProfileDelete);BindFormCommand(profile_back,sidebar::FormCommand::ProfileBack);}
+  BindFormCommand(create_profile_,sidebar::FormCommand::ProfileCreate);BindFormCommand(rename_profile_,sidebar::FormCommand::ProfileRename);BindFormCommand(delete_profile_,sidebar::FormCommand::ProfileDelete);BindFormCommand(profile_back,sidebar::FormCommand::ProfileBack);
 
-  if(profile_form_){profiles_panel->SetLayoutManager(CreateSidebarColumnLayout(10));profiles_panel->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(20)));}
+  profiles_panel->SetLayoutManager(CreateSidebarColumnLayout(10));profiles_panel->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(20)));
 
-  if(metal_sidebar_)import_form_=std::make_unique<ImportFormState>();
+  import_form_=std::make_unique<ImportFormState>();
   std::array<std::u16string,10> import_copy={u"Przenieś się do Zittera",u"Zamknij import",u"Wybierz przeglądarkę i dane, które chcesz przenieść.",u"Przeglądarka źródłowa",u"Przeglądarka do importu",u"Co chcesz przenieść?",u"Oddzielne profile przeglądania",u"Historia przeglądania",u"Ciasteczka i sesje witryn",u"Importuj"};
   std::vector<std::u16string> import_browsers={u"Arc",u"Google Chrome",u"Microsoft Edge",u"Brave"};
-  if(import_form_){const auto c=sidebar::import_copy();auto text=[](const rust::String& value){return base::UTF8ToUTF16(std::string(value));};import_copy={text(c.title),text(c.dismiss),text(c.intro),text(c.source_label),text(c.source_ax),text(c.heading),text(c.profiles),text(c.history),text(c.cookies),text(c.apply_label)};import_browsers.clear();for(const auto& b:c.browsers)import_browsers.push_back(text(b));}
+  {const auto c=sidebar::import_copy();auto text=[](const rust::String& value){return base::UTF8ToUTF16(std::string(value));};import_copy={text(c.title),text(c.dismiss),text(c.intro),text(c.source_label),text(c.source_ax),text(c.heading),text(c.profiles),text(c.history),text(c.cookies),text(c.apply_label)};import_browsers.clear();for(const auto& b:c.browsers)import_browsers.push_back(text(b));}
   auto import_text=[&](views::View* parent,std::u16string text,SkColor ink,int delta=0,gfx::Font::Weight weight=gfx::Font::Weight::NORMAL,bool multiline=false)->views::View* {
-    if(import_form_)return parent->AddChildView(std::make_unique<SceneParagraph>(std::move(text),delta,weight!=gfx::Font::Weight::NORMAL,ink));
-    auto* label=Label(parent,std::move(text),ink,Font(delta,weight));label->SetMultiLine(multiline);return label;
+    return parent->AddChildView(std::make_unique<SceneParagraph>(std::move(text),delta,weight!=gfx::Font::Weight::NORMAL,ink));
   };
   auto import_panel = std::make_unique<views::View>();
   import_root_ = import_panel.get();
@@ -3624,46 +3044,40 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     shell->CloseOverlays();
     shell->RestorePageFocus();
   }, weak);
-  if(import_form_){auto* controls=import_header->AddChildView(std::make_unique<ScenePreferenceControls>(true));dismiss_import_=controls->AddControl({},import_copy[1]);BindFormCommand(dismiss_import_,sidebar::FormCommand::ImportDismiss);}else
-  dismiss_import_=import_header->AddChildView(std::make_unique<GlyphButton>(dismiss_import,import_copy[1],GlyphButton::Glyph::kVector,&vector_icons::kCloseSmallIcon));
+  auto* import_controls=import_header->AddChildView(std::make_unique<ScenePreferenceControls>(true));dismiss_import_=import_controls->AddControl({},import_copy[1]);BindFormCommand(dismiss_import_,sidebar::FormCommand::ImportDismiss);
   import_text(import_panel.get(),import_copy[2],kMuted,-1,gfx::Font::Weight::NORMAL,true);
   import_text(import_panel.get(),import_copy[3],kSubtle,-1);
   auto source_changed=base::BindRepeating(&WorkspaceShell::ImportSelectionChanged,weak);
-  if(import_form_)import_browser_picker_=import_panel->AddChildView(MakeParentSceneControl<SceneSelect>(import_panel.get(),import_browsers,import_copy[4],source_changed));else
-  {
-    std::vector<ui::SimpleComboboxModel::Item> items;for(const auto& b:import_browsers)items.emplace_back(b);
-    auto* picker=import_panel->AddChildView(std::make_unique<views::Combobox>(std::make_unique<ui::SimpleComboboxModel>(items)));picker->SetTooltipTextAndAccessibleName(import_copy[4]);picker->SetSelectedIndex(0);picker->SetCallback(source_changed);import_browser_picker_=picker;
-  }
+  import_browser_picker_=import_panel->AddChildView(MakeParentSceneControl<SceneSelect>(import_panel.get(),import_browsers,import_copy[4],source_changed));
   Spacer(import_panel.get(), 8);
   import_text(import_panel.get(),import_copy[5],kInk,0,gfx::Font::Weight::SEMIBOLD);
   auto selection_changed = base::BindRepeating(&WorkspaceShell::ImportSelectionChanged, weak);
   views::View* import_choices=import_panel.get();
-  if(import_form_)import_choices=import_panel->AddChildView(std::make_unique<SceneCheckboxGroup>(12));
+  import_choices=import_panel->AddChildView(std::make_unique<SceneCheckboxGroup>(12));
   import_profiles_ = AddImportCheck(import_choices,import_copy[6],selection_changed);
   import_bookmarks_ = AddImportCheck(import_choices,u"Przypięte karty, foldery i Ulubione",selection_changed);
   for (auto* checkbox : {import_profiles_.get(), import_bookmarks_.get()}) {
     SetCheckValue(checkbox,true);
-    if(auto* native=views::AsViewClass<views::Checkbox>(checkbox))native->SetMultiLine(true);
   }
   import_history_ = AddImportCheck(import_choices,import_copy[7],selection_changed);
   import_cookies_ = AddImportCheck(import_choices,import_copy[8],selection_changed);
   Spacer(import_panel.get(), 8);
   import_status_ = import_text(import_panel.get(),u"",kSubtle,-1,gfx::Font::Weight::NORMAL,true);
   import_status_->SetVisible(false);
-  auto* import_actions=ActionGroup(import_panel.get(),bool(import_form_),true,0);
+  auto* import_actions=ActionGroup(import_panel.get(),true,0);
   apply_import_ = AddAction(import_actions,base::BindRepeating(&WorkspaceShell::SubmitImport,weak),import_copy[9]);
-  if(import_form_)BindFormCommand(apply_import_,sidebar::FormCommand::ImportApply);
+  BindFormCommand(apply_import_,sidebar::FormCommand::ImportApply);
   apply_import_->SetEnabled(false);
-  if(import_form_){const auto d=sidebar::import_defaults();SetCheckValue(import_profiles_,d.separate_profiles);SetCheckValue(import_bookmarks_,d.bookmarks);SetCheckValue(import_history_,d.history);SetCheckValue(import_cookies_,d.cookies);import_panel->SetLayoutManager(CreateSidebarColumnLayout(12));import_panel->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(20)));}
+  {const auto d=sidebar::import_defaults();SetCheckValue(import_profiles_,d.separate_profiles);SetCheckValue(import_bookmarks_,d.bookmarks);SetCheckValue(import_history_,d.history);SetCheckValue(import_cookies_,d.cookies);import_panel->SetLayoutManager(CreateSidebarColumnLayout(12));import_panel->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(20)));}
 
 
   auto general = std::make_unique<views::View>();
   general_root_ = general.get();
-  if(workspace_form_)preferences_chrome_=std::make_unique<PreferenceChromeState>(general_root_);
+  preferences_chrome_=std::make_unique<PreferenceChromeState>(general_root_);
   auto preference_chrome_painted=base::BindRepeating(&WorkspaceShell::SchedulePreferenceChrome,weak);
   auto preference_chrome_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->PreferenceChromeVisible();},weak);
   auto copy=[&](views::View* parent,std::u16string text,SkColor tone,int delta=0,gfx::Font::Weight weight=gfx::Font::Weight::NORMAL,bool multiline=false){return AddPreferenceCopy(parent,std::move(text),tone,delta,static_cast<int>(weight),multiline);};
-  auto* navigation = general->AddChildView(std::make_unique<PreferenceSurface>(true,bool(workspace_form_),preference_chrome_painted,preference_chrome_visible));
+  auto* navigation = general->AddChildView(std::make_unique<PreferenceSurface>(true,preference_chrome_painted,preference_chrome_visible));
   preferences_navigation_ = navigation;
   navigation->SetPreferredSize(gfx::Size(212, 1));
   copy(navigation, u"zitter", kInk, 8, gfx::Font::Weight::BOLD);
@@ -3678,10 +3092,8 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   copy(heading_text, u"Twoja przestrzeń. Twoje zasady.", kMuted, 0);
   SetSidebarPanelLayout(preferences_heading,false,gfx::Insets(),12,heading_text);
   auto dismiss=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell){shell->CloseOverlays();shell->RestorePageFocus();}},weak);
-  if(workspace_form_){auto* controls=preferences_heading->AddChildView(std::make_unique<ScenePreferenceControls>(true));preferences_close_=controls->AddControl({},u"Zamknij preferencje (Escape)");BindFormCommand(preferences_close_,sidebar::FormCommand::PreferencesDismiss);}
-  else
-  preferences_close_=preferences_heading->AddChildView(std::make_unique<GlyphButton>(dismiss,u"Zamknij preferencje (Escape)",GlyphButton::Glyph::kVector,&vector_icons::kCloseIcon));
-  preferences_search_ = AddEditor(main,bool(workspace_form_));
+  {auto* controls=preferences_heading->AddChildView(std::make_unique<ScenePreferenceControls>(true));preferences_close_=controls->AddControl({},u"Zamknij preferencje (Escape)");BindFormCommand(preferences_close_,sidebar::FormCommand::PreferencesDismiss);}
+  preferences_search_ = AddEditor(main);
   preferences_search_->SetPlaceholderText(u"Szukaj ustawień…");
   preferences_search_->GetViewAccessibility().SetName(u"Szukaj we wszystkich ustawieniach");
   preferences_search_->SetCallbacks(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){
@@ -3711,33 +3123,21 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       u"Kontroluj dane zapisane w bieżącym profilu.",
       u"Dostępność, połączenia i ustawienia silnika Chromium."};
   std::optional<sidebar::PreferenceCatalogue> preference_catalogue;
-  if(workspace_form_){
+  {
     preference_catalogue=sidebar::preference_catalogue(true);
     auto strings=[](const auto& input){std::vector<std::u16string> output;for(const auto& value:input)output.push_back(base::UTF8ToUTF16(std::string(value)));return output;};
     categories=strings(preference_catalogue->categories);descriptions=strings(preference_catalogue->descriptions);
   }
-  preferences_category_picker_=ChoicePicker(main,u"Kategoria preferencji",categories,bool(workspace_form_));
+  preferences_category_picker_=ChoicePicker(main,u"Kategoria preferencji",categories);
   preferences_category_picker_->SetVisible(false);
   SetPickerCallback(preferences_category_picker_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
     if(shell)shell->SelectPreferenceCategory(PickerIndex(shell->preferences_category_picker_).value_or(0));
   },weak));
-  views::View* category_controls=navigation;
-  if(workspace_form_){
-    // This UI-only controller retains category selection across view rebuilds.
-    if(!preferences_form_)preferences_form_=std::make_unique<PreferencesFormState>(categories.size());
-    category_controls=navigation->AddChildView(std::make_unique<ScenePreferenceControls>(false));
-  }
+  // This UI-only controller retains category selection across view rebuilds.
+  if(!preferences_form_)preferences_form_=std::make_unique<PreferencesFormState>(categories.size());
+  auto* category_controls=navigation->AddChildView(std::make_unique<ScenePreferenceControls>(false));
   for (size_t i = 0; i < categories.size(); ++i) {
-    const std::array icons = {&vector_icons::kSettingsIcon, &vector_icons::kSearchIcon,
-        &vector_icons::kShieldIcon, &vector_icons::kTuneIcon, &vector_icons::kGlobeIcon,
-        &vector_icons::kLockIcon, &vector_icons::kDownloadIcon, &vector_icons::kGlobeIcon,
-        &vector_icons::kShieldIcon, &vector_icons::kTuneIcon};
-    RowButton::Spec spec;
-    spec.title = categories[i]; spec.icon = icons[i]; spec.height = 40;
-    views::View* button=nullptr;
-    if(auto* controls=views::AsViewClass<ScenePreferenceControls>(category_controls)){button=controls->AddControl({},categories[i]);BindPreferenceCategory(button,i);}
-    else
-    button=category_controls->AddChildView(std::make_unique<RowButton>(base::BindRepeating(&WorkspaceShell::SelectPreferenceCategory,weak,i),std::move(spec)));
+    auto* button=category_controls->AddControl({},categories[i]);BindPreferenceCategory(button,i);
     auto* section = body->AddChildView(std::make_unique<views::View>());
     SetSidebarPanelLayout(section,true,gfx::Insets(),12);
     copy(section, categories[i],kInk,4,gfx::Font::Weight::SEMIBOLD);
@@ -3747,184 +3147,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto* nav_space = Spacer(navigation, 1);
   SetSidebarPanelLayout(navigation,true,gfx::Insets(16),6,nav_space);
   copy(navigation, u"ZITTER / PREFERENCJE", kMuted, -3);
-  if(preference_catalogue)BuildRustPreferenceRows(*preference_catalogue);
-  else
-  {
-  auto make_row = [&](size_t category, std::u16string title, std::u16string detail) {
-    auto* row = preference_sections_[category].view->AddChildView(std::make_unique<PreferenceSurface>(false,bool(workspace_form_),preference_chrome_painted,preference_chrome_visible));
-    auto* layout = row->SetLayoutManager(std::make_unique<views::BoxLayout>(
-        views::BoxLayout::Orientation::kHorizontal, gfx::Insets(16), 20));
-    layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
-    auto* text = row->AddChildView(std::make_unique<views::View>());
-    text->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 5));
-    copy(text,title,kInk,0,gfx::Font::Weight::MEDIUM,true);
-    copy(text,detail,kMuted,-1,gfx::Font::Weight::NORMAL,true);
-    layout->SetFlexForView(text, 1);
-    preference_sections_[category].rows.push_back({row, base::i18n::ToLower(categories[category] + u" " + title + u" " + detail)});
-    return row;
-  };
-  auto picker = [&](views::View* row,std::u16string name,std::vector<std::u16string> choices){
-    return ChoicePicker(row,std::move(name),std::move(choices),bool(workspace_form_));
-  };
-  auto toggle = [&](views::View* row,std::u16string name){return PreferenceToggle(row,std::move(name),bool(workspace_form_));};
-  theme_picker_ = picker(make_row(0, u"Motyw aplikacji", u"Kolory interfejsu i stron obsługujących motyw systemowy."),
-      u"Motyw aplikacji", {u"Systemowy", u"Jasny", u"Ciemny"});
-  SetPickerCallback(theme_picker_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
-    if (shell) shell->SetThemeMode(static_cast<ThemeMode>(PickerIndex(shell->theme_picker_).value_or(0)));
-  }, weak));
-  sidebar_check_ = toggle(make_row(0, u"Zawsze widoczny panel kart", u"Przypnij karty i przestrzenie przy lewej krawędzi."), u"Zawsze widoczny panel kart");
-  SetActionCallback(sidebar_check_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
-    if (shell) shell->SetPinned(ToggleOn(shell->sidebar_check_));
-  }, weak));
-  animations_check_ = toggle(make_row(0, u"Animacje przestrzeni", u"Płynne przejścia. Systemowe ograniczenie ruchu ma pierwszeństwo."), u"Animacje przestrzeni");
-  SetActionCallback(animations_check_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
-    if (shell) shell->SetWorkspaceAnimations(ToggleOn(shell->animations_check_));
-  }, weak));
-  search_engine_picker_ = picker(make_row(1, u"Domyślna wyszukiwarka", u"Używana, gdy wpiszesz zapytanie w pasku adresu."),
-      u"Domyślna wyszukiwarka", {u"DuckDuckGo", u"Google", u"Bing"});
-  SetPickerCallback(search_engine_picker_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
-    if (!shell) return;
-    const size_t index = PickerIndex(shell->search_engine_picker_).value_or(0);
-    if (index < shell->tools_.providers.size()) shell->SetDefaultSearchProvider(shell->tools_.providers[index].keyword);
-  }, weak));
-  auto add_toggle = [&](size_t category, std::string key, std::u16string title, std::u16string detail) {
-    auto* control = toggle(make_row(category, title, detail), title);
-    preference_toggles_[key] = control;
-    SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, std::string key) {
-      if (shell) shell->WritePreference(key, ToggleOn(shell->preference_toggles_.at(key)));
-    }, weak, key));
-  };
-  auto add_text = [&](size_t category, std::string key, std::u16string title, std::u16string detail, std::u16string placeholder) {
-    auto* row = make_row(category, title, detail);
-    auto* field = AddEditor(row->children().front(),bool(workspace_form_));
-    field->GetViewAccessibility().SetName(title);
-    field->SetPlaceholderText(placeholder);
-    field->SetCallbacks(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::string key){
-      if(shell) shell->PreferenceTextEdited(key);
-    },weak,key),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,EditorControl* field,const ui::KeyEvent& event){
-    return shell&&shell->HandlePreferenceEditorKey(field,event);
-  },weak,base::Unretained(field)));
-    field->view()->SetPreferredSize(gfx::Size(240, 36));
-    preference_textfields_[key] = field;
-    auto* save = PreferenceAction(row,bool(workspace_form_),
-        base::BindRepeating(&WorkspaceShell::SaveTextPreference, weak, key), u"Zapisz");
-    save->SetTooltipText(u"Zapisz: " + title);
-    save->GetViewAccessibility().SetName(u"Zapisz: " + title);
-    preference_save_buttons_[key] = save;
-  };
-  add_toggle(2, "referrers", u"Przekazuj adres strony odsyłającej", u"Nagłówek Referer pomaga witrynie rozpoznać, skąd pochodzi wejście. Wyłączenie może zmienić działanie niektórych serwisów.");
-  add_toggle(2, "https_only", u"Zawsze używaj HTTPS", u"Wymagaj bezpiecznego połączenia. Witryny bez HTTPS mogą wyświetlić ostrzeżenie.");
-  add_toggle(2, "third_party_cookies", u"Blokuj cookies innych firm", u"Ogranicz śledzenie między witrynami. Niektóre logowania mogą wymagać cookies.");
-  add_toggle(2, "do_not_track", u"Wysyłaj Do Not Track", u"Poproś witryny o nieśledzenie. Respektowanie prośby zależy od witryny.");
-  add_toggle(2, "preconnect", u"Wstępne połączenia ze stronami", u"Przygotowuj połączenie podczas wpisywania adresu. Może użyć sieci, nawet jeśli nie otworzysz strony. Ustawienie dotyczy tego profilu.");
-  add_toggle(2, "link_auditing", u"Raporty kliknięć w linki", u"Zezwalaj na wysyłanie sygnałów ping po kliknięciu odnośnika.");
-  const std::u16string permission_hint = u"Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo.";
-  add_toggle(3, "camera", u"Kamera", permission_hint);
-  add_toggle(3, "microphone", u"Mikrofon", permission_hint);
-  add_toggle(3, "location", u"Lokalizacja", permission_hint);
-  add_toggle(3, "notifications", u"Powiadomienia", permission_hint);
-  add_toggle(3, "clipboard", u"Odczyt schowka", permission_hint);
-  auto add_picker = [&](size_t category, std::string key, std::u16string title, std::u16string detail, std::vector<std::u16string> choices) {
-    auto* control = picker(make_row(category, title, detail), title, choices);
-    preference_pickers_[key] = control;
-    SetPickerCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, std::string key) {
-      if (shell) {
-        auto index = PickerIndex(shell->preference_pickers_.at(key));
-        if (index) shell->WritePreference(key, static_cast<int>(*index));
-      }
-    }, weak, key));
-  };
-  add_picker(4, "zoom", u"Domyślne powiększenie", u"Skala stron bez własnego, zapisanego powiększenia.", {u"75%", u"90%", u"100%", u"110%", u"125%", u"150%", u"175%", u"200%"});
-  add_picker(4, "font_size", u"Rozmiar tekstu", u"Domyślna wielkość czcionki na stronach.", {u"12 px", u"14 px", u"16 px", u"18 px", u"20 px", u"24 px"});
-  add_picker(4, "minimum_font_size", u"Minimalny rozmiar tekstu", u"Zapobiegaj wyświetlaniu zbyt drobnych liter.", {u"Bez limitu", u"10 px", u"12 px", u"14 px", u"16 px", u"18 px"});
-  add_picker(4, "fixed_font_size", u"Rozmiar tekstu o stałej szerokości", u"Domyślna wielkość tekstu w blokach kodu i elementach monospace.", {u"12 px", u"14 px", u"16 px", u"18 px", u"20 px", u"24 px"});
-  add_text(4, "font_standard", u"Czcionka standardowa", u"Nazwa rodziny czcionki używanej, gdy witryna nie wybierze własnej.", u"Np. Times New Roman");
-  add_text(4, "font_serif", u"Czcionka szeryfowa", u"Rodzina dla tekstu serif. Musi być zainstalowana w systemie.", u"Np. Georgia");
-  add_text(4, "font_sans", u"Czcionka bezszeryfowa", u"Rodzina dla tekstu sans-serif. Musi być zainstalowana w systemie.", u"Np. Arial");
-  add_text(4, "font_fixed", u"Czcionka o stałej szerokości", u"Rodzina monospace, używana m.in. w blokach kodu.", u"Np. Menlo");
-  add_toggle(4, "javascript", u"JavaScript", u"Skrypty potrzebne do działania większości aplikacji internetowych.");
-  add_toggle(4, "images", u"Wyświetlaj obrazy", u"Pozwól witrynom ładować zdjęcia i grafiki.");
-  add_toggle(4, "popups", u"Wyskakujące okna", u"Pozwól stronom otwierać dodatkowe okna. Domyślnie zablokowane.");
-  add_toggle(4, "sound", u"Dźwięk na stronach", u"Domyślna zgoda na odtwarzanie dźwięku.");
-  add_toggle(5, "save_passwords", u"Proponuj zapisywanie haseł", u"Zapisuj dane logowania w menedżerze haseł tego profilu.");
-  add_toggle(5, "auto_signin", u"Automatyczne logowanie", u"Korzystaj z zapisanych danych logowania, gdy witryna na to pozwala.");
-  auto action = [&](size_t category, std::u16string title, std::u16string detail, base::RepeatingClosure callback) {
-    auto* row = make_row(category, title, detail);
-    auto* button = PreferenceAction(row,bool(workspace_form_),std::move(callback),u"Otwórz →");
-    button->SetTooltipText(title);
-    button->GetViewAccessibility().SetName(title);
-  };
-  action(2, u"Historia przeglądania", u"Wyszukuj odwiedzone strony i czyść historię tego profilu.", base::BindRepeating(&WorkspaceShell::OpenTools, weak, 3));
-  action(0, u"Kolor i nazwa przestrzeni", u"Własny akcent kolorystyczny i przypisanie profilu.", base::BindRepeating(&WorkspaceShell::OpenWorkspaceSettings, weak));
-  action(5, u"Zapisane hasła", u"Przeglądaj i usuwaj loginy aktywnego profilu.", base::BindRepeating(
-      [](base::WeakPtr<WorkspaceShell> shell) { if (shell) { shell->CloseOverlays(); shell->callbacks_.passwords.Run(); } }, weak));
-  action(5, u"Profile przeglądania", u"Oddziel cookies, historię i dane logowania między profilami.", base::BindRepeating(&WorkspaceShell::OpenProfiles, weak, std::string(), std::string()));
-  action(5, u"Import z przeglądarki", u"Przenieś profile, przestrzenie, foldery i zakładki.", base::BindRepeating(&WorkspaceShell::OpenImport, weak));
-  add_toggle(6, "download_prompt", u"Pytaj, gdzie zapisać każdy plik", u"Wybieraj miejsce zapisu przy każdym pobieraniu.");
-  auto* directory_row = make_row(6, u"Folder pobierania", u"Domyślne miejsce zapisu plików w tym profilu.");
-  download_directory_button_ = PreferenceAction(directory_row,bool(workspace_form_),
-      callbacks_.choose_download_directory,u"Zmień…");
-  download_directory_button_->SetTooltipText(u"Zmień folder pobierania");
-  download_directory_button_->GetViewAccessibility().SetName(u"Zmień folder pobierania");
-  download_directory_label_=copy(directory_row->children().front().get(),u"",kMuted,-1,gfx::Font::Weight::NORMAL,true);
-  add_text(7, "accept_languages", u"Preferowane języki witryn", u"Kody języków w kolejności preferencji, oddzielone przecinkami. Np. pl, en-US, en. Zmiana dotyczy treści witryn; interfejs Zitter pozostaje po polsku.", u"pl, en-US, en");
-  add_toggle(7, "spellcheck", u"Sprawdzaj pisownię", u"Podkreślaj błędy w polach tekstowych na stronach. Na macOS słowniki wybiera system.");
-  add_toggle(7, "online_spellcheck", u"Rozszerzone sprawdzanie pisowni", u"Wysyłaj wpisywany tekst do usługi Google w celu sprawdzania pisowni. Wymaga włączonego sprawdzania pisowni.");
-  add_toggle(9, "caret_browsing", u"Nawigacja kursorem tekstowym", u"Poruszaj się po tekstach witryn za pomocą klawiatury i zaznaczaj je bez myszy.");
-  add_toggle(9, "hardware_acceleration", u"Akceleracja sprzętowa", u"Używaj procesora graficznego do renderowania. Ustawienie wspólne dla całej aplikacji; działa po ponownym uruchomieniu Zitter.");
-  add_picker(9, "dns_mode", u"Bezpieczny DNS", u"Wspólne dla całej aplikacji. Tryb automatyczny może używać DNS systemowego. Tryb ścisły wymaga wcześniej zapisanego adresu DNS-over-HTTPS.", {u"Systemowy", u"Automatyczny", u"Ścisły (DoH)"});
-  add_text(9, "dns_templates", u"Adres serwera DNS-over-HTTPS", u"Wspólny dla całej aplikacji. Wpisz szablon HTTPS, np. https://dns.google/dns-query{?dns}. Najpierw zapisz adres, następnie włącz tryb ścisły.", u"https://…/dns-query{?dns}");
-  action(9, u"Ustawienia proxy systemowego", u"Zitter korzysta z konfiguracji proxy systemu operacyjnego.", base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
-    if (shell && shell->callbacks_.system_settings) shell->callbacks_.system_settings.Run(false);
-  }, weak));
-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
-  action(9, u"Certyfikaty systemowe", u"Otwórz systemowy magazyn certyfikatów i ustawienia zaufania.", base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
-    if (shell && shell->callbacks_.system_settings) shell->callbacks_.system_settings.Run(true);
-  }, weak));
-#endif
-  auto* site_editor = make_row(3, u"Wyjątek dla witryny", u"Wpisz pełny adres witryny bez ścieżki, np. https://example.com. Wyjątek zastępuje politykę domyślną w tym profilu.");
-  auto* site_fields = site_editor->children().front().get();
-  site_origin_ = AddEditor(site_fields,bool(workspace_form_));
-  site_origin_->GetViewAccessibility().SetName(u"Adres witryny dla wyjątku");
-  site_origin_->SetPlaceholderText(u"https://example.com");
-  site_origin_->SetCallbacks({},base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,EditorControl* field,const ui::KeyEvent& event){
-    return shell&&shell->HandlePreferenceEditorKey(field,event);
-  },weak,base::Unretained(site_origin_.get())));
-  std::vector<std::u16string> site_names(kSitePreferenceNames.begin(), kSitePreferenceNames.end());
-  site_type_ = picker(site_fields, u"Rodzaj uprawnienia dla witryny", site_names);
-  site_policy_ = picker(site_fields, u"Polityka dla witryny", {u"Użyj domyślnej", u"Zezwalaj", u"Blokuj"});
-  SetPickerCallback(site_type_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
-    if (!shell) return;
-    std::vector<std::u16string> choices={u"Użyj domyślnej",u"Zezwalaj",u"Blokuj"};
-    if(PickerIndex(shell->site_type_).value_or(0)>=4)choices.emplace_back(u"Pytaj");
-    ReplacePickerLabels(shell->site_policy_,choices);
-  }, weak));
-  PreferenceAction(site_editor,bool(workspace_form_),base::BindRepeating(&WorkspaceShell::SaveSitePreference,weak),u"Zapisz wyjątek");
-  site_rules_card_ = make_row(3, u"Zapisane wyjątki", u"Własne reguły możesz usunąć, aby wrócić do ustawień domyślnych. Reguły zarządzane pozostają tylko do odczytu.");
-  site_rules_list_ = site_rules_card_->children().front()->AddChildView(std::make_unique<views::View>());
-  site_rules_list_->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 8));
-  auto* clear_row = make_row(8, u"Wyczyść dane przeglądania", u"Dotyczy wyłącznie aktywnego profilu. Pobrane pliki, zapisane hasła i przypięte karty pozostaną zachowane. Przed usunięciem zobaczysz potwierdzenie.");
-  auto* clear_fields = clear_row->children().front().get();
-  clear_data_period_ = picker(clear_fields, u"Zakres czasu czyszczenia danych", {u"Ostatnia godzina", u"Ostatnie 24 godziny", u"Ostatnie 7 dni", u"Cały okres"});
-  auto* clear_choices=clear_fields;
-  if(workspace_form_)clear_choices=clear_fields->AddChildView(std::make_unique<SceneCheckboxGroup>(8));
-  clear_history_=AddImportCheck(clear_choices,u"Historia przeglądania",{});
-  clear_cookies_=AddImportCheck(clear_choices,u"Cookies i dane witryn (może wylogować)",{});
-  clear_cache_=AddImportCheck(clear_choices,u"Pamięć podręczna",{});
-  for(auto* checkbox:{clear_history_.get(),clear_cookies_.get(),clear_cache_.get()})
-    if(auto* native=views::AsViewClass<views::Checkbox>(checkbox))native->SetMultiLine(true);
-  SetCheckValue(clear_cache_,true);
-  clear_data_button_ = PreferenceAction(clear_row,bool(workspace_form_),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
-    if (!shell || !shell->callbacks_.clear_browsing_data) return;
-    shell->callbacks_.clear_browsing_data.Run({static_cast<int>(PickerIndex(shell->clear_data_period_).value_or(0)),
-        CheckValue(shell->clear_history_), CheckValue(shell->clear_cookies_), CheckValue(shell->clear_cache_)});
-  }, weak), u"Wyczyść…");
-  action(1, u"Wyszukiwarki i prefiksy", u"Własne wyszukiwarki: g zapytanie, w hasło, yt film…", base::BindRepeating(&WorkspaceShell::OpenTools, weak, 2));
-  action(1, u"Skróty klawiszowe", u"Schemat Arc, własne kombinacje i wykrywanie konfliktów.", base::BindRepeating(&WorkspaceShell::OpenTools, weak, 1));
-  action(0, u"Time Machine przestrzeni", u"Snapshoty, zamknięte karty i usypianie całych projektów.", base::BindRepeating(&WorkspaceShell::OpenTools, weak, 0));
-  auto* shortcuts = make_row(1, u"Szybciej z klawiaturą", u"⌘ L  adres i wyszukiwanie\n⌘ K  karty, przestrzenie i historia\n⌘ T  nowa karta     ⌘ ,  preferencje");
-  shortcuts->SetTooltipText(u"Skróty klawiaturowe Zitter");
-  }
+  BuildRustPreferenceRows(*preference_catalogue);
   preferences_empty_ = copy(body.get(), u"Brak pasujących ustawień. Spróbuj innego hasła.", kMuted,0,gfx::Font::Weight::NORMAL,true);
   general_scroll_->SetPanelContents(std::move(body));
   auto* main_scroll=main->AddChildView(std::move(general_scroll));
@@ -3939,31 +3162,19 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     if(!shell)return;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,bool split){if(shell)shell->callbacks_.promote_peek.Run(split);},shell,split));
   },weak,split);
   peek_actions[4]=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(!shell)return;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->callbacks_.close_peek.Run();},shell));},weak);
-  if(workspace_form_){auto toolbar=std::make_unique<ScenePeekToolbar>(std::move(peek_actions));peek_title_=toolbar->title();peek_toolbar_=peek->AddChildView(std::move(toolbar));}
-  else
-  {
-    auto* toolbar=peek->AddChildView(std::make_unique<views::View>());peek_toolbar_=toolbar;
-    toolbar->AddChildView(std::make_unique<GlyphButton>(std::move(peek_actions[0]),u"Wstecz",GlyphButton::Glyph::kVector,&vector_icons::kArrowBackIcon));
-    toolbar->AddChildView(std::make_unique<GlyphButton>(std::move(peek_actions[1]),u"Dalej",GlyphButton::Glyph::kVector,&vector_icons::kArrowForwardIcon));
-    auto* title=Label(toolbar,u"Peek",kInk,Font(-1,gfx::Font::Weight::SEMIBOLD));title->SetElideBehavior(gfx::ELIDE_MIDDLE);peek_title_=title;
-    for(size_t index:{2u,3u})toolbar->AddChildView(std::make_unique<views::MdTextButton>(std::move(peek_actions[index]),index==2?u"Otwórz jako kartę":u"Split View"));
-    toolbar->AddChildView(std::make_unique<GlyphButton>(std::move(peek_actions[4]),u"Zamknij podgląd (Escape)",GlyphButton::Glyph::kVector,&vector_icons::kCloseIcon));
-    SetSidebarPanelLayout(toolbar,false,gfx::Insets(),6,title,true);
-  }
+  {auto toolbar=std::make_unique<ScenePeekToolbar>(std::move(peek_actions));peek_title_=toolbar->title();peek_toolbar_=peek->AddChildView(std::move(toolbar));}
   peek_host_=peek->AddChildView(std::make_unique<views::View>());peek_host_->SetLayoutManager(std::make_unique<views::FillLayout>());
   SetSidebarPanelLayout(peek.get(),true,gfx::Insets(8),8,peek_host_);
 
   auto tools_panel = std::make_unique<views::View>();
   tools_root_ = tools_panel.get();
-  if(workspace_form_)tools_chrome_=std::make_unique<PreferenceChromeState>(tools_root_);
+  tools_chrome_=std::make_unique<PreferenceChromeState>(tools_root_);
   auto* tools_heading = tools_panel->AddChildView(std::make_unique<views::View>());
   tools_title_ = AddToolsCopy(tools_heading,u"Time Machine",kInk,5,static_cast<int>(gfx::Font::Weight::SEMIBOLD),false);
   auto dismiss_tools=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){
     if(shell){shell->SetShortcutRecording(false);shell->tools_widget_->Hide();shell->RestorePageFocus();}
   },weak);
-  if(workspace_form_){auto* controls=tools_heading->AddChildView(std::make_unique<ScenePreferenceControls>(true));tools_close_=controls->AddControl({},u"Zamknij narzędzia");BindFormCommand(tools_close_,sidebar::FormCommand::ToolsDismiss);}
-  else
-  tools_close_=tools_heading->AddChildView(std::make_unique<GlyphButton>(dismiss_tools,u"Zamknij narzędzia",GlyphButton::Glyph::kVector,&vector_icons::kCloseIcon));
+  {auto* controls=tools_heading->AddChildView(std::make_unique<ScenePreferenceControls>(true));tools_close_=controls->AddControl({},u"Zamknij narzędzia");BindFormCommand(tools_close_,sidebar::FormCommand::ToolsDismiss);}
   SetSidebarPanelLayout(tools_heading,false,gfx::Insets(),8,tools_title_);
   PanelViewport* tools_viewport=nullptr;auto tools_scroll=CreatePanelViewport(&tools_viewport,base::BindRepeating(&WorkspaceShell::RefreshToolsViewport,weak));tools_scroll_=tools_viewport;
   auto tools_body = std::make_unique<views::View>(); tools_body_ = tools_body.get();
@@ -4135,7 +3346,7 @@ void WorkspaceShell::Detach() {
   preference_textfields_.clear(); preference_save_buttons_.clear(); preference_text_dirty_.clear();
   site_origin_ = nullptr; site_type_ = nullptr; site_policy_ = nullptr; site_rules_list_ = nullptr; site_rules_card_ = nullptr;
   clear_data_period_ = nullptr; clear_history_ = nullptr; clear_cookies_ = nullptr; clear_cache_ = nullptr; clear_data_button_ = nullptr;
-  site_preference_rules_.clear(); preferences_profile_id_.clear();
+  site_preference_rules_.clear();
   preference_sections_.clear(); preference_toggles_.clear(); preference_pickers_.clear();
   download_directory_label_ = nullptr; download_directory_button_ = nullptr;
   preferences_navigation_ = nullptr; preferences_category_picker_ = nullptr;preferences_close_=nullptr;
@@ -4220,8 +3431,6 @@ void WorkspaceShell::Update(ShellState state) {
     if(profile_form_){const auto profiles=ProfileOptions(state_);profile_form_->form->reconcile(rust::Slice<const sidebar::ProfileOption>(profiles.data(),profiles.size()),added_profile);const std::string id(profile_form_->form->selection());for(size_t i=0;i<state_.profiles.size();++i)if(state_.profiles[i].id==id)SetPickerIndex(managed_profile_picker_,i);}
   }
   if(import_form_){RefreshRustImportControls();if(ready_changed&&import_visible()&&import_form_->form->should_resume(state_.configuration_ready,state_.profiles_busy))ImportSelectionChanged();}
-  else
-  apply_import_->SetEnabled(import_can_apply_ && !import_busy_ && state_.configuration_ready && !state_.profiles_busy);
   profile_picker_->SetEnabled(state_.configuration_ready && !state_.profiles_busy);
   if (changed || profiles_changed || ready_changed) RefreshProfileControls();
   add_workspace_->SetEnabled(state_.configuration_ready && !state_.profiles_busy);
@@ -4253,7 +3462,6 @@ void WorkspaceShell::Update(ShellState state) {
 }
 
 void WorkspaceShell::ReconcileSidebarNodes(TabListCache& cache,std::string_view workspace,const std::vector<PinnedItem>& pins,const std::vector<ShellTab>& tabs,std::array<std::optional<size_t>,2> split_tabs,bool split){
-  if(!RustUiEnabled())return;
   // Titles, URLs and active selection do not alter logical node membership.
   // Keep the fast refresh path allocation-free when identities/order are equal.
   if(cache.node_graph&&cache.pins==pins&&cache.split_tabs==split_tabs&&cache.split==split&&cache.tabs.size()==tabs.size()&&
@@ -4394,7 +3602,7 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
       contents->SetLayoutManager(CreateSidebarColumnLayout(2));
     }
     auto add_tab = [&](views::View* parent, const ShellTab& tab, bool tile = false) {
-      RowButton::Spec spec;
+      RowRecipe::Spec spec;
       spec.title = tab.title;
       spec.sidebar_row = true;
       if(cache.node_graph)spec.scene_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_sidebar_visible();},weak_factory_.GetWeakPtr());
@@ -4958,14 +4166,14 @@ std::vector<sidebar::Item> WorkspaceShell::CaptureWorkspaceScene(std::string_vie
   const std::vector<PinnedItem>* pins=cache?&cache->pins:nullptr;
   if(!pins){auto queued=std::find_if(shell->sidebar_warm_queue_.begin(),shell->sidebar_warm_queue_.end(),[&](const auto& entry){return entry.first==id;});if(queued!=shell->sidebar_warm_queue_.end())pins=&queued->second;}
   std::vector<sidebar::Item> data;std::vector<sidebar::PreviewRow> rows;
-  auto make_item=[&](const RowButton::Spec& spec){
+  auto make_item=[&](const RowRecipe::Spec& spec){
     sidebar::Item item{};item.kind=0;item.title=base::UTF16ToUTF8(spec.title);item.monogram=base::UTF16ToUTF8(spec.icon?u"📁":spec.monogram);
     item.ink=Tone(shell->root_,kInk);item.badge=spec.icon?SK_ColorTRANSPARENT:spec.monogram_color;
     item.fill=spec.tile?SkColorSetA(Tone(shell->root_,kCard),spec.active?0xFF:0x59):spec.active?Tone(shell->root_,kCard):spec.highlighted?Tone(shell->root_,kAccentWash):SK_ColorTRANSPARENT;
     item.active=spec.active;item.tile=spec.tile;item.close=bool(spec.close);item.close_visible=spec.close&&spec.active&&!spec.tile;item.font_size=Font(0).GetFontSize();return item;
   };
   auto gap=[&](int height){rows.push_back({0,3,0,height});};
-  auto row=[&](const RowButton::Spec& spec,int depth){rows.push_back({data.size(),0,depth,34});data.push_back(make_item(spec));};
+  auto row=[&](const RowRecipe::Spec& spec,int depth){rows.push_back({data.size(),0,depth,34});data.push_back(make_item(spec));};
   auto pair=[&](const SidebarTabSlot& slot,int depth){
     // Tab plans contain both identities; resolve before publishing a group.
     const auto first=cache->tab_buttons.find(cache->tabs[slot.first].index),second=cache->tab_buttons.find(cache->tabs[slot.second].index);
@@ -4987,7 +4195,7 @@ std::vector<sidebar::Item> WorkspaceShell::CaptureWorkspaceScene(std::string_vie
         if(pair_slot&&pair_slot->pin==entry.index)pair(*pair_slot,entry.depth);
         else if(visible[entry.index])WithRowSnapshot(button->second.get(),[&](const auto& spec){row(spec,entry.depth);});
       } else {
-        RowButton::Spec spec;spec.title=base::UTF8ToUTF16(pin.title);
+        RowRecipe::Spec spec;spec.title=base::UTF8ToUTF16(pin.title);
         if(pin.folder){spec.icon=&vector_icons::kFolderFilledIcon;spec.title=(entry.collapsed?u"▸ ":u"▾ ")+spec.title;}
         else {spec.monogram=base::i18n::ToUpper(spec.title.substr(0,1));spec.monogram_color=kMonogramColors[base::FastHash(pin.url.host())%kMonogramColors.size()];}
         row(spec,entry.depth);
@@ -5000,7 +4208,7 @@ std::vector<sidebar::Item> WorkspaceShell::CaptureWorkspaceScene(std::string_vie
     if(slot.pair){if(slot.pin==SidebarTree::kRoot)pair(slot,0);continue;}
     auto button=cache->tab_buttons.find(cache->tabs[slot.first].index);if(button!=cache->tab_buttons.end())WithRowSnapshot(button->second.get(),[&](const auto& spec){row(spec,0);});
   }
-  if(!cache||(cache->tabs.empty()&&!source)){RowButton::Spec blank;blank.title=u"Nowa karta";blank.monogram=u"N";row(blank,0);}
+  if(!cache||(cache->tabs.empty()&&!source)){RowRecipe::Spec blank;blank.title=u"Nowa karta";blank.monogram=u"N";row(blank,0);}
   const auto plan=sidebar::workspace_preview_layout(size.width(),size.height(),offset,rust::Slice<const sidebar::PreviewRow>(rows.data(),rows.size()));
   std::vector<sidebar::Item> items;items.reserve(plan.size());
   for(const auto& placement:plan){auto item=std::move(data[placement.index]);const auto& r=placement.bounds;const auto& c=placement.clip;item.x=r.x;item.y=r.y;item.width=r.width;item.height=r.height;item.clip={float(c.x),float(c.y),float(c.width),float(c.height)};items.push_back(std::move(item));}
@@ -5031,9 +4239,9 @@ void WorkspaceShell::UpdateWorkspaceSwipePreview() {
           if (queued != shell->sidebar_warm_queue_.end()) pins = &queued->second;
         }
         int y = id == shell->swipe_source_ ? -shell->tab_scroll_->visible_rect().y() : 0;
-        auto row = [&](const RowButton::Spec& spec, int indent, int row_height) {
+        auto row = [&](const RowRecipe::Spec& spec, int indent, int row_height) {
           if (y + row_height > 0 && y < size.height())
-            RowButton::PaintPreview(canvas, gfx::Rect(indent, y, std::max(0, size.width() - indent), row_height), spec, shell->root_);
+            RowRecipe::PaintPreview(canvas, gfx::Rect(indent, y, std::max(0, size.width() - indent), row_height), spec, shell->root_);
           y += row_height + 2;
         };
         const SidebarTabSlot* pair_slot = nullptr;
@@ -5050,7 +4258,7 @@ void WorkspaceShell::UpdateWorkspaceSwipePreview() {
             auto button = cache->tab_buttons.find(tab.index);
             if (button == cache->tab_buttons.end()) continue;
             if (y + 38 > 0 && y < size.height())
-              WithRowSnapshot(button->second.get(),[&](const auto& spec){RowButton::PaintPreview(canvas,gfx::Rect(x,y+4,half,38),spec,shell->root_);});
+              WithRowSnapshot(button->second.get(),[&](const auto& spec){RowRecipe::PaintPreview(canvas,gfx::Rect(x,y+4,half,38),spec,shell->root_);});
             x += half + 4;
           }
           y += 48;
@@ -5078,7 +4286,7 @@ void WorkspaceShell::UpdateWorkspaceSwipePreview() {
               else if (pin_visibility[entry.index])
                 WithRowSnapshot(button->second.get(),[&](const auto& spec){row(spec,indent,34);});
             } else {
-              RowButton::Spec spec; spec.title = base::UTF8ToUTF16(pin->title);
+              RowRecipe::Spec spec; spec.title = base::UTF8ToUTF16(pin->title);
               if (pin->folder) {
                 spec.icon = &vector_icons::kFolderFilledIcon;
                 spec.title = (entry.collapsed ? u"▸ " : u"▾ ") + spec.title;
@@ -5100,7 +4308,7 @@ void WorkspaceShell::UpdateWorkspaceSwipePreview() {
             WithRowSnapshot(button->second.get(),[&](const auto& spec){row(spec,0,34);});
         }
         if (!cache || (cache->tabs.empty() && id != shell->swipe_source_)) {
-          RowButton::Spec blank; blank.title = u"Nowa karta"; blank.monogram = u"N";
+          RowRecipe::Spec blank; blank.title = u"Nowa karta"; blank.monogram = u"N";
           row(blank, 0, 34);
         }
       }
@@ -5212,7 +4420,7 @@ void WorkspaceShell::AppendPinnedItems(views::View* root, const std::vector<Pinn
   std::map<uint64_t,views::View*> groups{{0,root}};
   for(const auto& entry:plan){
     const auto* pin=&pins[entry.index];auto* parent=groups.at(entry.parent);
-    RowButton::Spec spec;
+    RowRecipe::Spec spec;
     spec.sidebar_row = true;
     if(!cache.node_graph){spec.title=base::UTF8ToUTF16(pin->title);if(pin->folder){spec.icon=&vector_icons::kFolderFilledIcon;spec.title=(entry.collapsed?u"▸ ":u"▾ ")+spec.title;}}
     if(cache.node_graph)spec.scene_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_sidebar_visible();},weak_factory_.GetWeakPtr());
@@ -5286,7 +4494,6 @@ views::View* WorkspaceShell::workspace_button(std::string_view id) const {
 }
 
 void WorkspaceShell::ReconcileChromeNodes() {
-  if(!RustUiEnabled())return;
   if(!chrome_node_graph_)chrome_node_graph_=std::make_shared<SidebarNodeGraphState>();
   auto units=[](const std::u16string& text){rust::Vec<uint16_t> result;for(char16_t unit:text)result.push_back(unit);return result;};
   rust::Vec<sidebar::WorkspaceSceneInput> items;items.reserve(state_.workspaces.size());
@@ -5403,8 +4610,7 @@ gfx::Rect WorkspaceShell::peek_toolbar_scene_bounds_for_testing() const{
   return {};
 }
 void WorkspaceShell::SetPeekTitle(std::u16string title) {
-  if(auto* toolbar=views::AsViewClass<ScenePeekToolbar>(peek_toolbar_)){toolbar->SetTitle(std::move(title));return;}
-  static_cast<views::Label*>(peek_title_.get())->SetText(u"Peek · "+title);
+  auto* toolbar=views::AsViewClass<ScenePeekToolbar>(peek_toolbar_);toolbar->SetTitle(std::move(title));
 }
 void WorkspaceShell::ShowPeek(std::u16string title) {
   CloseOverlays();
@@ -6094,14 +5300,14 @@ void WorkspaceShell::RebuildSuggestions() {
       const auto& child=scene.children[i];auto found=retained_rows.find(child.id);RustRowView* adapter=nullptr;
       if(found!=retained_rows.end())adapter=found->second;
       else{
-        RowButton::Spec spec;spec.chip=true;spec.sidebar_row=metal_palette_!=nullptr;spec.height=child.height;spec.title=std::u16string(child.title.begin(),child.title.end());spec.detail=std::u16string(child.detail.begin(),child.detail.end());spec.scene_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_palette_visible();},weak_factory_.GetWeakPtr());
+        RowRecipe::Spec spec;spec.chip=true;spec.sidebar_row=metal_palette_!=nullptr;spec.height=child.height;spec.title=std::u16string(child.title.begin(),child.title.end());spec.detail=std::u16string(child.detail.begin(),child.detail.end());spec.scene_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_palette_visible();},weak_factory_.GetWeakPtr());
         auto callback=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::weak_ptr<SidebarNodeGraphState> owner,std::string key,uint64_t id){const auto scope=owner.lock();if(!shell||!scope||shell->palette_node_graph_!=scope||!shell->address_visible())return;const auto target=scope->graph->palette_target(key,id);if(target.valid)shell->RunSuggestion(target.index);},weak_factory_.GetWeakPtr(),std::weak_ptr<SidebarNodeGraphState>(palette_node_graph_),std::string(child.key),child.id);
         adapter=views::AsViewClass<RustRowView>(suggestion_list_->AddChildView(CreateSceneRow(std::move(callback),std::move(spec),base::BindRepeating(&WorkspaceShell::ScheduleMetalPalette,weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak_factory_.GetWeakPtr()),{palette_node_graph_,6,{},std::string(child.key)})));
       }
       CHECK(adapter);adapter->ProjectPalette(child);suggestion_list_->ReorderChildView(adapter,i);continue;
     }
     const auto& item = suggestions_[i];
-    RowButton::Spec spec;
+    RowRecipe::Spec spec;
     spec.title = item.title;
     spec.detail = item.detail;
     spec.chip = true;
@@ -6145,8 +5351,6 @@ void WorkspaceShell::AnimateWorkspaceSwitch(std::string_view previous) {
   }
   const auto motion=sidebar::workspace_switch_motion(old_index,new_index,sidebar_visible(),workspace_animations_,gfx::Animation::PrefersReducedMotion());
   if(metal_sidebar_){if(!motion.enabled)return;}
-  else
-  if(previous.empty()||previous==state_.workspace_id||!sidebar_visible()||!workspace_animations_||gfx::Animation::PrefersReducedMotion()||old_index<0||new_index<0)return;
   // Prepare the new viewport before starting the clock. Otherwise its first
   // layout/raster can consume much of a short animation and skip its opening.
   sidebar_widget_->LayoutRootViewIfNecessary();
@@ -6319,8 +5523,7 @@ bool WorkspaceShell::preference_chrome_excludes_for_testing(views::View* view) c
   return preferences_chrome_&&preferences_chrome_->excludes(view);
 }
 size_t WorkspaceShell::preference_category_for_testing() const{
-  if(preferences_form_)return preferences_form_->form->preference_current();
-  return preference_category_;
+  return preferences_form_?preferences_form_->form->preference_current():0;
 }
 views::View* WorkspaceShell::preference_navigation_for_testing(size_t category) const{return category<preference_sections_.size()?preference_sections_[category].navigation.get():nullptr;}
 size_t WorkspaceShell::preference_navigation_frame_count_for_testing() const{
@@ -6383,8 +5586,7 @@ size_t WorkspaceShell::preference_choice_count_for_testing(std::string_view key)
 }
 std::u16string WorkspaceShell::preference_choice_label_for_testing(std::string_view key,size_t index) const {
   auto* picker=preference_choice_for_testing(key);if(!picker||index>=PickerCount(picker))return {};
-  if(auto* scene=views::AsViewClass<SceneSelect>(picker))return scene->LabelAt(index);
-  return static_cast<views::Combobox*>(picker)->GetModel()->GetItemAt(index);
+  auto* scene=views::AsViewClass<SceneSelect>(picker);return scene->LabelAt(index);
 }
 bool WorkspaceShell::preference_choice_metal_visible_for_testing(std::string_view key) const {
   auto* scene=views::AsViewClass<SceneSelect>(preference_choice_for_testing(key));return scene&&scene->metal_visible();
@@ -6395,8 +5597,7 @@ gfx::Rect WorkspaceShell::preference_choice_metal_bounds_for_testing(std::string
 }
 void WorkspaceShell::ActivatePreferenceChoiceForTesting(std::string_view key,size_t index){
   auto* picker=preference_choice_for_testing(key);if(!picker||index>=PickerCount(picker)||!SceneIsVisible(picker)||!picker->GetEnabledInViewsSubtree())return;
-  if(auto* scene=views::AsViewClass<SceneSelect>(picker)){scene->SelectForTesting(index);return;}
-  static_cast<views::Combobox*>(picker)->MenuSelectionAt(index);
+  auto* scene=views::AsViewClass<SceneSelect>(picker);scene->SelectForTesting(index);
 }
 void WorkspaceShell::RefreshFormViewports(){
   auto refresh=[&](auto&& self,views::View* view)->void{
@@ -6420,7 +5621,7 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
   auto copy=[&](views::View* parent,std::u16string value,SkColor tone,int delta,gfx::Font::Weight weight,bool multiline){return AddPreferenceCopy(parent,std::move(value),tone,delta,static_cast<int>(weight),multiline);};
   auto make_row=[&](const sidebar::PreferenceSpec& spec){
     CHECK_LT(spec.category,preference_sections_.size());
-    auto* row=preference_sections_[spec.category].view->AddChildView(std::make_unique<PreferenceSurface>(false,true,base::BindRepeating(&WorkspaceShell::SchedulePreferenceChrome,weak),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->PreferenceChromeVisible();},weak)));
+    auto* row=preference_sections_[spec.category].view->AddChildView(std::make_unique<PreferenceSurface>(false,base::BindRepeating(&WorkspaceShell::SchedulePreferenceChrome,weak),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->PreferenceChromeVisible();},weak)));
     auto* labels=row->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(labels,true,gfx::Insets(),5);
     copy(labels,text(spec.title),kInk,0,gfx::Font::Weight::MEDIUM,true);copy(labels,text(spec.detail),kMuted,-1,gfx::Font::Weight::NORMAL,true);SetSidebarPanelLayout(row,false,gfx::Insets(16),20,labels,true);
     preference_sections_[spec.category].rows.push_back({row,base::i18n::ToLower(text(catalogue.categories[spec.category])+u" "+text(spec.title)+u" "+text(spec.detail))});return row;
@@ -6428,23 +5629,23 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
   for(const auto& spec:catalogue.rows){
     auto* row=make_row(spec);const auto title=text(spec.title);const std::string key(spec.key);
     if(spec.kind==Kind::Theme||spec.kind==Kind::Search||spec.kind==Kind::Picker){
-      auto* control=ChoicePicker(row,title,strings(spec.choices),true);
+      auto* control=ChoicePicker(row,title,strings(spec.choices));
       if(spec.kind==Kind::Theme){theme_picker_=control;SetPickerCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetThemeMode(static_cast<ThemeMode>(PickerIndex(shell->theme_picker_).value_or(0)));},weak));}
       else if(spec.kind==Kind::Search){search_engine_picker_=control;SetPickerCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(!shell)return;const size_t index=PickerIndex(shell->search_engine_picker_).value_or(0);if(index<shell->tools_.providers.size())shell->SetDefaultSearchProvider(shell->tools_.providers[index].keyword);},weak));}
       else{preference_pickers_[key]=control;SetPickerCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::string key){if(shell){auto index=PickerIndex(shell->preference_pickers_.at(key));if(index)shell->WritePreference(key,static_cast<int>(*index));}},weak,key));}
       continue;
     }
     if(spec.kind==Kind::Pinned||spec.kind==Kind::Animations||spec.kind==Kind::Toggle){
-      auto* control=PreferenceToggle(row,title,true);
+      auto* control=PreferenceToggle(row,title);
       if(spec.kind==Kind::Pinned){sidebar_check_=control;SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetPinned(ToggleOn(shell->sidebar_check_));},weak));}
       else if(spec.kind==Kind::Animations){animations_check_=control;SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetWorkspaceAnimations(ToggleOn(shell->animations_check_));},weak));}
       else{preference_toggles_[key]=control;SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::string key){if(shell)shell->WritePreference(key,ToggleOn(shell->preference_toggles_.at(key)));},weak,key));}
       continue;
     }
     if(spec.kind==Kind::Text){
-      auto* field=AddEditor(row->children().front(),true);field->GetViewAccessibility().SetName(title);field->SetPlaceholderText(text(spec.placeholder));
+      auto* field=AddEditor(row->children().front());field->GetViewAccessibility().SetName(title);field->SetPlaceholderText(text(spec.placeholder));
       field->SetCallbacks(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::string key){if(shell)shell->PreferenceTextEdited(key);},weak,key),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,EditorControl* field,const ui::KeyEvent& event){return shell&&shell->HandlePreferenceEditorKey(field,event);},weak,base::Unretained(field)));field->view()->SetPreferredSize(gfx::Size(240,36));preference_textfields_[key]=field;
-      auto* save=PreferenceAction(row,true,{},text(spec.button));BindFormCommand(save,sidebar::FormCommand::PreferenceText,key);save->SetTooltipText(text(spec.button_ax));save->GetViewAccessibility().SetName(text(spec.button_ax));preference_save_buttons_[key]=save;continue;
+      auto* save=PreferenceAction(row,{},text(spec.button));BindFormCommand(save,sidebar::FormCommand::PreferenceText,key);save->SetTooltipText(text(spec.button_ax));save->GetViewAccessibility().SetName(text(spec.button_ax));preference_save_buttons_[key]=save;continue;
     }
     switch(spec.kind){
       case Kind::Action:{
@@ -6462,22 +5663,22 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
           case Action::TimeMachine:command=Command::TimeMachine;break;
           default:CHECK(false);
         }
-        auto* button=PreferenceAction(row,true,{},text(spec.button));BindFormCommand(button,command);button->SetTooltipText(text(spec.button_ax));button->GetViewAccessibility().SetName(text(spec.button_ax));break;
+        auto* button=PreferenceAction(row,{},text(spec.button));BindFormCommand(button,command);button->SetTooltipText(text(spec.button_ax));button->GetViewAccessibility().SetName(text(spec.button_ax));break;
       }
       case Kind::Directory:
-        download_directory_button_=PreferenceAction(row,true,{},text(spec.button));BindFormCommand(download_directory_button_,sidebar::FormCommand::PreferenceDirectory);download_directory_button_->SetTooltipText(text(spec.button_ax));download_directory_button_->GetViewAccessibility().SetName(text(spec.button_ax));download_directory_label_=copy(row->children().front().get(),u"",kMuted,-1,gfx::Font::Weight::NORMAL,true);break;
+        download_directory_button_=PreferenceAction(row,{},text(spec.button));BindFormCommand(download_directory_button_,sidebar::FormCommand::PreferenceDirectory);download_directory_button_->SetTooltipText(text(spec.button_ax));download_directory_button_->GetViewAccessibility().SetName(text(spec.button_ax));download_directory_label_=copy(row->children().front().get(),u"",kMuted,-1,gfx::Font::Weight::NORMAL,true);break;
       case Kind::SiteEditor:{
-        const auto& site=catalogue.site;auto* fields=row->children().front().get();site_origin_=AddEditor(fields,true);site_origin_->GetViewAccessibility().SetName(text(site.origin_ax));site_origin_->SetPlaceholderText(text(site.placeholder));site_origin_->SetCallbacks({},base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,EditorControl* field,const ui::KeyEvent& event){return shell&&shell->HandlePreferenceEditorKey(field,event);},weak,base::Unretained(site_origin_.get())));
-        site_type_=ChoicePicker(fields,text(site.type_ax),strings(site.types),true);site_policy_=ChoicePicker(fields,text(site.policy_ax),strings(sidebar::preference_site_policies(0)),true);
+        const auto& site=catalogue.site;auto* fields=row->children().front().get();site_origin_=AddEditor(fields);site_origin_->GetViewAccessibility().SetName(text(site.origin_ax));site_origin_->SetPlaceholderText(text(site.placeholder));site_origin_->SetCallbacks({},base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,EditorControl* field,const ui::KeyEvent& event){return shell&&shell->HandlePreferenceEditorKey(field,event);},weak,base::Unretained(site_origin_.get())));
+        site_type_=ChoicePicker(fields,text(site.type_ax),strings(site.types));site_policy_=ChoicePicker(fields,text(site.policy_ax),strings(sidebar::preference_site_policies(0)));
         SetPickerCallback(site_type_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(!shell)return;std::vector<std::u16string> choices;for(const auto& choice:sidebar::preference_site_policies(PickerIndex(shell->site_type_).value_or(0)))choices.push_back(base::UTF8ToUTF16(std::string(choice)));ReplacePickerLabels(shell->site_policy_,choices);},weak));
-        BindFormCommand(PreferenceAction(row,true,{},text(site.save)),sidebar::FormCommand::PreferenceSite);break;
+        BindFormCommand(PreferenceAction(row,{},text(site.save)),sidebar::FormCommand::PreferenceSite);break;
       }
       case Kind::SiteRules:
         site_rules_card_=row;site_rules_list_=row->children().front()->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(site_rules_list_,true,gfx::Insets(),8);break;
       case Kind::ClearData:{
-        const auto& clear=catalogue.clear;auto* fields=row->children().front().get();clear_data_period_=ChoicePicker(fields,text(clear.period_ax),strings(clear.periods),true);auto* checks=fields->AddChildView(std::make_unique<SceneCheckboxGroup>(8));CHECK_EQ(clear.checks.size(),3u);
+        const auto& clear=catalogue.clear;auto* fields=row->children().front().get();clear_data_period_=ChoicePicker(fields,text(clear.period_ax),strings(clear.periods));auto* checks=fields->AddChildView(std::make_unique<SceneCheckboxGroup>(8));CHECK_EQ(clear.checks.size(),3u);
         clear_history_=AddImportCheck(checks,text(clear.checks[0]),{});clear_cookies_=AddImportCheck(checks,text(clear.checks[1]),{});clear_cache_=AddImportCheck(checks,text(clear.checks[2]),{});SetCheckValue(clear_cache_,true);
-        clear_data_button_=PreferenceAction(row,true,{},text(clear.action));BindFormCommand(clear_data_button_,sidebar::FormCommand::PreferenceClear);break;
+        clear_data_button_=PreferenceAction(row,{},text(clear.action));BindFormCommand(clear_data_button_,sidebar::FormCommand::PreferenceClear);break;
       }
       case Kind::ShortcutHint:row->SetTooltipText(text(spec.tooltip));break;
       default:CHECK(false);
@@ -6488,8 +5689,6 @@ void WorkspaceShell::RefreshGeneralControls() {
   if (!general_widget_) return;
   bool profile_changed=false;
   if(preferences_form_)profile_changed=preferences_form_->form->preference_profile(state_.profile_id);
-  else
-  {profile_changed=preferences_profile_id_!=state_.profile_id;if(profile_changed){preferences_profile_id_=state_.profile_id;preference_text_dirty_.clear();}}
   if(profile_changed){CancelChoiceInteractions(general_widget_->GetContentsView());
     CancelSceneActions(general_widget_->GetContentsView());
   }
@@ -6551,8 +5750,6 @@ void WorkspaceShell::RefreshGeneralControls() {
 void WorkspaceShell::SelectPreferenceCategory(size_t category) {
   if (category >= preference_sections_.size()) return;
   if(preferences_form_){if(!preferences_form_->form->preference_select(category))return;}
-  else
-  preference_category_ = category;
   SyncPickerIndex(preferences_category_picker_,category);
   preferences_search_->SetText(u"");
   FilterPreferences();
@@ -6560,34 +5757,19 @@ void WorkspaceShell::SelectPreferenceCategory(size_t category) {
 void WorkspaceShell::FilterPreferences() {
   if (site_rules_list_) RefreshSitePreferences(false);
   const auto query = base::i18n::ToLower(base::TrimWhitespace(preferences_search_->GetText(), base::TRIM_ALL));
-  if(preferences_form_){
-    SyncPickerIndex(preferences_category_picker_,preferences_form_->form->preference_current());
-    std::vector<sidebar::PreferenceRow> rows;
-    for(size_t i=0;i<preference_sections_.size();++i)for(const auto& row:preference_sections_[i].rows){sidebar::PreferenceRow input{};input.category=i;for(auto unit:row.keywords)input.keywords.push_back(unit);rows.push_back(std::move(input));}
-    rust::Vec<uint16_t> normalized;for(auto unit:query)normalized.push_back(unit);
-    auto visible=preferences_form_->form->preference_filter(std::move(normalized),rust::Slice<const sidebar::PreferenceRow>(rows.data(),rows.size()));
-    size_t cursor=0;for(size_t i=0;i<preference_sections_.size();++i){auto& section=preference_sections_[i];for(auto& row:section.rows)row.view->SetVisible(visible.rows[cursor++]);section.view->SetVisible(visible.sections[i]);SetPreferenceNavigationSelected(section.navigation,visible.navigation[i]);}
-    preferences_empty_->SetVisible(!visible.any);preferences_body_->InvalidateLayout();general_scroll_->ScrollTo(0);return;
-  }
-  bool any = false;
-  for (size_t i = 0; i < preference_sections_.size(); ++i) {
-    auto& section = preference_sections_[i];
-    bool visible = false;
-    for (auto& row : section.rows) {
-      const bool match = query.empty() ? i == preference_category_ : row.keywords.find(query) != std::u16string::npos;
-      row.view->SetVisible(match); visible |= match;
-    }
-    section.view->SetVisible(visible); any |= visible;
-    SetPreferenceNavigationSelected(section.navigation,query.empty() && i == preference_category_);
-  }
-  preferences_empty_->SetVisible(!any);
-  preferences_body_->InvalidateLayout();
-  general_scroll_->ScrollTo(0);
+  if(!preferences_form_)return;
+  SyncPickerIndex(preferences_category_picker_,preferences_form_->form->preference_current());
+  std::vector<sidebar::PreferenceRow> rows;
+  for(size_t i=0;i<preference_sections_.size();++i)for(const auto& row:preference_sections_[i].rows){sidebar::PreferenceRow input{};input.category=i;for(auto unit:row.keywords)input.keywords.push_back(unit);rows.push_back(std::move(input));}
+  rust::Vec<uint16_t> normalized;for(auto unit:query)normalized.push_back(unit);
+  auto visible=preferences_form_->form->preference_filter(std::move(normalized),rust::Slice<const sidebar::PreferenceRow>(rows.data(),rows.size()));
+  size_t cursor=0;for(size_t i=0;i<preference_sections_.size();++i){auto& section=preference_sections_[i];for(auto& row:section.rows)row.view->SetVisible(visible.rows[cursor++]);section.view->SetVisible(visible.sections[i]);SetPreferenceNavigationSelected(section.navigation,visible.navigation[i]);}
+  preferences_empty_->SetVisible(!visible.any);preferences_body_->InvalidateLayout();general_scroll_->ScrollTo(0);
 }
 void WorkspaceShell::SetBrowsingDataBusy(bool busy) {
   browsing_data_busy_ = busy;
   if (history_clear_) {
-    const auto presentation=ToolsClearControls(bool(tools_form_),busy);
+    const auto presentation=ToolsClearControls(busy);
     history_clear_->SetEnabled(presentation.enabled);
     SetActionText(history_clear_,presentation.label);
   }
@@ -6641,8 +5823,6 @@ void WorkspaceShell::SaveTextPreference(std::string key) {
   const bool enabled=it->second->view()->GetEnabledInViewsSubtree();
   const bool composing=it->second->IsIMEComposing();
   if(preferences_form_){if(!preferences_form_->form->preference_can_save(enabled,composing))return;}
-  else
-  if(!enabled||composing)return;
   const bool ok = callbacks_.write_text_preference && callbacks_.write_text_preference.Run(key, base::UTF16ToUTF8(it->second->GetText()));
   PreferenceTextSaved(key,ok);
   RefreshGeneralControls();
@@ -6688,20 +5868,16 @@ void WorkspaceShell::RefreshSitePreferences(bool reload) {
       if(found!=retained.end())row=found->second;
       else{row=site_rules_list_->AddChildView(std::make_unique<SiteRuleSceneRow>(site_rule_node_graph_->graph->acquire({13,0,0,std::string(child.key)})));auto* label=AddPreferenceCopy(row,std::u16string(child.detail.begin(),child.detail.end()),kSubtle,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);SetSidebarPanelLayout(row,false,gfx::Insets::VH(4,0),12,label,true);
         auto callback=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::weak_ptr<SidebarNodeGraphState> owner,base::WeakPtr<SiteRuleSceneRow> row,std::string key,uint64_t id,std::string profile){const auto scope=owner.lock();if(!shell||!scope||!row||shell->site_rule_node_graph_!=scope||shell->state_.profile_id!=profile||!shell->general_widget_||!shell->general_widget_->IsVisible()||row->parent()!=shell->site_rules_list_||row->NodeId()!=id||!row->BelongsTo(*scope))return;const auto target=scope->graph->site_rule_target(key,id);if(target.valid&&target.index<shell->site_preference_rules_.size())shell->PostRemoveSiteRule(shell->site_preference_rules_[target.index],std::move(profile));},weak_factory_.GetWeakPtr(),std::weak_ptr<SidebarNodeGraphState>(site_rule_node_graph_),row->GetWeakPtr(),std::string(child.key),child.id,state_.profile_id);
-        auto* remove=PreferenceAction(row,true,std::move(callback),u"Usuń");row->SetParts(label,remove);
+        auto* remove=PreferenceAction(row,std::move(callback),u"Usuń");row->SetParts(label,remove);
       }row->Project(child);site_rules_list_->ReorderChildView(row,i);
     }
   }else
-  {site_rules_list_->RemoveAllChildViews();for(const auto& projection:visible){const auto& rule=site_preference_rules_[projection.source];auto* row=site_rules_list_->AddChildView(std::make_unique<views::View>());auto* label=AddPreferenceCopy(row,projection.detail,kSubtle,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);SetSidebarPanelLayout(row,false,gfx::Insets::VH(4,0),12,label,true);auto* remove=PreferenceAction(row,false,base::BindRepeating(&WorkspaceShell::PostRemoveSiteRule,weak_factory_.GetWeakPtr(),rule,state_.profile_id),u"Usuń");remove->SetEnabled(rule.editable);remove->GetViewAccessibility().SetName(u"Usuń wyjątek: "+projection.detail);}}
+  {site_rules_list_->RemoveAllChildViews();for(const auto& projection:visible){const auto& rule=site_preference_rules_[projection.source];auto* row=site_rules_list_->AddChildView(std::make_unique<views::View>());auto* label=AddPreferenceCopy(row,projection.detail,kSubtle,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);SetSidebarPanelLayout(row,false,gfx::Insets::VH(4,0),12,label,true);auto* remove=PreferenceAction(row,base::BindRepeating(&WorkspaceShell::PostRemoveSiteRule,weak_factory_.GetWeakPtr(),rule,state_.profile_id),u"Usuń");remove->SetEnabled(rule.editable);remove->GetViewAccessibility().SetName(u"Usuń wyjątek: "+projection.detail);}}
   if(!matching)AddPreferenceCopy(site_rules_list_,
       preferences_form_?base::UTF8ToUTF16(std::string(sidebar::site_rules_empty(!site_preference_rules_.empty()))):
       std::u16string(site_preference_rules_.empty()?u"Nie masz jeszcze zapisanych wyjątków.":u"Brak wyjątków pasujących do wyszukiwania."),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
   else if(matching>visible.size()){
-    if(workspace_form_){BindFormCommand(PreferenceAction(site_rules_list_,true,{},u"Pokaż kolejne wyjątki…",true),sidebar::FormCommand::PreferenceMore);}
-    else
-    {
-    PreferenceAction(site_rules_list_,false,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell){if(!shell)return;shell->MorePreferenceRules();shell->RefreshSitePreferences(false);},shell));},weak_factory_.GetWeakPtr()),u"Pokaż kolejne wyjątki…",true);
-    }
+    if(workspace_form_){BindFormCommand(PreferenceAction(site_rules_list_,{},u"Pokaż kolejne wyjątki…",true),sidebar::FormCommand::PreferenceMore);}
   }
   for(auto& row:preference_sections_[3].rows)if(row.view==site_rules_card_)row.keywords=keywords;site_rules_list_->InvalidateLayout();
 }
@@ -6996,42 +6172,36 @@ void WorkspaceShell::SaveTools() {
     return base::JSONWriter::Write(merged, &output) && base::ImportantFileWriter::WriteFileAtomically(path, output);
   }, settings_path_.DirName().AppendASCII("ZitterTools.json"), std::move(json), keys_dirty_, engines_dirty_), base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
     if (!shell) return;
-    --shell->pending_writes_; if (!ok && shell->tools_status_) SetPanelText(shell->tools_status_,shell->ToolsStatusText(2,u"Nie udało się zapisać ustawień na dysku."));
+    --shell->pending_writes_; if (!ok && shell->tools_status_) SetPanelText(shell->tools_status_,shell->ToolsStatusText(2));
   }, weak_factory_.GetWeakPtr()));
 }
 int WorkspaceShell::ToolsPage() const {
-  if(tools_form_)return static_cast<int>(tools_form_->form->tools_page());
-  return tools_page_;
+  return tools_form_?static_cast<int>(tools_form_->form->tools_page()):0;
 }
-std::u16string WorkspaceShell::ToolsStatusText(int status, std::u16string native) const {
-  if (tools_form_) return base::UTF8ToUTF16(std::string(sidebar::tools_status(sidebar::ToolsStatus{static_cast<uint8_t>(status)})));
-  return native;
+std::u16string WorkspaceShell::ToolsStatusText(int status) const {
+  return base::UTF8ToUTF16(std::string(sidebar::tools_status(sidebar::ToolsStatus{static_cast<uint8_t>(status)})));
 }
 bool WorkspaceShell::ToolsRecording() const {
-  if(tools_form_)return tools_form_->form->tools_recording();
-  return recording_shortcut_;
+  return tools_form_&&tools_form_->form->tools_recording();
 }
 bool WorkspaceShell::history_loaded() const {
-  if(tools_form_)return tools_form_->form->tools_history_loaded();
-  return history_loaded_;
+  return tools_form_&&tools_form_->form->tools_history_loaded();
 }
 std::u16string WorkspaceShell::ToolsHistoryQuery() const {
-  if(tools_form_){const auto units=tools_form_->form->tools_history_query();return std::u16string(units.begin(),units.end());}
-  return history_query_;
+  if(!tools_form_)return {};
+  const auto units=tools_form_->form->tools_history_query();return std::u16string(units.begin(),units.end());
 }
 std::u16string WorkspaceShell::ToolsTimelineQuery() const {
-  if(tools_form_){const auto units=tools_form_->form->tools_timeline_query();return std::u16string(units.begin(),units.end());}
-  return timeline_query_;
+  if(!tools_form_)return {};
+  const auto units=tools_form_->form->tools_timeline_query();return std::u16string(units.begin(),units.end());
 }
 void WorkspaceShell::ResetToolsForm() {
-  if(tools_form_){tools_form_->form->tools_reset();return;}
-  history_query_.clear();timeline_query_.clear();history_loaded_=false;recording_shortcut_=false;
+  if(tools_form_)tools_form_->form->tools_reset();
 }
 void WorkspaceShell::OpenTools(int page) {
   if (!widget_ || !tools_widget_) return;
   CloseOverlays(true);
-  if(tools_form_)tools_form_->form->tools_select(std::clamp(page,0,3));else
-  tools_page_=std::clamp(page,0,3);
+  if(tools_form_)tools_form_->form->tools_select(std::clamp(page,0,3));
   RefreshTools(); RefreshKeyRegistrations(); PositionPanels(); ApplyTheme();
   tools_widget_->LayoutRootViewIfNecessary();
   tools_widget_->Show(); tools_widget_->Activate(); tools_widget_->ClearNativeFocus();
@@ -7045,21 +6215,18 @@ bool WorkspaceShell::history_visible() const {
 void WorkspaceShell::RefreshHistory(bool more) {
   history_timer_.Stop();
   if (!history_visible() || !history_search_ || !callbacks_.query_history) return;
-  size_t limit;
-  if(tools_form_)limit=tools_form_->form->tools_history_request(more);else
-  {history_limit_=more?history_limit_+200:200;history_loaded_=false;limit=history_limit_;}
+  const size_t limit=tools_form_->form->tools_history_request(more);
   history_more_->SetEnabled(false);
-  SetPanelText(tools_status_,ToolsStatusText(0,u"Odczytywanie historii…"));
+  SetPanelText(tools_status_,ToolsStatusText(0));
   callbacks_.query_history.Run(ToolsHistoryQuery(),limit);
 }
 void WorkspaceShell::SetHistoryResults(std::u16string query, std::string profile_id, size_t limit,
     std::vector<BrowsingHistoryEntry> entries, bool more, bool error) {
   if (!history_visible() || !history_search_ || profile_id != state_.profile_id) return;
-  if(tools_form_){if(!tools_form_->form->tools_history_accept(rust::Slice<const uint16_t>(reinterpret_cast<const uint16_t*>(query.data()),query.size()),limit))return;}else
-  {if(history_query_!=query||limit!=history_limit_)return;history_loaded_=true;}
+  if(!tools_form_||!tools_form_->form->tools_history_accept(rust::Slice<const uint16_t>(reinterpret_cast<const uint16_t*>(query.data()),query.size()),limit))return;
   history_entries_ = std::move(entries);
   sidebar::HistoryScene scene{};std::map<uint64_t,RustRowView*> retained_rows;
-  if(tools_form_){
+  {
     if(!history_node_graph_)history_node_graph_=std::make_shared<SidebarNodeGraphState>();
     auto units=[](const std::u16string& text){rust::Vec<uint16_t> result;for(char16_t unit:text)result.push_back(unit);return result;};
     rust::Vec<sidebar::HistorySceneInput> items;items.reserve(history_entries_.size());std::map<std::pair<std::string,int64_t>,size_t> occurrences;
@@ -7075,18 +6242,15 @@ void WorkspaceShell::SetHistoryResults(std::u16string query, std::string profile
     std::vector<views::View*> removed;
     for(const auto& child:history_list_->children()){auto* row=views::AsViewClass<RustRowView>(child.get());const auto id=row?row->LogicalNodeId():0;if(id&&wanted.contains(id)&&row->BelongsTo(*history_node_graph_))retained_rows.emplace(id,row);else removed.push_back(child.get());}
     for(auto* child:removed)history_list_->RemoveChildViewT(child);
-  }else
-  history_list_->RemoveAllChildViews();
+  }
   std::u16string empty_text,status_text;bool more_visible,more_enabled;
-  if(tools_form_){const auto view=tools_form_->form->tools_history_view(history_entries_.size(),more,error);empty_text=base::UTF8ToUTF16(std::string(view.empty));status_text=base::UTF8ToUTF16(std::string(view.status));more_visible=view.more_visible;more_enabled=view.more_enabled;}else
-  {empty_text=error?u"Nie udało się odczytać historii.":query.empty()?u"Brak historii przeglądania w tym profilu.":u"Brak wyników dla tego wyszukiwania.";status_text=error?u"Spróbuj ponownie otworzyć historię.":base::UTF8ToUTF16("Wyświetlono wpisów: "+std::to_string(history_entries_.size()));more_visible=more&&!error;more_enabled=!error;}
+  {const auto view=tools_form_->form->tools_history_view(history_entries_.size(),more,error);empty_text=base::UTF8ToUTF16(std::string(view.empty));status_text=base::UTF8ToUTF16(std::string(view.status));more_visible=view.more_visible;more_enabled=view.more_enabled;}
   if(history_entries_.empty())AddToolsCopy(history_list_,empty_text,kMuted,0,static_cast<int>(gfx::Font::Weight::NORMAL),true);
   [[maybe_unused]] size_t history_node_index=0;
   for (const auto& entry : history_entries_) {
-    if(tools_form_){const auto& child=scene.children[history_node_index];const auto found=retained_rows.find(child.id);if(found!=retained_rows.end()){auto* adapter=found->second;adapter->ProjectHistory(child);history_list_->ReorderChildView(adapter,history_node_index++);continue;}}
-    RowButton::Spec row;
-    if(tools_form_){const auto& child=scene.children[history_node_index];row.title=std::u16string(child.title.begin(),child.title.end());row.detail=std::u16string(child.detail.begin(),child.detail.end());row.height=child.height;}else
-    {row.title=entry.title.empty()?base::UTF8ToUTF16(entry.url.spec()):entry.title;row.detail=base::TimeFormatShortDateAndTime(entry.visited)+u" · "+base::UTF8ToUTF16(entry.url.spec());row.height=60;}
+    {const auto& child=scene.children[history_node_index];const auto found=retained_rows.find(child.id);if(found!=retained_rows.end()){auto* adapter=found->second;adapter->ProjectHistory(child);history_list_->ReorderChildView(adapter,history_node_index++);continue;}}
+    RowRecipe::Spec row;
+    {const auto& child=scene.children[history_node_index];row.title=std::u16string(child.title.begin(),child.title.end());row.detail=std::u16string(child.detail.begin(),child.detail.end());row.height=child.height;}
     // Retained keys keep the same profile/URL callback; avoid rebinding and
     // cancelling input when an identical result batch is projected.
     auto callback=[&]{return base::BindRepeating(
@@ -7098,13 +6262,12 @@ void WorkspaceShell::SetHistoryResults(std::u16string query, std::string profile
               }, shell, profile_id, url));
         }, weak_factory_.GetWeakPtr(), profile_id, entry.url);};
     views::View* button;
-    if(tools_form_){
+    {
       row.sidebar_row=true;row.history=true;
       row.scene_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->ToolsChromeVisible();},weak_factory_.GetWeakPtr());
       const auto& child=scene.children[history_node_index];auto* adapter=views::AsViewClass<RustRowView>(history_list_->AddChildView(CreateSceneRow(callback(),std::move(row),base::BindRepeating(&WorkspaceShell::ScheduleToolsChrome,weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak_factory_.GetWeakPtr()),{history_node_graph_,5,{},std::string(child.key)})));
       CHECK(adapter);adapter->ProjectHistory(child);history_list_->ReorderChildView(adapter,history_node_index);button=adapter;
-    }else
-    button=history_list_->AddChildView(std::make_unique<RowButton>(callback(),std::move(row)));
+    }
     ++history_node_index;
     if(!tools_form_)
     {button->SetTooltipText(base::UTF8ToUTF16(entry.url.spec()));button->GetViewAccessibility().SetDescription(base::TimeFormatShortDateAndTime(entry.visited)+u" · "+base::UTF8ToUTF16(entry.url.spec()));}
@@ -7124,8 +6287,7 @@ size_t WorkspaceShell::tools_choice_count_for_testing(std::string_view key) cons
 std::optional<size_t> WorkspaceShell::tools_choice_selection_for_testing(std::string_view key) const{auto* picker=tools_choice_for_testing(key);return picker?PickerIndex(picker):std::nullopt;}
 std::u16string WorkspaceShell::tools_choice_label_for_testing(std::string_view key,size_t index) const{
   auto* picker=tools_choice_for_testing(key);if(!picker||index>=PickerCount(picker))return {};
-  if(auto* scene=views::AsViewClass<SceneSelect>(picker))return scene->LabelAt(index);
-  return static_cast<views::Combobox*>(picker)->GetModel()->GetItemAt(index);
+  auto* scene=views::AsViewClass<SceneSelect>(picker);return scene->LabelAt(index);
 }
 bool WorkspaceShell::tools_choice_metal_visible_for_testing(std::string_view key) const{
   auto* scene=views::AsViewClass<SceneSelect>(tools_choice_for_testing(key));return scene&&scene->metal_visible();
@@ -7136,8 +6298,7 @@ gfx::Rect WorkspaceShell::tools_choice_metal_bounds_for_testing(std::string_view
 }
 void WorkspaceShell::ActivateToolsChoiceForTesting(std::string_view key,size_t index){
   auto* picker=tools_choice_for_testing(key);if(!picker||index>=PickerCount(picker)||!SceneIsVisible(picker)||!picker->GetEnabledInViewsSubtree())return;
-  if(auto* scene=views::AsViewClass<SceneSelect>(picker)){scene->SelectForTesting(index);return;}
-  static_cast<views::Combobox*>(picker)->MenuSelectionAt(index);
+  auto* scene=views::AsViewClass<SceneSelect>(picker);scene->SelectForTesting(index);
 }
 bool WorkspaceShell::tools_action_metal_visible_for_testing(views::View* button) const{return preference_action_metal_visible_for_testing(button);}
 gfx::Rect WorkspaceShell::tools_action_metal_bounds_for_testing(views::View* button) const{
@@ -7164,35 +6325,19 @@ void WorkspaceShell::RefreshToolsViewport(){ScheduleToolsChrome();if(tools_body_
 void WorkspaceShell::RefreshTimelineItems() {
   if (ToolsPage() != 0 || !tools_picker_) return;
   const auto state = callbacks_.time_machine ? callbacks_.time_machine.Run() : TimeMachineState();
-  if(tools_form_){
-    // The Rust projection owns filtering, display copy and the current key-to-ID
-    // map. Keep the parallel ID vectors only for the untouched Views baseline.
-    snapshot_ids_.clear();closed_ids_.clear();
-    auto fill=[&](const auto& items,views::View* picker,bool closed){
-      auto* scene=views::AsViewClass<SceneSelect>(picker);if(!scene)return;
-      auto units=[](const std::u16string& text){rust::Vec<uint16_t> value;for(char16_t unit:text)value.push_back(unit);return value;};
-      rust::Vec<sidebar::ToolsTimelineItem> metadata;
-      for(const auto& item:items)metadata.push_back({item.id,units(item.title),units(item.detail),units(base::i18n::ToLower(item.title+u" "+item.detail))});
-      auto projection=tools_form_->form->tools_timeline_project(closed,std::move(metadata));
-      std::vector<std::pair<std::string,std::u16string>> choices;choices.reserve(projection.choices.size());
-      for(const auto& choice:projection.choices)choices.emplace_back(std::string(choice.key),std::u16string(choice.label.begin(),choice.label.end()));
-      scene->SetOptions(choices);scene->SetSelectedIndex(0);scene->SetEnabled(projection.enabled);
-    };
-    fill(state.snapshots,tools_picker_,false);fill(state.closed,closed_picker_,true);return;
-  }
-  const auto query = ToolsTimelineQuery();
-  auto fill = [&](const auto& items, views::View* picker, std::vector<std::string>& ids) {
-    ids.clear(); std::vector<ui::SimpleComboboxModel::Item> labels;
-    for (const auto& item : items) if (query.empty() || base::i18n::ToLower(item.title + u" " + item.detail).find(query) != std::u16string::npos) {
-      ids.push_back(item.id); labels.emplace_back(item.title + u" — " + item.detail);
-    }
-    if (labels.empty()) labels.emplace_back(u"Brak zapisanych pozycji");
-    auto* native=static_cast<views::Combobox*>(picker);
-    // Chromium keeps the cached AX value if a model swap retains index zero.
-    native->SetSelectedIndex(std::nullopt);
-    native->SetOwnedModel(std::make_unique<ui::SimpleComboboxModel>(labels)); native->SetSelectedIndex(0); native->SetEnabled(!ids.empty());
+  if(!tools_form_)return;
+  // The Rust projection owns filtering, display copy and the key-to-ID map.
+  auto fill=[&](const auto& items,views::View* picker,bool closed){
+    auto* scene=views::AsViewClass<SceneSelect>(picker);if(!scene)return;
+    auto units=[](const std::u16string& text){rust::Vec<uint16_t> value;for(char16_t unit:text)value.push_back(unit);return value;};
+    rust::Vec<sidebar::ToolsTimelineItem> metadata;
+    for(const auto& item:items)metadata.push_back({item.id,units(item.title),units(item.detail),units(base::i18n::ToLower(item.title+u" "+item.detail))});
+    auto projection=tools_form_->form->tools_timeline_project(closed,std::move(metadata));
+    std::vector<std::pair<std::string,std::u16string>> choices;choices.reserve(projection.choices.size());
+    for(const auto& choice:projection.choices)choices.emplace_back(std::string(choice.key),std::u16string(choice.label.begin(),choice.label.end()));
+    scene->SetOptions(choices);scene->SetSelectedIndex(0);scene->SetEnabled(projection.enabled);
   };
-  fill(state.snapshots, tools_picker_, snapshot_ids_); fill(state.closed, closed_picker_, closed_ids_);
+  fill(state.snapshots,tools_picker_,false);fill(state.closed,closed_picker_,true);
 }
 void WorkspaceShell::BuildRustToolsForm(){
   using Kind=sidebar::ToolsNodeKind;using Role=sidebar::ToolsNodeRole;
@@ -7212,26 +6357,26 @@ void WorkspaceShell::BuildRustToolsForm(){
     switch(node.kind){
       case Kind::BeginRow:{auto* row=parent->AddChildView(std::make_unique<views::View>());hosts.push_back({row,true,nullptr,node.spacing});continue;}
       case Kind::EndRow:{CHECK_GT(hosts.size(),1u);auto host=hosts.back();CHECK(host.row);SetSidebarPanelLayout(host.view,false,gfx::Insets(),host.spacing,host.flex);hosts.pop_back();continue;}
-      case Kind::BeginActions:hosts.push_back({ActionGroup(parent,true,true,node.spacing),false,nullptr,node.spacing});continue;
+      case Kind::BeginActions:hosts.push_back({ActionGroup(parent,true,node.spacing),false,nullptr,node.spacing});continue;
       case Kind::EndActions:CHECK_GT(hosts.size(),1u);CHECK(!hosts.back().row);hosts.pop_back();continue;
       case Kind::Hint:control=AddToolsCopy(parent,label,kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);break;
       case Kind::Heading:control=AddToolsCopy(parent,label,kSubtle,0,static_cast<int>(gfx::Font::Weight::SEMIBOLD),false);break;
       case Kind::Editor:{
-        auto* field=AddEditor(parent,true);field->GetViewAccessibility().SetName(label);field->SetPlaceholderText(label);field->view()->SetPreferredSize(gfx::Size(200,36));field->SetPresentation(gfx::FontList().GetFontSize(),8,true,Tone(root_,kChip));field->SetCallbacks(base::BindRepeating(&WorkspaceShell::ToolsEditorEdited,weak,base::Unretained(field)),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,EditorControl* editor,const ui::KeyEvent& event){return shell&&shell->HandleToolsEditorKey(editor,event);},weak,base::Unretained(field)));control=field->view();
+        auto* field=AddEditor(parent);field->GetViewAccessibility().SetName(label);field->SetPlaceholderText(label);field->view()->SetPreferredSize(gfx::Size(200,36));field->SetPresentation(gfx::FontList().GetFontSize(),8,true,Tone(root_,kChip));field->SetCallbacks(base::BindRepeating(&WorkspaceShell::ToolsEditorEdited,weak,base::Unretained(field)),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,EditorControl* editor,const ui::KeyEvent& event){return shell&&shell->HandleToolsEditorKey(editor,event);},weak,base::Unretained(field)));control=field->view();
         switch(node.role){case Role::SnapshotName:snapshot_name_=field;break;case Role::TimelineFilter:timeline_filter_=field;break;case Role::ShortcutChord:shortcut_chord_=field;break;case Role::ProviderName:provider_name_=field;break;case Role::ProviderKeyword:provider_keyword_=field;break;case Role::ProviderUrl:provider_url_=field;break;case Role::HistoryQuery:history_search_=field;break;default:CHECK(false);}
         break;
       }
       case Kind::Choice:{
         if(node.role==Role::ShortcutChoice){rust::Vec<sidebar::ToolsShortcutItem> metadata;for(const auto& item:tools_.shortcuts)metadata.push_back({item.id,units(item.title),units(base::UTF8ToUTF16(FormatShortcut(item.accelerator)))});const auto projection=tools_form_->form->tools_shortcut_choices(std::move(metadata));control=form_picker(parent,label,projection);}
         else if(node.role==Role::ProviderChoice){rust::Vec<sidebar::ToolsProviderItem> metadata;for(const auto& item:tools_.providers)metadata.push_back({item.keyword,units(base::UTF8ToUTF16(item.name)),units(base::UTF8ToUTF16(item.keyword)),units(base::UTF8ToUTF16(item.url)),item.keyword==tools_.default_keyword});const auto projection=tools_form_->form->tools_provider_choices(std::move(metadata));control=form_picker(parent,label,projection);}
-        else{std::vector<std::u16string> choices;for(const auto& value:node.choices)choices.push_back(base::UTF8ToUTF16(std::string(value)));control=ChoicePicker(parent,label,std::move(choices),true);SetPickerIndex(control,0);}
+        else{std::vector<std::u16string> choices;for(const auto& value:node.choices)choices.push_back(base::UTF8ToUTF16(std::string(value)));control=ChoicePicker(parent,label,std::move(choices));SetPickerIndex(control,0);}
         switch(node.role){case Role::SnapshotChoice:tools_picker_=control;timeline=true;break;case Role::ClosedChoice:closed_picker_=control;break;case Role::ShortcutChoice:case Role::ProviderChoice:tools_picker_=control;SetPickerCallback(control,base::BindRepeating(&WorkspaceShell::RefreshToolsChoiceFields,weak));break;case Role::HistoryPeriod:history_period_=control;break;default:CHECK(false);}
         break;
       }
       case Kind::Action:{
         views::View* button;
-        if(node.role==Role::HistoryClear){button=PreferenceAction(parent,true,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell&&shell->history_period_&&shell->callbacks_.clear_browsing_data)shell->callbacks_.clear_browsing_data.Run({static_cast<int>(PickerIndex(shell->history_period_).value_or(0)),true,false,false});},weak),label);history_clear_=button;}
-        else if(node.role==Role::HistoryMore){button=PreferenceAction(parent,true,{},label,true);BindFormCommand(button,sidebar::FormCommand::HistoryMore);history_more_=button;}
+        if(node.role==Role::HistoryClear){button=PreferenceAction(parent,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell&&shell->history_period_&&shell->callbacks_.clear_browsing_data)shell->callbacks_.clear_browsing_data.Run({static_cast<int>(PickerIndex(shell->history_period_).value_or(0)),true,false,false});},weak),label);history_clear_=button;}
+        else if(node.role==Role::HistoryMore){button=PreferenceAction(parent,{},label,true);BindFormCommand(button,sidebar::FormCommand::HistoryMore);history_more_=button;}
         else button=AddAction(parent,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,int action){if(shell)shell->PostToolsAction(action);},weak,node.action),label);
         control=button;break;
       }
@@ -7271,7 +6416,7 @@ void WorkspaceShell::RefreshTools() {
   auto weak = weak_factory_.GetWeakPtr();
   auto hint = [&](std::u16string text) {return AddToolsCopy(tools_body_,std::move(text),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);};
   auto input = [&](std::u16string name) {
-    auto* field = AddEditor(tools_body_,bool(workspace_form_));
+    auto* field = AddEditor(tools_body_);
     field->GetViewAccessibility().SetName(name);field->SetPlaceholderText(name);
     field->view()->SetPreferredSize(gfx::Size(200,36));
     field->SetPresentation(gfx::FontList().GetFontSize(),8,true,Tone(root_,kChip));
@@ -7285,7 +6430,7 @@ void WorkspaceShell::RefreshTools() {
     if(workspace_form_){
       // Batch adjacent actions while preserving the native body sequence/gaps.
       if(!tools_body_->children().empty())if(auto* group=views::AsViewClass<SceneActionGroup>(tools_body_->children().back()))return group;
-      return ActionGroup(tools_body_,true,true,10);
+      return ActionGroup(tools_body_,true,10);
     }
     return tools_body_;
   };
@@ -7299,11 +6444,7 @@ void WorkspaceShell::RefreshTools() {
   auto picker = [&](std::u16string name, std::vector<std::u16string> values, views::View* parent=nullptr)->views::View* {
     if(!parent)parent=tools_body_;
     if(values.empty())values.emplace_back(u"Brak pozycji");
-    if(workspace_form_){auto* control=ChoicePicker(parent,std::move(name),std::move(values),true);SetPickerIndex(control,0);return control;}
-    std::vector<ui::SimpleComboboxModel::Item> items; for (const auto& value : values) items.emplace_back(value);
-    if (items.empty()) items.emplace_back(u"Brak pozycji");
-    auto* control = parent->AddChildView(std::make_unique<views::Combobox>(std::make_unique<ui::SimpleComboboxModel>(items)));
-    control->SetTooltipTextAndAccessibleName(name); control->SetSelectedIndex(0); return control;
+    auto* control=ChoicePicker(parent,std::move(name),std::move(values));SetPickerIndex(control,0);return control;
   };
   auto units=[](const std::u16string& text){rust::Vec<uint16_t> value;value.reserve(text.size());for(char16_t unit:text)value.push_back(unit);return value;};
   auto form_picker=[&](std::u16string name,const sidebar::ToolsFormChoices& projection)->views::View*{
@@ -7383,16 +6524,15 @@ void WorkspaceShell::RefreshTools() {
     history_search_ = input(text(fields,0,u"Szukaj w historii"));
     auto* clear_row = tools_body_->AddChildView(std::make_unique<views::View>());
     history_period_=picker(text(pickers,0,u"Zakres czyszczenia historii"),workspace_form_?std::move(form_choices):std::vector<std::u16string>{u"Ostatnia godzina",u"Ostatnie 24 godziny",u"Ostatnie 7 dni",u"Cały okres"},clear_row);
-    const auto clear_presentation=ToolsClearControls(bool(tools_form_),browsing_data_busy_);
-    history_clear_ = PreferenceAction(clear_row,bool(workspace_form_),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+    const auto clear_presentation=ToolsClearControls(browsing_data_busy_);
+    history_clear_ = PreferenceAction(clear_row,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
       if (shell && shell->history_period_ && shell->callbacks_.clear_browsing_data)
         shell->callbacks_.clear_browsing_data.Run({static_cast<int>(PickerIndex(shell->history_period_).value_or(0)), true, false, false});
     }, weak), clear_presentation.label);
     SetSidebarPanelLayout(clear_row,false,gfx::Insets(),8,history_period_);
     history_list_ = tools_body_->AddChildView(std::make_unique<views::View>());
     if(tools_form_)history_list_->SetLayoutManager(CreateSidebarColumnLayout(4));
-    else history_list_->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 4));
-    history_more_ = PreferenceAction(tools_body_,bool(workspace_form_),base::BindRepeating(&WorkspaceShell::RefreshHistory, weak, true), text(actions,1,u"Pokaż więcej"),true);
+    history_more_ = PreferenceAction(tools_body_,base::BindRepeating(&WorkspaceShell::RefreshHistory, weak, true), text(actions,1,u"Pokaż więcej"),true);
     SetHistoryMoreVisible(false);
     SetPanelText(tools_status_,workspace_form_?form_status:u"Odczytywanie historii…");
     history_clear_->SetEnabled(clear_presentation.enabled);
@@ -7422,17 +6562,14 @@ void WorkspaceShell::PostToolsAction(int action) {
 }
 void WorkspaceShell::SetShortcutRecording(bool recording) {
   if(recording&&shortcut_chord_)shortcut_chord_->ClearCompositionText();
-  if(tools_form_)tools_form_->form->tools_record(recording);else
-  recording_shortcut_=recording;
+  if(tools_form_)tools_form_->form->tools_record(recording);
   if(shortcut_chord_)shortcut_chord_->SetReadOnly(recording);
 }
 void WorkspaceShell::ToolsAction(int action,std::optional<std::string> choice_key) {
-  if (!tools_widget_ || !tools_widget_->IsVisible()) return;
-  const size_t index = tools_picker_ ? PickerIndex(tools_picker_).value_or(0) : 0;
+  if (!tools_widget_ || !tools_widget_->IsVisible() || !tools_form_) return;
   std::u16string record_status;
-  bool rust_timeline=false;bool valid_form_choice=false;std::string snapshot_target,closed_target,form_target;
-  if(tools_form_){
-    rust_timeline=true;
+  bool valid_form_choice=false;std::string snapshot_target,closed_target,form_target;
+  {
     if(ToolsPage()==0){
       auto target=[&](views::View* picker,bool closed){auto* scene=views::AsViewClass<SceneSelect>(picker);return scene?std::string(tools_form_->form->tools_timeline_target(closed,choice_key?*choice_key:scene->SelectedKey())):std::string();};
       snapshot_target=target(tools_picker_,false);closed_target=target(closed_picker_,true);
@@ -7450,56 +6587,39 @@ void WorkspaceShell::ToolsAction(int action,std::optional<std::string> choice_ke
     const auto plan=tools_form_->form->tools_dispatch(action,context);if(!plan.admitted)return;
     if(plan.sync_recording){SetShortcutRecording(plan.recording);RefreshKeyRegistrations();}
     action=plan.action;record_status=base::UTF8ToUTF16(std::string(plan.record_status));
-  }else
-  {
-    if(action==1&&snapshot_name_&&snapshot_name_->IsIMEComposing())return;
-    if(action>=20&&action<=22)for(auto* field:{provider_name_.get(),provider_keyword_.get(),provider_url_.get()})if(field&&field->IsIMEComposing())return;
-    if((action==11||action==12)&&shortcut_chord_&&shortcut_chord_->IsIMEComposing())return;
-    if(action!=10&&ToolsRecording()){SetShortcutRecording(false);RefreshKeyRegistrations();}
   }
   bool ok = false;
   if (action == 1 && snapshot_name_) {
     ok = callbacks_.save_snapshot && callbacks_.save_snapshot.Run(base::UTF16ToUTF8(snapshot_name_->GetText()), false);
-  } else if ((action == 2 || action == 3) && (rust_timeline?!snapshot_target.empty():index<snapshot_ids_.size())) {
-    const auto& id=rust_timeline?snapshot_target:snapshot_ids_[index];
+  } else if ((action == 2 || action == 3) && !snapshot_target.empty()) {
+    const auto& id=snapshot_target;
     ok = action == 2 ? callbacks_.restore_snapshot.Run(id) : callbacks_.delete_snapshot.Run(id);
   } else if (action == 4 && closed_picker_) {
-    if(rust_timeline){if(!closed_target.empty())ok=callbacks_.reopen_closed.Run(closed_target);}
-    else{const size_t closed=PickerIndex(closed_picker_).value_or(0);if(closed<closed_ids_.size())ok=callbacks_.reopen_closed.Run(closed_ids_[closed]);}
+    if(!closed_target.empty())ok=callbacks_.reopen_closed.Run(closed_target);
   } else if (action == 5) {
     const std::string id = state_.workspace_id;
     ok = callbacks_.sleep_workspace && callbacks_.sleep_workspace.Run(id);
     if (ok) return;
   } else if (action == 10 && shortcut_chord_) {
-    if(!tools_form_){SetShortcutRecording(true);RefreshKeyRegistrations();}
     shortcut_chord_->RequestFocus();
-    SetPanelText(tools_status_,tools_form_?record_status:u"Naciśnij kombinację. Escape anuluje nagrywanie."); return;
-  } else if ((action == 11 || action == 12) && shortcut_chord_ && (rust_timeline?valid_form_choice:index<tools_.shortcuts.size())) {
-    ok = SetShortcut(rust_timeline?form_target:tools_.shortcuts[index].id, action == 12 ? "" : base::UTF16ToUTF8(shortcut_chord_->GetText()));
+    SetPanelText(tools_status_,record_status); return;
+  } else if ((action == 11 || action == 12) && shortcut_chord_ && valid_form_choice) {
+    ok = SetShortcut(form_target, action == 12 ? "" : base::UTF16ToUTF8(shortcut_chord_->GetText()));
   } else if (action == 13) {
     tools_.shortcuts = ArcShortcuts(); keys_dirty_ = true; RefreshKeyRegistrations(); SaveTools(); ok = true;
   } else if (action >= 20 && action <= 22 && provider_name_) {
-    const std::string previous=rust_timeline?form_target:(index>0&&index<=tools_.providers.size()?tools_.providers[index-1].keyword:"");
+    const std::string& previous=form_target;
     if (action == 20) ok = UpsertSearchProvider({base::UTF16ToUTF8(provider_name_->GetText()), base::UTF16ToUTF8(provider_keyword_->GetText()), base::UTF16ToUTF8(provider_url_->GetText())}, previous);
     if (action == 21) ok = SetDefaultSearchProvider(previous);
     if (action == 22) ok = RemoveSearchProvider(previous);
   }
-  if(tools_form_){
-    auto outcome=tools_form_->form->tools_outcome(ok,false);
-    if(outcome.refresh){RefreshTools();if(callbacks_.operation_pending&&callbacks_.operation_pending.Run())outcome=tools_form_->form->tools_outcome(true,true);}
-    SetPanelText(tools_status_,base::UTF8ToUTF16(std::string(outcome.status)));return;
-  }
-  if (ok) { RefreshTools(); SetPanelText(tools_status_,callbacks_.operation_pending && callbacks_.operation_pending.Run() ? u"Oczekiwanie na zgodę na opuszczenie strony…" : u"Gotowe. Zmiany zostały zastosowane."); }
-  else SetPanelText(tools_status_,ToolsPage() == 1 ? u"Nieprawidłowa lub zajęta kombinacja. Zmień ją albo wyłącz skrót drugiej akcji." : ToolsPage() == 2 ? u"Sprawdź unikalny prefiks, nazwę i adres z {query}. Musi pozostać co najmniej jedna wyszukiwarka." : u"Nie można wykonać operacji. Podaj nazwę, wybierz pozycję zgodną z profilem lub zostaw drugą przestrzeń do przełączenia.");
+  auto outcome=tools_form_->form->tools_outcome(ok,false);
+  if(outcome.refresh){RefreshTools();if(callbacks_.operation_pending&&callbacks_.operation_pending.Run())outcome=tools_form_->form->tools_outcome(true,true);}
+  SetPanelText(tools_status_,base::UTF8ToUTF16(std::string(outcome.status)));
 }
 
 void WorkspaceShell::SetOperationStatus(OperationStatusEvent event) {
-  static constexpr std::array<std::u16string_view, 4> kViewsCopy = {
-      u"Sprawdzanie niezapisanych zmian…", u"Anulowano. Karty i niezapisane zmiany pozostały otwarte.", u"Gotowe.",
-      u"Najpierw zatrzymaj nagrywanie lub udostępnianie w tej przestrzeni."};
-  const auto index = static_cast<size_t>(event);
-  if (metal_sidebar_) { SetOperationStatus(base::UTF8ToUTF16(std::string(sidebar::operation_status_copy(sidebar::OperationStatusEvent{static_cast<uint8_t>(index)})))); return; }
-  SetOperationStatus(std::u16string(kViewsCopy.at(index)));
+  SetOperationStatus(base::UTF8ToUTF16(std::string(sidebar::operation_status_copy(sidebar::OperationStatusEvent{static_cast<uint8_t>(event)}))));
 }
 void WorkspaceShell::SetOperationStatus(std::u16string text) {
   if (tools_widget_ && tools_widget_->IsVisible()) { RefreshTools(); SetPanelText(tools_status_,text); }
@@ -7604,10 +6724,7 @@ void WorkspaceShell::SetPinned(bool pinned) {
 void WorkspaceShell::ResizeSidebar(int amount, bool done) {
   if (!widget_) return;
   if (!sidebar_resizing_) { sidebar_resize_start_ = sidebar_width_; sidebar_resizing_ = true; }
-  int width;
-  if(metal_sidebar_)width=sidebar::sidebar_resize_width(sidebar_resize_start_,amount);
-  else
-    width=std::clamp(sidebar_resize_start_+amount,kMinSidebarWidth,kMaxSidebarWidth);
+  const int width=sidebar::sidebar_resize_width(sidebar_resize_start_,amount);
   if(done)sidebar_resizing_=false;
   ApplySidebarWidth(width,done);
 }
@@ -7924,8 +7041,7 @@ BrowserImportOptions WorkspaceShell::import_options() const {
 }
 void WorkspaceShell::SelectImportBrowserForTesting(size_t index) {
   if(!import_browser_picker_||!import_browser_picker_->GetEnabledInViewsSubtree()||!SceneIsVisible(import_browser_picker_))return;
-  if(auto* scene=views::AsViewClass<SceneSelect>(import_browser_picker_)){scene->SelectForTesting(index);return;}
-  auto* native=static_cast<views::Combobox*>(import_browser_picker_.get());if(index>=native->GetModel()->GetItemCount())return;native->SetSelectedIndex(index);ImportSelectionChanged();
+  views::AsViewClass<SceneSelect>(import_browser_picker_)->SelectForTesting(index);
 }
 bool WorkspaceShell::import_source_metal_visible() const {
   auto* source=views::AsViewClass<SceneSelect>(import_browser_picker_);return source&&source->metal_visible();
@@ -8272,18 +7388,16 @@ void WorkspaceShell::ToolsEditorEdited(EditorControl* sender) {
   if(!tools_widget_||!tools_widget_->IsVisible()||sender->IsIMEComposing())return;
   if(sender==history_search_){
     const auto query=base::TrimWhitespace(sender->GetText(),base::TRIM_ALL);
-    if(tools_form_){rust::Vec<uint16_t> units;for(char16_t unit:query)units.push_back(unit);tools_form_->form->tools_history_edit(std::move(units));}else
-    {history_query_=query;history_loaded_=false;}
+    if(tools_form_){rust::Vec<uint16_t> units;for(char16_t unit:query)units.push_back(unit);tools_form_->form->tools_history_edit(std::move(units));}
     history_entries_.clear();
     if(history_node_graph_)history_node_graph_->graph->reconcile({});
     if(history_list_)history_list_->RemoveAllChildViews();
-    SetPanelText(tools_status_,ToolsStatusText(1,u"Wyszukiwanie historii…"));
+    SetPanelText(tools_status_,ToolsStatusText(1));
     if(history_more_)history_more_->SetEnabled(false);
     history_timer_.Start(FROM_HERE,base::Milliseconds(150),base::BindOnce(&WorkspaceShell::RefreshHistory,weak_factory_.GetWeakPtr(),false));
   }else if(sender==timeline_filter_){
     const auto query=base::i18n::ToLower(sender->GetText());
-    if(tools_form_){rust::Vec<uint16_t> units;for(char16_t unit:query)units.push_back(unit);tools_form_->form->tools_timeline_edit(std::move(units));}else
-    timeline_query_=query;
+    if(tools_form_){rust::Vec<uint16_t> units;for(char16_t unit:query)units.push_back(unit);tools_form_->form->tools_timeline_edit(std::move(units));}
     RefreshTimelineItems();
   }
 }

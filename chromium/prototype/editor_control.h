@@ -39,6 +39,6 @@ class EditorControl {
   bool HasFocus(){return view()->HasFocus();}
   views::ViewAccessibility& GetViewAccessibility(){return view()->GetViewAccessibility();}
 };
-EditorControl* AddEditor(views::View* parent,bool metal);
+EditorControl* AddEditor(views::View* parent);
 }
 #endif

@@ -155,9 +155,10 @@ SidebarMetalStats GetSidebarMetalStatsForTesting() { return {}; }
 std::unique_ptr<SidebarMetal> CreateSidebarMetal() {
   // Adapters paint their Rust recipes in the Chromium compositor by default;
   // --zitter-rust-raster=metal opts into the in-process Metal overlay.
+  // Never null: an unavailable Metal device falls back to the compositor.
 #if BUILDFLAG(IS_MAC)
   if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-rust-raster") == "metal")
-    return CreateMetalSidebarSurface();
+    if (auto surface = CreateMetalSidebarSurface()) return surface;
 #endif
   return std::make_unique<CompositorSurface>();
 }

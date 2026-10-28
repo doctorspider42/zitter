@@ -62,14 +62,11 @@ class WorkspaceSwipeState {
   std::unique_ptr<Impl> impl_;
 };
 WorkspaceSwipeLayout SidebarSwipeLayout(double position,int count,int width);
-// Rust owns list geometry in the Metal backend. The native adapter retains
-// View identity, measurement, accessibility and input delivery during migration.
-// The Rust UI (Rust/Metal) is the default; --zitter-sidebar=views selects the
-// native Views baseline.
-bool RustUiEnabled();
+// Rust owns list geometry. The native adapter retains View identity,
+// measurement, accessibility and input delivery.
 std::unique_ptr<views::LayoutManager> CreateSidebarColumnLayout(int spacing = 0);
-// Install a start/stretch panel with a single optional flexible child. Views
-// uses its original BoxLayout; the opt-in backend owns allocation in Rust.
+// Install a start/stretch panel with a single optional flexible child; Rust
+// owns allocation.
 void SetSidebarPanelLayout(views::View* host,bool vertical,gfx::Insets insets,int spacing,views::View* flex = nullptr,bool center = false);
 std::unique_ptr<views::LayoutManager> CreateSidebarSplitLayout();
 gfx::Size SidebarSplitPreferredSize();
