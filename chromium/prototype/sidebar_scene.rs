@@ -266,6 +266,10 @@ mod ffi {
         family: u32, italic: bool, tracking: f32,
     }
     /// The design system's spacing and radius tokens, for native panel layout.
+    /// recipe::button for one kind (0 primary, 1 zing, 2 outline, 3 quiet, 4 danger,
+    /// 5 danger strong) and state (0 rest, 1 hover, 2 pressed, 3 disabled).
+    struct DesignButton { height: f32, radius: f32, padding_x: f32, fill: u32, ink: u32, edge: u32, edge_width: f32 }
+    struct DesignToggle { width: f32, height: f32, thumb: f32, inset: f32, track: u32, edge: u32, edge_width: f32, thumb_fill: u32 }
     struct DesignMetrics { space_0_5: i32, space_1: i32, space_2: i32, space_3: i32, space_4: i32, space_6: i32, space_8: i32, space_12: i32, radius_xs: i32, radius_sm: i32, radius_md: i32, radius_lg: i32 }
     /// A design system text style (design_tokens::text) for native measuring.
     struct DesignTextStyle { family: u32, size: f32, line_height: f32, weight: i32, italic: bool, tracking: f32, caps: bool }
@@ -411,6 +415,8 @@ mod ffi {
         fn design_same_workspace_color(a: u32, b: u32) -> bool;
         fn design_text_style(id: u32) -> DesignTextStyle;
         fn design_metrics() -> DesignMetrics;
+        fn design_button(dark: bool, workspace_color: u32, kind: u32, state: u32) -> DesignButton;
+        fn design_toggle(dark: bool, workspace_color: u32, on: bool) -> DesignToggle;
         fn design_font_family(family: u32) -> String;
         fn appearance_selected(emoji: bool, index: usize, color: u32, current_emoji: &str) -> bool;
         fn appearance_row_layout(width: i32, height: i32, editor_width: i32, editor_height: i32, emoji: bool) -> ColumnLayout;
@@ -1387,13 +1393,16 @@ fn toggle_scene(s:&ffi::ToggleStyle)->Vec<ffi::Primitive>{
  let p=s.progress.clamp(0.0,1.0);let hover=s.hover.clamp(0.0,1.0);
  let blend=|on:u32,off:u32,t:f32|{let mut color=0;for shift in [0,8,16,24]{let a=((on>>shift)&255) as f32;let b=((off>>shift)&255) as f32;color|=((b+(a-b)*t).round() as u32)<<shift;}color};
  let make=|x,y,width,height,radius,color,stroke|ffi::Primitive{x,y,width,height,radius,color,stroke,shape:0,text:String::new(),font_size:0.0,font_weight:0,bold:false,middle:false,center:false,right_align:false,clip:ffi::FloatRect{x:s.clip.x,y:s.clip.y,width:s.clip.width,height:s.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0,family:0,italic:false,tracking:0.0};
- let w=s.width.min(26.0);let h=s.height.min(16.0);let x=(s.width-w)/2.0;let y=(s.height-h)/2.0;
- let inset=if s.checked{2.0}else{4.0};let diameter=(h-2.0*inset).max(0.0);let pos=if s.rtl{1.0-p}else{p};let tx=x+inset+pos*(w-h).max(0.0);let ty=y+inset;let out=if s.pressed{1.0}else{0.0};
+ // Design system Toggle (recipe::toggle): a 34×20 pill, 12 px thumb 4 px in. Off:
+ // 1.5 px `line-strong` edge and an `ink-muted` thumb; on: `accent` with `on-accent`.
+ let _=hover;
+ let w=s.width.min(34.0);let h=s.height.min(20.0);let x=(s.width-w)/2.0;let y=(s.height-h)/2.0;
+ let inset=4.0f32.min(h/2.0);let diameter=(h-2.0*inset).max(0.0);let pos=if s.rtl{1.0-p}else{p};let tx=x+inset+pos*(w-h).max(0.0);let ty=y+inset;let out=if s.pressed{1.0}else{0.0};
  let mut ops=vec![make(x,y,w,h,h/2.0,blend(s.track_on,s.track_off,p),0.0)];
- if !s.checked{ops.push(make(x+0.5,y+0.5,(w-1.0).max(0.0),(h-1.0).max(0.0),(h-1.0).max(0.0)/2.0,s.border,1.0));}
- if hover>0.0{let cx=tx+diameter/2.0;let cy=ty+diameter/2.0;ops.push(make(cx-10.0,cy-10.0,20.0,20.0,10.0,blend(s.halo,s.halo&0xffffff,hover),0.0));}
- let mut thumb=blend(s.thumb_on,s.thumb_off,p);if s.checked{thumb=blend(s.thumb_hover,thumb,hover);}
+ if !s.checked{ops.push(make(x+0.75,y+0.75,(w-1.5).max(0.0),(h-1.5).max(0.0),(h-1.5).max(0.0)/2.0,s.border,1.5));}
+ let thumb=blend(s.thumb_on,s.thumb_off,p);
  ops.push(make(tx-out,ty-out,diameter+out*2.0,diameter+out*2.0,(diameter+out*2.0)/2.0,thumb,0.0));
+ // Focus: 2 px `focus` ring, 2 px away.
  if s.focused{ops.push(make(x-3.0,y-3.0,w+6.0,h+6.0,h/2.0+3.0,s.focus,2.0));}
  ops
 }
@@ -3047,6 +3056,19 @@ fn monogram_colors(seed: u32, ink: u32) -> (u32, u32) {
     let p = design_palette(dark, seed | 0xff000000);
     (p.accent, p.on_accent)
 }
+fn design_button(dark:bool,workspace_color:u32,kind:u32,state:u32)->ffi::DesignButton{
+    use design::recipe::{ButtonKind,Interaction};
+    let p=design::palette_for_stored(if dark {design::Scheme::Noc} else {design::Scheme::Papier},workspace_color);
+    let kind=match kind{1=>ButtonKind::Zing,2=>ButtonKind::Outline,3=>ButtonKind::Quiet,4=>ButtonKind::Danger,5=>ButtonKind::DangerStrong,_=>ButtonKind::Primary};
+    let state=match state{1=>Interaction::Hover,2=>Interaction::Pressed,3=>Interaction::Disabled,_=>Interaction::Rest};
+    let b=design::recipe::button(&p,kind,state);
+    ffi::DesignButton{height:b.height,radius:b.radius,padding_x:b.padding_x,fill:b.fill,ink:b.ink,edge:b.edge,edge_width:b.edge_width}
+}
+fn design_toggle(dark:bool,workspace_color:u32,on:bool)->ffi::DesignToggle{
+    let p=design::palette_for_stored(if dark {design::Scheme::Noc} else {design::Scheme::Papier},workspace_color);
+    let t=design::recipe::toggle(&p,on);
+    ffi::DesignToggle{width:t.width,height:t.height,thumb:t.thumb,inset:t.inset,track:t.track,edge:t.edge,edge_width:t.edge_width,thumb_fill:t.thumb_fill}
+}
 fn design_text_style(id:u32)->ffi::DesignTextStyle{
     match design::text_style(id){
         Some((s,caps))=>ffi::DesignTextStyle{family:design::family_id(s.family),size:s.size,line_height:s.line_height,weight:i32::from(s.weight),italic:s.italic,tracking:s.letter_spacing,caps},
@@ -3149,9 +3171,11 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
         if !i.title.is_empty() {emit(i.x+g.title.x as f32,i.y,(g.title.width as f32).min(i.title_width.max(0.0)),i.height,0.0,i.ink,&i.title,i.font_size,false);}return;
     }
     if i.kind == 9 {
-        let across=i.width>i.height;let extent=if across{i.width}else{i.height};let grip=40.0f32.min(extent/4.0);
-        emit(i.x+(i.width-if across{grip}else{4.0})/2.0,i.y+(i.height-if across{4.0}else{grip})/2.0,
-            if across{grip}else{4.0},if across{4.0}else{grip},2.0,i.ink,"",0.0,false);return;
+        // 3 px, growing to 5 px and a longer stroke on hover.
+        let across=i.width>i.height;let extent=if across{i.width}else{i.height};
+        let (thick,grip)=if i.hovered {(5.0f32,56.0f32.min(extent/3.0))} else {(3.0,40.0f32.min(extent/4.0))};
+        emit(i.x+(i.width-if across{grip}else{thick})/2.0,i.y+(i.height-if across{thick}else{grip})/2.0,
+            if across{grip}else{thick},if across{thick}else{grip},thick/2.0,i.ink,"",0.0,false);return;
     }
     if i.kind == 21 {
         if !(i.width>0.0&&i.height>0.0){return;}
@@ -3178,14 +3202,18 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
     }
     if i.kind == 19 {
         if !(i.width>0.0&&i.height>0.0){return;}
-        let radius=i.width.min(i.height).max(0.0)/2.0;
+        // A design system button passes its radius in font_height and its edge
+        // width in detail_font_size; without them it is a pill with a 1 px edge.
+        let pill=i.width.min(i.height).max(0.0)/2.0;
+        let radius=if i.font_height>0.0 {i.font_height.min(pill)} else {pill};
+        let edge_width=if i.detail_font_size>0.0 {i.detail_font_size} else {1.0};
         if i.fill>>24!=0 {emit(i.x,i.y,i.width,i.height,radius,i.fill,"",0.0,false);}
         if i.hovered&&i.detail_ink>>24!=0 {emit(i.x,i.y,i.width,i.height,radius,i.detail_ink,"",0.0,false);}
         let padding=i.title_width.max(0.0).min(i.width.max(0.0)/2.0);
         if !i.title.is_empty(){emit(i.x+padding,i.y,(i.width-padding*2.0).max(0.0),i.height,0.0,i.ink,&i.title,i.font_size,i.active);}
         if i.focused {emit(i.x+8.0,i.y+i.height-5.0,(i.width-16.0).max(0.0),2.0,1.0,i.ink,"",0.0,false);}
-        if i.badge>>24!=0 {emit(i.x,i.y,i.width,i.height,radius,i.badge,"",0.0,false);}
-        if i.badge>>24!=0 {if let Some(border)=out.last_mut(){border.stroke=1.0;}}
+        if i.badge>>24!=0 {let inset=edge_width/2.0;emit(i.x+inset,i.y+inset,i.width-edge_width,i.height-edge_width,(radius-inset).max(0.0),i.badge,"",0.0,false);}
+        if i.badge>>24!=0 {if let Some(border)=out.last_mut(){border.stroke=edge_width;}}
         for p in out[first_primitive..].iter_mut(){if !p.text.is_empty(){p.center=true;}}
         return;
     }
@@ -4103,9 +4131,9 @@ mod tests {
     }
     fn toggle_style()->ffi::ToggleStyle {ffi::ToggleStyle{width:38.0,height:28.0,progress:0.0,hover:0.0,checked:false,pressed:false,focused:false,rtl:false,track_on:0xff8040c0,track_off:0xffeeeeee,thumb_on:0xffffffff,thumb_off:0xff111111,thumb_hover:0xffcccccc,halo:0x22000000,focus:0xff0000ff,border:0xff888888,clip:ffi::FloatRect{x:0.0,y:0.0,width:38.0,height:28.0}}}
     #[test] fn toggle_scene_matches_native_track_thumb_and_rtl_endpoints() {
-        let mut s=toggle_style();let off=toggle_scene(&s);assert_eq!((off[0].x,off[0].y,off[0].width,off[0].height),(6.0,6.0,26.0,16.0));assert_eq!((off[2].x,off[2].width),(10.0,8.0));
-        s.checked=true;s.progress=1.0;let on=toggle_scene(&s);assert_eq!((on[1].x,on[1].width),(18.0,12.0));assert_eq!(on[0].color,s.track_on);
-        s.rtl=true;let rtl=toggle_scene(&s);assert_eq!(rtl[1].x,8.0);s.focused=true;s.hover=1.0;s.pressed=true;let ops=toggle_scene(&s);assert_eq!(ops.len(),4);assert_eq!(ops[3].stroke,2.0);assert!(ops.iter().all(|p|p.text.is_empty()&&p.clip.width==38.0));
+        let mut s=toggle_style();let off=toggle_scene(&s);assert_eq!((off[0].x,off[0].y,off[0].width,off[0].height),(2.0,4.0,34.0,20.0));assert_eq!(off[1].stroke,1.5);assert_eq!((off[2].x,off[2].width),(6.0,12.0));
+        s.checked=true;s.progress=1.0;let on=toggle_scene(&s);assert_eq!((on[1].x,on[1].width),(20.0,12.0));assert_eq!(on[0].color,s.track_on);
+        s.rtl=true;let rtl=toggle_scene(&s);assert_eq!(rtl[1].x,6.0);s.focused=true;s.hover=1.0;s.pressed=true;let ops=toggle_scene(&s);assert_eq!(ops.len(),3);assert_eq!(ops[2].stroke,2.0);assert!(ops.iter().all(|p|p.text.is_empty()&&p.clip.width==38.0));
     }
     #[test] fn toggle_scene_rejects_nonfinite_and_empty_surfaces() {
         for value in [f32::NAN,f32::INFINITY,f32::NEG_INFINITY]{let mut s=toggle_style();s.progress=value;assert!(toggle_scene(&s).is_empty());}
@@ -4185,7 +4213,7 @@ mod tests {
         assert!(action_group_layout(-1,-1,false,8,&[]).children.is_empty());
     }
     #[test] fn action_button_scene_keeps_hover_border_focus_and_centered_text() {
-        let mut b=row(160.0);b.kind=19;b.height=40.0;b.title_width=16.0;b.hovered=true;b.focused=true;b.detail_ink=0x14101010;let ops=layout(&[b]);assert_eq!(ops.len(),5);assert_eq!(ops[0].radius,20.0);assert_eq!(ops[2].text,"Zażółć 日本語 🦀");assert!(ops[2].center);assert_eq!(ops[2].width,128.0);assert_eq!(ops[4].stroke,1.0);
+        let mut b=row(160.0);b.kind=19;b.height=40.0;b.font_height=0.0;b.detail_font_size=0.0;b.title_width=16.0;b.hovered=true;b.focused=true;b.detail_ink=0x14101010;let ops=layout(&[b]);assert_eq!(ops.len(),5);assert_eq!(ops[0].radius,20.0);assert_eq!(ops[2].text,"Zażółć 日本語 🦀");assert!(ops[2].center);assert_eq!(ops[2].width,128.0);assert_eq!(ops[4].stroke,1.0);
     }
     #[test] fn action_button_text_style_omits_empty_background_and_border() {
         let mut b=row(160.0);b.kind=19;b.fill=0;b.badge=0;b.active=false;b.title_width=16.0;let ops=layout(&[b]);assert_eq!(ops.len(),1);assert!(ops[0].center);assert!(!ops[0].bold);assert_eq!(ops[0].text,"Zażółć 日本語 🦀");
@@ -4300,6 +4328,14 @@ mod tests {
     #[test] fn appearance_swatch_draws_raw_color_outline_focus_and_clip() {
         let mut swatch=row(32.0);swatch.kind=18;swatch.height=32.0;swatch.active=false;swatch.badge=0xff84b6a4;let ops=layout(std::slice::from_ref(&swatch));assert_eq!(ops.len(),1);assert_eq!(ops[0].color,0xff84b6a4);assert_eq!(ops[0].radius,7.0);
         swatch.active=true;swatch.focused=true;let ops=layout(&[swatch]);assert_eq!(ops.len(),3);assert_eq!(ops[0].stroke,1.0);assert_eq!(ops[1].width,14.0);assert_eq!(ops[2].height,2.0);assert_eq!(ops[0].clip.width,32.0);
+    }
+    #[test] fn design_button_bridge_follows_the_recipe() {
+        let quiet=design_button(true,APPEARANCE_COLORS[0],3,0);assert_eq!((quiet.height,quiet.padding_x,quiet.fill),(32.0,12.0,0));
+        let strong=design_button(true,APPEARANCE_COLORS[0],5,0);assert_eq!(strong.edge_width,1.5);assert_eq!(strong.edge,strong.ink);
+        let primary=design_button(false,APPEARANCE_COLORS[0],0,0);let p=design_palette(false,APPEARANCE_COLORS[0]);assert_eq!((primary.fill,primary.ink),(p.accent,p.on_accent));
+        let t=design_toggle(true,APPEARANCE_COLORS[0],false);assert_eq!((t.width,t.height,t.edge_width),(34.0,20.0,1.5));
+        let mut b=row(80.0);b.kind=19;b.height=32.0;b.font_height=8.0;b.detail_font_size=1.5;b.badge=0xffff0000;b.fill=0;b.hovered=false;b.focused=false;
+        let ops=layout(&[b]);let edge=ops.iter().find(|p|p.stroke>0.0).unwrap();assert_eq!((edge.stroke,edge.radius,edge.x),(1.5,7.25,0.75));
     }
     #[test] fn kbd_key_is_a_mono_chip_with_a_bottom_edge() {
         let mut k=row(18.0);k.kind=30;k.title="⌘".into();k.height=18.0;k.fill=0xff222222;k.edge=0xff444444;k.ink=0xffcccccc;

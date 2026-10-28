@@ -193,7 +193,13 @@ Metal (`PaintSceneRecipe`), zamiast starego malowania Views.
   otwórz, esc zamknij”.
 - `--zitter-open-panel` przyjmuje też `sidebar`, `palette`, `settings`, `profiles`.
 
-Zostaje: przyciski, przełącznik i dialogi z `recipe::*`, panele ustawień na `bg_base`,
-grupy w Command Center, tost, loader, strona nowej karty, strona Pobrane, tryb edycji
+Druga runda: przyciski z `recipe::button` (most `design_button`; 32 px, `body-strong`,
+warianty primary/outline/quiet/danger/danger strong; w dialogach „Anuluj” quiet, akcja
+primary albo danger strong, gdy dialog domyślnie wybiera Anuluj), przełącznik z
+`recipe::toggle` (`design_toggle`; 34×20, obrys 1.5 px), uchwyt podziału 3 px
+`line_strong` → `zing` na hover, pasek postępu 3 px `accent`, tytuł „Preferencje” w
+`display-l`.
+
+Zostaje: grupy w Command Center, tost, loader, strona nowej karty, strona Pobrane, tryb edycji
 adresu, głośnik grającej karty, para w podziale jako jeden wiersz, uchwyt podziału,
 terminologia „przestrzeń”/„obszar”.

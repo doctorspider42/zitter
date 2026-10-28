@@ -960,27 +960,34 @@ class SceneTextButton final : public RustActionView {
       :RustActionView(std::move(callback),text,ControlGlyph::kMore,nullptr,base::BindRepeating([]{return true;}),std::move(painted),false,std::move(input)),text_(std::move(text)),style_(style) {}
   void UseNativeMinimum(){native_minimum_=true;}
   // A destructive action: its text in the palette's danger color.
-  void SetDanger(){danger_=true;SchedulePaint();}
+  void SetDanger(){kind_=4;SchedulePaint();}
+  // A destructive confirmation in a dialog: the danger pill with a 1.5 px edge.
+  void SetDangerStrong(){kind_=5;SchedulePaint();}
+  void SetQuiet(){kind_=3;PreferredSizeChanged();SchedulePaint();}
+  void SetPrimary(){kind_=0;PreferredSizeChanged();SchedulePaint();}
   gfx::Size GetMinimumSize() const override{if(!native_minimum_)return RustActionView::GetMinimumSize();const auto font=TextFont();return gfx::Size(views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_DIALOG_BUTTON_MINIMUM_WIDTH),std::max(0,views::LayoutProvider::GetControlHeightForFont(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY,font)-std::max(font.GetHeight(),views::TypographyProvider::Get().GetLineHeight(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY))));}
   void SetText(std::u16string text){if(text==text_)return;OnMouseCaptureLost();text_=std::move(text);GetViewAccessibility().SetName(text_);SetTooltipText(text_);PreferredSizeChanged();SchedulePaint();}
-  static gfx::FontList TextFont(){return views::TypographyProvider::Get().GetFont(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY);}
+  // Buttons are set in `body-strong`.
+  static gfx::FontList TextFont(){return DesignFont(2,13,600,false);}
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {const auto g=Metrics(-1,-1);return gfx::Size(g.width,g.height);}
+  // recipe::button: kind from the platform style (prominent = primary, default =
+  // outline, text = quiet) unless set; fill, ink, edge and radius per state.
+  sidebar::DesignButton Style() const {
+    const auto state=Snapshot();const auto visual=state.visual;
+    const uint32_t interaction=!state.enabled?3:visual==sidebar::RowVisual::Pressed?2:visual==sidebar::RowVisual::Hovered?1:0;
+    return sidebar::design_button(IsDark(this),WindowWorkspaceColor(this),Kind(),interaction);
+  }
+  uint32_t Kind() const {return kind_?*kind_:style_==ui::ButtonStyle::kProminent?0:style_==ui::ButtonStyle::kText?3:2;}
   sidebar::Item Scene(gfx::RectF bounds,gfx::RectF clip) const {
-    const auto* provider=GetColorProvider();const auto state=Snapshot();const bool enabled=state.enabled;const auto font=TextFont();const bool prominent=style_==ui::ButtonStyle::kProminent;
-    sidebar::Item item{};item.kind=19;item.x=bounds.x();item.y=bounds.y();item.width=bounds.width();item.height=bounds.height();item.title=base::UTF16ToUTF8(text_);item.font_size=font.GetFontSize();item.active=font.GetFontWeight()>=gfx::Font::Weight::MEDIUM;
-    item.title_width=views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_BUTTON_HORIZONTAL_PADDING);item.focused=state.focused;item.focus=Palette(this).focus;item.hovered=enabled&&(state.visual==sidebar::RowVisual::Hovered||state.visual==sidebar::RowVisual::Pressed);
-    // Design system Button: prominent = primary on the workspace accent, default =
-    // outline on line_strong, text = quiet; disabled drops the fill for ink_faint.
-    const auto palette=Palette(this);
-    item.ink=!enabled?palette.ink_faint:prominent?palette.on_accent:danger_?palette.danger:palette.ink;
-    item.fill=enabled&&prominent?palette.accent:SK_ColorTRANSPARENT;
-    if(item.fill&&state.visual==sidebar::RowVisual::Pressed)item.fill=GetNativeTheme()->GetSystemButtonPressedColor(item.fill);
-    item.badge=!enabled&&style_!=ui::ButtonStyle::kText?palette.line:style_==ui::ButtonStyle::kDefault?palette.line_strong:SK_ColorTRANSPARENT;
-    item.detail_ink=prominent?provider->GetColor(ui::kColorSysStateHoverOnProminent):palette.bg_hover;item.clip={clip.x(),clip.y(),clip.width(),clip.height()};return item;
+    const auto state=Snapshot();const auto b=Style();
+    sidebar::Item item{};item.kind=19;item.x=bounds.x();item.y=bounds.y();item.width=bounds.width();item.height=bounds.height();item.title=base::UTF16ToUTF8(text_);item.font_size=13;item.active=true;item.text_style=4;
+    item.title_width=b.padding_x;item.focused=state.focused;item.focus=Palette(this).focus;item.hovered=false;
+    item.ink=b.ink;item.fill=b.fill;item.badge=b.edge;item.font_height=b.radius;item.detail_font_size=b.edge_width;
+    item.clip={clip.x(),clip.y(),clip.width(),clip.height()};return item;
   }
  private:
-  sidebar::ActionButtonLayout Metrics(int width,int height) const {const auto font=TextFont();return sidebar::action_button_layout(width,height,gfx::GetStringWidth(text_,font),views::LayoutProvider::GetControlHeightForFont(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY,font),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_BUTTON_HORIZONTAL_PADDING),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_DIALOG_BUTTON_MINIMUM_WIDTH));}
-  std::u16string text_;ui::ButtonStyle style_;bool native_minimum_=false;bool danger_=false;
+  sidebar::ActionButtonLayout Metrics(int width,int height) const {const auto b=Style();return sidebar::action_button_layout(width,height,gfx::GetStringWidth(text_,TextFont())+2,static_cast<int>(b.height),static_cast<int>(b.padding_x),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_DIALOG_BUTTON_MINIMUM_WIDTH));}
+  std::u16string text_;ui::ButtonStyle style_;bool native_minimum_=false;std::optional<uint32_t> kind_;
 };
 BEGIN_METADATA(SceneTextButton)
 END_METADATA
@@ -1111,8 +1118,10 @@ class SceneToggle final : public RustActionView {
   static uint64_t Now(){return (base::TimeTicks::Now()-base::TimeTicks()).InMilliseconds();}
   void RefreshAX(){GetViewAccessibility().SetCheckedState(On()?ax::mojom::CheckedState::kTrue:ax::mojom::CheckedState::kFalse);}
   rust::Vec<sidebar::Primitive> Scene() const{
-    const auto* colors=GetColorProvider();const auto input=Snapshot();const auto model=NodeControl().node_toggle_view(Now());const bool enabled=input.enabled;sidebar::ToggleStyle s{};s.width=width();s.height=height();s.checked=model.checked;s.pressed=input.visual==sidebar::RowVisual::Pressed;s.focused=input.focused;s.rtl=base::i18n::IsRTL();s.progress=model.progress;s.hover=model.hover;
-    const auto palette=Palette(this);s.track_on=palette.accent;s.track_off=colors->GetColor(enabled?ui::kColorToggleButtonTrackOff:ui::kColorToggleButtonTrackOffDisabled);s.thumb_on=enabled?palette.on_accent:colors->GetColor(ui::kColorToggleButtonThumbOnDisabled);s.thumb_off=colors->GetColor(enabled?ui::kColorToggleButtonThumbOff:ui::kColorToggleButtonThumbOffDisabled);s.thumb_hover=colors->GetColor(ui::kColorToggleButtonThumbOnHover);s.halo=colors->GetColor(s.pressed?ui::kColorToggleButtonPressed:ui::kColorToggleButtonHover);s.focus=colors->GetColor(ui::kColorFocusableBorderFocused);s.border=colors->GetColor(ui::kColorToggleButtonShadow);s.clip={0,0,float(width()),float(height())};return sidebar::toggle_scene(s);
+    const auto input=Snapshot();const auto model=NodeControl().node_toggle_view(Now());const bool enabled=input.enabled;sidebar::ToggleStyle s{};s.width=width();s.height=height();s.checked=model.checked;s.pressed=input.visual==sidebar::RowVisual::Pressed;s.focused=input.focused;s.rtl=base::i18n::IsRTL();s.progress=model.progress;s.hover=model.hover;
+    // recipe::toggle; disabled drops to `ink-faint` on a `line` edge.
+    const auto palette=Palette(this);const auto on=sidebar::design_toggle(IsDark(this),WindowWorkspaceColor(this),true);const auto off=sidebar::design_toggle(IsDark(this),WindowWorkspaceColor(this),false);
+    s.track_on=enabled?on.track:palette.line;s.track_off=SkColorSetA(off.edge,0);s.thumb_on=enabled?on.thumb_fill:palette.ink_faint;s.thumb_off=enabled?off.thumb_fill:palette.ink_faint;s.thumb_hover=s.thumb_on;s.halo=0;s.focus=palette.focus;s.border=enabled?off.edge:palette.line;s.clip={0,0,float(width()),float(height())};return sidebar::toggle_scene(s);
   }
   void Schedule(){SyncViewportVisibility();if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneToggle::UpdateMetal,weak_factory_.GetWeakPtr()));}
   void Tick(){if(!metal_visible())SchedulePaint();Schedule();}
@@ -2121,12 +2130,14 @@ class PreferenceCopy final : public views::View {
   PreferenceCopy(std::u16string text,SkColor tone,int delta,gfx::Font::Weight weight,bool multiline,base::RepeatingClosure changed,base::RepeatingCallback<bool()> visible,bool native_style=false,bool center=false,int fixed_width=0)
       :text_(std::move(text)),tone_(tone),delta_(delta),weight_(weight),multiline_(multiline),native_style_(native_style),center_(center),fixed_width_(fixed_width),changed_(std::move(changed)),visible_(std::move(visible)){GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);GetViewAccessibility().SetName(text_);SetCanProcessEventsWithinSubtree(false);}
   const std::u16string& text() const{return text_;}
-  gfx::FontList font() const{return native_style_?views::TypographyProvider::Get().GetFont(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY):Font(delta_,weight_);}
+  gfx::FontList font() const{if(display_)return DesignFont(1,40,400,true);return native_style_?views::TypographyProvider::Get().GetFont(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY):Font(delta_,weight_);}
+  // An inner page title: `display-l`, Instrument Serif italic.
+  void SetDisplay(){display_=true;measured_width_=-1;natural_width_=-1;PreferredSizeChanged();SchedulePaint();Notify();}
   SkColor Ink() const{return native_style_?GetColorProvider()->GetColor(views::TypographyProvider::Get().GetColorId(views::style::CONTEXT_LABEL,GetEnabledInViewsSubtree()?views::style::STYLE_PRIMARY:views::style::STYLE_DISABLED)):Tone(this,GetEnabledInViewsSubtree()?tone_:kDisabled);}
   void SetText(std::u16string text){if(text==text_)return;text_=std::move(text);GetViewAccessibility().SetName(text_);measured_width_=-1;natural_width_=-1;PreferredSizeChanged();SchedulePaint();Notify();}
   void SetTone(SkColor tone){if(tone_==tone)return;tone_=tone;SchedulePaint();Notify();}
   gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override{if(multiline_&&fixed_width_>0&&!text_.empty()){const auto g=Geometry(fixed_width_);return gfx::Size(fixed_width_,g.height);}const int natural=NaturalWidth();const int width=available.width().is_bounded()?std::min(natural,available.width().value()):natural;auto g=Geometry(width);return gfx::Size(width,g.height);}
-  void Append(std::vector<sidebar::Item>& items,gfx::Point origin,gfx::Rect clip) const{auto g=Geometry(width());for(size_t i=0;i<lines_.size();++i){auto r=g.children[i];gfx::Rect box(origin.x()+r.x,origin.y()+r.y,r.width,r.height);auto visible=box;visible.Intersect(clip);if(visible.IsEmpty()||lines_[i].empty())continue;sidebar::Item item{};item.kind=17;item.x=box.x();item.y=box.y();item.width=box.width();item.height=box.height();item.title=lines_[i];item.ink=Ink();item.glyph=center_?1:0;item.font_size=font().GetFontSize();item.font_weight=static_cast<int>(native_style_?font().GetFontWeight():weight_);item.active=item.font_weight>=static_cast<int>(gfx::Font::Weight::MEDIUM);item.clip={float(visible.x()),float(visible.y()),float(visible.width()),float(visible.height())};items.push_back(std::move(item));}}
+  void Append(std::vector<sidebar::Item>& items,gfx::Point origin,gfx::Rect clip) const{auto g=Geometry(width());for(size_t i=0;i<lines_.size();++i){auto r=g.children[i];gfx::Rect box(origin.x()+r.x,origin.y()+r.y,r.width,r.height);auto visible=box;visible.Intersect(clip);if(visible.IsEmpty()||lines_[i].empty())continue;sidebar::Item item{};item.kind=17;item.x=box.x();item.y=box.y();item.width=box.width();item.height=box.height();item.title=lines_[i];item.ink=Ink();item.glyph=center_?1:0;item.font_size=font().GetFontSize();item.font_weight=static_cast<int>(native_style_?font().GetFontWeight():weight_);item.active=item.font_weight>=static_cast<int>(gfx::Font::Weight::MEDIUM);if(display_)item.text_style=2;item.clip={float(visible.x()),float(visible.y()),float(visible.width()),float(visible.height())};items.push_back(std::move(item));}}
   bool HasFullText(const SidebarMetal& surface,std::string_view text) const{if(base::UTF16ToUTF8(text_)!=text||!SceneIsVisible(this)||GetVisibleBounds().height()!=height())return false;Geometry(width());return !lines_.empty()&&std::all_of(lines_.begin(),lines_.end(),[&](const auto& line){return line.empty()||surface.contains_text_for_testing(line);});}
   bool GetNeedsNotificationWhenVisibleBoundsChange() const override{return true;}
   void OnVisibleBoundsChanged() override{Notify();}
@@ -2145,7 +2156,7 @@ class PreferenceCopy final : public views::View {
       wrapped_->SetCursorEnabled(false);wrapped_->SetFontList(f);wrapped_->SetText(text_);wrapped_->SetMultiline(true);wrapped_->SetHorizontalAlignment(gfx::ALIGN_LEFT);wrapped_->SetElideBehavior(gfx::NO_ELIDE);wrapped_->SetWordWrapBehavior(gfx::TRUNCATE_LONG_WORDS);wrapped_->SetMinLineHeight(std::max(f.GetHeight(),views::TypographyProvider::Get().GetLineHeight(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY)));wrapped_->SetDisplayRect(gfx::Rect(0,0,width,0));
       for(size_t i=0;i<wrapped_->GetNumLines();++i){const auto start=std::min(text_.size(),wrapped_->GetTextIndexOfLine(i));const auto end=std::max(start,std::min(text_.size(),wrapped_->GetTextIndexOfLine(i+1)));auto line=text_.substr(start,end-start);while(!line.empty()&&(line.back()==u'\n'||line.back()==u'\r'))line.pop_back();lines_.push_back(base::UTF16ToUTF8(line));}
     }else lines_.push_back(base::UTF16ToUTF8(text_));if(lines_.empty())lines_.push_back("");measured_width_=width;measured_font_=f.GetFontSize();}return sidebar::paragraph_layout(width,std::max(f.GetHeight(),views::TypographyProvider::Get().GetLineHeight(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY)),lines_.size());}
-  std::u16string text_;SkColor tone_;int delta_;gfx::Font::Weight weight_;bool multiline_;bool native_style_,center_;int fixed_width_;base::RepeatingClosure changed_;base::RepeatingCallback<bool()> visible_;mutable int measured_width_=-1,measured_font_=0,natural_width_=-1;mutable std::vector<std::string> lines_;mutable std::unique_ptr<gfx::RenderText> wrapped_;
+  std::u16string text_;SkColor tone_;int delta_;gfx::Font::Weight weight_;bool multiline_;bool native_style_,center_;bool display_=false;int fixed_width_;base::RepeatingClosure changed_;base::RepeatingCallback<bool()> visible_;mutable int measured_width_=-1,measured_font_=0,natural_width_=-1;mutable std::vector<std::string> lines_;mutable std::unique_ptr<gfx::RenderText> wrapped_;
 };
 BEGIN_METADATA(PreferenceCopy)
 END_METADATA
@@ -2178,10 +2189,11 @@ class SceneProgress final : public views::View {
   METADATA_HEADER(SceneProgress,views::View)
  public:
   SceneProgress(base::RepeatingClosure changed,base::RepeatingCallback<bool()> visible):changed_(std::move(changed)),visible_(std::move(visible)){GetViewAccessibility().SetRole(ax::mojom::Role::kProgressIndicator);SetCanProcessEventsWithinSubtree(false);}
-  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(1,5);}
+  // Downloads progress: a 3 px `accent` bar on `bg-hover` (recipe::progress).
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(1,3);}
   void SetValue(double value){const double next=!std::isfinite(value)||value<0||value>1?-1:value;if(next==value_)return;value_=next;if(value_<0)started_=base::TimeTicks::Now();AX();SchedulePaint();changed_.Run();}
   bool moving() const{return value_<0;}
-  sidebar::Item Scene(gfx::Rect box,gfx::Rect clip) const{sidebar::Item item{};item.kind=26;item.x=box.x();item.y=box.y();item.width=box.width();item.height=box.height();item.title_width=value_;item.detail_font_size=started_.is_null()?0:std::fmod((base::TimeTicks::Now()-started_).InSecondsF(),2.0)/2.0;item.tile=base::i18n::IsRTL();item.ink=GetColorProvider()->GetColor(ui::kColorProgressBar);item.fill=GetColorProvider()->GetColor(ui::kColorProgressBarBackground);item.clip={float(clip.x()),float(clip.y()),float(clip.width()),float(clip.height())};return item;}
+  sidebar::Item Scene(gfx::Rect box,gfx::Rect clip) const{sidebar::Item item{};item.kind=26;item.x=box.x();item.y=box.y();item.width=box.width();item.height=box.height();item.title_width=value_;item.detail_font_size=started_.is_null()?0:std::fmod((base::TimeTicks::Now()-started_).InSecondsF(),2.0)/2.0;item.tile=base::i18n::IsRTL();item.ink=Palette(this).accent;item.fill=Palette(this).bg_hover;item.clip={float(clip.x()),float(clip.y()),float(clip.width()),float(clip.height())};return item;}
   bool GetNeedsNotificationWhenVisibleBoundsChange() const override{return true;}
   void OnVisibleBoundsChanged() override{changed_.Run();}
   void OnBoundsChanged(const gfx::Rect& old) override{views::View::OnBoundsChanged(old);changed_.Run();}
@@ -2935,6 +2947,11 @@ std::unique_ptr<views::View> CreatePageDialogActions(views::Widget* widget){
   auto add=[&](ui::mojom::DialogButton type){
     if(!(delegate->buttons()&static_cast<int>(type)))return;
     auto* button=static_cast<SceneTextButton*>(group->AddAction({},delegate->GetDialogButtonLabel(type),delegate->GetDialogButtonStyle(type)));
+    // Dialog: „Anuluj” is quiet; the action is primary, or danger strong when the
+    // dialog defaults to Cancel because the action destroys something.
+    if(type==ui::mojom::DialogButton::kCancel)button->SetQuiet();
+    else if(delegate->GetDefaultDialogButton()==static_cast<int>(ui::mojom::DialogButton::kCancel))button->SetDangerStrong();
+    else button->SetPrimary();
     button->SetID(static_cast<int>(type));button->SetProperty(views::kElementIdentifierKey,type==ui::mojom::DialogButton::kOk?views::DialogClientView::kOkButtonElementId:views::DialogClientView::kCancelButtonElementId);button->SetGroup(6666);button->SetEnabled(delegate->IsDialogButtonEnabled(type));button->SetDefault(delegate->GetIsDefault(type));
     button->SetCallback(base::BindRepeating([](base::WeakPtr<views::Widget> widget,views::View* button,ui::mojom::DialogButton type,const ui::Event& event){
       if(!widget||!widget->IsVisible())return;
@@ -3360,6 +3377,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto* confirm_actions=ActionGroup(profile_confirm_strip_,false,6);
   AddAction(confirm_actions,base::BindRepeating(&WorkspaceShell::CancelProfileRow,weak),profile_copy[8]);
   delete_profile_=AddAction(confirm_actions,base::BindRepeating(&WorkspaceShell::DeleteSelectedProfile,weak),profile_copy[9],ui::ButtonStyle::kProminent);
+  if(auto* button=views::AsViewClass<SceneTextButton>(delete_profile_))button->SetDangerStrong();
   SetSidebarPanelLayout(profile_confirm_strip_,true,gfx::Insets::TLBR(0,50,4,0),8);
   profile_confirm_strip_->SetVisible(false);
   profile_status_=profile_list_->AddChildView(std::make_unique<SceneParagraph>(u"",-1,false,kSubtle));
@@ -3454,13 +3472,13 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto* preferences_heading = main->AddChildView(std::make_unique<views::View>());
   auto* heading_text = preferences_heading->AddChildView(std::make_unique<views::View>());
   SetSidebarPanelLayout(heading_text,true,gfx::Insets(),5);
-  copy(heading_text, u"Preferencje", kInk, 9, gfx::Font::Weight::SEMIBOLD);
+  if(auto* title=views::AsViewClass<PreferenceCopy>(copy(heading_text, u"Preferencje", kInk, 9, gfx::Font::Weight::SEMIBOLD)))title->SetDisplay();
   copy(heading_text, u"Twoja przestrzeń. Twoje zasady.", kMuted, 0);
   SetSidebarPanelLayout(preferences_heading,false,gfx::Insets(),12,heading_text);
   auto dismiss=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell){shell->CloseOverlays();shell->RestorePageFocus();}},weak);
   {auto* controls=preferences_heading->AddChildView(std::make_unique<ScenePreferenceControls>(true));preferences_close_=controls->AddControl({},u"Zamknij preferencje (Escape)");BindFormCommand(preferences_close_,sidebar::FormCommand::PreferencesDismiss);}
   preferences_search_ = AddEditor(main);
-  preferences_search_->SetPlaceholderText(u"Szukaj ustawień…");
+  preferences_search_->SetPlaceholderText(u"Szukaj ustawień");
   preferences_search_->GetViewAccessibility().SetName(u"Szukaj we wszystkich ustawieniach");
   preferences_search_->SetCallbacks(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){
     if(shell&&shell->general_widget_->IsVisible()&&!shell->preferences_search_->IsIMEComposing()){
@@ -4165,7 +4183,8 @@ void WorkspaceShell::UpdateMetalSplit() {
       }
     } else {
       sidebar::Item item{};item.kind=9;item.x=rect.x();item.y=rect.y();item.width=rect.width();item.height=rect.height();item.clip=clip;
-      item.ink=Tone(view,host->divider_handle(index/2-1)->hovered()?kSubtle:kDisabled);items.push_back(std::move(item));
+      // SplitView gutter: a 3 px `line-strong` stroke that grows and turns `zing` on hover.
+      const bool hovered=host->divider_handle(index/2-1)->hovered();const auto p=Palette(view);item.hovered=hovered;item.ink=hovered?p.zing:p.line_strong;items.push_back(std::move(item));
     }
     surface->Update(widget_->GetNativeWindow(),bounds,items,is_bar ? FrameVoid(workspace_color(state_.workspace_id),root_) : Tone(view,kChip));
     if(was!=surface->visible())view->SchedulePaint();
