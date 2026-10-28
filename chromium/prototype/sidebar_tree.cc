@@ -1,5 +1,6 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 #include "chromium/prototype/sidebar_tree.h"
+#include "chromium/prototype/sidebar_layout.h"
 #include <map>
 #include <optional>
 #include <set>
@@ -17,7 +18,7 @@ struct SidebarTree::Impl {
 };
 SidebarTree::SidebarTree() : impl_(std::make_unique<Impl>()) {
 #if BUILDFLAG(IS_MAC)
-  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar") == "rust-metal")
+  if (RustUiEnabled())
     impl_->rust_tree.emplace(sidebar::new_sidebar_tree());
 #endif
 }

@@ -16,7 +16,7 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 TEST = "ZitterProfilesBrowserTest.PerformanceUiInteraction"
-BACKENDS = {"views": [], "rust-metal": ["--zitter-sidebar=rust-metal"],
+BACKENDS = {"views": ["--zitter-sidebar=views"], "rust-metal": ["--zitter-sidebar=rust-metal"],
             "rust-compositor": ["--zitter-sidebar=rust-metal", "--zitter-rust-raster=compositor"]}
 
 

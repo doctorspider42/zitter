@@ -2760,7 +2760,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarRemainsOpenWhileSpacesS
   EXPECT_FALSE(shell->pinned());
   EXPECT_TRUE(shell->workspace_animation_running());
   EXPECT_TRUE(shell->workspace_animation_pending());
-  if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal") {
+  if(RustUiEnabled()) {
     if(MetalPresents())EXPECT_TRUE(shell->workspace_switch_metal_visible());
     if(MetalPresents())EXPECT_FALSE(shell->tab_scroll_view()->layer());
   } else {
@@ -2770,7 +2770,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarRemainsOpenWhileSpacesS
   for (const auto& list : shell->tab_list_view()->children()) EXPECT_FALSE(list->layer());
   ASSERT_TRUE(base::test::RunUntil([&] { return !shell->workspace_animation_pending(); }));
   // Metal presentation and completion can both arrive in the same task turn.
-  if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal")
+  if(RustUiEnabled())
     EXPECT_TRUE(shell->workspace_animation_running()||!shell->workspace_switch_metal_visible());
   else EXPECT_TRUE(shell->workspace_animation_running());
   ASSERT_TRUE(base::test::RunUntil([&] { return !shell->workspace_animation_running(); }));
@@ -7607,7 +7607,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeDragAndCloseAtWidthLimit
   auto* original = window_->contents("work");
   shell->CloseOverlays(true); shell->SetPinned(true); shell->ShowSidebar();
   shell->sidebar_widget()->LayoutRootViewIfNecessary();
-  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar") == "rust-metal")
+  if (RustUiEnabled())
     if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible(); }));
   ui_controls::EnableUIControls();
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
@@ -7930,7 +7930,7 @@ class DeferredEditorClipboard final:public ui::TestClipboard {
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NameEditorsTypingUndoCompositionAndPersistence) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->OpenWorkspaceSettings();
   auto* field=shell->workspace_input();ASSERT_TRUE(field);auto* view=field->view();
-  const bool metal=base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal";
+  const bool metal=RustUiEnabled();
   EXPECT_EQ(metal,field->rust_editor());EXPECT_EQ(!metal,views::AsViewClass<views::Textfield>(view)!=nullptr);
   if(metal){EXPECT_TRUE(view->children().empty());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return field->metal_visible();}));}
   ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));view->RequestFocus();ASSERT_TRUE(base::test::RunUntil([&]{return view->HasFocus();}));

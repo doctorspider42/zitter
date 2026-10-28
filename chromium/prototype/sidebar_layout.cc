@@ -135,7 +135,7 @@ END_METADATA
 
 #if BUILDFLAG(IS_MAC)
 bool RustLayoutEnabled() {
-  return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar") == "rust-metal";
+  return RustUiEnabled();
 }
 class RustPanelLayout final : public views::LayoutManager {
  public:
@@ -463,4 +463,11 @@ WorkspaceSwipeLayout SidebarSwipeLayout(double position,int count,int width) {
   for(int i=std::max(0,center-1);i<=std::min(count-1,center+1);++i)out.pages.push_back({i,(i-position)*width});return out;
 }
 
+bool RustUiEnabled() {
+#if BUILDFLAG(IS_MAC)
+  return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar") != "views";
+#else
+  return false;
+#endif
+}
 }

@@ -1,3 +1,4 @@
+#include "chromium/prototype/sidebar_layout.h"
 #include "chromium/prototype/workspace_window.h"
 #include "chromium/prototype/page_media_access.h"
 #include <algorithm>
@@ -210,7 +211,7 @@ TimeMachineState WorkspaceWindow::TimeMachine() const {
   const auto* space = time_machine_.FindDict(active_id());
   [[maybe_unused]] const bool rust_copy =
 #if BUILDFLAG(IS_MAC)
-      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar") == "rust-metal";
+      RustUiEnabled();
 #else
       false;
 #endif

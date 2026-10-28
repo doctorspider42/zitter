@@ -1,5 +1,6 @@
 #include "base/threading/thread_restrictions.h"
 #include "base/files/file_util.h"
+#include "chromium/prototype/sidebar_layout.h"
 #include "chromium/prototype/page_media_access.h"
 #include "chromium/prototype/page_dialogs.h"
 #include "ui/accessibility/ax_node_data.h"
@@ -238,7 +239,7 @@ class ZitterMediaBrowserTest : public InProcessBrowserTest {
     ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));button->RequestFocus();
     base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),key,false,false,false,false));
   }
-  bool rust() const{return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal";}
+  bool rust() const{return RustUiEnabled();}
   void SetCamera(Profile* profile, ContentSetting setting) {
     auto origin = embedded_test_server()->GetURL("/");
     HostContentSettingsMapFactory::GetForProfile(profile)->SetContentSettingDefaultScope(

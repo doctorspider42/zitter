@@ -1,3 +1,4 @@
+#include "chromium/prototype/sidebar_layout.h"
 #include "chromium/prototype/browser_import_data.h"
 #include "chromium/prototype/workspace_window.h"
 #include "chromium/prototype/download_panel.h"
@@ -104,7 +105,7 @@ namespace {
 // wording in Rust mode, Views keeps the native text.
 std::u16string ResultDetail(int kind, const std::u16string& label, std::u16string native) {
 #if BUILDFLAG(IS_MAC)
-  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar") == "rust-metal")
+  if (RustUiEnabled())
     return base::UTF8ToUTF16(std::string(sidebar::palette_result_detail(sidebar::PaletteResultKind{static_cast<uint8_t>(kind)}, base::UTF16ToUTF8(label))));
 #endif
   return native;

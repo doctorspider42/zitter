@@ -554,7 +554,7 @@ class SceneGlyphButton : public GlyphButton {
       const gfx::VectorIcon* icon, base::RepeatingCallback<bool()> scene_visible,base::RepeatingClosure painted={})
       : GlyphButton(std::move(callback),std::move(name),glyph,icon),scene_visible_(std::move(scene_visible)),painted_(std::move(painted)) {
 #if BUILDFLAG(IS_MAC)
-    if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal")
+    if (RustUiEnabled())
       rust_pointer_.emplace(sidebar::new_row_pointer());
 #endif
   }
@@ -830,7 +830,7 @@ END_METADATA
 #endif
 std::unique_ptr<views::View> CreateSceneAction(views::Button::PressedCallback callback,std::u16string name,ControlGlyph glyph,const gfx::VectorIcon* icon,base::RepeatingCallback<bool()> visible,base::RepeatingClosure changed,bool native_focus_ring=true,SidebarNodeBinding binding={}){
 #if BUILDFLAG(IS_MAC)
-  if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal")return std::make_unique<RustActionView>(std::move(callback),std::move(name),glyph,icon,std::move(visible),std::move(changed),native_focus_ring,AcquireSidebarInput(binding));
+  if(RustUiEnabled())return std::make_unique<RustActionView>(std::move(callback),std::move(name),glyph,icon,std::move(visible),std::move(changed),native_focus_ring,AcquireSidebarInput(binding));
 #endif
   auto view=std::make_unique<SceneGlyphButton>(std::move(callback),std::move(name),glyph,icon,std::move(visible),std::move(changed));if(!native_focus_ring){view->SetInstallFocusRingOnFocus(false);view->SetHasInkDropActionOnClick(false);}return view;
 }
@@ -1527,7 +1527,7 @@ class PaletteView final : public views::View {
  public:
   explicit PaletteView(base::RepeatingClosure painted):painted_(std::move(painted)) {
 #if BUILDFLAG(IS_MAC)
-    if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal")scope_=std::make_shared<SidebarNodeGraphState>(true);
+    if(RustUiEnabled())scope_=std::make_shared<SidebarNodeGraphState>(true);
 #endif
   }
 #if BUILDFLAG(IS_MAC)
@@ -1636,7 +1636,7 @@ class RowButton : public views::Button {
     // The close affordance is a descendant: entering it must retain row hover.
     SetNotifyEnterExitOnChild(true);
 #if BUILDFLAG(IS_MAC)
-    if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar") == "rust-metal")
+    if (RustUiEnabled())
       rust_pointer_.emplace(sidebar::new_row_pointer());
     scene_text_ = rust_pointer_.has_value() && spec_.sidebar_row;
 #endif
@@ -2103,7 +2103,7 @@ END_METADATA
 #endif
 std::unique_ptr<views::View> CreateSceneRow(views::Button::PressedCallback callback,RowButton::Spec spec,base::RepeatingClosure changed,base::RepeatingCallback<void(views::View*,base::RepeatingClosure)> watch,SidebarNodeBinding binding={}){
 #if BUILDFLAG(IS_MAC)
-  if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal"){
+  if(RustUiEnabled()){
     auto state=AcquireSidebarInput(binding);SidebarNodeBinding close_binding;
     if(binding.scope&&state->tab_binding().valid){const auto update=binding.scope->graph->project_tab(*state,SceneUtf16(spec.title),SceneUtf16(spec.monogram),spec.monogram_color,spec.tile);CHECK(update.admitted);}
     if(binding.scope&&spec.close){CHECK_EQ(binding.kind,1u);close_binding={binding.scope,10,binding.identity,{}};}
@@ -2183,7 +2183,7 @@ class WorkspaceHeading final : public views::View {
   explicit WorkspaceHeading(base::RepeatingCallback<bool()> visible) : visible_(std::move(visible)) {
     SetPreferredSize(gfx::Size(200, 24));
 #if BUILDFLAG(IS_MAC)
-    scene_ = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar") == "rust-metal";
+    scene_ = RustUiEnabled();
 #endif
     if (scene_) GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);
     else {
@@ -2845,7 +2845,7 @@ END_METADATA
 #endif
 std::unique_ptr<views::View> CreateSidebarGrip(ResizeHandle** handle,base::RepeatingCallback<void(int,bool)> resized,base::RepeatingCallback<int()> width,base::RepeatingCallback<void(int,bool)> applied,base::RepeatingClosure painted,base::RepeatingCallback<bool()> visible){
 #if BUILDFLAG(IS_MAC)
-  if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal"){auto view=std::make_unique<RustResizeHandle>(std::move(width),std::move(applied),std::move(painted),std::move(visible));*handle=view.get();return view;}
+  if(RustUiEnabled()){auto view=std::make_unique<RustResizeHandle>(std::move(width),std::move(applied),std::move(painted),std::move(visible));*handle=view.get();return view;}
 #endif
   auto view=std::make_unique<NativeSidebarGrip>(std::move(resized),std::move(painted),std::move(visible));*handle=view.get();return view;
 }
@@ -2892,7 +2892,7 @@ class SidebarView final : public views::View {
     LayoutSuperclass<views::View>(this);
     if (grip) {
 #if BUILDFLAG(IS_MAC)
-      if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal") {const auto r=sidebar::sidebar_grip_layout(width(),height());grip->SetBounds(r.x,r.y,r.width,r.height);return;}
+      if(RustUiEnabled()) {const auto r=sidebar::sidebar_grip_layout(width(),height());grip->SetBounds(r.x,r.y,r.width,r.height);return;}
 #endif
       grip->SetBounds(width()-6,0,6,height());
     }
@@ -3126,7 +3126,7 @@ END_METADATA
 
 std::unique_ptr<views::View> CreateSplitDivider(ResizeHandle** handle,views::ResizeAreaDelegate* delegate,base::RepeatingCallback<double()> ratio,base::RepeatingCallback<int()> extent,base::RepeatingCallback<void(double,bool)> changed,base::RepeatingClosure painted,base::RepeatingCallback<bool()> visible){
 #if BUILDFLAG(IS_MAC)
-  if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal"){auto view=std::make_unique<RustResizeHandle>(std::move(ratio),std::move(extent),std::move(changed),std::move(painted),std::move(visible));*handle=view.get();return view;}
+  if(RustUiEnabled()){auto view=std::make_unique<RustResizeHandle>(std::move(ratio),std::move(extent),std::move(changed),std::move(painted),std::move(visible));*handle=view.get();return view;}
 #endif
   auto view=std::make_unique<NativeSplitDivider>(delegate,std::move(painted));*handle=view.get();return view;
 }
@@ -3139,7 +3139,7 @@ class PaneBar final : public views::View {
       base::RepeatingClosure painted,base::RepeatingCallback<bool()> visible)
       : painted_(std::move(painted)),visible_(std::move(visible)) {
 #if BUILDFLAG(IS_MAC)
-    scene_=base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal";
+    scene_=RustUiEnabled();
     if(scene_)node_graph_=std::make_shared<SidebarNodeGraphState>();
 #endif
     if(!scene_) {
@@ -3225,7 +3225,7 @@ class PaneHost final : public views::View, public views::ResizeAreaDelegate {
            base::RepeatingCallback<bool(size_t)> visible)
       : painted_(std::move(painted)),changed_(std::move(changed)) {
 #if BUILDFLAG(IS_MAC)
-    rust_=base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal";
+    rust_=RustUiEnabled();
 #endif
     ResizeHandle* divider_handle=nullptr;
     divider_=AddChildView(CreateSplitDivider(&divider_handle,this,
@@ -3343,7 +3343,7 @@ class ShellRoot final : public views::View {
     edge->SetBounds(0, kShellHeaderHeight, kGap, std::max(0, height() - kShellHeaderHeight));
     edge->SetVisible(!pinned);
 #if BUILDFLAG(IS_MAC)
-    if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal") {
+    if(RustUiEnabled()) {
       const auto g=sidebar::shell_layout(width(),height(),sidebar_width,pinned);
       content->SetBounds(g.content.x,g.content.y,g.content.width,g.content.height);
       edge->SetBounds(g.edge.x,g.edge.y,g.edge.width,g.edge.height);
@@ -3470,7 +3470,7 @@ std::unique_ptr<views::DialogDelegate> CreateSceneModalDialog(std::unique_ptr<vi
 }
 std::unique_ptr<PanelScene> CreatePanelScene(views::View* root){
 #if BUILDFLAG(IS_MAC)
-  if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal")return std::make_unique<PanelSceneImpl>(root);
+  if(RustUiEnabled())return std::make_unique<PanelSceneImpl>(root);
 #endif
   return nullptr;
 }
@@ -3511,7 +3511,7 @@ std::unique_ptr<views::View> WorkspaceShell::Build() {
   root->SetBackground(views::CreateSolidBackground(FrameTint(workspace_color("work"), root_)));
   auto weak = weak_factory_.GetWeakPtr();
 #if BUILDFLAG(IS_MAC)
-  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal") metal_header_=CreateSidebarMetal();
+  if (RustUiEnabled()) metal_header_=CreateSidebarMetal();
 #endif
   auto* header = root->AddChildView(std::make_unique<ChromeHeaderView>(
       base::BindRepeating(&WorkspaceShell::ScheduleMetalHeader,weak)));
@@ -3587,7 +3587,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         }
       }, weak));
 #if BUILDFLAG(IS_MAC)
-  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar") == "rust-metal") {
+  if (RustUiEnabled()) {
     metal_sidebar_ = CreateSidebarMetal();
     sidebar->painted = base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar, weak);
   }
@@ -4652,7 +4652,7 @@ void WorkspaceShell::Update(ShellState state) {
 
 void WorkspaceShell::ReconcileSidebarNodes(TabListCache& cache,std::string_view workspace,const std::vector<PinnedItem>& pins,const std::vector<ShellTab>& tabs,std::array<std::optional<size_t>,2> split_tabs,bool split){
 #if BUILDFLAG(IS_MAC)
-  if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")!="rust-metal")return;
+  if(!RustUiEnabled())return;
   // Titles, URLs and active selection do not alter logical node membership.
   // Keep the fast refresh path allocation-free when identities/order are equal.
   if(cache.node_graph&&cache.pins==pins&&cache.split_tabs==split_tabs&&cache.split==split&&cache.tabs.size()==tabs.size()&&
@@ -5743,7 +5743,7 @@ views::View* WorkspaceShell::workspace_button(std::string_view id) const {
 
 void WorkspaceShell::ReconcileChromeNodes() {
 #if BUILDFLAG(IS_MAC)
-  if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")!="rust-metal")return;
+  if(!RustUiEnabled())return;
   if(!chrome_node_graph_)chrome_node_graph_=std::make_shared<SidebarNodeGraphState>();
   auto units=[](const std::u16string& text){rust::Vec<uint16_t> result;for(char16_t unit:text)result.push_back(unit);return result;};
   rust::Vec<sidebar::WorkspaceSceneInput> items;items.reserve(state_.workspaces.size());

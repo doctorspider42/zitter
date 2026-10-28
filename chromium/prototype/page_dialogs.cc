@@ -134,7 +134,7 @@ void PageDialogs::Show(content::RenderFrameHost* frame, content::JavaScriptDialo
   requesting_frame_ = frame; unload_dialog_ = unload; dialog_callback_ = std::move(callback);
   std::unique_ptr<views::DialogDelegate> dialog;
 #if BUILDFLAG(IS_MAC)
-  if(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal")dialog=std::make_unique<PageDialogDelegate>();
+  if(RustUiEnabled())dialog=std::make_unique<PageDialogDelegate>();
 #endif
   if(!dialog)dialog=std::make_unique<views::DialogDelegate>();
   dialog->SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
@@ -159,7 +159,7 @@ void PageDialogs::Show(content::RenderFrameHost* frame, content::JavaScriptDialo
   if(scene_){auto copy=scene_->MakeText(message_text,true,false,440);copy->SizeToPreferredSize();viewport->SetPanelContents(std::move(copy));}
   else{auto label=std::make_unique<views::Label>(message_text);label->SetSubpixelRenderingEnabled(false);label->SetMultiLine(true);label->SetHorizontalAlignment(gfx::ALIGN_LEFT);label->SizeToFit(440);viewport->SetPanelContents(std::move(label));}
   if (is_prompt) {
-    prompt_ = AddEditor(body,base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar")=="rust-metal");
+    prompt_ = AddEditor(body,RustUiEnabled());
     prompt_->GetViewAccessibility().SetName(u"Odpowiedź dla strony");prompt_->SetText(initial);
     // Retain the native font metric; resolve the background from the live theme.
     prompt_->SetPresentation(views::Textfield::GetDefaultFontList().GetFontSize(),8,true,std::nullopt);

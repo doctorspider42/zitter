@@ -1,3 +1,4 @@
+#include "chromium/prototype/sidebar_layout.h"
 #include "chromium/prototype/workspace_window.h"
 #include "chromium/prototype/page_media_access.h"
 #include "build/build_config.h"
@@ -67,7 +68,7 @@ std::vector<PaletteResult> WorkspaceWindow::CommandResults(std::u16string query)
     });
   };
 #if BUILDFLAG(IS_MAC)
-  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar") == "rust-metal") {
+  if (RustUiEnabled()) {
     // Rust owns the catalogue, wording and matching; native code supplies facts.
     sidebar::CommandContext context{};
     context.page = page; context.http_page = page && page->GetVisibleURL().SchemeIsHTTPOrHTTPS(); context.split = split();

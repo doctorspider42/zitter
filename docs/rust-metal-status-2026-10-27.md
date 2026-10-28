@@ -1,6 +1,8 @@
 # Rust + Metal — stan i pozostałe prace
 
-Stan na 2026-10-28. Migracja wznowiona 2026-10-27 na prośbę użytkownika (cel: pełne
+Stan na 2026-10-28. **Rust/Metal jest backendem domyślnym** (decyzja użytkownika po
+teście ręcznym). Bazowe Views: `--zitter-sidebar=views`; Rust bez Metala w procesie:
+`--zitter-rust-raster=compositor`. Migracja wznowiona 2026-10-27 na prośbę użytkownika (cel: pełne
 przeniesienie implementacji albo 25% tygodniowego zużycia; testy UI po większych
 etapach). Implementacja jest przeniesiona do granic platformy; otwarta pozostaje
 akceptacja (ręczna, wydajność, wydanie) — patrz lista niżej.
@@ -56,7 +58,7 @@ Views. Natywne pozostają udokumentowane granice platformy: okna/widgety, runner
 ramki dialogów, fokus/AX/IME, dostarczanie zdarzeń oraz usługi przeglądarki.
 
 Wszystkie pozostałe punkty wymagają użytkownika lub jego decyzji: akceptacja ręczna,
-notaryzacja (poświadczenia Apple) oraz wybór domyślnego backendu.
+notaryzacja (poświadczenia Apple). Domyślny backend: Rust/Metal.
 
 0. **Automatyczna akceptacja skali i RTL (wykonana).** Skala 1× — 276/276 Metal.
    RTL: znalezione i naprawione 4 realne błędy w trybie Rust (kierunek przewijania
@@ -87,8 +89,7 @@ notaryzacja (poświadczenia Apple) oraz wybór domyślnego backendu.
    Pełna macierz po zmianie: 276/276 Metal, 227/227 Views. Pozostała różnica CPU (~5 ms/iterację) jest
    rozproszona (planowanie odrysowań, skracanie tekstu, malowanie pól) bez jednego
    gorącego punktu w profilu.
-2a. **Tryb kompozytora — wspierany (opt-in).** `--zitter-sidebar=rust-metal
-   --zitter-rust-raster=compositor`: cała logika Rust, malowanie przepisów scen przez
+2a. **Tryb kompozytora — wspierany (opt-in).** `--zitter-rust-raster=compositor`: cała logika Rust, malowanie przepisów scen przez
    kompozytor Chromium, bez `MTLDevice` w procesie przeglądarki (pamięć jak Views).
    Testy sprawdzają wyrocznie prezentacji Metal tylko gdy Metal rysuje
    (`MetalPresents()`); zestaw `ZitterMetalSidebarBrowserTest` jest pomijany jak w Views.
