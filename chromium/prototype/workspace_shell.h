@@ -405,6 +405,11 @@ class WorkspaceShell final : public ui::EventHandler,
   views::Widget* import_widget() const { return import_widget_.get(); }
   // Profile service outcomes; wording comes from Rust (or the Views table).
   enum class ProfileStatusEvent { kDuplicateName, kCreating, kCreateFailed, kCreated, kCreateNotSaved, kRenamed, kRenameFailed, kDeleting, kDeleted, kDeleteNotSaved, kLoadFailed };
+  // Browsing-data removal outcomes and confirmation copy (Rust in Rust mode).
+  enum class ClearDataEvent { kBusy, kNothingSelected, kHistoryForbidden, kClearing, kCleared, kFailed };
+  void ReportClearData(ClearDataEvent event, const std::u16string& profile);
+  struct ClearDataCopy { bool valid = false; std::u16string title, description, confirm, cancel; };
+  ClearDataCopy ClearDataConfirmCopy(const std::u16string& profile, int period, bool history, bool cookies, bool cache) const;
   void SetProfileStatus(ProfileStatusEvent event);
   void SetProfileStatus(std::u16string message);
   views::Widget* profiles_widget() const { return profiles_widget_.get(); }

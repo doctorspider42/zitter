@@ -29,6 +29,9 @@ mod ffi {
     enum ToolsStatus { HistoryReading, HistorySearching, WriteFailed }
     enum PreferenceOutcome { Text, Site, SiteRemove, Value, General }
     enum PreferenceControlKind { Text, Toggle }
+    #[derive(Debug)]
+    enum ClearDataEvent { Busy, NothingSelected, HistoryForbidden, Clearing, Cleared, Failed }
+    struct ClearDataConfirm { valid: bool, title: String, description: String, confirm: String, cancel: String }
     enum ImportStage { Reading, Preview, Importing, SavingBrowsingData, Finished }
     struct ImportStatusReport { stage: ImportStage, browser: String, error: String, profiles: usize, spaces: usize, folders: usize, tabs: usize, skipped: usize, ok: bool, added_profiles: usize, added_spaces: usize, browsing_data: bool, history: usize, cookies: usize, data_skipped: usize, data_failed: bool }
     #[derive(Debug)]
@@ -313,6 +316,8 @@ mod ffi {
         fn preference_control_view(kind: PreferenceControlKind, present: bool, editable: bool) -> PreferenceControlView;
         fn preferences_profile_banner(profile: &str) -> String;
         fn profile_status_copy(event: ProfileStatusEvent) -> String;
+        fn clear_data_status(event: ClearDataEvent, profile: &str) -> PreferenceStatus;
+        fn clear_data_confirm(profile: &str, period: i32, history: bool, cookies: bool, cache: bool) -> ClearDataConfirm;
         fn import_status_copy(report: &ImportStatusReport) -> String;
         fn site_rule_detail(primary: &str, name: &str, setting: i32, secondary: &str, editable: bool) -> String;
         fn site_rules_empty(saved: bool) -> String;
@@ -1163,6 +1168,28 @@ fn import_status_copy(r:&ffi::ImportStatusReport)->String{
         }
         _=>String::new(),
     }
+}
+// Browsing-data removal: confirmation copy and outcome wording/tone.
+const CLEAR_PERIODS:[&str;4]=["Ostatnia godzina","Ostatnie 24 godziny","Ostatnie 7 dni","Cały okres"];
+fn clear_data_status(event:ffi::ClearDataEvent,profile:&str)->ffi::PreferenceStatus{
+    use ffi::ClearDataEvent as E;
+    let (text,error)=match event {
+        E::Busy=>("Poczekaj na zakończenie bieżącej operacji.".to_string(),true),
+        E::NothingSelected=>("Wybierz co najmniej jeden rodzaj danych i zakres czasu.".into(),true),
+        E::HistoryForbidden=>("Zasady tego profilu nie pozwalają usuwać historii.".into(),true),
+        E::Clearing=>(format!("Czyszczenie danych profilu „{profile}”…"),false),
+        E::Cleared=>(format!("Wyczyszczono dane profilu „{profile}”."),false),
+        E::Failed=>("Nie udało się usunąć wszystkich wybranych danych. Spróbuj ponownie.".into(),true),
+        _=>(String::new(),false),
+    };
+    ffi::PreferenceStatus{text,error}
+}
+fn clear_data_confirm(profile:&str,period:i32,history:bool,cookies:bool,cache:bool)->ffi::ClearDataConfirm{
+    let Some(range)=usize::try_from(period).ok().and_then(|p|CLEAR_PERIODS.get(p)).filter(|_|history||cookies||cache) else{return ffi::ClearDataConfirm{valid:false,title:String::new(),description:String::new(),confirm:String::new(),cancel:String::new()};};
+    let mut description=format!("Profil: {profile}\nZakres: {range}\n\nZostaną usunięte:");
+    if history{description.push_str("\n• Historia przeglądania");}if cookies{description.push_str("\n• Cookies i dane witryn — może to wylogować Cię z serwisów");}if cache{description.push_str("\n• Pamięć podręczna");}
+    description.push_str("\n\nTej operacji nie można cofnąć. Hasła, przypięte karty i pobrane pliki pozostaną zachowane.");
+    ffi::ClearDataConfirm{valid:true,title:"Wyczyścić dane przeglądania?".into(),description,confirm:"Wyczyść dane".into(),cancel:"Anuluj".into()}
 }
 // Profile service outcomes arrive as typed events; Rust owns their wording.
 fn profile_status_copy(event:ffi::ProfileStatusEvent)->String{
@@ -3499,6 +3526,12 @@ mod tests {
         let mut r=import_report(S::Finished);r.browsing_data=true;r.history=10;r.cookies=20;r.data_skipped=3;r.data_failed=true;assert_eq!(import_status_copy(&r),"Import zakończony. Dodano 1 profili i 2 przestrzeni. Możesz wybrać je na liście przestrzeni. Przeniesiono 10 stron historii i 20 ciasteczek. Pominięto: 3. Część danych nie została zapisana. Ponów import.");
         let mut r=import_report(S::Finished);r.ok=false;assert!(import_status_copy(&r).starts_with("Import się nie powiódł."));
         assert!(import_status_copy(&import_report(S{repr:99})).is_empty());
+    }
+    #[test] fn clear_data_confirm_and_status_cover_selection_period_and_outcomes() {
+        let c=clear_data_confirm("Praca 🦀",1,true,false,true);assert!(c.valid);assert_eq!(c.description,"Profil: Praca 🦀\nZakres: Ostatnie 24 godziny\n\nZostaną usunięte:\n• Historia przeglądania\n• Pamięć podręczna\n\nTej operacji nie można cofnąć. Hasła, przypięte karty i pobrane pliki pozostaną zachowane.");assert_eq!((c.title.as_str(),c.confirm.as_str(),c.cancel.as_str()),("Wyczyścić dane przeglądania?","Wyczyść dane","Anuluj"));
+        assert!(clear_data_confirm("p",3,false,true,false).description.contains("Cały okres\n\nZostaną usunięte:\n• Cookies"));for (period,h,c,k) in [(-1,true,false,false),(4,true,false,false),(0,false,false,false)]{assert!(!clear_data_confirm("p",period,h,c,k).valid);}
+        use ffi::ClearDataEvent as E;let s=clear_data_status(E::Clearing,"Dom");assert_eq!((s.text.as_str(),s.error),("Czyszczenie danych profilu „Dom”…",false));let s=clear_data_status(E::Cleared,"Dom");assert_eq!((s.text.as_str(),s.error),("Wyczyszczono dane profilu „Dom”.",false));
+        for e in [E::Busy,E::NothingSelected,E::HistoryForbidden,E::Failed]{let s=clear_data_status(e,"x");assert!(s.error&&!s.text.is_empty());}assert!(clear_data_status(E{repr:77},"x").text.is_empty());
     }
     #[test] fn profile_status_events_have_distinct_copy_and_unknown_is_empty() {
         use ffi::ProfileStatusEvent as E;let all=[E::DuplicateName,E::Creating,E::CreateFailed,E::Created,E::CreateNotSaved,E::Renamed,E::RenameFailed,E::Deleting,E::Deleted,E::DeleteNotSaved,E::LoadFailed];let copies=all.iter().map(|e|profile_status_copy(*e)).collect::<std::collections::BTreeSet<_>>();assert_eq!(copies.len(),all.len());assert!(copies.iter().all(|c|!c.is_empty()));

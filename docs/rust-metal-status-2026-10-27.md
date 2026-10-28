@@ -137,6 +137,11 @@ ukończone/usunięte, przerwane, wstrzymane, prędkość, pozostały czas) w `do
 formatowanie bajtów zostaje w natywnej usłudze lokalizacji. Testy Rust 500; testy UI
 pobierania zaliczone w obu trybach.
 
+**Czyszczenie danych w Ruście:** treść potwierdzenia (profil, zakres, typy danych) i
+statusy operacji (zajęte, brak wyboru, zakaz zasad, w toku, gotowe, błąd) jako typowane
+zdarzenia z tekstem/tonem z Rusta. Testy Rust 501; testy UI czyszczenia/historii
+zaliczone w obu trybach.
+
 **Pełny checkpoint UI 2026-10-27:** po poprawkach **273/273 Metal i 224/224 Views**
 (pierwszy przebieg: 6 niepowodzeń Metal, 1 Views — trzy crashe testów na odłączonych
 widokach, brakująca komenda Rust `HistoryMore`, tooltip tytułu Peek, wyścig tytułu

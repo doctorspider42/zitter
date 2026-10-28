@@ -90,34 +90,30 @@ void WorkspaceWindow::QueryBrowsingHistory(std::u16string query, size_t limit) {
 void WorkspaceWindow::RequestClearBrowsingData(BrowsingDataSelection selection) {
   if (clear_data_dialog_) { clear_data_dialog_->Activate(); return; }
   if (!configuration_ready_ || profiles_busy_ || !model_.active() || data_remover_) {
-    shell_->SetPreferencesStatus(u"Poczekaj na zakończenie bieżącej operacji.", true);
+    shell_->ReportClearData(WorkspaceShell::ClearDataEvent::kBusy, {});
     return;
   }
   if ((!selection.history && !selection.cookies && !selection.cache) || selection.period < 0 || selection.period > 3) {
-    shell_->SetPreferencesStatus(u"Wybierz co najmniej jeden rodzaj danych i zakres czasu.", true);
+    shell_->ReportClearData(WorkspaceShell::ClearDataEvent::kNothingSelected, {});
     return;
   }
   const std::string id = model_.active()->profile_id;
   std::u16string name;
   for (const auto& profile : profiles_) if (profile.info.id == id) name = base::UTF8ToUTF16(profile.info.name);
-  const std::array<std::u16string, 4> periods = {u"Ostatnia godzina", u"Ostatnie 24 godziny", u"Ostatnie 7 dni", u"Cały okres"};
-  std::u16string description = u"Profil: " + name + u"\nZakres: " + periods[selection.period] + u"\n\nZostaną usunięte:";
-  if (selection.history) description += u"\n• Historia przeglądania";
-  if (selection.cookies) description += u"\n• Cookies i dane witryn — może to wylogować Cię z serwisów";
-  if (selection.cache) description += u"\n• Pamięć podręczna";
-  description += u"\n\nTej operacji nie można cofnąć. Hasła, przypięte karty i pobrane pliki pozostaną zachowane.";
+  const auto copy = shell_->ClearDataConfirmCopy(name, selection.period, selection.history, selection.cookies, selection.cache);
+  if (!copy.valid) return;
   const auto generation = ++clear_data_dialog_generation_;
   auto clear_dialog = base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window, size_t generation) {
     if (window && window->clear_data_dialog_generation_ == generation) window->clear_data_dialog_.reset();
   }, weak_factory_.GetWeakPtr(), generation);
   auto model = ui::DialogModel::Builder()
-      .SetTitle(u"Wyczyścić dane przeglądania?")
-      .AddParagraph(ui::DialogModelLabel(description))
+      .SetTitle(copy.title)
+      .AddParagraph(ui::DialogModelLabel(copy.description))
       .AddOkButton(base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, base::RepeatingClosure clear_dialog, std::string id, BrowsingDataSelection selection) {
         clear_dialog.Run();
         if (window) window->ClearBrowsingData(std::move(id), selection);
-      }, weak_factory_.GetWeakPtr(), clear_dialog, id, selection), ui::DialogModel::Button::Params().SetLabel(u"Wyczyść dane"))
-      .AddCancelButton(base::BindOnce(clear_dialog), ui::DialogModel::Button::Params().SetLabel(u"Anuluj"))
+      }, weak_factory_.GetWeakPtr(), clear_dialog, id, selection), ui::DialogModel::Button::Params().SetLabel(copy.confirm))
+      .AddCancelButton(base::BindOnce(clear_dialog), ui::DialogModel::Button::Params().SetLabel(copy.cancel))
       .SetCloseActionCallback(base::BindOnce(clear_dialog))
       .SetDialogDestroyingCallback(base::BindOnce(clear_dialog))
       .OverrideDefaultButton(ui::mojom::DialogButton::kCancel)
@@ -136,7 +132,7 @@ bool WorkspaceWindow::ClearBrowsingData(std::string profile_id, BrowsingDataSele
   auto* profile = ProfileFor(profile_id);
   if (!profile) return false;
   if (selection.history && !profile->GetPrefs()->GetBoolean(prefs::kAllowDeletingBrowserHistory)) {
-    shell_->SetPreferencesStatus(u"Zasady tego profilu nie pozwalają usuwać historii.", true);
+    shell_->ReportClearData(WorkspaceShell::ClearDataEvent::kHistoryForbidden, {});
     return false;
   }
   uint64_t mask = 0;
@@ -154,7 +150,7 @@ bool WorkspaceWindow::ClearBrowsingData(std::string profile_id, BrowsingDataSele
   data_remover_ = profile->GetBrowsingDataRemover();
   data_remover_->AddObserver(this);
   shell_->SetBrowsingDataBusy(true);
-  shell_->SetPreferencesStatus(u"Czyszczenie danych profilu „" + data_removal_profile_name_ + u"”…");
+  shell_->ReportClearData(WorkspaceShell::ClearDataEvent::kClearing, data_removal_profile_name_);
   data_remover_->RemoveAndReply(begin, base::Time::Max(), mask,
       content::BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB | content::BrowsingDataRemover::ORIGIN_TYPE_PROTECTED_WEB, this);
   return true;
@@ -164,8 +160,7 @@ void WorkspaceWindow::OnBrowsingDataRemoverDone(uint64_t failed_data_types) {
   data_remover_ = nullptr;
   shell_->SetBrowsingDataBusy(false);
   data_removal_lease_.reset();
-  shell_->SetPreferencesStatus(failed_data_types ? u"Nie udało się usunąć wszystkich wybranych danych. Spróbuj ponownie." :
-      u"Wyczyszczono dane profilu „" + data_removal_profile_name_ + u"”.", failed_data_types != 0);
+  shell_->ReportClearData(failed_data_types ? WorkspaceShell::ClearDataEvent::kFailed : WorkspaceShell::ClearDataEvent::kCleared, data_removal_profile_name_);
   history_tasks_.TryCancelAll();
   if (shell_->history_visible()) shell_->RefreshHistory();
 }

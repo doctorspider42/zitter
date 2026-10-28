@@ -8944,6 +8944,43 @@ void WorkspaceShell::OpenProfiles(std::string profile_id, std::string workspace_
   profiles_widget_->Show();
   profiles_widget_->Activate();
 }
+void WorkspaceShell::ReportClearData(ClearDataEvent event, const std::u16string& profile) {
+#if BUILDFLAG(IS_MAC)
+  if (metal_sidebar_) {
+    const auto status = sidebar::clear_data_status(sidebar::ClearDataEvent{static_cast<uint8_t>(event)}, base::UTF16ToUTF8(profile));
+    SetPreferencesStatus(base::UTF8ToUTF16(std::string(status.text)), status.error);
+    return;
+  }
+#endif
+  switch (event) {
+    case ClearDataEvent::kBusy: SetPreferencesStatus(u"Poczekaj na zakończenie bieżącej operacji.", true); break;
+    case ClearDataEvent::kNothingSelected: SetPreferencesStatus(u"Wybierz co najmniej jeden rodzaj danych i zakres czasu.", true); break;
+    case ClearDataEvent::kHistoryForbidden: SetPreferencesStatus(u"Zasady tego profilu nie pozwalają usuwać historii.", true); break;
+    case ClearDataEvent::kClearing: SetPreferencesStatus(u"Czyszczenie danych profilu „" + profile + u"”…"); break;
+    case ClearDataEvent::kCleared: SetPreferencesStatus(u"Wyczyszczono dane profilu „" + profile + u"”.", false); break;
+    case ClearDataEvent::kFailed: SetPreferencesStatus(u"Nie udało się usunąć wszystkich wybranych danych. Spróbuj ponownie.", true); break;
+  }
+}
+WorkspaceShell::ClearDataCopy WorkspaceShell::ClearDataConfirmCopy(const std::u16string& profile, int period, bool history, bool cookies, bool cache) const {
+  ClearDataCopy out;
+#if BUILDFLAG(IS_MAC)
+  if (metal_sidebar_) {
+    const auto copy = sidebar::clear_data_confirm(base::UTF16ToUTF8(profile), period, history, cookies, cache);
+    out.valid = copy.valid; out.title = base::UTF8ToUTF16(std::string(copy.title)); out.description = base::UTF8ToUTF16(std::string(copy.description));
+    out.confirm = base::UTF8ToUTF16(std::string(copy.confirm)); out.cancel = base::UTF8ToUTF16(std::string(copy.cancel));
+    return out;
+  }
+#endif
+  if (period < 0 || period > 3 || (!history && !cookies && !cache)) return out;
+  const std::array<std::u16string, 4> periods = {u"Ostatnia godzina", u"Ostatnie 24 godziny", u"Ostatnie 7 dni", u"Cały okres"};
+  out.description = u"Profil: " + profile + u"\nZakres: " + periods[period] + u"\n\nZostaną usunięte:";
+  if (history) out.description += u"\n• Historia przeglądania";
+  if (cookies) out.description += u"\n• Cookies i dane witryn — może to wylogować Cię z serwisów";
+  if (cache) out.description += u"\n• Pamięć podręczna";
+  out.description += u"\n\nTej operacji nie można cofnąć. Hasła, przypięte karty i pobrane pliki pozostaną zachowane.";
+  out.valid = true; out.title = u"Wyczyścić dane przeglądania?"; out.confirm = u"Wyczyść dane"; out.cancel = u"Anuluj";
+  return out;
+}
 void WorkspaceShell::SetProfileStatus(ProfileStatusEvent event) {
   static constexpr std::array<std::u16string_view, 11> kViewsCopy = {
       u"Profil o tej nazwie już istnieje.",
