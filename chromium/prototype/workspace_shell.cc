@@ -569,13 +569,13 @@ sidebar::Item GlyphSceneData(views::View* view,ControlGlyph glyph,const gfx::Vec
   item.active=on; item.focused=focused; item.focus=Palette(view).focus;
   item.hovered=hovered;
   item.ink=Tone(view,!view->GetEnabledInViewsSubtree() ? kDisabled : item.glyph==1 ? item.active || item.hovered ? kInk : kMuted : kSubtle);
-  item.monogram=base::UTF16ToUTF8(label); item.font_size=Font(3).GetFontSize();
+  item.monogram=base::UTF16ToUTF8(label); item.font_size=item.glyph==1&&rect.height()>=36?18:Font(3).GetFontSize();
   item.fill=item.glyph==1 ? item.active && !item.monogram.empty() ? SkColorSetA(Tone(view,kInk),0x1f) : item.hovered ? HoverWash(view) : SK_ColorTRANSPARENT
       : item.hovered ? HoverWash(view) : SK_ColorTRANSPARENT;
   if(glyph==GlyphButton::Glyph::kSwatch){item.kind=18;item.badge=color;item.ink=Tone(view,!view->GetEnabledInViewsSubtree()?kDisabled:item.active?kInk:kMuted);
     // A preset pill: the color's name beside its dot, the selected one on accent_soft.
     const auto name=label.empty()?view->GetTooltipText():label;
-    if(rect.width()>rect.height()*1.6f&&!name.empty()){const auto p=Palette(view);item.title=base::UTF16ToUTF8(name);item.font_size=Font(-1).GetFontSize();
+    if(rect.width()>rect.height()*1.6f&&!name.empty()){const auto p=Palette(view);item.title=base::UTF16ToUTF8(name);item.font_size=Font(-1).GetFontSize();item.text_style=6;
       item.fill=on?p.accent_soft:item.hovered?p.bg_hover:SK_ColorTRANSPARENT;item.edge=on?p.accent:p.line;}}
   return item;
 }
@@ -807,7 +807,7 @@ class ColorWheelControl final : public views::View {
   }
   void Refresh(){GetViewAccessibility().SetValue(base::UTF8ToUTF16(std::string(sidebar::color_wheel_description(current_.Run(),ring_))));SchedulePaint();}
   bool ring() const{return ring_;}
-  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return ring_?gfx::Size(200,200):gfx::Size(180,180);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return ring_?gfx::Size(184,184):gfx::Size(180,180);}
   void OnPaint(gfx::Canvas* canvas) override{
     const auto palette=Palette(this);sidebar::Item item{};item.kind=ring_?28:29;item.width=width();item.height=height();item.clip={0,0,float(width()),float(height())};
     item.badge=current_.Run();item.tile=IsDark(this);item.fill=palette.bg_raised;item.ink=palette.line_strong;item.edge=palette.line;item.focus=palette.focus;item.focused=HasFocus();
@@ -900,6 +900,8 @@ class SceneTextButton final : public RustActionView {
   SceneTextButton(views::Button::PressedCallback callback,std::u16string text,ui::ButtonStyle style,base::RepeatingClosure painted,rust::Box<sidebar::ActionControl> input)
       :RustActionView(std::move(callback),text,ControlGlyph::kMore,nullptr,base::BindRepeating([]{return true;}),std::move(painted),false,std::move(input)),text_(std::move(text)),style_(style) {}
   void UseNativeMinimum(){native_minimum_=true;}
+  // A destructive action: its text in the palette's danger color.
+  void SetDanger(){danger_=true;SchedulePaint();}
   gfx::Size GetMinimumSize() const override{if(!native_minimum_)return RustActionView::GetMinimumSize();const auto font=TextFont();return gfx::Size(views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_DIALOG_BUTTON_MINIMUM_WIDTH),std::max(0,views::LayoutProvider::GetControlHeightForFont(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY,font)-std::max(font.GetHeight(),views::TypographyProvider::Get().GetLineHeight(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY))));}
   void SetText(std::u16string text){if(text==text_)return;OnMouseCaptureLost();text_=std::move(text);GetViewAccessibility().SetName(text_);SetTooltipText(text_);PreferredSizeChanged();SchedulePaint();}
   static gfx::FontList TextFont(){return views::TypographyProvider::Get().GetFont(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY);}
@@ -911,7 +913,7 @@ class SceneTextButton final : public RustActionView {
     // Design system Button: prominent = primary on the workspace accent, default =
     // outline on line_strong, text = quiet; disabled drops the fill for ink_faint.
     const auto palette=Palette(this);
-    item.ink=!enabled?palette.ink_faint:prominent?palette.on_accent:palette.ink;
+    item.ink=!enabled?palette.ink_faint:prominent?palette.on_accent:danger_?palette.danger:palette.ink;
     item.fill=enabled&&prominent?palette.accent:SK_ColorTRANSPARENT;
     if(item.fill&&state.visual==sidebar::RowVisual::Pressed)item.fill=GetNativeTheme()->GetSystemButtonPressedColor(item.fill);
     item.badge=!enabled&&style_!=ui::ButtonStyle::kText?palette.line:style_==ui::ButtonStyle::kDefault?palette.line_strong:SK_ColorTRANSPARENT;
@@ -919,7 +921,7 @@ class SceneTextButton final : public RustActionView {
   }
  private:
   sidebar::ActionButtonLayout Metrics(int width,int height) const {const auto font=TextFont();return sidebar::action_button_layout(width,height,gfx::GetStringWidth(text_,font),views::LayoutProvider::GetControlHeightForFont(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY,font),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_BUTTON_HORIZONTAL_PADDING),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_DIALOG_BUTTON_MINIMUM_WIDTH));}
-  std::u16string text_;ui::ButtonStyle style_;bool native_minimum_=false;
+  std::u16string text_;ui::ButtonStyle style_;bool native_minimum_=false;bool danger_=false;
 };
 BEGIN_METADATA(SceneTextButton)
 END_METADATA
@@ -2194,14 +2196,18 @@ views::View* PanelColumns(views::View* parent){
 class SpaceIconTile final : public views::View {
   METADATA_HEADER(SpaceIconTile,views::View)
  public:
-  explicit SpaceIconTile(base::RepeatingCallback<std::u16string()> emoji):emoji_(std::move(emoji)){GetViewAccessibility().SetIsIgnored(true);}
+  // `icon` gives the emoji, or the name's initial (`initial`) when there is none.
+  explicit SpaceIconTile(base::RepeatingCallback<std::pair<std::u16string,bool>()> icon):icon_(std::move(icon)){GetViewAccessibility().SetIsIgnored(true);}
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(48,48);}
   void OnPaint(gfx::Canvas* canvas) override{
-    const auto p=Palette(this);FillRound(canvas,GetLocalBounds(),Metrics().radius_md+2,p.accent_soft);
-    const auto emoji=emoji_.Run();if(!emoji.empty())canvas->DrawStringRectWithFlags(emoji,Font(10),p.ink,GetLocalBounds(),gfx::Canvas::TEXT_ALIGN_CENTER);
+    const auto p=Palette(this);const int radius=Metrics().radius_md+2;FillRound(canvas,GetLocalBounds(),radius,p.accent_soft);
+    cc::PaintFlags line;line.setAntiAlias(true);line.setStyle(cc::PaintFlags::kStroke_Style);line.setStrokeWidth(1);line.setColor(p.line);
+    gfx::RectF edge(GetLocalBounds());edge.Inset(0.5f);canvas->DrawRoundRect(edge,radius-0.5f,line);
+    const auto [text,initial]=icon_.Run();if(text.empty())return;
+    canvas->DrawStringRectWithFlags(text,initial?DesignFont(1,30,400,true):Font(10),initial?p.accent_ink:p.ink,GetLocalBounds(),gfx::Canvas::TEXT_ALIGN_CENTER);
   }
  private:
-  base::RepeatingCallback<std::u16string()> emoji_;
+  base::RepeatingCallback<std::pair<std::u16string,bool>()> icon_;
 };
 BEGIN_METADATA(SpaceIconTile)
 END_METADATA
@@ -2987,7 +2993,12 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   settings->SetBackground(views::CreateRoundedRectBackground(kCard, 12));
   settings->SetBorder(views::CreateRoundedRectBorder(1, 12, Hairline(root_)));
   auto* settings_header = settings->AddChildView(std::make_unique<views::View>());
-  settings_icon_=settings_header->AddChildView(std::make_unique<SpaceIconTile>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell?shell->workspace_emoji(shell->state_.workspace_id):std::u16string();},weak)));
+  settings_icon_=settings_header->AddChildView(std::make_unique<SpaceIconTile>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){
+    if(!shell)return std::pair<std::u16string,bool>();
+    if(auto emoji=shell->workspace_emoji(shell->state_.workspace_id);!emoji.empty())return std::pair(emoji,false);
+    for(const auto& workspace:shell->state_.workspaces)if(workspace.id==shell->state_.workspace_id&&!workspace.name.empty())
+      return std::pair(base::i18n::ToUpper(base::UTF8ToUTF16(workspace.name).substr(0,1)),true);
+    return std::pair<std::u16string,bool>();},weak)));
   auto* settings_titles=PanelStack(settings_header,2);
   settings_title_ = PanelText(settings_titles,u"Praca",kDisplayLarge,kInk);
   profile_name_ = PanelText(settings_titles,u"",kLabelText,kMuted);
@@ -3000,11 +3011,11 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto* identity_columns=PanelColumns(identity);
   auto* name_column=PanelStack(identity_columns,Metrics().space_1);auto* profile_column=PanelStack(identity_columns,Metrics().space_1);
   PanelText(name_column,workspace_copy[0],kLabelText,kMuted);
-  workspace_input_ = AddEditor(name_column);
+  workspace_input_ = AddEditor(name_column);workspace_input_->view()->SetPreferredSize(gfx::Size(0,36));
   workspace_input_->GetViewAccessibility().SetName(workspace_copy[0]);
   workspace_input_->SetPlaceholderText(workspace_copy[1]);
   PanelText(profile_column,workspace_copy[2],kLabelText,kMuted);
-  profile_picker_=ProfilePicker(profile_column,workspace_copy[3],base::BindRepeating([]{}));
+  profile_picker_=ProfilePicker(profile_column,workspace_copy[3],base::BindRepeating([]{}));profile_picker_->SetPreferredSize(gfx::Size(0,36));
   PanelText(identity,workspace_copy[4],kLabelText,kMuted);
   auto* save_hint=settings_text(identity,workspace_copy[5],kMuted,-2,gfx::Font::Weight::NORMAL,true);
   auto* actions=ActionGroup(identity,false,8);
@@ -3039,7 +3050,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   color_error_->SetVisible(false);
   // Any color: the hue ring and the saturation x tone field beside it.
   {auto* wheel=appearance->AddChildView(std::make_unique<views::View>());
-   wheel->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal,gfx::Insets(),12))->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
+   wheel->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal,gfx::Insets(),22))->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
    auto current=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell?shell->workspace_color(shell->state_.workspace_id):kDefaultWorkspaceColor;},weak);
    auto emoji=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell?shell->workspace_emoji(shell->state_.workspace_id):std::u16string();},weak);
    auto pick=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,SkColor color){if(shell)shell->SetWorkspaceColor(shell->state_.workspace_id,color);},weak);
@@ -3078,20 +3089,20 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 
   auto* more = settings->AddChildView(std::make_unique<views::View>());
   workspace_more_ = more;
-  Spacer(more, 8);
-  settings_text(more,workspace_copy[13],kInk,0,gfx::Font::Weight::SEMIBOLD);
-  auto* more_actions=ActionGroup(more,true,8);
+  PanelText(more,workspace_copy[13],kEyebrow,kMuted);
+  auto* more_actions=ActionGroup(more,false,0);
   [[maybe_unused]] auto* workspace_profiles=AddAction(more_actions,
       base::BindRepeating(&WorkspaceShell::OpenProfiles, weak, std::string(), std::string()), workspace_copy[14],ui::ButtonStyle::kText);
-  [[maybe_unused]] auto* workspace_import=AddAction(more_actions,
+  [[maybe_unused]] auto* workspace_import=AddAction(ActionGroup(more,false,0),
       base::BindRepeating(&WorkspaceShell::OpenImport, weak), workspace_copy[15],ui::ButtonStyle::kText);
-  remove_workspace_ = AddAction(more_actions,
+  remove_workspace_ = AddAction(ActionGroup(more,false,0),
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
         if (shell) shell->ConfirmRemoveWorkspace(shell->state_.workspace_id);
       }, weak), workspace_copy[16],ui::ButtonStyle::kText);
+  views::AsViewClass<SceneTextButton>(remove_workspace_)->SetDanger();
   BindFormCommand(remove_workspace_,sidebar::FormCommand::WorkspaceRemove);BindFormCommand(workspace_profiles,sidebar::FormCommand::WorkspaceProfiles);BindFormCommand(workspace_import,sidebar::FormCommand::WorkspaceImport);
 
-  settings->SetLayoutManager(CreateSidebarColumnLayout(Metrics().space_4+4));settings->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(Metrics().space_6)));appearance->SetLayoutManager(CreateSidebarColumnLayout(8));more->SetLayoutManager(CreateSidebarColumnLayout(8));
+  settings->SetLayoutManager(CreateSidebarColumnLayout(Metrics().space_4));settings->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(Metrics().space_6)));appearance->SetLayoutManager(CreateSidebarColumnLayout(Metrics().space_2));more->SetLayoutManager(CreateSidebarColumnLayout(Metrics().space_2));
   // Appearance first (saved at once), then the name and profile with the save row.
   settings->ReorderChildView(appearance,settings->GetIndexOf(settings_header).value()+1);
   save_hint->SetVisible(false);
@@ -3472,6 +3483,12 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         // only if the saved state differs, never as a side effect of loading.
         if (shell->pinned_ && !shell->sidebar_visible()) shell->ShowSidebar();
         if (!shell->pinned_ && shell->sidebar_visible()) shell->sidebar_widget_->Hide();
+        // Development: --zitter-open-panel=space opens the space panel once the
+        // window is up, so UI checks can screenshot it without driving the mouse.
+        if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-open-panel") == "space")
+          base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE,
+              base::BindOnce([](base::WeakPtr<WorkspaceShell> shell) { if (shell) shell->OpenWorkspaceSettings(); }, shell->weak_factory_.GetWeakPtr()),
+              base::Seconds(1));
       }, weak));
 }
 

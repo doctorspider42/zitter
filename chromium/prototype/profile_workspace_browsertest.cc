@@ -4627,7 +4627,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceColorWheelPicksAnyCol
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));if(!shell->workspace_input()->rust_editor())return;
   shell->SetWorkspaceAnimations(false);shell->SetWorkspaceColor("work",0xFF53A2CD);shell->OpenWorkspaceSettings();shell->settings_widget()->LayoutRootViewIfNecessary();
   auto* ring=shell->color_wheel_for_testing(0);auto* field=shell->color_wheel_for_testing(1);ASSERT_TRUE(ring&&field);
-  EXPECT_EQ(gfx::Size(200,200),ring->size());EXPECT_EQ(gfx::Size(180,180),field->size());
+  EXPECT_EQ(gfx::Size(184,184),ring->size());EXPECT_EQ(gfx::Size(180,180),field->size());
   auto value=[](views::View* view){ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kSlider,ax.role);return ax.GetString16Attribute(ax::mojom::StringAttribute::kValue);};
   // The values read back from the stored hex, so they hold to within a few units.
   auto numbers=[&](views::View* view){std::vector<int> out;int n=-1;for(const char16_t c:value(view)){if(c>=u'0'&&c<=u'9')n=(n<0?0:n*10)+(c-u'0');else if(n>=0){out.push_back(n);n=-1;}}if(n>=0)out.push_back(n);return out;};
@@ -4635,10 +4635,10 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceColorWheelPicksAnyCol
   auto press=[](views::View* view,gfx::Point point){ui::MouseEvent event(ui::EventType::kMousePressed,point,point,base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);return view->OnMousePressed(event);};
   EXPECT_TRUE(press(field,gfx::Point(125,20)));auto levels=numbers(field);ASSERT_EQ(2u,levels.size());EXPECT_TRUE(near(levels[0],75)&&near(levels[1],100))<<levels[0]<<" "<<levels[1];  // Three quarters across, at the top.
   const auto field_color=shell->workspace_color("work");
-  EXPECT_TRUE(press(ring,gfx::Point(157,43)));auto hue=numbers(ring);ASSERT_EQ(1u,hue.size());EXPECT_TRUE(near(hue[0],45))<<hue[0];
+  EXPECT_TRUE(press(ring,gfx::Point(144,40)));auto hue=numbers(ring);ASSERT_EQ(1u,hue.size());EXPECT_TRUE(near(hue[0],45))<<hue[0];
   levels=numbers(field);EXPECT_TRUE(near(levels[0],75)&&near(levels[1],100))<<levels[0]<<" "<<levels[1];  // Levels kept.
   EXPECT_NE(field_color,shell->workspace_color("work"));
-  const auto ring_color=shell->workspace_color("work");EXPECT_FALSE(press(ring,gfx::Point(100,100)));EXPECT_EQ(ring_color,shell->workspace_color("work"));  // Centre disc.
+  const auto ring_color=shell->workspace_color("work");EXPECT_FALSE(press(ring,gfx::Point(92,92)));EXPECT_EQ(ring_color,shell->workspace_color("work"));  // Centre disc.
   const int before=numbers(field)[1];ui::KeyEvent down(ui::EventType::kKeyPressed,ui::VKEY_DOWN,ui::EF_NONE);EXPECT_TRUE(field->OnKeyPressed(down));EXPECT_TRUE(near(numbers(field)[1],before-5))<<numbers(field)[1];
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_saved();}));
 }

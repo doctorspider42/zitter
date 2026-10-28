@@ -58,6 +58,7 @@ def main():
     parser.add_argument("--port", type=int, default=8767)
     parser.add_argument("--raster", choices=["compositor", "metal"], default="compositor",
                         help="Rust UI painting: the Chromium compositor or in-process Metal")
+    parser.add_argument("--open-panel", choices=["space"], help="open this panel once the window is up (UI checks)")
     args = parser.parse_args()
     info = args.app.resolve() / "Contents/Info.plist"
     binary = args.app.resolve() / "Contents/MacOS" / plistlib.loads(info.read_bytes())["CFBundleExecutable"] if info.is_file() else info
@@ -69,13 +70,15 @@ def main():
         parser.error(str(error))
     server = ThreadingHTTPServer(("127.0.0.1", args.port), functools.partial(QuietHandler, directory=str(ROOT / "testdata")))
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    raster = [f"--zitter-rust-raster={args.raster}"] if args.raster != "compositor" else []
+    extra = [f"--zitter-rust-raster={args.raster}"] if args.raster != "compositor" else []
+    if args.open_panel:
+        extra.append(f"--zitter-open-panel={args.open_panel}")
     print(f"Rust UI raster: {args.raster}; isolated profile: {args.profile.resolve()}", flush=True)
     try:
         return subprocess.call(["/usr/bin/open", "-W", "-n", str(args.app.resolve()), "--args",
                                 f"--user-data-dir={args.profile.resolve()}",
                                 "--no-first-run",
-                                "--disable-component-update", "--disable-background-networking", "--enable-logging=stderr", *raster])
+                                "--disable-component-update", "--disable-background-networking", "--enable-logging=stderr", *extra])
     except KeyboardInterrupt:
         return 130
     finally:

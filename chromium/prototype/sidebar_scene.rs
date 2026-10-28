@@ -1569,11 +1569,13 @@ fn color_wheel_scene(i:&ffi::Item,out:&mut Vec<ffi::Primitive>){
 }
 fn appearance_row_layout(width: i32, height: i32, editor_width: i32, editor_height: i32, emoji: bool) -> ffi::ColumnLayout {
     // The emoji row ends with the "more emoji" tile; its field only takes its own width.
-    let count=if emoji {APPEARANCE_EMOJIS.len() as i32+1} else {APPEARANCE_COLORS.len() as i32};let button_width=if emoji {30} else {32};let button_height=if emoji {28} else {32};
-    let editor_height=editor_height.max(0);let width=if width<0 {(count*button_width+8i32).saturating_add(editor_width.max(0))} else {width};
-    let height=if height<0 {button_height.max(editor_height)} else {height};let control_width=width.min(count*button_width);
+    let count=if emoji {APPEARANCE_EMOJIS.len() as i32+1} else {APPEARANCE_COLORS.len() as i32};let button_width=if emoji {38} else {32};let button_height=if emoji {38} else {32};
+    // Tiles sit 6 px apart when the row has room, and touch when it does not.
+    let gap=if emoji&&(width<0||width>=count*button_width+(count-1)*6) {6} else {0};let natural=count*button_width+(count-1)*gap;
+    let editor_height=editor_height.max(0);let width=if width<0 {(natural+8i32).saturating_add(editor_width.max(0))} else {width};
+    let height=if height<0 {button_height.max(editor_height)} else {height};let control_width=width.min(natural)-(count-1)*gap;
     let mut children=Vec::with_capacity(count as usize+2);let mut x=0;
-    for index in 0..count { let width=control_width/count+if index<control_width%count {1} else {0};let h=button_height.min(height);children.push(ffi::Rect {x,y:(height-h)/2,width,height:h});x+=width; }
+    for index in 0..count { let width=control_width/count+if index<control_width%count {1} else {0};let h=button_height.min(height);children.push(ffi::Rect {x,y:(height-h)/2,width,height:h});x+=width+if index+1<count {gap} else {0}; }
     let gap=(width-x).min(8);children.push(ffi::Rect{x,y:0,width:gap,height});x+=gap;
     let h=editor_height.min(height);let field=if emoji {(width-x).min(editor_width.max(0))} else {width-x};children.push(ffi::Rect{x,y:(height-h)/2,width:field,height:h});
     ffi::ColumnLayout {width,height,children}
@@ -4201,10 +4203,10 @@ mod tests {
         assert!(appearance_selected(true,2,0,"🚀"));assert!(!appearance_selected(true,2,0,"👩‍💻"));assert!(!appearance_selected(true,8,0,"🚀"));assert!(!appearance_selected(true,0,0,""));
     }
     #[test] fn appearance_row_preserves_control_sizes_and_excludes_editor() {
-        for (emoji,count,bw,bh) in [(false,8,32,32),(true,9,30,28)] {
-            let g=appearance_row_layout(398,-1,100,30,emoji);assert_eq!(g.children.len(),count+2);assert_eq!(g.height,bh.max(30));
+        for (emoji,count,bw,bh) in [(false,8,32,32),(true,9,38,38)] {
+            let w=if emoji{498}else{398};let g=appearance_row_layout(w,-1,100,30,emoji);assert_eq!(g.children.len(),count+2);assert_eq!(g.height,bh.max(30));
             for r in &g.children[..count] {assert_eq!((r.width,r.height),(bw,bh));}
-            let field=&g.children[count+1];assert_eq!(field.x,count as i32*bw+8);assert_eq!(field.x+field.width,if emoji{field.x+100}else{398});
+            let field=&g.children[count+1];assert_eq!(field.x,count as i32*bw+if emoji{(count as i32-1)*6}else{0}+8);assert_eq!(field.x+field.width,if emoji{field.x+100}else{w});
         }
     }
     #[test] fn appearance_row_bounds_remain_nonnegative_on_tiny_and_saturated_metrics() {

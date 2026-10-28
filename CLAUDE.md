@@ -10,6 +10,12 @@
   Python tests (`python3 -m unittest discover -s tests -p 'test_*.py'`) and single
   browser tests named with `--gtest_filter` when a change needs them.
 
+## Checking UI changes
+
+Finish every UI change with the `verify-ui` skill (`.claude/skills/verify-ui/`): run
+the packaged app, screenshot the changed view, compare it with its design, fix what
+differs, and only then hand over the final screenshot.
+
 ## Shared build directory
 
 Several sessions stage into `.chromium/src/zitter_ui_lab` and build in
