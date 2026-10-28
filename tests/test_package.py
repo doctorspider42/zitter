@@ -138,6 +138,11 @@ class PackageTests(unittest.TestCase):
                 self.assertEqual((resources / 'THIRD_PARTY_LICENSES.txt').read_text(), notices.read_text())
                 self.assertTrue((resources / 'LICENSE').is_file())
                 self.assertTrue((resources / 'NOTICE').is_file())
+                # The design system's fonts travel with their OFL licenses.
+                self.assertTrue((resources / 'Fonts/InstrumentSerif-Regular.ttf').is_file())
+                self.assertTrue((resources / 'Fonts/SchibstedGrotesk-OFL.txt').is_file())
+                with (app / 'Contents/Info.plist').open('rb') as stream:
+                    self.assertEqual(packager.plistlib.load(stream)['ATSApplicationFontsPath'], 'Fonts')
             with mock.patch.object(packager, 'sign_bundle', side_effect=verify_at_signing):
                 packager.package(out, app, register=False, identity='test', third_party_licenses=notices)
 

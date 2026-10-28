@@ -73,6 +73,33 @@
         "third_party/rust-toolchain/share/doc/rustc/COPYRIGHT-library.html"
       ],
       "rationale": "Actual std rlib is a linker input. Preserve complete toolchain-supplied library copyright/licensing inventory rather than treating compiler license as sufficient."
+    },
+    {
+      "Name": "Instrument Serif (font)",
+      "dir": "assets/fonts",
+      "License": "OFL-1.1",
+      "License File": [
+        "@root/assets/fonts/InstrumentSerif-OFL.txt"
+      ],
+      "rationale": "Design system typeface bundled in Contents/Resources/Fonts (tools/package_app.py) from google/fonts ofl/."
+    },
+    {
+      "Name": "Schibsted Grotesk (font)",
+      "dir": "assets/fonts",
+      "License": "OFL-1.1",
+      "License File": [
+        "@root/assets/fonts/SchibstedGrotesk-OFL.txt"
+      ],
+      "rationale": "Design system typeface bundled in Contents/Resources/Fonts (tools/package_app.py) from google/fonts ofl/."
+    },
+    {
+      "Name": "JetBrains Mono (font)",
+      "dir": "assets/fonts",
+      "License": "OFL-1.1",
+      "License File": [
+        "@root/assets/fonts/JetBrainsMono-OFL.txt"
+      ],
+      "rationale": "Design system typeface bundled in Contents/Resources/Fonts (tools/package_app.py) from google/fonts ofl/."
     }
   ],
   "aliases": {

@@ -214,6 +214,16 @@ def package(out, destination, binary="zitter", register=True, identity=None, thi
             clone_file(ROOT / name, resources / name)
     if third_party_licenses:
         clone_file(Path(third_party_licenses), resources / 'THIRD_PARTY_LICENSES.txt')
+    # The design system's typefaces (SIL OFL 1.1) with their licenses; macOS
+    # activates them for this app through ATSApplicationFontsPath.
+    fonts = resources / "Fonts"
+    shutil.rmtree(fonts, ignore_errors=True)
+    font_sources = sorted((ROOT / "assets/fonts").glob("*")) if (ROOT / "assets/fonts").is_dir() else []
+    if font_sources:
+        fonts.mkdir()
+        for font in font_sources:
+            if font.suffix in (".ttf", ".otf", ".txt"):
+                clone_file(font, fonts / font.name)
     # Zitter's own icon (tools/build_icon.py); Chromium's only as a fallback.
     icon = ROOT / "assets/icon/Zitter.icns"
     if not icon.exists():
@@ -249,6 +259,8 @@ def package(out, destination, binary="zitter", register=True, identity=None, thi
     }
     if icon.exists():
         info["CFBundleIconFile"] = "app.icns"
+    if font_sources:
+        info["ATSApplicationFontsPath"] = "Fonts"
     with (contents / "Info.plist").open("wb") as stream:
         plistlib.dump(info, stream)
     (resources / "zitter-development-bundle").write_text(str(out) + "\n")
