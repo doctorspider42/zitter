@@ -183,6 +183,9 @@ namespace {
 // the right edge in RTL, and indentation grows away from it.
 int LeadingEdge(const views::View* view){const auto bounds=view->GetBoundsInScreen();return base::i18n::IsRTL()?bounds.right():bounds.x();}
 int Indent(int pixels){return base::i18n::IsRTL()?-pixels:pixels;}
+// Paints a view alone at its parent's visual origin; in RTL logical x=0 is the
+// mirrored right edge, which would place the paint outside the bitmap.
+SkBitmap PaintAtLeadingOrigin(views::View* view){const auto saved=view->bounds();const int x=base::i18n::IsRTL()&&view->parent()?view->parent()->width()-view->width():0;view->SetBoundsRect(gfx::Rect(x,0,view->width(),view->height()));view->SchedulePaint();auto bitmap=views::test::PaintViewToBitmap(view);view->SetBoundsRect(saved);return bitmap;}
 void ActivateSidebarRow(views::View* view){ASSERT_TRUE(view);ui::AXActionData action;action.action=ax::mojom::Action::kDoDefault;EXPECT_TRUE(view->HandleAccessibleAction(action));}
 
 void ClickControl(views::View* view){ASSERT_TRUE(view);if(auto* button=views::AsViewClass<views::Button>(view)){views::test::ButtonTestApi(button).NotifyDefaultMouseClick();return;}ui::AXActionData action;action.action=ax::mojom::Action::kDoDefault;view->HandleAccessibleAction(action);}
@@ -6699,7 +6702,9 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NewTabActionUsesSceneTextA
   }));
   const auto canvas = shell->metal_sidebar_screen_bounds_for_testing();
   const auto viewport = shell->tab_list_view()->parent()->GetBoundsInScreen();
-  EXPECT_EQ(SidebarNamedButton(shell->sidebar_view(), u"Adres strony")->GetBoundsInScreen().origin(), canvas.origin());
+  const auto address = SidebarNamedButton(shell->sidebar_view(), u"Adres strony")->GetBoundsInScreen();
+  EXPECT_EQ(address.y(), canvas.y());
+  EXPECT_EQ(base::i18n::IsRTL() ? address.right() : address.x(), base::i18n::IsRTL() ? canvas.right() : canvas.x());
   EXPECT_EQ(viewport.width(), action->width());
   const auto scrollbar_bounds = shell->tab_viewport()->vertical_scroll_bar()->GetBoundsInScreen();
   EXPECT_EQ(std::max(viewport.right(), scrollbar_bounds.right()), canvas.right());
@@ -6879,8 +6884,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, RustScrollThumbDragTrackKe
   };
   ASSERT_TRUE(base::test::RunUntil(has_submitted_thumb));
   auto native_ink=[&] {
-    const auto saved=bar->bounds(); bar->SetBoundsRect(gfx::Rect(bar->size())); bar->SchedulePaint();
-    const auto bitmap=views::test::PaintViewToBitmap(bar); bar->SetBoundsRect(saved);
+    const auto bitmap=PaintAtLeadingOrigin(bar);
     for (int y=0;y<bitmap.height();++y) for (int x=0;x<bitmap.width();++x)
       if (bitmap.getColor(x,y)!=SK_ColorRED) return true;
     return false;
@@ -6955,7 +6959,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, FooterSpacesScrollSelectPi
   };
   ASSERT_TRUE(move(bar->children().front()->GetBoundsInScreen().CenterPoint()));ASSERT_TRUE(mouse(ui_controls::DOWN));
   base::ScopedClosureRunner release_mouse(base::BindOnce([]{ui_controls::SendMouseEvents(ui_controls::LEFT,ui_controls::UP);}));
-  const auto track=bar->GetBoundsInScreen();ASSERT_TRUE(move(gfx::Point(track.right()-1,track.CenterPoint().y())));
+  const auto track=bar->GetBoundsInScreen();ASSERT_TRUE(move(gfx::Point(base::i18n::IsRTL()?track.x():track.right()-1,track.CenterPoint().y())));
   ASSERT_TRUE(mouse(ui_controls::UP));static_cast<void>(release_mouse.Release());
   ASSERT_TRUE(base::test::RunUntil([&] {return scroll->offset()>0 && shell->metal_sidebar_contains_text_for_testing("🚀");}));
   auto* last_button=shell->workspace_button(last);ASSERT_TRUE(last_button);
@@ -6972,8 +6976,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, FooterSpacesScrollSelectPi
   pin->SetEnabled(true);ASSERT_TRUE(mouse(ui_controls::DOWN|ui_controls::UP));EXPECT_FALSE(shell->pinned());
   shell->SetPinned(true);shell->ShowSidebar();
   auto native_ink=[&] {
-    const auto saved=pin->bounds();pin->SetBoundsRect(gfx::Rect(pin->size()));pin->SchedulePaint();
-    const auto bitmap=views::test::PaintViewToBitmap(pin);pin->SetBoundsRect(saved);
+    const auto bitmap=PaintAtLeadingOrigin(pin);
     for(int y=0;y<bitmap.height();++y)for(int x=0;x<bitmap.width();++x)if(bitmap.getColor(x,y)!=SK_ColorRED)return true;
     return false;
   };
@@ -6995,8 +6998,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NavigationHeaderHistoryRel
   ASSERT_TRUE(base::test::RunUntil([&] {return shell->metal_header_visible() && back->GetEnabled() && !forward->GetEnabled();}));
   EXPECT_TRUE(shell->metal_header_screen_bounds_for_testing().Contains(reload->GetBoundsInScreen().CenterPoint()));
   auto native_ink=[&] {
-    const auto saved=reload->bounds();reload->SetBoundsRect(gfx::Rect(reload->size()));reload->SchedulePaint();
-    const auto bitmap=views::test::PaintViewToBitmap(reload);reload->SetBoundsRect(saved);
+    const auto bitmap=PaintAtLeadingOrigin(reload);
     for(int y=0;y<bitmap.height();++y)for(int x=0;x<bitmap.width();++x)if(bitmap.getColor(x,y)!=SK_ColorRED)return true;
     return false;
   };
@@ -7046,7 +7048,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, PaletteChromeTextErrorsThe
   const auto hint_frame=shell->metal_palette_chrome_screen_bounds_for_testing(2),hint_view=shell->palette_chrome_view_for_testing(2)->GetBoundsInScreen();
   EXPECT_GT(hint_frame.x(),hint_view.x());EXPECT_LT(hint_frame.bottom(),hint_view.bottom()-5);
   ui::AXNodeData accessible;shell->palette_chrome_view_for_testing(3)->GetViewAccessibility().GetAccessibleNodeData(&accessible);EXPECT_EQ(ax::mojom::Role::kStaticText,accessible.role);EXPECT_EQ(u"Brak pasujących poleceń.",accessible.GetString16Attribute(ax::mojom::StringAttribute::kName));
-  auto* esc=shell->palette_chrome_view_for_testing(1);auto native_ink=[&]{const auto saved=esc->bounds();esc->SetBoundsRect(gfx::Rect(esc->size()));esc->SchedulePaint();const auto bitmap=views::test::PaintViewToBitmap(esc);esc->SetBoundsRect(saved);for(int y=0;y<bitmap.height();++y)for(int x=0;x<bitmap.width();++x)if(bitmap.getColor(x,y)!=SK_ColorRED)return true;return false;};
+  auto* esc=shell->palette_chrome_view_for_testing(1);auto native_ink=[&]{const auto bitmap=PaintAtLeadingOrigin(esc);for(int y=0;y<bitmap.height();++y)for(int x=0;x<bitmap.width();++x)if(bitmap.getColor(x,y)!=SK_ColorRED)return true;return false;};
   EXPECT_FALSE(native_ink());auto* panel=field->view()->GetWidget();panel->Hide();EXPECT_TRUE(native_ink());panel->Show();panel->Activate();field->RequestFocus();ASSERT_TRUE(base::test::RunUntil(ready));
   shell->SetThemeMode(ThemeMode::kLight);base::RunLoop().RunUntilIdle();const auto before=shell->metal_palette_chrome_frame_count_for_testing(1);
   shell->SetThemeMode(ThemeMode::kDark);ASSERT_TRUE(base::test::RunUntil([&]{return ready()&&shell->metal_palette_chrome_frame_count_for_testing(1)>before;}));
@@ -7094,7 +7096,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, PaletteScenesAsyncSelectio
   SetPaletteQuery(u"Palette GPU");ASSERT_TRUE(base::test::RunUntil([&]{return shell->search_results().size()>=8&&shell->metal_palette_visible();}));
   ASSERT_TRUE(drain_history());
   auto* row=shell->palette_results_view()->children().front().get();
-  auto native_ink=[&]{const auto saved=row->bounds();row->SetBoundsRect(gfx::Rect(row->size()));row->SchedulePaint();const auto bitmap=views::test::PaintViewToBitmap(row);row->SetBoundsRect(saved);for(int y=0;y<bitmap.height();++y)for(int x=0;x<bitmap.width();++x)if(bitmap.getColor(x,y)!=SK_ColorRED)return true;return false;};
+  auto native_ink=[&]{const auto bitmap=PaintAtLeadingOrigin(row);for(int y=0;y<bitmap.height();++y)for(int x=0;x<bitmap.width();++x)if(bitmap.getColor(x,y)!=SK_ColorRED)return true;return false;};
   EXPECT_FALSE(native_ink());panel->Hide();EXPECT_TRUE(native_ink());panel->Show();panel->Activate();field->RequestFocus();ASSERT_TRUE(base::test::RunUntil([&]{return shell->metal_palette_visible();}));
   const auto current_title=window_->contents("work")->GetTitle();
   auto target=std::find_if(shell->suggestions().begin(),shell->suggestions().end(),[&](const auto& item){return item.tab&&item.title!=current_title;});ASSERT_NE(target,shell->suggestions().end());
@@ -7113,14 +7115,14 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, SidebarGripDragAutoHideAnd
   ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
   auto move=[&](gfx::Point point,views::Widget* widget){base::test::TestFuture<void> done;return ui_controls::SendMouseMoveNotifyWhenDone(point.x(),point.y(),done.GetCallback(),widget->GetNativeWindow())&&done.Wait();};
   auto mouse=[&](int state){base::test::TestFuture<void> done;return ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT,state,done.GetCallback(),ui_controls::kNoAccelerator,shell->sidebar_widget()->GetNativeWindow())&&done.Wait();};
-  const auto start=grip->GetBoundsInScreen().CenterPoint();const auto page_x=shell->content_host()->GetBoundsInScreen().x();
+  const auto start=grip->GetBoundsInScreen().CenterPoint();const auto page_x=LeadingEdge(shell->content_host());
   ASSERT_TRUE(move(start,shell->sidebar_widget()));ASSERT_TRUE(mouse(ui_controls::DOWN));
   base::ScopedClosureRunner release(base::BindOnce([]{ui_controls::SendMouseEvents(ui_controls::LEFT,ui_controls::UP);}));
-  ASSERT_TRUE(move(start+gfx::Vector2d(60,0),shell->sidebar_widget()));ASSERT_TRUE(mouse(ui_controls::UP));static_cast<void>(release.Release());
-  EXPECT_EQ(308,shell->sidebar_width());window_->widget()->LayoutRootViewIfNecessary();EXPECT_GT(shell->content_host()->GetBoundsInScreen().x(),page_x);
+  ASSERT_TRUE(move(start+gfx::Vector2d(Indent(60),0),shell->sidebar_widget()));ASSERT_TRUE(mouse(ui_controls::UP));static_cast<void>(release.Release());
+  EXPECT_EQ(308,shell->sidebar_width());window_->widget()->LayoutRootViewIfNecessary();EXPECT_GT(Indent(LeadingEdge(shell->content_host())-page_x),0);
   auto gesture=[&](ui::GestureEventDetails details){ui::GestureEvent event(3,20,0,base::TimeTicks::Now(),details);grip->OnGestureEvent(&event);EXPECT_TRUE(event.handled());};
   gesture(ui::GestureEventDetails(ui::EventType::kGestureScrollBegin,0,0));
-  gesture(ui::GestureEventDetails(ui::EventType::kGestureScrollUpdate,20,0));
+  gesture(ui::GestureEventDetails(ui::EventType::kGestureScrollUpdate,Indent(20),0));
   gesture(ui::GestureEventDetails(ui::EventType::kGestureEnd));EXPECT_EQ(328,shell->sidebar_width());
   shell->ResizeSidebar(-20,true);
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_saved();}));
@@ -7128,13 +7130,13 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, SidebarGripDragAutoHideAnd
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->sidebar_widget()->GetWindowBoundsInScreen().width()<=280;}));EXPECT_EQ(308,shell->sidebar_width());
   window_->widget()->SetBounds(wide);window_->widget()->LayoutRootViewIfNecessary();
   ASSERT_TRUE(move(shell->sidebar_view()->GetBoundsInScreen().CenterPoint(),shell->sidebar_widget()));shell->SetPinned(false);
-  window_->widget()->LayoutRootViewIfNecessary();const auto overlay_x=shell->content_host()->GetBoundsInScreen().x();
+  window_->widget()->LayoutRootViewIfNecessary();const auto overlay_x=LeadingEdge(shell->content_host());
   ASSERT_TRUE(move(shell->content_host()->GetBoundsInScreen().CenterPoint(),window_->widget()));
   ASSERT_TRUE(base::test::RunUntil([&]{return !shell->sidebar_visible()&&!shell->metal_sidebar_grip_visible();}));
   const auto client=window_->widget()->GetClientAreaBoundsInScreen();
-  ASSERT_TRUE(move(gfx::Point(client.x()+2,client.y()+150),window_->widget()));
+  ASSERT_TRUE(move(gfx::Point(base::i18n::IsRTL()?client.right()-3:client.x()+2,client.y()+150),window_->widget()));
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->sidebar_visible()&&shell->metal_sidebar_grip_visible();}));
-  EXPECT_EQ(overlay_x,shell->content_host()->GetBoundsInScreen().x());
+  EXPECT_EQ(overlay_x,LeadingEdge(shell->content_host()));
   shell->OpenWorkspaceSettings();ASSERT_TRUE(shell->settings_visible());
   ASSERT_TRUE(move(shell->content_host()->GetBoundsInScreen().CenterPoint(),window_->widget()));EXPECT_TRUE(shell->sidebar_visible());
   shell->CloseOverlays(true);shell->SetPinned(true);shell->ShowSidebar();
@@ -7179,7 +7181,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, SplitPaneScenesDragOrientT
     base::ScopedClosureRunner release(base::BindOnce([]{ui_controls::SendMouseEvents(ui_controls::LEFT,ui_controls::UP);}));
     if(!move(point+gfx::Vector2d(dx,dy))||!mouse(ui_controls::UP))return false;static_cast<void>(release.Release());return true;
   };
-  const auto ratio=window_->split_ratio();ASSERT_TRUE(drag(80,0));EXPECT_GT(window_->split_ratio(),ratio);
+  const auto ratio=window_->split_ratio();ASSERT_TRUE(drag(Indent(80),0));EXPECT_GT(window_->split_ratio(),ratio);
   window_->SetSplitRatio(0.5);window_->SetSplitVertical(true);window_->widget()->LayoutRootViewIfNecessary();
   ASSERT_TRUE(base::test::RunUntil([&]{return ready() && shell->metal_split_screen_bounds_for_testing(2).width()>100;}));
   ASSERT_TRUE(drag(0,60));EXPECT_GT(window_->split_ratio(),0.5);check_regions();
@@ -7195,7 +7197,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, SplitPaneScenesDragOrientT
   ui::MouseEvent late(ui::EventType::kMouseDragged,gfx::Point(104,4),gfx::Point(104,4),base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,0);
   ASSERT_TRUE(divider->OnMouseDragged(late));divider->OnMouseCaptureLost();EXPECT_DOUBLE_EQ(cancelled,window_->split_ratio());
   ASSERT_TRUE(base::test::RunUntil(ready));
-  auto native_ink=[&]{const auto saved=bar->bounds();bar->SetBoundsRect(gfx::Rect(bar->size()));bar->SchedulePaint();const auto bitmap=views::test::PaintViewToBitmap(bar);bar->SetBoundsRect(saved);for(int y=0;y<bitmap.height();++y)for(int x=0;x<bitmap.width();++x)if(bitmap.getColor(x,y)!=SK_ColorRED)return true;return false;};
+  auto native_ink=[&]{const auto bitmap=PaintAtLeadingOrigin(bar);for(int y=0;y<bitmap.height();++y)for(int x=0;x<bitmap.width();++x)if(bitmap.getColor(x,y)!=SK_ColorRED)return true;return false;};
   EXPECT_FALSE(native_ink());window_->widget()->Hide();EXPECT_TRUE(native_ink());window_->widget()->Show();ASSERT_TRUE(base::test::RunUntil(ready));
   auto* close=shell->split_pane_button(true,true);ASSERT_TRUE(move(close->GetBoundsInScreen().CenterPoint()));ASSERT_TRUE(mouse(ui_controls::DOWN|ui_controls::UP));
   ASSERT_TRUE(base::test::RunUntil([&]{return window_->tab_count("work")==1 && !window_->split();}));

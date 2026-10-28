@@ -144,12 +144,12 @@ class SidebarScrollBar final : public views::ScrollBar {
 };
 bool SidebarThumb::OnMousePressed(const ui::MouseEvent& event) {
   if (!event.IsOnlyLeftMouseButton() || !GetEnabledInViewsSubtree()) return false;
-  static_cast<SidebarScrollBar*>(scroll_bar())->Begin(*drag_,IsHorizontal() ? x()+event.x() : y()+event.y());
+  static_cast<SidebarScrollBar*>(scroll_bar())->Begin(*drag_,IsHorizontal() ? x()+GetMirroredXInView(event.x()) : y()+event.y());  // Logical track position (RTL-mirrored).
   SetState(views::Button::STATE_PRESSED); return true;
 }
 bool SidebarThumb::OnMouseDragged(const ui::MouseEvent& event) {
   if (!GetEnabledInViewsSubtree()) { drag_->end(); return false; }
-  static_cast<SidebarScrollBar*>(scroll_bar())->Drag(*drag_,IsHorizontal() ? x()+event.x() : y()+event.y(),IsHorizontal() ? event.y() : event.x(),GetSnapBackOnDragOutside());
+  static_cast<SidebarScrollBar*>(scroll_bar())->Drag(*drag_,IsHorizontal() ? x()+GetMirroredXInView(event.x()) : y()+event.y(),IsHorizontal() ? event.y() : event.x(),GetSnapBackOnDragOutside());
   return true;
 }
 struct Quad { float x, y, width, height, radius; uint32_t color, textured; float stroke; };
