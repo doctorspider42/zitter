@@ -29,6 +29,8 @@ mod ffi {
     enum ToolsStatus { HistoryReading, HistorySearching, WriteFailed }
     enum PreferenceOutcome { Text, Site, SiteRemove, Value, General }
     enum PreferenceControlKind { Text, Toggle }
+    #[derive(Debug)]
+    enum ProfileStatusEvent { DuplicateName, Creating, CreateFailed, Created, CreateNotSaved, Renamed, RenameFailed, Deleting, Deleted, DeleteNotSaved, LoadFailed }
     struct PreferenceControlView { enabled: bool, tooltip: String }
     struct PreferenceStatus { text: String, error: bool }
     enum ToolsNodeKind { Hint, Heading, Editor, Choice, Action, BeginRow, EndRow, Rows, BeginActions, EndActions }
@@ -302,6 +304,7 @@ mod ffi {
         fn preference_status(self: &PreferencesForm) -> PreferenceStatus;
         fn preference_control_view(kind: PreferenceControlKind, present: bool, editable: bool) -> PreferenceControlView;
         fn preferences_profile_banner(profile: &str) -> String;
+        fn profile_status_copy(event: ProfileStatusEvent) -> String;
         fn site_rule_detail(primary: &str, name: &str, setting: i32, secondary: &str, editable: bool) -> String;
         fn site_rules_empty(saved: bool) -> String;
         fn preference_reset_rules(self: &mut PreferencesForm);
@@ -1132,6 +1135,24 @@ fn preference_control_view(kind:ffi::PreferenceControlKind,present:bool,editable
     use ffi::PreferenceControlKind as K;let toggle=kind==K::Toggle;
     let tooltip=if !present{if toggle{"Profil nie jest jeszcze gotowy"}else{"Ustawienie jest niedostępne"}}else if !editable{"To ustawienie jest zarządzane"}else if toggle{"Dotyczy aktywnego profilu"}else{"Zapisz przyciskiem lub klawiszem Enter"};
     ffi::PreferenceControlView{enabled:present&&editable,tooltip:tooltip.into()}
+}
+// Profile service outcomes arrive as typed events; Rust owns their wording.
+fn profile_status_copy(event:ffi::ProfileStatusEvent)->String{
+    use ffi::ProfileStatusEvent as E;
+    match event {
+        E::DuplicateName=>"Profil o tej nazwie już istnieje.",
+        E::Creating=>"Tworzenie profilu…",
+        E::CreateFailed=>"Nie udało się utworzyć profilu. Spróbuj ponownie.",
+        E::Created=>"Profil utworzony. Możesz przypisać go do przestrzeni.",
+        E::CreateNotSaved=>"Nie udało się zapisać profilu. Profil nie został dodany. Spróbuj ponownie.",
+        E::Renamed=>"Nazwa profilu zapisana.",
+        E::RenameFailed=>"Nie udało się zapisać nazwy profilu.",
+        E::Deleting=>"Usuwanie profilu…",
+        E::Deleted=>"Profil usunięty. Dane przeglądania zostaną wyczyszczone.",
+        E::DeleteNotSaved=>"Nie udało się zapisać zmian. Profil nie został usunięty.",
+        E::LoadFailed=>"Nie udało się wczytać profili. Uruchom aplikację ponownie.",
+        _=>"",
+    }.into()
 }
 fn preferences_profile_banner(profile:&str)->String{format!("Profil: {profile} · Ustawienia wspólne dla aplikacji są oznaczone w opisach.")}
 fn site_rule_detail(primary:&str,name:&str,setting:i32,secondary:&str,editable:bool)->String{
@@ -3389,6 +3410,10 @@ mod tests {
         f.tools_record(true);let escape=f.tools_capture(ffi::ToolsCapture::Escape);assert!(escape.admitted&&escape.stop_recording&&!escape.accept_chord);assert_eq!(escape.status,"Nagrywanie anulowane.");assert!(!f.tools_recording());
         f.tools_record(true);f.tools_reset();assert!(!f.tools_capture(ffi::ToolsCapture::Valid).admitted);
         assert_eq!(tools_status(ffi::ToolsStatus::HistoryReading),"Odczytywanie historii…");assert_eq!(tools_status(ffi::ToolsStatus::HistorySearching),"Wyszukiwanie historii…");assert_eq!(tools_status(ffi::ToolsStatus::WriteFailed),"Nie udało się zapisać ustawień na dysku.");
+    }
+    #[test] fn profile_status_events_have_distinct_copy_and_unknown_is_empty() {
+        use ffi::ProfileStatusEvent as E;let all=[E::DuplicateName,E::Creating,E::CreateFailed,E::Created,E::CreateNotSaved,E::Renamed,E::RenameFailed,E::Deleting,E::Deleted,E::DeleteNotSaved,E::LoadFailed];let copies=all.iter().map(|e|profile_status_copy(*e)).collect::<std::collections::BTreeSet<_>>();assert_eq!(copies.len(),all.len());assert!(copies.iter().all(|c|!c.is_empty()));
+        assert_eq!(profile_status_copy(E::Creating),"Tworzenie profilu…");assert_eq!(profile_status_copy(E::DuplicateName),"Profil o tej nazwie już istnieje.");assert!(profile_status_copy(E{repr:200}).is_empty());
     }
     #[test] fn preference_control_views_cover_missing_managed_and_editable_states() {
         use ffi::PreferenceControlKind as K;

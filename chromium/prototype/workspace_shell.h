@@ -389,6 +389,9 @@ class WorkspaceShell final : public ui::EventHandler,
   views::View* import_cookies() const { return import_cookies_; }
   views::View* import_profiles() const { return import_profiles_; }
   views::Widget* import_widget() const { return import_widget_.get(); }
+  // Profile service outcomes; wording comes from Rust (or the Views table).
+  enum class ProfileStatusEvent { kDuplicateName, kCreating, kCreateFailed, kCreated, kCreateNotSaved, kRenamed, kRenameFailed, kDeleting, kDeleted, kDeleteNotSaved, kLoadFailed };
+  void SetProfileStatus(ProfileStatusEvent event);
   void SetProfileStatus(std::u16string message);
   views::Widget* profiles_widget() const { return profiles_widget_.get(); }
   EditorControl* profile_name_input() const { return profile_name_input_; }

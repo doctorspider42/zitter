@@ -117,6 +117,11 @@ wstawienie komend) są w `palette_plan`; natywnie zostaje rozwiązywanie adresu,
 wyszukiwanie i komendy aplikacji. Testy Rust 495; podzbiór UI palety/adresu 33 Metal /
 30 Views zaliczony.
 
+**Statusy usług profili jako zdarzenia:** warstwa aplikacji zgłasza typowane
+`ProfileStatusEvent` (tworzenie, zmiana nazwy, usuwanie, błędy, wczytanie), a tekst
+pochodzi z Rusta (`profile_status_copy`); Views używa natywnej tabeli. Testy Rust 496;
+cała klasa `ZitterProfilesBrowserTest` przeszła: 216 Metal / 208 Views.
+
 **Pełny checkpoint UI 2026-10-27:** po poprawkach **273/273 Metal i 224/224 Views**
 (pierwszy przebieg: 6 niepowodzeń Metal, 1 Views — trzy crashe testów na odłączonych
 widokach, brakująca komenda Rust `HistoryMore`, tooltip tytułu Peek, wyścig tytułu

@@ -1601,7 +1601,7 @@ bool WorkspaceWindow::CreateProfile(std::string name, std::string workspace_id) 
   if (!configuration_ready_ || configuration_invalid_ || profiles_busy() || name.empty()) return false;
   for (const auto& entry : profiles_) {
     if (base::EqualsCaseInsensitiveASCII(entry.info.name, name)) {
-      shell_->SetProfileStatus(u"Profil o tej nazwie już istnieje.");
+      shell_->SetProfileStatus(WorkspaceShell::ProfileStatusEvent::kDuplicateName);
       return false;
     }
   }
@@ -1611,7 +1611,7 @@ bool WorkspaceWindow::CreateProfile(std::string name, std::string workspace_id) 
   info.directory = "ZitterProfile-" + info.id;
   info.name = std::move(name);
   profiles_busy_ = true;
-  shell_->SetProfileStatus(u"Tworzenie profilu…");
+  shell_->SetProfileStatus(WorkspaceShell::ProfileStatusEvent::kCreating);
   UpdateShell();
   auto path = data_directory_.AppendASCII(info.directory);
   g_browser_process->profile_manager()->CreateProfileAsync(path,
@@ -1624,7 +1624,7 @@ void WorkspaceWindow::ProfileCreated(ProfileInfo info, std::string workspace_id,
   if (!lease) {
     profiles_busy_ = false;
     UpdateShell();
-    shell_->SetProfileStatus(u"Nie udało się utworzyć profilu. Spróbuj ponownie.");
+    shell_->SetProfileStatus(WorkspaceShell::ProfileStatusEvent::kCreateFailed);
     return;
   }
   const auto id = info.id;
@@ -1643,8 +1643,7 @@ void WorkspaceWindow::ProfileCreated(ProfileInfo info, std::string workspace_id,
     window->profiles_busy_ = false;
     if (ok && !workspace_id.empty()) window->AssignProfile(workspace_id, id);
     window->UpdateShell();
-    window->shell_->SetProfileStatus(ok ? u"Profil utworzony. Możesz przypisać go do przestrzeni."
-                                       : u"Nie udało się zapisać profilu. Profil nie został dodany. Spróbuj ponownie.");
+    window->shell_->SetProfileStatus(ok ? WorkspaceShell::ProfileStatusEvent::kCreated : WorkspaceShell::ProfileStatusEvent::kCreateNotSaved);
   }, weak_factory_.GetWeakPtr(), id, std::move(workspace_id)));
 }
 
@@ -1655,7 +1654,7 @@ bool WorkspaceWindow::RenameProfile(std::string id, std::string name) {
   for (auto& entry : profiles_) {
     if (entry.info.id == id) selected = &entry;
     else if (base::EqualsCaseInsensitiveASCII(entry.info.name, name)) {
-      shell_->SetProfileStatus(u"Profil o tej nazwie już istnieje.");
+      shell_->SetProfileStatus(WorkspaceShell::ProfileStatusEvent::kDuplicateName);
       return false;
     }
   }
@@ -1675,7 +1674,7 @@ bool WorkspaceWindow::RenameProfile(std::string id, std::string name) {
     }
     window->profiles_busy_ = false;
     window->UpdateShell();
-    window->shell_->SetProfileStatus(ok ? u"Nazwa profilu zapisana." : u"Nie udało się zapisać nazwy profilu.");
+    window->shell_->SetProfileStatus(ok ? WorkspaceShell::ProfileStatusEvent::kRenamed : WorkspaceShell::ProfileStatusEvent::kRenameFailed);
   }, weak_factory_.GetWeakPtr(), id, old_name));
   return true;
 }
@@ -1719,7 +1718,7 @@ bool WorkspaceWindow::RemoveProfile(std::string id) {
   deleted_directories_.push_back(directory);
   profiles_busy_ = true;
   UpdateShell();
-  shell_->SetProfileStatus(u"Usuwanie profilu…");
+  shell_->SetProfileStatus(WorkspaceShell::ProfileStatusEvent::kDeleting);
   // Commit the catalogue and a deletion marker before touching any user data.
   SaveConfiguration(base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, size_t index,
                                      std::unique_ptr<ProfileEntry> removed, bool ok) {
@@ -1734,8 +1733,7 @@ bool WorkspaceWindow::RemoveProfile(std::string id) {
     }
     window->profiles_busy_ = false;
     window->UpdateShell();
-    window->shell_->SetProfileStatus(ok ? u"Profil usunięty. Dane przeglądania zostaną wyczyszczone."
-                                       : u"Nie udało się zapisać zmian. Profil nie został usunięty.");
+    window->shell_->SetProfileStatus(ok ? WorkspaceShell::ProfileStatusEvent::kDeleted : WorkspaceShell::ProfileStatusEvent::kDeleteNotSaved);
   }, weak_factory_.GetWeakPtr(), index, std::move(removed)));
   return true;
 }
@@ -1975,7 +1973,7 @@ void WorkspaceWindow::StartupProfileLoaded(std::string id, std::string directory
   if (!lease || profile->GetPath() != data_directory_.AppendASCII(directory)) {
     startup_profile_failed_ = true;
     pending_profile_action_.Reset();
-    shell_->SetProfileStatus(u"Nie udało się wczytać profili. Uruchom aplikację ponownie.");
+    shell_->SetProfileStatus(WorkspaceShell::ProfileStatusEvent::kLoadFailed);
     shell_->OpenProfiles();
     return;
   }

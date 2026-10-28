@@ -8909,6 +8909,26 @@ void WorkspaceShell::OpenProfiles(std::string profile_id, std::string workspace_
   profiles_widget_->Show();
   profiles_widget_->Activate();
 }
+void WorkspaceShell::SetProfileStatus(ProfileStatusEvent event) {
+  static constexpr std::array<std::u16string_view, 11> kViewsCopy = {
+      u"Profil o tej nazwie już istnieje.",
+      u"Tworzenie profilu…",
+      u"Nie udało się utworzyć profilu. Spróbuj ponownie.",
+      u"Profil utworzony. Możesz przypisać go do przestrzeni.",
+      u"Nie udało się zapisać profilu. Profil nie został dodany. Spróbuj ponownie.",
+      u"Nazwa profilu zapisana.",
+      u"Nie udało się zapisać nazwy profilu.",
+      u"Usuwanie profilu…",
+      u"Profil usunięty. Dane przeglądania zostaną wyczyszczone.",
+      u"Nie udało się zapisać zmian. Profil nie został usunięty.",
+      u"Nie udało się wczytać profili. Uruchom aplikację ponownie."};
+  const auto index = static_cast<size_t>(event);
+  std::u16string text(kViewsCopy.at(index));
+#if BUILDFLAG(IS_MAC)
+  if (profile_form_) text = base::UTF8ToUTF16(std::string(sidebar::profile_status_copy(sidebar::ProfileStatusEvent{static_cast<uint8_t>(index)})));
+#endif
+  SetProfileStatus(std::move(text));
+}
 void WorkspaceShell::SetProfileStatus(std::u16string message) {
   if(!profile_status_)return;
 #if BUILDFLAG(IS_MAC)
