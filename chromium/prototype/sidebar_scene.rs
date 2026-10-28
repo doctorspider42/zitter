@@ -192,6 +192,8 @@ mod ffi {
         ink: u32, fill: u32, badge: u32,
         // 1 px inset ring drawn over `fill` (0 = none); the design system's card edge.
         edge: u32,
+        // Keyboard focus ring colour (0 = the recipe's own focus bar).
+        focus: u32,
         active: bool, hovered: bool, tile: bool, close: bool, close_visible: bool, focused: bool,
         font_size: f32, font_height: f32, font_weight: i32,
         clip: FloatRect,
@@ -247,7 +249,7 @@ mod ffi {
     struct SidebarRowVisual { valid: bool, tile: bool, height: i32 }
     struct SidebarRowPresentation { valid: bool, title: Vec<u16>, monogram: Vec<u16>, color: u32, tile: bool, folder: bool, height: i32 }
     struct SidebarTabUpdate { admitted: bool, changed: bool, title_changed: bool, geometry_changed: bool }
-    struct SidebarRowStyle { font_size: f32, ink: u32, card: u32, hover: u32, edge: u32 }
+    struct SidebarRowStyle { font_size: f32, ink: u32, card: u32, hover: u32, edge: u32, focus: u32 }
     struct SidebarRowScene { valid: bool, item: Item }
     struct ColumnChild { width: i32, height: i32, top: i32, left: i32, bottom: i32, right: i32 }
     struct ColumnLayout { width: i32, height: i32, children: Vec<Rect> }
@@ -2653,7 +2655,7 @@ impl ActionControl {
     fn sidebar_set_title(&mut self,title:Vec<u16>)->bool{self.write_node(|r|{if let Some(NodeModel::SidebarPin(pin))=r.model.as_deref_mut(){let display=pin_title(&title,pin.presentation.folder,pin.collapsed);if pin.presentation.title==display{return false;}if pin.presentation.folder{pin.base_title=title;}pin.presentation.title_utf8=String::from_utf16_lossy(&display);pin.presentation.title=display;return true;}let Some(p)=r.model.as_deref_mut().and_then(NodeModel::row_presentation_mut) else{return false;};if p.title==title{return false;}p.title_utf8=String::from_utf16_lossy(&title);p.title=title;true}).unwrap_or(false)}
     fn sidebar_set_monogram(&mut self,monogram:Vec<u16>,color:u32)->bool{self.write_node(|r|{let Some(p)=r.model.as_deref_mut().and_then(NodeModel::row_presentation_mut) else{return false;};if p.monogram==monogram&&p.color==color{return false;}p.monogram_utf8=if p.folder{"📁".into()}else{String::from_utf16_lossy(&monogram)};p.monogram=monogram;p.color=color;true}).unwrap_or(false)}
     fn sidebar_scene(&self,bounds:ffi::FloatRect,clip:ffi::FloatRect,style:ffi::SidebarRowStyle,close:bool,close_visible:bool)->ffi::SidebarRowScene{
-        let mut item=ffi::Item{x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height,kind:0,glyph:0,title:String::new(),monogram:String::new(),detail:String::new(),title_width:0.0,detail_ink:0,detail_font_size:0.0,ink:style.ink,fill:0,badge:0,edge:0,active:false,hovered:false,tile:false,close:false,close_visible:false,focused:false,font_size:style.font_size,font_height:0.0,font_weight:0,clip};
+        let mut item=ffi::Item{x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height,kind:0,glyph:0,title:String::new(),monogram:String::new(),detail:String::new(),title_width:0.0,detail_ink:0,detail_font_size:0.0,ink:style.ink,fill:0,badge:0,edge:0,focus:style.focus,active:false,hovered:false,tile:false,close:false,close_visible:false,focused:false,font_size:style.font_size,font_height:0.0,font_weight:0,clip};
         let valid=self.read_node(|r|{let Some(p)=r.model.as_deref().and_then(NodeModel::row_presentation) else{return false;};let hovered=r.state.enabled&&matches!(r.state.visual,ffi::RowVisual::Hovered|ffi::RowVisual::Pressed);item.title=p.title_utf8.clone();item.monogram=p.monogram_utf8.clone();item.badge=if p.folder{0}else{p.color};item.close=close&&matches!(r.model.as_deref(),Some(NodeModel::SidebarTab(m)) if m.can_close);item.close_visible=item.close&&close_visible;item.active=r.state.on;item.hovered=hovered;item.tile=p.tile;item.focused=r.state.focused;item.fill=if p.tile{(style.card&0xffffff)|((if r.state.on{0xff}else if hovered{0x8c}else{0x59})<<24)}else if r.state.on{style.card}else if hovered{style.hover}else{0};item.edge=if r.state.on&&!p.tile{style.edge}else{0};true}).unwrap_or(false);
         ffi::SidebarRowScene{valid,item}
     }
@@ -2921,283 +2923,302 @@ fn preference_chrome_scene(items:&[ffi::Item],holes:&[ffi::FloatRect])->Vec<ffi:
 fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
     let mut out = Vec::with_capacity(items.len() * 5);
     for i in items {
-        if ![i.x, i.y, i.width, i.height].iter().all(|v| v.is_finite())
-            || i.width <= 0.0 || i.height <= 0.0
-            || ![i.clip.x, i.clip.y, i.clip.width, i.clip.height].iter().all(|v| v.is_finite())
-            || i.clip.width <= 0.0 || i.clip.height <= 0.0 { continue; }
-        if i.kind==22||i.kind==23{out.extend(preference_control_scene(i));continue;}
-        let first_primitive = out.len();
-        let mut emit = |x, y, w: f32, h: f32, radius, color, text: &str, size, bold| {
-            if w > 0.0 && h > 0.0 {
-                out.push(ffi::Primitive { x, y, width: w, height: h, radius,
-                    color, stroke: 0.0, shape: 0, text: text.into(), font_size: size, font_weight:0, bold, middle: false, center: false,right_align:false, editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0,
-                    clip: ffi::FloatRect {x: i.clip.x, y: i.clip.y, width: i.clip.width, height: i.clip.height} });
-            }
-        };
-        if i.kind==26 {
-            if !i.title_width.is_finite()||!i.detail_font_size.is_finite(){continue;}
-            emit(i.x,i.y,i.width,i.height,0.0,i.fill,"",0.0,false);
-            let mut slice=|left:f32,right:f32|{let left=(i.width*left).round();let right=(i.width*right.min(1.0)).round();let x=if i.tile{i.x+i.width-right}else{i.x+left};emit(x,i.y,(right-left).max(0.0),i.height,0.0,i.ink,"",0.0,false);};
-            if i.title_width>=0.0{slice(0.0,i.title_width.min(1.0));}
-            else{let t=i.detail_font_size.clamp(0.0,1.0);if t<0.5{slice(t/2.0,t*2.0);}else if t<0.75{slice(t*3.0-1.25,1.0);slice(0.0,t-0.5);}else{let left=(t-0.75)*4.0;slice(left,left+0.25-(t-0.75));}}
-            continue;
-        }
-        if i.kind == 27 {
-            if !i.title.is_empty(){emit(i.x,i.y,i.width,i.height,0.0,i.ink,&i.title,i.font_size,i.active);let p=out.last_mut().unwrap();p.font_weight=i.font_weight;p.middle=true;p.right_align=i.tile;}continue;
-        }
-        if i.kind == 17 {
-            if !i.title.is_empty(){emit(i.x,i.y,i.width,i.height,0.0,i.ink,&i.title,i.font_size,i.active);let last=out.last_mut().unwrap();last.font_weight=i.font_weight;last.center=i.glyph==1;}continue;
-        }
-        if i.kind==24 {
-            emit(i.x,i.y,i.width,i.height,12.0,i.fill,"",0.0,false);
-            if !i.active&&i.width>1.0&&i.height>1.0 {emit(i.x+0.5,i.y+0.5,i.width-1.0,i.height-1.0,12.0,i.ink,"",0.0,false);out.last_mut().unwrap().stroke=1.0;}
-            continue;
-        }
-        if i.kind == 16 {
-            let radius=design_tokens::radius::LG;
-            emit(i.x,i.y,i.width,i.height,radius,i.fill,"",0.0,false);
-            emit(i.x+0.5,i.y+0.5,i.width-1.0,i.height-1.0,radius-0.5,i.badge,"",0.0,false);
-            if let Some(border)=out.get_mut(first_primitive+1){border.stroke=1.0;}continue;
-        }
-        if i.kind == 15 {
-            if i.glyph==0{emit(i.x+0.5,i.y+0.5,i.width-1.0,i.height-1.0,4.5,i.badge,"",0.0,false);}
-            let g=palette_text_layout(i.glyph,i.width as i32,i.height as i32,i.title_width as i32,i.font_height as i32);
-            let r=&g.children[0];
-            if !i.title.is_empty(){emit(i.x+r.x as f32,i.y+r.y as f32,r.width as f32,r.height as f32,0.0,i.ink,&i.title,i.font_size,false);}
-            if i.glyph==0{if let Some(border)=out.get_mut(first_primitive){border.stroke=1.0;}}continue;
-        }
-        if i.kind == 14 {emit(i.x,i.y,i.width,i.height,0.0,i.fill,"",0.0,false);continue;}
-        if i.kind == 13 {
-            let start=first_primitive;
-            emit(i.x+18.0,i.y+(i.height-16.0)/2.0,16.0,16.0,0.0,i.ink,"",0.0,false);
-            for p in out[start..].iter_mut(){p.shape=if i.glyph==1{3}else if i.glyph==2{6}else{7};}continue;
-        }
-        if i.kind == 12 {
-            emit(i.x,i.y,i.width,i.height,design_tokens::radius::SM,i.fill,"",0.0,false);
-            emit(i.x+12.0,i.y+(i.height-28.0)/2.0,28.0,28.0,7.0,i.badge,"",0.0,false);
-            let g=row_layout(i.width as i32,i.height as i32,i.title_width as i32,!i.detail.is_empty(),true,false);
-            if i.focused{emit(i.x+2.0,i.y+i.height-3.0,(i.width-4.0).max(0.0),2.0,1.0,i.ink,"",0.0,false);}
-            if !i.title.is_empty(){emit(i.x+g.title.x as f32,i.y,(g.title.width as f32).min(i.title_width.max(0.0)),i.height,0.0,i.ink,&i.title,i.font_size,true);}
-            if !i.detail.is_empty(){emit(i.x+g.detail.x as f32,i.y,g.detail.width as f32,i.height,0.0,i.detail_ink,&i.detail,i.detail_font_size,false);}
-            for p in out[first_primitive..].iter_mut(){if !p.text.is_empty()&&!p.bold{p.middle=true;}}continue;
-        }
-        if i.kind == 11 {
-            if i.active||i.hovered {emit(i.x+i.width-3.0,i.y+8.0,2.0,(i.height-16.0).max(0.0),1.0,i.ink,"",0.0,false);}continue;
-        }
-        if i.kind == 10 {
-            emit(i.x,i.y,i.width,i.height,design_tokens::radius::MD,i.fill,"",0.0,false);continue;
-        }
-        if i.kind == 8 {
-            let g=pane_bar_layout(i.width as i32,i.height as i32);
-            if !i.title.is_empty() {emit(i.x+g.title.x as f32,i.y,(g.title.width as f32).min(i.title_width.max(0.0)),i.height,0.0,i.ink,&i.title,i.font_size,false);}continue;
-        }
-        if i.kind == 9 {
-            let across=i.width>i.height;let extent=if across{i.width}else{i.height};let grip=40.0f32.min(extent/4.0);
-            emit(i.x+(i.width-if across{grip}else{4.0})/2.0,i.y+(i.height-if across{4.0}else{grip})/2.0,
-                if across{grip}else{4.0},if across{4.0}else{grip},2.0,i.ink,"",0.0,false);continue;
-        }
-        if i.kind == 21 {
-            if !(i.width>0.0&&i.height>0.0){continue;}
-            emit(i.x,i.y,i.width,i.height,6.0,i.fill,"",0.0,false);
-            if i.hovered {emit(i.x,i.y,i.width,i.height,6.0,i.detail_ink,"",0.0,false);}
-            let g=select_layout(i.width as i32,i.height as i32,0,0,i.tile);
-            if !i.title.is_empty()&&g.label.width>0 {emit(i.x+g.label.x as f32,i.y,g.label.width as f32,i.height,0.0,i.ink,&i.title,i.font_size,i.active);}
-            if g.arrow.width>0 {emit(i.x+g.arrow.x as f32,i.y,g.arrow.width as f32,i.height,0.0,i.ink,"▾",i.font_size,false);}
-            emit(i.x,i.y,i.width,i.height,6.0,i.badge,"",0.0,false);if let Some(p)=out.last_mut(){p.stroke=if i.focused{2.0}else{1.0};}for p in out[first_primitive..].iter_mut(){if p.text=="▾"{p.center=true;}}
-            continue;
-        }
-        if i.kind == 20 {
-            if !(i.width>0.0&&i.height>0.0){continue;}
-            if i.hovered {emit(i.x-3.0,i.y-3.0,i.width+6.0,i.height+6.0,12.0,(i.badge&0xffffff)|0x14000000,"",0.0,false);}
-            if i.active {emit(i.x,i.y,i.width,i.height,2.0,i.fill,"",0.0,false);emit(i.x,i.y,i.width,i.height,0.0,i.ink,"✓",i.font_size,false);}
-            else {emit(i.x,i.y,i.width,i.height,2.0,i.badge,"",0.0,false);}
-            if i.focused {emit(i.x-2.0,i.y-2.0,i.width+4.0,i.height+4.0,4.0,i.detail_ink,"",0.0,false);}
-            for p in out[first_primitive..].iter_mut() {
-                if !p.text.is_empty(){p.center=true;}
-                else if !i.active&&p.x==i.x&&p.y==i.y&&p.width==i.width&&p.height==i.height {p.stroke=1.5;}
-                else if i.focused&&p.x==i.x-2.0&&p.y==i.y-2.0 {p.stroke=2.0;}
-            }
-            continue;
-        }
-        if i.kind == 19 {
-            if !(i.width>0.0&&i.height>0.0){continue;}
-            let radius=i.width.min(i.height).max(0.0)/2.0;
-            if i.fill>>24!=0 {emit(i.x,i.y,i.width,i.height,radius,i.fill,"",0.0,false);}
-            if i.hovered&&i.detail_ink>>24!=0 {emit(i.x,i.y,i.width,i.height,radius,i.detail_ink,"",0.0,false);}
-            let padding=i.title_width.max(0.0).min(i.width.max(0.0)/2.0);
-            if !i.title.is_empty(){emit(i.x+padding,i.y,(i.width-padding*2.0).max(0.0),i.height,0.0,i.ink,&i.title,i.font_size,i.active);}
-            if i.focused {emit(i.x+8.0,i.y+i.height-5.0,(i.width-16.0).max(0.0),2.0,1.0,i.ink,"",0.0,false);}
-            if i.badge>>24!=0 {emit(i.x,i.y,i.width,i.height,radius,i.badge,"",0.0,false);}
-            if i.badge>>24!=0 {if let Some(border)=out.last_mut(){border.stroke=1.0;}}
-            for p in out[first_primitive..].iter_mut(){if !p.text.is_empty(){p.center=true;}}
-            continue;
-        }
-        if i.kind == 18 {
-            let cx=i.x+i.width/2.0;let cy=i.y+i.height/2.0;
-            if i.active||i.hovered {emit(cx-10.0,cy-10.0,20.0,20.0,10.0,i.ink,"",0.0,false);}
-            emit(cx-7.0,cy-7.0,14.0,14.0,7.0,i.badge,"",0.0,false);
-            if i.focused {emit(i.x+2.0,i.y+i.height-3.0,(i.width-4.0).max(0.0),2.0,1.0,i.ink,"",0.0,false);}
-            for p in out[first_primitive..].iter_mut() {if p.width==20.0&&p.height==20.0 {p.stroke=1.0;}}
-            continue;
-        }
-        if i.kind == 7 {
-            let cx=i.x+i.width/2.0; let cy=i.y+i.height/2.0;
-            if i.glyph==1 {
-                if i.monogram.is_empty() {
-                    emit(cx-4.0,cy-4.0,8.0,8.0,4.0,i.ink,"",0.0,false);
-                } else {
-                    if i.fill>>24!=0 {emit(cx-13.0,cy-13.0,26.0,26.0,7.0,i.fill,"",0.0,false);}
-                    emit(cx-13.0,cy-13.0,26.0,26.0,0.0,i.ink,&i.monogram,i.font_size,false);
-                }
-            } else {
-                if i.fill>>24!=0 {emit(i.x,i.y,i.width,i.height,8.0,i.fill,"",0.0,false);}
-                if i.glyph==0 {
-                    emit(cx-8.0,cy-7.0,16.0,14.0,3.0,i.ink,"",0.0,false);
-                    emit(cx-3.0,cy-7.0,1.0,14.0,0.0,i.ink,"",0.0,false);
-                    if i.active {emit(cx-7.0,cy-6.0,4.0,12.0,0.0,(i.ink&0xffffff)|0x55000000,"",0.0,false);}
-                } else if i.glyph==2 {
-                    for (dy,knob) in [(-5.0,-3.0),(0.0,3.0),(5.0,-1.0)] {
-                        emit(cx-7.0,cy+dy-0.5,14.0,1.0,0.5,i.ink,"",0.0,false);
-                        emit(cx+knob-1.5,cy+dy-1.5,3.0,3.0,1.5,i.ink,"",0.0,false);
-                    }
-                } else if i.glyph==6 {
-                    for dx in [-5.0,0.0,5.0] {emit(cx+dx-1.0,cy-1.0,3.0,3.0,1.5,i.ink,"",0.0,false);}
-                } else {
-                    emit(cx-8.0,cy-8.0,16.0,16.0,0.0,i.ink,"",0.0,false);
-                }
-            }
-            if i.focused {emit(i.x+2.0,i.y+i.height-3.0,(i.width-4.0).max(0.0),2.0,1.0,i.ink,"",0.0,false);}
-            for p in out[first_primitive..].iter_mut() {
-                if !p.text.is_empty() {p.center=true;}
-                if (3..=5).contains(&i.glyph) && p.width==16.0 && p.height==16.0 {p.shape=i.glyph-1;}
-                if i.glyph==7 && p.width==16.0 && p.height==16.0 {p.shape=5;}
-                if i.glyph==8 && p.width==16.0 && p.height==16.0 {p.shape=7;}
-                if i.glyph==0 && p.width==16.0 && p.height==14.0 {p.stroke=1.0;}
-                if i.glyph==1 && i.monogram.is_empty() && p.width==8.0 && p.height==8.0 && !i.active {p.stroke=1.0;}
-            }
-            continue;
-        }
-        if i.kind == 6 {
-            emit(i.x + if i.tile {2.0} else {4.0}, i.y + if i.tile {4.0} else {2.0},
-                (i.width-if i.tile {4.0} else {8.0}).max(0.0), (i.height-if i.tile {8.0} else {4.0}).max(0.0),
-                3.5, i.fill, "", 0.0, false);
-            continue;
-        }
-        if i.kind == 1 {
-            emit(i.x, i.y, i.width, i.height, 0.0, i.ink, &i.title, i.font_size, false);
-            continue;
-        }
-        if i.kind == 5 {
-            emit(i.x + 8.0, i.y, (i.width - 16.0).max(0.0), i.height,
-                0.0, i.ink, &i.title, i.font_size, true);
-            continue;
-        }
-        if i.kind == 4 {
-            // A filled rounded pill and inset outline. Ring and lock strokes
-            // remain analytic GPU geometry; they need no icon/font dependency.
-            let pill = i.height / 2.0;
-            emit(i.x, i.y, i.width, i.height, pill, i.fill, "", 0.0, false);
-            let g = address_layout(i.width as i32, i.height as i32, i.title_width as i32);
-            let cy = i.y + i.height / 2.0;
-            let rings = [(i.x + 0.5, 1.0), (i.x + if i.active {14.0} else {12.0}, 1.5)];
-            emit(i.x + 0.5, i.y + 0.5, i.width - 1.0, i.height - 1.0,
-                pill - 0.5, (i.ink & 0x00ffffff) | 0x0d000000, "", 0.0, false);
-            if i.active {
-                emit(i.x + 14.0, cy - 7.0, 8.0, 10.0, 4.0, i.badge, "", 0.0, false);
-                emit(i.x + 12.0, cy - 1.0, 12.0, 8.0, 1.5, i.badge, "", 0.0, false);
-            } else {
-                emit(i.x + 12.0, cy - 6.0, 10.0, 10.0, 5.0, i.badge, "", 0.0, false);
-                for n in 0..4 {
-                    emit(i.x + 20.0 + n as f32, cy + 2.0 + n as f32, 2.0, 2.0,
-                        1.0, i.badge, "", 0.0, false);
-                }
-            }
-            if i.focused {
-                emit(i.x + 2.0, i.y + i.height - 3.0, (i.width - 4.0).max(0.0), 2.0,
-                    1.0, i.ink, "", 0.0, false);
-            }
-            emit(i.x + g.title.x as f32, i.y, g.title.width as f32, i.height,
-                0.0, i.ink, &i.title, i.font_size, true);
-            if !i.detail.is_empty() {
-                emit(i.x + g.detail.x as f32, i.y, g.detail.width as f32, i.height,
-                    0.0, i.detail_ink, &i.detail, i.detail_font_size, false);
-            }
-            // No more emissions borrow out: attach analytic inset strokes.
-            // Only the outline and icon ring are stroked; body/text stay filled.
-            for p in out[first_primitive..].iter_mut() {
-                if p.text.is_empty() {
-                    if let Some((_, stroke)) = rings.iter().find(|(x, _)| *x == p.x) {
-                        p.stroke = *stroke;
-                    }
-                }
-            }
-            continue;
-        }
-        let radius = if i.kind == 2 {design_tokens::radius::MD} else {design_tokens::radius::SM};
-        if i.fill >> 24 != 0 {
-            emit(i.x, i.y, i.width, i.height, radius, i.fill, "", 0.0, false);
-        }
-        // The active card's edge: a 1 px inset ring, stroked below with the others.
-        if i.edge >> 24 != 0 && i.width > 1.0 && i.height > 1.0 {
-            emit(i.x + 0.5, i.y + 0.5, i.width - 1.0, i.height - 1.0, radius - 0.5, i.edge, "", 0.0, false);
-        }
-        if i.kind == 2 { continue; }
-        if i.kind == 25 {
-            // Match the original history RowButton's two single-line columns:
-            // primary title elides at the tail; date/URL detail in the middle.
-            let g=row_layout(i.width as i32,i.height as i32,i.title_width as i32,!i.detail.is_empty(),false,false);
-            emit(i.x+10.0,i.y+(i.height-16.0)/2.0,16.0,16.0,4.0,i.badge,"",0.0,false);
-            if !i.monogram.is_empty(){emit(i.x+10.0,i.y+(i.height-16.0)/2.0,16.0,16.0,0.0,0xffffffff,&i.monogram,10.0,true);}
-            if i.focused {emit(i.x+2.0,i.y+i.height-3.0,(i.width-4.0).max(0.0),2.0,1.0,i.ink,"",0.0,false);}
-            emit(i.x+g.title.x as f32,i.y,g.title.width as f32,i.height,0.0,i.ink,&i.title,i.font_size,false);
-            if !i.detail.is_empty() && g.detail.width>0 {
-                emit(i.x+g.detail.x as f32,i.y,g.detail.width as f32,i.height,0.0,i.detail_ink,&i.detail,i.detail_font_size,false);
-                out.last_mut().unwrap().middle=true;
-            }
-            continue;
-        }
-        if i.focused {
-            // Inset focus indicator; event/focus ownership stays with the node.
-            emit(i.x + 2.0, i.y + i.height - 3.0, (i.width - 4.0).max(0.0), 2.0,
-                 1.0, i.ink, "", 0.0, false);
-        }
-        if i.kind == 3 {
-            let g = row_layout(i.width as i32, i.height as i32, i.title_width as i32,
-                !i.detail.is_empty(), false, false);
-            let cy = i.y + i.height / 2.0;
-            emit(i.x + 11.0, cy - 0.75, 14.0, 1.5, 0.75, i.badge, "", 0.0, false);
-            emit(i.x + 17.25, cy - 7.0, 1.5, 14.0, 0.75, i.badge, "", 0.0, false);
-            emit(i.x + g.title.x as f32, i.y, g.title.width as f32, i.height,
-                0.0, i.ink, &i.title, i.font_size, false);
-            if !i.detail.is_empty() && g.detail.width > 0 {
-                emit(i.x + g.detail.x as f32, i.y, g.detail.width as f32, i.height,
-                    0.0, i.detail_ink, &i.detail, i.detail_font_size, false);
-                out.last_mut().unwrap().middle = true;
-            }
-            continue;
-        }
-        emit(i.x + 10.0, i.y + (i.height - 16.0) / 2.0, 16.0, 16.0,
-             4.0, i.badge, "", 0.0, false);
-        emit(i.x + 12.0, i.y + (i.height - 16.0) / 2.0, 14.0, 16.0,
-             0.0, if i.badge >> 24 != 0 { 0xffffffff } else { i.ink },
-             &i.monogram, 10.0, true);
-        // Keep a close-button hit area reserved whenever it exists, just as the
-        // native interaction node does (including half-width split cards).
-        let geometry = row_layout(i.width as i32, i.height as i32, 0, false, false, i.close);
-        emit(i.x + geometry.title.x as f32, i.y, geometry.title.width as f32, i.height,
-             0.0, i.ink, &i.title, i.font_size, i.active);
-        if i.close && i.close_visible {
-            emit(i.x + geometry.close.x as f32 + 5.0, i.y,
-                 (geometry.close.width - 10).max(0) as f32, i.height,
-                 0.0, i.ink, "×", 18.0, false);
-        }
-        if i.edge >> 24 != 0 {
-            for p in out[first_primitive..].iter_mut() {
-                if p.text.is_empty() && p.color == i.edge && p.x == i.x + 0.5 && p.y == i.y + 0.5 {p.stroke = 1.0;}
-            }
-        }
+        let start = out.len();
+        layout_item(i, &mut out);
+        focus_ring(i, start, &mut out);
     }
     out
+}
+// Keyboard focus as the design system draws it: a 2 px ring in `focus` inside
+// the control's own shape, replacing the 2 px focus bar the recipes draw when
+// no ring colour is given. Controls with their own focus outline keep it.
+fn focus_ring(i: &ffi::Item, start: usize, out: &mut Vec<ffi::Primitive>) {
+    if !i.focused || i.focus >> 24 == 0 || out.len() <= start { return; }
+    let is_bar = |p: &ffi::Primitive| p.text.is_empty() && p.height == 2.0 && p.radius == 1.0 && p.color == i.ink && p.y >= i.y + i.height - 5.0;
+    let Some(bar) = out[start..].iter().position(is_bar) else { return; };
+    let template = out.remove(start + bar);
+    let radius = out[start..].iter().find(|p| p.text.is_empty() && p.x == i.x && p.y == i.y && p.width == i.width && p.height == i.height)
+        .map_or(design_tokens::radius::SM, |p| p.radius);
+    if i.width <= 2.0 || i.height <= 2.0 { return; }
+    out.push(ffi::Primitive { x: i.x + 1.0, y: i.y + 1.0, width: i.width - 2.0, height: i.height - 2.0,
+        radius: (radius - 1.0).max(0.0), color: i.focus, stroke: 2.0, ..template });
+}
+fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
+    if ![i.x, i.y, i.width, i.height].iter().all(|v| v.is_finite())
+        || i.width <= 0.0 || i.height <= 0.0
+        || ![i.clip.x, i.clip.y, i.clip.width, i.clip.height].iter().all(|v| v.is_finite())
+        || i.clip.width <= 0.0 || i.clip.height <= 0.0 { return; }
+    if i.kind==22||i.kind==23{out.extend(preference_control_scene(i));return;}
+    let first_primitive = out.len();
+    let mut emit = |x, y, w: f32, h: f32, radius, color, text: &str, size, bold| {
+        if w > 0.0 && h > 0.0 {
+            out.push(ffi::Primitive { x, y, width: w, height: h, radius,
+                color, stroke: 0.0, shape: 0, text: text.into(), font_size: size, font_weight:0, bold, middle: false, center: false,right_align:false, editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0,
+                clip: ffi::FloatRect {x: i.clip.x, y: i.clip.y, width: i.clip.width, height: i.clip.height} });
+        }
+    };
+    if i.kind==26 {
+        if !i.title_width.is_finite()||!i.detail_font_size.is_finite(){return;}
+        emit(i.x,i.y,i.width,i.height,0.0,i.fill,"",0.0,false);
+        let mut slice=|left:f32,right:f32|{let left=(i.width*left).round();let right=(i.width*right.min(1.0)).round();let x=if i.tile{i.x+i.width-right}else{i.x+left};emit(x,i.y,(right-left).max(0.0),i.height,0.0,i.ink,"",0.0,false);};
+        if i.title_width>=0.0{slice(0.0,i.title_width.min(1.0));}
+        else{let t=i.detail_font_size.clamp(0.0,1.0);if t<0.5{slice(t/2.0,t*2.0);}else if t<0.75{slice(t*3.0-1.25,1.0);slice(0.0,t-0.5);}else{let left=(t-0.75)*4.0;slice(left,left+0.25-(t-0.75));}}
+        return;
+    }
+    if i.kind == 27 {
+        if !i.title.is_empty(){emit(i.x,i.y,i.width,i.height,0.0,i.ink,&i.title,i.font_size,i.active);let p=out.last_mut().unwrap();p.font_weight=i.font_weight;p.middle=true;p.right_align=i.tile;}return;
+    }
+    if i.kind == 17 {
+        if !i.title.is_empty(){emit(i.x,i.y,i.width,i.height,0.0,i.ink,&i.title,i.font_size,i.active);let last=out.last_mut().unwrap();last.font_weight=i.font_weight;last.center=i.glyph==1;}return;
+    }
+    if i.kind==24 {
+        emit(i.x,i.y,i.width,i.height,12.0,i.fill,"",0.0,false);
+        if !i.active&&i.width>1.0&&i.height>1.0 {emit(i.x+0.5,i.y+0.5,i.width-1.0,i.height-1.0,12.0,i.ink,"",0.0,false);out.last_mut().unwrap().stroke=1.0;}
+        return;
+    }
+    if i.kind == 16 {
+        let radius=design_tokens::radius::LG;
+        emit(i.x,i.y,i.width,i.height,radius,i.fill,"",0.0,false);
+        emit(i.x+0.5,i.y+0.5,i.width-1.0,i.height-1.0,radius-0.5,i.badge,"",0.0,false);
+        if let Some(border)=out.get_mut(first_primitive+1){border.stroke=1.0;}return;
+    }
+    if i.kind == 15 {
+        if i.glyph==0{emit(i.x+0.5,i.y+0.5,i.width-1.0,i.height-1.0,4.5,i.badge,"",0.0,false);}
+        let g=palette_text_layout(i.glyph,i.width as i32,i.height as i32,i.title_width as i32,i.font_height as i32);
+        let r=&g.children[0];
+        if !i.title.is_empty(){emit(i.x+r.x as f32,i.y+r.y as f32,r.width as f32,r.height as f32,0.0,i.ink,&i.title,i.font_size,false);}
+        if i.glyph==0{if let Some(border)=out.get_mut(first_primitive){border.stroke=1.0;}}return;
+    }
+    if i.kind == 14 {emit(i.x,i.y,i.width,i.height,0.0,i.fill,"",0.0,false);return;}
+    if i.kind == 13 {
+        let start=first_primitive;
+        emit(i.x+18.0,i.y+(i.height-16.0)/2.0,16.0,16.0,0.0,i.ink,"",0.0,false);
+        for p in out[start..].iter_mut(){p.shape=if i.glyph==1{3}else if i.glyph==2{6}else{7};}return;
+    }
+    if i.kind == 12 {
+        emit(i.x,i.y,i.width,i.height,design_tokens::radius::SM,i.fill,"",0.0,false);
+        emit(i.x+12.0,i.y+(i.height-28.0)/2.0,28.0,28.0,7.0,i.badge,"",0.0,false);
+        let g=row_layout(i.width as i32,i.height as i32,i.title_width as i32,!i.detail.is_empty(),true,false);
+        if i.focused{emit(i.x+2.0,i.y+i.height-3.0,(i.width-4.0).max(0.0),2.0,1.0,i.ink,"",0.0,false);}
+        if !i.title.is_empty(){emit(i.x+g.title.x as f32,i.y,(g.title.width as f32).min(i.title_width.max(0.0)),i.height,0.0,i.ink,&i.title,i.font_size,true);}
+        if !i.detail.is_empty(){emit(i.x+g.detail.x as f32,i.y,g.detail.width as f32,i.height,0.0,i.detail_ink,&i.detail,i.detail_font_size,false);}
+        for p in out[first_primitive..].iter_mut(){if !p.text.is_empty()&&!p.bold{p.middle=true;}}return;
+    }
+    if i.kind == 11 {
+        if i.active||i.hovered {emit(i.x+i.width-3.0,i.y+8.0,2.0,(i.height-16.0).max(0.0),1.0,i.ink,"",0.0,false);}return;
+    }
+    if i.kind == 10 {
+        emit(i.x,i.y,i.width,i.height,design_tokens::radius::MD,i.fill,"",0.0,false);return;
+    }
+    if i.kind == 8 {
+        let g=pane_bar_layout(i.width as i32,i.height as i32);
+        if !i.title.is_empty() {emit(i.x+g.title.x as f32,i.y,(g.title.width as f32).min(i.title_width.max(0.0)),i.height,0.0,i.ink,&i.title,i.font_size,false);}return;
+    }
+    if i.kind == 9 {
+        let across=i.width>i.height;let extent=if across{i.width}else{i.height};let grip=40.0f32.min(extent/4.0);
+        emit(i.x+(i.width-if across{grip}else{4.0})/2.0,i.y+(i.height-if across{4.0}else{grip})/2.0,
+            if across{grip}else{4.0},if across{4.0}else{grip},2.0,i.ink,"",0.0,false);return;
+    }
+    if i.kind == 21 {
+        if !(i.width>0.0&&i.height>0.0){return;}
+        emit(i.x,i.y,i.width,i.height,6.0,i.fill,"",0.0,false);
+        if i.hovered {emit(i.x,i.y,i.width,i.height,6.0,i.detail_ink,"",0.0,false);}
+        let g=select_layout(i.width as i32,i.height as i32,0,0,i.tile);
+        if !i.title.is_empty()&&g.label.width>0 {emit(i.x+g.label.x as f32,i.y,g.label.width as f32,i.height,0.0,i.ink,&i.title,i.font_size,i.active);}
+        if g.arrow.width>0 {emit(i.x+g.arrow.x as f32,i.y,g.arrow.width as f32,i.height,0.0,i.ink,"▾",i.font_size,false);}
+        emit(i.x,i.y,i.width,i.height,6.0,i.badge,"",0.0,false);if let Some(p)=out.last_mut(){p.stroke=if i.focused{2.0}else{1.0};}for p in out[first_primitive..].iter_mut(){if p.text=="▾"{p.center=true;}}
+        return;
+    }
+    if i.kind == 20 {
+        if !(i.width>0.0&&i.height>0.0){return;}
+        if i.hovered {emit(i.x-3.0,i.y-3.0,i.width+6.0,i.height+6.0,12.0,(i.badge&0xffffff)|0x14000000,"",0.0,false);}
+        if i.active {emit(i.x,i.y,i.width,i.height,2.0,i.fill,"",0.0,false);emit(i.x,i.y,i.width,i.height,0.0,i.ink,"✓",i.font_size,false);}
+        else {emit(i.x,i.y,i.width,i.height,2.0,i.badge,"",0.0,false);}
+        if i.focused {emit(i.x-2.0,i.y-2.0,i.width+4.0,i.height+4.0,4.0,i.detail_ink,"",0.0,false);}
+        for p in out[first_primitive..].iter_mut() {
+            if !p.text.is_empty(){p.center=true;}
+            else if !i.active&&p.x==i.x&&p.y==i.y&&p.width==i.width&&p.height==i.height {p.stroke=1.5;}
+            else if i.focused&&p.x==i.x-2.0&&p.y==i.y-2.0 {p.stroke=2.0;}
+        }
+        return;
+    }
+    if i.kind == 19 {
+        if !(i.width>0.0&&i.height>0.0){return;}
+        let radius=i.width.min(i.height).max(0.0)/2.0;
+        if i.fill>>24!=0 {emit(i.x,i.y,i.width,i.height,radius,i.fill,"",0.0,false);}
+        if i.hovered&&i.detail_ink>>24!=0 {emit(i.x,i.y,i.width,i.height,radius,i.detail_ink,"",0.0,false);}
+        let padding=i.title_width.max(0.0).min(i.width.max(0.0)/2.0);
+        if !i.title.is_empty(){emit(i.x+padding,i.y,(i.width-padding*2.0).max(0.0),i.height,0.0,i.ink,&i.title,i.font_size,i.active);}
+        if i.focused {emit(i.x+8.0,i.y+i.height-5.0,(i.width-16.0).max(0.0),2.0,1.0,i.ink,"",0.0,false);}
+        if i.badge>>24!=0 {emit(i.x,i.y,i.width,i.height,radius,i.badge,"",0.0,false);}
+        if i.badge>>24!=0 {if let Some(border)=out.last_mut(){border.stroke=1.0;}}
+        for p in out[first_primitive..].iter_mut(){if !p.text.is_empty(){p.center=true;}}
+        return;
+    }
+    if i.kind == 18 {
+        let cx=i.x+i.width/2.0;let cy=i.y+i.height/2.0;
+        if i.active||i.hovered {emit(cx-10.0,cy-10.0,20.0,20.0,10.0,i.ink,"",0.0,false);}
+        emit(cx-7.0,cy-7.0,14.0,14.0,7.0,i.badge,"",0.0,false);
+        if i.focused {emit(i.x+2.0,i.y+i.height-3.0,(i.width-4.0).max(0.0),2.0,1.0,i.ink,"",0.0,false);}
+        for p in out[first_primitive..].iter_mut() {if p.width==20.0&&p.height==20.0 {p.stroke=1.0;}}
+        return;
+    }
+    if i.kind == 7 {
+        let cx=i.x+i.width/2.0; let cy=i.y+i.height/2.0;
+        if i.glyph==1 {
+            if i.monogram.is_empty() {
+                emit(cx-4.0,cy-4.0,8.0,8.0,4.0,i.ink,"",0.0,false);
+            } else {
+                if i.fill>>24!=0 {emit(cx-13.0,cy-13.0,26.0,26.0,7.0,i.fill,"",0.0,false);}
+                emit(cx-13.0,cy-13.0,26.0,26.0,0.0,i.ink,&i.monogram,i.font_size,false);
+            }
+        } else {
+            if i.fill>>24!=0 {emit(i.x,i.y,i.width,i.height,8.0,i.fill,"",0.0,false);}
+            if i.glyph==0 {
+                emit(cx-8.0,cy-7.0,16.0,14.0,3.0,i.ink,"",0.0,false);
+                emit(cx-3.0,cy-7.0,1.0,14.0,0.0,i.ink,"",0.0,false);
+                if i.active {emit(cx-7.0,cy-6.0,4.0,12.0,0.0,(i.ink&0xffffff)|0x55000000,"",0.0,false);}
+            } else if i.glyph==2 {
+                for (dy,knob) in [(-5.0,-3.0),(0.0,3.0),(5.0,-1.0)] {
+                    emit(cx-7.0,cy+dy-0.5,14.0,1.0,0.5,i.ink,"",0.0,false);
+                    emit(cx+knob-1.5,cy+dy-1.5,3.0,3.0,1.5,i.ink,"",0.0,false);
+                }
+            } else if i.glyph==6 {
+                for dx in [-5.0,0.0,5.0] {emit(cx+dx-1.0,cy-1.0,3.0,3.0,1.5,i.ink,"",0.0,false);}
+            } else {
+                emit(cx-8.0,cy-8.0,16.0,16.0,0.0,i.ink,"",0.0,false);
+            }
+        }
+        if i.focused {emit(i.x+2.0,i.y+i.height-3.0,(i.width-4.0).max(0.0),2.0,1.0,i.ink,"",0.0,false);}
+        for p in out[first_primitive..].iter_mut() {
+            if !p.text.is_empty() {p.center=true;}
+            if (3..=5).contains(&i.glyph) && p.width==16.0 && p.height==16.0 {p.shape=i.glyph-1;}
+            if i.glyph==7 && p.width==16.0 && p.height==16.0 {p.shape=5;}
+            if i.glyph==8 && p.width==16.0 && p.height==16.0 {p.shape=7;}
+            if i.glyph==0 && p.width==16.0 && p.height==14.0 {p.stroke=1.0;}
+            if i.glyph==1 && i.monogram.is_empty() && p.width==8.0 && p.height==8.0 && !i.active {p.stroke=1.0;}
+        }
+        return;
+    }
+    if i.kind == 6 {
+        emit(i.x + if i.tile {2.0} else {4.0}, i.y + if i.tile {4.0} else {2.0},
+            (i.width-if i.tile {4.0} else {8.0}).max(0.0), (i.height-if i.tile {8.0} else {4.0}).max(0.0),
+            3.5, i.fill, "", 0.0, false);
+        return;
+    }
+    if i.kind == 1 {
+        emit(i.x, i.y, i.width, i.height, 0.0, i.ink, &i.title, i.font_size, false);
+        return;
+    }
+    if i.kind == 5 {
+        emit(i.x + 8.0, i.y, (i.width - 16.0).max(0.0), i.height,
+            0.0, i.ink, &i.title, i.font_size, true);
+        return;
+    }
+    if i.kind == 4 {
+        // A filled rounded pill and inset outline. Ring and lock strokes
+        // remain analytic GPU geometry; they need no icon/font dependency.
+        let pill = i.height / 2.0;
+        emit(i.x, i.y, i.width, i.height, pill, i.fill, "", 0.0, false);
+        let g = address_layout(i.width as i32, i.height as i32, i.title_width as i32);
+        let cy = i.y + i.height / 2.0;
+        let rings = [(i.x + 0.5, 1.0), (i.x + if i.active {14.0} else {12.0}, 1.5)];
+        emit(i.x + 0.5, i.y + 0.5, i.width - 1.0, i.height - 1.0,
+            pill - 0.5, if i.edge >> 24 != 0 {i.edge} else {(i.ink & 0x00ffffff) | 0x0d000000}, "", 0.0, false);
+        if i.active {
+            emit(i.x + 14.0, cy - 7.0, 8.0, 10.0, 4.0, i.badge, "", 0.0, false);
+            emit(i.x + 12.0, cy - 1.0, 12.0, 8.0, 1.5, i.badge, "", 0.0, false);
+        } else {
+            emit(i.x + 12.0, cy - 6.0, 10.0, 10.0, 5.0, i.badge, "", 0.0, false);
+            for n in 0..4 {
+                emit(i.x + 20.0 + n as f32, cy + 2.0 + n as f32, 2.0, 2.0,
+                    1.0, i.badge, "", 0.0, false);
+            }
+        }
+        if i.focused {
+            emit(i.x + 2.0, i.y + i.height - 3.0, (i.width - 4.0).max(0.0), 2.0,
+                1.0, i.ink, "", 0.0, false);
+        }
+        emit(i.x + g.title.x as f32, i.y, g.title.width as f32, i.height,
+            0.0, i.ink, &i.title, i.font_size, true);
+        if !i.detail.is_empty() {
+            emit(i.x + g.detail.x as f32, i.y, g.detail.width as f32, i.height,
+                0.0, i.detail_ink, &i.detail, i.detail_font_size, false);
+        }
+        // No more emissions borrow out: attach analytic inset strokes.
+        // Only the outline and icon ring are stroked; body/text stay filled.
+        for p in out[first_primitive..].iter_mut() {
+            if p.text.is_empty() {
+                if let Some((_, stroke)) = rings.iter().find(|(x, _)| *x == p.x) {
+                    p.stroke = *stroke;
+                }
+            }
+        }
+        return;
+    }
+    let radius = if i.kind == 2 {design_tokens::radius::MD} else {design_tokens::radius::SM};
+    if i.fill >> 24 != 0 {
+        emit(i.x, i.y, i.width, i.height, radius, i.fill, "", 0.0, false);
+    }
+    // The active card's edge: a 1 px inset ring, stroked below with the others.
+    if i.edge >> 24 != 0 && i.width > 1.0 && i.height > 1.0 {
+        emit(i.x + 0.5, i.y + 0.5, i.width - 1.0, i.height - 1.0, radius - 0.5, i.edge, "", 0.0, false);
+    }
+    if i.kind == 2 { return; }
+    if i.kind == 25 {
+        // Match the original history RowButton's two single-line columns:
+        // primary title elides at the tail; date/URL detail in the middle.
+        let g=row_layout(i.width as i32,i.height as i32,i.title_width as i32,!i.detail.is_empty(),false,false);
+        emit(i.x+10.0,i.y+(i.height-16.0)/2.0,16.0,16.0,4.0,i.badge,"",0.0,false);
+        if !i.monogram.is_empty(){emit(i.x+10.0,i.y+(i.height-16.0)/2.0,16.0,16.0,0.0,0xffffffff,&i.monogram,10.0,true);}
+        if i.focused {emit(i.x+2.0,i.y+i.height-3.0,(i.width-4.0).max(0.0),2.0,1.0,i.ink,"",0.0,false);}
+        emit(i.x+g.title.x as f32,i.y,g.title.width as f32,i.height,0.0,i.ink,&i.title,i.font_size,false);
+        if !i.detail.is_empty() && g.detail.width>0 {
+            emit(i.x+g.detail.x as f32,i.y,g.detail.width as f32,i.height,0.0,i.detail_ink,&i.detail,i.detail_font_size,false);
+            out.last_mut().unwrap().middle=true;
+        }
+        return;
+    }
+    if i.focused {
+        // Inset focus indicator; event/focus ownership stays with the node.
+        emit(i.x + 2.0, i.y + i.height - 3.0, (i.width - 4.0).max(0.0), 2.0,
+             1.0, i.ink, "", 0.0, false);
+    }
+    if i.kind == 3 {
+        let g = row_layout(i.width as i32, i.height as i32, i.title_width as i32,
+            !i.detail.is_empty(), false, false);
+        let cy = i.y + i.height / 2.0;
+        emit(i.x + 11.0, cy - 0.75, 14.0, 1.5, 0.75, i.badge, "", 0.0, false);
+        emit(i.x + 17.25, cy - 7.0, 1.5, 14.0, 0.75, i.badge, "", 0.0, false);
+        emit(i.x + g.title.x as f32, i.y, g.title.width as f32, i.height,
+            0.0, i.ink, &i.title, i.font_size, false);
+        if !i.detail.is_empty() && g.detail.width > 0 {
+            emit(i.x + g.detail.x as f32, i.y, g.detail.width as f32, i.height,
+                0.0, i.detail_ink, &i.detail, i.detail_font_size, false);
+            out.last_mut().unwrap().middle = true;
+        }
+        return;
+    }
+    emit(i.x + 10.0, i.y + (i.height - 16.0) / 2.0, 16.0, 16.0,
+         4.0, i.badge, "", 0.0, false);
+    emit(i.x + 12.0, i.y + (i.height - 16.0) / 2.0, 14.0, 16.0,
+         0.0, if i.badge >> 24 != 0 { 0xffffffff } else { i.ink },
+         &i.monogram, 10.0, true);
+    // Keep a close-button hit area reserved whenever it exists, just as the
+    // native interaction node does (including half-width split cards).
+    let geometry = row_layout(i.width as i32, i.height as i32, 0, false, false, i.close);
+    emit(i.x + geometry.title.x as f32, i.y, geometry.title.width as f32, i.height,
+         0.0, i.ink, &i.title, i.font_size, i.active);
+    if i.close && i.close_visible {
+        emit(i.x + geometry.close.x as f32 + 5.0, i.y,
+             (geometry.close.width - 10).max(0) as f32, i.height,
+             0.0, i.ink, "×", 18.0, false);
+    }
+    if i.edge >> 24 != 0 {
+        for p in out[first_primitive..].iter_mut() {
+            if p.text.is_empty() && p.color == i.edge && p.x == i.x + 0.5 && p.y == i.y + 0.5 {p.stroke = 1.0;}
+        }
+    }
 }
 #[cfg(test)]
 mod tests {
@@ -3206,7 +3227,7 @@ mod tests {
         x:0.0, y:0.0, width, height:34.0, kind:0, glyph:0,
         title:"Zażółć 日本語 🦀".into(), monogram:"Z".into(), detail:String::new(),
         title_width:0.0, detail_ink:0, detail_font_size:12.0, ink:0xff101010,
-        fill:0xffffffff, badge:0xff556677, edge:0, active:true, hovered:false,
+        fill:0xffffffff, badge:0xff556677, edge:0, focus:0, active:true, hovered:false,
         tile:false, close:true, close_visible:true, focused:false, font_size:13.0, font_height:16.0, font_weight:0,
         clip:ffi::FloatRect {x:0.0, y:0.0, width:width.max(0.0), height:34.0},
     }}
@@ -4005,6 +4026,17 @@ mod tests {
         for ((_,preset),color) in design::WorkspaceColor::PRESETS.iter().zip(colors.iter()) {assert_eq!(preset.to_argb(),color.color);}assert!(colors.iter().all(|p|p.emoji.is_empty()&&p.color>>24==255));
         let emojis=appearance_presets(true);assert_eq!(emojis.len(),8);assert_eq!(emojis[7].emoji,"🎬");assert_eq!(emojis[2].emoji,"🚀");assert_eq!(emojis[5].label,"Emoji 🎮");
     }
+    #[test] fn focus_ring_replaces_the_focus_bar_only_when_a_colour_is_given() {
+        let bar=|ops:&[ffi::Primitive],ink:u32|ops.iter().any(|p|p.height==2.0&&p.radius==1.0&&p.color==ink&&p.text.is_empty());
+        let mut r=row(200.0);r.focused=true;assert!(bar(&layout(std::slice::from_ref(&r)),r.ink));
+        r.focus=0xffd7ff3f;let ops=layout(std::slice::from_ref(&r));assert!(!bar(&ops,r.ink));
+        let rings:Vec<_>=ops.iter().filter(|p|p.color==0xffd7ff3f).collect();assert_eq!(rings.len(),1);
+        assert_eq!((rings[0].x,rings[0].y,rings[0].width,rings[0].height,rings[0].stroke,rings[0].radius),(1.0,1.0,198.0,32.0,2.0,design_tokens::radius::SM-1.0));
+        let mut b=row(160.0);b.kind=19;b.height=32.0;b.title="Zapisz".into();b.fill=0xff112233;b.focused=true;b.focus=0xff16141c;let ops=layout(&[b]);
+        assert_eq!(ops.iter().filter(|p|p.color==0xff16141c&&p.stroke==2.0).map(|p|p.radius).collect::<Vec<_>>(),vec![15.0]);
+        let mut c=row(16.0);c.kind=20;c.height=16.0;c.focused=true;c.focus=0xffd7ff3f;c.detail_ink=0xff0000ff;assert!(layout(&[c]).iter().all(|p|p.color!=0xffd7ff3f));
+        let mut off=row(200.0);off.focus=0xffd7ff3f;assert!(layout(&[off]).iter().all(|p|p.color!=0xffd7ff3f));
+    }
     #[test] fn active_card_edge_is_one_inset_stroke_and_absent_without_a_colour() {
         let mut card=row(240.0);card.edge=0xff332211;let ops=layout(std::slice::from_ref(&card));
         let rings:Vec<_>=ops.iter().filter(|p|p.color==0xff332211).collect();assert_eq!(rings.len(),1);
@@ -4150,7 +4182,7 @@ mod tests {
         let (mut g,mut input)=pin_fixture();let parent=input.node_parent_id();input.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);g.reconcile_sidebar(vec![pin_input("other","Other",false,false),pin_input("folder","Dokumenty 日本語 🦀",true,false)],vec![]);assert!(!input.action_pending());assert_eq!(input.node_parent_id(),parent);assert!(g.pin_target("folder",input.action_node_id()).valid);
     }
     fn projected_tab()->(Box<ActionGraph>,Box<ActionControl>){let mut g=tab_scene_fixture();let input=g.acquire(&node_tab(1));assert!(g.project_tab(&input,"Żółć 日本語 🦀".encode_utf16().collect(),vec![b'Z' as u16],0xff123456,false).admitted);(g,input)}
-    fn tab_style()->ffi::SidebarRowStyle{ffi::SidebarRowStyle{font_size:13.0,ink:0xff112233,card:0xff778899,hover:0x22112233,edge:0xff445566}}
+    fn tab_style()->ffi::SidebarRowStyle{ffi::SidebarRowStyle{font_size:13.0,ink:0xff112233,card:0xff778899,hover:0x22112233,edge:0xff445566,focus:0xffd7ff3f}}
     fn tab_box()->ffi::FloatRect{ffi::FloatRect{x:3.0,y:5.0,width:200.0,height:34.0}}
     #[test] fn tab_properties_own_raw_utf16_and_prepare_utf8_scene_text(){
         let (g,input)=projected_tab();let p=input.sidebar_presentation();assert!(p.valid&&!p.tile);assert_eq!(p.title,"Żółć 日本語 🦀".encode_utf16().collect::<Vec<_>>());assert_eq!(p.monogram,vec![b'Z' as u16]);assert_eq!((p.color,p.height),(0xff123456,34));let scene=input.sidebar_scene(tab_box(),tab_box(),tab_style(),true,false);assert!(scene.valid);assert_eq!(scene.item.title,"Żółć 日本語 🦀");assert_eq!(scene.item.monogram,"Z");assert_eq!(scene.item.badge,0xff123456);assert_eq!(g.tab_target(7,1,input.action_node_id(),false).index,4);

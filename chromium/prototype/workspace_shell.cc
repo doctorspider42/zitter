@@ -559,7 +559,7 @@ sidebar::Item GlyphSceneData(views::View* view,ControlGlyph glyph,const gfx::Vec
   item.glyph=glyph==GlyphButton::Glyph::kSidebar ? 0 : glyph==GlyphButton::Glyph::kDot ? 1 : glyph==GlyphButton::Glyph::kMore ? 6
       : icon==&vector_icons::kArrowBackIcon ? 3 : icon==&vector_icons::kArrowForwardIcon ? 4
       : icon==&vector_icons::kReloadCustomIcon ? 5 : icon==&vector_icons::kCloseSmallIcon ? 7 : icon==&vector_icons::kSearchIcon ? 8 : 2;
-  item.active=on; item.focused=focused;
+  item.active=on; item.focused=focused; item.focus=Palette(view).focus;
   item.hovered=hovered;
   item.ink=Tone(view,!view->GetEnabledInViewsSubtree() ? kDisabled : item.glyph==1 ? item.active || item.hovered ? kInk : kMuted : kSubtle);
   item.monogram=base::UTF16ToUTF8(label); item.font_size=Font(3).GetFontSize();
@@ -846,7 +846,7 @@ class SceneTextButton final : public RustActionView {
   sidebar::Item Scene(gfx::RectF bounds,gfx::RectF clip) const {
     const auto* provider=GetColorProvider();const auto state=Snapshot();const bool enabled=state.enabled;const auto font=TextFont();const bool prominent=style_==ui::ButtonStyle::kProminent;
     sidebar::Item item{};item.kind=19;item.x=bounds.x();item.y=bounds.y();item.width=bounds.width();item.height=bounds.height();item.title=base::UTF16ToUTF8(text_);item.font_size=font.GetFontSize();item.active=font.GetFontWeight()>=gfx::Font::Weight::MEDIUM;
-    item.title_width=views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_BUTTON_HORIZONTAL_PADDING);item.focused=state.focused;item.hovered=enabled&&(state.visual==sidebar::RowVisual::Hovered||state.visual==sidebar::RowVisual::Pressed);
+    item.title_width=views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_BUTTON_HORIZONTAL_PADDING);item.focused=state.focused;item.focus=Palette(this).focus;item.hovered=enabled&&(state.visual==sidebar::RowVisual::Hovered||state.visual==sidebar::RowVisual::Pressed);
     // Design system Button: prominent = primary on the workspace accent, default =
     // outline on line_strong, text = quiet; disabled drops the fill for ink_faint.
     const auto palette=Palette(this);
@@ -1447,7 +1447,7 @@ class RustRowView final : public views::View {
   void ProjectPinAdapter(Spec spec){CHECK(PinBinding().valid);CancelInput();ClearSidebarVisuals(spec);spec_=std::move(spec);SyncSidebarAX();PreferredSizeChanged();SchedulePaint();}
   void RefreshPinProperties(){CHECK(PinBinding().valid);CancelInput();SyncSidebarAX();SchedulePaint();}
   Spec SidebarSnapshot() const{Spec spec;spec.sidebar_row=true;const auto presentation=state_->sidebar_presentation();if(presentation.valid){spec.title=std::u16string(presentation.title.begin(),presentation.title.end());spec.monogram=std::u16string(presentation.monogram.begin(),presentation.monogram.end());spec.monogram_color=presentation.color;spec.icon=presentation.folder?&vector_icons::kFolderFilledIcon:nullptr;spec.tile=presentation.tile;spec.height=presentation.height;spec.active=state_->action_snapshot().on;}return spec;}
-  sidebar::SidebarRowScene SidebarScene(gfx::RectF bounds,gfx::RectF clip) const{return state_->sidebar_scene({bounds.x(),bounds.y(),bounds.width(),bounds.height()},{clip.x(),clip.y(),clip.width(),clip.height()},{float(Font(0).GetFontSize()),Tone(this,kInk),Tone(this,kCard),HoverWash(this),Hairline(this)},has_close_button(),close_button_visible());}
+  sidebar::SidebarRowScene SidebarScene(gfx::RectF bounds,gfx::RectF clip) const{return state_->sidebar_scene({bounds.x(),bounds.y(),bounds.width(),bounds.height()},{clip.x(),clip.y(),clip.width(),clip.height()},{float(Font(0).GetFontSize()),Tone(this,kInk),Tone(this,kCard),HoverWash(this),Hairline(this),Palette(this).focus},has_close_button(),close_button_visible());}
   void ConfigureTabClose(bool wanted,views::Button::PressedCallback callback,const SidebarNodeBinding& binding){
     if(close_){auto* control=views::AsViewClass<RustActionView>(close_.get());if(!wanted||!control||!binding.scope||!control->BelongsTo(*binding.scope)||!control->LogicalNodeId()){auto* old=close_.get();close_=nullptr;RemoveChildViewT(old);}}
     if(wanted&&!close_){CHECK(callback);close_=AddChildView(CreateSceneAction(std::move(callback),u"Zamknij kartę",ControlGlyph::kVector,&vector_icons::kCloseSmallIcon,{},base::BindRepeating(&RustRowView::ChildChanged,weak_factory_.GetWeakPtr()),true,binding));}
@@ -1471,7 +1471,7 @@ class RustRowView final : public views::View {
     item.detail_font_size=Font(-1).GetFontSize();item.ink=Tone(this,kInk);item.detail_ink=Tone(this,kMuted);
     item.badge=spec.monogram_color;item.monogram=base::UTF16ToUTF8(spec.monogram);
     item.hovered=GetState()==views::Button::STATE_HOVERED||GetState()==views::Button::STATE_PRESSED;
-    item.fill=item.hovered?HoverWash(this):SK_ColorTRANSPARENT;item.focused=HasFocus();return item;
+    item.fill=item.hovered?HoverWash(this):SK_ColorTRANSPARENT;item.focused=HasFocus();item.focus=Palette(this).focus;return item;
   }
   void SetMonogram(std::u16string monogram,SkColor color){if(HasSidebarProperties()){if(state_->sidebar_set_monogram(SceneUtf16(monogram),color))SchedulePaint();return;}if(spec_.monogram==monogram&&spec_.monogram_color==color)return;spec_.monogram=std::move(monogram);spec_.monogram_color=color;SchedulePaint();}
   int scene_title_width() const{if(!spec_.address&&!spec_.chip&&spec_.detail.empty())return 0;if(!measured_)measured_=gfx::GetStringWidth(spec_.title,Font(0,spec_.active||spec_.chip||spec_.address?gfx::Font::Weight::MEDIUM:gfx::Font::Weight::NORMAL))+2;return *measured_;}
@@ -1602,7 +1602,8 @@ END_METADATA
 
 // Address chrome uses the shared row host and the same named AX adapter.
 std::unique_ptr<views::View> CreateAddressRow(views::Button::PressedCallback callback,base::RepeatingCallback<bool()> visible,base::RepeatingClosure changed,base::RepeatingCallback<void(views::View*,base::RepeatingClosure)> watch,SidebarNodeBinding binding={}){
-  RowRecipe::Spec spec;spec.address=true;spec.sidebar_row=true;spec.height=40;spec.scene_visible=std::move(visible);
+  RowRecipe::Spec spec;spec.address=true;spec.sidebar_row=true;spec.height=36;  // AddressPill: 36 px
+  spec.scene_visible=std::move(visible);
   auto row=CreateSceneRow(std::move(callback),std::move(spec),std::move(changed),std::move(watch),std::move(binding));row->GetViewAccessibility().SetName(u"Adres strony");row->SetTooltipText(u"Szukaj lub wpisz adres");return row;
 }
 
@@ -3988,7 +3989,7 @@ void WorkspaceShell::UpdateMetalPalette() {
     sidebar::Item item{};item.kind=12;item.x=rect.x();item.y=rect.y();item.width=rect.width();item.height=rect.height();item.clip={clip.x(),clip.y(),clip.width(),clip.height()};
     item.title=base::UTF16ToUTF8(spec.title);item.detail=base::UTF16ToUTF8(spec.detail);item.title_width=RowTitleWidth(row);
     item.ink=Tone(row,kInk);item.detail_ink=Tone(row,kMuted);item.badge=Tone(row,kChip);item.font_size=Font(0).GetFontSize();item.detail_font_size=Font(-1).GetFontSize();
-    item.active=spec.highlighted;item.hovered=hovered;item.focused=row->HasFocus();item.fill=spec.highlighted?Tone(row,kAccentWash):hovered?HoverWash(row):SK_ColorTRANSPARENT;
+    item.active=spec.highlighted;item.hovered=hovered;item.focused=row->HasFocus();item.focus=Palette(row).focus;item.fill=spec.highlighted?Tone(row,kAccentWash):hovered?HoverWash(row):SK_ColorTRANSPARENT;
     items.push_back(std::move(item));
     sidebar::Item icon{};icon.kind=13;icon.x=rect.x();icon.y=rect.y();icon.width=rect.width();icon.height=rect.height();icon.clip={clip.x(),clip.y(),clip.width(),clip.height()};icon.ink=Tone(row,kSubtle);
     icon.glyph=spec.icon==&vector_icons::kSettingsIcon?2:spec.icon==&vector_icons::kArrowForwardIcon?1:0;items.push_back(std::move(icon));
@@ -4123,7 +4124,7 @@ void WorkspaceShell::UpdateMetalSidebar() {
     item.ink=Tone(row,row->GetEnabledInViewsSubtree() && !spec.blank ? kInk : kMuted); item.badge=Tone(row,spec.address ? kMuted : kSubtle);
     item.active=spec.secure;
     item.hovered=RowHovered(row);
-    item.fill=spec.address ? SkColorSetA(Tone(row,kCard), item.hovered ? 0xD9 : 0x99) : item.hovered ? HoverWash(row) : SK_ColorTRANSPARENT; item.focused=row->HasFocus();
+    item.fill=spec.address ? Tone(row,kCard) : item.hovered ? HoverWash(row) : SK_ColorTRANSPARENT; if (spec.address) item.edge=Hairline(row); item.focused=row->HasFocus(); item.focus=Palette(row).focus;
     items.push_back(std::move(item));
   }
   if (workspace_name_->IsDrawn()) {

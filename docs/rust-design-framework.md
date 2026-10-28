@@ -123,8 +123,14 @@ Moduł nie zależy od cxx, więc da się go sprawdzić bez budowania Chromium, s
    = pełna pigułka); aktywna karta to neutralna karta z 1 px obrysem `line`
    (`Item::edge`, `SidebarRowStyle::edge`); przyciski biorą kolory z palety (primary:
    `accent`/`on_accent`, outline: `line_strong`, wyłączony: `ink_faint` + `line`).
-   Etap 2: wymiary (wysokość wiersza 34 px, odstępy, pole adresu 36 px), pierścień fokusu
-   2 px `focus` zamiast paska, menu i dialogi z `recipe::menu`/`recipe::dialog`.
+   Etap 2 (zrobione): fokus to pierścień 2 px w kolorze `focus` palety wewnątrz kształtu
+   kontrolki (`Item::focus`; `layout()` zamienia nim dawny pasek, kontrolki z własnym
+   obrysem fokusu — checkbox, selektor, preferencje — go zachowują); pole adresu ma 36 px,
+   nieprzezroczyste `bg_raised` i obrys `line`; wiersze miały już 34 px.
+   Zostaje: odstęp między wierszami 2 px zamiast `space-1` (4 px; dotyka geometrii
+   przeciągania), natywne menu i ramki dialogów (granica platformy, `recipe::menu` i
+   `recipe::dialog` nie mają czego malować), cienie poza 1 px obrysem (scena nie ma
+   rozmycia).
 2. Osobne `bg_void` dla ramy okna (dziś rama i pasek boczny mają wspólne `bg_base`).
 3. Picker koloru obszaru: barwa, nasycenie, jasność + presety (zapis
    `WorkspaceColor::to_argb`).
