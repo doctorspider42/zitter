@@ -3603,8 +3603,6 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_sidebar_grip_visible();},weak)));
   sidebar->grip_handle=sidebar_handle;
-  auto* layout = sidebar->SetLayoutManager(std::make_unique<views::BoxLayout>(
-      views::BoxLayout::Orientation::kVertical, gfx::Insets::TLBR(2, 4, 8, 4), 2));
   auto* pill = sidebar->AddChildView(CreateAddressRow(
       base::BindRepeating(&WorkspaceShell::OpenAddress, weak, false),
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
@@ -3647,7 +3645,8 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   list->SetLayoutManager(CreateSidebarColumnLayout(2));
   tab_list_=list.get();tab_scroll_->SetPanelContents(std::move(list));
   tab_list_->set_context_menu_controller(this);
-  layout->SetFlexForView(scroll, 1);
+  // Rust panel layout in Rust mode; identical BoxLayout fallback for Views.
+  SetSidebarPanelLayout(sidebar.get(), true, gfx::Insets::TLBR(2, 4, 8, 4), 2, scroll);
 
   // Workspace settings: profile and color live here, not in the sidebar.
 #if BUILDFLAG(IS_MAC)
@@ -3670,10 +3669,8 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   settings->SetBackground(views::CreateRoundedRectBackground(kCard, 12));
   settings->SetBorder(views::CreateRoundedRectBorder(1, 12, Hairline(root_)));
   auto* settings_header = settings->AddChildView(std::make_unique<views::View>());
-  auto* settings_header_layout = settings_header->SetLayoutManager(std::make_unique<views::BoxLayout>(
-      views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 8));
   settings_title_ = settings_text(settings_header,u"Praca",kInk,2,gfx::Font::Weight::SEMIBOLD);
-  settings_header_layout->SetFlexForView(settings_title_, 1);
+  SetSidebarPanelLayout(settings_header, false, gfx::Insets(), 8, settings_title_);
   auto dismiss_workspace=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
     if(shell){shell->settings_widget_->Hide();shell->RestorePageFocus();}
   },weak);
@@ -3975,10 +3972,8 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   import_panel->SetBackground(views::CreateRoundedRectBackground(kCard, 12));
   import_panel->SetBorder(views::CreateRoundedRectBorder(1, 12, Hairline(root_)));
   auto* import_header = import_panel->AddChildView(std::make_unique<views::View>());
-  auto* import_header_layout = import_header->SetLayoutManager(std::make_unique<views::BoxLayout>(
-      views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 8));
   auto* import_title = import_text(import_header,import_copy[0],kInk,4,gfx::Font::Weight::SEMIBOLD);
-  import_header_layout->SetFlexForView(import_title, 1);
+  SetSidebarPanelLayout(import_header, false, gfx::Insets(), 8, import_title);
   auto dismiss_import = base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
     if (!shell || shell->import_applying_) return;
     shell->callbacks_.dismiss_import.Run();

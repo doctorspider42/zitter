@@ -151,6 +151,12 @@ snapshotów, zamkniętych kart i uśpionych przestrzeni. Testy Rust 502; podzbi�
 (karta, przypięta, przestrzeń, historia) oraz tytuł/wiersze/przyciski monitu zapisu
 hasła w ścieżce sceny. Testy Rust 503; podzbiór UI 33 Metal / 30 Views zaliczony.
 
+**Układ kolumny sidebara i nagłówków w Ruście:** główna kolumna sidebara oraz nagłówki
+ustawień przestrzeni i importu używają `RustPanelLayout` (fallback Views: ten sam
+`BoxLayout`). W trybie Rust natywne kontrolki Views (Label/MdTextButton/Combobox/
+Checkbox/Toggle/ProgressBar) powstają już tylko w gałęziach Views. Pełna macierz po
+zmianie: 274/274 Metal, 225/225 Views.
+
 **Pełny checkpoint UI 2026-10-28 (`90c7e8b`):** 274/274 Metal i 225/225 Views.
 [Raport](benchmarks/rust-ui-checkpoint-2026-10-28.json).
 
