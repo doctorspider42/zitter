@@ -50,6 +50,20 @@ views::Label* Label(views::View* parent, std::u16string text) {
 }
 std::u16string Bytes(int64_t value) { return ui::FormatBytes(base::ByteSize(static_cast<uint64_t>(std::max<int64_t>(0, value)))); }
 bool Unsafe(Item* item) { return item->IsDangerous() || item->IsInsecure(); }
+#if BUILDFLAG(IS_MAC)
+// Facts for the Rust status wording; byte formatting stays with the locale service.
+std::u16string RustStatus(Item* item) {
+  sidebar::DownloadFacts facts{};
+  facts.phase = item->GetState() == Item::COMPLETE ? sidebar::DownloadPhase::Complete : item->GetState() == Item::CANCELLED ? sidebar::DownloadPhase::Cancelled :
+      item->GetState() == Item::INTERRUPTED ? sidebar::DownloadPhase::Interrupted : sidebar::DownloadPhase::InProgress;
+  facts.blocked = Unsafe(item); facts.removed = item->GetFileExternallyRemoved(); facts.can_resume = item->CanResume(); facts.paused = item->IsPaused();
+  facts.received = base::UTF16ToUTF8(Bytes(item->GetReceivedBytes()));
+  if (item->GetTotalBytes() > 0) facts.total = base::UTF16ToUTF8(Bytes(item->GetTotalBytes()));
+  if (item->CurrentSpeed() > 0) facts.speed = base::UTF16ToUTF8(Bytes(item->CurrentSpeed()));
+  base::TimeDelta remaining; facts.remaining_seconds = item->TimeRemaining(&remaining) ? std::max<int64_t>(0, remaining.InSeconds()) : -1;
+  return base::UTF8ToUTF16(std::string(sidebar::download_status(facts)));
+}
+#endif
 std::u16string Status(Item* item) {
   if (Unsafe(item)) return u"Zablokowane przez ochronę Chromium — plik nie jest gotowy do użycia.";
   if (item->GetState() == Item::CANCELLED) return u"Anulowano";
@@ -199,6 +213,9 @@ void DownloadPanel::Refresh() {
     SetText(row.title,name.empty()?u"Przygotowywanie pliku…":name);
     row.title->SetTooltipText(item->GetTargetFilePath().LossyDisplayName());
     SetText(row.source,base::UTF8ToUTF16(item->GetURL().host()));
+#if BUILDFLAG(IS_MAC)
+    if (scene_) SetText(row.status, RustStatus(item)); else
+#endif
     SetText(row.status,Status(item));
     const bool active = item->GetState() == Item::IN_PROGRESS;
     const bool safe = !Unsafe(item);

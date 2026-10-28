@@ -115,6 +115,9 @@ mod ffi {
     enum LinkMenuCommand { None, Peek, NewTab, Split, SetRule, RemoveRule }
     struct LinkMenuAction { command: LinkMenuCommand, workspace: String }
     struct FolderMenuState { ready: bool, busy: bool, workspace: String, folder: String }
+    enum DownloadPhase { InProgress, Complete, Cancelled, Interrupted }
+    // Byte quantities arrive pre-formatted by the platform locale service.
+    struct DownloadFacts { phase: DownloadPhase, blocked: bool, removed: bool, can_resume: bool, paused: bool, received: String, total: String, speed: String, remaining_seconds: i64 }
     struct CommandWorkspace { id: String, name: String, asleep: bool, same_profile: bool, capturing: bool }
     struct CommandContext { page: bool, http_page: bool, split: bool, can_back: bool, can_forward: bool, tab_count: usize, reopen: bool, workspaces: Vec<CommandWorkspace> }
     struct CommandEntry { id: String, title: String, detail: String, target: String }
@@ -420,6 +423,7 @@ mod ffi {
         fn link_menu_action(command: i32, state: &LinkMenuState) -> LinkMenuAction;
         fn folder_context_menu(state: &FolderMenuState) -> Vec<FolderMenuEntry>;
         fn palette_plan(input: &PalettePlanInput) -> PalettePlan;
+        fn download_status(facts: &DownloadFacts) -> String;
         fn command_catalogue(context: &CommandContext, query: &str) -> Vec<CommandEntry>;
         fn folder_menu_enabled(command: i32, state: &FolderMenuState) -> bool;
         fn folder_menu_action(command: i32, state: &FolderMenuState) -> FolderMenuAction;
@@ -1569,6 +1573,23 @@ fn palette_plan(p:&ffi::PalettePlanInput)->ffi::PalettePlan{
     if p.command_palette{let position=if keyword_search&&!slots.is_empty(){1}else{0};let commands=(0..p.commands).map(|index|ffi::PaletteSlot{source:S::Command,index}).collect::<Vec<_>>();slots.splice(position..position,commands);}
     let search=!p.provider.is_empty();
     ffi::PalettePlan{commands_only,keyword_search,primary_title:if !primary{String::new()}else if search{format!("Szukaj w {}",p.provider)}else{"Otwórz".into()},primary_detail:if !primary{String::new()}else if search{p.text.clone()}else{p.resolved.clone()},primary_icon:if primary&&!search{1}else{0},slots}
+}
+
+fn download_status(f:&ffi::DownloadFacts)->String{
+    use ffi::DownloadPhase as P;
+    if f.blocked{return "Zablokowane przez ochronę Chromium — plik nie jest gotowy do użycia.".into();}
+    match f.phase {
+        P::Cancelled=>"Anulowano".into(),
+        P::Complete=>if f.removed{"Plik został przeniesiony lub usunięty".into()}else{format!("Ukończono · {}",f.received)},
+        P::Interrupted=>if f.can_resume{"Pobieranie przerwane — możesz wznowić".into()}else{"Pobieranie przerwane — rozpocznij ponownie ze strony".into()},
+        _=>{
+            let mut text=if f.paused{format!("Wstrzymano · {}",f.received)}else{f.received.clone()};
+            if !f.total.is_empty(){text.push_str(" / ");text.push_str(&f.total);}
+            if !f.paused&&!f.speed.is_empty(){text.push_str(&format!(" · {}/s",f.speed));}
+            if !f.paused&&f.remaining_seconds>=0{text.push_str(&format!(" · pozostało {} s",f.remaining_seconds.max(1)));}
+            text
+        }
+    }
 }
 
 // Command Center catalogue. Native code supplies page/workspace facts and binds
@@ -4707,6 +4728,17 @@ mod tests {
         let p=palette_plan(&palette_input("",true,"",3,1));assert_eq!(palette_order(&p),vec![(2,0),(1,0),(1,1),(1,2)]);
         let p=palette_plan(&palette_input(">x",false,"",1,5));assert!(!p.commands_only);assert_eq!(palette_order(&p),vec![(0,0),(1,0)]);
         let p=palette_plan(&palette_input("ddg\tkot",true,"DuckDuckGo",0,1));assert!(p.keyword_search);assert_eq!(palette_order(&p),vec![(0,0),(2,0)]);
+    }
+    fn download_facts(phase:ffi::DownloadPhase)->ffi::DownloadFacts{ffi::DownloadFacts{phase,blocked:false,removed:false,can_resume:true,paused:false,received:"5 MB".into(),total:"10 MB".into(),speed:"1 MB".into(),remaining_seconds:0}}
+    #[test] fn download_status_covers_phases_pause_speed_and_remaining_time() {
+        use ffi::DownloadPhase as P;
+        assert_eq!(download_status(&download_facts(P::InProgress)),"5 MB / 10 MB · 1 MB/s · pozostało 1 s");
+        let mut f=download_facts(P::InProgress);f.paused=true;assert_eq!(download_status(&f),"Wstrzymano · 5 MB / 10 MB");
+        let mut f=download_facts(P::InProgress);f.total.clear();f.speed.clear();f.remaining_seconds=-1;assert_eq!(download_status(&f),"5 MB");
+        let mut f=download_facts(P::InProgress);f.remaining_seconds=42;assert!(download_status(&f).ends_with("pozostało 42 s"));
+        assert_eq!(download_status(&download_facts(P::Complete)),"Ukończono · 5 MB");let mut f=download_facts(P::Complete);f.removed=true;assert_eq!(download_status(&f),"Plik został przeniesiony lub usunięty");
+        assert_eq!(download_status(&download_facts(P::Cancelled)),"Anulowano");let mut f=download_facts(P::Interrupted);assert_eq!(download_status(&f),"Pobieranie przerwane — możesz wznowić");f.can_resume=false;assert!(download_status(&f).ends_with("ze strony"));
+        let mut f=download_facts(P::Complete);f.blocked=true;assert!(download_status(&f).starts_with("Zablokowane"));
     }
     fn command_context()->ffi::CommandContext{ffi::CommandContext{page:true,http_page:true,split:false,can_back:true,can_forward:false,tab_count:2,reopen:true,workspaces:vec![ffi::CommandWorkspace{id:"home".into(),name:"Dom".into(),asleep:false,same_profile:true,capturing:false},ffi::CommandWorkspace{id:"club".into(),name:"Klub".into(),asleep:true,same_profile:false,capturing:false}]}}
     #[test] fn command_catalogue_lists_conditional_entries_with_targets() {

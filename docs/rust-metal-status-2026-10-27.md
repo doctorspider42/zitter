@@ -132,6 +132,11 @@ przestrzeni, ich teksty, składanie diakrytyków, dopasowanie słów i skróceni
 startowego są w `command_catalogue`; natywnie zostaje wiązanie z kartą/stroną,
 skróty i wykonanie. Testy Rust 499; podzbiór UI 33 Metal / 29 Views zaliczony.
 
+**Status pobierania w Ruście:** decyzje i sformułowania (zablokowane, anulowane,
+ukończone/usunięte, przerwane, wstrzymane, prędkość, pozostały czas) w `download_status`;
+formatowanie bajtów zostaje w natywnej usłudze lokalizacji. Testy Rust 500; testy UI
+pobierania zaliczone w obu trybach.
+
 **Pełny checkpoint UI 2026-10-27:** po poprawkach **273/273 Metal i 224/224 Views**
 (pierwszy przebieg: 6 niepowodzeń Metal, 1 Views — trzy crashe testów na odłączonych
 widokach, brakująca komenda Rust `HistoryMore`, tooltip tytułu Peek, wyścig tytułu
