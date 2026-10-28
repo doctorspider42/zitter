@@ -13,6 +13,11 @@
 #include "content/public/browser/navigation_controller.h"
 #include "ui/views/controls/webview/webview.h"
 #include "ui/views/widget/widget.h"
+#include "build/build_config.h"
+#if BUILDFLAG(IS_MAC)
+#include "base/command_line.h"
+#include "chromium/prototype/sidebar_scene.rs.h"
+#endif
 namespace zitter::prototype {
 namespace {
 std::string Stamp() { return base::UTF16ToUTF8(base::TimeFormatShortDateAndTime(base::Time::Now())); }
@@ -182,7 +187,7 @@ bool WorkspaceWindow::workspace_sleeping(std::string_view id) const {
 bool WorkspaceWindow::SleepWorkspace(std::string id) {
   const auto discarded_pages = WorkspacePages(id, true, id == active_id());
   for (auto* page : discarded_pages) if (PageMediaAccess::IsCapturing(page) || page->IsBeingCaptured()) {
-    shell_->SetOperationStatus(u"Najpierw zatrzymaj nagrywanie lub udostępnianie w tej przestrzeni."); return false;
+    shell_->SetOperationStatus(WorkspaceShell::OperationStatusEvent::kStopCapture); return false;
   }
   if (GuardPages(discarded_pages, base::BindOnce([](base::WeakPtr<WorkspaceWindow> w, std::string id) { if (w) w->SleepWorkspace(id); }, weak_factory_.GetWeakPtr(), id))) return true;
   if (!configuration_ready_ || profiles_busy() || configuration_invalid_ || model_.workspaces().size() < 2) return false;
@@ -203,6 +208,12 @@ TimeMachineState WorkspaceWindow::TimeMachine() const {
   TimeMachineState result;
   if (!model_.active()) return result;
   const auto* space = time_machine_.FindDict(active_id());
+  [[maybe_unused]] const bool rust_copy =
+#if BUILDFLAG(IS_MAC)
+      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar") == "rust-metal";
+#else
+      false;
+#endif
   auto fill = [&](const char* key, std::vector<TimeMachineItem>& output) {
     const auto* list = space ? space->FindList(key) : nullptr; if (!list) return;
     for (auto it = list->rbegin(); it != list->rend(); ++it) {
@@ -210,6 +221,20 @@ TimeMachineState WorkspaceWindow::TimeMachine() const {
       const auto* id = entry->FindString("id"); if (!id) continue;
       const auto* name = entry->FindString(key == std::string_view("closed") ? "title" : "name");
       const auto* url = entry->FindString("url"); const auto* time = entry->FindString("time");
+#if BUILDFLAG(IS_MAC)
+      if (rust_copy) {
+        sidebar::TimeMachineFacts facts{};
+        if (name) facts.name = *name;
+        if (url) facts.url = *url;
+        if (time) facts.time = *time;
+        const auto* tabs = entry->FindList("tabs"); facts.tabs = tabs ? static_cast<int64_t>(tabs->size()) : -1;
+        facts.automatic = entry->FindBool("automatic").value_or(false);
+        const auto* profile = entry->FindString("profile_id"); facts.other_profile = profile && *profile != model_.active()->profile_id;
+        const auto copy = sidebar::time_machine_entry(facts);
+        output.push_back({*id, base::UTF8ToUTF16(std::string(copy.title)), base::UTF8ToUTF16(std::string(copy.detail))});
+        continue;
+      }
+#endif
       std::string title = name && !name->empty() ? *name : url && !url->empty() ? *url : "Nowa karta";
       std::string detail = time ? *time : "";
       if (url && !url->empty()) detail += " · " + *url;
@@ -222,7 +247,12 @@ TimeMachineState WorkspaceWindow::TimeMachine() const {
   fill("snapshots", result.snapshots); fill("closed", result.closed);
   for (const auto& host : hosts_) if (host.sleeping) {
     const auto* workspace = model_.Find(host.workspace_id);
-    if (workspace) result.sleeping.push_back({workspace->id, base::UTF8ToUTF16(workspace->name), u"Uśpiona · kliknij przestrzeń, aby wznowić"});
+    if (!workspace) continue;
+    std::u16string detail = u"Uśpiona · kliknij przestrzeń, aby wznowić";
+#if BUILDFLAG(IS_MAC)
+    if (rust_copy) detail = base::UTF8ToUTF16(std::string(sidebar::time_machine_sleeping_detail()));
+#endif
+    result.sleeping.push_back({workspace->id, base::UTF8ToUTF16(workspace->name), std::move(detail)});
   }
   return result;
 }

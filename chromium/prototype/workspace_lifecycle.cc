@@ -33,7 +33,7 @@ bool WorkspaceWindow::GuardPages(std::vector<content::WebContents*> pages, base:
   for (auto* page : WorkspacePages({})) lifecycle_topology_.push_back(page->GetWeakPtr());
   for (auto* page : pages) if (page) lifecycle_pages_.push_back({page->GetWeakPtr(), EntryId(page), false, PageDialogs::Attach(page)->navigation_generation()});
   shell_->CloseOverlays(true);
-  shell_->SetOperationStatus(u"Sprawdzanie niezapisanych zmian…");
+  shell_->SetOperationStatus(WorkspaceShell::OperationStatusEvent::kChecking);
   ContinueLifecycle(true);
   return true;
 }
@@ -67,7 +67,7 @@ void WorkspaceWindow::FinishLifecycle(bool proceed) {
   auto action = std::move(lifecycle_action_);
   lifecycle_pages_.clear(); lifecycle_topology_.clear(); lifecycle_source_page_.reset(); lifecycle_pending_ = false; lifecycle_index_ = 0;
   if (!proceed) {
-    shell_->SetOperationStatus(u"Anulowano. Karty i niezapisane zmiany pozostały otwarte.");
+    shell_->SetOperationStatus(WorkspaceShell::OperationStatusEvent::kCancelled);
     return;
   }
   auto weak = weak_factory_.GetWeakPtr();
@@ -75,7 +75,7 @@ void WorkspaceWindow::FinishLifecycle(bool proceed) {
   if (action) std::move(action).Run();
   if (!weak) return;
   lifecycle_approved_ = false;
-  shell_->SetOperationStatus(u"Gotowe.");
+  shell_->SetOperationStatus(WorkspaceShell::OperationStatusEvent::kDone);
 }
 void WorkspaceWindow::ArmCloseHandler() {
   widget_->MakeCloseSynchronous(base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, views::Widget::ClosedReason) {

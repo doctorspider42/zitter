@@ -30,6 +30,10 @@ mod ffi {
     enum PreferenceOutcome { Text, Site, SiteRemove, Value, General }
     enum PreferenceControlKind { Text, Toggle }
     #[derive(Debug)]
+    enum OperationStatusEvent { Checking, Cancelled, Done, StopCapture }
+    struct TimeMachineFacts { name: String, url: String, time: String, tabs: i64, automatic: bool, other_profile: bool }
+    struct TimeMachineCopy { title: String, detail: String }
+    #[derive(Debug)]
     enum ClearDataEvent { Busy, NothingSelected, HistoryForbidden, Clearing, Cleared, Failed }
     struct ClearDataConfirm { valid: bool, title: String, description: String, confirm: String, cancel: String }
     enum ImportStage { Reading, Preview, Importing, SavingBrowsingData, Finished }
@@ -316,6 +320,9 @@ mod ffi {
         fn preference_control_view(kind: PreferenceControlKind, present: bool, editable: bool) -> PreferenceControlView;
         fn preferences_profile_banner(profile: &str) -> String;
         fn profile_status_copy(event: ProfileStatusEvent) -> String;
+        fn operation_status_copy(event: OperationStatusEvent) -> String;
+        fn time_machine_entry(facts: &TimeMachineFacts) -> TimeMachineCopy;
+        fn time_machine_sleeping_detail() -> String;
         fn clear_data_status(event: ClearDataEvent, profile: &str) -> PreferenceStatus;
         fn clear_data_confirm(profile: &str, period: i32, history: bool, cookies: bool, cache: bool) -> ClearDataConfirm;
         fn import_status_copy(report: &ImportStatusReport) -> String;
@@ -1169,6 +1176,22 @@ fn import_status_copy(r:&ffi::ImportStatusReport)->String{
         _=>String::new(),
     }
 }
+// Page-lifecycle guarded operations (beforeunload checks, sleeping capture guard).
+fn operation_status_copy(event:ffi::OperationStatusEvent)->String{
+    use ffi::OperationStatusEvent as E;
+    match event{E::Checking=>"Sprawdzanie niezapisanych zmian…",E::Cancelled=>"Anulowano. Karty i niezapisane zmiany pozostały otwarte.",E::Done=>"Gotowe.",E::StopCapture=>"Najpierw zatrzymaj nagrywanie lub udostępnianie w tej przestrzeni.",_=>""}.into()
+}
+// Time Machine rows: the title falls back to URL then "Nowa karta"; the detail
+// lists time, URL, tab count and automatic/other-profile markers.
+fn time_machine_entry(f:&ffi::TimeMachineFacts)->ffi::TimeMachineCopy{
+    let title=if !f.name.is_empty(){f.name.clone()}else if !f.url.is_empty(){f.url.clone()}else{"Nowa karta".into()};
+    let mut detail=f.time.clone();
+    if !f.url.is_empty(){detail.push_str(" · ");detail.push_str(&f.url);}
+    if f.tabs>=0{detail.push_str(&format!(" · {} kart",f.tabs));}
+    if f.automatic{detail.push_str(" · automatyczny");}if f.other_profile{detail.push_str(" · inny profil");}
+    ffi::TimeMachineCopy{title,detail}
+}
+fn time_machine_sleeping_detail()->String{"Uśpiona · kliknij przestrzeń, aby wznowić".into()}
 // Browsing-data removal: confirmation copy and outcome wording/tone.
 const CLEAR_PERIODS:[&str;4]=["Ostatnia godzina","Ostatnie 24 godziny","Ostatnie 7 dni","Cały okres"];
 fn clear_data_status(event:ffi::ClearDataEvent,profile:&str)->ffi::PreferenceStatus{
@@ -3532,6 +3555,14 @@ mod tests {
         assert!(clear_data_confirm("p",3,false,true,false).description.contains("Cały okres\n\nZostaną usunięte:\n• Cookies"));for (period,h,c,k) in [(-1,true,false,false),(4,true,false,false),(0,false,false,false)]{assert!(!clear_data_confirm("p",period,h,c,k).valid);}
         use ffi::ClearDataEvent as E;let s=clear_data_status(E::Clearing,"Dom");assert_eq!((s.text.as_str(),s.error),("Czyszczenie danych profilu „Dom”…",false));let s=clear_data_status(E::Cleared,"Dom");assert_eq!((s.text.as_str(),s.error),("Wyczyszczono dane profilu „Dom”.",false));
         for e in [E::Busy,E::NothingSelected,E::HistoryForbidden,E::Failed]{let s=clear_data_status(e,"x");assert!(s.error&&!s.text.is_empty());}assert!(clear_data_status(E{repr:77},"x").text.is_empty());
+    }
+    #[test] fn operation_status_and_time_machine_copy_follow_facts() {
+        use ffi::OperationStatusEvent as E;assert_eq!(operation_status_copy(E::Done),"Gotowe.");assert!(operation_status_copy(E::Cancelled).starts_with("Anulowano."));assert!(operation_status_copy(E::Checking).ends_with("…"));assert!(operation_status_copy(E::StopCapture).starts_with("Najpierw"));assert!(operation_status_copy(E{repr:9}).is_empty());
+        let facts=|name:&str,url:&str,tabs:i64|ffi::TimeMachineFacts{name:name.into(),url:url.into(),time:"12:00".into(),tabs,automatic:false,other_profile:false};
+        let c=time_machine_entry(&facts("Rano","",3));assert_eq!((c.title.as_str(),c.detail.as_str()),("Rano","12:00 · 3 kart"));
+        let c=time_machine_entry(&facts("","https://a.test/",-1));assert_eq!((c.title.as_str(),c.detail.as_str()),("https://a.test/","12:00 · https://a.test/"));
+        let mut f=facts("","",-1);f.automatic=true;f.other_profile=true;f.time.clear();let c=time_machine_entry(&f);assert_eq!((c.title.as_str(),c.detail.as_str()),("Nowa karta"," · automatyczny · inny profil"));
+        assert!(time_machine_sleeping_detail().starts_with("Uśpiona"));
     }
     #[test] fn profile_status_events_have_distinct_copy_and_unknown_is_empty() {
         use ffi::ProfileStatusEvent as E;let all=[E::DuplicateName,E::Creating,E::CreateFailed,E::Created,E::CreateNotSaved,E::Renamed,E::RenameFailed,E::Deleting,E::Deleted,E::DeleteNotSaved,E::LoadFailed];let copies=all.iter().map(|e|profile_status_copy(*e)).collect::<std::collections::BTreeSet<_>>();assert_eq!(copies.len(),all.len());assert!(copies.iter().all(|c|!c.is_empty()));

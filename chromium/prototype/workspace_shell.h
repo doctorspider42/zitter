@@ -284,6 +284,9 @@ class WorkspaceShell final : public ui::EventHandler,
   // outcome is sidebar::PreferenceOutcome; general updates only the settings status.
   void ReportPreferenceOutcome(int outcome, const std::string& key, bool ok, std::u16string native);
   void SetOperationStatus(std::u16string text);
+  // Guarded page-lifecycle operations; wording comes from Rust in Rust mode.
+  enum class OperationStatusEvent { kChecking, kCancelled, kDone, kStopCapture };
+  void SetOperationStatus(OperationStatusEvent event);
   void SetBrowsingDataBusy(bool busy);
   EditorControl* preference_textfield(std::string key) const { return preference_textfields_.at(key); }
   views::View* preference_picker(std::string key) const { return preference_pickers_.at(key); }

@@ -8287,6 +8287,16 @@ void WorkspaceShell::ToolsAction(int action,std::optional<std::string> choice_ke
   else SetPanelText(tools_status_,ToolsPage() == 1 ? u"Nieprawidłowa lub zajęta kombinacja. Zmień ją albo wyłącz skrót drugiej akcji." : ToolsPage() == 2 ? u"Sprawdź unikalny prefiks, nazwę i adres z {query}. Musi pozostać co najmniej jedna wyszukiwarka." : u"Nie można wykonać operacji. Podaj nazwę, wybierz pozycję zgodną z profilem lub zostaw drugą przestrzeń do przełączenia.");
 }
 
+void WorkspaceShell::SetOperationStatus(OperationStatusEvent event) {
+  static constexpr std::array<std::u16string_view, 4> kViewsCopy = {
+      u"Sprawdzanie niezapisanych zmian…", u"Anulowano. Karty i niezapisane zmiany pozostały otwarte.", u"Gotowe.",
+      u"Najpierw zatrzymaj nagrywanie lub udostępnianie w tej przestrzeni."};
+  const auto index = static_cast<size_t>(event);
+#if BUILDFLAG(IS_MAC)
+  if (metal_sidebar_) { SetOperationStatus(base::UTF8ToUTF16(std::string(sidebar::operation_status_copy(sidebar::OperationStatusEvent{static_cast<uint8_t>(index)})))); return; }
+#endif
+  SetOperationStatus(std::u16string(kViewsCopy.at(index)));
+}
 void WorkspaceShell::SetOperationStatus(std::u16string text) {
   if (tools_widget_ && tools_widget_->IsVisible()) { RefreshTools(); SetPanelText(tools_status_,text); }
   if (profiles_widget_ && profiles_widget_->IsVisible()) SetProfileStatus(text);
