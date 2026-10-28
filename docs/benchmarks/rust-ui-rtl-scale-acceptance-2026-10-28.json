@@ -1,0 +1,53 @@
+{
+  "date": "2026-10-28",
+  "commit": "bfbe7e7",
+  "runs": {
+    "metal_scale_factor_1": {
+      "SUCCESS": 276
+    },
+    "metal_rtl": {
+      "SUCCESS": 258,
+      "FAILURE": 18
+    },
+    "views_rtl_on_metal_rtl_failures": {
+      "FAILURE": 7,
+      "SUCCESS": 1
+    }
+  },
+  "logs": "build/ui-acceptance-20261028T045543Z",
+  "metal_rtl_failures": [
+    "ZitterMetalSidebarBrowserTest.AppearanceRowsSceneInputClippingCompositionAndWorkspaceChange",
+    "ZitterMetalSidebarBrowserTest.FooterSpacesScrollSelectPinAndSettings",
+    "ZitterMetalSidebarBrowserTest.HorizontalViewportTrackpadFractionalMomentumAndAxisRouting",
+    "ZitterMetalSidebarBrowserTest.NavigationHeaderHistoryReloadAndIndependentVisibility",
+    "ZitterMetalSidebarBrowserTest.NewTabActionUsesSceneTextAndConfiguredShortcut",
+    "ZitterMetalSidebarBrowserTest.PaletteChromeTextErrorsThemeAndFallback",
+    "ZitterMetalSidebarBrowserTest.RustScrollThumbDragTrackKeyboardAndAccessibility",
+    "ZitterMetalSidebarBrowserTest.ScrollViewportTrackpadFractionalMomentumAndAxisRouting",
+    "ZitterMetalSidebarBrowserTest.SidebarGripDragAutoHideAndEdgeReveal",
+    "ZitterMetalSidebarBrowserTest.SplitPaneScenesDragOrientTitleAndClose",
+    "ZitterProfilesBrowserTest.AppearanceActionHostsKeyboardAXColorAndCancelledClip",
+    "ZitterProfilesBrowserTest.FooterActionHostsOwnershipEmojiMenuKeysAXAndClip",
+    "ZitterProfilesBrowserTest.SidebarColumnLayoutTracksCollapsedFolders",
+    "ZitterProfilesBrowserTest.SidebarPinnedPairFollowsPaneOrderAndFolders",
+    "ZitterProfilesBrowserTest.SidebarSplitAndDeepFolderGeometry",
+    "ZitterProfilesBrowserTest.SidebarTreeStateSurvivesRebuildsAndSpaces",
+    "ZitterProfilesBrowserTest.SplitPairPersistsWhileAnotherTabIsShown",
+    "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation"
+  ],
+  "also_fail_in_views_rtl": [
+    "ZitterProfilesBrowserTest.AppearanceActionHostsKeyboardAXColorAndCancelledClip",
+    "ZitterProfilesBrowserTest.SidebarColumnLayoutTracksCollapsedFolders",
+    "ZitterProfilesBrowserTest.SidebarPinnedPairFollowsPaneOrderAndFolders",
+    "ZitterProfilesBrowserTest.SidebarSplitAndDeepFolderGeometry",
+    "ZitterProfilesBrowserTest.SidebarTreeStateSurvivesRebuildsAndSpaces",
+    "ZitterProfilesBrowserTest.SplitPairPersistsWhileAnotherTabIsShown",
+    "ZitterProfilesBrowserTest.SplitViewLifecycleAndIsolation"
+  ],
+  "analysis": [
+    "--force-device-scale-factor=1: the full Metal matrix passes (276/276), covering non-Retina scale.",
+    "--force-ui-direction=rtl: 258/276 Metal. 7 of the 8 ZitterProfilesBrowserTest failures also fail in Views RTL, so they are LTR assumptions in tests or shared behaviour, not Rust regressions.",
+    "Inspected Metal-only failures assume LTR geometry: synthetic scroll events at LTR points fall outside mirrored views; the address canvas/button origin check ignores the mirrored scrollbar gutter; grip drag expectations use LTR direction.",
+    "Not yet classified: FooterActionHostsOwnershipEmojiMenuKeysAXAndClip (passes in Views RTL), native_ink fallback checks in the navigation header and palette chrome. RTL visuals still need a human look."
+  ]
+}
