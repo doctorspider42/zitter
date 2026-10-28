@@ -185,7 +185,7 @@ mod ffi {
     struct ViewportProjection { x: f32, y: f32, nodes: Vec<ProjectedNode> }
     struct Item {
         x: f32, y: f32, width: f32, height: f32,
-        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: control glyph, 8: pane title, 9: split grip, 10: rounded backing, 11: sidebar grip, 12: palette result, 13: result icon, 14: separator, 15: palette static text, 16: palette frame, 17: form static text, 18: appearance color swatch, 19: form text action, 20: checkbox mark, 21: closed selector, 22: preference category, 23: preferences dismiss, 24: preference surface, 25: history result row, 26: progress indicator, 27: Peek title (middle elision and physical RTL alignment).
+        // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: control glyph, 8: pane title, 9: split grip, 10: rounded backing, 11: sidebar grip, 12: palette result, 13: result icon, 14: separator, 15: palette static text, 16: palette frame, 17: form static text, 18: appearance color swatch, 19: form text action, 20: checkbox mark, 21: closed selector, 22: preference category, 23: preferences dismiss, 24: preference surface, 25: history result row, 26: progress indicator, 27: Peek title (middle elision and physical RTL alignment), 28: workspace color hue ring, 29: workspace color saturation x tone field (both: `badge` the stored color, `tile` the dark scheme, `fill` the surface, `ink` the knob edge, `title` the ring's emoji).
         kind: u32, glyph: u32,
         title: String, monogram: String, detail: String,
         title_width: f32, detail_ink: u32, detail_font_size: f32,
@@ -408,6 +408,12 @@ mod ffi {
         fn appearance_grid_target(axis: u32, index: usize, current: u32) -> u32;
         fn appearance_grid_selected(axis: u32, index: usize, current: u32) -> bool;
         fn appearance_grid_layout(width: i32, height: i32, axis: u32) -> ColumnLayout;
+        // The color wheel (design.rs wheel): hits snap to the grid; -1 = no hit / keep.
+        fn color_ring_hit(x: f32, y: f32, size: f32) -> i32;
+        fn color_pad_hit(x: f32, y: f32, width: f32, height: f32) -> i32;
+        fn color_wheel_target(current: u32, hue: i32, saturation: i32, tone: i32) -> u32;
+        fn color_wheel_step(current: u32, axis: u32, delta: i32) -> u32;
+        fn color_wheel_description(current: u32, ring: bool) -> String;
         type WorkspaceNotice;
         fn new_workspace_notice(workspace: &str, title: &str) -> Box<WorkspaceNotice>;
         fn copy(self: &WorkspaceNotice) -> NoticeCopy;
@@ -1517,6 +1523,55 @@ fn appearance_command_target(command:ffi::FormCommand,index:usize)->ffi::Appeara
 fn appearance_selected(emoji: bool, index: usize, color: u32, current_emoji: &str) -> bool {
     if emoji { APPEARANCE_EMOJIS.get(index).map(|e|*e==current_emoji).unwrap_or(false) }
     else { APPEARANCE_COLORS.get(index).map(|&c|design_same_workspace_color(c,color)).unwrap_or(false) }
+}
+fn color_ring_hit(x:f32,y:f32,size:f32)->i32{design::wheel::ring_hit(x,y,size).map_or(-1,i32::from)}
+// Saturation * 5 + tone.
+fn color_pad_hit(x:f32,y:f32,width:f32,height:f32)->i32{let (s,t)=design::wheel::pad_hit(x,y,width,height);i32::from(s)*5+i32::from(t)}
+fn color_wheel_target(current:u32,hue:i32,saturation:i32,tone:i32)->u32{
+    let axis=|v:i32|if v<0{Ok(None)}else{u8::try_from(v).map(Some)};
+    let (Ok(h),Ok(s),Ok(t))=(axis(hue),axis(saturation),axis(tone)) else{return 0;};
+    design::wheel::target(design::WorkspaceColor::from_argb(current),h,s,t).map_or(0,design::WorkspaceColor::to_argb)
+}
+fn color_wheel_step(current:u32,axis:u32,delta:i32)->u32{
+    let Some(axis)=design::PickerAxis::from_index(axis) else{return current;};
+    design::wheel::step(design::WorkspaceColor::from_argb(current),axis,delta).to_argb()
+}
+// The accessible value: the ring speaks its hue, the field its two levels.
+fn color_wheel_description(current:u32,ring:bool)->String{
+    use design::PickerAxis as A;let c=design::WorkspaceColor::from_argb(current);
+    if ring{A::Hue.label(c.axis_index(A::Hue))}else{format!("{}, {}",A::Saturation.label(c.axis_index(A::Saturation)),A::Tone.label(c.axis_index(A::Tone)).to_lowercase())}
+}
+fn wheel_primitive(i:&ffi::Item,x:f32,y:f32,w:f32,h:f32,radius:f32,color:u32,stroke:f32)->ffi::Primitive{
+    ffi::Primitive{x,y,width:w,height:h,radius,color,stroke,shape:0,text:String::new(),font_size:0.0,font_weight:0,bold:false,middle:false,center:false,right_align:false,clip:ffi::FloatRect{x:i.clip.x,y:i.clip.y,width:i.clip.width,height:i.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0}
+}
+// Kinds 28 and 29: the color wheel's ring and field, drawn from solid primitives
+// (the scene has no gradients): 96 overlapping dots make the ring, a 24 x 24
+// cell grid with rounded-corner insets makes the field.
+fn color_wheel_scene(i:&ffi::Item,out:&mut Vec<ffi::Primitive>){
+    use design::wheel;let c=design::WorkspaceColor::from_argb(i.badge);let (h,s,t)=c.grid();let hue=c.hue_degrees();
+    let disc=|out:&mut Vec<ffi::Primitive>,x:f32,y:f32,d:f32,color:u32,stroke:f32|out.push(wheel_primitive(i,x-d/2.0,y-d/2.0,d,d,d/2.0,color,stroke));
+    if i.kind==28{
+        let size=i.width.min(i.height);let (cx,cy)=(i.x+i.width/2.0,i.y+i.height/2.0);let mid=size/2.0-wheel::RING/2.0;
+        for k in 0..96{let deg=k as f32*3.75;let a=(deg-90.0).to_radians();disc(out,cx+mid*a.cos(),cy+mid*a.sin(),wheel::RING+2.0,wheel::ring_color(deg),0.0);}
+        let p=design::Palette::for_workspace(if i.tile{design::Scheme::Noc}else{design::Scheme::Papier},c);
+        disc(out,cx,cy,size-68.0,p.accent_soft,0.0);disc(out,cx,cy,size-80.0,p.accent,0.0);
+        let a=(f32::from(h)*15.0-90.0).to_radians();let (kx,ky)=(cx+mid*a.cos(),cy+mid*a.sin());
+        if i.focused&&i.focus>>24!=0{disc(out,kx,ky,36.0,i.focus,2.0);}
+        disc(out,kx,ky,28.0,i.fill,0.0);disc(out,kx,ky,22.0,wheel::ring_color(hue),0.0);disc(out,kx,ky,28.0,i.ink,1.0);
+        if !i.title.is_empty(){let d=size-80.0;let mut p=wheel_primitive(i,cx-d/2.0,cy-d/2.0,d,d,0.0,p.on_accent,0.0);p.text=i.title.clone();p.font_size=i.font_size;p.center=true;out.push(p);}
+        return;
+    }
+    let n=24usize;let r=14.0f32;let row_h=i.height/n as f32;
+    for row in 0..n{
+        let y=row as f32*row_h;let mid_y=y+row_h/2.0;let dy=if mid_y<r{r-mid_y}else if mid_y>i.height-r{mid_y-(i.height-r)}else{0.0};let inset=r-(r*r-dy*dy).max(0.0).sqrt();
+        let tone=4.0*(1.0-(row as f32+0.5)/n as f32);let cell=(i.width-2.0*inset)/n as f32;
+        for col in 0..n{let sat=4.0*(col as f32+0.5)/n as f32;out.push(wheel_primitive(i,i.x+inset+col as f32*cell,i.y+y,cell+0.5,row_h+0.5,0.0,wheel::pad_color(hue,sat,tone),0.0));}
+    }
+    out.push(wheel_primitive(i,i.x+0.5,i.y+0.5,i.width-1.0,i.height-1.0,r-0.5,i.edge,1.0));
+    let step_x=(i.width-wheel::PAD_KNOB)/4.0;let step_y=(i.height-wheel::PAD_KNOB)/4.0;
+    let (kx,ky)=(i.x+wheel::PAD_KNOB/2.0+f32::from(s)*step_x,i.y+wheel::PAD_KNOB/2.0+(4.0-f32::from(t))*step_y);
+    if i.focused&&i.focus>>24!=0{disc(out,kx,ky,32.0,i.focus,2.0);}
+    disc(out,kx,ky,wheel::PAD_KNOB,i.fill,0.0);disc(out,kx,ky,wheel::PAD_KNOB-6.0,wheel::pad_color(hue,f32::from(s),f32::from(t)),0.0);disc(out,kx,ky,wheel::PAD_KNOB,i.ink,1.0);
 }
 fn grid_command(axis:u32)->Option<ffi::FormCommand>{
     use ffi::FormCommand as C;[C::WorkspaceHue,C::WorkspaceSaturation,C::WorkspaceTone].get(axis as usize).copied()
@@ -2986,6 +3041,7 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
         || ![i.clip.x, i.clip.y, i.clip.width, i.clip.height].iter().all(|v| v.is_finite())
         || i.clip.width <= 0.0 || i.clip.height <= 0.0 { return; }
     if i.kind==22||i.kind==23{out.extend(preference_control_scene(i));return;}
+    if i.kind==28||i.kind==29{color_wheel_scene(i,out);return;}
     let first_primitive = out.len();
     let mut emit = |x, y, w: f32, h: f32, radius, color, text: &str, size, bold| {
         if w > 0.0 && h > 0.0 {
@@ -4098,6 +4154,25 @@ mod tests {
     }
     #[test] fn narrow_swatch_cells_shrink_the_dot_and_ring() {
         let mut s=row(16.0);s.kind=18;s.height=28.0;s.active=true;let ops=layout(&[s]);assert_eq!((ops[0].width,ops[0].stroke,ops[1].width),(16.0,1.0,10.0));
+    }
+    #[test] fn color_wheel_bridge_snaps_and_describes() {
+        let sky=design::WorkspaceColor::SKY.to_argb();
+        assert_eq!(color_ring_hit(92.0,6.0,184.0),0);assert_eq!(color_ring_hit(92.0,92.0,184.0),-1);assert_eq!(color_pad_hit(156.0,12.0,168.0,168.0),24);
+        assert_eq!(design::WorkspaceColor::from_argb(color_wheel_target(sky,3,-1,-1)).grid(),(3,4,2));
+        assert_eq!(design::WorkspaceColor::from_argb(color_wheel_target(sky,-1,1,4)).grid(),(16,1,4));
+        assert_eq!((color_wheel_target(sky,24,-1,-1),color_wheel_target(sky,-1,300,-1)),(0,0));
+        assert_eq!(design::WorkspaceColor::from_argb(color_wheel_step(sky,0,9)).grid(),(1,4,2));assert_eq!(color_wheel_step(sky,7,1),sky);
+        assert_eq!(color_wheel_description(sky,true),"Barwa 240°");assert_eq!(color_wheel_description(sky,false),"Nasycenie 100%, jasność 50%");
+    }
+    #[test] fn color_wheel_scenes_draw_a_ring_and_field_with_snapped_knobs() {
+        let mut ring=row(184.0);ring.kind=28;ring.height=184.0;ring.clip.height=184.0;ring.badge=design::WorkspaceColor::SKY.to_argb();ring.tile=true;ring.fill=0xff1e1b28;ring.ink=0xff736d89;ring.title="💼".into();ring.font_size=34.0;
+        let ops=layout(std::slice::from_ref(&ring));assert!(ops.len()>=96+5);assert_eq!(ops.iter().filter(|p|p.text=="💼").count(),1);
+        let knob=ops.iter().find(|p|p.color==0xff736d89&&p.stroke==1.0).unwrap();let a=(16.0f32*15.0-90.0).to_radians();assert!((knob.x+14.0-(92.0+81.0*a.cos())).abs()<0.01);
+        ring.focused=true;ring.focus=0xffd7ff3f;assert_eq!(layout(std::slice::from_ref(&ring)).iter().filter(|p|p.color==0xffd7ff3f&&p.stroke==2.0).count(),1);
+        let mut pad=row(168.0);pad.kind=29;pad.height=168.0;pad.clip.height=168.0;pad.badge=design::WorkspaceColor::new(16,1,4).unwrap().to_argb();pad.fill=0xff1e1b28;pad.ink=0xff736d89;pad.edge=0xff2c2839;
+        let ops=layout(std::slice::from_ref(&pad));assert_eq!(ops.iter().filter(|p|p.stroke==0.0&&p.radius==0.0).count(),24*24);
+        assert!(ops.iter().filter(|p|p.radius==0.0).all(|p|p.x>=-0.01&&p.x+p.width<=168.6));
+        let knob=ops.iter().find(|p|p.color==0xff736d89).unwrap();assert_eq!((knob.x+12.0,knob.y+12.0),(12.0+36.0,12.0));
     }
     #[test] fn design_palette_bridge_carries_the_rust_palette() {
         let p=design_palette(true,APPEARANCE_COLORS[2]);let q=design::Palette::for_workspace(design::Scheme::Noc,design::WorkspaceColor::SKY);

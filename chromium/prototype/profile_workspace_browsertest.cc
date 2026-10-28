@@ -4621,19 +4621,22 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceActionHostsAXSelecti
 }
 
 // Compiled only: semantic preset commands use the common Rust panel dispatcher.
-// The hue, saturation and tone rows each move the workspace color along one axis
-// of the design system grid and keep the other two (design.rs PickerAxis).
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceColorPickerRowsMoveOneAxis) {
+// The color wheel: the saturation x tone field and the hue ring snap a press to
+// the design system grid and keep the other axes; arrows step one grid point
+// and the ring's centre disc picks nothing (design.rs wheel).
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceColorWheelSnapsPressesAndArrows) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));if(!shell->workspace_input()->rust_editor())return;
   shell->SetWorkspaceAnimations(false);shell->SetWorkspaceColor("work",0xFF5AA0D0);shell->OpenWorkspaceSettings();shell->settings_widget()->LayoutRootViewIfNecessary();
-  auto* hues=shell->color_grid_row_for_testing(0);auto* levels=shell->color_grid_row_for_testing(1);auto* tones=shell->color_grid_row_for_testing(2);
-  ASSERT_TRUE(hues&&levels&&tones);ASSERT_EQ(26u,hues->children().size());ASSERT_EQ(7u,levels->children().size());ASSERT_EQ(7u,tones->children().size());
-  ui::AXNodeData ax;hues->children()[14]->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(u"Barwa 210°",ax.GetString16Attribute(ax::mojom::StringAttribute::kName));
-  auto click=[&](views::View* row,size_t index){auto* swatch=row->children()[index].get();swatch->ScrollViewToVisible();ClickControl(swatch);};
-  click(levels,1);EXPECT_EQ(0xFF8B9BA6u,shell->workspace_color("work"));  // Saturation 1, same hue and tone.
-  click(hues,3);EXPECT_EQ(0xFFA6948Cu,shell->workspace_color("work"));    // Hue 3, saturation kept.
-  click(tones,4);EXPECT_EQ(0xFFC0ADA4u,shell->workspace_color("work"));   // Tone 4.
-  EXPECT_EQ(u"#C0ADA4",shell->color_input()->GetText());
+  auto* ring=shell->color_wheel_for_testing(0);auto* field=shell->color_wheel_for_testing(1);ASSERT_TRUE(ring&&field);
+  EXPECT_EQ(gfx::Size(184,184),ring->size());EXPECT_EQ(gfx::Size(168,168),field->size());
+  ui::AXNodeData ax;ring->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kSlider,ax.role);EXPECT_EQ(u"Barwa 240°",ax.GetString16Attribute(ax::mojom::StringAttribute::kValue));
+  auto press=[](views::View* view,gfx::Point point){ui::MouseEvent event(ui::EventType::kMousePressed,point,point,base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);return view->OnMousePressed(event);};
+  EXPECT_TRUE(press(field,gfx::Point(48,12)));EXPECT_EQ(0xFFA3B4C0u,shell->workspace_color("work"));  // Saturation 1, tone 4, same hue.
+  EXPECT_TRUE(press(ring,gfx::Point(149,35)));EXPECT_EQ(0xFFC0ADA4u,shell->workspace_color("work"));  // Hue 3, levels kept.
+  EXPECT_FALSE(press(ring,gfx::Point(92,92)));EXPECT_EQ(0xFFC0ADA4u,shell->workspace_color("work"));  // Centre disc.
+  ui::KeyEvent down(ui::EventType::kKeyPressed,ui::VKEY_DOWN,ui::EF_NONE);EXPECT_TRUE(field->OnKeyPressed(down));EXPECT_EQ(0xFFB3A098u,shell->workspace_color("work"));
+  field->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(u"Nasycenie 25%, jasność 75%",ax.GetString16Attribute(ax::mojom::StringAttribute::kValue));
+  EXPECT_EQ(u"#B3A098",shell->color_input()->GetText());
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_saved();}));
 }
 

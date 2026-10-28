@@ -135,9 +135,15 @@ Moduł nie zależy od cxx, więc da się go sprawdzić bez budowania Chromium, s
 3. Picker koloru obszaru (zrobione): pod presetami trzy rzędy próbek — barwa (24),
    nasycenie (5) i jasność (5). Każdy pokazuje aktualny kolor przesunięty wzdłuż jednej
    osi siatki (`WorkspaceColor::with_axis`), klik zapisuje kanoniczny hex punktu;
-   barwa wybrana na grafit przywraca pełne nasycenie. Komendy `WorkspaceHue`,
-   `WorkspaceSaturation`, `WorkspaceTone` idą przez ten sam dyspozytor formularza co
-   presety.
+   barwa wybrana na grafit przywraca pełne nasycenie.
+   Potem (projekt: https://claude.ai/artifact/FrS3Q8MLtrxVtwmTWhP23j) rzędy zastąpiło
+   **koło barw** — pierścień (rodzaj sceny 28) i pole nasycenie × jasność (29) — w
+   `ColorWheelControl`: ciągłe kolory, uchwyt przyciągany do siatki
+   (`design::wheel`: `ring_hit`, `pad_hit`, `target`, `step`), klik, przeciąganie,
+   strzałki, AX jako suwak z opisem wartości. Pierścień to 96 nachodzących kół, pole
+   to siatka 24 × 24 komórek z zaokrąglonymi rogami (scena nie ma gradientów).
+   Zostaje z projektu panelu: presety jako pigułki z nazwą, kafelek „Więcej emoji”
+   zamiast pola tekstowego, kolejność sekcji (kolor, ikona, nazwa i profil).
 4. Kafelki monogramów (`kMonogramColors`) z presetów i `on_accent` zamiast białego
    tekstu w scenie.
 5. Fonty Instrument Serif, Schibsted Grotesk i JetBrains Mono (OFL) w pakiecie

@@ -295,6 +295,64 @@ impl WorkspaceColor {
     }
 }
 
+/// The workspace color wheel: a hue ring and a saturation x tone field. Both
+/// draw continuous colors and snap their knob to the grid.
+pub mod wheel {
+    use super::{Oklch, PickerAxis, WorkspaceColor};
+
+    /// Ring thickness in px.
+    pub const RING: f32 = 22.0;
+    /// Field knob diameter; the knob's centre travels inside half of it.
+    pub const PAD_KNOB: f32 = 24.0;
+
+    /// The ring's color at `degrees`: one lightness and chroma for every hue.
+    pub fn ring_color(degrees: f32) -> u32 {
+        Oklch::new(0.72, 0.14, f64::from(degrees)).to_argb()
+    }
+    /// The field's color at continuous saturation and tone (0..4 each).
+    pub fn pad_color(hue_degrees: f32, saturation: f32, tone: f32) -> u32 {
+        Oklch::new(0.42 + 0.11 * f64::from(tone), 0.035 * f64::from(saturation), f64::from(hue_degrees)).to_argb()
+    }
+
+    /// The hue a point on a `size` px ring selects; `None` off the ring band.
+    pub fn ring_hit(x: f32, y: f32, size: f32) -> Option<u8> {
+        let r = size / 2.0;
+        let (dx, dy) = (x - r, y - r);
+        let distance = dx.hypot(dy);
+        if !distance.is_finite() || distance < r - RING - 12.0 || distance > r + 4.0 {
+            return None;
+        }
+        let degrees = (dy.atan2(dx).to_degrees() + 90.0).rem_euclid(360.0);
+        Some((degrees / 15.0).round() as u8 % WorkspaceColor::HUES)
+    }
+
+    /// The saturation and tone a point in a `width` x `height` field selects.
+    pub fn pad_hit(x: f32, y: f32, width: f32, height: f32) -> (u8, u8) {
+        let top = f32::from(WorkspaceColor::LEVELS - 1);
+        let step = |extent: f32| ((extent - PAD_KNOB) / top).max(1.0);
+        let level = |v: f32| if v.is_finite() { v.round().clamp(0.0, top) as u8 } else { 0 };
+        (level((x - PAD_KNOB / 2.0) / step(width)), level(top - (y - PAD_KNOB / 2.0) / step(height)))
+    }
+
+    /// The color a ring or field pick stores: `None` keeps that axis. A hue picked
+    /// on graphite restores full saturation, as the picker rows do.
+    pub fn target(current: WorkspaceColor, hue: Option<u8>, saturation: Option<u8>, tone: Option<u8>) -> Option<WorkspaceColor> {
+        let mut c = current;
+        if let Some(h) = hue { c = c.with_axis(PickerAxis::Hue, h)?; }
+        if let Some(s) = saturation { c = c.with_axis(PickerAxis::Saturation, s)?; }
+        if let Some(t) = tone { c = c.with_axis(PickerAxis::Tone, t)?; }
+        Some(c)
+    }
+
+    /// One keyboard step along `axis`: hue wraps around, the levels stop at their ends.
+    pub fn step(current: WorkspaceColor, axis: PickerAxis, delta: i32) -> WorkspaceColor {
+        let len = axis.len() as i32;
+        let at = i32::from(current.axis_index(axis)) + delta;
+        let index = if axis == PickerAxis::Hue { at.rem_euclid(len) } else { at.clamp(0, len - 1) };
+        current.with_axis(axis, index as u8).unwrap_or(current)
+    }
+}
+
 /// One row of the workspace color picker.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PickerAxis {
@@ -1047,6 +1105,31 @@ mod tests {
         assert_eq!(PickerAxis::Saturation.label(2), "Nasycenie 50%");
         assert_eq!(PickerAxis::Tone.label(4), "Jasność 100%");
         assert_eq!(PickerAxis::from_index(3), None);
+    }
+
+    #[test]
+    fn color_wheel_hits_snap_to_the_grid() {
+        use wheel::*;
+        // 184 px ring: top of the band is hue 0, right is 90 degrees, centre is off.
+        assert_eq!(ring_hit(92.0, 6.0, 184.0), Some(0));
+        assert_eq!(ring_hit(178.0, 92.0, 184.0), Some(6));
+        assert_eq!(ring_hit(92.0, 178.0, 184.0), Some(12));
+        assert_eq!(ring_hit(92.0, 92.0, 184.0), None);
+        assert_eq!(ring_hit(0.0, 0.0, 184.0), None);
+        assert_eq!(ring_hit(f32::NAN, 0.0, 184.0), None);
+        // 168 px field: corners are the extreme levels, outside clamps.
+        assert_eq!(pad_hit(12.0, 156.0, 168.0, 168.0), (0, 0));
+        assert_eq!(pad_hit(156.0, 12.0, 168.0, 168.0), (4, 4));
+        assert_eq!(pad_hit(84.0, 84.0, 168.0, 168.0), (2, 2));
+        assert_eq!(pad_hit(-50.0, 500.0, 168.0, 168.0), (0, 0));
+        let c = WorkspaceColor::new(7, 2, 3).unwrap();
+        assert_eq!(target(c, Some(20), None, None).unwrap().grid(), (20, 2, 3));
+        assert_eq!(target(c, None, Some(4), Some(0)).unwrap().grid(), (7, 4, 0));
+        assert_eq!(target(WorkspaceColor::GRAPHITE, Some(3), None, None).unwrap().grid(), (3, 4, 2));
+        assert_eq!(target(c, Some(24), None, None), None);
+        assert_eq!(step(c, PickerAxis::Hue, -8).grid(), (23, 2, 3));
+        assert_eq!(step(c, PickerAxis::Tone, 5).grid(), (7, 2, 4));
+        assert_eq!(step(c, PickerAxis::Saturation, -9).grid(), (7, 0, 3));
     }
 
     #[test]
