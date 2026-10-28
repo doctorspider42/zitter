@@ -118,9 +118,13 @@ Moduł nie zależy od cxx, więc da się go sprawdzić bez budowania Chromium, s
 
 ## Dalej
 
-1. Przepisy `recipe::*` zamiast stylów składanych w C++ (`SidebarRowStyle`,
-   `EditorStyle`, przyciski, menu), z promieniami i wymiarami z tokenów; powłoka bierze dziś
-   z Rusta kolory, a z przepisów jeszcze nic.
+1. Przepisy komponentów, etap 1 (zrobione): `layout()` bierze promienie z tokenów
+   (wiersze `radius-sm`, tła `radius-md`, Command Center `radius-lg`, pigułka adresu
+   = pełna pigułka); aktywna karta to neutralna karta z 1 px obrysem `line`
+   (`Item::edge`, `SidebarRowStyle::edge`); przyciski biorą kolory z palety (primary:
+   `accent`/`on_accent`, outline: `line_strong`, wyłączony: `ink_faint` + `line`).
+   Etap 2: wymiary (wysokość wiersza 34 px, odstępy, pole adresu 36 px), pierścień fokusu
+   2 px `focus` zamiast paska, menu i dialogi z `recipe::menu`/`recipe::dialog`.
 2. Osobne `bg_void` dla ramy okna (dziś rama i pasek boczny mają wspólne `bg_base`).
 3. Picker koloru obszaru: barwa, nasycenie, jasność + presety (zapis
    `WorkspaceColor::to_argb`).

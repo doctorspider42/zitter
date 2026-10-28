@@ -6,7 +6,7 @@
 mod sidebar_editor;
 use sidebar_editor::EditorState;
 // The design system (docs/design-system): tokens, workspace palettes, recipes.
-// The shell reads palettes through design_palette(); recipes are not wired yet.
+// The shell reads palettes through design_palette(); layout() takes radii from the tokens.
 #[allow(dead_code)]
 mod design;
 mod design_tokens;
@@ -190,6 +190,8 @@ mod ffi {
         title: String, monogram: String, detail: String,
         title_width: f32, detail_ink: u32, detail_font_size: f32,
         ink: u32, fill: u32, badge: u32,
+        // 1 px inset ring drawn over `fill` (0 = none); the design system's card edge.
+        edge: u32,
         active: bool, hovered: bool, tile: bool, close: bool, close_visible: bool, focused: bool,
         font_size: f32, font_height: f32, font_weight: i32,
         clip: FloatRect,
@@ -245,7 +247,7 @@ mod ffi {
     struct SidebarRowVisual { valid: bool, tile: bool, height: i32 }
     struct SidebarRowPresentation { valid: bool, title: Vec<u16>, monogram: Vec<u16>, color: u32, tile: bool, folder: bool, height: i32 }
     struct SidebarTabUpdate { admitted: bool, changed: bool, title_changed: bool, geometry_changed: bool }
-    struct SidebarRowStyle { font_size: f32, ink: u32, card: u32, hover: u32 }
+    struct SidebarRowStyle { font_size: f32, ink: u32, card: u32, hover: u32, edge: u32 }
     struct SidebarRowScene { valid: bool, item: Item }
     struct ColumnChild { width: i32, height: i32, top: i32, left: i32, bottom: i32, right: i32 }
     struct ColumnLayout { width: i32, height: i32, children: Vec<Rect> }
@@ -2651,8 +2653,8 @@ impl ActionControl {
     fn sidebar_set_title(&mut self,title:Vec<u16>)->bool{self.write_node(|r|{if let Some(NodeModel::SidebarPin(pin))=r.model.as_deref_mut(){let display=pin_title(&title,pin.presentation.folder,pin.collapsed);if pin.presentation.title==display{return false;}if pin.presentation.folder{pin.base_title=title;}pin.presentation.title_utf8=String::from_utf16_lossy(&display);pin.presentation.title=display;return true;}let Some(p)=r.model.as_deref_mut().and_then(NodeModel::row_presentation_mut) else{return false;};if p.title==title{return false;}p.title_utf8=String::from_utf16_lossy(&title);p.title=title;true}).unwrap_or(false)}
     fn sidebar_set_monogram(&mut self,monogram:Vec<u16>,color:u32)->bool{self.write_node(|r|{let Some(p)=r.model.as_deref_mut().and_then(NodeModel::row_presentation_mut) else{return false;};if p.monogram==monogram&&p.color==color{return false;}p.monogram_utf8=if p.folder{"📁".into()}else{String::from_utf16_lossy(&monogram)};p.monogram=monogram;p.color=color;true}).unwrap_or(false)}
     fn sidebar_scene(&self,bounds:ffi::FloatRect,clip:ffi::FloatRect,style:ffi::SidebarRowStyle,close:bool,close_visible:bool)->ffi::SidebarRowScene{
-        let mut item=ffi::Item{x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height,kind:0,glyph:0,title:String::new(),monogram:String::new(),detail:String::new(),title_width:0.0,detail_ink:0,detail_font_size:0.0,ink:style.ink,fill:0,badge:0,active:false,hovered:false,tile:false,close:false,close_visible:false,focused:false,font_size:style.font_size,font_height:0.0,font_weight:0,clip};
-        let valid=self.read_node(|r|{let Some(p)=r.model.as_deref().and_then(NodeModel::row_presentation) else{return false;};let hovered=r.state.enabled&&matches!(r.state.visual,ffi::RowVisual::Hovered|ffi::RowVisual::Pressed);item.title=p.title_utf8.clone();item.monogram=p.monogram_utf8.clone();item.badge=if p.folder{0}else{p.color};item.close=close&&matches!(r.model.as_deref(),Some(NodeModel::SidebarTab(m)) if m.can_close);item.close_visible=item.close&&close_visible;item.active=r.state.on;item.hovered=hovered;item.tile=p.tile;item.focused=r.state.focused;item.fill=if p.tile{(style.card&0xffffff)|((if r.state.on{0xff}else if hovered{0x8c}else{0x59})<<24)}else if r.state.on{style.card}else if hovered{style.hover}else{0};true}).unwrap_or(false);
+        let mut item=ffi::Item{x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height,kind:0,glyph:0,title:String::new(),monogram:String::new(),detail:String::new(),title_width:0.0,detail_ink:0,detail_font_size:0.0,ink:style.ink,fill:0,badge:0,edge:0,active:false,hovered:false,tile:false,close:false,close_visible:false,focused:false,font_size:style.font_size,font_height:0.0,font_weight:0,clip};
+        let valid=self.read_node(|r|{let Some(p)=r.model.as_deref().and_then(NodeModel::row_presentation) else{return false;};let hovered=r.state.enabled&&matches!(r.state.visual,ffi::RowVisual::Hovered|ffi::RowVisual::Pressed);item.title=p.title_utf8.clone();item.monogram=p.monogram_utf8.clone();item.badge=if p.folder{0}else{p.color};item.close=close&&matches!(r.model.as_deref(),Some(NodeModel::SidebarTab(m)) if m.can_close);item.close_visible=item.close&&close_visible;item.active=r.state.on;item.hovered=hovered;item.tile=p.tile;item.focused=r.state.focused;item.fill=if p.tile{(style.card&0xffffff)|((if r.state.on{0xff}else if hovered{0x8c}else{0x59})<<24)}else if r.state.on{style.card}else if hovered{style.hover}else{0};item.edge=if r.state.on&&!p.tile{style.edge}else{0};true}).unwrap_or(false);
         ffi::SidebarRowScene{valid,item}
     }
     fn tab_binding(&self)->ffi::SidebarTabBinding{self.read_node(|node|if let Some(NodeModel::SidebarTab(p))=node.model.as_deref(){Some(ffi::SidebarTabBinding{valid:true,id:node.id,high:p.high,low:p.low,index:p.index,can_close:p.can_close})}else{None}).flatten().unwrap_or(ffi::SidebarTabBinding{valid:false,id:0,high:0,low:0,index:0,can_close:false})}
@@ -2952,8 +2954,9 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
             continue;
         }
         if i.kind == 16 {
-            emit(i.x,i.y,i.width,i.height,14.0,i.fill,"",0.0,false);
-            emit(i.x+0.5,i.y+0.5,i.width-1.0,i.height-1.0,13.5,i.badge,"",0.0,false);
+            let radius=design_tokens::radius::LG;
+            emit(i.x,i.y,i.width,i.height,radius,i.fill,"",0.0,false);
+            emit(i.x+0.5,i.y+0.5,i.width-1.0,i.height-1.0,radius-0.5,i.badge,"",0.0,false);
             if let Some(border)=out.get_mut(first_primitive+1){border.stroke=1.0;}continue;
         }
         if i.kind == 15 {
@@ -2970,7 +2973,7 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
             for p in out[start..].iter_mut(){p.shape=if i.glyph==1{3}else if i.glyph==2{6}else{7};}continue;
         }
         if i.kind == 12 {
-            emit(i.x,i.y,i.width,i.height,if i.active{9.0}else{8.0},i.fill,"",0.0,false);
+            emit(i.x,i.y,i.width,i.height,design_tokens::radius::SM,i.fill,"",0.0,false);
             emit(i.x+12.0,i.y+(i.height-28.0)/2.0,28.0,28.0,7.0,i.badge,"",0.0,false);
             let g=row_layout(i.width as i32,i.height as i32,i.title_width as i32,!i.detail.is_empty(),true,false);
             if i.focused{emit(i.x+2.0,i.y+i.height-3.0,(i.width-4.0).max(0.0),2.0,1.0,i.ink,"",0.0,false);}
@@ -2982,7 +2985,7 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
             if i.active||i.hovered {emit(i.x+i.width-3.0,i.y+8.0,2.0,(i.height-16.0).max(0.0),1.0,i.ink,"",0.0,false);}continue;
         }
         if i.kind == 10 {
-            emit(i.x,i.y,i.width,i.height,10.0,i.fill,"",0.0,false);continue;
+            emit(i.x,i.y,i.width,i.height,design_tokens::radius::MD,i.fill,"",0.0,false);continue;
         }
         if i.kind == 8 {
             let g=pane_bar_layout(i.width as i32,i.height as i32);
@@ -3092,12 +3095,13 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
         if i.kind == 4 {
             // A filled rounded pill and inset outline. Ring and lock strokes
             // remain analytic GPU geometry; they need no icon/font dependency.
-            emit(i.x, i.y, i.width, i.height, 10.0, i.fill, "", 0.0, false);
+            let pill = i.height / 2.0;
+            emit(i.x, i.y, i.width, i.height, pill, i.fill, "", 0.0, false);
             let g = address_layout(i.width as i32, i.height as i32, i.title_width as i32);
             let cy = i.y + i.height / 2.0;
             let rings = [(i.x + 0.5, 1.0), (i.x + if i.active {14.0} else {12.0}, 1.5)];
             emit(i.x + 0.5, i.y + 0.5, i.width - 1.0, i.height - 1.0,
-                9.5, (i.ink & 0x00ffffff) | 0x0d000000, "", 0.0, false);
+                pill - 0.5, (i.ink & 0x00ffffff) | 0x0d000000, "", 0.0, false);
             if i.active {
                 emit(i.x + 14.0, cy - 7.0, 8.0, 10.0, 4.0, i.badge, "", 0.0, false);
                 emit(i.x + 12.0, cy - 1.0, 12.0, 8.0, 1.5, i.badge, "", 0.0, false);
@@ -3129,9 +3133,13 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
             }
             continue;
         }
+        let radius = if i.kind == 2 {design_tokens::radius::MD} else {design_tokens::radius::SM};
         if i.fill >> 24 != 0 {
-            emit(i.x, i.y, i.width, i.height, if i.kind == 2 {12.0} else {8.0},
-                 i.fill, "", 0.0, false);
+            emit(i.x, i.y, i.width, i.height, radius, i.fill, "", 0.0, false);
+        }
+        // The active card's edge: a 1 px inset ring, stroked below with the others.
+        if i.edge >> 24 != 0 && i.width > 1.0 && i.height > 1.0 {
+            emit(i.x + 0.5, i.y + 0.5, i.width - 1.0, i.height - 1.0, radius - 0.5, i.edge, "", 0.0, false);
         }
         if i.kind == 2 { continue; }
         if i.kind == 25 {
@@ -3183,6 +3191,11 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
                  (geometry.close.width - 10).max(0) as f32, i.height,
                  0.0, i.ink, "×", 18.0, false);
         }
+        if i.edge >> 24 != 0 {
+            for p in out[first_primitive..].iter_mut() {
+                if p.text.is_empty() && p.color == i.edge && p.x == i.x + 0.5 && p.y == i.y + 0.5 {p.stroke = 1.0;}
+            }
+        }
     }
     out
 }
@@ -3193,7 +3206,7 @@ mod tests {
         x:0.0, y:0.0, width, height:34.0, kind:0, glyph:0,
         title:"Zażółć 日本語 🦀".into(), monogram:"Z".into(), detail:String::new(),
         title_width:0.0, detail_ink:0, detail_font_size:12.0, ink:0xff101010,
-        fill:0xffffffff, badge:0xff556677, active:true, hovered:false,
+        fill:0xffffffff, badge:0xff556677, edge:0, active:true, hovered:false,
         tile:false, close:true, close_visible:true, focused:false, font_size:13.0, font_height:16.0, font_weight:0,
         clip:ffi::FloatRect {x:0.0, y:0.0, width:width.max(0.0), height:34.0},
     }}
@@ -3992,6 +4005,14 @@ mod tests {
         for ((_,preset),color) in design::WorkspaceColor::PRESETS.iter().zip(colors.iter()) {assert_eq!(preset.to_argb(),color.color);}assert!(colors.iter().all(|p|p.emoji.is_empty()&&p.color>>24==255));
         let emojis=appearance_presets(true);assert_eq!(emojis.len(),8);assert_eq!(emojis[7].emoji,"🎬");assert_eq!(emojis[2].emoji,"🚀");assert_eq!(emojis[5].label,"Emoji 🎮");
     }
+    #[test] fn active_card_edge_is_one_inset_stroke_and_absent_without_a_colour() {
+        let mut card=row(240.0);card.edge=0xff332211;let ops=layout(std::slice::from_ref(&card));
+        let rings:Vec<_>=ops.iter().filter(|p|p.color==0xff332211).collect();assert_eq!(rings.len(),1);
+        assert_eq!((rings[0].x,rings[0].y,rings[0].width,rings[0].stroke,rings[0].radius),(0.5,0.5,239.0,1.0,design_tokens::radius::SM-0.5));
+        assert!(ops.iter().filter(|p|p.text.is_empty()&&p.color==card.fill).all(|p|p.stroke==0.0));
+        card.edge=0;assert!(layout(&[card]).iter().all(|p|p.stroke==0.0||p.color!=0xff332211));
+        let mut pill=row(200.0);pill.kind=4;pill.height=36.0;assert_eq!(layout(&[pill])[0].radius,18.0);
+    }
     #[test] fn design_palette_bridge_carries_the_rust_palette() {
         let p=design_palette(true,APPEARANCE_COLORS[2]);let q=design::Palette::for_workspace(design::Scheme::Noc,design::WorkspaceColor::SKY);
         assert_eq!((p.bg_void,p.bg_base,p.bg_raised,p.accent,p.on_accent,p.ink_muted,p.focus,p.scrim),(q.bg_void,q.bg_base,q.bg_raised,q.accent,q.on_accent,q.ink_muted,q.focus,q.scrim));
@@ -4129,7 +4150,7 @@ mod tests {
         let (mut g,mut input)=pin_fixture();let parent=input.node_parent_id();input.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);g.reconcile_sidebar(vec![pin_input("other","Other",false,false),pin_input("folder","Dokumenty 日本語 🦀",true,false)],vec![]);assert!(!input.action_pending());assert_eq!(input.node_parent_id(),parent);assert!(g.pin_target("folder",input.action_node_id()).valid);
     }
     fn projected_tab()->(Box<ActionGraph>,Box<ActionControl>){let mut g=tab_scene_fixture();let input=g.acquire(&node_tab(1));assert!(g.project_tab(&input,"Żółć 日本語 🦀".encode_utf16().collect(),vec![b'Z' as u16],0xff123456,false).admitted);(g,input)}
-    fn tab_style()->ffi::SidebarRowStyle{ffi::SidebarRowStyle{font_size:13.0,ink:0xff112233,card:0xff778899,hover:0x22112233}}
+    fn tab_style()->ffi::SidebarRowStyle{ffi::SidebarRowStyle{font_size:13.0,ink:0xff112233,card:0xff778899,hover:0x22112233,edge:0xff445566}}
     fn tab_box()->ffi::FloatRect{ffi::FloatRect{x:3.0,y:5.0,width:200.0,height:34.0}}
     #[test] fn tab_properties_own_raw_utf16_and_prepare_utf8_scene_text(){
         let (g,input)=projected_tab();let p=input.sidebar_presentation();assert!(p.valid&&!p.tile);assert_eq!(p.title,"Żółć 日本語 🦀".encode_utf16().collect::<Vec<_>>());assert_eq!(p.monogram,vec![b'Z' as u16]);assert_eq!((p.color,p.height),(0xff123456,34));let scene=input.sidebar_scene(tab_box(),tab_box(),tab_style(),true,false);assert!(scene.valid);assert_eq!(scene.item.title,"Żółć 日本語 🦀");assert_eq!(scene.item.monogram,"Z");assert_eq!(scene.item.badge,0xff123456);assert_eq!(g.tab_target(7,1,input.action_node_id(),false).index,4);
@@ -5097,7 +5118,7 @@ mod tests {
         let mut e=row(400.0);e.kind=15;e.glyph=2;e.title.clear();assert!(layout(&[e]).is_empty());
         let mut h=row(400.0);h.kind=15;h.glyph=1;h.title_width=80.0;h.font_height=13.0;h.height=34.0;
         let ops=layout(&[h]);assert_eq!((ops[0].x,ops[0].y,ops[0].width),(18.0,11.0,80.0));
-        let mut f=row(400.0);f.kind=16;let ops=layout(&[f]);assert_eq!((ops[0].radius,ops[1].stroke),(14.0,1.0));
+        let mut f=row(400.0);f.kind=16;let ops=layout(&[f]);assert_eq!((ops[0].radius,ops[1].stroke),(design_tokens::radius::LG,1.0));
     }
     #[test] fn palette_search_decoration_is_the_analytic_search_shape() {
         let mut s=row(32.0);s.kind=7;s.glyph=8;assert!(layout(&[s]).iter().any(|p|p.shape==7&&p.text.is_empty()));

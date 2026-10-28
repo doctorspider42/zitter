@@ -847,11 +847,14 @@ class SceneTextButton final : public RustActionView {
     const auto* provider=GetColorProvider();const auto state=Snapshot();const bool enabled=state.enabled;const auto font=TextFont();const bool prominent=style_==ui::ButtonStyle::kProminent;
     sidebar::Item item{};item.kind=19;item.x=bounds.x();item.y=bounds.y();item.width=bounds.width();item.height=bounds.height();item.title=base::UTF16ToUTF8(text_);item.font_size=font.GetFontSize();item.active=font.GetFontWeight()>=gfx::Font::Weight::MEDIUM;
     item.title_width=views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_BUTTON_HORIZONTAL_PADDING);item.focused=state.focused;item.hovered=enabled&&(state.visual==sidebar::RowVisual::Hovered||state.visual==sidebar::RowVisual::Pressed);
-    item.ink=provider->GetColor(views::TypographyProvider::Get().GetColorId(views::style::CONTEXT_BUTTON_MD,!enabled?views::style::STYLE_DISABLED:prominent?views::style::STYLE_DIALOG_BUTTON_DEFAULT:views::style::STYLE_PRIMARY));
-    item.fill=style_==ui::ButtonStyle::kText?SK_ColorTRANSPARENT:provider->GetColor(prominent?!enabled?ui::kColorButtonBackgroundProminentDisabled:state.focused?ui::kColorButtonBackgroundProminentFocused:ui::kColorButtonBackgroundProminent:ui::kColorButtonBackground);
-    if(state.visual==sidebar::RowVisual::Pressed)item.fill=GetNativeTheme()->GetSystemButtonPressedColor(item.fill);
-    item.badge=style_==ui::ButtonStyle::kDefault?provider->GetColor(enabled?ui::kColorButtonBorder:ui::kColorButtonBorderDisabled):SK_ColorTRANSPARENT;
-    item.detail_ink=provider->GetColor(prominent?ui::kColorSysStateHoverOnProminent:ui::kColorSysStateHoverOnSubtle);item.clip={clip.x(),clip.y(),clip.width(),clip.height()};return item;
+    // Design system Button: prominent = primary on the workspace accent, default =
+    // outline on line_strong, text = quiet; disabled drops the fill for ink_faint.
+    const auto palette=Palette(this);
+    item.ink=!enabled?palette.ink_faint:prominent?palette.on_accent:palette.ink;
+    item.fill=enabled&&prominent?palette.accent:SK_ColorTRANSPARENT;
+    if(item.fill&&state.visual==sidebar::RowVisual::Pressed)item.fill=GetNativeTheme()->GetSystemButtonPressedColor(item.fill);
+    item.badge=!enabled&&style_!=ui::ButtonStyle::kText?palette.line:style_==ui::ButtonStyle::kDefault?palette.line_strong:SK_ColorTRANSPARENT;
+    item.detail_ink=prominent?provider->GetColor(ui::kColorSysStateHoverOnProminent):palette.bg_hover;item.clip={clip.x(),clip.y(),clip.width(),clip.height()};return item;
   }
  private:
   sidebar::ActionButtonLayout Metrics(int width,int height) const {const auto font=TextFont();return sidebar::action_button_layout(width,height,gfx::GetStringWidth(text_,font),views::LayoutProvider::GetControlHeightForFont(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY,font),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_BUTTON_HORIZONTAL_PADDING),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_DIALOG_BUTTON_MINIMUM_WIDTH));}
@@ -1444,7 +1447,7 @@ class RustRowView final : public views::View {
   void ProjectPinAdapter(Spec spec){CHECK(PinBinding().valid);CancelInput();ClearSidebarVisuals(spec);spec_=std::move(spec);SyncSidebarAX();PreferredSizeChanged();SchedulePaint();}
   void RefreshPinProperties(){CHECK(PinBinding().valid);CancelInput();SyncSidebarAX();SchedulePaint();}
   Spec SidebarSnapshot() const{Spec spec;spec.sidebar_row=true;const auto presentation=state_->sidebar_presentation();if(presentation.valid){spec.title=std::u16string(presentation.title.begin(),presentation.title.end());spec.monogram=std::u16string(presentation.monogram.begin(),presentation.monogram.end());spec.monogram_color=presentation.color;spec.icon=presentation.folder?&vector_icons::kFolderFilledIcon:nullptr;spec.tile=presentation.tile;spec.height=presentation.height;spec.active=state_->action_snapshot().on;}return spec;}
-  sidebar::SidebarRowScene SidebarScene(gfx::RectF bounds,gfx::RectF clip) const{return state_->sidebar_scene({bounds.x(),bounds.y(),bounds.width(),bounds.height()},{clip.x(),clip.y(),clip.width(),clip.height()},{float(Font(0).GetFontSize()),Tone(this,kInk),Tone(this,kCard),HoverWash(this)},has_close_button(),close_button_visible());}
+  sidebar::SidebarRowScene SidebarScene(gfx::RectF bounds,gfx::RectF clip) const{return state_->sidebar_scene({bounds.x(),bounds.y(),bounds.width(),bounds.height()},{clip.x(),clip.y(),clip.width(),clip.height()},{float(Font(0).GetFontSize()),Tone(this,kInk),Tone(this,kCard),HoverWash(this),Hairline(this)},has_close_button(),close_button_visible());}
   void ConfigureTabClose(bool wanted,views::Button::PressedCallback callback,const SidebarNodeBinding& binding){
     if(close_){auto* control=views::AsViewClass<RustActionView>(close_.get());if(!wanted||!control||!binding.scope||!control->BelongsTo(*binding.scope)||!control->LogicalNodeId()){auto* old=close_.get();close_=nullptr;RemoveChildViewT(old);}}
     if(wanted&&!close_){CHECK(callback);close_=AddChildView(CreateSceneAction(std::move(callback),u"Zamknij kartę",ControlGlyph::kVector,&vector_icons::kCloseSmallIcon,{},base::BindRepeating(&RustRowView::ChildChanged,weak_factory_.GetWeakPtr()),true,binding));}
@@ -4295,7 +4298,7 @@ std::vector<sidebar::Item> WorkspaceShell::CaptureWorkspaceScene(std::string_vie
     sidebar::Item item{};item.kind=0;item.title=base::UTF16ToUTF8(spec.title);item.monogram=base::UTF16ToUTF8(spec.icon?u"📁":spec.monogram);
     item.ink=Tone(shell->root_,kInk);item.badge=spec.icon?SK_ColorTRANSPARENT:spec.monogram_color;
     item.fill=spec.tile?SkColorSetA(Tone(shell->root_,kCard),spec.active?0xFF:0x59):spec.active?Tone(shell->root_,kCard):spec.highlighted?Tone(shell->root_,kAccentWash):SK_ColorTRANSPARENT;
-    item.active=spec.active;item.tile=spec.tile;item.close=bool(spec.close);item.close_visible=spec.close&&spec.active&&!spec.tile;item.font_size=Font(0).GetFontSize();return item;
+    item.edge=spec.active&&!spec.tile?Hairline(shell->root_):SK_ColorTRANSPARENT;item.active=spec.active;item.tile=spec.tile;item.close=bool(spec.close);item.close_visible=spec.close&&spec.active&&!spec.tile;item.font_size=Font(0).GetFontSize();return item;
   };
   auto gap=[&](int height){rows.push_back({0,3,0,height});};
   auto row=[&](const RowRecipe::Spec& spec,int depth){rows.push_back({data.size(),0,depth,34});data.push_back(make_item(spec));};
@@ -5706,7 +5709,7 @@ void WorkspaceShell::ApplyTheme(bool refresh_controls) {
   for (auto* surface : {settings_root_.get(), profiles_root_.get(), import_root_.get(),
        peek_widget_ ? peek_widget_->GetContentsView() : nullptr, general_root_.get(), palette_root_.get(), tools_root_.get()}) {
     if (!surface) continue;
-    const int radius = surface == palette_root_ ? 14 : 12;
+    const int radius = surface == palette_root_ ? 20 : 12;  // radius-lg / radius-md
     if(surface==palette_root_&&static_cast<PaletteView*>(surface)->scene()){surface->SetBackground(nullptr);surface->SetBorder(views::CreateEmptyBorder(1));}
     else {surface->SetBackground(views::CreateRoundedRectBackground(Tone(surface,kCard),radius));
       if((surface==profiles_root_&&profile_form_)||(surface==settings_root_&&workspace_form_)||(surface==import_root_&&import_form_))surface->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,radius,Hairline(surface)),gfx::Insets(20)));
