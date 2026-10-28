@@ -639,7 +639,8 @@ class WorkspaceShell final : public ui::EventHandler,
                              std::array<std::optional<size_t>, 2> split_tabs = {}, bool split = false);
   void AppendPinnedItems(views::View* root, const std::vector<PinnedItem>& pins,
                          TabListCache& cache, const std::string& workspace,
-                         std::map<std::string,std::unique_ptr<views::View>>* retained=nullptr);
+                         std::map<std::string,std::unique_ptr<views::View>>* retained=nullptr,
+                         std::map<uint64_t,std::unique_ptr<views::View>>* retained_groups=nullptr);
   void ReconcileChromeNodes();
   void RebuildWorkspaceDots();
   void ShowContextMenuForViewImpl(views::View*, const gfx::Point&, ui::mojom::MenuSourceType) override;

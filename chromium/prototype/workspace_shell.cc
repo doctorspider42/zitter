@@ -4735,17 +4735,30 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
     };extract(extract,cache.root);
   }
 #endif
+  std::map<uint64_t,std::unique_ptr<views::View>> retained_groups;std::unique_ptr<views::View> retained_pin_contents;
+#if BUILDFLAG(IS_MAC)
+  if(retain&&rebuild_pins){
+    // Rows are out; keep folder groups by their Rust group ID and the list
+    // container, detaching deepest groups first so nesting can change.
+    std::vector<ScenePinGroup*> groups;auto collect=[&](auto&& self,views::View* view)->void{for(const auto& child:view->children())self(self,child.get());if(auto* group=views::AsViewClass<ScenePinGroup>(view);group&&group->Matches(cache.node_graph,group->AdapterId()))groups.push_back(group);};collect(collect,cache.pins_root);
+    for(auto* group:groups){const auto id=group->AdapterId();auto owned=group->parent()->RemoveChildViewT(group);owned->RemoveAllChildViews();retained_groups.emplace(id,std::move(owned));}
+    if(cache.pins_root->children().size()==1){retained_pin_contents=cache.pins_root->RemoveChildViewT(cache.pins_root->children().front().get());retained_pin_contents->RemoveAllChildViews();}
+  }
+#endif
   if (rebuild_pins) {
     ++pinned_list_build_count_;
     cache.pin_buttons.clear();
     cache.pins_root->RemoveAllChildViews();
-    auto contents = std::make_unique<views::View>();
-    contents->SetLayoutManager(CreateSidebarColumnLayout(2));
+    auto contents = std::move(retained_pin_contents);
+    if (!contents) {
+      contents = std::make_unique<views::View>();
+      contents->SetLayoutManager(CreateSidebarColumnLayout(2));
+    }
     if (!state_.pins.empty()) {
       Label(contents.get(), u"PRZYPIĘTE", kMuted, Font(-2));
       AppendPinnedItems(contents.get(),state_.pins,cache,state_.workspace_id
 #if BUILDFLAG(IS_MAC)
-          ,&retained_pins
+          ,&retained_pins,&retained_groups
 #endif
       );
       Spacer(contents.get(), 8);
@@ -5623,7 +5636,8 @@ void WorkspaceShell::OnMouseEvent(ui::MouseEvent* input) {
 }
 
 void WorkspaceShell::AppendPinnedItems(views::View* root, const std::vector<PinnedItem>& pins,
-    TabListCache& cache,const std::string& workspace,std::map<std::string,std::unique_ptr<views::View>>* retained) {
+    TabListCache& cache,const std::string& workspace,std::map<std::string,std::unique_ptr<views::View>>* retained,
+    std::map<uint64_t,std::unique_ptr<views::View>>* retained_groups) {
   struct Entry {size_t index;uint64_t parent,group;int depth;bool collapsed,visible;};std::vector<Entry> plan;
 #if BUILDFLAG(IS_MAC)
   if(cache.node_graph){const auto tree=cache.node_graph->graph->pin_tree();for(const auto& entry:tree.entries){CHECK_LT(entry.index,pins.size());CHECK_EQ(pins[entry.index].id,std::string(entry.key));plan.push_back({entry.index,entry.parent==tree.root?0:entry.parent,entry.group,entry.depth,entry.collapsed,entry.visible});}}else
@@ -5656,7 +5670,10 @@ void WorkspaceShell::AppendPinnedItems(views::View* root, const std::vector<Pinn
     views::View* folder_group=nullptr;
     if(pin->folder){
 #if BUILDFLAG(IS_MAC)
-      if(cache.node_graph){auto* control=views::AsViewClass<RustRowView>(button);CHECK(control);folder_group=parent->AddChildView(std::make_unique<ScenePinGroup>(cache.node_graph,entry.group));}else
+      if(cache.node_graph){auto* control=views::AsViewClass<RustRowView>(button);CHECK(control);
+        std::unique_ptr<views::View> group;if(retained_groups){auto found=retained_groups->find(entry.group);if(found!=retained_groups->end()){group=std::move(found->second);retained_groups->erase(found);}}
+        if(group&&views::AsViewClass<ScenePinGroup>(group.get())->Matches(cache.node_graph,entry.group))folder_group=parent->AddChildView(std::move(group));
+        else folder_group=parent->AddChildView(std::make_unique<ScenePinGroup>(cache.node_graph,entry.group));}else
 #endif
       folder_group=parent->AddChildView(std::make_unique<views::View>());
       folder_group->SetLayoutManager(CreateSidebarColumnLayout(2));groups[entry.group]=folder_group;folder_group->SetVisible(!entry.collapsed);

@@ -157,6 +157,11 @@ ustawień przestrzeni i importu używają `RustPanelLayout` (fallback Views: ten
 Checkbox/Toggle/ProgressBar) powstają już tylko w gałęziach Views. Pełna macierz po
 zmianie: 274/274 Metal, 225/225 Views.
 
+**Zachowanie grup folderów przy zmianie topologii:** przy przebudowie drzewa przypięć
+w trybie Rust kontener listy i `ScenePinGroup` są zachowywane według rustowego ID grupy
+(nowy test `PinTreeTopologyChangeRetainsFolderGroupsAndListContainer`); podzbiór UI
+sidebar/split/pin/folder 92 Metal / 43 Views zaliczony.
+
 **Pełny checkpoint UI 2026-10-28 (`90c7e8b`):** 274/274 Metal i 225/225 Views.
 [Raport](benchmarks/rust-ui-checkpoint-2026-10-28.json).
 
