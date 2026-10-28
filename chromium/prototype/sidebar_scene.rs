@@ -196,6 +196,8 @@ mod ffi {
         focus: u32,
         active: bool, hovered: bool, tile: bool, close: bool, close_visible: bool, focused: bool,
         font_size: f32, font_height: f32, font_weight: i32,
+        // A design system text style for every text this item draws (design::TextStyleId; 0 = none).
+        text_style: u32,
         clip: FloatRect,
     }
     struct TreeNode { id: String, parent: String, folder: bool }
@@ -260,7 +262,13 @@ mod ffi {
         radius: f32, color: u32, stroke: f32, shape: u32,
         text: String, font_size: f32, font_weight: i32, bold: bool, middle: bool, center: bool, right_align: bool, clip: FloatRect,
         editor: bool, utf16: Vec<u16>, text_x: f32, baseline: f32, text_direction: u32,
+        // Design system text: 0 system font, 1 display, 2 sans, 3 mono; letter spacing in em.
+        family: u32, italic: bool, tracking: f32,
     }
+    /// The design system's spacing and radius tokens, for native panel layout.
+    struct DesignMetrics { space_0_5: i32, space_1: i32, space_2: i32, space_3: i32, space_4: i32, space_6: i32, space_8: i32, space_12: i32, radius_xs: i32, radius_sm: i32, radius_md: i32, radius_lg: i32 }
+    /// A design system text style (design_tokens::text) for native measuring.
+    struct DesignTextStyle { family: u32, size: f32, line_height: f32, weight: i32, italic: bool, tracking: f32, caps: bool }
     extern "Rust" {
 
         fn editor_viewport(state: &mut EditorState, width: f32, height: f32, line_width: f32, caret_x: f32, ascent: f32, descent: f32, rtl: bool, inset: f32) -> EditorGeometry;
@@ -401,6 +409,9 @@ mod ffi {
         fn appearance_presets(emoji: bool) -> Vec<AppearancePreset>;
         fn design_palette(dark: bool, workspace_color: u32) -> DesignPalette;
         fn design_same_workspace_color(a: u32, b: u32) -> bool;
+        fn design_text_style(id: u32) -> DesignTextStyle;
+        fn design_metrics() -> DesignMetrics;
+        fn design_font_family(family: u32) -> String;
         fn appearance_selected(emoji: bool, index: usize, color: u32, current_emoji: &str) -> bool;
         fn appearance_row_layout(width: i32, height: i32, editor_width: i32, editor_height: i32, emoji: bool) -> ColumnLayout;
         fn appearance_pill_layout(width: i32, height: i32, count: usize) -> ColumnLayout;
@@ -1375,7 +1386,7 @@ fn toggle_scene(s:&ffi::ToggleStyle)->Vec<ffi::Primitive>{
  if ![s.width,s.height,s.progress,s.hover,s.clip.x,s.clip.y,s.clip.width,s.clip.height].iter().all(|v|v.is_finite())||s.width<=0.0||s.height<=0.0{return vec![];}
  let p=s.progress.clamp(0.0,1.0);let hover=s.hover.clamp(0.0,1.0);
  let blend=|on:u32,off:u32,t:f32|{let mut color=0;for shift in [0,8,16,24]{let a=((on>>shift)&255) as f32;let b=((off>>shift)&255) as f32;color|=((b+(a-b)*t).round() as u32)<<shift;}color};
- let make=|x,y,width,height,radius,color,stroke|ffi::Primitive{x,y,width,height,radius,color,stroke,shape:0,text:String::new(),font_size:0.0,font_weight:0,bold:false,middle:false,center:false,right_align:false,clip:ffi::FloatRect{x:s.clip.x,y:s.clip.y,width:s.clip.width,height:s.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0};
+ let make=|x,y,width,height,radius,color,stroke|ffi::Primitive{x,y,width,height,radius,color,stroke,shape:0,text:String::new(),font_size:0.0,font_weight:0,bold:false,middle:false,center:false,right_align:false,clip:ffi::FloatRect{x:s.clip.x,y:s.clip.y,width:s.clip.width,height:s.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0,family:0,italic:false,tracking:0.0};
  let w=s.width.min(26.0);let h=s.height.min(16.0);let x=(s.width-w)/2.0;let y=(s.height-h)/2.0;
  let inset=if s.checked{2.0}else{4.0};let diameter=(h-2.0*inset).max(0.0);let pos=if s.rtl{1.0-p}else{p};let tx=x+inset+pos*(w-h).max(0.0);let ty=y+inset;let out=if s.pressed{1.0}else{0.0};
  let mut ops=vec![make(x,y,w,h,h/2.0,blend(s.track_on,s.track_off,p),0.0)];
@@ -1528,7 +1539,7 @@ fn color_pad_target(current:u32,x:f32,y:f32,width:f32,height:f32)->u32{
 fn color_wheel_step(current:u32,axis:u32,delta:i32)->u32{design::wheel::step(design::WorkspaceColor::from_argb(current),axis,delta).to_argb()}
 fn color_wheel_description(current:u32,ring:bool)->String{design::wheel::description(design::WorkspaceColor::from_argb(current),ring)}
 fn wheel_primitive(i:&ffi::Item,x:f32,y:f32,w:f32,h:f32,radius:f32,color:u32,stroke:f32)->ffi::Primitive{
-    ffi::Primitive{x,y,width:w,height:h,radius,color,stroke,shape:0,text:String::new(),font_size:0.0,font_weight:0,bold:false,middle:false,center:false,right_align:false,clip:ffi::FloatRect{x:i.clip.x,y:i.clip.y,width:i.clip.width,height:i.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0}
+    ffi::Primitive{x,y,width:w,height:h,radius,color,stroke,shape:0,text:String::new(),font_size:0.0,font_weight:0,bold:false,middle:false,center:false,right_align:false,clip:ffi::FloatRect{x:i.clip.x,y:i.clip.y,width:i.clip.width,height:i.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0,family:0,italic:false,tracking:0.0}
 }
 // Kinds 28 and 29: the color wheel's ring and field, drawn from solid primitives
 // (the scene has no gradients): 120 overlapping dots make the ring, a 24 x 24
@@ -2710,7 +2721,7 @@ impl ActionControl {
     fn sidebar_set_title(&mut self,title:Vec<u16>)->bool{self.write_node(|r|{if let Some(NodeModel::SidebarPin(pin))=r.model.as_deref_mut(){let display=pin_title(&title,pin.presentation.folder,pin.collapsed);if pin.presentation.title==display{return false;}if pin.presentation.folder{pin.base_title=title;}pin.presentation.title_utf8=String::from_utf16_lossy(&display);pin.presentation.title=display;return true;}let Some(p)=r.model.as_deref_mut().and_then(NodeModel::row_presentation_mut) else{return false;};if p.title==title{return false;}p.title_utf8=String::from_utf16_lossy(&title);p.title=title;true}).unwrap_or(false)}
     fn sidebar_set_monogram(&mut self,monogram:Vec<u16>,color:u32)->bool{self.write_node(|r|{let Some(p)=r.model.as_deref_mut().and_then(NodeModel::row_presentation_mut) else{return false;};if p.monogram==monogram&&p.color==color{return false;}p.monogram_utf8=if p.folder{"📁".into()}else{String::from_utf16_lossy(&monogram)};p.monogram=monogram;p.color=color;true}).unwrap_or(false)}
     fn sidebar_scene(&self,bounds:ffi::FloatRect,clip:ffi::FloatRect,style:ffi::SidebarRowStyle,close:bool,close_visible:bool)->ffi::SidebarRowScene{
-        let mut item=ffi::Item{x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height,kind:0,glyph:0,title:String::new(),monogram:String::new(),detail:String::new(),title_width:0.0,detail_ink:0,detail_font_size:0.0,ink:style.ink,fill:0,badge:0,edge:0,focus:style.focus,active:false,hovered:false,tile:false,close:false,close_visible:false,focused:false,font_size:style.font_size,font_height:0.0,font_weight:0,clip};
+        let mut item=ffi::Item{x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height,kind:0,glyph:0,title:String::new(),monogram:String::new(),detail:String::new(),title_width:0.0,detail_ink:0,detail_font_size:0.0,ink:style.ink,fill:0,badge:0,edge:0,focus:style.focus,active:false,hovered:false,tile:false,close:false,close_visible:false,focused:false,font_size:style.font_size,font_height:0.0,font_weight:0,text_style:0,clip};
         let valid=self.read_node(|r|{let Some(p)=r.model.as_deref().and_then(NodeModel::row_presentation) else{return false;};let hovered=r.state.enabled&&matches!(r.state.visual,ffi::RowVisual::Hovered|ffi::RowVisual::Pressed);item.title=p.title_utf8.clone();item.monogram=p.monogram_utf8.clone();item.badge=if p.folder{0}else{p.color};item.close=close&&matches!(r.model.as_deref(),Some(NodeModel::SidebarTab(m)) if m.can_close);item.close_visible=item.close&&close_visible;item.active=r.state.on;item.hovered=hovered;item.tile=p.tile;item.focused=r.state.focused;item.fill=if p.tile{(style.card&0xffffff)|((if r.state.on{0xff}else if hovered{0x8c}else{0x59})<<24)}else if r.state.on{style.card}else if hovered{style.hover}else{0};item.edge=if r.state.on&&!p.tile{style.edge}else{0};true}).unwrap_or(false);
         ffi::SidebarRowScene{valid,item}
     }
@@ -2934,7 +2945,7 @@ fn cycle_tab(current: usize, count: usize, backwards: bool) -> usize {
 // so Metal and the CPU recipe do not depend on native vector-icon painting.
 fn preference_control_scene(i:&ffi::Item)->Vec<ffi::Primitive>{
     let mut ops=Vec::new();
-    let mut rect=|x:f32,y:f32,w:f32,h:f32,r:f32,color:u32,stroke:f32|{if w>0.0&&h>0.0{ops.push(ffi::Primitive{x,y,width:w,height:h,radius:r,color,stroke,shape:0,text:String::new(),font_size:0.0,font_weight:0,bold:false,middle:false,center:false,right_align:false,clip:ffi::FloatRect{x:i.clip.x,y:i.clip.y,width:i.clip.width,height:i.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0});}};
+    let mut rect=|x:f32,y:f32,w:f32,h:f32,r:f32,color:u32,stroke:f32|{if w>0.0&&h>0.0{ops.push(ffi::Primitive{x,y,width:w,height:h,radius:r,color,stroke,shape:0,text:String::new(),font_size:0.0,font_weight:0,bold:false,middle:false,center:false,right_align:false,clip:ffi::FloatRect{x:i.clip.x,y:i.clip.y,width:i.clip.width,height:i.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0,family:0,italic:false,tracking:0.0});}};
     if i.fill>>24!=0{rect(i.x,i.y,i.width,i.height,8.0,i.fill,0.0);}
     if i.active&&i.kind==22{rect(i.x+0.5,i.y+0.5,(i.width-1.0).max(0.0),(i.height-1.0).max(0.0),8.0,i.detail_ink,1.0);}
     let cx=if i.kind==23{i.x+i.width/2.0}else if i.tile{i.x+i.width-18.0}else{i.x+18.0};let cy=i.y+i.height/2.0;
@@ -2953,7 +2964,7 @@ fn preference_control_scene(i:&ffi::Item)->Vec<ffi::Primitive>{
         }
     }
     if i.focused{rect(i.x+2.0,i.y+i.height-3.0,(i.width-4.0).max(0.0),2.0,1.0,i.ink,0.0);}
-    if i.kind==22&&!i.title.is_empty(){let x=if i.tile{i.x+10.0}else{i.x+36.0};let w=(i.width-46.0).max(0.0);if w>0.0{ops.push(ffi::Primitive{x,y:i.y,width:w,height:i.height,radius:0.0,color:i.ink,stroke:0.0,shape:0,text:i.title.clone(),font_size:i.font_size,font_weight:0,bold:i.active,middle:false,center:false,right_align:false,clip:ffi::FloatRect{x:i.clip.x,y:i.clip.y,width:i.clip.width,height:i.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0});}}
+    if i.kind==22&&!i.title.is_empty(){let x=if i.tile{i.x+10.0}else{i.x+36.0};let w=(i.width-46.0).max(0.0);if w>0.0{ops.push(ffi::Primitive{x,y:i.y,width:w,height:i.height,radius:0.0,color:i.ink,stroke:0.0,shape:0,text:i.title.clone(),font_size:i.font_size,font_weight:0,bold:i.active,middle:false,center:false,right_align:false,clip:ffi::FloatRect{x:i.clip.x,y:i.clip.y,width:i.clip.width,height:i.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0,family:0,italic:false,tracking:0.0});}}
     ops
 }
 
@@ -2981,6 +2992,7 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
         let start = out.len();
         layout_item(i, &mut out);
         focus_ring(i, start, &mut out);
+        apply_text_style(i, start, &mut out);
     }
     out
 }
@@ -2998,6 +3010,31 @@ fn focus_ring(i: &ffi::Item, start: usize, out: &mut Vec<ffi::Primitive>) {
     out.push(ffi::Primitive { x: i.x + 1.0, y: i.y + 1.0, width: i.width - 2.0, height: i.height - 2.0,
         radius: (radius - 1.0).max(0.0), color: i.focus, stroke: 2.0, ..template });
 }
+// A design system text style replaces the recipe's own font on every text the
+// item draws: family, size, weight, italic, letter spacing and capitals.
+fn apply_text_style(i: &ffi::Item, start: usize, out: &mut [ffi::Primitive]) {
+    let Some((style, caps)) = design::text_style(i.text_style) else { return; };
+    for p in out[start..].iter_mut().filter(|p| !p.text.is_empty() && !p.editor) {
+        p.family = design::family_id(style.family);
+        p.font_size = style.size;
+        p.font_weight = i32::from(style.weight);
+        p.bold = style.weight >= 600;
+        p.italic = style.italic;
+        p.tracking = style.letter_spacing;
+        if caps { p.text = p.text.to_uppercase(); }
+    }
+}
+fn design_text_style(id:u32)->ffi::DesignTextStyle{
+    match design::text_style(id){
+        Some((s,caps))=>ffi::DesignTextStyle{family:design::family_id(s.family),size:s.size,line_height:s.line_height,weight:i32::from(s.weight),italic:s.italic,tracking:s.letter_spacing,caps},
+        None=>ffi::DesignTextStyle{family:0,size:0.0,line_height:0.0,weight:0,italic:false,tracking:0.0,caps:false},
+    }
+}
+fn design_font_family(family:u32)->String{design::family_name(family).unwrap_or_default().into()}
+fn design_metrics()->ffi::DesignMetrics{
+    use design_tokens::{radius,space};let px=|v:f32|v.round() as i32;
+    ffi::DesignMetrics{space_0_5:px(space::S0_5),space_1:px(space::S1),space_2:px(space::S2),space_3:px(space::S3),space_4:px(space::S4),space_6:px(space::S6),space_8:px(space::S8),space_12:px(space::S12),radius_xs:px(radius::XS),radius_sm:px(radius::SM),radius_md:px(radius::MD),radius_lg:px(radius::LG)}
+}
 fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
     if ![i.x, i.y, i.width, i.height].iter().all(|v| v.is_finite())
         || i.width <= 0.0 || i.height <= 0.0
@@ -3009,7 +3046,7 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
     let mut emit = |x, y, w: f32, h: f32, radius, color, text: &str, size, bold| {
         if w > 0.0 && h > 0.0 {
             out.push(ffi::Primitive { x, y, width: w, height: h, radius,
-                color, stroke: 0.0, shape: 0, text: text.into(), font_size: size, font_weight:0, bold, middle: false, center: false,right_align:false, editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0,
+                color, stroke: 0.0, shape: 0, text: text.into(), font_size: size, font_weight:0, bold, middle: false, center: false,right_align:false, editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0,family:0,italic:false,tracking:0.0,
                 clip: ffi::FloatRect {x: i.clip.x, y: i.clip.y, width: i.clip.width, height: i.clip.height} });
         }
     };
@@ -3296,7 +3333,7 @@ mod tests {
         title:"Zażółć 日本語 🦀".into(), monogram:"Z".into(), detail:String::new(),
         title_width:0.0, detail_ink:0, detail_font_size:12.0, ink:0xff101010,
         fill:0xffffffff, badge:0xff556677, edge:0, focus:0, active:true, hovered:false,
-        tile:false, close:true, close_visible:true, focused:false, font_size:13.0, font_height:16.0, font_weight:0,
+        tile:false, close:true, close_visible:true, focused:false, font_size:13.0, font_height:16.0, font_weight:0, text_style:0,
         clip:ffi::FloatRect {x:0.0, y:0.0, width:width.max(0.0), height:34.0},
     }}
     fn child(width: i32, height: i32) -> ffi::ColumnChild {
@@ -4142,6 +4179,17 @@ mod tests {
         let ops=layout(std::slice::from_ref(&p));assert_eq!(ops.iter().filter(|o|o.text=="Koral").count(),1);
         assert_eq!(ops.iter().find(|o|o.color==0xff9a92ff).map(|o|(o.stroke,o.radius)),Some((1.0,14.5)));assert_eq!(ops.iter().find(|o|o.color==0xffcc8463).map(|o|o.width),Some(18.0));
         p.width=32.0;assert!(layout(&[p]).iter().all(|o|o.text.is_empty()));
+    }
+    #[test] fn design_text_styles_restyle_every_text_of_an_item() {
+        let mut t=row(300.0);t.kind=17;t.title="Kolor przestrzeni".into();t.text_style=design::TextStyleId::Eyebrow as u32;
+        let ops=layout(std::slice::from_ref(&t));let text=ops.iter().find(|p|!p.text.is_empty()).unwrap();
+        assert_eq!((text.text.as_str(),text.family,text.font_size,text.font_weight,text.italic),("KOLOR PRZESTRZENI",2,10.5,600,false));assert!((text.tracking-0.08).abs()<1e-6);
+        t.text_style=design::TextStyleId::DisplayLarge as u32;let ops=layout(std::slice::from_ref(&t));let text=ops.iter().find(|p|!p.text.is_empty()).unwrap();
+        assert_eq!((text.text.as_str(),text.family,text.font_size,text.italic),("Kolor przestrzeni",1,40.0,true));
+        t.text_style=0;assert!(layout(&[t]).iter().all(|p|p.family==0));
+        let s=design_text_style(design::TextStyleId::Title as u32);assert_eq!((s.family,s.size,s.line_height,s.weight,s.caps),(2,17.0,22.0,600,false));assert_eq!(design_text_style(99).size,0.0);
+        assert_eq!((design_font_family(1),design_font_family(3),design_font_family(9)),("Instrument Serif".to_string(),"JetBrains Mono".to_string(),String::new()));
+        let m=design_metrics();assert_eq!((m.space_2,m.space_4,m.space_6,m.radius_sm,m.radius_lg),(8,16,24,8,20));
     }
     #[test] fn design_palette_bridge_carries_the_rust_palette() {
         let p=design_palette(true,APPEARANCE_COLORS[2]);let q=design::Palette::for_workspace(design::Scheme::Noc,design::WorkspaceColor::from_argb(APPEARANCE_COLORS[2]));
@@ -5651,13 +5699,13 @@ fn editor_scene(state:&EditorState,placeholder:&[u16],g:&ffi::EditorGeometry,s:&
     if ![s.width,s.height,s.font_size,g.origin,g.baseline,g.clip.x,g.clip.y,g.clip.width,g.clip.height].iter().all(|v|v.is_finite())||s.width<=0.0||s.height<=0.0||s.font_size<=0.0{return ops;}
     let full=||ffi::FloatRect{x:0.0,y:0.0,width:s.width,height:s.height};
     let clip=||ffi::FloatRect{x:g.clip.x,y:g.clip.y,width:g.clip.width,height:g.clip.height};
-    let rect=|x,y,width,height,color,cl:ffi::FloatRect|ffi::Primitive{x,y,width,height,radius:0.0,color,stroke:0.0,shape:0,text:String::new(),font_size:0.0,font_weight:0,bold:false,middle:false,center:false,right_align:false,clip:cl,editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0};
+    let rect=|x,y,width,height,color,cl:ffi::FloatRect|ffi::Primitive{x,y,width,height,radius:0.0,color,stroke:0.0,shape:0,text:String::new(),font_size:0.0,font_weight:0,bold:false,middle:false,center:false,right_align:false,clip:cl,editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0,family:0,italic:false,tracking:0.0};
     let mut frame=rect(0.0,0.0,s.width,s.height,s.fill,full());frame.radius=if s.framed{5.0}else{0.0};ops.push(frame);
     if s.framed{let mut edge=rect(0.5,0.5,(s.width-1.0).max(0.0),(s.height-1.0).max(0.0),s.edge,full());edge.radius=4.5;edge.stroke=if s.focused{2.0}else{1.0};edge.shape=0;ops.push(edge);}
     for span in selection {if span.x.is_finite()&&span.width.is_finite()&&span.width>0.0{ops.push(rect(g.origin+span.x,g.caret.y,span.width,g.caret.height,s.selection_fill,clip()));}}
     let text=if state.text().is_empty(){placeholder}else{state.text()};
     if !text.is_empty() {
-        let make=|color,cl:ffi::FloatRect|ffi::Primitive{x:0.0,y:0.0,width:s.width,height:s.height,radius:0.0,color,stroke:0.0,shape:0,text:String::from_utf16_lossy(text),font_size:s.font_size,font_weight:0,bold:false,middle:false,center:false,right_align:false,clip:cl,editor:true,utf16:text.to_vec(),text_x:if state.text().is_empty()&&s.right_align{g.clip.x+g.clip.width-s.placeholder_width}else{g.origin},baseline:g.baseline,text_direction:s.text_direction};
+        let make=|color,cl:ffi::FloatRect|ffi::Primitive{x:0.0,y:0.0,width:s.width,height:s.height,radius:0.0,color,stroke:0.0,shape:0,text:String::from_utf16_lossy(text),font_size:s.font_size,font_weight:0,bold:false,middle:false,center:false,right_align:false,clip:cl,editor:true,utf16:text.to_vec(),text_x:if state.text().is_empty()&&s.right_align{g.clip.x+g.clip.width-s.placeholder_width}else{g.origin},baseline:g.baseline,text_direction:s.text_direction,family:0,italic:false,tracking:0.0};
         ops.push(make(if state.text().is_empty(){s.placeholder_ink}else{s.ink},clip()));
         if !state.text().is_empty(){for span in selection{if span.x.is_finite()&&span.width.is_finite()&&span.width>0.0{let x=(g.origin+span.x).max(g.clip.x);let end=(g.origin+span.x+span.width).min(g.clip.x+g.clip.width);if end>x{ops.push(make(s.selection_ink,ffi::FloatRect{x,y:g.clip.y,width:end-x,height:g.clip.height}));}}}}
     }

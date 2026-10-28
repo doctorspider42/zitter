@@ -97,7 +97,15 @@ std::shared_ptr<SharedMetalContext> AcquireMetalContext() {
   if (!context->Init()) return nullptr;
   *cached=context; return context;
 }
-NSFont* ChromeFont(float size,int weight,bool medium=false){
+NSFont* ChromeFont(float size,int weight,bool medium=false,uint32_t family=0,bool italic=false){
+  // A design system family by name (design.rs family_id); the system font where
+  // the bundled fonts are not active.
+  if(family){
+    const CGFloat trait=weight>=700?NSFontWeightBold:weight>=600?NSFontWeightSemibold:weight>=500?NSFontWeightMedium:NSFontWeightRegular;
+    NSFontDescriptor* descriptor=[NSFontDescriptor fontDescriptorWithFontAttributes:@{NSFontFamilyAttribute:base::SysUTF8ToNSString(std::string(sidebar::design_font_family(family))),NSFontTraitsAttribute:@{NSFontWeightTrait:@(trait)}}];
+    if(italic)descriptor=[descriptor fontDescriptorWithSymbolicTraits:NSFontDescriptorTraitItalic];
+    if(NSFont* font=[NSFont fontWithDescriptor:descriptor size:std::isfinite(size)&&size>0?size:13])return font;
+  }
   if(weight<=0)return editor_text_detail::Font(size,medium);
   const CGFloat native_weight=weight>=900?NSFontWeightBlack:weight>=800?NSFontWeightHeavy:weight>=700?NSFontWeightBold:weight>=600?NSFontWeightSemibold:weight>=500?NSFontWeightMedium:weight>=400?NSFontWeightRegular:weight>=300?NSFontWeightLight:NSFontWeightThin;
   return [NSFont systemFontOfSize:std::isfinite(size)&&size>0?size:13 weight:native_weight];
@@ -242,7 +250,7 @@ class Surface final : public SidebarMetal {
     signature << bounds.ToString() << ':' << scale << ':' << background;
     for (const auto& op : ops) signature << '|' << op.x << ',' << op.y << ',' << op.width << ','
         << op.height << ',' << op.clip.x << ',' << op.clip.y << ',' << op.clip.width << ',' << op.clip.height
-        << ',' << op.radius << ',' << op.color << ',' << op.font_size << ',' << op.font_weight << ','
+        << ',' << op.radius << ',' << op.color << ',' << op.font_size << ',' << op.font_weight << ',' << op.family << ',' << op.italic << ',' << op.tracking << ','
         << op.shape << ',' << op.stroke << ',' << op.bold << ',' << op.middle << ',' << op.center << ',' << op.right_align << ',' << op.editor << ',' << op.text_x << ',' << op.baseline << ',' << op.text_direction << ':' << op.text.size() << ':' << std::string(op.text);
     for(const auto& op:ops)if(op.editor){signature << ':' << op.utf16.size();for(uint16_t c:op.utf16)signature << ',' << c;}
     std::string fingerprint = signature.str();
@@ -303,7 +311,7 @@ class Surface final : public SidebarMetal {
  private:
   id<MTLTexture> Text(const sidebar::Primitive& op, double scale) {
     std::ostringstream key;
-    key << op.width << ',' << op.height << ',' << op.font_size << ',' << op.font_weight << ',' << scale << ','
+    key << op.width << ',' << op.height << ',' << op.font_size << ',' << op.font_weight << ',' << op.family << ',' << op.italic << ',' << op.tracking << ',' << scale << ','
         << op.color << ',' << op.shape << ',' << op.stroke << ',' << op.bold << ',' << op.middle << ',' << op.center << ',' << op.right_align << ',' << op.editor << ',' << op.text_x << ',' << op.baseline << ',' << op.text_direction << ':' << std::string(op.text);
     if(op.editor){key << ':' << op.utf16.size();for(uint16_t c:op.utf16)key << ',' << c;}
     auto found = text_.find(key.str());
@@ -326,11 +334,12 @@ class Surface final : public SidebarMetal {
       EditorTextLayout line(text,op.font_size,op.bold,op.text_direction);
       line.Draw(context.get(),op.text_x,op.height-op.baseline,op.color);
     } else {
-    NSFont* font = ChromeFont(op.font_size,op.font_weight,op.bold);
+    NSFont* font = ChromeFont(op.font_size,op.font_weight,op.bold,op.family,op.italic);
     NSColor* color = [NSColor colorWithSRGBRed:((op.color>>16)&255)/255.
         green:((op.color>>8)&255)/255. blue:(op.color&255)/255. alpha:(op.color>>24)/255.];
     NSString* string = base::SysUTF8ToNSString(std::string(op.text));
-    NSDictionary* attributes = @{NSFontAttributeName:font, NSForegroundColorAttributeName:color};
+    NSDictionary* attributes = op.tracking!=0?@{NSFontAttributeName:font, NSForegroundColorAttributeName:color, NSKernAttributeName:@(op.tracking*op.font_size)}
+        :@{NSFontAttributeName:font, NSForegroundColorAttributeName:color};
     NSAttributedString* attributed = [[NSAttributedString alloc] initWithString:string attributes:attributes];
     base::apple::ScopedCFTypeRef<CTLineRef> line(CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)attributed));
     NSAttributedString* ellipsis = [[NSAttributedString alloc] initWithString:@"…" attributes:attributes];

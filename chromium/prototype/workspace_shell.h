@@ -923,6 +923,8 @@ class WorkspaceShell final : public ui::EventHandler,
   std::unique_ptr<ProfileFormState> profile_form_;
   raw_ptr<EditorControl> address_ = nullptr;
   raw_ptr<views::View> color_presets_ = nullptr;
+  // The panel header's icon tile.
+  raw_ptr<views::View> settings_icon_ = nullptr;
   raw_ptr<EditorControl> emoji_input_ = nullptr;
   raw_ptr<views::View> address_error_ = nullptr;
   raw_ptr<views::View> color_error_ = nullptr;

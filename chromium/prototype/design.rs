@@ -263,6 +263,62 @@ impl WorkspaceColor {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Text styles, as the scene names them.
+
+/// A design system text style a scene item can ask for (`Item::text_style`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum TextStyleId {
+    DisplayXl = 1,
+    DisplayLarge = 2,
+    Title = 3,
+    BodyStrong = 4,
+    Body = 5,
+    Label = 6,
+    /// Uppercase group label.
+    Eyebrow = 7,
+    Url = 8,
+}
+
+/// The tokens' style for `id`, and whether its text is set in capitals.
+pub fn text_style(id: u32) -> Option<(crate::design_tokens::TypeStyle, bool)> {
+    use crate::design_tokens::text;
+    Some(match id {
+        1 => (text::DISPLAY_XL, false),
+        2 => (text::DISPLAY_L, false),
+        3 => (text::TITLE, false),
+        4 => (text::BODY_STRONG, false),
+        5 => (text::BODY, false),
+        6 => (text::LABEL, false),
+        7 => (text::EYEBROW, true),
+        8 => (text::URL, false),
+        _ => return None,
+    })
+}
+
+/// The scene's font family number: 1 display, 2 sans, 3 mono (0 is the system font).
+pub fn family_id(family: crate::design_tokens::Family) -> u32 {
+    use crate::design_tokens::Family;
+    match family {
+        Family::Display => 1,
+        Family::Sans => 2,
+        Family::Mono => 3,
+    }
+}
+
+/// The installed family name for a scene font family number (the first of its stack).
+pub fn family_name(id: u32) -> Option<&'static str> {
+    use crate::design_tokens::{font, Family};
+    let family = match id {
+        1 => Family::Display,
+        2 => Family::Sans,
+        3 => Family::Mono,
+        _ => return None,
+    };
+    font::stack(family).first().copied()
+}
+
 /// The workspace color wheel: a hue ring and a saturation x tone field, both
 /// continuous. Geometry is in the control's own px.
 pub mod wheel {

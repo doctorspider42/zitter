@@ -369,6 +369,13 @@ bool SavePatch(const base::FilePath& path, std::optional<std::string> id,
 gfx::FontList Font(int size_delta, gfx::Font::Weight weight = gfx::Font::Weight::NORMAL) {
   return gfx::FontList().DeriveWithSizeDelta(size_delta).DeriveWithWeight(weight);
 }
+// A design system family (1 display, 2 sans, 3 mono; design.rs family_id). Falls
+// back to the system font where the bundled fonts are not active (test runs).
+gfx::FontList DesignFont(uint32_t family,float size,int weight,bool italic) {
+  const int weight_value=std::clamp(weight>0?weight:400,100,900)/100*100;
+  return gfx::FontList({std::string(sidebar::design_font_family(family))},italic?gfx::Font::ITALIC:gfx::Font::NORMAL,
+      std::max(1,static_cast<int>(std::lround(size))),static_cast<gfx::Font::Weight>(weight_value));
+}
 void FillRound(gfx::Canvas* canvas, const gfx::Rect& rect, int radius, SkColor color) {
   cc::PaintFlags flags;
   flags.setAntiAlias(true);
@@ -580,8 +587,8 @@ void PaintSceneRecipe(gfx::Canvas* canvas,const sidebar::Item& item,const gfx::F
   for(const auto& op:ops) {
     gfx::ScopedCanvas clipped(canvas);canvas->ClipRect(gfx::Rect(op.clip.x,op.clip.y,op.clip.width,op.clip.height));
     if(op.text.size()){
-      auto text=base::UTF8ToUTF16(std::string(op.text));auto text_font=font;
-      if(styled_text){text_font=font.DeriveWithSizeDelta(std::max(1,static_cast<int>(op.font_size))-font.GetFontSize());text=gfx::ElideText(text,text_font,op.width,op.middle?gfx::ELIDE_MIDDLE:gfx::ELIDE_TAIL);}
+      auto text=base::UTF8ToUTF16(std::string(op.text));auto text_font=op.family?DesignFont(op.family,op.font_size,op.font_weight,op.italic):font;
+      if(styled_text&&!op.family){text_font=font.DeriveWithSizeDelta(std::max(1,static_cast<int>(op.font_size))-font.GetFontSize());text=gfx::ElideText(text,text_font,op.width,op.middle?gfx::ELIDE_MIDDLE:gfx::ELIDE_TAIL);}
       canvas->DrawStringRectWithFlags(text,text_font,op.color,gfx::Rect(op.x,op.y,op.width,op.height),op.center?gfx::Canvas::TEXT_ALIGN_CENTER:op.right_align?gfx::Canvas::TEXT_ALIGN_RIGHT:gfx::Canvas::TEXT_ALIGN_LEFT);
     }
     else {cc::PaintFlags flags;flags.setAntiAlias(true);flags.setColor(op.color);if(op.stroke>0){flags.setStyle(cc::PaintFlags::kStroke_Style);flags.setStrokeWidth(op.stroke);}canvas->DrawRoundRect(gfx::RectF(op.x,op.y,op.width,op.height),op.radius,flags);}
@@ -2114,6 +2121,8 @@ class SceneParagraph final : public views::View {
     GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);GetViewAccessibility().SetName(text_);
   }
   void SetText(std::u16string text){if(text==text_)return;text_=std::move(text);GetViewAccessibility().SetName(text_);measured_width_=-1;PreferredSizeChanged();SchedulePaint();Schedule();}
+  // A design system text style (design.rs TextStyleId) instead of the delta/bold font.
+  void SetTextStyle(uint32_t style){style_=style;measured_width_=-1;PreferredSizeChanged();SchedulePaint();Schedule();}
   bool contains_scene_text(std::string_view text) const{
     if(!surface_||!surface_->visible())return false;if(surface_->contains_text_for_testing(text))return true;
     return !lines_.empty()&&base::UTF16ToUTF8(text_)==text&&std::all_of(lines_.begin(),lines_.end(),[&](const auto& line){return surface_->contains_text_for_testing(line);});
@@ -2131,13 +2140,19 @@ class SceneParagraph final : public views::View {
   }
  private:
   sidebar::ColumnLayout Geometry(int requested) const {
-    const int width=std::max(0,requested);const auto font=Font(delta_,bold_?gfx::Font::Weight::MEDIUM:gfx::Font::Weight::NORMAL);
+    const int width=std::max(0,requested);
+    if(style_){
+      const auto s=sidebar::design_text_style(style_);const auto text=base::UTF16ToUTF8(s.caps?base::i18n::ToUpper(text_):text_);
+      if(width!=measured_width_||measured_font_!=-static_cast<int>(style_)){lines_=ShapeSidebarParagraphWeight(text,s.size,width,s.weight);measured_width_=width;measured_font_=-static_cast<int>(style_);}
+      return sidebar::paragraph_layout(width,static_cast<int>(std::lround(s.line_height)),lines_.size());
+    }
+    const auto font=Font(delta_,bold_?gfx::Font::Weight::MEDIUM:gfx::Font::Weight::NORMAL);
     if(width!=measured_width_||font.GetFontSize()!=measured_font_){lines_=ShapeSidebarParagraph(base::UTF16ToUTF8(text_),font.GetFontSize(),width,bold_);measured_width_=width;measured_font_=font.GetFontSize();}
     return sidebar::paragraph_layout(width,font.GetHeight(),lines_.size());
   }
   std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const {
     const auto g=Geometry(width());std::vector<sidebar::Item> items;items.reserve(g.children.size());
-    for(size_t i=0;i<g.children.size();++i){const auto& r=g.children[i];sidebar::Item item{};item.kind=17;item.x=r.x+dx;item.y=r.y+dy;item.width=r.width;item.height=r.height;item.title=lines_[i];item.font_size=Font(delta_).GetFontSize();item.active=bold_;item.ink=Tone(this,ink_);item.clip={clip.x(),clip.y(),clip.width(),clip.height()};items.push_back(std::move(item));}return items;
+    for(size_t i=0;i<g.children.size();++i){const auto& r=g.children[i];sidebar::Item item{};item.kind=17;item.x=r.x+dx;item.y=r.y+dy;item.width=r.width;item.height=r.height;item.title=lines_[i];item.font_size=Font(delta_).GetFontSize();item.active=bold_;item.text_style=style_;item.ink=Tone(this,ink_);item.clip={clip.x(),clip.y(),clip.width(),clip.height()};items.push_back(std::move(item));}return items;
   }
   void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneParagraph::UpdateMetal,weak_factory_.GetWeakPtr()));}
   void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=surface_&&surface_->visible();const auto local=GetVisibleBounds();
@@ -2146,10 +2161,49 @@ class SceneParagraph final : public views::View {
     auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));
     surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,kCard));if(was!=surface_->visible())SchedulePaint();
   }
-  std::u16string text_;int delta_;bool bold_;SkColor ink_;mutable int measured_width_=-1,measured_font_=0;mutable std::vector<std::string> lines_;
+  std::u16string text_;int delta_;bool bold_;SkColor ink_;uint32_t style_=0;mutable int measured_width_=-1,measured_font_=0;mutable std::vector<std::string> lines_;
   std::unique_ptr<SidebarMetal> surface_;bool pending_=false;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneParagraph::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneParagraph> weak_factory_{this};
 };
 BEGIN_METADATA(SceneParagraph)
+END_METADATA
+
+// The design system's panel kit: text in the tokens' styles and sections laid
+// out with the spacing tokens (docs/design-system).
+const sidebar::DesignMetrics& Metrics(){static const sidebar::DesignMetrics metrics=sidebar::design_metrics();return metrics;}
+enum TextStyle : uint32_t { kDisplayLarge=2, kTitleText=3, kBodyStrong=4, kBodyText=5, kLabelText=6, kEyebrow=7 };
+SceneParagraph* PanelText(views::View* parent,std::u16string text,TextStyle style,SkColor role){
+  auto* paragraph=parent->AddChildView(std::make_unique<SceneParagraph>(std::move(text),0,false,role));paragraph->SetTextStyle(style);return paragraph;
+}
+// A vertical stack, `gap` px between children.
+views::View* PanelStack(views::View* parent,int gap){
+  auto* stack=parent->AddChildView(std::make_unique<views::View>());
+  stack->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical,gfx::Insets(),gap))->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kStretch);
+  return stack;
+}
+// A section: an uppercase label over its content, space-2 apart.
+views::View* PanelSection(views::View* parent,std::u16string label){
+  auto* section=PanelStack(parent,Metrics().space_2);PanelText(section,std::move(label),kEyebrow,kMuted);return section;
+}
+// Equal columns, space-2 apart; each child added to it takes one.
+views::View* PanelColumns(views::View* parent){
+  auto* row=parent->AddChildView(std::make_unique<views::View>());
+  auto* layout=row->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal,gfx::Insets(),Metrics().space_2));
+  layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kStart);layout->SetDefaultFlex(1);return row;
+}
+// The space's icon on its accent_soft tile (48 px, radius-md + 2), as the panel header shows it.
+class SpaceIconTile final : public views::View {
+  METADATA_HEADER(SpaceIconTile,views::View)
+ public:
+  explicit SpaceIconTile(base::RepeatingCallback<std::u16string()> emoji):emoji_(std::move(emoji)){GetViewAccessibility().SetIsIgnored(true);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(48,48);}
+  void OnPaint(gfx::Canvas* canvas) override{
+    const auto p=Palette(this);FillRound(canvas,GetLocalBounds(),Metrics().radius_md+2,p.accent_soft);
+    const auto emoji=emoji_.Run();if(!emoji.empty())canvas->DrawStringRectWithFlags(emoji,Font(10),p.ink,GetLocalBounds(),gfx::Canvas::TEXT_ALIGN_CENTER);
+  }
+ private:
+  base::RepeatingCallback<std::u16string()> emoji_;
+};
+BEGIN_METADATA(SpaceIconTile)
 END_METADATA
 void SetPanelText(views::View* view,std::u16string text) {
   if(auto* copy=views::AsViewClass<PreferenceCopy>(view)){copy->SetText(std::move(text));return;}
@@ -2933,22 +2987,27 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   settings->SetBackground(views::CreateRoundedRectBackground(kCard, 12));
   settings->SetBorder(views::CreateRoundedRectBorder(1, 12, Hairline(root_)));
   auto* settings_header = settings->AddChildView(std::make_unique<views::View>());
-  settings_title_ = settings_text(settings_header,u"Praca",kInk,8,gfx::Font::Weight::SEMIBOLD);
-  SetSidebarPanelLayout(settings_header, false, gfx::Insets(), 8, settings_title_);
+  settings_icon_=settings_header->AddChildView(std::make_unique<SpaceIconTile>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell?shell->workspace_emoji(shell->state_.workspace_id):std::u16string();},weak)));
+  auto* settings_titles=PanelStack(settings_header,2);
+  settings_title_ = PanelText(settings_titles,u"Praca",kDisplayLarge,kInk);
+  profile_name_ = PanelText(settings_titles,u"",kLabelText,kMuted);
+  SetSidebarPanelLayout(settings_header, false, gfx::Insets(), Metrics().space_3, settings_titles);
   auto dismiss_workspace=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
     if(shell){shell->settings_widget_->Hide();shell->RestorePageFocus();}
   },weak);
   {auto* controls=settings_header->AddChildView(std::make_unique<ScenePreferenceControls>(true));BindFormCommand(controls->AddControl({},workspace_copy[6]),sidebar::FormCommand::WorkspaceDismiss);}
-  profile_name_ = settings_text(settings.get(),u"",kMuted,-1);
-  settings_text(settings.get(),workspace_copy[0],kSubtle,-1);
-  workspace_input_ = AddEditor(settings.get());
+  auto* identity=PanelSection(settings.get(),u"Nazwa i profil");
+  auto* identity_columns=PanelColumns(identity);
+  auto* name_column=PanelStack(identity_columns,Metrics().space_1);auto* profile_column=PanelStack(identity_columns,Metrics().space_1);
+  PanelText(name_column,workspace_copy[0],kLabelText,kMuted);
+  workspace_input_ = AddEditor(name_column);
   workspace_input_->GetViewAccessibility().SetName(workspace_copy[0]);
   workspace_input_->SetPlaceholderText(workspace_copy[1]);
-  settings_text(settings.get(),workspace_copy[2],kSubtle,-1);
-  profile_picker_=ProfilePicker(settings.get(),workspace_copy[3],base::BindRepeating([]{}));
-  settings_text(settings.get(),workspace_copy[4],kMuted,-2,gfx::Font::Weight::NORMAL,true);
-  auto* save_hint=settings_text(settings.get(),workspace_copy[5],kMuted,-2,gfx::Font::Weight::NORMAL,true);
-  auto* actions=ActionGroup(settings.get(),false,8);
+  PanelText(profile_column,workspace_copy[2],kLabelText,kMuted);
+  profile_picker_=ProfilePicker(profile_column,workspace_copy[3],base::BindRepeating([]{}));
+  PanelText(identity,workspace_copy[4],kLabelText,kMuted);
+  auto* save_hint=settings_text(identity,workspace_copy[5],kMuted,-2,gfx::Font::Weight::NORMAL,true);
+  auto* actions=ActionGroup(identity,false,8);
   edit_workspace_ = AddAction(actions,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
         if (shell) shell->SubmitWorkspace(shell->creating_workspace_);
       }, weak),u"Zapisz nazwę i profil",ui::ButtonStyle::kProminent);
@@ -2962,9 +3021,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   workspace_appearance_ = appearance;
   appearance->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kVertical, gfx::Insets(), 8));
-  Spacer(appearance, 8);
-  settings_text(appearance,workspace_copy[7],kInk,0,gfx::Font::Weight::SEMIBOLD);
-  settings_text(appearance,workspace_copy[8],kSubtle,-1,gfx::Font::Weight::MEDIUM);
+  PanelText(appearance,u"Kolor przestrzeni",kEyebrow,kMuted);
   auto appearance_row=[&](bool emoji)->views::View* {
     return appearance->AddChildView(std::make_unique<AppearanceRow>(emoji));
   };
@@ -2987,8 +3044,8 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
    auto emoji=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell?shell->workspace_emoji(shell->state_.workspace_id):std::u16string();},weak);
    auto pick=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,SkColor color){if(shell)shell->SetWorkspaceColor(shell->state_.workspace_id,color);},weak);
    for(size_t i=0;i<color_wheel_.size();++i)color_wheel_[i]=wheel->AddChildView(std::make_unique<ColorWheelControl>(i==0,current,emoji,pick));}
-  Spacer(appearance, 6);
-  settings_text(appearance,workspace_copy[10],kSubtle,-1,gfx::Font::Weight::MEDIUM);
+  Spacer(appearance, Metrics().space_2);
+  PanelText(appearance,workspace_copy[10],kEyebrow,kMuted);
   auto* emoji_row=appearance_row(true);views::BoxLayout* emoji_layout=nullptr;
   std::vector<std::pair<std::u16string,std::u16string>> emojis;for(const auto* e:kWorkspaceEmojis)emojis.emplace_back(e,u"Emoji "+std::u16string(e));
   emojis.clear();for(const auto& p:sidebar::appearance_presets(true))emojis.emplace_back(base::UTF8ToUTF16(std::string(p.emoji)),base::UTF8ToUTF16(std::string(p.label)));
@@ -3034,9 +3091,9 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       }, weak), workspace_copy[16],ui::ButtonStyle::kText);
   BindFormCommand(remove_workspace_,sidebar::FormCommand::WorkspaceRemove);BindFormCommand(workspace_profiles,sidebar::FormCommand::WorkspaceProfiles);BindFormCommand(workspace_import,sidebar::FormCommand::WorkspaceImport);
 
-  settings->SetLayoutManager(CreateSidebarColumnLayout(8));settings->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(20)));appearance->SetLayoutManager(CreateSidebarColumnLayout(8));more->SetLayoutManager(CreateSidebarColumnLayout(8));
+  settings->SetLayoutManager(CreateSidebarColumnLayout(Metrics().space_4+4));settings->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(Metrics().space_6)));appearance->SetLayoutManager(CreateSidebarColumnLayout(8));more->SetLayoutManager(CreateSidebarColumnLayout(8));
   // Appearance first (saved at once), then the name and profile with the save row.
-  settings->ReorderChildView(appearance,settings->GetIndexOf(profile_name_.get()).value()+1);
+  settings->ReorderChildView(appearance,settings->GetIndexOf(settings_header).value()+1);
   save_hint->SetVisible(false);
 
   auto* footer = sidebar->AddChildView(std::make_unique<views::View>());
@@ -3486,7 +3543,7 @@ void WorkspaceShell::Detach() {
   url_pill_ = nullptr;
   workspace_name_ = nullptr;
   profile_name_ = nullptr;
-  settings_title_ = nullptr;
+  settings_title_ = nullptr; settings_icon_ = nullptr;
   workspace_appearance_ = nullptr; workspace_more_ = nullptr;
   settings_scroll_ = nullptr;
   settings_root_ = nullptr;
@@ -6275,6 +6332,7 @@ void WorkspaceShell::ApplyAppearance(bool refresh_theme) {
   for (auto& child : color_presets_->children())
     if (auto* swatch=child.get();IsGlyphAction(swatch)) SetActionOn(swatch,sidebar::appearance_selected(false,color_index++,color,{}));
   for(auto& wheel:color_wheel_)if(auto* control=views::AsViewClass<ColorWheelControl>(wheel.get()))control->Refresh();
+  if(settings_icon_)settings_icon_->SchedulePaint();
   const auto emoji = workspace_emoji(state_.workspace_id);
   if (!emoji_input_->HasFocus()) emoji_input_->SetText(emoji);
   size_t emoji_index=0;

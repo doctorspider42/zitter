@@ -114,7 +114,7 @@ out/ZitterOptimized/sidebar_scene_unittests design::
 python3 -m unittest tests.test_design_tokens
 ```
 
-Stan na `sidebar_scene` z mostem: 517/517 testów Rust (flagi GN: edycja 2024,
+Stan na `sidebar_scene` z mostem: 528/528 testów Rust (flagi GN: edycja 2024,
 `-Dwarnings`). `workspace_shell.cc` i `profile_workspace_browsertest.cc` kompilują się z
 flagami GN i pluginem stylu Chromium. **Testy przeglądarkowe nie były uruchamiane**;
 oczekiwania kolorów presetów w nich są zaktualizowane do nowych wartości.
@@ -157,3 +157,18 @@ Moduł nie zależy od cxx, więc da się go sprawdzić bez budowania Chromium, s
    tekstu w scenie.
 5. Fonty Instrument Serif, Schibsted Grotesk i JetBrains Mono (OFL) w pakiecie
    aplikacji i w audycie licencji.
+6. Typografia w scenie (zrobione): `Item::text_style` (`design::TextStyleId`: DisplayXl,
+   DisplayLarge, Title, BodyStrong, Body, Label, Eyebrow, Url) — `layout()` nadaje
+   tekstom elementu rodzinę, rozmiar, grubość, kursywę i rozstrzelenie z tokenów
+   (Eyebrow wersalikami). `Primitive` niesie `family` (0 systemowa, 1 Instrument Serif,
+   2 Schibsted Grotesk, 3 JetBrains Mono), `italic` i `tracking` (em). Metal składa
+   `NSFont` z rodziny i stosuje `NSKernAttributeName`; raster (`DesignFont`) ma rodzinę,
+   ale bez rozstrzelenia. Bez zainstalowanych fontów (testy, binaria spoza pakietu)
+   zostaje font systemowy. Most: `design_text_style`, `design_font_family`.
+7. Zestaw panelu (zrobione): `design_metrics()` daje C++ tokeny odstępów i promieni;
+   w `workspace_shell.cc` `PanelText` (tekst w stylu z tokenów), `PanelStack`,
+   `PanelSection` (Eyebrow nad treścią, `space-2`), `PanelColumns` (równe kolumny,
+   `space-2`) i `SpaceIconTile` (ikona przestrzeni na `accent_soft`, 48 px).
+   Panel przestrzeni na nich: nagłówek z kafelkiem, nazwą w DisplayLarge i profilem w
+   Label; sekcje „Kolor przestrzeni”, „Ikona”, „Nazwa i profil” (nazwa | profil w dwóch
+   kolumnach); marginesy `space-6`, odstęp sekcji 20 px.
