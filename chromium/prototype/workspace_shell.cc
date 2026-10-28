@@ -1,5 +1,6 @@
 #include "base/i18n/number_formatting.h"
 #include "ui/views/style/platform_style.h"
+#include "ui/views/vector_icons.h"
 #include "ui/views/mouse_constants.h"
 #include "ui/views/interaction/element_tracker_views.h"
 #include "ui/views/view_tracker.h"
@@ -710,7 +711,7 @@ class AppearanceRow final : public views::View {
  public:
   void SyncWindowVisibility(){CancelInput();if(!SceneIsVisible(this)&&surface_)surface_->Hide();Schedule();}
 
-  explicit AppearanceRow(bool emoji):emoji_(emoji) {}
+  explicit AppearanceRow(bool emoji):emoji_(emoji),count_(sidebar::appearance_presets(emoji).size()) {}
   views::View* AddPicker(views::Button::PressedCallback callback,std::u16string label,GlyphButton::Glyph glyph) {
     return AddChildView(nodes_.Make<RustActionView>(std::move(callback),std::move(label),glyph,nullptr,
         base::BindRepeating([]{return true;}),base::BindRepeating(&AppearanceRow::Schedule,weak_factory_.GetWeakPtr()),false));
@@ -731,7 +732,7 @@ class AppearanceRow final : public views::View {
   void OnPaint(gfx::Canvas* canvas) override {if(!metal_visible())for(const auto& item:Items(0,0,gfx::RectF(Controls())))PaintSceneRecipe(canvas,item,Font(3));Schedule();}
  private:
   SceneGroupNodes nodes_{this};
-  size_t Count() const{return emoji_?6:4;}
+  size_t Count() const{return count_;}
   sidebar::ColumnLayout Geometry(int width,int height) const {const auto field=children().size()==Count()+2?children().back()->GetPreferredSize():gfx::Size();return sidebar::appearance_row_layout(width,height,field.width(),field.height(),emoji_);}
   gfx::Rect Controls() const {return children().size()==Count()+2?GetMirroredRect(gfx::Rect(0,0,children()[Count()-1]->bounds().right(),height())):gfx::Rect();}
   std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const {
@@ -745,7 +746,7 @@ class AppearanceRow final : public views::View {
     frame_=GetBoundsInScreen();frame_.Offset(local.x(),local.y());frame_.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame_.size())));
     surface_->Update(GetWidget()->GetNativeWindow(),frame_,items,Tone(this,kCard));if(was!=metal_visible())SchedulePaint();
   }
-  bool emoji_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;gfx::Rect frame_;SceneWindowObserver window_visibility_{base::BindRepeating(&AppearanceRow::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<AppearanceRow> weak_factory_{this};
+  bool emoji_;size_t count_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;gfx::Rect frame_;SceneWindowObserver window_visibility_{base::BindRepeating(&AppearanceRow::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<AppearanceRow> weak_factory_{this};
 };
 BEGIN_METADATA(AppearanceRow)
 END_METADATA
@@ -1307,6 +1308,7 @@ struct RowRecipe {
     bool secure = false;
     bool blank = false;
     bool tile = false;  // One half of a Split View pair: always a filled card.
+    bool stacked = false;  // Two lines (title over detail) beside a large monogram.
     int height = 34;
     views::Button::PressedCallback close;
     base::RepeatingCallback<void(gfx::Point)> drop;
@@ -1353,9 +1355,10 @@ struct RowRecipe {
     } else if (spec.icon) {
       PaintIcon(canvas, *spec.icon, gfx::Rect(10, 0, 16, bounds.height()), 16, Tone(theme, kSubtle));
     } else {
-      const gfx::Rect mono(10, (bounds.height() - 16) / 2, 16, 16);
-      FillRound(canvas, mono, 4, spec.monogram_color);
-      canvas->DrawStringRectWithFlags(spec.monogram, Font(-4, gfx::Font::Weight::SEMIBOLD),
+      const int size = spec.stacked ? 30 : 16;
+      const gfx::Rect mono(10, (bounds.height() - size) / 2, size, size);
+      FillRound(canvas, mono, spec.stacked ? 8 : 4, spec.monogram_color);
+      canvas->DrawStringRectWithFlags(spec.monogram, Font(spec.stacked ? 0 : -4, gfx::Font::Weight::SEMIBOLD),
                                       SK_ColorWHITE, mono, gfx::Canvas::TEXT_ALIGN_CENTER);
     }
   }
@@ -1470,12 +1473,12 @@ class RustRowView final : public views::View {
   void OnPaint(gfx::Canvas* canvas) override{
     if(spec_.scene_visible&&spec_.scene_visible.Run())return;SyncEnabled();if(state_->sidebar_visual().valid){const auto spec=SidebarSnapshot();const auto visual=state_->action_snapshot().visual;RowRecipe::PaintDecorations(canvas,GetLocalBounds(),spec,this,visual==sidebar::RowVisual::Hovered||visual==sidebar::RowVisual::Pressed);const auto geometry=Geometry();const auto& title=geometry.title;canvas->DrawStringRectWithFlags(spec.title,Font(0,spec.active?gfx::Font::Weight::MEDIUM:gfx::Font::Weight::NORMAL),Tone(this,kInk),gfx::Rect(title.x,title.y,title.width,title.height),gfx::Canvas::TEXT_ALIGN_LEFT);return;}if(spec_.history){const auto bounds=gfx::RectF(GetLocalBounds());PaintSceneRecipe(canvas,Scene(bounds,bounds),Font(0),true);return;}const auto v=state_->action_snapshot().visual;RowRecipe::PaintDecorations(canvas,GetLocalBounds(),spec_,this,v==sidebar::RowVisual::Hovered||v==sidebar::RowVisual::Pressed);
     const auto geometry=Geometry();const auto& r=geometry.title;canvas->DrawStringRectWithFlags(spec_.title,Font(0,spec_.active||spec_.chip||spec_.address?gfx::Font::Weight::MEDIUM:gfx::Font::Weight::NORMAL),Tone(this,spec_.blank?kMuted:kInk),gfx::Rect(r.x,r.y,r.width,r.height),gfx::Canvas::TEXT_ALIGN_LEFT);
-    if(!spec_.detail.empty()){const auto& d=geometry.detail;canvas->DrawStringRectWithFlags(gfx::ElideText(spec_.detail,Font(spec_.address?0:-1),d.width,spec_.address?gfx::ELIDE_TAIL:gfx::ELIDE_MIDDLE),Font(spec_.address?0:-1),Tone(this,kMuted),gfx::Rect(d.x,d.y,d.width,d.height),gfx::Canvas::TEXT_ALIGN_LEFT);}
+    if(!spec_.detail.empty()){const auto& d=geometry.detail;canvas->DrawStringRectWithFlags(gfx::ElideText(spec_.detail,Font(spec_.address?0:-1),d.width,spec_.address||spec_.stacked?gfx::ELIDE_TAIL:gfx::ELIDE_MIDDLE),Font(spec_.address?0:-1),Tone(this,kMuted),gfx::Rect(d.x,d.y,d.width,d.height),gfx::Canvas::TEXT_ALIGN_LEFT);}
   }
  private:
   static void ClearSidebarVisuals(Spec& spec){std::u16string{}.swap(spec.title);std::u16string{}.swap(spec.monogram);spec.monogram_color=SK_ColorTRANSPARENT;spec.icon=nullptr;spec.active=false;spec.tile=false;spec.height=0;}
   void SyncSidebarAX(){const auto title=state_->sidebar_title();const std::u16string text(title.begin(),title.end());SetTooltipText(text);GetViewAccessibility().SetName(text);}
-  sidebar::RowLayout Geometry() const{if(spec_.address)return sidebar::address_layout(width(),height(),scene_title_width());return sidebar::row_layout(width(),height(),scene_title_width(),!spec_.detail.empty(),spec_.chip,close_!=nullptr);}
+  sidebar::RowLayout Geometry() const{if(spec_.stacked){auto g=sidebar::row_layout(width(),height(),0,false,false,close_!=nullptr);const int lead=50,half=height()/2;const int w=std::max(0,g.title.width+g.title.x-lead);g.title={lead,2,w,half-2};g.detail={lead,half,w,half-4};return g;}if(spec_.address)return sidebar::address_layout(width(),height(),scene_title_width());return sidebar::row_layout(width(),height(),scene_title_width(),!spec_.detail.empty(),spec_.chip,close_!=nullptr);}
   bool Interactive() const{return SceneIsVisible(this)&&!GetVisibleBounds().IsEmpty();}
   void SyncEnabled(){if(!state_->action_enabled(GetEnabledInViewsSubtree()))return;auto& ax=GetViewAccessibility();if(GetEnabledInViewsSubtree())ax.SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kPress);else ax.RemoveDefaultActionVerb();UpdateClose();UpdateWatch();SchedulePaint();}
   void EnabledChanged(){SyncEnabled();}
@@ -2857,7 +2860,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   settings_text(settings.get(),workspace_copy[2],kSubtle,-1);
   profile_picker_=ProfilePicker(settings.get(),workspace_copy[3],base::BindRepeating([]{}));
   settings_text(settings.get(),workspace_copy[4],kMuted,-2,gfx::Font::Weight::NORMAL,true);
-  settings_text(settings.get(),workspace_copy[5],kMuted,-2,gfx::Font::Weight::NORMAL,true);
+  auto* save_hint=settings_text(settings.get(),workspace_copy[5],kMuted,-2,gfx::Font::Weight::NORMAL,true);
   auto* actions=ActionGroup(settings.get(),false,8);
   edit_workspace_ = AddAction(actions,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
         if (shell) shell->SubmitWorkspace(shell->creating_workspace_);
@@ -2922,6 +2925,10 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       views::CreateRoundedRectBorder(1, 7, Hairline(root_)), gfx::Insets::VH(4, 8)));
   }
   if(emoji_layout)emoji_layout->SetFlexForView(emoji_input_->view(), 1);
+  // The system Emoji & Symbols viewer types into the focused field; its
+  // commit callback below applies the picked emoji like typed text.
+  {auto* more_emoji=ActionGroup(appearance,false,8);
+   AddAction(more_emoji,base::BindRepeating(&WorkspaceShell::OpenEmojiPicker,weak),base::UTF8ToUTF16(std::string(sidebar::workspace_copy().more_emoji)),ui::ButtonStyle::kText);}
 
   color_input_->SetCallbacks({},base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,const ui::KeyEvent& event){return shell&&shell->HandleAppearanceEditorKey(false,event);},weak));
   emoji_input_->SetCallbacks(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){
@@ -2929,9 +2936,11 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       shell->SetWorkspaceEmoji(shell->state_.workspace_id,std::u16string(shell->emoji_input_->GetText()));
   },weak),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,const ui::KeyEvent& event){return shell&&shell->HandleAppearanceEditorKey(true,event);},weak));
 
-  Spacer(appearance, 8);
-  settings_text(appearance,workspace_copy[13],kInk,0,gfx::Font::Weight::SEMIBOLD);
-  auto* more_actions=ActionGroup(appearance,true,8);
+  auto* more = settings->AddChildView(std::make_unique<views::View>());
+  workspace_more_ = more;
+  Spacer(more, 8);
+  settings_text(more,workspace_copy[13],kInk,0,gfx::Font::Weight::SEMIBOLD);
+  auto* more_actions=ActionGroup(more,true,8);
   [[maybe_unused]] auto* workspace_profiles=AddAction(more_actions,
       base::BindRepeating(&WorkspaceShell::OpenProfiles, weak, std::string(), std::string()), workspace_copy[14],ui::ButtonStyle::kText);
   [[maybe_unused]] auto* workspace_import=AddAction(more_actions,
@@ -2942,7 +2951,10 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       }, weak), workspace_copy[16],ui::ButtonStyle::kText);
   BindFormCommand(remove_workspace_,sidebar::FormCommand::WorkspaceRemove);BindFormCommand(workspace_profiles,sidebar::FormCommand::WorkspaceProfiles);BindFormCommand(workspace_import,sidebar::FormCommand::WorkspaceImport);
 
-  settings->SetLayoutManager(CreateSidebarColumnLayout(8));settings->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(20)));appearance->SetLayoutManager(CreateSidebarColumnLayout(8));
+  settings->SetLayoutManager(CreateSidebarColumnLayout(8));settings->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(20)));appearance->SetLayoutManager(CreateSidebarColumnLayout(8));more->SetLayoutManager(CreateSidebarColumnLayout(8));
+  // Name, then appearance (saved at once), then the profile with the save row.
+  settings->ReorderChildView(appearance,settings->GetIndexOf(workspace_input_->view()).value()+1);
+  save_hint->SetVisible(false);
 
   auto* footer = sidebar->AddChildView(std::make_unique<views::View>());
   sidebar_footer_=footer;
@@ -3031,36 +3043,61 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   palette_chrome_views_[2]=palette_text(palette.get(),u"↑↓ wybierz     ↵ wykonaj / otwórz     > polecenia",1,2);
 
   profile_form_=std::make_unique<ProfileFormState>();
-  std::array<std::u16string,12> profile_copy={u"Profile przeglądania",u"Każdy profil ma osobne logowania i dane stron.\nMożesz przypisać go do kilku przestrzeni.",u"Nazwa profilu",u"Nazwa nowego profilu",u"Np. Klient, Projekt, Konto testowe",u"Istniejące profile",u"Zarządzany profil",u"Utwórz profil",u"Zapisz nazwę profilu",u"Usuń profil i jego dane",u"Potwierdź usunięcie profilu i danych",u"Wróć do przestrzeni"};
-  {const auto c=sidebar::profile_copy();auto text=[](const rust::String& value){return base::UTF8ToUTF16(std::string(value));};profile_copy={text(c.title),text(c.hint),text(c.name_label),text(c.name_ax),text(c.placeholder),text(c.existing),text(c.picker_ax),text(c.create),text(c.rename),text(c.remove_label),text(c.confirm_delete),text(c.back)};}
+  std::array<std::u16string,11> profile_copy;
+  {const auto c=sidebar::profile_copy();auto text=[](const rust::String& value){return base::UTF8ToUTF16(std::string(value));};profile_copy={text(c.title),text(c.hint),text(c.name_label),text(c.name_ax),text(c.placeholder),text(c.rename_ax),text(c.create),text(c.rename),text(c.cancel),text(c.remove_label),text(c.back)};}
   auto profiles_panel = std::make_unique<views::View>();
   profiles_root_ = profiles_panel.get();
-  profiles_panel->SetLayoutManager(std::make_unique<views::BoxLayout>(
-      views::BoxLayout::Orientation::kVertical, gfx::Insets(20), 10));
   profiles_panel->SetBackground(views::CreateRoundedRectBackground(kCard, 12));
-  profiles_panel->SetBorder(views::CreateRoundedRectBorder(1, 12, Hairline(root_)));
-  auto profile_text=[&](std::u16string text,SkColor ink,int delta,gfx::Font::Weight weight=gfx::Font::Weight::NORMAL,bool multiline=false)->views::View* {
-    return profiles_panel->AddChildView(std::make_unique<SceneParagraph>(std::move(text),delta,weight!=gfx::Font::Weight::NORMAL,ink));
-  };
-  profile_text(profile_copy[0],kInk,3,gfx::Font::Weight::SEMIBOLD);
-  profile_text(profile_copy[1],kMuted,-1,gfx::Font::Weight::NORMAL,true);
-  profile_text(profile_copy[2],kSubtle,-1);
-  profile_name_input_ = AddEditor(profiles_panel.get());
+  // Header: title with the way back to the space it was opened from.
+  auto* profile_header=profiles_panel->AddChildView(std::make_unique<views::View>());
+  auto* profile_title=profile_header->AddChildView(std::make_unique<SceneParagraph>(profile_copy[0],3,true,kInk));
+  profile_header->AddChildView(CreateSceneAction(base::BindRepeating(&WorkspaceShell::OpenWorkspaceSettings,weak),profile_copy[10],ControlGlyph::kVector,&vector_icons::kCloseIcon,{},{}));
+  SetSidebarPanelLayout(profile_header,false,gfx::Insets(),8,profile_title,true);
+  profiles_panel->AddChildView(std::make_unique<SceneParagraph>(profile_copy[1],-1,false,kMuted));
+  // One row per profile; the rename and delete strips and the row status are
+  // reordered beneath the selected row (LayoutProfileStrips).
+  profile_list_=profiles_panel->AddChildView(std::make_unique<views::View>());
+  SetSidebarPanelLayout(profile_list_,true,gfx::Insets::TLBR(6,0,6,0),4);
+  profile_rename_strip_=profile_list_->AddChildView(std::make_unique<views::View>());
+  profile_rename_input_=AddEditor(profile_rename_strip_);
+  profile_rename_input_->GetViewAccessibility().SetName(profile_copy[5]);
+  profile_rename_input_->view()->SetPreferredSize(gfx::Size(160,32));
+  // Icon actions keep their own size; a text action group would claim the whole
+  // row and squeeze the field to nothing.
+  rename_profile_=profile_rename_strip_->AddChildView(CreateSceneAction(base::BindRepeating(&WorkspaceShell::RenameSelectedProfile,weak),profile_copy[7],ControlGlyph::kVector,&views::kCheckIcon,{},{}));
+  profile_rename_strip_->AddChildView(CreateSceneAction(base::BindRepeating(&WorkspaceShell::CancelProfileRow,weak),profile_copy[8],ControlGlyph::kVector,&vector_icons::kCloseIcon,{},{}));
+  SetSidebarPanelLayout(profile_rename_strip_,false,gfx::Insets::TLBR(0,50,4,4),4,profile_rename_input_->view(),true);
+  profile_rename_strip_->SetVisible(false);
+  profile_confirm_strip_=profile_list_->AddChildView(std::make_unique<views::View>());
+  profile_confirm_text_=profile_confirm_strip_->AddChildView(std::make_unique<SceneParagraph>(u"",-1,false,kInk));
+  auto* confirm_actions=ActionGroup(profile_confirm_strip_,false,6);
+  AddAction(confirm_actions,base::BindRepeating(&WorkspaceShell::CancelProfileRow,weak),profile_copy[8]);
+  delete_profile_=AddAction(confirm_actions,base::BindRepeating(&WorkspaceShell::DeleteSelectedProfile,weak),profile_copy[9],ui::ButtonStyle::kProminent);
+  SetSidebarPanelLayout(profile_confirm_strip_,true,gfx::Insets::TLBR(0,50,4,0),8);
+  profile_confirm_strip_->SetVisible(false);
+  profile_status_=profile_list_->AddChildView(std::make_unique<SceneParagraph>(u"",-1,false,kSubtle));
+  profile_status_->SetVisible(false);
+  // Footer: a new profile.
+  auto* profile_footer=profiles_panel->AddChildView(std::make_unique<views::View>());
+  profile_footer->SetBorder(views::CreatePaddedBorder(views::CreateSolidSidedBorder(gfx::Insets::TLBR(1,0,0,0),Hairline(root_)),gfx::Insets::TLBR(14,0,0,0)));
+  profile_footer->AddChildView(std::make_unique<SceneParagraph>(profile_copy[2],-1,true,kSubtle));
+  auto* create_line=profile_footer->AddChildView(std::make_unique<views::View>());
+  profile_name_input_ = AddEditor(create_line);
   profile_name_input_->GetViewAccessibility().SetName(profile_copy[3]);
   profile_name_input_->SetPlaceholderText(profile_copy[4]);
-  auto* profile_create_actions=ActionGroup(profiles_panel.get(),true,10);
+  profile_name_input_->view()->SetPreferredSize(gfx::Size(200,34));
+  auto* profile_create_actions=ActionGroup(create_line,false,6);
   create_profile_ = AddAction(profile_create_actions,
-      base::BindRepeating(&WorkspaceShell::SubmitProfile, weak), profile_copy[7]);
-  rename_profile_ = AddAction(profile_create_actions,
-      base::BindRepeating(&WorkspaceShell::RenameSelectedProfile, weak), profile_copy[8]);
-  profile_text(profile_copy[5],kSubtle,-1);
-  managed_profile_picker_=ProfilePicker(profiles_panel.get(),profile_copy[6],base::BindRepeating(&WorkspaceShell::ManagedProfileSelectionChanged,weak));
-  profile_status_=profile_text(u"",kSubtle,-1,gfx::Font::Weight::NORMAL,true);
-  auto* profile_delete_actions=ActionGroup(profiles_panel.get(),true,10);
-  delete_profile_ = AddAction(profile_delete_actions,
-      base::BindRepeating(&WorkspaceShell::DeleteSelectedProfile, weak), profile_copy[9]);
-  [[maybe_unused]] auto* profile_back=AddAction(profile_delete_actions,base::BindRepeating(&WorkspaceShell::OpenWorkspaceSettings, weak), profile_copy[11]);
-  BindFormCommand(create_profile_,sidebar::FormCommand::ProfileCreate);BindFormCommand(rename_profile_,sidebar::FormCommand::ProfileRename);BindFormCommand(delete_profile_,sidebar::FormCommand::ProfileDelete);BindFormCommand(profile_back,sidebar::FormCommand::ProfileBack);
+      base::BindRepeating(&WorkspaceShell::SubmitProfile, weak), profile_copy[6], ui::ButtonStyle::kProminent);
+  // Pin the group to its button so the field keeps the rest of the row.
+  profile_create_actions->SetPreferredSize(profile_create_actions->GetPreferredSize({}));
+  SetSidebarPanelLayout(create_line,false,gfx::Insets(),8,profile_name_input_->view(),true);
+  profile_create_status_=profile_footer->AddChildView(std::make_unique<SceneParagraph>(u"",-1,false,kSubtle));
+  profile_create_status_->SetVisible(false);
+  SetSidebarPanelLayout(profile_footer,true,gfx::Insets(),8);
+  profile_name_input_->SetCallbacks({},base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,const ui::KeyEvent& event){return shell&&shell->HandleProfileEditorKey(false,event);},weak));
+  profile_rename_input_->SetCallbacks({},base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,const ui::KeyEvent& event){return shell&&shell->HandleProfileEditorKey(true,event);},weak));
+  BindFormCommand(create_profile_,sidebar::FormCommand::ProfileCreate);BindFormCommand(delete_profile_,sidebar::FormCommand::ProfileDelete);
 
   profiles_panel->SetLayoutManager(CreateSidebarColumnLayout(10));profiles_panel->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(20)));
 
@@ -3348,7 +3385,8 @@ void WorkspaceShell::Detach() {
   apply_import_ = nullptr;
   dismiss_import_ = nullptr;
   profiles_root_ = nullptr;
-  managed_profile_picker_ = nullptr;
+  profile_list_ = nullptr; profile_rows_.clear(); profile_row_ids_.clear();
+  profile_rename_strip_ = nullptr; profile_rename_input_ = nullptr; profile_confirm_strip_ = nullptr; profile_confirm_text_ = nullptr; profile_create_status_ = nullptr;
   profile_name_input_ = nullptr;
   create_profile_ = nullptr;
   rename_profile_ = nullptr;
@@ -3367,7 +3405,7 @@ void WorkspaceShell::Detach() {
   workspace_name_ = nullptr;
   profile_name_ = nullptr;
   settings_title_ = nullptr;
-  workspace_appearance_ = nullptr;
+  workspace_appearance_ = nullptr; workspace_more_ = nullptr;
   settings_scroll_ = nullptr;
   settings_root_ = nullptr;
   chrome_node_graph_.reset();history_node_graph_.reset();palette_node_graph_.reset();site_rule_node_graph_.reset();
@@ -3435,9 +3473,6 @@ void WorkspaceShell::Update(ShellState state) {
     }
   }
   const bool ready_changed = state.configuration_ready != state_.configuration_ready || state.profiles_busy != state_.profiles_busy;
-  const auto managed_index = PickerIndex(managed_profile_picker_);
-  const std::string managed_id = managed_index && *managed_index < state_.profiles.size()
-      ? state_.profiles[*managed_index].id : std::string();
   const bool added_profile = state.profiles.size() > state_.profiles.size();
   const bool profiles_changed = state.profiles != state_.profiles;
   const auto previous_workspace = state_.workspace_id;
@@ -3460,18 +3495,10 @@ void WorkspaceShell::Update(ShellState state) {
   }
   if (profiles_changed) {
     ReplaceProfilePickerOptions(profile_picker_,state_.profiles,false,false);
-    ReplaceProfilePickerOptions(managed_profile_picker_,state_.profiles,true,added_profile);
-    if(!profile_form_)
-    {
-    if (!state_.profiles.empty()) SetPickerIndex(managed_profile_picker_,state_.profiles.size() - 1);
-    if (!added_profile) {
-      for (size_t i = 0; i < state_.profiles.size(); ++i)
-        if (state_.profiles[i].id == managed_id) SetPickerIndex(managed_profile_picker_,i);
-    }
-    }
-    confirm_profile_deletion_ = false;
-    if(profile_form_){const auto profiles=ProfileOptions(state_);profile_form_->form->reconcile(rust::Slice<const sidebar::ProfileOption>(profiles.data(),profiles.size()),added_profile);const std::string id(profile_form_->form->selection());for(size_t i=0;i<state_.profiles.size();++i)if(state_.profiles[i].id==id)SetPickerIndex(managed_profile_picker_,i);}
+    if(profile_form_){const auto profiles=ProfileOptions(state_);profile_form_->form->reconcile(rust::Slice<const sidebar::ProfileOption>(profiles.data(),profiles.size()),added_profile);}
+    renaming_profile_id_.clear();
   }
+  if (changed || profiles_changed || selected) RebuildProfileRows();
   if(import_form_){RefreshRustImportControls();if(ready_changed&&import_visible()&&import_form_->form->should_resume(state_.configuration_ready,state_.profiles_busy))ImportSelectionChanged();}
   profile_picker_->SetEnabled(state_.configuration_ready && !state_.profiles_busy);
   if (changed || profiles_changed || ready_changed) RefreshProfileControls();
@@ -3482,7 +3509,7 @@ void WorkspaceShell::Update(ShellState state) {
   if (general_widget_->IsVisible()) RefreshGeneralControls();
   RefreshWorkspaceHeading();
   SetPanelText(settings_title_,creating_workspace_ ? u"Nowa przestrzeń" : state_.workspace_name);
-  SetPanelText(profile_name_,u"Chromium: " + state_.profile_name);
+  SetPanelText(profile_name_,u"Profil: " + state_.profile_name);
   RefreshRustWorkspacePresentation();
   const bool blank = !state_.url.is_valid() || state_.url.path() == "/start.html";
   const std::string path = state_.url.path() == "/" ? std::string() : std::string(state_.url.path());
@@ -4788,7 +4815,7 @@ void WorkspaceShell::BuildWorkspaceMenu(std::string id) {
   for (size_t i = 0; i < menu_profiles_.size(); ++i)
     profile_menu_->AddRadioItem(kProfileCommandBase + i, base::UTF8ToUTF16(menu_profiles_[i].name), 1);
   profile_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
-  profile_menu_->AddItem(kEditProfile, u"Edytuj profil…");
+  profile_menu_->AddItem(kEditProfile, u"Edytuj profile…");
   profile_menu_->AddItem(kNewProfile, u"Dodaj nowy profil…");
   workspace_menu_ = std::make_unique<ui::SimpleMenuModel>(this);
   workspace_menu_->AddSubMenu(kSetProfile, u"Profil przeglądania", profile_menu_.get());
@@ -6993,7 +7020,7 @@ SkColor WorkspaceShell::workspace_color(std::string_view id) const {
 void WorkspaceShell::ToggleWorkspaceCreation() {
   if(creating_workspace_){RefreshWorkspaceSettings();PositionPanels();return;}
   if(workspace_form_)workspace_form_->form->begin_create(state_.workspace_id);
-  creating_workspace_=true;workspace_appearance_->SetVisible(false);configuration_error_->SetVisible(false);
+  creating_workspace_=true;workspace_appearance_->SetVisible(false);workspace_more_->SetVisible(false);configuration_error_->SetVisible(false);
   SetPanelText(settings_title_,u"Nowa przestrzeń");workspace_input_->SetText(u"");workspace_input_->RequestFocus();
   SetActionText(edit_workspace_,u"Utwórz przestrzeń");SetActionText(add_workspace_,u"Anuluj");
   RefreshRustWorkspacePresentation();PositionPanels();
@@ -7003,7 +7030,7 @@ void WorkspaceShell::RefreshRustWorkspacePresentation() {
   const auto v=workspace_form_->form->view(base::UTF16ToUTF8(state_.workspace_name),base::UTF16ToUTF8(state_.profile_name),state_.configuration_ready,state_.profiles_busy,state_.workspaces.size());
   creating_workspace_=v.creating;SetPanelText(settings_title_,base::UTF8ToUTF16(std::string(v.title)));SetPanelText(profile_name_,base::UTF8ToUTF16(std::string(v.description)));
   SetActionText(edit_workspace_,base::UTF8ToUTF16(std::string(v.save_label)));SetActionText(add_workspace_,base::UTF8ToUTF16(std::string(v.secondary_label)));
-  workspace_appearance_->SetVisible(v.appearance);edit_workspace_->SetEnabled(v.enabled);add_workspace_->SetEnabled(v.enabled);profile_picker_->SetEnabled(v.enabled);remove_workspace_->SetEnabled(v.remove_enabled);
+  workspace_appearance_->SetVisible(v.appearance);workspace_more_->SetVisible(v.appearance);edit_workspace_->SetEnabled(v.enabled);add_workspace_->SetEnabled(v.enabled);profile_picker_->SetEnabled(v.enabled);remove_workspace_->SetEnabled(v.remove_enabled);
   SetPanelText(configuration_error_,base::UTF8ToUTF16(std::string(v.error)));configuration_error_->SetVisible(!v.error.empty());
 }
 void WorkspaceShell::ShowWorkspaceAppearanceError(unsigned kind) {
@@ -7018,7 +7045,7 @@ bool WorkspaceShell::workspace_panel_contains_scene_text(std::string_view text) 
 void WorkspaceShell::RefreshWorkspaceSettings() {
   if(workspace_form_)workspace_form_->form->reset(state_.workspace_id);
   creating_workspace_ = false;
-  workspace_appearance_->SetVisible(true);
+  workspace_appearance_->SetVisible(true);workspace_more_->SetVisible(true);
   SetPanelText(settings_title_,state_.workspace_name);
   SetActionText(edit_workspace_,u"Zapisz nazwę i profil");
   SetActionText(add_workspace_,u"Nowa przestrzeń…");
@@ -7331,39 +7358,125 @@ void WorkspaceShell::SetImportStatus(std::u16string message, bool can_import, bo
   apply_import_->SetEnabled(can_import && !busy && state_.configuration_ready && !state_.profiles_busy);
   PositionPanels();
 }
-std::optional<size_t> WorkspaceShell::profile_picker_selection(bool managed) const {return PickerIndex(managed?managed_profile_picker_.get():profile_picker_.get());}
+std::optional<size_t> WorkspaceShell::profile_picker_selection(bool managed) const {
+  if(!managed)return PickerIndex(profile_picker_.get());
+  const std::string id=profile_form_?std::string(profile_form_->form->selection()):std::string();
+  for(size_t i=0;i<state_.profiles.size();++i)if(state_.profiles[i].id==id)return i;
+  return std::nullopt;
+}
 size_t WorkspaceShell::profile_picker_count() const {return PickerCount(profile_picker_);}
-void WorkspaceShell::SetProfilePickerSelectionForTesting(bool managed,size_t index){auto* picker=managed?managed_profile_picker_.get():profile_picker_.get();if(picker&&index<PickerCount(picker))SetPickerIndex(picker,index);}
+void WorkspaceShell::SetProfilePickerSelectionForTesting(bool managed,size_t index){
+  if(managed){if(index<state_.profiles.size())SelectManagedProfile(state_.profiles[index].id);return;}
+  if(profile_picker_&&index<PickerCount(profile_picker_))SetPickerIndex(profile_picker_,index);
+}
 void WorkspaceShell::ActivateProfilePickerSelectionForTesting(bool managed,size_t index){
-  auto* picker=managed?managed_profile_picker_.get():profile_picker_.get();if(!picker||index>=PickerCount(picker)||!SceneIsVisible(picker)||!picker->GetEnabledInViewsSubtree())return;
+  if(managed){if(index<state_.profiles.size()&&profile_list_&&SceneIsVisible(profile_list_)&&profile_list_->GetEnabledInViewsSubtree())SelectManagedProfile(state_.profiles[index].id);return;}
+  auto* picker=profile_picker_.get();if(!picker||index>=PickerCount(picker)||!SceneIsVisible(picker)||!picker->GetEnabledInViewsSubtree())return;
   if(auto* scene=views::AsViewClass<SceneSelect>(picker)){scene->SelectForTesting(index);return;}
-  SetPickerIndex(picker,index);if(managed)ManagedProfileSelectionChanged();
+  SetPickerIndex(picker,index);
 }
 bool WorkspaceShell::profile_picker_metal_visible(bool managed) const {
-  auto* scene=views::AsViewClass<SceneSelect>(managed?managed_profile_picker_.get():profile_picker_.get());return scene&&scene->metal_visible();
+  if(managed)return profile_list_&&SceneIsVisible(profile_list_);
+  auto* scene=views::AsViewClass<SceneSelect>(profile_picker_.get());return scene&&scene->metal_visible();
 }
-void WorkspaceShell::ManagedProfileSelectionChanged(){
-  confirm_profile_deletion_=false;new_profile_workspace_id_.clear();const auto selected=PickerIndex(managed_profile_picker_);
-  if(selected&&*selected<state_.profiles.size())profile_name_input_->SetText(base::UTF8ToUTF16(state_.profiles[*selected].name));
-  if(profile_form_){CancelSceneActions(profiles_root_);const auto id=selected&&*selected<state_.profiles.size()?state_.profiles[*selected].id:std::string();profile_form_->form->select(id);}
+namespace {
+SkColor ProfileAvatarColor(std::string_view id){return kMonogramColors[base::PersistentHash(id)%kMonogramColors.size()];}
+RustRowView* ProfileRowView(views::View* line){return line&&!line->children().empty()?views::AsViewClass<RustRowView>(line->children().front().get()):nullptr;}
+}  // namespace
+void WorkspaceShell::RebuildProfileRows(){
+  if(!profile_list_||!profile_form_)return;
+  CancelSceneActions(profiles_root_);
+  for(auto& row:profile_rows_)profile_list_->RemoveChildViewT(row.get());
+  profile_rows_.clear();profile_row_ids_.clear();
+  const auto profiles=ProfileOptions(state_);const auto uses=ProfileUses(state_);
+  const auto rows=sidebar::profile_rows(rust::Slice<const sidebar::ProfileOption>(profiles.data(),profiles.size()),rust::Slice<const sidebar::ProfileUse>(uses.data(),uses.size()),state_.profile_id);
+  const auto weak=weak_factory_.GetWeakPtr();
+  for(const auto& r:rows){
+    const std::string id(r.id);auto text=[](const rust::String& value){return base::UTF8ToUTF16(std::string(value));};
+    auto* line=profile_list_->AddChildView(std::make_unique<views::View>());
+    RowRecipe::Spec spec;spec.title=text(r.name);spec.detail=text(r.detail);spec.monogram=text(r.initial);spec.monogram_color=ProfileAvatarColor(id);spec.stacked=true;spec.height=48;
+    auto* row=line->AddChildView(CreateSceneRow(base::BindRepeating(&WorkspaceShell::SelectManagedProfile,weak,id),std::move(spec),{},{}));
+    line->AddChildView(CreateSceneAction(base::BindRepeating(&WorkspaceShell::StartProfileRename,weak,id),text(r.rename_ax),ControlGlyph::kVector,&vector_icons::kEditIcon,{},{}));
+    line->AddChildView(CreateSceneAction(base::BindRepeating(&WorkspaceShell::RequestProfileDelete,weak,id),text(r.remove_ax),ControlGlyph::kVector,&views::kDeleteIcon,{},{}));
+    SetSidebarPanelLayout(line,false,gfx::Insets(),2,row,true);
+    profile_rows_.push_back(line);profile_row_ids_.push_back(id);
+  }
+  RefreshProfileControls();
+}
+// Rename and delete strips and the row status sit beneath the selected row.
+void WorkspaceShell::LayoutProfileStrips(){
+  if(!profile_list_||!profile_form_)return;
+  const std::string selected(profile_form_->form->selection());const std::string confirming(CurrentProfileControls().confirming);
+  const bool renaming=!renaming_profile_id_.empty()&&renaming_profile_id_==selected;const bool confirm=!confirming.empty()&&confirming==selected;
+  const bool status=profile_status_->GetVisible();
+  size_t index=0;bool placed=false;
+  for(size_t i=0;i<profile_rows_.size();++i){
+    auto* line=profile_rows_[i].get();profile_list_->ReorderChildView(line,index++);const bool here=profile_row_ids_[i]==selected;
+    if(auto* row=ProfileRowView(line))row->SetActive(here);
+    if(!here)continue;placed=true;
+    if(renaming)profile_list_->ReorderChildView(profile_rename_strip_,index++);
+    if(confirm)profile_list_->ReorderChildView(profile_confirm_strip_,index++);
+    if(status)profile_list_->ReorderChildView(profile_status_,index++);
+  }
+  if(!placed&&status)profile_list_->ReorderChildView(profile_status_,index++);
+  profile_rename_strip_->SetVisible(renaming);profile_confirm_strip_->SetVisible(confirm);
+  if(confirm)for(const auto& p:state_.profiles)if(p.id==selected)SetPanelText(profile_confirm_text_,base::UTF8ToUTF16(std::string(sidebar::profile_confirm_copy(p.name))));
+  profile_list_->InvalidateLayout();PositionPanels();
+}
+void WorkspaceShell::SelectManagedProfile(std::string profile_id){
+  if(!profile_form_)return;
+  CancelSceneActions(profiles_root_);new_profile_workspace_id_.clear();
+  if(renaming_profile_id_!=profile_id)renaming_profile_id_.clear();
+  profile_form_->form->select(profile_id);last_profile_action_=1;
   SetProfileStatus(u"");RefreshProfileControls();
+}
+void WorkspaceShell::StartProfileRename(std::string profile_id){
+  SelectManagedProfile(profile_id);
+  if(!CurrentProfileControls().rename)return;
+  for(const auto& p:state_.profiles)if(p.id==profile_id){const auto name=base::UTF8ToUTF16(p.name);profile_rename_input_->SetText(name);profile_rename_input_->SelectRange(gfx::Range(0,name.size()));}
+  renaming_profile_id_=std::move(profile_id);LayoutProfileStrips();profile_rename_input_->RequestFocus();
+}
+void WorkspaceShell::RequestProfileDelete(std::string profile_id){
+  SelectManagedProfile(profile_id);SubmitRustProfileAction(2);
+}
+void WorkspaceShell::CancelProfileRow(){
+  if(!profile_form_)return;
+  CancelSceneActions(profiles_root_);renaming_profile_id_.clear();profile_form_->form->cancel();
+  SetProfileStatus(u"");RefreshProfileControls();
+}
+void WorkspaceShell::OpenEmojiPicker(){
+  if(!emoji_input_||!settings_widget_||!settings_widget_->IsVisible())return;
+  // Start empty so the picked emoji is the whole value the commit applies.
+  emoji_input_->SetText(u"");emoji_input_->RequestFocus();
+#if BUILDFLAG(IS_MAC)
+  ShowCharacterPalette();
+#endif
+}
+bool WorkspaceShell::HandleProfileEditorKey(bool rename,const ui::KeyEvent& event){
+  auto* field=rename?profile_rename_input_.get():profile_name_input_.get();
+  if(!field||event.type()!=ui::EventType::kKeyPressed||field->IsIMEComposing())return false;
+  if(event.key_code()==ui::VKEY_RETURN){if(rename)RenameSelectedProfile();else SubmitProfile();return true;}
+  if(rename&&event.key_code()==ui::VKEY_ESCAPE){CancelProfileRow();return true;}
+  return false;
 }
 void WorkspaceShell::OpenProfiles(std::string profile_id, std::string workspace_id) {
   if (!profiles_widget_) return;
   if(profile_form_)CancelSceneActions(profiles_root_);
   CloseOverlays();
-  confirm_profile_deletion_ = false;
   new_profile_workspace_id_ = std::move(workspace_id);
-  for (size_t i = 0; i < state_.profiles.size(); ++i)
-    if (state_.profiles[i].id == profile_id) SetPickerIndex(managed_profile_picker_,i);
+  renaming_profile_id_.clear();
   profile_name_input_->SetText(u"");
-  for (const auto& profile : state_.profiles)
-    if (profile.id == profile_id) profile_name_input_->SetText(base::UTF8ToUTF16(profile.name));
-  if(profile_form_){const auto selected=PickerIndex(managed_profile_picker_);const auto id=selected&&*selected<state_.profiles.size()?state_.profiles[*selected].id:std::string();profile_form_->form->open(id,new_profile_workspace_id_);}
-  RefreshProfileControls();
+  std::string selected=profile_id;
+  if(selected.empty()&&profile_form_)selected=std::string(profile_form_->form->selection());
+  if(selected.empty())selected=state_.profile_id;
+  if(profile_form_)profile_form_->form->open(selected,new_profile_workspace_id_);
+  last_profile_action_=new_profile_workspace_id_.empty()?1:0;
+  RebuildProfileRows();
   PositionPanels();
   profiles_widget_->Show();
   profiles_widget_->Activate();
+  if(!profile_id.empty())StartProfileRename(profile_id);
+  else if(!new_profile_workspace_id_.empty())profile_name_input_->RequestFocus();
 }
 void WorkspaceShell::ReportClearData(ClearDataEvent event, const std::u16string& profile) {
   if (metal_sidebar_) {
@@ -7419,47 +7532,41 @@ void WorkspaceShell::SetProfileStatus(ProfileStatusEvent event) {
 void WorkspaceShell::SetProfileStatus(std::u16string message) {
   if(!profile_status_)return;
   if(profile_form_)profile_form_->form->set_status(base::UTF16ToUTF8(message));
-  if(auto* text=views::AsViewClass<SceneParagraph>(profile_status_))text->SetText(message);
-  else
-    static_cast<views::Label*>(profile_status_.get())->SetText(message);
-  profile_status_->SetVisible(!message.empty());PositionPanels();
+  // A new profile reports under its field; row actions report under their row.
+  auto* active=last_profile_action_==0?profile_create_status_.get():profile_status_.get();
+  auto* idle=active==profile_status_.get()?profile_create_status_.get():profile_status_.get();
+  SetPanelText(active,message);active->SetVisible(!message.empty());
+  SetPanelText(idle,u"");idle->SetVisible(false);
+  LayoutProfileStrips();
+}
+sidebar::ProfileControls WorkspaceShell::CurrentProfileControls(){
+  const auto profiles=ProfileOptions(state_);const auto uses=ProfileUses(state_);
+  return profile_form_->form->controls(state_.configuration_ready,state_.profiles_busy,rust::Slice<const sidebar::ProfileOption>(profiles.data(),profiles.size()),rust::Slice<const sidebar::ProfileUse>(uses.data(),uses.size()));
 }
 void WorkspaceShell::RefreshProfileControls() {
-  if(profile_form_){const auto profiles=ProfileOptions(state_);const auto uses=ProfileUses(state_);
-    const auto controls=profile_form_->form->controls(state_.configuration_ready,state_.profiles_busy,rust::Slice<const sidebar::ProfileOption>(profiles.data(),profiles.size()),rust::Slice<const sidebar::ProfileUse>(uses.data(),uses.size()));
-    create_profile_->SetEnabled(controls.create);rename_profile_->SetEnabled(controls.rename);delete_profile_->SetEnabled(controls.remove);managed_profile_picker_->SetEnabled(controls.picker);
-    SetActionText(delete_profile_,base::UTF8ToUTF16(std::string(controls.delete_label)));SetProfileStatus(base::UTF8ToUTF16(std::string(controls.status)));return;
+  if(!profile_form_||!profile_list_)return;
+  const auto controls=CurrentProfileControls();
+  create_profile_->SetEnabled(controls.create);rename_profile_->SetEnabled(controls.rename);delete_profile_->SetEnabled(controls.edit);
+  for(size_t i=0;i<profile_rows_.size();++i){
+    auto* line=profile_rows_[i].get();if(line->children().size()<3)continue;
+    bool used=false;for(const auto& w:state_.workspaces)used=used||w.profile_id==profile_row_ids_[i];
+    line->children()[0]->SetEnabled(controls.edit);line->children()[1]->SetEnabled(controls.rename);line->children()[2]->SetEnabled(controls.edit);
+    // A profile still in use keeps its trash enabled (it explains why) but dimmed.
+    SetActionColor(line->children()[2].get(),used?kSubtle:kMuted);SetActionColor(line->children()[1].get(),kMuted);
   }
-  const bool ready = state_.configuration_ready && !state_.profiles_busy;
-  create_profile_->SetEnabled(ready);
-  rename_profile_->SetEnabled(ready && new_profile_workspace_id_.empty());
-  managed_profile_picker_->SetEnabled(ready);
-  auto index = PickerIndex(managed_profile_picker_);
-  bool used = false;
-  std::u16string names;
-  if (index && *index < state_.profiles.size()) {
-    const auto& profile = state_.profiles[*index];
-    for (const auto& workspace : state_.workspaces) {
-      if (workspace.profile_id != profile.id) continue;
-      used = true;
-      if (!names.empty()) names += u", ";
-      names += base::UTF8ToUTF16(workspace.name);
-    }
-  }
-  delete_profile_->SetEnabled(ready && index.has_value() && !used && state_.profiles.size() > 1);
-  SetActionText(delete_profile_,
-      confirm_profile_deletion_ ? u"Potwierdź usunięcie profilu i danych" : u"Usuń profil i jego dane");
-  if (used && !state_.profiles_busy) SetProfileStatus(u"Profil jest używany przez: " + names + u". Najpierw zmień profil tych przestrzeni.");
+  if(!controls.rename)renaming_profile_id_.clear();
+  SetProfileStatus(base::UTF8ToUTF16(std::string(controls.status)));
 }
 bool WorkspaceShell::SubmitRustProfileAction(unsigned action) {
   if(!profile_form_)return false;
-  if(profile_name_input_->IsIMEComposing())return true;
-  const auto index=PickerIndex(managed_profile_picker_);const auto selected=index&&*index<state_.profiles.size()?state_.profiles[*index].id:std::string();
-  if(selected!=std::string(profile_form_->form->selection()))profile_form_->form->select(selected);
+  auto* field=action==1?profile_rename_input_.get():profile_name_input_.get();
+  if(field->IsIMEComposing())return true;
+  last_profile_action_=action;
+  if(action==1&&renaming_profile_id_.empty())return true;
   const auto profiles=ProfileOptions(state_);const auto uses=ProfileUses(state_);
-  const auto request=profile_form_->form->request(action,base::UTF16ToUTF8(profile_name_input_->GetText()),state_.configuration_ready,state_.profiles_busy,rust::Slice<const sidebar::ProfileOption>(profiles.data(),profiles.size()),rust::Slice<const sidebar::ProfileUse>(uses.data(),uses.size()));
-  if(request.action==sidebar::ProfileAction::None){const auto status=base::UTF8ToUTF16(std::string(profile_form_->form->status()));RefreshProfileControls();SetProfileStatus(status);return true;}
-  if(request.action==sidebar::ProfileAction::ConfirmDelete){RefreshProfileControls();return true;}
+  const auto request=profile_form_->form->request(action,action==2?std::string():base::UTF16ToUTF8(field->GetText()),state_.configuration_ready,state_.profiles_busy,rust::Slice<const sidebar::ProfileOption>(profiles.data(),profiles.size()),rust::Slice<const sidebar::ProfileUse>(uses.data(),uses.size()));
+  if(request.action==sidebar::ProfileAction::None){const auto status=base::UTF8ToUTF16(std::string(profile_form_->form->status()));SetProfileStatus(status);RefreshProfileControls();return true;}
+  if(request.action==sidebar::ProfileAction::ConfirmDelete){SetProfileStatus(u"");RefreshProfileControls();return true;}
   const auto alive=weak_factory_.GetWeakPtr();bool accepted=false;
   switch(request.action){
     case sidebar::ProfileAction::Create:accepted=callbacks_.create_profile.Run(std::string(request.name),std::string(request.workspace));break;
@@ -7469,38 +7576,15 @@ bool WorkspaceShell::SubmitRustProfileAction(unsigned action) {
   }
   if(!alive||!profile_form_)return true;profile_form_->form->finish_attempt(accepted);
   if(accepted&&request.action==sidebar::ProfileAction::Create)profile_name_input_->SetText(u"");
-  const auto status=base::UTF8ToUTF16(std::string(profile_form_->form->status()));RefreshProfileControls();SetProfileStatus(status);return true;
+  if(accepted&&request.action==sidebar::ProfileAction::Rename)renaming_profile_id_.clear();
+  const auto status=base::UTF8ToUTF16(std::string(profile_form_->form->status()));SetProfileStatus(status);RefreshProfileControls();return true;
 }
 bool WorkspaceShell::profile_panel_contains_scene_text(std::string_view text) const {
-  if(!profiles_root_)return false;auto find=[&](auto&& self,views::View* view)->bool{if(auto* picker=views::AsViewClass<SceneSelect>(view))if(picker->contains_text(text))return true;if(auto* node=views::AsViewClass<SceneParagraph>(view))if(node->contains_scene_text(text))return true;for(const auto& child:view->children())if(self(self,child.get()))return true;return false;};return find(find,profiles_root_);
+  if(!profiles_root_)return false;auto find=[&](auto&& self,views::View* view)->bool{if(auto* row=views::AsViewClass<RustRowView>(view))if(base::UTF16ToUTF8(row->preview_spec().title)==text||base::UTF16ToUTF8(row->preview_spec().detail)==text)return true;if(auto* node=views::AsViewClass<SceneParagraph>(view))if(node->contains_scene_text(text))return true;for(const auto& child:view->children())if(self(self,child.get()))return true;return false;};return find(find,profiles_root_);
 }
-void WorkspaceShell::SubmitProfile() {
-  if(SubmitRustProfileAction(0))return;
-  auto name = base::UTF16ToUTF8(base::TrimWhitespace(profile_name_input_->GetText(), base::TRIM_ALL));
-  if (name.empty()) { SetProfileStatus(u"Podaj nazwę profilu."); return; }
-  if (callbacks_.create_profile.Run(name, new_profile_workspace_id_)) profile_name_input_->SetText(u"");
-}
-void WorkspaceShell::RenameSelectedProfile() {
-  if(SubmitRustProfileAction(1))return;
-  const auto index = PickerIndex(managed_profile_picker_);
-  if (!index || *index >= state_.profiles.size()) return;
-  const auto name = base::UTF16ToUTF8(base::TrimWhitespace(profile_name_input_->GetText(), base::TRIM_ALL));
-  if (name.empty()) { SetProfileStatus(u"Podaj nazwę profilu."); return; }
-  callbacks_.rename_profile.Run(state_.profiles[*index].id, name);
-}
-void WorkspaceShell::DeleteSelectedProfile() {
-  if(SubmitRustProfileAction(2))return;
-  const auto index = PickerIndex(managed_profile_picker_);
-  if (!index || *index >= state_.profiles.size()) return;
-  if (!confirm_profile_deletion_) {
-    confirm_profile_deletion_ = true;
-    SetProfileStatus(u"Usunięte zostaną logowania, cookies i dane stron tego profilu. Tej operacji nie można cofnąć.");
-    RefreshProfileControls();
-    return;
-  }
-  confirm_profile_deletion_ = false;
-  callbacks_.remove_profile.Run(state_.profiles[*index].id);
-}
+void WorkspaceShell::SubmitProfile() {SubmitRustProfileAction(0);}
+void WorkspaceShell::RenameSelectedProfile() {SubmitRustProfileAction(1);}
+void WorkspaceShell::DeleteSelectedProfile() {SubmitRustProfileAction(2);}
 bool WorkspaceShell::appearance_metal_visible(bool emoji) const {
   auto* field=emoji?emoji_input_.get():color_input_.get();auto* row=field?views::AsViewClass<AppearanceRow>(field->view()->parent()):nullptr;return row&&row->metal_visible();
 }

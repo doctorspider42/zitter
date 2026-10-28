@@ -36,7 +36,7 @@
 #include "ui/views/view_tracker.h"
 #include "url/gurl.h"
 
-namespace zitter::sidebar { struct Item; struct PreferenceCatalogue; struct WorkspaceMenuState; struct FolderMenuState; enum class FormCommand : uint32_t; struct FormCommandBinding; }
+namespace zitter::sidebar { struct Item; struct PreferenceCatalogue; struct WorkspaceMenuState; struct FolderMenuState; struct ProfileControls; enum class FormCommand : uint32_t; struct FormCommandBinding; }
 namespace ui { class AcceleratorTarget; }
 namespace views {
 class DialogDelegate;
@@ -430,7 +430,8 @@ class WorkspaceShell final : public ui::EventHandler,
   void SetProfileStatus(std::u16string message);
   views::Widget* profiles_widget() const { return profiles_widget_.get(); }
   EditorControl* profile_name_input() const { return profile_name_input_; }
-  views::View* managed_profile_picker() const { return managed_profile_picker_; }
+  views::View* managed_profile_picker() const { return profile_list_; }
+  EditorControl* profile_rename_input() const { return profile_rename_input_; }
   std::optional<size_t> profile_picker_selection(bool managed) const;
   size_t profile_picker_count() const;
   void SetProfilePickerSelectionForTesting(bool managed,size_t index);
@@ -517,7 +518,6 @@ class WorkspaceShell final : public ui::EventHandler,
   }
 
  private:
-  void ManagedProfileSelectionChanged();
   using Suggestion = PaletteResult;
 
   void PositionPanels();
@@ -697,6 +697,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void ConfirmRemoveWorkspace(std::string id);
   bool creating_workspace_ = false;
   raw_ptr<views::View> workspace_appearance_ = nullptr;
+  raw_ptr<views::View> workspace_more_ = nullptr;
   std::unique_ptr<views::DialogDelegate> remove_workspace_dialog_delegate_;
   std::unique_ptr<views::Widget> remove_workspace_dialog_;
   void RefreshWorkspaceSettings();
@@ -717,6 +718,15 @@ class WorkspaceShell final : public ui::EventHandler,
   views::View* AddPreferenceCopy(views::View* parent,std::u16string text,SkColor tone,int delta,int weight,bool multiline);
   void SetPreferenceCopyTone(views::View* view,SkColor tone);
   void RefreshProfileControls();
+  sidebar::ProfileControls CurrentProfileControls();
+  void RebuildProfileRows();
+  void LayoutProfileStrips();
+  void SelectManagedProfile(std::string profile_id);
+  void StartProfileRename(std::string profile_id);
+  void RequestProfileDelete(std::string profile_id);
+  void CancelProfileRow();
+  bool HandleProfileEditorKey(bool rename,const ui::KeyEvent& event);
+  void OpenEmojiPicker();
   bool SubmitRustProfileAction(unsigned action);
   void SubmitProfile();
   void DeleteSelectedProfile();
@@ -880,14 +890,23 @@ class WorkspaceShell final : public ui::EventHandler,
   bool import_applying_ = false;
   SidebarTree sidebar_tree_;
   raw_ptr<views::View> profiles_root_ = nullptr;
-  raw_ptr<views::View> managed_profile_picker_ = nullptr;
+  raw_ptr<views::View> profile_list_ = nullptr;
+  std::vector<raw_ptr<views::View>> profile_rows_;
+  std::vector<std::string> profile_row_ids_;
+  raw_ptr<views::View> profile_rename_strip_ = nullptr;
+  raw_ptr<EditorControl> profile_rename_input_ = nullptr;
+  raw_ptr<views::View> profile_confirm_strip_ = nullptr;
+  raw_ptr<views::View> profile_confirm_text_ = nullptr;
+  raw_ptr<views::View> profile_create_status_ = nullptr;
+  std::string renaming_profile_id_;
+  // 0: the last profile action came from the new-profile field; else a row.
+  unsigned last_profile_action_ = 1;
   raw_ptr<EditorControl> profile_name_input_ = nullptr;
   raw_ptr<views::View> create_profile_ = nullptr;
   raw_ptr<views::View> rename_profile_ = nullptr;
   raw_ptr<views::View> delete_profile_ = nullptr;
   raw_ptr<views::View> profile_status_ = nullptr;
   std::unique_ptr<ProfileFormState> profile_form_;
-  bool confirm_profile_deletion_ = false;
   raw_ptr<EditorControl> address_ = nullptr;
   raw_ptr<EditorControl> color_input_ = nullptr;
   raw_ptr<EditorControl> emoji_input_ = nullptr;

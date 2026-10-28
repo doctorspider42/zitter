@@ -88,16 +88,19 @@ mod ffi {
     struct AppearancePreset { color: u32, emoji: String, label: String }
     struct AppearanceTarget { valid: bool, color: u32, emoji: String }
     struct PeekCopy { initial: String, back: String, forward: String, promote: String, split: String, close: String }
-    struct WorkspaceCopy { name_label: String, placeholder: String, profile_label: String, profile_ax: String, profile_hint: String, save_hint: String, close: String, appearance: String, color: String, color_ax: String, emoji: String, emoji_ax: String, emoji_placeholder: String, more: String, manage: String, import_label: String, remove_label: String }
+    struct WorkspaceCopy { name_label: String, placeholder: String, profile_label: String, profile_ax: String, profile_hint: String, save_hint: String, close: String, appearance: String, color: String, color_ax: String, emoji: String, emoji_ax: String, emoji_placeholder: String, more_emoji: String, more: String, manage: String, import_label: String, remove_label: String }
     enum WorkspaceFormAction { None, Create, Edit }
     struct WorkspaceFormRequest { action: WorkspaceFormAction, workspace: String, name: String, profile: String }
     struct WorkspaceFormView { creating: bool, title: String, description: String, save_label: String, secondary_label: String, appearance: bool, enabled: bool, remove_enabled: bool, error: String }
     struct ProfileOption { id: String, name: String }
     struct ProfileUse { workspace: String, name: String, profile: String }
-    struct ProfileCopy { title: String, hint: String, name_label: String, name_ax: String, placeholder: String, existing: String, picker_ax: String, create: String, rename: String, remove_label: String, confirm_delete: String, back: String }
+    struct ProfileCopy { title: String, hint: String, name_label: String, name_ax: String, placeholder: String, rename_ax: String, create: String, rename: String, cancel: String, remove_label: String, back: String }
     enum ProfileAction { None, Create, Rename, Delete, ConfirmDelete }
     struct ProfileRequest { action: ProfileAction, id: String, name: String, workspace: String }
-    struct ProfileControls { create: bool, rename: bool, remove: bool, picker: bool, delete_label: String, status: String, selected: usize, has_selected: bool }
+    // edit: row actions (pencil, trash) accept input; rename: the pencil may open the editor.
+    struct ProfileControls { create: bool, edit: bool, rename: bool, confirming: String, status: String }
+    // One profile row: the initial stands in for an avatar; detail names the spaces using it.
+    struct ProfileRow { id: String, name: String, initial: String, detail: String, current: bool, rename_ax: String, remove_ax: String }
     enum WorkspaceNoticeAction { None, Delete }
     struct WorkspaceNoticeRequest { action: WorkspaceNoticeAction, workspace: String }
     struct NoticeCopy { title: String, body: String, accept: String, cancel: String, default_cancel: bool }
@@ -410,6 +413,8 @@ mod ffi {
         type ProfileForm;
         fn new_profile_form() -> Box<ProfileForm>;
         fn profile_copy() -> ProfileCopy;
+        fn profile_rows(profiles: &[ProfileOption], uses: &[ProfileUse], current: &str) -> Vec<ProfileRow>;
+        fn profile_confirm_copy(name: &str) -> String;
         fn open(self: &mut ProfileForm, selected: &str, workspace: &str);
         fn select(self: &mut ProfileForm, selected: &str);
         fn reconcile(self: &mut ProfileForm, profiles: &[ProfileOption], prefer_new: bool);
@@ -419,6 +424,7 @@ mod ffi {
         fn controls(self: &mut ProfileForm, ready: bool, busy: bool, profiles: &[ProfileOption], uses: &[ProfileUse]) -> ProfileControls;
         fn request(self: &mut ProfileForm, action: u32, name: &str, ready: bool, busy: bool, profiles: &[ProfileOption], uses: &[ProfileUse]) -> ProfileRequest;
         fn finish_attempt(self: &mut ProfileForm, accepted: bool);
+        fn cancel(self: &mut ProfileForm);
         fn preference_chrome_scene(items: &[Item], holes: &[FloatRect]) -> Vec<Primitive>;
         fn paragraph_layout(width: i32, line_height: i32, count: usize) -> ColumnLayout;
         type FolderNotice;
@@ -742,13 +748,13 @@ fn peek_title(title:&[u16])->Vec<u16>{"Peek · ".encode_utf16().chain(title.iter
 
 fn workspace_copy() -> ffi::WorkspaceCopy {
     ffi::WorkspaceCopy {
-        name_label: "Nazwa przestrzeni".into(), placeholder: "Np. Projekt lub Klient".into(),
+        name_label: "Nazwa".into(), placeholder: "Np. Projekt lub Klient".into(),
         profile_label: "Profil przeglądania".into(), profile_ax: "Profil przestrzeni".into(),
-        profile_hint: "Wspólny profil = wspólne logowanie i cookies.\nZmiana profilu zamknie karty tej przestrzeni.".into(),
+        profile_hint: "Przestrzenie z tym samym profilem dzielą logowania i cookies. Zmiana profilu zamknie karty tej przestrzeni.".into(),
         save_hint: "Zapisz poniżej nazwę i profil. Wygląd zapisuje się od razu.".into(),
-        close: "Zamknij ustawienia przestrzeni".into(), appearance: "Wygląd · zapis automatyczny".into(),
-        color: "Kolor przestrzeni".into(), color_ax: "Kolor przestrzeni #RRGGBB".into(),
-        emoji: "Emoji przestrzeni".into(), emoji_ax: "Emoji przestrzeni".into(), emoji_placeholder: "Inne… (⌃⌘Spacja)".into(),
+        close: "Zamknij ustawienia przestrzeni".into(), appearance: "Wygląd · zapisuje się od razu".into(),
+        color: "Kolor".into(), color_ax: "Kolor przestrzeni #RRGGBB".into(),
+        emoji: "Ikona".into(), emoji_ax: "Emoji przestrzeni".into(), emoji_placeholder: "Wpisz emoji".into(), more_emoji: "Więcej emoji…".into(),
         more: "Więcej opcji".into(), manage: "Zarządzaj profilami".into(), import_label: "Importuj z przeglądarki…".into(), remove_label: "Usuń przestrzeń…".into(),
     }
 }
@@ -762,7 +768,7 @@ impl WorkspaceForm {
     fn creating(&self) -> bool { self.creating }
     fn view(&self, name: &str, profile_name: &str, ready: bool, busy: bool, count: usize) -> ffi::WorkspaceFormView {
         let enabled=ready&&!busy&&!self.submitting;
-        ffi::WorkspaceFormView { creating:self.creating, title:if self.creating { "Nowa przestrzeń".into() } else { name.into() }, description:format!("Chromium: {}",profile_name),
+        ffi::WorkspaceFormView { creating:self.creating, title:if self.creating { "Nowa przestrzeń".into() } else { name.into() }, description:format!("Profil: {}",profile_name),
             save_label:if self.creating { "Utwórz przestrzeń" } else { "Zapisz nazwę i profil" }.into(),
             secondary_label:if self.creating { "Anuluj" } else { "Nowa przestrzeń…" }.into(),
             appearance:!self.creating, enabled, remove_enabled:enabled&&!self.creating&&count>1, error:self.error.clone() }
@@ -788,7 +794,17 @@ impl WorkspaceForm {
 
 pub struct ProfileForm { selected:String, workspace:String, confirmation:String, status:String, submitting:bool }
 fn new_profile_form()->Box<ProfileForm>{Box::new(ProfileForm{selected:String::new(),workspace:String::new(),confirmation:String::new(),status:String::new(),submitting:false})}
-fn profile_copy()->ffi::ProfileCopy {ffi::ProfileCopy{title:"Profile przeglądania".into(),hint:"Każdy profil ma osobne logowania i dane stron.\nMożesz przypisać go do kilku przestrzeni.".into(),name_label:"Nazwa profilu".into(),name_ax:"Nazwa nowego profilu".into(),placeholder:"Np. Klient, Projekt, Konto testowe".into(),existing:"Istniejące profile".into(),picker_ax:"Zarządzany profil".into(),create:"Utwórz profil".into(),rename:"Zapisz nazwę profilu".into(),remove_label:"Usuń profil i jego dane".into(),confirm_delete:"Potwierdź usunięcie profilu i danych".into(),back:"Wróć do przestrzeni".into()}}
+fn profile_copy()->ffi::ProfileCopy {ffi::ProfileCopy{title:"Profile przeglądania".into(),hint:"Każdy profil ma osobne logowania, cookies i dane stron. Jeden profil może obsługiwać kilka przestrzeni.".into(),name_label:"Nowy profil".into(),name_ax:"Nazwa nowego profilu".into(),placeholder:"Np. Klient, Projekt, Konto testowe".into(),rename_ax:"Nowa nazwa profilu".into(),create:"Utwórz profil".into(),rename:"Zapisz".into(),cancel:"Anuluj".into(),remove_label:"Usuń profil i dane".into(),back:"Wróć do przestrzeni".into()}}
+fn spaces_count(n:usize)->String{let (t,h)=(n%10,n%100);if n==1{"1 przestrzeń".into()}else if (2..=4).contains(&t)&&!(12..=14).contains(&h){format!("{n} przestrzenie")}else{format!("{n} przestrzeni")}}
+fn profile_rows(profiles:&[ffi::ProfileOption],uses:&[ffi::ProfileUse],current:&str)->Vec<ffi::ProfileRow>{
+    profiles.iter().map(|p|{
+        let names:Vec<&str>=uses.iter().filter(|w|w.profile==p.id).map(|w|w.name.as_str()).collect();
+        let usage=if names.is_empty(){"Nieprzypisany do żadnej przestrzeni".to_string()}else{format!("{}: {}",spaces_count(names.len()),names.join(", "))};
+        let current=!current.is_empty()&&p.id==current;
+        ffi::ProfileRow{id:p.id.clone(),name:p.name.clone(),initial:p.name.chars().next().map(|c|c.to_uppercase().collect()).unwrap_or_default(),detail:if current{format!("Ta przestrzeń · {usage}")}else{usage},current,rename_ax:format!("Zmień nazwę profilu {}",p.name),remove_ax:format!("Usuń profil {}",p.name)}
+    }).collect()
+}
+fn profile_confirm_copy(name:&str)->String{format!("Usunąć profil „{name}”? Logowania, cookies i dane stron tego profilu zostaną trwale usunięte. Tej operacji nie można cofnąć.")}
 impl ProfileForm {
     fn open(&mut self,selected:&str,workspace:&str){self.selected=selected.into();self.workspace=workspace.into();self.confirmation.clear();self.status.clear();self.submitting=false;}
     fn select(&mut self,selected:&str){self.selected=selected.into();self.workspace.clear();self.confirmation.clear();self.status.clear();}
@@ -800,8 +816,7 @@ impl ProfileForm {
     fn controls(&mut self,ready:bool,busy:bool,profiles:&[ffi::ProfileOption],uses:&[ffi::ProfileUse])->ffi::ProfileControls {
         let selected=profiles.iter().position(|p|p.id==self.selected);let used=uses.iter().any(|w|w.profile==self.selected);let enabled=ready&&!busy&&!self.submitting;
         if !enabled||used||selected.is_none()||profiles.len()<=1{self.confirmation.clear();}
-        if used&&!busy{self.status=format!("Profil jest używany przez: {}. Najpierw zmień profil tych przestrzeni.",self.used_names(uses));}
-        let copy=profile_copy();ffi::ProfileControls{create:enabled,rename:enabled&&selected.is_some()&&self.workspace.is_empty(),remove:enabled&&selected.is_some()&&!used&&profiles.len()>1,picker:enabled,delete_label:if self.confirmation==self.selected&&!self.confirmation.is_empty(){copy.confirm_delete}else{copy.remove_label},status:self.status.clone(),selected:selected.unwrap_or(0),has_selected:selected.is_some()}
+        ffi::ProfileControls{create:enabled,edit:enabled,rename:enabled&&self.workspace.is_empty(),confirming:self.confirmation.clone(),status:self.status.clone()}
     }
     fn request(&mut self,action:u32,raw_name:&str,ready:bool,busy:bool,profiles:&[ffi::ProfileOption],uses:&[ffi::ProfileUse])->ffi::ProfileRequest {
         let none=||ffi::ProfileRequest{action:ffi::ProfileAction::None,id:String::new(),name:String::new(),workspace:String::new()};
@@ -810,9 +825,9 @@ impl ProfileForm {
         let selected=profiles.iter().find(|p|p.id==self.selected);
         if action==2 {
             if selected.is_none(){self.confirmation.clear();self.status="Wybierz istniejący profil.".into();return none();}
-            if uses.iter().any(|w|w.profile==self.selected){self.confirmation.clear();self.status=format!("Profil jest używany przez: {}. Najpierw zmień profil tych przestrzeni.",self.used_names(uses));return none();}
+            if uses.iter().any(|w|w.profile==self.selected){self.confirmation.clear();self.status=format!("Profil jest używany przez: {}. Przypisz tym przestrzeniom inny profil, aby go usunąć.",self.used_names(uses));return none();}
             if profiles.len()<=1{self.confirmation.clear();self.status="Nie można usunąć ostatniego profilu.".into();return none();}
-            if self.confirmation!=self.selected {self.confirmation=self.selected.clone();self.status="Usunięte zostaną logowania, cookies i dane stron tego profilu. Tej operacji nie można cofnąć.".into();return ffi::ProfileRequest{action:ffi::ProfileAction::ConfirmDelete,id:self.selected.clone(),name:String::new(),workspace:String::new()};}
+            if self.confirmation!=self.selected {self.confirmation=self.selected.clone();self.status.clear();return ffi::ProfileRequest{action:ffi::ProfileAction::ConfirmDelete,id:self.selected.clone(),name:String::new(),workspace:String::new()};}
             self.confirmation.clear();self.status.clear();self.submitting=true;return ffi::ProfileRequest{action:ffi::ProfileAction::Delete,id:self.selected.clone(),name:String::new(),workspace:String::new()};
         }
         self.confirmation.clear();let name=raw_name.trim();
@@ -823,6 +838,8 @@ impl ProfileForm {
         self.status.clear();self.submitting=true;ffi::ProfileRequest{action:if action==0{ffi::ProfileAction::Create}else{ffi::ProfileAction::Rename},id:if action==0{String::new()}else{self.selected.clone()},name:name.into(),workspace:if action==0{self.workspace.clone()}else{String::new()}}
     }
     fn finish_attempt(&mut self,accepted:bool){self.submitting=false;if !accepted&&self.status.is_empty(){self.status="Nie udało się wykonać operacji na profilu. Spróbuj ponownie.".into();}}
+    // Leaves rename or delete confirmation; the selection stays on its row.
+    fn cancel(&mut self){self.confirmation.clear();self.status.clear();}
 }
 fn paragraph_layout(width:i32,line_height:i32,count:usize)->ffi::ColumnLayout{let g=notice_layout(width,line_height,count,0,0);ffi::ColumnLayout{width:g.width,height:g.height,children:g.body_lines}}
 
@@ -1455,8 +1472,8 @@ fn action_group_layout(width: i32, height: i32, vertical: bool, spacing: i32, ch
     ffi::ColumnLayout {width,height,children:rects}
 }
 
-const APPEARANCE_COLORS: [u32;4] = [0xff9e91dc,0xff84b6a4,0xffd6a07b,0xff7faacb];
-const APPEARANCE_EMOJIS: [&str;6] = ["💼","🏠","🚀","🎨","📚","🎮"];
+const APPEARANCE_COLORS: [u32;8] = [0xff9e91dc,0xff84b6a4,0xffd6a07b,0xff7faacb,0xffe58fa8,0xffd9c26a,0xff8fcb7a,0xffa9a9b4];
+const APPEARANCE_EMOJIS: [&str;8] = ["💼","🏠","🚀","🎨","📚","🎮","🛒","🎬"];
 fn appearance_presets(emoji: bool) -> Vec<ffi::AppearancePreset> {
     if emoji { APPEARANCE_EMOJIS.iter().map(|e|ffi::AppearancePreset { color:0, emoji:(*e).into(), label:format!("Emoji {}",e) }).collect() }
     else { APPEARANCE_COLORS.iter().map(|&c|ffi::AppearancePreset { color:c, emoji:String::new(), label:format!("#{:06X}",c&0xffffff) }).collect() }
@@ -1476,7 +1493,7 @@ fn appearance_selected(emoji: bool, index: usize, color: u32, current_emoji: &st
     else { APPEARANCE_COLORS.get(index).map(|c|c&0xffffff==color&0xffffff).unwrap_or(false) }
 }
 fn appearance_row_layout(width: i32, height: i32, editor_width: i32, editor_height: i32, emoji: bool) -> ffi::ColumnLayout {
-    let count=if emoji {6} else {4};let button_width=if emoji {30} else {32};let button_height=if emoji {28} else {32};
+    let count=if emoji {APPEARANCE_EMOJIS.len() as i32} else {APPEARANCE_COLORS.len() as i32};let button_width=if emoji {30} else {32};let button_height=if emoji {28} else {32};
     let editor_height=editor_height.max(0);let width=if width<0 {(count*button_width+8i32).saturating_add(editor_width.max(0))} else {width};
     let height=if height<0 {button_height.max(editor_height)} else {height};let control_width=width.min(count*button_width);
     let mut children=Vec::with_capacity(count as usize+2);let mut x=0;
@@ -1741,7 +1758,7 @@ fn folder_menu_action(command:i32,s:&ffi::FolderMenuState)->ffi::FolderMenuActio
 
 // Workspace menu IDs follow the native menu delegate contract.
 const WS_SET_PROFILE:i32=1;const WS_NEW_PROFILE:i32=2;const WS_EDIT_PROFILE:i32=3;const WS_SETTINGS:i32=4;const WS_REMOVE:i32=30;const WS_COLOR_MENU:i32=31;const WS_EMOJI_MENU:i32=32;const WS_CUSTOM_COLOR:i32=33;const WS_CUSTOM_EMOJI:i32=34;const WS_CLEAR_EMOJI:i32=35;const WS_COLOR_BASE:i32=40;const WS_EMOJI_BASE:i32=50;const WS_PROFILE_BASE:i32=100;
-const WORKSPACE_COLOR_NAMES:[&str;4]=["Lawendowy","Szałwiowy","Brzoskwiniowy","Niebieski"];
+const WORKSPACE_COLOR_NAMES:[&str;8]=["Lawendowy","Szałwiowy","Brzoskwiniowy","Niebieski","Różowy","Musztardowy","Zielony","Grafitowy"];
 fn indexed(command:i32,base:i32,count:usize)->Option<usize>{(command>=base&&((command-base) as usize)<count).then(||(command-base) as usize)}
 fn workspace_menu_command(command:i32,profiles:usize)->bool{
     matches!(command,WS_SET_PROFILE..=WS_SETTINGS|WS_REMOVE..=WS_CLEAR_EMOJI)||indexed(command,WS_COLOR_BASE,APPEARANCE_COLORS.len()).is_some()||indexed(command,WS_EMOJI_BASE,APPEARANCE_EMOJIS.len()).is_some()||indexed(command,WS_PROFILE_BASE,profiles).is_some()
@@ -1749,7 +1766,7 @@ fn workspace_menu_command(command:i32,profiles:usize)->bool{
 fn workspace_context_menu(s:&ffi::WorkspaceMenuState)->Vec<ffi::WorkspaceMenuEntry>{
     let mut entries=Vec::new();let mut add=|command:i32,label:&str,kind:u32,group:u32|entries.push(ffi::WorkspaceMenuEntry{command,label:label.into(),kind,group});
     for (index,profile) in s.profiles.iter().enumerate(){add(WS_PROFILE_BASE+index as i32,&profile.name,3,1);}
-    add(0,"",1,1);add(WS_EDIT_PROFILE,"Edytuj profil…",0,1);add(WS_NEW_PROFILE,"Dodaj nowy profil…",0,1);
+    add(0,"",1,1);add(WS_EDIT_PROFILE,"Edytuj profile…",0,1);add(WS_NEW_PROFILE,"Dodaj nowy profil…",0,1);
     for (index,name) in WORKSPACE_COLOR_NAMES.iter().enumerate(){add(WS_COLOR_BASE+index as i32,name,4,2);}
     add(0,"",1,2);add(WS_CUSTOM_COLOR,"Własny kolor…",0,2);
     for (index,emoji) in APPEARANCE_EMOJIS.iter().enumerate(){add(WS_EMOJI_BASE+index as i32,emoji,4,3);}
@@ -3940,7 +3957,7 @@ mod tests {
         for emoji in [false,true]{for (index,preset) in appearance_presets(emoji).iter().enumerate(){let mut input=graph.append_form_action();assert!(input.bind_appearance_preset(emoji,index));let binding=input.node_form_command();assert_eq!(binding.panel,ffi::FormPanel::Workspace);assert_eq!(binding.index,index);assert!(binding.key.is_empty());let target=appearance_command_target(binding.command,binding.index);assert!(target.valid);assert_eq!(target.color,preset.color);assert_eq!(target.emoji,preset.emoji);}}
     }
     #[test] fn appearance_commands_reject_invalid_index_and_generic_binding(){
-        let mut graph=new_form_graph(false,0,false,false);let mut input=graph.append_form_action();for (emoji,index) in [(false,4),(false,usize::MAX),(true,6),(true,usize::MAX)]{assert!(!input.bind_appearance_preset(emoji,index));assert_eq!(input.node_model_kind(),0);}for command in [ffi::FormCommand::WorkspaceColorPreset,ffi::FormCommand::WorkspaceEmojiPreset]{assert!(!input.node_form_command_init(command,""));assert!(!input.node_form_command_init(command,"2"));}assert!(input.bind_appearance_preset(true,2));assert_eq!(input.node_form_command().index,2);
+        let mut graph=new_form_graph(false,0,false,false);let mut input=graph.append_form_action();for (emoji,index) in [(false,8),(false,usize::MAX),(true,8),(true,usize::MAX)]{assert!(!input.bind_appearance_preset(emoji,index));assert_eq!(input.node_model_kind(),0);}for command in [ffi::FormCommand::WorkspaceColorPreset,ffi::FormCommand::WorkspaceEmojiPreset]{assert!(!input.node_form_command_init(command,""));assert!(!input.node_form_command_init(command,"2"));}assert!(input.bind_appearance_preset(true,2));assert_eq!(input.node_form_command().index,2);
     }
     #[test] fn appearance_commands_do_not_change_semantics_after_binding(){
         let mut graph=new_form_graph(false,0,false,false);let mut input=graph.append_form_action();assert!(input.bind_appearance_preset(false,1));assert!(input.bind_appearance_preset(false,1));assert!(!input.bind_appearance_preset(false,2));assert!(!input.bind_appearance_preset(true,1));assert!(!input.node_form_command_init(ffi::FormCommand::WorkspaceSave,""));let target=appearance_command_target(input.node_form_command().command,input.node_form_command().index);assert!(target.valid);assert_eq!(target.color,0xff84b6a4);
@@ -3955,15 +3972,15 @@ mod tests {
         let mut graph=new_form_graph(false,0,false,false);let mut input=graph.append_form_action();input.bind_appearance_preset(true,5);let mut ticket=input.defer_form_command();input.action_cancel();assert_eq!(ticket.take_command().command,ffi::FormCommand::None);let binding=input.node_form_command();assert_eq!(appearance_command_target(binding.command,binding.index).emoji,"🎮");assert_eq!(input.defer_form_command().take_command().index,5);
     }
     #[test] fn appearance_presets_preserve_palette_order_labels_and_unicode() {
-        let colors=appearance_presets(false);assert_eq!(colors.len(),4);assert_eq!(colors[0].color,0xff9e91dc);assert_eq!(colors[3].label,"#7FAACB");assert!(colors.iter().all(|p|p.emoji.is_empty()&&p.color>>24==255));
-        let emojis=appearance_presets(true);assert_eq!(emojis.len(),6);assert_eq!(emojis[2].emoji,"🚀");assert_eq!(emojis[5].label,"Emoji 🎮");
+        let colors=appearance_presets(false);assert_eq!(colors.len(),8);assert_eq!(colors[0].color,0xff9e91dc);assert_eq!(colors[3].label,"#7FAACB");assert!(colors.iter().all(|p|p.emoji.is_empty()&&p.color>>24==255));
+        let emojis=appearance_presets(true);assert_eq!(emojis.len(),8);assert_eq!(emojis[7].emoji,"🎬");assert_eq!(emojis[2].emoji,"🚀");assert_eq!(emojis[5].label,"Emoji 🎮");
     }
     #[test] fn appearance_selection_matches_custom_values_and_out_of_range_indices() {
-        assert!(appearance_selected(false,0,0x9e91dc,""));assert!(!appearance_selected(false,0,0xff123456,""));assert!(!appearance_selected(false,4,0xff9e91dc,""));
-        assert!(appearance_selected(true,2,0,"🚀"));assert!(!appearance_selected(true,2,0,"👩‍💻"));assert!(!appearance_selected(true,6,0,"🚀"));assert!(!appearance_selected(true,0,0,""));
+        assert!(appearance_selected(false,0,0x9e91dc,""));assert!(!appearance_selected(false,0,0xff123456,""));assert!(!appearance_selected(false,8,0xff9e91dc,""));
+        assert!(appearance_selected(true,2,0,"🚀"));assert!(!appearance_selected(true,2,0,"👩‍💻"));assert!(!appearance_selected(true,8,0,"🚀"));assert!(!appearance_selected(true,0,0,""));
     }
     #[test] fn appearance_row_preserves_control_sizes_and_excludes_editor() {
-        for (emoji,count,bw,bh) in [(false,4,32,32),(true,6,30,28)] {
+        for (emoji,count,bw,bh) in [(false,8,32,32),(true,8,30,28)] {
             let g=appearance_row_layout(398,-1,100,30,emoji);assert_eq!(g.children.len(),count+2);assert_eq!(g.height,bh.max(30));
             for r in &g.children[..count] {assert_eq!((r.width,r.height),(bw,bh));}
             let field=&g.children[count+1];assert_eq!(field.x,count as i32*bw+8);assert_eq!(field.x+field.width,398);
@@ -3973,7 +3990,7 @@ mod tests {
         for emoji in [false,true] {for width in [0,1,17,127,188,398,i32::MAX] {for height in [0,1,40] {
             let g=appearance_row_layout(width,height,100,30,emoji);for r in &g.children {assert!(r.x>=0&&r.y>=0&&r.width>=0&&r.height>=0);assert!(i64::from(r.x)+i64::from(r.width)<=i64::from(width));assert!(r.y+r.height<=height);}
         }}}
-        assert_eq!(appearance_row_layout(-1,-1,100,30,false).width,236);assert_eq!(appearance_row_layout(-1,-1,i32::MAX,i32::MAX,true).width,i32::MAX);
+        assert_eq!(appearance_row_layout(-1,-1,100,30,false).width,364);assert_eq!(appearance_row_layout(-1,-1,i32::MAX,i32::MAX,true).width,i32::MAX);
     }
     #[test] fn appearance_swatch_draws_raw_color_outline_focus_and_clip() {
         let mut swatch=row(32.0);swatch.kind=18;swatch.height=32.0;swatch.active=false;swatch.badge=0xff84b6a4;let ops=layout(std::slice::from_ref(&swatch));assert_eq!(ops.len(),1);assert_eq!(ops[0].color,0xff84b6a4);assert_eq!(ops[0].radius,7.0);
@@ -4658,11 +4675,11 @@ mod tests {
         let g=notice_layout(400,20,5,18,0);assert_eq!(g.height,100);assert!(g.error_lines.is_empty());
     }
     #[test] fn workspace_form_preserves_copy_and_profile_change_warning() {
-        let c=workspace_copy();assert!(c.profile_hint.contains("Zmiana profilu zamknie karty"));assert!(c.profile_hint.contains("wspólne logowanie i cookies"));assert!(c.save_hint.contains("Wygląd zapisuje się od razu"));
+        let c=workspace_copy();assert!(c.profile_hint.contains("Zmiana profilu zamknie karty"));assert!(c.profile_hint.contains("dzielą logowania i cookies"));assert!(c.save_hint.contains("Wygląd zapisuje się od razu"));
         assert_eq!(workspace_appearance_error(2),"Nie udało się zapisać emoji");assert_eq!(workspace_appearance_error(3),"Podaj kolor #RRGGBB");
     }
     #[test] fn workspace_form_tracks_create_cancel_and_edit_presentation() {
-        let mut f=new_workspace_form();f.reset("work");let v=f.view("Praca","Pracowy",true,false,2);assert!(!v.creating);assert!(v.appearance&&v.enabled&&v.remove_enabled);assert_eq!(v.description,"Chromium: Pracowy");
+        let mut f=new_workspace_form();f.reset("work");let v=f.view("Praca","Pracowy",true,false,2);assert!(!v.creating);assert!(v.appearance&&v.enabled&&v.remove_enabled);assert_eq!(v.description,"Profil: Pracowy");
         f.set_configuration_error(true);f.begin_create("work");let v=f.view("Praca","Pracowy",true,false,2);assert!(v.creating);assert!(!v.appearance&&!v.remove_enabled);assert!(v.error.is_empty());assert_eq!(v.title,"Nowa przestrzeń");assert_eq!(v.secondary_label,"Anuluj");
         f.reset("work");assert!(!f.creating());assert_eq!(f.view("Praca","P",true,false,2).save_label,"Zapisz nazwę i profil");
     }
@@ -4701,19 +4718,20 @@ mod tests {
     fn profile_options()->Vec<ffi::ProfileOption>{vec![ffi::ProfileOption{id:"used".into(),name:"Work".into()},ffi::ProfileOption{id:"spare".into(),name:"Spare".into()}]}
     fn profile_uses()->Vec<ffi::ProfileUse>{vec![ffi::ProfileUse{workspace:"work".into(),name:"Praca".into(),profile:"used".into()}]}
     #[test] fn profile_form_selects_by_id_across_reorder_and_catalogue_changes() {
-        let mut f=new_profile_form();f.open("spare","");let mut profiles=profile_options();profiles.reverse();f.reconcile(&profiles,false);assert_eq!(f.controls(true,false,&profiles,&profile_uses()).selected,0);
-        profiles.remove(0);f.reconcile(&profiles,false);assert_eq!(f.selected,"used");assert!(!f.controls(true,false,&profiles,&profile_uses()).remove);
+        let mut f=new_profile_form();f.open("spare","");let mut profiles=profile_options();profiles.reverse();f.reconcile(&profiles,false);assert_eq!(f.selected,"spare");
+        profiles.remove(0);f.reconcile(&profiles,false);assert_eq!(f.selected,"used");assert!(matches!(f.request(2,"",true,false,&profiles,&profile_uses()).action,ffi::ProfileAction::None));
         profiles.push(ffi::ProfileOption{id:"new".into(),name:"New".into()});f.reconcile(&profiles,true);assert_eq!(f.selected,"new");
     }
     #[test] fn profile_form_keeps_used_last_busy_and_unready_profiles_safe() {
-        let mut f=new_profile_form();f.open("used","");let c=f.controls(true,false,&profile_options(),&profile_uses());assert!(!c.remove);assert!(c.status.contains("Praca"));assert!(c.rename);
-        assert!(matches!(f.request(2,"",true,false,&profile_options(),&profile_uses()).action,ffi::ProfileAction::None));
-        f.open("spare","");for (ready,busy) in [(false,false),(true,true)]{let c=f.controls(ready,busy,&profile_options(),&[]);assert!(!c.create&&!c.rename&&!c.remove&&!c.picker);}
+        let mut f=new_profile_form();f.open("used","");let c=f.controls(true,false,&profile_options(),&profile_uses());assert!(c.edit&&c.rename);assert!(c.status.is_empty());
+        assert!(matches!(f.request(2,"",true,false,&profile_options(),&profile_uses()).action,ffi::ProfileAction::None));assert!(f.status().contains("Praca"));
+        f.open("spare","");for (ready,busy) in [(false,false),(true,true)]{let c=f.controls(ready,busy,&profile_options(),&[]);assert!(!c.create&&!c.edit&&!c.rename);}
         let mut profiles=profile_options();profiles.remove(0);assert!(matches!(f.request(2,"",true,false,&profiles,&[]).action,ffi::ProfileAction::None));
     }
     #[test] fn profile_form_requires_fresh_same_target_delete_confirmation() {
         let mut f=new_profile_form();f.open("spare","");assert!(matches!(f.request(2,"",true,false,&profile_options(),&profile_uses()).action,ffi::ProfileAction::ConfirmDelete));
-        assert!(f.controls(true,false,&profile_options(),&profile_uses()).delete_label.starts_with("Potwierdź"));
+        let c=f.controls(true,false,&profile_options(),&profile_uses());assert_eq!(c.confirming,"spare");assert!(c.status.is_empty());
+        f.cancel();assert!(f.controls(true,false,&profile_options(),&profile_uses()).confirming.is_empty());assert!(matches!(f.request(2,"",true,false,&profile_options(),&profile_uses()).action,ffi::ProfileAction::ConfirmDelete));
         f.select("used");assert!(matches!(f.request(2,"",true,false,&profile_options(),&[]).action,ffi::ProfileAction::ConfirmDelete));
         let r=f.request(2,"",true,false,&profile_options(),&[]);assert!(matches!(r.action,ffi::ProfileAction::Delete));assert_eq!(r.id,"used");
         assert!(matches!(f.request(2,"",true,false,&profile_options(),&[]).action,ffi::ProfileAction::None));
@@ -4736,6 +4754,14 @@ mod tests {
         assert!(matches!(f.request(0,"Name",true,false,&profile_options(),&[]).action,ffi::ProfileAction::None));
         let r=f.request(0,"Name",true,false,&profile_options(),&profile_uses());assert_eq!(r.workspace,"work");f.set_status("Tworzenie profilu…");f.finish_attempt(true);assert_eq!(f.status(),"Tworzenie profilu…");
         f.request(0,"Other",true,false,&profile_options(),&profile_uses());f.set_status("Błąd usługi");f.finish_attempt(false);assert_eq!(f.status(),"Błąd usługi");
+    }
+    #[test] fn profile_rows_name_spaces_with_polish_plurals_and_mark_current() {
+        let profiles=vec![ffi::ProfileOption{id:"w".into(),name:"work".into()},ffi::ProfileOption{id:"ł".into(),name:"łódź".into()}];
+        let uses:Vec<ffi::ProfileUse>=["A","B","C"].iter().map(|n|ffi::ProfileUse{workspace:n.to_string(),name:n.to_string(),profile:"w".into()}).collect();
+        let rows=profile_rows(&profiles,&uses,"w");assert_eq!(rows[0].initial,"W");assert!(rows[0].current);assert_eq!(rows[0].detail,"Ta przestrzeń · 3 przestrzenie: A, B, C");
+        assert_eq!(rows[1].initial,"Ł");assert!(!rows[1].current);assert_eq!(rows[1].detail,"Nieprzypisany do żadnej przestrzeni");assert_eq!(rows[1].remove_ax,"Usuń profil łódź");
+        for (n,text) in [(1,"1 przestrzeń"),(2,"2 przestrzenie"),(5,"5 przestrzeni"),(12,"12 przestrzeni"),(22,"22 przestrzenie")]{assert_eq!(spaces_count(n),text);}
+        assert!(profile_rows(&profiles,&[],"").iter().all(|r|!r.current));
     }
     #[test] fn profile_paragraph_layout_retains_lines_and_bold_scene_text() {
         let g=paragraph_layout(300,18,3);assert_eq!((g.width,g.height,g.children[2].y),(300,54,36));
@@ -4835,11 +4861,11 @@ mod tests {
     fn workspace_menu_state()->ffi::WorkspaceMenuState{ffi::WorkspaceMenuState{ready:true,busy:false,workspace:"work".into(),workspace_count:2,profile:"p2".into(),profiles:vec![ffi::WorkspaceMenuProfile{id:"p1".into(),name:"Główny".into()},ffi::WorkspaceMenuProfile{id:"p2".into(),name:"Praca".into()}],color:APPEARANCE_COLORS[1],emoji:"🚀".into()}}
     #[test] fn workspace_menu_preserves_structure_labels_groups_and_checks() {
         let s=workspace_menu_state();let menu=workspace_context_menu(&s);let group=|g:u32|menu.iter().filter(|e|e.group==g).map(|e|(e.command,e.kind)).collect::<Vec<_>>();
-        assert_eq!(group(0),vec![(1,2),(31,2),(32,2),(0,1),(4,0),(30,0)]);assert_eq!(group(1),vec![(100,3),(101,3),(0,1),(3,0),(2,0)]);assert_eq!(group(2),vec![(40,4),(41,4),(42,4),(43,4),(0,1),(33,0)]);assert_eq!(group(3),vec![(50,4),(51,4),(52,4),(53,4),(54,4),(55,4),(0,1),(34,0),(35,4)]);
+        assert_eq!(group(0),vec![(1,2),(31,2),(32,2),(0,1),(4,0),(30,0)]);assert_eq!(group(1),vec![(100,3),(101,3),(0,1),(3,0),(2,0)]);assert_eq!(group(2),vec![(40,4),(41,4),(42,4),(43,4),(44,4),(45,4),(46,4),(47,4),(0,1),(33,0)]);assert_eq!(group(3),vec![(50,4),(51,4),(52,4),(53,4),(54,4),(55,4),(56,4),(57,4),(0,1),(34,0),(35,4)]);
         assert_eq!(menu.iter().find(|e|e.command==41).unwrap().label,"Szałwiowy");assert_eq!(menu.iter().find(|e|e.command==101).unwrap().label,"Praca");assert_eq!(menu.iter().find(|e|e.command==52).unwrap().label,"🚀");
         assert!(workspace_menu_checked(101,&s)&&!workspace_menu_checked(100,&s)&&workspace_menu_checked(41,&s)&&!workspace_menu_checked(40,&s)&&workspace_menu_checked(52,&s)&&!workspace_menu_checked(35,&s)&&!workspace_menu_checked(102,&s));
         let mut plain=workspace_menu_state();plain.emoji.clear();assert!(workspace_menu_checked(35,&plain)&&!workspace_menu_checked(52,&plain));
-        assert!(workspace_menu_command(1,0)&&workspace_menu_command(43,0)&&!workspace_menu_command(44,0)&&workspace_menu_command(55,0)&&!workspace_menu_command(56,0)&&!workspace_menu_command(100,0)&&workspace_menu_command(101,2)&&!workspace_menu_command(5,9)&&!workspace_menu_command(20,9)&&!workspace_menu_command(36,9));
+        assert!(workspace_menu_command(1,0)&&workspace_menu_command(47,0)&&!workspace_menu_command(48,0)&&workspace_menu_command(57,0)&&!workspace_menu_command(58,0)&&!workspace_menu_command(100,0)&&workspace_menu_command(101,2)&&!workspace_menu_command(5,9)&&!workspace_menu_command(20,9)&&!workspace_menu_command(36,9));
     }
     #[test] fn workspace_menu_actions_resolve_targets_and_revalidate_state() {
         use ffi::WorkspaceMenuCommand as C;let s=workspace_menu_state();
@@ -4847,7 +4873,7 @@ mod tests {
         let a=workspace_menu_action(3,&s);assert_eq!((a.command,a.profile.as_str()),(C::EditProfile,"p2"));
         let a=workspace_menu_action(43,&s);assert_eq!((a.command,a.color),(C::Color,APPEARANCE_COLORS[3]));
         let a=workspace_menu_action(50,&s);assert_eq!((a.command,a.emoji.as_str()),(C::Emoji,"💼"));
-        for (command,expected) in [(2,C::NewProfile),(4,C::Settings),(30,C::Remove),(33,C::CustomColor),(34,C::CustomEmoji),(35,C::ClearEmoji),(1,C::None),(31,C::None),(102,C::None),(46,C::None),(5,C::None)]{let a=workspace_menu_action(command,&s);assert_eq!(a.command,expected,"{command}");assert_eq!(a.workspace.is_empty(),expected==C::None);}
+        for (command,expected) in [(2,C::NewProfile),(4,C::Settings),(30,C::Remove),(33,C::CustomColor),(34,C::CustomEmoji),(35,C::ClearEmoji),(1,C::None),(31,C::None),(102,C::None),(48,C::None),(58,C::None),(5,C::None)]{let a=workspace_menu_action(command,&s);assert_eq!(a.command,expected,"{command}");assert_eq!(a.workspace.is_empty(),expected==C::None);}
         let mut single=workspace_menu_state();single.workspace_count=1;assert_eq!(workspace_menu_action(30,&single).command,C::None);assert!(workspace_menu_enabled(4,&single));
         let mut busy=workspace_menu_state();busy.busy=true;assert!(!workspace_menu_enabled(30,&busy)&&workspace_menu_enabled(40,&busy));
         let mut stale=workspace_menu_state();stale.ready=false;for command in [2,3,4,30,40,50,100]{assert_eq!(workspace_menu_action(command,&stale).command,C::None);}

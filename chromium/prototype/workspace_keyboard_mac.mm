@@ -146,6 +146,9 @@ void InstallWorkspaceKeyboardRouting(views::Widget* widget, bool panel) {
   bridge->SetCommandDispatcher([[ZitterCommandDispatcherDelegate alloc] initWithWindow:widget->GetNativeWindow().GetNativeNSWindow() panel:panel widget:widget], nil);
 
 }
+void ShowCharacterPalette() {
+  [NSApp orderFrontCharacterPalette:nil];
+}
 // Native context menus intentionally block Chromium application tasks. Schedule
 // inspection in Cocoa tracking/default modes, then dismiss the actual menu.
 bool RunWithNativeMenuInspectionForTesting(base::OnceClosure open,base::RepeatingClosure inspect) {

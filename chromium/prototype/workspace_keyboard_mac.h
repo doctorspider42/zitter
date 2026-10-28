@@ -15,6 +15,8 @@ namespace zitter::prototype {
 bool RunWithNativeMenuInspectionForTesting(base::OnceClosure open,base::RepeatingClosure inspect);
 void UpdateWorkspaceMenuShortcuts(const std::vector<Shortcut>& shortcuts);
 void InstallWorkspaceKeyboardRouting(views::Widget* widget, bool panel = false);
+// Opens the system Emoji & Symbols viewer; it types into the focused field.
+void ShowCharacterPalette();
 }
 
 #endif
