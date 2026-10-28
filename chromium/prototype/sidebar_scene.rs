@@ -408,6 +408,7 @@ mod ffi {
         fn appearance_grid_target(axis: u32, index: usize, current: u32) -> u32;
         fn appearance_grid_selected(axis: u32, index: usize, current: u32) -> bool;
         fn appearance_grid_layout(width: i32, height: i32, axis: u32) -> ColumnLayout;
+        fn appearance_pill_layout(width: i32, height: i32, count: usize) -> ColumnLayout;
         // The color wheel (design.rs wheel): hits snap to the grid; -1 = no hit / keep.
         fn color_ring_hit(x: f32, y: f32, size: f32) -> i32;
         fn color_pad_hit(x: f32, y: f32, width: f32, height: f32) -> i32;
@@ -1508,7 +1509,7 @@ fn design_same_workspace_color(a:u32,b:u32)->bool{design::WorkspaceColor::from_a
 const APPEARANCE_EMOJIS: [&str;8] = ["💼","🏠","🚀","🎨","📚","🎮","🛒","🎬"];
 fn appearance_presets(emoji: bool) -> Vec<ffi::AppearancePreset> {
     if emoji { APPEARANCE_EMOJIS.iter().map(|e|ffi::AppearancePreset { color:0, emoji:(*e).into(), label:format!("Emoji {}",e) }).collect() }
-    else { APPEARANCE_COLORS.iter().map(|&c|ffi::AppearancePreset { color:c, emoji:String::new(), label:format!("#{:06X}",c&0xffffff) }).collect() }
+    else { APPEARANCE_COLORS.iter().zip(WORKSPACE_COLOR_NAMES).map(|(&c,name)|ffi::AppearancePreset { color:c, emoji:String::new(), label:name.into() }).collect() }
 }
 fn appearance_command_target(command:ffi::FormCommand,index:usize)->ffi::AppearanceTarget{
     use ffi::FormCommand as C;
@@ -1601,14 +1602,25 @@ fn appearance_grid_layout(width:i32,height:i32,axis:u32)->ffi::ColumnLayout{
     ffi::ColumnLayout{width,height,children}
 }
 fn appearance_row_layout(width: i32, height: i32, editor_width: i32, editor_height: i32, emoji: bool) -> ffi::ColumnLayout {
-    let count=if emoji {APPEARANCE_EMOJIS.len() as i32} else {APPEARANCE_COLORS.len() as i32};let button_width=if emoji {30} else {32};let button_height=if emoji {28} else {32};
+    // The emoji row ends with the "more emoji" tile; its field only takes its own width.
+    let count=if emoji {APPEARANCE_EMOJIS.len() as i32+1} else {APPEARANCE_COLORS.len() as i32};let button_width=if emoji {30} else {32};let button_height=if emoji {28} else {32};
     let editor_height=editor_height.max(0);let width=if width<0 {(count*button_width+8i32).saturating_add(editor_width.max(0))} else {width};
     let height=if height<0 {button_height.max(editor_height)} else {height};let control_width=width.min(count*button_width);
     let mut children=Vec::with_capacity(count as usize+2);let mut x=0;
     for index in 0..count { let width=control_width/count+if index<control_width%count {1} else {0};let h=button_height.min(height);children.push(ffi::Rect {x,y:(height-h)/2,width,height:h});x+=width; }
     let gap=(width-x).min(8);children.push(ffi::Rect{x,y:0,width:gap,height});x+=gap;
-    let h=editor_height.min(height);children.push(ffi::Rect{x,y:(height-h)/2,width:width-x,height:h});
+    let h=editor_height.min(height);let field=if emoji {(width-x).min(editor_width.max(0))} else {width-x};children.push(ffi::Rect{x,y:(height-h)/2,width:field,height:h});
     ffi::ColumnLayout {width,height,children}
+}
+// Color presets as pills: four columns of 30 px pills, 6 px apart, then an empty
+// spacer and field slot so the row keeps the appearance rows' child contract.
+fn appearance_pill_layout(width:i32,height:i32,count:usize)->ffi::ColumnLayout{
+    let (columns,gap,pill)=(4i32,6i32,30i32);let count=count.min(64) as i32;let rows=(count+columns-1)/columns;
+    let natural_height=rows*pill+(rows-1).max(0)*gap;let width=if width<0{columns*92+(columns-1)*gap}else{width};let height=if height<0{natural_height}else{height};
+    let cell=((width-(columns-1)*gap)/columns).max(0);let mut children=Vec::with_capacity(count as usize+2);
+    for i in 0..count{let (c,r)=(i%columns,i/columns);children.push(ffi::Rect{x:c*(cell+gap),y:r*(pill+gap),width:cell,height:pill.min(height)});}
+    children.push(ffi::Rect{x:0,y:height,width:0,height:0});children.push(ffi::Rect{x:0,y:height,width:0,height:0});
+    ffi::ColumnLayout{width,height:natural_height.max(0).max(if height<0{0}else{height}),children}
 }
 
 // A workspace notice targets the captured ID, independently of the currently
@@ -3149,6 +3161,17 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
         return;
     }
     if i.kind == 18 {
+        // A labelled swatch wider than tall is a pill: fill, 1 px edge, color dot, name.
+        if !i.title.is_empty() && i.width > i.height * 1.6 {
+            let radius=i.height/2.0;let cy=i.y+i.height/2.0;
+            if i.fill>>24!=0{emit(i.x,i.y,i.width,i.height,radius,i.fill,"",0.0,false);}
+            if i.edge>>24!=0{emit(i.x+0.5,i.y+0.5,i.width-1.0,i.height-1.0,radius-0.5,i.edge,"",0.0,false);}
+            emit(i.x+6.0,cy-9.0,18.0,18.0,9.0,i.badge,"",0.0,false);
+            emit(i.x+30.0,i.y,(i.width-36.0).max(0.0),i.height,0.0,i.ink,&i.title,i.font_size,i.active);
+            if i.focused {emit(i.x+2.0,i.y+i.height-3.0,(i.width-4.0).max(0.0),2.0,1.0,i.ink,"",0.0,false);}
+            for p in out[first_primitive..].iter_mut(){if p.color==i.edge&&p.x==i.x+0.5&&p.text.is_empty(){p.stroke=1.0;}}
+            return;
+        }
         // 14 px dot and 20 px ring in a 32 px cell; both shrink in narrow picker cells.
         let cx=i.x+i.width/2.0;let cy=i.y+i.height/2.0;let dot=(i.width.min(i.height)-6.0).clamp(6.0,14.0);let ring=dot+6.0;
         if i.active||i.hovered {emit(cx-ring/2.0,cy-ring/2.0,ring,ring,ring/2.0,i.ink,"",0.0,false);}
@@ -4116,7 +4139,7 @@ mod tests {
         let mut graph=new_form_graph(false,0,false,false);let mut input=graph.append_form_action();input.bind_appearance_preset(true,5);let mut ticket=input.defer_form_command();input.action_cancel();assert_eq!(ticket.take_command().command,ffi::FormCommand::None);let binding=input.node_form_command();assert_eq!(appearance_command_target(binding.command,binding.index).emoji,"🎮");assert_eq!(input.defer_form_command().take_command().index,5);
     }
     #[test] fn appearance_presets_preserve_palette_order_labels_and_unicode() {
-        let colors=appearance_presets(false);assert_eq!(colors.len(),8);assert_eq!(colors[0].color,0xff928fd4);assert_eq!(colors[7].label,"#989898");
+        let colors=appearance_presets(false);assert_eq!(colors.len(),8);assert_eq!(colors[0].color,0xff928fd4);assert_eq!(colors[7].label,"Grafit");
         for ((_,preset),color) in design::WorkspaceColor::PRESETS.iter().zip(colors.iter()) {assert_eq!(preset.to_argb(),color.color);}assert!(colors.iter().all(|p|p.emoji.is_empty()&&p.color>>24==255));
         let emojis=appearance_presets(true);assert_eq!(emojis.len(),8);assert_eq!(emojis[7].emoji,"🎬");assert_eq!(emojis[2].emoji,"🚀");assert_eq!(emojis[5].label,"Emoji 🎮");
     }
@@ -4174,6 +4197,15 @@ mod tests {
         assert!(ops.iter().filter(|p|p.radius==0.0).all(|p|p.x>=-0.01&&p.x+p.width<=168.6));
         let knob=ops.iter().find(|p|p.color==0xff736d89).unwrap();assert_eq!((knob.x+12.0,knob.y+12.0),(12.0+36.0,12.0));
     }
+    #[test] fn color_presets_lay_out_as_two_rows_of_pills_and_draw_dot_and_name() {
+        let g=appearance_pill_layout(400,-1,8);assert_eq!((g.width,g.height,g.children.len()),(400,66,10));
+        assert_eq!((g.children[3].x,g.children[3].width,g.children[4].y),(3*(95+6),95,36));assert_eq!((g.children[9].width,g.children[9].height),(0,0));
+        assert_eq!(appearance_pill_layout(-1,-1,8).width,386);assert!(appearance_pill_layout(10,-1,8).children.iter().all(|r|r.width>=0));
+        let mut p=row(95.0);p.kind=18;p.height=30.0;p.clip.height=30.0;p.title="Koral".into();p.badge=0xffcc8463;p.fill=0xff2a2550;p.edge=0xff9a92ff;p.ink=0xfff3f1f8;p.font_size=12.0;
+        let ops=layout(std::slice::from_ref(&p));assert_eq!(ops.iter().filter(|o|o.text=="Koral").count(),1);
+        assert_eq!(ops.iter().find(|o|o.color==0xff9a92ff).map(|o|(o.stroke,o.radius)),Some((1.0,14.5)));assert_eq!(ops.iter().find(|o|o.color==0xffcc8463).map(|o|o.width),Some(18.0));
+        p.width=32.0;assert!(layout(&[p]).iter().all(|o|o.text.is_empty()));
+    }
     #[test] fn design_palette_bridge_carries_the_rust_palette() {
         let p=design_palette(true,APPEARANCE_COLORS[2]);let q=design::Palette::for_workspace(design::Scheme::Noc,design::WorkspaceColor::SKY);
         assert_eq!((p.bg_void,p.bg_base,p.bg_raised,p.accent,p.on_accent,p.ink_muted,p.focus,p.scrim),(q.bg_void,q.bg_base,q.bg_raised,q.accent,q.on_accent,q.ink_muted,q.focus,q.scrim));
@@ -4184,10 +4216,10 @@ mod tests {
         assert!(appearance_selected(true,2,0,"🚀"));assert!(!appearance_selected(true,2,0,"👩‍💻"));assert!(!appearance_selected(true,8,0,"🚀"));assert!(!appearance_selected(true,0,0,""));
     }
     #[test] fn appearance_row_preserves_control_sizes_and_excludes_editor() {
-        for (emoji,count,bw,bh) in [(false,8,32,32),(true,8,30,28)] {
+        for (emoji,count,bw,bh) in [(false,8,32,32),(true,9,30,28)] {
             let g=appearance_row_layout(398,-1,100,30,emoji);assert_eq!(g.children.len(),count+2);assert_eq!(g.height,bh.max(30));
             for r in &g.children[..count] {assert_eq!((r.width,r.height),(bw,bh));}
-            let field=&g.children[count+1];assert_eq!(field.x,count as i32*bw+8);assert_eq!(field.x+field.width,398);
+            let field=&g.children[count+1];assert_eq!(field.x,count as i32*bw+8);assert_eq!(field.x+field.width,if emoji{field.x+100}else{398});
         }
     }
     #[test] fn appearance_row_bounds_remain_nonnegative_on_tiny_and_saturated_metrics() {

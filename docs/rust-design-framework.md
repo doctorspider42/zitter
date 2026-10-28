@@ -142,8 +142,11 @@ Moduł nie zależy od cxx, więc da się go sprawdzić bez budowania Chromium, s
    (`design::wheel`: `ring_hit`, `pad_hit`, `target`, `step`), klik, przeciąganie,
    strzałki, AX jako suwak z opisem wartości. Pierścień to 96 nachodzących kół, pole
    to siatka 24 × 24 komórek z zaokrąglonymi rogami (scena nie ma gradientów).
-   Zostaje z projektu panelu: presety jako pigułki z nazwą, kafelek „Więcej emoji”
-   zamiast pola tekstowego, kolejność sekcji (kolor, ikona, nazwa i profil).
+   Panel według projektu: presety to pigułki z nazwą w siatce 4 × 2
+   (`appearance_pill_layout`, pigułka = próbka z nazwą szersza niż wysoka), pola hex
+   nie ma (dowolny kolor daje koło), rząd ikon kończy kafelek „Więcej emoji…” otwierający
+   systemowy picker; pole emoji zostało tylko jako 1 px odbiorca, bo picker macOS wpisuje
+   znak do pola z fokusem. Kolejność: kolor i ikona, potem nazwa i profil.
 4. Kafelki monogramów (`kMonogramColors`) z presetów i `on_accent` zamiast białego
    tekstu w scenie.
 5. Fonty Instrument Serif, Schibsted Grotesk i JetBrains Mono (OFL) w pakiecie

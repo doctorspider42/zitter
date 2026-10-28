@@ -565,7 +565,10 @@ sidebar::Item GlyphSceneData(views::View* view,ControlGlyph glyph,const gfx::Vec
   item.monogram=base::UTF16ToUTF8(label); item.font_size=Font(3).GetFontSize();
   item.fill=item.glyph==1 ? item.active && !item.monogram.empty() ? SkColorSetA(Tone(view,kInk),0x1f) : item.hovered ? HoverWash(view) : SK_ColorTRANSPARENT
       : item.hovered ? HoverWash(view) : SK_ColorTRANSPARENT;
-  if(glyph==GlyphButton::Glyph::kSwatch){item.kind=18;item.badge=color;item.ink=Tone(view,!view->GetEnabledInViewsSubtree()?kDisabled:item.active?kInk:kMuted);}
+  if(glyph==GlyphButton::Glyph::kSwatch){item.kind=18;item.badge=color;item.ink=Tone(view,!view->GetEnabledInViewsSubtree()?kDisabled:item.active?kInk:kMuted);
+    // A preset pill: the color's name beside its dot, the selected one on accent_soft.
+    if(rect.width()>rect.height()*1.6f&&!label.empty()){const auto p=Palette(view);item.title=base::UTF16ToUTF8(label);item.font_size=Font(-1).GetFontSize();
+      item.fill=on?p.accent_soft:item.hovered?p.bg_hover:SK_ColorTRANSPARENT;item.edge=on?p.accent:p.line;}}
   return item;
 }
 sidebar::Item GlyphSceneItem(GlyphButton* button,gfx::RectF rect,gfx::RectF clip){return GlyphSceneData(button,button->glyph(),button->icon(),button->on(),button->label(),button->color(),button->GetEnabledInViewsSubtree()&&(button->GetState()==views::Button::STATE_HOVERED||button->GetState()==views::Button::STATE_PRESSED),button->HasFocus(),rect,clip);}
@@ -740,7 +743,7 @@ class AppearanceRow final : public views::View {
  public:
   void SyncWindowVisibility(){CancelInput();if(!SceneIsVisible(this)&&surface_)surface_->Hide();Schedule();}
 
-  explicit AppearanceRow(bool emoji):emoji_(emoji),count_(sidebar::appearance_presets(emoji).size()) {}
+  explicit AppearanceRow(bool emoji):emoji_(emoji),count_(sidebar::appearance_presets(emoji).size()+(emoji?1:0)) {}
 
   views::View* AddPicker(views::Button::PressedCallback callback,std::u16string label,GlyphButton::Glyph glyph) {
     return AddChildView(nodes_.Make<RustActionView>(std::move(callback),std::move(label),glyph,nullptr,
@@ -763,7 +766,7 @@ class AppearanceRow final : public views::View {
  private:
   SceneGroupNodes nodes_{this};
   size_t Count() const{return count_;}
-  sidebar::ColumnLayout Geometry(int width,int height) const {const auto field=children().size()==Count()+2?children().back()->GetPreferredSize():gfx::Size();return sidebar::appearance_row_layout(width,height,field.width(),field.height(),emoji_);}
+  sidebar::ColumnLayout Geometry(int width,int height) const {if(!emoji_)return sidebar::appearance_pill_layout(width,height,Count());const auto field=children().size()==Count()+2?children().back()->GetPreferredSize():gfx::Size();return sidebar::appearance_row_layout(width,height,field.width(),field.height(),emoji_);}
   gfx::Rect Controls() const {return children().size()==Count()+2?GetMirroredRect(gfx::Rect(0,0,children()[Count()-1]->bounds().right(),height())):gfx::Rect();}
   std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const {
     std::vector<sidebar::Item> items;if(children().size()!=Count()+2)return items;
@@ -2965,7 +2968,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto appearance_row=[&](bool emoji)->views::View* {
     return appearance->AddChildView(std::make_unique<AppearanceRow>(emoji));
   };
-  auto* color_row=appearance_row(false);views::BoxLayout* color_layout=nullptr;
+  auto* color_row=appearance_row(false);
   std::vector<std::pair<SkColor,std::u16string>> colors;for(const auto& p:sidebar::appearance_presets(false))colors.emplace_back(p.color,base::UTF8ToUTF16(std::string(p.label)));
   for(size_t preset=0;preset<colors.size();++preset){
     const auto& [color,label]=colors[preset];views::Button::PressedCallback callback;
@@ -2973,17 +2976,8 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     BindAppearancePreset(swatch,false,preset);
     SetActionColor(swatch,color);
   }
-  Spacer(color_row, 1)->SetPreferredSize(gfx::Size(8, 1));
-  color_input_ = AddEditor(color_row);
-  color_input_->GetViewAccessibility().SetName(workspace_copy[9]);
-  color_input_->SetPlaceholderText(u"#RRGGBB");
-  if(auto* native=views::AsViewClass<views::Textfield>(color_input_->view())){
-    native->SetFontList(Font(-1));
-  native->SetBackgroundColor(kChip);
-  native->SetBorder(views::CreatePaddedBorder(
-      views::CreateRoundedRectBorder(1, 7, Hairline(root_)), gfx::Insets::VH(4, 8)));
-  }
-  if(color_layout)color_layout->SetFlexForView(color_input_->view(), 1);
+  // Any color is picked on the wheel below; the presets are named pills.
+  Spacer(color_row, 1);color_row->AddChildView(std::make_unique<views::View>());color_presets_=color_row;
   color_error_ = settings_text(appearance,u"",kError,-2,gfx::Font::Weight::NORMAL,true);
   color_error_->SetVisible(false);
   // Any color, snapped to the design system grid: the hue ring and the
@@ -3005,8 +2999,12 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     BindAppearancePreset(pick,true,preset);
     SetActionLabel(pick,emoji);
   }
+  // The last tile opens the system Emoji & Symbols viewer. It types into the
+  // focused field, so the field stays as a 1 px receiver at the row's end.
+  {auto* more_emoji=AppearancePicker(emoji_row,base::BindRepeating(&WorkspaceShell::OpenEmojiPicker,weak),base::UTF8ToUTF16(std::string(sidebar::workspace_copy().more_emoji)),GlyphButton::Glyph::kDot);
+   SetActionLabel(more_emoji,u"+");}
   Spacer(emoji_row, 1)->SetPreferredSize(gfx::Size(8, 1));
-  emoji_input_ = AddEditor(emoji_row);
+  emoji_input_ = AddEditor(emoji_row);emoji_input_->view()->SetPreferredSize(gfx::Size(1,28));
   emoji_input_->GetViewAccessibility().SetName(workspace_copy[11]);
   emoji_input_->SetPlaceholderText(workspace_copy[12]);
   if(auto* native=views::AsViewClass<views::Textfield>(emoji_input_->view())){
@@ -3016,12 +3014,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       views::CreateRoundedRectBorder(1, 7, Hairline(root_)), gfx::Insets::VH(4, 8)));
   }
   if(emoji_layout)emoji_layout->SetFlexForView(emoji_input_->view(), 1);
-  // The system Emoji & Symbols viewer types into the focused field; its
-  // commit callback below applies the picked emoji like typed text.
-  {auto* more_emoji=ActionGroup(appearance,false,8);
-   AddAction(more_emoji,base::BindRepeating(&WorkspaceShell::OpenEmojiPicker,weak),base::UTF8ToUTF16(std::string(sidebar::workspace_copy().more_emoji)),ui::ButtonStyle::kText);}
 
-  color_input_->SetCallbacks({},base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,const ui::KeyEvent& event){return shell&&shell->HandleAppearanceEditorKey(false,event);},weak));
   emoji_input_->SetCallbacks(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){
     if(shell&&shell->emoji_input_&&!shell->emoji_input_->IsIMEComposing())
       shell->SetWorkspaceEmoji(shell->state_.workspace_id,std::u16string(shell->emoji_input_->GetText()));
@@ -3043,8 +3036,8 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   BindFormCommand(remove_workspace_,sidebar::FormCommand::WorkspaceRemove);BindFormCommand(workspace_profiles,sidebar::FormCommand::WorkspaceProfiles);BindFormCommand(workspace_import,sidebar::FormCommand::WorkspaceImport);
 
   settings->SetLayoutManager(CreateSidebarColumnLayout(8));settings->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(20)));appearance->SetLayoutManager(CreateSidebarColumnLayout(8));more->SetLayoutManager(CreateSidebarColumnLayout(8));
-  // Name, then appearance (saved at once), then the profile with the save row.
-  settings->ReorderChildView(appearance,settings->GetIndexOf(workspace_input_->view()).value()+1);
+  // Appearance first (saved at once), then the name and profile with the save row.
+  settings->ReorderChildView(appearance,settings->GetIndexOf(profile_name_.get()).value()+1);
   save_hint->SetVisible(false);
 
   auto* footer = sidebar->AddChildView(std::make_unique<views::View>());
@@ -3460,7 +3453,6 @@ void WorkspaceShell::Detach() {
   for(auto* field:{snapshot_name_.get(),timeline_filter_.get(),shortcut_chord_.get(),provider_name_.get(),provider_keyword_.get(),provider_url_.get(),history_search_.get()})
     if(field)field->SetCallbacks({},{});
   address_->SetCallbacks({},{});
-  color_input_->SetCallbacks({},{});
   emoji_input_->SetCallbacks({},{});
   preferences_search_->SetCallbacks({},{});
   site_origin_->SetCallbacks({},{});
@@ -3484,7 +3476,7 @@ void WorkspaceShell::Detach() {
   delete_profile_ = nullptr;
   profile_status_ = nullptr;profile_form_.reset();
   address_ = nullptr;
-  color_input_ = nullptr;
+  color_presets_ = nullptr;
   emoji_input_ = nullptr;
   sidebar_root_ = nullptr;
   palette_root_ = nullptr;
@@ -3573,7 +3565,7 @@ void WorkspaceShell::Update(ShellState state) {
   const bool history_profile_changed = state.profile_id != state_.profile_id;
   state_ = std::move(state);
   if (!widget_) return;
-  if(selected&&workspace_form_){for(auto* field:{color_input_.get(),emoji_input_.get()})if(auto* row=views::AsViewClass<AppearanceRow>(field->view()->parent()))row->CancelInput();CancelSceneActions(settings_root_);CancelSceneActions(profiles_root_);CancelSceneActions(general_root_);}
+  if(selected&&workspace_form_){for(auto* view:{color_presets_.get(),emoji_input_->view()->parent()})if(auto* row=views::AsViewClass<AppearanceRow>(view))row->CancelInput();CancelSceneActions(settings_root_);CancelSceneActions(profiles_root_);CancelSceneActions(general_root_);}
   if(profiles_changed&&profile_form_)CancelSceneActions(profiles_root_);
   if((selected||history_profile_changed)&&tools_root_)CancelChoiceInteractions(tools_root_);
   if (history_profile_changed && history_visible()) RefreshTools();
@@ -5516,7 +5508,7 @@ void WorkspaceShell::ExecuteCommand(int command_id, int) {
             case C::Settings: case C::CustomColor: case C::CustomEmoji:
               shell->callbacks_.select_workspace.Run(target);
               shell->OpenWorkspaceSettings();
-              if (command == C::CustomColor) shell->color_input_->RequestFocus();
+              if (command == C::CustomColor) shell->color_wheel_[0]->RequestFocus();
               if (command == C::CustomEmoji) shell->emoji_input_->RequestFocus();
               break;
             default: break;
@@ -5544,7 +5536,7 @@ void WorkspaceShell::ExecuteCommand(int command_id, int) {
         else if (command == kWorkspaceSettings || command == kCustomColor || command == kCustomEmoji) {
           shell->callbacks_.select_workspace.Run(target);
           shell->OpenWorkspaceSettings();
-          if (command == kCustomColor) shell->color_input_->RequestFocus();
+          if (command == kCustomColor) shell->color_wheel_[0]->RequestFocus();
           if (command == kCustomEmoji) shell->emoji_input_->RequestFocus();
         }
       }, weak_factory_.GetWeakPtr(), command_id, target, profile));
@@ -5784,7 +5776,7 @@ void WorkspaceShell::ApplyTheme(bool refresh_controls) {
   for (const auto& [key, field] : preference_textfields_) field->SetPresentation(gfx::FontList().GetFontSize(),8,true,Tone(root_, kChip));
   if (site_origin_) site_origin_->SetPresentation(gfx::FontList().GetFontSize(),8,true,Tone(root_, kChip));
   if (address_) address_->SetPresentation(Font(3).GetFontSize(),0,false,Tone(root_,kCard));
-  for(auto* editor:{color_input_.get(),emoji_input_.get()})if(editor)
+  for(auto* editor:{emoji_input_.get()})if(editor)
     if(auto* native=views::AsViewClass<views::Textfield>(editor->view())){
       native->SetBackgroundColor(Tone(root_, kChip));
       native->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,7,Hairline(root_)),gfx::Insets::VH(4,8)));
@@ -6280,15 +6272,9 @@ void WorkspaceShell::ApplyAppearance(bool refresh_theme) {
   }
   static_cast<EdgeView*>(edge_.get())->color = Palette(root_).accent;
   edge_->SchedulePaint();
-  color_input_->SetText(base::UTF8ToUTF16(Hex(color)));
   size_t color_index=0;
-  for (auto& child : color_input_->view()->parent()->children()) {
-    if (auto* swatch=child.get();IsGlyphAction(swatch)) {
-      if(workspace_form_){SetActionOn(swatch,sidebar::appearance_selected(false,color_index++,color,{}));continue;}
-      const auto preset=ParseColor(base::UTF16ToUTF8(swatch->GetTooltipText()));
-      SetActionOn(swatch,preset&&sidebar::design_same_workspace_color(*preset,color));
-    }
-  }
+  for (auto& child : color_presets_->children())
+    if (auto* swatch=child.get();IsGlyphAction(swatch)) SetActionOn(swatch,sidebar::appearance_selected(false,color_index++,color,{}));
   for(auto& wheel:color_wheel_)if(auto* control=views::AsViewClass<ColorWheelControl>(wheel.get()))control->Refresh();
   const auto emoji = workspace_emoji(state_.workspace_id);
   if (!emoji_input_->HasFocus()) emoji_input_->SetText(emoji);
@@ -7720,13 +7706,13 @@ void WorkspaceShell::SubmitProfile() {SubmitRustProfileAction(0);}
 void WorkspaceShell::RenameSelectedProfile() {SubmitRustProfileAction(1);}
 void WorkspaceShell::DeleteSelectedProfile() {SubmitRustProfileAction(2);}
 bool WorkspaceShell::appearance_metal_visible(bool emoji) const {
-  auto* field=emoji?emoji_input_.get():color_input_.get();auto* row=field?views::AsViewClass<AppearanceRow>(field->view()->parent()):nullptr;return row&&row->metal_visible();
+  auto* view=emoji?(emoji_input_?emoji_input_->view()->parent():nullptr):color_presets_.get();auto* row=views::AsViewClass<AppearanceRow>(view);return row&&row->metal_visible();
 }
 bool WorkspaceShell::appearance_contains_scene_text(std::string_view text) const {
   auto* row=emoji_input_?views::AsViewClass<AppearanceRow>(emoji_input_->view()->parent()):nullptr;return row&&row->contains_text(text);
 }
 gfx::Rect WorkspaceShell::appearance_scene_bounds_for_testing(bool emoji) const {
-  auto* field=emoji?emoji_input_.get():color_input_.get();auto* row=field?views::AsViewClass<AppearanceRow>(field->view()->parent()):nullptr;return row?row->scene_bounds():gfx::Rect();
+  auto* view=emoji?(emoji_input_?emoji_input_->view()->parent():nullptr):color_presets_.get();auto* row=views::AsViewClass<AppearanceRow>(view);return row?row->scene_bounds():gfx::Rect();
 }
 bool WorkspaceShell::form_actions_contains_scene_text(bool profiles,std::string_view text) const {
   auto* root=profiles?profiles_root_.get():settings_root_.get();if(!root)return false;auto find=[&](auto&& self,views::View* view)->bool{if(auto* group=views::AsViewClass<SceneActionGroup>(view))if(group->contains_text(text))return true;for(const auto& child:view->children())if(self(self,child.get()))return true;return false;};return find(find,root);
@@ -7735,17 +7721,12 @@ size_t WorkspaceShell::form_action_canvases_visible_for_testing(bool profiles) c
   auto* root=profiles?profiles_root_.get():settings_root_.get();if(!root)return 0;auto count=[&](auto&& self,views::View* view)->size_t{size_t n=0;if(auto* group=views::AsViewClass<SceneActionGroup>(view))n+=group->metal_visible();for(const auto& child:view->children())n+=self(self,child.get());return n;};return count(count,root);
 }
 bool WorkspaceShell::HandleAppearanceEditorKey(bool emoji,const ui::KeyEvent& event) {
-  auto* field=emoji?emoji_input_.get():color_input_.get();
+  auto* field=emoji?emoji_input_.get():nullptr;
   if(!field||event.type()!=ui::EventType::kKeyPressed||field->IsIMEComposing())return false;
   if(event.key_code()==ui::VKEY_ESCAPE){CloseOverlays();RestorePageFocus();return true;}
   if(event.key_code()!=ui::VKEY_RETURN)return false;
-  if(emoji)SetWorkspaceEmoji(state_.workspace_id,std::u16string(field->GetText()));else ApplyHexColor();
+  SetWorkspaceEmoji(state_.workspace_id,std::u16string(field->GetText()));
   return true;
-}
-void WorkspaceShell::ApplyHexColor() {
-  if (auto color = ParseColor(base::UTF16ToUTF8(color_input_->GetText())))
-    SetWorkspaceColor(state_.workspace_id, *color);
-  else ShowWorkspaceAppearanceError(3);
 }
 void WorkspaceShell::SetPaletteErrorText(std::u16string text) {
   if(!address_error_)return;
