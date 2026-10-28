@@ -2938,7 +2938,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 0));
   workspace_dots_=dots.get();
   workspace_scroll_->SetPanelContents(std::move(dots));
-  workspace_dots_->SetLayoutManager(CreateSidebarDotsLayout());
+  workspace_dots_->SetLayoutManager(CreateSidebarDotsLayout(6));
   footer_layout->SetFlexForView(dot_scroll, 1);
   Spacer(footer, 1);
   workspace_settings_button_=footer->AddChildView(CreateSceneAction(

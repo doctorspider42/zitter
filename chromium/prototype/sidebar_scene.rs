@@ -2733,11 +2733,14 @@ fn row_layout(width: i32, height: i32, title_width: i32,
 
 fn footer_layout(width: i32, content_width: i32) -> ffi::ColumnLayout {
     let width=width.max(0); let middle=(width-66).max(0);
-    let height=if content_width>middle {47} else {32};
+    let overflow=content_width>middle;
+    let height=if overflow {47} else {32};
+    // Workspace dots that fit sit centered between the two footer buttons.
+    let (strip_x,strip_width)=if overflow {(33,middle)} else {(33+(middle-content_width.max(0))/2,content_width.max(0))};
     ffi::ColumnLayout {width,height,children:vec![
         ffi::Rect{x:0,y:0,width:32.min(width),height:32},
         ffi::Rect{x:32,y:0,width:1,height:1},
-        ffi::Rect{x:33,y:0,width:middle,height},
+        ffi::Rect{x:strip_x,y:0,width:strip_width,height},
         ffi::Rect{x:(width-33).max(0),y:0,width:1,height:1},
         ffi::Rect{x:(width-32).max(0),y:0,width:32.min(width),height:32},
     ]}
@@ -3368,6 +3371,7 @@ mod tests {
     }
     #[test] fn footer_reserves_a_horizontal_scroll_gutter_only_for_overflow() {
         let normal=footer_layout(240,60); assert_eq!(normal.height,32);
+        assert_eq!((normal.children[2].x,normal.children[2].width),(90,60));
         let overflow=footer_layout(200,300); assert_eq!(overflow.height,47);
         assert_eq!(overflow.children[2].width,134); assert_eq!(overflow.children[2].height,47);
         assert_eq!(overflow.children[4].x,168); assert_eq!(overflow.children[0].y,0);
