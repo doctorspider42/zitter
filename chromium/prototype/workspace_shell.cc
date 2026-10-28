@@ -7506,44 +7506,50 @@ void WorkspaceShell::ApplyAppearance(bool refresh_theme) {
   if (refresh_theme) PositionPanels();
 }
 
+namespace {
+// Moving an NSWindow is costly even when the frame is unchanged.
+void SetWidgetBounds(views::Widget* widget, const gfx::Rect& bounds) {
+  if (widget->GetWindowBoundsInScreen() != bounds) widget->SetBounds(bounds);
+}
+}  // namespace
 void WorkspaceShell::PositionPanels() {
   if (!sidebar_widget_ || !address_widget_ || !settings_widget_) return;
   const auto bounds = widget_->GetClientAreaBoundsInScreen();
   if (tools_widget_) {
     const int w = std::max(300, std::min(660, bounds.width() - 24));
     const int h = std::max(240, std::min(680, bounds.height() - 24));
-    tools_widget_->SetBounds(gfx::Rect(bounds.CenterPoint().x() - w / 2, bounds.CenterPoint().y() - h / 2, w, h));
+    SetWidgetBounds(tools_widget_.get(),gfx::Rect(bounds.CenterPoint().x() - w / 2, bounds.CenterPoint().y() - h / 2, w, h));
   }
   const int width = SidebarColumn(sidebar_width_, bounds.width());
   auto sidebar_bounds=gfx::Rect(bounds.x()+kGap,bounds.y()+kShellHeaderHeight,width,std::max(200,bounds.height()-kShellHeaderHeight-kGap));
 #if BUILDFLAG(IS_MAC)
   if(metal_sidebar_){const auto g=sidebar::shell_layout(bounds.width(),bounds.height(),sidebar_width_,pinned_);sidebar_bounds=gfx::Rect(bounds.x()+g.sidebar.x,bounds.y()+g.sidebar.y,g.sidebar.width,g.sidebar.height);}
 #endif
-  sidebar_widget_->SetBounds(sidebar_bounds);
+  SetWidgetBounds(sidebar_widget_.get(),sidebar_bounds);
   if (general_widget_) {
     const int panel_width = std::max(320, std::min(960, bounds.width() - 24));
     const int panel_height = std::max(240, std::min(760, bounds.height() - 24));
     const bool sidebar = panel_width >= 760 && panel_height >= 720;
     preferences_navigation_->SetVisible(sidebar);
     preferences_category_picker_->SetVisible(!sidebar);
-    general_widget_->SetBounds(gfx::Rect(bounds.CenterPoint().x() - panel_width / 2,
+    SetWidgetBounds(general_widget_.get(),gfx::Rect(bounds.CenterPoint().x() - panel_width / 2,
         std::max(bounds.y() + 8, bounds.CenterPoint().y() - panel_height / 2), panel_width, panel_height));
   }
   const int settings_width = std::min(440, bounds.width() - 24);
   const int settings_height = std::min(settings_root_->GetHeightForWidth(settings_width), std::max(120, bounds.height() - 24));
-  settings_widget_->SetBounds(gfx::Rect(bounds.CenterPoint().x() - settings_width / 2,
+  SetWidgetBounds(settings_widget_.get(),gfx::Rect(bounds.CenterPoint().x() - settings_width / 2,
       std::max(bounds.y() + 12, bounds.CenterPoint().y() - settings_height / 2),
       settings_width, settings_height));
   if (profiles_widget_) {
     const int panel_width = std::min(420, bounds.width() - 24);
     const int panel_height = profiles_root_->GetHeightForWidth(panel_width);
-    profiles_widget_->SetBounds(gfx::Rect(bounds.CenterPoint().x() - panel_width / 2,
+    SetWidgetBounds(profiles_widget_.get(),gfx::Rect(bounds.CenterPoint().x() - panel_width / 2,
         std::max(bounds.y() + 12, bounds.CenterPoint().y() - panel_height / 2), panel_width, panel_height));
   }
   if (import_widget_) {
     const int panel_width = std::min(520, bounds.width() - 24);
     const int panel_height = std::min(import_root_->GetHeightForWidth(panel_width), bounds.height() - 24);
-    import_widget_->SetBounds(gfx::Rect(bounds.CenterPoint().x() - panel_width / 2,
+    SetWidgetBounds(import_widget_.get(),gfx::Rect(bounds.CenterPoint().x() - panel_width / 2,
         std::max(bounds.y() + 12, bounds.CenterPoint().y() - panel_height / 2), panel_width, panel_height));
   }
   if (peek_widget_) {
@@ -7553,7 +7559,7 @@ void WorkspaceShell::PositionPanels() {
       area.Inset(gfx::Insets::TLBR(kShellHeaderHeight, 8, 8, 8));
     }
     const int margin = std::clamp(area.width() / 16, 16, 64);
-    peek_widget_->SetBounds(gfx::Rect(area.x() + margin, area.y() + 20,
+    SetWidgetBounds(peek_widget_.get(),gfx::Rect(area.x() + margin, area.y() + 20,
         std::max(240, area.width() - 2 * margin), std::max(280, area.height() - 40)));
   }
   int palette_width=std::min(640,std::max(120,bounds.width()-48));
@@ -7571,7 +7577,7 @@ void WorkspaceShell::PositionPanels() {
 #if BUILDFLAG(IS_MAC)
   if(metal_palette_){const auto r=sidebar::palette_frame({content.x(),content.y(),content.width(),content.height()},palette_width,height);palette_bounds=gfx::Rect(r.x,r.y,r.width,r.height);}
 #endif
-  address_widget_->SetBounds(palette_bounds);
+  SetWidgetBounds(address_widget_.get(),palette_bounds);
 }
 
 std::string WorkspaceShell::ShortcutFor(const ui::Accelerator& accelerator) const {

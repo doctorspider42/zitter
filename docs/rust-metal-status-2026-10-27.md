@@ -72,6 +72,10 @@ ramki dialogów, fokus/AX/IME, dostarczanie zdarzeń oraz usługi przeglądarki.
    pełna macierz przechodzi 202/276 (większość niepowodzeń czeka na widoczność warstw
    Metal z założenia). Następne kroki: profil CPU warstwy adapterów; decyzja, czy
    wspierać tryb kompozytora jako backend (wymaga dostosowania ~70 testów).
+   Pierwsza optymalizacja z profilu: `PositionPanels` pomija `Widget::SetBounds` przy
+   niezmienionych granicach okna — wywołanie otwarcia palety 9,3→6,9 ms (Metal) i
+   6,8→5,6 ms (Views), CPU/iterację 30,0→27,7 ms (Metal), 23,6→22,6 ms (Views).
+   Pełna macierz po zmianie: 276/276 Metal, 227/227 Views.
 3. **Kandydat wydania — zbudowany i sprawdzony lokalnie.** `build/ZitterRustMetalRelease.app`
    (package_app.py, podpis lokalną tożsamością, `codesign --verify --deep --strict` OK),
    świeży audyt licencji: 326 komponentów, 0 niedopasowanych binariów, dołączone
