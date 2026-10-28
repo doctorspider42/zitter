@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "base/check.h"
+#include "base/files/file_path.h"
 #include "base/logging.h"
 #include "chrome/browser/download/download_core_service.h"
 #include "base/no_destructor.h"
@@ -180,6 +181,12 @@ void InstallAppShell() {
             if (g_delegate) g_delegate->RaiseWindow();
             return NO;  // Chrome would create a new Browser window here.
           });
+  // Chrome re-points its last-profile menu bridges here, building a bookmarks
+  // menu from a main-menu item Zitter's menu does not have (CHECK failure on
+  // profile deletion). Zitter never opens Browser windows, so AppController
+  // never holds a last profile or bridges to update.
+  Replace(controller, @selector(profileWasRemoved:forIncognito:),
+          ^(id, const base::FilePath&, bool) {});
   Replace(controller, @selector(applicationDockMenu:), ^NSMenu*(id, NSApplication*) {
     return DockMenu();
   });
