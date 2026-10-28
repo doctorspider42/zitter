@@ -55,6 +55,9 @@ układ kolumn/paneli. W trybie Rust natywne kontrolki Views powstają tylko w ga
 Views. Natywne pozostają udokumentowane granice platformy: okna/widgety, runnery menu,
 ramki dialogów, fokus/AX/IME, dostarczanie zdarzeń oraz usługi przeglądarki.
 
+Wszystkie pozostałe punkty wymagają użytkownika lub jego decyzji: akceptacja ręczna,
+notaryzacja (poświadczenia Apple) i ewentualne wsparcie trybu kompozytora.
+
 1. **Akceptacja ręczna (wymaga użytkownika):** IME i okna kandydatów, bidi/RTL,
    VoiceOver, trackpad/gesty, skala Retina, motywy, utrata drawable/GPU, fallback.
 2. **Porównanie wydajności — wykonane, otwarte optymalizacje.** Test
@@ -75,7 +78,9 @@ ramki dialogów, fokus/AX/IME, dostarczanie zdarzeń oraz usługi przeglądarki.
    Pierwsza optymalizacja z profilu: `PositionPanels` pomija `Widget::SetBounds` przy
    niezmienionych granicach okna — wywołanie otwarcia palety 9,3→6,9 ms (Metal) i
    6,8→5,6 ms (Views), CPU/iterację 30,0→27,7 ms (Metal), 23,6→22,6 ms (Views).
-   Pełna macierz po zmianie: 276/276 Metal, 227/227 Views.
+   Pełna macierz po zmianie: 276/276 Metal, 227/227 Views. Pozostała różnica CPU (~5 ms/iterację) jest
+   rozproszona (planowanie odrysowań, skracanie tekstu, malowanie pól) bez jednego
+   gorącego punktu w profilu.
 3. **Kandydat wydania — zbudowany i sprawdzony lokalnie.** `build/ZitterRustMetalRelease.app`
    (package_app.py, podpis lokalną tożsamością, `codesign --verify --deep --strict` OK),
    świeży audyt licencji: 326 komponentów, 0 niedopasowanych binariów, dołączone
