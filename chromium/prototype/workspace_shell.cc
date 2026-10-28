@@ -4041,7 +4041,6 @@ void WorkspaceShell::UpdateMetalSidebar() {
   }
   std::vector<sidebar::Item> items;
   items.reserve(projection.nodes.size());
-  std::optional<size_t> dragged_item;
   for (const auto& projected : projection.nodes) {
     auto* view = native_views[projected.index];
     auto rect = projected.bounds; rect.Offset(list_origin);
@@ -4053,7 +4052,7 @@ void WorkspaceShell::UpdateMetalSidebar() {
       auto* row=view;
       if(auto* rust_row=views::AsViewClass<RustRowView>(row)){auto scene=rust_row->SidebarScene(rect,clip);if(scene.valid){
         // The row being dragged stays in place as a faded placeholder.
-        if(row==drag_row_.view()){dragged_item=items.size();auto& i=scene.item;i.ink=SkColorSetA(i.ink,0x59);i.badge=SkColorSetA(i.badge,0x59);i.fill=SkColorSetA(i.fill,SkColorGetA(i.fill)/3);i.close_visible=false;}
+        if(row==drag_row_.view()){auto& i=scene.item;i.ink=SkColorSetA(i.ink,0x59);i.badge=SkColorSetA(i.badge,0x59);i.fill=SkColorSetA(i.fill,SkColorGetA(i.fill)/3);i.close_visible=false;}
         items.push_back(std::move(scene.item));continue;}}
       const auto& spec = RowSpec(row);
       const bool hovered=RowHovered(row);
@@ -4078,26 +4077,6 @@ void WorkspaceShell::UpdateMetalSidebar() {
       item.kind=2; item.fill=SkColorSetA(Tone(view,kCard),0x33);
       items.push_back(std::move(item));
     }
-  }
-  // Rows make room at the drop target, and the dragged row leaves its own slot
-  // (a Split View tile only fades: its group keeps the row).
-  std::optional<float> drop_gap;float gap_height=0;
-  if (sidebar_reorder_ && !sidebar_reorder_->into_folder && dragged_item && drag_point_) {
-    const bool tile=items[*dragged_item].tile;const float dragged_y=items[*dragged_item].y;
-    gap_height=(tile?34.f:items[*dragged_item].height)+2;
-    const float target=sidebar_reorder_->indicator.y()-bounds.y()+1;
-    const auto list=gfx::RectF(list_origin.x(),list_origin.y(),list_bounds.width(),list_bounds.height());
-    for (size_t i=0;i<items.size();++i) {
-      if (i==*dragged_item) continue;
-      auto& item=items[i];
-      const float shift=(!tile&&item.y>dragged_y?-gap_height:0.f)+(item.y>=target?gap_height:0.f);
-      if (!shift) continue;
-      item.y+=shift;
-      gfx::RectF clip(item.clip.x,item.clip.y+shift,item.clip.width,item.clip.height);clip.Intersect(list);
-      item.clip={clip.x(),clip.y(),clip.width(),clip.height()};
-    }
-    drop_gap=!tile&&target>dragged_y?target-gap_height:target;
-    if (!tile) items.erase(items.begin()+*dragged_item);
   }
   for (auto* control : {static_cast<views::View*>(url_pill_.get()),new_tab_button_.get()}) {
     if (!control->IsDrawn()) continue;
@@ -4167,13 +4146,11 @@ void WorkspaceShell::UpdateMetalSidebar() {
     items.push_back(std::move(item));
   }
   if (sidebar_reorder_) {
-    // Drop target: the open slot where the row lands, a wash over the folder
-    // that receives it, or a line when the row has no slot to show.
+    // Drop target: a line where the row lands, or a wash over the folder that receives it.
     auto rect=gfx::RectF(sidebar_reorder_->indicator);rect.Offset(-bounds.x(),-bounds.y());
-    if (drop_gap) rect=gfx::RectF(rect.x(),*drop_gap+1,rect.width(),gap_height-4);
     const auto list=gfx::RectF(list_origin.x(),list_origin.y(),list_bounds.width(),list_bounds.height());
-    sidebar::Item item{};item.kind=sidebar_reorder_->into_folder||drop_gap?24:14;item.active=true;
-    item.fill=SkColorSetA(workspace_color(state_.workspace_id),drop_gap?0x2E:sidebar_reorder_->into_folder?0x40:0xFF);
+    sidebar::Item item{};item.kind=sidebar_reorder_->into_folder?24:14;item.active=true;
+    item.fill=SkColorSetA(workspace_color(state_.workspace_id),sidebar_reorder_->into_folder?0x40:0xFF);
     item.x=rect.x();item.y=rect.y();item.width=rect.width();item.height=rect.height();
     item.clip={list.x(),list.y(),list.width(),list.height()};items.push_back(std::move(item));
   }
@@ -5239,10 +5216,57 @@ std::optional<WorkspaceShell::SidebarReorder> WorkspaceShell::SidebarReorderAt(g
   for(const auto& pin:state_.pins){if(pin.parent_id!=meta.parent)continue;if(next){out.before_pin=pin.id;break;}next=pin.id==meta.pin;}
   return out;
 }
+namespace {
+class SidebarDragOverlay final : public views::View {
+  METADATA_HEADER(SidebarDragOverlay, views::View)
+ public:
+  explicit SidebarDragOverlay(base::RepeatingCallback<void(gfx::Canvas*,views::View*)> paint):paint_(std::move(paint)) {
+    GetViewAccessibility().SetIsIgnored(true);SetCanProcessEventsWithinSubtree(false);
+    SetProperty(views::kViewIgnoredByLayoutKey,true);
+    // Its own layer stacks it above the scrolling tab list, which has one too.
+    SetPaintToLayer();layer()->SetFillsBoundsOpaquely(false);
+  }
+  void OnPaint(gfx::Canvas* canvas) override{paint_.Run(canvas,this);}
+ private:
+  base::RepeatingCallback<void(gfx::Canvas*,views::View*)> paint_;
+};
+BEGIN_METADATA(SidebarDragOverlay)
+END_METADATA
+}  // namespace
 void WorkspaceShell::HandleSidebarDrag(views::View* row,gfx::Point grab,std::optional<gfx::Point> point) {
   sidebar_reorder_=point?SidebarReorderAt(*point):std::nullopt;
   drag_row_.SetView(point?row:nullptr);drag_grab_=grab;drag_point_=point;
   ScheduleMetalSidebar();
+  if(!sidebar_root_)return;
+  if(!drag_overlay_)drag_overlay_=sidebar_root_->AddChildView(std::make_unique<SidebarDragOverlay>(
+      base::BindRepeating(&WorkspaceShell::PaintSidebarDrag,base::Unretained(this))));
+  // Above every row, including children added since the last drag.
+  sidebar_root_->ReorderChildView(drag_overlay_,sidebar_root_->children().size());
+  drag_overlay_->SetBoundsRect(sidebar_root_->GetLocalBounds());
+  drag_overlay_->SetVisible(point.has_value());
+  drag_overlay_->SchedulePaint();
+}
+void WorkspaceShell::PaintSidebarDrag(gfx::Canvas* canvas,views::View* overlay) {
+  auto* row=views::AsViewClass<RustRowView>(drag_row_.view());
+  if(!row||!drag_point_||metal_sidebar_visible())return;
+  auto local=[&](gfx::Rect screen){gfx::Point origin=screen.origin();views::View::ConvertPointFromScreen(overlay,&origin);return gfx::Rect(origin,screen.size());};
+  const SkColor tint=FrameTint(workspace_color(state_.workspace_id),root_);
+  // The row stays in place as a faded placeholder.
+  FillRound(canvas,local(row->GetBoundsInScreen()),10,SkColorSetA(pinned_?tint:Mix(tint,Tone(root_,kCard),70),0xB3));
+  if(sidebar_reorder_) {
+    gfx::ScopedCanvas clipped(canvas);canvas->ClipRect(local(tab_list_->parent()->GetBoundsInScreen()));
+    const SkColor accent=workspace_color(state_.workspace_id);
+    if(sidebar_reorder_->into_folder)FillRound(canvas,local(sidebar_reorder_->indicator),10,SkColorSetA(accent,0x40));
+    else FillRound(canvas,local(sidebar_reorder_->indicator),1,accent);
+  }
+  // A lifted copy of the row follows the pointer.
+  gfx::Point origin=*drag_point_-drag_grab_.OffsetFromOrigin();views::View::ConvertPointFromScreen(overlay,&origin);
+  const gfx::Rect ghost(origin,row->size());
+  FillRound(canvas,ghost+gfx::Vector2d(1,3),10,SkColorSetA(SK_ColorBLACK,IsDark(root_)?0x59:0x1F));
+  auto scene=row->SidebarScene(gfx::RectF(ghost),gfx::RectF(overlay->GetLocalBounds()));
+  if(!scene.valid)return;
+  auto& item=scene.item;item.fill=SkColorSetA(Tone(root_,kCard),0xF2);item.active=true;item.hovered=false;item.focused=false;item.close_visible=false;
+  PaintSceneRecipe(canvas,item,Font(0,gfx::Font::Weight::MEDIUM));
 }
 void WorkspaceShell::HandleSidebarDrop(std::string workspace,std::optional<size_t> tab,std::array<uint64_t,2> identity,std::string pin,gfx::Point point) {
   if(workspace!=state_.workspace_id)return;

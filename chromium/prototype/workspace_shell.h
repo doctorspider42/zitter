@@ -38,6 +38,7 @@
 
 namespace zitter::sidebar { struct Item; struct PreferenceCatalogue; struct WorkspaceMenuState; struct FolderMenuState; struct ProfileControls; enum class FormCommand : uint32_t; struct FormCommandBinding; }
 namespace ui { class AcceleratorTarget; }
+namespace gfx { class Canvas; }
 namespace views {
 class DialogDelegate;
 class Button;
@@ -677,6 +678,15 @@ class WorkspaceShell final : public ui::EventHandler,
   views::ViewTracker drag_row_;
   gfx::Point drag_grab_;
   std::optional<gfx::Point> drag_point_;
+  // Compositor raster: the native rows paint themselves, so an overlay above
+  // the sidebar draws the lifted copy, the faded slot and the drop target.
+  raw_ptr<views::View> drag_overlay_ = nullptr;
+  void PaintSidebarDrag(gfx::Canvas* canvas, views::View* overlay);
+ public:
+  const views::View* sidebar_drag_row_for_testing() const { return drag_row_.view(); }
+  bool sidebar_drop_target_for_testing() const { return sidebar_reorder_.has_value(); }
+  views::View* sidebar_drag_overlay_for_testing() const { return drag_overlay_; }
+ private:
   void QueueTabCommand(int command);
   bool RustTabCommandEnabled(int command) const;
   // Menu for context_tab_/context_pin_, at a screen point.

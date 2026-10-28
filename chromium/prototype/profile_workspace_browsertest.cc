@@ -5243,6 +5243,59 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarMovesTabsAndPinsAcrossS
   EXPECT_EQ(second_page, window_->contents("work"));
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarRowDragWithRealMouseShowsPreviewAndReorders) {
+  std::vector<content::WebContents*> pages;
+  for (const char* query : {"/storage_probe.html?a", "/storage_probe.html?b", "/storage_probe.html?c"}) {
+    ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL(query), !pages.empty()));
+    pages.push_back(window_->contents("work"));
+  }
+  auto* shell = window_->shell();
+  shell->SetPinned(true);
+  shell->ShowSidebar();
+  ui_controls::EnableUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  base::RunLoop().RunUntilIdle();
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  auto* row = shell->tab_button(0);
+  ASSERT_TRUE(row);
+  const auto native = shell->sidebar_widget()->GetNativeWindow();
+  auto move = [&](gfx::Point point) {
+    base::test::TestFuture<void> done;
+    ASSERT_TRUE(ui_controls::SendMouseMoveNotifyWhenDone(point.x(), point.y(), done.GetCallback(), native));
+    ASSERT_TRUE(done.Wait());
+  };
+  auto button = [&](int state) {
+    base::test::TestFuture<void> done;
+    ASSERT_TRUE(ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT, state, done.GetCallback(), ui_controls::kNoAccelerator, native));
+    ASSERT_TRUE(done.Wait());
+  };
+  const auto start = row->GetBoundsInScreen().CenterPoint();
+  const auto target = shell->tab_button(2)->GetBoundsInScreen().bottom_center() - gfx::Vector2d(0, 4);
+  move(start);
+  button(ui_controls::DOWN);
+  for (int step = 1; step <= 6; ++step) move(start + gfx::Vector2d(0, (target.y() - start.y()) * step / 6));
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(row, shell->sidebar_drag_row_for_testing());
+  EXPECT_TRUE(shell->sidebar_drop_target_for_testing());
+  // A layered overlay above the tab list paints the lifted copy under the pointer.
+  auto* overlay = shell->sidebar_drag_overlay_for_testing();
+  ASSERT_TRUE(overlay && overlay->GetVisible() && overlay->layer());
+  EXPECT_EQ(overlay, overlay->parent()->children().back());
+  const SkBitmap painted = views::test::PaintViewToBitmap(overlay);
+  gfx::Point pointer = start + gfx::Vector2d(0, target.y() - start.y());
+  views::View::ConvertPointFromScreen(overlay, &pointer);
+  ASSERT_TRUE(gfx::Rect(painted.width(), painted.height()).Contains(pointer));
+  // PaintViewToBitmap starts from a red placeholder; the copy covers it.
+  size_t covered = 0;
+  for (int dx = -40; dx <= 40; ++dx) covered += painted.getColor(pointer.x() + dx, pointer.y()) != SK_ColorRED;
+  EXPECT_GT(covered, 70u);
+  EXPECT_EQ(SK_ColorRED, painted.getColor(2, painted.height() - 2));
+  button(ui_controls::UP);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !shell->sidebar_drag_row_for_testing(); }));
+  window_->SelectTab(2);
+  EXPECT_EQ(pages[0], window_->contents("work"));
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FolderRemovalKeepsOpenedPinsAsTabs) {
   base::FilePath root;
   ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &root));
