@@ -67,7 +67,7 @@ mod ffi {
     enum PreferenceRowKind { Theme, Pinned, Animations, Search, Toggle, Text, Picker, Action, Directory, SiteEditor, SiteRules, ClearData, ShortcutHint }
     #[repr(u32)]
     #[derive(Debug)]
-    enum FormCommand { None, WorkspaceSave, WorkspaceToggle, WorkspaceRemove, WorkspaceProfiles, WorkspaceImport, ProfileCreate, ProfileRename, ProfileDelete, ProfileBack, ImportApply, PreferenceText, PreferenceSite, PreferenceClear, PreferenceDirectory, History, Workspace, Passwords, Profiles, Import, Proxy, Certificates, Providers, Shortcuts, TimeMachine, WorkspaceDismiss, PreferencesDismiss, ImportDismiss, ToolsDismiss, PreferenceCategory, PreferenceMore, WorkspaceColorPreset, WorkspaceEmojiPreset, HistoryMore, WorkspaceHue, WorkspaceSaturation, WorkspaceTone }
+    enum FormCommand { None, WorkspaceSave, WorkspaceToggle, WorkspaceRemove, WorkspaceProfiles, WorkspaceImport, ProfileCreate, ProfileRename, ProfileDelete, ProfileBack, ImportApply, PreferenceText, PreferenceSite, PreferenceClear, PreferenceDirectory, History, Workspace, Passwords, Profiles, Import, Proxy, Certificates, Providers, Shortcuts, TimeMachine, WorkspaceDismiss, PreferencesDismiss, ImportDismiss, ToolsDismiss, PreferenceCategory, PreferenceMore, WorkspaceColorPreset, WorkspaceEmojiPreset, HistoryMore }
     #[derive(Debug)]
     enum FormPanel { None, Workspace, Profiles, Import, Preferences, Tools }
     struct FormCommandBinding { command: FormCommand, panel: FormPanel, key: String, index: usize }
@@ -403,16 +403,11 @@ mod ffi {
         fn design_same_workspace_color(a: u32, b: u32) -> bool;
         fn appearance_selected(emoji: bool, index: usize, color: u32, current_emoji: &str) -> bool;
         fn appearance_row_layout(width: i32, height: i32, editor_width: i32, editor_height: i32, emoji: bool) -> ColumnLayout;
-        // Workspace color picker rows: axis 0 hue, 1 saturation, 2 tone (design.rs PickerAxis).
-        fn appearance_grid_swatches(axis: u32, current: u32) -> Vec<AppearancePreset>;
-        fn appearance_grid_target(axis: u32, index: usize, current: u32) -> u32;
-        fn appearance_grid_selected(axis: u32, index: usize, current: u32) -> bool;
-        fn appearance_grid_layout(width: i32, height: i32, axis: u32) -> ColumnLayout;
         fn appearance_pill_layout(width: i32, height: i32, count: usize) -> ColumnLayout;
-        // The color wheel (design.rs wheel): hits snap to the grid; -1 = no hit / keep.
-        fn color_ring_hit(x: f32, y: f32, size: f32) -> i32;
-        fn color_pad_hit(x: f32, y: f32, width: f32, height: f32) -> i32;
-        fn color_wheel_target(current: u32, hue: i32, saturation: i32, tone: i32) -> u32;
+        // The color wheel (design.rs wheel): the stored color a press picks, 0 for none.
+        fn color_ring_target(current: u32, x: f32, y: f32, size: f32) -> u32;
+        fn color_pad_target(current: u32, x: f32, y: f32, width: f32, height: f32) -> u32;
+        // Arrow keys: axis 0 hue, 1 saturation, 2 tone.
         fn color_wheel_step(current: u32, axis: u32, delta: i32) -> u32;
         fn color_wheel_description(current: u32, ring: bool) -> String;
         type WorkspaceNotice;
@@ -621,7 +616,6 @@ mod ffi {
         fn defer_form_command(self: &ActionControl) -> Box<FormCommandTicket>;
         fn action_node_id(self: &ActionControl) -> u64;
         fn bind_appearance_preset(self: &mut ActionControl, emoji: bool, index: usize) -> bool;
-        fn bind_appearance_grid(self: &mut ActionControl, axis: u32, index: usize) -> bool;
         fn node_form_command_init(self: &mut ActionControl, command: FormCommand, key: &str) -> bool;
         fn node_form_command(self: &ActionControl) -> FormCommandBinding;
         fn node_form_view(self: &ActionControl) -> FormCommandView;
@@ -1499,13 +1493,13 @@ fn action_group_layout(width: i32, height: i32, vertical: bool, spacing: i32, ch
 }
 
 // design::WorkspaceColor::PRESETS as stored hex (checked by a test below).
-const APPEARANCE_COLORS: [u32;8] = [0xff928fd4,0xffcc8463,0xff5aa0d0,0xffbc8f4d,0xffcb7e96,0xff55ac89,0xff7da667,0xff989898];
+const APPEARANCE_COLORS: [u32;8] = [0xff928fd4,0xffce826b,0xff53a2cd,0xffb9914c,0xffc97e9b,0xff4fac8f,0xff79a76a,0xff989898];
 fn design_palette(dark:bool,workspace_color:u32)->ffi::DesignPalette{
     let p=design::palette_for_stored(if dark {design::Scheme::Noc} else {design::Scheme::Papier},workspace_color);
     ffi::DesignPalette{bg_void:p.bg_void,bg_base:p.bg_base,bg_raised:p.bg_raised,bg_hover:p.bg_hover,line:p.line,line_strong:p.line_strong,ink:p.ink,ink_muted:p.ink_muted,ink_faint:p.ink_faint,accent:p.accent,on_accent:p.on_accent,accent_soft:p.accent_soft,accent_ink:p.accent_ink,zing:p.zing,on_zing:p.on_zing,zing_ink:p.zing_ink,focus:p.focus,ok:p.ok,warn:p.warn,danger:p.danger,scrim:p.scrim}
 }
-// Two stored colors are the same workspace color when they snap to one grid point.
-fn design_same_workspace_color(a:u32,b:u32)->bool{design::WorkspaceColor::from_argb(a)==design::WorkspaceColor::from_argb(b)}
+// Two stored colors are the same workspace color within what a hex can tell apart.
+fn design_same_workspace_color(a:u32,b:u32)->bool{design::WorkspaceColor::from_argb(a).same(design::WorkspaceColor::from_argb(b))}
 const APPEARANCE_EMOJIS: [&str;8] = ["💼","🏠","🚀","🎨","📚","🎮","🛒","🎬"];
 fn appearance_presets(emoji: bool) -> Vec<ffi::AppearancePreset> {
     if emoji { APPEARANCE_EMOJIS.iter().map(|e|ffi::AppearancePreset { color:0, emoji:(*e).into(), label:format!("Emoji {}",e) }).collect() }
@@ -1525,81 +1519,42 @@ fn appearance_selected(emoji: bool, index: usize, color: u32, current_emoji: &st
     if emoji { APPEARANCE_EMOJIS.get(index).map(|e|*e==current_emoji).unwrap_or(false) }
     else { APPEARANCE_COLORS.get(index).map(|&c|design_same_workspace_color(c,color)).unwrap_or(false) }
 }
-fn color_ring_hit(x:f32,y:f32,size:f32)->i32{design::wheel::ring_hit(x,y,size).map_or(-1,i32::from)}
-// Saturation * 5 + tone.
-fn color_pad_hit(x:f32,y:f32,width:f32,height:f32)->i32{let (s,t)=design::wheel::pad_hit(x,y,width,height);i32::from(s)*5+i32::from(t)}
-fn color_wheel_target(current:u32,hue:i32,saturation:i32,tone:i32)->u32{
-    let axis=|v:i32|if v<0{Ok(None)}else{u8::try_from(v).map(Some)};
-    let (Ok(h),Ok(s),Ok(t))=(axis(hue),axis(saturation),axis(tone)) else{return 0;};
-    design::wheel::target(design::WorkspaceColor::from_argb(current),h,s,t).map_or(0,design::WorkspaceColor::to_argb)
+fn color_ring_target(current:u32,x:f32,y:f32,size:f32)->u32{
+    design::wheel::ring_hit(x,y,size).map_or(0,|h|design::wheel::target(design::WorkspaceColor::from_argb(current),Some(h),None,None).to_argb())
 }
-fn color_wheel_step(current:u32,axis:u32,delta:i32)->u32{
-    let Some(axis)=design::PickerAxis::from_index(axis) else{return current;};
-    design::wheel::step(design::WorkspaceColor::from_argb(current),axis,delta).to_argb()
+fn color_pad_target(current:u32,x:f32,y:f32,width:f32,height:f32)->u32{
+    let (s,t)=design::wheel::pad_hit(x,y,width,height);design::wheel::target(design::WorkspaceColor::from_argb(current),None,Some(s),Some(t)).to_argb()
 }
-// The accessible value: the ring speaks its hue, the field its two levels.
-fn color_wheel_description(current:u32,ring:bool)->String{
-    use design::PickerAxis as A;let c=design::WorkspaceColor::from_argb(current);
-    if ring{A::Hue.label(c.axis_index(A::Hue))}else{format!("{}, {}",A::Saturation.label(c.axis_index(A::Saturation)),A::Tone.label(c.axis_index(A::Tone)).to_lowercase())}
-}
+fn color_wheel_step(current:u32,axis:u32,delta:i32)->u32{design::wheel::step(design::WorkspaceColor::from_argb(current),axis,delta).to_argb()}
+fn color_wheel_description(current:u32,ring:bool)->String{design::wheel::description(design::WorkspaceColor::from_argb(current),ring)}
 fn wheel_primitive(i:&ffi::Item,x:f32,y:f32,w:f32,h:f32,radius:f32,color:u32,stroke:f32)->ffi::Primitive{
     ffi::Primitive{x,y,width:w,height:h,radius,color,stroke,shape:0,text:String::new(),font_size:0.0,font_weight:0,bold:false,middle:false,center:false,right_align:false,clip:ffi::FloatRect{x:i.clip.x,y:i.clip.y,width:i.clip.width,height:i.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0}
 }
 // Kinds 28 and 29: the color wheel's ring and field, drawn from solid primitives
-// (the scene has no gradients): 96 overlapping dots make the ring, a 24 x 24
-// cell grid with rounded-corner insets makes the field.
+// (the scene has no gradients): 120 overlapping dots make the ring, a 24 x 24
+// cell grid under a surface-colored rounded mask makes the field.
 fn color_wheel_scene(i:&ffi::Item,out:&mut Vec<ffi::Primitive>){
-    use design::wheel;let c=design::WorkspaceColor::from_argb(i.badge);let (h,s,t)=c.grid();let hue=c.hue_degrees();
+    use design::wheel;let c=design::WorkspaceColor::from_argb(i.badge);let hue=c.hue_degrees();
     let disc=|out:&mut Vec<ffi::Primitive>,x:f32,y:f32,d:f32,color:u32,stroke:f32|out.push(wheel_primitive(i,x-d/2.0,y-d/2.0,d,d,d/2.0,color,stroke));
     if i.kind==28{
-        let size=i.width.min(i.height);let (cx,cy)=(i.x+i.width/2.0,i.y+i.height/2.0);let mid=size/2.0-wheel::RING/2.0;
-        for k in 0..96{let deg=k as f32*3.75;let a=(deg-90.0).to_radians();disc(out,cx+mid*a.cos(),cy+mid*a.sin(),wheel::RING+2.0,wheel::ring_color(deg),0.0);}
+        let size=i.width.min(i.height);let (ox,oy)=(i.x+(i.width-size)/2.0,i.y+(i.height-size)/2.0);let (cx,cy)=(ox+size/2.0,oy+size/2.0);
+        for k in 0..120{let deg=k as f32*3.0;let (x,y)=wheel::ring_knob(size,deg);disc(out,ox+x,oy+y,wheel::RING,wheel::ring_color(deg),0.0);}
         let p=design::Palette::for_workspace(if i.tile{design::Scheme::Noc}else{design::Scheme::Papier},c);
-        disc(out,cx,cy,size-68.0,p.accent_soft,0.0);disc(out,cx,cy,size-80.0,p.accent,0.0);
-        let a=(f32::from(h)*15.0-90.0).to_radians();let (kx,ky)=(cx+mid*a.cos(),cy+mid*a.sin());
+        let inner=size-2.0*wheel::INSET-2.0*wheel::RING-20.0;disc(out,cx,cy,inner+12.0,p.accent_soft,0.0);disc(out,cx,cy,inner,p.accent,0.0);
+        let (kx,ky)=wheel::ring_knob(size,hue);let (kx,ky)=(ox+kx,oy+ky);
         if i.focused&&i.focus>>24!=0{disc(out,kx,ky,36.0,i.focus,2.0);}
         disc(out,kx,ky,28.0,i.fill,0.0);disc(out,kx,ky,22.0,wheel::ring_color(hue),0.0);disc(out,kx,ky,28.0,i.ink,1.0);
-        if !i.title.is_empty(){let d=size-80.0;let mut p=wheel_primitive(i,cx-d/2.0,cy-d/2.0,d,d,0.0,p.on_accent,0.0);p.text=i.title.clone();p.font_size=i.font_size;p.center=true;out.push(p);}
+        if !i.title.is_empty(){let mut t=wheel_primitive(i,cx-inner/2.0,cy-inner/2.0,inner,inner,0.0,p.on_accent,0.0);t.text=i.title.clone();t.font_size=i.font_size;t.center=true;out.push(t);}
         return;
     }
-    let n=24usize;let r=14.0f32;let row_h=i.height/n as f32;
-    for row in 0..n{
-        let y=row as f32*row_h;let mid_y=y+row_h/2.0;let dy=if mid_y<r{r-mid_y}else if mid_y>i.height-r{mid_y-(i.height-r)}else{0.0};let inset=r-(r*r-dy*dy).max(0.0).sqrt();
-        let tone=4.0*(1.0-(row as f32+0.5)/n as f32);let cell=(i.width-2.0*inset)/n as f32;
-        for col in 0..n{let sat=4.0*(col as f32+0.5)/n as f32;out.push(wheel_primitive(i,i.x+inset+col as f32*cell,i.y+y,cell+0.5,row_h+0.5,0.0,wheel::pad_color(hue,sat,tone),0.0));}
-    }
-    out.push(wheel_primitive(i,i.x+0.5,i.y+0.5,i.width-1.0,i.height-1.0,r-0.5,i.edge,1.0));
-    let step_x=(i.width-wheel::PAD_KNOB)/4.0;let step_y=(i.height-wheel::PAD_KNOB)/4.0;
-    let (kx,ky)=(i.x+wheel::PAD_KNOB/2.0+f32::from(s)*step_x,i.y+wheel::PAD_KNOB/2.0+(4.0-f32::from(t))*step_y);
+    let (fx,fy,fw,fh)=(i.x+wheel::INSET,i.y+wheel::INSET,i.width-2.0*wheel::INSET,i.height-2.0*wheel::INSET);let n=24usize;let (cw,ch)=(fw/n as f32,fh/n as f32);
+    for row in 0..n{let tone=1.0-(row as f32+0.5)/n as f32;for col in 0..n{let sat=(col as f32+0.5)/n as f32;out.push(wheel_primitive(i,fx+col as f32*cw,fy+row as f32*ch,cw+0.5,ch+0.5,0.0,wheel::pad_color(hue,sat,tone),0.0));}}
+    // Round the field: a wide stroke in the surface color around its rounded edge.
+    let r=wheel::PAD_RADIUS;out.push(wheel_primitive(i,fx-6.0,fy-6.0,fw+12.0,fh+12.0,r+6.0,i.fill,12.0));
+    out.push(wheel_primitive(i,fx+0.5,fy+0.5,fw-1.0,fh-1.0,r-0.5,i.edge,1.0));
+    let (kx,ky)=wheel::pad_knob(i.width,i.height,c.saturation(),c.tone());let (kx,ky)=(i.x+kx,i.y+ky);
     if i.focused&&i.focus>>24!=0{disc(out,kx,ky,32.0,i.focus,2.0);}
-    disc(out,kx,ky,wheel::PAD_KNOB,i.fill,0.0);disc(out,kx,ky,wheel::PAD_KNOB-6.0,wheel::pad_color(hue,f32::from(s),f32::from(t)),0.0);disc(out,kx,ky,wheel::PAD_KNOB,i.ink,1.0);
-}
-fn grid_command(axis:u32)->Option<ffi::FormCommand>{
-    use ffi::FormCommand as C;[C::WorkspaceHue,C::WorkspaceSaturation,C::WorkspaceTone].get(axis as usize).copied()
-}
-// The picker rows show the current workspace color moved along one axis.
-fn appearance_grid_swatches(axis:u32,current:u32)->Vec<ffi::AppearancePreset>{
-    let Some(axis)=design::PickerAxis::from_index(axis) else{return vec![];};let c=design::WorkspaceColor::from_argb(current);
-    (0..axis.len() as u8).filter_map(|i|Some(ffi::AppearancePreset{color:c.with_axis(axis,i)?.to_argb(),emoji:String::new(),label:axis.label(i)})).collect()
-}
-// The stored color a picker swatch selects; 0 for an invalid axis or index.
-fn appearance_grid_target(axis:u32,index:usize,current:u32)->u32{
-    let Some(axis)=design::PickerAxis::from_index(axis) else{return 0;};let Ok(index)=u8::try_from(index) else{return 0;};
-    design::WorkspaceColor::from_argb(current).with_axis(axis,index).map_or(0,design::WorkspaceColor::to_argb)
-}
-fn appearance_grid_selected(axis:u32,index:usize,current:u32)->bool{
-    design::PickerAxis::from_index(axis).is_some_and(|a|usize::from(design::WorkspaceColor::from_argb(current).axis_index(a))==index&&index<a.len())
-}
-// Swatches only (16 px hue cells, 32 px level cells), then an empty spacer and field
-// slot, so a picker row keeps the appearance rows' child contract.
-fn appearance_grid_layout(width:i32,height:i32,axis:u32)->ffi::ColumnLayout{
-    let Some(a)=design::PickerAxis::from_index(axis) else{return ffi::ColumnLayout{width:0,height:0,children:vec![]};};
-    let count=a.len() as i32;let cell=if a==design::PickerAxis::Hue{16}else{32};let cell_height=28;
-    let width=if width<0{count*cell}else{width};let height=if height<0{cell_height}else{height};let control=width.min(count*cell);
-    let mut children=Vec::with_capacity(count as usize+2);let mut x=0;
-    for index in 0..count{let w=control/count+if index<control%count{1}else{0};let h=cell_height.min(height);children.push(ffi::Rect{x,y:(height-h)/2,width:w,height:h});x+=w;}
-    children.push(ffi::Rect{x,y:0,width:0,height});children.push(ffi::Rect{x,y:0,width:0,height});
-    ffi::ColumnLayout{width,height,children}
+    disc(out,kx,ky,wheel::PAD_KNOB,i.fill,0.0);disc(out,kx,ky,wheel::PAD_KNOB-6.0,wheel::pad_color(hue,c.saturation(),c.tone()),0.0);disc(out,kx,ky,wheel::PAD_KNOB,i.ink,1.0);
 }
 fn appearance_row_layout(width: i32, height: i32, editor_width: i32, editor_height: i32, emoji: bool) -> ffi::ColumnLayout {
     // The emoji row ends with the "more emoji" tile; its field only takes its own width.
@@ -2449,7 +2404,7 @@ struct FormCommandModel {command:ffi::FormCommand,key:String,index:usize}
 fn form_command_panel(command:ffi::FormCommand)->ffi::FormPanel {
     use ffi::{FormCommand as C,FormPanel as P};
     match command {
-        C::WorkspaceSave|C::WorkspaceToggle|C::WorkspaceRemove|C::WorkspaceProfiles|C::WorkspaceImport|C::WorkspaceDismiss|C::WorkspaceColorPreset|C::WorkspaceEmojiPreset|C::WorkspaceHue|C::WorkspaceSaturation|C::WorkspaceTone=>P::Workspace,
+        C::WorkspaceSave|C::WorkspaceToggle|C::WorkspaceRemove|C::WorkspaceProfiles|C::WorkspaceImport|C::WorkspaceDismiss|C::WorkspaceColorPreset|C::WorkspaceEmojiPreset=>P::Workspace,
         C::ProfileCreate|C::ProfileRename|C::ProfileDelete|C::ProfileBack=>P::Profiles,
         C::ImportApply|C::ImportDismiss=>P::Import,
         C::ToolsDismiss|C::HistoryMore=>P::Tools,
@@ -2782,10 +2737,6 @@ impl ActionControl {
     fn bind_appearance_preset(&mut self,emoji:bool,index:usize)->bool{
         let command=if emoji{ffi::FormCommand::WorkspaceEmojiPreset}else{ffi::FormCommand::WorkspaceColorPreset};
         appearance_command_target(command,index).valid&&self.init_form_command(command,"",index)
-    }
-    fn bind_appearance_grid(&mut self,axis:u32,index:usize)->bool{
-        let Some(command)=grid_command(axis) else{return false;};
-        design::PickerAxis::from_index(axis).is_some_and(|a|index<a.len())&&self.init_form_command(command,"",index)
     }
     fn node_form_command_init(&mut self,command:ffi::FormCommand,key:&str)->bool{valid_form_command(command,key)&&self.init_form_command(command,key,0)}
     fn node_form_command(&self)->ffi::FormCommandBinding{self.read_node(record_form_command).unwrap_or_else(empty_form_command)}
@@ -4162,40 +4113,26 @@ mod tests {
         card.edge=0;assert!(layout(&[card]).iter().all(|p|p.stroke==0.0||p.color!=0xff332211));
         let mut pill=row(200.0);pill.kind=4;pill.height=36.0;assert_eq!(layout(&[pill])[0].radius,18.0);
     }
-    #[test] fn appearance_grid_rows_offer_the_current_color_along_one_axis() {
-        let current=design::WorkspaceColor::new(16,2,1).unwrap().to_argb();
-        let hues=appearance_grid_swatches(0,current);assert_eq!(hues.len(),24);assert_eq!(hues[14].label,"Barwa 210°");
-        assert_eq!(appearance_grid_swatches(1,current).len(),5);assert_eq!(appearance_grid_swatches(2,current).len(),5);assert!(appearance_grid_swatches(3,current).is_empty());
-        for (axis,index) in [(0u32,3usize),(1,4),(2,0)] {let t=appearance_grid_target(axis,index,current);assert_eq!(t,appearance_grid_swatches(axis,current)[index].color);assert!(appearance_grid_selected(axis,index,t));}
-        assert_eq!(design::WorkspaceColor::from_argb(appearance_grid_target(1,4,current)).grid(),(16,4,1));
-        assert!(appearance_grid_selected(0,16,current)&&appearance_grid_selected(1,2,current)&&appearance_grid_selected(2,1,current)&&!appearance_grid_selected(2,2,current));
-        assert_eq!((appearance_grid_target(0,24,current),appearance_grid_target(3,0,current),appearance_grid_target(1,usize::MAX,current)),(0,0,0));
-        let g=appearance_grid_layout(-1,-1,0);assert_eq!((g.width,g.height,g.children.len()),(384,28,26));assert_eq!(g.children[23].x,368);assert_eq!(g.children[25].width,0);
-        let g=appearance_grid_layout(300,40,0);assert!(g.children.iter().all(|r|r.x+r.width<=300&&r.width>=0));assert_eq!(appearance_grid_layout(-1,-1,2).width,160);
-        let mut graph=new_form_graph(false,0,false,false);let mut input=graph.append_form_action();assert!(!input.bind_appearance_grid(0,24));assert!(!input.bind_appearance_grid(3,0));assert!(input.bind_appearance_grid(1,4));
-        let b=input.node_form_command();assert_eq!((b.command,b.panel,b.index),(ffi::FormCommand::WorkspaceSaturation,ffi::FormPanel::Workspace,4));
-    }
     #[test] fn narrow_swatch_cells_shrink_the_dot_and_ring() {
         let mut s=row(16.0);s.kind=18;s.height=28.0;s.active=true;let ops=layout(&[s]);assert_eq!((ops[0].width,ops[0].stroke,ops[1].width),(16.0,1.0,10.0));
     }
-    #[test] fn color_wheel_bridge_snaps_and_describes() {
-        let sky=design::WorkspaceColor::SKY.to_argb();
-        assert_eq!(color_ring_hit(92.0,6.0,184.0),0);assert_eq!(color_ring_hit(92.0,92.0,184.0),-1);assert_eq!(color_pad_hit(156.0,12.0,168.0,168.0),24);
-        assert_eq!(design::WorkspaceColor::from_argb(color_wheel_target(sky,3,-1,-1)).grid(),(3,4,2));
-        assert_eq!(design::WorkspaceColor::from_argb(color_wheel_target(sky,-1,1,4)).grid(),(16,1,4));
-        assert_eq!((color_wheel_target(sky,24,-1,-1),color_wheel_target(sky,-1,300,-1)),(0,0));
-        assert_eq!(design::WorkspaceColor::from_argb(color_wheel_step(sky,0,9)).grid(),(1,4,2));assert_eq!(color_wheel_step(sky,7,1),sky);
-        assert_eq!(color_wheel_description(sky,true),"Barwa 240°");assert_eq!(color_wheel_description(sky,false),"Nasycenie 100%, jasność 50%");
+    #[test] fn color_wheel_bridge_picks_continuous_colors() {
+        let sky=design::WorkspaceColor::SKY.to_argb();let back=|c:u32|design::WorkspaceColor::from_argb(c);
+        let top=back(color_ring_target(sky,100.0,19.0,200.0));assert!(top.hue_degrees()<2.0||top.hue_degrees()>358.0);assert_eq!(color_ring_target(sky,100.0,100.0,200.0),0);
+        let mid=back(color_pad_target(sky,90.0,90.0,180.0,180.0));assert!((mid.saturation()-0.5).abs()<0.03&&(mid.tone()-0.5).abs()<0.03);
+        assert!((back(color_wheel_step(sky,0,2)).hue_degrees()-244.0).abs()<1.5);assert_eq!(color_wheel_step(sky,7,1),sky);
+        assert_eq!(color_wheel_description(sky,true),design::wheel::description(back(sky),true));assert!(color_wheel_description(sky,true).starts_with("Barwa 23"));assert_eq!(color_wheel_description(sky,false),"Nasycenie 100%, jasność 50%");
     }
-    #[test] fn color_wheel_scenes_draw_a_ring_and_field_with_snapped_knobs() {
-        let mut ring=row(184.0);ring.kind=28;ring.height=184.0;ring.clip.height=184.0;ring.badge=design::WorkspaceColor::SKY.to_argb();ring.tile=true;ring.fill=0xff1e1b28;ring.ink=0xff736d89;ring.title="💼".into();ring.font_size=34.0;
-        let ops=layout(std::slice::from_ref(&ring));assert!(ops.len()>=96+5);assert_eq!(ops.iter().filter(|p|p.text=="💼").count(),1);
-        let knob=ops.iter().find(|p|p.color==0xff736d89&&p.stroke==1.0).unwrap();let a=(16.0f32*15.0-90.0).to_radians();assert!((knob.x+14.0-(92.0+81.0*a.cos())).abs()<0.01);
+    #[test] fn color_wheel_scenes_draw_a_ring_and_field_with_their_knobs() {
+        let mut ring=row(200.0);ring.kind=28;ring.height=200.0;ring.clip.height=200.0;ring.badge=design::WorkspaceColor::SKY.to_argb();ring.tile=true;ring.fill=0xff1e1b28;ring.ink=0xff736d89;ring.title="💼".into();ring.font_size=34.0;
+        let ops=layout(std::slice::from_ref(&ring));assert!(ops.len()>=120+5);assert_eq!(ops.iter().filter(|p|p.text=="💼").count(),1);
+        assert!(ops.iter().filter(|p|p.text.is_empty()).all(|p|p.x>=-0.01&&p.y>=-0.01&&p.x+p.width<=200.01&&p.y+p.height<=200.01),"ring fits its control");
+        let knob=ops.iter().find(|p|p.color==0xff736d89&&p.stroke==1.0).unwrap();let hue=design::WorkspaceColor::from_argb(ring.badge).hue_degrees();let (kx,ky)=design::wheel::ring_knob(200.0,hue);assert!((knob.x+14.0-kx).abs()<0.01&&(knob.y+14.0-ky).abs()<0.01);
         ring.focused=true;ring.focus=0xffd7ff3f;assert_eq!(layout(std::slice::from_ref(&ring)).iter().filter(|p|p.color==0xffd7ff3f&&p.stroke==2.0).count(),1);
-        let mut pad=row(168.0);pad.kind=29;pad.height=168.0;pad.clip.height=168.0;pad.badge=design::WorkspaceColor::new(16,1,4).unwrap().to_argb();pad.fill=0xff1e1b28;pad.ink=0xff736d89;pad.edge=0xff2c2839;
+        let mut pad=row(180.0);pad.kind=29;pad.height=180.0;pad.clip.height=180.0;pad.badge=design::WorkspaceColor::new(234.0,0.25,1.0).to_argb();pad.fill=0xff1e1b28;pad.ink=0xff736d89;pad.edge=0xff2c2839;
         let ops=layout(std::slice::from_ref(&pad));assert_eq!(ops.iter().filter(|p|p.stroke==0.0&&p.radius==0.0).count(),24*24);
-        assert!(ops.iter().filter(|p|p.radius==0.0).all(|p|p.x>=-0.01&&p.x+p.width<=168.6));
-        let knob=ops.iter().find(|p|p.color==0xff736d89).unwrap();assert_eq!((knob.x+12.0,knob.y+12.0),(12.0+36.0,12.0));
+        assert_eq!(ops.iter().filter(|p|p.color==0xff1e1b28&&p.stroke==12.0).count(),1,"rounded-corner mask");
+        let knob=ops.iter().find(|p|p.color==0xff736d89).unwrap();let c=design::WorkspaceColor::from_argb(pad.badge);let (kx,ky)=design::wheel::pad_knob(180.0,180.0,c.saturation(),c.tone());assert!((knob.x+12.0-kx).abs()<0.01&&(knob.y+12.0-ky).abs()<0.01);
     }
     #[test] fn color_presets_lay_out_as_two_rows_of_pills_and_draw_dot_and_name() {
         let g=appearance_pill_layout(400,-1,8);assert_eq!((g.width,g.height,g.children.len()),(400,66,10));
@@ -4207,7 +4144,7 @@ mod tests {
         p.width=32.0;assert!(layout(&[p]).iter().all(|o|o.text.is_empty()));
     }
     #[test] fn design_palette_bridge_carries_the_rust_palette() {
-        let p=design_palette(true,APPEARANCE_COLORS[2]);let q=design::Palette::for_workspace(design::Scheme::Noc,design::WorkspaceColor::SKY);
+        let p=design_palette(true,APPEARANCE_COLORS[2]);let q=design::Palette::for_workspace(design::Scheme::Noc,design::WorkspaceColor::from_argb(APPEARANCE_COLORS[2]));
         assert_eq!((p.bg_void,p.bg_base,p.bg_raised,p.accent,p.on_accent,p.ink_muted,p.focus,p.scrim),(q.bg_void,q.bg_base,q.bg_raised,q.accent,q.on_accent,q.ink_muted,q.focus,q.scrim));
         assert_ne!(design_palette(false,APPEARANCE_COLORS[2]).bg_base,p.bg_base);assert!(design_same_workspace_color(0xff808080,0xff7f7f7f));assert!(!design_same_workspace_color(APPEARANCE_COLORS[0],APPEARANCE_COLORS[1]));
     }

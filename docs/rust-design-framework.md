@@ -20,7 +20,13 @@ python3 tools/gen_design_tokens.py
 
 ## Kolor obszaru roboczego
 
-Osoba wybiera kolor dowolnie: barwę, nasycenie i jasność. `WorkspaceColor` zaokrągla
+> **Zmiana (2026-10-28, wieczór):** siatkę porzuciliśmy — kolor jest **ciągły**
+> (barwa OKLCH w stopniach, nasycenie i jasność 0..1). Zapis: jasność jako L 0,60..0,76,
+> nasycenie jako chroma 0..0,10. `same()` porównuje z tolerancją rozdzielczości hexa
+> (2°, 3%). Test kontrastu sprawdza gęstą próbkę: co 10° × 9 × 9 = 5832 palety.
+> Koło barw nie przyciąga już do siatki; opis poniżej o siatce jest historyczny.
+
+Osoba wybiera kolor dowolnie: barwę, nasycenie i jasność. `WorkspaceColor` zaokrąglał
 wybór do siatki **24 barw (co 15°, barwa OKLCH) × 5 nasyceń × 5 jasności = 600 punktów**.
 
 - **Barwa** barwi wszystko: ramę, pasek boczny, hover, linie i kontrolki.

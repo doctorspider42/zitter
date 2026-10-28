@@ -4118,7 +4118,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceContextAppearanceAndD
   auto* colors = shell->workspace_menu()->GetSubmenuModelAt(1);
   ASSERT_TRUE(colors);
   colors->ActivatedAt(1, 0);
-  ASSERT_TRUE(base::test::RunUntil([&] { return shell->workspace_color("personal") == 0xFFCC8463u; }));
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->workspace_color("personal") == 0xFFCE826Bu; }));
   EXPECT_EQ("work", window_->active_id());
   shell->BuildWorkspaceMenu("personal");
   EXPECT_TRUE(shell->workspace_menu()->GetSubmenuModelAt(1)->IsItemCheckedAt(1));
@@ -4621,27 +4621,31 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceActionHostsAXSelecti
 }
 
 // Compiled only: semantic preset commands use the common Rust panel dispatcher.
-// The color wheel: the saturation x tone field and the hue ring snap a press to
-// the design system grid and keep the other axes; arrows step one grid point
-// and the ring's centre disc picks nothing (design.rs wheel).
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceColorWheelSnapsPressesAndArrows) {
+// The color wheel picks any color: the saturation x tone field and the hue ring
+// keep the other axes, arrows step 5%, and the ring's centre disc picks nothing.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceColorWheelPicksAnyColor) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));if(!shell->workspace_input()->rust_editor())return;
-  shell->SetWorkspaceAnimations(false);shell->SetWorkspaceColor("work",0xFF5AA0D0);shell->OpenWorkspaceSettings();shell->settings_widget()->LayoutRootViewIfNecessary();
+  shell->SetWorkspaceAnimations(false);shell->SetWorkspaceColor("work",0xFF53A2CD);shell->OpenWorkspaceSettings();shell->settings_widget()->LayoutRootViewIfNecessary();
   auto* ring=shell->color_wheel_for_testing(0);auto* field=shell->color_wheel_for_testing(1);ASSERT_TRUE(ring&&field);
-  EXPECT_EQ(gfx::Size(184,184),ring->size());EXPECT_EQ(gfx::Size(168,168),field->size());
-  ui::AXNodeData ax;ring->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kSlider,ax.role);EXPECT_EQ(u"Barwa 240°",ax.GetString16Attribute(ax::mojom::StringAttribute::kValue));
+  EXPECT_EQ(gfx::Size(200,200),ring->size());EXPECT_EQ(gfx::Size(180,180),field->size());
+  auto value=[](views::View* view){ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kSlider,ax.role);return ax.GetString16Attribute(ax::mojom::StringAttribute::kValue);};
+  // The values read back from the stored hex, so they hold to within a few units.
+  auto numbers=[&](views::View* view){std::vector<int> out;int n=-1;for(const char16_t c:value(view)){if(c>=u'0'&&c<=u'9')n=(n<0?0:n*10)+(c-u'0');else if(n>=0){out.push_back(n);n=-1;}}if(n>=0)out.push_back(n);return out;};
+  auto near=[](int value,int expected){return std::abs(value-expected)<=3;};
   auto press=[](views::View* view,gfx::Point point){ui::MouseEvent event(ui::EventType::kMousePressed,point,point,base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);return view->OnMousePressed(event);};
-  EXPECT_TRUE(press(field,gfx::Point(48,12)));EXPECT_EQ(0xFFA3B4C0u,shell->workspace_color("work"));  // Saturation 1, tone 4, same hue.
-  EXPECT_TRUE(press(ring,gfx::Point(149,35)));EXPECT_EQ(0xFFC0ADA4u,shell->workspace_color("work"));  // Hue 3, levels kept.
-  EXPECT_FALSE(press(ring,gfx::Point(92,92)));EXPECT_EQ(0xFFC0ADA4u,shell->workspace_color("work"));  // Centre disc.
-  ui::KeyEvent down(ui::EventType::kKeyPressed,ui::VKEY_DOWN,ui::EF_NONE);EXPECT_TRUE(field->OnKeyPressed(down));EXPECT_EQ(0xFFB3A098u,shell->workspace_color("work"));
-  field->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(u"Nasycenie 25%, jasność 75%",ax.GetString16Attribute(ax::mojom::StringAttribute::kValue));
+  EXPECT_TRUE(press(field,gfx::Point(125,20)));auto levels=numbers(field);ASSERT_EQ(2u,levels.size());EXPECT_TRUE(near(levels[0],75)&&near(levels[1],100))<<levels[0]<<" "<<levels[1];  // Three quarters across, at the top.
+  const auto field_color=shell->workspace_color("work");
+  EXPECT_TRUE(press(ring,gfx::Point(157,43)));auto hue=numbers(ring);ASSERT_EQ(1u,hue.size());EXPECT_TRUE(near(hue[0],45))<<hue[0];
+  levels=numbers(field);EXPECT_TRUE(near(levels[0],75)&&near(levels[1],100))<<levels[0]<<" "<<levels[1];  // Levels kept.
+  EXPECT_NE(field_color,shell->workspace_color("work"));
+  const auto ring_color=shell->workspace_color("work");EXPECT_FALSE(press(ring,gfx::Point(100,100)));EXPECT_EQ(ring_color,shell->workspace_color("work"));  // Centre disc.
+  const int before=numbers(field)[1];ui::KeyEvent down(ui::EventType::kKeyPressed,ui::VKEY_DOWN,ui::EF_NONE);EXPECT_TRUE(field->OnKeyPressed(down));EXPECT_TRUE(near(numbers(field)[1],before-5))<<numbers(field)[1];
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_saved();}));
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AppearanceCommandsResolveAllPresetsWithStableActionNodes) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));if(!shell->workspace_input()->rust_editor())return;shell->SetWorkspaceAnimations(false);shell->OpenWorkspaceSettings();
-  auto* colors=shell->color_presets();const std::array<SkColor,8> expected_colors={0xff928fd4,0xffcc8463,0xff5aa0d0,0xffbc8f4d,0xffcb7e96,0xff55ac89,0xff7da667,0xff989898};
+  auto* colors=shell->color_presets();const std::array<SkColor,8> expected_colors={0xff928fd4,0xffce826b,0xff53a2cd,0xffb9914c,0xffc97e9b,0xff4fac8f,0xff79a76a,0xff989898};
   for(size_t i=0;i<expected_colors.size();++i){auto* button=colors->children()[i].get();const auto id=shell->sidebar_node_id_for_testing(button);EXPECT_NE(0u,id);EXPECT_EQ(8u,shell->control_model_kind_for_testing(button));button->ScrollViewToVisible();ClickControl(button);EXPECT_EQ(expected_colors[i],shell->workspace_color("work"));EXPECT_EQ(id,shell->sidebar_node_id_for_testing(button));}
   auto* emojis=shell->emoji_input()->view()->parent();const std::array<std::u16string,8> expected_emojis={u"💼",u"🏠",u"🚀",u"🎨",u"📚",u"🎮",u"🛒",u"🎬"};
   for(size_t i=0;i<expected_emojis.size();++i){auto* button=emojis->children()[i].get();const auto id=shell->sidebar_node_id_for_testing(button);EXPECT_EQ(8u,shell->control_model_kind_for_testing(button));button->ScrollViewToVisible();ClickControl(button);EXPECT_EQ(expected_emojis[i],shell->workspace_emoji("work"));EXPECT_EQ(id,shell->sidebar_node_id_for_testing(button));}
@@ -4654,18 +4658,18 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AppearanceCommandObserverCanno
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AppearanceActionHostsKeyboardAXColorAndCancelledClip) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->OpenWorkspaceSettings();auto* widget=shell->settings_widget();widget->LayoutRootViewIfNecessary();const bool rust=shell->workspace_input()->rust_editor();auto* colors=shell->color_presets();auto* emojis=shell->emoji_input()->view()->parent();
   for(auto* row:{colors,emojis})for(size_t i=0;i<8u;++i){auto* view=row->children()[i].get();EXPECT_EQ(!rust,views::AsViewClass<views::Button>(view)!=nullptr);ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kButton,ax.role);EXPECT_FALSE(ax.GetString16Attribute(ax::mojom::StringAttribute::kName).empty());if(rust)EXPECT_TRUE(view->children().empty());}
-  auto* mint=colors->children()[1].get();mint->ScrollViewToVisible();ActivateSidebarRow(mint);EXPECT_EQ(0xFFCC8463u,shell->workspace_color("work"));auto* blue=colors->children()[3].get();blue->ScrollViewToVisible();
+  auto* mint=colors->children()[1].get();mint->ScrollViewToVisible();ActivateSidebarRow(mint);EXPECT_EQ(0xFFCE826Bu,shell->workspace_color("work"));auto* blue=colors->children()[3].get();blue->ScrollViewToVisible();
   ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));blue->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);blue->RequestFocus();ASSERT_TRUE(base::test::RunUntil([&]{return blue->HasFocus();}));base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
-  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));EXPECT_EQ(0xFFBC8F4Du,shell->workspace_color("work"));auto* rocket=emojis->children()[2].get();rocket->ScrollViewToVisible();ActivateSidebarRow(rocket);EXPECT_EQ(u"🚀",shell->workspace_emoji("work"));
-  mint->SetEnabled(false);ui::AXActionData activate;activate.action=ax::mojom::Action::kDoDefault;mint->HandleAccessibleAction(activate);EXPECT_EQ(0xFFBC8F4Du,shell->workspace_color("work"));mint->SetEnabled(true);mint->ScrollViewToVisible();
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));EXPECT_EQ(0xFFB9914Cu,shell->workspace_color("work"));auto* rocket=emojis->children()[2].get();rocket->ScrollViewToVisible();ActivateSidebarRow(rocket);EXPECT_EQ(u"🚀",shell->workspace_emoji("work"));
+  mint->SetEnabled(false);ui::AXActionData activate;activate.action=ax::mojom::Action::kDoDefault;mint->HandleAccessibleAction(activate);EXPECT_EQ(0xFFB9914Cu,shell->workspace_color("work"));mint->SetEnabled(true);mint->ScrollViewToVisible();
   auto press=[](views::View* view){ui::MouseEvent event(ui::EventType::kMousePressed,gfx::Point(12,12),gfx::Point(12,12),base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);return view->OnMousePressed(event);};auto release=[](views::View* view){ui::MouseEvent event(ui::EventType::kMouseReleased,gfx::Point(12,12),gfx::Point(12,12),base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);view->OnMouseReleased(event);};
-  if(rust){auto* viewport=shell->workspace_viewport_for_testing();auto* overflow=viewport->contents()->AddChildView(std::make_unique<FormOverflowProbeView>());widget->LayoutRootViewIfNecessary();mint->ScrollViewToVisible();const auto offset=viewport->offset();ASSERT_GT(viewport->maximum(),0);ASSERT_TRUE(press(mint));viewport->ScrollTo(viewport->maximum());EXPECT_TRUE(mint->GetVisibleBounds().IsEmpty());viewport->ScrollTo(offset);release(mint);EXPECT_EQ(0xFFBC8F4Du,shell->workspace_color("work"));viewport->contents()->RemoveChildViewT(overflow);widget->LayoutRootViewIfNecessary();mint->ScrollViewToVisible();
-    ASSERT_TRUE(press(mint));widget->Hide();widget->Show();release(mint);EXPECT_EQ(0xFFBC8F4Du,shell->workspace_color("work"));
+  if(rust){auto* viewport=shell->workspace_viewport_for_testing();auto* overflow=viewport->contents()->AddChildView(std::make_unique<FormOverflowProbeView>());widget->LayoutRootViewIfNecessary();mint->ScrollViewToVisible();const auto offset=viewport->offset();ASSERT_GT(viewport->maximum(),0);ASSERT_TRUE(press(mint));viewport->ScrollTo(viewport->maximum());EXPECT_TRUE(mint->GetVisibleBounds().IsEmpty());viewport->ScrollTo(offset);release(mint);EXPECT_EQ(0xFFB9914Cu,shell->workspace_color("work"));viewport->contents()->RemoveChildViewT(overflow);widget->LayoutRootViewIfNecessary();mint->ScrollViewToVisible();
+    ASSERT_TRUE(press(mint));widget->Hide();widget->Show();release(mint);EXPECT_EQ(0xFFB9914Cu,shell->workspace_color("work"));
   }
   // The shared scene and native comparison must both preserve the actual swatch
   // fill in fallback, not just apply the corresponding workspace store value.
-  widget->Hide();const auto bounds=colors->bounds();colors->SetBoundsRect(gfx::Rect(colors->size()));const auto pixel=mint->GetMirroredBounds().CenterPoint();const auto bitmap=views::test::PaintViewToBitmap(colors);colors->SetBoundsRect(bounds);ASSERT_LT(pixel.x(),bitmap.width());ASSERT_LT(pixel.y(),bitmap.height());EXPECT_EQ(0xFFCC8463u,bitmap.getColor(pixel.x(),pixel.y()));widget->Show();
-  if(rust){mint->ScrollViewToVisible();const auto personal=shell->workspace_color("personal");ASSERT_TRUE(press(mint));ASSERT_TRUE(window_->Select("personal"));release(mint);EXPECT_EQ(personal,shell->workspace_color("personal"));EXPECT_EQ(0xFFBC8F4Du,shell->workspace_color("work"));}
+  widget->Hide();const auto bounds=colors->bounds();colors->SetBoundsRect(gfx::Rect(colors->size()));const auto pixel=gfx::Point(mint->GetMirroredBounds().x()+15,mint->GetMirroredBounds().CenterPoint().y());/* The pill's color dot. */const auto bitmap=views::test::PaintViewToBitmap(colors);colors->SetBoundsRect(bounds);ASSERT_LT(pixel.x(),bitmap.width());ASSERT_LT(pixel.y(),bitmap.height());EXPECT_EQ(0xFFCE826Bu,bitmap.getColor(pixel.x(),pixel.y()));widget->Show();
+  if(rust){mint->ScrollViewToVisible();const auto personal=shell->workspace_color("personal");ASSERT_TRUE(press(mint));ASSERT_TRUE(window_->Select("personal"));release(mint);EXPECT_EQ(personal,shell->workspace_color("personal"));EXPECT_EQ(0xFFB9914Cu,shell->workspace_color("work"));}
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_saved();}));
 }
 
@@ -6585,11 +6589,11 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, AppearanceRowsSceneInputCl
   auto* colors=shell->color_presets();auto* emojis=shell->emoji_input()->view()->parent();ASSERT_EQ(10u,colors->children().size());ASSERT_EQ(11u,emojis->children().size());
   for(bool emoji:{false,true}){auto* row=emoji?shell->emoji_input()->view()->parent():shell->color_presets();const auto frame=shell->appearance_scene_bounds_for_testing(emoji);EXPECT_FALSE(frame.IsEmpty());if(emoji)EXPECT_FALSE(frame.Intersects(shell->emoji_input()->view()->GetBoundsInScreen()));for(size_t i=0;i<8u;++i){EXPECT_TRUE(frame.Contains(row->children()[i]->GetBoundsInScreen()));EXPECT_FALSE(views::AsViewClass<views::Button>(row->children()[i].get()));EXPECT_TRUE(row->children()[i]->children().empty());for(const auto& child:row->children()[i]->children())EXPECT_FALSE(views::AsViewClass<views::Label>(child.get()));}}
   auto* mint=colors->children()[1].get();const gfx::Point point(10,10);ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);
-  ASSERT_TRUE(mint->OnMousePressed(press));mint->OnMouseReleased(release);EXPECT_EQ(0xFFCC8463u,shell->workspace_color("work"));
-  auto* peach=colors->children()[2].get();ASSERT_TRUE(peach->OnMousePressed(press));peach->OnMouseCaptureLost();peach->OnMouseReleased(release);EXPECT_EQ(0xFFCC8463u,shell->workspace_color("work"));
-  auto* blue=colors->children()[3].get();blue->RequestFocus();ui::KeyEvent space(ui::EventType::kKeyPressed,ui::VKEY_SPACE,ui::EF_NONE);ui::KeyEvent space_up(ui::EventType::kKeyReleased,ui::VKEY_SPACE,ui::EF_NONE);ASSERT_TRUE(blue->OnKeyPressed(space));blue->OnKeyReleased(space_up);EXPECT_EQ(0xFFBC8F4Du,shell->workspace_color("work"));
+  ASSERT_TRUE(mint->OnMousePressed(press));mint->OnMouseReleased(release);EXPECT_EQ(0xFFCE826Bu,shell->workspace_color("work"));
+  auto* peach=colors->children()[2].get();ASSERT_TRUE(peach->OnMousePressed(press));peach->OnMouseCaptureLost();peach->OnMouseReleased(release);EXPECT_EQ(0xFFCE826Bu,shell->workspace_color("work"));
+  auto* blue=colors->children()[3].get();blue->RequestFocus();ui::KeyEvent space(ui::EventType::kKeyPressed,ui::VKEY_SPACE,ui::EF_NONE);ui::KeyEvent space_up(ui::EventType::kKeyReleased,ui::VKEY_SPACE,ui::EF_NONE);ASSERT_TRUE(blue->OnKeyPressed(space));blue->OnKeyReleased(space_up);EXPECT_EQ(0xFFB9914Cu,shell->workspace_color("work"));
   auto* rocket=emojis->children()[2].get();rocket->RequestFocus();ASSERT_TRUE(rocket->OnKeyPressed(space));rocket->OnKeyReleased(space_up);EXPECT_EQ(u"🚀",shell->workspace_emoji("work"));if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_contains_scene_text("🚀");}));
-  const auto personal_color=shell->workspace_color("personal");ASSERT_TRUE(peach->OnMousePressed(press));ASSERT_TRUE(window_->Select("personal"));peach->OnMouseReleased(release);EXPECT_EQ(personal_color,shell->workspace_color("personal"));EXPECT_EQ(0xFFBC8F4Du,shell->workspace_color("work"));
+  const auto personal_color=shell->workspace_color("personal");ASSERT_TRUE(peach->OnMousePressed(press));ASSERT_TRUE(window_->Select("personal"));peach->OnMouseReleased(release);EXPECT_EQ(personal_color,shell->workspace_color("personal"));EXPECT_EQ(0xFFB9914Cu,shell->workspace_color("work"));
   shell->OpenWorkspaceSettings();auto* field=shell->emoji_input();field->RequestFocus();ASSERT_TRUE(field->HasFocus());field->SetText(u"");ui::CompositionText composition;composition.text=u"にほん";composition.selection=gfx::Range(composition.text.size());field->SetCompositionText(composition);ASSERT_TRUE(field->IsIMEComposing());const auto before=shell->workspace_emoji("personal");ui::KeyEvent enter(ui::EventType::kKeyPressed,ui::VKEY_RETURN,ui::EF_NONE);
   EXPECT_FALSE(field->view()->OnKeyPressed(enter));EXPECT_EQ(before,shell->workspace_emoji("personal"));field->ClearCompositionText();field->SetText(u"👩‍💻abc");ASSERT_TRUE(field->view()->OnKeyPressed(enter));EXPECT_EQ(u"👩‍💻",shell->workspace_emoji("personal"));
   shell->OpenWorkspaceSettings();shell->SetWorkspaceColor("personal",0xFF123456);EXPECT_EQ(0xFF123456u,shell->workspace_color("personal"));

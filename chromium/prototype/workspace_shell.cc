@@ -298,7 +298,7 @@ std::optional<SkColor> ParseColor(std::string_view text) {
   return value | 0xFF000000;
 }
 struct Appearance {
-  std::map<std::string, SkColor> colors = {{"work", kDefaultWorkspaceColor}, {"personal", 0xFF55AC89}};  // Violet, mint.
+  std::map<std::string, SkColor> colors = {{"work", kDefaultWorkspaceColor}, {"personal", 0xFF4FAC8F}};  // Violet, mint.
   // Tabs live in a visible sidebar by default; auto-hide is opt-in.
   bool pinned = true;
   ThemeMode theme = ThemeMode::kSystem;
@@ -567,7 +567,8 @@ sidebar::Item GlyphSceneData(views::View* view,ControlGlyph glyph,const gfx::Vec
       : item.hovered ? HoverWash(view) : SK_ColorTRANSPARENT;
   if(glyph==GlyphButton::Glyph::kSwatch){item.kind=18;item.badge=color;item.ink=Tone(view,!view->GetEnabledInViewsSubtree()?kDisabled:item.active?kInk:kMuted);
     // A preset pill: the color's name beside its dot, the selected one on accent_soft.
-    if(rect.width()>rect.height()*1.6f&&!label.empty()){const auto p=Palette(view);item.title=base::UTF16ToUTF8(label);item.font_size=Font(-1).GetFontSize();
+    const auto name=label.empty()?view->GetTooltipText():label;
+    if(rect.width()>rect.height()*1.6f&&!name.empty()){const auto p=Palette(view);item.title=base::UTF16ToUTF8(name);item.font_size=Font(-1).GetFontSize();
       item.fill=on?p.accent_soft:item.hovered?p.bg_hover:SK_ColorTRANSPARENT;item.edge=on?p.accent:p.line;}}
   return item;
 }
@@ -784,8 +785,8 @@ class AppearanceRow final : public views::View {
 BEGIN_METADATA(AppearanceRow)
 END_METADATA
 // The workspace color wheel (design.rs wheel): the hue ring or the saturation x
-// tone field. Paints from the scene, snaps every pick to the grid and hands the
-// stored color to `pick`; arrows step one grid point.
+// tone field. Paints from the scene, picks any color and hands the stored color
+// to `pick`; arrows step 5 degrees of hue or 5% of a level.
 class ColorWheelControl final : public views::View {
   METADATA_HEADER(ColorWheelControl,views::View)
  public:
@@ -799,7 +800,7 @@ class ColorWheelControl final : public views::View {
   }
   void Refresh(){GetViewAccessibility().SetValue(base::UTF8ToUTF16(std::string(sidebar::color_wheel_description(current_.Run(),ring_))));SchedulePaint();}
   bool ring() const{return ring_;}
-  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return ring_?gfx::Size(184,184):gfx::Size(168,168);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return ring_?gfx::Size(200,200):gfx::Size(180,180);}
   void OnPaint(gfx::Canvas* canvas) override{
     const auto palette=Palette(this);sidebar::Item item{};item.kind=ring_?28:29;item.width=width();item.height=height();item.clip={0,0,float(width()),float(height())};
     item.badge=current_.Run();item.tile=IsDark(this);item.fill=palette.bg_raised;item.ink=palette.line_strong;item.edge=palette.line;item.focus=palette.focus;item.focused=HasFocus();
@@ -822,10 +823,9 @@ class ColorWheelControl final : public views::View {
  private:
   // A ring press off the band (the centre disc) picks nothing.
   bool PickAt(const gfx::Point& p){
-    SkColor target=0;
-    if(ring_){const int hue=sidebar::color_ring_hit(p.x(),p.y(),std::min(width(),height()));if(hue<0)return false;target=sidebar::color_wheel_target(current_.Run(),hue,-1,-1);}
-    else{const int level=sidebar::color_pad_hit(p.x(),p.y(),width(),height());target=sidebar::color_wheel_target(current_.Run(),-1,level/5,level%5);}
-    if(target)Pick(target);return true;
+    const SkColor target=ring_?sidebar::color_ring_target(current_.Run(),p.x(),p.y(),std::min(width(),height()))
+                              :sidebar::color_pad_target(current_.Run(),p.x(),p.y(),width(),height());
+    if(!target)return false;Pick(target);return true;
   }
   void Pick(SkColor color){if(!sidebar::design_same_workspace_color(color,current_.Run()))pick_.Run(color);}
   bool ring_;base::RepeatingCallback<SkColor()> current_;base::RepeatingCallback<std::u16string()> emoji_;base::RepeatingCallback<void(SkColor)> pick_;
@@ -2980,10 +2980,9 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   Spacer(color_row, 1);color_row->AddChildView(std::make_unique<views::View>());color_presets_=color_row;
   color_error_ = settings_text(appearance,u"",kError,-2,gfx::Font::Weight::NORMAL,true);
   color_error_->SetVisible(false);
-  // Any color, snapped to the design system grid: the hue ring and the
-  // saturation x tone field beside it.
+  // Any color: the hue ring and the saturation x tone field beside it.
   {auto* wheel=appearance->AddChildView(std::make_unique<views::View>());
-   wheel->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal,gfx::Insets::VH(6,0),22))->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
+   wheel->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal,gfx::Insets(),12))->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
    auto current=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell?shell->workspace_color(shell->state_.workspace_id):kDefaultWorkspaceColor;},weak);
    auto emoji=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell?shell->workspace_emoji(shell->state_.workspace_id):std::u16string();},weak);
    auto pick=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,SkColor color){if(shell)shell->SetWorkspaceColor(shell->state_.workspace_id,color);},weak);
@@ -3000,11 +2999,11 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     SetActionLabel(pick,emoji);
   }
   // The last tile opens the system Emoji & Symbols viewer. It types into the
-  // focused field, so the field stays as a 1 px receiver at the row's end.
+  // focused field, so the field stays as a zero-width receiver at the row's end.
   {auto* more_emoji=AppearancePicker(emoji_row,base::BindRepeating(&WorkspaceShell::OpenEmojiPicker,weak),base::UTF8ToUTF16(std::string(sidebar::workspace_copy().more_emoji)),GlyphButton::Glyph::kDot);
    SetActionLabel(more_emoji,u"+");}
   Spacer(emoji_row, 1)->SetPreferredSize(gfx::Size(8, 1));
-  emoji_input_ = AddEditor(emoji_row);emoji_input_->view()->SetPreferredSize(gfx::Size(1,28));
+  emoji_input_ = AddEditor(emoji_row);emoji_input_->view()->SetPreferredSize(gfx::Size(0,28));
   emoji_input_->GetViewAccessibility().SetName(workspace_copy[11]);
   emoji_input_->SetPlaceholderText(workspace_copy[12]);
   if(auto* native=views::AsViewClass<views::Textfield>(emoji_input_->view())){
@@ -7294,11 +7293,6 @@ void WorkspaceShell::DispatchFormCommand(views::View* source,const sidebar::Form
       const auto target=sidebar::appearance_command_target(command,binding.index);if(!target.valid)return;
       if(command==C::WorkspaceColorPreset)SetWorkspaceColor(state_.workspace_id,target.color);
       else SetWorkspaceEmoji(state_.workspace_id,base::UTF8ToUTF16(std::string(target.emoji)));
-      break;
-    }
-    case C::WorkspaceHue:case C::WorkspaceSaturation:case C::WorkspaceTone:{
-      const uint32_t axis=command==C::WorkspaceHue?0:command==C::WorkspaceSaturation?1:2;
-      if(const auto color=sidebar::appearance_grid_target(axis,binding.index,workspace_color(state_.workspace_id)))SetWorkspaceColor(state_.workspace_id,color);
       break;
     }
     case C::WorkspaceSave:SubmitWorkspace(creating_workspace_);break;

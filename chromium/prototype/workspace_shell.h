@@ -947,7 +947,7 @@ class WorkspaceShell final : public ui::EventHandler,
   bool command_palette_ = false;
   std::u16string suggestions_text_;
   // Violet and mint (design.rs WorkspaceColor::PRESETS); any stored hex is kept.
-  std::map<std::string, SkColor> colors_ = {{"work", 0xFF928FD4}, {"personal", 0xFF55AC89}};
+  std::map<std::string, SkColor> colors_ = {{"work", 0xFF928FD4}, {"personal", 0xFF4FAC8F}};
   std::set<std::string> color_dirty_;
   std::map<std::string, std::u16string> emoji_;
   std::set<std::string> emoji_dirty_;

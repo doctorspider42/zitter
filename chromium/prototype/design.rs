@@ -4,10 +4,10 @@
 //! Three layers, all pure functions of their inputs:
 //! - `design_tokens` (generated): every fixed value of tokens.json.
 //! - [`WorkspaceColor`] and [`Palette`]: a workspace color picked freely by hue,
-//!   saturation and tone, quantized to 24 x 5 x 5 grid points, resolves to one
-//!   palette per scheme. The workspace color tints the whole window (void, base,
-//!   hover, line) and paints the controls (accent); raised surfaces stay neutral.
-//!   Every grid point is contrast-checked by the unit tests below.
+//!   saturation and tone resolves to one palette per scheme. The workspace color
+//!   tints the whole window (void, base, hover, line) and paints the controls
+//!   (accent); raised surfaces stay neutral. A dense sample of the whole space is
+//!   contrast-checked by the unit tests below.
 //! - [`recipe`]: component styles (sizes, radii, colors) built from a palette.
 //!
 //! Colors are ARGB `u32`, the same encoding the scene ABI already uses.
@@ -157,34 +157,40 @@ pub fn mix(a: u32, b: u32, t: f32) -> u32 {
 }
 
 // ---------------------------------------------------------------------------
-// Workspace color: free hue, saturation and tone, quantized to a grid.
+// Workspace color: any hue, saturation and tone.
 
-/// A workspace's color, as the person picked it, snapped to the grid:
-/// 24 hues (15 degrees apart, OKLCH hue), 5 saturation levels and 5 tone levels.
-/// Saturation drives how colored the window and the controls are (0 = graphite);
-/// tone only moves the window lighter or darker inside the scheme's safe band,
-/// so controls keep their contrast whatever the person picks.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// A workspace's color as the person picked it: OKLCH hue in degrees,
+/// saturation and tone 0..1. Saturation drives how colored the window and the
+/// controls are (0 = graphite); tone only moves the window lighter or darker
+/// inside the scheme's safe band, so controls keep their contrast whatever the
+/// person picks. Text that would still miss its floor is corrected by the palette.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WorkspaceColor {
-    hue: u8,
-    saturation: u8,
-    tone: u8,
+    hue: f32,
+    saturation: f32,
+    tone: f32,
 }
 
-impl WorkspaceColor {
-    pub const HUES: u8 = 24;
-    pub const LEVELS: u8 = 5;
-    /// Grid points, the size of the index space.
-    pub const COUNT: u16 = Self::HUES as u16 * Self::LEVELS as u16 * Self::LEVELS as u16;
+/// OKLCH chroma of the controls at full saturation: as vivid as the design
+/// system's named colors.
+const ACCENT_CHROMA: f64 = 0.14;
+/// Stored colors encode the pick: tone 0..1 as OKLCH L 0.60..0.76 and saturation
+/// 0..1 as chroma 0..0.10, which every hue holds inside sRGB there.
+const CANONICAL_L: f64 = 0.60;
+const CANONICAL_L_SPAN: f64 = 0.16;
+const CANONICAL_C: f64 = 0.10;
+/// Below this saturation a stored color has no reliable hue.
+const GRAY: f32 = 0.02;
 
-    pub const VIOLET: Self = Self { hue: 19, saturation: 4, tone: 2 };
-    pub const CORAL: Self = Self { hue: 3, saturation: 4, tone: 2 };
-    pub const SKY: Self = Self { hue: 16, saturation: 4, tone: 2 };
-    pub const AMBER: Self = Self { hue: 5, saturation: 4, tone: 2 };
-    pub const ROSE: Self = Self { hue: 0, saturation: 4, tone: 2 };
-    pub const MINT: Self = Self { hue: 11, saturation: 4, tone: 2 };
-    pub const GREEN: Self = Self { hue: 9, saturation: 4, tone: 2 };
-    pub const GRAPHITE: Self = Self { hue: 19, saturation: 0, tone: 2 };
+impl WorkspaceColor {
+    pub const VIOLET: Self = Self { hue: 285.0, saturation: 1.0, tone: 0.5 };
+    pub const CORAL: Self = Self { hue: 38.0, saturation: 1.0, tone: 0.5 };
+    pub const SKY: Self = Self { hue: 234.0, saturation: 1.0, tone: 0.5 };
+    pub const AMBER: Self = Self { hue: 79.0, saturation: 1.0, tone: 0.5 };
+    pub const ROSE: Self = Self { hue: 355.0, saturation: 1.0, tone: 0.5 };
+    pub const MINT: Self = Self { hue: 170.0, saturation: 1.0, tone: 0.5 };
+    pub const GREEN: Self = Self { hue: 138.0, saturation: 1.0, tone: 0.5 };
+    pub const GRAPHITE: Self = Self { hue: 285.0, saturation: 0.0, tone: 0.5 };
     /// The named colors the pickers offer, in picker order.
     pub const PRESETS: [(&'static str, Self); 8] = [
         ("violet", Self::VIOLET),
@@ -197,216 +203,165 @@ impl WorkspaceColor {
         ("graphite", Self::GRAPHITE),
     ];
 
-    /// Grid coordinates; `None` when one is out of range.
-    pub fn new(hue: u8, saturation: u8, tone: u8) -> Option<Self> {
-        (hue < Self::HUES && saturation < Self::LEVELS && tone < Self::LEVELS)
-            .then_some(Self { hue, saturation, tone })
+    /// Hue wraps around; saturation and tone clamp to 0..1; NaN becomes 0.
+    pub fn new(hue_degrees: f32, saturation: f32, tone: f32) -> Self {
+        let finite = |v: f32| if v.is_finite() { v } else { 0.0 };
+        Self {
+            hue: finite(hue_degrees).rem_euclid(360.0),
+            saturation: finite(saturation).clamp(0.0, 1.0),
+            tone: finite(tone).clamp(0.0, 1.0),
+        }
     }
 
-    /// Snaps continuous picker values (hue in degrees, saturation and tone 0..1).
-    pub fn from_picker(hue_degrees: f32, saturation: f32, tone: f32) -> Self {
-        let step = 360.0 / f32::from(Self::HUES);
-        let hue = (hue_degrees.rem_euclid(360.0) / step).round() as u8 % Self::HUES;
-        let level = |v: f32| (v.clamp(0.0, 1.0) * f32::from(Self::LEVELS - 1)).round() as u8;
-        Self { hue, saturation: level(saturation), tone: level(tone) }
-    }
-
-    /// Nearest grid point to a stored `#RRGGBB`. Profiles keep any hex the
-    /// person typed; [`Self::to_argb`] writes one that reads back exactly.
-    /// Hue and chroma give hue and saturation; lightness gives tone.
+    /// The pick a stored `#RRGGBB` holds. Profiles keep any hex; [`Self::to_argb`]
+    /// writes one that reads back to the same pick (to sRGB precision).
     pub fn from_argb(argb: u32) -> Self {
         let c = Oklch::from_argb(argb);
-        let top = f64::from(Self::LEVELS - 1);
-        let saturation = (c.c / CANONICAL_C_STEP).round().clamp(0.0, top) as u8;
-        let hue = if saturation == 0 { Self::GRAPHITE.hue } else { (c.h / 15.0).round() as u8 % Self::HUES };
-        let tone = ((c.l - CANONICAL_L) / CANONICAL_L_STEP).round().clamp(0.0, top) as u8;
-        Self { hue, saturation, tone }
+        let saturation = (c.c / CANONICAL_C) as f32;
+        let hue = if saturation < GRAY { Self::GRAPHITE.hue } else { c.h as f32 };
+        Self::new(hue, saturation, ((c.l - CANONICAL_L) / CANONICAL_L_SPAN) as f32)
     }
 
-    /// The `#RRGGBB` a profile stores for this grid point; also its swatch.
+    /// The `#RRGGBB` a profile stores for this pick.
     pub fn to_argb(self) -> u32 {
         Oklch::new(
-            CANONICAL_L + CANONICAL_L_STEP * f64::from(self.tone),
-            CANONICAL_C_STEP * f64::from(self.saturation),
-            f64::from(self.hue_degrees()),
+            CANONICAL_L + CANONICAL_L_SPAN * f64::from(self.tone),
+            CANONICAL_C * f64::from(self.saturation),
+            f64::from(self.hue),
         )
         .to_argb()
     }
 
-    /// Dense index for storage, `0..COUNT`.
-    pub fn index(self) -> u16 {
-        (u16::from(self.hue) * u16::from(Self::LEVELS) + u16::from(self.saturation)) * u16::from(Self::LEVELS)
-            + u16::from(self.tone)
-    }
-    pub fn from_index(index: u16) -> Option<Self> {
-        let levels = u16::from(Self::LEVELS);
-        (index < Self::COUNT).then(|| Self {
-            hue: (index / (levels * levels)) as u8,
-            saturation: (index / levels % levels) as u8,
-            tone: (index % levels) as u8,
-        })
+    /// Two picks are the same color within what a stored hex can tell apart:
+    /// two degrees of hue (any hue when both are gray) and 3% of each level.
+    pub fn same(self, other: Self) -> bool {
+        let gray = self.saturation < GRAY && other.saturation < GRAY;
+        let dh = (self.hue - other.hue + 540.0).rem_euclid(360.0) - 180.0;
+        (gray || dh.abs() < 2.0)
+            && (self.saturation - other.saturation).abs() < 0.03
+            && (self.tone - other.tone).abs() < 0.03
     }
 
     pub fn hue_degrees(self) -> f32 {
-        f32::from(self.hue) * 360.0 / f32::from(Self::HUES)
+        self.hue
     }
-    /// 0..1, as the picker shows it.
+    /// 0..1.
     pub fn saturation(self) -> f32 {
-        f32::from(self.saturation) / f32::from(Self::LEVELS - 1)
+        self.saturation
     }
-    /// 0..1, as the picker shows it.
+    /// 0..1.
     pub fn tone(self) -> f32 {
-        f32::from(self.tone) / f32::from(Self::LEVELS - 1)
-    }
-    pub fn grid(self) -> (u8, u8, u8) {
-        (self.hue, self.saturation, self.tone)
+        self.tone
     }
 
-    /// Every grid point, for pickers and exhaustive tests.
-    pub fn all() -> impl Iterator<Item = Self> {
-        (0..Self::COUNT).filter_map(Self::from_index)
-    }
-
-    /// The point the picker's `axis` row offers at `index`, the other two axes
-    /// held at `self`. A hue picked on graphite also restores full saturation,
-    /// so the choice is visible.
-    pub fn with_axis(self, axis: PickerAxis, index: u8) -> Option<Self> {
-        if usize::from(index) >= axis.len() {
-            return None;
-        }
-        Some(match axis {
-            PickerAxis::Hue => Self {
-                hue: index,
-                saturation: if self.saturation == 0 { Self::LEVELS - 1 } else { self.saturation },
-                ..self
-            },
-            PickerAxis::Saturation => Self { saturation: index, ..self },
-            PickerAxis::Tone => Self { tone: index, ..self },
+    /// A dense sample of the whole space (every 10 degrees, 9 levels each way),
+    /// for exhaustive tests.
+    pub fn samples() -> impl Iterator<Item = Self> {
+        (0..36).flat_map(|h| {
+            (0..9).flat_map(move |s| (0..9).map(move |t| Self::new(h as f32 * 10.0, s as f32 / 8.0, t as f32 / 8.0)))
         })
-    }
-
-    /// Where `self` sits on a picker row.
-    pub fn axis_index(self, axis: PickerAxis) -> u8 {
-        match axis {
-            PickerAxis::Hue => self.hue,
-            PickerAxis::Saturation => self.saturation,
-            PickerAxis::Tone => self.tone,
-        }
     }
 }
 
-/// The workspace color wheel: a hue ring and a saturation x tone field. Both
-/// draw continuous colors and snap their knob to the grid.
+/// The workspace color wheel: a hue ring and a saturation x tone field, both
+/// continuous. Geometry is in the control's own px.
 pub mod wheel {
-    use super::{Oklch, PickerAxis, WorkspaceColor};
+    use super::{Oklch, WorkspaceColor, GRAY};
 
-    /// Ring thickness in px.
+    /// Ring thickness.
     pub const RING: f32 = 22.0;
-    /// Field knob diameter; the knob's centre travels inside half of it.
+    /// Space around the ring and the field so knobs and focus rings fit.
+    pub const INSET: f32 = 8.0;
+    /// Field knob diameter; its centre stays half of it inside the field.
     pub const PAD_KNOB: f32 = 24.0;
+    /// Field corner radius.
+    pub const PAD_RADIUS: f32 = 16.0;
 
     /// The ring's color at `degrees`: one lightness and chroma for every hue.
     pub fn ring_color(degrees: f32) -> u32 {
         Oklch::new(0.72, 0.14, f64::from(degrees)).to_argb()
     }
-    /// The field's color at continuous saturation and tone (0..4 each).
+    /// The field's color at saturation and tone 0..1.
     pub fn pad_color(hue_degrees: f32, saturation: f32, tone: f32) -> u32 {
-        Oklch::new(0.42 + 0.11 * f64::from(tone), 0.035 * f64::from(saturation), f64::from(hue_degrees)).to_argb()
+        Oklch::new(0.42 + 0.44 * f64::from(tone), 0.14 * f64::from(saturation), f64::from(hue_degrees)).to_argb()
     }
 
-    /// The hue a point on a `size` px ring selects; `None` off the ring band.
-    pub fn ring_hit(x: f32, y: f32, size: f32) -> Option<u8> {
-        let r = size / 2.0;
-        let (dx, dy) = (x - r, y - r);
+    /// Centre of the ring band's circle, from the control's top-left.
+    pub fn ring_knob(size: f32, hue_degrees: f32) -> (f32, f32) {
+        let mid = size / 2.0 - INSET - RING / 2.0;
+        let a = (hue_degrees - 90.0).to_radians();
+        (size / 2.0 + mid * a.cos(), size / 2.0 + mid * a.sin())
+    }
+    /// The hue a point selects on a `size` px ring control; `None` off the band
+    /// (the centre disc picks nothing).
+    pub fn ring_hit(x: f32, y: f32, size: f32) -> Option<f32> {
+        let outer = size / 2.0 - INSET;
+        let (dx, dy) = (x - size / 2.0, y - size / 2.0);
         let distance = dx.hypot(dy);
-        if !distance.is_finite() || distance < r - RING - 12.0 || distance > r + 4.0 {
+        if !distance.is_finite() || distance < outer - RING - 10.0 || distance > outer + INSET {
             return None;
         }
-        let degrees = (dy.atan2(dx).to_degrees() + 90.0).rem_euclid(360.0);
-        Some((degrees / 15.0).round() as u8 % WorkspaceColor::HUES)
+        Some((dy.atan2(dx).to_degrees() + 90.0).rem_euclid(360.0))
     }
 
-    /// The saturation and tone a point in a `width` x `height` field selects.
-    pub fn pad_hit(x: f32, y: f32, width: f32, height: f32) -> (u8, u8) {
-        let top = f32::from(WorkspaceColor::LEVELS - 1);
-        let step = |extent: f32| ((extent - PAD_KNOB) / top).max(1.0);
-        let level = |v: f32| if v.is_finite() { v.round().clamp(0.0, top) as u8 } else { 0 };
-        (level((x - PAD_KNOB / 2.0) / step(width)), level(top - (y - PAD_KNOB / 2.0) / step(height)))
+    /// The field's knob travel: from `INSET + PAD_KNOB / 2` to the far edge.
+    fn travel(extent: f32) -> (f32, f32) {
+        let start = INSET + PAD_KNOB / 2.0;
+        (start, (extent - 2.0 * start).max(1.0))
+    }
+    pub fn pad_knob(width: f32, height: f32, saturation: f32, tone: f32) -> (f32, f32) {
+        let ((x0, w), (y0, h)) = (travel(width), travel(height));
+        (x0 + saturation * w, y0 + (1.0 - tone) * h)
+    }
+    /// The saturation and tone a point selects in a `width` x `height` control.
+    pub fn pad_hit(x: f32, y: f32, width: f32, height: f32) -> (f32, f32) {
+        let ((x0, w), (y0, h)) = (travel(width), travel(height));
+        let unit = |v: f32| if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 };
+        (unit((x - x0) / w), unit(1.0 - (y - y0) / h))
     }
 
     /// The color a ring or field pick stores: `None` keeps that axis. A hue picked
-    /// on graphite restores full saturation, as the picker rows do.
-    pub fn target(current: WorkspaceColor, hue: Option<u8>, saturation: Option<u8>, tone: Option<u8>) -> Option<WorkspaceColor> {
-        let mut c = current;
-        if let Some(h) = hue { c = c.with_axis(PickerAxis::Hue, h)?; }
-        if let Some(s) = saturation { c = c.with_axis(PickerAxis::Saturation, s)?; }
-        if let Some(t) = tone { c = c.with_axis(PickerAxis::Tone, t)?; }
-        Some(c)
+    /// on graphite brings back full saturation, so the choice is visible.
+    pub fn target(current: WorkspaceColor, hue: Option<f32>, saturation: Option<f32>, tone: Option<f32>) -> WorkspaceColor {
+        let s = saturation.unwrap_or(if hue.is_some() && current.saturation() < GRAY { 1.0 } else { current.saturation() });
+        WorkspaceColor::new(hue.unwrap_or(current.hue_degrees()), s, tone.unwrap_or(current.tone()))
     }
 
-    /// One keyboard step along `axis`: hue wraps around, the levels stop at their ends.
-    pub fn step(current: WorkspaceColor, axis: PickerAxis, delta: i32) -> WorkspaceColor {
-        let len = axis.len() as i32;
-        let at = i32::from(current.axis_index(axis)) + delta;
-        let index = if axis == PickerAxis::Hue { at.rem_euclid(len) } else { at.clamp(0, len - 1) };
-        current.with_axis(axis, index as u8).unwrap_or(current)
+    /// One keyboard step: axis 0 hue (5 degrees, wraps), 1 saturation, 2 tone (5%).
+    pub fn step(current: WorkspaceColor, axis: u32, delta: i32) -> WorkspaceColor {
+        let d = delta as f32;
+        match axis {
+            0 => target(current, Some(current.hue_degrees() + 5.0 * d), None, None),
+            1 => target(current, None, Some(current.saturation() + 0.05 * d), None),
+            2 => target(current, None, None, Some(current.tone() + 0.05 * d)),
+            _ => current,
+        }
     }
-}
 
-/// One row of the workspace color picker.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PickerAxis {
-    Hue,
-    Saturation,
-    Tone,
-}
-
-impl PickerAxis {
-    pub const ALL: [Self; 3] = [Self::Hue, Self::Saturation, Self::Tone];
-
-    pub fn from_index(index: u32) -> Option<Self> {
-        Self::ALL.get(index as usize).copied()
-    }
-    /// Swatches in the row.
-    pub fn len(self) -> usize {
-        usize::from(match self {
-            Self::Hue => WorkspaceColor::HUES,
-            Self::Saturation | Self::Tone => WorkspaceColor::LEVELS,
-        })
-    }
-    /// The swatch's accessible name, in the picker's language.
-    pub fn label(self, index: u8) -> String {
-        let step = |levels: u8| u32::from(index) * 100 / u32::from(levels - 1);
-        match self {
-            Self::Hue => format!("Barwa {}°", u32::from(index) * 360 / u32::from(WorkspaceColor::HUES)),
-            Self::Saturation => format!("Nasycenie {}%", step(WorkspaceColor::LEVELS)),
-            Self::Tone => format!("Jasność {}%", step(WorkspaceColor::LEVELS)),
+    /// What a screen reader says: the ring its hue, the field its two levels.
+    pub fn description(c: WorkspaceColor, ring: bool) -> String {
+        let pct = |v: f32| (v * 100.0).round() as i32;
+        if ring {
+            format!("Barwa {}°", c.hue_degrees().round() as i32 % 360)
+        } else {
+            format!("Nasycenie {}%, jasność {}%", pct(c.saturation()), pct(c.tone()))
         }
     }
 }
 
-/// OKLCH chroma per saturation level: level 4 (0.14) is as vivid as the design
-/// system's named colors.
-const ACCENT_CHROMA_STEP: f64 = 0.035;
-/// Stored colors encode the grid point: tone 0..4 as OKLCH L 0.60..0.76 and
-/// saturation 0..4 as chroma 0..0.10, which every hue holds inside sRGB there.
-const CANONICAL_L: f64 = 0.60;
-const CANONICAL_L_STEP: f64 = 0.04;
-const CANONICAL_C_STEP: f64 = 0.025;
-
-/// The palette for a stored workspace color, memoized per scheme and grid
-/// point (each one runs the contrast search once per thread).
+/// The palette for a stored workspace color, memoized per scheme and stored
+/// hex (each one runs the contrast search once per thread).
 pub fn palette_for_stored(scheme: Scheme, argb: u32) -> Palette {
     use std::cell::RefCell;
     use std::collections::HashMap;
     thread_local! {
-        static CACHE: RefCell<HashMap<(bool, u16), Palette>> = RefCell::new(HashMap::new());
+        static CACHE: RefCell<HashMap<(bool, u32), Palette>> = RefCell::new(HashMap::new());
     }
     let color = WorkspaceColor::from_argb(argb);
     CACHE.with(|cache| {
         *cache
             .borrow_mut()
-            .entry((scheme.is_dark(), color.index()))
+            .entry((scheme.is_dark(), argb | 0xff00_0000))
             .or_insert_with(|| Palette::for_workspace(scheme, color))
     })
 }
@@ -524,13 +479,9 @@ impl Palette {
 
         // Controls: hue and saturation from the workspace, lightness fixed per
         // scheme so the fill always carries its on-color.
-        let chroma = ACCENT_CHROMA_STEP * f64::from(workspace.saturation);
-        let graphite = workspace.saturation == 0;
-        let fill_l = match (dark, graphite) {
-            (true, _) => 0.76,
-            (false, false) => 0.50,
-            (false, true) => 0.32,
-        };
+        let chroma = ACCENT_CHROMA * saturation;
+        // Light scheme: graphite fills go dark; colored ones sit at 0.50.
+        let fill_l = if dark { 0.76 } else { 0.32 + 0.18 * (saturation / 0.25).min(1.0) };
         p.accent = with_contrast(Oklch::new(fill_l, chroma, hue), &[p.on_accent], 4.5, !dark);
         p.accent_soft = Oklch::new(if dark { 0.30 } else { 0.93 }, chroma * 0.45, hue).to_argb();
         p.accent_ink = with_contrast(
@@ -1041,113 +992,72 @@ mod tests {
     }
 
     #[test]
-    fn grid_indexes_round_trip_and_snap() {
-        assert_eq!(WorkspaceColor::all().count(), usize::from(WorkspaceColor::COUNT));
-        for c in WorkspaceColor::all() {
-            assert_eq!(WorkspaceColor::from_index(c.index()), Some(c));
+    fn picks_wrap_clamp_and_read_back_from_their_stored_hex() {
+        let c = WorkspaceColor::new(-30.0, 1.4, f32::NAN);
+        assert_eq!((c.hue_degrees(), c.saturation(), c.tone()), (330.0, 1.0, 0.0));
+        for c in WorkspaceColor::samples() {
+            let back = WorkspaceColor::from_argb(c.to_argb());
+            assert!((back.saturation() - c.saturation()).abs() < 0.03, "{c:?} -> {back:?}");
+            assert!((back.tone() - c.tone()).abs() < 0.03, "{c:?} -> {back:?}");
+            // 8-bit sRGB blurs the hue of weak colors more than of vivid ones.
+            if c.saturation() >= 0.25 {
+                let dh = (back.hue_degrees() - c.hue_degrees() + 540.0).rem_euclid(360.0) - 180.0;
+                assert!(dh.abs() < if c.saturation() >= 0.5 { 2.0 } else { 6.0 }, "{c:?} -> {back:?}");
+            }
+            assert!(back.same(WorkspaceColor::from_argb(back.to_argb())), "{c:?} is not stable");
+            assert!(!c.same(WorkspaceColor::new(c.hue_degrees(), (c.saturation() + 0.1).min(1.0), c.tone())) || c.saturation() == 1.0);
         }
-        assert_eq!(WorkspaceColor::from_index(WorkspaceColor::COUNT), None);
-        assert_eq!(WorkspaceColor::new(24, 0, 0), None);
-        let c = WorkspaceColor::from_picker(286.0, 0.93, 0.4);
-        assert_eq!(c.grid(), (19, 4, 2));
-        assert_eq!(WorkspaceColor::from_picker(-7.0, 2.0, -1.0).grid(), (0, 4, 0));
-        assert_eq!(WorkspaceColor::from_picker(359.0, 0.0, 1.0).grid(), (0, 0, 4));
+        // A gray has no hue: it reads back as graphite's.
+        assert_eq!(WorkspaceColor::from_argb(0xff808080).hue_degrees(), WorkspaceColor::GRAPHITE.hue_degrees());
+        // Older vivid hex colors read as full saturation of their hue.
+        let violet = WorkspaceColor::from_argb(0xff9a92ff);
+        assert!(violet.saturation() > 0.99 && (violet.hue_degrees() - 285.0).abs() < 2.0);
     }
 
     #[test]
-    fn stored_hex_reads_back_as_the_same_grid_point() {
-        for c in WorkspaceColor::all() {
-            // Without saturation there is no hue: every gray reads back as graphite's.
-            let (h, s, t) = c.grid();
-            let expected = if s == 0 { (WorkspaceColor::GRAPHITE.hue, 0, t) } else { (h, s, t) };
-            assert_eq!(WorkspaceColor::from_argb(c.to_argb()).grid(), expected, "{:08x}", c.to_argb());
-        }
-    }
-
-    #[test]
-    fn any_stored_hex_snaps_to_the_nearest_point() {
-        let hue_and_saturation = |argb| {
-            let (h, s, _) = WorkspaceColor::from_argb(argb).grid();
-            (h, s)
-        };
-        // The design system's named colors keep their hue at full saturation.
-        for (argb, preset) in [
-            (0xff9a92ff, WorkspaceColor::VIOLET),
-            (0xffff8a66, WorkspaceColor::CORAL),
-            (0xff5cc8ff, WorkspaceColor::SKY),
-            (0xffff7eb6, WorkspaceColor::ROSE),
-            (0xff5fe0b8, WorkspaceColor::MINT),
-        ] {
-            let (h, s, _) = preset.grid();
-            assert_eq!(hue_and_saturation(argb), (h, s), "{argb:08x}");
-        }
-        // The four colors profiles used before the design system.
-        assert_eq!(WorkspaceColor::from_argb(0xff9e91dc).grid(), (19, 4, 2));
-        assert_eq!(WorkspaceColor::from_argb(0xff84b6a4).grid(), (11, 2, 3));
-        assert_eq!(hue_and_saturation(0xff808080), (WorkspaceColor::GRAPHITE.hue, 0));
-    }
-
-    #[test]
-    fn picker_rows_move_one_axis_and_keep_the_others() {
-        let c = WorkspaceColor::new(7, 2, 3).unwrap();
-        assert_eq!(c.with_axis(PickerAxis::Hue, 20).unwrap().grid(), (20, 2, 3));
-        assert_eq!(c.with_axis(PickerAxis::Saturation, 4).unwrap().grid(), (7, 4, 3));
-        assert_eq!(c.with_axis(PickerAxis::Tone, 0).unwrap().grid(), (7, 2, 0));
-        assert_eq!(c.with_axis(PickerAxis::Hue, 24), None);
-        assert_eq!(c.with_axis(PickerAxis::Tone, 5), None);
-        // A hue on graphite brings the color back.
-        assert_eq!(WorkspaceColor::GRAPHITE.with_axis(PickerAxis::Hue, 3).unwrap().grid(), (3, 4, 2));
-        for axis in PickerAxis::ALL {
-            assert_eq!(c.with_axis(axis, c.axis_index(axis)), Some(c));
-        }
-        assert_eq!(PickerAxis::ALL.map(PickerAxis::len), [24, 5, 5]);
-        assert_eq!(PickerAxis::Hue.label(14), "Barwa 210°");
-        assert_eq!(PickerAxis::Saturation.label(2), "Nasycenie 50%");
-        assert_eq!(PickerAxis::Tone.label(4), "Jasność 100%");
-        assert_eq!(PickerAxis::from_index(3), None);
-    }
-
-    #[test]
-    fn color_wheel_hits_snap_to_the_grid() {
+    fn color_wheel_hits_and_steps_are_continuous() {
         use wheel::*;
-        // 184 px ring: top of the band is hue 0, right is 90 degrees, centre is off.
-        assert_eq!(ring_hit(92.0, 6.0, 184.0), Some(0));
-        assert_eq!(ring_hit(178.0, 92.0, 184.0), Some(6));
-        assert_eq!(ring_hit(92.0, 178.0, 184.0), Some(12));
-        assert_eq!(ring_hit(92.0, 92.0, 184.0), None);
-        assert_eq!(ring_hit(0.0, 0.0, 184.0), None);
-        assert_eq!(ring_hit(f32::NAN, 0.0, 184.0), None);
-        // 168 px field: corners are the extreme levels, outside clamps.
-        assert_eq!(pad_hit(12.0, 156.0, 168.0, 168.0), (0, 0));
-        assert_eq!(pad_hit(156.0, 12.0, 168.0, 168.0), (4, 4));
-        assert_eq!(pad_hit(84.0, 84.0, 168.0, 168.0), (2, 2));
-        assert_eq!(pad_hit(-50.0, 500.0, 168.0, 168.0), (0, 0));
-        let c = WorkspaceColor::new(7, 2, 3).unwrap();
-        assert_eq!(target(c, Some(20), None, None).unwrap().grid(), (20, 2, 3));
-        assert_eq!(target(c, None, Some(4), Some(0)).unwrap().grid(), (7, 4, 0));
-        assert_eq!(target(WorkspaceColor::GRAPHITE, Some(3), None, None).unwrap().grid(), (3, 4, 2));
-        assert_eq!(target(c, Some(24), None, None), None);
-        assert_eq!(step(c, PickerAxis::Hue, -8).grid(), (23, 2, 3));
-        assert_eq!(step(c, PickerAxis::Tone, 5).grid(), (7, 2, 4));
-        assert_eq!(step(c, PickerAxis::Saturation, -9).grid(), (7, 0, 3));
+        // 200 px ring control: top of the band is 0 degrees, right is 90, centre is off.
+        assert_eq!(ring_hit(100.0, 19.0, 200.0), Some(0.0));
+        assert!((ring_hit(181.0, 100.0, 200.0).unwrap() - 90.0).abs() < 1e-3);
+        assert!((ring_hit(181.0, 60.0, 200.0).unwrap() - 63.72).abs() < 0.05);
+        assert_eq!(ring_hit(100.0, 100.0, 200.0), None);
+        assert_eq!(ring_hit(f32::NAN, 0.0, 200.0), None);
+        let (kx, ky) = ring_knob(200.0, 90.0);
+        assert!((kx - 181.0).abs() < 1e-3 && (ky - 100.0).abs() < 1e-3);
+        // 180 px field control: corners are the extremes, halfway is 0.5, outside clamps.
+        assert_eq!(pad_hit(20.0, 160.0, 180.0, 180.0), (0.0, 0.0));
+        assert_eq!(pad_hit(160.0, 20.0, 180.0, 180.0), (1.0, 1.0));
+        assert_eq!(pad_hit(90.0, 90.0, 180.0, 180.0), (0.5, 0.5));
+        assert_eq!(pad_hit(-50.0, 500.0, 180.0, 180.0), (0.0, 0.0));
+        assert_eq!(pad_knob(180.0, 180.0, 0.25, 1.0), (55.0, 20.0));
+        let c = WorkspaceColor::new(100.0, 0.4, 0.6);
+        assert_eq!(target(c, Some(200.0), None, None), WorkspaceColor::new(200.0, 0.4, 0.6));
+        assert_eq!(target(c, None, Some(0.9), Some(0.1)), WorkspaceColor::new(100.0, 0.9, 0.1));
+        assert_eq!(target(WorkspaceColor::GRAPHITE, Some(30.0), None, None), WorkspaceColor::new(30.0, 1.0, 0.5));
+        assert_eq!(step(c, 0, -21).hue_degrees(), 355.0);
+        assert!((step(c, 2, 20).tone() - 1.0).abs() < 1e-6);
+        assert!((step(c, 1, -1).saturation() - 0.35).abs() < 1e-6);
+        assert_eq!(step(c, 9, 1), c);
+        assert_eq!(description(WorkspaceColor::SKY, true), "Barwa 234°");
+        assert_eq!(description(c, false), "Nasycenie 40%, jasność 60%");
     }
 
     #[test]
-    fn stored_palettes_are_memoized_per_grid_point() {
+    fn stored_palettes_are_memoized_per_stored_hex() {
         let a = palette_for_stored(Scheme::Noc, WorkspaceColor::SKY.to_argb());
-        assert_eq!(a, Palette::for_workspace(Scheme::Noc, WorkspaceColor::SKY));
-        assert_eq!(palette_for_stored(Scheme::Noc, WorkspaceColor::SKY.to_argb() ^ 1), a);
+        assert_eq!(a, Palette::for_workspace(Scheme::Noc, WorkspaceColor::from_argb(WorkspaceColor::SKY.to_argb())));
         assert_ne!(palette_for_stored(Scheme::Papier, WorkspaceColor::SKY.to_argb()), a);
     }
 
-    /// Every grid point, both schemes: every text/ground pair the components
-    /// paint meets its floor. 1200 palettes.
+    /// A dense sample of every pick, both schemes: every text/ground pair the
+    /// components paint meets its floor. 5832 palettes.
     #[test]
     fn every_workspace_color_keeps_every_contrast_floor() {
         for scheme in SCHEMES {
-            for ws in WorkspaceColor::all() {
+            for ws in WorkspaceColor::samples() {
                 let p = Palette::for_workspace(scheme, ws);
-                let at = format!("{scheme:?} {:?}", ws.grid());
+                let at = format!("{scheme:?} {ws:?}");
                 for ground in [p.bg_void, p.bg_base, p.bg_hover, p.bg_raised] {
                     assert_pair("ink", p.ink, ground, 7.0, &at);
                     assert_pair("ink_muted", p.ink_muted, ground, 4.5, &at);
@@ -1202,9 +1112,8 @@ mod tests {
             let gray = Palette::for_workspace(scheme, WorkspaceColor::GRAPHITE);
             assert!(Oklch::from_argb(gray.bg_base).c < 0.005);
             assert!(Oklch::from_argb(gray.accent).c < 0.005);
-            let (h, s, _) = WorkspaceColor::VIOLET.grid();
-            let low = Palette::for_workspace(scheme, WorkspaceColor::new(h, s, 0).unwrap());
-            let high = Palette::for_workspace(scheme, WorkspaceColor::new(h, s, 4).unwrap());
+            let low = Palette::for_workspace(scheme, WorkspaceColor::new(285.0, 1.0, 0.0));
+            let high = Palette::for_workspace(scheme, WorkspaceColor::new(285.0, 1.0, 1.0));
             assert!(Oklch::from_argb(high.bg_base).l > Oklch::from_argb(low.bg_base).l);
             assert_eq!(low.accent, high.accent);
             assert_eq!(low.on_accent, high.on_accent);
