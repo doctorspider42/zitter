@@ -912,10 +912,10 @@ class AppearanceRow final : public views::View {
   SceneGroupNodes nodes_{this};
   size_t Count() const{return emoji_?6:4;}
   sidebar::ColumnLayout Geometry(int width,int height) const {const auto field=children().size()==Count()+2?children().back()->GetPreferredSize():gfx::Size();return sidebar::appearance_row_layout(width,height,field.width(),field.height(),emoji_);}
-  gfx::Rect Controls() const {return children().size()==Count()+2?gfx::Rect(0,0,children()[Count()-1]->bounds().right(),height()):gfx::Rect();}
+  gfx::Rect Controls() const {return children().size()==Count()+2?GetMirroredRect(gfx::Rect(0,0,children()[Count()-1]->bounds().right(),height())):gfx::Rect();}
   std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const {
     std::vector<sidebar::Item> items;if(children().size()!=Count()+2)return items;
-    for(size_t i=0;i<Count();++i){auto* button=children()[i].get();auto bounds=gfx::RectF(button->bounds());bounds.Offset(dx,dy);auto child_clip=bounds;child_clip.Intersect(clip);items.push_back(ActionSceneItem(button,bounds,child_clip));}return items;
+    for(size_t i=0;i<Count();++i){auto* button=children()[i].get();auto bounds=gfx::RectF(button->GetMirroredBounds());bounds.Offset(dx,dy);auto child_clip=bounds;child_clip.Intersect(clip);items.push_back(ActionSceneItem(button,bounds,child_clip));}return items;
   }
   void Schedule(){SyncViewport();if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&AppearanceRow::UpdateMetal,weak_factory_.GetWeakPtr()));}
   void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();auto local=GetVisibleBounds();local.Intersect(Controls());
@@ -978,7 +978,7 @@ class ScenePreferenceControls final : public views::View {
  private:
   SceneGroupNodes nodes_;
   sidebar::ColumnLayout Geometry(int width,int height) const{std::vector<sidebar::ColumnChild> measured;for(const auto& child:children()){auto size=child->GetPreferredSize();measured.push_back({size.width(),size.height(),0,0,0,0});}const auto style=nodes_.Style();return sidebar::action_group_layout(width,height,style.vertical,style.spacing,rust::Slice<const sidebar::ColumnChild>(measured.data(),measured.size()));}
-  std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const{std::vector<sidebar::Item> items;for(const auto& child:children()){auto bounds=gfx::RectF(child->bounds());bounds.Offset(dx,dy);auto local=bounds;local.Intersect(clip);items.push_back(static_cast<ScenePreferenceButton*>(child.get())->Scene(bounds,local));}return items;}
+  std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const{std::vector<sidebar::Item> items;for(const auto& child:children()){auto bounds=gfx::RectF(child->GetMirroredBounds());bounds.Offset(dx,dy);auto local=bounds;local.Intersect(clip);items.push_back(static_cast<ScenePreferenceButton*>(child.get())->Scene(bounds,local));}return items;}
   void Schedule(){SyncInput();if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&ScenePreferenceControls::UpdateMetal,weak_factory_.GetWeakPtr()));}
   void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,nodes_.Style().vertical?kFrameBase:kCard));if(was!=metal_visible())SchedulePaint();}
   bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&ScenePreferenceControls::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<ScenePreferenceControls> weak_factory_{this};
@@ -1042,7 +1042,7 @@ class SceneActionGroup final : public views::View {
  private:
   SceneGroupNodes nodes_{this};
   sidebar::FormLayout Geometry(int width,int height,bool preferred=false) const {std::vector<sidebar::FormMeasure> measured;for(const auto& child:children())if(child->GetVisible()){const auto size=child->GetPreferredSize();measured.push_back({nodes_.Id(child.get()),size.width(),size.height()});}auto* provider=views::LayoutProvider::Get();const auto insets=provider->GetInsetsMetric(views::INSETS_DIALOG_BUTTON_ROW);auto geometry=nodes_.Geometry(width,height,preferred,provider->GetDistanceMetric(views::DISTANCE_BUTTON_MAX_LINKABLE_WIDTH),insets.top(),insets.left(),insets.bottom(),insets.right(),measured);CHECK(geometry.admitted);return geometry;}
-  std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const {std::vector<sidebar::Item> out;for(const auto& child:children())if(child->GetVisible()){auto bounds=gfx::RectF(child->bounds());bounds.Offset(dx,dy);auto local=bounds;local.Intersect(clip);out.push_back(static_cast<SceneTextButton*>(child.get())->Scene(bounds,local));}return out;}
+  std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const {std::vector<sidebar::Item> out;for(const auto& child:children())if(child->GetVisible()){auto bounds=gfx::RectF(child->GetMirroredBounds());bounds.Offset(dx,dy);auto local=bounds;local.Intersect(clip);out.push_back(static_cast<SceneTextButton*>(child.get())->Scene(bounds,local));}return out;}
   void Schedule(){for(const auto& child:children())static_cast<SceneTextButton*>(child.get())->SyncViewportVisibility();if(shared()){shared_changed_.Run();return;}if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneActionGroup::UpdateMetal,weak_factory_.GetWeakPtr()));}
   void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,nodes_.Style().dialog?GetColorProvider()->GetColor(ui::kColorDialogBackground):Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
   base::RepeatingCallback<bool()> shared_visible_;base::RepeatingClosure shared_changed_;
@@ -1231,7 +1231,7 @@ class SceneCheckboxGroup final : public views::View {
   void OnPaint(gfx::Canvas* canvas) override {if(!metal_visible())for(const auto& item:Items(0,0,gfx::RectF(GetLocalBounds())))PaintSceneRecipe(canvas,item,SceneCheckbox::TextFont());Schedule();}
  private:
   SceneGroupNodes nodes_{this};
-  std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const {std::vector<sidebar::Item> out;for(const auto& child:children())if(child->GetVisible()){auto bounds=gfx::RectF(child->bounds());bounds.Offset(dx,dy);auto local=bounds;local.Intersect(clip);auto items=static_cast<SceneCheckbox*>(child.get())->Scene(bounds,local);for(auto& item:items)out.push_back(std::move(item));}return out;}
+  std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const {std::vector<sidebar::Item> out;for(const auto& child:children())if(child->GetVisible()){auto bounds=gfx::RectF(child->GetMirroredBounds());bounds.Offset(dx,dy);auto local=bounds;local.Intersect(clip);auto items=static_cast<SceneCheckbox*>(child.get())->Scene(bounds,local);for(auto& item:items)out.push_back(std::move(item));}return out;}
   void Schedule(){for(const auto& child:children())static_cast<SceneCheckbox*>(child.get())->SyncViewportVisibility();if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneCheckboxGroup::UpdateMetal,weak_factory_.GetWeakPtr()));}
   void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
   bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneCheckboxGroup::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneCheckboxGroup> weak_factory_{this};
@@ -2350,7 +2350,7 @@ class FolderFormView final : public views::View {
     views::View::OnDidSchedulePaint(rect);if(field_&&views::View::ConvertRectToTarget(field_->view(),this,field_->view()->GetLocalBounds()).Contains(rect))return;Schedule();
   }
   void OnPaint(gfx::Canvas* canvas) override {
-    for(size_t i=0;i<parts_.size();++i)if(parts_[i]->GetVisible()&&(!surfaces_[i]||!surfaces_[i]->visible()))PaintSceneRecipe(canvas,Item(i,gfx::RectF(parts_[i]->bounds())),Font(-1));
+    for(size_t i=0;i<parts_.size();++i)if(parts_[i]->GetVisible()&&(!surfaces_[i]||!surfaces_[i]->visible()))PaintSceneRecipe(canvas,Item(i,gfx::RectF(parts_[i]->GetMirroredBounds())),Font(-1));
     Schedule();
   }
  private:
@@ -2419,7 +2419,7 @@ class NoticeBodyView : public views::View {
   void OnPaint(gfx::Canvas* canvas) override {
     const auto g=Geometry(width());
     for(size_t i=0;i<2;++i)if(parts_[i]->GetVisible()&&(!surfaces_[i]||!surfaces_[i]->visible())) {
-      const auto clip=gfx::RectF(parts_[i]->bounds());const auto items=Items(i,g,0,0,clip);
+      const auto clip=gfx::RectF(parts_[i]->GetMirroredBounds());const auto items=Items(i,g,0,0,clip);
       for(const auto& item:items)PaintSceneRecipe(canvas,item,Font(i?-1:0));
     }
     Schedule();

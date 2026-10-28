@@ -2,6 +2,7 @@
 #include "ui/views/controls/separator.h"
 #include "ui/views/background.h"
 #include "ui/views/view_targeter.h"
+#include "base/i18n/rtl.h"
 #include "build/build_config.h"
 #if BUILDFLAG(IS_MAC)
 #include "chromium/prototype/sidebar_metal.h"
@@ -178,6 +179,10 @@
 
 namespace zitter::prototype {
 namespace {
+// Direction-aware screen geometry: the leading edge is the left edge in LTR and
+// the right edge in RTL, and indentation grows away from it.
+int LeadingEdge(const views::View* view){const auto bounds=view->GetBoundsInScreen();return base::i18n::IsRTL()?bounds.right():bounds.x();}
+int Indent(int pixels){return base::i18n::IsRTL()?-pixels:pixels;}
 void ActivateSidebarRow(views::View* view){ASSERT_TRUE(view);ui::AXActionData action;action.action=ax::mojom::Action::kDoDefault;EXPECT_TRUE(view->HandleAccessibleAction(action));}
 
 void ClickControl(views::View* view){ASSERT_TRUE(view);if(auto* button=views::AsViewClass<views::Button>(view)){views::test::ButtonTestApi(button).NotifyDefaultMouseClick();return;}ui::AXActionData action;action.action=ax::mojom::Action::kDoDefault;view->HandleAccessibleAction(action);}
@@ -3822,7 +3827,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitPairPersistsWhileAnotherT
   ASSERT_TRUE(close->IsDrawn());
   // The header sits above the right page, not over it.
   EXPECT_LE(close->GetBoundsInScreen().bottom(), c->GetContainerBounds().y());
-  EXPECT_GT(close->GetBoundsInScreen().x(), shell->split_pane_button(false, true)->GetBoundsInScreen().x());
+  EXPECT_GT(Indent(close->GetBoundsInScreen().x() - shell->split_pane_button(false, true)->GetBoundsInScreen().x()), 0);
   ui::AXActionData activate;activate.action=ax::mojom::Action::kDoDefault;
   EXPECT_TRUE(close->HandleAccessibleAction(activate));
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->tab_count("work") == 1; }));
@@ -3877,10 +3882,12 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitViewLifecycleAndIsolation
   ui::MouseEvent press(ui::EventType::kMousePressed, gfx::Point(4, 10), gfx::Point(4, 10),
       base::TimeTicks::Now(), ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON);
   ASSERT_TRUE(divider->OnMousePressed(press));
-  ui::MouseEvent drag(ui::EventType::kMouseDragged, gfx::Point(104, 10), gfx::Point(104, 10),
+  // Dragging toward the trailing side grows the leading (first) pane.
+  const gfx::Point dragged(4 + Indent(100), 10);
+  ui::MouseEvent drag(ui::EventType::kMouseDragged, dragged, dragged,
       base::TimeTicks::Now(), ui::EF_LEFT_MOUSE_BUTTON, 0);
   ASSERT_TRUE(divider->OnMouseDragged(drag));
-  ui::MouseEvent release(ui::EventType::kMouseReleased, gfx::Point(104, 10), gfx::Point(104, 10),
+  ui::MouseEvent release(ui::EventType::kMouseReleased, dragged, dragged,
       base::TimeTicks::Now(), 0, ui::EF_LEFT_MOUSE_BUTTON);
   divider->OnMouseReleased(release);
   EXPECT_GT(window_->split_ratio(), 0.5);
@@ -3897,14 +3904,14 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitViewLifecycleAndIsolation
   EXPECT_EQ(right, window_->contents("work"));
   // The sidebar's right-edge handle resizes the pinned column and the page.
   const int sidebar_before = shell->sidebar_widget()->GetWindowBoundsInScreen().width();
-  const int page_before = shell->content_host()->GetBoundsInScreen().x();
+  const int page_before = LeadingEdge(shell->content_host());
   const int width_before = shell->sidebar_width();
   shell->ResizeSidebar(30, false);
   shell->ResizeSidebar(40, true);
   EXPECT_EQ(width_before + 40, shell->sidebar_width());
   window_->widget()->LayoutRootViewIfNecessary();
   EXPECT_GT(shell->sidebar_widget()->GetWindowBoundsInScreen().width(), sidebar_before);
-  EXPECT_GT(shell->content_host()->GetBoundsInScreen().x(), page_before);
+  EXPECT_GT(Indent(LeadingEdge(shell->content_host()) - page_before), 0);
   shell->ResizeSidebar(-1000, true);
   EXPECT_EQ(200, shell->sidebar_width());
   window_->SetSplitRatio(0.65);
@@ -4641,7 +4648,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AppearanceActionHostsKeyboardA
   }
   // The shared scene and native comparison must both preserve the actual swatch
   // fill in fallback, not just apply the corresponding workspace store value.
-  widget->Hide();const auto bounds=colors->bounds();colors->SetBoundsRect(gfx::Rect(colors->size()));const auto pixel=mint->bounds().CenterPoint();const auto bitmap=views::test::PaintViewToBitmap(colors);colors->SetBoundsRect(bounds);ASSERT_LT(pixel.x(),bitmap.width());ASSERT_LT(pixel.y(),bitmap.height());EXPECT_EQ(0xFF84B6A4u,bitmap.getColor(pixel.x(),pixel.y()));widget->Show();
+  widget->Hide();const auto bounds=colors->bounds();colors->SetBoundsRect(gfx::Rect(colors->size()));const auto pixel=mint->GetMirroredBounds().CenterPoint();const auto bitmap=views::test::PaintViewToBitmap(colors);colors->SetBoundsRect(bounds);ASSERT_LT(pixel.x(),bitmap.width());ASSERT_LT(pixel.y(),bitmap.height());EXPECT_EQ(0xFF84B6A4u,bitmap.getColor(pixel.x(),pixel.y()));widget->Show();
   if(rust){mint->ScrollViewToVisible();const auto personal=shell->workspace_color("personal");ASSERT_TRUE(press(mint));ASSERT_TRUE(window_->Select("personal"));release(mint);EXPECT_EQ(personal,shell->workspace_color("personal"));EXPECT_EQ(0xFF7FAACBu,shell->workspace_color("work"));}
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_saved();}));
 }
@@ -7302,7 +7309,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarColumnLayoutTracksColla
     auto* folder = SidebarNamedButton(shell->sidebar_view(), u"▾ Parent");
     auto* child = SidebarNamedButton(shell->sidebar_view(), u"▾ Child");
     ASSERT_TRUE(folder); ASSERT_TRUE(child);
-    EXPECT_EQ(folder->GetBoundsInScreen().x() + 12, child->GetBoundsInScreen().x());
+    EXPECT_EQ(LeadingEdge(folder) + Indent(12), LeadingEdge(child));
     const int expanded_height = shell->tab_list_view()->height();
     EXPECT_GT(expanded_height, shell->tab_viewport()->visible_rect().height());
     const int expanded_first = shell->tab_button(0)->GetBoundsInScreen().y();
@@ -7385,7 +7392,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarTreeStateSurvivesRebuil
   root = SidebarNamedButton(shell->sidebar_view(), u"▾ Tree root");
   auto* added = SidebarNamedButton(shell->sidebar_view(), u"▾ Tree new child");
   ASSERT_TRUE(root); ASSERT_TRUE(added); EXPECT_TRUE(added->IsDrawn());
-  EXPECT_EQ(root->GetBoundsInScreen().x() + 12, added->GetBoundsInScreen().x());
+  EXPECT_EQ(LeadingEdge(root) + Indent(12), LeadingEdge(added));
 }
 // Shared contract for the Views baseline and the Rust container adapters.
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarSplitAndDeepFolderGeometry) {
@@ -7420,8 +7427,8 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarSplitAndDeepFolderGeome
     EXPECT_LE(std::abs(left->width() - right->width()), 1);
     EXPECT_TRUE(pair->GetLocalBounds().Contains(left->bounds()));
     EXPECT_TRUE(pair->GetLocalBounds().Contains(right->bounds()));
-    EXPECT_EQ(left, pair->GetEventHandlerForPoint(left->bounds().CenterPoint()));
-    EXPECT_EQ(right, pair->GetEventHandlerForPoint(right->bounds().CenterPoint()));
+    EXPECT_EQ(left, pair->GetEventHandlerForPoint(left->GetMirroredBounds().CenterPoint()));
+    EXPECT_EQ(right, pair->GetEventHandlerForPoint(right->GetMirroredBounds().CenterPoint()));
   };
   for (int width : {200, 201, 247, 480}) {
     check_pair(width);
@@ -7430,7 +7437,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarSplitAndDeepFolderGeome
     for (int depth = 0; depth <= 10; ++depth) {
       auto* folder = SidebarNamedButton(shell->sidebar_view(), u"▾ Depth " + base::NumberToString16(depth));
       ASSERT_TRUE(folder);
-      EXPECT_EQ(root->GetBoundsInScreen().x() + std::min(depth, 8) * 12, folder->GetBoundsInScreen().x());
+      EXPECT_EQ(LeadingEdge(root) + Indent(std::min(depth, 8) * 12), LeadingEdge(folder));
       EXPECT_EQ(34, folder->height());
       EXPECT_EQ(folder->parent()->width() - std::min(depth, 8) * 12, folder->width());
     }
@@ -7449,11 +7456,11 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarSplitAndDeepFolderGeome
   shell->sidebar_widget()->LayoutRootViewIfNecessary();
   auto* pin = SidebarNamedButton(shell->sidebar_view(), u"Przypięta A");
   ASSERT_TRUE(pin);
-  const int pin_x = pin->GetBoundsInScreen().x();
+  const int pin_x = LeadingEdge(pin);
   ASSERT_TRUE(window_->SplitTab(0));
   check_pair(480);
   auto* pair = shell->tab_button(1)->parent();
-  EXPECT_EQ(pin_x, pair->GetBoundsInScreen().x());
+  EXPECT_EQ(pin_x, LeadingEdge(pair));
   EXPECT_FALSE(pin->IsDrawn());
   auto* folder = SidebarNamedButton(shell->sidebar_view(), u"▾ Dokumenty");
   ASSERT_TRUE(folder);
@@ -7468,7 +7475,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarSplitAndDeepFolderGeome
   shell->sidebar_widget()->LayoutRootViewIfNecessary();
   EXPECT_FALSE(shell->tab_button(1));
   EXPECT_TRUE(pin->IsDrawn());
-  EXPECT_EQ(pin_x, pin->GetBoundsInScreen().x());
+  EXPECT_EQ(pin_x, LeadingEdge(pin));
 }
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarPinnedPairFollowsPaneOrderAndFolders) {
   auto* shell = window_->shell();
@@ -7486,8 +7493,8 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarPinnedPairFollowsPaneOr
   auto* a = SidebarNamedButton(shell->sidebar_view(), u"Przypięta A");
   auto* b = SidebarNamedButton(shell->sidebar_view(), u"Przypięta B");
   ASSERT_TRUE(a); ASSERT_TRUE(b);
-  const int a_x = a->GetBoundsInScreen().x(), b_x = b->GetBoundsInScreen().x();
-  EXPECT_EQ(a_x + 12, b_x);
+  const int a_x = LeadingEdge(a), b_x = LeadingEdge(b);
+  EXPECT_EQ(a_x + Indent(12), b_x);
   window_->OpenPinnedItem("tab-a"); auto* page_a = window_->contents("arc-space-space-a");
   window_->OpenPinnedItem("tab-b"); auto* page_b = window_->contents("arc-space-space-a");
   ASSERT_EQ(3u, window_->tab_count("arc-space-space-a"));
@@ -7495,13 +7502,13 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarPinnedPairFollowsPaneOr
   shell->sidebar_widget()->LayoutRootViewIfNecessary();
   ASSERT_TRUE(shell->tab_button(1)); ASSERT_TRUE(shell->tab_button(2));
   EXPECT_EQ(page_b, window_->pane_contents(false)); EXPECT_EQ(page_a, window_->pane_contents(true));
-  EXPECT_EQ(b_x, shell->tab_button(2)->parent()->GetBoundsInScreen().x());
+  EXPECT_EQ(b_x, LeadingEdge(shell->tab_button(2)->parent()));
   EXPECT_LT(shell->tab_button(2)->x(), shell->tab_button(1)->x());
   EXPECT_FALSE(a->IsDrawn()); EXPECT_FALSE(b->IsDrawn());
   window_->SwapSplit();
   shell->sidebar_widget()->LayoutRootViewIfNecessary();
   EXPECT_EQ(page_a, window_->pane_contents(false)); EXPECT_EQ(page_b, window_->pane_contents(true));
-  EXPECT_EQ(a_x, shell->tab_button(1)->parent()->GetBoundsInScreen().x());
+  EXPECT_EQ(a_x, LeadingEdge(shell->tab_button(1)->parent()));
   EXPECT_LT(shell->tab_button(1)->x(), shell->tab_button(2)->x());
   auto* docs = SidebarNamedButton(shell->sidebar_view(), u"▾ Dokumenty");
   ASSERT_TRUE(docs); ActivateSidebarRow(docs);
@@ -7520,12 +7527,12 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarPinnedPairFollowsPaneOr
   ActivateSidebarRow(nested);
   shell->sidebar_widget()->LayoutRootViewIfNecessary();
   EXPECT_TRUE(shell->tab_button(2)->IsDrawn());
-  EXPECT_EQ(b_x, shell->tab_button(2)->parent()->GetBoundsInScreen().x());
+  EXPECT_EQ(b_x, LeadingEdge(shell->tab_button(2)->parent()));
   window_->Unsplit(1);
   shell->sidebar_widget()->LayoutRootViewIfNecessary();
   EXPECT_FALSE(window_->split()); EXPECT_FALSE(shell->tab_button(1)); EXPECT_FALSE(shell->tab_button(2));
   EXPECT_TRUE(a->IsDrawn()); EXPECT_TRUE(b->IsDrawn());
-  EXPECT_EQ(a_x, a->GetBoundsInScreen().x()); EXPECT_EQ(b_x, b->GetBoundsInScreen().x());
+  EXPECT_EQ(a_x, LeadingEdge(a)); EXPECT_EQ(b_x, LeadingEdge(b));
 }
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarTabColumnAndPairContainersSurviveStructuralRefresh) {
   ASSERT_TRUE(window_->Select("work"));auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));if(!shell->workspace_input()->rust_editor())return;shell->SetWorkspaceAnimations(false);
