@@ -13,10 +13,8 @@
 #include "content/public/browser/navigation_controller.h"
 #include "components/sessions/content/session_tab_helper.h"
 #include "ui/views/controls/webview/webview.h"
-#if BUILDFLAG(IS_MAC)
 #include "base/command_line.h"
 #include "chromium/prototype/sidebar_scene.rs.h"
-#endif
 
 namespace zitter::prototype {
 namespace {
@@ -67,7 +65,6 @@ std::vector<PaletteResult> WorkspaceWindow::CommandResults(std::u16string query)
       return profile && *profile == model_.active()->profile_id;
     });
   };
-#if BUILDFLAG(IS_MAC)
   if (RustUiEnabled()) {
     // Rust owns the catalogue, wording and matching; native code supplies facts.
     sidebar::CommandContext context{};
@@ -85,7 +82,6 @@ std::vector<PaletteResult> WorkspaceWindow::CommandResults(std::u16string query)
       bind(std::string(entry.id), base::UTF8ToUTF16(std::string(entry.title)), base::UTF8ToUTF16(std::string(entry.detail)), std::string(entry.target));
     return results;
   }
-#endif
   auto add = [&](std::string id, std::u16string title, std::u16string detail,
                  std::u16string aliases = {}, std::string target = {}) {
     const auto haystack = Fold(title + u" " + detail + u" " + aliases);

@@ -5,9 +5,9 @@
 #include "chromium/prototype/sidebar_layout.h"
 #include "base/command_line.h"
 #include "build/build_config.h"
+#include "chromium/prototype/sidebar_scene.rs.h"
 #if BUILDFLAG(IS_MAC)
 #include "chromium/prototype/workspace_keyboard_mac.h"
-#include "chromium/prototype/sidebar_scene.rs.h"
 #endif
 #include "ui/events/event.h"
 
@@ -37,7 +37,6 @@
 
 namespace zitter::prototype {
 namespace {
-#if BUILDFLAG(IS_MAC)
 // This client replaces DialogClientView's private MdTextButton construction.
 // The inherited native Escape, input-protection and themed window services are
 // retained. Its empty private button-row container never owns controls. Only
@@ -79,27 +78,16 @@ class PageDialogDelegate final : public views::DialogDelegate {
     const int button=GetDefaultDialogButton();if(!button)return nullptr;auto* client=static_cast<SceneDialogClient*>(GetDialogClientView());return client?client->Button(button==static_cast<int>(ui::mojom::DialogButton::kOk)):nullptr;
   }
 };
-#endif
 }  // namespace
 std::unique_ptr<views::DialogDelegate> CreateSceneDialogDelegate(){
-#if BUILDFLAG(IS_MAC)
   return std::make_unique<PageDialogDelegate>();
-#else
-  return std::make_unique<views::DialogDelegate>();
-#endif
 }
 views::ClientView* CreateSceneDialogClient(views::Widget* widget,views::View* contents){
-#if BUILDFLAG(IS_MAC)
   return new SceneDialogClient(widget,contents);
-#else
-  return nullptr;
-#endif
 }
 views::View* DialogActionButton(views::Widget* widget,bool accept){
   if(!widget)return nullptr;
-#if BUILDFLAG(IS_MAC)
   if(auto* client=views::AsViewClass<SceneDialogClient>(widget->client_view()))return client->Button(accept);
-#endif
   auto* client=widget->widget_delegate()->AsDialogDelegate()->GetDialogClientView();return client?(accept?client->ok_button():client->cancel_button()):nullptr;
 }
 views::View* PageDialogs::dialog_button_for_testing(bool accept) const{return DialogActionButton(dialog_.get(),accept);}
@@ -133,9 +121,7 @@ void PageDialogs::Show(content::RenderFrameHost* frame, content::JavaScriptDialo
   const auto generation=++dialog_generation_;
   requesting_frame_ = frame; unload_dialog_ = unload; dialog_callback_ = std::move(callback);
   std::unique_ptr<views::DialogDelegate> dialog;
-#if BUILDFLAG(IS_MAC)
   if(RustUiEnabled())dialog=std::make_unique<PageDialogDelegate>();
-#endif
   if(!dialog)dialog=std::make_unique<views::DialogDelegate>();
   dialog->SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
   auto* body = dialog->SetContentsView(std::make_unique<views::View>());body_=body;
@@ -144,9 +130,7 @@ void PageDialogs::Show(content::RenderFrameHost* frame, content::JavaScriptDialo
   auto* profile = Profile::FromBrowserContext(web_contents()->GetBrowserContext());
   std::u16string title=(unload?u"Opuścić stronę? · ":u"Strona: ")+base::UTF8ToUTF16(origin),identity_text=u"Profil: "+BrowsingProfileName(profile),message_text=message.substr(0,8192),accept=unload?u"Opuść stronę":u"OK",cancel=unload?u"Zostań":u"Anuluj";
   bool show_cancel=type!=content::JAVASCRIPT_DIALOG_TYPE_ALERT,default_cancel=unload,is_prompt=type==content::JAVASCRIPT_DIALOG_TYPE_PROMPT;
-#if BUILDFLAG(IS_MAC)
   if(scene_){const auto copy=sidebar::page_dialog_copy(type==content::JAVASCRIPT_DIALOG_TYPE_ALERT?0:type==content::JAVASCRIPT_DIALOG_TYPE_PROMPT?2:1,unload,origin,base::UTF16ToUTF8(BrowsingProfileName(profile)),rust::Slice<const uint16_t>(reinterpret_cast<const uint16_t*>(message.data()),message.size()));title=base::UTF8ToUTF16(std::string(copy.title));identity_text=base::UTF8ToUTF16(std::string(copy.identity));message_text=std::u16string(copy.message.begin(),copy.message.end());accept=base::UTF8ToUTF16(std::string(copy.accept));cancel=base::UTF8ToUTF16(std::string(copy.cancel));show_cancel=copy.show_cancel;default_cancel=copy.default_cancel;is_prompt=copy.prompt;}
-#endif
   dialog->SetTitle(title);
   dialog->SetModalType(ui::mojom::ModalType::kWindow);
   dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk)|(show_cancel?static_cast<int>(ui::mojom::DialogButton::kCancel):0));

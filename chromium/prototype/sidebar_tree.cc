@@ -6,39 +6,29 @@
 #include <set>
 #include "base/command_line.h"
 #include "build/build_config.h"
-#if BUILDFLAG(IS_MAC)
 #include "chromium/prototype/sidebar_scene.rs.h"
-#endif
 namespace zitter::prototype {
 struct SidebarTree::Impl {
-#if BUILDFLAG(IS_MAC)
   std::optional<rust::Box<sidebar::SidebarTree>> rust_tree;
-#endif
   std::map<std::string, std::set<std::string, std::less<>>, std::less<>> collapsed;
 };
 SidebarTree::SidebarTree() : impl_(std::make_unique<Impl>()) {
-#if BUILDFLAG(IS_MAC)
   if (RustUiEnabled())
     impl_->rust_tree.emplace(sidebar::new_sidebar_tree());
-#endif
 }
 SidebarTree::~SidebarTree() = default;
 bool SidebarTree::Collapsed(std::string_view workspace, std::string_view id) const {
-#if BUILDFLAG(IS_MAC)
   if (impl_->rust_tree) return (*impl_->rust_tree)->collapsed(
       rust::Str(workspace.data(), workspace.size()), rust::Str(id.data(), id.size()));
-#endif
   const auto found = impl_->collapsed.find(workspace);
   return found != impl_->collapsed.end() && found->second.contains(id);
 }
 void SidebarTree::SetCollapsed(std::string_view workspace, std::string_view id, bool value) {
-#if BUILDFLAG(IS_MAC)
   if (impl_->rust_tree) {
     (*impl_->rust_tree)->set_collapsed(rust::Str(workspace.data(), workspace.size()),
         rust::Str(id.data(), id.size()), value);
     return;
   }
-#endif
   if (value) impl_->collapsed[std::string(workspace)].insert(std::string(id));
   else if (auto found = impl_->collapsed.find(workspace); found != impl_->collapsed.end()) {
     if (auto item = found->second.find(id); item != found->second.end()) found->second.erase(item);
@@ -46,25 +36,20 @@ void SidebarTree::SetCollapsed(std::string_view workspace, std::string_view id, 
   }
 }
 bool SidebarTree::Toggle(std::string_view workspace, std::string_view id) {
-#if BUILDFLAG(IS_MAC)
   if (impl_->rust_tree) return (*impl_->rust_tree)->toggle(
       rust::Str(workspace.data(), workspace.size()), rust::Str(id.data(), id.size()));
-#endif
   const bool value = !Collapsed(workspace, id); SetCollapsed(workspace, id, value); return value;
 }
 void SidebarTree::ForgetWorkspace(std::string_view workspace) {
-#if BUILDFLAG(IS_MAC)
   if (impl_->rust_tree) {
     (*impl_->rust_tree)->forget_workspace(rust::Str(workspace.data(), workspace.size()));
     return;
   }
-#endif
   if (auto found = impl_->collapsed.find(workspace); found != impl_->collapsed.end()) impl_->collapsed.erase(found);
 }
 std::vector<SidebarTreeEntry> SidebarTree::Plan(std::string_view workspace,
                                               base::span<const SidebarTreeNode> nodes) const {
   std::vector<SidebarTreeEntry> out;
-#if BUILDFLAG(IS_MAC)
   if (impl_->rust_tree) {
     std::vector<sidebar::TreeNode> input;
     input.reserve(nodes.size());
@@ -75,7 +60,6 @@ std::vector<SidebarTreeEntry> SidebarTree::Plan(std::string_view workspace,
     for (const auto& item : result) out.push_back({item.index, item.parent, item.depth, item.collapsed, item.visible});
     return out;
   }
-#endif
   // Views baseline: the original ordered recursive traversal, with stable IDs
   // and bounded malformed-input handling matching the Rust plan contract.
   std::map<std::string_view, std::vector<size_t>> children;
@@ -96,7 +80,6 @@ std::vector<SidebarTreeEntry> SidebarTree::Plan(std::string_view workspace,
 SidebarTabPlan SidebarTree::Tabs(std::string_view workspace, base::span<const SidebarTreeNode> nodes,
     base::span<const SidebarTabNode> tabs, size_t first, size_t second, bool split) const {
   SidebarTabPlan out;
-#if BUILDFLAG(IS_MAC)
   if (impl_->rust_tree) {
     std::vector<sidebar::TreeNode> input;
     std::vector<sidebar::TabNode> tab_input;
@@ -111,7 +94,6 @@ SidebarTabPlan SidebarTree::Tabs(std::string_view workspace, base::span<const Si
     for (const auto& item : result.pins) out.pins.push_back({item.index, item.visible});
     return out;
   }
-#endif
   // Default Views keeps the same grouping contract in its native baseline.
   const auto tree = Plan(workspace, nodes);
   std::map<std::string_view, size_t> reachable;

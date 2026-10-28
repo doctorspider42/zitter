@@ -649,10 +649,8 @@ class WorkspaceShell final : public ui::EventHandler,
   bool IsCommandIdEnabled(int command_id) const override;
   void ExecuteCommand(int command_id, int event_flags) override;
   void RenameSelectedProfile();
-#if BUILDFLAG(IS_MAC)
   sidebar::WorkspaceMenuState RustWorkspaceMenuState() const;
   sidebar::FolderMenuState RustFolderMenuState() const;
-#endif
   bool ShowRustFolderNotice(std::string workspace,std::string folder,std::string title,bool error_only);
   void QueueSplit(std::optional<size_t> tab, std::string pin);
   struct ResolvedRowTarget { bool valid; std::optional<size_t> tab; std::string pin; };

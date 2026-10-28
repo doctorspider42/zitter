@@ -15,10 +15,8 @@
 #include "ui/views/controls/webview/webview.h"
 #include "ui/views/widget/widget.h"
 #include "build/build_config.h"
-#if BUILDFLAG(IS_MAC)
 #include "base/command_line.h"
 #include "chromium/prototype/sidebar_scene.rs.h"
-#endif
 namespace zitter::prototype {
 namespace {
 std::string Stamp() { return base::UTF16ToUTF8(base::TimeFormatShortDateAndTime(base::Time::Now())); }
@@ -210,11 +208,7 @@ TimeMachineState WorkspaceWindow::TimeMachine() const {
   if (!model_.active()) return result;
   const auto* space = time_machine_.FindDict(active_id());
   [[maybe_unused]] const bool rust_copy =
-#if BUILDFLAG(IS_MAC)
       RustUiEnabled();
-#else
-      false;
-#endif
   auto fill = [&](const char* key, std::vector<TimeMachineItem>& output) {
     const auto* list = space ? space->FindList(key) : nullptr; if (!list) return;
     for (auto it = list->rbegin(); it != list->rend(); ++it) {
@@ -222,7 +216,6 @@ TimeMachineState WorkspaceWindow::TimeMachine() const {
       const auto* id = entry->FindString("id"); if (!id) continue;
       const auto* name = entry->FindString(key == std::string_view("closed") ? "title" : "name");
       const auto* url = entry->FindString("url"); const auto* time = entry->FindString("time");
-#if BUILDFLAG(IS_MAC)
       if (rust_copy) {
         sidebar::TimeMachineFacts facts{};
         if (name) facts.name = *name;
@@ -235,7 +228,6 @@ TimeMachineState WorkspaceWindow::TimeMachine() const {
         output.push_back({*id, base::UTF8ToUTF16(std::string(copy.title)), base::UTF8ToUTF16(std::string(copy.detail))});
         continue;
       }
-#endif
       std::string title = name && !name->empty() ? *name : url && !url->empty() ? *url : "Nowa karta";
       std::string detail = time ? *time : "";
       if (url && !url->empty()) detail += " · " + *url;
@@ -250,9 +242,7 @@ TimeMachineState WorkspaceWindow::TimeMachine() const {
     const auto* workspace = model_.Find(host.workspace_id);
     if (!workspace) continue;
     std::u16string detail = u"Uśpiona · kliknij przestrzeń, aby wznowić";
-#if BUILDFLAG(IS_MAC)
     if (rust_copy) detail = base::UTF8ToUTF16(std::string(sidebar::time_machine_sleeping_detail()));
-#endif
     result.sleeping.push_back({workspace->id, base::UTF8ToUTF16(workspace->name), std::move(detail)});
   }
   return result;

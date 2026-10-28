@@ -1,7 +1,10 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 #ifndef ZITTER_CHROMIUM_PROTOTYPE_EDITOR_TEXT_LAYOUT_H_
 #define ZITTER_CHROMIUM_PROTOTYPE_EDITOR_TEXT_LAYOUT_H_
+#include "build/build_config.h"
+#if BUILDFLAG(IS_MAC)
 #include <CoreGraphics/CoreGraphics.h>
+#endif
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -19,6 +22,7 @@ struct EditorCaretStop {
 struct EditorTextSpan {
   float x = 0, width = 0;
 };
+// Shaping is platform-provided (CoreText on macOS: editor_text_layout_mac.inc).
 // One immutable shaped line is shared by hit testing, caret/selection geometry
 // and drawing. All string offsets are UTF-16; all coordinates are logical
 // points.
@@ -44,7 +48,9 @@ public:
   // CGContext uses its normal baseline coordinates. The caller supplies the
   // horizontal scroll transform and clip; no truncation/re-shaping is
   // performed.
+#if BUILDFLAG(IS_MAC)
   void Draw(CGContextRef context, float x, float baseline, uint32_t argb) const;
+#endif
 
 private:
   struct Impl;

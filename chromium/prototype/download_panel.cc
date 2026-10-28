@@ -3,8 +3,8 @@
 #include "chromium/prototype/sidebar_metal.h"
 #include "chromium/prototype/sidebar_layout.h"
 #include "build/build_config.h"
-#if BUILDFLAG(IS_MAC)
 #include "chromium/prototype/sidebar_scene.rs.h"
+#if BUILDFLAG(IS_MAC)
 #include "chromium/prototype/workspace_keyboard_mac.h"
 #endif
 
@@ -50,7 +50,6 @@ views::Label* Label(views::View* parent, std::u16string text) {
 }
 std::u16string Bytes(int64_t value) { return ui::FormatBytes(base::ByteSize(static_cast<uint64_t>(std::max<int64_t>(0, value)))); }
 bool Unsafe(Item* item) { return item->IsDangerous() || item->IsInsecure(); }
-#if BUILDFLAG(IS_MAC)
 // Facts for the Rust status wording; byte formatting stays with the locale service.
 std::u16string RustStatus(Item* item) {
   sidebar::DownloadFacts facts{};
@@ -63,7 +62,6 @@ std::u16string RustStatus(Item* item) {
   base::TimeDelta remaining; facts.remaining_seconds = item->TimeRemaining(&remaining) ? std::max<int64_t>(0, remaining.InSeconds()) : -1;
   return base::UTF8ToUTF16(std::string(sidebar::download_status(facts)));
 }
-#endif
 std::u16string Status(Item* item) {
   if (Unsafe(item)) return u"Zablokowane przez ochronę Chromium — plik nie jest gotowy do użycia.";
   if (item->GetState() == Item::CANCELLED) return u"Anulowano";
@@ -213,9 +211,7 @@ void DownloadPanel::Refresh() {
     SetText(row.title,name.empty()?u"Przygotowywanie pliku…":name);
     row.title->SetTooltipText(item->GetTargetFilePath().LossyDisplayName());
     SetText(row.source,base::UTF8ToUTF16(item->GetURL().host()));
-#if BUILDFLAG(IS_MAC)
     if (scene_) SetText(row.status, RustStatus(item)); else
-#endif
     SetText(row.status,Status(item));
     const bool active = item->GetState() == Item::IN_PROGRESS;
     const bool safe = !Unsafe(item);

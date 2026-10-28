@@ -2,6 +2,15 @@
 import("//testing/test.gni")
 import("//build/rust/rust_static_library.gni")
 
+# The Rust UI: scene, layout, controls and editor state. Portable on purpose.
+rust_static_library("sidebar_scene") {
+  crate_root = "chromium/prototype/sidebar_scene.rs"
+  sources = [ crate_root, "chromium/prototype/sidebar_editor.rs" ]
+  cxx_bindings = [ crate_root ]
+  allow_unsafe = true
+  build_native_rust_unit_tests = true
+}
+
 if (is_mac) {
   action("ui_lab_shader") {
     script = "chromium/app/compile_ui_lab_metal.py"
@@ -14,13 +23,6 @@ if (is_mac) {
     sources = [ "chromium/prototype/sidebar.metal" ]
     outputs = [ "$target_gen_dir/chromium/prototype/sidebar_shader.h" ]
     args = [ rebase_path(sources[0], root_build_dir), rebase_path(outputs[0], root_build_dir), "--namespace", "zitter::sidebar" ]
-  }
-  rust_static_library("sidebar_scene") {
-    crate_root = "chromium/prototype/sidebar_scene.rs"
-    sources = [ crate_root, "chromium/prototype/sidebar_editor.rs" ]
-    cxx_bindings = [ crate_root ]
-    allow_unsafe = true
-    build_native_rust_unit_tests = true
   }
   rust_static_library("ui_lab_scene") {
     crate_root = "chromium/app/ui_lab_scene.rs"
@@ -116,12 +118,16 @@ source_set("shell") {
     "chromium/prototype/sidebar_tree.h",
     "chromium/prototype/workspace_shell.cc",
     "chromium/prototype/editor_control.h",
+    "chromium/prototype/editor_text_layout.h",
     "chromium/prototype/scene_editor.cc",
+    "chromium/prototype/sidebar_metal.h",
+    "chromium/prototype/sidebar_raster.cc",
     "chromium/prototype/workspace_shell.h",
   ]
-  include_dirs = [ "." ]
+  include_dirs = [ ".", target_gen_dir ]
   public_deps = [
     ":core",
+    ":sidebar_scene",
     "//base",
     "//base:i18n",
     "//build:buildflag_header_h",
@@ -193,7 +199,6 @@ source_set("shell") {
   ]
   if (is_mac) {
     sources += [
-      "chromium/prototype/sidebar_metal.h",
       "chromium/prototype/sidebar_metal.mm",
       "chromium/prototype/browser_import_key_mac.mm",
       "chromium/prototype/workspace_frame_mac.h",
@@ -201,9 +206,8 @@ source_set("shell") {
       "chromium/prototype/workspace_keyboard_mac.h",
       "chromium/prototype/workspace_keyboard_mac.mm",
     ]
-    include_dirs += [ target_gen_dir ]
     frameworks = [ "Metal.framework", "QuartzCore.framework", "AppKit.framework", "CoreText.framework" ]
-    public_deps += [ ":sidebar_scene", ":sidebar_shader",
+    public_deps += [ ":sidebar_shader",
       "//components/remote_cocoa/app_shim",
       "//components/remote_cocoa/common:mojo",
     ]

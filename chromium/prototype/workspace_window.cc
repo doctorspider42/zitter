@@ -58,10 +58,8 @@
 #include "components/history/core/browser/history_service.h"
 #include "components/history/core/browser/history_types.h"
 #include "build/build_config.h"
-#if BUILDFLAG(IS_MAC)
 #include "base/command_line.h"
 #include "chromium/prototype/sidebar_scene.rs.h"
-#endif
 #include "chrome/browser/profiles/profile.h"
 #include "components/input/native_web_keyboard_event.h"
 #include "content/public/browser/invalidate_type.h"
@@ -104,10 +102,8 @@ namespace {
 // Palette result provenance; kind is sidebar::PaletteResultKind. Rust owns the
 // wording in Rust mode, Views keeps the native text.
 std::u16string ResultDetail(int kind, const std::u16string& label, std::u16string native) {
-#if BUILDFLAG(IS_MAC)
   if (RustUiEnabled())
     return base::UTF8ToUTF16(std::string(sidebar::palette_result_detail(sidebar::PaletteResultKind{static_cast<uint8_t>(kind)}, base::UTF16ToUTF8(label))));
-#endif
   return native;
 }
 }  // namespace

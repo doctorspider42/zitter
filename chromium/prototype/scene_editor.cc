@@ -45,15 +45,12 @@
 #include "ui/gfx/font_list.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_observer.h"
-#if BUILDFLAG(IS_MAC)
 #include "chromium/prototype/editor_text_layout.h"
 #include "ui/views/controls/textfield/text_edit_kill_buffer.h"
 #include "chromium/prototype/sidebar_scene.rs.h"
 #include "chromium/prototype/sidebar_metal.h"
-#endif
 namespace zitter::prototype {
 namespace {
-#if BUILDFLAG(IS_MAC)
 bool SceneIsVisible(const views::View* view){return view->IsDrawn()&&view->GetWidget()&&view->GetWidget()->IsVisible();}
 class SceneWindowObserver final:public views::WidgetObserver {
  public:
@@ -64,7 +61,6 @@ class SceneWindowObserver final:public views::WidgetObserver {
  private:
   base::RepeatingClosure changed_;base::ScopedObservation<views::Widget,views::WidgetObserver> observation_{this};
 };
-#endif
 class NativeEditor final : public views::Textfield, public EditorControl, private views::TextfieldController {
   METADATA_HEADER(NativeEditor,views::Textfield)
  public:
@@ -110,7 +106,6 @@ class NativeEditor final : public views::Textfield, public EditorControl, privat
 };
 BEGIN_METADATA(NativeEditor)
 END_METADATA
-#if BUILDFLAG(IS_MAC)
 class SceneEditor final : public views::View, public EditorControl,
     public ui::TextInputClient, public views::ContextMenuController,
     public views::DragController, public views::WordLookupClient {
@@ -427,12 +422,9 @@ class SceneEditor final : public views::View, public EditorControl,
 };
 BEGIN_METADATA(SceneEditor)
 END_METADATA
-#endif
 }  // namespace
 EditorControl* AddEditor(views::View* parent,bool metal){
-#if BUILDFLAG(IS_MAC)
   if(metal)return parent->AddChildView(std::make_unique<SceneEditor>());
-#endif
   return parent->AddChildView(std::make_unique<NativeEditor>());
 }
 

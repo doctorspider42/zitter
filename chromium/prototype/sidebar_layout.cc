@@ -20,9 +20,7 @@
 #include "ui/color/color_id.h"
 #include "ui/views/controls/scroll_view.h"
 #include "ui/views/view_class_properties.h"
-#if BUILDFLAG(IS_MAC)
 #include "chromium/prototype/sidebar_scene.rs.h"
-#endif
 #include "base/functional/bind.h"
 #include "base/memory/weak_ptr.h"
 #include "ui/base/metadata/metadata_header_macros.h"
@@ -56,7 +54,6 @@ class NativePanelViewport final : public views::ScrollView,public PanelViewport 
 };
 BEGIN_METADATA(NativePanelViewport)
 END_METADATA
-#if BUILDFLAG(IS_MAC)
 class RustViewportClip final : public views::View {
   METADATA_HEADER(RustViewportClip,views::View)
  public:
@@ -131,9 +128,7 @@ class RustPanelViewport final : public views::View,public PanelViewport,public v
 };
 BEGIN_METADATA(RustPanelViewport)
 END_METADATA
-#endif
 
-#if BUILDFLAG(IS_MAC)
 bool RustLayoutEnabled() {
   return RustUiEnabled();
 }
@@ -309,104 +304,71 @@ class RustColumnLayout final : public views::LayoutManager {
   }
   const int spacing_;
 };
-#endif
 }
 PanelViewport* PanelViewportForView(views::View* view){
-#if BUILDFLAG(IS_MAC)
   if(auto* viewport=views::AsViewClass<RustPanelViewport>(view))return viewport;
-#endif
   return views::AsViewClass<NativePanelViewport>(view);
 }
 std::unique_ptr<views::View> CreatePanelViewport(PanelViewport** adapter,base::RepeatingClosure changed,PanelViewportOptions options){return CreatePanelViewport(adapter,std::move(changed),options,{});}
 std::unique_ptr<views::View> CreatePanelViewport(PanelViewport** adapter,base::RepeatingClosure changed,PanelViewportOptions options,std::unique_ptr<views::ScrollBar> primary_bar){
-#if BUILDFLAG(IS_MAC)
   if(RustLayoutEnabled()){auto host=std::make_unique<RustPanelViewport>(std::move(changed),options,std::move(primary_bar));*adapter=host.get();return host;}
-#endif
   auto host=std::make_unique<NativePanelViewport>(std::move(changed),options,std::move(primary_bar));*adapter=host.get();return host;
 }
 void SetSidebarPanelLayout(views::View* host,bool vertical,gfx::Insets insets,int spacing,views::View* flex,bool center){
-#if BUILDFLAG(IS_MAC)
   if(RustLayoutEnabled()){host->SetLayoutManager(std::make_unique<RustPanelLayout>(vertical,insets,spacing,flex,center));return;}
-#endif
   auto* layout=host->SetLayoutManager(std::make_unique<views::BoxLayout>(vertical?views::BoxLayout::Orientation::kVertical:views::BoxLayout::Orientation::kHorizontal,insets,spacing));if(flex)layout->SetFlexForView(flex,1);if(center)layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
 }
 std::unique_ptr<views::LayoutManager> CreatePaletteInputLayout() {
-#if BUILDFLAG(IS_MAC)
   if(RustLayoutEnabled())return std::make_unique<RustPaletteInputLayout>();
-#endif
   return std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal,gfx::Insets::VH(0,18),12);
 }
 std::unique_ptr<views::LayoutManager> CreateSidebarColumnLayout(int spacing) {
-#if BUILDFLAG(IS_MAC)
   if (RustLayoutEnabled())
     return std::make_unique<RustColumnLayout>(spacing);
-#endif
   return std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical,
                                           gfx::Insets(), spacing);
 }
 std::unique_ptr<views::LayoutManager> CreateSidebarSplitLayout() {
-#if BUILDFLAG(IS_MAC)
   if (RustLayoutEnabled()) return std::make_unique<RustSplitLayout>();
-#endif
   auto layout = std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kHorizontal, gfx::Insets(4), 4);
   layout->SetDefaultFlex(1);
   return layout;
 }
 gfx::Size SidebarSplitPreferredSize() {
-#if BUILDFLAG(IS_MAC)
   if (RustLayoutEnabled()) {
     const auto result = sidebar::split_layout(-1, -1, 0);
     return gfx::Size(result.width, result.height);
   }
-#endif
   return gfx::Size(200, 46);
 }
 std::unique_ptr<views::LayoutManager> CreateSidebarPinnedRowLayout() {
-#if BUILDFLAG(IS_MAC)
   if (RustLayoutEnabled()) return std::make_unique<RustColumnLayout>(0);
-#endif
   return std::make_unique<views::FillLayout>();
 }
 int SidebarFolderIndent(int depth) {
-#if BUILDFLAG(IS_MAC)
   if (RustLayoutEnabled()) return sidebar::folder_indent(depth);
-#endif
   return std::clamp(depth, 0, 8) * 12;
 }
 
 std::unique_ptr<views::LayoutManager> CreateSidebarFooterLayout() {
-#if BUILDFLAG(IS_MAC)
   return std::make_unique<RustFooterLayout>();
-#else
-  return std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal);
-#endif
 }
 std::unique_ptr<views::LayoutManager> CreateSidebarDotsLayout(int spacing) {
-#if BUILDFLAG(IS_MAC)
   return std::make_unique<RustDotsLayout>(spacing);
-#else
-  return std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal,gfx::Insets(),spacing);
-#endif
 }
 
 struct WorkspaceSwipeState::Impl {
-#if BUILDFLAG(IS_MAC)
   std::optional<rust::Box<sidebar::WorkspaceSwipe>> rust;
-#endif
   float x=0,y=0;int axis=0,start=0,count=0;
   bool tracking=false,closed=false,phase_less=false;double position=0;
 };
 WorkspaceSwipeState::WorkspaceSwipeState():impl_(std::make_unique<Impl>()) {
-#if BUILDFLAG(IS_MAC)
   if(RustLayoutEnabled())impl_->rust.emplace(sidebar::new_workspace_swipe());
-#endif
 }
 WorkspaceSwipeState::~WorkspaceSwipeState()=default;
 WorkspaceSwipeUpdate WorkspaceSwipeState::Event(float x,float y,int width,int index,int count,bool began,bool ended,bool momentum,bool phase_less) {
-#if BUILDFLAG(IS_MAC)
   if(impl_->rust){const auto u=(*impl_->rust)->event(x,y,width,index,count,began,ended,momentum,phase_less);return {u.started,u.preview,u.finish,u.handled};}
-#endif
   auto& s=*impl_;const bool started=count>=2&&(began||(!s.tracking&&!momentum&&!ended&&(!s.closed||phase_less)));
   if(started){s.x=s.y=0;s.axis=0;s.closed=false;s.tracking=true;s.phase_less=phase_less;s.start=index;s.count=count;s.position=index;}
   WorkspaceSwipeUpdate out{started,false,false,s.axis==1};
@@ -419,55 +381,37 @@ WorkspaceSwipeUpdate WorkspaceSwipeState::Event(float x,float y,int width,int in
   out.handled=s.axis==1;if(ended){Finish();out.finish=true;}return out;
 }
 void WorkspaceSwipeState::Finish(){
-#if BUILDFLAG(IS_MAC)
   if(impl_->rust){(*impl_->rust)->finish();return;}
-#endif
   impl_->tracking=false;impl_->closed=true;
 }
 void WorkspaceSwipeState::Cancel(){
-#if BUILDFLAG(IS_MAC)
   if(impl_->rust){(*impl_->rust)->cancel();return;}
-#endif
   Finish();
 }
 bool WorkspaceSwipeState::tracking() const {
-#if BUILDFLAG(IS_MAC)
   if(impl_->rust)return (*impl_->rust)->tracking();
-#endif
   return impl_->tracking;
 }
 bool WorkspaceSwipeState::phase_less() const {
-#if BUILDFLAG(IS_MAC)
   if(impl_->rust)return (*impl_->rust)->phase_less();
-#endif
   return impl_->phase_less;
 }
 double WorkspaceSwipeState::position() const {
-#if BUILDFLAG(IS_MAC)
   if(impl_->rust)return (*impl_->rust)->position();
-#endif
   return impl_->position;
 }
 int WorkspaceSwipeState::target(int count) const {
-#if BUILDFLAG(IS_MAC)
   if(impl_->rust)return (*impl_->rust)->target(count);
-#endif
   return count>0?std::clamp(static_cast<int>(std::round(impl_->position)),0,count-1):-1;
 }
 WorkspaceSwipeLayout SidebarSwipeLayout(double position,int count,int width) {
-#if BUILDFLAG(IS_MAC)
   if(RustLayoutEnabled()){const auto g=sidebar::swipe_layout(position,count,width);WorkspaceSwipeLayout out{g.center,{}};for(const auto& p:g.pages)out.pages.push_back({p.index,p.x});return out;}
-#endif
   if(count<=0)return {-1,{}};
   const int center=std::clamp(static_cast<int>(std::round(position)),0,count-1);WorkspaceSwipeLayout out{center,{}};
   for(int i=std::max(0,center-1);i<=std::min(count-1,center+1);++i)out.pages.push_back({i,(i-position)*width});return out;
 }
 
 bool RustUiEnabled() {
-#if BUILDFLAG(IS_MAC)
   return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar") != "views";
-#else
-  return false;
-#endif
 }
 }
