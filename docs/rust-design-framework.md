@@ -53,9 +53,10 @@ punkt. `WorkspaceColor::to_argb` daje kanoniczny hex punktu (jasność 0..4 jako
 L 0,60..0,76, nasycenie jako chroma 0..0,10, które każda barwa mieści w sRGB), który
 czyta się z powrotem dokładnie; test sprawdza to dla całej siatki.
 
-Presety (`WorkspaceColor::PRESETS`): fiolet, koral, niebo, bursztyn, róż, mięta, każdy
-z nasyceniem 4 i jasnością 2, zapisywane jako `#928FD4`, `#CC8463`, `#5AA0D0`,
-`#BC8F4D`, `#CB7E96`, `#55AC89`. `WorkspaceColor::GRAPHITE` to brak koloru.
+Presety (`WorkspaceColor::PRESETS`): fiolet, koral, niebo, bursztyn, róż, mięta, zieleń
+(nasycenie 4, jasność 2) i grafit (`WorkspaceColor::GRAPHITE`, nasycenie 0), zapisywane
+jako `#928FD4`, `#CC8463`, `#5AA0D0`, `#BC8F4D`, `#CB7E96`, `#55AC89`, `#7DA667`,
+`#989898`.
 
 Rodziny `accent-*` w `tokens.json` są teraz **renderingami poglądowymi**: generator je
 pomija, a prawdziwe wartości liczy `design.rs`.
@@ -95,8 +96,8 @@ W [`workspace_shell.cc`](../chromium/prototype/workspace_shell.cc):
   `ApplyAppearance` wykonuje też `ApplyTheme()`, bo zmieniają się wszystkie role, nie
   tylko rama.
 - Przełącznik: tor `accent`, gałka `on_accent`. Pasek przy krawędzi: `accent`.
-- 6 presetów zamiast 4 w menu kontekstowym obszaru („Fiolet”, „Koral”, „Niebo”,
-  „Bursztyn”, „Róż”, „Mięta”) i w panelu wyglądu; zaznaczenie presetu porównuje punkty
+- 8 presetów w menu kontekstowym obszaru („Fiolet”, „Koral”, „Niebo”, „Bursztyn”,
+  „Róż”, „Mięta”, „Zieleń”, „Grafit”) i w panelu wyglądu; zaznaczenie presetu porównuje punkty
   siatki, więc wpisany ręcznie hex bliski presetowi też go zaznacza. Domyślne kolory:
   praca = fiolet, prywatne = mięta.
 

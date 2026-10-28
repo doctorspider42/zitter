@@ -128,17 +128,36 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void CloseTab(size_t index);
   void CloseActiveTab();
   void ToggleSplit();
+  // Adds a tab to the shown Split View group (starting a pair beside the shown
+  // page); a full group replaces its focused pane.
   bool SplitTab(size_t index);
+  // Separates the whole group, keeping the given tab on screen.
   void Unsplit(size_t index);
-  // Swaps the two halves of the pair (Arc's Move Left / Move Right).
+  // Takes one tab out of the group; the remaining pages stay together.
+  void RemoveFromSplit(size_t index);
+  // Closes every tab of the group containing `index` (a new tab remains if
+  // the group held them all).
+  void CloseSplitTabs(size_t index);
+  // Moves a member one pane earlier or later (Arc's Move Left / Move Right).
+  void MoveSplitPane(size_t index, bool later);
+  // Reverses the pane order.
   void SwapSplit();
   void SetSplitVertical(bool vertical);
   bool split_vertical() const;
-  void FocusPane(bool right);
-  void SetSplitRatio(double ratio, bool done = true);
+  void FocusPane(size_t pane);
+  // Ratio of the two panes beside a divider; the other panes keep their size.
+  void SetDividerRatio(size_t divider, double ratio, bool done = true);
+  void SetSplitRatio(double ratio, bool done = true) { SetDividerRatio(0, ratio, done); }
   bool split() const;
   double split_ratio() const;
-  content::WebContents* pane_contents(bool right) const;
+  size_t split_count() const;
+  content::WebContents* pane_contents(size_t pane) const;
+  // Sidebar reordering. `before` is a tab index (tab_count() appends) or a pin
+  // id (empty appends to the parent folder). Crossing sections pins or unpins.
+  bool MoveTab(size_t index, size_t before);
+  bool PinTab(size_t index, std::string parent, std::string before);
+  bool UnpinItem(std::string id, size_t before);
+  bool MovePin(std::string id, std::string parent, std::string before);
   void RunPageCommand(PageCommand command);
   bool SaveSnapshot(std::string name, bool automatic = false);
   bool RestoreSnapshot(std::string id);
@@ -234,10 +253,16 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   struct Host;
   static GURL TabUrl(const Host& host, views::WebView* view);
   static std::u16string TabTitle(const Host& host, views::WebView* view);
-  // left/right form a persistent pair; it is on screen only while one of its
-  // halves is the selected page.
+  // The split group persists; it is on screen only while one of its members
+  // is the selected page.
   static bool SplitShown(const Host& host);
-  static std::pair<views::WebView*, views::WebView*> VisiblePanes(const Host& host);
+  static bool InSplit(const Host& host, const views::WebView* view);
+  static std::vector<views::WebView*> VisiblePanes(const Host& host);
+  // Drops a page from the group (dissolving it below two members) and returns
+  // the pane that takes its place, or nullptr.
+  static views::WebView* LeaveSplit(Host& host, views::WebView* view);
+  void ApplyPanes(const Host& host);
+  bool InsertPin(std::string workspace, PinnedItem item, std::string before);
   base::DictValue CaptureHost(const Host& host) const;
   bool RestoreHost(Host& host, const base::DictValue& entry);
   void ReleaseHost(Host& host);
@@ -259,9 +284,9 @@ class WorkspaceWindow final : public WorkspaceRuntime,
     raw_ptr<views::WebView> view = nullptr;
     std::vector<raw_ptr<views::WebView>> tabs;
     size_t active_tab = 0;
-    raw_ptr<views::WebView> left = nullptr;
-    raw_ptr<views::WebView> right = nullptr;
-    double ratio = 0.5;
+    // Split View group in pane order: empty or 2..kMaxSplitPanes pages.
+    std::vector<raw_ptr<views::WebView>> split;
+    std::vector<double> weights;  // One size per pane, summing to one.
     bool vertical = false;
     std::map<views::WebView*, GURL> deferred_urls;
     std::map<views::WebView*, std::u16string> deferred_titles;
@@ -313,6 +338,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   // Shared across hosts: keydown can switch the destination of keyup.
   bool suppress_shortcut_char_ = false;
   bool closing_ = false;
+  bool closing_split_tabs_ = false;  // One snapshot covers the whole group.
   bool restoring_session_ = false;
   std::string session_json_;
   base::DictValue time_machine_;

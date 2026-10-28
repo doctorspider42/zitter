@@ -35,7 +35,7 @@ std::vector<SidebarTreeEntry> SidebarTree::Plan(std::string_view workspace,
   return out;
 }
 SidebarTabPlan SidebarTree::Tabs(std::string_view workspace, base::span<const SidebarTreeNode> nodes,
-    base::span<const SidebarTabNode> tabs, size_t first, size_t second, bool split) const {
+    base::span<const SidebarTabNode> tabs, base::span<const size_t> members, bool split) const {
   SidebarTabPlan out;
   std::vector<sidebar::TreeNode> input;
   std::vector<sidebar::TabNode> tab_input;
@@ -44,9 +44,11 @@ SidebarTabPlan SidebarTree::Tabs(std::string_view workspace, base::span<const Si
   for (const auto& tab : tabs) tab_input.push_back({tab.index, rust::String(tab.pin)});
   const auto result = impl_->rust_tree->tab_plan(rust::Str(workspace.data(), workspace.size()),
       rust::Slice<const sidebar::TreeNode>(input.data(), input.size()),
-      rust::Slice<const sidebar::TabNode>(tab_input.data(), tab_input.size()), first, second, split);
+      rust::Slice<const sidebar::TabNode>(tab_input.data(), tab_input.size()),
+      rust::Slice<const size_t>(members.data(), members.size()), split);
   out.slots.reserve(result.slots.size()); out.pins.reserve(result.pins.size());
-  for (const auto& item : result.slots) out.slots.push_back({item.first, item.second, item.pin, item.pair});
+  for (const auto& item : result.slots)
+    out.slots.push_back({item.first, std::vector<size_t>(item.members.begin(), item.members.end()), item.pin, item.pair});
   for (const auto& item : result.pins) out.pins.push_back({item.index, item.visible});
   return out;
 }

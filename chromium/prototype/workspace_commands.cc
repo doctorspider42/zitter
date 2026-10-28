@@ -146,7 +146,7 @@ bool WorkspaceWindow::MoveActiveTab(std::string target_id) {
   ClosePeek();
   SaveSnapshot("Przed przeniesieniem karty", true);
   auto* moving = source->view.get();
-  shell_->SetPanes(nullptr, nullptr, 0.5);
+  shell_->SetPanes({}, {});
   const auto pending = source->deferred_urls.find(moving);
   if (pending != source->deferred_urls.end()) { target->deferred_urls[moving] = pending->second; source->deferred_urls.erase(pending); }
   if (auto title = source->deferred_titles.find(moving); title != source->deferred_titles.end()) {
@@ -157,17 +157,14 @@ bool WorkspaceWindow::MoveActiveTab(std::string target_id) {
   std::erase_if(source->pin_tabs, [&](const auto& item) { return item.second == moving; });
   std::erase(source->tabs, moving);
   if (source->tabs.empty()) source->tabs.push_back(CreatePage(source->profile));
-  if (source->left == moving) { source->left = source->right; source->right = nullptr; }
-  if (source->right == moving) source->right = nullptr;
-  if (!source->left) source->left = source->tabs.front();
-  source->view = source->left;
+  auto* survivor = LeaveSplit(*source, moving);
+  source->view = survivor ? survivor : source->tabs.front().get();
   source->active_tab = std::find(source->tabs.begin(), source->tabs.end(), source->view) - source->tabs.begin();
-  const bool focused_right = target->right && target->view == target->right;
+  // Keep an existing split, replacing only its focused pane.
+  if (SplitShown(*target)) *std::find(target->split.begin(), target->split.end(), target->view) = moving;
   target->tabs.push_back(moving);
   target->active_tab = target->tabs.size() - 1;
   target->view = moving;
-  // Keep an existing split, replacing only its focused pane.
-  if (focused_right) target->right = moving; else target->left = moving;
   return Select(target_id);
 }
 }  // namespace zitter::prototype

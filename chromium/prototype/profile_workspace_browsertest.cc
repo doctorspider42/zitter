@@ -4466,7 +4466,6 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CheckedAndSelectorNodesCoverLi
   shell->OpenGeneralSettings();for(const auto* key:{"camera","javascript","hardware_acceleration","sidebar","animations"}){auto* view=shell->preference_switch_for_testing(key);const auto before=id(view);const bool enabled=view->GetEnabled();view->SetEnabled(false);view->SetEnabled(enabled);EXPECT_EQ(before,id(view));}
   for(const auto* key:{"theme","search","category","zoom","font_size","minimum_font_size","fixed_font_size","dns_mode","site_type","site_policy","clear_period"}){auto* view=shell->preference_choice_for_testing(key);const auto before=id(view);const auto selected=shell->preference_choice_selection_for_testing(key);const bool enabled=view->GetEnabled();view->SetEnabled(false);view->SetEnabled(enabled);EXPECT_EQ(before,id(view));EXPECT_EQ(selected,shell->preference_choice_selection_for_testing(key));}
   std::vector<uint64_t> checks;for(size_t i=0;i<3;++i)checks.push_back(id(shell->clear_checkbox_for_testing(i)));if(rust)for(size_t i=0;i<checks.size();++i)for(size_t j=0;j<i;++j)EXPECT_NE(checks[i],checks[j]);
-  shell->OpenProfiles();auto* profiles=shell->managed_profile_picker();const auto profile_id=id(profiles);shell->SetProfilePickerSelectionForTesting(true,0);EXPECT_EQ(profile_id,id(profiles));
   shell->OpenImport();id(shell->import_browser_picker());std::vector<views::View*> options={shell->import_profiles(),shell->import_bookmarks(),shell->import_history(),shell->import_cookies()};checks.clear();for(auto* view:options)checks.push_back(id(view));if(rust)for(size_t i=0;i<checks.size();++i)for(size_t j=0;j<i;++j)EXPECT_NE(checks[i],checks[j]);shell->SetImportStatus(u"Scoped busy",false,true,true);for(size_t i=0;i<options.size();++i)EXPECT_EQ(checks[i],id(options[i]));shell->SetImportStatus(u"Scoped ready",false,false,false);
 }
 
@@ -4475,7 +4474,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SelectorModelsBelongToNodesAcr
   base::ScopedAllowBlockingForTesting files;base::ScopedTempDir app_data;ASSERT_TRUE(app_data.CreateUniqueTempDir());base::ScopedPathOverride isolated_data(base::DIR_APP_DATA,app_data.GetPath());auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready()&&shell->tools_ready();}));const bool rust=shell->workspace_input()->rust_editor();
   auto check=[&](views::View* view){ASSERT_TRUE(view);EXPECT_EQ(rust?3u:0u,shell->control_model_kind_for_testing(view));const auto id=shell->sidebar_node_id_for_testing(view);const bool enabled=view->GetEnabled();view->SetEnabled(false);view->SetEnabled(enabled);EXPECT_EQ(id,shell->sidebar_node_id_for_testing(view));EXPECT_EQ(rust?3u:0u,shell->control_model_kind_for_testing(view));};
   shell->OpenGeneralSettings();for(const auto* key:{"theme","search","category","zoom","font_size","minimum_font_size","fixed_font_size","dns_mode","site_type","site_policy","clear_period"})check(shell->preference_choice_for_testing(key));
-  shell->OpenWorkspaceSettings();check(shell->profile_picker());shell->OpenProfiles();check(shell->managed_profile_picker());shell->SetProfilePickerSelectionForTesting(true,0);check(shell->managed_profile_picker());shell->OpenImport();check(shell->import_browser_picker());shell->SetImportStatus(u"Selector busy",false,true,true);check(shell->import_browser_picker());shell->SetImportStatus(u"Selector ready",false,false,false);
+  shell->OpenWorkspaceSettings();check(shell->profile_picker());shell->OpenImport();check(shell->import_browser_picker());shell->SetImportStatus(u"Selector busy",false,true,true);check(shell->import_browser_picker());shell->SetImportStatus(u"Selector ready",false,false,false);
   for(size_t page=0;page<3;++page){shell->OpenTools(page);check(shell->tools_choice_for_testing("selection"));}
 }
 
@@ -4523,7 +4522,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FormActionNodesCoverPreference
   ActivateSidebarRow(fonts);EXPECT_EQ(4u,shell->preference_category_for_testing());EXPECT_EQ(fonts_id,id(fonts));if(rust)EXPECT_TRUE(shell->preference_navigation_selected_for_testing(4));
   shell->OpenWorkspaceSettings();auto* root=shell->workspace_panel_for_testing();auto* edit=FindButton(root,u"Zapisz nazwę i profil");auto* add=FindButton(root,u"Nowa przestrzeń…");ASSERT_TRUE(edit);ASSERT_TRUE(add);const auto edit_id=id(edit),add_id=id(add);if(rust)EXPECT_NE(edit_id,add_id);id(FindButton(root,u"#BC8F4D"));id(FindButton(root,u"Emoji 🚀"));
   edit->parent()->ReorderChildView(edit,edit->parent()->children().size()-1);EXPECT_EQ(edit_id,id(edit));EXPECT_EQ(add_id,id(add));ClickControl(add);EXPECT_EQ(edit,FindButton(root,u"Utwórz przestrzeń"));EXPECT_EQ(edit_id,id(edit));EXPECT_EQ(add_id,id(add));ClickControl(add);
-  shell->OpenProfiles();root=shell->profile_panel_for_testing();auto* create=FindButton(root,u"Utwórz profil");auto* rename=FindButton(root,u"Zapisz nazwę profilu");ASSERT_TRUE(create);ASSERT_TRUE(rename);const auto create_id=id(create),rename_id=id(rename);if(rust)EXPECT_NE(create_id,rename_id);id(FindButton(root,u"Usuń profil i jego dane"));shell->SetProfileStatus(u"Node status refresh");EXPECT_EQ(create_id,id(create));EXPECT_EQ(rename_id,id(rename));
+  shell->OpenProfiles();root=shell->profile_panel_for_testing();auto* create=FindButton(root,u"Utwórz profil");auto* remove=FindButton(root,u"Usuń profil i dane");ASSERT_TRUE(create);ASSERT_TRUE(remove);const auto create_id=id(create),remove_id=id(remove);if(rust)EXPECT_NE(create_id,remove_id);shell->SetProfileStatus(u"Node status refresh");EXPECT_EQ(create_id,id(create));EXPECT_EQ(remove_id,id(remove));
   shell->OpenImport();root=shell->import_panel_for_testing();auto* apply=FindButton(root,u"Importuj");ASSERT_TRUE(apply);const auto apply_id=id(apply),close_id=id(shell->import_close());shell->SetImportStatus(u"Node busy",false,true,true);EXPECT_FALSE(apply->GetEnabled());EXPECT_EQ(apply_id,id(apply));EXPECT_EQ(close_id,id(shell->import_close()));ui::AXActionData activate;activate.action=ax::mojom::Action::kDoDefault;shell->import_close()->HandleAccessibleAction(activate);EXPECT_TRUE(shell->import_visible());shell->SetImportStatus(u"Node ready",false,false,false);EXPECT_EQ(apply_id,id(apply));EXPECT_EQ(close_id,id(shell->import_close()));
 }
 
@@ -4580,7 +4579,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FormCommandModelsCoverPreferen
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));if(!shell->workspace_input()->rust_editor())return;
   auto check=[&](views::View* root,std::u16string_view label){auto* view=FindButton(root,std::u16string(label));EXPECT_TRUE(view);if(view){EXPECT_EQ(8u,shell->control_model_kind_for_testing(view));EXPECT_NE(0u,shell->sidebar_node_id_for_testing(view));EXPECT_NE(0u,shell->scene_parent_id_for_testing(view));}};
   shell->OpenWorkspaceSettings();check(shell->workspace_panel_for_testing(),u"Zapisz nazwę i profil");check(shell->workspace_panel_for_testing(),u"Nowa przestrzeń…");
-  shell->OpenProfiles({},{});for(auto label:{u"Utwórz profil",u"Zapisz nazwę profilu",u"Usuń profil i jego dane",u"Wróć do przestrzeni"})check(shell->profile_panel_for_testing(),label);
+  shell->OpenProfiles({},{});for(auto label:{u"Utwórz profil",u"Usuń profil i dane"})check(shell->profile_panel_for_testing(),label);
   shell->OpenImport();check(shell->import_widget()->GetContentsView(),u"Importuj");
   shell->OpenGeneralSettings();size_t commands=0;auto scan=[&](auto&& self,views::View* view)->void{if(shell->control_model_kind_for_testing(view)==8)++commands;for(const auto& child:view->children())self(self,child.get());};scan(scan,shell->general_widget()->GetContentsView());EXPECT_GE(commands,14u);
 }
@@ -4624,9 +4623,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceActionHostsAXSelecti
 // Compiled only: semantic preset commands use the common Rust panel dispatcher.
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AppearanceCommandsResolveAllPresetsWithStableActionNodes) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));if(!shell->workspace_input()->rust_editor())return;shell->SetWorkspaceAnimations(false);shell->OpenWorkspaceSettings();
-  auto* colors=shell->color_input()->view()->parent();const std::array<SkColor,6> expected_colors={0xff928fd4,0xffcc8463,0xff5aa0d0,0xffbc8f4d,0xffcb7e96,0xff55ac89};
+  auto* colors=shell->color_input()->view()->parent();const std::array<SkColor,8> expected_colors={0xff928fd4,0xffcc8463,0xff5aa0d0,0xffbc8f4d,0xffcb7e96,0xff55ac89,0xff7da667,0xff989898};
   for(size_t i=0;i<expected_colors.size();++i){auto* button=colors->children()[i].get();const auto id=shell->sidebar_node_id_for_testing(button);EXPECT_NE(0u,id);EXPECT_EQ(8u,shell->control_model_kind_for_testing(button));button->ScrollViewToVisible();ClickControl(button);EXPECT_EQ(expected_colors[i],shell->workspace_color("work"));EXPECT_EQ(id,shell->sidebar_node_id_for_testing(button));}
-  auto* emojis=shell->emoji_input()->view()->parent();const std::array<std::u16string,6> expected_emojis={u"💼",u"🏠",u"🚀",u"🎨",u"📚",u"🎮"};
+  auto* emojis=shell->emoji_input()->view()->parent();const std::array<std::u16string,8> expected_emojis={u"💼",u"🏠",u"🚀",u"🎨",u"📚",u"🎮",u"🛒",u"🎬"};
   for(size_t i=0;i<expected_emojis.size();++i){auto* button=emojis->children()[i].get();const auto id=shell->sidebar_node_id_for_testing(button);EXPECT_EQ(8u,shell->control_model_kind_for_testing(button));button->ScrollViewToVisible();ClickControl(button);EXPECT_EQ(expected_emojis[i],shell->workspace_emoji("work"));EXPECT_EQ(id,shell->sidebar_node_id_for_testing(button));}
 }
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AppearanceCommandObserverCannotRetargetPresetToAnotherWorkspace) {
@@ -4636,7 +4635,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AppearanceCommandObserverCanno
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AppearanceActionHostsKeyboardAXColorAndCancelledClip) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->OpenWorkspaceSettings();auto* widget=shell->settings_widget();widget->LayoutRootViewIfNecessary();const bool rust=shell->workspace_input()->rust_editor();auto* colors=shell->color_input()->view()->parent();auto* emojis=shell->emoji_input()->view()->parent();
-  for(auto* row:{colors,emojis})for(size_t i=0;i<6u;++i){auto* view=row->children()[i].get();EXPECT_EQ(!rust,views::AsViewClass<views::Button>(view)!=nullptr);ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kButton,ax.role);EXPECT_FALSE(ax.GetString16Attribute(ax::mojom::StringAttribute::kName).empty());if(rust)EXPECT_TRUE(view->children().empty());}
+  for(auto* row:{colors,emojis})for(size_t i=0;i<8u;++i){auto* view=row->children()[i].get();EXPECT_EQ(!rust,views::AsViewClass<views::Button>(view)!=nullptr);ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kButton,ax.role);EXPECT_FALSE(ax.GetString16Attribute(ax::mojom::StringAttribute::kName).empty());if(rust)EXPECT_TRUE(view->children().empty());}
   auto* mint=colors->children()[1].get();mint->ScrollViewToVisible();ActivateSidebarRow(mint);EXPECT_EQ(0xFFCC8463u,shell->workspace_color("work"));auto* blue=colors->children()[3].get();blue->ScrollViewToVisible();
   ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));blue->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);blue->RequestFocus();ASSERT_TRUE(base::test::RunUntil([&]{return blue->HasFocus();}));base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
   ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));EXPECT_EQ(0xFFBC8F4Du,shell->workspace_color("work"));EXPECT_EQ(u"#BC8F4D",shell->color_input()->GetText());auto* rocket=emojis->children()[2].get();rocket->ScrollViewToVisible();ActivateSidebarRow(rocket);EXPECT_EQ(u"🚀",shell->workspace_emoji("work"));
@@ -5158,6 +5157,164 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarFolderFailedWriteRollsB
   ASSERT_TRUE(base::Move(backup, file));
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitViewGroupsMoreThanTwoTabsAndSeparates) {
+  std::vector<content::WebContents*> pages;
+  for (const char* query : {"/storage_probe.html?a", "/storage_probe.html?b", "/storage_probe.html?c"}) {
+    ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL(query), !pages.empty()));
+    pages.push_back(window_->contents("work"));
+    ASSERT_TRUE(content::WaitForLoadStop(pages.back()));
+  }
+  // NavigateFromBar on the first page reuses the initial tab.
+  ASSERT_EQ(3u, window_->tab_count("work"));
+  window_->SelectTab(0);
+  ASSERT_TRUE(window_->SplitTab(1));
+  ASSERT_TRUE(window_->SplitTab(2));
+  ASSERT_EQ(3u, window_->split_count());
+  for (size_t pane = 0; pane < 3; ++pane) EXPECT_EQ(pages[pane], window_->pane_contents(pane));
+  base::RunLoop().RunUntilIdle();
+  for (size_t pane = 0; pane + 1 < 3; ++pane)
+    EXPECT_LT(pages[pane]->GetContainerBounds().right(), pages[pane + 1]->GetContainerBounds().x());
+  EXPECT_TRUE(window_->shell()->split_pane_button(2, false)->parent()->GetVisible());
+  EXPECT_FALSE(window_->shell()->split_pane_button(3, false)->parent()->GetVisible());
+  // One sidebar group holds all three tiles on a single row.
+  auto* shell = window_->shell();
+  shell->ShowSidebar();
+  base::RunLoop().RunUntilIdle();
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  for (size_t tab = 1; tab < 3; ++tab) {
+    ASSERT_TRUE(shell->tab_button(tab));
+    EXPECT_EQ(shell->tab_button(0)->parent(), shell->tab_button(tab)->parent());
+    EXPECT_EQ(shell->tab_button(0)->y(), shell->tab_button(tab)->y());
+  }
+  // A middle pane moves both ways; dividers resize only their neighbours.
+  window_->MoveSplitPane(1, false);
+  EXPECT_EQ(pages[1], window_->pane_contents(0));
+  window_->MoveSplitPane(1, true);
+  EXPECT_EQ(pages[1], window_->pane_contents(1));
+  const int leading = window_->pane_contents(0)->GetContainerBounds().width();
+  const int middle = window_->pane_contents(1)->GetContainerBounds().width();
+  window_->SetDividerRatio(1, 0.7);
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(leading, window_->pane_contents(0)->GetContainerBounds().width());
+  EXPECT_GT(window_->pane_contents(1)->GetContainerBounds().width(), middle);
+  // Taking one tab out keeps the other two together.
+  window_->RemoveFromSplit(1);
+  EXPECT_EQ(2u, window_->split_count());
+  EXPECT_EQ(pages[2], window_->pane_contents(1));
+  // "Rozdziel" in the sidebar tab menu separates the whole group.
+  shell->BuildTabMenu(2);
+  auto* menu = shell->workspace_menu();
+  std::optional<size_t> separate;
+  for (size_t i = 0; i < menu->GetItemCount(); ++i) if (menu->GetLabelAt(i) == u"Rozdziel") separate = i;
+  ASSERT_TRUE(separate);
+  menu->ActivatedAt(*separate, 0);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->split(); }));
+  EXPECT_EQ(pages[2], window_->contents("work"));
+  // Closing the whole group from the menu leaves the tab outside it.
+  window_->SelectTab(0);
+  ASSERT_TRUE(window_->SplitTab(1));
+  shell->BuildTabMenu(1);
+  menu = shell->workspace_menu();
+  std::optional<size_t> close_all;
+  for (size_t i = 0; i < menu->GetItemCount(); ++i) if (menu->GetLabelAt(i) == u"Zamknij wszystkie karty w splicie") close_all = i;
+  ASSERT_TRUE(close_all);
+  menu->ActivatedAt(*close_all, 0);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->tab_count("work") == 1; }));
+  EXPECT_FALSE(window_->split());
+  EXPECT_EQ(pages[2], window_->contents("work"));
+  // A group holding every tab leaves one new tab behind.
+  ASSERT_TRUE(window_->SplitTab(0));
+  ASSERT_EQ(2u, window_->tab_count("work"));
+  window_->CloseSplitTabs(0);
+  EXPECT_EQ(1u, window_->tab_count("work"));
+  EXPECT_FALSE(window_->split());
+  EXPECT_NE(pages[2], window_->contents("work"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarMovesTabsAndPinsAcrossSections) {
+  const auto first = embedded_test_server()->GetURL("/storage_probe.html?first");
+  const auto second = embedded_test_server()->GetURL("/storage_probe.html?second");
+  ASSERT_TRUE(window_->NavigateFromBar(first, false));
+  auto* first_page = window_->contents("work");
+  ASSERT_TRUE(window_->NavigateFromBar(second, true));
+  auto* second_page = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(second_page));
+  ASSERT_TRUE(window_->MoveTab(1, 0));
+  window_->SelectTab(0);
+  EXPECT_EQ(second_page, window_->contents("work"));
+  // Dropping a tab among the pins pins it and keeps its page.
+  ASSERT_TRUE(window_->PinTab(0, "", ""));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  const auto& pins = window_->pinned_items("work");
+  const auto pin = std::ranges::find_if(pins, [&](const auto& item) { return item.url == second; });
+  ASSERT_NE(pin, pins.end());
+  const std::string id = pin->id;
+  EXPECT_EQ(second_page, window_->contents("work"));
+  EXPECT_FALSE(window_->shell()->tab_button(0));
+  // Dropping the pin back among the tabs unpins it after the other tab.
+  ASSERT_TRUE(window_->UnpinItem(id, 2));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  EXPECT_TRUE(std::ranges::none_of(window_->pinned_items("work"), [&](const auto& item) { return item.id == id; }));
+  EXPECT_TRUE(window_->shell()->tab_button(1));
+  window_->SelectTab(0);
+  EXPECT_EQ(first_page, window_->contents("work"));
+  window_->SelectTab(1);
+  EXPECT_EQ(second_page, window_->contents("work"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarRowDragWithRealMouseShowsPreviewAndReorders) {
+  std::vector<content::WebContents*> pages;
+  for (const char* query : {"/storage_probe.html?a", "/storage_probe.html?b", "/storage_probe.html?c"}) {
+    ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL(query), !pages.empty()));
+    pages.push_back(window_->contents("work"));
+  }
+  auto* shell = window_->shell();
+  shell->SetPinned(true);
+  shell->ShowSidebar();
+  ui_controls::EnableUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  base::RunLoop().RunUntilIdle();
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  auto* row = shell->tab_button(0);
+  ASSERT_TRUE(row);
+  const auto native = shell->sidebar_widget()->GetNativeWindow();
+  auto move = [&](gfx::Point point) {
+    base::test::TestFuture<void> done;
+    ASSERT_TRUE(ui_controls::SendMouseMoveNotifyWhenDone(point.x(), point.y(), done.GetCallback(), native));
+    ASSERT_TRUE(done.Wait());
+  };
+  auto button = [&](int state) {
+    base::test::TestFuture<void> done;
+    ASSERT_TRUE(ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT, state, done.GetCallback(), ui_controls::kNoAccelerator, native));
+    ASSERT_TRUE(done.Wait());
+  };
+  const auto start = row->GetBoundsInScreen().CenterPoint();
+  const auto target = shell->tab_button(2)->GetBoundsInScreen().bottom_center() - gfx::Vector2d(0, 4);
+  move(start);
+  button(ui_controls::DOWN);
+  for (int step = 1; step <= 6; ++step) move(start + gfx::Vector2d(0, (target.y() - start.y()) * step / 6));
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(row, shell->sidebar_drag_row_for_testing());
+  EXPECT_TRUE(shell->sidebar_drop_target_for_testing());
+  // A layered overlay above the tab list paints the lifted copy under the pointer.
+  auto* overlay = shell->sidebar_drag_overlay_for_testing();
+  ASSERT_TRUE(overlay && overlay->GetVisible() && overlay->layer());
+  EXPECT_EQ(overlay, overlay->parent()->children().back());
+  const SkBitmap painted = views::test::PaintViewToBitmap(overlay);
+  gfx::Point pointer = start + gfx::Vector2d(0, target.y() - start.y());
+  views::View::ConvertPointFromScreen(overlay, &pointer);
+  ASSERT_TRUE(gfx::Rect(painted.width(), painted.height()).Contains(pointer));
+  // PaintViewToBitmap starts from a red placeholder; the copy covers it.
+  size_t covered = 0;
+  for (int dx = -40; dx <= 40; ++dx) covered += painted.getColor(pointer.x() + dx, pointer.y()) != SK_ColorRED;
+  EXPECT_GT(covered, 70u);
+  EXPECT_EQ(SK_ColorRED, painted.getColor(2, painted.height() - 2));
+  button(ui_controls::UP);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !shell->sidebar_drag_row_for_testing(); }));
+  window_->SelectTab(2);
+  EXPECT_EQ(pages[0], window_->contents("work"));
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FolderRemovalKeepsOpenedPinsAsTabs) {
   base::FilePath root;
   ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &root));
@@ -5203,9 +5360,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceDotProfileMenu) {
   profiles = shell->workspace_menu()->GetSubmenuModelAt(0);
   profiles->ActivatedAt(3, 0);  // Two profiles, separator, Edit.
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->profiles_widget()->IsVisible(); }));
-  EXPECT_EQ(u"Profil firmowy", shell->profile_name_input()->GetText());
-  shell->profile_name_input()->SetText(u"Profil zespołu");
-  auto* rename = FindButton(shell->profiles_widget()->GetContentsView(), u"Zapisz nazwę profilu");
+  EXPECT_EQ(u"Profil firmowy", shell->profile_rename_input()->GetText());
+  shell->profile_rename_input()->SetText(u"Profil zespołu");
+  auto* rename = FindButton(shell->profiles_widget()->GetContentsView(), u"Zapisz");
   ASSERT_TRUE(rename);
   ClickControl(rename);
   ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
@@ -5270,12 +5427,13 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DynamicProfiles) {
   ASSERT_TRUE(window_->EditWorkspace("Praca", "work-profile"));
   shell = window_->shell();
   shell->OpenProfiles();
-  shell->SetProfilePickerSelectionForTesting(true,2);
-  auto* remove = FindButton(shell->profiles_widget()->GetContentsView(), u"Usuń profil i jego dane");
+  shell->profiles_widget()->LayoutRootViewIfNecessary();
+  auto* remove = FindButton(shell->profiles_widget()->GetContentsView(), u"Usuń profil Klient Łódź");
   ASSERT_TRUE(remove);
   ClickControl(remove);
   EXPECT_EQ(3u, window_->profiles().size());
-  auto* confirm = FindButton(shell->profiles_widget()->GetContentsView(), u"Potwierdź usunięcie profilu i danych");
+  auto* confirm = FindButton(shell->profiles_widget()->GetContentsView(), u"Usuń profil i dane");
+  ASSERT_TRUE(confirm && confirm->IsDrawn());
   ASSERT_TRUE(confirm);
   ClickControl(confirm);
   ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
@@ -6336,12 +6494,13 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, PreferenceChoicesScenesIde
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ProfilePickerScenesStableIDsPrefixAndModelCancellation) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenWorkspaceSettings();if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->profile_picker_metal_visible(false);}));auto* assignment=shell->profile_picker();EXPECT_FALSE(views::AsViewClass<views::Combobox>(assignment));for(const auto& child:assignment->children())EXPECT_FALSE(views::AsViewClass<views::Label>(child.get()));
   ASSERT_TRUE(shell->profile_picker_selection(false));EXPECT_EQ("work-profile",window_->profiles()[*shell->profile_picker_selection(false)].id);shell->SetProfilePickerSelectionForTesting(false,1);ui::AXNodeData chosen;assignment->GetViewAccessibility().GetAccessibleNodeData(&chosen);EXPECT_EQ(ax::mojom::Role::kComboBoxSelect,chosen.role);EXPECT_EQ(base::UTF8ToUTF16(window_->profiles()[1].name),chosen.GetString16Attribute(ax::mojom::StringAttribute::kValue));shell->OpenWorkspaceSettings();ASSERT_TRUE(shell->profile_picker_selection(false));EXPECT_EQ("work-profile",window_->profiles()[*shell->profile_picker_selection(false)].id);
-  shell->OpenProfiles("work-profile");if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->profile_picker_metal_visible(true);}));auto* managed=shell->managed_profile_picker();EXPECT_FALSE(views::AsViewClass<views::Combobox>(managed));ASSERT_TRUE(window_->CreateProfile("Picker Łódź 🦀"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy()&&shell->profile_picker_selection(true)==2u;}));const auto added=window_->profiles().back().id;if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->profile_panel_contains_scene_text("Picker Łódź 🦀");}));EXPECT_EQ(3u,shell->profile_picker_count());
-  ASSERT_TRUE(window_->RenameProfile(added,"Picker 日本語"));if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy()&&shell->profile_panel_contains_scene_text("Picker 日本語");}));ASSERT_TRUE(shell->profile_picker_selection(true));EXPECT_EQ(added,window_->profiles()[*shell->profile_picker_selection(true)].id);
-  auto* remove=FindButton(shell->profile_panel_for_testing(),u"Usuń profil i jego dane");ASSERT_TRUE(remove&&remove->GetEnabled());ClickControl(remove);ASSERT_TRUE(FindButton(shell->profile_panel_for_testing(),u"Potwierdź usunięcie profilu i danych"));shell->ActivateProfilePickerSelectionForTesting(true,0);EXPECT_FALSE(FindButton(shell->profile_panel_for_testing(),u"Potwierdź usunięcie profilu i danych"));EXPECT_EQ(base::UTF8ToUTF16(window_->profiles()[0].name),shell->profile_name_input()->GetText());EXPECT_EQ(3u,window_->profiles().size());
-  managed->RequestFocus();ASSERT_TRUE(managed->HasFocus());auto* input=managed->GetInputMethod()->GetTextInputClient();ASSERT_TRUE(input);input->InsertText(u"picker",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);ASSERT_TRUE(shell->profile_picker_selection(true));EXPECT_EQ(added,window_->profiles()[*shell->profile_picker_selection(true)].id);EXPECT_EQ(u"Picker 日本語",shell->profile_name_input()->GetText());managed->SetEnabled(false);shell->ActivateProfilePickerSelectionForTesting(true,0);EXPECT_EQ(2u,shell->profile_picker_selection(true));managed->SetEnabled(true);
-  const gfx::Point point(12,12);ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ASSERT_TRUE(managed->OnMousePressed(press));ASSERT_TRUE(window_->RenameProfile(added,"Picker after update"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));managed->OnMouseReleased(release);ui::AXNodeData collapsed;managed->GetViewAccessibility().GetAccessibleNodeData(&collapsed);EXPECT_TRUE(collapsed.HasState(ax::mojom::State::kCollapsed));EXPECT_EQ(u"Picker after update",collapsed.GetString16Attribute(ax::mojom::StringAttribute::kValue));
-  shell->profiles_widget()->Hide();if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return !shell->profile_picker_metal_visible(true);}));shell->OpenProfiles(added);if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->profile_picker_metal_visible(true)&&shell->profile_panel_contains_scene_text("Picker after update");}));
+  // Profiles are rows: a new profile is selected, renames repaint its row, and
+  // choosing another row withdraws a pending delete confirmation.
+  shell->OpenProfiles();ASSERT_TRUE(window_->CreateProfile("Picker Łódź 🦀"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy()&&shell->profile_picker_selection(true)==2u;}));const auto added=window_->profiles().back().id;ASSERT_TRUE(shell->profile_panel_contains_scene_text("Picker Łódź 🦀"));EXPECT_EQ(3u,shell->profile_picker_count());
+  ASSERT_TRUE(window_->RenameProfile(added,"Picker 日本語"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy()&&shell->profile_panel_contains_scene_text("Picker 日本語");}));ASSERT_TRUE(shell->profile_picker_selection(true));EXPECT_EQ(added,window_->profiles()[*shell->profile_picker_selection(true)].id);
+  auto* remove=FindButton(shell->profile_panel_for_testing(),u"Usuń profil Picker 日本語");ASSERT_TRUE(remove&&remove->GetEnabled());ClickControl(remove);auto* confirm=FindButton(shell->profile_panel_for_testing(),u"Usuń profil i dane");ASSERT_TRUE(confirm&&confirm->IsDrawn());
+  shell->ActivateProfilePickerSelectionForTesting(true,0);EXPECT_FALSE(confirm->IsDrawn());EXPECT_EQ(0u,shell->profile_picker_selection(true));EXPECT_EQ(3u,window_->profiles().size());
+  shell->profiles_widget()->Hide();shell->OpenProfiles(added);ASSERT_TRUE(shell->profile_rename_input());EXPECT_EQ(u"Picker 日本語",shell->profile_rename_input()->GetText());EXPECT_TRUE(shell->profile_rename_input()->view()->IsDrawn());
 }
 // Compile only. Real popup, IME and Metal acceptance awaits the GUI checkpoint.
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ImportSourceScenePrefixAXDisabledAndVisibility) {
@@ -6391,28 +6550,30 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ImportFormScenesLatestOpti
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, FormActionGroupsSceneTextDynamicLabelsAndCancelledTargets) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
   window_->widget()->SetBounds(display::Screen::Get()->GetDisplayNearestWindow(window_->widget()->GetNativeWindow()).work_area());shell->OpenWorkspaceSettings();
-  ASSERT_TRUE(base::test::RunUntil([&]{return shell->form_action_canvases_visible_for_testing(false)==2;}));if(MetalPresents())ASSERT_TRUE(shell->form_actions_contains_scene_text(false,"Zapisz nazwę i profil"));
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->form_action_canvases_visible_for_testing(false)==3;}));if(MetalPresents())ASSERT_TRUE(shell->form_actions_contains_scene_text(false,"Zapisz nazwę i profil"));
   auto find=[&](bool profiles,std::u16string_view name){return FindButton(profiles?shell->profile_panel_for_testing():shell->workspace_panel_for_testing(),name);};
   auto check=[&](views::View* button)->bool{if(!button)return false;EXPECT_FALSE(views::AsViewClass<views::MdTextButton>(button));EXPECT_FALSE(views::AsViewClass<views::Button>(button));for(const auto& child:button->children())EXPECT_FALSE(views::AsViewClass<views::Label>(child.get()));return true;};
   auto* create=find(false,u"Nowa przestrzeń…");ASSERT_TRUE(check(create));const gfx::Point point(12,12);ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);
   ASSERT_TRUE(create->OnMousePressed(press));create->OnMouseReleased(release);if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->form_actions_contains_scene_text(false,"Utwórz przestrzeń");}));EXPECT_EQ(1u,shell->form_action_canvases_visible_for_testing(false));
   auto* save=find(false,u"Utwórz przestrzeń");ASSERT_TRUE(check(save));shell->workspace_input()->SetText(u"Must not create");ASSERT_TRUE(save->OnMousePressed(press));ASSERT_TRUE(window_->Select("personal"));save->OnMouseReleased(release);EXPECT_EQ(2u,window_->workspaces().size());EXPECT_EQ("Prywatne",window_->workspaces()[1].name);
   shell->OpenWorkspaceSettings();auto* manage=find(false,u"Zarządzaj profilami");ASSERT_TRUE(check(manage));ASSERT_TRUE(manage->OnMousePressed(press));manage->OnMouseReleased(release);
-  ASSERT_TRUE(base::test::RunUntil([&]{return shell->form_action_canvases_visible_for_testing(true)==2;}));if(MetalPresents())ASSERT_TRUE(shell->form_actions_contains_scene_text(true,"Utwórz profil"));auto* profile_create=find(true,u"Utwórz profil");ASSERT_TRUE(check(profile_create));
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->form_action_canvases_visible_for_testing(true)==1;}));if(MetalPresents())ASSERT_TRUE(shell->form_actions_contains_scene_text(true,"Utwórz profil"));auto* profile_create=find(true,u"Utwórz profil");ASSERT_TRUE(check(profile_create));
   shell->profile_name_input()->SetText(u"  ");ui::KeyEvent space(ui::EventType::kKeyPressed,ui::VKEY_SPACE,ui::EF_NONE);ui::KeyEvent up(ui::EventType::kKeyReleased,ui::VKEY_SPACE,ui::EF_NONE);profile_create->RequestFocus();ASSERT_TRUE(profile_create->OnKeyPressed(space));profile_create->OnKeyReleased(up);
   EXPECT_EQ(2u,window_->profiles().size());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->profile_panel_contains_scene_text("Podaj nazwę profilu.");}));
   ASSERT_TRUE(window_->CreateProfile("Action profile"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));const auto added=window_->profiles().back();shell->OpenProfiles(added.id);
-  auto* remove=find(true,u"Usuń profil i jego dane");ASSERT_TRUE(check(remove));ASSERT_TRUE(remove->OnKeyPressed(space));remove->OnKeyReleased(up);if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->form_actions_contains_scene_text(true,"Potwierdź usunięcie profilu i danych");}));
-  auto* confirm=find(true,u"Potwierdź usunięcie profilu i danych");ASSERT_TRUE(confirm);ASSERT_TRUE(confirm->OnMousePressed(press));shell->OpenProfiles("personal-profile");confirm->OnMouseReleased(release);EXPECT_EQ(3u,window_->profiles().size());EXPECT_FALSE(find(true,u"Usuń profil i jego dane")->GetEnabled());
-  shell->OpenProfiles(added.id);remove=find(true,u"Usuń profil i jego dane");ASSERT_TRUE(remove->OnKeyPressed(space));remove->OnKeyReleased(up);confirm=find(true,u"Potwierdź usunięcie profilu i danych");ASSERT_TRUE(confirm);ASSERT_TRUE(confirm->OnKeyPressed(space));confirm->OnKeyReleased(up);
+  // A row's trash opens the confirmation; reopening on another profile before
+  // the release withdraws it, so nothing is deleted.
+  auto* remove=find(true,u"Usuń profil Action profile");ASSERT_TRUE(check(remove));ASSERT_TRUE(remove->OnKeyPressed(space));remove->OnKeyReleased(up);if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->form_actions_contains_scene_text(true,"Usuń profil i dane");}));
+  auto* confirm=find(true,u"Usuń profil i dane");ASSERT_TRUE(confirm&&confirm->IsDrawn());ASSERT_TRUE(confirm->OnMousePressed(press));shell->OpenProfiles("personal-profile");confirm->OnMouseReleased(release);EXPECT_EQ(3u,window_->profiles().size());EXPECT_FALSE(confirm->IsDrawn());
+  shell->OpenProfiles(added.id);remove=find(true,u"Usuń profil Action profile");ASSERT_TRUE(remove->OnKeyPressed(space));remove->OnKeyReleased(up);ASSERT_TRUE(confirm->IsDrawn());ASSERT_TRUE(confirm->OnKeyPressed(space));confirm->OnKeyReleased(up);
   ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));EXPECT_EQ(2u,window_->profiles().size());ASSERT_TRUE(base::test::RunUntil([&]{return window_->configuration_saved();}));
 }
 // Compiled only. Execution remains deferred to the user's GUI checkpoint.
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, AppearanceRowsSceneInputClippingCompositionAndWorkspaceChange) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->OpenWorkspaceSettings();
   if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_metal_visible(false)&&shell->appearance_metal_visible(true);}));
-  auto* colors=shell->color_input()->view()->parent();auto* emojis=shell->emoji_input()->view()->parent();ASSERT_EQ(8u,colors->children().size());ASSERT_EQ(8u,emojis->children().size());
-  for(bool emoji:{false,true}){auto* field=emoji?shell->emoji_input():shell->color_input();auto* row=field->view()->parent();const auto frame=shell->appearance_scene_bounds_for_testing(emoji);EXPECT_FALSE(frame.IsEmpty());EXPECT_FALSE(frame.Intersects(field->view()->GetBoundsInScreen()));for(size_t i=0;i<6u;++i){EXPECT_TRUE(frame.Contains(row->children()[i]->GetBoundsInScreen()));EXPECT_FALSE(views::AsViewClass<views::Button>(row->children()[i].get()));EXPECT_TRUE(row->children()[i]->children().empty());for(const auto& child:row->children()[i]->children())EXPECT_FALSE(views::AsViewClass<views::Label>(child.get()));}}
+  auto* colors=shell->color_input()->view()->parent();auto* emojis=shell->emoji_input()->view()->parent();ASSERT_EQ(10u,colors->children().size());ASSERT_EQ(10u,emojis->children().size());
+  for(bool emoji:{false,true}){auto* field=emoji?shell->emoji_input():shell->color_input();auto* row=field->view()->parent();const auto frame=shell->appearance_scene_bounds_for_testing(emoji);EXPECT_FALSE(frame.IsEmpty());EXPECT_FALSE(frame.Intersects(field->view()->GetBoundsInScreen()));for(size_t i=0;i<8u;++i){EXPECT_TRUE(frame.Contains(row->children()[i]->GetBoundsInScreen()));EXPECT_FALSE(views::AsViewClass<views::Button>(row->children()[i].get()));EXPECT_TRUE(row->children()[i]->children().empty());for(const auto& child:row->children()[i]->children())EXPECT_FALSE(views::AsViewClass<views::Label>(child.get()));}}
   auto* mint=colors->children()[1].get();const gfx::Point point(10,10);ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);
   ASSERT_TRUE(mint->OnMousePressed(press));mint->OnMouseReleased(release);EXPECT_EQ(0xFFCC8463u,shell->workspace_color("work"));
   auto* peach=colors->children()[2].get();ASSERT_TRUE(peach->OnMousePressed(press));peach->OnMouseCaptureLost();peach->OnMouseReleased(release);EXPECT_EQ(0xFFCC8463u,shell->workspace_color("work"));
@@ -6454,7 +6615,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, WorkspaceNoticeCancelCaptu
 // Compilation only; do not execute before the requested GUI checkpoint.
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, WorkspaceFormScenesCreateCancelIMEAndProfileAssignment) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->OpenWorkspaceSettings();
-  if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_panel_contains_scene_text("Nazwa przestrzeni");}));
+  if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_panel_contains_scene_text("Nazwa");}));
   auto* panel=shell->workspace_panel_for_testing();ASSERT_TRUE(panel);
   auto no_labels=[&](auto&& self,views::View* view)->void {
     if(views::AsViewClass<views::Textfield>(view)||views::AsViewClass<views::Combobox>(view)||views::AsViewClass<views::Button>(view))return;
@@ -6492,12 +6653,15 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ProfilePanelScenesValidati
   auto* panel=shell->profile_panel_for_testing();ASSERT_TRUE(panel);
   // Editor, picker and buttons retain their own native text; panel copy does not.
   for(const auto& child:panel->children())EXPECT_FALSE(views::AsViewClass<views::Label>(child.get()));
-  ui::AXNodeData heading;panel->children()[0]->GetViewAccessibility().GetAccessibleNodeData(&heading);
+  ui::AXNodeData heading;panel->children()[0]->children()[0]->GetViewAccessibility().GetAccessibleNodeData(&heading);
   EXPECT_EQ(ax::mojom::Role::kStaticText,heading.role);
   EXPECT_EQ(u"Profile przeglądania",heading.GetString16Attribute(ax::mojom::StringAttribute::kName));
   auto button=[&](std::u16string_view name){return FindButton(panel,name);};
   auto* create=button(u"Utwórz profil");ASSERT_TRUE(create);
-  auto* remove=button(u"Usuń profil i jego dane");ASSERT_TRUE(remove);EXPECT_FALSE(remove->GetEnabled());
+  // A profile a space still uses explains itself instead of asking to confirm.
+  auto* confirm=button(u"Usuń profil i dane");ASSERT_TRUE(confirm);
+  ClickControl(button(u"Usuń profil "+base::UTF8ToUTF16(window_->profiles()[0].name)));EXPECT_FALSE(confirm->IsDrawn());
+  if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->profile_panel_contains_scene_text("Profil jest używany przez: Praca. Przypisz tym przestrzeniom inny profil, aby go usunąć.");}));
   auto* field=shell->profile_name_input();field->SetText(u" \u3000\u00a0 ");
   ClickControl(create);EXPECT_EQ(2u,window_->profiles().size());
   if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->profile_panel_contains_scene_text("Podaj nazwę profilu.");}));
@@ -6508,19 +6672,21 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ProfilePanelScenesValidati
   const auto added=window_->profiles().back();EXPECT_EQ("Klient Łódź 🦀",added.name);
   shell->OpenProfiles(added.id);field->SetText(u"Klient Łódź 🦀");ClickControl(create);
   if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->profile_panel_contains_scene_text("Profil o tej nazwie już istnieje.");}));EXPECT_EQ(3u,window_->profiles().size());
-  auto* rename=button(u"Zapisz nazwę profilu");ASSERT_TRUE(rename);field->SetText(u"  Zmieniony 日本語  ");ClickControl(rename);
+  // Opening a profile starts renaming it in its own field, beside its row.
+  auto* rename_field=shell->profile_rename_input();ASSERT_TRUE(rename_field&&rename_field->view()->IsDrawn());EXPECT_EQ(u"Klient Łódź 🦀",rename_field->GetText());
+  auto* rename=button(u"Zapisz");ASSERT_TRUE(rename);rename_field->SetText(u"  Zmieniony 日本語  ");ClickControl(rename);
   ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));EXPECT_EQ(added.id,window_->profiles().back().id);EXPECT_EQ("Zmieniony 日本語",window_->profiles().back().name);
-  shell->OpenProfiles(added.id);remove=button(u"Usuń profil i jego dane");ASSERT_TRUE(remove);ASSERT_TRUE(remove->GetEnabled());ClickControl(remove);
-  ASSERT_TRUE(button(u"Potwierdź usunięcie profilu i danych"));EXPECT_EQ(3u,window_->profiles().size());
+  shell->OpenProfiles(added.id);ClickControl(button(u"Usuń profil Zmieniony 日本語"));
+  ASSERT_TRUE(confirm->IsDrawn());EXPECT_EQ(3u,window_->profiles().size());
   // Opening another target must not transfer the destructive confirmation.
-  shell->OpenProfiles("work-profile");remove=button(u"Usuń profil i jego dane");ASSERT_TRUE(remove);EXPECT_FALSE(remove->GetEnabled());
-  shell->OpenProfiles(added.id);remove=button(u"Usuń profil i jego dane");ASSERT_TRUE(remove);ClickControl(remove);
+  shell->OpenProfiles("work-profile");EXPECT_FALSE(confirm->IsDrawn());
+  shell->OpenProfiles(added.id);ClickControl(button(u"Usuń profil Zmieniony 日本語"));ASSERT_TRUE(confirm->IsDrawn());
   // An external rename updates the catalogue and disarms the pending deletion.
   ASSERT_TRUE(window_->RenameProfile(added.id,"Po zmianie katalogu"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));
-  ASSERT_TRUE(button(u"Usuń profil i jego dane"));ASSERT_TRUE(shell->profile_picker_selection(true));
+  EXPECT_FALSE(confirm->IsDrawn());ASSERT_TRUE(shell->profile_picker_selection(true));
   EXPECT_EQ(added.id,window_->profiles()[*shell->profile_picker_selection(true)].id);
-  ClickControl(button(u"Usuń profil i jego dane"));EXPECT_EQ(3u,window_->profiles().size());
-  auto* confirm=button(u"Potwierdź usunięcie profilu i danych");ASSERT_TRUE(confirm);ClickControl(confirm);
+  ClickControl(button(u"Usuń profil Po zmianie katalogu"));EXPECT_EQ(3u,window_->profiles().size());
+  ASSERT_TRUE(confirm->IsDrawn());ClickControl(confirm);
   ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));EXPECT_EQ(2u,window_->profiles().size());
   for(const auto& profile:window_->profiles())EXPECT_NE(added.id,profile.id);
 }
@@ -7937,7 +8103,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NameEditorsTypingUndoCompositi
   ui::AXNodeData node;field->GetViewAccessibility().GetAccessibleNodeData(&node);EXPECT_EQ(ax::mojom::Role::kTextField,node.role);EXPECT_EQ(u"alpha",node.GetString16Attribute(ax::mojom::StringAttribute::kValue));
   std::u16string long_text(1000,u'x');long_text+=u"🦀";field->SetText(long_text);const auto caret=client->GetCaretBounds();EXPECT_GE(caret.x(),view->GetBoundsInScreen().x());EXPECT_LE(caret.right(),view->GetBoundsInScreen().right());
   field->SetText(u"Workspace 日本語");auto* save=FindButton(shell->workspace_panel_for_testing(),u"Zapisz nazwę i profil");ASSERT_TRUE(save);ClickControl(save);EXPECT_EQ("Workspace 日本語",window_->workspaces()[0].name);ASSERT_TRUE(base::test::RunUntil([&]{return window_->configuration_saved();}));
-  shell->OpenProfiles("work-profile");auto* profile=shell->profile_name_input();ASSERT_TRUE(profile);EXPECT_TRUE(profile->rust_editor());profile->SetText(u"Profil 日本語");auto* rename=FindButton(shell->profile_panel_for_testing(),u"Zapisz nazwę profilu");ASSERT_TRUE(rename&&rename->GetEnabled());ClickControl(rename);ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));EXPECT_EQ("Profil 日本語",window_->profiles()[0].name);
+  shell->OpenProfiles("work-profile");auto* profile=shell->profile_rename_input();ASSERT_TRUE(profile);EXPECT_TRUE(profile->rust_editor());profile->SetText(u"Profil 日本語");auto* rename=FindButton(shell->profile_panel_for_testing(),u"Zapisz");ASSERT_TRUE(rename&&rename->GetEnabled());ClickControl(rename);ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));EXPECT_EQ("Profil 日本語",window_->profiles()[0].name);
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NameEditorsAdmissionHideResetAndClipboard) {

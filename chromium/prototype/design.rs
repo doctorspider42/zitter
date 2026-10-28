@@ -183,15 +183,18 @@ impl WorkspaceColor {
     pub const AMBER: Self = Self { hue: 5, saturation: 4, tone: 2 };
     pub const ROSE: Self = Self { hue: 0, saturation: 4, tone: 2 };
     pub const MINT: Self = Self { hue: 11, saturation: 4, tone: 2 };
+    pub const GREEN: Self = Self { hue: 9, saturation: 4, tone: 2 };
     pub const GRAPHITE: Self = Self { hue: 19, saturation: 0, tone: 2 };
-    /// The design system's six named colors, in picker order.
-    pub const PRESETS: [(&'static str, Self); 6] = [
+    /// The named colors the pickers offer, in picker order.
+    pub const PRESETS: [(&'static str, Self); 8] = [
         ("violet", Self::VIOLET),
         ("coral", Self::CORAL),
         ("sky", Self::SKY),
         ("amber", Self::AMBER),
         ("rose", Self::ROSE),
         ("mint", Self::MINT),
+        ("green", Self::GREEN),
+        ("graphite", Self::GRAPHITE),
     ];
 
     /// Grid coordinates; `None` when one is out of range.
