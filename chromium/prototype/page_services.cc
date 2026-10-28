@@ -5,6 +5,7 @@
 #include "build/build_config.h"
 #if BUILDFLAG(IS_MAC)
 #include "chromium/prototype/workspace_keyboard_mac.h"
+#include "chromium/prototype/sidebar_scene.rs.h"
 #endif
 #include "ui/views/layout/layout_provider.h"
 
@@ -156,6 +157,17 @@ bool PageServices::OfferPassword(std::unique_ptr<FormManager> form, bool update)
   std::unique_ptr<views::DialogDelegate> dialog;
   if(password_scene_){
     SetSidebarPanelLayout(body.get(),true,gfx::Insets(),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_UNRELATED_CONTROL_VERTICAL));
+    // The scene path takes its prompt copy from Rust.
+#if BUILDFLAG(IS_MAC)
+    const auto copy=sidebar::password_prompt_copy(update,base::UTF16ToUTF8(origin),base::UTF16ToUTF8(username),base::UTF16ToUTF8(BrowsingProfileName(profile)));
+    for(const auto& line:copy.lines)
+      body->AddChildView(password_scene_->MakeText(base::UTF8ToUTF16(std::string(line)),true,false,0));
+    dialog=CreateSceneModalDialog(std::move(body),false);
+    dialog->SetTitle(base::UTF8ToUTF16(std::string(copy.title)));
+    dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk)|static_cast<int>(ui::mojom::DialogButton::kCancel));
+    dialog->SetButtonLabel(ui::mojom::DialogButton::kOk,base::UTF8ToUTF16(std::string(copy.accept)));
+    dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel,base::UTF8ToUTF16(std::string(copy.cancel)));
+#else
     for(auto text:{origin,u"Użytkownik: "+username,u"Profil: "+BrowsingProfileName(profile),std::u16string(u"Hasło będzie chronione w magazynie tego profilu.")})
       body->AddChildView(password_scene_->MakeText(std::move(text),true,false,0));
     dialog=CreateSceneModalDialog(std::move(body),false);
@@ -163,6 +175,7 @@ bool PageServices::OfferPassword(std::unique_ptr<FormManager> form, bool update)
     dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk)|static_cast<int>(ui::mojom::DialogButton::kCancel));
     dialog->SetButtonLabel(ui::mojom::DialogButton::kOk,update?u"Zaktualizuj":u"Zapisz hasło");
     dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel,u"Nie teraz");
+#endif
     dialog->SetAcceptCallback(base::BindOnce([](std::weak_ptr<PendingPassword> weak){if(auto value=weak.lock())value->Save();},pending));
     dialog->SetCancelCallback(base::BindOnce([](std::weak_ptr<PendingPassword> weak){if(auto value=weak.lock())value->Decline();},pending));
     dialog->SetCloseCallback(base::BindOnce([](std::weak_ptr<PendingPassword> weak){if(auto value=weak.lock())value->Ignore();},pending));

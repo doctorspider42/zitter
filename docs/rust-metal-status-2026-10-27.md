@@ -147,6 +147,10 @@ zaliczone w obu trybach.
 snapshotów, zamkniętych kart i uśpionych przestrzeni. Testy Rust 502; podzbiór UI
 33 Metal / 26 Views zaliczony.
 
+**Pochodzenie wyników palety i monit hasła w Ruście:** prefiksy szczegółów wyników
+(karta, przypięta, przestrzeń, historia) oraz tytuł/wiersze/przyciski monitu zapisu
+hasła w ścieżce sceny. Testy Rust 503; podzbiór UI 33 Metal / 30 Views zaliczony.
+
 **Pełny checkpoint UI 2026-10-28 (`90c7e8b`):** 274/274 Metal i 225/225 Views.
 [Raport](benchmarks/rust-ui-checkpoint-2026-10-28.json).
 

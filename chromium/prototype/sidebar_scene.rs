@@ -29,6 +29,8 @@ mod ffi {
     enum ToolsStatus { HistoryReading, HistorySearching, WriteFailed }
     enum PreferenceOutcome { Text, Site, SiteRemove, Value, General }
     enum PreferenceControlKind { Text, Toggle }
+    enum PaletteResultKind { Tab, Pin, Workspace, History }
+    struct PasswordPromptCopy { title: String, lines: Vec<String>, accept: String, cancel: String }
     #[derive(Debug)]
     enum OperationStatusEvent { Checking, Cancelled, Done, StopCapture }
     struct TimeMachineFacts { name: String, url: String, time: String, tabs: i64, automatic: bool, other_profile: bool }
@@ -320,6 +322,8 @@ mod ffi {
         fn preference_control_view(kind: PreferenceControlKind, present: bool, editable: bool) -> PreferenceControlView;
         fn preferences_profile_banner(profile: &str) -> String;
         fn profile_status_copy(event: ProfileStatusEvent) -> String;
+        fn palette_result_detail(kind: PaletteResultKind, label: &str) -> String;
+        fn password_prompt_copy(update: bool, origin: &str, username: &str, profile: &str) -> PasswordPromptCopy;
         fn operation_status_copy(event: OperationStatusEvent) -> String;
         fn time_machine_entry(facts: &TimeMachineFacts) -> TimeMachineCopy;
         fn time_machine_sleeping_detail() -> String;
@@ -1192,6 +1196,14 @@ fn time_machine_entry(f:&ffi::TimeMachineFacts)->ffi::TimeMachineCopy{
     ffi::TimeMachineCopy{title,detail}
 }
 fn time_machine_sleeping_detail()->String{"Uśpiona · kliknij przestrzeń, aby wznowić".into()}
+// Search result provenance shown under each palette result.
+fn palette_result_detail(kind:ffi::PaletteResultKind,label:&str)->String{
+    use ffi::PaletteResultKind as K;
+    match kind{K::Tab=>format!("Karta · {label}"),K::Pin=>format!("Przypięta · {label}"),K::Workspace=>"Przełącz workspace".into(),K::History=>format!("Historia · {label}"),_=>String::new()}
+}
+fn password_prompt_copy(update:bool,origin:&str,username:&str,profile:&str)->ffi::PasswordPromptCopy{
+    ffi::PasswordPromptCopy{title:if update{"Zaktualizować hasło?"}else{"Zapisać hasło?"}.into(),lines:vec![origin.into(),format!("Użytkownik: {username}"),format!("Profil: {profile}"),"Hasło będzie chronione w magazynie tego profilu.".into()],accept:if update{"Zaktualizuj"}else{"Zapisz hasło"}.into(),cancel:"Nie teraz".into()}
+}
 // Browsing-data removal: confirmation copy and outcome wording/tone.
 const CLEAR_PERIODS:[&str;4]=["Ostatnia godzina","Ostatnie 24 godziny","Ostatnie 7 dni","Cały okres"];
 fn clear_data_status(event:ffi::ClearDataEvent,profile:&str)->ffi::PreferenceStatus{
@@ -3563,6 +3575,11 @@ mod tests {
         let c=time_machine_entry(&facts("","https://a.test/",-1));assert_eq!((c.title.as_str(),c.detail.as_str()),("https://a.test/","12:00 · https://a.test/"));
         let mut f=facts("","",-1);f.automatic=true;f.other_profile=true;f.time.clear();let c=time_machine_entry(&f);assert_eq!((c.title.as_str(),c.detail.as_str()),("Nowa karta"," · automatyczny · inny profil"));
         assert!(time_machine_sleeping_detail().starts_with("Uśpiona"));
+    }
+    #[test] fn palette_result_details_and_password_prompt_copy() {
+        use ffi::PaletteResultKind as K;assert_eq!(palette_result_detail(K::Tab,"Praca"),"Karta · Praca");assert_eq!(palette_result_detail(K::Pin,"Dom / Projekt"),"Przypięta · Dom / Projekt");assert_eq!(palette_result_detail(K::Workspace,"x"),"Przełącz workspace");assert_eq!(palette_result_detail(K::History,"a.test"),"Historia · a.test");assert!(palette_result_detail(K{repr:9},"x").is_empty());
+        let c=password_prompt_copy(true,"https://a.test","jan","Praca");assert_eq!((c.title.as_str(),c.accept.as_str(),c.cancel.as_str()),("Zaktualizować hasło?","Zaktualizuj","Nie teraz"));assert_eq!(c.lines,vec!["https://a.test","Użytkownik: jan","Profil: Praca","Hasło będzie chronione w magazynie tego profilu."]);
+        let c=password_prompt_copy(false,"o","","p");assert_eq!((c.title.as_str(),c.accept.as_str()),("Zapisać hasło?","Zapisz hasło"));assert_eq!(c.lines[1],"Użytkownik: ");
     }
     #[test] fn profile_status_events_have_distinct_copy_and_unknown_is_empty() {
         use ffi::ProfileStatusEvent as E;let all=[E::DuplicateName,E::Creating,E::CreateFailed,E::Created,E::CreateNotSaved,E::Renamed,E::RenameFailed,E::Deleting,E::Deleted,E::DeleteNotSaved,E::LoadFailed];let copies=all.iter().map(|e|profile_status_copy(*e)).collect::<std::collections::BTreeSet<_>>();assert_eq!(copies.len(),all.len());assert!(copies.iter().all(|c|!c.is_empty()));

@@ -57,6 +57,10 @@
 #include "components/history/core/browser/history_service.h"
 #include "components/history/core/browser/history_types.h"
 #include "build/build_config.h"
+#if BUILDFLAG(IS_MAC)
+#include "base/command_line.h"
+#include "chromium/prototype/sidebar_scene.rs.h"
+#endif
 #include "chrome/browser/profiles/profile.h"
 #include "components/input/native_web_keyboard_event.h"
 #include "content/public/browser/invalidate_type.h"
@@ -95,6 +99,18 @@
 #endif
 
 namespace zitter::prototype {
+namespace {
+// Palette result provenance; kind is sidebar::PaletteResultKind. Rust owns the
+// wording in Rust mode, Views keeps the native text.
+std::u16string ResultDetail(int kind, const std::u16string& label, std::u16string native) {
+#if BUILDFLAG(IS_MAC)
+  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-sidebar") == "rust-metal")
+    return base::UTF8ToUTF16(std::string(sidebar::palette_result_detail(sidebar::PaletteResultKind{static_cast<uint8_t>(kind)}, base::UTF16ToUTF8(label))));
+#endif
+  return native;
+}
+}  // namespace
+
 namespace {
 
 
@@ -988,7 +1004,7 @@ void WorkspaceWindow::SearchPalette(std::u16string query) {
       if (title.empty()) title = base::UTF8ToUTF16(url.host());
       if (!matches(title + u" " + label, url)) continue;
       if (needle.empty() && host.workspace_id == active_id() && i == host.active_tab) { open_urls.insert(url.spec()); continue; }
-      results.push_back({title, u"Karta · " + label, url, i, host.workspace_id});
+      results.push_back({title, ResultDetail(0, label, u"Karta · " + label), url, i, host.workspace_id});
       open_urls.insert(url.spec());
     }
   }
@@ -1008,11 +1024,11 @@ void WorkspaceWindow::SearchPalette(std::u16string query) {
         parent = found->second->parent_id;
       }
       if (!matches(base::UTF8ToUTF16(pin.title) + u" " + label + path, pin.url)) continue;
-      results.push_back({base::UTF8ToUTF16(pin.title), u"Przypięta · " + label + path, pin.url, std::nullopt, candidate.id, pin.id});
+      results.push_back({base::UTF8ToUTF16(pin.title), ResultDetail(1, label + path, u"Przypięta · " + label + path), pin.url, std::nullopt, candidate.id, pin.id});
       open_urls.insert(pin.url.spec());
     }
     if (candidate.id != active_id() && results.size() < 16 && matches(label, GURL()))
-      results.push_back({label, u"Przełącz workspace", GURL(), std::nullopt, candidate.id, "", true});
+      results.push_back({label, ResultDetail(2, label, u"Przełącz workspace"), GURL(), std::nullopt, candidate.id, "", true});
   }
   shell_->SetSearchResults(query, profile_id, results);
   auto* service = HistoryServiceFactory::GetForProfile(ProfileFor(profile_id), ServiceAccessType::EXPLICIT_ACCESS);
@@ -1029,7 +1045,7 @@ void WorkspaceWindow::SearchPalette(std::u16string query) {
         for (const auto& row : history) {
           if (!row.url().SchemeIsHTTPOrHTTPS() || !seen.insert(row.url().spec()).second) continue;
           results.push_back({row.title().empty() ? base::UTF8ToUTF16(row.url().host()) : row.title(),
-              u"Historia · " + base::UTF8ToUTF16(row.url().host()), row.url(), std::nullopt});
+              ResultDetail(3, base::UTF8ToUTF16(row.url().host()), u"Historia · " + base::UTF8ToUTF16(row.url().host())), row.url(), std::nullopt});
         }
         window->shell_->SetSearchResults(std::move(query), std::move(profile_id), std::move(results));
       }, weak_factory_.GetWeakPtr(), generation, query, profile_id, std::move(results), std::move(open_urls)), &history_tasks_);
