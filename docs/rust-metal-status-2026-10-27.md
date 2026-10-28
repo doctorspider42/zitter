@@ -58,12 +58,12 @@ ramki dialogów, fokus/AX/IME, dostarczanie zdarzeń oraz usługi przeglądarki.
 Wszystkie pozostałe punkty wymagają użytkownika lub jego decyzji: akceptacja ręczna,
 notaryzacja (poświadczenia Apple) i ewentualne wsparcie trybu kompozytora.
 
-0. **Automatyczna akceptacja skali i RTL (wykonana):** skala 1× — 276/276 Metal; RTL —
-   259/276 po dwóch poprawkach RTL (kierunek przewijania poziomego `RustPanelViewport`,
-   projekcja sceny kropek stopki). Wszystkie 7 pozostałych niepowodzeń profili występuje
-   też w Views RTL, a sprawdzone przypadki tylko-Metal zakładają geometrię LTR
-   (kontrole koloru fallbacku najpewniej przez lustrzane `PaintViewToBitmap` —
-   niezweryfikowane). Wygląd RTL nadal wymaga oceny człowieka. [Raport](benchmarks/rust-ui-rtl-scale-acceptance-2026-10-28.json).
+0. **Automatyczna akceptacja skali i RTL (wykonana).** Skala 1× — 276/276 Metal.
+   RTL: znalezione i naprawione 4 realne błędy w trybie Rust (kierunek przewijania
+   poziomego, projekcja sceny kropek stopki, lustrzenie elementów scen, przeciąganie
+   poziomego suwaka); testy RTL są teraz niezależne od kierunku. Pełne macierze na
+   `4bbee47`: Metal LTR 276/276, Metal RTL 276/276, Views LTR 227/227, Views RTL
+   227/227. [Raport](benchmarks/rust-ui-rtl-scale-acceptance-2026-10-28.json).
 1. **Akceptacja ręczna (wymaga użytkownika):** IME i okna kandydatów, bidi/RTL,
    VoiceOver, trackpad/gesty, skala Retina, motywy, utrata drawable/GPU, fallback.
 2. **Porównanie wydajności — wykonane, otwarte optymalizacje.** Test

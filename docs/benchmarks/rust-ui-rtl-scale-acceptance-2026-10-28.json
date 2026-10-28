@@ -52,10 +52,29 @@
     "--force-device-scale-factor=1: the full Metal matrix passes (276/276), covering non-Retina scale.",
     "--force-ui-direction=rtl: 258/276 Metal. 7 of the 8 ZitterProfilesBrowserTest failures also fail in Views RTL, so they are LTR assumptions in tests or shared behaviour, not Rust regressions.",
     "Inspected Metal-only failures assume LTR geometry: synthetic scroll events at LTR points fall outside mirrored views; the address canvas/button origin check ignores the mirrored scrollbar gutter; grip drag expectations use LTR direction.",
-    "Remaining Metal RTL failures: 7 ZitterProfilesBrowserTest cases also fail in Views RTL; inspected Metal-only cases use LTR geometry (scroll/drag points, thumb direction, canvas-vs-button origin with mirrored gutter). Native-ink fallback checks move a view to logical (0,0) and use PaintViewToBitmap, which in RTL places it at the mirrored right edge outside the bitmap; likely a test artifact (same pattern fails for the scrollbar), not verified; RTL visuals need a human look."
+    "Remaining Metal RTL failures: 7 ZitterProfilesBrowserTest cases also fail in Views RTL; inspected Metal-only cases use LTR geometry (scroll/drag points, thumb direction, canvas-vs-button origin with mirrored gutter). Native-ink fallback checks move a view to logical (0,0) and use PaintViewToBitmap, which in RTL places it at the mirrored right edge outside the bitmap; likely a test artifact (same pattern fails for the scrollbar), not verified; RTL visuals need a human look.",
+    "Final: all four matrices pass (Metal/Views x LTR/RTL); RTL tests are now direction-aware. RTL visuals still need a human look."
   ],
   "fixes": [
     "RustPanelViewport translated horizontal contents by -offset physically; in RTL mirrored contents must move by +offset (footer workspace dots scrolled the wrong way).",
-    "The Metal footer-dot scene projected with the logical offset over physical (mirrored) node bounds; RTL now projects with maximum-offset and maps corrections back."
-  ]
+    "The Metal footer-dot scene projected with the logical offset over physical (mirrored) node bounds; RTL now projects with maximum-offset and maps corrections back.",
+    "Rust scene containers built items from logical bounds; RTL now uses mirrored bounds (appearance row, preference buttons, text actions, checkboxes, split parts).",
+    "Horizontal Rust scrollbar thumb drags mirror the event x in RTL."
+  ],
+  "final_runs": {
+    "metal-ltr": {
+      "SUCCESS": 276
+    },
+    "metal-rtl": {
+      "SUCCESS": 276
+    },
+    "views-ltr": {
+      "SUCCESS": 227
+    },
+    "views-rtl": {
+      "SUCCESS": 227
+    }
+  },
+  "final_commit": "4bbee47",
+  "final_logs": "build/ui-checkpoint-20261028T060828Z"
 }
