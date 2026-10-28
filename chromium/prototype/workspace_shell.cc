@@ -4723,7 +4723,7 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
     }
   }
 
-  std::map<std::array<uint64_t,2>,std::unique_ptr<views::View>> retained_tabs;std::map<std::string,std::unique_ptr<views::View>> retained_pins;std::optional<std::string> retained_pin_focus;std::optional<std::array<uint64_t,2>> retained_focus;uint32_t retained_focus_part=0;
+  std::map<std::array<uint64_t,2>,std::unique_ptr<views::View>> retained_tabs;std::map<std::string,std::unique_ptr<views::View>> retained_pins,retained_holders;std::optional<std::string> retained_pin_focus;std::optional<std::array<uint64_t,2>> retained_focus;uint32_t retained_focus_part=0;
   const bool retain=!same_structure&&cache.node_graph;const double retained_offset=tab_scroll_->offset();
   if(retain){
     cache.tab_buttons.clear();if(rebuild_pins)cache.pin_buttons.clear();const auto* focused=cache.root->GetFocusManager()?cache.root->GetFocusManager()->GetFocusedView():nullptr;
@@ -4731,7 +4731,9 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
     auto extract=[&](auto&& self,views::View* view)->void{
       if(auto* row=views::AsViewClass<RustRowView>(view)){const auto binding=row->TabBinding();if(binding.valid&&row->BelongsTo(*cache.node_graph)&&row->parent()){
         const std::array<uint64_t,2> identity{binding.high,binding.low};if(const auto part=row->RetainedFocusPart(focused)){retained_focus=identity;retained_focus_part=part;}row->CancelInput();auto owned=row->parent()->RemoveChildViewT(row);CHECK(retained_tabs.emplace(identity,std::move(owned)).second);return;
-      }if(rebuild_pins){const auto pin=row->PinBinding();if(pin.valid&&row->BelongsTo(*cache.node_graph)&&row->parent()){if(row->RetainedFocusPart(focused))retained_pin_focus=std::string(pin.key);row->CancelInput();auto owned=row->parent()->RemoveChildViewT(row);CHECK(retained_pins.emplace(std::string(pin.key),std::move(owned)).second);return;}}}std::vector<views::View*> children;for(const auto& child:view->children())children.push_back(child.get());for(auto* child:children)self(self,child);
+      }if(rebuild_pins){const auto pin=row->PinBinding();if(pin.valid&&row->BelongsTo(*cache.node_graph)&&row->parent()){if(row->RetainedFocusPart(focused))retained_pin_focus=std::string(pin.key);row->CancelInput();auto* holder=row->parent();auto owned=holder->RemoveChildViewT(row);CHECK(retained_pins.emplace(std::string(pin.key),std::move(owned)).second);
+        // Keep the row's indent holder too, so the whole parent path is retained.
+        if(holder->children().empty()&&holder->parent()&&holder!=cache.pins_root.get()&&!views::AsViewClass<ScenePinGroup>(holder))retained_holders.emplace(std::string(pin.key),holder->parent()->RemoveChildViewT(holder));return;}}}std::vector<views::View*> children;for(const auto& child:view->children())children.push_back(child.get());for(auto* child:children)self(self,child);
     };extract(extract,cache.root);
   }
 #endif
@@ -4758,7 +4760,7 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
       Label(contents.get(), u"PRZYPIĘTE", kMuted, Font(-2));
       AppendPinnedItems(contents.get(),state_.pins,cache,state_.workspace_id
 #if BUILDFLAG(IS_MAC)
-          ,&retained_pins,&retained_groups
+          ,&retained_pins,&retained_groups,&retained_holders
 #endif
       );
       Spacer(contents.get(), 8);
@@ -5637,7 +5639,7 @@ void WorkspaceShell::OnMouseEvent(ui::MouseEvent* input) {
 
 void WorkspaceShell::AppendPinnedItems(views::View* root, const std::vector<PinnedItem>& pins,
     TabListCache& cache,const std::string& workspace,std::map<std::string,std::unique_ptr<views::View>>* retained,
-    std::map<uint64_t,std::unique_ptr<views::View>>* retained_groups) {
+    std::map<uint64_t,std::unique_ptr<views::View>>* retained_groups,std::map<std::string,std::unique_ptr<views::View>>* retained_holders) {
   struct Entry {size_t index;uint64_t parent,group;int depth;bool collapsed,visible;};std::vector<Entry> plan;
 #if BUILDFLAG(IS_MAC)
   if(cache.node_graph){const auto tree=cache.node_graph->graph->pin_tree();for(const auto& entry:tree.entries){CHECK_LT(entry.index,pins.size());CHECK_EQ(pins[entry.index].id,std::string(entry.key));plan.push_back({entry.index,entry.parent==tree.root?0:entry.parent,entry.group,entry.depth,entry.collapsed,entry.visible});}}else
@@ -5658,7 +5660,9 @@ void WorkspaceShell::AppendPinnedItems(views::View* root, const std::vector<Pinn
       },weak_factory_.GetWeakPtr(),workspace,pin->id);
       if(!cache.node_graph){spec.monogram=base::i18n::ToUpper(spec.title.substr(0,1));spec.monogram_color=kMonogramColors[base::FastHash(pin->url.host())%kMonogramColors.size()];}
     }
-    auto* row = parent->AddChildView(std::make_unique<views::View>());
+    std::unique_ptr<views::View> holder;
+    if(retained_holders){auto found=retained_holders->find(pin->id);if(found!=retained_holders->end()){holder=std::move(found->second);retained_holders->erase(found);}}
+    auto* row = parent->AddChildView(holder?std::move(holder):std::make_unique<views::View>());
     row->SetLayoutManager(CreateSidebarPinnedRowLayout());
     row->SetBorder(views::CreateEmptyBorder(gfx::Insets::TLBR(0, SidebarFolderIndent(entry.depth), 0, 0)));
     std::unique_ptr<views::View> adapter;[[maybe_unused]] bool fresh=true;

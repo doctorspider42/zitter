@@ -4135,9 +4135,10 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PinTreeTopologyChangeRetainsFo
   ASSERT_TRUE(window_->Select("work"));auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));if(!shell->workspace_input()->rust_editor())return;shell->SetWorkspaceAnimations(false);
   ASSERT_TRUE(window_->CreatePinnedFolder("work","","Retained group"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));shell->SetPinned(true);shell->ShowSidebar();
   auto* folder=FindButton(shell->sidebar_view(),u"▾ Retained group");ASSERT_TRUE(folder);auto* holder=folder->parent();auto* container=holder->parent();const auto index=container->GetIndexOf(holder);ASSERT_TRUE(index);ASSERT_LT(*index+1,container->children().size());
-  auto* group=container->children()[*index+1].get();const auto group_id=shell->sidebar_node_id_for_testing(group);ASSERT_NE(0u,group_id);views::ViewTracker group_alive(group),container_alive(container);
+  auto* group=container->children()[*index+1].get();const auto group_id=shell->sidebar_node_id_for_testing(group);ASSERT_NE(0u,group_id);views::ViewTracker group_alive(group),container_alive(container),holder_alive(holder);
   ASSERT_TRUE(window_->CreatePinnedFolder("work","","Second group"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));shell->sidebar_widget()->LayoutRootViewIfNecessary();
   ASSERT_TRUE(group_alive.view());ASSERT_TRUE(container_alive.view());EXPECT_EQ(group_id,shell->sidebar_node_id_for_testing(group));
+  ASSERT_TRUE(holder_alive.view());EXPECT_EQ(holder,FindButton(shell->sidebar_view(),u"▾ Retained group")->parent());
   auto* again=FindButton(shell->sidebar_view(),u"▾ Retained group");ASSERT_TRUE(again);EXPECT_EQ(container,again->parent()->parent());const auto next=container->GetIndexOf(again->parent());ASSERT_TRUE(next);ASSERT_LT(*next+1,container->children().size());EXPECT_EQ(group,container->children()[*next+1].get());
   EXPECT_TRUE(FindButton(shell->sidebar_view(),u"▾ Second group"));
 }

@@ -158,7 +158,7 @@ Checkbox/Toggle/ProgressBar) powstają już tylko w gałęziach Views. Pełna ma
 zmianie: 274/274 Metal, 225/225 Views.
 
 **Zachowanie grup folderów przy zmianie topologii:** przy przebudowie drzewa przypięć
-w trybie Rust kontener listy i `ScenePinGroup` są zachowywane według rustowego ID grupy
+w trybie Rust kontener listy, kontenery wcięć wierszy i `ScenePinGroup` są zachowywane (według klucza przypięcia i rustowego ID grupy)
 (nowy test `PinTreeTopologyChangeRetainsFolderGroupsAndListContainer`); podzbiór UI
 sidebar/split/pin/folder 92 Metal / 43 Views zaliczony.
 
