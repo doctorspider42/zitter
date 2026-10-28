@@ -26,6 +26,7 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/hash/hash.h"
+#include "base/no_destructor.h"
 #include "base/i18n/break_iterator.h"
 #include "base/i18n/case_conversion.h"
 #include "base/i18n/rtl.h"
@@ -197,7 +198,8 @@ class SceneParentNodes final {
 
 namespace {
 DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kFolderNameField);
-// Light "frame + card" palette from the Zitter design canvas.
+// Color roles. The values only name a role: Tone() resolves each one from the
+// design system palette (design.rs) for the view's scheme and workspace color.
 constexpr SkColor kInk = 0xFF1B1A22;
 constexpr SkColor kSubtle = 0xFF4A4757;
 constexpr SkColor kMuted = 0xFF5E5B6B;
@@ -214,8 +216,10 @@ constexpr int kMaxSidebarWidth = 480;
 int SidebarColumn(int preferred, int window_width) {
   return std::min(preferred, std::max(120, window_width / 2));
 }
-constexpr std::array<SkColor, 4> kWorkspaceColors = {
-    0xFF9E91DCu, 0xFF84B6A4u, 0xFFD6A07Bu, 0xFF7FAACBu};
+// The design system's named workspace colors (WorkspaceColor::PRESETS).
+constexpr size_t kWorkspacePresetCount = 6;
+SkColor WorkspacePreset(size_t index) { return sidebar::appearance_presets(false)[index].color; }
+constexpr SkColor kDefaultWorkspaceColor = 0xFF928FD4;  // Violet.
 constexpr std::array<const char16_t*, 6> kWorkspaceEmojis = {
     u"💼", u"🏠", u"🚀", u"🎨", u"📚", u"🎮"};
 constexpr int kGap = 8;
@@ -231,31 +235,56 @@ constexpr std::array<SkColor, 7> kMonogramColors = {
 bool IsDark(const views::View* view) {
   return view && view->GetWidget() && view->GetWidget()->GetColorMode() == ui::ColorProviderKey::ColorMode::kDark;
 }
-SkColor Tone(const views::View* view, SkColor light) {
-  if (!IsDark(view)) return light;
-  switch (light) {
-    case kInk: return 0xFFF0EEF5;
-    case kSubtle: return 0xFFD0CCD9;
-    case kMuted: return 0xFFAAA5B8;
-    case kDisabled: return 0xFF686373;
-    case kCard: return 0xFF24212D;
-    case kAccentWash: return 0xFF393249;
-    case kChip: return 0xFF302C3B;
-    case kFrameBase: return 0xFF19171F;
-    case kError: return 0xFFFFB4AB;
-    default: return light;
+// The workspace color each top-level window is painted with. Keys are only
+// compared, never dereferenced; windows the shell has not registered (bubbles,
+// menus) use the color painted last.
+std::map<const void*, SkColor>& WindowWorkspaceColors() {
+  static base::NoDestructor<std::map<const void*, SkColor>> colors;
+  return *colors;
+}
+SkColor& LastWorkspaceColor() {
+  static SkColor color = kDefaultWorkspaceColor;
+  return color;
+}
+const void* TopLevel(const views::View* view) {
+  const auto* widget = view ? view->GetWidget() : nullptr;
+  return widget ? widget->GetTopLevelWidget() : nullptr;
+}
+SkColor WindowWorkspaceColor(const views::View* view) {
+  const auto& colors = WindowWorkspaceColors();
+  const auto it = colors.find(TopLevel(view));
+  return it == colors.end() ? LastWorkspaceColor() : it->second;
+}
+// The design system palette for a view: Noc or Papier from its color mode,
+// tinted by its window's workspace color (or `workspace`, when given).
+sidebar::DesignPalette Palette(const views::View* view, std::optional<SkColor> workspace = std::nullopt) {
+  return sidebar::design_palette(IsDark(view), workspace.value_or(WindowWorkspaceColor(view)));
+}
+SkColor Tone(const views::View* view, SkColor role) {
+  const auto p = Palette(view);
+  switch (role) {
+    case kInk: return p.ink;
+    case kSubtle:
+    case kMuted: return p.ink_muted;
+    case kDisabled: return p.ink_faint;
+    case kCard: return p.bg_raised;
+    case kAccentWash: return p.accent_soft;
+    case kChip: return p.bg_hover;
+    case kFrameBase: return p.bg_base;
+    case kError: return p.danger;
+    default: return role;
   }
 }
-SkColor Hairline(const views::View* view) { return SkColorSetA(Tone(view, kInk), IsDark(view) ? 0x30 : 0x17); }
-SkColor HoverWash(const views::View* view) { return SkColorSetA(Tone(view, kInk), 0x0D); }
+SkColor Hairline(const views::View* view) { return Palette(view).line; }
+SkColor HoverWash(const views::View* view) { return Palette(view).bg_hover; }
 SkColor Mix(SkColor a, SkColor b, int percent_a) {
   auto channel = [&](U8CPU x, U8CPU y) { return (x * percent_a + y * (100 - percent_a)) / 100; };
   return SkColorSetRGB(channel(SkColorGetR(a), SkColorGetR(b)),
                        channel(SkColorGetG(a), SkColorGetG(b)),
                        channel(SkColorGetB(a), SkColorGetB(b)));
 }
-// The workspace accent tints the whole window frame, Arc-style.
-SkColor FrameTint(SkColor accent, const views::View* view) { return Mix(accent, Tone(view, kFrameBase), IsDark(view) ? 10 : 14); }
+// The workspace color tints the whole window; the frame and sidebar share bg_base.
+SkColor FrameTint(SkColor workspace, const views::View* view) { return Palette(view, workspace).bg_base; }
 
 std::string Hex(SkColor color) { return base::StringPrintf("#%06X", color & 0xFFFFFF); }
 std::optional<SkColor> ParseColor(std::string_view text) {
@@ -265,7 +294,7 @@ std::optional<SkColor> ParseColor(std::string_view text) {
   return value | 0xFF000000;
 }
 struct Appearance {
-  std::map<std::string, SkColor> colors = {{"work", 0xFF9E91DC}, {"personal", 0xFF84B6A4}};
+  std::map<std::string, SkColor> colors = {{"work", kDefaultWorkspaceColor}, {"personal", 0xFF55AC89}};  // Violet, mint.
   // Tabs live in a visible sidebar by default; auto-hide is opt-in.
   bool pinned = true;
   ThemeMode theme = ThemeMode::kSystem;
@@ -954,7 +983,7 @@ class SceneToggle final : public RustActionView {
   void RefreshAX(){GetViewAccessibility().SetCheckedState(On()?ax::mojom::CheckedState::kTrue:ax::mojom::CheckedState::kFalse);}
   rust::Vec<sidebar::Primitive> Scene() const{
     const auto* colors=GetColorProvider();const auto input=Snapshot();const auto model=NodeControl().node_toggle_view(Now());const bool enabled=input.enabled;sidebar::ToggleStyle s{};s.width=width();s.height=height();s.checked=model.checked;s.pressed=input.visual==sidebar::RowVisual::Pressed;s.focused=input.focused;s.rtl=base::i18n::IsRTL();s.progress=model.progress;s.hover=model.hover;
-    s.track_on=SkColorSetRGB(110,86,207);s.track_off=colors->GetColor(enabled?ui::kColorToggleButtonTrackOff:ui::kColorToggleButtonTrackOffDisabled);s.thumb_on=colors->GetColor(enabled?ui::kColorToggleButtonThumbOn:ui::kColorToggleButtonThumbOnDisabled);s.thumb_off=colors->GetColor(enabled?ui::kColorToggleButtonThumbOff:ui::kColorToggleButtonThumbOffDisabled);s.thumb_hover=colors->GetColor(ui::kColorToggleButtonThumbOnHover);s.halo=colors->GetColor(s.pressed?ui::kColorToggleButtonPressed:ui::kColorToggleButtonHover);s.focus=colors->GetColor(ui::kColorFocusableBorderFocused);s.border=colors->GetColor(ui::kColorToggleButtonShadow);s.clip={0,0,float(width()),float(height())};return sidebar::toggle_scene(s);
+    const auto palette=Palette(this);s.track_on=palette.accent;s.track_off=colors->GetColor(enabled?ui::kColorToggleButtonTrackOff:ui::kColorToggleButtonTrackOffDisabled);s.thumb_on=enabled?palette.on_accent:colors->GetColor(ui::kColorToggleButtonThumbOnDisabled);s.thumb_off=colors->GetColor(enabled?ui::kColorToggleButtonThumbOff:ui::kColorToggleButtonThumbOffDisabled);s.thumb_hover=colors->GetColor(ui::kColorToggleButtonThumbOnHover);s.halo=colors->GetColor(s.pressed?ui::kColorToggleButtonPressed:ui::kColorToggleButtonHover);s.focus=colors->GetColor(ui::kColorFocusableBorderFocused);s.border=colors->GetColor(ui::kColorToggleButtonShadow);s.clip={0,0,float(width()),float(height())};return sidebar::toggle_scene(s);
   }
   void Schedule(){SyncViewportVisibility();if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneToggle::UpdateMetal,weak_factory_.GetWeakPtr()));}
   void Tick(){if(!metal_visible())SchedulePaint();Schedule();}
@@ -2062,7 +2091,7 @@ class EdgeView final : public views::View {
   void OnPaint(gfx::Canvas* canvas) override {
     FillRound(canvas, gfx::Rect(2, std::max(0, height() / 2 - 18), 3, 36), 2, color);
   }
-  SkColor color = 0xFF9E91DC;
+  SkColor color = kDefaultWorkspaceColor;
  private:
   base::RepeatingClosure show_;
 };
@@ -2837,8 +2866,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     return appearance->AddChildView(std::make_unique<AppearanceRow>(emoji));
   };
   auto* color_row=appearance_row(false);views::BoxLayout* color_layout=nullptr;
-  std::vector<std::pair<SkColor,std::u16string>> colors;for(const auto c:kWorkspaceColors)colors.emplace_back(c,base::UTF8ToUTF16(Hex(c)));
-  colors.clear();for(const auto& p:sidebar::appearance_presets(false))colors.emplace_back(p.color,base::UTF8ToUTF16(std::string(p.label)));
+  std::vector<std::pair<SkColor,std::u16string>> colors;for(const auto& p:sidebar::appearance_presets(false))colors.emplace_back(p.color,base::UTF8ToUTF16(std::string(p.label)));
   for(size_t preset=0;preset<colors.size();++preset){
     const auto& [color,label]=colors[preset];views::Button::PressedCallback callback;
     auto* swatch=AppearancePicker(color_row,std::move(callback),label,GlyphButton::Glyph::kSwatch);
@@ -4697,8 +4725,8 @@ void WorkspaceShell::BuildWorkspaceMenu(std::string id) {
   workspace_menu_ = std::make_unique<ui::SimpleMenuModel>(this);
   workspace_menu_->AddSubMenu(kSetProfile, u"Profil przeglądania", profile_menu_.get());
   color_menu_ = std::make_unique<ui::SimpleMenuModel>(this);
-  const std::array<const char16_t*, 4> color_names = {u"Lawendowy", u"Szałwiowy", u"Brzoskwiniowy", u"Niebieski"};
-  for (size_t i = 0; i < kWorkspaceColors.size(); ++i)
+  const std::array<const char16_t*, kWorkspacePresetCount> color_names = {u"Fiolet", u"Koral", u"Niebo", u"Bursztyn", u"Róż", u"Mięta"};
+  for (size_t i = 0; i < kWorkspacePresetCount; ++i)
     color_menu_->AddCheckItem(kColorBase + i, color_names[i]);
   color_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
   color_menu_->AddItem(kCustomColor, u"Własny kolor…");
@@ -5017,8 +5045,8 @@ sidebar::WorkspaceMenuState WorkspaceShell::RustWorkspaceMenuState() const {
 bool WorkspaceShell::IsCommandIdChecked(int command_id) const {
   if (metal_sidebar_ && sidebar::workspace_menu_command(command_id, menu_profiles_.size()))
     return sidebar::workspace_menu_checked(command_id, RustWorkspaceMenuState());
-  if (command_id >= kColorBase && command_id < kColorBase + static_cast<int>(kWorkspaceColors.size()))
-    return workspace_color(context_workspace_id_) == kWorkspaceColors[command_id - kColorBase];
+  if (command_id >= kColorBase && command_id < kColorBase + static_cast<int>(kWorkspacePresetCount))
+    return sidebar::design_same_workspace_color(workspace_color(context_workspace_id_), WorkspacePreset(command_id - kColorBase));
   if (command_id >= kEmojiBase && command_id < kEmojiBase + static_cast<int>(kWorkspaceEmojis.size()))
     return workspace_emoji(context_workspace_id_) == kWorkspaceEmojis[command_id - kEmojiBase];
   if (command_id == kClearEmoji) return workspace_emoji(context_workspace_id_).empty();
@@ -5207,8 +5235,8 @@ void WorkspaceShell::ExecuteCommand(int command_id, int) {
         else if (command == kNewProfile) shell->OpenProfiles({}, target);
         else if (command == kEditProfile) shell->OpenProfiles(profile);
         else if (command == kRemoveWorkspace) shell->ConfirmRemoveWorkspace(target);
-        else if (command >= kColorBase && command < kColorBase + static_cast<int>(kWorkspaceColors.size()))
-          shell->SetWorkspaceColor(target, kWorkspaceColors[command - kColorBase]);
+        else if (command >= kColorBase && command < kColorBase + static_cast<int>(kWorkspacePresetCount))
+          shell->SetWorkspaceColor(target, WorkspacePreset(command - kColorBase));
         else if (command >= kEmojiBase && command < kEmojiBase + static_cast<int>(kWorkspaceEmojis.size()))
           shell->SetWorkspaceEmoji(target, kWorkspaceEmojis[command - kEmojiBase]);
         else if (command == kClearEmoji) shell->SetWorkspaceEmoji(target, u"");
@@ -5929,7 +5957,14 @@ void WorkspaceShell::ApplyAppearance(bool refresh_theme) {
   ScheduleMetalHeader();ScheduleMetalSplit();
   if (!widget_) return;
   const auto color = workspace_color(state_.workspace_id);
-  if (refresh_theme) ApplyTheme();
+  // Every role of the palette follows the workspace color, so a new color
+  // re-applies the theme, not only the frame.
+  const bool repaint = !sidebar::design_same_workspace_color(WindowWorkspaceColor(root_), color);
+  LastWorkspaceColor() = color;
+  for (const auto* window : {widget_.get(), sidebar_widget_.get(), address_widget_.get()})
+    if (window) WindowWorkspaceColors()[window->GetTopLevelWidget()] = color;
+  if (refresh_theme || repaint) ApplyTheme();
+  if (repaint && sidebar_root_) sidebar_root_->SchedulePaint();
   const auto tint = FrameTint(color, root_);
   root_->SetBackground(views::CreateSolidBackground(tint));
   root_->SchedulePaint();
@@ -5941,14 +5976,15 @@ void WorkspaceShell::ApplyAppearance(bool refresh_theme) {
     sidebar_root_->SetBorder(views::CreatePaddedBorder(
         views::CreateRoundedRectBorder(1, 12, Hairline(root_)), gfx::Insets(6)));
   }
-  static_cast<EdgeView*>(edge_.get())->color = color;
+  static_cast<EdgeView*>(edge_.get())->color = Palette(root_).accent;
   edge_->SchedulePaint();
   color_input_->SetText(base::UTF8ToUTF16(Hex(color)));
   size_t color_index=0;
   for (auto& child : color_input_->view()->parent()->children()) {
     if (auto* swatch=child.get();IsGlyphAction(swatch)) {
       if(workspace_form_){SetActionOn(swatch,sidebar::appearance_selected(false,color_index++,color,{}));continue;}
-      SetActionOn(swatch,swatch->GetTooltipText()==base::UTF8ToUTF16(Hex(color)));
+      const auto preset=ParseColor(base::UTF16ToUTF8(swatch->GetTooltipText()));
+      SetActionOn(swatch,preset&&sidebar::design_same_workspace_color(*preset,color));
     }
   }
   const auto emoji = workspace_emoji(state_.workspace_id);
@@ -6805,7 +6841,7 @@ void WorkspaceShell::SetWorkspaceEmoji(std::string_view id, std::u16string text)
 }
 SkColor WorkspaceShell::workspace_color(std::string_view id) const {
   auto it = colors_.find(std::string(id));
-  return it == colors_.end() ? 0xFF9E91DC : it->second;
+  return it == colors_.end() ? kDefaultWorkspaceColor : it->second;
 }
 void WorkspaceShell::ToggleWorkspaceCreation() {
   if(creating_workspace_){RefreshWorkspaceSettings();PositionPanels();return;}

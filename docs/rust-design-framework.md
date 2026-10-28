@@ -1,8 +1,8 @@
 # Design system w Rust UI
 
 Stan na 2026-10-28. Moduł `design` w crate `sidebar_scene` przenosi
-[design system](design-system/README.md) do Rusta. Rust staje się jedynym źródłem
-wyglądu; C++ będzie tylko pytać o gotowe kolory i wymiary.
+[design system](design-system/README.md) do Rusta. Rust jest jedynym źródłem kolorów
+okna: `WorkspaceShell` pyta most cxx o paletę i nie ma już własnych wartości.
 
 ## Warstwy
 
@@ -46,13 +46,16 @@ Korekty w praktyce: w Nocy `line_strong` na 388 z 600 mocniej zabarwionych teł
 ciemnieją o odrobinę zawsze, bo ich wartości z `tokens.json` nie trzymały progu na
 `bg-hover` już w neutralnym oknie, a `zing_ink` w 260 przypadkach.
 
-**Zapis w profilu:** `WorkspaceColor::index()` (0..600) zamiast hex.
-**Stare profile:** `WorkspaceColor::from_argb` mapuje zapisany `#RRGGBB` na najbliższy
-punkt (barwa i chroma z koloru, jasność środkowa). Dotychczasowe 4 kolory trafiają w
-siatkę, a nazwane kolory design systemu w swoje presety.
+**Zapis w profilu bez zmian:** profil trzyma dowolny `#RRGGBB`, a siatka działa przy
+liczeniu palety (`WorkspaceColor::from_argb`: barwa i chroma z koloru, jasność z
+lightness). Nie ma migracji: stare kolory i wpisany ręcznie hex trafiają w najbliższy
+punkt. `WorkspaceColor::to_argb` daje kanoniczny hex punktu (jasność 0..4 jako OKLCH
+L 0,60..0,76, nasycenie jako chroma 0..0,10, które każda barwa mieści w sRGB), który
+czyta się z powrotem dokładnie; test sprawdza to dla całej siatki.
 
 Presety (`WorkspaceColor::PRESETS`): fiolet, koral, niebo, bursztyn, róż, mięta, każdy
-z nasyceniem 4 i jasnością 2. `WorkspaceColor::GRAPHITE` to brak koloru.
+z nasyceniem 4 i jasnością 2, zapisywane jako `#928FD4`, `#CC8463`, `#5AA0D0`,
+`#BC8F4D`, `#CB7E96`, `#55AC89`. `WorkspaceColor::GRAPHITE` to brak koloru.
 
 Rodziny `accent-*` w `tokens.json` są teraz **renderingami poglądowymi**: generator je
 pomija, a prawdziwe wartości liczy `design.rs`.
@@ -70,6 +73,33 @@ wyłączony), `icon_button`, `sidebar_tab` (aktywna karta to neutralna karta z c
 `duration::MOVE_MS` (`motion::progress`). `motion::tremor_offset` to drżenie.
 Oba respektują ograniczenie ruchu.
 
+## Most do C++
+
+`sidebar_scene.rs` wystawia `ffi::DesignPalette` (wszystkie role), `design_palette(dark,
+workspace_color)` (paleta z pamięci podręcznej, raz na punkt siatki i motyw) oraz
+`design_same_workspace_color(a, b)` (czy dwa zapisane kolory to ten sam punkt).
+
+W [`workspace_shell.cc`](../chromium/prototype/workspace_shell.cc):
+
+- `kInk`, `kMuted`, `kCard`… to już tylko **nazwy ról**. `Tone(view, rola)` bierze
+  paletę dla trybu widoku (Noc/Papier) i koloru obszaru jego okna: `kInk` → `ink`,
+  `kSubtle`/`kMuted` → `ink_muted`, `kDisabled` → `ink_faint`, `kCard` → `bg_raised`,
+  `kAccentWash` → `accent_soft`, `kChip` → `bg_hover`, `kFrameBase` → `bg_base`,
+  `kError` → `danger`. `Hairline` to `line`, `HoverWash` to `bg_hover`, `FrameTint` to
+  `bg_base` palety danego koloru. Ręczna mapa jasny→ciemny i mieszanie akcentu
+  zniknęły.
+- Kolor obszaru jest przypisany do okna najwyższego poziomu (`widget_`,
+  `sidebar_widget_`, `address_widget_`). Okna, których powłoka nie rejestruje (dymki,
+  menu), biorą ostatnio użyty kolor.
+- Gdy kolor obszaru okna się zmienia (przełączenie obszaru, nowy kolor),
+  `ApplyAppearance` wykonuje też `ApplyTheme()`, bo zmieniają się wszystkie role, nie
+  tylko rama.
+- Przełącznik: tor `accent`, gałka `on_accent`. Pasek przy krawędzi: `accent`.
+- 6 presetów zamiast 4 w menu kontekstowym obszaru („Fiolet”, „Koral”, „Niebo”,
+  „Bursztyn”, „Róż”, „Mięta”) i w panelu wyglądu; zaznaczenie presetu porównuje punkty
+  siatki, więc wpisany ręcznie hex bliski presetowi też go zaznacza. Domyślne kolory:
+  praca = fiolet, prywatne = mięta.
+
 ## Testy
 
 ```bash
@@ -77,17 +107,23 @@ out/ZitterOptimized/sidebar_scene_unittests design::
 python3 -m unittest tests.test_design_tokens
 ```
 
+Stan na `sidebar_scene` z mostem: 517/517 testów Rust (flagi GN: edycja 2024,
+`-Dwarnings`). `workspace_shell.cc` i `profile_workspace_browsertest.cc` kompilują się z
+flagami GN i pluginem stylu Chromium. **Testy przeglądarkowe nie były uruchamiane**;
+oczekiwania kolorów presetów w nich są zaktualizowane do nowych wartości.
+
 Moduł nie zależy od cxx, więc da się go sprawdzić bez budowania Chromium, samym
 `rustc` z toolchaina Chromium (`third_party/rust-toolchain/bin/rustc --test`).
 
-## Następny krok: most do C++
+## Dalej
 
-1. `ffi::DesignPalette` + `design_palette(dark, workspace_index)` w `sidebar_scene.rs`.
-2. `WorkspaceShell::ApplyTheme()` i miejsca używające `Tone`, `FrameTint`, `Hairline`,
-   `HoverWash`, `kInk`… oraz `kWorkspaceColors` przechodzą na paletę z Rusta;
-   stałe w `workspace_shell.cc` znikają.
-3. Style przekazywane do sceny (`ToggleStyle`, `SidebarRowStyle`, `EditorStyle`)
-   powstają z `recipe::*`.
-4. Picker koloru obszaru: trzy suwaki + presety, zapis indeksu, migracja hex.
+1. Przepisy `recipe::*` zamiast stylów składanych w C++ (`SidebarRowStyle`,
+   `EditorStyle`, przyciski, menu), z promieniami i wymiarami z tokenów; powłoka bierze dziś
+   z Rusta kolory, a z przepisów jeszcze nic.
+2. Osobne `bg_void` dla ramy okna (dziś rama i pasek boczny mają wspólne `bg_base`).
+3. Picker koloru obszaru: barwa, nasycenie, jasność + presety (zapis
+   `WorkspaceColor::to_argb`).
+4. Kafelki monogramów (`kMonogramColors`) z presetów i `on_accent` zamiast białego
+   tekstu w scenie.
 5. Fonty Instrument Serif, Schibsted Grotesk i JetBrains Mono (OFL) w pakiecie
    aplikacji i w audycie licencji.

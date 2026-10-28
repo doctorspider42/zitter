@@ -6,7 +6,7 @@
 mod sidebar_editor;
 use sidebar_editor::EditorState;
 // The design system (docs/design-system): tokens, workspace palettes, recipes.
-// Not yet read by the scene; the shell switches over in the next step.
+// The shell reads palettes through design_palette(); recipes are not wired yet.
 #[allow(dead_code)]
 mod design;
 mod design_tokens;
@@ -91,6 +91,8 @@ mod ffi {
     struct ImportView { message: String, bookmarks_label: String, options_enabled: bool, close_enabled: bool, apply_enabled: bool, applying: bool, busy: bool, can_apply: bool }
     struct ActionButtonLayout { width: i32, height: i32, text: Rect }
     struct AppearancePreset { color: u32, emoji: String, label: String }
+    /// Every color role of the design system for one window (design.rs).
+    struct DesignPalette { bg_void: u32, bg_base: u32, bg_raised: u32, bg_hover: u32, line: u32, line_strong: u32, ink: u32, ink_muted: u32, ink_faint: u32, accent: u32, on_accent: u32, accent_soft: u32, accent_ink: u32, zing: u32, on_zing: u32, zing_ink: u32, focus: u32, ok: u32, warn: u32, danger: u32, scrim: u32 }
     struct AppearanceTarget { valid: bool, color: u32, emoji: String }
     struct PeekCopy { initial: String, back: String, forward: String, promote: String, split: String, close: String }
     struct WorkspaceCopy { name_label: String, placeholder: String, profile_label: String, profile_ax: String, profile_hint: String, save_hint: String, close: String, appearance: String, color: String, color_ax: String, emoji: String, emoji_ax: String, emoji_placeholder: String, more: String, manage: String, import_label: String, remove_label: String }
@@ -382,6 +384,8 @@ mod ffi {
         fn action_group_layout(width: i32, height: i32, vertical: bool, spacing: i32, children: &[ColumnChild]) -> ColumnLayout;
         fn appearance_command_target(command: FormCommand, index: usize) -> AppearanceTarget;
         fn appearance_presets(emoji: bool) -> Vec<AppearancePreset>;
+        fn design_palette(dark: bool, workspace_color: u32) -> DesignPalette;
+        fn design_same_workspace_color(a: u32, b: u32) -> bool;
         fn appearance_selected(emoji: bool, index: usize, color: u32, current_emoji: &str) -> bool;
         fn appearance_row_layout(width: i32, height: i32, editor_width: i32, editor_height: i32, emoji: bool) -> ColumnLayout;
         type WorkspaceNotice;
@@ -1447,7 +1451,14 @@ fn action_group_layout(width: i32, height: i32, vertical: bool, spacing: i32, ch
     ffi::ColumnLayout {width,height,children:rects}
 }
 
-const APPEARANCE_COLORS: [u32;4] = [0xff9e91dc,0xff84b6a4,0xffd6a07b,0xff7faacb];
+// design::WorkspaceColor::PRESETS as stored hex (checked by a test below).
+const APPEARANCE_COLORS: [u32;6] = [0xff928fd4,0xffcc8463,0xff5aa0d0,0xffbc8f4d,0xffcb7e96,0xff55ac89];
+fn design_palette(dark:bool,workspace_color:u32)->ffi::DesignPalette{
+    let p=design::palette_for_stored(if dark {design::Scheme::Noc} else {design::Scheme::Papier},workspace_color);
+    ffi::DesignPalette{bg_void:p.bg_void,bg_base:p.bg_base,bg_raised:p.bg_raised,bg_hover:p.bg_hover,line:p.line,line_strong:p.line_strong,ink:p.ink,ink_muted:p.ink_muted,ink_faint:p.ink_faint,accent:p.accent,on_accent:p.on_accent,accent_soft:p.accent_soft,accent_ink:p.accent_ink,zing:p.zing,on_zing:p.on_zing,zing_ink:p.zing_ink,focus:p.focus,ok:p.ok,warn:p.warn,danger:p.danger,scrim:p.scrim}
+}
+// Two stored colors are the same workspace color when they snap to one grid point.
+fn design_same_workspace_color(a:u32,b:u32)->bool{design::WorkspaceColor::from_argb(a)==design::WorkspaceColor::from_argb(b)}
 const APPEARANCE_EMOJIS: [&str;6] = ["💼","🏠","🚀","🎨","📚","🎮"];
 fn appearance_presets(emoji: bool) -> Vec<ffi::AppearancePreset> {
     if emoji { APPEARANCE_EMOJIS.iter().map(|e|ffi::AppearancePreset { color:0, emoji:(*e).into(), label:format!("Emoji {}",e) }).collect() }
@@ -1465,10 +1476,10 @@ fn appearance_command_target(command:ffi::FormCommand,index:usize)->ffi::Appeara
 
 fn appearance_selected(emoji: bool, index: usize, color: u32, current_emoji: &str) -> bool {
     if emoji { APPEARANCE_EMOJIS.get(index).map(|e|*e==current_emoji).unwrap_or(false) }
-    else { APPEARANCE_COLORS.get(index).map(|c|c&0xffffff==color&0xffffff).unwrap_or(false) }
+    else { APPEARANCE_COLORS.get(index).map(|&c|design_same_workspace_color(c,color)).unwrap_or(false) }
 }
 fn appearance_row_layout(width: i32, height: i32, editor_width: i32, editor_height: i32, emoji: bool) -> ffi::ColumnLayout {
-    let count=if emoji {6} else {4};let button_width=if emoji {30} else {32};let button_height=if emoji {28} else {32};
+    let count=6;let button_width=if emoji {30} else {32};let button_height=if emoji {28} else {32};
     let editor_height=editor_height.max(0);let width=if width<0 {(count*button_width+8i32).saturating_add(editor_width.max(0))} else {width};
     let height=if height<0 {button_height.max(editor_height)} else {height};let control_width=width.min(count*button_width);
     let mut children=Vec::with_capacity(count as usize+2);let mut x=0;
@@ -1709,7 +1720,7 @@ fn folder_menu_action(command:i32,s:&ffi::FolderMenuState)->ffi::FolderMenuActio
 
 // Workspace menu IDs follow the native menu delegate contract.
 const WS_SET_PROFILE:i32=1;const WS_NEW_PROFILE:i32=2;const WS_EDIT_PROFILE:i32=3;const WS_SETTINGS:i32=4;const WS_REMOVE:i32=30;const WS_COLOR_MENU:i32=31;const WS_EMOJI_MENU:i32=32;const WS_CUSTOM_COLOR:i32=33;const WS_CUSTOM_EMOJI:i32=34;const WS_CLEAR_EMOJI:i32=35;const WS_COLOR_BASE:i32=40;const WS_EMOJI_BASE:i32=50;const WS_PROFILE_BASE:i32=100;
-const WORKSPACE_COLOR_NAMES:[&str;4]=["Lawendowy","Szałwiowy","Brzoskwiniowy","Niebieski"];
+const WORKSPACE_COLOR_NAMES:[&str;6]=["Fiolet","Koral","Niebo","Bursztyn","Róż","Mięta"];
 fn indexed(command:i32,base:i32,count:usize)->Option<usize>{(command>=base&&((command-base) as usize)<count).then(||(command-base) as usize)}
 fn workspace_menu_command(command:i32,profiles:usize)->bool{
     matches!(command,WS_SET_PROFILE..=WS_SETTINGS|WS_REMOVE..=WS_CLEAR_EMOJI)||indexed(command,WS_COLOR_BASE,APPEARANCE_COLORS.len()).is_some()||indexed(command,WS_EMOJI_BASE,APPEARANCE_EMOJIS.len()).is_some()||indexed(command,WS_PROFILE_BASE,profiles).is_some()
@@ -1731,7 +1742,7 @@ fn workspace_menu_enabled(command:i32,s:&ffi::WorkspaceMenuState)->bool{
 }
 fn workspace_menu_checked(command:i32,s:&ffi::WorkspaceMenuState)->bool{
     if let Some(index)=indexed(command,WS_PROFILE_BASE,s.profiles.len()){return s.profiles[index].id==s.profile;}
-    if let Some(index)=indexed(command,WS_COLOR_BASE,APPEARANCE_COLORS.len()){return s.color==APPEARANCE_COLORS[index];}
+    if let Some(index)=indexed(command,WS_COLOR_BASE,APPEARANCE_COLORS.len()){return design_same_workspace_color(s.color,APPEARANCE_COLORS[index]);}
     if let Some(index)=indexed(command,WS_EMOJI_BASE,APPEARANCE_EMOJIS.len()){return s.emoji==APPEARANCE_EMOJIS[index];}
     command==WS_CLEAR_EMOJI&&s.emoji.is_empty()
 }
@@ -3879,10 +3890,10 @@ mod tests {
         for emoji in [false,true]{for (index,preset) in appearance_presets(emoji).iter().enumerate(){let mut input=graph.append_form_action();assert!(input.bind_appearance_preset(emoji,index));let binding=input.node_form_command();assert_eq!(binding.panel,ffi::FormPanel::Workspace);assert_eq!(binding.index,index);assert!(binding.key.is_empty());let target=appearance_command_target(binding.command,binding.index);assert!(target.valid);assert_eq!(target.color,preset.color);assert_eq!(target.emoji,preset.emoji);}}
     }
     #[test] fn appearance_commands_reject_invalid_index_and_generic_binding(){
-        let mut graph=new_form_graph(false,0,false,false);let mut input=graph.append_form_action();for (emoji,index) in [(false,4),(false,usize::MAX),(true,6),(true,usize::MAX)]{assert!(!input.bind_appearance_preset(emoji,index));assert_eq!(input.node_model_kind(),0);}for command in [ffi::FormCommand::WorkspaceColorPreset,ffi::FormCommand::WorkspaceEmojiPreset]{assert!(!input.node_form_command_init(command,""));assert!(!input.node_form_command_init(command,"2"));}assert!(input.bind_appearance_preset(true,2));assert_eq!(input.node_form_command().index,2);
+        let mut graph=new_form_graph(false,0,false,false);let mut input=graph.append_form_action();for (emoji,index) in [(false,6),(false,usize::MAX),(true,6),(true,usize::MAX)]{assert!(!input.bind_appearance_preset(emoji,index));assert_eq!(input.node_model_kind(),0);}for command in [ffi::FormCommand::WorkspaceColorPreset,ffi::FormCommand::WorkspaceEmojiPreset]{assert!(!input.node_form_command_init(command,""));assert!(!input.node_form_command_init(command,"2"));}assert!(input.bind_appearance_preset(true,2));assert_eq!(input.node_form_command().index,2);
     }
     #[test] fn appearance_commands_do_not_change_semantics_after_binding(){
-        let mut graph=new_form_graph(false,0,false,false);let mut input=graph.append_form_action();assert!(input.bind_appearance_preset(false,1));assert!(input.bind_appearance_preset(false,1));assert!(!input.bind_appearance_preset(false,2));assert!(!input.bind_appearance_preset(true,1));assert!(!input.node_form_command_init(ffi::FormCommand::WorkspaceSave,""));let target=appearance_command_target(input.node_form_command().command,input.node_form_command().index);assert!(target.valid);assert_eq!(target.color,0xff84b6a4);
+        let mut graph=new_form_graph(false,0,false,false);let mut input=graph.append_form_action();assert!(input.bind_appearance_preset(false,1));assert!(input.bind_appearance_preset(false,1));assert!(!input.bind_appearance_preset(false,2));assert!(!input.bind_appearance_preset(true,1));assert!(!input.node_form_command_init(ffi::FormCommand::WorkspaceSave,""));let target=appearance_command_target(input.node_form_command().command,input.node_form_command().index);assert!(target.valid);assert_eq!(target.color,APPEARANCE_COLORS[1]);
     }
     #[test] fn appearance_commands_disabled_retired_and_wrong_models_fail_closed(){
         let mut graph=new_form_graph(false,0,false,false);let mut input=graph.append_form_action();input.bind_appearance_preset(true,2);input.action_enabled(false);assert!(!appearance_command_target(input.node_form_command().command,2).valid);input.action_enabled(true);assert_eq!(appearance_command_target(input.node_form_command().command,2).emoji,"🚀");graph.retire_form_action(input.action_node_id());assert!(!appearance_command_target(input.node_form_command().command,2).valid);let mut checkbox=graph.append_form_action();checkbox.node_checkbox_init(false);assert!(!checkbox.bind_appearance_preset(false,0));assert!(!new_action_control().bind_appearance_preset(true,0));
@@ -3894,15 +3905,21 @@ mod tests {
         let mut graph=new_form_graph(false,0,false,false);let mut input=graph.append_form_action();input.bind_appearance_preset(true,5);let mut ticket=input.defer_form_command();input.action_cancel();assert_eq!(ticket.take_command().command,ffi::FormCommand::None);let binding=input.node_form_command();assert_eq!(appearance_command_target(binding.command,binding.index).emoji,"🎮");assert_eq!(input.defer_form_command().take_command().index,5);
     }
     #[test] fn appearance_presets_preserve_palette_order_labels_and_unicode() {
-        let colors=appearance_presets(false);assert_eq!(colors.len(),4);assert_eq!(colors[0].color,0xff9e91dc);assert_eq!(colors[3].label,"#7FAACB");assert!(colors.iter().all(|p|p.emoji.is_empty()&&p.color>>24==255));
+        let colors=appearance_presets(false);assert_eq!(colors.len(),6);assert_eq!(colors[0].color,0xff928fd4);assert_eq!(colors[5].label,"#55AC89");
+        for ((_,preset),color) in design::WorkspaceColor::PRESETS.iter().zip(colors.iter()) {assert_eq!(preset.to_argb(),color.color);}assert!(colors.iter().all(|p|p.emoji.is_empty()&&p.color>>24==255));
         let emojis=appearance_presets(true);assert_eq!(emojis.len(),6);assert_eq!(emojis[2].emoji,"🚀");assert_eq!(emojis[5].label,"Emoji 🎮");
     }
+    #[test] fn design_palette_bridge_carries_the_rust_palette() {
+        let p=design_palette(true,APPEARANCE_COLORS[2]);let q=design::Palette::for_workspace(design::Scheme::Noc,design::WorkspaceColor::SKY);
+        assert_eq!((p.bg_void,p.bg_base,p.bg_raised,p.accent,p.on_accent,p.ink_muted,p.focus,p.scrim),(q.bg_void,q.bg_base,q.bg_raised,q.accent,q.on_accent,q.ink_muted,q.focus,q.scrim));
+        assert_ne!(design_palette(false,APPEARANCE_COLORS[2]).bg_base,p.bg_base);assert!(design_same_workspace_color(0xff808080,0xff7f7f7f));assert!(!design_same_workspace_color(APPEARANCE_COLORS[0],APPEARANCE_COLORS[1]));
+    }
     #[test] fn appearance_selection_matches_custom_values_and_out_of_range_indices() {
-        assert!(appearance_selected(false,0,0x9e91dc,""));assert!(!appearance_selected(false,0,0xff123456,""));assert!(!appearance_selected(false,4,0xff9e91dc,""));
+        assert!(appearance_selected(false,0,0x928fd4,""));assert!(appearance_selected(false,0,0xff9390d5,""));assert!(!appearance_selected(false,0,0xff123456,""));assert!(!appearance_selected(false,6,0xff928fd4,""));
         assert!(appearance_selected(true,2,0,"🚀"));assert!(!appearance_selected(true,2,0,"👩‍💻"));assert!(!appearance_selected(true,6,0,"🚀"));assert!(!appearance_selected(true,0,0,""));
     }
     #[test] fn appearance_row_preserves_control_sizes_and_excludes_editor() {
-        for (emoji,count,bw,bh) in [(false,4,32,32),(true,6,30,28)] {
+        for (emoji,count,bw,bh) in [(false,6,32,32),(true,6,30,28)] {
             let g=appearance_row_layout(398,-1,100,30,emoji);assert_eq!(g.children.len(),count+2);assert_eq!(g.height,bh.max(30));
             for r in &g.children[..count] {assert_eq!((r.width,r.height),(bw,bh));}
             let field=&g.children[count+1];assert_eq!(field.x,count as i32*bw+8);assert_eq!(field.x+field.width,398);
@@ -3912,7 +3929,7 @@ mod tests {
         for emoji in [false,true] {for width in [0,1,17,127,188,398,i32::MAX] {for height in [0,1,40] {
             let g=appearance_row_layout(width,height,100,30,emoji);for r in &g.children {assert!(r.x>=0&&r.y>=0&&r.width>=0&&r.height>=0);assert!(i64::from(r.x)+i64::from(r.width)<=i64::from(width));assert!(r.y+r.height<=height);}
         }}}
-        assert_eq!(appearance_row_layout(-1,-1,100,30,false).width,236);assert_eq!(appearance_row_layout(-1,-1,i32::MAX,i32::MAX,true).width,i32::MAX);
+        assert_eq!(appearance_row_layout(-1,-1,100,30,false).width,300);assert_eq!(appearance_row_layout(-1,-1,i32::MAX,i32::MAX,true).width,i32::MAX);
     }
     #[test] fn appearance_swatch_draws_raw_color_outline_focus_and_clip() {
         let mut swatch=row(32.0);swatch.kind=18;swatch.height=32.0;swatch.active=false;swatch.badge=0xff84b6a4;let ops=layout(std::slice::from_ref(&swatch));assert_eq!(ops.len(),1);assert_eq!(ops[0].color,0xff84b6a4);assert_eq!(ops[0].radius,7.0);
@@ -4774,11 +4791,11 @@ mod tests {
     fn workspace_menu_state()->ffi::WorkspaceMenuState{ffi::WorkspaceMenuState{ready:true,busy:false,workspace:"work".into(),workspace_count:2,profile:"p2".into(),profiles:vec![ffi::WorkspaceMenuProfile{id:"p1".into(),name:"Główny".into()},ffi::WorkspaceMenuProfile{id:"p2".into(),name:"Praca".into()}],color:APPEARANCE_COLORS[1],emoji:"🚀".into()}}
     #[test] fn workspace_menu_preserves_structure_labels_groups_and_checks() {
         let s=workspace_menu_state();let menu=workspace_context_menu(&s);let group=|g:u32|menu.iter().filter(|e|e.group==g).map(|e|(e.command,e.kind)).collect::<Vec<_>>();
-        assert_eq!(group(0),vec![(1,2),(31,2),(32,2),(0,1),(4,0),(30,0)]);assert_eq!(group(1),vec![(100,3),(101,3),(0,1),(3,0),(2,0)]);assert_eq!(group(2),vec![(40,4),(41,4),(42,4),(43,4),(0,1),(33,0)]);assert_eq!(group(3),vec![(50,4),(51,4),(52,4),(53,4),(54,4),(55,4),(0,1),(34,0),(35,4)]);
-        assert_eq!(menu.iter().find(|e|e.command==41).unwrap().label,"Szałwiowy");assert_eq!(menu.iter().find(|e|e.command==101).unwrap().label,"Praca");assert_eq!(menu.iter().find(|e|e.command==52).unwrap().label,"🚀");
+        assert_eq!(group(0),vec![(1,2),(31,2),(32,2),(0,1),(4,0),(30,0)]);assert_eq!(group(1),vec![(100,3),(101,3),(0,1),(3,0),(2,0)]);assert_eq!(group(2),vec![(40,4),(41,4),(42,4),(43,4),(44,4),(45,4),(0,1),(33,0)]);assert_eq!(group(3),vec![(50,4),(51,4),(52,4),(53,4),(54,4),(55,4),(0,1),(34,0),(35,4)]);
+        assert_eq!(menu.iter().find(|e|e.command==41).unwrap().label,"Koral");assert_eq!(menu.iter().find(|e|e.command==101).unwrap().label,"Praca");assert_eq!(menu.iter().find(|e|e.command==52).unwrap().label,"🚀");
         assert!(workspace_menu_checked(101,&s)&&!workspace_menu_checked(100,&s)&&workspace_menu_checked(41,&s)&&!workspace_menu_checked(40,&s)&&workspace_menu_checked(52,&s)&&!workspace_menu_checked(35,&s)&&!workspace_menu_checked(102,&s));
         let mut plain=workspace_menu_state();plain.emoji.clear();assert!(workspace_menu_checked(35,&plain)&&!workspace_menu_checked(52,&plain));
-        assert!(workspace_menu_command(1,0)&&workspace_menu_command(43,0)&&!workspace_menu_command(44,0)&&workspace_menu_command(55,0)&&!workspace_menu_command(56,0)&&!workspace_menu_command(100,0)&&workspace_menu_command(101,2)&&!workspace_menu_command(5,9)&&!workspace_menu_command(20,9)&&!workspace_menu_command(36,9));
+        assert!(workspace_menu_command(1,0)&&workspace_menu_command(45,0)&&!workspace_menu_command(46,0)&&workspace_menu_command(55,0)&&!workspace_menu_command(56,0)&&!workspace_menu_command(100,0)&&workspace_menu_command(101,2)&&!workspace_menu_command(5,9)&&!workspace_menu_command(20,9)&&!workspace_menu_command(36,9));
     }
     #[test] fn workspace_menu_actions_resolve_targets_and_revalidate_state() {
         use ffi::WorkspaceMenuCommand as C;let s=workspace_menu_state();

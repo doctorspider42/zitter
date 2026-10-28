@@ -208,13 +208,26 @@ impl WorkspaceColor {
         Self { hue, saturation: level(saturation), tone: level(tone) }
     }
 
-    /// Nearest grid point to a stored `#RRGGBB` (profiles written before the
-    /// grid existed). Hue and chroma come from the color; tone is the middle.
+    /// Nearest grid point to a stored `#RRGGBB`. Profiles keep any hex the
+    /// person typed; [`Self::to_argb`] writes one that reads back exactly.
+    /// Hue and chroma give hue and saturation; lightness gives tone.
     pub fn from_argb(argb: u32) -> Self {
         let c = Oklch::from_argb(argb);
-        let saturation = (c.c / ACCENT_CHROMA_STEP).round().clamp(0.0, f64::from(Self::LEVELS - 1)) as u8;
+        let top = f64::from(Self::LEVELS - 1);
+        let saturation = (c.c / CANONICAL_C_STEP).round().clamp(0.0, top) as u8;
         let hue = if saturation == 0 { Self::GRAPHITE.hue } else { (c.h / 15.0).round() as u8 % Self::HUES };
-        Self { hue, saturation, tone: 2 }
+        let tone = ((c.l - CANONICAL_L) / CANONICAL_L_STEP).round().clamp(0.0, top) as u8;
+        Self { hue, saturation, tone }
+    }
+
+    /// The `#RRGGBB` a profile stores for this grid point; also its swatch.
+    pub fn to_argb(self) -> u32 {
+        Oklch::new(
+            CANONICAL_L + CANONICAL_L_STEP * f64::from(self.tone),
+            CANONICAL_C_STEP * f64::from(self.saturation),
+            f64::from(self.hue_degrees()),
+        )
+        .to_argb()
     }
 
     /// Dense index for storage, `0..COUNT`.
@@ -255,6 +268,28 @@ impl WorkspaceColor {
 /// OKLCH chroma per saturation level: level 4 (0.14) is as vivid as the design
 /// system's named colors.
 const ACCENT_CHROMA_STEP: f64 = 0.035;
+/// Stored colors encode the grid point: tone 0..4 as OKLCH L 0.60..0.76 and
+/// saturation 0..4 as chroma 0..0.10, which every hue holds inside sRGB there.
+const CANONICAL_L: f64 = 0.60;
+const CANONICAL_L_STEP: f64 = 0.04;
+const CANONICAL_C_STEP: f64 = 0.025;
+
+/// The palette for a stored workspace color, memoized per scheme and grid
+/// point (each one runs the contrast search once per thread).
+pub fn palette_for_stored(scheme: Scheme, argb: u32) -> Palette {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    thread_local! {
+        static CACHE: RefCell<HashMap<(bool, u16), Palette>> = RefCell::new(HashMap::new());
+    }
+    let color = WorkspaceColor::from_argb(argb);
+    CACHE.with(|cache| {
+        *cache
+            .borrow_mut()
+            .entry((scheme.is_dark(), color.index()))
+            .or_insert_with(|| Palette::for_workspace(scheme, color))
+    })
+}
 
 /// Window lightness and chroma per role and scheme. Tone shifts every role by
 /// up to `TONE_SPAN` around the middle; chroma scales with saturation.
@@ -900,16 +935,44 @@ mod tests {
     }
 
     #[test]
-    fn stored_hex_colors_snap_to_their_preset_or_nearest_point() {
-        assert_eq!(WorkspaceColor::from_argb(0xff9a92ff), WorkspaceColor::VIOLET);
-        assert_eq!(WorkspaceColor::from_argb(0xffff8a66), WorkspaceColor::CORAL);
-        assert_eq!(WorkspaceColor::from_argb(0xff5cc8ff), WorkspaceColor::SKY);
-        assert_eq!(WorkspaceColor::from_argb(0xffff7eb6), WorkspaceColor::ROSE);
-        assert_eq!(WorkspaceColor::from_argb(0xff5fe0b8), WorkspaceColor::MINT);
+    fn stored_hex_reads_back_as_the_same_grid_point() {
+        for c in WorkspaceColor::all() {
+            // Without saturation there is no hue: every gray reads back as graphite's.
+            let (h, s, t) = c.grid();
+            let expected = if s == 0 { (WorkspaceColor::GRAPHITE.hue, 0, t) } else { (h, s, t) };
+            assert_eq!(WorkspaceColor::from_argb(c.to_argb()).grid(), expected, "{:08x}", c.to_argb());
+        }
+    }
+
+    #[test]
+    fn any_stored_hex_snaps_to_the_nearest_point() {
+        let hue_and_saturation = |argb| {
+            let (h, s, _) = WorkspaceColor::from_argb(argb).grid();
+            (h, s)
+        };
+        // The design system's named colors keep their hue at full saturation.
+        for (argb, preset) in [
+            (0xff9a92ff, WorkspaceColor::VIOLET),
+            (0xffff8a66, WorkspaceColor::CORAL),
+            (0xff5cc8ff, WorkspaceColor::SKY),
+            (0xffff7eb6, WorkspaceColor::ROSE),
+            (0xff5fe0b8, WorkspaceColor::MINT),
+        ] {
+            let (h, s, _) = preset.grid();
+            assert_eq!(hue_and_saturation(argb), (h, s), "{argb:08x}");
+        }
         // The four colors profiles used before the design system.
-        assert_eq!(WorkspaceColor::from_argb(0xff9e91dc).grid(), (19, 3, 2));
-        assert_eq!(WorkspaceColor::from_argb(0xff84b6a4).grid(), (11, 2, 2));
-        assert_eq!(WorkspaceColor::from_argb(0xff808080), WorkspaceColor::GRAPHITE);
+        assert_eq!(WorkspaceColor::from_argb(0xff9e91dc).grid(), (19, 4, 2));
+        assert_eq!(WorkspaceColor::from_argb(0xff84b6a4).grid(), (11, 2, 3));
+        assert_eq!(hue_and_saturation(0xff808080), (WorkspaceColor::GRAPHITE.hue, 0));
+    }
+
+    #[test]
+    fn stored_palettes_are_memoized_per_grid_point() {
+        let a = palette_for_stored(Scheme::Noc, WorkspaceColor::SKY.to_argb());
+        assert_eq!(a, Palette::for_workspace(Scheme::Noc, WorkspaceColor::SKY));
+        assert_eq!(palette_for_stored(Scheme::Noc, WorkspaceColor::SKY.to_argb() ^ 1), a);
+        assert_ne!(palette_for_stored(Scheme::Papier, WorkspaceColor::SKY.to_argb()), a);
     }
 
     /// Every grid point, both schemes: every text/ground pair the components
