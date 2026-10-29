@@ -1392,6 +1392,18 @@ bool RunWithMenuInspection(WorkspaceShell* shell,base::OnceClosure open,base::Re
   return base::test::RunUntil([&]{return !shell->workspace_context_menu_running_for_testing();});
 }
 
+// Context menus (design: ContextMenu): the destructive action reads in danger,
+// last, after a separator.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ContextMenusMarkDestructiveActionsInDanger) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
+  shell->BuildWorkspaceMenu("personal");auto* menu=shell->workspace_menu();ASSERT_TRUE(menu);
+  const auto last=menu->GetItemCount()-1;EXPECT_EQ(u"Usuń przestrzeń",menu->GetLabelAt(last));
+  EXPECT_EQ(ui::MenuModel::TYPE_SEPARATOR,menu->GetTypeAt(last-1));
+  EXPECT_EQ(std::optional<ui::ColorId>(ui::kColorAlertHighSeverity),menu->GetForegroundColorId(last));
+  EXPECT_EQ(std::nullopt,menu->GetForegroundColorId(last-2));
+  EXPECT_EQ(shell->workspace_menu()->GetLabelAt(last-2),u"Nazwa i ustawienia…");
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FooterActionHostsOwnershipEmojiMenuKeysAXAndClip) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->SetPinned(true);shell->ShowSidebar();const bool rust=shell->workspace_input()->rust_editor();
   for(auto* view:{shell->footer_action_for_testing(0),shell->footer_action_for_testing(1),shell->workspace_button("work"),shell->workspace_button("personal")}){ASSERT_TRUE(view);EXPECT_EQ(!rust,views::AsViewClass<views::Button>(view)!=nullptr);ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kButton,ax.role);EXPECT_FALSE(ax.GetString16Attribute(ax::mojom::StringAttribute::kName).empty());}

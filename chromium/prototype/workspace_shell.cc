@@ -462,8 +462,20 @@ END_METADATA
 // Context menus of tabs, links and spaces (design: ContextMenu) run as Views
 // menus — macOS draws CONTEXT_MENU runs natively, out of reach of the design —
 // on `bg-raised`, 30 px rows in `body`, `bg-hover` under the pointer at
-// `radius-sm`. (The panel radius is MenuConfig's own; it is not settable.)
+// `radius-sm`, in a `radius-md` panel.
 constexpr int32_t kZitterMenuRun = views::MenuRunner::NO_FLAGS;
+// The panel's `radius-md`, passed to every context-menu run.
+gfx::RoundedCornersF ZitterMenuCorners() { return gfx::RoundedCornersF(12); }
+// Destructive commands read in `danger` (ContextMenu): close tab (10), close the
+// split (12), remove a domain rule (24), remove a space (30), delete a folder (38).
+class DesignMenuModel final : public ui::SimpleMenuModel {
+ public:
+  using ui::SimpleMenuModel::SimpleMenuModel;
+  std::optional<ui::ColorId> GetForegroundColorId(size_t index) override {
+    static constexpr std::array<int, 5> kDanger = {10, 12, 24, 30, 38};
+    return std::ranges::contains(kDanger, GetCommandIdAt(index)) ? std::optional<ui::ColorId>(ui::kColorAlertHighSeverity) : std::nullopt;
+  }
+};
 void InstallMenuStyle() {
   static bool installed = false;
   if (installed) return;
@@ -490,6 +502,7 @@ void InstallMenuStyle() {
         mixer[ui::kColorMenuItemBackgroundHighlighted] = {p.bg_hover};
         mixer[ui::kColorMenuItemBackgroundSelected] = {p.bg_hover};
         mixer[ui::kColorMenuSelectionBackground] = {p.bg_hover};
+        mixer[ui::kColorAlertHighSeverity] = {p.danger};  // Destructive menu items.
       }));
   ui::ColorProviderManager::Get().ResetColorProviderCache();
 }
@@ -5312,9 +5325,9 @@ void WorkspaceShell::BuildLinkMenu(GURL url, std::string source_workspace) {
   link_menu_runner_.reset(); link_menu_.reset(); route_menu_.reset();
   context_url_ = std::move(url); link_source_workspace_ = std::move(source_workspace);
   route_workspaces_ = state_.workspaces;
-  route_menu_ = std::make_unique<ui::SimpleMenuModel>(this);
+  route_menu_ = std::make_unique<DesignMenuModel>(this);
   if (metal_sidebar_) {
-    link_menu_ = std::make_unique<ui::SimpleMenuModel>(this);
+    link_menu_ = std::make_unique<DesignMenuModel>(this);
     for (const auto& entry : sidebar::link_context_menu(LinkMenuStateFor(state_, context_url_, link_source_workspace_, route_workspaces_))) {
       const auto label = base::UTF8ToUTF16(std::string(entry.label));
       switch (entry.kind) {
@@ -5333,7 +5346,7 @@ void WorkspaceShell::BuildLinkMenu(GURL url, std::string source_workspace) {
     route_menu_->AddRadioItem(kRouteBase + i,
         base::UTF8ToUTF16(route_workspaces_[i].name) + u" · " + profile, 2);
   }
-  link_menu_ = std::make_unique<ui::SimpleMenuModel>(this);
+  link_menu_ = std::make_unique<DesignMenuModel>(this);
   link_menu_->AddItem(kLinkPeek, T(u"Otwórz w Peek"));
   link_menu_->AddItem(kLinkNewTab, T(u"Otwórz w nowej karcie"));
   link_menu_->AddItem(kLinkSplit, T(u"Otwórz obok w Split View"));
@@ -5346,7 +5359,7 @@ void WorkspaceShell::ShowLinkMenu(GURL url, std::string source_workspace, gfx::P
   BuildLinkMenu(std::move(url), std::move(source_workspace));
   link_menu_runner_ = std::make_unique<views::MenuRunner>(link_menu_.get(), kZitterMenuRun);
   link_menu_runner_->RunMenuAt(widget_, nullptr, gfx::Rect(point, gfx::Size()), views::MenuAnchorPosition::kTopLeft,
-      ui::mojom::MenuSourceType::kMouse);
+      ui::mojom::MenuSourceType::kMouse, gfx::NativeView(), ZitterMenuCorners());
 }
 
 void WorkspaceShell::BuildWorkspaceMenu(std::string id) {
@@ -5357,11 +5370,11 @@ void WorkspaceShell::BuildWorkspaceMenu(std::string id) {
   context_pin_.clear();
   context_workspace_id_ = std::move(id);
   menu_profiles_ = state_.profiles;
-  profile_menu_ = std::make_unique<ui::SimpleMenuModel>(this);
+  profile_menu_ = std::make_unique<DesignMenuModel>(this);
   if (metal_sidebar_) {
-    color_menu_ = std::make_unique<ui::SimpleMenuModel>(this);
-    emoji_menu_ = std::make_unique<ui::SimpleMenuModel>(this);
-    workspace_menu_ = std::make_unique<ui::SimpleMenuModel>(this);
+    color_menu_ = std::make_unique<DesignMenuModel>(this);
+    emoji_menu_ = std::make_unique<DesignMenuModel>(this);
+    workspace_menu_ = std::make_unique<DesignMenuModel>(this);
     const auto entries = sidebar::workspace_context_menu(RustWorkspaceMenuState());
     // Fill submenus first; their headers in the main menu reference them.
     for (uint32_t pass : {1u, 0u}) for (const auto& entry : entries) {
@@ -5383,15 +5396,15 @@ void WorkspaceShell::BuildWorkspaceMenu(std::string id) {
   profile_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
   profile_menu_->AddItem(kEditProfile, T(u"Edytuj profile…"));
   profile_menu_->AddItem(kNewProfile, T(u"Dodaj nowy profil…"));
-  workspace_menu_ = std::make_unique<ui::SimpleMenuModel>(this);
+  workspace_menu_ = std::make_unique<DesignMenuModel>(this);
   workspace_menu_->AddSubMenu(kSetProfile, T(u"Profil przeglądania"), profile_menu_.get());
-  color_menu_ = std::make_unique<ui::SimpleMenuModel>(this);
+  color_menu_ = std::make_unique<DesignMenuModel>(this);
   const std::array<std::u16string, kWorkspacePresetCount> color_names = {T(u"Fiolet"), T(u"Koral"), T(u"Niebo"), T(u"Bursztyn"), T(u"Róż"), T(u"Mięta"), T(u"Zieleń"), T(u"Grafit")};
   for (size_t i = 0; i < kWorkspacePresetCount; ++i)
     color_menu_->AddCheckItem(kColorBase + i, color_names[i]);
   color_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
   color_menu_->AddItem(kCustomColor, T(u"Własny kolor…"));
-  emoji_menu_ = std::make_unique<ui::SimpleMenuModel>(this);
+  emoji_menu_ = std::make_unique<DesignMenuModel>(this);
   for (size_t i = 0; i < kWorkspaceEmojis.size(); ++i)
     emoji_menu_->AddCheckItem(kEmojiBase + i, kWorkspaceEmojis[i]);
   emoji_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
@@ -5408,7 +5421,7 @@ void WorkspaceShell::BuildWorkspaceMenu(std::string id) {
 void WorkspaceShell::BuildFolderMenu(std::string parent) {
   context_tab_.reset();context_tab_identity_={};context_pin_.clear();
   workspace_menu_runner_.reset();
-  workspace_menu_ = std::make_unique<ui::SimpleMenuModel>(this);
+  workspace_menu_ = std::make_unique<DesignMenuModel>(this);
   folder_parent_id_ = std::move(parent);
   context_workspace_id_ = state_.workspace_id;
   if (metal_sidebar_) {
@@ -5592,7 +5605,7 @@ void WorkspaceShell::ShowContextMenuForViewImpl(views::View* source, const gfx::
     if (pin.id == context_pin_ && pin.folder) {
       BuildFolderMenu(pin.id);
       workspace_menu_runner_ = std::make_unique<views::MenuRunner>(workspace_menu_.get(), kZitterMenuRun);
-      workspace_menu_runner_->RunMenuAt(widget_, nullptr, gfx::Rect(point, gfx::Size()), views::MenuAnchorPosition::kTopLeft, source_type);
+      workspace_menu_runner_->RunMenuAt(widget_, nullptr, gfx::Rect(point, gfx::Size()), views::MenuAnchorPosition::kTopLeft, source_type, gfx::NativeView(), ZitterMenuCorners());
       return;
     }
   }
@@ -5604,13 +5617,13 @@ void WorkspaceShell::ShowContextMenuForViewImpl(views::View* source, const gfx::
     if (button != source) continue;
     BuildWorkspaceMenu(id);
     workspace_menu_runner_ = std::make_unique<views::MenuRunner>(workspace_menu_.get(), kZitterMenuRun);
-    workspace_menu_runner_->RunMenuAt(widget_, nullptr, gfx::Rect(point, gfx::Size()), views::MenuAnchorPosition::kTopLeft, source_type);
+    workspace_menu_runner_->RunMenuAt(widget_, nullptr, gfx::Rect(point, gfx::Size()), views::MenuAnchorPosition::kTopLeft, source_type, gfx::NativeView(), ZitterMenuCorners());
     return;
   }
   if (source == sidebar_root_ || source == tab_list_ || sidebar_root_->Contains(source)) {
     BuildFolderMenu();
     workspace_menu_runner_ = std::make_unique<views::MenuRunner>(workspace_menu_.get(), kZitterMenuRun);
-    workspace_menu_runner_->RunMenuAt(widget_, nullptr, gfx::Rect(point, gfx::Size()), views::MenuAnchorPosition::kTopLeft, source_type);
+    workspace_menu_runner_->RunMenuAt(widget_, nullptr, gfx::Rect(point, gfx::Size()), views::MenuAnchorPosition::kTopLeft, source_type, gfx::NativeView(), ZitterMenuCorners());
   }
 }
 
@@ -5641,7 +5654,7 @@ void WorkspaceShell::BuildTabMenu(std::optional<size_t> target_tab,std::string t
   context_tab_=target_tab;context_pin_=std::move(target_pin);context_tab_identity_={};
   if(target_tab)for(const auto& row:state_.tabs)if(row.index==*target_tab){context_tab_identity_=row.identity;break;}
     workspace_menu_runner_.reset();
-    workspace_menu_ = std::make_unique<ui::SimpleMenuModel>(this);
+    workspace_menu_ = std::make_unique<DesignMenuModel>(this);
     GURL url;
     if (context_tab_) for (const auto& tab : state_.tabs) if (tab.index == *context_tab_) url = tab.url;
     if (!context_pin_.empty()) for (const auto& pin : state_.pins) if (pin.id == context_pin_) url = pin.url;
@@ -5684,7 +5697,7 @@ void WorkspaceShell::BuildTabMenu(std::optional<size_t> target_tab,std::string t
 void WorkspaceShell::ShowTabMenu(gfx::Point point,ui::mojom::MenuSourceType source_type) {
   BuildTabMenu(context_tab_,context_pin_);
   workspace_menu_runner_=std::make_unique<views::MenuRunner>(workspace_menu_.get(),kZitterMenuRun);
-  workspace_menu_runner_->RunMenuAt(widget_,nullptr,gfx::Rect(point,gfx::Size()),views::MenuAnchorPosition::kTopLeft,source_type);
+  workspace_menu_runner_->RunMenuAt(widget_,nullptr,gfx::Rect(point,gfx::Size()),views::MenuAnchorPosition::kTopLeft,source_type, gfx::NativeView(), ZitterMenuCorners());
 }
 
 sidebar::FolderMenuState WorkspaceShell::RustFolderMenuState() const {

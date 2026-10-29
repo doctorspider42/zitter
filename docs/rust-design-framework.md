@@ -217,11 +217,12 @@ Menu kontekstowe kart, linków i przestrzeni są menu Views w kolorach i kroju d
 z akcjami niszczącymi na końcu po separatorze; menu aplikacji macOS mówi językiem
 interfejsu; „+” kończy szynę przestrzeni, dopóki się mieści.
 
-Ograniczenia platformy (nie do obejścia w designie): promień panelu menu Views i
-kolor pojedynczej pozycji („danger”) nie są wystawione przez Chromium (MenuConfig,
-MenuModel); dialogi modalne okna na macOS są arkuszami, którym Chromium narzuca
-promień 2 px (pozostałe dialogi dostają `radius-lg`); w pasku bocznym nie ma ikony
-Pobrane, więc koniec pobierania sygnalizuje tylko tost.
+Panel menu ma `radius-md` (przekazywany do `RunMenuAt`), a akcje niszczące są w
+`danger` (`DesignMenuModel`).
+
+Ograniczenie platformy: dialogi modalne okna na macOS są arkuszami, którym Chromium
+narzuca promień 2 px (pozostałe dialogi dostają `radius-lg`). Pasek boczny w designie
+nie ma ikony Pobrane, więc koniec pobierania sygnalizuje tost.
 
 ## Języki interfejsu
 
