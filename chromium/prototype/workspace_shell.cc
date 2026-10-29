@@ -99,6 +99,7 @@
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/gfx/scoped_canvas.h"
+#include "ui/views/bubble/bubble_frame_view.h"
 #include "ui/color/color_recipe.h"
 #include "ui/color/color_mixer.h"
 #include "ui/color/color_provider_manager.h"
@@ -2063,6 +2064,12 @@ END_METADATA
 // and destroys its CLIENT_OWNS_WIDGET widget before deleting the delegate.
 class SceneModalDialog final : public views::BubbleDialogDelegate {
  public:
+  // Design: Dialog has `radius-lg`. Chromium caps window-modal sheets on macOS
+  // at 2 px through GetCornerRadius(); the frame takes the design radius here.
+  std::unique_ptr<views::FrameView> CreateFrameView(views::Widget* widget) override{
+    auto frame=views::BubbleDialogDelegate::CreateFrameView(widget);
+    if(auto* bubble=views::AsViewClass<views::BubbleFrameView>(frame.get()))bubble->SetRoundedCorners(gfx::RoundedCornersF(20));
+    return frame;}
   SceneModalDialog(std::unique_ptr<views::View> body,bool control,bool modal=true)
       :views::BubbleDialogDelegate(views::BubbleAnchor(),views::BubbleBorder::Arrow::NONE,views::BubbleBorder::DIALOG_SHADOW,true){
     SetModalType(modal?ui::mojom::ModalType::kWindow:ui::mojom::ModalType::kNone);SetShowCloseButton(!modal);if(!modal)set_close_on_deactivate(false);SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
@@ -3854,7 +3861,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         // only if the saved state differs, never as a side effect of loading.
         if (shell->pinned_ && !shell->sidebar_visible()) shell->ShowSidebar();
         if (!shell->pinned_ && shell->sidebar_visible()) shell->sidebar_widget_->Hide();
-        // Development: --zitter-open-panel=space|sidebar|palette|address|settings|profiles|downloads|menu|toast opens
+        // Development: --zitter-open-panel=space|sidebar|palette|address|settings|profiles|downloads|menu|dialog|toast opens
         // that view once the window is up, so UI checks can screenshot it without
         // driving the mouse.
         if (const std::string panel = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-open-panel"); !panel.empty())
@@ -3869,6 +3876,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
                 else if (panel == "profiles") shell->OpenProfiles();
                 // A sample undo toast; its „Cofnij” does nothing.
                 else if (panel == "downloads") shell->callbacks_.run_shortcut.Run("downloads");
+                else if (panel == "dialog") shell->RequestNewFolder(shell->state_.workspace_id);
                 else if (panel == "menu") {shell->context_tab_=shell->state_.active_tab;shell->context_pin_.clear();shell->ShowTabMenu(shell->widget_->GetWindowBoundsInScreen().origin()+gfx::Vector2d(80,140),ui::mojom::MenuSourceType::kMouse);}
                 else if (panel == "toast") shell->ShowToast(T(u"Usunięto folder "), u"Projekty", base::DoNothing());
               }, shell->weak_factory_.GetWeakPtr(), panel),

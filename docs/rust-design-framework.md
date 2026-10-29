@@ -220,9 +220,10 @@ interfejsu; „+” kończy szynę przestrzeni, dopóki się mieści.
 Panel menu ma `radius-md` (przekazywany do `RunMenuAt`), a akcje niszczące są w
 `danger` (`DesignMenuModel`).
 
-Ograniczenie platformy: dialogi modalne okna na macOS są arkuszami, którym Chromium
-narzuca promień 2 px (pozostałe dialogi dostają `radius-lg`). Pasek boczny w designie
-nie ma ikony Pobrane, więc koniec pobierania sygnalizuje tost.
+Dialogi modalne okna na macOS są arkuszami, którym Chromium przez `GetCornerRadius()`
+narzuca promień 2 px; `SceneModalDialog::CreateFrameView` ustawia ramce `radius-lg`
+(20 px), więc wszystkie dialogi mają promień z designu. Pasek boczny w designie nie ma
+ikony Pobrane, więc koniec pobierania sygnalizuje tost.
 
 ## Języki interfejsu
 
