@@ -260,3 +260,11 @@ ponownym uruchomieniu. Testy przeglądarkowe przypinają polski
 
 Strzałka folderu jest osobnym glifem: w tytule „▸ Nazwa” zmieniała cały wiersz na font
 zastępczy, większy niż `body` karty.
+
+Szósta runda: usunięcie przestrzeni znów pyta (Dialog, „Usuń przestrzeń” w `danger`,
+domyślnie Anuluj), a po zatwierdzeniu działa jak dotąd z tostem „Cofnij”. Kliknięcie
+paska panelu w Split View daje mu fokus. Między przypiętymi a otwartymi kartami jest
+linia `line` z odstępem `space-2`. Karta przeciągnięta z paska na stronę trafia do
+podziału przy najbliższej krawędzi panelu (z lewej, z prawej albo między panelami);
+podgląd przyciemnia stronę, rysuje panele, które powstaną, a nowy wypełnia `accent`
+z nazwą karty. Pełna grupa (4 panele) dalej zastępuje panel z fokusem.

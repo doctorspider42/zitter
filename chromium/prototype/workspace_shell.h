@@ -235,6 +235,13 @@ class WorkspaceShell final : public ui::EventHandler,
   void ToggleSidebar();
   // The header's sidebar button pins and unpins the panel.
   void TogglePinned();
+  // Asks before removing a space; accepting removes it with an undo toast.
+  void RequestRemoveWorkspace(std::string id);
+  views::Widget* workspace_remove_dialog() const { return remove_dialog_.get(); }
+  std::optional<size_t> split_drop_slot_for_testing() const { return split_drop_slot_; }
+  std::optional<size_t> SplitDropSlotForTesting(gfx::Point point) const { return SplitDropSlot(point); }
+  void DropIntoSplitForTesting(size_t tab, size_t slot) { QueueSplit(tab, {}, slot); }
+  const std::vector<size_t>& split_tabs_for_testing() const { return state_.split_tabs; }
   // The footer's „+”: a new tab, folder or space.
   void ShowAddMenu();
   void SetPinned(bool pinned);
@@ -712,7 +719,9 @@ class WorkspaceShell final : public ui::EventHandler,
   sidebar::WorkspaceMenuState RustWorkspaceMenuState() const;
   sidebar::FolderMenuState RustFolderMenuState() const;
   bool ShowRustFolderNotice(std::string workspace,std::string folder,std::string title,bool error_only);
-  void QueueSplit(std::optional<size_t> tab, std::string pin);
+  void QueueSplit(std::optional<size_t> tab, std::string pin, std::optional<size_t> slot = std::nullopt);
+  std::optional<size_t> SplitDropSlot(gfx::Point point) const;
+  void ShowSplitDrop(std::optional<size_t> slot, std::u16string title);
   struct ResolvedRowTarget { bool valid; std::optional<size_t> tab; std::string pin; };
   ResolvedRowTarget ResolveSidebarTarget(std::string_view workspace,std::array<uint64_t,2> identity,std::string_view pin) const;
   void HandleSidebarDrop(std::string workspace,std::optional<size_t> tab,std::array<uint64_t,2> identity,std::string pin,gfx::Point point);
@@ -886,6 +895,14 @@ class WorkspaceShell final : public ui::EventHandler,
   std::vector<Workspace> route_workspaces_;
   raw_ptr<views::View> new_tab_button_ = nullptr;
   std::unique_ptr<views::DialogDelegate> rust_folder_dialog_delegate_;
+  // Removing a space asks first (design: Dialog), then removes with an undo toast.
+  std::unique_ptr<views::DialogDelegate> remove_dialog_delegate_;
+  std::unique_ptr<views::Widget> remove_dialog_;
+  // A tab dragged over the page: where it lands in the split, shown on a panel.
+  std::unique_ptr<views::WidgetDelegate> drop_delegate_;
+  std::unique_ptr<views::Widget> drop_widget_;
+  raw_ptr<views::View> drop_view_ = nullptr;
+  std::optional<size_t> split_drop_slot_;
   std::unique_ptr<views::Widget> rust_folder_dialog_;
   base::WeakPtr<views::Widget> folder_dialog_;
   std::string folder_parent_id_;

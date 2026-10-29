@@ -9,3 +9,4 @@ Dwie lub więcej stron w jednym widoku: obok siebie albo jedna pod drugą, z uch
 - Pasek hosta 28 px w `url` nad każdym panelem — adres pokazuje też pigułka, ale tylko dla aktywnego.
 - Uchwyt (`zt-gutter`, `role="separator"`): kreska 3 px `line-strong`, na hover rośnie i zmienia się w `zing`. Strzałki przesuwają o 5%.
 - W pasku bocznym karty podziału stoją obok siebie w jednym wierszu `SidebarTab`, w kolejności paneli.
+- Kliknięcie paska panelu daje mu fokus. Karta przeciągnięta z paska bocznego na stronę dołącza do podziału przy najbliższej krawędzi: podgląd przyciemnia stronę, pokazuje przyszłe panele jako karty, a nowy w `accent` z nazwą karty.

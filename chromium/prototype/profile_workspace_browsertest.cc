@@ -201,6 +201,12 @@ class RoutingTestBrowserClient : public ChromeContentBrowserClient {
     ChromeContentBrowserClient::CreateThrottlesForNavigation(registry);
   }
 };
+// Removing a space asks first: accept the dialog the request opened.
+[[nodiscard]] bool AcceptWorkspaceRemoval(WorkspaceShell* shell) {
+  if (!base::test::RunUntil([&] { return shell->workspace_remove_dialog() != nullptr; })) return false;
+  shell->workspace_remove_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+  return true;
+}
 views::View* FindButton(views::View* root, std::u16string_view text) {
   if (auto* button = views::AsViewClass<views::MdTextButton>(root)) {
     if (button->GetText() == text) return button;
@@ -1433,6 +1439,32 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SpacePanelAutosavesAndMakesPro
   ASSERT_TRUE(base::test::RunUntil([&]{return window_->workspaces().size()==spaces+1&&window_->profiles().size()==profiles+1&&!window_->profiles_busy();}));
   EXPECT_EQ("Klient X",window_->workspaces().back().name);EXPECT_EQ("Klient X",window_->profiles().back().name);
   ASSERT_TRUE(base::test::RunUntil([&]{return window_->workspaces().back().profile_id==window_->profiles().back().id;}));
+}
+
+// Removing a space asks first; Cancel keeps it.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SpaceRemovalAsksFirst) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
+  const auto spaces=window_->workspaces().size();
+  shell->RequestRemoveWorkspace("personal");ASSERT_TRUE(shell->workspace_remove_dialog());
+  shell->workspace_remove_dialog()->widget_delegate()->AsDialogDelegate()->CancelDialog();
+  ASSERT_TRUE(base::test::RunUntil([&]{return !shell->workspace_remove_dialog();}));EXPECT_EQ(spaces,window_->workspaces().size());
+  shell->RequestRemoveWorkspace("personal");ASSERT_TRUE(AcceptWorkspaceRemoval(shell));
+  ASSERT_TRUE(base::test::RunUntil([&]{return window_->workspaces().size()==spaces-1;}));
+}
+// A tab dragged onto the page lands at the nearest pane edge (design: SplitView).
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitDropSlotFollowsThePointer) {
+  ASSERT_NO_FATAL_FAILURE(NavigateBoth());
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
+  ASSERT_TRUE(window_->Select("work"));window_->widget()->LayoutRootViewIfNecessary();
+  auto at=[&](double along){const auto b=shell->content_host()->GetBoundsInScreen();return shell->SplitDropSlotForTesting(gfx::Point(b.x()+static_cast<int>(b.width()*along),b.CenterPoint().y()));};
+  EXPECT_EQ(0u,at(0.2));EXPECT_EQ(1u,at(0.8));EXPECT_FALSE(shell->SplitDropSlotForTesting(gfx::Point(-50,-50)));
+  const auto url=embedded_test_server()->GetURL("/storage_probe.html?drop");ASSERT_TRUE(window_->NavigateFromBar(url,true));window_->SelectTab(0);ASSERT_TRUE(window_->SplitTab(1));window_->widget()->LayoutRootViewIfNecessary();
+  EXPECT_EQ(0u,at(0.1));EXPECT_EQ(1u,at(0.5));EXPECT_EQ(2u,at(0.9));
+  // A drop in the middle walks the new pane between the two.
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html?third"),true));
+  const size_t third=window_->tab_count("work")-1;window_->SelectTab(0);
+  ASSERT_EQ(2u,shell->split_tabs_for_testing().size());shell->DropIntoSplitForTesting(third,1);
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->split_tabs_for_testing().size()==3u;}));EXPECT_EQ(third,shell->split_tabs_for_testing()[1]);
 }
 
 // The footer's „+” (design: Sidebar footer) offers a new tab, folder or space.
@@ -4189,8 +4221,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DynamicWorkspacesAndProfiles) 
   shell->OpenWorkspaceSettings();
   auto* remove = FindButton(shell->settings_widget()->GetContentsView(), u"Usuń przestrzeń");
   ASSERT_TRUE(remove);
-  // Removal can be undone, so it happens at once with a toast.
+  // Removal asks first (dialog), then happens with an undo toast.
   ClickControl(remove);
+  ASSERT_TRUE(AcceptWorkspaceRemoval(shell));
   ASSERT_TRUE(base::test::RunUntil([&] { return !window_->tab_count("work") && !window_->profiles_busy(); }));
   EXPECT_TRUE(base::StartsWith(shell->toast_text_for_testing(), u"Usunięto przestrzeń "));
   shell->UndoToast();
@@ -4201,6 +4234,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DynamicWorkspacesAndProfiles) 
   remove = FindButton(shell->settings_widget()->GetContentsView(), u"Usuń przestrzeń");
   ASSERT_TRUE(remove);
   ClickControl(remove);
+  ASSERT_TRUE(AcceptWorkspaceRemoval(shell));
   ASSERT_TRUE(base::test::RunUntil([&] { return !window_->tab_count("work"); }));
   ASSERT_TRUE(window_->Select(project));
   ASSERT_TRUE(base::test::RunUntil([&] {
@@ -4244,6 +4278,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceContextAppearanceAndD
   EXPECT_EQ(u"", shell->emoji_input()->GetText());
   shell->BuildWorkspaceMenu("personal");
   shell->workspace_menu()->ActivatedAt(6, 0);
+  ASSERT_TRUE(AcceptWorkspaceRemoval(shell));
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->workspaces().size() == 1u && !window_->profiles_busy(); }));
   EXPECT_EQ("work", window_->active_id());
   // Undo brings it back (at the end of the list) with its look, unselected.
@@ -4256,6 +4291,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceContextAppearanceAndD
   EXPECT_EQ(u"🚀", shell->workspace_emoji("personal"));
   shell->BuildWorkspaceMenu("personal");
   shell->workspace_menu()->ActivatedAt(6, 0);
+  ASSERT_TRUE(AcceptWorkspaceRemoval(shell));
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->workspaces().size() == 1u; }));
   EXPECT_EQ("work", window_->active_id());
   shell->BuildWorkspaceMenu("work");
@@ -4281,6 +4317,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceRemovalToastStaysInTh
       ASSERT_TRUE(remove);
       ClickControl(remove);
     }
+    ASSERT_TRUE(AcceptWorkspaceRemoval(shell));
     ASSERT_TRUE(base::test::RunUntil([&] { return window_->workspaces().size() == 1u && shell->toast_widget()->IsVisible(); }));
     const auto bounds = shell->toast_widget()->GetWindowBoundsInScreen();
     EXPECT_FALSE(bounds.IsEmpty());
@@ -6731,13 +6768,13 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, AppearanceRowsSceneInputCl
   auto* cancel=FindButton(shell->workspace_panel_for_testing(),u"Anuluj");ASSERT_TRUE(cancel);ClickControl(cancel);if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_metal_visible(false)&&shell->appearance_metal_visible(true);}));
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_saved();}));
 }
-// Removal is immediate with an undo toast; a page with unsaved changes asks
-// first, and the toast follows the actual removal. The profile stays.
+// Removal asks first, then happens with an undo toast; a page with unsaved
+// changes asks too, and the toast follows the actual removal. The profile stays.
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, WorkspaceRemovalUndoUnloadAndRetainedProfile) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
   ASSERT_TRUE(window_->Select("personal"));ASSERT_TRUE(window_->EditWorkspace("Prywatne 日本語 🦀","personal-profile"));
   const auto url=embedded_test_server()->GetURL("/storage_probe.html");auto* personal=window_->contents("personal");ASSERT_TRUE(content::NavigateToURL(personal,url));EXPECT_EQ("kept",content::EvalJs(personal,"writeMarker('kept')"));ASSERT_TRUE(window_->Select("work"));
-  auto open=[&](const std::string& id){shell->BuildWorkspaceMenu(id);shell->workspace_menu()->ActivatedAt(6,0);};
+  auto open=[&](const std::string& id){shell->BuildWorkspaceMenu(id);shell->workspace_menu()->ActivatedAt(6,0);ASSERT_TRUE(AcceptWorkspaceRemoval(shell));};
   open("personal");ASSERT_TRUE(base::test::RunUntil([&]{return !window_->tab_count("personal")&&!window_->lifecycle_pending();}));EXPECT_EQ(u"Usunięto przestrzeń Prywatne 日本語 🦀",shell->toast_text_for_testing());
   ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));shell->UndoToast();ASSERT_EQ(2u,window_->workspaces().size());EXPECT_EQ("Prywatne 日本語 🦀",window_->workspaces()[1].name);EXPECT_EQ("work",window_->active_id());
   ASSERT_TRUE(window_->Select("personal"));personal=window_->contents("personal");ASSERT_TRUE(content::NavigateToURL(personal,url));EXPECT_NE(std::string::npos,content::EvalJs(personal,"readMarker()").ExtractString().find("kept"));ArmUnsaved(personal);ASSERT_TRUE(window_->Select("work"));

@@ -294,4 +294,6 @@ pub static EN: &[(&str, &str)] = &[
     ("kart", "tabs"),
     ("karty", "tabs"),
     ("kartę", "tab"),
+    ("Usunąć przestrzeń „{}”?", "Remove space “{}”?"),
+    ("Zamknie wszystkie karty i foldery tej przestrzeni. Przez 6 s możesz cofnąć.", "Closes every tab and folder in this space. You can undo for 6 s."),
 ];

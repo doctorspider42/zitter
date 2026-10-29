@@ -531,6 +531,17 @@ views::View* Spacer(views::View* parent, int height) {
   spacer->SetPreferredSize(gfx::Size(1, height));
   return spacer;
 }
+// The quiet line between pinned rows and open tabs: `line`, `space-2` above and
+// below, inset like the rows.
+class SidebarDivider final : public views::View {
+  METADATA_HEADER(SidebarDivider,views::View)
+ public:
+  SidebarDivider(){GetViewAccessibility().SetIsIgnored(true);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(0,17);}
+  void OnPaint(gfx::Canvas* canvas) override{canvas->FillRect(gfx::Rect(12,8,std::max(0,width()-24),1),Hairline(this));}
+};
+BEGIN_METADATA(SidebarDivider)
+END_METADATA
 std::u16string HostLabel(const GURL& url) {
   std::string host(url.host());
   if (host.starts_with("www.")) host = host.substr(4);
@@ -2906,8 +2917,8 @@ class PaneBar final : public views::View {
   METADATA_HEADER(PaneBar, views::View)
  public:
   PaneBar(views::Button::PressedCallback menu, views::Button::PressedCallback close,
-      base::RepeatingClosure painted,base::RepeatingCallback<bool()> visible)
-      : painted_(std::move(painted)),visible_(std::move(visible)) {
+      base::RepeatingClosure painted,base::RepeatingCallback<bool()> visible,base::RepeatingClosure focus)
+      : focus_(std::move(focus)),painted_(std::move(painted)),visible_(std::move(visible)) {
     node_graph_=std::make_shared<SidebarNodeGraphState>();
     GetViewAccessibility().SetRole(ax::mojom::Role::kGroup);
     menu_=AddChildView(CreateSceneAction(std::move(menu),T(u"Opcje Split View"),ControlGlyph::kMore,nullptr,visible_,painted_,true,{node_graph_}));
@@ -2948,10 +2959,13 @@ class PaneBar final : public views::View {
     const auto g=sidebar::pane_bar_layout(width(),height());
     canvas->DrawStringRectWithFlags(text_,DesignFont(3,12,400,false),active_?Palette(this).ink:Palette(this).ink_muted,gfx::Rect(g.title.x,g.title.y,g.title.width,g.title.height),gfx::Canvas::TEXT_ALIGN_LEFT);
   }
+  // A click on the bar (outside its buttons) focuses its pane.
+  bool OnMousePressed(const ui::MouseEvent& event) override{if(!event.IsOnlyLeftMouseButton()||!focus_)return false;focus_.Run();return true;}
   views::View* menu() const { return menu_; }
   views::View* close() const { return close_; }
  private:
   std::shared_ptr<SidebarNodeGraphState> node_graph_;
+  base::RepeatingClosure focus_;
   bool active_=false;
   std::u16string text_;
   mutable std::optional<int> measured_;
@@ -2992,11 +3006,11 @@ class PaneHost final : public views::View, public views::ResizeAreaDelegate {
   PaneHost(base::RepeatingCallback<void(size_t, double, bool)> changed,
            base::RepeatingCallback<void(size_t, views::View*)> menu,
            base::RepeatingCallback<void(size_t)> close,base::RepeatingClosure painted,
-           base::RepeatingCallback<bool(size_t)> visible)
+           base::RepeatingCallback<bool(size_t)> visible,base::RepeatingCallback<void(size_t)> focus)
       : painted_(std::move(painted)),changed_(std::move(changed)) {
     for (size_t pane = 0; pane < kMaxSplitPanes; ++pane) {
       auto* bar = AddChildView(std::make_unique<PaneBar>(views::Button::PressedCallback(),
-          base::BindRepeating(close, pane),painted_,base::BindRepeating(visible,SurfaceIndex(false,pane))));
+          base::BindRepeating(close, pane),painted_,base::BindRepeating(visible,SurfaceIndex(false,pane)),base::BindRepeating(focus,pane)));
       SetActionCallback(bar->menu(),base::BindRepeating(menu,pane,base::Unretained(bar->menu())));
       bar->SetVisible(false);
       bars_[pane] = bar;
@@ -3289,7 +3303,8 @@ std::unique_ptr<views::View> WorkspaceShell::Build() {
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, size_t pane) {
         if (shell) shell->CloseSplitPane(pane);
       }, weak),base::BindRepeating(&WorkspaceShell::ScheduleMetalSplit,weak),
-      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,size_t index){return shell && shell->metal_split_visible(index);},weak)));
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,size_t index){return shell && shell->metal_split_visible(index);},weak),
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,size_t pane){if(shell&&shell->callbacks_.focus_pane)shell->callbacks_.focus_pane.Run(pane);},weak)));
   content_host_->SetBackground(views::CreateRoundedRectBackground(kCard, 10));
   edge_ = root->AddChildView(std::make_unique<EdgeView>(
       base::BindRepeating(&WorkspaceShell::ShowSidebar, weak)));
@@ -3531,7 +3546,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto* danger_copy=danger->AddChildView(std::make_unique<views::View>());danger_copy->SetPreferredSize(gfx::Size(0,54));
   remove_workspace_ = danger->AddChildView(std::make_unique<SceneDangerPill>(
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
-        if (shell) shell->ConfirmRemoveWorkspace(shell->state_.workspace_id);
+        if (shell) shell->RequestRemoveWorkspace(shell->state_.workspace_id);
       }, weak), T(u"Usuń"), workspace_copy[16]));
   {auto* layout=danger->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal,gfx::Insets(),Metrics().space_4));
    layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);layout->SetFlexForView(danger_copy,1);}
@@ -3936,6 +3951,8 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
                 else if (panel == "dialog") shell->RequestNewFolder(shell->state_.workspace_id);
                 else if (panel == "space-end") {shell->OpenWorkspaceSettings();shell->settings_widget_->LayoutRootViewIfNecessary();shell->settings_scroll_->ScrollTo(shell->settings_scroll_->maximum());}
                 else if (panel == "space-new") {shell->OpenWorkspaceSettings();shell->ToggleWorkspaceCreation();shell->workspace_input_->SetText(u"Klient X");shell->PickWorkspaceProfile(std::string());shell->settings_widget_->LayoutRootViewIfNecessary();shell->settings_scroll_->ScrollTo(shell->settings_scroll_->maximum());}
+                else if (panel == "remove") shell->RequestRemoveWorkspace(shell->state_.workspace_id);
+                else if (panel == "drop") shell->ShowSplitDrop(shell->state_.split_visible?1:0,u"Google");
                 else if (panel == "add") {shell->ShowSidebar();shell->sidebar_widget_->LayoutRootViewIfNecessary();shell->ShowAddMenu();}
                 else if (panel == "menu") {shell->context_tab_=shell->state_.active_tab;shell->context_pin_.clear();shell->ShowTabMenu(shell->widget_->GetWindowBoundsInScreen().origin()+gfx::Vector2d(80,140),ui::mojom::MenuSourceType::kMouse);}
                 else if (panel == "toast") shell->ShowToast(T(u"Usunięto folder "), u"Projekty", base::DoNothing());
@@ -4051,6 +4068,7 @@ void WorkspaceShell::Detach() {
   history_more_ = nullptr; history_clear_ = nullptr;
   tools_widget_.reset(); tools_delegate_.reset();
   toast_timer_.Stop(); toast_tremor_timer_.Stop(); toast_undo_.Reset(); toast_ = nullptr; toast_widget_.reset(); toast_delegate_.reset();
+  remove_dialog_.reset(); remove_dialog_delegate_.reset(); drop_view_ = nullptr; drop_widget_.reset(); drop_delegate_.reset();
   scrim_widget_.reset(); scrim_delegate_.reset();
   general_widget_.reset(); general_delegate_.reset();
   peek_host_ = nullptr; peek_title_ = nullptr;peek_toolbar_=nullptr;
@@ -4268,7 +4286,7 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
       AppendPinnedItems(contents.get(),state_.pins,cache,state_.workspace_id
           ,&retained_pins,&retained_groups,&retained_holders
       );
-      Spacer(contents.get(), 8);
+      contents->AddChildView(std::make_unique<SidebarDivider>());
     }
     cache.pins_root->AddChildView(std::move(contents));
     cache.pins = state_.pins;
@@ -4715,6 +4733,9 @@ void WorkspaceShell::UpdateMetalSidebar() {
       items.push_back(std::move(item));
     } else if (views::AsViewClass<SplitPair>(view)) {
       item.kind=2; item.fill=SkColorSetA(Tone(view,kCard),0x33);
+      items.push_back(std::move(item));
+    } else if (views::AsViewClass<SidebarDivider>(view)) {
+      item.kind=14; item.x+=12; item.width=std::max(0.f,item.width-24); item.y+=8; item.height=1; item.fill=Hairline(view);
       items.push_back(std::move(item));
     }
   }
@@ -5894,6 +5915,40 @@ std::optional<WorkspaceShell::SidebarReorder> WorkspaceShell::SidebarReorderAt(g
   return out;
 }
 namespace {
+// Where a tab dragged onto the page lands in the split (design: SplitView): the
+// page dims, the panes it will make are outlined, and the new one is an
+// `accent` card holding the tab's name.
+class SplitDropView final : public views::View {
+  METADATA_HEADER(SplitDropView, views::View)
+ public:
+  SplitDropView(){GetViewAccessibility().SetIsIgnored(true);SetCanProcessEventsWithinSubtree(false);}
+  void Set(size_t panes,size_t slot,bool vertical,std::u16string title){
+    if(panes_==panes&&slot_==slot&&vertical_==vertical&&title_==title)return;
+    panes_=panes;slot_=slot;vertical_=vertical;title_=std::move(title);SchedulePaint();}
+  void OnPaint(gfx::Canvas* canvas) override{
+    const auto p=Palette(this);const int radius=Metrics().radius_md;
+    FillRound(canvas,GetLocalBounds(),radius,SkColorSetA(p.bg_void,0xC7));
+    const int count=static_cast<int>(panes_)+1;const int extent=vertical_?height():width();
+    for(int i=0;i<count;++i){
+      const int start=extent*i/count,end=extent*(i+1)/count;
+      gfx::Rect cell=vertical_?gfx::Rect(0,start,width(),end-start):gfx::Rect(start,0,end-start,height());cell.Inset(6);
+      gfx::RectF edge(cell);edge.Inset(i==static_cast<int>(slot_)?1.f:0.5f);
+      cc::PaintFlags line;line.setAntiAlias(true);line.setStyle(cc::PaintFlags::kStroke_Style);
+      if(i!=static_cast<int>(slot_)){FillRound(canvas,cell,radius,SkColorSetA(p.bg_raised,0xB3));line.setStrokeWidth(1);line.setColor(p.line);canvas->DrawRoundRect(edge,radius,line);continue;}
+      FillRound(canvas,cell,radius,SkColorSetA(p.accent,0x4D));
+      line.setStrokeWidth(2);line.setColor(p.accent);canvas->DrawRoundRect(edge,radius,line);
+      // The tab's name on a raised pill in the middle of its future pane.
+      const auto font=DesignFont(2,13,600,false);const int text=std::min(gfx::GetStringWidth(title_,font),std::max(0,cell.width()-56));
+      const gfx::Rect pill(cell.CenterPoint().x()-(text+32)/2,cell.CenterPoint().y()-16,text+32,32);
+      FillRound(canvas,pill,16,p.bg_raised);StrokeRound(canvas,pill,16,p.line);
+      canvas->DrawStringRectWithFlags(gfx::ElideText(title_,font,text,gfx::ELIDE_TAIL),font,p.ink,gfx::Rect(pill.x()+16,pill.y(),text,pill.height()),gfx::Canvas::TEXT_ALIGN_LEFT);
+    }
+  }
+ private:
+  size_t panes_=1,slot_=1;bool vertical_=false;std::u16string title_;
+};
+BEGIN_METADATA(SplitDropView)
+END_METADATA
 class SidebarDragOverlay final : public views::View {
   METADATA_HEADER(SidebarDragOverlay, views::View)
  public:
@@ -5910,9 +5965,38 @@ class SidebarDragOverlay final : public views::View {
 BEGIN_METADATA(SidebarDragOverlay)
 END_METADATA
 }  // namespace
+std::optional<size_t> WorkspaceShell::SplitDropSlot(gfx::Point point) const {
+  if(!content_host_||!state_.configuration_ready||state_.profiles_busy)return std::nullopt;
+  const auto bounds=content_host_->GetBoundsInScreen();if(!bounds.Contains(point))return std::nullopt;
+  const size_t panes=state_.split_visible?std::max<size_t>(1,state_.split_tabs.size()):1;
+  // A full group replaces its focused pane instead.
+  if(panes>=kMaxSplitPanes)return std::nullopt;
+  const bool vertical=panes>1&&state_.split_vertical;
+  const double along=vertical?double(point.y()-bounds.y())/std::max(1,bounds.height()):double(point.x()-bounds.x())/std::max(1,bounds.width());
+  // The nearest pane edge: left or right of a single page, or between panes.
+  return std::min<size_t>(panes,static_cast<size_t>(std::max(0.0,std::floor(along*panes+0.5))));
+}
+void WorkspaceShell::ShowSplitDrop(std::optional<size_t> slot,std::u16string title) {
+  split_drop_slot_=slot;
+  if(!slot){if(drop_widget_)drop_widget_->Hide();return;}
+  if(!drop_widget_){
+    drop_delegate_=std::make_unique<views::WidgetDelegate>();drop_delegate_->SetTitle(u"Zitter — Split View");
+    auto view=std::make_unique<SplitDropView>();drop_view_=view.get();drop_delegate_->SetContentsView(std::move(view));
+    views::Widget::InitParams params(views::Widget::InitParams::CLIENT_OWNS_WIDGET,views::Widget::InitParams::TYPE_BUBBLE);
+    params.delegate=drop_delegate_.get();params.SetParent(widget_);params.activatable=views::Widget::InitParams::Activatable::kNo;
+    params.accept_events=false;params.opacity=views::Widget::InitParams::WindowOpacity::kTranslucent;params.rounded_corners=gfx::RoundedCornersF(Metrics().radius_md);
+    drop_widget_=std::make_unique<views::Widget>();drop_widget_->Init(std::move(params));
+  }
+  const size_t panes=state_.split_visible?std::max<size_t>(1,state_.split_tabs.size()):1;
+  static_cast<SplitDropView*>(drop_view_.get())->Set(panes,*slot,panes>1&&state_.split_vertical,std::move(title));
+  if(drop_widget_->GetWindowBoundsInScreen()!=content_host_->GetBoundsInScreen())drop_widget_->SetBounds(content_host_->GetBoundsInScreen());
+  if(!drop_widget_->IsVisible())drop_widget_->ShowInactive();
+  if(sidebar_widget_&&sidebar_widget_->IsVisible())sidebar_widget_->StackAboveWidget(drop_widget_.get());
+}
 void WorkspaceShell::HandleSidebarDrag(views::View* row,gfx::Point grab,std::optional<gfx::Point> point) {
   sidebar_reorder_=point?SidebarReorderAt(*point):std::nullopt;
   drag_row_.SetView(point?row:nullptr);drag_grab_=grab;drag_point_=point;
+  ShowSplitDrop(point&&!sidebar_reorder_?SplitDropSlot(*point):std::nullopt,row?std::u16string(row->GetViewAccessibility().GetCachedName()):std::u16string());
   ScheduleMetalSidebar();
   if(!sidebar_root_)return;
   if(!drag_overlay_)drag_overlay_=sidebar_root_->AddChildView(std::make_unique<SidebarDragOverlay>(
@@ -5946,6 +6030,7 @@ void WorkspaceShell::PaintSidebarDrag(gfx::Canvas* canvas,views::View* overlay) 
   PaintSceneRecipe(canvas,item,Font(0,gfx::Font::Weight::MEDIUM));
 }
 void WorkspaceShell::HandleSidebarDrop(std::string workspace,std::optional<size_t> tab,std::array<uint64_t,2> identity,std::string pin,gfx::Point point) {
+  const auto slot=SplitDropSlot(point);ShowSplitDrop(std::nullopt,{});
   if(workspace!=state_.workspace_id)return;
   if(auto reorder=SidebarReorderAt(point)) {
     sidebar_reorder_.reset();ScheduleMetalSidebar();
@@ -5968,7 +6053,7 @@ void WorkspaceShell::HandleSidebarDrop(std::string workspace,std::optional<size_
   if(metal_sidebar_) {
     const auto target=ResolveSidebarTarget(workspace,identity,pin);
     const bool allowed=target.valid&&state_.configuration_ready&&!state_.profiles_busy;
-    if(sidebar::sidebar_drop_accepts({bounds.x(),bounds.y(),bounds.width(),bounds.height()},point.x(),point.y(),allowed))QueueSplit(target.tab,target.pin);
+    if(sidebar::sidebar_drop_accepts({bounds.x(),bounds.y(),bounds.width(),bounds.height()},point.x(),point.y(),allowed))QueueSplit(target.tab,target.pin,slot);
     return;
   }
   if(bounds.Contains(point)&&point.x()>=bounds.CenterPoint().x())QueueSplit(tab,std::move(pin));
@@ -5993,19 +6078,27 @@ void WorkspaceShell::QueueTabCommand(int command) {
     }
   },weak_factory_.GetWeakPtr(),command,context_workspace_id_,context_tab_identity_,context_pin_));
 }
-void WorkspaceShell::QueueSplit(std::optional<size_t> tab, std::string pin) {
+void WorkspaceShell::QueueSplit(std::optional<size_t> tab, std::string pin, std::optional<size_t> slot) {
   std::array<uint64_t,2> identity{};if(tab)for(const auto& row:state_.tabs)if(row.index==*tab){identity=row.identity;break;}
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(
-      [](base::WeakPtr<WorkspaceShell> shell, std::string workspace, std::optional<size_t> tab, std::string pin,std::array<uint64_t,2> identity) {
+      [](base::WeakPtr<WorkspaceShell> shell, std::string workspace, std::optional<size_t> tab, std::string pin,std::array<uint64_t,2> identity,std::optional<size_t> slot) {
         if (!shell || shell->state_.workspace_id != workspace) return;
         if(shell->metal_sidebar_) {
           const auto target=shell->ResolveSidebarTarget(workspace,identity,pin);
           if(!target.valid||!shell->state_.configuration_ready||shell->state_.profiles_busy)return;
-          if(target.tab)shell->callbacks_.split_tab.Run(*target.tab);else shell->callbacks_.split_pin.Run(target.pin);return;
+          if(target.tab)shell->callbacks_.split_tab.Run(*target.tab);else shell->callbacks_.split_pin.Run(target.pin);
+          // The new pane joins at the end; walk it to the edge it was dropped on.
+          if(!slot||!shell->state_.split_visible)return;
+          for(size_t step=0;step<kMaxSplitPanes;++step){
+            const auto& panes=shell->state_.split_tabs;const auto found=std::ranges::find(panes,shell->state_.active_tab);
+            if(found==panes.end()||static_cast<size_t>(found-panes.begin())<=*slot)break;
+            shell->callbacks_.move_split_pane.Run(shell->state_.active_tab,false);
+          }
+          return;
         }
         if (tab) shell->callbacks_.split_tab.Run(*tab);
         else if (!pin.empty()) shell->callbacks_.split_pin.Run(std::move(pin));
-      }, weak_factory_.GetWeakPtr(), state_.workspace_id, tab, std::move(pin),std::move(identity)));
+      }, weak_factory_.GetWeakPtr(), state_.workspace_id, tab, std::move(pin),std::move(identity),slot));
 }
 
 bool WorkspaceShell::GetAcceleratorForCommandId(int command_id, ui::Accelerator* accelerator) const {
@@ -6109,7 +6202,7 @@ void WorkspaceShell::ExecuteCommand(int command_id, int) {
             case C::AssignProfile: shell->callbacks_.assign_profile.Run(target, profile); break;
             case C::NewProfile: shell->OpenProfiles({}, target); break;
             case C::EditProfile: shell->OpenProfiles(profile); break;
-            case C::Remove: shell->ConfirmRemoveWorkspace(target); break;
+            case C::Remove: shell->RequestRemoveWorkspace(target); break;
             case C::Color: shell->SetWorkspaceColor(target, color); break;
             case C::Emoji: case C::ClearEmoji: shell->SetWorkspaceEmoji(target, emoji); break;
             case C::Settings: case C::CustomColor: case C::CustomEmoji:
@@ -7987,6 +8080,42 @@ void WorkspaceShell::ConfirmRemoveWorkspace(std::string id) {
   if (std::ranges::any_of(state_.workspaces, [&](const auto& w) { return w.id == id; })) { pending_removal_.emplace(id, name); return; }
   ShowWorkspaceRemovedToast(std::move(id), name);
 }
+void WorkspaceShell::RequestRemoveWorkspace(std::string id) {
+  if (!widget_ || !widget_->IsVisible() || !state_.configuration_ready || state_.profiles_busy || state_.workspaces.size() < 2) return;
+  const auto target = std::ranges::find(state_.workspaces, id, &Workspace::id);
+  if (target == state_.workspaces.end()) return;
+  if (remove_dialog_) remove_dialog_->CloseNow();
+  std::u16string detail = T(u"Zamknie wszystkie karty i foldery tej przestrzeni. Przez 6 s możesz cofnąć.");
+  if (id == state_.workspace_id) {
+    int folders = 0; for (const auto& pin : state_.pins) folders += pin.folder;
+    detail = TF(u"Zamknie {} i {}. Przez 6 s możesz cofnąć.", {CountOf(static_cast<int>(state_.tabs.size()), T(u"kartę"), T(u"karty"), T(u"kart")), CountOf(folders, T(u"folder"), T(u"foldery"), T(u"folderów"))});
+  }
+  // Design: Dialog — the destructive action in danger, Cancel the default.
+  auto dialog = std::make_unique<SceneModalDialog>(std::make_unique<SceneParagraph>(std::move(detail), 0, false, kMuted), false);
+  dialog->SetTitle(TF(u"Usunąć przestrzeń „{}”?", {base::UTF8ToUTF16(target->name)}));
+  dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk) | static_cast<int>(ui::mojom::DialogButton::kCancel));
+  dialog->SetButtonLabel(ui::mojom::DialogButton::kOk, T(u"Usuń przestrzeń"));
+  dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel, T(u"Anuluj"));
+  dialog->SetDefaultButton(static_cast<int>(ui::mojom::DialogButton::kCancel));
+  dialog->SetAcceptCallback(base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, std::string id) {
+    // After the sheet has closed: removal re-lays the window and shows a toast.
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, std::string id) {
+      if (shell) shell->ConfirmRemoveWorkspace(std::move(id));
+    }, shell, std::move(id)));
+  }, weak_factory_.GetWeakPtr(), std::move(id)));
+  remove_dialog_delegate_ = std::move(dialog);
+  auto* prompt = views::DialogDelegate::CreateDialogWidget(remove_dialog_delegate_.get(), widget_->GetNativeWindow(), widget_->GetNativeView());
+  remove_dialog_.reset(prompt);
+  prompt->MakeCloseSynchronous(base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, views::Widget::ClosedReason) {
+    if (shell) { shell->remove_dialog_.reset(); shell->remove_dialog_delegate_.reset(); }
+  }, weak_factory_.GetWeakPtr()));
+  prompt->SetColorModeOverride(widget_->color_mode_override());
+#if BUILDFLAG(IS_MAC)
+  InstallWorkspaceKeyboardRouting(prompt, true);
+#endif
+  PreparePanelText(prompt->GetRootView());
+  prompt->Show();
+}
 void WorkspaceShell::ShowWorkspaceRemovedToast(std::string id, std::u16string name) {
   ShowToast(T(u"Usunięto przestrzeń "), std::move(name), base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, std::string id) {
     if (shell) shell->SetConfigurationError(!shell->callbacks_.restore_workspace.Run(id));
@@ -8044,7 +8173,7 @@ void WorkspaceShell::DispatchFormCommand(views::View* source,const sidebar::Form
     }
     case C::WorkspaceSave:SubmitWorkspace(creating_workspace_);break;
     case C::WorkspaceToggle:ToggleWorkspaceCreation();break;
-    case C::WorkspaceRemove:ConfirmRemoveWorkspace(state_.workspace_id);break;
+    case C::WorkspaceRemove:RequestRemoveWorkspace(state_.workspace_id);break;
     case C::ProfileCreate:SubmitProfile();break;
     case C::ProfileRename:RenameSelectedProfile();break;
     case C::ProfileDelete:DeleteSelectedProfile();break;
