@@ -213,10 +213,10 @@ tost „Pobrano X · Pokaż”), drgnięcie tostu, pigułka adresu w trybie edyc
 przyciski stopki 28 px, przycisk `zing` przy tworzeniu przestrzeni, Split View (host w
 `url`, pasek 28 px, obrys aktywnego panelu).
 
-Świadome odstępstwa: menu kontekstowe są natywne (bez 248 px i stylu z designu), „+” w szynie
+Menu kontekstowe kart, linków i przestrzeni są menu Views w kolorach i kroju designu; świadome odstępstwa: promień panelu menu jest systemowy (MenuConfig go nie wystawia), „+” w szynie
 przestrzeni pokazuje się tylko, gdy się mieści, dialogi modalne na macOS są
-arkuszami z promieniem 2 px, w pasku bocznym nie ma ikony Pobrane do drgnięcia, menu
-aplikacji macOS zostaje po polsku (`chromium/app` nie jest przenoszony przez skrypt budowania).
+arkuszami z promieniem 2 px, w pasku bocznym nie ma ikony Pobrane do drgnięcia.
+Menu aplikacji macOS mówi językiem interfejsu.
 
 ## Języki interfejsu
 

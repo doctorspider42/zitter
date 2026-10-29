@@ -524,6 +524,7 @@ class WorkspaceShell final : public ui::EventHandler,
   views::View* tab_list_view() const { return tab_list_; }
   ui::SimpleMenuModel* workspace_menu() const { return workspace_menu_.get(); }
   bool workspace_context_menu_running_for_testing() const;
+  void CancelContextMenuForTesting();
   views::View* profile_picker() const { return profile_picker_; }
   views::View* color_presets() const { return color_presets_; }
   views::View* color_wheel_for_testing(size_t index) const { return color_wheel_[index]; }

@@ -99,6 +99,10 @@
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/gfx/scoped_canvas.h"
+#include "ui/color/color_recipe.h"
+#include "ui/color/color_mixer.h"
+#include "ui/color/color_provider_manager.h"
+#include "ui/views/controls/menu/menu_config.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/background.h"
 #include "ui/views/border.h"
@@ -455,6 +459,41 @@ END_METADATA
 
 // Bubble panels and moving row layers are translucent. Native controls also
 // contain Labels, which must use grayscale text on those surfaces.
+// Context menus of tabs, links and spaces (design: ContextMenu) run as Views
+// menus — macOS draws CONTEXT_MENU runs natively, out of reach of the design —
+// on `bg-raised`, 30 px rows in `body`, `bg-hover` under the pointer at
+// `radius-sm`. (The panel radius is MenuConfig's own; it is not settable.)
+constexpr int32_t kZitterMenuRun = views::MenuRunner::NO_FLAGS;
+void InstallMenuStyle() {
+  static bool installed = false;
+  if (installed) return;
+  installed = true;
+  auto& config = const_cast<views::MenuConfig&>(views::MenuConfig::instance());
+  config.font_list = config.context_menu_font_list = DesignFont(2, 13, 400, false);
+  config.minimum_text_item_height = config.minimum_container_item_height = 30;
+  config.item_horizontal_padding = 8;
+  config.item_corner_radius = 8;
+  config.nonrounded_menu_vertical_border_size = 4;
+  ui::ColorProviderManager::Get().AppendColorProviderInitializer(base::BindRepeating(
+      [](ui::ColorProvider* provider, const ui::ColorProviderKey& key) {
+        const auto p = sidebar::design_palette(key.color_mode == ui::ColorProviderKey::ColorMode::kDark, kDefaultWorkspaceColor);
+        auto& mixer = provider->AddMixer();
+        mixer[ui::kColorMenuBackground] = {p.bg_raised};
+        mixer[ui::kColorMenuBorder] = {p.line};
+        mixer[ui::kColorMenuSeparator] = {p.line};
+        mixer[ui::kColorMenuIcon] = {p.ink_muted};
+        mixer[ui::kColorMenuItemForeground] = {p.ink};
+        mixer[ui::kColorMenuItemForegroundSecondary] = {p.ink_muted};
+        mixer[ui::kColorMenuItemForegroundDisabled] = {p.ink_faint};
+        mixer[ui::kColorMenuItemForegroundHighlighted] = {p.ink};
+        mixer[ui::kColorMenuItemForegroundSelected] = {p.ink};
+        mixer[ui::kColorMenuItemBackgroundHighlighted] = {p.bg_hover};
+        mixer[ui::kColorMenuItemBackgroundSelected] = {p.bg_hover};
+        mixer[ui::kColorMenuSelectionBackground] = {p.bg_hover};
+      }));
+  ui::ColorProviderManager::Get().ResetColorProviderCache();
+}
+
 void PreparePanelText(views::View* view) {
   if (auto* label = views::AsViewClass<views::Label>(view)) label->SetSubpixelRenderingEnabled(false);
   for (const auto& child : view->children()) PreparePanelText(child);
@@ -3136,6 +3175,7 @@ WorkspaceShell::WorkspaceShell(base::FilePath path, Callbacks callbacks)
   workspace_swipe_ = std::make_unique<WorkspaceSwipeState>();
   state_.workspace_id = "work";
   sidebar_tree_.SetDefaultCollapsed(true);
+  InstallMenuStyle();
   ui::NativeTheme::GetInstanceForNativeUi()->AddObserver(this);
 }
 WorkspaceShell::~WorkspaceShell() { ui::NativeTheme::GetInstanceForNativeUi()->RemoveObserver(this); Detach(); }
@@ -3801,7 +3841,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         // only if the saved state differs, never as a side effect of loading.
         if (shell->pinned_ && !shell->sidebar_visible()) shell->ShowSidebar();
         if (!shell->pinned_ && shell->sidebar_visible()) shell->sidebar_widget_->Hide();
-        // Development: --zitter-open-panel=space|sidebar|palette|address|settings|profiles|downloads|toast opens
+        // Development: --zitter-open-panel=space|sidebar|palette|address|settings|profiles|downloads|menu|toast opens
         // that view once the window is up, so UI checks can screenshot it without
         // driving the mouse.
         if (const std::string panel = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-open-panel"); !panel.empty())
@@ -3816,6 +3856,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
                 else if (panel == "profiles") shell->OpenProfiles();
                 // A sample undo toast; its „Cofnij” does nothing.
                 else if (panel == "downloads") shell->callbacks_.run_shortcut.Run("downloads");
+                else if (panel == "menu") {shell->context_tab_=shell->state_.active_tab;shell->context_pin_.clear();shell->ShowTabMenu(shell->widget_->GetWindowBoundsInScreen().origin()+gfx::Vector2d(80,140),ui::mojom::MenuSourceType::kMouse);}
                 else if (panel == "toast") shell->ShowToast(T(u"Usunięto folder "), u"Projekty", base::DoNothing());
               }, shell->weak_factory_.GetWeakPtr(), panel),
               base::Seconds(1));
@@ -4328,6 +4369,7 @@ size_t WorkspaceShell::metal_sidebar_paint_count() const {
   return tab_list_ ? static_cast<SidebarListView*>(tab_list_.get())->metal_paints() : 0;
 }
 bool WorkspaceShell::workspace_context_menu_running_for_testing() const{return workspace_menu_runner_&&workspace_menu_runner_->IsRunning();}
+void WorkspaceShell::CancelContextMenuForTesting(){if(workspace_menu_runner_)workspace_menu_runner_->Cancel();}
 std::unique_ptr<views::View> WorkspaceShell::CreateWorkspaceActionForTesting(base::RepeatingClosure callback) const{return CreateSceneAction(std::move(callback),u"Test workspace",ControlGlyph::kDot,nullptr,{},base::DoNothing());}
 uint32_t WorkspaceShell::control_model_kind_for_testing(views::View* view) const{
   if(auto* action=views::AsViewClass<RustActionView>(view))return action->ModelKind();
@@ -5302,7 +5344,7 @@ void WorkspaceShell::BuildLinkMenu(GURL url, std::string source_workspace) {
 }
 void WorkspaceShell::ShowLinkMenu(GURL url, std::string source_workspace, gfx::Point point) {
   BuildLinkMenu(std::move(url), std::move(source_workspace));
-  link_menu_runner_ = std::make_unique<views::MenuRunner>(link_menu_.get(), views::MenuRunner::CONTEXT_MENU);
+  link_menu_runner_ = std::make_unique<views::MenuRunner>(link_menu_.get(), kZitterMenuRun);
   link_menu_runner_->RunMenuAt(widget_, nullptr, gfx::Rect(point, gfx::Size()), views::MenuAnchorPosition::kTopLeft,
       ui::mojom::MenuSourceType::kMouse);
 }
@@ -5548,7 +5590,7 @@ void WorkspaceShell::ShowContextMenuForViewImpl(views::View* source, const gfx::
   if (!context_pin_.empty()) for (const auto& pin : state_.pins) {
     if (pin.id == context_pin_ && pin.folder) {
       BuildFolderMenu(pin.id);
-      workspace_menu_runner_ = std::make_unique<views::MenuRunner>(workspace_menu_.get(), views::MenuRunner::CONTEXT_MENU);
+      workspace_menu_runner_ = std::make_unique<views::MenuRunner>(workspace_menu_.get(), kZitterMenuRun);
       workspace_menu_runner_->RunMenuAt(widget_, nullptr, gfx::Rect(point, gfx::Size()), views::MenuAnchorPosition::kTopLeft, source_type);
       return;
     }
@@ -5560,13 +5602,13 @@ void WorkspaceShell::ShowContextMenuForViewImpl(views::View* source, const gfx::
   for (const auto& [id, button] : workspace_buttons_) {
     if (button != source) continue;
     BuildWorkspaceMenu(id);
-    workspace_menu_runner_ = std::make_unique<views::MenuRunner>(workspace_menu_.get(), views::MenuRunner::CONTEXT_MENU);
+    workspace_menu_runner_ = std::make_unique<views::MenuRunner>(workspace_menu_.get(), kZitterMenuRun);
     workspace_menu_runner_->RunMenuAt(widget_, nullptr, gfx::Rect(point, gfx::Size()), views::MenuAnchorPosition::kTopLeft, source_type);
     return;
   }
   if (source == sidebar_root_ || source == tab_list_ || sidebar_root_->Contains(source)) {
     BuildFolderMenu();
-    workspace_menu_runner_ = std::make_unique<views::MenuRunner>(workspace_menu_.get(), views::MenuRunner::CONTEXT_MENU);
+    workspace_menu_runner_ = std::make_unique<views::MenuRunner>(workspace_menu_.get(), kZitterMenuRun);
     workspace_menu_runner_->RunMenuAt(widget_, nullptr, gfx::Rect(point, gfx::Size()), views::MenuAnchorPosition::kTopLeft, source_type);
   }
 }
@@ -5640,7 +5682,7 @@ void WorkspaceShell::BuildTabMenu(std::optional<size_t> target_tab,std::string t
 }
 void WorkspaceShell::ShowTabMenu(gfx::Point point,ui::mojom::MenuSourceType source_type) {
   BuildTabMenu(context_tab_,context_pin_);
-  workspace_menu_runner_=std::make_unique<views::MenuRunner>(workspace_menu_.get(),views::MenuRunner::CONTEXT_MENU);
+  workspace_menu_runner_=std::make_unique<views::MenuRunner>(workspace_menu_.get(),kZitterMenuRun);
   workspace_menu_runner_->RunMenuAt(widget_,nullptr,gfx::Rect(point,gfx::Size()),views::MenuAnchorPosition::kTopLeft,source_type);
 }
 

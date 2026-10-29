@@ -58,7 +58,7 @@ def main():
     parser.add_argument("--port", type=int, default=8767)
     parser.add_argument("--raster", choices=["compositor", "metal"], default="compositor",
                         help="Rust UI painting: the Chromium compositor or in-process Metal")
-    parser.add_argument("--open-panel", choices=["space", "sidebar", "palette", "address", "settings", "profiles", "downloads", "toast"], help="open this panel once the window is up (UI checks)")
+    parser.add_argument("--open-panel", choices=["space", "sidebar", "palette", "address", "settings", "profiles", "downloads", "menu", "toast"], help="open this panel once the window is up (UI checks)")
     args = parser.parse_args()
     info = args.app.resolve() / "Contents/Info.plist"
     binary = args.app.resolve() / "Contents/MacOS" / plistlib.loads(info.read_bytes())["CFBundleExecutable"] if info.is_file() else info
