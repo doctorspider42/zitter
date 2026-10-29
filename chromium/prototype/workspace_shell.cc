@@ -2522,12 +2522,6 @@ views::View* PanelStack(views::View* parent,int gap){
 views::View* PanelSection(views::View* parent,std::u16string label){
   auto* section=PanelStack(parent,Metrics().space_2);PanelText(section,std::move(label),kEyebrow,kMuted);return section;
 }
-// Equal columns, space-2 apart; each child added to it takes one.
-views::View* PanelColumns(views::View* parent){
-  auto* row=parent->AddChildView(std::make_unique<views::View>());
-  auto* layout=row->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal,gfx::Insets(),Metrics().space_2));
-  layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kStart);layout->SetDefaultFlex(1);return row;
-}
 // The space's icon on its accent_soft tile (48 px, radius-md + 2), as the panel header shows it.
 class SpaceIconTile final : public views::View {
   METADATA_HEADER(SpaceIconTile,views::View)
@@ -2570,29 +2564,6 @@ class SceneCard final : public views::View {
   bool danger_;std::u16string title_,detail_;int text_end_=0;
 };
 BEGIN_METADATA(SceneCard)
-END_METADATA
-// A shortcut tile (design: space settings): a card with a line icon and a hint
-// over its label in `body-strong`; `bg-hover` under the pointer.
-class SceneShortcutTile final : public views::Button {
-  METADATA_HEADER(SceneShortcutTile,views::Button)
- public:
-  SceneShortcutTile(PressedCallback callback,std::u16string title,std::u16string hint,const gfx::VectorIcon& icon)
-      :views::Button(std::move(callback)),title_(std::move(title)),hint_(std::move(hint)),icon_(icon){
-    GetViewAccessibility().SetName(title_);SetTooltipText(title_);SetInstallFocusRingOnFocus(true);}
-  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(0,76);}
-  void PaintButtonContents(gfx::Canvas* canvas) override{
-    const auto p=Palette(this);const int radius=Metrics().radius_md;const bool hot=GetState()==STATE_HOVERED||GetState()==STATE_PRESSED;
-    FillRound(canvas,GetLocalBounds(),radius,hot?p.bg_hover:p.bg_base);StrokeRound(canvas,GetLocalBounds(),radius,p.line);
-    const auto ink=GetEnabled()?p.ink:p.ink_faint;
-    canvas->DrawImageInt(gfx::CreateVectorIcon(*icon_,16,p.ink_muted),12,12);
-    const auto hint_font=DesignFont(2,12,400,false);const int hint_width=std::min(width()-48,gfx::GetStringWidth(hint_,hint_font));
-    canvas->DrawStringRectWithFlags(hint_,hint_font,p.ink_muted,gfx::Rect(width()-12-hint_width,10,hint_width,18),gfx::Canvas::TEXT_ALIGN_RIGHT);
-    canvas->DrawStringRectWithFlags(title_,DesignFont(2,13,600,false),ink,gfx::Rect(12,height()-30,width()-24,18),gfx::Canvas::TEXT_ALIGN_LEFT);
-  }
- private:
-  std::u16string title_,hint_;raw_ref<const gfx::VectorIcon> icon_;
-};
-BEGIN_METADATA(SceneShortcutTile)
 END_METADATA
 // The danger zone's action: a `radius-pill` outline in `danger` (painted here,
 // inside the card that covers scene text), washed with `danger` under the pointer.
@@ -3551,17 +3522,9 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       shell->SetWorkspaceEmoji(shell->EditedWorkspaceId(),std::u16string(shell->emoji_input_->GetText()));
   },weak),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,const ui::KeyEvent& event){return shell&&shell->HandleAppearanceEditorKey(true,event);},weak));
 
-  // Shortcuts as tiles, then the danger zone (design: space settings).
+  // The danger zone (design: space settings); new spaces come from the „+” menu.
   auto* more = settings->AddChildView(std::make_unique<views::View>());
   workspace_more_ = more;
-  PanelText(more,T(u"Skróty"),kEyebrow,kMuted);
-  auto* tiles=PanelColumns(more);
-  tiles->AddChildView(std::make_unique<SceneShortcutTile>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell&&!shell->creating_workspace_)shell->ToggleWorkspaceCreation();},weak),
-      T(u"Nowa przestrzeń"),T(u"Kolor, ikona, profil"),vector_icons::kAdd2Icon));
-  tiles->AddChildView(std::make_unique<SceneShortcutTile>(base::BindRepeating(&WorkspaceShell::OpenImport,weak),
-      workspace_copy[15],T(u"Chrome, Arc, Safari"),vector_icons::kFolderOpenIcon));
-  static_cast<views::BoxLayout*>(tiles->GetLayoutManager())->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kStretch);
-  Spacer(more,Metrics().space_2);
   auto* danger=more->AddChildView(std::make_unique<SceneCard>(true));
   danger->SetBorder(views::CreateEmptyBorder(gfx::Insets::VH(14,16)));danger->SetTextEnd(96);
   workspace_danger_text_=danger;

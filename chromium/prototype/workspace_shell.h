@@ -501,6 +501,7 @@ class WorkspaceShell final : public ui::EventHandler,
   size_t workspace_profile_row_count() const { return workspace_profile_rows_.size(); }
   bool workspace_saved_visible() const;
   void SaveWorkspaceForTesting(){SubmitWorkspace(false);}
+  void StartWorkspaceCreationForTesting(){if(!creating_workspace_)ToggleWorkspaceCreation();}
   bool creating_workspace_for_testing() const{return creating_workspace_;}
   views::View* new_profile_import_for_testing() const{return new_profile_import_;}
   views::View* workspace_button(std::string_view id) const;

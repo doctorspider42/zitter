@@ -3449,8 +3449,18 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
     // Keep a close-button hit area reserved whenever it exists, just as the
     // native interaction node does (including half-width split cards).
     let geometry = row_layout(i.width as i32, i.height as i32, 0, false, false, i.close);
-    emit(i.x + geometry.title.x as f32, i.y, geometry.title.width as f32, i.height,
-         0.0, i.ink, &i.title, i.font_size, i.active);
+    // A folder's caret is its own glyph: in the title it would pull the whole
+    // line into a fallback font, larger than a tab's `body`.
+    let (caret, title) = match i.title.strip_prefix("▸ ").map(|t| ("▸", t)).or_else(|| i.title.strip_prefix("▾ ").map(|t| ("▾", t))) {
+        Some((caret, title)) => (Some(caret), title),
+        None => (None, i.title.as_str()),
+    };
+    let title_x = i.x + geometry.title.x as f32 + if caret.is_some() { 14.0 } else { 0.0 };
+    if let Some(caret) = caret {
+        emit(i.x + geometry.title.x as f32, i.y, 12.0, i.height, 0.0, i.ink, caret, 10.0, false);
+    }
+    emit(title_x, i.y, (geometry.title.width as f32 - (title_x - i.x - geometry.title.x as f32)).max(0.0), i.height,
+         0.0, i.ink, title, i.font_size, i.active);
     if i.close && i.close_visible {
         emit(i.x + geometry.close.x as f32 + 5.0, i.y,
              (geometry.close.width - 10).max(0) as f32, i.height,
@@ -3467,7 +3477,8 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
         if p.text.is_empty() || p.text == "×" { continue; }
         if p.width == 16.0 && p.x == i.x + 12.0 && p.text == i.monogram {
             p.center = true; p.family = design::family_id(design_tokens::Family::Sans); p.font_weight = 700;
-        } else if p.text == i.title { style_text(p, if i.active {4} else {5}); }
+        } else if p.text == title { style_text(p, if i.active {4} else {5}); }
+        else if caret == Some(p.text.as_str()) { p.middle = true; }
     }
 }
 #[cfg(test)]
@@ -3747,6 +3758,12 @@ mod tests {
         let ops = layout(&[item]); assert_eq!(ops.len(), 1);
         assert_eq!((ops[0].x, ops[0].y, ops[0].width, ops[0].height), (4.0, 2.0, 7.0, 76.0));
         assert!(ops[0].text.is_empty()); assert_eq!(ops[0].clip.width, 15.0);
+    }
+    #[test] fn folder_caret_is_its_own_glyph_and_the_title_reads_like_a_tab() {
+        let mut item=row(200.0);item.title="▸ Bezoom".into();let ops=layout(std::slice::from_ref(&item));
+        let caret=ops.iter().find(|p|p.text=="▸").unwrap();let title=ops.iter().find(|p|p.text=="Bezoom").unwrap();
+        assert!(caret.x<title.x);let mut tab=row(200.0);tab.title="Bezoom".into();let plain=layout(std::slice::from_ref(&tab));
+        let same=plain.iter().find(|p|p.text=="Bezoom").unwrap();assert_eq!((title.family,title.font_size,title.font_weight),(same.family,same.font_size,same.font_weight));
     }
     #[test] fn footer_reserves_a_horizontal_scroll_gutter_only_for_overflow() {
         let normal=footer_layout(240,60); assert_eq!(normal.height,32);
