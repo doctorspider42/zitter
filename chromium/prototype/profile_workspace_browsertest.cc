@@ -7961,7 +7961,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarPairRustNodeOwnsMembers
   }
 }
 // A tab dragged with the real pointer onto a shown split joins it on the first
-// drop, at the edge it was dropped on.
+// drop, at the edge it was dropped on, including the page's left half.
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeDragJoinsShownSplitFirstTime) {
   auto* shell = window_->shell();
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
@@ -7991,12 +7991,13 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeDragJoinsShownSplitFirst
   ASSERT_TRUE(move(shell->tab_button(third)->GetBoundsInScreen().CenterPoint()));
   ASSERT_TRUE(mouse(ui_controls::DOWN));
   const auto content = shell->content_host()->GetBoundsInScreen();
-  ASSERT_TRUE(move(gfx::Point(content.x() + content.width() / 3, content.CenterPoint().y())));
-  ASSERT_TRUE(move(gfx::Point(content.CenterPoint().x(), content.CenterPoint().y())));
-  EXPECT_EQ(std::optional<size_t>(1), shell->split_drop_slot_for_testing());
+  // The left part of the page, not only its right half, takes the drop.
+  ASSERT_TRUE(move(gfx::Point(content.x() + content.width() / 4, content.CenterPoint().y())));
+  ASSERT_TRUE(move(gfx::Point(content.x() + content.width() / 8, content.CenterPoint().y())));
+  EXPECT_EQ(std::optional<size_t>(0), shell->split_drop_slot_for_testing());
   ASSERT_TRUE(mouse(ui_controls::UP));
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->split_tabs_for_testing().size() == 3u; }));
-  EXPECT_EQ(third, shell->split_tabs_for_testing()[1]);
+  EXPECT_EQ(third, shell->split_tabs_for_testing()[0]);
 }
 // Dragging a tab over another tab's row focuses that tab after a moment and
 // previews the split; dropping there pairs them, the dragged tab on the right.

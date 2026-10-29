@@ -1684,7 +1684,8 @@ fn resolve_row_target(source:&str,current:&str,high:u64,low:u64,pin:&str,tabs:&[
 fn sidebar_drop_accepts(bounds:ffi::Rect,x:i32,y:i32,allowed:bool)->bool {
     if !allowed||bounds.width<=0||bounds.height<=0{return false;}
     let left=bounds.x as i64;let top=bounds.y as i64;let x=x as i64;let y=y as i64;
-    x>=left+bounds.width as i64/2 && x<left+bounds.width as i64 && y>=top && y<top+bounds.height as i64
+    // Anywhere on the page: the drop slot picks the pane edge (left, right, between).
+    x>=left && x<left+bounds.width as i64 && y>=top && y<top+bounds.height as i64
 }
 // Pane position of the menu's tab inside the Split View group.
 fn sidebar_reorder_target(rows:&[ffi::ReorderRow],y:i32)->ffi::ReorderTarget {
@@ -5250,12 +5251,14 @@ mod tests {
         let t=resolve_row_target("work","work",0,0,"pin",&[],&pins);assert!(t.valid&&!t.has_tab);assert_eq!(t.pin,"pin");
         for (source,high,low,pin) in [("work",0,0,"folder"),("work",0,0,"missing"),("work",1,2,"pin"),("work",0,0,""),("",0,0,"pin")] {assert!(!resolve_row_target(source,"work",high,low,pin,&[],&pins).valid);}
     }
-    #[test] fn sidebar_drop_uses_physical_right_half_and_exclusive_edges() {
+    #[test] fn sidebar_drop_takes_the_whole_page_with_exclusive_edges() {
         let r=||ffi::Rect{x:-20,y:30,width:101,height:50};
-        assert!(!sidebar_drop_accepts(r(),29,30,true));assert!(sidebar_drop_accepts(r(),30,30,true));assert!(sidebar_drop_accepts(r(),80,79,true));
+        assert!(sidebar_drop_accepts(r(),-20,30,true));assert!(!sidebar_drop_accepts(r(),-21,30,true));
+        assert!(sidebar_drop_accepts(r(),29,30,true));assert!(sidebar_drop_accepts(r(),30,30,true));assert!(sidebar_drop_accepts(r(),80,79,true));
         assert!(!sidebar_drop_accepts(r(),81,79,true));assert!(!sidebar_drop_accepts(r(),30,80,true));assert!(!sidebar_drop_accepts(r(),30,29,true));assert!(!sidebar_drop_accepts(r(),30,30,false));
         assert!(!sidebar_drop_accepts(ffi::Rect{x:0,y:0,width:0,height:50},0,0,true));
-        assert!(sidebar_drop_accepts(ffi::Rect{x:i32::MAX-20,y:0,width:100,height:20},i32::MAX,0,true)==false);
+        // No overflow at the coordinate limits.
+        assert!(sidebar_drop_accepts(ffi::Rect{x:i32::MAX-20,y:0,width:100,height:20},i32::MAX,0,true));assert!(!sidebar_drop_accepts(ffi::Rect{x:i32::MAX-20,y:0,width:100,height:20},i32::MAX-21,0,true));
     }
     fn link_state()->ffi::LinkMenuState{ffi::LinkMenuState{ready:true,host:"example.com".into(),source:"work".into(),has_rule:true,rule_workspace:"home".into(),routes:vec![ffi::LinkRoute{id:"work".into(),label:"Praca · Główny".into()},ffi::LinkRoute{id:"home".into(),label:"Dom · Prywatny".into()}]}}
     #[test] fn link_menu_preserves_order_labels_route_submenu_and_checks() {
