@@ -213,10 +213,15 @@ tost „Pobrano X · Pokaż”), drgnięcie tostu, pigułka adresu w trybie edyc
 przyciski stopki 28 px, przycisk `zing` przy tworzeniu przestrzeni, Split View (host w
 `url`, pasek 28 px, obrys aktywnego panelu).
 
-Menu kontekstowe kart, linków i przestrzeni są menu Views w kolorach i kroju designu; świadome odstępstwa: promień panelu menu jest systemowy (MenuConfig go nie wystawia), „+” w szynie
-przestrzeni pokazuje się tylko, gdy się mieści, dialogi modalne na macOS są
-arkuszami z promieniem 2 px, w pasku bocznym nie ma ikony Pobrane do drgnięcia.
-Menu aplikacji macOS mówi językiem interfejsu.
+Menu kontekstowe kart, linków i przestrzeni są menu Views w kolorach i kroju designu,
+z akcjami niszczącymi na końcu po separatorze; menu aplikacji macOS mówi językiem
+interfejsu; „+” kończy szynę przestrzeni, dopóki się mieści.
+
+Ograniczenia platformy (nie do obejścia w designie): promień panelu menu Views i
+kolor pojedynczej pozycji („danger”) nie są wystawione przez Chromium (MenuConfig,
+MenuModel); dialogi modalne okna na macOS są arkuszami, którym Chromium narzuca
+promień 2 px (pozostałe dialogi dostają `radius-lg`); w pasku bocznym nie ma ikony
+Pobrane, więc koniec pobierania sygnalizuje tylko tost.
 
 ## Języki interfejsu
 
