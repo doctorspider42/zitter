@@ -3,6 +3,7 @@
 // through the Chromium compositor. The macOS Metal overlay is an opt-in
 // alternative (--zitter-rust-raster=metal).
 #include "chromium/prototype/sidebar_metal.h"
+#include "chromium/prototype/i18n.h"
 #include "chromium/prototype/sidebar_scene.rs.h"
 #include <memory>
 #include <vector>
@@ -55,7 +56,7 @@ class SidebarScrollBar final : public views::ScrollBar {
   SidebarScrollBar(base::RepeatingCallback<bool()> scene_visible, bool horizontal)
       : ScrollBar(horizontal ? Orientation::kHorizontal : Orientation::kVertical) {
     SetThumb(new SidebarThumb(this,std::move(scene_visible)));
-    GetViewAccessibility().SetName(horizontal ? u"Przewijanie przestrzeni" : u"Przewijanie kart");
+    GetViewAccessibility().SetName(horizontal ? T(u"Przewijanie przestrzeni") : T(u"Przewijanie kart"));
     GetViewAccessibility().AddAction(ax::mojom::Action::kIncrement);
     GetViewAccessibility().AddAction(ax::mojom::Action::kDecrement);
   }

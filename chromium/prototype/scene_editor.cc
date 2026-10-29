@@ -1,5 +1,6 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 #include "chromium/prototype/editor_control.h"
+#include "chromium/prototype/i18n.h"
 #include <algorithm>
 #include <cmath>
 #include <optional>
@@ -356,7 +357,7 @@ class SceneEditor final : public views::View, public EditorControl,
   void SyncLifecycle(){auto update=sidebar::editor_availability(*state_,GetEnabledInViewsSubtree(),read_only_);Apply(std::move(update));if(!Available()){++context_;CancelMenu();CancelNativeComposition();ClearCompositionText();Detach();blink_.Stop();OnMouseCaptureLost();if(surface_)surface_->Hide();}else if(HasFocus()){if(GetInputMethod())GetInputMethod()->SetFocusedTextInputClient(this);StartBlink();}if(GetInputMethod())GetInputMethod()->OnTextInputTypeChanged(this);Schedule();}
   void CancelMenu(){++menu_generation_;if(runner_)runner_->Cancel();}
   void ShowContextMenuForViewImpl(views::View*,const gfx::Point& point,ui::mojom::MenuSourceType source) override {
-    if(!Available())return;CancelMenu();runner_.reset();menu_.reset();menu_delegate_=std::make_unique<MenuDelegate>(weak_factory_.GetWeakPtr(),context_,menu_generation_);menu_=std::make_unique<ui::SimpleMenuModel>(menu_delegate_.get());for(auto entry:{std::pair{ui::TextEditCommand::UNDO,u"Cofnij"},std::pair{ui::TextEditCommand::REDO,u"Ponów"},std::pair{ui::TextEditCommand::CUT,u"Wytnij"},std::pair{ui::TextEditCommand::COPY,u"Kopiuj"},std::pair{ui::TextEditCommand::PASTE,u"Wklej"},std::pair{ui::TextEditCommand::SELECT_ALL,u"Zaznacz wszystko"}})menu_->AddItem(static_cast<int>(entry.first),entry.second);
+    if(!Available())return;CancelMenu();runner_.reset();menu_.reset();menu_delegate_=std::make_unique<MenuDelegate>(weak_factory_.GetWeakPtr(),context_,menu_generation_);menu_=std::make_unique<ui::SimpleMenuModel>(menu_delegate_.get());for(auto entry:{std::pair{ui::TextEditCommand::UNDO,T(u"Cofnij")},std::pair{ui::TextEditCommand::REDO,T(u"Ponów")},std::pair{ui::TextEditCommand::CUT,T(u"Wytnij")},std::pair{ui::TextEditCommand::COPY,T(u"Kopiuj")},std::pair{ui::TextEditCommand::PASTE,T(u"Wklej")},std::pair{ui::TextEditCommand::SELECT_ALL,T(u"Zaznacz wszystko")}})menu_->AddItem(static_cast<int>(entry.first),entry.second);
     runner_=std::make_unique<views::MenuRunner>(menu_.get(),views::MenuRunner::CONTEXT_MENU);runner_->RunMenuAt(GetWidget(),nullptr,gfx::Rect(point,gfx::Size()),views::MenuAnchorPosition::kTopLeft,source);
   }
   class MenuDelegate final:public ui::SimpleMenuModel::Delegate {

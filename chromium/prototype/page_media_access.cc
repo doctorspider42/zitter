@@ -1,5 +1,6 @@
 #include "chromium/prototype/page_media_access.h"
 #include "chromium/prototype/browser_data.h"
+#include "chromium/prototype/i18n.h"
 #include "chromium/prototype/page_dialogs.h"
 #include "chromium/prototype/sidebar_layout.h"
 #include "build/build_config.h"
@@ -140,7 +141,7 @@ class ZitterTabSourceList final : public DesktopMediaListBase {
                 frame->GetProcess()->GetDeprecatedID(), frame->GetRoutingID()));
         auto title = page->GetTitle();
         if (title.empty()) title = base::UTF8ToUTF16(page->GetLastCommittedURL().spec());
-        if (title.empty()) title = u"Nowa karta";
+        if (title.empty()) title = T(u"Nowa karta");
         sources.emplace_back(id, title, blocked);
       }
     }
@@ -237,32 +238,32 @@ class MediaPermissionPrompt final : public permissions::PermissionPrompt {
       owned_=std::make_unique<MediaSceneDialog>();owned_->scene=std::move(scene);
       SetSidebarPanelLayout(body.get(),true,gfx::Insets(),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_UNRELATED_CONTROL_VERTICAL));
       auto paragraph=[&](std::u16string text){body->AddChildView(owned_->scene->MakeText(std::move(text),true,false,0));};
-      paragraph(u"Prosi o dostęp: "+requesters);paragraph(capabilities);paragraph(u"Profil: "+BrowsingProfileName(profile));
-      if(!requesting_origins.contains(permission_origin))paragraph(u"Uprawnienie dla: "+base::UTF8ToUTF16(permission_origin));
-      if(!requesting_origins.contains(embedding_origin)&&embedding_origin!=permission_origin)paragraph(u"W stronie: "+base::UTF8ToUTF16(embedding_origin));
-      dialog=CreateSceneModalDialog(std::move(body),false);dialog->SetTitle(u"Uprawnienia strony");
+      paragraph(TF(u"Prosi o dostęp: {}",{requesters}));paragraph(capabilities);paragraph(TF(u"Profil: {}",{BrowsingProfileName(profile)}));
+      if(!requesting_origins.contains(permission_origin))paragraph(TF(u"Uprawnienie dla: {}",{base::UTF8ToUTF16(permission_origin)}));
+      if(!requesting_origins.contains(embedding_origin)&&embedding_origin!=permission_origin)paragraph(TF(u"W stronie: {}",{base::UTF8ToUTF16(embedding_origin)}));
+      dialog=CreateSceneModalDialog(std::move(body),false);dialog->SetTitle(T(u"Uprawnienia strony"));
       dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk)|static_cast<int>(ui::mojom::DialogButton::kCancel));
-      dialog->SetButtonLabel(ui::mojom::DialogButton::kOk,temporary?u"Zezwól tym razem":u"Zezwól");dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel,u"Zablokuj");
+      dialog->SetButtonLabel(ui::mojom::DialogButton::kOk,temporary?T(u"Zezwól tym razem"):T(u"Zezwól"));dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel,T(u"Zablokuj"));
       dialog->SetAcceptCallback(base::BindOnce(&State::Decide,state_,temporary?Decision::kAllowOnce:Decision::kAllowPersistent));
       dialog->SetCancelCallback(base::BindOnce(&State::Decide,state_,Decision::kDeny));
       dialog->SetCloseCallback(base::BindOnce(&State::Decide,state_,Decision::kDismiss));
     }else{
     auto builder = ui::DialogModel::Builder();
-    builder.SetTitle(u"Uprawnienia strony")
-        .AddParagraph(ui::DialogModelLabel(u"Prosi o dostęp: " + requesters))
+    builder.SetTitle(T(u"Uprawnienia strony"))
+        .AddParagraph(ui::DialogModelLabel(TF(u"Prosi o dostęp: {}", {requesters})))
         .AddParagraph(ui::DialogModelLabel(capabilities))
-        .AddParagraph(ui::DialogModelLabel(u"Profil: " +
-            BrowsingProfileName(profile)));
+        .AddParagraph(ui::DialogModelLabel(TF(u"Profil: {}",
+            {BrowsingProfileName(profile)})));
     if (!requesting_origins.contains(permission_origin))
-      builder.AddParagraph(ui::DialogModelLabel(u"Uprawnienie dla: " + base::UTF8ToUTF16(permission_origin)));
+      builder.AddParagraph(ui::DialogModelLabel(TF(u"Uprawnienie dla: {}", {base::UTF8ToUTF16(permission_origin)})));
     if (!requesting_origins.contains(embedding_origin) && embedding_origin != permission_origin)
-      builder.AddParagraph(ui::DialogModelLabel(u"W stronie: " + base::UTF8ToUTF16(embedding_origin)));
+      builder.AddParagraph(ui::DialogModelLabel(TF(u"W stronie: {}", {base::UTF8ToUTF16(embedding_origin)})));
     auto model = builder
         .AddOkButton(base::BindOnce(&State::Decide, state_,
             temporary ? Decision::kAllowOnce : Decision::kAllowPersistent),
-            ui::DialogModel::Button::Params().SetLabel(temporary ? u"Zezwól tym razem" : u"Zezwól"))
+            ui::DialogModel::Button::Params().SetLabel(temporary ? T(u"Zezwól tym razem") : T(u"Zezwól")))
         .AddCancelButton(base::BindOnce(&State::Decide, state_, Decision::kDeny),
-            ui::DialogModel::Button::Params().SetLabel(u"Zablokuj"))
+            ui::DialogModel::Button::Params().SetLabel(T(u"Zablokuj")))
         .SetDialogDestroyingCallback(base::BindOnce(&State::Decide, state_, Decision::kDismiss))
         .Build();
     dialog = views::BubbleDialogModelHost::CreateModal(std::move(model),
@@ -482,9 +483,9 @@ void PageMediaAccess::UpdateCaptureIndicator() {
   if(scene){
     capture_scene_=std::make_unique<MediaSceneDialog>();capture_scene_->scene=std::move(scene);
     SetSidebarPanelLayout(body.get(),true,gfx::Insets(),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_UNRELATED_CONTROL_VERTICAL));
-    for(auto text:{origins,std::u16string(u"Ta strona korzysta z mikrofonu, kamery lub udostępniania obrazu."),u"Profil: "+BrowsingProfileName(profile),std::u16string(u"Zamknięcie tego okna zatrzyma przechwytywanie.")})
+    for(auto text:{origins,T(u"Ta strona korzysta z mikrofonu, kamery lub udostępniania obrazu."),TF(u"Profil: {}",{BrowsingProfileName(profile)}),T(u"Zamknięcie tego okna zatrzyma przechwytywanie.")})
       body->AddChildView(capture_scene_->scene->MakeText(std::move(text),true,false,0));
-    auto dialog=CreateSceneModalDialog(std::move(body),false,false);dialog->SetTitle(u"Trwa przechwytywanie");dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kCancel));dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel,u"Zatrzymaj");
+    auto dialog=CreateSceneModalDialog(std::move(body),false,false);dialog->SetTitle(T(u"Trwa przechwytywanie"));dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kCancel));dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel,T(u"Zatrzymaj"));
     dialog->SetCancelCallback(stop);dialog->SetCloseCallback(stop);
     capture_scene_->delegate=std::move(dialog);
     auto* parent=views::Widget::GetWidgetForNativeWindow(web_contents()->GetTopLevelNativeWindow());
@@ -497,13 +498,13 @@ void PageMediaAccess::UpdateCaptureIndicator() {
     capture_prompt_=widget->GetWeakPtr();widget->ShowInactive();capture_scene_->scene->Schedule();return;
   }
   auto model = ui::DialogModel::Builder()
-      .SetTitle(u"Trwa przechwytywanie")
+      .SetTitle(T(u"Trwa przechwytywanie"))
       .AddParagraph(ui::DialogModelLabel(origins))
-      .AddParagraph(ui::DialogModelLabel(u"Ta strona korzysta z mikrofonu, kamery lub udostępniania obrazu."))
-      .AddParagraph(ui::DialogModelLabel(u"Profil: " +
-          BrowsingProfileName(profile)))
-      .AddParagraph(ui::DialogModelLabel(u"Zamknięcie tego okna zatrzyma przechwytywanie."))
-      .AddCancelButton(stop, ui::DialogModel::Button::Params().SetLabel(u"Zatrzymaj"))
+      .AddParagraph(ui::DialogModelLabel(T(u"Ta strona korzysta z mikrofonu, kamery lub udostępniania obrazu.")))
+      .AddParagraph(ui::DialogModelLabel(TF(u"Profil: {}",
+          {BrowsingProfileName(profile)})))
+      .AddParagraph(ui::DialogModelLabel(T(u"Zamknięcie tego okna zatrzyma przechwytywanie.")))
+      .AddCancelButton(stop, ui::DialogModel::Button::Params().SetLabel(T(u"Zatrzymaj")))
       .SetDialogDestroyingCallback(stop)
       .Build();
   auto dialog = std::make_unique<views::BubbleDialogModelHost>(

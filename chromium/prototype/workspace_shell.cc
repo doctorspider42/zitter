@@ -660,7 +660,7 @@ class SceneSearchIcon final : public views::View {
   METADATA_HEADER(SceneSearchIcon,views::View)
  public:
   explicit SceneSearchIcon(base::RepeatingCallback<bool()> visible):visible_(std::move(visible)) {
-    SetTooltipText(u"Szukaj");GetViewAccessibility().SetName(u"Szukaj");GetViewAccessibility().SetRole(ax::mojom::Role::kImage);
+    SetTooltipText(T(u"Szukaj"));GetViewAccessibility().SetName(T(u"Szukaj"));GetViewAccessibility().SetRole(ax::mojom::Role::kImage);
     SetFocusBehavior(FocusBehavior::NEVER);SetCanProcessEventsWithinSubtree(false);
   }
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {const auto r=sidebar::action_preferred_size(false,false);return gfx::Size(r.width,r.height);}
@@ -877,7 +877,7 @@ class ColorWheelControl final : public views::View {
       :ring_(ring),current_(std::move(current)),emoji_(std::move(emoji)),pick_(std::move(pick)){
     SetFocusBehavior(FocusBehavior::ALWAYS);
     GetViewAccessibility().SetRole(ax::mojom::Role::kSlider);
-    GetViewAccessibility().SetName(ring?u"Barwa przestrzeni":u"Nasycenie i jasność przestrzeni");
+    GetViewAccessibility().SetName(ring?T(u"Barwa przestrzeni"):T(u"Nasycenie i jasność przestrzeni"));
     GetViewAccessibility().AddAction(ax::mojom::Action::kIncrement);GetViewAccessibility().AddAction(ax::mojom::Action::kDecrement);
     Refresh();
   }
@@ -981,6 +981,8 @@ class SceneTextButton final : public RustActionView {
   // A destructive confirmation in a dialog: the danger pill with a 1.5 px edge.
   void SetDangerStrong(){kind_=5;SchedulePaint();}
   void SetQuiet(){kind_=3;PreferredSizeChanged();SchedulePaint();}
+  // A quiet action that reads as the toast's one action: `accent-ink` text.
+  void SetAccentInk(){accent_ink_=true;SchedulePaint();}
   void SetPrimary(){kind_=0;PreferredSizeChanged();SchedulePaint();}
   gfx::Size GetMinimumSize() const override{if(!native_minimum_)return RustActionView::GetMinimumSize();const auto font=TextFont();return gfx::Size(views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_DIALOG_BUTTON_MINIMUM_WIDTH),std::max(0,views::LayoutProvider::GetControlHeightForFont(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY,font)-std::max(font.GetHeight(),views::TypographyProvider::Get().GetLineHeight(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY))));}
   void SetText(std::u16string text){if(text==text_)return;OnMouseCaptureLost();text_=std::move(text);GetViewAccessibility().SetName(text_);SetTooltipText(text_);PreferredSizeChanged();SchedulePaint();}
@@ -999,12 +1001,12 @@ class SceneTextButton final : public RustActionView {
     const auto state=Snapshot();const auto b=Style();
     sidebar::Item item{};item.kind=19;item.x=bounds.x();item.y=bounds.y();item.width=bounds.width();item.height=bounds.height();item.title=base::UTF16ToUTF8(text_);item.font_size=13;item.active=true;item.text_style=4;
     item.title_width=b.padding_x;item.focused=state.focused;item.focus=Palette(this).focus;item.hovered=false;
-    item.ink=b.ink;item.fill=b.fill;item.badge=b.edge;item.font_height=b.radius;item.detail_font_size=b.edge_width;
+    item.ink=accent_ink_?Palette(this).accent_ink:b.ink;item.fill=b.fill;item.badge=b.edge;item.font_height=b.radius;item.detail_font_size=b.edge_width;
     item.clip={clip.x(),clip.y(),clip.width(),clip.height()};return item;
   }
  private:
   sidebar::ActionButtonLayout Metrics(int width,int height) const {const auto b=Style();return sidebar::action_button_layout(width,height,gfx::GetStringWidth(text_,TextFont())+2,static_cast<int>(b.height),static_cast<int>(b.padding_x),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_DIALOG_BUTTON_MINIMUM_WIDTH));}
-  std::u16string text_;ui::ButtonStyle style_;bool native_minimum_=false;std::optional<uint32_t> kind_;
+  std::u16string text_;ui::ButtonStyle style_;bool native_minimum_=false;bool accent_ink_=false;std::optional<uint32_t> kind_;
 };
 BEGIN_METADATA(SceneTextButton)
 END_METADATA
@@ -1051,27 +1053,33 @@ class ToastView final : public views::View {
   METADATA_HEADER(ToastView,views::View)
  public:
   ToastView(base::RepeatingClosure undo,base::RepeatingClosure close,base::RepeatingCallback<void(bool)> hovered):hovered_(std::move(hovered)){
-    auto* layout=SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal,gfx::Insets::TLBR(0,16,0,8),12));
-    layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
-    auto* message=AddChildView(std::make_unique<views::View>());message->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal));
-    lead_=message->AddChildView(std::make_unique<views::Label>());noun_=message->AddChildView(std::make_unique<views::Label>());
+    message_=AddChildView(std::make_unique<views::View>());message_->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal));
+    lead_=message_->AddChildView(std::make_unique<views::Label>());noun_=message_->AddChildView(std::make_unique<views::Label>());
     lead_->SetFontList(gfx::FontList(DesignFont(2,12,500,false)));noun_->SetFontList(gfx::FontList(DesignFont(2,12,600,false)));
-    layout->SetFlexForView(message,1);
-    auto* actions=AddChildView(std::make_unique<SceneActionGroup>(false,4));
-    undo_=actions->AddAction(base::BindRepeating(undo),u"Cofnij",ui::ButtonStyle::kText);views::AsViewClass<SceneTextButton>(undo_)->SetQuiet();
-    AddChildView(CreateSceneAction(base::BindRepeating(close),u"Zamknij komunikat",ControlGlyph::kVector,&vector_icons::kCloseSmallIcon,{},base::DoNothing()));
+    auto* actions=AddChildView(std::make_unique<SceneActionGroup>(false,4));actions_=actions;
+    undo_=actions->AddAction(base::BindRepeating(undo),T(u"Cofnij"),ui::ButtonStyle::kText);views::AsViewClass<SceneTextButton>(undo_)->SetQuiet();views::AsViewClass<SceneTextButton>(undo_)->SetAccentInk();
+    close_=AddChildView(CreateSceneAction(base::BindRepeating(close),T(u"Zamknij komunikat"),ControlGlyph::kVector,&vector_icons::kCloseSmallIcon,{},base::DoNothing()));
     SetNotifyEnterExitOnChild(true);GetViewAccessibility().SetRole(ax::mojom::Role::kStatus);
   }
   void SetMessage(std::u16string lead,std::u16string noun){lead_->SetText(lead);noun_->SetText(noun);GetViewAccessibility().SetName(lead+noun);PreferredSizeChanged();}
   std::u16string text() const{return std::u16string(lead_->GetText())+std::u16string(noun_->GetText());}
   views::View* undo() const{return undo_;}
-  gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override{const auto size=views::View::CalculatePreferredSize(available);return gfx::Size(std::min(420,size.width()),std::max(44,size.height()));}
+  // `space-4` in, the message, „Cofnij” and close at their natural widths, `space-2` out.
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{
+    const int width=16+message_->GetPreferredSize().width()+12+actions_->GetPreferredSize().width()+4+close_->GetPreferredSize().width()+8;
+    return gfx::Size(std::min(420,width),44);}
+  void Layout(PassKey) override{
+    const auto close=close_->GetPreferredSize(),actions=actions_->GetPreferredSize(),message=message_->GetPreferredSize();
+    auto centred=[&](views::View* view,int x,gfx::Size size){view->SetBounds(x,(height()-size.height())/2,size.width(),size.height());};
+    const int close_x=width()-8-close.width(),actions_x=close_x-4-actions.width();
+    centred(close_,close_x,close);centred(actions_,actions_x,actions);
+    centred(message_,16,gfx::Size(std::max(0,actions_x-12-16),message.height()));}
   void OnThemeChanged() override{views::View::OnThemeChanged();const auto p=Palette(this);for(auto* label:{lead_.get(),noun_.get()}){label->SetEnabledColor(p.ink);label->SetBackgroundColor(p.bg_raised);}SchedulePaint();}
   void OnPaint(gfx::Canvas* canvas) override{canvas->DrawColor(Palette(this).bg_raised);}
   void OnMouseEntered(const ui::MouseEvent&) override{hovered_.Run(true);}
   void OnMouseExited(const ui::MouseEvent&) override{hovered_.Run(false);}
  private:
-  raw_ptr<views::Label> lead_=nullptr,noun_=nullptr;raw_ptr<views::View> undo_=nullptr;base::RepeatingCallback<void(bool)> hovered_;
+  raw_ptr<views::View> message_=nullptr,actions_=nullptr,close_=nullptr,undo_=nullptr;raw_ptr<views::Label> lead_=nullptr,noun_=nullptr;base::RepeatingCallback<void(bool)> hovered_;
 };
 BEGIN_METADATA(ToastView)
 END_METADATA
@@ -1632,7 +1640,7 @@ class RustRowView final : public views::View {
   RustRowView(views::Button::PressedCallback callback,Spec spec,base::RepeatingClosure changed,Watch watch,rust::Box<sidebar::ActionControl> state,SidebarNodeBinding close_binding)
       :spec_(std::move(spec)),callback_(std::move(callback)),changed_(std::move(changed)),watch_(std::move(watch)),state_(std::move(state)){
     SetNotifyEnterExitOnChild(true);SetTooltipText(spec_.title);auto& ax=GetViewAccessibility();ax.SetName(spec_.title);ax.SetRole(ax::mojom::Role::kButton);ax.SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kPress);SetFocusBehavior(views::PlatformStyle::kDefaultFocusBehavior);if(!spec_.history)views::FocusRing::Install(this);state_->action_on(spec_.active);if(spec_.chip)ax.SetDescription(spec_.detail);
-    if(spec_.close){close_=AddChildView(CreateSceneAction(std::move(spec_.close),u"Zamknij kartę",ControlGlyph::kVector,&vector_icons::kCloseSmallIcon,{},base::BindRepeating(&RustRowView::ChildChanged,weak_factory_.GetWeakPtr()),true,std::move(close_binding)));UpdateClose();}
+    if(spec_.close){close_=AddChildView(CreateSceneAction(std::move(spec_.close),T(u"Zamknij kartę"),ControlGlyph::kVector,&vector_icons::kCloseSmallIcon,{},base::BindRepeating(&RustRowView::ChildChanged,weak_factory_.GetWeakPtr()),true,std::move(close_binding)));UpdateClose();}
     if(state_->sidebar_visual().valid){SyncSidebarAX();ClearSidebarVisuals(spec_);}
   }
   ~RustRowView() override{if(watch_)watch_.Run(this,{});}
@@ -1676,7 +1684,7 @@ class RustRowView final : public views::View {
   sidebar::SidebarRowScene SidebarScene(gfx::RectF bounds,gfx::RectF clip) const{return state_->sidebar_scene({bounds.x(),bounds.y(),bounds.width(),bounds.height()},{clip.x(),clip.y(),clip.width(),clip.height()},{float(Font(0).GetFontSize()),Tone(this,kInk),Tone(this,kCard),HoverWash(this),Hairline(this),Palette(this).focus,Tone(this,kMuted)},has_close_button(),close_button_visible());}
   void ConfigureTabClose(bool wanted,views::Button::PressedCallback callback,const SidebarNodeBinding& binding){
     if(close_){auto* control=views::AsViewClass<RustActionView>(close_.get());if(!wanted||!control||!binding.scope||!control->BelongsTo(*binding.scope)||!control->LogicalNodeId()){auto* old=close_.get();close_=nullptr;RemoveChildViewT(old);}}
-    if(wanted&&!close_){CHECK(callback);close_=AddChildView(CreateSceneAction(std::move(callback),u"Zamknij kartę",ControlGlyph::kVector,&vector_icons::kCloseSmallIcon,{},base::BindRepeating(&RustRowView::ChildChanged,weak_factory_.GetWeakPtr()),true,binding));}
+    if(wanted&&!close_){CHECK(callback);close_=AddChildView(CreateSceneAction(std::move(callback),T(u"Zamknij kartę"),ControlGlyph::kVector,&vector_icons::kCloseSmallIcon,{},base::BindRepeating(&RustRowView::ChildChanged,weak_factory_.GetWeakPtr()),true,binding));}
     UpdateClose();InvalidateLayout();SchedulePaint();
   }
   void ViewHierarchyChanged(const views::ViewHierarchyChangedDetails& details) override{if(!details.is_add&&details.parent==this&&details.child==close_)close_=nullptr;views::View::ViewHierarchyChanged(details);}
@@ -1685,7 +1693,7 @@ class RustRowView final : public views::View {
   void SetActive(bool active){if(!state_->action_on(active))return;if(!state_->sidebar_visual().valid)spec_.active=active;measured_.reset();UpdateClose();SchedulePaint();}
   void SetTitle(std::u16string title){if(HasSidebarProperties()){if(state_->sidebar_set_title(SceneUtf16(title))){SyncSidebarAX();SchedulePaint();}return;}if(spec_.title==title)return;spec_.title=std::move(title);measured_.reset();SetTooltipText(spec_.title);GetViewAccessibility().SetName(spec_.title);SchedulePaint();}
   void SetDetail(std::u16string detail){if(spec_.detail==detail)return;spec_.detail=std::move(detail);InvalidateLayout();SchedulePaint();}
-  void SetAddress(std::u16string host,std::u16string path,bool blank,bool secure){SetTitle(std::move(host));SetDetail(std::move(path));spec_.blank=blank;spec_.secure=secure;GetViewAccessibility().SetDescription(spec_.title+spec_.detail);GetViewAccessibility().SetName(u"Adres strony");SetTooltipText(u"Szukaj lub wpisz adres");InvalidateLayout();SchedulePaint();}
+  void SetAddress(std::u16string host,std::u16string path,bool blank,bool secure){SetTitle(std::move(host));SetDetail(std::move(path));spec_.blank=blank;spec_.secure=secure;GetViewAccessibility().SetDescription(spec_.title+spec_.detail);GetViewAccessibility().SetName(T(u"Adres strony"));SetTooltipText(T(u"Szukaj lub wpisz adres"));InvalidateLayout();SchedulePaint();}
   void OnTooltipTextChanged(const std::u16string& previous) override{views::View::OnTooltipTextChanged(previous);auto& ax=GetViewAccessibility();if((ax.GetCachedName().empty()||ax.GetCachedName()==previous)&&!GetTooltipText().empty())ax.SetName(GetTooltipText());}
   bool history() const{return spec_.history;}
   sidebar::Item Scene(gfx::RectF box,gfx::RectF clip) const {
@@ -1826,7 +1834,7 @@ class SplitPair final : public views::View {
  public:
   SplitPair() {
     GetViewAccessibility().SetRole(ax::mojom::Role::kGroup);
-    GetViewAccessibility().SetName(u"Split View — para kart");
+    GetViewAccessibility().SetName(T(u"Split View — para kart"));
     SetLayoutManager(CreateSidebarSplitLayout());
   }
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {
@@ -1844,7 +1852,7 @@ END_METADATA
 std::unique_ptr<views::View> CreateAddressRow(views::Button::PressedCallback callback,base::RepeatingCallback<bool()> visible,base::RepeatingClosure changed,base::RepeatingCallback<void(views::View*,base::RepeatingClosure)> watch,SidebarNodeBinding binding={}){
   RowRecipe::Spec spec;spec.address=true;spec.sidebar_row=true;spec.height=36;  // AddressPill: 36 px
   spec.scene_visible=std::move(visible);
-  auto row=CreateSceneRow(std::move(callback),std::move(spec),std::move(changed),std::move(watch),std::move(binding));row->GetViewAccessibility().SetName(u"Adres strony");row->SetTooltipText(u"Szukaj lub wpisz adres");return row;
+  auto row=CreateSceneRow(std::move(callback),std::move(spec),std::move(changed),std::move(watch),std::move(binding));row->GetViewAccessibility().SetName(T(u"Adres strony"));row->SetTooltipText(T(u"Szukaj lub wpisz adres"));return row;
 }
 
 // Scene-owned text with one native static-text accessibility node. The Views
@@ -1855,7 +1863,7 @@ class WorkspaceHeading final : public views::View {
   explicit WorkspaceHeading(base::RepeatingCallback<bool()> visible) : visible_(std::move(visible)) {
     SetPreferredSize(gfx::Size(200, 24));
     GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);
-    SetText(u"Praca");
+    SetText(T(u"Praca"));
   }
   void SetText(std::u16string text) {
     if (text_ == text) return;
@@ -1911,7 +1919,7 @@ class PaletteText final : public views::View {
     sidebar::Item fill{};fill.kind=14;fill.x=rect.x();fill.y=rect.y();fill.width=rect.width();fill.height=rect.height();fill.fill=p.bg_base;fill.clip=c;items.push_back(fill);
     sidebar::Item line{};line.kind=14;line.x=rect.x();line.y=rect.y();line.width=rect.width();line.height=1;line.fill=p.line;line.clip=c;items.push_back(line);
     float x=rect.x()+18;const float cy=rect.y()+rect.height()/2;
-    const std::array<std::pair<std::vector<std::u16string>,std::u16string>,3> hints{{{{u"↑",u"↓"},u"wybierz"},{{u"↵"},u"otwórz"},{{u"esc"},u"zamknij"}}};
+    const std::array<std::pair<std::vector<std::u16string>,std::u16string>,3> hints{{{{u"↑",u"↓"},T(u"wybierz")},{{u"↵"},T(u"otwórz")},{{u"esc"},T(u"zamknij")}}};
     for(const auto& [keys,word]:hints){
       for(const auto& key:keys){sidebar::Item k{};k.kind=30;k.title=base::UTF16ToUTF8(key);k.width=std::max(18.f,gfx::GetStringWidth(key,DesignFont(3,11,500,false))+10.f);k.height=18;k.x=x;k.y=cy-9;k.fill=p.bg_hover;k.edge=p.line;k.ink=p.ink_muted;k.clip=c;items.push_back(k);x+=k.width+2;}
       sidebar::Item w{};w.kind=17;w.title=base::UTF16ToUTF8(word);w.x=x+4;w.width=gfx::GetStringWidth(word,DesignFont(2,12,500,false))+2;w.y=rect.y();w.height=rect.height();w.ink=p.ink_muted;w.font_size=12;w.text_style=6;w.clip=c;items.push_back(w);
@@ -2199,7 +2207,7 @@ class SiteRuleSceneRow final : public views::View {
   void SetParts(views::View* copy,views::View* remove){copy_=copy;remove_=remove;}
   void Project(const sidebar::SiteRuleSceneChild& child){
     CHECK(copy_&&remove_);if(child.cancel_input)remove_->OnMouseCaptureLost();
-    const std::u16string detail(child.detail.begin(),child.detail.end());SetPanelText(copy_,detail);remove_->SetEnabled(child.editable);remove_->GetViewAccessibility().SetName(u"Usuń wyjątek: "+detail);remove_->SchedulePaint();
+    const std::u16string detail(child.detail.begin(),child.detail.end());SetPanelText(copy_,detail);remove_->SetEnabled(child.editable);remove_->GetViewAccessibility().SetName(TF(u"Usuń wyjątek: {}",{detail}));remove_->SchedulePaint();
   }
  private:
   rust::Box<sidebar::ActionControl> input_;
@@ -2422,7 +2430,7 @@ class RustResizeHandle final : public views::View,public ResizeHandle {
   METADATA_HEADER(RustResizeHandle,views::View)
  public:
   RustResizeHandle(base::RepeatingCallback<int()> width,base::RepeatingCallback<void(int,bool)> applied,base::RepeatingClosure painted,base::RepeatingCallback<bool()> visible)
-      :width_(std::move(width)),applied_(std::move(applied)),painted_(std::move(painted)),visible_(std::move(visible)){width_drag_.emplace(sidebar::new_sidebar_drag());Init();GetViewAccessibility().SetName(u"Zmień szerokość panelu bocznego");SetProperty(views::kViewIgnoredByLayoutKey,true);}
+      :width_(std::move(width)),applied_(std::move(applied)),painted_(std::move(painted)),visible_(std::move(visible)){width_drag_.emplace(sidebar::new_sidebar_drag());Init();GetViewAccessibility().SetName(T(u"Zmień szerokość panelu bocznego"));SetProperty(views::kViewIgnoredByLayoutKey,true);}
   RustResizeHandle(base::RepeatingCallback<double()> ratio,base::RepeatingCallback<int()> extent,base::RepeatingCallback<void(double,bool)> changed,base::RepeatingClosure painted,base::RepeatingCallback<bool()> visible)
       :ratio_(std::move(ratio)),extent_(std::move(extent)),changed_(std::move(changed)),painted_(std::move(painted)),visible_(std::move(visible)){split_drag_.emplace(sidebar::new_split_drag());Init();}
   views::View* view() override{return this;}
@@ -2706,8 +2714,8 @@ class PaneBar final : public views::View {
       : painted_(std::move(painted)),visible_(std::move(visible)) {
     node_graph_=std::make_shared<SidebarNodeGraphState>();
     GetViewAccessibility().SetRole(ax::mojom::Role::kGroup);
-    menu_=AddChildView(CreateSceneAction(std::move(menu),u"Opcje Split View",ControlGlyph::kMore,nullptr,visible_,painted_,true,{node_graph_}));
-    close_=AddChildView(CreateSceneAction(std::move(close),u"Zamknij kartę w Split View",ControlGlyph::kVector,&vector_icons::kCloseSmallIcon,visible_,painted_,true,{node_graph_}));
+    menu_=AddChildView(CreateSceneAction(std::move(menu),T(u"Opcje Split View"),ControlGlyph::kMore,nullptr,visible_,painted_,true,{node_graph_}));
+    close_=AddChildView(CreateSceneAction(std::move(close),T(u"Zamknij kartę w Split View"),ControlGlyph::kVector,&vector_icons::kCloseSmallIcon,visible_,painted_,true,{node_graph_}));
   }
   void CancelInput(){CancelActionInput(menu_);CancelActionInput(close_);}
   // A bar survives tab replacement and index reuse. Revoke pending input when
@@ -2786,7 +2794,7 @@ class PaneHost final : public views::View, public views::ResizeAreaDelegate {
           base::BindRepeating([](PaneHost* host,size_t divider){return host->PairExtent(divider);},base::Unretained(this),divider),
           base::BindRepeating(&PaneHost::ApplyRustRatio,base::Unretained(this),divider),painted_,base::BindRepeating(visible,SurfaceIndex(true,divider))));
       handles_[divider]=handle;
-      dividers_[divider]->GetViewAccessibility().SetName(u"Zmień szerokość paneli");
+      dividers_[divider]->GetViewAccessibility().SetName(T(u"Zmień szerokość paneli"));
       dividers_[divider]->SetVisible(false);
     }
   }
@@ -3039,12 +3047,12 @@ std::unique_ptr<views::View> WorkspaceShell::Build() {
     return shell && shell->metal_header_visible();
   },weak);
   header_sidebar_button_=header->AddChildView(CreateSceneAction(
-      base::BindRepeating(&WorkspaceShell::ToggleSidebar,weak),u"Pokaż lub ukryj karty",
+      base::BindRepeating(&WorkspaceShell::ToggleSidebar,weak),T(u"Pokaż lub ukryj karty"),
       GlyphButton::Glyph::kSidebar,nullptr,header_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalHeader,weak),true,{chrome_node_graph_,4,{},"header.sidebar"}));
   const std::array<std::pair<const gfx::VectorIcon*, std::u16string>, 3> commands = {{
-      {&vector_icons::kArrowBackIcon, u"Wstecz"},
-      {&vector_icons::kArrowForwardIcon, u"Dalej"},
-      {&vector_icons::kReloadCustomIcon, u"Odśwież"}}};
+      {&vector_icons::kArrowBackIcon, T(u"Wstecz")},
+      {&vector_icons::kArrowForwardIcon, T(u"Dalej")},
+      {&vector_icons::kReloadCustomIcon, T(u"Odśwież")}}};
   const std::array<const char*,3> command_nodes={"header.back","header.forward","header.reload"};
   for (size_t i = 0; i < commands.size(); ++i) {
     nav_buttons_[i] = header->AddChildView(CreateSceneAction(
@@ -3131,7 +3139,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   const auto* new_tab_hint = u"Ctrl+T";
 #endif
   RowRecipe::Spec new_tab;
-  new_tab.title = u"Nowa karta";
+  new_tab.title = T(u"Nowa karta");
   new_tab.detail = new_tab_hint;
   new_tab.sidebar_row = true;
   new_tab.scene_visible = base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
@@ -3159,7 +3167,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 
   // Workspace settings: profile and color live here, not in the sidebar.
   workspace_form_=std::make_unique<WorkspaceFormState>();tools_form_=std::make_unique<ToolsFormState>();
-  std::array<std::u16string,17> workspace_copy={u"Nazwa przestrzeni",u"Np. Projekt lub Klient",u"Profil przeglądania",u"Profil przestrzeni",u"Wspólny profil = wspólne logowanie i cookies.\nZmiana profilu zamknie karty tej przestrzeni.",u"Zapisz poniżej nazwę i profil. Wygląd zapisuje się od razu.",u"Zamknij ustawienia przestrzeni",u"Wygląd · zapis automatyczny",u"Kolor przestrzeni",u"Kolor przestrzeni #RRGGBB",u"Emoji przestrzeni",u"Emoji przestrzeni",u"Inne… (⌃⌘Spacja)",u"Więcej opcji",u"Zarządzaj profilami",u"Importuj z przeglądarki…",u"Usuń przestrzeń"};
+  std::array<std::u16string,17> workspace_copy={T(u"Nazwa przestrzeni"),T(u"Np. Projekt lub Klient"),T(u"Profil przeglądania"),T(u"Profil przestrzeni"),T(u"Wspólny profil = wspólne logowanie i cookies.\nZmiana profilu zamknie karty tej przestrzeni."),T(u"Zapisz poniżej nazwę i profil. Wygląd zapisuje się od razu."),T(u"Zamknij ustawienia przestrzeni"),T(u"Wygląd · zapis automatyczny"),T(u"Kolor przestrzeni"),T(u"Kolor przestrzeni #RRGGBB"),T(u"Emoji przestrzeni"),T(u"Emoji przestrzeni"),T(u"Inne… (⌃⌘Spacja)"),T(u"Więcej opcji"),T(u"Zarządzaj profilami"),T(u"Importuj z przeglądarki…"),T(u"Usuń przestrzeń")};
   {const auto c=sidebar::workspace_copy();auto text=[](const rust::String& value){return base::UTF8ToUTF16(std::string(value));};workspace_copy={text(c.name_label),text(c.placeholder),text(c.profile_label),text(c.profile_ax),text(c.profile_hint),text(c.save_hint),text(c.close),text(c.appearance),text(c.color),text(c.color_ax),text(c.emoji),text(c.emoji_ax),text(c.emoji_placeholder),text(c.more),text(c.manage),text(c.import_label),text(c.remove_label)};}
   auto settings_text=[&](views::View* parent,std::u16string text,SkColor ink,int delta=0,gfx::Font::Weight weight=gfx::Font::Weight::NORMAL,bool multiline=false)->views::View* {
     return parent->AddChildView(std::make_unique<SceneParagraph>(std::move(text),delta,weight!=gfx::Font::Weight::NORMAL,ink));
@@ -3178,14 +3186,14 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       return std::pair(base::i18n::ToUpper(base::UTF8ToUTF16(workspace.name).substr(0,1)),true);
     return std::pair<std::u16string,bool>();},weak)));
   auto* settings_titles=PanelStack(settings_header,2);
-  settings_title_ = PanelText(settings_titles,u"Praca",kDisplayLarge,kInk);
+  settings_title_ = PanelText(settings_titles,T(u"Praca"),kDisplayLarge,kInk);
   profile_name_ = PanelText(settings_titles,u"",kLabelText,kMuted);
   SetSidebarPanelLayout(settings_header, false, gfx::Insets(), Metrics().space_3, settings_titles);
   auto dismiss_workspace=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
     if(shell){shell->settings_widget_->Hide();shell->RestorePageFocus();}
   },weak);
   {auto* controls=settings_header->AddChildView(std::make_unique<ScenePreferenceControls>(true));BindFormCommand(controls->AddControl({},workspace_copy[6]),sidebar::FormCommand::WorkspaceDismiss);}
-  auto* identity=PanelSection(settings.get(),u"Nazwa i profil");
+  auto* identity=PanelSection(settings.get(),T(u"Nazwa i profil"));
   auto* identity_columns=PanelColumns(identity);
   auto* name_column=PanelStack(identity_columns,Metrics().space_1);auto* profile_column=PanelStack(identity_columns,Metrics().space_1);
   PanelText(name_column,workspace_copy[0],kLabelText,kMuted);
@@ -3198,10 +3206,10 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto* actions=ActionGroup(identity,false,8);
   edit_workspace_ = AddAction(actions,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
         if (shell) shell->SubmitWorkspace(shell->creating_workspace_);
-      }, weak),u"Zapisz nazwę i profil",ui::ButtonStyle::kProminent);
+      }, weak),T(u"Zapisz nazwę i profil"),ui::ButtonStyle::kProminent);
   add_workspace_ = AddAction(actions,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
         if(shell)shell->ToggleWorkspaceCreation();
-      }, weak),u"Nowa przestrzeń…");
+      }, weak),T(u"Nowa przestrzeń…"));
   BindFormCommand(edit_workspace_,sidebar::FormCommand::WorkspaceSave);BindFormCommand(add_workspace_,sidebar::FormCommand::WorkspaceToggle);
   configuration_error_ = settings_text(settings.get(),u"",kError,-2,gfx::Font::Weight::NORMAL,true);
   configuration_error_->SetVisible(false);
@@ -3209,7 +3217,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   workspace_appearance_ = appearance;
   appearance->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kVertical, gfx::Insets(), 8));
-  PanelText(appearance,u"Kolor przestrzeni",kEyebrow,kMuted);
+  PanelText(appearance,T(u"Kolor przestrzeni"),kEyebrow,kMuted);
   auto appearance_row=[&](bool emoji)->views::View* {
     return appearance->AddChildView(std::make_unique<AppearanceRow>(emoji));
   };
@@ -3235,7 +3243,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   Spacer(appearance, Metrics().space_2);
   PanelText(appearance,workspace_copy[10],kEyebrow,kMuted);
   auto* emoji_row=appearance_row(true);views::BoxLayout* emoji_layout=nullptr;
-  std::vector<std::pair<std::u16string,std::u16string>> emojis;for(const auto* e:kWorkspaceEmojis)emojis.emplace_back(e,u"Emoji "+std::u16string(e));
+  std::vector<std::pair<std::u16string,std::u16string>> emojis;for(const auto* e:kWorkspaceEmojis)emojis.emplace_back(e,TF(u"Emoji {}",{e}));
   emojis.clear();for(const auto& p:sidebar::appearance_presets(true))emojis.emplace_back(base::UTF8ToUTF16(std::string(p.emoji)),base::UTF8ToUTF16(std::string(p.label)));
   for(size_t preset=0;preset<emojis.size();++preset){
     const auto& [emoji,label]=emojis[preset];views::Button::PressedCallback callback;
@@ -3296,7 +3304,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   pin_button_ = footer->AddChildView(CreateSceneAction(
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
         if (shell) shell->SetPinned(!shell->pinned_);
-      }, weak), u"Przypnij panel", GlyphButton::Glyph::kSidebar,nullptr,footer_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),true,{chrome_node_graph_,4,{},"pin"}));
+      }, weak), T(u"Przypnij panel"), GlyphButton::Glyph::kSidebar,nullptr,footer_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),true,{chrome_node_graph_,4,{},"pin"}));
   Spacer(footer, 1);
   std::unique_ptr<views::ScrollBar> workspace_bar;
   workspace_bar=CreateSidebarScrollBar(footer_visible,true);
@@ -3314,7 +3322,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   Spacer(footer, 1);
   workspace_settings_button_=footer->AddChildView(CreateSceneAction(
       base::BindRepeating(&WorkspaceShell::OpenWorkspaceSettings, weak),
-      u"Ustawienia przestrzeni", GlyphButton::Glyph::kVector, &vector_icons::kTuneIcon,footer_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),true,{chrome_node_graph_,4,{},"settings"}));
+      T(u"Ustawienia przestrzeni"), GlyphButton::Glyph::kVector, &vector_icons::kTuneIcon,footer_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),true,{chrome_node_graph_,4,{},"settings"}));
   footer->SetLayoutManager(CreateSidebarFooterLayout());
 
   // Command palette: input, suggestions, keyboard hints.
@@ -3341,8 +3349,8 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   search_icon->SetFocusBehavior(views::View::FocusBehavior::NEVER);
   search_icon->SetCanProcessEventsWithinSubtree(false);
   address_ = AddEditor(input_row);
-  address_->GetViewAccessibility().SetName(u"Szukaj lub wpisz adres");
-  address_->SetPlaceholderText(u"Szukaj lub wpisz adres");
+  address_->GetViewAccessibility().SetName(T(u"Szukaj lub wpisz adres"));
+  address_->SetPlaceholderText(T(u"Szukaj lub wpisz adres"));
   address_->SetPresentation(17,0,false,Tone(root_,kCard));
   address_->SetCallbacks(base::BindRepeating(&WorkspaceShell::AddressEdited,weak),
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,const ui::KeyEvent& event){return shell&&shell->HandleAddressKey(event);},weak));
@@ -3369,7 +3377,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     suggestion_list_->SetLayoutManager(CreateSidebarColumnLayout(2));
     suggestion_list_->SetBorder(views::CreatePaddedBorder(views::CreateSolidSidedBorder(gfx::Insets::TLBR(1,0,0,0),Hairline(root_)),gfx::Insets(8)));
   }
-  palette_chrome_views_[2]=palette_text(palette.get(),u"↑↓ wybierz, ↵ otwórz, esc zamknij",1,2);
+  palette_chrome_views_[2]=palette_text(palette.get(),T(u"↑↓ wybierz, ↵ otwórz, esc zamknij"),1,2);
 
   profile_form_=std::make_unique<ProfileFormState>();
   std::array<std::u16string,11> profile_copy;
@@ -3432,7 +3440,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   profiles_panel->SetLayoutManager(CreateSidebarColumnLayout(10));profiles_panel->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(20)));
 
   import_form_=std::make_unique<ImportFormState>();
-  std::array<std::u16string,10> import_copy={u"Przenieś się do Zittera",u"Zamknij import",u"Wybierz przeglądarkę i dane, które chcesz przenieść.",u"Przeglądarka źródłowa",u"Przeglądarka do importu",u"Co chcesz przenieść?",u"Oddzielne profile przeglądania",u"Historia przeglądania",u"Ciasteczka i sesje witryn",u"Importuj"};
+  std::array<std::u16string,10> import_copy={T(u"Przenieś się do Zittera"),T(u"Zamknij import"),T(u"Wybierz przeglądarkę i dane, które chcesz przenieść."),T(u"Przeglądarka źródłowa"),T(u"Przeglądarka do importu"),T(u"Co chcesz przenieść?"),T(u"Oddzielne profile przeglądania"),T(u"Historia przeglądania"),T(u"Ciasteczka i sesje witryn"),T(u"Importuj")};
   std::vector<std::u16string> import_browsers={u"Arc",u"Google Chrome",u"Microsoft Edge",u"Brave"};
   {const auto c=sidebar::import_copy();auto text=[](const rust::String& value){return base::UTF8ToUTF16(std::string(value));};import_copy={text(c.title),text(c.dismiss),text(c.intro),text(c.source_label),text(c.source_ax),text(c.heading),text(c.profiles),text(c.history),text(c.cookies),text(c.apply_label)};import_browsers.clear();for(const auto& b:c.browsers)import_browsers.push_back(text(b));}
   auto import_text=[&](views::View* parent,std::u16string text,SkColor ink,int delta=0,gfx::Font::Weight weight=gfx::Font::Weight::NORMAL,bool multiline=false)->views::View* {
@@ -3464,7 +3472,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   views::View* import_choices=import_panel.get();
   import_choices=import_panel->AddChildView(std::make_unique<SceneCheckboxGroup>(12));
   import_profiles_ = AddImportCheck(import_choices,import_copy[6],selection_changed);
-  import_bookmarks_ = AddImportCheck(import_choices,u"Przypięte karty, foldery i Ulubione",selection_changed);
+  import_bookmarks_ = AddImportCheck(import_choices,T(u"Przypięte karty, foldery i Ulubione"),selection_changed);
   for (auto* checkbox : {import_profiles_.get(), import_bookmarks_.get()}) {
     SetCheckValue(checkbox,true);
   }
@@ -3490,21 +3498,21 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   preferences_navigation_ = navigation;
   navigation->SetPreferredSize(gfx::Size(212, 1));
   copy(navigation, u"zitter", kInk, 8, gfx::Font::Weight::BOLD);
-  copy(navigation, u"TWOJA PRZEGLĄDARKA", kMuted, -3, gfx::Font::Weight::MEDIUM);
+  copy(navigation, T(u"TWOJA PRZEGLĄDARKA"), kMuted, -3, gfx::Font::Weight::MEDIUM);
   Spacer(navigation, 20);
   auto* main = general->AddChildView(std::make_unique<views::View>());
   SetSidebarPanelLayout(general.get(),false,gfx::Insets(8),8,main);
   auto* preferences_heading = main->AddChildView(std::make_unique<views::View>());
   auto* heading_text = preferences_heading->AddChildView(std::make_unique<views::View>());
   SetSidebarPanelLayout(heading_text,true,gfx::Insets(),5);
-  if(auto* title=views::AsViewClass<PreferenceCopy>(copy(heading_text, u"Preferencje", kInk, 9, gfx::Font::Weight::SEMIBOLD)))title->SetDisplay();
-  copy(heading_text, u"Twoja przestrzeń. Twoje zasady.", kMuted, 0);
+  if(auto* title=views::AsViewClass<PreferenceCopy>(copy(heading_text, T(u"Preferencje"), kInk, 9, gfx::Font::Weight::SEMIBOLD)))title->SetDisplay();
+  copy(heading_text, T(u"Twoja przestrzeń. Twoje zasady."), kMuted, 0);
   SetSidebarPanelLayout(preferences_heading,false,gfx::Insets(),12,heading_text);
   auto dismiss=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell){shell->CloseOverlays();shell->RestorePageFocus();}},weak);
-  {auto* controls=preferences_heading->AddChildView(std::make_unique<ScenePreferenceControls>(true));preferences_close_=controls->AddControl({},u"Zamknij preferencje (Escape)");BindFormCommand(preferences_close_,sidebar::FormCommand::PreferencesDismiss);}
+  {auto* controls=preferences_heading->AddChildView(std::make_unique<ScenePreferenceControls>(true));preferences_close_=controls->AddControl({},T(u"Zamknij preferencje (Escape)"));BindFormCommand(preferences_close_,sidebar::FormCommand::PreferencesDismiss);}
   preferences_search_ = AddEditor(main);
-  preferences_search_->SetPlaceholderText(u"Szukaj ustawień");
-  preferences_search_->GetViewAccessibility().SetName(u"Szukaj we wszystkich ustawieniach");
+  preferences_search_->SetPlaceholderText(T(u"Szukaj ustawień"));
+  preferences_search_->GetViewAccessibility().SetName(T(u"Szukaj we wszystkich ustawieniach"));
   preferences_search_->SetCallbacks(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){
     if(shell&&shell->general_widget_->IsVisible()&&!shell->preferences_search_->IsIMEComposing()){
       shell->ResetPreferenceRuleLimit();shell->FilterPreferences();
@@ -3520,24 +3528,24 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   preferences_body_ = body.get();
   SetSidebarPanelLayout(body.get(),true,gfx::Insets::TLBR(0,0,8,8),16);
   std::vector<std::u16string> categories = {
-      u"Wygląd", u"Wyszukiwanie", u"Prywatność", u"Uprawnienia stron", u"Treści i czytelność", u"Hasła i profile", u"Pobieranie", u"Języki i pisownia", u"Dane przeglądania", u"Zaawansowane"};
+      T(u"Wygląd"), T(u"Wyszukiwanie"), T(u"Prywatność"), T(u"Uprawnienia stron"), T(u"Treści i czytelność"), T(u"Hasła i profile"), T(u"Pobieranie"), T(u"Języki i pisownia"), T(u"Dane przeglądania"), T(u"Zaawansowane")};
   std::vector<std::u16string> descriptions = {
-      u"Dopasuj Zitter do swojego rytmu.",
-      u"Wybierz, gdzie zaczyna się każde wyszukiwanie.",
-      u"Zdecyduj, jakie ślady zostawiasz w sieci.",
-      u"Ustal domyślny dostęp witryn do urządzenia.",
-      u"Wygodne czytanie i kontrola zawartości stron.",
-      u"Oddzielne logowania, wspólne możliwości.", u"Wybierz miejsce dla pobieranych plików.",
-      u"Wybierz języki witryn i pomoc podczas pisania.",
-      u"Kontroluj dane zapisane w bieżącym profilu.",
-      u"Dostępność, połączenia i ustawienia silnika Chromium."};
+      T(u"Dopasuj Zitter do swojego rytmu."),
+      T(u"Wybierz, gdzie zaczyna się każde wyszukiwanie."),
+      T(u"Zdecyduj, jakie ślady zostawiasz w sieci."),
+      T(u"Ustal domyślny dostęp witryn do urządzenia."),
+      T(u"Wygodne czytanie i kontrola zawartości stron."),
+      T(u"Oddzielne logowania, wspólne możliwości."), T(u"Wybierz miejsce dla pobieranych plików."),
+      T(u"Wybierz języki witryn i pomoc podczas pisania."),
+      T(u"Kontroluj dane zapisane w bieżącym profilu."),
+      T(u"Dostępność, połączenia i ustawienia silnika Chromium.")};
   std::optional<sidebar::PreferenceCatalogue> preference_catalogue;
   {
     preference_catalogue=sidebar::preference_catalogue(true);
     auto strings=[](const auto& input){std::vector<std::u16string> output;for(const auto& value:input)output.push_back(base::UTF8ToUTF16(std::string(value)));return output;};
     categories=strings(preference_catalogue->categories);descriptions=strings(preference_catalogue->descriptions);
   }
-  preferences_category_picker_=ChoicePicker(main,u"Kategoria preferencji",categories);
+  preferences_category_picker_=ChoicePicker(main,T(u"Kategoria preferencji"),categories);
   preferences_category_picker_->SetVisible(false);
   SetPickerCallback(preferences_category_picker_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
     if(shell)shell->SelectPreferenceCategory(PickerIndex(shell->preferences_category_picker_).value_or(0));
@@ -3555,13 +3563,13 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   }
   auto* nav_space = Spacer(navigation, 1);
   SetSidebarPanelLayout(navigation,true,gfx::Insets(16),6,nav_space);
-  copy(navigation, u"ZITTER / PREFERENCJE", kMuted, -3);
+  copy(navigation, T(u"ZITTER / PREFERENCJE"), kMuted, -3);
   BuildRustPreferenceRows(*preference_catalogue);
-  preferences_empty_ = copy(body.get(), u"Brak pasujących ustawień. Spróbuj innego hasła.", kMuted,0,gfx::Font::Weight::NORMAL,true);
+  preferences_empty_ = copy(body.get(), T(u"Brak pasujących ustawień. Spróbuj innego hasła."), kMuted,0,gfx::Font::Weight::NORMAL,true);
   general_scroll_->SetPanelContents(std::move(body));
   auto* main_scroll=main->AddChildView(std::move(general_scroll));
   SetSidebarPanelLayout(main,true,gfx::Insets::VH(16,20),12,main_scroll);
-  general_status_ = copy(main, u"Przełączniki zapisują się automatycznie. Pola tekstowe zatwierdź przyciskiem Zapisz lub Enter.", kMuted,-2,gfx::Font::Weight::NORMAL,true);
+  general_status_ = copy(main, T(u"Przełączniki zapisują się automatycznie. Pola tekstowe zatwierdź przyciskiem Zapisz lub Enter."), kMuted,-2,gfx::Font::Weight::NORMAL,true);
   FilterPreferences();
   auto peek = std::make_unique<views::View>();
   peek->SetBackground(views::CreateRoundedRectBackground(kCard,12));peek->SetBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)));
@@ -3583,7 +3591,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto dismiss_tools=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){
     if(shell){shell->SetShortcutRecording(false);shell->tools_widget_->Hide();shell->RestorePageFocus();}
   },weak);
-  {auto* controls=tools_heading->AddChildView(std::make_unique<ScenePreferenceControls>(true));tools_close_=controls->AddControl({},u"Zamknij narzędzia");BindFormCommand(tools_close_,sidebar::FormCommand::ToolsDismiss);}
+  {auto* controls=tools_heading->AddChildView(std::make_unique<ScenePreferenceControls>(true));tools_close_=controls->AddControl({},T(u"Zamknij narzędzia"));BindFormCommand(tools_close_,sidebar::FormCommand::ToolsDismiss);}
   SetSidebarPanelLayout(tools_heading,false,gfx::Insets(),8,tools_title_);
   PanelViewport* tools_viewport=nullptr;auto tools_scroll=CreatePanelViewport(&tools_viewport,base::BindRepeating(&WorkspaceShell::RefreshToolsViewport,weak));tools_scroll_=tools_viewport;
   auto tools_body = std::make_unique<views::View>(); tools_body_ = tools_body.get();
@@ -3615,23 +3623,23 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     panel->AddObserver(this);
     RegisterKeys(panel.get(), target, tools_, true);
   };
-  make_panel(std::move(sidebar), sidebar_delegate_, sidebar_widget_, u"Zitter — Karty", false);
-  make_panel(std::move(palette), address_delegate_, address_widget_, u"Zitter — Paleta poleceń");
+  make_panel(std::move(sidebar), sidebar_delegate_, sidebar_widget_, T(u"Zitter — Karty"), false);
+  make_panel(std::move(palette), address_delegate_, address_widget_, T(u"Zitter — Paleta poleceń"));
   PanelViewport* settings_viewport=nullptr;
   auto settings_scroll=CreatePanelViewport(&settings_viewport,base::BindRepeating(&WorkspaceShell::RefreshFormViewports,weak),{0,10000,false});
   settings_scroll_=settings_viewport;settings_viewport->SetPanelContents(std::move(settings));
-  make_panel(std::move(settings_scroll), settings_delegate_, settings_widget_, u"Zitter — Ustawienia przestrzeni");
-  make_panel(std::move(profiles_panel), profiles_delegate_, profiles_widget_, u"Zitter — Profile");
+  make_panel(std::move(settings_scroll), settings_delegate_, settings_widget_, T(u"Zitter — Ustawienia przestrzeni"));
+  make_panel(std::move(profiles_panel), profiles_delegate_, profiles_widget_, T(u"Zitter — Profile"));
   PanelViewport* import_viewport=nullptr;
   auto import_scroll=CreatePanelViewport(&import_viewport,base::BindRepeating(&WorkspaceShell::RefreshFormViewports,weak),{0,10000,false});
   import_scroll_=import_viewport;import_viewport->SetPanelContents(std::move(import_panel));
-  make_panel(std::move(import_scroll), import_delegate_, import_widget_, u"Zitter — Import danych");
+  make_panel(std::move(import_scroll), import_delegate_, import_widget_, T(u"Zitter — Import danych"));
   make_panel(std::move(peek), peek_delegate_, peek_widget_, u"Zitter — Peek");
-  make_panel(std::move(general), general_delegate_, general_widget_, u"Zitter — Ustawienia");
-  make_panel(std::move(tools_panel), tools_delegate_, tools_widget_, u"Zitter — Narzędzia");
+  make_panel(std::move(general), general_delegate_, general_widget_, T(u"Zitter — Ustawienia"));
+  make_panel(std::move(tools_panel), tools_delegate_, tools_widget_, T(u"Zitter — Narzędzia"));
   {auto toast=std::make_unique<ToastView>(base::BindRepeating(&WorkspaceShell::UndoToast,weak),base::BindRepeating(&WorkspaceShell::HideToast,weak),
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,bool hovered){if(!shell)return;if(hovered)shell->toast_timer_.Stop();else if(shell->toast_widget_->IsVisible())shell->toast_timer_.Start(FROM_HERE,base::Seconds(6),base::BindOnce(&WorkspaceShell::HideToast,shell));},weak));
-   toast_=toast.get();make_panel(std::move(toast), toast_delegate_, toast_widget_, u"Zitter — Komunikat", false);}
+   toast_=toast.get();make_panel(std::move(toast), toast_delegate_, toast_widget_, T(u"Zitter — Komunikat"), false);}
   PositionPanels();
   ApplyAppearance();
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE, base::BindOnce([](base::FilePath path) {
@@ -3667,7 +3675,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         // only if the saved state differs, never as a side effect of loading.
         if (shell->pinned_ && !shell->sidebar_visible()) shell->ShowSidebar();
         if (!shell->pinned_ && shell->sidebar_visible()) shell->sidebar_widget_->Hide();
-        // Development: --zitter-open-panel=space|sidebar|palette|settings|profiles opens
+        // Development: --zitter-open-panel=space|sidebar|palette|settings|profiles|toast opens
         // that view once the window is up, so UI checks can screenshot it without
         // driving the mouse.
         if (const std::string panel = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-open-panel"); !panel.empty())
@@ -3679,6 +3687,8 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
                 else if (panel == "palette") shell->OpenCommandPalette();
                 else if (panel == "settings") shell->OpenGeneralSettings();
                 else if (panel == "profiles") shell->OpenProfiles();
+                // A sample undo toast; its „Cofnij” does nothing.
+                else if (panel == "toast") shell->ShowToast(T(u"Usunięto folder "), u"Projekty", base::DoNothing());
               }, shell->weak_factory_.GetWeakPtr(), panel),
               base::Seconds(1));
       }, weak));
@@ -3862,13 +3872,13 @@ void WorkspaceShell::Update(ShellState state) {
   if ((changed || selected || profiles_changed) && settings_visible()) RefreshWorkspaceSettings();
   if (general_widget_->IsVisible()) RefreshGeneralControls();
   RefreshWorkspaceHeading();
-  SetPanelText(settings_title_,creating_workspace_ ? u"Nowa przestrzeń" : state_.workspace_name);
-  SetPanelText(profile_name_,u"Profil: " + state_.profile_name);
+  SetPanelText(settings_title_,creating_workspace_ ? T(u"Nowa przestrzeń") : state_.workspace_name);
+  SetPanelText(profile_name_,TF(u"Profil: {}", {state_.profile_name}));
   RefreshRustWorkspacePresentation();
   const bool blank = !state_.url.is_valid() || state_.url.path() == "/start.html";
   const std::string path = state_.url.path() == "/" ? std::string() : std::string(state_.url.path());
   SetRowAddress(url_pill_.get(),
-      blank ? u"Szukaj lub wpisz adres" : HostLabel(state_.url),
+      blank ? T(u"Szukaj lub wpisz adres") : HostLabel(state_.url),
       blank ? u"" : base::UTF8ToUTF16(path), blank, !blank && state_.url.SchemeIs("https"));
   for (size_t pane = 0; pane < kMaxSplitPanes; ++pane) {
     std::u16string title;
@@ -4001,7 +4011,7 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
       contents->SetLayoutManager(CreateSidebarColumnLayout(2));
     }
     if (!state_.pins.empty()) {
-      Label(contents.get(), u"PRZYPIĘTE", kMuted, Font(-2));
+      Label(contents.get(), T(u"PRZYPIĘTE"), kMuted, Font(-2));
       AppendPinnedItems(contents.get(),state_.pins,cache,state_.workspace_id
           ,&retained_pins,&retained_groups,&retained_holders
       );
@@ -4605,7 +4615,7 @@ void WorkspaceShell::WarmNextSidebar() {
     cache.tabs_root->SetLayoutManager(CreateSidebarColumnLayout(2));
     auto contents = std::make_unique<views::View>();
     contents->SetLayoutManager(CreateSidebarColumnLayout(2));
-    Label(contents.get(), u"PRZYPIĘTE", kMuted, Font(-2));
+    Label(contents.get(), T(u"PRZYPIĘTE"), kMuted, Font(-2));
     AppendPinnedItems(contents.get(), pins, cache, workspace);
     Spacer(contents.get(), 8);
     cache.pins_root->AddChildView(std::move(contents));
@@ -4663,7 +4673,7 @@ std::vector<sidebar::Item> WorkspaceShell::CaptureWorkspaceScene(std::string_vie
   const SidebarTabSlot* pair_slot=nullptr;if(cache)for(const auto& slot:cache->tab_plan.slots)if(slot.pair){pair_slot=&slot;break;}
   std::vector<bool> visible(pins?pins->size():0,true);if(cache)for(const auto& pin:cache->tab_plan.pins)visible[pin.index]=pin.visible;
   if(pins&&!pins->empty()) {
-    rows.push_back({data.size(),1,0,Font(-2).GetHeight()});sidebar::Item label{};label.kind=1;label.title="PRZYPIĘTE";label.ink=Tone(shell->root_,kMuted);label.font_size=Font(-2).GetFontSize();label.text_style=7;data.push_back(std::move(label));
+    rows.push_back({data.size(),1,0,Font(-2).GetHeight()});sidebar::Item label{};label.kind=1;label.title=base::UTF16ToUTF8(T(u"PRZYPIĘTE"));label.ink=Tone(shell->root_,kMuted);label.font_size=Font(-2).GetFontSize();label.text_style=7;data.push_back(std::move(label));
     std::vector<SidebarTreeNode> nodes;for(const auto& pin:*pins)nodes.push_back({pin.id,pin.parent_id,pin.folder});
     const auto plan=shell->sidebar_tree_.Plan(id,nodes);std::vector<int> groups;
     for(const auto& entry:plan) {
@@ -4687,7 +4697,7 @@ std::vector<sidebar::Item> WorkspaceShell::CaptureWorkspaceScene(std::string_vie
     if(slot.pair){if(slot.pin==SidebarTree::kRoot)pair(slot,0);continue;}
     auto button=cache->tab_buttons.find(cache->tabs[slot.first].index);if(button!=cache->tab_buttons.end())WithRowSnapshot(button->second.get(),[&](const auto& spec){row(spec,0);});
   }
-  if(!cache||(cache->tabs.empty()&&!source)){RowRecipe::Spec blank;blank.title=u"Nowa karta";blank.monogram=u"N";row(blank,0);}
+  if(!cache||(cache->tabs.empty()&&!source)){RowRecipe::Spec blank;blank.title=T(u"Nowa karta");blank.monogram=u"N";row(blank,0);}
   const auto plan=sidebar::workspace_preview_layout(size.width(),size.height(),offset,rust::Slice<const sidebar::PreviewRow>(rows.data(),rows.size()));
   std::vector<sidebar::Item> items;items.reserve(plan.size());
   for(const auto& placement:plan){auto item=std::move(data[placement.index]);const auto& r=placement.bounds;const auto& c=placement.clip;item.x=r.x;item.y=r.y;item.width=r.width;item.height=r.height;item.clip={float(c.x),float(c.y),float(c.width),float(c.height)};items.push_back(std::move(item));}
@@ -4745,7 +4755,7 @@ void WorkspaceShell::UpdateWorkspaceSwipePreview() {
         };
         if (pins && !pins->empty()) {
           const int label_height = Font(-2).GetHeight();
-          canvas->DrawStringRectWithFlags(u"PRZYPIĘTE", Font(-2), Tone(shell->root_, kMuted),
+          canvas->DrawStringRectWithFlags(T(u"PRZYPIĘTE"), Font(-2), Tone(shell->root_, kMuted),
               gfx::Rect(0, y, size.width(), label_height), gfx::Canvas::TEXT_ALIGN_LEFT);
           y += label_height + 2;
           std::vector<SidebarTreeNode> nodes;
@@ -4788,7 +4798,7 @@ void WorkspaceShell::UpdateWorkspaceSwipePreview() {
             WithRowSnapshot(button->second.get(),[&](const auto& spec){row(spec,0,34);});
         }
         if (!cache || (cache->tabs.empty() && id != shell->swipe_source_)) {
-          RowRecipe::Spec blank; blank.title = u"Nowa karta"; blank.monogram = u"N";
+          RowRecipe::Spec blank; blank.title = T(u"Nowa karta"); blank.monogram = u"N";
           row(blank, 0, 34);
         }
       }
@@ -5030,7 +5040,7 @@ void WorkspaceShell::RebuildWorkspaceDots() {
   for (const auto& workspace : state_.workspaces) {
     auto* button = workspace_dots_->AddChildView(CreateSceneAction(
         base::BindRepeating(callbacks_.select_workspace, workspace.id),
-        u"Przestrzeń: " + base::UTF8ToUTF16(workspace.name) + (state_.sleeping_workspaces.contains(workspace.id) ? u" · uśpiona" : u""), GlyphButton::Glyph::kDot,nullptr,
+        state_.sleeping_workspaces.contains(workspace.id) ? TF(u"Przestrzeń: {} · uśpiona", {base::UTF8ToUTF16(workspace.name)}) : TF(u"Przestrzeń: {}", {base::UTF8ToUTF16(workspace.name)}), GlyphButton::Glyph::kDot,nullptr,
         base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {return shell && shell->metal_sidebar_visible();},weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak_factory_.GetWeakPtr()),true,{chrome_node_graph_,3,{},workspace.id}));
     SetActionLabel(button,workspace_emoji(workspace.id));
     SetActionColor(button,workspace_color(workspace.id));
@@ -5147,13 +5157,13 @@ void WorkspaceShell::BuildLinkMenu(GURL url, std::string source_workspace) {
         base::UTF8ToUTF16(route_workspaces_[i].name) + u" · " + profile, 2);
   }
   link_menu_ = std::make_unique<ui::SimpleMenuModel>(this);
-  link_menu_->AddItem(kLinkPeek, u"Otwórz w Peek");
-  link_menu_->AddItem(kLinkNewTab, u"Otwórz w nowej karcie");
-  link_menu_->AddItem(kLinkSplit, u"Otwórz obok w Split View");
+  link_menu_->AddItem(kLinkPeek, T(u"Otwórz w Peek"));
+  link_menu_->AddItem(kLinkNewTab, T(u"Otwórz w nowej karcie"));
+  link_menu_->AddItem(kLinkSplit, T(u"Otwórz obok w Split View"));
   link_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
-  link_menu_->AddItem(kRuleHere, u"Zawsze otwieraj tę domenę tutaj");
-  link_menu_->AddSubMenu(kRouteSubmenu, u"Otwieraj " + base::UTF8ToUTF16(context_url_.host()) + u" w…", route_menu_.get());
-  link_menu_->AddItem(kRemoveRule, u"Usuń regułę dla tej domeny");
+  link_menu_->AddItem(kRuleHere, T(u"Zawsze otwieraj tę domenę tutaj"));
+  link_menu_->AddSubMenu(kRouteSubmenu, TF(u"Otwieraj {} w…", {base::UTF8ToUTF16(context_url_.host())}), route_menu_.get());
+  link_menu_->AddItem(kRemoveRule, T(u"Usuń regułę dla tej domeny"));
 }
 void WorkspaceShell::ShowLinkMenu(GURL url, std::string source_workspace, gfx::Point point) {
   BuildLinkMenu(std::move(url), std::move(source_workspace));
@@ -5194,27 +5204,27 @@ void WorkspaceShell::BuildWorkspaceMenu(std::string id) {
   for (size_t i = 0; i < menu_profiles_.size(); ++i)
     profile_menu_->AddRadioItem(kProfileCommandBase + i, base::UTF8ToUTF16(menu_profiles_[i].name), 1);
   profile_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
-  profile_menu_->AddItem(kEditProfile, u"Edytuj profile…");
-  profile_menu_->AddItem(kNewProfile, u"Dodaj nowy profil…");
+  profile_menu_->AddItem(kEditProfile, T(u"Edytuj profile…"));
+  profile_menu_->AddItem(kNewProfile, T(u"Dodaj nowy profil…"));
   workspace_menu_ = std::make_unique<ui::SimpleMenuModel>(this);
-  workspace_menu_->AddSubMenu(kSetProfile, u"Profil przeglądania", profile_menu_.get());
+  workspace_menu_->AddSubMenu(kSetProfile, T(u"Profil przeglądania"), profile_menu_.get());
   color_menu_ = std::make_unique<ui::SimpleMenuModel>(this);
-  const std::array<const char16_t*, kWorkspacePresetCount> color_names = {u"Fiolet", u"Koral", u"Niebo", u"Bursztyn", u"Róż", u"Mięta", u"Zieleń", u"Grafit"};
+  const std::array<std::u16string, kWorkspacePresetCount> color_names = {T(u"Fiolet"), T(u"Koral"), T(u"Niebo"), T(u"Bursztyn"), T(u"Róż"), T(u"Mięta"), T(u"Zieleń"), T(u"Grafit")};
   for (size_t i = 0; i < kWorkspacePresetCount; ++i)
     color_menu_->AddCheckItem(kColorBase + i, color_names[i]);
   color_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
-  color_menu_->AddItem(kCustomColor, u"Własny kolor…");
+  color_menu_->AddItem(kCustomColor, T(u"Własny kolor…"));
   emoji_menu_ = std::make_unique<ui::SimpleMenuModel>(this);
   for (size_t i = 0; i < kWorkspaceEmojis.size(); ++i)
     emoji_menu_->AddCheckItem(kEmojiBase + i, kWorkspaceEmojis[i]);
   emoji_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
-  emoji_menu_->AddItem(kCustomEmoji, u"Własna ikonka…");
-  emoji_menu_->AddCheckItem(kClearEmoji, u"Bez ikonki (kropka)");
-  workspace_menu_->AddSubMenu(kColorMenu, u"Kolor przestrzeni", color_menu_.get());
-  workspace_menu_->AddSubMenu(kEmojiMenu, u"Ikonka przestrzeni", emoji_menu_.get());
+  emoji_menu_->AddItem(kCustomEmoji, T(u"Własna ikonka…"));
+  emoji_menu_->AddCheckItem(kClearEmoji, T(u"Bez ikonki (kropka)"));
+  workspace_menu_->AddSubMenu(kColorMenu, T(u"Kolor przestrzeni"), color_menu_.get());
+  workspace_menu_->AddSubMenu(kEmojiMenu, T(u"Ikonka przestrzeni"), emoji_menu_.get());
   workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
-  workspace_menu_->AddItem(kWorkspaceSettings, u"Nazwa i ustawienia…");
-  workspace_menu_->AddItem(kRemoveWorkspace, u"Usuń przestrzeń");
+  workspace_menu_->AddItem(kWorkspaceSettings, T(u"Nazwa i ustawienia…"));
+  workspace_menu_->AddItem(kRemoveWorkspace, T(u"Usuń przestrzeń"));
 }
 
 void WorkspaceShell::BuildFolderMenu(std::string parent) {
@@ -5230,11 +5240,11 @@ void WorkspaceShell::BuildFolderMenu(std::string parent) {
     }
     return;
   }
-  workspace_menu_->AddItem(kNewFolder, folder_parent_id_.empty() ? u"Nowy folder…" : u"Nowy podfolder…");
+  workspace_menu_->AddItem(kNewFolder, folder_parent_id_.empty() ? T(u"Nowy folder…") : T(u"Nowy podfolder…"));
   if (!folder_parent_id_.empty()) {
     workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
-    workspace_menu_->AddItem(kRenameFolder, u"Zmień nazwę…");
-    workspace_menu_->AddItem(kDeleteFolder, u"Usuń folder");
+    workspace_menu_->AddItem(kRenameFolder, T(u"Zmień nazwę…"));
+    workspace_menu_->AddItem(kDeleteFolder, T(u"Usuń folder"));
   }
 }
 
@@ -5262,7 +5272,7 @@ void WorkspaceShell::RequestRenameFolder(std::string workspace, std::string fold
 void WorkspaceShell::RequestFolderName(std::string workspace, std::string parent, std::string renamed) {
   if (folder_dialog_) { folder_dialog_->Activate(); return; }
   if (!state_.configuration_ready || state_.profiles_busy || !callbacks_.create_folder) return;
-  std::u16string initial_name = u"Nowy folder";
+  std::u16string initial_name = T(u"Nowy folder");
   if (!renamed.empty()) {
     auto item = std::find_if(state_.pins.begin(), state_.pins.end(), [&](const auto& item) { return item.id == renamed && item.folder; });
     if (state_.workspace_id != workspace || item == state_.pins.end()) return;
@@ -5294,8 +5304,8 @@ void WorkspaceShell::RequestFolderName(std::string workspace, std::string parent
   ui::DialogModel::Builder builder;
   auto* model = builder.model();
   auto weak = weak_factory_.GetWeakPtr();
-  auto dialog_model = builder.SetTitle(!renamed.empty() ? u"Zmień nazwę folderu" : parent.empty() ? u"Nowy folder" : u"Nowy podfolder")
-      .AddTextfield(kFolderNameField, u"Nazwa folderu", initial_name)
+  auto dialog_model = builder.SetTitle(!renamed.empty() ? T(u"Zmień nazwę folderu") : parent.empty() ? T(u"Nowy folder") : T(u"Nowy podfolder"))
+      .AddTextfield(kFolderNameField, T(u"Nazwa folderu"), initial_name)
       .SetInitiallyFocusedField(kFolderNameField)
       .AddOkButton(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, ui::DialogModel* model,
                                         std::string workspace, std::string parent, std::string renamed) {
@@ -5309,8 +5319,8 @@ void WorkspaceShell::RequestFolderName(std::string workspace, std::string parent
         if (!ok && !parent.empty()) shell->sidebar_tree_.SetCollapsed(workspace, parent, was_collapsed);
         if (ok) shell->folder_dialog_.reset();
         return ok;
-      }, weak, base::Unretained(model), workspace, parent, renamed), ui::DialogModel::Button::Params().SetLabel(renamed.empty() ? u"Dodaj folder" : u"Zapisz nazwę"))
-      .AddCancelButton(base::DoNothing(), ui::DialogModel::Button::Params().SetLabel(u"Anuluj"))
+      }, weak, base::Unretained(model), workspace, parent, renamed), ui::DialogModel::Button::Params().SetLabel(renamed.empty() ? T(u"Dodaj folder") : T(u"Zapisz nazwę")))
+      .AddCancelButton(base::DoNothing(), ui::DialogModel::Button::Params().SetLabel(T(u"Anuluj")))
       .Build();
   auto* prompt = views::DialogDelegate::CreateDialogWidget(
       views::BubbleDialogModelHost::CreateModal(std::move(dialog_model), ui::mojom::ModalType::kWindow),
@@ -5366,7 +5376,7 @@ void WorkspaceShell::RequestDeleteFolder(std::string workspace, std::string fold
   const auto title = base::UTF8ToUTF16(item->title);
   auto previous = state_.pins;
   if (!callbacks_.delete_folder.Run(workspace, folder, true)) return;
-  ShowToast(u"Usunięto folder ", title, base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, std::string workspace, std::vector<PinnedItem> pins) {
+  ShowToast(T(u"Usunięto folder "), title, base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, std::string workspace, std::vector<PinnedItem> pins) {
     if (shell) shell->callbacks_.restore_pins.Run(std::move(workspace), std::move(pins));
   }, weak_factory_.GetWeakPtr(), workspace, std::move(previous)));
 }
@@ -5374,8 +5384,8 @@ void WorkspaceShell::RequestDeleteFolder(std::string workspace, std::string fold
 void WorkspaceShell::ShowFolderSaveError() {
   if(!widget_)return;
   if(ShowRustFolderNotice({},{},{},true))return;
-  auto model = ui::DialogModel::Builder().SetTitle(u"Nie udało się zapisać folderu")
-      .AddParagraph(ui::DialogModelLabel(u"Sprawdź wolne miejsce na dysku i spróbuj ponownie."))
+  auto model = ui::DialogModel::Builder().SetTitle(T(u"Nie udało się zapisać folderu"))
+      .AddParagraph(ui::DialogModelLabel(T(u"Sprawdź wolne miejsce na dysku i spróbuj ponownie.")))
       .AddOkButton(base::DoNothing(), ui::DialogModel::Button::Params().SetLabel(u"OK")).Build();
   auto* prompt = views::DialogDelegate::CreateDialogWidget(
       views::BubbleDialogModelHost::CreateModal(std::move(model), ui::mojom::ModalType::kWindow),
@@ -5465,32 +5475,32 @@ void WorkspaceShell::BuildTabMenu(std::optional<size_t> target_tab,std::string t
       for(const auto& entry:plan){if(entry.command==0)workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);else workspace_menu_->AddItem(entry.command,base::UTF8ToUTF16(std::string(entry.label)));}
       return;
     }
-    workspace_menu_->AddItem(kNewFolder, u"Nowy folder…");
+    workspace_menu_->AddItem(kNewFolder, T(u"Nowy folder…"));
     folder_parent_id_.clear();
     context_workspace_id_ = state_.workspace_id;
     workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
-    workspace_menu_->AddItem(kLinkPeek, u"Otwórz w Peek");
+    workspace_menu_->AddItem(kLinkPeek, T(u"Otwórz w Peek"));
     const bool paired = context_tab_ && state_.split &&
         std::find(state_.split_tabs.begin(), state_.split_tabs.end(), *context_tab_) != state_.split_tabs.end();
     if (paired) {
       const bool vertical = state_.split_vertical;
-      workspace_menu_->AddItem(kMoveLeft, vertical ? u"Przesuń w górę" : u"Przesuń w lewo");
-      workspace_menu_->AddItem(kMoveRight, vertical ? u"Przesuń w dół" : u"Przesuń w prawo");
+      workspace_menu_->AddItem(kMoveLeft, vertical ? T(u"Przesuń w górę") : T(u"Przesuń w lewo"));
+      workspace_menu_->AddItem(kMoveRight, vertical ? T(u"Przesuń w dół") : T(u"Przesuń w prawo"));
       workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
-      workspace_menu_->AddItem(kToggleVertical, vertical ? u"Podział poziomy (obok siebie)"
-                                                         : u"Podział pionowy (jedna nad drugą)");
+      workspace_menu_->AddItem(kToggleVertical, vertical ? T(u"Podział poziomy (obok siebie)")
+                                                         : T(u"Podział pionowy (jedna nad drugą)"));
       workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
-      workspace_menu_->AddItem(kSeparateSplit, u"Rozdziel");
-      if (state_.split_tabs.size() > 2) workspace_menu_->AddItem(kCloseSplit, u"Wyjmij kartę ze splitu");
-      workspace_menu_->AddItem(kCloseTab, u"Zamknij kartę");
-      workspace_menu_->AddItem(kCloseSplitTabs, u"Zamknij wszystkie karty w splicie");
+      workspace_menu_->AddItem(kSeparateSplit, T(u"Rozdziel"));
+      if (state_.split_tabs.size() > 2) workspace_menu_->AddItem(kCloseSplit, T(u"Wyjmij kartę ze splitu"));
+      workspace_menu_->AddItem(kCloseTab, T(u"Zamknij kartę"));
+      workspace_menu_->AddItem(kCloseSplitTabs, T(u"Zamknij wszystkie karty w splicie"));
     } else {
-      workspace_menu_->AddItem(kOpenSplit, u"Otwórz obok w Split View");
+      workspace_menu_->AddItem(kOpenSplit, T(u"Otwórz obok w Split View"));
     }
     if (url.SchemeIsHTTPOrHTTPS()) {
       workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
-      workspace_menu_->AddItem(kRuleHere, u"Zawsze otwieraj tę domenę tutaj");
-      workspace_menu_->AddItem(kRemoveRule, u"Usuń regułę dla tej domeny");
+      workspace_menu_->AddItem(kRuleHere, T(u"Zawsze otwieraj tę domenę tutaj"));
+      workspace_menu_->AddItem(kRemoveRule, T(u"Usuń regułę dla tej domeny"));
     }
 }
 void WorkspaceShell::ShowTabMenu(gfx::Point point,ui::mojom::MenuSourceType source_type) {
@@ -5881,8 +5891,8 @@ void WorkspaceShell::RebuildSuggestions() {
     std::u16string provider_name;
     const GURL url = ResolveInput(text, &provider_name);
     const bool search = !provider_name.empty();
-    const std::u16string search_title = u"Szukaj w " + provider_name;
-    suggestions_.push_back({search ? search_title : u"Otwórz",
+    const std::u16string search_title = TF(u"Szukaj w {}", {provider_name});
+    suggestions_.push_back({search ? search_title : T(u"Otwórz"),
                             search ? base::UTF8ToUTF16(text) : base::UTF8ToUTF16(url.is_valid() ? url.spec() : text),
                             url, std::nullopt});
   }
@@ -5914,7 +5924,7 @@ void WorkspaceShell::RebuildSuggestions() {
       base::ListValue identity;identity.Append(state_.profile_id);identity.Append(state_.workspace_id);identity.Append(base::UTF16ToUTF8(suggestions_text_));identity.Append(command_palette_);identity.Append(new_tab_);
       identity.Append(item.url.spec());identity.Append(item.tab?base::NumberToString(*item.tab):std::string());identity.Append(item.workspace_id);identity.Append(item.pin_id);identity.Append(item.workspace_only);identity.Append(item.command_id);identity.Append(item.target_workspace_id);identity.Append(item.command_page_id);
       std::string target;CHECK(base::JSONWriter::Write(identity,&target));identity.Append(base::NumberToString(occurrences[target]++));
-      std::string name;CHECK(base::JSONWriter::Write(identity,&name));const uint32_t icon=!item.command_id.empty()?2:(item.tab||item.workspace_only||!item.pin_id.empty()||item.title==u"Otwórz")?1:0;items.push_back({std::move(name),units(item.title),units(item.detail),icon});
+      std::string name;CHECK(base::JSONWriter::Write(identity,&name));const uint32_t icon=!item.command_id.empty()?2:(item.tab||item.workspace_only||!item.pin_id.empty()||item.title==T(u"Otwórz"))?1:0;items.push_back({std::move(name),units(item.title),units(item.detail),icon});
     }
     CHECK(palette_node_graph_->graph->reconcile_palette(std::move(items)).admitted)<<"Invalid palette scene projection";scene=palette_node_graph_->graph->palette_scene();CHECK_NE(scene.root,0u);
     std::set<uint64_t> wanted;for(const auto& child:scene.children){CHECK_EQ(child.parent,scene.root);wanted.insert(child.id);}
@@ -5944,7 +5954,7 @@ void WorkspaceShell::RebuildSuggestions() {
     spec.scene_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_palette_visible();},weak_factory_.GetWeakPtr());
     spec.icon = !item.command_id.empty() ? &vector_icons::kSettingsIcon
               : (item.tab || item.workspace_only || !item.pin_id.empty()) ? &vector_icons::kArrowForwardIcon
-              : item.title == u"Otwórz" ? &vector_icons::kArrowForwardIcon
+              : item.title == T(u"Otwórz") ? &vector_icons::kArrowForwardIcon
                                         : &vector_icons::kSearchIcon;
     suggestion_list_->AddChildView(CreateSceneRow(
         base::BindRepeating(&WorkspaceShell::RunSuggestion,weak_factory_.GetWeakPtr(),i),std::move(spec),base::BindRepeating(&WorkspaceShell::ScheduleMetalPalette,weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak_factory_.GetWeakPtr()),{}));
@@ -6354,7 +6364,7 @@ void WorkspaceShell::RefreshGeneralControls() {
   };
   if (rust_copy) SetPanelText(preferences_profile_,base::UTF8ToUTF16(std::string(sidebar::preferences_profile_banner(base::UTF16ToUTF8(state_.profile_name)))));
   else
-  SetPanelText(preferences_profile_,u"Profil: " + state_.profile_name + u" · Ustawienia wspólne dla aplikacji są oznaczone w opisach.");
+  SetPanelText(preferences_profile_,TF(u"Profil: {} · Ustawienia wspólne dla aplikacji są oznaczone w opisach.", {state_.profile_name}));
   const auto values = callbacks_.read_preferences ? callbacks_.read_preferences.Run() : BrowserPreferences();
   SetPanelText(download_directory_label_,callbacks_.download_directory ? callbacks_.download_directory.Run() : u"");
   for (const auto& [key, field] : preference_textfields_) {
@@ -6365,7 +6375,7 @@ void WorkspaceShell::RefreshGeneralControls() {
     if (SyncPreferenceText(key,it!=values.end(),enabled,field->IsIMEComposing(),profile_changed)) {
       field->SetText(base::UTF8ToUTF16(it->second.text));
     }
-    field->view()->SetTooltipText(control_view(false, it != values.end(), enabled, it == values.end() ? u"Ustawienie jest niedostępne" : !enabled ? u"To ustawienie jest zarządzane" : u"Zapisz przyciskiem lub klawiszem Enter"));
+    field->view()->SetTooltipText(control_view(false, it != values.end(), enabled, it == values.end() ? T(u"Ustawienie jest niedostępne") : !enabled ? T(u"To ustawienie jest zarządzane") : T(u"Zapisz przyciskiem lub klawiszem Enter")));
   }
   auto directory = values.find("download_directory");
   download_directory_button_->SetEnabled(directory != values.end() && directory->second.editable);
@@ -6373,8 +6383,8 @@ void WorkspaceShell::RefreshGeneralControls() {
     auto it = values.find(key);
     control->SetEnabled(it != values.end() && it->second.editable);
     if (it != values.end()) SetToggleOn(control,it->second.value != 0);
-    control->SetTooltipText(control_view(true, it != values.end(), it != values.end() && it->second.editable, it == values.end() ? u"Profil nie jest jeszcze gotowy" :
-        !it->second.editable ? u"To ustawienie jest zarządzane" : u"Dotyczy aktywnego profilu"));
+    control->SetTooltipText(control_view(true, it != values.end(), it != values.end() && it->second.editable, it == values.end() ? T(u"Profil nie jest jeszcze gotowy") :
+        !it->second.editable ? T(u"To ustawienie jest zarządzane") : T(u"Dotyczy aktywnego profilu")));
   }
   for (const auto& [key, control] : preference_pickers_) {
     auto it = values.find(key);
@@ -6410,7 +6420,7 @@ void WorkspaceShell::SetBrowsingDataBusy(bool busy) {
   }
   if (!clear_data_button_) return;
   clear_data_button_->SetEnabled(!busy);
-  SetActionText(clear_data_button_,busy ? u"Czyszczenie…" : u"Wyczyść…");
+  SetActionText(clear_data_button_,busy ? T(u"Czyszczenie…") : T(u"Wyczyść…"));
 }
 void WorkspaceShell::ReportPreferenceOutcome(int outcome, const std::string& key, bool ok, std::u16string native) {
   bool error = !ok;
@@ -6461,10 +6471,10 @@ void WorkspaceShell::SaveTextPreference(std::string key) {
   const bool ok = callbacks_.write_text_preference && callbacks_.write_text_preference.Run(key, base::UTF16ToUTF8(it->second->GetText()));
   PreferenceTextSaved(key,ok);
   RefreshGeneralControls();
-  ReportPreferenceOutcome(0, key, ok, ok ? u"Zapisano. Witryna może wymagać odświeżenia, aby zastosować zmianę." :
-      key == "accept_languages" ? u"Podaj poprawne kody języków oddzielone przecinkami, np. pl, en-US, en." :
-      key == "dns_templates" ? u"Podaj poprawny szablon DNS-over-HTTPS. W trybie ścisłym adres nie może być pusty." :
-      u"Nie udało się zapisać. Podaj nazwę rodziny czcionki (do 128 znaków). Ustawienie może być zarządzane.");
+  ReportPreferenceOutcome(0, key, ok, ok ? T(u"Zapisano. Witryna może wymagać odświeżenia, aby zastosować zmianę.") :
+      key == "accept_languages" ? T(u"Podaj poprawne kody języków oddzielone przecinkami, np. pl, en-US, en.") :
+      key == "dns_templates" ? T(u"Podaj poprawny szablon DNS-over-HTTPS. W trybie ścisłym adres nie może być pusty.") :
+      T(u"Nie udało się zapisać. Podaj nazwę rodziny czcionki (do 128 znaków). Ustawienie może być zarządzane."));
 }
 void WorkspaceShell::SaveSitePreference() {
   if(!site_origin_||site_origin_->IsIMEComposing())return;
@@ -6474,22 +6484,22 @@ void WorkspaceShell::SaveSitePreference() {
   const bool ok = callbacks_.write_site_preference && callbacks_.write_site_preference.Run(
       base::UTF16ToUTF8(site_origin_->GetText()), kSitePreferenceKeys[type], static_cast<int>(policy));
   if (ok) { RefreshSitePreferences(); FilterPreferences(); }
-  ReportPreferenceOutcome(1, "", ok, ok ? u"Zapisano wyjątek w tym profilu. Odśwież witrynę, aby zastosować zmianę." :
-      u"Nie zapisano wyjątku. Podaj adres HTTP(S) bez ścieżki i danych logowania. Sprawdź wybraną politykę; reguły zarządzane nie mogą być zmieniane.");
+  ReportPreferenceOutcome(1, "", ok, ok ? T(u"Zapisano wyjątek w tym profilu. Odśwież witrynę, aby zastosować zmianę.") :
+      T(u"Nie zapisano wyjątku. Podaj adres HTTP(S) bez ścieżki i danych logowania. Sprawdź wybraną politykę; reguły zarządzane nie mogą być zmieniane."));
 }
 void WorkspaceShell::PostRemoveSiteRule(SitePreferenceRule rule,std::string profile_id){
   // Retain the click's exact backend value and profile through the deferred task.
-  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,SitePreferenceRule rule,std::string profile_id){if(!shell||shell->state_.profile_id!=profile_id)return;const bool ok=shell->callbacks_.remove_site_preference&&shell->callbacks_.remove_site_preference.Run(std::move(rule));shell->RefreshSitePreferences();shell->FilterPreferences();shell->ReportPreferenceOutcome(2,"",ok,ok?u"Usunięto wyjątek. Witryna wróci do ustawień domyślnych.":u"Nie udało się usunąć wyjątku. Reguła może być zarządzana.");},weak_factory_.GetWeakPtr(),std::move(rule),std::move(profile_id)));
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,SitePreferenceRule rule,std::string profile_id){if(!shell||shell->state_.profile_id!=profile_id)return;const bool ok=shell->callbacks_.remove_site_preference&&shell->callbacks_.remove_site_preference.Run(std::move(rule));shell->RefreshSitePreferences();shell->FilterPreferences();shell->ReportPreferenceOutcome(2,"",ok,ok?T(u"Usunięto wyjątek. Witryna wróci do ustawień domyślnych."):T(u"Nie udało się usunąć wyjątku. Reguła może być zarządzana."));},weak_factory_.GetWeakPtr(),std::move(rule),std::move(profile_id)));
 }
 void WorkspaceShell::RefreshSitePreferences(bool reload) {
   if(!site_rules_list_)return;
   if(reload)site_preference_rules_=callbacks_.read_site_preferences?callbacks_.read_site_preferences.Run():std::vector<SitePreferenceRule>();
   const auto query=base::i18n::ToLower(base::TrimWhitespace(preferences_search_->GetText(),base::TRIM_ALL));
-  std::u16string keywords=u"uprawnienia stron zapisane wyjątki witryny reguły domyślne zarządzane";const bool show_all=query.empty()||keywords.find(query)!=std::u16string::npos;
+  std::u16string keywords=T(u"uprawnienia stron zapisane wyjątki witryny reguły domyślne zarządzane");const bool show_all=query.empty()||keywords.find(query)!=std::u16string::npos;
   struct Projection {size_t source;std::u16string detail;std::string key;};std::vector<Projection> visible;size_t matching=0;
   [[maybe_unused]] std::map<std::string,size_t> occurrences;
-  for(size_t source=0;source<site_preference_rules_.size();++source){const auto& rule=site_preference_rules_[source];auto it=std::find(kSitePreferenceKeys.begin(),kSitePreferenceKeys.end(),rule.key);const auto name=it==kSitePreferenceKeys.end()?base::UTF8ToUTF16(rule.key):kSitePreferenceNames[it-kSitePreferenceKeys.begin()];const auto* policy=rule.setting==1?u"Zezwalaj":rule.setting==2?u"Blokuj":rule.setting==3?u"Pytaj":u"Inna polityka";
-    auto detail=base::UTF8ToUTF16(rule.primary)+u" · "+name+u" · "+policy;if(rule.secondary!="*")detail+=u" · Osadzenie: "+base::UTF8ToUTF16(rule.secondary);if(!rule.editable)detail+=u" · Zarządzane";
+  for(size_t source=0;source<site_preference_rules_.size();++source){const auto& rule=site_preference_rules_[source];auto it=std::find(kSitePreferenceKeys.begin(),kSitePreferenceKeys.end(),rule.key);const auto name=it==kSitePreferenceKeys.end()?base::UTF8ToUTF16(rule.key):T(kSitePreferenceNames[it-kSitePreferenceKeys.begin()]);const auto policy=rule.setting==1?T(u"Zezwalaj"):rule.setting==2?T(u"Blokuj"):rule.setting==3?T(u"Pytaj"):T(u"Inna polityka");
+    auto detail=base::UTF8ToUTF16(rule.primary)+u" · "+name+u" · "+policy;if(rule.secondary!="*")detail+=u" · "+TF(u"Osadzenie: {}",{base::UTF8ToUTF16(rule.secondary)});if(!rule.editable)detail+=u" · "+T(u"Zarządzane");
     if(preferences_form_)detail=base::UTF8ToUTF16(std::string(sidebar::site_rule_detail(rule.primary,base::UTF16ToUTF8(name),rule.setting,rule.secondary,rule.editable)));
     std::string key;
     if(workspace_form_){base::ListValue identity;identity.Append(state_.profile_id);identity.Append(rule.key);identity.Append(rule.primary);identity.Append(rule.secondary);std::string target;CHECK(base::JSONWriter::Write(identity,&target));identity.Append(base::NumberToString(occurrences[target]++));CHECK(base::JSONWriter::Write(identity,&key));}
@@ -6503,16 +6513,16 @@ void WorkspaceShell::RefreshSitePreferences(bool reload) {
       if(found!=retained.end())row=found->second;
       else{row=site_rules_list_->AddChildView(std::make_unique<SiteRuleSceneRow>(site_rule_node_graph_->graph->acquire({13,0,0,std::string(child.key)})));auto* label=AddPreferenceCopy(row,std::u16string(child.detail.begin(),child.detail.end()),kSubtle,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);SetSidebarPanelLayout(row,false,gfx::Insets::VH(4,0),12,label,true);
         auto callback=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::weak_ptr<SidebarNodeGraphState> owner,base::WeakPtr<SiteRuleSceneRow> row,std::string key,uint64_t id,std::string profile){const auto scope=owner.lock();if(!shell||!scope||!row||shell->site_rule_node_graph_!=scope||shell->state_.profile_id!=profile||!shell->general_widget_||!shell->general_widget_->IsVisible()||row->parent()!=shell->site_rules_list_||row->NodeId()!=id||!row->BelongsTo(*scope))return;const auto target=scope->graph->site_rule_target(key,id);if(target.valid&&target.index<shell->site_preference_rules_.size())shell->PostRemoveSiteRule(shell->site_preference_rules_[target.index],std::move(profile));},weak_factory_.GetWeakPtr(),std::weak_ptr<SidebarNodeGraphState>(site_rule_node_graph_),row->GetWeakPtr(),std::string(child.key),child.id,state_.profile_id);
-        auto* remove=PreferenceAction(row,std::move(callback),u"Usuń");row->SetParts(label,remove);
+        auto* remove=PreferenceAction(row,std::move(callback),T(u"Usuń"));row->SetParts(label,remove);
       }row->Project(child);site_rules_list_->ReorderChildView(row,i);
     }
   }else
-  {site_rules_list_->RemoveAllChildViews();for(const auto& projection:visible){const auto& rule=site_preference_rules_[projection.source];auto* row=site_rules_list_->AddChildView(std::make_unique<views::View>());auto* label=AddPreferenceCopy(row,projection.detail,kSubtle,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);SetSidebarPanelLayout(row,false,gfx::Insets::VH(4,0),12,label,true);auto* remove=PreferenceAction(row,base::BindRepeating(&WorkspaceShell::PostRemoveSiteRule,weak_factory_.GetWeakPtr(),rule,state_.profile_id),u"Usuń");remove->SetEnabled(rule.editable);remove->GetViewAccessibility().SetName(u"Usuń wyjątek: "+projection.detail);}}
+  {site_rules_list_->RemoveAllChildViews();for(const auto& projection:visible){const auto& rule=site_preference_rules_[projection.source];auto* row=site_rules_list_->AddChildView(std::make_unique<views::View>());auto* label=AddPreferenceCopy(row,projection.detail,kSubtle,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);SetSidebarPanelLayout(row,false,gfx::Insets::VH(4,0),12,label,true);auto* remove=PreferenceAction(row,base::BindRepeating(&WorkspaceShell::PostRemoveSiteRule,weak_factory_.GetWeakPtr(),rule,state_.profile_id),T(u"Usuń"));remove->SetEnabled(rule.editable);remove->GetViewAccessibility().SetName(TF(u"Usuń wyjątek: {}",{projection.detail}));}}
   if(!matching)AddPreferenceCopy(site_rules_list_,
       preferences_form_?base::UTF8ToUTF16(std::string(sidebar::site_rules_empty(!site_preference_rules_.empty()))):
-      std::u16string(site_preference_rules_.empty()?u"Nie masz jeszcze zapisanych wyjątków.":u"Brak wyjątków pasujących do wyszukiwania."),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
+      std::u16string(site_preference_rules_.empty()?T(u"Nie masz jeszcze zapisanych wyjątków."):T(u"Brak wyjątków pasujących do wyszukiwania.")),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
   else if(matching>visible.size()){
-    if(workspace_form_){BindFormCommand(PreferenceAction(site_rules_list_,{},u"Pokaż kolejne wyjątki…",true),sidebar::FormCommand::PreferenceMore);}
+    if(workspace_form_){BindFormCommand(PreferenceAction(site_rules_list_,{},T(u"Pokaż kolejne wyjątki…"),true),sidebar::FormCommand::PreferenceMore);}
   }
   for(auto& row:preference_sections_[3].rows)if(row.view==site_rules_card_)row.keywords=keywords;site_rules_list_->InvalidateLayout();
 }
@@ -6520,9 +6530,9 @@ void WorkspaceShell::RefreshSitePreferences(bool reload) {
 void WorkspaceShell::WritePreference(std::string key, int value) {
   const bool ok = callbacks_.write_preference && callbacks_.write_preference.Run(key, value);
   RefreshGeneralControls();
-  ReportPreferenceOutcome(3, key, ok, ok ? (key == "hardware_acceleration" ? u"Zapisano. Uruchom ponownie Zitter, aby zmienić akcelerację sprzętową." : u"Zapisano. Jeśli strona nie zastosowała zmiany, odśwież ją.") :
-      key == "dns_mode" ? u"Nie zapisano trybu DNS. Tryb ścisły wymaga poprawnego adresu DNS-over-HTTPS; ustawienie może też być zarządzane." :
-      u"Nie udało się zmienić ustawienia. Profil może być zarządzany lub niedostępny.");
+  ReportPreferenceOutcome(3, key, ok, ok ? (key == "hardware_acceleration" ? T(u"Zapisano. Uruchom ponownie Zitter, aby zmienić akcelerację sprzętową.") : T(u"Zapisano. Jeśli strona nie zastosowała zmiany, odśwież ją.")) :
+      key == "dns_mode" ? T(u"Nie zapisano trybu DNS. Tryb ścisły wymaga poprawnego adresu DNS-over-HTTPS; ustawienie może też być zarządzane.") :
+      T(u"Nie udało się zmienić ustawienia. Profil może być zarządzany lub niedostępny."));
 }
 void WorkspaceShell::OpenGeneralSettings() {
   if (!widget_ || !widget_->IsVisible()) return;
@@ -6579,7 +6589,7 @@ void WorkspaceShell::SaveGeneralPatch(std::optional<ThemeMode> theme, std::optio
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
         if (!shell) return;
         --shell->pending_writes_;
-        shell->ReportPreferenceOutcome(4, "", ok, ok ? u"Przełączniki zapisują się automatycznie. Pola tekstowe zatwierdź przyciskiem Zapisz lub Enter." : u"Nie udało się zapisać ustawień. Spróbuj ponownie.");
+        shell->ReportPreferenceOutcome(4, "", ok, ok ? T(u"Przełączniki zapisują się automatycznie. Pola tekstowe zatwierdź przyciskiem Zapisz lub Enter.") : T(u"Nie udało się zapisać ustawień. Spróbuj ponownie."));
       }, weak_factory_.GetWeakPtr()));
 }
 
@@ -6620,12 +6630,12 @@ void WorkspaceShell::ApplyAppearance(bool refresh_theme) {
   for (auto& child : emoji_input_->view()->parent()->children()) {
     if (auto* pick=child.get();IsGlyphAction(pick)) {
       if(workspace_form_){SetActionOn(pick,sidebar::appearance_selected(true,emoji_index++,color,base::UTF16ToUTF8(emoji)));continue;}
-      SetActionOn(pick,!emoji.empty()&&pick->GetTooltipText()==u"Emoji "+emoji);
+      SetActionOn(pick,!emoji.empty()&&pick->GetTooltipText()==TF(u"Emoji {}",{emoji}));
     }
   }
   auto* pin = pin_button_.get();
   SetActionOn(pin,pinned_);
-  pin->SetTooltipText(pinned_ ? u"Odepnij panel (auto-ukrywanie)" : u"Przypnij panel");
+  pin->SetTooltipText(pinned_ ? T(u"Odepnij panel (auto-ukrywanie)") : T(u"Przypnij panel"));
   static_cast<ShellRoot*>(root_.get())->pinned = pinned_;
   static_cast<ShellRoot*>(root_.get())->sidebar_width = sidebar_width_;
   root_->InvalidateLayout();
@@ -6782,15 +6792,15 @@ bool WorkspaceShell::CaptureShortcut(const ui::Accelerator& accelerator) {
   if (accelerator.key_code() == ui::VKEY_ESCAPE) {
     SetShortcutRecording(false);
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(&WorkspaceShell::RefreshKeyRegistrations, weak_factory_.GetWeakPtr()));
-    SetPanelText(tools_status_,u"Nagrywanie anulowane."); return true;
+    SetPanelText(tools_status_,T(u"Nagrywanie anulowane.")); return true;
   }
   if (!ValidShortcut(accelerator) || accelerator.key_code() == ui::VKEY_UNKNOWN) {
-    SetPanelText(tools_status_,u"Użyj Cmd / Ctrl / Alt i klawisza. Skróty edycji tekstu oraz systemowe są zarezerwowane."); return true;
+    SetPanelText(tools_status_,T(u"Użyj Cmd / Ctrl / Alt i klawisza. Skróty edycji tekstu oraz systemowe są zarezerwowane.")); return true;
   }
   shortcut_chord_->SetText(base::UTF8ToUTF16(FormatShortcut(accelerator)));
   SetShortcutRecording(false);
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(&WorkspaceShell::RefreshKeyRegistrations, weak_factory_.GetWeakPtr()));
-  SetPanelText(tools_status_,u"Kombinacja przechwycona. Wybierz Zapisz skrót."); return true;
+  SetPanelText(tools_status_,T(u"Kombinacja przechwycona. Wybierz Zapisz skrót.")); return true;
 }
 bool WorkspaceShell::UpsertSearchProvider(SearchProvider provider, std::string previous) {
   if (!ValidSearchProvider(provider)) return false;
@@ -7093,7 +7103,7 @@ void WorkspaceShell::RefreshTools() {
     fields=strings(data.fields);pickers=strings(data.pickers);headings=strings(data.headings);actions=strings(data.actions);form_choices=strings(data.choices);
   }
   auto text=[&](std::vector<std::u16string>& data,size_t index,std::u16string_view native){return workspace_form_?std::move(data.at(index)):std::u16string(native);};
-  SetPanelText(tools_status_,workspace_form_?form_status:u"Użyj przycisków poniżej pól lub Enter, aby zatwierdzić zmiany. Dane są zapisywane lokalnie.");
+  SetPanelText(tools_status_,workspace_form_?form_status:T(u"Użyj przycisków poniżej pól lub Enter, aby zatwierdzić zmiany. Dane są zapisywane lokalnie."));
   auto weak = weak_factory_.GetWeakPtr();
   auto hint = [&](std::u16string text) {return AddToolsCopy(tools_body_,std::move(text),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);};
   auto input = [&](std::u16string name) {
@@ -7124,7 +7134,7 @@ void WorkspaceShell::RefreshTools() {
   };
   auto picker = [&](std::u16string name, std::vector<std::u16string> values, views::View* parent=nullptr)->views::View* {
     if(!parent)parent=tools_body_;
-    if(values.empty())values.emplace_back(u"Brak pozycji");
+    if(values.empty())values.emplace_back(T(u"Brak pozycji"));
     auto* control=ChoicePicker(parent,std::move(name),std::move(values));SetPickerIndex(control,0);return control;
   };
   auto units=[](const std::u16string& text){rust::Vec<uint16_t> value;value.reserve(text.size());for(char16_t unit:text)value.push_back(unit);return value;};
@@ -7135,34 +7145,34 @@ void WorkspaceShell::RefreshTools() {
   };
   if (ToolsPage() == 0) {
     SetPanelText(tools_title_,workspace_form_?form_title:u"Time Machine · " + state_.workspace_name);
-    hint(workspace_form_?form_intro:u"Snapshot zapisuje karty, foldery i Split View w tej przestrzeni. Przywrócenie przeładuje strony; formularze i historia Wstecz nie są częścią snapshotu. Poprzedni układ otrzyma punkt przywracania.");
-    snapshot_name_ = input(text(fields,0,u"Nazwa snapshotu, np. Research przed deployem"));
-    button(u"Zapisz snapshot", 1);
-    timeline_filter_ = input(text(fields,1,u"Szukaj snapshotów i zamkniętych kart"));
-    AddToolsCopy(tools_body_,text(headings,0,u"Snapshoty · 30 własnych + 30 automatycznych"),kSubtle,0,static_cast<int>(gfx::Font::Weight::SEMIBOLD),false);
-    tools_picker_ = picker(text(pickers,0,u"Zapisane snapshoty"), {});
-    button(u"Przywróć wybrany układ", 2); button(u"Usuń wybrany snapshot", 3);
-    AddToolsCopy(tools_body_,text(headings,1,u"Ostatnio zamknięte · do 100 kart"),kSubtle,0,static_cast<int>(gfx::Font::Weight::SEMIBOLD),false);
-    closed_picker_ = picker(text(pickers,1,u"Zamknięte karty"), {});
-    button(u"Przywróć wybraną kartę", 4);
-    hint(workspace_form_?form_tail:u"Uśpienie zwalnia strony tej przestrzeni z pamięci i przełącza do innej. Kliknięcie jej kropki wznowi układ. Niezapisane formularze zostaną utracone.");
-    button(u"Uśpij tę przestrzeń", 5);
+    hint(workspace_form_?form_intro:T(u"Snapshot zapisuje karty, foldery i Split View w tej przestrzeni. Przywrócenie przeładuje strony; formularze i historia Wstecz nie są częścią snapshotu. Poprzedni układ otrzyma punkt przywracania."));
+    snapshot_name_ = input(text(fields,0,T(u"Nazwa snapshotu, np. Research przed deployem")));
+    button(T(u"Zapisz snapshot"), 1);
+    timeline_filter_ = input(text(fields,1,T(u"Szukaj snapshotów i zamkniętych kart")));
+    AddToolsCopy(tools_body_,text(headings,0,T(u"Snapshoty · 30 własnych + 30 automatycznych")),kSubtle,0,static_cast<int>(gfx::Font::Weight::SEMIBOLD),false);
+    tools_picker_ = picker(text(pickers,0,T(u"Zapisane snapshoty")), {});
+    button(T(u"Przywróć wybrany układ"), 2); button(T(u"Usuń wybrany snapshot"), 3);
+    AddToolsCopy(tools_body_,text(headings,1,T(u"Ostatnio zamknięte · do 100 kart")),kSubtle,0,static_cast<int>(gfx::Font::Weight::SEMIBOLD),false);
+    closed_picker_ = picker(text(pickers,1,T(u"Zamknięte karty")), {});
+    button(T(u"Przywróć wybraną kartę"), 4);
+    hint(workspace_form_?form_tail:T(u"Uśpienie zwalnia strony tej przestrzeni z pamięci i przełącza do innej. Kliknięcie jej kropki wznowi układ. Niezapisane formularze zostaną utracone."));
+    button(T(u"Uśpij tę przestrzeń"), 5);
     const auto timeline = callbacks_.time_machine ? callbacks_.time_machine.Run() : TimeMachineState();
     for (const auto& item : timeline.sleeping) hint(item.title + u" · " + item.detail);
     RefreshTimelineItems();
   } else if (ToolsPage() == 1) {
-    SetPanelText(tools_title_,workspace_form_?form_title:u"Skróty klawiszowe");
-    hint(workspace_form_?form_intro:u"Schemat inspirowany Arc. Wybierz akcję, nagraj kombinację lub wpisz np. Cmd+Shift+J. Puste pole wyłącza skrót. Escape, skróty edycji tekstu i systemowe pozostają zarezerwowane.");
+    SetPanelText(tools_title_,workspace_form_?form_title:T(u"Skróty klawiszowe"));
+    hint(workspace_form_?form_intro:T(u"Schemat inspirowany Arc. Wybierz akcję, nagraj kombinację lub wpisz np. Cmd+Shift+J. Puste pole wyłącza skrót. Escape, skróty edycji tekstu i systemowe pozostają zarezerwowane."));
     if(tools_form_){
       rust::Vec<sidebar::ToolsShortcutItem> metadata;for(const auto& shortcut:tools_.shortcuts)metadata.push_back({shortcut.id,units(shortcut.title),units(base::UTF8ToUTF16(FormatShortcut(shortcut.accelerator)))});
-      const auto projection=tools_form_->form->tools_shortcut_choices(std::move(metadata));tools_picker_=form_picker(text(pickers,0,u"Akcja skrótu"),projection);
-      shortcut_chord_=input(text(fields,0,u"Kombinacja, np. Cmd+Shift+J"));RefreshToolsChoiceFields();
+      const auto projection=tools_form_->form->tools_shortcut_choices(std::move(metadata));tools_picker_=form_picker(text(pickers,0,T(u"Akcja skrótu")),projection);
+      shortcut_chord_=input(text(fields,0,T(u"Kombinacja, np. Cmd+Shift+J")));RefreshToolsChoiceFields();
     }else
     {
     std::vector<std::u16string> choices;
     for (const auto& shortcut : tools_.shortcuts) choices.push_back(shortcut.title + u" — " + base::UTF8ToUTF16(FormatShortcut(shortcut.accelerator)));
-    tools_picker_ = picker(text(pickers,0,u"Akcja skrótu"), choices);
-    shortcut_chord_ = input(text(fields,0,u"Kombinacja, np. Cmd+Shift+J"));
+    tools_picker_ = picker(text(pickers,0,T(u"Akcja skrótu")), choices);
+    shortcut_chord_ = input(text(fields,0,T(u"Kombinacja, np. Cmd+Shift+J")));
     shortcut_chord_->SetText(base::UTF8ToUTF16(FormatShortcut(tools_.shortcuts.front().accelerator)));
     }
     SetPickerCallback(tools_picker_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
@@ -7173,21 +7183,21 @@ void WorkspaceShell::RefreshTools() {
       shell->SetShortcutRecording(false);
       shell->RefreshKeyRegistrations();
     }, weak));
-    button(u"Nagraj kombinację…", 10); button(u"Zapisz skrót", 11);
-    button(u"Wyłącz wybrany skrót", 12); button(u"Przywróć schemat Arc", 13);
+    button(T(u"Nagraj kombinację…"), 10); button(T(u"Zapisz skrót"), 11);
+    button(T(u"Wyłącz wybrany skrót"), 12); button(T(u"Przywróć schemat Arc"), 13);
   } else if (ToolsPage() == 2) {
-    SetPanelText(tools_title_,workspace_form_?form_title:u"Wyszukiwarki i prefiksy");
-    hint(workspace_form_?form_intro:u"W pasku adresu wpisz prefiks i zapytanie, np. g koty lub w Warszawa. Szablon musi być adresem HTTP(S) z jednym znacznikiem {query}. Zapytania są kodowane automatycznie.");
+    SetPanelText(tools_title_,workspace_form_?form_title:T(u"Wyszukiwarki i prefiksy"));
+    hint(workspace_form_?form_intro:T(u"W pasku adresu wpisz prefiks i zapytanie, np. g koty lub w Warszawa. Szablon musi być adresem HTTP(S) z jednym znacznikiem {query}. Zapytania są kodowane automatycznie."));
     if(tools_form_){
       rust::Vec<sidebar::ToolsProviderItem> metadata;for(const auto& provider:tools_.providers)metadata.push_back({provider.keyword,units(base::UTF8ToUTF16(provider.name)),units(base::UTF8ToUTF16(provider.keyword)),units(base::UTF8ToUTF16(provider.url)),provider.keyword==tools_.default_keyword});
-      const auto projection=tools_form_->form->tools_provider_choices(std::move(metadata));tools_picker_=form_picker(text(pickers,0,u"Wyszukiwarka do edycji"),projection);
-      provider_name_=input(text(fields,0,u"Nazwa wyszukiwarki"));provider_keyword_=input(text(fields,1,u"Prefiks (a–z, 0–9)"));provider_url_=input(text(fields,2,u"Adres z {query}"));RefreshToolsChoiceFields();
+      const auto projection=tools_form_->form->tools_provider_choices(std::move(metadata));tools_picker_=form_picker(text(pickers,0,T(u"Wyszukiwarka do edycji")),projection);
+      provider_name_=input(text(fields,0,T(u"Nazwa wyszukiwarki")));provider_keyword_=input(text(fields,1,T(u"Prefiks (a–z, 0–9)")));provider_url_=input(text(fields,2,T(u"Adres z {query}")));RefreshToolsChoiceFields();
     }else
     {
-    std::vector<std::u16string> provider_choices{workspace_form_?std::move(form_choices.at(0)):u"Dodaj nową wyszukiwarkę…"};
-    for (const auto& provider : tools_.providers) provider_choices.push_back(base::UTF8ToUTF16(provider.keyword + " · " + provider.name + (provider.keyword == tools_.default_keyword ? " · domyślna" : "")));
-    tools_picker_ = picker(text(pickers,0,u"Wyszukiwarka do edycji"), provider_choices);
-    provider_name_ = input(text(fields,0,u"Nazwa wyszukiwarki")); provider_keyword_ = input(text(fields,1,u"Prefiks (a–z, 0–9)")); provider_url_ = input(text(fields,2,u"Adres z {query}"));
+    std::vector<std::u16string> provider_choices{workspace_form_?std::move(form_choices.at(0)):T(u"Dodaj nową wyszukiwarkę…")};
+    for (const auto& provider : tools_.providers) {const auto choice = base::UTF8ToUTF16(provider.keyword + " · " + provider.name); provider_choices.push_back(provider.keyword == tools_.default_keyword ? TF(u"{} · domyślna", {choice}) : choice);}
+    tools_picker_ = picker(text(pickers,0,T(u"Wyszukiwarka do edycji")), provider_choices);
+    provider_name_ = input(text(fields,0,T(u"Nazwa wyszukiwarki"))); provider_keyword_ = input(text(fields,1,T(u"Prefiks (a–z, 0–9)"))); provider_url_ = input(text(fields,2,T(u"Adres z {query}")));
     }
     SetPickerCallback(tools_picker_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
       if (!shell || !shell->provider_name_) return;
@@ -7197,14 +7207,14 @@ void WorkspaceShell::RefreshTools() {
       if (i > 0 && i <= shell->tools_.providers.size()) provider = shell->tools_.providers[i - 1];
       shell->provider_name_->SetText(base::UTF8ToUTF16(provider.name)); shell->provider_keyword_->SetText(base::UTF8ToUTF16(provider.keyword)); shell->provider_url_->SetText(base::UTF8ToUTF16(provider.url));
     }, weak));
-    button(u"Zapisz wyszukiwarkę", 20); button(u"Ustaw jako domyślną", 21); button(u"Usuń wyszukiwarkę", 22);
+    button(T(u"Zapisz wyszukiwarkę"), 20); button(T(u"Ustaw jako domyślną"), 21); button(T(u"Usuń wyszukiwarkę"), 22);
   }
   if (ToolsPage() == 3) {
-    SetPanelText(tools_title_,workspace_form_?form_title:u"Historia przeglądania");
-    hint(workspace_form_?form_intro:u"Profil: "+context);
-    history_search_ = input(text(fields,0,u"Szukaj w historii"));
+    SetPanelText(tools_title_,workspace_form_?form_title:T(u"Historia przeglądania"));
+    hint(workspace_form_?form_intro:TF(u"Profil: {}",{context}));
+    history_search_ = input(text(fields,0,T(u"Szukaj w historii")));
     auto* clear_row = tools_body_->AddChildView(std::make_unique<views::View>());
-    history_period_=picker(text(pickers,0,u"Zakres czyszczenia historii"),workspace_form_?std::move(form_choices):std::vector<std::u16string>{u"Ostatnia godzina",u"Ostatnie 24 godziny",u"Ostatnie 7 dni",u"Cały okres"},clear_row);
+    history_period_=picker(text(pickers,0,T(u"Zakres czyszczenia historii")),workspace_form_?std::move(form_choices):std::vector<std::u16string>{T(u"Ostatnia godzina"),T(u"Ostatnie 24 godziny"),T(u"Ostatnie 7 dni"),T(u"Cały okres")},clear_row);
     const auto clear_presentation=ToolsClearControls(browsing_data_busy_);
     history_clear_ = PreferenceAction(clear_row,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
       if (shell && shell->history_period_ && shell->callbacks_.clear_browsing_data)
@@ -7213,9 +7223,9 @@ void WorkspaceShell::RefreshTools() {
     SetSidebarPanelLayout(clear_row,false,gfx::Insets(),8,history_period_);
     history_list_ = tools_body_->AddChildView(std::make_unique<views::View>());
     if(tools_form_)history_list_->SetLayoutManager(CreateSidebarColumnLayout(4));
-    history_more_ = PreferenceAction(tools_body_,base::BindRepeating(&WorkspaceShell::RefreshHistory, weak, true), text(actions,1,u"Pokaż więcej"),true);
+    history_more_ = PreferenceAction(tools_body_,base::BindRepeating(&WorkspaceShell::RefreshHistory, weak, true), text(actions,1,T(u"Pokaż więcej")),true);
     SetHistoryMoreVisible(false);
-    SetPanelText(tools_status_,workspace_form_?form_status:u"Odczytywanie historii…");
+    SetPanelText(tools_status_,workspace_form_?form_status:T(u"Odczytywanie historii…"));
     history_clear_->SetEnabled(clear_presentation.enabled);
   }
   PreparePanelText(tools_widget_->GetRootView()); tools_body_->InvalidateLayout();
@@ -7308,8 +7318,8 @@ void WorkspaceShell::SetOperationStatus(std::u16string text) {
 }
 void WorkspaceShell::OpenAddress(bool new_tab) {
   command_palette_ = false;
-  address_->SetPlaceholderText(u"Szukaj lub wpisz adres");
-  address_->GetViewAccessibility().SetName(u"Szukaj lub wpisz adres");
+  address_->SetPlaceholderText(T(u"Szukaj lub wpisz adres"));
+  address_->GetViewAccessibility().SetName(T(u"Szukaj lub wpisz adres"));
   new_tab_ = new_tab;
   static_cast<PaletteView*>(palette_root_.get())->Reset();
   search_results_.clear();
@@ -7330,8 +7340,8 @@ void WorkspaceShell::OpenAddress(bool new_tab) {
 void WorkspaceShell::OpenCommandPalette() {
   OpenAddress(false);
   command_palette_ = true;
-  address_->SetPlaceholderText(u"Szukaj lub wpisz > i polecenie");
-  address_->GetViewAccessibility().SetName(u"Command Center — karty, historia i polecenia");
+  address_->SetPlaceholderText(T(u"Szukaj lub wpisz > i polecenie"));
+  address_->GetViewAccessibility().SetName(T(u"Command Center — karty, historia i polecenia"));
   address_->SetText(u"");
   search_results_.clear();
   RebuildSuggestions();
@@ -7492,8 +7502,8 @@ void WorkspaceShell::ToggleWorkspaceCreation() {
   if(creating_workspace_){RefreshWorkspaceSettings();PositionPanels();return;}
   if(workspace_form_)workspace_form_->form->begin_create(state_.workspace_id);
   creating_workspace_=true;workspace_appearance_->SetVisible(false);workspace_more_->SetVisible(false);configuration_error_->SetVisible(false);
-  SetPanelText(settings_title_,u"Nowa przestrzeń");workspace_input_->SetText(u"");workspace_input_->RequestFocus();
-  SetActionText(edit_workspace_,u"Utwórz przestrzeń");SetActionText(add_workspace_,u"Anuluj");
+  SetPanelText(settings_title_,T(u"Nowa przestrzeń"));workspace_input_->SetText(u"");workspace_input_->RequestFocus();
+  SetActionText(edit_workspace_,T(u"Utwórz przestrzeń"));SetActionText(add_workspace_,T(u"Anuluj"));
   RefreshRustWorkspacePresentation();PositionPanels();
 }
 void WorkspaceShell::RefreshRustWorkspacePresentation() {
@@ -7505,7 +7515,7 @@ void WorkspaceShell::RefreshRustWorkspacePresentation() {
   SetPanelText(configuration_error_,base::UTF8ToUTF16(std::string(v.error)));configuration_error_->SetVisible(!v.error.empty());
 }
 void WorkspaceShell::ShowWorkspaceAppearanceError(unsigned kind) {
-  static constexpr std::array<std::u16string_view,4> messages={u"Nie udało się zapisać ustawień",u"Nie udało się zapisać koloru",u"Nie udało się zapisać emoji",u"Podaj kolor #RRGGBB"};
+  const std::array<std::u16string,4> messages={T(u"Nie udało się zapisać ustawień"),T(u"Nie udało się zapisać koloru"),T(u"Nie udało się zapisać emoji"),T(u"Podaj kolor #RRGGBB")};
   std::u16string text(messages[std::min<size_t>(kind,3)]);
   if(workspace_form_)text=base::UTF8ToUTF16(std::string(sidebar::workspace_appearance_error(kind)));
   SetPanelText(color_error_,std::move(text));color_error_->SetVisible(true);PositionPanels();
@@ -7518,8 +7528,8 @@ void WorkspaceShell::RefreshWorkspaceSettings() {
   creating_workspace_ = false;
   workspace_appearance_->SetVisible(true);workspace_more_->SetVisible(true);
   SetPanelText(settings_title_,state_.workspace_name);
-  SetActionText(edit_workspace_,u"Zapisz nazwę i profil");
-  SetActionText(add_workspace_,u"Nowa przestrzeń…");
+  SetActionText(edit_workspace_,T(u"Zapisz nazwę i profil"));
+  SetActionText(add_workspace_,T(u"Nowa przestrzeń…"));
   workspace_input_->SetText(state_.workspace_name);
   for (size_t i = 0; i < state_.profiles.size(); ++i)
     if (state_.profiles[i].id == state_.profile_id) SetPickerIndex(profile_picker_,i);
@@ -7527,7 +7537,7 @@ void WorkspaceShell::RefreshWorkspaceSettings() {
 }
 void WorkspaceShell::SetConfigurationError(bool error) {
   if(workspace_form_){workspace_form_->form->set_configuration_error(error);RefreshRustWorkspacePresentation();PositionPanels();return;}
-  SetPanelText(configuration_error_,error ? u"Nie udało się odczytać lub zapisać przestrzeni." : u"");
+  SetPanelText(configuration_error_,error ? T(u"Nie udało się odczytać lub zapisać przestrzeni.") : u"");
   configuration_error_->SetVisible(error);
   PositionPanels();
 }
@@ -7547,7 +7557,7 @@ void WorkspaceShell::ConfirmRemoveWorkspace(std::string id) {
   ShowWorkspaceRemovedToast(std::move(id), name);
 }
 void WorkspaceShell::ShowWorkspaceRemovedToast(std::string id, std::u16string name) {
-  ShowToast(u"Usunięto przestrzeń ", std::move(name), base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, std::string id) {
+  ShowToast(T(u"Usunięto przestrzeń "), std::move(name), base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, std::string id) {
     if (shell) shell->SetConfigurationError(!shell->callbacks_.restore_workspace.Run(id));
   }, weak_factory_.GetWeakPtr(), std::move(id)));
 }
@@ -7639,7 +7649,7 @@ void WorkspaceShell::SubmitWorkspace(bool add) {
   std::string name;
   base::TrimWhitespaceASCII(base::UTF16ToUTF8(workspace_input_->GetText()), base::TRIM_ALL, &name);
   if (name.empty()) {
-    SetPanelText(configuration_error_,u"Podaj nazwę przestrzeni.");
+    SetPanelText(configuration_error_,T(u"Podaj nazwę przestrzeni."));
     configuration_error_->SetVisible(true);
     PositionPanels();
     return;
@@ -7718,9 +7728,9 @@ void WorkspaceShell::ImportSelectionChanged() {
   }
   if (import_applying_) return;
   const bool arc = import_options().browser == ImportBrowser::kArc;
-  SetCheckText(import_bookmarks_,arc ? u"Przypięte karty, foldery i Ulubione" : u"Zakładki i foldery");
+  SetCheckText(import_bookmarks_,arc ? T(u"Przypięte karty, foldery i Ulubione") : T(u"Zakładki i foldery"));
   callbacks_.invalidate_import.Run();
-  SetImportStatus(u"Odczytywanie danych…", false, true);
+  SetImportStatus(T(u"Odczytywanie danych…"), false, true);
   import_preview_timer_.Start(FROM_HERE, base::Milliseconds(200), base::BindOnce(
       [](base::WeakPtr<WorkspaceShell> shell) {
         if (shell && shell->import_visible()) shell->callbacks_.preview_import.Run(shell->import_options());
@@ -7737,27 +7747,27 @@ void WorkspaceShell::SetImportStatus(const ImportStatusReport& report, bool can_
     SetImportStatus(base::UTF8ToUTF16(std::string(sidebar::import_status_copy(rust))), can_import, busy, applying);
     return;
   }
-  std::string text;
+  std::u16string text;
   switch (report.stage) {
-    case Stage::kReading: SetImportStatus(u"Odczytywanie danych z " + report.browser + u"…", can_import, busy, applying); return;
-    case Stage::kImporting: text = "Importowanie wybranych danych…"; break;
-    case Stage::kSavingBrowsingData: text = "Zapisywanie historii i ciasteczek…"; break;
+    case Stage::kReading: SetImportStatus(TF(u"Odczytywanie danych z {}…", {report.browser}), can_import, busy, applying); return;
+    case Stage::kImporting: text = T(u"Importowanie wybranych danych…"); break;
+    case Stage::kSavingBrowsingData: text = T(u"Zapisywanie historii i ciasteczek…"); break;
     case Stage::kPreview:
-      text = report.error.empty() ? "Do importu: " + base::NumberToString(report.profiles) + " profili, " + base::NumberToString(report.spaces) + " przestrzeni, " +
-          base::NumberToString(report.folders) + " folderów i " + base::NumberToString(report.tabs) + " kart lub zakładek." : report.error;
-      if (report.skipped) text += " Pominięte elementy: " + base::NumberToString(report.skipped) + ".";
+      text = report.error.empty() ? TF(u"Do importu: {} profili, {} przestrzeni, {} folderów i {} kart lub zakładek.", {base::NumberToString16(report.profiles), base::NumberToString16(report.spaces),
+          base::NumberToString16(report.folders), base::NumberToString16(report.tabs)}) : base::UTF8ToUTF16(report.error);
+      if (report.skipped) text += u" " + TF(u"Pominięte elementy: {}.", {base::NumberToString16(report.skipped)});
       break;
     case Stage::kFinished:
-      text = report.ok ? "Import zakończony. Dodano " + base::NumberToString(report.added_profiles) + " profili i " + base::NumberToString(report.added_spaces) +
-          " przestrzeni. Możesz wybrać je na liście przestrzeni." : "Import się nie powiódł. Dotychczasowe przestrzenie pozostały bez zmian. Spróbuj ponownie.";
+      text = report.ok ? TF(u"Import zakończony. Dodano {} profili i {} przestrzeni. Możesz wybrać je na liście przestrzeni.", {base::NumberToString16(report.added_profiles), base::NumberToString16(report.added_spaces)})
+          : T(u"Import się nie powiódł. Dotychczasowe przestrzenie pozostały bez zmian. Spróbuj ponownie.");
       if (report.browsing_data) {
-        text += " Przeniesiono " + base::NumberToString(report.history) + " stron historii i " + base::NumberToString(report.cookies) + " ciasteczek.";
-        if (report.data_skipped) text += " Pominięto: " + base::NumberToString(report.data_skipped) + ".";
-        if (report.data_failed) text += " Część danych nie została zapisana. Ponów import.";
+        text += u" " + TF(u"Przeniesiono {} stron historii i {} ciasteczek.", {base::NumberToString16(report.history), base::NumberToString16(report.cookies)});
+        if (report.data_skipped) text += u" " + TF(u"Pominięto: {}.", {base::NumberToString16(report.data_skipped)});
+        if (report.data_failed) text += u" " + T(u"Część danych nie została zapisana. Ponów import.");
       }
       break;
   }
-  SetImportStatus(base::UTF8ToUTF16(text), can_import, busy, applying);
+  SetImportStatus(std::move(text), can_import, busy, applying);
 }
 void WorkspaceShell::SetImportStatus(std::u16string message, bool can_import, bool busy, bool applying) {
   import_preview_timer_.Stop();if(!import_status_)return;
@@ -7905,12 +7915,12 @@ void WorkspaceShell::ReportClearData(ClearDataEvent event, const std::u16string&
     return;
   }
   switch (event) {
-    case ClearDataEvent::kBusy: SetPreferencesStatus(u"Poczekaj na zakończenie bieżącej operacji.", true); break;
-    case ClearDataEvent::kNothingSelected: SetPreferencesStatus(u"Wybierz co najmniej jeden rodzaj danych i zakres czasu.", true); break;
-    case ClearDataEvent::kHistoryForbidden: SetPreferencesStatus(u"Zasady tego profilu nie pozwalają usuwać historii.", true); break;
-    case ClearDataEvent::kClearing: SetPreferencesStatus(u"Czyszczenie danych profilu „" + profile + u"”…"); break;
-    case ClearDataEvent::kCleared: SetPreferencesStatus(u"Wyczyszczono dane profilu „" + profile + u"”.", false); break;
-    case ClearDataEvent::kFailed: SetPreferencesStatus(u"Nie udało się usunąć wszystkich wybranych danych. Spróbuj ponownie.", true); break;
+    case ClearDataEvent::kBusy: SetPreferencesStatus(T(u"Poczekaj na zakończenie bieżącej operacji."), true); break;
+    case ClearDataEvent::kNothingSelected: SetPreferencesStatus(T(u"Wybierz co najmniej jeden rodzaj danych i zakres czasu."), true); break;
+    case ClearDataEvent::kHistoryForbidden: SetPreferencesStatus(T(u"Zasady tego profilu nie pozwalają usuwać historii."), true); break;
+    case ClearDataEvent::kClearing: SetPreferencesStatus(TF(u"Czyszczenie danych profilu „{}”…", {profile})); break;
+    case ClearDataEvent::kCleared: SetPreferencesStatus(TF(u"Wyczyszczono dane profilu „{}”.", {profile}), false); break;
+    case ClearDataEvent::kFailed: SetPreferencesStatus(T(u"Nie udało się usunąć wszystkich wybranych danych. Spróbuj ponownie."), true); break;
   }
 }
 WorkspaceShell::ClearDataCopy WorkspaceShell::ClearDataConfirmCopy(const std::u16string& profile, int period, bool history, bool cookies, bool cache) const {
@@ -7922,28 +7932,28 @@ WorkspaceShell::ClearDataCopy WorkspaceShell::ClearDataConfirmCopy(const std::u1
     return out;
   }
   if (period < 0 || period > 3 || (!history && !cookies && !cache)) return out;
-  const std::array<std::u16string, 4> periods = {u"Ostatnia godzina", u"Ostatnie 24 godziny", u"Ostatnie 7 dni", u"Cały okres"};
-  out.description = u"Profil: " + profile + u"\nZakres: " + periods[period] + u"\n\nZostaną usunięte:";
-  if (history) out.description += u"\n• Historia przeglądania";
-  if (cookies) out.description += u"\n• Cookies i dane witryn — może to wylogować Cię z serwisów";
-  if (cache) out.description += u"\n• Pamięć podręczna";
-  out.description += u"\n\nTej operacji nie można cofnąć. Hasła, przypięte karty i pobrane pliki pozostaną zachowane.";
-  out.valid = true; out.title = u"Wyczyścić dane przeglądania?"; out.confirm = u"Wyczyść dane"; out.cancel = u"Anuluj";
+  const std::array<std::u16string, 4> periods = {T(u"Ostatnia godzina"), T(u"Ostatnie 24 godziny"), T(u"Ostatnie 7 dni"), T(u"Cały okres")};
+  out.description = TF(u"Profil: {}\nZakres: {}\n\nZostaną usunięte:", {profile, periods[period]});
+  if (history) out.description += u"\n• " + T(u"Historia przeglądania");
+  if (cookies) out.description += u"\n• " + T(u"Cookies i dane witryn — może to wylogować Cię z serwisów");
+  if (cache) out.description += u"\n• " + T(u"Pamięć podręczna");
+  out.description += u"\n\n" + T(u"Tej operacji nie można cofnąć. Hasła, przypięte karty i pobrane pliki pozostaną zachowane.");
+  out.valid = true; out.title = T(u"Wyczyścić dane przeglądania?"); out.confirm = T(u"Wyczyść dane"); out.cancel = T(u"Anuluj");
   return out;
 }
 void WorkspaceShell::SetProfileStatus(ProfileStatusEvent event) {
-  static constexpr std::array<std::u16string_view, 11> kViewsCopy = {
-      u"Profil o tej nazwie już istnieje.",
-      u"Tworzenie profilu…",
-      u"Nie udało się utworzyć profilu. Spróbuj ponownie.",
-      u"Profil utworzony. Możesz przypisać go do przestrzeni.",
-      u"Nie udało się zapisać profilu. Profil nie został dodany. Spróbuj ponownie.",
-      u"Nazwa profilu zapisana.",
-      u"Nie udało się zapisać nazwy profilu.",
-      u"Usuwanie profilu…",
-      u"Profil usunięty. Dane przeglądania zostaną wyczyszczone.",
-      u"Nie udało się zapisać zmian. Profil nie został usunięty.",
-      u"Nie udało się wczytać profili. Uruchom aplikację ponownie."};
+  const std::array<std::u16string, 11> kViewsCopy = {
+      T(u"Profil o tej nazwie już istnieje."),
+      T(u"Tworzenie profilu…"),
+      T(u"Nie udało się utworzyć profilu. Spróbuj ponownie."),
+      T(u"Profil utworzony. Możesz przypisać go do przestrzeni."),
+      T(u"Nie udało się zapisać profilu. Profil nie został dodany. Spróbuj ponownie."),
+      T(u"Nazwa profilu zapisana."),
+      T(u"Nie udało się zapisać nazwy profilu."),
+      T(u"Usuwanie profilu…"),
+      T(u"Profil usunięty. Dane przeglądania zostaną wyczyszczone."),
+      T(u"Nie udało się zapisać zmian. Profil nie został usunięty."),
+      T(u"Nie udało się wczytać profili. Uruchom aplikację ponownie.")};
   const auto index = static_cast<size_t>(event);
   std::u16string text(kViewsCopy.at(index));
   if (profile_form_) text = base::UTF8ToUTF16(std::string(sidebar::profile_status_copy(sidebar::ProfileStatusEvent{static_cast<uint8_t>(index)})));
@@ -8034,7 +8044,7 @@ void WorkspaceShell::SetPaletteErrorText(std::u16string text) {
   static_cast<views::Label*>(address_error_.get())->SetText(text);
 }
 void WorkspaceShell::ShowAddressError() {
-  SetPaletteErrorText(u"Wpisz adres strony HTTP lub HTTPS");
+  SetPaletteErrorText(T(u"Wpisz adres strony HTTP lub HTTPS"));
   address_error_->SetVisible(true);
   PositionPanels();
 }
@@ -8142,7 +8152,7 @@ bool WorkspaceShell::HandleAddressKey(const ui::KeyEvent& event) {
     return true;
   if (suggestions_.empty()) {
     if (command_palette_ && base::TrimWhitespace(address_->GetText(), base::TRIM_ALL).starts_with(u">")) {
-      SetPaletteErrorText(u"Brak pasujących poleceń."); address_error_->SetVisible(true); PositionPanels();
+      SetPaletteErrorText(T(u"Brak pasujących poleceń.")); address_error_->SetVisible(true); PositionPanels();
     } else ShowAddressError();
     return true;
   }

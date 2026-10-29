@@ -200,6 +200,27 @@ primary albo danger strong, gdy dialog domyślnie wybiera Anuluj), przełącznik
 `line_strong` → `zing` na hover, pasek postępu 3 px `accent`, tytuł „Preferencje” w
 `display-l`.
 
-Zostaje: grupy w Command Center, tost, loader, strona nowej karty, strona Pobrane, tryb edycji
-adresu, głośnik grającej karty, para w podziale jako jeden wiersz, uchwyt podziału,
-terminologia „przestrzeń”/„obszar”.
+Trzecia runda (decyzje produktowe): nazwa aktywnej przestrzeni w szynie opcjonalna
+(Preferencje → Wygląd), „przestrzeń” wszędzie, ⌘T otwiera Command Center (bez strony
+nowej karty), foldery przypiętych zwinięte z podglądem jednej karty, tost z „Cofnij”
+zamiast dialogów dla usuwania folderu i przestrzeni.
+
+Zostaje: grupy w Command Center, drgnięcie tostu (`zt-tremor`), loader, strona Pobrane,
+tryb edycji adresu, głośnik grającej karty, menu aplikacji macOS po angielsku.
+
+## Języki interfejsu
+
+Polski jest językiem źródłowym: tekst UI pisze się po polsku w miejscu użycia i owija w
+`t("…")`/`tf("… {} …", &[&x])` (Rust, [`i18n.rs`](../chromium/prototype/i18n.rs)) albo
+`T(u"…")`/`TF(u"… {} …", {x})` (C++, [`i18n.h`](../chromium/prototype/i18n.h)).
+Angielski tekst jest w katalogach `chromium/prototype/i18n_en_{scene,shell,native}.rs`
+(klucz to polski literał dokładnie jak w kodzie). Brak wpisu = tekst po polsku;
+`python3 tools/i18n_check.py --missing` pokazuje braki, a `tests/test_i18n.py` pilnuje
+pokrycia, duplikatów, liczby `{}` i spójności między katalogami.
+
+Język ustala się raz przy starcie (`ApplyUiLanguage`): wybór z Preferencji („Język
+interfejsu”: Systemowy / Polski / English, zapisany w domyślnych aplikacji jako
+`ZitterLanguage` razem z `AppleLanguages`) albo język aplikacji. Zmiana działa po
+ponownym uruchomieniu. Testy przeglądarkowe przypinają polski
+(`SetUiLanguageForTesting("pl")`); angielski UI do podglądu:
+`defaults write dev.zitter.browser ZitterLanguage en`.

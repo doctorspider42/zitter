@@ -1,5 +1,6 @@
 #include "chromium/prototype/download_panel.h"
 #include "chromium/prototype/browser_data.h"
+#include "chromium/prototype/i18n.h"
 #include "chromium/prototype/sidebar_metal.h"
 #include "chromium/prototype/sidebar_layout.h"
 #include "build/build_config.h"
@@ -98,14 +99,14 @@ void DownloadPanel::Show(Profile* profile, views::Widget* parent) {
   if (widget_) { widget_->Show(); widget_->Activate(); Refresh(); return; }
   auto delegate = std::make_unique<views::DialogDelegate>();
   delegate->SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
-  delegate->SetTitle(u"Pobrania · " + BrowsingProfileName(profile));
+  delegate->SetTitle(TF(u"Pobrania · {}", {BrowsingProfileName(profile)}));
   delegate->SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
   delegate->SetCanResize(true);
   delegate->set_use_custom_frame(false);
   delegate->set_draggable(true);
   auto content = std::make_unique<views::View>();
   scene_=CreatePanelScene(content.get());
-  MakeLabel(content.get(), u"Pobrania tego profilu · ostatnie 200 i wszystkie aktywne");
+  MakeLabel(content.get(), T(u"Pobrania tego profilu · ostatnie 200 i wszystkie aktywne"));
   PanelViewport* viewport=nullptr;
   auto scroll_host=CreatePanelViewport(&viewport,scene_->ViewportChangedCallback(),{100,480,false,true,true});scroll_=viewport;
   auto* scroll=content->AddChildView(std::move(scroll_host));
@@ -157,7 +158,7 @@ void DownloadPanel::Refresh() {
   for (const auto& row : rows_) previous.push_back(row.guid);
   if (ids != previous || list_->children().empty()) {
     rows_.clear(); list_->RemoveAllChildViews();
-    if (ids.empty()) MakeLabel(list_, u"Nie ma jeszcze pobrań w tym profilu.");
+    if (ids.empty()) MakeLabel(list_, T(u"Nie ma jeszcze pobrań w tym profilu."));
     for (const auto& guid : ids) {
       auto* box = list_->AddChildView(std::make_unique<views::View>());
       SetSidebarPanelLayout(box,true,gfx::Insets(8),6);
@@ -172,26 +173,26 @@ void DownloadPanel::Refresh() {
         auto callback=base::BindRepeating([](base::WeakPtr<DownloadPanel> panel,std::string guid,Action action){if(panel)panel->Act(std::move(guid),action);},weak_factory_.GetWeakPtr(),guid,action);
         return scene_->AddAction(buttons,std::move(callback),std::move(text));
       };
-      row.pause = button(u"Wstrzymaj", Action::kPauseResume);
-      row.cancel = button(u"Anuluj", Action::kCancel);
-      row.reveal = button(u"Pokaż w Finderze", Action::kReveal);
+      row.pause = button(T(u"Wstrzymaj"), Action::kPauseResume);
+      row.cancel = button(T(u"Anuluj"), Action::kCancel);
+      row.reveal = button(T(u"Pokaż w Finderze"), Action::kReveal);
       rows_.push_back(row);
     }
   }
   for (auto& row : rows_) {
     auto* item = items_.at(row.guid).get();
     auto name = item->GetFileNameToReportUser().LossyDisplayName();
-    SetText(row.title,name.empty()?u"Przygotowywanie pliku…":name);
+    SetText(row.title,name.empty()?T(u"Przygotowywanie pliku…"):name);
     row.title->SetTooltipText(item->GetTargetFilePath().LossyDisplayName());
     SetText(row.source,base::UTF8ToUTF16(item->GetURL().host()));
     SetText(row.status, RustStatus(item));
     const bool active = item->GetState() == Item::IN_PROGRESS;
     const bool safe = !Unsafe(item);
-    row.progress->GetViewAccessibility().SetName(u"Postęp pobierania: " + name);
+    row.progress->GetViewAccessibility().SetName(TF(u"Postęp pobierania: {}", {name}));
     row.progress->SetVisible(active);
     const double value=item->PercentComplete()<0?-1.0:item->PercentComplete()/100.0;scene_->SetProgress(row.progress,value);
     row.pause->SetVisible(safe && (active || item->CanResume()));
-    const std::u16string pause_label=item->IsPaused()||item->GetState()==Item::INTERRUPTED?u"Wznów":u"Wstrzymaj";scene_->SetActionText(row.pause,pause_label);
+    const std::u16string pause_label=item->IsPaused()||item->GetState()==Item::INTERRUPTED?T(u"Wznów"):T(u"Wstrzymaj");scene_->SetActionText(row.pause,pause_label);
     row.pause->SetEnabled((active && !item->IsPaused()) || item->CanResume());
     row.cancel->SetVisible(active || item->GetState() == Item::INTERRUPTED);
     row.reveal->SetVisible(safe && item->GetState() == Item::COMPLETE && !item->GetFileExternallyRemoved());

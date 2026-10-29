@@ -576,7 +576,7 @@ void WorkspaceWindow::UpdateShell() {
       }
       const size_t index = &view - host.tabs.data();
       if (pin_id.empty() || InSplit(host, view))
-        state.tabs.push_back({title.empty() ? u"Nowa karta" : title, display_url, index, pin_id, static_cast<WorkspaceWebView*>(view.get())->sidebar_identity()});
+        state.tabs.push_back({title.empty() ? T(u"Nowa karta") : title, display_url, index, pin_id, static_cast<WorkspaceWebView*>(view.get())->sidebar_identity()});
     }
     auto& controller = host.view->GetWebContents()->GetController();
     state.workspace_id = host.workspace_id;
@@ -736,7 +736,7 @@ void WorkspaceWindow::ChooseDownloadDirectory() {
   auto* profile = ProfileFor(download_directory_profile_);
   if (!download_directory_dialog_) download_directory_dialog_ = ui::SelectFileDialog::Create(this, nullptr);
   download_directory_dialog_->SelectFile(ui::SelectFileDialog::SELECT_FOLDER,
-      u"Wybierz folder pobierania", profile->GetPrefs()->GetFilePath(prefs::kDownloadDefaultDirectory),
+      T(u"Wybierz folder pobierania"), profile->GetPrefs()->GetFilePath(prefs::kDownloadDefaultDirectory),
       nullptr, 0, base::FilePath::StringType(), shell_->general_widget()->GetNativeWindow());
 }
 void WorkspaceWindow::FileSelected(const ui::SelectedFileInfo& file, int) {
@@ -1092,7 +1092,7 @@ void WorkspaceWindow::CloseWorkspaceTab(std::string_view workspace_id, size_t in
         for (size_t i = 0; i < host.tabs.size(); ++i) if (host.tabs[i]->web_contents() == page.get()) { w->CloseWorkspaceTab(id, i); return; }
     }, weak_factory_.GetWeakPtr(), std::string(workspace_id), page->GetWeakPtr()))) return;
     if (configuration_ready_ && !restoring_session_ && !closing_) {
-      if (host.workspace_id == active_id() && !closing_split_tabs_) SaveSnapshot("Przed zamknięciem karty", true);
+      if (host.workspace_id == active_id() && !closing_split_tabs_) SaveSnapshot(base::UTF16ToUTF8(T(u"Przed zamknięciem karty")), true);
       RecordClosedTab(host, index);
     }
     views::WebView* closing = host.tabs[index];
@@ -1220,7 +1220,7 @@ bool WorkspaceWindow::SplitTab(size_t index) {
   if (!configuration_ready_ || profiles_busy_) return false;
   for (auto& host : hosts_) {
     if (host.workspace_id != active_id() || index >= host.tabs.size()) continue;
-    SaveSnapshot("Przed zmianą podziału", true);
+    SaveSnapshot(base::UTF16ToUTF8(T(u"Przed zmianą podziału")), true);
     // A visible group gains a pane; otherwise the shown page anchors a new pair.
     if (!SplitShown(host)) { host.split = {host.view}; host.weights.clear(); host.vertical = false; }
     if (InSplit(host, host.tabs[index])) {
@@ -1256,7 +1256,7 @@ void WorkspaceWindow::Unsplit(size_t index) {
     if (host.workspace_id != active_id() || host.split.empty() || index >= host.tabs.size()) continue;
     auto* kept = host.tabs[index].get();
     if (!InSplit(host, kept)) return;
-    SaveSnapshot("Przed zamknięciem podziału", true);
+    SaveSnapshot(base::UTF16ToUTF8(T(u"Przed zamknięciem podziału")), true);
     host.split.clear(); host.weights.clear(); host.vertical = false;
     host.view = kept; host.active_tab = index;
     RefreshPanes(); UpdateShell();
@@ -1268,7 +1268,7 @@ void WorkspaceWindow::RemoveFromSplit(size_t index) {
   if (!configuration_ready_ || profiles_busy_) return;
   for (auto& host : hosts_) {
     if (host.workspace_id != active_id() || index >= host.tabs.size() || !InSplit(host, host.tabs[index])) continue;
-    SaveSnapshot("Przed zmianą podziału", true);
+    SaveSnapshot(base::UTF16ToUTF8(T(u"Przed zmianą podziału")), true);
     const bool shown = SplitShown(host);
     auto* leaving = host.tabs[index].get();
     auto* next = LeaveSplit(host, leaving);
@@ -1288,7 +1288,7 @@ void WorkspaceWindow::CloseSplitTabs(size_t index) {
     std::vector<content::WebContents*> pages;
     for (const auto& member : host.split) if (auto* page = member->web_contents()) pages.push_back(page);
     if (GuardPages(pages, base::BindOnce(&WorkspaceWindow::CloseSplitTabs, weak_factory_.GetWeakPtr(), index))) return;
-    SaveSnapshot("Przed zamknięciem kart Split View", true);
+    SaveSnapshot(base::UTF16ToUTF8(T(u"Przed zamknięciem kart Split View")), true);
     const std::vector<views::WebView*> members(host.split.begin(), host.split.end());
     const bool fresh = members.size() == host.tabs.size();
     if (fresh) host.tabs.push_back(CreatePage(host.profile));
@@ -1344,7 +1344,7 @@ void WorkspaceWindow::ToggleSplit() {
   for (auto& host : hosts_) {
     if (host.workspace_id != active_id()) continue;
     if (SplitShown(host)) {
-      SaveSnapshot("Przed zamknięciem podziału", true);
+      SaveSnapshot(base::UTF16ToUTF8(T(u"Przed zamknięciem podziału")), true);
       host.split.clear(); host.weights.clear(); host.vertical = false;
       RefreshPanes(); UpdateShell(); host.view->RequestFocus();
       return;
@@ -1893,8 +1893,8 @@ void WorkspaceWindow::RestoreConfiguration(std::string json) {
   bool valid = dict.has_value();
   // Migrate the workspace-only format without moving the original profiles.
   if (!dict || !dict->contains("profiles")) {
-    entries.push_back({{"work-profile", "Profil firmowy", "ZitterWork", ""}, nullptr});
-    entries.push_back({{"personal-profile", "Profil osobisty", "ZitterPersonal", ""}, nullptr});
+    entries.push_back({{"work-profile", base::UTF16ToUTF8(T(u"Profil firmowy")), "ZitterWork", ""}, nullptr});
+    entries.push_back({{"personal-profile", base::UTF16ToUTF8(T(u"Profil osobisty")), "ZitterPersonal", ""}, nullptr});
   } else if (const auto* list = dict->FindList("profiles")) {
     for (const auto& item : *list) {
       const auto* entry = item.GetIfDict();
@@ -1973,16 +1973,16 @@ void WorkspaceWindow::RestoreConfiguration(std::string json) {
   } else {
     configuration_invalid_ = !json.empty();
     if (json.empty()) {
-      profiles_.push_back({{"personal-profile", "Profil osobisty", "ZitterPersonal", ""}, nullptr});
-      model_.Add({"personal", "personal-profile", "Moja przestrzeń"});
+      profiles_.push_back({{"personal-profile", base::UTF16ToUTF8(T(u"Profil osobisty")), "ZitterPersonal", ""}, nullptr});
+      model_.Add({"personal", "personal-profile", base::UTF16ToUTF8(T(u"Moja przestrzeń"))});
       starter_workspace_id_ = "personal";
       restored_active_ = "personal";
     } else {
       // Invalid existing metadata retains the established recovery behavior.
-      profiles_.push_back({{"work-profile", "Profil firmowy", "ZitterWork", ""}, nullptr});
-      profiles_.push_back({{"personal-profile", "Profil osobisty", "ZitterPersonal", ""}, nullptr});
-      model_.Add({"work", "work-profile", "Praca"});
-      model_.Add({"personal", "personal-profile", "Prywatne"});
+      profiles_.push_back({{"work-profile", base::UTF16ToUTF8(T(u"Profil firmowy")), "ZitterWork", ""}, nullptr});
+      profiles_.push_back({{"personal-profile", base::UTF16ToUTF8(T(u"Profil osobisty")), "ZitterPersonal", ""}, nullptr});
+      model_.Add({"work", "work-profile", base::UTF16ToUTF8(T(u"Praca"))});
+      model_.Add({"personal", "personal-profile", base::UTF16ToUTF8(T(u"Prywatne"))});
       restored_active_ = "work";
     }
   }
@@ -2437,7 +2437,7 @@ void WorkspaceWindow::CommitArcImport() {
   if (!onboarding_complete_ && model_.workspaces().size() == 1 && !starter_workspace_id_.empty()) {
     const auto* starter = model_.Find(starter_workspace_id_);
     auto host = std::find_if(hosts_.begin(), hosts_.end(), [&](const auto& h) { return h.workspace_id == starter_workspace_id_; });
-    import_replaces_starter_ = starter && starter->name == "Moja przestrzeń" &&
+    import_replaces_starter_ = starter && (starter->name == "Moja przestrzeń" || starter->name == base::UTF16ToUTF8(T(u"Moja przestrzeń"))) &&
         starter->profile_id == "personal-profile" && pinned_items(starter->id).empty() &&
         host != hosts_.end() && host->tabs.size() == 1 && host->split.empty() &&
         !TabUrl(*host, host->view).SchemeIsHTTPOrHTTPS();
@@ -2561,7 +2561,7 @@ void WorkspaceWindow::SaveSession() {
     auto entry = CaptureHost(host);
     session.Set(host.workspace_id, std::move(entry));
   }
-  if (base::Time::Now() - last_automatic_snapshot_ >= base::Minutes(5)) SaveSnapshot("Punkt przywracania", true);
+  if (base::Time::Now() - last_automatic_snapshot_ >= base::Minutes(5)) SaveSnapshot(base::UTF16ToUTF8(T(u"Punkt przywracania")), true);
   ++pending_config_writes_;
   config_runner_->PostTaskAndReplyWithResult(FROM_HERE, base::BindOnce([](base::FilePath path, base::DictValue session) {
     std::string json;

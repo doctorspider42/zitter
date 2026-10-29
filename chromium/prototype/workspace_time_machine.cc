@@ -1,5 +1,6 @@
 #include "chromium/prototype/workspace_window.h"
 #include "chromium/prototype/page_media_access.h"
+#include "chromium/prototype/i18n.h"
 #include <algorithm>
 #include <cmath>
 #include <set>
@@ -150,7 +151,7 @@ bool WorkspaceWindow::RestoreSnapshot(std::string id) {
     pins.push_back({*pin_id, *parent, *title, GURL(*url), folder});
   }
   if (GuardPages(WorkspacePages(active_id(), true, true), base::BindOnce([](base::WeakPtr<WorkspaceWindow> w, std::string id) { if (w) w->RestoreSnapshot(id); }, weak_factory_.GetWeakPtr(), id))) return true;
-  ClosePeek(); SaveSnapshot("Przed przywróceniem układu", true);
+  ClosePeek(); SaveSnapshot(base::UTF16ToUTF8(T(u"Przed przywróceniem układu")), true);
   for (auto& host : hosts_) if (host.workspace_id == active_id()) {
     // Validate the page payload before modifying the pinned catalog.
     const auto previous = pinned_items(active_id());
@@ -207,7 +208,7 @@ bool WorkspaceWindow::SleepWorkspace(std::string id) {
   if (GuardPages(discarded_pages, base::BindOnce([](base::WeakPtr<WorkspaceWindow> w, std::string id) { if (w) w->SleepWorkspace(id); }, weak_factory_.GetWeakPtr(), id))) return true;
   if (!configuration_ready_ || profiles_busy() || configuration_invalid_ || model_.workspaces().size() < 2) return false;
   if (id == active_id()) {
-    SaveSnapshot("Przed uśpieniem przestrzeni", true);
+    SaveSnapshot(base::UTF16ToUTF8(T(u"Przed uśpieniem przestrzeni")), true);
     const auto other = std::find_if(model_.workspaces().begin(), model_.workspaces().end(), [&](const auto& space) { return space.id != id; });
     if (other == model_.workspaces().end() || !Select(other->id)) return false;
   }

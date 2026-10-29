@@ -323,6 +323,7 @@ pub fn family_name(id: u32) -> Option<&'static str> {
 /// continuous. Geometry is in the control's own px.
 pub mod wheel {
     use super::{Oklch, WorkspaceColor, GRAY};
+    use crate::i18n::tf;
 
     /// Ring thickness.
     pub const RING: f32 = 22.0;
@@ -398,9 +399,9 @@ pub mod wheel {
     pub fn description(c: WorkspaceColor, ring: bool) -> String {
         let pct = |v: f32| (v * 100.0).round() as i32;
         if ring {
-            format!("Barwa {}°", c.hue_degrees().round() as i32 % 360)
+            tf("Barwa {}°", &[&(c.hue_degrees().round() as i32 % 360).to_string()])
         } else {
-            format!("Nasycenie {}%, jasność {}%", pct(c.saturation()), pct(c.tone()))
+            tf("Nasycenie {}%, jasność {}%", &[&pct(c.saturation()).to_string(), &pct(c.tone()).to_string()])
         }
     }
 }

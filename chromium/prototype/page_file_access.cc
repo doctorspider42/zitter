@@ -8,6 +8,7 @@
 #include "chrome/browser/file_select_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/select_file_policy/chrome_select_file_policy.h"
+#include "chromium/prototype/i18n.h"
 #include "content/public/browser/file_select_listener.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
@@ -80,7 +81,7 @@ class FolderChooser : public base::RefCounted<FolderChooser>,
     if (!dialog_) { Cancel(); return; }
     auto* profile = Profile::FromBrowserContext(web_contents()->GetBrowserContext());
     dialog_->SelectFile(ui::SelectFileDialog::SELECT_UPLOAD_FOLDER,
-                        u"Wybierz folder do przesłania",
+                        T(u"Wybierz folder do przesłania"),
                         profile->last_selected_directory(), nullptr, 0, {},
                         web_contents()->GetTopLevelNativeWindow());
   }

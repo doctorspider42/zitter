@@ -6,6 +6,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
+#include "chromium/prototype/i18n.h"
 #include "ui/events/event_constants.h"
 namespace zitter::prototype {
 namespace {
@@ -38,36 +39,36 @@ std::vector<Shortcut> ArcShortcuts() {
     result.push_back({std::move(id), std::move(title), ui::Accelerator(key, modifiers)});
   };
   const int p = Primary();
-  add("address", u"Adres i wyszukiwanie", ui::VKEY_L, p);
-  add("new_tab", u"Nowa karta", ui::VKEY_T, p);
-  add("palette", u"Command Center", ui::VKEY_K, p);
-  add("close_tab", u"Zamknij kartę / Peek", ui::VKEY_W, p);
-  add("reopen", u"Przywróć zamkniętą kartę", ui::VKEY_T, p | ui::EF_SHIFT_DOWN);
-  add("sidebar", u"Pokaż / ukryj panel", ui::VKEY_S, p);
-  add("reload", u"Odśwież stronę", ui::VKEY_R, p);
-  add("history", u"Historia przeglądania", ui::VKEY_Y, p);
-  add("downloads", u"Pobrania", ui::VKEY_J, p);
-  add("settings", u"Preferencje", ui::VKEY_OEM_COMMA, p);
-  add("next_space", u"Następna przestrzeń", ui::VKEY_RIGHT, p | ui::EF_ALT_DOWN);
-  add("previous_space", u"Poprzednia przestrzeń", ui::VKEY_LEFT, p | ui::EF_ALT_DOWN);
-  add("next_tab", u"Następna karta", ui::VKEY_TAB, ui::EF_CONTROL_DOWN);
-  add("previous_tab", u"Poprzednia karta", ui::VKEY_TAB, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN);
-  add("split", u"Dodaj / zamknij Split View", ui::VKEY_OEM_PLUS, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN);
-  add("close_split", u"Zamknij Split View", ui::VKEY_OEM_MINUS, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN);
-  add("left_pane", u"Aktywuj lewą stronę podziału", ui::VKEY_1, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN);
-  add("right_pane", u"Aktywuj prawą stronę podziału", ui::VKEY_2, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN);
-  add("third_pane", u"Aktywuj trzeci panel podziału", ui::VKEY_3, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN);
-  add("fourth_pane", u"Aktywuj czwarty panel podziału", ui::VKEY_4, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN);
-  add("back", u"Wstecz", ui::VKEY_LEFT, p);
-  add("forward", u"Dalej", ui::VKEY_RIGHT, p);
-  add("timeline", u"Time Machine przestrzeni", ui::VKEY_Y, p | ui::EF_SHIFT_DOWN);
-  add("snapshot", u"Zapisz snapshot przestrzeni", ui::VKEY_S, p | ui::EF_SHIFT_DOWN);
+  add("address", T(u"Adres i wyszukiwanie"), ui::VKEY_L, p);
+  add("new_tab", T(u"Nowa karta"), ui::VKEY_T, p);
+  add("palette", T(u"Command Center"), ui::VKEY_K, p);
+  add("close_tab", T(u"Zamknij kartę / Peek"), ui::VKEY_W, p);
+  add("reopen", T(u"Przywróć zamkniętą kartę"), ui::VKEY_T, p | ui::EF_SHIFT_DOWN);
+  add("sidebar", T(u"Pokaż / ukryj panel"), ui::VKEY_S, p);
+  add("reload", T(u"Odśwież stronę"), ui::VKEY_R, p);
+  add("history", T(u"Historia przeglądania"), ui::VKEY_Y, p);
+  add("downloads", T(u"Pobrania"), ui::VKEY_J, p);
+  add("settings", T(u"Preferencje"), ui::VKEY_OEM_COMMA, p);
+  add("next_space", T(u"Następna przestrzeń"), ui::VKEY_RIGHT, p | ui::EF_ALT_DOWN);
+  add("previous_space", T(u"Poprzednia przestrzeń"), ui::VKEY_LEFT, p | ui::EF_ALT_DOWN);
+  add("next_tab", T(u"Następna karta"), ui::VKEY_TAB, ui::EF_CONTROL_DOWN);
+  add("previous_tab", T(u"Poprzednia karta"), ui::VKEY_TAB, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN);
+  add("split", T(u"Dodaj / zamknij Split View"), ui::VKEY_OEM_PLUS, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN);
+  add("close_split", T(u"Zamknij Split View"), ui::VKEY_OEM_MINUS, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN);
+  add("left_pane", T(u"Aktywuj lewą stronę podziału"), ui::VKEY_1, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN);
+  add("right_pane", T(u"Aktywuj prawą stronę podziału"), ui::VKEY_2, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN);
+  add("third_pane", T(u"Aktywuj trzeci panel podziału"), ui::VKEY_3, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN);
+  add("fourth_pane", T(u"Aktywuj czwarty panel podziału"), ui::VKEY_4, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN);
+  add("back", T(u"Wstecz"), ui::VKEY_LEFT, p);
+  add("forward", T(u"Dalej"), ui::VKEY_RIGHT, p);
+  add("timeline", T(u"Time Machine przestrzeni"), ui::VKEY_Y, p | ui::EF_SHIFT_DOWN);
+  add("snapshot", T(u"Zapisz snapshot przestrzeni"), ui::VKEY_S, p | ui::EF_SHIFT_DOWN);
   for (int i = 0; i < 9; ++i) {
-    add("space" + std::to_string(i + 1), u"Przestrzeń " + base::UTF8ToUTF16(std::to_string(i + 1)),
+    add("space" + std::to_string(i + 1), TF(u"Przestrzeń {}", {base::UTF8ToUTF16(std::to_string(i + 1))}),
         static_cast<ui::KeyboardCode>(ui::VKEY_1 + i), ui::EF_CONTROL_DOWN | (p == ui::EF_CONTROL_DOWN ? ui::EF_ALT_DOWN : 0));
   }
   for (int i = 0; i < 9; ++i)
-    add("tab" + std::to_string(i + 1), u"Przejdź do karty " + base::UTF8ToUTF16(std::to_string(i + 1)), static_cast<ui::KeyboardCode>(ui::VKEY_1 + i), p);
+    add("tab" + std::to_string(i + 1), TF(u"Przejdź do karty {}", {base::UTF8ToUTF16(std::to_string(i + 1))}), static_cast<ui::KeyboardCode>(ui::VKEY_1 + i), p);
   return result;
 }
 bool ValidSearchProvider(const SearchProvider& provider) {

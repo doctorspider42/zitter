@@ -2,6 +2,7 @@
 #include <algorithm>
 #include "chromium/prototype/browser_data.h"
 #include "chromium/prototype/editor_control.h"
+#include "chromium/prototype/i18n.h"
 #include "chromium/prototype/sidebar_layout.h"
 #include "build/build_config.h"
 #include "chromium/prototype/sidebar_scene.rs.h"
@@ -108,7 +109,7 @@ void PageDialogs::RunBeforeUnloadDialog(content::WebContents*, content::RenderFr
     bool reload, DialogClosedCallback callback) {
   if (dialog_callback_) CancelDialogs(web_contents(), false);
   Show(frame, content::JAVASCRIPT_DIALOG_TYPE_CONFIRM,
-      reload ? u"Odświeżenie strony może usunąć niezapisane zmiany." : u"Opuszczenie strony może usunąć niezapisane zmiany.",
+      reload ? T(u"Odświeżenie strony może usunąć niezapisane zmiany.") : T(u"Opuszczenie strony może usunąć niezapisane zmiany."),
       {}, true, std::move(callback));
 }
 void PageDialogs::Show(content::RenderFrameHost* frame, content::JavaScriptDialogType type,
@@ -124,7 +125,7 @@ void PageDialogs::Show(content::RenderFrameHost* frame, content::JavaScriptDialo
   scene_=CreatePageDialogScene(body);
   const auto origin=frame->GetLastCommittedOrigin().Serialize();
   auto* profile = Profile::FromBrowserContext(web_contents()->GetBrowserContext());
-  std::u16string title=(unload?u"Opuścić stronę? · ":u"Strona: ")+base::UTF8ToUTF16(origin),identity_text=u"Profil: "+BrowsingProfileName(profile),message_text=message.substr(0,8192),accept=unload?u"Opuść stronę":u"OK",cancel=unload?u"Zostań":u"Anuluj";
+  std::u16string title=unload?TF(u"Opuścić stronę? · {}",{base::UTF8ToUTF16(origin)}):TF(u"Strona: {}",{base::UTF8ToUTF16(origin)}),identity_text=TF(u"Profil: {}",{BrowsingProfileName(profile)}),message_text=message.substr(0,8192),accept=unload?T(u"Opuść stronę"):u"OK",cancel=unload?T(u"Zostań"):T(u"Anuluj");
   bool show_cancel=type!=content::JAVASCRIPT_DIALOG_TYPE_ALERT,default_cancel=unload,is_prompt=type==content::JAVASCRIPT_DIALOG_TYPE_PROMPT;
   {const auto copy=sidebar::page_dialog_copy(type==content::JAVASCRIPT_DIALOG_TYPE_ALERT?0:type==content::JAVASCRIPT_DIALOG_TYPE_PROMPT?2:1,unload,origin,base::UTF16ToUTF8(BrowsingProfileName(profile)),rust::Slice<const uint16_t>(reinterpret_cast<const uint16_t*>(message.data()),message.size()));title=base::UTF8ToUTF16(std::string(copy.title));identity_text=base::UTF8ToUTF16(std::string(copy.identity));message_text=std::u16string(copy.message.begin(),copy.message.end());accept=base::UTF8ToUTF16(std::string(copy.accept));cancel=base::UTF8ToUTF16(std::string(copy.cancel));show_cancel=copy.show_cancel;default_cancel=copy.default_cancel;is_prompt=copy.prompt;}
   dialog->SetTitle(title);
@@ -138,7 +139,7 @@ void PageDialogs::Show(content::RenderFrameHost* frame, content::JavaScriptDialo
   {auto copy=scene_->MakeText(message_text,true,false,440);copy->SizeToPreferredSize();viewport->SetPanelContents(std::move(copy));}
   if (is_prompt) {
     prompt_ = AddEditor(body);
-    prompt_->GetViewAccessibility().SetName(u"Odpowiedź dla strony");prompt_->SetText(initial);
+    prompt_->GetViewAccessibility().SetName(T(u"Odpowiedź dla strony"));prompt_->SetText(initial);
     // Retain the native font metric; resolve the background from the live theme.
     prompt_->SetPresentation(views::Textfield::GetDefaultFontList().GetFontSize(),8,true,std::nullopt);
     prompt_->SetCallbacks({},base::BindRepeating([](base::WeakPtr<PageDialogs> manager,size_t generation,const ui::KeyEvent& event){

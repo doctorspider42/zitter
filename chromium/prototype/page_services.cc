@@ -1,5 +1,6 @@
 #include "chromium/prototype/page_services.h"
 #include "chromium/prototype/browser_data.h"
+#include "chromium/prototype/i18n.h"
 #include "chromium/prototype/page_dialogs.h"
 #include "chromium/prototype/sidebar_layout.h"
 #include "build/build_config.h"
@@ -188,9 +189,9 @@ void PageServices::OnGetPasswordStoreResultsOrErrorFrom(password_manager::Passwo
   auto content=std::make_unique<views::View>();
   password_scene_=CreatePanelScene(content.get());
   auto dialog=CreateSceneDialogDelegate();
-  dialog->SetTitle(u"Zapisane logowania");
+  dialog->SetTitle(T(u"Zapisane logowania"));
   dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk));
-  dialog->SetButtonLabel(ui::mojom::DialogButton::kOk, u"Zamknij");
+  dialog->SetButtonLabel(ui::mojom::DialogButton::kOk, T(u"Zamknij"));
   dialog->set_use_custom_frame(false);
   dialog->set_draggable(true);
   dialog->SetCanResize(true);
@@ -198,17 +199,17 @@ void PageServices::OnGetPasswordStoreResultsOrErrorFrom(password_manager::Passwo
   auto paragraph = [&](std::u16string text) {
     content->AddChildView(password_scene_->MakeText(std::move(text),true,false,0));
   };
-  paragraph(u"Profil: " + BrowsingProfileName(profile));
+  paragraph(TF(u"Profil: {}", {BrowsingProfileName(profile)}));
   if (!results.has_value()) {
-    paragraph(u"Magazyn haseł jest niedostępny. Spróbuj ponownie później.");
+    paragraph(T(u"Magazyn haseł jest niedostępny. Spróbuj ponownie później."));
   } else if (results->empty()) {
-    paragraph(u"Brak zapisanych logowań. Po zalogowaniu na stronie zaproponujemy zapis hasła.");
+    paragraph(T(u"Brak zapisanych logowań. Po zalogowaniu na stronie zaproponujemy zapis hasła."));
   } else {
     std::vector<std::u16string> labels;
     for(const auto& credential:*results)
       labels.push_back(base::UTF8ToUTF16(url::Origin::Create(credential.url).Serialize())+u" · "+credential.username_value);
-    content->AddChildView(password_scene_->MakeSelect(content.get(),std::move(labels),u"Zapisane konta"));
-    paragraph(u"Kliknij pole logowania na stronie, aby wybrać zapisane konto. Hasła nie są tu ujawniane.");
+    content->AddChildView(password_scene_->MakeSelect(content.get(),std::move(labels),T(u"Zapisane konta")));
+    paragraph(T(u"Kliknij pole logowania na stronie, aby wybrać zapisane konto. Hasła nie są tu ujawniane."));
   }
   content->SetPreferredSize(gfx::Size(460, 180));
   dialog->SetContentsView(std::move(content));

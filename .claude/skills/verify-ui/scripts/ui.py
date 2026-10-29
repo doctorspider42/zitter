@@ -70,9 +70,11 @@ def launch(a):
     if not w:
         sys.exit(f"The app did not show a window; see {log.name}")
     time.sleep(2)  # first paint and the sidebar's Metal surface
-    if panel and not wait(lambda: find("panel"), 10):
+    # Only the space panel is a window find() knows; the others open in place.
+    space = getattr(a, "open_panel", None) == "space"
+    if space and not wait(lambda: find("panel"), 10):
         sys.exit("The app started, but the panel did not open.")
-    print(json.dumps(find("panel") if panel else w))
+    print(json.dumps(find("panel") if space else w))
 
 
 def open_space_panel(_):
@@ -98,8 +100,10 @@ def open_space_panel(_):
 def find(name):
     shown = [w for w in windows() if w["onscreen"]]
     # Window titles name the app's windows; sizes change with the main window.
-    titles = {"main": "Zitter", "sidebar": "Zitter — Karty", "panel": "Zitter — Ustawienia przestrzeni"}
-    return next((w for w in shown if w["title"] == titles.get(name) or str(w["id"]) == name), None)
+    # Polish or English UI.
+    titles = {"main": {"Zitter"}, "sidebar": {"Zitter — Karty", "Zitter — Tabs"},
+              "panel": {"Zitter — Ustawienia przestrzeni", "Zitter — Space settings"}}
+    return next((w for w in shown if w["title"] in titles.get(name, ()) or str(w["id"]) == name), None)
 
 
 def shot(a):
@@ -116,7 +120,7 @@ def shot(a):
 
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 sub = parser.add_subparsers(dest="command", required=True)
-l = sub.add_parser("launch"); l.add_argument("--open-panel", choices=["space", "sidebar", "palette", "settings", "profiles"],
+l = sub.add_parser("launch"); l.add_argument("--open-panel", choices=["space", "sidebar", "palette", "settings", "profiles", "toast"],
     help="open this panel once the window is up (no mouse needed)"); l.set_defaults(run=launch)
 sub.add_parser("windows").set_defaults(run=lambda _: print("\n".join(map(json.dumps, windows()))))
 c = sub.add_parser("click"); c.add_argument("x", type=float); c.add_argument("y", type=float)

@@ -24,6 +24,7 @@ using BrowserPreferences = std::map<std::string, BrowserPreference>;
 
 inline constexpr std::array<const char*, 9> kSitePreferenceKeys = {
     "javascript", "images", "popups", "sound", "notifications", "location", "camera", "microphone", "clipboard"};
+// Polish source text (the English is in i18n_en_native.rs): show through T().
 inline constexpr std::array<const char16_t*, 9> kSitePreferenceNames = {
     u"JavaScript", u"Obrazy", u"Wyskakujące okna", u"Dźwięk", u"Powiadomienia", u"Lokalizacja", u"Kamera", u"Mikrofon", u"Schowek"};
 

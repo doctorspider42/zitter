@@ -14,6 +14,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/keep_alive/scoped_profile_keep_alive.h"
 #include "chrome/browser/profiles/keep_alive/profile_keep_alive_types.h"
+#include "chromium/prototype/i18n.h"
 #include "components/history/core/browser/history_backend.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/history/core/browser/url_database.h"
@@ -119,13 +120,13 @@ bool ReadCookies(const base::FilePath& profile, ImportedProfileData& data,
     if (!encrypted.empty()) {
       if (!value.empty() || encrypted.size() < 3 ||
           std::string_view(reinterpret_cast<const char*>(encrypted.data()), 3) != "v10") {
-        result.error = "Nieobsługiwane szyfrowanie ciasteczek. Import został zatrzymany.";
+        result.error = base::UTF16ToUTF8(T(u"Nieobsługiwane szyfrowanie ciasteczek. Import został zatrzymany."));
         return false;
       }
       if (!key) {
         key = key_reader ? std::move(key_reader).Run(browser) : ReadImportedCookieKey(browser);
         if (!key) {
-          result.error = "Nie uzyskano dostępu do klucza przeglądarki. Zezwól na dostęp w pęku kluczy i ponów import.";
+          result.error = base::UTF16ToUTF8(T(u"Nie uzyskano dostępu do klucza przeglądarki. Zezwól na dostęp w pęku kluczy i ponów import."));
           return false;
         }
       }
@@ -134,7 +135,7 @@ bool ReadCookies(const base::FilePath& profile, ImportedProfileData& data,
       const auto hash = crypto::hash::Sha256(domain);
       const size_t prefix = version >= 24 ? hash.size() : 0;
       if (!plain || plain->size() < prefix || (prefix && !std::equal(hash.begin(), hash.end(), plain->begin()))) {
-        result.error = "Nie udało się odszyfrować ciasteczek. Import został zatrzymany.";
+        result.error = base::UTF16ToUTF8(T(u"Nie udało się odszyfrować ciasteczek. Import został zatrzymany."));
         return false;
       }
       value.assign(plain->begin() + prefix, plain->end());
@@ -252,7 +253,7 @@ std::shared_ptr<BrowsingImportData> ReadBrowsingImportData(const ArcImport& sour
     auto& data = result->profiles[it->second];
     if ((source.options.history && !ReadHistory(profile.directory.AppendASCII("History"), data)) ||
         (source.options.cookies && !ReadCookies(profile.directory, data, *result, source.options.browser, key_reader, key))) {
-      if (result->error.empty()) result->error = "Nie udało się odczytać danych. Zamknij przeglądarkę źródłową i spróbuj ponownie.";
+      if (result->error.empty()) result->error = base::UTF16ToUTF8(T(u"Nie udało się odczytać danych. Zamknij przeglądarkę źródłową i spróbuj ponownie."));
       result->profiles.clear();
       break;
     }

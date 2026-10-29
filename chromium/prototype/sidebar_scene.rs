@@ -11,7 +11,6 @@ use sidebar_editor::EditorState;
 mod design;
 mod design_tokens;
 // UI language: Polish source strings, English catalogue (t, tf).
-#[allow(dead_code)]
 mod i18n;
 #[allow(unused_imports)]
 use i18n::{t, tf};
@@ -784,23 +783,23 @@ pub struct WorkspaceForm {
 fn new_workspace_form() -> Box<WorkspaceForm> {
     Box::new(WorkspaceForm { workspace: String::new(), creating: false, submitting: false, error: String::new() })
 }
-fn peek_copy()->ffi::PeekCopy{ffi::PeekCopy{initial:"Peek".into(),back:"Wstecz".into(),forward:"Dalej".into(),promote:"Otwórz jako kartę".into(),split:"Split View".into(),close:"Zamknij podgląd (Escape)".into()}}
+fn peek_copy()->ffi::PeekCopy{ffi::PeekCopy{initial:"Peek".into(),back:t("Wstecz").into(),forward:t("Dalej").into(),promote:t("Otwórz jako kartę").into(),split:"Split View".into(),close:t("Zamknij podgląd (Escape)").into()}}
 fn peek_title(title:&[u16])->Vec<u16>{"Peek · ".encode_utf16().chain(title.iter().copied()).collect()}
 
 fn workspace_copy() -> ffi::WorkspaceCopy {
     ffi::WorkspaceCopy {
-        name_label: "Nazwa".into(), placeholder: "Np. Projekt lub Klient".into(),
-        profile_label: "Profil przeglądania".into(), profile_ax: "Profil przestrzeni".into(),
-        profile_hint: "Przestrzenie z tym samym profilem dzielą logowania i cookies. Zmiana profilu zamknie karty tej przestrzeni.".into(),
-        save_hint: "Zapisz poniżej nazwę i profil. Wygląd zapisuje się od razu.".into(),
-        close: "Zamknij ustawienia przestrzeni".into(), appearance: "Wygląd · zapisuje się od razu".into(),
-        color: "Kolor".into(), color_ax: "Kolor przestrzeni #RRGGBB".into(),
-        emoji: "Ikona".into(), emoji_ax: "Emoji przestrzeni".into(), emoji_placeholder: "Wpisz emoji".into(), more_emoji: "Więcej emoji…".into(),
-        more: "Więcej opcji".into(), manage: "Zarządzaj profilami".into(), import_label: "Importuj z przeglądarki…".into(), remove_label: "Usuń przestrzeń".into(),
+        name_label: t("Nazwa").into(), placeholder: t("Np. Projekt lub Klient").into(),
+        profile_label: t("Profil przeglądania").into(), profile_ax: t("Profil przestrzeni").into(),
+        profile_hint: t("Przestrzenie z tym samym profilem dzielą logowania i cookies. Zmiana profilu zamknie karty tej przestrzeni.").into(),
+        save_hint: t("Zapisz poniżej nazwę i profil. Wygląd zapisuje się od razu.").into(),
+        close: t("Zamknij ustawienia przestrzeni").into(), appearance: t("Wygląd · zapisuje się od razu").into(),
+        color: t("Kolor").into(), color_ax: t("Kolor przestrzeni #RRGGBB").into(),
+        emoji: t("Ikona").into(), emoji_ax: t("Emoji przestrzeni").into(), emoji_placeholder: t("Wpisz emoji").into(), more_emoji: t("Więcej emoji…").into(),
+        more: t("Więcej opcji").into(), manage: t("Zarządzaj profilami").into(), import_label: t("Importuj z przeglądarki…").into(), remove_label: t("Usuń przestrzeń").into(),
     }
 }
 fn workspace_appearance_error(kind: u32) -> String {
-    match kind { 0 => "Nie udało się zapisać ustawień", 1 => "Nie udało się zapisać koloru", 2 => "Nie udało się zapisać emoji", _ => "Podaj kolor #RRGGBB" }.into()
+    match kind { 0 => t("Nie udało się zapisać ustawień"), 1 => t("Nie udało się zapisać koloru"), 2 => t("Nie udało się zapisać emoji"), _ => t("Podaj kolor #RRGGBB") }.into()
 }
 const WORKSPACE_CONFIGURATION_ERROR: &str = "Nie udało się odczytać lub zapisać przestrzeni.";
 impl WorkspaceForm {
@@ -809,43 +808,43 @@ impl WorkspaceForm {
     fn creating(&self) -> bool { self.creating }
     fn view(&self, name: &str, profile_name: &str, ready: bool, busy: bool, count: usize) -> ffi::WorkspaceFormView {
         let enabled=ready&&!busy&&!self.submitting;
-        ffi::WorkspaceFormView { creating:self.creating, title:if self.creating { "Nowa przestrzeń".into() } else { name.into() }, description:format!("Profil: {}",profile_name),
-            save_label:if self.creating { "Utwórz przestrzeń" } else { "Zapisz nazwę i profil" }.into(),
-            secondary_label:if self.creating { "Anuluj" } else { "Nowa przestrzeń…" }.into(),
+        ffi::WorkspaceFormView { creating:self.creating, title:if self.creating { t("Nowa przestrzeń").into() } else { name.into() }, description:tf("Profil: {}",&[profile_name]),
+            save_label:if self.creating { t("Utwórz przestrzeń") } else { t("Zapisz nazwę i profil") }.into(),
+            secondary_label:if self.creating { t("Anuluj") } else { t("Nowa przestrzeń…") }.into(),
             appearance:!self.creating, enabled, remove_enabled:enabled&&!self.creating&&count>1, error:self.error.clone() }
     }
-    fn set_configuration_error(&mut self, error: bool) { self.error=if error { WORKSPACE_CONFIGURATION_ERROR.into() } else { String::new() }; }
+    fn set_configuration_error(&mut self, error: bool) { self.error=if error { t(WORKSPACE_CONFIGURATION_ERROR).into() } else { String::new() }; }
     fn submit(&mut self, raw_name: &str, profile: &str, current: &str, ready: bool, busy: bool, composing: bool, profiles: &[ffi::ProfileOption], workspaces: &[ffi::ProfileUse]) -> ffi::WorkspaceFormRequest {
         let none=||ffi::WorkspaceFormRequest { action:ffi::WorkspaceFormAction::None, workspace:String::new(), name:String::new(), profile:String::new() };
         if composing||self.submitting { return none(); }
-        if !ready||busy { self.error="Poczekaj na zakończenie zapisywania.".into(); return none(); }
-        if self.workspace.is_empty()||self.workspace!=current||!workspaces.iter().any(|w|w.workspace==self.workspace) { self.error="Przestrzeń zmieniła się. Otwórz ustawienia ponownie.".into(); return none(); }
+        if !ready||busy { self.error=t("Poczekaj na zakończenie zapisywania.").into(); return none(); }
+        if self.workspace.is_empty()||self.workspace!=current||!workspaces.iter().any(|w|w.workspace==self.workspace) { self.error=t("Przestrzeń zmieniła się. Otwórz ustawienia ponownie.").into(); return none(); }
         let name=raw_name.trim_matches(|c|matches!(c,' '|'\t'|'\n'|'\r'|'\x0b'|'\x0c'));
-        if name.is_empty() { self.error="Podaj nazwę przestrzeni.".into(); return none(); }
-        if profile.is_empty()||!profiles.iter().any(|p|p.id==profile) { self.error="Wybierz istniejący profil.".into(); return none(); }
+        if name.is_empty() { self.error=t("Podaj nazwę przestrzeni.").into(); return none(); }
+        if profile.is_empty()||!profiles.iter().any(|p|p.id==profile) { self.error=t("Wybierz istniejący profil.").into(); return none(); }
         self.error.clear(); self.submitting=true;
         ffi::WorkspaceFormRequest { action:if self.creating { ffi::WorkspaceFormAction::Create } else { ffi::WorkspaceFormAction::Edit }, workspace:self.workspace.clone(), name:name.into(), profile:profile.into() }
     }
     fn finish_attempt(&mut self, accepted: bool) {
         self.submitting=false;
         if accepted { self.creating=false; self.error.clear(); }
-        else if self.error.is_empty() { self.error=WORKSPACE_CONFIGURATION_ERROR.into(); }
+        else if self.error.is_empty() { self.error=t(WORKSPACE_CONFIGURATION_ERROR).into(); }
     }
 }
 
 pub struct ProfileForm { selected:String, workspace:String, confirmation:String, status:String, submitting:bool }
 fn new_profile_form()->Box<ProfileForm>{Box::new(ProfileForm{selected:String::new(),workspace:String::new(),confirmation:String::new(),status:String::new(),submitting:false})}
-fn profile_copy()->ffi::ProfileCopy {ffi::ProfileCopy{title:"Profile przeglądania".into(),hint:"Każdy profil ma osobne logowania, cookies i dane stron. Jeden profil może obsługiwać kilka przestrzeni.".into(),name_label:"Nowy profil".into(),name_ax:"Nazwa nowego profilu".into(),placeholder:"Np. Klient, Projekt, Konto testowe".into(),rename_ax:"Nowa nazwa profilu".into(),create:"Utwórz profil".into(),rename:"Zapisz".into(),cancel:"Anuluj".into(),remove_label:"Usuń profil i dane".into(),back:"Wróć do przestrzeni".into()}}
-fn spaces_count(n:usize)->String{let (t,h)=(n%10,n%100);if n==1{"1 przestrzeń".into()}else if (2..=4).contains(&t)&&!(12..=14).contains(&h){format!("{n} przestrzenie")}else{format!("{n} przestrzeni")}}
+fn profile_copy()->ffi::ProfileCopy {ffi::ProfileCopy{title:t("Profile przeglądania").into(),hint:t("Każdy profil ma osobne logowania, cookies i dane stron. Jeden profil może obsługiwać kilka przestrzeni.").into(),name_label:t("Nowy profil").into(),name_ax:t("Nazwa nowego profilu").into(),placeholder:t("Np. Klient, Projekt, Konto testowe").into(),rename_ax:t("Nowa nazwa profilu").into(),create:t("Utwórz profil").into(),rename:t("Zapisz").into(),cancel:t("Anuluj").into(),remove_label:t("Usuń profil i dane").into(),back:t("Wróć do przestrzeni").into()}}
+fn spaces_count(n:usize)->String{let (u,h)=(n%10,n%100);if n==1{t("1 przestrzeń").into()}else if (2..=4).contains(&u)&&!(12..=14).contains(&h){tf("{} przestrzenie",&[&n.to_string()])}else{tf("{} przestrzeni",&[&n.to_string()])}}
 fn profile_rows(profiles:&[ffi::ProfileOption],uses:&[ffi::ProfileUse],current:&str)->Vec<ffi::ProfileRow>{
     profiles.iter().map(|p|{
         let names:Vec<&str>=uses.iter().filter(|w|w.profile==p.id).map(|w|w.name.as_str()).collect();
-        let usage=if names.is_empty(){"Nieprzypisany do żadnej przestrzeni".to_string()}else{format!("{}: {}",spaces_count(names.len()),names.join(", "))};
+        let usage=if names.is_empty(){t("Nieprzypisany do żadnej przestrzeni").to_string()}else{format!("{}: {}",spaces_count(names.len()),names.join(", "))};
         let current=!current.is_empty()&&p.id==current;
-        ffi::ProfileRow{id:p.id.clone(),name:p.name.clone(),initial:p.name.chars().next().map(|c|c.to_uppercase().collect()).unwrap_or_default(),detail:if current{format!("Ta przestrzeń · {usage}")}else{usage},current,rename_ax:format!("Zmień nazwę profilu {}",p.name),remove_ax:format!("Usuń profil {}",p.name)}
+        ffi::ProfileRow{id:p.id.clone(),name:p.name.clone(),initial:p.name.chars().next().map(|c|c.to_uppercase().collect()).unwrap_or_default(),detail:if current{tf("Ta przestrzeń · {}",&[&usage])}else{usage},current,rename_ax:tf("Zmień nazwę profilu {}",&[&p.name]),remove_ax:tf("Usuń profil {}",&[&p.name])}
     }).collect()
 }
-fn profile_confirm_copy(name:&str)->String{format!("Usunąć profil „{name}”? Logowania, cookies i dane stron tego profilu zostaną trwale usunięte. Tej operacji nie można cofnąć.")}
+fn profile_confirm_copy(name:&str)->String{tf("Usunąć profil „{}”? Logowania, cookies i dane stron tego profilu zostaną trwale usunięte. Tej operacji nie można cofnąć.",&[name])}
 impl ProfileForm {
     fn open(&mut self,selected:&str,workspace:&str){self.selected=selected.into();self.workspace=workspace.into();self.confirmation.clear();self.status.clear();self.submitting=false;}
     fn select(&mut self,selected:&str){self.selected=selected.into();self.workspace.clear();self.confirmation.clear();self.status.clear();}
@@ -861,24 +860,24 @@ impl ProfileForm {
     }
     fn request(&mut self,action:u32,raw_name:&str,ready:bool,busy:bool,profiles:&[ffi::ProfileOption],uses:&[ffi::ProfileUse])->ffi::ProfileRequest {
         let none=||ffi::ProfileRequest{action:ffi::ProfileAction::None,id:String::new(),name:String::new(),workspace:String::new()};
-        if !ready||busy||self.submitting{self.confirmation.clear();self.status="Poczekaj na zakończenie operacji na profilach.".into();return none();}
+        if !ready||busy||self.submitting{self.confirmation.clear();self.status=t("Poczekaj na zakończenie operacji na profilach.").into();return none();}
         if action>2{return none();}
         let selected=profiles.iter().find(|p|p.id==self.selected);
         if action==2 {
-            if selected.is_none(){self.confirmation.clear();self.status="Wybierz istniejący profil.".into();return none();}
-            if uses.iter().any(|w|w.profile==self.selected){self.confirmation.clear();self.status=format!("Profil jest używany przez: {}. Przypisz tym przestrzeniom inny profil, aby go usunąć.",self.used_names(uses));return none();}
-            if profiles.len()<=1{self.confirmation.clear();self.status="Nie można usunąć ostatniego profilu.".into();return none();}
+            if selected.is_none(){self.confirmation.clear();self.status=t("Wybierz istniejący profil.").into();return none();}
+            if uses.iter().any(|w|w.profile==self.selected){self.confirmation.clear();self.status=tf("Profil jest używany przez: {}. Przypisz tym przestrzeniom inny profil, aby go usunąć.",&[&self.used_names(uses)]);return none();}
+            if profiles.len()<=1{self.confirmation.clear();self.status=t("Nie można usunąć ostatniego profilu.").into();return none();}
             if self.confirmation!=self.selected {self.confirmation=self.selected.clone();self.status.clear();return ffi::ProfileRequest{action:ffi::ProfileAction::ConfirmDelete,id:self.selected.clone(),name:String::new(),workspace:String::new()};}
             self.confirmation.clear();self.status.clear();self.submitting=true;return ffi::ProfileRequest{action:ffi::ProfileAction::Delete,id:self.selected.clone(),name:String::new(),workspace:String::new()};
         }
         self.confirmation.clear();let name=raw_name.trim();
-        if name.is_empty(){self.status="Podaj nazwę profilu.".into();return none();}
-        if action==1&&(selected.is_none()||!self.workspace.is_empty()){self.status="Wybierz profil w trybie zarządzania.".into();return none();}
-        if action==0&&!self.workspace.is_empty()&&!uses.iter().any(|w|w.workspace==self.workspace){self.status="Przestrzeń nie jest już dostępna.".into();return none();}
-        if profiles.iter().any(|p|(action==0||p.id!=self.selected)&&p.name.eq_ignore_ascii_case(name)){self.status="Profil o tej nazwie już istnieje.".into();return none();}
+        if name.is_empty(){self.status=t("Podaj nazwę profilu.").into();return none();}
+        if action==1&&(selected.is_none()||!self.workspace.is_empty()){self.status=t("Wybierz profil w trybie zarządzania.").into();return none();}
+        if action==0&&!self.workspace.is_empty()&&!uses.iter().any(|w|w.workspace==self.workspace){self.status=t("Przestrzeń nie jest już dostępna.").into();return none();}
+        if profiles.iter().any(|p|(action==0||p.id!=self.selected)&&p.name.eq_ignore_ascii_case(name)){self.status=t("Profil o tej nazwie już istnieje.").into();return none();}
         self.status.clear();self.submitting=true;ffi::ProfileRequest{action:if action==0{ffi::ProfileAction::Create}else{ffi::ProfileAction::Rename},id:if action==0{String::new()}else{self.selected.clone()},name:name.into(),workspace:if action==0{self.workspace.clone()}else{String::new()}}
     }
-    fn finish_attempt(&mut self,accepted:bool){self.submitting=false;if !accepted&&self.status.is_empty(){self.status="Nie udało się wykonać operacji na profilu. Spróbuj ponownie.".into();}}
+    fn finish_attempt(&mut self,accepted:bool){self.submitting=false;if !accepted&&self.status.is_empty(){self.status=t("Nie udało się wykonać operacji na profilu. Spróbuj ponownie.").into();}}
     // Leaves rename or delete confirmation; the selection stays on its row.
     fn cancel(&mut self){self.confirmation.clear();self.status.clear();}
 }
@@ -938,20 +937,20 @@ fn select_layout(width:i32,height:i32,text_width:i32,control_height:i32,rtl:bool
 // Display data only. The native manager retains frame/origin/profile authority,
 // modal/default-key policy, generation checks and renderer callbacks.
 fn page_dialog_copy(kind:u32,unload:bool,origin:&str,profile:&str,message:&[u16])->ffi::PageDialogCopy {
-    ffi::PageDialogCopy{title:format!("{}{}",if unload{"Opuścić stronę? · "}else{"Strona: "},origin),identity:format!("Profil: {}",profile),message:message.iter().copied().take(8192).collect(),accept:if unload{"Opuść stronę"}else{"OK"}.into(),cancel:if unload{"Zostań"}else{"Anuluj"}.into(),show_cancel:kind!=0,default_cancel:unload,prompt:kind==2}
+    ffi::PageDialogCopy{title:if unload{tf("Opuścić stronę? · {}",&[origin])}else{tf("Strona: {}",&[origin])},identity:tf("Profil: {}",&[profile]),message:message.iter().copied().take(8192).collect(),accept:if unload{t("Opuść stronę")}else{"OK"}.into(),cancel:if unload{t("Zostań")}else{t("Anuluj")}.into(),show_cancel:kind!=0,default_cancel:unload,prompt:kind==2}
 }
 
 // Page copy is UI data only; context is a display name, never store authority.
 fn tools_copy(page:usize,context:&str)->ffi::ToolsCopy{
     match page.min(3){
-        0=>ffi::ToolsCopy{title:if context.is_empty(){"Time Machine".into()}else{format!("Time Machine · {}",context)},intro:"Snapshot zapisuje karty, foldery i Split View w tej przestrzeni. Przywrócenie przeładuje strony; formularze i historia Wstecz nie są częścią snapshotu. Poprzedni układ otrzyma punkt przywracania.".into(),tail:"Uśpienie zwalnia strony tej przestrzeni z pamięci i przełącza do innej. Kliknięcie jej kropki wznowi układ. Niezapisane formularze zostaną utracone.".into(),initial_status:"Użyj przycisków poniżej pól lub Enter, aby zatwierdzić zmiany. Dane są zapisywane lokalnie.".into(),fields:vec!["Nazwa snapshotu, np. Research przed deployem".into(),"Szukaj snapshotów i zamkniętych kart".into()],pickers:vec!["Zapisane snapshoty".into(),"Zamknięte karty".into()],headings:vec!["Snapshoty · 30 własnych + 30 automatycznych".into(),"Ostatnio zamknięte · do 100 kart".into()],actions:vec!["Zapisz snapshot".into(),"Przywróć wybrany układ".into(),"Usuń wybrany snapshot".into(),"Przywróć wybraną kartę".into(),"Uśpij tę przestrzeń".into()],choices:vec![]},
-        1=>ffi::ToolsCopy{title:"Skróty klawiszowe".into(),intro:"Schemat inspirowany Arc. Wybierz akcję, nagraj kombinację lub wpisz np. Cmd+Shift+J. Puste pole wyłącza skrót. Escape, skróty edycji tekstu i systemowe pozostają zarezerwowane.".into(),tail:"".into(),initial_status:"Użyj przycisków poniżej pól lub Enter, aby zatwierdzić zmiany. Dane są zapisywane lokalnie.".into(),fields:vec!["Kombinacja, np. Cmd+Shift+J".into()],pickers:vec!["Akcja skrótu".into()],headings:vec![],actions:vec!["Nagraj kombinację…".into(),"Zapisz skrót".into(),"Wyłącz wybrany skrót".into(),"Przywróć schemat Arc".into()],choices:vec![]},
-        2=>ffi::ToolsCopy{title:"Wyszukiwarki i prefiksy".into(),intro:"W pasku adresu wpisz prefiks i zapytanie, np. g koty lub w Warszawa. Szablon musi być adresem HTTP(S) z jednym znacznikiem {query}. Zapytania są kodowane automatycznie.".into(),tail:"".into(),initial_status:"Użyj przycisków poniżej pól lub Enter, aby zatwierdzić zmiany. Dane są zapisywane lokalnie.".into(),fields:vec!["Nazwa wyszukiwarki".into(),"Prefiks (a–z, 0–9)".into(),"Adres z {query}".into()],pickers:vec!["Wyszukiwarka do edycji".into()],headings:vec![],actions:vec!["Zapisz wyszukiwarkę".into(),"Ustaw jako domyślną".into(),"Usuń wyszukiwarkę".into()],choices:vec![TOOLS_NEW_PROVIDER.into()]},
-        3=>ffi::ToolsCopy{title:"Historia przeglądania".into(),intro:format!("Profil: {}",context),tail:"".into(),initial_status:"Odczytywanie historii…".into(),fields:vec!["Szukaj w historii".into()],pickers:vec!["Zakres czyszczenia historii".into()],headings:vec![],actions:vec!["Wyczyść historię…".into(),"Pokaż więcej".into()],choices:vec!["Ostatnia godzina".into(),"Ostatnie 24 godziny".into(),"Ostatnie 7 dni".into(),"Cały okres".into()]},
+        0=>ffi::ToolsCopy{title:if context.is_empty(){"Time Machine".into()}else{tf("Time Machine · {}",&[context])},intro:t("Snapshot zapisuje karty, foldery i Split View w tej przestrzeni. Przywrócenie przeładuje strony; formularze i historia Wstecz nie są częścią snapshotu. Poprzedni układ otrzyma punkt przywracania.").into(),tail:t("Uśpienie zwalnia strony tej przestrzeni z pamięci i przełącza do innej. Kliknięcie jej kropki wznowi układ. Niezapisane formularze zostaną utracone.").into(),initial_status:t("Użyj przycisków poniżej pól lub Enter, aby zatwierdzić zmiany. Dane są zapisywane lokalnie.").into(),fields:vec![t("Nazwa snapshotu, np. Research przed deployem").into(),t("Szukaj snapshotów i zamkniętych kart").into()],pickers:vec![t("Zapisane snapshoty").into(),t("Zamknięte karty").into()],headings:vec![t("Snapshoty · 30 własnych + 30 automatycznych").into(),t("Ostatnio zamknięte · do 100 kart").into()],actions:vec![t("Zapisz snapshot").into(),t("Przywróć wybrany układ").into(),t("Usuń wybrany snapshot").into(),t("Przywróć wybraną kartę").into(),t("Uśpij tę przestrzeń").into()],choices:vec![]},
+        1=>ffi::ToolsCopy{title:t("Skróty klawiszowe").into(),intro:t("Schemat inspirowany Arc. Wybierz akcję, nagraj kombinację lub wpisz np. Cmd+Shift+J. Puste pole wyłącza skrót. Escape, skróty edycji tekstu i systemowe pozostają zarezerwowane.").into(),tail:"".into(),initial_status:t("Użyj przycisków poniżej pól lub Enter, aby zatwierdzić zmiany. Dane są zapisywane lokalnie.").into(),fields:vec![t("Kombinacja, np. Cmd+Shift+J").into()],pickers:vec![t("Akcja skrótu").into()],headings:vec![],actions:vec![t("Nagraj kombinację…").into(),t("Zapisz skrót").into(),t("Wyłącz wybrany skrót").into(),t("Przywróć schemat Arc").into()],choices:vec![]},
+        2=>ffi::ToolsCopy{title:t("Wyszukiwarki i prefiksy").into(),intro:t("W pasku adresu wpisz prefiks i zapytanie, np. g koty lub w Warszawa. Szablon musi być adresem HTTP(S) z jednym znacznikiem {query}. Zapytania są kodowane automatycznie.").into(),tail:"".into(),initial_status:t("Użyj przycisków poniżej pól lub Enter, aby zatwierdzić zmiany. Dane są zapisywane lokalnie.").into(),fields:vec![t("Nazwa wyszukiwarki").into(),t("Prefiks (a–z, 0–9)").into(),t("Adres z {query}").into()],pickers:vec![t("Wyszukiwarka do edycji").into()],headings:vec![],actions:vec![t("Zapisz wyszukiwarkę").into(),t("Ustaw jako domyślną").into(),t("Usuń wyszukiwarkę").into()],choices:vec![tools_new_provider().into()]},
+        3=>ffi::ToolsCopy{title:t("Historia przeglądania").into(),intro:tf("Profil: {}",&[context]),tail:"".into(),initial_status:t("Odczytywanie historii…").into(),fields:vec![t("Szukaj w historii").into()],pickers:vec![t("Zakres czyszczenia historii").into()],headings:vec![],actions:vec![t("Wyczyść historię…").into(),t("Pokaż więcej").into()],choices:vec![t("Ostatnia godzina").into(),t("Ostatnie 24 godziny").into(),t("Ostatnie 7 dni").into(),t("Cały okres").into()]},
         _=>unreachable!(),
     }
 }
-fn tools_clear_label(busy:bool)->String{if busy{"Czyszczenie…"}else{"Wyczyść historię…"}.into()}
+fn tools_clear_label(busy:bool)->String{if busy{t("Czyszczenie…")}else{t("Wyczyść historię…")}.into()}
 fn tools_clear_controls(busy:bool)->ffi::ToolsClearControls{ffi::ToolsClearControls{label:tools_clear_label(busy),enabled:!busy}}
 
 // UI state only. Native code supplies committed, normalized UTF-16 and retains
@@ -961,7 +960,7 @@ fn tools_clear_controls(busy:bool)->ffi::ToolsClearControls{ffi::ToolsClearContr
 struct ToolShortcutChoice { key:String, id:String, chord:Vec<u16> }
 struct ToolProviderChoice { key:String, item:Option<ffi::ToolsProviderItem> }
 fn tools_invalid_choice()->ffi::ToolsChoiceDraft {ffi::ToolsChoiceDraft{valid:false,page:0,create:false,target:String::new(),chord:vec![],name:vec![],keyword:vec![],url:vec![],stop_recording:false}}
-const TOOLS_NEW_PROVIDER:&str="Dodaj nową wyszukiwarkę…";
+fn tools_new_provider()->&'static str{t("Dodaj nową wyszukiwarkę…")}
 pub struct ToolsForm {
     page: usize,
     recording: bool,
@@ -979,7 +978,7 @@ pub struct ToolsForm {
 }
 fn tools_status(status: ffi::ToolsStatus) -> String {
     use ffi::ToolsStatus as S;
-    match status {S::HistoryReading=>"Odczytywanie historii…",S::HistorySearching=>"Wyszukiwanie historii…",S::WriteFailed=>"Nie udało się zapisać ustawień na dysku.",_=>""}.into()
+    match status {S::HistoryReading=>t("Odczytywanie historii…"),S::HistorySearching=>t("Wyszukiwanie historii…"),S::WriteFailed=>t("Nie udało się zapisać ustawień na dysku."),_=>""}.into()
 }
 fn new_tools_form() -> Box<ToolsForm> {
     Box::new(ToolsForm { page: 0, recording: false, history_query: vec![],
@@ -1018,9 +1017,9 @@ impl ToolsForm {
         let rejected=||ffi::ToolsCaptureResult{admitted:false,stop_recording:false,accept_chord:false,status:String::new()};
         if !self.recording {return rejected();}
         let (stop,accept,status)=match capture {
-            C::Escape=>(true,false,"Nagrywanie anulowane."),
-            C::Invalid=>(false,false,"Użyj Cmd / Ctrl / Alt i klawisza. Skróty edycji tekstu oraz systemowe są zarezerwowane."),
-            C::Valid=>(true,true,"Kombinacja przechwycona. Wybierz Zapisz skrót."),
+            C::Escape=>(true,false,t("Nagrywanie anulowane.")),
+            C::Invalid=>(false,false,t("Użyj Cmd / Ctrl / Alt i klawisza. Skróty edycji tekstu oraz systemowe są zarezerwowane.")),
+            C::Valid=>(true,true,t("Kombinacja przechwycona. Wybierz Zapisz skrót.")),
             _=>return rejected(),
         };
         if stop {self.recording=false;}
@@ -1041,16 +1040,16 @@ impl ToolsForm {
         let sync_recording=(action!=10&&self.recording)||command==10;
         if action!=10 {self.recording=false;} else if command==10 {self.recording=true;}
         ffi::ToolsDispatch{admitted:true,action:command,recording:self.recording,sync_recording,
-            record_status:if command==10{"Naciśnij kombinację. Escape anuluje nagrywanie.".into()}else{String::new()}}
+            record_status:if command==10{t("Naciśnij kombinację. Escape anuluje nagrywanie.").into()}else{String::new()}}
     }
     fn tools_outcome(&self,ok:bool,pending:bool)->ffi::ToolsOutcome {
-        let status=if ok {if pending{"Oczekiwanie na zgodę na opuszczenie strony…"}else{"Gotowe. Zmiany zostały zastosowane."}}
-            else {match self.page {1=>"Nieprawidłowa lub zajęta kombinacja. Zmień ją albo wyłącz skrót drugiej akcji.",2=>"Sprawdź unikalny prefiks, nazwę i adres z {query}. Musi pozostać co najmniej jedna wyszukiwarka.",_=>"Nie można wykonać operacji. Podaj nazwę, wybierz pozycję zgodną z profilem lub zostaw drugą przestrzeń do przełączenia."}};
+        let status=if ok {if pending{t("Oczekiwanie na zgodę na opuszczenie strony…")}else{t("Gotowe. Zmiany zostały zastosowane.")}}
+            else {match self.page {1=>t("Nieprawidłowa lub zajęta kombinacja. Zmień ją albo wyłącz skrót drugiej akcji."),2=>t("Sprawdź unikalny prefiks, nazwę i adres z {query}. Musi pozostać co najmniej jedna wyszukiwarka."),_=>t("Nie można wykonać operacji. Podaj nazwę, wybierz pozycję zgodną z profilem lub zostaw drugą przestrzeń do przełączenia.")}};
         ffi::ToolsOutcome{refresh:ok,status:status.into()}
     }
     fn tools_history_view(&self,count:usize,more:bool,error:bool)->ffi::ToolsHistoryView {
-        let empty=if count!=0 {""}else if error{"Nie udało się odczytać historii."}else if self.history_query.is_empty(){"Brak historii przeglądania w tym profilu."}else{"Brak wyników dla tego wyszukiwania."};
-        ffi::ToolsHistoryView{empty:empty.into(),status:if error{"Spróbuj ponownie otworzyć historię.".into()}else{format!("Wyświetlono wpisów: {}",count)},more_visible:more&&!error,more_enabled:!error}
+        let empty=if count!=0 {""}else if error{t("Nie udało się odczytać historii.")}else if self.history_query.is_empty(){t("Brak historii przeglądania w tym profilu.")}else{t("Brak wyników dla tego wyszukiwania.")};
+        ffi::ToolsHistoryView{empty:empty.into(),status:if error{t("Spróbuj ponownie otworzyć historię.").into()}else{tf("Wyświetlono wpisów: {}",&[&count.to_string()])},more_visible:more&&!error,more_enabled:!error}
     }
 
     fn tools_history_edit(&mut self, query: Vec<u16>) {
@@ -1072,9 +1071,9 @@ impl ToolsForm {
         match self.page {
             0=>{
                 nodes.push(tools_form_node(K::Editor,R::SnapshotName,&copy.fields[0],0));nodes.push(tools_form_node(K::Action,R::None,&copy.actions[0],1));nodes.push(tools_form_node(K::Editor,R::TimelineFilter,&copy.fields[1],0));
-                nodes.push(tools_form_node(K::Heading,R::None,&copy.headings[0],0));let mut picker=tools_form_node(K::Choice,R::SnapshotChoice,&copy.pickers[0],0);picker.choices.push("Brak pozycji".into());nodes.push(picker);
+                nodes.push(tools_form_node(K::Heading,R::None,&copy.headings[0],0));let mut picker=tools_form_node(K::Choice,R::SnapshotChoice,&copy.pickers[0],0);picker.choices.push(t("Brak pozycji").into());nodes.push(picker);
                 nodes.push(tools_form_node(K::Action,R::None,&copy.actions[1],2));nodes.push(tools_form_node(K::Action,R::None,&copy.actions[2],3));nodes.push(tools_form_node(K::Heading,R::None,&copy.headings[1],0));
-                let mut picker=tools_form_node(K::Choice,R::ClosedChoice,&copy.pickers[1],0);picker.choices.push("Brak pozycji".into());nodes.push(picker);nodes.push(tools_form_node(K::Action,R::None,&copy.actions[3],4));nodes.push(tools_form_node(K::Hint,R::None,&copy.tail,0));nodes.push(tools_form_node(K::Action,R::None,&copy.actions[4],5));
+                let mut picker=tools_form_node(K::Choice,R::ClosedChoice,&copy.pickers[1],0);picker.choices.push(t("Brak pozycji").into());nodes.push(picker);nodes.push(tools_form_node(K::Action,R::None,&copy.actions[3],4));nodes.push(tools_form_node(K::Hint,R::None,&copy.tail,0));nodes.push(tools_form_node(K::Action,R::None,&copy.actions[4],5));
                 for item in sleeping{let mut text=item.title;text.extend(" · ".encode_utf16());text.extend(item.detail);let mut node=tools_form_node(K::Hint,R::None,"",0);node.text=text;nodes.push(node);}
             }
             1=>{nodes.push(tools_form_node(K::Choice,R::ShortcutChoice,&copy.pickers[0],0));nodes.push(tools_form_node(K::Editor,R::ShortcutChord,&copy.fields[0],0));for (i,text) in copy.actions.iter().enumerate(){nodes.push(tools_form_node(K::Action,R::None,text,10+i as i32));}}
@@ -1093,16 +1092,16 @@ impl ToolsForm {
         if let Some(epoch)=self.choice_epoch.checked_add(1){self.choice_epoch=epoch;
             for item in items {let key=format!("form:{}:1:{}",epoch,choices.len());let mut label=item.title;label.extend(" — ".encode_utf16());label.extend_from_slice(&item.chord);self.shortcut_choices.push(ToolShortcutChoice{key:key.clone(),id:item.id,chord:item.chord});choices.push(ffi::ToolsFormChoice{key,label});}
         }
-        let enabled=!choices.is_empty();if enabled{self.active_choice=choices[0].key.clone();}else{choices.push(ffi::ToolsFormChoice{key:"empty".into(),label:"Brak pozycji".encode_utf16().collect()});}
+        let enabled=!choices.is_empty();if enabled{self.active_choice=choices[0].key.clone();}else{choices.push(ffi::ToolsFormChoice{key:"empty".into(),label:t("Brak pozycji").encode_utf16().collect()});}
         ffi::ToolsFormChoices{choices,enabled}
     }
     fn tools_provider_choices(&mut self,items:Vec<ffi::ToolsProviderItem>)->ffi::ToolsFormChoices {
         self.provider_choices.clear();self.active_choice.clear();let mut choices=vec![];
         if let Some(epoch)=self.choice_epoch.checked_add(1){self.choice_epoch=epoch;
-            let key=format!("form:{}:2:0",epoch);self.provider_choices.push(ToolProviderChoice{key:key.clone(),item:None});choices.push(ffi::ToolsFormChoice{key,label:TOOLS_NEW_PROVIDER.encode_utf16().collect()});
-            for item in items {let key=format!("form:{}:2:{}",epoch,choices.len());let mut label=item.keyword.clone();label.extend(" · ".encode_utf16());label.extend_from_slice(&item.name);if item.default_provider{label.extend(" · domyślna".encode_utf16());}self.provider_choices.push(ToolProviderChoice{key:key.clone(),item:Some(item)});choices.push(ffi::ToolsFormChoice{key,label});}
+            let key=format!("form:{}:2:0",epoch);self.provider_choices.push(ToolProviderChoice{key:key.clone(),item:None});choices.push(ffi::ToolsFormChoice{key,label:tools_new_provider().encode_utf16().collect()});
+            for item in items {let key=format!("form:{}:2:{}",epoch,choices.len());let mut label=item.keyword.clone();label.extend(" · ".encode_utf16());label.extend_from_slice(&item.name);if item.default_provider{label.extend(t(" · domyślna").encode_utf16());}self.provider_choices.push(ToolProviderChoice{key:key.clone(),item:Some(item)});choices.push(ffi::ToolsFormChoice{key,label});}
         }
-        let enabled=!choices.is_empty();if enabled{self.active_choice=choices[0].key.clone();}else{choices.push(ffi::ToolsFormChoice{key:"empty".into(),label:"Brak pozycji".encode_utf16().collect()});}
+        let enabled=!choices.is_empty();if enabled{self.active_choice=choices[0].key.clone();}else{choices.push(ffi::ToolsFormChoice{key:"empty".into(),label:t("Brak pozycji").encode_utf16().collect()});}
         ffi::ToolsFormChoices{choices,enabled}
     }
     fn tools_choice_select(&mut self,key:&str)->ffi::ToolsChoiceDraft {
@@ -1137,7 +1136,7 @@ impl ToolsForm {
             }
         }
         let enabled=!choices.is_empty();
-        if !enabled{choices.push(ffi::ToolsTimelineChoice{key:"empty".into(),label:"Brak zapisanych pozycji".encode_utf16().collect()});}
+        if !enabled{choices.push(ffi::ToolsTimelineChoice{key:"empty".into(),label:t("Brak zapisanych pozycji").encode_utf16().collect()});}
         ffi::ToolsTimelineList{choices,enabled}
     }
     fn tools_timeline_target(&self,closed:bool,key:&str)->String {
@@ -1159,82 +1158,82 @@ impl ToolsForm {
 // native store; a descriptor never authorizes a write or a platform operation.
 fn preference_spec(category:usize,kind:ffi::PreferenceRowKind,key:&str,title:&str,detail:&str,choices:Vec<String>,placeholder:&str,action:ffi::PreferenceActionKind)->ffi::PreferenceSpec {
     use ffi::PreferenceRowKind as K;
-    let (button,button_ax)=match kind {K::Text=>("Zapisz",format!("Zapisz: {}",title)),K::Action=>("Otwórz →",title.into()),K::Directory=>("Zmień…","Zmień folder pobierania".into()),_=>("",String::new())};
-    ffi::PreferenceSpec{category,kind,key:key.into(),title:title.into(),detail:detail.into(),choices,placeholder:placeholder.into(),action,button:button.into(),button_ax,tooltip:if kind==K::ShortcutHint{"Skróty klawiaturowe Zitter".into()}else{String::new()}}
+    let (button,button_ax)=match kind {K::Text=>(t("Zapisz"),tf("Zapisz: {}",&[title])),K::Action=>(t("Otwórz →"),title.into()),K::Directory=>(t("Zmień…"),t("Zmień folder pobierania").into()),_=>("",String::new())};
+    ffi::PreferenceSpec{category,kind,key:key.into(),title:title.into(),detail:detail.into(),choices,placeholder:placeholder.into(),action,button:button.into(),button_ax,tooltip:if kind==K::ShortcutHint{t("Skróty klawiaturowe Zitter").into()}else{String::new()}}
 }
 fn preference_site_policies(index:usize)->Vec<String> {
-    let mut choices=vec!["Użyj domyślnej".into(),"Zezwalaj".into(),"Blokuj".into()];if index>=4{choices.push("Pytaj".into());}choices
+    let mut choices=vec![t("Użyj domyślnej").into(),t("Zezwalaj").into(),t("Blokuj").into()];if index>=4{choices.push(t("Pytaj").into());}choices
 }
 fn preference_catalogue(system_certificates:bool)->ffi::PreferenceCatalogue {
     use ffi::PreferenceRowKind as K;use ffi::PreferenceActionKind as A;
     let mut rows=vec![];
-    rows.push(preference_spec(0,K::Theme,"","Motyw aplikacji","Kolory interfejsu i stron obsługujących motyw systemowy.",vec!["Systemowy".into(),"Jasny".into(),"Ciemny".into()],"",A::None));
-    rows.push(preference_spec(0,K::Pinned,"","Zawsze widoczny panel kart","Przypnij karty i przestrzenie przy lewej krawędzi.",vec![],"",A::None));
-    rows.push(preference_spec(0,K::Animations,"","Animacje przestrzeni","Płynne przejścia. Systemowe ograniczenie ruchu ma pierwszeństwo.",vec![],"",A::None));
-    rows.push(preference_spec(0,K::WorkspaceNames,"","Nazwa aktywnej przestrzeni","Pokazuj nazwę obok kropki aktywnej przestrzeni na dole panelu kart.",vec![],"",A::None));
-    rows.push(preference_spec(0,K::Language,"","Język interfejsu","Zmiana zadziała po ponownym uruchomieniu Zitter.",vec!["Systemowy".into(),"Polski".into(),"English".into()],"",A::None));
-    rows.push(preference_spec(0,K::FoldersCollapsed,"","Zwinięte foldery przypiętych","Foldery startują zwinięte. Karta otwarta z Command Center pokazuje się pod folderem bez rozwijania reszty.",vec![],"",A::None));
-    rows.push(preference_spec(1,K::Search,"","Domyślna wyszukiwarka","Używana, gdy wpiszesz zapytanie w pasku adresu.",vec!["DuckDuckGo".into(),"Google".into(),"Bing".into()],"",A::None));
-    rows.push(preference_spec(2,K::Toggle,"referrers","Przekazuj adres strony odsyłającej","Nagłówek Referer pomaga witrynie rozpoznać, skąd pochodzi wejście. Wyłączenie może zmienić działanie niektórych serwisów.",vec![],"",A::None));
-    rows.push(preference_spec(2,K::Toggle,"https_only","Zawsze używaj HTTPS","Wymagaj bezpiecznego połączenia. Witryny bez HTTPS mogą wyświetlić ostrzeżenie.",vec![],"",A::None));
-    rows.push(preference_spec(2,K::Toggle,"third_party_cookies","Blokuj cookies innych firm","Ogranicz śledzenie między witrynami. Niektóre logowania mogą wymagać cookies.",vec![],"",A::None));
-    rows.push(preference_spec(2,K::Toggle,"do_not_track","Wysyłaj Do Not Track","Poproś witryny o nieśledzenie. Respektowanie prośby zależy od witryny.",vec![],"",A::None));
-    rows.push(preference_spec(2,K::Toggle,"preconnect","Wstępne połączenia ze stronami","Przygotowuj połączenie podczas wpisywania adresu. Może użyć sieci, nawet jeśli nie otworzysz strony. Ustawienie dotyczy tego profilu.",vec![],"",A::None));
-    rows.push(preference_spec(2,K::Toggle,"link_auditing","Raporty kliknięć w linki","Zezwalaj na wysyłanie sygnałów ping po kliknięciu odnośnika.",vec![],"",A::None));
-    rows.push(preference_spec(3,K::Toggle,"camera","Kamera","Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo.",vec![],"",A::None));
-    rows.push(preference_spec(3,K::Toggle,"microphone","Mikrofon","Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo.",vec![],"",A::None));
-    rows.push(preference_spec(3,K::Toggle,"location","Lokalizacja","Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo.",vec![],"",A::None));
-    rows.push(preference_spec(3,K::Toggle,"notifications","Powiadomienia","Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo.",vec![],"",A::None));
-    rows.push(preference_spec(3,K::Toggle,"clipboard","Odczyt schowka","Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo.",vec![],"",A::None));
-    rows.push(preference_spec(4,K::Picker,"zoom","Domyślne powiększenie","Skala stron bez własnego, zapisanego powiększenia.",vec!["75%".into(),"90%".into(),"100%".into(),"110%".into(),"125%".into(),"150%".into(),"175%".into(),"200%".into()],"",A::None));
-    rows.push(preference_spec(4,K::Picker,"font_size","Rozmiar tekstu","Domyślna wielkość czcionki na stronach.",vec!["12 px".into(),"14 px".into(),"16 px".into(),"18 px".into(),"20 px".into(),"24 px".into()],"",A::None));
-    rows.push(preference_spec(4,K::Picker,"minimum_font_size","Minimalny rozmiar tekstu","Zapobiegaj wyświetlaniu zbyt drobnych liter.",vec!["Bez limitu".into(),"10 px".into(),"12 px".into(),"14 px".into(),"16 px".into(),"18 px".into()],"",A::None));
-    rows.push(preference_spec(4,K::Picker,"fixed_font_size","Rozmiar tekstu o stałej szerokości","Domyślna wielkość tekstu w blokach kodu i elementach monospace.",vec!["12 px".into(),"14 px".into(),"16 px".into(),"18 px".into(),"20 px".into(),"24 px".into()],"",A::None));
-    rows.push(preference_spec(4,K::Text,"font_standard","Czcionka standardowa","Nazwa rodziny czcionki używanej, gdy witryna nie wybierze własnej.",vec![],"Np. Times New Roman",A::None));
-    rows.push(preference_spec(4,K::Text,"font_serif","Czcionka szeryfowa","Rodzina dla tekstu serif. Musi być zainstalowana w systemie.",vec![],"Np. Georgia",A::None));
-    rows.push(preference_spec(4,K::Text,"font_sans","Czcionka bezszeryfowa","Rodzina dla tekstu sans-serif. Musi być zainstalowana w systemie.",vec![],"Np. Arial",A::None));
-    rows.push(preference_spec(4,K::Text,"font_fixed","Czcionka o stałej szerokości","Rodzina monospace, używana m.in. w blokach kodu.",vec![],"Np. Menlo",A::None));
-    rows.push(preference_spec(4,K::Toggle,"javascript","JavaScript","Skrypty potrzebne do działania większości aplikacji internetowych.",vec![],"",A::None));
-    rows.push(preference_spec(4,K::Toggle,"images","Wyświetlaj obrazy","Pozwól witrynom ładować zdjęcia i grafiki.",vec![],"",A::None));
-    rows.push(preference_spec(4,K::Toggle,"popups","Wyskakujące okna","Pozwól stronom otwierać dodatkowe okna. Domyślnie zablokowane.",vec![],"",A::None));
-    rows.push(preference_spec(4,K::Toggle,"sound","Dźwięk na stronach","Domyślna zgoda na odtwarzanie dźwięku.",vec![],"",A::None));
-    rows.push(preference_spec(5,K::Toggle,"save_passwords","Proponuj zapisywanie haseł","Zapisuj dane logowania w menedżerze haseł tego profilu.",vec![],"",A::None));
-    rows.push(preference_spec(5,K::Toggle,"auto_signin","Automatyczne logowanie","Korzystaj z zapisanych danych logowania, gdy witryna na to pozwala.",vec![],"",A::None));
-    rows.push(preference_spec(2,K::Action,"","Historia przeglądania","Wyszukuj odwiedzone strony i czyść historię tego profilu.",vec![],"",A::History));
-    rows.push(preference_spec(0,K::Action,"","Kolor i nazwa przestrzeni","Własny akcent kolorystyczny i przypisanie profilu.",vec![],"",A::Workspace));
-    rows.push(preference_spec(5,K::Action,"","Zapisane hasła","Przeglądaj i usuwaj loginy aktywnego profilu.",vec![],"",A::Passwords));
-    rows.push(preference_spec(5,K::Action,"","Profile przeglądania","Oddziel cookies, historię i dane logowania między profilami.",vec![],"",A::Profiles));
-    rows.push(preference_spec(5,K::Action,"","Import z przeglądarki","Przenieś profile, przestrzenie, foldery i zakładki.",vec![],"",A::Import));
-    rows.push(preference_spec(6,K::Toggle,"download_prompt","Pytaj, gdzie zapisać każdy plik","Wybieraj miejsce zapisu przy każdym pobieraniu.",vec![],"",A::None));
-    rows.push(preference_spec(6,K::Directory,"","Folder pobierania","Domyślne miejsce zapisu plików w tym profilu.",vec![],"",A::None));
-    rows.push(preference_spec(7,K::Text,"accept_languages","Preferowane języki witryn","Kody języków w kolejności preferencji, oddzielone przecinkami. Np. pl, en-US, en. Zmiana dotyczy treści witryn; interfejs Zitter pozostaje po polsku.",vec![],"pl, en-US, en",A::None));
-    rows.push(preference_spec(7,K::Toggle,"spellcheck","Sprawdzaj pisownię","Podkreślaj błędy w polach tekstowych na stronach. Na macOS słowniki wybiera system.",vec![],"",A::None));
-    rows.push(preference_spec(7,K::Toggle,"online_spellcheck","Rozszerzone sprawdzanie pisowni","Wysyłaj wpisywany tekst do usługi Google w celu sprawdzania pisowni. Wymaga włączonego sprawdzania pisowni.",vec![],"",A::None));
-    rows.push(preference_spec(9,K::Toggle,"caret_browsing","Nawigacja kursorem tekstowym","Poruszaj się po tekstach witryn za pomocą klawiatury i zaznaczaj je bez myszy.",vec![],"",A::None));
-    rows.push(preference_spec(9,K::Toggle,"hardware_acceleration","Akceleracja sprzętowa","Używaj procesora graficznego do renderowania. Ustawienie wspólne dla całej aplikacji; działa po ponownym uruchomieniu Zitter.",vec![],"",A::None));
-    rows.push(preference_spec(9,K::Picker,"dns_mode","Bezpieczny DNS","Wspólne dla całej aplikacji. Tryb automatyczny może używać DNS systemowego. Tryb ścisły wymaga wcześniej zapisanego adresu DNS-over-HTTPS.",vec!["Systemowy".into(),"Automatyczny".into(),"Ścisły (DoH)".into()],"",A::None));
-    rows.push(preference_spec(9,K::Text,"dns_templates","Adres serwera DNS-over-HTTPS","Wspólny dla całej aplikacji. Wpisz szablon HTTPS, np. https://dns.google/dns-query{?dns}. Najpierw zapisz adres, następnie włącz tryb ścisły.",vec![],"https://…/dns-query{?dns}",A::None));
-    rows.push(preference_spec(9,K::Action,"","Ustawienia proxy systemowego","Zitter korzysta z konfiguracji proxy systemu operacyjnego.",vec![],"",A::Proxy));
-    if system_certificates{rows.push(preference_spec(9,K::Action,"","Certyfikaty systemowe","Otwórz systemowy magazyn certyfikatów i ustawienia zaufania.",vec![],"",A::Certificates));}
-    rows.push(preference_spec(3,K::SiteEditor,"","Wyjątek dla witryny","Wpisz pełny adres witryny bez ścieżki, np. https://example.com. Wyjątek zastępuje politykę domyślną w tym profilu.",vec![],"",A::None));
-    rows.push(preference_spec(3,K::SiteRules,"","Zapisane wyjątki","Własne reguły możesz usunąć, aby wrócić do ustawień domyślnych. Reguły zarządzane pozostają tylko do odczytu.",vec![],"",A::None));
-    rows.push(preference_spec(8,K::ClearData,"","Wyczyść dane przeglądania","Dotyczy wyłącznie aktywnego profilu. Pobrane pliki, zapisane hasła i przypięte karty pozostaną zachowane. Przed usunięciem zobaczysz potwierdzenie.",vec![],"",A::None));
-    rows.push(preference_spec(1,K::Action,"","Wyszukiwarki i prefiksy","Własne wyszukiwarki: g zapytanie, w hasło, yt film…",vec![],"",A::Providers));
-    rows.push(preference_spec(1,K::Action,"","Skróty klawiszowe","Schemat Arc, własne kombinacje i wykrywanie konfliktów.",vec![],"",A::Shortcuts));
-    rows.push(preference_spec(0,K::Action,"","Time Machine przestrzeni","Snapshoty, zamknięte karty i usypianie całych projektów.",vec![],"",A::TimeMachine));
-    rows.push(preference_spec(1,K::ShortcutHint,"","Szybciej z klawiaturą","⌘ L  adres i wyszukiwanie\n⌘ K  karty, przestrzenie i historia\n⌘ T  nowa karta     ⌘ ,  preferencje",vec![],"",A::None));
+    rows.push(preference_spec(0,K::Theme,"",t("Motyw aplikacji"),t("Kolory interfejsu i stron obsługujących motyw systemowy."),vec![t("Systemowy").into(),t("Jasny").into(),t("Ciemny").into()],"",A::None));
+    rows.push(preference_spec(0,K::Pinned,"",t("Zawsze widoczny panel kart"),t("Przypnij karty i przestrzenie przy lewej krawędzi."),vec![],"",A::None));
+    rows.push(preference_spec(0,K::Animations,"",t("Animacje przestrzeni"),t("Płynne przejścia. Systemowe ograniczenie ruchu ma pierwszeństwo."),vec![],"",A::None));
+    rows.push(preference_spec(0,K::WorkspaceNames,"",t("Nazwa aktywnej przestrzeni"),t("Pokazuj nazwę obok kropki aktywnej przestrzeni na dole panelu kart."),vec![],"",A::None));
+    rows.push(preference_spec(0,K::Language,"",t("Język interfejsu"),t("Zmiana zadziała po ponownym uruchomieniu Zitter."),vec![t("Systemowy").into(),"Polski".into(),"English".into()],"",A::None));
+    rows.push(preference_spec(0,K::FoldersCollapsed,"",t("Zwinięte foldery przypiętych"),t("Foldery startują zwinięte. Karta otwarta z Command Center pokazuje się pod folderem bez rozwijania reszty."),vec![],"",A::None));
+    rows.push(preference_spec(1,K::Search,"",t("Domyślna wyszukiwarka"),t("Używana, gdy wpiszesz zapytanie w pasku adresu."),vec!["DuckDuckGo".into(),"Google".into(),"Bing".into()],"",A::None));
+    rows.push(preference_spec(2,K::Toggle,"referrers",t("Przekazuj adres strony odsyłającej"),t("Nagłówek Referer pomaga witrynie rozpoznać, skąd pochodzi wejście. Wyłączenie może zmienić działanie niektórych serwisów."),vec![],"",A::None));
+    rows.push(preference_spec(2,K::Toggle,"https_only",t("Zawsze używaj HTTPS"),t("Wymagaj bezpiecznego połączenia. Witryny bez HTTPS mogą wyświetlić ostrzeżenie."),vec![],"",A::None));
+    rows.push(preference_spec(2,K::Toggle,"third_party_cookies",t("Blokuj cookies innych firm"),t("Ogranicz śledzenie między witrynami. Niektóre logowania mogą wymagać cookies."),vec![],"",A::None));
+    rows.push(preference_spec(2,K::Toggle,"do_not_track",t("Wysyłaj Do Not Track"),t("Poproś witryny o nieśledzenie. Respektowanie prośby zależy od witryny."),vec![],"",A::None));
+    rows.push(preference_spec(2,K::Toggle,"preconnect",t("Wstępne połączenia ze stronami"),t("Przygotowuj połączenie podczas wpisywania adresu. Może użyć sieci, nawet jeśli nie otworzysz strony. Ustawienie dotyczy tego profilu."),vec![],"",A::None));
+    rows.push(preference_spec(2,K::Toggle,"link_auditing",t("Raporty kliknięć w linki"),t("Zezwalaj na wysyłanie sygnałów ping po kliknięciu odnośnika."),vec![],"",A::None));
+    rows.push(preference_spec(3,K::Toggle,"camera",t("Kamera"),t("Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo."),vec![],"",A::None));
+    rows.push(preference_spec(3,K::Toggle,"microphone",t("Mikrofon"),t("Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo."),vec![],"",A::None));
+    rows.push(preference_spec(3,K::Toggle,"location",t("Lokalizacja"),t("Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo."),vec![],"",A::None));
+    rows.push(preference_spec(3,K::Toggle,"notifications",t("Powiadomienia"),t("Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo."),vec![],"",A::None));
+    rows.push(preference_spec(3,K::Toggle,"clipboard",t("Odczyt schowka"),t("Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo."),vec![],"",A::None));
+    rows.push(preference_spec(4,K::Picker,"zoom",t("Domyślne powiększenie"),t("Skala stron bez własnego, zapisanego powiększenia."),vec!["75%".into(),"90%".into(),"100%".into(),"110%".into(),"125%".into(),"150%".into(),"175%".into(),"200%".into()],"",A::None));
+    rows.push(preference_spec(4,K::Picker,"font_size",t("Rozmiar tekstu"),t("Domyślna wielkość czcionki na stronach."),vec!["12 px".into(),"14 px".into(),"16 px".into(),"18 px".into(),"20 px".into(),"24 px".into()],"",A::None));
+    rows.push(preference_spec(4,K::Picker,"minimum_font_size",t("Minimalny rozmiar tekstu"),t("Zapobiegaj wyświetlaniu zbyt drobnych liter."),vec![t("Bez limitu").into(),"10 px".into(),"12 px".into(),"14 px".into(),"16 px".into(),"18 px".into()],"",A::None));
+    rows.push(preference_spec(4,K::Picker,"fixed_font_size",t("Rozmiar tekstu o stałej szerokości"),t("Domyślna wielkość tekstu w blokach kodu i elementach monospace."),vec!["12 px".into(),"14 px".into(),"16 px".into(),"18 px".into(),"20 px".into(),"24 px".into()],"",A::None));
+    rows.push(preference_spec(4,K::Text,"font_standard",t("Czcionka standardowa"),t("Nazwa rodziny czcionki używanej, gdy witryna nie wybierze własnej."),vec![],t("Np. Times New Roman"),A::None));
+    rows.push(preference_spec(4,K::Text,"font_serif",t("Czcionka szeryfowa"),t("Rodzina dla tekstu serif. Musi być zainstalowana w systemie."),vec![],t("Np. Georgia"),A::None));
+    rows.push(preference_spec(4,K::Text,"font_sans",t("Czcionka bezszeryfowa"),t("Rodzina dla tekstu sans-serif. Musi być zainstalowana w systemie."),vec![],t("Np. Arial"),A::None));
+    rows.push(preference_spec(4,K::Text,"font_fixed",t("Czcionka o stałej szerokości"),t("Rodzina monospace, używana m.in. w blokach kodu."),vec![],t("Np. Menlo"),A::None));
+    rows.push(preference_spec(4,K::Toggle,"javascript","JavaScript",t("Skrypty potrzebne do działania większości aplikacji internetowych."),vec![],"",A::None));
+    rows.push(preference_spec(4,K::Toggle,"images",t("Wyświetlaj obrazy"),t("Pozwól witrynom ładować zdjęcia i grafiki."),vec![],"",A::None));
+    rows.push(preference_spec(4,K::Toggle,"popups",t("Wyskakujące okna"),t("Pozwól stronom otwierać dodatkowe okna. Domyślnie zablokowane."),vec![],"",A::None));
+    rows.push(preference_spec(4,K::Toggle,"sound",t("Dźwięk na stronach"),t("Domyślna zgoda na odtwarzanie dźwięku."),vec![],"",A::None));
+    rows.push(preference_spec(5,K::Toggle,"save_passwords",t("Proponuj zapisywanie haseł"),t("Zapisuj dane logowania w menedżerze haseł tego profilu."),vec![],"",A::None));
+    rows.push(preference_spec(5,K::Toggle,"auto_signin",t("Automatyczne logowanie"),t("Korzystaj z zapisanych danych logowania, gdy witryna na to pozwala."),vec![],"",A::None));
+    rows.push(preference_spec(2,K::Action,"",t("Historia przeglądania"),t("Wyszukuj odwiedzone strony i czyść historię tego profilu."),vec![],"",A::History));
+    rows.push(preference_spec(0,K::Action,"",t("Kolor i nazwa przestrzeni"),t("Własny akcent kolorystyczny i przypisanie profilu."),vec![],"",A::Workspace));
+    rows.push(preference_spec(5,K::Action,"",t("Zapisane hasła"),t("Przeglądaj i usuwaj loginy aktywnego profilu."),vec![],"",A::Passwords));
+    rows.push(preference_spec(5,K::Action,"",t("Profile przeglądania"),t("Oddziel cookies, historię i dane logowania między profilami."),vec![],"",A::Profiles));
+    rows.push(preference_spec(5,K::Action,"",t("Import z przeglądarki"),t("Przenieś profile, przestrzenie, foldery i zakładki."),vec![],"",A::Import));
+    rows.push(preference_spec(6,K::Toggle,"download_prompt",t("Pytaj, gdzie zapisać każdy plik"),t("Wybieraj miejsce zapisu przy każdym pobieraniu."),vec![],"",A::None));
+    rows.push(preference_spec(6,K::Directory,"",t("Folder pobierania"),t("Domyślne miejsce zapisu plików w tym profilu."),vec![],"",A::None));
+    rows.push(preference_spec(7,K::Text,"accept_languages",t("Preferowane języki witryn"),t("Kody języków w kolejności preferencji, oddzielone przecinkami. Np. pl, en-US, en. Zmiana dotyczy treści witryn; język interfejsu Zitter wybierasz osobno."),vec![],"pl, en-US, en",A::None));
+    rows.push(preference_spec(7,K::Toggle,"spellcheck",t("Sprawdzaj pisownię"),t("Podkreślaj błędy w polach tekstowych na stronach. Na macOS słowniki wybiera system."),vec![],"",A::None));
+    rows.push(preference_spec(7,K::Toggle,"online_spellcheck",t("Rozszerzone sprawdzanie pisowni"),t("Wysyłaj wpisywany tekst do usługi Google w celu sprawdzania pisowni. Wymaga włączonego sprawdzania pisowni."),vec![],"",A::None));
+    rows.push(preference_spec(9,K::Toggle,"caret_browsing",t("Nawigacja kursorem tekstowym"),t("Poruszaj się po tekstach witryn za pomocą klawiatury i zaznaczaj je bez myszy."),vec![],"",A::None));
+    rows.push(preference_spec(9,K::Toggle,"hardware_acceleration",t("Akceleracja sprzętowa"),t("Używaj procesora graficznego do renderowania. Ustawienie wspólne dla całej aplikacji; działa po ponownym uruchomieniu Zitter."),vec![],"",A::None));
+    rows.push(preference_spec(9,K::Picker,"dns_mode",t("Bezpieczny DNS"),t("Wspólne dla całej aplikacji. Tryb automatyczny może używać DNS systemowego. Tryb ścisły wymaga wcześniej zapisanego adresu DNS-over-HTTPS."),vec![t("Systemowy").into(),t("Automatyczny").into(),t("Ścisły (DoH)").into()],"",A::None));
+    rows.push(preference_spec(9,K::Text,"dns_templates",t("Adres serwera DNS-over-HTTPS"),t("Wspólny dla całej aplikacji. Wpisz szablon HTTPS, np. https://dns.google/dns-query{?dns}. Najpierw zapisz adres, następnie włącz tryb ścisły."),vec![],"https://…/dns-query{?dns}",A::None));
+    rows.push(preference_spec(9,K::Action,"",t("Ustawienia proxy systemowego"),t("Zitter korzysta z konfiguracji proxy systemu operacyjnego."),vec![],"",A::Proxy));
+    if system_certificates{rows.push(preference_spec(9,K::Action,"",t("Certyfikaty systemowe"),t("Otwórz systemowy magazyn certyfikatów i ustawienia zaufania."),vec![],"",A::Certificates));}
+    rows.push(preference_spec(3,K::SiteEditor,"",t("Wyjątek dla witryny"),t("Wpisz pełny adres witryny bez ścieżki, np. https://example.com. Wyjątek zastępuje politykę domyślną w tym profilu."),vec![],"",A::None));
+    rows.push(preference_spec(3,K::SiteRules,"",t("Zapisane wyjątki"),t("Własne reguły możesz usunąć, aby wrócić do ustawień domyślnych. Reguły zarządzane pozostają tylko do odczytu."),vec![],"",A::None));
+    rows.push(preference_spec(8,K::ClearData,"",t("Wyczyść dane przeglądania"),t("Dotyczy wyłącznie aktywnego profilu. Pobrane pliki, zapisane hasła i przypięte karty pozostaną zachowane. Przed usunięciem zobaczysz potwierdzenie."),vec![],"",A::None));
+    rows.push(preference_spec(1,K::Action,"",t("Wyszukiwarki i prefiksy"),t("Własne wyszukiwarki: g zapytanie, w hasło, yt film…"),vec![],"",A::Providers));
+    rows.push(preference_spec(1,K::Action,"",t("Skróty klawiszowe"),t("Schemat Arc, własne kombinacje i wykrywanie konfliktów."),vec![],"",A::Shortcuts));
+    rows.push(preference_spec(0,K::Action,"",t("Time Machine przestrzeni"),t("Snapshoty, zamknięte karty i usypianie całych projektów."),vec![],"",A::TimeMachine));
+    rows.push(preference_spec(1,K::ShortcutHint,"",t("Szybciej z klawiaturą"),t("⌘ L  adres i wyszukiwanie\n⌘ K  karty, przestrzenie i historia\n⌘ T  nowa karta     ⌘ ,  preferencje"),vec![],"",A::None));
     ffi::PreferenceCatalogue{
-        categories:vec!["Wygląd".into(),"Wyszukiwanie".into(),"Prywatność".into(),"Uprawnienia stron".into(),"Treści i czytelność".into(),"Hasła i profile".into(),"Pobieranie".into(),"Języki i pisownia".into(),"Dane przeglądania".into(),"Zaawansowane".into()],descriptions:vec!["Dopasuj Zitter do swojego rytmu.".into(),"Wybierz, gdzie zaczyna się każde wyszukiwanie.".into(),"Zdecyduj, jakie ślady zostawiasz w sieci.".into(),"Ustal domyślny dostęp witryn do urządzenia.".into(),"Wygodne czytanie i kontrola zawartości stron.".into(),"Oddzielne logowania, wspólne możliwości.".into(),"Wybierz miejsce dla pobieranych plików.".into(),"Wybierz języki witryn i pomoc podczas pisania.".into(),"Kontroluj dane zapisane w bieżącym profilu.".into(),"Dostępność, połączenia i ustawienia silnika Chromium.".into()],rows,
-        site:ffi::PreferenceSiteCopy{origin_ax:"Adres witryny dla wyjątku".into(),placeholder:"https://example.com".into(),type_ax:"Rodzaj uprawnienia dla witryny".into(),policy_ax:"Polityka dla witryny".into(),save:"Zapisz wyjątek".into(),types:vec!["JavaScript".into(),"Obrazy".into(),"Wyskakujące okna".into(),"Dźwięk".into(),"Powiadomienia".into(),"Lokalizacja".into(),"Kamera".into(),"Mikrofon".into(),"Schowek".into()]},
-        clear:ffi::PreferenceClearCopy{period_ax:"Zakres czasu czyszczenia danych".into(),periods:vec!["Ostatnia godzina".into(),"Ostatnie 24 godziny".into(),"Ostatnie 7 dni".into(),"Cały okres".into()],checks:vec!["Historia przeglądania".into(),"Cookies i dane witryn (może wylogować)".into(),"Pamięć podręczna".into()],action:"Wyczyść…".into()}
+        categories:vec![t("Wygląd").into(),t("Wyszukiwanie").into(),t("Prywatność").into(),t("Uprawnienia stron").into(),t("Treści i czytelność").into(),t("Hasła i profile").into(),t("Pobieranie").into(),t("Języki i pisownia").into(),t("Dane przeglądania").into(),t("Zaawansowane").into()],descriptions:vec![t("Dopasuj Zitter do swojego rytmu.").into(),t("Wybierz, gdzie zaczyna się każde wyszukiwanie.").into(),t("Zdecyduj, jakie ślady zostawiasz w sieci.").into(),t("Ustal domyślny dostęp witryn do urządzenia.").into(),t("Wygodne czytanie i kontrola zawartości stron.").into(),t("Oddzielne logowania, wspólne możliwości.").into(),t("Wybierz miejsce dla pobieranych plików.").into(),t("Wybierz języki witryn i pomoc podczas pisania.").into(),t("Kontroluj dane zapisane w bieżącym profilu.").into(),t("Dostępność, połączenia i ustawienia silnika Chromium.").into()],rows,
+        site:ffi::PreferenceSiteCopy{origin_ax:t("Adres witryny dla wyjątku").into(),placeholder:"https://example.com".into(),type_ax:t("Rodzaj uprawnienia dla witryny").into(),policy_ax:t("Polityka dla witryny").into(),save:t("Zapisz wyjątek").into(),types:vec!["JavaScript".into(),t("Obrazy").into(),t("Wyskakujące okna").into(),t("Dźwięk").into(),t("Powiadomienia").into(),t("Lokalizacja").into(),t("Kamera").into(),t("Mikrofon").into(),t("Schowek").into()]},
+        clear:ffi::PreferenceClearCopy{period_ax:t("Zakres czasu czyszczenia danych").into(),periods:vec![t("Ostatnia godzina").into(),t("Ostatnie 24 godziny").into(),t("Ostatnie 7 dni").into(),t("Cały okres").into()],checks:vec![t("Historia przeglądania").into(),t("Cookies i dane witryn (może wylogować)").into(),t("Pamięć podręczna").into()],action:t("Wyczyść…").into()}
     }
 }
 pub struct PreferencesForm { categories: usize, selected: usize, query: Vec<u16>, profile: String, dirty: std::collections::BTreeSet<String>, rule_limit: usize, status: (&'static str, bool) }
-fn new_preferences_form(categories:usize)->Box<PreferencesForm>{Box::new(PreferencesForm{categories,selected:0,query:vec![],profile:String::new(),dirty:Default::default(),rule_limit:50,status:(PREFERENCE_IDLE,false)})}
+fn new_preferences_form(categories:usize)->Box<PreferencesForm>{Box::new(PreferencesForm{categories,selected:0,query:vec![],profile:String::new(),dirty:Default::default(),rule_limit:50,status:(t(PREFERENCE_IDLE),false)})}
 // Availability and managed-state copy for profile-scoped preference controls.
 fn preference_control_view(kind:ffi::PreferenceControlKind,present:bool,editable:bool)->ffi::PreferenceControlView{
     use ffi::PreferenceControlKind as K;let toggle=kind==K::Toggle;
-    let tooltip=if !present{if toggle{"Profil nie jest jeszcze gotowy"}else{"Ustawienie jest niedostępne"}}else if !editable{"To ustawienie jest zarządzane"}else if toggle{"Dotyczy aktywnego profilu"}else{"Zapisz przyciskiem lub klawiszem Enter"};
+    let tooltip=if !present{if toggle{t("Profil nie jest jeszcze gotowy")}else{t("Ustawienie jest niedostępne")}}else if !editable{t("To ustawienie jest zarządzane")}else if toggle{t("Dotyczy aktywnego profilu")}else{t("Zapisz przyciskiem lub klawiszem Enter")};
     ffi::PreferenceControlView{enabled:present&&editable,tooltip:tooltip.into()}
 }
 // Import services report stages and counts; Rust owns the user-facing wording.
@@ -1242,13 +1241,13 @@ fn preference_control_view(kind:ffi::PreferenceControlKind,present:bool,editable
 fn import_status_copy(r:&ffi::ImportStatusReport)->String{
     use ffi::ImportStage as S;
     match r.stage {
-        S::Reading=>format!("Odczytywanie danych z {}…",r.browser),
-        S::Preview=>{let mut text=if r.error.is_empty(){format!("Do importu: {} profili, {} przestrzeni, {} folderów i {} kart lub zakładek.",r.profiles,r.spaces,r.folders,r.tabs)}else{r.error.clone()};if r.skipped!=0{text.push_str(&format!(" Pominięte elementy: {}.",r.skipped));}text}
-        S::Importing=>"Importowanie wybranych danych…".into(),
-        S::SavingBrowsingData=>"Zapisywanie historii i ciasteczek…".into(),
+        S::Reading=>tf("Odczytywanie danych z {}…",&[&r.browser]),
+        S::Preview=>{let mut text=if r.error.is_empty(){tf("Do importu: {} profili, {} przestrzeni, {} folderów i {} kart lub zakładek.",&[&r.profiles.to_string(),&r.spaces.to_string(),&r.folders.to_string(),&r.tabs.to_string()])}else{r.error.clone()};if r.skipped!=0{text.push_str(&tf(" Pominięte elementy: {}.",&[&r.skipped.to_string()]));}text}
+        S::Importing=>t("Importowanie wybranych danych…").into(),
+        S::SavingBrowsingData=>t("Zapisywanie historii i ciasteczek…").into(),
         S::Finished=>{
-            let mut text=if r.ok{format!("Import zakończony. Dodano {} profili i {} przestrzeni. Możesz wybrać je na liście przestrzeni.",r.added_profiles,r.added_spaces)}else{"Import się nie powiódł. Dotychczasowe przestrzenie pozostały bez zmian. Spróbuj ponownie.".into()};
-            if r.browsing_data{text.push_str(&format!(" Przeniesiono {} stron historii i {} ciasteczek.",r.history,r.cookies));if r.data_skipped!=0{text.push_str(&format!(" Pominięto: {}.",r.data_skipped));}if r.data_failed{text.push_str(" Część danych nie została zapisana. Ponów import.");}}
+            let mut text=if r.ok{tf("Import zakończony. Dodano {} profili i {} przestrzeni. Możesz wybrać je na liście przestrzeni.",&[&r.added_profiles.to_string(),&r.added_spaces.to_string()])}else{t("Import się nie powiódł. Dotychczasowe przestrzenie pozostały bez zmian. Spróbuj ponownie.").into()};
+            if r.browsing_data{text.push_str(&tf(" Przeniesiono {} stron historii i {} ciasteczek.",&[&r.history.to_string(),&r.cookies.to_string()]));if r.data_skipped!=0{text.push_str(&tf(" Pominięto: {}.",&[&r.data_skipped.to_string()]));}if r.data_failed{text.push_str(t(" Część danych nie została zapisana. Ponów import."));}}
             text
         }
         _=>String::new(),
@@ -1257,89 +1256,89 @@ fn import_status_copy(r:&ffi::ImportStatusReport)->String{
 // Page-lifecycle guarded operations (beforeunload checks, sleeping capture guard).
 fn operation_status_copy(event:ffi::OperationStatusEvent)->String{
     use ffi::OperationStatusEvent as E;
-    match event{E::Checking=>"Sprawdzanie niezapisanych zmian…",E::Cancelled=>"Anulowano. Karty i niezapisane zmiany pozostały otwarte.",E::Done=>"Gotowe.",E::StopCapture=>"Najpierw zatrzymaj nagrywanie lub udostępnianie w tej przestrzeni.",_=>""}.into()
+    match event{E::Checking=>t("Sprawdzanie niezapisanych zmian…"),E::Cancelled=>t("Anulowano. Karty i niezapisane zmiany pozostały otwarte."),E::Done=>t("Gotowe."),E::StopCapture=>t("Najpierw zatrzymaj nagrywanie lub udostępnianie w tej przestrzeni."),_=>""}.into()
 }
 // Time Machine rows: the title falls back to URL then "Nowa karta"; the detail
 // lists time, URL, tab count and automatic/other-profile markers.
 fn time_machine_entry(f:&ffi::TimeMachineFacts)->ffi::TimeMachineCopy{
-    let title=if !f.name.is_empty(){f.name.clone()}else if !f.url.is_empty(){f.url.clone()}else{"Nowa karta".into()};
+    let title=if !f.name.is_empty(){f.name.clone()}else if !f.url.is_empty(){f.url.clone()}else{t("Nowa karta").into()};
     let mut detail=f.time.clone();
     if !f.url.is_empty(){detail.push_str(" · ");detail.push_str(&f.url);}
-    if f.tabs>=0{detail.push_str(&format!(" · {} kart",f.tabs));}
-    if f.automatic{detail.push_str(" · automatyczny");}if f.other_profile{detail.push_str(" · inny profil");}
+    if f.tabs>=0{detail.push_str(&tf(" · {} kart",&[&f.tabs.to_string()]));}
+    if f.automatic{detail.push_str(t(" · automatyczny"));}if f.other_profile{detail.push_str(t(" · inny profil"));}
     ffi::TimeMachineCopy{title,detail}
 }
-fn time_machine_sleeping_detail()->String{"Uśpiona · kliknij przestrzeń, aby wznowić".into()}
+fn time_machine_sleeping_detail()->String{t("Uśpiona · kliknij przestrzeń, aby wznowić").into()}
 // Search result provenance shown under each palette result.
 fn palette_result_detail(kind:ffi::PaletteResultKind,label:&str)->String{
     use ffi::PaletteResultKind as K;
-    match kind{K::Tab=>format!("Karta · {label}"),K::Pin=>format!("Przypięta · {label}"),K::Workspace=>"Przełącz workspace".into(),K::History=>format!("Historia · {label}"),_=>String::new()}
+    match kind{K::Tab=>tf("Karta · {}",&[label]),K::Pin=>tf("Przypięta · {}",&[label]),K::Workspace=>t("Przełącz workspace").into(),K::History=>tf("Historia · {}",&[label]),_=>String::new()}
 }
 fn password_prompt_copy(update:bool,origin:&str,username:&str,profile:&str)->ffi::PasswordPromptCopy{
-    ffi::PasswordPromptCopy{title:if update{"Zaktualizować hasło?"}else{"Zapisać hasło?"}.into(),lines:vec![origin.into(),format!("Użytkownik: {username}"),format!("Profil: {profile}"),"Hasło będzie chronione w magazynie tego profilu.".into()],accept:if update{"Zaktualizuj"}else{"Zapisz hasło"}.into(),cancel:"Nie teraz".into()}
+    ffi::PasswordPromptCopy{title:if update{t("Zaktualizować hasło?")}else{t("Zapisać hasło?")}.into(),lines:vec![origin.into(),tf("Użytkownik: {}",&[username]),tf("Profil: {}",&[profile]),t("Hasło będzie chronione w magazynie tego profilu.").into()],accept:if update{t("Zaktualizuj")}else{t("Zapisz hasło")}.into(),cancel:t("Nie teraz").into()}
 }
 // Browsing-data removal: confirmation copy and outcome wording/tone.
-const CLEAR_PERIODS:[&str;4]=["Ostatnia godzina","Ostatnie 24 godziny","Ostatnie 7 dni","Cały okres"];
+fn clear_periods()->[&'static str;4]{[t("Ostatnia godzina"),t("Ostatnie 24 godziny"),t("Ostatnie 7 dni"),t("Cały okres")]}
 fn clear_data_status(event:ffi::ClearDataEvent,profile:&str)->ffi::PreferenceStatus{
     use ffi::ClearDataEvent as E;
     let (text,error)=match event {
-        E::Busy=>("Poczekaj na zakończenie bieżącej operacji.".to_string(),true),
-        E::NothingSelected=>("Wybierz co najmniej jeden rodzaj danych i zakres czasu.".into(),true),
-        E::HistoryForbidden=>("Zasady tego profilu nie pozwalają usuwać historii.".into(),true),
-        E::Clearing=>(format!("Czyszczenie danych profilu „{profile}”…"),false),
-        E::Cleared=>(format!("Wyczyszczono dane profilu „{profile}”."),false),
-        E::Failed=>("Nie udało się usunąć wszystkich wybranych danych. Spróbuj ponownie.".into(),true),
+        E::Busy=>(t("Poczekaj na zakończenie bieżącej operacji.").to_string(),true),
+        E::NothingSelected=>(t("Wybierz co najmniej jeden rodzaj danych i zakres czasu.").into(),true),
+        E::HistoryForbidden=>(t("Zasady tego profilu nie pozwalają usuwać historii.").into(),true),
+        E::Clearing=>(tf("Czyszczenie danych profilu „{}”…",&[profile]),false),
+        E::Cleared=>(tf("Wyczyszczono dane profilu „{}”.",&[profile]),false),
+        E::Failed=>(t("Nie udało się usunąć wszystkich wybranych danych. Spróbuj ponownie.").into(),true),
         _=>(String::new(),false),
     };
     ffi::PreferenceStatus{text,error}
 }
 fn clear_data_confirm(profile:&str,period:i32,history:bool,cookies:bool,cache:bool)->ffi::ClearDataConfirm{
-    let Some(range)=usize::try_from(period).ok().and_then(|p|CLEAR_PERIODS.get(p)).filter(|_|history||cookies||cache) else{return ffi::ClearDataConfirm{valid:false,title:String::new(),description:String::new(),confirm:String::new(),cancel:String::new()};};
-    let mut description=format!("Profil: {profile}\nZakres: {range}\n\nZostaną usunięte:");
-    if history{description.push_str("\n• Historia przeglądania");}if cookies{description.push_str("\n• Cookies i dane witryn — może to wylogować Cię z serwisów");}if cache{description.push_str("\n• Pamięć podręczna");}
-    description.push_str("\n\nTej operacji nie można cofnąć. Hasła, przypięte karty i pobrane pliki pozostaną zachowane.");
-    ffi::ClearDataConfirm{valid:true,title:"Wyczyścić dane przeglądania?".into(),description,confirm:"Wyczyść dane".into(),cancel:"Anuluj".into()}
+    let Some(range)=usize::try_from(period).ok().and_then(|p|clear_periods().get(p).copied()).filter(|_|history||cookies||cache) else{return ffi::ClearDataConfirm{valid:false,title:String::new(),description:String::new(),confirm:String::new(),cancel:String::new()};};
+    let mut description=tf("Profil: {}\nZakres: {}\n\nZostaną usunięte:",&[profile,range]);
+    if history{description.push_str(t("\n• Historia przeglądania"));}if cookies{description.push_str(t("\n• Cookies i dane witryn — może to wylogować Cię z serwisów"));}if cache{description.push_str(t("\n• Pamięć podręczna"));}
+    description.push_str(t("\n\nTej operacji nie można cofnąć. Hasła, przypięte karty i pobrane pliki pozostaną zachowane."));
+    ffi::ClearDataConfirm{valid:true,title:t("Wyczyścić dane przeglądania?").into(),description,confirm:t("Wyczyść dane").into(),cancel:t("Anuluj").into()}
 }
 // Profile service outcomes arrive as typed events; Rust owns their wording.
 fn profile_status_copy(event:ffi::ProfileStatusEvent)->String{
     use ffi::ProfileStatusEvent as E;
     match event {
-        E::DuplicateName=>"Profil o tej nazwie już istnieje.",
-        E::Creating=>"Tworzenie profilu…",
-        E::CreateFailed=>"Nie udało się utworzyć profilu. Spróbuj ponownie.",
-        E::Created=>"Profil utworzony. Możesz przypisać go do przestrzeni.",
-        E::CreateNotSaved=>"Nie udało się zapisać profilu. Profil nie został dodany. Spróbuj ponownie.",
-        E::Renamed=>"Nazwa profilu zapisana.",
-        E::RenameFailed=>"Nie udało się zapisać nazwy profilu.",
-        E::Deleting=>"Usuwanie profilu…",
-        E::Deleted=>"Profil usunięty. Dane przeglądania zostaną wyczyszczone.",
-        E::DeleteNotSaved=>"Nie udało się zapisać zmian. Profil nie został usunięty.",
-        E::LoadFailed=>"Nie udało się wczytać profili. Uruchom aplikację ponownie.",
+        E::DuplicateName=>t("Profil o tej nazwie już istnieje."),
+        E::Creating=>t("Tworzenie profilu…"),
+        E::CreateFailed=>t("Nie udało się utworzyć profilu. Spróbuj ponownie."),
+        E::Created=>t("Profil utworzony. Możesz przypisać go do przestrzeni."),
+        E::CreateNotSaved=>t("Nie udało się zapisać profilu. Profil nie został dodany. Spróbuj ponownie."),
+        E::Renamed=>t("Nazwa profilu zapisana."),
+        E::RenameFailed=>t("Nie udało się zapisać nazwy profilu."),
+        E::Deleting=>t("Usuwanie profilu…"),
+        E::Deleted=>t("Profil usunięty. Dane przeglądania zostaną wyczyszczone."),
+        E::DeleteNotSaved=>t("Nie udało się zapisać zmian. Profil nie został usunięty."),
+        E::LoadFailed=>t("Nie udało się wczytać profili. Uruchom aplikację ponownie."),
         _=>"",
     }.into()
 }
-fn preferences_profile_banner(profile:&str)->String{format!("Profil: {profile} · Ustawienia wspólne dla aplikacji są oznaczone w opisach.")}
+fn preferences_profile_banner(profile:&str)->String{tf("Profil: {} · Ustawienia wspólne dla aplikacji są oznaczone w opisach.",&[profile])}
 fn site_rule_detail(primary:&str,name:&str,setting:i32,secondary:&str,editable:bool)->String{
-    let policy=match setting{1=>"Zezwalaj",2=>"Blokuj",3=>"Pytaj",_=>"Inna polityka"};let mut detail=format!("{primary} · {name} · {policy}");
-    if secondary!="*"{detail.push_str(" · Osadzenie: ");detail.push_str(secondary);}if !editable{detail.push_str(" · Zarządzane");}detail
+    let policy=match setting{1=>t("Zezwalaj"),2=>t("Blokuj"),3=>t("Pytaj"),_=>t("Inna polityka")};let mut detail=format!("{primary} · {name} · {policy}");
+    if secondary!="*"{detail.push_str(t(" · Osadzenie: "));detail.push_str(secondary);}if !editable{detail.push_str(t(" · Zarządzane"));}detail
 }
-fn site_rules_empty(saved:bool)->String{if saved{"Brak wyjątków pasujących do wyszukiwania."}else{"Nie masz jeszcze zapisanych wyjątków."}.into()}
+fn site_rules_empty(saved:bool)->String{if saved{t("Brak wyjątków pasujących do wyszukiwania.")}else{t("Nie masz jeszcze zapisanych wyjątków.")}.into()}
 const PREFERENCE_IDLE:&str="Przełączniki zapisują się automatycznie. Pola tekstowe zatwierdź przyciskiem Zapisz lub Enter.";
 // Outcome copy is keyed by the semantic write and its backend result; native
 // code only reports what it attempted and projects the returned text/tone.
 fn preference_outcome_text(outcome:ffi::PreferenceOutcome,key:&str,ok:bool)->&'static str {
     use ffi::PreferenceOutcome as O;
     match (outcome,ok) {
-        (O::Text,true)=>"Zapisano. Witryna może wymagać odświeżenia, aby zastosować zmianę.",
-        (O::Text,false)=>match key {"accept_languages"=>"Podaj poprawne kody języków oddzielone przecinkami, np. pl, en-US, en.","dns_templates"=>"Podaj poprawny szablon DNS-over-HTTPS. W trybie ścisłym adres nie może być pusty.",_=>"Nie udało się zapisać. Podaj nazwę rodziny czcionki (do 128 znaków). Ustawienie może być zarządzane."},
-        (O::Site,true)=>"Zapisano wyjątek w tym profilu. Odśwież witrynę, aby zastosować zmianę.",
-        (O::Site,false)=>"Nie zapisano wyjątku. Podaj adres HTTP(S) bez ścieżki i danych logowania. Sprawdź wybraną politykę; reguły zarządzane nie mogą być zmieniane.",
-        (O::SiteRemove,true)=>"Usunięto wyjątek. Witryna wróci do ustawień domyślnych.",
-        (O::SiteRemove,false)=>"Nie udało się usunąć wyjątku. Reguła może być zarządzana.",
-        (O::Value,true)=>if key=="hardware_acceleration"{"Zapisano. Uruchom ponownie Zitter, aby zmienić akcelerację sprzętową."}else{"Zapisano. Jeśli strona nie zastosowała zmiany, odśwież ją."},
-        (O::Value,false)=>if key=="dns_mode"{"Nie zapisano trybu DNS. Tryb ścisły wymaga poprawnego adresu DNS-over-HTTPS; ustawienie może też być zarządzane."}else{"Nie udało się zmienić ustawienia. Profil może być zarządzany lub niedostępny."},
-        (O::General,true)=>PREFERENCE_IDLE,
-        (O::General,false)=>"Nie udało się zapisać ustawień. Spróbuj ponownie.",
+        (O::Text,true)=>t("Zapisano. Witryna może wymagać odświeżenia, aby zastosować zmianę."),
+        (O::Text,false)=>match key {"accept_languages"=>t("Podaj poprawne kody języków oddzielone przecinkami, np. pl, en-US, en."),"dns_templates"=>t("Podaj poprawny szablon DNS-over-HTTPS. W trybie ścisłym adres nie może być pusty."),_=>t("Nie udało się zapisać. Podaj nazwę rodziny czcionki (do 128 znaków). Ustawienie może być zarządzane.")},
+        (O::Site,true)=>t("Zapisano wyjątek w tym profilu. Odśwież witrynę, aby zastosować zmianę."),
+        (O::Site,false)=>t("Nie zapisano wyjątku. Podaj adres HTTP(S) bez ścieżki i danych logowania. Sprawdź wybraną politykę; reguły zarządzane nie mogą być zmieniane."),
+        (O::SiteRemove,true)=>t("Usunięto wyjątek. Witryna wróci do ustawień domyślnych."),
+        (O::SiteRemove,false)=>t("Nie udało się usunąć wyjątku. Reguła może być zarządzana."),
+        (O::Value,true)=>if key=="hardware_acceleration"{t("Zapisano. Uruchom ponownie Zitter, aby zmienić akcelerację sprzętową.")}else{t("Zapisano. Jeśli strona nie zastosowała zmiany, odśwież ją.")},
+        (O::Value,false)=>if key=="dns_mode"{t("Nie zapisano trybu DNS. Tryb ścisły wymaga poprawnego adresu DNS-over-HTTPS; ustawienie może też być zarządzane.")}else{t("Nie udało się zmienić ustawienia. Profil może być zarządzany lub niedostępny.")},
+        (O::General,true)=>t(PREFERENCE_IDLE),
+        (O::General,false)=>t("Nie udało się zapisać ustawień. Spróbuj ponownie."),
         _=>"",
     }
 }
@@ -1438,7 +1437,7 @@ fn checkbox_layout(width: i32, line_height: i32, line_count: usize, left: i32, t
 pub struct ImportForm { selection: ffi::ImportSelection, preview: ffi::ImportSelection, epoch: u64, scheduled: bool, waiting: bool, can_apply: bool, busy: bool, applying: bool, submitted: bool, message: String }
 fn import_defaults() -> ffi::ImportSelection { ffi::ImportSelection { browser:0, separate_profiles:true, bookmarks:true, history:false, cookies:false } }
 fn import_copy() -> ffi::ImportCopy {
-    ffi::ImportCopy { title:"Przenieś się do Zittera".into(), dismiss:"Zamknij import".into(), intro:"Wybierz przeglądarkę i dane, które chcesz przenieść.".into(), source_label:"Przeglądarka źródłowa".into(), source_ax:"Przeglądarka do importu".into(), heading:"Co chcesz przenieść?".into(), profiles:"Oddzielne profile przeglądania".into(), history:"Historia przeglądania".into(), cookies:"Ciasteczka i sesje witryn".into(), apply_label:"Importuj".into(), browsers:vec!["Arc".into(),"Google Chrome".into(),"Microsoft Edge".into(),"Brave".into()] }
+    ffi::ImportCopy { title:t("Przenieś się do Zittera").into(), dismiss:t("Zamknij import").into(), intro:t("Wybierz przeglądarkę i dane, które chcesz przenieść.").into(), source_label:t("Przeglądarka źródłowa").into(), source_ax:t("Przeglądarka do importu").into(), heading:t("Co chcesz przenieść?").into(), profiles:t("Oddzielne profile przeglądania").into(), history:t("Historia przeglądania").into(), cookies:t("Ciasteczka i sesje witryn").into(), apply_label:t("Importuj").into(), browsers:vec!["Arc".into(),"Google Chrome".into(),"Microsoft Edge".into(),"Brave".into()] }
 }
 fn new_import_form() -> Box<ImportForm> { Box::new(ImportForm { selection:import_defaults(), preview:import_defaults(), epoch:0, scheduled:false, waiting:false, can_apply:false, busy:false, applying:false, submitted:false, message:String::new() }) }
 impl ImportForm {
@@ -1447,22 +1446,22 @@ impl ImportForm {
     fn select(&mut self, selection: ffi::ImportSelection) -> ffi::ImportDispatch {
         if self.applying||self.submitted {return self.dispatch(ffi::ImportAction::None);}
         self.next_epoch();self.can_apply=false;self.waiting=false;
-        if selection.browser>3 {self.scheduled=false;self.busy=false;self.message="Wybierz przeglądarkę źródłową.".into();return self.dispatch(ffi::ImportAction::None);}
-        self.selection=selection;self.scheduled=true;self.busy=true;self.message="Odczytywanie danych…".into();self.dispatch(ffi::ImportAction::Preview)
+        if selection.browser>3 {self.scheduled=false;self.busy=false;self.message=t("Wybierz przeglądarkę źródłową.").into();return self.dispatch(ffi::ImportAction::None);}
+        self.selection=selection;self.scheduled=true;self.busy=true;self.message=t("Odczytywanie danych…").into();self.dispatch(ffi::ImportAction::Preview)
     }
     fn cancel_scan(&mut self) {self.next_epoch();self.scheduled=false;self.waiting=false;}
     fn take_scan(&mut self, epoch: u64, visible: bool, current: ffi::ImportSelection, ready: bool, profiles_busy: bool) -> ffi::ImportDispatch {
         if !self.scheduled||epoch!=self.epoch||self.applying||self.submitted {return self.dispatch(ffi::ImportAction::None);}
         self.scheduled=false;if !visible{return self.dispatch(ffi::ImportAction::None);}
         if current!=self.selection {self.can_apply=false;return self.dispatch(ffi::ImportAction::Rescan);}
-        if !ready||profiles_busy {self.waiting=true;self.busy=false;self.message="Poczekaj na zakończenie zapisywania.".into();return self.dispatch(ffi::ImportAction::None);}
+        if !ready||profiles_busy {self.waiting=true;self.busy=false;self.message=t("Poczekaj na zakończenie zapisywania.").into();return self.dispatch(ffi::ImportAction::None);}
         self.busy=true;self.dispatch(ffi::ImportAction::Preview)
     }
     fn should_resume(&self, ready: bool, profiles_busy: bool) -> bool {self.waiting&&ready&&!profiles_busy&&!self.applying&&!self.submitted}
     fn begin_preview(&mut self, selection: ffi::ImportSelection) {self.next_epoch();self.scheduled=false;self.waiting=false;self.preview=selection;self.can_apply=false;self.busy=true;}
     fn set_status(&mut self, message: &str, can_apply: bool, busy: bool, applying: bool) {self.scheduled=false;self.waiting=false;self.submitted=false;self.message=message.into();self.can_apply=can_apply;self.busy=busy;self.applying=applying;}
     fn view(&self, ready: bool, profiles_busy: bool) -> ffi::ImportView {
-        let locked=self.applying||self.submitted;ffi::ImportView {message:self.message.clone(),bookmarks_label:if self.selection.browser==0 {"Przypięte karty, foldery i Ulubione"} else {"Zakładki i foldery"}.into(),options_enabled:!locked,close_enabled:!locked,apply_enabled:self.can_apply&&!self.busy&&!locked&&ready&&!profiles_busy&&self.preview==self.selection,applying:locked,busy:self.busy||self.submitted,can_apply:self.can_apply}
+        let locked=self.applying||self.submitted;ffi::ImportView {message:self.message.clone(),bookmarks_label:if self.selection.browser==0 {t("Przypięte karty, foldery i Ulubione")} else {t("Zakładki i foldery")}.into(),options_enabled:!locked,close_enabled:!locked,apply_enabled:self.can_apply&&!self.busy&&!locked&&ready&&!profiles_busy&&self.preview==self.selection,applying:locked,busy:self.busy||self.submitted,can_apply:self.can_apply}
     }
     fn request_apply(&mut self, current: ffi::ImportSelection, ready: bool, profiles_busy: bool, visible: bool) -> ffi::ImportDispatch {
         if !visible||self.applying||self.submitted {return self.dispatch(ffi::ImportAction::None);}
@@ -1474,8 +1473,8 @@ impl ImportForm {
         // A synchronous service callback may already have supplied progress or
         // completion. Do not overwrite its authoritative state on return.
         if !self.submitted {return;}self.submitted=false;
-        if accepted {self.applying=true;self.busy=true;self.can_apply=false;self.message="Importowanie wybranych danych…".into();}
-        else {self.message="Nie udało się rozpocząć importu. Spróbuj ponownie.".into();}
+        if accepted {self.applying=true;self.busy=true;self.can_apply=false;self.message=t("Importowanie wybranych danych…").into();}
+        else {self.message=t("Nie udało się rozpocząć importu. Spróbuj ponownie.").into();}
     }
 }
 
@@ -1529,8 +1528,8 @@ fn design_palette(dark:bool,workspace_color:u32)->ffi::DesignPalette{
 fn design_same_workspace_color(a:u32,b:u32)->bool{design::WorkspaceColor::from_argb(a).same(design::WorkspaceColor::from_argb(b))}
 const APPEARANCE_EMOJIS: [&str;8] = ["💼","🏠","🚀","🎨","📚","🎮","🛒","🎬"];
 fn appearance_presets(emoji: bool) -> Vec<ffi::AppearancePreset> {
-    if emoji { APPEARANCE_EMOJIS.iter().map(|e|ffi::AppearancePreset { color:0, emoji:(*e).into(), label:format!("Emoji {}",e) }).collect() }
-    else { APPEARANCE_COLORS.iter().zip(WORKSPACE_COLOR_NAMES).map(|(&c,name)|ffi::AppearancePreset { color:c, emoji:String::new(), label:name.into() }).collect() }
+    if emoji { APPEARANCE_EMOJIS.iter().map(|e|ffi::AppearancePreset { color:0, emoji:(*e).into(), label:tf("Emoji {}",&[e]) }).collect() }
+    else { APPEARANCE_COLORS.iter().zip(workspace_color_names()).map(|(&c,name)|ffi::AppearancePreset { color:c, emoji:String::new(), label:name.into() }).collect() }
 }
 fn appearance_command_target(command:ffi::FormCommand,index:usize)->ffi::AppearanceTarget{
     use ffi::FormCommand as C;
@@ -1611,20 +1610,20 @@ pub struct FolderNotice { workspace:String, folder:String, title:String, error_o
 fn new_folder_notice(workspace:&str,folder:&str,title:&str,error_only:bool)->Box<FolderNotice>{Box::new(FolderNotice{workspace:workspace.into(),folder:folder.into(),title:title.into(),error_only,error:String::new(),submitting:false,closed:false})}
 impl FolderNotice {
     fn copy(&self)->ffi::NoticeCopy {
-        if self.error_only{return ffi::NoticeCopy{title:"Nie udało się zapisać folderu".into(),body:"Sprawdź wolne miejsce na dysku i spróbuj ponownie.".into(),accept:"OK".into(),cancel:String::new(),default_cancel:false};}
-        ffi::NoticeCopy{title:format!("Usunąć folder „{}”?",self.title),body:"Folder i cała jego przypięta zawartość zostaną usunięte. Tej operacji nie można cofnąć. Strony już otwarte w kartach pozostaną otwarte.".into(),accept:"Usuń folder".into(),cancel:"Anuluj".into(),default_cancel:true}
+        if self.error_only{return ffi::NoticeCopy{title:t("Nie udało się zapisać folderu").into(),body:t("Sprawdź wolne miejsce na dysku i spróbuj ponownie.").into(),accept:"OK".into(),cancel:String::new(),default_cancel:false};}
+        ffi::NoticeCopy{title:tf("Usunąć folder „{}”?",&[&self.title]),body:t("Folder i cała jego przypięta zawartość zostaną usunięte. Tej operacji nie można cofnąć. Strony już otwarte w kartach pozostaną otwarte.").into(),accept:t("Usuń folder").into(),cancel:t("Anuluj").into(),default_cancel:true}
     }
     fn error(&self)->&str{&self.error}
     fn submit(&mut self,current:&str,ready:bool,busy:bool,nodes:&[ffi::TreeNode])->ffi::FolderNoticeRequest {
         let none=||ffi::FolderNoticeRequest{action:ffi::FolderNoticeAction::None,workspace:String::new(),folder:String::new()};
         if self.closed||self.submitting{return none();}
         if self.error_only{self.submitting=true;return ffi::FolderNoticeRequest{action:ffi::FolderNoticeAction::Acknowledge,workspace:String::new(),folder:String::new()};}
-        if self.workspace.is_empty()||self.workspace!=current{self.error="Przestrzeń zmieniła się. Otwórz potwierdzenie ponownie.".into();return none();}
-        if !ready||busy{self.error="Poczekaj na zakończenie zapisywania.".into();return none();}
-        if self.folder.is_empty()||!nodes.iter().any(|n|n.id==self.folder&&n.folder){self.error="Folder nie jest już dostępny.".into();return none();}
+        if self.workspace.is_empty()||self.workspace!=current{self.error=t("Przestrzeń zmieniła się. Otwórz potwierdzenie ponownie.").into();return none();}
+        if !ready||busy{self.error=t("Poczekaj na zakończenie zapisywania.").into();return none();}
+        if self.folder.is_empty()||!nodes.iter().any(|n|n.id==self.folder&&n.folder){self.error=t("Folder nie jest już dostępny.").into();return none();}
         self.error.clear();self.submitting=true;ffi::FolderNoticeRequest{action:ffi::FolderNoticeAction::Delete,workspace:self.workspace.clone(),folder:self.folder.clone()}
     }
-    fn finish_attempt(&mut self,accepted:bool){if !self.submitting{return;}self.submitting=false;self.closed=accepted;if !accepted{self.error="Nie udało się usunąć folderu. Spróbuj ponownie.".into();}}
+    fn finish_attempt(&mut self,accepted:bool){if !self.submitting{return;}self.submitting=false;self.closed=accepted;if !accepted{self.error=t("Nie udało się usunąć folderu. Spróbuj ponownie.").into();}}
     fn cancel(&mut self){self.closed=true;self.submitting=false;}
 }
 fn notice_layout(width:i32,body_height:i32,body_count:usize,error_height:i32,error_count:usize)->ffi::NoticeLayout {
@@ -1640,26 +1639,26 @@ fn notice_layout(width:i32,body_height:i32,body_count:usize,error_height:i32,err
 pub struct FolderForm { workspace:String, parent:String, folder:String, name:String, error:String, submitting:bool, closed:bool }
 fn new_folder_form(workspace:&str,parent:&str,folder:&str,initial:&str)->Box<FolderForm>{Box::new(FolderForm{workspace:workspace.into(),parent:parent.into(),folder:folder.into(),name:initial.into(),error:String::new(),submitting:false,closed:false})}
 impl FolderForm {
-    fn copy(&self)->ffi::FolderCopy{ffi::FolderCopy{title:if !self.folder.is_empty(){"Zmień nazwę folderu"}else if self.parent.is_empty(){"Nowy folder"}else{"Nowy podfolder"}.into(),label:"Nazwa folderu".into(),accept:if self.folder.is_empty(){"Dodaj folder"}else{"Zapisz nazwę"}.into(),cancel:"Anuluj".into()}}
+    fn copy(&self)->ffi::FolderCopy{ffi::FolderCopy{title:if !self.folder.is_empty(){t("Zmień nazwę folderu")}else if self.parent.is_empty(){t("Nowy folder")}else{t("Nowy podfolder")}.into(),label:t("Nazwa folderu").into(),accept:if self.folder.is_empty(){t("Dodaj folder")}else{t("Zapisz nazwę")}.into(),cancel:t("Anuluj").into()}}
     fn edit(&mut self,name:&str){if !self.closed&&!self.submitting&&self.name!=name{self.name=name.into();self.error.clear();}}
     fn error(&self)->&str{&self.error}
     fn submit(&mut self,current:&str,ready:bool,busy:bool,nodes:&[ffi::TreeNode],composing:bool)->ffi::FolderRequest {
         let none=||ffi::FolderRequest{action:ffi::FolderAction::None,workspace:String::new(),parent:String::new(),folder:String::new(),name:String::new(),expand_parent:false};
         if self.closed||self.submitting||composing{return none();}
-        if self.workspace.is_empty()||self.workspace!=current{self.error="Przestrzeń zmieniła się. Otwórz formularz ponownie.".into();return none();}
-        if !ready||busy{self.error="Poczekaj na zakończenie zapisywania.".into();return none();}
+        if self.workspace.is_empty()||self.workspace!=current{self.error=t("Przestrzeń zmieniła się. Otwórz formularz ponownie.").into();return none();}
+        if !ready||busy{self.error=t("Poczekaj na zakończenie zapisywania.").into();return none();}
         let target=if self.folder.is_empty(){&self.parent}else{&self.folder};
-        if (!self.folder.is_empty()&&!self.parent.is_empty())||(!target.is_empty()&&!nodes.iter().any(|n|n.id==*target&&n.folder)){self.error="Folder nie jest już dostępny.".into();return none();}
+        if (!self.folder.is_empty()&&!self.parent.is_empty())||(!target.is_empty()&&!nodes.iter().any(|n|n.id==*target&&n.folder)){self.error=t("Folder nie jest już dostępny.").into();return none();}
         // Unicode White_Space matches Chromium's kWhitespaceUTF16 set. The
         // 256-byte UTF-8 limit is the existing application persistence contract.
         let name=self.name.trim();
-        if name.is_empty(){self.error="Wpisz nazwę folderu.".into();return none();}
-        if name.len()>256{self.error="Nazwa folderu jest za długa.".into();return none();}
+        if name.is_empty(){self.error=t("Wpisz nazwę folderu.").into();return none();}
+        if name.len()>256{self.error=t("Nazwa folderu jest za długa.").into();return none();}
         self.error.clear();self.submitting=true;
         ffi::FolderRequest{action:if self.folder.is_empty(){ffi::FolderAction::Create}else{ffi::FolderAction::Rename},workspace:self.workspace.clone(),parent:self.parent.clone(),folder:self.folder.clone(),name:name.into(),expand_parent:!self.parent.is_empty()}
     }
     // This acknowledges application admission, not completion of async storage.
-    fn finish_attempt(&mut self,accepted:bool){if !self.submitting{return;}self.submitting=false;self.closed=accepted;if !accepted{self.error="Nie udało się zapisać folderu. Spróbuj ponownie.".into();}}
+    fn finish_attempt(&mut self,accepted:bool){if !self.submitting{return;}self.submitting=false;self.closed=accepted;if !accepted{self.error=t("Nie udało się zapisać folderu. Spróbuj ponownie.").into();}}
     fn cancel(&mut self){self.closed=true;self.submitting=false;}
 }
 fn folder_form_layout(width:i32,label_height:i32,input_height:i32,error_height:i32,error:bool)->ffi::FolderLayout {
@@ -1718,14 +1717,14 @@ fn tab_menu_action(command:u32,s:&ffi::TabMenuState)->ffi::SidebarAction {
 }
 fn tab_context_menu(s:&ffi::TabMenuState)->Vec<ffi::TabMenuEntry> {
     let mut entries=Vec::new();let mut add=|command,label:&str|entries.push(ffi::TabMenuEntry{command,label:label.into()});
-    add(36,"Nowy folder…");add(0,"");add(20,"Otwórz w Peek");
+    add(36,t("Nowy folder…"));add(0,"");add(20,t("Otwórz w Peek"));
     if tab_menu_position(s).is_some(){
-        add(7,if s.vertical{"Przesuń w górę"}else{"Przesuń w lewo"});add(8,if s.vertical{"Przesuń w dół"}else{"Przesuń w prawo"});add(0,"");
-        add(9,if s.vertical{"Podział poziomy (obok siebie)"}else{"Podział pionowy (jedna nad drugą)"});add(0,"");add(11,"Rozdziel");
+        add(7,if s.vertical{t("Przesuń w górę")}else{t("Przesuń w lewo")});add(8,if s.vertical{t("Przesuń w dół")}else{t("Przesuń w prawo")});add(0,"");
+        add(9,if s.vertical{t("Podział poziomy (obok siebie)")}else{t("Podział pionowy (jedna nad drugą)")});add(0,"");add(11,t("Rozdziel"));
         // With two panes, taking one out is the same as separating them.
-        if s.members.len()>2{add(6,"Wyjmij kartę ze splitu");}add(10,"Zamknij kartę");add(12,"Zamknij wszystkie karty w splicie");
-    } else {add(5,"Otwórz obok w Split View");}
-    if s.http{add(0,"");add(23,"Zawsze otwieraj tę domenę tutaj");add(24,"Usuń regułę dla tej domeny");}
+        if s.members.len()>2{add(6,t("Wyjmij kartę ze splitu"));}add(10,t("Zamknij kartę"));add(12,t("Zamknij wszystkie karty w splicie"));
+    } else {add(5,t("Otwórz obok w Split View"));}
+    if s.http{add(0,"");add(23,t("Zawsze otwieraj tę domenę tutaj"));add(24,t("Usuń regułę dla tej domeny"));}
     entries
 }
 
@@ -1734,10 +1733,10 @@ const LINK_PEEK:i32=20;const LINK_NEW_TAB:i32=21;const LINK_SPLIT:i32=22;const L
 fn link_route(command:i32,s:&ffi::LinkMenuState)->Option<&ffi::LinkRoute>{if command<LINK_ROUTE_BASE{return None;}s.routes.get((command-LINK_ROUTE_BASE) as usize)}
 fn link_context_menu(s:&ffi::LinkMenuState)->Vec<ffi::LinkMenuEntry>{
     let mut entries=Vec::new();let mut add=|command,label:String,kind|entries.push(ffi::LinkMenuEntry{command,label,kind});
-    add(LINK_PEEK,"Otwórz w Peek".into(),0);add(LINK_NEW_TAB,"Otwórz w nowej karcie".into(),0);add(LINK_SPLIT,"Otwórz obok w Split View".into(),0);add(0,String::new(),1);
-    add(LINK_RULE_HERE,"Zawsze otwieraj tę domenę tutaj".into(),0);add(LINK_ROUTES,format!("Otwieraj {} w…",s.host),2);
+    add(LINK_PEEK,t("Otwórz w Peek").into(),0);add(LINK_NEW_TAB,t("Otwórz w nowej karcie").into(),0);add(LINK_SPLIT,t("Otwórz obok w Split View").into(),0);add(0,String::new(),1);
+    add(LINK_RULE_HERE,t("Zawsze otwieraj tę domenę tutaj").into(),0);add(LINK_ROUTES,tf("Otwieraj {} w…",&[&s.host]),2);
     for (index,route) in s.routes.iter().enumerate(){add(LINK_ROUTE_BASE+index as i32,route.label.clone(),3);}
-    add(LINK_REMOVE_RULE,"Usuń regułę dla tej domeny".into(),0);entries
+    add(LINK_REMOVE_RULE,t("Usuń regułę dla tej domeny").into(),0);entries
 }
 fn link_menu_enabled(command:i32,s:&ffi::LinkMenuState)->bool{
     if !s.ready{return false;}
@@ -1762,21 +1761,21 @@ fn palette_plan(p:&ffi::PalettePlanInput)->ffi::PalettePlan{
     if p.command_palette&&!commands_only&&!keyword_search&&!text.is_empty()&&p.results>0{slots.rotate_left(1);}
     if p.command_palette{let position=if keyword_search&&!slots.is_empty(){1}else{0};let commands=(0..p.commands).map(|index|ffi::PaletteSlot{source:S::Command,index}).collect::<Vec<_>>();slots.splice(position..position,commands);}
     let search=!p.provider.is_empty();
-    ffi::PalettePlan{commands_only,keyword_search,primary_title:if !primary{String::new()}else if search{format!("Szukaj w {}",p.provider)}else{"Otwórz".into()},primary_detail:if !primary{String::new()}else if search{p.text.clone()}else{p.resolved.clone()},primary_icon:if primary&&!search{1}else{0},slots}
+    ffi::PalettePlan{commands_only,keyword_search,primary_title:if !primary{String::new()}else if search{tf("Szukaj w {}",&[&p.provider])}else{t("Otwórz").into()},primary_detail:if !primary{String::new()}else if search{p.text.clone()}else{p.resolved.clone()},primary_icon:if primary&&!search{1}else{0},slots}
 }
 
 fn download_status(f:&ffi::DownloadFacts)->String{
     use ffi::DownloadPhase as P;
-    if f.blocked{return "Zablokowane przez ochronę Chromium — plik nie jest gotowy do użycia.".into();}
+    if f.blocked{return t("Zablokowane przez ochronę Chromium — plik nie jest gotowy do użycia.").into();}
     match f.phase {
-        P::Cancelled=>"Anulowano".into(),
-        P::Complete=>if f.removed{"Plik został przeniesiony lub usunięty".into()}else{format!("Ukończono · {}",f.received)},
-        P::Interrupted=>if f.can_resume{"Pobieranie przerwane — możesz wznowić".into()}else{"Pobieranie przerwane — rozpocznij ponownie ze strony".into()},
+        P::Cancelled=>t("Anulowano").into(),
+        P::Complete=>if f.removed{t("Plik został przeniesiony lub usunięty").into()}else{tf("Ukończono · {}",&[&f.received])},
+        P::Interrupted=>if f.can_resume{t("Pobieranie przerwane — możesz wznowić").into()}else{t("Pobieranie przerwane — rozpocznij ponownie ze strony").into()},
         _=>{
-            let mut text=if f.paused{format!("Wstrzymano · {}",f.received)}else{f.received.clone()};
+            let mut text=if f.paused{tf("Wstrzymano · {}",&[&f.received])}else{f.received.clone()};
             if !f.total.is_empty(){text.push_str(" / ");text.push_str(&f.total);}
             if !f.paused&&!f.speed.is_empty(){text.push_str(&format!(" · {}/s",f.speed));}
-            if !f.paused&&f.remaining_seconds>=0{text.push_str(&format!(" · pozostało {} s",f.remaining_seconds.max(1)));}
+            if !f.paused&&f.remaining_seconds>=0{text.push_str(&tf(" · pozostało {} s",&[&f.remaining_seconds.max(1).to_string()]));}
             text
         }
     }
@@ -1789,27 +1788,27 @@ fn command_catalogue(c:&ffi::CommandContext,query:&str)->Vec<ffi::CommandEntry>{
     let only=query.starts_with('>');let query=if only{&query[1..]}else{query};let query=command_fold(query.trim());
     let words=query.split([' ','\t']).filter(|w|!w.is_empty()).collect::<Vec<_>>();
     let mut out=Vec::new();
-    let mut add=|id:&str,title:String,detail:&str,aliases:&str,target:&str|{let haystack=command_fold(&format!("{title} {detail} {aliases}"));if words.iter().all(|w|haystack.contains(w)){out.push(ffi::CommandEntry{id:id.into(),title,detail:format!("Polecenie · {detail}"),target:target.into()});}};
-    for (id,title,detail,aliases) in [("new_tab","Nowa karta","Otwórz pasek nowej karty","new tab"),("save_snapshot","Zapisz snapshot przestrzeni","Szybki punkt przywracania w Time Machine","zapis sesji save snapshot backup"),("timeline","Time Machine","Snapshoty i zamknięte karty","przywróć restore historia sesji"),("settings","Ustawienia przeglądarki","Wygląd, prywatność i ustawienia profilu","settings preferences"),("shortcuts","Konfiguruj skróty klawiszowe","Nagraj lub zmień kombinacje klawiszy","keyboard shortcuts"),("engines","Konfiguruj wyszukiwarki","Prefiksy i domyślna wyszukiwarka","search engines"),("sidebar","Pokaż / ukryj panel boczny","Karty i przestrzenie","sidebar menu"),("spaces","Zarządzaj przestrzeniami","Dodaj lub edytuj space i przypisanie profilu","workspace spaces"),("profiles","Zarządzaj profilami","Dodaj profil i zarządzaj jego danymi","profile accounts"),("import","Importuj z przeglądarki","Wybierz przeglądarkę i zakres importu","import arc chrome edge brave zakladki profile"),("history","Historia przeglądania","Przeglądaj, szukaj i czyść historię profilu","history visited historia wyczysc"),("downloads","Pobrania","Postęp, pauza, wznowienie i Finder","downloads pobierz pliki transfer")]{add(id,title.into(),detail,aliases,"");}
+    let mut add=|id:&str,title:String,detail:&str,aliases:&str,target:&str|{let haystack=command_fold(&format!("{title} {detail} {aliases}"));if words.iter().all(|w|haystack.contains(w)){out.push(ffi::CommandEntry{id:id.into(),title,detail:tf("Polecenie · {}",&[detail]),target:target.into()});}};
+    for (id,title,detail,aliases) in [("new_tab",t("Nowa karta"),t("Otwórz pasek nowej karty"),"new tab"),("save_snapshot",t("Zapisz snapshot przestrzeni"),t("Szybki punkt przywracania w Time Machine"),"zapis sesji save snapshot backup"),("timeline","Time Machine",t("Snapshoty i zamknięte karty"),"przywróć restore historia sesji"),("settings",t("Ustawienia przeglądarki"),t("Wygląd, prywatność i ustawienia profilu"),"settings preferences"),("shortcuts",t("Konfiguruj skróty klawiszowe"),t("Nagraj lub zmień kombinacje klawiszy"),"keyboard shortcuts"),("engines",t("Konfiguruj wyszukiwarki"),t("Prefiksy i domyślna wyszukiwarka"),"search engines"),("sidebar",t("Pokaż / ukryj panel boczny"),t("Karty i przestrzenie"),"sidebar menu"),("spaces",t("Zarządzaj przestrzeniami"),t("Dodaj lub edytuj space i przypisanie profilu"),"workspace spaces"),("profiles",t("Zarządzaj profilami"),t("Dodaj profil i zarządzaj jego danymi"),"profile accounts"),("import",t("Importuj z przeglądarki"),t("Wybierz przeglądarkę i zakres importu"),"import arc chrome edge brave zakladki profile"),("history",t("Historia przeglądania"),t("Przeglądaj, szukaj i czyść historię profilu"),"history visited historia wyczysc"),("downloads",t("Pobrania"),t("Postęp, pauza, wznowienie i Finder"),"downloads pobierz pliki transfer")]{add(id,title.into(),detail,aliases,"");}
     if c.page{
-        add("split",(if c.split{"Zakończ Split View"}else{"Otwórz Split View"}).into(),"Dwie karty obok siebie","split podziel porównaj compare","");
-        add("reload","Odśwież kartę".into(),"Załaduj bieżącą stronę ponownie","reload refresh","");
-        if c.can_back{add("back","Wstecz".into(),"Poprzednia strona tej karty","back","");}
-        if c.can_forward{add("forward","Dalej".into(),"Następna strona tej karty","forward","");}
-        add("passwords","Hasła tego profilu".into(),"Zapisane logowania","passwords logins","");
-        if c.tab_count>1{add("close_tab","Zamknij bieżącą kartę".into(),"Możesz ją odzyskać w Time Machine","close tab","");}
-        if c.split{add("left_pane","Przejdź do lewej karty Split View".into(),"Ustaw aktywną stronę","focus left pane","");add("right_pane","Przejdź do prawej karty Split View".into(),"Ustaw aktywną stronę","focus right pane","");}
+        add("split",(if c.split{t("Zakończ Split View")}else{t("Otwórz Split View")}).into(),t("Dwie karty obok siebie"),"split podziel porównaj compare","");
+        add("reload",t("Odśwież kartę").into(),t("Załaduj bieżącą stronę ponownie"),"reload refresh","");
+        if c.can_back{add("back",t("Wstecz").into(),t("Poprzednia strona tej karty"),"back","");}
+        if c.can_forward{add("forward",t("Dalej").into(),t("Następna strona tej karty"),"forward","");}
+        add("passwords",t("Hasła tego profilu").into(),t("Zapisane logowania"),"passwords logins","");
+        if c.tab_count>1{add("close_tab",t("Zamknij bieżącą kartę").into(),t("Możesz ją odzyskać w Time Machine"),"close tab","");}
+        if c.split{add("left_pane",t("Przejdź do lewej karty Split View").into(),t("Ustaw aktywną stronę"),"focus left pane","");add("right_pane",t("Przejdź do prawej karty Split View").into(),t("Ustaw aktywną stronę"),"focus right pane","");}
     }
-    if c.reopen{add("reopen","Przywróć zamkniętą kartę".into(),"Ostatnia karta w tym profilu i space","reopen closed tab","");}
+    if c.reopen{add("reopen",t("Przywróć zamkniętą kartę").into(),t("Ostatnia karta w tym profilu i space"),"reopen closed tab","");}
     let mut awake_background=false;
     for w in &c.workspaces{
-        add("select_space",format!("{}{}",if w.asleep{"Obudź przestrzeń: "}else{"Przełącz przestrzeń: "},w.name),if w.asleep{"Przywróć zapisany układ kart"}else{"Przejdź do space"},"switch space workspace wake",&w.id);
-        if c.page&&w.same_profile{add("move_tab",format!("Przenieś kartę do: {}",w.name),"Ten sam profil · zachowuje formularze i historię karty","move tab przenies karte",&w.id);}
-        else if c.page&&c.http_page{add("copy_tab",format!("Otwórz kopię karty w: {}",w.name),"Inny profil · nowe logowanie i dane strony","copy tab skopiuj karte",&w.id);}
+        add("select_space",if w.asleep{tf("Obudź przestrzeń: {}",&[&w.name])}else{tf("Przełącz przestrzeń: {}",&[&w.name])},if w.asleep{t("Przywróć zapisany układ kart")}else{t("Przejdź do space")},"switch space workspace wake",&w.id);
+        if c.page&&w.same_profile{add("move_tab",tf("Przenieś kartę do: {}",&[&w.name]),t("Ten sam profil · zachowuje formularze i historię karty"),"move tab przenies karte",&w.id);}
+        else if c.page&&c.http_page{add("copy_tab",tf("Otwórz kopię karty w: {}",&[&w.name]),t("Inny profil · nowe logowanie i dane strony"),"copy tab skopiuj karte",&w.id);}
         awake_background|=!w.asleep&&!w.capturing;
-        if !w.asleep&&!w.capturing{add("sleep_space",format!("Uśpij przestrzeń: {}",w.name),"Zwolnij pamięć · strony przeładują się po obudzeniu; zapisz formularze","sleep space memory",&w.id);}
+        if !w.asleep&&!w.capturing{add("sleep_space",tf("Uśpij przestrzeń: {}",&[&w.name]),t("Zwolnij pamięć · strony przeładują się po obudzeniu; zapisz formularze"),"sleep space memory",&w.id);}
     }
-    if awake_background{add("sleep_others","Uśpij pozostałe przestrzenie".into(),"Pomiń aktywne nagrywanie · inne strony przeładują się; zapisz formularze","sleep other spaces memory pamiec","");}
+    if awake_background{add("sleep_others",t("Uśpij pozostałe przestrzenie").into(),t("Pomiń aktywne nagrywanie · inne strony przeładują się; zapisz formularze"),"sleep other spaces memory pamiec","");}
     // The initial view stays compact; ">" reveals the full catalogue.
     if query.is_empty()&&!only{out.truncate(6);}out
 }
@@ -1818,8 +1817,8 @@ fn command_catalogue(c:&ffi::CommandContext,query:&str)->Vec<ffi::CommandEntry>{
 const FOLDER_NEW:i32=36;const FOLDER_RENAME:i32=37;const FOLDER_DELETE:i32=38;
 fn folder_context_menu(s:&ffi::FolderMenuState)->Vec<ffi::FolderMenuEntry>{
     let entry=|command,label:&str|ffi::FolderMenuEntry{command,label:label.into()};
-    let mut entries=vec![entry(FOLDER_NEW,if s.folder.is_empty(){"Nowy folder…"}else{"Nowy podfolder…"})];
-    if !s.folder.is_empty(){entries.extend([entry(0,""),entry(FOLDER_RENAME,"Zmień nazwę…"),entry(FOLDER_DELETE,"Usuń folder")]);}entries
+    let mut entries=vec![entry(FOLDER_NEW,if s.folder.is_empty(){t("Nowy folder…")}else{t("Nowy podfolder…")})];
+    if !s.folder.is_empty(){entries.extend([entry(0,""),entry(FOLDER_RENAME,t("Zmień nazwę…")),entry(FOLDER_DELETE,t("Usuń folder"))]);}entries
 }
 fn folder_menu_enabled(command:i32,s:&ffi::FolderMenuState)->bool{
     s.ready&&!s.busy&&!s.workspace.is_empty()&&match command{FOLDER_NEW=>true,FOLDER_RENAME|FOLDER_DELETE=>!s.folder.is_empty(),_=>false}
@@ -1832,7 +1831,7 @@ fn folder_menu_action(command:i32,s:&ffi::FolderMenuState)->ffi::FolderMenuActio
 
 // Workspace menu IDs follow the native menu delegate contract.
 const WS_SET_PROFILE:i32=1;const WS_NEW_PROFILE:i32=2;const WS_EDIT_PROFILE:i32=3;const WS_SETTINGS:i32=4;const WS_REMOVE:i32=30;const WS_COLOR_MENU:i32=31;const WS_EMOJI_MENU:i32=32;const WS_CUSTOM_COLOR:i32=33;const WS_CUSTOM_EMOJI:i32=34;const WS_CLEAR_EMOJI:i32=35;const WS_COLOR_BASE:i32=40;const WS_EMOJI_BASE:i32=50;const WS_PROFILE_BASE:i32=100;
-const WORKSPACE_COLOR_NAMES:[&str;8]=["Fiolet","Koral","Niebo","Bursztyn","Róż","Mięta","Zieleń","Grafit"];
+fn workspace_color_names()->[&'static str;8]{[t("Fiolet"),t("Koral"),t("Niebo"),t("Bursztyn"),t("Róż"),t("Mięta"),t("Zieleń"),t("Grafit")]}
 fn indexed(command:i32,base:i32,count:usize)->Option<usize>{(command>=base&&((command-base) as usize)<count).then(||(command-base) as usize)}
 fn workspace_menu_command(command:i32,profiles:usize)->bool{
     matches!(command,WS_SET_PROFILE..=WS_SETTINGS|WS_REMOVE..=WS_CLEAR_EMOJI)||indexed(command,WS_COLOR_BASE,APPEARANCE_COLORS.len()).is_some()||indexed(command,WS_EMOJI_BASE,APPEARANCE_EMOJIS.len()).is_some()||indexed(command,WS_PROFILE_BASE,profiles).is_some()
@@ -1840,13 +1839,13 @@ fn workspace_menu_command(command:i32,profiles:usize)->bool{
 fn workspace_context_menu(s:&ffi::WorkspaceMenuState)->Vec<ffi::WorkspaceMenuEntry>{
     let mut entries=Vec::new();let mut add=|command:i32,label:&str,kind:u32,group:u32|entries.push(ffi::WorkspaceMenuEntry{command,label:label.into(),kind,group});
     for (index,profile) in s.profiles.iter().enumerate(){add(WS_PROFILE_BASE+index as i32,&profile.name,3,1);}
-    add(0,"",1,1);add(WS_EDIT_PROFILE,"Edytuj profile…",0,1);add(WS_NEW_PROFILE,"Dodaj nowy profil…",0,1);
-    for (index,name) in WORKSPACE_COLOR_NAMES.iter().enumerate(){add(WS_COLOR_BASE+index as i32,name,4,2);}
-    add(0,"",1,2);add(WS_CUSTOM_COLOR,"Własny kolor…",0,2);
+    add(0,"",1,1);add(WS_EDIT_PROFILE,t("Edytuj profile…"),0,1);add(WS_NEW_PROFILE,t("Dodaj nowy profil…"),0,1);
+    for (index,name) in workspace_color_names().iter().enumerate(){add(WS_COLOR_BASE+index as i32,name,4,2);}
+    add(0,"",1,2);add(WS_CUSTOM_COLOR,t("Własny kolor…"),0,2);
     for (index,emoji) in APPEARANCE_EMOJIS.iter().enumerate(){add(WS_EMOJI_BASE+index as i32,emoji,4,3);}
-    add(0,"",1,3);add(WS_CUSTOM_EMOJI,"Własna ikonka…",0,3);add(WS_CLEAR_EMOJI,"Bez ikonki (kropka)",4,3);
-    add(WS_SET_PROFILE,"Profil przeglądania",2,0);add(WS_COLOR_MENU,"Kolor przestrzeni",2,0);add(WS_EMOJI_MENU,"Ikonka przestrzeni",2,0);add(0,"",1,0);
-    add(WS_SETTINGS,"Nazwa i ustawienia…",0,0);add(WS_REMOVE,"Usuń przestrzeń",0,0);entries
+    add(0,"",1,3);add(WS_CUSTOM_EMOJI,t("Własna ikonka…"),0,3);add(WS_CLEAR_EMOJI,t("Bez ikonki (kropka)"),4,3);
+    add(WS_SET_PROFILE,t("Profil przeglądania"),2,0);add(WS_COLOR_MENU,t("Kolor przestrzeni"),2,0);add(WS_EMOJI_MENU,t("Ikonka przestrzeni"),2,0);add(0,"",1,0);
+    add(WS_SETTINGS,t("Nazwa i ustawienia…"),0,0);add(WS_REMOVE,t("Usuń przestrzeń"),0,0);entries
 }
 fn workspace_menu_enabled(command:i32,s:&ffi::WorkspaceMenuState)->bool{
     if !s.ready||s.workspace.is_empty()||!workspace_menu_command(command,s.profiles.len()){return false;}
@@ -2536,7 +2535,7 @@ impl ActionGraph {
         for item in &items{keys.push(ffi::ActionNodeKey{kind:3,high:0,low:0,name:item.key.clone()});}
         let plan=self.reconcile(keys);if !plan.admitted{return plan;}
         let root=self.nodes[&group].borrow().id;
-        for item in items{let mut node=self.nodes[&(3,0,0,item.key)].borrow_mut();let mut name="Przestrzeń: ".encode_utf16().collect::<Vec<_>>();name.extend(item.name);if item.sleeping{name.extend(" · uśpiona".encode_utf16());}node.parent=root;node.state.action_on(item.active);node.state.action_enabled(item.enabled);if geometry_changed{node.state.action_cancel();}if let Some(NodeModel::Workspace(p))=node.model.as_deref_mut(){p.name=name;p.label=item.label;p.cancel_input=geometry_changed;}else{node.model=Some(Box::new(NodeModel::Workspace(WorkspacePresentation{name,label:item.label,cancel_input:geometry_changed})));}}
+        for item in items{let mut node=self.nodes[&(3,0,0,item.key)].borrow_mut();let mut name=t("Przestrzeń: ").encode_utf16().collect::<Vec<_>>();name.extend(item.name);if item.sleeping{name.extend(t(" · uśpiona").encode_utf16());}node.parent=root;node.state.action_on(item.active);node.state.action_enabled(item.enabled);if geometry_changed{node.state.action_cancel();}if let Some(NodeModel::Workspace(p))=node.model.as_deref_mut(){p.name=name;p.label=item.label;p.cancel_input=geometry_changed;}else{node.model=Some(Box::new(NodeModel::Workspace(WorkspacePresentation{name,label:item.label,cancel_input:geometry_changed})));}}
         plan
     }
     fn workspace_scene(&self)->ffi::WorkspaceScene{

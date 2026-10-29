@@ -22,6 +22,12 @@ class UiLanguageTests(unittest.TestCase):
                 self.assertTrue(english, polish)
                 self.assertEqual(polish.count("{}"), english.count("{}"), polish)
 
+    def test_a_string_in_several_catalogues_reads_the_same(self):
+        seen = {}
+        for name in check.CATALOGUES:
+            for polish, english in check.catalogue(name)[0].items():
+                self.assertEqual(seen.setdefault(polish, english), english, polish)
+
 
 if __name__ == "__main__":
     unittest.main()

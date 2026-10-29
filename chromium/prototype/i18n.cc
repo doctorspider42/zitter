@@ -22,6 +22,18 @@ std::optional<std::string>& TestingLanguage() {
 // Chromium-owned UI (menus, system dialogs) switches with it on the next start.
 constexpr char kLanguageKey[] = "ZitterLanguage";
 #endif
+// The user's first preferred language. Chromium's app locale is not enough: a
+// bundle without a Polish locale pack reports en-US on a Polish system.
+std::string SystemLanguage(std::string_view app_locale) {
+#if BUILDFLAG(IS_MAC)
+  base::apple::ScopedCFTypeRef<CFArrayRef> languages(CFLocaleCopyPreferredLanguages());
+  if (languages && CFArrayGetCount(languages.get()) > 0) {
+    if (auto* first = base::apple::CFCast<CFStringRef>(CFArrayGetValueAtIndex(languages.get(), 0)))
+      return base::SysCFStringRefToUTF8(first);
+  }
+#endif
+  return std::string(app_locale);
+}
 }  // namespace
 std::u16string T(std::u16string_view polish) {
   if (!sidebar::ui_language_is_english()) return std::u16string(polish);
@@ -77,7 +89,7 @@ void ApplyUiLanguage(std::string_view app_locale) {
     return;
   }
   const auto choice = StoredUiLanguage();
-  const std::string locale = choice == "system" ? std::string(app_locale) : choice;
+  const std::string locale = choice == "system" ? SystemLanguage(app_locale) : choice;
   sidebar::set_ui_language(rust::Str(locale.data(), locale.size()));
 }
 bool UiLanguageIsEnglish() { return sidebar::ui_language_is_english(); }

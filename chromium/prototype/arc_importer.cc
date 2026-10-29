@@ -17,6 +17,7 @@
 #include "base/uuid.h"
 #include "base/values.h"
 #include "build/build_config.h"
+#include "chromium/prototype/i18n.h"
 
 namespace zitter::prototype {
 namespace {
@@ -88,7 +89,7 @@ void VisitItem(const std::string& id, const std::string& parent, const Dictionar
 ArcImport ParseArcImport(std::string_view sidebar, std::string_view local_state) {
   ArcImport result;
   auto data = base::JSONReader::ReadDict(sidebar, base::JSON_PARSE_RFC);
-  if (!data) { result.error = "Nie udało się odczytać pliku StorableSidebar.json."; return result; }
+  if (!data) { result.error = base::UTF16ToUTF8(T(u"Nie udało się odczytać pliku StorableSidebar.json.")); return result; }
   auto state = base::JSONReader::ReadDict(local_state, base::JSON_PARSE_RFC);
   const auto* cache = state ? state->FindDictByDottedPath("profile.info_cache") : nullptr;
   std::map<std::string, std::string> profile_ids;
@@ -96,7 +97,7 @@ ArcImport ParseArcImport(std::string_view sidebar, std::string_view local_state)
     if (auto it = profile_ids.find(source); it != profile_ids.end()) return it->second;
     const auto id = "arc-profile-" + source;
     const auto* entry = cache ? cache->FindDict(source) : nullptr;
-    result.profiles.push_back({id, entry ? Text(*entry, "name", source) : (source == "Default" ? "Osobisty (Arc)" : source + " (Arc)"),
+    result.profiles.push_back({id, entry ? Text(*entry, "name", source) : (source == "Default" ? base::UTF16ToUTF8(T(u"Osobisty (Arc)")) : source + " (Arc)"),
                               "ZitterProfile-" + base::Uuid::GenerateRandomV4().AsLowercaseString(), "arc:" + source});
     profile_ids[source] = id;
     return id;
@@ -110,7 +111,7 @@ ArcImport ParseArcImport(std::string_view sidebar, std::string_view local_state)
     }
   }
   const auto* containers = data->FindListByDottedPath("sidebar.containers");
-  if (!containers) { result.error = "Nieobsługiwany format paska bocznego Arc."; return result; }
+  if (!containers) { result.error = base::UTF16ToUTF8(T(u"Nieobsługiwany format paska bocznego Arc.")); return result; }
   std::set<std::string> seen_spaces;
   for (const auto& value : *containers) {
     const auto* container = value.GetIfDict();
@@ -141,7 +142,7 @@ ArcImport ParseArcImport(std::string_view sidebar, std::string_view local_state)
       if (directory.empty()) { ++result.skipped_count; continue; }
       ImportedSpace imported;
       imported.id = "arc-space-" + id;
-      imported.name = Text(space, "title", "Osobiste (Arc)");
+      imported.name = Text(space, "title", base::UTF16ToUTF8(T(u"Osobiste (Arc)")));
       imported.profile_id = add_profile(directory);
       // Current Arc stores the full emoji sequence; older exports use a scalar.
       if (const auto* icon = space.FindDictByDottedPath("customInfo.iconType")) {
@@ -158,7 +159,7 @@ ArcImport ParseArcImport(std::string_view sidebar, std::string_view local_state)
           const auto* children = root->second->FindList("childrenIds");
           if (children && !children->empty()) {
             const auto folder_id = "arc-favorites-" + id;
-            imported.pins.push_back({folder_id, "", "Ulubione Arc", GURL(), true});
+            imported.pins.push_back({folder_id, "", base::UTF16ToUTF8(T(u"Ulubione Arc")), GURL(), true});
             ++result.folder_count;
             VisitItem(it->second, folder_id, items, imported, result, visited, 0);
           }
@@ -170,7 +171,7 @@ ArcImport ParseArcImport(std::string_view sidebar, std::string_view local_state)
           const auto* kind = (*list)[i].GetIfDict();
           if (kind && kind->contains("pinned") && (*list)[i + 1].is_string()) {
             if (!items.contains((*list)[i + 1].GetString())) {
-              result.error = "Dane Arc są niekompletne. Zamknij Arc i ponów import.";
+              result.error = base::UTF16ToUTF8(T(u"Dane Arc są niekompletne. Zamknij Arc i ponów import."));
               return result;
             }
             VisitItem((*list)[i + 1].GetString(), "", items, imported, result, visited, 0);
@@ -184,7 +185,7 @@ ArcImport ParseArcImport(std::string_view sidebar, std::string_view local_state)
           for (size_t i = 0; i + 1 < list->size(); i += 2) {
             if ((*list)[i].is_string() && (*list)[i].GetString() == "pinned" && (*list)[i + 1].is_string()) {
               if (!items.contains((*list)[i + 1].GetString())) {
-              result.error = "Dane Arc są niekompletne. Zamknij Arc i ponów import.";
+              result.error = base::UTF16ToUTF8(T(u"Dane Arc są niekompletne. Zamknij Arc i ponów import."));
               return result;
             }
             VisitItem((*list)[i + 1].GetString(), "", items, imported, result, visited, 0);
@@ -193,25 +194,25 @@ ArcImport ParseArcImport(std::string_view sidebar, std::string_view local_state)
           }
         }
       }
-      if (!pinned_found) { result.error = "Nie znaleziono przypiętych kart jednej z przestrzeni Arc. Import został zatrzymany."; return result; }
+      if (!pinned_found) { result.error = base::UTF16ToUTF8(T(u"Nie znaleziono przypiętych kart jednej z przestrzeni Arc. Import został zatrzymany.")); return result; }
       result.spaces.push_back(std::move(imported));
     }
   }
-  if (result.spaces.empty()) result.error = "Nie znaleziono przestrzeni Arc do importu.";
+  if (result.spaces.empty()) result.error = base::UTF16ToUTF8(T(u"Nie znaleziono przestrzeni Arc do importu."));
   return result;
 }
 
 ArcImport ReadArcImport(const base::FilePath& arc_directory) {
   if (arc_directory.empty()) {
     ArcImport result;
-    result.error = "Import Arc jest obecnie dostępny na macOS.";
+    result.error = base::UTF16ToUTF8(T(u"Import Arc jest obecnie dostępny na macOS."));
     return result;
   }
   constexpr size_t kMaxSize = 32 * 1024 * 1024;
   std::string sidebar, state;
   if (!base::ReadFileToStringWithMaxSize(arc_directory.AppendASCII("StorableSidebar.json"), &sidebar, kMaxSize)) {
     ArcImport result;
-    result.error = "Nie znaleziono danych Arc. Uruchom Arc na tym komputerze i spróbuj ponownie.";
+    result.error = base::UTF16ToUTF8(T(u"Nie znaleziono danych Arc. Uruchom Arc na tym komputerze i spróbuj ponownie."));
     return result;
   }
   base::ReadFileToStringWithMaxSize(arc_directory.AppendASCII("User Data").AppendASCII("Local State"), &state, kMaxSize);
@@ -263,7 +264,7 @@ ArcImport ApplyImportOptions(ArcImport result, BrowserImportOptions options) {
     profile.id = options.browser == ImportBrowser::kArc ? "arc-profile-merged" :
         options.browser == ImportBrowser::kChrome ? "chrome-profile-merged" :
         options.browser == ImportBrowser::kEdge ? "edge-profile-merged" : "brave-profile-merged";
-    profile.name = "Import z " + base::UTF16ToUTF8(ImportBrowserName(options.browser));
+    profile.name = base::UTF16ToUTF8(TF(u"Import z {}", {ImportBrowserName(options.browser)}));
     profile.source_id = "import:" + profile.id;
     result.profiles = {profile};
     for (auto& space : result.spaces) space.profile_id = profile.id;
@@ -281,7 +282,7 @@ void VisitBookmark(const base::DictValue& node, const std::string& parent,
   if (!type) { ++result.skipped_count; return; }
   // Generate unique destination IDs even for damaged/duplicate source IDs.
   const auto id = space.id + "-bookmark-" + std::to_string(visited);
-  const auto name = Text(node, "name", "Bez nazwy");
+  const auto name = Text(node, "name", base::UTF16ToUTF8(T(u"Bez nazwy")));
   if (*type == "url") {
     const GURL url(Text(node, "url", ""));
     if (!url.SchemeIsHTTPOrHTTPS() || !url.is_valid()) { ++result.skipped_count; return; }
@@ -309,7 +310,7 @@ ArcImport ReadBrowserImport(BrowserImportOptions options, const base::FilePath& 
   }
   ArcImport result;
   if (directory.empty() || !base::DirectoryExists(directory)) {
-    result.error = "Nie znaleziono danych przeglądarki " + base::UTF16ToUTF8(ImportBrowserName(options.browser)) + ".";
+    result.error = base::UTF16ToUTF8(TF(u"Nie znaleziono danych przeglądarki {}.", {ImportBrowserName(options.browser)}));
     return result;
   }
   const char* prefix = options.browser == ImportBrowser::kChrome ? "chrome" :
@@ -348,12 +349,12 @@ ArcImport ReadBrowserImport(BrowserImportOptions options, const base::FilePath& 
     if (options.bookmarks && base::PathExists(profile_dir.AppendASCII("Bookmarks"))) {
       std::string bookmarks_json;
       if (!base::ReadFileToStringWithMaxSize(profile_dir.AppendASCII("Bookmarks"), &bookmarks_json, kMaxSize)) {
-        result.error = "Nie udało się odczytać zakładek. Zamknij przeglądarkę i spróbuj ponownie.";
+        result.error = base::UTF16ToUTF8(T(u"Nie udało się odczytać zakładek. Zamknij przeglądarkę i spróbuj ponownie."));
         return result;
       }
       auto data = base::JSONReader::ReadDict(bookmarks_json, base::JSON_PARSE_RFC);
       const auto* roots = data ? data->FindDict("roots") : nullptr;
-      if (!roots) { result.error = "Nieprawidłowy plik zakładek. Import został zatrzymany."; return result; }
+      if (!roots) { result.error = base::UTF16ToUTF8(T(u"Nieprawidłowy plik zakładek. Import został zatrzymany.")); return result; }
       size_t visited = 0;
       for (const auto key : {"bookmark_bar", "other", "synced"})
         if (const auto* root = roots->FindDict(key)) VisitBookmark(*root, "", space, result, 0, visited);
@@ -362,7 +363,7 @@ ArcImport ReadBrowserImport(BrowserImportOptions options, const base::FilePath& 
     result.profiles.push_back(std::move(profile));
     result.spaces.push_back(std::move(space));
   }
-  if (result.spaces.empty()) result.error = "Nie znaleziono profili do importu.";
+  if (result.spaces.empty()) result.error = base::UTF16ToUTF8(T(u"Nie znaleziono profili do importu."));
   return ApplyImportOptions(std::move(result), options);
 }
 }  // namespace zitter::prototype

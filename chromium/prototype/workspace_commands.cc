@@ -1,5 +1,6 @@
 #include "chromium/prototype/workspace_window.h"
 #include "chromium/prototype/page_media_access.h"
+#include "chromium/prototype/i18n.h"
 #include "build/build_config.h"
 
 #include <algorithm>
@@ -144,7 +145,7 @@ bool WorkspaceWindow::MoveActiveTab(std::string target_id) {
   }
   if (peek_view_ && GuardPages({peek_contents()}, base::BindOnce([](base::WeakPtr<WorkspaceWindow> w, std::string target) { if (w) w->MoveActiveTab(target); }, weak_factory_.GetWeakPtr(), target_id))) return true;
   ClosePeek();
-  SaveSnapshot("Przed przeniesieniem karty", true);
+  SaveSnapshot(base::UTF16ToUTF8(T(u"Przed przeniesieniem karty")), true);
   auto* moving = source->view.get();
   shell_->SetPanes({}, {});
   const auto pending = source->deferred_urls.find(moving);
