@@ -1738,6 +1738,8 @@ class RustRowView final : public views::View {
   void ViewHierarchyChanged(const views::ViewHierarchyChangedDetails& details) override{if(!details.is_add&&details.parent==this&&details.child==close_)close_=nullptr;views::View::ViewHierarchyChanged(details);}
   const Spec& preview_spec() const{return spec_;}
   void SetCallback(views::Button::PressedCallback callback){CancelInput();callback_=std::move(callback);}
+  // `zt-tremor`: 1 px shakes in four steps over 180 ms (off under reduced motion).
+  void Tremor(){if(gfx::Animation::PrefersReducedMotion())return;tremor_step_=0;tremor_timer_.Start(FROM_HERE,base::Milliseconds(45),base::BindRepeating(&RustRowView::TremorStep,base::Unretained(this)));}
   void SetAudible(bool audible){if(spec_.audible==audible)return;spec_.audible=audible;SchedulePaint();if(changed_)changed_.Run();}
   void SetEditing(bool editing){if(spec_.editing==editing)return;spec_.editing=editing;SchedulePaint();if(changed_)changed_.Run();}
   void SetActive(bool active){if(!state_->action_on(active))return;if(!state_->sidebar_visual().valid)spec_.active=active;measured_.reset();UpdateClose();SchedulePaint();}
@@ -1804,11 +1806,14 @@ class RustRowView final : public views::View {
       PaintSceneRecipe(canvas,PaletteRowItem(this,spec_,bounds,bounds,v.visual==sidebar::RowVisual::Hovered||v.visual==sidebar::RowVisual::Pressed,HasFocus()),Font(0),true);
       if(spec_.icon){const auto p=Palette(this);const auto body=gfx::ToEnclosingRect(PaletteRowBody(spec_,bounds));PaintIcon(canvas,*spec_.icon,gfx::Rect(12,body.y(),16,body.height()),16,spec_.highlighted?p.accent_ink:p.ink_muted);}return;}
     if(spec_.kbd){const auto bounds=gfx::RectF(GetLocalBounds());const auto v=state_->action_snapshot();for(const auto& item:CommandRowItems(this,spec_,bounds,bounds,v.visual==sidebar::RowVisual::Hovered||v.visual==sidebar::RowVisual::Pressed,HasFocus()))PaintSceneRecipe(canvas,item,Font(0),true);return;}
+    gfx::ScopedCanvas tremor(canvas);canvas->Translate(gfx::Vector2d(tremor_dx_,0));
     if(spec_.address){const auto bounds=gfx::RectF(GetLocalBounds());const auto v=state_->action_snapshot();PaintSceneRecipe(canvas,AddressRowItem(this,spec_,bounds,bounds,scene_title_width(),v.visual==sidebar::RowVisual::Hovered||v.visual==sidebar::RowVisual::Pressed,HasFocus()),Font(0),true);return;}if(spec_.history){const auto bounds=gfx::RectF(GetLocalBounds());PaintSceneRecipe(canvas,Scene(bounds,bounds),Font(0),true);return;}const auto v=state_->action_snapshot().visual;RowRecipe::PaintDecorations(canvas,GetLocalBounds(),spec_,this,v==sidebar::RowVisual::Hovered||v==sidebar::RowVisual::Pressed);
     const auto geometry=Geometry();const auto& r=geometry.title;canvas->DrawStringRectWithFlags(spec_.title,Font(0,spec_.active||spec_.chip||spec_.address?gfx::Font::Weight::MEDIUM:gfx::Font::Weight::NORMAL),Tone(this,spec_.blank?kMuted:kInk),gfx::Rect(r.x,r.y,r.width,r.height),gfx::Canvas::TEXT_ALIGN_LEFT);
     if(!spec_.detail.empty()){const auto& d=geometry.detail;canvas->DrawStringRectWithFlags(gfx::ElideText(spec_.detail,Font(spec_.address?0:-1),d.width,spec_.address||spec_.stacked?gfx::ELIDE_TAIL:gfx::ELIDE_MIDDLE),Font(spec_.address?0:-1),Tone(this,kMuted),gfx::Rect(d.x,d.y,d.width,d.height),gfx::Canvas::TEXT_ALIGN_LEFT);}
   }
+  void TremorStep(){static constexpr std::array<int,4> kOffsets={-1,1,-1,0};if(tremor_step_>=static_cast<int>(kOffsets.size())){tremor_timer_.Stop();return;}tremor_dx_=kOffsets[tremor_step_++];SchedulePaint();if(changed_)changed_.Run();}
  private:
+  int tremor_dx_=0,tremor_step_=0;base::RepeatingTimer tremor_timer_;
   static void ClearSidebarVisuals(Spec& spec){std::u16string{}.swap(spec.title);std::u16string{}.swap(spec.monogram);spec.monogram_color=SK_ColorTRANSPARENT;spec.icon=nullptr;spec.active=false;spec.tile=false;spec.height=0;}
   void SyncSidebarAX(){const auto title=state_->sidebar_title();const std::u16string text(title.begin(),title.end());SetTooltipText(text);GetViewAccessibility().SetName(text);}
   sidebar::RowLayout Geometry() const{if(spec_.stacked){auto g=sidebar::row_layout(width(),height(),0,false,false,close_!=nullptr);const int lead=50,half=height()/2;const int w=std::max(0,g.title.width+g.title.x-lead);g.title={lead,2,w,half-2};g.detail={lead,half,w,half-4};return g;}if(spec_.address)return sidebar::address_layout(width(),height(),scene_title_width());return sidebar::row_layout(width(),height(),scene_title_width(),!spec_.detail.empty(),spec_.chip,close_!=nullptr);}
@@ -1863,6 +1868,7 @@ bool IsRow(views::View* view){
 }
 const RowRecipe::Spec& RowSpec(views::View* view){return VisitRow(view,[](auto* row)->const RowRecipe::Spec&{return row->preview_spec();});}
 void SetRowActive(views::View* view,bool value){VisitRow(view,[value](auto* row){row->SetActive(value);});}
+void TremorRow(views::View* view){if(auto* row=views::AsViewClass<RustRowView>(view))row->Tremor();}
 void SetRowAudible(views::View* view,bool value){if(auto* row=views::AsViewClass<RustRowView>(view))row->SetAudible(value);}
 void SetCreateAction(views::View* view,bool creating){if(auto* button=views::AsViewClass<SceneTextButton>(view))button->SetZing(creating);}
 void SetRowEditing(views::View* view,bool value){if(auto* row=views::AsViewClass<RustRowView>(view))row->SetEditing(value);}
@@ -6788,6 +6794,7 @@ void SetWidgetBounds(views::Widget* widget, const gfx::Rect& bounds) {
   if (widget->GetWindowBoundsInScreen() != bounds) widget->SetBounds(bounds);
 }
 }  // namespace
+void WorkspaceShell::TremorAddress(){if(url_pill_)TremorRow(url_pill_);}
 void WorkspaceShell::ShowToast(std::u16string lead,std::u16string noun,base::OnceClosure undo,std::u16string action){
   if(!toast_widget_)return;
   auto* toast=static_cast<ToastView*>(toast_.get());toast->SetMessage(std::move(lead),std::move(noun));toast->SetAction(action.empty()?T(u"Cofnij"):std::move(action));toast_undo_=std::move(undo);

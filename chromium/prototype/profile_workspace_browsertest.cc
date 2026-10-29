@@ -3511,6 +3511,24 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CommandCenterSearchAndDispatch
   EXPECT_FALSE(window_->ExecuteCommand(*settings));  // Queued action cannot cross workspaces.
 }
 
+// „Kopiuj adres strony” puts the address on the clipboard (the pill trembles,
+// design: AddressPill); pages without a web address offer no copy.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CommandCenterCopiesThePageAddress) {
+  ui::TestClipboard::CreateForCurrentThread();
+  ASSERT_TRUE(window_->Select("work"));
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html?copy-address");
+  ASSERT_TRUE(window_->NavigateFromBar(url, false));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  const auto actions = window_->CommandResults(u">");
+  const auto copy = std::find_if(actions.begin(), actions.end(), [](const auto& item) { return item.command_id == "copy_url"; });
+  ASSERT_NE(copy, actions.end());
+  EXPECT_TRUE(window_->ExecuteCommand(*copy));
+  base::test::TestFuture<std::u16string> text;
+  ui::Clipboard::GetForCurrentThread()->ReadText(ui::ClipboardBuffer::kCopyPaste, std::nullopt, text.GetCallback());
+  EXPECT_EQ(base::UTF8ToUTF16(url.spec()), text.Get());
+  ui::Clipboard::DestroyClipboardForCurrentThread();
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CommandCenterMoveCopyAndSleep) {
   ASSERT_TRUE(window_->AddWorkspace("Projekt", "work-profile"));
   const auto target = window_->active_id();

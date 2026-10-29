@@ -3,6 +3,8 @@
 // One entry per distinct Polish string, written exactly as in the source
 // (same escapes); `{}` placeholders keep their order.
 pub static EN: &[(&str, &str)] = &[
+    ("Kopiuj adres strony", "Copy page address"),
+    ("Adres bieżącej karty do schowka", "The current tab’s address to the clipboard"),
     ("Gotowe", "Done"),
     ("Ochrona Chromium — plik nie jest gotowy do użycia", "Chromium protection — the file isn’t ready to use"),
     ("Plik przeniesiony lub usunięty", "File moved or deleted"),

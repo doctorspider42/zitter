@@ -1,6 +1,7 @@
 #include "chromium/prototype/browser_import_data.h"
 #include "chromium/prototype/workspace_window.h"
 #include "chromium/prototype/i18n.h"
+#include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "chromium/prototype/download_panel.h"
 #include "chromium/prototype/page_services.h"
 #include "chromium/prototype/page_dialogs.h"
@@ -1462,6 +1463,14 @@ bool WorkspaceWindow::AcceleratorPressed(const ui::Accelerator& accelerator) {
 
 bool WorkspaceWindow::RunShortcut(std::string id) {
   if (id.empty()) return false;
+  if (id == "copy_url") {
+    // The address pill trembles once: the copy's only confirmation (design: AddressPill).
+    auto* page = peek_contents() ? peek_contents() : contents(active_id());
+    if (!page || !page->GetLastCommittedURL().SchemeIsHTTPOrHTTPS()) return false;
+    ui::ScopedClipboardWriter(ui::ClipboardBuffer::kCopyPaste).WriteText(base::UTF8ToUTF16(page->GetLastCommittedURL().spec()));
+    shell_->TremorAddress();
+    return true;
+  }
   if (id == "downloads") { ShowDownloads(); return true; }
   if (id == "history") { shell_->OpenTools(3); return true; }
   if (id == "settings") { shell_->OpenGeneralSettings(); return true; }

@@ -461,6 +461,8 @@ class WorkspaceShell final : public ui::EventHandler,
   // `action` names the button („Cofnij” when empty).
   void ShowToast(std::u16string lead, std::u16string noun, base::OnceClosure undo, std::u16string action = {});
   void HideToast();
+  // The address pill trembles once (a copied address).
+  void TremorAddress();
   void UndoToast();
   views::Widget* toast_widget() const { return toast_widget_.get(); }
   std::u16string toast_text_for_testing() const;
