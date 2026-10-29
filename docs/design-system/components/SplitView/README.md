@@ -8,4 +8,4 @@ Dwie lub więcej stron w jednym widoku: obok siebie albo jedna pod drugą, z uch
 - Aktywny panel: obrys 1.5 px `--accent`; host w `ink`, nieaktywny w `ink-muted`.
 - Pasek hosta 28 px w `url` nad każdym panelem — adres pokazuje też pigułka, ale tylko dla aktywnego.
 - Uchwyt (`zt-gutter`, `role="separator"`): kreska 3 px `line-strong`, na hover rośnie i zmienia się w `zing`. Strzałki przesuwają o 5%.
-- W pasku bocznym karty podziału to kolejne wiersze `SidebarTab` tuż pod sobą, na wspólnym tle grupy.
+- W pasku bocznym karty podziału stoją obok siebie w jednym wierszu `SidebarTab`, w kolejności paneli.
