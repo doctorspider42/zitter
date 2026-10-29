@@ -33,6 +33,11 @@ done
 for f in $OVERLAY/chromium/prototype/*; do
   [[ -e $ROOT/chromium/prototype/${f:t} ]] || { rm $f; echo "removed ${f:t}"; }
 done
+# The app menu (chromium/app/app_shell_mac.*) follows the checkout too; the rest
+# of chromium/app is hand-staged (the overlay leaves the network policy out).
+for f in $ROOT/chromium/app/app_shell_mac.{h,mm}; do
+  dest=$OVERLAY/chromium/app/${f:t}; cp $f $dest.tmp; stage $dest
+done
 # The overlay renames the targets and leaves out the network policy targets.
 python3 - $ROOT/chromium/BUILD.gn $OVERLAY/BUILD.gn.tmp <<'EOF'
 import re, sys

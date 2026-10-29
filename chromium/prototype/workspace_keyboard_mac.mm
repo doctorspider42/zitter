@@ -1,4 +1,6 @@
 #include "chromium/prototype/workspace_keyboard_mac.h"
+#include "chromium/prototype/i18n.h"
+#include "base/strings/utf_string_conversions.h"
 
 #include "base/apple/owned_objc.h"
 #include "base/check.h"
@@ -102,11 +104,13 @@
 
 namespace zitter::prototype {
 void UpdateWorkspaceMenuShortcuts(const std::vector<Shortcut>& shortcuts) {
+  // Menu titles are translated (chromium/app/app_shell_mac.mm); match them alike.
+  auto title = [](std::u16string_view polish) { return base::UTF16ToUTF8(T(polish)); };
   const std::map<std::string, std::string> commands = {
-      {"Nowa karta", "new_tab"}, {"Otwórz adres…", "address"},
-      {"Command Center…", "palette"}, {"Historia…", "history"}, {"Time Machine…", "timeline"}, {"Pobrania…", "downloads"}, {"Zamknij kartę", "close_tab"},
-      {"Pokaż lub ukryj karty", "sidebar"}, {"Odśwież stronę", "reload"},
-      {"Ustawienia…", "settings"}, {"Pierwsza przestrzeń", "space1"}, {"Druga przestrzeń", "space2"}};
+      {title(u"Nowa karta"), "new_tab"}, {title(u"Otwórz adres…"), "address"},
+      {"Command Center…", "palette"}, {title(u"Historia…"), "history"}, {"Time Machine…", "timeline"}, {title(u"Pobrania…"), "downloads"}, {title(u"Zamknij kartę"), "close_tab"},
+      {title(u"Pokaż lub ukryj karty"), "sidebar"}, {title(u"Odśwież stronę"), "reload"},
+      {title(u"Ustawienia…"), "settings"}, {title(u"Pierwsza przestrzeń"), "space1"}, {title(u"Druga przestrzeń"), "space2"}};
   auto update = [&](auto&& self, NSMenu* menu) -> void {
     for (NSMenuItem* item in menu.itemArray) {
       if (item.submenu) self(self, item.submenu);

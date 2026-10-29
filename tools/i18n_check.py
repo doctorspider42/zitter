@@ -29,7 +29,13 @@ def catalogue(name):
     return entries, duplicates
 
 
+# The macOS menu lives in the app target.
+EXTRA = [ROOT / "chromium/app/app_shell_mac.mm"]
+
+
 def sources():
+    for path in EXTRA:
+        yield path, CXX_USE
     for path in sorted(PROTOTYPE.iterdir()):
         if path.name.startswith("i18n") or "test" in path.name:
             continue

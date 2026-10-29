@@ -11,6 +11,7 @@
 #include "chrome/browser/download/download_core_service.h"
 #include "base/no_destructor.h"
 #include "base/strings/sys_string_conversions.h"
+#include "chromium/prototype/i18n.h"
 #include "url/gurl.h"
 
 namespace {
@@ -62,6 +63,8 @@ ZitterMenuTarget* MenuTarget() {
   return target;
 }
 
+NSString* Text(std::u16string_view polish) { return base::SysUTF16ToNSString(zitter::prototype::T(polish)); }
+
 NSMenuItem* Item(NSString* title, SEL action, NSString* key,
                  NSEventModifierFlags modifiers = NSEventModifierFlagCommand) {
   NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:title action:action keyEquivalent:key];
@@ -94,48 +97,50 @@ constexpr NSEventModifierFlags kCmdOption = NSEventModifierFlagCommand | NSEvent
 // Only Zitter commands and standard AppKit responder actions: nothing here can
 // reach Chrome's command dispatch (New Window, Incognito, History…).
 NSMenu* BuildMainMenu() {
+  // The menu speaks the UI language, decided before any window exists.
+  zitter::prototype::ApplyUiLanguage("");
   NSMenu* bar = [[NSMenu alloc] initWithTitle:@""];
   Submenu(bar, @"Zitter", @[
-    Item(@"O Zitter", @selector(orderFrontStandardAboutPanel:), @""),
+    Item(Text(u"O Zitter"), @selector(orderFrontStandardAboutPanel:), @""),
     NSMenuItem.separatorItem,
     Command(@"Time Machine…", AppCommand::kTimeline, @"y", kCmdShift),
-    Command(@"Historia…", AppCommand::kHistory, @"y", kCmd),
-    Command(@"Pobrania…", AppCommand::kDownloads, @"j", kCmd),
-    Command(@"Ustawienia…", AppCommand::kSettings, @",", kCmd),
+    Command(Text(u"Historia…"), AppCommand::kHistory, @"y", kCmd),
+    Command(Text(u"Pobrania…"), AppCommand::kDownloads, @"j", kCmd),
+    Command(Text(u"Ustawienia…"), AppCommand::kSettings, @",", kCmd),
     NSMenuItem.separatorItem,
-    Item(@"Ukryj Zitter", @selector(hide:), @"h"),
-    Item(@"Ukryj pozostałe", @selector(hideOtherApplications:), @"h", kCmdOption),
-    Item(@"Pokaż wszystkie", @selector(unhideAllApplications:), @"", 0),
+    Item(Text(u"Ukryj Zitter"), @selector(hide:), @"h"),
+    Item(Text(u"Ukryj pozostałe"), @selector(hideOtherApplications:), @"h", kCmdOption),
+    Item(Text(u"Pokaż wszystkie"), @selector(unhideAllApplications:), @"", 0),
     NSMenuItem.separatorItem,
-    Item(@"Zakończ Zitter", @selector(terminate:), @"q"),
+    Item(Text(u"Zakończ Zitter"), @selector(terminate:), @"q"),
   ]);
-  Submenu(bar, @"Plik", @[
-    Command(@"Nowa karta", AppCommand::kNewTab, @"t", kCmd),
-    Command(@"Otwórz adres…", AppCommand::kOpenAddress, @"l", kCmd),
+  Submenu(bar, Text(u"Plik"), @[
+    Command(Text(u"Nowa karta"), AppCommand::kNewTab, @"t", kCmd),
+    Command(Text(u"Otwórz adres…"), AppCommand::kOpenAddress, @"l", kCmd),
     Command(@"Command Center…", AppCommand::kCommandPalette, @"k", kCmd),
-    Command(@"Hasła tego profilu…", AppCommand::kPasswords, @"", 0),
+    Command(Text(u"Hasła tego profilu…"), AppCommand::kPasswords, @"", 0),
     NSMenuItem.separatorItem,
-    Command(@"Zamknij kartę", AppCommand::kCloseTab, @"w", kCmd),
+    Command(Text(u"Zamknij kartę"), AppCommand::kCloseTab, @"w", kCmd),
   ]);
-  Submenu(bar, @"Edycja", @[
-    Item(@"Cofnij", @selector(undo:), @"z"),
-    Item(@"Ponów", @selector(redo:), @"z", kCmdShift),
+  Submenu(bar, Text(u"Edycja"), @[
+    Item(Text(u"Cofnij"), @selector(undo:), @"z"),
+    Item(Text(u"Ponów"), @selector(redo:), @"z", kCmdShift),
     NSMenuItem.separatorItem,
-    Item(@"Wytnij", @selector(cut:), @"x"),
-    Item(@"Kopiuj", @selector(copy:), @"c"),
-    Item(@"Wklej", @selector(paste:), @"v"),
-    Item(@"Zaznacz wszystko", @selector(selectAll:), @"a"),
+    Item(Text(u"Wytnij"), @selector(cut:), @"x"),
+    Item(Text(u"Kopiuj"), @selector(copy:), @"c"),
+    Item(Text(u"Wklej"), @selector(paste:), @"v"),
+    Item(Text(u"Zaznacz wszystko"), @selector(selectAll:), @"a"),
   ]);
-  Submenu(bar, @"Widok", @[
-    Command(@"Pokaż lub ukryj karty", AppCommand::kToggleSidebar, @"s", kCmd),
-    Command(@"Odśwież stronę", AppCommand::kReload, @"r", kCmd),
+  Submenu(bar, Text(u"Widok"), @[
+    Command(Text(u"Pokaż lub ukryj karty"), AppCommand::kToggleSidebar, @"s", kCmd),
+    Command(Text(u"Odśwież stronę"), AppCommand::kReload, @"r", kCmd),
   ]);
-  NSMenuItem* window = Submenu(bar, @"Okno", @[
-    Item(@"Minimalizuj", @selector(performMiniaturize:), @"m"),
-    Item(@"Powiększ", @selector(performZoom:), @"", 0),
+  NSMenuItem* window = Submenu(bar, Text(u"Okno"), @[
+    Item(Text(u"Minimalizuj"), @selector(performMiniaturize:), @"m"),
+    Item(Text(u"Powiększ"), @selector(performZoom:), @"", 0),
     NSMenuItem.separatorItem,
-    Command(@"Pierwsza przestrzeń", AppCommand::kWorkspaceWork, @"1", kCmdOption),
-    Command(@"Druga przestrzeń", AppCommand::kWorkspacePersonal, @"2", kCmdOption),
+    Command(Text(u"Pierwsza przestrzeń"), AppCommand::kWorkspaceWork, @"1", kCmdOption),
+    Command(Text(u"Druga przestrzeń"), AppCommand::kWorkspacePersonal, @"2", kCmdOption),
   ]);
   NSApp.windowsMenu = window.submenu;
   return bar;
@@ -144,7 +149,7 @@ NSMenu* BuildMainMenu() {
 NSMenu* DockMenu() {
   static NSMenu* menu = [] {
     NSMenu* dock = [[NSMenu alloc] initWithTitle:@""];
-    [dock addItem:Command(@"Nowa karta", AppCommand::kNewTab, @"", 0)];
+    [dock addItem:Command(Text(u"Nowa karta"), AppCommand::kNewTab, @"", 0)];
     return dock;
   }();
   return menu;
