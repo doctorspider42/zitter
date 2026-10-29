@@ -2917,8 +2917,9 @@ class PaneBar final : public views::View {
   METADATA_HEADER(PaneBar, views::View)
  public:
   PaneBar(views::Button::PressedCallback menu, views::Button::PressedCallback close,
-      base::RepeatingClosure painted,base::RepeatingCallback<bool()> visible,base::RepeatingClosure focus)
-      : focus_(std::move(focus)),painted_(std::move(painted)),visible_(std::move(visible)) {
+      base::RepeatingClosure painted,base::RepeatingCallback<bool()> visible,base::RepeatingClosure focus,
+      base::RepeatingCallback<void(std::optional<gfx::Point>,bool)> drag)
+      : focus_(std::move(focus)),drag_(std::move(drag)),painted_(std::move(painted)),visible_(std::move(visible)) {
     node_graph_=std::make_shared<SidebarNodeGraphState>();
     GetViewAccessibility().SetRole(ax::mojom::Role::kGroup);
     menu_=AddChildView(CreateSceneAction(std::move(menu),T(u"Opcje Split View"),ControlGlyph::kMore,nullptr,visible_,painted_,true,{node_graph_}));
@@ -2960,12 +2961,24 @@ class PaneBar final : public views::View {
     canvas->DrawStringRectWithFlags(text_,DesignFont(3,12,400,false),active_?Palette(this).ink:Palette(this).ink_muted,gfx::Rect(g.title.x,g.title.y,g.title.width,g.title.height),gfx::Canvas::TEXT_ALIGN_LEFT);
   }
   // A click on the bar (outside its buttons) focuses its pane.
-  bool OnMousePressed(const ui::MouseEvent& event) override{if(!event.IsOnlyLeftMouseButton()||!focus_)return false;focus_.Run();return true;}
+  // Dragged past a few points, the bar carries its pane: within the page to
+  // another place in the split, onto the sidebar out of it.
+  bool OnMousePressed(const ui::MouseEvent& event) override{if(!event.IsOnlyLeftMouseButton()||!focus_)return false;press_=event.location();dragging_=false;focus_.Run();return true;}
+  bool OnMouseDragged(const ui::MouseEvent& event) override{
+    if(!press_||!drag_)return false;
+    if(!dragging_&&(event.location()-*press_).Length()<6)return true;
+    dragging_=true;drag_.Run(display::Screen::Get()->GetCursorScreenPoint(),false);return true;}
+  void OnMouseReleased(const ui::MouseEvent& event) override{
+    const bool dropped=dragging_;press_.reset();dragging_=false;
+    if(dropped&&drag_)drag_.Run(display::Screen::Get()->GetCursorScreenPoint(),true);}
+  void OnMouseCaptureLost() override{const bool dropped=dragging_;press_.reset();dragging_=false;if(dropped&&drag_)drag_.Run(std::nullopt,false);}
   views::View* menu() const { return menu_; }
   views::View* close() const { return close_; }
  private:
   std::shared_ptr<SidebarNodeGraphState> node_graph_;
   base::RepeatingClosure focus_;
+  base::RepeatingCallback<void(std::optional<gfx::Point>,bool)> drag_;
+  std::optional<gfx::Point> press_;bool dragging_=false;
   bool active_=false;
   std::u16string text_;
   mutable std::optional<int> measured_;
@@ -3006,11 +3019,12 @@ class PaneHost final : public views::View, public views::ResizeAreaDelegate {
   PaneHost(base::RepeatingCallback<void(size_t, double, bool)> changed,
            base::RepeatingCallback<void(size_t, views::View*)> menu,
            base::RepeatingCallback<void(size_t)> close,base::RepeatingClosure painted,
-           base::RepeatingCallback<bool(size_t)> visible,base::RepeatingCallback<void(size_t)> focus)
+           base::RepeatingCallback<bool(size_t)> visible,base::RepeatingCallback<void(size_t)> focus,
+           base::RepeatingCallback<void(size_t,std::optional<gfx::Point>,bool)> drag)
       : painted_(std::move(painted)),changed_(std::move(changed)) {
     for (size_t pane = 0; pane < kMaxSplitPanes; ++pane) {
       auto* bar = AddChildView(std::make_unique<PaneBar>(views::Button::PressedCallback(),
-          base::BindRepeating(close, pane),painted_,base::BindRepeating(visible,SurfaceIndex(false,pane)),base::BindRepeating(focus,pane)));
+          base::BindRepeating(close, pane),painted_,base::BindRepeating(visible,SurfaceIndex(false,pane)),base::BindRepeating(focus,pane),base::BindRepeating(drag,pane)));
       SetActionCallback(bar->menu(),base::BindRepeating(menu,pane,base::Unretained(bar->menu())));
       bar->SetVisible(false);
       bars_[pane] = bar;
@@ -3304,7 +3318,8 @@ std::unique_ptr<views::View> WorkspaceShell::Build() {
         if (shell) shell->CloseSplitPane(pane);
       }, weak),base::BindRepeating(&WorkspaceShell::ScheduleMetalSplit,weak),
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,size_t index){return shell && shell->metal_split_visible(index);},weak),
-      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,size_t pane){if(shell&&shell->callbacks_.focus_pane)shell->callbacks_.focus_pane.Run(pane);},weak)));
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,size_t pane){if(shell&&shell->callbacks_.focus_pane)shell->callbacks_.focus_pane.Run(pane);},weak),
+      base::BindRepeating(&WorkspaceShell::HandlePaneDrag,weak)));
   content_host_->SetBackground(views::CreateRoundedRectBackground(kCard, 10));
   edge_ = root->AddChildView(std::make_unique<EdgeView>(
       base::BindRepeating(&WorkspaceShell::ShowSidebar, weak)));
@@ -5977,12 +5992,12 @@ std::optional<size_t> WorkspaceShell::SplitDropSlot(gfx::Point point) const {
   // The nearest pane edge: left or right of a single page, or between panes.
   return std::min<size_t>(panes,static_cast<size_t>(std::max(0.0,std::floor(along*panes+0.5))));
 }
-void WorkspaceShell::ShowSplitDrop(std::optional<size_t> slot,std::u16string title) {
+void WorkspaceShell::ShowSplitDrop(std::optional<size_t> slot,std::u16string title,std::optional<size_t> others) {
   split_drop_slot_=slot;
   if(!slot){if(drop_widget_)drop_widget_->Hide();return;}
   // Made with the window (CreateSplitDrop); a new NSWindow mid-drag ends the drag.
   if(!drop_widget_)return;
-  const size_t panes=state_.split_visible?std::max<size_t>(1,state_.split_tabs.size()):1;
+  const size_t panes=others?*others:state_.split_visible?std::max<size_t>(1,state_.split_tabs.size()):1;
   static_cast<SplitDropView*>(drop_view_.get())->Set(panes,*slot,panes>1&&state_.split_vertical,std::move(title));
   if(drop_widget_->GetWindowBoundsInScreen()!=content_host_->GetBoundsInScreen())drop_widget_->SetBounds(content_host_->GetBoundsInScreen());
   if(!drop_widget_->IsVisible())drop_widget_->ShowInactive();
@@ -5996,6 +6011,45 @@ void WorkspaceShell::CreateSplitDrop() {
     params.accept_events=false;params.opacity=views::Widget::InitParams::WindowOpacity::kTranslucent;params.rounded_corners=gfx::RoundedCornersF(Metrics().radius_md);
     drop_widget_=std::make_unique<views::Widget>();drop_widget_->Init(std::move(params));
   }
+}
+void WorkspaceShell::HandlePaneDrag(size_t pane,std::optional<gfx::Point> point,bool drop) {
+  const auto panes=state_.split_tabs;
+  if(!state_.split_visible||pane>=panes.size()||!state_.configuration_ready||state_.profiles_busy){
+    if(sidebar_reorder_){sidebar_reorder_.reset();ScheduleMetalSidebar();}ShowSplitDrop(std::nullopt,{});return;}
+  const size_t tab=panes[pane];
+  std::optional<SidebarReorder> reorder;std::optional<size_t> place;
+  if(point){
+    if(sidebar_widget_&&sidebar_widget_->IsVisible()&&sidebar_widget_->GetWindowBoundsInScreen().Contains(*point))reorder=SidebarReorderAt(*point);
+    else if(content_host_->GetBoundsInScreen().Contains(*point)){
+      // The nearest pane edge, then the pane's own place once it is lifted out.
+      const auto b=content_host_->GetBoundsInScreen();const bool vertical=state_.split_vertical;
+      const double along=vertical?double(point->y()-b.y())/std::max(1,b.height()):double(point->x()-b.x())/std::max(1,b.width());
+      const size_t edge=std::min<size_t>(panes.size(),static_cast<size_t>(std::max(0.0,std::floor(along*panes.size()+0.5))));
+      const size_t final=edge>pane?edge-1:edge;if(final!=pane)place=final;
+    }
+  }
+  std::u16string title;for(const auto& row:state_.tabs)if(row.index==tab)title=row.title;
+  if(!drop){
+    sidebar_reorder_=reorder;ScheduleMetalSidebar();
+    ShowSplitDrop(place,std::move(title),panes.size()-1);return;
+  }
+  sidebar_reorder_.reset();ScheduleMetalSidebar();ShowSplitDrop(std::nullopt,{});
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,size_t tab,std::optional<SidebarReorder> reorder,std::optional<size_t> place){
+    if(!shell||!shell->state_.configuration_ready||shell->state_.profiles_busy||!std::ranges::contains(shell->state_.split_tabs,tab))return;
+    if(reorder){
+      // Out of the split, to where it was dropped in the sidebar.
+      shell->callbacks_.leave_split.Run(tab);
+      if(reorder->pinned)shell->callbacks_.pin_tab.Run(tab,reorder->parent,reorder->before_pin);
+      else shell->callbacks_.move_tab.Run(tab,reorder->before_tab);
+      return;
+    }
+    if(!place)return;
+    for(size_t step=0;step<kMaxSplitPanes;++step){
+      const auto& panes=shell->state_.split_tabs;const auto found=std::ranges::find(panes,tab);if(found==panes.end())return;
+      const size_t at=found-panes.begin();if(at==*place)return;
+      shell->callbacks_.move_split_pane.Run(tab,at<*place);
+    }
+  },weak_factory_.GetWeakPtr(),tab,std::move(reorder),place));
 }
 void WorkspaceShell::DragHoverSettled() {
   if(!drag_hover_tab_||!drag_point_)return;
@@ -6080,6 +6134,8 @@ void WorkspaceShell::HandleSidebarDrop(std::string workspace,std::optional<size_
       const auto target=shell->ResolveSidebarTarget(workspace,identity,pin);
       if(!target.valid)return;
       if(target.tab) {
+        // A split's tab dragged into the list leaves the split.
+        if(std::ranges::contains(shell->state_.split_tabs,*target.tab))shell->callbacks_.leave_split.Run(*target.tab);
         // Crossing into the pinned section pins the tab.
         if(reorder.pinned)shell->callbacks_.pin_tab.Run(*target.tab,reorder.parent,reorder.before_pin);
         else shell->callbacks_.move_tab.Run(*target.tab,reorder.before_tab);

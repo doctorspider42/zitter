@@ -11,3 +11,4 @@ Dwie lub więcej stron w jednym widoku: obok siebie albo jedna pod drugą, z uch
 - W pasku bocznym karty podziału stoją obok siebie w jednym wierszu `SidebarTab`, w kolejności paneli.
 - Kliknięcie paska panelu daje mu fokus. Karta przeciągnięta z paska bocznego na stronę dołącza do podziału przy najbliższej krawędzi: podgląd przyciemnia stronę, pokazuje przyszłe panele jako karty, a nowy w `accent` z nazwą karty.
 - Przeciągana karta zatrzymana na chwilę (450 ms) nad inną kartą w pasku przenosi na nią fokus i pokazuje podgląd podziału; upuszczona tam dołącza z prawej.
+- Pasek panelu da się złapać: przeciągnięty po stronie przenosi panel (ten sam podgląd), upuszczony na pasku bocznym wyjmuje kartę ze splitu. Karta z pary w pasku bocznym przeciągnięta na listę też wychodzi ze splitu. Każdy panel ma zaokrąglone rogi strony.

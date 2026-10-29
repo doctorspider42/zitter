@@ -244,6 +244,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void DropIntoSplitForTesting(size_t tab, size_t slot) { QueueSplit(tab, {}, slot); }
   const std::vector<size_t>& split_tabs_for_testing() const { return state_.split_tabs; }
   size_t active_pane_for_testing() const { return state_.active_pane; }
+  void PaneDragForTesting(size_t pane, std::optional<gfx::Point> point, bool drop) { HandlePaneDrag(pane, point, drop); }
   // The footer's „+”: a new tab, folder or space.
   void ShowAddMenu();
   void SetPinned(bool pinned);
@@ -723,7 +724,10 @@ class WorkspaceShell final : public ui::EventHandler,
   bool ShowRustFolderNotice(std::string workspace,std::string folder,std::string title,bool error_only);
   void QueueSplit(std::optional<size_t> tab, std::string pin, std::optional<size_t> slot = std::nullopt);
   std::optional<size_t> SplitDropSlot(gfx::Point point) const;
-  void ShowSplitDrop(std::optional<size_t> slot, std::u16string title);
+  // `others`: panes besides the dropped one (default: the shown split).
+  void ShowSplitDrop(std::optional<size_t> slot, std::u16string title, std::optional<size_t> others = std::nullopt);
+  // A split pane's bar dragged: within the page it moves, onto the sidebar it leaves.
+  void HandlePaneDrag(size_t pane, std::optional<gfx::Point> point, bool drop);
   void CreateSplitDrop();
   struct ResolvedRowTarget { bool valid; std::optional<size_t> tab; std::string pin; };
   ResolvedRowTarget ResolveSidebarTarget(std::string_view workspace,std::array<uint64_t,2> identity,std::string_view pin) const;

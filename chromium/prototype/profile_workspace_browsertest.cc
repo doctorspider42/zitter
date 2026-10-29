@@ -1467,6 +1467,22 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitDropSlotFollowsThePointer
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->split_tabs_for_testing().size()==3u;}));EXPECT_EQ(third,shell->split_tabs_for_testing()[1]);
 }
 
+// A pane's bar dragged within the page moves the pane; dropped on the sidebar
+// it takes the tab out of the split, like dragging its row out of the pair.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitPaneDragMovesOrLeavesTheSplit) {
+  ASSERT_NO_FATAL_FAILURE(NavigateBoth());
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html?pane"),true));window_->SelectTab(0);ASSERT_TRUE(window_->SplitTab(1));
+  shell->CloseOverlays(true);shell->SetPinned(true);shell->ShowSidebar();shell->sidebar_widget()->LayoutRootViewIfNecessary();window_->widget()->LayoutRootViewIfNecessary();
+  ASSERT_EQ((std::vector<size_t>{0,1}),shell->split_tabs_for_testing());
+  const auto b=shell->content_host()->GetBoundsInScreen();const gfx::Point left(b.x()+b.width()/10,b.CenterPoint().y());
+  shell->PaneDragForTesting(1,left,false);EXPECT_EQ(std::optional<size_t>(0),shell->split_drop_slot_for_testing());
+  shell->PaneDragForTesting(1,left,true);ASSERT_TRUE(base::test::RunUntil([&]{return shell->split_tabs_for_testing()==std::vector<size_t>{1,0};}));
+  const gfx::Point row=shell->tab_button(1)->GetBoundsInScreen().CenterPoint();
+  shell->PaneDragForTesting(0,row,false);EXPECT_TRUE(shell->sidebar_drop_target_for_testing());
+  shell->PaneDragForTesting(0,row,true);EXPECT_FALSE(shell->sidebar_drop_target_for_testing());
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->split_tabs_for_testing().size()<2u;}));
+}
 // A click on a split pane's bar focuses that pane.
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitPaneBarClickFocusesItsPane) {
   ASSERT_NO_FATAL_FAILURE(NavigateBoth());
@@ -7998,6 +8014,38 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeDragJoinsShownSplitFirst
   ASSERT_TRUE(mouse(ui_controls::UP));
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->split_tabs_for_testing().size() == 3u; }));
   EXPECT_EQ(third, shell->split_tabs_for_testing()[0]);
+}
+// A split's tab dragged from its pair into the tab list leaves the split.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeDragTakesTabOutOfSplit) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->SetWorkspaceAnimations(false);
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html?a"), true));
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html?b"), true));
+  window_->SelectTab(0); ASSERT_TRUE(window_->SplitTab(1));
+  shell->CloseOverlays(true); shell->SetPinned(true); shell->ShowSidebar();
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible(); }));
+  ASSERT_EQ(2u, shell->split_tabs_for_testing().size());
+  ui_controls::EnableUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  const auto sidebar_window = shell->sidebar_widget()->GetNativeWindow();
+  auto move = [&](gfx::Point p) {
+    base::test::TestFuture<void> done;
+    return ui_controls::SendMouseMoveNotifyWhenDone(p.x(), p.y(), done.GetCallback(), sidebar_window) && done.Wait();
+  };
+  auto mouse = [&](int state) {
+    base::test::TestFuture<void> done;
+    return ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT, state, done.GetCallback(), ui_controls::kNoAccelerator, sidebar_window) && done.Wait();
+  };
+  ASSERT_TRUE(move(shell->tab_button(1)->GetBoundsInScreen().CenterPoint()));
+  ASSERT_TRUE(mouse(ui_controls::DOWN));
+  const auto below = shell->tab_button(2)->GetBoundsInScreen();
+  ASSERT_TRUE(move(gfx::Point(below.CenterPoint().x(), below.bottom() - 6)));
+  ASSERT_TRUE(move(gfx::Point(below.CenterPoint().x(), below.bottom() - 3)));
+  ASSERT_TRUE(shell->sidebar_drop_target_for_testing());
+  ASSERT_TRUE(mouse(ui_controls::UP));
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->split_tabs_for_testing().size() < 2u; }));
 }
 // Dragging a tab over another tab's row focuses that tab after a moment and
 // previews the split; dropping there pairs them, the dragged tab on the right.

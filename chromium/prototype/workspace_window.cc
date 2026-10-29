@@ -615,15 +615,21 @@ void WorkspaceWindow::UpdateShell() {
   }
 }
 
+namespace {
+// The page is a rounded card inside the tinted frame. The native view attaches
+// only after the page is shown, so every refresh rounds each visible pane again.
+void RoundPage(views::WebView* view) {
+  if (view && view->holder()->native_view() && view->holder()->GetNativeViewCornerRadii() != gfx::RoundedCornersF(10))
+    view->holder()->SetNativeViewCornerRadii(gfx::RoundedCornersF(10));
+}
+}  // namespace
 void WorkspaceWindow::ShowPage(views::WebView* view) {
   auto* page = EnsurePage(view);
+  RoundPage(view);
   if (view->GetVisible() && page->GetVisibility() == content::Visibility::VISIBLE) return;
   view->SetVisible(true);
   page->UpdateWebContentsVisibility(content::Visibility::VISIBLE);
-  // The page is a rounded card inside the tinted frame.
-  if (view->holder()->native_view()) {
-    view->holder()->SetNativeViewCornerRadii(gfx::RoundedCornersF(10));
-  }
+  RoundPage(view);
 }
 
 bool WorkspaceWindow::Activate(std::string_view id,
@@ -1200,6 +1206,11 @@ void WorkspaceWindow::RefreshPanes() {
         }
       } else if (tab->GetVisible()) { tab->SetVisible(false); tab->GetWebContents()->WasHidden(); }
     }
+    // Native views of newly shown panes attach after this pass.
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceWindow> window) {
+      if (!window) return;
+      for (auto& host : window->hosts_) if (host.workspace_id == window->active_id()) for (auto* pane : window->VisiblePanes(host)) RoundPage(pane);
+    }, weak_factory_.GetWeakPtr()));
   }
 }
 void WorkspaceWindow::PageFocused(views::WebView* view) {
