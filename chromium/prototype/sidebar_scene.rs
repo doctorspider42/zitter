@@ -3337,9 +3337,13 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
         emit(i.x, i.y, i.width, i.height, pill, i.fill, "", 0.0, false);
         let g = address_layout(i.width as i32, i.height as i32, i.title_width as i32);
         let cy = i.y + i.height / 2.0;
-        let rings = [(i.x + 0.5, 1.0), (i.x + if i.active {14.0} else {12.0}, 1.5)];
-        emit(i.x + 0.5, i.y + 0.5, i.width - 1.0, i.height - 1.0,
-            pill - 0.5, if i.edge >> 24 != 0 {i.edge} else {(i.ink & 0x00ffffff) | 0x0d000000}, "", 0.0, false);
+        // Editing (glyph 1, ⌘L): a 2 px `accent` ring and ↵ at the end.
+        let editing = i.glyph == 1;
+        let inset = if editing {1.0} else {0.5};
+        let rings = [(i.x + inset, if editing {2.0} else {1.0}), (i.x + if i.active {14.0} else {12.0}, 1.5)];
+        emit(i.x + inset, i.y + inset, i.width - 2.0 * inset, i.height - 2.0 * inset,
+            pill - inset, if i.edge >> 24 != 0 {i.edge} else {(i.ink & 0x00ffffff) | 0x0d000000}, "", 0.0, false);
+        if editing {emit(i.x + i.width - 30.0, i.y, 18.0, i.height, 0.0, i.detail_ink, "↵", i.detail_font_size, false);}
         if i.active {
             emit(i.x + 14.0, cy - 7.0, 8.0, 10.0, 4.0, i.badge, "", 0.0, false);
             emit(i.x + 12.0, cy - 1.0, 12.0, 8.0, 1.5, i.badge, "", 0.0, false);
@@ -3367,6 +3371,7 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
             if !p.text.is_empty() {
                 style_text(p, design::TextStyleId::Url as u32);
                 if p.text == i.title { p.font_weight = 600; p.bold = true; }
+                if editing && p.text == "↵" { p.center = true; }
             }
             if p.text.is_empty() {
                 if let Some((_, stroke)) = rings.iter().find(|(x, _)| *x == p.x) {
@@ -4352,6 +4357,11 @@ mod tests {
         let t=design_toggle(true,APPEARANCE_COLORS[0],false);assert_eq!((t.width,t.height,t.edge_width),(34.0,20.0,1.5));
         let mut b=row(80.0);b.kind=19;b.height=32.0;b.font_height=8.0;b.detail_font_size=1.5;b.badge=0xffff0000;b.fill=0;b.hovered=false;b.focused=false;
         let ops=layout(&[b]);let edge=ops.iter().find(|p|p.stroke>0.0).unwrap();assert_eq!((edge.stroke,edge.radius,edge.x),(1.5,7.25,0.75));
+    }
+    #[test] fn address_pill_while_editing_has_a_two_pixel_accent_ring_and_return_key() {
+        let pill=|glyph:u32|{let mut a=row(240.0);a.kind=4;a.glyph=glyph;a.edge=0xff7766ee;a.title="github.com".into();a.detail="/zitter".into();a.title_width=60.0;a.height=36.0;a.badge=0xff00ff00;a.active=true;a};
+        let ops=layout(&[pill(1)]);let ring=ops.iter().find(|p|p.color==0xff7766ee).unwrap();assert_eq!((ring.stroke,ring.x),(2.0,1.0));assert!(ops.iter().any(|p|p.text=="↵"&&p.center));
+        let ops=layout(&[pill(0)]);assert_eq!(ops.iter().find(|p|p.color==0xff7766ee).unwrap().stroke,1.0);assert!(!ops.iter().any(|p|p.text=="↵"));
     }
     #[test] fn kbd_key_is_a_mono_chip_with_a_bottom_edge() {
         let mut k=row(18.0);k.kind=30;k.title="⌘".into();k.height=18.0;k.fill=0xff222222;k.edge=0xff444444;k.ink=0xffcccccc;

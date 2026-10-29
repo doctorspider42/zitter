@@ -1547,6 +1547,7 @@ struct RowRecipe {
     bool stacked = false;  // Two lines (title over detail) beside a large monogram.
     bool kbd = false;  // The detail is a shortcut, drawn as Kbd keys after the title.
     std::u16string header;  // A palette group's eyebrow, drawn above its first row.
+    bool editing = false;   // AddressPill while its address is being edited (⌘L).
     int height = 34;
     views::Button::PressedCallback close;
     base::RepeatingCallback<void(gfx::Point)> drop;
@@ -1616,6 +1617,7 @@ sidebar::Item AddressRowItem(views::View* row,const RowRecipe::Spec& spec,gfx::R
   item.ink=row->GetEnabledInViewsSubtree()&&!spec.blank?p.ink:p.ink_muted;
   item.badge=spec.secure?p.ok:p.ink_muted; item.active=spec.secure; item.hovered=hovered;
   item.fill=p.bg_raised; item.edge=p.line; item.focused=focused; item.focus=p.focus;
+  if(spec.editing){item.glyph=1;item.edge=p.accent;}
   return item;
 }
 // A command row (icon, title) whose shortcut detail is a row of Kbd keys, one per
@@ -1718,6 +1720,7 @@ class RustRowView final : public views::View {
   void ViewHierarchyChanged(const views::ViewHierarchyChangedDetails& details) override{if(!details.is_add&&details.parent==this&&details.child==close_)close_=nullptr;views::View::ViewHierarchyChanged(details);}
   const Spec& preview_spec() const{return spec_;}
   void SetCallback(views::Button::PressedCallback callback){CancelInput();callback_=std::move(callback);}
+  void SetEditing(bool editing){if(spec_.editing==editing)return;spec_.editing=editing;SchedulePaint();if(changed_)changed_.Run();}
   void SetActive(bool active){if(!state_->action_on(active))return;if(!state_->sidebar_visual().valid)spec_.active=active;measured_.reset();UpdateClose();SchedulePaint();}
   void SetTitle(std::u16string title){if(HasSidebarProperties()){if(state_->sidebar_set_title(SceneUtf16(title))){SyncSidebarAX();SchedulePaint();}return;}if(spec_.title==title)return;spec_.title=std::move(title);measured_.reset();SetTooltipText(spec_.title);GetViewAccessibility().SetName(spec_.title);SchedulePaint();}
   void SetDetail(std::u16string detail){if(spec_.detail==detail)return;spec_.detail=std::move(detail);InvalidateLayout();SchedulePaint();}
@@ -1839,6 +1842,7 @@ bool IsRow(views::View* view){
 }
 const RowRecipe::Spec& RowSpec(views::View* view){return VisitRow(view,[](auto* row)->const RowRecipe::Spec&{return row->preview_spec();});}
 void SetRowActive(views::View* view,bool value){VisitRow(view,[value](auto* row){row->SetActive(value);});}
+void SetRowEditing(views::View* view,bool value){if(auto* row=views::AsViewClass<RustRowView>(view))row->SetEditing(value);}
 void SetRowTitle(views::View* view,std::u16string value){VisitRow(view,[&value](auto* row){row->SetTitle(std::move(value));});}
 void SetRowDetail(views::View* view,std::u16string value){VisitRow(view,[&value](auto* row){row->SetDetail(std::move(value));});}
 void SetRowMonogram(views::View* view,std::u16string value,SkColor color){VisitRow(view,[&value,color](auto* row){row->SetMonogram(std::move(value),color);});}
@@ -3736,7 +3740,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         // only if the saved state differs, never as a side effect of loading.
         if (shell->pinned_ && !shell->sidebar_visible()) shell->ShowSidebar();
         if (!shell->pinned_ && shell->sidebar_visible()) shell->sidebar_widget_->Hide();
-        // Development: --zitter-open-panel=space|sidebar|palette|settings|profiles|downloads|toast opens
+        // Development: --zitter-open-panel=space|sidebar|palette|address|settings|profiles|downloads|toast opens
         // that view once the window is up, so UI checks can screenshot it without
         // driving the mouse.
         if (const std::string panel = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-open-panel"); !panel.empty())
@@ -3746,6 +3750,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
                 if (panel == "space") shell->OpenWorkspaceSettings();
                 else if (panel == "sidebar") shell->ShowSidebar();
                 else if (panel == "palette") shell->OpenCommandPalette();
+                else if (panel == "address") shell->OpenAddress(false);
                 else if (panel == "settings") shell->OpenGeneralSettings();
                 else if (panel == "profiles") shell->OpenProfiles();
                 // A sample undo toast; its „Cofnij” does nothing.
@@ -7413,6 +7418,7 @@ void WorkspaceShell::OpenAddress(bool new_tab) {
   const bool blank = new_tab || state_.url.path() == "/start.html";
   address_->SetText(blank ? u"" : base::UTF8ToUTF16(state_.url.spec()));
   RebuildSuggestions();
+  if (url_pill_) SetRowEditing(url_pill_, true);
   address_widget_->Show();
   address_widget_->Activate();
   address_widget_->ClearNativeFocus();
@@ -7422,6 +7428,7 @@ void WorkspaceShell::OpenAddress(bool new_tab) {
 }
 void WorkspaceShell::OpenCommandPalette() {
   OpenAddress(false);
+  if (url_pill_) SetRowEditing(url_pill_, false);  // The Command Center is not an address edit.
   // The Command Center sits on the dimmed window (design: CommandPalette).
   if (scrim_widget_) {
     PositionPanels(); scrim_widget_->ShowInactive();
@@ -8268,6 +8275,7 @@ void WorkspaceShell::OnWidgetActivationChanged(views::Widget* widget, bool activ
 void WorkspaceShell::OnWidgetVisibilityChanged(views::Widget* widget, bool visible) {
   if(widget==address_widget_.get())ScheduleMetalPalette();
   if(widget==address_widget_.get()&&!visible&&scrim_widget_)scrim_widget_->Hide();
+  if(widget==address_widget_.get()&&!visible&&url_pill_){SetRowEditing(url_pill_,false);ScheduleMetalSidebar();}
   if (widget==widget_) {ScheduleMetalHeader();ScheduleMetalSplit();}
   if (widget == sidebar_widget_.get() && !visible) { CancelWorkspaceSwipe(); StopWorkspaceAnimation(); }
   if (widget == widget_ && !visible) {
