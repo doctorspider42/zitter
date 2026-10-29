@@ -5,13 +5,14 @@ Zitter to przeglądarka, która **schodzi z drogi**: rama w kolorze przestrzeni 
 1. **Okno ma kolor przestrzeni, strona jest neutralna.** Rama (`bg-void`) i pasek boczny (`bg-base`) przyjmują odcień aktywnej przestrzeni; strona, aktywna karta i wszystko, co pływa, to neutralne `bg-raised`, które odcina się od kolorowego okna. Bez gradientów i ozdobnych teł.
 2. **Jedna nuta naraz.** `zing` pojawia się w jednym miejscu widoku: przycisk `zt-btn-zing`, loader albo uchwyt podziału w ruchu. Jeśli na ekranie są dwa — usuń jeden.
 3. **Aktywne się unosi.** To, co jest „teraz” (aktywna karta, aktywna przestrzeń), dostaje neutralne `bg-raised` i `shadow-card` na zabarwionym tle — bez strzałek, belek i znaczników.
-4. **Klawiatura pierwsza.** Każda akcja ma skrót i pokazuje go w `Kbd`. ⌘L adres, ⌘K Command Center, ⌘T karta, ⌘⌥1/2 przestrzeń.
+4. **Klawiatura pierwsza.** Każda akcja ma skrót i pokazuje go w `Kbd`. ⌘L adres, ⌘K Command Center, ⌘T nowa karta (otwiera Command Center; osobnej strony nowej karty nie ma), ⌘⌥1/2 przestrzeń.
 5. **Drżenie zamiast tostów.** Potwierdzenia drobnych akcji (skopiowano, przypięto) to jedno drgnięcie elementu (`zt-tremor`, `dur-tremor`), nie wyskakujące okienko. `Toast` tylko dla zdarzeń do cofnięcia lub z tła.
 6. **Przestrzeń ma swój kolor.** Przełączenie przestrzeni przemalowuje całe okno w `dur-move`: ramę, pasek boczny, hover i linie, a do tego akcent kontrolek. Tekst, statusy i strona się nie zmieniają.
 
 ## Treść i ton
 
-- Polski, druga osoba, krótko: „Otwórz w podziale”, „Zamknij 12 kart”, „Gdzie dziś?”. Bez „Proszę”, bez wykrzykników.
+- Interfejs po polsku i angielsku (język wybierany w Preferencjach). Nazwy funkcji — Peek, Split View, Time Machine, snapshot — zostają po angielsku w obu wersjach.
+- Polski: druga osoba, krótko: „Otwórz w podziale”, „Zamknij 12 kart”, „Cofnij”. Bez „Proszę”, bez wykrzykników.
 - Wielka litera tylko na początku etykiety. WERSALIKI wyłącznie w stylu `eyebrow` (etykiety grup: „PRZYPIĘTE”, „PRZESTRZENIE”).
 - Przyciski i pozycje menu to czasowniki. Liczby cyframi („3 nieprzeczytane”).
 - Emoji tylko jako wybrany przez użytkownika znak przestrzeni — nigdy w tekstach interfejsu.

@@ -8,4 +8,4 @@ Okno decyzji na zasłonie `scrim`: tytuł-pytanie, jedno zdanie skutku, maks. dw
 - Przyciski do prawej: `zt-btn-quiet` „Anuluj”, potem akcja. Destrukcja: `zt-btn-danger strong`; zwykła: `zt-btn-primary`.
 - Etykieta akcji powtarza czasownik z pytania („Zamknij karty”, nie „OK”).
 - `role="alertdialog"`, fokus startuje na „Anuluj”, `esc` zamyka, ↵ potwierdza.
-- Jeśli da się cofnąć — zrób akcję od razu i pokaż `Toast` z „Cofnij” zamiast pytać.
+- Tylko dla akcji nieodwracalnych (np. usunięcie profilu z danymi). Jeśli da się cofnąć — zrób akcję od razu i pokaż `Toast` z „Cofnij” zamiast pytać.
