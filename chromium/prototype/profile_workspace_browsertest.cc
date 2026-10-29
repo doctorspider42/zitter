@@ -4187,7 +4187,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceContextAppearanceAndD
   EXPECT_EQ("work", window_->active_id());
   EXPECT_EQ(u"", shell->emoji_input()->GetText());
   shell->BuildWorkspaceMenu("personal");
-  shell->workspace_menu()->ActivatedAt(5, 0);
+  shell->workspace_menu()->ActivatedAt(6, 0);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->workspaces().size() == 1u && !window_->profiles_busy(); }));
   EXPECT_EQ("work", window_->active_id());
   // Undo brings it back (at the end of the list) with its look, unselected.
@@ -4199,11 +4199,11 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceContextAppearanceAndD
   EXPECT_EQ(0xFFCE826Bu, shell->workspace_color("personal"));
   EXPECT_EQ(u"🚀", shell->workspace_emoji("personal"));
   shell->BuildWorkspaceMenu("personal");
-  shell->workspace_menu()->ActivatedAt(5, 0);
+  shell->workspace_menu()->ActivatedAt(6, 0);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->workspaces().size() == 1u; }));
   EXPECT_EQ("work", window_->active_id());
   shell->BuildWorkspaceMenu("work");
-  EXPECT_FALSE(shell->workspace_menu()->IsEnabledAt(5));
+  EXPECT_FALSE(shell->workspace_menu()->IsEnabledAt(6));
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceRemovalToastStaysInTheWindow) {
@@ -4218,7 +4218,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceRemovalToastStaysInTh
     window_->widget()->SetBounds(gfx::Rect(corners[i], size));
     if (i % 2 == 0) {
       shell->BuildWorkspaceMenu("personal");
-      shell->workspace_menu()->ActivatedAt(5, 0);
+      shell->workspace_menu()->ActivatedAt(6, 0);
     } else {
       shell->OpenWorkspaceSettings();
       auto* remove = FindButton(shell->settings_widget()->GetContentsView(), u"Usuń przestrzeń");
@@ -6680,7 +6680,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, WorkspaceRemovalUndoUnload
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
   ASSERT_TRUE(window_->Select("personal"));ASSERT_TRUE(window_->EditWorkspace("Prywatne 日本語 🦀","personal-profile"));
   const auto url=embedded_test_server()->GetURL("/storage_probe.html");auto* personal=window_->contents("personal");ASSERT_TRUE(content::NavigateToURL(personal,url));EXPECT_EQ("kept",content::EvalJs(personal,"writeMarker('kept')"));ASSERT_TRUE(window_->Select("work"));
-  auto open=[&](const std::string& id){shell->BuildWorkspaceMenu(id);shell->workspace_menu()->ActivatedAt(5,0);};
+  auto open=[&](const std::string& id){shell->BuildWorkspaceMenu(id);shell->workspace_menu()->ActivatedAt(6,0);};
   open("personal");ASSERT_TRUE(base::test::RunUntil([&]{return !window_->tab_count("personal")&&!window_->lifecycle_pending();}));EXPECT_EQ(u"Usunięto przestrzeń Prywatne 日本語 🦀",shell->toast_text_for_testing());
   ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));shell->UndoToast();ASSERT_EQ(2u,window_->workspaces().size());EXPECT_EQ("Prywatne 日本語 🦀",window_->workspaces()[1].name);EXPECT_EQ("work",window_->active_id());
   ASSERT_TRUE(window_->Select("personal"));personal=window_->contents("personal");ASSERT_TRUE(content::NavigateToURL(personal,url));EXPECT_NE(std::string::npos,content::EvalJs(personal,"readMarker()").ExtractString().find("kept"));ArmUnsaved(personal);ASSERT_TRUE(window_->Select("work"));
@@ -6688,7 +6688,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, WorkspaceRemovalUndoUnload
   open("personal");AnswerUnload(personal,true);
   ASSERT_TRUE(base::test::RunUntil([&]{return !window_->lifecycle_pending()&&!window_->contents("personal");}));EXPECT_EQ(u"Usunięto przestrzeń Prywatne 日本語 🦀",shell->toast_text_for_testing());EXPECT_EQ("work",window_->active_id());ASSERT_EQ(2u,window_->profiles().size());
   ASSERT_TRUE(window_->AddWorkspace("Retained profile","personal-profile"));const auto retained=window_->active_id();EXPECT_EQ(personal_.get(),window_->contents(retained)->GetBrowserContext());ASSERT_TRUE(content::NavigateToURL(window_->contents(retained),url));EXPECT_NE(std::string::npos,content::EvalJs(window_->contents(retained),"readMarker()").ExtractString().find("kept"));
-  ASSERT_TRUE(window_->Select("work"));ASSERT_TRUE(window_->RemoveWorkspace(retained));shell->BuildWorkspaceMenu("work");EXPECT_FALSE(shell->workspace_menu()->IsEnabledAt(5));
+  ASSERT_TRUE(window_->Select("work"));ASSERT_TRUE(window_->RemoveWorkspace(retained));shell->BuildWorkspaceMenu("work");EXPECT_FALSE(shell->workspace_menu()->IsEnabledAt(6));
   ASSERT_TRUE(base::test::RunUntil([&]{return window_->configuration_saved();}));
 }
 // Compilation only; do not execute before the requested GUI checkpoint.

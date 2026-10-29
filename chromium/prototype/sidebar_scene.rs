@@ -1719,15 +1719,19 @@ fn tab_menu_action(command:u32,s:&ffi::TabMenuState)->ffi::SidebarAction {
     match command{5=>A::OpenSplit,6=>A::CloseSplit,7=>A::MoveEarlier,8=>A::MoveLater,9=>A::ToggleOrientation,10=>A::CloseTab,11=>A::Separate,12=>A::CloseGroup,_=>A::None}
 }
 fn tab_context_menu(s:&ffi::TabMenuState)->Vec<ffi::TabMenuEntry> {
+    // Design (ContextMenu): verbs in groups, the destructive actions last after
+    // a separator.
     let mut entries=Vec::new();let mut add=|command,label:&str|entries.push(ffi::TabMenuEntry{command,label:label.into()});
-    add(36,t("Nowy folder…"));add(0,"");add(20,t("Otwórz w Peek"));
-    if tab_menu_position(s).is_some(){
-        add(7,if s.vertical{t("Przesuń w górę")}else{t("Przesuń w lewo")});add(8,if s.vertical{t("Przesuń w dół")}else{t("Przesuń w prawo")});add(0,"");
-        add(9,if s.vertical{t("Podział poziomy (obok siebie)")}else{t("Podział pionowy (jedna nad drugą)")});add(0,"");add(11,t("Rozdziel"));
+    let split=tab_menu_position(s).is_some();
+    add(36,t("Nowy folder…"));add(20,t("Otwórz w Peek"));
+    if split{
+        add(0,"");add(7,if s.vertical{t("Przesuń w górę")}else{t("Przesuń w lewo")});add(8,if s.vertical{t("Przesuń w dół")}else{t("Przesuń w prawo")});
+        add(9,if s.vertical{t("Podział poziomy (obok siebie)")}else{t("Podział pionowy (jedna nad drugą)")});add(11,t("Rozdziel"));
         // With two panes, taking one out is the same as separating them.
-        if s.members.len()>2{add(6,t("Wyjmij kartę ze splitu"));}add(10,t("Zamknij kartę"));add(12,t("Zamknij wszystkie karty w splicie"));
+        if s.members.len()>2{add(6,t("Wyjmij kartę ze splitu"));}
     } else {add(5,t("Otwórz obok w Split View"));}
     if s.http{add(0,"");add(23,t("Zawsze otwieraj tę domenę tutaj"));add(24,t("Usuń regułę dla tej domeny"));}
+    if split{add(0,"");add(10,t("Zamknij kartę"));add(12,t("Zamknij wszystkie karty w splicie"));}
     entries
 }
 
@@ -1851,7 +1855,8 @@ fn workspace_context_menu(s:&ffi::WorkspaceMenuState)->Vec<ffi::WorkspaceMenuEnt
     for (index,emoji) in APPEARANCE_EMOJIS.iter().enumerate(){add(WS_EMOJI_BASE+index as i32,emoji,4,3);}
     add(0,"",1,3);add(WS_CUSTOM_EMOJI,t("Własna ikonka…"),0,3);add(WS_CLEAR_EMOJI,t("Bez ikonki (kropka)"),4,3);
     add(WS_SET_PROFILE,t("Profil przeglądania"),2,0);add(WS_COLOR_MENU,t("Kolor przestrzeni"),2,0);add(WS_EMOJI_MENU,t("Ikonka przestrzeni"),2,0);add(0,"",1,0);
-    add(WS_SETTINGS,t("Nazwa i ustawienia…"),0,0);add(WS_REMOVE,t("Usuń przestrzeń"),0,0);entries
+    // The destructive action comes last, after its own separator (ContextMenu).
+    add(WS_SETTINGS,t("Nazwa i ustawienia…"),0,0);add(0,"",1,0);add(WS_REMOVE,t("Usuń przestrzeń"),0,0);entries
 }
 fn workspace_menu_enabled(command:i32,s:&ffi::WorkspaceMenuState)->bool{
     if !s.ready||s.workspace.is_empty()||!workspace_menu_command(command,s.profiles.len()){return false;}
@@ -5250,7 +5255,7 @@ mod tests {
     fn workspace_menu_state()->ffi::WorkspaceMenuState{ffi::WorkspaceMenuState{ready:true,busy:false,workspace:"work".into(),workspace_count:2,profile:"p2".into(),profiles:vec![ffi::WorkspaceMenuProfile{id:"p1".into(),name:"Główny".into()},ffi::WorkspaceMenuProfile{id:"p2".into(),name:"Praca".into()}],color:APPEARANCE_COLORS[1],emoji:"🚀".into()}}
     #[test] fn workspace_menu_preserves_structure_labels_groups_and_checks() {
         let s=workspace_menu_state();let menu=workspace_context_menu(&s);let group=|g:u32|menu.iter().filter(|e|e.group==g).map(|e|(e.command,e.kind)).collect::<Vec<_>>();
-        assert_eq!(group(0),vec![(1,2),(31,2),(32,2),(0,1),(4,0),(30,0)]);assert_eq!(group(1),vec![(100,3),(101,3),(0,1),(3,0),(2,0)]);assert_eq!(group(2),vec![(40,4),(41,4),(42,4),(43,4),(44,4),(45,4),(46,4),(47,4),(0,1),(33,0)]);assert_eq!(group(3),vec![(50,4),(51,4),(52,4),(53,4),(54,4),(55,4),(56,4),(57,4),(0,1),(34,0),(35,4)]);
+        assert_eq!(group(0),vec![(1,2),(31,2),(32,2),(0,1),(4,0),(0,1),(30,0)]);assert_eq!(group(1),vec![(100,3),(101,3),(0,1),(3,0),(2,0)]);assert_eq!(group(2),vec![(40,4),(41,4),(42,4),(43,4),(44,4),(45,4),(46,4),(47,4),(0,1),(33,0)]);assert_eq!(group(3),vec![(50,4),(51,4),(52,4),(53,4),(54,4),(55,4),(56,4),(57,4),(0,1),(34,0),(35,4)]);
         assert_eq!(menu.iter().find(|e|e.command==41).unwrap().label,"Koral");assert_eq!(menu.iter().find(|e|e.command==101).unwrap().label,"Praca");assert_eq!(menu.iter().find(|e|e.command==52).unwrap().label,"🚀");
         assert!(workspace_menu_checked(101,&s)&&!workspace_menu_checked(100,&s)&&workspace_menu_checked(41,&s)&&!workspace_menu_checked(40,&s)&&workspace_menu_checked(52,&s)&&!workspace_menu_checked(35,&s)&&!workspace_menu_checked(102,&s));
         let mut plain=workspace_menu_state();plain.emoji.clear();assert!(workspace_menu_checked(35,&plain)&&!workspace_menu_checked(52,&plain));
@@ -5320,11 +5325,11 @@ mod tests {
         assert!(command_catalogue(&c,"nonexistent").is_empty());assert_eq!(command_fold("ĄĆĘŁŃÓŚŹŻ Żółć"),"acelnoszz zolc");
     }
     #[test] fn tab_menu_preserves_order_labels_and_orientation() {
-        let mut s=menu_state();let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,0,20,7,8,0,9,0,11,10,12,0,23,24]);assert_eq!(entries[3].label,"Przesuń w lewo");assert_eq!(entries[8].label,"Rozdziel");assert_eq!(entries[10].label,"Zamknij wszystkie karty w splicie");
-        s.vertical=true;let entries=tab_context_menu(&s);assert_eq!(entries[3].label,"Przesuń w górę");assert_eq!(entries[6].label,"Podział poziomy (obok siebie)");
+        let mut s=menu_state();let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,20,0,7,8,9,11,0,23,24,0,10,12]);assert_eq!(entries[3].label,"Przesuń w lewo");assert_eq!(entries[6].label,"Rozdziel");assert_eq!(entries[12].label,"Zamknij wszystkie karty w splicie");
+        s.vertical=true;let entries=tab_context_menu(&s);assert_eq!(entries[3].label,"Przesuń w górę");assert_eq!(entries[5].label,"Podział poziomy (obok siebie)");
         // Three or more panes can also lose a single member.
-        s.members=vec![3,7,9];let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,0,20,7,8,0,9,0,11,6,10,12,0,23,24]);
-        s.has_tab=false;s.http=false;let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,0,20,5]);
+        s.members=vec![3,7,9];let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,20,0,7,8,9,11,6,0,23,24,0,10,12]);
+        s.has_tab=false;s.http=false;let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,20,5]);
     }
     #[test] fn tab_menu_moves_middle_panes_both_ways_and_separates_groups() {
         use ffi::SidebarAction as A;let mut s=menu_state();s.members=vec![3,7,9];

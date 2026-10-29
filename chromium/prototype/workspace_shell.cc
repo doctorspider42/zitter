@@ -5401,6 +5401,7 @@ void WorkspaceShell::BuildWorkspaceMenu(std::string id) {
   workspace_menu_->AddSubMenu(kEmojiMenu, T(u"Ikonka przestrzeni"), emoji_menu_.get());
   workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
   workspace_menu_->AddItem(kWorkspaceSettings, T(u"Nazwa i ustawienia…"));
+  workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);  // The destructive action last.
   workspace_menu_->AddItem(kRemoveWorkspace, T(u"Usuń przestrzeń"));
 }
 
