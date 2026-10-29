@@ -242,6 +242,7 @@ class WorkspaceShell final : public ui::EventHandler,
   std::optional<size_t> SplitDropSlotForTesting(gfx::Point point) const { return SplitDropSlot(point); }
   void DropIntoSplitForTesting(size_t tab, size_t slot) { QueueSplit(tab, {}, slot); }
   const std::vector<size_t>& split_tabs_for_testing() const { return state_.split_tabs; }
+  size_t active_pane_for_testing() const { return state_.active_pane; }
   // The footer's „+”: a new tab, folder or space.
   void ShowAddMenu();
   void SetPinned(bool pinned);

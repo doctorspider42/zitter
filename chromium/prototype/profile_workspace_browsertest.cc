@@ -1467,6 +1467,17 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitDropSlotFollowsThePointer
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->split_tabs_for_testing().size()==3u;}));EXPECT_EQ(third,shell->split_tabs_for_testing()[1]);
 }
 
+// A click on a split pane's bar focuses that pane.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitPaneBarClickFocusesItsPane) {
+  ASSERT_NO_FATAL_FAILURE(NavigateBoth());
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html?bar"),true));window_->SelectTab(0);ASSERT_TRUE(window_->SplitTab(1));
+  window_->widget()->LayoutRootViewIfNecessary();ASSERT_EQ(1u,shell->active_pane_for_testing());
+  auto* bar=shell->split_pane_button(0,false)->parent();ASSERT_TRUE(bar);const gfx::Point point(bar->width()/3,bar->height()/2);
+  ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);
+  EXPECT_TRUE(bar->OnMousePressed(press));ASSERT_TRUE(base::test::RunUntil([&]{return shell->active_pane_for_testing()==0u;}));
+}
+
 // The footer's „+” (design: Sidebar footer) offers a new tab, folder or space.
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FooterAddMenuOpensTabFolderAndSpace) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->SetPinned(true);shell->ShowSidebar();
