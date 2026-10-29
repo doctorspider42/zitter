@@ -1548,6 +1548,7 @@ struct RowRecipe {
     bool kbd = false;  // The detail is a shortcut, drawn as Kbd keys after the title.
     std::u16string header;  // A palette group's eyebrow, drawn above its first row.
     bool editing = false;   // AddressPill while its address is being edited (⌘L).
+    bool audible = false;   // A tab playing sound: a speaker in `accent-ink`.
     int height = 34;
     views::Button::PressedCallback close;
     base::RepeatingCallback<void(gfx::Point)> drop;
@@ -1720,6 +1721,7 @@ class RustRowView final : public views::View {
   void ViewHierarchyChanged(const views::ViewHierarchyChangedDetails& details) override{if(!details.is_add&&details.parent==this&&details.child==close_)close_=nullptr;views::View::ViewHierarchyChanged(details);}
   const Spec& preview_spec() const{return spec_;}
   void SetCallback(views::Button::PressedCallback callback){CancelInput();callback_=std::move(callback);}
+  void SetAudible(bool audible){if(spec_.audible==audible)return;spec_.audible=audible;SchedulePaint();if(changed_)changed_.Run();}
   void SetEditing(bool editing){if(spec_.editing==editing)return;spec_.editing=editing;SchedulePaint();if(changed_)changed_.Run();}
   void SetActive(bool active){if(!state_->action_on(active))return;if(!state_->sidebar_visual().valid)spec_.active=active;measured_.reset();UpdateClose();SchedulePaint();}
   void SetTitle(std::u16string title){if(HasSidebarProperties()){if(state_->sidebar_set_title(SceneUtf16(title))){SyncSidebarAX();SchedulePaint();}return;}if(spec_.title==title)return;spec_.title=std::move(title);measured_.reset();SetTooltipText(spec_.title);GetViewAccessibility().SetName(spec_.title);SchedulePaint();}
@@ -1776,7 +1778,9 @@ class RustRowView final : public views::View {
         scene.item.close_visible=false;
         // A folder shows the folder icon in the row's ink, never an emoji.
         const bool folder=state_->sidebar_presentation().folder;if(folder)scene.item.monogram=rust::String();
-        if(!scene.item.tile){PaintSceneRecipe(canvas,scene.item,Font(0),true);if(folder)PaintIcon(canvas,vector_icons::kFolderFilledIcon,gfx::Rect(12,(height()-16)/2,16,16),16,scene.item.ink);}else{const auto geometry=Geometry();const auto& title=geometry.title;canvas->DrawStringRectWithFlags(SidebarSnapshot().title,DesignFont(2,13,scene.item.active?600:400,false),scene.item.ink,gfx::Rect(title.x,title.y,title.width,title.height),gfx::Canvas::TEXT_ALIGN_LEFT);}}
+        if(!scene.item.tile){PaintSceneRecipe(canvas,scene.item,Font(0),true);if(folder)PaintIcon(canvas,vector_icons::kFolderFilledIcon,gfx::Rect(12,(height()-16)/2,16,16),16,scene.item.ink);
+          // The close button takes this place on hover.
+          if(spec_.audible&&!(close_&&close_->GetVisible()))PaintIcon(canvas,vector_icons::kVolumeUpIcon,gfx::Rect(width()-30,(height()-14)/2,14,14),14,Palette(this).accent_ink);}else{const auto geometry=Geometry();const auto& title=geometry.title;canvas->DrawStringRectWithFlags(SidebarSnapshot().title,DesignFont(2,13,scene.item.active?600:400,false),scene.item.ink,gfx::Rect(title.x,title.y,title.width,title.height),gfx::Canvas::TEXT_ALIGN_LEFT);}}
       return;}
     if(spec_.chip&&!spec_.address){const auto bounds=gfx::RectF(GetLocalBounds());const auto v=state_->action_snapshot();
       if(!spec_.header.empty())PaintSceneRecipe(canvas,PaletteHeaderItem(this,spec_,bounds,bounds),Font(0),true);
@@ -1842,6 +1846,7 @@ bool IsRow(views::View* view){
 }
 const RowRecipe::Spec& RowSpec(views::View* view){return VisitRow(view,[](auto* row)->const RowRecipe::Spec&{return row->preview_spec();});}
 void SetRowActive(views::View* view,bool value){VisitRow(view,[value](auto* row){row->SetActive(value);});}
+void SetRowAudible(views::View* view,bool value){if(auto* row=views::AsViewClass<RustRowView>(view))row->SetAudible(value);}
 void SetRowEditing(views::View* view,bool value){if(auto* row=views::AsViewClass<RustRowView>(view))row->SetEditing(value);}
 void SetRowTitle(views::View* view,std::u16string value){VisitRow(view,[&value](auto* row){row->SetTitle(std::move(value));});}
 void SetRowDetail(views::View* view,std::u16string value){VisitRow(view,[&value](auto* row){row->SetDetail(std::move(value));});}
@@ -4124,6 +4129,7 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
     auto add_tab = [&](views::View* parent, const ShellTab& tab, bool tile = false) {
       RowRecipe::Spec spec;
       spec.title = tab.title;
+      spec.audible = tab.audible;
       spec.sidebar_row = true;
       if(cache.node_graph)spec.scene_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_sidebar_visible();},weak_factory_.GetWeakPtr());
       spec.tile = tile;
@@ -4194,6 +4200,7 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
       if (found == cache.tab_buttons.end()) continue;
       auto* row = found->second.get();
       if (tab.title != previous.title) SetRowTitle(row,tab.title);
+      if (tab.audible != previous.audible) SetRowAudible(row,tab.audible);
       if (tab.url != previous.url || tab.title != previous.title) {
         const auto host = HostLabel(tab.url);
         SetRowMonogram(row,base::i18n::ToUpper((host.empty() ? tab.title : host).substr(0, 1)),

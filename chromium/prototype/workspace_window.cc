@@ -576,7 +576,8 @@ void WorkspaceWindow::UpdateShell() {
       }
       const size_t index = &view - host.tabs.data();
       if (pin_id.empty() || InSplit(host, view))
-        state.tabs.push_back({title.empty() ? T(u"Nowa karta") : title, display_url, index, pin_id, static_cast<WorkspaceWebView*>(view.get())->sidebar_identity()});
+        state.tabs.push_back({title.empty() ? T(u"Nowa karta") : title, display_url, index, pin_id, static_cast<WorkspaceWebView*>(view.get())->sidebar_identity(),
+                              view->web_contents() && view->web_contents()->IsCurrentlyAudible()});
     }
     auto& controller = host.view->GetWebContents()->GetController();
     state.workspace_id = host.workspace_id;

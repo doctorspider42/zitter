@@ -81,6 +81,7 @@ struct ShellTab {
   size_t index = 0;
   std::string pin_id;
   std::array<uint64_t,2> identity{};  // Opaque 128-bit row token, independent of lazy WebContents.
+  bool audible = false;  // Playing sound: the row shows a speaker.
   bool operator==(const ShellTab&) const = default;
 };
 
