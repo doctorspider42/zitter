@@ -6610,7 +6610,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ImportFormScenesLatestOpti
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, FormActionGroupsSceneTextDynamicLabelsAndCancelledTargets) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
   window_->widget()->SetBounds(display::Screen::Get()->GetDisplayNearestWindow(window_->widget()->GetNativeWindow()).work_area());shell->OpenWorkspaceSettings();
-  ASSERT_TRUE(base::test::RunUntil([&]{return shell->form_action_canvases_visible_for_testing(false)==3;}));if(MetalPresents())ASSERT_TRUE(shell->form_actions_contains_scene_text(false,"Zapisz nazwę i profil"));
+  /* The space panel (design) has four action groups. */ASSERT_TRUE(base::test::RunUntil([&]{return shell->form_action_canvases_visible_for_testing(false)==4;}));if(MetalPresents())ASSERT_TRUE(shell->form_actions_contains_scene_text(false,"Zapisz nazwę i profil"));
   auto find=[&](bool profiles,std::u16string_view name){return FindButton(profiles?shell->profile_panel_for_testing():shell->workspace_panel_for_testing(),name);};
   auto check=[&](views::View* button)->bool{if(!button)return false;EXPECT_FALSE(views::AsViewClass<views::MdTextButton>(button));EXPECT_FALSE(views::AsViewClass<views::Button>(button));for(const auto& child:button->children())EXPECT_FALSE(views::AsViewClass<views::Label>(child.get()));return true;};
   auto* create=find(false,u"Nowa przestrzeń…");ASSERT_TRUE(check(create));const gfx::Point point(12,12);ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);
@@ -6898,8 +6898,10 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NewTabActionUsesSceneTextA
   no_labels(no_labels, action);
   ASSERT_TRUE(shell->SetShortcut("new_tab", "Cmd+Shift+U"));
   if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&] {
+    // The shortcut is drawn as one Kbd key per symbol.
     return shell->metal_sidebar_contains_text_for_testing("Nowa karta") &&
-        shell->metal_sidebar_contains_text_for_testing("⇧⌘U");
+        shell->metal_sidebar_contains_text_for_testing("⇧") && shell->metal_sidebar_contains_text_for_testing("⌘") &&
+        shell->metal_sidebar_contains_text_for_testing("U");
   }));
   const auto canvas = shell->metal_sidebar_screen_bounds_for_testing();
   const auto viewport = shell->tab_list_view()->parent()->GetBoundsInScreen();
@@ -7521,15 +7523,15 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarColumnLayoutTracksColla
       auto* row = shell->tab_button(index);
       ASSERT_TRUE(row);
       EXPECT_TRUE(row->parent()->GetLocalBounds().Contains(row->bounds()));
-      if (index) EXPECT_EQ(shell->tab_button(index - 1)->bounds().bottom() + 2, row->y());
+      if (index) EXPECT_EQ(shell->tab_button(index - 1)->bounds().bottom() + 4, row->y());  // space-1
     }
     ActivateSidebarRow(folder);
     shell->sidebar_widget()->LayoutRootViewIfNecessary();
     EXPECT_FALSE(child->IsDrawn());
-    // Views baseline: a 34px child, its empty nested group's 2px spacing,
-    // and the parent column's 2px spacing disappear on collapse.
-    EXPECT_EQ(expanded_height - 38, shell->tab_list_view()->height());
-    EXPECT_EQ(expanded_first - 38, shell->tab_button(0)->GetBoundsInScreen().y());
+    // Views baseline: a 34px child, its empty nested group's 4px spacing,
+    // and the parent column's 4px spacing (space-1) disappear on collapse.
+    EXPECT_EQ(expanded_height - 42, shell->tab_list_view()->height());
+    EXPECT_EQ(expanded_first - 42, shell->tab_button(0)->GetBoundsInScreen().y());
     ActivateSidebarRow(folder);
     shell->sidebar_widget()->LayoutRootViewIfNecessary();
     EXPECT_TRUE(child->IsDrawn());

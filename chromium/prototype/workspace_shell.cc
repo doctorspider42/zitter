@@ -998,6 +998,8 @@ class SceneTextButton final : public RustActionView {
   // A quiet action that reads as the toast's one action: `accent-ink` text.
   void SetAccentInk(){accent_ink_=true;SchedulePaint();}
   void SetPrimary(){kind_=0;PreferredSizeChanged();SchedulePaint();}
+  // Creating something new (a space, a profile): the one lime `zing` button.
+  void SetZing(bool zing){if(zing)kind_=1;else kind_.reset();PreferredSizeChanged();SchedulePaint();}
   gfx::Size GetMinimumSize() const override{if(!native_minimum_)return RustActionView::GetMinimumSize();const auto font=TextFont();return gfx::Size(views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_DIALOG_BUTTON_MINIMUM_WIDTH),std::max(0,views::LayoutProvider::GetControlHeightForFont(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY,font)-std::max(font.GetHeight(),views::TypographyProvider::Get().GetLineHeight(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY))));}
   void SetText(std::u16string text){if(text==text_)return;OnMouseCaptureLost();text_=std::move(text);GetViewAccessibility().SetName(text_);SetTooltipText(text_);PreferredSizeChanged();SchedulePaint();}
   // Buttons are set in `body-strong`.
@@ -1659,6 +1661,8 @@ std::vector<sidebar::Item> CommandRowItems(views::View* row,const RowRecipe::Spe
 // selected, `bg-hover` on hover, no tile under the icon.
 // A palette group starts with its `eyebrow` (space-3 above, space-1 below) inside
 // the first row, so rows stay one per result and the keyboard never lands on it.
+// SidebarTab rows (and pinned rows, folders) sit `space-1` apart.
+constexpr int kSidebarRowGap=4;
 constexpr int kPaletteHeader=30;
 gfx::RectF PaletteRowBody(const RowRecipe::Spec& spec,gfx::RectF rect){if(!spec.header.empty())rect.Inset(gfx::InsetsF::TLBR(kPaletteHeader,0,0,0));return rect;}
 sidebar::Item PaletteHeaderItem(views::View* row,const RowRecipe::Spec& spec,gfx::RectF rect,gfx::RectF clip){
@@ -1860,6 +1864,7 @@ bool IsRow(views::View* view){
 const RowRecipe::Spec& RowSpec(views::View* view){return VisitRow(view,[](auto* row)->const RowRecipe::Spec&{return row->preview_spec();});}
 void SetRowActive(views::View* view,bool value){VisitRow(view,[value](auto* row){row->SetActive(value);});}
 void SetRowAudible(views::View* view,bool value){if(auto* row=views::AsViewClass<RustRowView>(view))row->SetAudible(value);}
+void SetCreateAction(views::View* view,bool creating){if(auto* button=views::AsViewClass<SceneTextButton>(view))button->SetZing(creating);}
 void SetRowEditing(views::View* view,bool value){if(auto* row=views::AsViewClass<RustRowView>(view))row->SetEditing(value);}
 void SetRowTitle(views::View* view,std::u16string value){VisitRow(view,[&value](auto* row){row->SetTitle(std::move(value));});}
 void SetRowDetail(views::View* view,std::u16string value){VisitRow(view,[&value](auto* row){row->SetDetail(std::move(value));});}
@@ -3241,7 +3246,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
         return shell && (shell->metal_sidebar_visible()||shell->workspace_swipe_metal_visible()||shell->workspace_switch_metal_visible());
       }, weak));
-  list->SetLayoutManager(CreateSidebarColumnLayout(2));
+  list->SetLayoutManager(CreateSidebarColumnLayout(kSidebarRowGap));
   tab_list_=list.get();tab_scroll_->SetPanelContents(std::move(list));
   tab_list_->set_context_menu_controller(this);
   // Rust panel layout in Rust mode; identical BoxLayout fallback for Views.
@@ -4031,9 +4036,9 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
     cache.root = root.get();
     root->set_context_menu_controller(this);
     cache.pins_root = root->AddChildView(std::make_unique<views::View>());
-    cache.pins_root->SetLayoutManager(CreateSidebarColumnLayout(2));
+    cache.pins_root->SetLayoutManager(CreateSidebarColumnLayout(kSidebarRowGap));
     cache.tabs_root = root->AddChildView(std::make_unique<views::View>());
-    cache.tabs_root->SetLayoutManager(CreateSidebarColumnLayout(2));
+    cache.tabs_root->SetLayoutManager(CreateSidebarColumnLayout(kSidebarRowGap));
     // Attach a completed tree only once, instead of hundreds of live AX/layout mutations.
     cache.root->SetVisible(false);
     tab_list_->AddChildView(std::move(root));
@@ -4095,7 +4100,7 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
     auto contents = std::move(retained_pin_contents);
     if (!contents) {
       contents = std::make_unique<views::View>();
-      contents->SetLayoutManager(CreateSidebarColumnLayout(2));
+      contents->SetLayoutManager(CreateSidebarColumnLayout(kSidebarRowGap));
     }
     if (!state_.pins.empty()) {
       Label(contents.get(), T(u"PRZYPIĘTE"), kMuted, Font(-2));
@@ -4138,7 +4143,7 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
     auto contents = std::move(kept_contents);
     if (!contents) {
       contents = std::make_unique<views::View>();
-      contents->SetLayoutManager(CreateSidebarColumnLayout(2));
+      contents->SetLayoutManager(CreateSidebarColumnLayout(kSidebarRowGap));
     }
     auto add_tab = [&](views::View* parent, const ShellTab& tab, bool tile = false) {
       RowRecipe::Spec spec;
@@ -4700,11 +4705,11 @@ void WorkspaceShell::WarmNextSidebar() {
     root->SetLayoutManager(CreateSidebarColumnLayout());
     root->SetVisible(false); root->set_context_menu_controller(this); cache.root = root.get();
     cache.pins_root = root->AddChildView(std::make_unique<views::View>());
-    cache.pins_root->SetLayoutManager(CreateSidebarColumnLayout(2));
+    cache.pins_root->SetLayoutManager(CreateSidebarColumnLayout(kSidebarRowGap));
     cache.tabs_root = root->AddChildView(std::make_unique<views::View>());
-    cache.tabs_root->SetLayoutManager(CreateSidebarColumnLayout(2));
+    cache.tabs_root->SetLayoutManager(CreateSidebarColumnLayout(kSidebarRowGap));
     auto contents = std::make_unique<views::View>();
-    contents->SetLayoutManager(CreateSidebarColumnLayout(2));
+    contents->SetLayoutManager(CreateSidebarColumnLayout(kSidebarRowGap));
     Label(contents.get(), T(u"PRZYPIĘTE"), kMuted, Font(-2));
     AppendPinnedItems(contents.get(), pins, cache, workspace);
     Spacer(contents.get(), 8);
@@ -5038,7 +5043,7 @@ void WorkspaceShell::AppendPinnedItems(views::View* root, const std::vector<Pinn
         if(group&&views::AsViewClass<ScenePinGroup>(group.get())->Matches(cache.node_graph,entry.group))folder_group=parent->AddChildView(std::move(group));
         else folder_group=parent->AddChildView(std::make_unique<ScenePinGroup>(cache.node_graph,entry.group));}else
       folder_group=parent->AddChildView(std::make_unique<views::View>());
-      folder_group->SetLayoutManager(CreateSidebarColumnLayout(2));groups[entry.group]=folder_group;collapsed_groups[entry.group]=entry.collapsed;folder_group->SetVisible(shown_in_parent&&(!entry.collapsed||peeking.contains(pin->id)));
+      folder_group->SetLayoutManager(CreateSidebarColumnLayout(kSidebarRowGap));groups[entry.group]=folder_group;collapsed_groups[entry.group]=entry.collapsed;folder_group->SetVisible(shown_in_parent&&(!entry.collapsed||peeking.contains(pin->id)));
     }
     if(cache.node_graph){
       auto* control=views::AsViewClass<RustRowView>(button);CHECK(control);const auto binding=control->PinBinding();CHECK(binding.valid&&binding.folder==pin->folder);
@@ -7627,14 +7632,14 @@ void WorkspaceShell::ToggleWorkspaceCreation() {
   if(workspace_form_)workspace_form_->form->begin_create(state_.workspace_id);
   creating_workspace_=true;workspace_appearance_->SetVisible(false);workspace_more_->SetVisible(false);configuration_error_->SetVisible(false);
   SetPanelText(settings_title_,T(u"Nowa przestrzeń"));workspace_input_->SetText(u"");workspace_input_->RequestFocus();
-  SetActionText(edit_workspace_,T(u"Utwórz przestrzeń"));SetActionText(add_workspace_,T(u"Anuluj"));
+  SetActionText(edit_workspace_,T(u"Utwórz przestrzeń"));SetActionText(add_workspace_,T(u"Anuluj"));SetCreateAction(edit_workspace_,true);
   RefreshRustWorkspacePresentation();PositionPanels();
 }
 void WorkspaceShell::RefreshRustWorkspacePresentation() {
   if(!workspace_form_)return;
   const auto v=workspace_form_->form->view(base::UTF16ToUTF8(state_.workspace_name),base::UTF16ToUTF8(state_.profile_name),state_.configuration_ready,state_.profiles_busy,state_.workspaces.size());
   creating_workspace_=v.creating;SetPanelText(settings_title_,base::UTF8ToUTF16(std::string(v.title)));SetPanelText(profile_name_,base::UTF8ToUTF16(std::string(v.description)));
-  SetActionText(edit_workspace_,base::UTF8ToUTF16(std::string(v.save_label)));SetActionText(add_workspace_,base::UTF8ToUTF16(std::string(v.secondary_label)));
+  SetActionText(edit_workspace_,base::UTF8ToUTF16(std::string(v.save_label)));SetActionText(add_workspace_,base::UTF8ToUTF16(std::string(v.secondary_label)));SetCreateAction(edit_workspace_,v.creating);
   workspace_appearance_->SetVisible(v.appearance);workspace_more_->SetVisible(v.appearance);edit_workspace_->SetEnabled(v.enabled);add_workspace_->SetEnabled(v.enabled);profile_picker_->SetEnabled(v.enabled);remove_workspace_->SetEnabled(v.remove_enabled);
   SetPanelText(configuration_error_,base::UTF8ToUTF16(std::string(v.error)));configuration_error_->SetVisible(!v.error.empty());
 }
@@ -7652,7 +7657,7 @@ void WorkspaceShell::RefreshWorkspaceSettings() {
   creating_workspace_ = false;
   workspace_appearance_->SetVisible(true);workspace_more_->SetVisible(true);
   SetPanelText(settings_title_,state_.workspace_name);
-  SetActionText(edit_workspace_,T(u"Zapisz nazwę i profil"));
+  SetActionText(edit_workspace_,T(u"Zapisz nazwę i profil"));SetCreateAction(edit_workspace_,false);
   SetActionText(add_workspace_,T(u"Nowa przestrzeń…"));
   workspace_input_->SetText(state_.workspace_name);
   for (size_t i = 0; i < state_.profiles.size(); ++i)
