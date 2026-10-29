@@ -2002,8 +2002,9 @@ class SceneModalDialog final : public views::BubbleDialogDelegate {
   SceneModalDialog(std::unique_ptr<views::View> body,bool control,bool modal=true)
       :views::BubbleDialogDelegate(views::BubbleAnchor(),views::BubbleBorder::Arrow::NONE,views::BubbleBorder::DIALOG_SHADOW,true){
     SetModalType(modal?ui::mojom::ModalType::kWindow:ui::mojom::ModalType::kNone);SetShowCloseButton(!modal);if(!modal)set_close_on_deactivate(false);SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
-    auto* provider=views::LayoutProvider::Get();set_fixed_width(provider->GetDistanceMetric(views::DISTANCE_MODAL_DIALOG_PREFERRED_WIDTH));
-    const auto sides=provider->GetInsetsMetric(views::INSETS_DIALOG);
+    // Design: Dialog — 400 px wide, `radius-lg`, `space-6` at the sides.
+    auto* provider=views::LayoutProvider::Get();set_fixed_width(400);set_corner_radius(20);
+    const auto sides=gfx::Insets::VH(0,24);
     // Modal bodies retain the native model host's 2px scroll workaround.
     const int scroll_margin=modal?2:0;
     auto contents=std::make_unique<views::View>();SetSidebarPanelLayout(contents.get(),true,gfx::Insets::TLBR(scroll_margin,sides.left(),scroll_margin,sides.right()),0);contents->AddChildView(std::move(body));
