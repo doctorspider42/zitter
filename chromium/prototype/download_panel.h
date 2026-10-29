@@ -2,6 +2,7 @@
 #define ZITTER_CHROMIUM_PROTOTYPE_DOWNLOAD_PANEL_H_
 
 #include <map>
+#include <set>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -28,6 +29,8 @@ class DownloadPanel final : public content::DownloadManager::Observer,
   void Show(Profile* profile, views::Widget* parent);
   views::Widget* widget() const { return widget_.get(); }
   bool Act(std::string guid, Action action);
+  // Runs when a transfer this panel saw in progress finishes safely.
+  void SetCompletedCallback(base::RepeatingCallback<void(std::string guid, std::u16string name)> completed) { completed_ = std::move(completed); }
   std::vector<std::string> visible_guids() const;
   bool scene_visible_for_testing() const;
   bool scene_contains_text_for_testing(std::string_view text) const;
@@ -40,6 +43,7 @@ class DownloadPanel final : public content::DownloadManager::Observer,
   void Disconnect();
   void CloseUI();
   views::View* MakeLabel(views::View* parent,std::u16string text);
+  views::View* MakeLine(views::View* parent,uint32_t style,int tone);
   void SetText(views::View* view,std::u16string text);
   void Observe(download::DownloadItem* item);
   void ScheduleRefresh();
@@ -53,11 +57,14 @@ class DownloadPanel final : public content::DownloadManager::Observer,
   raw_ptr<Profile> profile_ = nullptr;
   raw_ptr<content::DownloadManager> manager_ = nullptr;
   std::map<std::string, raw_ptr<download::DownloadItem>> items_;
+  std::set<std::string> in_progress_;  // Seen transferring: their completion is news.
+  base::RepeatingCallback<void(std::string, std::u16string)> completed_;
   std::unique_ptr<views::DialogDelegate> delegate_;
   std::unique_ptr<views::Widget> widget_;
   std::unique_ptr<PanelScene> scene_;
   raw_ptr<PanelViewport> scroll_=nullptr;
   raw_ptr<views::View> list_ = nullptr;
+  raw_ptr<views::View> count_ = nullptr;
   std::vector<Row> rows_;
   base::RepeatingTimer timer_;
   bool refresh_pending_ = false;

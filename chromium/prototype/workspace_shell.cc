@@ -712,6 +712,7 @@ class RustActionView : public views::View {
   // The active workspace slides out of the rail as a pill with its name.
   void SetPillName(std::u16string name){if(pill_name_==name)return;pill_name_=std::move(name);PreferredSizeChanged();SchedulePaint();}
   const std::u16string& pill_name() const{return pill_name_;}
+  void SetIcon(const gfx::VectorIcon* icon){if(icon_==icon)return;icon_=icon;SchedulePaint();}
   void SetLabel(std::u16string label){if(label_==label)return;label_=std::move(label);PreferredSizeChanged();SchedulePaint();}
   void SyncViewportVisibility(){if(!Interactive())Cancel();}
   bool HandleAccessibleAction(const ui::AXActionData& action) override{if(action.action==ax::mojom::Action::kDoDefault&&SceneIsVisible(this)&&GetEnabledInViewsSubtree())ScrollViewToVisible();return views::View::HandleAccessibleAction(action);}
@@ -1062,6 +1063,7 @@ class ToastView final : public views::View {
     SetNotifyEnterExitOnChild(true);GetViewAccessibility().SetRole(ax::mojom::Role::kStatus);
   }
   void SetMessage(std::u16string lead,std::u16string noun){lead_->SetText(lead);noun_->SetText(noun);GetViewAccessibility().SetName(lead+noun);PreferredSizeChanged();}
+  void SetAction(std::u16string label){views::AsViewClass<SceneTextButton>(undo_)->SetText(std::move(label));actions_->InvalidateLayout();PreferredSizeChanged();}
   std::u16string text() const{return std::u16string(lead_->GetText())+std::u16string(noun_->GetText());}
   views::View* undo() const{return undo_;}
   // `space-4` in, the message, „Cofnij” and close at their natural widths, `space-2` out.
@@ -1410,6 +1412,7 @@ void RefreshChoiceViewports(views::View* root){
   if(auto* scene=views::AsViewClass<SceneToggle>(root)){scene->OnVisibleBoundsChanged();return;}
   if(auto* group=views::AsViewClass<SceneCheckboxGroup>(root)){group->OnVisibleBoundsChanged();return;}
   if(auto* scene=views::AsViewClass<SceneSelect>(root)){scene->OnVisibleBoundsChanged();return;}
+  if(auto* action=views::AsViewClass<RustActionView>(root)){action->SyncViewportVisibility();return;}
   for(const auto& child:root->children())RefreshChoiceViewports(child.get());
 }
 void CancelChoiceInteractions(views::View* root){
@@ -2188,14 +2191,18 @@ class PreferenceCopy final : public views::View {
   PreferenceCopy(std::u16string text,SkColor tone,int delta,gfx::Font::Weight weight,bool multiline,base::RepeatingClosure changed,base::RepeatingCallback<bool()> visible,bool native_style=false,bool center=false,int fixed_width=0)
       :text_(std::move(text)),tone_(tone),delta_(delta),weight_(weight),multiline_(multiline),native_style_(native_style),center_(center),fixed_width_(fixed_width),changed_(std::move(changed)),visible_(std::move(visible)){GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);GetViewAccessibility().SetName(text_);SetCanProcessEventsWithinSubtree(false);}
   const std::u16string& text() const{return text_;}
-  gfx::FontList font() const{if(display_)return DesignFont(1,40,400,true);return native_style_?views::TypographyProvider::Get().GetFont(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY):Font(delta_,weight_);}
+  gfx::FontList font() const{if(style_){const auto s=sidebar::design_text_style(style_);return DesignFont(s.family,s.size,s.weight,s.italic);}return native_style_?views::TypographyProvider::Get().GetFont(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY):Font(delta_,weight_);}
   // An inner page title: `display-l`, Instrument Serif italic.
-  void SetDisplay(){display_=true;measured_width_=-1;natural_width_=-1;PreferredSizeChanged();SchedulePaint();Notify();}
-  SkColor Ink() const{return native_style_?GetColorProvider()->GetColor(views::TypographyProvider::Get().GetColorId(views::style::CONTEXT_LABEL,GetEnabledInViewsSubtree()?views::style::STYLE_PRIMARY:views::style::STYLE_DISABLED)):Tone(this,GetEnabledInViewsSubtree()?tone_:kDisabled);}
+  void SetDisplay(){SetTextStyle(2);}
+  // A design text style (design::TextStyleId) instead of the panel copy font.
+  void SetTextStyle(uint32_t style){if(style_==style)return;style_=style;measured_width_=-1;natural_width_=-1;PreferredSizeChanged();SchedulePaint();Notify();}
+  // A design role colour for the text (status tones), over the tone.
+  void SetInk(std::optional<SkColor> ink){if(ink_==ink)return;ink_=ink;SchedulePaint();Notify();}
+  SkColor Ink() const{if(ink_)return *ink_;return native_style_?GetColorProvider()->GetColor(views::TypographyProvider::Get().GetColorId(views::style::CONTEXT_LABEL,GetEnabledInViewsSubtree()?views::style::STYLE_PRIMARY:views::style::STYLE_DISABLED)):Tone(this,GetEnabledInViewsSubtree()?tone_:kDisabled);}
   void SetText(std::u16string text){if(text==text_)return;text_=std::move(text);GetViewAccessibility().SetName(text_);measured_width_=-1;natural_width_=-1;PreferredSizeChanged();SchedulePaint();Notify();}
   void SetTone(SkColor tone){if(tone_==tone)return;tone_=tone;SchedulePaint();Notify();}
   gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override{if(multiline_&&fixed_width_>0&&!text_.empty()){const auto g=Geometry(fixed_width_);return gfx::Size(fixed_width_,g.height);}const int natural=NaturalWidth();const int width=available.width().is_bounded()?std::min(natural,available.width().value()):natural;auto g=Geometry(width);return gfx::Size(width,g.height);}
-  void Append(std::vector<sidebar::Item>& items,gfx::Point origin,gfx::Rect clip) const{auto g=Geometry(width());for(size_t i=0;i<lines_.size();++i){auto r=g.children[i];gfx::Rect box(origin.x()+r.x,origin.y()+r.y,r.width,r.height);auto visible=box;visible.Intersect(clip);if(visible.IsEmpty()||lines_[i].empty())continue;sidebar::Item item{};item.kind=17;item.x=box.x();item.y=box.y();item.width=box.width();item.height=box.height();item.title=lines_[i];item.ink=Ink();item.glyph=center_?1:0;item.font_size=font().GetFontSize();item.font_weight=static_cast<int>(native_style_?font().GetFontWeight():weight_);item.active=item.font_weight>=static_cast<int>(gfx::Font::Weight::MEDIUM);if(display_)item.text_style=2;item.clip={float(visible.x()),float(visible.y()),float(visible.width()),float(visible.height())};items.push_back(std::move(item));}}
+  void Append(std::vector<sidebar::Item>& items,gfx::Point origin,gfx::Rect clip) const{auto g=Geometry(width());for(size_t i=0;i<lines_.size();++i){auto r=g.children[i];gfx::Rect box(origin.x()+r.x,origin.y()+r.y,r.width,r.height);auto visible=box;visible.Intersect(clip);if(visible.IsEmpty()||lines_[i].empty())continue;sidebar::Item item{};item.kind=17;item.x=box.x();item.y=box.y();item.width=box.width();item.height=box.height();item.title=lines_[i];item.ink=Ink();item.glyph=center_?1:0;item.font_size=font().GetFontSize();item.font_weight=static_cast<int>(native_style_?font().GetFontWeight():weight_);if(style_)item.font_weight=sidebar::design_text_style(style_).weight;item.active=item.font_weight>=static_cast<int>(gfx::Font::Weight::MEDIUM);item.text_style=style_;item.clip={float(visible.x()),float(visible.y()),float(visible.width()),float(visible.height())};items.push_back(std::move(item));}}
   bool HasFullText(const SidebarMetal& surface,std::string_view text) const{if(base::UTF16ToUTF8(text_)!=text||!SceneIsVisible(this)||GetVisibleBounds().height()!=height())return false;Geometry(width());return !lines_.empty()&&std::all_of(lines_.begin(),lines_.end(),[&](const auto& line){return line.empty()||surface.contains_text_for_testing(line);});}
   bool GetNeedsNotificationWhenVisibleBoundsChange() const override{return true;}
   void OnVisibleBoundsChanged() override{Notify();}
@@ -2214,7 +2221,7 @@ class PreferenceCopy final : public views::View {
       wrapped_->SetCursorEnabled(false);wrapped_->SetFontList(f);wrapped_->SetText(text_);wrapped_->SetMultiline(true);wrapped_->SetHorizontalAlignment(gfx::ALIGN_LEFT);wrapped_->SetElideBehavior(gfx::NO_ELIDE);wrapped_->SetWordWrapBehavior(gfx::TRUNCATE_LONG_WORDS);wrapped_->SetMinLineHeight(std::max(f.GetHeight(),views::TypographyProvider::Get().GetLineHeight(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY)));wrapped_->SetDisplayRect(gfx::Rect(0,0,width,0));
       for(size_t i=0;i<wrapped_->GetNumLines();++i){const auto start=std::min(text_.size(),wrapped_->GetTextIndexOfLine(i));const auto end=std::max(start,std::min(text_.size(),wrapped_->GetTextIndexOfLine(i+1)));auto line=text_.substr(start,end-start);while(!line.empty()&&(line.back()==u'\n'||line.back()==u'\r'))line.pop_back();lines_.push_back(base::UTF16ToUTF8(line));}
     }else lines_.push_back(base::UTF16ToUTF8(text_));if(lines_.empty())lines_.push_back("");measured_width_=width;measured_font_=f.GetFontSize();}return sidebar::paragraph_layout(width,std::max(f.GetHeight(),views::TypographyProvider::Get().GetLineHeight(views::style::CONTEXT_LABEL,views::style::STYLE_PRIMARY)),lines_.size());}
-  std::u16string text_;SkColor tone_;int delta_;gfx::Font::Weight weight_;bool multiline_;bool native_style_,center_;bool display_=false;int fixed_width_;base::RepeatingClosure changed_;base::RepeatingCallback<bool()> visible_;mutable int measured_width_=-1,measured_font_=0,natural_width_=-1;mutable std::vector<std::string> lines_;mutable std::unique_ptr<gfx::RenderText> wrapped_;
+  std::u16string text_;SkColor tone_;int delta_;gfx::Font::Weight weight_;bool multiline_;bool native_style_,center_;uint32_t style_=0;std::optional<SkColor> ink_;int fixed_width_;base::RepeatingClosure changed_;base::RepeatingCallback<bool()> visible_;mutable int measured_width_=-1,measured_font_=0,natural_width_=-1;mutable std::vector<std::string> lines_;mutable std::unique_ptr<gfx::RenderText> wrapped_;
 };
 BEGIN_METADATA(PreferenceCopy)
 END_METADATA
@@ -2251,7 +2258,9 @@ class SceneProgress final : public views::View {
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(1,3);}
   void SetValue(double value){const double next=!std::isfinite(value)||value<0||value>1?-1:value;if(next==value_)return;value_=next;if(value_<0)started_=base::TimeTicks::Now();AX();SchedulePaint();changed_.Run();}
   bool moving() const{return value_<0;}
-  sidebar::Item Scene(gfx::Rect box,gfx::Rect clip) const{sidebar::Item item{};item.kind=26;item.x=box.x();item.y=box.y();item.width=box.width();item.height=box.height();item.title_width=value_;item.detail_font_size=started_.is_null()?0:std::fmod((base::TimeTicks::Now()-started_).InSecondsF(),2.0)/2.0;item.tile=base::i18n::IsRTL();item.ink=Palette(this).accent;item.fill=Palette(this).bg_hover;item.clip={float(clip.x()),float(clip.y()),float(clip.width()),float(clip.height())};return item;}
+  // A paused transfer keeps its bar in `warn`.
+  void SetPaused(bool paused){if(paused_==paused)return;paused_=paused;SchedulePaint();changed_.Run();}
+  sidebar::Item Scene(gfx::Rect box,gfx::Rect clip) const{sidebar::Item item{};item.kind=26;item.x=box.x();item.y=box.y();item.width=box.width();item.height=box.height();item.title_width=value_;item.detail_font_size=started_.is_null()?0:std::fmod((base::TimeTicks::Now()-started_).InSecondsF(),2.0)/2.0;item.tile=base::i18n::IsRTL();item.ink=paused_?Palette(this).warn:Palette(this).accent;item.fill=Palette(this).bg_hover;item.clip={float(clip.x()),float(clip.y()),float(clip.width()),float(clip.height())};return item;}
   bool GetNeedsNotificationWhenVisibleBoundsChange() const override{return true;}
   void OnVisibleBoundsChanged() override{changed_.Run();}
   void OnBoundsChanged(const gfx::Rect& old) override{views::View::OnBoundsChanged(old);changed_.Run();}
@@ -2262,7 +2271,7 @@ class SceneProgress final : public views::View {
   void OnPaint(gfx::Canvas* canvas) override{if(!visible_.Run())PaintSceneRecipe(canvas,Scene(GetLocalBounds(),GetLocalBounds()),Font(0));}
  private:
   void AX(){if(value_<0){GetViewAccessibility().RemoveValue();return;}if(!GetWidget()||!GetWidget()->IsVisible())return;const int percent=static_cast<int>(value_*100);if(percent!=announced_){announced_=percent;GetViewAccessibility().SetValue(base::FormatPercent(percent));}}
-  double value_=0;int announced_=-1;base::TimeTicks started_;base::RepeatingClosure changed_;base::RepeatingCallback<bool()> visible_;
+  double value_=0;bool paused_=false;int announced_=-1;base::TimeTicks started_;base::RepeatingClosure changed_;base::RepeatingCallback<bool()> visible_;
 };
 BEGIN_METADATA(SceneProgress)
 END_METADATA
@@ -2290,6 +2299,22 @@ class PreferenceChromeRenderer : public views::WidgetObserver {
   raw_ptr<views::View> root_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;rust::Vec<sidebar::Primitive> last_ops_;base::ScopedObservation<views::Widget,views::WidgetObserver> observation_{this};base::WeakPtrFactory<PreferenceChromeRenderer> weak_factory_{this};
 };
 
+// A file's extension on a 32 px `bg-hover` tile, `mono` 9 px 600 in capitals
+// (design: Downloads).
+class SceneFileTile final : public views::View {
+  METADATA_HEADER(SceneFileTile,views::View)
+ public:
+  SceneFileTile(){SetCanProcessEventsWithinSubtree(false);GetViewAccessibility().SetIsIgnored(true);}
+  void SetExtension(std::u16string extension){extension=base::i18n::ToUpper(extension.substr(0,4));if(extension_==extension)return;extension_=std::move(extension);SchedulePaint();}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(32,32);}
+  void OnPaint(gfx::Canvas* canvas) override{const auto p=Palette(this);FillRound(canvas,GetLocalBounds(),4/* radius-xs */,p.bg_hover);
+    canvas->DrawStringRectWithFlags(extension_,DesignFont(3,9,600,false),p.ink_muted,GetLocalBounds(),gfx::Canvas::TEXT_ALIGN_CENTER);}
+ private:
+  std::u16string extension_;
+};
+BEGIN_METADATA(SceneFileTile)
+END_METADATA
+
 class PanelSceneImpl final : public PanelScene {
  public:
   explicit PanelSceneImpl(views::View* root):root_(root),renderer_(root){}
@@ -2303,6 +2328,14 @@ class PanelSceneImpl final : public PanelScene {
   void SetActionText(views::View* button,std::u16string text) override{static_cast<SceneTextButton*>(button)->SetText(std::move(text));}
   std::unique_ptr<views::View> MakeProgress() override{return std::make_unique<SceneProgress>(base::BindRepeating(&PanelSceneImpl::Schedule,weak_factory_.GetWeakPtr()),base::BindRepeating([](base::WeakPtr<PanelSceneImpl> self){return self&&self->visible();},weak_factory_.GetWeakPtr()));}
   void SetProgress(views::View* view,double value) override{static_cast<SceneProgress*>(view)->SetValue(value);}
+  void SetTextStyle(views::View* text,uint32_t style,Tone tone) override{auto* copy=static_cast<PreferenceCopy*>(text);copy->SetTextStyle(style);
+    const auto p=Palette(root_);copy->SetInk(tone==Tone::kOk?std::optional<SkColor>(p.ok):tone==Tone::kWarn?std::optional<SkColor>(p.warn):tone==Tone::kDanger?std::optional<SkColor>(p.danger):tone==Tone::kMuted?std::optional<SkColor>(p.ink_muted):std::nullopt);}
+  std::unique_ptr<views::View> MakeFileTile() override{return std::make_unique<SceneFileTile>();}
+  void SetFileTile(views::View* tile,std::u16string extension) override{static_cast<SceneFileTile*>(tile)->SetExtension(std::move(extension));}
+  views::View* AddIconAction(views::View* parent,base::RepeatingClosure callback,std::u16string name,const gfx::VectorIcon* icon) override{
+    return parent->AddChildView(CreateSceneAction(base::BindRepeating(callback),std::move(name),ControlGlyph::kVector,icon,{},base::BindRepeating(&PanelSceneImpl::Schedule,weak_factory_.GetWeakPtr())));}
+  void SetIconAction(views::View* button,std::u16string name,const gfx::VectorIcon* icon) override{if(auto* action=views::AsViewClass<RustActionView>(button))action->SetIcon(icon);button->SetTooltipText(name);button->GetViewAccessibility().SetName(name);}
+  void SetProgressPaused(views::View* progress,bool paused) override{static_cast<SceneProgress*>(progress)->SetPaused(paused);}
   bool animating() const override{return renderer_.animating();}
   void Schedule() override{renderer_.Schedule();}
   base::RepeatingClosure ViewportChangedCallback() override{return base::BindRepeating(&PanelSceneImpl::ViewportChanged,weak_factory_.GetWeakPtr());}
@@ -3703,7 +3736,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         // only if the saved state differs, never as a side effect of loading.
         if (shell->pinned_ && !shell->sidebar_visible()) shell->ShowSidebar();
         if (!shell->pinned_ && shell->sidebar_visible()) shell->sidebar_widget_->Hide();
-        // Development: --zitter-open-panel=space|sidebar|palette|settings|profiles|toast opens
+        // Development: --zitter-open-panel=space|sidebar|palette|settings|profiles|downloads|toast opens
         // that view once the window is up, so UI checks can screenshot it without
         // driving the mouse.
         if (const std::string panel = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-open-panel"); !panel.empty())
@@ -3716,6 +3749,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
                 else if (panel == "settings") shell->OpenGeneralSettings();
                 else if (panel == "profiles") shell->OpenProfiles();
                 // A sample undo toast; its „Cofnij” does nothing.
+                else if (panel == "downloads") shell->callbacks_.run_shortcut.Run("downloads");
                 else if (panel == "toast") shell->ShowToast(T(u"Usunięto folder "), u"Projekty", base::DoNothing());
               }, shell->weak_factory_.GetWeakPtr(), panel),
               base::Seconds(1));
@@ -6697,9 +6731,9 @@ void SetWidgetBounds(views::Widget* widget, const gfx::Rect& bounds) {
   if (widget->GetWindowBoundsInScreen() != bounds) widget->SetBounds(bounds);
 }
 }  // namespace
-void WorkspaceShell::ShowToast(std::u16string lead,std::u16string noun,base::OnceClosure undo){
+void WorkspaceShell::ShowToast(std::u16string lead,std::u16string noun,base::OnceClosure undo,std::u16string action){
   if(!toast_widget_)return;
-  static_cast<ToastView*>(toast_.get())->SetMessage(std::move(lead),std::move(noun));toast_undo_=std::move(undo);
+  auto* toast=static_cast<ToastView*>(toast_.get());toast->SetMessage(std::move(lead),std::move(noun));toast->SetAction(action.empty()?T(u"Cofnij"):std::move(action));toast_undo_=std::move(undo);
   PositionToast();toast_widget_->ShowInactive();
   toast_timer_.Start(FROM_HERE,base::Seconds(6),base::BindOnce(&WorkspaceShell::HideToast,weak_factory_.GetWeakPtr()));
 }

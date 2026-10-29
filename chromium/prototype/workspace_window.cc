@@ -602,7 +602,13 @@ void WorkspaceWindow::UpdateShell() {
       state.active_pane = std::find(host.split.begin(), host.split.end(), host.view) - host.split.begin();
     state.can_go_back = controller.CanGoBack();
     state.can_go_forward = controller.CanGoForward();
-    if (downloads_) downloads_->SetProfile(host.profile);
+    // The panel watches the active profile even while closed, so a finished
+    // download shows its toast (design: Downloads).
+    if (!downloads_) {
+      downloads_ = std::make_unique<DownloadPanel>();
+      downloads_->SetCompletedCallback(base::BindRepeating(&WorkspaceWindow::DownloadCompleted, base::Unretained(this)));
+    }
+    downloads_->SetProfile(host.profile);
     shell_->Update(std::move(state));
   }
 }
@@ -799,6 +805,11 @@ bool WorkspaceWindow::WritePreference(std::string key, int value) {
   return false;
 }
 
+void WorkspaceWindow::DownloadCompleted(std::string guid, std::u16string name) {
+  shell_->ShowToast(T(u"Pobrano "), name, base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, std::string guid) {
+    if (window && window->downloads_) window->downloads_->Act(guid, DownloadPanel::Action::kReveal);
+  }, weak_factory_.GetWeakPtr(), std::move(guid)), T(u"Pokaż"));
+}
 void WorkspaceWindow::ShowDownloads() {
   auto* page = peek_contents() ? peek_contents() : contents(active_id());
   if (!page) return;

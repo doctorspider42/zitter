@@ -453,8 +453,9 @@ class WorkspaceShell final : public ui::EventHandler,
   bool workspace_panel_contains_scene_text(std::string_view text) const;
   views::View* workspace_panel_for_testing() const{return settings_root_;}
   views::View* profile_panel_for_testing() const{return profiles_root_;}
-  // An undoable event: "lead" + bold "noun", with „Cofnij” running `undo`.
-  void ShowToast(std::u16string lead, std::u16string noun, base::OnceClosure undo);
+  // An undoable event: "lead" + bold "noun", with its button running `undo`.
+  // `action` names the button („Cofnij” when empty).
+  void ShowToast(std::u16string lead, std::u16string noun, base::OnceClosure undo, std::u16string action = {});
   void HideToast();
   void UndoToast();
   views::Widget* toast_widget() const { return toast_widget_.get(); }

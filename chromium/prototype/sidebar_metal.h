@@ -17,6 +17,7 @@
 namespace gfx {class Canvas;}
 namespace views { class ScrollBar; class ScrollView; class View; class Button; }
 namespace zitter::sidebar { struct Item; struct Primitive; }
+namespace gfx { struct VectorIcon; }
 namespace zitter::prototype {
 // Shared control scene with native event/focus/AX adapters. All managed text,
 // actions and progress share one transparent canvas; browser services stay native.
@@ -33,6 +34,16 @@ class PanelScene {
   virtual void SetActionText(views::View* button,std::u16string text)=0;
   virtual std::unique_ptr<views::View> MakeProgress()=0;
   virtual void SetProgress(views::View* view,double value)=0;
+  // Downloads page parts (design: Downloads).
+  enum class Tone { kInk, kMuted, kOk, kWarn, kDanger };
+  // `style` is a design text style id (2 display-l, 5 body, 6 label, 8 url).
+  virtual void SetTextStyle(views::View* text,uint32_t style,Tone tone)=0;
+  virtual std::unique_ptr<views::View> MakeFileTile()=0;
+  virtual void SetFileTile(views::View* tile,std::u16string extension)=0;
+  // A 32 px icon button (IconButton) appended to `parent`.
+  virtual views::View* AddIconAction(views::View* parent,base::RepeatingClosure callback,std::u16string name,const gfx::VectorIcon* icon)=0;
+  virtual void SetIconAction(views::View* button,std::u16string name,const gfx::VectorIcon* icon)=0;
+  virtual void SetProgressPaused(views::View* progress,bool paused)=0;
   virtual void Schedule()=0;
   virtual base::RepeatingClosure ViewportChangedCallback()=0;
   virtual bool visible() const=0;

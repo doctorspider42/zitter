@@ -3,6 +3,13 @@
 // One entry per distinct Polish string, written exactly as in the source
 // (same escapes); `{}` placeholders keep their order.
 pub static EN: &[(&str, &str)] = &[
+    ("Gotowe", "Done"),
+    ("Ochrona Chromium — plik nie jest gotowy do użycia", "Chromium protection — the file isn’t ready to use"),
+    ("Plik przeniesiony lub usunięty", "File moved or deleted"),
+    ("Przerwano — możesz wznowić", "Interrupted — you can resume"),
+    ("Przerwano — pobierz ponownie ze strony", "Interrupted — download again from the page"),
+    ("Wstrzymano", "Paused"),
+    ("Zablokowane", "Blocked"),
     ("Anuluj", "Cancel"),
     ("1 przestrzeń", "1 space"),
     ("Adres serwera DNS-over-HTTPS", "DNS-over-HTTPS server address"),

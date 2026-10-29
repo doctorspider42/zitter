@@ -3,6 +3,12 @@
 // One entry per distinct Polish string, written exactly as in the source
 // (same escapes); `{}` placeholders keep their order.
 pub static EN: &[(&str, &str)] = &[
+    ("Pobrano ", "Downloaded "),
+    ("Pokaż", "Show"),
+    ("Pobrane", "Downloads"),
+    ("{} plik", "{} file"),
+    ("{} pliki", "{} files"),
+    ("{} plików", "{} files"),
     // Keyboard shortcuts (browser_tools.cc).
     ("Adres i wyszukiwanie", "Address and search"),
     ("Nowa karta", "New tab"),

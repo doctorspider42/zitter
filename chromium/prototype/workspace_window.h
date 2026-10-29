@@ -104,6 +104,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void ShowPasswords();
   void ShowDownloads();
   DownloadPanel* downloads() const { return downloads_.get(); }
+  void DownloadCompleted(std::string guid, std::u16string name);
   BrowserPreferences ReadPreferences() const;
   std::u16string DownloadDirectory() const;
   void ChooseDownloadDirectory();
