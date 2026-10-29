@@ -10,6 +10,7 @@
 #include "chromium/prototype/page_dialogs.h"
 #include "base/i18n/time_formatting.h"
 #include "chromium/prototype/workspace_shell.h"
+#include "chromium/prototype/i18n.h"
 
 #include <algorithm>
 #include <cmath>
@@ -310,6 +311,8 @@ struct Appearance {
   bool animations = true;
   // The active space shows its name beside its dot in the sidebar rail.
   bool workspace_names = true;
+  // Pinned folders start collapsed; an item opened elsewhere peeks out of its folder.
+  bool folders_collapsed = true;
   int sidebar_width = kSidebarWidth;
   std::map<std::string, std::string> emoji;
 };
@@ -335,6 +338,7 @@ Appearance ReadAppearance(const base::FilePath& path) {
   }
   result.animations = dict->FindBool("workspace_animations").value_or(true);
   result.workspace_names = dict->FindBool("workspace_names").value_or(true);
+  result.folders_collapsed = dict->FindBool("pinned_folders_collapsed").value_or(true);
   if (const auto* emoji = dict->FindDict("workspace_emoji")) {
     for (const auto [id, value] : *emoji)
       if (value.is_string() && !value.GetString().empty() && value.GetString().size() <= 64)
@@ -349,7 +353,8 @@ bool SavePatch(const base::FilePath& path, std::optional<std::string> id,
                std::optional<SearchEngine> search, std::optional<bool> animations,
                std::optional<int> sidebar_width,
                std::optional<std::pair<std::string, std::string>> emoji,
-               std::optional<bool> workspace_names) {
+               std::optional<bool> workspace_names,
+               std::optional<bool> folders_collapsed) {
   auto appearance = ReadAppearance(path);
   if (id) appearance.colors[*id] = color;
   if (pinned) appearance.pinned = *pinned;
@@ -357,6 +362,7 @@ bool SavePatch(const base::FilePath& path, std::optional<std::string> id,
   if (search) appearance.search = *search;
   if (animations) appearance.animations = *animations;
   if (workspace_names) appearance.workspace_names = *workspace_names;
+  if (folders_collapsed) appearance.folders_collapsed = *folders_collapsed;
   if (sidebar_width) appearance.sidebar_width = *sidebar_width;
   if (emoji && emoji->second.empty()) appearance.emoji.erase(emoji->first);
   else if (emoji) appearance.emoji[emoji->first] = emoji->second;
@@ -367,6 +373,7 @@ bool SavePatch(const base::FilePath& path, std::optional<std::string> id,
   dict.Set("search_engine", appearance.search == SearchEngine::kGoogle ? "google" : appearance.search == SearchEngine::kBing ? "bing" : "duckduckgo");
   dict.Set("workspace_animations", appearance.animations);
   dict.Set("workspace_names", appearance.workspace_names);
+  dict.Set("pinned_folders_collapsed", appearance.folders_collapsed);
   dict.Set("sidebar_width", appearance.sidebar_width);
   base::DictValue emoji_dict;
   for (const auto& [key, value] : appearance.emoji) emoji_dict.Set(key, value);
@@ -805,6 +812,8 @@ void SetActionLabel(views::View* view,std::u16string label){
 sidebar::Item ActionSceneItem(views::View* view,gfx::RectF rect,gfx::RectF clip){if(auto* control=views::AsViewClass<RustActionView>(view))return control->SceneItem(rect,clip);return GlyphSceneItem(static_cast<GlyphButton*>(view),rect,clip);}
 
 DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(SceneParentNodes,kSceneParentNodes)
+// Marks the indent holder of a pinned row (as opposed to a nested folder group).
+DEFINE_UI_CLASS_PROPERTY_KEY(bool,kPinRowHolder,false)
 template<class T,class... Args> std::unique_ptr<T> MakeParentSceneControl(views::View* parent,Args&&... args){
   auto* scope=parent->GetProperty(kSceneParentNodes);
   if(!scope)scope=parent->SetProperty(kSceneParentNodes,std::make_unique<SceneParentNodes>(parent));
@@ -1034,6 +1043,37 @@ class SceneActionGroup final : public views::View {
   bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneActionGroup::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneActionGroup> weak_factory_{this};
 };
 BEGIN_METADATA(SceneActionGroup)
+END_METADATA
+
+// Toast (design: Toast): one undoable event at the bottom of the window. The
+// noun is bold, „Cofnij” is a quiet button, and hovering holds the timer.
+class ToastView final : public views::View {
+  METADATA_HEADER(ToastView,views::View)
+ public:
+  ToastView(base::RepeatingClosure undo,base::RepeatingClosure close,base::RepeatingCallback<void(bool)> hovered):hovered_(std::move(hovered)){
+    auto* layout=SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal,gfx::Insets::TLBR(0,16,0,8),12));
+    layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
+    auto* message=AddChildView(std::make_unique<views::View>());message->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal));
+    lead_=message->AddChildView(std::make_unique<views::Label>());noun_=message->AddChildView(std::make_unique<views::Label>());
+    lead_->SetFontList(gfx::FontList(DesignFont(2,12,500,false)));noun_->SetFontList(gfx::FontList(DesignFont(2,12,600,false)));
+    layout->SetFlexForView(message,1);
+    auto* actions=AddChildView(std::make_unique<SceneActionGroup>(false,4));
+    undo_=actions->AddAction(base::BindRepeating(undo),u"Cofnij",ui::ButtonStyle::kText);views::AsViewClass<SceneTextButton>(undo_)->SetQuiet();
+    AddChildView(CreateSceneAction(base::BindRepeating(close),u"Zamknij komunikat",ControlGlyph::kVector,&vector_icons::kCloseSmallIcon,{},base::DoNothing()));
+    SetNotifyEnterExitOnChild(true);GetViewAccessibility().SetRole(ax::mojom::Role::kStatus);
+  }
+  void SetMessage(std::u16string lead,std::u16string noun){lead_->SetText(lead);noun_->SetText(noun);GetViewAccessibility().SetName(lead+noun);PreferredSizeChanged();}
+  std::u16string text() const{return std::u16string(lead_->GetText())+std::u16string(noun_->GetText());}
+  views::View* undo() const{return undo_;}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override{const auto size=views::View::CalculatePreferredSize(available);return gfx::Size(std::min(420,size.width()),std::max(44,size.height()));}
+  void OnThemeChanged() override{views::View::OnThemeChanged();const auto p=Palette(this);for(auto* label:{lead_.get(),noun_.get()}){label->SetEnabledColor(p.ink);label->SetBackgroundColor(p.bg_raised);}SchedulePaint();}
+  void OnPaint(gfx::Canvas* canvas) override{canvas->DrawColor(Palette(this).bg_raised);}
+  void OnMouseEntered(const ui::MouseEvent&) override{hovered_.Run(true);}
+  void OnMouseExited(const ui::MouseEvent&) override{hovered_.Run(false);}
+ private:
+  raw_ptr<views::Label> lead_=nullptr,noun_=nullptr;raw_ptr<views::View> undo_=nullptr;base::RepeatingCallback<void(bool)> hovered_;
+};
+BEGIN_METADATA(ToastView)
 END_METADATA
 void CancelSceneActions(views::View* root){if(!root)return;if(auto* group=views::AsViewClass<SceneActionGroup>(root)){group->CancelInput();return;}if(auto* controls=views::AsViewClass<ScenePreferenceControls>(root)){controls->CancelInput();return;}for(const auto& child:root->children())CancelSceneActions(child.get());}
 // Font shaping stays a platform service; no Label is constructed for the scene.
@@ -2103,30 +2143,6 @@ class FolderNoticeView final : public NoticeBodyView {
 };
 BEGIN_METADATA(FolderNoticeView)
 END_METADATA
-class WorkspaceNoticeView final : public NoticeBodyView {
-  METADATA_HEADER(WorkspaceNoticeView,NoticeBodyView)
- public:
-  WorkspaceNoticeView(const std::string& workspace,const std::string& title,base::RepeatingCallback<bool(WorkspaceNoticeView*)> submit)
-      :WorkspaceNoticeView(sidebar::new_workspace_notice(workspace,title),std::move(submit)) {}
-  base::WeakPtr<WorkspaceNoticeView> weak(){return weak_factory_.GetWeakPtr();}
-  bool Accept(){return submit_.Run(this);}
-  void Cancel(){notice_->cancel();}
-  sidebar::WorkspaceNoticeRequest Prepare(bool ready,bool busy,const std::vector<Workspace>& workspaces) {
-    std::vector<sidebar::ProfileUse> uses;uses.reserve(workspaces.size());for(const auto& w:workspaces)uses.push_back({w.id,w.name,w.profile_id});
-    auto request=notice_->submit(ready,busy,rust::Slice<const sidebar::ProfileUse>(uses.data(),uses.size()));SetError(base::UTF8ToUTF16(std::string(notice_->error())));return request;
-  }
-  void Finish(bool accepted){notice_->finish_attempt(accepted);SetError(base::UTF8ToUTF16(std::string(notice_->error())));}
- private:
-  WorkspaceNoticeView(rust::Box<sidebar::WorkspaceNotice> notice,base::RepeatingCallback<bool(WorkspaceNoticeView*)> submit)
-      :NoticeBodyView(notice->copy()),notice_(std::move(notice)),submit_(std::move(submit)) {}
-  rust::Box<sidebar::WorkspaceNotice> notice_;base::RepeatingCallback<bool(WorkspaceNoticeView*)> submit_;base::WeakPtrFactory<WorkspaceNoticeView> weak_factory_{this};
-};
-BEGIN_METADATA(WorkspaceNoticeView)
-END_METADATA
-WorkspaceNoticeView* FindWorkspaceNotice(views::View* view) {
-  if(auto* notice=views::AsViewClass<WorkspaceNoticeView>(view))return notice;
-  for(const auto& child:view->children())if(auto* notice=FindWorkspaceNotice(child.get()))return notice;return nullptr;
-}
 FolderNoticeView* FindFolderNotice(views::View* view) {
   if(auto* notice=views::AsViewClass<FolderNoticeView>(view))return notice;
   for(const auto& child:view->children())if(auto* notice=FindFolderNotice(child.get()))return notice;return nullptr;
@@ -2992,6 +3008,7 @@ WorkspaceShell::WorkspaceShell(base::FilePath path, Callbacks callbacks)
           {base::MayBlock(), base::TaskShutdownBehavior::BLOCK_SHUTDOWN})) {
   workspace_swipe_ = std::make_unique<WorkspaceSwipeState>();
   state_.workspace_id = "work";
+  sidebar_tree_.SetDefaultCollapsed(true);
   ui::NativeTheme::GetInstanceForNativeUi()->AddObserver(this);
 }
 WorkspaceShell::~WorkspaceShell() { ui::NativeTheme::GetInstanceForNativeUi()->RemoveObserver(this); Detach(); }
@@ -3142,7 +3159,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 
   // Workspace settings: profile and color live here, not in the sidebar.
   workspace_form_=std::make_unique<WorkspaceFormState>();tools_form_=std::make_unique<ToolsFormState>();
-  std::array<std::u16string,17> workspace_copy={u"Nazwa przestrzeni",u"Np. Projekt lub Klient",u"Profil przeglądania",u"Profil przestrzeni",u"Wspólny profil = wspólne logowanie i cookies.\nZmiana profilu zamknie karty tej przestrzeni.",u"Zapisz poniżej nazwę i profil. Wygląd zapisuje się od razu.",u"Zamknij ustawienia przestrzeni",u"Wygląd · zapis automatyczny",u"Kolor przestrzeni",u"Kolor przestrzeni #RRGGBB",u"Emoji przestrzeni",u"Emoji przestrzeni",u"Inne… (⌃⌘Spacja)",u"Więcej opcji",u"Zarządzaj profilami",u"Importuj z przeglądarki…",u"Usuń przestrzeń…"};
+  std::array<std::u16string,17> workspace_copy={u"Nazwa przestrzeni",u"Np. Projekt lub Klient",u"Profil przeglądania",u"Profil przestrzeni",u"Wspólny profil = wspólne logowanie i cookies.\nZmiana profilu zamknie karty tej przestrzeni.",u"Zapisz poniżej nazwę i profil. Wygląd zapisuje się od razu.",u"Zamknij ustawienia przestrzeni",u"Wygląd · zapis automatyczny",u"Kolor przestrzeni",u"Kolor przestrzeni #RRGGBB",u"Emoji przestrzeni",u"Emoji przestrzeni",u"Inne… (⌃⌘Spacja)",u"Więcej opcji",u"Zarządzaj profilami",u"Importuj z przeglądarki…",u"Usuń przestrzeń"};
   {const auto c=sidebar::workspace_copy();auto text=[](const rust::String& value){return base::UTF8ToUTF16(std::string(value));};workspace_copy={text(c.name_label),text(c.placeholder),text(c.profile_label),text(c.profile_ax),text(c.profile_hint),text(c.save_hint),text(c.close),text(c.appearance),text(c.color),text(c.color_ax),text(c.emoji),text(c.emoji_ax),text(c.emoji_placeholder),text(c.more),text(c.manage),text(c.import_label),text(c.remove_label)};}
   auto settings_text=[&](views::View* parent,std::u16string text,SkColor ink,int delta=0,gfx::Font::Weight weight=gfx::Font::Weight::NORMAL,bool multiline=false)->views::View* {
     return parent->AddChildView(std::make_unique<SceneParagraph>(std::move(text),delta,weight!=gfx::Font::Weight::NORMAL,ink));
@@ -3612,6 +3629,9 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   make_panel(std::move(peek), peek_delegate_, peek_widget_, u"Zitter — Peek");
   make_panel(std::move(general), general_delegate_, general_widget_, u"Zitter — Ustawienia");
   make_panel(std::move(tools_panel), tools_delegate_, tools_widget_, u"Zitter — Narzędzia");
+  {auto toast=std::make_unique<ToastView>(base::BindRepeating(&WorkspaceShell::UndoToast,weak),base::BindRepeating(&WorkspaceShell::HideToast,weak),
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,bool hovered){if(!shell)return;if(hovered)shell->toast_timer_.Stop();else if(shell->toast_widget_->IsVisible())shell->toast_timer_.Start(FROM_HERE,base::Seconds(6),base::BindOnce(&WorkspaceShell::HideToast,shell));},weak));
+   toast_=toast.get();make_panel(std::move(toast), toast_delegate_, toast_widget_, u"Zitter — Komunikat", false);}
   PositionPanels();
   ApplyAppearance();
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE, base::BindOnce([](base::FilePath path) {
@@ -3635,6 +3655,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         if (!shell->general_dirty_.contains("search")) shell->search_engine_ = appearance.search;
         if (!shell->general_dirty_.contains("animations")) shell->workspace_animations_ = appearance.animations;
         if (!shell->general_dirty_.contains("workspace_names")) shell->workspace_names_ = appearance.workspace_names;
+        if (!shell->general_dirty_.contains("folders_collapsed")) {shell->folders_collapsed_ = appearance.folders_collapsed;shell->sidebar_tree_.SetDefaultCollapsed(appearance.folders_collapsed);}
         if (!shell->sidebar_width_dirty_) shell->sidebar_width_ = appearance.sidebar_width;
         for (const auto& [id, emoji] : appearance.emoji)
           if (!shell->emoji_dirty_.contains(id)) shell->emoji_[id] = base::UTF8ToUTF16(emoji);
@@ -3680,7 +3701,7 @@ void WorkspaceShell::Detach() {
   import_preview_timer_.Stop();
   if (folder_dialog_) folder_dialog_->CloseNow();
   rust_folder_dialog_.reset();rust_folder_dialog_delegate_.reset();
-  remove_workspace_dialog_.reset();remove_workspace_dialog_delegate_.reset();
+
   link_menu_runner_.reset(); link_menu_.reset(); route_menu_.reset();
   workspace_menu_runner_.reset();
   workspace_menu_.reset();
@@ -3760,7 +3781,7 @@ void WorkspaceShell::Detach() {
   preferences_search_ = nullptr; preferences_profile_ = nullptr; preferences_empty_ = nullptr; preferences_body_ = nullptr;
   general_root_ = nullptr; general_scroll_ = nullptr; general_status_ = nullptr;
   theme_picker_ = nullptr; search_engine_picker_ = nullptr;
-  sidebar_check_ = nullptr; animations_check_ = nullptr; workspace_names_check_ = nullptr;
+  sidebar_check_ = nullptr; animations_check_ = nullptr; workspace_names_check_ = nullptr; folders_collapsed_check_ = nullptr; language_picker_ = nullptr;
   tools_root_ = nullptr; tools_body_ = nullptr; tools_close_=nullptr; tools_title_ = nullptr; tools_status_ = nullptr;
   tools_scroll_ = nullptr; tools_picker_ = nullptr; closed_picker_ = nullptr;
   snapshot_name_ = nullptr; timeline_filter_ = nullptr; shortcut_chord_ = nullptr;
@@ -3768,6 +3789,7 @@ void WorkspaceShell::Detach() {
   history_search_ = nullptr; history_period_ = nullptr; history_list_ = nullptr;
   history_more_ = nullptr; history_clear_ = nullptr;
   tools_widget_.reset(); tools_delegate_.reset();
+  toast_timer_.Stop(); toast_undo_.Reset(); toast_ = nullptr; toast_widget_.reset(); toast_delegate_.reset();
   general_widget_.reset(); general_delegate_.reset();
   peek_host_ = nullptr; peek_title_ = nullptr;peek_toolbar_=nullptr;
   peek_widget_.reset(); peek_delegate_.reset();
@@ -3809,6 +3831,11 @@ void WorkspaceShell::Update(ShellState state) {
   const bool history_profile_changed = state.profile_id != state_.profile_id;
   state_ = std::move(state);
   if (!widget_) return;
+  // A removal that first asked a page (beforeunload) gets its toast once done.
+  if (pending_removal_ && std::ranges::none_of(state_.workspaces, [&](const auto& w) { return w.id == pending_removal_->first; })) {
+    auto [id, name] = std::move(*pending_removal_); pending_removal_.reset();
+    ShowWorkspaceRemovedToast(std::move(id), std::move(name));
+  }
   if(selected&&workspace_form_){for(auto* view:{color_presets_.get(),emoji_input_->view()->parent()})if(auto* row=views::AsViewClass<AppearanceRow>(view))row->CancelInput();CancelSceneActions(settings_root_);CancelSceneActions(profiles_root_);CancelSceneActions(general_root_);}
   if(profiles_changed&&profile_form_)CancelSceneActions(profiles_root_);
   if((selected||history_profile_changed)&&tools_root_)CancelChoiceInteractions(tools_root_);
@@ -3865,7 +3892,7 @@ void WorkspaceShell::ReconcileSidebarNodes(TabListCache& cache,std::string_view 
   if(cache.node_graph&&cache.pins==pins&&cache.split_tabs==split_tabs&&cache.split==split&&cache.tabs.size()==tabs.size()&&
       std::equal(cache.tabs.begin(),cache.tabs.end(),tabs.begin(),[](const auto& a,const auto& b){return a.identity==b.identity&&a.index==b.index&&a.pin_id==b.pin_id;}))return;
   if(!cache.node_graph)cache.node_graph=std::make_shared<SidebarNodeGraphState>();
-  rust::Vec<sidebar::SidebarPinInput> pin_ids;for(const auto& pin:pins){const auto title=base::UTF8ToUTF16(pin.title);const auto monogram=pin.folder?std::u16string():base::i18n::ToUpper(title.substr(0,1));const auto color=pin.folder?SK_ColorTRANSPARENT:kMonogramColors[base::FastHash(pin.url.host())%kMonogramColors.size()];pin_ids.push_back({pin.id,pin.parent_id,SceneUtf16(title),SceneUtf16(monogram),color,pin.folder,pin.folder&&sidebar_tree_.Collapsed(workspace,pin.id)});}rust::Vec<sidebar::SidebarTabInput> tab_ids;for(const auto& tab:tabs)tab_ids.push_back({tab.identity[0],tab.identity[1],tab.index,tab.pin_id});
+  rust::Vec<sidebar::SidebarPinInput> pin_ids;for(const auto& pin:pins){const auto title=base::UTF8ToUTF16(pin.title);const auto monogram=pin.folder?std::u16string():base::i18n::ToUpper(title.substr(0,1));const auto color=pin.folder?SK_ColorTRANSPARENT:kMonogramColors[base::FastHash(pin.url.host())%kMonogramColors.size()];pin_ids.push_back({pin.id,pin.parent_id,SceneUtf16(title),SceneUtf16(monogram),color,pin.folder,pin.folder&&sidebar_tree_.Collapsed(workspace,pin.id),sidebar_tree_.Revealed(workspace,pin.id)});}rust::Vec<sidebar::SidebarTabInput> tab_ids;for(const auto& tab:tabs)tab_ids.push_back({tab.identity[0],tab.identity[1],tab.index,tab.pin_id});
   // Rust owns the split group node, its pin anchor/parent and member visibility.
   rust::Vec<size_t> members;for(size_t member:split_tabs)members.push_back(member);
   const auto plan=cache.node_graph->graph->reconcile_sidebar_layout(std::move(pin_ids),std::move(tab_ids),
@@ -3874,6 +3901,21 @@ void WorkspaceShell::ReconcileSidebarNodes(TabListCache& cache,std::string_view 
 }
 void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catalogue_changed) {
   if (state_.workspace_id.empty()) return;
+  // A pin opened elsewhere (Command Center, keyboard) shows under its collapsed
+  // folders on its own; the folders stay collapsed.
+  bool revealed = false;
+  if (state_.active_pin != revealed_for_pin_) {
+    revealed_for_pin_ = state_.active_pin;
+    for (std::string id = state_.active_pin; !id.empty();) {
+      const auto pin = std::ranges::find(state_.pins, id, &PinnedItem::id);
+      if (pin == state_.pins.end() || pin->parent_id.empty()) break;
+      if (sidebar_tree_.Collapsed(state_.workspace_id, pin->parent_id) &&
+          !sidebar_tree_.Revealed(state_.workspace_id, id)) {
+        sidebar_tree_.SetRevealed(state_.workspace_id, id, true); revealed = true;
+      }
+      id = pin->parent_id;
+    }
+  }
   // Keep one native tree per workspace. Switching never recreates its rows.
   if (catalogue_changed) for (auto it = tab_lists_.begin(); it != tab_lists_.end();) {
     bool exists = false;
@@ -3885,6 +3927,7 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
     tab_list_->RemoveChildViewT(root);
   }
   auto& cache = tab_lists_[state_.workspace_id];
+  if (revealed) cache.pins.clear();  // Re-plan the pin tree with the new peek.
   if (!cache.root) {
     auto root = std::make_unique<views::View>();
     root->SetLayoutManager(CreateSidebarColumnLayout());
@@ -4091,7 +4134,12 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
   if (!same_structure) {
     for (const auto& pin : cache.tab_plan.pins) {
       ++pin_visibility_update_count_;
-      cache.pin_buttons.at(state_.pins[pin.index].id)->parent()->SetVisible(pin.visible);
+      // Hidden when a split pair stands in for it, or inside a collapsed folder
+      // it was not revealed from.
+      const auto& item = state_.pins[pin.index];
+      const bool in_folder = item.parent_id.empty() || !sidebar_tree_.Collapsed(state_.workspace_id, item.parent_id) ||
+          sidebar_tree_.Revealed(state_.workspace_id, item.id);
+      cache.pin_buttons.at(item.id)->parent()->SetVisible(pin.visible && in_folder);
     }
   }
   for (const auto& [index, button] : cache.tab_buttons)
@@ -4794,7 +4842,7 @@ void WorkspaceShell::FinishWorkspaceSwipe() {
       }, weak_factory_.GetWeakPtr(), source, destination));
 }
 bool WorkspaceShell::HandleWorkspaceScroll(float x, float y, bool began, bool ended, bool momentum, base::TimeTicks time, bool phase_less) {
-  if (!sidebar_visible() || !state_.configuration_ready || state_.profiles_busy || state_.workspaces.size() < 2 || folder_dialog_ || remove_workspace_dialog_ ||
+  if (!sidebar_visible() || !state_.configuration_ready || state_.profiles_busy || state_.workspaces.size() < 2 || folder_dialog_ ||
       (workspace_menu_runner_ && workspace_menu_runner_->IsRunning())) return false;
   const int index=std::find_if(state_.workspaces.begin(),state_.workspaces.end(),[&](const auto& w){return w.id==state_.workspace_id;})-state_.workspaces.begin();
   const auto update=workspace_swipe_->Event(x,y,tab_scroll_->view()->width(),index,state_.workspaces.size(),began,ended,momentum,phase_less);
@@ -4843,15 +4891,25 @@ void WorkspaceShell::OnMouseEvent(ui::MouseEvent* input) {
   if (HandleWorkspaceScroll(x, y, false, false, false, event->time_stamp(), true)) event->StopPropagation();
 }
 
+// Toggling a folder ends the peek of items revealed in it: expanded shows every
+// row, collapsed hides them all. Nested folder groups keep their own state.
+void WorkspaceShell::EndFolderPeek(const std::string& workspace,const std::string& folder,views::View* group,bool collapsed){
+  for(const auto& pin:state_.pins)if(pin.parent_id==folder)sidebar_tree_.SetRevealed(workspace,pin.id,false);
+  for(const auto& child:group->children())if(child->GetProperty(kPinRowHolder))child->SetVisible(true);
+  group->SetVisible(!collapsed);
+}
 void WorkspaceShell::AppendPinnedItems(views::View* root, const std::vector<PinnedItem>& pins,
     TabListCache& cache,const std::string& workspace,std::map<std::string,std::unique_ptr<views::View>>* retained,
     std::map<uint64_t,std::unique_ptr<views::View>>* retained_groups,std::map<std::string,std::unique_ptr<views::View>>* retained_holders) {
   struct Entry {size_t index;uint64_t parent,group;int depth;bool collapsed,visible;};std::vector<Entry> plan;
   if(cache.node_graph){const auto tree=cache.node_graph->graph->pin_tree();for(const auto& entry:tree.entries){CHECK_LT(entry.index,pins.size());CHECK_EQ(pins[entry.index].id,std::string(entry.key));plan.push_back({entry.index,entry.parent==tree.root?0:entry.parent,entry.group,entry.depth,entry.collapsed,entry.visible});}}else
   {std::vector<SidebarTreeNode> nodes;for(const auto& pin:pins)nodes.push_back({pin.id,pin.parent_id,pin.folder});for(const auto& entry:sidebar_tree_.Plan(workspace,nodes))plan.push_back({entry.index,entry.parent==SidebarTree::kRoot?0:entry.parent+1,pins[entry.index].folder?entry.index+1:0,entry.depth,entry.collapsed,entry.visible});}
-  std::map<uint64_t,views::View*> groups{{0,root}};
+  std::map<uint64_t,views::View*> groups{{0,root}};std::map<uint64_t,bool> collapsed_groups{{0,false}};
+  // Collapsed folders still show (and open just for) the items revealed in them.
+  std::set<std::string> peeking;for(const auto& pin:pins)if(sidebar_tree_.Revealed(workspace,pin.id))peeking.insert(pin.parent_id);
   for(const auto& entry:plan){
     const auto* pin=&pins[entry.index];auto* parent=groups.at(entry.parent);
+    const bool shown_in_parent=!collapsed_groups.at(entry.parent)||sidebar_tree_.Revealed(workspace,pin->id);
     RowRecipe::Spec spec;
     spec.sidebar_row = true;
     if(!cache.node_graph){spec.title=base::UTF8ToUTF16(pin->title);if(pin->folder){spec.icon=&vector_icons::kFolderFilledIcon;spec.title=(entry.collapsed?u"▸ ":u"▾ ")+spec.title;}}
@@ -4866,6 +4924,7 @@ void WorkspaceShell::AppendPinnedItems(views::View* root, const std::vector<Pinn
     std::unique_ptr<views::View> holder;
     if(retained_holders){auto found=retained_holders->find(pin->id);if(found!=retained_holders->end()){holder=std::move(found->second);retained_holders->erase(found);}}
     auto* row = parent->AddChildView(holder?std::move(holder):std::make_unique<views::View>());
+    row->SetProperty(kPinRowHolder,true);row->SetVisible(shown_in_parent);
     row->SetLayoutManager(CreateSidebarPinnedRowLayout());
     row->SetBorder(views::CreateEmptyBorder(gfx::Insets::TLBR(0, SidebarFolderIndent(entry.depth), 0, 0)));
     std::unique_ptr<views::View> adapter;[[maybe_unused]] bool fresh=true;
@@ -4879,7 +4938,7 @@ void WorkspaceShell::AppendPinnedItems(views::View* root, const std::vector<Pinn
         if(group&&views::AsViewClass<ScenePinGroup>(group.get())->Matches(cache.node_graph,entry.group))folder_group=parent->AddChildView(std::move(group));
         else folder_group=parent->AddChildView(std::make_unique<ScenePinGroup>(cache.node_graph,entry.group));}else
       folder_group=parent->AddChildView(std::make_unique<views::View>());
-      folder_group->SetLayoutManager(CreateSidebarColumnLayout(2));groups[entry.group]=folder_group;folder_group->SetVisible(!entry.collapsed);
+      folder_group->SetLayoutManager(CreateSidebarColumnLayout(2));groups[entry.group]=folder_group;collapsed_groups[entry.group]=entry.collapsed;folder_group->SetVisible(shown_in_parent&&(!entry.collapsed||peeking.contains(pin->id)));
     }
     if(cache.node_graph){
       auto* control=views::AsViewClass<RustRowView>(button);CHECK(control);const auto binding=control->PinBinding();CHECK(binding.valid&&binding.folder==pin->folder);
@@ -4889,10 +4948,10 @@ void WorkspaceShell::AppendPinnedItems(views::View* root, const std::vector<Pinn
         const auto target=scope->graph->pin_target(key,id);if(!target.valid)return;const auto pin=std::find_if(shell->state_.pins.begin(),shell->state_.pins.end(),[&](const PinnedItem& item){return item.id==key&&item.folder==target.folder;});if(pin==shell->state_.pins.end())return;
         if(!target.folder){shell->callbacks_.open_pin.Run(key);return;}
         auto* holder=row->parent();auto* container=holder?holder->parent():nullptr;if(!container)return;const auto index=container->GetIndexOf(holder);if(!index||*index+1>=container->children().size())return;auto* group=views::AsViewClass<ScenePinGroup>(container->children()[*index+1].get());if(!group||!group->Matches(scope,target.group)||group->GetWidget()!=shell->sidebar_widget_.get()||!cache->second.root->Contains(group))return;
-        const bool collapsed=shell->sidebar_tree_.Toggle(workspace,key);if(!row->ProjectPinCollapsed(*scope,collapsed)){shell->sidebar_tree_.SetCollapsed(workspace,key,target.collapsed);return;}group->SetVisible(!collapsed);shell->ScheduleMetalSidebar();
+        const bool collapsed=shell->sidebar_tree_.Toggle(workspace,key);if(!row->ProjectPinCollapsed(*scope,collapsed)){shell->sidebar_tree_.SetCollapsed(workspace,key,target.collapsed);return;}shell->EndFolderPeek(workspace,key,group,collapsed);shell->ScheduleMetalSidebar();
       },weak_factory_.GetWeakPtr(),control->GetWeakPtr(),std::weak_ptr<SidebarNodeGraphState>(cache.node_graph),workspace,pin->id,binding.id));
     }else
-    if(pin->folder){SetRowCallback(button,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,views::View* group,views::View* button,std::string workspace,std::string id,std::u16string title){if(!shell)return;const bool collapsed=shell->sidebar_tree_.Toggle(workspace,id);group->SetVisible(!collapsed);SetRowTitle(button,(collapsed?u"▸ ":u"▾ ")+title);shell->ScheduleMetalSidebar();},weak_factory_.GetWeakPtr(),base::Unretained(folder_group),base::Unretained(button),workspace,pin->id,base::UTF8ToUTF16(pin->title)));}
+    if(pin->folder){SetRowCallback(button,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,views::View* group,views::View* button,std::string workspace,std::string id,std::u16string title){if(!shell)return;const bool collapsed=shell->sidebar_tree_.Toggle(workspace,id);shell->EndFolderPeek(workspace,id,group,collapsed);SetRowTitle(button,(collapsed?u"▸ ":u"▾ ")+title);shell->ScheduleMetalSidebar();},weak_factory_.GetWeakPtr(),base::Unretained(folder_group),base::Unretained(button),workspace,pin->id,base::UTF8ToUTF16(pin->title)));}
     else SetRowCallback(button,base::BindRepeating(callbacks_.open_pin,pin->id));
     cache.pin_buttons[pin->id] = button;
     button->set_context_menu_controller(this);
@@ -4913,6 +4972,12 @@ uint64_t WorkspaceShell::scene_parent_id_for_testing(views::View* view) const{
   if(auto* row=views::AsViewClass<RustRowView>(view))return row->LogicalParentId();
   if(auto* row=views::AsViewClass<SiteRuleSceneRow>(view))return row->ParentId();
   return 0;
+}
+views::View* WorkspaceShell::pin_button(std::string_view id) const {
+  auto cache = tab_lists_.find(state_.workspace_id);
+  if (cache == tab_lists_.end()) return nullptr;
+  auto button = cache->second.pin_buttons.find(std::string(id));
+  return button == cache->second.pin_buttons.end() ? nullptr : button->second.get();
 }
 views::View* WorkspaceShell::tab_button(size_t index) const {
   auto cache = tab_lists_.find(state_.workspace_id);
@@ -5149,7 +5214,7 @@ void WorkspaceShell::BuildWorkspaceMenu(std::string id) {
   workspace_menu_->AddSubMenu(kEmojiMenu, u"Ikonka przestrzeni", emoji_menu_.get());
   workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
   workspace_menu_->AddItem(kWorkspaceSettings, u"Nazwa i ustawienia…");
-  workspace_menu_->AddItem(kRemoveWorkspace, u"Usuń przestrzeń…");
+  workspace_menu_->AddItem(kRemoveWorkspace, u"Usuń przestrzeń");
 }
 
 void WorkspaceShell::BuildFolderMenu(std::string parent) {
@@ -5169,7 +5234,7 @@ void WorkspaceShell::BuildFolderMenu(std::string parent) {
   if (!folder_parent_id_.empty()) {
     workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
     workspace_menu_->AddItem(kRenameFolder, u"Zmień nazwę…");
-    workspace_menu_->AddItem(kDeleteFolder, u"Usuń folder…");
+    workspace_menu_->AddItem(kDeleteFolder, u"Usuń folder");
   }
 }
 
@@ -5293,29 +5358,17 @@ std::u16string WorkspaceShell::folder_notice_error_for_testing() const {
 size_t WorkspaceShell::folder_notice_line_count_for_testing() const {
   auto* notice=static_cast<FolderNoticeView*>(folder_notice_for_testing());return notice?notice->body_line_count():0;
 }
+// Removing a folder can be undone, so it happens at once with a toast (design:
+// Dialog is only for what cannot be undone).
 void WorkspaceShell::RequestDeleteFolder(std::string workspace, std::string folder) {
-  if (folder_dialog_) { folder_dialog_->Activate(); return; }
   auto item = std::find_if(state_.pins.begin(), state_.pins.end(), [&](const auto& item) { return item.id == folder && item.folder; });
-  if (state_.workspace_id != workspace || item == state_.pins.end() || state_.profiles_busy) return;
-  if(ShowRustFolderNotice(workspace,folder,item->title,false))return;
-  auto model = ui::DialogModel::Builder().SetTitle(u"Usunąć folder „" + base::UTF8ToUTF16(item->title) + u"”?")
-      .AddParagraph(ui::DialogModelLabel(u"Folder i cała jego przypięta zawartość zostaną usunięte. Tej operacji nie można cofnąć. Strony już otwarte w kartach pozostaną otwarte."))
-      .AddOkButton(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, std::string workspace, std::string folder) {
-        if (!shell) return true;
-        const bool ok = shell->callbacks_.delete_folder.Run(workspace, folder, true);
-        if (ok) shell->folder_dialog_.reset();
-        return ok;
-      }, weak_factory_.GetWeakPtr(), workspace, folder), ui::DialogModel::Button::Params().SetLabel(u"Usuń folder"))
-      .AddCancelButton(base::DoNothing(), ui::DialogModel::Button::Params().SetLabel(u"Anuluj"))
-      .OverrideDefaultButton(ui::mojom::DialogButton::kCancel).Build();
-  auto* prompt = views::DialogDelegate::CreateDialogWidget(
-      views::BubbleDialogModelHost::CreateModal(std::move(model), ui::mojom::ModalType::kWindow), widget_->GetNativeWindow(), widget_->GetNativeView());
-  prompt->SetColorModeOverride(widget_->color_mode_override());
-#if BUILDFLAG(IS_MAC)
-  InstallWorkspaceKeyboardRouting(prompt,true);
-#endif
-  PreparePanelText(prompt->GetRootView());
-  folder_dialog_ = prompt->GetWeakPtr(); prompt->Show();
+  if (state_.workspace_id != workspace || item == state_.pins.end() || state_.profiles_busy || !state_.configuration_ready) return;
+  const auto title = base::UTF8ToUTF16(item->title);
+  auto previous = state_.pins;
+  if (!callbacks_.delete_folder.Run(workspace, folder, true)) return;
+  ShowToast(u"Usunięto folder ", title, base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, std::string workspace, std::vector<PinnedItem> pins) {
+    if (shell) shell->callbacks_.restore_pins.Run(std::move(workspace), std::move(pins));
+  }, weak_factory_.GetWeakPtr(), workspace, std::move(previous)));
 }
 
 void WorkspaceShell::ShowFolderSaveError() {
@@ -6127,6 +6180,7 @@ views::View* WorkspaceShell::preference_switch_for_testing(std::string_view key)
   if(key=="sidebar")return sidebar_check_;
   if(key=="animations")return animations_check_;
   if(key=="workspace_names")return workspace_names_check_;
+  if(key=="folders_collapsed")return folders_collapsed_check_;
   const auto it=preference_toggles_.find(std::string(key));
   return it==preference_toggles_.end()?nullptr:it->second.get();
 }
@@ -6203,17 +6257,19 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
   };
   for(const auto& spec:catalogue.rows){
     auto* row=make_row(spec);const auto title=text(spec.title);const std::string key(spec.key);
-    if(spec.kind==Kind::Theme||spec.kind==Kind::Search||spec.kind==Kind::Picker){
+    if(spec.kind==Kind::Theme||spec.kind==Kind::Search||spec.kind==Kind::Picker||spec.kind==Kind::Language){
       auto* control=ChoicePicker(row,title,strings(spec.choices));
-      if(spec.kind==Kind::Theme){theme_picker_=control;SetPickerCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetThemeMode(static_cast<ThemeMode>(PickerIndex(shell->theme_picker_).value_or(0)));},weak));}
+      if(spec.kind==Kind::Language){language_picker_=control;SetPickerCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetUiLanguageChoice(PickerIndex(shell->language_picker_).value_or(0));},weak));}
+      else if(spec.kind==Kind::Theme){theme_picker_=control;SetPickerCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetThemeMode(static_cast<ThemeMode>(PickerIndex(shell->theme_picker_).value_or(0)));},weak));}
       else if(spec.kind==Kind::Search){search_engine_picker_=control;SetPickerCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(!shell)return;const size_t index=PickerIndex(shell->search_engine_picker_).value_or(0);if(index<shell->tools_.providers.size())shell->SetDefaultSearchProvider(shell->tools_.providers[index].keyword);},weak));}
       else{preference_pickers_[key]=control;SetPickerCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::string key){if(shell){auto index=PickerIndex(shell->preference_pickers_.at(key));if(index)shell->WritePreference(key,static_cast<int>(*index));}},weak,key));}
       continue;
     }
-    if(spec.kind==Kind::Pinned||spec.kind==Kind::Animations||spec.kind==Kind::WorkspaceNames||spec.kind==Kind::Toggle){
+    if(spec.kind==Kind::Pinned||spec.kind==Kind::Animations||spec.kind==Kind::WorkspaceNames||spec.kind==Kind::FoldersCollapsed||spec.kind==Kind::Toggle){
       auto* control=PreferenceToggle(row,title);
       if(spec.kind==Kind::Pinned){sidebar_check_=control;SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetPinned(ToggleOn(shell->sidebar_check_));},weak));}
       else if(spec.kind==Kind::Animations){animations_check_=control;SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetWorkspaceAnimations(ToggleOn(shell->animations_check_));},weak));}
+      else if(spec.kind==Kind::FoldersCollapsed){folders_collapsed_check_=control;SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetPinnedFoldersCollapsed(ToggleOn(shell->folders_collapsed_check_));},weak));}
       else if(spec.kind==Kind::WorkspaceNames){workspace_names_check_=control;SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetWorkspaceNames(ToggleOn(shell->workspace_names_check_));},weak));}
       else{preference_toggles_[key]=control;SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::string key){if(shell)shell->WritePreference(key,ToggleOn(shell->preference_toggles_.at(key)));},weak,key));}
       continue;
@@ -6282,6 +6338,8 @@ void WorkspaceShell::RefreshGeneralControls() {
   SetToggleOn(sidebar_check_,pinned_);
   SetToggleOn(animations_check_,workspace_animations_);
   SetToggleOn(workspace_names_check_,workspace_names_);
+  SetToggleOn(folders_collapsed_check_,folders_collapsed_);
+  {const auto stored=StoredUiLanguage();SyncPickerIndex(language_picker_,stored=="pl"?1:stored=="en"?2:0);}
   if (profile_changed) {
     site_origin_->SetText(u"");
     ResetPreferenceRuleLimit();
@@ -6495,11 +6553,29 @@ void WorkspaceShell::SetWorkspaceNames(bool shown) {
   RebuildWorkspaceDots(); ScheduleMetalSidebar();
   RefreshGeneralControls(); SaveGeneralPatch(std::nullopt, std::nullopt, std::nullopt, shown);
 }
+// The language is fixed for a run (its text is built once); the choice is
+// stored for the next start.
+void WorkspaceShell::SetUiLanguageChoice(size_t index) {
+  if (index > 2) return;
+  StoreUiLanguage(index == 1 ? "pl" : index == 2 ? "en" : "system");
+  ReportPreferenceOutcome(4, "", true, T(u"Język zmieni się po ponownym uruchomieniu Zitter."));
+}
+void WorkspaceShell::SetPinnedFoldersCollapsed(bool collapsed) {
+  ApplyPinnedFoldersCollapsed(collapsed);
+  RefreshGeneralControls(); SaveGeneralPatch(std::nullopt, std::nullopt, std::nullopt, std::nullopt, collapsed);
+}
+void WorkspaceShell::ApplyPinnedFoldersCollapsed(bool collapsed) {
+  folders_collapsed_ = collapsed; general_dirty_.insert("folders_collapsed");
+  sidebar_tree_.SetDefaultCollapsed(collapsed); revealed_for_pin_.clear();
+  // Every cached pin tree re-plans with the new default on its next build.
+  for (auto& [id, cache] : tab_lists_) cache.pins.clear();
+  if (tab_list_) { RebuildTabs("", false); ScheduleMetalSidebar(); }
+}
 void WorkspaceShell::SaveGeneralPatch(std::optional<ThemeMode> theme, std::optional<SearchEngine> search,
-    std::optional<bool> animations, std::optional<bool> workspace_names) {
+    std::optional<bool> animations, std::optional<bool> workspace_names, std::optional<bool> folders_collapsed) {
   ++pending_writes_;
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
-      base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, std::nullopt, theme, search, animations, std::nullopt, std::nullopt, workspace_names),
+      base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, std::nullopt, theme, search, animations, std::nullopt, std::nullopt, workspace_names, folders_collapsed),
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
         if (!shell) return;
         --shell->pending_writes_;
@@ -6563,6 +6639,23 @@ void SetWidgetBounds(views::Widget* widget, const gfx::Rect& bounds) {
   if (widget->GetWindowBoundsInScreen() != bounds) widget->SetBounds(bounds);
 }
 }  // namespace
+void WorkspaceShell::ShowToast(std::u16string lead,std::u16string noun,base::OnceClosure undo){
+  if(!toast_widget_)return;
+  static_cast<ToastView*>(toast_.get())->SetMessage(std::move(lead),std::move(noun));toast_undo_=std::move(undo);
+  PositionToast();toast_widget_->ShowInactive();
+  toast_timer_.Start(FROM_HERE,base::Seconds(6),base::BindOnce(&WorkspaceShell::HideToast,weak_factory_.GetWeakPtr()));
+}
+void WorkspaceShell::HideToast(){toast_timer_.Stop();toast_undo_.Reset();if(toast_widget_)toast_widget_->Hide();}
+void WorkspaceShell::UndoToast(){auto undo=std::move(toast_undo_);HideToast();if(undo)std::move(undo).Run();}
+std::u16string WorkspaceShell::toast_text_for_testing() const{return toast_widget_&&toast_widget_->IsVisible()?static_cast<ToastView*>(toast_.get())->text():std::u16string();}
+// Bottom-centre of the page area, 20 pt above the window edge.
+void WorkspaceShell::PositionToast(){
+  if(!toast_widget_)return;
+  const auto bounds=widget_->GetClientAreaBoundsInScreen();
+  const int left=pinned_&&sidebar_visible()?sidebar_widget_->GetWindowBoundsInScreen().right():bounds.x();
+  const auto size=toast_->GetPreferredSize();const int width=std::min(size.width(),std::max(200,bounds.right()-left-24));
+  SetWidgetBounds(toast_widget_.get(),gfx::Rect((left+bounds.right()-width)/2,bounds.bottom()-20-size.height(),width,size.height()));
+}
 void WorkspaceShell::PositionPanels() {
   if (!sidebar_widget_ || !address_widget_ || !settings_widget_) return;
   const auto bounds = widget_->GetClientAreaBoundsInScreen();
@@ -6575,6 +6668,7 @@ void WorkspaceShell::PositionPanels() {
   auto sidebar_bounds=gfx::Rect(bounds.x()+kGap,bounds.y()+kShellHeaderHeight,width,std::max(200,bounds.height()-kShellHeaderHeight-kGap));
   if(metal_sidebar_){const auto g=sidebar::shell_layout(bounds.width(),bounds.height(),sidebar_width_,pinned_);sidebar_bounds=gfx::Rect(bounds.x()+g.sidebar.x,bounds.y()+g.sidebar.y,g.sidebar.width,g.sidebar.height);}
   SetWidgetBounds(sidebar_widget_.get(),sidebar_bounds);
+  if(toast_widget_&&toast_widget_->IsVisible())PositionToast();
   if (general_widget_) {
     const int panel_width = std::max(320, std::min(960, bounds.width() - 24));
     const int panel_height = std::max(240, std::min(760, bounds.height() - 24));
@@ -7301,7 +7395,7 @@ void WorkspaceShell::SetPinned(bool pinned) {
   if (pinned_) ShowSidebar();
   ++pending_writes_;
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
-      base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, pinned_, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt),
+      base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, pinned_, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt),
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
         if (!shell) return;
         --shell->pending_writes_;
@@ -7327,7 +7421,7 @@ void WorkspaceShell::ApplySidebarWidth(int width,bool done) {
   ++pending_writes_;
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
       base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, std::nullopt, std::nullopt, std::nullopt,
-                     std::nullopt, std::optional<int>(sidebar_width_), std::nullopt, std::nullopt),
+                     std::nullopt, std::optional<int>(sidebar_width_), std::nullopt, std::nullopt, std::nullopt),
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool) {
         if (shell) --shell->pending_writes_;
       }, weak_factory_.GetWeakPtr()));
@@ -7340,7 +7434,7 @@ void WorkspaceShell::SetWorkspaceColor(std::string_view id, SkColor color) {
   ApplyAppearance();
   ++pending_writes_;
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
-      base::BindOnce(SavePatch, settings_path_, std::optional<std::string>(key), colors_[key], std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt),
+      base::BindOnce(SavePatch, settings_path_, std::optional<std::string>(key), colors_[key], std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt),
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
         if (!shell) return;
         --shell->pending_writes_;
@@ -7383,7 +7477,7 @@ void WorkspaceShell::SetWorkspaceEmoji(std::string_view id, std::u16string text)
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
       base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, std::nullopt, std::nullopt, std::nullopt,
                      std::nullopt, std::nullopt,
-                     std::optional<std::pair<std::string, std::string>>({key, base::UTF16ToUTF8(emoji)}), std::nullopt),
+                     std::optional<std::pair<std::string, std::string>>({key, base::UTF16ToUTF8(emoji)}), std::nullopt, std::nullopt),
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
         if (!shell) return;
         --shell->pending_writes_;
@@ -7437,76 +7531,25 @@ void WorkspaceShell::SetConfigurationError(bool error) {
   configuration_error_->SetVisible(error);
   PositionPanels();
 }
-bool WorkspaceShell::ShowRustWorkspaceNotice(std::string workspace,std::string title) {
-  if(!metal_sidebar_)return false;
-  auto content=std::make_unique<WorkspaceNoticeView>(workspace,title,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,WorkspaceNoticeView* notice){
-    if(!shell)return true;const auto alive=notice->weak();auto request=notice->Prepare(shell->state_.configuration_ready,shell->state_.profiles_busy,shell->state_.workspaces);
-    if(request.action!=sidebar::WorkspaceNoticeAction::Delete)return false;
-    const bool accepted=shell->callbacks_.remove_workspace.Run(std::string(request.workspace));
-    if(shell)shell->SetConfigurationError(!accepted);
-    if(alive)alive->Finish(accepted);return accepted;
-  },weak_factory_.GetWeakPtr()));
-  const auto copy=content->copy();const auto weak=content->weak();
-  auto dialog=std::make_unique<SceneModalDialog>(std::move(content),false);dialog->SetTitle(base::UTF8ToUTF16(std::string(copy.title)));dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk)|static_cast<int>(ui::mojom::DialogButton::kCancel));dialog->SetButtonLabel(ui::mojom::DialogButton::kOk,base::UTF8ToUTF16(std::string(copy.accept)));dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel,base::UTF8ToUTF16(std::string(copy.cancel)));
-  dialog->SetAcceptCallbackWithClose(base::BindRepeating([](base::WeakPtr<WorkspaceNoticeView> notice){return !notice||notice->Accept();},weak));dialog->SetCancelCallback(base::BindOnce([](base::WeakPtr<WorkspaceNoticeView> notice){if(notice)notice->Cancel();},weak));if(copy.default_cancel)dialog->SetDefaultButton(static_cast<int>(ui::mojom::DialogButton::kCancel));
-  remove_workspace_dialog_delegate_=std::move(dialog);auto* prompt=views::DialogDelegate::CreateDialogWidget(remove_workspace_dialog_delegate_.get(),widget_->GetNativeWindow(),widget_->GetNativeView());
-  prompt->SetColorModeOverride(widget_->color_mode_override());
-#if BUILDFLAG(IS_MAC)
-  InstallWorkspaceKeyboardRouting(prompt,true);
-#endif
-  PreparePanelText(prompt->GetRootView());
-  remove_workspace_dialog_.reset(prompt);
-  prompt->MakeCloseSynchronous(base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,views::Widget::ClosedReason){
-    if(shell){shell->remove_workspace_dialog_.reset();shell->remove_workspace_dialog_delegate_.reset();}
-  },weak_factory_.GetWeakPtr()));
-  prompt->Show();return true;
-}
-views::View* WorkspaceShell::workspace_notice_for_testing() const {
-  return remove_workspace_dialog_?FindWorkspaceNotice(remove_workspace_dialog_->GetContentsView()):nullptr;
-}
-bool WorkspaceShell::workspace_notice_metal_visible() const {
-  auto* notice=static_cast<WorkspaceNoticeView*>(workspace_notice_for_testing());return notice&&notice->metal_visible();
-}
-bool WorkspaceShell::workspace_notice_contains_scene_text(std::string_view text) const {
-  auto* notice=static_cast<WorkspaceNoticeView*>(workspace_notice_for_testing());return notice&&notice->contains_scene_text(text);
-}
-std::u16string WorkspaceShell::workspace_notice_error_for_testing() const {
-  auto* notice=static_cast<WorkspaceNoticeView*>(workspace_notice_for_testing());return notice?notice->error_text():std::u16string();
-}
-size_t WorkspaceShell::workspace_notice_line_count_for_testing() const {
-  auto* notice=static_cast<WorkspaceNoticeView*>(workspace_notice_for_testing());return notice?notice->body_line_count():0;
-}
+// Removing a workspace can be undone (its tabs reload from their URLs), so it
+// happens at once with a toast instead of a confirmation dialog.
 void WorkspaceShell::ConfirmRemoveWorkspace(std::string id) {
   if (!widget_ || !state_.configuration_ready || state_.profiles_busy || state_.workspaces.size() < 2) return;
-  if (remove_workspace_dialog_) { remove_workspace_dialog_->Activate(); return; }
   const auto target = std::ranges::find(state_.workspaces, id, &Workspace::id);
   if (target == state_.workspaces.end()) return;
-  if(ShowRustWorkspaceNotice(id,target->name))return;
-  auto model = ui::DialogModel::Builder()
-      .SetTitle(u"Usunąć przestrzeń „" + base::UTF8ToUTF16(target->name) + u"”?")
-      .AddParagraph(ui::DialogModelLabel(u"Przestrzeń, jej karty i przypięte elementy zostaną usunięte. Tej operacji nie można cofnąć.\n\nProfil przeglądania, hasła, historia i cookies pozostaną zachowane."))
-      .AddOkButton(base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, std::string id) {
-        if (!shell || !shell->state_.configuration_ready || shell->state_.profiles_busy || shell->state_.workspaces.size() < 2) return;
-        // The target is captured when opening the prompt, independently of selection.
-        if (std::ranges::none_of(shell->state_.workspaces, [&](const auto& w) { return w.id == id; })) return;
-        shell->SetConfigurationError(!shell->callbacks_.remove_workspace.Run(id));
-      }, weak_factory_.GetWeakPtr(), id), ui::DialogModel::Button::Params().SetLabel(u"Usuń przestrzeń"))
-      .AddCancelButton(base::DoNothing(), ui::DialogModel::Button::Params().SetLabel(u"Anuluj"))
-      .OverrideDefaultButton(ui::mojom::DialogButton::kCancel)
-      .Build();
-  auto dialog = views::BubbleDialogModelHost::CreateModal(std::move(model), ui::mojom::ModalType::kWindow);
-  dialog->SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
-  auto* prompt = views::DialogDelegate::CreateDialogWidget(std::move(dialog), widget_->GetNativeWindow(), widget_->GetNativeView());
-  prompt->SetColorModeOverride(widget_->color_mode_override());
-#if BUILDFLAG(IS_MAC)
-  InstallWorkspaceKeyboardRouting(prompt,true);
-#endif
-  PreparePanelText(prompt->GetRootView());
-  remove_workspace_dialog_.reset(prompt);
-  prompt->MakeCloseSynchronous(base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,views::Widget::ClosedReason){
-    if(shell){shell->remove_workspace_dialog_.reset();shell->remove_workspace_dialog_delegate_.reset();}
-  },weak_factory_.GetWeakPtr()));
-  prompt->Show();
+  const auto name = base::UTF8ToUTF16(target->name);
+  pending_removal_.reset();
+  const bool ok = callbacks_.remove_workspace.Run(id);
+  SetConfigurationError(!ok);
+  if (!ok) return;
+  // Pages with unsaved changes may ask first; the toast follows the removal.
+  if (std::ranges::any_of(state_.workspaces, [&](const auto& w) { return w.id == id; })) { pending_removal_.emplace(id, name); return; }
+  ShowWorkspaceRemovedToast(std::move(id), name);
+}
+void WorkspaceShell::ShowWorkspaceRemovedToast(std::string id, std::u16string name) {
+  ShowToast(u"Usunięto przestrzeń ", std::move(name), base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, std::string id) {
+    if (shell) shell->SetConfigurationError(!shell->callbacks_.restore_workspace.Run(id));
+  }, weak_factory_.GetWeakPtr(), std::move(id)));
 }
 
 // Rust owns each form member's semantic command and key. Native dispatch keeps

@@ -1,5 +1,6 @@
 #include "base/threading/thread_restrictions.h"
 #include "base/files/file_util.h"
+#include "chromium/prototype/i18n.h"
 #include "chromium/prototype/sidebar_layout.h"
 #include "chromium/prototype/page_media_access.h"
 #include "chromium/prototype/page_dialogs.h"
@@ -202,6 +203,7 @@ class ZitterMediaBrowserTest : public InProcessBrowserTest {
         "active":"work","onboarding_complete":true
       })"));
     }
+    SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
     window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
     ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
     embedded_test_server()->ServeFilesFromSourceDirectory("zitter/testdata");

@@ -69,6 +69,8 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   bool CreatePinnedFolder(std::string workspace, std::string parent, std::string name);
   bool RenamePinnedFolder(std::string workspace, std::string id, std::string name);
   bool RemovePinnedFolder(std::string workspace, std::string id, bool contents);
+  // Undo of a folder removal: puts the workspace's earlier pins back.
+  bool RestorePins(std::string workspace, std::vector<PinnedItem> items);
   bool CreateProfile(std::string name, std::string workspace_id = {});
   bool RenameProfile(std::string id, std::string name);
   bool AssignProfile(std::string workspace_id, std::string profile_id);
@@ -78,6 +80,9 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   bool AddWorkspace(std::string name, std::string profile_id);
   bool EditWorkspace(std::string name, std::string profile_id);
   bool RemoveWorkspace(std::string id = {});
+  // Undo of the last removal: the workspace returns to its place with its pins,
+  // link rules and tabs (reloaded from their URLs).
+  bool RestoreRemovedWorkspace(std::string id);
   bool configuration_ready() const { return configuration_ready_; }
   using StartupProfileLoader = base::RepeatingCallback<void(base::FilePath, base::OnceCallback<void(Profile*)>)>;
   void SetStartupProfileLoaderForTesting(StartupProfileLoader loader);
@@ -298,6 +303,14 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   WorkspaceController controller_;
   std::vector<Host> hosts_;
   std::vector<LinkRule> link_rules_;
+  struct RemovedWorkspace {
+    Workspace workspace;
+    std::vector<PinnedItem> pins;
+    std::vector<LinkRule> rules;
+    base::DictValue host;
+    bool active = false;
+  };
+  std::optional<RemovedWorkspace> removed_workspace_;
   raw_ptr<views::WebView> peek_view_ = nullptr;
   std::string peek_workspace_id_;
   struct ProfileEntry {

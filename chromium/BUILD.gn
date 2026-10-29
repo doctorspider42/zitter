@@ -9,6 +9,10 @@ rust_static_library("sidebar_scene") {
     crate_root,
     "chromium/prototype/design.rs",
     "chromium/prototype/design_tokens.rs",
+    "chromium/prototype/i18n.rs",
+    "chromium/prototype/i18n_en_native.rs",
+    "chromium/prototype/i18n_en_scene.rs",
+    "chromium/prototype/i18n_en_shell.rs",
     "chromium/prototype/sidebar_editor.rs",
   ]
   cxx_bindings = [ crate_root ]
@@ -91,6 +95,8 @@ source_set("shell") {
   sources = [
     "chromium/prototype/workspace_window.cc",
     "chromium/prototype/workspace_window.h",
+    "chromium/prototype/i18n.cc",
+    "chromium/prototype/i18n.h",
     "chromium/prototype/browser_data.h",
     "chromium/prototype/browser_tools.h",
     "chromium/prototype/browser_tools.cc",

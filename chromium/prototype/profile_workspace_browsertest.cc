@@ -5,6 +5,7 @@
 #include "base/i18n/rtl.h"
 #include "build/build_config.h"
 #if BUILDFLAG(IS_MAC)
+#include "chromium/prototype/i18n.h"
 #include "chromium/prototype/sidebar_metal.h"
 #endif
 #include "ui/views/view_targeter_delegate.h"
@@ -251,8 +252,12 @@ class ZitterProfilesBrowserTest : public InProcessBrowserTest {
         "active":"work","onboarding_complete":true
       })"));
     }
+    SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
     window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
     ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+    // Most sidebar tests predate collapsed-by-default folders; the ones about
+    // that default turn it back on.
+    window_->shell()->SetPinnedFoldersCollapsedForTesting(false);
 #if BUILDFLAG(IS_MAC)
     // This executable is unbundled. Merely showing a widget does not reliably
     // activate AppKit; native modal-close animations can otherwise stall. Use
@@ -594,6 +599,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PerformanceRestoration) {
       ASSERT_TRUE(base::WriteFile(directory.AppendASCII("ZitterTimeMachine.json"), "{}"));
     }
     const auto start = base::TimeTicks::Now();
+    SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
     window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
     ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
     const auto ready = base::TimeTicks::Now();
@@ -708,6 +714,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PerformanceProfileStartup) {
     base::ScopedObservation<ProfileManager, ProfileManagerObserver> observation(&timings);
     observation.Observe(manager);
     const auto start = base::TimeTicks::Now();
+    SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
     window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
     ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
     const auto ready = base::TimeTicks::Now();
@@ -795,6 +802,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, TimeMachineFlushesPendingHisto
   // Wait for the old window's BLOCK_SHUTDOWN writer, including the payload
   // explicitly flushed from its pending timer, before reopening the profile.
   base::ThreadPoolInstance::Get()->FlushForTesting();
+  SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
   const auto history = window_->TimeMachine();
@@ -832,6 +840,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, RestoredTabsStayUnrealizedUnti
     ASSERT_TRUE(base::WriteFile(g_browser_process->profile_manager()->user_data_dir()
         .AppendASCII("ZitterSession.json"), json));
   }
+  SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
   auto live_pages = [&] {
@@ -880,6 +889,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, RestoredTabsStayUnrealizedUnti
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
   window_.reset();
   base::ThreadPoolInstance::Get()->FlushForTesting();
+  SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
   EXPECT_EQ(7u, window_->tab_count("work"));
@@ -928,6 +938,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, StartupPrioritizesActiveProfil
   } order(paths);
   base::ScopedObservation<ProfileManager, ProfileManagerObserver> observation(&order);
   observation.Observe(manager);
+  SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
   EXPECT_FALSE(window_->configuration_ready());
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
@@ -983,6 +994,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, StartupPrioritizesActiveProfil
     base::ScopedAllowBlockingForTesting allow;
     ASSERT_TRUE(base::WriteFile(manager->user_data_dir().AppendASCII("ZitterWorkspaces.json"), json));
   }
+  SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
   EXPECT_TRUE(window_->OpenLink(cancelled, "cold-space-0", true));
@@ -992,6 +1004,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, StartupPrioritizesActiveProfil
   ASSERT_TRUE(completed.Wait());
   ASSERT_NE(nullptr, completed.Get());
   base::ThreadPoolInstance::Get()->FlushForTesting();
+  SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
   EXPECT_EQ("cold-space-3", window_->active_id());
@@ -1028,6 +1041,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, StartupProfileFailureKeepsActi
     ASSERT_TRUE(base::WriteFile(manager->user_data_dir().AppendASCII("ZitterWorkspaces.json"), json));
     ASSERT_TRUE(base::WriteFile(manager->user_data_dir().AppendASCII("ZitterSession.json"), "{}"));
   }
+  SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
   const auto url = embedded_test_server()->GetURL("/performance_probe.html?failed-profile");
@@ -2380,7 +2394,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceCatalogueRowsOrderCo
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenGeneralSettings();
   using Copy=std::pair<std::u16string,std::u16string>;
   const std::vector<std::vector<Copy>> expected={
-    {{u"Motyw aplikacji",u"Kolory interfejsu i stron obsługujących motyw systemowy."},{u"Zawsze widoczny panel kart",u"Przypnij karty i przestrzenie przy lewej krawędzi."},{u"Animacje przestrzeni",u"Płynne przejścia. Systemowe ograniczenie ruchu ma pierwszeństwo."},{u"Kolor i nazwa przestrzeni",u"Własny akcent kolorystyczny i przypisanie profilu."},{u"Time Machine przestrzeni",u"Snapshoty, zamknięte karty i usypianie całych projektów."}},
+    {{u"Motyw aplikacji",u"Kolory interfejsu i stron obsługujących motyw systemowy."},{u"Zawsze widoczny panel kart",u"Przypnij karty i przestrzenie przy lewej krawędzi."},{u"Animacje przestrzeni",u"Płynne przejścia. Systemowe ograniczenie ruchu ma pierwszeństwo."},{u"Nazwa aktywnej przestrzeni",u"Pokazuj nazwę obok kropki aktywnej przestrzeni na dole panelu kart."},{u"Język interfejsu",u"Zmiana zadziała po ponownym uruchomieniu Zitter."},{u"Zwinięte foldery przypiętych",u"Foldery startują zwinięte. Karta otwarta z Command Center pokazuje się pod folderem bez rozwijania reszty."},{u"Kolor i nazwa przestrzeni",u"Własny akcent kolorystyczny i przypisanie profilu."},{u"Time Machine przestrzeni",u"Snapshoty, zamknięte karty i usypianie całych projektów."}},
     {{u"Domyślna wyszukiwarka",u"Używana, gdy wpiszesz zapytanie w pasku adresu."},{u"Wyszukiwarki i prefiksy",u"Własne wyszukiwarki: g zapytanie, w hasło, yt film…"},{u"Skróty klawiszowe",u"Schemat Arc, własne kombinacje i wykrywanie konfliktów."},{u"Szybciej z klawiaturą",u"⌘ L  adres i wyszukiwanie\n⌘ K  karty, przestrzenie i historia\n⌘ T  nowa karta     ⌘ ,  preferencje"}},
     {{u"Przekazuj adres strony odsyłającej",u"Nagłówek Referer pomaga witrynie rozpoznać, skąd pochodzi wejście. Wyłączenie może zmienić działanie niektórych serwisów."},{u"Zawsze używaj HTTPS",u"Wymagaj bezpiecznego połączenia. Witryny bez HTTPS mogą wyświetlić ostrzeżenie."},{u"Blokuj cookies innych firm",u"Ogranicz śledzenie między witrynami. Niektóre logowania mogą wymagać cookies."},{u"Wysyłaj Do Not Track",u"Poproś witryny o nieśledzenie. Respektowanie prośby zależy od witryny."},{u"Wstępne połączenia ze stronami",u"Przygotowuj połączenie podczas wpisywania adresu. Może użyć sieci, nawet jeśli nie otworzysz strony. Ustawienie dotyczy tego profilu."},{u"Raporty kliknięć w linki",u"Zezwalaj na wysyłanie sygnałów ping po kliknięciu odnośnika."},{u"Historia przeglądania",u"Wyszukuj odwiedzone strony i czyść historię tego profilu."}},
     {{u"Kamera",u"Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo."},{u"Mikrofon",u"Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo."},{u"Lokalizacja",u"Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo."},{u"Powiadomienia",u"Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo."},{u"Odczyt schowka",u"Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo."},{u"Wyjątek dla witryny",u"Wpisz pełny adres witryny bez ścieżki, np. https://example.com. Wyjątek zastępuje politykę domyślną w tym profilu."},{u"Zapisane wyjątki",u"Własne reguły możesz usunąć, aby wrócić do ustawień domyślnych. Reguły zarządzane pozostają tylko do odczytu."}},
@@ -2459,7 +2473,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceViewportWheelAXTheme
   auto filter=[&]{auto* field=shell->preferences_search();field->SelectRange(gfx::Range(0,field->GetText().size()));field->input_client()->InsertText(u"czcion",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();};filter();ASSERT_GT(viewport->maximum(),0);viewport->ScrollTo(0);
   ui::MouseWheelEvent wheel(gfx::Vector2d(0,-120),gfx::PointF(10,10),gfx::PointF(10,10),base::TimeTicks::Now(),0,0);EXPECT_TRUE(viewport->view()->OnMouseWheel(wheel));EXPECT_GT(viewport->offset(),0);ui::AXActionData down;down.action=ax::mojom::Action::kScrollDown;EXPECT_TRUE(viewport->view()->HandleAccessibleAction(down));EXPECT_GT(viewport->offset(),0);
   ui::AXNodeData before;viewport->view()->GetViewAccessibility().GetAccessibleNodeData(&before);EXPECT_EQ(ax::mojom::Role::kScrollView,before.role);EXPECT_EQ(viewport->maximum(),before.GetIntAttribute(ax::mojom::IntAttribute::kScrollYMax));
-  shell->SetThemeMode(ThemeMode::kDark);shell->general_widget()->LayoutRootViewIfNecessary();EXPECT_EQ(0,viewport->offset());EXPECT_EQ(ThemeMode::kDark,shell->theme_mode());EXPECT_EQ(u"czcion",shell->preferences_search()->GetText());viewport->ScrollTo(viewport->maximum());shell->SetThemeMode(ThemeMode::kLight);shell->general_widget()->LayoutRootViewIfNecessary();EXPECT_EQ(0,viewport->offset());EXPECT_EQ(ThemeMode::kLight,shell->theme_mode());EXPECT_EQ(u"czcion",shell->preferences_search()->GetText());
+  /* A theme switch keeps the reader's place. */shell->SetThemeMode(ThemeMode::kDark);shell->general_widget()->LayoutRootViewIfNecessary();EXPECT_LE(viewport->offset(),viewport->maximum());EXPECT_EQ(ThemeMode::kDark,shell->theme_mode());EXPECT_EQ(u"czcion",shell->preferences_search()->GetText());viewport->ScrollTo(viewport->maximum());shell->SetThemeMode(ThemeMode::kLight);shell->general_widget()->LayoutRootViewIfNecessary();EXPECT_LE(viewport->offset(),viewport->maximum());EXPECT_EQ(ThemeMode::kLight,shell->theme_mode());EXPECT_EQ(u"czcion",shell->preferences_search()->GetText());
   // Hidden native scrollbars retain an old range; Rust exports current metrics.
   ui::AXNodeData ax;viewport->view()->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kScrollView,ax.role);if(viewport->rust_owned()||viewport->maximum()>0)EXPECT_EQ(viewport->maximum(),ax.GetIntAttribute(ax::mojom::IntAttribute::kScrollYMax));
   const auto personal=personal_->GetPrefs()->GetString(prefs::kWebKitStandardFontFamily);ASSERT_TRUE(window_->Select("personal"));shell->OpenGeneralSettings();filter();EXPECT_EQ(0,viewport->offset());EXPECT_EQ(personal,personal_->GetPrefs()->GetString(prefs::kWebKitStandardFontFamily));EXPECT_EQ(base::UTF8ToUTF16(personal),shell->preference_textfield("font_standard")->GetText());
@@ -3976,6 +3990,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitViewSessionRestore) {
   ASSERT_TRUE(content::NavigateToURL(window_->contents("personal"), personal_url));
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
   window_.reset();
+  SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
   EXPECT_EQ("personal", window_->active_id());
@@ -3994,6 +4009,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitViewSessionRestore) {
   window_->ToggleSplit();
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
   window_.reset();
+  SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
   EXPECT_FALSE(window_->split());
@@ -4032,6 +4048,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, StorageIsolationAndSwitching) 
   // Destroy and rebuild all WebContents in the same process. This checks host
   // teardown/recreation, not durability across a browser restart.
   window_.reset();
+  SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
   ASSERT_NO_FATAL_FAILURE(NavigateBoth());
@@ -4083,27 +4100,27 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DynamicWorkspacesAndProfiles) 
   {ui::AXActionData activate;activate.action=ax::mojom::Action::kDoDefault;EXPECT_TRUE(shell->workspace_button("work")->HandleAccessibleAction(activate));}
   EXPECT_EQ("work", window_->active_id());
   shell->OpenWorkspaceSettings();
-  auto* remove = FindButton(shell->settings_widget()->GetContentsView(), u"Usuń przestrzeń…");
+  auto* remove = FindButton(shell->settings_widget()->GetContentsView(), u"Usuń przestrzeń");
+  ASSERT_TRUE(remove);
+  // Removal can be undone, so it happens at once with a toast.
+  ClickControl(remove);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->tab_count("work") && !window_->profiles_busy(); }));
+  EXPECT_TRUE(base::StartsWith(shell->toast_text_for_testing(), u"Usunięto przestrzeń "));
+  shell->UndoToast();
+  EXPECT_GE(window_->tab_count("work"), 1u);
+  EXPECT_EQ("work", window_->active_id());  // The removed workspace was active.
+  EXPECT_TRUE(shell->toast_text_for_testing().empty());
+  shell->OpenWorkspaceSettings();
+  remove = FindButton(shell->settings_widget()->GetContentsView(), u"Usuń przestrzeń");
   ASSERT_TRUE(remove);
   ClickControl(remove);
-  ASSERT_TRUE(shell->remove_workspace_dialog());
-  EXPECT_NE(nullptr, window_->contents("work"));
-  EXPECT_EQ(static_cast<int>(ui::mojom::DialogButton::kCancel),
-      shell->remove_workspace_dialog()->widget_delegate()->AsDialogDelegate()->GetDefaultDialogButton());
-  shell->remove_workspace_dialog()->widget_delegate()->AsDialogDelegate()->CancelDialog();
-  ASSERT_TRUE(base::test::RunUntil([&] { return !shell->remove_workspace_dialog(); }));
-  EXPECT_NE(nullptr, window_->contents("work"));
-  shell->OpenWorkspaceSettings();  // Confirmation dismissed the settings overlay.
-  ClickControl(remove);
-  ASSERT_TRUE(shell->remove_workspace_dialog());
-  shell->remove_workspace_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
-  ASSERT_TRUE(base::test::RunUntil([&] { return !shell->remove_workspace_dialog(); }));
-  EXPECT_EQ(nullptr, window_->contents("work"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->tab_count("work"); }));
   ASSERT_TRUE(window_->Select(project));
   ASSERT_TRUE(base::test::RunUntil([&] {
     return window_->configuration_saved() && window_->shell()->appearance_saved();
   }));
   window_.reset();
+  SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
   ASSERT_TRUE(base::test::RunUntil([&] {
     return window_->configuration_ready() && window_->shell()->appearance_ready();
@@ -4140,26 +4157,25 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceContextAppearanceAndD
   EXPECT_EQ(u"", shell->emoji_input()->GetText());
   shell->BuildWorkspaceMenu("personal");
   shell->workspace_menu()->ActivatedAt(5, 0);
-  ASSERT_TRUE(base::test::RunUntil([&] { return shell->remove_workspace_dialog(); }));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->workspaces().size() == 1u && !window_->profiles_busy(); }));
   EXPECT_EQ("work", window_->active_id());
-  shell->remove_workspace_dialog()->widget_delegate()->AsDialogDelegate()->CancelDialog();
-  ASSERT_TRUE(base::test::RunUntil([&] { return !shell->remove_workspace_dialog(); }));
-  EXPECT_EQ(2u, window_->workspaces().size());
+  // Undo brings it back (at the end of the list) with its look, unselected.
+  shell->UndoToast();
+  ASSERT_EQ(2u, window_->workspaces().size());
+  EXPECT_EQ("personal", window_->workspaces()[1].id);
+  EXPECT_GE(window_->tab_count("personal"), 1u);
+  EXPECT_EQ("work", window_->active_id());
+  EXPECT_EQ(0xFFCE826Bu, shell->workspace_color("personal"));
+  EXPECT_EQ(u"🚀", shell->workspace_emoji("personal"));
   shell->BuildWorkspaceMenu("personal");
   shell->workspace_menu()->ActivatedAt(5, 0);
-  ASSERT_TRUE(base::test::RunUntil([&] { return shell->remove_workspace_dialog(); }));
-  // Selection changing behind the dialog must never redirect deletion.
-  ASSERT_TRUE(window_->Select("personal"));
-  ASSERT_TRUE(window_->Select("work"));
-  shell->remove_workspace_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
-  ASSERT_TRUE(base::test::RunUntil([&] { return !shell->remove_workspace_dialog(); }));
-  EXPECT_EQ(nullptr, window_->contents("personal"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->workspaces().size() == 1u; }));
   EXPECT_EQ("work", window_->active_id());
   shell->BuildWorkspaceMenu("work");
   EXPECT_FALSE(shell->workspace_menu()->IsEnabledAt(5));
 }
 
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceDeletionConfirmationStaysOnScreen) {
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceRemovalToastStaysInTheWindow) {
   auto* shell = window_->shell();
   const auto area = display::Screen::Get()->GetDisplayNearestWindow(window_->widget()->GetNativeWindow()).work_area();
   const gfx::Size size(std::min(700, area.width()), std::min(600, area.height()));
@@ -4174,18 +4190,18 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceDeletionConfirmationS
       shell->workspace_menu()->ActivatedAt(5, 0);
     } else {
       shell->OpenWorkspaceSettings();
-      auto* remove = FindButton(shell->settings_widget()->GetContentsView(), u"Usuń przestrzeń…");
+      auto* remove = FindButton(shell->settings_widget()->GetContentsView(), u"Usuń przestrzeń");
       ASSERT_TRUE(remove);
       ClickControl(remove);
     }
-    ASSERT_TRUE(base::test::RunUntil([&] { return shell->remove_workspace_dialog() && shell->remove_workspace_dialog()->IsVisible(); }));
-    base::RunLoop().RunUntilIdle();
-    const auto bounds = shell->remove_workspace_dialog()->GetWindowBoundsInScreen();
+    ASSERT_TRUE(base::test::RunUntil([&] { return window_->workspaces().size() == 1u && shell->toast_widget()->IsVisible(); }));
+    const auto bounds = shell->toast_widget()->GetWindowBoundsInScreen();
     EXPECT_FALSE(bounds.IsEmpty());
-    EXPECT_TRUE(area.Contains(bounds)) << area.ToString() << " / " << bounds.ToString();
-    EXPECT_TRUE(window_->widget()->GetWindowBoundsInScreen().Intersects(bounds));
-    shell->remove_workspace_dialog()->widget_delegate()->AsDialogDelegate()->CancelDialog();
-    ASSERT_TRUE(base::test::RunUntil([&] { return !shell->remove_workspace_dialog(); }));
+    EXPECT_LE(bounds.width(), 420);
+    EXPECT_TRUE(window_->widget()->GetWindowBoundsInScreen().Contains(bounds)) << bounds.ToString();
+    ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+    shell->UndoToast();
+    EXPECT_FALSE(shell->toast_widget()->IsVisible());
     EXPECT_EQ(2u, window_->workspaces().size());
   }
 }
@@ -4808,15 +4824,14 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SceneModalActionsNativeMetrics
       ASSERT_TRUE(body);if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return PageDialogActionsVisibleForTesting(ok->parent(),base::UTF16ToUTF8(delegate->GetDialogButtonLabel(ui::mojom::DialogButton::kOk)));}));EXPECT_FALSE(delegate->owned_by_widget());EXPECT_FALSE(delegate->GetOkButton());EXPECT_FALSE(delegate->GetCancelButton());
       auto oracle=std::make_unique<SceneModalBodyOracle>(body);auto* reference_body=oracle.get();ui::DialogModel::Builder builder;builder.SetTitle(delegate->GetWindowTitle()).AddCustomField(std::make_unique<views::BubbleDialogModelHost::CustomView>(std::move(oracle),control?views::BubbleDialogModelHost::FieldType::kControl:views::BubbleDialogModelHost::FieldType::kText)).AddOkButton(base::DoNothing(),ui::DialogModel::Button::Params().SetLabel(delegate->GetDialogButtonLabel(ui::mojom::DialogButton::kOk))).AddCancelButton(base::DoNothing(),ui::DialogModel::Button::Params().SetLabel(delegate->GetDialogButtonLabel(ui::mojom::DialogButton::kCancel))).OverrideDefaultButton(delegate->GetDefaultDialogButton()==static_cast<int>(ui::mojom::DialogButton::kOk)?ui::mojom::DialogButton::kOk:ui::mojom::DialogButton::kCancel);
       auto reference=views::BubbleDialogModelHost::CreateModal(builder.Build(),ui::mojom::ModalType::kWindow);reference->SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);auto* reference_delegate=reference.get();std::unique_ptr<views::Widget> reference_widget(views::DialogDelegate::CreateDialogWidget(std::move(reference),window_->widget()->GetNativeWindow(),window_->widget()->GetNativeView()));reference_widget->SetColorModeOverride(widget->color_mode_override());widget->LayoutRootViewIfNecessary();reference_widget->LayoutRootViewIfNecessary();
-      EXPECT_EQ(reference_delegate->margins(),delegate->margins());EXPECT_EQ(reference_delegate->fixed_width(),delegate->fixed_width());EXPECT_EQ(reference_widget->client_view()->GetPreferredSize(),widget->client_view()->GetPreferredSize());EXPECT_EQ(reference_widget->client_view()->GetMinimumSize(),widget->client_view()->GetMinimumSize());
+      EXPECT_EQ(reference_delegate->margins(),delegate->margins());EXPECT_EQ(reference_delegate->fixed_width(),delegate->fixed_width());// Heights follow the design's 32 px buttons, not the native ones.
+      EXPECT_EQ(reference_widget->client_view()->GetPreferredSize().width(),widget->client_view()->GetPreferredSize().width());EXPECT_EQ(reference_widget->client_view()->GetMinimumSize().width(),widget->client_view()->GetMinimumSize().width());
       EXPECT_EQ(views::View::ConvertRectToTarget(reference_body,reference_widget->client_view(),reference_body->GetLocalBounds()),views::View::ConvertRectToTarget(body,widget->client_view(),body->GetLocalBounds()));
     }
   };
   auto ready=[&](views::Widget* widget,views::View* focus){ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));if(focus)focus->RequestFocus();base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());widget->widget_delegate()->AsDialogDelegate()->ResetViewShownTimeStampForTesting();};
   shell->RequestNewFolder("work");ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_dialog()!=nullptr;}));inspect(shell->folder_dialog(),shell->folder_form_for_testing(),true);auto* widget=shell->folder_dialog();ready(widget,DialogActionButton(widget,false));ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));ASSERT_TRUE(base::test::RunUntil([&]{return !shell->folder_dialog();}));EXPECT_TRUE(window_->pinned_items("work").empty());
   shell->RequestNewFolder("work");ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_dialog()!=nullptr;}));ASSERT_TRUE(ReplaceFolderName(shell,u"Scene folder 🦀"));widget=shell->folder_dialog();ready(widget,nullptr);ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_RETURN,false,false,false,false));ASSERT_TRUE(base::test::RunUntil([&]{return !shell->folder_dialog()&&!window_->profiles_busy();}));ASSERT_EQ(1u,window_->pinned_items("work").size());const auto folder=window_->pinned_items("work")[0].id;
-  shell->RequestDeleteFolder("work",folder);ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_dialog()!=nullptr;}));inspect(shell->folder_dialog(),shell->folder_notice_for_testing(),false);widget=shell->folder_dialog();ready(widget,DialogActionButton(widget,false));ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_RETURN,false,false,false,false));if(!views::PlatformStyle::kDialogDefaultButtonCanBeCancel){EXPECT_TRUE(shell->folder_dialog());ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_ESCAPE,false,false,false,false));}ASSERT_TRUE(base::test::RunUntil([&]{return !shell->folder_dialog();}));EXPECT_EQ(1u,window_->pinned_items("work").size());
-  shell->BuildWorkspaceMenu("personal");shell->workspace_menu()->ActivatedAt(5,0);ASSERT_TRUE(base::test::RunUntil([&]{return shell->remove_workspace_dialog()!=nullptr;}));inspect(shell->remove_workspace_dialog(),shell->workspace_notice_for_testing(),false);widget=shell->remove_workspace_dialog();ready(widget,DialogActionButton(widget,false));ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_ESCAPE,false,false,false,false));ASSERT_TRUE(base::test::RunUntil([&]{return !shell->remove_workspace_dialog();}));EXPECT_EQ(2u,window_->workspaces().size());
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceSwitchCostWithImportedSidebar) {
@@ -4841,6 +4856,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceSwitchCostWithImporte
     ASSERT_TRUE(base::JSONWriter::Write(*data, &json));
     ASSERT_TRUE(base::WriteFile(file, json));
   }
+  SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready() && !window_->profiles_busy(); }));
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->shell()->appearance_ready() && window_->shell()->tools_ready(); }));
@@ -4891,6 +4907,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceSwitchCostWithTwoLarg
     ASSERT_TRUE(base::JSONWriter::Write(*data, &json));
     ASSERT_TRUE(base::WriteFile(file, json));
   }
+  SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready() && !window_->profiles_busy(); }));
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->shell()->appearance_ready() && window_->shell()->tools_ready(); }));
@@ -5000,6 +5017,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarFoldersCreateNestAndPer
   EXPECT_FALSE(window_->CreatePinnedFolder("work", {}, "   "));
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
   window_.reset();
+  SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
   ASSERT_EQ(2u, window_->pinned_items("work").size());
@@ -5017,7 +5035,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarFolderRenameAndDeleteCo
   auto* shell = window_->shell();
   shell->BuildFolderMenu(id);
   EXPECT_EQ(u"Zmień nazwę…", shell->workspace_menu()->GetLabelAt(2));
-  EXPECT_EQ(u"Usuń folder…", shell->workspace_menu()->GetLabelAt(3));
+  EXPECT_EQ(u"Usuń folder", shell->workspace_menu()->GetLabelAt(3));
   shell->workspace_menu()->ActivatedAt(2, 0);
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->folder_dialog() != nullptr; }));
   auto* editor=shell->folder_editor_for_testing();auto* native=NativeFolderNameInput(shell->folder_dialog()->GetContentsView());ASSERT_TRUE(editor||native);
@@ -5033,17 +5051,17 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarFolderRenameAndDeleteCo
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready() && !window_->profiles_busy(); }));
   EXPECT_EQ("Renamed 🦊", window_->pinned_items("work")[0].title);
   shell = window_->shell();
+  // Deleting removes the folder with its contents at once; the toast undoes it.
+  auto* page = window_->contents("work");
   shell->BuildFolderMenu(id); shell->workspace_menu()->ActivatedAt(3, 0);
-  ASSERT_TRUE(base::test::RunUntil([&] { return shell->folder_dialog() != nullptr; }));
-  EXPECT_EQ(static_cast<int>(ui::mojom::DialogButton::kCancel), shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->GetDefaultDialogButton());
-  shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->CancelDialog();
-  ASSERT_TRUE(base::test::RunUntil([&] { return !shell->folder_dialog(); }));
+  EXPECT_FALSE(shell->folder_dialog());
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  EXPECT_TRUE(window_->pinned_items("work").empty());
+  shell->UndoToast();
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
   EXPECT_EQ(2u, window_->pinned_items("work").size());
   shell->BuildFolderMenu(id); shell->workspace_menu()->ActivatedAt(3, 0);
-  ASSERT_TRUE(base::test::RunUntil([&] { return shell->folder_dialog() != nullptr; }));
-  auto* page = window_->contents("work");
-  shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
-  ASSERT_TRUE(base::test::RunUntil([&] { return !shell->folder_dialog() && !window_->profiles_busy(); }));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
   EXPECT_TRUE(window_->pinned_items("work").empty());
   EXPECT_EQ(page, window_->contents("work"));
   EXPECT_FALSE(window_->RenamePinnedFolder("work", id, "Gone"));
@@ -5421,6 +5439,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceDotProfileMenu) {
   EXPECT_EQ("personal", window_->active_id());
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
   window_.reset();
+  SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
   EXPECT_EQ("Profil zespołu", window_->profiles()[0].name);
@@ -5452,6 +5471,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DynamicProfiles) {
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
   window_.reset();
   const auto directory = g_browser_process->profile_manager()->user_data_dir();
+  SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(directory, false);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
   ASSERT_EQ(3u, window_->profiles().size());
@@ -5481,6 +5501,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DynamicProfiles) {
   ASSERT_TRUE(window_->RemoveProfile("personal-profile"));
   ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
   window_.reset();
+  SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(directory, false);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
   ASSERT_EQ(1u, window_->profiles().size());
@@ -5565,6 +5586,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ArcImportStructureAndPersisten
   EXPECT_EQ(page->GetBrowserContext(), window_->contents("arc-space-space-b")->GetBrowserContext());
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved() && shell->appearance_saved(); }));
   window_.reset();
+  SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->shell()->appearance_ready(); }));
@@ -5809,6 +5831,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, BrowsingImportPersistsInDestin
   EXPECT_EQ("local-session", cookies(profile)[0].Value());
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
   window_.reset();
+  SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
   window_->Select("chrome-space-Default");
@@ -5868,6 +5891,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ChromiumBrowserImportSelection
   EXPECT_EQ(4u, window_->pinned_items("chrome-space-Default").size());
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
   window_.reset();
+  SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
   EXPECT_EQ(4u, window_->pinned_items("chrome-space-Default").size());
@@ -5961,6 +5985,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FirstRunImportReplacesStarterA
     base::ScopedAllowBlockingForTesting allow;
     ASSERT_TRUE(base::DeleteFile(file));
   }
+  SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(directory);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready() && window_->configuration_saved(); }));
   ASSERT_EQ(1u, window_->workspaces().size());
@@ -5993,6 +6018,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FirstRunImportReplacesStarterA
   for (const auto& space : window_->workspaces()) EXPECT_TRUE(space.id.starts_with("arc-space-"));
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
   window_.reset();
+  SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(directory);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
   EXPECT_EQ(3u, window_->workspaces().size());
@@ -6007,6 +6033,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FirstRunImportOffer) {
     base::ScopedAllowBlockingForTesting allow;
     ASSERT_TRUE(base::DeleteFile(directory.AppendASCII("ZitterWorkspaces.json")));
   }
+  SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(directory);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
   EXPECT_TRUE(window_->shell()->import_visible());
@@ -6019,6 +6046,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FirstRunImportOffer) {
   ClickControl(skip);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
   window_.reset();
+  SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(directory);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
   EXPECT_FALSE(window_->shell()->import_visible());
@@ -6060,6 +6088,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, LiveArcImport) {
             << " ms; pinned list builds unchanged at " << builds;
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
   window_.reset();
+  SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
   EXPECT_EQ(2u + preview.profiles.size(), window_->profiles().size());
@@ -6234,6 +6263,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeShellAndAppearance) {
   shell->SetPinned(true);
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_saved(); }));
   window_.reset();
+  SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
   ASSERT_TRUE(base::test::RunUntil([&] {
     return window_->configuration_ready() && window_->shell()->appearance_ready();
@@ -6613,29 +6643,21 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, AppearanceRowsSceneInputCl
   auto* cancel=FindButton(shell->workspace_panel_for_testing(),u"Anuluj");ASSERT_TRUE(cancel);ClickControl(cancel);if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_metal_visible(false)&&shell->appearance_metal_visible(true);}));
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_saved();}));
 }
-// Compiled with the shared notice renderer; execution awaits the GUI checkpoint.
-IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, WorkspaceNoticeCancelCapturedTargetUnloadAndRetainedProfile) {
+// Removal is immediate with an undo toast; a page with unsaved changes asks
+// first, and the toast follows the actual removal. The profile stays.
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, WorkspaceRemovalUndoUnloadAndRetainedProfile) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
   ASSERT_TRUE(window_->Select("personal"));ASSERT_TRUE(window_->EditWorkspace("Prywatne 日本語 🦀","personal-profile"));
   const auto url=embedded_test_server()->GetURL("/storage_probe.html");auto* personal=window_->contents("personal");ASSERT_TRUE(content::NavigateToURL(personal,url));EXPECT_EQ("kept",content::EvalJs(personal,"writeMarker('kept')"));ASSERT_TRUE(window_->Select("work"));
   auto open=[&](const std::string& id){shell->BuildWorkspaceMenu(id);shell->workspace_menu()->ActivatedAt(5,0);};
-  open("personal");if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_notice_metal_visible();}));
-  auto* notice=shell->workspace_notice_for_testing();ASSERT_TRUE(notice);EXPECT_GE(shell->workspace_notice_line_count_for_testing(),4u);
-  EXPECT_EQ(u"Usunąć przestrzeń „Prywatne 日本語 🦀”?",shell->remove_workspace_dialog()->widget_delegate()->GetWindowTitle());
-  EXPECT_EQ(static_cast<int>(ui::mojom::DialogButton::kCancel),shell->remove_workspace_dialog()->widget_delegate()->AsDialogDelegate()->GetDefaultDialogButton());
-  for(const auto& child:notice->children())EXPECT_FALSE(views::AsViewClass<views::Label>(child.get()));ui::AXNodeData data;notice->children()[0]->GetViewAccessibility().GetAccessibleNodeData(&data);EXPECT_EQ(ax::mojom::Role::kStaticText,data.role);
-  EXPECT_NE(std::u16string::npos,data.GetString16Attribute(ax::mojom::StringAttribute::kName).find(u"Profil przeglądania, hasła, historia i cookies pozostaną zachowane."));
-  shell->remove_workspace_dialog()->widget_delegate()->AsDialogDelegate()->CancelDialog();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->remove_workspace_dialog();}));EXPECT_EQ(2u,window_->workspaces().size());
-  ASSERT_TRUE(window_->Select("personal"));ArmUnsaved(personal);ASSERT_TRUE(window_->Select("work"));
-  open("personal");if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_notice_metal_visible();}));shell->remove_workspace_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
-  AnswerUnload(personal,false);ASSERT_TRUE(base::test::RunUntil([&]{return !window_->lifecycle_pending()&&!shell->remove_workspace_dialog();}));EXPECT_EQ(personal,window_->contents("personal"));EXPECT_EQ(2u,window_->workspaces().size());
-  open("personal");if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_notice_metal_visible();}));ASSERT_TRUE(window_->Select("personal"));ASSERT_TRUE(window_->Select("work"));
-  shell->remove_workspace_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();AnswerUnload(personal,true);
-  ASSERT_TRUE(base::test::RunUntil([&]{return !shell->remove_workspace_dialog()&&!window_->lifecycle_pending()&&!window_->contents("personal");}));EXPECT_EQ("work",window_->active_id());ASSERT_EQ(2u,window_->profiles().size());
-  ASSERT_TRUE(window_->AddWorkspace("Retained profile","personal-profile"));const auto retained=window_->active_id();EXPECT_EQ(personal_.get(),window_->contents(retained)->GetBrowserContext());ASSERT_TRUE(content::NavigateToURL(window_->contents(retained),url));EXPECT_EQ("kept|kept|kept|",content::EvalJs(window_->contents(retained),"readMarker()"));
-  ASSERT_TRUE(window_->Select("work"));open(retained);if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_notice_metal_visible();}));ASSERT_TRUE(window_->RemoveWorkspace(retained));
-  shell->remove_workspace_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();ASSERT_TRUE(shell->remove_workspace_dialog());EXPECT_EQ(u"Przestrzeń nie jest już dostępna.",shell->workspace_notice_error_for_testing());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_notice_contains_scene_text("Przestrzeń nie jest już dostępna.");}));EXPECT_EQ(1u,window_->workspaces().size());EXPECT_NE(nullptr,window_->contents("work"));
-  shell->remove_workspace_dialog()->widget_delegate()->AsDialogDelegate()->CancelDialog();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->remove_workspace_dialog();}));shell->BuildWorkspaceMenu("work");EXPECT_FALSE(shell->workspace_menu()->IsEnabledAt(5));
+  open("personal");ASSERT_TRUE(base::test::RunUntil([&]{return !window_->tab_count("personal")&&!window_->lifecycle_pending();}));EXPECT_EQ(u"Usunięto przestrzeń Prywatne 日本語 🦀",shell->toast_text_for_testing());
+  ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));shell->UndoToast();ASSERT_EQ(2u,window_->workspaces().size());EXPECT_EQ("Prywatne 日本語 🦀",window_->workspaces()[1].name);EXPECT_EQ("work",window_->active_id());
+  ASSERT_TRUE(window_->Select("personal"));personal=window_->contents("personal");ASSERT_TRUE(content::NavigateToURL(personal,url));EXPECT_NE(std::string::npos,content::EvalJs(personal,"readMarker()").ExtractString().find("kept"));ArmUnsaved(personal);ASSERT_TRUE(window_->Select("work"));
+  open("personal");AnswerUnload(personal,false);ASSERT_TRUE(base::test::RunUntil([&]{return !window_->lifecycle_pending();}));EXPECT_EQ(personal,window_->contents("personal"));EXPECT_EQ(2u,window_->workspaces().size());EXPECT_TRUE(shell->toast_text_for_testing().empty());
+  open("personal");AnswerUnload(personal,true);
+  ASSERT_TRUE(base::test::RunUntil([&]{return !window_->lifecycle_pending()&&!window_->contents("personal");}));EXPECT_EQ(u"Usunięto przestrzeń Prywatne 日本語 🦀",shell->toast_text_for_testing());EXPECT_EQ("work",window_->active_id());ASSERT_EQ(2u,window_->profiles().size());
+  ASSERT_TRUE(window_->AddWorkspace("Retained profile","personal-profile"));const auto retained=window_->active_id();EXPECT_EQ(personal_.get(),window_->contents(retained)->GetBrowserContext());ASSERT_TRUE(content::NavigateToURL(window_->contents(retained),url));EXPECT_NE(std::string::npos,content::EvalJs(window_->contents(retained),"readMarker()").ExtractString().find("kept"));
+  ASSERT_TRUE(window_->Select("work"));ASSERT_TRUE(window_->RemoveWorkspace(retained));shell->BuildWorkspaceMenu("work");EXPECT_FALSE(shell->workspace_menu()->IsEnabledAt(5));
   ASSERT_TRUE(base::test::RunUntil([&]{return window_->configuration_saved();}));
 }
 // Compilation only; do not execute before the requested GUI checkpoint.
@@ -6715,28 +6737,16 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ProfilePanelScenesValidati
   ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));EXPECT_EQ(2u,window_->profiles().size());
   for(const auto& profile:window_->profiles())EXPECT_NE(added.id,profile.id);
 }
-// Compiled with the migration; execution is deferred to the requested GUI checkpoint.
-IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, FolderNoticesWrapPreserveCancelAndRejectStaleTargets) {
+// Removing a folder is immediate and undone from its toast; a failed save is
+// still a notice dialog (it needs a decision).
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, FolderRemovalUndoAndSaveErrorNotice) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
   ASSERT_TRUE(window_->CreatePinnedFolder("work",{},"Notice 🦀"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));
   const auto id=window_->pinned_items("work")[0].id;shell->RequestDeleteFolder("work",id);
-  if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_notice_metal_visible();}));
-  auto* notice=shell->folder_notice_for_testing();ASSERT_TRUE(notice);EXPECT_GE(shell->folder_notice_line_count_for_testing(),2u);
-  EXPECT_EQ(static_cast<int>(ui::mojom::DialogButton::kCancel),shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->GetDefaultDialogButton());
-  for(const auto& child:notice->children())EXPECT_FALSE(views::AsViewClass<views::Label>(child.get()));
-  ui::AXNodeData data;notice->children()[0]->GetViewAccessibility().GetAccessibleNodeData(&data);EXPECT_EQ(ax::mojom::Role::kStaticText,data.role);
-  EXPECT_NE(std::u16string::npos,data.GetString16Attribute(ax::mojom::StringAttribute::kName).find(u"Strony już otwarte w kartach pozostaną otwarte."));
-  shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->CancelDialog();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->folder_dialog();}));EXPECT_EQ(1u,window_->pinned_items("work").size());
-  shell->RequestDeleteFolder("work",id);if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_notice_metal_visible();}));
-  ASSERT_TRUE(window_->Select("personal"));ASSERT_TRUE(base::test::RunUntil([&]{return window_->active_id()=="personal"&&!window_->profiles_busy();}));
-  shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();EXPECT_FALSE(shell->folder_notice_error_for_testing().empty());EXPECT_EQ(1u,window_->pinned_items("work").size());
-  shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->CancelDialog();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->folder_dialog();}));
-  ASSERT_TRUE(window_->Select("work"));shell->RequestDeleteFolder("work",id);if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_notice_metal_visible();}));
-  shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->folder_dialog()&&!window_->profiles_busy();}));EXPECT_TRUE(window_->pinned_items("work").empty());
-  ASSERT_TRUE(window_->CreatePinnedFolder("work",{},"Removed"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));const auto removed=window_->pinned_items("work")[0].id;
-  shell->RequestDeleteFolder("work",removed);if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_notice_metal_visible();}));ASSERT_TRUE(window_->RemovePinnedFolder("work",removed,true));
-  ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();EXPECT_EQ(u"Folder nie jest już dostępny.",shell->folder_notice_error_for_testing());
-  if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_notice_contains_scene_text("Folder nie jest już dostępny.");}));shell->folder_dialog()->widget_delegate()->AsDialogDelegate()->CancelDialog();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->folder_dialog();}));
+  EXPECT_FALSE(shell->folder_dialog());EXPECT_TRUE(window_->pinned_items("work").empty());EXPECT_EQ(u"Usunięto folder Notice 🦀",shell->toast_text_for_testing());
+  ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));shell->UndoToast();ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));
+  ASSERT_EQ(1u,window_->pinned_items("work").size());EXPECT_EQ(id,window_->pinned_items("work")[0].id);
+  shell->RequestDeleteFolder("work",id);ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));shell->HideToast();EXPECT_TRUE(window_->pinned_items("work").empty());
   shell->ShowFolderSaveError();if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_notice_metal_visible();}));
   EXPECT_EQ(u"Nie udało się zapisać folderu",shell->folder_dialog()->widget_delegate()->GetWindowTitle());
   auto* dialog=shell->folder_dialog()->widget_delegate()->AsDialogDelegate();EXPECT_EQ(0,dialog->buttons()&static_cast<int>(ui::mojom::DialogButton::kCancel));
@@ -7527,6 +7537,26 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarColumnLayoutTracksColla
     EXPECT_EQ(first, shell->tab_button(0));
   }
 }
+// Folders start collapsed; a pin opened from outside the sidebar (Command
+// Center) peeks out under its folder alone, and toggling the folder ends that.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CollapsedFoldersRevealOnlyThePinOpenedElsewhere) {
+  ASSERT_NO_FATAL_FAILURE(NavigateBoth());ASSERT_TRUE(window_->Select("work"));
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
+  ASSERT_TRUE(window_->CreatePinnedFolder("work","","Peek folder"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));
+  const auto folder=window_->pinned_items("work").back().id;
+  for(const char* page:{"/storage_probe.html?peek-a","/storage_probe.html?peek-b"}){ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL(page),true));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));}
+  for(size_t index:{2u,1u}){ASSERT_TRUE(window_->PinTab(index,folder,""));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));}
+  std::vector<std::string> pins;for(const auto& item:window_->pinned_items("work"))if(item.parent_id==folder)pins.push_back(item.id);ASSERT_EQ(2u,pins.size());
+  window_->SelectTab(0);shell->CloseOverlays(true);shell->SetPinned(true);shell->ShowSidebar();
+  shell->SetPinnedFoldersCollapsedForTesting(true);EXPECT_TRUE(shell->pinned_folders_collapsed());
+  auto row=[&](const std::string& id){shell->sidebar_widget()->LayoutRootViewIfNecessary();return shell->pin_button(id);};
+  auto drawn=[&](const std::string& id){auto* button=row(id);return button&&button->IsDrawn();};
+  ASSERT_TRUE(row(folder));EXPECT_TRUE(drawn(folder));EXPECT_FALSE(drawn(pins[0]));EXPECT_FALSE(drawn(pins[1]));
+  window_->OpenPinnedItem(pins[1]);ASSERT_TRUE(base::test::RunUntil([&]{return drawn(pins[1]);}));EXPECT_FALSE(drawn(pins[0]));
+  ActivateSidebarRow(row(folder));EXPECT_TRUE(drawn(pins[0]));EXPECT_TRUE(drawn(pins[1]));
+  ActivateSidebarRow(row(folder));EXPECT_TRUE(base::test::RunUntil([&]{return !drawn(pins[0])&&!drawn(pins[1]);}));
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarTreeStateSurvivesRebuildsAndSpaces) {
   auto* shell = window_->shell();
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));

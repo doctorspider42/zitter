@@ -38,6 +38,11 @@ class SidebarTree {
   void SetCollapsed(std::string_view workspace, std::string_view id, bool value);
   bool Toggle(std::string_view workspace, std::string_view id);
   void ForgetWorkspace(std::string_view workspace);
+  // Folders start collapsed when set; a revealed item shows under its collapsed
+  // folder without opening the rest of it.
+  void SetDefaultCollapsed(bool value);
+  bool Revealed(std::string_view workspace, std::string_view id) const;
+  void SetRevealed(std::string_view workspace, std::string_view id, bool value);
  private:
   struct Impl;
   std::unique_ptr<Impl> impl_;

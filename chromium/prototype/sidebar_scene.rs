@@ -10,6 +10,11 @@ use sidebar_editor::EditorState;
 #[allow(dead_code)]
 mod design;
 mod design_tokens;
+// UI language: Polish source strings, English catalogue (t, tf).
+#[allow(dead_code)]
+mod i18n;
+#[allow(unused_imports)]
+use i18n::{t, tf};
 
 #[cxx::bridge(namespace = "zitter::sidebar")]
 mod ffi {
@@ -64,7 +69,7 @@ mod ffi {
     struct ToolsTimelineList { choices: Vec<ToolsTimelineChoice>, enabled: bool }
     struct ToolsHistoryView { empty: String, status: String, more_visible: bool, more_enabled: bool }
     struct ToolsClearControls { label: String, enabled: bool }
-    enum PreferenceRowKind { Theme, Pinned, Animations, Search, Toggle, Text, Picker, Action, Directory, SiteEditor, SiteRules, ClearData, ShortcutHint, WorkspaceNames }
+    enum PreferenceRowKind { Theme, Pinned, Animations, Search, Toggle, Text, Picker, Action, Directory, SiteEditor, SiteRules, ClearData, ShortcutHint, WorkspaceNames, FoldersCollapsed, Language }
     #[repr(u32)]
     #[derive(Debug)]
     enum FormCommand { None, WorkspaceSave, WorkspaceToggle, WorkspaceRemove, WorkspaceProfiles, WorkspaceImport, ProfileCreate, ProfileRename, ProfileDelete, ProfileBack, ImportApply, PreferenceText, PreferenceSite, PreferenceClear, PreferenceDirectory, History, Workspace, Passwords, Profiles, Import, Proxy, Certificates, Providers, Shortcuts, TimeMachine, WorkspaceDismiss, PreferencesDismiss, ImportDismiss, ToolsDismiss, PreferenceCategory, PreferenceMore, WorkspaceColorPreset, WorkspaceEmojiPreset, HistoryMore }
@@ -108,8 +113,6 @@ mod ffi {
     struct ProfileControls { create: bool, edit: bool, rename: bool, confirming: String, status: String }
     // One profile row: the initial stands in for an avatar; detail names the spaces using it.
     struct ProfileRow { id: String, name: String, initial: String, detail: String, current: bool, rename_ax: String, remove_ax: String }
-    enum WorkspaceNoticeAction { None, Delete }
-    struct WorkspaceNoticeRequest { action: WorkspaceNoticeAction, workspace: String }
     struct NoticeCopy { title: String, body: String, accept: String, cancel: String, default_cancel: bool }
     enum FolderNoticeAction { None, Delete, Acknowledge }
     struct FolderNoticeRequest { action: FolderNoticeAction, workspace: String, folder: String }
@@ -239,7 +242,7 @@ mod ffi {
     struct SiteRuleSceneChild { id: u64, parent: u64, key: String, detail: Vec<u16>, editable: bool, cancel_input: bool }
     struct SiteRuleScene { root: u64, children: Vec<SiteRuleSceneChild> }
     struct SiteRuleTarget { valid: bool, index: usize }
-    struct SidebarPinInput { id: String, parent: String, title: Vec<u16>, monogram: Vec<u16>, color: u32, folder: bool, collapsed: bool }
+    struct SidebarPinInput { id: String, parent: String, title: Vec<u16>, monogram: Vec<u16>, color: u32, folder: bool, collapsed: bool, revealed: bool }
     struct SidebarPinBinding { valid: bool, id: u64, key: String, folder: bool, collapsed: bool, group: u64 }
     struct SidebarPinTarget { valid: bool, folder: bool, collapsed: bool, group: u64 }
     struct SidebarPinTreeEntry { index: usize, key: String, id: u64, parent: u64, group: u64, depth: i32, collapsed: bool, visible: bool }
@@ -427,13 +430,6 @@ mod ffi {
         // Arrow keys: axis 0 hue, 1 saturation, 2 tone.
         fn color_wheel_step(current: u32, axis: u32, delta: i32) -> u32;
         fn color_wheel_description(current: u32, ring: bool) -> String;
-        type WorkspaceNotice;
-        fn new_workspace_notice(workspace: &str, title: &str) -> Box<WorkspaceNotice>;
-        fn copy(self: &WorkspaceNotice) -> NoticeCopy;
-        fn error(self: &WorkspaceNotice) -> &str;
-        fn submit(self: &mut WorkspaceNotice, ready: bool, busy: bool, workspaces: &[ProfileUse]) -> WorkspaceNoticeRequest;
-        fn finish_attempt(self: &mut WorkspaceNotice, accepted: bool);
-        fn cancel(self: &mut WorkspaceNotice);
         type WorkspaceForm;
         fn new_workspace_form() -> Box<WorkspaceForm>;
         fn workspace_copy() -> WorkspaceCopy;
@@ -590,6 +586,9 @@ mod ffi {
         fn set_collapsed(self: &mut SidebarTree, workspace: &str, id: &str, value: bool);
         fn toggle(self: &mut SidebarTree, workspace: &str, id: &str) -> bool;
         fn forget_workspace(self: &mut SidebarTree, workspace: &str);
+        fn set_default_collapsed(self: &mut SidebarTree, value: bool);
+        fn revealed(self: &SidebarTree, workspace: &str, id: &str) -> bool;
+        fn set_revealed(self: &mut SidebarTree, workspace: &str, id: &str, value: bool);
         type ActionGraph;
         fn new_action_graph() -> Box<ActionGraph>;
         fn reconcile(self: &mut ActionGraph, keys: Vec<ActionNodeKey>) -> ActionNodePlan;
@@ -651,6 +650,11 @@ mod ffi {
         fn node_toggle_finish(self: &mut ActionControl) -> bool;
         fn node_toggle_view(self: &ActionControl, now: u64) -> NodeToggleView;
         fn new_action_control() -> Box<ActionControl>;
+        // UI language: set once at startup from the locale; translate() looks a
+        // Polish source string up for the active language.
+        fn set_ui_language(locale: &str);
+        fn ui_language_is_english() -> bool;
+        fn translate(polish: &str) -> String;
         fn action_preferred_size(dot: bool, label: bool) -> Rect;
         fn action_enabled(self: &mut ActionControl, enabled: bool) -> bool;
         fn action_focus(self: &mut ActionControl, focused: bool);
@@ -792,7 +796,7 @@ fn workspace_copy() -> ffi::WorkspaceCopy {
         close: "Zamknij ustawienia przestrzeni".into(), appearance: "Wygląd · zapisuje się od razu".into(),
         color: "Kolor".into(), color_ax: "Kolor przestrzeni #RRGGBB".into(),
         emoji: "Ikona".into(), emoji_ax: "Emoji przestrzeni".into(), emoji_placeholder: "Wpisz emoji".into(), more_emoji: "Więcej emoji…".into(),
-        more: "Więcej opcji".into(), manage: "Zarządzaj profilami".into(), import_label: "Importuj z przeglądarki…".into(), remove_label: "Usuń przestrzeń…".into(),
+        more: "Więcej opcji".into(), manage: "Zarządzaj profilami".into(), import_label: "Importuj z przeglądarki…".into(), remove_label: "Usuń przestrzeń".into(),
     }
 }
 fn workspace_appearance_error(kind: u32) -> String {
@@ -1168,6 +1172,8 @@ fn preference_catalogue(system_certificates:bool)->ffi::PreferenceCatalogue {
     rows.push(preference_spec(0,K::Pinned,"","Zawsze widoczny panel kart","Przypnij karty i przestrzenie przy lewej krawędzi.",vec![],"",A::None));
     rows.push(preference_spec(0,K::Animations,"","Animacje przestrzeni","Płynne przejścia. Systemowe ograniczenie ruchu ma pierwszeństwo.",vec![],"",A::None));
     rows.push(preference_spec(0,K::WorkspaceNames,"","Nazwa aktywnej przestrzeni","Pokazuj nazwę obok kropki aktywnej przestrzeni na dole panelu kart.",vec![],"",A::None));
+    rows.push(preference_spec(0,K::Language,"","Język interfejsu","Zmiana zadziała po ponownym uruchomieniu Zitter.",vec!["Systemowy".into(),"Polski".into(),"English".into()],"",A::None));
+    rows.push(preference_spec(0,K::FoldersCollapsed,"","Zwinięte foldery przypiętych","Foldery startują zwinięte. Karta otwarta z Command Center pokazuje się pod folderem bez rozwijania reszty.",vec![],"",A::None));
     rows.push(preference_spec(1,K::Search,"","Domyślna wyszukiwarka","Używana, gdy wpiszesz zapytanie w pasku adresu.",vec!["DuckDuckGo".into(),"Google".into(),"Bing".into()],"",A::None));
     rows.push(preference_spec(2,K::Toggle,"referrers","Przekazuj adres strony odsyłającej","Nagłówek Referer pomaga witrynie rozpoznać, skąd pochodzi wejście. Wyłączenie może zmienić działanie niektórych serwisów.",vec![],"",A::None));
     rows.push(preference_spec(2,K::Toggle,"https_only","Zawsze używaj HTTPS","Wymagaj bezpiecznego połączenia. Witryny bez HTTPS mogą wyświetlić ostrzeżenie.",vec![],"",A::None));
@@ -1601,36 +1607,6 @@ fn appearance_pill_layout(width:i32,height:i32,count:usize)->ffi::ColumnLayout{
     ffi::ColumnLayout{width,height:natural_height.max(0).max(if height<0{0}else{height}),children}
 }
 
-// A workspace notice targets the captured ID, independently of the currently
-// selected workspace. Removing a workspace never emits a profile deletion.
-pub struct WorkspaceNotice { workspace: String, title: String, error: String, submitting: bool, closed: bool }
-fn new_workspace_notice(workspace: &str, title: &str) -> Box<WorkspaceNotice> {
-    Box::new(WorkspaceNotice { workspace: workspace.into(), title: title.into(), error: String::new(), submitting: false, closed: false })
-}
-impl WorkspaceNotice {
-    fn copy(&self) -> ffi::NoticeCopy {
-        ffi::NoticeCopy { title: format!("Usunąć przestrzeń „{}”?", self.title),
-            body: "Przestrzeń, jej karty i przypięte elementy zostaną usunięte. Tej operacji nie można cofnąć.\n\nProfil przeglądania, hasła, historia i cookies pozostaną zachowane.".into(),
-            accept: "Usuń przestrzeń".into(), cancel: "Anuluj".into(), default_cancel: true }
-    }
-    fn error(&self) -> &str { &self.error }
-    fn submit(&mut self, ready: bool, busy: bool, workspaces: &[ffi::ProfileUse]) -> ffi::WorkspaceNoticeRequest {
-        let none=||ffi::WorkspaceNoticeRequest { action: ffi::WorkspaceNoticeAction::None, workspace: String::new() };
-        if self.closed||self.submitting { return none(); }
-        if !ready||busy { self.error="Poczekaj na zakończenie zapisywania.".into(); return none(); }
-        if self.workspace.is_empty()||!workspaces.iter().any(|w|w.workspace==self.workspace) { self.error="Przestrzeń nie jest już dostępna.".into(); return none(); }
-        if workspaces.len()<=1 { self.error="Nie można usunąć ostatniej przestrzeni.".into(); return none(); }
-        self.error.clear();self.submitting=true;
-        ffi::WorkspaceNoticeRequest { action: ffi::WorkspaceNoticeAction::Delete, workspace: self.workspace.clone() }
-    }
-    fn finish_attempt(&mut self, accepted: bool) {
-        if !self.submitting { return; }
-        self.submitting=false;self.closed=accepted;
-        if !accepted { self.error="Nie udało się usunąć przestrzeni. Spróbuj ponownie.".into(); }
-    }
-    fn cancel(&mut self) { self.closed=true;self.submitting=false; }
-}
-
 pub struct FolderNotice { workspace:String, folder:String, title:String, error_only:bool, error:String, submitting:bool, closed:bool }
 fn new_folder_notice(workspace:&str,folder:&str,title:&str,error_only:bool)->Box<FolderNotice>{Box::new(FolderNotice{workspace:workspace.into(),folder:folder.into(),title:title.into(),error_only,error:String::new(),submitting:false,closed:false})}
 impl FolderNotice {
@@ -1843,7 +1819,7 @@ const FOLDER_NEW:i32=36;const FOLDER_RENAME:i32=37;const FOLDER_DELETE:i32=38;
 fn folder_context_menu(s:&ffi::FolderMenuState)->Vec<ffi::FolderMenuEntry>{
     let entry=|command,label:&str|ffi::FolderMenuEntry{command,label:label.into()};
     let mut entries=vec![entry(FOLDER_NEW,if s.folder.is_empty(){"Nowy folder…"}else{"Nowy podfolder…"})];
-    if !s.folder.is_empty(){entries.extend([entry(0,""),entry(FOLDER_RENAME,"Zmień nazwę…"),entry(FOLDER_DELETE,"Usuń folder…")]);}entries
+    if !s.folder.is_empty(){entries.extend([entry(0,""),entry(FOLDER_RENAME,"Zmień nazwę…"),entry(FOLDER_DELETE,"Usuń folder")]);}entries
 }
 fn folder_menu_enabled(command:i32,s:&ffi::FolderMenuState)->bool{
     s.ready&&!s.busy&&!s.workspace.is_empty()&&match command{FOLDER_NEW=>true,FOLDER_RENAME|FOLDER_DELETE=>!s.folder.is_empty(),_=>false}
@@ -1870,7 +1846,7 @@ fn workspace_context_menu(s:&ffi::WorkspaceMenuState)->Vec<ffi::WorkspaceMenuEnt
     for (index,emoji) in APPEARANCE_EMOJIS.iter().enumerate(){add(WS_EMOJI_BASE+index as i32,emoji,4,3);}
     add(0,"",1,3);add(WS_CUSTOM_EMOJI,"Własna ikonka…",0,3);add(WS_CLEAR_EMOJI,"Bez ikonki (kropka)",4,3);
     add(WS_SET_PROFILE,"Profil przeglądania",2,0);add(WS_COLOR_MENU,"Kolor przestrzeni",2,0);add(WS_EMOJI_MENU,"Ikonka przestrzeni",2,0);add(0,"",1,0);
-    add(WS_SETTINGS,"Nazwa i ustawienia…",0,0);add(WS_REMOVE,"Usuń przestrzeń…",0,0);entries
+    add(WS_SETTINGS,"Nazwa i ustawienia…",0,0);add(WS_REMOVE,"Usuń przestrzeń",0,0);entries
 }
 fn workspace_menu_enabled(command:i32,s:&ffi::WorkspaceMenuState)->bool{
     if !s.ready||s.workspace.is_empty()||!workspace_menu_command(command,s.profiles.len()){return false;}
@@ -2201,25 +2177,41 @@ impl Viewport {
 use std::collections::{BTreeMap, BTreeSet};
 use std::cell::RefCell;
 use std::rc::Rc;
+// Folders start in `default_collapsed`; `overrides` lists the ones the user
+// flipped. A revealed item stays shown under its collapsed folder (the folder
+// opens just far enough for it) until that folder is toggled.
 #[derive(Default)]
-struct SidebarTree { collapsed: BTreeMap<String, BTreeSet<String>> }
+struct SidebarTree { overrides: BTreeMap<String, BTreeSet<String>>, default_collapsed: bool, revealed: BTreeMap<String, BTreeSet<String>> }
 fn new_sidebar_tree() -> Box<SidebarTree> { Box::new(SidebarTree::default()) }
+fn set_member(sets: &mut BTreeMap<String, BTreeSet<String>>, workspace: &str, id: &str, value: bool) {
+    if value {sets.entry(workspace.into()).or_default().insert(id.into());}
+    else if let Some(ids) = sets.get_mut(workspace) {
+        ids.remove(id);
+        if ids.is_empty() {sets.remove(workspace);}
+    }
+}
 impl SidebarTree {
     fn collapsed(&self, workspace: &str, id: &str) -> bool {
-        self.collapsed.get(workspace).is_some_and(|ids| ids.contains(id))
+        self.default_collapsed != self.overrides.get(workspace).is_some_and(|ids| ids.contains(id))
     }
     fn set_collapsed(&mut self, workspace: &str, id: &str, value: bool) {
-        if value {self.collapsed.entry(workspace.into()).or_default().insert(id.into());}
-        else if let Some(ids) = self.collapsed.get_mut(workspace) {
-            ids.remove(id);
-            if ids.is_empty() {self.collapsed.remove(workspace);}
-        }
+        set_member(&mut self.overrides, workspace, id, value != self.default_collapsed);
+    }
+    // A new default applies to every folder: earlier flips and peeks are dropped.
+    fn set_default_collapsed(&mut self, value: bool) {
+        if self.default_collapsed != value {self.default_collapsed = value; self.overrides.clear(); self.revealed.clear();}
+    }
+    fn revealed(&self, workspace: &str, id: &str) -> bool {
+        self.revealed.get(workspace).is_some_and(|ids| ids.contains(id))
+    }
+    fn set_revealed(&mut self, workspace: &str, id: &str, value: bool) {
+        set_member(&mut self.revealed, workspace, id, value);
     }
     fn toggle(&mut self, workspace: &str, id: &str) -> bool {
         let collapsed = !self.collapsed(workspace, id);
         self.set_collapsed(workspace, id, collapsed); collapsed
     }
-    fn forget_workspace(&mut self, workspace: &str) {self.collapsed.remove(workspace);}
+    fn forget_workspace(&mut self, workspace: &str) {self.overrides.remove(workspace);self.revealed.remove(workspace);}
     fn tab_plan(&self, workspace: &str, nodes: &[ffi::TreeNode], tabs: &[ffi::TabNode],
                 members: &[usize], split: bool) -> ffi::TabPlan {
         let tree = self.tree_plan(workspace, nodes);
@@ -2278,7 +2270,8 @@ impl SidebarTree {
             if node.folder {
                 if let Some(descendants) = children.get(node.id.as_str()) {
                     for &child in descendants.iter().rev() {
-                        pending.push((child, index, depth + 1, visible && !collapsed));
+                        let shown = !collapsed || self.revealed(workspace, &nodes[child].id);
+                        pending.push((child, index, depth + 1, visible && shown));
                     }
                 }
             }
@@ -2354,6 +2347,9 @@ impl RowPointer {
 // An action's state outlives individual native events; no Button state is read.
 struct ActionState { admission_epoch:u64, pointer:RowPointer, enabled:bool, focused:bool, on:bool, is_default:bool, on_press:bool, visual:ffi::RowVisual }
 fn initial_action_state()->ActionState{ActionState{admission_epoch:1,pointer:RowPointer::default(),enabled:true,focused:false,on:false,is_default:false,on_press:false,visual:ffi::RowVisual::Normal}}
+fn set_ui_language(locale:&str){i18n::set_language(locale)}
+fn ui_language_is_english()->bool{i18n::language()==i18n::Language::English}
+fn translate(polish:&str)->String{i18n::translate(polish)}
 fn new_action_control()->Box<ActionControl>{Box::new(ActionControl{storage:ActionStorage::Standalone(initial_action_state())})}
 fn action_preferred_size(dot:bool,label:bool)->ffi::Rect{ffi::Rect{x:0,y:0,width:if dot{if label{30}else{24}}else{32},height:if dot{28}else{32}}}
 impl ActionState {
@@ -2415,13 +2411,13 @@ struct SiteRulePresentation {detail:Vec<u16>,editable:bool,source_index:usize,ca
 struct SidebarRowPresentation {title:Vec<u16>,monogram:Vec<u16>,title_utf8:String,monogram_utf8:String,color:u32,tile:bool,folder:bool}
 impl SidebarRowPresentation {fn height(&self)->i32{if self.tile{38}else{34}}}
 struct SidebarTabModel {high:u64,low:u64,index:usize,pin:String,pair:u64,visible:bool,can_close:bool,presentation:Option<SidebarRowPresentation>}
-struct SidebarPinModel {row_shown:bool,key:String,parent_key:String,index:usize,rank:usize,depth:i32,reachable:bool,visible:bool,group:u64,base_title:Vec<u16>,collapsed:bool,presentation:SidebarRowPresentation}
+struct SidebarPinModel {row_shown:bool,key:String,parent_key:String,index:usize,rank:usize,depth:i32,reachable:bool,visible:bool,group:u64,base_title:Vec<u16>,collapsed:bool,revealed:bool,presentation:SidebarRowPresentation}
 struct SidebarPinGroupModel {owner:u64,visible:bool}
 fn pin_title(base:&[u16],folder:bool,collapsed:bool)->Vec<u16>{if !folder{return base.to_vec();}let mut title=Vec::with_capacity(base.len()+2);title.extend_from_slice(&[if collapsed{0x25b8}else{0x25be},0x20]);title.extend_from_slice(base);title}
 impl SidebarPinModel {
-    fn from_input(input:ffi::SidebarPinInput)->Self{let title=pin_title(&input.title,input.folder,input.collapsed);Self{row_shown:true,key:input.id,parent_key:input.parent,index:0,rank:usize::MAX,depth:0,reachable:false,visible:false,group:0,base_title:if input.folder{input.title}else{vec![]},collapsed:input.collapsed,presentation:SidebarRowPresentation{title_utf8:String::from_utf16_lossy(&title),monogram_utf8:if input.folder{"📁".into()}else{String::from_utf16_lossy(&input.monogram)},title,monogram:input.monogram,color:input.color,tile:false,folder:input.folder}}}
+    fn from_input(input:ffi::SidebarPinInput)->Self{let title=pin_title(&input.title,input.folder,input.collapsed);Self{row_shown:true,key:input.id,parent_key:input.parent,index:0,rank:usize::MAX,depth:0,reachable:false,visible:false,group:0,base_title:if input.folder{input.title}else{vec![]},collapsed:input.collapsed,revealed:input.revealed,presentation:SidebarRowPresentation{title_utf8:String::from_utf16_lossy(&title),monogram_utf8:if input.folder{"📁".into()}else{String::from_utf16_lossy(&input.monogram)},title,monogram:input.monogram,color:input.color,tile:false,folder:input.folder}}}
 }
-#[cfg(test)] impl From<&str> for ffi::SidebarPinInput{fn from(id:&str)->Self{Self{id:id.into(),parent:String::new(),title:id.encode_utf16().collect(),monogram:vec![],color:0,folder:false,collapsed:false}}}
+#[cfg(test)] impl From<&str> for ffi::SidebarPinInput{fn from(id:&str)->Self{Self{id:id.into(),parent:String::new(),title:id.encode_utf16().collect(),monogram:vec![],color:0,folder:false,collapsed:false,revealed:false}}}
 
 struct FormCommandModel {command:ffi::FormCommand,key:String,index:usize}
 // The semantic command owns its panel; native code only resolves the widget.
@@ -2624,7 +2620,7 @@ impl ActionGraph {
         let mut indices=BTreeSet::new();if tabs.iter().any(|tab|!indices.insert(tab.index)||self.nodes.get(&(1,tab.high,tab.low,String::new())).is_some_and(|node|node.borrow().model.as_deref().is_some_and(|m|!matches!(m,NodeModel::SidebarTab(_))))){return self.rejected();}
         if self.nodes.get(&(11,0,0,"sidebar.tabs".into())).is_some_and(|n|n.borrow().model.as_deref().is_some_and(|m|!matches!(m,NodeModel::SidebarTabs(_))))||self.nodes.get(&(15,0,0,"sidebar.pair".into())).is_some_and(|n|n.borrow().model.as_deref().is_some_and(|m|!matches!(m,NodeModel::SidebarPair(_)))){return self.rejected();}
         let old_layout=self.nodes.get(&(11,0,0,"sidebar.tabs".into())).and_then(|n|{let n=n.borrow();if let Some(NodeModel::SidebarTabs(m))=n.model.as_deref(){Some((m.members.clone(),m.split))}else{None}});let old_pair_parent=self.nodes.get(&(15,0,0,"sidebar.pair".into())).map(|n|n.borrow().parent);
-        let nodes=pins.iter().map(|p|ffi::TreeNode{id:p.id.clone(),parent:p.parent.clone(),folder:p.folder}).collect::<Vec<_>>();let mut tree=new_sidebar_tree();for pin in &pins{if pin.folder&&pin.collapsed{tree.set_collapsed("",&pin.id,true);}}let tab_nodes=tabs.iter().map(|t|ffi::TabNode{index:t.index,pin:t.pin.clone()}).collect::<Vec<_>>();let tab_plan=tree.tab_plan("",&nodes,&tab_nodes,&members,split);let pair_slot=tab_plan.slots.iter().find(|slot|slot.pair).map(|slot|(slot.members.clone(),slot.pin));let pin_shown=tab_plan.pins.iter().map(|p|(p.index,p.visible)).collect::<BTreeMap<_,_>>();let layout=tree.tree_plan("",&nodes);let positions=layout.iter().enumerate().map(|(rank,e)|(e.index,(rank,e))).collect::<BTreeMap<_,_>>();
+        let nodes=pins.iter().map(|p|ffi::TreeNode{id:p.id.clone(),parent:p.parent.clone(),folder:p.folder}).collect::<Vec<_>>();let mut tree=new_sidebar_tree();for pin in &pins{if pin.folder&&pin.collapsed{tree.set_collapsed("",&pin.id,true);}if pin.revealed{tree.set_revealed("",&pin.id,true);}}let peeking=pins.iter().filter(|p|p.revealed).map(|p|p.parent.clone()).collect::<BTreeSet<_>>();let tab_nodes=tabs.iter().map(|t|ffi::TabNode{index:t.index,pin:t.pin.clone()}).collect::<Vec<_>>();let tab_plan=tree.tab_plan("",&nodes,&tab_nodes,&members,split);let pair_slot=tab_plan.slots.iter().find(|slot|slot.pair).map(|slot|(slot.members.clone(),slot.pin));let pin_shown=tab_plan.pins.iter().map(|p|(p.index,p.visible)).collect::<BTreeMap<_,_>>();let layout=tree.tree_plan("",&nodes);let positions=layout.iter().enumerate().map(|(rank,e)|(e.index,(rank,e))).collect::<BTreeMap<_,_>>();
         let tab_root=(11,0,0,"sidebar.tabs".to_owned());let pin_root=(11,0,0,"sidebar.pins".to_owned());let mut keys=Vec::with_capacity(2+pins.len()*2+tabs.len()*2);let mut edges=BTreeMap::new();
         for root in [&tab_root,&pin_root]{keys.push(ffi::ActionNodeKey{kind:11,high:0,low:0,name:root.3.clone()});edges.insert(root.clone(),None);}
         for (index,pin) in pins.iter().enumerate(){let parent=positions.get(&index).map(|(_,entry)|if entry.parent==usize::MAX{pin_root.clone()}else{(14,0,0,pins[entry.parent].id.clone())});let key=(2,0,0,pin.id.clone());keys.push(ffi::ActionNodeKey{kind:2,high:0,low:0,name:pin.id.clone()});edges.insert(key,parent.clone());if pin.folder{keys.push(ffi::ActionNodeKey{kind:14,high:0,low:0,name:pin.id.clone()});edges.insert((14,0,0,pin.id.clone()),parent);}}
@@ -2633,7 +2629,7 @@ impl ActionGraph {
         let can_close=tabs.len()>1;for (position,tab) in tabs.iter().enumerate(){let key=(1,tab.high,tab.low,String::new());keys.push(ffi::ActionNodeKey{kind:1,high:tab.high,low:tab.low,name:String::new()});edges.insert(key.clone(),Some(if pair_slot.as_ref().is_some_and(|(group,_)|group.contains(&position)){pair_key.clone()}else{tab_root.clone()}));if can_close{keys.push(ffi::ActionNodeKey{kind:10,high:tab.high,low:tab.low,name:String::new()});edges.insert((10,tab.high,tab.low,String::new()),Some(key));}}
         let old_order=self.order.clone();let plan=self.reconcile_with_parents(keys,Some(&edges));if !plan.admitted{return plan;}let mut invalidated=old_order!=plan.ids||old_layout.as_ref()!=Some(&(members.clone(),split));
         for (index,pin) in pins.into_iter().enumerate(){let key=(2,0,0,pin.id.clone());let group=if pin.folder{self.nodes[&(14,0,0,pin.id.clone())].borrow().id}else{0};let mut next=SidebarPinModel::from_input(pin);next.index=index;next.group=group;next.row_shown=pin_shown.get(&index).copied().unwrap_or(true);if let Some((rank,entry))=positions.get(&index){next.rank=*rank;next.depth=entry.depth;next.reachable=true;next.visible=entry.visible&&next.row_shown;}
-            let mut node=self.nodes[&key].borrow_mut();let changed=match node.model.as_deref(){Some(NodeModel::SidebarPin(p))=>p.parent_key!=next.parent_key||p.rank!=next.rank||p.visible!=next.visible||p.collapsed!=next.collapsed||p.presentation.title!=next.presentation.title||p.presentation.monogram!=next.presentation.monogram||p.presentation.color!=next.presentation.color||p.presentation.folder!=next.presentation.folder,_=>true};if group!=0{self.nodes[&(14,0,0,next.key.clone())].borrow_mut().model=Some(Box::new(NodeModel::SidebarPinGroup(SidebarPinGroupModel{owner:node.id,visible:positions.get(&index).is_some_and(|(_,entry)|entry.visible)&&!next.collapsed})));}node.model=Some(Box::new(NodeModel::SidebarPin(next)));if changed{node.state.action_cancel();}}
+            let mut node=self.nodes[&key].borrow_mut();let changed=match node.model.as_deref(){Some(NodeModel::SidebarPin(p))=>p.parent_key!=next.parent_key||p.rank!=next.rank||p.visible!=next.visible||p.collapsed!=next.collapsed||p.revealed!=next.revealed||p.presentation.title!=next.presentation.title||p.presentation.monogram!=next.presentation.monogram||p.presentation.color!=next.presentation.color||p.presentation.folder!=next.presentation.folder,_=>true};if group!=0{self.nodes[&(14,0,0,next.key.clone())].borrow_mut().model=Some(Box::new(NodeModel::SidebarPinGroup(SidebarPinGroupModel{owner:node.id,visible:positions.get(&index).is_some_and(|(_,entry)|entry.visible)&&(!next.collapsed||peeking.contains(&next.key))})));}node.model=Some(Box::new(NodeModel::SidebarPin(next)));if changed{node.state.action_cancel();}}
         let pair_id=pair_slot.as_ref().map_or(0,|_|self.nodes[&pair_key].borrow().id);let pair_visible=pair_slot.as_ref().is_none_or(|(_,pin)|*pin==usize::MAX||positions.get(pin).is_some_and(|(_,entry)|entry.visible));
         if let Some((group,_))=&pair_slot{let mut pair=self.nodes[&pair_key].borrow_mut();invalidated|=old_pair_parent!=Some(pair.parent);pair.model=Some(Box::new(NodeModel::SidebarPair(SidebarPairModel{members:group.iter().map(|&i|(tabs[i].high,tabs[i].low)).collect(),visible:pair_visible})));}
         for (position,tab) in tabs.into_iter().enumerate(){let pair=if pair_slot.as_ref().is_some_and(|(group,_)|group.contains(&position)){pair_id}else{0};let visible=pair==0||pair_visible;let mut node=self.nodes[&(1,tab.high,tab.low,String::new())].borrow_mut();invalidated|=matches!(node.model.as_deref(),Some(NodeModel::SidebarTab(p)) if p.index!=tab.index||p.pin!=tab.pin||p.pair!=pair||p.visible!=visible||p.can_close!=can_close);if let Some(NodeModel::SidebarTab(p))=node.model.as_deref_mut(){p.index=tab.index;p.pin=tab.pin;p.pair=pair;p.visible=visible;p.can_close=can_close;}else{node.model=Some(Box::new(NodeModel::SidebarTab(SidebarTabModel{high:tab.high,low:tab.low,index:tab.index,pin:tab.pin,pair,visible,can_close,presentation:None})));}}
@@ -2643,9 +2639,17 @@ impl ActionGraph {
     fn sidebar_tabs(&self)->ffi::SidebarTabTree{let root=self.nodes.get(&(11,0,0,"sidebar.tabs".into())).map_or(0,|n|n.borrow().id);let pair=self.nodes.get(&(15,0,0,"sidebar.pair".into())).map(|n|n.borrow());let mut result=ffi::SidebarTabTree{root,pair:pair.as_ref().map_or(0,|p|p.id),parent:pair.as_ref().map_or(0,|p|p.parent),visible:pair.as_ref().is_none_or(|p|matches!(p.model.as_deref(),Some(NodeModel::SidebarPair(m)) if m.visible)),slots:vec![],pins:vec![]};if let Some(node)=self.nodes.get(&(11,0,0,"sidebar.tabs".into())){if let Some(NodeModel::SidebarTabs(m))=node.borrow().model.as_deref(){result.slots=m.plan.slots.iter().map(|s|ffi::TabSlot{first:s.first,members:s.members.clone(),pin:s.pin,pair:s.pair}).collect();result.pins=m.plan.pins.iter().map(|p|ffi::PinVisibility{index:p.index,visible:p.visible}).collect();}}result}
     fn refresh_pair_visibility(&mut self){let Some(pair)=self.nodes.get(&(15,0,0,"sidebar.pair".into())).cloned() else{return;};let parent=pair.borrow().parent;let visible=self.nodes.values().find_map(|node|{let node=node.borrow();if node.id!=parent{return None;}Some(match node.model.as_deref(){Some(NodeModel::SidebarPinGroup(m))=>m.visible,_=>true})}).unwrap_or(false);let (id,members)={let mut pair=pair.borrow_mut();let id=pair.id;let Some(NodeModel::SidebarPair(m))=pair.model.as_deref_mut() else{return;};m.visible=visible;(id,m.members.clone())};for (high,low) in members{if let Some(node)=self.nodes.get(&(1,high,low,String::new())){let mut node=node.borrow_mut();if let Some(NodeModel::SidebarTab(m))=node.model.as_deref_mut(){if m.pair==id&&m.visible!=visible{m.visible=visible;node.state.action_cancel();if let Some(close)=self.nodes.get(&(10,high,low,String::new())){close.borrow_mut().state.action_cancel();}}}}}}
     fn pin_tree(&self)->ffi::SidebarPinTree{let root=self.nodes.get(&(11,0,0,"sidebar.pins".into())).map_or(0,|n|n.borrow().id);let mut ordered=self.nodes.values().filter_map(|node|{let node=node.borrow();if let Some(NodeModel::SidebarPin(p))=node.model.as_deref(){if p.reachable{return Some((p.rank,ffi::SidebarPinTreeEntry{index:p.index,key:p.key.clone(),id:node.id,parent:node.parent,group:p.group,depth:p.depth,collapsed:p.collapsed,visible:p.visible}));}}None}).collect::<Vec<_>>();ordered.sort_by_key(|(rank,_)|*rank);ffi::SidebarPinTree{root,entries:ordered.into_iter().map(|(_,entry)|entry).collect()}}
-    fn refresh_pin_visibility(&mut self){let tree=self.pin_tree();let mut visible=BTreeMap::from([(tree.root,true)]);for entry in tree.entries{let shown=visible.get(&entry.parent).copied().unwrap_or(false);let mut row=self.nodes[&(2,0,0,entry.key.clone())].borrow_mut();if let Some(NodeModel::SidebarPin(p))=row.model.as_deref_mut(){let next=shown&&p.row_shown;let changed=p.visible!=next;p.visible=next;if changed{row.state.action_cancel();}}if entry.group!=0{let mut group=self.nodes[&(14,0,0,entry.key)].borrow_mut();if let Some(NodeModel::SidebarPinGroup(p))=group.model.as_deref_mut(){p.visible=shown&&!entry.collapsed;visible.insert(entry.group,p.visible);}}}self.refresh_pair_visibility();}
+    fn refresh_pin_visibility(&mut self){
+        // `open` groups show every child; a collapsed group still shows (and is
+        // itself shown for) the children revealed under it.
+        let tree=self.pin_tree();let revealed=|key:&str|self.nodes.get(&(2,0,0,key.to_owned())).is_some_and(|n|matches!(n.borrow().model.as_deref(),Some(NodeModel::SidebarPin(p)) if p.revealed));
+        let peeking=tree.entries.iter().filter(|e|revealed(&e.key)).map(|e|e.parent).collect::<BTreeSet<_>>();let flags=tree.entries.iter().map(|e|revealed(&e.key)).collect::<Vec<_>>();
+        let mut open=BTreeMap::from([(tree.root,true)]);let mut shown_groups=BTreeMap::from([(tree.root,true)]);
+        for (entry,revealed) in tree.entries.into_iter().zip(flags){let shown=open.get(&entry.parent).copied().unwrap_or(false)||(revealed&&shown_groups.get(&entry.parent).copied().unwrap_or(false));let mut row=self.nodes[&(2,0,0,entry.key.clone())].borrow_mut();if let Some(NodeModel::SidebarPin(p))=row.model.as_deref_mut(){let next=shown&&p.row_shown;let changed=p.visible!=next;p.visible=next;if changed{row.state.action_cancel();}}drop(row);if entry.group!=0{let mut group=self.nodes[&(14,0,0,entry.key)].borrow_mut();if let Some(NodeModel::SidebarPinGroup(p))=group.model.as_deref_mut(){p.visible=shown&&(!entry.collapsed||peeking.contains(&entry.group));open.insert(entry.group,shown&&!entry.collapsed);shown_groups.insert(entry.group,p.visible);}}}self.refresh_pair_visibility();}
     fn pin_target(&self,key:&str,id:u64)->ffi::SidebarPinTarget{let invalid=||ffi::SidebarPinTarget{valid:false,folder:false,collapsed:false,group:0};let Some(node)=self.nodes.get(&(2,0,0,key.into())) else{return invalid();};let node=node.borrow();if !node.alive||!node.attached||!node.state.enabled||id==0||node.id!=id{return invalid();}if let Some(NodeModel::SidebarPin(pin))=node.model.as_deref(){if !pin.reachable||!pin.visible{return invalid();}if pin.presentation.folder{let Some(group)=self.nodes.get(&(14,0,0,key.into())) else{return invalid();};let group=group.borrow();if !matches!(group.model.as_deref(),Some(NodeModel::SidebarPinGroup(p)) if p.owner==id)||group.id!=pin.group||group.parent!=node.parent{return invalid();}}ffi::SidebarPinTarget{valid:true,folder:pin.presentation.folder,collapsed:pin.collapsed,group:pin.group}}else{invalid()}}
-    fn set_pin_collapsed(&mut self,input:&ActionControl,collapsed:bool)->bool{if !self.owns_input(input){return false;}let binding=input.pin_binding();if !binding.valid||!binding.folder{return false;}{let Some(node)=self.nodes.get(&(2,0,0,binding.key)) else{return false;};let mut node=node.borrow_mut();let Some(NodeModel::SidebarPin(pin))=node.model.as_deref_mut() else{return false;};if pin.collapsed!=collapsed{pin.collapsed=collapsed;pin.presentation.title=pin_title(&pin.base_title,true,collapsed);pin.presentation.title_utf8=String::from_utf16_lossy(&pin.presentation.title);}}self.refresh_pin_visibility();true}
+    fn set_pin_collapsed(&mut self,input:&ActionControl,collapsed:bool)->bool{if !self.owns_input(input){return false;}let binding=input.pin_binding();if !binding.valid||!binding.folder{return false;}{let Some(node)=self.nodes.get(&(2,0,0,binding.key)) else{return false;};let mut node=node.borrow_mut();let Some(NodeModel::SidebarPin(pin))=node.model.as_deref_mut() else{return false;};if pin.collapsed!=collapsed{pin.collapsed=collapsed;pin.presentation.title=pin_title(&pin.base_title,true,collapsed);pin.presentation.title_utf8=String::from_utf16_lossy(&pin.presentation.title);}}
+        // Toggling a folder ends the peek of the items revealed under it.
+        let folder=input.pin_binding().key;for node in self.nodes.values(){if let Some(NodeModel::SidebarPin(p))=node.borrow_mut().model.as_deref_mut(){if p.parent_key==folder{p.revealed=false;}}}self.refresh_pin_visibility();true}
     fn project_tab(&mut self,input:&ActionControl,title:Vec<u16>,monogram:Vec<u16>,color:u32,tile:bool)->ffi::SidebarTabUpdate{
         let rejected=||ffi::SidebarTabUpdate{admitted:false,changed:false,title_changed:false,geometry_changed:false};
         if !self.owns_input(input){return rejected();}let binding=input.tab_binding();if !binding.valid{return rejected();}
@@ -4064,10 +4068,10 @@ mod tests {
     }
     #[test] fn preference_catalogue_preserves_categories_counts_and_platform_gate() {
         use ffi::PreferenceRowKind as K;use ffi::PreferenceActionKind as A;
-        let c=preference_catalogue(true);assert_eq!(c.categories,["Wygląd","Wyszukiwanie","Prywatność","Uprawnienia stron","Treści i czytelność","Hasła i profile","Pobieranie","Języki i pisownia","Dane przeglądania","Zaawansowane"]);assert_eq!(c.descriptions.len(),10);assert_eq!(c.rows.len(),53);
-        let mut counts=[0;10];for row in &c.rows{counts[row.category]+=1;assert!(!row.title.is_empty()&&!row.detail.is_empty());}assert_eq!(counts,[6,4,7,7,12,5,2,3,1,6]);
-        assert_eq!(c.rows.iter().filter(|r|r.kind==K::Toggle||r.kind==K::Pinned||r.kind==K::Animations||r.kind==K::WorkspaceNames).count(),25);assert_eq!(c.rows.iter().filter(|r|r.kind==K::Text).count(),6);
-        let no=preference_catalogue(false);assert_eq!(no.rows.len(),52);assert!(no.rows.iter().all(|r|r.action!=A::Certificates));assert!(c.rows.iter().filter(|r|r.action!=A::Certificates).map(|r|(&r.title,&r.detail,r.category)).eq(no.rows.iter().map(|r|(&r.title,&r.detail,r.category))));
+        let c=preference_catalogue(true);assert_eq!(c.categories,["Wygląd","Wyszukiwanie","Prywatność","Uprawnienia stron","Treści i czytelność","Hasła i profile","Pobieranie","Języki i pisownia","Dane przeglądania","Zaawansowane"]);assert_eq!(c.descriptions.len(),10);assert_eq!(c.rows.len(),55);
+        let mut counts=[0;10];for row in &c.rows{counts[row.category]+=1;assert!(!row.title.is_empty()&&!row.detail.is_empty());}assert_eq!(counts,[8,4,7,7,12,5,2,3,1,6]);
+        assert_eq!(c.rows.iter().filter(|r|r.kind==K::Toggle||r.kind==K::Pinned||r.kind==K::Animations||r.kind==K::WorkspaceNames||r.kind==K::FoldersCollapsed).count(),26);assert_eq!(c.rows.iter().filter(|r|r.kind==K::Text).count(),6);
+        let no=preference_catalogue(false);assert_eq!(no.rows.len(),54);assert!(no.rows.iter().all(|r|r.action!=A::Certificates));assert!(c.rows.iter().filter(|r|r.action!=A::Certificates).map(|r|(&r.title,&r.detail,r.category)).eq(no.rows.iter().map(|r|(&r.title,&r.detail,r.category))));
     }
     #[test] fn preference_catalogue_registered_store_keys_keep_their_control_kinds() {
         use ffi::PreferenceRowKind as K;let c=preference_catalogue(true);let mut keys=std::collections::BTreeSet::new();
@@ -4396,6 +4400,25 @@ mod tests {
         assert!(g.reconcile_sidebar_layout(pins(),tabs(),vec![],false).admitted);let tree=g.sidebar_tabs();assert_eq!((tree.pair,a.node_parent_id()),(0,tree.root));assert!(!g.pin_target("p",p.action_node_id()).valid);
         assert!(g.reconcile_sidebar_layout(pins(),vec![sidebar_tab(1,0),sidebar_tab(2,1)],vec![],false).admitted);assert!(g.pin_target("p",p.action_node_id()).valid);
     }
+    #[test] fn sidebar_tree_defaults_folders_collapsed_and_reveals_single_items(){
+        let nodes=vec![ffi::TreeNode{id:"f".into(),parent:"".into(),folder:true},ffi::TreeNode{id:"a".into(),parent:"f".into(),folder:false},ffi::TreeNode{id:"b".into(),parent:"f".into(),folder:false}];
+        let mut t=new_sidebar_tree();t.set_default_collapsed(true);
+        let vis=|t:&SidebarTree|t.tree_plan("w",&nodes).iter().map(|e|(e.collapsed,e.visible)).collect::<Vec<_>>();
+        assert_eq!(vis(&t),vec![(true,true),(false,false),(false,false)]);assert!(vis(&new_sidebar_tree()).iter().all(|&(c,v)|!c&&v));
+        t.set_revealed("w","b",true);assert_eq!(vis(&t),vec![(true,true),(false,false),(false,true)]);assert!(t.revealed("w","b")&&!t.revealed("x","b"));
+        assert!(!t.toggle("w","f"));assert_eq!(vis(&t),vec![(false,true),(false,true),(false,true)]);
+        t.set_collapsed("w","f",true);assert!(t.collapsed("w","f"));t.forget_workspace("w");assert!(t.collapsed("w","f")&&!t.revealed("w","b"));
+    }
+    #[test] fn sidebar_pin_revealed_under_collapsed_folder_peeks_until_toggled(){
+        let mut g=new_action_graph();let mut peek=nested_pin("a","f",false,false);peek.revealed=true;
+        assert!(g.reconcile_sidebar(vec![nested_pin("f","",true,true),peek,nested_pin("b","f",false,false)],vec![]).admitted);
+        let folder=g.acquire(&node_named(2,"f"));let a=g.acquire(&node_named(2,"a"));let b=g.acquire(&node_named(2,"b"));
+        let vis=|g:&ActionGraph|g.pin_tree().entries.iter().map(|e|(e.key.clone(),e.visible)).collect::<Vec<_>>();
+        assert_eq!(vis(&g),vec![("f".to_string(),true),("a".to_string(),true),("b".to_string(),false)]);
+        assert!(g.pin_target("a",a.action_node_id()).valid&&!g.pin_target("b",b.action_node_id()).valid);
+        assert!(g.set_pin_collapsed(&folder,false));assert!(vis(&g).iter().all(|(_,v)|*v));
+        assert!(g.set_pin_collapsed(&folder,true));assert!(vis(&g)[1..].iter().all(|(_,v)|!*v));
+    }
     #[test] fn sidebar_split_pair_in_collapsed_folder_starts_hidden_and_unreachable_pin_falls_back_to_root(){
         let mut g=new_action_graph();assert!(g.reconcile_sidebar_layout(vec![nested_pin("f","",true,true),nested_pin("p","f",false,false)],vec![pinned_tab(1,0,"p"),sidebar_tab(2,1)],vec![0,1],true).admitted);g.acquire(&node_tab(1));let tree=g.sidebar_tabs();assert!(!tree.visible);assert!(!g.tab_target(7,1,g.nodes[&(1,7,1,String::new())].borrow().id,false).valid);
         let mut g=new_action_graph();assert!(g.reconcile_sidebar_layout(vec![nested_pin("p","missing",false,false)],vec![pinned_tab(1,0,"p"),sidebar_tab(2,1)],vec![0,1],true).admitted);let tree=g.sidebar_tabs();assert_eq!(tree.parent,tree.root);assert!(tree.visible);assert_eq!(tree.slots[0].pin,usize::MAX);
@@ -4436,7 +4459,7 @@ mod tests {
     #[test] fn pin_tree_snapshot_is_owned_and_group_identity_survives_rename(){
         let (mut g,input)=pin_fixture();let group=input.pin_binding().group;let mut snapshot=g.pin_tree();snapshot.entries[0].key.clear();snapshot.entries.clear();assert_eq!(g.pin_tree().entries[0].key,"folder");g.reconcile_sidebar(vec![pin_input("folder","Renamed",true,false)],vec![]);assert_eq!(input.pin_binding().group,group);assert_eq!(g.pin_tree().entries[0].group,group);
     }
-    fn pin_input(id:&str,title:&str,folder:bool,collapsed:bool)->ffi::SidebarPinInput{ffi::SidebarPinInput{id:id.into(),parent:String::new(),title:title.encode_utf16().collect(),monogram:vec![b'P' as u16],color:0xff123456,folder,collapsed}}
+    fn pin_input(id:&str,title:&str,folder:bool,collapsed:bool)->ffi::SidebarPinInput{ffi::SidebarPinInput{id:id.into(),parent:String::new(),title:title.encode_utf16().collect(),monogram:vec![b'P' as u16],color:0xff123456,folder,collapsed,revealed:false}}
     fn pin_fixture()->(Box<ActionGraph>,Box<ActionControl>){let mut g=new_action_graph();assert!(g.reconcile_sidebar(vec![pin_input("folder","Dokumenty 日本語 🦀",true,false)],vec![]).admitted);let input=g.acquire(&node_named(2,"folder"));(g,input)}
     #[test] fn pin_model_owns_role_title_monogram_and_collection_parent(){
         let (g,input)=pin_fixture();assert_eq!(input.node_model_kind(),10);let binding=input.pin_binding();assert!(binding.valid&&binding.folder&&!binding.collapsed);assert_eq!(binding.key,"folder");assert_eq!(input.node_parent_id(),g.nodes[&(11,0,0,"sidebar.pins".into())].borrow().id);let p=input.sidebar_presentation();assert!(p.valid&&p.folder&&!p.tile);assert_eq!(p.height,34);assert_eq!(p.title,"▾ Dokumenty 日本語 🦀".encode_utf16().collect::<Vec<_>>());let scene=input.sidebar_scene(tab_box(),tab_box(),tab_style(),true,true);assert!(scene.valid);assert_eq!(scene.item.monogram,"📁");assert_eq!(scene.item.badge,0);assert!(!scene.item.close&&!scene.item.close_visible);
@@ -5014,30 +5037,6 @@ mod tests {
         let mut p=new_row_pointer();p.pointer_event(ffi::PointerPhase::Press,10,10,true,true,true,false);p.cancel();assert!(matches!(p.pointer_event(ffi::PointerPhase::Release,10,10,true,true,true,false).action,ffi::RowAction::Cancel));
         assert!(matches!(p.key_event(true,key_policy(1,true),true).action,ffi::RowAction::Activate));assert!(!p.key_event(true,key_policy(2,true),true).handled);assert!(matches!(p.key_event(true,key_policy(1,true),false).action,ffi::RowAction::None));
     }
-    fn notice_workspaces() -> Vec<ffi::ProfileUse> { vec![ffi::ProfileUse { workspace:"work".into(), name:"Praca".into(), profile:"shared".into() },ffi::ProfileUse { workspace:"personal".into(), name:"Prywatne".into(), profile:"shared".into() }] }
-    #[test] fn workspace_notice_preserves_irreversible_warning_profile_data_and_cancel() {
-        let f=new_workspace_notice("personal","Żółć 日本語 🦀");let c=f.copy();assert_eq!(c.title,"Usunąć przestrzeń „Żółć 日本語 🦀”?");assert!(c.default_cancel);assert_eq!(c.cancel,"Anuluj");assert_eq!(c.accept,"Usuń przestrzeń");
-        assert!(c.body.contains("karty i przypięte elementy zostaną usunięte"));assert!(c.body.contains("Tej operacji nie można cofnąć."));assert!(c.body.contains("\n\nProfil przeglądania, hasła, historia i cookies pozostaną zachowane."));
-    }
-    #[test] fn workspace_notice_revalidates_readiness_busy_last_and_missing_targets() {
-        for (id,ready,busy) in [("personal",false,false),("personal",true,true),("missing",true,false),("",true,false)] {
-            let mut f=new_workspace_notice(id,"W");let r=f.submit(ready,busy,&notice_workspaces());assert!(matches!(r.action,ffi::WorkspaceNoticeAction::None));assert!(r.workspace.is_empty());assert!(!f.error().is_empty());
-        }
-        let mut f=new_workspace_notice("work","W");let mut workspaces=notice_workspaces();workspaces.pop();assert!(matches!(f.submit(true,false,&workspaces).action,ffi::WorkspaceNoticeAction::None));assert!(f.error().contains("ostatniej"));
-    }
-    #[test] fn workspace_notice_keeps_captured_id_across_reorder_and_profile_assignment() {
-        let mut f=new_workspace_notice("personal","Prywatne");let mut workspaces=notice_workspaces();workspaces.reverse();workspaces[0].profile="changed".into();workspaces[0].name="Renamed".into();
-        let r=f.submit(true,false,&workspaces);assert!(matches!(r.action,ffi::WorkspaceNoticeAction::Delete));assert_eq!(r.workspace,"personal");
-    }
-    #[test] fn workspace_notice_admission_can_retry_but_pending_and_accepted_cannot_repeat() {
-        let mut f=new_workspace_notice("personal","P");assert!(matches!(f.submit(true,false,&notice_workspaces()).action,ffi::WorkspaceNoticeAction::Delete));assert!(matches!(f.submit(true,false,&notice_workspaces()).action,ffi::WorkspaceNoticeAction::None));
-        f.finish_attempt(false);assert!(f.error().contains("Spróbuj ponownie"));assert!(matches!(f.submit(true,false,&notice_workspaces()).action,ffi::WorkspaceNoticeAction::Delete));assert!(f.error().is_empty());f.finish_attempt(true);
-        assert!(matches!(f.submit(true,false,&notice_workspaces()).action,ffi::WorkspaceNoticeAction::None));
-    }
-    #[test] fn workspace_notice_cancel_is_terminal_and_external_removal_never_redirects() {
-        let mut f=new_workspace_notice("personal","P");f.cancel();assert!(matches!(f.submit(true,false,&notice_workspaces()).action,ffi::WorkspaceNoticeAction::None));
-        let mut f=new_workspace_notice("personal","P");let mut workspaces=notice_workspaces();workspaces[1].workspace="replacement".into();let r=f.submit(true,false,&workspaces);assert!(matches!(r.action,ffi::WorkspaceNoticeAction::None));assert!(r.workspace.is_empty());assert_eq!(f.error(),"Przestrzeń nie jest już dostępna.");
-    }
     #[test] fn workspace_notice_shared_geometry_retains_blank_paragraph_lines_and_errors() {
         let g=notice_layout(400,20,5,18,2);assert_eq!(g.body_lines.len(),5);assert_eq!((g.body.height,g.error.y,g.height),(100,108,144));assert_eq!(g.body_lines[3].y,60);
         let g=notice_layout(400,20,5,18,0);assert_eq!(g.height,100);assert!(g.error_lines.is_empty());
@@ -5250,7 +5249,7 @@ mod tests {
     #[test] fn folder_menu_labels_enablement_and_captured_targets() {
         use ffi::FolderMenuCommand as C;let state=|folder:&str|ffi::FolderMenuState{ready:true,busy:false,workspace:"work".into(),folder:folder.into()};
         let root=folder_context_menu(&state(""));assert_eq!(root.iter().map(|e|(e.command,e.label.as_str())).collect::<Vec<_>>(),vec![(36,"Nowy folder…")]);
-        let nested=folder_context_menu(&state("f"));assert_eq!(nested.iter().map(|e|(e.command,e.label.as_str())).collect::<Vec<_>>(),vec![(36,"Nowy podfolder…"),(0,""),(37,"Zmień nazwę…"),(38,"Usuń folder…")]);
+        let nested=folder_context_menu(&state("f"));assert_eq!(nested.iter().map(|e|(e.command,e.label.as_str())).collect::<Vec<_>>(),vec![(36,"Nowy podfolder…"),(0,""),(37,"Zmień nazwę…"),(38,"Usuń folder")]);
         assert!(folder_menu_enabled(36,&state(""))&&!folder_menu_enabled(37,&state(""))&&!folder_menu_enabled(38,&state(""))&&folder_menu_enabled(38,&state("f"))&&!folder_menu_enabled(30,&state("f")));
         for (command,expected) in [(36,C::Create),(37,C::Rename),(38,C::Delete),(35,C::None)]{let a=folder_menu_action(command,&state("f"));assert_eq!(a.command,expected);if expected!=C::None{assert_eq!((a.workspace.as_str(),a.folder.as_str()),("work","f"));}else{assert!(a.workspace.is_empty());}}
         let a=folder_menu_action(36,&state(""));assert_eq!((a.command,a.folder.as_str()),(C::Create,""));

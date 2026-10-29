@@ -148,6 +148,8 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingClosure downloads;
     base::RepeatingCallback<bool(std::string, std::string, std::string)> create_folder, rename_folder;
     base::RepeatingCallback<bool(std::string, std::string, bool)> delete_folder;
+    base::RepeatingCallback<bool(std::string, std::vector<PinnedItem>)> restore_pins;
+    base::RepeatingCallback<bool(std::string)> restore_workspace;
     base::RepeatingCallback<void(std::u16string, size_t)> query_history;
     base::RepeatingCallback<TimeMachineState()> time_machine;
     base::RepeatingCallback<bool()> operation_pending;
@@ -282,8 +284,13 @@ class WorkspaceShell final : public ui::EventHandler,
   SearchEngine search_engine() const { return search_engine_; }
   void SetWorkspaceAnimations(bool enabled);
   void SetWorkspaceNames(bool shown);
+  void SetPinnedFoldersCollapsed(bool collapsed);
+  void SetUiLanguageChoice(size_t index);
+  // The same without saving the preference (tests that predate the default).
+  void SetPinnedFoldersCollapsedForTesting(bool collapsed) { ApplyPinnedFoldersCollapsed(collapsed); }
   bool workspace_animations() const { return workspace_animations_; }
   bool workspace_names() const { return workspace_names_; }
+  bool pinned_folders_collapsed() const { return folders_collapsed_; }
   void AnimateWorkspaceSwitch(std::string_view previous);
   bool workspace_animation_running() const;
   bool workspace_animation_pending() const { return workspace_animation_pending_; }
@@ -446,17 +453,17 @@ class WorkspaceShell final : public ui::EventHandler,
   bool workspace_panel_contains_scene_text(std::string_view text) const;
   views::View* workspace_panel_for_testing() const{return settings_root_;}
   views::View* profile_panel_for_testing() const{return profiles_root_;}
-  views::Widget* remove_workspace_dialog() const { return remove_workspace_dialog_.get(); }
-  views::View* workspace_notice_for_testing() const;
-  bool workspace_notice_metal_visible() const;
+  // An undoable event: "lead" + bold "noun", with „Cofnij” running `undo`.
+  void ShowToast(std::u16string lead, std::u16string noun, base::OnceClosure undo);
+  void HideToast();
+  void UndoToast();
+  views::Widget* toast_widget() const { return toast_widget_.get(); }
+  std::u16string toast_text_for_testing() const;
   bool appearance_metal_visible(bool emoji) const;
   bool form_actions_contains_scene_text(bool profiles,std::string_view text) const;
   size_t form_action_canvases_visible_for_testing(bool profiles) const;
   bool appearance_contains_scene_text(std::string_view text) const;
   gfx::Rect appearance_scene_bounds_for_testing(bool emoji) const;
-  bool workspace_notice_contains_scene_text(std::string_view text) const;
-  std::u16string workspace_notice_error_for_testing() const;
-  size_t workspace_notice_line_count_for_testing() const;
   views::Widget* settings_widget() const { return settings_widget_.get(); }
   PanelViewport* workspace_viewport_for_testing() const{return settings_scroll_;}
   PanelViewport* import_viewport_for_testing() const{return import_scroll_;}
@@ -471,6 +478,7 @@ class WorkspaceShell final : public ui::EventHandler,
   bool appearance_saved() const { return pending_writes_ == 0; }
   views::Widget* address_widget() const { return address_widget_.get(); }
   views::View* tab_button(size_t index) const;
+  views::View* pin_button(std::string_view id) const;
   uint64_t sidebar_node_id_for_testing(views::View* row) const;
   // Rust split pair node: {id, parent id, visible}; zeros without a Rust graph.
   std::array<uint64_t, 3> sidebar_pair_for_testing() const;
@@ -604,6 +612,11 @@ class WorkspaceShell final : public ui::EventHandler,
   void RefreshToolsChoiceFields();
   void SetShortcutRecording(bool recording);
   std::unique_ptr<views::WidgetDelegate> tools_delegate_;
+  std::unique_ptr<views::WidgetDelegate> toast_delegate_;
+  std::unique_ptr<views::Widget> toast_widget_;
+  raw_ptr<views::View> toast_ = nullptr;  // ToastView
+  base::OnceClosure toast_undo_;
+  base::OneShotTimer toast_timer_;
   std::unique_ptr<views::Widget> tools_widget_;
   void RequestFolderName(std::string workspace, std::string parent, std::string renamed);
   // `refresh_controls` false only repaints: a new workspace color must not rebind
@@ -625,7 +638,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void PostRemoveSiteRule(SitePreferenceRule rule,std::string profile_id);
   void RefreshSitePreferences(bool reload = true);
   void SaveSitePreference();
-  void SaveGeneralPatch(std::optional<ThemeMode> theme, std::optional<SearchEngine> search, std::optional<bool> animations, std::optional<bool> workspace_names = std::nullopt);
+  void SaveGeneralPatch(std::optional<ThemeMode> theme, std::optional<SearchEngine> search, std::optional<bool> animations, std::optional<bool> workspace_names = std::nullopt, std::optional<bool> folders_collapsed = std::nullopt);
   void OnNativeThemeUpdated(ui::NativeTheme* observed_theme) override;
   void RebuildTabs(std::string_view previous, bool catalogue_changed);
   void StopWorkspaceAnimation();
@@ -650,6 +663,11 @@ class WorkspaceShell final : public ui::EventHandler,
   };
   void ReconcileSidebarNodes(TabListCache& cache, std::string_view workspace, const std::vector<PinnedItem>& pins, const std::vector<ShellTab>& tabs,
                              const std::vector<size_t>& split_tabs = {}, bool split = false);
+  void ApplyPinnedFoldersCollapsed(bool collapsed);
+  void PositionToast();
+  void ShowWorkspaceRemovedToast(std::string id, std::u16string name);
+  std::optional<std::pair<std::string, std::u16string>> pending_removal_;  // Waiting on a page's unload answer.
+  void EndFolderPeek(const std::string& workspace,const std::string& folder,views::View* group,bool collapsed);
   void AppendPinnedItems(views::View* root, const std::vector<PinnedItem>& pins,
                          TabListCache& cache, const std::string& workspace,
                          std::map<std::string,std::unique_ptr<views::View>>* retained=nullptr,
@@ -715,13 +733,10 @@ class WorkspaceShell final : public ui::EventHandler,
   bool creating_workspace_ = false;
   raw_ptr<views::View> workspace_appearance_ = nullptr;
   raw_ptr<views::View> workspace_more_ = nullptr;
-  std::unique_ptr<views::DialogDelegate> remove_workspace_dialog_delegate_;
-  std::unique_ptr<views::Widget> remove_workspace_dialog_;
   void RefreshWorkspaceSettings();
   void ToggleWorkspaceCreation();
   void RefreshRustWorkspacePresentation();
   void ShowWorkspaceAppearanceError(unsigned kind);
-  bool ShowRustWorkspaceNotice(std::string workspace,std::string title);
   std::unique_ptr<WorkspaceFormState> workspace_form_;
   std::unique_ptr<PreferencesFormState> preferences_form_;
   std::unique_ptr<ToolsFormState> tools_form_;
@@ -773,6 +788,8 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> search_engine_picker_ = nullptr;
   raw_ptr<views::View> sidebar_check_ = nullptr;
   raw_ptr<views::View> workspace_names_check_ = nullptr;
+  raw_ptr<views::View> folders_collapsed_check_ = nullptr;
+  raw_ptr<views::View> language_picker_ = nullptr;
   raw_ptr<views::View> animations_check_ = nullptr;
   raw_ptr<EditorControl> preferences_search_ = nullptr;
   raw_ptr<views::View> preferences_profile_ = nullptr;
@@ -818,6 +835,7 @@ class WorkspaceShell final : public ui::EventHandler,
   SearchEngine search_engine_ = SearchEngine::kDuckDuckGo;
   bool workspace_animations_ = true;
   bool workspace_names_ = true;
+  bool folders_collapsed_ = true;
   std::set<std::string> general_dirty_;
   bool applying_theme_ = false;
   raw_ptr<views::View> peek_host_ = nullptr;
@@ -907,6 +925,7 @@ class WorkspaceShell final : public ui::EventHandler,
   bool import_busy_ = false;
   bool import_applying_ = false;
   SidebarTree sidebar_tree_;
+  std::string revealed_for_pin_;  // The active pin last revealed under collapsed folders.
   raw_ptr<views::View> profiles_root_ = nullptr;
   raw_ptr<views::View> profile_list_ = nullptr;
   std::vector<raw_ptr<views::View>> profile_rows_;

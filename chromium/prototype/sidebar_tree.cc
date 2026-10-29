@@ -19,6 +19,15 @@ bool SidebarTree::Toggle(std::string_view workspace, std::string_view id) {
   return impl_->rust_tree->toggle(
       rust::Str(workspace.data(), workspace.size()), rust::Str(id.data(), id.size()));
 }
+void SidebarTree::SetDefaultCollapsed(bool value) { impl_->rust_tree->set_default_collapsed(value); }
+bool SidebarTree::Revealed(std::string_view workspace, std::string_view id) const {
+  return impl_->rust_tree->revealed(
+      rust::Str(workspace.data(), workspace.size()), rust::Str(id.data(), id.size()));
+}
+void SidebarTree::SetRevealed(std::string_view workspace, std::string_view id, bool value) {
+  impl_->rust_tree->set_revealed(rust::Str(workspace.data(), workspace.size()),
+      rust::Str(id.data(), id.size()), value);
+}
 void SidebarTree::ForgetWorkspace(std::string_view workspace) {
   impl_->rust_tree->forget_workspace(rust::Str(workspace.data(), workspace.size()));
 }

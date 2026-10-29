@@ -1,5 +1,6 @@
 #include "chromium/prototype/browser_import_data.h"
 #include "chromium/prototype/workspace_window.h"
+#include "chromium/prototype/i18n.h"
 #include "chromium/prototype/download_panel.h"
 #include "chromium/prototype/page_services.h"
 #include "chromium/prototype/page_dialogs.h"
@@ -282,6 +283,8 @@ WorkspaceWindow::WorkspaceWindow(Profile* work, Profile* personal)
 WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_import)
     : controller_(model_, *this), data_directory_(std::move(data_directory)), offer_import_(offer_import) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  // The UI language is fixed for the run, before any text is built.
+  ApplyUiLanguage(g_browser_process->GetApplicationLocale());
   configuration_path_ = data_directory_.AppendASCII("ZitterWorkspaces.json");
   config_runner_ = base::ThreadPool::CreateSequencedTaskRunner(
       {base::MayBlock(), base::TaskPriority::USER_VISIBLE, base::TaskShutdownBehavior::BLOCK_SHUTDOWN});
@@ -316,6 +319,8 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   callbacks.remove_site_preference = base::BindRepeating(&WorkspaceWindow::RemoveSitePreference, base::Unretained(this));
   callbacks.rename_folder = base::BindRepeating(&WorkspaceWindow::RenamePinnedFolder, base::Unretained(this));
   callbacks.delete_folder = base::BindRepeating(&WorkspaceWindow::RemovePinnedFolder, base::Unretained(this));
+  callbacks.restore_pins = base::BindRepeating(&WorkspaceWindow::RestorePins, base::Unretained(this));
+  callbacks.restore_workspace = base::BindRepeating(&WorkspaceWindow::RestoreRemovedWorkspace, base::Unretained(this));
   callbacks.create_folder = base::BindRepeating(&WorkspaceWindow::CreatePinnedFolder, base::Unretained(this));
   callbacks.query_history = base::BindRepeating(&WorkspaceWindow::QueryBrowsingHistory, base::Unretained(this));
   callbacks.clear_browsing_data = base::BindRepeating(&WorkspaceWindow::RequestClearBrowsingData, base::Unretained(this));
@@ -1607,9 +1612,13 @@ bool WorkspaceWindow::RemoveWorkspace(std::string id) {
       }, weak_factory_.GetWeakPtr(), id))) return true;
   const auto next = model_.workspaces()[0].id == id
       ? model_.workspaces()[1].id : model_.workspaces()[0].id;
-  if (active_id() == id && !Select(next)) return false;
+  const bool was_active = active_id() == id;
+  if (was_active && !Select(next)) return false;
   for (auto it = hosts_.begin(); it != hosts_.end(); ++it) {
     if (it->workspace_id != id) continue;
+    RemovedWorkspace removed{*model_.Find(id), pins_[id], {}, CaptureHost(*it), was_active};
+    std::ranges::copy_if(link_rules_, std::back_inserter(removed.rules), [&](const auto& rule) { return rule.workspace_id == id; });
+    removed_workspace_ = std::move(removed);
     auto tabs = std::move(it->tabs);
     it->view = nullptr;
     hosts_.erase(it);
@@ -1620,6 +1629,23 @@ bool WorkspaceWindow::RemoveWorkspace(std::string id) {
     break;
   }
   UpdateShell();
+  SaveConfiguration();
+  return true;
+}
+
+bool WorkspaceWindow::RestoreRemovedWorkspace(std::string id) {
+  if (!removed_workspace_ || removed_workspace_->workspace.id != id || !configuration_ready_ ||
+      configuration_invalid_ || profiles_busy()) return false;
+  auto removed = std::move(*removed_workspace_); removed_workspace_.reset();
+  auto* profile = ProfileFor(removed.workspace.profile_id);
+  if (!profile || !model_.Add(removed.workspace)) return false;  // Returns at the end of the list.
+  pins_[id] = std::move(removed.pins);
+  std::ranges::move(removed.rules, std::back_inserter(link_rules_));
+  hosts_.emplace_back();
+  auto& host = hosts_.back();
+  host.workspace_id = id; host.profile_id = removed.workspace.profile_id; host.profile = profile;
+  if (!RestoreHost(host, removed.host)) { host.view = CreatePage(profile); host.tabs.push_back(host.view); }
+  if (removed.active) Select(id); else UpdateShell();
   SaveConfiguration();
   return true;
 }
@@ -2298,6 +2324,12 @@ bool WorkspaceWindow::RemovePinnedFolder(std::string workspace, std::string id, 
   }
   std::erase_if(items, [&](const auto& item) { return removed.contains(item.id); });
   SaveFolderEdit(std::move(workspace), std::move(previous), std::move(removed));
+  return true;
+}
+bool WorkspaceWindow::RestorePins(std::string workspace, std::vector<PinnedItem> items) {
+  if (!configuration_ready_ || configuration_invalid_ || profiles_busy_ || !model_.Find(workspace)) return false;
+  auto previous = std::exchange(pins_[workspace], std::move(items));
+  SaveFolderEdit(std::move(workspace), std::move(previous), {});
   return true;
 }
 void WorkspaceWindow::SaveFolderEdit(std::string workspace, std::vector<PinnedItem> previous, std::set<std::string> removed) {

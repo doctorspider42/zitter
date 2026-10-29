@@ -1,3 +1,4 @@
+#include "chromium/prototype/i18n.h"
 #include "chromium/prototype/editor_control.h"
 #include "chromium/prototype/workspace_window.h"
 
@@ -148,6 +149,7 @@ class ZitterPreconnectBrowserTest : public InProcessBrowserTest {
         "active":"work","onboarding_complete":true
       })"));
     }
+    SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
     window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
     ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
   }
@@ -280,6 +282,7 @@ IN_PROC_BROWSER_TEST_F(ZitterPreconnectBrowserTest, PendingProfileDoesNotQueueSp
     ASSERT_TRUE(base::WriteFile(manager->user_data_dir().AppendASCII("ZitterSession.json"), "{}"));
   }
   base::OnceCallback<void(Profile*)> pending;
+  SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
   window_->SetStartupProfileLoaderForTesting(base::BindRepeating(
       [](base::FilePath cold, base::OnceCallback<void(Profile*)>* pending,

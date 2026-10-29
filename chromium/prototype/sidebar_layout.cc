@@ -60,6 +60,9 @@ class RustPanelViewport final : public views::View,public PanelViewport,public v
   int maximum() const override{return state_->viewport_maximum();}
   bool rust_owned() const override{return true;}
   void ScrollTo(double position) override{if(state_->viewport_scroll_to(position))Apply(true);}
+  // A scrolling viewport can shrink to show part of its contents: across the
+  // scroll axis it needs only its configured minimum, never the whole content.
+  gfx::Size GetMinimumSize() const override{const auto preferred=GetPreferredSize();return options_.horizontal?gfx::Size(0,preferred.height()):gfx::Size(preferred.width(),std::max(0,options_.minimum_height));}
   gfx::Size CalculatePreferredSize(const views::SizeBounds& bounds) const override{const auto measured=contents_?contents_->GetPreferredSize(bounds):gfx::Size();const auto size=sidebar::viewport_preferred_size(measured.width(),measured.height(),options_.minimum_height,options_.maximum_height);return gfx::Size(size.width,size.height);}
   void Layout(PassKey) override{
     if(!contents_)return;auto preferred=contents_->GetPreferredSize(views::SizeBounds(width(),height()));
@@ -117,7 +120,17 @@ class RustPanelLayout final : public views::LayoutManager {
   gfx::Size GetPreferredSize(const views::View* host) const override{const auto g=Measure(host,-1,-1);return gfx::Size(g.width,g.height);}
   gfx::Size GetPreferredSize(const views::View* host,const views::SizeBounds& bounds) const override{if(!bounds.width().is_bounded())return GetPreferredSize(host);const auto g=Measure(host,bounds.width().value(),bounds.height().is_bounded()?bounds.height().value():-1);return gfx::Size(g.width,g.height);}
   int GetPreferredHeightForWidth(const views::View* host,int width) const override{return Measure(host,width,-1).height;}
-  gfx::Size GetMinimumSize(const views::View* host) const override{const auto g=Measure(host,0,0);return gfx::Size(g.width,g.height);}
+  // A flex child that scrolls (a panel viewport) gives up the length it can scroll, so a
+  // panel fits a short window and scrolls instead of outgrowing it.
+  gfx::Size GetMinimumSize(const views::View* host) const override{const auto g=Measure(host,0,0);gfx::Size size(g.width,g.height);
+    if(flex_&&Included(flex_)&&views::AsViewClass<RustPanelViewport>(flex_)){const auto preferred=flex_->GetPreferredSize();const auto minimum=flex_->GetMinimumSize();
+      if(vertical_)size.set_height(std::max(0,size.height()-std::max(0,preferred.height()-minimum.height())));else size.set_width(std::max(0,size.width()-std::max(0,preferred.width()-minimum.width())));}
+    // A row needs only its tallest child's own minimum height (a column keeps
+    // its widest child's preferred width, as BoxLayout does).
+    if(!vertical_){const auto insets=insets_+host->GetInsets();int cross=0;
+      for(const auto& child:host->children())if(Included(child.get())){const auto* m=child->GetProperty(views::kMarginsKey);cross=std::max(cross,child->GetMinimumSize().height()+(m?m->height():0));}
+      size.set_height(std::min(size.height(),cross+insets.height()));}
+    return size;}
  private:
   static bool Included(const views::View* child){return child->GetVisible()&&!child->GetProperty(views::kViewIgnoredByLayoutKey);}
   sidebar::ColumnLayout Measure(const views::View* host,int width,int height) const {
