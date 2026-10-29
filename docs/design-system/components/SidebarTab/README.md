@@ -8,4 +8,5 @@ Wiersz karty w pionowym pasku bocznym; aktywna karta unosi się nad zabarwionym 
 - Aktywna: `bg-raised` + `shadow-card`, tytuł w `body-strong`. Pasek boczny ma kolor przestrzeni (`bg-base` z odcienia), a aktywna karta zostaje neutralna — tak jak strona obok niej. Bez dodatkowych znaczników.
 - Nieaktywne w `ink-muted`; przycisk zamknięcia pojawia się dopiero na hover.
 - Karty w podziale (dwie i więcej) stoją obok siebie w jednym wierszu, w kolejności paneli: każda jako kafelek z ikoną i tytułem, aktywna uniesiona (`bg-raised`). Wiersz przesuwa się w całości. Grająca karta pokazuje głośnik w `--accent-ink`.
+- Foldery przypiętych startują zwinięte (do wyłączenia w Preferencjach). Karta otwarta spoza paska (Command Center, skrót) pojawia się pod zwiniętym folderem sama; kliknięcie folderu rozwija go całego i kończy ten podgląd.
 - Nie: kolorowe tło całego wiersza, lewa kolorowa belka, licznik kart.
