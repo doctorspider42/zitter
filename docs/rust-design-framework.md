@@ -222,6 +222,18 @@ Piąta runda: stopka paska to wyśrodkowana szyna przestrzeni i zawsze widoczny 
 Przycisk przypinania i ustawienia przestrzeni zniknęły ze stopki: panel przypina przycisk
 w nagłówku, ustawienia otwiera menu kontekstowe przestrzeni.
 
+Panel przestrzeni (projekt „Ustawienia przestrzeni”): nazwa zapisuje się sama 700 ms po
+ostatnim znaku (albo Enterem) i pokazuje „Zapisano” w `ok`; profile to lista wierszy
+z monogramem (wybór od razu zmienia profil przestrzeni, ukryty `SceneSelect` zostaje
+wartością formularza), a „Nowy profil” otwiera panel profili. Pod spodem kafelki
+„Nowa przestrzeń” i „Importuj z przeglądarki” oraz strefa usuwania: karta w `danger`
+z opisem tego, co zniknie, i konturowym „Usuń”. Nowa przestrzeń wybiera kolor i ikonę
+tym samym kołem barw (szkic trzymany pod kluczem roboczym do chwili utworzenia),
+a „Nowy profil” rozwija pole nazwy profilu (podpowiada nazwę przestrzeni) i opcję
+późniejszego importu; „Utwórz przestrzeń i profil” tworzy przestrzeń, potem profil,
+który od razu do niej przypisuje. Tekst w kartach rysowanych natywnie (strefa usuwania,
+kafelki) jest malowany przez sam widok, bo karta przykrywa tekst sceny.
+
 Panel menu ma `radius-md` (przekazywany do `RunMenuAt`), a akcje niszczące są w
 `danger` (`DesignMenuModel`).
 

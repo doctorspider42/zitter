@@ -1404,6 +1404,37 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ContextMenusMarkDestructiveAct
   EXPECT_EQ(shell->workspace_menu()->GetLabelAt(last-2),u"Nazwa i ustawienia…");
 }
 
+// Space panel (design: space settings): the name saves itself, a profile row
+// switches the space at once (the pressed row is rebuilt), and a new space can
+// make its own profile.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SpacePanelAutosavesAndMakesProfileWithNewSpace) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
+  ASSERT_TRUE(window_->Select("work"));shell->OpenWorkspaceSettings();
+  ASSERT_EQ(window_->profiles().size()+1,shell->workspace_profile_row_count());
+  // Typing commits text; the name saves once typing pauses.
+  auto* field=shell->workspace_input();field->RequestFocus();field->SelectRange(gfx::Range(field->GetText().size()));
+  field->input_client()->InsertText(u" nowa",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
+  ASSERT_TRUE(base::test::RunUntil([&]{return window_->workspaces()[0].name==base::UTF16ToUTF8(field->GetText())&&window_->workspaces()[0].name.ends_with(" nowa");}));EXPECT_TRUE(shell->workspace_saved_visible());
+  size_t other=0;for(size_t i=0;i<window_->profiles().size();++i)if(window_->profiles()[i].id!="work-profile")other=i;
+  ui::AXActionData activate;activate.action=ax::mojom::Action::kDoDefault;
+  ASSERT_TRUE(shell->workspace_profile_row(other)->HandleAccessibleAction(activate));
+  ASSERT_TRUE(base::test::RunUntil([&]{return window_->workspaces()[0].profile_id==window_->profiles()[other].id&&!window_->profiles_busy();}));
+  base::RunLoop().RunUntilIdle();
+  ASSERT_EQ(window_->profiles().size()+1,shell->workspace_profile_row_count());
+  const auto profiles=window_->profiles().size();const auto spaces=window_->workspaces().size();
+  ClickControl(FindButton(shell->workspace_panel_for_testing(),u"Nowa przestrzeń"));ASSERT_TRUE(shell->creating_workspace_for_testing());
+  shell->workspace_input()->SetText(u"Klient X");
+  // „Nowy profil” is the list's last row, below the fold of a short window.
+  shell->settings_widget()->LayoutRootViewIfNecessary();auto* last=shell->workspace_profile_row(shell->workspace_profile_row_count()-1);last->ScrollViewToVisible();
+  ASSERT_TRUE(last->HandleAccessibleAction(activate));
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->new_profile_input()->view()->IsDrawn();}));EXPECT_EQ(u"Klient X",shell->new_profile_input()->GetText());
+  ASSERT_TRUE(FindButton(shell->workspace_panel_for_testing(),u"Utwórz przestrzeń i profil"));
+  ClickControl(FindButton(shell->workspace_panel_for_testing(),u"Utwórz przestrzeń i profil"));
+  ASSERT_TRUE(base::test::RunUntil([&]{return window_->workspaces().size()==spaces+1&&window_->profiles().size()==profiles+1&&!window_->profiles_busy();}));
+  EXPECT_EQ("Klient X",window_->workspaces().back().name);EXPECT_EQ("Klient X",window_->profiles().back().name);
+  ASSERT_TRUE(base::test::RunUntil([&]{return window_->workspaces().back().profile_id==window_->profiles().back().id;}));
+}
+
 // The footer's „+” (design: Sidebar footer) offers a new tab, folder or space.
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FooterAddMenuOpensTabFolderAndSpace) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->SetPinned(true);shell->ShowSidebar();
@@ -4125,7 +4156,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DynamicWorkspacesAndProfiles) 
   EXPECT_FALSE(window_->AddWorkspace("Invalid", "missing-profile"));
   auto* shell = window_->shell();
   shell->OpenWorkspaceSettings();
-  auto* start_add = FindButton(shell->settings_widget()->GetContentsView(), u"Nowa przestrzeń…");
+  auto* start_add = FindButton(shell->settings_widget()->GetContentsView(), u"Nowa przestrzeń");
   ASSERT_TRUE(start_add);
   ClickControl(start_add);
   auto* add = FindButton(shell->settings_widget()->GetContentsView(), u"Utwórz przestrzeń");
@@ -4149,9 +4180,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DynamicWorkspacesAndProfiles) 
   shell->OpenWorkspaceSettings();
   shell->workspace_input()->SetText(u"Klient");
   shell->SetProfilePickerSelectionForTesting(false,1);
-  auto* edit = FindButton(shell->settings_widget()->GetContentsView(), u"Zapisz nazwę i profil");
-  ASSERT_TRUE(edit);
-  ClickControl(edit);
+  shell->SaveWorkspaceForTesting();
   EXPECT_EQ(1u, window_->tab_count(project));
   EXPECT_EQ(personal_.get(), window_->contents(project)->GetBrowserContext());
   ASSERT_TRUE(content::NavigateToURL(window_->contents(project), url));
@@ -4606,8 +4635,8 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FormActionNodesCoverPreference
   shell->OpenGeneralSettings();auto* save=shell->preference_save_button_for_testing("font_standard");const auto save_id=id(save);id(shell->preference_close_for_testing());auto* first=shell->preference_navigation_for_testing(0);auto* fonts=shell->preference_navigation_for_testing(4);const auto first_id=id(first),fonts_id=id(fonts);if(rust)EXPECT_NE(first_id,fonts_id);
   auto* clear=FindButton(shell->general_widget()->GetContentsView(),u"Wyczyść…");ASSERT_TRUE(clear);const auto clear_id=id(clear);shell->SetBrowsingDataBusy(true);EXPECT_EQ(clear,FindButton(shell->general_widget()->GetContentsView(),u"Czyszczenie…"));EXPECT_EQ(clear_id,id(clear));shell->SetBrowsingDataBusy(false);EXPECT_EQ(save_id,id(save));
   ActivateSidebarRow(fonts);EXPECT_EQ(4u,shell->preference_category_for_testing());EXPECT_EQ(fonts_id,id(fonts));if(rust)EXPECT_TRUE(shell->preference_navigation_selected_for_testing(4));
-  shell->OpenWorkspaceSettings();auto* root=shell->workspace_panel_for_testing();auto* edit=FindButton(root,u"Zapisz nazwę i profil");auto* add=FindButton(root,u"Nowa przestrzeń…");ASSERT_TRUE(edit);ASSERT_TRUE(add);const auto edit_id=id(edit),add_id=id(add);if(rust)EXPECT_NE(edit_id,add_id);id(FindButton(root,u"Bursztyn"));id(FindButton(root,u"Emoji 🚀"));
-  edit->parent()->ReorderChildView(edit,edit->parent()->children().size()-1);EXPECT_EQ(edit_id,id(edit));EXPECT_EQ(add_id,id(add));ClickControl(add);EXPECT_EQ(edit,FindButton(root,u"Utwórz przestrzeń"));EXPECT_EQ(edit_id,id(edit));EXPECT_EQ(add_id,id(add));ClickControl(add);
+  shell->OpenWorkspaceSettings();auto* root=shell->workspace_panel_for_testing();ClickControl(FindButton(root,u"Nowa przestrzeń"));auto* edit=FindButton(root,u"Utwórz przestrzeń");auto* add=FindButton(root,u"Anuluj");ASSERT_TRUE(edit);ASSERT_TRUE(add);const auto edit_id=id(edit),add_id=id(add);if(rust)EXPECT_NE(edit_id,add_id);id(FindButton(root,u"Bursztyn"));id(FindButton(root,u"Emoji 🚀"));
+  edit->parent()->ReorderChildView(edit,edit->parent()->children().size()-1);EXPECT_EQ(edit_id,id(edit));EXPECT_EQ(add_id,id(add));ClickControl(add);ClickControl(FindButton(root,u"Nowa przestrzeń"));EXPECT_EQ(edit,FindButton(root,u"Utwórz przestrzeń"));EXPECT_EQ(edit_id,id(edit));EXPECT_EQ(add_id,id(add));ClickControl(add);
   shell->OpenProfiles();root=shell->profile_panel_for_testing();auto* create=FindButton(root,u"Utwórz profil");auto* remove=FindButton(root,u"Usuń profil i dane");ASSERT_TRUE(create);ASSERT_TRUE(remove);const auto create_id=id(create),remove_id=id(remove);if(rust)EXPECT_NE(create_id,remove_id);shell->SetProfileStatus(u"Node status refresh");EXPECT_EQ(create_id,id(create));EXPECT_EQ(remove_id,id(remove));
   shell->OpenImport();root=shell->import_panel_for_testing();auto* apply=FindButton(root,u"Importuj");ASSERT_TRUE(apply);const auto apply_id=id(apply),close_id=id(shell->import_close());shell->SetImportStatus(u"Node busy",false,true,true);EXPECT_FALSE(apply->GetEnabled());EXPECT_EQ(apply_id,id(apply));EXPECT_EQ(close_id,id(shell->import_close()));ui::AXActionData activate;activate.action=ax::mojom::Action::kDoDefault;shell->import_close()->HandleAccessibleAction(activate);EXPECT_TRUE(shell->import_visible());shell->SetImportStatus(u"Node ready",false,false,false);EXPECT_EQ(apply_id,id(apply));EXPECT_EQ(close_id,id(shell->import_close()));
 }
@@ -4664,7 +4693,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FormCommandObserverCannotDispa
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FormCommandModelsCoverPreferencesWorkspaceProfilesAndImport) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));if(!shell->workspace_input()->rust_editor())return;
   auto check=[&](views::View* root,std::u16string_view label){auto* view=FindButton(root,std::u16string(label));EXPECT_TRUE(view);if(view){EXPECT_EQ(8u,shell->control_model_kind_for_testing(view));EXPECT_NE(0u,shell->sidebar_node_id_for_testing(view));EXPECT_NE(0u,shell->scene_parent_id_for_testing(view));}};
-  shell->OpenWorkspaceSettings();check(shell->workspace_panel_for_testing(),u"Zapisz nazwę i profil");check(shell->workspace_panel_for_testing(),u"Nowa przestrzeń…");
+  shell->OpenWorkspaceSettings();ClickControl(FindButton(shell->workspace_panel_for_testing(),u"Nowa przestrzeń"));check(shell->workspace_panel_for_testing(),u"Utwórz przestrzeń");check(shell->workspace_panel_for_testing(),u"Anuluj");
   shell->OpenProfiles({},{});for(auto label:{u"Utwórz profil",u"Usuń profil i dane"})check(shell->profile_panel_for_testing(),label);
   shell->OpenImport();check(shell->import_widget()->GetContentsView(),u"Importuj");
   shell->OpenGeneralSettings();size_t commands=0;auto scan=[&](auto&& self,views::View* view)->void{if(shell->control_model_kind_for_testing(view)==8)++commands;for(const auto& child:view->children())self(self,child.get());};scan(scan,shell->general_widget()->GetContentsView());EXPECT_GE(commands,14u);
@@ -6608,8 +6637,9 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, PreferenceChoicesScenesIde
 
 // Compile only. Native popup, IME and Metal acceptance awaits the GUI checkpoint.
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ProfilePickerScenesStableIDsPrefixAndModelCancellation) {
-  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenWorkspaceSettings();if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->profile_picker_metal_visible(false);}));auto* assignment=shell->profile_picker();EXPECT_FALSE(views::AsViewClass<views::Combobox>(assignment));for(const auto& child:assignment->children())EXPECT_FALSE(views::AsViewClass<views::Label>(child.get()));
-  ASSERT_TRUE(shell->profile_picker_selection(false));EXPECT_EQ("work-profile",window_->profiles()[*shell->profile_picker_selection(false)].id);shell->SetProfilePickerSelectionForTesting(false,1);ui::AXNodeData chosen;assignment->GetViewAccessibility().GetAccessibleNodeData(&chosen);EXPECT_EQ(ax::mojom::Role::kComboBoxSelect,chosen.role);EXPECT_EQ(base::UTF8ToUTF16(window_->profiles()[1].name),chosen.GetString16Attribute(ax::mojom::StringAttribute::kValue));shell->OpenWorkspaceSettings();ASSERT_TRUE(shell->profile_picker_selection(false));EXPECT_EQ("work-profile",window_->profiles()[*shell->profile_picker_selection(false)].id);
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenWorkspaceSettings();
+  // The space panel lists profiles as rows (design: space settings); the picker is its hidden value.
+  EXPECT_FALSE(shell->profile_picker()->GetVisible());EXPECT_EQ(window_->profiles().size()+1,shell->workspace_profile_row_count());ASSERT_TRUE(shell->profile_picker_selection(false));EXPECT_EQ("work-profile",window_->profiles()[*shell->profile_picker_selection(false)].id);
   // Profiles are rows: a new profile is selected, renames repaint its row, and
   // choosing another row withdraws a pending delete confirmation.
   shell->OpenProfiles();ASSERT_TRUE(window_->CreateProfile("Picker Łódź 🦀"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy()&&shell->profile_picker_selection(true)==2u;}));const auto added=window_->profiles().back().id;ASSERT_TRUE(shell->profile_panel_contains_scene_text("Picker Łódź 🦀"));EXPECT_EQ(3u,shell->profile_picker_count());
@@ -6666,13 +6696,13 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ImportFormScenesLatestOpti
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, FormActionGroupsSceneTextDynamicLabelsAndCancelledTargets) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
   window_->widget()->SetBounds(display::Screen::Get()->GetDisplayNearestWindow(window_->widget()->GetNativeWindow()).work_area());shell->OpenWorkspaceSettings();
-  /* The space panel (design) has four action groups. */ASSERT_TRUE(base::test::RunUntil([&]{return shell->form_action_canvases_visible_for_testing(false)==4;}));if(MetalPresents())ASSERT_TRUE(shell->form_actions_contains_scene_text(false,"Zapisz nazwę i profil"));
+  /* Editing a space (design) saves as it goes: its form actions show only while creating one. */ASSERT_TRUE(base::test::RunUntil([&]{return shell->form_action_canvases_visible_for_testing(false)==0;}));
   auto find=[&](bool profiles,std::u16string_view name){return FindButton(profiles?shell->profile_panel_for_testing():shell->workspace_panel_for_testing(),name);};
   auto check=[&](views::View* button)->bool{if(!button)return false;EXPECT_FALSE(views::AsViewClass<views::MdTextButton>(button));EXPECT_FALSE(views::AsViewClass<views::Button>(button));for(const auto& child:button->children())EXPECT_FALSE(views::AsViewClass<views::Label>(child.get()));return true;};
-  auto* create=find(false,u"Nowa przestrzeń…");ASSERT_TRUE(check(create));const gfx::Point point(12,12);ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);
+  auto* create=find(false,u"Nowa przestrzeń");ASSERT_TRUE(create);const gfx::Point point(12,12);ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);
   ASSERT_TRUE(create->OnMousePressed(press));create->OnMouseReleased(release);if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->form_actions_contains_scene_text(false,"Utwórz przestrzeń");}));EXPECT_EQ(1u,shell->form_action_canvases_visible_for_testing(false));
   auto* save=find(false,u"Utwórz przestrzeń");ASSERT_TRUE(check(save));shell->workspace_input()->SetText(u"Must not create");ASSERT_TRUE(save->OnMousePressed(press));ASSERT_TRUE(window_->Select("personal"));save->OnMouseReleased(release);EXPECT_EQ(2u,window_->workspaces().size());EXPECT_EQ("Prywatne",window_->workspaces()[1].name);
-  shell->OpenWorkspaceSettings();auto* manage=find(false,u"Zarządzaj profilami");ASSERT_TRUE(check(manage));ASSERT_TRUE(manage->OnMousePressed(press));manage->OnMouseReleased(release);
+  shell->OpenProfiles();
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->form_action_canvases_visible_for_testing(true)==1;}));if(MetalPresents())ASSERT_TRUE(shell->form_actions_contains_scene_text(true,"Utwórz profil"));auto* profile_create=find(true,u"Utwórz profil");ASSERT_TRUE(check(profile_create));
   shell->profile_name_input()->SetText(u"  ");ui::KeyEvent space(ui::EventType::kKeyPressed,ui::VKEY_SPACE,ui::EF_NONE);ui::KeyEvent up(ui::EventType::kKeyReleased,ui::VKEY_SPACE,ui::EF_NONE);profile_create->RequestFocus();ASSERT_TRUE(profile_create->OnKeyPressed(space));profile_create->OnKeyReleased(up);
   EXPECT_EQ(2u,window_->profiles().size());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->profile_panel_contains_scene_text("Podaj nazwę profilu.");}));
@@ -6699,7 +6729,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, AppearanceRowsSceneInputCl
   shell->OpenWorkspaceSettings();auto* field=shell->emoji_input();field->RequestFocus();ASSERT_TRUE(field->HasFocus());field->SetText(u"");ui::CompositionText composition;composition.text=u"にほん";composition.selection=gfx::Range(composition.text.size());field->SetCompositionText(composition);ASSERT_TRUE(field->IsIMEComposing());const auto before=shell->workspace_emoji("personal");ui::KeyEvent enter(ui::EventType::kKeyPressed,ui::VKEY_RETURN,ui::EF_NONE);
   EXPECT_FALSE(field->view()->OnKeyPressed(enter));EXPECT_EQ(before,shell->workspace_emoji("personal"));field->ClearCompositionText();field->SetText(u"👩‍💻abc");ASSERT_TRUE(field->view()->OnKeyPressed(enter));EXPECT_EQ(u"👩‍💻",shell->workspace_emoji("personal"));
   shell->OpenWorkspaceSettings();shell->SetWorkspaceColor("personal",0xFF123456);EXPECT_EQ(0xFF123456u,shell->workspace_color("personal"));
-  auto* create=FindButton(shell->workspace_panel_for_testing(),u"Nowa przestrzeń…");ASSERT_TRUE(create);ASSERT_TRUE(peach->OnMousePressed(press));ClickControl(create);if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return !shell->appearance_metal_visible(false)&&!shell->appearance_metal_visible(true);}));peach->OnMouseReleased(release);EXPECT_EQ(0xFF123456u,shell->workspace_color("personal"));
+  auto* create=FindButton(shell->workspace_panel_for_testing(),u"Nowa przestrzeń");ASSERT_TRUE(create);ASSERT_TRUE(peach->OnMousePressed(press));ClickControl(create);/* A new space picks its color here too (design). */if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_metal_visible(false);}));peach->OnMouseReleased(release);EXPECT_EQ(0xFF123456u,shell->workspace_color("personal"));
   auto* cancel=FindButton(shell->workspace_panel_for_testing(),u"Anuluj");ASSERT_TRUE(cancel);ClickControl(cancel);if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_metal_visible(false)&&shell->appearance_metal_visible(true);}));
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_saved();}));
 }
@@ -6730,10 +6760,10 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, WorkspaceFormScenesCreateC
     EXPECT_FALSE(views::AsViewClass<views::Label>(view));for(const auto& child:view->children())self(self,child.get());
   };no_labels(no_labels,panel);
   auto button=[&](std::u16string_view title){return FindButton(panel,title);};
-  auto* start=button(u"Nowa przestrzeń…");ASSERT_TRUE(start);ClickControl(start);
+  auto* start=button(u"Nowa przestrzeń");ASSERT_TRUE(start);ClickControl(start);
   ASSERT_TRUE(button(u"Utwórz przestrzeń"));if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_panel_contains_scene_text("Nowa przestrzeń");}));
   ASSERT_TRUE(button(u"Anuluj"));ClickControl(button(u"Anuluj"));EXPECT_EQ(2u,window_->workspaces().size());EXPECT_EQ(u"Praca",shell->workspace_input()->GetText());
-  ClickControl(button(u"Nowa przestrzeń…"));auto* create=button(u"Utwórz przestrzeń");ASSERT_TRUE(create);auto* field=shell->workspace_input();field->SetText(u" \t ");
+  ClickControl(button(u"Nowa przestrzeń"));auto* create=button(u"Utwórz przestrzeń");ASSERT_TRUE(create);auto* field=shell->workspace_input();field->SetText(u" \t ");
   ClickControl(create);EXPECT_EQ(2u,window_->workspaces().size());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_panel_contains_scene_text("Podaj nazwę przestrzeni.");}));
   ui::CompositionText composition;composition.text=u"にほん";composition.selection=gfx::Range(composition.text.size());field->SetCompositionText(composition);ASSERT_TRUE(field->IsIMEComposing());
   ClickControl(create);EXPECT_EQ(2u,window_->workspaces().size());field->ClearCompositionText();
@@ -6742,12 +6772,12 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, WorkspaceFormScenesCreateC
   // Selecting the new workspace closes settings, just as in the Views backend.
   shell->OpenWorkspaceSettings();
   if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_panel_contains_scene_text("Projekt Łódź 🦀");}));ASSERT_TRUE(button(u"Zapisz nazwę i profil"));
-  shell->OpenWorkspaceSettings();field->SetText(u"  Klient 日本語  ");shell->SetProfilePickerSelectionForTesting(false,1);ClickControl(button(u"Zapisz nazwę i profil"));
+  shell->OpenWorkspaceSettings();field->SetText(u"  Klient 日本語  ");shell->SetProfilePickerSelectionForTesting(false,1);shell->SaveWorkspaceForTesting();
   EXPECT_EQ("Klient 日本語",window_->workspaces().back().name);EXPECT_EQ(personal_.get(),window_->contents(project)->GetBrowserContext());
   shell->OpenWorkspaceSettings();
   shell->SetWorkspaceColor(project,0xFF123456);EXPECT_EQ(0xFF123456u,shell->workspace_color(project));
-  ClickControl(button(u"Nowa przestrzeń…"));ASSERT_TRUE(button(u"Utwórz przestrzeń"));ASSERT_TRUE(window_->Select("work"));shell->OpenWorkspaceSettings();
-  ASSERT_TRUE(base::test::RunUntil([&]{return button(u"Zapisz nazwę i profil")!=nullptr;}));EXPECT_EQ(u"Praca",field->GetText());
+  ClickControl(button(u"Nowa przestrzeń"));ASSERT_TRUE(button(u"Utwórz przestrzeń"));ASSERT_TRUE(window_->Select("work"));shell->OpenWorkspaceSettings();
+  ASSERT_TRUE(base::test::RunUntil([&]{return !shell->creating_workspace_for_testing();}));EXPECT_EQ(u"Praca",field->GetText());
   shell->SetConfigurationError(true);if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->workspace_panel_contains_scene_text("Nie udało się odczytać lub zapisać przestrzeni.");}));shell->SetConfigurationError(false);
   ASSERT_TRUE(base::test::RunUntil([&]{return window_->configuration_saved()&&shell->appearance_saved();}));
 }
@@ -8233,7 +8263,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NameEditorsTypingUndoCompositi
   EXPECT_EQ(3u,client->ConfirmCompositionText(false));EXPECT_FALSE(field->IsIMEComposing());EXPECT_EQ(u"alphaにほん",field->GetText());ASSERT_TRUE(key(ui::VKEY_Z,false,true));ASSERT_TRUE(base::test::RunUntil([&]{return field->GetText()==u"alpha";}));
   ui::AXNodeData node;field->GetViewAccessibility().GetAccessibleNodeData(&node);EXPECT_EQ(ax::mojom::Role::kTextField,node.role);EXPECT_EQ(u"alpha",node.GetString16Attribute(ax::mojom::StringAttribute::kValue));
   std::u16string long_text(1000,u'x');long_text+=u"🦀";field->SetText(long_text);const auto caret=client->GetCaretBounds();EXPECT_GE(caret.x(),view->GetBoundsInScreen().x());EXPECT_LE(caret.right(),view->GetBoundsInScreen().right());
-  field->SetText(u"Workspace 日本語");auto* save=FindButton(shell->workspace_panel_for_testing(),u"Zapisz nazwę i profil");ASSERT_TRUE(save);ClickControl(save);EXPECT_EQ("Workspace 日本語",window_->workspaces()[0].name);ASSERT_TRUE(base::test::RunUntil([&]{return window_->configuration_saved();}));
+  field->SetText(u"Workspace 日本語");shell->SaveWorkspaceForTesting();EXPECT_EQ("Workspace 日本語",window_->workspaces()[0].name);ASSERT_TRUE(base::test::RunUntil([&]{return window_->configuration_saved();}));
   shell->OpenProfiles("work-profile");auto* profile=shell->profile_rename_input();ASSERT_TRUE(profile);EXPECT_TRUE(profile->rust_editor());profile->SetText(u"Profil 日本語");auto* rename=FindButton(shell->profile_panel_for_testing(),u"Zapisz");ASSERT_TRUE(rename&&rename->GetEnabled());ClickControl(rename);ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));EXPECT_EQ("Profil 日本語",window_->profiles()[0].name);
 }
 

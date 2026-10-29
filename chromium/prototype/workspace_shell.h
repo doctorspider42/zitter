@@ -496,6 +496,13 @@ class WorkspaceShell final : public ui::EventHandler,
   std::array<uint64_t, 3> sidebar_pair_for_testing() const;
   views::Widget* sidebar_widget() const { return sidebar_widget_.get(); }
   EditorControl* workspace_input() const { return workspace_input_; }
+  EditorControl* new_profile_input() const { return new_profile_input_; }
+  views::View* workspace_profile_row(size_t index) const { return index < workspace_profile_rows_.size() ? workspace_profile_rows_[index].get() : nullptr; }
+  size_t workspace_profile_row_count() const { return workspace_profile_rows_.size(); }
+  bool workspace_saved_visible() const;
+  void SaveWorkspaceForTesting(){SubmitWorkspace(false);}
+  bool creating_workspace_for_testing() const{return creating_workspace_;}
+  views::View* new_profile_import_for_testing() const{return new_profile_import_;}
   views::View* workspace_button(std::string_view id) const;
   size_t pinned_list_build_count() const { return pinned_list_build_count_; }
   size_t sidebar_context_visit_count() const { return sidebar_context_visit_count_; }
@@ -756,6 +763,12 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> workspace_more_ = nullptr;
   void RefreshWorkspaceSettings();
   void ToggleWorkspaceCreation();
+  // The space whose color and icon the panel edits: the draft while creating one.
+  std::string EditedWorkspaceId() const;
+  void RebuildWorkspaceProfileRows();
+  void PickWorkspaceProfile(std::string profile_id);
+  void SaveWorkspaceName();
+  void RefreshWorkspaceDanger();
   void RefreshRustWorkspacePresentation();
   void ShowWorkspaceAppearanceError(unsigned kind);
   std::unique_ptr<WorkspaceFormState> workspace_form_;
@@ -928,6 +941,19 @@ class WorkspaceShell final : public ui::EventHandler,
   size_t pin_visibility_update_count_ = 0;
   raw_ptr<views::View> profile_picker_ = nullptr;
   raw_ptr<EditorControl> workspace_input_ = nullptr;
+  // Space panel (design: space settings): the name saves itself, profiles are a
+  // list of rows, a new space may make its profile on the spot.
+  raw_ptr<views::View> workspace_saved_ = nullptr;
+  raw_ptr<views::View> workspace_profile_list_ = nullptr;
+  std::vector<raw_ptr<views::View>> workspace_profile_rows_;
+  std::vector<std::string> workspace_profile_row_ids_;  // "" is „Nowy profil”.
+  raw_ptr<views::View> new_profile_strip_ = nullptr;
+  raw_ptr<EditorControl> new_profile_input_ = nullptr;
+  raw_ptr<views::View> new_profile_import_ = nullptr;
+  raw_ptr<views::View> workspace_actions_ = nullptr;
+  raw_ptr<views::View> workspace_danger_text_ = nullptr;
+  bool new_profile_choice_ = false;
+  base::OneShotTimer workspace_name_timer_;
   raw_ptr<views::View> add_workspace_ = nullptr;
   raw_ptr<views::View> edit_workspace_ = nullptr;
   raw_ptr<views::View> remove_workspace_ = nullptr;

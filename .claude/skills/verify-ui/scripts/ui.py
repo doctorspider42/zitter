@@ -120,7 +120,7 @@ def shot(a):
 
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 sub = parser.add_subparsers(dest="command", required=True)
-l = sub.add_parser("launch"); l.add_argument("--open-panel", choices=["space", "sidebar", "palette", "address", "settings", "profiles", "downloads", "menu", "dialog", "toast", "add"],
+l = sub.add_parser("launch"); l.add_argument("--open-panel", choices=["space", "sidebar", "palette", "address", "settings", "profiles", "downloads", "menu", "dialog", "toast", "add", "space-end", "space-new"],
     help="open this panel once the window is up (no mouse needed)"); l.set_defaults(run=launch)
 sub.add_parser("windows").set_defaults(run=lambda _: print("\n".join(map(json.dumps, windows()))))
 c = sub.add_parser("click"); c.add_argument("x", type=float); c.add_argument("y", type=float)

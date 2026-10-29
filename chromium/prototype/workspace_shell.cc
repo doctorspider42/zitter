@@ -218,6 +218,7 @@ constexpr SkColor kAccentWash = 0xFFEEEDFD;
 constexpr SkColor kChip = 0xFFF1F0F5;
 constexpr SkColor kFrameBase = 0xFFF4F3F7;
 constexpr SkColor kError = 0xFFB3261E;
+constexpr SkColor kOk = 0xFF0F766E;
 constexpr int kSidebarWidth = 248;
 constexpr int kMinSidebarWidth = 200;
 constexpr int kMaxSidebarWidth = 480;
@@ -286,6 +287,7 @@ SkColor Tone(const views::View* view, SkColor role) {
     case kChip: return p.bg_hover;
     case kFrameBase: return p.bg_base;
     case kError: return p.danger;
+    case kOk: return p.ok;
     default: return role;
   }
 }
@@ -2545,6 +2547,74 @@ class SpaceIconTile final : public views::View {
 };
 BEGIN_METADATA(SpaceIconTile)
 END_METADATA
+// A card on `bg-base` with a `line` edge at `radius-md` (the profile list), or
+// the danger zone: `danger` washed into the surface with a `danger` edge, its
+// title in `danger` over a muted line (painted here: the card covers scene text).
+class SceneCard final : public views::View {
+  METADATA_HEADER(SceneCard,views::View)
+ public:
+  explicit SceneCard(bool danger=false):danger_(danger){}
+  void SetCopy(std::u16string title,std::u16string detail){title_=std::move(title);detail_=std::move(detail);GetViewAccessibility().SetName(title_+u". "+detail_);SchedulePaint();}
+  void OnPaint(gfx::Canvas* canvas) override{
+    const auto p=Palette(this);const int radius=Metrics().radius_md;
+    FillRound(canvas,GetLocalBounds(),radius,danger_?Mix(p.danger,p.bg_raised,8):p.bg_base);
+    StrokeRound(canvas,GetLocalBounds(),radius,danger_?Mix(p.danger,p.bg_raised,40):p.line);
+    if(title_.empty())return;
+    const int text_width=std::max(0,width()-GetInsets().width()-text_end_);const int x=GetInsets().left();const int top=height()/2-27;
+    canvas->DrawStringRectWithFlags(title_,DesignFont(2,13,600,false),p.danger,gfx::Rect(x,top,text_width,18),gfx::Canvas::TEXT_ALIGN_LEFT);
+    canvas->DrawStringRectWithFlags(detail_,DesignFont(2,12,400,false),p.ink_muted,gfx::Rect(x,top+20,text_width,34),gfx::Canvas::TEXT_ALIGN_LEFT|gfx::Canvas::MULTI_LINE);
+  }
+  // Room the trailing action takes, so the copy stops short of it.
+  void SetTextEnd(int end){text_end_=end;}
+ private:
+  bool danger_;std::u16string title_,detail_;int text_end_=0;
+};
+BEGIN_METADATA(SceneCard)
+END_METADATA
+// A shortcut tile (design: space settings): a card with a line icon and a hint
+// over its label in `body-strong`; `bg-hover` under the pointer.
+class SceneShortcutTile final : public views::Button {
+  METADATA_HEADER(SceneShortcutTile,views::Button)
+ public:
+  SceneShortcutTile(PressedCallback callback,std::u16string title,std::u16string hint,const gfx::VectorIcon& icon)
+      :views::Button(std::move(callback)),title_(std::move(title)),hint_(std::move(hint)),icon_(icon){
+    GetViewAccessibility().SetName(title_);SetTooltipText(title_);SetInstallFocusRingOnFocus(true);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(0,76);}
+  void PaintButtonContents(gfx::Canvas* canvas) override{
+    const auto p=Palette(this);const int radius=Metrics().radius_md;const bool hot=GetState()==STATE_HOVERED||GetState()==STATE_PRESSED;
+    FillRound(canvas,GetLocalBounds(),radius,hot?p.bg_hover:p.bg_base);StrokeRound(canvas,GetLocalBounds(),radius,p.line);
+    const auto ink=GetEnabled()?p.ink:p.ink_faint;
+    canvas->DrawImageInt(gfx::CreateVectorIcon(*icon_,16,p.ink_muted),12,12);
+    const auto hint_font=DesignFont(2,12,400,false);const int hint_width=std::min(width()-48,gfx::GetStringWidth(hint_,hint_font));
+    canvas->DrawStringRectWithFlags(hint_,hint_font,p.ink_muted,gfx::Rect(width()-12-hint_width,10,hint_width,18),gfx::Canvas::TEXT_ALIGN_RIGHT);
+    canvas->DrawStringRectWithFlags(title_,DesignFont(2,13,600,false),ink,gfx::Rect(12,height()-30,width()-24,18),gfx::Canvas::TEXT_ALIGN_LEFT);
+  }
+ private:
+  std::u16string title_,hint_;raw_ref<const gfx::VectorIcon> icon_;
+};
+BEGIN_METADATA(SceneShortcutTile)
+END_METADATA
+// The danger zone's action: a `radius-pill` outline in `danger` (painted here,
+// inside the card that covers scene text), washed with `danger` under the pointer.
+class SceneDangerPill final : public views::Button {
+  METADATA_HEADER(SceneDangerPill,views::Button)
+ public:
+  SceneDangerPill(PressedCallback callback,std::u16string text,std::u16string name):views::Button(std::move(callback)),text_(std::move(text)){
+    GetViewAccessibility().SetName(std::move(name));SetInstallFocusRingOnFocus(true);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(gfx::GetStringWidth(text_,Font())+28,32);}
+  void PaintButtonContents(gfx::Canvas* canvas) override{
+    const auto p=Palette(this);const auto ink=GetEnabled()?p.danger:p.ink_faint;
+    gfx::RectF edge(GetLocalBounds());edge.Inset(0.75f);
+    if(GetEnabled()&&(GetState()==STATE_HOVERED||GetState()==STATE_PRESSED)){cc::PaintFlags fill;fill.setAntiAlias(true);fill.setColor(SkColorSetA(p.danger,0x24));canvas->DrawRoundRect(edge,height()/2.f,fill);}
+    cc::PaintFlags line;line.setAntiAlias(true);line.setStyle(cc::PaintFlags::kStroke_Style);line.setStrokeWidth(1.5f);line.setColor(ink);canvas->DrawRoundRect(edge,height()/2.f,line);
+    canvas->DrawStringRectWithFlags(text_,Font(),ink,GetLocalBounds(),gfx::Canvas::TEXT_ALIGN_CENTER);
+  }
+ private:
+  static gfx::FontList Font(){return DesignFont(2,13,600,false);}
+  std::u16string text_;
+};
+BEGIN_METADATA(SceneDangerPill)
+END_METADATA
 void SetPanelText(views::View* view,std::u16string text) {
   if(auto* copy=views::AsViewClass<PreferenceCopy>(view)){copy->SetText(std::move(text));return;}
   auto* scene=views::AsViewClass<SceneParagraph>(view);scene->SetText(std::move(text));
@@ -3362,7 +3432,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto* settings_header = settings->AddChildView(std::make_unique<views::View>());
   settings_icon_=settings_header->AddChildView(std::make_unique<SpaceIconTile>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){
     if(!shell)return std::pair<std::u16string,bool>();
-    if(auto emoji=shell->workspace_emoji(shell->state_.workspace_id);!emoji.empty())return std::pair(emoji,false);
+    if(auto emoji=shell->workspace_emoji(shell->EditedWorkspaceId());!emoji.empty())return std::pair(emoji,false);
     for(const auto& workspace:shell->state_.workspaces)if(workspace.id==shell->state_.workspace_id&&!workspace.name.empty())
       return std::pair(base::i18n::ToUpper(base::UTF8ToUTF16(workspace.name).substr(0,1)),true);
     return std::pair<std::u16string,bool>();},weak)));
@@ -3374,24 +3444,52 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     if(shell){shell->settings_widget_->Hide();shell->RestorePageFocus();}
   },weak);
   {auto* controls=settings_header->AddChildView(std::make_unique<ScenePreferenceControls>(true));BindFormCommand(controls->AddControl({},workspace_copy[6]),sidebar::FormCommand::WorkspaceDismiss);}
-  auto* identity=PanelSection(settings.get(),T(u"Nazwa i profil"));
-  auto* identity_columns=PanelColumns(identity);
-  auto* name_column=PanelStack(identity_columns,Metrics().space_1);auto* profile_column=PanelStack(identity_columns,Metrics().space_1);
-  PanelText(name_column,workspace_copy[0],kLabelText,kMuted);
-  workspace_input_ = AddEditor(name_column);workspace_input_->view()->SetPreferredSize(gfx::Size(0,36));
+  // Name: saved as it is typed (design: space settings), „Zapisano” beside it.
+  auto* identity=PanelSection(settings.get(),T(u"Nazwa"));
+  auto* name_row=identity->AddChildView(std::make_unique<views::View>());
+  workspace_input_ = AddEditor(name_row);workspace_input_->view()->SetPreferredSize(gfx::Size(0,36));
   workspace_input_->GetViewAccessibility().SetName(workspace_copy[0]);
   workspace_input_->SetPlaceholderText(workspace_copy[1]);
-  PanelText(profile_column,workspace_copy[2],kLabelText,kMuted);
-  profile_picker_=ProfilePicker(profile_column,workspace_copy[3],base::BindRepeating([]{}));profile_picker_->SetPreferredSize(gfx::Size(0,36));
-  auto* save_hint=settings_text(identity,workspace_copy[5],kMuted,-2,gfx::Font::Weight::NORMAL,true);
-  auto* actions=ActionGroup(identity,false,8);
+  workspace_saved_=PanelText(name_row,T(u"Zapisano"),kLabelText,kOk);workspace_saved_->SetVisible(false);
+  SetSidebarPanelLayout(name_row,false,gfx::Insets(),Metrics().space_3,workspace_input_->view(),true);
+  workspace_input_->SetCallbacks(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){
+    if(!shell||shell->creating_workspace_||!shell->workspace_input_||shell->workspace_input_->IsIMEComposing())return;
+    shell->workspace_saved_->SetVisible(false);
+    shell->workspace_name_timer_.Start(FROM_HERE,base::Milliseconds(700),base::BindOnce(&WorkspaceShell::SaveWorkspaceName,shell));
+  },weak),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,const ui::KeyEvent& event){
+    if(!shell||event.type()!=ui::EventType::kKeyPressed||event.key_code()!=ui::VKEY_RETURN||shell->workspace_input_->IsIMEComposing())return false;
+    if(shell->creating_workspace_)shell->SubmitWorkspace(true);else shell->SaveWorkspaceName();
+    return true;
+  },weak));
+  // Profile: one row per profile, then „Nowy profil”; the picker stays as the
+  // form's hidden value.
+  auto* profile_section=PanelSection(settings.get(),T(u"Profil przeglądania"));
+  profile_picker_=ProfilePicker(profile_section,workspace_copy[3],base::BindRepeating([]{}));profile_picker_->SetVisible(false);
+  workspace_profile_list_=profile_section->AddChildView(std::make_unique<SceneCard>());
+  workspace_profile_list_->SetLayoutManager(CreateSidebarColumnLayout(2));
+  workspace_profile_list_->SetBorder(views::CreateEmptyBorder(gfx::Insets(4)));
+  new_profile_strip_=profile_section->AddChildView(std::make_unique<views::View>());
+  new_profile_strip_->SetLayoutManager(CreateSidebarColumnLayout(Metrics().space_2));
+  new_profile_strip_->SetBorder(views::CreateEmptyBorder(gfx::Insets::TLBR(0,12,4,12)));
+  PanelText(new_profile_strip_,T(u"Nazwa profilu"),kLabelText,kMuted);
+  new_profile_input_=AddEditor(new_profile_strip_);new_profile_input_->view()->SetPreferredSize(gfx::Size(0,36));
+  new_profile_input_->GetViewAccessibility().SetName(T(u"Nazwa profilu"));
+  new_profile_input_->SetCallbacks(base::DoNothing(),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,const ui::KeyEvent& event){
+    if(!shell||event.type()!=ui::EventType::kKeyPressed||event.key_code()!=ui::VKEY_RETURN||shell->new_profile_input_->IsIMEComposing())return false;
+    shell->SubmitWorkspace(true);return true;
+  },weak));
+  {auto* checks=new_profile_strip_->AddChildView(std::make_unique<SceneCheckboxGroup>(Metrics().space_2));
+   new_profile_import_=AddImportCheck(checks,T(u"Zaimportuj potem dane z innej przeglądarki"),base::BindRepeating([]{}));}
+  new_profile_strip_->SetVisible(false);
+  auto* actions=ActionGroup(settings.get(),false,8);workspace_actions_=actions;
   edit_workspace_ = AddAction(actions,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
         if (shell) shell->SubmitWorkspace(shell->creating_workspace_);
-      }, weak),T(u"Zapisz nazwę i profil"),ui::ButtonStyle::kProminent);
+      }, weak),T(u"Utwórz przestrzeń"),ui::ButtonStyle::kProminent);
   add_workspace_ = AddAction(actions,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
         if(shell)shell->ToggleWorkspaceCreation();
-      }, weak),T(u"Nowa przestrzeń…"));
+      }, weak),T(u"Anuluj"));
   BindFormCommand(edit_workspace_,sidebar::FormCommand::WorkspaceSave);BindFormCommand(add_workspace_,sidebar::FormCommand::WorkspaceToggle);
+  auto* save_hint=settings_text(profile_section,workspace_copy[5],kMuted,-2,gfx::Font::Weight::NORMAL,true);
   configuration_error_ = settings_text(settings.get(),u"",kError,-2,gfx::Font::Weight::NORMAL,true);
   configuration_error_->SetVisible(false);
   auto* appearance = settings->AddChildView(std::make_unique<views::View>());
@@ -3417,9 +3515,9 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   // Any color: the hue ring and the saturation x tone field beside it.
   {auto* wheel=appearance->AddChildView(std::make_unique<views::View>());
    wheel->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal,gfx::Insets(),22))->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
-   auto current=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell?shell->workspace_color(shell->state_.workspace_id):kDefaultWorkspaceColor;},weak);
-   auto emoji=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell?shell->workspace_emoji(shell->state_.workspace_id):std::u16string();},weak);
-   auto pick=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,SkColor color){if(shell)shell->SetWorkspaceColor(shell->state_.workspace_id,color);},weak);
+   auto current=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell?shell->workspace_color(shell->EditedWorkspaceId()):kDefaultWorkspaceColor;},weak);
+   auto emoji=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell?shell->workspace_emoji(shell->EditedWorkspaceId()):std::u16string();},weak);
+   auto pick=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,SkColor color){if(shell)shell->SetWorkspaceColor(shell->EditedWorkspaceId(),color);},weak);
    for(size_t i=0;i<color_wheel_.size();++i)color_wheel_[i]=wheel->AddChildView(std::make_unique<ColorWheelControl>(i==0,current,emoji,pick));}
   Spacer(appearance, Metrics().space_2);
   PanelText(appearance,workspace_copy[10],kEyebrow,kMuted);
@@ -3450,23 +3548,30 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 
   emoji_input_->SetCallbacks(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){
     if(shell&&shell->emoji_input_&&!shell->emoji_input_->IsIMEComposing())
-      shell->SetWorkspaceEmoji(shell->state_.workspace_id,std::u16string(shell->emoji_input_->GetText()));
+      shell->SetWorkspaceEmoji(shell->EditedWorkspaceId(),std::u16string(shell->emoji_input_->GetText()));
   },weak),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,const ui::KeyEvent& event){return shell&&shell->HandleAppearanceEditorKey(true,event);},weak));
 
+  // Shortcuts as tiles, then the danger zone (design: space settings).
   auto* more = settings->AddChildView(std::make_unique<views::View>());
   workspace_more_ = more;
-  PanelText(more,workspace_copy[13],kEyebrow,kMuted);
-  auto* more_actions=ActionGroup(more,false,0);
-  [[maybe_unused]] auto* workspace_profiles=AddAction(more_actions,
-      base::BindRepeating(&WorkspaceShell::OpenProfiles, weak, std::string(), std::string()), workspace_copy[14],ui::ButtonStyle::kText);
-  [[maybe_unused]] auto* workspace_import=AddAction(ActionGroup(more,false,0),
-      base::BindRepeating(&WorkspaceShell::OpenImport, weak), workspace_copy[15],ui::ButtonStyle::kText);
-  remove_workspace_ = AddAction(ActionGroup(more,false,0),
+  PanelText(more,T(u"Skróty"),kEyebrow,kMuted);
+  auto* tiles=PanelColumns(more);
+  tiles->AddChildView(std::make_unique<SceneShortcutTile>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell&&!shell->creating_workspace_)shell->ToggleWorkspaceCreation();},weak),
+      T(u"Nowa przestrzeń"),T(u"Kolor, ikona, profil"),vector_icons::kAdd2Icon));
+  tiles->AddChildView(std::make_unique<SceneShortcutTile>(base::BindRepeating(&WorkspaceShell::OpenImport,weak),
+      workspace_copy[15],T(u"Chrome, Arc, Safari"),vector_icons::kFolderOpenIcon));
+  static_cast<views::BoxLayout*>(tiles->GetLayoutManager())->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kStretch);
+  Spacer(more,Metrics().space_2);
+  auto* danger=more->AddChildView(std::make_unique<SceneCard>(true));
+  danger->SetBorder(views::CreateEmptyBorder(gfx::Insets::VH(14,16)));danger->SetTextEnd(96);
+  workspace_danger_text_=danger;
+  auto* danger_copy=danger->AddChildView(std::make_unique<views::View>());danger_copy->SetPreferredSize(gfx::Size(0,54));
+  remove_workspace_ = danger->AddChildView(std::make_unique<SceneDangerPill>(
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
         if (shell) shell->ConfirmRemoveWorkspace(shell->state_.workspace_id);
-      }, weak), workspace_copy[16],ui::ButtonStyle::kText);
-  views::AsViewClass<SceneTextButton>(remove_workspace_)->SetDanger();
-  BindFormCommand(remove_workspace_,sidebar::FormCommand::WorkspaceRemove);BindFormCommand(workspace_profiles,sidebar::FormCommand::WorkspaceProfiles);BindFormCommand(workspace_import,sidebar::FormCommand::WorkspaceImport);
+      }, weak), T(u"Usuń"), workspace_copy[16]));
+  {auto* layout=danger->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal,gfx::Insets(),Metrics().space_4));
+   layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);layout->SetFlexForView(danger_copy,1);}
 
   settings->SetLayoutManager(CreateSidebarColumnLayout(Metrics().space_4));settings->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(Metrics().space_6)));appearance->SetLayoutManager(CreateSidebarColumnLayout(Metrics().space_2));more->SetLayoutManager(CreateSidebarColumnLayout(Metrics().space_2));
   // Appearance first (saved at once), then the name and profile with the save row.
@@ -3866,6 +3971,8 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
                 // A sample undo toast; its „Cofnij” does nothing.
                 else if (panel == "downloads") shell->callbacks_.run_shortcut.Run("downloads");
                 else if (panel == "dialog") shell->RequestNewFolder(shell->state_.workspace_id);
+                else if (panel == "space-end") {shell->OpenWorkspaceSettings();shell->settings_widget_->LayoutRootViewIfNecessary();shell->settings_scroll_->ScrollTo(shell->settings_scroll_->maximum());}
+                else if (panel == "space-new") {shell->OpenWorkspaceSettings();shell->ToggleWorkspaceCreation();shell->workspace_input_->SetText(u"Klient X");shell->PickWorkspaceProfile(std::string());shell->settings_widget_->LayoutRootViewIfNecessary();shell->settings_scroll_->ScrollTo(shell->settings_scroll_->maximum());}
                 else if (panel == "add") {shell->ShowSidebar();shell->sidebar_widget_->LayoutRootViewIfNecessary();shell->ShowAddMenu();}
                 else if (panel == "menu") {shell->context_tab_=shell->state_.active_tab;shell->context_pin_.clear();shell->ShowTabMenu(shell->widget_->GetWindowBoundsInScreen().origin()+gfx::Vector2d(80,140),ui::mojom::MenuSourceType::kMouse);}
                 else if (panel == "toast") shell->ShowToast(T(u"Usunięto folder "), u"Projekty", base::DoNothing());
@@ -3952,6 +4059,8 @@ void WorkspaceShell::Detach() {
   workspace_dots_ = nullptr; add_button_ = nullptr; sidebar_footer_=nullptr; workspace_scroll_=nullptr;
   tab_lists_.clear();
   profile_picker_ = nullptr;
+  workspace_saved_ = nullptr; workspace_profile_list_ = nullptr; workspace_profile_rows_.clear(); workspace_profile_row_ids_.clear();
+  new_profile_strip_ = nullptr; new_profile_input_ = nullptr; new_profile_import_ = nullptr; workspace_actions_ = nullptr; workspace_danger_text_ = nullptr;
   workspace_input_ = nullptr;
   add_workspace_ = nullptr;
   edit_workspace_ = nullptr;
@@ -4042,7 +4151,7 @@ void WorkspaceShell::Update(ShellState state) {
     if(profile_form_){const auto profiles=ProfileOptions(state_);profile_form_->form->reconcile(rust::Slice<const sidebar::ProfileOption>(profiles.data(),profiles.size()),added_profile);}
     renaming_profile_id_.clear();
   }
-  if (changed || profiles_changed || selected) RebuildProfileRows();
+  if (changed || profiles_changed || selected) {RebuildProfileRows();RebuildWorkspaceProfileRows();RefreshWorkspaceDanger();}
   if(import_form_){RefreshRustImportControls();if(ready_changed&&import_visible()&&import_form_->form->should_resume(state_.configuration_ready,state_.profiles_busy))ImportSelectionChanged();}
   profile_picker_->SetEnabled(state_.configuration_ready && !state_.profiles_busy);
   if (changed || profiles_changed || ready_changed) RefreshProfileControls();
@@ -5272,6 +5381,8 @@ constexpr int kColorBase = 40;
 constexpr int kAddTab = 900;
 constexpr int kAddFolder = 901;
 constexpr int kAddSpace = 902;
+// A draft's color and icon live under this key until the space exists.
+constexpr char kDraftWorkspace[] = "\x01draft";
 // Its 16 px line icons (Iconography): a tab, a folder and a space, each with „+”.
 using enum gfx::CommandType;
 constexpr gfx::PathElement kAddTabPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,ROUND_RECT,2.5f,3,11,10,2.5f,MOVE_TO,8,6,V_LINE_TO,10,MOVE_TO,6,8,H_LINE_TO,10};
@@ -6854,17 +6965,20 @@ void WorkspaceShell::ApplyAppearance(bool refresh_theme) {
   }
   static_cast<EdgeView*>(edge_.get())->color = Palette(root_).accent;
   edge_->SchedulePaint();
+  // The panel's swatches show the space it edits (a draft while creating one).
+  const auto edited = EditedWorkspaceId();
+  const auto edited_color = workspace_color(edited);
   size_t color_index=0;
   for (auto& child : color_presets_->children())
-    if (auto* swatch=child.get();IsGlyphAction(swatch)) SetActionOn(swatch,sidebar::appearance_selected(false,color_index++,color,{}));
+    if (auto* swatch=child.get();IsGlyphAction(swatch)) SetActionOn(swatch,sidebar::appearance_selected(false,color_index++,edited_color,{}));
   for(auto& wheel:color_wheel_)if(auto* control=views::AsViewClass<ColorWheelControl>(wheel.get()))control->Refresh();
   if(settings_icon_)settings_icon_->SchedulePaint();
-  const auto emoji = workspace_emoji(state_.workspace_id);
+  const auto emoji = workspace_emoji(edited);
   if (!emoji_input_->HasFocus()) emoji_input_->SetText(emoji);
   size_t emoji_index=0;
   for (auto& child : emoji_input_->view()->parent()->children()) {
     if (auto* pick=child.get();IsGlyphAction(pick)) {
-      if(workspace_form_){SetActionOn(pick,sidebar::appearance_selected(true,emoji_index++,color,base::UTF16ToUTF8(emoji)));continue;}
+      if(workspace_form_){SetActionOn(pick,sidebar::appearance_selected(true,emoji_index++,edited_color,base::UTF16ToUTF8(emoji)));continue;}
       SetActionOn(pick,!emoji.empty()&&pick->GetTooltipText()==TF(u"Emoji {}",{emoji}));
     }
   }
@@ -7709,8 +7823,9 @@ void WorkspaceShell::ApplySidebarWidth(int width,bool done) {
 void WorkspaceShell::SetWorkspaceColor(std::string_view id, SkColor color) {
   const std::string key(id);
   colors_[key] = color | 0xFF000000;
-  color_dirty_.insert(key);
   color_error_->SetVisible(false);
+  if (key == kDraftWorkspace) { ApplyAppearance(); return; }
+  color_dirty_.insert(key);
   ApplyAppearance();
   ++pending_writes_;
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
@@ -7748,6 +7863,11 @@ void WorkspaceShell::SetWorkspaceEmoji(std::string_view id, std::u16string text)
     return;
   }
   if (emoji.empty()) emoji_.erase(key); else emoji_[key] = emoji;
+  if (key == kDraftWorkspace) {
+    ApplyAppearance();
+    if (emoji_input_ && emoji_input_->GetText() != emoji) emoji_input_->SetText(emoji);
+    return;
+  }
   emoji_dirty_.insert(key);
   RebuildWorkspaceDots();
   RefreshWorkspaceHeading();
@@ -7768,21 +7888,96 @@ SkColor WorkspaceShell::workspace_color(std::string_view id) const {
   auto it = colors_.find(std::string(id));
   return it == colors_.end() ? kDefaultWorkspaceColor : it->second;
 }
+namespace {
+SkColor ProfileAvatarColor(std::string_view id);
+// „1 karta”, „3 karty”, „5 kart”: the Polish plural form for `n`.
+std::u16string CountOf(int n,std::u16string one,std::u16string few,std::u16string many){
+  const bool is_few=n%10>=2&&n%10<=4&&(n%100<12||n%100>14);
+  return base::NumberToString16(n)+u" "+(n==1?one:is_few?few:many);
+}
+}  // namespace
+std::string WorkspaceShell::EditedWorkspaceId() const { return creating_workspace_ ? kDraftWorkspace : state_.workspace_id; }
 void WorkspaceShell::ToggleWorkspaceCreation() {
-  if(creating_workspace_){RefreshWorkspaceSettings();PositionPanels();return;}
+  if(creating_workspace_){colors_.erase(kDraftWorkspace);emoji_.erase(kDraftWorkspace);RefreshWorkspaceSettings();ApplyAppearance();PositionPanels();return;}
   if(workspace_form_)workspace_form_->form->begin_create(state_.workspace_id);
-  creating_workspace_=true;workspace_appearance_->SetVisible(false);workspace_more_->SetVisible(false);configuration_error_->SetVisible(false);
+  workspace_name_timer_.Stop();
+  creating_workspace_=true;workspace_more_->SetVisible(false);configuration_error_->SetVisible(false);workspace_saved_->SetVisible(false);
+  // The draft starts in the color the window has now and without an icon.
+  colors_[kDraftWorkspace]=workspace_color(state_.workspace_id);emoji_.erase(kDraftWorkspace);
   SetPanelText(settings_title_,T(u"Nowa przestrzeń"));workspace_input_->SetText(u"");workspace_input_->RequestFocus();
   SetActionText(edit_workspace_,T(u"Utwórz przestrzeń"));SetActionText(add_workspace_,T(u"Anuluj"));SetCreateAction(edit_workspace_,true);
-  RefreshRustWorkspacePresentation();PositionPanels();
+  new_profile_choice_=false;
+  RefreshRustWorkspacePresentation();RebuildWorkspaceProfileRows();ApplyAppearance();PositionPanels();
+}
+void WorkspaceShell::RebuildWorkspaceProfileRows() {
+  if(!workspace_profile_list_)return;
+  CancelSceneActions(workspace_profile_list_);
+  for(auto& row:workspace_profile_rows_)workspace_profile_list_->RemoveChildViewT(row.get());
+  workspace_profile_rows_.clear();workspace_profile_row_ids_.clear();
+  const auto index=PickerIndex(profile_picker_);
+  const std::string selected=new_profile_choice_?std::string():index&&*index<state_.profiles.size()?state_.profiles[*index].id:state_.profile_id;
+  const auto profiles=ProfileOptions(state_);const auto uses=ProfileUses(state_);
+  const auto rows=sidebar::profile_rows(rust::Slice<const sidebar::ProfileOption>(profiles.data(),profiles.size()),rust::Slice<const sidebar::ProfileUse>(uses.data(),uses.size()),state_.profile_id);
+  const auto weak=weak_factory_.GetWeakPtr();const bool enabled=state_.configuration_ready&&!state_.profiles_busy;
+  auto add=[&](std::string id,RowRecipe::Spec spec){
+    spec.stacked=true;spec.height=48;spec.active=new_profile_choice_?id.empty():id==selected;
+    // Picking rebuilds the list (and may save the space), which destroys the
+    // pressed row: the pick runs after the press returns.
+    auto* row=workspace_profile_list_->AddChildView(CreateSceneRow(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::string id){
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&WorkspaceShell::PickWorkspaceProfile,shell,std::move(id)));},weak,id),std::move(spec),{},{}));
+    row->SetEnabled(enabled);
+    workspace_profile_rows_.push_back(row);workspace_profile_row_ids_.push_back(std::move(id));
+  };
+  for(const auto& r:rows){
+    const std::string id(r.id);RowRecipe::Spec spec;
+    spec.title=base::UTF8ToUTF16(std::string(r.name));spec.detail=base::UTF8ToUTF16(std::string(r.detail));
+    spec.monogram=base::UTF8ToUTF16(std::string(r.initial));spec.monogram_color=ProfileAvatarColor(id);add(id,std::move(spec));
+  }
+  RowRecipe::Spec fresh;fresh.title=T(u"Nowy profil");fresh.detail=T(u"Czysty start: bez logowań i historii");fresh.monogram=u"+";fresh.monogram_color=Palette(root_).bg_hover;
+  add(std::string(),std::move(fresh));
+  new_profile_strip_->SetVisible(creating_workspace_&&new_profile_choice_);
+  if(creating_workspace_)SetActionText(edit_workspace_,new_profile_choice_?T(u"Utwórz przestrzeń i profil"):T(u"Utwórz przestrzeń"));
+  workspace_profile_list_->InvalidateLayout();
+}
+void WorkspaceShell::PickWorkspaceProfile(std::string profile_id) {
+  if(!state_.configuration_ready||state_.profiles_busy)return;
+  if(profile_id.empty()){
+    // Editing a space: profiles are made in the profile panel. A new space
+    // makes its own, named like the space unless renamed.
+    if(!creating_workspace_){OpenProfiles({},{});return;}
+    new_profile_choice_=true;RebuildWorkspaceProfileRows();
+    if(new_profile_input_->GetText().empty())new_profile_input_->SetText(workspace_input_->GetText());
+    new_profile_input_->RequestFocus();PositionPanels();return;
+  }
+  new_profile_choice_=false;
+  for(size_t i=0;i<state_.profiles.size();++i)if(state_.profiles[i].id==profile_id)SetPickerIndex(profile_picker_,i);
+  if(!creating_workspace_&&profile_id!=state_.profile_id){SubmitWorkspace(false);return;}
+  RebuildWorkspaceProfileRows();PositionPanels();
+}
+void WorkspaceShell::SaveWorkspaceName() {
+  workspace_name_timer_.Stop();
+  if(creating_workspace_||!workspace_input_||workspace_input_->IsIMEComposing())return;
+  const auto name=std::u16string(base::TrimWhitespace(workspace_input_->GetText(),base::TRIM_ALL));
+  if(name.empty()||name==state_.workspace_name)return;
+  SubmitWorkspace(false);
+  if(state_.workspace_name==name){workspace_saved_->SetVisible(true);PositionPanels();}
+}
+bool WorkspaceShell::workspace_saved_visible() const { return workspace_saved_ && workspace_saved_->GetVisible(); }
+void WorkspaceShell::RefreshWorkspaceDanger() {
+  if(!workspace_danger_text_)return;
+  const int tabs=static_cast<int>(state_.tabs.size());
+  int folders=0;for(const auto& pin:state_.pins)folders+=pin.folder;
+  static_cast<SceneCard*>(workspace_danger_text_.get())->SetCopy(T(u"Usuń przestrzeń"),TF(u"Zamknie {} i {}. Przez 6 s możesz cofnąć.",
+      {CountOf(tabs,T(u"kartę"),T(u"karty"),T(u"kart")),CountOf(folders,T(u"folder"),T(u"foldery"),T(u"folderów"))}));
 }
 void WorkspaceShell::RefreshRustWorkspacePresentation() {
   if(!workspace_form_)return;
   const auto v=workspace_form_->form->view(base::UTF16ToUTF8(state_.workspace_name),base::UTF16ToUTF8(state_.profile_name),state_.configuration_ready,state_.profiles_busy,state_.workspaces.size());
   creating_workspace_=v.creating;SetPanelText(settings_title_,base::UTF8ToUTF16(std::string(v.title)));SetPanelText(profile_name_,base::UTF8ToUTF16(std::string(v.description)));
   SetActionText(edit_workspace_,base::UTF8ToUTF16(std::string(v.save_label)));SetActionText(add_workspace_,base::UTF8ToUTF16(std::string(v.secondary_label)));SetCreateAction(edit_workspace_,v.creating);
-  workspace_appearance_->SetVisible(v.appearance);workspace_more_->SetVisible(v.appearance);edit_workspace_->SetEnabled(v.enabled);add_workspace_->SetEnabled(v.enabled);profile_picker_->SetEnabled(v.enabled);remove_workspace_->SetEnabled(v.remove_enabled);
+  workspace_appearance_->SetVisible(true);workspace_more_->SetVisible(v.appearance);workspace_actions_->SetVisible(v.creating);edit_workspace_->SetEnabled(v.enabled);add_workspace_->SetEnabled(v.enabled);profile_picker_->SetEnabled(v.enabled);remove_workspace_->SetEnabled(v.remove_enabled);
   SetPanelText(configuration_error_,base::UTF8ToUTF16(std::string(v.error)));configuration_error_->SetVisible(!v.error.empty());
+  if(v.creating&&new_profile_choice_)SetActionText(edit_workspace_,T(u"Utwórz przestrzeń i profil"));
 }
 void WorkspaceShell::ShowWorkspaceAppearanceError(unsigned kind) {
   const std::array<std::u16string,4> messages={T(u"Nie udało się zapisać ustawień"),T(u"Nie udało się zapisać koloru"),T(u"Nie udało się zapisać emoji"),T(u"Podaj kolor #RRGGBB")};
@@ -7795,15 +7990,18 @@ bool WorkspaceShell::workspace_panel_contains_scene_text(std::string_view text) 
 }
 void WorkspaceShell::RefreshWorkspaceSettings() {
   if(workspace_form_)workspace_form_->form->reset(state_.workspace_id);
-  creating_workspace_ = false;
-  workspace_appearance_->SetVisible(true);workspace_more_->SetVisible(true);
+  creating_workspace_ = false;new_profile_choice_ = false;
+  colors_.erase(kDraftWorkspace);emoji_.erase(kDraftWorkspace);
+  workspace_appearance_->SetVisible(true);workspace_more_->SetVisible(true);workspace_actions_->SetVisible(false);
   SetPanelText(settings_title_,state_.workspace_name);
-  SetActionText(edit_workspace_,T(u"Zapisz nazwę i profil"));SetCreateAction(edit_workspace_,false);
-  SetActionText(add_workspace_,T(u"Nowa przestrzeń…"));
-  workspace_input_->SetText(state_.workspace_name);
+  SetActionText(edit_workspace_,T(u"Utwórz przestrzeń"));SetCreateAction(edit_workspace_,false);
+  SetActionText(add_workspace_,T(u"Anuluj"));
+  // Saving while typing must not move the caret.
+  if (workspace_input_->GetText() != state_.workspace_name) workspace_input_->SetText(state_.workspace_name);
+  new_profile_input_->SetText(u"");SetCheckValue(new_profile_import_,false);
   for (size_t i = 0; i < state_.profiles.size(); ++i)
     if (state_.profiles[i].id == state_.profile_id) SetPickerIndex(profile_picker_,i);
-  RefreshRustWorkspacePresentation();
+  RefreshRustWorkspacePresentation();RebuildWorkspaceProfileRows();RefreshWorkspaceDanger();
 }
 void WorkspaceShell::SetConfigurationError(bool error) {
   if(workspace_form_){workspace_form_->form->set_configuration_error(error);RefreshRustWorkspacePresentation();PositionPanels();return;}
@@ -7877,8 +8075,8 @@ void WorkspaceShell::DispatchFormCommand(views::View* source,const sidebar::Form
     case C::ImportDismiss:{if(import_applying_)return;const auto alive=weak_factory_.GetWeakPtr();callbacks_.dismiss_import.Run();if(!alive)return;CloseOverlays();RestorePageFocus();break;}
     case C::WorkspaceColorPreset:case C::WorkspaceEmojiPreset:{
       const auto target=sidebar::appearance_command_target(command,binding.index);if(!target.valid)return;
-      if(command==C::WorkspaceColorPreset)SetWorkspaceColor(state_.workspace_id,target.color);
-      else SetWorkspaceEmoji(state_.workspace_id,base::UTF8ToUTF16(std::string(target.emoji)));
+      if(command==C::WorkspaceColorPreset)SetWorkspaceColor(EditedWorkspaceId(),target.color);
+      else SetWorkspaceEmoji(EditedWorkspaceId(),base::UTF8ToUTF16(std::string(target.emoji)));
       break;
     }
     case C::WorkspaceSave:SubmitWorkspace(creating_workspace_);break;
@@ -7910,11 +8108,26 @@ void WorkspaceShell::SubmitWorkspace(bool add) {
     const auto profiles=ProfileOptions(state_);const auto uses=ProfileUses(state_);
     const auto request=workspace_form_->form->submit(base::UTF16ToUTF8(workspace_input_->GetText()),profile,state_.workspace_id,state_.configuration_ready,state_.profiles_busy,workspace_input_->IsIMEComposing(),rust::Slice<const sidebar::ProfileOption>(profiles.data(),profiles.size()),rust::Slice<const sidebar::ProfileUse>(uses.data(),uses.size()));
     if(request.action==sidebar::WorkspaceFormAction::None){RefreshRustWorkspacePresentation();PositionPanels();return;}
+    const bool create=request.action==sidebar::WorkspaceFormAction::Create;
+    const auto profile_name=std::u16string(base::TrimWhitespace(new_profile_input_->GetText(),base::TRIM_ALL));
+    if(create&&new_profile_choice_&&profile_name.empty()){workspace_form_->form->finish_attempt(false);new_profile_input_->RequestFocus();RefreshRustWorkspacePresentation();return;}
+    std::set<std::string> before;for(const auto& w:state_.workspaces)before.insert(w.id);
+    const auto draft_color=workspace_color(kDraftWorkspace);const auto draft_emoji=workspace_emoji(kDraftWorkspace);
+    const bool import=create&&new_profile_choice_&&CheckValue(new_profile_import_);const bool make_profile=create&&new_profile_choice_;
     const auto alive=weak_factory_.GetWeakPtr();
-    const bool accepted=request.action==sidebar::WorkspaceFormAction::Create?callbacks_.add_workspace.Run(std::string(request.name),std::string(request.profile)):callbacks_.edit_workspace.Run(std::string(request.name),std::string(request.profile));
+    const bool accepted=create?callbacks_.add_workspace.Run(std::string(request.name),std::string(request.profile)):callbacks_.edit_workspace.Run(std::string(request.name),std::string(request.profile));
     if(!alive||!workspace_form_)return;
     workspace_form_->form->finish_attempt(accepted);SetConfigurationError(!accepted);
-    if(accepted)RefreshWorkspaceSettings();else RefreshRustWorkspacePresentation();return;
+    if(!accepted){RefreshRustWorkspacePresentation();return;}
+    std::string added;for(const auto& w:state_.workspaces)if(!before.contains(w.id))added=w.id;
+    RefreshWorkspaceSettings();
+    if(!added.empty()){
+      SetWorkspaceColor(added,draft_color);if(!draft_emoji.empty())SetWorkspaceEmoji(added,draft_emoji);
+      // The new profile is made in the background and then assigned to the space.
+      if(make_profile)callbacks_.create_profile.Run(base::UTF16ToUTF8(profile_name),added);
+      if(import)OpenImport();
+    }
+    return;
   }
   std::string name;
   base::TrimWhitespaceASCII(base::UTF16ToUTF8(workspace_input_->GetText()), base::TRIM_ALL, &name);
@@ -8305,7 +8518,7 @@ bool WorkspaceShell::HandleAppearanceEditorKey(bool emoji,const ui::KeyEvent& ev
   if(!field||event.type()!=ui::EventType::kKeyPressed||field->IsIMEComposing())return false;
   if(event.key_code()==ui::VKEY_ESCAPE){CloseOverlays();RestorePageFocus();return true;}
   if(event.key_code()!=ui::VKEY_RETURN)return false;
-  SetWorkspaceEmoji(state_.workspace_id,std::u16string(field->GetText()));
+  SetWorkspaceEmoji(EditedWorkspaceId(),std::u16string(field->GetText()));
   return true;
 }
 void WorkspaceShell::SetPaletteErrorText(std::u16string text) {
