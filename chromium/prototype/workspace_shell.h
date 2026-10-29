@@ -239,6 +239,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void RequestRemoveWorkspace(std::string id);
   views::Widget* workspace_remove_dialog() const { return remove_dialog_.get(); }
   std::optional<size_t> split_drop_slot_for_testing() const { return split_drop_slot_; }
+  bool drag_hover_split_for_testing() const { return drag_hover_split_; }
   std::optional<size_t> SplitDropSlotForTesting(gfx::Point point) const { return SplitDropSlot(point); }
   void DropIntoSplitForTesting(size_t tab, size_t slot) { QueueSplit(tab, {}, slot); }
   const std::vector<size_t>& split_tabs_for_testing() const { return state_.split_tabs; }
@@ -723,6 +724,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void QueueSplit(std::optional<size_t> tab, std::string pin, std::optional<size_t> slot = std::nullopt);
   std::optional<size_t> SplitDropSlot(gfx::Point point) const;
   void ShowSplitDrop(std::optional<size_t> slot, std::u16string title);
+  void CreateSplitDrop();
   struct ResolvedRowTarget { bool valid; std::optional<size_t> tab; std::string pin; };
   ResolvedRowTarget ResolveSidebarTarget(std::string_view workspace,std::array<uint64_t,2> identity,std::string_view pin) const;
   void HandleSidebarDrop(std::string workspace,std::optional<size_t> tab,std::array<uint64_t,2> identity,std::string pin,gfx::Point point);
@@ -904,6 +906,12 @@ class WorkspaceShell final : public ui::EventHandler,
   std::unique_ptr<views::Widget> drop_widget_;
   raw_ptr<views::View> drop_view_ = nullptr;
   std::optional<size_t> split_drop_slot_;
+  // Dragging a tab over another tab's row: after a moment that tab takes focus
+  // and the drop joins its split, on the right.
+  base::OneShotTimer drag_hover_timer_;
+  std::optional<std::array<uint64_t,2>> drag_hover_tab_;
+  bool drag_hover_split_ = false;
+  void DragHoverSettled();
   std::unique_ptr<views::Widget> rust_folder_dialog_;
   base::WeakPtr<views::Widget> folder_dialog_;
   std::string folder_parent_id_;

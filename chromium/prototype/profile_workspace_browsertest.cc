@@ -7960,6 +7960,77 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarPairRustNodeOwnsMembers
     EXPECT_EQ(first, shell->sidebar_node_id_for_testing(row));
   }
 }
+// A tab dragged with the real pointer onto a shown split joins it on the first
+// drop, at the edge it was dropped on.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeDragJoinsShownSplitFirstTime) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->SetWorkspaceAnimations(false);
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html");
+  ASSERT_TRUE(window_->NavigateFromBar(url, true));
+  window_->SelectTab(0); ASSERT_TRUE(window_->SplitTab(1));
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html?third"), true));
+  const size_t third = window_->tab_count("work") - 1;
+  window_->SelectTab(0);
+  shell->CloseOverlays(true); shell->SetPinned(true); shell->ShowSidebar();
+  shell->sidebar_widget()->LayoutRootViewIfNecessary(); window_->widget()->LayoutRootViewIfNecessary();
+  if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible(); }));
+  ASSERT_EQ(2u, shell->split_tabs_for_testing().size());
+  ui_controls::EnableUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  const auto sidebar_window = shell->sidebar_widget()->GetNativeWindow();
+  auto move = [&](gfx::Point p) {
+    base::test::TestFuture<void> done;
+    return ui_controls::SendMouseMoveNotifyWhenDone(p.x(), p.y(), done.GetCallback(), sidebar_window) && done.Wait();
+  };
+  auto mouse = [&](int state) {
+    base::test::TestFuture<void> done;
+    return ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT, state, done.GetCallback(), ui_controls::kNoAccelerator, sidebar_window) && done.Wait();
+  };
+  ASSERT_TRUE(shell->tab_button(third));
+  ASSERT_TRUE(move(shell->tab_button(third)->GetBoundsInScreen().CenterPoint()));
+  ASSERT_TRUE(mouse(ui_controls::DOWN));
+  const auto content = shell->content_host()->GetBoundsInScreen();
+  ASSERT_TRUE(move(gfx::Point(content.x() + content.width() / 3, content.CenterPoint().y())));
+  ASSERT_TRUE(move(gfx::Point(content.CenterPoint().x(), content.CenterPoint().y())));
+  EXPECT_EQ(std::optional<size_t>(1), shell->split_drop_slot_for_testing());
+  ASSERT_TRUE(mouse(ui_controls::UP));
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->split_tabs_for_testing().size() == 3u; }));
+  EXPECT_EQ(third, shell->split_tabs_for_testing()[1]);
+}
+// Dragging a tab over another tab's row focuses that tab after a moment and
+// previews the split; dropping there pairs them, the dragged tab on the right.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeDragOverTabFocusesItAndSplits) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->SetWorkspaceAnimations(false);
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html?a"), true));
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html?b"), true));
+  window_->SelectTab(0);
+  shell->CloseOverlays(true); shell->SetPinned(true); shell->ShowSidebar();
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible(); }));
+  ui_controls::EnableUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  const auto sidebar_window = shell->sidebar_widget()->GetNativeWindow();
+  auto move = [&](gfx::Point p) {
+    base::test::TestFuture<void> done;
+    return ui_controls::SendMouseMoveNotifyWhenDone(p.x(), p.y(), done.GetCallback(), sidebar_window) && done.Wait();
+  };
+  auto mouse = [&](int state) {
+    base::test::TestFuture<void> done;
+    return ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT, state, done.GetCallback(), ui_controls::kNoAccelerator, sidebar_window) && done.Wait();
+  };
+  ASSERT_TRUE(move(shell->tab_button(2)->GetBoundsInScreen().CenterPoint()));
+  ASSERT_TRUE(mouse(ui_controls::DOWN));
+  const auto over = shell->tab_button(1)->GetBoundsInScreen().CenterPoint();
+  ASSERT_TRUE(move(over + gfx::Vector2d(0, -4)));ASSERT_TRUE(move(over));
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->drag_hover_split_for_testing(); }));
+  EXPECT_EQ(std::optional<size_t>(1), shell->split_drop_slot_for_testing());
+  ASSERT_TRUE(mouse(ui_controls::UP));
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->split_tabs_for_testing().size() == 2u; }));
+  EXPECT_EQ((std::vector<size_t>{1, 2}), shell->split_tabs_for_testing());
+}
 // Exercise Rust-owned gesture state and row geometry through native events,
 // rather than invoking the command callbacks or asserting implementation data.
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeDragAndCloseAtWidthLimits) {

@@ -3896,6 +3896,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   {auto toast=std::make_unique<ToastView>(base::BindRepeating(&WorkspaceShell::UndoToast,weak),base::BindRepeating(&WorkspaceShell::HideToast,weak),
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,bool hovered){if(!shell)return;if(hovered)shell->toast_timer_.Stop();else if(shell->toast_widget_->IsVisible())shell->toast_timer_.Start(FROM_HERE,base::Seconds(6),base::BindOnce(&WorkspaceShell::HideToast,shell));},weak));
    toast_=toast.get();make_panel(std::move(toast), toast_delegate_, toast_widget_, T(u"Zitter — Komunikat"), false);}
+  CreateSplitDrop();
   make_panel(std::make_unique<ScrimView>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->CloseOverlays(true);},weak)),
              scrim_delegate_, scrim_widget_, u"Zitter", false);
   PositionPanels();
@@ -5979,6 +5980,14 @@ std::optional<size_t> WorkspaceShell::SplitDropSlot(gfx::Point point) const {
 void WorkspaceShell::ShowSplitDrop(std::optional<size_t> slot,std::u16string title) {
   split_drop_slot_=slot;
   if(!slot){if(drop_widget_)drop_widget_->Hide();return;}
+  // Made with the window (CreateSplitDrop); a new NSWindow mid-drag ends the drag.
+  if(!drop_widget_)return;
+  const size_t panes=state_.split_visible?std::max<size_t>(1,state_.split_tabs.size()):1;
+  static_cast<SplitDropView*>(drop_view_.get())->Set(panes,*slot,panes>1&&state_.split_vertical,std::move(title));
+  if(drop_widget_->GetWindowBoundsInScreen()!=content_host_->GetBoundsInScreen())drop_widget_->SetBounds(content_host_->GetBoundsInScreen());
+  if(!drop_widget_->IsVisible())drop_widget_->ShowInactive();
+}
+void WorkspaceShell::CreateSplitDrop() {
   if(!drop_widget_){
     drop_delegate_=std::make_unique<views::WidgetDelegate>();drop_delegate_->SetTitle(u"Zitter — Split View");
     auto view=std::make_unique<SplitDropView>();drop_view_=view.get();drop_delegate_->SetContentsView(std::move(view));
@@ -5987,15 +5996,38 @@ void WorkspaceShell::ShowSplitDrop(std::optional<size_t> slot,std::u16string tit
     params.accept_events=false;params.opacity=views::Widget::InitParams::WindowOpacity::kTranslucent;params.rounded_corners=gfx::RoundedCornersF(Metrics().radius_md);
     drop_widget_=std::make_unique<views::Widget>();drop_widget_->Init(std::move(params));
   }
-  const size_t panes=state_.split_visible?std::max<size_t>(1,state_.split_tabs.size()):1;
-  static_cast<SplitDropView*>(drop_view_.get())->Set(panes,*slot,panes>1&&state_.split_vertical,std::move(title));
-  if(drop_widget_->GetWindowBoundsInScreen()!=content_host_->GetBoundsInScreen())drop_widget_->SetBounds(content_host_->GetBoundsInScreen());
-  if(!drop_widget_->IsVisible())drop_widget_->ShowInactive();
-  if(sidebar_widget_&&sidebar_widget_->IsVisible())sidebar_widget_->StackAboveWidget(drop_widget_.get());
+}
+void WorkspaceShell::DragHoverSettled() {
+  if(!drag_hover_tab_||!drag_point_)return;
+  for(const auto& tab:state_.tabs){
+    if(tab.identity!=*drag_hover_tab_)continue;
+    // The hovered tab (or its split) takes the page; the dragged one would join on the right.
+    if(tab.index!=state_.active_tab)callbacks_.select_tab.Run(tab.index);
+    drag_hover_split_=true;
+    const size_t panes=state_.split_visible?std::max<size_t>(1,state_.split_tabs.size()):1;
+    sidebar_reorder_.reset();ScheduleMetalSidebar();
+    ShowSplitDrop(panes<kMaxSplitPanes?std::optional<size_t>(panes):std::nullopt,drag_row_.view()?std::u16string(drag_row_.view()->GetViewAccessibility().GetCachedName()):std::u16string());
+    return;
+  }
 }
 void WorkspaceShell::HandleSidebarDrag(views::View* row,gfx::Point grab,std::optional<gfx::Point> point) {
-  sidebar_reorder_=point?SidebarReorderAt(*point):std::nullopt;
+  // Another tab's row under the pointer: wait, then focus it and preview the split.
+  std::optional<std::array<uint64_t,2>> hovered;
+  if(point&&tab_list_&&tab_list_->GetWidget()){
+    gfx::Point local=*point;views::View::ConvertPointFromScreen(tab_list_,&local);
+    for(auto* view=tab_list_->HitTestPoint(local)?tab_list_->GetEventHandlerForPoint(local):nullptr;view;view=view->parent()){
+      auto* over=views::AsViewClass<RustRowView>(view);if(!over)continue;
+      const auto binding=over->TabBinding();if(binding.valid&&over!=row)hovered=std::array<uint64_t,2>{binding.high,binding.low};
+      break;
+    }
+  }
+  if(hovered!=drag_hover_tab_){
+    drag_hover_tab_=hovered;drag_hover_split_=false;drag_hover_timer_.Stop();
+    if(hovered)drag_hover_timer_.Start(FROM_HERE,base::Milliseconds(450),base::BindOnce(&WorkspaceShell::DragHoverSettled,weak_factory_.GetWeakPtr()));
+  }
   drag_row_.SetView(point?row:nullptr);drag_grab_=grab;drag_point_=point;
+  if(drag_hover_split_){ScheduleMetalSidebar();return;}
+  sidebar_reorder_=point?SidebarReorderAt(*point):std::nullopt;
   ShowSplitDrop(point&&!sidebar_reorder_?SplitDropSlot(*point):std::nullopt,row?std::u16string(row->GetViewAccessibility().GetCachedName()):std::u16string());
   ScheduleMetalSidebar();
   if(!sidebar_root_)return;
@@ -6031,7 +6063,16 @@ void WorkspaceShell::PaintSidebarDrag(gfx::Canvas* canvas,views::View* overlay) 
 }
 void WorkspaceShell::HandleSidebarDrop(std::string workspace,std::optional<size_t> tab,std::array<uint64_t,2> identity,std::string pin,gfx::Point point) {
   const auto slot=SplitDropSlot(point);ShowSplitDrop(std::nullopt,{});
+  const bool hover_split=drag_hover_split_;drag_hover_split_=false;drag_hover_tab_.reset();drag_hover_timer_.Stop();
   if(workspace!=state_.workspace_id)return;
+  if(hover_split){
+    // Dropped on the tab it settled on: join that tab's split on the right.
+    sidebar_reorder_.reset();ScheduleMetalSidebar();
+    const auto target=ResolveSidebarTarget(workspace,identity,pin);
+    const size_t panes=state_.split_visible?std::max<size_t>(1,state_.split_tabs.size()):1;
+    if(target.valid&&state_.configuration_ready&&!state_.profiles_busy)QueueSplit(target.tab,target.pin,panes<kMaxSplitPanes?std::optional<size_t>(panes):std::nullopt);
+    return;
+  }
   if(auto reorder=SidebarReorderAt(point)) {
     sidebar_reorder_.reset();ScheduleMetalSidebar();
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,std::string workspace,std::array<uint64_t,2> identity,std::string pin,SidebarReorder reorder){
