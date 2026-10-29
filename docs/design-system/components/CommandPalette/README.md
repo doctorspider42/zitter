@@ -1,6 +1,6 @@
 # CommandPalette
 
-Command Center (⌘K): jedno pole i jedna lista akcji, kart, przypiętych, obszarów i historii.
+Command Center (⌘K): jedno pole i jedna lista akcji, kart, przypiętych, przestrzeni i historii.
 
 **Daje konsument:** zapytanie, wyniki pogrupowane (`zt-eyebrow` nad grupą), zaznaczony indeks, stan ładowania.
 
@@ -9,4 +9,4 @@ Command Center (⌘K): jedno pole i jedna lista akcji, kart, przypiętych, obsza
 - Wiersz 36 px: ikona `ink-muted`, nazwa `ink`, URL w `url`/`ink-muted`, skrót w `Kbd`. Zaznaczony: `--accent-soft`, ikona i nazwa w `--accent-ink`.
 - Ładowanie: trzy drżące kropki `zt-loader` (zing, akcent, zing) zamiast spinnera.
 - Stopka na `bg-base` z trzema skrótami: wybierz, otwórz, zamknij.
-- Kolejność grup: Akcje, Karty, Przypięte, Obszary, Historia. Maks. 8 widocznych wierszy.
+- Kolejność grup: Akcje, Karty, Przypięte, Przestrzenie, Historia. Maks. 8 widocznych wierszy.

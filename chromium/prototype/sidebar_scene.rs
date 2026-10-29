@@ -64,7 +64,7 @@ mod ffi {
     struct ToolsTimelineList { choices: Vec<ToolsTimelineChoice>, enabled: bool }
     struct ToolsHistoryView { empty: String, status: String, more_visible: bool, more_enabled: bool }
     struct ToolsClearControls { label: String, enabled: bool }
-    enum PreferenceRowKind { Theme, Pinned, Animations, Search, Toggle, Text, Picker, Action, Directory, SiteEditor, SiteRules, ClearData, ShortcutHint }
+    enum PreferenceRowKind { Theme, Pinned, Animations, Search, Toggle, Text, Picker, Action, Directory, SiteEditor, SiteRules, ClearData, ShortcutHint, WorkspaceNames }
     #[repr(u32)]
     #[derive(Debug)]
     enum FormCommand { None, WorkspaceSave, WorkspaceToggle, WorkspaceRemove, WorkspaceProfiles, WorkspaceImport, ProfileCreate, ProfileRename, ProfileDelete, ProfileBack, ImportApply, PreferenceText, PreferenceSite, PreferenceClear, PreferenceDirectory, History, Workspace, Passwords, Profiles, Import, Proxy, Certificates, Providers, Shortcuts, TimeMachine, WorkspaceDismiss, PreferencesDismiss, ImportDismiss, ToolsDismiss, PreferenceCategory, PreferenceMore, WorkspaceColorPreset, WorkspaceEmojiPreset, HistoryMore }
@@ -1167,6 +1167,7 @@ fn preference_catalogue(system_certificates:bool)->ffi::PreferenceCatalogue {
     rows.push(preference_spec(0,K::Theme,"","Motyw aplikacji","Kolory interfejsu i stron obsługujących motyw systemowy.",vec!["Systemowy".into(),"Jasny".into(),"Ciemny".into()],"",A::None));
     rows.push(preference_spec(0,K::Pinned,"","Zawsze widoczny panel kart","Przypnij karty i przestrzenie przy lewej krawędzi.",vec![],"",A::None));
     rows.push(preference_spec(0,K::Animations,"","Animacje przestrzeni","Płynne przejścia. Systemowe ograniczenie ruchu ma pierwszeństwo.",vec![],"",A::None));
+    rows.push(preference_spec(0,K::WorkspaceNames,"","Nazwa aktywnej przestrzeni","Pokazuj nazwę obok kropki aktywnej przestrzeni na dole panelu kart.",vec![],"",A::None));
     rows.push(preference_spec(1,K::Search,"","Domyślna wyszukiwarka","Używana, gdy wpiszesz zapytanie w pasku adresu.",vec!["DuckDuckGo".into(),"Google".into(),"Bing".into()],"",A::None));
     rows.push(preference_spec(2,K::Toggle,"referrers","Przekazuj adres strony odsyłającej","Nagłówek Referer pomaga witrynie rozpoznać, skąd pochodzi wejście. Wyłączenie może zmienić działanie niektórych serwisów.",vec![],"",A::None));
     rows.push(preference_spec(2,K::Toggle,"https_only","Zawsze używaj HTTPS","Wymagaj bezpiecznego połączenia. Witryny bez HTTPS mogą wyświetlić ostrzeżenie.",vec![],"",A::None));
@@ -3239,27 +3240,34 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
     }
     if i.kind == 7 {
         let cx=i.x+i.width/2.0; let cy=i.y+i.height/2.0;
-        if i.glyph==1 && i.active && !i.title.is_empty() {
-            // The active workspace: a raised pill with its 10 px dot ringed in its
-            // own accent (or its emoji) and the name in `label` 600.
+        if i.glyph==1 && i.active && (!i.title.is_empty() || i.edge>>24!=0) {
+            // The active workspace in the rail (pickers carry no edge): a raised
+            // pill with its 10 px dot ringed in its own accent (or its emoji) and
+            // the name in `label` 600. Without a name it closes into a 22 px disc.
             let h=22.0f32.min(i.height);let top=cy-h/2.0;
-            if i.fill>>24!=0 {emit(i.x,top,i.width,h,h/2.0,i.fill,"",0.0,false);}
-            if i.edge>>24!=0 {emit(i.x+0.5,top+0.5,i.width-1.0,h-1.0,h/2.0-0.5,i.edge,"",0.0,false);}
+            let (x,w)=if i.title.is_empty() {(cx-h/2.0,h)} else {(i.x,i.width)};
+            if i.fill>>24!=0 {emit(x,top,w,h,h/2.0,i.fill,"",0.0,false);}
+            if i.edge>>24!=0 {emit(x+0.5,top+0.5,w-1.0,h-1.0,h/2.0-0.5,i.edge,"",0.0,false);}
+            let lead=if i.title.is_empty() {(h-14.0)/2.0} else {6.0};
             let name_x=if i.monogram.is_empty() {
-                emit(i.x+6.0,cy-7.0,14.0,14.0,7.0,i.badge,"",0.0,false);
-                emit(i.x+8.0,cy-5.0,10.0,10.0,5.0,i.badge,"",0.0,false);
-                i.x+26.0
+                emit(x+lead,cy-7.0,14.0,14.0,7.0,i.badge,"",0.0,false);
+                emit(x+lead+2.0,cy-5.0,10.0,10.0,5.0,i.badge,"",0.0,false);
+                x+26.0
+            } else if i.title.is_empty() {
+                emit(x,top,w,h,0.0,i.ink,&i.monogram,i.font_size.min(14.0),false);
+                x+w
             } else {
-                emit(i.x+4.0,top,20.0,h,0.0,i.ink,&i.monogram,i.font_size.min(14.0),false);
-                i.x+28.0
+                emit(x+4.0,top,20.0,h,0.0,i.ink,&i.monogram,i.font_size.min(14.0),false);
+                x+28.0
             };
-            emit(name_x,top,(i.x+i.width-name_x-10.0).max(0.0),h,0.0,i.detail_ink,&i.title,12.0,true);
+            if !i.title.is_empty() {emit(name_x,top,(x+w-name_x-10.0).max(0.0),h,0.0,i.detail_ink,&i.title,12.0,true);}
+            if i.focused {emit(i.x+2.0,i.y+i.height-3.0,(i.width-4.0).max(0.0),2.0,1.0,i.ink,"",0.0,false);}
             for p in out[first_primitive..].iter_mut() {
                 if !p.text.is_empty() {
                     if p.text==i.title && p.x==name_x {style_text(p,design::TextStyleId::Label as u32);p.font_weight=600;p.bold=true;} else {p.center=true;}
                     continue;
                 }
-                if p.text.is_empty() && ((p.color==i.edge && p.x==i.x+0.5) || (p.width==14.0 && p.color==i.badge)) {p.stroke=if p.width==14.0 {1.5} else {1.0};}
+                if (p.color==i.edge && p.x==x+0.5) || (p.width==14.0 && p.color==i.badge) {p.stroke=if p.width==14.0 {1.5} else {1.0};}
             }
             return;
         }
@@ -4056,10 +4064,10 @@ mod tests {
     }
     #[test] fn preference_catalogue_preserves_categories_counts_and_platform_gate() {
         use ffi::PreferenceRowKind as K;use ffi::PreferenceActionKind as A;
-        let c=preference_catalogue(true);assert_eq!(c.categories,["Wygląd","Wyszukiwanie","Prywatność","Uprawnienia stron","Treści i czytelność","Hasła i profile","Pobieranie","Języki i pisownia","Dane przeglądania","Zaawansowane"]);assert_eq!(c.descriptions.len(),10);assert_eq!(c.rows.len(),52);
-        let mut counts=[0;10];for row in &c.rows{counts[row.category]+=1;assert!(!row.title.is_empty()&&!row.detail.is_empty());}assert_eq!(counts,[5,4,7,7,12,5,2,3,1,6]);
-        assert_eq!(c.rows.iter().filter(|r|r.kind==K::Toggle||r.kind==K::Pinned||r.kind==K::Animations).count(),24);assert_eq!(c.rows.iter().filter(|r|r.kind==K::Text).count(),6);
-        let no=preference_catalogue(false);assert_eq!(no.rows.len(),51);assert!(no.rows.iter().all(|r|r.action!=A::Certificates));assert!(c.rows.iter().filter(|r|r.action!=A::Certificates).map(|r|(&r.title,&r.detail,r.category)).eq(no.rows.iter().map(|r|(&r.title,&r.detail,r.category))));
+        let c=preference_catalogue(true);assert_eq!(c.categories,["Wygląd","Wyszukiwanie","Prywatność","Uprawnienia stron","Treści i czytelność","Hasła i profile","Pobieranie","Języki i pisownia","Dane przeglądania","Zaawansowane"]);assert_eq!(c.descriptions.len(),10);assert_eq!(c.rows.len(),53);
+        let mut counts=[0;10];for row in &c.rows{counts[row.category]+=1;assert!(!row.title.is_empty()&&!row.detail.is_empty());}assert_eq!(counts,[6,4,7,7,12,5,2,3,1,6]);
+        assert_eq!(c.rows.iter().filter(|r|r.kind==K::Toggle||r.kind==K::Pinned||r.kind==K::Animations||r.kind==K::WorkspaceNames).count(),25);assert_eq!(c.rows.iter().filter(|r|r.kind==K::Text).count(),6);
+        let no=preference_catalogue(false);assert_eq!(no.rows.len(),52);assert!(no.rows.iter().all(|r|r.action!=A::Certificates));assert!(c.rows.iter().filter(|r|r.action!=A::Certificates).map(|r|(&r.title,&r.detail,r.category)).eq(no.rows.iter().map(|r|(&r.title,&r.detail,r.category))));
     }
     #[test] fn preference_catalogue_registered_store_keys_keep_their_control_kinds() {
         use ffi::PreferenceRowKind as K;let c=preference_catalogue(true);let mut keys=std::collections::BTreeSet::new();
@@ -4349,6 +4357,12 @@ mod tests {
         assert_eq!((ops[0].height,ops[0].radius,ops[0].color),(22.0,11.0,0xff202020));assert_eq!(ops[1].stroke,1.0);
         assert_eq!((ops[2].width,ops[2].stroke),(14.0,1.5));assert_eq!((ops[3].width,ops[3].color),(10.0,0xff928fd4));
         let name=ops.iter().find(|p|p.text=="Praca").unwrap();assert_eq!((name.font_weight,name.color,name.center),(600,0xffeeeeee,false));
+    }
+    #[test] fn active_workspace_without_a_name_is_a_raised_disc_around_its_dot() {
+        let mut dot=row(32.0);dot.kind=7;dot.glyph=1;dot.monogram.clear();dot.title.clear();dot.height=32.0;dot.fill=0xff202020;dot.edge=0xff303030;dot.badge=0xff928fd4;
+        let ops=layout(&[dot]);assert_eq!(ops.len(),4);
+        assert_eq!((ops[0].x,ops[0].width,ops[0].height,ops[0].radius),(5.0,22.0,22.0,11.0));assert_eq!(ops[1].stroke,1.0);
+        assert_eq!((ops[2].x,ops[2].width,ops[2].stroke),(9.0,14.0,1.5));assert_eq!((ops[3].x,ops[3].width,ops[3].stroke),(11.0,10.0,0.0));
     }
     #[test] fn appearance_emoji_scene_uses_centered_text_and_selection_wash() {
         let mut emoji=row(30.0);emoji.kind=7;emoji.glyph=1;emoji.monogram="🚀".into();emoji.title.clear();emoji.fill=0x1f1b1a22;let ops=layout(&[emoji]);assert_eq!(ops.len(),2);assert_eq!(ops[0].radius,7.0);assert_eq!(ops[1].text,"🚀");assert!(ops[1].center);

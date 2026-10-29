@@ -2567,6 +2567,15 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceSwitchesCocoaScopeAn
   const bool previous_animations=shell->workspace_animations();ClickControl(animations);EXPECT_EQ(!previous_animations,shell->workspace_animations());
   filter(u"Zawsze widoczny panel kart");auto* pinned=shell->preference_switch_for_testing("sidebar");ASSERT_TRUE(pinned);
   const bool previous_pinned=shell->pinned();ClickControl(pinned);EXPECT_EQ(!previous_pinned,shell->pinned());
+  // The active space's name widens its rail button; switching moves that width
+  // with it, and turning the name off shrinks the active button back to a dot cell.
+  auto rail_width=[&](const char* id){auto* b=shell->workspace_button(id);b->parent()->parent()->parent()->DeprecatedLayoutImmediately();return b->width();};
+  ASSERT_TRUE(shell->workspace_names());const int named=rail_width("work");const int dot=rail_width("personal");EXPECT_GT(named,dot);
+  ASSERT_TRUE(window_->Select("personal"));EXPECT_EQ(dot,rail_width("work"));EXPECT_GT(rail_width("personal"),dot);
+  ASSERT_TRUE(window_->Select("work"));shell->OpenGeneralSettings();
+  filter(u"Nazwa aktywnej przestrzeni");auto* names=shell->preference_switch_for_testing("workspace_names");ASSERT_TRUE(names);
+  ClickControl(names);EXPECT_FALSE(shell->workspace_names());EXPECT_EQ(dot,rail_width("work"));
+  ClickControl(names);EXPECT_TRUE(shell->workspace_names());EXPECT_EQ(named,rail_width("work"));
   filter(u"Kamera");auto* camera=shell->preference_toggle("camera");
   EXPECT_EQ(rust,!views::AsViewClass<views::ToggleButton>(camera));
   ui::AXNodeData node;camera->GetViewAccessibility().GetAccessibleNodeData(&node);EXPECT_EQ(ax::mojom::Role::kSwitch,node.role);EXPECT_EQ(ax::mojom::CheckedState::kTrue,node.GetCheckedState());

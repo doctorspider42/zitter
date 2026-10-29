@@ -6,8 +6,8 @@ Pigułka z czasownikiem: jedna akcja, jedno słowo lub krótkie zdanie, zawsze w
 
 | Wariant | Kiedy |
 | --- | --- |
-| `zt-btn-primary` | Główna akcja widoku na `--accent` obszaru roboczego (tekst `--on-accent`). Najwyżej jedna na ekran. |
-| `zt-btn-zing` | Akcja „wow”: utworzenie czegoś nowego (obszar roboczy, profil). Limonka `zing` z tekstem `on-zing`. Najwyżej jedna na **całą aplikację w danym momencie**, nigdy obok `primary`. |
+| `zt-btn-primary` | Główna akcja widoku na `--accent` przestrzeni (tekst `--on-accent`). Najwyżej jedna na ekran. |
+| `zt-btn-zing` | Akcja „wow”: utworzenie czegoś nowego (przestrzeń, profil). Limonka `zing` z tekstem `on-zing`. Najwyżej jedna na **całą aplikację w danym momencie**, nigdy obok `primary`. |
 | `zt-btn-outline` | Akcja drugorzędna obok primary. Obrys `line-strong`. |
 | `zt-btn-quiet` | Anuluj, akcje w paskach narzędzi. Kształt `radius-sm`, nie pigułka. |
 | `zt-btn-danger` | Destrukcja: tekst `danger` z ikoną, nigdy pełne wypełnienie. |

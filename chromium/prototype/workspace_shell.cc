@@ -308,6 +308,8 @@ struct Appearance {
   ThemeMode theme = ThemeMode::kSystem;
   SearchEngine search = SearchEngine::kDuckDuckGo;
   bool animations = true;
+  // The active space shows its name beside its dot in the sidebar rail.
+  bool workspace_names = true;
   int sidebar_width = kSidebarWidth;
   std::map<std::string, std::string> emoji;
 };
@@ -332,6 +334,7 @@ Appearance ReadAppearance(const base::FilePath& path) {
     else if (*search == "bing") result.search = SearchEngine::kBing;
   }
   result.animations = dict->FindBool("workspace_animations").value_or(true);
+  result.workspace_names = dict->FindBool("workspace_names").value_or(true);
   if (const auto* emoji = dict->FindDict("workspace_emoji")) {
     for (const auto [id, value] : *emoji)
       if (value.is_string() && !value.GetString().empty() && value.GetString().size() <= 64)
@@ -345,13 +348,15 @@ bool SavePatch(const base::FilePath& path, std::optional<std::string> id,
                SkColor color, std::optional<bool> pinned, std::optional<ThemeMode> theme,
                std::optional<SearchEngine> search, std::optional<bool> animations,
                std::optional<int> sidebar_width,
-               std::optional<std::pair<std::string, std::string>> emoji) {
+               std::optional<std::pair<std::string, std::string>> emoji,
+               std::optional<bool> workspace_names) {
   auto appearance = ReadAppearance(path);
   if (id) appearance.colors[*id] = color;
   if (pinned) appearance.pinned = *pinned;
   if (theme) appearance.theme = *theme;
   if (search) appearance.search = *search;
   if (animations) appearance.animations = *animations;
+  if (workspace_names) appearance.workspace_names = *workspace_names;
   if (sidebar_width) appearance.sidebar_width = *sidebar_width;
   if (emoji && emoji->second.empty()) appearance.emoji.erase(emoji->first);
   else if (emoji) appearance.emoji[emoji->first] = emoji->second;
@@ -361,6 +366,7 @@ bool SavePatch(const base::FilePath& path, std::optional<std::string> id,
   dict.Set("theme", appearance.theme == ThemeMode::kDark ? "dark" : appearance.theme == ThemeMode::kLight ? "light" : "system");
   dict.Set("search_engine", appearance.search == SearchEngine::kGoogle ? "google" : appearance.search == SearchEngine::kBing ? "bing" : "duckduckgo");
   dict.Set("workspace_animations", appearance.animations);
+  dict.Set("workspace_names", appearance.workspace_names);
   dict.Set("sidebar_width", appearance.sidebar_width);
   base::DictValue emoji_dict;
   for (const auto& [key, value] : appearance.emoji) emoji_dict.Set(key, value);
@@ -693,7 +699,9 @@ class RustActionView : public views::View {
   rust::Box<sidebar::FormCommandTicket> DeferFormCommand() const{return state_->defer_form_command();}
   void CancelInput(){Cancel();}
   bool Pending() const{return state_->action_pending();}
-  void SetOn(bool on){if(!state_->action_on(on))return;if(glyph_==ControlGlyph::kDot)PreferredSizeChanged();SchedulePaint();}
+  // The Rust graph may already hold `on` (no delta here), so the dot re-measures
+  // whenever it differs from the state its preferred size was taken in.
+  void SetOn(bool on){const bool changed=state_->action_on(on);if(glyph_==ControlGlyph::kDot&&measured_on_!=on){measured_on_=on;PreferredSizeChanged();}if(changed)SchedulePaint();}
   // The active workspace slides out of the rail as a pill with its name.
   void SetPillName(std::u16string name){if(pill_name_==name)return;pill_name_=std::move(name);PreferredSizeChanged();SchedulePaint();}
   const std::u16string& pill_name() const{return pill_name_;}
@@ -704,7 +712,7 @@ class RustActionView : public views::View {
     if(glyph_==ControlGlyph::kDot&&!pill_name_.empty()&&state_->action_snapshot().on)return gfx::Size(WorkspacePillWidth(pill_name_,!label_.empty()),r.height);
     return gfx::Size(r.width,r.height);}
   sidebar::Item SceneItem(gfx::RectF rect,gfx::RectF clip){SyncEnabled();const auto s=state_->action_snapshot();auto item=GlyphSceneData(this,glyph_,icon_,s.on,label_,color_,s.enabled&&(s.visual==sidebar::RowVisual::Hovered||s.visual==sidebar::RowVisual::Pressed),s.focused,rect,clip);
-    if(glyph_==ControlGlyph::kDot&&s.on&&!pill_name_.empty()){const auto p=Palette(this);item.title=base::UTF16ToUTF8(pill_name_);item.fill=p.bg_raised;item.edge=p.line;}return item;}
+    if(glyph_==ControlGlyph::kDot&&s.on){const auto p=Palette(this);item.title=base::UTF16ToUTF8(pill_name_);item.fill=p.bg_raised;item.edge=p.line;}return item;}
   void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);if(changed_)changed_.Run();}
   bool OnMousePressed(const ui::MouseEvent& event) override{return Pointer(sidebar::PointerPhase::Press,event);}
   bool OnMouseDragged(const ui::MouseEvent& event) override{return Pointer(sidebar::PointerPhase::Drag,event);}
@@ -763,7 +771,7 @@ class RustActionView : public views::View {
   bool Pointer(sidebar::PointerPhase phase,const ui::MouseEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;const bool pending=state_->action_pending();return Apply(state_->action_pointer(phase,event.x(),event.y(),phase!=sidebar::PointerPhase::Exit&&HitTestPoint(event.location())&&GetVisibleBounds().Contains(event.location()),event.IsLeftMouseButton(),Interactive()),event,before,pending);}
   bool Key(bool pressed,const ui::KeyEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;const bool pending=state_->action_pending();const uint32_t key=event.key_code()==ui::VKEY_SPACE?1:event.key_code()==ui::VKEY_RETURN?2:0;return Apply(state_->action_key(pressed,key,true,Interactive()),event,before,pending);}
   bool Apply(const sidebar::RowInputResult& result,const ui::Event& event,sidebar::RowVisual before,bool pending){const bool handled=result.handled;if(result.visual!=before)SchedulePaint();else if(pending!=state_->action_pending()&&changed_)changed_.Run();if(result.action==sidebar::RowAction::Activate){ActivateAction(event);return handled;}return handled;}
-  SkColor color_=kSubtle;std::u16string label_;std::u16string pill_name_;base::RepeatingCallback<void(views::View*,const sidebar::FormCommandBinding&)> command_callback_;views::Button::PressedCallback callback_;ControlGlyph glyph_;raw_ptr<const gfx::VectorIcon> icon_;base::RepeatingCallback<bool()> visible_;base::RepeatingClosure changed_;rust::Box<sidebar::ActionControl> state_;SceneWindowObserver window_{base::BindRepeating(&RustActionView::WindowChanged,base::Unretained(this))};base::CallbackListSubscription enabled_changed_{AddEnabledInViewsSubtreeChangedCallback(base::BindRepeating(&RustActionView::EnabledChanged,base::Unretained(this)))};
+  SkColor color_=kSubtle;std::u16string label_;std::u16string pill_name_;bool measured_on_=false;base::RepeatingCallback<void(views::View*,const sidebar::FormCommandBinding&)> command_callback_;views::Button::PressedCallback callback_;ControlGlyph glyph_;raw_ptr<const gfx::VectorIcon> icon_;base::RepeatingCallback<bool()> visible_;base::RepeatingClosure changed_;rust::Box<sidebar::ActionControl> state_;SceneWindowObserver window_{base::BindRepeating(&RustActionView::WindowChanged,base::Unretained(this))};base::CallbackListSubscription enabled_changed_{AddEnabledInViewsSubtreeChangedCallback(base::BindRepeating(&RustActionView::EnabledChanged,base::Unretained(this)))};
 };
 BEGIN_METADATA(RustActionView)
 END_METADATA
@@ -3626,6 +3634,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         if (!shell->general_dirty_.contains("theme")) shell->theme_mode_ = appearance.theme;
         if (!shell->general_dirty_.contains("search")) shell->search_engine_ = appearance.search;
         if (!shell->general_dirty_.contains("animations")) shell->workspace_animations_ = appearance.animations;
+        if (!shell->general_dirty_.contains("workspace_names")) shell->workspace_names_ = appearance.workspace_names;
         if (!shell->sidebar_width_dirty_) shell->sidebar_width_ = appearance.sidebar_width;
         for (const auto& [id, emoji] : appearance.emoji)
           if (!shell->emoji_dirty_.contains(id)) shell->emoji_[id] = base::UTF8ToUTF16(emoji);
@@ -3751,7 +3760,7 @@ void WorkspaceShell::Detach() {
   preferences_search_ = nullptr; preferences_profile_ = nullptr; preferences_empty_ = nullptr; preferences_body_ = nullptr;
   general_root_ = nullptr; general_scroll_ = nullptr; general_status_ = nullptr;
   theme_picker_ = nullptr; search_engine_picker_ = nullptr;
-  sidebar_check_ = nullptr; animations_check_ = nullptr;
+  sidebar_check_ = nullptr; animations_check_ = nullptr; workspace_names_check_ = nullptr;
   tools_root_ = nullptr; tools_body_ = nullptr; tools_close_=nullptr; tools_title_ = nullptr; tools_status_ = nullptr;
   tools_scroll_ = nullptr; tools_picker_ = nullptr; closed_picker_ = nullptr;
   snapshot_name_ = nullptr; timeline_filter_ = nullptr; shortcut_chord_ = nullptr;
@@ -4941,7 +4950,7 @@ void WorkspaceShell::RebuildWorkspaceDots() {
       if(found!=existing.end())button=found->second;
       else button=workspace_dots_->AddChildView(CreateSceneAction(base::BindRepeating(callbacks_.select_workspace,key),text(child.name),GlyphButton::Glyph::kDot,nullptr,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_sidebar_visible();},weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak_factory_.GetWeakPtr()),true,{chrome_node_graph_,3,{},key}));
       if(child.cancel_input)CancelActionInput(button);
-      workspace_dots_->ReorderChildView(button,index++);button->SetTooltipText(text(child.name));button->GetViewAccessibility().SetName(text(child.name));SetActionLabel(button,text(child.label));SetActionColor(button,workspace_color(key));if(auto* action=views::AsViewClass<RustActionView>(button)){std::u16string pill;for(const auto& w:state_.workspaces)if(w.id==key)pill=base::UTF8ToUTF16(w.name);action->SetPillName(std::move(pill));}SetActionOn(button,child.active);button->SetEnabled(child.enabled);
+      workspace_dots_->ReorderChildView(button,index++);button->SetTooltipText(text(child.name));button->GetViewAccessibility().SetName(text(child.name));SetActionLabel(button,text(child.label));SetActionColor(button,workspace_color(key));if(auto* action=views::AsViewClass<RustActionView>(button)){std::u16string pill;for(const auto& w:state_.workspaces)if(w.id==key&&workspace_names_)pill=base::UTF8ToUTF16(w.name);action->SetPillName(std::move(pill));}SetActionOn(button,child.active);button->SetEnabled(child.enabled);
       // Rust may update input enablement before the native setter sees a delta.
       // AX also follows native ancestor enablement, not just the local property.
       if(button->GetEnabledInViewsSubtree())button->GetViewAccessibility().SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kPress);else button->GetViewAccessibility().RemoveDefaultActionVerb();
@@ -4960,7 +4969,7 @@ void WorkspaceShell::RebuildWorkspaceDots() {
         base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {return shell && shell->metal_sidebar_visible();},weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak_factory_.GetWeakPtr()),true,{chrome_node_graph_,3,{},workspace.id}));
     SetActionLabel(button,workspace_emoji(workspace.id));
     SetActionColor(button,workspace_color(workspace.id));
-    if(auto* action=views::AsViewClass<RustActionView>(button))action->SetPillName(base::UTF8ToUTF16(workspace.name));
+    if(auto* action=views::AsViewClass<RustActionView>(button))action->SetPillName(workspace_names_?base::UTF8ToUTF16(workspace.name):std::u16string());
     SetActionOn(button,workspace.id == state_.workspace_id);
     button->set_context_menu_controller(this);
     workspace_buttons_[workspace.id] = button;
@@ -6117,6 +6126,7 @@ bool WorkspaceShell::preference_actions_contains_scene_text_for_testing(std::str
 views::View* WorkspaceShell::preference_switch_for_testing(std::string_view key) const {
   if(key=="sidebar")return sidebar_check_;
   if(key=="animations")return animations_check_;
+  if(key=="workspace_names")return workspace_names_check_;
   const auto it=preference_toggles_.find(std::string(key));
   return it==preference_toggles_.end()?nullptr:it->second.get();
 }
@@ -6200,10 +6210,11 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
       else{preference_pickers_[key]=control;SetPickerCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::string key){if(shell){auto index=PickerIndex(shell->preference_pickers_.at(key));if(index)shell->WritePreference(key,static_cast<int>(*index));}},weak,key));}
       continue;
     }
-    if(spec.kind==Kind::Pinned||spec.kind==Kind::Animations||spec.kind==Kind::Toggle){
+    if(spec.kind==Kind::Pinned||spec.kind==Kind::Animations||spec.kind==Kind::WorkspaceNames||spec.kind==Kind::Toggle){
       auto* control=PreferenceToggle(row,title);
       if(spec.kind==Kind::Pinned){sidebar_check_=control;SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetPinned(ToggleOn(shell->sidebar_check_));},weak));}
       else if(spec.kind==Kind::Animations){animations_check_=control;SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetWorkspaceAnimations(ToggleOn(shell->animations_check_));},weak));}
+      else if(spec.kind==Kind::WorkspaceNames){workspace_names_check_=control;SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetWorkspaceNames(ToggleOn(shell->workspace_names_check_));},weak));}
       else{preference_toggles_[key]=control;SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::string key){if(shell)shell->WritePreference(key,ToggleOn(shell->preference_toggles_.at(key)));},weak,key));}
       continue;
     }
@@ -6270,6 +6281,7 @@ void WorkspaceShell::RefreshGeneralControls() {
   SyncPickerIndex(search_engine_picker_,provider_choices.empty()?std::nullopt:std::optional<size_t>(provider_index));
   SetToggleOn(sidebar_check_,pinned_);
   SetToggleOn(animations_check_,workspace_animations_);
+  SetToggleOn(workspace_names_check_,workspace_names_);
   if (profile_changed) {
     site_origin_->SetText(u"");
     ResetPreferenceRuleLimit();
@@ -6478,11 +6490,16 @@ void WorkspaceShell::SetWorkspaceAnimations(bool enabled) {
   if (!enabled) StopWorkspaceAnimation();
   RefreshGeneralControls(); SaveGeneralPatch(std::nullopt, std::nullopt, enabled);
 }
+void WorkspaceShell::SetWorkspaceNames(bool shown) {
+  workspace_names_ = shown; general_dirty_.insert("workspace_names");
+  RebuildWorkspaceDots(); ScheduleMetalSidebar();
+  RefreshGeneralControls(); SaveGeneralPatch(std::nullopt, std::nullopt, std::nullopt, shown);
+}
 void WorkspaceShell::SaveGeneralPatch(std::optional<ThemeMode> theme, std::optional<SearchEngine> search,
-    std::optional<bool> animations) {
+    std::optional<bool> animations, std::optional<bool> workspace_names) {
   ++pending_writes_;
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
-      base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, std::nullopt, theme, search, animations, std::nullopt, std::nullopt),
+      base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, std::nullopt, theme, search, animations, std::nullopt, std::nullopt, workspace_names),
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
         if (!shell) return;
         --shell->pending_writes_;
@@ -7284,7 +7301,7 @@ void WorkspaceShell::SetPinned(bool pinned) {
   if (pinned_) ShowSidebar();
   ++pending_writes_;
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
-      base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, pinned_, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt),
+      base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, pinned_, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt),
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
         if (!shell) return;
         --shell->pending_writes_;
@@ -7310,7 +7327,7 @@ void WorkspaceShell::ApplySidebarWidth(int width,bool done) {
   ++pending_writes_;
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
       base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, std::nullopt, std::nullopt, std::nullopt,
-                     std::nullopt, std::optional<int>(sidebar_width_), std::nullopt),
+                     std::nullopt, std::optional<int>(sidebar_width_), std::nullopt, std::nullopt),
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool) {
         if (shell) --shell->pending_writes_;
       }, weak_factory_.GetWeakPtr()));
@@ -7323,7 +7340,7 @@ void WorkspaceShell::SetWorkspaceColor(std::string_view id, SkColor color) {
   ApplyAppearance();
   ++pending_writes_;
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
-      base::BindOnce(SavePatch, settings_path_, std::optional<std::string>(key), colors_[key], std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt),
+      base::BindOnce(SavePatch, settings_path_, std::optional<std::string>(key), colors_[key], std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt),
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
         if (!shell) return;
         --shell->pending_writes_;
@@ -7366,7 +7383,7 @@ void WorkspaceShell::SetWorkspaceEmoji(std::string_view id, std::u16string text)
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
       base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, std::nullopt, std::nullopt, std::nullopt,
                      std::nullopt, std::nullopt,
-                     std::optional<std::pair<std::string, std::string>>({key, base::UTF16ToUTF8(emoji)})),
+                     std::optional<std::pair<std::string, std::string>>({key, base::UTF16ToUTF8(emoji)}), std::nullopt),
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
         if (!shell) return;
         --shell->pending_writes_;

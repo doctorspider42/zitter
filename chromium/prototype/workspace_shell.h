@@ -281,7 +281,9 @@ class WorkspaceShell final : public ui::EventHandler,
   void SetSearchEngine(SearchEngine engine);
   SearchEngine search_engine() const { return search_engine_; }
   void SetWorkspaceAnimations(bool enabled);
+  void SetWorkspaceNames(bool shown);
   bool workspace_animations() const { return workspace_animations_; }
+  bool workspace_names() const { return workspace_names_; }
   void AnimateWorkspaceSwitch(std::string_view previous);
   bool workspace_animation_running() const;
   bool workspace_animation_pending() const { return workspace_animation_pending_; }
@@ -623,7 +625,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void PostRemoveSiteRule(SitePreferenceRule rule,std::string profile_id);
   void RefreshSitePreferences(bool reload = true);
   void SaveSitePreference();
-  void SaveGeneralPatch(std::optional<ThemeMode> theme, std::optional<SearchEngine> search, std::optional<bool> animations);
+  void SaveGeneralPatch(std::optional<ThemeMode> theme, std::optional<SearchEngine> search, std::optional<bool> animations, std::optional<bool> workspace_names = std::nullopt);
   void OnNativeThemeUpdated(ui::NativeTheme* observed_theme) override;
   void RebuildTabs(std::string_view previous, bool catalogue_changed);
   void StopWorkspaceAnimation();
@@ -770,6 +772,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> theme_picker_ = nullptr;
   raw_ptr<views::View> search_engine_picker_ = nullptr;
   raw_ptr<views::View> sidebar_check_ = nullptr;
+  raw_ptr<views::View> workspace_names_check_ = nullptr;
   raw_ptr<views::View> animations_check_ = nullptr;
   raw_ptr<EditorControl> preferences_search_ = nullptr;
   raw_ptr<views::View> preferences_profile_ = nullptr;
@@ -814,6 +817,7 @@ class WorkspaceShell final : public ui::EventHandler,
   ThemeMode theme_mode_ = ThemeMode::kSystem;
   SearchEngine search_engine_ = SearchEngine::kDuckDuckGo;
   bool workspace_animations_ = true;
+  bool workspace_names_ = true;
   std::set<std::string> general_dirty_;
   bool applying_theme_ = false;
   raw_ptr<views::View> peek_host_ = nullptr;

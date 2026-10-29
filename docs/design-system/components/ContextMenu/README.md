@@ -1,6 +1,6 @@
 # ContextMenu
 
-Menu pod prawym przyciskiem: kart, linków i obszarów; krótkie, z akcją destrukcyjną zawsze na końcu.
+Menu pod prawym przyciskiem: kart, linków i przestrzeni; krótkie, z akcją destrukcyjną zawsze na końcu.
 
 **Daje konsument:** wiersze (ikona, etykieta, opcjonalny skrót), separatory `<hr>`, wiersz `danger`.
 

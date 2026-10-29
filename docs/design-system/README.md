@@ -1,33 +1,33 @@
-Zitter to przeglądarka, która **schodzi z drogi**: rama w kolorze obszaru roboczego wokół neutralnej strony, gęsty pionowy pasek kart i jeden Command Center. Ekstrawagancja jest dozowana jak przyprawa: okno, które zmienia kolor razem z obszarem, kursywny szeryf w wielkich momentach, limonkowy `zing` w jednym miejscu naraz i drżenie, od którego wzięła się nazwa (*Zitterbewegung*, „ruch drżący” elektronu). Znak to ket z mechaniki kwantowej, `|z⟩`.
+Zitter to przeglądarka, która **schodzi z drogi**: rama w kolorze przestrzeni wokół neutralnej strony, gęsty pionowy pasek kart i jeden Command Center. Ekstrawagancja jest dozowana jak przyprawa: okno, które zmienia kolor razem z przestrzenią, kursywny szeryf w wielkich momentach, limonkowy `zing` w jednym miejscu naraz i drżenie, od którego wzięła się nazwa (*Zitterbewegung*, „ruch drżący” elektronu). Znak to ket z mechaniki kwantowej, `|z⟩`.
 
 ## Zasady
 
-1. **Okno ma kolor obszaru, strona jest neutralna.** Rama (`bg-void`) i pasek boczny (`bg-base`) przyjmują odcień aktywnego obszaru; strona, aktywna karta i wszystko, co pływa, to neutralne `bg-raised`, które odcina się od kolorowego okna. Bez gradientów i ozdobnych teł.
+1. **Okno ma kolor przestrzeni, strona jest neutralna.** Rama (`bg-void`) i pasek boczny (`bg-base`) przyjmują odcień aktywnej przestrzeni; strona, aktywna karta i wszystko, co pływa, to neutralne `bg-raised`, które odcina się od kolorowego okna. Bez gradientów i ozdobnych teł.
 2. **Jedna nuta naraz.** `zing` pojawia się w jednym miejscu widoku: przycisk `zt-btn-zing`, loader albo uchwyt podziału w ruchu. Jeśli na ekranie są dwa — usuń jeden.
-3. **Aktywne się unosi.** To, co jest „teraz” (aktywna karta, aktywny obszar), dostaje neutralne `bg-raised` i `shadow-card` na zabarwionym tle — bez strzałek, belek i znaczników.
-4. **Klawiatura pierwsza.** Każda akcja ma skrót i pokazuje go w `Kbd`. ⌘L adres, ⌘K Command Center, ⌘T karta, ⌘⌥1/2 obszar.
+3. **Aktywne się unosi.** To, co jest „teraz” (aktywna karta, aktywna przestrzeń), dostaje neutralne `bg-raised` i `shadow-card` na zabarwionym tle — bez strzałek, belek i znaczników.
+4. **Klawiatura pierwsza.** Każda akcja ma skrót i pokazuje go w `Kbd`. ⌘L adres, ⌘K Command Center, ⌘T karta, ⌘⌥1/2 przestrzeń.
 5. **Drżenie zamiast tostów.** Potwierdzenia drobnych akcji (skopiowano, przypięto) to jedno drgnięcie elementu (`zt-tremor`, `dur-tremor`), nie wyskakujące okienko. `Toast` tylko dla zdarzeń do cofnięcia lub z tła.
-6. **Obszar ma swój kolor.** Przełączenie obszaru przemalowuje całe okno w `dur-move`: ramę, pasek boczny, hover i linie, a do tego akcent kontrolek. Tekst, statusy i strona się nie zmieniają.
+6. **Przestrzeń ma swój kolor.** Przełączenie przestrzeni przemalowuje całe okno w `dur-move`: ramę, pasek boczny, hover i linie, a do tego akcent kontrolek. Tekst, statusy i strona się nie zmieniają.
 
 ## Treść i ton
 
 - Polski, druga osoba, krótko: „Otwórz w podziale”, „Zamknij 12 kart”, „Gdzie dziś?”. Bez „Proszę”, bez wykrzykników.
-- Wielka litera tylko na początku etykiety. WERSALIKI wyłącznie w stylu `eyebrow` (etykiety grup: „PRZYPIĘTE”, „OBSZARY ROBOCZE”).
+- Wielka litera tylko na początku etykiety. WERSALIKI wyłącznie w stylu `eyebrow` (etykiety grup: „PRZYPIĘTE”, „PRZESTRZENIE”).
 - Przyciski i pozycje menu to czasowniki. Liczby cyframi („3 nieprzeczytane”).
-- Emoji tylko jako wybrany przez użytkownika znak obszaru roboczego — nigdy w tekstach interfejsu.
+- Emoji tylko jako wybrany przez użytkownika znak przestrzeni — nigdy w tekstach interfejsu.
 - Adresy bez `https://` i `www.`; host pogrubiony, ścieżka wyciszona.
 
 ## Kolor
 
 Dwa motywy: **Noc** (`dark`, domyślny) i **Papier** (`light`, ciepła kość słoniowa zamiast bieli).
 
-- Warstwy od najgłębszej: `bg-void` (rama okna) → `bg-base` (pasek boczny, ustawienia) → `bg-raised` (karta strony, aktywna karta, Command Center, menu, pigułka adresu). Hover: `bg-hover`. Pierwsze trzy (i `line`) są zabarwione kolorem obszaru; `bg-raised` nigdy.
+- Warstwy od najgłębszej: `bg-void` (rama okna) → `bg-base` (pasek boczny, ustawienia) → `bg-raised` (karta strony, aktywna karta, Command Center, menu, pigułka adresu). Hover: `bg-hover`. Pierwsze trzy (i `line`) są zabarwione kolorem przestrzeni; `bg-raised` nigdy.
 - Tekst: `ink` dla treści, `ink-muted` dla URL-i, podpowiedzi i ikon w spoczynku (≥4.5:1 na każdym `bg-*` w obu motywach). `ink-faint` tylko dla stanów wyłączonych — podpowiedzi w polach (placeholder) i znaki, które trzeba zobaczyć, są w `ink-muted`.
-- **Kolor obszaru roboczego.** Każdy obszar ma własny kolor, który barwi okno i kontrolki: `violet` (domyślny, = `ket`), `coral`, `sky`, `amber`, `rose`, `mint`. Ustaw `data-accent` aktywnego obszaru na oknie. Wtedy `bg-void`, `bg-base`, `bg-hover` i `line` biorą odcień z `accent-<n>-void|base|hover|line`, a kontrolki malują `--accent` (primary, przełącznik, kropka obszaru, pasek ładowania), `--on-accent`, `--accent-soft` (zaznaczony wiersz) i `--accent-ink` (akcent jako tekst). Niezabarwione `bg-*` to okno bez obszaru (świeży profil). Szczegóły w komponencie `WorkspaceAccent`.
+- **Kolor przestrzeni.** Każda przestrzeń ma własny kolor, który barwi okno i kontrolki: `violet` (domyślny, = `ket`), `coral`, `sky`, `amber`, `rose`, `mint`. Ustaw `data-accent` aktywnej przestrzeni na oknie. Wtedy `bg-void`, `bg-base`, `bg-hover` i `line` biorą odcień z `accent-<n>-void|base|hover|line`, a kontrolki malują `--accent` (primary, przełącznik, kropka przestrzeni, pasek ładowania), `--on-accent`, `--accent-soft` (zaznaczony wiersz) i `--accent-ink` (akcent jako tekst). Niezabarwione `bg-*` to okno bez przestrzeni (świeży profil). Szczegóły w komponencie `WorkspaceAccent`.
 - `ket` (fiolet ze znaku) to logo i okładka; w interfejsie pojawia się tylko jako akcent `violet`.
 - Ekstrawagancja: `zing` (#d7ff3f) tylko jako wypełnienie, zawsze z `on-zing`. Jako tekst (np. etykieta „nowe”) — `zing-ink`. Żadnych limonkowych strzałek ani znaczników.
 - Stany: `ok` (morski, nie zielony), `warn`, `danger` (pomarańczowy). Zawsze z ikoną lub słowem — nigdy sam kolor.
-- Kolor obszaru nie zmienia tekstu (`ink`, `ink-muted` trzymają 4.5:1 na każdym odcieniu), statusów, fokusu, `bg-raised` ani `zing`. Limonka nie jest kolorem obszaru: zostaje taka sama wszędzie.
+- Kolor przestrzeni nie zmienia tekstu (`ink`, `ink-muted` trzymają 4.5:1 na każdym odcieniu), statusów, fokusu, `bg-raised` ani `zing`. Limonka nie jest kolorem przestrzeni: zostaje taka sama wszędzie.
 - Linie: `line` tylko rozdziela; obrys kontrolek, które trzeba znaleźć, to `line-strong` (≥3:1).
 
 ## Typografia
@@ -43,7 +43,7 @@ Chrome jest gęsty: nie podnoś tekstu interfejsu powyżej 13 px poza `title` i 
 ## Przestrzeń, kształt, głębia
 
 - Siatka 4 px: `space-1` między kartami, `space-2` ikona–etykieta, `space-3` padding wierszy i przycisków, `space-4` wnętrze paska bocznego, `space-6` między grupami, `space-12` marginesy nowej karty.
-- Promienie rosną z rozmiarem: `radius-xs` klawisze i kafelki, `radius-sm` karty i wiersze, `radius-md` karta strony i menu, `radius-lg` Command Center i dialogi, `radius-pill` adres, primary, przełączniki, obszary.
+- Promienie rosną z rozmiarem: `radius-xs` klawisze i kafelki, `radius-sm` karty i wiersze, `radius-md` karta strony i menu, `radius-lg` Command Center i dialogi, `radius-pill` adres, primary, przełączniki, przestrzenie.
 - Głębia przez warstwy, nie cienie: `shadow-card` dla strony i pigułki adresu, `shadow-float` dla wszystkiego, co pływa. Każdy cień zaczyna się obrysem 1 px w kolorze `line`.
 
 ## Ruch
@@ -57,7 +57,7 @@ Chrome jest gęsty: nie podnoś tekstu interfejsu powyżej 13 px poza `title` i 
 
 - Pierścień fokusu: 2 px solid `focus`, odstęp 2 px (`space-0-5`). W Nocy to limonka, w Papierze `ink` — dzięki temu nie zlewa się z żadnym akcentem; ≥3:1 na każdej powierzchni.
 - Każdy przycisk z samą ikoną ma `aria-label` po polsku.
-- Przełączniki to `role="switch"` z `aria-checked`; obszary to `role="tab"`.
+- Przełączniki to `role="switch"` z `aria-checked`; przestrzenie to `role="tab"`.
 
 ## Ikonografia
 
