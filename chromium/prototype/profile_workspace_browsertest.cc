@@ -7541,6 +7541,18 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarColumnLayoutTracksColla
     EXPECT_EQ(first, shell->tab_button(0));
   }
 }
+// The Command Center's ket gives way to `zt-loader` until the history answer.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CommandCenterShowsTheLoaderUntilHistoryAnswers) {
+  ASSERT_NO_FATAL_FAILURE(NavigateBoth());ASSERT_TRUE(window_->Select("work"));
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
+  shell->OpenCommandPalette();EXPECT_FALSE(shell->palette_loading_for_testing());
+  shell->address_input()->input_client()->InsertText(u"storage",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
+  EXPECT_TRUE(shell->palette_loading_for_testing());
+  ASSERT_TRUE(base::test::RunUntil([&]{return !shell->palette_loading_for_testing();}));
+  shell->address_input()->input_client()->InsertText(u"x",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
+  EXPECT_TRUE(shell->palette_loading_for_testing());shell->CloseOverlays(true);EXPECT_FALSE(shell->palette_loading_for_testing());
+}
+
 // Folders start collapsed; a pin opened from outside the sidebar (Command
 // Center) peeks out under its folder alone, and toggling the folder ends that.
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CollapsedFoldersRevealOnlyThePinOpenedElsewhere) {

@@ -1045,8 +1045,8 @@ void WorkspaceWindow::SearchPalette(std::u16string query) {
     if (candidate.id != active_id() && results.size() < 16 && matches(label, GURL()))
       results.push_back({label, ResultDetail(2, label), GURL(), std::nullopt, candidate.id, "", true});
   }
-  shell_->SetSearchResults(query, profile_id, results);
   auto* service = HistoryServiceFactory::GetForProfile(ProfileFor(profile_id), ServiceAccessType::EXPLICIT_ACCESS);
+  shell_->SetSearchResults(query, profile_id, results, /*complete=*/!service);
   if (!service) return;
   history::QueryOptions options;
   options.max_count = 12;

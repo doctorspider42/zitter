@@ -225,7 +225,10 @@ class WorkspaceShell final : public ui::EventHandler,
   void Update(ShellState state);
   void OpenAddress(bool new_tab);
   void OpenCommandPalette();
-  void SetSearchResults(std::u16string query, std::string profile_id, std::vector<PaletteResult> results);
+  // `complete` is false for the quick first answer (tabs, pins); the loader
+  // stays until the history answer arrives.
+  void SetSearchResults(std::u16string query, std::string profile_id, std::vector<PaletteResult> results, bool complete = true);
+  bool palette_loading_for_testing() const;
   const std::vector<PaletteResult>& search_results() const { return search_results_; }
   const std::vector<PaletteResult>& suggestions() const { return suggestions_; }
   void ShowSidebar();
@@ -621,6 +624,8 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> toast_ = nullptr;  // ToastView
   base::OnceClosure toast_undo_;
   base::OneShotTimer toast_timer_;
+  base::RepeatingTimer toast_tremor_timer_;
+  int toast_tremor_step_ = 0;
   std::unique_ptr<views::Widget> tools_widget_;
   void RequestFolderName(std::string workspace, std::string parent, std::string renamed);
   // `refresh_controls` false only repaints: a new workspace color must not rebind
@@ -669,6 +674,8 @@ class WorkspaceShell final : public ui::EventHandler,
                              const std::vector<size_t>& split_tabs = {}, bool split = false);
   void ApplyPinnedFoldersCollapsed(bool collapsed);
   void PositionToast();
+  void TremorToast();
+  void SetPaletteLoading(bool loading);
   void ShowWorkspaceRemovedToast(std::string id, std::u16string name);
   std::optional<std::pair<std::string, std::u16string>> pending_removal_;  // Waiting on a page's unload answer.
   void EndFolderPeek(const std::string& workspace,const std::string& folder,views::View* group,bool collapsed);

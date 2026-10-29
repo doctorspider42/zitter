@@ -668,9 +668,22 @@ class SceneSearchIcon final : public views::View {
   sidebar::Item SceneItem(gfx::RectF bounds,gfx::RectF clip) {
     sidebar::Item item{};item.kind=17;item.glyph=1;item.x=bounds.x();item.y=bounds.y();item.width=bounds.width();item.height=bounds.height();
     item.clip={clip.x(),clip.y(),clip.width(),clip.height()};item.title="|";item.ink=Palette(this).accent_ink;item.font_size=28;item.text_style=2;return item;}
-  void OnPaint(gfx::Canvas* canvas) override {if(visible_&&visible_.Run())return;canvas->DrawStringRectWithFlags(u"|",DesignFont(1,28,400,true),Palette(this).accent_ink,GetLocalBounds(),gfx::Canvas::TEXT_ALIGN_CENTER);}
+  // While results load the ket gives way to `zt-loader`: three 5 px dots (zing,
+  // accent, zing) jittering 1 px in five steps of 52 ms, offset by 90/170 ms.
+  void SetLoading(bool loading){
+    if(loading_==loading)return;loading_=loading;step_=0;
+    if(loading_&&!gfx::Animation::PrefersReducedMotion())timer_.Start(FROM_HERE,base::Milliseconds(52),base::BindRepeating(&SceneSearchIcon::Tick,base::Unretained(this)));else timer_.Stop();
+    GetViewAccessibility().SetName(loading_?T(u"Wczytywanie wyników"):T(u"Szukaj"));SchedulePaint();}
+  bool loading() const{return loading_;}
+  void OnPaint(gfx::Canvas* canvas) override {if(visible_&&visible_.Run())return;
+    if(!loading_){canvas->DrawStringRectWithFlags(u"|",DesignFont(1,28,400,true),Palette(this).accent_ink,GetLocalBounds(),gfx::Canvas::TEXT_ALIGN_CENTER);return;}
+    static constexpr std::array<std::pair<int,int>,5> kJitter={{{0,0},{1,-1},{-1,1},{1,1},{-1,-1}}};
+    const auto p=Palette(this);const auto c=GetLocalBounds().CenterPoint();
+    for(int dot=0;dot<3;++dot){const auto [dx,dy]=kJitter[(step_+(dot==0?0:dot==1?2:3))%5];
+      FillRound(canvas,gfx::Rect(c.x()-10+dot*8+dx,c.y()-2+dy,5,5),3,dot==1?p.accent:p.zing);}}
  private:
-  base::RepeatingCallback<bool()> visible_;
+  void Tick(){step_=(step_+1)%5;SchedulePaint();}
+  base::RepeatingCallback<bool()> visible_;bool loading_=false;int step_=0;base::RepeatingTimer timer_;
 };
 BEGIN_METADATA(SceneSearchIcon)
 END_METADATA
@@ -3871,7 +3884,7 @@ void WorkspaceShell::Detach() {
   history_search_ = nullptr; history_period_ = nullptr; history_list_ = nullptr;
   history_more_ = nullptr; history_clear_ = nullptr;
   tools_widget_.reset(); tools_delegate_.reset();
-  toast_timer_.Stop(); toast_undo_.Reset(); toast_ = nullptr; toast_widget_.reset(); toast_delegate_.reset();
+  toast_timer_.Stop(); toast_tremor_timer_.Stop(); toast_undo_.Reset(); toast_ = nullptr; toast_widget_.reset(); toast_delegate_.reset();
   scrim_widget_.reset(); scrim_delegate_.reset();
   general_widget_.reset(); general_delegate_.reset();
   peek_host_ = nullptr; peek_title_ = nullptr;peek_toolbar_=nullptr;
@@ -6748,8 +6761,15 @@ void WorkspaceShell::ShowToast(std::u16string lead,std::u16string noun,base::Onc
   auto* toast=static_cast<ToastView*>(toast_.get());toast->SetMessage(std::move(lead),std::move(noun));toast->SetAction(action.empty()?T(u"Cofnij"):std::move(action));toast_undo_=std::move(undo);
   PositionToast();toast_widget_->ShowInactive();
   toast_timer_.Start(FROM_HERE,base::Seconds(6),base::BindOnce(&WorkspaceShell::HideToast,weak_factory_.GetWeakPtr()));
+  // It lands with one tremor (`zt-tremor`: 1 px shakes in four steps over 180 ms).
+  toast_tremor_step_=0;if(!gfx::Animation::PrefersReducedMotion())toast_tremor_timer_.Start(FROM_HERE,base::Milliseconds(45),base::BindRepeating(&WorkspaceShell::TremorToast,base::Unretained(this)));
 }
-void WorkspaceShell::HideToast(){toast_timer_.Stop();toast_undo_.Reset();if(toast_widget_)toast_widget_->Hide();}
+void WorkspaceShell::TremorToast(){
+  static constexpr std::array<int,4> kOffsets={-1,1,-1,0};
+  PositionToast();if(!toast_widget_||toast_tremor_step_>=static_cast<int>(kOffsets.size())){toast_tremor_timer_.Stop();return;}
+  auto bounds=toast_widget_->GetWindowBoundsInScreen();bounds.Offset(kOffsets[toast_tremor_step_++],0);toast_widget_->SetBounds(bounds);
+}
+void WorkspaceShell::HideToast(){toast_timer_.Stop();toast_tremor_timer_.Stop();toast_undo_.Reset();if(toast_widget_)toast_widget_->Hide();}
 void WorkspaceShell::UndoToast(){auto undo=std::move(toast_undo_);HideToast();if(undo)std::move(undo).Run();}
 std::u16string WorkspaceShell::toast_text_for_testing() const{return toast_widget_&&toast_widget_->IsVisible()?static_cast<ToastView*>(toast_.get())->text():std::u16string();}
 // Bottom-centre of the page area, 20 pt above the window edge.
@@ -8206,14 +8226,23 @@ void WorkspaceShell::AddressEdited() {
 void WorkspaceShell::RequestSearch() {
   if (!callbacks_.search) return;
   search_query_ = base::TrimWhitespace(address_->GetText(), base::TRIM_ALL);
+  SetPaletteLoading(!search_query_.empty());
   search_timer_.Start(FROM_HERE, base::Milliseconds(120), base::BindOnce(
       [](base::WeakPtr<WorkspaceShell> shell, std::u16string query) {
         if (shell && shell->address_visible()&&!shell->address_->IsIMEComposing()&&base::TrimWhitespace(shell->address_->GetText(),base::TRIM_ALL)==query) shell->callbacks_.search.Run(query);
       }, weak_factory_.GetWeakPtr(), search_query_));
 }
-void WorkspaceShell::SetSearchResults(std::u16string query, std::string profile_id, std::vector<PaletteResult> results) {
+void WorkspaceShell::SetPaletteLoading(bool loading) {
+  if (auto* icon = views::AsViewClass<SceneSearchIcon>(palette_chrome_views_[0].get())) icon->SetLoading(loading);
+}
+bool WorkspaceShell::palette_loading_for_testing() const {
+  auto* icon = views::AsViewClass<SceneSearchIcon>(palette_chrome_views_[0].get());
+  return icon && icon->loading();
+}
+void WorkspaceShell::SetSearchResults(std::u16string query, std::string profile_id, std::vector<PaletteResult> results, bool complete) {
   if (!address_visible() || address_->IsIMEComposing() || profile_id != state_.profile_id ||
       base::TrimWhitespace(address_->GetText(), base::TRIM_ALL) != query) return;
+  if (complete) SetPaletteLoading(false);
   search_results_ = std::move(results);
   RebuildSuggestions();
 }
@@ -8282,6 +8311,7 @@ void WorkspaceShell::OnWidgetActivationChanged(views::Widget* widget, bool activ
 void WorkspaceShell::OnWidgetVisibilityChanged(views::Widget* widget, bool visible) {
   if(widget==address_widget_.get())ScheduleMetalPalette();
   if(widget==address_widget_.get()&&!visible&&scrim_widget_)scrim_widget_->Hide();
+  if(widget==address_widget_.get()&&!visible)SetPaletteLoading(false);
   if(widget==address_widget_.get()&&!visible&&url_pill_){SetRowEditing(url_pill_,false);ScheduleMetalSidebar();}
   if (widget==widget_) {ScheduleMetalHeader();ScheduleMetalSplit();}
   if (widget == sidebar_widget_.get() && !visible) { CancelWorkspaceSwipe(); StopWorkspaceAnimation(); }

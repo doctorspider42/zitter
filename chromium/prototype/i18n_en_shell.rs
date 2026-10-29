@@ -3,6 +3,7 @@
 // One entry per distinct Polish string, written exactly as in the source
 // (same escapes); `{}` placeholders keep their order.
 pub static EN: &[(&str, &str)] = &[
+    ("Wczytywanie wyników", "Loading results"),
     ("Akcje", "Actions"),
     ("Karty", "Tabs"),
     ("Przypięte", "Pinned"),
