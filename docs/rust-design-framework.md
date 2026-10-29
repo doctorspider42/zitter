@@ -205,8 +205,18 @@ Trzecia runda (decyzje produktowe): nazwa aktywnej przestrzeni w szynie opcjonal
 nowej karty), foldery przypiętych zwinięte z podglądem jednej karty, tost z „Cofnij”
 zamiast dialogów dla usuwania folderu i przestrzeni.
 
-Zostaje: grupy w Command Center, drgnięcie tostu (`zt-tremor`), loader, strona Pobrane,
-tryb edycji adresu, głośnik grającej karty, menu aplikacji macOS po angielsku.
+Czwarta runda: grupy w Command Center (nagłówek `eyebrow` w pierwszym wierszu grupy,
+klawiatura go omija) na przyciemnionym oknie, `zt-loader` zamiast kreski ket podczas
+ładowania, strona Pobrane z designu (kafelek rozszerzenia, stan ikoną i słowem, akcje-ikony,
+tost „Pobrano X · Pokaż”), drgnięcie tostu, pigułka adresu w trybie edycji i drgnięcie po
+„Kopiuj adres strony”, głośnik grającej karty, dialogi 400 px, odstęp wierszy `space-1`,
+przyciski stopki 28 px, przycisk `zing` przy tworzeniu przestrzeni, Split View (host w
+`url`, pasek 28 px, obrys aktywnego panelu).
+
+Świadome odstępstwa: menu kontekstowe są natywne (bez 248 px i stylu z designu), szyna
+przestrzeni nie ma „+” (nie mieści się obok nazwanej pigułki), dialogi modalne na macOS są
+arkuszami z promieniem 2 px, w pasku bocznym nie ma ikony Pobrane do drgnięcia, menu
+aplikacji macOS zostaje po polsku (`chromium/app` nie jest przenoszony przez skrypt budowania).
 
 ## Języki interfejsu
 
