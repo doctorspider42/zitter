@@ -67,6 +67,8 @@
 #include "base/task/single_thread_task_runner.h"
 #include "ui/views/controls/button/md_text_button.h"
 #include "ui/color/color_id.h"
+#include "ui/base/models/image_model.h"
+#include "ui/gfx/vector_icon_types.h"
 #include "ui/color/color_provider.h"
 #include "ui/views/layout/layout_provider.h"
 #include "ui/views/style/typography.h"
@@ -3226,7 +3228,7 @@ std::unique_ptr<views::View> WorkspaceShell::Build() {
     return shell && shell->metal_header_visible();
   },weak);
   header_sidebar_button_=header->AddChildView(CreateSceneAction(
-      base::BindRepeating(&WorkspaceShell::ToggleSidebar,weak),T(u"Pokaż lub ukryj karty"),
+      base::BindRepeating(&WorkspaceShell::TogglePinned,weak),T(u"Przypnij panel"),
       GlyphButton::Glyph::kSidebar,nullptr,header_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalHeader,weak),true,{chrome_node_graph_,4,{},"header.sidebar"}));
   const std::array<std::pair<const gfx::VectorIcon*, std::u16string>, 3> commands = {{
       {&vector_icons::kArrowBackIcon, T(u"Wstecz")},
@@ -3476,15 +3478,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto footer_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
     return shell && shell->metal_sidebar_visible();
   },weak);
-  auto* footer_layout = footer->SetLayoutManager(std::make_unique<views::BoxLayout>(
-      views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 0));
-  footer_layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
   ReconcileChromeNodes();
-  pin_button_ = footer->AddChildView(CreateSceneAction(
-      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
-        if (shell) shell->SetPinned(!shell->pinned_);
-      }, weak), T(u"Przypnij panel"), GlyphButton::Glyph::kSidebar,nullptr,footer_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),true,{chrome_node_graph_,4,{},"pin"}));
-  Spacer(footer, 1);
   std::unique_ptr<views::ScrollBar> workspace_bar;
   workspace_bar=CreateSidebarScrollBar(footer_visible,true);
   PanelViewport* workspace_viewport=nullptr;
@@ -3497,17 +3491,12 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   workspace_dots_=dots.get();
   workspace_scroll_->SetPanelContents(std::move(dots));
   workspace_dots_->SetLayoutManager(CreateSidebarDotsLayout(4));
-  // The rail ends with „+” (design: WorkspaceSwitcher) while it fits unscrolled:
-  // a new space in the space panel.
-  add_space_button_=workspace_dots_->AddChildView(CreateSceneAction(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){
-        if(!shell)return;shell->OpenWorkspaceSettings();if(!shell->creating_workspace_)shell->ToggleWorkspaceCreation();},weak),
-      T(u"Nowa przestrzeń"),GlyphButton::Glyph::kVector,&vector_icons::kAdd2Icon,footer_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak)));
-  footer_layout->SetFlexForView(dot_scroll, 1);
   Spacer(footer, 1);
-  workspace_settings_button_=footer->AddChildView(CreateSceneAction(
-      base::BindRepeating(&WorkspaceShell::OpenWorkspaceSettings, weak),
-      T(u"Ustawienia przestrzeni"), GlyphButton::Glyph::kVector, &vector_icons::kTuneIcon,footer_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),true,{chrome_node_graph_,4,{},"settings"}));
-  footer->SetLayoutManager(CreateSidebarFooterLayout(add_space_button_,4));
+  // Design: the footer ends with „+”, a menu for a new tab, folder or space.
+  add_button_=footer->AddChildView(CreateSceneAction(
+      base::BindRepeating(&WorkspaceShell::ShowAddMenu,weak),
+      T(u"Dodaj kartę, folder lub przestrzeń"),GlyphButton::Glyph::kVector,&vector_icons::kAdd2Icon,footer_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),true,{chrome_node_graph_,4,{},"sidebar.add"}));
+  footer->SetLayoutManager(CreateSidebarFooterLayout());
 
   // Command palette: input, suggestions, keyboard hints.
   auto palette=std::make_unique<PaletteView>(base::BindRepeating(&WorkspaceShell::ScheduleMetalPalette,weak));
@@ -3877,6 +3866,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
                 // A sample undo toast; its „Cofnij” does nothing.
                 else if (panel == "downloads") shell->callbacks_.run_shortcut.Run("downloads");
                 else if (panel == "dialog") shell->RequestNewFolder(shell->state_.workspace_id);
+                else if (panel == "add") {shell->ShowSidebar();shell->sidebar_widget_->LayoutRootViewIfNecessary();shell->ShowAddMenu();}
                 else if (panel == "menu") {shell->context_tab_=shell->state_.active_tab;shell->context_pin_.clear();shell->ShowTabMenu(shell->widget_->GetWindowBoundsInScreen().origin()+gfx::Vector2d(80,140),ui::mojom::MenuSourceType::kMouse);}
                 else if (panel == "toast") shell->ShowToast(T(u"Usunięto folder "), u"Projekty", base::DoNothing());
               }, shell->weak_factory_.GetWeakPtr(), panel),
@@ -3902,7 +3892,7 @@ void WorkspaceShell::Detach() {
   if (folder_dialog_) folder_dialog_->CloseNow();
   rust_folder_dialog_.reset();rust_folder_dialog_delegate_.reset();
 
-  link_menu_runner_.reset(); link_menu_.reset(); route_menu_.reset();
+  link_menu_runner_.reset(); link_menu_.reset(); route_menu_.reset(); add_menu_runner_.reset(); add_menu_.reset();
   workspace_menu_runner_.reset();
   workspace_menu_.reset();
   profile_menu_.reset();
@@ -3957,10 +3947,9 @@ void WorkspaceShell::Detach() {
   settings_scroll_ = nullptr;
   settings_root_ = nullptr;
   chrome_node_graph_.reset();history_node_graph_.reset();palette_node_graph_.reset();site_rule_node_graph_.reset();
-  pin_button_ = nullptr;
   nav_buttons_.fill(nullptr);
   workspace_buttons_.clear();
-  workspace_dots_ = nullptr; add_space_button_ = nullptr; sidebar_footer_=nullptr; workspace_scroll_=nullptr; workspace_settings_button_=nullptr;
+  workspace_dots_ = nullptr; add_button_ = nullptr; sidebar_footer_=nullptr; workspace_scroll_=nullptr;
   tab_lists_.clear();
   profile_picker_ = nullptr;
   workspace_input_ = nullptr;
@@ -4390,7 +4379,8 @@ size_t WorkspaceShell::metal_sidebar_paint_count() const {
   return tab_list_ ? static_cast<SidebarListView*>(tab_list_.get())->metal_paints() : 0;
 }
 bool WorkspaceShell::workspace_context_menu_running_for_testing() const{return workspace_menu_runner_&&workspace_menu_runner_->IsRunning();}
-void WorkspaceShell::CancelContextMenuForTesting(){if(workspace_menu_runner_)workspace_menu_runner_->Cancel();}
+void WorkspaceShell::CancelContextMenuForTesting(){if(workspace_menu_runner_)workspace_menu_runner_->Cancel();if(add_menu_runner_)add_menu_runner_->Cancel();}
+bool WorkspaceShell::add_menu_running_for_testing() const{return add_menu_runner_&&add_menu_runner_->IsRunning();}
 std::unique_ptr<views::View> WorkspaceShell::CreateWorkspaceActionForTesting(base::RepeatingClosure callback) const{return CreateSceneAction(std::move(callback),u"Test workspace",ControlGlyph::kDot,nullptr,{},base::DoNothing());}
 uint32_t WorkspaceShell::control_model_kind_for_testing(views::View* view) const{
   if(auto* action=views::AsViewClass<RustActionView>(view))return action->ModelKind();
@@ -4470,7 +4460,7 @@ void WorkspaceShell::UpdateMetalHeader() {
   const auto visible=header_view_->GetVisibleBounds();
   if (visible.IsEmpty()) {metal_header_->Hide();if(was_visible)header_view_->SchedulePaint();return;}
   auto bounds=header_view_->GetBoundsInScreen();bounds.Offset(visible.x(),visible.y());bounds.set_size(visible.size());
-  if(auto* control=views::AsViewClass<RustActionView>(header_sidebar_button_))control->SetOn(sidebar_visible());else static_cast<GlyphButton*>(header_sidebar_button_.get())->set_on(sidebar_visible());
+  if(auto* control=views::AsViewClass<RustActionView>(header_sidebar_button_))control->SetOn(pinned_);else static_cast<GlyphButton*>(header_sidebar_button_.get())->set_on(pinned_);
   std::vector<sidebar::Item> items;items.reserve(header_view_->children().size());
   for (const auto& child : header_view_->children()) {
     auto rect=gfx::RectF(child->GetBoundsInScreen());rect.Offset(-bounds.x(),-bounds.y());
@@ -4557,7 +4547,7 @@ void WorkspaceShell::ScheduleMetalSidebar() {
   // Layer transforms do not deliver descendant visibility callbacks. Retire a
   // clipped action synchronously, including while a GPU update is already queued.
   if(tab_scroll_&&tab_scroll_->rust_owned()){
-  for(auto* view:{pin_button_.get(),workspace_settings_button_.get()})if(view)if(auto* control=views::AsViewClass<RustActionView>(view))control->SyncViewportVisibility();
+  if(auto* view=add_button_.get())if(auto* control=views::AsViewClass<RustActionView>(view))control->SyncViewportVisibility();
   for(const auto& [id,view]:workspace_buttons_)if(auto* control=views::AsViewClass<RustActionView>(view.get()))control->SyncViewportVisibility();
   }
   ScheduleMetalHeader();
@@ -4690,7 +4680,7 @@ void WorkspaceShell::UpdateMetalSidebar() {
   auto local_rect=[&](views::View* view) {
     auto rect=gfx::RectF(view->GetBoundsInScreen()); rect.Offset(-bounds.x(),-bounds.y()); return rect;
   };
-  for (auto* button : {pin_button_.get(),workspace_settings_button_.get()}) {
+  if (auto* button=add_button_.get()) {
     const auto rect=local_rect(button); append_glyph(button,rect,rect);
   }
   auto* dot_viewport=workspace_dots_->parent();
@@ -5212,7 +5202,7 @@ void WorkspaceShell::RebuildWorkspaceDots() {
     for(const auto& child:scene.children){CHECK_EQ(child.parent,scene.root);wanted.insert(child.id);}
     std::vector<views::View*> removed;
     // Inspect actual children, never stale cached pointers to detached adapters.
-    for(const auto& child:workspace_dots_->children()){if(child.get()==add_space_button_)continue;auto* adapter=views::AsViewClass<RustActionView>(child.get());const auto id=adapter?adapter->LogicalNodeId():0;if(id&&wanted.contains(id)&&adapter->BelongsTo(*chrome_node_graph_))existing.emplace(id,child.get());else removed.push_back(child.get());}
+    for(const auto& child:workspace_dots_->children()){auto* adapter=views::AsViewClass<RustActionView>(child.get());const auto id=adapter?adapter->LogicalNodeId():0;if(id&&wanted.contains(id)&&adapter->BelongsTo(*chrome_node_graph_))existing.emplace(id,child.get());else removed.push_back(child.get());}
     workspace_buttons_.clear();
     for(auto* child:removed)workspace_dots_->RemoveChildViewT(child);
     size_t index=0;
@@ -5229,11 +5219,10 @@ void WorkspaceShell::RebuildWorkspaceDots() {
       // canvas fallback even when SetOn/CancelInput now see no state delta.
       button->SchedulePaint();button->set_context_menu_controller(this);workspace_buttons_[key]=button;
     }
-    if(add_space_button_)workspace_dots_->ReorderChildView(add_space_button_,workspace_dots_->children().size()-1);
     ScheduleMetalSidebar();return;
   }
   workspace_buttons_.clear();
-  {std::vector<views::View*> dots;for(const auto& child:workspace_dots_->children())if(child.get()!=add_space_button_)dots.push_back(child.get());for(auto* dot:dots)workspace_dots_->RemoveChildViewT(dot);}
+  {std::vector<views::View*> dots;for(const auto& child:workspace_dots_->children())dots.push_back(child.get());for(auto* dot:dots)workspace_dots_->RemoveChildViewT(dot);}
   for (const auto& workspace : state_.workspaces) {
     auto* button = workspace_dots_->AddChildView(CreateSceneAction(
         base::BindRepeating(callbacks_.select_workspace, workspace.id),
@@ -5246,7 +5235,6 @@ void WorkspaceShell::RebuildWorkspaceDots() {
     button->set_context_menu_controller(this);
     workspace_buttons_[workspace.id] = button;
   }
-  if(add_space_button_)workspace_dots_->ReorderChildView(add_space_button_,workspace_dots_->children().size()-1);
   ScheduleMetalSidebar();
 }
 
@@ -5280,6 +5268,21 @@ constexpr int kCustomColor = 33;
 constexpr int kCustomEmoji = 34;
 constexpr int kClearEmoji = 35;
 constexpr int kColorBase = 40;
+// The footer's „+” menu.
+constexpr int kAddTab = 900;
+constexpr int kAddFolder = 901;
+constexpr int kAddSpace = 902;
+// Its 16 px line icons (Iconography): a tab, a folder and a space, each with „+”.
+using enum gfx::CommandType;
+constexpr gfx::PathElement kAddTabPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,ROUND_RECT,2.5f,3,11,10,2.5f,MOVE_TO,8,6,V_LINE_TO,10,MOVE_TO,6,8,H_LINE_TO,10};
+constexpr gfx::PathElement kAddFolderPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,2.5f,4,H_LINE_TO,6.5f,LINE_TO,8,5.5f,H_LINE_TO,13.5f,V_LINE_TO,12.5f,H_LINE_TO,2.5f,CLOSE};
+constexpr gfx::PathElement kAddSpacePath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,CIRCLE,8,8,5.5f,MOVE_TO,8,5.5f,V_LINE_TO,10.5f,MOVE_TO,5.5f,8,H_LINE_TO,10.5f};
+constexpr gfx::VectorIconRep kAddTabRep[]={{kAddTabPath}};
+constexpr gfx::VectorIconRep kAddFolderRep[]={{kAddFolderPath}};
+constexpr gfx::VectorIconRep kAddSpaceRep[]={{kAddSpacePath}};
+constexpr gfx::VectorIcon kAddTabIcon(kAddTabRep,1,"zitter_add_tab");
+constexpr gfx::VectorIcon kAddFolderIcon(kAddFolderRep,1,"zitter_add_folder");
+constexpr gfx::VectorIcon kAddSpaceIcon(kAddSpaceRep,1,"zitter_add_space");
 constexpr int kEmojiBase = 50;
 constexpr int kProfileCommandBase = 100;
 // Rust plans use the established application command IDs; fail compilation if
@@ -5740,7 +5743,7 @@ bool WorkspaceShell::IsCommandIdEnabled(int command_id) const {
   if(metal_sidebar_&&command_id>=kNewFolder&&command_id<=kDeleteFolder)return sidebar::folder_menu_enabled(command_id,RustFolderMenuState());
   if(metal_sidebar_&&((command_id>=kLinkPeek&&command_id<=kRouteSubmenu)||(command_id>=kRouteBase&&command_id<kRouteBase+static_cast<int>(route_workspaces_.size()))))
     return sidebar::link_menu_enabled(command_id,LinkMenuStateFor(state_,context_url_,link_source_workspace_,route_workspaces_));
-  if (command_id == kNewFolder || command_id == kRenameFolder || command_id == kDeleteFolder) return state_.configuration_ready && !state_.profiles_busy;
+  if (command_id == kNewFolder || command_id == kRenameFolder || command_id == kDeleteFolder || command_id == kAddFolder || command_id == kAddSpace) return state_.configuration_ready && !state_.profiles_busy;
   if (command_id == kRemoveWorkspace) return state_.configuration_ready && !state_.profiles_busy && state_.workspaces.size() > 1;
   // Left/top half can only move right/down, and vice versa.
   if (command_id == kMoveLeft || command_id == kMoveRight) {
@@ -5931,7 +5934,22 @@ void WorkspaceShell::QueueSplit(std::optional<size_t> tab, std::string pin) {
       }, weak_factory_.GetWeakPtr(), state_.workspace_id, tab, std::move(pin),std::move(identity)));
 }
 
+bool WorkspaceShell::GetAcceleratorForCommandId(int command_id, ui::Accelerator* accelerator) const {
+  if (command_id != kAddTab) return false;
+  for (const auto& shortcut : tools_.shortcuts)
+    if (shortcut.id == "new_tab" && shortcut.accelerator.key_code() != ui::VKEY_UNKNOWN) {*accelerator = shortcut.accelerator; return true;}
+  return false;
+}
 void WorkspaceShell::ExecuteCommand(int command_id, int) {
+  if (command_id >= kAddTab && command_id <= kAddSpace) {
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, int command) {
+      if (!shell) return;
+      if (command == kAddTab) shell->OpenAddress(true);
+      else if (command == kAddFolder) shell->RequestNewFolder(shell->state_.workspace_id);
+      else {shell->OpenWorkspaceSettings();if(!shell->creating_workspace_)shell->ToggleWorkspaceCreation();}
+    }, weak_factory_.GetWeakPtr(), command_id));
+    return;
+  }
   if(metal_sidebar_&&command_id>=kOpenSplit&&command_id<=kCloseSplitTabs){QueueTabCommand(command_id);return;}
   if(metal_sidebar_&&command_id>=kNewFolder&&command_id<=kDeleteFolder){
     // Rust revalidates readiness and captures the workspace/folder target.
@@ -6850,9 +6868,11 @@ void WorkspaceShell::ApplyAppearance(bool refresh_theme) {
       SetActionOn(pick,!emoji.empty()&&pick->GetTooltipText()==TF(u"Emoji {}",{emoji}));
     }
   }
-  auto* pin = pin_button_.get();
-  SetActionOn(pin,pinned_);
-  pin->SetTooltipText(pinned_ ? T(u"Odepnij panel (auto-ukrywanie)") : T(u"Przypnij panel"));
+  if (auto* pin = header_sidebar_button_.get()) {
+    SetActionOn(pin,pinned_);
+    pin->SetTooltipText(pinned_ ? T(u"Odepnij panel (auto-ukrywanie)") : T(u"Przypnij panel"));
+    ScheduleMetalHeader();
+  }
   static_cast<ShellRoot*>(root_.get())->pinned = pinned_;
   static_cast<ShellRoot*>(root_.get())->sidebar_width = sidebar_width_;
   root_->InvalidateLayout();
@@ -7588,6 +7608,22 @@ void WorkspaceShell::ShowSidebar() {
   sidebar_widget_->ShowInactive();
   sidebar_widget_->StackAboveWidget(widget_);
   ScheduleMetalSidebar();
+}
+void WorkspaceShell::TogglePinned() {
+  if (!pinned_) {SetPinned(true);return;}
+  SetPinned(false);
+  if (sidebar_widget_) sidebar_widget_->Hide();
+}
+void WorkspaceShell::ShowAddMenu() {
+  if (!add_button_ || !sidebar_widget_ || !sidebar_widget_->IsVisible()) return;
+  add_menu_ = std::make_unique<DesignMenuModel>(this);
+  const auto icon=[](const gfx::VectorIcon& vector){return ui::ImageModel::FromVectorIcon(vector,ui::kColorMenuIcon,16);};
+  add_menu_->AddItemWithIcon(kAddTab, T(u"Nowa karta"), icon(kAddTabIcon));
+  add_menu_->AddItemWithIcon(kAddFolder, T(u"Nowy folder"), icon(kAddFolderIcon));
+  add_menu_->AddItemWithIcon(kAddSpace, T(u"Nowa przestrzeń…"), icon(kAddSpaceIcon));
+  add_menu_runner_ = std::make_unique<views::MenuRunner>(add_menu_.get(), kZitterMenuRun);
+  add_menu_runner_->RunMenuAt(sidebar_widget_.get(), nullptr, add_button_->GetBoundsInScreen(), views::MenuAnchorPosition::kTopRight,
+      ui::mojom::MenuSourceType::kMouse, gfx::NativeView(), ZitterMenuCorners());
 }
 void WorkspaceShell::ToggleSidebar() {
   if (sidebar_visible()) {

@@ -2542,7 +2542,7 @@ impl ActionGraph {
         let previous=self.order.iter().filter_map(|id|previous_by_id.get(id).copied()).collect::<Vec<_>>();
         let geometry_changed=previous.into_iter().ne(items.iter().map(|i|i.key.as_str()))||items.iter().any(|item|self.nodes.get(&(3,0,0,item.key.clone())).is_some_and(|node|{let n=node.borrow();matches!(n.model.as_deref(),Some(NodeModel::Workspace(p)) if p.label!=item.label)}));
         let mut keys=Vec::with_capacity(9+items.len());
-        for name in ["pin","settings","header.sidebar","header.back","header.forward","header.reload","sidebar.address","sidebar.new-tab"]{keys.push(ffi::ActionNodeKey{kind:4,high:0,low:0,name:name.into()});}
+        for name in ["sidebar.add","header.sidebar","header.back","header.forward","header.reload","sidebar.address","sidebar.new-tab"]{keys.push(ffi::ActionNodeKey{kind:4,high:0,low:0,name:name.into()});}
         keys.push(ffi::ActionNodeKey{kind:11,high:0,low:0,name:group.3.clone()});
         for item in &items{keys.push(ffi::ActionNodeKey{kind:3,high:0,low:0,name:item.key.clone()});}
         let plan=self.reconcile(keys);if !plan.admitted{return plan;}
@@ -2926,19 +2926,18 @@ fn row_layout(width: i32, height: i32, title_width: i32,
 }
 
 fn footer_layout(width: i32, content_width: i32) -> ffi::ColumnLayout {
-    // The two footer buttons are 28 px IconButtons, centred in the 32 px row.
-    const BUTTON: i32 = 28;
-    let width=width.max(0); let middle=(width-2*BUTTON-2).max(0);
+    // The space rail is centred in the footer, short of the 28 px „+”
+    // IconButton that ends it, centred in the 32 px row.
+    const BUTTON: i32 = 28; const GAP: i32 = 4;
+    let width=width.max(0); let middle=(width-BUTTON-GAP).max(0);
     let overflow=content_width>middle;
     let height=if overflow {47} else {32};
-    // Workspace dots that fit sit centered between the two footer buttons.
-    let (strip_x,strip_width)=if overflow {(BUTTON+1,middle)} else {(BUTTON+1+(middle-content_width.max(0))/2,content_width.max(0))};
+    let strip_width=if overflow {middle} else {content_width.max(0)};
+    let strip_x=((width-strip_width)/2).min(middle-strip_width).max(0);
     let button_y=(32-BUTTON)/2;
     ffi::ColumnLayout {width,height,children:vec![
-        ffi::Rect{x:0,y:button_y,width:BUTTON.min(width),height:BUTTON},
-        ffi::Rect{x:BUTTON,y:0,width:1,height:1},
         ffi::Rect{x:strip_x,y:0,width:strip_width,height},
-        ffi::Rect{x:(width-BUTTON-1).max(0),y:0,width:1,height:1},
+        ffi::Rect{x:middle,y:0,width:1,height:1},
         ffi::Rect{x:(width-BUTTON).max(0),y:button_y,width:BUTTON.min(width),height:BUTTON},
     ]}
 }
@@ -3751,10 +3750,12 @@ mod tests {
     }
     #[test] fn footer_reserves_a_horizontal_scroll_gutter_only_for_overflow() {
         let normal=footer_layout(240,60); assert_eq!(normal.height,32);
-        assert_eq!((normal.children[2].x,normal.children[2].width),(90,60));
+        assert_eq!((normal.children[0].x,normal.children[0].width),(90,60));
+        assert_eq!(footer_layout(240,200).children[0].x,8);
+        assert_eq!((normal.children[2].x,normal.children[2].width),(212,28));
         let overflow=footer_layout(200,300); assert_eq!(overflow.height,47);
-        assert_eq!(overflow.children[2].width,142); assert_eq!(overflow.children[2].height,47);
-        assert_eq!((overflow.children[4].x,overflow.children[4].width),(172,28)); assert_eq!(overflow.children[0].y,2);
+        assert_eq!(overflow.children[0].width,168); assert_eq!(overflow.children[0].height,47);
+        assert_eq!((overflow.children[2].x,overflow.children[2].width),(172,28)); assert_eq!(overflow.children[2].y,2);
         let dots=strip_layout(-1,32,0,&[child(24,28),child(30,28),child(24,28)]);
         assert_eq!((dots.width,dots.children[1].x,dots.children[1].y),(78,24,2));
     }

@@ -176,10 +176,8 @@ class RustFooterLayout final : public views::LayoutManager {
  public:
   void ViewAdded(views::View* host,views::View*) override {host->InvalidateLayout();}
   void ViewRemoved(views::View* host,views::View*) override {host->InvalidateLayout();}
-  explicit RustFooterLayout(views::View* fit_only=nullptr,int spacing=0):fit_only_(fit_only),spacing_(spacing){}
   void Layout(views::View* host) override {
-    if (host->children().size()!=5) return;
-    FitOptional(host);
+    if (host->children().size()!=3) return;
     const auto g=Measure(host,host->width());
     for (size_t i=0;i<g.children.size();++i) {const auto& r=g.children[i];host->children()[i]->SetBounds(r.x,r.y,r.width,r.height);}
   }
@@ -191,19 +189,10 @@ class RustFooterLayout final : public views::LayoutManager {
   }
   int GetPreferredHeightForWidth(const views::View* host,int width) const override {return Measure(host,width).height;}
  private:
-  // The optional rail child shows only while the rail fits without scrolling.
-  void FitOptional(views::View* host){
-    if(!fit_only_)return;auto* scroll=PanelViewportForView(host->children()[2].get());if(!scroll||!scroll->contents())return;
-    const int extra=fit_only_->GetPreferredSize().width()+spacing_;
-    const int shown=scroll->contents()->GetPreferredSize().width()+(fit_only_->GetVisible()?0:extra);
-    const bool fits=sidebar::footer_layout(host->width(),shown).height==32;
-    if(fit_only_->GetVisible()!=fits)fit_only_->SetVisible(fits);
-  }
-  raw_ptr<views::View> fit_only_;int spacing_;
   sidebar::ColumnLayout Measure(const views::View* host,int width) const {
     int content=0;
-    if (host->children().size()==5) {
-      auto* scroll=PanelViewportForView(host->children()[2].get());
+    if (host->children().size()==3) {
+      auto* scroll=PanelViewportForView(host->children()[0].get());
       if (scroll&&scroll->contents()) content=scroll->contents()->GetPreferredSize().width();
     }
     return sidebar::footer_layout(width,content);
@@ -225,7 +214,7 @@ class RustDotsLayout final : public views::LayoutManager {
  private:
   sidebar::ColumnLayout Measure(const views::View* host,int width,int height) const {
     std::vector<sidebar::ColumnChild> children;
-    // Hidden children (the rail's „+” when it does not fit) take no room.
+    // Hidden children take no room.
     for (const auto& child : host->children()) {if(!child->GetVisible())continue;const auto size=child->GetPreferredSize();children.push_back({size.width(),size.height(),0,0,0,0});}
     return sidebar::strip_layout(width,height,spacing_,rust::Slice<const sidebar::ColumnChild>(children.data(),children.size()));
   }
@@ -336,8 +325,8 @@ int SidebarFolderIndent(int depth) {
   return sidebar::folder_indent(depth);
 }
 
-std::unique_ptr<views::LayoutManager> CreateSidebarFooterLayout(views::View* fit_only,int spacing) {
-  return std::make_unique<RustFooterLayout>(fit_only,spacing);
+std::unique_ptr<views::LayoutManager> CreateSidebarFooterLayout() {
+  return std::make_unique<RustFooterLayout>();
 }
 std::unique_ptr<views::LayoutManager> CreateSidebarDotsLayout(int spacing) {
   return std::make_unique<RustDotsLayout>(spacing);

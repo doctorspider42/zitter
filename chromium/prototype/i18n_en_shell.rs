@@ -54,7 +54,6 @@ pub static EN: &[(&str, &str)] = &[
     ("Nowa przestrzeń…", "New space…"),
     ("Emoji {}", "Emoji {}"),
     ("Przypnij panel", "Pin sidebar"),
-    ("Ustawienia przestrzeni", "Space settings"),
     ("↑↓ wybierz, ↵ otwórz, esc zamknij", "↑↓ select, ↵ open, esc close"),
     ("Przenieś się do Zittera", "Move to Zitter"),
     ("Zamknij import", "Close import"),
@@ -282,4 +281,5 @@ pub static EN: &[(&str, &str)] = &[
     ("Nie udało się wczytać profili. Uruchom aplikację ponownie.", "Couldn’t load profiles. Restart the app."),
     ("Wpisz adres strony HTTP lub HTTPS", "Enter an HTTP or HTTPS page address"),
     ("Brak pasujących poleceń.", "No matching commands."),
+    ("Dodaj kartę, folder lub przestrzeń", "Add a tab, folder or space"),
 ];

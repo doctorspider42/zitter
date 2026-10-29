@@ -233,6 +233,10 @@ class WorkspaceShell final : public ui::EventHandler,
   const std::vector<PaletteResult>& suggestions() const { return suggestions_; }
   void ShowSidebar();
   void ToggleSidebar();
+  // The header's sidebar button pins and unpins the panel.
+  void TogglePinned();
+  // The footer's „+”: a new tab, folder or space.
+  void ShowAddMenu();
   void SetPinned(bool pinned);
   // Drag delta from the sidebar's right-edge handle; persisted when done.
   void ResizeSidebar(int amount, bool done);
@@ -379,7 +383,8 @@ class WorkspaceShell final : public ui::EventHandler,
   uint64_t scene_parent_id_for_testing(views::View* view) const;
   views::View* header_action_for_testing(size_t index) const;
   views::View* sidebar_action_for_testing(size_t index) const{return index==0?url_pill_.get():index==1?new_tab_button_.get():nullptr;}
-  views::View* footer_action_for_testing(size_t index) const{return index==0?pin_button_.get():index==1?workspace_settings_button_.get():nullptr;}
+  views::View* footer_action_for_testing(size_t index) const{return index==0?add_button_.get():nullptr;}
+  ui::SimpleMenuModel* add_menu_for_testing() const{return add_menu_.get();}
   std::unique_ptr<views::View> CreateWorkspaceActionForTesting(base::RepeatingClosure callback) const;
   views::View* sidebar_grip_for_testing() const;
   views::View* split_divider_for_testing() const;
@@ -525,6 +530,7 @@ class WorkspaceShell final : public ui::EventHandler,
   ui::SimpleMenuModel* workspace_menu() const { return workspace_menu_.get(); }
   bool workspace_context_menu_running_for_testing() const;
   void CancelContextMenuForTesting();
+  bool add_menu_running_for_testing() const;
   views::View* profile_picker() const { return profile_picker_; }
   views::View* color_presets() const { return color_presets_; }
   views::View* color_wheel_for_testing(size_t index) const { return color_wheel_[index]; }
@@ -693,6 +699,7 @@ class WorkspaceShell final : public ui::EventHandler,
   bool IsCommandIdChecked(int command_id) const override;
   bool IsCommandIdEnabled(int command_id) const override;
   void ExecuteCommand(int command_id, int event_flags) override;
+  bool GetAcceleratorForCommandId(int command_id, ui::Accelerator* accelerator) const override;
   void RenameSelectedProfile();
   sidebar::WorkspaceMenuState RustWorkspaceMenuState() const;
   sidebar::FolderMenuState RustFolderMenuState() const;
@@ -881,13 +888,13 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> workspace_name_ = nullptr;
   raw_ptr<views::View> profile_name_ = nullptr;
   std::shared_ptr<SidebarNodeGraphState> chrome_node_graph_;
-  raw_ptr<views::View> pin_button_ = nullptr;
   std::array<raw_ptr<views::View>, 3> nav_buttons_ = {};
   raw_ptr<views::View> sidebar_footer_=nullptr;
   raw_ptr<PanelViewport> workspace_scroll_=nullptr;
-  raw_ptr<views::View> workspace_settings_button_=nullptr;
   raw_ptr<views::View> workspace_dots_ = nullptr;
-  raw_ptr<views::View> add_space_button_ = nullptr;  // The rail's „+”.
+  raw_ptr<views::View> add_button_ = nullptr;  // The footer's „+”: tab, folder or space.
+  std::unique_ptr<ui::SimpleMenuModel> add_menu_;
+  std::unique_ptr<views::MenuRunner> add_menu_runner_;
   std::map<std::string, raw_ptr<views::View>> workspace_buttons_;
   std::string context_workspace_id_;
   std::string new_profile_workspace_id_;

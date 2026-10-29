@@ -72,8 +72,8 @@ std::unique_ptr<views::LayoutManager> CreateSidebarSplitLayout();
 gfx::Size SidebarSplitPreferredSize();
 std::unique_ptr<views::LayoutManager> CreateSidebarPinnedRowLayout();
 int SidebarFolderIndent(int depth);
-// `fit_only`, a child of the rail, shows only while the rail fits unscrolled.
-std::unique_ptr<views::LayoutManager> CreateSidebarFooterLayout(views::View* fit_only=nullptr,int spacing=0);
+// The space rail, a spacer and the footer's „+”.
+std::unique_ptr<views::LayoutManager> CreateSidebarFooterLayout();
 std::unique_ptr<views::LayoutManager> CreatePaletteInputLayout();
 std::unique_ptr<views::LayoutManager> CreateSidebarDotsLayout(int spacing = 0);
 }

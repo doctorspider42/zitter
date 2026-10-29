@@ -215,7 +215,12 @@ przyciski stopki 28 px, przycisk `zing` przy tworzeniu przestrzeni, Split View (
 
 Menu kontekstowe kart, linków i przestrzeni są menu Views w kolorach i kroju designu,
 z akcjami niszczącymi na końcu po separatorze; menu aplikacji macOS mówi językiem
-interfejsu; „+” kończy szynę przestrzeni, dopóki się mieści.
+interfejsu.
+
+Piąta runda: stopka paska to wyśrodkowana szyna przestrzeni i zawsze widoczny „+” z menu
+(nowa karta, folder, przestrzeń; ikony rysowane jako `gfx::VectorIcon` w kodzie powłoki).
+Przycisk przypinania i ustawienia przestrzeni zniknęły ze stopki: panel przypina przycisk
+w nagłówku, ustawienia otwiera menu kontekstowe przestrzeni.
 
 Panel menu ma `radius-md` (przekazywany do `RunMenuAt`), a akcje niszczące są w
 `danger` (`DesignMenuModel`).

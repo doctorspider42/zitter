@@ -1359,7 +1359,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ChromeLogicalNodesRemainDistin
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->SetPinned(true);shell->ShowSidebar();
   const bool rust=shell->workspace_input()->rust_editor();std::vector<views::View*> controls;
   for(size_t i=0;i<4;++i)controls.push_back(shell->header_action_for_testing(i));
-  for(size_t i=0;i<2;++i){controls.push_back(shell->sidebar_action_for_testing(i));controls.push_back(shell->footer_action_for_testing(i));}
+  for(size_t i=0;i<2;++i)controls.push_back(shell->sidebar_action_for_testing(i));controls.push_back(shell->footer_action_for_testing(0));
   std::vector<uint64_t> ids;for(auto* view:controls){ASSERT_TRUE(view);ids.push_back(shell->sidebar_node_id_for_testing(view));if(rust)EXPECT_NE(0u,ids.back());else EXPECT_EQ(0u,ids.back());}
   if(rust)for(size_t i=0;i<ids.size();++i)for(size_t j=0;j<i;++j)EXPECT_NE(ids[i],ids[j]);
   ASSERT_TRUE(window_->Select("personal"));shell->SetWorkspaceEmoji("personal",u"🚀");shell->ShowSidebar();
@@ -1372,12 +1372,12 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ChromeLogicalNodesRemainDistin
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FooterLogicalNodesSurviveEmojiReplacementAndRejectStaleAdapter) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->SetPinned(true);shell->ShowSidebar();
   const bool rust=shell->workspace_input()->rust_editor();auto* personal=shell->workspace_button("personal");ASSERT_TRUE(personal);
-  auto* pin=shell->footer_action_for_testing(0);auto* settings=shell->footer_action_for_testing(1);ASSERT_TRUE(pin);ASSERT_TRUE(settings);
-  const auto logical=shell->sidebar_node_id_for_testing(personal),pin_id=shell->sidebar_node_id_for_testing(pin),settings_id=shell->sidebar_node_id_for_testing(settings);
-  if(rust){EXPECT_NE(0u,logical);EXPECT_NE(0u,pin_id);EXPECT_NE(0u,settings_id);EXPECT_NE(logical,pin_id);EXPECT_NE(pin_id,settings_id);}else EXPECT_EQ(0u,logical);
+  auto* add=shell->footer_action_for_testing(0);ASSERT_TRUE(add);
+  const auto logical=shell->sidebar_node_id_for_testing(personal),add_id=shell->sidebar_node_id_for_testing(add);
+  if(rust){EXPECT_NE(0u,logical);EXPECT_NE(0u,add_id);EXPECT_NE(logical,add_id);}else EXPECT_EQ(0u,logical);
   auto held=personal->parent()->RemoveChildViewT(personal);
   shell->SetWorkspaceEmoji("personal",u"🚀");auto* replacement=shell->workspace_button("personal");ASSERT_TRUE(replacement);EXPECT_NE(held.get(),replacement);
-  EXPECT_EQ(logical,shell->sidebar_node_id_for_testing(replacement));EXPECT_EQ(pin_id,shell->sidebar_node_id_for_testing(pin));EXPECT_EQ(settings_id,shell->sidebar_node_id_for_testing(settings));
+  EXPECT_EQ(logical,shell->sidebar_node_id_for_testing(replacement));EXPECT_EQ(add_id,shell->sidebar_node_id_for_testing(add));
   if(rust){EXPECT_EQ(0u,shell->sidebar_node_id_for_testing(held.get()));held->SetEventTargeter(std::make_unique<views::ViewTargeter>(std::make_unique<views::ViewTargeterDelegate>()));ui::AXActionData activate;activate.action=ax::mojom::Action::kDoDefault;held->HandleAccessibleAction(activate);EXPECT_EQ("work",window_->active_id());}
   ASSERT_TRUE(window_->Select("personal"));shell->ShowSidebar();EXPECT_EQ(logical,shell->sidebar_node_id_for_testing(shell->workspace_button("personal")));
   shell->SetWorkspaceEmoji("personal",u"");EXPECT_EQ(logical,shell->sidebar_node_id_for_testing(shell->workspace_button("personal")));
@@ -1404,16 +1404,33 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ContextMenusMarkDestructiveAct
   EXPECT_EQ(shell->workspace_menu()->GetLabelAt(last-2),u"Nazwa i ustawienia…");
 }
 
+// The footer's „+” (design: Sidebar footer) offers a new tab, folder or space.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FooterAddMenuOpensTabFolderAndSpace) {
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->SetPinned(true);shell->ShowSidebar();
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();ASSERT_TRUE(shell->footer_action_for_testing(0));EXPECT_FALSE(shell->footer_action_for_testing(1));
+  shell->ShowAddMenu();ASSERT_TRUE(base::test::RunUntil([&]{return shell->add_menu_running_for_testing();}));
+  auto* menu=shell->add_menu_for_testing();ASSERT_TRUE(menu);ASSERT_EQ(3u,menu->GetItemCount());
+  EXPECT_EQ(u"Nowa karta",menu->GetLabelAt(0));EXPECT_EQ(u"Nowy folder",menu->GetLabelAt(1));EXPECT_EQ(u"Nowa przestrzeń…",menu->GetLabelAt(2));
+  for(size_t i=0;i<3;++i)EXPECT_FALSE(menu->GetIconAt(i).IsEmpty());
+  ui::Accelerator accelerator;EXPECT_TRUE(menu->GetAcceleratorAt(0,&accelerator));EXPECT_EQ(ui::VKEY_T,accelerator.key_code());EXPECT_FALSE(menu->GetAcceleratorAt(1,&accelerator));
+  shell->CancelContextMenuForTesting();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->add_menu_running_for_testing();}));
+  menu->ActivatedAt(1);ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_dialog()!=nullptr;}));shell->folder_dialog()->CloseNow();
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_dialog()==nullptr;}));
+  menu->ActivatedAt(2);ASSERT_TRUE(base::test::RunUntil([&]{return shell->settings_visible();}));shell->CloseOverlays(true);
+  menu->ActivatedAt(0);ASSERT_TRUE(base::test::RunUntil([&]{return shell->address_visible();}));
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FooterActionHostsOwnershipEmojiMenuKeysAXAndClip) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->SetPinned(true);shell->ShowSidebar();const bool rust=shell->workspace_input()->rust_editor();
-  for(auto* view:{shell->footer_action_for_testing(0),shell->footer_action_for_testing(1),shell->workspace_button("work"),shell->workspace_button("personal")}){ASSERT_TRUE(view);EXPECT_EQ(!rust,views::AsViewClass<views::Button>(view)!=nullptr);ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kButton,ax.role);EXPECT_FALSE(ax.GetString16Attribute(ax::mojom::StringAttribute::kName).empty());}
+  for(auto* view:{shell->footer_action_for_testing(0),shell->workspace_button("work"),shell->workspace_button("personal")}){ASSERT_TRUE(view);EXPECT_EQ(!rust,views::AsViewClass<views::Button>(view)!=nullptr);ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kButton,ax.role);EXPECT_FALSE(ax.GetString16Attribute(ax::mojom::StringAttribute::kName).empty());}
   EXPECT_EQ(gfx::Size(24,28),shell->workspace_button("personal")->GetPreferredSize());views::ViewTracker old(shell->workspace_button("personal"));shell->SetWorkspaceEmoji("personal",u"🚀");if(rust)EXPECT_TRUE(old.view());else EXPECT_FALSE(old.view());auto* personal=shell->workspace_button("personal");ASSERT_TRUE(personal);EXPECT_EQ(gfx::Size(30,28),personal->GetPreferredSize());shell->sidebar_widget()->LayoutRootViewIfNecessary();
 #if BUILDFLAG(IS_MAC)
   bool inspected=false;const auto inspect=base::BindRepeating([](WorkspaceShell* shell,bool* inspected){EXPECT_TRUE(shell->workspace_context_menu_running_for_testing());auto* menu=shell->workspace_menu();EXPECT_TRUE(menu);if(menu){auto* profiles=menu->GetSubmenuModelAt(0);EXPECT_TRUE(profiles);if(profiles){EXPECT_FALSE(profiles->IsItemCheckedAt(0));EXPECT_TRUE(profiles->IsItemCheckedAt(1));}}*inspected=true;},base::Unretained(shell),&inspected);
   EXPECT_TRUE(RunWithMenuInspection(shell,base::BindOnce([](views::View* view){ui::AXActionData context;context.action=ax::mojom::Action::kShowContextMenu;EXPECT_TRUE(view->HandleAccessibleAction(context));},base::Unretained(personal)),inspect));EXPECT_TRUE(inspected);EXPECT_FALSE(shell->workspace_context_menu_running_for_testing());EXPECT_EQ("work",window_->active_id());
 #endif
 
-  auto* pin=shell->footer_action_for_testing(0);auto check_pin_name=[&]{ui::AXNodeData node;pin->GetViewAccessibility().GetAccessibleNodeData(&node);EXPECT_EQ(shell->pinned()?u"Odepnij panel (auto-ukrywanie)":u"Przypnij panel",node.GetString16Attribute(ax::mojom::StringAttribute::kName));};check_pin_name();ui::AXActionData activate;activate.action=ax::mojom::Action::kDoDefault;pin->SetEnabled(false);pin->HandleAccessibleAction(activate);EXPECT_TRUE(shell->pinned());pin->SetEnabled(true);EXPECT_TRUE(pin->HandleAccessibleAction(activate));EXPECT_FALSE(shell->pinned());check_pin_name();shell->SetPinned(true);check_pin_name();shell->ShowSidebar();
+  // The header's sidebar button pins the panel (the footer has only „+”).
+  auto* pin=shell->header_action_for_testing(0);auto check_pin_name=[&]{ui::AXNodeData node;pin->GetViewAccessibility().GetAccessibleNodeData(&node);EXPECT_EQ(shell->pinned()?u"Odepnij panel (auto-ukrywanie)":u"Przypnij panel",node.GetString16Attribute(ax::mojom::StringAttribute::kName));};check_pin_name();ui::AXActionData activate;activate.action=ax::mojom::Action::kDoDefault;pin->SetEnabled(false);pin->HandleAccessibleAction(activate);EXPECT_TRUE(shell->pinned());pin->SetEnabled(true);EXPECT_TRUE(pin->HandleAccessibleAction(activate));EXPECT_FALSE(shell->pinned());check_pin_name();shell->SetPinned(true);check_pin_name();shell->ShowSidebar();
   ui::KeyEvent space(ui::EventType::kKeyPressed,ui::VKEY_SPACE,0);EXPECT_TRUE(shell->workspace_button("personal")->OnKeyPressed(space));EXPECT_EQ("personal",window_->active_id());shell->ShowSidebar();EXPECT_TRUE(shell->workspace_button("work")->HandleAccessibleAction(activate));EXPECT_EQ("work",window_->active_id());
   std::vector<std::string> added;for(int i=0;i<10;++i){ASSERT_TRUE(window_->AddWorkspace("Action "+std::to_string(i),"work-profile"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));added.push_back(window_->workspaces().back().id);}ASSERT_TRUE(window_->Select("work"));shell->ShowSidebar();shell->sidebar_widget()->LayoutRootViewIfNecessary();auto* viewport=shell->workspace_viewport();ASSERT_TRUE(viewport);
   if(rust){ASSERT_GT(viewport->maximum(),0);viewport->ScrollTo(0);personal=shell->workspace_button("personal");ASSERT_TRUE(personal);const auto point=personal->GetLocalBounds().CenterPoint();ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ASSERT_TRUE(personal->OnMousePressed(press));viewport->ScrollTo(viewport->maximum());EXPECT_TRUE(personal->GetVisibleBounds().IsEmpty());viewport->ScrollTo(0);personal->OnMouseReleased(release);EXPECT_EQ("work",window_->active_id());
@@ -1481,7 +1498,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitPaneActionQueuedCloseSurv
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, HeaderActionHostOwnershipKeyboardAXGestureAndCancel) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);const bool rust=shell->workspace_input()->rust_editor();
-  const std::array<std::u16string,4> names={u"Pokaż lub ukryj karty",u"Wstecz",u"Dalej",u"Odśwież"};for(size_t i=0;i<4;++i){auto* view=shell->header_action_for_testing(i);ASSERT_TRUE(view);EXPECT_EQ(!rust,views::AsViewClass<views::Button>(view)!=nullptr);ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kButton,ax.role);EXPECT_EQ(names[i],ax.GetString16Attribute(ax::mojom::StringAttribute::kName));}
+  const std::array<std::u16string,4> names={shell->pinned()?u"Odepnij panel (auto-ukrywanie)":u"Przypnij panel",u"Wstecz",u"Dalej",u"Odśwież"};for(size_t i=0;i<4;++i){auto* view=shell->header_action_for_testing(i);ASSERT_TRUE(view);EXPECT_EQ(!rust,views::AsViewClass<views::Button>(view)!=nullptr);ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kButton,ax.role);EXPECT_EQ(names[i],ax.GetString16Attribute(ax::mojom::StringAttribute::kName));}
   auto reset=[&]{shell->SetPinned(true);shell->ShowSidebar();};reset();auto* action=shell->header_action_for_testing(0);ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));action->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);action->RequestFocus();ASSERT_TRUE(base::test::RunUntil([&]{return action->HasFocus();}));
   base::test::TestFuture<void> presented;auto* compositor=window_->widget()->GetCompositor();ASSERT_TRUE(compositor);window_->widget()->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
   ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(window_->widget()->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));EXPECT_FALSE(shell->sidebar_visible());reset();ui::KeyEvent enter(ui::EventType::kKeyPressed,ui::VKEY_RETURN,0);EXPECT_FALSE(action->OnKeyPressed(enter));EXPECT_TRUE(shell->sidebar_visible());
@@ -6951,7 +6968,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NewTabActionUsesSceneTextA
   const auto scrollbar_bounds = shell->tab_viewport()->vertical_scroll_bar()->GetBoundsInScreen();
   EXPECT_EQ(std::max(viewport.right(), scrollbar_bounds.right()), canvas.right());
   EXPECT_TRUE(canvas.Contains(scrollbar_bounds));
-  EXPECT_EQ(shell->footer_action_for_testing(1)->parent()->GetBoundsInScreen().bottom(),canvas.bottom());
+  EXPECT_EQ(shell->footer_action_for_testing(0)->parent()->GetBoundsInScreen().bottom(),canvas.bottom());
   auto paint_action = [&] {
     // The helper paints a root at (0,0); a sidebar child's parent-relative
     // origin would clip its entire recording outside the small test bitmap.
@@ -7173,7 +7190,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, RustScrollThumbDragTrackKe
   ui::KeyEvent last(ui::EventType::kKeyPressed,ui::VKEY_END,ui::EF_NONE);
   EXPECT_TRUE(bar->OnKeyPressed(last)); EXPECT_EQ(max_offset,scroll->visible_rect().y());
 }
-IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, FooterSpacesScrollSelectPinAndSettings) {
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, FooterSpacesScrollSelectAndAddMenu) {
   auto* shell=window_->shell();
   ASSERT_TRUE(base::test::RunUntil([&] {return shell->appearance_ready();}));
   shell->SetWorkspaceAnimations(false);
@@ -7184,9 +7201,9 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, FooterSpacesScrollSelectPi
   const auto last=window_->workspaces().back().id;
   shell->SetWorkspaceEmoji("work",u"🦀");shell->SetWorkspaceEmoji(last,u"🚀");
   ASSERT_TRUE(window_->Select("work"));shell->CloseOverlays(true);shell->SetPinned(true);shell->ShowSidebar();
-  auto* settings=shell->footer_action_for_testing(1);ASSERT_TRUE(settings);
-  auto* footer=settings->parent();auto* pin=shell->footer_action_for_testing(0);
-  auto* scroll=shell->workspace_viewport();ASSERT_TRUE(scroll);EXPECT_EQ(footer->children()[2].get(),scroll->view());auto* bar=scroll->horizontal_scroll_bar();
+  auto* add=shell->footer_action_for_testing(0);ASSERT_TRUE(add);
+  auto* footer=add->parent();
+  auto* scroll=shell->workspace_viewport();ASSERT_TRUE(scroll);EXPECT_EQ(footer->children()[0].get(),scroll->view());auto* bar=scroll->horizontal_scroll_bar();
   if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&] {return shell->metal_sidebar_visible() && bar->IsDrawn();}));
   EXPECT_EQ(47,footer->height());EXPECT_GE(scroll->contents()->parent()->height(),28);
   if(MetalPresents())EXPECT_TRUE(shell->metal_sidebar_screen_bounds_for_testing().Contains(footer->GetBoundsInScreen()));
@@ -7208,17 +7225,17 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, FooterSpacesScrollSelectPi
   EXPECT_TRUE(scroll->contents()->parent()->GetBoundsInScreen().Contains(last_button->GetBoundsInScreen()));
   ASSERT_TRUE(move(last_button->GetBoundsInScreen().CenterPoint()));ASSERT_TRUE(mouse(ui_controls::DOWN|ui_controls::UP));
   ASSERT_TRUE(base::test::RunUntil([&] {return window_->active_id()==last;}));
-  ASSERT_TRUE(move(settings->GetBoundsInScreen().CenterPoint()));ASSERT_TRUE(mouse(ui_controls::DOWN|ui_controls::UP));
+  shell->OpenWorkspaceSettings();
   ASSERT_TRUE(base::test::RunUntil([&] {return shell->settings_visible();}));
   shell->emoji_input()->RequestFocus();shell->emoji_input()->SelectRange(gfx::Range(0,shell->emoji_input()->GetText().size()));
   ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->settings_widget()->GetNativeWindow(),ui::VKEY_BACK,false,false,false,false));
   ASSERT_TRUE(base::test::RunUntil([&] {return shell->workspace_emoji(last).empty();}));
   EXPECT_TRUE(shell->settings_visible());shell->CloseOverlays(true);
-  pin->SetEnabled(false);ASSERT_TRUE(move(pin->GetBoundsInScreen().CenterPoint()));ASSERT_TRUE(mouse(ui_controls::DOWN|ui_controls::UP));EXPECT_TRUE(shell->pinned());
-  pin->SetEnabled(true);ASSERT_TRUE(mouse(ui_controls::DOWN|ui_controls::UP));EXPECT_FALSE(shell->pinned());
-  shell->SetPinned(true);shell->ShowSidebar();
+  add->SetEnabled(false);ASSERT_TRUE(move(add->GetBoundsInScreen().CenterPoint()));ASSERT_TRUE(mouse(ui_controls::DOWN|ui_controls::UP));EXPECT_FALSE(shell->add_menu_running_for_testing());
+  add->SetEnabled(true);ASSERT_TRUE(mouse(ui_controls::DOWN|ui_controls::UP));ASSERT_TRUE(base::test::RunUntil([&] {return shell->add_menu_running_for_testing();}));
+  shell->CancelContextMenuForTesting();ASSERT_TRUE(base::test::RunUntil([&] {return !shell->add_menu_running_for_testing();}));
   auto native_ink=[&] {
-    const auto bitmap=PaintAtLeadingOrigin(pin);
+    const auto bitmap=PaintAtLeadingOrigin(add);
     for(int y=0;y<bitmap.height();++y)for(int x=0;x<bitmap.width();++x)if(bitmap.getColor(x,y)!=SK_ColorRED)return true;
     return false;
   };

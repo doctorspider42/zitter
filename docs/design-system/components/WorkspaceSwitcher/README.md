@@ -8,6 +8,7 @@ Wgłębiona szyna kropek na dole paska bocznego; aktywna przestrzeń wysuwa się
 - Każdy przycisk niesie własny `data-accent`, więc kropka zawsze ma kolor swojej przestrzeni, niezależnie od aktywnego.
 - Nieaktywne: sama kropka 8 px (lub emoji zamiast kropki). Aktywny: `bg-raised` + `shadow-card`, kropka 10 px z pierścieniem w swoim akcencie, nazwa w `label` 600.
 - Nazwę można wyłączyć (Preferencje → Wygląd → „Nazwa aktywnej przestrzeni”); wtedy aktywna przestrzeń to krążek 22 px `bg-raised` wokół kropki z pierścieniem.
-- „+” stoi na końcu szyny, dopóki mieści się bez przewijania; gdy szyna się nie mieści (nazwana pigułka, wiele przestrzeni), „+” znika zamiast wymuszać pasek przewijania. Nową przestrzeń tworzy też panel przestrzeni.
+- Stopka paska to tylko szyna, wyśrodkowana, i `IconButton` „+” na prawym końcu, zawsze widoczny (szyna, która się nie mieści, przewija się przed nim). „+” otwiera `ContextMenu`: „Nowa karta” (⌘T), „Nowy folder”, „Nowa przestrzeń…”, każda z ikoną 16 px.
+- Panel przypina przycisk paska bocznego w nagłówku okna (włączony, gdy panel jest przypięty); ustawienia przestrzeni otwiera jej menu kontekstowe („Nazwa i ustawienia…”).
 - Przejście szerokości i koloru `dur-move`. ⌘⌥1…9 przełącza; każdy przycisk ma `aria-label` z nazwą.
 - Po przełączeniu rama, pasek boczny, hover i linie przyjmują odcień przestrzeni (`WorkspaceAccent`); strona i aktywna karta zostają neutralne.
