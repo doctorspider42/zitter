@@ -7276,14 +7276,14 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, PaletteScenesAsyncSelectio
   auto key=[&](ui::KeyboardCode code){return ui_test_utils::SendKeyPressToWindowSync(panel->GetNativeWindow(),code,false,false,false,false);};
   for(int i=0;i<3;++i)ASSERT_TRUE(key(ui::VKEY_DOWN));ASSERT_EQ(3u,shell->palette_selection_for_testing());
   const auto selected=shell->suggestions()[3];auto results=shell->search_results();
-  PaletteResult inserted;inserted.title=u"Palette GPU 新しい結果 🦀";inserted.detail=u"History / 日本語";inserted.url=url;results.insert(results.begin(),inserted);
+  /* A tab lands in the visible Karty group; groups keep the selected row. */PaletteResult inserted;inserted.title=u"Palette GPU 新しい結果 🦀";inserted.detail=u"History / 日本語";inserted.url=url;inserted.tab=0;inserted.workspace_id=window_->workspaces().front().id;results.insert(results.begin(),inserted);
   {
     views::ScopedPaintLock locked(shell->palette_results_view());shell->SetSearchResults(u"Palette GPU",window_->workspaces().front().profile_id,results);
-    ASSERT_EQ(selected,shell->suggestions()[shell->palette_selection_for_testing()]);EXPECT_EQ(4u,shell->palette_selection_for_testing());
+    ASSERT_EQ(selected,shell->suggestions()[shell->palette_selection_for_testing()]);
     if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->metal_palette_contains_text_for_testing("Palette GPU 新しい結果 🦀");}));
   }
   const auto count=shell->suggestions().size();shell->SetSearchResults(u"stale query",window_->workspaces().front().profile_id,{});shell->SetSearchResults(u"Palette GPU","personal-profile",{});EXPECT_EQ(count,shell->suggestions().size());
-  for(int i=0;i<5;++i)ASSERT_TRUE(key(ui::VKEY_UP));EXPECT_EQ(count-1,shell->palette_selection_for_testing());
+  const size_t steps=shell->palette_selection_for_testing()+1;for(size_t i=0;i<steps;++i)ASSERT_TRUE(key(ui::VKEY_UP));EXPECT_EQ(count-1,shell->palette_selection_for_testing());
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->palette_viewport()->offset()>0;}));
   // While composition is active the platform editor owns navigation, commit
   // and cancel keys. The palette must neither change selection nor dispatch.

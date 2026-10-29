@@ -614,6 +614,8 @@ class WorkspaceShell final : public ui::EventHandler,
   std::unique_ptr<views::WidgetDelegate> tools_delegate_;
   std::unique_ptr<views::WidgetDelegate> toast_delegate_;
   std::unique_ptr<views::Widget> toast_widget_;
+  std::unique_ptr<views::WidgetDelegate> scrim_delegate_;
+  std::unique_ptr<views::Widget> scrim_widget_;
   raw_ptr<views::View> toast_ = nullptr;  // ToastView
   base::OnceClosure toast_undo_;
   base::OneShotTimer toast_timer_;

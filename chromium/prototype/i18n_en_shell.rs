@@ -3,6 +3,11 @@
 // One entry per distinct Polish string, written exactly as in the source
 // (same escapes); `{}` placeholders keep their order.
 pub static EN: &[(&str, &str)] = &[
+    ("Akcje", "Actions"),
+    ("Karty", "Tabs"),
+    ("Przypięte", "Pinned"),
+    ("Przestrzenie", "Spaces"),
+    ("Historia", "History"),
     ("Język zmieni się po ponownym uruchomieniu Zitter.", "The language changes after Zitter restarts."),
     ("Szukaj", "Search"),
     ("Barwa przestrzeni", "Space hue"),

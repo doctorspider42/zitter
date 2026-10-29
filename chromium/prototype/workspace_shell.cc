@@ -1083,6 +1083,20 @@ class ToastView final : public views::View {
 };
 BEGIN_METADATA(ToastView)
 END_METADATA
+
+// The dimmed window under the Command Center (`scrim`); a click on it closes
+// the palette.
+class ScrimView final : public views::View {
+  METADATA_HEADER(ScrimView,views::View)
+ public:
+  explicit ScrimView(base::RepeatingClosure pressed):pressed_(std::move(pressed)){}
+  void OnPaint(gfx::Canvas* canvas) override{canvas->DrawColor(Palette(this).scrim);}
+  bool OnMousePressed(const ui::MouseEvent&) override{pressed_.Run();return true;}
+ private:
+  base::RepeatingClosure pressed_;
+};
+BEGIN_METADATA(ScrimView)
+END_METADATA
 void CancelSceneActions(views::View* root){if(!root)return;if(auto* group=views::AsViewClass<SceneActionGroup>(root)){group->CancelInput();return;}if(auto* controls=views::AsViewClass<ScenePreferenceControls>(root)){controls->CancelInput();return;}for(const auto& child:root->children())CancelSceneActions(child.get());}
 // Font shaping stays a platform service; no Label is constructed for the scene.
 class ScenePeekTitle final : public views::View {
@@ -1529,6 +1543,7 @@ struct RowRecipe {
     bool tile = false;  // One half of a Split View pair: always a filled card.
     bool stacked = false;  // Two lines (title over detail) beside a large monogram.
     bool kbd = false;  // The detail is a shortcut, drawn as Kbd keys after the title.
+    std::u16string header;  // A palette group's eyebrow, drawn above its first row.
     int height = 34;
     views::Button::PressedCallback close;
     base::RepeatingCallback<void(gfx::Point)> drop;
@@ -1623,7 +1638,16 @@ std::vector<sidebar::Item> CommandRowItems(views::View* row,const RowRecipe::Spe
 }
 // A Command Center row: `accent-soft` with the name and icon in `accent-ink` when
 // selected, `bg-hover` on hover, no tile under the icon.
+// A palette group starts with its `eyebrow` (space-3 above, space-1 below) inside
+// the first row, so rows stay one per result and the keyboard never lands on it.
+constexpr int kPaletteHeader=30;
+gfx::RectF PaletteRowBody(const RowRecipe::Spec& spec,gfx::RectF rect){if(!spec.header.empty())rect.Inset(gfx::InsetsF::TLBR(kPaletteHeader,0,0,0));return rect;}
+sidebar::Item PaletteHeaderItem(views::View* row,const RowRecipe::Spec& spec,gfx::RectF rect,gfx::RectF clip){
+  sidebar::Item item{};item.kind=17;item.x=rect.x()+12;item.y=rect.y()+12;item.width=std::max(0.f,rect.width()-24);item.height=14;
+  item.clip={clip.x(),clip.y(),clip.width(),clip.height()};item.title=base::UTF16ToUTF8(spec.header);item.ink=Palette(row).ink_muted;item.font_size=10.5f;item.text_style=7;return item;
+}
 sidebar::Item PaletteRowItem(views::View* row,const RowRecipe::Spec& spec,gfx::RectF rect,gfx::RectF clip,bool hovered,bool focused){
+  rect=PaletteRowBody(spec,rect);
   const auto p=Palette(row);sidebar::Item item{};item.kind=12;
   item.x=rect.x();item.y=rect.y();item.width=rect.width();item.height=rect.height();item.clip={clip.x(),clip.y(),clip.width(),clip.height()};
   item.title=base::UTF16ToUTF8(spec.title);item.detail=base::UTF16ToUTF8(spec.detail);item.title_width=gfx::GetStringWidth(spec.title,DesignFont(2,13,400,false))+2;
@@ -1668,6 +1692,7 @@ class RustRowView final : public views::View {
     if(spec_.height!=child.height){spec_.height=child.height;PreferredSizeChanged();}
     GetViewAccessibility().SetName(spec_.title);GetViewAccessibility().SetDescription(spec_.detail);SchedulePaint();
   }
+  void SetPaletteHeader(std::u16string header,int row_height){if(spec_.header==header&&spec_.height==row_height+(header.empty()?0:kPaletteHeader))return;spec_.header=std::move(header);spec_.height=row_height+(spec_.header.empty()?0:kPaletteHeader);PreferredSizeChanged();SchedulePaint();}
   sidebar::SidebarTabBinding TabBinding() const{return state_->tab_binding();}
   sidebar::SidebarPinBinding PinBinding() const{return state_->pin_binding();}
   bool HasSidebarProperties() const{return state_->sidebar_visual().valid;}
@@ -1748,8 +1773,9 @@ class RustRowView final : public views::View {
         if(!scene.item.tile){PaintSceneRecipe(canvas,scene.item,Font(0),true);if(folder)PaintIcon(canvas,vector_icons::kFolderFilledIcon,gfx::Rect(12,(height()-16)/2,16,16),16,scene.item.ink);}else{const auto geometry=Geometry();const auto& title=geometry.title;canvas->DrawStringRectWithFlags(SidebarSnapshot().title,DesignFont(2,13,scene.item.active?600:400,false),scene.item.ink,gfx::Rect(title.x,title.y,title.width,title.height),gfx::Canvas::TEXT_ALIGN_LEFT);}}
       return;}
     if(spec_.chip&&!spec_.address){const auto bounds=gfx::RectF(GetLocalBounds());const auto v=state_->action_snapshot();
+      if(!spec_.header.empty())PaintSceneRecipe(canvas,PaletteHeaderItem(this,spec_,bounds,bounds),Font(0),true);
       PaintSceneRecipe(canvas,PaletteRowItem(this,spec_,bounds,bounds,v.visual==sidebar::RowVisual::Hovered||v.visual==sidebar::RowVisual::Pressed,HasFocus()),Font(0),true);
-      if(spec_.icon){const auto p=Palette(this);PaintIcon(canvas,*spec_.icon,gfx::Rect(12,0,16,height()),16,spec_.highlighted?p.accent_ink:p.ink_muted);}return;}
+      if(spec_.icon){const auto p=Palette(this);const auto body=gfx::ToEnclosingRect(PaletteRowBody(spec_,bounds));PaintIcon(canvas,*spec_.icon,gfx::Rect(12,body.y(),16,body.height()),16,spec_.highlighted?p.accent_ink:p.ink_muted);}return;}
     if(spec_.kbd){const auto bounds=gfx::RectF(GetLocalBounds());const auto v=state_->action_snapshot();for(const auto& item:CommandRowItems(this,spec_,bounds,bounds,v.visual==sidebar::RowVisual::Hovered||v.visual==sidebar::RowVisual::Pressed,HasFocus()))PaintSceneRecipe(canvas,item,Font(0),true);return;}
     if(spec_.address){const auto bounds=gfx::RectF(GetLocalBounds());const auto v=state_->action_snapshot();PaintSceneRecipe(canvas,AddressRowItem(this,spec_,bounds,bounds,scene_title_width(),v.visual==sidebar::RowVisual::Hovered||v.visual==sidebar::RowVisual::Pressed,HasFocus()),Font(0),true);return;}if(spec_.history){const auto bounds=gfx::RectF(GetLocalBounds());PaintSceneRecipe(canvas,Scene(bounds,bounds),Font(0),true);return;}const auto v=state_->action_snapshot().visual;RowRecipe::PaintDecorations(canvas,GetLocalBounds(),spec_,this,v==sidebar::RowVisual::Hovered||v==sidebar::RowVisual::Pressed);
     const auto geometry=Geometry();const auto& r=geometry.title;canvas->DrawStringRectWithFlags(spec_.title,Font(0,spec_.active||spec_.chip||spec_.address?gfx::Font::Weight::MEDIUM:gfx::Font::Weight::NORMAL),Tone(this,spec_.blank?kMuted:kInk),gfx::Rect(r.x,r.y,r.width,r.height),gfx::Canvas::TEXT_ALIGN_LEFT);
@@ -3640,6 +3666,8 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   {auto toast=std::make_unique<ToastView>(base::BindRepeating(&WorkspaceShell::UndoToast,weak),base::BindRepeating(&WorkspaceShell::HideToast,weak),
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,bool hovered){if(!shell)return;if(hovered)shell->toast_timer_.Stop();else if(shell->toast_widget_->IsVisible())shell->toast_timer_.Start(FROM_HERE,base::Seconds(6),base::BindOnce(&WorkspaceShell::HideToast,shell));},weak));
    toast_=toast.get();make_panel(std::move(toast), toast_delegate_, toast_widget_, T(u"Zitter — Komunikat"), false);}
+  make_panel(std::make_unique<ScrimView>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->CloseOverlays(true);},weak)),
+             scrim_delegate_, scrim_widget_, u"Zitter", false);
   PositionPanels();
   ApplyAppearance();
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE, base::BindOnce([](base::FilePath path) {
@@ -3800,6 +3828,7 @@ void WorkspaceShell::Detach() {
   history_more_ = nullptr; history_clear_ = nullptr;
   tools_widget_.reset(); tools_delegate_.reset();
   toast_timer_.Stop(); toast_undo_.Reset(); toast_ = nullptr; toast_widget_.reset(); toast_delegate_.reset();
+  scrim_widget_.reset(); scrim_delegate_.reset();
   general_widget_.reset(); general_delegate_.reset();
   peek_host_ = nullptr; peek_title_ = nullptr;peek_toolbar_=nullptr;
   peek_widget_.reset(); peek_delegate_.reset();
@@ -4339,9 +4368,10 @@ void WorkspaceShell::UpdateMetalPalette() {
     auto rect=node.bounds;rect.Offset(origin);auto clip=node.clip;clip.Offset(origin);
     if(node.index==0){sidebar::Item line{};line.kind=14;line.x=rect.x();line.y=rect.y();line.width=rect.width();line.height=1;line.fill=Hairline(suggestion_list_);line.clip={clip.x(),clip.y(),clip.width(),clip.height()};items.push_back(std::move(line));continue;}
     auto* row=suggestion_list_->children()[node.index-1].get();const auto& spec=RowSpec(row);
+    if(!spec.header.empty())items.push_back(PaletteHeaderItem(row,spec,rect,clip));
     items.push_back(PaletteRowItem(row,spec,rect,clip,RowHovered(row),row->HasFocus()));
-    const auto p=Palette(row);
-    sidebar::Item icon{};icon.kind=13;icon.x=rect.x();icon.y=rect.y();icon.width=rect.width();icon.height=rect.height();icon.clip={clip.x(),clip.y(),clip.width(),clip.height()};icon.ink=spec.highlighted?p.accent_ink:p.ink_muted;
+    const auto p=Palette(row);const auto body=PaletteRowBody(spec,rect);
+    sidebar::Item icon{};icon.kind=13;icon.x=body.x();icon.y=body.y();icon.width=body.width();icon.height=body.height();icon.clip={clip.x(),clip.y(),clip.width(),clip.height()};icon.ink=spec.highlighted?p.accent_ink:p.ink_muted;
     icon.glyph=spec.icon==&vector_icons::kSettingsIcon?2:spec.icon==&vector_icons::kArrowForwardIcon?1:0;items.push_back(std::move(icon));
   }
   if(scroller.visible){auto rect=scroller.thumb;rect.Offset(-bounds.x(),-bounds.y());auto clip=scroller.bounds;clip.Offset(-bounds.x(),-bounds.y());sidebar::Item thumb{};thumb.kind=6;thumb.x=rect.x();thumb.y=rect.y();thumb.width=rect.width();thumb.height=rect.height();thumb.fill=scroller.color;thumb.clip={float(clip.x()),float(clip.y()),float(clip.width()),float(clip.height())};items.push_back(std::move(thumb));}
@@ -5867,6 +5897,8 @@ void WorkspaceShell::RebuildSuggestions() {
   suggestions_text_ = address_->GetText();
   const auto text = base::UTF16ToUTF8(base::TrimWhitespace(address_->GetText(), base::TRIM_ALL));
   const bool commands_only = command_palette_ && text.starts_with(">");
+  std::optional<size_t> primary;
+  std::optional<Suggestion> primary_item;  // Found again below: rotation and commands move it.
   if (metal_sidebar_) {
     // Native services resolve input and supply results/commands; Rust orders them.
     sidebar::PalettePlanInput input{};input.text=text;input.command_palette=command_palette_;input.results=search_results_.size();
@@ -5880,7 +5912,7 @@ void WorkspaceShell::RebuildSuggestions() {
     const auto plan = sidebar::palette_plan(input);
     for (const auto& slot : plan.slots) {
       switch (slot.source) {
-        case sidebar::PaletteSource::Primary: suggestions_.push_back({base::UTF8ToUTF16(std::string(plan.primary_title)),base::UTF8ToUTF16(std::string(plan.primary_detail)),url,std::nullopt});break;
+        case sidebar::PaletteSource::Primary: primary=suggestions_.size();suggestions_.push_back({base::UTF8ToUTF16(std::string(plan.primary_title)),base::UTF8ToUTF16(std::string(plan.primary_detail)),url,std::nullopt});break;
         case sidebar::PaletteSource::Result: suggestions_.push_back(search_results_.at(slot.index));break;
         default: suggestions_.push_back(commands.at(slot.index));break;
       }
@@ -5895,6 +5927,7 @@ void WorkspaceShell::RebuildSuggestions() {
     suggestions_.push_back({search ? search_title : T(u"Otwórz"),
                             search ? base::UTF8ToUTF16(text) : base::UTF8ToUTF16(url.is_valid() ? url.spec() : text),
                             url, std::nullopt});
+    primary_item = suggestions_.back();
   }
   if (!commands_only) suggestions_.insert(suggestions_.end(), search_results_.begin(), search_results_.end());
   const auto keyword_end = text.find_first_of(" \t");
@@ -5908,6 +5941,20 @@ void WorkspaceShell::RebuildSuggestions() {
     const auto position = keyword_search && !suggestions_.empty() ? suggestions_.begin() + 1 : suggestions_.begin();
     suggestions_.insert(position, commands.begin(), commands.end());
   }
+  if (primary_item) primary = std::find(suggestions_.begin(), suggestions_.end(), *primary_item) - suggestions_.begin();
+  }
+  // Results come in groups (design: CommandPalette): Akcje, Karty, Przypięte,
+  // Przestrzenie, Historia, each under its eyebrow. The resolved search/open row
+  // keeps its place and has no group.
+  std::vector<std::u16string> headers(suggestions_.size());
+  {
+    auto rank=[](const Suggestion& s){return !s.command_id.empty()?0:s.tab?1:!s.pin_id.empty()?2:s.workspace_only?3:4;};
+    std::vector<size_t> slots;std::vector<Suggestion> grouped;
+    for(size_t i=0;i<suggestions_.size();++i)if(i!=primary){slots.push_back(i);grouped.push_back(suggestions_[i]);}
+    std::stable_sort(grouped.begin(),grouped.end(),[&](const auto& a,const auto& b){return rank(a)<rank(b);});
+    const std::array<std::u16string,5> names={T(u"Akcje"),T(u"Karty"),T(u"Przypięte"),T(u"Przestrzenie"),T(u"Historia")};
+    int previous=-1;
+    for(size_t k=0;k<slots.size();++k){suggestions_[slots[k]]=grouped[k];const int r=rank(grouped[k]);if(r!=previous)headers[slots[k]]=base::i18n::ToUpper(names[r]);previous=r;}
   }
   size_t preserved=0;bool found_selected=false;
   if(selected){auto found=std::find(suggestions_.begin(),suggestions_.end(),*selected);if(found!=suggestions_.end()){preserved=found-suggestions_.begin();found_selected=true;}}
@@ -5941,14 +5988,15 @@ void WorkspaceShell::RebuildSuggestions() {
         auto callback=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::weak_ptr<SidebarNodeGraphState> owner,std::string key,uint64_t id){const auto scope=owner.lock();if(!shell||!scope||shell->palette_node_graph_!=scope||!shell->address_visible())return;const auto target=scope->graph->palette_target(key,id);if(target.valid)shell->RunSuggestion(target.index);},weak_factory_.GetWeakPtr(),std::weak_ptr<SidebarNodeGraphState>(palette_node_graph_),std::string(child.key),child.id);
         adapter=views::AsViewClass<RustRowView>(suggestion_list_->AddChildView(CreateSceneRow(std::move(callback),std::move(spec),base::BindRepeating(&WorkspaceShell::ScheduleMetalPalette,weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak_factory_.GetWeakPtr()),{palette_node_graph_,6,{},std::string(child.key)})));
       }
-      CHECK(adapter);adapter->ProjectPalette(child);suggestion_list_->ReorderChildView(adapter,i);continue;
+      CHECK(adapter);adapter->ProjectPalette(child);adapter->SetPaletteHeader(headers[i],child.height);suggestion_list_->ReorderChildView(adapter,i);continue;
     }
     const auto& item = suggestions_[i];
     RowRecipe::Spec spec;
     spec.title = item.title;
     spec.detail = item.detail;
     spec.chip = true;
-    spec.height = 36;
+    spec.header = headers[i];
+    spec.height = 36 + (spec.header.empty() ? 0 : kPaletteHeader);
     spec.highlighted=i==palette->selected();
     spec.sidebar_row=metal_palette_!=nullptr;
     spec.scene_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_palette_visible();},weak_factory_.GetWeakPtr());
@@ -6678,6 +6726,7 @@ void WorkspaceShell::PositionPanels() {
   auto sidebar_bounds=gfx::Rect(bounds.x()+kGap,bounds.y()+kShellHeaderHeight,width,std::max(200,bounds.height()-kShellHeaderHeight-kGap));
   if(metal_sidebar_){const auto g=sidebar::shell_layout(bounds.width(),bounds.height(),sidebar_width_,pinned_);sidebar_bounds=gfx::Rect(bounds.x()+g.sidebar.x,bounds.y()+g.sidebar.y,g.sidebar.width,g.sidebar.height);}
   SetWidgetBounds(sidebar_widget_.get(),sidebar_bounds);
+  if(scrim_widget_)SetWidgetBounds(scrim_widget_.get(),bounds);
   if(toast_widget_&&toast_widget_->IsVisible())PositionToast();
   if (general_widget_) {
     const int panel_width = std::max(320, std::min(960, bounds.width() - 24));
@@ -7339,6 +7388,12 @@ void WorkspaceShell::OpenAddress(bool new_tab) {
 }
 void WorkspaceShell::OpenCommandPalette() {
   OpenAddress(false);
+  // The Command Center sits on the dimmed window (design: CommandPalette).
+  if (scrim_widget_) {
+    PositionPanels(); scrim_widget_->ShowInactive();
+    if (sidebar_visible()) scrim_widget_->StackAboveWidget(sidebar_widget_.get());
+    address_widget_->StackAboveWidget(scrim_widget_.get());
+  }
   command_palette_ = true;
   address_->SetPlaceholderText(T(u"Szukaj lub wpisz > i polecenie"));
   address_->GetViewAccessibility().SetName(T(u"Command Center — karty, historia i polecenia"));
@@ -8178,6 +8233,7 @@ void WorkspaceShell::OnWidgetActivationChanged(views::Widget* widget, bool activ
 }
 void WorkspaceShell::OnWidgetVisibilityChanged(views::Widget* widget, bool visible) {
   if(widget==address_widget_.get())ScheduleMetalPalette();
+  if(widget==address_widget_.get()&&!visible&&scrim_widget_)scrim_widget_->Hide();
   if (widget==widget_) {ScheduleMetalHeader();ScheduleMetalSplit();}
   if (widget == sidebar_widget_.get() && !visible) { CancelWorkspaceSwipe(); StopWorkspaceAnimation(); }
   if (widget == widget_ && !visible) {
