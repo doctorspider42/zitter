@@ -1983,8 +1983,9 @@ fn pane_host_layout(width: i32, height: i32, weights: &[f64], vertical: bool) ->
         let offset=start+gap*index as i32;let size=(end-start).max(0);start=end.max(start);
         let r=if vertical{ffi::Rect{x:0,y:offset,width,height:size}}else{ffi::Rect{x:offset,y:0,width:size,height}};
         if index+1<count{dividers.push(if vertical{ffi::Rect{x:0,y:offset+size,width,height:gap}}else{ffi::Rect{x:offset+size,y:0,width:gap,height}});}
-        bars.push(ffi::Rect{x:r.x,y:r.y,width:r.width,height:30.min(r.height)});
-        pages.push(ffi::Rect{x:r.x,y:r.y+30.min(r.height),width:r.width,height:(r.height-30).max(0)});
+        // SplitView: a 28 px host bar above each pane.
+        bars.push(ffi::Rect{x:r.x,y:r.y,width:r.width,height:28.min(r.height)});
+        pages.push(ffi::Rect{x:r.x,y:r.y+28.min(r.height),width:r.width,height:(r.height-28).max(0)});
     }
     ffi::PaneHostLayout{pages,bars,dividers}
 }
@@ -5500,9 +5501,9 @@ mod tests {
     #[test] fn pane_layout_separates_real_page_rects_in_both_orientations() {
         let g=pane_host_layout(809,600,&[0.5,0.5],false);
         assert_eq!((g.pages[0].width,g.pages[1].x,g.pages[1].width,g.dividers[0].width),(400,408,401,8));
-        assert_eq!((g.pages[0].y,g.pages[0].height),(30,570));
+        assert_eq!((g.pages[0].y,g.pages[0].height),(28,572));
         let v=pane_host_layout(600,809,&[0.5,0.5],true);
-        assert_eq!((v.pages[0].height,v.pages[1].y,v.pages[1].height,v.dividers[0].y),(370,438,371,400));
+        assert_eq!((v.pages[0].height,v.pages[1].y,v.pages[1].height,v.dividers[0].y),(372,436,373,400));
         let single=pane_host_layout(600,809,&[1.0],false);assert_eq!(single.pages[0].height,809);assert!(single.bars.is_empty()&&single.dividers.is_empty());
         for width in [0,4,54,120] {
             let b=pane_bar_layout(width,30);assert!(b.menu.x+b.menu.width<=b.close.x);assert!(b.close.x+b.close.width<=width);

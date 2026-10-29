@@ -7375,7 +7375,8 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, SplitPaneScenesDragOrientT
   {
     views::ScopedPaintLock locked(host);
     ASSERT_TRUE(content::ExecJs(window_->pane_contents(true),"document.title='Split GPU 日本語';"));
-    if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->metal_split_contains_text_for_testing(1,"Split GPU 日本語");}));
+    // Pane bars name the host (SplitView), so a retitled page keeps its bar text.
+    if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->metal_split_contains_text_for_testing(1,window_->pane_contents(true)->GetLastCommittedURL().host());}));
   }
   ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
   auto move=[&](gfx::Point point){base::test::TestFuture<void> done;return ui_controls::SendMouseMoveNotifyWhenDone(point.x(),point.y(),done.GetCallback(),window_->widget()->GetNativeWindow())&&done.Wait();};

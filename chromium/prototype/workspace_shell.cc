@@ -2821,13 +2821,14 @@ class PaneBar final : public views::View {
   }
   void SetTitle(std::u16string title,bool active) {
     if(text_==title && active_==active)return;
+    if(active_!=active&&parent())parent()->InvalidateLayout();  // The host moves the active outline.
     if(text_!=title)measured_.reset();text_=std::move(title);active_=active;
     GetViewAccessibility().SetName(text_);
     SchedulePaint();painted_.Run();
   }
   const std::u16string& text() const{return text_;}
   bool active() const{return active_;}
-  int text_width() const{if(!measured_)measured_=gfx::GetStringWidth(text_,Font(-1))+2;return *measured_;}
+  int text_width() const{if(!measured_)measured_=gfx::GetStringWidth(text_,DesignFont(3,12,400,false))+2;return *measured_;}
   void OnThemeChanged() override{views::View::OnThemeChanged();measured_.reset();painted_.Run();}
   void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);painted_.Run();}
   void Layout(PassKey) override {
@@ -2836,7 +2837,7 @@ class PaneBar final : public views::View {
   void OnPaint(gfx::Canvas* canvas) override {
     if(visible_ && visible_.Run())return;
     const auto g=sidebar::pane_bar_layout(width(),height());
-    canvas->DrawStringRectWithFlags(text_,Font(-1),Tone(this,active_?kInk:kMuted),gfx::Rect(g.title.x,g.title.y,g.title.width,g.title.height),gfx::Canvas::TEXT_ALIGN_LEFT);
+    canvas->DrawStringRectWithFlags(text_,DesignFont(3,12,400,false),active_?Palette(this).ink:Palette(this).ink_muted,gfx::Rect(g.title.x,g.title.y,g.title.width,g.title.height),gfx::Canvas::TEXT_ALIGN_LEFT);
   }
   views::View* menu() const { return menu_; }
   views::View* close() const { return close_; }
@@ -2859,6 +2860,23 @@ END_METADATA
 
 // Keeps WebViews owned by the existing content host while laying out only the
 // selected pages. Each divider resizes only its two neighbouring panes.
+// SplitView: the active pane's 1.5 px `accent` outline (radius-md) on its own
+// transparent layer above the page layers; it never takes events.
+class PaneOutline final : public views::View {
+  METADATA_HEADER(PaneOutline,views::View)
+ public:
+  PaneOutline(){SetPaintToLayer();layer()->SetFillsBoundsOpaquely(false);SetCanProcessEventsWithinSubtree(false);GetViewAccessibility().SetIsIgnored(true);}
+  void SetCard(std::optional<gfx::Rect> card){if(card_==card)return;card_=card;SchedulePaint();}
+  void OnPaint(gfx::Canvas* canvas) override{
+    if(!card_)return;gfx::RectF ring(*card_);ring.Inset(0.75f);
+    cc::PaintFlags flags;flags.setAntiAlias(true);flags.setStyle(cc::PaintFlags::kStroke_Style);flags.setStrokeWidth(1.5f);flags.setColor(Palette(this).accent);
+    canvas->DrawRoundRect(ring,12-0.75f,flags);}
+ private:
+  std::optional<gfx::Rect> card_;
+};
+BEGIN_METADATA(PaneOutline)
+END_METADATA
+
 class PaneHost final : public views::View, public views::ResizeAreaDelegate {
   METADATA_HEADER(PaneHost, views::View)
  public:
@@ -2884,8 +2902,10 @@ class PaneHost final : public views::View, public views::ResizeAreaDelegate {
       dividers_[divider]->GetViewAccessibility().SetName(T(u"Zmień szerokość paneli"));
       dividers_[divider]->SetVisible(false);
     }
+    outline_=AddChildView(std::make_unique<PaneOutline>());
   }
   // Metal surfaces: bar 0, bar 1, divider 0, bar 2, divider 1, ...
+  // (The active outline is the last child; see SetPanes.)
   static size_t SurfaceIndex(bool divider,size_t index){return divider?2*index+2:index==0?0:2*index-1;}
   views::View* surface(size_t index) const{return index%2==0&&index>0?dividers_[index/2-1].get():bars_[index==0?0:(index+1)/2].get();}
   PaneBar* bar(size_t pane) const { return pane<bars_.size()?bars_[pane].get():nullptr; }
@@ -2900,6 +2920,7 @@ class PaneHost final : public views::View, public views::ResizeAreaDelegate {
     if (same_panes && weights_ == weights && vertical_ == vertical) return;
     if(!same_panes || vertical_!=vertical){for(auto& handle:handles_)handle->CancelDrag();for(auto& bar:bars_)bar->CancelInput();}
     panes_.assign(panes.begin(),panes.end()); weights_ = std::move(weights); vertical_ = vertical;
+    ReorderChildView(outline_, children().size() - 1);  // Above the page layers added since.
     const bool split=panes_.size()>=2;
     for(size_t i=0;i<handles_.size();++i){handles_[i]->SetVertical(vertical);dividers_[i]->SetVisible(split&&i+1<panes_.size());}
     for(size_t i=0;i<bars_.size();++i)bars_[i]->SetVisible(split&&i<panes_.size());
@@ -2915,6 +2936,9 @@ class PaneHost final : public views::View, public views::ResizeAreaDelegate {
     for(size_t i=0;i<panes_.size()&&i<g.pages.size();++i)set(panes_[i],g.pages[i]);
     for(size_t i=0;i<g.bars.size()&&i<bars_.size();++i)set(bars_[i],g.bars[i]);
     for(size_t i=0;i<g.dividers.size()&&i<dividers_.size();++i)set(dividers_[i],g.dividers[i]);
+    outline_->SetBounds(0,0,width(),height());std::optional<gfx::Rect> card;
+    for(size_t i=0;i<g.bars.size()&&i<g.pages.size()&&i<bars_.size();++i)if(bars_[i]->active()){card=gfx::Rect(g.bars[i].x,g.bars[i].y,g.bars[i].width,g.bars[i].height+g.pages[i].height);}
+    static_cast<PaneOutline*>(outline_.get())->SetCard(panes_.size()>=2?card:std::nullopt);
     LayoutSuperclass<views::View>(this);painted_.Run();
   }
   // Native ResizeArea fallback: the first visible divider follows the pointer.
@@ -2941,6 +2965,7 @@ class PaneHost final : public views::View, public views::ResizeAreaDelegate {
   std::array<raw_ptr<views::View>, kMaxSplitPanes - 1> dividers_ = {};
   std::array<raw_ptr<ResizeHandle>, kMaxSplitPanes - 1> handles_ = {};
   std::array<raw_ptr<PaneBar>, kMaxSplitPanes> bars_ = {};
+  raw_ptr<views::View> outline_ = nullptr;
   base::RepeatingCallback<void(size_t, double, bool)> changed_;
   double initial_ratio_ = 0.5;
   bool resizing_ = false;
@@ -3977,7 +4002,8 @@ void WorkspaceShell::Update(ShellState state) {
     std::array<uint64_t,2> identity{};
     std::optional<size_t> member;
     if (pane < state_.split_tabs.size()) member = state_.split_tabs[pane];
-    for (const auto& tab : state_.tabs) if (member == tab.index){title=tab.title;identity=tab.identity;}
+    // SplitView: each pane is labelled by its host in `url` (the page title when there is none).
+    for (const auto& tab : state_.tabs) if (member == tab.index){const auto host=HostLabel(tab.url);title=host.empty()?tab.title:host;identity=tab.identity;}
     auto* bar=static_cast<PaneHost*>(content_host_.get())->bar(pane);
     bar->SetTarget(state_.workspace_id,member,identity,state_.split_visible&&member.has_value());
     bar->SetTitle(title,state_.active_pane==pane);
@@ -4337,7 +4363,7 @@ void WorkspaceShell::UpdateMetalSplit() {
       background.x=card.x();background.y=card.y();background.width=card.width();background.height=card.height();items.push_back(std::move(background));
       auto* bar=static_cast<PaneBar*>(view);
       sidebar::Item title{};title.kind=8;title.x=rect.x();title.y=rect.y();title.width=rect.width();title.height=rect.height();title.clip=clip;
-      title.title=base::UTF16ToUTF8(bar->text());title.title_width=bar->text_width();title.ink=Tone(bar,bar->active()?kInk:kMuted);title.font_size=Font(-1).GetFontSize();items.push_back(std::move(title));
+      title.title=base::UTF16ToUTF8(bar->text());title.title_width=bar->text_width();title.ink=bar->active()?Palette(bar).ink:Palette(bar).ink_muted;title.font_size=12;title.text_style=8;items.push_back(std::move(title));
       for(auto* button:{bar->menu(),bar->close()}) {
         auto box=gfx::RectF(button->GetBoundsInScreen());box.Offset(-bounds.x(),-bounds.y());
         items.push_back(ActionSceneItem(button,box,gfx::RectF(gfx::Rect(bounds.size()))));
