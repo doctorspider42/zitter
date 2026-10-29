@@ -3306,6 +3306,9 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
                 }
             } else if i.glyph==6 {
                 for dx in [-5.0,0.0,5.0] {emit(cx+dx-1.0,cy-1.0,3.0,3.0,1.5,i.ink,"",0.0,false);}
+            } else if i.glyph==9 {
+                // „+”: two 1.5 px strokes, 12 px long.
+                emit(cx-6.0,cy-0.75,12.0,1.5,0.75,i.ink,"",0.0,false);emit(cx-0.75,cy-6.0,1.5,12.0,0.75,i.ink,"",0.0,false);
             } else {
                 emit(cx-8.0,cy-8.0,16.0,16.0,0.0,i.ink,"",0.0,false);
             }

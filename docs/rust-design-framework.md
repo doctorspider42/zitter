@@ -213,8 +213,8 @@ tost „Pobrano X · Pokaż”), drgnięcie tostu, pigułka adresu w trybie edyc
 przyciski stopki 28 px, przycisk `zing` przy tworzeniu przestrzeni, Split View (host w
 `url`, pasek 28 px, obrys aktywnego panelu).
 
-Świadome odstępstwa: menu kontekstowe są natywne (bez 248 px i stylu z designu), szyna
-przestrzeni nie ma „+” (nie mieści się obok nazwanej pigułki), dialogi modalne na macOS są
+Świadome odstępstwa: menu kontekstowe są natywne (bez 248 px i stylu z designu), „+” w szynie
+przestrzeni pokazuje się tylko, gdy się mieści, dialogi modalne na macOS są
 arkuszami z promieniem 2 px, w pasku bocznym nie ma ikony Pobrane do drgnięcia, menu
 aplikacji macOS zostaje po polsku (`chromium/app` nie jest przenoszony przez skrypt budowania).
 

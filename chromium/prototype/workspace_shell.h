@@ -886,6 +886,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<PanelViewport> workspace_scroll_=nullptr;
   raw_ptr<views::View> workspace_settings_button_=nullptr;
   raw_ptr<views::View> workspace_dots_ = nullptr;
+  raw_ptr<views::View> add_space_button_ = nullptr;  // The rail's „+”.
   std::map<std::string, raw_ptr<views::View>> workspace_buttons_;
   std::string context_workspace_id_;
   std::string new_profile_workspace_id_;

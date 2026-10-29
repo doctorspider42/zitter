@@ -616,7 +616,8 @@ sidebar::Item GlyphSceneData(views::View* view,ControlGlyph glyph,const gfx::Vec
   item.clip={clip.x(),clip.y(),clip.width(),clip.height()};
   item.glyph=glyph==GlyphButton::Glyph::kSidebar ? 0 : glyph==GlyphButton::Glyph::kDot ? 1 : glyph==GlyphButton::Glyph::kMore ? 6
       : icon==&vector_icons::kArrowBackIcon ? 3 : icon==&vector_icons::kArrowForwardIcon ? 4
-      : icon==&vector_icons::kReloadCustomIcon ? 5 : icon==&vector_icons::kCloseSmallIcon ? 7 : icon==&vector_icons::kSearchIcon ? 8 : 2;
+      : icon==&vector_icons::kReloadCustomIcon ? 5 : icon==&vector_icons::kCloseSmallIcon ? 7 : icon==&vector_icons::kSearchIcon ? 8
+      : icon==&vector_icons::kAdd2Icon ? 9 : 2;
   item.active=on; item.focused=focused; item.focus=Palette(view).focus;
   item.hovered=hovered;
   item.ink=Tone(view,!view->GetEnabledInViewsSubtree() ? kDisabled : item.glyph==1 ? item.active || item.hovered ? kInk : kMuted : item.hovered ? kInk : kSubtle);
@@ -3436,12 +3437,17 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   workspace_dots_=dots.get();
   workspace_scroll_->SetPanelContents(std::move(dots));
   workspace_dots_->SetLayoutManager(CreateSidebarDotsLayout(4));
+  // The rail ends with „+” (design: WorkspaceSwitcher) while it fits unscrolled:
+  // a new space in the space panel.
+  add_space_button_=workspace_dots_->AddChildView(CreateSceneAction(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){
+        if(!shell)return;shell->OpenWorkspaceSettings();if(!shell->creating_workspace_)shell->ToggleWorkspaceCreation();},weak),
+      T(u"Nowa przestrzeń"),GlyphButton::Glyph::kVector,&vector_icons::kAdd2Icon,footer_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak)));
   footer_layout->SetFlexForView(dot_scroll, 1);
   Spacer(footer, 1);
   workspace_settings_button_=footer->AddChildView(CreateSceneAction(
       base::BindRepeating(&WorkspaceShell::OpenWorkspaceSettings, weak),
       T(u"Ustawienia przestrzeni"), GlyphButton::Glyph::kVector, &vector_icons::kTuneIcon,footer_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),true,{chrome_node_graph_,4,{},"settings"}));
-  footer->SetLayoutManager(CreateSidebarFooterLayout());
+  footer->SetLayoutManager(CreateSidebarFooterLayout(add_space_button_,4));
 
   // Command palette: input, suggestions, keyboard hints.
   auto palette=std::make_unique<PaletteView>(base::BindRepeating(&WorkspaceShell::ScheduleMetalPalette,weak));
@@ -3892,7 +3898,7 @@ void WorkspaceShell::Detach() {
   pin_button_ = nullptr;
   nav_buttons_.fill(nullptr);
   workspace_buttons_.clear();
-  workspace_dots_ = nullptr; sidebar_footer_=nullptr; workspace_scroll_=nullptr; workspace_settings_button_=nullptr;
+  workspace_dots_ = nullptr; add_space_button_ = nullptr; sidebar_footer_=nullptr; workspace_scroll_=nullptr; workspace_settings_button_=nullptr;
   tab_lists_.clear();
   profile_picker_ = nullptr;
   workspace_input_ = nullptr;
@@ -5143,7 +5149,7 @@ void WorkspaceShell::RebuildWorkspaceDots() {
     for(const auto& child:scene.children){CHECK_EQ(child.parent,scene.root);wanted.insert(child.id);}
     std::vector<views::View*> removed;
     // Inspect actual children, never stale cached pointers to detached adapters.
-    for(const auto& child:workspace_dots_->children()){auto* adapter=views::AsViewClass<RustActionView>(child.get());const auto id=adapter?adapter->LogicalNodeId():0;if(id&&wanted.contains(id)&&adapter->BelongsTo(*chrome_node_graph_))existing.emplace(id,child.get());else removed.push_back(child.get());}
+    for(const auto& child:workspace_dots_->children()){if(child.get()==add_space_button_)continue;auto* adapter=views::AsViewClass<RustActionView>(child.get());const auto id=adapter?adapter->LogicalNodeId():0;if(id&&wanted.contains(id)&&adapter->BelongsTo(*chrome_node_graph_))existing.emplace(id,child.get());else removed.push_back(child.get());}
     workspace_buttons_.clear();
     for(auto* child:removed)workspace_dots_->RemoveChildViewT(child);
     size_t index=0;
@@ -5160,10 +5166,11 @@ void WorkspaceShell::RebuildWorkspaceDots() {
       // canvas fallback even when SetOn/CancelInput now see no state delta.
       button->SchedulePaint();button->set_context_menu_controller(this);workspace_buttons_[key]=button;
     }
+    if(add_space_button_)workspace_dots_->ReorderChildView(add_space_button_,workspace_dots_->children().size()-1);
     ScheduleMetalSidebar();return;
   }
   workspace_buttons_.clear();
-  workspace_dots_->RemoveAllChildViews();
+  {std::vector<views::View*> dots;for(const auto& child:workspace_dots_->children())if(child.get()!=add_space_button_)dots.push_back(child.get());for(auto* dot:dots)workspace_dots_->RemoveChildViewT(dot);}
   for (const auto& workspace : state_.workspaces) {
     auto* button = workspace_dots_->AddChildView(CreateSceneAction(
         base::BindRepeating(callbacks_.select_workspace, workspace.id),
@@ -5176,6 +5183,7 @@ void WorkspaceShell::RebuildWorkspaceDots() {
     button->set_context_menu_controller(this);
     workspace_buttons_[workspace.id] = button;
   }
+  if(add_space_button_)workspace_dots_->ReorderChildView(add_space_button_,workspace_dots_->children().size()-1);
   ScheduleMetalSidebar();
 }
 
