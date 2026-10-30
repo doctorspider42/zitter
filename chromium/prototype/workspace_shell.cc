@@ -3966,6 +3966,8 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
                 else if (panel == "palette") shell->OpenCommandPalette();
                 else if (panel == "address") shell->OpenAddress(false);
                 else if (panel == "settings") shell->OpenGeneralSettings();
+                else if (panel == "fingerprint") shell->callbacks_.run_shortcut.Run("fingerprint");
+                else if (panel == "privacy") {shell->OpenPrivacySettings();shell->general_widget_->LayoutRootViewIfNecessary();for(auto& row:shell->preference_sections_[2].rows)if(row.keywords.find(u"fingerprint")!=std::u16string::npos)row.view->ScrollViewToVisible();}
                 else if (panel == "profiles") shell->OpenProfiles();
                 // A sample undo toast; its „Cofnij” does nothing.
                 else if (panel == "downloads") shell->callbacks_.run_shortcut.Run("downloads");
@@ -6912,6 +6914,10 @@ void WorkspaceShell::RefreshGeneralControls() {
     control->SetEnabled(it != values.end() && it->second.editable);
     if (it != values.end()) SyncPickerIndex(control,it->second.value < 0 ? std::nullopt : std::optional<size_t>(it->second.value));
   }
+}
+void WorkspaceShell::OpenPrivacySettings() {
+  OpenGeneralSettings();
+  SelectPreferenceCategory(2);
 }
 void WorkspaceShell::SelectPreferenceCategory(size_t category) {
   if (category >= preference_sections_.size()) return;

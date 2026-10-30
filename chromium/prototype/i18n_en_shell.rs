@@ -279,4 +279,13 @@ pub static EN: &[(&str, &str)] = &[
     ("kartę", "tab"),
     ("Usunąć przestrzeń „{}”?", "Remove space “{}”?"),
     ("Zamknie wszystkie karty i foldery tej przestrzeni. Przez 6 s możesz cofnąć.", "Closes every tab and folder in this space. You can undo for 6 s."),
+    ("Ochrona przed fingerprintingiem", "Fingerprinting protection"),
+    ("Ta strona nie dostaje odcisku", "This page gets no fingerprint"),
+    ("Odcisk dla tej strony: {}", "Fingerprint for this site: {}"),
+    ("Odcisk dla tej strony", "Fingerprint for this site"),
+    ("Inny na każdej stronie i nowy po ponownym uruchomieniu Zittera.", "Different on every site and new after you relaunch Zitter."),
+    ("Odcisk przeglądarki", "Browser fingerprint"),
+    ("Zmień odcisk", "New fingerprint"),
+    ("Wyłącz ochronę", "Turn off protection"),
+    ("Ustawienia prywatności", "Privacy settings"),
 ];

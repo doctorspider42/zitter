@@ -262,6 +262,8 @@ class WorkspaceShell final : public ui::EventHandler,
   int sidebar_width() const { return sidebar_width_; }
   bool CloseOverlays(bool keep_sidebar = false);
   void OpenGeneralSettings();
+  // Preferences on the Privacy category (fingerprint protection).
+  void OpenPrivacySettings();
   void OpenTools(int page);  // 0: Time Machine, 1: shortcuts, 2: search providers.
   void SyncShortcuts() { RefreshKeyRegistrations(); }
   bool CaptureShortcut(const ui::Accelerator& accelerator);

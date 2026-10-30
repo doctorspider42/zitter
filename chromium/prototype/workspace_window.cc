@@ -5,6 +5,7 @@
 #include "chromium/prototype/i18n.h"
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "chromium/prototype/download_panel.h"
+#include "chromium/prototype/fingerprint_protection.h"
 #include "chromium/prototype/page_services.h"
 #include "chromium/prototype/page_dialogs.h"
 #include "chromium/prototype/page_media_access.h"
@@ -134,6 +135,7 @@ constexpr BooleanPreference kBooleanPreferences[] = {
     {"link_auditing", prefs::kEnableHyperlinkAuditing},
     {"save_passwords", password_manager::prefs::kCredentialsEnableService},
     {"auto_signin", password_manager::prefs::kCredentialsEnableAutosignin},
+    {"fingerprint_protection", kFingerprintProtectionPref},
 };
 struct ContentPreference {
   const char* key;
@@ -612,6 +614,9 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   extension_callbacks.workspace_color = base::BindRepeating([](WorkspaceWindow* window) {
     return window->shell_->active_workspace_color();
   }, base::Unretained(this));
+  extension_callbacks.open_privacy_settings = base::BindRepeating([](WorkspaceWindow* window) {
+    window->shell_->OpenPrivacySettings();
+  }, base::Unretained(this));
   extensions_bar_ = static_cast<ExtensionsBar*>(shell_->SetHeaderTrailing(
       std::make_unique<ExtensionsBar>(std::move(extension_callbacks))));
   delegate_ = std::make_unique<views::WidgetDelegate>();
@@ -730,6 +735,7 @@ std::u16string WorkspaceWindow::TabTitle(const Host& host, views::WebView* view)
 
 void WorkspaceWindow::PreparePage(content::WebContents* page, std::string source_hint) {
   PageServices::Attach(page);
+  FingerprintProtection::Attach(page);
   PageDialogs::Attach(page);
   PageMediaAccess::Attach(page);
   LinkNavigation::Attach(page, base::BindRepeating(
@@ -1879,6 +1885,7 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
     return true;
   }
   if (id == "extensions") { shell_->CloseOverlays(true); extensions_bar_->ToggleMenu(); return extensions_bar_->profile() != nullptr; }
+  if (id == "fingerprint") { shell_->CloseOverlays(true); extensions_bar_->ToggleFingerprintPanel(); return extensions_bar_->fingerprint_panel_for_testing() != nullptr; }
   if (id == "history") { ShowHistory(); return true; }
   if (id == "settings") { shell_->OpenGeneralSettings(); return true; }
   if (id == "address" || id == "new_tab" || id == "palette") {

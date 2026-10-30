@@ -1,6 +1,7 @@
 import importlib.util
 import sys
 import editor_service_fixture
+import fingerprint_protection_fixture
 from pathlib import Path
 import tempfile
 import unittest
@@ -204,6 +205,7 @@ class OverlayTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             checkout = Path(directory)
             editor_service_fixture.seed(checkout)
+            fingerprint_protection_fixture.seed(checkout)
             seed_extension_tabs(checkout)
             seed_extensions_logo(checkout)
             build = checkout / "chrome/test/BUILD.gn"

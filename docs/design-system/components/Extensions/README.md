@@ -1,14 +1,14 @@
 # Extensions
 
-Rozszerzenia Chrome w prawym końcu paska górnego: przypięte akcje, przycisk z puzzlem i jego menu, popup rozszerzenia.
+Chrome extensions at the right end of the top band: pinned actions, the puzzle button with its menu, and extension popups.
 
-**Daje konsument:** dla każdego rozszerzenia aktywnego profilu: ikonę (bitmapa 16 px), nazwę, odznakę (tekst do 4 znaków), czy jest przypięte, dostęp do bieżącej witryny (`ma dostęp`, `po kliknięciu`, `chce dostępu`, `brak`), opcjonalnie popup.
+**The consumer provides:** for each extension of the active profile: an icon (16 px bitmap), a name, a badge (text of up to 4 characters), whether it is pinned, its access to the current site (`ma dostęp`, `po kliknięciu`, `chce dostępu`, `brak`), and optionally a popup.
 
-- Miejsce: prawy koniec 44‑px pasa nagłówka, na `bg-void`, oś pionowa wspólna ze światłami i nawigacją, `space-2` od krawędzi okna. Kolejność od lewej: przypięte ikony, kreska `line` 16 px, puzzle. Bez rozszerzeń zostaje sam puzzle.
-- Każda ikona to `IconButton` 28 px z bitmapą 16 px w `radius-xs`; hover `bg-hover`, otwarty popup `on`. Ikona zawsze jest ta, którą rozszerzenie ustawiło dla tej karty (`action.setIcon`): menedżer haseł po wylogowaniu sam podmienia ją na szarą i pasek pokazuje to od razu. Rozszerzenie, które wyłączyło akcję na tej stronie (`action.disable`), dostaje ikonę w szarości (pełny kolor na hover); dostęp do witryny menu mówi słowami.
-- Odznaka: pigułka 12 px w prawym dolnym rogu, `mono` 9 px 600, `ink` z tekstem `bg-raised` i obrysem 1.5 px `bg-void`. Zawsze neutralna — kolor odznaki z rozszerzenia ignorujemy, żeby nie walczył z akcentem przestrzeni. Treść odznaki trafia do `aria-label`.
-- Przypiętych najwyżej 6. Gdy okno się zwęża, chowają się od lewej do menu; puzzle zostaje zawsze.
-- Popup: `bg-raised`, `radius-md`, `shadow-float`, 4 px pod ikoną, prawą krawędzią przy prawej krawędzi ikony (nie wychodzi poza okno). Treść i rozmiar daje rozszerzenie (do 800×600). Escape i klik poza zamykają.
-- Menu (`⌘⇧E` lub puzzle): `ContextMenu` 296 px. Nagłówek `eyebrow` „Rozszerzenia” z hostem w `url`. Wiersz 44 px: ikona 20 px, nazwa `body`, pod nią dostęp w `label`/`ink-muted`; przypnij (`on`, gdy przypięte — widoczne zawsze) i „Więcej” pojawiają się na hover. Prośba o dostęp to `warn` z ikoną i słowem oraz cichy przycisk „Zezwól”. Po separatorze: „Zarządzaj rozszerzeniami” i „Chrome Web Store”.
-- Prawy klik na ikonie: `ContextMenu` — „Odepnij”, „Opcje”, „Zarządzaj”, po separatorze „Usuń z Zittera…” w `danger`.
-- Rozszerzenia należą do profilu Chromium, nie do przestrzeni: przestrzenie dzielące profil mają ten sam zestaw, przełączenie na inny profil podmienia ikony bez animacji. Nowo zainstalowane rozszerzenie: jedno drgnięcie (`zt-tremor`) puzzla, bez tostu.
+- Placement: the right end of the 44 px header band, on `bg-void`, sharing its vertical axis with the traffic lights and navigation, `space-2` from the window edge. Left to right: pinned icons, a 16 px `line` stroke, the puzzle. With no extensions, only the puzzle remains.
+- Each icon is a 28 px `IconButton` with a 16 px bitmap in `radius-xs`; hover `bg-hover`, open popup `on`. The icon is always the one the extension set for this tab (`action.setIcon`): a password manager that signs out swaps it to grey itself, and the bar shows that at once. An extension that disabled its action on this page (`action.disable`) gets a greyed icon (full color on hover); the menu states site access in words.
+- Badge: a 12 px pill in the lower right corner, `mono` 9 px 600, `ink` with `bg-raised` text and a 1.5 px `bg-void` ring. Always neutral: we ignore the extension's badge color so it never competes with the space accent. The badge text goes into `aria-label`.
+- At most 6 pinned. As the window narrows they move into the menu from the left; the puzzle always stays.
+- Popup: `bg-raised`, `radius-md`, `shadow-float`, 4 px below the icon, its right edge at the icon's right edge (never outside the window). The extension provides its content and size (up to 800×600). Escape and a click outside close it.
+- Menu (`⌘⇧E` or the puzzle): a 296 px `ContextMenu`. An `eyebrow` header „Rozszerzenia”, with no host: each row states its site access. Rows are 44 px: a 20 px icon, the name in `body`, its access below in `label`/`ink-muted`; pin (`on` when pinned, then always visible) and „Więcej” appear on hover. An access request is `warn` with an icon and a word, plus a quiet „Zezwól” button. After a separator: „Zarządzaj rozszerzeniami” and „Chrome Web Store”.
+- Right click on an icon: a `ContextMenu` with „Odepnij”, „Opcje”, „Zarządzaj”, and after a separator „Usuń z Zittera…” in `danger`.
+- Extensions belong to a Chromium profile, not to a space: spaces that share a profile share the set, and switching to another profile swaps the icons without animation. A newly installed extension: one tremor (`zt-tremor`) of the puzzle, no toast.

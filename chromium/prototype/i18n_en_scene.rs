@@ -396,6 +396,8 @@ pub static EN: &[(&str, &str)] = &[
     ("Wymagaj bezpiecznego połączenia. Witryny bez HTTPS mogą wyświetlić ostrzeżenie.", "Require a secure connection. Sites without HTTPS may show a warning."),
     ("Wyskakujące okna", "Pop-ups"),
     ("Wysyłaj Do Not Track", "Send Do Not Track"),
+    ("Ochrona przed fingerprintingiem", "Fingerprinting protection"),
+    ("Dodawaj niewidoczny szum do odczytów canvas, WebGL i dźwięku. Każda witryna widzi wtedy inny odcisk przeglądarki, nowy po ponownym uruchomieniu lub po zmianie ikoną odcisku w pasku. Może zakłócić edytory grafiki. Dotyczy tego profilu.", "Add invisible noise to what sites read from canvas, WebGL and audio. Each site then sees a different browser fingerprint, new after a relaunch or when you change it with the fingerprint icon in the toolbar. May disrupt graphics editors. Applies to this profile."),
     ("Wysyłaj wpisywany tekst do usługi Google w celu sprawdzania pisowni. Wymaga włączonego sprawdzania pisowni.", "Send what you type to a Google service to check spelling. Needs spell check turned on."),
     ("Wyszukiwanie", "Search"),
     ("Wyszukiwarka do edycji", "Search engine to edit"),

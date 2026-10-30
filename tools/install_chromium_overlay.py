@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 
 import editor_service_patch as editor_services
+import fingerprint_protection_patch as fingerprint_protection
 
 ROOT = Path(__file__).resolve().parents[1]
 DEPENDENCY = '      "//zitter:profile_workspace_browser_tests",\n'
@@ -801,6 +802,7 @@ def install(checkout, dry_run=False):
     if revision != lock["revision"]:
         raise ValueError(f"Chromium revision mismatch: {revision}; expected {lock['revision']}")
     editor_patch = editor_services.prepare(checkout)
+    fingerprint_patch = fingerprint_protection.prepare(checkout)
     build = checkout / "chrome/test/BUILD.gn"
     original = build.read_text()
     patched = patch_build(original)
@@ -873,6 +875,7 @@ def install(checkout, dry_run=False):
                 if text != extensions_logo[path]:
                     path.write_text(text)
             editor_services.apply(editor_patch)
+            fingerprint_protection.apply(fingerprint_patch)
         except Exception:
             if destination.exists():
                 shutil.rmtree(destination)
