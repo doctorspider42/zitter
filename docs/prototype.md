@@ -178,10 +178,13 @@ Zitter tabs through the embedder; `windows.getAll/get/getCurrent/
 getLastFocused` describe the window. `windows.remove` is refused: the window
 holds every profile's spaces.
 
-Not covered: tab groups, Split View and highlighting through the tabs API,
-moving a tab to another window or between spaces, `windows.create` (it opens a
-stock window, whose tabs move into Zitter) and `windows.update`. A real
-BrowserWindowInterface remains the gate for those.
+`windows.create` for a normal window opens its pages as tabs of that window
+(Zitter keeps one window) and `windows.update` focuses, minimizes, maximizes,
+restores, moves and resizes it.
+
+Not covered: tab groups (Zitter has none), Split View and multi-tab
+highlighting through the tabs API, and moving a tab between spaces or
+windows. A real BrowserWindowInterface remains the gate for those.
 
 ## Next gate: real browser context ownership
 

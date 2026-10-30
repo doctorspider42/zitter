@@ -37,6 +37,7 @@ def seed_extension_tabs(checkout):
                            overlay.TABS_CREATE_OLD + overlay.TABS_UPDATE_OLD + overlay.TABS_REMOVE_OLD +
                            overlay.TABS_MOVE_OLD),
                  windows_api=(overlay.WINDOWS_GET_ALL_OLD + overlay.WINDOWS_LAST_FOCUSED_OLD +
+                              overlay.WINDOWS_CREATE_ANCHOR + overlay.WINDOWS_UPDATE_OLD +
                               overlay.WINDOWS_REMOVE_OLD),
                  function_details=(overlay.FUNCTION_DETAILS_INCLUDE_ANCHOR + overlay.CURRENT_WINDOW_ANCHOR))
     for part, path in overlay.EXTENSION_TABS_FILES.items():
@@ -98,6 +99,8 @@ class OverlayTests(unittest.TestCase):
         self.assertIn("embedder->CloseTab(contents)", tabs_api)
         windows_api = overlay.patch_extension_tabs(texts["windows_api"], "windows_api")
         self.assertIn("kTabStripNotEditableError", windows_api)
+        self.assertIn("embedder->OpenTab(window_profile", windows_api)
+        self.assertIn("window->Minimize();", windows_api)
         details = overlay.patch_extension_tabs(texts["function_details"], "function_details")
         self.assertLess(details.index("GetWindow(profile)"), details.index("NOTE(rafaelw)"))
 

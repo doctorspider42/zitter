@@ -9173,4 +9173,42 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionWindowsAndTabOperatio
   EXPECT_TRUE(window_->widget()->IsVisible());
 }
 
+
+// windows.create opens its pages as tabs of the profile's Zitter window, and
+// windows.update focuses that window: Zitter keeps one window.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionWindowsCreateAndUpdateUseZitterWindow) {
+  base::ScopedTempDir dir;
+  {
+    base::ScopedAllowBlockingForTesting allow;
+    ASSERT_TRUE(dir.CreateUniqueTempDir());
+  }
+  const auto extension = LoadTestExtension(work_, WriteTestExtension(dir.GetPath(), "Opener", SK_ColorBLUE, false));
+  ASSERT_TRUE(extension);
+  auto* bar = window_->extensions_bar();
+  NavigateBoth();
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return Shown(bar, extension->id()).has_value(); }));
+  const size_t tabs = window_->tab_count("work");
+  const size_t browsers = GlobalBrowserCollection::GetInstance()->GetSize();
+  const std::string script = base::StringPrintf(R"(let step = ''; (async () => {
+    const fail = text => chrome.action.setBadgeText({text});
+    step = 'g'; const win = await chrome.windows.getCurrent();
+    step = 'c'; const created = await chrome.windows.create({url: '%s', focused: true});
+    if (created.id !== win.id) return fail('cid');
+    if (!created.tabs.some(tab => tab.id && tab.windowId === win.id)) return fail('ct');
+    step = 'u'; const updated = await chrome.windows.update(win.id, {focused: true});
+    if (updated.id !== win.id || updated.type !== 'normal') return fail('uid');
+    fail('ok');
+  })().catch(error => { console.error(step, error.message); chrome.action.setBadgeText({text: 'x' + step}); }))",
+      embedded_test_server()->GetURL("/storage_probe.html?fromwindow").spec().c_str());
+  ASSERT_TRUE(extensions::BackgroundScriptExecutor::ExecuteScriptAsync(work_, extension->id(), script));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !Shown(bar, extension->id())->badge.empty(); }));
+  EXPECT_EQ("ok", Shown(bar, extension->id())->badge);
+  EXPECT_EQ(tabs + 1, window_->tab_count("work"));
+  EXPECT_EQ("work", window_->active_id());
+  EXPECT_NE(std::string::npos, window_->contents("work")->GetVisibleURL().spec().find("fromwindow"));
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(browsers, GlobalBrowserCollection::GetInstance()->GetSize());
+}
+
 } // namespace zitter::prototype

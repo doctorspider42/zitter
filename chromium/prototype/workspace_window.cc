@@ -42,7 +42,7 @@
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/extensions/window_controller.h"
 #include "chrome/browser/extensions/window_controller_list.h"
-#include "chrome/browser/ui/views/picture_in_picture/document_pip_base_window.h"
+#include "ui/base/base_window.h"
 #include "components/sessions/content/session_tab_helper.h"
 #include "extensions/common/extension.h"
 #include "base/check.h"
@@ -283,6 +283,39 @@ BEGIN_METADATA(WorkspaceWebView)
 END_METADATA
 }  // namespace
 
+// ui::BaseWindow over the Zitter widget for chrome.windows. Close is refused:
+// the window holds every profile's spaces, and only the user closes it.
+class ZitterBaseWindow final : public ui::BaseWindow {
+ public:
+  explicit ZitterBaseWindow(views::Widget& widget) : widget_(widget) {}
+  bool IsActive() const override { return widget_->IsActive(); }
+  bool IsMaximized() const override { return widget_->IsMaximized(); }
+  bool IsMinimized() const override { return widget_->IsMinimized(); }
+  bool IsFullscreen() const override { return widget_->IsFullscreen(); }
+  gfx::NativeWindow GetNativeWindow() const override { return widget_->GetNativeWindow(); }
+  gfx::Rect GetRestoredBounds() const override { return widget_->GetRestoredBounds(); }
+  ui::mojom::WindowShowState GetRestoredState() const override {
+    return widget_->IsMaximized() ? ui::mojom::WindowShowState::kMaximized : ui::mojom::WindowShowState::kNormal;
+  }
+  gfx::Rect GetBounds() const override { return widget_->GetWindowBoundsInScreen(); }
+  void Show() override { widget_->IsVisible() ? widget_->Activate() : widget_->Show(); }
+  void Hide() override {}
+  bool IsVisible() const override { return widget_->IsVisible(); }
+  void ShowInactive() override { if (!widget_->IsVisible()) widget_->ShowInactive(); }
+  void Close() override {}
+  void Activate() override { widget_->Activate(); }
+  void Deactivate() override { widget_->Deactivate(); }
+  void Maximize() override { widget_->Maximize(); }
+  void Minimize() override { widget_->Minimize(); }
+  void Restore() override { widget_->Restore(); }
+  void SetBounds(const gfx::Rect& bounds) override { widget_->SetBounds(bounds); }
+  void FlashFrame(bool flash) override { widget_->FlashFrame(flash); }
+  ui::ZOrderLevel GetZOrderLevel() const override { return widget_->GetZOrderLevel(); }
+  void SetZOrderLevel(ui::ZOrderLevel level) override { widget_->SetZOrderLevel(level); }
+ private:
+  const raw_ref<views::Widget> widget_;
+};
+
 // chrome.windows sees each profile's Zitter tabs as one window of type
 // "normal", backed by the Zitter widget rather than a Browser (as Document
 // PiP windows are).
@@ -290,7 +323,7 @@ class ZitterExtensionWindow final : public extensions::WindowController {
  public:
   using Tabs = extensions::ExtensionTabUtil::EmbedderTabs;
   static std::unique_ptr<ZitterExtensionWindow> Create(views::Widget& widget, Profile* profile, Tabs* tabs) {
-    auto base_window = std::make_unique<DocumentPipBaseWindow>(widget);
+    auto base_window = std::make_unique<ZitterBaseWindow>(widget);
     return base::WrapUnique(new ZitterExtensionWindow(std::move(base_window), profile, tabs));
   }
   ~ZitterExtensionWindow() override { extensions::WindowControllerList::GetInstance()->RemoveExtensionWindow(this); }
@@ -340,11 +373,11 @@ class ZitterExtensionWindow final : public extensions::WindowController {
   }
 
  private:
-  ZitterExtensionWindow(std::unique_ptr<DocumentPipBaseWindow> base_window, Profile* profile, Tabs* tabs)
+  ZitterExtensionWindow(std::unique_ptr<ZitterBaseWindow> base_window, Profile* profile, Tabs* tabs)
       : extensions::WindowController(base_window.get(), profile), base_window_(std::move(base_window)), tabs_(tabs) {
     extensions::WindowControllerList::GetInstance()->AddExtensionWindow(this);
   }
-  const std::unique_ptr<DocumentPipBaseWindow> base_window_;
+  const std::unique_ptr<ZitterBaseWindow> base_window_;
   raw_ptr<Tabs> tabs_;
   const SessionID session_id_ = SessionID::NewUnique();
 };

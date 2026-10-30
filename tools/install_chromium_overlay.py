@@ -471,6 +471,84 @@ CURRENT_WINDOW_ADDITION = """  // Zitter: the embedder's window when the profile
 FUNCTION_DETAILS_INCLUDE_ANCHOR = '#include "chrome/browser/extensions/browser_extension_window_controller.h"\n'
 FUNCTION_DETAILS_INCLUDE = '#include "chrome/browser/extensions/extension_tab_util.h"\n'
 
+WINDOWS_CREATE_ANCHOR = """  Profile* window_profile =
+      incognito_result == windows_util::IncognitoResult::kIncognito
+          ? calling_profile->GetPrimaryOTRProfile(/*create_if_needed=*/true)
+          : calling_profile;
+"""
+WINDOWS_CREATE_ADDITION = """
+  // Zitter: one window holds a profile's tabs. A normal window for that
+  // profile opens its pages as tabs there and answers with that window.
+  if (ExtensionTabUtil::EmbedderTabs* embedder = ExtensionTabUtil::GetEmbedderTabs();
+      embedder && window_profile == calling_profile &&
+      (!create_data_ || ((create_data_->type == windows::CreateType::kNone ||
+                          create_data_->type == windows::CreateType::kNormal) &&
+                         !create_data_->tab_id))) {
+    if (WindowController* window = embedder->GetWindow(window_profile)) {
+      const bool focused = !create_data_ || create_data_->focused.value_or(true);
+      for (size_t i = 0; i < urls_.size(); ++i) {
+        embedder->OpenTab(window_profile, urls_[i], focused && i == 0);
+      }
+      if (focused) {
+        window->window()->Activate();
+      }
+      return RespondNow(WithArguments(window->CreateWindowValueForExtension(
+          extension(), WindowController::kPopulateTabs, source_context_type())));
+    }
+  }
+"""
+WINDOWS_UPDATE_OLD = """  if (!browser) {
+    return RespondNow(Error(ExtensionTabUtil::kNoCrashBrowserError));
+  }
+  ui::BaseWindow* browser_window = browser->GetWindow();
+"""
+WINDOWS_UPDATE_NEW = """  if (!browser) {
+    // Zitter: the embedder's window takes focus, state and bounds.
+    ExtensionTabUtil::EmbedderTabs* embedder = ExtensionTabUtil::GetEmbedderTabs();
+    if (!embedder ||
+        embedder->GetWindow(window_controller->profile()) != window_controller) {
+      return RespondNow(Error(ExtensionTabUtil::kNoCrashBrowserError));
+    }
+    ui::BaseWindow* window = window_controller->window();
+    gfx::Rect bounds =
+        window->IsMinimized() ? window->GetRestoredBounds() : window->GetBounds();
+    const bool set_bounds = UpdateWindowBoundsFromParams(*params, bounds);
+    if (set_bounds && !WindowBoundsIntersectDisplays(bounds)) {
+      return RespondNow(Error(tabs_constants::kInvalidWindowBoundsError));
+    }
+    const ui::mojom::WindowShowState state =
+        ConvertToWindowShowState(params->update_info.state);
+    if (state == ui::mojom::WindowShowState::kFullscreen ||
+        (set_bounds && (state == ui::mojom::WindowShowState::kMinimized ||
+                        state == ui::mojom::WindowShowState::kMaximized))) {
+      return RespondNow(Error(tabs_constants::kInvalidWindowStateError));
+    }
+    if (state == ui::mojom::WindowShowState::kMinimized) {
+      window->Minimize();
+    } else if (state == ui::mojom::WindowShowState::kMaximized) {
+      window->Maximize();
+    } else if (state == ui::mojom::WindowShowState::kNormal) {
+      window->Restore();
+    }
+    if (set_bounds) {
+      window->SetBounds(bounds);
+    }
+    if (params->update_info.focused) {
+      if (*params->update_info.focused) {
+        window->Activate();
+      } else {
+        window->Deactivate();
+      }
+    }
+    if (params->update_info.draw_attention) {
+      window->FlashFrame(*params->update_info.draw_attention);
+    }
+    return RespondNow(WithArguments(window_controller->CreateWindowValueForExtension(
+        extension(), WindowController::kDontPopulateTabs, source_context_type())));
+  }
+  ui::BaseWindow* browser_window = browser->GetWindow();
+"""
+
 def _patch_once(text, anchor, replacement, marker, what):
     if text.count(replacement) == 1:
         return text
@@ -506,6 +584,10 @@ def patch_extension_tabs(text, part):
         text = _patch_once(text, WINDOWS_GET_ALL_OLD, WINDOWS_GET_ALL_NEW, "windows describe themselves", "windows.getAll")
         text = _patch_once(text, WINDOWS_LAST_FOCUSED_OLD, WINDOWS_LAST_FOCUSED_NEW,
                            "window when no browser window qualifies", "windows.getLastFocused")
+        text = _patch_once(text, WINDOWS_CREATE_ANCHOR, WINDOWS_CREATE_ANCHOR + WINDOWS_CREATE_ADDITION,
+                           "opens its\n  // pages as tabs there", "windows.create")
+        text = _patch_once(text, WINDOWS_UPDATE_OLD, WINDOWS_UPDATE_NEW, "window takes focus, state and bounds",
+                           "windows.update")
         return _patch_once(text, WINDOWS_REMOVE_OLD, WINDOWS_REMOVE_NEW, "window holds every profile", "windows.remove")
     text = _patch_once(text, TABS_INCLUDE_ANCHOR, TABS_INCLUDE_ANCHOR + TABS_INCLUDE,
                        "\n" + TABS_INCLUDE, "tabs API include")
