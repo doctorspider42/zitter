@@ -155,12 +155,23 @@ extension's profile; tabs an extension opens through a stock window move into
 Zitter before that window closes. Chrome's post-install bubble is disabled (it
 needs a stock window); the puzzle trembles instead.
 
-Not covered: `chrome.tabs`/`chrome.windows` cannot see Zitter tabs.
-`ExtensionTabUtil::GetTabById` and `tabs.query` only walk Browser windows, so
-`tabs.query`, `tabs.sendMessage`, `scripting.executeScript({tabId})` and
-`windows.getCurrent` find nothing from a Zitter tab. Content-script messaging
-in the other direction (`runtime.sendMessage` with `sendResponse`) works. Closing
-that gap needs the BrowserWindowInterface integration below.
+The tabs API sees Zitter tabs through one guarded Chromium hook,
+`ExtensionTabUtil::EmbedderTabs` (`patch_extension_tabs` in
+`tools/install_chromium_overlay.py`). `WorkspaceWindow` provides each profile's
+tabs (every space of that profile, in sidebar order) and the page on screen.
+`GetTabById` finds them for callers that need no window, so
+`tabs.sendMessage`, `scripting.executeScript({tabId})` and
+`action.setIcon/setBadgeText({tabId})` work; `tabs.get` falls back to them, and
+`tabs.query` lists them as one window per profile: the current window when the
+caller has no browser window (popups, service workers), the last focused one
+while no browser window is active. `extension_tab_events.cc` sends
+`tabs.onCreated`, `onUpdated` (loading, url, title), `onRemoved` and
+`onActivated`, scrubbed per extension as Chromium's TabsEventRouter does.
+
+Not covered: anything that needs a window object. `chrome.windows`, and
+`tabs.create/update/move/remove/duplicate/group` on Zitter tabs still fail, and
+tab objects carry no window id. Those need the BrowserWindowInterface
+integration below.
 
 ## Next gate: real browser context ownership
 

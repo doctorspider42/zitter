@@ -115,6 +115,8 @@ source_set("shell") {
     "chromium/prototype/page_media_access.cc",
     "chromium/prototype/page_file_access.h",
     "chromium/prototype/page_file_access.cc",
+    "chromium/prototype/extension_tab_events.cc",
+    "chromium/prototype/extension_tab_events.h",
     "chromium/prototype/extensions_bar.cc",
     "chromium/prototype/extensions_bar.h",
     "chromium/prototype/download_panel.h",

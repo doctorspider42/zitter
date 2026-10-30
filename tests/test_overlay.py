@@ -13,6 +13,29 @@ with mock.patch.object(sys, "path", [str(Path(__file__).resolve().parents[1] / "
     spec.loader.exec_module(overlay)
 
 
+# The upstream anchors patch_extension_tabs needs, as minimal stand-ins.
+EXTENSION_TABS_SOURCES = {
+    "header": "class ExtensionTabUtil {\n public:\n"
+              "  // Any out parameter (`window`, `contents`, & `tab_index`) may be null.\n};\n",
+    "source": ("// static\nbool ExtensionTabUtil::GetTabById(int tab_id,\n"
+               "                                  content::BrowserContext* browser_context,\n"
+               "                                  bool include_incognito,\n"
+               "                                  WindowController** out_window,\n"
+               "  // Prerendering tab is not visible and it cannot be in `TabStripModel`, if the\n"
+               "// static\nbool ExtensionTabUtil::GetTabById(int tab_id,\n"),
+    "tabs_api": None,
+}
+
+
+def seed_extension_tabs(checkout):
+    texts = dict(EXTENSION_TABS_SOURCES, tabs_api=(overlay.TABS_INCLUDE_ANCHOR + overlay.TABS_GET_OLD +
+                                                    overlay.TABS_QUERY_ANCHOR))
+    for part, path in overlay.EXTENSION_TABS_FILES.items():
+        (checkout / path).parent.mkdir(parents=True, exist_ok=True)
+        (checkout / path).write_text(texts[part])
+    return texts
+
+
 class OverlayTests(unittest.TestCase):
     def test_component_exclusion_hook_is_narrow_and_idempotent(self):
         source = ('#include "base/check.h"\n'
@@ -45,6 +68,23 @@ class OverlayTests(unittest.TestCase):
         self.assertEqual(patched, overlay.patch_embedded_autofill(patched))
         with self.assertRaises(ValueError):
             overlay.patch_embedded_autofill('unknown upstream layout')
+
+    def test_extension_tabs_hook_is_narrow_idempotent_and_guarded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            texts = seed_extension_tabs(Path(directory))
+        for part, original in texts.items():
+            patched = overlay.patch_extension_tabs(original, part)
+            self.assertNotEqual(original, patched)
+            self.assertEqual(patched, overlay.patch_extension_tabs(patched, part))
+            with self.assertRaises(ValueError):
+                overlay.patch_extension_tabs("unknown upstream layout", part)
+        source = overlay.patch_extension_tabs(texts["source"], "source")
+        # Only window-less lookups see embedder tabs; browser tabs come first.
+        self.assertIn("if (g_embedder_tabs && !out_window)", source)
+        self.assertLess(source.index("g_embedder_tabs && !out_window"), source.index("Prerendering tab"))
+        tabs_api = overlay.patch_extension_tabs(texts["tabs_api"], "tabs_api")
+        self.assertIn("embedder->GetShownTab(profile)", tabs_api)
+        self.assertIn("ExtensionTabUtil::GetTabById(tab_id, browser_context(),", tabs_api)
 
     def test_media_registration_keeps_dispatcher_and_is_guarded(self):
         for header, original in ((True, "  void ProcessMediaAccessRequest(content::WebContents* web_contents,\n"),
@@ -84,6 +124,7 @@ class OverlayTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             checkout = Path(directory)
             editor_service_fixture.seed(checkout)
+            seed_extension_tabs(checkout)
             build = checkout / "chrome/test/BUILD.gn"
             build.parent.mkdir(parents=True)
             original = ('# Existing local build configuration\n'

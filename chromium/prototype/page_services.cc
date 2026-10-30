@@ -54,6 +54,7 @@
 #include "chrome/browser/extensions/chrome_extension_web_contents_observer.h"
 #include "chrome/browser/extensions/tab_helper.h"
 #include "extensions/browser/view_type_utils.h"
+#include "chromium/prototype/extension_tab_events.h"
 #include "extensions/common/mojom/view_type.mojom.h"
 
 namespace zitter::prototype {
@@ -134,6 +135,7 @@ PageServices::PageServices(content::WebContents* contents)
     extensions::SetViewType(contents, extensions::mojom::ViewType::kTabContents);
   extensions::WebNavigationTabObserver::CreateForWebContents(contents);
   extensions::TabHelper::CreateForWebContents(contents);
+  ExtensionTabEvents::Attach(contents);
   autofill::ChromeAutofillClient::CreateForWebContents(contents);
   // Payment-save/reauth UI depends on Chrome's BrowserWindow. This is a
   // per-page capability switch, not a modification of the profile's settings.

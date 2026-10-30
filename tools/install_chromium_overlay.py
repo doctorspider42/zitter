@@ -94,6 +94,186 @@ def patch_media_dispatcher(text, header=False):
     return text.replace(anchor, addition + anchor, 1)
 
 
+# Zitter tabs live outside Browser windows. Extensions reach them through one
+# embedder hook: GetTabById for callers that need no window (tabs.sendMessage,
+# scripting.executeScript, action.setIcon({tabId}), ...), tabs.get, and
+# tabs.query, which lists them as one window per profile.
+EXTENSION_TABS_DECLARATION = """  // Zitter: tabs an embedder hosts outside Browser windows. They have no
+  // window; GetTabById finds them when no window is asked for, and the tabs
+  // API lists them after the browsers' tabs.
+  class EmbedderTabs {
+   public:
+    virtual ~EmbedderTabs() = default;
+    // The profile's tabs in order.
+    virtual std::vector<content::WebContents*> GetTabs(Profile* profile) = 0;
+    // The tab on screen for the profile, which counts as active.
+    virtual content::WebContents* GetShownTab(Profile* profile) = 0;
+  };
+  static void SetEmbedderTabs(EmbedderTabs* tabs);
+  static EmbedderTabs* GetEmbedderTabs();
+
+"""
+EXTENSION_TABS_DEFINITIONS = """// Zitter: tabs hosted outside Browser windows.
+namespace {
+ExtensionTabUtil::EmbedderTabs* g_embedder_tabs = nullptr;
+}  // namespace
+
+// static
+void ExtensionTabUtil::SetEmbedderTabs(EmbedderTabs* tabs) {
+  g_embedder_tabs = tabs;
+}
+
+// static
+ExtensionTabUtil::EmbedderTabs* ExtensionTabUtil::GetEmbedderTabs() {
+  return g_embedder_tabs;
+}
+
+"""
+EXTENSION_TABS_LOOKUP = """  // Zitter: tabs hosted outside Browser windows, when no window is asked for.
+  if (g_embedder_tabs && !out_window) {
+    for (Profile* candidate : {profile, incognito_profile}) {
+      if (!candidate) {
+        continue;
+      }
+      const std::vector<WebContents*> tabs = g_embedder_tabs->GetTabs(candidate);
+      for (size_t i = 0; i < tabs.size(); ++i) {
+        if (sessions::SessionTabHelper::IdForTab(tabs[i]).id() != tab_id) {
+          continue;
+        }
+        if (out_contents) {
+          *out_contents = tabs[i];
+        }
+        if (out_tab_index) {
+          *out_tab_index = static_cast<int>(i);
+        }
+        return true;
+      }
+    }
+  }
+
+"""
+TABS_GET_OLD = """  int tab_index = -1;
+  std::string error;
+  if (!tabs_util::GetTabById(tab_id, browser_context(),
+                             include_incognito_information(), &window,
+                             &contents, &tab_index, &error)) {
+"""
+TABS_GET_NEW = """  int tab_index = -1;
+  std::string error;
+  if (!tabs_util::GetTabById(tab_id, browser_context(),
+                             include_incognito_information(), &window,
+                             &contents, &tab_index, &error) &&
+      // Zitter: a tab hosted outside Browser windows has no window.
+      !ExtensionTabUtil::GetTabById(tab_id, browser_context(),
+                                    include_incognito_information(), nullptr,
+                                    &contents, &tab_index)) {
+"""
+TABS_QUERY_ANCHOR = """      result.Append(CreateTabObjectHelper(tab->GetContents(), extension(),
+                                          source_context_type(), browser, i)
+                        .ToValue());
+    }
+  }
+  return result;
+}
+"""
+TABS_QUERY_ADDITION = """      result.Append(CreateTabObjectHelper(tab->GetContents(), extension(),
+                                          source_context_type(), browser, i)
+                        .ToValue());
+    }
+  }
+  // Zitter: tabs hosted outside Browser windows form one window per profile,
+  // the current window when the caller has no browser window, and the last
+  // focused one while no browser window is active.
+  ExtensionTabUtil::EmbedderTabs* embedder = ExtensionTabUtil::GetEmbedderTabs();
+  if (!embedder || !window_type.empty() || window_id >= 0 ||
+      (window_id == extension_misc::kCurrentWindowId && current_browser) ||
+      !MatchesBool(query_info_.current_window, !current_browser) ||
+      !MatchesBool(query_info_.last_focused_window,
+                   !GlobalBrowserCollection::GetInstance()->GetActiveBrowser())) {
+    return result;
+  }
+  Profile* profile = Profile::FromBrowserContext(browser_context());
+  content::WebContents* shown = embedder->GetShownTab(profile);
+  const std::vector<content::WebContents*> embedded = embedder->GetTabs(profile);
+  for (size_t i = 0; i < embedded.size(); ++i) {
+    content::WebContents* contents = embedded[i];
+    if (tab_index > -1 && static_cast<int>(i) != tab_index) {
+      continue;
+    }
+    if (!MatchesBool(query_info_.active, contents == shown) ||
+        !MatchesBool(query_info_.highlighted, contents == shown) ||
+        !MatchesBool(query_info_.pinned, false) ||
+        !MatchesBool(query_info_.audible, contents->IsCurrentlyAudible()) ||
+        !MatchesBool(query_info_.muted, contents->IsAudioMuted()) ||
+        !MatchesBool(query_info_.frozen, false) ||
+        !MatchesBool(query_info_.discarded, false) ||
+        (query_info_.group_id && *query_info_.group_id != -1) ||
+        (query_info_.split_view_id && *query_info_.split_view_id != -1)) {
+      continue;
+    }
+    ExtensionTabUtil::ScrubTabBehavior scrub =
+        ExtensionTabUtil::GetScrubTabBehavior(extension(), source_context_type(),
+                                              contents);
+    const bool hidden = scrub.committed_info == ExtensionTabUtil::kScrubTabFully;
+    if (query_info_.title && !query_info_.title->empty() &&
+        (hidden || !base::MatchPattern(contents->GetTitle(),
+                                       base::UTF8ToUTF16(*query_info_.title)))) {
+      continue;
+    }
+    if (!url_patterns.is_empty() &&
+        (hidden || !url_patterns.MatchesURL(contents->GetLastCommittedURL()))) {
+      continue;
+    }
+    if (query_info_.status != tabs::TabStatus::kNone &&
+        query_info_.status != ExtensionTabUtil::GetLoadingStatus(contents)) {
+      continue;
+    }
+    result.Append(CreateTabObjectHelper(contents, extension(),
+                                        source_context_type(), nullptr, i)
+                      .ToValue());
+  }
+  return result;
+}
+"""
+TABS_INCLUDE_ANCHOR = '#include "base/strings/pattern.h"\n'
+TABS_INCLUDE = '#include "chrome/browser/ui/browser_window/public/global_browser_collection.h"\n'
+
+
+def _patch_once(text, anchor, replacement, marker, what):
+    if text.count(replacement) == 1:
+        return text
+    if text.count(anchor) != 1 or marker in text.replace(replacement, ''):
+        raise ValueError(f"Unexpected upstream {what} layout; review the patch")
+    return text.replace(anchor, replacement, 1)
+
+
+def patch_extension_tabs(text, part):
+    """part: 'header' (extension_tab_util.h), 'source' (.cc) or 'tabs_api'."""
+    if part == 'header':
+        anchor = "  // Any out parameter (`window`, `contents`, & `tab_index`) may be null.\n"
+        return _patch_once(text, anchor, EXTENSION_TABS_DECLARATION + anchor, "class EmbedderTabs", "ExtensionTabUtil")
+    if part == 'source':
+        anchor = ("// static\nbool ExtensionTabUtil::GetTabById(int tab_id,\n"
+                  "                                  content::BrowserContext* browser_context,\n"
+                  "                                  bool include_incognito,\n"
+                  "                                  WindowController** out_window,\n")
+        text = _patch_once(text, anchor, EXTENSION_TABS_DEFINITIONS + anchor, "g_embedder_tabs = nullptr", "ExtensionTabUtil")
+        lookup_anchor = "  // Prerendering tab is not visible and it cannot be in `TabStripModel`, if the\n"
+        return _patch_once(text, lookup_anchor, EXTENSION_TABS_LOOKUP + lookup_anchor,
+                           "tabs hosted outside Browser windows, when", "GetTabById")
+    text = _patch_once(text, TABS_INCLUDE_ANCHOR, TABS_INCLUDE_ANCHOR + TABS_INCLUDE,
+                       "\n" + TABS_INCLUDE, "tabs API include")
+    text = _patch_once(text, TABS_GET_OLD, TABS_GET_NEW, "a tab hosted outside Browser windows", "tabs.get")
+    return _patch_once(text, TABS_QUERY_ANCHOR, TABS_QUERY_ADDITION, "form one window per", "tabs.query")
+
+
+EXTENSION_TABS_FILES = {
+    "header": "chrome/browser/extensions/extension_tab_util.h",
+    "source": "chrome/browser/extensions/extension_tab_util.cc",
+    "tabs_api": "chrome/browser/extensions/api/tabs/tabs_api.cc",
+}
+
+
 def patch_component_registration(text):
     """Optional embedder exclusions, leaving upstream verification untouched."""
     include_anchor = '#include "base/check.h"\n'
@@ -166,6 +346,9 @@ def install(checkout, dry_run=False):
     component_service = checkout / "components/component_updater/component_updater_service.cc"
     component_original = component_service.read_text()
     component_patched = patch_component_registration(component_original)
+    extension_tabs = {checkout / path: (checkout / path).read_text() for path in EXTENSION_TABS_FILES.values()}
+    extension_tabs_patched = {path: patch_extension_tabs(text, part) for (part, _), (path, text)
+                              in zip(EXTENSION_TABS_FILES.items(), extension_tabs.items())}
     destination = checkout / "zitter"
     check_existing(destination)
     files = overlay_files()
@@ -205,6 +388,9 @@ def install(checkout, dry_run=False):
                 media_source.write_text(media_source_patched)
             if component_patched != component_original:
                 component_service.write_text(component_patched)
+            for path, text in extension_tabs_patched.items():
+                if text != extension_tabs[path]:
+                    path.write_text(text)
             editor_services.apply(editor_patch)
         except Exception:
             if destination.exists():
@@ -217,6 +403,8 @@ def install(checkout, dry_run=False):
             media_header.write_text(media_header_original)
             media_source.write_text(media_source_original)
             component_service.write_text(component_original)
+            for path, text in extension_tabs.items():
+                path.write_text(text)
             raise
     print("Installed. Run gn gen/check and build zitter or zitter_prototype; see README.md.")
 

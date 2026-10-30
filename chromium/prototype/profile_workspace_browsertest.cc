@@ -39,6 +39,7 @@
 #include "content/public/browser/storage_partition.h"
 #include "chromium/prototype/workspace_window.h"
 #include "chromium/prototype/extensions_bar.h"
+#include "components/sessions/content/session_tab_helper.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
 #include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
 #include "chrome/browser/ui/views/extensions/extension_install_dialog_view.h"
@@ -8705,13 +8706,15 @@ base::FilePath WriteTestExtension(const base::FilePath& dir, std::string_view na
     "manifest_version":3,"name":"%s","version":"1.0",
     "action":{"default_icon":{"16":"on.png"},"default_title":"%s"%s},
     "background":{"service_worker":"background.js"},
-    "permissions":["activeTab"],
+    "permissions":["activeTab","tabs","scripting"],
     "host_permissions":["http://*/*"],
     "content_scripts":[{"matches":["http://*/*"],"js":["content.js"],"run_at":"document_end"}]
   })", std::string(name).c_str(), std::string(name).c_str(), popup_entry.c_str())));
   CHECK(base::WriteFile(root.AppendASCII("background.js"), std::string(background)));
   CHECK(base::WriteFile(root.AppendASCII("content.js"),
-      base::StringPrintf("document.documentElement.dataset.%s = 'here';", std::string(name).c_str())));
+      base::StringPrintf("document.documentElement.dataset.%s = 'here';"
+                         "chrome.runtime.onMessage.addListener((message, sender, reply) => reply(document.documentElement.dataset.%s));",
+                         std::string(name).c_str(), std::string(name).c_str())));
   CHECK(base::WriteFile(root.AppendASCII("popup.html"),
       "<!doctype html><title>Popup</title><body style='margin:0;width:160px;height:80px'>Popup</body>"));
   return root;
@@ -9028,6 +9031,94 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionInstallPromptsOverZit
   ASSERT_TRUE(base::test::RunUntil([&] { return Shown(bar, extension->id()).has_value(); }));
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(browsers, GlobalBrowserCollection::GetInstance()->GetSize());
+}
+
+
+// The tabs API sees Zitter tabs: tabs.query/get from the service worker and the
+// popup, tabs.sendMessage to the content script, scripting.executeScript and a
+// per-tab badge, all within the extension's own profile.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionTabsApiSeesZitterTabsOfItsProfile) {
+  base::ScopedTempDir dir;
+  {
+    base::ScopedAllowBlockingForTesting allow;
+    ASSERT_TRUE(dir.CreateUniqueTempDir());
+  }
+  const auto extension = LoadTestExtension(work_, WriteTestExtension(dir.GetPath(), "Keeper", SK_ColorBLUE, true));
+  ASSERT_TRUE(extension);
+  auto* bar = window_->extensions_bar();
+  NavigateBoth();
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return Shown(bar, extension->id()).has_value(); }));
+  auto* page = window_->contents("work");
+  auto badge = [&] { return Shown(bar, extension->id())->badge; };
+  auto run = [&](std::string script) {
+    ASSERT_TRUE(extensions::BackgroundScriptExecutor::ExecuteScriptAsync(work_, extension->id(), script));
+  };
+  // The active tab of the current window is the page on screen.
+  run("chrome.tabs.query({active: true, currentWindow: true}).then(tabs => chrome.action.setBadgeText({text: "
+      "tabs.length === 1 && tabs[0].url.includes('storage_probe') ? 'q1' : 'q' + tabs.length}));");
+  ASSERT_TRUE(base::test::RunUntil([&] { return badge() == "q1"; })) << badge();
+  // Only this profile's tabs: the personal page never shows up.
+  run(base::StringPrintf("chrome.tabs.query({}).then(tabs => chrome.action.setBadgeText({text: "
+      "tabs.length === %zu ? 'all' : 'n' + tabs.length}));", window_->tab_count("work")));
+  ASSERT_TRUE(base::test::RunUntil([&] { return badge() == "all"; })) << badge();
+  // A message to the content script, and its reply.
+  run("chrome.tabs.query({active: true, currentWindow: true}).then(([tab]) => chrome.tabs.sendMessage(tab.id, 'ping'))"
+      ".then(reply => chrome.action.setBadgeText({text: reply === 'here' ? 'msg' : 'nomsg'}));");
+  ASSERT_TRUE(base::test::RunUntil([&] { return badge() == "msg"; })) << badge();
+  // A script injected by tab id.
+  run("chrome.tabs.query({active: true, currentWindow: true}).then(([tab]) => chrome.scripting.executeScript("
+      "{target: {tabId: tab.id}, func: () => { document.title = 'from-extension'; }}));");
+  ASSERT_TRUE(base::test::RunUntil([&] { return page->GetTitle() == u"from-extension"; }));
+  // tabs.get and a badge set for that tab only.
+  run("chrome.action.setBadgeText({text: ''}); chrome.tabs.query({active: true, currentWindow: true})"
+      ".then(([tab]) => chrome.tabs.get(tab.id)).then(tab => chrome.action.setBadgeText({tabId: tab.id, text: 'tab'}));");
+  ASSERT_TRUE(base::test::RunUntil([&] { return badge() == "tab"; })) << badge();
+  // The popup asks for the current tab, as password managers do.
+  bar->RunAction(extension->id());
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->popup_for_testing() && bar->popup_for_testing()->IsVisible(); }));
+  EXPECT_EQ(page->GetLastCommittedURL().spec(),
+            content::EvalJs(bar->popup_contents_for_testing(),
+                            "chrome.tabs.query({active: true, currentWindow: true}).then(tabs => tabs[0].url)"));
+  // The personal space's page is invisible to this profile's extension.
+  const int personal_tab = sessions::SessionTabHelper::IdForTab(window_->contents("personal")).id();
+  EXPECT_EQ("missing", content::EvalJs(bar->popup_contents_for_testing(),
+      base::StringPrintf("chrome.tabs.get(%d).then(() => 'found', () => 'missing')", personal_tab)));
+}
+
+
+// chrome.tabs events reach the extension for Zitter tabs of its profile: a load
+// that completes, a new tab shown, a closed tab. Password managers repaint
+// their icon on these.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionTabEventsFollowZitterTabs) {
+  base::ScopedTempDir dir;
+  {
+    base::ScopedAllowBlockingForTesting allow;
+    ASSERT_TRUE(dir.CreateUniqueTempDir());
+  }
+  const auto extension = LoadTestExtension(work_, WriteTestExtension(dir.GetPath(), "Watcher", SK_ColorBLUE, false,
+      "chrome.tabs.onUpdated.addListener((id, info, tab) => {"
+      "  if (info.status === 'complete' && tab.url && tab.url.includes('updated=1')) chrome.action.setBadgeText({text: 'upd'}); });"
+      // The tab shown after a close is activated too; a removal stays on the badge.
+      "let removed = false;"
+      "chrome.tabs.onActivated.addListener(() => { if (!removed) chrome.action.setBadgeText({text: 'act'}); });"
+      "chrome.tabs.onRemoved.addListener(() => { removed = true; chrome.action.setBadgeText({text: 'rem'}); });"));
+  ASSERT_TRUE(extension);
+  auto* bar = window_->extensions_bar();
+  NavigateBoth();
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return Shown(bar, extension->id()).has_value(); }));
+  auto badge = [&] { return Shown(bar, extension->id())->badge; };
+  // A load in the other profile never reaches this profile's extension.
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("personal"), embedded_test_server()->GetURL("/storage_probe.html?updated=1")));
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), embedded_test_server()->GetURL("/storage_probe.html?updated=1")));
+  ASSERT_TRUE(base::test::RunUntil([&] { return badge() == "upd"; })) << badge();
+  // A new tab shown in the space.
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html?second"), true));
+  ASSERT_TRUE(base::test::RunUntil([&] { return badge() == "act"; })) << badge();
+  // And closed again.
+  window_->CloseActiveTab();
+  ASSERT_TRUE(base::test::RunUntil([&] { return badge() == "rem"; })) << badge();
 }
 
 } // namespace zitter::prototype

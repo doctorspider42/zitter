@@ -37,7 +37,9 @@
 
 #include "base/auto_reset.h"
 #include "chromium/prototype/extensions_bar.h"
+#include "chromium/prototype/extension_tab_events.h"
 #include "chrome/browser/ui/extensions/extension_install_ui.h"
+#include "chrome/browser/extensions/extension_tab_util.h"
 #include "base/check.h"
 #include "base/files/file_util.h"
 #include "base/files/important_file_writer.h"
@@ -276,6 +278,37 @@ BEGIN_METADATA(WorkspaceWebView)
 END_METADATA
 }  // namespace
 
+// The tabs API sees each profile's Zitter tabs as one window: every space of
+// that profile, in sidebar order, with the page on screen as the active tab.
+class WorkspaceWindow::ExtensionTabs final : public extensions::ExtensionTabUtil::EmbedderTabs {
+ public:
+  explicit ExtensionTabs(WorkspaceWindow* window) : window_(window) {
+    extensions::ExtensionTabUtil::SetEmbedderTabs(this);
+  }
+  ~ExtensionTabs() override {
+    if (extensions::ExtensionTabUtil::GetEmbedderTabs() == this) extensions::ExtensionTabUtil::SetEmbedderTabs(nullptr);
+  }
+  std::vector<content::WebContents*> GetTabs(Profile* profile) override {
+    std::vector<content::WebContents*> tabs;
+    for (const auto& host : window_->hosts_) {
+      if (host.profile != profile) continue;
+      for (const auto& tab : host.tabs) if (auto* contents = tab->web_contents()) tabs.push_back(contents);
+    }
+    return tabs;
+  }
+  content::WebContents* GetShownTab(Profile* profile) override {
+    content::WebContents* first = nullptr;
+    for (const auto& host : window_->hosts_) {
+      if (host.profile != profile || !host.view || !host.view->web_contents()) continue;
+      if (host.workspace_id == window_->active_id()) return host.view->web_contents();
+      if (!first) first = host.view->web_contents();
+    }
+    return first;
+  }
+ private:
+  raw_ptr<WorkspaceWindow> window_;
+};
+
 WorkspaceWindow::WorkspaceWindow(Profile* work, Profile* personal)
     : WorkspaceWindow(work->GetPath().DirName(), false) {
   CHECK(personal);
@@ -380,6 +413,7 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   // Zitter confirms a new extension with the puzzle's tremor instead.
   extension_install_ui_ = std::make_unique<base::AutoReset<bool>>(
       ExtensionInstallUI::disable_ui_for_tests(true));
+  extension_tabs_ = std::make_unique<ExtensionTabs>(this);
   // Design: Extensions. The bar follows the profile of the page on screen.
   ExtensionsBar::Callbacks extension_callbacks;
   extension_callbacks.open_page = base::BindRepeating([](WorkspaceWindow* window, Profile* profile, const GURL& url) {
@@ -447,6 +481,7 @@ WorkspaceWindow::~WorkspaceWindow() {
   history_view_tasks_.TryCancelAll();
   weak_factory_.InvalidateWeakPtrs();
   ClosePeek();
+  extension_tabs_.reset();
   extensions_bar_->SetContext(nullptr, nullptr);
   extensions_bar_ = nullptr;
   shell_->Detach();
@@ -630,6 +665,11 @@ void WorkspaceWindow::UpdateShell() {
     }
     downloads_->SetProfile(host.profile);
     extensions_bar_->SetContext(host.profile, host.view->GetWebContents());
+    // The page on screen changed: chrome.tabs.onActivated for its profile.
+    if (auto* shown = host.view->GetWebContents(); shown != shown_page_.get()) {
+      shown_page_ = shown->GetWeakPtr();
+      ExtensionTabEvents::DispatchActivated(shown);
+    }
     shell_->Update(std::move(state));
   }
 }

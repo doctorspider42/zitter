@@ -381,6 +381,10 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   std::unique_ptr<DownloadPanel> downloads_;
   raw_ptr<ExtensionsBar> extensions_bar_ = nullptr;  // Owned by the window root.
   std::unique_ptr<base::AutoReset<bool>> extension_install_ui_;
+  // Extensions see the window's tabs through ExtensionTabUtil::EmbedderTabs.
+  class ExtensionTabs;
+  std::unique_ptr<ExtensionTabs> extension_tabs_;
+  base::WeakPtr<content::WebContents> shown_page_;
   base::WeakPtrFactory<WorkspaceWindow> weak_factory_{this};
 };
 }  // namespace zitter::prototype
