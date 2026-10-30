@@ -126,6 +126,7 @@
 #include "chromium/prototype/workspace_keyboard_mac.h"
 #include "chromium/prototype/workspace_frame_mac.h"
 #elif BUILDFLAG(IS_WIN)
+#include "base/win/windows_version.h"
 #include "chromium/prototype/workspace_frame_win.h"
 #endif
 #if !BUILDFLAG(IS_MAC)
@@ -3351,6 +3352,17 @@ class ShellRoot final : public views::View {
     edge->SetBounds(g.edge.x,g.edge.y,g.edge.width,g.edge.height);
     LayoutSuperclass<views::View>(this);
   }
+#if BUILDFLAG(IS_WIN)
+  // Design: Pasek tytułu, a 1 px window border. Windows 10 draws it on three
+  // sides only once the client area covers the titlebar; Windows 11 draws all four.
+  void OnPaint(gfx::Canvas* canvas) override {
+    views::View::OnPaint(canvas);
+    auto* widget = GetWidget();
+    if (widget && !widget->IsMaximized() && !widget->IsFullscreen() &&
+        base::win::GetVersion() < base::win::Version::WIN11)
+      canvas->FillRect(gfx::Rect(0, 0, width(), 1), Palette(this).line);
+  }
+#endif
   // Empty frame and header space moves the window, like a native titlebar.
   bool IsDraggable(const gfx::Point& point) {
     if (content->bounds().Contains(point)) return false;
@@ -8179,7 +8191,8 @@ void WorkspaceShell::ShowAppMenu(views::View* anchor) {
   add("settings", T(u"Ustawienia…"));
   if (!state_.workspaces.empty()) {
     model->AddSeparator(ui::NORMAL_SEPARATOR);
-    model->AddTitle(T(u"Przestrzenie"));
+    // Design: an eyebrow group label, in capitals.
+    model->AddTitle(base::i18n::ToUpper(T(u"Przestrzenie")));
     for (size_t i = 0; i < state_.workspaces.size() && i < 9; ++i) {
       const auto& space = state_.workspaces[i];
       model->AddCheckItem(AppMenuDelegate::kBase + static_cast<int>(commands.size()), base::UTF8ToUTF16(space.name));
