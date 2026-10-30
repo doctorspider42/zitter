@@ -139,9 +139,12 @@ Notes:
   system frame, HTMINBUTTON/HTMAXBUTTON/HTCLOSE make Windows draw its classic
   buttons. Snap Layouts on Windows 11 needs HTMAXBUTTON handled without that.
 - Design fonts (Instrument Serif, Schibsted Grotesk, JetBrains Mono in
-  `assets/fonts`) are registered from the bundle on macOS; on Windows Skia's
-  DirectWrite font manager sees only system fonts, so text falls back to Segoe
-  UI until the fonts join its collection (or the installer adds them).
+  `assets/fonts`) are registered from the bundle on macOS. On Windows GN copies
+  them to `Fonts\` beside `zitter.exe`, which sideloads them into the browser
+  process's DirectWrite collection before gfx creates it (Chromium's web-test
+  hook); the overlay installer patches `ui/gfx/win/direct_write.cc` so variable
+  fonts bring every named weight. Web pages don't see them. Text that asks for
+  the default UI font stays Segoe UI, as it stays SF on macOS.
 - The icon sits in chrome.dll's `IDR_MAINFRAME` slot, patched by the overlay
   installer: every icon must be in that one `.rc`, since icon image IDs collide
   across `.res` files.
@@ -192,5 +195,5 @@ Notes:
 | 0 — environment | Done: vanilla `chrome.exe` runs (`out/ZitterWin`), the overlay installs |
 | 1 — non-Mac build | Done: `:shell` compiles on `text_services_skia.cc`; `sidebar_scene_unittests` (532), `zitter_network_policy_tests` (3) and `editor_text_layout_unittests` (6) pass. The `zitter` target for `is_win` moves to phase 2 |
 | 2 — first launch | Done: `zitter.exe` opens the window, loads pages and restores the session and its space after a restart; data in `%LOCALAPPDATA%\Zitter`. The download shutdown prompt moves to phase 3 |
-| 3 — native look | In progress: own titlebar on the system frame (shadow, snap, resize), 46 × 38 caption buttons, the Zitter menu, Windows shortcuts and Kbd words, the emoji panel, the downloads prompt on close, the app icon. Open: verify-ui against the design, Snap Layouts on Windows 11, design fonts, menu icons, HiDPI |
+| 3 — native look | In progress: own titlebar on the system frame (shadow, snap, resize), 46 × 38 caption buttons, the Zitter menu, Windows shortcuts and Kbd words, the emoji panel, the downloads prompt on close, the app icon. Design fonts load. verify-ui done (Noc, restored and maximized). Open: Papier, Snap Layouts on Windows 11, menu icons and Kbd chips, HiDPI |
 | 4–6 | Not started |

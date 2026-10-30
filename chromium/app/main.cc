@@ -28,10 +28,12 @@
 #elif BUILDFLAG(IS_WIN)
 #include <windows.h>
 
+#include "base/files/file_enumerator.h"
 #include "base/win/win_util.h"
 #include "chrome/install_static/initialize_from_primary_module.h"
 #include "content/public/app/sandbox_helper_win.h"
 #include "sandbox/win/src/sandbox_types.h"
+#include "ui/gfx/win/direct_write.h"
 #endif
 
 namespace {
@@ -83,6 +85,18 @@ int main(int argc, const char** argv) {
 #endif
   auto* command = base::CommandLine::ForCurrentProcess();
   if (!command->HasSwitch(switches::kProcessType)) {
+#if BUILDFLAG(IS_WIN)
+    // The design fonts (Fonts\ beside zitter.exe) join the browser's font
+    // collection before gfx creates it; macOS activates them from the bundle.
+    // Web pages never see them.
+    base::FilePath exe_dir;
+    if (base::PathService::Get(base::DIR_EXE, &exe_dir)) {
+      base::FileEnumerator fonts(exe_dir.Append(FILE_PATH_LITERAL("Fonts")), false,
+                                 base::FileEnumerator::FILES, FILE_PATH_LITERAL("*.ttf"));
+      for (auto path = fonts.Next(); !path.empty(); path = fonts.Next())
+        gfx::win::SideLoadFontForTesting(path);
+    }
+#endif
     zitter::ConfigureSafeBrowsingKey();
     zitter::ConfigureNetworkPolicy(*command);
     if (!command->HasSwitch(switches::kUserDataDir))

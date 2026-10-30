@@ -47,6 +47,9 @@ def seed_extensions_logo(checkout):
     # The Windows icon resource rides along with the other branding patches.
     icon = checkout / overlay.WINDOW_ICON_FILE
     icon.parent.mkdir(parents=True, exist_ok=True)
+    direct_write = checkout / overlay.DIRECT_WRITE_FILE
+    direct_write.parent.mkdir(parents=True, exist_ok=True)
+    direct_write.write_text(overlay.DIRECT_WRITE_ANCHOR, newline="\n")
     icon.write_text('#else\nIDR_MAINFRAME       ICON                        "theme\\chromium\\win\\chromium.ico"\n#endif\n', newline="\n")
 
 
@@ -141,6 +144,14 @@ class OverlayTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 overlay.patch_extensions_logo("unknown upstream layout", slot)
 
+    def test_sideloaded_fonts_bring_every_variable_instance(self):
+        patched = overlay.patch_direct_write("before\n" + overlay.DIRECT_WRITE_ANCHOR + "after\n")
+        self.assertIn("font_set_builder1->AddFontFile(font_file.Get())", patched)
+        self.assertLess(patched.index("CreateFontFileReference"), patched.index("AddFontFile"))
+        self.assertEqual(patched, overlay.patch_direct_write(patched))
+        self.assertTrue(sorted((overlay.ROOT / "assets/fonts").glob("*.ttf")))
+        with self.assertRaises(ValueError):
+            overlay.patch_direct_write("unknown upstream layout")
     def test_windows_icon_is_zitter_in_chromes_resource_slot(self):
         original = ('#else\n'
                     'IDR_MAINFRAME       ICON                        "theme\\chromium\\win\\chromium.ico"\n'

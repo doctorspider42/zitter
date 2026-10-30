@@ -44,7 +44,7 @@ def patch_build(text):
 
 def overlay_files():
     files = {"BUILD.gn": ROOT / "chromium/BUILD.gn"}
-    for directory in ("zitter", "chromium/prototype", "chromium/app", "testdata"):
+    for directory in ("zitter", "chromium/prototype", "chromium/app", "testdata", "assets/fonts"):
         for path in sorted((ROOT / directory).rglob("*")):
             if path.is_file():
                 files[path.relative_to(ROOT).as_posix()] = path
@@ -724,6 +724,29 @@ def patch_window_icon(text):
         raise ValueError("Unexpected upstream Windows icon resource layout; review the patch")
     return text.replace(original, replacement, 1)
 
+# zitter.exe sideloads its design fonts (Fonts\ beside it) into the browser's
+# DirectWrite collection, the hook web tests use for Ahem. Variable fonts must
+# bring every named instance (weights 500-700), not only the default face.
+DIRECT_WRITE_FILE = "ui/gfx/win/direct_write.cc"
+DIRECT_WRITE_ANCHOR = ('    hr = factory3->CreateFontFileReference(path.value().c_str(), nullptr,\n'
+                       '                                           &font_file);\n'
+                       '    DCHECK(SUCCEEDED(hr));\n')
+DIRECT_WRITE_HOOK = ('    // Zitter: every named instance of a variable font, as installed fonts.\n'
+                     '    Microsoft::WRL::ComPtr<IDWriteFontSetBuilder1> font_set_builder1;\n'
+                     '    if (SUCCEEDED(font_set_builder.As(&font_set_builder1))) {\n'
+                     '      hr = font_set_builder1->AddFontFile(font_file.Get());\n'
+                     '      DCHECK(SUCCEEDED(hr));\n'
+                     '      continue;\n'
+                     '    }\n')
+
+
+def patch_direct_write(text):
+    if text.count(DIRECT_WRITE_ANCHOR + DIRECT_WRITE_HOOK) == 1:
+        return text
+    if text.count(DIRECT_WRITE_ANCHOR) != 1 or "Zitter: every named instance" in text:
+        raise ValueError("Unexpected upstream DirectWrite sideload layout; review the patch")
+    return text.replace(DIRECT_WRITE_ANCHOR, DIRECT_WRITE_ANCHOR + DIRECT_WRITE_HOOK, 1)
+
 def patch_component_registration(text):
     """Optional embedder exclusions, leaving upstream verification untouched."""
     include_anchor = '#include "base/check.h"\n'
@@ -799,6 +822,9 @@ def install(checkout, dry_run=False):
     extensions_logo = {checkout / path: read(checkout / path) for path in EXTENSIONS_LOGO_FILES.values()}
     extensions_logo_patched = {path: patch_extensions_logo(text, slot) for (slot, _), (path, text)
                                in zip(EXTENSIONS_LOGO_FILES.items(), extensions_logo.items())}
+    direct_write = checkout / DIRECT_WRITE_FILE
+    direct_write_original = read(direct_write)
+    direct_write_patched = patch_direct_write(direct_write_original)
     window_icon = checkout / WINDOW_ICON_FILE
     window_icon_original = read(window_icon)
     window_icon_patched = patch_window_icon(window_icon_original)
@@ -847,6 +873,8 @@ def install(checkout, dry_run=False):
             for path, text in extension_tabs_patched.items():
                 if text != extension_tabs[path]:
                     write(path, text)
+            if direct_write_patched != direct_write_original:
+                write(direct_write, direct_write_patched)
             if window_icon_patched != window_icon_original:
                 write(window_icon, window_icon_patched)
             for path, text in extensions_logo_patched.items():

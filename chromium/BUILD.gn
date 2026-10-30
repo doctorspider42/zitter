@@ -319,6 +319,20 @@ if (!is_mac) {
   }
 }
 
+if (is_win) {
+  # The design fonts beside zitter.exe; main.cc adds them to the browser's
+  # DirectWrite collection (macOS: the bundle's Fonts, tools/package_app.py).
+  copy("design_fonts") {
+    sources = [
+      "assets/fonts/InstrumentSerif-Italic.ttf",
+      "assets/fonts/InstrumentSerif-Regular.ttf",
+      "assets/fonts/JetBrainsMono-Variable.ttf",
+      "assets/fonts/SchibstedGrotesk-Italic-Variable.ttf",
+      "assets/fonts/SchibstedGrotesk-Variable.ttf",
+    ]
+    outputs = [ "$root_out_dir/Fonts/{{source_file_part}}" ]
+  }
+}
 # Real browser bootstrap, with no browser-test runner or test-only dependencies.
 if (is_mac || is_linux || is_win) {
   executable("zitter") {
@@ -407,7 +421,9 @@ if (is_mac || is_linux || is_win) {
         "//components/crash/core/app",
         "//content:sandbox_helper_win",
         "//sandbox/win:sandbox",
+        "//ui/gfx",
       ]
+      data_deps += [ ":design_fonts" ]
     }
   }
 }
