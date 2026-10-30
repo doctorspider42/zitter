@@ -38,6 +38,7 @@
 #include "services/network/public/mojom/cookie_manager.mojom.h"
 #include "content/public/browser/storage_partition.h"
 #include "chromium/prototype/workspace_window.h"
+#include "chromium/prototype/time_machine_view.h"
 #include "chromium/prototype/extensions_bar.h"
 #include "components/sessions/content/session_tab_helper.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
@@ -148,6 +149,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_run_loop_timeout.h"
 #include "base/test/run_until.h"
+#include "base/test/simple_test_clock.h"
 #include "base/test/test_future.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -392,6 +394,8 @@ class ZitterProfilesBrowserTest : public InProcessBrowserTest {
   raw_ptr<Profile> personal_ = nullptr;
   std::unique_ptr<ScopedProfileKeepAlive> work_lease_;
   std::unique_ptr<ScopedProfileKeepAlive> personal_lease_;
+  // Time Machine tests step this clock; it outlives the window that reads it.
+  base::SimpleTestClock timeline_clock_;
   std::unique_ptr<WorkspaceWindow> window_;
 };
 
@@ -619,7 +623,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PerformanceRestoration) {
     {
       base::ScopedAllowBlockingForTesting allow;
       ASSERT_TRUE(base::WriteFile(directory.AppendASCII("ZitterSession.json"), json));
-      ASSERT_TRUE(base::WriteFile(directory.AppendASCII("ZitterTimeMachine.json"), "{}"));
+      ASSERT_TRUE(base::WriteFile(directory.AppendASCII("ZitterTimeline.jsonl"), ""));
     }
     const auto start = base::TimeTicks::Now();
     SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
@@ -731,7 +735,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PerformanceProfileStartup) {
       base::ScopedAllowBlockingForTesting allow;
       ASSERT_TRUE(base::WriteFile(manager->user_data_dir().AppendASCII("ZitterWorkspaces.json"), json));
       ASSERT_TRUE(base::WriteFile(manager->user_data_dir().AppendASCII("ZitterSession.json"), session_json));
-      ASSERT_TRUE(base::WriteFile(manager->user_data_dir().AppendASCII("ZitterTimeMachine.json"), "{}"));
+      ASSERT_TRUE(base::WriteFile(manager->user_data_dir().AppendASCII("ZitterTimeline.jsonl"), ""));
     }
     Timings timings(paths);
     base::ScopedObservation<ProfileManager, ProfileManagerObserver> observation(&timings);
@@ -819,8 +823,10 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarMetadataUpdatesPreserve
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, TimeMachineFlushesPendingHistoryOnClose) {
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), embedded_test_server()->GetURL("/storage_probe.html?pending")));
   ASSERT_TRUE(window_->SaveSnapshot("Pending close snapshot"));
-  EXPECT_FALSE(window_->configuration_saved());
+  EXPECT_FALSE(window_->configuration_saved());  // The timeline line is still being appended.
   window_.reset();
   // Wait for the old window's BLOCK_SHUTDOWN writer, including the payload
   // explicitly flushed from its pending timer, before reopening the profile.
@@ -828,9 +834,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, TimeMachineFlushesPendingHisto
   SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
-  const auto history = window_->TimeMachine();
-  EXPECT_TRUE(std::any_of(history.snapshots.begin(), history.snapshots.end(),
-      [](const TimeMachineItem& item) { return item.title == u"Pending close snapshot"; }));
+  const auto marks = window_->timeline_marks_for_testing();
+  EXPECT_TRUE(std::ranges::contains(marks, "Pending close snapshot"));
+  EXPECT_TRUE(window_->timeline_recorded_for_testing("work"));
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, RestoredTabsStayUnrealizedUntilShown) {
@@ -880,13 +886,10 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, RestoredTabsStayUnrealizedUnti
   EXPECT_EQ(2u, live_pages());  // Only the selected split has WebContents/clients.
   EXPECT_EQ(nullptr, window_->contents("personal"));
   ASSERT_TRUE(window_->SaveSnapshot("Unopened tabs retained"));
-  const auto snapshot = window_->TimeMachine().snapshots.front().id;
+  const int64_t saved = window_->Now().InMillisecondsSinceUnixEpoch();
   window_->SearchPalette(u"Saved");
   window_->CloseTab(5);  // Closing a dormant tab must not realize it.
   EXPECT_EQ(2u, live_pages());
-  ASSERT_FALSE(window_->TimeMachine().closed.empty());
-  EXPECT_EQ(u"Saved work5", window_->TimeMachine().closed.front().title);
-  const auto closed = window_->TimeMachine().closed.front().id;
   window_->SelectTab(3);
   ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
   EXPECT_EQ(3u, live_pages());
@@ -899,23 +902,26 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, RestoredTabsStayUnrealizedUnti
   EXPECT_EQ(4u, live_pages());
   EXPECT_EQ(personal_, window_->contents("personal")->GetBrowserContext());
   ASSERT_TRUE(window_->Select("work"));
-  ASSERT_TRUE(window_->RestoreSnapshot(snapshot));
-  EXPECT_EQ(6u, window_->tab_count("work"));
-  EXPECT_TRUE(window_->split());
-  EXPECT_DOUBLE_EQ(0.55, window_->split_ratio());
-  EXPECT_EQ(3u, live_pages());  // Personal page plus two new split pages.
-  ASSERT_TRUE(window_->ReopenClosedTab(closed));
+  // Cmd+Shift+T brings back the dormant tab closed above.
+  ASSERT_TRUE(window_->ReopenClosedTab());
   ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
-  EXPECT_EQ(4u, live_pages());
+  EXPECT_EQ(5u, live_pages());
   EXPECT_EQ(embedded_test_server()->GetURL("/performance_probe.html?lazy=work5"),
             window_->contents("work")->GetLastCommittedURL());
+  EXPECT_FALSE(window_->ReopenClosedTab());
+  // Time Machine returns the six tabs as they were saved; only the selection loads.
+  window_->CloseTab(5);
+  ASSERT_TRUE(window_->RestoreTimeline(saved, 0));
+  EXPECT_EQ(6u, window_->tab_count("work"));
+  EXPECT_FALSE(window_->split());
+  EXPECT_EQ(2u, live_pages());  // Personal page plus the restored selection.
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
   window_.reset();
   base::ThreadPoolInstance::Get()->FlushForTesting();
   SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
-  EXPECT_EQ(7u, window_->tab_count("work"));
+  EXPECT_EQ(6u, window_->tab_count("work"));
   EXPECT_EQ(1u, live_pages());  // The restored selection is outside its saved pair.
   EXPECT_EQ(nullptr, window_->contents("personal"));
 }
@@ -1172,18 +1178,17 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsChromeCopyMetricsStatusAn
   ASSERT_TRUE(window_->Select("work"));auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready()&&shell->appearance_ready();}));
   const bool rust=shell->workspace_input()->rust_editor();
   auto find=[&](std::u16string_view name){auto visit=[&](auto&& self,views::View* view)->views::View*{if(views::AsViewClass<views::Button>(view))return nullptr;ui::AXNodeData node;view->GetViewAccessibility().GetAccessibleNodeData(&node);if(node.role==ax::mojom::Role::kStaticText&&node.GetString16Attribute(ax::mojom::StringAttribute::kName)==name)return view;for(const auto& child:view->children())if(auto* found=self(self,child.get()))return found;return nullptr;};return visit(visit,shell->tools_widget()->GetContentsView());};
-  const std::array<std::u16string,4> titles={u"Time Machine · Praca",u"Skróty klawiszowe",u"Wyszukiwarki i prefiksy",u"Historia przeglądania"};
-  const std::array<std::u16string,4> intros={u"Snapshot zapisuje karty, foldery i Split View w tej przestrzeni. Przywrócenie przeładuje strony; formularze i historia Wstecz nie są częścią snapshotu. Poprzedni układ otrzyma punkt przywracania.",u"Schemat inspirowany Arc. Wybierz akcję, nagraj kombinację lub wpisz np. Cmd+Shift+J. Puste pole wyłącza skrót. Escape, skróty edycji tekstu i systemowe pozostają zarezerwowane.",u"W pasku adresu wpisz prefiks i zapytanie, np. g koty lub w Warszawa. Szablon musi być adresem HTTP(S) z jednym znacznikiem {query}. Zapytania są kodowane automatycznie.",u"Profil: Profil firmowy"};
+  const std::array<std::u16string,3> titles={u"Time Machine · Praca",u"Skróty klawiszowe",u"Wyszukiwarki i prefiksy"};
+  const std::array<std::u16string,3> intros={u"Snapshot zapisuje karty, foldery i Split View w tej przestrzeni. Przywrócenie przeładuje strony; formularze i historia Wstecz nie są częścią snapshotu. Poprzedni układ otrzyma punkt przywracania.",u"Schemat inspirowany Arc. Wybierz akcję, nagraj kombinację lub wpisz np. Cmd+Shift+J. Puste pole wyłącza skrót. Escape, skróty edycji tekstu i systemowe pozostają zarezerwowane.",u"W pasku adresu wpisz prefiks i zapytanie, np. g koty lub w Warszawa. Szablon musi być adresem HTTP(S) z jednym znacznikiem {query}. Zapytania są kodowane automatycznie."};
   auto metrics=[&](views::View* copy,std::u16string text,int delta,gfx::Font::Weight weight,bool multiline){ASSERT_TRUE(copy)<<base::UTF16ToUTF8(text);EXPECT_EQ(!rust,views::AsViewClass<views::Label>(copy)!=nullptr);views::Label reference(text);reference.SetFontList(gfx::FontList().DeriveWithSizeDelta(delta).DeriveWithWeight(weight));reference.SetMultiLine(multiline);for(int width:{80,160,320})EXPECT_EQ(reference.GetHeightForWidth(width),copy->GetHeightForWidth(width))<<base::UTF16ToUTF8(text)<<" width="<<width;};
-  for(int page=0;page<4;++page){shell->OpenTools(page);ASSERT_NO_FATAL_FAILURE(metrics(find(titles[page]),titles[page],5,gfx::Font::Weight::SEMIBOLD,false));
+  // Page 0 (snapshots) became the Time Machine view.
+  for(int page=1;page<3;++page){shell->OpenTools(page);ASSERT_NO_FATAL_FAILURE(metrics(find(titles[page]),titles[page],5,gfx::Font::Weight::SEMIBOLD,false));
     ASSERT_NO_FATAL_FAILURE(metrics(find(intros[page]),intros[page],-1,gfx::Font::Weight::NORMAL,true));
     if(rust)if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_contains_text_for_testing(base::UTF16ToUTF8(titles[page]));}));
   }
   shell->OpenTools(2);views::ViewTracker old(find(intros[2]));const std::u16string status=std::u16string(u"Błąd zapisu 日本語 🦀")+char16_t(10)+u"Ponów operację w bieżącym profilu.";shell->SetOperationStatus(status);EXPECT_FALSE(old.view());
   ASSERT_NO_FATAL_FAILURE(metrics(find(status),status,-1,gfx::Font::Weight::NORMAL,true));shell->tools_widget()->LayoutRootViewIfNecessary();
   if(rust)if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_contains_text_for_testing(base::UTF16ToUTF8(status));}));
-  ASSERT_TRUE(window_->Select("personal"));shell->OpenTools(3);ASSERT_TRUE(find(u"Profil: Profil osobisty"));
-  if(rust)if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_contains_text_for_testing("Profil: Profil osobisty");}));
 }
 
 class ToolsPanelProbeView final : public views::View {
@@ -1669,11 +1674,11 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsViewportWheelKeyboardAcce
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsPanelResizeLongStatusAndViewportGeometry) {
   ASSERT_TRUE(window_->Select("work"));auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));
   const bool rust=shell->workspace_input()->rust_editor();
-  for(int page=0;page<4;++page){shell->OpenTools(page);if(page==3)ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));
+  for(int page=1;page<3;++page){shell->OpenTools(page);
     for(auto size:{gfx::Size(420,560),gfx::Size(680,720)}){
       shell->SetOperationStatus(u"Długi status 🦀 אבג · sprawdzenie zawijania, zmiany rozmiaru i widoczności przewijanego formularza bez nachodzenia na nagłówek ani stopkę.");
       shell->tools_widget()->SetSize(size);shell->tools_widget()->LayoutRootViewIfNecessary();
-      auto* field=page==0?shell->snapshot_input():page==1?shell->shortcut_input():page==2?shell->provider_input(0):shell->history_search();ASSERT_TRUE(field);
+      auto* field=page==1?shell->shortcut_input():shell->provider_input(0);ASSERT_TRUE(field);
       auto* scroll=shell->tools_viewport_for_testing();ASSERT_TRUE(scroll);
       auto* root=scroll->view()->parent();ASSERT_TRUE(root);ASSERT_EQ(3u,root->children().size());auto* heading=root->children()[0].get();EXPECT_EQ(scroll->view(),root->children()[1].get());auto* status=root->children()[2].get();
       const auto insets=root->GetInsets()+gfx::Insets(20);EXPECT_EQ(insets.left(),heading->x());EXPECT_EQ(insets.top(),heading->y());EXPECT_EQ(root->width()-insets.width(),heading->width());
@@ -1684,7 +1689,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsPanelResizeLongStatusAndV
   }
 }
 
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsPolicyFailedActionsRecorderAndHistoryStatuses) {
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsPolicyFailedActionsAndRecorderStatuses) {
   ASSERT_TRUE(window_->Select("work"));auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));
   auto has_copy=[&](std::u16string_view text){auto find=[&](auto&& self,views::View* view)->bool{ui::AXNodeData node;view->GetViewAccessibility().GetAccessibleNodeData(&node);if(node.role==ax::mojom::Role::kStaticText&&node.GetString16Attribute(ax::mojom::StringAttribute::kName)==text)return true;for(const auto& child:view->children())if(self(self,child.get()))return true;return false;};return find(find,shell->tools_widget()->GetContentsView());};
   auto click=[&](std::u16string text){auto* button=FindButton(shell->tools_widget()->GetContentsView(),text);ASSERT_TRUE(button);ClickControl(button);base::RunLoop().RunUntilIdle();};
@@ -1700,18 +1705,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsPolicyFailedActionsRecord
   ASSERT_NO_FATAL_FAILURE(click(u"Nagraj kombinację…"));EXPECT_FALSE(chord->IsIMEComposing());EXPECT_EQ(ui::TEXT_INPUT_TYPE_NONE,chord->input_client()->GetTextInputType());
   EXPECT_TRUE(has_copy(u"Naciśnij kombinację. Escape anuluje nagrywanie."));
   ASSERT_TRUE(shell->CaptureShortcut(ui::Accelerator(ui::VKEY_ESCAPE,0)));EXPECT_EQ(ui::TEXT_INPUT_TYPE_TEXT,chord->input_client()->GetTextInputType());EXPECT_TRUE(has_copy(u"Nagrywanie anulowane."));
-  shell->OpenTools(3);ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));const auto profile=window_->workspaces().front().profile_id;
-  shell->SetHistoryResults(u"",profile,200,{},false,false);EXPECT_TRUE(has_copy(u"Brak historii przeglądania w tym profilu."));EXPECT_TRUE(has_copy(u"Wyświetlono wpisów: 0"));
-  auto* field=shell->history_search();field->RequestFocus();field->input_client()->InsertText(u"Missing 🦀",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
-  ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));EXPECT_TRUE(has_copy(u"Brak wyników dla tego wyszukiwania."));
-  shell->SetHistoryResults(u"Missing 🦀",profile,200,{},true,true);EXPECT_TRUE(has_copy(u"Nie udało się odczytać historii."));EXPECT_TRUE(has_copy(u"Spróbuj ponownie otworzyć historię."));
-  auto* more=FindButton(shell->tools_widget()->GetContentsView(),u"Pokaż więcej");ASSERT_TRUE(more);EXPECT_FALSE(more->GetVisible());EXPECT_FALSE(more->GetEnabled());
-  const std::vector<BrowsingHistoryEntry> entry={{GURL("https://tools-policy.test/"),u"Result 🦀",base::Time::Now()}};
-  shell->SetHistoryResults(u"Missing 🦀",profile,200,entry,true,false);EXPECT_TRUE(has_copy(u"Wyświetlono wpisów: 1"));EXPECT_TRUE(more->GetVisible());EXPECT_TRUE(more->GetEnabled());
-  shell->SetHistoryResults(u"Missing 🦀",profile,200,entry,true,true);EXPECT_EQ(1u,shell->history_entries().size());EXPECT_TRUE(has_copy(u"Spróbuj ponownie otworzyć historię."));EXPECT_FALSE(more->GetVisible());EXPECT_FALSE(more->GetEnabled());
 }
 
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsActionsCocoaSnapshotProviderAndClose) {
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsActionsCocoaProviderAndClose) {
   ASSERT_TRUE(window_->Select("work"));ASSERT_TRUE(window_->contents("work"));
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready()&&shell->appearance_ready();}));
   const bool rust=shell->workspace_input()->rust_editor();ui_controls::EnableUIControls();
@@ -1728,14 +1724,6 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsActionsCocoaSnapshotProvi
     button->ScrollRectToVisible(button->GetLocalBounds());ASSERT_TRUE(button->HasFocus());
     ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->tools_widget()->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));
   };
-  shell->OpenTools(0);shell->snapshot_input()->SetText(u"Action snapshot 🦀");
-  auto named_snapshots=[&]{const auto items=window_->TimeMachine().snapshots;return std::count_if(items.begin(),items.end(),[](const auto& item){return item.title==u"Action snapshot 🦀";});};
-  const auto snapshots=named_snapshots();
-  views::ViewTracker saved_button(FindButton(shell->tools_widget()->GetContentsView(),u"Zapisz snapshot"));
-  auto messages=[&]{std::u16string text;auto visit=[&](auto&& self,views::View* view)->void{ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);if(ax.role==ax::mojom::Role::kStaticText)text+=ax.GetString16Attribute(ax::mojom::StringAttribute::kName)+u" | ";for(const auto& child:view->children())self(self,child.get());};visit(visit,shell->tools_widget()->GetContentsView());return base::UTF16ToUTF8(text);};
-  ASSERT_NO_FATAL_FAILURE(activate(u"Zapisz snapshot"));
-  ASSERT_TRUE(base::test::RunUntil([&]{return named_snapshots()==snapshots+1;}))<<"before="<<snapshots<<" after="<<window_->TimeMachine().snapshots.size()<<" active="<<window_->active_id()<<" rebuilt="<<!saved_button.view()<<" name="<<base::UTF16ToUTF8(shell->snapshot_input()->GetText())<<" UI="<<messages();
-  const auto saved=window_->TimeMachine().snapshots;auto snapshot=std::find_if(saved.begin(),saved.end(),[](const auto& item){return item.title==u"Action snapshot 🦀";});ASSERT_NE(saved.end(),snapshot);EXPECT_FALSE(snapshot->id.empty());
   shell->OpenTools(2);shell->provider_input(0)->SetText(u"Action provider 🦀");shell->provider_input(1)->SetText(u"zaction");shell->provider_input(2)->SetText(u"https://actions.test/?q={query}");
   const auto count=shell->browser_tools().providers.size();ASSERT_NO_FATAL_FAILURE(activate(u"Zapisz wyszukiwarkę"));
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->browser_tools().providers.size()==count+1;}));
@@ -1746,31 +1734,15 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsActionsCocoaSnapshotProvi
   ASSERT_NO_FATAL_FAILURE(choose());
   ASSERT_NO_FATAL_FAILURE(activate(u"Usuń wyszukiwarkę"));
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->browser_tools().providers.size()==count;}));
-  EXPECT_NE("zaction",shell->browser_tools().default_keyword);EXPECT_EQ(snapshots+1,named_snapshots());
+  EXPECT_NE("zaction",shell->browser_tools().default_keyword);
   auto* close=shell->tools_close_for_testing();ASSERT_TRUE(close);if(rust)EXPECT_TRUE(close->children().empty());
   close->RequestFocus();ASSERT_TRUE(close->HasFocus());
   ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->tools_widget()->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));
   EXPECT_FALSE(shell->tools_widget()->IsVisible());
 }
 
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsActionsHistoryBusyAcrossRebuildAndVisibility) {
-  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready()&&shell->appearance_ready();}));
-  const bool rust=shell->workspace_input()->rust_editor();shell->OpenTools(3);
-  auto* clear=FindButton(shell->tools_widget()->GetContentsView(),u"Wyczyść historię…");ASSERT_TRUE(clear);
-  EXPECT_EQ(rust,!views::AsViewClass<views::MdTextButton>(clear));
-  shell->SetBrowsingDataBusy(true);EXPECT_FALSE(clear->GetEnabled());EXPECT_EQ(clear,FindButton(shell->tools_widget()->GetContentsView(),u"Czyszczenie…"));
-  views::ViewTracker previous(clear);shell->OpenTools(2);EXPECT_FALSE(previous.view());shell->OpenTools(3);
-  clear=FindButton(shell->tools_widget()->GetContentsView(),u"Czyszczenie…");ASSERT_TRUE(clear);EXPECT_FALSE(clear->GetEnabled());
-  clear->ScrollRectToVisible(clear->GetLocalBounds());
-  if(rust)if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_actions_contains_scene_text_for_testing("Czyszczenie…");}));
-  shell->SetBrowsingDataBusy(false);EXPECT_TRUE(clear->GetEnabled());EXPECT_EQ(clear,FindButton(shell->tools_widget()->GetContentsView(),u"Wyczyść historię…"));
-  if(rust)if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_actions_contains_scene_text_for_testing("Wyczyść historię…");}));
-  ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));
-  auto* more=FindButton(shell->tools_widget()->GetContentsView(),u"Pokaż więcej");ASSERT_TRUE(more);EXPECT_FALSE(more->GetVisible());
-  if(rust)EXPECT_FALSE(more->parent()->GetVisible());
-}
 
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsChoicesCocoaPrefixCallbacksAndHistoryPeriod) {
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsChoicesCocoaPrefixAndCallbacks) {
   auto* shell=window_->shell();
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready()&&shell->appearance_ready();}));
   shell->OpenTools(1);ui_controls::EnableUIControls();
@@ -1800,33 +1772,21 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsChoicesCocoaPrefixCallbac
   EXPECT_EQ(u"Tools duplicate 🦀",shell->provider_input(0)->GetText());EXPECT_EQ(u"ztools",shell->provider_input(1)->GetText());
   EXPECT_EQ(u"https://tools.test/?q={query}",shell->provider_input(2)->GetText());
   picker->SetEnabled(false);shell->ActivateToolsChoiceForTesting("selection",0);EXPECT_EQ(provider_index,shell->tools_choice_selection_for_testing("selection"));picker->SetEnabled(true);
-  views::ViewTracker old(picker);shell->OpenTools(3);EXPECT_FALSE(old.view());
-  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));
-  picker=shell->history_period();ASSERT_TRUE(picker);picker->ScrollRectToVisible(picker->GetLocalBounds());picker->RequestFocus();
-  EXPECT_EQ(4u,shell->tools_choice_count_for_testing("history_period"));
-  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->tools_widget()->GetNativeWindow(),ui::VKEY_C,false,false,false,false));
-  ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_choice_selection_for_testing("history_period")==3u;}));
-  ui::AXNodeData ax;picker->GetViewAccessibility().GetAccessibleNodeData(&ax);
-  EXPECT_EQ(ax::mojom::Role::kComboBoxSelect,ax.role);EXPECT_EQ(u"Cały okres",ax.GetString16Attribute(ax::mojom::StringAttribute::kValue));
 }
 
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsFormStructureOrderNamesAndHistoryBusy) {
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsFormStructureOrderAndNames) {
   auto* shell=window_->shell();
-  const std::vector<std::vector<std::u16string>> expected={
-    {u"Nazwa snapshotu, np. Research przed deployem",u"Zapisz snapshot",u"Szukaj snapshotów i zamkniętych kart",u"Zapisane snapshoty",u"Przywróć wybrany układ",u"Usuń wybrany snapshot",u"Zamknięte karty",u"Przywróć wybraną kartę",u"Uśpij tę przestrzeń"},
+  const std::vector<std::vector<std::u16string>> expected={{},
     {u"Akcja skrótu",u"Kombinacja, np. Cmd+Shift+J",u"Nagraj kombinację…",u"Zapisz skrót",u"Wyłącz wybrany skrót",u"Przywróć schemat Arc"},
-    {u"Wyszukiwarka do edycji",u"Nazwa wyszukiwarki",u"Prefiks (a–z, 0–9)",u"Adres z {query}",u"Zapisz wyszukiwarkę",u"Ustaw jako domyślną",u"Usuń wyszukiwarkę"},
-    {u"Szukaj w historii",u"Zakres czyszczenia historii",u"Wyczyść historię…"}};
-  for(int page=0;page<4;++page){SCOPED_TRACE(page);shell->OpenTools(page);if(page==3)ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));
+    {u"Wyszukiwarka do edycji",u"Nazwa wyszukiwarki",u"Prefiks (a–z, 0–9)",u"Adres z {query}",u"Zapisz wyszukiwarkę",u"Ustaw jako domyślną",u"Usuń wyszukiwarkę"}};
+  // Page 0 (snapshots) became the Time Machine view.
+  for(int page=1;page<3;++page){SCOPED_TRACE(page);shell->OpenTools(page);
     std::vector<std::u16string> names;
     auto visit=[&](auto&& self,views::View* view)->void{if(!view->GetVisible())return;ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);
       if(ax.role==ax::mojom::Role::kTextField||ax.role==ax::mojom::Role::kComboBoxSelect||ax.role==ax::mojom::Role::kButton){names.push_back(ax.GetString16Attribute(ax::mojom::StringAttribute::kName));return;}
       for(const auto& child:view->children())self(self,child.get());};
     visit(visit,shell->tools_body_for_testing());EXPECT_EQ(expected[page],names);
   }
-  shell->SetBrowsingDataBusy(true);shell->OpenTools(3);
-  auto* clear=FindButton(shell->tools_body_for_testing(),u"Czyszczenie…");ASSERT_TRUE(clear);EXPECT_FALSE(clear->GetEnabled());
-  shell->SetBrowsingDataBusy(false);EXPECT_TRUE(clear->GetEnabled());EXPECT_EQ(clear,FindButton(shell->tools_body_for_testing(),u"Wyczyść historię…"));
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsChoicesShortcutProviderProjectionAndDrafts) {
@@ -1841,83 +1801,14 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsChoicesShortcutProviderPr
   if(shell->workspace_input()->rust_editor()){auto* picker=shell->tools_selection();picker->ScrollRectToVisible(picker->GetLocalBounds());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_choice_metal_visible_for_testing("selection");}));}
 }
 
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsChoicesTimelineIdentityFilteringAndEmptyState) {
-  ASSERT_TRUE(window_->Select("work"));auto* shell=window_->shell();
-  ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready()&&shell->appearance_ready();}));
-  ASSERT_TRUE(window_->SaveSnapshot("Tools twin"));ASSERT_TRUE(window_->SaveSnapshot("Tools twin"));
-  shell->OpenTools(0);
-  auto filter=[&](std::u16string text){auto* field=shell->timeline_filter_input();field->SelectRange(gfx::Range(0,field->GetText().size()));field->input_client()->InsertText(text,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->tools_widget()->LayoutRootViewIfNecessary();};
-  filter(u"Tools twin");ASSERT_EQ(2u,shell->tools_choice_count_for_testing("selection"));
-  auto* picker=shell->tools_selection();picker->ScrollRectToVisible(picker->GetLocalBounds());
-  std::vector<std::string> ids;for(const auto& item:window_->TimeMachine().snapshots)if(item.title==u"Tools twin")ids.push_back(item.id);ASSERT_EQ(2u,ids.size());
-  shell->ActivateToolsChoiceForTesting("selection",1);EXPECT_EQ(1u,shell->tools_choice_selection_for_testing("selection"));
-  auto* remove=FindButton(shell->tools_widget()->GetContentsView(),u"Usuń wybrany snapshot");ASSERT_TRUE(remove);
-  views::ViewTracker old(picker);ClickControl(remove);
-  ASSERT_TRUE(base::test::RunUntil([&]{return !old.view();}));
-  auto snapshots=window_->TimeMachine().snapshots;
-  EXPECT_TRUE(std::any_of(snapshots.begin(),snapshots.end(),[&](const auto& item){return item.id==ids[0];}));
-  EXPECT_FALSE(std::any_of(snapshots.begin(),snapshots.end(),[&](const auto& item){return item.id==ids[1];}));
-  filter(u"Tools twin");EXPECT_EQ(1u,shell->tools_choice_count_for_testing("selection"));EXPECT_EQ(0u,shell->tools_choice_selection_for_testing("selection"));
-  filter(u"No saved item matches this probe");picker=shell->tools_selection();EXPECT_FALSE(picker->GetEnabled());
-  EXPECT_EQ(1u,shell->tools_choice_count_for_testing("selection"));EXPECT_EQ(u"Brak zapisanych pozycji",shell->tools_choice_label_for_testing("selection",0));
-  ui::AXNodeData empty;picker->GetViewAccessibility().GetAccessibleNodeData(&empty);EXPECT_EQ(u"Brak zapisanych pozycji",empty.GetString16Attribute(ax::mojom::StringAttribute::kValue));
-  shell->ActivateToolsChoiceForTesting("selection",0);EXPECT_EQ(snapshots.size(),window_->TimeMachine().snapshots.size());
-  filter(u"Tools twin");EXPECT_TRUE(picker->GetEnabled());EXPECT_TRUE(shell->tools_choice_label_for_testing("selection",0).starts_with(u"Tools twin"));
-  shell->tools_widget()->Hide();shell->ActivateToolsChoiceForTesting("selection",0);EXPECT_EQ(snapshots.size(),window_->TimeMachine().snapshots.size());
-}
-
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsChoicesTimelineUnicodeRestoreAndClosedTargets) {
-  ASSERT_TRUE(window_->Select("work"));auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready()&&shell->appearance_ready();}));
-  const auto left=embedded_test_server()->GetURL("/storage_probe.html?projection-left");const auto right=embedded_test_server()->GetURL("/storage_probe.html?projection-right");
-  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"),left));const std::u16string prefix=u"ΣΙΓΜΑ İSTANBUL 🦀";const auto snapshot_name=prefix+u" saved";const auto closed_name=prefix+u" closed";
-  ASSERT_TRUE(window_->SaveSnapshot(base::UTF16ToUTF8(snapshot_name)));ASSERT_TRUE(window_->NavigateFromBar(right,true));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
-  content::TitleWatcher title(window_->contents("work"),closed_name);ASSERT_TRUE(content::ExecJs(window_->contents("work"),content::JsReplace("document.title=$1",closed_name)));EXPECT_EQ(closed_name,title.WaitAndGetTitle());
-  ASSERT_TRUE(window_->SaveSnapshot("Different layout"));window_->CloseTab(1);ASSERT_EQ(1u,window_->tab_count("work"));shell->OpenTools(0);
-  auto filter=[&](std::u16string text){auto* field=shell->timeline_filter_input();field->SelectRange(gfx::Range(0,field->GetText().size()));if(text.empty())EXPECT_TRUE(field->input_client()->DeleteRange(gfx::Range(0,field->GetText().size())));else field->input_client()->InsertText(text,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->tools_widget()->LayoutRootViewIfNecessary();};
-  auto oracle=[&](std::u16string query){
-    filter(query);query=base::i18n::ToLower(query);const auto state=window_->TimeMachine();
-    auto check=[&](const auto& items,std::string key){std::vector<std::u16string> labels;for(const auto& item:items)if(query.empty()||base::i18n::ToLower(item.title+u" "+item.detail).find(query)!=std::u16string::npos)labels.push_back(item.title+u" — "+item.detail);auto* picker=shell->tools_choice_for_testing(key);ASSERT_TRUE(picker);EXPECT_EQ(!labels.empty(),picker->GetEnabled());if(labels.empty())labels.push_back(u"Brak zapisanych pozycji");ASSERT_EQ(labels.size(),shell->tools_choice_count_for_testing(key));for(size_t i=0;i<labels.size();++i)EXPECT_EQ(labels[i],shell->tools_choice_label_for_testing(key,i));EXPECT_EQ(0u,shell->tools_choice_selection_for_testing(key));ui::AXNodeData node;picker->GetViewAccessibility().GetAccessibleNodeData(&node);EXPECT_EQ(labels[0],node.GetString16Attribute(ax::mojom::StringAttribute::kValue));};
-    ASSERT_NO_FATAL_FAILURE(check(state.snapshots,"selection"));
-  ASSERT_NO_FATAL_FAILURE(check(state.closed,"closed"));
-  };
-  for(const auto& query:std::vector<std::u16string>{u"σιγμα i\u0307stanbul 🦀",u" — ",std::u16string(1,0xd83e),u"not a timeline match",u""}){SCOPED_TRACE(base::UTF16ToUTF8(query));
-  ASSERT_NO_FATAL_FAILURE(oracle(query));}
-  ASSERT_NO_FATAL_FAILURE(oracle(prefix));ASSERT_TRUE(shell->tools_choice_for_testing("closed")->GetEnabled());
-  auto activate=[&](std::u16string text){auto* widget=shell->tools_widget();auto* button=FindButton(widget->GetContentsView(),text);ASSERT_TRUE(button);button->ScrollRectToVisible(button->GetLocalBounds());ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));button->RequestFocus();base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));};
-  ASSERT_NO_FATAL_FAILURE(activate(u"Przywróć wybraną kartę"));ASSERT_TRUE(base::test::RunUntil([&]{return window_->tab_count("work")==2;}));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));EXPECT_EQ(right,window_->contents("work")->GetLastCommittedURL());EXPECT_EQ(work_,window_->contents("work")->GetBrowserContext());
-  shell->OpenTools(0);
-  ASSERT_NO_FATAL_FAILURE(oracle(snapshot_name));ASSERT_EQ(1u,shell->tools_choice_count_for_testing("selection"));
-  ASSERT_NO_FATAL_FAILURE(activate(u"Przywróć wybrany układ"));ASSERT_TRUE(base::test::RunUntil([&]{return window_->tab_count("work")==1;}));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));EXPECT_EQ(left,window_->contents("work")->GetLastCommittedURL());EXPECT_EQ(work_,window_->contents("work")->GetBrowserContext());
-  shell->OpenTools(0);
-  ASSERT_NO_FATAL_FAILURE(oracle(prefix));shell->tools_widget()->Hide();const auto count=window_->TimeMachine().snapshots.size();shell->ActivateToolsChoiceForTesting("selection",0);EXPECT_EQ(count,window_->TimeMachine().snapshots.size());
-}
-
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsEditorsCocoaSnapshotProviderAndStaleActions) {
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsEditorsCocoaProviderAndStaleActions) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));
-  ASSERT_TRUE(window_->Select("work"));shell->OpenTools(0);ui_controls::EnableUIControls();
-  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));
+  ASSERT_TRUE(window_->Select("work"));ui_controls::EnableUIControls();
   auto key=[&](ui::KeyboardCode code){return ui_test_utils::SendKeyPressToWindowSync(shell->tools_widget()->GetNativeWindow(),code,false,false,false,false);};
   auto replace=[](EditorControl* field,std::u16string text){field->SelectRange(gfx::Range(0,field->GetText().size()));field->input_client()->InsertText(text,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);};
-  auto* name=shell->snapshot_input();ASSERT_TRUE(name);name->RequestFocus();
-  EXPECT_EQ(shell->workspace_input()->rust_editor(),name->rust_editor());
-  ASSERT_TRUE(key(ui::VKEY_A));ASSERT_TRUE(base::test::RunUntil([&]{return name->GetText()==u"a";}));
-  replace(name,u"Research 🦀");
-  if(name->rust_editor()){EXPECT_TRUE(name->view()->children().empty());EXPECT_FALSE(views::AsViewClass<views::Textfield>(name->view()));if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return name->metal_visible();}));}
-  auto lifetime=name->input_client()->AsWeakPtr();const auto before=window_->TimeMachine().snapshots.size();
-  ui::CompositionText marked;marked.text=u"未";marked.selection=gfx::Range(1);name->SetCompositionText(marked);
-  ui::KeyEvent enter(ui::EventType::kKeyPressed,ui::VKEY_RETURN,0),escape(ui::EventType::kKeyPressed,ui::VKEY_ESCAPE,0);
-  EXPECT_FALSE(shell->HandleToolsEditorKey(name,enter));EXPECT_FALSE(shell->HandleToolsEditorKey(name,escape));
-  auto* save=FindButton(shell->tools_widget()->GetContentsView(),u"Zapisz snapshot");ASSERT_TRUE(save);
-  ClickControl(save);base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(before,window_->TimeMachine().snapshots.size());EXPECT_TRUE(lifetime);name->ClearCompositionText();
-  ASSERT_TRUE(key(ui::VKEY_RETURN));
-  ASSERT_TRUE(base::test::RunUntil([&]{return window_->TimeMachine().snapshots.size()>before&&!lifetime;}));
-  EXPECT_EQ(u"Research 🦀",window_->TimeMachine().snapshots.front().title);
-  auto* filter=shell->timeline_filter_input();ASSERT_TRUE(filter);filter->RequestFocus();replace(filter,u"RESEARCH");
-  auto* picker=shell->tools_selection();ASSERT_TRUE(picker->GetEnabled());ASSERT_EQ(1u,shell->tools_choice_count_for_testing("selection"));
-  filter->SetCompositionText(marked);EXPECT_TRUE(picker->GetEnabled());filter->ConfirmCompositionText(false);EXPECT_FALSE(picker->GetEnabled());
-  replace(filter,u"Research");EXPECT_TRUE(picker->GetEnabled());
-  auto old_filter=filter->input_client()->AsWeakPtr();shell->OpenTools(2);EXPECT_FALSE(old_filter);
+  ui::CompositionText marked;marked.text=u"未";marked.selection=gfx::Range(1);
+  ui::KeyEvent enter(ui::EventType::kKeyPressed,ui::VKEY_RETURN,0);
+  shell->OpenTools(2);
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));
   auto fill=[&](std::u16string title,std::u16string keyword,std::u16string url){
     replace(shell->provider_input(0),title);replace(shell->provider_input(1),keyword);replace(shell->provider_input(2),url);
@@ -1926,7 +1817,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsEditorsCocoaSnapshotProvi
   fill(u"Wyszukiwarka 🦀",u"zprobe",u"https://provider.test/?q={query}");
   auto* provider=shell->provider_input(0);EXPECT_EQ(shell->workspace_input()->rust_editor(),provider->rust_editor());provider->RequestFocus();provider->SetCompositionText(marked);
   EXPECT_FALSE(shell->HandleToolsEditorKey(provider,enter));
-  save=FindButton(shell->tools_widget()->GetContentsView(),u"Zapisz wyszukiwarkę");ASSERT_TRUE(save);ClickControl(save);base::RunLoop().RunUntilIdle();
+  auto* save=FindButton(shell->tools_widget()->GetContentsView(),u"Zapisz wyszukiwarkę");ASSERT_TRUE(save);ClickControl(save);base::RunLoop().RunUntilIdle();
   EXPECT_EQ(providers,shell->browser_tools().providers.size());provider->ClearCompositionText();auto old_provider=provider->input_client()->AsWeakPtr();
   ASSERT_TRUE(key(ui::VKEY_RETURN));ASSERT_TRUE(base::test::RunUntil([&]{return !old_provider&&shell->browser_tools().providers.size()==providers+1;}));
   EXPECT_TRUE(std::any_of(shell->browser_tools().providers.begin(),shell->browser_tools().providers.end(),[](const auto& value){return value.keyword=="zprobe"&&value.name=="Wyszukiwarka 🦀";}));
@@ -1936,36 +1827,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsEditorsCocoaSnapshotProvi
   shell->OpenTools(2);EXPECT_FALSE(old_provider);
   fill(u"Wrong new form",u"zwrong",u"https://provider.test/?q={query}");base::RunLoop().RunUntilIdle();
   EXPECT_EQ(providers+1,shell->browser_tools().providers.size());
-  shell->OpenTools(0);name=shell->snapshot_input();replace(name,u"Old queued snapshot");ASSERT_TRUE(name->view()->OnKeyPressed(enter));
-  ASSERT_TRUE(window_->Select("personal"));shell->OpenTools(0);replace(shell->snapshot_input(),u"Wrong profile snapshot");base::RunLoop().RunUntilIdle();
-  auto absent=[](const auto& values){return std::none_of(values.begin(),values.end(),[](const auto& value){return value.title==u"Old queued snapshot"||value.title==u"Wrong profile snapshot";});};
-  EXPECT_TRUE(absent(window_->TimeMachine().snapshots));ASSERT_TRUE(window_->Select("work"));EXPECT_TRUE(absent(window_->TimeMachine().snapshots));
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_saved()&&window_->configuration_saved();}));
 }
 
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, HistoryEditorCommittedQueryDuringPreeditAndReopen) {
-  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));ASSERT_TRUE(window_->Select("work"));
-  auto seed=[](Profile* profile,const char* host,std::u16string title){history::URLRow row(GURL(std::string("https://")+host+"/"));row.set_title(title);row.set_visit_count(1);row.set_last_visit(base::Time::Now()-base::Minutes(1));HistoryServiceFactory::GetForProfile(profile,ServiceAccessType::EXPLICIT_ACCESS)->AddPagesWithDetails({row},history::SOURCE_OS_MIGRATION_IMPORTED);};
-  seed(work_,"alpha.test",u"Alpha");seed(work_,"beta.test",u"Beta");seed(personal_,"private.test",u"Private");
-  shell->OpenTools(3);ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));ASSERT_EQ(2u,shell->history_entries().size());
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));auto* field=shell->history_search();field->RequestFocus();
-  EXPECT_EQ(shell->workspace_input()->rust_editor(),field->rust_editor());
-  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->tools_widget()->GetNativeWindow(),ui::VKEY_A,false,false,false,false));
-  ASSERT_TRUE(base::test::RunUntil([&]{return field->GetText()==u"a";}));
-  field->SelectRange(gfx::Range(0,field->GetText().size()));field->input_client()->InsertText(u"Alpha",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
-  ui::CompositionText marked;marked.text=u"未";marked.selection=gfx::Range(1);field->SetCompositionText(marked);ASSERT_TRUE(field->IsIMEComposing());
-  // The pending 150 ms query uses committed Alpha even while the OS owns preedit.
-  ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));ASSERT_EQ(1u,shell->history_entries().size());EXPECT_EQ(u"Alpha",shell->history_entries()[0].title);
-  const auto profile=window_->workspaces().front().profile_id;
-  shell->SetHistoryResults(std::u16string(field->GetText()),profile,200,{{GURL("https://poison.test/"),u"Preedit poison",base::Time::Now()}},false,false);
-  shell->SetHistoryResults(u"Alpha","wrong-profile",200,{{GURL("https://poison.test/"),u"Profile poison",base::Time::Now()}},false,false);
-  ASSERT_EQ(1u,shell->history_entries().size());EXPECT_EQ(u"Alpha",shell->history_entries()[0].title);field->ClearCompositionText();EXPECT_EQ(u"Alpha",field->GetText());
-  field->SelectRange(gfx::Range(0,field->GetText().size()));field->input_client()->InsertText(u"Beta",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
-  ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));ASSERT_EQ(1u,shell->history_entries().size());EXPECT_EQ(u"Beta",shell->history_entries()[0].title);
-  auto old=field->input_client()->AsWeakPtr();shell->OpenTools(3);EXPECT_FALSE(old);ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));EXPECT_EQ(2u,shell->history_entries().size());
-  ASSERT_TRUE(window_->Select("personal"));shell->OpenTools(3);ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));ASSERT_EQ(1u,shell->history_entries().size());EXPECT_EQ(u"Private",shell->history_entries()[0].title);
-  shell->SetHistoryResults(u"",profile,200,{{GURL("https://poison.test/"),u"Stale profile",base::Time::Now()}},false,false);EXPECT_EQ(u"Private",shell->history_entries()[0].title);
-}
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ShortcutEditorCocoaRecorderAdmissionAndCancel) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));shell->OpenTools(1);ui_controls::EnableUIControls();
@@ -1983,53 +1847,230 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ShortcutEditorCocoaRecorderAdm
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_saved();}));
 }
 
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, TimeMachineSnapshotsClosedTabsAndSleep) {
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, TimeMachineRestoresMomentsClosedTabsAndSleep) {
+  timeline_clock_.SetNow(base::Time::Now());
+  window_->SetClockForTesting(&timeline_clock_);
   ASSERT_TRUE(window_->Select("work"));
   const auto left = embedded_test_server()->GetURL("/storage_probe.html?left");
   const auto right = embedded_test_server()->GetURL("/storage_probe.html?right");
   ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), left));
   ASSERT_TRUE(window_->NavigateFromBar(right, true));
   ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
-  window_->SelectTab(0); ASSERT_TRUE(window_->SplitTab(1)); window_->SetSplitRatio(0.63);
+  window_->SelectTab(0); ASSERT_TRUE(window_->SplitTab(1));
   ASSERT_TRUE(window_->SaveSnapshot("Research"));
-  const auto snapshot = window_->TimeMachine().snapshots.front().id;
+  const int64_t research = window_->Now().InMillisecondsSinceUnixEpoch();
+  timeline_clock_.Advance(base::Minutes(5));
+  const auto marks = window_->timeline_marks_for_testing();
+  ASSERT_FALSE(marks.empty()); EXPECT_EQ("Research", marks.back());
+  // Closing records the state first: the closed tab is on the timeline.
   window_->CloseTab(0);
   EXPECT_FALSE(window_->split());
-  EXPECT_FALSE(window_->TimeMachine().closed.empty());
   ASSERT_TRUE(window_->ReopenClosedTab());
   EXPECT_EQ(2u, window_->tab_count("work"));
-  ASSERT_TRUE(window_->RestoreSnapshot(snapshot));
-  EXPECT_TRUE(window_->split()); EXPECT_DOUBLE_EQ(0.63, window_->split_ratio());
-  ASSERT_TRUE(content::WaitForLoadStop(window_->pane_contents(false)));
-  EXPECT_EQ(left, window_->pane_contents(false)->GetLastCommittedURL());
-  ASSERT_TRUE(content::WaitForLoadStop(window_->pane_contents(true)));
-  EXPECT_EQ(right, window_->pane_contents(true)->GetLastCommittedURL());
-  EXPECT_GE(window_->TimeMachine().snapshots.size(), 2u);  // Undo point before restore.
+  window_->CloseTab(0); window_->CloseTab(0);
+  EXPECT_EQ(1u, window_->tab_count("work"));
+  // The moment brings back both pages; the state before it is the undo point.
+  const auto moment = window_->timeline_moment_for_testing("work", research, 0);
+  ASSERT_EQ(2u, moment.urls.size());
+  EXPECT_EQ(left.spec(), moment.urls[0]);
+  ASSERT_TRUE(window_->RestoreTimeline(research, 0));
+  EXPECT_EQ(2u, window_->tab_count("work"));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  const auto shown = window_->contents("work")->GetLastCommittedURL();
+  EXPECT_TRUE(shown == left || shown == right) << shown;
+  EXPECT_FALSE(window_->RestoreTimeline(research - 24 * 60 * 60 * 1000, 0));  // Nothing recorded then.
   ASSERT_TRUE(window_->SleepWorkspace("work"));
   EXPECT_EQ("personal", window_->active_id());
   EXPECT_TRUE(window_->workspace_sleeping("work"));
   EXPECT_EQ(nullptr, window_->contents("work"));  // WebContents actually released.
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
   window_.reset(); window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+  window_->SetClockForTesting(&timeline_clock_);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
   EXPECT_TRUE(window_->workspace_sleeping("work"));
-  EXPECT_EQ(nullptr, window_->contents("work"));
+  // The timeline survives the restart: the moment and its mark are still there.
+  EXPECT_EQ(2u, window_->timeline_moment_for_testing("work", research, 0).urls.size());
+  EXPECT_FALSE(window_->timeline_marks_for_testing().empty());
   ASSERT_TRUE(window_->Select("work"));
-  EXPECT_FALSE(window_->workspace_sleeping("work")); EXPECT_TRUE(window_->split());
-  EXPECT_DOUBLE_EQ(0.63, window_->split_ratio());
-  ASSERT_TRUE(content::WaitForLoadStop(window_->pane_contents(false)));
-  EXPECT_EQ(left, window_->pane_contents(false)->GetLastCommittedURL());
-  EXPECT_EQ(work_, window_->pane_contents(false)->GetBrowserContext());
-  ASSERT_TRUE(window_->RestoreSnapshot(snapshot));
-  ASSERT_TRUE(window_->DeleteSnapshot(snapshot));
-  EXPECT_FALSE(window_->RestoreSnapshot(snapshot));
-  window_->shell()->OpenTools(0);
-  EXPECT_TRUE(window_->shell()->tools_widget()->IsVisible());
-  auto* selection = window_->shell()->tools_selection();
-  ui::AXNodeData node;
-  selection->GetViewAccessibility().GetAccessibleNodeData(&node);
-  EXPECT_EQ(base::UTF16ToUTF8(window_->shell()->tools_choice_label_for_testing("selection",window_->shell()->tools_choice_selection_for_testing("selection").value_or(0))),
-      node.GetStringAttribute(ax::mojom::StringAttribute::kValue));
+  EXPECT_FALSE(window_->workspace_sleeping("work"));
+  ASSERT_TRUE(window_->RestoreTimeline(research, 0));
+  EXPECT_EQ(2u, window_->tab_count("work"));
+  EXPECT_EQ(work_, window_->contents("work")->GetBrowserContext());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CloseOtherTabsKeepsSelectionAndRecordsThem) {
+  ASSERT_TRUE(window_->Select("work"));
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->tools_ready(); }));
+  const auto shortcut = std::find_if(shell->browser_tools().shortcuts.begin(), shell->browser_tools().shortcuts.end(),
+      [](const auto& item) { return item.id == "close_other_tabs"; });
+  ASSERT_NE(shell->browser_tools().shortcuts.end(), shortcut);
+  EXPECT_EQ(ui::VKEY_K, shortcut->accelerator.key_code());
+  EXPECT_TRUE(shortcut->accelerator.IsShiftDown());
+  const auto a = embedded_test_server()->GetURL("/storage_probe.html?a");
+  const auto b = embedded_test_server()->GetURL("/storage_probe.html?b");
+  const auto c = embedded_test_server()->GetURL("/storage_probe.html?c");
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), a));
+  ASSERT_TRUE(window_->NavigateFromBar(b, true)); ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  ASSERT_TRUE(window_->NavigateFromBar(c, true)); ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  window_->SelectTab(1);
+  ASSERT_EQ(3u, window_->tab_count("work"));
+  ASSERT_TRUE(window_->RunShortcut("close_other_tabs"));
+  ASSERT_EQ(1u, window_->tab_count("work"));
+  EXPECT_EQ(b, window_->contents("work")->GetLastCommittedURL());
+  // The toast's undo puts both back in their places; the kept tab stays live.
+  ASSERT_TRUE(shell->toast_widget()->IsVisible());
+  auto* kept = window_->contents("work");
+  shell->UndoToast();
+  ASSERT_EQ(3u, window_->tab_count("work"));
+  EXPECT_EQ(kept, window_->contents("work"));
+  window_->SelectTab(0); ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  EXPECT_EQ(a, window_->contents("work")->GetLastCommittedURL());
+  window_->SelectTab(2); ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  EXPECT_EQ(c, window_->contents("work")->GetLastCommittedURL());
+  EXPECT_FALSE(window_->ReopenClosedTab());  // Undo also took them off Cmd+Shift+T's list.
+  // Closed again, both come back with Cmd+Shift+T.
+  window_->SelectTab(1);
+  ASSERT_TRUE(window_->RunShortcut("close_other_tabs"));
+  ASSERT_EQ(1u, window_->tab_count("work"));
+  EXPECT_FALSE(window_->RunShortcut("close_other_tabs"));  // Nothing left to close.
+  ASSERT_TRUE(window_->ReopenClosedTab()); ASSERT_TRUE(window_->ReopenClosedTab());
+  EXPECT_EQ(3u, window_->tab_count("work"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, TimeMachineViewScrubsDeckAndRestores) {
+  timeline_clock_.SetNow(base::Time::Now() - base::Hours(3));
+  window_->SetClockForTesting(&timeline_clock_);
+  ASSERT_TRUE(window_->Select("work"));
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  const auto a = embedded_test_server()->GetURL("/storage_probe.html?a");
+  const auto b = embedded_test_server()->GetURL("/storage_probe.html?b");
+  const auto c = embedded_test_server()->GetURL("/storage_probe.html?c");
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), a));
+  ASSERT_TRUE(window_->NavigateFromBar(b, true));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  window_->RecordActiveTimeline();
+  const int64_t earlier = window_->Now().InMillisecondsSinceUnixEpoch();
+  // Two hours later only c is open.
+  timeline_clock_.Advance(base::Hours(2));
+  ASSERT_TRUE(window_->NavigateFromBar(c, true));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  window_->CloseTab(0); window_->CloseTab(0);
+  ASSERT_EQ(1u, window_->tab_count("work"));
+  window_->RecordActiveTimeline();
+  timeline_clock_.Advance(base::Minutes(1));
+
+  // Cmd+Shift+Y opens the view at now. The deck holds every tab of the last hour,
+  // the closed a and b included (closing recorded them first).
+  ASSERT_TRUE(window_->RunShortcut("timeline"));
+  ASSERT_TRUE(shell->time_machine_visible());
+  auto* view = shell->time_machine_for_testing();
+  ASSERT_TRUE(view);
+  const int64_t now = window_->Now().InMillisecondsSinceUnixEpoch();
+  EXPECT_EQ(now, view->moment());
+  const auto latest = window_->timeline_moment_for_testing("work", now, TimeMachineView::kQuantumMs);
+  EXPECT_EQ(latest.urls.size(), view->card_count_for_testing());
+  EXPECT_GE(latest.urls.size(), 3u);
+  EXPECT_EQ(1u, latest.open);
+  auto* axis = view->axis_for_testing();
+  EXPECT_TRUE(axis->HasFocus());
+  ui::AXNodeData ax; axis->GetViewAccessibility().GetAccessibleNodeData(&ax);
+  EXPECT_EQ(ax::mojom::Role::kSlider, ax.role);
+  // Shift+Left jumps between changes; an hour before that frame both tabs were open.
+  auto press = [&](ui::KeyboardCode code, int flags) {
+    ui::KeyEvent event(ui::EventType::kKeyPressed, code, flags); return axis->OnKeyPressed(event);
+  };
+  ASSERT_TRUE(press(ui::VKEY_LEFT, ui::EF_SHIFT_DOWN));
+  ASSERT_TRUE(press(ui::VKEY_LEFT, ui::EF_SHIFT_DOWN));
+  EXPECT_LE(view->moment(), earlier);
+  view->SetMoment(earlier, false);
+  const size_t before = window_->timeline_moment_for_testing("work", earlier, TimeMachineView::kQuantumMs).urls.size();
+  EXPECT_GE(before, 2u);
+  EXPECT_EQ(before, view->card_count_for_testing());
+  if (before == 2) EXPECT_EQ(u"Przywróć 2 karty", view->restore_label_for_testing());
+  // The card drawn under the pointer turns to the front; leaving brings back the active one.
+  ASSERT_TRUE(base::test::RunUntil([&] { return !view->animating_for_testing(); }));
+  auto* deck = view->deck_for_testing();
+  const int active = view->front_card_for_testing();
+  const int middle = deck->height() / 2;
+  int target = -1; gfx::Point other;
+  for (int x = 0; x < deck->width() && target < 0; x += 4) {
+    const int hit = view->CardAt(gfx::Point(x, deck->y() + middle));
+    if (hit >= 0 && hit != active) { target = hit; other = gfx::Point(x, middle); }
+  }
+  ASSERT_GE(target, 0);
+  EXPECT_EQ(active, view->CardAt(gfx::Point(deck->width() / 2, deck->y() + middle)));
+  deck->OnMouseMoved(ui::MouseEvent(ui::EventType::kMouseMoved, other, other, base::TimeTicks(), 0, 0));
+  EXPECT_EQ(target, view->front_card_for_testing());
+  // The turn runs on springs stepped every frame and comes to rest by itself.
+  if (!gfx::Animation::PrefersReducedMotion()) {
+    EXPECT_TRUE(view->animating_for_testing());
+    ASSERT_TRUE(base::test::RunUntil([&] { return !view->animating_for_testing(); }));
+  }
+  // The pointer has not moved: what the turn uncovered under it does not take over.
+  deck->OnMouseMoved(ui::MouseEvent(ui::EventType::kMouseMoved, other, other, base::TimeTicks(), 0, 0));
+  EXPECT_EQ(target, view->front_card_for_testing());
+  deck->OnMouseExited(ui::MouseEvent(ui::EventType::kMouseExited, other, other, base::TimeTicks(), 0, 0));
+  EXPECT_EQ(active, view->front_card_for_testing());
+  ASSERT_TRUE(press(ui::VKEY_LEFT, 0));
+  EXPECT_EQ(earlier - 5 * 60 * 1000, view->moment());
+  // Return restores the hour's tabs, closes the view and offers undo.
+  view->SetMoment(earlier, false);
+  ASSERT_TRUE(press(ui::VKEY_RETURN, 0));
+  EXPECT_FALSE(shell->time_machine_visible());
+  EXPECT_EQ(before, window_->tab_count("work"));
+  ASSERT_TRUE(shell->toast_widget()->IsVisible());
+  shell->UndoToast();
+  EXPECT_EQ(1u, window_->tab_count("work"));
+  // Escape closes the view (CloseOverlays).
+  shell->OpenTimeMachine(); ASSERT_TRUE(shell->time_machine_visible());
+  EXPECT_TRUE(shell->CloseOverlays());
+  EXPECT_FALSE(shell->time_machine_visible());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, TimeMachineSettingsRetentionClearAndHistory) {
+  timeline_clock_.SetNow(base::Time::Now() - base::Days(10));
+  window_->SetClockForTesting(&timeline_clock_);
+  ASSERT_TRUE(window_->Select("work"));
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), embedded_test_server()->GetURL("/storage_probe.html?old")));
+  window_->RecordActiveTimeline();
+  const int64_t old_moment = window_->Now().InMillisecondsSinceUnixEpoch();
+  timeline_clock_.Advance(base::Days(10));
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), embedded_test_server()->GetURL("/storage_probe.html?new")));
+  window_->RecordActiveTimeline();
+  EXPECT_FALSE(window_->timeline_moment_for_testing("work", old_moment, 0).urls.empty());
+  // Seven days of retention drop the ten-day-old frame.
+  shell->SetTimeMachine(true, 7);
+  EXPECT_TRUE(window_->timeline_moment_for_testing("work", old_moment, 0).urls.empty());
+  EXPECT_FALSE(window_->timeline_moment_for_testing("work", window_->Now().InMillisecondsSinceUnixEpoch(), 0).urls.empty());
+  // Off: nothing is recorded, snapshots are refused and the view offers to turn it on.
+  shell->SetTimeMachine(false, 7);
+  const auto frames = window_->timeline_frames_for_testing();
+  timeline_clock_.Advance(base::Minutes(5));
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), embedded_test_server()->GetURL("/storage_probe.html?off")));
+  window_->RecordActiveTimeline();
+  EXPECT_EQ(frames, window_->timeline_frames_for_testing());
+  EXPECT_FALSE(window_->SaveSnapshot("Off"));
+  shell->OpenTimeMachine();
+  EXPECT_EQ(0u, shell->time_machine_for_testing()->card_count_for_testing());
+  shell->CloseOverlays();
+  shell->SetTimeMachine(true, 30);
+  EXPECT_TRUE(shell->time_machine_enabled());
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_saved(); }));
+  // Clearing keeps only now; the toast's undo brings the history back.
+  timeline_clock_.Advance(base::Minutes(5));
+  ASSERT_TRUE(window_->ClearTimeline());
+  EXPECT_LE(window_->timeline_frames_for_testing(), 1u);
+  shell->UndoToast();
+  EXPECT_GE(window_->timeline_frames_for_testing(), frames);
+  // Clearing browsing history clears the profile's timeline for the same period.
+  BrowsingDataSelection selection; selection.period = 3; selection.history = true; selection.cache = false;
+  ASSERT_TRUE(window_->ClearBrowsingData("work-profile", selection));
+  EXPECT_FALSE(window_->timeline_recorded_for_testing("work"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->shell()->browsing_data_busy_for_testing(); }));
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceEditorsCocoaCompositionAndProfileScope) {
@@ -2259,189 +2300,43 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SitePreferenceExceptionsAndIso
   EXPECT_FALSE(window_->contents("work")->IsAudioMuted());
 }
 
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, BrowsingHistoryPanelSearchOpenAndClear) {
+// History is Chromium's own page, opened as a tab of the space on screen and
+// shown again instead of duplicated; the Zitter mark replaces Chromium's logo.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, HistoryShortcutOpensChromiumHistoryPage) {
   ASSERT_TRUE(window_->Select("work"));
-  auto* shell = window_->shell();
-  ASSERT_TRUE(base::test::RunUntil([&] { return shell->tools_ready(); }));
-  const auto recent_url = embedded_test_server()->GetURL("/storage_probe.html?history-recent");
-  const auto older_url = embedded_test_server()->GetURL("/storage_probe.html?history-older");
-  const auto private_url = embedded_test_server()->GetURL("/storage_probe.html?history-private");
-  auto seed = [](Profile* profile, GURL url, std::u16string title, base::Time time) {
-    history::URLRow row(url); row.set_title(title); row.set_visit_count(1); row.set_last_visit(time);
-    HistoryServiceFactory::GetForProfile(profile, ServiceAccessType::EXPLICIT_ACCESS)->AddPagesWithDetails(
-        {row}, history::SOURCE_OS_MIGRATION_IMPORTED);
-  };
-  seed(work_, recent_url, u"Recent entry", base::Time::Now() - base::Minutes(10));
-  seed(work_, older_url, u"Older entry", base::Time::Now() - base::Days(2));
-  seed(personal_, private_url, u"Private entry", base::Time::Now() - base::Minutes(10));
-  ASSERT_TRUE(window_->RunShortcut("history"));
-  ASSERT_TRUE(base::test::RunUntil([&] { return shell->history_loaded(); }));
-  ASSERT_TRUE(shell->history_visible());
-  ASSERT_EQ(2u, shell->history_entries().size());
-  EXPECT_EQ(recent_url, shell->history_entries()[0].url);
-  EXPECT_EQ(older_url, shell->history_entries()[1].url);
-  auto search = [&](std::u16string text) {
-    auto* field=shell->history_search();const gfx::Range range(0,field->GetText().size());field->SelectRange(range);
-    if(text.empty())field->input_client()->DeleteRange(range);
-    else field->input_client()->InsertText(text,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
-    EXPECT_TRUE(base::test::RunUntil([&] { return shell->history_loaded(); }));
-  };
-  search(u"nothing-matches-8372");
-  EXPECT_TRUE(shell->history_entries().empty());
-  search(u"Recent entry");
-  ASSERT_EQ(1u, shell->history_entries().size());
   const auto tabs = window_->tab_count("work");
-  auto* row=shell->history_results_view()->children()[0].get();
-  ASSERT_TRUE(row);
-  ActivateSidebarRow(row);
-  ASSERT_TRUE(base::test::RunUntil([&] { return !shell->history_visible() && window_->tab_count("work") == tabs + 1; }));
-  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
-  EXPECT_EQ(recent_url, window_->contents("work")->GetLastCommittedURL());
   ASSERT_TRUE(window_->RunShortcut("history"));
-  ASSERT_TRUE(base::test::RunUntil([&] { return shell->history_loaded(); }));
-  auto* clear = FindButton(shell->tools_widget()->GetContentsView(), u"Wyczyść historię…");
-  ASSERT_TRUE(clear);
-  ClickControl(clear);
-  ASSERT_TRUE(window_->clear_data_dialog());
-  EXPECT_EQ(static_cast<int>(ui::mojom::DialogButton::kCancel),
-      window_->clear_data_dialog()->widget_delegate()->AsDialogDelegate()->GetDefaultDialogButton());
-  EXPECT_TRUE(display::Screen::Get()->GetDisplayNearestWindow(shell->tools_widget()->GetNativeWindow()).work_area().Contains(
-      window_->clear_data_dialog()->GetWindowBoundsInScreen()));
-  window_->clear_data_dialog()->widget_delegate()->AsDialogDelegate()->CancelDialog();
-  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->clear_data_dialog(); }));
-  EXPECT_FALSE(window_->clearing_browsing_data());
-  ClickControl(clear);
-  ASSERT_TRUE(window_->clear_data_dialog());
-  window_->clear_data_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
-  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->clearing_browsing_data() && shell->history_loaded(); }));
-  ASSERT_EQ(1u, shell->history_entries().size());
-  EXPECT_EQ(older_url, shell->history_entries()[0].url);
-  // The other profile retains its independent history.
+  ASSERT_EQ(tabs + 1, window_->tab_count("work"));
+  auto* page = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(page));
+  EXPECT_EQ(GURL("chrome://history/"), page->GetLastCommittedURL());
+  EXPECT_EQ(work_, Profile::FromBrowserContext(page->GetBrowserContext()));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return content::EvalJs(page, R"(
+        (() => {
+          const toolbar = document.querySelector('history-app')?.shadowRoot
+              ?.querySelector('history-toolbar')?.shadowRoot?.querySelector('cr-toolbar');
+          const logo = toolbar?.querySelector('picture[slot="product-logo"] img');
+          return !!logo && logo.src.startsWith('data:image/svg+xml;base64,') &&
+              logo.parentElement.assignedSlot?.name === 'product-logo' && logo.complete && logo.naturalWidth > 0 &&
+              // Like Chromium's logo, it is 24 px and hidden while the toolbar is narrow.
+              logo.getBoundingClientRect().width === (toolbar.hasAttribute('narrow') ? 0 : 24);
+        })())").ExtractBool();
+  }));
+  window_->SelectTab(0);
+  ASSERT_NE(page, window_->contents("work"));
+  ASSERT_TRUE(window_->RunShortcut("history"));
+  EXPECT_EQ(tabs + 1, window_->tab_count("work"));
+  EXPECT_EQ(page, window_->contents("work"));
   ASSERT_TRUE(window_->Select("personal"));
+  const auto personal_tabs = window_->tab_count("personal");
   ASSERT_TRUE(window_->RunShortcut("history"));
-  ASSERT_TRUE(base::test::RunUntil([&] { return shell->history_loaded(); }));
-  ASSERT_EQ(1u, shell->history_entries().size());
-  EXPECT_EQ(private_url, shell->history_entries()[0].url);
-  // All time clears only this profile and updates the open list.
-  shell->ActivateToolsChoiceForTesting("history_period",3);
-  clear = FindButton(shell->tools_widget()->GetContentsView(), u"Wyczyść historię…");
-  ASSERT_TRUE(clear);
-  ClickControl(clear);
-  ASSERT_TRUE(window_->clear_data_dialog());
-  window_->clear_data_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
-  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->clearing_browsing_data() && shell->history_loaded(); }));
-  EXPECT_TRUE(shell->history_entries().empty());
+  ASSERT_EQ(personal_tabs + 1, window_->tab_count("personal"));
+  EXPECT_EQ(personal_, Profile::FromBrowserContext(window_->contents("personal")->GetBrowserContext()));
 }
 
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, HistoryRowsCocoaKeyboardAccessibilityAndURLFallback) {
-  ASSERT_TRUE(window_->Select("work"));auto* shell=window_->shell();
-  ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));
-  const auto target=embedded_test_server()->GetURL("/storage_probe.html?history-row-keyboard");
-  const GURL fallback("https://history-fallback.test/empty-title");
-  history::URLRow first(target);first.set_title(u"Wpis 🦀 אבג");first.set_visit_count(1);first.set_last_visit(base::Time::Now());
-  history::URLRow second(fallback);second.set_visit_count(1);second.set_last_visit(base::Time::Now()-base::Minutes(1));
-  HistoryServiceFactory::GetForProfile(work_,ServiceAccessType::EXPLICIT_ACCESS)->AddPagesWithDetails({first,second},history::SOURCE_OS_MIGRATION_IMPORTED);
-  shell->OpenTools(3);ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));
-  ASSERT_EQ(2u,shell->history_entries().size());auto* list=shell->history_results_view();ASSERT_EQ(2u,list->children().size());
-  const bool rust=shell->workspace_input()->rust_editor();
-  for(size_t i=0;i<2;++i){auto* row=list->children()[i].get();ASSERT_TRUE(row);ui::AXNodeData ax;row->GetViewAccessibility().GetAccessibleNodeData(&ax);
-    const auto& entry=shell->history_entries()[i];const auto title=entry.title.empty()?base::UTF8ToUTF16(entry.url.spec()):entry.title;
-    EXPECT_EQ(ax::mojom::Role::kButton,ax.role);EXPECT_EQ(base::UTF8ToUTF16(entry.url.spec()),ax.GetString16Attribute(ax::mojom::StringAttribute::kName));
-    EXPECT_NE(std::u16string::npos,ax.GetString16Attribute(ax::mojom::StringAttribute::kDescription).find(base::UTF8ToUTF16(entry.url.spec())));
-    EXPECT_EQ(60,row->height());EXPECT_EQ(list->width(),row->width());EXPECT_EQ(static_cast<int>(i)*64,row->y());
-    EXPECT_EQ(!rust,views::AsViewClass<views::Button>(row)!=nullptr);if(rust)EXPECT_TRUE(row->children().empty());else{size_t labels=0;bool primary=false;for(const auto& child:row->children())if(auto* label=views::AsViewClass<views::Label>(child)){++labels;primary|=label->GetText()==title;}EXPECT_EQ(2u,labels);EXPECT_TRUE(primary);}
-  }
-  auto* row=list->children()[0].get();ASSERT_TRUE(row);
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));
-  row->ScrollRectToVisible(row->GetLocalBounds());row->RequestFocus();ASSERT_TRUE(row->HasFocus());
-  base::test::TestFuture<void> presented;auto* compositor=shell->tools_widget()->GetCompositor();ASSERT_TRUE(compositor);shell->tools_widget()->GetRootView()->SchedulePaint();
-  compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
-  if(rust)if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_contains_text_for_testing("Wpis 🦀 אבג");}));
-  const auto tabs=window_->tab_count("work");ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->tools_widget()->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));
-  ASSERT_TRUE(base::test::RunUntil([&]{return !shell->history_visible()&&window_->tab_count("work")==tabs+1;}));
-  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));EXPECT_EQ(target,window_->contents("work")->GetLastCommittedURL());
-}
 
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsFormHistoryAdmissionErrorRecoveryAndPageReset) {
-  ASSERT_TRUE(window_->Select("work"));
-  auto* shell=window_->shell();
-  ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));
-  const auto profile=window_->workspaces().front().profile_id;
-  shell->OpenTools(3);
-  ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));
-  // A service failure is a completed response; wrong query/limit/profile cannot
-  // replace it, even if those results contain otherwise valid rows.
-  shell->SetHistoryResults(u"",profile,200,{},false,true);
-  ASSERT_TRUE(shell->history_loaded());ASSERT_TRUE(shell->history_entries().empty());
-  const std::vector<BrowsingHistoryEntry> poison={{GURL("https://stale.test/"),u"Stale",base::Time::Now()}};
-  shell->SetHistoryResults(u"",profile,400,poison,true,false);
-  shell->SetHistoryResults(u"older",profile,200,poison,true,false);
-  shell->SetHistoryResults(u"","other-profile",200,poison,true,false);
-  EXPECT_TRUE(shell->history_loaded());EXPECT_TRUE(shell->history_entries().empty());
-  auto* field=shell->history_search();ASSERT_TRUE(field);
-  field->RequestFocus();field->SelectRange(gfx::Range(0,field->GetText().size()));
-  field->input_client()->InsertText(u"  Nowe 🦀 אבג  ",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
-  EXPECT_FALSE(shell->history_loaded());
-  shell->SetHistoryResults(u"",profile,200,poison,true,false);
-  EXPECT_FALSE(shell->history_loaded());EXPECT_TRUE(shell->history_entries().empty());
-  ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));
-  shell->SetHistoryResults(u"Nowe 🦀 אבג",profile,200,
-      {{GURL("https://current.test/"),u"Current",base::Time::Now()}},false,false);
-  ASSERT_EQ(1u,shell->history_entries().size());EXPECT_EQ(u"Current",shell->history_entries()[0].title);
-  shell->OpenTools(0);EXPECT_FALSE(shell->history_visible());
-  shell->SetHistoryResults(u"Nowe 🦀 אבג",profile,200,poison,true,false);
-  EXPECT_FALSE(shell->history_loaded());EXPECT_TRUE(shell->history_entries().empty());
-  // Page clamping and reconstruction reset committed queries, matching Views.
-  shell->OpenTools(99);ASSERT_TRUE(shell->history_visible());
-  ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));
-  EXPECT_TRUE(shell->history_search()->GetText().empty());
-  shell->SetHistoryResults(u"",profile,200,{},false,true);
-  shell->SetHistoryResults(u"Nowe 🦀 אבג",profile,200,poison,true,false);
-  EXPECT_TRUE(shell->history_entries().empty());EXPECT_TRUE(shell->history_loaded());
-  shell->OpenTools(-1);EXPECT_FALSE(shell->history_visible());
-  EXPECT_TRUE(shell->tools_selection());
-}
 
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, BrowsingHistoryPaginationAndStaleSearch) {
-  ASSERT_TRUE(window_->Select("work"));
-  auto* shell = window_->shell();
-  ASSERT_TRUE(base::test::RunUntil([&] { return shell->tools_ready(); }));
-  history::URLRows rows;
-  for (int i = 0; i < 205; ++i) {
-    history::URLRow row(GURL("https://history.test/" + std::to_string(i)));
-    row.set_title(u"Paged history"); row.set_visit_count(1);
-    row.set_last_visit(base::Time::Now() - base::Minutes(i + 1));
-    rows.push_back(row);
-  }
-  HistoryServiceFactory::GetForProfile(work_, ServiceAccessType::EXPLICIT_ACCESS)->AddPagesWithDetails(
-      rows, history::SOURCE_OS_MIGRATION_IMPORTED);
-  shell->OpenTools(3);
-  ASSERT_TRUE(base::test::RunUntil([&] { return shell->history_loaded(); }));
-  ASSERT_EQ(200u, shell->history_entries().size());
-  auto* more = FindButton(shell->tools_widget()->GetContentsView(), u"Pokaż więcej");
-  ASSERT_TRUE(more);
-  EXPECT_TRUE(more->GetVisible());
-  const bool rust=shell->workspace_input()->rust_editor();EXPECT_EQ(rust,!views::AsViewClass<views::MdTextButton>(more));if(rust)EXPECT_EQ(8u,shell->control_model_kind_for_testing(more));
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));
-  base::test::TestFuture<void> presented;auto* compositor=shell->tools_widget()->GetCompositor();ASSERT_TRUE(compositor);
-  compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
-  more->ScrollRectToVisible(more->GetLocalBounds());
-  if(rust)if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_actions_contains_scene_text_for_testing("Pokaż więcej");}));
-  more->RequestFocus();ASSERT_TRUE(more->HasFocus());
-  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->tools_widget()->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));
-  ASSERT_TRUE(base::test::RunUntil([&] { return shell->history_loaded(); }));
-  EXPECT_EQ(205u, shell->history_entries().size());
-  EXPECT_FALSE(more->GetVisible());if(rust)EXPECT_FALSE(more->parent()->GetVisible());
-  // Old results cannot replace a newer search, even with the same profile.
-  window_->QueryBrowsingHistory(u"Paged", 400);
-  auto* field=shell->history_search();field->SelectRange(gfx::Range(0,field->GetText().size()));
-  field->input_client()->InsertText(u"no-results",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
-  ASSERT_TRUE(base::test::RunUntil([&] { return shell->history_loaded(); }));
-  EXPECT_TRUE(shell->history_entries().empty());
-  shell->SetHistoryResults(u"Paged", window_->workspaces()[0].profile_id, 400,
-      {{GURL("https://history.test/stale"), u"Stale", base::Time::Now()}}, false, false);
-  EXPECT_TRUE(shell->history_entries().empty());
-}
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ClearBrowsingDataConfirmationAndScope) {
   ASSERT_NO_FATAL_FAILURE(NavigateBoth());
@@ -2562,8 +2457,14 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceCatalogueRowsOrderCo
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceCatalogueToolsRoutes) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
-  const std::vector<std::pair<std::u16string,int>> routes={{u"Time Machine przestrzeni",0},{u"Skróty klawiszowe",1},{u"Wyszukiwarki i prefiksy",2},{u"Historia przeglądania",3}};
-  for(const auto& [title,page]:routes){SCOPED_TRACE(page);shell->OpenGeneralSettings();auto* query=shell->preferences_search();query->SelectRange(gfx::Range(0,query->GetText().size()));query->input_client()->InsertText(title,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();auto* button=FindButton(shell->general_widget()->GetContentsView(),title);ASSERT_TRUE(button&&button->IsDrawn());ClickControl(button);ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_widget()->IsVisible();}));EXPECT_FALSE(shell->general_widget()->IsVisible());EXPECT_EQ(page==0,shell->snapshot_input()!=nullptr);EXPECT_EQ(page==1,shell->shortcut_input()!=nullptr);EXPECT_EQ(page==2,shell->provider_input(0)!=nullptr);EXPECT_EQ(page==3,shell->history_visible());}
+  const std::vector<std::pair<std::u16string,int>> routes={{u"Time Machine przestrzeni",0},{u"Skróty klawiszowe",1},{u"Wyszukiwarki i prefiksy",2}};
+  for(const auto& [title,page]:routes){SCOPED_TRACE(page);shell->OpenGeneralSettings();auto* query=shell->preferences_search();query->SelectRange(gfx::Range(0,query->GetText().size()));query->input_client()->InsertText(title,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();auto* button=FindButton(shell->general_widget()->GetContentsView(),title);ASSERT_TRUE(button&&button->IsDrawn());ClickControl(button);ASSERT_TRUE(base::test::RunUntil([&]{return page==0?shell->time_machine_visible():shell->tools_widget()->IsVisible();}));EXPECT_FALSE(shell->general_widget()->IsVisible());if(page==0){EXPECT_FALSE(shell->tools_widget()->IsVisible());shell->CloseOverlays();EXPECT_FALSE(shell->time_machine_visible());continue;}EXPECT_EQ(page==1,shell->shortcut_input()!=nullptr);EXPECT_EQ(page==2,shell->provider_input(0)!=nullptr);}
+  // Its History row opens Chromium's History page in the space on screen.
+  ASSERT_TRUE(window_->Select("work"));const auto tabs=window_->tab_count("work");
+  shell->OpenGeneralSettings();auto* query=shell->preferences_search();query->SelectRange(gfx::Range(0,query->GetText().size()));query->input_client()->InsertText(u"Historia przeglądania",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();
+  auto* history=FindButton(shell->general_widget()->GetContentsView(),u"Historia przeglądania");ASSERT_TRUE(history&&history->IsDrawn());ClickControl(history);
+  ASSERT_TRUE(base::test::RunUntil([&]{return window_->tab_count("work")==tabs+1;}));EXPECT_FALSE(shell->general_widget()->IsVisible());EXPECT_FALSE(shell->tools_widget()->IsVisible());
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));EXPECT_EQ(GURL("chrome://history/"),window_->contents("work")->GetLastCommittedURL());
 }
 
 // Add deterministic overflow without inflating the native window minimum.
@@ -2983,6 +2884,33 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PeekToolbarActionsNavigateProm
   close->HandleAccessibleAction(activate);ASSERT_TRUE(base::test::RunUntil([&]{return !window_->peek_contents();}));
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CmdClickOpensBackgroundTabWithToast) {
+  const auto source_url = embedded_test_server()->GetURL("/links_probe.html");
+  const auto target = embedded_test_server()->GetURL("/storage_probe.html?peek");
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), source_url));
+  auto* source = window_->contents("work");
+  content::SimulateEndOfPaintHoldingOnPrimaryMainFrame(source);
+#if BUILDFLAG(IS_MAC)
+  constexpr int modifier = blink::WebInputEvent::kMetaKey;
+#else
+  constexpr int modifier = blink::WebInputEvent::kControlKey;
+#endif
+  const size_t tabs = window_->tab_count("work");
+  content::SimulateMouseClickAt(source, modifier, blink::WebMouseEvent::Button::kLeft,
+      gfx::ToRoundedPoint(content::GetCenterCoordinatesOfElementWithId(source, "peek")));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->tab_count("work") == tabs + 1; }));
+  EXPECT_EQ(nullptr, window_->peek_contents());           // No mini window any more.
+  EXPECT_EQ(source, window_->contents("work"));           // The page stays in front.
+  auto* shell = window_->shell();
+  ASSERT_TRUE(shell->toast_widget()->IsVisible());
+  // The toast's Pokaż switches to the new tab, which loaded in the background.
+  shell->UndoToast();
+  ASSERT_NE(source, window_->contents("work"));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  EXPECT_EQ(target, window_->contents("work")->GetLastCommittedURL());
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PeekLifecycleAndPromotion) {
   const auto source_url = embedded_test_server()->GetURL("/links_probe.html");
   const auto target = embedded_test_server()->GetURL("/storage_probe.html?peek");
@@ -2990,14 +2918,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PeekLifecycleAndPromotion) {
   auto* source = window_->contents("work");
   ASSERT_TRUE(content::ExecJs(source, "document.getElementById('marker').value = 'source kept'"));
   content::SimulateEndOfPaintHoldingOnPrimaryMainFrame(source);
-#if BUILDFLAG(IS_MAC)
-  constexpr int modifier = blink::WebInputEvent::kMetaKey;
-#else
-  constexpr int modifier = blink::WebInputEvent::kControlKey;
-#endif
-  content::SimulateMouseClickAt(source, modifier, blink::WebMouseEvent::Button::kLeft,
-      gfx::ToRoundedPoint(content::GetCenterCoordinatesOfElementWithId(source, "peek")));
-  ASSERT_TRUE(base::test::RunUntil([&] { return window_->peek_contents() != nullptr; }));
+  // Cmd+click opens a background tab (CmdClickOpensBackgroundTabWithToast); Peek
+  // still opens from the link menu.
+  ASSERT_TRUE(window_->OpenPeek(target));
   auto* peek = window_->peek_contents();
   ASSERT_TRUE(content::WaitForLoadStop(peek));
   EXPECT_EQ(target, peek->GetLastCommittedURL());
@@ -3494,7 +3417,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, BeforeUnloadCloseAndAtomicRest
   auto* first = window_->contents("work");
   ASSERT_TRUE(content::NavigateToURL(first, url));
   ASSERT_TRUE(window_->SaveSnapshot("Before dirty pages"));
-  const auto snapshot = window_->TimeMachine().snapshots.front().id;
+  const int64_t snapshot = window_->Now().InMillisecondsSinceUnixEpoch();
   ASSERT_TRUE(window_->NavigateFromBar(url, true));
   auto* second = window_->contents("work");
   ASSERT_TRUE(content::WaitForLoadStop(second));
@@ -3506,7 +3429,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, BeforeUnloadCloseAndAtomicRest
   EXPECT_EQ(2u, window_->tab_count("work"));
   EXPECT_EQ("draft", content::EvalJs(second, "unsaved"));
   window_->SelectTab(0); ArmUnsaved(first); window_->SelectTab(1);
-  EXPECT_TRUE(window_->RestoreSnapshot(snapshot));
+  EXPECT_TRUE(window_->RestoreTimeline(snapshot, 0));
   AnswerUnload(first, true);
   AnswerUnload(second, false);
   ASSERT_TRUE(base::test::RunUntil([&] { return !window_->lifecycle_pending(); }));
@@ -3525,11 +3448,11 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, BeforeUnloadRechecksNewDirtyPa
   ASSERT_TRUE(content::NavigateToURL(first, url));
   content::SimulateMouseClickAt(first, 0, blink::WebMouseEvent::Button::kLeft, gfx::Point(12, 12));
   ASSERT_TRUE(window_->SaveSnapshot("Clean original"));
-  const auto snapshot = window_->TimeMachine().snapshots.front().id;
+  const int64_t snapshot = window_->Now().InMillisecondsSinceUnixEpoch();
   ASSERT_TRUE(window_->NavigateFromBar(url, true));
   auto* second = window_->contents("work");
   ASSERT_TRUE(content::WaitForLoadStop(second)); ArmUnsaved(second);
-  EXPECT_TRUE(window_->RestoreSnapshot(snapshot));
+  EXPECT_TRUE(window_->RestoreTimeline(snapshot, 0));
   auto* second_dialogs = PageDialogs::FromWebContents(second);
   ASSERT_TRUE(base::test::RunUntil([&] { return second_dialogs->dialog() != nullptr; }));
   // First page was clean when preflight skipped it. Its script now becomes dirty.
@@ -3590,15 +3513,16 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, BeforeUnloadPeekAndBackgroundB
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, BeforeUnloadRoutedPeekIsPartOfDiscardPlan) {
   const auto url = embedded_test_server()->GetURL("/storage_probe.html?routed-preview");
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), embedded_test_server()->GetURL("/storage_probe.html?original")));
   ASSERT_TRUE(window_->SaveSnapshot("Original workspace"));
-  const auto snapshot = window_->TimeMachine().snapshots.front().id;
+  const int64_t snapshot = window_->Now().InMillisecondsSinceUnixEpoch();
   ASSERT_TRUE(window_->SetLinkRule(url, "personal"));
   ASSERT_TRUE(window_->OpenPeek(url));
   auto* peek = window_->peek_contents();
   ASSERT_TRUE(content::WaitForLoadStop(peek));
   EXPECT_EQ(personal_.get(), peek->GetBrowserContext());
   ArmUnsaved(peek);
-  EXPECT_TRUE(window_->RestoreSnapshot(snapshot)); AnswerUnload(peek, false);
+  EXPECT_TRUE(window_->RestoreTimeline(snapshot, 0)); AnswerUnload(peek, false);
   ASSERT_TRUE(base::test::RunUntil([&] { return !window_->lifecycle_pending(); }));
   EXPECT_EQ(peek, window_->peek_contents()); EXPECT_EQ("work", window_->active_id());
   EXPECT_TRUE(window_->SleepWorkspace("work")); AnswerUnload(peek, false);
@@ -3625,10 +3549,11 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CommandCenterSearchAndDispatch
   shell->CloseOverlays();
   window_->OpenCommandPalette(); SetPaletteQuery(u"> zapisz snapshot");
   ASSERT_EQ(1u, shell->suggestions().size());
-  const auto before = window_->TimeMachine().snapshots.size();
+  const auto before = window_->timeline_marks_for_testing().size();
   EXPECT_TRUE(shell->address_input()->view()->OnKeyPressed(enter));
-  ASSERT_TRUE(base::test::RunUntil([&] { return window_->TimeMachine().snapshots.size() > before; }));
-  EXPECT_EQ(u"Command Center", window_->TimeMachine().snapshots.front().title);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->timeline_marks_for_testing().size() > before; }));
+  EXPECT_EQ("Command Center", window_->timeline_marks_for_testing().back());
+  EXPECT_TRUE(shell->time_machine_visible());
   shell->CloseOverlays(); window_->OpenCommandPalette(); SetPaletteQuery(u"> no-such-command-xyz");
   EXPECT_TRUE(shell->suggestions().empty());
   EXPECT_TRUE(shell->address_input()->view()->OnKeyPressed(enter));
@@ -4912,43 +4837,10 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ResultRowHostsAddressPaletteAX
 }
 
 // Compile only: native focus/AX and reused callback targets await the bulk checkpoint.
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, HistorySceneReusesRowsAcrossPresentationOrderAndMembership) {
-  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));if(!shell->workspace_input()->rust_editor())return;shell->OpenTools(3);ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));const auto visited=base::Time::Now()-base::Hours(1);std::vector<BrowsingHistoryEntry> entries={{embedded_test_server()->GetURL("/storage_probe.html?scene-a"),u"First",visited},{embedded_test_server()->GetURL("/storage_probe.html?scene-b"),u"Second",visited-base::Minutes(1)}};
-  shell->SetHistoryResults(u"","work-profile",200,entries,false,false);auto* list=shell->history_results_view();ASSERT_EQ(2u,list->children().size());auto* first=list->children()[0].get();auto* second=list->children()[1].get();const auto id=shell->sidebar_node_id_for_testing(first),root=shell->scene_parent_id_for_testing(first);ASSERT_NE(0u,root);EXPECT_EQ(5u,shell->control_model_kind_for_testing(first));EXPECT_EQ(root,shell->scene_parent_id_for_testing(second));first->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);first->ScrollViewToVisible();first->RequestFocus();ASSERT_TRUE(first->HasFocus());
-  shell->SetHistoryResults(u"","work-profile",200,entries,false,false);EXPECT_EQ(first,list->children()[0].get());EXPECT_TRUE(first->HasFocus());entries[0].title=u"Changed 日本語 🦀";shell->SetHistoryResults(u"","work-profile",200,entries,false,false);EXPECT_EQ(first,list->children()[0].get());EXPECT_TRUE(first->HasFocus());ui::AXNodeData ax;first->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(base::UTF8ToUTF16(entries[0].url.spec()),ax.GetString16Attribute(ax::mojom::StringAttribute::kName));EXPECT_FALSE(ax.GetString16Attribute(ax::mojom::StringAttribute::kDescription).empty());
-  std::swap(entries[0],entries[1]);shell->SetHistoryResults(u"","work-profile",200,entries,false,false);EXPECT_EQ(second,list->children()[0].get());EXPECT_EQ(first,list->children()[1].get());EXPECT_EQ(id,shell->sidebar_node_id_for_testing(first));EXPECT_EQ(root,shell->scene_parent_id_for_testing(first));EXPECT_TRUE(first->HasFocus());
-  auto held=second->parent()->RemoveChildViewT(second);entries.erase(entries.begin());shell->SetHistoryResults(u"","work-profile",200,entries,false,false);ASSERT_EQ(1u,list->children().size());EXPECT_EQ(first,list->children()[0].get());EXPECT_EQ(0u,shell->sidebar_node_id_for_testing(held.get()));EXPECT_EQ(0u,shell->scene_parent_id_for_testing(held.get()));EXPECT_EQ(0u,shell->control_model_kind_for_testing(held.get()));ui::KeyEvent space(ui::EventType::kKeyPressed,ui::VKEY_SPACE,0);EXPECT_FALSE(held->OnKeyPressed(space));
-}
 
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, HistorySceneReorderCancelsPressAndKeepsNativeCallbackTarget) {
-  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));if(!shell->workspace_input()->rust_editor())return;shell->OpenTools(3);ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));const auto visited=base::Time::Now()-base::Hours(1);std::vector<BrowsingHistoryEntry> entries={{embedded_test_server()->GetURL("/storage_probe.html?scene-target-a"),u"First",visited},{embedded_test_server()->GetURL("/storage_probe.html?scene-target-b"),u"Second",visited-base::Minutes(1)}};shell->SetHistoryResults(u"","work-profile",200,entries,false,false);auto* list=shell->history_results_view();auto* first=list->children()[0].get();first->ScrollViewToVisible();shell->tools_widget()->LayoutRootViewIfNecessary();const auto tabs=window_->tab_count("work");ui::MouseEvent press(ui::EventType::kMousePressed,gfx::Point(12,12),gfx::Point(12,12),base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ASSERT_TRUE(first->OnMousePressed(press));std::swap(entries[0],entries[1]);shell->SetHistoryResults(u"","work-profile",200,entries,false,false);ASSERT_EQ(first,list->children()[1].get());ui::MouseEvent release(ui::EventType::kMouseReleased,gfx::Point(12,12),gfx::Point(12,12),base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);first->OnMouseReleased(release);base::RunLoop().RunUntilIdle();EXPECT_EQ(tabs,window_->tab_count("work"));EXPECT_TRUE(shell->history_visible());
-  const auto expected=entries[1].url;ActivateSidebarRow(first);ASSERT_TRUE(base::test::RunUntil([&]{return !shell->history_visible()&&window_->tab_count("work")==tabs+1;}));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));EXPECT_EQ(expected,window_->contents("work")->GetLastCommittedURL());
-}
 
 // Runtime deferred: compile this retained-adapter case for the bulk checkpoint.
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, HistoryLogicalNodesSurviveTitleAndOrderRefreshThenRetire) {
-  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));shell->OpenTools(3);ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));
-  const bool rust=shell->workspace_input()->rust_editor();const auto visited=base::Time::Now()-base::Hours(1);
-  std::vector<BrowsingHistoryEntry> entries={{embedded_test_server()->GetURL("/storage_probe.html?history-node-a"),u"First",visited},{embedded_test_server()->GetURL("/storage_probe.html?history-node-b"),u"Second",visited-base::Minutes(1)}};
-  shell->SetHistoryResults(u"","work-profile",200,entries,false,false);auto* list=shell->history_results_view();ASSERT_EQ(2u,list->children().size());auto* first=list->children()[0].get();const auto id=shell->sidebar_node_id_for_testing(first);if(rust)EXPECT_NE(0u,id);else EXPECT_EQ(0u,id);
-  auto held=first->parent()->RemoveChildViewT(first);entries[0].title=u"Updated title";std::swap(entries[0],entries[1]);shell->SetHistoryResults(u"","work-profile",200,entries,false,false);ASSERT_EQ(2u,list->children().size());auto* replacement=list->children()[1].get();EXPECT_EQ(id,shell->sidebar_node_id_for_testing(replacement));
-  if(rust){EXPECT_EQ(0u,shell->sidebar_node_id_for_testing(held.get()));const auto tabs=window_->tab_count("work");ui::KeyEvent space(ui::EventType::kKeyPressed,ui::VKEY_SPACE,0);held->OnKeyPressed(space);base::RunLoop().RunUntilIdle();EXPECT_EQ(tabs,window_->tab_count("work"));}
-  auto held_replacement=replacement->parent()->RemoveChildViewT(replacement);shell->SetHistoryResults(u"","work-profile",200,{},false,false);if(rust)EXPECT_EQ(0u,shell->sidebar_node_id_for_testing(held_replacement.get()));
-  entries.push_back(entries[1]);shell->SetHistoryResults(u"","work-profile",200,entries,false,false);ASSERT_EQ(3u,list->children().size());if(rust){const auto a=shell->sidebar_node_id_for_testing(list->children()[1].get()),b=shell->sidebar_node_id_for_testing(list->children()[2].get());EXPECT_NE(0u,a);EXPECT_NE(a,b);EXPECT_NE(id,a);}
-}
 
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ResultRowHostsHistoryAXClipAndReplacementTarget) {
-  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));const bool rust=shell->workspace_input()->rust_editor();history::URLRows seeds;
-  for(int i=0;i<35;++i){history::URLRow row(embedded_test_server()->GetURL("/storage_probe.html?history-result-"+base::NumberToString(i)));row.set_title(u"Result history 日本語 "+base::NumberToString16(i));row.set_visit_count(1);row.set_last_visit(base::Time::Now()-base::Minutes(i+1));seeds.push_back(row);}HistoryServiceFactory::GetForProfile(work_,ServiceAccessType::EXPLICIT_ACCESS)->AddPagesWithDetails(seeds,history::SOURCE_OS_MIGRATION_IMPORTED);
-  shell->OpenTools(3);ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));ASSERT_EQ(35u,shell->history_entries().size());auto* list=shell->history_results_view();for(const auto& child:list->children()){EXPECT_EQ(!rust,views::AsViewClass<views::Button>(child)!=nullptr);if(rust)EXPECT_TRUE(child->children().empty());}
-  auto* scroll=shell->tools_viewport_for_testing();ASSERT_GT(scroll->maximum(),0);auto* first=list->children().front().get();first->ScrollViewToVisible();const auto tabs=window_->tab_count("work");
-  auto press=[](views::View* row){ui::MouseEvent event(ui::EventType::kMousePressed,gfx::Point(12,12),gfx::Point(12,12),base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);return row->OnMousePressed(event);};auto release=[](views::View* row){ui::MouseEvent event(ui::EventType::kMouseReleased,gfx::Point(12,12),gfx::Point(12,12),base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);row->OnMouseReleased(event);};
-  if(rust){ASSERT_TRUE(press(first));const auto offset=scroll->offset();scroll->ScrollTo(scroll->maximum());EXPECT_TRUE(first->GetVisibleBounds().IsEmpty());scroll->ScrollTo(offset);release(first);base::RunLoop().RunUntilIdle();EXPECT_EQ(tabs,window_->tab_count("work"));EXPECT_TRUE(shell->history_visible());
-    ASSERT_TRUE(press(first));shell->tools_widget()->Hide();shell->tools_widget()->Show();release(first);base::RunLoop().RunUntilIdle();EXPECT_EQ(tabs,window_->tab_count("work"));
-    ASSERT_TRUE(press(first));views::ViewTracker old(first);auto replacement=shell->history_entries();replacement.front().title=u"Replacement history";shell->SetHistoryResults(u"","work-profile",200,replacement,false,false);EXPECT_EQ(first,old.view());EXPECT_EQ(first,list->children().front().get());shell->tools_widget()->LayoutRootViewIfNecessary();release(list->children().front().get());base::RunLoop().RunUntilIdle();EXPECT_EQ(tabs,window_->tab_count("work"));
-  }
-  const auto expected=shell->history_entries().back().url;auto* last=list->children().back().get();ActivateSidebarRow(last);ASSERT_TRUE(base::test::RunUntil([&]{return !shell->history_visible()&&window_->tab_count("work")==tabs+1;}));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));EXPECT_EQ(expected,window_->contents("work")->GetLastCommittedURL());
-}
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarRowHostsOwnershipMenuKeysAXAndTitleUpdate) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
@@ -5739,15 +5631,6 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ArcImportStructureAndPersisten
   EXPECT_EQ(shell->tab_button(1)->parent(), shell->tab_button(0)->parent());
   window_->FocusPane(false);
   EXPECT_EQ(page, window_->contents("arc-space-space-a"));
-  const auto original_pins = window_->pinned_items("arc-space-space-a");
-  ASSERT_TRUE(window_->SaveSnapshot("Imported folders and split"));
-  const auto arc_snapshot = window_->TimeMachine().snapshots.front().id;
-  window_->ToggleSplit();
-  ASSERT_TRUE(window_->RestoreSnapshot(arc_snapshot));
-  EXPECT_EQ(original_pins, window_->pinned_items("arc-space-space-a"));
-  EXPECT_TRUE(window_->split());
-  EXPECT_EQ(shell->tab_button(1)->parent(), shell->tab_button(0)->parent());
-  page = window_->contents("arc-space-space-a");
   window_->ToggleSplit();
   EXPECT_FALSE(shell->tab_button(1));
   ASSERT_TRUE(window_->Select("arc-space-space-b"));
@@ -6490,76 +6373,33 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsChoicesPostedActionsR
   ClickControl(disable);ASSERT_TRUE(base::test::RunUntil([&]{return shell->browser_tools().shortcuts[1].accelerator.key_code()==ui::VKEY_UNKNOWN;}));EXPECT_EQ(shortcuts[0].accelerator,shell->browser_tools().shortcuts[0].accelerator);
 }
 
-IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsTimelinePostedDeleteCannotBorrowFilteredTarget) {
-  ASSERT_TRUE(window_->Select("work"));auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready()&&shell->appearance_ready();}));
-  ASSERT_TRUE(window_->SaveSnapshot("Ticket alpha"));ASSERT_TRUE(window_->SaveSnapshot("Ticket beta"));shell->OpenTools(0);
-  auto filter=[&](std::u16string text){auto* field=shell->timeline_filter_input();field->SelectRange(gfx::Range(0,field->GetText().size()));field->input_client()->InsertText(text,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);};
-  auto has=[&](std::u16string title){const auto state=window_->TimeMachine();return std::any_of(state.snapshots.begin(),state.snapshots.end(),[&](const auto& item){return item.title==title;});};
-  filter(u"Ticket alpha");ASSERT_EQ(1u,shell->tools_choice_count_for_testing("selection"));auto* button=FindButton(shell->tools_widget()->GetContentsView(),u"Usuń wybrany snapshot");ASSERT_TRUE(button);
-  ClickControl(button);
-  // The button posts its command. A newer filter must not lend index zero's
-  // new target to the older click while that command is waiting in the queue.
-  filter(u"Ticket beta");ASSERT_EQ(1u,shell->tools_choice_count_for_testing("selection"));base::RunLoop().RunUntilIdle();EXPECT_TRUE(has(u"Ticket alpha"));EXPECT_TRUE(has(u"Ticket beta"));
-  ClickControl(button);ASSERT_TRUE(base::test::RunUntil([&]{return !has(u"Ticket beta");}));EXPECT_TRUE(has(u"Ticket alpha"));
-}
-
-IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsChromeSharedUnderlayCutoutsScrollingAndHistoryRows) {
+IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsChromeSharedUnderlayCutoutsAndScrolling) {
   ASSERT_TRUE(window_->Select("work"));auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready()&&shell->appearance_ready();}));
   auto inspect=[&]{size_t copies=0;auto visit=[&](auto&& self,views::View* view)->void{if(views::AsViewClass<views::Button>(view))return;ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);if(ax.role==ax::mojom::Role::kTextField)return;EXPECT_FALSE(views::AsViewClass<views::Label>(view));if(ax.role==ax::mojom::Role::kStaticText)++copies;for(const auto& child:view->children())self(self,child.get());};visit(visit,shell->tools_widget()->GetContentsView());EXPECT_GE(copies,3u);};
-  for(int page=0;page<4;++page){shell->OpenTools(page);if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_visible_for_testing()&&shell->tools_chrome_order_correct_for_testing();}))<<shell->tools_chrome_debug_for_testing();inspect();
+  // Page 0 (snapshots) became the Time Machine view.
+  for(int page=1;page<3;++page){shell->OpenTools(page);if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_visible_for_testing()&&shell->tools_chrome_order_correct_for_testing();}))<<shell->tools_chrome_debug_for_testing();inspect();
     if(MetalPresents())EXPECT_TRUE(shell->tools_chrome_excludes_for_testing(shell->tools_close_for_testing()));
-    auto* editor=page==0?shell->snapshot_input():page==1?shell->shortcut_input():page==2?shell->provider_input(0):shell->history_search();editor->view()->ScrollRectToVisible(editor->view()->GetLocalBounds());
+    auto* editor=page==1?shell->shortcut_input():shell->provider_input(0);editor->view()->ScrollRectToVisible(editor->view()->GetLocalBounds());
     if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_excludes_for_testing(editor->view());}));
-    auto* choice=page==3?shell->history_period():shell->tools_selection();choice->ScrollRectToVisible(choice->GetLocalBounds());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_excludes_for_testing(choice);}));
+    auto* choice=shell->tools_selection();choice->ScrollRectToVisible(choice->GetLocalBounds());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_excludes_for_testing(choice);}));
   }
-  shell->OpenTools(0);auto* field=shell->snapshot_input()->view();auto* spacer=field->parent()->AddChildView(std::make_unique<views::View>());spacer->SetPreferredSize(gfx::Size(1,1200));shell->tools_widget()->LayoutRootViewIfNecessary();
+  shell->OpenTools(1);auto* field=shell->shortcut_input()->view();auto* spacer=field->parent()->AddChildView(std::make_unique<views::View>());spacer->SetPreferredSize(gfx::Size(1,1200));shell->tools_widget()->LayoutRootViewIfNecessary();
   base::test::TestFuture<void> presented;auto* compositor=shell->tools_widget()->GetCompositor();ASSERT_TRUE(compositor);compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
   auto* scroll=shell->tools_viewport_for_testing();ASSERT_TRUE(scroll);scroll->ScrollTo(scroll->maximum());
   ASSERT_TRUE(base::test::RunUntil([&]{return field->GetVisibleBounds().IsEmpty();}));
-  if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_contains_text_for_testing("Time Machine · Praca");}));
+  if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_contains_text_for_testing("Skróty klawiszowe");}));
   field->ScrollRectToVisible(field->GetLocalBounds());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_excludes_for_testing(field);}));
   shell->tools_widget()->Hide();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->tools_chrome_visible_for_testing();}));shell->OpenTools(2);shell->SetThemeMode(ThemeMode::kDark);
   if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_order_correct_for_testing()&&shell->tools_chrome_contains_text_for_testing("Wyszukiwarki i prefiksy");}));
-  history::URLRow entry(GURL("https://tools-chrome.test/entry"));entry.set_title(u"Native result 🦀");entry.set_visit_count(1);entry.set_last_visit(base::Time::Now());
-  HistoryServiceFactory::GetForProfile(work_,ServiceAccessType::EXPLICIT_ACCESS)->AddPagesWithDetails({entry},history::SOURCE_OS_MIGRATION_IMPORTED);
-  shell->OpenTools(3);ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));ASSERT_EQ(1u,shell->history_entries().size());
-  auto* row=shell->history_results_view()->children()[0].get();ASSERT_TRUE(row);row->ScrollRectToVisible(row->GetLocalBounds());
-  if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_contains_text_for_testing("Native result 🦀");}));if(MetalPresents())EXPECT_FALSE(shell->tools_chrome_excludes_for_testing(row));EXPECT_TRUE(row->children().empty());inspect();
-  shell->SetHistoryResults(u"","work-profile",200,{},false,true);
-  if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_contains_text_for_testing("Nie udało się odczytać historii.");}));
-  if(MetalPresents())EXPECT_TRUE(shell->tools_chrome_order_correct_for_testing());
 }
 
-IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsHistoryRowsSharedCanvasScrollingAndCancelledPress) {
-  ASSERT_TRUE(window_->Select("work"));auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));
-  history::URLRows rows;for(int i=0;i<80;++i){history::URLRow row(GURL("https://history-gpu.test/"+std::to_string(i)));row.set_title(base::UTF8ToUTF16("History GPU "+std::to_string(i)+" 🦀"));row.set_visit_count(1);row.set_last_visit(base::Time::Now()-base::Minutes(i+1));rows.push_back(row);}
-  HistoryServiceFactory::GetForProfile(work_,ServiceAccessType::EXPLICIT_ACCESS)->AddPagesWithDetails(rows,history::SOURCE_OS_MIGRATION_IMPORTED);
-  shell->OpenTools(3);ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));ASSERT_EQ(80u,shell->history_entries().size());
-  auto* list=shell->history_results_view();for(const auto& child:list->children()){EXPECT_TRUE(child->children().empty());EXPECT_FALSE(views::AsViewClass<views::Button>(child));}
-  auto* first=list->children()[0].get();ASSERT_TRUE(first);first->ScrollRectToVisible(first->GetLocalBounds());
-  if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_contains_text_for_testing("History GPU 0 🦀");}));if(MetalPresents())EXPECT_FALSE(shell->tools_chrome_excludes_for_testing(first));
-  if(MetalPresents())EXPECT_TRUE(shell->tools_chrome_order_correct_for_testing());if(MetalPresents())EXPECT_TRUE(shell->tools_chrome_excludes_for_testing(shell->tools_close_for_testing()));
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));first->RequestFocus();
-  base::test::TestFuture<void> presented;auto* compositor=shell->tools_widget()->GetCompositor();ASSERT_TRUE(compositor);compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
-  const auto tabs=window_->tab_count("work");const gfx::Point point(12,12);ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);
-  ASSERT_TRUE(first->OnMousePressed(press));auto* scroll=shell->tools_viewport_for_testing();ASSERT_TRUE(scroll);
-  scroll->ScrollTo(scroll->maximum());ASSERT_TRUE(base::test::RunUntil([&]{return first->GetVisibleBounds().IsEmpty();}));
-  if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return !shell->tools_chrome_contains_text_for_testing("History GPU 0 🦀")&&shell->tools_chrome_contains_text_for_testing("History GPU 79 🦀");}));
-  first->OnMouseReleased(release);base::RunLoop().RunUntilIdle();EXPECT_EQ(tabs,window_->tab_count("work"));EXPECT_TRUE(shell->history_visible());
-  first->ScrollRectToVisible(first->GetLocalBounds());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_contains_text_for_testing("History GPU 0 🦀");}));
-  ASSERT_TRUE(first->OnMousePressed(press));shell->tools_widget()->Hide();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->tools_chrome_visible_for_testing();}));first->OnMouseReleased(release);base::RunLoop().RunUntilIdle();EXPECT_EQ(tabs,window_->tab_count("work"));
-  views::ViewTracker previous(first);shell->OpenTools(3);EXPECT_FALSE(previous.view());ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));shell->SetThemeMode(ThemeMode::kDark);
-  auto* current=shell->history_results_view()->children()[0].get();current->ScrollRectToVisible(current->GetLocalBounds());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_contains_text_for_testing("History GPU 0 🦀")&&shell->tools_chrome_order_correct_for_testing();}));
-  ASSERT_TRUE(window_->Select("personal"));shell->OpenTools(3);ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));EXPECT_TRUE(shell->history_entries().empty());
-  if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return !shell->tools_chrome_contains_text_for_testing("History GPU 0 🦀");}));
-}
 
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsActionsScenesBatchingClippingAndCancelledChildren) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready()&&shell->appearance_ready();}));
-  const std::array<std::vector<std::u16string>,4> titles={{{u"Zapisz snapshot",u"Przywróć wybrany układ",u"Usuń wybrany snapshot",u"Przywróć wybraną kartę",u"Uśpij tę przestrzeń"},{u"Nagraj kombinację…",u"Zapisz skrót",u"Wyłącz wybrany skrót",u"Przywróć schemat Arc"},{u"Zapisz wyszukiwarkę",u"Ustaw jako domyślną",u"Usuń wyszukiwarkę"},{u"Wyczyść historię…",u"Pokaż więcej"}}};
-  const std::array<size_t,4> groups={4,1,1,2};
+  const std::array<std::vector<std::u16string>,3> titles={{{u"Zapisz snapshot",u"Przywróć wybrany układ",u"Usuń wybrany snapshot",u"Przywróć wybraną kartę",u"Uśpij tę przestrzeń"},{u"Nagraj kombinację…",u"Zapisz skrót",u"Wyłącz wybrany skrót",u"Przywróć schemat Arc"},{u"Zapisz wyszukiwarkę",u"Ustaw jako domyślną",u"Usuń wyszukiwarkę"}}};
+  const std::array<size_t,3> groups={4,1,1};
   auto present=[&]{base::test::TestFuture<void> ready;auto* compositor=shell->tools_widget()->GetCompositor();ASSERT_TRUE(compositor);compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},ready.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(ready.Wait());};
-  for(int page=0;page<4;++page){
+  for(int page=1;page<3;++page){
     shell->OpenTools(page);ASSERT_EQ(groups[page],shell->tools_action_groups_for_testing());ASSERT_NO_FATAL_FAILURE(present());
     if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_close_metal_visible_for_testing();}));
     for(const auto& title:titles[page]){
@@ -6589,9 +6429,9 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsChoicesScenesClipping
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready()&&shell->tools_ready();}));
   window_->widget()->SetBounds(gfx::Rect(50,50,640,520));
   auto present=[&]{base::test::TestFuture<void> ready;auto* compositor=shell->tools_widget()->GetCompositor();ASSERT_TRUE(compositor);compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},ready.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(ready.Wait());};
-  for(int page=0;page<4;++page){
+  for(int page=1;page<3;++page){
     shell->OpenTools(page);shell->tools_widget()->LayoutRootViewIfNecessary();ASSERT_NO_FATAL_FAILURE(present());
-    for(const auto* key:(page==0?std::vector<const char*>{"selection","closed"}:std::vector<const char*>{page==3?"history_period":"selection"})){
+    for(const auto* key:{"selection"}){
       auto* picker=shell->tools_choice_for_testing(key);ASSERT_TRUE(picker);EXPECT_TRUE(picker->children().empty());EXPECT_FALSE(views::AsViewClass<views::Button>(picker));EXPECT_FALSE(views::AsViewClass<views::Combobox>(picker));
       picker->ScrollRectToVisible(picker->GetLocalBounds());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_choice_metal_visible_for_testing(key);}));
       auto expected=[&]{auto r=picker->GetVisibleBounds();r.Offset(picker->GetBoundsInScreen().x(),picker->GetBoundsInScreen().y());return r;};
@@ -6599,7 +6439,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsChoicesScenesClipping
       ui::AXNodeData ax;picker->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kComboBoxSelect,ax.role);
     }
   }
-  shell->OpenTools(0);auto* top=shell->tools_selection();
+  shell->OpenTools(1);auto* top=shell->tools_selection();
   // Make the offscreen precondition independent of native minimum panel size.
   // This fixture-only spacer leaves the real controls and services unchanged.
   auto* scrolling_fixture=top->parent()->AddChildView(std::make_unique<views::View>());

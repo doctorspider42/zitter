@@ -664,8 +664,9 @@ EXTENSION_TABS_FILES = {
 
 
 
-# chrome://extensions is the one Chromium page Zitter shows; it carries the
-# Zitter mark (assets/icon/zitter.svg, unchanged) where Chromium puts its logo.
+# chrome://extensions and chrome://history are the Chromium pages Zitter shows;
+# they carry the Zitter mark (assets/icon/zitter.svg, unchanged) where Chromium
+# puts its logo.
 EXTENSIONS_LOGO_FILES = {
     "product-logo": "chrome/browser/resources/extensions/toolbar.html.ts",
     "header-icon": "chrome/browser/resources/extensions/manager.html.ts",
@@ -693,6 +694,57 @@ def patch_extensions_logo(text, slot):
     if text.count(original) != 1 or "Zitter: its own mark" in text:
         raise ValueError("Unexpected upstream Extensions page logo layout; review the patch")
     return text.replace(original, replacement, 1)
+
+
+HISTORY_LOGO_FILES = {
+    "template": "chrome/browser/resources/history/history_toolbar.html.ts",
+    "style": "chrome/browser/resources/history/history_toolbar.css",
+}
+HISTORY_LOGO_STYLE = """
+/* Zitter: its mark sits in cr-toolbar's logo slot, sized like Chromium's logo. */
+cr-toolbar[narrow] picture[slot='product-logo'] {
+  display: none;
+}
+
+picture[slot='product-logo'] {
+  display: inline-block;
+  height: 24px;
+  margin-inline-end: 16px;
+  width: 24px;
+}
+
+picture[slot='product-logo'] img {
+  display: block;
+  height: 100%;
+  width: 100%;
+}
+"""
+
+
+def patch_history_logo(text, part):
+    """Fills cr-toolbar's product-logo slot, which otherwise shows Chrome's logo."""
+    if part == "style":
+        if text.count(HISTORY_LOGO_STYLE) == 1:
+            return text
+        if "#css_wrapper_metadata_end */\n" not in text or "Zitter: its mark" in text:
+            raise ValueError("Unexpected upstream History toolbar style; review the patch")
+        return text + HISTORY_LOGO_STYLE
+    import base64
+    mark = base64.b64encode((ROOT / "assets/icon/zitter.svg").read_bytes()).decode()
+    original = ('    narrow-threshold="1023" @search-changed="${this.onSearchChanged_}">\n'
+                '</cr-toolbar>\n')
+    replacement = ('    narrow-threshold="1023" @search-changed="${this.onSearchChanged_}">\n'
+                   '  <!-- Zitter: its own mark on every platform. -->\n'
+                   '  <picture slot="product-logo">\n'
+                   f'    <img src="data:image/svg+xml;base64,{mark}" alt="" role="presentation">\n'
+                   '  </picture>\n'
+                   '</cr-toolbar>\n')
+    if text.count(replacement) == 1:
+        return text
+    if text.count(original) != 1 or "Zitter: its own mark" in text:
+        raise ValueError("Unexpected upstream History page toolbar layout; review the patch")
+    return text.replace(original, replacement, 1)
+
 
 def patch_component_registration(text):
     """Optional embedder exclusions, leaving upstream verification untouched."""
@@ -769,6 +821,9 @@ def install(checkout, dry_run=False):
     extensions_logo = {checkout / path: (checkout / path).read_text() for path in EXTENSIONS_LOGO_FILES.values()}
     extensions_logo_patched = {path: patch_extensions_logo(text, slot) for (slot, _), (path, text)
                                in zip(EXTENSIONS_LOGO_FILES.items(), extensions_logo.items())}
+    for part, path in HISTORY_LOGO_FILES.items():
+        extensions_logo[checkout / path] = (checkout / path).read_text()
+        extensions_logo_patched[checkout / path] = patch_history_logo(extensions_logo[checkout / path], part)
     extension_tabs = {checkout / path: (checkout / path).read_text() for path in EXTENSION_TABS_FILES.values()}
     extension_tabs_patched = {path: patch_extension_tabs(text, part) for (part, _), (path, text)
                               in zip(EXTENSION_TABS_FILES.items(), extension_tabs.items())}

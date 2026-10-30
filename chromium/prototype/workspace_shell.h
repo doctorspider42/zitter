@@ -36,7 +36,7 @@
 #include "ui/views/view_tracker.h"
 #include "url/gurl.h"
 
-namespace zitter::sidebar { struct Item; struct PreferenceCatalogue; struct WorkspaceMenuState; struct FolderMenuState; struct ProfileControls; enum class FormCommand : uint32_t; struct FormCommandBinding; }
+namespace zitter::sidebar { struct Item; struct Timeline; struct PreferenceCatalogue; struct WorkspaceMenuState; struct FolderMenuState; struct ProfileControls; enum class FormCommand : uint32_t; struct FormCommandBinding; }
 namespace ui { class AcceleratorTarget; }
 namespace gfx { class Canvas; }
 namespace views {
@@ -63,6 +63,7 @@ class ToolsFormState;
 class PreferenceChromeState;
 class ImportFormState;
 class SidebarNodeGraphState;
+class TimeMachineView;
 
 // Top band above the sidebar; the native traffic lights and the page commands
 // are centered on its middle line.
@@ -151,11 +152,14 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingCallback<bool(std::string, std::string, bool)> delete_folder;
     base::RepeatingCallback<bool(std::string, std::vector<PinnedItem>)> restore_pins;
     base::RepeatingCallback<bool(std::string)> restore_workspace;
-    base::RepeatingCallback<void(std::u16string, size_t)> query_history;
-    base::RepeatingCallback<TimeMachineState()> time_machine;
     base::RepeatingCallback<bool()> operation_pending;
-    base::RepeatingCallback<bool(std::string, bool)> save_snapshot;
-    base::RepeatingCallback<bool(std::string)> restore_snapshot, delete_snapshot, reopen_closed, sleep_workspace;
+    // Time Machine (timeline.rs): the window owns the timeline and its file.
+    base::RepeatingCallback<const sidebar::Timeline*()> timeline;
+    base::RepeatingCallback<base::Time()> timeline_now;
+    base::RepeatingClosure record_timeline;
+    base::RepeatingCallback<bool(int64_t, int64_t)> restore_timeline;
+    base::RepeatingCallback<void(bool, int)> timeline_settings;
+    base::RepeatingCallback<bool()> clear_timeline;
     base::RepeatingCallback<bool(std::string)> run_shortcut;
     base::RepeatingCallback<BrowserPreferences()> read_preferences;
     base::RepeatingCallback<std::u16string()> download_directory;
@@ -258,16 +262,7 @@ class WorkspaceShell final : public ui::EventHandler,
   int sidebar_width() const { return sidebar_width_; }
   bool CloseOverlays(bool keep_sidebar = false);
   void OpenGeneralSettings();
-  void OpenTools(int page);  // 0: Time Machine, 1: shortcuts, 2: search providers, 3: history.
-  void RefreshHistory(bool more = false);
-  void SetHistoryResults(std::u16string query, std::string profile_id, size_t limit,
-      std::vector<BrowsingHistoryEntry> entries, bool more, bool error);
-  bool history_visible() const;
-  bool history_loaded() const;
-  views::View* history_results_view() const { return history_list_; }
-  EditorControl* history_search() const { return history_search_; }
-  views::View* history_period() const { return history_period_; }
-  const std::vector<BrowsingHistoryEntry>& history_entries() const { return history_entries_; }
+  void OpenTools(int page);  // 0: Time Machine, 1: shortcuts, 2: search providers.
   void SyncShortcuts() { RefreshKeyRegistrations(); }
   bool CaptureShortcut(const ui::Accelerator& accelerator);
   std::string ShortcutFor(const ui::Accelerator& accelerator) const;
@@ -306,6 +301,13 @@ class WorkspaceShell final : public ui::EventHandler,
   void SetSearchEngine(SearchEngine engine);
   SearchEngine search_engine() const { return search_engine_; }
   void SetWorkspaceAnimations(bool enabled);
+  // Time Machine recording (Preferences → Wygląd): on/off and 7, 30 or 90 days.
+  void SetTimeMachine(bool enabled, int days);
+  bool time_machine_enabled() const { return time_machine_enabled_; }
+  // The full-window Time Machine view of the active workspace.
+  void OpenTimeMachine();
+  bool time_machine_visible() const;
+  TimeMachineView* time_machine_for_testing() const { return time_machine_; }
   void SetWorkspaceNames(bool shown);
   void SetPinnedFoldersCollapsed(bool collapsed);
   void SetUiLanguageChoice(size_t index);
@@ -391,7 +393,7 @@ class WorkspaceShell final : public ui::EventHandler,
   PanelViewport* workspace_viewport() const{return workspace_scroll_;}
   bool metal_sidebar_visible() const;
   bool metal_sidebar_grip_visible() const;
-  // 0 untyped/retired, 1 checkbox, 2 switch, 3 selector, 4 workspace, 5 history row, 6 palette row, 7 site-rule row, 8 form command, 9 tab row, 10 pin row; local graph model diagnostics.
+  // 0 untyped/retired, 1 checkbox, 2 switch, 3 selector, 4 workspace, 6 palette row, 7 site-rule row, 8 form command, 9 tab row, 10 pin row; local graph model diagnostics.
   views::View* site_rule_results_for_testing() const{return site_rules_list_;}
   void RefreshSiteRulesForTesting(bool reload=true){RefreshSitePreferences(reload);}
   uint32_t control_model_kind_for_testing(views::View* view) const;
@@ -503,6 +505,7 @@ class WorkspaceShell final : public ui::EventHandler,
   EditorControl* emoji_input() const { return emoji_input_; }
   bool appearance_ready() const { return appearance_ready_; }
   bool appearance_saved() const { return pending_writes_ == 0; }
+  bool browsing_data_busy_for_testing() const { return browsing_data_busy_; }
   views::Widget* address_widget() const { return address_widget_.get(); }
   views::View* tab_button(size_t index) const;
   views::View* pin_button(std::string_view id) const;
@@ -562,8 +565,6 @@ class WorkspaceShell final : public ui::EventHandler,
   bool HandleAddressKey(const ui::KeyEvent& event);
   bool HandlePreferenceEditorKey(EditorControl* sender,const ui::KeyEvent& event);
   bool HandleToolsEditorKey(EditorControl* sender,const ui::KeyEvent& event);
-  EditorControl* snapshot_input() const { return snapshot_name_; }
-  EditorControl* timeline_filter_input() const { return timeline_filter_; }
   EditorControl* provider_input(size_t index) const {
     return std::array<EditorControl*,3>{provider_name_,provider_keyword_,provider_url_}.at(index);
   }
@@ -604,15 +605,11 @@ class WorkspaceShell final : public ui::EventHandler,
   bool ToolsRecording() const;
   // status is sidebar::ToolsStatus; Rust owns the copy when the tools form exists.
   std::u16string ToolsStatusText(int status) const;
-  std::u16string ToolsHistoryQuery() const;
-  std::u16string ToolsTimelineQuery() const;
   void ResetToolsForm();
   void RefreshTools();
   void BuildRustToolsForm();
   void BuildRustPreferenceRows(const sidebar::PreferenceCatalogue& catalogue);
-  void RefreshTimelineItems();
   void RefreshToolsViewport();
-  void SetHistoryMoreVisible(bool visible);
   void RefreshKeyRegistrations();
   void SaveTools();
   void ToolsAction(int action,std::optional<std::string> choice_key=std::nullopt);
@@ -625,26 +622,14 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> tools_close_ = nullptr;
   raw_ptr<views::View> tools_title_ = nullptr;
   raw_ptr<views::View> tools_status_ = nullptr;
-  raw_ptr<EditorControl> snapshot_name_ = nullptr;
-  raw_ptr<EditorControl> timeline_filter_ = nullptr;
   raw_ptr<EditorControl> shortcut_chord_ = nullptr;
   raw_ptr<EditorControl> provider_name_ = nullptr;
   raw_ptr<EditorControl> provider_keyword_ = nullptr;
   raw_ptr<EditorControl> provider_url_ = nullptr;
   raw_ptr<views::View> tools_picker_ = nullptr;
-  raw_ptr<views::View> closed_picker_ = nullptr;
   raw_ptr<PanelViewport> tools_scroll_ = nullptr;
-  raw_ptr<EditorControl> history_search_ = nullptr;
-  raw_ptr<views::View> history_period_ = nullptr;
-  raw_ptr<views::View> history_list_ = nullptr;
-  raw_ptr<views::View> history_more_ = nullptr;
-  raw_ptr<views::View> history_clear_ = nullptr;
-  std::shared_ptr<SidebarNodeGraphState> history_node_graph_;
-  std::vector<BrowsingHistoryEntry> history_entries_;
   bool browsing_data_busy_ = false;
-  base::OneShotTimer history_timer_;
   uint64_t tools_generation_ = 0;
-  void ToolsEditorEdited(EditorControl* sender);
   void PostToolsAction(int action);
   void RefreshToolsChoiceFields();
   void SetShortcutRecording(bool recording);
@@ -679,7 +664,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void PostRemoveSiteRule(SitePreferenceRule rule,std::string profile_id);
   void RefreshSitePreferences(bool reload = true);
   void SaveSitePreference();
-  void SaveGeneralPatch(std::optional<ThemeMode> theme, std::optional<SearchEngine> search, std::optional<bool> animations, std::optional<bool> workspace_names = std::nullopt, std::optional<bool> folders_collapsed = std::nullopt);
+  void SaveGeneralPatch(std::optional<ThemeMode> theme, std::optional<SearchEngine> search, std::optional<bool> animations, std::optional<bool> workspace_names = std::nullopt, std::optional<bool> folders_collapsed = std::nullopt, std::optional<std::pair<bool, int>> time_machine = std::nullopt);
   void OnNativeThemeUpdated(ui::NativeTheme* observed_theme) override;
   void RebuildTabs(std::string_view previous, bool catalogue_changed);
   void StopWorkspaceAnimation();
@@ -890,6 +875,13 @@ class WorkspaceShell final : public ui::EventHandler,
   ThemeMode theme_mode_ = ThemeMode::kSystem;
   SearchEngine search_engine_ = SearchEngine::kDuckDuckGo;
   bool workspace_animations_ = true;
+  bool time_machine_enabled_ = true;
+  int time_machine_days_ = 30;
+  raw_ptr<views::View> time_machine_check_ = nullptr;
+  raw_ptr<views::View> time_machine_days_picker_ = nullptr;
+  raw_ptr<TimeMachineView> time_machine_ = nullptr;
+  std::unique_ptr<views::WidgetDelegate> time_machine_delegate_;
+  std::unique_ptr<views::Widget> time_machine_widget_;
   bool workspace_names_ = true;
   bool folders_collapsed_ = true;
   std::set<std::string> general_dirty_;

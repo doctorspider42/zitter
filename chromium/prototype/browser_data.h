@@ -42,12 +42,6 @@ struct BrowsingDataSelection {
   bool cache = true;
 };
 
-struct BrowsingHistoryEntry {
-  GURL url;
-  std::u16string title;
-  base::Time visited;
-};
-
 struct PaletteResult {
   std::u16string title;
   std::u16string detail;
