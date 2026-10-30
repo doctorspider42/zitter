@@ -121,7 +121,7 @@ A views::WebView is a content host, not a Chrome tab. This probe does not regist
 its pages in TabStripModel / TabInterface / BrowserWindowInterface or install the
 full set of browser tab features. Therefore the following remain **unproven**:
 
-- Chrome extension tabs/windows APIs, action popups, and profile-specific extensions;
+- Chrome extension tabs/windows APIs (see "Extensions" below);
 - visited-URL recording in Chrome history services;
 - window.open and external/new-tab navigation routing;
 - permissions and device selection dialogs;
@@ -132,6 +132,35 @@ full set of browser tab features. Therefore the following remain **unproven**:
 
 Do not infer production readiness or extensions compatibility from storage passing.
 Do not patch a single TabStripModel to accept mixed profiles to make a test pass.
+
+## Extensions
+
+Each Chromium profile keeps its own extensions; Zitter adds no state of its
+own. `ExtensionsBar` (`extensions_bar.cc`, design: Extensions) sits at the
+right end of the header band and always follows the profile of the page on
+screen: its pinned actions come from that profile's `ToolbarActionsModel`, the
+menu lists that profile's extensions, and switching to a space with another
+profile swaps them. Icons, titles, badges and the enabled state are read per
+tab from `ExtensionAction` through `ExtensionActionIconFactory`, and every
+`OnToolbarActionUpdated` repaints the action, so `action.setIcon`,
+`action.disable` or `setBadgeText` (a password manager going grey when signed
+out) show at once.
+
+Every page gets the extension tab helpers (`PageServices`): content scripts,
+`activeTab`, the action runner and webNavigation work in Zitter tabs. A click
+runs `ExtensionActionRunner::RunAction`; popups are `ExtensionViewHost`s with a
+Zitter delegate (no Browser) in a bubble under the icon. Extension pages,
+`chrome://extensions` and the Web Store open as tabs of a space using the
+extension's profile; tabs an extension opens through a stock window move into
+Zitter before that window closes. Chrome's post-install bubble is disabled (it
+needs a stock window); the puzzle trembles instead.
+
+Not covered: `chrome.tabs`/`chrome.windows` cannot see Zitter tabs.
+`ExtensionTabUtil::GetTabById` and `tabs.query` only walk Browser windows, so
+`tabs.query`, `tabs.sendMessage`, `scripting.executeScript({tabId})` and
+`windows.getCurrent` find nothing from a Zitter tab. Content-script messaging
+in the other direction (`runtime.sendMessage` with `sendResponse`) works. Closing
+that gap needs the BrowserWindowInterface integration below.
 
 ## Next gate: real browser context ownership
 

@@ -3130,6 +3130,13 @@ class ShellRoot final : public views::View {
       header_x = lights.right() + kHeaderLightsGap;
 #endif
     header->SetBounds(header_x, kAxis - kHeaderButtonSize / 2, header_width, kHeaderButtonSize);
+    // Design: Extensions. The right end of the band, on the same axis, `space-2`
+    // from the window edge; it never runs into the page commands.
+    if (trailing && trailing->GetVisible()) {
+      const int trailing_width = std::min(trailing->GetPreferredSize().width(),
+                                          std::max(0, width() - kGap - header->bounds().right() - kGap));
+      trailing->SetBounds(width() - kGap - trailing_width, kAxis - kHeaderButtonSize / 2, trailing_width, kHeaderButtonSize);
+    }
     const int top = kShellHeaderHeight;
     content->SetBounds(column + kGap, top, std::max(0, width() - column - 2 * kGap),
                        std::max(0, height() - top - kGap));
@@ -3147,6 +3154,7 @@ class ShellRoot final : public views::View {
     return target == this || target == header.get();
   }
   raw_ptr<views::View> header = nullptr;
+  raw_ptr<views::View> trailing = nullptr;  // Extensions (design: Extensions).
   raw_ptr<views::View> content = nullptr;
   raw_ptr<views::View> edge = nullptr;
   bool pinned = true;
@@ -3949,7 +3957,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         // only if the saved state differs, never as a side effect of loading.
         if (shell->pinned_ && !shell->sidebar_visible()) shell->ShowSidebar();
         if (!shell->pinned_ && shell->sidebar_visible()) shell->sidebar_widget_->Hide();
-        // Development: --zitter-open-panel=space|sidebar|palette|address|settings|profiles|downloads|menu|dialog|toast opens
+        // Development: --zitter-open-panel=space|sidebar|palette|address|settings|profiles|downloads|extensions|extension-popup|menu|dialog|toast opens
         // that view once the window is up, so UI checks can screenshot it without
         // driving the mouse.
         if (const std::string panel = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-open-panel"); !panel.empty())
@@ -3964,6 +3972,8 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
                 else if (panel == "profiles") shell->OpenProfiles();
                 // A sample undo toast; its „Cofnij” does nothing.
                 else if (panel == "downloads") shell->callbacks_.run_shortcut.Run("downloads");
+                else if (panel == "extensions") shell->callbacks_.run_shortcut.Run("extensions");
+                else if (panel == "extension-popup") shell->callbacks_.run_shortcut.Run("extension_popup");
                 else if (panel == "dialog") shell->RequestNewFolder(shell->state_.workspace_id);
                 else if (panel == "space-end") {shell->OpenWorkspaceSettings();shell->settings_widget_->LayoutRootViewIfNecessary();shell->settings_scroll_->ScrollTo(shell->settings_scroll_->maximum());}
                 else if (panel == "space-new") {shell->OpenWorkspaceSettings();shell->ToggleWorkspaceCreation();shell->workspace_input_->SetText(u"Klient X");shell->PickWorkspaceProfile(std::string());shell->settings_widget_->LayoutRootViewIfNecessary();shell->settings_scroll_->ScrollTo(shell->settings_scroll_->maximum());}
@@ -4493,6 +4503,14 @@ uint32_t WorkspaceShell::control_model_kind_for_testing(views::View* view) const
   if(auto* row=views::AsViewClass<RustRowView>(view))return row->ModelKind();
   if(auto* row=views::AsViewClass<SiteRuleSceneRow>(view))return row->ModelKind();
   return 0;
+}
+views::View* WorkspaceShell::SetHeaderTrailing(std::unique_ptr<views::View> view) {
+  CHECK(root_);
+  auto* root = static_cast<ShellRoot*>(root_.get());
+  if (root->trailing) root->RemoveChildViewT(root->trailing.get());
+  root->trailing = root->AddChildView(std::move(view));
+  root->InvalidateLayout();
+  return root->trailing;
 }
 views::View* WorkspaceShell::header_action_for_testing(size_t index) const{return header_view_&&index<header_view_->children().size()?header_view_->children()[index].get():nullptr;}
 views::View* WorkspaceShell::sidebar_grip_for_testing() const{return sidebar_root_?static_cast<SidebarView*>(sidebar_root_.get())->grip.get():nullptr;}

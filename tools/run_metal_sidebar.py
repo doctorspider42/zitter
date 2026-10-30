@@ -58,7 +58,9 @@ def main():
     parser.add_argument("--port", type=int, default=8767)
     parser.add_argument("--raster", choices=["compositor", "metal"], default="compositor",
                         help="Rust UI painting: the Chromium compositor or in-process Metal")
-    parser.add_argument("--open-panel", choices=["space", "sidebar", "palette", "address", "settings", "profiles", "downloads", "menu", "dialog", "toast", "add", "space-end", "space-new", "remove", "drop"], help="open this panel once the window is up (UI checks)")
+    parser.add_argument("--open-panel", choices=["space", "sidebar", "palette", "address", "settings", "profiles", "downloads", "extensions", "extension-popup", "menu", "dialog", "toast", "add", "space-end", "space-new", "remove", "drop"], help="open this panel once the window is up (UI checks)")
+    parser.add_argument("--load-extension", action="append", type=Path, default=[],
+                        help="load an unpacked extension (UI checks of the extensions bar)")
     args = parser.parse_args()
     info = args.app.resolve() / "Contents/Info.plist"
     binary = args.app.resolve() / "Contents/MacOS" / plistlib.loads(info.read_bytes())["CFBundleExecutable"] if info.is_file() else info
@@ -73,6 +75,8 @@ def main():
     extra = [f"--zitter-rust-raster={args.raster}"] if args.raster != "compositor" else []
     if args.open_panel:
         extra.append(f"--zitter-open-panel={args.open_panel}")
+    if args.load_extension:
+        extra.append(f"--load-extension={','.join(str(path.resolve()) for path in args.load_extension)}")
     print(f"Rust UI raster: {args.raster}; isolated profile: {args.profile.resolve()}", flush=True)
     try:
         return subprocess.call(["/usr/bin/open", "-W", "-n", str(args.app.resolve()), "--args",

@@ -148,4 +148,18 @@ pub static EN: &[(&str, &str)] = &[
     ("Nie uzyskano dostępu do klucza przeglądarki. Zezwól na dostęp w pęku kluczy i ponów import.", "Couldn’t access the browser’s key. Allow access in Keychain and import again."),
     ("Nie udało się odszyfrować ciasteczek. Import został zatrzymany.", "Couldn’t decrypt the cookies. The import was stopped."),
     ("Nie udało się odczytać danych. Zamknij przeglądarkę źródłową i spróbuj ponownie.", "Couldn’t read the data. Quit the source browser and try again."),
+    // Extensions (extensions_bar.cc).
+    ("Rozszerzenia", "Extensions"),
+    ("Ma dostęp do tej witryny", "Has access to this site"),
+    ("Po kliknięciu", "On click"),
+    ("Chce dostępu do {}", "Wants access to {}"),
+    ("Brak dostępu do tej witryny", "No access to this site"),
+    ("Przypnij", "Pin"),
+    ("Odepnij", "Unpin"),
+    ("Opcje", "Options"),
+    ("Zarządzaj rozszerzeniami", "Manage extensions"),
+    ("Usuń z Zittera…", "Remove from Zitter…"),
+    ("Ten profil nie ma rozszerzeń", "This profile has no extensions"),
+    ("Dodaj je z Chrome Web Store", "Add them from the Chrome Web Store"),
+    ("Więcej: {}", "More: {}"),
 ];

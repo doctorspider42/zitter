@@ -42,6 +42,7 @@ class WidgetDelegate;
 namespace zitter::prototype {
 
 class DownloadPanel;
+class ExtensionsBar;
 struct BrowsingImportData;
 
 // Intentionally a substrate probe, not a replacement BrowserWindowInterface.
@@ -127,6 +128,10 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   std::string WorkspaceForUrl(const GURL& url) const;
   const std::vector<LinkRule>& link_rules() const { return link_rules_; }
   bool OpenExternalUrl(const GURL& url);
+  // Opens an extension's page (options, chrome://extensions, a link from its
+  // popup) as a new tab in a space that uses `profile`.
+  bool OpenExtensionPage(Profile* profile, const GURL& url);
+  ExtensionsBar* extensions_bar() const { return extensions_bar_; }
   bool OpenLink(const GURL& url, std::string source_workspace, bool new_tab, bool split = false);
   WorkspaceShell* shell() const { return shell_.get(); }
   bool NavigateFromBar(const GURL& url, bool new_tab);
@@ -373,6 +378,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   std::unique_ptr<views::WidgetDelegate> delegate_;
   std::unique_ptr<views::Widget> widget_;
   std::unique_ptr<DownloadPanel> downloads_;
+  raw_ptr<ExtensionsBar> extensions_bar_ = nullptr;  // Owned by the window root.
   base::WeakPtrFactory<WorkspaceWindow> weak_factory_{this};
 };
 }  // namespace zitter::prototype

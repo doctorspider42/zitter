@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Launch the packaged Zitter app, find its windows, click, and screenshot them.
 
-  ui.py launch [--open-panel space] quit the running copy, start build/ZitterRustMetal.app
+  ui.py launch [--open-panel space] [--load-extension DIR] quit the running copy, start build/ZitterRustMetal.app
                                     (and open the space panel by itself, without the mouse)
   ui.py windows                     the app's windows (id, onscreen, bounds in points)
   ui.py click X Y                   hover, then click at screen point X, Y
@@ -64,6 +64,7 @@ def launch(a):
     wait(lambda: subprocess.run(["pgrep", "-f", f"{APP}/Contents/MacOS/"], capture_output=True).returncode != 0, 10)
     log = open(BIN.with_suffix(".log"), "w")
     panel = ["--open-panel", a.open_panel] if getattr(a, "open_panel", None) else []
+    panel += [arg for path in getattr(a, "load_extension", None) or [] for arg in ("--load-extension", path)]
     subprocess.Popen([sys.executable, str(ROOT / "tools/run_metal_sidebar.py"), "--app", str(APP), *panel],
                      cwd=ROOT, stdout=log, stderr=log, start_new_session=True)
     w = wait(lambda: (m := main_window()) and m["width"] > 600 and m)
@@ -120,8 +121,10 @@ def shot(a):
 
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 sub = parser.add_subparsers(dest="command", required=True)
-l = sub.add_parser("launch"); l.add_argument("--open-panel", choices=["space", "sidebar", "palette", "address", "settings", "profiles", "downloads", "menu", "dialog", "toast", "add", "space-end", "space-new", "remove", "drop"],
-    help="open this panel once the window is up (no mouse needed)"); l.set_defaults(run=launch)
+l = sub.add_parser("launch"); l.add_argument("--open-panel", choices=["space", "sidebar", "palette", "address", "settings", "profiles", "downloads", "extensions", "extension-popup", "menu", "dialog", "toast", "add", "space-end", "space-new", "remove", "drop"],
+    help="open this panel once the window is up (no mouse needed)")
+l.add_argument("--load-extension", action="append", help="load an unpacked extension into the profiles (repeatable)")
+l.set_defaults(run=launch)
 sub.add_parser("windows").set_defaults(run=lambda _: print("\n".join(map(json.dumps, windows()))))
 c = sub.add_parser("click"); c.add_argument("x", type=float); c.add_argument("y", type=float)
 c.set_defaults(run=lambda a: (activate(), drive("click", a.x, a.y)))

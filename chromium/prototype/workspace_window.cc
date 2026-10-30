@@ -36,6 +36,7 @@
 #include "third_party/blink/public/common/page/page_zoom.h"
 
 #include "base/auto_reset.h"
+#include "chromium/prototype/extensions_bar.h"
 #include "base/check.h"
 #include "base/files/file_util.h"
 #include "base/files/important_file_writer.h"
@@ -374,6 +375,16 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   shell_ = std::make_unique<WorkspaceShell>(
       data_directory_.AppendASCII("ZitterAppearance.json"), std::move(callbacks));
   auto root = shell_->Build();
+  // Design: Extensions. The bar follows the profile of the page on screen.
+  ExtensionsBar::Callbacks extension_callbacks;
+  extension_callbacks.open_page = base::BindRepeating([](WorkspaceWindow* window, Profile* profile, const GURL& url) {
+    window->OpenExtensionPage(profile, url);
+  }, base::Unretained(this));
+  extension_callbacks.workspace_color = base::BindRepeating([](WorkspaceWindow* window) {
+    return window->shell_->active_workspace_color();
+  }, base::Unretained(this));
+  extensions_bar_ = static_cast<ExtensionsBar*>(shell_->SetHeaderTrailing(
+      std::make_unique<ExtensionsBar>(std::move(extension_callbacks))));
   delegate_ = std::make_unique<views::WidgetDelegate>();
   delegate_->SetTitle(u"Zitter");
   delegate_->SetHasWindowSizeControls(true);
@@ -431,6 +442,8 @@ WorkspaceWindow::~WorkspaceWindow() {
   history_view_tasks_.TryCancelAll();
   weak_factory_.InvalidateWeakPtrs();
   ClosePeek();
+  extensions_bar_->SetContext(nullptr, nullptr);
+  extensions_bar_ = nullptr;
   shell_->Detach();
   widget_->GetFocusManager()->UnregisterAccelerators(this);
   for (auto& host : hosts_) {
@@ -611,6 +624,7 @@ void WorkspaceWindow::UpdateShell() {
       downloads_->SetCompletedCallback(base::BindRepeating(&WorkspaceWindow::DownloadCompleted, base::Unretained(this)));
     }
     downloads_->SetProfile(host.profile);
+    extensions_bar_->SetContext(host.profile, host.view->GetWebContents());
     shell_->Update(std::move(state));
   }
 }
@@ -850,6 +864,24 @@ std::string WorkspaceWindow::WorkspaceForPage(content::WebContents* page) const 
   for (const auto& host : hosts_)
     for (const auto& tab : host.tabs) if (tab->web_contents() == page) return host.workspace_id;
   return {};
+}
+bool WorkspaceWindow::OpenExtensionPage(Profile* profile, const GURL& url) {
+  if (closing_ || !configuration_ready_ || profiles_busy_ || !profile || !url.is_valid()) return false;
+  // The page belongs to the profile whose extension asked for it: the space on
+  // screen when it uses that profile, otherwise the first space that does.
+  std::string target;
+  for (const auto& host : hosts_)
+    if (host.profile == profile && (target.empty() || host.workspace_id == active_id())) target = host.workspace_id;
+  if (target.empty() || !Select(target)) return false;
+  for (auto& host : hosts_) {
+    if (host.workspace_id != target) continue;
+    auto* view = CreatePage(host.profile);
+    host.tabs.push_back(view);
+    view->GetWebContents()->GetController().LoadURL(url, content::Referrer(), ui::PAGE_TRANSITION_AUTO_TOPLEVEL, std::string());
+    SelectTab(host.tabs.size() - 1);
+    return true;
+  }
+  return false;
 }
 bool WorkspaceWindow::OpenExternalUrl(const GURL& url) { return OpenLink(url, active_id(), true); }
 bool WorkspaceWindow::OpenLink(const GURL& url, std::string source_workspace, bool new_tab, bool split) {
@@ -1483,6 +1515,14 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
     return true;
   }
   if (id == "downloads") { ShowDownloads(); return true; }
+  // Development (--zitter-open-panel=extension-popup): the first pinned action.
+  if (id == "extension_popup") {
+    const auto actions = extensions_bar_->visible_actions_for_testing();
+    if (actions.empty()) return false;
+    extensions_bar_->RunAction(actions.front().id);
+    return true;
+  }
+  if (id == "extensions") { shell_->CloseOverlays(true); extensions_bar_->ToggleMenu(); return extensions_bar_->profile() != nullptr; }
   if (id == "history") { shell_->OpenTools(3); return true; }
   if (id == "settings") { shell_->OpenGeneralSettings(); return true; }
   if (id == "address" || id == "new_tab" || id == "palette") {

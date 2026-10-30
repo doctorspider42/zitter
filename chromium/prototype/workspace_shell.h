@@ -200,6 +200,11 @@ class WorkspaceShell final : public ui::EventHandler,
   static views::WidgetDelegate::ClientViewFactory ClientViewFactory();
   std::unique_ptr<views::View> Build();
   views::View* content_host() const { return content_host_; }
+  // A view at the right end of the header band, owned by the window's root
+  // (design: Extensions). Its preferred width is honored up to the page commands.
+  views::View* SetHeaderTrailing(std::unique_ptr<views::View> view);
+  // The color of the space on screen, which tints the window and its popovers.
+  SkColor active_workspace_color() const { return workspace_color(state_.workspace_id); }
   void Attach(views::Widget* widget, ui::AcceleratorTarget* target);
   // Pages in pane order; fewer than two show the first page alone.
   void SetPanes(std::vector<views::View*> panes, std::vector<double> weights, bool vertical = false);

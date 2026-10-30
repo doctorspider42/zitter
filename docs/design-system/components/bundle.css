@@ -192,3 +192,25 @@ body { background: var(--bg-base); color: var(--ink); font-family: var(--font-sa
 .zt-win-page i, .zt-win-side i { display: block; height: 6px; border-radius: var(--radius-pill); background: var(--line); }
 .zt-win-side i.on { height: 14px; background: var(--bg-raised); box-shadow: var(--shadow-card); }
 .zt-win .zt-tabs { width: auto; }
+
+/* Extensions: pinned actions and the puzzle at the right end of the header band. */
+.zt-ext { display: flex; align-items: center; gap: var(--space-0-5); }
+.zt-ext .zt-iconbtn { position: relative; }
+.zt-ext .zt-iconbtn img, .zt-ext .zt-iconbtn .app { width: 16px; height: 16px; border-radius: var(--radius-xs); display: block; }
+.zt-ext .zt-iconbtn:not(:hover):not(.on) .app.idle { filter: grayscale(1); opacity: 0.55; }
+.zt-ext .badge { position: absolute; right: 0; bottom: 1px; min-width: 14px; height: 12px; padding: 0 3px; box-sizing: border-box; border-radius: var(--radius-pill); background: var(--ink); color: var(--bg-raised); font: 600 9px/12px var(--font-mono); text-align: center; box-shadow: 0 0 0 1.5px var(--bg-void); }
+.zt-ext hr { width: 1px; height: 16px; border: 0; margin: 0 var(--space-1); background: var(--line); }
+.zt-extmenu { width: 296px; }
+.zt-extmenu .zt-eyebrow { display: flex; justify-content: space-between; padding: var(--space-2) var(--space-2) var(--space-1); }
+.zt-extmenu .zt-eyebrow .h { font: 400 11px/14px var(--font-mono); letter-spacing: 0; text-transform: none; }
+.zt-extmenu .zt-row.ext { height: 44px; }
+.zt-extmenu .zt-row.ext .app { width: 20px; height: 20px; border-radius: var(--radius-xs); flex: none; }
+.zt-extmenu .zt-row.ext .txt { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.zt-extmenu .zt-row.ext .txt .n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.zt-extmenu .zt-row.ext .txt .a { font: 400 12px/16px var(--font-sans); color: var(--ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: var(--space-1); }
+.zt-extmenu .zt-row.ext .txt .a.warn { color: var(--warn); }
+.zt-extmenu .zt-row.ext .txt .a .zt-icon { width: 12px; height: 12px; }
+.zt-extmenu .zt-row.ext .zt-iconbtn { width: 24px; height: 24px; }
+.zt-extmenu .zt-row.ext:not(:hover):not(.sel) .zt-iconbtn:not(.on) { visibility: hidden; }
+.zt-extmenu .zt-row.ext .zt-btn { height: 24px; padding: 0 var(--space-2); }
+.zt-extpop { border-radius: var(--radius-md); background: var(--bg-raised); box-shadow: var(--shadow-float); overflow: hidden; }

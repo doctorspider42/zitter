@@ -14,6 +14,9 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
+#include "chrome/browser/tab_list/tab_list_interface.h"
+#include "chrome/browser/ui/extensions/extension_install_ui.h"
+#include "components/tabs/public/tab_interface.h"
 #include "chromium/prototype/workspace_window.h"
 #include "components/keep_alive_registry/keep_alive_types.h"
 #include "components/keep_alive_registry/scoped_keep_alive.h"
@@ -39,6 +42,10 @@ void Runtime::PreMainMessageLoopRun() {
 #if BUILDFLAG(IS_MAC)
   InstallAppShell();
 #endif
+  // Chrome's post-install bubble opens (and needs) a stock browser window;
+  // Zitter confirms a new extension with the puzzle's tremor instead.
+  extension_install_ui_ = std::make_unique<base::AutoReset<bool>>(
+      ExtensionInstallUI::disable_ui_for_tests(true));
   browsers_.Observe(GlobalBrowserCollection::GetInstance());
 #if BUILDFLAG(IS_MAC)
   if (base::CommandLine::ForCurrentProcess()->HasSwitch("zitter-ui-lab")) {
@@ -94,6 +101,17 @@ void Runtime::OnBrowserClosed(BrowserWindowInterface* browser) {
 void Runtime::ReplaceStockWindow(BrowserWindowInterface* browser) {
   if (!stock_windows_.contains(browser)) return;  // Already gone.
   stock_windows_.erase(browser);
+  // Extensions open tabs (chrome.tabs.create, a welcome page after install)
+  // through a stock window of their profile; those pages move into Zitter.
+  if (auto* tabs = window_ && !closing_ ? TabListInterface::From(browser) : nullptr) {
+    std::vector<GURL> urls;
+    for (int i = 0; i < tabs->GetTabCount(); ++i) {
+      auto* tab = tabs->GetTab(i);
+      const GURL url = tab && tab->GetContents() ? tab->GetContents()->GetVisibleURL() : GURL();
+      if (url.is_valid() && !url.IsAboutBlank() && url.host() != "newtab") urls.push_back(url);
+    }
+    for (const auto& url : urls) window_->OpenExtensionPage(browser->GetProfile(), url);
+  }
   if (auto* window = browser->GetWindow()) window->Close();
   if (window_ && !closing_) window_->widget()->Activate();
 }

@@ -38,6 +38,14 @@
 #include "services/network/public/mojom/cookie_manager.mojom.h"
 #include "content/public/browser/storage_partition.h"
 #include "chromium/prototype/workspace_window.h"
+#include "chromium/prototype/extensions_bar.h"
+#include "chrome/browser/extensions/chrome_test_extension_loader.h"
+#include "chrome/browser/ui/toolbar/toolbar_actions_model.h"
+#include "extensions/browser/background_script_executor.h"
+#include "extensions/browser/extension_registry.h"
+#include "extensions/common/extension.h"
+#include "ui/gfx/codec/png_codec.h"
+#include "base/strings/stringprintf.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/spare_render_process_host_manager.h"
 #include "chromium/prototype/workspace_shell.h"
@@ -8666,5 +8674,239 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NameEditorKillYankInteroperate
 }
 
 #endif
+
+
+// Design: Extensions. Test extensions are written per test: an action with
+// two icons, an optional popup and a content script that marks the page.
+namespace {
+base::FilePath WriteTestExtension(const base::FilePath& dir, std::string_view name, SkColor color,
+                                  bool popup, std::string_view background = "") {
+  base::ScopedAllowBlockingForTesting allow;
+  const auto root = dir.AppendASCII(name);
+  CHECK(base::CreateDirectory(root));
+  auto png = [](SkColor fill) {
+    SkBitmap bitmap;
+    bitmap.allocN32Pixels(16, 16);
+    bitmap.eraseColor(fill);
+    return *gfx::PNGCodec::EncodeBGRASkBitmap(bitmap, false);
+  };
+  CHECK(base::WriteFile(root.AppendASCII("on.png"), png(color)));
+  CHECK(base::WriteFile(root.AppendASCII("off.png"), png(SK_ColorLTGRAY)));
+  const std::string popup_entry = popup ? R"(,"default_popup":"popup.html")" : "";
+  CHECK(base::WriteFile(root.AppendASCII("manifest.json"), base::StringPrintf(R"({
+    "manifest_version":3,"name":"%s","version":"1.0",
+    "action":{"default_icon":{"16":"on.png"},"default_title":"%s"%s},
+    "background":{"service_worker":"background.js"},
+    "permissions":["activeTab"],
+    "host_permissions":["http://*/*"],
+    "content_scripts":[{"matches":["http://*/*"],"js":["content.js"],"run_at":"document_end"}]
+  })", std::string(name).c_str(), std::string(name).c_str(), popup_entry.c_str())));
+  CHECK(base::WriteFile(root.AppendASCII("background.js"), std::string(background)));
+  CHECK(base::WriteFile(root.AppendASCII("content.js"),
+      base::StringPrintf("document.documentElement.dataset.%s = 'here';", std::string(name).c_str())));
+  CHECK(base::WriteFile(root.AppendASCII("popup.html"),
+      "<!doctype html><title>Popup</title><body style='margin:0;width:160px;height:80px'>Popup</body>"));
+  return root;
+}
+scoped_refptr<const extensions::Extension> LoadTestExtension(Profile* profile, const base::FilePath& path) {
+  extensions::ChromeTestExtensionLoader loader(profile);
+  return loader.LoadExtension(path);
+}
+std::vector<std::string> ShownActions(ExtensionsBar* bar) {
+  std::vector<std::string> ids;
+  for (const auto& action : bar->visible_actions_for_testing()) ids.push_back(action.id);
+  return ids;
+}
+std::optional<ExtensionsBar::ActionSnapshot> Shown(ExtensionsBar* bar, const std::string& id) {
+  for (const auto& action : bar->visible_actions_for_testing()) if (action.id == id) return action;
+  return std::nullopt;
+}
+}  // namespace
+
+// Each Chromium profile has its own extensions: the header shows the extensions
+// of the profile of the page on screen, the menu lists only that profile's,
+// content scripts run only in its pages and pinning stays per profile.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionsFollowTheProfileOfTheShownPage) {
+  base::ScopedTempDir dir;
+  {
+    base::ScopedAllowBlockingForTesting allow;
+    ASSERT_TRUE(dir.CreateUniqueTempDir());
+  }
+  const auto work_extension = LoadTestExtension(work_, WriteTestExtension(dir.GetPath(), "WorkTool", SK_ColorBLUE, false));
+  const auto personal_extension = LoadTestExtension(personal_, WriteTestExtension(dir.GetPath(), "HomeTool", SK_ColorRED, false));
+  const auto unpinned = LoadTestExtension(work_, WriteTestExtension(dir.GetPath(), "SpareTool", SK_ColorGREEN, false));
+  ASSERT_TRUE(work_extension && personal_extension && unpinned);
+  // Registries are per profile: neither sees the other's extension.
+  EXPECT_FALSE(extensions::ExtensionRegistry::Get(work_)->enabled_extensions().Contains(personal_extension->id()));
+  EXPECT_FALSE(extensions::ExtensionRegistry::Get(personal_)->enabled_extensions().Contains(work_extension->id()));
+  ToolbarActionsModel::Get(work_)->SetActionVisibility(work_extension->id(), true);
+  ToolbarActionsModel::Get(personal_)->SetActionVisibility(personal_extension->id(), true);
+  // New extensions start pinned; this one lives only in the menu.
+  ToolbarActionsModel::Get(work_)->SetActionVisibility(unpinned->id(), false);
+
+  auto* bar = window_->extensions_bar();
+  ASSERT_TRUE(bar);
+  NavigateBoth();
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->profile() == work_.get(); }));
+  ASSERT_TRUE(base::test::RunUntil([&] { return ShownActions(bar) == std::vector<std::string>{work_extension->id()}; }))
+      << "shown " << base::JoinString(ShownActions(bar), ",") << "; work " << work_extension->id()
+      << " spare " << unpinned->id() << " home " << personal_extension->id()
+      << " pinned " << base::JoinString(ToolbarActionsModel::Get(work_)->pinned_action_ids(), ",");
+  EXPECT_TRUE(bar->GetVisible());
+  EXPECT_FALSE(bar->bounds().IsEmpty());
+  // The bar sits at the right end of the header band, clear of the page card.
+  EXPECT_GT(bar->bounds().x(), window_->shell()->content_host()->bounds().CenterPoint().x());
+  EXPECT_LE(bar->bounds().bottom(), window_->shell()->content_host()->bounds().y());
+  bar->ToggleMenu();
+  ASSERT_TRUE(bar->menu_for_testing());
+  auto menu = bar->menu_ids_for_testing();
+  std::ranges::sort(menu);
+  std::vector<std::string> expected{work_extension->id(), unpinned->id()};
+  std::ranges::sort(expected);
+  EXPECT_EQ(expected, menu);
+  bar->CloseMenus();
+  ASSERT_TRUE(base::test::RunUntil([&] { return !bar->menu_for_testing(); }));
+  // Content scripts run only in pages of the profile that has the extension.
+  EXPECT_EQ("here", content::EvalJs(window_->contents("work"), "document.documentElement.dataset.WorkTool || ''"));
+  EXPECT_EQ("", content::EvalJs(window_->contents("work"), "document.documentElement.dataset.HomeTool || ''"));
+
+  ASSERT_TRUE(window_->Select("personal"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->profile() == personal_.get(); }));
+  ASSERT_TRUE(base::test::RunUntil([&] { return ShownActions(bar) == std::vector<std::string>{personal_extension->id()}; }));
+  bar->ToggleMenu();
+  EXPECT_EQ(std::vector<std::string>{personal_extension->id()}, bar->menu_ids_for_testing());
+  bar->CloseMenus();
+  ASSERT_TRUE(base::test::RunUntil([&] { return !bar->menu_for_testing(); }));
+  EXPECT_EQ("here", content::EvalJs(window_->contents("personal"), "document.documentElement.dataset.HomeTool || ''"));
+  EXPECT_EQ("", content::EvalJs(window_->contents("personal"), "document.documentElement.dataset.WorkTool || ''"));
+
+  // Pinning from the menu changes only this profile.
+  ToolbarActionsModel::Get(work_)->SetActionVisibility(unpinned->id(), true);
+  EXPECT_EQ(std::vector<std::string>{personal_extension->id()}, ShownActions(bar));
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return ShownActions(bar).size() == 2; }));
+  EXPECT_FALSE(ToolbarActionsModel::Get(personal_)->HasAction(unpinned->id()));
+}
+
+// The header repaints an action as soon as the extension changes it: a new icon
+// (a password manager that turns grey when signed out), a disabled action, a
+// badge.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionActionIconsFollowTheExtension) {
+  base::ScopedTempDir dir;
+  {
+    base::ScopedAllowBlockingForTesting allow;
+    ASSERT_TRUE(dir.CreateUniqueTempDir());
+  }
+  const auto extension = LoadTestExtension(work_, WriteTestExtension(dir.GetPath(), "Vault", SK_ColorBLUE, false));
+  ASSERT_TRUE(extension);
+  ToolbarActionsModel::Get(work_)->SetActionVisibility(extension->id(), true);
+  auto* bar = window_->extensions_bar();
+  NavigateBoth();
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return Shown(bar, extension->id()).has_value(); }));
+  // The default icon loads asynchronously.
+  ASSERT_TRUE(base::test::RunUntil([&] { return Shown(bar, extension->id())->icon_hash != 0; }));
+  const auto initial = *Shown(bar, extension->id());
+  EXPECT_TRUE(initial.enabled);
+  EXPECT_TRUE(initial.badge.empty());
+  EXPECT_EQ(u"Vault", initial.name);
+
+  auto run = [&](std::string script) {
+    ASSERT_TRUE(extensions::BackgroundScriptExecutor::ExecuteScriptAsync(work_, extension->id(), script));
+  };
+  // Signed out: the extension swaps in its grey icon.
+  run("chrome.action.setIcon({path: 'off.png'});");
+  ASSERT_TRUE(base::test::RunUntil([&] { return Shown(bar, extension->id())->icon_hash != initial.icon_hash; }));
+  const auto grey_icon = Shown(bar, extension->id())->icon_hash;
+  // It disables itself on the page: the header greys the icon too.
+  run("chrome.action.disable();");
+  ASSERT_TRUE(base::test::RunUntil([&] { return !Shown(bar, extension->id())->enabled; }));
+  EXPECT_NE(grey_icon, Shown(bar, extension->id())->icon_hash);
+  // A badge shows its text.
+  run("chrome.action.setBadgeText({text: '12'});");
+  ASSERT_TRUE(base::test::RunUntil([&] { return Shown(bar, extension->id())->badge == "12"; }));
+  auto* button = bar->action_button_for_testing(extension->id());
+  ASSERT_TRUE(button);
+  EXPECT_EQ(u"Vault: 12", button->GetViewAccessibility().GetCachedName());
+  // Signed in again: full color, the original icon.
+  run("chrome.action.enable(); chrome.action.setIcon({path: 'on.png'}); chrome.action.setBadgeText({text: ''});");
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    const auto action = Shown(bar, extension->id());
+    return action->enabled && action->badge.empty() && action->icon_hash != grey_icon;
+  }));
+  // The other profile's page never shows this extension.
+  ASSERT_TRUE(window_->Select("personal"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->profile() == personal_.get(); }));
+  EXPECT_FALSE(Shown(bar, extension->id()).has_value());
+}
+
+// A click runs the action: its popup opens under the icon and closes with
+// window.close(); an action without a popup gets action.onClicked with the tab.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionActionsOpenPopupsAndDispatchClicks) {
+  base::ScopedTempDir dir;
+  {
+    base::ScopedAllowBlockingForTesting allow;
+    ASSERT_TRUE(dir.CreateUniqueTempDir());
+  }
+  const auto popup = LoadTestExtension(work_, WriteTestExtension(dir.GetPath(), "Notes", SK_ColorBLUE, true));
+  const auto clicker = LoadTestExtension(work_, WriteTestExtension(dir.GetPath(), "Clicker", SK_ColorRED, false,
+      "chrome.action.onClicked.addListener(tab => chrome.action.setBadgeText({text: tab && tab.id > 0 ? 'ok' : 'no'}));"));
+  ASSERT_TRUE(popup && clicker);
+  ToolbarActionsModel::Get(work_)->SetActionVisibility(popup->id(), true);
+  ToolbarActionsModel::Get(work_)->SetActionVisibility(clicker->id(), true);
+  auto* bar = window_->extensions_bar();
+  NavigateBoth();
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return ShownActions(bar).size() == 2; }));
+
+  bar->RunAction(popup->id());
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->popup_for_testing() && bar->popup_for_testing()->IsVisible(); }));
+  auto* contents = bar->popup_contents_for_testing();
+  ASSERT_TRUE(contents);
+  EXPECT_EQ(popup->GetResourceURL("popup.html"), contents->GetLastCommittedURL());
+  EXPECT_TRUE(Shown(bar, popup->id())->popup_open);
+  // Anchored under its icon, right edges together.
+  const auto anchor = bar->action_button_for_testing(popup->id())->GetBoundsInScreen();
+  const auto bubble = bar->popup_for_testing()->GetWindowBoundsInScreen();
+  // The bubble's window bounds include its shadow margin.
+  EXPECT_GT(bubble.y(), anchor.y());
+  EXPECT_GE(bubble.y(), anchor.bottom() - 12);
+  EXPECT_LE(std::abs(bubble.right() - anchor.right()), 24);
+  ASSERT_TRUE(content::ExecJs(contents, "window.close()"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !bar->popup_for_testing(); }));
+  EXPECT_FALSE(Shown(bar, popup->id())->popup_open);
+
+  bar->RunAction(clicker->id());
+  ASSERT_TRUE(base::test::RunUntil([&] { return Shown(bar, clicker->id())->badge == "ok"; }));
+  EXPECT_FALSE(bar->popup_for_testing());
+}
+
+// Extension pages (options, chrome://extensions, links from popups) open as
+// tabs of a space that uses the extension's profile.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionPagesOpenInTheirProfile) {
+  base::ScopedTempDir dir;
+  {
+    base::ScopedAllowBlockingForTesting allow;
+    ASSERT_TRUE(dir.CreateUniqueTempDir());
+  }
+  const auto extension = LoadTestExtension(personal_, WriteTestExtension(dir.GetPath(), "Reader", SK_ColorBLUE, true));
+  ASSERT_TRUE(extension);
+  NavigateBoth();
+  ASSERT_TRUE(window_->Select("work"));
+  const size_t personal_tabs = window_->tab_count("personal");
+  ASSERT_TRUE(window_->OpenExtensionPage(personal_, extension->GetResourceURL("popup.html")));
+  EXPECT_EQ("personal", window_->active_id());
+  EXPECT_EQ(personal_tabs + 1, window_->tab_count("personal"));
+  auto* page = window_->contents("personal");
+  ASSERT_TRUE(content::WaitForLoadStop(page));
+  EXPECT_EQ(extension->GetResourceURL("popup.html"), page->GetLastCommittedURL());
+  EXPECT_EQ(personal_.get(), Profile::FromBrowserContext(page->GetBrowserContext()));
+  // ⌘⇧E opens the extensions menu of the shown profile.
+  ASSERT_TRUE(window_->RunShortcut("extensions"));
+  ASSERT_TRUE(window_->extensions_bar()->menu_for_testing());
+  EXPECT_EQ(std::vector<std::string>{extension->id()}, window_->extensions_bar()->menu_ids_for_testing());
+  window_->extensions_bar()->CloseMenus();
+}
 
 } // namespace zitter::prototype

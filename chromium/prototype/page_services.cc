@@ -50,6 +50,11 @@
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/window/dialog_delegate.h"
 #include "url/origin.h"
+#include "chrome/browser/extensions/api/web_navigation/web_navigation_tab_observer.h"
+#include "chrome/browser/extensions/chrome_extension_web_contents_observer.h"
+#include "chrome/browser/extensions/tab_helper.h"
+#include "extensions/browser/view_type_utils.h"
+#include "extensions/common/mojom/view_type.mojom.h"
 
 namespace zitter::prototype {
 std::u16string BrowsingProfileName(Profile* profile) {
@@ -122,6 +127,13 @@ PageServices::PageServices(content::WebContents* contents)
   sessions::SessionTabHelper::CreateForWebContents(contents, base::BindRepeating(
       [](content::WebContents*) -> sessions::SessionTabHelperDelegate* { return nullptr; }));
   HistoryTabHelper::CreateForWebContents(contents);
+  // Extensions see the page as a tab of its own profile: content scripts,
+  // activeTab, the action runner, webNavigation (design: Extensions).
+  extensions::ChromeExtensionWebContentsObserver::CreateForWebContents(contents);
+  if (extensions::GetViewType(contents) == extensions::mojom::ViewType::kInvalid)
+    extensions::SetViewType(contents, extensions::mojom::ViewType::kTabContents);
+  extensions::WebNavigationTabObserver::CreateForWebContents(contents);
+  extensions::TabHelper::CreateForWebContents(contents);
   autofill::ChromeAutofillClient::CreateForWebContents(contents);
   // Payment-save/reauth UI depends on Chrome's BrowserWindow. This is a
   // per-page capability switch, not a modification of the profile's settings.

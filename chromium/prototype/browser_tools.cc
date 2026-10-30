@@ -48,6 +48,7 @@ std::vector<Shortcut> ArcShortcuts() {
   add("reload", T(u"Odśwież stronę"), ui::VKEY_R, p);
   add("history", T(u"Historia przeglądania"), ui::VKEY_Y, p);
   add("downloads", T(u"Pobrania"), ui::VKEY_J, p);
+  add("extensions", T(u"Rozszerzenia"), ui::VKEY_E, p | ui::EF_SHIFT_DOWN);
   add("settings", T(u"Preferencje"), ui::VKEY_OEM_COMMA, p);
   add("next_space", T(u"Następna przestrzeń"), ui::VKEY_RIGHT, p | ui::EF_ALT_DOWN);
   add("previous_space", T(u"Poprzednia przestrzeń"), ui::VKEY_LEFT, p | ui::EF_ALT_DOWN);
