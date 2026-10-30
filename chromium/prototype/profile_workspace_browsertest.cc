@@ -9121,4 +9121,56 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionTabEventsFollowZitter
   ASSERT_TRUE(base::test::RunUntil([&] { return badge() == "rem"; })) << badge();
 }
 
+
+// chrome.windows sees each profile's Zitter tabs as one normal window, and the
+// tabs API creates, activates, moves and closes Zitter tabs in it. Closing the
+// window itself is refused: it holds every profile's spaces.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionWindowsAndTabOperationsUseZitter) {
+  base::ScopedTempDir dir;
+  {
+    base::ScopedAllowBlockingForTesting allow;
+    ASSERT_TRUE(dir.CreateUniqueTempDir());
+  }
+  const auto extension = LoadTestExtension(work_, WriteTestExtension(dir.GetPath(), "Organizer", SK_ColorBLUE, false));
+  ASSERT_TRUE(extension);
+  auto* bar = window_->extensions_bar();
+  NavigateBoth();
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return Shown(bar, extension->id()).has_value(); }));
+  const size_t tabs = window_->tab_count("work");
+  const GURL shown = window_->contents("work")->GetLastCommittedURL();
+  const std::string script = base::StringPrintf(R"(let step = ''; (async () => {
+    const fail = text => chrome.action.setBadgeText({text});
+    step = 'g'; const win = await chrome.windows.getCurrent({populate: true});
+    if (win.type !== 'normal' || win.tabs.length !== %zu) return fail('w' + win.tabs.length);
+    step = 'l'; const all = await chrome.windows.getAll();
+    if (all.length !== 1 || all[0].id !== win.id) return fail('a' + all.length);
+    step = 'q'; const [active] = await chrome.tabs.query({active: true, currentWindow: true});
+    if (active.windowId !== win.id || !active.active) return fail('id');
+    step = 'c'; const created = await chrome.tabs.create({url: '%s'});
+    if (created.windowId !== win.id) return fail('cw');
+    step = 'u'; await chrome.tabs.update(active.id, {active: true});
+    step = 'm'; await chrome.tabs.move(created.id, {index: 0});
+    const [first] = await chrome.tabs.query({index: 0, currentWindow: true});
+    if (first.id !== created.id) return fail('mv');
+    step = 'r'; await chrome.tabs.remove(created.id);
+    const after = await chrome.tabs.query({currentWindow: true});
+    if (after.length !== %zu) return fail('rm' + after.length);
+    const closed = await chrome.windows.remove(win.id).then(() => 'closed', () => 'kept');
+    if (closed !== 'kept') return fail('wr');
+    fail('ok');
+  })().catch(error => { console.error(step, error.message); chrome.action.setBadgeText({text: 'x' + step}); }))",
+      tabs, embedded_test_server()->GetURL("/storage_probe.html?created").spec().c_str(), tabs);
+  ASSERT_TRUE(extensions::BackgroundScriptExecutor::ExecuteScriptAsync(work_, extension->id(), script));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    const auto badge = Shown(bar, extension->id())->badge;
+    return !badge.empty();
+  }));
+  EXPECT_EQ("ok", Shown(bar, extension->id())->badge);
+  // The space is as it was, the window still open.
+  EXPECT_EQ(tabs, window_->tab_count("work"));
+  EXPECT_EQ(shown, window_->contents("work")->GetLastCommittedURL());
+  EXPECT_TRUE(window_->widget()->IsVisible());
+}
+
 } // namespace zitter::prototype

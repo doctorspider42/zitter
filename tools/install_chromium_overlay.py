@@ -108,6 +108,14 @@ EXTENSION_TABS_DECLARATION = """  // Zitter: tabs an embedder hosts outside Brow
     virtual std::vector<content::WebContents*> GetTabs(Profile* profile) = 0;
     // The tab on screen for the profile, which counts as active.
     virtual content::WebContents* GetShownTab(Profile* profile) = 0;
+    // The window holding the profile's tabs (no Browser behind it), or null.
+    virtual WindowController* GetWindow(Profile* profile) = 0;
+    // Tab operations of the tabs API, performed by the embedder.
+    virtual content::WebContents* OpenTab(Profile* profile, const GURL& url,
+                                          bool active) = 0;
+    virtual bool ActivateTab(content::WebContents* contents) = 0;
+    virtual bool CloseTab(content::WebContents* contents) = 0;
+    virtual bool MoveTab(content::WebContents* contents, int index) = 0;
   };
   static void SetEmbedderTabs(EmbedderTabs* tabs);
   static EmbedderTabs* GetEmbedderTabs();
@@ -239,6 +247,230 @@ TABS_INCLUDE_ANCHOR = '#include "base/strings/pattern.h"\n'
 TABS_INCLUDE = '#include "chrome/browser/ui/browser_window/public/global_browser_collection.h"\n'
 
 
+TAB_OBJECT_ACTIVE_OLD = """  bool is_active = tab_interface && tab_interface->IsActivated();
+"""
+TAB_OBJECT_ACTIVE_NEW = """  bool is_active = tab_interface && tab_interface->IsActivated();
+  // Zitter: the embedder's tab on screen is its window's active tab.
+  const bool embedder_shown =
+      !tab_interface && GetEmbedderTabs() &&
+      GetEmbedderTabs()->GetShownTab(
+          Profile::FromBrowserContext(contents->GetBrowserContext())) == contents;
+  is_active = is_active || embedder_shown;
+"""
+TAB_OBJECT_HIGHLIGHTED_OLD = """  tab_object.highlighted = tab_interface && tab_interface->IsSelected();
+"""
+TAB_OBJECT_HIGHLIGHTED_NEW = """  tab_object.highlighted =
+      embedder_shown || (tab_interface && tab_interface->IsSelected());
+"""
+TABS_CREATE_OLD = """    browser = controller->GetBrowserWindowInterface();
+  }
+
+  // We didn't find a browser. Bail.
+"""
+TABS_CREATE_NEW = """    browser = controller->GetBrowserWindowInterface();
+    // Zitter: the embedder's window opens the tab itself.
+    ExtensionTabUtil::EmbedderTabs* embedder = ExtensionTabUtil::GetEmbedderTabs();
+    if (!browser && embedder &&
+        embedder->GetWindow(controller->profile()) == controller) {
+      content::WebContents* contents = embedder->OpenTab(
+          controller->profile(), validated_url_, active_.value_or(true));
+      if (!contents) {
+        return RespondNow(Error(ExtensionTabUtil::kTabStripNotEditableError));
+      }
+      if (!has_callback()) {
+        return RespondNow(NoArguments());
+      }
+      return RespondNow(WithArguments(
+          ExtensionTabUtil::CreateTabObject(
+              contents,
+              ExtensionTabUtil::GetScrubTabBehavior(
+                  extension(), source_context_type(), contents),
+              extension())
+              .ToValue()));
+    }
+  }
+
+  // We didn't find a browser. Bail.
+"""
+TABS_UPDATE_OLD = """                             &contents, &tab_index, &error)) {
+    return RespondNow(Error(std::move(error)));
+  }
+
+  if (DevToolsWindow::IsDevToolsWindow(contents)) {
+    return RespondNow(Error(tabs_constants::kNotAllowedForDevToolsError));
+  }
+
+  // GetTabById may return a null window for prerender tabs.
+"""
+TABS_UPDATE_NEW = """                             &contents, &tab_index, &error)) {
+    // Zitter: a tab hosted outside Browser windows updates in its embedder.
+    ExtensionTabUtil::EmbedderTabs* embedder = ExtensionTabUtil::GetEmbedderTabs();
+    if (!embedder ||
+        !ExtensionTabUtil::GetTabById(tab_id, browser_context(),
+                                      include_incognito_information(), nullptr,
+                                      &contents, &tab_index)) {
+      return RespondNow(Error(std::move(error)));
+    }
+    const auto& properties = params->update_properties;
+    if (properties.url) {
+      base::expected<GURL, std::string> url =
+          ExtensionTabUtil::PrepareURLForNavigation(*properties.url, extension(),
+                                                    browser_context());
+      if (!url.has_value()) {
+        return RespondNow(Error(url.error()));
+      }
+      contents->GetController().LoadURL(*url, content::Referrer(),
+                                        ui::PAGE_TRANSITION_FROM_API,
+                                        std::string());
+    }
+    if (properties.active.value_or(false) ||
+        properties.selected.value_or(false) ||
+        properties.highlighted.value_or(false)) {
+      embedder->ActivateTab(contents);
+    }
+    if (properties.muted) {
+      contents->SetAudioMuted(*properties.muted);
+    }
+    if (!has_callback()) {
+      return RespondNow(NoArguments());
+    }
+    return RespondNow(ArgumentList(tabs::Update::Results::Create(
+        CreateTabObjectHelper(contents, extension(), source_context_type(),
+                              nullptr, tab_index))));
+  }
+
+  if (DevToolsWindow::IsDevToolsWindow(contents)) {
+    return RespondNow(Error(tabs_constants::kNotAllowedForDevToolsError));
+  }
+
+  // GetTabById may return a null window for prerender tabs.
+"""
+TABS_REMOVE_OLD = """bool TabsRemoveFunction::RemoveTab(int tab_id, std::string* error) {
+  WindowController* window = nullptr;
+  content::WebContents* contents = nullptr;
+"""
+TABS_REMOVE_NEW = """bool TabsRemoveFunction::RemoveTab(int tab_id, std::string* error) {
+  WindowController* window = nullptr;
+  content::WebContents* contents = nullptr;
+  // Zitter: a tab hosted outside Browser windows closes in its embedder.
+  if (ExtensionTabUtil::EmbedderTabs* embedder = ExtensionTabUtil::GetEmbedderTabs();
+      embedder &&
+      ExtensionTabUtil::GetTabById(tab_id, browser_context(),
+                                   include_incognito_information(), nullptr,
+                                   &contents, nullptr) &&
+      !::tabs::TabInterface::MaybeGetFromContents(contents)) {
+    if (!embedder->CloseTab(contents)) {
+      *error = ExtensionTabUtil::kTabStripNotEditableError;
+      return false;
+    }
+    return true;
+  }
+"""
+TABS_MOVE_OLD = """  WindowController* source_window = nullptr;
+  content::WebContents* contents = nullptr;
+  int tab_index = -1;
+  if (!tabs_util::GetTabById(tab_id, browser_context(),
+                             include_incognito_information(), &source_window,
+                             &contents, &tab_index, error)) {
+    return false;
+  }
+"""
+TABS_MOVE_NEW = """  WindowController* source_window = nullptr;
+  content::WebContents* contents = nullptr;
+  int tab_index = -1;
+  // Zitter: a tab hosted outside Browser windows moves within its embedder.
+  if (ExtensionTabUtil::EmbedderTabs* embedder = ExtensionTabUtil::GetEmbedderTabs();
+      embedder &&
+      ExtensionTabUtil::GetTabById(tab_id, browser_context(),
+                                   include_incognito_information(), nullptr,
+                                   &contents, &tab_index) &&
+      !::tabs::TabInterface::MaybeGetFromContents(contents)) {
+    WindowController* window = embedder->GetWindow(
+        Profile::FromBrowserContext(contents->GetBrowserContext()));
+    if (window_id && (!window || *window_id != window->GetWindowId())) {
+      *error = tabs_constants::kInvalidWindowStateError;
+      return false;
+    }
+    if (!embedder->MoveTab(contents, *new_index)) {
+      *error = ExtensionTabUtil::kTabStripNotEditableError;
+      return false;
+    }
+    tab_values.Append(CreateTabObjectHelper(contents, extension(),
+                                            source_context_type(), nullptr,
+                                            *new_index)
+                          .ToValue());
+    return true;
+  }
+  if (!tabs_util::GetTabById(tab_id, browser_context(),
+                             include_incognito_information(), &source_window,
+                             &contents, &tab_index, error)) {
+    return false;
+  }
+"""
+WINDOWS_GET_ALL_OLD = """  for (WindowController* controller : *WindowControllerList::GetInstance()) {
+    if (!controller->GetBrowserWindowInterface() ||
+"""
+WINDOWS_GET_ALL_NEW = """  for (WindowController* controller : *WindowControllerList::GetInstance()) {
+    // Zitter: the embedder's windows describe themselves.
+    ExtensionTabUtil::EmbedderTabs* embedder = ExtensionTabUtil::GetEmbedderTabs();
+    if (!controller->GetBrowserWindowInterface() && embedder &&
+        embedder->GetWindow(controller->profile()) == controller) {
+      if (windows_util::CanOperateOnWindow(this, controller,
+                                           extractor.type_filters())) {
+        window_list.Append(controller->CreateWindowValueForExtension(
+            extension(), populate_tab_behavior, source_context_type()));
+      }
+      continue;
+    }
+    if (!controller->GetBrowserWindowInterface() ||
+"""
+WINDOWS_LAST_FOCUSED_OLD = """  if (!last_focused_browser) {
+    return RespondNow(Error(tabs_constants::kNoLastFocusedWindowError));
+  }
+"""
+WINDOWS_LAST_FOCUSED_NEW = """  if (!last_focused_browser) {
+    // Zitter: the embedder's window when no browser window qualifies.
+    ExtensionTabUtil::EmbedderTabs* embedder = ExtensionTabUtil::GetEmbedderTabs();
+    WindowController* window =
+        embedder ? embedder->GetWindow(Profile::FromBrowserContext(browser_context()))
+                 : nullptr;
+    if (window && windows_util::CanOperateOnWindow(this, window,
+                                                   extractor.type_filters())) {
+      return RespondNow(WithArguments(window->CreateWindowValueForExtension(
+          extension(),
+          extractor.populate_tabs() ? WindowController::kPopulateTabs
+                                    : WindowController::kDontPopulateTabs,
+          source_context_type())));
+    }
+    return RespondNow(Error(tabs_constants::kNoLastFocusedWindowError));
+  }
+"""
+WINDOWS_REMOVE_OLD = """  TabListInterface* tab_list =
+      TabListInterface::From(window_controller->GetBrowserWindowInterface());
+  if (tab_list && !tab_list->IsThisTabListEditable()) {
+"""
+WINDOWS_REMOVE_NEW = """  // Zitter: the embedder's window holds every profile; extensions close tabs.
+  if (ExtensionTabUtil::EmbedderTabs* embedder = ExtensionTabUtil::GetEmbedderTabs();
+      embedder && !window_controller->GetBrowserWindowInterface() &&
+      embedder->GetWindow(window_controller->profile()) == window_controller) {
+    return RespondNow(Error(ExtensionTabUtil::kTabStripNotEditableError));
+  }
+  TabListInterface* tab_list =
+      TabListInterface::From(window_controller->GetBrowserWindowInterface());
+  if (tab_list && !tab_list->IsThisTabListEditable()) {
+"""
+
+CURRENT_WINDOW_ANCHOR = """  // NOTE(rafaelw): This can return NULL in some circumstances. In particular,
+"""
+CURRENT_WINDOW_ADDITION = """  // Zitter: the embedder's window when the profile has no browser window.
+  if (!window_controller && ExtensionTabUtil::GetEmbedderTabs()) {
+    window_controller = ExtensionTabUtil::GetEmbedderTabs()->GetWindow(profile);
+  }
+
+"""
+FUNCTION_DETAILS_INCLUDE_ANCHOR = '#include "chrome/browser/extensions/browser_extension_window_controller.h"\n'
+FUNCTION_DETAILS_INCLUDE = '#include "chrome/browser/extensions/extension_tab_util.h"\n'
+
 def _patch_once(text, anchor, replacement, marker, what):
     if text.count(replacement) == 1:
         return text
@@ -248,7 +480,7 @@ def _patch_once(text, anchor, replacement, marker, what):
 
 
 def patch_extension_tabs(text, part):
-    """part: 'header' (extension_tab_util.h), 'source' (.cc) or 'tabs_api'."""
+    """part: 'header' (extension_tab_util.h), 'source' (.cc), 'tabs_api', 'windows_api' or 'function_details'."""
     if part == 'header':
         anchor = "  // Any out parameter (`window`, `contents`, & `tab_index`) may be null.\n"
         return _patch_once(text, anchor, EXTENSION_TABS_DECLARATION + anchor, "class EmbedderTabs", "ExtensionTabUtil")
@@ -259,18 +491,38 @@ def patch_extension_tabs(text, part):
                   "                                  WindowController** out_window,\n")
         text = _patch_once(text, anchor, EXTENSION_TABS_DEFINITIONS + anchor, "g_embedder_tabs = nullptr", "ExtensionTabUtil")
         lookup_anchor = "  // Prerendering tab is not visible and it cannot be in `TabStripModel`, if the\n"
-        return _patch_once(text, lookup_anchor, EXTENSION_TABS_LOOKUP + lookup_anchor,
+        text = _patch_once(text, lookup_anchor, EXTENSION_TABS_LOOKUP + lookup_anchor,
                            "tabs hosted outside Browser windows, when", "GetTabById")
+        text = _patch_once(text, TAB_OBJECT_ACTIVE_OLD, TAB_OBJECT_ACTIVE_NEW, "embedder_shown =", "tab object")
+        return _patch_once(text, TAB_OBJECT_HIGHLIGHTED_OLD, TAB_OBJECT_HIGHLIGHTED_NEW,
+                           "embedder_shown ||", "tab object")
+    if part == 'function_details':
+        text = _patch_once(text, FUNCTION_DETAILS_INCLUDE_ANCHOR,
+                           FUNCTION_DETAILS_INCLUDE_ANCHOR + FUNCTION_DETAILS_INCLUDE,
+                           FUNCTION_DETAILS_INCLUDE, "function details include")
+        return _patch_once(text, CURRENT_WINDOW_ANCHOR, CURRENT_WINDOW_ADDITION + CURRENT_WINDOW_ANCHOR,
+                           "window when the profile has no browser window", "current window")
+    if part == 'windows_api':
+        text = _patch_once(text, WINDOWS_GET_ALL_OLD, WINDOWS_GET_ALL_NEW, "windows describe themselves", "windows.getAll")
+        text = _patch_once(text, WINDOWS_LAST_FOCUSED_OLD, WINDOWS_LAST_FOCUSED_NEW,
+                           "window when no browser window qualifies", "windows.getLastFocused")
+        return _patch_once(text, WINDOWS_REMOVE_OLD, WINDOWS_REMOVE_NEW, "window holds every profile", "windows.remove")
     text = _patch_once(text, TABS_INCLUDE_ANCHOR, TABS_INCLUDE_ANCHOR + TABS_INCLUDE,
                        "\n" + TABS_INCLUDE, "tabs API include")
     text = _patch_once(text, TABS_GET_OLD, TABS_GET_NEW, "a tab hosted outside Browser windows", "tabs.get")
-    return _patch_once(text, TABS_QUERY_ANCHOR, TABS_QUERY_ADDITION, "form one window per", "tabs.query")
+    text = _patch_once(text, TABS_QUERY_ANCHOR, TABS_QUERY_ADDITION, "form one window per", "tabs.query")
+    text = _patch_once(text, TABS_CREATE_OLD, TABS_CREATE_NEW, "window opens the tab itself", "tabs.create")
+    text = _patch_once(text, TABS_UPDATE_OLD, TABS_UPDATE_NEW, "updates in its embedder", "tabs.update")
+    text = _patch_once(text, TABS_REMOVE_OLD, TABS_REMOVE_NEW, "closes in its embedder", "tabs.remove")
+    return _patch_once(text, TABS_MOVE_OLD, TABS_MOVE_NEW, "moves within its embedder", "tabs.move")
 
 
 EXTENSION_TABS_FILES = {
     "header": "chrome/browser/extensions/extension_tab_util.h",
     "source": "chrome/browser/extensions/extension_tab_util.cc",
     "tabs_api": "chrome/browser/extensions/api/tabs/tabs_api.cc",
+    "windows_api": "chrome/browser/extensions/api/tabs/windows_api.cc",
+    "function_details": "chrome/browser/extensions/chrome_extension_function_details.cc",
 }
 
 

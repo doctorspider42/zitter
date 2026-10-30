@@ -132,6 +132,8 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   // Opens an extension's page (options, chrome://extensions, a link from its
   // popup) as a new tab in a space that uses `profile`.
   bool OpenExtensionPage(Profile* profile, const GURL& url);
+  // The same as a tab of the tabs API: shown when `active`, else opened behind.
+  content::WebContents* OpenProfileTab(Profile* profile, const GURL& url, bool active);
   ExtensionsBar* extensions_bar() const { return extensions_bar_; }
   bool OpenLink(const GURL& url, std::string source_workspace, bool new_tab, bool split = false);
   WorkspaceShell* shell() const { return shell_.get(); }

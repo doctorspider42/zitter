@@ -24,12 +24,21 @@ EXTENSION_TABS_SOURCES = {
                "  // Prerendering tab is not visible and it cannot be in `TabStripModel`, if the\n"
                "// static\nbool ExtensionTabUtil::GetTabById(int tab_id,\n"),
     "tabs_api": None,
+    "windows_api": None,
+    "function_details": None,
 }
 
 
 def seed_extension_tabs(checkout):
-    texts = dict(EXTENSION_TABS_SOURCES, tabs_api=(overlay.TABS_INCLUDE_ANCHOR + overlay.TABS_GET_OLD +
-                                                    overlay.TABS_QUERY_ANCHOR))
+    texts = dict(EXTENSION_TABS_SOURCES,
+                 source=EXTENSION_TABS_SOURCES["source"] + overlay.TAB_OBJECT_ACTIVE_OLD +
+                 overlay.TAB_OBJECT_HIGHLIGHTED_OLD,
+                 tabs_api=(overlay.TABS_INCLUDE_ANCHOR + overlay.TABS_GET_OLD + overlay.TABS_QUERY_ANCHOR +
+                           overlay.TABS_CREATE_OLD + overlay.TABS_UPDATE_OLD + overlay.TABS_REMOVE_OLD +
+                           overlay.TABS_MOVE_OLD),
+                 windows_api=(overlay.WINDOWS_GET_ALL_OLD + overlay.WINDOWS_LAST_FOCUSED_OLD +
+                              overlay.WINDOWS_REMOVE_OLD),
+                 function_details=(overlay.FUNCTION_DETAILS_INCLUDE_ANCHOR + overlay.CURRENT_WINDOW_ANCHOR))
     for part, path in overlay.EXTENSION_TABS_FILES.items():
         (checkout / path).parent.mkdir(parents=True, exist_ok=True)
         (checkout / path).write_text(texts[part])
@@ -85,6 +94,12 @@ class OverlayTests(unittest.TestCase):
         tabs_api = overlay.patch_extension_tabs(texts["tabs_api"], "tabs_api")
         self.assertIn("embedder->GetShownTab(profile)", tabs_api)
         self.assertIn("ExtensionTabUtil::GetTabById(tab_id, browser_context(),", tabs_api)
+        self.assertIn("embedder->OpenTab(", tabs_api)
+        self.assertIn("embedder->CloseTab(contents)", tabs_api)
+        windows_api = overlay.patch_extension_tabs(texts["windows_api"], "windows_api")
+        self.assertIn("kTabStripNotEditableError", windows_api)
+        details = overlay.patch_extension_tabs(texts["function_details"], "function_details")
+        self.assertLess(details.index("GetWindow(profile)"), details.index("NOTE(rafaelw)"))
 
     def test_media_registration_keeps_dispatcher_and_is_guarded(self):
         for header, original in ((True, "  void ProcessMediaAccessRequest(content::WebContents* web_contents,\n"),

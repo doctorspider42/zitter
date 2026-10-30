@@ -16,6 +16,7 @@
 #include "base/timer/timer.h"
 #include "cc/paint/paint_flags.h"
 #include "chrome/browser/extensions/extension_action_runner.h"
+#include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/extensions/extension_uninstall_dialog.h"
 #include "chrome/browser/extensions/extension_view_host.h"
 #include "chrome/browser/profiles/profile.h"
@@ -635,9 +636,16 @@ class PopupHostDelegate final : public extensions::ExtensionViewHost::Delegate {
   std::unique_ptr<content::EyeDropper> OpenEyeDropper(content::RenderFrameHost*, content::EyeDropperListener*) override {
     return nullptr;
   }
-  extensions::WindowController* GetExtensionWindowController() override { return nullptr; }
+  // The popup belongs to its profile's Zitter window, as a Chrome popup
+  // belongs to its browser window.
+  extensions::WindowController* GetExtensionWindowController() override {
+    auto* tabs = extensions::ExtensionTabUtil::GetEmbedderTabs();
+    return tabs && profile_ ? tabs->GetWindow(profile_) : nullptr;
+  }
+  void set_profile(Profile* profile) { profile_ = profile; }
  private:
   base::RepeatingCallback<void(const GURL&)> open_;
+  raw_ptr<Profile> profile_ = nullptr;
 };
 
 // Calls back when a widget becomes active (the popup closes when the window
@@ -977,6 +985,7 @@ void ExtensionsBar::ShowPopup(const Extension& extension, views::View* anchor) {
         bar->ClosePopup();
         bar->OpenPage(url);
       }, weak_factory_.GetWeakPtr()));
+  delegate->set_profile(profile_);
   auto host = std::make_unique<extensions::ExtensionViewHost>(&extension, profile_, url,
       extensions::mojom::ViewType::kExtensionPopup, std::move(delegate));
   popup_ = std::make_unique<Popup>(this, anchor, std::move(host));

@@ -168,10 +168,20 @@ while no browser window is active. `extension_tab_events.cc` sends
 `tabs.onCreated`, `onUpdated` (loading, url, title), `onRemoved` and
 `onActivated`, scrubbed per extension as Chromium's TabsEventRouter does.
 
-Not covered: anything that needs a window object. `chrome.windows`, and
-`tabs.create/update/move/remove/duplicate/group` on Zitter tabs still fail, and
-tab objects carry no window id. Those need the BrowserWindowInterface
-integration below.
+`chrome.windows` sees each profile's Zitter tabs as one window of type
+`normal`: a `WindowController` per profile (as Document PiP has one), backed by
+the Zitter widget and registered in `WindowControllerList`. Every page carries
+its window id. It is the current window when the profile has no Browser window,
+and the window of the profile's popups. `tabs.create`, `tabs.update` (url,
+active, muted), `tabs.move` within the space on screen and `tabs.remove` act on
+Zitter tabs through the embedder; `windows.getAll/get/getCurrent/
+getLastFocused` describe the window. `windows.remove` is refused: the window
+holds every profile's spaces.
+
+Not covered: tab groups, Split View and highlighting through the tabs API,
+moving a tab to another window or between spaces, `windows.create` (it opens a
+stock window, whose tabs move into Zitter) and `windows.update`. A real
+BrowserWindowInterface remains the gate for those.
 
 ## Next gate: real browser context ownership
 

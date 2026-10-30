@@ -40,6 +40,11 @@
 #include "chromium/prototype/extension_tab_events.h"
 #include "chrome/browser/ui/extensions/extension_install_ui.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
+#include "chrome/browser/extensions/window_controller.h"
+#include "chrome/browser/extensions/window_controller_list.h"
+#include "chrome/browser/ui/views/picture_in_picture/document_pip_base_window.h"
+#include "components/sessions/content/session_tab_helper.h"
+#include "extensions/common/extension.h"
 #include "base/check.h"
 #include "base/files/file_util.h"
 #include "base/files/important_file_writer.h"
@@ -278,6 +283,72 @@ BEGIN_METADATA(WorkspaceWebView)
 END_METADATA
 }  // namespace
 
+// chrome.windows sees each profile's Zitter tabs as one window of type
+// "normal", backed by the Zitter widget rather than a Browser (as Document
+// PiP windows are).
+class ZitterExtensionWindow final : public extensions::WindowController {
+ public:
+  using Tabs = extensions::ExtensionTabUtil::EmbedderTabs;
+  static std::unique_ptr<ZitterExtensionWindow> Create(views::Widget& widget, Profile* profile, Tabs* tabs) {
+    auto base_window = std::make_unique<DocumentPipBaseWindow>(widget);
+    return base::WrapUnique(new ZitterExtensionWindow(std::move(base_window), profile, tabs));
+  }
+  ~ZitterExtensionWindow() override { extensions::WindowControllerList::GetInstance()->RemoveExtensionWindow(this); }
+  SessionID session_id() const { return session_id_; }
+  int GetWindowId() const override { return session_id_.id(); }
+  std::string GetWindowTypeText() const override { return "normal"; }
+  void SetFullscreenMode(bool, const GURL&) const override {}
+  content::WebContents* GetActiveTab() const override { return tabs_->GetShownTab(profile()); }
+  int GetTabCount() const override { return static_cast<int>(tabs_->GetTabs(profile()).size()); }
+  content::WebContents* GetWebContentsAt(int i) const override {
+    const auto tabs = tabs_->GetTabs(profile());
+    return i >= 0 && static_cast<size_t>(i) < tabs.size() ? tabs[i] : nullptr;
+  }
+  bool IsVisibleToTabsAPIForExtension(const extensions::Extension* extension, bool) const override {
+    return !extension || !extension->is_platform_app();
+  }
+  base::DictValue CreateWindowValueForExtension(const extensions::Extension* extension,
+                                                PopulateTabBehavior populate_tab_behavior,
+                                                extensions::mojom::ContextType context) const override {
+    const gfx::Rect bounds = base_window_->IsMinimized() ? base_window_->GetRestoredBounds() : base_window_->GetBounds();
+    base::DictValue dict;
+    dict.Set("id", GetWindowId());
+    dict.Set("focused", base_window_->IsActive());
+    dict.Set("top", bounds.y());
+    dict.Set("left", bounds.x());
+    dict.Set("width", bounds.width());
+    dict.Set("height", bounds.height());
+    dict.Set("type", GetWindowTypeText());
+    dict.Set("state", base_window_->IsMinimized() ? "minimized" : base_window_->IsMaximized() ? "maximized" : "normal");
+    dict.Set("incognito", profile()->IsOffTheRecord());
+    dict.Set("alwaysOnTop", false);
+    if (populate_tab_behavior == kPopulateTabs) dict.Set(extensions::ExtensionTabUtil::kTabsKey, CreateTabList(extension, context));
+    return dict;
+  }
+  base::ListValue CreateTabList(const extensions::Extension* extension, extensions::mojom::ContextType context) const override {
+    base::ListValue list;
+    const auto tabs = tabs_->GetTabs(profile());
+    for (size_t i = 0; i < tabs.size(); ++i) {
+      list.Append(extensions::ExtensionTabUtil::CreateTabObject(
+          tabs[i], extensions::ExtensionTabUtil::GetScrubTabBehavior(extension, context, tabs[i]), extension, nullptr,
+          static_cast<int>(i)).ToValue());
+    }
+    return list;
+  }
+  bool OpenOptionsPage(const extensions::Extension*, const GURL& url, bool) override {
+    return tabs_->OpenTab(profile(), url, true) != nullptr;
+  }
+
+ private:
+  ZitterExtensionWindow(std::unique_ptr<DocumentPipBaseWindow> base_window, Profile* profile, Tabs* tabs)
+      : extensions::WindowController(base_window.get(), profile), base_window_(std::move(base_window)), tabs_(tabs) {
+    extensions::WindowControllerList::GetInstance()->AddExtensionWindow(this);
+  }
+  const std::unique_ptr<DocumentPipBaseWindow> base_window_;
+  raw_ptr<Tabs> tabs_;
+  const SessionID session_id_ = SessionID::NewUnique();
+};
+
 // The tabs API sees each profile's Zitter tabs as one window: every space of
 // that profile, in sidebar order, with the page on screen as the active tab.
 class WorkspaceWindow::ExtensionTabs final : public extensions::ExtensionTabUtil::EmbedderTabs {
@@ -287,6 +358,20 @@ class WorkspaceWindow::ExtensionTabs final : public extensions::ExtensionTabUtil
   }
   ~ExtensionTabs() override {
     if (extensions::ExtensionTabUtil::GetEmbedderTabs() == this) extensions::ExtensionTabUtil::SetEmbedderTabs(nullptr);
+  }
+  // One window per profile in use; each page knows its window id.
+  void Sync() {
+    std::set<Profile*> profiles;
+    for (const auto& host : window_->hosts_) if (host.profile) profiles.insert(host.profile);
+    std::erase_if(windows_, [&](const auto& entry) { return !profiles.contains(entry.first); });
+    for (auto* profile : profiles) {
+      auto& window = windows_[profile];
+      if (!window) window = ZitterExtensionWindow::Create(*window_->widget_, profile, this);
+      for (auto* page : GetTabs(profile))
+        if (auto* helper = sessions::SessionTabHelper::FromWebContents(page);
+            helper && helper->window_id() != window->session_id())
+          helper->SetWindowID(window->session_id());
+    }
   }
   std::vector<content::WebContents*> GetTabs(Profile* profile) override {
     std::vector<content::WebContents*> tabs;
@@ -305,8 +390,43 @@ class WorkspaceWindow::ExtensionTabs final : public extensions::ExtensionTabUtil
     }
     return first;
   }
+  extensions::WindowController* GetWindow(Profile* profile) override {
+    const auto found = windows_.find(profile);
+    return found == windows_.end() ? nullptr : found->second.get();
+  }
+  content::WebContents* OpenTab(Profile* profile, const GURL& url, bool active) override {
+    return window_->OpenProfileTab(profile, url, active);
+  }
+  bool ActivateTab(content::WebContents* contents) override {
+    const auto [workspace, index] = Find(contents);
+    if (workspace.empty() || !window_->Select(workspace)) return false;
+    window_->SelectTab(index);
+    return true;
+  }
+  bool CloseTab(content::WebContents* contents) override {
+    const auto [workspace, index] = Find(contents);
+    if (workspace.empty() || window_->tab_count(workspace) < 2) return false;
+    window_->CloseWorkspaceTab(workspace, index);
+    return true;
+  }
+  // Moves a tab within its space (the sidebar order); -1 moves it to the end.
+  bool MoveTab(content::WebContents* contents, int index) override {
+    const auto [workspace, from] = Find(contents);
+    if (workspace.empty() || workspace != window_->active_id()) return false;
+    const size_t count = window_->tab_count(workspace);
+    const size_t to = index < 0 || static_cast<size_t>(index) >= count ? count - 1 : static_cast<size_t>(index);
+    return window_->MoveTab(from, to > from ? to + 1 : to);
+  }
+
  private:
+  std::pair<std::string, size_t> Find(content::WebContents* contents) const {
+    for (const auto& host : window_->hosts_)
+      for (size_t i = 0; i < host.tabs.size(); ++i)
+        if (host.tabs[i]->web_contents() == contents) return {host.workspace_id, i};
+    return {};
+  }
   raw_ptr<WorkspaceWindow> window_;
+  std::map<Profile*, std::unique_ptr<ZitterExtensionWindow>> windows_;
 };
 
 WorkspaceWindow::WorkspaceWindow(Profile* work, Profile* personal)
@@ -665,6 +785,7 @@ void WorkspaceWindow::UpdateShell() {
     }
     downloads_->SetProfile(host.profile);
     extensions_bar_->SetContext(host.profile, host.view->GetWebContents());
+    extension_tabs_->Sync();
     // The page on screen changed: chrome.tabs.onActivated for its profile.
     if (auto* shown = host.view->GetWebContents(); shown != shown_page_.get()) {
       shown_page_ = shown->GetWeakPtr();
@@ -911,22 +1032,28 @@ std::string WorkspaceWindow::WorkspaceForPage(content::WebContents* page) const 
   return {};
 }
 bool WorkspaceWindow::OpenExtensionPage(Profile* profile, const GURL& url) {
-  if (closing_ || !configuration_ready_ || profiles_busy_ || !profile || !url.is_valid()) return false;
+  return OpenProfileTab(profile, url, true) != nullptr;
+}
+content::WebContents* WorkspaceWindow::OpenProfileTab(Profile* profile, const GURL& url, bool active) {
+  if (closing_ || !configuration_ready_ || profiles_busy_ || !profile || !url.is_valid()) return nullptr;
   // The page belongs to the profile whose extension asked for it: the space on
   // screen when it uses that profile, otherwise the first space that does.
   std::string target;
   for (const auto& host : hosts_)
     if (host.profile == profile && (target.empty() || host.workspace_id == active_id())) target = host.workspace_id;
-  if (target.empty() || !Select(target)) return false;
+  if (target.empty() || (active && !Select(target))) return nullptr;
   for (auto& host : hosts_) {
     if (host.workspace_id != target) continue;
     auto* view = CreatePage(host.profile);
     host.tabs.push_back(view);
-    view->GetWebContents()->GetController().LoadURL(url, content::Referrer(), ui::PAGE_TRANSITION_AUTO_TOPLEVEL, std::string());
-    SelectTab(host.tabs.size() - 1);
-    return true;
+    auto* page = view->GetWebContents();
+    page->GetController().LoadURL(url, content::Referrer(), ui::PAGE_TRANSITION_AUTO_TOPLEVEL, std::string());
+    if (active) SelectTab(host.tabs.size() - 1);
+    else UpdateShell();
+    extension_tabs_->Sync();  // The tabs API answers with the new tab's window.
+    return page;
   }
-  return false;
+  return nullptr;
 }
 bool WorkspaceWindow::OpenExternalUrl(const GURL& url) { return OpenLink(url, active_id(), true); }
 bool WorkspaceWindow::OpenLink(const GURL& url, std::string source_workspace, bool new_tab, bool split) {
