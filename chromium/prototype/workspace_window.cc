@@ -165,7 +165,7 @@ class WorkspaceWebView final : public views::WebView {
       content::KeyboardEventProcessingResult(
           content::WebContents*, const input::NativeWebKeyboardEvent&)>;
 
-  using OpenHandler = base::RepeatingCallback<content::WebContents*(content::WebContents*, const content::OpenURLParams&, bool)>;
+  using OpenHandler = base::RepeatingCallback<content::WebContents*(content::WebContents*, const content::OpenURLParams&)>;
   using MenuHandler = base::RepeatingCallback<void(content::WebContents*, const content::ContextMenuParams&)>;
   using AdoptHandler = base::RepeatingCallback<content::WebContents*(content::WebContents*, std::unique_ptr<content::WebContents>, bool)>;
   using CreatedHandler = base::RepeatingCallback<void(content::WebContents*, content::WebContents*)>;
@@ -185,25 +185,9 @@ class WorkspaceWebView final : public views::WebView {
     return handler_.Run(source, event);
   }
 
-  bool PreHandleMouseEvent(content::WebContents*, const blink::WebMouseEvent& event) override {
-    if (event.GetType() == blink::WebInputEvent::Type::kMouseDown) {
-#if BUILDFLAG(IS_MAC)
-      constexpr int primary = blink::WebInputEvent::kMetaKey;
-#else
-      constexpr int primary = blink::WebInputEvent::kControlKey;
-#endif
-      peek_click_ = event.button == blink::WebMouseEvent::Button::kLeft &&
-          (event.GetModifiers() & primary) && !(event.GetModifiers() & (blink::WebInputEvent::kShiftKey | blink::WebInputEvent::kAltKey));
-      peek_click_time_ = base::TimeTicks::Now();
-    }
-    return false;
-  }
   content::WebContents* OpenURLFromTab(content::WebContents* source, const content::OpenURLParams& params,
       base::OnceCallback<void(content::NavigationHandle&)> callback) override {
-    const bool peek = std::exchange(peek_click_, false) &&
-        base::TimeTicks::Now() - peek_click_time_ < base::Seconds(2) &&
-        params.disposition == WindowOpenDisposition::NEW_BACKGROUND_TAB;
-    return open_.Run(source, params, peek);
+    return open_.Run(source, params);
   }
   void RunFileChooser(content::RenderFrameHost* frame,
       scoped_refptr<content::FileSelectListener> listener,
@@ -263,8 +247,6 @@ class WorkspaceWebView final : public views::WebView {
   MenuHandler menu_;
   AdoptHandler adopt_;
   CreatedHandler created_;
-  bool peek_click_ = false;
-  base::TimeTicks peek_click_time_;
   void TitleWasSet(content::NavigationEntry*) override { changed_.Run(); }
   // URL and back/forward availability feed the sidebar's address pill.
   void NavigationStateChanged(content::WebContents* source,
@@ -1255,26 +1237,34 @@ bool WorkspaceWindow::RouteNavigation(content::NavigationHandle& navigation, con
   return true;
 }
 content::WebContents* WorkspaceWindow::OpenPageLink(content::WebContents* source,
-    const content::OpenURLParams& params, bool peek) {
+    const content::OpenURLParams& params) {
   if (!params.url.SchemeIsHTTPOrHTTPS() || params.post_data) return nullptr;
   const auto workspace = WorkspaceForPage(source);
   if (workspace.empty()) return nullptr;
   const bool new_tab = params.disposition != WindowOpenDisposition::CURRENT_TAB;
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
-      base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, GURL url, std::string workspace, bool peek, bool new_tab, bool background) {
+      base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, GURL url, std::string workspace, bool new_tab, bool background) {
         if (!window) return;
-        if (peek) { window->OpenPeek(url, workspace); return; }
         const auto target = window->WorkspaceForUrl(url);
+        // Cmd+click: a new tab that loads behind the current one, announced by a toast.
         if (background && (target.empty() || target == workspace)) {
           for (auto& host : window->hosts_) if (host.workspace_id == workspace) {
             auto* view = window->CreatePage(host.profile);
             host.tabs.push_back(view);
             view->GetWebContents()->GetController().LoadURL(url, content::Referrer(), ui::PAGE_TRANSITION_LINK, std::string());
-            window->UpdateShell(); return;
+            window->UpdateShell();
+            std::string site(url.host());
+            if (base::StartsWith(site, "www.")) site = site.substr(4);
+            window->shell_->ShowToast(T(u"Otwarto w tle: "), base::UTF8ToUTF16(site), base::BindOnce([](base::WeakPtr<WorkspaceWindow> w, std::string id, base::WeakPtr<content::WebContents> page) {
+              if (!w || !page || !w->Select(id)) return;
+              for (const auto& host : w->hosts_) if (host.workspace_id == id)
+                for (size_t i = 0; i < host.tabs.size(); ++i) if (host.tabs[i]->web_contents() == page.get()) { w->SelectTab(i); return; }
+            }, window->weak_factory_.GetWeakPtr(), workspace, view->GetWebContents()->GetWeakPtr()), T(u"Pokaż"));
+            return;
           }
         }
         window->OpenLink(url, workspace, new_tab);
-      }, weak_factory_.GetWeakPtr(), params.url, workspace, peek, new_tab,
+      }, weak_factory_.GetWeakPtr(), params.url, workspace, new_tab,
           params.disposition == WindowOpenDisposition::NEW_BACKGROUND_TAB));
   return nullptr;
 }
@@ -1657,7 +1647,11 @@ bool WorkspaceWindow::CloseOtherTabs() {
       return view != keep && std::none_of(host.pin_tabs.begin(), host.pin_tabs.end(), [&](const auto& pin) { return pin.second == view; });
     };
     std::vector<views::WebView*> closing;
-    for (const auto& view : host.tabs) if (closes(view)) closing.push_back(view);
+    std::vector<ClosedTabSlot> undo;
+    for (size_t i = 0; i < host.tabs.size(); ++i) if (closes(host.tabs[i])) {
+      closing.push_back(host.tabs[i]);
+      undo.push_back({i, TabUrl(host, host.tabs[i]), TabTitle(host, host.tabs[i])});
+    }
     if (closing.empty()) return false;
     // Every page with a beforeunload handler is asked once, before any closes.
     std::vector<content::WebContents*> pages;
@@ -1670,6 +1664,30 @@ bool WorkspaceWindow::CloseOtherTabs() {
       const auto found = std::find(host.tabs.begin(), host.tabs.end(), view);
       if (found != host.tabs.end()) CloseWorkspaceTab(host.workspace_id, found - host.tabs.begin());
     }
+    shell_->ShowToast(T(u"Zamknięto "), base::UTF8ToUTF16(std::string(sidebar::tab_count_copy(undo.size()))),
+        base::BindOnce([](base::WeakPtr<WorkspaceWindow> w, std::string id, std::vector<ClosedTabSlot> tabs) {
+          if (w) w->ReopenTabs(id, std::move(tabs));
+        }, weak_factory_.GetWeakPtr(), host.workspace_id, std::move(undo)));
+    return true;
+  }
+  return false;
+}
+bool WorkspaceWindow::ReopenTabs(std::string workspace_id, std::vector<ClosedTabSlot> tabs) {
+  if (!configuration_ready_ || profiles_busy_) return false;
+  for (auto& host : hosts_) {
+    if (host.workspace_id != workspace_id || host.sleeping) continue;
+    views::WebView* selected = host.view;
+    // Back in their places, unloaded until shown; the tab that stayed is untouched.
+    for (const auto& tab : tabs) {
+      auto* view = CreatePage(host.profile);
+      host.tabs.insert(host.tabs.begin() + std::min(tab.index, host.tabs.size()), view);
+      if (tab.url.SchemeIsHTTPOrHTTPS()) host.deferred_urls[view] = tab.url;
+      if (!tab.title.empty()) host.deferred_titles[view] = tab.title;
+      std::erase_if(closed_tabs_, [&](const ClosedTab& closed) { return closed.workspace_id == workspace_id && closed.url == tab.url; });
+    }
+    const auto found = std::find(host.tabs.begin(), host.tabs.end(), selected);
+    if (found != host.tabs.end()) host.active_tab = found - host.tabs.begin();
+    RefreshPanes(); UpdateShell(); SaveSession();
     return true;
   }
   return false;

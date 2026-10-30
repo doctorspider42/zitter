@@ -156,6 +156,8 @@ pub static EN: &[(&str, &str)] = &[
     ("Więcej: {}", "More: {}"),
     // Time Machine timeline.
     ("Zamknij pozostałe karty", "Close other tabs"),
+    ("Zamknięto ", "Closed "),
+    ("Otwarto w tle: ", "Opened in the background: "),
     ("Chwila na osi czasu", "Moment on the timeline"),
     ("Nic jeszcze nie zapisano", "Nothing recorded yet"),
     ("Przestrzeń była wtedy pusta", "The space was empty then"),

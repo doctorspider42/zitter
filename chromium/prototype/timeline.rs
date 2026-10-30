@@ -487,6 +487,16 @@ fn plural(n: usize) -> usize {
     }
 }
 
+/// "2 karty" as the object of a verb ("Zamknięto 2 karty"; 1 kartę, 5 kart).
+pub fn tab_count_copy(count: usize) -> String {
+    let n = count.to_string();
+    match plural(count) {
+        0 => tf("{} kartę", &[&n]),
+        1 => tf("{} karty", &[&n]),
+        _ => tf("{} kart", &[&n]),
+    }
+}
+
 /// Copy for the moment at `t_ms`: the day line, the clock digits, the restore
 /// button and the quantum caption.
 pub fn timeline_clock(t_ms: i64, now_ms: i64, tz_offset_min: i32, tabs: usize, quantum_ms: i64) -> ffi::TimelineClock {
@@ -818,6 +828,7 @@ mod tests {
         assert_eq!(timeline_clock(now - 3 * DAY_MS, now, 120, 22, 0).restore, "Przywróć 22 karty");
         assert_eq!(timeline_clock(now, now, 120, 12, 0).restore, "Przywróć 12 kart");
         assert_eq!(timeline_clock(now, now, 120, 1, 0).restore, "Przywróć 1 kartę");
+        assert_eq!([tab_count_copy(1), tab_count_copy(3), tab_count_copy(12), tab_count_copy(22)], ["1 kartę", "3 karty", "12 kart", "22 karty"]);
         assert!(timeline_clock(now, now, 120, 0, MIN).range.contains("nic nie było"));
         // Midnight in UTC is already the next day two hours east.
         assert_eq!(timeline_clock(civil_days(2026, 1, 1) * DAY_MS - MIN, now, 0, 1, 0).digits, [2, 3, 5, 9]);

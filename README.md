@@ -261,9 +261,11 @@ per workspace and restored on launch. Background tabs load when shown. This
 restores page URLs, not form contents, sessionStorage or the back/forward stack.
 Reassigning a workspace's profile starts a fresh session for that workspace.
 
+**Cmd+click** (Ctrl on Linux) on a link opens it in a new tab behind the current
+one; a toast names the site and **Pokaż** switches to it.
+
 **Peek** opens an HTTP(S) link in a temporary native preview above the current
-page: hold **Cmd and left-click** (Ctrl on Linux), or right-click a link, tab or
-pin and choose **Otwórz w Peek**. Escape or the close button dismisses it. The
+page: right-click a link, tab or pin and choose **Otwórz w Peek**. Escape or the close button dismisses it. The
 preview has its own back/forward buttons; **Otwórz jako kartę** and **Split View**
 move the same live page into the workspace, keeping its form state and navigation
 history. Closing the preview leaves the source page and tab count unchanged.

@@ -472,6 +472,9 @@ pub static EN: &[(&str, &str)] = &[
     ("⌘ L  adres i wyszukiwanie\n⌘ K  karty, przestrzenie i historia\n⌘ T  nowa karta     ⌘ ,  preferencje", "⌘ L  address and search\n⌘ K  tabs, spaces and history\n⌘ T  new tab     ⌘ ,  preferences"),
     // Time Machine timeline.
     ("Zamknij pozostałe karty", "Close other tabs"),
+    ("{} kartę", "{} tab"),
+    ("{} karty", "{} tabs"),
+    ("{} kart", "{} tabs"),
     ("Zostaje tylko bieżąca karta i przypięte", "Only the current tab and pinned ones stay"),
     ("30 dni", "30 days"),
     ("7 dni", "7 days"),

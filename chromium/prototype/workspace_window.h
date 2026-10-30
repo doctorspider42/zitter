@@ -186,8 +186,11 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   // the state before is recorded first and offered as undo.
   bool RestoreTimeline(int64_t t_ms, int64_t quantum_ms);
   bool ReopenClosedTab();
-  // Closes every tab of the active workspace but the selected one and pinned pages.
+  // Closes every tab of the active workspace but the selected one and pinned
+  // pages; the toast's undo puts them back in their places.
   bool CloseOtherTabs();
+  struct ClosedTabSlot { size_t index; GURL url; std::u16string title; };
+  bool ReopenTabs(std::string workspace_id, std::vector<ClosedTabSlot> tabs);
   bool SleepWorkspace(std::string id);
   bool workspace_sleeping(std::string_view id) const;
   const sidebar::Timeline& timeline() const;
@@ -231,7 +234,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void PreparePage(content::WebContents* page, std::string source_hint = {});
   content::WebContents* AdoptPage(content::WebContents* source, std::unique_ptr<content::WebContents> page, bool background);
   bool RouteNavigation(content::NavigationHandle& navigation, const std::string& source_hint);
-  content::WebContents* OpenPageLink(content::WebContents* source, const content::OpenURLParams& params, bool peek);
+  content::WebContents* OpenPageLink(content::WebContents* source, const content::OpenURLParams& params);
   void ShowPageMenu(content::WebContents* source, const content::ContextMenuParams& params);
   std::string WorkspaceForPage(content::WebContents* page) const;
   void UpdateShell();

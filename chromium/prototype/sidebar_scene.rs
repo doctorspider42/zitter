@@ -14,7 +14,7 @@ mod design_tokens;
 mod i18n;
 // Time Machine: the recorded timeline of each workspace's tabs.
 mod timeline;
-use timeline::{new_timeline, timeline_card, timeline_clock, timeline_deck, timeline_spring, timeline_follow, timeline_pan, timeline_time_at, timeline_window, timeline_zoom, Timeline};
+use timeline::{new_timeline, timeline_card, tab_count_copy, timeline_clock, timeline_deck, timeline_spring, timeline_follow, timeline_pan, timeline_time_at, timeline_window, timeline_zoom, Timeline};
 #[allow(unused_imports)]
 use i18n::{t, tf};
 
@@ -437,6 +437,7 @@ mod ffi {
         fn timeline_follow(start_ms: i64, end_ms: i64, t_ms: i64, now_ms: i64, first_ms: i64) -> TimelineSpan;
         fn timeline_deck(count: usize, front: usize) -> Vec<TimelineCard>;
         fn timeline_card(offset: f32) -> TimelineCard;
+        fn tab_count_copy(count: usize) -> String;
         fn timeline_spring(value: f32, velocity: f32, target: f32, dt: f32, stiffness: f32, damping: f32) -> TimelineSpring;
         fn design_same_workspace_color(a: u32, b: u32) -> bool;
         fn design_text_style(id: u32) -> DesignTextStyle;

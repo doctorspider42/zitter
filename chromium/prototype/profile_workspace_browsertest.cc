@@ -1918,8 +1918,22 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CloseOtherTabsKeepsSelectionAn
   ASSERT_TRUE(window_->RunShortcut("close_other_tabs"));
   ASSERT_EQ(1u, window_->tab_count("work"));
   EXPECT_EQ(b, window_->contents("work")->GetLastCommittedURL());
+  // The toast's undo puts both back in their places; the kept tab stays live.
+  ASSERT_TRUE(shell->toast_widget()->IsVisible());
+  auto* kept = window_->contents("work");
+  shell->UndoToast();
+  ASSERT_EQ(3u, window_->tab_count("work"));
+  EXPECT_EQ(kept, window_->contents("work"));
+  window_->SelectTab(0); ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  EXPECT_EQ(a, window_->contents("work")->GetLastCommittedURL());
+  window_->SelectTab(2); ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  EXPECT_EQ(c, window_->contents("work")->GetLastCommittedURL());
+  EXPECT_FALSE(window_->ReopenClosedTab());  // Undo also took them off Cmd+Shift+T's list.
+  // Closed again, both come back with Cmd+Shift+T.
+  window_->SelectTab(1);
+  ASSERT_TRUE(window_->RunShortcut("close_other_tabs"));
+  ASSERT_EQ(1u, window_->tab_count("work"));
   EXPECT_FALSE(window_->RunShortcut("close_other_tabs"));  // Nothing left to close.
-  // Both closed tabs come back with Cmd+Shift+T.
   ASSERT_TRUE(window_->ReopenClosedTab()); ASSERT_TRUE(window_->ReopenClosedTab());
   EXPECT_EQ(3u, window_->tab_count("work"));
 }
@@ -2870,6 +2884,33 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PeekToolbarActionsNavigateProm
   close->HandleAccessibleAction(activate);ASSERT_TRUE(base::test::RunUntil([&]{return !window_->peek_contents();}));
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CmdClickOpensBackgroundTabWithToast) {
+  const auto source_url = embedded_test_server()->GetURL("/links_probe.html");
+  const auto target = embedded_test_server()->GetURL("/storage_probe.html?peek");
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), source_url));
+  auto* source = window_->contents("work");
+  content::SimulateEndOfPaintHoldingOnPrimaryMainFrame(source);
+#if BUILDFLAG(IS_MAC)
+  constexpr int modifier = blink::WebInputEvent::kMetaKey;
+#else
+  constexpr int modifier = blink::WebInputEvent::kControlKey;
+#endif
+  const size_t tabs = window_->tab_count("work");
+  content::SimulateMouseClickAt(source, modifier, blink::WebMouseEvent::Button::kLeft,
+      gfx::ToRoundedPoint(content::GetCenterCoordinatesOfElementWithId(source, "peek")));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->tab_count("work") == tabs + 1; }));
+  EXPECT_EQ(nullptr, window_->peek_contents());           // No mini window any more.
+  EXPECT_EQ(source, window_->contents("work"));           // The page stays in front.
+  auto* shell = window_->shell();
+  ASSERT_TRUE(shell->toast_widget()->IsVisible());
+  // The toast's Pokaż switches to the new tab, which loaded in the background.
+  shell->UndoToast();
+  ASSERT_NE(source, window_->contents("work"));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  EXPECT_EQ(target, window_->contents("work")->GetLastCommittedURL());
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PeekLifecycleAndPromotion) {
   const auto source_url = embedded_test_server()->GetURL("/links_probe.html");
   const auto target = embedded_test_server()->GetURL("/storage_probe.html?peek");
@@ -2877,14 +2918,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PeekLifecycleAndPromotion) {
   auto* source = window_->contents("work");
   ASSERT_TRUE(content::ExecJs(source, "document.getElementById('marker').value = 'source kept'"));
   content::SimulateEndOfPaintHoldingOnPrimaryMainFrame(source);
-#if BUILDFLAG(IS_MAC)
-  constexpr int modifier = blink::WebInputEvent::kMetaKey;
-#else
-  constexpr int modifier = blink::WebInputEvent::kControlKey;
-#endif
-  content::SimulateMouseClickAt(source, modifier, blink::WebMouseEvent::Button::kLeft,
-      gfx::ToRoundedPoint(content::GetCenterCoordinatesOfElementWithId(source, "peek")));
-  ASSERT_TRUE(base::test::RunUntil([&] { return window_->peek_contents() != nullptr; }));
+  // Cmd+click opens a background tab (CmdClickOpensBackgroundTabWithToast); Peek
+  // still opens from the link menu.
+  ASSERT_TRUE(window_->OpenPeek(target));
   auto* peek = window_->peek_contents();
   ASSERT_TRUE(content::WaitForLoadStop(peek));
   EXPECT_EQ(target, peek->GetLastCommittedURL());
