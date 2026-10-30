@@ -10,6 +10,7 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/download/download_core_service.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
+#include "chrome/browser/lifetime/application_lifetime_desktop.h"
 #include "chrome/browser/profiles/keep_alive/profile_keep_alive_types.h"
 #include "chrome/browser/profiles/keep_alive/scoped_profile_keep_alive.h"
 #include "chrome/browser/profiles/profile.h"
@@ -44,6 +45,17 @@ void Runtime::PreMainMessageLoopRun() {
   InstallAppShell();
 #endif
   browsers_.Observe(GlobalBrowserCollection::GetInstance());
+#if !BUILDFLAG(IS_MAC)
+  // Chromium quitting by itself (DevTools Browser.close, chrome://quit, the
+  // session ending) closes all browsers, which Zitter's keep-alive outlives;
+  // macOS routes these through the app shell's terminate hook instead.
+  closing_all_browsers_ = chrome::AddClosingAllBrowsersCallback(base::BindRepeating(
+      [](base::WeakPtr<Runtime> runtime, bool closing) {
+        if (!runtime || !closing || runtime->closing_) return;
+        runtime->downloads_confirmed_ = true;
+        runtime->RequestClose();
+      }, weak_factory_.GetWeakPtr()));
+#endif
 #if BUILDFLAG(IS_MAC)
   if (base::CommandLine::ForCurrentProcess()->HasSwitch("zitter-ui-lab")) {
     SetAppShellDelegate(this);

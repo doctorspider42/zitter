@@ -4,6 +4,7 @@
 #include <memory>
 
 #include "base/containers/flat_set.h"
+#include "base/callback_list.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
 #include "build/build_config.h"
@@ -67,6 +68,7 @@ class Runtime final : public ChromeBrowserMainExtraParts,
   bool closing_ = false;
 #if !BUILDFLAG(IS_MAC)
   bool downloads_confirmed_ = false;
+  base::CallbackListSubscription closing_all_browsers_;
 #endif
   base::WeakPtrFactory<Runtime> weak_factory_{this};
 };

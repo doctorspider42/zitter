@@ -215,7 +215,11 @@ async function runScenario(executable, output, spec) {
     client?.close();
     if (process.exitCode === null && process.signalCode === null) {
       record.forced_termination = true;
-      try {globalThis.process.kill(-process.pid, 'SIGKILL');} catch {}
+      // Windows has no process groups to signal; end the browser's tree.
+      try {
+        if (globalThis.process.platform === 'win32') execFileSync('taskkill', ['/PID', String(process.pid), '/T', '/F']);
+        else globalThis.process.kill(-process.pid, 'SIGKILL');
+      } catch {}
     }
     record.exit_code = process.exitCode; record.signal = process.signalCode;
     record.ended_utc = new Date().toISOString();
@@ -236,10 +240,15 @@ async function main() {
     console.log('node tools/audit_background_network.mjs [--app PATH] [--output NEW_DIRECTORY] [--seconds 120] [--external-url HTTPS_URL] [--inspect-page] [--verify-warning] [--warmup-seconds 10] [--test-threat phishing|malware] [--suppression-control] [--targeted-probe] [--only SCENARIO,SCENARIO]');
     return;
   }
-  const app = path.resolve(option('--app', path.join(root, 'build/Zitter.app')));
-  const executable = path.join(app, 'Contents/MacOS/Chromium');
-  if (!fs.existsSync(path.join(app, 'Contents/Resources/zitter-development-bundle')) &&
-      !fs.existsSync(path.join(app, 'Contents/zitter-development-bundle'))) throw new Error('Expected marker-owned Zitter bundle');
+  // Windows: the development build's zitter.exe (docs/windows-port.md).
+  const windows = globalThis.process.platform === 'win32';
+  const app = path.resolve(option('--app', windows ? path.join(root, '.chromium/src/out/ZitterWin/zitter.exe')
+                                                   : path.join(root, 'build/Zitter.app')));
+  const executable = windows ? app : path.join(app, 'Contents/MacOS/Chromium');
+  if (windows ? path.basename(executable).toLowerCase() !== 'zitter.exe' || !fs.existsSync(executable)
+              : !fs.existsSync(path.join(app, 'Contents/Resources/zitter-development-bundle')) &&
+                !fs.existsSync(path.join(app, 'Contents/zitter-development-bundle')))
+    throw new Error(windows ? 'Expected a zitter.exe build' : 'Expected marker-owned Zitter bundle');
   const output = path.resolve(option('--output', path.join(root, 'build/network-audit', new Date().toISOString().replaceAll(':', '-'))));
   const seconds = Number(option('--seconds', '120'));
   if (!Number.isFinite(seconds) || seconds < 15 || seconds > 3600) throw new Error('--seconds must be 15..3600');

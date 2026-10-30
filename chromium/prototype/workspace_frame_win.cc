@@ -5,6 +5,7 @@
 
 #include <dwmapi.h>
 
+#include "chrome/browser/lifetime/application_lifetime_desktop.h"
 #include "ui/display/win/screen_win.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
@@ -37,6 +38,11 @@ class WorkspaceTreeHost final : public views::DesktopWindowTreeHostWin {
     // No glass inside the client area: the header paints its own ground.
     *insets = gfx::Insets();
     return true;
+  }
+  bool PreHandleMSG(UINT message, WPARAM w_param, LPARAM l_param, LRESULT* result) override {
+    // As Chrome's frame: save the session before Windows logs off or shuts down.
+    if (message == WM_ENDSESSION && w_param) chrome::SessionEnding();
+    return views::DesktopWindowTreeHostWin::PreHandleMSG(message, w_param, l_param, result);
   }
 };
 }  // namespace

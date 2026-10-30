@@ -160,6 +160,30 @@ Notes:
 - Check the sandbox (`chrome://sandbox`) and repeat the network audit
   (`audit_background_network.mjs`).
 
+Notes:
+
+- Arc for Windows is the MSIX package `TheBrowserCompany.Arc_*`; its
+  `LocalCache\Local\Arc` holds `StorableSidebar.json` and `User Data` as on
+  macOS. Its sidebar also holds Little Arc windows (`littleBrowser` containers)
+  whose spaces have no pinned tabs; the importer skips them on both systems.
+  `arc_importer_unittests` covers the format; its disabled tests read this
+  computer's Arc, Chrome, Edge and Brave and print only counts.
+- Chrome, Edge and Brave: `%LOCALAPPDATA%\<vendor>\<browser>\User Data`.
+- The cookie option is hidden on Windows (App-Bound Encryption).
+- CSV password import does not exist on any system yet: a feature of its own.
+- Sandbox: renderers and the storage service run Untrusted, the GPU process Low,
+  nothing with `--no-sandbox`. The network service runs at Medium, as in
+  Chromium: `kNetworkServiceSandbox` is off upstream (Chrome turns it on by
+  field trial). Turning it on is a decision for later.
+- Network audit (four scenarios, 60 s): only `update.googleapis.com`
+  (component updates), as on macOS. It found two Windows-only issues, fixed:
+  - Chromium installed the extensions other apps register for Google Chrome
+    (`Software\Google\Chrome\Extensions`, here Google Docs Offline from
+    `clients2.google.com`). A guarded overlay patch skips that provider when
+    `zitter.exe` passes `--zitter-ignore-chrome-registry-extensions`.
+  - Chromium's own quit (DevTools `Browser.close`, the session ending) closed
+    all browsers but not Zitter, whose keep-alive outlived them; Runtime now
+    closes its window then. `WM_ENDSESSION` saves the session as Chrome does.
 ## Phase 5: tests and tools
 
 - Run `zitter_prototype` on Windows. The macOS native keyboard tests (12 `IS_MAC`
@@ -196,4 +220,5 @@ Notes:
 | 1 — non-Mac build | Done: `:shell` compiles on `text_services_skia.cc`; `sidebar_scene_unittests` (532), `zitter_network_policy_tests` (3) and `editor_text_layout_unittests` (6) pass. The `zitter` target for `is_win` moves to phase 2 |
 | 2 — first launch | Done: `zitter.exe` opens the window, loads pages and restores the session and its space after a restart; data in `%LOCALAPPDATA%\Zitter`. The download shutdown prompt moves to phase 3 |
 | 3 — native look | In progress: own titlebar on the system frame (shadow, snap, resize), 46 × 38 caption buttons, the Zitter menu, Windows shortcuts and Kbd words, the emoji panel, the downloads prompt on close, the app icon. Design fonts load. verify-ui done (Noc, restored and maximized). Open: Papier, Snap Layouts on Windows 11, menu icons and Kbd chips, HiDPI |
-| 4–6 | Not started |
+| 4 — import and security | Done: Arc (MSIX), Chrome, Edge and Brave paths, real Arc and Chrome data read, no cookie option, sandbox checked, network audit clean after two fixes. CSV passwords remain a feature of its own |
+| 5–6 | Not started |

@@ -47,6 +47,9 @@ def seed_extensions_logo(checkout):
     # The Windows icon resource rides along with the other branding patches.
     icon = checkout / overlay.WINDOW_ICON_FILE
     icon.parent.mkdir(parents=True, exist_ok=True)
+    registry = checkout / overlay.REGISTRY_EXTENSIONS_FILE
+    registry.parent.mkdir(parents=True, exist_ok=True)
+    registry.write_text(overlay.REGISTRY_EXTENSIONS_OLD, newline="\n")
     direct_write = checkout / overlay.DIRECT_WRITE_FILE
     direct_write.parent.mkdir(parents=True, exist_ok=True)
     direct_write.write_text(overlay.DIRECT_WRITE_ANCHOR, newline="\n")
@@ -144,6 +147,15 @@ class OverlayTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 overlay.patch_extensions_logo("unknown upstream layout", slot)
 
+    def test_chrome_registry_extensions_are_skipped_behind_zitters_switch(self):
+        patched = overlay.patch_registry_extensions("a\n" + overlay.REGISTRY_EXTENSIONS_OLD + "#else\n")
+        self.assertIn(f'HasSwitch(\n            "{overlay.REGISTRY_EXTENSIONS_SWITCH}")', patched)
+        self.assertLess(patched.index("HasSwitch"), patched.index("new ExternalRegistryLoader"))
+        self.assertEqual(patched, overlay.patch_registry_extensions(patched))
+        self.assertIn(overlay.REGISTRY_EXTENSIONS_SWITCH,
+                      (overlay.ROOT / "chromium/app/main.cc").read_text(encoding="utf-8"))
+        with self.assertRaises(ValueError):
+            overlay.patch_registry_extensions("unknown upstream layout")
     def test_sideloaded_fonts_bring_every_variable_instance(self):
         patched = overlay.patch_direct_write("before\n" + overlay.DIRECT_WRITE_ANCHOR + "after\n")
         self.assertIn("font_set_builder1->AddFontFile(font_file.Get())", patched)

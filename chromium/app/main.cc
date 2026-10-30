@@ -97,6 +97,11 @@ int main(int argc, const char** argv) {
         gfx::win::SideLoadFontForTesting(path);
     }
 #endif
+#if BUILDFLAG(IS_WIN)
+    // Extensions other apps register for Google Chrome stay Chrome's
+    // (tools/install_chromium_overlay.py).
+    command->AppendSwitch("zitter-ignore-chrome-registry-extensions");
+#endif
     zitter::ConfigureSafeBrowsingKey();
     zitter::ConfigureNetworkPolicy(*command);
     if (!command->HasSwitch(switches::kUserDataDir))

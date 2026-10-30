@@ -747,6 +747,38 @@ def patch_direct_write(text):
         raise ValueError("Unexpected upstream DirectWrite sideload layout; review the patch")
     return text.replace(DIRECT_WRITE_ANCHOR, DIRECT_WRITE_ANCHOR + DIRECT_WRITE_HOOK, 1)
 
+# Chromium on Windows installs the extensions other apps register for Google
+# Chrome (HKCU/HKLM Software\Google\Chrome\Extensions). They are not Zitter's:
+# zitter.exe passes this switch so that provider is never created.
+REGISTRY_EXTENSIONS_FILE = "chrome/browser/extensions/external_provider_impl.cc"
+REGISTRY_EXTENSIONS_SWITCH = "zitter-ignore-chrome-registry-extensions"
+REGISTRY_EXTENSIONS_OLD = ('#if BUILDFLAG(IS_WIN)\n'
+                           '    auto registry_provider = std::make_unique<ExternalProviderImpl>(\n'
+                           '        service, new ExternalRegistryLoader, profile,\n'
+                           '        ManifestLocation::kExternalRegistry,\n'
+                           '        ManifestLocation::kExternalPrefDownload, Extension::NO_FLAGS);\n'
+                           '    registry_provider->set_allow_updates(true);\n'
+                           '    provider_list->push_back(std::move(registry_provider));\n')
+REGISTRY_EXTENSIONS_NEW = ('#if BUILDFLAG(IS_WIN)\n'
+                           '    // Zitter: other apps\' extensions for Google Chrome are not Zitter\'s.\n'
+                           '    if (!base::CommandLine::ForCurrentProcess()->HasSwitch(\n'
+                           f'            "{REGISTRY_EXTENSIONS_SWITCH}")) {{\n'
+                           '      auto registry_provider = std::make_unique<ExternalProviderImpl>(\n'
+                           '          service, new ExternalRegistryLoader, profile,\n'
+                           '          ManifestLocation::kExternalRegistry,\n'
+                           '          ManifestLocation::kExternalPrefDownload, Extension::NO_FLAGS);\n'
+                           '      registry_provider->set_allow_updates(true);\n'
+                           '      provider_list->push_back(std::move(registry_provider));\n'
+                           '    }\n')
+
+
+def patch_registry_extensions(text):
+    if text.count(REGISTRY_EXTENSIONS_NEW) == 1:
+        return text
+    if text.count(REGISTRY_EXTENSIONS_OLD) != 1 or "Zitter: other apps'" in text:
+        raise ValueError("Unexpected upstream registry extension provider layout; review the patch")
+    return text.replace(REGISTRY_EXTENSIONS_OLD, REGISTRY_EXTENSIONS_NEW, 1)
+
 def patch_component_registration(text):
     """Optional embedder exclusions, leaving upstream verification untouched."""
     include_anchor = '#include "base/check.h"\n'
@@ -822,6 +854,9 @@ def install(checkout, dry_run=False):
     extensions_logo = {checkout / path: read(checkout / path) for path in EXTENSIONS_LOGO_FILES.values()}
     extensions_logo_patched = {path: patch_extensions_logo(text, slot) for (slot, _), (path, text)
                                in zip(EXTENSIONS_LOGO_FILES.items(), extensions_logo.items())}
+    registry_extensions = checkout / REGISTRY_EXTENSIONS_FILE
+    registry_extensions_original = read(registry_extensions)
+    registry_extensions_patched = patch_registry_extensions(registry_extensions_original)
     direct_write = checkout / DIRECT_WRITE_FILE
     direct_write_original = read(direct_write)
     direct_write_patched = patch_direct_write(direct_write_original)
@@ -873,6 +908,8 @@ def install(checkout, dry_run=False):
             for path, text in extension_tabs_patched.items():
                 if text != extension_tabs[path]:
                     write(path, text)
+            if registry_extensions_patched != registry_extensions_original:
+                write(registry_extensions, registry_extensions_patched)
             if direct_write_patched != direct_write_original:
                 write(direct_write, direct_write_patched)
             if window_icon_patched != window_icon_original:
