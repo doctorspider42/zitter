@@ -90,6 +90,19 @@ source_set("core") {
   include_dirs = [ "." ]
 }
 
+if (!is_mac) {
+  # Text layout, paragraph shaping and the editor fallback painter on
+  # gfx::RenderText; macOS has them in sidebar_metal.mm on CoreText.
+  source_set("text_services") {
+    sources = [
+      "chromium/prototype/editor_text_layout.h",
+      "chromium/prototype/text_services_skia.cc",
+    ]
+    include_dirs = [ ".", target_gen_dir ]
+    public_deps = [ ":sidebar_scene", "//base", "//base:i18n", "//cc/paint", "//skia", "//ui/gfx" ]
+  }
+}
+
 source_set("shell") {
   public_configs = [ ":shell_includes" ]
   sources = [
@@ -231,6 +244,8 @@ source_set("shell") {
       "//components/remote_cocoa/app_shim",
       "//components/remote_cocoa/common:mojo",
     ]
+  } else {
+    public_deps += [ ":text_services" ]
   }
 }
 
@@ -286,6 +301,15 @@ test("network_policy_tests") {
   sources = [ "chromium/app/network_policy_unittest.cc" ]
   include_dirs = [ "." ]
   deps = [ ":network_policy", "//base/test:run_all_unittests", "//base/test:test_support", "//testing/gtest" ]
+}
+
+if (!is_mac) {
+  # macOS keeps the CoreText harness: tools/check_editor_text_layout.py.
+  test("editor_text_layout_unittests") {
+    sources = [ "chromium/prototype/editor_text_layout_unittest.cc" ]
+    include_dirs = [ "." ]
+    deps = [ ":text_services", "//base/test:test_support", "//testing/gtest" ]
+  }
 }
 
 # Real browser bootstrap, with no browser-test runner or test-only dependencies.

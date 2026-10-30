@@ -16,6 +16,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/timer/timer.h"
+#include "build/build_config.h"
 #include "ui/accessibility/ax_action_data.h"
 #include "ui/base/clipboard/clipboard.h"
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
@@ -149,11 +150,35 @@ class SceneEditor final : public views::View, public EditorControl,
     if(!Available()||!range.IsValid())return false;if(IsIMEComposing())ConfirmCompositionText(true);
     auto update=sidebar::editor_select(*state_,range.start(),range.end(),false);const bool ok=update.admitted;Apply(std::move(update));return ok;
   }
-  bool DeleteRange(const gfx::Range& range) override {
+  // A TextInputClient override on macOS only; elsewhere ExtendSelectionAndDelete uses it.
+  bool DeleteRange(const gfx::Range& range)
+#if BUILDFLAG(IS_MAC)
+      override
+#endif
+  {
     if(!Editable()||!range.IsValid())return false;if(IsIMEComposing())ConfirmCompositionText(true);
     auto selected=sidebar::editor_select(*state_,range.start(),range.end(),false);if(!selected.admitted)return false;
     Apply(std::move(selected));auto changed=sidebar::editor_insert(*state_,rust::Slice<const uint16_t>(),false);const bool ok=changed.admitted;Apply(std::move(changed));return ok;
   }
+#if BUILDFLAG(IS_WIN)
+  // TSF stylus handwriting: geometry comes from the same shaped line as the caret.
+  std::optional<gfx::Rect> GetProximateCharacterBounds(const gfx::Range& range) const override {
+    if(!Available()||!range.IsValid()||range.GetMax()>text_.size())return std::nullopt;EnsureLayout();gfx::Rect out;
+    for(const auto& s:line_->Spans(range.GetMin(),range.GetMax()))out.Union(ScreenRect({geometry_.origin+s.x,geometry_.caret.y,s.width,geometry_.caret.height}));
+    if(out.IsEmpty())out=ScreenRect({geometry_.origin+line_->Caret(range.GetMin()).x,geometry_.caret.y,1,geometry_.caret.height});return out;
+  }
+  std::optional<size_t> GetProximateCharacterIndexFromPoint(const gfx::Point& point,ui::IndexFromPointFlags flags) const override {
+    if(!Available())return std::nullopt;const auto bounds=GetBoundsInScreen();
+    if(flags==ui::IndexFromPointFlags::kNone&&!bounds.Contains(point))return std::nullopt;return Hit(point.x()-bounds.x()).index;
+  }
+  bool SetCompositionFromExistingText(const gfx::Range& range,const std::vector<ui::ImeTextSpan>& spans) override {
+    if(!Editable()||!range.IsValid()||range.GetMax()>text_.size())return false;if(IsIMEComposing())ConfirmCompositionText(true);
+    if(!SetEditableSelectionRange(gfx::Range(range.GetMin(),range.GetMax())))return false;
+    ui::CompositionText composition;composition.text=text_.substr(range.GetMin(),range.length());composition.ime_text_spans=spans;
+    composition.selection=gfx::Range(composition.text.size());SetCompositionText(composition);return IsIMEComposing();
+  }
+  void SetActiveCompositionForAccessibility(const gfx::Range&,const std::u16string&,bool) override{}
+#endif
   bool GetTextFromRange(const gfx::Range& range,std::u16string* text) const override {
     if(!Available()||!range.IsValid()||range.GetMax()>text_.size())return false;*text=text_.substr(range.GetMin(),range.length());return true;
   }

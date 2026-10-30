@@ -203,7 +203,7 @@ void DownloadPanel::Refresh() {
     bytes += std::max<int64_t>(0, item->GetTotalBytes() > 0 ? item->GetTotalBytes() : item->GetReceivedBytes());
     const auto file = item->GetFileNameToReportUser();
     auto name = file.LossyDisplayName();
-    std::u16string extension = file.Extension().empty() ? std::u16string() : base::UTF8ToUTF16(file.Extension().substr(1));
+    std::u16string extension = file.Extension().empty() ? std::u16string() : base::FilePath(file.Extension()).AsUTF16Unsafe().substr(1);
     scene_->SetFileTile(row.tile, extension.empty() ? u"—" : extension);
     SetText(row.title,name.empty()?T(u"Przygotowywanie pliku…"):name);
     row.title->SetTooltipText(item->GetTargetFilePath().LossyDisplayName());

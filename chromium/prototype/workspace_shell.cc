@@ -240,7 +240,9 @@ constexpr int kTrafficLightInset = 8;
 #endif
 // Compact header commands, centered with the traffic lights.
 constexpr int kHeaderButtonSize = 28;
+#if BUILDFLAG(IS_MAC)
 constexpr int kHeaderLightsGap = 14;
+#endif
 // Monogram tiles take a workspace preset (violet, coral, sky, amber, rose, mint,
 // green); painting turns it into that color's palette `accent` and `on-accent`.
 constexpr std::array<SkColor, 7> kMonogramColors = {

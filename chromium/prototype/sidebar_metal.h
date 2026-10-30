@@ -102,7 +102,8 @@ std::unique_ptr<SidebarMetal> CreateMetalSidebarSurface();
 struct SidebarMetalStats { size_t surfaces = 0, visible = 0, text_bytes = 0, drawable_bytes = 0, device_bytes = 0, frames = 0; double drawable_wait_ms = 0, render_ms = 0; };
 SidebarMetalStats GetSidebarMetalStatsForTesting();
 // Platform text services. macOS implements them with CoreText in
-// sidebar_metal.mm; other platforms need their own implementation.
+// sidebar_metal.mm; other platforms with gfx::RenderText in
+// text_services_skia.cc.
 // Paints an editor scene (untruncated shaped lines) on the compositor canvas.
 void PaintEditorSceneFallback(gfx::Canvas* canvas,base::span<const sidebar::Primitive> scene);
 // Typography adapter, matching the font used for GPU text tiles.

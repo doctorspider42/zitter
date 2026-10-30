@@ -81,7 +81,9 @@ void ConfigureSafeBrowsingKey() {
   } else {
     base::FilePath home;
     if (!base::PathService::Get(base::DIR_HOME, &home)) return;
-    path = home.Append(".config").Append("zitter").Append("safe-browsing-api-key");
+    path = home.Append(FILE_PATH_LITERAL(".config"))
+               .Append(FILE_PATH_LITERAL("zitter"))
+               .Append(FILE_PATH_LITERAL("safe-browsing-api-key"));
   }
   std::string key;
   const auto status = ReadSafeBrowsingKeyFile(path, &key);

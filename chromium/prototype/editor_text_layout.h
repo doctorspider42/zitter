@@ -10,6 +10,11 @@
 #include <memory>
 #include <string_view>
 #include <vector>
+#if !BUILDFLAG(IS_MAC)
+namespace gfx {
+class Canvas;
+}
+#endif
 namespace zitter::prototype {
 struct EditorTextRange {
   size_t start = 0, end = 0;
@@ -22,7 +27,8 @@ struct EditorCaretStop {
 struct EditorTextSpan {
   float x = 0, width = 0;
 };
-// Shaping is platform-provided (CoreText on macOS: editor_text_layout_mac.inc).
+// Shaping is platform-provided (CoreText on macOS: editor_text_layout_mac.inc;
+// gfx::RenderText elsewhere: text_services_skia.cc).
 // One immutable shaped line is shared by hit testing, caret/selection geometry
 // and drawing. All string offsets are UTF-16; all coordinates are logical
 // points.
@@ -50,6 +56,9 @@ public:
   // performed.
 #if BUILDFLAG(IS_MAC)
   void Draw(CGContextRef context, float x, float baseline, uint32_t argb) const;
+#else
+  // Canvas coordinates are top-down; |baseline| is measured from the top.
+  void Draw(gfx::Canvas* canvas, float x, float baseline, uint32_t argb) const;
 #endif
 
 private:
