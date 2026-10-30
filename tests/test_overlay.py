@@ -29,6 +29,23 @@ EXTENSION_TABS_SOURCES = {
 }
 
 
+def extensions_logo_source(slot):
+    indent = "  " if slot == "product-logo" else "    "
+    inner = indent + "  "
+    return ('<cr-toolbar>\n<if expr="is_android">\n'
+            f'{indent}<picture slot="{slot}">\n'
+            f'{inner}<source media="(prefers-color-scheme: dark)"\n'
+            f'{inner}    srcset="//resources/images/chrome_logo_dark.svg">\n'
+            f'{inner}<img srcset="images/product_logo.png" role="presentation">\n'
+            f'{indent}</picture>\n</if>\n</cr-toolbar>\n')
+
+
+def seed_extensions_logo(checkout):
+    for slot, path in overlay.EXTENSIONS_LOGO_FILES.items():
+        (checkout / path).parent.mkdir(parents=True, exist_ok=True)
+        (checkout / path).write_text(extensions_logo_source(slot))
+
+
 def seed_extension_tabs(checkout):
     texts = dict(EXTENSION_TABS_SOURCES,
                  source=EXTENSION_TABS_SOURCES["source"] + overlay.TAB_OBJECT_ACTIVE_OLD +
@@ -106,6 +123,20 @@ class OverlayTests(unittest.TestCase):
         details = overlay.patch_extension_tabs(texts["function_details"], "function_details")
         self.assertLess(details.index("GetWindow(profile)"), details.index("NOTE(rafaelw)"))
 
+    def test_extensions_page_logo_is_zitter_mark_on_every_platform(self):
+        import base64
+        mark = base64.b64encode((overlay.ROOT / "assets/icon/zitter.svg").read_bytes()).decode()
+        for slot in overlay.EXTENSIONS_LOGO_FILES:
+            original = extensions_logo_source(slot)
+            patched = overlay.patch_extensions_logo(original, slot)
+            self.assertNotIn('is_android', patched)
+            self.assertNotIn('chrome_logo_dark', patched)
+            self.assertIn(f'<picture slot="{slot}">', patched)
+            self.assertIn(mark, patched)
+            self.assertEqual(patched, overlay.patch_extensions_logo(patched, slot))
+            with self.assertRaises(ValueError):
+                overlay.patch_extensions_logo("unknown upstream layout", slot)
+
     def test_media_registration_keeps_dispatcher_and_is_guarded(self):
         for header, original in ((True, "  void ProcessMediaAccessRequest(content::WebContents* web_contents,\n"),
                                  (False, "void MediaCaptureDevicesDispatcher::ProcessMediaAccessRequest(\n")):
@@ -145,6 +176,7 @@ class OverlayTests(unittest.TestCase):
             checkout = Path(directory)
             editor_service_fixture.seed(checkout)
             seed_extension_tabs(checkout)
+            seed_extensions_logo(checkout)
             build = checkout / "chrome/test/BUILD.gn"
             build.parent.mkdir(parents=True)
             original = ('# Existing local build configuration\n'

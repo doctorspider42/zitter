@@ -663,6 +663,37 @@ EXTENSION_TABS_FILES = {
 }
 
 
+
+# chrome://extensions is the one Chromium page Zitter shows; it carries the
+# Zitter mark (assets/icon/zitter.svg, unchanged) where Chromium puts its logo.
+EXTENSIONS_LOGO_FILES = {
+    "product-logo": "chrome/browser/resources/extensions/toolbar.html.ts",
+    "header-icon": "chrome/browser/resources/extensions/manager.html.ts",
+}
+
+
+def patch_extensions_logo(text, slot):
+    import base64
+    mark = base64.b64encode((ROOT / "assets/icon/zitter.svg").read_bytes()).decode()
+    indent = "  " if slot == "product-logo" else "    "
+    inner = indent + "  "
+    original = (f'<if expr="is_android">\n'
+                f'{indent}<picture slot="{slot}">\n'
+                f'{inner}<source media="(prefers-color-scheme: dark)"\n'
+                f'{inner}    srcset="//resources/images/chrome_logo_dark.svg">\n'
+                f'{inner}<img srcset="images/product_logo.png" role="presentation">\n'
+                f'{indent}</picture>\n'
+                f'</if>\n')
+    replacement = (f'{indent}<!-- Zitter: its own mark on every platform. -->\n'
+                   f'{indent}<picture slot="{slot}">\n'
+                   f'{inner}<img src="data:image/svg+xml;base64,{mark}" alt="" role="presentation">\n'
+                   f'{indent}</picture>\n')
+    if text.count(replacement) == 1:
+        return text
+    if text.count(original) != 1 or "Zitter: its own mark" in text:
+        raise ValueError("Unexpected upstream Extensions page logo layout; review the patch")
+    return text.replace(original, replacement, 1)
+
 def patch_component_registration(text):
     """Optional embedder exclusions, leaving upstream verification untouched."""
     include_anchor = '#include "base/check.h"\n'
@@ -735,6 +766,9 @@ def install(checkout, dry_run=False):
     component_service = checkout / "components/component_updater/component_updater_service.cc"
     component_original = component_service.read_text()
     component_patched = patch_component_registration(component_original)
+    extensions_logo = {checkout / path: (checkout / path).read_text() for path in EXTENSIONS_LOGO_FILES.values()}
+    extensions_logo_patched = {path: patch_extensions_logo(text, slot) for (slot, _), (path, text)
+                               in zip(EXTENSIONS_LOGO_FILES.items(), extensions_logo.items())}
     extension_tabs = {checkout / path: (checkout / path).read_text() for path in EXTENSION_TABS_FILES.values()}
     extension_tabs_patched = {path: patch_extension_tabs(text, part) for (part, _), (path, text)
                               in zip(EXTENSION_TABS_FILES.items(), extension_tabs.items())}
@@ -780,6 +814,9 @@ def install(checkout, dry_run=False):
             for path, text in extension_tabs_patched.items():
                 if text != extension_tabs[path]:
                     path.write_text(text)
+            for path, text in extensions_logo_patched.items():
+                if text != extensions_logo[path]:
+                    path.write_text(text)
             editor_services.apply(editor_patch)
         except Exception:
             if destination.exists():
@@ -792,7 +829,7 @@ def install(checkout, dry_run=False):
             media_header.write_text(media_header_original)
             media_source.write_text(media_source_original)
             component_service.write_text(component_original)
-            for path, text in extension_tabs.items():
+            for path, text in {**extension_tabs, **extensions_logo}.items():
                 path.write_text(text)
             raise
     print("Installed. Run gn gen/check and build zitter or zitter_prototype; see README.md.")
