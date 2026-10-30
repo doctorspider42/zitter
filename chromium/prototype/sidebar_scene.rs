@@ -35,7 +35,7 @@ mod ffi {
     struct ToolsOutcome { refresh: bool, status: String }
     enum ToolsCapture { Escape, Invalid, Valid }
     struct ToolsCaptureResult { admitted: bool, stop_recording: bool, accept_chord: bool, status: String }
-    enum ToolsStatus { HistoryReading, HistorySearching, WriteFailed }
+    enum ToolsStatus { WriteFailed }
     enum PreferenceOutcome { Text, Site, SiteRemove, Value, General }
     enum PreferenceControlKind { Text, Toggle }
     enum PaletteResultKind { Tab, Pin, Workspace, History }
@@ -53,8 +53,8 @@ mod ffi {
     enum ProfileStatusEvent { DuplicateName, Creating, CreateFailed, Created, CreateNotSaved, Renamed, RenameFailed, Deleting, Deleted, DeleteNotSaved, LoadFailed }
     struct PreferenceControlView { enabled: bool, tooltip: String }
     struct PreferenceStatus { text: String, error: bool }
-    enum ToolsNodeKind { Hint, Heading, Editor, Choice, Action, BeginRow, EndRow, Rows, BeginActions, EndActions }
-    enum ToolsNodeRole { None, SnapshotName, TimelineFilter, SnapshotChoice, ClosedChoice, ShortcutChoice, ShortcutChord, ProviderChoice, ProviderName, ProviderKeyword, ProviderUrl, HistoryQuery, HistoryPeriod, HistoryClear, HistoryRows, HistoryMore }
+    enum ToolsNodeKind { Hint, Heading, Editor, Choice, Action, BeginActions, EndActions }
+    enum ToolsNodeRole { None, SnapshotName, TimelineFilter, SnapshotChoice, ClosedChoice, ShortcutChoice, ShortcutChord, ProviderChoice, ProviderName, ProviderKeyword, ProviderUrl }
     struct ToolsSleepingCopy { title: Vec<u16>, detail: Vec<u16> }
     struct ToolsFormNode { kind: ToolsNodeKind, role: ToolsNodeRole, text: Vec<u16>, action: i32, choices: Vec<String>, enabled: bool, visible: bool, flex: bool, spacing: i32 }
     struct ToolsFormPlan { title: Vec<u16>, status: Vec<u16>, nodes: Vec<ToolsFormNode> }
@@ -66,12 +66,10 @@ mod ffi {
     struct ToolsTimelineItem { id: String, title: Vec<u16>, detail: Vec<u16>, search: Vec<u16> }
     struct ToolsTimelineChoice { key: String, label: Vec<u16> }
     struct ToolsTimelineList { choices: Vec<ToolsTimelineChoice>, enabled: bool }
-    struct ToolsHistoryView { empty: String, status: String, more_visible: bool, more_enabled: bool }
-    struct ToolsClearControls { label: String, enabled: bool }
     enum PreferenceRowKind { Theme, Pinned, Animations, Search, Toggle, Text, Picker, Action, Directory, SiteEditor, SiteRules, ClearData, ShortcutHint, WorkspaceNames, FoldersCollapsed, Language }
     #[repr(u32)]
     #[derive(Debug)]
-    enum FormCommand { None, WorkspaceSave, WorkspaceToggle, WorkspaceRemove, WorkspaceProfiles, WorkspaceImport, ProfileCreate, ProfileRename, ProfileDelete, ProfileBack, ImportApply, PreferenceText, PreferenceSite, PreferenceClear, PreferenceDirectory, History, Workspace, Passwords, Profiles, Import, Proxy, Certificates, Providers, Shortcuts, TimeMachine, WorkspaceDismiss, PreferencesDismiss, ImportDismiss, ToolsDismiss, PreferenceCategory, PreferenceMore, WorkspaceColorPreset, WorkspaceEmojiPreset, HistoryMore }
+    enum FormCommand { None, WorkspaceSave, WorkspaceToggle, WorkspaceRemove, WorkspaceProfiles, WorkspaceImport, ProfileCreate, ProfileRename, ProfileDelete, ProfileBack, ImportApply, PreferenceText, PreferenceSite, PreferenceClear, PreferenceDirectory, History, Workspace, Passwords, Profiles, Import, Proxy, Certificates, Providers, Shortcuts, TimeMachine, WorkspaceDismiss, PreferencesDismiss, ImportDismiss, ToolsDismiss, PreferenceCategory, PreferenceMore, WorkspaceColorPreset, WorkspaceEmojiPreset }
     #[derive(Debug)]
     enum FormPanel { None, Workspace, Profiles, Import, Preferences, Tools }
     struct FormCommandBinding { command: FormCommand, panel: FormPanel, key: String, index: usize }
@@ -221,9 +219,6 @@ mod ffi {
     struct WorkspaceSceneInput { key: String, name: Vec<u16>, label: Vec<u16>, sleeping: bool, active: bool, enabled: bool }
     struct WorkspaceSceneChild { id: u64, parent: u64, key: String, name: Vec<u16>, label: Vec<u16>, active: bool, enabled: bool, cancel_input: bool }
     struct WorkspaceScene { root: u64, children: Vec<WorkspaceSceneChild> }
-    struct HistorySceneInput { key: String, title: Vec<u16>, detail: Vec<u16>, url: Vec<u16> }
-    struct HistorySceneChild { id: u64, parent: u64, key: String, title: Vec<u16>, detail: Vec<u16>, url: Vec<u16>, height: i32, cancel_input: bool }
-    struct HistoryScene { root: u64, children: Vec<HistorySceneChild> }
     struct PaletteSceneInput { key: String, title: Vec<u16>, detail: Vec<u16>, icon: u32 }
     struct PaletteSceneChild { id: u64, parent: u64, key: String, title: Vec<u16>, detail: Vec<u16>, icon: u32, highlighted: bool, height: i32, cancel_input: bool }
     struct PaletteScene { root: u64, children: Vec<PaletteSceneChild> }
@@ -315,8 +310,6 @@ mod ffi {
 
         fn tools_copy(page: usize, context: &str) -> ToolsCopy;
         fn page_dialog_copy(kind: u32, unload: bool, origin: &str, profile: &str, message: &[u16]) -> PageDialogCopy;
-        fn tools_clear_label(busy: bool) -> String;
-        fn tools_clear_controls(busy: bool) -> ToolsClearControls;
         type ToolsForm;
         fn new_tools_form() -> Box<ToolsForm>;
         fn tools_select(self: &mut ToolsForm, page: usize);
@@ -328,15 +321,9 @@ mod ffi {
         fn tools_status(status: ToolsStatus) -> String;
         fn tools_dispatch(self: &mut ToolsForm, action: i32, context: &ToolsActionContext) -> ToolsDispatch;
         fn tools_outcome(self: &ToolsForm, ok: bool, pending: bool) -> ToolsOutcome;
-        fn tools_history_view(self: &ToolsForm, count: usize, more: bool, error: bool) -> ToolsHistoryView;
-        fn tools_history_edit(self: &mut ToolsForm, query: Vec<u16>);
-        fn tools_history_request(self: &mut ToolsForm, more: bool) -> usize;
-        fn tools_history_query(self: &ToolsForm) -> Vec<u16>;
-        fn tools_history_accept(self: &mut ToolsForm, query: &[u16], limit: usize) -> bool;
-        fn tools_history_loaded(self: &ToolsForm) -> bool;
         fn tools_timeline_edit(self: &mut ToolsForm, query: Vec<u16>);
         fn tools_timeline_query(self: &ToolsForm) -> Vec<u16>;
-        fn tools_form_plan(self: &ToolsForm, context: &str, busy: bool, sleeping: Vec<ToolsSleepingCopy>) -> ToolsFormPlan;
+        fn tools_form_plan(self: &ToolsForm, context: &str, sleeping: Vec<ToolsSleepingCopy>) -> ToolsFormPlan;
         fn tools_shortcut_choices(self: &mut ToolsForm, items: Vec<ToolsShortcutItem>) -> ToolsFormChoices;
         fn tools_provider_choices(self: &mut ToolsForm, items: Vec<ToolsProviderItem>) -> ToolsFormChoices;
         fn tools_choice_select(self: &mut ToolsForm, key: &str) -> ToolsChoiceDraft;
@@ -596,8 +583,6 @@ mod ffi {
         fn reconcile(self: &mut ActionGraph, keys: Vec<ActionNodeKey>) -> ActionNodePlan;
         fn reconcile_chrome(self: &mut ActionGraph, items: Vec<WorkspaceSceneInput>) -> ActionNodePlan;
         fn workspace_scene(self: &ActionGraph) -> WorkspaceScene;
-        fn reconcile_history(self: &mut ActionGraph, items: Vec<HistorySceneInput>) -> ActionNodePlan;
-        fn history_scene(self: &ActionGraph) -> HistoryScene;
         fn node_parent_id(self: &ActionControl) -> u64;
         fn owns_input(self: &ActionGraph, input: &ActionControl) -> bool;
         fn acquire(self: &mut ActionGraph, key: &ActionNodeKey) -> Box<ActionControl>;
@@ -945,21 +930,17 @@ fn page_dialog_copy(kind:u32,unload:bool,origin:&str,profile:&str,message:&[u16]
 
 // Page copy is UI data only; context is a display name, never store authority.
 fn tools_copy(page:usize,context:&str)->ffi::ToolsCopy{
-    match page.min(3){
+    match page.min(2){
         0=>ffi::ToolsCopy{title:if context.is_empty(){"Time Machine".into()}else{tf("Time Machine · {}",&[context])},intro:t("Snapshot zapisuje karty, foldery i Split View w tej przestrzeni. Przywrócenie przeładuje strony; formularze i historia Wstecz nie są częścią snapshotu. Poprzedni układ otrzyma punkt przywracania.").into(),tail:t("Uśpienie zwalnia strony tej przestrzeni z pamięci i przełącza do innej. Kliknięcie jej kropki wznowi układ. Niezapisane formularze zostaną utracone.").into(),initial_status:t("Użyj przycisków poniżej pól lub Enter, aby zatwierdzić zmiany. Dane są zapisywane lokalnie.").into(),fields:vec![t("Nazwa snapshotu, np. Research przed deployem").into(),t("Szukaj snapshotów i zamkniętych kart").into()],pickers:vec![t("Zapisane snapshoty").into(),t("Zamknięte karty").into()],headings:vec![t("Snapshoty · 30 własnych + 30 automatycznych").into(),t("Ostatnio zamknięte · do 100 kart").into()],actions:vec![t("Zapisz snapshot").into(),t("Przywróć wybrany układ").into(),t("Usuń wybrany snapshot").into(),t("Przywróć wybraną kartę").into(),t("Uśpij tę przestrzeń").into()],choices:vec![]},
         1=>ffi::ToolsCopy{title:t("Skróty klawiszowe").into(),intro:t("Schemat inspirowany Arc. Wybierz akcję, nagraj kombinację lub wpisz np. Cmd+Shift+J. Puste pole wyłącza skrót. Escape, skróty edycji tekstu i systemowe pozostają zarezerwowane.").into(),tail:"".into(),initial_status:t("Użyj przycisków poniżej pól lub Enter, aby zatwierdzić zmiany. Dane są zapisywane lokalnie.").into(),fields:vec![t("Kombinacja, np. Cmd+Shift+J").into()],pickers:vec![t("Akcja skrótu").into()],headings:vec![],actions:vec![t("Nagraj kombinację…").into(),t("Zapisz skrót").into(),t("Wyłącz wybrany skrót").into(),t("Przywróć schemat Arc").into()],choices:vec![]},
         2=>ffi::ToolsCopy{title:t("Wyszukiwarki i prefiksy").into(),intro:t("W pasku adresu wpisz prefiks i zapytanie, np. g koty lub w Warszawa. Szablon musi być adresem HTTP(S) z jednym znacznikiem {query}. Zapytania są kodowane automatycznie.").into(),tail:"".into(),initial_status:t("Użyj przycisków poniżej pól lub Enter, aby zatwierdzić zmiany. Dane są zapisywane lokalnie.").into(),fields:vec![t("Nazwa wyszukiwarki").into(),t("Prefiks (a–z, 0–9)").into(),t("Adres z {query}").into()],pickers:vec![t("Wyszukiwarka do edycji").into()],headings:vec![],actions:vec![t("Zapisz wyszukiwarkę").into(),t("Ustaw jako domyślną").into(),t("Usuń wyszukiwarkę").into()],choices:vec![tools_new_provider().into()]},
-        3=>ffi::ToolsCopy{title:t("Historia przeglądania").into(),intro:tf("Profil: {}",&[context]),tail:"".into(),initial_status:t("Odczytywanie historii…").into(),fields:vec![t("Szukaj w historii").into()],pickers:vec![t("Zakres czyszczenia historii").into()],headings:vec![],actions:vec![t("Wyczyść historię…").into(),t("Pokaż więcej").into()],choices:vec![t("Ostatnia godzina").into(),t("Ostatnie 24 godziny").into(),t("Ostatnie 7 dni").into(),t("Cały okres").into()]},
         _=>unreachable!(),
     }
 }
-fn tools_clear_label(busy:bool)->String{if busy{t("Czyszczenie…")}else{t("Wyczyść historię…")}.into()}
-fn tools_clear_controls(busy:bool)->ffi::ToolsClearControls{ffi::ToolsClearControls{label:tools_clear_label(busy),enabled:!busy}}
 
 // UI state only. Native code supplies committed, normalized UTF-16 and retains
 // visibility/profile authorization, timers, IME and all browser-service calls.
-// Reconstructing a page clears its transient query/recording state. The history
-// limit is reset by a fresh request, as in Views, not by page reconstruction.
+// Reconstructing a page clears its transient query/recording state.
 struct ToolShortcutChoice { key:String, id:String, chord:Vec<u16> }
 struct ToolProviderChoice { key:String, item:Option<ffi::ToolsProviderItem> }
 fn tools_invalid_choice()->ffi::ToolsChoiceDraft {ffi::ToolsChoiceDraft{valid:false,page:0,create:false,target:String::new(),chord:vec![],name:vec![],keyword:vec![],url:vec![],stop_recording:false}}
@@ -967,7 +948,6 @@ fn tools_new_provider()->&'static str{t("Dodaj nową wyszukiwarkę…")}
 pub struct ToolsForm {
     page: usize,
     recording: bool,
-    history_query: Vec<u16>,
     timeline_query: Vec<u16>,
     timeline_epoch: u64,
     choice_epoch: u64,
@@ -976,16 +956,14 @@ pub struct ToolsForm {
     provider_choices: Vec<ToolProviderChoice>,
     timeline_snapshots: Vec<(String,String)>,
     timeline_closed: Vec<(String,String)>,
-    history_limit: usize,
-    history_loaded: bool,
 }
 fn tools_status(status: ffi::ToolsStatus) -> String {
     use ffi::ToolsStatus as S;
-    match status {S::HistoryReading=>t("Odczytywanie historii…"),S::HistorySearching=>t("Wyszukiwanie historii…"),S::WriteFailed=>t("Nie udało się zapisać ustawień na dysku."),_=>""}.into()
+    match status {S::WriteFailed=>t("Nie udało się zapisać ustawień na dysku."),_=>""}.into()
 }
 fn new_tools_form() -> Box<ToolsForm> {
-    Box::new(ToolsForm { page: 0, recording: false, history_query: vec![],
-        timeline_query: vec![], choice_epoch: 0, active_choice:String::new(), shortcut_choices:vec![], provider_choices:vec![], timeline_epoch: 0, timeline_snapshots: vec![], timeline_closed: vec![], history_limit: 200, history_loaded: false })
+    Box::new(ToolsForm { page: 0, recording: false,
+        timeline_query: vec![], choice_epoch: 0, active_choice:String::new(), shortcut_choices:vec![], provider_choices:vec![], timeline_epoch: 0, timeline_snapshots: vec![], timeline_closed: vec![] })
 }
 fn tools_form_node(kind:ffi::ToolsNodeKind,role:ffi::ToolsNodeRole,text:&str,action:i32)->ffi::ToolsFormNode {ffi::ToolsFormNode{kind,role,text:text.encode_utf16().collect(),action,choices:vec![],enabled:true,visible:true,flex:false,spacing:0}}
 fn tools_group_actions(nodes:Vec<ffi::ToolsFormNode>)->Vec<ffi::ToolsFormNode>{
@@ -999,17 +977,16 @@ fn tools_group_actions(nodes:Vec<ffi::ToolsFormNode>)->Vec<ffi::ToolsFormNode>{
 }
 impl ToolsForm {
     fn tools_select(&mut self, page: usize) {
-        let page=page.min(3);
+        let page=page.min(2);
         if self.page!=page{self.timeline_snapshots.clear();self.timeline_closed.clear();self.shortcut_choices.clear();self.provider_choices.clear();self.active_choice.clear();}
         self.page=page;
     }
     fn tools_page(&self) -> usize { self.page }
     fn tools_reset(&mut self) {
         self.recording = false;
-        self.history_query.clear(); self.timeline_query.clear();
+        self.timeline_query.clear();
         self.timeline_snapshots.clear(); self.timeline_closed.clear();
         self.shortcut_choices.clear();self.provider_choices.clear();self.active_choice.clear();
-        self.history_loaded = false;
     }
     fn tools_record(&mut self, recording: bool) { self.recording = recording; }
     fn tools_recording(&self) -> bool { self.recording }
@@ -1050,25 +1027,7 @@ impl ToolsForm {
             else {match self.page {1=>t("Nieprawidłowa lub zajęta kombinacja. Zmień ją albo wyłącz skrót drugiej akcji."),2=>t("Sprawdź unikalny prefiks, nazwę i adres z {query}. Musi pozostać co najmniej jedna wyszukiwarka."),_=>t("Nie można wykonać operacji. Podaj nazwę, wybierz pozycję zgodną z profilem lub zostaw drugą przestrzeń do przełączenia.")}};
         ffi::ToolsOutcome{refresh:ok,status:status.into()}
     }
-    fn tools_history_view(&self,count:usize,more:bool,error:bool)->ffi::ToolsHistoryView {
-        let empty=if count!=0 {""}else if error{t("Nie udało się odczytać historii.")}else if self.history_query.is_empty(){t("Brak historii przeglądania w tym profilu.")}else{t("Brak wyników dla tego wyszukiwania.")};
-        ffi::ToolsHistoryView{empty:empty.into(),status:if error{t("Spróbuj ponownie otworzyć historię.").into()}else{tf("Wyświetlono wpisów: {}",&[&count.to_string()])},more_visible:more&&!error,more_enabled:!error}
-    }
-
-    fn tools_history_edit(&mut self, query: Vec<u16>) {
-        self.history_query = query; self.history_loaded = false;
-    }
-    fn tools_history_request(&mut self, more: bool) -> usize {
-        self.history_limit = if more { self.history_limit.saturating_add(200) } else { 200 };
-        self.history_loaded = false; self.history_limit
-    }
-    fn tools_history_query(&self) -> Vec<u16> { self.history_query.clone() }
-    fn tools_history_accept(&mut self, query: &[u16], limit: usize) -> bool {
-        if query != self.history_query || limit != self.history_limit { return false; }
-        self.history_loaded = true; true
-    }
-    fn tools_history_loaded(&self) -> bool { self.history_loaded }
-    fn tools_form_plan(&self,context:&str,busy:bool,sleeping:Vec<ffi::ToolsSleepingCopy>)->ffi::ToolsFormPlan {
+    fn tools_form_plan(&self,context:&str,sleeping:Vec<ffi::ToolsSleepingCopy>)->ffi::ToolsFormPlan {
         use ffi::ToolsNodeKind as K;use ffi::ToolsNodeRole as R;
         let copy=tools_copy(self.page,context);let mut nodes=vec![tools_form_node(K::Hint,R::None,&copy.intro,0)];
         match self.page {
@@ -1080,13 +1039,7 @@ impl ToolsForm {
                 for item in sleeping{let mut text=item.title;text.extend(" · ".encode_utf16());text.extend(item.detail);let mut node=tools_form_node(K::Hint,R::None,"",0);node.text=text;nodes.push(node);}
             }
             1=>{nodes.push(tools_form_node(K::Choice,R::ShortcutChoice,&copy.pickers[0],0));nodes.push(tools_form_node(K::Editor,R::ShortcutChord,&copy.fields[0],0));for (i,text) in copy.actions.iter().enumerate(){nodes.push(tools_form_node(K::Action,R::None,text,10+i as i32));}}
-            2=>{nodes.push(tools_form_node(K::Choice,R::ProviderChoice,&copy.pickers[0],0));for (i,role) in [R::ProviderName,R::ProviderKeyword,R::ProviderUrl].into_iter().enumerate(){nodes.push(tools_form_node(K::Editor,role,&copy.fields[i],0));}for (i,text) in copy.actions.iter().enumerate(){nodes.push(tools_form_node(K::Action,R::None,text,20+i as i32));}}
-            _=>{
-                nodes.push(tools_form_node(K::Editor,R::HistoryQuery,&copy.fields[0],0));let mut begin=tools_form_node(K::BeginRow,R::None,"",0);begin.spacing=8;nodes.push(begin);
-                let mut period=tools_form_node(K::Choice,R::HistoryPeriod,&copy.pickers[0],0);period.choices=copy.choices;period.flex=true;nodes.push(period);
-                let clear=tools_clear_controls(busy);let mut action=tools_form_node(K::Action,R::HistoryClear,&clear.label,30);action.enabled=clear.enabled;nodes.push(action);nodes.push(tools_form_node(K::EndRow,R::None,"",0));
-                let mut rows=tools_form_node(K::Rows,R::HistoryRows,"",0);rows.spacing=4;nodes.push(rows);let mut more=tools_form_node(K::Action,R::HistoryMore,&copy.actions[1],31);more.visible=false;nodes.push(more);
-            }
+            _=>{nodes.push(tools_form_node(K::Choice,R::ProviderChoice,&copy.pickers[0],0));for (i,role) in [R::ProviderName,R::ProviderKeyword,R::ProviderUrl].into_iter().enumerate(){nodes.push(tools_form_node(K::Editor,role,&copy.fields[i],0));}for (i,text) in copy.actions.iter().enumerate(){nodes.push(tools_form_node(K::Action,R::None,text,20+i as i32));}}
         }
         ffi::ToolsFormPlan{title:copy.title.encode_utf16().collect(),status:copy.initial_status.encode_utf16().collect(),nodes:tools_group_actions(nodes)}
     }
@@ -2416,7 +2369,6 @@ fn action_node_key(key:&ffi::ActionNodeKey)->Option<ActionNodeIdentity>{
 // Typed payloads belong to the graph record, not the native adapter's Box.
 // Optional indirection keeps ordinary action records from embedding large models.
 struct WorkspacePresentation {name:Vec<u16>,label:Vec<u16>,cancel_input:bool}
-struct HistoryPresentation {title:Vec<u16>,detail:Vec<u16>,url:Vec<u16>,cancel_input:bool}
 struct PalettePresentation {title:Vec<u16>,detail:Vec<u16>,icon:u32,index:usize,cancel_input:bool}
 struct PaletteSceneState {selection:PaletteSelection,dirty:bool}
 struct SiteRulePresentation {detail:Vec<u16>,editable:bool,source_index:usize,cancel_input:bool}
@@ -2439,16 +2391,16 @@ fn form_command_panel(command:ffi::FormCommand)->ffi::FormPanel {
         C::WorkspaceSave|C::WorkspaceToggle|C::WorkspaceRemove|C::WorkspaceProfiles|C::WorkspaceImport|C::WorkspaceDismiss|C::WorkspaceColorPreset|C::WorkspaceEmojiPreset=>P::Workspace,
         C::ProfileCreate|C::ProfileRename|C::ProfileDelete|C::ProfileBack=>P::Profiles,
         C::ImportApply|C::ImportDismiss=>P::Import,
-        C::ToolsDismiss|C::HistoryMore=>P::Tools,
+        C::ToolsDismiss=>P::Tools,
         C::PreferenceText|C::PreferenceSite|C::PreferenceClear|C::PreferenceDirectory|C::History|C::Workspace|C::Passwords|C::Profiles|C::Import|C::Proxy|C::Certificates|C::Providers|C::Shortcuts|C::TimeMachine|C::PreferencesDismiss|C::PreferenceCategory|C::PreferenceMore=>P::Preferences,
         _=>P::None,
     }
 }
 
-fn valid_form_command(command:ffi::FormCommand,key:&str)->bool{use ffi::FormCommand as C;match command{C::PreferenceText=>!key.is_empty(),C::WorkspaceSave|C::WorkspaceToggle|C::WorkspaceRemove|C::WorkspaceProfiles|C::WorkspaceImport|C::ProfileCreate|C::ProfileRename|C::ProfileDelete|C::ProfileBack|C::ImportApply|C::PreferenceSite|C::PreferenceClear|C::PreferenceDirectory|C::History|C::Workspace|C::Passwords|C::Profiles|C::Import|C::Proxy|C::Certificates|C::Providers|C::Shortcuts|C::TimeMachine|C::WorkspaceDismiss|C::PreferencesDismiss|C::ImportDismiss|C::ToolsDismiss|C::PreferenceMore|C::HistoryMore=>key.is_empty(),_=>false}}
+fn valid_form_command(command:ffi::FormCommand,key:&str)->bool{use ffi::FormCommand as C;match command{C::PreferenceText=>!key.is_empty(),C::WorkspaceSave|C::WorkspaceToggle|C::WorkspaceRemove|C::WorkspaceProfiles|C::WorkspaceImport|C::ProfileCreate|C::ProfileRename|C::ProfileDelete|C::ProfileBack|C::ImportApply|C::PreferenceSite|C::PreferenceClear|C::PreferenceDirectory|C::History|C::Workspace|C::Passwords|C::Profiles|C::Import|C::Proxy|C::Certificates|C::Providers|C::Shortcuts|C::TimeMachine|C::WorkspaceDismiss|C::PreferencesDismiss|C::ImportDismiss|C::ToolsDismiss|C::PreferenceMore=>key.is_empty(),_=>false}}
 struct SidebarTabsModel {members:Vec<usize>,split:bool,plan:ffi::TabPlan}
 struct SidebarPairModel {members:Vec<(u64,u64)>,visible:bool}
-enum NodeModel { SidebarTabs(SidebarTabsModel), SidebarPair(SidebarPairModel), SidebarPinGroup(SidebarPinGroupModel), SidebarPin(SidebarPinModel), FormCommand(FormCommandModel), Checkbox(CheckboxState), Toggle(ToggleState), Select(SelectState), Workspace(WorkspacePresentation), History(HistoryPresentation), Palette(PalettePresentation), PaletteRoot(PaletteSceneState), FormRoot(ffi::FormGroupStyle), SiteRule(SiteRulePresentation), SidebarTab(SidebarTabModel) }
+enum NodeModel { SidebarTabs(SidebarTabsModel), SidebarPair(SidebarPairModel), SidebarPinGroup(SidebarPinGroupModel), SidebarPin(SidebarPinModel), FormCommand(FormCommandModel), Checkbox(CheckboxState), Toggle(ToggleState), Select(SelectState), Workspace(WorkspacePresentation), Palette(PalettePresentation), PaletteRoot(PaletteSceneState), FormRoot(ffi::FormGroupStyle), SiteRule(SiteRulePresentation), SidebarTab(SidebarTabModel) }
 impl NodeModel {
     fn row_presentation(&self)->Option<&SidebarRowPresentation>{match self{Self::SidebarTab(model)=>model.presentation.as_ref(),Self::SidebarPin(model)=>Some(&model.presentation),_=>None}}
     fn row_presentation_mut(&mut self)->Option<&mut SidebarRowPresentation>{match self{Self::SidebarTab(model)=>model.presentation.as_mut(),Self::SidebarPin(model)=>Some(&mut model.presentation),_=>None}}
@@ -2556,26 +2508,6 @@ impl ActionGraph {
         let by_id=self.nodes.iter().map(|(key,node)|(node.borrow().id,(key,node))).collect::<BTreeMap<_,_>>();
         let children=self.order.iter().filter_map(|id|{let (key,node)=by_id.get(id)?;let node=node.borrow();let Some(NodeModel::Workspace(p))=node.model.as_deref() else{return None;};if root==0||node.parent!=root{return None;}Some(ffi::WorkspaceSceneChild{id:node.id,parent:node.parent,key:key.3.clone(),name:p.name.clone(),label:p.label.clone(),active:node.state.on,enabled:node.state.enabled,cancel_input:p.cancel_input})}).collect();
         ffi::WorkspaceScene{root,children}
-    }
-    fn reconcile_history(&mut self,items:Vec<ffi::HistorySceneInput>)->ffi::ActionNodePlan{
-        if items.iter().any(|item|self.nodes.get(&(5,0,0,item.key.clone())).is_some_and(|node|node.borrow().model.as_deref().is_some_and(|m|!matches!(m,NodeModel::History(_))))){return self.rejected();}
-        let previous_by_id=self.nodes.iter().filter(|(key,_)|key.0==5).map(|(key,node)|(node.borrow().id,key.3.as_str())).collect::<BTreeMap<_,_>>();
-        let order_changed=self.order.iter().filter_map(|id|previous_by_id.get(id).copied()).ne(items.iter().map(|i|i.key.as_str()));
-        let group=(11,0,0,"tools.history".to_owned());let mut keys=Vec::with_capacity(1+items.len());
-        keys.push(ffi::ActionNodeKey{kind:11,high:0,low:0,name:group.3.clone()});
-        for item in &items{keys.push(ffi::ActionNodeKey{kind:5,high:0,low:0,name:item.key.clone()});}
-        let plan=self.reconcile(keys);if !plan.admitted{return plan;}
-        let root=self.nodes[&group].borrow().id;
-        for item in items{let mut node=self.nodes[&(5,0,0,item.key)].borrow_mut();let content_changed=matches!(node.model.as_deref(),Some(NodeModel::History(p)) if p.title!=item.title||p.detail!=item.detail||p.url!=item.url);let cancel_input=order_changed||content_changed;node.parent=root;if cancel_input{node.state.action_cancel();}
-            if let Some(NodeModel::History(p))=node.model.as_deref_mut(){p.title=item.title;p.detail=item.detail;p.url=item.url;p.cancel_input=cancel_input;}
-            else{node.model=Some(Box::new(NodeModel::History(HistoryPresentation{title:item.title,detail:item.detail,url:item.url,cancel_input})));}
-        }plan
-    }
-    fn history_scene(&self)->ffi::HistoryScene{
-        let root=self.nodes.get(&(11,0,0,"tools.history".into())).map_or(0,|node|node.borrow().id);
-        let by_id=self.nodes.iter().map(|(key,node)|(node.borrow().id,(key,node))).collect::<BTreeMap<_,_>>();
-        let children=self.order.iter().filter_map(|id|{let (key,node)=by_id.get(id)?;let node=node.borrow();let Some(NodeModel::History(p))=node.model.as_deref() else{return None;};if root==0||node.parent!=root{return None;}Some(ffi::HistorySceneChild{id:node.id,parent:node.parent,key:key.3.clone(),title:p.title.clone(),detail:p.detail.clone(),url:p.url.clone(),height:60,cancel_input:p.cancel_input})}).collect();
-        ffi::HistoryScene{root,children}
     }
     fn read_palette<R>(&self,f:impl FnOnce(&PaletteSceneState)->R)->Option<R>{let node=self.nodes.get(&(11,0,0,"palette.results".into()))?.borrow();if let Some(NodeModel::PaletteRoot(state))=node.model.as_deref(){Some(f(state))}else{None}}
     fn write_palette<R>(&mut self,f:impl FnOnce(&mut PaletteSceneState)->R)->Option<R>{let mut node=self.nodes.get(&(11,0,0,"palette.results".into()))?.borrow_mut();if let Some(NodeModel::PaletteRoot(state))=node.model.as_deref_mut(){Some(f(state))}else{None}}
@@ -2755,7 +2687,7 @@ impl ActionControl {
         ffi::SidebarRowScene{valid,item}
     }
     fn tab_binding(&self)->ffi::SidebarTabBinding{self.read_node(|node|if let Some(NodeModel::SidebarTab(p))=node.model.as_deref(){Some(ffi::SidebarTabBinding{valid:true,id:node.id,high:p.high,low:p.low,index:p.index,can_close:p.can_close})}else{None}).flatten().unwrap_or(ffi::SidebarTabBinding{valid:false,id:0,high:0,low:0,index:0,can_close:false})}
-    fn node_model_kind(&self)->u32{self.read_node(|r|match r.model.as_deref(){Some(NodeModel::SidebarPin(_))=>10,Some(NodeModel::SidebarTab(_))=>9,Some(NodeModel::FormCommand(_))=>8,Some(NodeModel::Checkbox(_))=>1,Some(NodeModel::Toggle(_))=>2,Some(NodeModel::Select(_))=>3,Some(NodeModel::Workspace(_))=>4,Some(NodeModel::History(_))=>5,Some(NodeModel::Palette(_))=>6,Some(NodeModel::SiteRule(_))=>7,Some(NodeModel::SidebarTabs(_))|Some(NodeModel::SidebarPair(_))|Some(NodeModel::SidebarPinGroup(_))|Some(NodeModel::PaletteRoot(_))|Some(NodeModel::FormRoot(_))|None=>0}).unwrap_or(0)}
+    fn node_model_kind(&self)->u32{self.read_node(|r|match r.model.as_deref(){Some(NodeModel::SidebarPin(_))=>10,Some(NodeModel::SidebarTab(_))=>9,Some(NodeModel::FormCommand(_))=>8,Some(NodeModel::Checkbox(_))=>1,Some(NodeModel::Toggle(_))=>2,Some(NodeModel::Select(_))=>3,Some(NodeModel::Workspace(_))=>4,Some(NodeModel::Palette(_))=>6,Some(NodeModel::SiteRule(_))=>7,Some(NodeModel::SidebarTabs(_))|Some(NodeModel::SidebarPair(_))|Some(NodeModel::SidebarPinGroup(_))|Some(NodeModel::PaletteRoot(_))|Some(NodeModel::FormRoot(_))|None=>0}).unwrap_or(0)}
     fn node_checkbox_init(&mut self,checked:bool)->bool{self.write_node(|r|match r.model.as_deref(){Some(NodeModel::Checkbox(_))=>true,Some(_)=>false,None=>{r.model=Some(Box::new(NodeModel::Checkbox(CheckboxState{checked})));true}}).unwrap_or(false)}
     fn node_checked(&self)->bool{self.read_node(|r|matches!(r.model.as_deref(),Some(NodeModel::Checkbox(s)) if s.checked())).unwrap_or(false)}
     fn node_set_checked(&mut self,checked:bool)->bool{self.write_node(|r|if let Some(NodeModel::Checkbox(s))=r.model.as_deref_mut(){s.set_checked(checked)}else{false}).unwrap_or(false)}
@@ -3403,21 +3335,6 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
         emit(i.x + 0.5, i.y + 0.5, i.width - 1.0, i.height - 1.0, radius - 0.5, i.edge, "", 0.0, false);
     }
     if i.kind == 2 { return; }
-    if i.kind == 25 {
-        // Match the original history RowButton's two single-line columns:
-        // primary title elides at the tail; date/URL detail in the middle.
-        let g=row_layout(i.width as i32,i.height as i32,i.title_width as i32,!i.detail.is_empty(),false,false);
-        emit(i.x+10.0,i.y+(i.height-16.0)/2.0,16.0,16.0,4.0,i.badge,"",0.0,false);
-        if !i.monogram.is_empty(){emit(i.x+10.0,i.y+(i.height-16.0)/2.0,16.0,16.0,0.0,monogram_colors(i.badge,i.ink).1,&i.monogram,9.0,true);}
-        if i.focused {emit(i.x+2.0,i.y+i.height-3.0,(i.width-4.0).max(0.0),2.0,1.0,i.ink,"",0.0,false);}
-        emit(i.x+g.title.x as f32,i.y,g.title.width as f32,i.height,0.0,i.ink,&i.title,i.font_size,false);
-        if !i.detail.is_empty() && g.detail.width>0 {
-            emit(i.x+g.detail.x as f32,i.y,g.detail.width as f32,i.height,0.0,i.detail_ink,&i.detail,i.detail_font_size,false);
-            out.last_mut().unwrap().middle=true;
-        }
-        for p in out[first_primitive..].iter_mut(){if p.width==16.0&&!p.text.is_empty()&&p.text==i.monogram{p.center=true;}}
-        return;
-    }
     if i.focused {
         // Inset focus indicator; event/focus ownership stays with the node.
         emit(i.x + 2.0, i.y + i.height - 3.0, (i.width - 4.0).max(0.0), 2.0,
@@ -3656,23 +3573,6 @@ mod tests {
         assert_eq!((r.x, r.y, r.width, r.height), (4, 70, 225, 34));
         let narrow = action_frame(r, ffi::Rect {x: 19, y: 106, width: -1, height: 0});
         assert_eq!((narrow.x, narrow.width, narrow.height), (19, 0, 34));
-    }
-    #[test] fn history_rows_keep_native_columns_elision_focus_and_clip() {
-        let mut item=row(320.0);item.kind=25;item.height=60.0;item.active=false;
-        item.title_width=120.0;item.detail="2026 · example.test/אבג/🦀".into();item.detail_ink=0xff778899;
-        item.monogram.clear();item.close=false;item.focused=true;
-        item.clip=ffi::FloatRect{x:0.0,y:12.0,width:320.0,height:24.0};
-        for width in [20.0,80.0,160.0,320.0] {
-            item.width=width;let ops=layout(std::slice::from_ref(&item));
-            let g=row_layout(width as i32,60,120,true,false,false);
-            let primary=ops.iter().find(|op|op.text==item.title);
-            if g.title.width>0 {let p=primary.unwrap();assert_eq!((p.x,p.width,p.height),(36.0,g.title.width as f32,60.0));assert!(!p.middle);assert!(!p.bold);} else {assert!(primary.is_none());}
-            let detail=ops.iter().find(|op|op.text==item.detail);
-            if g.detail.width>0 {let p=detail.unwrap();assert_eq!((p.x,p.width,p.font_size),(g.detail.x as f32,g.detail.width as f32,12.0));assert!(p.middle);assert_eq!(p.color,item.detail_ink);} else {assert!(detail.is_none());}
-            assert!(ops.iter().all(|p|p.clip.y==12.0&&p.clip.height==24.0));
-            assert!(ops.iter().any(|p|p.text.is_empty()&&p.y==57.0&&p.height==2.0)||width<=4.0);
-        }
-        item.width=320.0;item.clip.height=0.0;assert!(layout(&[item]).is_empty());
     }
     #[test] fn new_tab_action_keeps_title_hint_icon_and_clip() {
         let mut item = row(177.0); item.kind = 3; item.close = false;
@@ -3951,7 +3851,7 @@ mod tests {
         let valid=f.tools_capture(ffi::ToolsCapture::Valid);assert!(valid.admitted&&valid.stop_recording&&valid.accept_chord);assert_eq!(valid.status,"Kombinacja przechwycona. Wybierz Zapisz skrót.");assert!(!f.tools_recording());assert!(!f.tools_capture(ffi::ToolsCapture::Escape).admitted);
         f.tools_record(true);let escape=f.tools_capture(ffi::ToolsCapture::Escape);assert!(escape.admitted&&escape.stop_recording&&!escape.accept_chord);assert_eq!(escape.status,"Nagrywanie anulowane.");assert!(!f.tools_recording());
         f.tools_record(true);f.tools_reset();assert!(!f.tools_capture(ffi::ToolsCapture::Valid).admitted);
-        assert_eq!(tools_status(ffi::ToolsStatus::HistoryReading),"Odczytywanie historii…");assert_eq!(tools_status(ffi::ToolsStatus::HistorySearching),"Wyszukiwanie historii…");assert_eq!(tools_status(ffi::ToolsStatus::WriteFailed),"Nie udało się zapisać ustawień na dysku.");
+        assert_eq!(tools_status(ffi::ToolsStatus::WriteFailed),"Nie udało się zapisać ustawień na dysku.");
     }
     fn import_report(stage:ffi::ImportStage)->ffi::ImportStatusReport{ffi::ImportStatusReport{stage,browser:"Arc".into(),error:String::new(),profiles:2,spaces:3,folders:4,tabs:5,skipped:0,ok:true,added_profiles:1,added_spaces:2,browsing_data:false,history:0,cookies:0,data_skipped:0,data_failed:false}}
     #[test] fn import_status_copy_formats_stages_counts_errors_and_browsing_data() {
@@ -4011,14 +3911,8 @@ mod tests {
         for _ in 0..2 {let p=form.tools_dispatch(10,&c);assert!(p.recording&&p.sync_recording);assert!(!p.record_status.is_empty());}
         let p=form.tools_dispatch(99,&c);assert!(p.admitted&&p.sync_recording);assert!(!p.recording);assert_eq!(p.action,0);
         assert!(!form.tools_dispatch(11,&c).sync_recording);
-        for page in 0..4 {form.tools_select(page);let failed=form.tools_outcome(false,true);assert!(!failed.refresh);assert!(!failed.status.is_empty());assert_eq!(form.tools_outcome(true,false).status,"Gotowe. Zmiany zostały zastosowane.");assert!(form.tools_outcome(true,true).refresh);assert!(form.tools_outcome(true,true).status.contains("Oczekiwanie"));}
+        for page in 0..3 {form.tools_select(page);let failed=form.tools_outcome(false,true);assert!(!failed.refresh);assert!(!failed.status.is_empty());assert_eq!(form.tools_outcome(true,false).status,"Gotowe. Zmiany zostały zastosowane.");assert!(form.tools_outcome(true,true).refresh);assert!(form.tools_outcome(true,true).status.contains("Oczekiwanie"));}
         form.tools_select(2);assert!(form.tools_outcome(false,false).status.contains("{query}"));form.tools_select(1);assert!(form.tools_outcome(false,false).status.contains("kombinacja"));
-    }
-    #[test] fn tools_history_presentation_preserves_errors_counts_and_busy_controls() {
-        let mut form=new_tools_form();assert!(form.tools_history_view(0,false,false).empty.contains("w tym profilu"));
-        form.tools_history_edit(vec![0xd800]);assert!(form.tools_history_view(0,false,false).empty.contains("wyszukiwania"));
-        for count in [0,1,200,usize::MAX] {for error in [false,true] {for more in [false,true] {let v=form.tools_history_view(count,more,error);assert_eq!(v.more_visible,more&&!error);assert_eq!(v.more_enabled,!error);assert_eq!(v.empty.is_empty(),count!=0);if error{assert!(v.status.contains("ponownie"));}else{assert_eq!(v.status,format!("Wyświetlono wpisów: {}",count));}}}}
-        for busy in [false,true] {let c=tools_clear_controls(busy);assert_eq!(c.enabled,!busy);assert_eq!(c.label,tools_clear_label(busy));}
     }
     #[test] fn page_dialog_copy_preserves_roles_and_utf16_cap_without_authority() {
         for kind in 0..3 {for unload in [false,true] {let copy=page_dialog_copy(kind,unload,"https://example.test","Profil 🦀 אבג",&[0xd800,0x41]);assert_eq!(copy.show_cancel,kind!=0);assert_eq!(copy.prompt,kind==2);assert_eq!(copy.default_cancel,unload);assert_eq!(copy.identity,"Profil: Profil 🦀 אבג");assert!(copy.title.ends_with("https://example.test"));assert_eq!(copy.message,vec![0xd800,0x41]);assert_eq!(copy.accept,if unload{"Opuść stronę"}else{"OK"});assert_eq!(copy.cancel,if unload{"Zostań"}else{"Anuluj"});}}
@@ -4029,83 +3923,46 @@ mod tests {
         let center=layout(std::slice::from_ref(&item));assert_eq!(center.len(),1);assert!(center[0].center);assert_eq!(center[0].font_weight,400);
         item.glyph=0;let left=layout(&[item]);assert!(!left[0].center);
     }
-    #[test] fn tools_form_committed_queries_paging_and_stale_results() {
-        let mut form = new_tools_form(); form.tools_select(3);
-        let query = vec![0x41, 0xd83e, 0xdd80, 0xd800, 0x5d0];
-        form.tools_history_edit(query.clone());
-        assert_eq!(form.tools_history_query(), query);
-        assert_eq!(form.tools_history_request(false), 200);
-        assert!(!form.tools_history_accept(&[0x41], 200));
-        assert!(!form.tools_history_accept(&query, 400));
-        assert!(!form.tools_history_loaded());
-        assert!(form.tools_history_accept(&query, 200));
-        assert!(form.tools_history_loaded());
-        assert_eq!(form.tools_history_request(true), 400);
-        assert!(!form.tools_history_loaded());
-        assert!(!form.tools_history_accept(&query, 200));
-        assert!(form.tools_history_accept(&query, 400));
-        form.tools_history_edit(vec![]);
-        assert!(!form.tools_history_loaded());
-        assert!(!form.tools_history_accept(&query, 400));
-        assert_eq!(form.tools_history_request(false), 200);
-        assert!(form.tools_history_accept(&[], 200));
-    }
     #[test] fn tools_form_rebuild_clears_transient_state_and_preserves_page() {
         let mut form = new_tools_form(); form.tools_select(1); form.tools_record(true);
-        form.tools_history_edit(vec![0xd800]); form.tools_timeline_edit(vec![0x5d0, 0xdfff]);
+        form.tools_timeline_edit(vec![0x5d0, 0xdfff]);
         assert_eq!(form.tools_timeline_query(), vec![0x5d0, 0xdfff]);
-        assert_eq!(form.tools_history_request(true), 400);
         form.tools_reset();
         assert_eq!(form.tools_page(), 1); assert!(!form.tools_recording());
-        assert!(form.tools_history_query().is_empty()); assert!(form.tools_timeline_query().is_empty());
-        assert!(!form.tools_history_loaded());
-        assert!(!form.tools_history_accept(&[], 200));
-        assert_eq!(form.tools_history_request(false), 200);
-        form.tools_select(usize::MAX); assert_eq!(form.tools_page(), 3);
+        assert!(form.tools_timeline_query().is_empty());
+        form.tools_select(usize::MAX); assert_eq!(form.tools_page(), 2);
         form.tools_select(0); assert_eq!(form.tools_page(), 0);
-    }
-    #[test] fn tools_form_pagination_saturates_instead_of_wrapping() {
-        let mut form = new_tools_form(); form.history_limit = usize::MAX - 100;
-        assert_eq!(form.tools_history_request(true), usize::MAX);
-        assert_eq!(form.tools_history_request(true), usize::MAX);
-        assert_eq!(form.tools_history_request(false), 200);
     }
     #[test] fn tools_form_order_preserves_native_control_and_command_sequence() {
         use ffi::ToolsNodeKind as K;use ffi::ToolsNodeRole as R;
-        let roles=[vec![R::SnapshotName,R::TimelineFilter,R::SnapshotChoice,R::ClosedChoice],vec![R::ShortcutChoice,R::ShortcutChord],vec![R::ProviderChoice,R::ProviderName,R::ProviderKeyword,R::ProviderUrl],vec![R::HistoryQuery,R::HistoryPeriod]];
-        let actions=[vec![1,2,3,4,5],vec![10,11,12,13],vec![20,21,22],vec![30,31]];
-        for page in 0..4 {let mut f=new_tools_form();f.tools_select(page);let plan=f.tools_form_plan("Profil",false,vec![]);
+        let roles=[vec![R::SnapshotName,R::TimelineFilter,R::SnapshotChoice,R::ClosedChoice],vec![R::ShortcutChoice,R::ShortcutChord],vec![R::ProviderChoice,R::ProviderName,R::ProviderKeyword,R::ProviderUrl]];
+        let actions=[vec![1,2,3,4,5],vec![10,11,12,13],vec![20,21,22]];
+        for page in 0..3 {let mut f=new_tools_form();f.tools_select(page);let plan=f.tools_form_plan("Profil",vec![]);
             assert!(plan.nodes.iter().filter(|n|n.kind==K::Editor||n.kind==K::Choice).map(|n|n.role).eq(roles[page].iter().copied()));
             assert_eq!(plan.nodes.iter().filter(|n|n.kind==K::Action).map(|n|n.action).collect::<Vec<_>>(),actions[page]);
             assert!(plan.nodes.iter().filter(|n|n.kind==K::Editor||n.kind==K::Choice||n.kind==K::Action).all(|n|!n.text.is_empty()));
         }
     }
-    #[test] fn tools_form_groups_preserve_native_gaps_and_history_flex() {
-        use ffi::ToolsNodeKind as K;use ffi::ToolsNodeRole as R;
-        for (page,expected) in [4,1,1,0].into_iter().enumerate(){let mut f=new_tools_form();f.tools_select(page);let plan=f.tools_form_plan("",false,vec![]);let mut stack=vec![];let mut groups=0;
-            for n in &plan.nodes {match n.kind {K::BeginActions=>{assert_eq!(n.spacing,10);groups+=1;stack.push(K::EndActions);},K::BeginRow=>{assert_eq!(n.spacing,8);stack.push(K::EndRow);},K::EndActions|K::EndRow=>assert!(stack.pop()==Some(n.kind)),_=>{}}
-                if n.role==R::HistoryPeriod{assert!(n.flex);assert!(stack.last()==Some(&K::EndRow));}else{assert!(!n.flex);}if n.role==R::HistoryRows{assert_eq!(n.spacing,4);assert!(stack.is_empty());}
+    #[test] fn tools_form_groups_preserve_native_gaps() {
+        use ffi::ToolsNodeKind as K;
+        for (page,expected) in [4,1,1].into_iter().enumerate(){let mut f=new_tools_form();f.tools_select(page);let plan=f.tools_form_plan("",vec![]);let mut stack=vec![];let mut groups=0;
+            for n in &plan.nodes {match n.kind {K::BeginActions=>{assert_eq!(n.spacing,10);groups+=1;stack.push(K::EndActions);},K::EndActions=>assert!(stack.pop()==Some(n.kind)),_=>{}}assert!(!n.flex);
             }assert!(stack.is_empty());assert_eq!(groups,expected);
         }
     }
-    #[test] fn tools_form_history_reconstruction_respects_busy_and_hidden_more() {
-        use ffi::ToolsNodeRole as R;let mut f=new_tools_form();f.tools_select(3);
-        for busy in [false,true]{let p=f.tools_form_plan("Osobisty",busy,vec![]);let clear=p.nodes.iter().find(|n|n.role==R::HistoryClear).unwrap();assert_eq!(clear.enabled,!busy);assert_eq!(String::from_utf16(&clear.text).unwrap(),if busy{"Czyszczenie…"}else{"Wyczyść historię…"});assert!(!p.nodes.iter().find(|n|n.role==R::HistoryMore).unwrap().visible);assert_eq!(p.nodes.iter().find(|n|n.role==R::HistoryPeriod).unwrap().choices,["Ostatnia godzina","Ostatnie 24 godziny","Ostatnie 7 dni","Cały okres"]);}
-    }
     #[test] fn tools_form_context_and_sleeping_copy_preserve_utf16() {
-        use ffi::ToolsNodeKind as K;let f=new_tools_form();let p=f.tools_form_plan("Praca 🦀 אבג",false,vec![ffi::ToolsSleepingCopy{title:vec![0xd800],detail:vec![0xdfff]}]);assert_eq!(String::from_utf16(&p.title).unwrap(),"Time Machine · Praca 🦀 אבג");let last=p.nodes.last().unwrap();assert!(last.kind==K::Hint);assert_eq!(last.text,vec![0xd800,0x20,0xb7,0x20,0xdfff]);assert!(p.nodes[p.nodes.len()-2].kind==K::EndActions);
-        let mut f=new_tools_form();f.tools_select(3);let p=f.tools_form_plan("Profil 🦀 אבג",false,vec![]);assert_eq!(String::from_utf16(&p.nodes[0].text).unwrap(),"Profil: Profil 🦀 אבג");
+        use ffi::ToolsNodeKind as K;let f=new_tools_form();let p=f.tools_form_plan("Praca 🦀 אבג",vec![ffi::ToolsSleepingCopy{title:vec![0xd800],detail:vec![0xdfff]}]);assert_eq!(String::from_utf16(&p.title).unwrap(),"Time Machine · Praca 🦀 אבג");let last=p.nodes.last().unwrap();assert!(last.kind==K::Hint);assert_eq!(last.text,vec![0xd800,0x20,0xb7,0x20,0xdfff]);assert!(p.nodes[p.nodes.len()-2].kind==K::EndActions);
     }
     #[test] fn tools_form_description_does_not_reset_queries_recording_or_choice_keys() {
-        let mut f=new_tools_form();f.tools_select(1);let p=f.tools_shortcut_choices(vec![form_shortcut("a","A","Cmd+J")]);let key=p.choices[0].key.clone();f.tools_record(true);f.tools_timeline_edit(vec![0xd800]);f.tools_history_edit(vec![0xdfff]);let epoch=f.choice_epoch;
-        for _ in 0..2 {let _=f.tools_form_plan("",false,vec![]);assert!(f.tools_recording());assert_eq!(f.tools_timeline_query(),vec![0xd800]);assert_eq!(f.history_query,vec![0xdfff]);assert_eq!(f.choice_epoch,epoch);let draft=f.tools_choice_draft(&key);assert!(draft.valid);assert_eq!(draft.target,"a");}
+        let mut f=new_tools_form();f.tools_select(1);let p=f.tools_shortcut_choices(vec![form_shortcut("a","A","Cmd+J")]);let key=p.choices[0].key.clone();f.tools_record(true);f.tools_timeline_edit(vec![0xd800]);let epoch=f.choice_epoch;
+        for _ in 0..2 {let _=f.tools_form_plan("",vec![]);assert!(f.tools_recording());assert_eq!(f.tools_timeline_query(),vec![0xd800]);assert_eq!(f.choice_epoch,epoch);let draft=f.tools_choice_draft(&key);assert!(draft.valid);assert_eq!(draft.target,"a");}
     }
     #[test] fn tools_copy_display_context_and_adapter_roles_are_complete() {
         let copy=tools_copy(0,"Praca 🦀 אבג");assert_eq!(copy.title,"Time Machine · Praca 🦀 אבג");assert_eq!(copy.fields.len(),2);assert_eq!(copy.pickers.len(),2);assert_eq!(copy.headings.len(),2);assert_eq!(copy.actions.len(),5);assert!(copy.tail.contains("Niezapisane formularze"));
         let shortcut=tools_copy(1,"");assert_eq!(shortcut.fields.len(),1);assert_eq!(shortcut.actions.len(),4);assert!(shortcut.intro.contains("Escape"));
         let provider=tools_copy(2,"");assert_eq!(provider.fields.len(),3);assert_eq!(provider.actions.len(),3);assert!(provider.intro.contains("{query}"));
-        let history=tools_copy(usize::MAX,"Profil 🦀");assert_eq!(history.intro,"Profil: Profil 🦀");assert_eq!(history.fields.len(),1);assert_eq!(history.choices.len(),4);assert_eq!(history.actions[0],tools_clear_label(false));assert_eq!(tools_clear_label(true),"Czyszczenie…");
-        for page in 0..4{let copy=tools_copy(page,"");assert!(!copy.title.is_empty());assert!(!copy.initial_status.is_empty());assert!(copy.fields.iter().chain(copy.actions.iter()).all(|s|!s.is_empty()));}
+        assert_eq!(tools_copy(usize::MAX,"").title,provider.title);
+        for page in 0..3{let copy=tools_copy(page,"");assert!(!copy.title.is_empty());assert!(!copy.initial_status.is_empty());assert!(copy.fields.iter().chain(copy.actions.iter()).all(|s|!s.is_empty()));}
     }
     #[test] fn preference_catalogue_preserves_categories_counts_and_platform_gate() {
         use ffi::PreferenceRowKind as K;use ffi::PreferenceActionKind as A;
@@ -4668,8 +4525,8 @@ mod tests {
     }
     #[test] fn form_command_panels_cover_workspace_profile_and_import_actions(){
         use ffi::{FormCommand as C,FormPanel as P};let mut g=new_form_graph(false,0,false,false);
-        for (panel,commands) in [(P::Workspace,vec![C::WorkspaceSave,C::WorkspaceToggle,C::WorkspaceRemove,C::WorkspaceProfiles,C::WorkspaceImport,C::WorkspaceDismiss]),(P::Profiles,vec![C::ProfileCreate,C::ProfileRename,C::ProfileDelete,C::ProfileBack]),(P::Import,vec![C::ImportApply,C::ImportDismiss]),(P::Tools,vec![C::ToolsDismiss,C::HistoryMore])]{for command in commands{let mut input=g.append_form_action();assert!(input.node_form_command_init(command,""));assert_eq!(input.node_form_command().panel,panel);}}
-        let mut keyed=g.append_form_action();assert!(!keyed.node_form_command_init(C::HistoryMore,"page"));assert_eq!(keyed.node_model_kind(),0);
+        for (panel,commands) in [(P::Workspace,vec![C::WorkspaceSave,C::WorkspaceToggle,C::WorkspaceRemove,C::WorkspaceProfiles,C::WorkspaceImport,C::WorkspaceDismiss]),(P::Profiles,vec![C::ProfileCreate,C::ProfileRename,C::ProfileDelete,C::ProfileBack]),(P::Import,vec![C::ImportApply,C::ImportDismiss]),(P::Tools,vec![C::ToolsDismiss])]{for command in commands{let mut input=g.append_form_action();assert!(input.node_form_command_init(command,""));assert_eq!(input.node_form_command().panel,panel);}}
+        let mut keyed=g.append_form_action();assert!(!keyed.node_form_command_init(C::ToolsDismiss,"page"));assert_eq!(keyed.node_model_kind(),0);
     }
     #[test] fn preference_command_panel_includes_navigation_and_dynamic_pagination(){
         use ffi::{FormCommand as C,FormPanel as P};let mut g=new_form_graph(false,0,false,false);
@@ -4816,42 +4673,10 @@ mod tests {
         let mut g=palette_tree();let mut other=palette_tree();let a=g.acquire(&node_named(6,"a"));let b=other.acquire(&node_named(6,"a"));assert_eq!(a.action_node_id(),b.action_node_id());assert_eq!(a.node_parent_id(),b.node_parent_id());assert!(g.owns_input(&a)&&other.owns_input(&b));assert!(!g.owns_input(&b)&&!other.owns_input(&a));drop(g);assert_eq!(a.node_parent_id(),0);
     }
     #[test] fn scene_owner_tokens_reject_equal_ids_from_foreign_graphs(){
-        let mut left=history_tree();let mut right=history_tree();let a=left.acquire(&node_named(5,"a"));let b=right.acquire(&node_named(5,"a"));assert_eq!(a.action_node_id(),b.action_node_id());assert_eq!(a.node_parent_id(),b.node_parent_id());assert!(left.owns_input(&a)&&right.owns_input(&b));assert!(!left.owns_input(&b)&&!right.owns_input(&a));let plain=new_action_control();assert!(!left.owns_input(&plain));left.reconcile(vec![]);assert!(!left.owns_input(&a));
+        let mut left=workspace_tree();let mut right=workspace_tree();let a=left.acquire(&node_named(3,"work"));let b=right.acquire(&node_named(3,"work"));assert_eq!(a.action_node_id(),b.action_node_id());assert_eq!(a.node_parent_id(),b.node_parent_id());assert!(left.owns_input(&a)&&right.owns_input(&b));assert!(!left.owns_input(&b)&&!right.owns_input(&a));let plain=new_action_control();assert!(!left.owns_input(&plain));left.reconcile(vec![]);assert!(!left.owns_input(&a));
     }
     #[test] fn scene_owner_checks_reject_replaced_leases_and_cover_workspace_nodes(){
         let mut g=workspace_tree();let a=g.acquire(&node_named(3,"work"));assert!(g.owns_input(&a));let b=g.acquire(&node_named(3,"work"));assert!(!g.owns_input(&a));assert!(g.owns_input(&b));drop(a);assert!(g.owns_input(&b));let root=g.acquire(&node_named(11,"chrome.workspaces"));assert!(!g.owns_input(&root));
-    }
-    fn history_item(key:&str,title:&str)->ffi::HistorySceneInput{ffi::HistorySceneInput{key:key.into(),title:title.encode_utf16().collect(),detail:"Date · URL".encode_utf16().collect(),url:format!("https://{key}.test/").encode_utf16().collect()}}
-    fn history_tree()->Box<ActionGraph>{let mut g=new_action_graph();assert!(g.reconcile_history(vec![history_item("a","First"),history_item("b","Second")]).admitted);g}
-    #[test] fn history_tree_owns_parent_order_utf16_copy_and_height(){
-        let mut g=new_action_graph();let mut item=history_item("a","日本語 🦀");item.title.push(0xd800);let expected=item.title.clone();g.reconcile_history(vec![item]);let scene=g.history_scene();assert_ne!(scene.root,0);assert_eq!(scene.children[0].parent,scene.root);assert_eq!(scene.children[0].title,expected);assert_eq!(scene.children[0].height,60);let row=g.acquire(&node_named(5,"a"));assert_eq!(row.node_parent_id(),scene.root);assert_eq!(row.node_model_kind(),5);assert_eq!(g.acquire(&node_named(11,"tools.history")).action_node_id(),0);
-    }
-    #[test] fn history_identical_projection_preserves_focus_press_and_lease(){
-        let mut g=history_tree();let root=g.history_scene().root;let mut a=g.acquire(&node_named(5,"a"));let id=a.action_node_id();a.action_focus(true);a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);let plan=g.reconcile_history(vec![history_item("a","First"),history_item("b","Second")]);assert_eq!((plan.created,plan.retired),(0,0));assert_eq!(a.action_node_id(),id);assert_eq!(a.node_parent_id(),root);assert!(a.action_snapshot().focused&&a.action_pending());assert!(g.history_scene().children.iter().all(|n|!n.cancel_input));assert!(a.action_pointer(ffi::PointerPhase::Release,1,1,true,true,true).action==ffi::RowAction::Activate);
-    }
-    #[test] fn history_title_change_cancels_own_press_preserves_sibling_and_focus(){
-        let mut g=history_tree();let mut a=g.acquire(&node_named(5,"a"));let mut b=g.acquire(&node_named(5,"b"));a.action_focus(true);for row in [&mut a,&mut b]{row.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);}g.reconcile_history(vec![history_item("a","Updated"),history_item("b","Second")]);let scene=g.history_scene();assert!(scene.children[0].cancel_input);assert!(!scene.children[1].cancel_input);assert!(!a.action_pending());assert!(a.action_snapshot().focused&&b.action_pending());assert!(a.action_pointer(ffi::PointerPhase::Release,1,1,true,true,true).action!=ffi::RowAction::Activate);
-    }
-    #[test] fn history_detail_or_url_projection_change_cancels_pending_input(){
-        for detail in [false,true]{let mut g=history_tree();let mut a=g.acquire(&node_named(5,"a"));a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);let mut item=history_item("a","First");if detail{item.detail.push(32);}else{item.url.push(32);}g.reconcile_history(vec![item,history_item("b","Second")]);assert!(!a.action_pending());assert!(g.history_scene().children[0].cancel_input);}
-    }
-    #[test] fn history_reorder_and_insert_cancel_press_keep_parent_and_ids(){
-        let mut g=history_tree();let tree=g.history_scene();let mut a=g.acquire(&node_named(5,"a"));a.action_focus(true);a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);g.reconcile_history(vec![history_item("b","Second"),history_item("a","First"),history_item("c","New")]);let scene=g.history_scene();assert_eq!(scene.root,tree.root);assert_eq!(scene.children[1].id,tree.children[0].id);assert_eq!(scene.children[0].id,tree.children[1].id);assert!(scene.children.iter().all(|n|n.parent==tree.root&&n.cancel_input));assert!(!a.action_pending());assert!(a.action_snapshot().focused);
-    }
-    #[test] fn history_removal_releases_payload_and_readmission_gets_new_id(){
-        let mut g=history_tree();let mut a=g.acquire(&node_named(5,"a"));let id=a.action_node_id();let record=if let ActionStorage::Shared{node,..}=&a.storage{node.clone()}else{panic!("missing record")};g.reconcile_history(vec![history_item("b","Second")]);assert!(record.borrow().model.is_none());assert_eq!(a.node_parent_id(),0);assert_eq!(a.node_model_kind(),0);assert!(!a.action_key(true,1,true,true).handled);g.reconcile_history(vec![history_item("a","First"),history_item("b","Second")]);assert_ne!(g.history_scene().children[0].id,id);
-    }
-    #[test] fn history_invalid_projection_is_atomic_and_wrong_kind_rejects(){
-        let mut g=history_tree();let mut a=g.acquire(&node_named(5,"a"));a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);let tree=g.history_scene();for items in [vec![history_item("a","Updated"),history_item("a","Duplicate")],vec![history_item("","Empty")]]{assert!(!g.reconcile_history(items).admitted);assert!(a.action_pending());assert_eq!(g.history_scene().children[0].title,tree.children[0].title);assert_eq!(a.node_parent_id(),tree.root);}let mut other=new_action_graph();other.reconcile(vec![node_named(5,"a")]);let mut b=other.acquire(&node_named(5,"a"));b.node_checkbox_init(true);assert!(!other.reconcile_history(vec![history_item("a","First")]).admitted);assert!(b.node_checked());
-    }
-    #[test] fn history_empty_keeps_root_query_retirement_clears_entire_subtree(){
-        let mut g=history_tree();let mut a=g.acquire(&node_named(5,"a"));let root=g.history_scene().root;g.reconcile_history(vec![]);assert_eq!(g.history_scene().root,root);assert!(g.history_scene().children.is_empty());assert_eq!(a.action_node_id(),0);assert!(g.reconcile(vec![]).admitted);assert_eq!(g.history_scene().root,0);g.reconcile_history(vec![history_item("a","First")]);assert_ne!(g.history_scene().root,root);assert!(!a.action_key(true,1,true,true).handled);
-    }
-    #[test] fn history_parent_retention_and_adapter_replacement_enforce_leases(){
-        let mut g=history_tree();let mut a=g.acquire(&node_named(5,"a"));let id=a.action_node_id();let root=a.node_parent_id();assert!(!g.reconcile(vec![node_named(5,"a")]).admitted);let b=g.acquire(&node_named(5,"a"));assert_eq!(b.action_node_id(),id);assert_eq!(b.node_parent_id(),root);assert!(!a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true).handled);drop(a);assert_eq!(b.node_model_kind(),5);
-    }
-    #[test] fn history_snapshots_are_owned_and_graph_drop_revokes_retained_handles(){
-        let mut g=history_tree();let mut a=g.acquire(&node_named(5,"a"));let mut snapshot=g.history_scene();snapshot.children[0].title.clear();snapshot.children[0].url.clear();snapshot.children.reverse();let fresh=g.history_scene();assert_eq!(fresh.children[0].key,"a");assert!(!fresh.children[0].title.is_empty()&&!fresh.children[0].url.is_empty());drop(g);assert_eq!(a.node_parent_id(),0);assert_eq!(a.node_model_kind(),0);assert!(!a.action_key(true,1,true,true).handled);
     }
     fn space(key:&str,name:&str,label:&str)->ffi::WorkspaceSceneInput{ffi::WorkspaceSceneInput{key:key.into(),name:name.encode_utf16().collect(),label:label.encode_utf16().collect(),sleeping:false,active:false,enabled:true}}
     fn workspace_tree()->Box<ActionGraph>{let mut g=new_action_graph();assert!(g.reconcile_chrome(vec![space("work","Praca",""),space("personal","Prywatne","")]).admitted);g}

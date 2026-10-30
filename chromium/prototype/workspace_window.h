@@ -116,7 +116,6 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   std::vector<SitePreferenceRule> ReadSitePreferences() const;
   bool WriteSitePreference(std::string origin, std::string key, int setting);
   bool RemoveSitePreference(SitePreferenceRule rule);
-  void QueryBrowsingHistory(std::u16string query, size_t limit);
   void RequestClearBrowsingData(BrowsingDataSelection selection);
   bool ClearBrowsingData(std::string profile_id, BrowsingDataSelection selection);
   bool clearing_browsing_data() const { return data_remover_ != nullptr; }
@@ -376,8 +375,6 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   GURL last_preconnect_origin_;
   base::TimeTicks last_preconnect_time_;
   base::CancelableTaskTracker history_tasks_;
-  base::CancelableTaskTracker history_view_tasks_;
-  size_t history_view_generation_ = 0;
   size_t search_generation_ = 0;
   std::unique_ptr<WorkspaceShell> shell_;
   // Widget must die before its non-owned delegate and before profiles.

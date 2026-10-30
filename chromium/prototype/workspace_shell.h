@@ -151,7 +151,6 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingCallback<bool(std::string, std::string, bool)> delete_folder;
     base::RepeatingCallback<bool(std::string, std::vector<PinnedItem>)> restore_pins;
     base::RepeatingCallback<bool(std::string)> restore_workspace;
-    base::RepeatingCallback<void(std::u16string, size_t)> query_history;
     base::RepeatingCallback<TimeMachineState()> time_machine;
     base::RepeatingCallback<bool()> operation_pending;
     base::RepeatingCallback<bool(std::string, bool)> save_snapshot;
@@ -258,16 +257,7 @@ class WorkspaceShell final : public ui::EventHandler,
   int sidebar_width() const { return sidebar_width_; }
   bool CloseOverlays(bool keep_sidebar = false);
   void OpenGeneralSettings();
-  void OpenTools(int page);  // 0: Time Machine, 1: shortcuts, 2: search providers, 3: history.
-  void RefreshHistory(bool more = false);
-  void SetHistoryResults(std::u16string query, std::string profile_id, size_t limit,
-      std::vector<BrowsingHistoryEntry> entries, bool more, bool error);
-  bool history_visible() const;
-  bool history_loaded() const;
-  views::View* history_results_view() const { return history_list_; }
-  EditorControl* history_search() const { return history_search_; }
-  views::View* history_period() const { return history_period_; }
-  const std::vector<BrowsingHistoryEntry>& history_entries() const { return history_entries_; }
+  void OpenTools(int page);  // 0: Time Machine, 1: shortcuts, 2: search providers.
   void SyncShortcuts() { RefreshKeyRegistrations(); }
   bool CaptureShortcut(const ui::Accelerator& accelerator);
   std::string ShortcutFor(const ui::Accelerator& accelerator) const;
@@ -391,7 +381,7 @@ class WorkspaceShell final : public ui::EventHandler,
   PanelViewport* workspace_viewport() const{return workspace_scroll_;}
   bool metal_sidebar_visible() const;
   bool metal_sidebar_grip_visible() const;
-  // 0 untyped/retired, 1 checkbox, 2 switch, 3 selector, 4 workspace, 5 history row, 6 palette row, 7 site-rule row, 8 form command, 9 tab row, 10 pin row; local graph model diagnostics.
+  // 0 untyped/retired, 1 checkbox, 2 switch, 3 selector, 4 workspace, 6 palette row, 7 site-rule row, 8 form command, 9 tab row, 10 pin row; local graph model diagnostics.
   views::View* site_rule_results_for_testing() const{return site_rules_list_;}
   void RefreshSiteRulesForTesting(bool reload=true){RefreshSitePreferences(reload);}
   uint32_t control_model_kind_for_testing(views::View* view) const;
@@ -604,7 +594,6 @@ class WorkspaceShell final : public ui::EventHandler,
   bool ToolsRecording() const;
   // status is sidebar::ToolsStatus; Rust owns the copy when the tools form exists.
   std::u16string ToolsStatusText(int status) const;
-  std::u16string ToolsHistoryQuery() const;
   std::u16string ToolsTimelineQuery() const;
   void ResetToolsForm();
   void RefreshTools();
@@ -612,7 +601,6 @@ class WorkspaceShell final : public ui::EventHandler,
   void BuildRustPreferenceRows(const sidebar::PreferenceCatalogue& catalogue);
   void RefreshTimelineItems();
   void RefreshToolsViewport();
-  void SetHistoryMoreVisible(bool visible);
   void RefreshKeyRegistrations();
   void SaveTools();
   void ToolsAction(int action,std::optional<std::string> choice_key=std::nullopt);
@@ -634,15 +622,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> tools_picker_ = nullptr;
   raw_ptr<views::View> closed_picker_ = nullptr;
   raw_ptr<PanelViewport> tools_scroll_ = nullptr;
-  raw_ptr<EditorControl> history_search_ = nullptr;
-  raw_ptr<views::View> history_period_ = nullptr;
-  raw_ptr<views::View> history_list_ = nullptr;
-  raw_ptr<views::View> history_more_ = nullptr;
-  raw_ptr<views::View> history_clear_ = nullptr;
-  std::shared_ptr<SidebarNodeGraphState> history_node_graph_;
-  std::vector<BrowsingHistoryEntry> history_entries_;
   bool browsing_data_busy_ = false;
-  base::OneShotTimer history_timer_;
   uint64_t tools_generation_ = 0;
   void ToolsEditorEdited(EditorControl* sender);
   void PostToolsAction(int action);

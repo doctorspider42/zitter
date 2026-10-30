@@ -563,7 +563,6 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   callbacks.restore_pins = base::BindRepeating(&WorkspaceWindow::RestorePins, base::Unretained(this));
   callbacks.restore_workspace = base::BindRepeating(&WorkspaceWindow::RestoreRemovedWorkspace, base::Unretained(this));
   callbacks.create_folder = base::BindRepeating(&WorkspaceWindow::CreatePinnedFolder, base::Unretained(this));
-  callbacks.query_history = base::BindRepeating(&WorkspaceWindow::QueryBrowsingHistory, base::Unretained(this));
   callbacks.clear_browsing_data = base::BindRepeating(&WorkspaceWindow::RequestClearBrowsingData, base::Unretained(this));
   callbacks.system_settings = base::BindRepeating(&WorkspaceWindow::OpenSystemSettings, base::Unretained(this));
   callbacks.read_preferences = base::BindRepeating(&WorkspaceWindow::ReadPreferences, base::Unretained(this));
@@ -683,7 +682,6 @@ WorkspaceWindow::~WorkspaceWindow() {
   if (time_machine_timer_.IsRunning()) FlushTimeMachine();
   closing_ = true;
   history_tasks_.TryCancelAll();
-  history_view_tasks_.TryCancelAll();
   weak_factory_.InvalidateWeakPtrs();
   ClosePeek();
   extension_tabs_.reset();
