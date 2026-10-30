@@ -39,6 +39,14 @@
 #include "content/public/browser/storage_partition.h"
 #include "chromium/prototype/workspace_window.h"
 #include "chromium/prototype/extensions_bar.h"
+#include "chrome/browser/extensions/extension_install_prompt.h"
+#include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
+#include "chrome/browser/ui/views/extensions/extension_install_dialog_view.h"
+#include "extensions/browser/crx_installer.h"
+#include "extensions/browser/extension_creator.h"
+#include "extensions/browser/test_extension_registry_observer.h"
+#include "ui/views/widget/any_widget_observer.h"
+#include "ui/views/test/button_test_api.h"
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_model.h"
 #include "extensions/browser/background_script_executor.h"
@@ -8907,6 +8915,119 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionPagesOpenInTheirProfi
   ASSERT_TRUE(window_->extensions_bar()->menu_for_testing());
   EXPECT_EQ(std::vector<std::string>{extension->id()}, window_->extensions_bar()->menu_ids_for_testing());
   window_->extensions_bar()->CloseMenus();
+}
+
+
+namespace {
+// A button anywhere under `root` by its accessible name.
+views::Button* FindNamedButton(views::View* root, std::u16string_view name) {
+  if (auto* button = views::AsViewClass<views::Button>(root);
+      button && root->GetViewAccessibility().GetCachedName() == name && root->GetVisible())
+    return button;
+  for (const auto& child : root->children())
+    if (auto* found = FindNamedButton(child.get(), name)) return found;
+  return nullptr;
+}
+}  // namespace
+
+// The menu's pin is a real control: pinning puts the action in the header of
+// this profile only, and the pinned pin unpins it again.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionMenuPinsAndUnpinsPerProfile) {
+  base::ScopedTempDir dir;
+  {
+    base::ScopedAllowBlockingForTesting allow;
+    ASSERT_TRUE(dir.CreateUniqueTempDir());
+  }
+  const auto extension = LoadTestExtension(work_, WriteTestExtension(dir.GetPath(), "Pinboard", SK_ColorBLUE, false));
+  ASSERT_TRUE(extension);
+  ToolbarActionsModel::Get(work_)->SetActionVisibility(extension->id(), false);
+  auto* bar = window_->extensions_bar();
+  NavigateBoth();
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->profile() == work_.get(); }));
+  EXPECT_TRUE(ShownActions(bar).empty());
+  auto click = [](views::Button* button) {
+    ui::MouseEvent event(ui::EventType::kMousePressed, gfx::Point(), gfx::Point(), base::TimeTicks::Now(),
+                         ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON);
+    views::test::ButtonTestApi(button).NotifyClick(event);
+  };
+  bar->ToggleMenu();
+  ASSERT_TRUE(bar->menu_for_testing());
+  auto* menu = bar->menu_for_testing()->GetRootView();
+  // An unpinned pin shows on hover; the row is hovered when the pointer is on it.
+  views::Button* pin = nullptr;
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    pin = FindNamedButton(menu, u"Przypnij");
+    if (!pin) {
+      // Reveal it as hovering would.
+      std::function<void(views::View*)> reveal = [&](views::View* view) {
+        if (view->GetViewAccessibility().GetCachedName() == u"Przypnij") view->SetVisible(true);
+        for (const auto& child : view->children()) reveal(child.get());
+      };
+      reveal(menu);
+      pin = FindNamedButton(menu, u"Przypnij");
+    }
+    return pin != nullptr;
+  }));
+  click(pin);
+  ASSERT_TRUE(base::test::RunUntil([&] { return ShownActions(bar) == std::vector<std::string>{extension->id()}; }));
+  EXPECT_TRUE(ToolbarActionsModel::Get(work_)->IsActionPinned(extension->id()));
+  // The menu rebuilds after the click; its pin is now "Odepnij" and stays shown.
+  views::Button* unpin = nullptr;
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    unpin = bar->menu_for_testing() ? FindNamedButton(bar->menu_for_testing()->GetRootView(), u"Odepnij") : nullptr;
+    return unpin != nullptr;
+  }));
+  click(unpin);
+  ASSERT_TRUE(base::test::RunUntil([&] { return ShownActions(bar).empty(); }));
+  EXPECT_FALSE(ToolbarActionsModel::Get(work_)->IsActionPinned(extension->id()));
+  bar->CloseMenus();
+  ASSERT_TRUE(base::test::RunUntil([&] { return !bar->menu_for_testing(); }));
+  EXPECT_FALSE(ToolbarActionsModel::Get(personal_)->HasAction(extension->id()));
+}
+
+// Installing a packed extension with its confirmation (the Web Store path):
+// the prompt opens over the Zitter window, the extension lands only in the
+// profile of the page that asked, no stock Chrome window opens afterwards and
+// the puzzle trembles.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionInstallPromptsOverZitterAndStaysInItsProfile) {
+  base::ScopedTempDir dir;
+  base::FilePath crx;
+  {
+    base::ScopedAllowBlockingForTesting allow;
+    ASSERT_TRUE(dir.CreateUniqueTempDir());
+    const auto source = WriteTestExtension(dir.GetPath(), "Packed", SK_ColorGREEN, false);
+    crx = dir.GetPath().AppendASCII("packed.crx");
+    extensions::ExtensionCreator creator;
+    ASSERT_TRUE(creator.Run(source, crx, base::FilePath(), dir.GetPath().AppendASCII("packed.pem"),
+                            extensions::ExtensionCreator::kOverwriteCRX)) << creator.error_message();
+  }
+  auto* bar = window_->extensions_bar();
+  NavigateBoth();
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->profile() == work_.get(); }));
+  const size_t browsers = GlobalBrowserCollection::GetInstance()->GetSize();
+  ExtensionInstallDialogView::SetInstallButtonDelayForTesting(0);
+  views::NamedWidgetShownWaiter prompt_shown(views::test::AnyWidgetTestPasskey{}, "ExtensionInstallDialogView");
+  extensions::TestExtensionRegistryObserver installed(extensions::ExtensionRegistry::Get(work_));
+  auto installer = extensions::CrxInstaller::Create(
+      work_, std::make_unique<ExtensionInstallPrompt>(window_->contents("work"),
+                 std::make_unique<extensions::InstallPromptData>(extensions::InstallPromptData::UNSET_PROMPT_TYPE)));
+  // Web Store installs carry an approval; a local .crx needs this instead.
+  installer->set_off_store_install_allow_reason(extensions::CrxInstaller::OffStoreInstallAllowedInTest);
+  installer->InstallCrx(crx);
+  auto* prompt = prompt_shown.WaitIfNeededAndGet();
+  ASSERT_TRUE(prompt);
+  // Modal to Zitter's window, not to a stock browser.
+  EXPECT_EQ(window_->widget(), prompt->parent());
+  prompt->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+  const auto extension = installed.WaitForExtensionInstalled();
+  ASSERT_TRUE(extension);
+  EXPECT_FALSE(extensions::ExtensionRegistry::Get(personal_)->GetInstalledExtension(extension->id()));
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->tremor_for_testing(); }));
+  ASSERT_TRUE(base::test::RunUntil([&] { return Shown(bar, extension->id()).has_value(); }));
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(browsers, GlobalBrowserCollection::GetInstance()->GetSize());
 }
 
 } // namespace zitter::prototype

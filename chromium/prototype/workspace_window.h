@@ -3,6 +3,7 @@
 
 #include <array>
 #include <memory>
+#include "base/auto_reset.h"
 #include <map>
 #include <set>
 #include <string>
@@ -379,6 +380,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   std::unique_ptr<views::Widget> widget_;
   std::unique_ptr<DownloadPanel> downloads_;
   raw_ptr<ExtensionsBar> extensions_bar_ = nullptr;  // Owned by the window root.
+  std::unique_ptr<base::AutoReset<bool>> extension_install_ui_;
   base::WeakPtrFactory<WorkspaceWindow> weak_factory_{this};
 };
 }  // namespace zitter::prototype

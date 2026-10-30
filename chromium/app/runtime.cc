@@ -15,7 +15,6 @@
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
 #include "chrome/browser/tab_list/tab_list_interface.h"
-#include "chrome/browser/ui/extensions/extension_install_ui.h"
 #include "components/tabs/public/tab_interface.h"
 #include "chromium/prototype/workspace_window.h"
 #include "components/keep_alive_registry/keep_alive_types.h"
@@ -42,10 +41,6 @@ void Runtime::PreMainMessageLoopRun() {
 #if BUILDFLAG(IS_MAC)
   InstallAppShell();
 #endif
-  // Chrome's post-install bubble opens (and needs) a stock browser window;
-  // Zitter confirms a new extension with the puzzle's tremor instead.
-  extension_install_ui_ = std::make_unique<base::AutoReset<bool>>(
-      ExtensionInstallUI::disable_ui_for_tests(true));
   browsers_.Observe(GlobalBrowserCollection::GetInstance());
 #if BUILDFLAG(IS_MAC)
   if (base::CommandLine::ForCurrentProcess()->HasSwitch("zitter-ui-lab")) {

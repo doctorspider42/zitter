@@ -37,6 +37,7 @@
 
 #include "base/auto_reset.h"
 #include "chromium/prototype/extensions_bar.h"
+#include "chrome/browser/ui/extensions/extension_install_ui.h"
 #include "base/check.h"
 #include "base/files/file_util.h"
 #include "base/files/important_file_writer.h"
@@ -375,6 +376,10 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   shell_ = std::make_unique<WorkspaceShell>(
       data_directory_.AppendASCII("ZitterAppearance.json"), std::move(callbacks));
   auto root = shell_->Build();
+  // Chrome's post-install bubble opens (and needs) a stock browser window;
+  // Zitter confirms a new extension with the puzzle's tremor instead.
+  extension_install_ui_ = std::make_unique<base::AutoReset<bool>>(
+      ExtensionInstallUI::disable_ui_for_tests(true));
   // Design: Extensions. The bar follows the profile of the page on screen.
   ExtensionsBar::Callbacks extension_callbacks;
   extension_callbacks.open_page = base::BindRepeating([](WorkspaceWindow* window, Profile* profile, const GURL& url) {

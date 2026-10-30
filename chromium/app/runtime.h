@@ -3,7 +3,6 @@
 
 #include <memory>
 
-#include "base/auto_reset.h"
 #include "base/containers/flat_set.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
@@ -55,7 +54,6 @@ class Runtime final : public ChromeBrowserMainExtraParts,
   std::unique_ptr<ScopedKeepAlive> keep_alive_;
   std::unique_ptr<prototype::WorkspaceWindow> window_;
   std::unique_ptr<AppPerformanceProbe> performance_probe_;
-  std::unique_ptr<base::AutoReset<bool>> extension_install_ui_;
 #if BUILDFLAG(IS_MAC)
   std::unique_ptr<UiLab> ui_lab_;
 #endif
