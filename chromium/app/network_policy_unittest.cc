@@ -7,6 +7,14 @@
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+#if BUILDFLAG(IS_WIN)
+#include <windows.h>
+
+#include "base/win/access_token.h"
+#include "base/win/security_descriptor.h"
+#include "base/win/sid.h"
+#endif
+
 namespace zitter {
 namespace {
 TEST(ZitterNetworkPolicy, PreservesSafetyAndExistingFlags) {
@@ -52,6 +60,24 @@ TEST(ZitterSafeBrowsingKey, RejectsUnsafeFilesWithoutReturningTheirContents) {
   EXPECT_EQ(ReadSafeBrowsingKeyFile(file, &key), SafeBrowsingKeyFileStatus::kInsecurePermissions);
   EXPECT_TRUE(key.empty());
   ASSERT_TRUE(base::SetPosixFilePermissions(file, 0600));
+#elif BUILDFLAG(IS_WIN)
+  // Not inherited from the temp dir, whose ACL varies by machine: a file every
+  // user can read, then one only the user and SYSTEM can (mode 0644, 0600).
+  for (const bool shared : {true, false}) {
+    auto descriptor = base::win::SecurityDescriptor::CreateWithEmptyDacl();
+    descriptor.set_dacl_protected(true);
+    const auto token = base::win::AccessToken::FromCurrentProcess();
+    ASSERT_TRUE(token);
+    ASSERT_TRUE(descriptor.SetDaclEntry(token->User(), base::win::SecurityAccessMode::kGrant, GENERIC_ALL, 0));
+    ASSERT_TRUE(descriptor.SetDaclEntry(base::win::WellKnownSid::kLocalSystem, base::win::SecurityAccessMode::kGrant, GENERIC_ALL, 0));
+    if (shared)
+      ASSERT_TRUE(descriptor.SetDaclEntry(base::win::WellKnownSid::kWorld, base::win::SecurityAccessMode::kGrant, FILE_GENERIC_READ, 0));
+    ASSERT_TRUE(descriptor.WriteToFile(file, DACL_SECURITY_INFORMATION));
+    if (shared) {
+      EXPECT_EQ(ReadSafeBrowsingKeyFile(file, &key), SafeBrowsingKeyFileStatus::kInsecurePermissions);
+      EXPECT_TRUE(key.empty());
+    }
+  }
 #endif
   EXPECT_EQ(ReadSafeBrowsingKeyFile(file, &key), SafeBrowsingKeyFileStatus::kReady);
   EXPECT_EQ(key, "fixture-key-not-a-real-google-api-key");

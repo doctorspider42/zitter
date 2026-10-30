@@ -95,12 +95,23 @@ text tests pass on Windows.
   **This is the biggest risk of the port.**
 - Store data (profiles, cache) in `%LOCALAPPDATA%\Zitter`.
 - `Runtime`: generalize the macOS-only shutdown logic (`ConfirmDownloadShutdown`),
-  because closing the last window exits the app on Windows.
-- `i18n.cc`: keep the language choice in Zitter's own settings instead of
-  `CFPreferences`. This also works on Linux.
+  because closing the last window exits the app on Windows. Moved to phase 3: it
+  needs a dialog in Zitter's design; until then closing cancels downloads.
+- `i18n.cc`: keep the language choice outside `CFPreferences`. Elsewhere it is
+  Chromium's own `intl.app_locale` in Local State, which also switches the
+  Chromium-owned UI on the next start, as in Chrome on Windows and Linux.
 - `network_policy.cc`: check the Safe Browsing key file's permissions through
   ACLs instead of POSIX modes.
 - Use the plain Views frame for now.
+
+Notes from the first launch:
+
+- `zitter.exe` is one executable for every process, as content_shell; only
+  `chrome_elf.dll` stays separate. On Windows the crash reporter client lives in
+  `chrome_elf`, so the `zitter` target compiles it only on POSIX.
+- The sidebar, palette and panels are separate translucent windows. PrintWindow
+  leaves them blank, so screenshots copy the screen with the window in front.
+- The window has no app icon yet (`.ico` from `assets/icon`, phase 3 or 6).
 
 **Done when** the window works, pages load, and profiles and workspaces survive a
 restart with the session restored.
@@ -167,4 +178,5 @@ restart with the session restored.
 | Design | Done ([canvas](https://claude.ai/artifact/V1fAXXfmYYMv3QMbAURWjJ)) |
 | 0 — environment | Done: vanilla `chrome.exe` runs (`out/ZitterWin`), the overlay installs |
 | 1 — non-Mac build | Done: `:shell` compiles on `text_services_skia.cc`; `sidebar_scene_unittests` (532), `zitter_network_policy_tests` (3) and `editor_text_layout_unittests` (6) pass. The `zitter` target for `is_win` moves to phase 2 |
-| 2–6 | Not started |
+| 2 — first launch | Done: `zitter.exe` opens the window, loads pages and restores the session and its space after a restart; data in `%LOCALAPPDATA%\Zitter`. The download shutdown prompt moves to phase 3 |
+| 3–6 | Not started |

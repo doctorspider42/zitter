@@ -5,6 +5,7 @@
 #include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
@@ -57,7 +58,11 @@ void Runtime::PreMainMessageLoopRun() {
 
 void Runtime::WindowReady() {
   for (const auto& arg : base::CommandLine::ForCurrentProcess()->GetArgs()) {
+#if BUILDFLAG(IS_WIN)
+    GURL url(base::WideToUTF8(arg));
+#else
     GURL url(arg);
+#endif
     if (url.SchemeIsHTTPOrHTTPS()) { window_->OpenExternalUrl(url); break; }
   }
   window_->widget()->Activate();

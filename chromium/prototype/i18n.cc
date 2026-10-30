@@ -10,6 +10,10 @@
 #include "base/apple/foundation_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include <CoreFoundation/CoreFoundation.h>
+#else
+#include "chrome/browser/browser_process.h"
+#include "components/language/core/browser/pref_names.h"
+#include "components/prefs/pref_service.h"
 #endif
 namespace zitter::prototype {
 namespace {
@@ -62,6 +66,14 @@ std::string StoredUiLanguage() {
     const auto choice = base::SysCFStringRefToUTF8(string);
     if (choice == "pl" || choice == "en") return choice;
   }
+#else
+  // Elsewhere Chromium's own UI language preference holds the choice, so the
+  // Chromium-owned UI switches with it on the next start, as on Windows Chrome.
+  if (auto* local_state = g_browser_process ? g_browser_process->local_state() : nullptr) {
+    const auto choice = local_state->GetString(language::prefs::kApplicationLocale);
+    if (choice == "pl") return "pl";
+    if (choice == "en" || choice == "en-US") return "en";
+  }
 #endif
   return "system";
 }
@@ -81,6 +93,12 @@ void StoreUiLanguage(std::string_view choice) {
     CFPreferencesSetAppValue(apple.get(), nullptr, kCFPreferencesCurrentApplication);
   }
   CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication);
+#else
+  if (auto* local_state = g_browser_process ? g_browser_process->local_state() : nullptr) {
+    // Chromium has an en-US pack, not a bare "en" one.
+    local_state->SetString(language::prefs::kApplicationLocale,
+                           choice == "pl" ? "pl" : choice == "en" ? "en-US" : "");
+  }
 #endif
 }
 void ApplyUiLanguage(std::string_view app_locale) {

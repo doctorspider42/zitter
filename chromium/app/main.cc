@@ -25,6 +25,13 @@
 #include "chrome/common/mac/detect_inappropriate_exit.h"
 #elif BUILDFLAG(IS_LINUX)
 #include "chrome/app/chrome_main_linux.h"
+#elif BUILDFLAG(IS_WIN)
+#include <windows.h>
+
+#include "base/win/win_util.h"
+#include "chrome/install_static/initialize_from_primary_module.h"
+#include "content/public/app/sandbox_helper_win.h"
+#include "sandbox/win/src/sandbox_types.h"
 #endif
 
 namespace {
@@ -35,7 +42,12 @@ std::optional<base::CommandLine>& InitialCommandLine() {
 base::FilePath DefaultDataDirectory() {
   base::FilePath home;
   CHECK(base::PathService::Get(base::DIR_HOME, &home));
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_WIN)
+  // %LOCALAPPDATA%\Zitter, next to where Chromium keeps its User Data.
+  base::FilePath local;
+  CHECK(base::PathService::Get(base::DIR_LOCAL_APP_DATA, &local));
+  return local.Append(FILE_PATH_LITERAL("Zitter"));
+#elif BUILDFLAG(IS_MAC)
   CHECK(base::CreateDirectory(home.Append("Library").Append("Caches").Append("Zitter")));
   return home.Append("Library").Append("Application Support").Append("Zitter");
 #else
@@ -53,11 +65,22 @@ const base::CommandLine& GetInitialBrowserCommandLine() {
   return InitialCommandLine().value();
 }
 
+#if BUILDFLAG(IS_WIN)
+// One executable for every process, as content_shell does: Chrome splits
+// chrome.exe and chrome.dll, Zitter links Chromium into zitter.exe.
+int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, wchar_t*, int) {
+  // chrome_elf (loaded with this executable) owns the install details that
+  // //chrome reads; this module takes its copy, as chrome.dll does.
+  install_static::InitializeFromPrimaryModule();
+  base::win::SetAbortBehaviorForCrashReporting();
+  base::CommandLine::Init(0, nullptr);
+#else
 int main(int argc, const char** argv) {
   // Unlike Chrome's small macOS launcher, this executable links Chromium
   // directly. PartitionAlloc initializes before main; registering its early
   // delegating zone here would register the allocator twice in static builds.
   base::CommandLine::Init(argc, argv);
+#endif
   auto* command = base::CommandLine::ForCurrentProcess();
   if (!command->HasSwitch(switches::kProcessType)) {
     zitter::ConfigureSafeBrowsingKey();
@@ -79,7 +102,16 @@ int main(int argc, const char** argv) {
   base::PoissonAllocationSampler::Init();
   zitter::MainDelegate delegate({.exe_entry_point_ticks = base::TimeTicks::Now()});
   content::ContentMainParams params(&delegate);
+#if BUILDFLAG(IS_WIN)
+  // The sandbox broker (browser) or target (children) needs the command line
+  // before ContentMain.
+  sandbox::SandboxInterfaceInfo sandbox_info = {nullptr};
+  content::InitializeSandboxInfo(&sandbox_info);
+  params.instance = instance;
+  params.sandbox_info = &sandbox_info;
+#else
   params.argc = argc;
   params.argv = argv;
+#endif
   return content::ContentMain(std::move(params));
 }

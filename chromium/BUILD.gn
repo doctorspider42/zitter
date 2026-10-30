@@ -313,7 +313,7 @@ if (!is_mac) {
 }
 
 # Real browser bootstrap, with no browser-test runner or test-only dependencies.
-if (is_mac || is_linux) {
+if (is_mac || is_linux || is_win) {
   executable("zitter") {
     # Match Chromium's main browser link: ThinLTO defaults to LTO O0 even
     # when thin_lto_enable_optimizations is true, unless opted in per target.
@@ -327,8 +327,6 @@ if (is_mac || is_linux) {
       "chromium/app/performance_probe.cc",
       "chromium/app/performance_probe.h",
       "chromium/app/runtime.h",
-      "//chrome/app/chrome_crash_reporter_client.cc",
-      "//chrome/app/chrome_crash_reporter_client.h",
       "//chrome/app/chrome_main_delegate.cc",
       "//chrome/app/chrome_main_delegate.h",
       "//chrome/app/startup_timestamps.h",
@@ -340,7 +338,6 @@ if (is_mac || is_linux) {
       "//base",
       "//build:chromeos_buildflags",
       "//chrome:dependencies",
-      "//chrome/app:chrome_crash_reporter_client",
       "//chrome/app:command_ids",
       "//chrome/browser:chrome_content_browser_client",
       "//chrome/browser:chrome_browser_main",
@@ -360,6 +357,14 @@ if (is_mac || is_linux) {
       "//ui/lottie",
     ]
     data_deps = [ "//chrome:packed_resources" ]
+    if (is_posix) {
+      # On Windows, chrome_elf holds the crash reporter client.
+      sources += [
+        "//chrome/app/chrome_crash_reporter_client.cc",
+        "//chrome/app/chrome_crash_reporter_client.h",
+      ]
+      deps += [ "//chrome/app:chrome_crash_reporter_client" ]
+    }
     if (is_mac) {
       deps += [ ":ui_lab" ]
       sources += [
@@ -378,6 +383,24 @@ if (is_mac || is_linux) {
     }
     if (is_linux) {
       sources += [ "//chrome/app/chrome_main_linux.cc", "//chrome/app/chrome_main_linux.h" ]
+    }
+    if (is_win) {
+      # chrome.dll's dependencies, linked into the one executable; chrome_elf
+      # stays a DLL, loaded first, as chrome.exe loads it.
+      configs -= [ "//build/config/win:console" ]
+      configs += [ "//build/config/win:windowed", "//build/config/win:delayloads" ]
+      deps += [
+        "//build/win:default_exe_manifest",
+        "//chrome/app:chrome_dll_resources",
+        "//chrome/app/theme:chrome_unscaled_resources",
+        "//chrome/browser/win/isolated_browser:isolated_browser_support",
+        "//chrome/chrome_elf",
+        "//chrome/install_static:install_static_util",
+        "//chrome/install_static:secondary_module",
+        "//components/crash/core/app",
+        "//content:sandbox_helper_win",
+        "//sandbox/win:sandbox",
+      ]
     }
   }
 }

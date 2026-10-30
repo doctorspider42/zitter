@@ -12,8 +12,40 @@
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
 
+#if BUILDFLAG(IS_WIN)
+#include <windows.h>
+
+#include "base/win/access_token.h"
+#include "base/win/security_descriptor.h"
+#include "base/win/sid.h"
+#endif
+
 namespace zitter {
 namespace {
+#if BUILDFLAG(IS_WIN)
+// The Windows counterpart of mode 0600: only the user, SYSTEM and
+// Administrators may read the file. A null DACL lets everyone in.
+bool KeyFileIsPrivate(const base::FilePath& path) {
+  auto descriptor = base::win::SecurityDescriptor::FromFile(path, DACL_SECURITY_INFORMATION);
+  const auto token = base::win::AccessToken::FromCurrentProcess();
+  if (!descriptor || !token || !descriptor->dacl() || descriptor->dacl()->is_null()) return false;
+  const base::win::Sid allowed[] = {token->User(),
+                                    base::win::Sid(base::win::WellKnownSid::kLocalSystem),
+                                    base::win::Sid(base::win::WellKnownSid::kBuiltinAdministrators)};
+  ACL* acl = descriptor->dacl()->get();
+  for (DWORD i = 0; i < acl->AceCount; ++i) {
+    void* ace = nullptr;
+    if (!::GetAce(acl, i, &ace)) return false;
+    if (static_cast<ACE_HEADER*>(ace)->AceType != ACCESS_ALLOWED_ACE_TYPE) continue;
+    auto* grant = static_cast<ACCESS_ALLOWED_ACE*>(ace);
+    if (!(grant->Mask & (FILE_READ_DATA | GENERIC_READ | GENERIC_ALL))) continue;
+    PSID sid = &grant->SidStart;
+    if (!std::ranges::any_of(allowed, [&](const auto& known) { return ::EqualSid(sid, known.GetPSID()); }))
+      return false;
+  }
+  return true;
+}
+#endif
 constexpr std::string_view kDisabledFeatures[] = {
 #define ZITTER_NETWORK_FEATURE(name, path, symbol) name,
 #include "chromium/app/network_policy_features.inc"
@@ -50,6 +82,8 @@ SafeBrowsingKeyFileStatus ReadSafeBrowsingKeyFile(
     return SafeBrowsingKeyFileStatus::kUnreadable;
   if (mode & (base::FILE_PERMISSION_GROUP_MASK | base::FILE_PERMISSION_OTHERS_MASK))
     return SafeBrowsingKeyFileStatus::kInsecurePermissions;
+#elif BUILDFLAG(IS_WIN)
+  if (!KeyFileIsPrivate(path)) return SafeBrowsingKeyFileStatus::kInsecurePermissions;
 #endif
   std::string contents;
   if (!base::ReadFileToStringWithMaxSize(path, &contents, 512))
