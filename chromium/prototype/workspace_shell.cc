@@ -3226,7 +3226,9 @@ END_METADATA
 #endif
 
 #if !BUILDFLAG(IS_MAC)
-// Design: Menu Zitter. The |z⟩ mark in `display` italic, a header icon button.
+// Design: Przycisk menu Zitter, wariant B. The ket |z⟩ as a 16 px line icon
+// (1.6 stroke, as the header's other icons): the bar faded, the Z in the icon's
+// ink, the ⟩ in the workspace accent, as the violet ⟩ of the app icon.
 class AppMenuButton final : public views::Button {
   METADATA_HEADER(AppMenuButton, views::Button)
  public:
@@ -3236,18 +3238,35 @@ class AppMenuButton final : public views::Button {
     SetAnimateOnStateChange(false);
   }
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {
-    return gfx::Size(std::max(kHeaderButtonSize, gfx::GetStringWidth(kMark, Mark()) + 8), kHeaderButtonSize);
+    return gfx::Size(kHeaderButtonSize, kHeaderButtonSize);
   }
   void PaintButtonContents(gfx::Canvas* canvas) override {
     const auto p = Palette(this);
-    if (open_ || GetState() == STATE_HOVERED || GetState() == STATE_PRESSED) {
-      cc::PaintFlags flags;
-      flags.setAntiAlias(true);
-      flags.setColor(open_ ? p.accent_soft : p.bg_hover);
-      canvas->DrawRoundRect(gfx::RectF(GetLocalBounds()), 6, flags);
+    const bool hovered = GetState() == STATE_HOVERED || GetState() == STATE_PRESSED;
+    cc::PaintFlags fill;
+    fill.setAntiAlias(true);
+    if (open_ || hovered) {
+      // `zt-iconbtn`: `radius-sm`, `bg-hover` on hover, `accent-soft` when on.
+      fill.setColor(open_ ? p.accent_soft : p.bg_hover);
+      canvas->DrawRoundRect(gfx::RectF(GetLocalBounds()), 8, fill);
     }
-    // Raised a pixel: the italic mark sits low in its line box.
-    canvas->DrawStringRectWithFlags(kMark, Mark(), p.ink, GetLocalBounds() - gfx::Vector2d(0, 1), gfx::Canvas::TEXT_ALIGN_CENTER);
+    const SkColor ink = open_ ? p.accent_ink : hovered ? p.ink : p.ink_muted;
+    cc::PaintFlags stroke;
+    stroke.setAntiAlias(true);
+    stroke.setStyle(cc::PaintFlags::kStroke_Style);
+    stroke.setStrokeWidth(1.6f);
+    stroke.setStrokeCap(cc::PaintFlags::kRound_Cap);
+    stroke.setStrokeJoin(cc::PaintFlags::kRound_Join);
+    // The 16 px icon grid, centered in the button.
+    const gfx::Vector2dF o((width() - 16) / 2.f, (height() - 16) / 2.f);
+    auto polyline = [&](std::vector<gfx::PointF> points, SkColor color) {
+      stroke.setColor(color);
+      for (size_t i = 0; i + 1 < points.size(); ++i)
+        canvas->DrawLine(points[i] + o, points[i + 1] + o, stroke);
+    };
+    polyline({{3.5f, 3}, {3.5f, 13}}, SkColorSetA(ink, SkColorGetA(ink) * 6 / 10));
+    polyline({{6.5f, 5.5f}, {10, 5.5f}, {6.5f, 10.5f}, {10, 10.5f}}, ink);
+    polyline({{12, 3}, {14.5f, 8}, {12, 13}}, p.accent_ink);
   }
   void SetOpen(bool open) {
     open_ = open;
@@ -3255,11 +3274,8 @@ class AppMenuButton final : public views::Button {
     SchedulePaint();
   }
  private:
-  static constexpr char16_t kMark[] = u"|z⟩";
-  static gfx::FontList Mark() { return DesignFont(1, 18, 400, true); }
   bool open_ = false;
-};
-BEGIN_METADATA(AppMenuButton)
+};BEGIN_METADATA(AppMenuButton)
 END_METADATA
 
 // The |z⟩ menu's commands: each runs one of the window's shortcut actions.
