@@ -3957,7 +3957,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         // only if the saved state differs, never as a side effect of loading.
         if (shell->pinned_ && !shell->sidebar_visible()) shell->ShowSidebar();
         if (!shell->pinned_ && shell->sidebar_visible()) shell->sidebar_widget_->Hide();
-        // Development: --zitter-open-panel=space|sidebar|palette|address|settings|profiles|downloads|extensions|extension-popup|menu|dialog|toast opens
+        // Development: --zitter-open-panel=space|sidebar|palette|address|settings|profiles|downloads|history|extensions|extension-popup|menu|dialog|toast opens
         // that view once the window is up, so UI checks can screenshot it without
         // driving the mouse.
         if (const std::string panel = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-open-panel"); !panel.empty())
@@ -3972,6 +3972,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
                 else if (panel == "profiles") shell->OpenProfiles();
                 // A sample undo toast; its „Cofnij” does nothing.
                 else if (panel == "downloads") shell->callbacks_.run_shortcut.Run("downloads");
+                else if (panel == "history") shell->callbacks_.run_shortcut.Run("history");
                 else if (panel == "extensions") shell->callbacks_.run_shortcut.Run("extensions");
                 else if (panel == "extension-popup") shell->callbacks_.run_shortcut.Run("extension_popup");
                 else if (panel == "dialog") shell->RequestNewFolder(shell->state_.workspace_id);
@@ -8298,7 +8299,7 @@ void WorkspaceShell::DispatchFormCommand(views::View* source,const sidebar::Form
     case C::PreferenceSite:SaveSitePreference();break;
     case C::PreferenceClear:if(callbacks_.clear_browsing_data)callbacks_.clear_browsing_data.Run({static_cast<int>(PickerIndex(clear_data_period_).value_or(0)),CheckValue(clear_history_),CheckValue(clear_cookies_),CheckValue(clear_cache_)});break;
     case C::PreferenceDirectory:if(callbacks_.choose_download_directory)callbacks_.choose_download_directory.Run();break;
-    case C::History:OpenTools(3);break;
+    case C::History:CloseOverlays();callbacks_.run_shortcut.Run("history");break;
     case C::Passwords:CloseOverlays();callbacks_.passwords.Run();break;
     case C::WorkspaceProfiles:case C::Profiles:OpenProfiles({},{});break;
     case C::WorkspaceImport:case C::Import:OpenImport();break;

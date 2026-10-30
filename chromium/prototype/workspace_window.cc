@@ -1090,6 +1090,20 @@ void WorkspaceWindow::ShowDownloads() {
   if (!downloads_) downloads_ = std::make_unique<DownloadPanel>();
   downloads_->Show(Profile::FromBrowserContext(page->GetBrowserContext()), widget_.get());
 }
+// History is Chromium's own page: the space on screen shows its existing
+// chrome://history tab, or opens one in its profile.
+void WorkspaceWindow::ShowHistory() {
+  if (!model_.active()) return;
+  shell_->CloseOverlays(true);
+  for (const auto& host : hosts_) {
+    if (host.workspace_id != active_id()) continue;
+    for (size_t i = 0; i < host.tabs.size(); ++i) {
+      const GURL url = TabUrl(host, host.tabs[i]);
+      if (url.SchemeIs("chrome") && url.host() == "history") { SelectTab(i); return; }
+    }
+  }
+  OpenProfileTab(ProfileFor(model_.active()->profile_id), GURL("chrome://history"), true);
+}
 void WorkspaceWindow::ShowPasswords() {
   shell_->CloseOverlays(true);
   if (auto* page = peek_contents() ? peek_contents() : contents(active_id())) PageServices::FromWebContents(page)->ShowPasswords();
@@ -1822,7 +1836,7 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
     return true;
   }
   if (id == "extensions") { shell_->CloseOverlays(true); extensions_bar_->ToggleMenu(); return extensions_bar_->profile() != nullptr; }
-  if (id == "history") { shell_->OpenTools(3); return true; }
+  if (id == "history") { ShowHistory(); return true; }
   if (id == "settings") { shell_->OpenGeneralSettings(); return true; }
   if (id == "address" || id == "new_tab" || id == "palette") {
     if (peek_view_ && GuardPages({peek_contents()}, base::BindOnce([](base::WeakPtr<WorkspaceWindow> w, std::string id) { if (w) w->RunShortcut(id); }, weak_factory_.GetWeakPtr(), id))) return true;

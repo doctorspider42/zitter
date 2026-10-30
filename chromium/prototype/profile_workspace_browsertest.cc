@@ -2259,78 +2259,40 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SitePreferenceExceptionsAndIso
   EXPECT_FALSE(window_->contents("work")->IsAudioMuted());
 }
 
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, BrowsingHistoryPanelSearchOpenAndClear) {
+// History is Chromium's own page, opened as a tab of the space on screen and
+// shown again instead of duplicated; the Zitter mark replaces Chromium's logo.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, HistoryShortcutOpensChromiumHistoryPage) {
   ASSERT_TRUE(window_->Select("work"));
-  auto* shell = window_->shell();
-  ASSERT_TRUE(base::test::RunUntil([&] { return shell->tools_ready(); }));
-  const auto recent_url = embedded_test_server()->GetURL("/storage_probe.html?history-recent");
-  const auto older_url = embedded_test_server()->GetURL("/storage_probe.html?history-older");
-  const auto private_url = embedded_test_server()->GetURL("/storage_probe.html?history-private");
-  auto seed = [](Profile* profile, GURL url, std::u16string title, base::Time time) {
-    history::URLRow row(url); row.set_title(title); row.set_visit_count(1); row.set_last_visit(time);
-    HistoryServiceFactory::GetForProfile(profile, ServiceAccessType::EXPLICIT_ACCESS)->AddPagesWithDetails(
-        {row}, history::SOURCE_OS_MIGRATION_IMPORTED);
-  };
-  seed(work_, recent_url, u"Recent entry", base::Time::Now() - base::Minutes(10));
-  seed(work_, older_url, u"Older entry", base::Time::Now() - base::Days(2));
-  seed(personal_, private_url, u"Private entry", base::Time::Now() - base::Minutes(10));
-  ASSERT_TRUE(window_->RunShortcut("history"));
-  ASSERT_TRUE(base::test::RunUntil([&] { return shell->history_loaded(); }));
-  ASSERT_TRUE(shell->history_visible());
-  ASSERT_EQ(2u, shell->history_entries().size());
-  EXPECT_EQ(recent_url, shell->history_entries()[0].url);
-  EXPECT_EQ(older_url, shell->history_entries()[1].url);
-  auto search = [&](std::u16string text) {
-    auto* field=shell->history_search();const gfx::Range range(0,field->GetText().size());field->SelectRange(range);
-    if(text.empty())field->input_client()->DeleteRange(range);
-    else field->input_client()->InsertText(text,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
-    EXPECT_TRUE(base::test::RunUntil([&] { return shell->history_loaded(); }));
-  };
-  search(u"nothing-matches-8372");
-  EXPECT_TRUE(shell->history_entries().empty());
-  search(u"Recent entry");
-  ASSERT_EQ(1u, shell->history_entries().size());
   const auto tabs = window_->tab_count("work");
-  auto* row=shell->history_results_view()->children()[0].get();
-  ASSERT_TRUE(row);
-  ActivateSidebarRow(row);
-  ASSERT_TRUE(base::test::RunUntil([&] { return !shell->history_visible() && window_->tab_count("work") == tabs + 1; }));
-  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
-  EXPECT_EQ(recent_url, window_->contents("work")->GetLastCommittedURL());
   ASSERT_TRUE(window_->RunShortcut("history"));
-  ASSERT_TRUE(base::test::RunUntil([&] { return shell->history_loaded(); }));
-  auto* clear = FindButton(shell->tools_widget()->GetContentsView(), u"Wyczyść historię…");
-  ASSERT_TRUE(clear);
-  ClickControl(clear);
-  ASSERT_TRUE(window_->clear_data_dialog());
-  EXPECT_EQ(static_cast<int>(ui::mojom::DialogButton::kCancel),
-      window_->clear_data_dialog()->widget_delegate()->AsDialogDelegate()->GetDefaultDialogButton());
-  EXPECT_TRUE(display::Screen::Get()->GetDisplayNearestWindow(shell->tools_widget()->GetNativeWindow()).work_area().Contains(
-      window_->clear_data_dialog()->GetWindowBoundsInScreen()));
-  window_->clear_data_dialog()->widget_delegate()->AsDialogDelegate()->CancelDialog();
-  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->clear_data_dialog(); }));
-  EXPECT_FALSE(window_->clearing_browsing_data());
-  ClickControl(clear);
-  ASSERT_TRUE(window_->clear_data_dialog());
-  window_->clear_data_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
-  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->clearing_browsing_data() && shell->history_loaded(); }));
-  ASSERT_EQ(1u, shell->history_entries().size());
-  EXPECT_EQ(older_url, shell->history_entries()[0].url);
-  // The other profile retains its independent history.
+  ASSERT_EQ(tabs + 1, window_->tab_count("work"));
+  auto* page = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(page));
+  EXPECT_EQ(GURL("chrome://history/"), page->GetLastCommittedURL());
+  EXPECT_EQ(work_, Profile::FromBrowserContext(page->GetBrowserContext()));
+  EXPECT_FALSE(window_->shell()->history_visible());
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return content::EvalJs(page, R"(
+        (() => {
+          const toolbar = document.querySelector('history-app')?.shadowRoot
+              ?.querySelector('history-toolbar')?.shadowRoot?.querySelector('cr-toolbar');
+          const logo = toolbar?.querySelector('picture[slot="product-logo"] img');
+          return !!logo && logo.src.startsWith('data:image/svg+xml;base64,') &&
+              logo.parentElement.assignedSlot?.name === 'product-logo' && logo.complete && logo.naturalWidth > 0 &&
+              // Like Chromium's logo, it is 24 px and hidden while the toolbar is narrow.
+              logo.getBoundingClientRect().width === (toolbar.hasAttribute('narrow') ? 0 : 24);
+        })())").ExtractBool();
+  }));
+  window_->SelectTab(0);
+  ASSERT_NE(page, window_->contents("work"));
+  ASSERT_TRUE(window_->RunShortcut("history"));
+  EXPECT_EQ(tabs + 1, window_->tab_count("work"));
+  EXPECT_EQ(page, window_->contents("work"));
   ASSERT_TRUE(window_->Select("personal"));
+  const auto personal_tabs = window_->tab_count("personal");
   ASSERT_TRUE(window_->RunShortcut("history"));
-  ASSERT_TRUE(base::test::RunUntil([&] { return shell->history_loaded(); }));
-  ASSERT_EQ(1u, shell->history_entries().size());
-  EXPECT_EQ(private_url, shell->history_entries()[0].url);
-  // All time clears only this profile and updates the open list.
-  shell->ActivateToolsChoiceForTesting("history_period",3);
-  clear = FindButton(shell->tools_widget()->GetContentsView(), u"Wyczyść historię…");
-  ASSERT_TRUE(clear);
-  ClickControl(clear);
-  ASSERT_TRUE(window_->clear_data_dialog());
-  window_->clear_data_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
-  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->clearing_browsing_data() && shell->history_loaded(); }));
-  EXPECT_TRUE(shell->history_entries().empty());
+  ASSERT_EQ(personal_tabs + 1, window_->tab_count("personal"));
+  EXPECT_EQ(personal_, Profile::FromBrowserContext(window_->contents("personal")->GetBrowserContext()));
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, HistoryRowsCocoaKeyboardAccessibilityAndURLFallback) {

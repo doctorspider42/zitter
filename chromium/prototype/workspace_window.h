@@ -105,6 +105,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   bool MoveActiveTab(std::string target_id);
   void ShowPasswords();
   void ShowDownloads();
+  void ShowHistory();
   DownloadPanel* downloads() const { return downloads_.get(); }
   void DownloadCompleted(std::string guid, std::u16string name);
   BrowserPreferences ReadPreferences() const;
