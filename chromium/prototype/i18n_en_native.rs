@@ -149,7 +149,7 @@ pub static EN: &[(&str, &str)] = &[
     ("Dane Arc są niekompletne. Zamknij Arc i ponów import.", "Arc data is incomplete. Quit Arc and import again."),
     ("Nie znaleziono przypiętych kart jednej z przestrzeni Arc. Import został zatrzymany.", "Pinned tabs of one of the Arc spaces weren’t found. The import was stopped."),
     ("Nie znaleziono przestrzeni Arc do importu.", "No Arc spaces found to import."),
-    ("Import Arc jest obecnie dostępny na macOS.", "Arc import is currently available on macOS."),
+    ("Nie znaleziono Arc na tym komputerze.", "Arc isn't on this computer."),
     ("Nie znaleziono danych Arc. Uruchom Arc na tym komputerze i spróbuj ponownie.", "No Arc data found. Open Arc on this computer and try again."),
     ("Import z {}", "Imported from {}"),
     ("Bez nazwy", "Untitled"),

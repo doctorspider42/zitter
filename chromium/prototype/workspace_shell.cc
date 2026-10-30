@@ -3995,6 +3995,11 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   }
   import_history_ = AddImportCheck(import_choices,import_copy[7],selection_changed);
   import_cookies_ = AddImportCheck(import_choices,import_copy[8],selection_changed);
+#if BUILDFLAG(IS_WIN)
+  // App-Bound Encryption keeps Chromium browsers' cookies to themselves on
+  // Windows (docs/windows-port.md, Decisions): no sign-ins to carry over.
+  import_cookies_->SetVisible(false);
+#endif
   Spacer(import_panel.get(), 8);
   import_status_ = import_text(import_panel.get(),u"",kSubtle,-1,gfx::Font::Weight::NORMAL,true);
   import_status_->SetVisible(false);
@@ -8699,7 +8704,11 @@ BrowserImportOptions WorkspaceShell::import_options() const {
   options.separate_profiles = CheckValue(import_profiles_);
   options.bookmarks = CheckValue(import_bookmarks_);
   options.history = CheckValue(import_history_);
+#if BUILDFLAG(IS_WIN)
+  options.cookies = false;
+#else
   options.cookies = CheckValue(import_cookies_);
+#endif
   return options;
 }
 void WorkspaceShell::SelectImportBrowserForTesting(size_t index) {

@@ -310,6 +310,17 @@ test("network_policy_tests") {
   deps = [ ":network_policy", "//base/test:run_all_unittests", "//base/test:test_support", "//testing/gtest" ]
 }
 
+# The importer alone, with its messages in their Polish source.
+test("arc_importer_unittests") {
+  sources = [
+    "chromium/prototype/arc_importer.cc",
+    "chromium/prototype/arc_importer.h",
+    "chromium/prototype/arc_importer_unittest.cc",
+    "chromium/prototype/browser_data.h",
+  ]
+  include_dirs = [ "." ]
+  deps = [ "//base", "//base/test:run_all_unittests", "//base/test:test_support", "//testing/gtest", "//url" ]
+}
 if (!is_mac) {
   # macOS keeps the CoreText harness: tools/check_editor_text_layout.py.
   test("editor_text_layout_unittests") {

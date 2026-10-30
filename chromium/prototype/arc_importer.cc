@@ -113,9 +113,16 @@ ArcImport ParseArcImport(std::string_view sidebar, std::string_view local_state)
   const auto* containers = data->FindListByDottedPath("sidebar.containers");
   if (!containers) { result.error = base::UTF16ToUTF8(T(u"Nieobsługiwany format paska bocznego Arc.")); return result; }
   std::set<std::string> seen_spaces;
+  // Containers alternate a kind marker ({"global": {}}, {"littleBrowser": {}})
+  // and its data. Little Arc windows hold transient spaces with no pinned tabs.
+  bool little_browser = false;
   for (const auto& value : *containers) {
     const auto* container = value.GetIfDict();
-    if (!container || !container->contains("spaces")) continue;
+    if (container && !container->contains("spaces")) {
+      little_browser = container->contains("littleBrowser");
+      continue;
+    }
+    if (!container || std::exchange(little_browser, false)) continue;
     const auto spaces = SwiftDictionary(container->Find("spaces"));
     const auto items = SwiftDictionary(container->Find("items"));
     std::vector<std::string> order;
@@ -205,7 +212,7 @@ ArcImport ParseArcImport(std::string_view sidebar, std::string_view local_state)
 ArcImport ReadArcImport(const base::FilePath& arc_directory) {
   if (arc_directory.empty()) {
     ArcImport result;
-    result.error = base::UTF16ToUTF8(T(u"Import Arc jest obecnie dostępny na macOS."));
+    result.error = base::UTF16ToUTF8(T(u"Nie znaleziono Arc na tym komputerze."));
     return result;
   }
   constexpr size_t kMaxSize = 32 * 1024 * 1024;
@@ -223,6 +230,18 @@ base::FilePath DefaultArcDirectory() {
   base::FilePath path;
 #if BUILDFLAG(IS_MAC)
   if (base::PathService::Get(base::DIR_APP_DATA, &path)) return path.AppendASCII("Arc");
+#elif BUILDFLAG(IS_WIN)
+  // Arc for Windows is an MSIX package; its data sits in the package's
+  // redirected LocalAppData, laid out as on macOS.
+  if (base::PathService::Get(base::DIR_LOCAL_APP_DATA, &path)) {
+    base::FileEnumerator packages(path.AppendASCII("Packages"), false, base::FileEnumerator::DIRECTORIES,
+                                  FILE_PATH_LITERAL("TheBrowserCompany.Arc_*"));
+    for (auto package = packages.Next(); !package.empty(); package = packages.Next()) {
+      const auto arc = package.AppendASCII("LocalCache").AppendASCII("Local").AppendASCII("Arc");
+      if (base::PathExists(arc.AppendASCII("StorableSidebar.json"))) return arc;
+    }
+  }
+  path.clear();
 #endif
   return path;
 }
@@ -245,6 +264,15 @@ base::FilePath DefaultBrowserDirectory(ImportBrowser browser) {
     case ImportBrowser::kChrome: return path.AppendASCII("Google/Chrome");
     case ImportBrowser::kEdge: return path.AppendASCII("Microsoft Edge");
     case ImportBrowser::kBrave: return path.AppendASCII("BraveSoftware/Brave-Browser");
+    case ImportBrowser::kArc: break;
+  }
+#elif BUILDFLAG(IS_WIN)
+  if (!base::PathService::Get(base::DIR_LOCAL_APP_DATA, &path)) return {};
+  switch (browser) {
+    case ImportBrowser::kChrome: return path.AppendASCII("Google").AppendASCII("Chrome").AppendASCII("User Data");
+    case ImportBrowser::kEdge: return path.AppendASCII("Microsoft").AppendASCII("Edge").AppendASCII("User Data");
+    case ImportBrowser::kBrave:
+      return path.AppendASCII("BraveSoftware").AppendASCII("Brave-Browser").AppendASCII("User Data");
     case ImportBrowser::kArc: break;
   }
 #endif
