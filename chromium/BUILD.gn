@@ -14,6 +14,7 @@ rust_static_library("sidebar_scene") {
     "chromium/prototype/i18n_en_scene.rs",
     "chromium/prototype/i18n_en_shell.rs",
     "chromium/prototype/sidebar_editor.rs",
+    "chromium/prototype/timeline.rs",
   ]
   cxx_bindings = [ crate_root ]
   allow_unsafe = true
@@ -101,6 +102,9 @@ source_set("shell") {
     "chromium/prototype/browser_tools.h",
     "chromium/prototype/browser_tools.cc",
     "chromium/prototype/workspace_time_machine.cc",
+    "chromium/prototype/time_machine_view.cc",
+    "chromium/prototype/time_machine_view.h",
+    "chromium/prototype/timeline_store.h",
     "chromium/prototype/workspace_commands.cc",
     "chromium/prototype/workspace_preconnect.cc",
     "chromium/prototype/browser_preferences.h",

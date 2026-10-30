@@ -1,6 +1,8 @@
 #include "chromium/prototype/workspace_window.h"
+#include "chromium/prototype/timeline_store.h"
 
 #include <algorithm>
+#include <limits>
 
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
@@ -119,6 +121,9 @@ bool WorkspaceWindow::ClearBrowsingData(std::string profile_id, BrowsingDataSele
   if (selection.period == 0) begin = now - base::Hours(1);
   if (selection.period == 1) begin = now - base::Days(1);
   if (selection.period == 2) begin = now - base::Days(7);
+  // Time Machine is browsing history too: the same period leaves its timeline.
+  if (selection.history && timeline_->current->timeline_forget(profile_id, begin.is_null() ? std::numeric_limits<int64_t>::min() : begin.InMillisecondsSinceUnixEpoch(),
+      std::numeric_limits<int64_t>::max())) RewriteTimeline();
   data_removal_profile_name_ = base::UTF8ToUTF16(profile->GetPrefs()->GetString(prefs::kProfileName));
   for (const auto& info : profiles_) if (info.info.id == profile_id) data_removal_profile_name_ = base::UTF8ToUTF16(info.info.name);
   data_removal_lease_ = std::make_unique<ScopedProfileKeepAlive>(profile, ProfileKeepAliveOrigin::kBrowserWindow);

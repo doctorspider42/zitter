@@ -3,6 +3,7 @@
 
 #include <array>
 #include <memory>
+#include <optional>
 #include "base/auto_reset.h"
 #include <map>
 #include <set>
@@ -14,6 +15,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/browsing_data_remover.h"
 #include "base/timer/timer.h"
+#include "base/time/clock.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "base/memory/raw_ptr.h"
 #include "ui/base/accelerators/accelerator.h"
@@ -40,7 +42,9 @@ class Widget;
 class WidgetDelegate;
 }  // namespace views
 
+namespace zitter::sidebar { struct Timeline; }
 namespace zitter::prototype {
+struct TimelineStore;
 
 class DownloadPanel;
 class ExtensionsBar;
@@ -88,7 +92,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   bool configuration_ready() const { return configuration_ready_; }
   using StartupProfileLoader = base::RepeatingCallback<void(base::FilePath, base::OnceCallback<void(Profile*)>)>;
   void SetStartupProfileLoaderForTesting(StartupProfileLoader loader);
-  bool configuration_saved() const { return pending_config_writes_ == 0 && !session_timer_.IsRunning() && !time_machine_timer_.IsRunning(); }
+  bool configuration_saved() const { return pending_config_writes_ == 0 && !session_timer_.IsRunning(); }
   std::vector<Workspace> workspaces() const { return model_.workspaces(); }
   bool Select(std::string_view workspace_id);
   void Navigate(const GURL& url);
@@ -175,13 +179,30 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   bool UnpinItem(std::string id, size_t before);
   bool MovePin(std::string id, std::string parent, std::string before);
   void RunPageCommand(PageCommand command);
-  bool SaveSnapshot(std::string name, bool automatic = false);
-  bool RestoreSnapshot(std::string id);
-  bool DeleteSnapshot(std::string id);
-  bool ReopenClosedTab(std::string id = {});
+  // Time Machine (timeline.rs, ZitterTimeline.jsonl): every workspace's tabs over
+  // time. A snapshot is a named mark on the active workspace's timeline.
+  bool SaveSnapshot(std::string name);
+  // Replaces the active workspace's tabs with every tab open in (t − quantum, t];
+  // the state before is recorded first and offered as undo.
+  bool RestoreTimeline(int64_t t_ms, int64_t quantum_ms);
+  bool ReopenClosedTab();
+  // Closes every tab of the active workspace but the selected one and pinned pages.
+  bool CloseOtherTabs();
   bool SleepWorkspace(std::string id);
   bool workspace_sleeping(std::string_view id) const;
-  TimeMachineState TimeMachine() const;
+  const sidebar::Timeline& timeline() const;
+  base::Time Now() const { return clock_->Now(); }
+  // Captures the active workspace now, so the view and Cmd+Shift+T see it.
+  void RecordActiveTimeline() { RecordTimeline(false, active_id()); }
+  void SetTimelineSettings(bool enabled, int days);
+  bool ClearTimeline();
+  bool timeline_enabled() const { return timeline_enabled_; }
+  void SetClockForTesting(base::Clock* clock) { clock_ = clock; }
+  struct TimelineMomentForTesting { std::vector<std::string> urls; size_t open = 0; };
+  TimelineMomentForTesting timeline_moment_for_testing(std::string_view workspace_id, int64_t t_ms, int64_t quantum_ms) const;
+  std::vector<std::string> timeline_marks_for_testing() const;
+  size_t timeline_frames_for_testing() const;
+  bool timeline_recorded_for_testing(std::string_view workspace_id) const;
   bool RunShortcut(std::string id);
   size_t tab_count(std::string_view id) const;
   void SetCloseCallback(base::OnceClosure callback);
@@ -282,8 +303,12 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   base::DictValue CaptureHost(const Host& host) const;
   bool RestoreHost(Host& host, const base::DictValue& entry);
   void ReleaseHost(Host& host);
-  void SaveTimeMachine();
-  void FlushTimeMachine();
+  void RecordTimeline(bool force, std::string_view workspace_id = {});
+  // Puts back a layout captured with CaptureHost (Time Machine's undo).
+  bool RestoreLayout(std::string workspace_id, base::DictValue entry);
+  void LoadTimeline(std::string data);
+  void AppendTimeline(std::string lines);
+  void RewriteTimeline();
   void RecordClosedTab(const Host& host, size_t index);
   content::KeyboardEventProcessingResult PreHandlePageKeyEvent(
       content::WebContents* source,
@@ -365,11 +390,17 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   bool closing_split_tabs_ = false;  // One snapshot covers the whole group.
   bool restoring_session_ = false;
   std::string session_json_;
-  base::DictValue time_machine_;
-  base::Time last_automatic_snapshot_;
+  // The Rust timeline (timeline_store.h keeps the cxx types out of this header).
+  std::unique_ptr<TimelineStore> timeline_;
+  raw_ptr<base::Clock> clock_;
+  bool timeline_enabled_ = true;
+  bool timeline_settings_known_ = false;
+  int timeline_days_ = 30;
+  // Recently closed tabs of this run (Cmd+Shift+T), kept even with the timeline off.
+  struct ClosedTab { std::string workspace_id, profile_id; GURL url; std::u16string title; };
+  std::vector<ClosedTab> closed_tabs_;
   std::set<int> consumed_keys_;
   base::OneShotTimer session_timer_;
-  base::OneShotTimer time_machine_timer_;
   base::OneShotTimer preconnect_timer_;
   std::string last_preconnect_profile_;
   GURL last_preconnect_origin_;

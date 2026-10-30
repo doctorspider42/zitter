@@ -121,7 +121,7 @@ def shot(a):
 
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 sub = parser.add_subparsers(dest="command", required=True)
-l = sub.add_parser("launch"); l.add_argument("--open-panel", choices=["space", "sidebar", "palette", "address", "settings", "profiles", "downloads", "history", "extensions", "extension-popup", "menu", "dialog", "toast", "add", "space-end", "space-new", "remove", "drop"],
+l = sub.add_parser("launch"); l.add_argument("--open-panel", choices=["space", "sidebar", "palette", "address", "settings", "profiles", "downloads", "history", "time-machine", "extensions", "extension-popup", "menu", "dialog", "toast", "add", "space-end", "space-new", "remove", "drop"],
     help="open this panel once the window is up (no mouse needed)")
 l.add_argument("--load-extension", action="append", help="load an unpacked extension into the profiles (repeatable)")
 l.set_defaults(run=launch)

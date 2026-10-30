@@ -10,6 +10,7 @@
 #include "chromium/prototype/page_dialogs.h"
 #include "base/i18n/time_formatting.h"
 #include "chromium/prototype/workspace_shell.h"
+#include "chromium/prototype/time_machine_view.h"
 #include "chromium/prototype/i18n.h"
 
 #include <algorithm>
@@ -324,6 +325,9 @@ struct Appearance {
   bool folders_collapsed = true;
   int sidebar_width = kSidebarWidth;
   std::map<std::string, std::string> emoji;
+  // Time Machine records each workspace's tabs (on by default) for 7, 30 or 90 days.
+  bool time_machine = true;
+  int time_machine_days = 30;
 };
 Appearance ReadAppearance(const base::FilePath& path) {
   Appearance result;
@@ -355,6 +359,9 @@ Appearance ReadAppearance(const base::FilePath& path) {
   }
   result.sidebar_width = std::clamp(dict->FindInt("sidebar_width").value_or(kSidebarWidth),
                                     kMinSidebarWidth, kMaxSidebarWidth);
+  result.time_machine = dict->FindBool("time_machine").value_or(true);
+  const int days = dict->FindInt("time_machine_days").value_or(30);
+  result.time_machine_days = days == 7 || days == 90 ? days : 30;
   return result;
 }
 bool SavePatch(const base::FilePath& path, std::optional<std::string> id,
@@ -363,7 +370,8 @@ bool SavePatch(const base::FilePath& path, std::optional<std::string> id,
                std::optional<int> sidebar_width,
                std::optional<std::pair<std::string, std::string>> emoji,
                std::optional<bool> workspace_names,
-               std::optional<bool> folders_collapsed) {
+               std::optional<bool> folders_collapsed,
+               std::optional<std::pair<bool, int>> time_machine) {
   auto appearance = ReadAppearance(path);
   if (id) appearance.colors[*id] = color;
   if (pinned) appearance.pinned = *pinned;
@@ -373,6 +381,7 @@ bool SavePatch(const base::FilePath& path, std::optional<std::string> id,
   if (workspace_names) appearance.workspace_names = *workspace_names;
   if (folders_collapsed) appearance.folders_collapsed = *folders_collapsed;
   if (sidebar_width) appearance.sidebar_width = *sidebar_width;
+  if (time_machine) { appearance.time_machine = time_machine->first; appearance.time_machine_days = time_machine->second; }
   if (emoji && emoji->second.empty()) appearance.emoji.erase(emoji->first);
   else if (emoji) appearance.emoji[emoji->first] = emoji->second;
   base::DictValue dict;
@@ -384,6 +393,8 @@ bool SavePatch(const base::FilePath& path, std::optional<std::string> id,
   dict.Set("workspace_names", appearance.workspace_names);
   dict.Set("pinned_folders_collapsed", appearance.folders_collapsed);
   dict.Set("sidebar_width", appearance.sidebar_width);
+  dict.Set("time_machine", appearance.time_machine);
+  dict.Set("time_machine_days", appearance.time_machine_days);
   base::DictValue emoji_dict;
   for (const auto& [key, value] : appearance.emoji) emoji_dict.Set(key, value);
   dict.Set("workspace_emoji", std::move(emoji_dict));
@@ -3332,6 +3343,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         const bool blocked=shell->settings_visible() ||
             (shell->general_widget_ && shell->general_widget_->IsVisible()) ||
             (shell->tools_widget_ && shell->tools_widget_->IsVisible()) ||
+            (shell->time_machine_widget_ && shell->time_machine_widget_->IsVisible()) ||
             (shell->workspace_menu_runner_ && shell->workspace_menu_runner_->IsRunning());
         bool hide=!shell->pinned_&&!blocked&&!inside&&!dragging;
         if(shell->metal_sidebar_)hide=sidebar::sidebar_auto_hide(shell->pinned_,blocked,inside,dragging);
@@ -3888,6 +3900,15 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   make_panel(std::move(peek), peek_delegate_, peek_widget_, u"Zitter — Peek");
   make_panel(std::move(general), general_delegate_, general_widget_, T(u"Zitter — Ustawienia"));
   make_panel(std::move(tools_panel), tools_delegate_, tools_widget_, T(u"Zitter — Narzędzia"));
+  {TimeMachineView::Host host;
+   host.timeline=callbacks_.timeline;host.now=callbacks_.timeline_now;host.restore=callbacks_.restore_timeline;
+   host.palette=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->time_machine_?Palette(shell->time_machine_.get()):sidebar::design_palette(true,kDefaultWorkspaceColor);},weak);
+   // Only the system's reduced motion stills Time Machine; „Animacje przestrzeni” is about switching spaces.
+   host.animations=base::BindRepeating([]{return !gfx::Animation::PrefersReducedMotion();});
+   host.enable=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetTimeMachine(true,shell->time_machine_days_);},weak);
+   host.close=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell&&shell->time_machine_widget_){shell->time_machine_widget_->Hide();shell->RestorePageFocus();}},weak);
+   auto view=std::make_unique<TimeMachineView>(std::move(host));time_machine_=view.get();
+   make_panel(std::move(view), time_machine_delegate_, time_machine_widget_, u"Zitter — Time Machine");}
   {auto toast=std::make_unique<ToastView>(base::BindRepeating(&WorkspaceShell::UndoToast,weak),base::BindRepeating(&WorkspaceShell::HideToast,weak),
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,bool hovered){if(!shell)return;if(hovered)shell->toast_timer_.Stop();else if(shell->toast_widget_->IsVisible())shell->toast_timer_.Start(FROM_HERE,base::Seconds(6),base::BindOnce(&WorkspaceShell::HideToast,shell));},weak));
    toast_=toast.get();make_panel(std::move(toast), toast_delegate_, toast_widget_, T(u"Zitter — Komunikat"), false);}
@@ -3919,6 +3940,10 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         if (!shell->general_dirty_.contains("workspace_names")) shell->workspace_names_ = appearance.workspace_names;
         if (!shell->general_dirty_.contains("folders_collapsed")) {shell->folders_collapsed_ = appearance.folders_collapsed;shell->sidebar_tree_.SetDefaultCollapsed(appearance.folders_collapsed);}
         if (!shell->sidebar_width_dirty_) shell->sidebar_width_ = appearance.sidebar_width;
+        if (!shell->general_dirty_.contains("time_machine")) {
+          shell->time_machine_enabled_ = appearance.time_machine; shell->time_machine_days_ = appearance.time_machine_days;
+          if (shell->callbacks_.timeline_settings) shell->callbacks_.timeline_settings.Run(shell->time_machine_enabled_, shell->time_machine_days_);
+        }
         for (const auto& [id, emoji] : appearance.emoji)
           if (!shell->emoji_dirty_.contains(id)) shell->emoji_[id] = base::UTF8ToUTF16(emoji);
         shell->RebuildWorkspaceDots();
@@ -3945,6 +3970,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
                 // A sample undo toast; its „Cofnij” does nothing.
                 else if (panel == "downloads") shell->callbacks_.run_shortcut.Run("downloads");
                 else if (panel == "history") shell->callbacks_.run_shortcut.Run("history");
+                else if (panel == "time-machine") shell->OpenTimeMachine();
                 else if (panel == "extensions") shell->callbacks_.run_shortcut.Run("extensions");
                 else if (panel == "extension-popup") shell->callbacks_.run_shortcut.Run("extension_popup");
                 else if (panel == "dialog") shell->RequestNewFolder(shell->state_.workspace_id);
@@ -3987,10 +4013,10 @@ void WorkspaceShell::Detach() {
   ResetToolsForm();
   new_tab_button_ = nullptr;
   widget_->RemoveObserver(this);
-  for (auto* panel : {sidebar_widget_.get(), address_widget_.get(), settings_widget_.get(), profiles_widget_.get(), import_widget_.get(), peek_widget_.get(), general_widget_.get(), tools_widget_.get()})
-    panel->RemoveObserver(this);
+  for (auto* panel : {sidebar_widget_.get(), address_widget_.get(), settings_widget_.get(), profiles_widget_.get(), import_widget_.get(), peek_widget_.get(), general_widget_.get(), tools_widget_.get(), time_machine_widget_.get()})
+    if (panel) panel->RemoveObserver(this);
   search_timer_.Stop();
-  for(auto* field:{snapshot_name_.get(),timeline_filter_.get(),shortcut_chord_.get(),provider_name_.get(),provider_keyword_.get(),provider_url_.get()})
+  for(auto* field:{shortcut_chord_.get(),provider_name_.get(),provider_keyword_.get(),provider_url_.get()})
     if(field)field->SetCallbacks({},{});
   address_->SetCallbacks({},{});
   emoji_input_->SetCallbacks({},{});
@@ -4057,10 +4083,12 @@ void WorkspaceShell::Detach() {
   preferences_search_ = nullptr; preferences_profile_ = nullptr; preferences_empty_ = nullptr; preferences_body_ = nullptr;
   general_root_ = nullptr; general_scroll_ = nullptr; general_status_ = nullptr;
   theme_picker_ = nullptr; search_engine_picker_ = nullptr;
+  time_machine_check_ = nullptr; time_machine_days_picker_ = nullptr; time_machine_ = nullptr;
+  time_machine_widget_.reset(); time_machine_delegate_.reset();
   sidebar_check_ = nullptr; animations_check_ = nullptr; workspace_names_check_ = nullptr; folders_collapsed_check_ = nullptr; language_picker_ = nullptr;
   tools_root_ = nullptr; tools_body_ = nullptr; tools_close_=nullptr; tools_title_ = nullptr; tools_status_ = nullptr;
-  tools_scroll_ = nullptr; tools_picker_ = nullptr; closed_picker_ = nullptr;
-  snapshot_name_ = nullptr; timeline_filter_ = nullptr; shortcut_chord_ = nullptr;
+  tools_scroll_ = nullptr; tools_picker_ = nullptr;
+  shortcut_chord_ = nullptr;
   provider_name_ = nullptr; provider_keyword_ = nullptr; provider_url_ = nullptr;
   tools_widget_.reset(); tools_delegate_.reset();
   toast_timer_.Stop(); toast_tremor_timer_.Stop(); toast_undo_.Reset(); toast_ = nullptr; toast_widget_.reset(); toast_delegate_.reset();
@@ -6549,7 +6577,7 @@ void WorkspaceShell::ApplyTheme(bool refresh_controls) {
   if (theme_mode_ != ThemeMode::kSystem) mode = theme_mode_ == ThemeMode::kDark
       ? ui::ColorProviderKey::ColorMode::kDark : ui::ColorProviderKey::ColorMode::kLight;
   for (auto* panel : {widget_.get(), sidebar_widget_.get(), address_widget_.get(), settings_widget_.get(),
-       profiles_widget_.get(), import_widget_.get(), peek_widget_.get(), general_widget_.get(), tools_widget_.get()}) {
+       profiles_widget_.get(), import_widget_.get(), peek_widget_.get(), general_widget_.get(), tools_widget_.get(), time_machine_widget_.get()}) {
     if (!panel) continue;
     if (panel->color_mode_override() != mode) {
       panel->SetColorModeOverride(mode);
@@ -6569,7 +6597,7 @@ void WorkspaceShell::ApplyTheme(bool refresh_controls) {
       else surface->SetBorder(views::CreateRoundedRectBorder(1,radius,Hairline(surface)));}
     surface->SchedulePaint();
   }
-  for (auto* field : {snapshot_name_.get(), timeline_filter_.get(), shortcut_chord_.get(), provider_name_.get(), provider_keyword_.get(), provider_url_.get()})
+  for (auto* field : {shortcut_chord_.get(), provider_name_.get(), provider_keyword_.get(), provider_url_.get()})
     if (field) field->SetPresentation(gfx::FontList().GetFontSize(),8,true,Tone(root_, kChip));
   content_host_->SetBackground(views::CreateRoundedRectBackground(Tone(root_, kCard), 10));
   if (general_scroll_) general_scroll_->SetViewportBackground(Tone(root_, kCard));
@@ -6752,17 +6780,19 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
   };
   for(const auto& spec:catalogue.rows){
     auto* row=make_row(spec);const auto title=text(spec.title);const std::string key(spec.key);
-    if(spec.kind==Kind::Theme||spec.kind==Kind::Search||spec.kind==Kind::Picker||spec.kind==Kind::Language){
+    if(spec.kind==Kind::Theme||spec.kind==Kind::Search||spec.kind==Kind::Picker||spec.kind==Kind::Language||spec.kind==Kind::TimeMachineDays){
       auto* control=ChoicePicker(row,title,strings(spec.choices));
-      if(spec.kind==Kind::Language){language_picker_=control;SetPickerCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetUiLanguageChoice(PickerIndex(shell->language_picker_).value_or(0));},weak));}
+      if(spec.kind==Kind::TimeMachineDays){time_machine_days_picker_=control;SetPickerCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetTimeMachine(shell->time_machine_enabled_,std::array{7,30,90}[std::min<size_t>(2,PickerIndex(shell->time_machine_days_picker_).value_or(1))]);},weak));}
+      else if(spec.kind==Kind::Language){language_picker_=control;SetPickerCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetUiLanguageChoice(PickerIndex(shell->language_picker_).value_or(0));},weak));}
       else if(spec.kind==Kind::Theme){theme_picker_=control;SetPickerCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetThemeMode(static_cast<ThemeMode>(PickerIndex(shell->theme_picker_).value_or(0)));},weak));}
       else if(spec.kind==Kind::Search){search_engine_picker_=control;SetPickerCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(!shell)return;const size_t index=PickerIndex(shell->search_engine_picker_).value_or(0);if(index<shell->tools_.providers.size())shell->SetDefaultSearchProvider(shell->tools_.providers[index].keyword);},weak));}
       else{preference_pickers_[key]=control;SetPickerCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::string key){if(shell){auto index=PickerIndex(shell->preference_pickers_.at(key));if(index)shell->WritePreference(key,static_cast<int>(*index));}},weak,key));}
       continue;
     }
-    if(spec.kind==Kind::Pinned||spec.kind==Kind::Animations||spec.kind==Kind::WorkspaceNames||spec.kind==Kind::FoldersCollapsed||spec.kind==Kind::Toggle){
+    if(spec.kind==Kind::Pinned||spec.kind==Kind::Animations||spec.kind==Kind::WorkspaceNames||spec.kind==Kind::FoldersCollapsed||spec.kind==Kind::Toggle||spec.kind==Kind::TimeMachine){
       auto* control=PreferenceToggle(row,title);
-      if(spec.kind==Kind::Pinned){sidebar_check_=control;SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetPinned(ToggleOn(shell->sidebar_check_));},weak));}
+      if(spec.kind==Kind::TimeMachine){time_machine_check_=control;SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetTimeMachine(ToggleOn(shell->time_machine_check_),shell->time_machine_days_);},weak));}
+      else if(spec.kind==Kind::Pinned){sidebar_check_=control;SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetPinned(ToggleOn(shell->sidebar_check_));},weak));}
       else if(spec.kind==Kind::Animations){animations_check_=control;SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetWorkspaceAnimations(ToggleOn(shell->animations_check_));},weak));}
       else if(spec.kind==Kind::FoldersCollapsed){folders_collapsed_check_=control;SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetPinnedFoldersCollapsed(ToggleOn(shell->folders_collapsed_check_));},weak));}
       else if(spec.kind==Kind::WorkspaceNames){workspace_names_check_=control;SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetWorkspaceNames(ToggleOn(shell->workspace_names_check_));},weak));}
@@ -6776,6 +6806,10 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
     }
     switch(spec.kind){
       case Kind::Action:{
+        if(spec.action==Action::ClearTimeline){
+          auto* button=PreferenceAction(row,{},text(spec.button));button->GetViewAccessibility().SetName(text(spec.title));
+          SetActionCallback(button,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell&&shell->callbacks_.clear_timeline)shell->callbacks_.clear_timeline.Run();},weak));break;
+        }
         using Command=sidebar::FormCommand;Command command=Command::None;
         switch(spec.action){
           case Action::History:command=Command::History;break;
@@ -6832,6 +6866,8 @@ void WorkspaceShell::RefreshGeneralControls() {
   SyncPickerIndex(search_engine_picker_,provider_choices.empty()?std::nullopt:std::optional<size_t>(provider_index));
   SetToggleOn(sidebar_check_,pinned_);
   SetToggleOn(animations_check_,workspace_animations_);
+  SetToggleOn(time_machine_check_,time_machine_enabled_);
+  SyncPickerIndex(time_machine_days_picker_,time_machine_days_==7?0:time_machine_days_==90?2:1);
   SetToggleOn(workspace_names_check_,workspace_names_);
   SetToggleOn(folders_collapsed_check_,folders_collapsed_);
   {const auto stored=StoredUiLanguage();SyncPickerIndex(language_picker_,stored=="pl"?1:stored=="en"?2:0);}
@@ -7037,6 +7073,13 @@ void WorkspaceShell::SetWorkspaceAnimations(bool enabled) {
   if (!enabled) StopWorkspaceAnimation();
   RefreshGeneralControls(); SaveGeneralPatch(std::nullopt, std::nullopt, enabled);
 }
+void WorkspaceShell::SetTimeMachine(bool enabled, int days) {
+  time_machine_enabled_ = enabled; time_machine_days_ = days == 7 || days == 90 ? days : 30;
+  general_dirty_.insert("time_machine");
+  if (callbacks_.timeline_settings) callbacks_.timeline_settings.Run(time_machine_enabled_, time_machine_days_);
+  RefreshGeneralControls();
+  SaveGeneralPatch(std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::pair(time_machine_enabled_, time_machine_days_));
+}
 void WorkspaceShell::SetWorkspaceNames(bool shown) {
   workspace_names_ = shown; general_dirty_.insert("workspace_names");
   RebuildWorkspaceDots(); ScheduleMetalSidebar();
@@ -7061,10 +7104,11 @@ void WorkspaceShell::ApplyPinnedFoldersCollapsed(bool collapsed) {
   if (tab_list_) { RebuildTabs("", false); ScheduleMetalSidebar(); }
 }
 void WorkspaceShell::SaveGeneralPatch(std::optional<ThemeMode> theme, std::optional<SearchEngine> search,
-    std::optional<bool> animations, std::optional<bool> workspace_names, std::optional<bool> folders_collapsed) {
+    std::optional<bool> animations, std::optional<bool> workspace_names, std::optional<bool> folders_collapsed,
+    std::optional<std::pair<bool, int>> time_machine) {
   ++pending_writes_;
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
-      base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, std::nullopt, theme, search, animations, std::nullopt, std::nullopt, workspace_names, folders_collapsed),
+      base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, std::nullopt, theme, search, animations, std::nullopt, std::nullopt, workspace_names, folders_collapsed, time_machine),
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
         if (!shell) return;
         --shell->pending_writes_;
@@ -7138,6 +7182,7 @@ void WorkspaceShell::ShowToast(std::u16string lead,std::u16string noun,base::Onc
   if(!toast_widget_)return;
   auto* toast=static_cast<ToastView*>(toast_.get());toast->SetMessage(std::move(lead),std::move(noun));toast->SetAction(action.empty()?T(u"Cofnij"):std::move(action));toast_undo_=std::move(undo);
   PositionToast();toast_widget_->ShowInactive();
+  if(time_machine_widget_&&time_machine_widget_->IsVisible())toast_widget_->StackAboveWidget(time_machine_widget_.get());
   toast_timer_.Start(FROM_HERE,base::Seconds(6),base::BindOnce(&WorkspaceShell::HideToast,weak_factory_.GetWeakPtr()));
   // It lands with one tremor (`zt-tremor`: 1 px shakes in four steps over 180 ms).
   toast_tremor_step_=0;if(!gfx::Animation::PrefersReducedMotion())toast_tremor_timer_.Start(FROM_HERE,base::Milliseconds(45),base::BindRepeating(&WorkspaceShell::TremorToast,base::Unretained(this)));
@@ -7171,6 +7216,7 @@ void WorkspaceShell::PositionPanels() {
   if(metal_sidebar_){const auto g=sidebar::shell_layout(bounds.width(),bounds.height(),sidebar_width_,pinned_);sidebar_bounds=gfx::Rect(bounds.x()+g.sidebar.x,bounds.y()+g.sidebar.y,g.sidebar.width,g.sidebar.height);}
   SetWidgetBounds(sidebar_widget_.get(),sidebar_bounds);
   if(scrim_widget_)SetWidgetBounds(scrim_widget_.get(),bounds);
+  if(time_machine_widget_)SetWidgetBounds(time_machine_widget_.get(),bounds);
   if(toast_widget_&&toast_widget_->IsVisible())PositionToast();
   if (general_widget_) {
     const int panel_width = std::max(320, std::min(960, bounds.width() - 24));
@@ -7243,7 +7289,7 @@ void WorkspaceShell::RefreshKeyRegistrations() {
 #if BUILDFLAG(IS_MAC)
   UpdateWorkspaceMenuShortcuts(tools_.shortcuts);
 #endif
-  for (auto* panel : {widget_.get(), sidebar_widget_.get(), address_widget_.get(), settings_widget_.get(), profiles_widget_.get(), import_widget_.get(), peek_widget_.get(), general_widget_.get(), tools_widget_.get()}) {
+  for (auto* panel : {widget_.get(), sidebar_widget_.get(), address_widget_.get(), settings_widget_.get(), profiles_widget_.get(), import_widget_.get(), peek_widget_.get(), general_widget_.get(), tools_widget_.get(), time_machine_widget_.get()}) {
     if (!panel) continue;
     panel->GetFocusManager()->UnregisterAccelerators(accelerator_target_);
     RegisterKeys(panel, accelerator_target_, tools_, panel != widget_, false);
@@ -7368,25 +7414,33 @@ std::u16string WorkspaceShell::ToolsStatusText(int status) const {
 bool WorkspaceShell::ToolsRecording() const {
   return tools_form_&&tools_form_->form->tools_recording();
 }
-std::u16string WorkspaceShell::ToolsTimelineQuery() const {
-  if(!tools_form_)return {};
-  const auto units=tools_form_->form->tools_timeline_query();return std::u16string(units.begin(),units.end());
-}
 void WorkspaceShell::ResetToolsForm() {
   if(tools_form_)tools_form_->form->tools_reset();
 }
+void WorkspaceShell::OpenTimeMachine() {
+  if (!widget_ || !time_machine_widget_ || !time_machine_) return;
+  CloseOverlays(true);
+  // The current state joins the timeline first, so "now" is on the axis.
+  if (callbacks_.record_timeline) callbacks_.record_timeline.Run();
+  PositionPanels(); ApplyTheme();
+  time_machine_->Open(state_.workspace_id, state_.workspace_name, time_machine_enabled_);
+  time_machine_widget_->Show(); time_machine_widget_->Activate();
+  if (sidebar_visible()) time_machine_widget_->StackAboveWidget(sidebar_widget_.get());
+  time_machine_->axis_for_testing()->RequestFocus();
+}
+bool WorkspaceShell::time_machine_visible() const { return time_machine_widget_ && time_machine_widget_->IsVisible(); }
 void WorkspaceShell::OpenTools(int page) {
+  if (page == 0) { OpenTimeMachine(); return; }
   if (!widget_ || !tools_widget_) return;
   CloseOverlays(true);
-  if(tools_form_)tools_form_->form->tools_select(std::clamp(page,0,2));
+  if(tools_form_)tools_form_->form->tools_select(std::clamp(page,1,2));
   RefreshTools(); RefreshKeyRegistrations(); PositionPanels(); ApplyTheme();
   tools_widget_->LayoutRootViewIfNecessary();
   tools_widget_->Show(); tools_widget_->Activate(); tools_widget_->ClearNativeFocus();
-  if (snapshot_name_) snapshot_name_->RequestFocus();
-  else if (tools_picker_) tools_picker_->RequestFocus();
+  if (tools_picker_) tools_picker_->RequestFocus();
 }
 views::View* WorkspaceShell::tools_choice_for_testing(std::string_view key) const{
-  if(key=="selection")return tools_picker_;if(key=="closed")return closed_picker_;return nullptr;
+  if(key=="selection")return tools_picker_;return nullptr;
 }
 size_t WorkspaceShell::tools_choice_count_for_testing(std::string_view key) const{auto* picker=tools_choice_for_testing(key);return picker?PickerCount(picker):0;}
 std::optional<size_t> WorkspaceShell::tools_choice_selection_for_testing(std::string_view key) const{auto* picker=tools_choice_for_testing(key);return picker?PickerIndex(picker):std::nullopt;}
@@ -7423,32 +7477,13 @@ bool WorkspaceShell::tools_close_metal_visible_for_testing() const{
 void WorkspaceShell::RefreshToolsViewport(){ScheduleToolsChrome();if(tools_body_){RefreshChoiceViewports(tools_body_);
   SyncSceneRowInput();
 }}
-void WorkspaceShell::RefreshTimelineItems() {
-  if (ToolsPage() != 0 || !tools_picker_) return;
-  const auto state = callbacks_.time_machine ? callbacks_.time_machine.Run() : TimeMachineState();
-  if(!tools_form_)return;
-  // The Rust projection owns filtering, display copy and the key-to-ID map.
-  auto fill=[&](const auto& items,views::View* picker,bool closed){
-    auto* scene=views::AsViewClass<SceneSelect>(picker);if(!scene)return;
-    auto units=[](const std::u16string& text){rust::Vec<uint16_t> value;for(char16_t unit:text)value.push_back(unit);return value;};
-    rust::Vec<sidebar::ToolsTimelineItem> metadata;
-    for(const auto& item:items)metadata.push_back({item.id,units(item.title),units(item.detail),units(base::i18n::ToLower(item.title+u" "+item.detail))});
-    auto projection=tools_form_->form->tools_timeline_project(closed,std::move(metadata));
-    std::vector<std::pair<std::string,std::u16string>> choices;choices.reserve(projection.choices.size());
-    for(const auto& choice:projection.choices)choices.emplace_back(std::string(choice.key),std::u16string(choice.label.begin(),choice.label.end()));
-    scene->SetOptions(choices);scene->SetSelectedIndex(0);scene->SetEnabled(projection.enabled);
-  };
-  fill(state.snapshots,tools_picker_,false);fill(state.closed,closed_picker_,true);
-}
 void WorkspaceShell::BuildRustToolsForm(){
   using Kind=sidebar::ToolsNodeKind;using Role=sidebar::ToolsNodeRole;
   CHECK(tools_form_);auto weak=weak_factory_.GetWeakPtr();
   auto units=[](const std::u16string& text){rust::Vec<uint16_t> value;value.reserve(text.size());for(char16_t unit:text)value.push_back(unit);return value;};
   auto text=[](const auto& units){return std::u16string(units.begin(),units.end());};
-  std::u16string context;rust::Vec<sidebar::ToolsSleepingCopy> sleeping;
-  if(ToolsPage()==0){context=state_.workspace_name;const auto state=callbacks_.time_machine?callbacks_.time_machine.Run():TimeMachineState();for(const auto& item:state.sleeping)sleeping.push_back({units(item.title),units(item.detail)});}
-  const auto plan=tools_form_->form->tools_form_plan(base::UTF16ToUTF8(context),std::move(sleeping));SetPanelText(tools_title_,text(plan.title));SetPanelText(tools_status_,text(plan.status));
-  std::vector<raw_ptr<views::View>> hosts{tools_body_};bool timeline=false;
+  const auto plan=tools_form_->form->tools_form_plan();SetPanelText(tools_title_,text(plan.title));SetPanelText(tools_status_,text(plan.status));
+  std::vector<raw_ptr<views::View>> hosts{tools_body_};
   auto form_picker=[&](views::View* parent,std::u16string name,const sidebar::ToolsFormChoices& projection)->views::View*{
     auto* control=parent->AddChildView(MakeParentSceneControl<SceneSelect>(parent,std::vector<std::u16string>(),std::move(name),base::RepeatingClosure()));std::vector<std::pair<std::string,std::u16string>> choices;choices.reserve(projection.choices.size());for(const auto& choice:projection.choices)choices.emplace_back(std::string(choice.key),text(choice.label));control->SetOptions(choices);control->SetSelectedIndex(0);control->SetEnabled(projection.enabled);return control;
   };
@@ -7459,15 +7494,15 @@ void WorkspaceShell::BuildRustToolsForm(){
       case Kind::Hint:control=AddToolsCopy(parent,label,kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);break;
       case Kind::Heading:control=AddToolsCopy(parent,label,kSubtle,0,static_cast<int>(gfx::Font::Weight::SEMIBOLD),false);break;
       case Kind::Editor:{
-        auto* field=AddEditor(parent);field->GetViewAccessibility().SetName(label);field->SetPlaceholderText(label);field->view()->SetPreferredSize(gfx::Size(200,36));field->SetPresentation(gfx::FontList().GetFontSize(),8,true,Tone(root_,kChip));field->SetCallbacks(base::BindRepeating(&WorkspaceShell::ToolsEditorEdited,weak,base::Unretained(field)),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,EditorControl* editor,const ui::KeyEvent& event){return shell&&shell->HandleToolsEditorKey(editor,event);},weak,base::Unretained(field)));control=field->view();
-        switch(node.role){case Role::SnapshotName:snapshot_name_=field;break;case Role::TimelineFilter:timeline_filter_=field;break;case Role::ShortcutChord:shortcut_chord_=field;break;case Role::ProviderName:provider_name_=field;break;case Role::ProviderKeyword:provider_keyword_=field;break;case Role::ProviderUrl:provider_url_=field;break;default:CHECK(false);}
+        auto* field=AddEditor(parent);field->GetViewAccessibility().SetName(label);field->SetPlaceholderText(label);field->view()->SetPreferredSize(gfx::Size(200,36));field->SetPresentation(gfx::FontList().GetFontSize(),8,true,Tone(root_,kChip));field->SetCallbacks(base::RepeatingClosure(),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,EditorControl* editor,const ui::KeyEvent& event){return shell&&shell->HandleToolsEditorKey(editor,event);},weak,base::Unretained(field)));control=field->view();
+        switch(node.role){case Role::ShortcutChord:shortcut_chord_=field;break;case Role::ProviderName:provider_name_=field;break;case Role::ProviderKeyword:provider_keyword_=field;break;case Role::ProviderUrl:provider_url_=field;break;default:CHECK(false);}
         break;
       }
       case Kind::Choice:{
         if(node.role==Role::ShortcutChoice){rust::Vec<sidebar::ToolsShortcutItem> metadata;for(const auto& item:tools_.shortcuts)metadata.push_back({item.id,units(item.title),units(base::UTF8ToUTF16(FormatShortcut(item.accelerator)))});const auto projection=tools_form_->form->tools_shortcut_choices(std::move(metadata));control=form_picker(parent,label,projection);}
         else if(node.role==Role::ProviderChoice){rust::Vec<sidebar::ToolsProviderItem> metadata;for(const auto& item:tools_.providers)metadata.push_back({item.keyword,units(base::UTF8ToUTF16(item.name)),units(base::UTF8ToUTF16(item.keyword)),units(base::UTF8ToUTF16(item.url)),item.keyword==tools_.default_keyword});const auto projection=tools_form_->form->tools_provider_choices(std::move(metadata));control=form_picker(parent,label,projection);}
         else{std::vector<std::u16string> choices;for(const auto& value:node.choices)choices.push_back(base::UTF8ToUTF16(std::string(value)));control=ChoicePicker(parent,label,std::move(choices));SetPickerIndex(control,0);}
-        switch(node.role){case Role::SnapshotChoice:tools_picker_=control;timeline=true;break;case Role::ClosedChoice:closed_picker_=control;break;case Role::ShortcutChoice:case Role::ProviderChoice:tools_picker_=control;SetPickerCallback(control,base::BindRepeating(&WorkspaceShell::RefreshToolsChoiceFields,weak));break;default:CHECK(false);}
+        switch(node.role){case Role::ShortcutChoice:case Role::ProviderChoice:tools_picker_=control;SetPickerCallback(control,base::BindRepeating(&WorkspaceShell::RefreshToolsChoiceFields,weak));break;default:CHECK(false);}
         break;
       }
       case Kind::Action:{
@@ -7478,24 +7513,23 @@ void WorkspaceShell::BuildRustToolsForm(){
     }
     CHECK(control);control->SetEnabled(control->GetEnabled()&&node.enabled);control->SetVisible(node.visible);
   }
-  CHECK_EQ(hosts.size(),1u);RefreshToolsChoiceFields();if(timeline)RefreshTimelineItems();
+  CHECK_EQ(hosts.size(),1u);RefreshToolsChoiceFields();
 }
 void WorkspaceShell::RefreshTools() {
   ++tools_generation_;
   if(tools_root_)CancelChoiceInteractions(tools_root_);
   SetShortcutRecording(false);
-  for(auto* field:{snapshot_name_.get(),timeline_filter_.get(),shortcut_chord_.get(),provider_name_.get(),provider_keyword_.get(),provider_url_.get()})
+  for(auto* field:{shortcut_chord_.get(),provider_name_.get(),provider_keyword_.get(),provider_url_.get()})
     if(field)field->SetCallbacks({},{});
   ResetToolsForm();
-  snapshot_name_ = nullptr; timeline_filter_ = nullptr; shortcut_chord_ = nullptr;
-  provider_name_ = nullptr; provider_keyword_ = nullptr; provider_url_ = nullptr; tools_picker_ = nullptr; closed_picker_ = nullptr;
+  shortcut_chord_ = nullptr;
+  provider_name_ = nullptr; provider_keyword_ = nullptr; provider_url_ = nullptr; tools_picker_ = nullptr;
   tools_body_->RemoveAllChildViews();
   if(tools_form_){BuildRustToolsForm();PreparePanelText(tools_widget_->GetRootView());tools_body_->InvalidateLayout();return;}
-  std::u16string context=ToolsPage()==0?state_.workspace_name:std::u16string();
   std::u16string form_title,form_intro,form_tail,form_status;
   std::vector<std::u16string> fields,pickers,headings,actions,form_choices;
   if(workspace_form_){
-    auto data=sidebar::tools_copy(ToolsPage(),base::UTF16ToUTF8(context));
+    auto data=sidebar::tools_copy(ToolsPage());
     auto strings=[](const auto& input){std::vector<std::u16string> out;for(const auto& value:input)out.push_back(base::UTF8ToUTF16(std::string(value)));return out;};
     form_title=base::UTF8ToUTF16(std::string(data.title));form_intro=base::UTF8ToUTF16(std::string(data.intro));form_tail=base::UTF8ToUTF16(std::string(data.tail));form_status=base::UTF8ToUTF16(std::string(data.initial_status));
     fields=strings(data.fields);pickers=strings(data.pickers);headings=strings(data.headings);actions=strings(data.actions);form_choices=strings(data.choices);
@@ -7509,7 +7543,7 @@ void WorkspaceShell::RefreshTools() {
     field->GetViewAccessibility().SetName(name);field->SetPlaceholderText(name);
     field->view()->SetPreferredSize(gfx::Size(200,36));
     field->SetPresentation(gfx::FontList().GetFontSize(),8,true,Tone(root_,kChip));
-    field->SetCallbacks(base::BindRepeating(&WorkspaceShell::ToolsEditorEdited,weak,base::Unretained(field)),
+    field->SetCallbacks(base::RepeatingClosure(),
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,EditorControl* editor,const ui::KeyEvent& event){
         return shell&&shell->HandleToolsEditorKey(editor,event);
       },weak,base::Unretained(field)));
@@ -7524,7 +7558,7 @@ void WorkspaceShell::RefreshTools() {
     return tools_body_;
   };
   auto button = [&](std::u16string_view native, int action) {
-    const size_t index=ToolsPage()==0?action-1:ToolsPage()==1?action-10:action-20;
+    const size_t index=ToolsPage()==1?action-10:action-20;
     auto title=text(actions,index,native);
     return AddAction(action_parent(),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, int action) {
       if (shell) shell->PostToolsAction(action);
@@ -7541,24 +7575,7 @@ void WorkspaceShell::RefreshTools() {
     std::vector<std::pair<std::string,std::u16string>> choices;choices.reserve(projection.choices.size());for(const auto& choice:projection.choices)choices.emplace_back(std::string(choice.key),std::u16string(choice.label.begin(),choice.label.end()));
     control->SetOptions(choices);control->SetSelectedIndex(0);control->SetEnabled(projection.enabled);return control;
   };
-  if (ToolsPage() == 0) {
-    SetPanelText(tools_title_,workspace_form_?form_title:u"Time Machine · " + state_.workspace_name);
-    hint(workspace_form_?form_intro:T(u"Snapshot zapisuje karty, foldery i Split View w tej przestrzeni. Przywrócenie przeładuje strony; formularze i historia Wstecz nie są częścią snapshotu. Poprzedni układ otrzyma punkt przywracania."));
-    snapshot_name_ = input(text(fields,0,T(u"Nazwa snapshotu, np. Research przed deployem")));
-    button(T(u"Zapisz snapshot"), 1);
-    timeline_filter_ = input(text(fields,1,T(u"Szukaj snapshotów i zamkniętych kart")));
-    AddToolsCopy(tools_body_,text(headings,0,T(u"Snapshoty · 30 własnych + 30 automatycznych")),kSubtle,0,static_cast<int>(gfx::Font::Weight::SEMIBOLD),false);
-    tools_picker_ = picker(text(pickers,0,T(u"Zapisane snapshoty")), {});
-    button(T(u"Przywróć wybrany układ"), 2); button(T(u"Usuń wybrany snapshot"), 3);
-    AddToolsCopy(tools_body_,text(headings,1,T(u"Ostatnio zamknięte · do 100 kart")),kSubtle,0,static_cast<int>(gfx::Font::Weight::SEMIBOLD),false);
-    closed_picker_ = picker(text(pickers,1,T(u"Zamknięte karty")), {});
-    button(T(u"Przywróć wybraną kartę"), 4);
-    hint(workspace_form_?form_tail:T(u"Uśpienie zwalnia strony tej przestrzeni z pamięci i przełącza do innej. Kliknięcie jej kropki wznowi układ. Niezapisane formularze zostaną utracone."));
-    button(T(u"Uśpij tę przestrzeń"), 5);
-    const auto timeline = callbacks_.time_machine ? callbacks_.time_machine.Run() : TimeMachineState();
-    for (const auto& item : timeline.sleeping) hint(item.title + u" · " + item.detail);
-    RefreshTimelineItems();
-  } else if (ToolsPage() == 1) {
+  if (ToolsPage() == 1) {
     SetPanelText(tools_title_,workspace_form_?form_title:T(u"Skróty klawiszowe"));
     hint(workspace_form_?form_intro:T(u"Schemat inspirowany Arc. Wybierz akcję, nagraj kombinację lub wpisz np. Cmd+Shift+J. Puste pole wyłącza skrót. Escape, skróty edycji tekstu i systemowe pozostają zarezerwowane."));
     if(tools_form_){
@@ -7619,8 +7636,8 @@ void WorkspaceShell::RefreshToolsChoiceFields(){
 }
 void WorkspaceShell::PostToolsAction(int action) {
   std::optional<std::string> choice_key;
-  if(tools_form_&&(action==2||action==3||action==4||action==11||action==12||(action>=20&&action<=22))){
-    auto* picker=action==4?closed_picker_.get():tools_picker_.get();auto* scene=views::AsViewClass<SceneSelect>(picker);
+  if(tools_form_&&(action==11||action==12||(action>=20&&action<=22))){
+    auto* scene=views::AsViewClass<SceneSelect>(tools_picker_.get());
     choice_key=scene?scene->SelectedKey():std::string();
   }
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(
@@ -7637,39 +7654,24 @@ void WorkspaceShell::SetShortcutRecording(bool recording) {
 void WorkspaceShell::ToolsAction(int action,std::optional<std::string> choice_key) {
   if (!tools_widget_ || !tools_widget_->IsVisible() || !tools_form_) return;
   std::u16string record_status;
-  bool valid_form_choice=false;std::string snapshot_target,closed_target,form_target;
+  bool valid_form_choice=false;std::string form_target;
   {
-    if(ToolsPage()==0){
-      auto target=[&](views::View* picker,bool closed){auto* scene=views::AsViewClass<SceneSelect>(picker);return scene?std::string(tools_form_->form->tools_timeline_target(closed,choice_key?*choice_key:scene->SelectedKey())):std::string();};
-      snapshot_target=target(tools_picker_,false);closed_target=target(closed_picker_,true);
-    }
     if(ToolsPage()==1||ToolsPage()==2){
       if(auto* scene=views::AsViewClass<SceneSelect>(tools_picker_)){
         const auto draft=tools_form_->form->tools_choice_draft(choice_key?*choice_key:scene->SelectedKey());valid_form_choice=draft.valid;form_target=std::string(draft.target);
       }
     }
     sidebar::ToolsActionContext context{};
-    context.snapshot_field=bool(snapshot_name_);context.shortcut_field=bool(shortcut_chord_);context.provider_field=bool(provider_name_);
-    context.snapshot_composing=snapshot_name_&&snapshot_name_->IsIMEComposing();context.shortcut_composing=shortcut_chord_&&shortcut_chord_->IsIMEComposing();
+    context.shortcut_field=bool(shortcut_chord_);context.provider_field=bool(provider_name_);
+    context.shortcut_composing=shortcut_chord_&&shortcut_chord_->IsIMEComposing();
     for(auto* field:{provider_name_.get(),provider_keyword_.get(),provider_url_.get()})if(field&&field->IsIMEComposing())context.provider_composing=true;
-    context.snapshot_selected=!snapshot_target.empty();context.closed_selected=!closed_target.empty();context.shortcut_selected=ToolsPage()==1&&valid_form_choice;context.provider_selected=ToolsPage()==2&&valid_form_choice;
+    context.shortcut_selected=ToolsPage()==1&&valid_form_choice;context.provider_selected=ToolsPage()==2&&valid_form_choice;
     const auto plan=tools_form_->form->tools_dispatch(action,context);if(!plan.admitted)return;
     if(plan.sync_recording){SetShortcutRecording(plan.recording);RefreshKeyRegistrations();}
     action=plan.action;record_status=base::UTF8ToUTF16(std::string(plan.record_status));
   }
   bool ok = false;
-  if (action == 1 && snapshot_name_) {
-    ok = callbacks_.save_snapshot && callbacks_.save_snapshot.Run(base::UTF16ToUTF8(snapshot_name_->GetText()), false);
-  } else if ((action == 2 || action == 3) && !snapshot_target.empty()) {
-    const auto& id=snapshot_target;
-    ok = action == 2 ? callbacks_.restore_snapshot.Run(id) : callbacks_.delete_snapshot.Run(id);
-  } else if (action == 4 && closed_picker_) {
-    if(!closed_target.empty())ok=callbacks_.reopen_closed.Run(closed_target);
-  } else if (action == 5) {
-    const std::string id = state_.workspace_id;
-    ok = callbacks_.sleep_workspace && callbacks_.sleep_workspace.Run(id);
-    if (ok) return;
-  } else if (action == 10 && shortcut_chord_) {
+  if (action == 10 && shortcut_chord_) {
     shortcut_chord_->RequestFocus();
     SetPanelText(tools_status_,record_status); return;
   } else if ((action == 11 || action == 12) && shortcut_chord_ && valid_form_choice) {
@@ -7767,8 +7769,10 @@ bool WorkspaceShell::CloseOverlays(bool keep_sidebar) {
   if (!keep_sidebar) CancelWorkspaceSwipe();
   const bool visible = address_visible() || settings_visible() ||
       (profiles_widget_ && profiles_widget_->IsVisible()) || import_visible() ||
-      (general_widget_ && general_widget_->IsVisible()) || (tools_widget_ && tools_widget_->IsVisible()) || (!keep_sidebar && !pinned_ && sidebar_visible());
+      (general_widget_ && general_widget_->IsVisible()) || (tools_widget_ && tools_widget_->IsVisible()) ||
+      (time_machine_widget_ && time_machine_widget_->IsVisible()) || (!keep_sidebar && !pinned_ && sidebar_visible());
   if (tools_widget_) tools_widget_->Hide();
+  if (time_machine_widget_) time_machine_widget_->Hide();
   SetShortcutRecording(false);
   if (general_widget_) general_widget_->Hide();
   if (profiles_widget_) profiles_widget_->Hide();
@@ -7794,7 +7798,8 @@ void WorkspaceShell::OpenWorkspaceSettings() {
 }
 bool WorkspaceShell::sidebar_visible() const { return sidebar_widget_ && sidebar_widget_->IsVisible(); }
 void WorkspaceShell::RestorePageFocus() {
-  if ((general_widget_ && general_widget_->IsVisible()) || (tools_widget_ && tools_widget_->IsVisible())) return;
+  if ((general_widget_ && general_widget_->IsVisible()) || (tools_widget_ && tools_widget_->IsVisible()) ||
+      (time_machine_widget_ && time_machine_widget_->IsVisible())) return;
   widget_->Activate();
   if (callbacks_.focus_pane) callbacks_.focus_pane.Run(state_.active_pane);
 }
@@ -7806,7 +7811,7 @@ void WorkspaceShell::SetPinned(bool pinned) {
   if (pinned_) ShowSidebar();
   ++pending_writes_;
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
-      base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, pinned_, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt),
+      base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, pinned_, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt),
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
         if (!shell) return;
         --shell->pending_writes_;
@@ -7832,7 +7837,7 @@ void WorkspaceShell::ApplySidebarWidth(int width,bool done) {
   ++pending_writes_;
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
       base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, std::nullopt, std::nullopt, std::nullopt,
-                     std::nullopt, std::optional<int>(sidebar_width_), std::nullopt, std::nullopt, std::nullopt),
+                     std::nullopt, std::optional<int>(sidebar_width_), std::nullopt, std::nullopt, std::nullopt, std::nullopt),
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool) {
         if (shell) --shell->pending_writes_;
       }, weak_factory_.GetWeakPtr()));
@@ -7846,7 +7851,7 @@ void WorkspaceShell::SetWorkspaceColor(std::string_view id, SkColor color) {
   ApplyAppearance();
   ++pending_writes_;
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
-      base::BindOnce(SavePatch, settings_path_, std::optional<std::string>(key), colors_[key], std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt),
+      base::BindOnce(SavePatch, settings_path_, std::optional<std::string>(key), colors_[key], std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt),
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
         if (!shell) return;
         --shell->pending_writes_;
@@ -7894,7 +7899,7 @@ void WorkspaceShell::SetWorkspaceEmoji(std::string_view id, std::u16string text)
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
       base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, std::nullopt, std::nullopt, std::nullopt,
                      std::nullopt, std::nullopt,
-                     std::optional<std::pair<std::string, std::string>>({key, base::UTF16ToUTF8(emoji)}), std::nullopt, std::nullopt),
+                     std::optional<std::pair<std::string, std::string>>({key, base::UTF16ToUTF8(emoji)}), std::nullopt, std::nullopt, std::nullopt),
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
         if (!shell) return;
         --shell->pending_writes_;
@@ -8150,7 +8155,7 @@ void WorkspaceShell::DispatchFormCommand(views::View* source,const sidebar::Form
     case C::Proxy:case C::Certificates:if(callbacks_.system_settings)callbacks_.system_settings.Run(command==C::Certificates);break;
     case C::Providers:OpenTools(2);break;
     case C::Shortcuts:OpenTools(1);break;
-    case C::TimeMachine:OpenTools(0);break;
+    case C::TimeMachine:OpenTimeMachine();break;
     default:break;
   }
 }
@@ -8611,14 +8616,6 @@ void WorkspaceShell::RunSuggestion(size_t index) {
     ShowAddressError();
   }
 }
-void WorkspaceShell::ToolsEditorEdited(EditorControl* sender) {
-  if(!tools_widget_||!tools_widget_->IsVisible()||sender->IsIMEComposing())return;
-  if(sender==timeline_filter_){
-    const auto query=base::i18n::ToLower(sender->GetText());
-    if(tools_form_){rust::Vec<uint16_t> units;for(char16_t unit:query)units.push_back(unit);tools_form_->form->tools_timeline_edit(std::move(units));}
-    RefreshTimelineItems();
-  }
-}
 void WorkspaceShell::AddressEdited() {
   if(!address_visible()||address_->IsIMEComposing())return;
   address_error_->SetVisible(false);
@@ -8656,7 +8653,7 @@ bool WorkspaceShell::HandleToolsEditorKey(EditorControl* sender,const ui::KeyEve
   if(sender->IsIMEComposing())return false;
   if(event.key_code()==ui::VKEY_ESCAPE){CloseOverlays();RestorePageFocus();return true;}
   if(event.key_code()==ui::VKEY_RETURN){
-    const int action=sender==snapshot_name_?1:sender==shortcut_chord_?11:
+    const int action=sender==shortcut_chord_?11:
         (sender==provider_name_||sender==provider_keyword_||sender==provider_url_)?20:0;
     if(action){PostToolsAction(action);return true;}
   }
@@ -8725,6 +8722,7 @@ void WorkspaceShell::OnWidgetVisibilityChanged(views::Widget* widget, bool visib
     if (import_widget_) import_widget_->Hide();
     if (general_widget_) general_widget_->Hide();
     if (tools_widget_) tools_widget_->Hide();
+    if (time_machine_widget_) time_machine_widget_->Hide();
   } else if (widget == widget_ && visible && pinned_) ShowSidebar();
 }
 }

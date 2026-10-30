@@ -205,18 +205,20 @@ time. A confirmation names the profile and interval, with Cancel as the default.
 Only history is selected by this action; the open list reloads after deletion.
 Preferences also retain the broader data-clear controls for cookies and cache.
 
-**Time Machine** is available in the Zitter app menu and in Preferences →
-Wygląd. Save a named snapshot of the current workspace's pages, pinned folders,
-active pane and split ratio. Restoring creates a recovery point for the current
-layout first. Automatic points are also made before closing tabs/changing splits,
-before sleeping a workspace, and on session saves at most every five minutes.
-Each workspace retains 30 named and 30 automatic snapshots, plus its last 100
-closed tabs. Search snapshots/closed tabs and restore them from the same panel.
-Snapshots belong to their original browsing profile; they cannot transplant a
-session into another profile. Restoration reloads URLs, not forms or the page's
-back/forward stack. Cookies, passwords and browsing history are not rolled back.
+**Time Machine** records, for every workspace, which tabs were open and when —
+addresses, titles and the active tab, never page content; private profiles are
+never recorded. It is on by default and keeps 30 days (Preferences → Wygląd:
+on/off, 7/30/90 days, clear with undo). Clearing browsing history clears the
+same period of the profile's timeline. Cmd+Shift+Y (or the app menu) opens a
+full-window view: drag the playhead on the week's axis (or use ←/→, Shift+←/→
+for the previous/next change), and a cover-flow deck shows every tab open in the
+hour before that moment — hover a card to turn it to the front. Return restores
+those tabs into the workspace; the state it replaces is recorded first and the
+toast's Cofnij brings it back. Cmd+Shift+S marks a named snapshot on the axis.
+Restoration reloads URLs, not forms, splits, pins or the back/forward stack.
+Cmd+Shift+T reopens this run's closed tabs, then older ones from the timeline.
 
-**Sleep a workspace** from its Time Machine panel to release all its live pages,
+**Sleep a workspace** from the Command Center to release all its live pages,
 including both split panes. Zitter switches to another workspace; selecting the
 sleeping space wakes its saved layout. At least two spaces must exist. Sleeping
 state survives restarting the app. Save work in web forms before sleeping.
@@ -225,11 +227,11 @@ state survives restarting the app. Save work in web forms before sleeping.
 klawiszowe. Select an action, record its chord or type `Cmd+Shift+J`, then save.
 An empty chord disables an action. Conflicts and reserved editing/system chords
 are rejected. Reset restores an [Arc-inspired scheme](https://resources.arc.net/hc/en-us/articles/20595231349911-Keyboard-Shortcuts): Cmd+S toggles the sidebar,
-Cmd+Shift+T reopens a closed tab, Cmd+Option+Left/Right changes spaces,
+Cmd+Shift+T reopens a closed tab, Cmd+Shift+K closes every other tab of the space (pinned pages stay), Cmd+Option+Left/Right changes spaces,
 Control+1…9 selects spaces, Cmd+1…9 selects tabs, Control+Tab cycles tabs,
 Control+Shift+= toggles Split View, Control+Shift+- closes it, and
 Control+Shift+1/2 focuses a pane. Cmd+Shift+Y opens Time Machine and Cmd+Shift+S
-opens snapshot saving. Original Cmd+Option+1/2 space chords remain compatibility
+saves a snapshot mark. Original Cmd+Option+1/2 space chords remain compatibility
 aliases until those actions are remapped. Native menu shortcuts update too.
 
 **Keyword search** is configurable in Preferences → Wyszukiwanie → Wyszukiwarki
@@ -240,7 +242,8 @@ Add/edit/remove providers using an HTTP(S) URL containing one `{query}` marker;
 query text is encoded and cannot alter the destination origin. A provider's
 prefix is unique, lowercase alphanumeric, and up to 16 characters. At least one
 provider must remain. All shortcuts and providers persist in `ZitterTools.json`;
-snapshot/closed-tab metadata uses `ZitterTimeMachine.json` in Zitter's data folder.
+the Time Machine timeline uses `ZitterTimeline.jsonl` (one JSON line per change)
+in Zitter's data folder.
 
 **Split View** opens two pages side by side using the header's split button.
 The sidebar groups the two split tabs side by side in one outlined row, in pane

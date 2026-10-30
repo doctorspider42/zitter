@@ -3,6 +3,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include "base/time/time.h"
 #include "base/values.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "url/gurl.h"
@@ -37,14 +38,7 @@ struct BrowserTools {
   base::DictValue ToValue() const;
   static BrowserTools FromValue(const base::DictValue& dict);
 };
-struct TimeMachineItem {
-  std::string id;
-  std::u16string title;
-  std::u16string detail;
-};
-struct TimeMachineState {
-  std::vector<TimeMachineItem> snapshots, closed;
-  std::vector<TimeMachineItem> sleeping;
-};
+// Minutes the local time zone is ahead of UTC at `time` (Time Machine copy).
+int TimelineUtcOffsetMinutes(base::Time time);
 }  // namespace zitter::prototype
 #endif
