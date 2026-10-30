@@ -9211,4 +9211,54 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionWindowsCreateAndUpdat
   EXPECT_EQ(browsers, GlobalBrowserCollection::GetInstance()->GetSize());
 }
 
+
+// Split View and moves through the tabs API: two tabs of a space pair up in
+// Zitter's Split View and separate again, and a tab moves into another space
+// of the same profile (the profile's window spans its spaces).
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionTabsSplitAndMoveAcrossSpaces) {
+  base::ScopedTempDir dir;
+  {
+    base::ScopedAllowBlockingForTesting allow;
+    ASSERT_TRUE(dir.CreateUniqueTempDir());
+  }
+  const auto extension = LoadTestExtension(work_, WriteTestExtension(dir.GetPath(), "Arranger", SK_ColorBLUE, false));
+  ASSERT_TRUE(extension);
+  auto* bar = window_->extensions_bar();
+  NavigateBoth();
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), embedded_test_server()->GetURL("/storage_probe.html?a")));
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html?b"), true));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  ASSERT_TRUE(window_->AddWorkspace("Projekt", "work-profile"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  const std::string project = window_->workspaces().back().id;
+  ASSERT_TRUE(window_->Select(project));
+  ASSERT_TRUE(content::NavigateToURL(window_->contents(project), embedded_test_server()->GetURL("/storage_probe.html?p")));
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_EQ(2u, window_->tab_count("work"));
+  ASSERT_EQ(1u, window_->tab_count(project));
+  ASSERT_TRUE(base::test::RunUntil([&] { return Shown(bar, extension->id()).has_value(); }));
+  const std::string script = R"(let step = ''; (async () => {
+    const fail = text => chrome.action.setBadgeText({text});
+    step = 'q'; const all = await chrome.tabs.query({currentWindow: true});
+    if (all.length !== 3) return fail('n' + all.length);
+    const a = all.find(tab => tab.url.endsWith('?a')), b = all.find(tab => tab.url.endsWith('?b'));
+    step = 's'; const split = await chrome.tabs.createSplit([a.id, b.id]);
+    const paired = await chrome.tabs.query({splitViewId: split});
+    if (paired.length !== 2) return fail('p' + paired.length);
+    step = 'u'; await chrome.tabs.unsplit(split);
+    if ((await chrome.tabs.get(a.id)).splitViewId !== -1) return fail('sv');
+    step = 'm'; await chrome.tabs.move(b.id, {index: 2});
+    fail('ok');
+  })().catch(error => { console.error(step, error.message); chrome.action.setBadgeText({text: 'x' + step}); }))";
+  ASSERT_TRUE(extensions::BackgroundScriptExecutor::ExecuteScriptAsync(work_, extension->id(), script));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !Shown(bar, extension->id())->badge.empty(); }));
+  EXPECT_EQ("ok", Shown(bar, extension->id())->badge);
+  EXPECT_FALSE(window_->split());
+  EXPECT_EQ(1u, window_->tab_count("work"));
+  EXPECT_EQ(2u, window_->tab_count(project));
+  ASSERT_TRUE(window_->Select(project));
+  EXPECT_TRUE(window_->contents(project)->GetVisibleURL().spec().ends_with("?p"));
+}
+
 } // namespace zitter::prototype

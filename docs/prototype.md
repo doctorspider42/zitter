@@ -182,9 +182,12 @@ holds every profile's spaces.
 (Zitter keeps one window) and `windows.update` focuses, minimizes, maximizes,
 restores, moves and resizes it.
 
-Not covered: tab groups (Zitter has none), Split View and multi-tab
-highlighting through the tabs API, and moving a tab between spaces or
-windows. A real BrowserWindowInterface remains the gate for those.
+`tabs.createSplit`/`tabs.unsplit` pair two tabs of a space in Zitter's Split
+View and separate them; tabs carry the split's id. `tabs.move` counts across
+the profile's spaces, so a tab can move into another space of its profile.
+
+Not covered: tab groups and multi-tab highlighting (Zitter has neither), and
+moving a tab between profiles (their storage is separate by design).
 
 ## Next gate: real browser context ownership
 

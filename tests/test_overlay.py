@@ -32,10 +32,10 @@ EXTENSION_TABS_SOURCES = {
 def seed_extension_tabs(checkout):
     texts = dict(EXTENSION_TABS_SOURCES,
                  source=EXTENSION_TABS_SOURCES["source"] + overlay.TAB_OBJECT_ACTIVE_OLD +
-                 overlay.TAB_OBJECT_HIGHLIGHTED_OLD,
+                 overlay.TAB_OBJECT_HIGHLIGHTED_OLD + overlay.TAB_OBJECT_SPLIT_OLD,
                  tabs_api=(overlay.TABS_INCLUDE_ANCHOR + overlay.TABS_GET_OLD + overlay.TABS_QUERY_ANCHOR +
                            overlay.TABS_CREATE_OLD + overlay.TABS_UPDATE_OLD + overlay.TABS_REMOVE_OLD +
-                           overlay.TABS_MOVE_OLD),
+                           overlay.TABS_MOVE_OLD + overlay.TABS_CREATE_SPLIT_OLD + overlay.TABS_UNSPLIT_OLD),
                  windows_api=(overlay.WINDOWS_GET_ALL_OLD + overlay.WINDOWS_LAST_FOCUSED_OLD +
                               overlay.WINDOWS_CREATE_ANCHOR + overlay.WINDOWS_UPDATE_OLD +
                               overlay.WINDOWS_REMOVE_OLD),
@@ -97,6 +97,8 @@ class OverlayTests(unittest.TestCase):
         self.assertIn("ExtensionTabUtil::GetTabById(tab_id, browser_context(),", tabs_api)
         self.assertIn("embedder->OpenTab(", tabs_api)
         self.assertIn("embedder->CloseTab(contents)", tabs_api)
+        self.assertIn("embedder->SplitTabs(first, second)", tabs_api)
+        self.assertIn("embedder->Unsplit(", tabs_api)
         windows_api = overlay.patch_extension_tabs(texts["windows_api"], "windows_api")
         self.assertIn("kTabStripNotEditableError", windows_api)
         self.assertIn("embedder->OpenTab(window_profile", windows_api)

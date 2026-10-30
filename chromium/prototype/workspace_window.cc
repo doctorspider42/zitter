@@ -442,13 +442,58 @@ class WorkspaceWindow::ExtensionTabs final : public extensions::ExtensionTabUtil
     window_->CloseWorkspaceTab(workspace, index);
     return true;
   }
-  // Moves a tab within its space (the sidebar order); -1 moves it to the end.
+  // `index` counts across the profile's spaces in sidebar order (-1: the
+  // end). Within the space on screen the sidebar reorders; into another space
+  // of the profile the tab moves there.
   bool MoveTab(content::WebContents* contents, int index) override {
     const auto [workspace, from] = Find(contents);
-    if (workspace.empty() || workspace != window_->active_id()) return false;
-    const size_t count = window_->tab_count(workspace);
-    const size_t to = index < 0 || static_cast<size_t>(index) >= count ? count - 1 : static_cast<size_t>(index);
+    if (workspace.empty()) return false;
+    auto* profile = Profile::FromBrowserContext(contents->GetBrowserContext());
+    std::string target;
+    size_t position = 0, offset = 0;
+    for (const auto& host : window_->hosts_) {
+      if (host.profile != profile) continue;
+      target = host.workspace_id;
+      position = host.tabs.size();
+      if (index >= 0 && static_cast<size_t>(index) < offset + host.tabs.size()) {
+        position = static_cast<size_t>(index) - offset;
+        break;
+      }
+      offset += host.tabs.size();
+    }
+    if (target.empty()) return false;
+    if (target != workspace) return window_->MoveTabToSpace(contents, target, position);
+    if (workspace != window_->active_id()) return false;
+    const size_t to = std::min(position, window_->tab_count(workspace) - 1);
     return window_->MoveTab(from, to > from ? to + 1 : to);
+  }
+  // Split View: the pair shows side by side in its space.
+  int SplitTabs(content::WebContents* first, content::WebContents* second) override {
+    const auto [workspace, a] = Find(first);
+    const auto [other, b] = Find(second);
+    if (workspace.empty() || workspace != other || a == b || GetSplitId(first) >= 0 || GetSplitId(second) >= 0 ||
+        !window_->Select(workspace))
+      return -1;
+    window_->SelectTab(a);
+    if (!window_->SplitTab(b)) return -1;
+    return GetSplitId(first);
+  }
+  bool Unsplit(Profile* profile, int split_view_id) override {
+    for (const auto& host : window_->hosts_) {
+      if (host.profile != profile || host.split.empty() || SplitId(host.workspace_id) != split_view_id) continue;
+      const auto kept = std::find(host.tabs.begin(), host.tabs.end(), host.split.front()) - host.tabs.begin();
+      const std::string workspace = host.workspace_id;
+      if (!window_->Select(workspace)) return false;
+      window_->Unsplit(kept);
+      return true;
+    }
+    return false;
+  }
+  int GetSplitId(content::WebContents* contents) override {
+    for (const auto& host : window_->hosts_)
+      for (const auto& member : host.split)
+        if (member->web_contents() == contents) return SplitId(host.workspace_id);
+    return -1;
   }
 
  private:
@@ -458,8 +503,15 @@ class WorkspaceWindow::ExtensionTabs final : public extensions::ExtensionTabUtil
         if (host.tabs[i]->web_contents() == contents) return {host.workspace_id, i};
     return {};
   }
+  // One split per space: its id is the space's, numbered apart from Chrome's.
+  int SplitId(const std::string& workspace) {
+    auto [entry, added] = split_ids_.try_emplace(workspace, 0);
+    if (added) entry->second = 1'000'000 + static_cast<int>(split_ids_.size());
+    return entry->second;
+  }
   raw_ptr<WorkspaceWindow> window_;
   std::map<Profile*, std::unique_ptr<ZitterExtensionWindow>> windows_;
+  std::map<std::string, int> split_ids_;
 };
 
 WorkspaceWindow::WorkspaceWindow(Profile* work, Profile* personal)
@@ -1374,6 +1426,48 @@ void WorkspaceWindow::CloseWorkspaceTab(std::string_view workspace_id, size_t in
     if (was_active && host.workspace_id == active_id()) host.view->RequestFocus();
     return;
   }
+}
+
+// A tab moves to another space of the same profile (the tabs API's window
+// spans them all). Its page, history and storage stay; it leaves any split and
+// its pin, as a closed tab would.
+bool WorkspaceWindow::MoveTabToSpace(content::WebContents* page, const std::string& target, size_t position) {
+  if (!configuration_ready_ || profiles_busy_ || closing_ || !page) return false;
+  Host* from = nullptr;
+  Host* to = nullptr;
+  size_t index = 0;
+  for (auto& host : hosts_) {
+    if (host.workspace_id == target) to = &host;
+    for (size_t i = 0; i < host.tabs.size(); ++i)
+      if (host.tabs[i]->web_contents() == page) { from = &host; index = i; }
+  }
+  if (!from || !to || from == to || from->profile != to->profile || from->tabs.size() < 2 || to->sleeping || !to->view)
+    return false;
+  views::WebView* moving = from->tabs[index];
+  std::erase_if(from->pin_tabs, [moving](const auto& entry) { return entry.second == moving; });
+  const bool was_active = moving == from->view;
+  if (from->workspace_id == active_id() || to->workspace_id == active_id()) shell_->SetPanes({}, {});
+  if (auto* survivor = LeaveSplit(*from, moving); survivor && was_active) from->view = survivor;
+  if (const auto url = from->deferred_urls.find(moving); url != from->deferred_urls.end()) {
+    to->deferred_urls[moving] = url->second;
+    from->deferred_urls.erase(url);
+  }
+  if (const auto title = from->deferred_titles.find(moving); title != from->deferred_titles.end()) {
+    to->deferred_titles[moving] = title->second;
+    from->deferred_titles.erase(title);
+  }
+  from->popup_tabs.erase(moving);
+  from->tabs.erase(from->tabs.begin() + index);
+  if (from->active_tab > index || from->active_tab >= from->tabs.size()) --from->active_tab;
+  if (was_active && (from->view == moving || !from->view)) from->view = from->tabs[from->active_tab];
+  from->active_tab = std::find(from->tabs.begin(), from->tabs.end(), from->view) - from->tabs.begin();
+  to->tabs.insert(to->tabs.begin() + std::min(position, to->tabs.size()), moving);
+  to->active_tab = std::find(to->tabs.begin(), to->tabs.end(), to->view) - to->tabs.begin();
+  moving->SetVisible(false);
+  if (auto* contents = moving->web_contents()) contents->WasHidden();
+  RefreshPanes();
+  UpdateShell();
+  return true;
 }
 
 namespace {

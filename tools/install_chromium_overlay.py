@@ -116,6 +116,12 @@ EXTENSION_TABS_DECLARATION = """  // Zitter: tabs an embedder hosts outside Brow
     virtual bool ActivateTab(content::WebContents* contents) = 0;
     virtual bool CloseTab(content::WebContents* contents) = 0;
     virtual bool MoveTab(content::WebContents* contents, int index) = 0;
+    // The embedder's Split View: pairs two tabs and returns the split's id
+    // (-1 when it cannot), separates a split, and names a tab's split (-1).
+    virtual int SplitTabs(content::WebContents* first,
+                          content::WebContents* second) = 0;
+    virtual bool Unsplit(Profile* profile, int split_view_id) = 0;
+    virtual int GetSplitId(content::WebContents* contents) = 0;
   };
   static void SetEmbedderTabs(EmbedderTabs* tabs);
   static EmbedderTabs* GetEmbedderTabs();
@@ -216,7 +222,8 @@ TABS_QUERY_ADDITION = """      result.Append(CreateTabObjectHelper(tab->GetConte
         !MatchesBool(query_info_.frozen, false) ||
         !MatchesBool(query_info_.discarded, false) ||
         (query_info_.group_id && *query_info_.group_id != -1) ||
-        (query_info_.split_view_id && *query_info_.split_view_id != -1)) {
+        (query_info_.split_view_id &&
+         *query_info_.split_view_id != embedder->GetSplitId(contents))) {
       continue;
     }
     ExtensionTabUtil::ScrubTabBehavior scrub =
@@ -549,6 +556,51 @@ WINDOWS_UPDATE_NEW = """  if (!browser) {
   ui::BaseWindow* browser_window = browser->GetWindow();
 """
 
+TAB_OBJECT_SPLIT_OLD = """  tab_object.split_view_id = -1;
+"""
+TAB_OBJECT_SPLIT_NEW = """  tab_object.split_view_id = -1;
+  // Zitter: the embedder's Split View.
+  if (!tab_interface && GetEmbedderTabs()) {
+    tab_object.split_view_id = GetEmbedderTabs()->GetSplitId(contents);
+  }
+"""
+TABS_CREATE_SPLIT_OLD = """  std::vector<::tabs::TabHandle> tab_handles;
+  tab_handles.reserve(tab_ids.size());
+"""
+TABS_CREATE_SPLIT_NEW = """  std::vector<::tabs::TabHandle> tab_handles;
+  tab_handles.reserve(tab_ids.size());
+
+  // Zitter: tabs hosted outside Browser windows split in their embedder.
+  if (ExtensionTabUtil::EmbedderTabs* embedder = ExtensionTabUtil::GetEmbedderTabs()) {
+    content::WebContents* first = nullptr;
+    content::WebContents* second = nullptr;
+    if (ExtensionTabUtil::GetTabById(tab_ids[0], browser_context(),
+                                     include_incognito_information(), nullptr,
+                                     &first, nullptr) &&
+        ExtensionTabUtil::GetTabById(tab_ids[1], browser_context(),
+                                     include_incognito_information(), nullptr,
+                                     &second, nullptr) &&
+        !::tabs::TabInterface::MaybeGetFromContents(first) &&
+        !::tabs::TabInterface::MaybeGetFromContents(second)) {
+      const int split_view_id = embedder->SplitTabs(first, second);
+      if (split_view_id < 0) {
+        return RespondNow(Error(tabs_constants::kSplitViewCreationFailedError));
+      }
+      return RespondNow(WithArguments(split_view_id));
+    }
+  }
+"""
+TABS_UNSPLIT_OLD = """  int split_view_id = params->split_view_id;
+"""
+TABS_UNSPLIT_NEW = """  int split_view_id = params->split_view_id;
+  // Zitter: a split of the embedder's tabs.
+  if (ExtensionTabUtil::EmbedderTabs* embedder = ExtensionTabUtil::GetEmbedderTabs();
+      embedder && embedder->Unsplit(Profile::FromBrowserContext(browser_context()),
+                                    split_view_id)) {
+    return RespondNow(NoArguments());
+  }
+"""
+
 def _patch_once(text, anchor, replacement, marker, what):
     if text.count(replacement) == 1:
         return text
@@ -572,8 +624,9 @@ def patch_extension_tabs(text, part):
         text = _patch_once(text, lookup_anchor, EXTENSION_TABS_LOOKUP + lookup_anchor,
                            "tabs hosted outside Browser windows, when", "GetTabById")
         text = _patch_once(text, TAB_OBJECT_ACTIVE_OLD, TAB_OBJECT_ACTIVE_NEW, "embedder_shown =", "tab object")
-        return _patch_once(text, TAB_OBJECT_HIGHLIGHTED_OLD, TAB_OBJECT_HIGHLIGHTED_NEW,
+        text = _patch_once(text, TAB_OBJECT_HIGHLIGHTED_OLD, TAB_OBJECT_HIGHLIGHTED_NEW,
                            "embedder_shown ||", "tab object")
+        return _patch_once(text, TAB_OBJECT_SPLIT_OLD, TAB_OBJECT_SPLIT_NEW, "the embedder's Split View", "tab object")
     if part == 'function_details':
         text = _patch_once(text, FUNCTION_DETAILS_INCLUDE_ANCHOR,
                            FUNCTION_DETAILS_INCLUDE_ANCHOR + FUNCTION_DETAILS_INCLUDE,
@@ -596,7 +649,9 @@ def patch_extension_tabs(text, part):
     text = _patch_once(text, TABS_CREATE_OLD, TABS_CREATE_NEW, "window opens the tab itself", "tabs.create")
     text = _patch_once(text, TABS_UPDATE_OLD, TABS_UPDATE_NEW, "updates in its embedder", "tabs.update")
     text = _patch_once(text, TABS_REMOVE_OLD, TABS_REMOVE_NEW, "closes in its embedder", "tabs.remove")
-    return _patch_once(text, TABS_MOVE_OLD, TABS_MOVE_NEW, "moves within its embedder", "tabs.move")
+    text = _patch_once(text, TABS_MOVE_OLD, TABS_MOVE_NEW, "moves within its embedder", "tabs.move")
+    text = _patch_once(text, TABS_CREATE_SPLIT_OLD, TABS_CREATE_SPLIT_NEW, "split in their embedder", "tabs.createSplit")
+    return _patch_once(text, TABS_UNSPLIT_OLD, TABS_UNSPLIT_NEW, "a split of the embedder", "tabs.unsplit")
 
 
 EXTENSION_TABS_FILES = {
