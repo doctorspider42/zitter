@@ -21,7 +21,7 @@ class PerformanceCandidateTest(unittest.TestCase):
             checkout = Path(directory)
             source = checkout / "source.gn"
             source.write_text('executable("zitter") {}\n'
-                              'build_native_rust_unit_tests = true\n')
+                              'build_native_rust_unit_tests = true\n', newline="\n")
             self.stage(checkout, {"BUILD.gn": source}, variant="zitter_security",
                        skip_native_rust_tests=True)
             self.assertIn('build_native_rust_unit_tests = false',
@@ -42,12 +42,12 @@ class PerformanceCandidateTest(unittest.TestCase):
             for name, value in contents.items():
                 target = baseline / name
                 target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(value)
+                target.write_text(value, newline="\n")
             (baseline / candidate.overlay.MARKER).write_text(json.dumps({
                 "owner": "zitter-prototype", "files": {
                     name: hashlib.sha256(value.encode()).hexdigest() for name, value in contents.items()
                 },
-            }))
+            }), newline="\n")
             self.stage(checkout, {}, variant="zitter_app_reference", reference_overlay=baseline, app_benchmark=True)
             staged = checkout / "zitter_app_reference"
             self.assertEqual("frozen user product", (staged / "chromium/prototype/workspace_window.cc").read_text())
@@ -72,17 +72,17 @@ class PerformanceCandidateTest(unittest.TestCase):
             baseline = checkout / "zitter"
             baseline.mkdir()
             build = baseline / "BUILD.gn"
-            build.write_text('test("zitter_prototype") {}\nexecutable("zitter") {}\n')
+            build.write_text('test("zitter_prototype") {}\nexecutable("zitter") {}\n', newline="\n")
             product = baseline / "product.cc"
-            product.write_text("frozen product")
+            product.write_text("frozen product", newline="\n")
             (baseline / candidate.overlay.MARKER).write_text(json.dumps({
                 "owner": "zitter-prototype", "files": {
                     path.name: hashlib.sha256(path.read_bytes()).hexdigest()
                     for path in (build, product)
                 },
-            }))
+            }), newline="\n")
             updated = checkout / "updated.cc"
-            updated.write_text('new benchmark uses "zitter/testdata"')
+            updated.write_text('new benchmark uses "zitter/testdata"', newline="\n")
             self.stage(checkout, {"product.cc": updated, "new_browsertest.cc": updated},
                        variant="zitter_reference", reference_overlay=baseline, current_tests=True)
             staged = checkout / "zitter_reference"
@@ -99,14 +99,14 @@ class PerformanceCandidateTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             checkout = Path(directory)
             build = checkout / "build.gn"
-            build.write_text('test("zitter_prototype") {}\nexecutable("zitter") {}\n')
+            build.write_text('test("zitter_prototype") {}\nexecutable("zitter") {}\n', newline="\n")
             product = checkout / "source.cc"
-            product.write_text("measured lazy implementation")
+            product.write_text("measured lazy implementation", newline="\n")
             test = checkout / "test.cc"
-            test.write_text('fixture uses "zitter/testdata"')
+            test.write_text('fixture uses "zitter/testdata"', newline="\n")
             files = {"BUILD.gn": build, "product.cc": product, "probe_browsertest.cc": test}
             self.stage(checkout, files)
-            product.write_text("next unmeasured experiment")
+            product.write_text("next unmeasured experiment", newline="\n")
             self.stage(checkout, files, variant="zitter_lazy_reference",
                        reference_overlay=checkout / "zitter_candidate")
             frozen = checkout / "zitter_lazy_reference"
@@ -120,9 +120,9 @@ class PerformanceCandidateTest(unittest.TestCase):
             checkout = Path(directory)
             baseline = checkout / "zitter"
             baseline.mkdir()
-            (baseline / "sentinel").write_text("frozen baseline")
+            (baseline / "sentinel").write_text("frozen baseline", newline="\n")
             source = checkout / "source.txt"
-            source.write_text('test("zitter_prototype") {}\nexecutable("zitter") {}\n')
+            source.write_text('test("zitter_prototype") {}\nexecutable("zitter") {}\n', newline="\n")
             files = {"BUILD.gn": source}
             self.stage(checkout, files)
             staged = checkout / "zitter_candidate/BUILD.gn"
@@ -137,17 +137,17 @@ class PerformanceCandidateTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             checkout = Path(directory)
             source = checkout / "source.cc"
-            source.write_text("original")
+            source.write_text("original", newline="\n")
             files = {"source.cc": source}
             self.stage(checkout, files)
             staged = checkout / "zitter_candidate/source.cc"
-            staged.write_text("user edit")
+            staged.write_text("user edit", newline="\n")
             with self.assertRaisesRegex(ValueError, "local edits"):
                 self.stage(checkout, files)
             self.assertEqual("user edit", staged.read_text())
-            staged.write_text("original")
+            staged.write_text("original", newline="\n")
             extra = staged.parent / "notes.txt"
-            extra.write_text("keep my notes")
+            extra.write_text("keep my notes", newline="\n")
             with self.assertRaisesRegex(ValueError, "untracked"):
                 self.stage(checkout, files)
             self.assertEqual("keep my notes", extra.read_text())

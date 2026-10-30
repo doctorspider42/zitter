@@ -17,10 +17,10 @@ void SetKillBuffer(std::u16string_view text);
 // TextfieldModel: public
 void PreserveExistingModelBehavior();
 } // namespace views
-''')
+''', newline="\n")
     (checkout / 'ui/views/BUILD.gn').write_text('''source_set("views") {
   sources = [
     "controls/textfield/textfield_model.h",
   ]
 }
-''')
+''', newline="\n")

@@ -18,6 +18,16 @@ DEPENDENCY = '      "//zitter:profile_workspace_browser_tests",\n'
 MARKER = ".zitter-overlay.json"
 
 
+# Chromium sources are UTF-8 with LF endings; don't let Windows' locale encoding
+# or newline translation touch them.
+def read(path):
+    return path.read_bytes().decode("utf-8")
+
+
+def write(path, text):
+    path.write_bytes(text.encode("utf-8"))
+
+
 def patch_build(text):
     target = '  test("browser_tests") {'
     if text.count(target) != 1:
@@ -37,7 +47,7 @@ def overlay_files():
     for directory in ("zitter", "chromium/prototype", "chromium/app", "testdata"):
         for path in sorted((ROOT / directory).rglob("*")):
             if path.is_file():
-                files[str(path.relative_to(ROOT))] = path
+                files[path.relative_to(ROOT).as_posix()] = path
     return files
 
 
@@ -728,11 +738,11 @@ def check_existing(destination):
     marker = destination / MARKER
     if not marker.is_file():
         raise ValueError(f"Refusing to replace an unowned directory: {destination}")
-    manifest = json.loads(marker.read_text())
+    manifest = json.loads(read(marker))
     if manifest.get("owner") != "zitter-prototype":
         raise ValueError("Invalid overlay ownership marker")
     hashes = manifest["files"]
-    actual = {str(p.relative_to(destination)) for p in destination.rglob("*")
+    actual = {p.relative_to(destination).as_posix() for p in destination.rglob("*")
               if p.is_file() and p.name != MARKER}
     if actual != set(hashes):
         raise ValueError("Overlay has added or deleted files; preserve local work first")
@@ -743,33 +753,33 @@ def check_existing(destination):
 
 def install(checkout, dry_run=False):
     checkout = checkout.resolve()
-    lock = json.loads((ROOT / "chromium/revision.json").read_text())
+    lock = json.loads(read(ROOT / "chromium/revision.json"))
     revision = subprocess.check_output(
         ["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True).strip()
     if revision != lock["revision"]:
         raise ValueError(f"Chromium revision mismatch: {revision}; expected {lock['revision']}")
     editor_patch = editor_services.prepare(checkout)
     build = checkout / "chrome/test/BUILD.gn"
-    original = build.read_text()
+    original = read(build)
     patched = patch_build(original)
     keychain = checkout / "components/os_crypt/common/keychain_password_mac.mm"
-    keychain_original = keychain.read_text()
+    keychain_original = read(keychain)
     keychain_patched = patch_keychain(keychain_original)
     autofill = checkout / "chrome/browser/ui/autofill/chrome_autofill_client.cc"
-    autofill_original = autofill.read_text()
+    autofill_original = read(autofill)
     autofill_patched = patch_embedded_autofill(autofill_original)
     media_header = checkout / "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
     media_source = media_header.with_suffix(".cc")
-    media_header_original, media_source_original = media_header.read_text(), media_source.read_text()
+    media_header_original, media_source_original = read(media_header), read(media_source)
     media_header_patched = patch_media_dispatcher(media_header_original, header=True)
     media_source_patched = patch_media_dispatcher(media_source_original)
     component_service = checkout / "components/component_updater/component_updater_service.cc"
-    component_original = component_service.read_text()
+    component_original = read(component_service)
     component_patched = patch_component_registration(component_original)
-    extensions_logo = {checkout / path: (checkout / path).read_text() for path in EXTENSIONS_LOGO_FILES.values()}
+    extensions_logo = {checkout / path: read(checkout / path) for path in EXTENSIONS_LOGO_FILES.values()}
     extensions_logo_patched = {path: patch_extensions_logo(text, slot) for (slot, _), (path, text)
                                in zip(EXTENSIONS_LOGO_FILES.items(), extensions_logo.items())}
-    extension_tabs = {checkout / path: (checkout / path).read_text() for path in EXTENSION_TABS_FILES.values()}
+    extension_tabs = {checkout / path: read(checkout / path) for path in EXTENSION_TABS_FILES.values()}
     extension_tabs_patched = {path: patch_extension_tabs(text, part) for (part, _), (path, text)
                               in zip(EXTENSION_TABS_FILES.items(), extension_tabs.items())}
     destination = checkout / "zitter"
@@ -791,7 +801,7 @@ def install(checkout, dry_run=False):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
             hashes[name] = digest(target)
-        (staged / MARKER).write_text(json.dumps(
+        write(staged / MARKER, json.dumps(
             {"owner": "zitter-prototype", "revision": revision, "files": hashes}, indent=2) + "\n")
         backup = Path(staging) / "previous"
         if destination.exists():
@@ -800,37 +810,37 @@ def install(checkout, dry_run=False):
             staged.rename(destination)
             # Preserve other edits in this file; add only our single dependency.
             if patched != original:
-                build.write_text(patched)
+                write(build, patched)
             if keychain_patched != keychain_original:
-                keychain.write_text(keychain_patched)
+                write(keychain, keychain_patched)
             if autofill_patched != autofill_original:
-                autofill.write_text(autofill_patched)
+                write(autofill, autofill_patched)
             if media_header_patched != media_header_original:
-                media_header.write_text(media_header_patched)
+                write(media_header, media_header_patched)
             if media_source_patched != media_source_original:
-                media_source.write_text(media_source_patched)
+                write(media_source, media_source_patched)
             if component_patched != component_original:
-                component_service.write_text(component_patched)
+                write(component_service, component_patched)
             for path, text in extension_tabs_patched.items():
                 if text != extension_tabs[path]:
-                    path.write_text(text)
+                    write(path, text)
             for path, text in extensions_logo_patched.items():
                 if text != extensions_logo[path]:
-                    path.write_text(text)
+                    write(path, text)
             editor_services.apply(editor_patch)
         except Exception:
             if destination.exists():
                 shutil.rmtree(destination)
             if backup.exists():
                 backup.rename(destination)
-            build.write_text(original)
-            keychain.write_text(keychain_original)
-            autofill.write_text(autofill_original)
-            media_header.write_text(media_header_original)
-            media_source.write_text(media_source_original)
-            component_service.write_text(component_original)
+            write(build, original)
+            write(keychain, keychain_original)
+            write(autofill, autofill_original)
+            write(media_header, media_header_original)
+            write(media_source, media_source_original)
+            write(component_service, component_original)
             for path, text in {**extension_tabs, **extensions_logo}.items():
-                path.write_text(text)
+                write(path, text)
             raise
     print("Installed. Run gn gen/check and build zitter or zitter_prototype; see README.md.")
 

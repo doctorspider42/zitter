@@ -16,7 +16,7 @@ class EditorServicePatchTests(unittest.TestCase):
             root = Path(directory)
             editor_service_fixture.seed(root)
             source = root / service.SOURCE_PATH
-            source.write_text(source.read_text() + '// unrelated local edit\n')
+            source.write_text(source.read_text() + '// unrelated local edit\n', newline="\n")
             original = source.read_text()
             plan = service.prepare(root)
             self.assertFalse((root / service.HEADER_PATH).exists())
@@ -38,9 +38,9 @@ class EditorServicePatchTests(unittest.TestCase):
                 service.apply(service.prepare(root))
                 path = root / (service.HEADER_PATH if changed == 'header' else service.BUILD_PATH if changed == 'build' else service.SOURCE_PATH)
                 if changed in ['include','build']:
-                    path.write_text(path.read_text().replace('text_edit_kill_buffer.h','text_edit_kill_buffer_local.h'))
+                    path.write_text(path.read_text().replace('text_edit_kill_buffer.h','text_edit_kill_buffer_local.h'), newline="\n")
                 else:
-                    path.write_text(path.read_text().replace('GetTextEditKillBuffer()', 'GetTextEditKillBuffer() /* local change */'))
+                    path.write_text(path.read_text().replace('GetTextEditKillBuffer()', 'GetTextEditKillBuffer() /* local change */'), newline="\n")
                 before = {p: p.read_bytes() for p in root.rglob('*') if p.is_file()}
                 with self.assertRaises(ValueError):
                     service.prepare(root)
@@ -50,7 +50,7 @@ class EditorServicePatchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             editor_service_fixture.seed(root)
-            (root / service.BUILD_PATH).write_text('unexpected upstream layout')
+            (root / service.BUILD_PATH).write_text('unexpected upstream layout', newline="\n")
             with self.assertRaises(ValueError):
                 service.prepare(root)
             self.assertFalse((root / service.HEADER_PATH).exists())
@@ -96,7 +96,7 @@ class EditorServicePatchTests(unittest.TestCase):
             root.mkdir()
             editor_service_fixture.seed(root)
             outside = root.parent / 'private-header'
-            outside.write_text('keep me')
+            outside.write_text('keep me', newline="\n")
             (root / service.HEADER_PATH).symlink_to(outside)
             with self.assertRaises(ValueError):
                 service.prepare(root)
@@ -107,7 +107,7 @@ class EditorServicePatchTests(unittest.TestCase):
             root = Path(directory)
             editor_service_fixture.seed(root)
             header = root / service.HEADER_PATH
-            header.write_text(service.HEADER)
+            header.write_text(service.HEADER, newline="\n")
             before = header.stat().st_mtime_ns
             service.apply(service.prepare(root))
             self.assertEqual(before, header.stat().st_mtime_ns)

@@ -43,7 +43,7 @@ def extensions_logo_source(slot):
 def seed_extensions_logo(checkout):
     for slot, path in overlay.EXTENSIONS_LOGO_FILES.items():
         (checkout / path).parent.mkdir(parents=True, exist_ok=True)
-        (checkout / path).write_text(extensions_logo_source(slot))
+        (checkout / path).write_text(extensions_logo_source(slot), newline="\n")
 
 
 def seed_extension_tabs(checkout):
@@ -59,7 +59,7 @@ def seed_extension_tabs(checkout):
                  function_details=(overlay.FUNCTION_DETAILS_INCLUDE_ANCHOR + overlay.CURRENT_WINDOW_ANCHOR))
     for part, path in overlay.EXTENSION_TABS_FILES.items():
         (checkout / path).parent.mkdir(parents=True, exist_ok=True)
-        (checkout / path).write_text(texts[part])
+        (checkout / path).write_text(texts[part], newline="\n")
     return texts
 
 
@@ -181,23 +181,23 @@ class OverlayTests(unittest.TestCase):
             build.parent.mkdir(parents=True)
             original = ('# Existing local build configuration\n'
                         '  test("browser_tests") {\n    deps = [\n    ]\n  }\n')
-            build.write_text(original)
+            build.write_text(original, newline="\n")
             keychain = checkout / "components/os_crypt/common/keychain_password_mac.mm"
             keychain.parent.mkdir(parents=True)
-            keychain.write_text('"Chromium Safe Storage"\n"Chromium";\n')
+            keychain.write_text('"Chromium Safe Storage"\n"Chromium";\n', newline="\n")
             autofill = checkout / "chrome/browser/ui/autofill/chrome_autofill_client.cc"
             autofill.parent.mkdir(parents=True)
-            autofill.write_text('bool ChromeAutofillClient::IsAutofillProfileEnabled() const {\n  return true;\n}\n')
+            autofill.write_text('bool ChromeAutofillClient::IsAutofillProfileEnabled() const {\n  return true;\n}\n', newline="\n")
             media_header = checkout / "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
             media_header.parent.mkdir(parents=True)
-            media_header.write_text("  void ProcessMediaAccessRequest(content::WebContents* web_contents,\n")
-            media_header.with_suffix(".cc").write_text("void MediaCaptureDevicesDispatcher::ProcessMediaAccessRequest(\n")
+            media_header.write_text("  void ProcessMediaAccessRequest(content::WebContents* web_contents,\n", newline="\n")
+            media_header.with_suffix(".cc").write_text("void MediaCaptureDevicesDispatcher::ProcessMediaAccessRequest(\n", newline="\n")
             component = checkout / "components/component_updater/component_updater_service.cc"
             component.parent.mkdir(parents=True)
             component.write_text('#include "base/check.h"\n'
                                  'bool CrxUpdateService::RegisterComponent(\n'
                                  '    const ComponentRegistration& component) {\n'
-                                 '  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);\n}\n')
+                                 '  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);\n}\n', newline="\n")
             with mock.patch.object(overlay.subprocess, "check_output", return_value=revision):
                 overlay.install(checkout, dry_run=True)
                 self.assertFalse((checkout / "zitter").exists())
@@ -206,7 +206,7 @@ class OverlayTests(unittest.TestCase):
                 overlay.install(checkout)
                 self.assertEqual(build.read_text().replace(overlay.DEPENDENCY, ""), original)
                 source = checkout / "zitter/zitter/core/workspace_model.cc"
-                source.write_text(source.read_text() + "\n// Local changes\n")
+                source.write_text(source.read_text() + "\n// Local changes\n", newline="\n")
                 with self.assertRaisesRegex(ValueError, "local modifications"):
                     overlay.install(checkout)
                 self.assertIn("Local changes", source.read_text())

@@ -86,18 +86,18 @@ def _write(path, data):
         path.unlink()
         return
     # A compiler/observer never sees a half-written source file.
+    # Windows can't replace a file that is still open, so close it first.
     with tempfile.NamedTemporaryFile(dir=path.parent, prefix='.zitter-editor-', delete=False) as output:
         temporary = Path(output.name)
-        try:
-            output.write(data)
-            output.flush()
-            if path.exists():
-                os.chmod(temporary, path.stat().st_mode)
-            else:
-                os.chmod(temporary, 0o644)
-            os.replace(temporary, path)
-        finally:
-            temporary.unlink(missing_ok=True)
+    try:
+        temporary.write_bytes(data)
+        if path.exists():
+            os.chmod(temporary, path.stat().st_mode)
+        else:
+            os.chmod(temporary, 0o644)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def apply(plan):
