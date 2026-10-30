@@ -3,6 +3,19 @@
 // One entry per distinct Polish string, written exactly as in the source
 // (same escapes); `{}` placeholders keep their order.
 pub static EN: &[(&str, &str)] = &[
+    ("Maksymalizuj", "Maximize"),
+    ("Trwa pobieranie: {}. Zamknięcie Zitter je przerwie.", "Downloading {}. Exiting Zitter cancels it."),
+    ("Zamknąć Zitter w trakcie pobierania?", "Exit Zitter while downloading?"),
+    ("Zamknij i przerwij", "Exit and cancel"),
+    ("Poczekaj", "Wait"),
+    ("plik", "file"),
+    ("pliki", "files"),
+    ("plików", "files"),
+    ("Menu Zitter", "Zitter menu"),
+    ("Command Center…", "Command Center…"),
+    ("Time Machine…", "Time Machine…"),
+    ("Zamknij Zitter", "Exit Zitter"),
+    ("Przywróć", "Restore"),
     ("Druga przestrzeń", "Second space"),
     ("Edycja", "Edit"),
     ("Hasła tego profilu…", "Passwords for this profile…"),

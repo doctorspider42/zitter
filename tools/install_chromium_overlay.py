@@ -704,6 +704,26 @@ def patch_extensions_logo(text, slot):
         raise ValueError("Unexpected upstream Extensions page logo layout; review the patch")
     return text.replace(original, replacement, 1)
 
+# zitter.exe links chrome.dll's resources, whose icon group comes first; Windows
+# shows it for the file, taskbar and window. All icons must be in that one .rc
+# (their image IDs collide across .res files), so Zitter's takes Chromium's slot.
+WINDOW_ICON_FILE = "chrome/app/chrome_dll.rc"
+
+
+def patch_window_icon(text):
+    original = ('#else\n'
+                'IDR_MAINFRAME       ICON                        "theme\\chromium\\win\\chromium.ico"\n'
+                '#endif\n')
+    replacement = ('#else\n'
+                   '// Zitter: zitter.exe\'s icon (chromium/app/zitter.ico).\n'
+                   'IDR_MAINFRAME       ICON                        "../../zitter/chromium/app/zitter.ico"\n'
+                   '#endif\n')
+    if text.count(replacement) == 1:
+        return text
+    if text.count(original) != 1 or "Zitter: zitter.exe's icon" in text:
+        raise ValueError("Unexpected upstream Windows icon resource layout; review the patch")
+    return text.replace(original, replacement, 1)
+
 def patch_component_registration(text):
     """Optional embedder exclusions, leaving upstream verification untouched."""
     include_anchor = '#include "base/check.h"\n'
@@ -779,6 +799,9 @@ def install(checkout, dry_run=False):
     extensions_logo = {checkout / path: read(checkout / path) for path in EXTENSIONS_LOGO_FILES.values()}
     extensions_logo_patched = {path: patch_extensions_logo(text, slot) for (slot, _), (path, text)
                                in zip(EXTENSIONS_LOGO_FILES.items(), extensions_logo.items())}
+    window_icon = checkout / WINDOW_ICON_FILE
+    window_icon_original = read(window_icon)
+    window_icon_patched = patch_window_icon(window_icon_original)
     extension_tabs = {checkout / path: read(checkout / path) for path in EXTENSION_TABS_FILES.values()}
     extension_tabs_patched = {path: patch_extension_tabs(text, part) for (part, _), (path, text)
                               in zip(EXTENSION_TABS_FILES.items(), extension_tabs.items())}
@@ -824,6 +847,8 @@ def install(checkout, dry_run=False):
             for path, text in extension_tabs_patched.items():
                 if text != extension_tabs[path]:
                     write(path, text)
+            if window_icon_patched != window_icon_original:
+                write(window_icon, window_icon_patched)
             for path, text in extensions_logo_patched.items():
                 if text != extensions_logo[path]:
                     write(path, text)

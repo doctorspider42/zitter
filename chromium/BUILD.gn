@@ -245,7 +245,14 @@ source_set("shell") {
       "//components/remote_cocoa/common:mojo",
     ]
   } else {
-    public_deps += [ ":text_services" ]
+    public_deps += [ ":text_services", "//ui/base/emoji" ]
+  }
+  if (is_win) {
+    sources += [
+      "chromium/prototype/workspace_frame_win.cc",
+      "chromium/prototype/workspace_frame_win.h",
+    ]
+    libs = [ "dwmapi.lib" ]
   }
 }
 
@@ -386,12 +393,12 @@ if (is_mac || is_linux || is_win) {
     }
     if (is_win) {
       # chrome.dll's dependencies, linked into the one executable; chrome_elf
-      # stays a DLL, loaded first, as chrome.exe loads it.
+      # stays a DLL, loaded first, as chrome.exe loads it. chrome.dll's icon
+      # resource carries Zitter's icon (tools/install_chromium_overlay.py).
       configs -= [ "//build/config/win:console" ]
       configs += [ "//build/config/win:windowed", "//build/config/win:delayloads" ]
       deps += [
         "//build/win:default_exe_manifest",
-        "//chrome/app:chrome_dll_resources",
         "//chrome/app/theme:chrome_unscaled_resources",
         "//chrome/browser/win/isolated_browser:isolated_browser_support",
         "//chrome/chrome_elf",

@@ -242,6 +242,9 @@ class WorkspaceShell final : public ui::EventHandler,
   void TogglePinned();
   // Asks before removing a space; accepting removes it with an undo toast.
   void RequestRemoveWorkspace(std::string id);
+  // Closing the window would cancel |count| downloads; |answer| gets whether
+  // to quit anyway. Outside macOS, where AppController asks.
+  void ConfirmQuitWithDownloads(int count, base::OnceCallback<void(bool)> answer);
   views::Widget* workspace_remove_dialog() const { return remove_dialog_.get(); }
   std::optional<size_t> split_drop_slot_for_testing() const { return split_drop_slot_; }
   bool drag_hover_split_for_testing() const { return drag_hover_split_; }
@@ -258,6 +261,10 @@ class WorkspaceShell final : public ui::EventHandler,
   int sidebar_width() const { return sidebar_width_; }
   bool CloseOverlays(bool keep_sidebar = false);
   void OpenGeneralSettings();
+  // The |z⟩ menu (design: Menu Zitter): the macOS menu bar's commands on
+  // Windows, below |anchor|.
+  void ShowAppMenu(views::View* anchor);
+  bool app_menu_running_for_testing() const;
   void OpenTools(int page);  // 0: Time Machine, 1: shortcuts, 2: search providers, 3: history.
   void RefreshHistory(bool more = false);
   void SetHistoryResults(std::u16string query, std::string profile_id, size_t limit,
@@ -910,6 +917,8 @@ class WorkspaceShell final : public ui::EventHandler,
   // Removing a space asks first (design: Dialog), then removes with an undo toast.
   std::unique_ptr<views::DialogDelegate> remove_dialog_delegate_;
   std::unique_ptr<views::Widget> remove_dialog_;
+  std::unique_ptr<views::DialogDelegate> quit_dialog_delegate_;
+  std::unique_ptr<views::Widget> quit_dialog_;
   // A tab dragged over the page: where it lands in the split, shown on a panel.
   std::unique_ptr<views::WidgetDelegate> drop_delegate_;
   std::unique_ptr<views::Widget> drop_widget_;
@@ -953,6 +962,9 @@ class WorkspaceShell final : public ui::EventHandler,
   std::unique_ptr<ui::SimpleMenuModel> color_menu_;
   std::unique_ptr<ui::SimpleMenuModel> emoji_menu_;
   std::unique_ptr<views::MenuRunner> workspace_menu_runner_;
+  std::unique_ptr<ui::SimpleMenuModel::Delegate> app_menu_delegate_;
+  std::unique_ptr<ui::SimpleMenuModel> app_menu_;
+  std::unique_ptr<views::MenuRunner> app_menu_runner_;
   std::map<std::string, TabListCache> tab_lists_;
   void WarmNextSidebar();
   std::vector<std::pair<std::string, std::vector<PinnedItem>>> sidebar_warm_queue_;

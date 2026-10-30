@@ -105,6 +105,14 @@
 #if BUILDFLAG(IS_MAC)
 #include "chromium/prototype/workspace_frame_mac.h"
 #include "chromium/prototype/workspace_keyboard_mac.h"
+#elif BUILDFLAG(IS_WIN)
+#include <windows.h>
+
+#include "chrome/app/chrome_dll_resource.h"
+#include "chromium/prototype/workspace_frame_win.h"
+#include "ui/base/models/image_model.h"
+#include "ui/gfx/image/image_family.h"
+#include "ui/gfx/win/icon_util.h"
 #endif
 
 namespace zitter::prototype {
@@ -642,6 +650,14 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   widget_ = std::make_unique<views::Widget>();
 #if BUILDFLAG(IS_MAC)
   params.native_widget = CreateWorkspaceNativeWidget(widget_.get());
+#elif BUILDFLAG(IS_WIN)
+  ConfigureWorkspaceNativeWidget(widget_.get(), params);
+  // The titlebar-less window still has an icon: taskbar, Alt+Tab, system menu.
+  // Zitter's icon in chrome.dll's resource slot, linked into zitter.exe.
+  if (auto icons = IconUtil::CreateImageFamilyFromIconResource(::GetModuleHandle(nullptr), IDR_MAINFRAME)) {
+    if (const auto* small = icons->GetBest(32, 32)) delegate_->SetIcon(ui::ImageModel::FromImage(*small));
+    if (const auto* large = icons->GetBest(256, 256)) delegate_->SetAppIcon(ui::ImageModel::FromImage(*large));
+  }
 #endif
   widget_->Init(std::move(params));
   shell_->Attach(widget_.get(), this);
@@ -1814,6 +1830,9 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
     return true;
   }
   if (id == "downloads") { ShowDownloads(); return true; }
+  // The |z⟩ menu's commands without a shortcut.
+  if (id == "passwords") { ShowPasswords(); return true; }
+  if (id == "quit") { RequestClose(); return true; }
   // Development (--zitter-open-panel=extension-popup): the first pinned action.
   if (id == "extension_popup") {
     const auto actions = extensions_bar_->visible_actions_for_testing();

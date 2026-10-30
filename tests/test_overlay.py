@@ -44,6 +44,10 @@ def seed_extensions_logo(checkout):
     for slot, path in overlay.EXTENSIONS_LOGO_FILES.items():
         (checkout / path).parent.mkdir(parents=True, exist_ok=True)
         (checkout / path).write_text(extensions_logo_source(slot), newline="\n")
+    # The Windows icon resource rides along with the other branding patches.
+    icon = checkout / overlay.WINDOW_ICON_FILE
+    icon.parent.mkdir(parents=True, exist_ok=True)
+    icon.write_text('#else\nIDR_MAINFRAME       ICON                        "theme\\chromium\\win\\chromium.ico"\n#endif\n', newline="\n")
 
 
 def seed_extension_tabs(checkout):
@@ -137,6 +141,17 @@ class OverlayTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 overlay.patch_extensions_logo("unknown upstream layout", slot)
 
+    def test_windows_icon_is_zitter_in_chromes_resource_slot(self):
+        original = ('#else\n'
+                    'IDR_MAINFRAME       ICON                        "theme\\chromium\\win\\chromium.ico"\n'
+                    '#endif\n')
+        patched = overlay.patch_window_icon("before\n" + original + "after\n")
+        self.assertNotIn("chromium.ico", patched)
+        self.assertIn('"../../zitter/chromium/app/zitter.ico"', patched)
+        self.assertTrue((overlay.ROOT / "chromium/app/zitter.ico").is_file())
+        self.assertEqual(patched, overlay.patch_window_icon(patched))
+        with self.assertRaises(ValueError):
+            overlay.patch_window_icon("unknown upstream layout")
     def test_media_registration_keeps_dispatcher_and_is_guarded(self):
         for header, original in ((True, "  void ProcessMediaAccessRequest(content::WebContents* web_contents,\n"),
                                  (False, "void MediaCaptureDevicesDispatcher::ProcessMediaAccessRequest(\n")):

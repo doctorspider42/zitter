@@ -8,6 +8,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/download/download_core_service.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/profiles/keep_alive/profile_keep_alive_types.h"
 #include "chrome/browser/profiles/keep_alive/scoped_profile_keep_alive.h"
@@ -175,11 +176,29 @@ void Runtime::Close() {
     if (window_) window_->SetCloseCallback(base::BindOnce(&Runtime::RequestClose, weak_factory_.GetWeakPtr()));
     return;
   }
+#else
+  // Closing the window quits Zitter: ask before cancelling downloads, as
+  // Chrome does for its last window.
+  if (const int count = DownloadCoreService::BlockingShutdownCountAllProfiles();
+      count && !downloads_confirmed_ && window_) {
+    closing_ = false;
+    window_->SetCloseCallback(base::BindOnce(&Runtime::RequestClose, weak_factory_.GetWeakPtr()));
+    window_->shell()->ConfirmQuitWithDownloads(count, base::BindOnce(&Runtime::DownloadsAnswered, weak_factory_.GetWeakPtr()));
+    return;
+  }
 #endif
   ReleaseProfiles();
   keep_alive_.reset();
   chrome::ExitIgnoreUnloadHandlers();
 }
+
+#if !BUILDFLAG(IS_MAC)
+void Runtime::DownloadsAnswered(bool quit) {
+  if (!quit) return;
+  downloads_confirmed_ = true;
+  RequestClose();
+}
+#endif
 
 void Runtime::ReleaseProfiles() {
 #if BUILDFLAG(IS_MAC)

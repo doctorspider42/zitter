@@ -125,6 +125,11 @@
 #if BUILDFLAG(IS_MAC)
 #include "chromium/prototype/workspace_keyboard_mac.h"
 #include "chromium/prototype/workspace_frame_mac.h"
+#elif BUILDFLAG(IS_WIN)
+#include "chromium/prototype/workspace_frame_win.h"
+#endif
+#if !BUILDFLAG(IS_MAC)
+#include "ui/base/emoji/emoji_panel_helper.h"
 #endif
 
 namespace zitter::prototype {class SceneParentNodes;}
@@ -1718,13 +1723,17 @@ std::vector<sidebar::Item> CommandRowItems(views::View* row,const RowRecipe::Spe
   items.push_back(item);
   float x=rect.x()+36+gfx::GetStringWidth(spec.title,DesignFont(2,13,400,false))+8;
   const std::u16string keys=spec.detail;
+  // macOS symbols are one key each ("tab", "esc" one word); elsewhere the chord
+  // is words joined by "+", one key per word ("Ctrl+T").
+  const bool words=keys.size()>1&&keys.find(u'+',1)!=std::u16string::npos;
   for(size_t i=0;i<keys.size();){
-    size_t next=i+(base::IsAsciiAlpha(keys[i])&&i+1<keys.size()&&base::IsAsciiAlpha(keys[i+1])?keys.size()-i:1);  // "tab", "esc": one key.
-    sidebar::Item key{};key.kind=30;key.title=base::UTF16ToUTF8(keys.substr(i,next-i));
-    const float w=std::max(18.f,gfx::GetStringWidth(keys.substr(i,next-i),DesignFont(3,11,500,false))+10.f);
+    size_t next=words?std::min(keys.find(u'+',i+1),keys.size()):i+(base::IsAsciiAlpha(keys[i])&&i+1<keys.size()&&base::IsAsciiAlpha(keys[i+1])?keys.size()-i:1);
+    const std::u16string label=keys.substr(i,next-i);
+    sidebar::Item key{};key.kind=30;key.title=base::UTF16ToUTF8(label);
+    const float w=std::max(18.f,gfx::GetStringWidth(label,DesignFont(3,11,500,false))+10.f);
     key.x=x;key.y=rect.y()+(rect.height()-18)/2;key.width=w;key.height=18;key.clip=item.clip;
     key.fill=p.bg_hover;key.edge=p.line;key.ink=p.ink_muted;
-    if(x+w<=rect.right()-8)items.push_back(key);x+=w+2;i=next;
+    if(x+w<=rect.right()-8)items.push_back(key);x+=w+2;i=words&&next<keys.size()?next+1:next;
   }
   return items;
 }
@@ -2052,7 +2061,12 @@ class PaletteText final : public views::View {
     sidebar::Item fill{};fill.kind=14;fill.x=rect.x();fill.y=rect.y();fill.width=rect.width();fill.height=rect.height();fill.fill=p.bg_base;fill.clip=c;items.push_back(fill);
     sidebar::Item line{};line.kind=14;line.x=rect.x();line.y=rect.y();line.width=rect.width();line.height=1;line.fill=p.line;line.clip=c;items.push_back(line);
     float x=rect.x()+18;const float cy=rect.y()+rect.height()/2;
+#if BUILDFLAG(IS_MAC)
     const std::array<std::pair<std::vector<std::u16string>,std::u16string>,3> hints{{{{u"↑",u"↓"},T(u"wybierz")},{{u"↵"},T(u"otwórz")},{{u"esc"},T(u"zamknij")}}};
+#else
+    // Design: Teksty i skróty. Keys are words outside macOS.
+    const std::array<std::pair<std::vector<std::u16string>,std::u16string>,3> hints{{{{u"↑",u"↓"},T(u"wybierz")},{{u"Enter"},T(u"otwórz")},{{u"Esc"},T(u"zamknij")}}};
+#endif
     for(const auto& [keys,word]:hints){
       for(const auto& key:keys){sidebar::Item k{};k.kind=30;k.title=base::UTF16ToUTF8(key);k.width=std::max(18.f,gfx::GetStringWidth(key,DesignFont(3,11,500,false))+10.f);k.height=18;k.x=x;k.y=cy-9;k.fill=p.bg_hover;k.edge=p.line;k.ink=p.ink_muted;k.clip=c;items.push_back(k);x+=k.width+2;}
       sidebar::Item w{};w.kind=17;w.title=base::UTF16ToUTF8(word);w.x=x+4;w.width=gfx::GetStringWidth(word,DesignFont(2,12,500,false))+2;w.y=rect.y();w.height=rect.height();w.ink=p.ink_muted;w.font_size=12;w.text_style=6;w.clip=c;items.push_back(w);
@@ -3113,6 +3127,165 @@ class PaneHost final : public views::View, public views::ResizeAreaDelegate {
 BEGIN_METADATA(PaneHost)
 END_METADATA
 
+#if BUILDFLAG(IS_WIN)
+// Design: Pasek tytułu. Windows caption buttons, 46 × 38 at the top-right edge,
+// a 10 px glyph in 1 px lines; close hovers the system red.
+class CaptionButton final : public views::Button {
+  METADATA_HEADER(CaptionButton, views::Button)
+ public:
+  enum class Kind { kMinimize, kMaximize, kClose };
+  explicit CaptionButton(Kind kind) : views::Button(base::BindRepeating(&CaptionButton::Pressed, base::Unretained(this))), kind_(kind) {
+    SetFocusBehavior(FocusBehavior::NEVER);
+    SetPreferredSize(gfx::Size(46, kShellHeaderHeight));
+    SetAnimateOnStateChange(false);
+    UpdateName();
+  }
+  void UpdateName() {
+    GetViewAccessibility().SetName(kind_ == Kind::kMinimize ? T(u"Minimalizuj")
+        : kind_ == Kind::kClose ? T(u"Zamknij") : Maximized() ? T(u"Przywróć") : T(u"Maksymalizuj"));
+  }
+  void PaintButtonContents(gfx::Canvas* canvas) override {
+    const auto p = Palette(this);
+    const bool close = kind_ == Kind::kClose, hovered = GetState() == STATE_HOVERED, pressed = GetState() == STATE_PRESSED;
+    constexpr SkColor kCloseRed = SkColorSetRGB(0xC4, 0x2B, 0x1C);
+    if (close && (hovered || pressed)) canvas->FillRect(GetLocalBounds(), pressed ? SkColorSetA(kCloseRed, 0xE6) : kCloseRed);
+    else if (hovered || pressed) canvas->FillRect(GetLocalBounds(), pressed ? p.line : p.bg_hover);
+    const bool active = !GetWidget() || GetWidget()->IsActive();
+    SkColor ink = close && (hovered || pressed) ? (pressed ? SkColorSetA(SK_ColorWHITE, 0xB3) : SK_ColorWHITE) : active ? p.ink : p.ink_faint;
+    // Whole device pixels keep the 1 px lines crisp at 125% and 150%.
+    gfx::ScopedCanvas scoped(canvas);
+    const float scale = canvas->UndoDeviceScaleFactor();
+    const float stroke = std::max(1.f, std::floor(scale));
+    const float size = std::round(10 * scale);
+    const float x = std::round((width() * scale - size) / 2), y = std::round((height() * scale - size) / 2);
+    const float u = size / 10, half = stroke / 2;
+    cc::PaintFlags flags;
+    flags.setColor(ink);
+    flags.setStyle(cc::PaintFlags::kStroke_Style);
+    flags.setStrokeWidth(stroke);
+    switch (kind_) {
+      case Kind::kMinimize:
+        canvas->DrawLine(gfx::PointF(x, y + std::round(5 * u) + half), gfx::PointF(x + size, y + std::round(5 * u) + half), flags);
+        break;
+      case Kind::kMaximize:
+        if (Maximized()) {
+          // Restore: a front square and the back square's visible corner.
+          const float front = std::round(7 * u), shift = std::round(2 * u);
+          canvas->sk_canvas()->drawRect(SkRect::MakeXYWH(x + half, y + shift + half, front - stroke, front - stroke), flags);
+          const std::array<gfx::PointF, 5> corner = {{{x + shift + half, y + shift}, {x + shift + half, y + half},
+              {x + size - half, y + half}, {x + size - half, y + size - shift - half}, {x + front, y + size - shift - half}}};
+          for (size_t i = 0; i + 1 < corner.size(); ++i) canvas->DrawLine(corner[i], corner[i + 1], flags);
+        } else {
+          canvas->sk_canvas()->drawRect(SkRect::MakeXYWH(x + half, y + half, size - stroke, size - stroke), flags);
+        }
+        break;
+      case Kind::kClose:
+        flags.setAntiAlias(true);
+        canvas->DrawLine(gfx::PointF(x, y), gfx::PointF(x + size, y + size), flags);
+        canvas->DrawLine(gfx::PointF(x + size, y), gfx::PointF(x, y + size), flags);
+        break;
+    }
+  }
+ private:
+  bool Maximized() const { return GetWidget() && GetWidget()->IsMaximized(); }
+  void Pressed() {
+    auto* widget = GetWidget();
+    if (!widget) return;
+    if (kind_ == Kind::kMinimize) widget->Minimize();
+    else if (kind_ == Kind::kClose) widget->Close();
+    else if (widget->IsMaximized()) widget->Restore();
+    else widget->Maximize();
+  }
+  const Kind kind_;
+};
+BEGIN_METADATA(CaptionButton)
+END_METADATA
+
+// The three caption buttons; repaints them when the window activates,
+// maximizes or restores.
+class CaptionButtons final : public views::View, public views::WidgetObserver {
+  METADATA_HEADER(CaptionButtons, views::View)
+ public:
+  CaptionButtons() {
+    SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal));
+    for (auto kind : {CaptionButton::Kind::kMinimize, CaptionButton::Kind::kMaximize, CaptionButton::Kind::kClose})
+      buttons_.push_back(AddChildView(std::make_unique<CaptionButton>(kind)));
+  }
+  void AddedToWidget() override { observation_.Observe(GetWidget()); }
+  void RemovedFromWidget() override { observation_.Reset(); }
+  void OnWidgetActivationChanged(views::Widget*, bool) override { SchedulePaintAll(); }
+  void OnWidgetBoundsChanged(views::Widget*, const gfx::Rect&) override { SchedulePaintAll(); }
+  views::View* maximize() { return buttons_[1]; }
+ private:
+  void SchedulePaintAll() { for (CaptionButton* button : buttons_) { button->UpdateName(); button->SchedulePaint(); } }
+  std::vector<raw_ptr<CaptionButton>> buttons_;
+  base::ScopedObservation<views::Widget, views::WidgetObserver> observation_{this};
+};
+BEGIN_METADATA(CaptionButtons)
+END_METADATA
+#endif
+
+#if !BUILDFLAG(IS_MAC)
+// Design: Menu Zitter. The |z⟩ mark in `display` italic, a header icon button.
+class AppMenuButton final : public views::Button {
+  METADATA_HEADER(AppMenuButton, views::Button)
+ public:
+  explicit AppMenuButton(PressedCallback callback) : views::Button(std::move(callback)) {
+    GetViewAccessibility().SetName(T(u"Menu Zitter"));
+    GetViewAccessibility().SetRole(ax::mojom::Role::kPopUpButton);
+    SetAnimateOnStateChange(false);
+  }
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {
+    return gfx::Size(std::max(kHeaderButtonSize, gfx::GetStringWidth(kMark, Mark()) + 8), kHeaderButtonSize);
+  }
+  void PaintButtonContents(gfx::Canvas* canvas) override {
+    const auto p = Palette(this);
+    if (open_ || GetState() == STATE_HOVERED || GetState() == STATE_PRESSED) {
+      cc::PaintFlags flags;
+      flags.setAntiAlias(true);
+      flags.setColor(open_ ? p.accent_soft : p.bg_hover);
+      canvas->DrawRoundRect(gfx::RectF(GetLocalBounds()), 6, flags);
+    }
+    // Raised a pixel: the italic mark sits low in its line box.
+    canvas->DrawStringRectWithFlags(kMark, Mark(), p.ink, GetLocalBounds() - gfx::Vector2d(0, 1), gfx::Canvas::TEXT_ALIGN_CENTER);
+  }
+  void SetOpen(bool open) {
+    open_ = open;
+    if (open) GetViewAccessibility().SetIsExpanded(); else GetViewAccessibility().SetIsCollapsed();
+    SchedulePaint();
+  }
+ private:
+  static constexpr char16_t kMark[] = u"|z⟩";
+  static gfx::FontList Mark() { return DesignFont(1, 18, 400, true); }
+  bool open_ = false;
+};
+BEGIN_METADATA(AppMenuButton)
+END_METADATA
+
+// The |z⟩ menu's commands: each runs one of the window's shortcut actions.
+class AppMenuDelegate final : public ui::SimpleMenuModel::Delegate {
+ public:
+  struct Command { std::string action; bool checked = false; };
+  explicit AppMenuDelegate(base::RepeatingCallback<void(std::string)> run) : run_(std::move(run)) {}
+  // Command kBase + i is commands()[i].
+  std::vector<Command>& commands() { return commands_; }
+  static constexpr int kBase = 900;
+  bool IsCommandIdChecked(int id) const override { return Get(id) && Get(id)->checked; }
+  void ExecuteCommand(int id, int) override {
+    // After the menu has closed, never inside its run loop.
+    if (const auto* command = Get(id))
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(run_, command->action));
+  }
+ private:
+  const Command* Get(int id) const {
+    const size_t index = static_cast<size_t>(id - kBase);
+    return id >= kBase && index < commands_.size() ? &commands_[index] : nullptr;
+  }
+  std::vector<Command> commands_;
+  base::RepeatingCallback<void(std::string)> run_;
+};
+#endif
+
 // Frame: tinted ground, header row (traffic lights + page commands) and the
 // page as a rounded white card. Pinned, the sidebar column owns the header.
 class ShellRoot final : public views::View {
@@ -3133,11 +3306,24 @@ class ShellRoot final : public views::View {
 #endif
     header->SetBounds(header_x, kAxis - kHeaderButtonSize / 2, header_width, kHeaderButtonSize);
     // Design: Extensions. The right end of the band, on the same axis, `space-2`
-    // from the window edge; it never runs into the page commands.
+    // from the window edge (from the caption buttons on Windows); it never runs
+    // into the page commands.
+    int trailing_end = width() - kGap;
+    if (caption) {
+      const int caption_width = caption->GetPreferredSize().width();
+      caption->SetBounds(width() - caption_width, 0, caption_width, kShellHeaderHeight);
+      trailing_end = caption->x() - kGap;
+    }
+    // Design: Menu Zitter. The |z⟩ button closes the extensions toolbar.
+    if (app_menu) {
+      const int menu_width = app_menu->GetPreferredSize().width();
+      app_menu->SetBounds(trailing_end - menu_width, kAxis - kHeaderButtonSize / 2, menu_width, kHeaderButtonSize);
+      trailing_end = app_menu->x() - 2;
+    }
     if (trailing && trailing->GetVisible()) {
       const int trailing_width = std::min(trailing->GetPreferredSize().width(),
-                                          std::max(0, width() - kGap - header->bounds().right() - kGap));
-      trailing->SetBounds(width() - kGap - trailing_width, kAxis - kHeaderButtonSize / 2, trailing_width, kHeaderButtonSize);
+                                          std::max(0, trailing_end - header->bounds().right() - kGap));
+      trailing->SetBounds(trailing_end - trailing_width, kAxis - kHeaderButtonSize / 2, trailing_width, kHeaderButtonSize);
     }
     const int top = kShellHeaderHeight;
     content->SetBounds(column + kGap, top, std::max(0, width() - column - 2 * kGap),
@@ -3157,6 +3343,8 @@ class ShellRoot final : public views::View {
   }
   raw_ptr<views::View> header = nullptr;
   raw_ptr<views::View> trailing = nullptr;  // Extensions (design: Extensions).
+  raw_ptr<views::View> caption = nullptr;   // Windows caption buttons.
+  raw_ptr<views::View> app_menu = nullptr;  // |z⟩, outside macOS.
   raw_ptr<views::View> content = nullptr;
   raw_ptr<views::View> edge = nullptr;
   bool pinned = true;
@@ -3176,6 +3364,16 @@ class ShellClientView final : public views::ClientView {
     if (result != HTCLIENT || !root || !parent()) return result;
     gfx::Point local = point;
     views::View::ConvertPointToTarget(parent(), root, &local);
+#if BUILDFLAG(IS_WIN)
+    // The client area covers the system titlebar, so its top resize band too;
+    // the caption buttons stay clickable up to the edge, as in the system frame.
+    if (const int band = WorkspaceResizeBorderThickness(GetWidget());
+        local.y() < band && !(root->caption && root->caption->bounds().Contains(local))) {
+      if (local.x() < band) return HTTOPLEFT;
+      if (local.x() >= root->width() - band) return HTTOPRIGHT;
+      return HTTOP;
+    }
+#endif
     return root->IsDraggable(local) ? HTCAPTION : result;
   }
 };
@@ -3186,12 +3384,14 @@ void RegisterKeys(views::Widget* widget, ui::AcceleratorTarget* target,
                   const BrowserTools& tools, bool panel = false, bool install_native = true) {
   for (const auto& shortcut : tools.shortcuts) if (shortcut.accelerator.key_code() != ui::VKEY_UNKNOWN)
     widget->GetFocusManager()->RegisterAccelerator(shortcut.accelerator, ui::AcceleratorManager::kHighPriority, target);
+  // Preserve Zitter's first two original chords until these actions are remapped.
+  // Not on Windows: Ctrl+Alt is AltGr there, which types characters.
+#if !BUILDFLAG(IS_WIN)
 #if BUILDFLAG(IS_MAC)
   constexpr int primary = ui::EF_COMMAND_DOWN;
 #else
   constexpr int primary = ui::EF_CONTROL_DOWN;
 #endif
-  // Preserve Zitter's first two original chords until these actions are remapped.
   const auto defaults = ArcShortcuts();
   for (int i = 0; i < 2; ++i) {
     const auto id = "space" + std::to_string(i + 1);
@@ -3200,6 +3400,7 @@ void RegisterKeys(views::Widget* widget, ui::AcceleratorTarget* target,
     if (current != tools.shortcuts.end() && current->accelerator == original->accelerator)
       widget->GetFocusManager()->RegisterAccelerator(ui::Accelerator(static_cast<ui::KeyboardCode>(ui::VKEY_1 + i), primary | ui::EF_ALT_DOWN), ui::AcceleratorManager::kHighPriority, target);
   }
+#endif
   widget->GetFocusManager()->RegisterAccelerator(ui::Accelerator(ui::VKEY_ESCAPE, 0), ui::AcceleratorManager::kHighPriority, target);
 #if BUILDFLAG(IS_MAC)
   if (install_native) InstallWorkspaceKeyboardRouting(widget, panel);
@@ -3334,6 +3535,13 @@ std::unique_ptr<views::View> WorkspaceShell::Build() {
   edge_ = root->AddChildView(std::make_unique<EdgeView>(
       base::BindRepeating(&WorkspaceShell::ShowSidebar, weak)));
   root->header = header;
+#if BUILDFLAG(IS_WIN)
+  root->caption = root->AddChildView(std::make_unique<CaptionButtons>());
+#endif
+#if !BUILDFLAG(IS_MAC)
+  root->app_menu = root->AddChildView(std::make_unique<AppMenuButton>(base::BindRepeating(
+      [](base::WeakPtr<WorkspaceShell> shell, ShellRoot* root) { if (shell) shell->ShowAppMenu(root->app_menu); }, weak, root.get())));
+#endif
   root->content = content_host_;
   root->edge = edge_;
   return root;
@@ -3959,7 +4167,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         // only if the saved state differs, never as a side effect of loading.
         if (shell->pinned_ && !shell->sidebar_visible()) shell->ShowSidebar();
         if (!shell->pinned_ && shell->sidebar_visible()) shell->sidebar_widget_->Hide();
-        // Development: --zitter-open-panel=space|sidebar|palette|address|settings|profiles|downloads|extensions|extension-popup|menu|dialog|toast opens
+        // Development: --zitter-open-panel=space|sidebar|palette|address|settings|profiles|downloads|extensions|extension-popup|menu|app-menu|dialog|toast opens
         // that view once the window is up, so UI checks can screenshot it without
         // driving the mouse.
         if (const std::string panel = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-open-panel"); !panel.empty())
@@ -3983,6 +4191,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
                 else if (panel == "drop") shell->ShowSplitDrop(shell->state_.split_visible?1:0,u"Google");
                 else if (panel == "add") {shell->ShowSidebar();shell->sidebar_widget_->LayoutRootViewIfNecessary();shell->ShowAddMenu();}
                 else if (panel == "menu") {shell->context_tab_=shell->state_.active_tab;shell->context_pin_.clear();shell->ShowTabMenu(shell->widget_->GetWindowBoundsInScreen().origin()+gfx::Vector2d(80,140),ui::mojom::MenuSourceType::kMouse);}
+                else if (panel == "app-menu" && shell->root_) shell->ShowAppMenu(static_cast<ShellRoot*>(shell->root_.get())->app_menu);
                 else if (panel == "toast") shell->ShowToast(T(u"Usunięto folder "), u"Projekty", base::DoNothing());
               }, shell->weak_factory_.GetWeakPtr(), panel),
               base::Seconds(1));
@@ -6591,6 +6800,11 @@ void WorkspaceShell::ApplyTheme(bool refresh_controls) {
     }
 #if BUILDFLAG(IS_MAC)
     SetWorkspaceNativeAppearance(panel, mode ? std::optional<bool>(*mode == ui::ColorProviderKey::ColorMode::kDark) : std::nullopt);
+#elif BUILDFLAG(IS_WIN)
+    // Only the main window has a system frame; its border follows the theme.
+    if (panel == widget_.get())
+      SetWorkspaceNativeAppearance(panel, mode ? *mode == ui::ColorProviderKey::ColorMode::kDark
+          : ui::NativeTheme::GetInstanceForNativeUi()->preferred_color_scheme() == ui::NativeTheme::PreferredColorScheme::kDark);
 #endif
   }
   for (auto* surface : {settings_root_.get(), profiles_root_.get(), import_root_.get(),
@@ -7912,7 +8126,67 @@ void WorkspaceShell::ShowAddMenu() {
   add_menu_runner_->RunMenuAt(sidebar_widget_.get(), nullptr, add_button_->GetBoundsInScreen(), views::MenuAnchorPosition::kTopRight,
       ui::mojom::MenuSourceType::kMouse, gfx::NativeView(), ZitterMenuCorners());
 }
-void WorkspaceShell::ToggleSidebar() {
+void WorkspaceShell::ShowAppMenu(views::View* anchor) {
+#if BUILDFLAG(IS_MAC)
+  (void)anchor;
+#else
+  if (!anchor || !widget_ || (app_menu_runner_ && app_menu_runner_->IsRunning())) return;
+  app_menu_ = nullptr;
+  auto delegate = std::make_unique<AppMenuDelegate>(
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, std::string action) {
+        if (shell && shell->callbacks_.run_shortcut) shell->callbacks_.run_shortcut.Run(std::move(action));
+      }, weak_factory_.GetWeakPtr()));
+  auto& commands = delegate->commands();
+  auto model = std::make_unique<DesignMenuModel>(delegate.get());
+  // Each command shows its shortcut's current chord as the design's Kbd words
+  // ("Ctrl+,"), not Chromium's accelerator names.
+  auto chord = [&](const std::string& action) {
+    const int id = AppMenuDelegate::kBase + static_cast<int>(commands.size()) - 1;
+    for (const auto& shortcut : tools_.shortcuts)
+      if (shortcut.id == action && shortcut.accelerator.key_code() != ui::VKEY_UNKNOWN)
+        model->SetMinorText(*model->GetIndexOfCommandId(id), base::UTF8ToUTF16(DisplayShortcut(shortcut.accelerator)));
+  };
+  auto add = [&](std::string action, std::u16string label) {
+    model->AddItem(AppMenuDelegate::kBase + static_cast<int>(commands.size()), std::move(label));
+    commands.push_back({action});
+    chord(action);
+  };
+  add("new_tab", T(u"Nowa karta"));
+  add("address", T(u"Otwórz adres…"));
+  add("palette", T(u"Command Center…"));
+  model->AddSeparator(ui::NORMAL_SEPARATOR);
+  add("sidebar", T(u"Pokaż lub ukryj karty"));
+  add("history", T(u"Historia…"));
+  add("timeline", T(u"Time Machine…"));
+  add("downloads", T(u"Pobrania…"));
+  add("passwords", T(u"Hasła tego profilu…"));
+  add("settings", T(u"Ustawienia…"));
+  if (!state_.workspaces.empty()) {
+    model->AddSeparator(ui::NORMAL_SEPARATOR);
+    model->AddTitle(T(u"Przestrzenie"));
+    for (size_t i = 0; i < state_.workspaces.size() && i < 9; ++i) {
+      const auto& space = state_.workspaces[i];
+      model->AddCheckItem(AppMenuDelegate::kBase + static_cast<int>(commands.size()), base::UTF8ToUTF16(space.name));
+      commands.push_back({"space" + std::to_string(i + 1), space.id == state_.workspace_id});
+      chord(commands.back().action);
+    }
+  }
+  model->AddSeparator(ui::NORMAL_SEPARATOR);
+  add("quit", T(u"Zamknij Zitter"));
+  app_menu_delegate_ = std::move(delegate);
+  app_menu_ = std::move(model);
+  auto* button = views::AsViewClass<AppMenuButton>(anchor);
+  if (button) button->SetOpen(true);
+  app_menu_runner_ = std::make_unique<views::MenuRunner>(app_menu_.get(), kZitterMenuRun,
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+        if (shell && shell->root_)
+          if (auto* menu = views::AsViewClass<AppMenuButton>(static_cast<ShellRoot*>(shell->root_.get())->app_menu)) menu->SetOpen(false);
+      }, weak_factory_.GetWeakPtr()));
+  app_menu_runner_->RunMenuAt(widget_.get(), nullptr, anchor->GetBoundsInScreen(), views::MenuAnchorPosition::kTopRight,
+      ui::mojom::MenuSourceType::kMouse, gfx::NativeView(), ZitterMenuCorners());
+#endif
+}
+bool WorkspaceShell::app_menu_running_for_testing() const { return app_menu_runner_ && app_menu_runner_->IsRunning(); }void WorkspaceShell::ToggleSidebar() {
   if (sidebar_visible()) {
     if (pinned_) SetPinned(false);
     sidebar_widget_->Hide();
@@ -8230,6 +8504,34 @@ void WorkspaceShell::RequestRemoveWorkspace(std::string id) {
 #if BUILDFLAG(IS_MAC)
   InstallWorkspaceKeyboardRouting(prompt, true);
 #endif
+  PreparePanelText(prompt->GetRootView());
+  prompt->Show();
+}
+void WorkspaceShell::ConfirmQuitWithDownloads(int count, base::OnceCallback<void(bool)> answer) {
+  if (!widget_ || !widget_->IsVisible()) { std::move(answer).Run(true); return; }
+  if (quit_dialog_) quit_dialog_->CloseNow();
+  // Design: Dialog — quitting cancels the downloads, so it is the danger action
+  // and waiting is the default.
+  auto dialog = std::make_unique<SceneModalDialog>(std::make_unique<SceneParagraph>(
+      TF(u"Trwa pobieranie: {}. Zamknięcie Zitter je przerwie.", {CountOf(count, T(u"plik"), T(u"pliki"), T(u"plików"))}), 0, false, kMuted), false);
+  dialog->SetTitle(T(u"Zamknąć Zitter w trakcie pobierania?"));
+  dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk) | static_cast<int>(ui::mojom::DialogButton::kCancel));
+  dialog->SetButtonLabel(ui::mojom::DialogButton::kOk, T(u"Zamknij i przerwij"));
+  dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel, T(u"Poczekaj"));
+  dialog->SetDefaultButton(static_cast<int>(ui::mojom::DialogButton::kCancel));
+  auto [accept, cancel] = base::SplitOnceCallback(std::move(answer));
+  dialog->SetAcceptCallback(base::BindOnce([](base::OnceCallback<void(bool)> answer) {
+    // After the dialog has closed: quitting tears the window down.
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(std::move(answer), true));
+  }, std::move(accept)));
+  dialog->SetCancelCallback(base::BindOnce(std::move(cancel), false));
+  quit_dialog_delegate_ = std::move(dialog);
+  auto* prompt = views::DialogDelegate::CreateDialogWidget(quit_dialog_delegate_.get(), widget_->GetNativeWindow(), widget_->GetNativeView());
+  quit_dialog_.reset(prompt);
+  prompt->MakeCloseSynchronous(base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, views::Widget::ClosedReason) {
+    if (shell) { shell->quit_dialog_.reset(); shell->quit_dialog_delegate_.reset(); }
+  }, weak_factory_.GetWeakPtr()));
+  prompt->SetColorModeOverride(widget_->color_mode_override());
   PreparePanelText(prompt->GetRootView());
   prompt->Show();
 }
@@ -8572,6 +8874,9 @@ void WorkspaceShell::OpenEmojiPicker(){
   emoji_input_->SetText(u"");emoji_input_->RequestFocus();
 #if BUILDFLAG(IS_MAC)
   ShowCharacterPalette();
+#else
+  // The system emoji panel (Win+. on Windows) types into the focused field.
+  if(ui::IsEmojiPanelSupported())ui::ShowEmojiPanel();
 #endif
 }
 bool WorkspaceShell::HandleProfileEditorKey(bool rename,const ui::KeyEvent& event){

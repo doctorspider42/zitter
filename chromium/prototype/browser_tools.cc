@@ -46,7 +46,12 @@ std::vector<Shortcut> ArcShortcuts() {
   add("reopen", T(u"Przywróć zamkniętą kartę"), ui::VKEY_T, p | ui::EF_SHIFT_DOWN);
   add("sidebar", T(u"Pokaż / ukryj panel"), ui::VKEY_S, p);
   add("reload", T(u"Odśwież stronę"), ui::VKEY_R, p);
+#if BUILDFLAG(IS_WIN)
+  // Design: Teksty i skróty. Ctrl+Y is Redo on Windows.
+  add("history", T(u"Historia przeglądania"), ui::VKEY_H, p);
+#else
   add("history", T(u"Historia przeglądania"), ui::VKEY_Y, p);
+#endif
   add("downloads", T(u"Pobrania"), ui::VKEY_J, p);
   add("extensions", T(u"Rozszerzenia"), ui::VKEY_E, p | ui::EF_SHIFT_DOWN);
   add("settings", T(u"Preferencje"), ui::VKEY_OEM_COMMA, p);
@@ -62,11 +67,20 @@ std::vector<Shortcut> ArcShortcuts() {
   add("fourth_pane", T(u"Aktywuj czwarty panel podziału"), ui::VKEY_4, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN);
   add("back", T(u"Wstecz"), ui::VKEY_LEFT, p);
   add("forward", T(u"Dalej"), ui::VKEY_RIGHT, p);
+#if BUILDFLAG(IS_WIN)
+  add("timeline", T(u"Time Machine przestrzeni"), ui::VKEY_H, p | ui::EF_SHIFT_DOWN);
+#else
   add("timeline", T(u"Time Machine przestrzeni"), ui::VKEY_Y, p | ui::EF_SHIFT_DOWN);
+#endif
   add("snapshot", T(u"Zapisz snapshot przestrzeni"), ui::VKEY_S, p | ui::EF_SHIFT_DOWN);
   for (int i = 0; i < 9; ++i) {
     add("space" + std::to_string(i + 1), TF(u"Przestrzeń {}", {base::UTF8ToUTF16(std::to_string(i + 1))}),
+#if BUILDFLAG(IS_WIN)
+        // Alt+N: Ctrl+Alt is AltGr in Polish and other layouts.
+        static_cast<ui::KeyboardCode>(ui::VKEY_1 + i), ui::EF_ALT_DOWN);
+#else
         static_cast<ui::KeyboardCode>(ui::VKEY_1 + i), ui::EF_CONTROL_DOWN | (p == ui::EF_CONTROL_DOWN ? ui::EF_ALT_DOWN : 0));
+#endif
   }
   for (int i = 0; i < 9; ++i)
     add("tab" + std::to_string(i + 1), TF(u"Przejdź do karty {}", {base::UTF8ToUTF16(std::to_string(i + 1))}), static_cast<ui::KeyboardCode>(ui::VKEY_1 + i), p);
@@ -106,9 +120,20 @@ std::string FormatShortcut(const ui::Accelerator& accelerator) {
   return result;
 }
 // The chord as the interface shows it in `Kbd`: macOS symbols in their system
-// order (⌃⌥⇧⌘), named keys as symbols or lowercase words.
+// order (⌃⌥⇧⌘), named keys as symbols or lowercase words. Elsewhere keys are
+// words joined by "+" (design: Teksty i skróty), arrows stay arrows.
 std::string DisplayShortcut(const ui::Accelerator& accelerator) {
   if (accelerator.key_code() == ui::VKEY_UNKNOWN) return "";
+#if !BUILDFLAG(IS_MAC)
+  if (accelerator.key_code() == ui::VKEY_LEFT || accelerator.key_code() == ui::VKEY_RIGHT ||
+      accelerator.key_code() == ui::VKEY_UP || accelerator.key_code() == ui::VKEY_DOWN) {
+    std::string result = FormatShortcut(ui::Accelerator(ui::VKEY_A, accelerator.modifiers()));
+    result.pop_back();
+    const auto key = accelerator.key_code();
+    return result + (key == ui::VKEY_LEFT ? "←" : key == ui::VKEY_RIGHT ? "→" : key == ui::VKEY_UP ? "↑" : "↓");
+  }
+  return FormatShortcut(accelerator);
+#else
   std::string result;
   const int mods = accelerator.modifiers();
   if (mods & ui::EF_CONTROL_DOWN) result += "⌃";
@@ -128,6 +153,7 @@ std::string DisplayShortcut(const ui::Accelerator& accelerator) {
   }
   for (const auto& entry : kKeys) if (entry.code == key) { result += entry.name; break; }
   return result;
+#endif
 }
 std::optional<ui::Accelerator> ParseShortcut(std::string text) {
   if (text.empty()) return ui::Accelerator(ui::VKEY_UNKNOWN, 0);

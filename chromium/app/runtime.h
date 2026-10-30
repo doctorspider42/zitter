@@ -50,6 +50,10 @@ class Runtime final : public ChromeBrowserMainExtraParts,
   void WindowReady();
   void RequestClose();
   void Close();
+#if !BUILDFLAG(IS_MAC)
+  // Answer to the in-progress downloads prompt; quitting resumes Close().
+  void DownloadsAnswered(bool quit);
+#endif
   void ReleaseProfiles();
   std::unique_ptr<ScopedKeepAlive> keep_alive_;
   std::unique_ptr<prototype::WorkspaceWindow> window_;
@@ -61,6 +65,9 @@ class Runtime final : public ChromeBrowserMainExtraParts,
   // Stock windows awaiting closure; dropped if they close first.
   base::flat_set<BrowserWindowInterface*> stock_windows_;
   bool closing_ = false;
+#if !BUILDFLAG(IS_MAC)
+  bool downloads_confirmed_ = false;
+#endif
   base::WeakPtrFactory<Runtime> weak_factory_{this};
 };
 }  // namespace zitter
