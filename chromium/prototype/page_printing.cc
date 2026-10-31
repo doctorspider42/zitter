@@ -19,6 +19,8 @@
 #include "chrome/browser/download/download_prefs.h"
 #include "chrome/browser/printing/print_view_manager.h"
 #include "chrome/browser/printing/print_view_manager_common.h"
+#include "chrome/browser/printing/printing_init.h"
+#include "base/task/sequenced_task_runner.h"
 #include "chrome/browser/printing/pwg_raster_converter.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/select_file_policy/chrome_select_file_policy.h"
@@ -142,7 +144,36 @@ class PdfSaver final : public ui::SelectFileDialog::Listener {
   base::OnceCallback<void(std::u16string)> done_;
   scoped_refptr<ui::SelectFileDialog> dialog_;
 };
+// Chrome's print manager, except that a page's window.print() opens Zitter's
+// sheet: the page's call ends at once, as a cancelled dialog, and the sheet
+// prints a fresh copy. Ctrl+Shift+P's system dialog is unchanged.
+class ZitterPrintManager final : public printing::PrintViewManager {
+ public:
+  ZitterPrintManager(content::WebContents* page, base::RepeatingCallback<void(content::WebContents*)> scripted)
+      : printing::PrintViewManager(page), scripted_(std::move(scripted)) {}
+  void ScriptedPrint(printing::mojom::ScriptedPrintParamsPtr params, ScriptedPrintCallback callback) override {
+    if (!params->is_scripted || !scripted_) {
+      printing::PrintViewManager::ScriptedPrint(std::move(params), std::move(callback));
+      return;
+    }
+    std::move(callback).Run(nullptr);
+    // After the renderer has left its print() call.
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(
+        [](base::RepeatingCallback<void(content::WebContents*)> scripted, base::WeakPtr<content::WebContents> page) {
+          if (page) scripted.Run(page.get());
+        }, scripted_, web_contents()->GetWeakPtr()));
+  }
+
+ private:
+  base::RepeatingCallback<void(content::WebContents*)> scripted_;
+};
 }  // namespace
+
+void AttachPagePrinting(content::WebContents* page, base::RepeatingCallback<void(content::WebContents*)> scripted) {
+  if (!printing::PrintViewManager::FromWebContents(page))
+    page->SetUserData(printing::PrintViewManager::UserDataKey(), std::make_unique<ZitterPrintManager>(page, std::move(scripted)));
+  printing::InitializePrintingForWebContents(page);
+}
 
 PagePrinter::PagePrinter(content::WebContents* page) : content::WebContentsObserver(page) {}
 PagePrinter::~PagePrinter() = default;

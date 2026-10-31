@@ -1,5 +1,4 @@
 #include "chromium/prototype/page_services.h"
-#include "chrome/browser/printing/printing_init.h"
 #include "components/find_in_page/find_tab_helper.h"
 #include "chromium/prototype/browser_data.h"
 #include "chromium/prototype/i18n.h"
@@ -133,9 +132,8 @@ PageServices::PageServices(content::WebContents* contents)
   sessions::SessionTabHelper::CreateForWebContents(contents, base::BindRepeating(
       [](content::WebContents*) -> sessions::SessionTabHelperDelegate* { return nullptr; }));
   HistoryTabHelper::CreateForWebContents(contents);
-  // Find in page and printing (design: Find & Print).
+  // Find in page (design: Find & Print); printing comes with the window.
   find_in_page::FindTabHelper::CreateForWebContents(contents);
-  printing::InitializePrintingForWebContents(contents);
   // Extensions see the page as a tab of its own profile: content scripts,
   // activeTab, the action runner, webNavigation (design: Extensions).
   extensions::ChromeExtensionWebContentsObserver::CreateForWebContents(contents);

@@ -386,12 +386,14 @@ Notes:
     - Save as PDF writes it after a save dialog.
     - Ctrl+Shift+P opens the system dialog.
   - Chrome's own Print Preview needs a Chrome browser window, so Zitter starts
-    with `--disable-print-preview`, and a page's `window.print()` gets the
-    system dialog.
-  - Checked on Windows: the preview, Save as PDF, and a real job through
-    Microsoft Print to PDF.
-  - The match highlights keep Blink's colors (yellow and orange), not the
-    design's lime and violet.
+    with `--disable-print-preview`. A page's `window.print()` reaches
+    `ZitterPrintManager` (a `PrintViewManager`), which ends the page's call and
+    opens the sheet for the page on screen.
+  - Match highlights take the design's colors: the current one on `zing`, the
+    others on light violet. The overlay patches Blink's `layout_theme.cc` for
+    this. The scrollbar's match ticks keep Chromium's color.
+  - Checked on Windows: the preview, Save as PDF, `window.print()`, and a real
+    job through Microsoft Print to PDF.
 
 ## Status
 

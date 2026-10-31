@@ -148,6 +148,7 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "ui/shell_dialogs/fake_select_file_dialog.h"
+#include "chrome/common/chrome_switches.h"
 #include "components/find_in_page/find_tab_helper.h"
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
@@ -9466,6 +9467,37 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PrintSheetPreviewsAndSavesPdf)
   ASSERT_TRUE(base::test::RunUntil([&] { return base::ReadFileToString(path, &pdf) && !pdf.empty(); }));
   EXPECT_TRUE(pdf.starts_with("%PDF-"));
   ui::SelectFileDialog::SetFactory(nullptr);
+}
+
+// Zitter starts with Chrome's Print Preview off (Runtime::PreBrowserStart).
+class ZitterPrintBrowserTest : public ZitterProfilesBrowserTest {
+ public:
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    ZitterProfilesBrowserTest::SetUpCommandLine(command_line);
+    command_line->AppendSwitch(switches::kDisablePrintPreview);
+  }
+};
+
+// A page's own window.print() opens Zitter's sheet, not the system dialog;
+// a page in the background opens nothing.
+IN_PROC_BROWSER_TEST_F(ZitterPrintBrowserTest, PagePrintOpensTheSheet) {
+  base::test::ScopedRunLoopTimeout timeout(FROM_HERE, base::Seconds(30));
+  ASSERT_TRUE(window_->Select("work"));
+  auto* page = window_->contents("work");
+  ASSERT_TRUE(content::NavigateToURL(page, GURL("data:text/html,<p>print me</p>")));
+  auto* shell = window_->shell();
+  ASSERT_TRUE(content::ExecJs(page, "window.print(); true"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->print_visible(); }));
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->print_ready_for_testing(); }));
+  EXPECT_EQ(1u, shell->print_preview_pages_for_testing());
+  shell->HidePrint();
+  ASSERT_TRUE(window_->Select("personal"));
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("personal"), GURL("data:text/html,<p>here</p>")));
+  ASSERT_TRUE(content::ExecJs(page, "window.print(); true"));
+  base::RunLoop idle;
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE, idle.QuitClosure(), base::Seconds(1));
+  idle.Run();
+  EXPECT_FALSE(shell->print_visible());
 }
 
 } // namespace zitter::prototype

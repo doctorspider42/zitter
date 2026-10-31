@@ -747,6 +747,22 @@ def patch_direct_write(text):
         raise ValueError("Unexpected upstream DirectWrite sideload layout; review the patch")
     return text.replace(DIRECT_WRITE_ANCHOR, DIRECT_WRITE_ANCHOR + DIRECT_WRITE_HOOK, 1)
 
+# Find in page (design: Find & Print): the current match on the design's lime
+# `zing`, the other matches on its light violet, instead of Blink's orange and
+# yellow. Forced colors keep the system's highlight.
+SEARCH_HIGHLIGHT_FILE = "third_party/blink/renderer/core/layout/layout_theme.cc"
+SEARCH_HIGHLIGHT_OLD = ('    return Color(255, 150, 50);  // Orange.\n'
+                        '  }\n'
+                        '  return Color(255, 255, 0);  // Yellow.\n')
+SEARCH_HIGHLIGHT_NEW = ('    return Color(0xD7, 0xFF, 0x3F);  // Zitter: `zing`.\n'
+                        '  }\n'
+                        '  return Color(0xE4, 0xE1, 0xFF);  // Zitter: light violet.\n')
+
+
+def patch_search_highlight(text):
+    return _patch_once(text, SEARCH_HIGHLIGHT_OLD, SEARCH_HIGHLIGHT_NEW, "Zitter: `zing`", "find-in-page highlight")
+
+
 # Chromium on Windows installs the extensions other apps register for Google
 # Chrome (HKCU/HKLM Software\Google\Chrome\Extensions). They are not Zitter's:
 # zitter.exe passes this switch so that provider is never created.
@@ -860,6 +876,9 @@ def install(checkout, dry_run=False):
     direct_write = checkout / DIRECT_WRITE_FILE
     direct_write_original = read(direct_write)
     direct_write_patched = patch_direct_write(direct_write_original)
+    search_highlight = checkout / SEARCH_HIGHLIGHT_FILE
+    search_highlight_original = read(search_highlight)
+    search_highlight_patched = patch_search_highlight(search_highlight_original)
     window_icon = checkout / WINDOW_ICON_FILE
     window_icon_original = read(window_icon)
     window_icon_patched = patch_window_icon(window_icon_original)
@@ -914,6 +933,8 @@ def install(checkout, dry_run=False):
                 write(direct_write, direct_write_patched)
             if window_icon_patched != window_icon_original:
                 write(window_icon, window_icon_patched)
+            if search_highlight_patched != search_highlight_original:
+                write(search_highlight, search_highlight_patched)
             for path, text in extensions_logo_patched.items():
                 if text != extensions_logo[path]:
                     write(path, text)

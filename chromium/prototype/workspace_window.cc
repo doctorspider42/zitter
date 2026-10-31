@@ -777,6 +777,11 @@ std::u16string WorkspaceWindow::TabTitle(const Host& host, views::WebView* view)
 
 void WorkspaceWindow::PreparePage(content::WebContents* page, std::string source_hint) {
   PageServices::Attach(page);
+  AttachPagePrinting(page, base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window, content::WebContents* page) {
+    // Only the page on screen opens the sheet.
+    if (window && page == (window->peek_contents() ? window->peek_contents() : window->contents(window->active_id())))
+      window->StartPrint(page);
+  }, weak_factory_.GetWeakPtr()));
   PageDialogs::Attach(page);
   PageMediaAccess::Attach(page);
   LinkNavigation::Attach(page, base::BindRepeating(
@@ -3125,8 +3130,8 @@ void WorkspaceWindow::OnFindTabHelperDestroyed(find_in_page::FindTabHelper*) {
   if (shell_) shell_->ResetFind();
 }
 
-bool WorkspaceWindow::StartPrint() {
-  auto* page = peek_contents() ? peek_contents() : contents(active_id());
+bool WorkspaceWindow::StartPrint(content::WebContents* page) {
+  if (!page) page = peek_contents() ? peek_contents() : contents(active_id());
   if (!page || !printing::PrintViewManager::FromWebContents(page)) return false;
   // A sheet already open reports its close first, for its own printer.
   shell_->HidePrint();

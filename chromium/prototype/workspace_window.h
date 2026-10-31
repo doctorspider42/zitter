@@ -414,7 +414,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   gfx::Rect FindBounds() const;
   void OnFindResultAvailable(content::WebContents* page) override;
   void OnFindTabHelperDestroyed(find_in_page::FindTabHelper* helper) override;
-  bool StartPrint();
+  bool StartPrint(content::WebContents* page = nullptr);
   raw_ptr<content::WebContents> find_page_ = nullptr;
   base::ScopedObservation<find_in_page::FindTabHelper, find_in_page::FindResultObserver> find_observation_{this};
   std::unique_ptr<PagePrinter> printer_;

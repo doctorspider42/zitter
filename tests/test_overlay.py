@@ -53,6 +53,9 @@ def seed_extensions_logo(checkout):
     direct_write = checkout / overlay.DIRECT_WRITE_FILE
     direct_write.parent.mkdir(parents=True, exist_ok=True)
     direct_write.write_text(overlay.DIRECT_WRITE_ANCHOR, newline="\n")
+    search_highlight = checkout / overlay.SEARCH_HIGHLIGHT_FILE
+    search_highlight.parent.mkdir(parents=True, exist_ok=True)
+    search_highlight.write_text(overlay.SEARCH_HIGHLIGHT_OLD, newline="\n")
     icon.write_text('#else\nIDR_MAINFRAME       ICON                        "theme\\chromium\\win\\chromium.ico"\n#endif\n', newline="\n")
 
 
@@ -164,6 +167,13 @@ class OverlayTests(unittest.TestCase):
         self.assertTrue(sorted((overlay.ROOT / "assets/fonts").glob("*.ttf")))
         with self.assertRaises(ValueError):
             overlay.patch_direct_write("unknown upstream layout")
+    def test_search_highlight_takes_the_design_colors_once(self):
+        patched = overlay.patch_search_highlight("before\n" + overlay.SEARCH_HIGHLIGHT_OLD + "after\n")
+        self.assertIn("0xD7, 0xFF, 0x3F", patched)
+        self.assertNotIn("Orange", patched)
+        self.assertEqual(patched, overlay.patch_search_highlight(patched))
+        with self.assertRaises(ValueError):
+            overlay.patch_search_highlight("unknown upstream layout")
     def test_windows_icon_is_zitter_in_chromes_resource_slot(self):
         original = ('#else\n'
                     'IDR_MAINFRAME       ICON                        "theme\\chromium\\win\\chromium.ico"\n'

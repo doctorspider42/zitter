@@ -29,6 +29,10 @@ struct PrintOptions {
   Margins margins = Margins::kDefault;
 };
 
+// Chromium's printing for a page, with a page's own window.print() handed to
+// `scripted` (Zitter's print sheet) instead of the system dialog.
+void AttachPagePrinting(content::WebContents* page, base::RepeatingCallback<void(content::WebContents*)> scripted);
+
 struct PrinterChoice {
   std::string name;
   std::u16string label;
