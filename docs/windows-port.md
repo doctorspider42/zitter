@@ -372,6 +372,9 @@ Notes:
   A chosen browser opens the import panel with it picked. Checked end to end on
   a fresh profile: rename and color saved, Chrome's two profiles imported as
   spaces, onboarding complete.
+- Web notifications: a page's request goes through Zitter's site permission
+  prompt, and once allowed `new Notification(…)` shows as a native Windows
+  toast (Chromium's Windows notification platform, attributed to the site).
 - Not in Zitter on any system yet: find in page and printing.
 
 ## Status
