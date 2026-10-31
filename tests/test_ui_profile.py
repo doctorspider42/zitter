@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+import struct
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
@@ -45,6 +46,25 @@ class ProfileTests(unittest.TestCase):
     def test_ninja_escaped_bundle_names(self):
         self.assertEqual(audit_licenses.ninja_tokens('Chromium$ Framework.framework/Chromium$ Framework lib.a'),
                          ['Chromium Framework.framework/Chromium Framework', 'lib.a'])
+
+    def test_pe_imports_include_delay_loads(self):
+        # A PE32+ image with one section at RVA 0x1000 (file offset 0x200)
+        # holding an import descriptor and a delay-load descriptor.
+        data = bytearray(0x400)
+        data[0:2] = b'MZ'
+        struct.pack_into('<I', data, 0x3c, 0x40)
+        data[0x40:0x44] = b'PE\0\0'
+        struct.pack_into('<HH12xH', data, 0x44, 0x8664, 1, 240)
+        optional = 0x58
+        struct.pack_into('<H', data, optional, 0x20b)
+        struct.pack_into('<II', data, optional + 112 + 8 * 1, 0x1000, 40)
+        struct.pack_into('<II', data, optional + 112 + 8 * 13, 0x1080, 64)
+        struct.pack_into('<IIII', data, optional + 240 + 8, 0x200, 0x1000, 0x200, 0x200)
+        struct.pack_into('<I', data, 0x200 + 12, 0x1100)
+        struct.pack_into('<I', data, 0x280 + 4, 0x1110)
+        data[0x300:0x30d] = b'KERNEL32.dll\0'
+        data[0x310:0x31b] = b'dwrite.dll\0'
+        self.assertEqual(audit_licenses.pe_imports(bytes(data)), ['KERNEL32.dll', 'dwrite.dll'])
 
 
 class InstrumentsTests(unittest.TestCase):

@@ -67,12 +67,14 @@ def runtime_deps(out):
     return result.stdout.splitlines()
 
 
-def write_zip(destination, out, files, prefix=""):
+def write_zip(destination, out, files, prefix="", extras=None):
     with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED, compresslevel=6, allowZip64=True) as archive:
         for name in files:
             source = out / name
             if not source.is_file():
                 raise FileNotFoundError(f"{source} is listed but not built")
+            archive.write(source, prefix + name)
+        for name, source in (extras or {}).items():
             archive.write(source, prefix + name)
 
 
@@ -81,19 +83,22 @@ def main():
     parser.add_argument("--out", type=Path, default=SRC / "out/ZitterWin")
     parser.add_argument("--setup", type=Path, help="zitter_setup.exe; adds the installer to the output")
     parser.add_argument("--destination", type=Path, default=ROOT / "build")
+    parser.add_argument("--third-party-licenses", type=Path,
+                        help="THIRD_PARTY_LICENSES.txt from tools/audit_licenses.py, shipped beside zitter.exe")
     args = parser.parse_args()
     out = args.out.resolve()
     files = select_files(runtime_deps(out))
+    extras = {"THIRD_PARTY_LICENSES.txt": args.third_party_licenses} if args.third_party_licenses else {}
     args.destination.mkdir(parents=True, exist_ok=True)
     stem = f"Zitter-{version()}-win-x64"
     portable = args.destination / f"{stem}-portable.zip"
-    write_zip(portable, out, files, prefix="Zitter/")
-    print(f"{portable} ({len(files)} files, {portable.stat().st_size // 2**20} MB)")
+    write_zip(portable, out, files, prefix="Zitter/", extras=extras)
+    print(f"{portable} ({len(files) + len(extras)} files, {portable.stat().st_size // 2**20} MB)")
     if args.setup:
         # The installer finds the ZIP from its end: minizip skips the bytes before it.
         setup = args.destination / f"{stem}-setup.exe"
         payload = args.destination / f"{stem}-payload.zip"
-        write_zip(payload, out, files)
+        write_zip(payload, out, files, extras=extras)
         with open(setup, "wb") as target:
             for part in (args.setup, payload):
                 with open(part, "rb") as source:

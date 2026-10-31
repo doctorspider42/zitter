@@ -269,8 +269,26 @@ Notes:
   the setup, an update over it, a quiet update, a quiet removal refused while
   Zitter runs, and a quiet removal that leaves no folder, Apps & features entry,
   shortcut or browser registration.
-- Not done yet: ThinLTO/PGO, Authenticode signing (no certificate yet) and the
-  license audit, whose tool reads a macOS bundle.
+- `tools/audit_licenses.py` also reads the Windows package (its folder or ZIP):
+  binaries match their link rules by content, and their imports, delay-loaded
+  ones included, come from the PE headers. The release package
+  ([summary](licenses/windows-audit-2026-10-31.json),
+  [manifest](licenses/windows-manifest.json.gz),
+  [license texts](licenses/windows-THIRD_PARTY_LICENSES.txt.gz)) has 344
+  components, 253 with direct link evidence; 7 of 8 binaries match a link rule,
+  and the eighth, `d3dcompiler_47.dll`, is the Windows SDK's redistributable.
+  The copyleft and restricted set is the macOS one (FFmpeg LGPL, hunspell,
+  Symphonia MPL, UnRAR, WebKit LGPL) without libusb, plus three Windows-only
+  entries: DirectX Shader Compiler (`dxcompiler.dll`; its GPL-2.0 file carries
+  the autoconf exception), ISimpleDOM (MPL-1.1, accessibility interfaces) and
+  WTL (MS-PL, headers with no link evidence). `zitter.exe` imports no MSVC
+  runtime DLL: the static build carries the CRT. `package_win.py
+  --third-party-licenses` ships the collection beside `zitter.exe`.
+  ```
+  python tools/audit_licenses.py --app build/release/Zitter-0.1.0-win-x64-portable.zip --out .chromium/src/out/ZitterWinRelease --destination build/license-audit/windows
+  python tools/package_win.py --out .chromium/src/out/ZitterWinRelease --setup .chromium/src/out/ZitterWinRelease/zitter_setup.exe --destination build/release --third-party-licenses build/license-audit/windows/THIRD_PARTY_LICENSES.txt
+  ```
+- Not done yet: ThinLTO/PGO and Authenticode signing (no certificate yet).
 - The installer draws its own controls: keyboard (Tab, Enter, Space, Esc) works,
   UI Automation does not yet.
 ## Status

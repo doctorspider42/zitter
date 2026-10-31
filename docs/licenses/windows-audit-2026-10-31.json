@@ -1,0 +1,320 @@
+{
+  "chromium_revision": "1a732fcc23b20dd0bcf38f35d72c1fe1ec799d35",
+  "package": "Zitter-0.1.0-win-x64-portable.zip (static release build, out/ZitterWinRelease)",
+  "components_including_reviewed_supplements": 344,
+  "graph_components_with_direct_link_evidence": 253,
+  "packaged_files": 246,
+  "unique_binaries": 8,
+  "matched_link_rules": 7,
+  "unmatched_binaries": [
+    "d3dcompiler_47.dll"
+  ],
+  "unmatched_binaries_note": "d3dcompiler_47.dll is copied from the Windows SDK redistributables (Redist/D3D/x64), not linked by the build.",
+  "binaries": [
+    {
+      "path": "chrome_elf.dll",
+      "sha256": "ac9c3de5dce10b853bda0baaf9a6c38a79707bc2e339f03a503a69fb620d1cd0",
+      "imports": [
+        "KERNEL32.dll",
+        "VERSION.dll",
+        "ntdll.dll",
+        "ADVAPI32.dll",
+        "dbghelp.dll",
+        "WINMM.dll",
+        "SHELL32.dll",
+        "ole32.dll"
+      ]
+    },
+    {
+      "path": "d3dcompiler_47.dll",
+      "sha256": "d28d341306db9067c779d2cfe5865c3840e3a863efa47a2e0b0d4a1b906f6158",
+      "imports": [
+        "KERNEL32.dll",
+        "ADVAPI32.dll",
+        "RPCRT4.dll"
+      ]
+    },
+    {
+      "path": "dxcompiler.dll",
+      "sha256": "2d4caca3310bf529be94a6923157b1d58d202796794144c112a8b77a49e0e959",
+      "imports": [
+        "KERNEL32.dll",
+        "USER32.dll",
+        "ADVAPI32.dll",
+        "ole32.dll",
+        "OLEAUT32.dll"
+      ]
+    },
+    {
+      "path": "libEGL.dll",
+      "sha256": "fe7df12a6323c1d34d8a044aebe546e352f28f5e78b6f260368dc1973f44d5ee",
+      "imports": [
+        "KERNEL32.dll"
+      ]
+    },
+    {
+      "path": "libGLESv2.dll",
+      "sha256": "64484208324b6ac4b1d1dd574cc434e565acfaa7f84d64a80ad6b18527873b61",
+      "imports": [
+        "KERNEL32.dll"
+      ]
+    },
+    {
+      "path": "vk_swiftshader.dll",
+      "sha256": "2f2698fb66b782c322c8cf4943257d8ad70cda78d0198f829c5280bafde2c1fb",
+      "imports": [
+        "KERNEL32.dll",
+        "USER32.dll",
+        "GDI32.dll"
+      ]
+    },
+    {
+      "path": "vulkan-1.dll",
+      "sha256": "052365e8695df238b94c1d3f39d634fe34d216de43f3192c804c458f000b2c35",
+      "imports": [
+        "KERNEL32.dll",
+        "ADVAPI32.dll",
+        "CFGMGR32.dll"
+      ]
+    },
+    {
+      "path": "zitter.exe",
+      "sha256": "c192748d3ea7726d18ab3aa6280d83218cbcbfccdb469096deb06d7c02a71e6f",
+      "imports": [
+        "chrome_elf.dll",
+        "VERSION.dll",
+        "WINMM.dll",
+        "WS2_32.dll",
+        "KERNEL32.dll",
+        "CRYPT32.dll",
+        "ntdll.dll",
+        "DWrite.dll",
+        "SHELL32.dll",
+        "ADVAPI32.dll",
+        "dbghelp.dll",
+        "GDI32.dll",
+        "OLEAUT32.dll",
+        "SHLWAPI.dll",
+        "USER32.dll",
+        "ole32.dll",
+        "credui.dll",
+        "CRYPTUI.dll",
+        "dwmapi.dll",
+        "IMM32.dll",
+        "NETAPI32.dll",
+        "NDFAPI.DLL",
+        "bcrypt.dll",
+        "Secur32.dll",
+        "UIAutomationCore.DLL",
+        "WTSAPI32.dll",
+        "api-ms-win-core-handle-l1-1-0.dll",
+        "USERENV.dll",
+        "IPHLPAPI.DLL",
+        "COMCTL32.dll",
+        "SETUPAPI.dll",
+        "WINHTTP.dll",
+        "pdh.dll",
+        "PROPSYS.dll",
+        "WINTRUST.dll",
+        "urlmon.dll",
+        "MMDevAPI.DLL",
+        "d3d11.dll",
+        "dxgi.dll",
+        "MF.dll",
+        "MFPlat.DLL",
+        "MFReadWrite.dll",
+        "wevtapi.dll",
+        "OLEACC.dll",
+        "HID.DLL",
+        "api-ms-win-core-winrt-l1-1-0.dll",
+        "api-ms-win-power-base-l1-1-0.dll",
+        "api-ms-win-shcore-scaling-l1-1-1.dll",
+        "CFGMGR32.dll",
+        "api-ms-win-core-winrt-string-l1-1-0.dll",
+        "tbs.dll",
+        "api-ms-win-core-realtime-l1-1-1.dll",
+        "ncrypt.dll",
+        "api-ms-win-power-setting-l1-1-0.dll",
+        "WINSPOOL.DRV",
+        "UxTheme.dll",
+        "d3d12.dll",
+        "dcomp.dll",
+        "api-ms-win-core-synch-l1-2-0.dll",
+        "bcryptprimitives.dll",
+        "WINUSB.DLL",
+        "COMDLG32.dll",
+        "bthprops.cpl",
+        "dhcpcsvc.DLL",
+        "WININET.dll",
+        "ESENT.dll"
+      ]
+    }
+  ],
+  "copyleft_and_restricted_components": [
+    {
+      "name": "DirectX-Shader-Compiler",
+      "path": "third_party/dawn/third_party/directx-shader-compiler",
+      "license": "bcrypt-solar-designer, bsd-3-clause, gpl-2.0-with-autoconf-exception, isc, mit, ncsa, spencer-86, unicode_org, unlicense",
+      "link_inputs": [
+        "obj/third_party/dawn/third_party/directx-shader-compiler/LLVMSupport.lib",
+        "obj/third_party/dawn/third_party/directx-shader-compiler/clang_lib_analysis.lib",
+        "obj/third_party/dawn/third_party/directx-shader-compiler/clang_lib_ast.lib",
+        "obj/third_party/dawn/third_party/directx-shader-compiler/clang_lib_basic.lib",
+        "obj/third_party/dawn/third_party/directx-shader-compiler/clang_lib_codegen.lib"
+      ],
+      "link_input_count": 51
+    },
+    {
+      "name": "ffmpeg",
+      "path": "third_party/ffmpeg",
+      "license": "bsd-2-clause, bsd-3-clause, isc, lgpl-2.1, mit",
+      "link_inputs": [
+        "obj/third_party/ffmpeg/ffmpeg_internal.lib",
+        "obj/third_party/ffmpeg/ffmpeg_nasm.lib"
+      ],
+      "link_input_count": 2
+    },
+    {
+      "name": "hunspell",
+      "path": "third_party/hunspell",
+      "license": "MPL-1.1",
+      "link_inputs": [
+        "obj/third_party/hunspell/hunspell.lib"
+      ],
+      "link_input_count": 1
+    },
+    {
+      "name": "ISimpleDOM COM interfaces for accessibility",
+      "path": "third_party/isimpledom",
+      "license": "MPL-1.1",
+      "link_inputs": [
+        "obj/third_party/isimpledom/isimpledom/ISimpleDOMDocument_i.obj",
+        "obj/third_party/isimpledom/isimpledom/ISimpleDOMNode_i.obj",
+        "obj/third_party/isimpledom/isimpledom/ISimpleDOMText_i.obj"
+      ],
+      "link_input_count": 3
+    },
+    {
+      "name": "symphonia-bundle-flac",
+      "path": "third_party/rust/symphonia_bundle_flac/v0_6",
+      "license": "MPL-2.0",
+      "link_inputs": [
+        "obj/third_party/rust/symphonia_bundle_flac/v0_6/lib/libsymphonia_bundle_flac_lib.rlib"
+      ],
+      "link_input_count": 1
+    },
+    {
+      "name": "symphonia-bundle-mp3",
+      "path": "third_party/rust/symphonia_bundle_mp3/v0_6",
+      "license": "MPL-2.0",
+      "link_inputs": [
+        "obj/third_party/rust/symphonia_bundle_mp3/v0_6/lib/libsymphonia_bundle_mp3_lib.rlib"
+      ],
+      "link_input_count": 1
+    },
+    {
+      "name": "symphonia-codec-pcm",
+      "path": "third_party/rust/symphonia_codec_pcm/v0_6",
+      "license": "MPL-2.0",
+      "link_inputs": [
+        "obj/third_party/rust/symphonia_codec_pcm/v0_6/lib/libsymphonia_codec_pcm_lib.rlib"
+      ],
+      "link_input_count": 1
+    },
+    {
+      "name": "symphonia-codec-vorbis",
+      "path": "third_party/rust/symphonia_codec_vorbis/v0_6",
+      "license": "MPL-2.0",
+      "link_inputs": [
+        "obj/third_party/rust/symphonia_codec_vorbis/v0_6/lib/libsymphonia_codec_vorbis_lib.rlib"
+      ],
+      "link_input_count": 1
+    },
+    {
+      "name": "symphonia-common",
+      "path": "third_party/rust/symphonia_common/v0_6",
+      "license": "MPL-2.0",
+      "link_inputs": [
+        "obj/third_party/rust/symphonia_common/v0_6/lib/libsymphonia_common_lib.rlib"
+      ],
+      "link_input_count": 1
+    },
+    {
+      "name": "symphonia-core",
+      "path": "third_party/rust/symphonia_core/v0_6",
+      "license": "MPL-2.0",
+      "link_inputs": [
+        "obj/third_party/rust/symphonia_core/v0_6/lib/libsymphonia_core_lib.rlib"
+      ],
+      "link_input_count": 1
+    },
+    {
+      "name": "symphonia-metadata",
+      "path": "third_party/rust/symphonia_metadata/v0_6",
+      "license": "MPL-2.0",
+      "link_inputs": [
+        "obj/third_party/rust/symphonia_metadata/v0_6/lib/libsymphonia_metadata_lib.rlib"
+      ],
+      "link_input_count": 1
+    },
+    {
+      "name": "UnRAR source for decompressing .RAR and other files.",
+      "path": "third_party/unrar",
+      "license": "UnRAR",
+      "link_inputs": [
+        "obj/third_party/unrar/unrar.lib"
+      ],
+      "link_input_count": 1
+    },
+    {
+      "name": "WebKit",
+      "path": "third_party/blink",
+      "license": "BSD-2-Clause, BSD-3-Clause, LGPL-2.0, LGPL-2.1",
+      "link_inputs": [
+        "obj/third_party/blink/common/common/accelerated_static_bitmap_image_mojom_traits.obj",
+        "obj/third_party/blink/common/common/address_space_feature.obj",
+        "obj/third_party/blink/common/common/approximated_device_memory.obj",
+        "obj/third_party/blink/common/common/associated_interface_provider.obj",
+        "obj/third_party/blink/common/common/associated_interface_registry.obj"
+      ],
+      "link_input_count": 1639
+    },
+    {
+      "name": "Windows Template Library (WTL)",
+      "path": "third_party/wtl",
+      "license": "MS-PL",
+      "link_inputs": [],
+      "link_input_count": 0
+    }
+  ],
+  "metadata_diagnostics": {
+    "//chrome/chrome_elf:chrome_elf": [
+      "Errors in third_party\\crashpad\\crashpad\\third_party\\zlib\\README.crashpad:",
+      " License file not found for third_party\\crashpad\\crashpad\\third_party\\zlib\\README.crashpad>>zlib. Either add a file named LICENSE, import upstream's COPYING if available, or add a 'License File:' line to README.chromium with the appropriate paths.",
+      "Error: missing third party metadata file or licenses.py SPECIAL_CASES entry in third_party\\perfetto\\protos\\third_party\\android",
+      "Error: missing third party metadata file or licenses.py SPECIAL_CASES entry in third_party\\perfetto\\protos\\third_party\\chromium"
+    ],
+    "//third_party/dawn/third_party/directx-shader-compiler:dxcompiler": [],
+    "//third_party/swiftshader/src/Vulkan:swiftshader_libvulkan": [
+      "Error: missing third party metadata file or licenses.py SPECIAL_CASES entry in third_party\\swiftshader\\third_party\\marl"
+    ],
+    "//third_party/vulkan-loader/src:libvulkan": [],
+    "//ui/gl:dummy_libEGL": [],
+    "//ui/gl:dummy_libGLESv2": [],
+    "//zitter:zitter": [
+      "Error: missing third party metadata file or licenses.py SPECIAL_CASES entry in third_party\\catapult",
+      "Errors in third_party\\crashpad\\crashpad\\third_party\\zlib\\README.crashpad:",
+      " License file not found for third_party\\crashpad\\crashpad\\third_party\\zlib\\README.crashpad>>zlib. Either add a file named LICENSE, import upstream's COPYING if available, or add a 'License File:' line to README.chromium with the appropriate paths.",
+      "Error: missing third party metadata file or licenses.py SPECIAL_CASES entry in third_party\\perfetto\\protos\\third_party\\android",
+      "Error: missing third party metadata file or licenses.py SPECIAL_CASES entry in third_party\\perfetto\\protos\\third_party\\chromium",
+      "Error: missing third party metadata file or licenses.py SPECIAL_CASES entry in third_party\\rust",
+      "Error: missing third party metadata file or licenses.py SPECIAL_CASES entry in third_party\\rust-toolchain\\lib\\third_party\\crubit",
+      "Error: missing third party metadata file or licenses.py SPECIAL_CASES entry in third_party\\swiftshader\\third_party\\marl"
+    ]
+  },
+  "artifact_sha256": {
+    "manifest.json": "ea9a7620e03d73527760dc9ed247b151d903bb01ff648909e3e15a310fa7a8f3",
+    "THIRD_PARTY_LICENSES.txt": "5b2b71c24d0b4b34f29734b990fe130acf66853657f6f220216356f4584a2f1d"
+  },
+  "scope": "Packaged files and UUID-matched linker inputs; conservative GN shipped metadata includes build tools. Link inputs do not establish which sections survive ThinLTO/dead stripping. Diagnostics and unmatched binaries prevent treating this as a complete release compliance certificate."
+}

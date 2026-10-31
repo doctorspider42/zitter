@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Inventory a macOS bundle, concrete Ninja link inputs, and GN license candidates.
+"""Inventory a macOS bundle or a Windows package, concrete Ninja link inputs, and GN license candidates.
+
+A Windows package is the folder (or ZIP) tools/package_win.py writes; its
+binaries match their link rules by content, and prebuilt DLLs without one
+(d3dcompiler_47, dxcompiler) are listed as unmatched.
 
 Does not certify distribution compliance: metadata errors are preserved and the
 GN graph includes generators as well as runtime dependencies. Dead stripping
@@ -13,9 +17,13 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import struct
+import sys
 import tempfile
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+WINDOWS_TARGET = '//zitter:zitter'
 MAGIC = {b'\xcf\xfa\xed\xfe', b'\xfe\xed\xfa\xcf', b'\xca\xfe\xba\xbe', b'\xbe\xba\xfe\xca'}
 
 
@@ -54,9 +62,44 @@ def link_records(out):
             inputs += re.findall(r'^  rlibs = (.*)$', text[match.end():], re.M)[0].split() if re.search(r'^  rlibs = ', text[match.end():], re.M) else []
             libraries = re.search(r'^  libs = (.*)$', text[match.end():], re.M)
             if libraries:
-                inputs += [p for p in ninja_tokens(libraries[1]) if p.endswith(('.a', '.rlib', '.dylib'))]
+                inputs += [p for p in ninja_tokens(libraries[1]) if p.endswith(('.a', '.rlib', '.dylib', '.lib'))]
             records.append({'ninja': str(path.relative_to(out)), 'outputs': outputs, 'inputs': inputs})
     return records
+
+
+def pe_imports(data):
+    """DLL names a PE file imports, delay-loaded ones included."""
+    pe = struct.unpack_from('<I', data, 0x3c)[0]
+    if data[pe:pe + 4] != b'PE\0\0':
+        raise ValueError('not a PE file')
+    sections, optional_size = struct.unpack_from('<H12xH', data, pe + 6)
+    optional = pe + 24
+    directories = optional + (112 if struct.unpack_from('<H', data, optional)[0] == 0x20b else 96)
+    # Section headers: an 8-byte name, then virtual size and address, raw size and offset.
+    table = [struct.unpack_from('<IIII', data, optional + optional_size + 40 * i + 8) for i in range(sections)]
+
+    def offset(rva):
+        for size, address, raw_size, raw in table:
+            if address <= rva < address + max(size, raw_size):
+                return raw + rva - address
+        raise ValueError('RVA outside the sections')
+
+    def name(rva):
+        start = offset(rva)
+        return data[start:data.index(b'\0', start)].decode('ascii')
+
+    names = []
+    # The import table (directory 1, 20-byte descriptors, name at +12) and the
+    # delay-load table (directory 13, 32-byte descriptors, name at +4).
+    for index, stride, at in ((1, 20, 12), (13, 32, 4)):
+        rva = struct.unpack_from('<I', data, directories + 8 * index)[0]
+        if not rva:
+            continue
+        position = offset(rva)
+        while any(data[position:position + stride]):
+            names.append(name(struct.unpack_from('<I', data, position + at)[0]))
+            position += stride
+    return names
 
 
 def inventory(app):
@@ -73,8 +116,10 @@ def inventory(app):
             row = {'path': rel, 'bytes': st.st_size, 'sha256': hashes[key]}
             files.append(row)
             with p.open('rb') as stream:
-                macho = stream.read(4) in MAGIC
-            if macho:
+                head = stream.read(4)
+            if head[:2] == b'MZ' and p.suffix.lower() in ('.exe', '.dll'):
+                binaries.append({**row, 'imports': pe_imports(p.read_bytes())})
+            elif head in MAGIC:
                 uuid = subprocess.check_output(['dwarfdump', '--uuid', str(p)], text=True).splitlines()
                 # otool-classic interprets parentheses in helper filenames as archive syntax.
                 with tempfile.TemporaryDirectory(prefix='zitter-macho-') as temporary:
@@ -89,14 +134,21 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--app', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
-    parser.add_argument('--target', default='//zitter_optimized:zitter_optimized')
+    parser.add_argument('--target', help='default: //zitter_optimized:zitter_optimized, on Windows ' + WINDOWS_TARGET)
     parser.add_argument('--destination', type=Path, default=ROOT / 'build/license-audit/current')
     args = parser.parse_args()
     out, app, dest = args.out.resolve(), args.app.resolve(), args.destination.resolve()
     src = ROOT / '.chromium/src'
     dest.mkdir(parents=True, exist_ok=True)
     links = link_records(out)
-    files, binaries = inventory(app)
+    with tempfile.TemporaryDirectory(prefix='zitter-package-') as unpacked:
+        if app.suffix.lower() == '.zip':
+            with zipfile.ZipFile(app) as archive:
+                archive.extractall(unpacked)
+            app = next(Path(unpacked).iterdir())
+        windows = (app / 'zitter.exe').is_file()
+        files, binaries = inventory(app)
+    target = args.target or (WINDOWS_TARGET if windows else '//zitter_optimized:zitter_optimized')
     # Main, framework, helpers and all bundled dylibs (including dlopen-only
     # libraries). Match LC_UUID, which survives packaging/codesign.
     by_name = {}
@@ -106,13 +158,21 @@ def main():
     actual_links, unmatched = [], []
     seen = set()
     for binary in binaries:
+        if windows:
+            # Packaged files are the build's own copies: match by content.
+            matched = [link for link in by_name.get(Path(binary['path']).name, [])
+                       if any((out / o).is_file() and Path(o).name == Path(binary['path']).name
+                              and sha(out / o) == binary['sha256'] for o in link['outputs'])][:1]
+            (actual_links.extend(matched) if matched else unmatched.append(binary['path']))
+            seen.add(binary['sha256'])
+            continue
         signature = tuple(binary['uuid'])
         if signature in seen:
             continue
         seen.add(signature)
         candidates = by_name.get(Path(binary['path']).name, [])
         if binary['path'] == 'Contents/MacOS/Chromium':
-            candidates = by_name.get(args.target.split(':')[-1], [])
+            candidates = by_name.get(target.split(':')[-1], [])
         matched = []
         for link in candidates:
             for output in link['outputs']:
@@ -128,13 +188,13 @@ def main():
             actual_links.extend(matched)
         else:
             unmatched.append(binary['path'])
-    targets = {args.target, '//chrome:chrome_framework'}
+    targets = {target} if windows else {target, '//chrome:chrome_framework'}
     for link in actual_links:
         p = Path(link['ninja'])
-        targets.add('//' + str(p.parent.relative_to('obj')) + ':' + p.stem)
+        targets.add('//' + p.parent.relative_to('obj').as_posix() + ':' + p.stem)
     def scan(target):
-        result = subprocess.run(['python3', str(src / 'tools/licenses/licenses.py'), 'list',
-                                 '--gn-out-dir', str(out), '--gn-target', target, '--target-os', 'mac',
+        result = subprocess.run([sys.executable, str(src / 'tools/licenses/licenses.py'), 'list',
+                                 '--gn-out-dir', str(out), '--gn-target', target, '--target-os', 'win' if windows else 'mac',
                                  '--shipped-only', '--verbose', '--enable-warnings'], capture_output=True, text=True)
         if result.returncode:
             raise RuntimeError(target + ': ' + result.stdout + result.stderr)
@@ -144,10 +204,13 @@ def main():
         for target, (rows, errors) in pool.map(scan, sorted(targets)):
             diagnostics[target] = errors
             for row in rows:
+                # The scanner writes Windows separators on Windows; link inputs use '/'.
+                row['dir'] = row['dir'].replace('\\', '/')
+                row['License File'] = [p.replace('\\', '/') for p in row['License File']]
                 key = (row['dir'], row['Name'])
                 entry = components.setdefault(key, {**row, 'reachable_from': [], 'link_evidence': []})
                 entry['reachable_from'].append(target)
-    supplements = json.loads((ROOT / 'docs/licenses/supplements.json').read_text())
+    supplements = json.loads((ROOT / 'docs/licenses/supplements.json').read_text(encoding='utf-8'))
     for row in supplements['components']:
         components[(row['dir'], row['Name'])] = {**row, 'reachable_from': ['manual-metadata-review'], 'link_evidence': []}
     def license_path(value):
@@ -160,20 +223,20 @@ def main():
         entry['notice_files'] = [{'path': p, 'sha256': sha(src / p)} for p in notices]
         entry['license_files'] = [{'path': p, 'sha256': sha(license_path(p))} for p in entry['License File'] if p != 'NOT_SHIPPED']
     manifest = {'reviewed_supplements': supplements, 'chromium_revision': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=src, text=True).strip(),
-                'target': args.target, 'gn_args': (out / 'args.gn').read_text(),
+                'target': target, 'gn_args': (out / 'args.gn').read_text(),
                 'scope': 'Packaged files and UUID-matched linker inputs; conservative GN shipped metadata includes build tools. Link inputs do not establish which sections survive ThinLTO/dead stripping. Diagnostics and unmatched binaries prevent treating this as a complete release compliance certificate.',
                 'components': sorted(components.values(), key=lambda x: (x['Name'].lower(), x['dir'])),
                 'metadata_diagnostics': diagnostics, 'unmatched_binaries': unmatched,
                 'binaries': binaries, 'link_records': actual_links, 'files': files}
     (dest / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
-    with (dest / 'THIRD_PARTY_LICENSES.txt').open('w') as stream:
+    with (dest / 'THIRD_PARTY_LICENSES.txt').open('w', encoding='utf-8') as stream:
         stream.write('GN-reachable third-party license collection; see manifest.json for scope and unresolved metadata.\n')
         for row in manifest['components']:
             stream.write('\n' + '=' * 80 + '\n' + row['Name'] + '\n' + row['dir'] + '\n' + row['License'] + '\n')
             for file in row['License File'] + [n['path'] for n in row['notice_files']]:
                 if file != 'NOT_SHIPPED':
-                    stream.write('\n' + file + '\n' + license_path(file).read_text(errors='replace') + '\n')
-    print(json.dumps({'destination': str(dest), 'components': len(components), 'macho_files': len(binaries),
+                    stream.write('\n' + file + '\n' + license_path(file).read_text(encoding='utf-8', errors='replace') + '\n')
+    print(json.dumps({'destination': str(dest), 'components': len(components), 'binary_files': len(binaries),
                       'unique_binaries': len(seen), 'matched_link_rules': len(actual_links),
                       'unmatched_binaries': unmatched, 'targets': sorted(targets)}, indent=2))
 
