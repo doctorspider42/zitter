@@ -54,6 +54,14 @@ class QuietHandler(SimpleHTTPRequestHandler):
         pass
 
 
+def set_theme(profile, theme):
+    """Writes the theme into the profile's appearance settings, keeping the rest."""
+    path = profile / "ZitterAppearance.json"
+    settings = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    settings["theme"] = theme
+    path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app", type=Path, default=ROOT / (".chromium/src/out/ZitterWin/zitter.exe" if WINDOWS
@@ -65,6 +73,9 @@ def main():
     parser.add_argument("--open-panel", choices=["space", "sidebar", "palette", "address", "settings", "profiles", "downloads", "extensions", "extension-popup", "menu", "app-menu", "dialog", "toast", "add", "space-end", "space-new", "remove", "drop"], help="open this panel once the window is up (UI checks)")
     parser.add_argument("--load-extension", action="append", type=Path, default=[],
                         help="load an unpacked extension (UI checks of the extensions bar)")
+    parser.add_argument("--scale", type=float, help="force this device scale factor (HiDPI checks, e.g. 1.25)")
+    parser.add_argument("--theme", choices=["dark", "light", "system"],
+                        help="set the profile's theme first (Noc is dark, Papier light)")
     args = parser.parse_args()
     if WINDOWS:
         binary = args.app.resolve()
@@ -79,11 +90,15 @@ def main():
         initialize_profile(args.profile, args.port)
     except ValueError as error:
         parser.error(str(error))
+    if args.theme:
+        set_theme(args.profile, args.theme)
     server = ThreadingHTTPServer(("127.0.0.1", args.port), functools.partial(QuietHandler, directory=str(ROOT / "testdata")))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     extra = [f"--zitter-rust-raster={args.raster}"] if args.raster != "compositor" else []
     if args.open_panel:
         extra.append(f"--zitter-open-panel={args.open_panel}")
+    if args.scale:
+        extra.append(f"--force-device-scale-factor={args.scale:g}")
     if args.load_extension:
         extra.append(f"--load-extension={','.join(str(path.resolve()) for path in args.load_extension)}")
     print(f"Rust UI raster: {args.raster}; isolated profile: {args.profile.resolve()}", flush=True)

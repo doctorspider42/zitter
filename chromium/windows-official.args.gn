@@ -1,0 +1,16 @@
+# Windows x64 official build for distribution: the release build
+# (windows-release.args.gn) plus ThinLTO and PGO with Chromium's published
+# win64 profile (gclient custom var checkout_pgo_profiles). is_official_build
+# turns both on; chrome_pgo_phase 2 picks the profile up. Build it in
+# out/ZitterWinOfficial; package with tools/package_win.py --out.
+is_debug = false
+is_component_build = false
+is_official_build = true
+chrome_pgo_phase = 2
+dcheck_always_on = false
+symbol_level = 0
+blink_symbol_level = 0
+v8_symbol_level = 0
+target_cpu = "x64"
+use_remoteexec = false
+use_siso = false

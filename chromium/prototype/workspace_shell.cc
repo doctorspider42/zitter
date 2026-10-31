@@ -70,6 +70,11 @@
 #include "ui/base/models/image_model.h"
 #include "ui/gfx/vector_icon_types.h"
 #include "ui/color/color_provider.h"
+#include "ui/gfx/image/canvas_image_source.h"
+#include "components/version_info/version_info.h"
+#if !BUILDFLAG(IS_MAC)
+#include "chromium/app/zitter_version.h"
+#endif
 #include "ui/views/layout/layout_provider.h"
 #include "ui/views/style/typography.h"
 #include "ui/views/style/typography_provider.h"
@@ -498,6 +503,7 @@ void InstallMenuStyle() {
   config.minimum_text_item_height = config.minimum_container_item_height = 30;
   config.item_horizontal_padding = 8;
   config.item_corner_radius = 8;
+  config.icon_label_spacing = 8;  // `.zt-menu .zt-row` gap: `space-2`.
   config.nonrounded_menu_vertical_border_size = 4;
   ui::ColorProviderManager::Get().AppendColorProviderInitializer(base::BindRepeating(
       [](ui::ColorProvider* provider, const ui::ColorProviderKey& key) {
@@ -2115,6 +2121,16 @@ class SceneModalDialog final : public views::BubbleDialogDelegate {
     else SetContentsView(std::move(contents));
     set_margins(gfx::Insets::TLBR(std::max(0,provider->GetDistanceMetric(control?views::DISTANCE_DIALOG_CONTENT_MARGIN_TOP_CONTROL:views::DISTANCE_DIALOG_CONTENT_MARGIN_TOP_TEXT)-scroll_margin),0,std::max(0,provider->GetDistanceMetric(control?views::DISTANCE_DIALOG_CONTENT_MARGIN_BOTTOM_CONTROL:views::DISTANCE_DIALOG_CONTENT_MARGIN_BOTTOM_TEXT)-scroll_margin),0));
   }
+#if !BUILDFLAG(IS_MAC)
+  // Without an anchor, a bubble sits at the screen's origin; macOS shows these
+  // as sheets. Centered over the parent window instead.
+  gfx::Rect GetBubbleBounds() override{
+    gfx::Rect bounds=views::BubbleDialogDelegate::GetBubbleBounds();
+    if(GetAnchorView()||!GetWidget()||!GetWidget()->parent())return bounds;
+    bounds.set_origin(GetWidget()->parent()->GetWindowBoundsInScreen().CenterPoint()-gfx::Vector2d(bounds.width()/2,bounds.height()/2));
+    return bounds;
+  }
+#endif
   views::ClientView* CreateClientView(views::Widget* widget) override{
     auto* client=CreateSceneDialogClient(widget,TransferOwnershipOfContentsView());client->SetPaintToLayer(layer_type());client->layer()->SetRoundedCornerRadius(gfx::RoundedCornersF(GetCornerRadius()));client->layer()->SetIsFastRoundedCorner(true);return client;
   }
@@ -3212,8 +3228,14 @@ class CaptionButtons final : public views::View, public views::WidgetObserver {
     for (auto kind : {CaptionButton::Kind::kMinimize, CaptionButton::Kind::kMaximize, CaptionButton::Kind::kClose})
       buttons_.push_back(AddChildView(std::make_unique<CaptionButton>(kind)));
   }
-  void AddedToWidget() override { observation_.Observe(GetWidget()); }
-  void RemovedFromWidget() override { observation_.Reset(); }
+  void AddedToWidget() override {
+    observation_.Observe(GetWidget());
+    SetWorkspaceMaximizeButton(GetWidget(), buttons_[1]);
+  }
+  void RemovedFromWidget() override {
+    SetWorkspaceMaximizeButton(GetWidget(), nullptr);
+    observation_.Reset();
+  }
   void OnWidgetActivationChanged(views::Widget*, bool) override { SchedulePaintAll(); }
   void OnWidgetBoundsChanged(views::Widget*, const gfx::Rect&) override { SchedulePaintAll(); }
   views::View* maximize() { return buttons_[1]; }
@@ -5656,6 +5678,83 @@ constexpr gfx::VectorIconRep kAddSpaceRep[]={{kAddSpacePath}};
 constexpr gfx::VectorIcon kAddTabIcon(kAddTabRep,1,"zitter_add_tab");
 constexpr gfx::VectorIcon kAddFolderIcon(kAddFolderRep,1,"zitter_add_folder");
 constexpr gfx::VectorIcon kAddSpaceIcon(kAddSpaceRep,1,"zitter_add_space");
+// The |z⟩ menu's row icons (design: Main, Menu Zitter), 16 px at `.zt-icon`'s 1.6 stroke.
+constexpr gfx::PathElement kMenuNewTabPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,8,3,V_LINE_TO,13,MOVE_TO,3,8,H_LINE_TO,13};
+constexpr gfx::PathElement kMenuAddressPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,CIRCLE,7,7,4,MOVE_TO,10,10,LINE_TO,13,13};
+constexpr gfx::PathElement kMenuPalettePath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,5.5f,3.5f,LINE_TO,3,8,LINE_TO,5.5f,12.5f,MOVE_TO,10.5f,3.5f,LINE_TO,13,8,LINE_TO,10.5f,12.5f};
+constexpr gfx::PathElement kMenuSidebarPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,ROUND_RECT,2.5f,3,11,10,2,MOVE_TO,6.5f,3,V_LINE_TO,13};
+constexpr gfx::PathElement kMenuHistoryPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,CIRCLE,8,8,5.5f,MOVE_TO,8,5,V_LINE_TO,8,LINE_TO,10,9.5f};
+constexpr gfx::PathElement kMenuTimelinePath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,3,8,R_ARC_TO,5,5,0,1,0,1.5f,-3.5f,MOVE_TO,3,2.5f,V_LINE_TO,5.5f,H_LINE_TO,6,MOVE_TO,8,5.5f,V_LINE_TO,8,LINE_TO,9.5f,9.5f};
+constexpr gfx::PathElement kMenuDownloadsPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,8,2.5f,V_LINE_TO,10.5f,MOVE_TO,4.5f,7,LINE_TO,8,10.5f,LINE_TO,11.5f,7,MOVE_TO,3,13.5f,H_LINE_TO,13};
+constexpr gfx::PathElement kMenuPasswordsPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,CIRCLE,6,8,2.4f,MOVE_TO,8.4f,8,H_LINE_TO,13,MOVE_TO,11.5f,8,V_LINE_TO,10};
+constexpr gfx::PathElement kMenuSettingsPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,CIRCLE,8,8,2,MOVE_TO,8,2,V_LINE_TO,3.5f,MOVE_TO,8,12.5f,V_LINE_TO,14,
+    MOVE_TO,2,8,H_LINE_TO,3.5f,MOVE_TO,12.5f,8,H_LINE_TO,14,MOVE_TO,3.8f,3.8f,LINE_TO,4.8f,4.8f,MOVE_TO,11.2f,11.2f,LINE_TO,12.2f,12.2f,
+    MOVE_TO,3.8f,12.2f,LINE_TO,4.8f,11.2f,MOVE_TO,11.2f,4.8f,LINE_TO,12.2f,3.8f};
+constexpr gfx::PathElement kMenuAboutPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,CIRCLE,8,8,5.5f,MOVE_TO,8,7.5f,V_LINE_TO,11,MOVE_TO,8,5,H_LINE_TO,8.01f};
+constexpr gfx::PathElement kMenuQuitPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,6.5f,2.5f,H_LINE_TO,3.5f,V_LINE_TO,13.5f,H_LINE_TO,6.5f,
+    MOVE_TO,10,5,LINE_TO,13,8,LINE_TO,10,11,MOVE_TO,13,8,H_LINE_TO,6.5f};
+constexpr gfx::VectorIconRep kMenuNewTabRep[]={{kMenuNewTabPath}};
+constexpr gfx::VectorIconRep kMenuAddressRep[]={{kMenuAddressPath}};
+constexpr gfx::VectorIconRep kMenuPaletteRep[]={{kMenuPalettePath}};
+constexpr gfx::VectorIconRep kMenuSidebarRep[]={{kMenuSidebarPath}};
+constexpr gfx::VectorIconRep kMenuHistoryRep[]={{kMenuHistoryPath}};
+constexpr gfx::VectorIconRep kMenuTimelineRep[]={{kMenuTimelinePath}};
+constexpr gfx::VectorIconRep kMenuDownloadsRep[]={{kMenuDownloadsPath}};
+constexpr gfx::VectorIconRep kMenuPasswordsRep[]={{kMenuPasswordsPath}};
+constexpr gfx::VectorIconRep kMenuSettingsRep[]={{kMenuSettingsPath}};
+constexpr gfx::VectorIconRep kMenuAboutRep[]={{kMenuAboutPath}};
+constexpr gfx::VectorIconRep kMenuQuitRep[]={{kMenuQuitPath}};
+constexpr gfx::VectorIcon kMenuNewTabIcon(kMenuNewTabRep,1,"zitter_menu_new_tab");
+constexpr gfx::VectorIcon kMenuAddressIcon(kMenuAddressRep,1,"zitter_menu_address");
+constexpr gfx::VectorIcon kMenuPaletteIcon(kMenuPaletteRep,1,"zitter_menu_palette");
+constexpr gfx::VectorIcon kMenuSidebarIcon(kMenuSidebarRep,1,"zitter_menu_sidebar");
+constexpr gfx::VectorIcon kMenuHistoryIcon(kMenuHistoryRep,1,"zitter_menu_history");
+constexpr gfx::VectorIcon kMenuTimelineIcon(kMenuTimelineRep,1,"zitter_menu_timeline");
+constexpr gfx::VectorIcon kMenuDownloadsIcon(kMenuDownloadsRep,1,"zitter_menu_downloads");
+constexpr gfx::VectorIcon kMenuPasswordsIcon(kMenuPasswordsRep,1,"zitter_menu_passwords");
+constexpr gfx::VectorIcon kMenuSettingsIcon(kMenuSettingsRep,1,"zitter_menu_settings");
+constexpr gfx::VectorIcon kMenuAboutIcon(kMenuAboutRep,1,"zitter_menu_about");
+constexpr gfx::VectorIcon kMenuQuitIcon(kMenuQuitRep,1,"zitter_menu_quit");
+
+// A menu row's shortcut (design: `.zt-menu .zt-kbd`): mono 11/16 500 in
+// `ink-muted`, right-aligned, drawn as the row's minor icon since Views draws
+// minor text in the row's own font.
+class KbdImageSource final : public gfx::CanvasImageSource {
+ public:
+  KbdImageSource(std::u16string text, gfx::FontList font, SkColor color, gfx::Size size)
+      : gfx::CanvasImageSource(size), text_(std::move(text)), font_(std::move(font)), color_(color) {}
+  void Draw(gfx::Canvas* canvas) override {
+    canvas->DrawStringRectWithFlags(text_, font_, color_, gfx::Rect(size()), gfx::Canvas::TEXT_ALIGN_RIGHT);
+  }
+
+ private:
+  const std::u16string text_;
+  const gfx::FontList font_;
+  const SkColor color_;
+};
+ui::ImageModel KbdImage(std::u16string text) {
+  gfx::FontList font = DesignFont(3, 11, 500, false);
+  const gfx::Size size(gfx::GetStringWidth(text, font), 16);
+  return ui::ImageModel::FromImageGenerator(base::BindRepeating(
+      [](std::u16string text, gfx::FontList font, gfx::Size size, const ui::ColorProvider* provider) {
+        const SkColor color = provider ? provider->GetColor(ui::kColorMenuItemForegroundSecondary) : SK_ColorGRAY;
+        return gfx::CanvasImageSource::MakeImageSkia<KbdImageSource>(text, font, color, size);
+      }, text, font, size), size);
+}
+// A space's 8 px dot in its color, in the 16 px icon column (design: Main, Przestrzenie).
+class DotImageSource final : public gfx::CanvasImageSource {
+ public:
+  explicit DotImageSource(SkColor color) : gfx::CanvasImageSource(gfx::Size(16, 16)), color_(color) {}
+  void Draw(gfx::Canvas* canvas) override {
+    cc::PaintFlags flags;
+    flags.setAntiAlias(true);
+    flags.setColor(color_);
+    canvas->DrawCircle(gfx::PointF(8, 8), 4, flags);
+  }
+
+ private:
+  const SkColor color_;
+};
 constexpr int kEmojiBase = 50;
 constexpr int kProfileCommandBase = 100;
 // Rust plans use the established application command IDs; fail compilation if
@@ -8167,7 +8266,9 @@ void WorkspaceShell::ShowAppMenu(views::View* anchor) {
   app_menu_ = nullptr;
   auto delegate = std::make_unique<AppMenuDelegate>(
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, std::string action) {
-        if (shell && shell->callbacks_.run_shortcut) shell->callbacks_.run_shortcut.Run(std::move(action));
+        if (!shell) return;
+        if (action == "about") shell->ShowAbout();
+        else if (shell->callbacks_.run_shortcut) shell->callbacks_.run_shortcut.Run(std::move(action));
       }, weak_factory_.GetWeakPtr()));
   auto& commands = delegate->commands();
   auto model = std::make_unique<DesignMenuModel>(delegate.get());
@@ -8176,37 +8277,52 @@ void WorkspaceShell::ShowAppMenu(views::View* anchor) {
   auto chord = [&](const std::string& action) {
     const int id = AppMenuDelegate::kBase + static_cast<int>(commands.size()) - 1;
     for (const auto& shortcut : tools_.shortcuts)
-      if (shortcut.id == action && shortcut.accelerator.key_code() != ui::VKEY_UNKNOWN)
-        model->SetMinorText(*model->GetIndexOfCommandId(id), base::UTF8ToUTF16(DisplayShortcut(shortcut.accelerator)));
+      if (shortcut.id == action && shortcut.accelerator.key_code() != ui::VKEY_UNKNOWN) {
+        const size_t index = *model->GetIndexOfCommandId(id);
+        model->SetMinorIcon(index, KbdImage(base::UTF8ToUTF16(DisplayShortcut(shortcut.accelerator))));
+        // The icon carries no text: screen readers still read the chord.
+        model->SetAccessibleNameAt(index, model->GetLabelAt(index) + u", " + base::UTF8ToUTF16(DisplayShortcut(shortcut.accelerator)));
+      }
   };
-  auto add = [&](std::string action, std::u16string label) {
-    model->AddItem(AppMenuDelegate::kBase + static_cast<int>(commands.size()), std::move(label));
+  auto add = [&](std::string action, std::u16string label, const gfx::VectorIcon& icon) {
+    model->AddItemWithIcon(AppMenuDelegate::kBase + static_cast<int>(commands.size()), std::move(label),
+                           ui::ImageModel::FromVectorIcon(icon, ui::kColorMenuIcon, 16));
     commands.push_back({action});
     chord(action);
   };
-  add("new_tab", T(u"Nowa karta"));
-  add("address", T(u"Otwórz adres…"));
-  add("palette", T(u"Command Center…"));
+  add("new_tab", T(u"Nowa karta"), kMenuNewTabIcon);
+  add("address", T(u"Otwórz adres…"), kMenuAddressIcon);
+  add("palette", T(u"Command Center…"), kMenuPaletteIcon);
   model->AddSeparator(ui::NORMAL_SEPARATOR);
-  add("sidebar", T(u"Pokaż lub ukryj karty"));
-  add("history", T(u"Historia…"));
-  add("timeline", T(u"Time Machine…"));
-  add("downloads", T(u"Pobrania…"));
-  add("passwords", T(u"Hasła tego profilu…"));
-  add("settings", T(u"Ustawienia…"));
+  add("sidebar", T(u"Pokaż lub ukryj karty"), kMenuSidebarIcon);
+  add("history", T(u"Historia…"), kMenuHistoryIcon);
+  add("timeline", T(u"Time Machine…"), kMenuTimelineIcon);
+  add("downloads", T(u"Pobrania…"), kMenuDownloadsIcon);
+  add("passwords", T(u"Hasła tego profilu…"), kMenuPasswordsIcon);
+  add("settings", T(u"Ustawienia…"), kMenuSettingsIcon);
   if (!state_.workspaces.empty()) {
     model->AddSeparator(ui::NORMAL_SEPARATOR);
     // Design: an eyebrow group label, in capitals.
     model->AddTitle(base::i18n::ToUpper(T(u"Przestrzenie")));
     for (size_t i = 0; i < state_.workspaces.size() && i < 9; ++i) {
       const auto& space = state_.workspaces[i];
-      model->AddCheckItem(AppMenuDelegate::kBase + static_cast<int>(commands.size()), base::UTF8ToUTF16(space.name));
+      // Design: each space's dot in its color, no check mark; screen readers
+      // hear which one is current.
+      const int id = AppMenuDelegate::kBase + static_cast<int>(commands.size());
+      model->AddItemWithIcon(id, base::UTF8ToUTF16(space.name),
+                             ui::ImageModel::FromImageSkia(gfx::CanvasImageSource::MakeImageSkia<DotImageSource>(workspace_color(space.id))));
       commands.push_back({"space" + std::to_string(i + 1), space.id == state_.workspace_id});
       chord(commands.back().action);
+      if (space.id == state_.workspace_id) {
+        const size_t index = *model->GetIndexOfCommandId(id);
+        const std::u16string name = model->GetAccessibleNameAt(index);
+        model->SetAccessibleNameAt(index, (name.empty() ? model->GetLabelAt(index) : name) + u", " + T(u"bieżąca przestrzeń"));
+      }
     }
   }
   model->AddSeparator(ui::NORMAL_SEPARATOR);
-  add("quit", T(u"Zamknij Zitter"));
+  add("about", T(u"O Zitter"), kMenuAboutIcon);
+  add("quit", T(u"Zamknij Zitter"), kMenuQuitIcon);
   app_menu_delegate_ = std::move(delegate);
   app_menu_ = std::move(model);
   auto* button = views::AsViewClass<AppMenuButton>(anchor);
@@ -8568,6 +8684,28 @@ void WorkspaceShell::ConfirmQuitWithDownloads(int count, base::OnceCallback<void
   prompt->SetColorModeOverride(widget_->color_mode_override());
   PreparePanelText(prompt->GetRootView());
   prompt->Show();
+}
+void WorkspaceShell::ShowAbout() {
+#if !BUILDFLAG(IS_MAC)
+  if (!widget_ || !widget_->IsVisible()) return;
+  if (quit_dialog_) quit_dialog_->CloseNow();
+  // Design: Dialog with a single button, as macOS's About panel.
+  auto dialog = std::make_unique<SceneModalDialog>(std::make_unique<SceneParagraph>(
+      TF(u"Wersja {} · Chromium {}", {base::WideToUTF16(std::wstring(ZITTER_VERSION_SHORT)), base::UTF8ToUTF16(version_info::GetVersionNumber())}),
+      0, false, kMuted), false);
+  dialog->SetTitle(u"Zitter");
+  dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk));
+  dialog->SetButtonLabel(ui::mojom::DialogButton::kOk, T(u"Zamknij"));
+  quit_dialog_delegate_ = std::move(dialog);
+  auto* about = views::DialogDelegate::CreateDialogWidget(quit_dialog_delegate_.get(), widget_->GetNativeWindow(), widget_->GetNativeView());
+  quit_dialog_.reset(about);
+  about->MakeCloseSynchronous(base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, views::Widget::ClosedReason) {
+    if (shell) { shell->quit_dialog_.reset(); shell->quit_dialog_delegate_.reset(); }
+  }, weak_factory_.GetWeakPtr()));
+  about->SetColorModeOverride(widget_->color_mode_override());
+  PreparePanelText(about->GetRootView());
+  about->Show();
+#endif
 }
 void WorkspaceShell::ShowWorkspaceRemovedToast(std::string id, std::u16string name) {
   ShowToast(T(u"Usunięto przestrzeń "), std::move(name), base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, std::string id) {

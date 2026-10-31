@@ -22,6 +22,8 @@ pub static EN: &[(&str, &str)] = &[
     ("Historia…", "History…"),
     ("Minimalizuj", "Minimize"),
     ("O Zitter", "About Zitter"),
+    ("Wersja {} · Chromium {}", "Version {} · Chromium {}"),
+    ("bieżąca przestrzeń", "current space"),
     ("Okno", "Window"),
     ("Otwórz adres…", "Open address…"),
     ("Pierwsza przestrzeń", "First space"),

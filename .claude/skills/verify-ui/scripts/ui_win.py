@@ -2,7 +2,8 @@
 """Windows counterpart of ui.py: launch the development build, find its windows,
 click, and screenshot them.
 
-  ui.py launch [--open-panel space]  quit the running copy, start out/ZitterWin/zitter.exe
+  ui.py launch [--open-panel space] [--scale 1.25] [--theme light]
+                                     quit the running copy, start out/ZitterWin/zitter.exe
                                      in the isolated profile (build/win-ui-profile)
   ui.py windows                      the app's top-level windows (id, title, bounds in pixels)
   ui.py click X Y | rightclick X Y   bring the app forward, then click at screen pixel X, Y
@@ -102,6 +103,10 @@ def launch(a):
         subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
     wait(lambda: not processes(), 10)
     panel = ["--open-panel", a.open_panel] if a.open_panel else []
+    if a.scale:
+        panel += ["--scale", str(a.scale)]
+    if a.theme:
+        panel += ["--theme", a.theme]
     LOG.parent.mkdir(exist_ok=True)
     log = open(LOG, "w", encoding="utf-8")
     subprocess.Popen([sys.executable, str(ROOT / "tools/run_metal_sidebar.py"), "--app", str(EXE),
@@ -145,6 +150,8 @@ def main():
                                             "extensions", "extension-popup", "menu", "app-menu", "dialog", "toast",
                                             "add", "space-end", "space-new", "remove", "drop"],
                    help="open this panel once the window is up (no mouse needed)")
+    l.add_argument("--scale", type=float, help="force a device scale factor, as 1.25 or 1.5 (HiDPI)")
+    l.add_argument("--theme", choices=["dark", "light", "system"], help="Noc (dark) or Papier (light)")
     l.set_defaults(run=launch)
     sub.add_parser("windows").set_defaults(run=lambda _: print("\n".join(map(json.dumps, windows()))))
     for name, button in (("click", "left"), ("rightclick", "right")):

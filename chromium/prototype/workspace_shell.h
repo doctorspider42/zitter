@@ -245,6 +245,8 @@ class WorkspaceShell final : public ui::EventHandler,
   // Closing the window would cancel |count| downloads; |answer| gets whether
   // to quit anyway. Outside macOS, where AppController asks.
   void ConfirmQuitWithDownloads(int count, base::OnceCallback<void(bool)> answer);
+  // The |z⟩ menu's „O Zitter”: Zitter's and Chromium's versions.
+  void ShowAbout();
   views::Widget* workspace_remove_dialog() const { return remove_dialog_.get(); }
   std::optional<size_t> split_drop_slot_for_testing() const { return split_drop_slot_; }
   bool drag_hover_split_for_testing() const { return drag_hover_split_; }
@@ -917,6 +919,7 @@ class WorkspaceShell final : public ui::EventHandler,
   // Removing a space asks first (design: Dialog), then removes with an undo toast.
   std::unique_ptr<views::DialogDelegate> remove_dialog_delegate_;
   std::unique_ptr<views::Widget> remove_dialog_;
+  // The quit-while-downloading prompt or the About dialog, one at a time.
   std::unique_ptr<views::DialogDelegate> quit_dialog_delegate_;
   std::unique_ptr<views::Widget> quit_dialog_;
   // A tab dragged over the page: where it lands in the split, shown on a panel.

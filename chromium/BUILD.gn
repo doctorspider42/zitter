@@ -213,6 +213,7 @@ source_set("shell") {
     "//components/input",
     "//components/vector_icons",
     "//components/url_formatter",
+    "//components/version_info",
     "//content/public/browser",
     "//skia",
     "//ui/color",
