@@ -304,12 +304,12 @@ class ZitterProfilesBrowserTest : public InProcessBrowserTest {
   ZitterProfilesBrowserTest() {
     network_sandbox_.InitAndDisableFeature(sandbox::policy::features::kNetworkServiceSandbox);
   }
-  // Geometry tests size windows and panels in DIPs, as on a Mac's display; a
+  // Geometry tests size windows and panels in DIPs, as on a Retina Mac; a
   // high-DPI Windows desktop can be smaller than that in DIPs (300% of a 4K
-  // screen is 1280 × 720) and would clamp them.
+  // screen is 1280 × 720) and would clamp them. 200%, as a Retina display.
   void SetUpCommandLine(base::CommandLine* command_line) override {
     InProcessBrowserTest::SetUpCommandLine(command_line);
-    command_line->AppendSwitchASCII(switches::kForceDeviceScaleFactor, "1");
+    command_line->AppendSwitchASCII(switches::kForceDeviceScaleFactor, "2");
   }
 #endif
   void SetUpOnMainThread() override {
