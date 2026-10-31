@@ -28,6 +28,8 @@
 #elif BUILDFLAG(IS_WIN)
 #include <windows.h>
 
+#include <shobjidl.h>
+
 #include "base/files/file_enumerator.h"
 #include "base/win/win_util.h"
 #include "chrome/install_static/initialize_from_primary_module.h"
@@ -98,6 +100,9 @@ int main(int argc, const char** argv) {
     }
 #endif
 #if BUILDFLAG(IS_WIN)
+    // The taskbar groups Zitter's windows, pins and jump list under this ID;
+    // the installer's shortcuts carry the same one (installer/win).
+    ::SetCurrentProcessExplicitAppUserModelID(L"Zitter.Browser");
     // Extensions other apps register for Google Chrome stay Chrome's
     // (tools/install_chromium_overlay.py).
     command->AppendSwitch("zitter-ignore-chrome-registry-extensions");

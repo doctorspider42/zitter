@@ -1,0 +1,32 @@
+import importlib.util
+from pathlib import Path
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location("package_win", ROOT / "tools/package_win.py")
+package = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(package)
+
+
+class WindowsPackageTest(unittest.TestCase):
+    def test_keeps_what_runs_and_drops_symbols_sources_and_test_data(self):
+        files = package.select_files([
+            "./zitter.exe", "./zitter.exe.pdb", "./base.dll", "chrome_elf.dll", "resources.pak",
+            "locales/pl.pak", "locales/pl.pak.info", "Fonts/InstrumentSerif-Regular.ttf", "icudtl.dat",
+            "v8_context_snapshot.bin", "gen/third_party/devtools-frontend/src/front_end/Tests.js",
+            "pyproto/google/__init__.py", "angledata/foo.bin", "../../third_party/x.txt", "zitter.lib",
+        ])
+        self.assertEqual(files, sorted(["zitter.exe", "base.dll", "chrome_elf.dll", "resources.pak",
+                                        "locales/pl.pak", "Fonts/InstrumentSerif-Regular.ttf", "icudtl.dat",
+                                        "v8_context_snapshot.bin"]))
+
+    def test_refuses_a_build_without_zitter(self):
+        with self.assertRaises(ValueError):
+            package.select_files(["./chrome.exe", "./base.dll"])
+
+    def test_version_comes_from_the_exe_resource(self):
+        self.assertRegex(package.version(), r"^\d+\.\d+\.\d+$")
+
+
+if __name__ == "__main__":
+    unittest.main()

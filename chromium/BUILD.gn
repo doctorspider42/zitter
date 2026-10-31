@@ -426,6 +426,8 @@ if (is_mac || is_linux || is_win) {
       # resource carries Zitter's icon (tools/install_chromium_overlay.py).
       configs -= [ "//build/config/win:console" ]
       configs += [ "//build/config/win:windowed", "//build/config/win:delayloads" ]
+      sources += [ "chromium/app/zitter_exe.rc" ]
+      libs = [ "shell32.lib" ]
       deps += [
         "//build/win:default_exe_manifest",
         "//chrome/app/theme:chrome_unscaled_resources",
