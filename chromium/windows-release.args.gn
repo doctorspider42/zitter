@@ -1,0 +1,14 @@
+# Windows x64 release build for packaging (tools/package_win.py): static, so
+# zitter.exe and zitter_setup.exe run without the build directory's DLLs. No
+# symbols, no ThinLTO or PGO yet (docs/windows-port.md, Phase 6).
+is_debug = false
+is_component_build = false
+is_official_build = false
+dcheck_always_on = false
+symbol_level = 0
+blink_symbol_level = 0
+v8_symbol_level = 0
+target_cpu = "x64"
+chrome_pgo_phase = 0
+use_remoteexec = false
+use_siso = false
