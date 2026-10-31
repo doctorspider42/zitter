@@ -137,7 +137,22 @@ Notes:
 - The client area covers the titlebar (`workspace_frame_win.cc`, as Chrome's
   frame does). Caption buttons are Views buttons that answer HTCLIENT: with the
   system frame, HTMINBUTTON/HTMAXBUTTON/HTCLOSE make Windows draw its classic
-  buttons. Snap Layouts on Windows 11 needs HTMAXBUTTON handled without that.
+  buttons. Snap Layouts on Windows 11 needs HTMAXBUTTON, so there the frame
+  host answers it over the maximize button and handles the non-client hover,
+  press and click itself, which keeps DefWindowProc from drawing the classic
+  button. `--zitter-force-snap-layouts` takes that path on Windows 10 (no
+  flyout there): hover, press, maximize and restore checked; the flyout itself
+  is not, for want of a Windows 11 machine.
+- The |z⟩ menu follows the design: 16 px line icons per row, shortcuts in mono
+  `ink-muted` (drawn as the row's minor icon, since Views draws minor text in
+  the row's font; the accessible name keeps the chord), each space's dot in its
+  color, and „O Zitter” with Zitter's and Chromium's versions.
+- Scene dialogs (remove a space, quit while downloading, About) are bubbles
+  without an anchor; macOS shows them as sheets, Windows put them at the
+  screen's corner. They now center over the window.
+- verify-ui: `ui.py launch --theme light` (Papier) and `--scale 1.25`/`1.5`.
+  Checked: Noc and Papier with the menu open, 125% and 150% (Rust text and the
+  1 px caption glyphs stay sharp), the inactive window's faint glyphs.
 - Design fonts (Instrument Serif, Schibsted Grotesk, JetBrains Mono in
   `assets/fonts`) are registered from the bundle on macOS. On Windows GN copies
   them to `Fonts\` beside `zitter.exe`, which sideloads them into the browser
@@ -170,7 +185,10 @@ Notes:
   computer's Arc, Chrome, Edge and Brave and print only counts.
 - Chrome, Edge and Brave: `%LOCALAPPDATA%\<vendor>\<browser>\User Data`.
 - The cookie option is hidden on Windows (App-Bound Encryption).
-- CSV password import does not exist on any system yet: a feature of its own.
+- Passwords come over as a CSV export: Saved sign-ins has Import passwords
+  from CSV, which runs Chromium's `PasswordImporter` (as its
+  `StartupPasswordsImporter`) into the profile's store
+  (`password_csv_import.cc`). Checked with a two-entry Chrome-format file.
 - Sandbox: renderers and the storage service run Untrusted, the GPU process Low,
   nothing with `--no-sandbox`. The network service runs at Medium, as in
   Chromium: `kNetworkServiceSandbox` is off upstream (Chrome turns it on by
@@ -207,6 +225,14 @@ Notes:
 - Windows-only fixes the tests found: shortcuts saved with Ctrl+H (History) were
   rejected on load, since H, M and Q were reserved as on macOS; `near` is a macro
   in the Windows SDK.
+- Real input finds what injected events don't. Driving the window with real
+  mouse and keyboard events showed that Windows ate every click on the sidebar
+  and the undo toast: Views answers `WM_MOUSEACTIVATE` with
+  `MA_NOACTIVATEANDEAT` for a non-activatable window that has a non-client
+  view. Those panels now get a host that answers `MA_NOACTIVATE`
+  (`ConfigureNonActivatingPanel`). Checked with real input since: tab and
+  space context menus, New tab, Ctrl+T with typing and Enter, Alt+1/2, Ctrl+W,
+  Ctrl+J, Ctrl+H, Ctrl+Shift+H and Ctrl+,.
 - `ui_capture.swift` measures UI Lab frame timing, which is macOS-only (Metal); it
   has no Windows counterpart. `verify-ui` has: `ui_win.py` (launch, windows, click,
   shot) and `build_app_win.ps1`; `run_metal_sidebar.py` starts `zitter.exe`.
@@ -253,8 +279,13 @@ Notes:
   the network service runs in its AppContainer.
 - Checked end to end for one user on Windows 10: install, update over it,
   pages loading with the sandboxed network service, removal from Apps &
-  features leaving nothing behind. The elevated install for everyone is not
-  checked yet.
+  features leaving nothing behind. For everyone, with UAC: install to Program
+  Files (HKLM entry, all-users Start menu shortcut, browser registration, the
+  install-files capabilities on the folder), Zitter started from there as the
+  user with its network service in the AppContainer, and a quiet removal
+  through `QuietUninstallString` leaving nothing. The elevated copy starts a
+  moment after UAC (Windows checks the unsigned file first), so scripts should
+  wait for it rather than for the first process.
 - A component build's installer needs its DLLs beside it; the standalone one
   comes from the static release build in `out/ZitterWinRelease`
   (`chromium/windows-release.args.gn`, about 8 hours from scratch on this
@@ -288,7 +319,10 @@ Notes:
   python tools/audit_licenses.py --app build/release/Zitter-0.1.0-win-x64-portable.zip --out .chromium/src/out/ZitterWinRelease --destination build/license-audit/windows
   python tools/package_win.py --out .chromium/src/out/ZitterWinRelease --setup .chromium/src/out/ZitterWinRelease/zitter_setup.exe --destination build/release --third-party-licenses build/license-audit/windows/THIRD_PARTY_LICENSES.txt
   ```
-- Not done yet: ThinLTO/PGO and Authenticode signing (no certificate yet).
+- `chromium/windows-official.args.gn` (`out/ZitterWinOfficial`) is the release
+  build with `is_official_build`, which brings ThinLTO, and PGO from Chromium's
+  win64 profile (gclient `checkout_pgo_profiles`).
+- Not done: Authenticode signing (no certificate yet).
 - The installer draws its own controls, so it describes them to UI Automation
   itself (`setup_accessibility.cc`): headings and sentences as text, the two
   placements as radio buttons, the switches with the Toggle pattern, buttons
@@ -298,6 +332,30 @@ Notes:
   window's thread. Checked with a UIA client on the install and remove pages:
   every control is listed with its state, and Toggle, Select, SetFocus and
   Invoke work. Keyboard: Tab, Enter, Space, Esc.
+## Windows integration
+
+- Links from other apps: a second `zitter.exe` forwards its command line to
+  the running one (Chrome's process singleton). `main()` used to add
+  `--no-startup-window` to every process, so the forwarded line carried it and
+  Chrome dropped the URLs; the switch now goes on in `PreBrowserStart`, in the
+  process that owns the profile. Forwarded links open as external links (the
+  active space, domain rules) through `ReplaceStockWindow`, and a named startup
+  profile keeps Chrome's profile picker away from launches without a URL.
+- Jump list (`jump_list_win.cc`): the spaces, then New tab and Command
+  Center. Each entry runs `zitter.exe --zitter-command=…`; a running Zitter
+  takes it through `WM_COPYDATA` before the second process starts Chromium,
+  and a fresh start runs it once the window is ready. Windows refuses custom
+  categories while „Show recently opened items in Jump Lists” is off
+  (`Start_TrackDocs`), so the spaces then join the tasks above a separator.
+- First run (`ShowWelcome`, design: Pierwsze uruchomienie): welcome, the
+  default browser (Windows' Default apps page; Windows lets only the user
+  choose, and the step notices when Zitter is the default), the browsers found
+  on this computer with CSV passwords, and the first space's name and color.
+  A chosen browser opens the import panel with it picked. Checked end to end on
+  a fresh profile: rename and color saved, Chrome's two profiles imported as
+  spaces, onboarding complete.
+- Not in Zitter on any system yet: find in page and printing.
+
 ## Status
 
 | Phase | State |
@@ -306,7 +364,7 @@ Notes:
 | 0 — environment | Done: vanilla `chrome.exe` runs (`out/ZitterWin`), the overlay installs |
 | 1 — non-Mac build | Done: `:shell` compiles on `text_services_skia.cc`; `sidebar_scene_unittests` (532), `zitter_network_policy_tests` (3) and `editor_text_layout_unittests` (6) pass. The `zitter` target for `is_win` moves to phase 2 |
 | 2 — first launch | Done: `zitter.exe` opens the window, loads pages and restores the session and its space after a restart; data in `%LOCALAPPDATA%\Zitter`. The download shutdown prompt moves to phase 3 |
-| 3 — native look | In progress: own titlebar on the system frame (shadow, snap, resize), 46 × 38 caption buttons, the Zitter menu, Windows shortcuts and Kbd words, the emoji panel, the downloads prompt on close, the app icon. Design fonts load. verify-ui done (Noc, restored and maximized). Open: Papier, Snap Layouts on Windows 11, menu icons and Kbd chips, HiDPI |
-| 4 — import and security | Done: Arc (MSIX), Chrome, Edge and Brave paths, real Arc and Chrome data read, no cookie option, sandbox checked, network audit clean after two fixes. CSV passwords remain a feature of its own |
+| 3 — native look | Done: own titlebar on the system frame (shadow, snap, resize), 46 × 38 caption buttons, Snap Layouts (HTMAXBUTTON, Windows 11), the Zitter menu with icons and mono shortcuts, Windows shortcuts and Kbd words, the emoji panel, the downloads prompt on close, centered dialogs, clickable sidebar and toasts, the jump list, the first-run wizard, links from other apps, the app icon, design fonts. verify-ui: Noc and Papier, restored and maximized, 125% and 150%. The Snap Layouts flyout itself awaits a Windows 11 machine |
+| 4 — import and security | Done: Arc (MSIX), Chrome, Edge and Brave paths, real Arc and Chrome data read, CSV passwords, no cookie option, sandbox checked, network audit clean after two fixes |
 | 5 — tests and tools | Mostly done: browser tests build and the targeted ones pass, verify-ui works on Windows, Python tests pass. Open: the full browser suite, Windows sections in CLAUDE.md and README |
-| 6 — packaging | In progress: static release build, portable ZIP and standalone installer (191 MB), install, update and quiet remove checked end to end for one user, browser registration, network sandbox. Open: signing, elevated install, ThinLTO/PGO |
+| 6 — packaging | Done but signing: static release build, ThinLTO + PGO args, portable ZIP and standalone installer (191 MB), install, update and quiet remove checked for one user and for everyone, browser registration, network sandbox, license audit, installer accessibility. Open: Authenticode signing (no certificate) |
