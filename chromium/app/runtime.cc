@@ -8,6 +8,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/browser/download/download_core_service.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/lifetime/application_lifetime_desktop.h"
@@ -38,6 +39,14 @@ Runtime::~Runtime() = default;
 void Runtime::PreBrowserStart() {
   keep_alive_ = std::make_unique<ScopedKeepAlive>(
       KeepAliveOrigin::BROWSER, KeepAliveRestartOption::DISABLED);
+#if BUILDFLAG(IS_WIN)
+  // Chrome initializes services/profiles, but only our Views window is opened.
+  // Set here, in the process that owns the profile, not in main(): a second
+  // zitter.exe (a link from another app, the Start menu) forwards its command
+  // line, and with this switch Chrome would drop its URLs. Without it, Chrome
+  // opens them in a stock window, which ReplaceStockWindow moves into Zitter.
+  base::CommandLine::ForCurrentProcess()->AppendSwitch(switches::kNoStartupWindow);
+#endif
 }
 
 void Runtime::PreMainMessageLoopRun() {
@@ -123,7 +132,14 @@ void Runtime::ReplaceStockWindow(BrowserWindowInterface* browser) {
       const GURL url = tab && tab->GetContents() ? tab->GetContents()->GetVisibleURL() : GURL();
       if (url.is_valid() && !url.IsAboutBlank() && url.host() != "newtab") urls.push_back(url);
     }
-    for (const auto& url : urls) window_->OpenExtensionPage(browser->GetProfile(), url);
+    for (const auto& url : urls) {
+#if !BUILDFLAG(IS_MAC)
+      // Links forwarded by a second zitter.exe open as external links do (the
+      // active space, domain rules); macOS receives those through the app shell.
+      if (url.SchemeIsHTTPOrHTTPS() || url.SchemeIsFile()) { window_->OpenExternalUrl(url); continue; }
+#endif
+      window_->OpenExtensionPage(browser->GetProfile(), url);
+    }
   }
   if (auto* window = browser->GetWindow()) window->Close();
   if (window_ && !closing_) window_->widget()->Activate();

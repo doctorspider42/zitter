@@ -111,8 +111,16 @@ int main(int argc, const char** argv) {
     zitter::ConfigureNetworkPolicy(*command);
     if (!command->HasSwitch(switches::kUserDataDir))
       command->AppendSwitchPath(switches::kUserDataDir, DefaultDataDirectory());
+#if !BUILDFLAG(IS_WIN)
     // Chrome initializes services/profiles, but only our Views window is opened.
     command->AppendSwitch(switches::kNoStartupWindow);
+#else
+    // A second zitter.exe forwards this command line (runtime.cc). Zitter keeps
+    // several profiles, and without a named one Chrome would answer a launch
+    // without a URL with its profile picker instead of a window to replace.
+    if (!command->HasSwitch(switches::kProfileDirectory))
+      command->AppendSwitchASCII(switches::kProfileDirectory, "Default");
+#endif
     command->AppendSwitch(switches::kNoFirstRun);
     InitialCommandLine() = *command;
   }
