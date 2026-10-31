@@ -250,10 +250,12 @@ source_set("shell") {
   }
   if (is_win) {
     sources += [
+      "chromium/prototype/jump_list_win.cc",
+      "chromium/prototype/jump_list_win.h",
       "chromium/prototype/workspace_frame_win.cc",
       "chromium/prototype/workspace_frame_win.h",
     ]
-    libs = [ "dwmapi.lib" ]
+    libs = [ "dwmapi.lib", "propsys.lib", "shell32.lib" ]
   }
 }
 

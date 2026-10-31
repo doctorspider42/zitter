@@ -15,6 +15,9 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/common/chrome_switches.h"
+#if BUILDFLAG(IS_WIN)
+#include "chromium/prototype/jump_list_win.h"
+#endif
 #include "chromium/app/browser_client.h"
 #include "chromium/app/network_policy.h"
 #include "content/public/app/content_main.h"
@@ -88,6 +91,9 @@ int main(int argc, const char** argv) {
   auto* command = base::CommandLine::ForCurrentProcess();
   if (!command->HasSwitch(switches::kProcessType)) {
 #if BUILDFLAG(IS_WIN)
+    // A jump list entry while Zitter runs: that window takes the command and
+    // this process ends before Chromium starts.
+    if (zitter::prototype::ForwardCommandToRunningZitter(*command)) return 0;
     // The design fonts (Fonts\ beside zitter.exe) join the browser's font
     // collection before gfx creates it; macOS activates them from the bundle.
     // Web pages never see them.

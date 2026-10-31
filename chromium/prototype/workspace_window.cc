@@ -110,6 +110,7 @@
 
 #include "chrome/app/chrome_dll_resource.h"
 #include "chromium/prototype/workspace_frame_win.h"
+#include "chromium/prototype/jump_list_win.h"
 #include "ui/base/models/image_model.h"
 #include "ui/gfx/image/image_family.h"
 #include "ui/gfx/win/icon_util.h"
@@ -660,6 +661,11 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   }
 #endif
   widget_->Init(std::move(params));
+#if BUILDFLAG(IS_WIN)
+  SetWorkspaceCommandHandler(widget_.get(), base::BindRepeating(
+      [](base::WeakPtr<WorkspaceWindow> window, std::string command) { if (window) window->RunExternalCommand(std::move(command)); },
+      weak_factory_.GetWeakPtr()));
+#endif
   shell_->Attach(widget_.get(), this);
   widget_->Show();
   config_runner_->PostTaskAndReplyWithResult(FROM_HERE,
@@ -866,6 +872,16 @@ void WorkspaceWindow::UpdateShell() {
     state.pins = pinned_items(host.workspace_id);
     state.profile_id = host.profile_id;
     state.workspaces = model_.workspaces();
+#if BUILDFLAG(IS_WIN)
+    std::vector<std::pair<std::string, std::string>> listed;
+    for (const auto& space : state.workspaces) listed.emplace_back(space.id, space.name);
+    if (listed != jump_list_spaces_) {
+      jump_list_spaces_ = listed;
+      std::vector<JumpListSpace> spaces;
+      for (const auto& [id, name] : listed) spaces.push_back({id, base::UTF8ToUTF16(name)});
+      UpdateJumpList(std::move(spaces));
+    }
+#endif
     state.configuration_ready = configuration_ready_ && !profiles_busy_ && !configuration_invalid_;
     state.url = host.view->GetWebContents()->GetVisibleURL();
     state.active_tab = host.active_tab;
@@ -1157,6 +1173,13 @@ content::WebContents* WorkspaceWindow::OpenProfileTab(Profile* profile, const GU
   return nullptr;
 }
 bool WorkspaceWindow::OpenExternalUrl(const GURL& url) { return OpenLink(url, active_id(), true); }
+bool WorkspaceWindow::RunExternalCommand(std::string command) {
+  if (!widget_) return false;
+  widget_->Activate();
+  if (command.starts_with("space:")) return Select(command.substr(6));
+  if (command == "new_tab" || command == "palette") return RunShortcut(std::move(command));
+  return false;
+}
 bool WorkspaceWindow::OpenLink(const GURL& url, std::string source_workspace, bool new_tab, bool split) {
   preconnect_timer_.Stop();
   if (peek_view_ && GuardPages({peek_contents()}, base::BindOnce([](base::WeakPtr<WorkspaceWindow> w, GURL url, std::string source, bool fresh, bool split) {

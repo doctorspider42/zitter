@@ -129,6 +129,9 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   std::string WorkspaceForUrl(const GURL& url) const;
   const std::vector<LinkRule>& link_rules() const { return link_rules_; }
   bool OpenExternalUrl(const GURL& url);
+  // A command from the taskbar's jump list (--zitter-command): "new_tab",
+  // "palette" or "space:<id>". Brings the window forward first.
+  bool RunExternalCommand(std::string command);
   // Opens an extension's page (options, chrome://extensions, a link from its
   // popup) as a new tab in a space that uses `profile`.
   bool OpenExtensionPage(Profile* profile, const GURL& url);
@@ -345,6 +348,11 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   bool profiles_busy_ = false;
   bool offer_import_ = true;
   bool onboarding_complete_ = false;
+#if BUILDFLAG(IS_WIN)
+  // The spaces the jump list last showed (id, name), so it is rewritten only
+  // when they change.
+  std::vector<std::pair<std::string, std::string>> jump_list_spaces_;
+#endif
   std::string starter_workspace_id_;
   bool import_replaces_starter_ = false;
   size_t import_preview_generation_ = 0;

@@ -3,6 +3,9 @@
 #define ZITTER_CHROMIUM_PROTOTYPE_WORKSPACE_FRAME_WIN_H_
 
 #include <optional>
+#include <string>
+
+#include "base/functional/callback.h"
 
 #include "ui/views/controls/button/button.h"
 #include "ui/views/widget/widget.h"
@@ -22,6 +25,11 @@ int WorkspaceResizeBorderThickness(const views::Widget* widget);
 // over it, so hovering shows Snap Layouts, and drives its hover, press and
 // click itself, since those then arrive as non-client mouse messages.
 void SetWorkspaceMaximizeButton(views::Widget* widget, views::Button* button);
+// Commands a second zitter.exe sends the window (jump_list_win.cc): the window
+// carries this property, and the command arrives as WM_COPYDATA with this tag.
+inline constexpr wchar_t kWorkspaceCommandProperty[] = L"ZitterWorkspaceCommands";
+inline constexpr unsigned long kWorkspaceCommandMessage = 0x5A43;  // "ZC"
+void SetWorkspaceCommandHandler(views::Widget* widget, base::RepeatingCallback<void(std::string)> handler);
 }  // namespace zitter::prototype
 
 #endif

@@ -21,6 +21,9 @@
 #include "chrome/browser/tab_list/tab_list_interface.h"
 #include "components/tabs/public/tab_interface.h"
 #include "chromium/prototype/workspace_window.h"
+#if BUILDFLAG(IS_WIN)
+#include "chromium/prototype/jump_list_win.h"
+#endif
 #include "components/keep_alive_registry/keep_alive_types.h"
 #include "components/keep_alive_registry/scoped_keep_alive.h"
 #include "content/public/browser/storage_partition.h"
@@ -88,6 +91,12 @@ void Runtime::WindowReady() {
     if (url.SchemeIsHTTPOrHTTPS()) { window_->OpenExternalUrl(url); break; }
   }
   window_->widget()->Activate();
+#if BUILDFLAG(IS_WIN)
+  // A jump list entry that started Zitter (no Zitter was running to take it).
+  if (const auto command = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(prototype::kZitterCommandSwitch);
+      !command.empty() && window_->RunExternalCommand(command))
+    return;
+#endif
   // A restored workspace should reopen as its saved layout. Offer the palette
   // only for an empty page, rather than covering the restored panes on launch.
   auto* page = window_->contents(window_->active_id());

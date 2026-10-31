@@ -8,6 +8,8 @@
 #include <set>
 
 #include "base/command_line.h"
+#include "base/functional/bind.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/no_destructor.h"
 #include "base/win/windows_version.h"
 #include "chrome/browser/lifetime/application_lifetime_desktop.h"
@@ -51,6 +53,11 @@ class WorkspaceTreeHost final : public views::DesktopWindowTreeHostWin {
   ~WorkspaceTreeHost() override { Hosts().erase(this); }
 
   void set_maximize_button(views::Button* button) { maximize_.SetView(button); }
+  void set_command_handler(base::RepeatingCallback<void(std::string)> handler) {
+    command_handler_ = std::move(handler);
+    if (command_handler_) ::SetPropW(GetHWND(), kWorkspaceCommandProperty, reinterpret_cast<HANDLE>(1));
+    else ::RemovePropW(GetHWND(), kWorkspaceCommandProperty);
+  }
 
  protected:
   bool GetClientAreaInsets(gfx::Insets* insets, int frame_thickness) const override {
@@ -74,6 +81,16 @@ class WorkspaceTreeHost final : public views::DesktopWindowTreeHostWin {
     // As Chrome's frame: save the session before Windows logs off or shuts down.
     if (message == WM_ENDSESSION && w_param) chrome::SessionEnding();
     if (HandleSnapLayouts(message, w_param, l_param, result)) return true;
+    if (message == WM_COPYDATA && command_handler_) {
+      const auto* data = reinterpret_cast<const COPYDATASTRUCT*>(l_param);
+      if (data && data->dwData == kWorkspaceCommandMessage && data->lpData && data->cbData <= 4096) {
+        // Data the sender's copy owns only for this call.
+        std::string command(static_cast<const char*>(data->lpData), data->cbData);
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(command_handler_, std::move(command)));
+        *result = TRUE;
+        return true;
+      }
+    }
     return views::DesktopWindowTreeHostWin::PreHandleMSG(message, w_param, l_param, result);
   }
 
@@ -143,6 +160,7 @@ class WorkspaceTreeHost final : public views::DesktopWindowTreeHostWin {
 
   // Clears itself when the button goes away.
   views::ViewTracker maximize_;
+  base::RepeatingCallback<void(std::string)> command_handler_;
   bool tracking_ = false;
 };
 }  // namespace
@@ -167,6 +185,13 @@ void SetWorkspaceMaximizeButton(views::Widget* widget, views::Button* button) {
   const aura::WindowTreeHost* host = widget->GetNativeWindow()->GetHost();
   for (WorkspaceTreeHost* workspace : Hosts())
     if (static_cast<const aura::WindowTreeHost*>(workspace) == host) workspace->set_maximize_button(button);
+}
+
+void SetWorkspaceCommandHandler(views::Widget* widget, base::RepeatingCallback<void(std::string)> handler) {
+  if (!widget || !widget->GetNativeWindow()) return;
+  const aura::WindowTreeHost* host = widget->GetNativeWindow()->GetHost();
+  for (WorkspaceTreeHost* workspace : Hosts())
+    if (static_cast<const aura::WindowTreeHost*>(workspace) == host) workspace->set_command_handler(handler);
 }
 
 int WorkspaceResizeBorderThickness(const views::Widget* widget) {
