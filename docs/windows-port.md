@@ -218,12 +218,15 @@ Notes:
   preconnect fixtures turn the network sandbox off too; a mock TSF bridge keeps
   TSF from committing the compositions the editor tests inject (keys still type
   through `WM_CHAR`); primary-modifier chords send Ctrl; the Arc package path's
-  parents exist before test data is copied; geometry tests run at scale 1,
-  since a high-DPI desktop is small in DIPs (300% of 4K is 1280 × 720); cookie
+  parents exist before test data is copied; the profile tests run at
+  200%, since a high-DPI desktop is small in DIPs (300% of 4K is 1280 × 720;
+  at a forced 100% the harness renders extension `setIcon` images empty, while
+  the app at 100% swaps them, checked by hand); cookie
   import and Return in the permission prompt follow Windows. Four tests that
   compare with macOS overlay scrollers or sidebar key focus run on macOS only:
   Windows scrollers are classic and take layout space, and its sidebar never
   takes key focus.
+  The full suite then passes: 226 of 226, none flaky (four disabled).
 - Browser tests run with `fieldtrial_testing_config`, which turns the network
   sandbox on, and its AppContainer can't read an `out\` directory no installer
   granted access to (`lpacChromeInstallFiles`); they turn the sandbox off on
@@ -381,5 +384,5 @@ Notes:
 | 2 — first launch | Done: `zitter.exe` opens the window, loads pages and restores the session and its space after a restart; data in `%LOCALAPPDATA%\Zitter`. The download shutdown prompt moves to phase 3 |
 | 3 — native look | Done: own titlebar on the system frame (shadow, snap, resize), 46 × 38 caption buttons, Snap Layouts (HTMAXBUTTON, Windows 11), the Zitter menu with icons and mono shortcuts, Windows shortcuts and Kbd words, the emoji panel, the downloads prompt on close, centered dialogs, clickable sidebar and toasts, the jump list, the first-run wizard, links from other apps, the app icon, design fonts. verify-ui: Noc and Papier, restored and maximized, 125% and 150%. The Snap Layouts flyout itself awaits a Windows 11 machine |
 | 4 — import and security | Done: Arc (MSIX), Chrome, Edge and Brave paths, real Arc and Chrome data read, CSV passwords, no cookie option, sandbox checked, network audit clean after two fixes |
-| 5 — tests and tools | Mostly done: browser tests build and the targeted ones pass, verify-ui works on Windows, Python tests pass. Open: the full browser suite, Windows sections in CLAUDE.md and README |
+| 5 — tests and tools | Done but the docs: the full browser suite passes (226), Rust (532) and Python (83) tests pass, verify-ui works on Windows. Open: Windows sections in CLAUDE.md and README, waiting on their rewrite |
 | 6 — packaging | Done but signing: static release and ThinLTO + PGO builds (188 MB package), portable ZIP and standalone installer (191 MB), install, update and quiet remove checked for one user and for everyone, browser registration, network sandbox, license audit, installer accessibility. Open: Authenticode signing (no certificate) |
