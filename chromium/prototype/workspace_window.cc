@@ -4,6 +4,9 @@
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "chromium/prototype/download_panel.h"
 #include "chromium/prototype/page_services.h"
+#include "chrome/browser/printing/print_view_manager.h"
+#include "chrome/browser/printing/print_view_manager_common.h"
+#include "components/find_in_page/find_types.h"
 #include "chromium/prototype/page_dialogs.h"
 #include "chromium/prototype/page_media_access.h"
 #include "chromium/prototype/page_file_access.h"
@@ -837,6 +840,8 @@ void WorkspaceWindow::ScheduleShellUpdate() {
 void WorkspaceWindow::UpdateShell() {
   shell_update_pending_ = false;
   if (closing_ || !widget_) return;
+  // The find bar belongs to one page: another tab or space ends it.
+  if (find_page_ && find_page_ != (peek_contents() ? peek_contents() : contents(active_id()))) shell_->ResetFind();
   ScheduleSessionSave();
   if (peek_view_) {
     const auto* workspace = model_.Find(peek_workspace_id_);
@@ -1855,6 +1860,15 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
     return true;
   }
   if (id == "downloads") { ShowDownloads(); return true; }
+  if (id == "find") return StartFind();
+  if (id == "print") return StartPrint();
+  if (id == "print_system") {
+    auto* page = peek_contents() ? peek_contents() : contents(active_id());
+    if (!page || !printing::PrintViewManager::FromWebContents(page)) return false;
+    shell_->HidePrint();
+    printing::StartBasicPrint(page);
+    return true;
+  }
   // The |z⟩ menu's commands without a shortcut.
   if (id == "passwords") { ShowPasswords(); return true; }
   if (id == "quit") { RequestClose(); return true; }
@@ -3064,5 +3078,85 @@ void WorkspaceWindow::SetReadyCallback(base::OnceClosure callback) {
 void WorkspaceWindow::SetCloseCallback(base::OnceClosure callback) {
   close_callback_ = std::move(callback);
   ArmCloseHandler();
+}
+
+bool WorkspaceWindow::StartFind() {
+  auto* page = peek_contents() ? peek_contents() : contents(active_id());
+  auto* helper = page ? find_in_page::FindTabHelper::FromWebContents(page) : nullptr;
+  if (!helper) return false;
+  if (find_page_ != page) {
+    StopFind();
+    find_page_ = page;
+    find_observation_.Observe(helper);
+  }
+  helper->set_find_ui_active(true);
+  shell_->ShowFind(base::BindRepeating(&WorkspaceWindow::FindBounds, base::Unretained(this)),
+                   base::BindRepeating(&WorkspaceWindow::Find, weak_factory_.GetWeakPtr()),
+                   base::BindRepeating(&WorkspaceWindow::StopFind, weak_factory_.GetWeakPtr()));
+  return true;
+}
+void WorkspaceWindow::Find(std::u16string text, bool forward, bool match_case) {
+  auto* helper = find_page_ ? find_in_page::FindTabHelper::FromWebContents(find_page_) : nullptr;
+  if (!helper) return;
+  if (text.empty()) { helper->StopFinding(find_in_page::SelectionAction::kClear); return; }
+  helper->StartFinding(std::move(text), forward, match_case, /*find_match=*/true);
+}
+void WorkspaceWindow::StopFind() {
+  if (!find_page_) return;
+  if (auto* helper = find_in_page::FindTabHelper::FromWebContents(find_page_)) {
+    // Like Chrome's find bar: the last match stays selected.
+    helper->StopFinding(find_in_page::SelectionAction::kKeep);
+    helper->set_find_ui_active(false);
+  }
+  find_observation_.Reset();
+  find_page_ = nullptr;
+}
+gfx::Rect WorkspaceWindow::FindBounds() const {
+  return find_page_ ? find_page_->GetContainerBounds() : widget_->GetClientAreaBoundsInScreen();
+}
+void WorkspaceWindow::OnFindResultAvailable(content::WebContents* page) {
+  if (page != find_page_) return;
+  const auto& result = find_in_page::FindTabHelper::FromWebContents(page)->find_result();
+  shell_->SetFindResult(result.active_match_ordinal(), result.number_of_matches());
+}
+void WorkspaceWindow::OnFindTabHelperDestroyed(find_in_page::FindTabHelper*) {
+  find_observation_.Reset();
+  find_page_ = nullptr;
+  if (shell_) shell_->ResetFind();
+}
+
+bool WorkspaceWindow::StartPrint() {
+  auto* page = peek_contents() ? peek_contents() : contents(active_id());
+  if (!page || !printing::PrintViewManager::FromWebContents(page)) return false;
+  // A sheet already open reports its close first, for its own printer.
+  shell_->HidePrint();
+  printer_ = std::make_unique<PagePrinter>(page);
+  const auto weak = weak_factory_.GetWeakPtr();
+  WorkspaceShell::PrintHandlers handlers;
+  handlers.preview = base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window, PrintOptions options) {
+    if (!window || !window->printer_) return;
+    window->printer_->Render(options, base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, PagePrinter::Preview preview) {
+      if (window) window->shell_->SetPrintPreview(std::move(preview.pages), preview.failed);
+    }, window));
+  }, weak);
+  handlers.print = base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window, PrintOptions options) {
+    if (!window || !window->printer_) return;
+    window->printer_->Print(options, base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, std::u16string error) {
+      if (window) window->shell_->PrintFinished(std::move(error));
+    }, window));
+  }, weak);
+  handlers.system_dialog = base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window) {
+    if (window) window->RunShortcut("print_system");
+  }, weak);
+  // The sheet may close from inside the printer's own callbacks.
+  handlers.closed = base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window) {
+    if (window && window->printer_)
+      base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(FROM_HERE, std::move(window->printer_));
+  }, weak);
+  shell_->ShowPrint(std::move(handlers));
+  PagePrinter::ListPrinters(base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, std::vector<PrinterChoice> printers) {
+    if (window) window->shell_->SetPrinters(std::move(printers));
+  }, weak));
+  return true;
 }
 }  // namespace zitter::prototype

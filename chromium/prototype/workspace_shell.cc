@@ -117,6 +117,9 @@
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/textfield/textfield.h"
+#include "ui/views/controls/textfield/textfield_controller.h"
+#include "third_party/skia/include/core/SkPath.h"
+#include "ui/gfx/geometry/skia_conversions.h"
 #include "chromium/prototype/arc_importer.h"
 #include "ui/views/border.h"
 #include "ui/views/background.h"
@@ -4373,6 +4376,12 @@ void WorkspaceShell::Detach() {
   tools_widget_.reset(); tools_delegate_.reset();
   toast_timer_.Stop(); toast_tremor_timer_.Stop(); toast_undo_.Reset(); toast_ = nullptr; toast_widget_.reset(); toast_delegate_.reset();
   remove_dialog_.reset(); remove_dialog_delegate_.reset(); drop_view_ = nullptr; drop_widget_.reset(); drop_delegate_.reset();
+  find_view_ = nullptr; find_request_.Reset(); find_closed_.Reset(); find_page_bounds_.Reset();
+  if (find_widget_) find_widget_->RemoveObserver(this);
+  find_widget_.reset(); find_delegate_.reset();
+  print_view_ = nullptr; print_closed_.Reset();
+  if (print_widget_) print_widget_->RemoveObserver(this);
+  print_widget_.reset(); print_delegate_.reset();
   scrim_widget_.reset(); scrim_delegate_.reset();
   quit_dialog_.reset(); quit_dialog_delegate_.reset();
 #if BUILDFLAG(IS_WIN)
@@ -5711,6 +5720,14 @@ constexpr gfx::PathElement kMenuSettingsPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f
 constexpr gfx::PathElement kMenuAboutPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,CIRCLE,8,8,5.5f,MOVE_TO,8,7.5f,V_LINE_TO,11,MOVE_TO,8,5,H_LINE_TO,8.01f};
 constexpr gfx::PathElement kMenuQuitPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,6.5f,2.5f,H_LINE_TO,3.5f,V_LINE_TO,13.5f,H_LINE_TO,6.5f,
     MOVE_TO,10,5,LINE_TO,13,8,LINE_TO,10,11,MOVE_TO,13,8,H_LINE_TO,6.5f};
+constexpr gfx::PathElement kMenuFindPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,2.5f,3.5f,H_LINE_TO,9,MOVE_TO,2.5f,7,H_LINE_TO,5.5f,
+    CIRCLE,9.5f,9.5f,3,MOVE_TO,11.7f,11.7f,LINE_TO,14,14};
+constexpr gfx::PathElement kMenuPrintPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,4.5f,6,V_LINE_TO,2.5f,H_LINE_TO,11.5f,V_LINE_TO,6,
+    MOVE_TO,4.5f,11.5f,H_LINE_TO,2.5f,V_LINE_TO,6.5f,H_LINE_TO,13.5f,V_LINE_TO,11.5f,H_LINE_TO,11.5f,MOVE_TO,4.5f,9.5f,H_LINE_TO,11.5f,V_LINE_TO,13.5f,H_LINE_TO,4.5f,CLOSE};
+constexpr gfx::VectorIconRep kMenuFindRep[]={{kMenuFindPath}};
+constexpr gfx::VectorIconRep kMenuPrintRep[]={{kMenuPrintPath}};
+constexpr gfx::VectorIcon kMenuFindIcon(kMenuFindRep,1,"zitter_menu_find");
+constexpr gfx::VectorIcon kMenuPrintIcon(kMenuPrintRep,1,"zitter_menu_print");
 constexpr gfx::VectorIconRep kMenuNewTabRep[]={{kMenuNewTabPath}};
 constexpr gfx::VectorIconRep kMenuAddressRep[]={{kMenuAddressPath}};
 constexpr gfx::VectorIconRep kMenuPaletteRep[]={{kMenuPalettePath}};
@@ -7576,6 +7593,8 @@ void WorkspaceShell::PositionPanels() {
   SetWidgetBounds(sidebar_widget_.get(),sidebar_bounds);
   if(scrim_widget_)SetWidgetBounds(scrim_widget_.get(),bounds);
   if(toast_widget_&&toast_widget_->IsVisible())PositionToast();
+  if (find_visible()) PositionFind();
+  PositionPrint();
   if (general_widget_) {
     const int panel_width = std::max(320, std::min(960, bounds.width() - 24));
     const int panel_height = std::max(240, std::min(760, bounds.height() - 24));
@@ -8312,6 +8331,10 @@ void WorkspaceShell::ShowAppMenu(views::View* anchor) {
   add("address", T(u"Otwórz adres…"), kMenuAddressIcon);
   add("palette", T(u"Command Center…"), kMenuPaletteIcon);
   model->AddSeparator(ui::NORMAL_SEPARATOR);
+  // Design: Find & Print, the |z⟩ menu.
+  add("find", T(u"Znajdź na stronie…"), kMenuFindIcon);
+  add("print", T(u"Drukuj…"), kMenuPrintIcon);
+  model->AddSeparator(ui::NORMAL_SEPARATOR);
   add("sidebar", T(u"Pokaż lub ukryj karty"), kMenuSidebarIcon);
   add("history", T(u"Historia…"), kMenuHistoryIcon);
   add("timeline", T(u"Time Machine…"), kMenuTimelineIcon);
@@ -8364,7 +8387,10 @@ bool WorkspaceShell::CloseOverlays(bool keep_sidebar) {
   if (!keep_sidebar) CancelWorkspaceSwipe();
   const bool visible = address_visible() || settings_visible() ||
       (profiles_widget_ && profiles_widget_->IsVisible()) || import_visible() ||
-      (general_widget_ && general_widget_->IsVisible()) || (tools_widget_ && tools_widget_->IsVisible()) || (!keep_sidebar && !pinned_ && sidebar_visible());
+      (general_widget_ && general_widget_->IsVisible()) || (tools_widget_ && tools_widget_->IsVisible()) || (!keep_sidebar && !pinned_ && sidebar_visible()) ||
+      find_visible() || print_visible();
+  HideFind();
+  HidePrint();
   if (tools_widget_) tools_widget_->Hide();
   SetShortcutRecording(false);
   if (general_widget_) general_widget_->Hide();
@@ -9285,6 +9311,883 @@ void WorkspaceShell::ShowAbout() {
   about->Show();
 #endif
 }
+
+namespace {
+// Find & Print (design: Find & Print). Line icons on the 16 px grid at the
+// design's 1.6 stroke.
+using enum gfx::CommandType;
+constexpr gfx::PathElement kFindSearchPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,CIRCLE,7,7,4.5f,MOVE_TO,10.5f,10.5f,LINE_TO,14,14};
+constexpr gfx::PathElement kFindUpPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,4,10,LINE_TO,8,6,LINE_TO,12,10};
+constexpr gfx::PathElement kFindDownPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,4,6,LINE_TO,8,10,LINE_TO,12,6};
+constexpr gfx::PathElement kSheetLeftPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,10,4,LINE_TO,6,8,LINE_TO,10,12};
+constexpr gfx::PathElement kSheetRightPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,6,4,LINE_TO,10,8,LINE_TO,6,12};
+constexpr gfx::PathElement kSheetClosePath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,4,4,LINE_TO,12,12,MOVE_TO,12,4,LINE_TO,4,12};
+constexpr gfx::PathElement kSheetAlertPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,CIRCLE,8,8,6,MOVE_TO,8,5,V_LINE_TO,8.5f,MOVE_TO,8,11,H_LINE_TO,8.01f};
+constexpr gfx::VectorIconRep kFindSearchRep[]={{kFindSearchPath}};
+constexpr gfx::VectorIconRep kFindUpRep[]={{kFindUpPath}};
+constexpr gfx::VectorIconRep kFindDownRep[]={{kFindDownPath}};
+constexpr gfx::VectorIconRep kSheetLeftRep[]={{kSheetLeftPath}};
+constexpr gfx::VectorIconRep kSheetRightRep[]={{kSheetRightPath}};
+constexpr gfx::VectorIconRep kSheetCloseRep[]={{kSheetClosePath}};
+constexpr gfx::VectorIconRep kSheetAlertRep[]={{kSheetAlertPath}};
+constexpr gfx::VectorIcon kFindSearchIcon(kFindSearchRep,1,"zitter_find_search");
+constexpr gfx::VectorIcon kFindUpIcon(kFindUpRep,1,"zitter_find_up");
+constexpr gfx::VectorIcon kFindDownIcon(kFindDownRep,1,"zitter_find_down");
+constexpr gfx::VectorIcon kSheetLeftIcon(kSheetLeftRep,1,"zitter_sheet_left");
+constexpr gfx::VectorIcon kSheetRightIcon(kSheetRightRep,1,"zitter_sheet_right");
+constexpr gfx::VectorIcon kSheetCloseIcon(kSheetCloseRep,1,"zitter_sheet_close");
+constexpr gfx::VectorIcon kSheetAlertIcon(kSheetAlertRep,1,"zitter_sheet_alert");
+
+views::Label* SheetLabel(views::View* parent, std::u16string text, gfx::FontList font) {
+  auto* label = parent->AddChildView(std::make_unique<views::Label>(std::move(text)));
+  label->SetFontList(std::move(font));
+  label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
+  label->SetAutoColorReadabilityEnabled(false);
+  label->SetSubpixelRenderingEnabled(false);
+  label->SetBackgroundColor(SK_ColorTRANSPARENT);
+  return label;
+}
+
+// A 32 px icon button (IconButton). `strong`: ink at rest instead of ink-muted.
+class SheetIconButton final : public views::Button {
+  METADATA_HEADER(SheetIconButton, views::Button)
+ public:
+  SheetIconButton(PressedCallback callback, std::u16string name, const gfx::VectorIcon* icon, bool strong, std::u16string text = {})
+      : views::Button(std::move(callback)), icon_(icon), strong_(strong), text_(std::move(text)) {
+    GetViewAccessibility().SetName(name);
+    SetTooltipText(name);
+    SetFocusBehavior(FocusBehavior::ALWAYS);
+    SetAnimateOnStateChange(false);
+    SetPreferredSize(gfx::Size(32, 32));
+  }
+  void SetToggled(bool on) {
+    toggled_ = on;
+    GetViewAccessibility().SetRole(ax::mojom::Role::kToggleButton);
+    GetViewAccessibility().SetCheckedState(on ? ax::mojom::CheckedState::kTrue : ax::mojom::CheckedState::kFalse);
+    SchedulePaint();
+  }
+  bool toggled() const { return toggled_; }
+  void PaintButtonContents(gfx::Canvas* canvas) override {
+    const auto p = Palette(this);
+    const gfx::Rect r = GetLocalBounds();
+    const bool hovered = GetEnabled() && (GetState() == STATE_HOVERED || GetState() == STATE_PRESSED);
+    if (toggled_) FillRound(canvas, r, 8, p.accent_soft);
+    else if (hovered) FillRound(canvas, r, 8, p.bg_hover);
+    const SkColor ink = !GetEnabled() ? p.ink_faint : toggled_ ? p.accent_ink : hovered || strong_ ? p.ink : p.ink_muted;
+    if (icon_) canvas->DrawImageInt(gfx::CreateVectorIcon(*icon_, 16, ink), (width() - 16) / 2, (height() - 16) / 2);
+    else canvas->DrawStringRectWithFlags(text_, DesignFont(2, 12, 600, false), ink, r, gfx::Canvas::TEXT_ALIGN_CENTER);
+    if (HasFocus()) StrokeRound(canvas, r, 8, p.focus);
+  }
+
+ private:
+  const raw_ptr<const gfx::VectorIcon> icon_;
+  const bool strong_;
+  const std::u16string text_;
+  bool toggled_ = false;
+};
+BEGIN_METADATA(SheetIconButton)
+END_METADATA
+
+// The find bar (design: Find in page): 404 × 44 on `bg-raised` over the
+// page's top right. Enter and Shift+Enter step, Esc closes.
+class FindBarView final : public views::View, public views::TextfieldController {
+  METADATA_HEADER(FindBarView, views::View)
+ public:
+  using Find = base::RepeatingCallback<void(std::u16string, bool, bool)>;
+  FindBarView(Find find, base::RepeatingClosure close) : find_(std::move(find)), close_(std::move(close)) {
+    GetViewAccessibility().SetRole(ax::mojom::Role::kSearch);
+    GetViewAccessibility().SetName(T(u"Znajdź na stronie"));
+    field_ = AddChildView(std::make_unique<views::Textfield>());
+    field_->set_controller(this);
+    field_->SetBorder(nullptr);
+    field_->SetFontList(DesignFont(2, 13, 400, false));
+    field_->SetPlaceholderText(T(u"Znajdź na stronie"));
+    field_->GetViewAccessibility().SetName(T(u"Szukaj na stronie"));
+    count_ = SheetLabel(this, u"", DesignFont(3, 12, 400, false));
+    count_->GetViewAccessibility().SetRole(ax::mojom::Role::kStatus);
+    match_case_ = AddChildView(std::make_unique<SheetIconButton>(
+        base::BindRepeating(&FindBarView::ToggleCase, base::Unretained(this)), T(u"Uwzględnij wielkość liter"), nullptr, false, u"Aa"));
+    match_case_->SetToggled(false);
+    previous_ = AddChildView(std::make_unique<SheetIconButton>(
+        base::BindRepeating(&FindBarView::Step, base::Unretained(this), false), T(u"Poprzedni wynik (Shift+Enter)"), &kFindUpIcon, true));
+    next_ = AddChildView(std::make_unique<SheetIconButton>(
+        base::BindRepeating(&FindBarView::Step, base::Unretained(this), true), T(u"Następny wynik (Enter)"), &kFindDownIcon, true));
+    close_button_ = AddChildView(std::make_unique<SheetIconButton>(
+        base::BindRepeating([](FindBarView* bar) { bar->close_.Run(); }, base::Unretained(this)), T(u"Zamknij (Esc)"), &kSheetCloseIcon, false));
+    SetResult(0, 0);
+  }
+  // Ctrl+F again, or a fresh open: the text stays and is selected.
+  void Focus() {
+    field_->RequestFocus();
+    field_->SelectAll(false);
+  }
+  void Clear() { field_->SetText(u""); SetResult(0, 0); }
+  void SetResult(int active, int count) {
+    count_value_ = count;
+    const bool none = count == 0 && !field_->GetText().empty();
+    count_->SetText(none ? T(u"Brak wyników") : count > 0 ? TF(u"{} z {}", {base::NumberToString16(active), base::NumberToString16(count)}) : u"");
+    count_->SetFontList(none ? DesignFont(2, 12, 500, false) : DesignFont(3, 12, 400, false));
+    previous_->SetEnabled(count > 0);
+    next_->SetEnabled(count > 0);
+    Recolor();
+    InvalidateLayout();
+    SchedulePaint();
+  }
+  std::u16string count_text() const { return std::u16string(count_->GetText()); }
+  views::Textfield* field() const { return field_; }
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override { return gfx::Size(404, 44); }
+  void Layout(PassKey) override {
+    int right = width() - 6;
+    for (views::View* button : {close_button_.get(), next_.get(), previous_.get(), match_case_.get()}) {
+      right -= 32;
+      button->SetBounds(right, (height() - 32) / 2, 32, 32);
+      right -= 4;
+    }
+    separator_x_ = right - 1;
+    right -= 4;
+    const bool none = count_value_ == 0 && !field_->GetText().empty();
+    const int count_width = count_->GetText().empty() ? 0 : count_->GetPreferredSize().width() + (none ? 18 : 0);
+    count_->SetBounds(right - count_width + (none ? 18 : 0) - 6, 0, count_width - (none ? 18 : 0), height());
+    const int field_right = right - count_width - 12;
+    field_->SetBounds(34, (height() - 32) / 2, std::max(0, field_right - 34), 32);
+  }
+  void OnPaint(gfx::Canvas* canvas) override {
+    const auto p = Palette(this);
+    FillRound(canvas, GetLocalBounds(), 12, p.bg_raised);
+    StrokeRound(canvas, GetLocalBounds(), 12, p.line);
+    canvas->DrawImageInt(gfx::CreateVectorIcon(kFindSearchIcon, 16, p.ink_muted), 12, (height() - 16) / 2);
+    canvas->FillRect(gfx::Rect(separator_x_, (height() - 20) / 2, 1, 20), p.line);
+    if (count_value_ == 0 && !field_->GetText().empty())
+      canvas->DrawImageInt(gfx::CreateVectorIcon(kSheetAlertIcon, 14, p.danger), count_->x() - 18, (height() - 14) / 2);
+  }
+  void OnThemeChanged() override { views::View::OnThemeChanged(); Recolor(); }
+  void ContentsChanged(views::Textfield*, const std::u16string& text) override {
+    if (text.empty()) SetResult(0, 0);
+    find_.Run(text, true, match_case_->toggled());
+  }
+  bool HandleKeyEvent(views::Textfield*, const ui::KeyEvent& event) override {
+    if (event.type() != ui::EventType::kKeyPressed) return false;
+    if (event.key_code() == ui::VKEY_RETURN) { Step(!event.IsShiftDown()); return true; }
+    if (event.key_code() == ui::VKEY_ESCAPE) { close_.Run(); return true; }
+    return false;
+  }
+
+ private:
+  void Step(bool forward) {
+    if (!field_->GetText().empty()) find_.Run(std::u16string(field_->GetText()), forward, match_case_->toggled());
+  }
+  void ToggleCase() {
+    match_case_->SetToggled(!match_case_->toggled());
+    if (!field_->GetText().empty()) find_.Run(std::u16string(field_->GetText()), true, match_case_->toggled());
+  }
+  void Recolor() {
+    if (!GetWidget()) return;
+    const auto p = Palette(this);
+    field_->SetColor(p.ink);
+    field_->SetBackgroundColor(p.bg_raised);
+    count_->SetEnabledColor(count_value_ == 0 && !field_->GetText().empty() ? p.danger : p.ink_muted);
+  }
+  Find find_;
+  base::RepeatingClosure close_;
+  raw_ptr<views::Textfield> field_ = nullptr;
+  raw_ptr<views::Label> count_ = nullptr;
+  raw_ptr<SheetIconButton> match_case_ = nullptr, previous_ = nullptr, next_ = nullptr, close_button_ = nullptr;
+  int count_value_ = 0;
+  int separator_x_ = 0;
+};
+BEGIN_METADATA(FindBarView)
+END_METADATA
+
+// `.zt-btn`: primary (accent pill), quiet (text) or link (muted, with a Kbd).
+class SheetButton final : public views::Button {
+  METADATA_HEADER(SheetButton, views::Button)
+ public:
+  enum class Look { kPrimary, kQuiet, kLink };
+  SheetButton(PressedCallback callback, std::u16string label, Look look, std::u16string kbd = {})
+      : views::Button(std::move(callback)), look_(look), kbd_(std::move(kbd)) {
+    SetLabel(std::move(label));
+    SetAnimateOnStateChange(false);
+    SetFocusBehavior(FocusBehavior::ALWAYS);
+  }
+  void SetLabel(std::u16string label) {
+    label_ = std::move(label);
+    GetViewAccessibility().SetName(kbd_.empty() ? label_ : label_ + u", " + kbd_);
+    PreferredSizeChanged();
+    SchedulePaint();
+  }
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {
+    int w = gfx::GetStringWidth(label_, Font()) + (look_ == Look::kPrimary ? 36 : look_ == Look::kQuiet ? 28 : 8);
+    if (!kbd_.empty()) w += 8 + gfx::GetStringWidth(kbd_, DesignFont(3, 11, 400, false)) + 10;
+    return gfx::Size(w, 36);
+  }
+  void PaintButtonContents(gfx::Canvas* canvas) override {
+    const auto p = Palette(this);
+    const bool hovered = GetEnabled() && (GetState() == STATE_HOVERED || GetState() == STATE_PRESSED);
+    const gfx::Rect r = GetLocalBounds();
+    SkColor ink = look_ == Look::kLink ? (hovered ? p.ink : p.ink_muted) : p.ink;
+    if (look_ == Look::kPrimary) {
+      FillRound(canvas, r, height() / 2, !GetEnabled() ? p.bg_hover : hovered ? color_utils::AlphaBlend(p.accent, p.ink, 0.88f) : p.accent);
+      ink = GetEnabled() ? p.on_accent : p.ink_faint;
+    } else if (look_ == Look::kQuiet && hovered) {
+      FillRound(canvas, r, 8, p.bg_hover);
+    }
+    const auto font = Font();
+    const int text_width = gfx::GetStringWidth(label_, font);
+    const int x = look_ == Look::kLink ? 4 : (width() - text_width) / 2;
+    canvas->DrawStringRect(label_, font, ink, gfx::Rect(x, (height() - font.GetHeight()) / 2, text_width + 2, font.GetHeight()));
+    if (!kbd_.empty()) {
+      const auto mono = DesignFont(3, 11, 400, false);
+      const gfx::Rect key(x + text_width + 8, (height() - 18) / 2, gfx::GetStringWidth(kbd_, mono) + 10, 18);
+      StrokeRound(canvas, key, 4, p.line);
+      canvas->DrawStringRectWithFlags(kbd_, mono, p.ink_muted, key, gfx::Canvas::TEXT_ALIGN_CENTER);
+    }
+    if (HasFocus()) StrokeRound(canvas, r, look_ == Look::kPrimary ? height() / 2 : 8, p.focus);
+  }
+
+ private:
+  gfx::FontList Font() const { return DesignFont(2, look_ == Look::kLink ? 12 : 13, look_ == Look::kLink ? 400 : 600, false); }
+  const Look look_;
+  std::u16string label_;
+  const std::u16string kbd_;
+};
+BEGIN_METADATA(SheetButton)
+END_METADATA
+
+// `.zt-toggle`: 36 × 20, a 14 px knob (design: Print sheet).
+class SheetSwitch final : public views::Button {
+  METADATA_HEADER(SheetSwitch, views::Button)
+ public:
+  SheetSwitch(PressedCallback callback, std::u16string name) : views::Button(std::move(callback)) {
+    GetViewAccessibility().SetRole(ax::mojom::Role::kSwitch);
+    GetViewAccessibility().SetName(name);
+    SetFocusBehavior(FocusBehavior::ALWAYS);
+    SetPreferredSize(gfx::Size(36, 20));
+  }
+  void SetOn(bool on) {
+    on_ = on;
+    GetViewAccessibility().SetCheckedState(on ? ax::mojom::CheckedState::kTrue : ax::mojom::CheckedState::kFalse);
+    SchedulePaint();
+  }
+  bool on() const { return on_; }
+  void PaintButtonContents(gfx::Canvas* canvas) override {
+    const auto p = Palette(this);
+    if (on_) FillRound(canvas, GetLocalBounds(), 10, p.accent);
+    else StrokeRound(canvas, GetLocalBounds(), 10, p.line_strong);
+    cc::PaintFlags knob;
+    knob.setAntiAlias(true);
+    knob.setColor(on_ ? p.on_accent : p.ink_muted);
+    canvas->DrawCircle(gfx::PointF(on_ ? 26 : 10, 10), 7, knob);
+    if (HasFocus()) StrokeRound(canvas, GetLocalBounds(), 10, p.focus);
+  }
+
+ private:
+  bool on_ = false;
+};
+BEGIN_METADATA(SheetSwitch)
+END_METADATA
+
+// One option of a segmented choice.
+class SheetSegment final : public views::Button {
+  METADATA_HEADER(SheetSegment, views::Button)
+ public:
+SheetSegment(PressedCallback callback, std::u16string label) : views::Button(std::move(callback)), label_(std::move(label)) {
+    GetViewAccessibility().SetRole(ax::mojom::Role::kRadioButton);
+    GetViewAccessibility().SetName(label_);
+    SetFocusBehavior(FocusBehavior::ALWAYS);
+    SetAnimateOnStateChange(false);
+  }
+  void SetSelected(bool selected) {
+    selected_ = selected;
+    GetViewAccessibility().SetCheckedState(selected ? ax::mojom::CheckedState::kTrue : ax::mojom::CheckedState::kFalse);
+    SchedulePaint();
+  }
+  void PaintButtonContents(gfx::Canvas* canvas) override {
+    const auto p = Palette(this);
+    const gfx::Rect r = GetLocalBounds();
+    if (selected_) { FillRound(canvas, r, height() / 2, p.accent_soft); StrokeRound(canvas, r, height() / 2, p.line); }
+    else if (GetState() == STATE_HOVERED) FillRound(canvas, r, height() / 2, p.bg_hover);
+    canvas->DrawStringRectWithFlags(label_, DesignFont(2, 12, selected_ ? 600 : 500, false), selected_ ? p.accent_ink : p.ink_muted, r,
+                                    gfx::Canvas::TEXT_ALIGN_CENTER);
+    if (HasFocus()) StrokeRound(canvas, r, height() / 2, p.focus);
+  }
+
+ private:
+  const std::u16string label_;
+  bool selected_ = false;
+};
+BEGIN_METADATA(SheetSegment)
+END_METADATA
+
+// A segmented choice (`zt-seg`): radio pills in a `bg-base` track.
+class SheetSegments final : public views::View {
+  METADATA_HEADER(SheetSegments, views::View)
+ public:
+  SheetSegments(std::u16string name, std::vector<std::u16string> labels, base::RepeatingCallback<void(size_t)> picked)
+      : picked_(std::move(picked)) {
+    GetViewAccessibility().SetRole(ax::mojom::Role::kRadioGroup);
+    GetViewAccessibility().SetName(name);
+    for (size_t i = 0; i < labels.size(); ++i)
+      segments_.push_back(AddChildView(std::make_unique<SheetSegment>(base::BindRepeating(&SheetSegments::Pick, base::Unretained(this), i), labels[i])));
+    Select(0);
+  }
+  void Select(size_t index) {
+    selected_ = index;
+    for (size_t i = 0; i < segments_.size(); ++i) segments_[i]->SetSelected(i == index);
+  }
+  size_t selected() const { return selected_; }
+  void PickForTesting(size_t index) { Pick(index); }
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override { return gfx::Size(200, 36); }
+  void Layout(PassKey) override {
+    const int n = segments_.size(), inner = width() - 6 - 4 * (n - 1);
+    for (int i = 0; i < n; ++i) segments_[i]->SetBounds(3 + i * (inner / n + 4), 3, inner / n, height() - 6);
+  }
+  void OnPaint(gfx::Canvas* canvas) override {
+    const auto p = Palette(this);
+    FillRound(canvas, GetLocalBounds(), height() / 2, p.bg_base);
+    StrokeRound(canvas, GetLocalBounds(), height() / 2, p.line);
+  }
+
+ private:
+  void Pick(size_t index) { Select(index); picked_.Run(index); }
+  base::RepeatingCallback<void(size_t)> picked_;
+  std::vector<raw_ptr<SheetSegment>> segments_;
+  size_t selected_ = 0;
+};
+BEGIN_METADATA(SheetSegments)
+END_METADATA
+
+// A select field (Select): the choice and a chevron, opening a Zitter menu.
+class SheetSelect final : public views::Button, public ui::SimpleMenuModel::Delegate {
+  METADATA_HEADER(SheetSelect, views::Button)
+ public:
+  SheetSelect(std::u16string name, base::RepeatingCallback<void(size_t)> picked, bool quiet)
+      : views::Button(base::BindRepeating(&SheetSelect::Open, base::Unretained(this))), picked_(std::move(picked)), quiet_(quiet) {
+    GetViewAccessibility().SetRole(ax::mojom::Role::kComboBoxSelect);
+    GetViewAccessibility().SetName(name);
+    SetFocusBehavior(FocusBehavior::ALWAYS);
+    SetAnimateOnStateChange(false);
+  }
+  void SetChoices(std::vector<std::u16string> choices, size_t selected) {
+    choices_ = std::move(choices);
+    Select(std::min(selected, choices_.empty() ? 0 : choices_.size() - 1));
+  }
+  void Select(size_t index) {
+    selected_ = index;
+    GetViewAccessibility().SetValue(selected_ < choices_.size() ? choices_[selected_] : std::u16string());
+    SchedulePaint();
+  }
+  size_t selected() const { return selected_; }
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override { return gfx::Size(quiet_ ? 150 : 320, 36); }
+  void PaintButtonContents(gfx::Canvas* canvas) override {
+    const auto p = Palette(this);
+    const gfx::Rect r = GetLocalBounds();
+    const bool hovered = GetState() == STATE_HOVERED || GetState() == STATE_PRESSED;
+    if (!quiet_) {
+      FillRound(canvas, r, 8, hovered ? p.bg_hover : p.bg_base);
+      StrokeRound(canvas, r, 8, p.line_strong);
+    } else if (hovered) {
+      FillRound(canvas, r, 8, p.bg_hover);
+    }
+    const std::u16string text = selected_ < choices_.size() ? choices_[selected_] : u"";
+    const auto font = DesignFont(2, 13, 400, false);
+    const int chevron = width() - 26;
+    if (quiet_) {
+      const int w = std::min(chevron - 8, gfx::GetStringWidth(text, font));
+      canvas->DrawStringRect(text, font, p.ink_muted, gfx::Rect(chevron - 4 - w, (height() - font.GetHeight()) / 2, w + 2, font.GetHeight()));
+    } else {
+      canvas->DrawStringRect(text, font, p.ink, gfx::Rect(12, (height() - font.GetHeight()) / 2, chevron - 16, font.GetHeight()));
+    }
+    canvas->DrawImageInt(gfx::CreateVectorIcon(quiet_ ? kSheetRightIcon : kFindDownIcon, 16, p.ink_muted), chevron, (height() - 16) / 2);
+    if (HasFocus()) StrokeRound(canvas, r, 8, p.focus);
+  }
+  void ExecuteCommand(int command_id, int) override { Select(command_id); picked_.Run(command_id); }
+  bool IsCommandIdChecked(int command_id) const override { return static_cast<size_t>(command_id) == selected_; }
+
+ private:
+  void Open() {
+    model_ = std::make_unique<DesignMenuModel>(this);
+    for (size_t i = 0; i < choices_.size(); ++i) model_->AddCheckItem(static_cast<int>(i), choices_[i]);
+    runner_ = std::make_unique<views::MenuRunner>(model_.get(), views::MenuRunner::NO_FLAGS);
+    runner_->RunMenuAt(GetWidget(), nullptr, GetBoundsInScreen(), views::MenuAnchorPosition::kTopLeft,
+                       ui::mojom::MenuSourceType::kMouse, gfx::NativeView(), ZitterMenuCorners());
+  }
+  base::RepeatingCallback<void(size_t)> picked_;
+  const bool quiet_;
+  std::vector<std::u16string> choices_;
+  size_t selected_ = 0;
+  std::unique_ptr<DesignMenuModel> model_;
+  std::unique_ptr<views::MenuRunner> runner_;
+};
+BEGIN_METADATA(SheetSelect)
+END_METADATA
+
+// The previewed page on the sheet's `bg-base`, fitted with a 24 px margin.
+class SheetPreview final : public views::View {
+  METADATA_HEADER(SheetPreview, views::View)
+ public:
+  SheetPreview() { GetViewAccessibility().SetRole(ax::mojom::Role::kImage); }
+  void Set(gfx::ImageSkia page, std::u16string note) {
+    page_ = std::move(page);
+    note_ = std::move(note);
+    GetViewAccessibility().SetName(note_.empty() ? T(u"Podgląd wydruku") : note_);
+    SchedulePaint();
+  }
+  void OnPaint(gfx::Canvas* canvas) override {
+    const auto p = Palette(this);
+    if (!page_.isNull()) {
+      const gfx::Size image = page_.size();
+      const double scale = std::min((width() - 48.0) / image.width(), (height() - 48.0) / image.height());
+      const gfx::Size fitted = gfx::ToRoundedSize(gfx::ScaleSize(gfx::SizeF(image), scale));
+      const gfx::Rect frame((width() - fitted.width()) / 2, (height() - fitted.height()) / 2, fitted.width(), fitted.height());
+      cc::PaintFlags shadow;
+      shadow.setAntiAlias(true);
+      shadow.setColor(SkColorSetA(SK_ColorBLACK, 0x60));
+      canvas->DrawRect(gfx::RectF(frame.x(), frame.y() + 4, frame.width(), frame.height()), shadow);
+      canvas->DrawImageInt(page_, 0, 0, image.width(), image.height(), frame.x(), frame.y(), frame.width(), frame.height(), true);
+      canvas->DrawRect(gfx::RectF(frame), [&] { cc::PaintFlags ring; ring.setStyle(cc::PaintFlags::kStroke_Style); ring.setColor(p.line); return ring; }());
+    }
+    if (!note_.empty())
+      canvas->DrawStringRectWithFlags(note_, DesignFont(2, 13, 500, false), p.ink_muted, GetLocalBounds(), gfx::Canvas::TEXT_ALIGN_CENTER);
+  }
+
+ private:
+  gfx::ImageSkia page_;
+  std::u16string note_;
+};
+BEGIN_METADATA(SheetPreview)
+END_METADATA
+
+// Polish sheet counts: 1 arkusz, 2–4 arkusze, 5 arkuszy (12–14 arkuszy).
+std::u16string SheetCount(int sheets) {
+  const auto n = base::NumberToString16(sheets);
+  if (sheets == 1) return TF(u"{} arkusz", {n});
+  const int tens = sheets % 100, ones = sheets % 10;
+  return ones >= 2 && ones <= 4 && !(tens >= 12 && tens <= 14) ? TF(u"{} arkusze", {n}) : TF(u"{} arkuszy", {n});
+}
+
+// The print sheet (design: Print sheet): the preview at the left, the
+// settings column at the right, on the dimmed window.
+class PrintSheetView final : public views::View, public views::TextfieldController {
+  METADATA_HEADER(PrintSheetView, views::View)
+ public:
+  PrintSheetView(WorkspaceShell::PrintHandlers handlers) : handlers_(std::move(handlers)) {
+    GetViewAccessibility().SetRole(ax::mojom::Role::kDialog);
+    GetViewAccessibility().SetName(T(u"Drukuj"));
+    preview_ = AddChildView(std::make_unique<SheetPreview>());
+    previous_page_ = AddChildView(std::make_unique<SheetIconButton>(
+        base::BindRepeating(&PrintSheetView::Turn, base::Unretained(this), -1), T(u"Poprzednia strona"), &kSheetLeftIcon, true));
+    page_label_ = SheetLabel(this, u"", DesignFont(3, 12, 400, false));
+    page_label_->SetHorizontalAlignment(gfx::ALIGN_CENTER);
+    next_page_ = AddChildView(std::make_unique<SheetIconButton>(
+        base::BindRepeating(&PrintSheetView::Turn, base::Unretained(this), 1), T(u"Następna strona"), &kSheetRightIcon, true));
+
+    column_ = AddChildView(std::make_unique<views::View>());
+    auto* layout = column_->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(24), 16));
+    layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kStretch);
+    auto* heading = column_->AddChildView(std::make_unique<views::View>());
+    auto* heading_layout = heading->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal));
+    heading_layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kEnd);
+    ink_.push_back(SheetLabel(heading, T(u"Drukuj"), DesignFont(2, 17, 600, false)));
+    heading_layout->SetFlexForView(ink_.back(), 1);
+    sheets_ = SheetLabel(heading, u"", DesignFont(2, 12, 400, false));
+    muted_.push_back(sheets_);
+
+    auto* printer_group = Group(T(u"Drukarka"));
+    printer_ = printer_group->AddChildView(std::make_unique<SheetSelect>(T(u"Drukarka"), base::BindRepeating(&PrintSheetView::PickPrinter, base::Unretained(this)), false));
+    auto* pages_group = Group(T(u"Strony"));
+    pages_ = pages_group->AddChildView(std::make_unique<SheetSegments>(T(u"Strony"),
+        std::vector<std::u16string>{T(u"Wszystkie"), T(u"Bieżąca"), T(u"Zakres")}, base::BindRepeating(&PrintSheetView::PickPages, base::Unretained(this))));
+    range_ = pages_group->AddChildView(std::make_unique<views::Textfield>());
+    range_->set_controller(this);
+    range_->SetFontList(DesignFont(3, 12, 400, false));
+    range_->SetPlaceholderText(u"1-3, 5");
+    range_->GetViewAccessibility().SetName(T(u"Zakres stron"));
+    range_->SetPreferredSize(gfx::Size(0, 32));
+    range_->SetVisible(false);
+    auto* pair = column_->AddChildView(std::make_unique<views::View>());
+    auto* pair_layout = pair->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 12));
+    auto* orientation_group = Group(T(u"Układ"), pair);
+    pair_layout->SetFlexForView(orientation_group, 1);
+    orientation_ = orientation_group->AddChildView(std::make_unique<SheetSegments>(T(u"Układ"),
+        std::vector<std::u16string>{T(u"Pionowo"), T(u"Poziomo")}, base::BindRepeating(&PrintSheetView::PickOrientation, base::Unretained(this))));
+    auto* copies_group = Group(T(u"Kopie"), pair);
+    copies_group->SetPreferredSize(gfx::Size(104, 58));
+    copies_ = copies_group->AddChildView(std::make_unique<views::Textfield>());
+    copies_->set_controller(this);
+    copies_->SetText(u"1");
+    copies_->SetTextInputType(ui::TEXT_INPUT_TYPE_NUMBER);
+    copies_->SetFontList(DesignFont(3, 13, 400, false));
+    copies_->GetViewAccessibility().SetName(T(u"Kopie"));
+    copies_->SetPreferredSize(gfx::Size(104, 36));
+
+    switches_ = column_->AddChildView(std::make_unique<views::View>());
+    switches_->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets::TLBR(8, 0, 0, 0)))
+        ->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kStretch);
+    color_row_ = SwitchRow(T(u"Kolor"), &color_, &PrintSheetView::ToggleColor);
+    SwitchRow(T(u"Grafika tła"), &backgrounds_, &PrintSheetView::ToggleBackgrounds);
+    SwitchRow(T(u"Nagłówki i stopki"), &headers_, &PrintSheetView::ToggleHeaders);
+    color_->SetOn(true);
+    headers_->SetOn(true);
+    auto* margins_row = Row(T(u"Marginesy"));
+    margins_ = margins_row->AddChildView(std::make_unique<SheetSelect>(T(u"Marginesy"), base::BindRepeating(&PrintSheetView::PickMargins, base::Unretained(this)), true));
+    margins_->SetChoices({T(u"Domyślne"), T(u"Brak"), T(u"Minimalne")}, 0);
+
+    auto* spacer = column_->AddChildView(std::make_unique<views::View>());
+    layout->SetFlexForView(spacer, 1);
+    status_ = SheetLabel(column_, u"", DesignFont(2, 12, 500, false));
+    status_->SetMultiLine(true);
+    status_->SetVisible(false);
+    auto* system_row = column_->AddChildView(std::make_unique<views::View>());
+    system_row->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal));
+    auto* footer = column_->AddChildView(std::make_unique<views::View>());
+    auto* footer_layout = footer->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 8));
+    footer_layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
+    footer_layout->set_main_axis_alignment(views::BoxLayout::MainAxisAlignment::kEnd);
+#if BUILDFLAG(IS_MAC)
+    const std::u16string system_kbd = u"⇧⌘P";
+#else
+    const std::u16string system_kbd = u"Ctrl Shift P";
+#endif
+    system_row->AddChildView(std::make_unique<SheetButton>(
+        base::BindRepeating([](PrintSheetView* sheet) { sheet->handlers_.system_dialog.Run(); }, base::Unretained(this)),
+        T(u"Okno systemowe…"), SheetButton::Look::kLink, system_kbd));
+    footer->AddChildView(std::make_unique<SheetButton>(
+        base::BindRepeating([](PrintSheetView* sheet) { sheet->handlers_.closed.Run(); }, base::Unretained(this)), T(u"Anuluj"), SheetButton::Look::kQuiet));
+    primary_ = footer->AddChildView(std::make_unique<SheetButton>(
+        base::BindRepeating(&PrintSheetView::Print, base::Unretained(this)), T(u"Zapisz PDF"), SheetButton::Look::kPrimary));
+    SetPrinters({});
+  }
+  void SetPrinters(std::vector<PrinterChoice> printers) {
+    printers_ = std::move(printers);
+    std::vector<std::u16string> labels;
+    for (const auto& printer : printers_) labels.push_back(printer.label);
+    labels.push_back(T(u"Zapisz jako PDF"));
+    printer_->SetChoices(std::move(labels), 0);
+    PickPrinter(0);
+  }
+  void SetPreview(std::vector<gfx::ImageSkia> pages, bool failed) {
+    pages_images_ = std::move(pages);
+    failed_ = failed;
+    rendering_ = false;
+    page_ = std::clamp(page_, 0, std::max(0, static_cast<int>(pages_images_.size()) - 1));
+    Refresh();
+  }
+  void Finished(std::u16string error) {
+    printing_ = false;
+    status_->SetText(error);
+    status_->SetVisible(!error.empty());
+    Refresh();
+  }
+  const PrintOptions& options() const { return options_; }
+  SheetSegments* pages_for_testing() const { return pages_; }
+  SheetSegments* orientation_for_testing() const { return orientation_; }
+  views::Textfield* range_for_testing() const { return range_; }
+  SheetButton* primary_for_testing() const { return primary_; }
+  std::u16string sheets_text() const { return std::u16string(sheets_->GetText()); }
+  std::u16string page_text() const { return std::u16string(page_label_->GetText()); }
+  size_t preview_pages() const { return pages_images_.size(); }
+  void PickPrinterForTesting(size_t index) { index = std::min(index, printers_.size()); printer_->Select(index); PickPrinter(index); }
+  void SetRangeForTesting(std::u16string range) { range_->SetText(range); ContentsChanged(range_, range); }
+  void PrintForTesting() { Print(); }
+
+  void Layout(PassKey) override {
+    const int column_width = std::min(380, width() / 2);
+    column_->SetBounds(width() - column_width, 0, column_width, height());
+    const int left = width() - column_width;
+    preview_->SetBounds(0, 0, left, height() - 52);
+    const int nav_y = height() - 48;
+    page_label_->SetBounds(left / 2 - 60, nav_y, 120, 32);
+    previous_page_->SetBounds(left / 2 - 60 - 32, nav_y, 32, 32);
+    next_page_->SetBounds(left / 2 + 60, nav_y, 32, 32);
+  }
+  void OnPaint(gfx::Canvas* canvas) override {
+    const auto p = Palette(this);
+    // The sheet's 20 px corners: the preview's `bg-base` is clipped to them.
+    canvas->ClipPath(SkPath::RRect(gfx::RectToSkRect(GetLocalBounds()), 20, 20), true);
+    canvas->DrawColor(p.bg_raised);
+    canvas->FillRect(gfx::Rect(0, 0, column_->x(), height()), p.bg_base);
+    canvas->FillRect(gfx::Rect(column_->x(), 0, 1, height()), p.line);
+    StrokeRound(canvas, GetLocalBounds(), 20, p.line);
+    // Hairlines above the switches.
+    const auto switches = switches_->bounds() + column_->bounds().OffsetFromOrigin();
+    canvas->FillRect(gfx::Rect(switches.x(), switches.y(), switches.width(), 1), p.line);
+  }
+  void OnThemeChanged() override { views::View::OnThemeChanged(); Recolor(); }
+  void ContentsChanged(views::Textfield* sender, const std::u16string& text) override {
+    if (sender == copies_) {
+      int copies = 1;
+      options_.copies = base::StringToInt(text, &copies) ? std::clamp(copies, 1, 999) : 1;
+    } else {
+      options_.range = text;
+    }
+    status_->SetVisible(false);
+    Refresh();
+  }
+  bool HandleKeyEvent(views::Textfield*, const ui::KeyEvent& event) override {
+    if (event.type() == ui::EventType::kKeyPressed && event.key_code() == ui::VKEY_RETURN) { Print(); return true; }
+    return false;
+  }
+  // The first render, once the sheet is on screen.
+  void Start() { Render(); }
+
+ private:
+  views::View* Group(std::u16string label, views::View* parent = nullptr) {
+    auto* group = (parent ? parent : column_.get())->AddChildView(std::make_unique<views::View>());
+    group->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 6))
+        ->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kStretch);
+    muted_.push_back(SheetLabel(group, std::move(label), DesignFont(2, 12, 400, false)));
+    return group;
+  }
+  views::View* Row(std::u16string label) {
+    auto* row = switches_->AddChildView(std::make_unique<views::View>());
+    auto* layout = row->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal));
+    layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
+    row->SetPreferredSize(gfx::Size(0, 40));
+    ink_.push_back(SheetLabel(row, std::move(label), DesignFont(2, 13, 400, false)));
+    layout->SetFlexForView(ink_.back(), 1);
+    return row;
+  }
+  views::View* SwitchRow(std::u16string label, raw_ptr<SheetSwitch>* out, void (PrintSheetView::*toggle)()) {
+    auto* row = Row(label);
+    *out = row->AddChildView(std::make_unique<SheetSwitch>(base::BindRepeating(toggle, base::Unretained(this)), label));
+    return row;
+  }
+  void PickPrinter(size_t index) {
+    options_.printer = index < printers_.size() ? printers_[index].name : std::string();
+    // Color is the printer's choice; a PDF keeps the page's colors.
+    color_row_->SetVisible(!options_.printer.empty());
+    primary_->SetLabel(options_.printer.empty() ? T(u"Zapisz PDF") : T(u"Drukuj"));
+    column_->InvalidateLayout();
+    Render();
+  }
+  void PickPages(size_t index) {
+    options_.pages = static_cast<PrintOptions::Pages>(index);
+    range_->SetVisible(index == 2);
+    if (index == 2) range_->RequestFocus();
+    column_->InvalidateLayout();
+    status_->SetVisible(false);
+    Refresh();
+  }
+  void PickOrientation(size_t index) { options_.landscape = index == 1; Render(); }
+  void PickMargins(size_t index) { options_.margins = static_cast<PrintOptions::Margins>(index); Render(); }
+  void ToggleColor() { color_->SetOn(!color_->on()); options_.color = color_->on(); Render(); }
+  void ToggleBackgrounds() { backgrounds_->SetOn(!backgrounds_->on()); options_.backgrounds = backgrounds_->on(); Render(); }
+  void ToggleHeaders() { headers_->SetOn(!headers_->on()); options_.headers = headers_->on(); Render(); }
+  void Turn(int delta) {
+    page_ = std::clamp(page_ + delta, 0, std::max(0, static_cast<int>(pages_images_.size()) - 1));
+    options_.current = page_;
+    Refresh();
+  }
+  void Render() {
+    rendering_ = true;
+    failed_ = false;
+    Refresh();
+    if (handlers_.preview) handlers_.preview.Run(options_);
+  }
+  void Print() {
+    if (printing_ || rendering_ || failed_ || pages_images_.empty()) return;
+    if (!PagePrinter::PageRanges(options_, pages_images_.size())) {
+      status_->SetText(T(u"Podaj strony jako 1-3, 5."));
+      status_->SetVisible(true);
+      Recolor();
+      column_->InvalidateLayout();
+      return;
+    }
+    printing_ = true;
+    status_->SetVisible(false);
+    Refresh();
+    handlers_.print.Run(options_);
+  }
+  int SelectedPages() const {
+    const int total = pages_images_.size();
+    const auto ranges = PagePrinter::PageRanges(options_, total);
+    if (!ranges) return 0;
+    if (ranges->empty()) return total;
+    int pages = 0;
+    for (const auto& part : base::SplitString(*ranges, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
+      const auto ends = base::SplitString(part, "-", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
+      int first = 0, last = 0;
+      if (base::StringToInt(ends.front(), &first) && base::StringToInt(ends.back(), &last)) pages += last - first + 1;
+    }
+    return pages;
+  }
+  void Refresh() {
+    const int total = pages_images_.size();
+    options_.current = page_;
+    preview_->Set(rendering_ || pages_images_.empty() ? gfx::ImageSkia() : pages_images_[page_],
+                  rendering_ ? T(u"Przygotowuję podgląd…") : failed_ ? T(u"Nie udało się przygotować podglądu.") : u"");
+    page_label_->SetText(total ? TF(u"Strona {} z {}", {base::NumberToString16(page_ + 1), base::NumberToString16(total)}) : u"");
+    previous_page_->SetEnabled(page_ > 0);
+    next_page_->SetEnabled(page_ + 1 < total);
+    const int pages = SelectedPages();
+    sheets_->SetText(total && pages ? SheetCount(pages * (options_.printer.empty() ? 1 : options_.copies)) : u"");
+    primary_->SetEnabled(!printing_ && !rendering_ && !failed_ && total > 0 && pages > 0);
+    Recolor();
+    InvalidateLayout();
+    SchedulePaint();
+  }
+  void Recolor() {
+    if (!GetWidget()) return;
+    const auto p = Palette(this);
+    for (views::Label* label : ink_) label->SetEnabledColor(p.ink);
+    for (views::Label* label : muted_) label->SetEnabledColor(p.ink_muted);
+    page_label_->SetEnabledColor(p.ink_muted);
+    status_->SetEnabledColor(p.danger);
+    for (views::Textfield* field : {range_.get(), copies_.get()}) {
+      field->SetColor(p.ink);
+      field->SetBackgroundColor(p.bg_base);
+      field->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1, 8, p.line_strong), gfx::Insets::VH(0, 11)));
+    }
+  }
+
+  WorkspaceShell::PrintHandlers handlers_;
+  PrintOptions options_;
+  std::vector<PrinterChoice> printers_;
+  std::vector<gfx::ImageSkia> pages_images_;
+  int page_ = 0;
+  bool rendering_ = false, failed_ = false, printing_ = false;
+  raw_ptr<SheetPreview> preview_ = nullptr;
+  raw_ptr<SheetIconButton> previous_page_ = nullptr, next_page_ = nullptr;
+  raw_ptr<views::Label> page_label_ = nullptr, sheets_ = nullptr, status_ = nullptr;
+  raw_ptr<views::View> column_ = nullptr, switches_ = nullptr, color_row_ = nullptr;
+  raw_ptr<SheetSelect> printer_ = nullptr, margins_ = nullptr;
+  raw_ptr<SheetSegments> pages_ = nullptr, orientation_ = nullptr;
+  raw_ptr<views::Textfield> range_ = nullptr, copies_ = nullptr;
+  raw_ptr<SheetSwitch> color_ = nullptr, backgrounds_ = nullptr, headers_ = nullptr;
+  raw_ptr<SheetButton> primary_ = nullptr;
+  std::vector<raw_ptr<views::Label>> ink_, muted_;
+};
+BEGIN_METADATA(PrintSheetView)
+END_METADATA
+
+std::unique_ptr<views::Widget> CreateOverlayWidget(views::Widget* parent, views::WidgetDelegate* delegate, int radius) {
+  views::Widget::InitParams params(views::Widget::InitParams::CLIENT_OWNS_WIDGET, views::Widget::InitParams::TYPE_BUBBLE);
+  params.delegate = delegate;
+  params.SetParent(parent);
+  params.opacity = views::Widget::InitParams::WindowOpacity::kTranslucent;
+  params.rounded_corners = gfx::RoundedCornersF(radius);
+  auto widget = std::make_unique<views::Widget>();
+  widget->Init(std::move(params));
+  return widget;
+}
+}  // namespace
+
+void WorkspaceShell::ShowFind(base::RepeatingCallback<gfx::Rect()> page_bounds, FindRequest find, base::RepeatingClosure closed) {
+  if (!widget_ || !widget_->IsVisible()) return;
+  find_page_bounds_ = std::move(page_bounds);
+  find_closed_ = std::move(closed);
+  if (!find_widget_) {
+    find_delegate_ = std::make_unique<views::WidgetDelegate>();
+    find_delegate_->SetTitle(T(u"Zitter — Znajdź na stronie"));
+    find_view_ = find_delegate_->SetContentsView(std::make_unique<FindBarView>(
+        base::BindRepeating([](WorkspaceShell* shell, std::u16string text, bool forward, bool match_case) {
+          if (shell->find_request_) shell->find_request_.Run(std::move(text), forward, match_case);
+        }, base::Unretained(this)),
+        base::BindRepeating(&WorkspaceShell::HideFind, weak_factory_.GetWeakPtr())));
+    find_widget_ = CreateOverlayWidget(widget_, find_delegate_.get(), 12);
+    PreparePanelText(find_widget_->GetRootView());
+    find_widget_->AddObserver(this);
+    RegisterKeys(find_widget_.get(), accelerator_target_, tools_, true);
+  }
+  find_request_ = std::move(find);
+  PositionFind();
+  find_widget_->Show();
+  find_widget_->Activate();
+  static_cast<FindBarView*>(find_view_.get())->Focus();
+}
+void WorkspaceShell::SetFindResult(int active, int count) {
+  if (find_view_) static_cast<FindBarView*>(find_view_.get())->SetResult(active, count);
+}
+void WorkspaceShell::HideFind() {
+  if (find_widget_ && find_widget_->IsVisible()) find_widget_->Hide();
+}
+void WorkspaceShell::ResetFind() {
+  HideFind();
+  if (find_view_) static_cast<FindBarView*>(find_view_.get())->Clear();
+}
+bool WorkspaceShell::find_visible() const { return find_widget_ && find_widget_->IsVisible(); }
+std::u16string WorkspaceShell::find_count_for_testing() const {
+  return find_view_ ? static_cast<FindBarView*>(find_view_.get())->count_text() : std::u16string();
+}
+views::Textfield* WorkspaceShell::find_field_for_testing() const {
+  return find_view_ ? static_cast<FindBarView*>(find_view_.get())->field() : nullptr;
+}
+void WorkspaceShell::PositionFind() {
+  if (!find_widget_ || !find_page_bounds_) return;
+  const gfx::Rect page = find_page_bounds_.Run();
+  const int width = std::min(404, std::max(240, page.width() - 32));
+  SetWidgetBounds(find_widget_.get(), gfx::Rect(page.right() - 16 - width, page.y() + 12, width, 44));
+}
+
+void WorkspaceShell::ShowPrint(PrintHandlers handlers) {
+  if (!widget_ || !widget_->IsVisible()) return;
+  HidePrint();
+  CloseOverlays(true);
+  print_closed_ = handlers.closed;
+  print_delegate_ = std::make_unique<views::WidgetDelegate>();
+  print_delegate_->SetTitle(T(u"Zitter — Drukuj"));
+  print_view_ = print_delegate_->SetContentsView(std::make_unique<PrintSheetView>(std::move(handlers)));
+  print_widget_ = CreateOverlayWidget(widget_, print_delegate_.get(), 20);
+  PreparePanelText(print_widget_->GetRootView());
+  print_widget_->AddObserver(this);
+  RegisterKeys(print_widget_.get(), accelerator_target_, tools_, true);
+  PositionPanels();
+  if (scrim_widget_) scrim_widget_->ShowInactive();
+  print_widget_->Show();
+  if (scrim_widget_) print_widget_->StackAboveWidget(scrim_widget_.get());
+  print_widget_->Activate();
+  static_cast<PrintSheetView*>(print_view_.get())->Start();
+}
+void WorkspaceShell::SetPrinters(std::vector<PrinterChoice> printers) {
+  if (print_view_) static_cast<PrintSheetView*>(print_view_.get())->SetPrinters(std::move(printers));
+}
+void WorkspaceShell::SetPrintPreview(std::vector<gfx::ImageSkia> pages, bool failed) {
+  if (print_view_) static_cast<PrintSheetView*>(print_view_.get())->SetPreview(std::move(pages), failed);
+}
+void WorkspaceShell::PrintFinished(std::u16string error) {
+  if (!print_view_) return;
+  if (error.empty()) { HidePrint(); return; }
+  static_cast<PrintSheetView*>(print_view_.get())->Finished(std::move(error));
+}
+void WorkspaceShell::HidePrint() {
+  if (!print_widget_) return;
+  print_view_ = nullptr;
+  print_widget_->RemoveObserver(this);
+  print_widget_.reset();
+  print_delegate_.reset();
+  if (scrim_widget_ && !address_visible()) scrim_widget_->Hide();
+  if (auto closed = std::move(print_closed_)) closed.Run();
+  RestorePageFocus();
+}
+bool WorkspaceShell::print_visible() const { return print_widget_ && print_widget_->IsVisible(); }
+views::View* WorkspaceShell::print_sheet_for_testing() const { return print_view_; }
+void WorkspaceShell::PositionPrint() {
+  if (!print_widget_) return;
+  const auto bounds = widget_->GetClientAreaBoundsInScreen();
+  const int w = std::max(560, std::min(1000, bounds.width() - 48));
+  const int h = std::max(420, std::min(660, bounds.height() - 48));
+  SetWidgetBounds(print_widget_.get(), gfx::Rect(bounds.CenterPoint().x() - w / 2, bounds.CenterPoint().y() - h / 2, w, h));
+}
+std::u16string WorkspaceShell::print_sheets_for_testing() const {
+  return print_view_ ? static_cast<PrintSheetView*>(print_view_.get())->sheets_text() : std::u16string();
+}
+size_t WorkspaceShell::print_preview_pages_for_testing() const {
+  return print_view_ ? static_cast<PrintSheetView*>(print_view_.get())->preview_pages() : 0;
+}
+bool WorkspaceShell::print_ready_for_testing() const {
+  return print_view_ && static_cast<PrintSheetView*>(print_view_.get())->primary_for_testing()->GetEnabled();
+}
+void WorkspaceShell::PrintChooseForTesting(size_t printer, size_t pages, std::u16string range, bool landscape) {
+  if (!print_view_) return;
+  auto* sheet = static_cast<PrintSheetView*>(print_view_.get());
+  sheet->PickPrinterForTesting(printer);
+  sheet->pages_for_testing()->PickForTesting(pages);
+  if (pages == 2) sheet->SetRangeForTesting(std::move(range));
+  if (landscape) sheet->orientation_for_testing()->PickForTesting(1);
+}
+void WorkspaceShell::PrintNowForTesting() {
+  if (print_view_) static_cast<PrintSheetView*>(print_view_.get())->PrintForTesting();
+}
 void WorkspaceShell::ShowWorkspaceRemovedToast(std::string id, std::u16string name) {
   ShowToast(T(u"Usunięto przestrzeń "), std::move(name), base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, std::string id) {
     if (shell) shell->SetConfigurationError(!shell->callbacks_.restore_workspace.Run(id));
@@ -9944,6 +10847,8 @@ void WorkspaceShell::OnWidgetActivationChanged(views::Widget* widget, bool activ
   }
 }
 void WorkspaceShell::OnWidgetVisibilityChanged(views::Widget* widget, bool visible) {
+  if (widget == find_widget_.get() && !visible && find_closed_) find_closed_.Run();
+  if (widget == widget_ && !visible) { HideFind(); HidePrint(); }
   if(widget==address_widget_.get())ScheduleMetalPalette();
   if(widget==address_widget_.get()&&!visible&&scrim_widget_)scrim_widget_->Hide();
   if(widget==address_widget_.get()&&!visible)SetPaletteLoading(false);

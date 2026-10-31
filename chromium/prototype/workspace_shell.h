@@ -13,6 +13,7 @@
 #include "chromium/prototype/sidebar_tree.h"
 #include "chromium/prototype/sidebar_layout.h"
 #include "chromium/prototype/browser_tools.h"
+#include "chromium/prototype/page_printing.h"
 #include <optional>
 #include <string>
 #include <string_view>
@@ -247,6 +248,39 @@ class WorkspaceShell final : public ui::EventHandler,
   void ConfirmQuitWithDownloads(int count, base::OnceCallback<void(bool)> answer);
   // The |z⟩ menu's „O Zitter”: Zitter's and Chromium's versions.
   void ShowAbout();
+  // Find in page (design: Find & Print): the bar over the active page's top
+  // right. `find` gets the text, the direction and case matching; `closed`
+  // runs when the bar hides.
+  using FindRequest = base::RepeatingCallback<void(std::u16string, bool, bool)>;
+  void ShowFind(base::RepeatingCallback<gfx::Rect()> page_bounds, FindRequest find, base::RepeatingClosure closed);
+  void SetFindResult(int active, int count);
+  void HideFind();
+  // Hides the bar and forgets its text (another page became active).
+  void ResetFind();
+  bool find_visible() const;
+  std::u16string find_count_for_testing() const;
+  views::Textfield* find_field_for_testing() const;
+  // The print sheet (design: Print sheet) on the dimmed window.
+  struct PrintHandlers {
+    base::RepeatingCallback<void(PrintOptions)> preview;
+    base::RepeatingCallback<void(PrintOptions)> print;
+    base::RepeatingClosure system_dialog;
+    base::RepeatingClosure closed;
+  };
+  void ShowPrint(PrintHandlers handlers);
+  void SetPrinters(std::vector<PrinterChoice> printers);
+  void SetPrintPreview(std::vector<gfx::ImageSkia> pages, bool failed);
+  // An empty error closes the sheet; otherwise it shows under the settings.
+  void PrintFinished(std::u16string error);
+  void HidePrint();
+  bool print_visible() const;
+  views::View* print_sheet_for_testing() const;
+  std::u16string print_sheets_for_testing() const;
+  size_t print_preview_pages_for_testing() const;
+  bool print_ready_for_testing() const;
+  // `printer` indexes the printers, then Save as PDF; `pages` is All, Current or Range.
+  void PrintChooseForTesting(size_t printer, size_t pages, std::u16string range, bool landscape);
+  void PrintNowForTesting();
   views::Widget* workspace_remove_dialog() const { return remove_dialog_.get(); }
   std::optional<size_t> split_drop_slot_for_testing() const { return split_drop_slot_; }
   bool drag_hover_split_for_testing() const { return drag_hover_split_; }
@@ -732,6 +766,8 @@ class WorkspaceShell final : public ui::EventHandler,
                              const std::vector<size_t>& split_tabs = {}, bool split = false);
   void ApplyPinnedFoldersCollapsed(bool collapsed);
   void PositionToast();
+  void PositionFind();
+  void PositionPrint();
   void TremorToast();
   void SetPaletteLoading(bool loading);
   void ShowWorkspaceRemovedToast(std::string id, std::u16string name);
@@ -941,6 +977,16 @@ class WorkspaceShell final : public ui::EventHandler,
   std::unique_ptr<views::Widget> quit_dialog_;
   std::unique_ptr<views::WidgetDelegate> welcome_delegate_;
   std::unique_ptr<views::Widget> welcome_widget_;
+  std::unique_ptr<views::WidgetDelegate> find_delegate_;
+  std::unique_ptr<views::Widget> find_widget_;
+  raw_ptr<views::View> find_view_ = nullptr;
+  base::RepeatingCallback<gfx::Rect()> find_page_bounds_;
+  FindRequest find_request_;
+  base::RepeatingClosure find_closed_;
+  std::unique_ptr<views::WidgetDelegate> print_delegate_;
+  std::unique_ptr<views::Widget> print_widget_;
+  raw_ptr<views::View> print_view_ = nullptr;
+  base::RepeatingClosure print_closed_;
   // A tab dragged over the page: where it lands in the split, shown on a panel.
   std::unique_ptr<views::WidgetDelegate> drop_delegate_;
   std::unique_ptr<views::Widget> drop_widget_;

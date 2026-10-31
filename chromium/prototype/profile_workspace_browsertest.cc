@@ -147,6 +147,8 @@
 #include "base/base_paths.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "ui/shell_dialogs/fake_select_file_dialog.h"
+#include "components/find_in_page/find_tab_helper.h"
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
 #include "base/threading/thread_restrictions.h"
@@ -9392,6 +9394,78 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionTabsSplitAndMoveAcros
   EXPECT_EQ(2u, window_->tab_count(project));
   ASSERT_TRUE(window_->Select(project));
   EXPECT_TRUE(window_->contents(project)->GetVisibleURL().spec().ends_with("?p"));
+}
+
+// Design: Find & Print. Ctrl+F counts and steps through matches; Esc ends
+// the find session.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FindInPageCountsAndSteps) {
+  base::test::ScopedRunLoopTimeout timeout(FROM_HERE, base::Seconds(30));
+  ASSERT_TRUE(window_->Select("work"));
+  auto* page = window_->contents("work");
+  ASSERT_TRUE(content::NavigateToURL(page, GURL("data:text/html,<p>zitter one, zitter two, ZITTER three</p>")));
+  auto* shell = window_->shell();
+  ASSERT_TRUE(window_->RunShortcut("find"));
+  ASSERT_TRUE(shell->find_visible());
+  EXPECT_EQ(page, window_->find_page_for_testing());
+  auto* field = shell->find_field_for_testing();
+  field->InsertOrReplaceText(u"zitter");
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->find_count_for_testing() == TF(u"{} z {}", {u"1", u"3"}); }))
+      << shell->find_count_for_testing();
+  static_cast<views::View*>(field)->OnKeyPressed(ui::KeyEvent(ui::EventType::kKeyPressed, ui::VKEY_RETURN, ui::EF_NONE));
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->find_count_for_testing() == TF(u"{} z {}", {u"2", u"3"}); }));
+  static_cast<views::View*>(field)->OnKeyPressed(ui::KeyEvent(ui::EventType::kKeyPressed, ui::VKEY_RETURN, ui::EF_SHIFT_DOWN));
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->find_count_for_testing() == TF(u"{} z {}", {u"1", u"3"}); }));
+  field->SelectAll(false);
+  field->InsertOrReplaceText(u"kwarki");
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->find_count_for_testing() == T(u"Brak wyników"); }));
+  // Ctrl+F again keeps the bar and its text.
+  ASSERT_TRUE(window_->RunShortcut("find"));
+  EXPECT_EQ(u"kwarki", field->GetText());
+  ASSERT_TRUE(static_cast<ui::AcceleratorTarget*>(window_.get())->AcceleratorPressed(ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE)));
+  EXPECT_FALSE(shell->find_visible());
+  EXPECT_EQ(nullptr, window_->find_page_for_testing());
+  EXPECT_FALSE(find_in_page::FindTabHelper::FromWebContents(page)->find_ui_active());
+}
+
+// Design: Find & Print. Ctrl+P previews every page in the sandboxed printing
+// service, counts the chosen sheets and saves the chosen pages as a PDF.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PrintSheetPreviewsAndSavesPdf) {
+  base::test::ScopedRunLoopTimeout timeout(FROM_HERE, base::Seconds(60));
+  auto* factory = ui::FakeSelectFileDialog::RegisterFactory();
+  factory->SetOpenCallback(base::DoNothing());
+  ASSERT_TRUE(window_->Select("work"));
+  auto* page = window_->contents("work");
+  ASSERT_TRUE(content::NavigateToURL(page, GURL("data:text/html,<title>Probe</title><div style='height:2400px'>first</div><p>last</p>")));
+  auto* shell = window_->shell();
+  ASSERT_TRUE(window_->RunShortcut("print"));
+  ASSERT_TRUE(shell->print_visible());
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->print_ready_for_testing(); }));
+  const size_t pages = shell->print_preview_pages_for_testing();
+  EXPECT_GE(pages, 2u);
+  // Save as PDF comes after the printers; a range picks one sheet.
+  shell->PrintChooseForTesting(1000, 2, u"2", false);
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->print_ready_for_testing(); }));
+  EXPECT_EQ(TF(u"{} arkusz", {u"1"}), shell->print_sheets_for_testing());
+  shell->PrintChooseForTesting(1000, 2, u"9-12", false);
+  EXPECT_FALSE(shell->print_ready_for_testing());
+  shell->PrintChooseForTesting(1000, 0, u"", true);
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->print_ready_for_testing(); }));
+  EXPECT_GE(shell->print_preview_pages_for_testing(), pages);  // Landscape pages are shorter.
+  shell->PrintNowForTesting();
+  ASSERT_TRUE(base::test::RunUntil([&] { return factory->GetLastDialog() != nullptr; }));
+  base::ScopedTempDir directory;
+  {
+    base::ScopedAllowBlockingForTesting allow;
+    ASSERT_TRUE(directory.CreateUniqueTempDir());
+  }
+  const auto path = directory.GetPath().AppendASCII("probe.pdf");
+  ASSERT_TRUE(factory->GetLastDialog()->CallFileSelected(path, "pdf"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !shell->print_visible(); }));
+  base::ScopedAllowBlockingForTesting allow;
+  std::string pdf;
+  ASSERT_TRUE(base::test::RunUntil([&] { return base::ReadFileToString(path, &pdf) && !pdf.empty(); }));
+  EXPECT_TRUE(pdf.starts_with("%PDF-"));
+  ui::SelectFileDialog::SetFactory(nullptr);
 }
 
 } // namespace zitter::prototype

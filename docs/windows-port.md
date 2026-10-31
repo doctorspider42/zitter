@@ -375,7 +375,23 @@ Notes:
 - Web notifications: a page's request goes through Zitter's site permission
   prompt, and once allowed `new Notification(…)` shows as a native Windows
   toast (Chromium's Windows notification platform, attributed to the site).
-- Not in Zitter on any system yet: find in page and printing.
+- Find in page and printing (all systems; design: [Find & Print](https://claude.ai/artifact/TcySm8V2L3jZaWZzjXaivj)):
+  - Ctrl+F opens a bar over the page's top right. It drives Chromium's
+    `FindTabHelper`; the counter, Enter / Shift+Enter, match case and Esc are
+    Zitter's.
+  - Ctrl+P opens Zitter's print sheet:
+    - The page goes to PDF in the renderer (`PrintToPdf`).
+    - The sandboxed printing service rasterizes the preview (PDF to PWG raster).
+    - Printers get the PDF through Chrome's print job queue (`PrintForPrintPreview`).
+    - Save as PDF writes it after a save dialog.
+    - Ctrl+Shift+P opens the system dialog.
+  - Chrome's own Print Preview needs a Chrome browser window, so Zitter starts
+    with `--disable-print-preview`, and a page's `window.print()` gets the
+    system dialog.
+  - Checked on Windows: the preview, Save as PDF, and a real job through
+    Microsoft Print to PDF.
+  - The match highlights keep Blink's colors (yellow and orange), not the
+    design's lime and violet.
 
 ## Status
 

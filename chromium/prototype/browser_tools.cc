@@ -1,4 +1,6 @@
 #include "chromium/prototype/browser_tools.h"
+
+#include <set>
 #include <algorithm>
 #include <array>
 #include "base/strings/escape.h"
@@ -53,6 +55,9 @@ std::vector<Shortcut> ArcShortcuts() {
   add("history", T(u"Historia przeglądania"), ui::VKEY_Y, p);
 #endif
   add("downloads", T(u"Pobrania"), ui::VKEY_J, p);
+  add("find", T(u"Znajdź na stronie"), ui::VKEY_F, p);
+  add("print", T(u"Drukuj"), ui::VKEY_P, p);
+  add("print_system", T(u"Drukuj w oknie systemowym"), ui::VKEY_P, p | ui::EF_SHIFT_DOWN);
   add("extensions", T(u"Rozszerzenia"), ui::VKEY_E, p | ui::EF_SHIFT_DOWN);
   add("settings", T(u"Preferencje"), ui::VKEY_OEM_COMMA, p);
   add("next_space", T(u"Następna przestrzeń"), ui::VKEY_RIGHT, p | ui::EF_ALT_DOWN);
@@ -218,22 +223,23 @@ BrowserTools BrowserTools::FromValue(const base::DictValue& dict) {
   if (const auto* key = dict.FindString("default"); key && std::any_of(result.providers.begin(), result.providers.end(), [&](const auto& provider) { return provider.keyword == *key; })) result.default_keyword = *key;
   if (const auto* list = dict.FindList("shortcuts"); list && list->size() <= 100) {
     // Apply atomically: swaps are valid, duplicates and malformed files fall back.
-    auto proposed = result.shortcuts; bool valid = true; bool saved_downloads = false;
+    auto proposed = result.shortcuts; bool valid = true; std::set<std::string> saved;
     for (const auto& item : *list) {
       const auto* entry = item.GetIfDict(); if (!entry) { valid = false; break; }
       const auto* id = entry->FindString("id"); const auto* chord = entry->FindString("chord");
       if (!id || !chord) { valid = false; break; }
-      if (*id == "downloads") saved_downloads = true;
+      saved.insert(*id);
       auto parsed = ParseShortcut(*chord); if (!parsed) { valid = false; break; }
       auto found = std::find_if(proposed.begin(), proposed.end(), [&](const auto& shortcut) { return shortcut.id == *id; });
       if (found != proposed.end()) found->accelerator = *parsed;
     }
     // A new default must never invalidate an older user's custom bindings.
-    if (!saved_downloads) {
-      auto downloads = std::find_if(proposed.begin(), proposed.end(), [](const auto& shortcut) { return shortcut.id == "downloads"; });
-      if (downloads != proposed.end() && std::any_of(proposed.begin(), proposed.end(), [&](const auto& shortcut) {
-        return shortcut.id != "downloads" && shortcut.accelerator == downloads->accelerator;
-      })) downloads->accelerator = ui::Accelerator();
+    for (const std::string added : {"downloads", "find", "print", "print_system"}) {
+      if (saved.contains(added)) continue;
+      auto shortcut = std::find_if(proposed.begin(), proposed.end(), [&](const auto& item) { return item.id == added; });
+      if (shortcut != proposed.end() && std::any_of(proposed.begin(), proposed.end(), [&](const auto& other) {
+        return other.id != added && other.accelerator == shortcut->accelerator;
+      })) shortcut->accelerator = ui::Accelerator();
     }
     for (size_t i = 0; i < proposed.size(); ++i) for (size_t j = 0; j < i; ++j)
       if (proposed[i].accelerator.key_code() != ui::VKEY_UNKNOWN && proposed[i].accelerator == proposed[j].accelerator) valid = false;

@@ -120,6 +120,8 @@ NSMenu* BuildMainMenu() {
     Command(@"Command Center…", AppCommand::kCommandPalette, @"k", kCmd),
     Command(Text(u"Hasła tego profilu…"), AppCommand::kPasswords, @"", 0),
     NSMenuItem.separatorItem,
+    Command(Text(u"Drukuj…"), AppCommand::kPrint, @"p", kCmd),
+    NSMenuItem.separatorItem,
     Command(Text(u"Zamknij kartę"), AppCommand::kCloseTab, @"w", kCmd),
   ]);
   Submenu(bar, Text(u"Edycja"), @[
@@ -130,6 +132,8 @@ NSMenu* BuildMainMenu() {
     Item(Text(u"Kopiuj"), @selector(copy:), @"c"),
     Item(Text(u"Wklej"), @selector(paste:), @"v"),
     Item(Text(u"Zaznacz wszystko"), @selector(selectAll:), @"a"),
+    NSMenuItem.separatorItem,
+    Command(Text(u"Znajdź na stronie…"), AppCommand::kFind, @"f", kCmd),
   ]);
   Submenu(bar, Text(u"Widok"), @[
     Command(Text(u"Pokaż lub ukryj karty"), AppCommand::kToggleSidebar, @"s", kCmd),

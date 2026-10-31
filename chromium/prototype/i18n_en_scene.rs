@@ -502,4 +502,6 @@ pub static EN: &[(&str, &str)] = &[
     ("{} przestrzenie", "{} spaces"),
     ("Ścisły (DoH)", "Strict (DoH)"),
     ("⌘ L  adres i wyszukiwanie\n⌘ K  karty, przestrzenie i historia\n⌘ T  nowa karta     ⌘ ,  preferencje", "⌘ L  address and search\n⌘ K  tabs, spaces and history\n⌘ T  new tab     ⌘ ,  preferences"),
+    ("Szukaj tekstu na bieżącej stronie", "Search for text on the current page"),
+    ("Wydrukuj stronę albo zapisz ją jako PDF", "Print the page or save it as a PDF"),
 ];

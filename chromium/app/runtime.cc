@@ -50,6 +50,9 @@ void Runtime::PreBrowserStart() {
   // opens them in a stock window, which ReplaceStockWindow moves into Zitter.
   base::CommandLine::ForCurrentProcess()->AppendSwitch(switches::kNoStartupWindow);
 #endif
+  // Chrome's Print Preview dialog needs a Chrome browser window. Ctrl+P opens
+  // Zitter's print sheet; a page's window.print() gets the system dialog.
+  base::CommandLine::ForCurrentProcess()->AppendSwitch(switches::kDisablePrintPreview);
 }
 
 void Runtime::PreMainMessageLoopRun() {
@@ -187,6 +190,8 @@ void Runtime::RunCommand(AppCommand command) {
     case AppCommand::kToggleSidebar: shell->ToggleSidebar(); break;
     case AppCommand::kHistory: window_->RunShortcut("history"); break;
     case AppCommand::kTimeline: window_->RunShortcut("timeline"); break;
+    case AppCommand::kFind: window_->RunShortcut("find"); break;
+    case AppCommand::kPrint: window_->RunShortcut("print"); break;
     case AppCommand::kSettings: shell->OpenGeneralSettings(); break;
     case AppCommand::kWorkspaceWork:
       if (!window_->workspaces().empty()) window_->Select(window_->workspaces()[0].id);

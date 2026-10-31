@@ -16,6 +16,9 @@
 #include "base/timer/timer.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "base/memory/raw_ptr.h"
+#include "base/scoped_observation.h"
+#include "components/find_in_page/find_result_observer.h"
+#include "components/find_in_page/find_tab_helper.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
 #include "chromium/prototype/workspace_shell.h"
@@ -51,7 +54,8 @@ struct BrowsingImportData;
 class WorkspaceWindow final : public WorkspaceRuntime,
                               public ui::AcceleratorTarget,
                               public ui::SelectFileDialog::Listener,
-                              public content::BrowsingDataRemover::Observer {
+                              public content::BrowsingDataRemover::Observer,
+                              public find_in_page::FindResultObserver {
  public:
   WorkspaceWindow(Profile* work, Profile* personal);
   explicit WorkspaceWindow(base::FilePath data_directory, bool offer_import = true);
@@ -191,6 +195,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   bool workspace_sleeping(std::string_view id) const;
   TimeMachineState TimeMachine() const;
   bool RunShortcut(std::string id);
+  content::WebContents* find_page_for_testing() const { return find_page_; }
   size_t tab_count(std::string_view id) const;
   void SetCloseCallback(base::OnceClosure callback);
   void RequestClose();
@@ -402,6 +407,17 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   class ExtensionTabs;
   std::unique_ptr<ExtensionTabs> extension_tabs_;
   base::WeakPtr<content::WebContents> shown_page_;
+  // Find in page and printing (design: Find & Print).
+  bool StartFind();
+  void Find(std::u16string text, bool forward, bool match_case);
+  void StopFind();
+  gfx::Rect FindBounds() const;
+  void OnFindResultAvailable(content::WebContents* page) override;
+  void OnFindTabHelperDestroyed(find_in_page::FindTabHelper* helper) override;
+  bool StartPrint();
+  raw_ptr<content::WebContents> find_page_ = nullptr;
+  base::ScopedObservation<find_in_page::FindTabHelper, find_in_page::FindResultObserver> find_observation_{this};
+  std::unique_ptr<PagePrinter> printer_;
   base::WeakPtrFactory<WorkspaceWindow> weak_factory_{this};
 };
 }  // namespace zitter::prototype

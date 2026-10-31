@@ -213,4 +213,9 @@ pub static EN: &[(&str, &str)] = &[
     ("Ten profil nie ma rozszerzeń", "This profile has no extensions"),
     ("Dodaj je z Chrome Web Store", "Add them from the Chrome Web Store"),
     ("Więcej: {}", "More: {}"),
+    ("Drukuj w oknie systemowym", "Print using the system dialog"),
+    ("Drukarka odrzuciła zadanie.", "The printer rejected the job."),
+    ("Drukowanie jest niedostępne na tej stronie.", "Printing isn’t available on this page."),
+    ("Nie udało się przygotować stron do druku.", "The pages couldn’t be prepared for printing."),
+    ("Nie udało się zapisać pliku PDF.", "The PDF couldn’t be saved."),
 ];
