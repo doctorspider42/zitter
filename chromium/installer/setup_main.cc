@@ -30,6 +30,7 @@
 #include <thread>
 #include <vector>
 
+#include "chromium/installer/setup_accessibility.h"
 #include "chromium/installer/setup_install.h"
 #include "chromium/installer/setup_resource.h"
 #include "chromium/installer/setup_text.h"
@@ -49,7 +50,7 @@ constexpr D2D1_COLOR_F kVoid = Rgb(0x100b2c), kBase = Rgb(0x1b1440), kRaised = R
                        kOk = Rgb(0x6fd6cb), kDanger = Rgb(0xff7a55), kCloseRed = Rgb(0xc42b1c),
                        kWhite = Rgb(0xffffff), kTile = Rgb(0x14121e);
 constexpr float kWidth = 640, kHeight = 440, kHead = 38;
-constexpr UINT kProgressMessage = WM_APP + 1, kDoneMessage = WM_APP + 2;
+constexpr UINT kProgressMessage = WM_APP + 1, kDoneMessage = WM_APP + 2, kActivateMessage = WM_APP + 3;
 constexpr UINT_PTR kAnimationTimer = 1;
 
 struct Style {
@@ -84,13 +85,42 @@ struct Hit {
   Control id;
 };
 
+// What screen readers get of a painted element, in paint order.
+struct Accessible {
+  D2D1_RECT_F rect;
+  int id;
+  Role role;
+  std::wstring name;
+  std::wstring help;
+};
+constexpr int kFirstTextId = 100;  // Controls use their Control value.
+
+const wchar_t* AutomationId(int id) {
+  switch (id) {
+    case kClose: return L"close";
+    case kForMe: return L"for-me";
+    case kForAll: return L"for-all";
+    case kChange: return L"change-folder";
+    case kShortcut: return L"desktop-shortcut";
+    case kCancel: return L"cancel";
+    case kInstall: return L"install";
+    case kRemoveZitter: return L"remove";
+    case kElsewhere: return L"install-elsewhere";
+    case kUpdate: return L"update";
+    case kWipe: return L"remove-data";
+    case kBack: return L"back";
+    case kConfirmRemove: return L"confirm-remove";
+    default: return L"";
+  }
+}
+
 std::wstring Substitute(const wchar_t* pattern, const std::wstring& value) {
   std::wstring out(pattern);
   if (const auto at = out.find(L"%s"); at != std::wstring::npos) out.replace(at, 2, value);
   return out;
 }
 
-class Window {
+class Window : public AccessibilityHost {
  public:
   explicit Window(HINSTANCE instance) : instance_(instance), text_(Strings()) {}
   Window(const Window&) = delete;
@@ -294,11 +324,17 @@ class Window {
       case kDoneMessage:
         Finished();
         return 0;
+      case kActivateMessage:
+        Activate(static_cast<Control>(w));
+        return 0;
+      case WM_GETOBJECT:
+        return AnswerGetObject(hwnd, this, w, l);
       case WM_CLOSE:
         if (page_ == Page::kWorking) return 0;  // Never mid-copy.
         DestroyWindow(hwnd);
         return 0;
       case WM_DESTROY:
+        DisconnectAccessibility(hwnd);
         PostQuitMessage(0);
         return 0;
     }
@@ -370,7 +406,14 @@ class Window {
     target_->DrawRoundedRectangle({{r.left - 3, r.top - 3, r.right + 3, r.bottom + 3}, radius + 3, radius + 3}, Brush(kZing), 2);
   }
 
-  void Register(D2D1_RECT_F rect, Control id) { hits_.push_back({rect, id}); }
+  void Register(D2D1_RECT_F rect, Control id, Role role, const std::wstring& name, const std::wstring& help = {}) {
+    hits_.push_back({rect, id});
+    accessible_.push_back({rect, id, role, name, help});
+  }
+  // Text a screen reader reads in order with the controls.
+  void Say(D2D1_RECT_F rect, const std::wstring& text, Role role = Role::kText) {
+    accessible_.push_back({rect, kFirstTextId + static_cast<int>(accessible_.size()), role, text, {}});
+  }
 
   Control Find(float x, float y) const {
     for (const auto& hit : hits_)
@@ -385,7 +428,7 @@ class Window {
   }
 
   void Button(D2D1_RECT_F r, const std::wstring& label, Look look, Control id) {
-    Register(r, id);
+    Register(r, id, Role::kButton, label);
     const bool hovered = hover_ == id, pill = look == Look::kPrimary || look == Look::kOutline || look == Look::kDangerStrong;
     const float radius = pill ? (r.bottom - r.top) / 2 : 8;
     const float shift = pressed_ == id && hovered ? 1.f : 0.f;
@@ -418,8 +461,8 @@ class Window {
   }
 
   // zt-toggle: a 34 × 20 pill, its knob 12 px.
-  void Toggle(D2D1_RECT_F r, bool on, Control id) {
-    Register(r, id);
+  void Toggle(D2D1_RECT_F r, bool on, Control id, const std::wstring& name, const std::wstring& help = {}) {
+    Register(r, id, Role::kSwitch, name, help);
     if (on) Fill(r, kAccent, 10);
     else Ring(r, kLineStrong, 10, 1.5f);
     const float x = r.left + 4 + (on ? 14.f : 0.f) + 6;
@@ -429,7 +472,7 @@ class Window {
 
   // A radio card: raised and ringed in the accent when chosen.
   void Card(D2D1_RECT_F r, const std::wstring& title, const std::wstring& detail, bool on, Control id) {
-    Register(r, id);
+    Register(r, id, Role::kRadio, title, detail);
     if (on) {
       Fill(r, kRaised, 12);
       Ring({r.left - 2, r.top - 2, r.right + 2, r.bottom + 2}, kAccent, 14, 2);
@@ -467,6 +510,7 @@ class Window {
       target_->CreateSolidColorBrush(kInk, &brush_);
     }
     hits_.clear();
+    accessible_.clear();
     target_->BeginDraw();
     target_->Clear(kVoid);
     // Header: the eyebrow and the close button (design: zw-tool).
@@ -478,7 +522,7 @@ class Window {
     Print(upper, kEyebrow, {16, 12, 400, kHead}, kMuted);
     const D2D1_RECT_F close{kWidth - 46, 0, kWidth, kHead};
     if (page_ != Page::kWorking) {
-      Register(close, kClose);
+      Register(close, kClose, Role::kButton, text_.close);
       if (hover_ == kClose) Fill(close, kCloseRed);
       const D2D1_COLOR_F glyph = hover_ == kClose ? kWhite : kInk;
       const float cx = kWidth - 23, cy = kHead / 2;
@@ -495,10 +539,16 @@ class Window {
       case Page::kWorking: PaintWorking(body); break;
     }
     if (target_->EndDraw() == static_cast<HRESULT>(D2DERR_RECREATE_TARGET)) target_.Reset();
+    if (painted_page_ != page_) {
+      painted_page_ = page_;
+      NotifyChildrenChanged(hwnd_);
+    }
   }
 
   void PaintFresh(D2D1_RECT_F b) {
-    float y = b.top + Print(text_.where, kHeadline, {b.left, b.top, b.right, b.bottom}, kInk) + 16;
+    const float headline = Print(text_.where, kHeadline, {b.left, b.top, b.right, b.bottom}, kInk);
+    Say({b.left, b.top, b.right, b.top + headline}, text_.where);
+    float y = b.top + headline + 16;
     const float half = (b.right - b.left - 10) / 2;
     Card({b.left, y, b.left + half, y + 62}, text_.for_me, text_.for_me_detail, !placement_.system, kForMe);
     Card({b.right - half, y, b.right, y + 62}, text_.for_all, text_.for_all_detail, placement_.system, kForAll);
@@ -511,17 +561,20 @@ class Window {
     Ring(field, kLineStrong, 8);
     Print(DisplayPath(placement_.directory), kPath, {field.left + 12, y + 8, field.right - 12, y + 24}, kInk,
          DWRITE_TEXT_ALIGNMENT_LEADING, true);
+    Say(field, std::wstring(text_.folder) + L": " + placement_.directory);
     Button({b.right - change, y, b.right, y + 32}, text_.change, Look::kOutline, kChange);
     y += 32 + 16;
     Print(text_.desktop_shortcut, kBody, {b.left, y + 1, b.right - 40, y + 20}, kInk);
-    Toggle({b.right - 34, y, b.right, y + 20}, desktop_shortcut_, kShortcut);
+    Toggle({b.right - 34, y, b.right, y + 20}, desktop_shortcut_, kShortcut, text_.desktop_shortcut);
     const float footer = b.bottom - 32;
     Print(text_.platform, kPlatform, {b.left, footer + 8, b.left + 200, footer + 24}, kMuted);
     ButtonsRightToLeft(b.right, footer, {{text_.cancel, Look::kQuiet, kCancel}, {text_.install, Look::kPrimary, kInstall}});
   }
 
   void PaintExisting(D2D1_RECT_F b) {
-    float y = b.top + Print(text_.already_here, kHeadline, b, kInk) + 16;
+    const float headline = Print(text_.already_here, kHeadline, b, kInk);
+    Say({b.left, b.top, b.right, b.top + headline}, text_.already_here);
+    float y = b.top + headline + 16;
     const D2D1_RECT_F card{b.left, y, b.right, y + 68};
     Fill(card, kRaised, 12);
     Ring(card, kLine, 12);
@@ -533,8 +586,11 @@ class Window {
     Print(DisplayPath(existing_->placement.directory), kPath, {tile.right + 14, y + 35, card.right - status - 32, y + 51},
          kMuted, DWRITE_TEXT_ALIGNMENT_LEADING, true);
     Print(text_.installed, kLabel, {card.right - status - 16, y + 26, card.right - 16, y + 42}, kOk);
+    Say(card, L"Zitter " + existing_->version + L", " + existing_->placement.directory + L", " + text_.installed);
     y += 68 + 16;
-    Print(Substitute(text_.update_keeps, PayloadVersion()), kBody, {b.left, y, b.right, b.bottom}, kMuted);
+    const std::wstring keeps = Substitute(text_.update_keeps, PayloadVersion());
+    const float note = Print(keeps, kBody, {b.left, y, b.right, b.bottom}, kMuted);
+    Say({b.left, y, b.right, y + note}, keeps);
     const float footer = b.bottom - 32;
     Button({b.left - 12, footer, b.left - 12 + ButtonWidth(text_.remove_zitter, Look::kDanger), footer + 32},
            text_.remove_zitter, Look::kDanger, kRemoveZitter);
@@ -542,7 +598,9 @@ class Window {
   }
 
   void PaintRemove(D2D1_RECT_F b) {
-    float y = b.top + Print(text_.remove_question, kHeadline, b, kInk) + 16;
+    const float headline = Print(text_.remove_question, kHeadline, b, kInk);
+    Say({b.left, b.top, b.right, b.top + headline}, text_.remove_question);
+    float y = b.top + headline + 16;
     // „Usunę aplikację z <folder> razem ze skrótami.”, the folder in mono ink.
     const std::wstring path = DisplayPath(placement_.directory);
     const std::wstring sentence = Substitute(text_.remove_from, path);
@@ -558,13 +616,15 @@ class Window {
     DWRITE_TEXT_METRICS metrics{};
     layout->GetMetrics(&metrics);
     target_->DrawTextLayout({b.left, y}, layout.Get(), Brush(kMuted));
+    Say({b.left, y, b.right, y + metrics.height}, Substitute(text_.remove_from, placement_.directory));
     y += metrics.height + 16;
     const D2D1_RECT_F card{b.left, y, b.right, y + 64};
     Fill(card, kRaised, 12);
     Ring(card, kLine, 12);
     Print(text_.remove_data, kStrong, {card.left + 16, y + 14, card.right - 70, y + 32}, kInk);
     Print(text_.remove_data_detail, kLabel, {card.left + 16, y + 34, card.right - 70, y + 50}, kMuted);
-    Toggle({card.right - 50, y + 22, card.right - 16, y + 42}, remove_data_, kWipe);
+    Toggle({card.right - 50, y + 22, card.right - 16, y + 42}, remove_data_, kWipe, text_.remove_data,
+           text_.remove_data_detail);
     const float footer = b.bottom - 32;
     if (uninstall_only_) ButtonsRightToLeft(b.right, footer, {{text_.cancel, Look::kQuiet, kCancel}, {text_.remove_zitter, Look::kDangerStrong, kConfirmRemove}});
     else ButtonsRightToLeft(b.right, footer, {{text_.back, Look::kQuiet, kBack}, {text_.remove_zitter, Look::kDangerStrong, kConfirmRemove}});
@@ -573,7 +633,9 @@ class Window {
   void PaintWorking(D2D1_RECT_F b) {
     const float title = Print(text_.about_to_tremble, kHeadlineLarge, {b.left, b.top, b.left + 400, b.bottom}, kInk);
     const wchar_t* note = removing_ ? text_.removing : placement_.system ? text_.copying_for_all : text_.copying_for_me;
-    Print(note, kBody, {b.left, b.top + title + 12, b.left + 360, b.bottom}, kMuted);
+    Say({b.left, b.top, b.left + 400, b.top + title}, text_.about_to_tremble);
+    const float said = Print(note, kBody, {b.left, b.top + title + 12, b.left + 360, b.bottom}, kMuted);
+    Say({b.left, b.top + title + 12, b.left + 360, b.top + title + 12 + said}, note);
     // Design: three dots trembling like a particle (zing, accent, zing), in
     // five 52 ms steps; still under reduced motion.
     BOOL animations = TRUE;
@@ -594,6 +656,8 @@ class Window {
     Fill(track, kHover, 3);
     Ring(track, kLine, 3);
     if (progress_ > 0) Fill({b.left, bar, b.left + (b.right - b.left) * static_cast<float>(progress_), bar + 6}, kAccent, 3);
+    Say(track, std::wstring(removing_ ? text_.removing_files : text_.copying_files) + L" " + std::to_wstring(percent) + L"%",
+        Role::kProgress);
     Print(text_.platform, kPlatform, {b.left, bar + 16, b.right, bar + 32}, kMuted);
   }
 
@@ -617,6 +681,7 @@ class Window {
     int index = at == order.end() ? (direction > 0 ? -1 : 0) : static_cast<int>(at - order.begin());
     index = (index + direction + static_cast<int>(order.size())) % static_cast<int>(order.size());
     focus_ = order.at(static_cast<size_t>(index));
+    NotifyFocusChanged(hwnd_, focus_);
     Invalidate();
   }
 
@@ -639,8 +704,42 @@ class Window {
       case kNone: break;
     }
     focus_ = id == kForMe || id == kForAll || id == kShortcut || id == kWipe ? id : kNone;
+    if (id == kShortcut) NotifyToggled(hwnd_, id, desktop_shortcut_);
+    if (id == kWipe) NotifyToggled(hwnd_, id, remove_data_);
+    if (id == kForMe || id == kForAll) NotifyToggled(hwnd_, id, true);
+    NotifyFocusChanged(hwnd_, focus_);
     Invalidate();
   }
+
+  // --- Accessibility ---------------------------------------------------------
+
+  std::vector<AccessibleItem> AccessibleItems() const override {
+    std::vector<AccessibleItem> items;
+    POINT origin{0, 0};
+    ClientToScreen(hwnd_, &origin);
+    auto pixels = [&](float value, LONG offset) { return offset + static_cast<LONG>(std::lround(value * scale_)); };
+    for (const auto& element : accessible_) {
+      AccessibleItem item;
+      item.id = element.id;
+      item.role = element.role;
+      item.name = element.name;
+      item.help = element.help;
+      item.automation_id = AutomationId(element.id);
+      item.bounds = {pixels(element.rect.left, origin.x), pixels(element.rect.top, origin.y),
+                     pixels(element.rect.right, origin.x), pixels(element.rect.bottom, origin.y)};
+      item.on = (element.id == kForMe && !placement_.system) || (element.id == kForAll && placement_.system) ||
+                (element.id == kShortcut && desktop_shortcut_) || (element.id == kWipe && remove_data_);
+      items.push_back(std::move(item));
+    }
+    return items;
+  }
+  int AccessibleFocus() const override { return focus_; }
+  void SetAccessibleFocus(int id) override {
+    focus_ = static_cast<Control>(id);
+    NotifyFocusChanged(hwnd_, focus_);
+    Invalidate();
+  }
+  void AccessibleActivate(int id) override { PostMessageW(hwnd_, kActivateMessage, static_cast<WPARAM>(id), 0); }
 
   void PickFolder() {
     ComPtr<IFileOpenDialog> dialog;
@@ -762,6 +861,8 @@ class Window {
   ComPtr<ID2D1HwndRenderTarget> target_;
   ComPtr<ID2D1SolidColorBrush> brush_;
   std::vector<Hit> hits_;
+  std::vector<Accessible> accessible_;
+  std::optional<Page> painted_page_;
   Control hover_ = kNone, pressed_ = kNone, focus_ = kNone;
   bool tracking_ = false;
   Page page_ = Page::kFresh;

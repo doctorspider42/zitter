@@ -289,8 +289,15 @@ Notes:
   python tools/package_win.py --out .chromium/src/out/ZitterWinRelease --setup .chromium/src/out/ZitterWinRelease/zitter_setup.exe --destination build/release --third-party-licenses build/license-audit/windows/THIRD_PARTY_LICENSES.txt
   ```
 - Not done yet: ThinLTO/PGO and Authenticode signing (no certificate yet).
-- The installer draws its own controls: keyboard (Tab, Enter, Space, Esc) works,
-  UI Automation does not yet.
+- The installer draws its own controls, so it describes them to UI Automation
+  itself (`setup_accessibility.cc`): headings and sentences as text, the two
+  placements as radio buttons, the switches with the Toggle pattern, buttons
+  with Invoke, progress as a progress bar, each with a name, help text and an
+  automation id, in reading order. Focus, toggles, selection and page changes
+  raise events. The providers use COM threading, so UIA calls them on the
+  window's thread. Checked with a UIA client on the install and remove pages:
+  every control is listed with its state, and Toggle, Select, SetFocus and
+  Invoke work. Keyboard: Tab, Enter, Space, Esc.
 ## Status
 
 | Phase | State |
@@ -302,4 +309,4 @@ Notes:
 | 3 — native look | In progress: own titlebar on the system frame (shadow, snap, resize), 46 × 38 caption buttons, the Zitter menu, Windows shortcuts and Kbd words, the emoji panel, the downloads prompt on close, the app icon. Design fonts load. verify-ui done (Noc, restored and maximized). Open: Papier, Snap Layouts on Windows 11, menu icons and Kbd chips, HiDPI |
 | 4 — import and security | Done: Arc (MSIX), Chrome, Edge and Brave paths, real Arc and Chrome data read, no cookie option, sandbox checked, network audit clean after two fixes. CSV passwords remain a feature of its own |
 | 5 — tests and tools | Mostly done: browser tests build and the targeted ones pass, verify-ui works on Windows, Python tests pass. Open: the full browser suite, Windows sections in CLAUDE.md and README |
-| 6 — packaging | In progress: static release build, portable ZIP and standalone installer (191 MB), install, update and quiet remove checked end to end for one user, browser registration, network sandbox. Open: signing, license audit, elevated install, installer accessibility, ThinLTO/PGO |
+| 6 — packaging | In progress: static release build, portable ZIP and standalone installer (191 MB), install, update and quiet remove checked end to end for one user, browser registration, network sandbox. Open: signing, elevated install, ThinLTO/PGO |

@@ -361,6 +361,8 @@ if (is_win) {
   executable("zitter_setup") {
     sources = [
       "chromium/installer/setup.rc",
+      "chromium/installer/setup_accessibility.cc",
+      "chromium/installer/setup_accessibility.h",
       "chromium/installer/setup_install.cc",
       "chromium/installer/setup_install.h",
       "chromium/installer/setup_main.cc",
@@ -371,7 +373,7 @@ if (is_win) {
     configs -= [ "//build/config/win:console" ]
     configs += [ "//build/config/win:windowed" ]
     deps = [ ":setup_manifest", "//third_party/zlib:minizip" ]
-    libs = [ "d2d1.lib", "dwmapi.lib", "dwrite.lib", "ole32.lib", "propsys.lib", "shell32.lib", "advapi32.lib" ]
+    libs = [ "d2d1.lib", "dwmapi.lib", "dwrite.lib", "ole32.lib", "oleaut32.lib", "propsys.lib", "shell32.lib", "advapi32.lib", "uiautomationcore.lib" ]
   }
 }
 # Real browser bootstrap, with no browser-test runner or test-only dependencies.
