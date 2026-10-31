@@ -123,8 +123,16 @@ class ZitterPreconnectBrowserTest : public InProcessBrowserTest {
   void SetUp() override {
     const auto* command = base::CommandLine::ForCurrentProcess();
     const bool enabled = !command->HasSwitch("zitter-benchmark") || command->HasSwitch("zitter-perf-preconnect");
+#if BUILDFLAG(IS_WIN)
+    // Development builds turn the network sandbox on (fieldtrial_testing_config),
+    // and its AppContainer can't read an out\ directory that no installer granted
+    // access to (as ZitterProfilesBrowserTest).
+    features_.InitFromCommandLine(enabled ? "ZitterOmniboxPreconnect" : "",
+                                 enabled ? "NetworkServiceSandbox" : "ZitterOmniboxPreconnect,NetworkServiceSandbox");
+#else
     features_.InitFromCommandLine(enabled ? "ZitterOmniboxPreconnect" : "",
                                  enabled ? "" : "ZitterOmniboxPreconnect");
+#endif
     InProcessBrowserTest::SetUp();
   }
   void SetUpOnMainThread() override {

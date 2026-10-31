@@ -22,6 +22,7 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/bind_post_task.h"
 #include "base/test/scoped_feature_list.h"
+#include "sandbox/policy/features.h"
 #include "base/test/bind.h"
 #include "base/test/run_until.h"
 #include "base/test/test_future.h"
@@ -167,7 +168,14 @@ class CancelDesktopFactory final : public DesktopMediaPickerFactory {
 class ZitterMediaBrowserTest : public InProcessBrowserTest {
  public:
   ZitterMediaBrowserTest() {
+#if BUILDFLAG(IS_WIN)
+  // Development builds turn the network sandbox on (fieldtrial_testing_config),
+  // and its AppContainer can't read an out\ directory that no installer granted
+  // access to (as ZitterProfilesBrowserTest).
+    features_.InitWithFeatures({}, {features::kAudioServiceOutOfProcess, sandbox::policy::features::kNetworkServiceSandbox});
+#else
     features_.InitAndDisableFeature(features::kAudioServiceOutOfProcess);
+#endif
   }
   void SetUpCommandLine(base::CommandLine* command_line) override {
     InProcessBrowserTest::SetUpCommandLine(command_line);
@@ -284,7 +292,10 @@ IN_PROC_BROWSER_TEST_F(ZitterMediaBrowserTest, ScenePermissionCocoaDefaultAndFor
   }
   // macOS deliberately does not bind Return to a default Cancel. It must
   // neither grant the request nor close the prompt as a side effect.
+#if BUILDFLAG(IS_MAC)
   stage="Return leaves default Cancel unbound";ASSERT_NO_FATAL_FAILURE(Press(widget,false,ui::VKEY_RETURN));base::RunLoop().RunUntilIdle();EXPECT_EQ(widget,access()->permission_prompt());EXPECT_FALSE(PageMediaAccess::IsCapturing(page()));
+#endif
+  // Elsewhere Return presses the default button, Cancel, as Escape does next.
   ASSERT_NO_FATAL_FAILURE(Press(widget,false,ui::VKEY_ESCAPE));ASSERT_TRUE(base::test::RunUntil([&]{return ResultIs("NotAllowedError");}));EXPECT_FALSE(access()->permission_prompt());if(MetalPresents())EXPECT_FALSE(access()->permission_scene_contains_for_testing("Prosi o dostęp: "+origin));
   stage="allow and wait for page track listeners";SetCamera(work_,CONTENT_SETTING_ASK);Load("?scene-allow");Start();ASSERT_TRUE(base::test::RunUntil([&]{return access()->permission_prompt()!=nullptr;}));
   ASSERT_NO_FATAL_FAILURE(Press(access()->permission_prompt(),true));ASSERT_TRUE(base::test::RunUntil([&]{return ResultIs("running")&&PageMediaAccess::IsCapturing(page())&&access()->capture_prompt();}));

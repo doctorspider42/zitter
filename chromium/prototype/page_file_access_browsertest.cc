@@ -10,6 +10,8 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
+#include "base/test/scoped_feature_list.h"
+#include "sandbox/policy/features.h"
 #include "base/test/run_until.h"
 #include "base/test/test_future.h"
 #include "base/threading/thread_restrictions.h"
@@ -53,6 +55,15 @@ class UploadResult : public content::FileSelectListener {
 
 class ZitterFileUploadBrowserTest : public InProcessBrowserTest {
  public:
+#if BUILDFLAG(IS_WIN)
+  // Development builds turn the network sandbox on (fieldtrial_testing_config),
+  // and its AppContainer can't read an out\ directory that no installer granted
+  // access to (as ZitterProfilesBrowserTest).
+  ZitterFileUploadBrowserTest() {
+    network_sandbox_.InitAndDisableFeature(sandbox::policy::features::kNetworkServiceSandbox);
+  }
+  base::test::ScopedFeatureList network_sandbox_;
+#endif
   void SetUpOnMainThread() override {
     InProcessBrowserTest::SetUpOnMainThread();
     auto* manager = g_browser_process->profile_manager();
