@@ -4166,6 +4166,9 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     params.opacity = views::Widget::InitParams::WindowOpacity::kTranslucent;
     params.rounded_corners = gfx::RoundedCornersF(12);
     panel = std::make_unique<views::Widget>();
+#if BUILDFLAG(IS_WIN)
+    if (!activatable) ConfigureNonActivatingPanel(panel.get(), params);
+#endif
     panel->Init(std::move(params));
 
     PreparePanelText(panel->GetRootView());

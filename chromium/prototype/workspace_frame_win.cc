@@ -165,12 +165,32 @@ class WorkspaceTreeHost final : public views::DesktopWindowTreeHostWin {
   base::RepeatingCallback<void(std::string)> command_handler_;
   bool tracking_ = false;
 };
+// Clicks stay with the panel, activation with the window behind it.
+class NonActivatingPanelHost final : public views::DesktopWindowTreeHostWin {
+ public:
+  using views::DesktopWindowTreeHostWin::DesktopWindowTreeHostWin;
+
+ protected:
+  bool PreHandleMSG(UINT message, WPARAM w_param, LPARAM l_param, LRESULT* result) override {
+    if (message == WM_MOUSEACTIVATE) {
+      *result = MA_NOACTIVATE;
+      return true;
+    }
+    return views::DesktopWindowTreeHostWin::PreHandleMSG(message, w_param, l_param, result);
+  }
+};
 }  // namespace
 
 void ConfigureWorkspaceNativeWidget(views::Widget* widget, views::Widget::InitParams& params) {
   auto* native_widget = new views::DesktopNativeWidgetAura(widget);
   params.native_widget = native_widget;
   params.desktop_window_tree_host = new WorkspaceTreeHost(widget, native_widget);
+}
+
+void ConfigureNonActivatingPanel(views::Widget* widget, views::Widget::InitParams& params) {
+  auto* native_widget = new views::DesktopNativeWidgetAura(widget);
+  params.native_widget = native_widget;
+  params.desktop_window_tree_host = new NonActivatingPanelHost(widget, native_widget);
 }
 
 void SetWorkspaceNativeAppearance(views::Widget* widget, std::optional<bool> dark) {
