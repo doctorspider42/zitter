@@ -7,6 +7,8 @@
 //   zitter_setup.exe --uninstall [--system]          Apps & features' remove
 //   zitter_setup.exe --install-now --dir D [--system] [--no-desktop]
 //                                        the elevated half of an install for everyone
+//   --quiet with either: no questions, no Zitter launched afterwards, and the
+//   exit code says whether it worked (for scripts and package managers)
 #include <windows.h>
 
 #include <d2d1_1.h>
@@ -119,13 +121,14 @@ class Window {
     SetWindowPos(hwnd_, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER);
     ShowWindow(hwnd_, show);
     if (install_now_) StartInstall();
+    else if (uninstall_only_ && quiet_) StartUninstall();
     MSG message;
     while (GetMessageW(&message, nullptr, 0, 0)) {
       TranslateMessage(&message);
       DispatchMessageW(&message);
     }
     if (worker_.joinable()) worker_.join();
-    return 0;
+    return exit_code_;
   }
 
  private:
@@ -143,6 +146,7 @@ class Window {
     if (auto dir = std::find(args.begin(), args.end(), L"--dir"); dir != args.end() && std::next(dir) != args.end())
       placement_.directory = *std::next(dir);
     desktop_shortcut_ = !has(L"--no-desktop");
+    quiet_ = has(L"--quiet");
     existing_ = FindExisting();
     if (has(L"--uninstall")) {
       if (existing_) placement_ = existing_->placement;
@@ -661,9 +665,20 @@ class Window {
     CoTaskMemFree(path);
   }
 
+  // A quiet run ends instead of asking.
+  void Refuse(const std::wstring& message, UINT icon) {
+    if (!quiet_) {
+      MessageBoxW(hwnd_, message.c_str(), L"Zitter", MB_OK | icon);
+      return;
+    }
+    exit_code_ = 1;
+    page_ = Page::kFresh;  // Lets WM_CLOSE through.
+    DestroyWindow(hwnd_);
+  }
+
   void StartInstall() {
     if (IsRunning(placement_.directory)) {
-      MessageBoxW(hwnd_, text_.close_zitter_first, L"Zitter", MB_OK | MB_ICONINFORMATION);
+      Refuse(text_.close_zitter_first, MB_ICONINFORMATION);
       return;
     }
     // Everyone's installation runs elevated, in a second copy of this window.
@@ -678,11 +693,11 @@ class Window {
 
   void StartUninstall() {
     if (IsRunning(placement_.directory)) {
-      MessageBoxW(hwnd_, text_.close_zitter_first, L"Zitter", MB_OK | MB_ICONINFORMATION);
+      Refuse(text_.close_zitter_first, MB_ICONINFORMATION);
       return;
     }
     if (placement_.system && !IsElevated()) {
-      if (Relaunch(L"--uninstall --system")) DestroyWindow(hwnd_);
+      if (Relaunch(quiet_ ? L"--uninstall --system --quiet" : L"--uninstall --system")) DestroyWindow(hwnd_);
       return;
     }
     Start(true);
@@ -720,15 +735,15 @@ class Window {
       error = result_;
     }
     if (!error.empty()) {
-      MessageBoxW(hwnd_, error == L"running" ? text_.close_zitter_first : Substitute(text_.failed, error).c_str(), L"Zitter",
-                  MB_OK | MB_ICONWARNING);
       page_ = removing_ ? Page::kRemove : Page::kFresh;
       Invalidate();
+      Refuse(error == L"running" ? std::wstring(text_.close_zitter_first) : Substitute(text_.failed, error),
+             MB_ICONWARNING);
       return;
     }
     if (removing_) {
       DeleteSelfLater(placement_.directory);
-    } else if (!IsElevated()) {
+    } else if (!IsElevated() && !quiet_) {
       // Zitter opens once installed; an elevated copy would run it as administrator.
       const std::wstring exe = placement_.directory + L"\\zitter.exe";
       ShellExecuteW(nullptr, L"open", exe.c_str(), nullptr, placement_.directory.c_str(), SW_SHOWNORMAL);
@@ -753,7 +768,8 @@ class Window {
   Placement placement_;
   std::optional<Existing> existing_;
   bool desktop_shortcut_ = true, remove_data_ = false, removing_ = false;
-  bool install_now_ = false, uninstall_only_ = false;
+  bool install_now_ = false, uninstall_only_ = false, quiet_ = false;
+  int exit_code_ = 0;
   double progress_ = 0;
   std::thread worker_;
   std::mutex result_lock_;

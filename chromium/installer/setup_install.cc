@@ -282,6 +282,7 @@ bool RegisterUninstall(const Placement& placement, uint64_t bytes) {
          SetString(root, kUninstallKey, L"DisplayIcon", dir + L"\\zitter.exe,0") &&
          SetString(root, kUninstallKey, L"InstallLocation", dir) &&
          SetString(root, kUninstallKey, L"UninstallString", uninstall) &&
+         SetString(root, kUninstallKey, L"QuietUninstallString", uninstall + L" --quiet") &&
          SetDword(root, kUninstallKey, L"EstimatedSize", static_cast<DWORD>(bytes / 1024)) &&
          SetDword(root, kUninstallKey, L"NoModify", 1) && SetDword(root, kUninstallKey, L"NoRepair", 1);
 }

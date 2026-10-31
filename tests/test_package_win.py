@@ -15,6 +15,7 @@ class WindowsPackageTest(unittest.TestCase):
             "locales/pl.pak", "locales/pl.pak.info", "Fonts/InstrumentSerif-Regular.ttf", "icudtl.dat",
             "v8_context_snapshot.bin", "gen/third_party/devtools-frontend/src/front_end/Tests.js",
             "pyproto/google/__init__.py", "angledata/foo.bin", "../../third_party/x.txt", "zitter.lib",
+            "VkLayer_khronos_validation.dll", "msdia140.dll", "dbghelp.dll", "locales/en-XA.pak",
         ])
         self.assertEqual(files, sorted(["zitter.exe", "base.dll", "chrome_elf.dll", "resources.pak",
                                         "locales/pl.pak", "Fonts/InstrumentSerif-Regular.ttf", "icudtl.dat",

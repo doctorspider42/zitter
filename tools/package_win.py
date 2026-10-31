@@ -25,6 +25,14 @@ DEPOT_TOOLS = ROOT / ".chromium/depot_tools"
 # Not needed at run time: symbols, link products, generated sources (DevTools'
 # front end ships inside resources.pak), Python protos and ANGLE's test data.
 EXCLUDED = re.compile(r"(^gen/|^\.\./|^pyproto/|^angledata/|^resources/|\.(pdb|lib|exp|ilk)$)")
+# Debugging aids that Chrome's own installer (chrome.release) leaves out too:
+# the Vulkan validation layer, the mock driver, symbol readers and the
+# pseudolocales a non-official build generates.
+DEBUG_ONLY = {
+    "VkLayer_khronos_validation.dll", "VkLayer_khronos_validation.json", "VkICD_mock_icd.dll",
+    "VkICD_mock_icd.json", "msdia140.dll", "dbgcore.dll", "dbghelp.dll", "locales/en-XA.pak",
+    "locales/ar-XB.pak",
+}
 
 
 def version():
@@ -39,7 +47,7 @@ def select_files(runtime_deps):
     files = []
     for entry in runtime_deps:
         path = entry.strip().removeprefix("./")
-        if not path or EXCLUDED.search(path):
+        if not path or EXCLUDED.search(path) or path in DEBUG_ONLY:
             continue
         if path.startswith("locales/") and not path.endswith(".pak"):
             continue

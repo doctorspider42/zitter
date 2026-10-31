@@ -256,8 +256,20 @@ Notes:
   features leaving nothing behind. The elevated install for everyone is not
   checked yet.
 - A component build's installer needs its DLLs beside it; the standalone one
-  comes from a static release build (`is_component_build = false`), not built
-  yet. So are ThinLTO/PGO, Authenticode signing (no certificate yet) and the
+  comes from the static release build in `out/ZitterWinRelease`
+  (`chromium/windows-release.args.gn`, about 8 hours from scratch on this
+  machine). Its package is 191 MB (ZIP and installer alike) against 430 MB from
+  the component build: `zitter.exe` is 325 MB uncompressed, and the packager
+  leaves out what Chrome's installer leaves out too (Vulkan validation layer,
+  mock driver, symbol readers, pseudolocales).
+- `--quiet` with `--install-now` or `--uninstall` runs without questions or a
+  launch afterwards and reports through the exit code (1 when Zitter is running
+  or the work failed); Apps & features gets it as `QuietUninstallString`.
+- Checked with the release installer: a fresh install from a folder holding only
+  the setup, an update over it, a quiet update, a quiet removal refused while
+  Zitter runs, and a quiet removal that leaves no folder, Apps & features entry,
+  shortcut or browser registration.
+- Not done yet: ThinLTO/PGO, Authenticode signing (no certificate yet) and the
   license audit, whose tool reads a macOS bundle.
 - The installer draws its own controls: keyboard (Tab, Enter, Space, Esc) works,
   UI Automation does not yet.
@@ -272,4 +284,4 @@ Notes:
 | 3 — native look | In progress: own titlebar on the system frame (shadow, snap, resize), 46 × 38 caption buttons, the Zitter menu, Windows shortcuts and Kbd words, the emoji panel, the downloads prompt on close, the app icon. Design fonts load. verify-ui done (Noc, restored and maximized). Open: Papier, Snap Layouts on Windows 11, menu icons and Kbd chips, HiDPI |
 | 4 — import and security | Done: Arc (MSIX), Chrome, Edge and Brave paths, real Arc and Chrome data read, no cookie option, sandbox checked, network audit clean after two fixes. CSV passwords remain a feature of its own |
 | 5 — tests and tools | Mostly done: browser tests build and the targeted ones pass, verify-ui works on Windows, Python tests pass. Open: the full browser suite, Windows sections in CLAUDE.md and README |
-| 6 — packaging | In progress: portable ZIP, the installer (install, update, remove; for one user checked end to end), browser registration, network sandbox. Open: static release build, signing, license audit, elevated install, installer accessibility, ThinLTO/PGO |
+| 6 — packaging | In progress: static release build, portable ZIP and standalone installer (191 MB), install, update and quiet remove checked end to end for one user, browser registration, network sandbox. Open: signing, license audit, elevated install, installer accessibility, ThinLTO/PGO |
