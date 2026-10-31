@@ -33,8 +33,8 @@ class MetalSidebarProfileTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             profile = Path(temporary) / "isolated"
             launcher.initialize_profile(profile, 8767)
-            config = json.loads((profile / "ZitterWorkspaces.json").read_text())
-            session = json.loads((profile / "ZitterSession.json").read_text())
+            config = json.loads((profile / "ZitterWorkspaces.json").read_text(encoding="utf-8"))
+            session = json.loads((profile / "ZitterSession.json").read_text(encoding="utf-8"))
             self.assertTrue(config["onboarding_complete"])
             self.assertTrue(config["workspaces"][0]["pins"][0]["folder"])
             self.assertEqual(len(session["work"]["tabs"]), 24)

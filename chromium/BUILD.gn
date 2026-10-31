@@ -290,6 +290,10 @@ source_set("profile_workspace_browser_tests") {
     "//ui/base/clipboard:clipboard_test_support",
     "//ui/views:test_support",
   ]
+  if (is_win) {
+    # Native input for the keyboard tests (aura::test::EnableUIControlsAuraWin).
+    deps += [ "//ui/aura:test_support" ]
+  }
 }
 
 source_set("network_policy") {

@@ -7,11 +7,14 @@ import json
 import plistlib
 from pathlib import Path
 import subprocess
+import sys
 import threading
 from urllib.parse import urlencode
 
 ROOT = Path(__file__).resolve().parents[1]
 MARKER = ".zitter-metal-sidebar"
+# Windows runs the development build's zitter.exe; macOS the packaged app.
+WINDOWS = sys.platform == "win32"
 
 
 def initialize_profile(profile, port):
@@ -43,7 +46,7 @@ def initialize_profile(profile, port):
     for name, data in [("ZitterWorkspaces.json", configuration), ("ZitterSession.json", session),
                        ("ZitterAppearance.json", {"sidebar_pinned": True, "sidebar_width": 300,
                                                   "workspace_animations": False})]:
-        (profile / name).write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+        (profile / name).write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 class QuietHandler(SimpleHTTPRequestHandler):
@@ -53,19 +56,25 @@ class QuietHandler(SimpleHTTPRequestHandler):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--app", type=Path, default=ROOT / "build/ZitterRustMetal.app")
+    parser.add_argument("--app", type=Path, default=ROOT / (".chromium/src/out/ZitterWin/zitter.exe" if WINDOWS
+                                                            else "build/ZitterRustMetal.app"))
     parser.add_argument("--profile", type=Path, default=ROOT / "build/rust-metal-profile")
     parser.add_argument("--port", type=int, default=8767)
     parser.add_argument("--raster", choices=["compositor", "metal"], default="compositor",
                         help="Rust UI painting: the Chromium compositor or in-process Metal")
-    parser.add_argument("--open-panel", choices=["space", "sidebar", "palette", "address", "settings", "profiles", "downloads", "extensions", "extension-popup", "menu", "dialog", "toast", "add", "space-end", "space-new", "remove", "drop"], help="open this panel once the window is up (UI checks)")
+    parser.add_argument("--open-panel", choices=["space", "sidebar", "palette", "address", "settings", "profiles", "downloads", "extensions", "extension-popup", "menu", "app-menu", "dialog", "toast", "add", "space-end", "space-new", "remove", "drop"], help="open this panel once the window is up (UI checks)")
     parser.add_argument("--load-extension", action="append", type=Path, default=[],
                         help="load an unpacked extension (UI checks of the extensions bar)")
     args = parser.parse_args()
-    info = args.app.resolve() / "Contents/Info.plist"
-    binary = args.app.resolve() / "Contents/MacOS" / plistlib.loads(info.read_bytes())["CFBundleExecutable"] if info.is_file() else info
-    if not info.is_file() or not binary.is_file():
-        parser.error("Package the prototype first; see docs/rust-metal-sidebar.md")
+    if WINDOWS:
+        binary = args.app.resolve()
+        if binary.suffix.lower() != ".exe" or not binary.is_file():
+            parser.error("Build zitter.exe first; see docs/windows-port.md")
+    else:
+        info = args.app.resolve() / "Contents/Info.plist"
+        binary = args.app.resolve() / "Contents/MacOS" / plistlib.loads(info.read_bytes())["CFBundleExecutable"] if info.is_file() else info
+        if not info.is_file() or not binary.is_file():
+            parser.error("Package the prototype first; see docs/rust-metal-sidebar.md")
     try:
         initialize_profile(args.profile, args.port)
     except ValueError as error:
@@ -79,8 +88,8 @@ def main():
         extra.append(f"--load-extension={','.join(str(path.resolve()) for path in args.load_extension)}")
     print(f"Rust UI raster: {args.raster}; isolated profile: {args.profile.resolve()}", flush=True)
     try:
-        return subprocess.call(["/usr/bin/open", "-W", "-n", str(args.app.resolve()), "--args",
-                                f"--user-data-dir={args.profile.resolve()}",
+        launcher = [str(binary)] if WINDOWS else ["/usr/bin/open", "-W", "-n", str(args.app.resolve()), "--args"]
+        return subprocess.call([*launcher, f"--user-data-dir={args.profile.resolve()}",
                                 "--no-first-run",
                                 "--disable-component-update", "--disable-background-networking", "--enable-logging=stderr", *extra])
     except KeyboardInterrupt:

@@ -85,6 +85,29 @@ against the design, and fixed until it matches.
    Leave the app running so the user can look at it themselves. Then wait for their
    remarks and treat them as the next round of this same loop.
 
+## Windows
+
+The loop is the same; the tools differ. `ui.py` runs `ui_win.py` on Windows.
+
+1. **Build:** `powershell -File .claude/skills/verify-ui/scripts/build_app_win.ps1`
+   installs the overlay and builds `zitter.exe` and its tests in
+   `.chromium/src/out/ZitterWin`. There is no package: the build directory, with the
+   design fonts in its `Fonts\`, is the app.
+2. **Tests:** `out\ZitterWin\sidebar_scene_unittests.exe`,
+   `editor_text_layout_unittests.exe`, `arc_importer_unittests.exe`; browser tests
+   run with `zitter_prototype.exe --gtest_filter=…`.
+3. **Launch and shoot:**
+   ```bash
+   python .claude/skills/verify-ui/scripts/ui.py launch --open-panel app-menu
+   python .claude/skills/verify-ui/scripts/ui.py shot build/screens/app-menu.png --as-is
+   ```
+   `launch` starts `zitter.exe` with the seeded profile `build/win-ui-profile`. The
+   sidebar, palette and panels are translucent windows that PrintWindow can't
+   capture, so `shot` brings Zitter forward and copies that window's area of the
+   screen. Ask the user before taking over their screen, and don't capture while
+   another app is in front. `--as-is` skips the Alt press that brings the window
+   forward, which also closes open menus. Coordinates are physical pixels.
+
 ## Notes
 
 - A sleeping display makes every capture fail ("could not create image"). Check

@@ -4,10 +4,13 @@
 #include "ui/views/view_targeter.h"
 #include "base/i18n/rtl.h"
 #include "build/build_config.h"
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_WIN)
+#include "base/test/scoped_feature_list.h"
+#include "sandbox/policy/features.h"
+#include "ui/aura/test/ui_controls_aurawin.h"
+#endif
 #include "chromium/prototype/i18n.h"
 #include "chromium/prototype/sidebar_metal.h"
-#endif
 #include "ui/views/view_targeter_delegate.h"
 #include "ui/views/controls/focus_ring.h"
 #include "ui/views/layout/layout_provider.h"
@@ -197,7 +200,50 @@
 
 namespace zitter::prototype {
 namespace {
-// Direction-aware screen geometry: the leading edge is the left edge in LTR and
+// Where browsers keep the data the importer reads (arc_importer.cc), inside an
+// overridden app-data directory: macOS's Application Support, or Windows'
+// LocalAppData with Arc in its MSIX package.
+#if BUILDFLAG(IS_WIN)
+constexpr int kImportAppData = base::DIR_LOCAL_APP_DATA;
+base::FilePath ArcData(const base::FilePath& app_data) {
+  return app_data.AppendASCII("Packages").AppendASCII("TheBrowserCompany.Arc_test")
+      .AppendASCII("LocalCache").AppendASCII("Local").AppendASCII("Arc");
+}
+base::FilePath ChromeData(const base::FilePath& app_data) {
+  return app_data.AppendASCII("Google").AppendASCII("Chrome").AppendASCII("User Data");
+}
+#else
+constexpr int kImportAppData = base::DIR_APP_DATA;
+base::FilePath ArcData(const base::FilePath& app_data) { return app_data.AppendASCII("Arc"); }
+base::FilePath ChromeData(const base::FilePath& app_data) { return app_data.AppendASCII("Google/Chrome"); }
+#endif
+// The primary shortcut modifier: Cmd on macOS, Ctrl elsewhere (browser_tools.cc).
+#if BUILDFLAG(IS_MAC)
+constexpr int kPrimaryModifier = ui::EF_COMMAND_DOWN;
+std::string Chord(std::string_view keys) { return "Cmd+" + std::string(keys); }
+#else
+constexpr int kPrimaryModifier = ui::EF_CONTROL_DOWN;
+std::string Chord(std::string_view keys) { return "Ctrl+" + std::string(keys); }
+#endif
+// Native input for interactive tests, as interactive_ui_tests sets it up.
+void EnableNativeUIControls() {
+#if BUILDFLAG(IS_WIN)
+  aura::test::EnableUIControlsAuraWin();
+#else
+  ui_controls::EnableUIControls();
+#endif
+}
+// TextInputClient::DeleteRange is macOS-only; elsewhere select the range and
+// delete the selection, as an input method would.
+bool DeleteEditorRange(ui::TextInputClient* client, const gfx::Range& range) {
+#if BUILDFLAG(IS_MAC)
+  return client->DeleteRange(range);
+#else
+  if (!client->SetEditableSelectionRange(range)) return false;
+  client->ExtendSelectionAndDelete(0, 0);
+  return true;
+#endif
+}// Direction-aware screen geometry: the leading edge is the left edge in LTR and
 // the right edge in RTL, and indentation grows away from it.
 int LeadingEdge(const views::View* view){const auto bounds=view->GetBoundsInScreen();return base::i18n::IsRTL()?bounds.right():bounds.x();}
 int Indent(int pixels){return base::i18n::IsRTL()?-pixels:pixels;}
@@ -206,7 +252,9 @@ int Indent(int pixels){return base::i18n::IsRTL()?-pixels:pixels;}
 bool MetalPresents(){return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-rust-raster")=="metal";}
 // Paints a view alone at its parent's visual origin; in RTL logical x=0 is the
 // mirrored right edge, which would place the paint outside the bitmap.
+#if BUILDFLAG(IS_MAC)  // The Metal sidebar tests.
 SkBitmap PaintAtLeadingOrigin(views::View* view){const auto saved=view->bounds();const int x=base::i18n::IsRTL()&&view->parent()?view->parent()->width()-view->width():0;view->SetBoundsRect(gfx::Rect(x,0,view->width(),view->height()));view->SchedulePaint();auto bitmap=views::test::PaintViewToBitmap(view);view->SetBoundsRect(saved);return bitmap;}
+#endif
 void ActivateSidebarRow(views::View* view){ASSERT_TRUE(view);ui::AXActionData action;action.action=ax::mojom::Action::kDoDefault;EXPECT_TRUE(view->HandleAccessibleAction(action));}
 
 void ClickControl(views::View* view){ASSERT_TRUE(view);if(auto* button=views::AsViewClass<views::Button>(view)){views::test::ButtonTestApi(button).NotifyDefaultMouseClick();return;}ui::AXActionData action;action.action=ax::mojom::Action::kDoDefault;view->HandleAccessibleAction(action);}
@@ -239,6 +287,14 @@ views::View* FindButton(views::View* root, std::u16string_view text) {
 
 class ZitterProfilesBrowserTest : public InProcessBrowserTest {
  public:
+#if BUILDFLAG(IS_WIN)
+  // Development builds turn the network sandbox on (fieldtrial_testing_config),
+  // and its AppContainer can't read an out\ directory that no installer granted
+  // access to: browser tests don't fall back to an unsandboxed relaunch.
+  ZitterProfilesBrowserTest() {
+    network_sandbox_.InitAndDisableFeature(sandbox::policy::features::kNetworkServiceSandbox);
+  }
+#endif
   void SetUpOnMainThread() override {
     InProcessBrowserTest::SetUpOnMainThread();
     routing_client_ = std::make_unique<RoutingTestBrowserClient>();
@@ -329,7 +385,7 @@ class ZitterProfilesBrowserTest : public InProcessBrowserTest {
     auto* shell = window_->shell();
     auto* field=shell->address_input();
     const auto length=field->GetText().size();field->SelectRange(gfx::Range(0,length));
-    if(query.empty()){if(length)ASSERT_TRUE(field->input_client()->DeleteRange(gfx::Range(0,length)));}
+    if(query.empty()){if(length)ASSERT_TRUE(DeleteEditorRange(field->input_client(),gfx::Range(0,length)));}
     else field->input_client()->InsertText(query,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
   }
   void ArmUnsaved(content::WebContents* page) {
@@ -357,6 +413,9 @@ class ZitterProfilesBrowserTest : public InProcessBrowserTest {
 #if BUILDFLAG(IS_MAC)
     constexpr int modifiers = blink::WebInputEvent::kAltKey |
                               blink::WebInputEvent::kMetaKey;
+#elif BUILDFLAG(IS_WIN)
+    // Alt+N: Ctrl+Alt is AltGr on Windows (browser_tools.cc).
+    constexpr int modifiers = blink::WebInputEvent::kAltKey;
 #else
     constexpr int modifiers = blink::WebInputEvent::kAltKey |
                               blink::WebInputEvent::kControlKey;
@@ -386,6 +445,9 @@ class ZitterProfilesBrowserTest : public InProcessBrowserTest {
 
   base::Lock routing_lock_;
   std::vector<std::string> routing_cookies_ GUARDED_BY(routing_lock_);
+#if BUILDFLAG(IS_WIN)
+  base::test::ScopedFeatureList network_sandbox_;
+#endif
   std::unique_ptr<RoutingTestBrowserClient> routing_client_;
   raw_ptr<content::ContentBrowserClient> old_client_ = nullptr;
   raw_ptr<Profile> work_ = nullptr;
@@ -1119,51 +1181,51 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, KeywordSearchProvidersAndPersi
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ConfigurableNativeKeyboardShortcuts) {
   base::DictValue older;
   base::ListValue bindings;
-  bindings.Append(base::DictValue().Set("id", "space2").Set("chord", "Cmd+J"));
+  bindings.Append(base::DictValue().Set("id", "space2").Set("chord", Chord("J")));
   older.Set("shortcuts", std::move(bindings));
   const auto migrated = BrowserTools::FromValue(older);
   for (const auto& shortcut : migrated.shortcuts) {
-    if (shortcut.id == "space2") EXPECT_EQ(*ParseShortcut("Cmd+J"), shortcut.accelerator);
+    if (shortcut.id == "space2") EXPECT_EQ(*ParseShortcut(Chord("J")), shortcut.accelerator);
     if (shortcut.id == "downloads") EXPECT_EQ(ui::VKEY_UNKNOWN, shortcut.accelerator.key_code());
   }
   ASSERT_NO_FATAL_FAILURE(NavigateBoth());
   ASSERT_TRUE(window_->Select("work"));
   auto* shell = window_->shell();
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->tools_ready(); }));
-  EXPECT_FALSE(shell->SetShortcut("space2", "Cmd+C"));
-  EXPECT_FALSE(shell->SetShortcut("space2", "Cmd+L"));
+  EXPECT_FALSE(shell->SetShortcut("space2", Chord("C")));
+  EXPECT_FALSE(shell->SetShortcut("space2", Chord("L")));
   EXPECT_FALSE(shell->SetShortcut("space2", "J"));
-  ASSERT_TRUE(shell->SetShortcut("space2", "Cmd+Shift+J"));
-  EXPECT_EQ("space2", shell->ShortcutFor(*ParseShortcut("Cmd+Shift+J")));
-  EXPECT_TRUE(shell->ShortcutFor(ui::Accelerator(ui::VKEY_2, ui::EF_COMMAND_DOWN | ui::EF_ALT_DOWN)).empty());
-  ui_controls::EnableUIControls();
+  ASSERT_TRUE(shell->SetShortcut("space2", Chord("Shift+J")));
+  EXPECT_EQ("space2", shell->ShortcutFor(*ParseShortcut(Chord("Shift+J"))));
+  EXPECT_TRUE(shell->ShortcutFor(ui::Accelerator(ui::VKEY_2, kPrimaryModifier | ui::EF_ALT_DOWN)).empty());
+  EnableNativeUIControls();
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
-  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(window_->widget()->GetNativeWindow(), ui::VKEY_J, false, true, false, true));
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(window_->widget()->GetNativeWindow(), ui::VKEY_J, !BUILDFLAG(IS_MAC), true, false, BUILDFLAG(IS_MAC)));
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->active_id() == "personal"; }));
   shell->OpenTools(1);
   ASSERT_TRUE(shell->tools_widget()->IsVisible());
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));
   const bool sidebar_before = shell->sidebar_visible();
-  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->tools_widget()->GetNativeWindow(), ui::VKEY_S, false, false, false, true));
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->tools_widget()->GetNativeWindow(), ui::VKEY_S, !BUILDFLAG(IS_MAC), false, false, BUILDFLAG(IS_MAC)));
   ASSERT_TRUE(base::test::RunUntil([&] { return sidebar_before != shell->sidebar_visible(); }));
   auto* record = FindButton(shell->tools_widget()->GetContentsView(), u"Nagraj kombinację…");
   ASSERT_TRUE(record);
   ClickControl(record);
   base::RunLoop().RunUntilIdle();
-  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->tools_widget()->GetNativeWindow(), ui::VKEY_U, false, true, false, true));
-  EXPECT_EQ(u"Cmd+Shift+U", shell->shortcut_input()->GetText());
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->tools_widget()->GetNativeWindow(), ui::VKEY_U, !BUILDFLAG(IS_MAC), true, false, BUILDFLAG(IS_MAC)));
+  EXPECT_EQ(base::UTF8ToUTF16(Chord("Shift+U")), shell->shortcut_input()->GetText());
   auto* save_key = FindButton(shell->tools_widget()->GetContentsView(), u"Zapisz skrót");
   ASSERT_TRUE(save_key);
   ClickControl(save_key);
   base::RunLoop().RunUntilIdle();
-  EXPECT_EQ("address", shell->ShortcutFor(*ParseShortcut("Cmd+Shift+U")));
+  EXPECT_EQ("address", shell->ShortcutFor(*ParseShortcut(Chord("Shift+U"))));
   ASSERT_TRUE(shell->SetShortcut("sidebar", ""));
-  EXPECT_TRUE(shell->ShortcutFor(*ParseShortcut("Cmd+S")).empty());
+  EXPECT_TRUE(shell->ShortcutFor(*ParseShortcut(Chord("S"))).empty());
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_saved() && window_->configuration_saved(); }));
   window_.reset(); window_ = std::make_unique<WorkspaceWindow>(work_, personal_); shell = window_->shell();
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready() && shell->tools_ready(); }));
-  EXPECT_EQ("space2", shell->ShortcutFor(*ParseShortcut("Cmd+Shift+J")));
-  EXPECT_TRUE(shell->ShortcutFor(*ParseShortcut("Cmd+S")).empty());
+  EXPECT_EQ("space2", shell->ShortcutFor(*ParseShortcut(Chord("Shift+J"))));
+  EXPECT_TRUE(shell->ShortcutFor(*ParseShortcut(Chord("S"))).empty());
   const auto original = BrowserTools::FromValue(shell->browser_tools().ToValue());
   EXPECT_EQ(shell->browser_tools().shortcuts.size(), original.shortcuts.size());
 }
@@ -1588,7 +1650,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitPaneActionHostsMenuKeyboa
   }
   // This host lives in the activatable main window: verify actual Cocoa Space
   // delivery as well as AX activation above and the existing physical mouse case.
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));close->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);close->RequestFocus();ASSERT_TRUE(base::test::RunUntil([&]{return close->HasFocus();}));
+  EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));close->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);close->RequestFocus();ASSERT_TRUE(base::test::RunUntil([&]{return close->HasFocus();}));
   base::test::TestFuture<void> presented;auto* compositor=window_->widget()->GetCompositor();ASSERT_TRUE(compositor);window_->widget()->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
   ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(window_->widget()->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));ASSERT_TRUE(base::test::RunUntil([&]{return window_->tab_count("work")==2&&!window_->split();}));
 }
@@ -1606,7 +1668,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitPaneActionQueuedCloseSurv
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, HeaderActionHostOwnershipKeyboardAXGestureAndCancel) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);const bool rust=shell->workspace_input()->rust_editor();
   const std::array<std::u16string,4> names={shell->pinned()?u"Odepnij panel (auto-ukrywanie)":u"Przypnij panel",u"Wstecz",u"Dalej",u"Odśwież"};for(size_t i=0;i<4;++i){auto* view=shell->header_action_for_testing(i);ASSERT_TRUE(view);EXPECT_EQ(!rust,views::AsViewClass<views::Button>(view)!=nullptr);ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kButton,ax.role);EXPECT_EQ(names[i],ax.GetString16Attribute(ax::mojom::StringAttribute::kName));}
-  auto reset=[&]{shell->SetPinned(true);shell->ShowSidebar();};reset();auto* action=shell->header_action_for_testing(0);ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));action->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);action->RequestFocus();ASSERT_TRUE(base::test::RunUntil([&]{return action->HasFocus();}));
+  auto reset=[&]{shell->SetPinned(true);shell->ShowSidebar();};reset();auto* action=shell->header_action_for_testing(0);EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));action->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);action->RequestFocus();ASSERT_TRUE(base::test::RunUntil([&]{return action->HasFocus();}));
   base::test::TestFuture<void> presented;auto* compositor=window_->widget()->GetCompositor();ASSERT_TRUE(compositor);window_->widget()->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
   ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(window_->widget()->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));EXPECT_FALSE(shell->sidebar_visible());reset();ui::KeyEvent enter(ui::EventType::kKeyPressed,ui::VKEY_RETURN,0);EXPECT_FALSE(action->OnKeyPressed(enter));EXPECT_TRUE(shell->sidebar_visible());
   ui::AXActionData activate;activate.action=ax::mojom::Action::kDoDefault;EXPECT_TRUE(action->HandleAccessibleAction(activate));EXPECT_FALSE(shell->sidebar_visible());reset();action->SetEnabled(false);ui::AXNodeData disabled;action->GetViewAccessibility().GetAccessibleNodeData(&disabled);EXPECT_FALSE(disabled.HasIntAttribute(ax::mojom::IntAttribute::kDefaultActionVerb));action->HandleAccessibleAction(activate);EXPECT_TRUE(shell->sidebar_visible());action->SetEnabled(true);
@@ -1648,7 +1710,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PaletteViewportOwnershipResize
   auto* service=HistoryServiceFactory::GetForProfile(work_,ServiceAccessType::EXPLICIT_ACCESS);base::CancelableTaskTracker tasks;history::QueryOptions options;options.max_count=1;base::test::TestFuture<history::QueryResults> queried;service->QueryHistory(u"Viewport probe",options,queried.GetCallback(),&tasks);ASSERT_TRUE(queried.Wait());base::RunLoop().RunUntilIdle();
   std::vector<PaletteResult> results;for(int i=0;i<30;++i){PaletteResult item;item.title=u"Viewport probe 日本語 "+base::NumberToString16(i);item.detail=u"History / 🦀";item.url=GURL("https://viewport.test/"+base::NumberToString(i));results.push_back(std::move(item));}
   const auto profile=window_->workspaces().front().profile_id;shell->SetSearchResults(u"Viewport probe",profile,results);auto* viewport=shell->palette_viewport();ASSERT_TRUE(viewport);EXPECT_EQ(shell->palette_results_view(),viewport->contents());EXPECT_EQ(shell->workspace_input()->rust_editor(),viewport->rust_owned());if(viewport->rust_owned())EXPECT_FALSE(views::AsViewClass<views::ScrollView>(viewport->view()));ASSERT_TRUE(viewport->vertical_scroll_bar());
-  ui_controls::EnableUIControls();auto* panel=shell->address_input()->view()->GetWidget();auto present=[&]{if(!ui_test_utils::ShowAndFocusNativeWindow(panel->GetNativeWindow()))return false;shell->address_input()->RequestFocus();base::test::TestFuture<void> done;auto* compositor=panel->GetCompositor();if(!compositor)return false;panel->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure callback,const viz::FrameTimingDetails&){std::move(callback).Run();},done.GetCallback()));compositor->ScheduleFullRedraw();return done.Wait();};
+  EnableNativeUIControls();auto* panel=shell->address_input()->view()->GetWidget();auto present=[&]{if(!ui_test_utils::ShowAndFocusNativeWindow(panel->GetNativeWindow()))return false;shell->address_input()->RequestFocus();base::test::TestFuture<void> done;auto* compositor=panel->GetCompositor();if(!compositor)return false;panel->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure callback,const viz::FrameTimingDetails&){std::move(callback).Run();},done.GetCallback()));compositor->ScheduleFullRedraw();return done.Wait();};
   for(auto size:{gfx::Size(700,480),gfx::Size(1000,860)}){SCOPED_TRACE(size.ToString());window_->widget()->SetBounds(gfx::Rect(gfx::Point(40,40),size));panel->LayoutRootViewIfNecessary();ASSERT_TRUE(present());
     ASSERT_GE(shell->suggestions().size(),30u);const int cap=std::clamp(shell->content_host()->height()-230,90,8*36+7*2+16+1);/* 8 rows of 36 px, as palette_results_height in sidebar_scene.rs. */EXPECT_EQ(cap,viewport->view()->GetPreferredSize().height());EXPECT_EQ(cap,viewport->visible_rect().height());ASSERT_GT(viewport->maximum(),0);viewport->ScrollTo(viewport->maximum());EXPECT_DOUBLE_EQ(viewport->maximum(),viewport->offset());auto* first=viewport->contents()->children().front().get();first->ScrollViewToVisible();EXPECT_DOUBLE_EQ(first->y(),viewport->offset());EXPECT_FALSE(first->GetVisibleBounds().IsEmpty());
     ui::KeyEvent up(ui::EventType::kKeyPressed,ui::VKEY_UP,0);EXPECT_TRUE(shell->address_input()->view()->OnKeyPressed(up));EXPECT_EQ(shell->suggestions().size()-1,shell->palette_selection_for_testing());ASSERT_TRUE(base::test::RunUntil([&]{return viewport->offset()>0;}));EXPECT_FALSE(viewport->contents()->children().back()->GetVisibleBounds().IsEmpty());ui::KeyEvent down(ui::EventType::kKeyPressed,ui::VKEY_DOWN,0);EXPECT_TRUE(shell->address_input()->view()->OnKeyPressed(down));EXPECT_EQ(0u,shell->palette_selection_for_testing());EXPECT_FALSE(viewport->contents()->children().front()->GetVisibleBounds().IsEmpty());EXPECT_LE(viewport->offset(),viewport->contents()->children().front()->y());
@@ -1714,7 +1776,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsPolicyFailedActionsRecord
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsActionsCocoaSnapshotProviderAndClose) {
   ASSERT_TRUE(window_->Select("work"));ASSERT_TRUE(window_->contents("work"));
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready()&&shell->appearance_ready();}));
-  const bool rust=shell->workspace_input()->rust_editor();ui_controls::EnableUIControls();
+  const bool rust=shell->workspace_input()->rust_editor();EnableNativeUIControls();
   auto activate=[&](std::u16string title){
     SCOPED_TRACE(base::UTF16ToUTF8(title));
     auto* button=FindButton(shell->tools_widget()->GetContentsView(),title);ASSERT_TRUE(button);
@@ -1773,7 +1835,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsActionsHistoryBusyAcrossR
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsChoicesCocoaPrefixCallbacksAndHistoryPeriod) {
   auto* shell=window_->shell();
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready()&&shell->appearance_ready();}));
-  shell->OpenTools(1);ui_controls::EnableUIControls();
+  shell->OpenTools(1);EnableNativeUIControls();
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));
   auto* picker=shell->tools_selection();ASSERT_TRUE(picker);
   const bool rust=shell->workspace_input()->rust_editor();EXPECT_EQ(rust,!views::AsViewClass<views::Combobox>(picker));
@@ -1873,7 +1935,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsChoicesTimelineUnicodeRes
   ASSERT_TRUE(window_->SaveSnapshot(base::UTF16ToUTF8(snapshot_name)));ASSERT_TRUE(window_->NavigateFromBar(right,true));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
   content::TitleWatcher title(window_->contents("work"),closed_name);ASSERT_TRUE(content::ExecJs(window_->contents("work"),content::JsReplace("document.title=$1",closed_name)));EXPECT_EQ(closed_name,title.WaitAndGetTitle());
   ASSERT_TRUE(window_->SaveSnapshot("Different layout"));window_->CloseTab(1);ASSERT_EQ(1u,window_->tab_count("work"));shell->OpenTools(0);
-  auto filter=[&](std::u16string text){auto* field=shell->timeline_filter_input();field->SelectRange(gfx::Range(0,field->GetText().size()));if(text.empty())EXPECT_TRUE(field->input_client()->DeleteRange(gfx::Range(0,field->GetText().size())));else field->input_client()->InsertText(text,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->tools_widget()->LayoutRootViewIfNecessary();};
+  auto filter=[&](std::u16string text){auto* field=shell->timeline_filter_input();field->SelectRange(gfx::Range(0,field->GetText().size()));if(text.empty())EXPECT_TRUE(DeleteEditorRange(field->input_client(),gfx::Range(0,field->GetText().size())));else field->input_client()->InsertText(text,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->tools_widget()->LayoutRootViewIfNecessary();};
   auto oracle=[&](std::u16string query){
     filter(query);query=base::i18n::ToLower(query);const auto state=window_->TimeMachine();
     auto check=[&](const auto& items,std::string key){std::vector<std::u16string> labels;for(const auto& item:items)if(query.empty()||base::i18n::ToLower(item.title+u" "+item.detail).find(query)!=std::u16string::npos)labels.push_back(item.title+u" — "+item.detail);auto* picker=shell->tools_choice_for_testing(key);ASSERT_TRUE(picker);EXPECT_EQ(!labels.empty(),picker->GetEnabled());if(labels.empty())labels.push_back(u"Brak zapisanych pozycji");ASSERT_EQ(labels.size(),shell->tools_choice_count_for_testing(key));for(size_t i=0;i<labels.size();++i)EXPECT_EQ(labels[i],shell->tools_choice_label_for_testing(key,i));EXPECT_EQ(0u,shell->tools_choice_selection_for_testing(key));ui::AXNodeData node;picker->GetViewAccessibility().GetAccessibleNodeData(&node);EXPECT_EQ(labels[0],node.GetString16Attribute(ax::mojom::StringAttribute::kValue));};
@@ -1883,7 +1945,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsChoicesTimelineUnicodeRes
   for(const auto& query:std::vector<std::u16string>{u"σιγμα i\u0307stanbul 🦀",u" — ",std::u16string(1,0xd83e),u"not a timeline match",u""}){SCOPED_TRACE(base::UTF16ToUTF8(query));
   ASSERT_NO_FATAL_FAILURE(oracle(query));}
   ASSERT_NO_FATAL_FAILURE(oracle(prefix));ASSERT_TRUE(shell->tools_choice_for_testing("closed")->GetEnabled());
-  auto activate=[&](std::u16string text){auto* widget=shell->tools_widget();auto* button=FindButton(widget->GetContentsView(),text);ASSERT_TRUE(button);button->ScrollRectToVisible(button->GetLocalBounds());ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));button->RequestFocus();base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));};
+  auto activate=[&](std::u16string text){auto* widget=shell->tools_widget();auto* button=FindButton(widget->GetContentsView(),text);ASSERT_TRUE(button);button->ScrollRectToVisible(button->GetLocalBounds());EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));button->RequestFocus();base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));};
   ASSERT_NO_FATAL_FAILURE(activate(u"Przywróć wybraną kartę"));ASSERT_TRUE(base::test::RunUntil([&]{return window_->tab_count("work")==2;}));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));EXPECT_EQ(right,window_->contents("work")->GetLastCommittedURL());EXPECT_EQ(work_,window_->contents("work")->GetBrowserContext());
   shell->OpenTools(0);
   ASSERT_NO_FATAL_FAILURE(oracle(snapshot_name));ASSERT_EQ(1u,shell->tools_choice_count_for_testing("selection"));
@@ -1894,7 +1956,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsChoicesTimelineUnicodeRes
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsEditorsCocoaSnapshotProviderAndStaleActions) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));
-  ASSERT_TRUE(window_->Select("work"));shell->OpenTools(0);ui_controls::EnableUIControls();
+  ASSERT_TRUE(window_->Select("work"));shell->OpenTools(0);EnableNativeUIControls();
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));
   auto key=[&](ui::KeyboardCode code){return ui_test_utils::SendKeyPressToWindowSync(shell->tools_widget()->GetNativeWindow(),code,false,false,false,false);};
   auto replace=[](EditorControl* field,std::u16string text){field->SelectRange(gfx::Range(0,field->GetText().size()));field->input_client()->InsertText(text,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);};
@@ -1948,7 +2010,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, HistoryEditorCommittedQueryDur
   auto seed=[](Profile* profile,const char* host,std::u16string title){history::URLRow row(GURL(std::string("https://")+host+"/"));row.set_title(title);row.set_visit_count(1);row.set_last_visit(base::Time::Now()-base::Minutes(1));HistoryServiceFactory::GetForProfile(profile,ServiceAccessType::EXPLICIT_ACCESS)->AddPagesWithDetails({row},history::SOURCE_OS_MIGRATION_IMPORTED);};
   seed(work_,"alpha.test",u"Alpha");seed(work_,"beta.test",u"Beta");seed(personal_,"private.test",u"Private");
   shell->OpenTools(3);ASSERT_TRUE(base::test::RunUntil([&]{return shell->history_loaded();}));ASSERT_EQ(2u,shell->history_entries().size());
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));auto* field=shell->history_search();field->RequestFocus();
+  EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));auto* field=shell->history_search();field->RequestFocus();
   EXPECT_EQ(shell->workspace_input()->rust_editor(),field->rust_editor());
   ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->tools_widget()->GetNativeWindow(),ui::VKEY_A,false,false,false,false));
   ASSERT_TRUE(base::test::RunUntil([&]{return field->GetText()==u"a";}));
@@ -1968,7 +2030,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, HistoryEditorCommittedQueryDur
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ShortcutEditorCocoaRecorderAdmissionAndCancel) {
-  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));shell->OpenTools(1);ui_controls::EnableUIControls();
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));shell->OpenTools(1);EnableNativeUIControls();
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));auto* field=shell->shortcut_input();field->SetText(u"Cmd+Shift+U");field->SelectRange(gfx::Range(field->GetText().size()));
   EXPECT_EQ(shell->workspace_input()->rust_editor(),field->rust_editor());
   auto key=[&](ui::KeyboardCode code,bool shift=false,bool command=false){return ui_test_utils::SendKeyPressToWindowSync(shell->tools_widget()->GetNativeWindow(),code,false,shift,false,command);};
@@ -2038,7 +2100,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceEditorsCocoaComposit
   ASSERT_TRUE(window_->Select("work"));
   ASSERT_TRUE(window_->WriteTextPreference("accept_languages","en-US"));
   shell->OpenGeneralSettings();
-  ui_controls::EnableUIControls();
+  EnableNativeUIControls();
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->general_widget()->GetNativeWindow()));
   auto key=[&](ui::KeyboardCode code){return ui_test_utils::SendKeyPressToWindowSync(
       shell->general_widget()->GetNativeWindow(),code,false,false,false,false);};
@@ -2282,7 +2344,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, BrowsingHistoryPanelSearchOpen
   EXPECT_EQ(older_url, shell->history_entries()[1].url);
   auto search = [&](std::u16string text) {
     auto* field=shell->history_search();const gfx::Range range(0,field->GetText().size());field->SelectRange(range);
-    if(text.empty())field->input_client()->DeleteRange(range);
+    if(text.empty())DeleteEditorRange(field->input_client(),range);
     else field->input_client()->InsertText(text,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
     EXPECT_TRUE(base::test::RunUntil([&] { return shell->history_loaded(); }));
   };
@@ -2352,7 +2414,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, HistoryRowsCocoaKeyboardAccess
     EXPECT_EQ(!rust,views::AsViewClass<views::Button>(row)!=nullptr);if(rust)EXPECT_TRUE(row->children().empty());else{size_t labels=0;bool primary=false;for(const auto& child:row->children())if(auto* label=views::AsViewClass<views::Label>(child)){++labels;primary|=label->GetText()==title;}EXPECT_EQ(2u,labels);EXPECT_TRUE(primary);}
   }
   auto* row=list->children()[0].get();ASSERT_TRUE(row);
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));
+  EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));
   row->ScrollRectToVisible(row->GetLocalBounds());row->RequestFocus();ASSERT_TRUE(row->HasFocus());
   base::test::TestFuture<void> presented;auto* compositor=shell->tools_widget()->GetCompositor();ASSERT_TRUE(compositor);shell->tools_widget()->GetRootView()->SchedulePaint();
   compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
@@ -2422,7 +2484,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, BrowsingHistoryPaginationAndSt
   ASSERT_TRUE(more);
   EXPECT_TRUE(more->GetVisible());
   const bool rust=shell->workspace_input()->rust_editor();EXPECT_EQ(rust,!views::AsViewClass<views::MdTextButton>(more));if(rust)EXPECT_EQ(8u,shell->control_model_kind_for_testing(more));
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));
+  EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));
   base::test::TestFuture<void> presented;auto* compositor=shell->tools_widget()->GetCompositor();ASSERT_TRUE(compositor);
   compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
   more->ScrollRectToVisible(more->GetLocalBounds());
@@ -2486,7 +2548,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ProfilePreferencesAndSearch) {
   auto search = [&](std::u16string text) {
     auto* field=shell->preferences_search();
     const gfx::Range range(0,field->GetText().size());field->SelectRange(range);
-    if(text.empty())field->input_client()->DeleteRange(range);
+    if(text.empty())DeleteEditorRange(field->input_client(),range);
     else field->input_client()->InsertText(text,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
     shell->general_widget()->LayoutRootViewIfNecessary();
   };
@@ -2638,7 +2700,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceChromeTextMetricsAnd
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceNavigationCocoaFilterAndResponsiveChoice) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));window_->widget()->SetBounds(gfx::Rect(40,40,1000,860));shell->OpenGeneralSettings();shell->general_widget()->LayoutRootViewIfNecessary();auto* languages=shell->preference_navigation_for_testing(7);ASSERT_TRUE(languages&&languages->IsDrawn());const bool rust=shell->workspace_input()->rust_editor();
   if(rust)if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->preference_navigation_metal_visible_for_testing()&&shell->preference_navigation_contains_text_for_testing("Zaawansowane");}));
-  ui_controls::EnableUIControls();auto activate=[&](views::View* control){EXPECT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->general_widget()->GetNativeWindow()));control->RequestFocus();EXPECT_TRUE(control->HasFocus());EXPECT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->general_widget()->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));};activate(languages);
+  EnableNativeUIControls();auto activate=[&](views::View* control){EXPECT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->general_widget()->GetNativeWindow()));control->RequestFocus();EXPECT_TRUE(control->HasFocus());EXPECT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->general_widget()->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));};activate(languages);
   EXPECT_EQ(7u,shell->preference_category_for_testing());EXPECT_EQ(7u,shell->preference_choice_selection_for_testing("category"));EXPECT_TRUE(shell->preference_textfield("accept_languages")->view()->IsDrawn());EXPECT_FALSE(shell->preference_textfield("font_standard")->view()->IsDrawn());
   auto* search=shell->preferences_search();search->SelectRange(gfx::Range(0,search->GetText().size()));search->input_client()->InsertText(u"  KAMERA  ",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();EXPECT_TRUE(shell->preference_toggle("camera")->IsDrawn());EXPECT_FALSE(shell->preference_textfield("accept_languages")->view()->IsDrawn());for(size_t i=0;i<10;++i)EXPECT_FALSE(shell->preference_navigation_selected_for_testing(i));
   activate(languages);EXPECT_TRUE(search->GetText().empty());EXPECT_EQ(7u,shell->preference_category_for_testing());for(size_t i=0;i<10;++i)EXPECT_EQ(i==7,shell->preference_navigation_selected_for_testing(i));
@@ -2652,7 +2714,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceActionsCocoaCommitAd
   auto filter=[&](std::u16string query){auto* field=shell->preferences_search();field->SelectRange(gfx::Range(0,field->GetText().size()));field->input_client()->InsertText(query,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();};
   filter(u"Czcionka standardowa");auto* field=shell->preference_textfield("font_standard");auto* save=shell->preference_save_button_for_testing("font_standard");ASSERT_TRUE(save);const bool rust=field->rust_editor();EXPECT_EQ(rust,!views::AsViewClass<views::MdTextButton>(save));
   field->SelectRange(gfx::Range(0,field->GetText().size()));field->input_client()->InsertText(u"Georgia",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);save->ScrollRectToVisible(save->GetLocalBounds());if(rust)if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->preference_action_metal_visible_for_testing(save)&&shell->preference_actions_contains_scene_text_for_testing("Zapisz");}));
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->general_widget()->GetNativeWindow()));save->RequestFocus();ASSERT_TRUE(save->HasFocus());ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->general_widget()->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));EXPECT_EQ("Georgia",window_->ReadPreferences().at("font_standard").text);
+  EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->general_widget()->GetNativeWindow()));save->RequestFocus();ASSERT_TRUE(save->HasFocus());ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->general_widget()->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));EXPECT_EQ("Georgia",window_->ReadPreferences().at("font_standard").text);
   ui::CompositionText marked;marked.text=u"未";marked.selection=gfx::Range(1);field->SetCompositionText(marked);ASSERT_TRUE(field->IsIMEComposing());ClickControl(save);EXPECT_EQ("Georgia",window_->ReadPreferences().at("font_standard").text);field->ClearCompositionText();
   field->SetText(u"Arial");field->view()->SetEnabled(false);save->SetEnabled(false);ui::KeyEvent press(ui::EventType::kKeyPressed,ui::VKEY_SPACE,0),release(ui::EventType::kKeyReleased,ui::VKEY_SPACE,0);save->OnKeyPressed(press);save->OnKeyReleased(release);EXPECT_EQ("Georgia",window_->ReadPreferences().at("font_standard").text);field->view()->SetEnabled(true);save->SetEnabled(true);
   filter(u"Wyczyść dane przeglądania");auto* clear=FindButton(shell->general_widget()->GetContentsView(),u"Wyczyść…");ASSERT_TRUE(clear);clear->ScrollRectToVisible(clear->GetLocalBounds());shell->SetBrowsingDataBusy(true);EXPECT_FALSE(clear->GetEnabled());EXPECT_EQ(clear,FindButton(shell->general_widget()->GetContentsView(),u"Czyszczenie…"));
@@ -2707,7 +2769,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceActionsSiteRulePagin
   shell->OpenGeneralSettings();auto* query=shell->preferences_search();query->SelectRange(gfx::Range(0,query->GetText().size()));query->input_client()->InsertText(u"Zapisane wyjątki",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();
   auto removes=[&]{std::vector<views::View*> found;auto visit=[&](auto&& self,views::View* view)->void{{ui::AXNodeData node;view->GetViewAccessibility().GetAccessibleNodeData(&node);if(node.role==ax::mojom::Role::kButton&&node.GetString16Attribute(ax::mojom::StringAttribute::kName).starts_with(u"Usuń wyjątek:"))found.push_back(view);}for(const auto& child:view->children())self(self,child.get());};visit(visit,shell->general_widget()->GetContentsView());return found;};
   ASSERT_EQ(50u,removes().size());auto* more=FindButton(shell->general_widget()->GetContentsView(),u"Pokaż kolejne wyjątki…");ASSERT_TRUE(more);const bool rust=shell->workspace_input()->rust_editor();EXPECT_EQ(rust,!views::AsViewClass<views::MdTextButton>(more));
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->general_widget()->GetNativeWindow()));base::test::TestFuture<void> presented;auto* compositor=shell->general_widget()->GetCompositor();ASSERT_TRUE(compositor);compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());more->ScrollRectToVisible(more->GetLocalBounds());
+  EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->general_widget()->GetNativeWindow()));base::test::TestFuture<void> presented;auto* compositor=shell->general_widget()->GetCompositor();ASSERT_TRUE(compositor);compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());more->ScrollRectToVisible(more->GetLocalBounds());
   if(rust)if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->preference_action_metal_visible_for_testing(more);}));
   views::ViewTracker old_more(more);more->RequestFocus();ASSERT_TRUE(more->HasFocus());ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->general_widget()->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));ASSERT_TRUE(base::test::RunUntil([&]{return !old_more.view()&&removes().size()==55;}));EXPECT_FALSE(FindButton(shell->general_widget()->GetContentsView(),u"Pokaż kolejne wyjątki…"));
   // The deferred action must retain its opening's profile, even though the
@@ -2740,7 +2802,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceSwitchesCocoaScopeAn
   ui::AXNodeData node;camera->GetViewAccessibility().GetAccessibleNodeData(&node);EXPECT_EQ(ax::mojom::Role::kSwitch,node.role);EXPECT_EQ(ax::mojom::CheckedState::kTrue,node.GetCheckedState());
   camera->ScrollRectToVisible(camera->GetLocalBounds());
   if(rust)if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->preference_switch_metal_visible_for_testing("camera");}));
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->general_widget()->GetNativeWindow()));camera->RequestFocus();ASSERT_TRUE(camera->HasFocus());
+  EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->general_widget()->GetNativeWindow()));camera->RequestFocus();ASSERT_TRUE(camera->HasFocus());
   ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->general_widget()->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));
   EXPECT_EQ(0,window_->ReadPreferences().at("camera").value);EXPECT_FALSE(shell->preference_switch_checked_for_testing("camera"));
   camera->GetViewAccessibility().GetAccessibleNodeData(&node);EXPECT_EQ(ax::mojom::CheckedState::kFalse,node.GetCheckedState());
@@ -2783,7 +2845,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceChoicesCocoaEmptySel
   ui::AXNodeData empty;picker->GetViewAccessibility().GetAccessibleNodeData(&empty);EXPECT_TRUE(empty.GetString16Attribute(ax::mojom::StringAttribute::kValue).empty());
   picker->ScrollRectToVisible(picker->GetLocalBounds());
   if(rust)if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->preference_choice_metal_visible_for_testing("font_size");}));
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->general_widget()->GetNativeWindow()));picker->RequestFocus();ASSERT_TRUE(picker->HasFocus());
+  EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->general_widget()->GetNativeWindow()));picker->RequestFocus();ASSERT_TRUE(picker->HasFocus());
   ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->general_widget()->GetNativeWindow(),ui::VKEY_2,false,false,false,false));
   ASSERT_TRUE(base::test::RunUntil([&]{return work_->GetPrefs()->GetInteger(prefs::kWebKitDefaultFontSize)==20;}));EXPECT_EQ(4u,shell->preference_choice_selection_for_testing("font_size"));
   picker->SetEnabled(false);shell->ActivatePreferenceChoiceForTesting("font_size",0);EXPECT_EQ(20,work_->GetPrefs()->GetInteger(prefs::kWebKitDefaultFontSize));picker->SetEnabled(true);
@@ -2827,7 +2889,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, GeneralSettingsThemeAndPersist
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
   const auto url = embedded_test_server()->GetURL("/links_probe.html");
   ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), url));
-  ui_controls::EnableUIControls();
+  EnableNativeUIControls();
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
   ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(window_->widget()->GetNativeWindow(),
       ui::VKEY_OEM_COMMA, false, false, false, true));
@@ -3021,7 +3083,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PeekLifecycleAndPromotion) {
   EXPECT_EQ(second, window_->pane_contents(true));
   ASSERT_TRUE(window_->OpenPeek(target));
   ASSERT_TRUE(content::WaitForLoadStop(window_->peek_contents()));
-  ui_controls::EnableUIControls();
+  EnableNativeUIControls();
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->shell()->peek_widget()->GetNativeWindow()));
   ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(window_->shell()->peek_widget()->GetNativeWindow(),
       ui::VKEY_ESCAPE, false, false, false, false));
@@ -3242,7 +3304,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DownloadsSceneMetricsUnknownPr
   auto* actions=row->children()[2].get();ASSERT_EQ(3u,actions->children().size());
   for(const auto& child:actions->children()){ui::AXNodeData node;child->GetViewAccessibility().GetAccessibleNodeData(&node);EXPECT_EQ(ax::mojom::Role::kButton,node.role);EXPECT_FALSE(node.GetString16Attribute(ax::mojom::StringAttribute::kName).empty());EXPECT_FALSE(views::AsViewClass<views::MdTextButton>(child.get()));}
   if(rust){if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return panel->scene_visible_for_testing()&&panel->scene_order_correct_for_testing()&&panel->scene_animating_for_testing()&&panel->scene_contains_text_for_testing("unknown.txt");}));panel->widget()->Hide();if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return !panel->scene_visible_for_testing()&&!panel->scene_animating_for_testing();}));panel->widget()->Show();}
-  ui_controls::EnableUIControls();auto activate=[&](std::u16string text){auto* widget=panel->widget();auto* button=FindButton(widget->GetContentsView(),text);ASSERT_TRUE(button);ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));button->RequestFocus();base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));};activate(u"Wstrzymaj");ASSERT_TRUE(base::test::RunUntil([&]{return item->IsPaused();}));ASSERT_TRUE(base::test::RunUntil([&]{return FindButton(panel->widget()->GetContentsView(),u"Wznów");}));activate(u"Wznów");ASSERT_TRUE(base::test::RunUntil([&]{return !item->IsPaused();}));EXPECT_TRUE(panel->Act(item->GetGuid(),DownloadPanel::Action::kCancel));ASSERT_TRUE(base::test::RunUntil([&]{return item->GetState()==download::DownloadItem::CANCELLED;}));response.Done();auto* widget=panel->widget();ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_ESCAPE,false,false,false,false));ASSERT_TRUE(base::test::RunUntil([&]{return !panel->widget();}));if(MetalPresents())EXPECT_FALSE(panel->scene_visible_for_testing());EXPECT_FALSE(panel->scene_animating_for_testing());
+  EnableNativeUIControls();auto activate=[&](std::u16string text){auto* widget=panel->widget();auto* button=FindButton(widget->GetContentsView(),text);ASSERT_TRUE(button);ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));button->RequestFocus();base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));};activate(u"Wstrzymaj");ASSERT_TRUE(base::test::RunUntil([&]{return item->IsPaused();}));ASSERT_TRUE(base::test::RunUntil([&]{return FindButton(panel->widget()->GetContentsView(),u"Wznów");}));activate(u"Wznów");ASSERT_TRUE(base::test::RunUntil([&]{return !item->IsPaused();}));EXPECT_TRUE(panel->Act(item->GetGuid(),DownloadPanel::Action::kCancel));ASSERT_TRUE(base::test::RunUntil([&]{return item->GetState()==download::DownloadItem::CANCELLED;}));response.Done();auto* widget=panel->widget();ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_ESCAPE,false,false,false,false));ASSERT_TRUE(base::test::RunUntil([&]{return !panel->widget();}));if(MetalPresents())EXPECT_FALSE(panel->scene_visible_for_testing());EXPECT_FALSE(panel->scene_animating_for_testing());
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DownloadsDangerousHistoryCannotRevealOrResume) {
@@ -3283,7 +3345,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PasswordOverviewAccountsCocoaA
   ASSERT_TRUE(picker);EXPECT_EQ(std::u16string::npos,exposed.find(u"scene-secret-never-render"));
   ui::AXNodeData account;picker->GetViewAccessibility().GetAccessibleNodeData(&account);EXPECT_NE(std::u16string::npos,account.GetString16Attribute(ax::mojom::StringAttribute::kValue).find(u"alpha"));
   if(rust){EXPECT_TRUE(picker->children().empty());EXPECT_FALSE(views::AsViewClass<views::Button>(picker));EXPECT_FALSE(views::AsViewClass<views::Combobox>(picker));if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return services->password_scene_visible_for_testing()&&services->password_scene_contains_for_testing(base::UTF16ToUTF8(u"Profil: "+BrowsingProfileName(work_)));}));EXPECT_FALSE(services->password_scene_contains_for_testing("scene-secret-never-render"));}
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));picker->RequestFocus();
+  EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));picker->RequestFocus();
   base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
   // Account labels start with the origin, so type its first character. This
   // exercises the platform prefix input client without opening a nested menu.
@@ -3361,7 +3423,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PageDialogsActionGeometryAXAnd
   auto* page=window_->contents("work");ASSERT_TRUE(content::NavigateToURL(page,embedded_test_server()->GetURL("/storage_probe.html?dialog-actions")));auto* manager=PageDialogs::FromWebContents(page);ASSERT_TRUE(manager);
   const bool rust=window_->shell()->workspace_input()->rust_editor();int closed=0;bool accepted=false;
   base::ScopedClosureRunner cleanup(base::BindOnce([](PageDialogs* m,content::WebContents* p){m->CancelDialogs(p,true);base::RunLoop().RunUntilIdle();},base::Unretained(manager),base::Unretained(page)));
-  ui_controls::EnableUIControls();
+  EnableNativeUIControls();
   for(int kind:{0,1,2,3}){
     auto callback=base::BindOnce([](int* count,bool* value,bool ok,const std::u16string&){++*count;*value=ok;},base::Unretained(&closed),base::Unretained(&accepted));
     if(kind==3)manager->RunBeforeUnloadDialog(page,page->GetPrimaryMainFrame(),false,std::move(callback));
@@ -3401,7 +3463,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, JavaScriptPromptEditorCocoaCom
   auto* field=manager->prompt_input();ASSERT_TRUE(field);auto* widget=manager->dialog();
   EXPECT_EQ(ui::ColorProviderKey::ColorMode::kDark,widget->GetColorMode());
   EXPECT_EQ(window_->shell()->workspace_input()->rust_editor(),field->rust_editor());EXPECT_EQ(u"szkic 🦀",field->GetText());
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));field->RequestFocus();
+  EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));field->RequestFocus();
   field->SelectRange(gfx::Range(field->GetText().size()));
   auto key=[&](ui::KeyboardCode code){return ui_test_utils::SendKeyPressToWindowSync(manager->dialog()->GetNativeWindow(),code,false,false,false,false);};
   ASSERT_TRUE(key(ui::VKEY_A));ASSERT_TRUE(base::test::RunUntil([&]{return field->GetText()==u"szkic 🦀a";}));
@@ -3472,7 +3534,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, JavaScriptPromptEditorHiddenPa
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PageDialogsCocoaBeforeUnloadDefaultCancel) {
   ASSERT_NO_FATAL_FAILURE(NavigateBoth());ASSERT_TRUE(window_->Select("work"));auto* page=window_->contents("work");
   ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html?other-tab"),true));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));window_->SelectTab(0);ASSERT_EQ(page,window_->contents("work"));
-  auto* manager=PageDialogs::FromWebContents(page);ASSERT_TRUE(manager);ui_controls::EnableUIControls();
+  auto* manager=PageDialogs::FromWebContents(page);ASSERT_TRUE(manager);EnableNativeUIControls();
   for(auto code:{ui::VKEY_RETURN,ui::VKEY_ESCAPE}){
     SCOPED_TRACE(static_cast<int>(code));
     ASSERT_NO_FATAL_FAILURE(ArmUnsaved(page));window_->CloseTab(0);ASSERT_TRUE(base::test::RunUntil([&]{return manager->dialog()!=nullptr;}));
@@ -3821,7 +3883,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ChromiumPasswordSaveAndFill) {
   ASSERT_TRUE(store);
   const auto url = embedded_test_server()->GetURL("/login_probe.html");
   bool has_saved_account = false;
-  ui_controls::EnableUIControls();
+  EnableNativeUIControls();
   auto activate_password=[&](PageServices* services,bool accept,ui::KeyboardCode key){
     auto* widget=services->password_prompt();ASSERT_TRUE(widget);auto* button=DialogActionButton(widget,accept);ASSERT_TRUE(button);ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));button->RequestFocus();
     base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),key,false,false,false,false));ASSERT_TRUE(base::test::RunUntil([&]{return !services->password_prompt();}));
@@ -3932,7 +3994,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ChromiumPasswordSaveAndFill) {
     return !content::EvalJs(window_->contents("work"), "document.getElementById('username').value").ExtractString().empty();
   }));
   base::test::ScopedRunLoopTimeout suggestion_timeout(FROM_HERE, base::Seconds(15));
-  ui_controls::EnableUIControls();
+  EnableNativeUIControls();
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
   window_->contents("work")->Focus();
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->contents("work")->GetRenderWidgetHostView()->HasFocus(); }));
@@ -4496,8 +4558,8 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ResidualGlyphHostsImageAndImpo
   base::ScopedAllowBlockingForTesting files; base::ScopedTempDir source;
   ASSERT_TRUE(source.CreateUniqueTempDir());base::FilePath root;
   ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT,&root));
-  ASSERT_TRUE(base::CopyDirectory(root.AppendASCII("zitter/testdata/arc"),source.GetPath().AppendASCII("Arc"),true));
-  base::ScopedPathOverride app_data(base::DIR_APP_DATA,source.GetPath());
+  ASSERT_TRUE(base::CopyDirectory(root.AppendASCII("zitter/testdata/arc"),ArcData(source.GetPath()),true));
+  base::ScopedPathOverride app_data(kImportAppData,source.GetPath());
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
   const bool rust=shell->workspace_input()->rust_editor();window_->FocusAddressBar();
   auto* icon=shell->palette_chrome_view_for_testing(0);ASSERT_TRUE(icon);
@@ -4562,7 +4624,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest,
     if (auto* menu = views::MenuController::GetActiveInstance())
       menu->Cancel(views::MenuController::ExitType::kAll);
   }));
-  ui_controls::EnableUIControls();
+  EnableNativeUIControls();
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(
       shell->general_widget()->GetNativeWindow()));
   // Native Combobox guards rapid clicks after menu close; exercise mouse first.
@@ -4647,7 +4709,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CheckedModelsBelongToNodesAcro
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CheckedModelRetiresDuringObserverBeforeImportCallback) {
-  base::ScopedAllowBlockingForTesting files;base::ScopedTempDir app_data;ASSERT_TRUE(app_data.CreateUniqueTempDir());base::ScopedPathOverride isolated_data(base::DIR_APP_DATA,app_data.GetPath());auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));if(!shell->workspace_input()->rust_editor())return;shell->OpenImport();auto* check=shell->import_history();ASSERT_TRUE(check);EXPECT_EQ(1u,shell->control_model_kind_for_testing(check));ASSERT_FALSE(shell->import_options().history);check->SetProperty(views::kElementIdentifierKey,views::DialogClientView::kOkButtonElementId);int notified=0;bool observed_checked=false;std::unique_ptr<views::View> held;
+  base::ScopedAllowBlockingForTesting files;base::ScopedTempDir app_data;ASSERT_TRUE(app_data.CreateUniqueTempDir());base::ScopedPathOverride isolated_data(kImportAppData,app_data.GetPath());auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));if(!shell->workspace_input()->rust_editor())return;shell->OpenImport();auto* check=shell->import_history();ASSERT_TRUE(check);EXPECT_EQ(1u,shell->control_model_kind_for_testing(check));ASSERT_FALSE(shell->import_options().history);check->SetProperty(views::kElementIdentifierKey,views::DialogClientView::kOkButtonElementId);int notified=0;bool observed_checked=false;std::unique_ptr<views::View> held;
   auto observer=ui::ElementTracker::GetElementTracker()->AddElementActivatedCallback(views::DialogClientView::kOkButtonElementId,views::ElementTrackerViews::GetContextForWidget(shell->import_widget()),base::BindRepeating([](views::View* view,std::unique_ptr<views::View>* held,int* notified,bool* checked,ui::TrackedElement*){++*notified;ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);*checked=ax.GetCheckedState()==ax::mojom::CheckedState::kTrue;*held=view->parent()->RemoveChildViewT(view);},base::Unretained(check),&held,&notified,&observed_checked));ClickControl(check);EXPECT_EQ(1,notified);EXPECT_TRUE(observed_checked);ASSERT_TRUE(held);EXPECT_EQ(0u,shell->control_model_kind_for_testing(held.get()));EXPECT_EQ(0u,shell->sidebar_node_id_for_testing(held.get()));EXPECT_FALSE(shell->import_options().history);
   // Keep the retired adapter alive through controller teardown, without a dangling form field.
   window_.reset();ui::KeyEvent space(ui::EventType::kKeyPressed,ui::VKEY_SPACE,0);EXPECT_FALSE(held->OnKeyPressed(space));
@@ -4665,7 +4727,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CheckedAndSelectorNodesCoverLi
 
 // Compile only: native selector projections await the deferred GUI checkpoint.
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SelectorModelsBelongToNodesAcrossFormsAndProjection) {
-  base::ScopedAllowBlockingForTesting files;base::ScopedTempDir app_data;ASSERT_TRUE(app_data.CreateUniqueTempDir());base::ScopedPathOverride isolated_data(base::DIR_APP_DATA,app_data.GetPath());auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready()&&shell->tools_ready();}));const bool rust=shell->workspace_input()->rust_editor();
+  base::ScopedAllowBlockingForTesting files;base::ScopedTempDir app_data;ASSERT_TRUE(app_data.CreateUniqueTempDir());base::ScopedPathOverride isolated_data(kImportAppData,app_data.GetPath());auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready()&&shell->tools_ready();}));const bool rust=shell->workspace_input()->rust_editor();
   auto check=[&](views::View* view){ASSERT_TRUE(view);EXPECT_EQ(rust?3u:0u,shell->control_model_kind_for_testing(view));const auto id=shell->sidebar_node_id_for_testing(view);const bool enabled=view->GetEnabled();view->SetEnabled(false);view->SetEnabled(enabled);EXPECT_EQ(id,shell->sidebar_node_id_for_testing(view));EXPECT_EQ(rust?3u:0u,shell->control_model_kind_for_testing(view));};
   shell->OpenGeneralSettings();for(const auto* key:{"theme","search","category","zoom","font_size","minimum_font_size","fixed_font_size","dns_mode","site_type","site_policy","clear_period"})check(shell->preference_choice_for_testing(key));
   shell->OpenWorkspaceSettings();check(shell->profile_picker());shell->OpenImport();check(shell->import_browser_picker());shell->SetImportStatus(u"Selector busy",false,true,true);check(shell->import_browser_picker());shell->SetImportStatus(u"Selector ready",false,false,false);
@@ -4740,7 +4802,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, TextActionHostsDialogDefaultsA
   widget->Show();widget->LayoutRootViewIfNecessary();auto* ok=DialogActionButton(widget.get(),true);auto* cancel=DialogActionButton(widget.get(),false);ASSERT_TRUE(ok);ASSERT_TRUE(cancel);
   for(auto* action:{ok,cancel}){EXPECT_EQ(!rust,views::AsViewClass<views::Button>(action)!=nullptr);if(rust)EXPECT_TRUE(action->children().empty());ui::AXNodeData data;action->GetViewAccessibility().GetAccessibleNodeData(&data);EXPECT_EQ(ax::mojom::Role::kButton,data.role);}EXPECT_TRUE(ok->GetViewAccessibility().GetIsDefault());
   const auto context=views::ElementTrackerViews::GetContextForWidget(widget.get());auto activated=ui::ElementTracker::GetElementTracker()->AddElementActivatedCallback(views::DialogClientView::kOkButtonElementId,context,base::BindRepeating([](int* count,ui::TrackedElement*){++*count;},&ok_activated));auto cancel_activation=ui::ElementTracker::GetElementTracker()->AddElementActivatedCallback(views::DialogClientView::kCancelButtonElementId,context,base::BindRepeating([](int* count,ui::TrackedElement*){++*count;},&cancel_activated));
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));cancel->RequestFocus();ASSERT_TRUE(cancel->HasFocus());base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());delegate->ResetViewShownTimeStampForTesting();
+  EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));cancel->RequestFocus();ASSERT_TRUE(cancel->HasFocus());base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());delegate->ResetViewShownTimeStampForTesting();
   ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_RETURN,false,false,false,false));ASSERT_TRUE(base::test::RunUntil([&]{return accepted==1&&ok_activated==1;}));EXPECT_TRUE(widget->IsVisible());delegate->SetButtonEnabled(ui::mojom::DialogButton::kOk,false);widget->LayoutRootViewIfNecessary();ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_RETURN,false,false,false,false));ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));ASSERT_TRUE(base::test::RunUntil([&]{return cancelled==1&&cancel_activated==1;}));EXPECT_EQ(1,accepted);EXPECT_EQ(1,ok_activated);
   delegate->SetButtonEnabled(ui::mojom::DialogButton::kOk,true);delegate->SetButtonLabel(ui::mojom::DialogButton::kOk,u"Apply replacement 🦀");delegate->SetDefaultButton(static_cast<int>(ui::mojom::DialogButton::kCancel));widget->LayoutRootViewIfNecessary();ok=DialogActionButton(widget.get(),true);cancel=DialogActionButton(widget.get(),false);ASSERT_TRUE(ok);ASSERT_TRUE(cancel);ui::AXNodeData renamed;ok->GetViewAccessibility().GetAccessibleNodeData(&renamed);EXPECT_EQ(u"Apply replacement 🦀",renamed.GetString16Attribute(ax::mojom::StringAttribute::kName));EXPECT_EQ(delegate->GetIsDefault(ui::mojom::DialogButton::kCancel),cancel->GetViewAccessibility().GetIsDefault());cancel->RequestFocus();ASSERT_TRUE(cancel->HasFocus());delegate->ResetViewShownTimeStampForTesting();const int before_cancel=cancelled;
   ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_RETURN,false,false,false,false));const int expected_cancel=before_cancel+(views::PlatformStyle::kDialogDefaultButtonCanBeCancel?1:0)+1;ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));ASSERT_TRUE(base::test::RunUntil([&]{return cancelled==expected_cancel&&cancel_activated==expected_cancel;}));EXPECT_EQ(1,accepted);EXPECT_EQ(1,ok_activated);widget->CloseNow();
@@ -4762,7 +4824,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PanelCommandHideShowObserverCa
   auto observer=ui::ElementTracker::GetElementTracker()->AddElementActivatedCallback(views::DialogClientView::kCancelButtonElementId,views::ElementTrackerViews::GetContextForWidget(shell->general_widget()),base::BindRepeating([](views::Widget* widget,int* count,ui::TrackedElement*){++*count;widget->Hide();widget->Show();},base::Unretained(shell->general_widget()),&notified));ClickControl(close);EXPECT_EQ(1,notified);EXPECT_TRUE(shell->general_widget()->IsVisible());EXPECT_EQ(node,shell->sidebar_node_id_for_testing(close));close->ClearProperty(views::kElementIdentifierKey);ClickControl(close);EXPECT_FALSE(shell->general_widget()->IsVisible());
 }
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PanelImportDismissCommandHonorsApplyingState) {
-  base::ScopedAllowBlockingForTesting files;base::ScopedTempDir app_data;ASSERT_TRUE(app_data.CreateUniqueTempDir());base::ScopedPathOverride isolated_data(base::DIR_APP_DATA,app_data.GetPath());auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));if(!shell->workspace_input()->rust_editor())return;shell->OpenImport();auto* close=shell->import_close();ASSERT_TRUE(close);const auto id=shell->sidebar_node_id_for_testing(close);shell->SetImportStatus(u"Applying",false,true,true);EXPECT_FALSE(close->GetEnabledInViewsSubtree());EXPECT_EQ(gfx::Size(32,32),close->GetPreferredSize());ClickControl(close);EXPECT_TRUE(shell->import_widget()->IsVisible());shell->SetImportStatus(u"Ready",false,false,false);EXPECT_TRUE(close->GetEnabledInViewsSubtree());EXPECT_EQ(id,shell->sidebar_node_id_for_testing(close));ClickControl(close);EXPECT_FALSE(shell->import_widget()->IsVisible());
+  base::ScopedAllowBlockingForTesting files;base::ScopedTempDir app_data;ASSERT_TRUE(app_data.CreateUniqueTempDir());base::ScopedPathOverride isolated_data(kImportAppData,app_data.GetPath());auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));if(!shell->workspace_input()->rust_editor())return;shell->OpenImport();auto* close=shell->import_close();ASSERT_TRUE(close);const auto id=shell->sidebar_node_id_for_testing(close);shell->SetImportStatus(u"Applying",false,true,true);EXPECT_FALSE(close->GetEnabledInViewsSubtree());EXPECT_EQ(gfx::Size(32,32),close->GetPreferredSize());ClickControl(close);EXPECT_TRUE(shell->import_widget()->IsVisible());shell->SetImportStatus(u"Ready",false,false,false);EXPECT_TRUE(close->GetEnabledInViewsSubtree());EXPECT_EQ(id,shell->sidebar_node_id_for_testing(close));ClickControl(close);EXPECT_FALSE(shell->import_widget()->IsVisible());
 }
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FormCommandObserverCannotDispatchThroughForeignWidget) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));if(!shell->workspace_input()->rust_editor())return;auto delegate=CreateSceneDialogDelegate();delegate->SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);delegate->SetContentsView(std::make_unique<views::View>())->SetPreferredSize(gfx::Size(400,200));delegate->SetButtons(0);std::unique_ptr<views::Widget> foreign(views::DialogDelegate::CreateDialogWidget(delegate.get(),window_->widget()->GetNativeWindow(),window_->widget()->GetNativeView()));foreign->Show();shell->OpenProfiles({},{});shell->profile_name_input()->SetText(u"Foreign form profile");auto* create=FindButton(shell->profile_panel_for_testing(),u"Utwórz profil");ASSERT_TRUE(create);const auto count=window_->profiles().size();const auto node=shell->sidebar_node_id_for_testing(create);create->SetProperty(views::kElementIdentifierKey,views::DialogClientView::kOkButtonElementId);
@@ -4806,12 +4868,12 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceActionHostsAXSelecti
   auto press=[](views::View* view){ui::MouseEvent event(ui::EventType::kMousePressed,gfx::Point(20,20),gfx::Point(20,20),base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);return view->OnMousePressed(event);};auto release=[](views::View* view){ui::MouseEvent event(ui::EventType::kMouseReleased,gfx::Point(20,20),gfx::Point(20,20),base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);view->OnMouseReleased(event);};
   if(rust){ASSERT_TRUE(press(languages));auto* group=languages->parent();const auto bounds=group->bounds();auto clipped=bounds;clipped.set_height(20);group->SetBoundsRect(clipped);EXPECT_FALSE(group->GetVisibleBounds().IsEmpty());EXPECT_TRUE(languages->IsDrawn());EXPECT_TRUE(languages->GetVisibleBounds().IsEmpty());group->SetBoundsRect(bounds);release(languages);EXPECT_EQ(0u,shell->preference_category_for_testing());
     ASSERT_TRUE(press(languages));languages->SetEnabled(false);languages->SetEnabled(true);release(languages);EXPECT_EQ(0u,shell->preference_category_for_testing());ASSERT_TRUE(press(languages));languages->SetVisible(false);languages->SetVisible(true);widget->LayoutRootViewIfNecessary();release(languages);EXPECT_EQ(0u,shell->preference_category_for_testing());
-    ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));first->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);first->RequestFocus();ASSERT_TRUE(first->HasFocus());const auto outside=widget->GetWindowBoundsInScreen().CenterPoint();base::test::TestFuture<void> moved;ASSERT_TRUE(ui_controls::SendMouseMoveNotifyWhenDone(outside.x(),outside.y(),moved.GetCallback(),widget->GetNativeWindow()));ASSERT_TRUE(moved.Wait());
+    EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));first->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);first->RequestFocus();ASSERT_TRUE(first->HasFocus());const auto outside=widget->GetWindowBoundsInScreen().CenterPoint();base::test::TestFuture<void> moved;ASSERT_TRUE(ui_controls::SendMouseMoveNotifyWhenDone(outside.x(),outside.y(),moved.GetCallback(),widget->GetNativeWindow()));ASSERT_TRUE(moved.Wait());
     base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->preference_navigation_metal_visible_for_testing();}));
     ui::MouseEvent exit(ui::EventType::kMouseExited,gfx::Point(-1,-1),gfx::Point(-1,-1),base::TimeTicks::Now(),0,0);languages->OnMouseExited(exit);base::RunLoop().RunUntilIdle();const auto before=shell->preference_navigation_frame_count_for_testing();ui::MouseEvent entered(ui::EventType::kMouseEntered,gfx::Point(20,20),gfx::Point(20,20),base::TimeTicks::Now(),0,0);languages->OnMouseEntered(entered);if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->preference_navigation_frame_count_for_testing()>before;}));base::RunLoop().RunUntilIdle();const auto settled=shell->preference_navigation_frame_count_for_testing();
     for(int i=0;i<20;++i){ui::MouseEvent move(ui::EventType::kMouseMoved,gfx::Point(20,20),gfx::Point(20,20),base::TimeTicks::Now(),0,0);languages->OnMouseMoved(move);}base::RunLoop().RunUntilIdle();if(MetalPresents())EXPECT_EQ(settled,shell->preference_navigation_frame_count_for_testing());languages->OnMouseExited(exit);
   }
-  auto* close=shell->preference_close_for_testing();EXPECT_EQ(!rust,views::AsViewClass<views::Button>(close)!=nullptr);if(rust)EXPECT_TRUE(close->children().empty());ActivateSidebarRow(close);EXPECT_FALSE(widget->IsVisible());shell->OpenTools(2);auto* tools_close=shell->tools_close_for_testing();ASSERT_TRUE(tools_close);EXPECT_EQ(!rust,views::AsViewClass<views::Button>(tools_close)!=nullptr);if(rust)EXPECT_TRUE(tools_close->children().empty());ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));tools_close->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);tools_close->RequestFocus();ASSERT_TRUE(tools_close->HasFocus());ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->tools_widget()->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));EXPECT_FALSE(shell->tools_widget()->IsVisible());
+  auto* close=shell->preference_close_for_testing();EXPECT_EQ(!rust,views::AsViewClass<views::Button>(close)!=nullptr);if(rust)EXPECT_TRUE(close->children().empty());ActivateSidebarRow(close);EXPECT_FALSE(widget->IsVisible());shell->OpenTools(2);auto* tools_close=shell->tools_close_for_testing();ASSERT_TRUE(tools_close);EXPECT_EQ(!rust,views::AsViewClass<views::Button>(tools_close)!=nullptr);if(rust)EXPECT_TRUE(tools_close->children().empty());EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));tools_close->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);tools_close->RequestFocus();ASSERT_TRUE(tools_close->HasFocus());ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->tools_widget()->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));EXPECT_FALSE(shell->tools_widget()->IsVisible());
 }
 
 // Compiled only: semantic preset commands use the common Rust panel dispatcher.
@@ -4825,15 +4887,15 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceColorWheelPicksAnyCol
   auto value=[](views::View* view){ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kSlider,ax.role);return ax.GetString16Attribute(ax::mojom::StringAttribute::kValue);};
   // The values read back from the stored hex, so they hold to within a few units.
   auto numbers=[&](views::View* view){std::vector<int> out;int n=-1;for(const char16_t c:value(view)){if(c>=u'0'&&c<=u'9')n=(n<0?0:n*10)+(c-u'0');else if(n>=0){out.push_back(n);n=-1;}}if(n>=0)out.push_back(n);return out;};
-  auto near=[](int value,int expected){return std::abs(value-expected)<=3;};
+  auto within=[](int value,int expected){return std::abs(value-expected)<=3;};
   auto press=[](views::View* view,gfx::Point point){ui::MouseEvent event(ui::EventType::kMousePressed,point,point,base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);return view->OnMousePressed(event);};
-  EXPECT_TRUE(press(field,gfx::Point(125,20)));auto levels=numbers(field);ASSERT_EQ(2u,levels.size());EXPECT_TRUE(near(levels[0],75)&&near(levels[1],100))<<levels[0]<<" "<<levels[1];  // Three quarters across, at the top.
+  EXPECT_TRUE(press(field,gfx::Point(125,20)));auto levels=numbers(field);ASSERT_EQ(2u,levels.size());EXPECT_TRUE(within(levels[0],75)&&within(levels[1],100))<<levels[0]<<" "<<levels[1];  // Three quarters across, at the top.
   const auto field_color=shell->workspace_color("work");
-  EXPECT_TRUE(press(ring,gfx::Point(144,40)));auto hue=numbers(ring);ASSERT_EQ(1u,hue.size());EXPECT_TRUE(near(hue[0],45))<<hue[0];
-  levels=numbers(field);EXPECT_TRUE(near(levels[0],75)&&near(levels[1],100))<<levels[0]<<" "<<levels[1];  // Levels kept.
+  EXPECT_TRUE(press(ring,gfx::Point(144,40)));auto hue=numbers(ring);ASSERT_EQ(1u,hue.size());EXPECT_TRUE(within(hue[0],45))<<hue[0];
+  levels=numbers(field);EXPECT_TRUE(within(levels[0],75)&&within(levels[1],100))<<levels[0]<<" "<<levels[1];  // Levels kept.
   EXPECT_NE(field_color,shell->workspace_color("work"));
   const auto ring_color=shell->workspace_color("work");EXPECT_FALSE(press(ring,gfx::Point(92,92)));EXPECT_EQ(ring_color,shell->workspace_color("work"));  // Centre disc.
-  const int before=numbers(field)[1];ui::KeyEvent down(ui::EventType::kKeyPressed,ui::VKEY_DOWN,ui::EF_NONE);EXPECT_TRUE(field->OnKeyPressed(down));EXPECT_TRUE(near(numbers(field)[1],before-5))<<numbers(field)[1];
+  const int before=numbers(field)[1];ui::KeyEvent down(ui::EventType::kKeyPressed,ui::VKEY_DOWN,ui::EF_NONE);EXPECT_TRUE(field->OnKeyPressed(down));EXPECT_TRUE(within(numbers(field)[1],before-5))<<numbers(field)[1];
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_saved();}));
 }
 
@@ -4853,7 +4915,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AppearanceActionHostsKeyboardA
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->OpenWorkspaceSettings();auto* widget=shell->settings_widget();widget->LayoutRootViewIfNecessary();const bool rust=shell->workspace_input()->rust_editor();auto* colors=shell->color_presets();auto* emojis=shell->emoji_input()->view()->parent();
   for(auto* row:{colors,emojis})for(size_t i=0;i<8u;++i){auto* view=row->children()[i].get();EXPECT_EQ(!rust,views::AsViewClass<views::Button>(view)!=nullptr);ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kButton,ax.role);EXPECT_FALSE(ax.GetString16Attribute(ax::mojom::StringAttribute::kName).empty());if(rust)EXPECT_TRUE(view->children().empty());}
   auto* mint=colors->children()[1].get();mint->ScrollViewToVisible();ActivateSidebarRow(mint);EXPECT_EQ(0xFFCE826Bu,shell->workspace_color("work"));auto* blue=colors->children()[3].get();blue->ScrollViewToVisible();
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));blue->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);blue->RequestFocus();ASSERT_TRUE(base::test::RunUntil([&]{return blue->HasFocus();}));base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
+  EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));blue->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);blue->RequestFocus();ASSERT_TRUE(base::test::RunUntil([&]{return blue->HasFocus();}));base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
   ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));EXPECT_EQ(0xFFB9914Cu,shell->workspace_color("work"));auto* rocket=emojis->children()[2].get();rocket->ScrollViewToVisible();ActivateSidebarRow(rocket);EXPECT_EQ(u"🚀",shell->workspace_emoji("work"));
   mint->SetEnabled(false);ui::AXActionData activate;activate.action=ax::mojom::Action::kDoDefault;mint->HandleAccessibleAction(activate);EXPECT_EQ(0xFFB9914Cu,shell->workspace_color("work"));mint->SetEnabled(true);mint->ScrollViewToVisible();
   auto press=[](views::View* view){ui::MouseEvent event(ui::EventType::kMousePressed,gfx::Point(12,12),gfx::Point(12,12),base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);return view->OnMousePressed(event);};auto release=[](views::View* view){ui::MouseEvent event(ui::EventType::kMouseReleased,gfx::Point(12,12),gfx::Point(12,12),base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);view->OnMouseReleased(event);};
@@ -4983,7 +5045,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarRowHostsClipDisableHide
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SceneModalActionsNativeMetricsAndCocoaDefaults) {
-  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);ui_controls::EnableUIControls();
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);EnableNativeUIControls();
   const bool rust=shell->workspace_input()->rust_editor();
   auto inspect=[&](views::Widget* widget,views::View* body,bool control){
     ASSERT_TRUE(widget);auto* delegate=widget->widget_delegate()->AsDialogDelegate();auto* ok=DialogActionButton(widget,true);auto* cancel=DialogActionButton(widget,false);ASSERT_TRUE(ok);ASSERT_TRUE(cancel);
@@ -5491,7 +5553,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarRowDragWithRealMouseSho
   auto* shell = window_->shell();
   shell->SetPinned(true);
   shell->ShowSidebar();
-  ui_controls::EnableUIControls();
+  EnableNativeUIControls();
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
   base::RunLoop().RunUntilIdle();
   shell->sidebar_widget()->LayoutRootViewIfNecessary();
@@ -6082,10 +6144,10 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ImportOptionsInvalidatePreview
   ASSERT_TRUE(source.CreateUniqueTempDir());
   base::FilePath root;
   ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &root));
-  ASSERT_TRUE(base::CopyDirectory(root.AppendASCII("zitter/testdata/arc"), source.GetPath().AppendASCII("Arc"), true));
-  const auto chrome = source.GetPath().AppendASCII("Google/Chrome");
+  ASSERT_TRUE(base::CopyDirectory(root.AppendASCII("zitter/testdata/arc"), ArcData(source.GetPath()), true));
+  const auto chrome = ChromeData(source.GetPath());
   ASSERT_TRUE(base::CreateDirectory(chrome.AppendASCII("Default")));
-  base::ScopedPathOverride app_data(base::DIR_APP_DATA, source.GetPath());
+  base::ScopedPathOverride app_data(kImportAppData, source.GetPath());
   auto* shell = window_->shell();
   shell->OpenImport();
   // Opening the panel automatically prepares the selected source.
@@ -6127,7 +6189,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ImportOptionsInvalidatePreview
   ASSERT_EQ(1u, window_->import_preview()->spaces.size());
   EXPECT_EQ("chrome-space-Default", window_->import_preview()->spaces[0].id);
   // Replies from in-flight earlier reads must not replace the latest source.
-  window_->PreviewArcImport(source.GetPath().AppendASCII("Arc"));
+  window_->PreviewArcImport(ArcData(source.GetPath()));
   BrowserImportOptions options = shell->import_options();
   window_->PreviewBrowserImport(options, chrome);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->import_ready(); }));
@@ -6310,7 +6372,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, KeyboardWorkspaceSwitching) {
   EXPECT_EQ(false, content::EvalJs(personal, "keyEvents.includes('1')"));
   // A plain press of the same digit after a chord must retain its keyup too.
   ASSERT_TRUE(content::ExecJs(work, "window.released = []; document.addEventListener('keyup', e => released.push(e.key));"));
-  ui_controls::EnableUIControls();
+  EnableNativeUIControls();
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));work->Focus();
   ASSERT_TRUE(content::ExecJs(work,"window.releaseReady = new Promise(resolve => document.addEventListener('keyup', e => {if(e.key==='1')resolve(true);}, {once:true})); void 0;"));
   ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(window_->widget()->GetNativeWindow(), ui::VKEY_1, false, false, false, false));
@@ -6318,10 +6380,10 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, KeyboardWorkspaceSwitching) {
   EXPECT_EQ("x1",content::EvalJs(work,"document.querySelector('#marker').value"));
 }
 
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeKeyboardWorkspaceSwitching) {
   ASSERT_NO_FATAL_FAILURE(NavigateBoth());
-  ui_controls::EnableUIControls();
+  EnableNativeUIControls();
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(
       window_->widget()->GetNativeWindow()));
   ASSERT_TRUE(window_->widget()->IsActive());
@@ -6331,8 +6393,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeKeyboardWorkspaceSwitchi
   auto switch_workspace = [&](ui::KeyboardCode key, std::string_view expected) {
     const auto target = window_->shell()->address_visible()
         ? window_->shell()->address_widget()->GetNativeWindow() : native_window;
+    // Cmd+Opt+N on macOS, Alt+N on Windows.
     return ui_test_utils::SendKeyPressToWindowSync(
-               target, key, false, false, true, true) &&
+               target, key, false, false, true, BUILDFLAG(IS_MAC)) &&
            base::test::RunUntil([&] { return window_->active_id() == expected; });
   };
   ASSERT_TRUE(switch_workspace(ui::VKEY_2, "personal"));
@@ -6367,11 +6430,14 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeKeyboardWorkspaceSwitchi
   }
 }
 
+#endif
+
+#if BUILDFLAG(IS_MAC)
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeShellAndAppearance) {
   ASSERT_NO_FATAL_FAILURE(NavigateBoth());
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->shell()->appearance_ready(); }));
   ASSERT_TRUE(window_->Select("work"));
-  ui_controls::EnableUIControls();
+  EnableNativeUIControls();
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
   auto* original = window_->contents("work");
   ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(
@@ -6472,7 +6538,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, PageDialogSceneScrollPromp
   if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return manager->scene_visible_for_testing()&&manager->scene_order_correct_for_testing()&&manager->scene_contains_text_for_testing("Dialog start 🦀");}));if(MetalPresents())EXPECT_FALSE(manager->scene_contains_text_for_testing("Dialog end 🦀"));
   if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return manager->scene_excludes_for_testing(field->view());}));
   auto* body=manager->dialog_body_for_testing();ASSERT_TRUE(body);auto* scroll=manager->viewport_for_testing();ASSERT_TRUE(scroll);EXPECT_EQ(body->children()[1],scroll->view());EXPECT_EQ(window_->shell()->workspace_input()->rust_editor(),scroll->rust_owned());if(scroll->rust_owned())EXPECT_FALSE(views::AsViewClass<views::ScrollView>(scroll->view()));
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));field->RequestFocus();base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
+  EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));field->RequestFocus();base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
   scroll->ScrollTo(scroll->maximum());
   if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return manager->scene_contains_text_for_testing("Dialog end 🦀")&&!manager->scene_contains_text_for_testing("Dialog start 🦀");}));if(MetalPresents())EXPECT_TRUE(manager->scene_excludes_for_testing(field->view()));
   widget->SetColorModeOverride(ui::ColorProviderKey::ColorMode::kLight);if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return manager->scene_order_correct_for_testing()&&manager->scene_contains_text_for_testing("Dialog end 🦀");}));
@@ -6539,7 +6605,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsHistoryRowsSharedCanv
   auto* first=list->children()[0].get();ASSERT_TRUE(first);first->ScrollRectToVisible(first->GetLocalBounds());
   if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_contains_text_for_testing("History GPU 0 🦀");}));if(MetalPresents())EXPECT_FALSE(shell->tools_chrome_excludes_for_testing(first));
   if(MetalPresents())EXPECT_TRUE(shell->tools_chrome_order_correct_for_testing());if(MetalPresents())EXPECT_TRUE(shell->tools_chrome_excludes_for_testing(shell->tools_close_for_testing()));
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));first->RequestFocus();
+  EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));first->RequestFocus();
   base::test::TestFuture<void> presented;auto* compositor=shell->tools_widget()->GetCompositor();ASSERT_TRUE(compositor);compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
   const auto tabs=window_->tab_count("work");const gfx::Point point(12,12);ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);
   ASSERT_TRUE(first->OnMousePressed(press));auto* scroll=shell->tools_viewport_for_testing();ASSERT_TRUE(scroll);
@@ -6661,7 +6727,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, PreferenceSwitchesRustScen
     auto* control=shell->preference_switch_for_testing(key);ASSERT_TRUE(control)<<key;EXPECT_FALSE(views::AsViewClass<views::ToggleButton>(control));EXPECT_TRUE(control->children().empty());EXPECT_FALSE(views::AsViewClass<views::Button>(control));
     ui::AXNodeData node;control->GetViewAccessibility().GetAccessibleNodeData(&node);EXPECT_EQ(ax::mojom::Role::kSwitch,node.role);EXPECT_EQ(shell->preference_switch_checked_for_testing(key)?ax::mojom::CheckedState::kTrue:ax::mojom::CheckedState::kFalse,node.GetCheckedState());
   }
-  auto filter=[&](std::u16string query){auto* field=shell->preferences_search();field->SelectRange(gfx::Range(0,field->GetText().size()));if(query.empty())field->input_client()->DeleteRange(gfx::Range(0,field->GetText().size()));else field->input_client()->InsertText(query,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();};
+  auto filter=[&](std::u16string query){auto* field=shell->preferences_search();field->SelectRange(gfx::Range(0,field->GetText().size()));if(query.empty())DeleteEditorRange(field->input_client(),gfx::Range(0,field->GetText().size()));else field->input_client()->InsertText(query,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();};
   auto expect_checked=[](views::View* control,bool checked){ui::AXNodeData node;control->GetViewAccessibility().GetAccessibleNodeData(&node);EXPECT_EQ(checked?ax::mojom::CheckedState::kTrue:ax::mojom::CheckedState::kFalse,node.GetCheckedState());};
   filter(u"Kamera");auto* camera=shell->preference_toggle("camera");camera->ScrollRectToVisible(camera->GetLocalBounds());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->preference_switch_metal_visible_for_testing("camera");}));
   const gfx::Point point(12,12);ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);
@@ -6682,7 +6748,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, PreferenceSwitchesRustScen
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, PreferenceChoicesScenesIdentityScrollAndCancellation) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready()&&shell->tools_ready();}));
   window_->widget()->SetBounds(gfx::Rect(60,60,700,660));shell->OpenGeneralSettings();
-  auto filter=[&](std::u16string query){auto* field=shell->preferences_search();field->SelectRange(gfx::Range(0,field->GetText().size()));if(query.empty())field->input_client()->DeleteRange(gfx::Range(0,field->GetText().size()));else field->input_client()->InsertText(query,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();};
+  auto filter=[&](std::u16string query){auto* field=shell->preferences_search();field->SelectRange(gfx::Range(0,field->GetText().size()));if(query.empty())DeleteEditorRange(field->input_client(),gfx::Range(0,field->GetText().size()));else field->input_client()->InsertText(query,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();};
   for(const auto* key:{"theme","search","category","zoom","font_size","minimum_font_size","fixed_font_size","dns_mode","site_type","site_policy","clear_period"}){
     auto* picker=shell->preference_choice_for_testing(key);ASSERT_TRUE(picker);EXPECT_FALSE(views::AsViewClass<views::Combobox>(picker));EXPECT_FALSE(views::AsViewClass<views::Button>(picker));EXPECT_TRUE(picker->children().empty());
     ui::AXNodeData ax;picker->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kComboBoxSelect,ax.role);
@@ -6729,7 +6795,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ProfilePickerScenesStableI
 }
 // Compile only. Real popup, IME and Metal acceptance awaits the GUI checkpoint.
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ImportSourceScenePrefixAXDisabledAndVisibility) {
-  base::ScopedAllowBlockingForTesting files;base::ScopedTempDir source;ASSERT_TRUE(source.CreateUniqueTempDir());base::FilePath root;ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT,&root));ASSERT_TRUE(base::CopyDirectory(root.AppendASCII("zitter/testdata/arc"),source.GetPath().AppendASCII("Arc"),true));ASSERT_TRUE(base::CreateDirectory(source.GetPath().AppendASCII("Google/Chrome/Default")));base::ScopedPathOverride app_data(base::DIR_APP_DATA,source.GetPath());
+  base::ScopedAllowBlockingForTesting files;base::ScopedTempDir source;ASSERT_TRUE(source.CreateUniqueTempDir());base::FilePath root;ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT,&root));ASSERT_TRUE(base::CopyDirectory(root.AppendASCII("zitter/testdata/arc"),ArcData(source.GetPath()),true));ASSERT_TRUE(base::CreateDirectory(ChromeData(source.GetPath()).AppendASCII("Default")));base::ScopedPathOverride app_data(kImportAppData,source.GetPath());
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenImport();if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return window_->import_ready()&&shell->import_source_metal_visible();}));auto* picker=shell->import_browser_picker();ASSERT_TRUE(picker);EXPECT_FALSE(views::AsViewClass<views::Combobox>(picker));for(const auto& child:picker->children())EXPECT_FALSE(views::AsViewClass<views::Label>(child.get()));if(MetalPresents())EXPECT_TRUE(shell->import_panel_contains_scene_text("Arc"));
   ui::AXNodeData data;picker->GetViewAccessibility().GetAccessibleNodeData(&data);EXPECT_EQ(ax::mojom::Role::kComboBoxSelect,data.role);EXPECT_EQ(u"Arc",data.GetString16Attribute(ax::mojom::StringAttribute::kValue));EXPECT_TRUE(data.HasState(ax::mojom::State::kCollapsed));
   picker->RequestFocus();ASSERT_TRUE(picker->HasFocus());auto* input=picker->GetInputMethod()->GetTextInputClient();ASSERT_TRUE(input);input->InsertText(u"g",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);EXPECT_EQ(ImportBrowser::kChrome,shell->import_options().browser);if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return window_->import_ready()&&shell->import_panel_contains_scene_text("Google Chrome");}));
@@ -6739,7 +6805,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ImportSourceScenePrefixAXD
 }
 // Compile only. Checkbox rendering/input acceptance awaits the GUI checkpoint.
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ImportCheckboxScenesAXSpaceCaptureDisabledAndVisibility) {
-  base::ScopedAllowBlockingForTesting files;base::ScopedTempDir source;ASSERT_TRUE(source.CreateUniqueTempDir());base::FilePath root;ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT,&root));ASSERT_TRUE(base::CopyDirectory(root.AppendASCII("zitter/testdata/arc"),source.GetPath().AppendASCII("Arc"),true));ASSERT_TRUE(base::CreateDirectory(source.GetPath().AppendASCII("Google/Chrome/Default")));base::ScopedPathOverride app_data(base::DIR_APP_DATA,source.GetPath());
+  base::ScopedAllowBlockingForTesting files;base::ScopedTempDir source;ASSERT_TRUE(source.CreateUniqueTempDir());base::FilePath root;ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT,&root));ASSERT_TRUE(base::CopyDirectory(root.AppendASCII("zitter/testdata/arc"),ArcData(source.GetPath()),true));ASSERT_TRUE(base::CreateDirectory(ChromeData(source.GetPath()).AppendASCII("Default")));base::ScopedPathOverride app_data(kImportAppData,source.GetPath());
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenImport();if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return window_->import_ready()&&shell->import_choices_metal_visible();}));
   const auto defaults=shell->import_options();EXPECT_TRUE(defaults.separate_profiles&&defaults.bookmarks);EXPECT_FALSE(defaults.history||defaults.cookies);
   for(auto* check:{shell->import_profiles(),shell->import_bookmarks(),shell->import_history(),shell->import_cookies()}) {EXPECT_FALSE(views::AsViewClass<views::Checkbox>(check));EXPECT_FALSE(views::AsViewClass<views::Button>(check));for(const auto& child:check->children())EXPECT_FALSE(views::AsViewClass<views::Label>(child.get()));ui::AXNodeData data;check->GetViewAccessibility().GetAccessibleNodeData(&data);EXPECT_EQ(ax::mojom::Role::kCheckBox,data.role);}
@@ -6756,7 +6822,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ImportCheckboxScenesAXSpac
 // Compile only; real import UI acceptance awaits the requested checkpoint.
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ImportFormScenesLatestOptionsLocksAndAdmission) {
   base::ScopedAllowBlockingForTesting files;base::ScopedTempDir source;ASSERT_TRUE(source.CreateUniqueTempDir());base::FilePath root;ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT,&root));
-  ASSERT_TRUE(base::CopyDirectory(root.AppendASCII("zitter/testdata/arc"),source.GetPath().AppendASCII("Arc"),true));const auto chrome=source.GetPath().AppendASCII("Google/Chrome");ASSERT_TRUE(base::CreateDirectory(chrome.AppendASCII("Default")));base::ScopedPathOverride app_data(base::DIR_APP_DATA,source.GetPath());
+  ASSERT_TRUE(base::CopyDirectory(root.AppendASCII("zitter/testdata/arc"),ArcData(source.GetPath()),true));const auto chrome=ChromeData(source.GetPath());ASSERT_TRUE(base::CreateDirectory(chrome.AppendASCII("Default")));base::ScopedPathOverride app_data(kImportAppData,source.GetPath());
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenImport();if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return window_->import_ready()&&shell->import_panel_contains_scene_text("Przenieś się do Zittera");}));
   auto* panel=shell->import_panel_for_testing();ASSERT_TRUE(panel);auto no_labels=[&](auto&& self,views::View* view)->void {if(views::AsViewClass<views::Combobox>(view)||views::AsViewClass<views::Checkbox>(view))return;EXPECT_FALSE(views::AsViewClass<views::Label>(view));for(const auto& child:view->children())self(self,child.get());};no_labels(no_labels,panel);
   auto* apply=FindButton(panel,u"Importuj");ASSERT_TRUE(apply);EXPECT_FALSE(views::AsViewClass<views::MdTextButton>(apply));if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->import_panel_contains_scene_text("Importuj");}));
@@ -6924,7 +6990,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, FolderRemovalUndoAndSaveEr
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, SceneModalActionsForcedCloseAndFreshEditorLifetime) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
   for(int attempt=0;attempt<3;++attempt){shell->RequestNewFolder("work");if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_form_metal_visible();}));auto* field=shell->folder_editor_for_testing();ASSERT_TRUE(field);auto lifetime=field->input_client()->AsWeakPtr();ui::CompositionText marked;marked.text=u"未";marked.selection=gfx::Range(1);field->SetCompositionText(marked);EXPECT_TRUE(field->IsIMEComposing());auto* widget=shell->folder_dialog();auto* ok=DialogActionButton(widget,true);ASSERT_TRUE(ok);if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return PageDialogActionsVisibleForTesting(ok->parent(),"Dodaj folder");}));widget->CloseNow();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->folder_dialog()&&!lifetime;}));EXPECT_TRUE(window_->pinned_items("work").empty());}
-  shell->ShowFolderSaveError();if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_notice_metal_visible();}));auto* widget=shell->folder_dialog();EXPECT_FALSE(DialogActionButton(widget,false));auto* ok=DialogActionButton(widget,true);ASSERT_TRUE(ok);if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return PageDialogActionsVisibleForTesting(ok->parent(),"OK");}));ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));ok->RequestFocus();base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());widget->widget_delegate()->AsDialogDelegate()->ResetViewShownTimeStampForTesting();ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_RETURN,false,false,false,false));ASSERT_TRUE(base::test::RunUntil([&]{return !shell->folder_dialog();}));
+  shell->ShowFolderSaveError();if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_notice_metal_visible();}));auto* widget=shell->folder_dialog();EXPECT_FALSE(DialogActionButton(widget,false));auto* ok=DialogActionButton(widget,true);ASSERT_TRUE(ok);if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return PageDialogActionsVisibleForTesting(ok->parent(),"OK");}));EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));ok->RequestFocus();base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());widget->widget_delegate()->AsDialogDelegate()->ResetViewShownTimeStampForTesting();ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_RETURN,false,false,false,false));ASSERT_TRUE(base::test::RunUntil([&]{return !shell->folder_dialog();}));
   shell->RequestNewFolder("work");if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_form_metal_visible();}));EXPECT_EQ(u"Nowy folder",shell->folder_editor_for_testing()->GetText());auto lifetime=shell->folder_editor_for_testing()->input_client()->AsWeakPtr();shell->Detach();EXPECT_FALSE(shell->folder_dialog());EXPECT_FALSE(lifetime);
 }
 
@@ -7101,7 +7167,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NewTabActionUsesSceneTextA
   EXPECT_TRUE(has_native_ink(paint_action()));
   shell->ShowSidebar();
   if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible(); }));
-  ui_controls::EnableUIControls();
+  EnableNativeUIControls();
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
   const auto point = action->GetBoundsInScreen().CenterPoint();
   base::test::TestFuture<void> moved;
@@ -7173,7 +7239,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, AddressAndWorkspaceHeading
   if(MetalPresents())EXPECT_FALSE(shell->metal_sidebar_visible()); EXPECT_TRUE(native_ink());
   shell->ShowSidebar();
   if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible(); }));
-  ui_controls::EnableUIControls();
+  EnableNativeUIControls();
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
   const auto point = pill->GetBoundsInScreen().CenterPoint();
   base::test::TestFuture<void> moved;
@@ -7260,7 +7326,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, RustScrollThumbDragTrackKe
   EXPECT_FALSE(native_ink()); shell->sidebar_widget()->Hide();
   if(MetalPresents())EXPECT_FALSE(shell->metal_sidebar_visible()); EXPECT_TRUE(native_ink());
   shell->ShowSidebar(); if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible(); }));
-  ui_controls::EnableUIControls();
+  EnableNativeUIControls();
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
   auto move=[&](gfx::Point point) {
     base::test::TestFuture<void> done;
@@ -7317,7 +7383,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, FooterSpacesScrollSelectAn
   EXPECT_EQ(47,footer->height());EXPECT_GE(scroll->contents()->parent()->height(),28);
   if(MetalPresents())EXPECT_TRUE(shell->metal_sidebar_screen_bounds_for_testing().Contains(footer->GetBoundsInScreen()));
   if(MetalPresents())EXPECT_TRUE(shell->metal_sidebar_contains_text_for_testing("🦀"));
-  ui_controls::EnableUIControls();
+  EnableNativeUIControls();
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
   auto move=[&](gfx::Point point) {
     base::test::TestFuture<void> done;return ui_controls::SendMouseMoveNotifyWhenDone(point.x(),point.y(),done.GetCallback(),shell->sidebar_widget()->GetNativeWindow()) && done.Wait();
@@ -7374,7 +7440,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NavigationHeaderHistoryRel
   reload->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);reload->RequestFocus();
   if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&] {return reload->HasFocus() && shell->metal_header_frame_count()>before_focus;}));
   EXPECT_FALSE(native_ink()); // Includes the native focus-ring child.
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
   auto click=[&](views::View* button) {
     const auto point=button->GetBoundsInScreen().CenterPoint();base::test::TestFuture<void> moved,pressed;
     return ui_controls::SendMouseMoveNotifyWhenDone(point.x(),point.y(),moved.GetCallback(),window_->widget()->GetNativeWindow()) && moved.Wait() &&
@@ -7443,7 +7509,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, PaletteScenesAsyncSelectio
   ASSERT_TRUE(drain_history());
   auto* field=shell->address_input();auto* panel=field->view()->GetWidget();
   const auto frame=shell->metal_palette_screen_bounds_for_testing();EXPECT_FALSE(frame.IsEmpty());EXPECT_FALSE(frame.Intersects(field->view()->GetBoundsInScreen()));
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(panel->GetNativeWindow()));field->RequestFocus();
+  EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(panel->GetNativeWindow()));field->RequestFocus();
   auto key=[&](ui::KeyboardCode code){return ui_test_utils::SendKeyPressToWindowSync(panel->GetNativeWindow(),code,false,false,false,false);};
   for(int i=0;i<3;++i)ASSERT_TRUE(key(ui::VKEY_DOWN));ASSERT_EQ(3u,shell->palette_selection_for_testing());
   const auto selected=shell->suggestions()[3];auto results=shell->search_results();
@@ -7481,7 +7547,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, SidebarGripDragAutoHideAnd
   shell->ResizeSidebar(248-shell->sidebar_width(),true);
   if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->metal_sidebar_visible()&&shell->metal_sidebar_grip_visible();}));
   auto* grip=shell->sidebar_grip_for_testing();ASSERT_TRUE(grip);EXPECT_FALSE(views::AsViewClass<views::ResizeArea>(grip));
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
   auto move=[&](gfx::Point point,views::Widget* widget){base::test::TestFuture<void> done;return ui_controls::SendMouseMoveNotifyWhenDone(point.x(),point.y(),done.GetCallback(),widget->GetNativeWindow())&&done.Wait();};
   auto mouse=[&](int state){base::test::TestFuture<void> done;return ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT,state,done.GetCallback(),ui_controls::kNoAccelerator,shell->sidebar_widget()->GetNativeWindow())&&done.Wait();};
   const auto start=grip->GetBoundsInScreen().CenterPoint();const auto page_x=LeadingEdge(shell->content_host());
@@ -7543,7 +7609,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, SplitPaneScenesDragOrientT
     // Pane bars name the host (SplitView), so a retitled page keeps its bar text.
     if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->metal_split_contains_text_for_testing(1,window_->pane_contents(true)->GetLastCommittedURL().host());}));
   }
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
   auto move=[&](gfx::Point point){base::test::TestFuture<void> done;return ui_controls::SendMouseMoveNotifyWhenDone(point.x(),point.y(),done.GetCallback(),window_->widget()->GetNativeWindow())&&done.Wait();};
   auto mouse=[&](int state){base::test::TestFuture<void> done;return ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT,state,done.GetCallback(),ui_controls::kNoAccelerator,window_->widget()->GetNativeWindow())&&done.Wait();};
   auto drag=[&](int dx,int dy) {
@@ -7601,7 +7667,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, RealTabViewportScrolls) {
   ASSERT_TRUE(hit == row || row->Contains(hit)) << hit->GetClassName();
   window_->SelectTab(0);
   auto* first = window_->contents("work");
-  ui_controls::EnableUIControls();
+  EnableNativeUIControls();
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
   base::test::TestFuture<void> moved;
   ASSERT_TRUE(ui_controls::SendMouseMoveNotifyWhenDone(screen_point.x(), screen_point.y(),
@@ -8009,7 +8075,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeDragJoinsShownSplitFirst
   shell->sidebar_widget()->LayoutRootViewIfNecessary(); window_->widget()->LayoutRootViewIfNecessary();
   if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible(); }));
   ASSERT_EQ(2u, shell->split_tabs_for_testing().size());
-  ui_controls::EnableUIControls();
+  EnableNativeUIControls();
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
   const auto sidebar_window = shell->sidebar_widget()->GetNativeWindow();
   auto move = [&](gfx::Point p) {
@@ -8044,7 +8110,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeDragTakesTabOutOfSplit) 
   shell->sidebar_widget()->LayoutRootViewIfNecessary();
   if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible(); }));
   ASSERT_EQ(2u, shell->split_tabs_for_testing().size());
-  ui_controls::EnableUIControls();
+  EnableNativeUIControls();
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
   const auto sidebar_window = shell->sidebar_widget()->GetNativeWindow();
   auto move = [&](gfx::Point p) {
@@ -8076,7 +8142,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeDragOverTabFocusesItAndS
   shell->CloseOverlays(true); shell->SetPinned(true); shell->ShowSidebar();
   shell->sidebar_widget()->LayoutRootViewIfNecessary();
   if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible(); }));
-  ui_controls::EnableUIControls();
+  EnableNativeUIControls();
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
   const auto sidebar_window = shell->sidebar_widget()->GetNativeWindow();
   auto move = [&](gfx::Point p) {
@@ -8111,7 +8177,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeDragAndCloseAtWidthLimit
   shell->CloseOverlays(true); shell->SetPinned(true); shell->ShowSidebar();
   shell->sidebar_widget()->LayoutRootViewIfNecessary();
   if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible(); }));
-  ui_controls::EnableUIControls();
+  EnableNativeUIControls();
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
   const auto sidebar_window = shell->sidebar_widget()->GetNativeWindow();
   auto move = [&](gfx::Point p) {
@@ -8247,7 +8313,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, MetalOwnsRowTextAndSkipsNa
   ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html"), true));
   ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
   shell->CloseOverlays(true); shell->SetPinned(true); shell->ShowSidebar();
-  ui_controls::EnableUIControls();
+  EnableNativeUIControls();
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
   if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_visible(); }));
   // Newly added rows must lay out without a window resize or a Label's
@@ -8347,7 +8413,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, LiveTabsKeyboardFoldersAnd
   shell->SetPinned(true);
   ASSERT_TRUE(shell->tab_button(0));
   EXPECT_EQ(u"Zażółć 日本語 🦀", shell->tab_button(0)->GetTooltipText());
-  ui_controls::EnableUIControls();
+  EnableNativeUIControls();
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
   // Physical key dispatch traverses the existing page/accelerator path and the
   // Rust tab-cycle reducer, rather than directly calling select_tab callbacks.
@@ -8434,7 +8500,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NameEditorsTypingUndoCompositi
   auto* field=shell->workspace_input();ASSERT_TRUE(field);auto* view=field->view();
   EXPECT_TRUE(field->rust_editor());EXPECT_FALSE(views::AsViewClass<views::Textfield>(view));
   EXPECT_TRUE(view->children().empty());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return field->metal_visible();}));
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));view->RequestFocus();ASSERT_TRUE(base::test::RunUntil([&]{return view->HasFocus();}));
+  EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));view->RequestFocus();ASSERT_TRUE(base::test::RunUntil([&]{return view->HasFocus();}));
   auto key=[&](ui::KeyboardCode code,bool shift=false,bool command=false){return ui_test_utils::SendKeyPressToWindowSync(shell->settings_widget()->GetNativeWindow(),code,false,shift,false,command);};
   field->SetText(u"Praca");ASSERT_TRUE(key(ui::VKEY_A,false,true));ASSERT_TRUE(key(ui::VKEY_X));ASSERT_TRUE(base::test::RunUntil([&]{return field->GetText()==u"x";}));
   ASSERT_TRUE(key(ui::VKEY_Z,false,true));ASSERT_TRUE(base::test::RunUntil([&]{return field->GetText()==u"Praca";}));
@@ -8470,7 +8536,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NameEditorsAdmissionHideRe
 }
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, NameEditorMouseDropAndNativeFallback) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenWorkspaceSettings();auto* field=shell->workspace_input();auto* view=field->view();ASSERT_TRUE(field->rust_editor());
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));field->SetText(u"abcdef");field->SelectRange(gfx::Range(0,6));
+  EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));field->SetText(u"abcdef");field->SelectRange(gfx::Range(0,6));
   const auto target=view->GetBoundsInScreen();const gfx::Point point(target.right()-10,target.CenterPoint().y());base::test::TestFuture<void> moved;ASSERT_TRUE(ui_controls::SendMouseMoveNotifyWhenDone(point.x(),point.y(),moved.GetCallback(),shell->settings_widget()->GetNativeWindow()));ASSERT_TRUE(moved.Wait());
   base::test::TestFuture<void> clicked;ASSERT_TRUE(ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT,ui_controls::DOWN|ui_controls::UP,clicked.GetCallback(),ui_controls::kNoAccelerator,shell->settings_widget()->GetNativeWindow()));ASSERT_TRUE(clicked.Wait());EXPECT_TRUE(view->HasFocus());EXPECT_EQ(gfx::Range(6),field->GetSelectedRange());
   field->SelectRange(gfx::Range(1,3));ui::OSExchangeData dragged;ASSERT_TRUE(view->drag_controller());view->drag_controller()->WriteDragDataForView(view,gfx::Point(15,16),&dragged);ASSERT_TRUE(dragged.GetString());EXPECT_EQ(u"bc",*dragged.GetString());
@@ -8535,7 +8601,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FolderEditorCocoaTypingUnicode
   auto* editor=shell->folder_editor_for_testing();auto* native=NativeFolderNameInput(shell->folder_dialog()->GetContentsView());ASSERT_TRUE(editor||native);
   auto* view=editor?editor->view():static_cast<views::View*>(native);auto* client=editor?editor->input_client():static_cast<ui::TextInputClient*>(native);
   if(editor){EXPECT_TRUE(editor->rust_editor());EXPECT_FALSE(native);EXPECT_TRUE(view->children().empty());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return editor->metal_visible();}));}
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->folder_dialog()->GetNativeWindow()));view->RequestFocus();ASSERT_TRUE(base::test::RunUntil([&]{return view->HasFocus();}));
+  EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->folder_dialog()->GetNativeWindow()));view->RequestFocus();ASSERT_TRUE(base::test::RunUntil([&]{return view->HasFocus();}));
   auto key=[&](ui::KeyboardCode code){return ui_test_utils::SendKeyPressToWindowSync(shell->folder_dialog()->GetNativeWindow(),code,false,false,false,false);};
   for(auto code:{ui::VKEY_T,ui::VKEY_E,ui::VKEY_S,ui::VKEY_T})ASSERT_TRUE(key(code));
   ASSERT_TRUE(base::test::RunUntil([&]{gfx::Range range;std::u16string text;return client->GetTextRange(&range)&&client->GetTextFromRange(range,&text)&&text==u"test";}));
@@ -8555,7 +8621,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AddressEditorCocoaCommitCompos
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenAddress(true);auto* field=shell->address_input();auto* view=field->view();
   EXPECT_EQ(shell->workspace_input()->rust_editor(),field->rust_editor());
   if(field->rust_editor()){EXPECT_TRUE(view->children().empty());EXPECT_FALSE(views::AsViewClass<views::Textfield>(view));if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return field->metal_visible();}));}
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->address_widget()->GetNativeWindow()));field->RequestFocus();
+  EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->address_widget()->GetNativeWindow()));field->RequestFocus();
   auto key=[&](ui::KeyboardCode code,bool command=false){return ui_test_utils::SendKeyPressToWindowSync(shell->address_widget()->GetNativeWindow(),code,false,false,false,command);};
   ASSERT_TRUE(key(ui::VKEY_A));ASSERT_TRUE(base::test::RunUntil([&]{return field->GetText()==u"a";}));
   const auto original=window_->contents("work")->GetLastCommittedURL();ui::CompositionText marked;marked.text=u"にほん";marked.selection=gfx::Range(marked.text.size());field->SetCompositionText(marked);ASSERT_TRUE(field->IsIMEComposing());
@@ -8620,7 +8686,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AppearanceEditorsCommitValidat
   const bool metal=shell->workspace_input()->rust_editor();EXPECT_EQ(metal,emoji->rust_editor());
   if(metal){EXPECT_TRUE(emoji->view()->children().empty());EXPECT_FALSE(views::AsViewClass<views::Textfield>(emoji->view()));if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return emoji->metal_visible();}));}
   else {EXPECT_TRUE(views::AsViewClass<views::Textfield>(emoji->view()));}
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));
+  EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));
   auto key=[&](EditorControl* field,ui::KeyboardCode code,bool command=false){field->RequestFocus();return base::test::RunUntil([&]{return field->HasFocus();})&&ui_test_utils::SendKeyPressToWindowSync(shell->settings_widget()->GetNativeWindow(),code,false,false,false,command);};
   shell->SetWorkspaceColor("work",0xFF123456);EXPECT_EQ(0xFF123456u,shell->workspace_color("work"));
   ui::CompositionText preedit;preedit.text=u"uncommitted";preedit.selection=gfx::Range(preedit.text.size());emoji->RequestFocus();emoji->SetCompositionText(preedit);ASSERT_TRUE(emoji->IsIMEComposing());ui::KeyEvent enter(ui::EventType::kKeyPressed,ui::VKEY_RETURN,0);EXPECT_FALSE(emoji->view()->OnKeyPressed(enter));emoji->ClearCompositionText();
@@ -8634,7 +8700,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AppearanceEditorsCommitValidat
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NameEditorMacCommandsAndSelectionPolicies) {
   using C=ui::TextEditCommand;auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenWorkspaceSettings();auto* field=shell->workspace_input();auto* view=field->view();auto* client=field->input_client();
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));view->RequestFocus();ASSERT_TRUE(base::test::RunUntil([&]{return view->HasFocus();}));
+  EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));view->RequestFocus();ASSERT_TRUE(base::test::RunUntil([&]{return view->HasFocus();}));
   auto command=[&](C c){client->SetTextEditCommandForNextKeyEvent(c);ui::KeyEvent key(ui::EventType::kKeyPressed,ui::VKEY_F15,ui::EF_NONE);return view->OnKeyPressed(key);};
   field->SetText(u"one two three");field->SelectRange(gfx::Range(5,9));ASSERT_TRUE(command(C::MOVE_TO_BEGINNING_OF_LINE_AND_MODIFY_SELECTION));EXPECT_EQ(gfx::Range(9,0),field->GetSelectedRange());ASSERT_TRUE(command(C::MOVE_TO_END_OF_LINE_AND_MODIFY_SELECTION));EXPECT_EQ(gfx::Range(0,13),field->GetSelectedRange());
   field->SelectRange(gfx::Range(5,9));ASSERT_TRUE(command(C::MOVE_WORD_BACKWARD_AND_MODIFY_SELECTION));EXPECT_EQ(gfx::Range(9,4),field->GetSelectedRange());field->SelectRange(gfx::Range(5,9));ASSERT_TRUE(command(C::MOVE_WORD_BACKWARD));EXPECT_EQ(gfx::Range(4),field->GetSelectedRange());field->SelectRange(gfx::Range(5,9));ASSERT_TRUE(command(C::MOVE_WORD_FORWARD));EXPECT_EQ(gfx::Range(13),field->GetSelectedRange());
@@ -8653,7 +8719,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NameEditorMacCommandsAndSelect
 }
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NameEditorBidiDirectionAndSharedKillYank) {
   using C=ui::TextEditCommand;auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenWorkspaceSettings();auto* field=shell->workspace_input();
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));field->RequestFocus();auto command=[&](EditorControl* field,C c){field->input_client()->SetTextEditCommandForNextKeyEvent(c);ui::KeyEvent key(ui::EventType::kKeyPressed,ui::VKEY_F15,ui::EF_NONE);return field->view()->OnKeyPressed(key);};
+  EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));field->RequestFocus();auto command=[&](EditorControl* field,C c){field->input_client()->SetTextEditCommandForNextKeyEvent(c);ui::KeyEvent key(ui::EventType::kKeyPressed,ui::VKEY_F15,ui::EF_NONE);return field->view()->OnKeyPressed(key);};
   field->SetText(u"אבג");field->SelectRange(gfx::Range(0));ASSERT_TRUE(command(field,C::MOVE_WORD_LEFT));EXPECT_EQ(gfx::Range(3),field->GetSelectedRange());ASSERT_TRUE(command(field,C::MOVE_WORD_RIGHT));EXPECT_EQ(gfx::Range(0),field->GetSelectedRange());
   field->SetText(u"abc אבג");field->SelectRange(gfx::Range(5));ASSERT_TRUE(command(field,C::MOVE_BACKWARD));EXPECT_EQ(gfx::Range(6),field->GetSelectedRange());ASSERT_TRUE(command(field,C::MOVE_FORWARD));EXPECT_EQ(gfx::Range(5),field->GetSelectedRange());auto* client=field->input_client();ASSERT_TRUE(client->ChangeTextDirectionAndLayoutAlignment(base::i18n::RIGHT_TO_LEFT));EXPECT_EQ(base::i18n::RIGHT_TO_LEFT,client->GetTextDirection());ui::AXNodeData rtl;field->GetViewAccessibility().GetAccessibleNodeData(&rtl);EXPECT_EQ(static_cast<int>(ax::mojom::WritingDirection::kRtl),rtl.GetIntAttribute(ax::mojom::IntAttribute::kTextDirection));EXPECT_TRUE(field->view()->GetBoundsInScreen().Contains(client->GetCaretBounds()));
   ASSERT_TRUE(client->ChangeTextDirectionAndLayoutAlignment(base::i18n::RIGHT_TO_LEFT));EXPECT_EQ(base::i18n::LEFT_TO_RIGHT,client->GetTextDirection());ui::AXNodeData ltr;field->GetViewAccessibility().GetAccessibleNodeData(&ltr);EXPECT_EQ(static_cast<int>(ax::mojom::WritingDirection::kLtr),ltr.GetIntAttribute(ax::mojom::IntAttribute::kTextDirection));
@@ -8668,7 +8734,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NameEditorKillYankInteroperate
   auto* native=name->view()->parent()->AddChildView(std::make_unique<views::Textfield>());
   native->SetBoundsRect(name->view()->bounds());ASSERT_TRUE(native);
   const std::u16string saved(views::GetTextEditKillBuffer());base::ScopedClosureRunner restore(base::BindOnce([](std::u16string text){views::SetTextEditKillBuffer(text);},saved));
-  ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));
+  EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->settings_widget()->GetNativeWindow()));
   auto key=[&](views::View* view,ui::KeyboardCode key){view->RequestFocus();return base::test::RunUntil([&]{return view->HasFocus();})&&ui_test_utils::SendKeyPressToWindowSync(shell->settings_widget()->GetNativeWindow(),key,true,false,false,false);};
   name->SetText(u"workspace-cut");name->SelectRange(gfx::Range(10));ASSERT_TRUE(key(name->view(),ui::VKEY_K));EXPECT_EQ(u"workspace-",name->GetText());EXPECT_EQ(u"cut",views::GetTextEditKillBuffer());
   native->SetText(u"native:");native->SetSelectedRange(gfx::Range(7));ASSERT_TRUE(key(native,ui::VKEY_Y));EXPECT_EQ(u"native:cut",native->GetText());

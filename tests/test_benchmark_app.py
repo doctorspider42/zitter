@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -59,6 +60,7 @@ class RegularAppBenchmarkTest(unittest.TestCase):
             return benchmark.launch(executable, directory, "http://127.0.0.1/page", "startup", 1, 2,
                                     directory / "run.log")
 
+    @unittest.skipUnless(os.name == "posix", "the stub is a shebang script")
     def test_collects_process_markers_and_requires_success(self):
         output, times = self.run_stub(["Zitter ready; isolated", "ZITTER_APP_FIRST_PAINT",
                                        'ZITTER_APP_STATUS {"ok":true}'])
@@ -66,6 +68,7 @@ class RegularAppBenchmarkTest(unittest.TestCase):
         self.assertGreaterEqual(times["app_process_first_visual_paint_ms"], times["app_process_ready_ms"])
         self.assertIn("ZITTER_APP_STATUS", output)
 
+    @unittest.skipUnless(os.name == "posix", "the stub is a shebang script")
     def test_rejects_missing_or_contradictory_completion(self):
         for lines in (["Zitter ready; isolated"],
                       ['ZITTER_APP_STATUS {"ok":true}', 'ZITTER_APP_STATUS {"ok":false}']):

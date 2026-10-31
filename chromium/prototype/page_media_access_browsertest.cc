@@ -28,6 +28,9 @@
 #include "base/test/scoped_command_line.h"
 #include "base/test/scoped_run_loop_timeout.h"
 #include "build/build_config.h"
+#if BUILDFLAG(IS_WIN)
+#include "ui/aura/test/ui_controls_aurawin.h"
+#endif
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/media/webrtc/desktop_media_picker_factory.h"
 #include "chrome/browser/media/webrtc/display_media_access_handler.h"
@@ -238,7 +241,12 @@ class ZitterMediaBrowserTest : public InProcessBrowserTest {
   }
   void Press(views::Widget* widget,bool accept,ui::KeyboardCode key=ui::VKEY_SPACE){
     ASSERT_TRUE(widget);auto* button=DialogActionButton(widget,accept);ASSERT_TRUE(button);
-    ui_controls::EnableUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));button->RequestFocus();
+#if BUILDFLAG(IS_WIN)
+    aura::test::EnableUIControlsAuraWin();
+#else
+    ui_controls::EnableUIControls();
+#endif
+    ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));button->RequestFocus();
     base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),key,false,false,false,false));
   }
   void SetCamera(Profile* profile, ContentSetting setting) {

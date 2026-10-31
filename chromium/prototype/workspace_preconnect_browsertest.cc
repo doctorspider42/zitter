@@ -162,7 +162,7 @@ class ZitterPreconnectBrowserTest : public InProcessBrowserTest {
   void TypeAddress(std::u16string query) {
     auto* input = window_->shell()->address_input();
     const auto length=input->GetText().size();input->SelectRange(gfx::Range(0,length));
-    if(query.empty()){if(length)ASSERT_TRUE(input->input_client()->DeleteRange(gfx::Range(0,length)));}
+    if(query.empty()){if(length){input->input_client()->SetEditableSelectionRange(gfx::Range(0,length));input->input_client()->ExtendSelectionAndDelete(0,0);}}
     else input->input_client()->InsertText(query,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
   }
   base::test::ScopedFeatureList features_;

@@ -179,7 +179,12 @@ bool ValidShortcut(const ui::Accelerator& accelerator) {
   const auto key = accelerator.key_code();
   if (key == ui::VKEY_UNKNOWN) return mods == 0;
   if ((mods & ~kModifiers) || !(mods & (ui::EF_COMMAND_DOWN | ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN))) return false;
-  if (mods == Primary() && (key == ui::VKEY_A || key == ui::VKEY_C || key == ui::VKEY_V || key == ui::VKEY_X || key == ui::VKEY_Z || key == ui::VKEY_Q || key == ui::VKEY_H || key == ui::VKEY_M)) return false;
+  // Text editing everywhere; Quit, Hide and Minimize only on macOS, where Windows
+  // uses Ctrl+H for History.
+  if (mods == Primary() && (key == ui::VKEY_A || key == ui::VKEY_C || key == ui::VKEY_V || key == ui::VKEY_X || key == ui::VKEY_Z)) return false;
+#if BUILDFLAG(IS_MAC)
+  if (mods == Primary() && (key == ui::VKEY_Q || key == ui::VKEY_H || key == ui::VKEY_M)) return false;
+#endif
   if ((mods == (Primary() | ui::EF_SHIFT_DOWN) && key == ui::VKEY_Z) ||
       (mods == (Primary() | ui::EF_ALT_DOWN) && (key == ui::VKEY_1 || key == ui::VKEY_2))) return false;
   return (key >= ui::VKEY_A && key <= ui::VKEY_Z) || (key >= ui::VKEY_0 && key <= ui::VKEY_9) ||

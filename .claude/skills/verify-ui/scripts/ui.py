@@ -15,6 +15,13 @@ just its area of the screen. Coordinates are macOS points; a Retina capture is 2
 import argparse, json, os, subprocess, sys, time
 from pathlib import Path
 
+if sys.platform == "win32":
+    # The same commands for the Windows development build.
+    sys.path.insert(0, str(Path(__file__).parent))
+    import ui_win
+    ui_win.main()
+    sys.exit()
+
 ROOT = Path(subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True,
                            cwd=Path(__file__).parent).stdout.strip())
 APP = ROOT / "build/ZitterRustMetal.app"

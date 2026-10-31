@@ -193,6 +193,27 @@ Notes:
   `verify-ui` skill.
 - Add Windows sections to `CLAUDE.md` and the README.
 
+Notes:
+
+- `zitter_prototype` builds and runs on Windows (230 tests). Checked one by one:
+  the Arc and Chromium imports, `NativeKeyboardWorkspaceSwitching` (real Alt+1/2)
+  and `ConfigurableNativeKeyboardShortcuts` (Ctrl chords). The full suite still
+  needs a run with the user's go-ahead.
+- Development builds turn the network sandbox on (`fieldtrial_testing_config`), and
+  its AppContainer can't read an `out\` directory no installer granted access to
+  (`lpacChromeInstallFiles`). The app falls back to an unsandboxed network
+  service; browser tests don't, so they turn the sandbox off on Windows. The
+  installer (phase 6) must grant that access.
+- Windows-only fixes the tests found: shortcuts saved with Ctrl+H (History) were
+  rejected on load, since H, M and Q were reserved as on macOS; `near` is a macro
+  in the Windows SDK.
+- `ui_capture.swift` measures UI Lab frame timing, which is macOS-only (Metal); it
+  has no Windows counterpart. `verify-ui` has: `ui_win.py` (launch, windows, click,
+  shot) and `build_app_win.ps1`; `run_metal_sidebar.py` starts `zitter.exe`.
+- The macOS-only Python tests (shebang stubs) skip elsewhere; the launcher writes
+  its UTF-8 fixtures explicitly, so all 79 pass on Windows.
+- The Windows sections in `CLAUDE.md` and the README wait for the rewrite of
+  those files that is in progress.
 ## Phase 6: packaging and distribution
 
 - `tools/package_win.py`:
@@ -221,4 +242,5 @@ Notes:
 | 2 — first launch | Done: `zitter.exe` opens the window, loads pages and restores the session and its space after a restart; data in `%LOCALAPPDATA%\Zitter`. The download shutdown prompt moves to phase 3 |
 | 3 — native look | In progress: own titlebar on the system frame (shadow, snap, resize), 46 × 38 caption buttons, the Zitter menu, Windows shortcuts and Kbd words, the emoji panel, the downloads prompt on close, the app icon. Design fonts load. verify-ui done (Noc, restored and maximized). Open: Papier, Snap Layouts on Windows 11, menu icons and Kbd chips, HiDPI |
 | 4 — import and security | Done: Arc (MSIX), Chrome, Edge and Brave paths, real Arc and Chrome data read, no cookie option, sandbox checked, network audit clean after two fixes. CSV passwords remain a feature of its own |
-| 5–6 | Not started |
+| 5 — tests and tools | Mostly done: browser tests build and the targeted ones pass, verify-ui works on Windows, Python tests pass. Open: the full browser suite, Windows sections in CLAUDE.md and README |
+| 6 | Not started |
