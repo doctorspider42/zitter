@@ -328,7 +328,15 @@ Notes:
   ```
 - `chromium/windows-official.args.gn` (`out/ZitterWinOfficial`) is the release
   build with `is_official_build`, which brings ThinLTO, and PGO from Chromium's
-  win64 profile (gclient `checkout_pgo_profiles`).
+  win64 profile (gclient `checkout_pgo_profiles`): about 7 hours from scratch
+  here, the LTO link last. `zitter.exe` is 296 MB against 325 MB without them,
+  and the package 188 MB (189 MB installer). Checked: quiet install from the
+  installer alone, the network service in its AppContainer, a page loading,
+  the first-run wizard, quiet removal leaving nothing. This is the build to
+  ship:
+  ```
+  python tools/package_win.py --out .chromium/src/out/ZitterWinOfficial --setup .chromium/src/out/ZitterWinOfficial/zitter_setup.exe --destination build/official --third-party-licenses build/license-audit/windows/THIRD_PARTY_LICENSES.txt
+  ```
 - Not done: Authenticode signing (no certificate yet).
 - The installer draws its own controls, so it describes them to UI Automation
   itself (`setup_accessibility.cc`): headings and sentences as text, the two
@@ -374,4 +382,4 @@ Notes:
 | 3 — native look | Done: own titlebar on the system frame (shadow, snap, resize), 46 × 38 caption buttons, Snap Layouts (HTMAXBUTTON, Windows 11), the Zitter menu with icons and mono shortcuts, Windows shortcuts and Kbd words, the emoji panel, the downloads prompt on close, centered dialogs, clickable sidebar and toasts, the jump list, the first-run wizard, links from other apps, the app icon, design fonts. verify-ui: Noc and Papier, restored and maximized, 125% and 150%. The Snap Layouts flyout itself awaits a Windows 11 machine |
 | 4 — import and security | Done: Arc (MSIX), Chrome, Edge and Brave paths, real Arc and Chrome data read, CSV passwords, no cookie option, sandbox checked, network audit clean after two fixes |
 | 5 — tests and tools | Mostly done: browser tests build and the targeted ones pass, verify-ui works on Windows, Python tests pass. Open: the full browser suite, Windows sections in CLAUDE.md and README |
-| 6 — packaging | Done but signing: static release build, ThinLTO + PGO args, portable ZIP and standalone installer (191 MB), install, update and quiet remove checked for one user and for everyone, browser registration, network sandbox, license audit, installer accessibility. Open: Authenticode signing (no certificate) |
+| 6 — packaging | Done but signing: static release and ThinLTO + PGO builds (188 MB package), portable ZIP and standalone installer (191 MB), install, update and quiet remove checked for one user and for everyone, browser registration, network sandbox, license audit, installer accessibility. Open: Authenticode signing (no certificate) |
