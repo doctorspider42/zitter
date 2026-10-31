@@ -3,6 +3,7 @@
 
 #include <memory>
 #include <optional>
+#include <string>
 #include <string_view>
 #include "base/scoped_observation.h"
 #include "components/content_settings/core/browser/content_settings_observer.h"
@@ -54,6 +55,10 @@ class PageServices final : public content::WebContentsObserver,
   void OnGetPasswordStoreResultsOrErrorFrom(password_manager::PasswordStoreInterface* store,
       base::expected<std::vector<password_manager::StoredCredential>, password_manager::PasswordStoreBackendError> results) override;
   bool manage_requested_ = false;
+  // The saved-logins dialog's CSV import: its result, shown when the dialog
+  // comes back.
+  void ImportPasswords();
+  std::u16string import_status_;
   struct PendingPassword;
   std::shared_ptr<PendingPassword> pending_password_;
 

@@ -107,6 +107,8 @@ source_set("shell") {
   public_configs = [ ":shell_includes" ]
   sources = [
     "chromium/prototype/workspace_window.cc",
+    "chromium/prototype/password_csv_import.cc",
+    "chromium/prototype/password_csv_import.h",
     "chromium/prototype/workspace_window.h",
     "chromium/prototype/i18n.cc",
     "chromium/prototype/i18n.h",

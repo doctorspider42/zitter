@@ -25,6 +25,9 @@
 #include "components/content_settings/browser/page_specific_content_settings.h"
 #include "chrome/browser/history/history_tab_helper.h"
 #include "chrome/browser/password_manager/chrome_password_manager_client.h"
+#include "chromium/prototype/password_csv_import.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/task/single_thread_task_runner.h"
 #include "chrome/browser/password_manager/factories/profile_password_store_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/browser_process.h"
@@ -206,7 +209,9 @@ void PageServices::OnGetPasswordStoreResultsOrErrorFrom(password_manager::Passwo
   dialog->SetTitle(T(u"Zapisane logowania"));
   dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk));
   dialog->SetButtonLabel(ui::mojom::DialogButton::kOk, T(u"Zamknij"));
+#if BUILDFLAG(IS_MAC)
   dialog->set_use_custom_frame(false);
+#endif
   dialog->set_draggable(true);
   dialog->SetCanResize(true);
   SetSidebarPanelLayout(content.get(),true,gfx::Insets(16),12);
@@ -214,6 +219,7 @@ void PageServices::OnGetPasswordStoreResultsOrErrorFrom(password_manager::Passwo
     content->AddChildView(password_scene_->MakeText(std::move(text),true,false,0));
   };
   paragraph(TF(u"Profil: {}", {BrowsingProfileName(profile)}));
+  if (!import_status_.empty()) paragraph(std::exchange(import_status_, std::u16string()));
   if (!results.has_value()) {
     paragraph(T(u"Magazyn haseł jest niedostępny. Spróbuj ponownie później."));
   } else if (results->empty()) {
@@ -225,19 +231,36 @@ void PageServices::OnGetPasswordStoreResultsOrErrorFrom(password_manager::Passwo
     content->AddChildView(password_scene_->MakeSelect(content.get(),std::move(labels),T(u"Zapisane konta")));
     paragraph(T(u"Kliknij pole logowania na stronie, aby wybrać zapisane konto. Hasła nie są tu ujawniane."));
   }
-  content->SetPreferredSize(gfx::Size(460, 180));
+  // Chrome's passwords come over as its CSV export (docs/windows-port.md).
+  auto* actions = content->AddChildView(password_scene_->MakeActions(8));
+  password_scene_->AddAction(actions, base::BindRepeating([](base::WeakPtr<PageServices> services) {
+        // After the dialog closes, never inside its button handler.
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(&PageServices::ImportPasswords, services));
+      }, weak_factory_.GetWeakPtr()),
+      T(u"Importuj hasła z CSV…"));
+  content->SetPreferredSize(gfx::Size(460, 220));
   dialog->SetContentsView(std::move(content));
   ShowPasswordWidget(std::move(dialog),false);
   auto* widget=password_prompt();
   auto* parent=views::Widget::GetWidgetForNativeWindow(web_contents()->GetTopLevelNativeWindow());
   const auto area = display::Screen::Get()->GetDisplayNearestWindow(web_contents()->GetTopLevelNativeWindow()).work_area();
-  gfx::Rect bounds(0, 0, std::min(520, area.width()), std::min(300, area.height()));
+  gfx::Rect bounds(0, 0, std::min(520, area.width()), std::min(340, area.height()));
   const auto anchor = parent ? parent->GetWindowBoundsInScreen().CenterPoint() : area.CenterPoint();
   bounds.set_origin(gfx::Point(anchor.x() - bounds.width()/2, anchor.y() - bounds.height()/2));
   bounds.AdjustToFit(area);
   widget->SetBoundsConstrained(bounds);
   widget->Show();
   password_scene_->Schedule();
+}
+void PageServices::ImportPasswords() {
+  if (!web_contents()) return;
+  DismissPassword();
+  ImportPasswordsFromCsv(web_contents(), base::BindOnce([](base::WeakPtr<PageServices> services, PasswordCsvOutcome outcome) {
+    if (!services || outcome.cancelled) return;
+    services->import_status_ = outcome.imported ? TF(u"Zaimportowano haseł: {}.", {base::NumberToString16(outcome.count)})
+                                                : T(u"Nie udało się zaimportować pliku CSV.");
+    services->ShowPasswords();
+  }, weak_factory_.GetWeakPtr()));
 }
 bool PageServices::password_scene_visible_for_testing() const{return password_scene_&&password_scene_->visible();}
 bool PageServices::password_scene_contains_for_testing(std::string_view text) const{return password_scene_&&password_scene_->contains_text(text);}
