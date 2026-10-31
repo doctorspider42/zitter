@@ -213,10 +213,17 @@ Notes:
 
 Notes:
 
-- `zitter_prototype` builds and runs on Windows (230 tests). Checked one by one:
-  the Arc and Chromium imports, `NativeKeyboardWorkspaceSwitching` (real Alt+1/2)
-  and `ConfigurableNativeKeyboardShortcuts` (Ctrl chords). The full suite still
-  needs a run with the user's go-ahead.
+- `zitter_prototype` builds and runs on Windows (271 tests). The first full run
+  failed 41, all for test-environment reasons, now fixed: the upload, media and
+  preconnect fixtures turn the network sandbox off too; a mock TSF bridge keeps
+  TSF from committing the compositions the editor tests inject (keys still type
+  through `WM_CHAR`); primary-modifier chords send Ctrl; the Arc package path's
+  parents exist before test data is copied; geometry tests run at scale 1,
+  since a high-DPI desktop is small in DIPs (300% of 4K is 1280 × 720); cookie
+  import and Return in the permission prompt follow Windows. Four tests that
+  compare with macOS overlay scrollers or sidebar key focus run on macOS only:
+  Windows scrollers are classic and take layout space, and its sidebar never
+  takes key focus.
 - Browser tests run with `fieldtrial_testing_config`, which turns the network
   sandbox on, and its AppContainer can't read an `out\` directory no installer
   granted access to (`lpacChromeInstallFiles`); they turn the sandbox off on
