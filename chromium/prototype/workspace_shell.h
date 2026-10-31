@@ -431,7 +431,24 @@ class WorkspaceShell final : public ui::EventHandler,
   bool settings_visible() const;
   void SetConfigurationError(bool error);
   void OpenProfiles(std::string profile_id = {}, std::string workspace_id = {});
-  void OpenImport();
+  void OpenImport(std::optional<ImportBrowser> browser = std::nullopt);
+  // The first-run wizard (design: Pierwsze uruchomienie, Windows): welcome,
+  // default browser, import and the first space, in a tool window.
+  struct WelcomeSetup {
+    // Browsers found on this computer, in the import step.
+    std::vector<ImportBrowser> sources;
+    std::u16string space_name;
+    SkColor space_color = 0;
+    // Passwords from a CSV export; reports the line to show under the source.
+    base::RepeatingCallback<void(base::OnceCallback<void(std::u16string)>)> import_passwords;
+  };
+  struct WelcomeResult {
+    std::optional<ImportBrowser> import;  // Opens the import panel with it.
+    std::u16string space_name;
+    std::optional<SkColor> space_color;
+  };
+  void ShowWelcome(WelcomeSetup setup, base::OnceCallback<void(WelcomeResult)> done);
+  views::Widget* welcome_widget_for_testing() const { return welcome_widget_.get(); }
   // Import service stage/counts; wording comes from Rust (or the Views formatter).
   struct ImportStatusReport {
     enum class Stage { kReading, kPreview, kImporting, kSavingBrowsingData, kFinished };
@@ -922,6 +939,8 @@ class WorkspaceShell final : public ui::EventHandler,
   // The quit-while-downloading prompt or the About dialog, one at a time.
   std::unique_ptr<views::DialogDelegate> quit_dialog_delegate_;
   std::unique_ptr<views::Widget> quit_dialog_;
+  std::unique_ptr<views::WidgetDelegate> welcome_delegate_;
+  std::unique_ptr<views::Widget> welcome_widget_;
   // A tab dragged over the page: where it lands in the split, shown on a panel.
   std::unique_ptr<views::WidgetDelegate> drop_delegate_;
   std::unique_ptr<views::Widget> drop_widget_;

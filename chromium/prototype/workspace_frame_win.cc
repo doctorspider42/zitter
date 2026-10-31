@@ -4,6 +4,7 @@
 #include <windows.h>
 
 #include <dwmapi.h>
+#include <shellapi.h>
 
 #include <set>
 
@@ -11,6 +12,7 @@
 #include "base/functional/bind.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/no_destructor.h"
+#include "base/win/registry.h"
 #include "base/win/windows_version.h"
 #include "chrome/browser/lifetime/application_lifetime_desktop.h"
 #include "ui/aura/window_tree_host.h"
@@ -185,6 +187,17 @@ void SetWorkspaceMaximizeButton(views::Widget* widget, views::Button* button) {
   const aura::WindowTreeHost* host = widget->GetNativeWindow()->GetHost();
   for (WorkspaceTreeHost* workspace : Hosts())
     if (static_cast<const aura::WindowTreeHost*>(workspace) == host) workspace->set_maximize_button(button);
+}
+
+bool IsZitterDefaultBrowser() {
+  base::win::RegKey choice(HKEY_CURRENT_USER,
+      L"Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https\\UserChoice", KEY_READ);
+  std::wstring prog_id;
+  return choice.Valid() && choice.ReadValue(L"ProgId", &prog_id) == ERROR_SUCCESS && prog_id == L"ZitterHTML";
+}
+
+void OpenDefaultAppsSettings() {
+  ::ShellExecuteW(nullptr, L"open", L"ms-settings:defaultapps?registeredAppUser=Zitter", nullptr, nullptr, SW_SHOWNORMAL);
 }
 
 void SetWorkspaceCommandHandler(views::Widget* widget, base::RepeatingCallback<void(std::string)> handler) {

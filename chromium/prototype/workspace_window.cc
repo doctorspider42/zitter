@@ -111,6 +111,8 @@
 #include "chrome/app/chrome_dll_resource.h"
 #include "chromium/prototype/workspace_frame_win.h"
 #include "chromium/prototype/jump_list_win.h"
+#include "chromium/prototype/password_csv_import.h"
+#include "base/strings/string_number_conversions.h"
 #include "ui/base/models/image_model.h"
 #include "ui/gfx/image/image_family.h"
 #include "ui/gfx/win/icon_util.h"
@@ -2569,8 +2571,60 @@ void WorkspaceWindow::FinishConfiguration() {
   for (const auto& directory : deleted_directories_) ScheduleProfileDeletion(directory);
   if (configuration_invalid_) shell_->SetConfigurationError(true);
   if (ready_callback_) std::move(ready_callback_).Run();
-  if (offer_import_ && !onboarding_complete_) shell_->OpenImport();
+  if (offer_import_ && !onboarding_complete_) {
+#if BUILDFLAG(IS_WIN)
+    ShowWelcome();
+#else
+    shell_->OpenImport();
+#endif
+  }
 }
+
+#if BUILDFLAG(IS_WIN)
+void WorkspaceWindow::ShowWelcome() {
+  // Which browsers this computer has: their data folders, read off the UI thread.
+  config_runner_->PostTaskAndReplyWithResult(FROM_HERE, base::BindOnce([] {
+        std::vector<ImportBrowser> found;
+        for (const auto browser : {ImportBrowser::kChrome, ImportBrowser::kEdge, ImportBrowser::kBrave, ImportBrowser::kArc})
+          if (base::DirectoryExists(DefaultBrowserDirectory(browser))) found.push_back(browser);
+        return found;
+      }),
+      base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, std::vector<ImportBrowser> found) {
+        if (!window || window->onboarding_complete_) return;
+        const auto* starter = window->model_.Find(window->starter_workspace_id_);
+        WorkspaceShell::WelcomeSetup setup;
+        setup.sources = std::move(found);
+        setup.space_name = starter ? base::UTF8ToUTF16(starter->name) : std::u16string();
+        setup.space_color = window->shell_->workspace_color(window->starter_workspace_id_);
+        setup.import_passwords = base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window, base::OnceCallback<void(std::u16string)> report) {
+          auto* page = window ? window->contents(window->active_id()) : nullptr;
+          if (!page) return;
+          ImportPasswordsFromCsv(page, base::BindOnce([](base::OnceCallback<void(std::u16string)> report, PasswordCsvOutcome outcome) {
+            if (outcome.cancelled) return;
+            std::move(report).Run(outcome.imported ? TF(u"Zaimportowano haseł: {}.", {base::NumberToString16(outcome.count)})
+                                                   : T(u"Nie udało się zaimportować pliku CSV."));
+          }, std::move(report)));
+        }, window->weak_factory_.GetWeakPtr());
+        window->shell_->ShowWelcome(std::move(setup), base::BindOnce(&WorkspaceWindow::WelcomeFinished, window));
+      }, weak_factory_.GetWeakPtr()));
+}
+
+void WorkspaceWindow::WelcomeFinished(WorkspaceShell::WelcomeResult result) {
+  const std::string starter = starter_workspace_id_;
+  if (const auto* space = model_.Find(starter)) {
+    const std::string name = base::UTF16ToUTF8(result.space_name);
+    if (!name.empty() && name != space->name) UpdateWorkspace(starter, name, space->profile_id);
+    if (result.space_color) shell_->SetWorkspaceColor(starter, *result.space_color);
+  }
+  if (result.import) {
+    // The import panel takes over, with the chosen browser read in; the first
+    // run ends there, as without the wizard.
+    shell_->OpenImport(result.import);
+    return;
+  }
+  DismissImport();
+}
+#endif
 
 const std::vector<PinnedItem>& WorkspaceWindow::pinned_items(std::string_view workspace_id) const {
   static const base::NoDestructor<std::vector<PinnedItem>> empty;

@@ -64,6 +64,11 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void InvalidateImportPreview();
   bool ApplyArcImport();
   void DismissImport();
+#if BUILDFLAG(IS_WIN)
+  // The first run's wizard instead of the bare import offer.
+  void ShowWelcome();
+  void WelcomeFinished(WorkspaceShell::WelcomeResult result);
+#endif
   bool import_ready() const { return pending_import_.has_value() && pending_import_->error.empty(); }
   const ArcImport* import_preview() const { return pending_import_ ? &*pending_import_ : nullptr; }
   const std::vector<PinnedItem>& pinned_items(std::string_view workspace_id) const;
