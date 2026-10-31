@@ -31,6 +31,9 @@ TEST(ZitterNetworkPolicy, PreservesSafetyAndExistingFlags) {
   EXPECT_FALSE(command.HasSwitch("disable-component-update"));
   EXPECT_FALSE(command.HasSwitch("ignore-certificate-errors"));
   EXPECT_FALSE(command.HasSwitch("no-sandbox"));
+#if BUILDFLAG(IS_WIN)
+  EXPECT_NE(command.GetSwitchValueASCII("enable-features").find("NetworkServiceSandbox"), std::string::npos);
+#endif
   const auto components = command.GetSwitchValueASCII("component-updater-disabled-ids");
   EXPECT_EQ(components.find("hfnkpimlhhgieaddgfemjhofmfblmnib"), std::string::npos);  // CRLSet
   EXPECT_EQ(components.find("efniojlnjndmcbiieegkicadnoecjjef"), std::string::npos);  // PKI

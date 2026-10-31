@@ -1,12 +1,10 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 // zitter.exe's version: Explorer, Apps & features and the installer read it.
 // Only the version lives here; every icon must stay in chrome_dll.rc, whose
-// icon image IDs a second .rc would collide with. Keep in step with
-// tools/package_app.py (macOS).
+// icon image IDs a second .rc would collide with.
 #include <winres.h>
 
-#define ZITTER_VERSION 0,1,0,0
-#define ZITTER_VERSION_STRING "0.1.0.0"
+#include "chromium/app/zitter_version.h"
 
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION ZITTER_VERSION

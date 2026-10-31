@@ -8,7 +8,7 @@ Writes build/Zitter-<version>-win-x64-portable.zip and, given the installer's
 zitter_setup.exe, build/Zitter-<version>-win-x64-setup.exe: the installer with
 the same files appended as a ZIP it reads from its own end. The file list is
 GN's runtime_deps for //zitter:zitter without symbols, generated sources and
-test data. The version is zitter.exe's (chromium/app/zitter_exe.rc).
+test data. The version is zitter.exe's (chromium/app/zitter_version.h).
 """
 import argparse
 import os
@@ -28,7 +28,7 @@ EXCLUDED = re.compile(r"(^gen/|^\.\./|^pyproto/|^angledata/|^resources/|\.(pdb|l
 
 
 def version():
-    text = (ROOT / "chromium/app/zitter_exe.rc").read_text(encoding="utf-8")
+    text = (ROOT / "chromium/app/zitter_version.h").read_text(encoding="utf-8")
     full = re.search(r'#define ZITTER_VERSION_STRING "([\d.]+)"', text).group(1)
     # 0.1.0.0 → 0.1.0, as the macOS bundle names it.
     return ".".join(full.split(".")[:3])

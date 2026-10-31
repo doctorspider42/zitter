@@ -59,6 +59,13 @@ constexpr std::string_view kDisabledComponents[] = {
 constexpr std::string_view kEnabledFeatures[] = {
     "SkipListAccountsWithoutGaiaCookies",
     "AvoidAutoTriggerListAccountsOnStale",
+#if BUILDFLAG(IS_WIN)
+    // The network service in its AppContainer, as Chrome runs it by field trial,
+    // which Zitter doesn't fetch. The installer grants the container access to
+    // Zitter's files; without it (a build directory) Chromium relaunches the
+    // service unsandboxed.
+    "NetworkServiceSandbox",
+#endif
 };
 
 void AppendListSwitch(base::CommandLine& command, const char* name,

@@ -44,7 +44,7 @@ def patch_build(text):
 
 def overlay_files():
     files = {"BUILD.gn": ROOT / "chromium/BUILD.gn"}
-    for directory in ("zitter", "chromium/prototype", "chromium/app", "testdata", "assets/fonts"):
+    for directory in ("zitter", "chromium/prototype", "chromium/app", "chromium/installer", "testdata", "assets/fonts"):
         for path in sorted((ROOT / directory).rglob("*")):
             if path.is_file():
                 files[path.relative_to(ROOT).as_posix()] = path

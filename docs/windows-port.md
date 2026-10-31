@@ -199,11 +199,11 @@ Notes:
   the Arc and Chromium imports, `NativeKeyboardWorkspaceSwitching` (real Alt+1/2)
   and `ConfigurableNativeKeyboardShortcuts` (Ctrl chords). The full suite still
   needs a run with the user's go-ahead.
-- Development builds turn the network sandbox on (`fieldtrial_testing_config`), and
-  its AppContainer can't read an `out\` directory no installer granted access to
-  (`lpacChromeInstallFiles`). The app falls back to an unsandboxed network
-  service; browser tests don't, so they turn the sandbox off on Windows. The
-  installer (phase 6) must grant that access.
+- Browser tests run with `fieldtrial_testing_config`, which turns the network
+  sandbox on, and its AppContainer can't read an `out\` directory no installer
+  granted access to (`lpacChromeInstallFiles`); they turn the sandbox off on
+  Windows. (The app itself had it off: Zitter passes
+  `--disable-field-trial-config`. Phase 6 turns it on.)
 - Windows-only fixes the tests found: shortcuts saved with Ctrl+H (History) were
   rejected on load, since H, M and Q were reserved as on macOS; `near` is a macro
   in the Windows SDK.
@@ -232,6 +232,35 @@ Notes:
 - Optimized x64 build with ThinLTO and PGO (`win64.pgo`).
 - Auto-update is out of scope for now.
 
+Notes:
+
+- `tools/package_win.py` packs GN's runtime_deps of `//zitter:zitter` (without
+  symbols, generated sources and test data) into
+  `build/Zitter-<version>-win-x64-portable.zip`, and with `--setup` appends the
+  same files to `zitter_setup.exe` as `Zitter-<version>-win-x64-setup.exe`. The
+  version is `chromium/app/zitter_version.h`; `zitter.exe` carries it and the
+  AppUserModelID `Zitter.Browser`.
+- `zitter_setup.exe` (`chromium/installer/`) is the design's installer: a
+  Direct2D window in Noc with the design fonts embedded, no Chromium code. It
+  installs just for the user or for everyone (relaunching itself elevated),
+  updates or removes what it finds, and on removal can delete browsing data.
+  It writes the files, `zitter_setup.exe` as the uninstaller (without the
+  payload), Start menu and desktop shortcuts with the AppUserModelID, Apps &
+  features, and the browser registration Default apps lists (`ZitterHTML`,
+  `StartMenuInternet\Zitter`, `RegisteredApplications`; http, https and web
+  files). It grants the install folder to the two install-files capabilities,
+  as Chrome's installer does, and `NetworkServiceSandbox` is now on: installed,
+  the network service runs in its AppContainer.
+- Checked end to end for one user on Windows 10: install, update over it,
+  pages loading with the sandboxed network service, removal from Apps &
+  features leaving nothing behind. The elevated install for everyone is not
+  checked yet.
+- A component build's installer needs its DLLs beside it; the standalone one
+  comes from a static release build (`is_component_build = false`), not built
+  yet. So are ThinLTO/PGO, Authenticode signing (no certificate yet) and the
+  license audit, whose tool reads a macOS bundle.
+- The installer draws its own controls: keyboard (Tab, Enter, Space, Esc) works,
+  UI Automation does not yet.
 ## Status
 
 | Phase | State |
@@ -243,4 +272,4 @@ Notes:
 | 3 — native look | In progress: own titlebar on the system frame (shadow, snap, resize), 46 × 38 caption buttons, the Zitter menu, Windows shortcuts and Kbd words, the emoji panel, the downloads prompt on close, the app icon. Design fonts load. verify-ui done (Noc, restored and maximized). Open: Papier, Snap Layouts on Windows 11, menu icons and Kbd chips, HiDPI |
 | 4 — import and security | Done: Arc (MSIX), Chrome, Edge and Brave paths, real Arc and Chrome data read, no cookie option, sandbox checked, network audit clean after two fixes. CSV passwords remain a feature of its own |
 | 5 — tests and tools | Mostly done: browser tests build and the targeted ones pass, verify-ui works on Windows, Python tests pass. Open: the full browser suite, Windows sections in CLAUDE.md and README |
-| 6 | Not started |
+| 6 — packaging | In progress: portable ZIP, the installer (install, update, remove; for one user checked end to end), browser registration, network sandbox. Open: static release build, signing, license audit, elevated install, installer accessibility, ThinLTO/PGO |

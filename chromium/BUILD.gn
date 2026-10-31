@@ -348,6 +348,32 @@ if (is_win) {
     outputs = [ "$root_out_dir/Fonts/{{source_file_part}}" ]
   }
 }
+if (is_win) {
+  import("//build/config/win/manifest.gni")
+
+  windows_manifest("setup_manifest") {
+    sources = [ "chromium/installer/setup.manifest" ]
+  }
+
+  # Zitter's installer and uninstaller (design: Instalator): a standalone
+  # Direct2D window with the design's fonts and no Chromium code.
+  # tools/package_win.py appends the app to it.
+  executable("zitter_setup") {
+    sources = [
+      "chromium/installer/setup.rc",
+      "chromium/installer/setup_install.cc",
+      "chromium/installer/setup_install.h",
+      "chromium/installer/setup_main.cc",
+      "chromium/installer/setup_resource.h",
+      "chromium/installer/setup_text.h",
+    ]
+    include_dirs = [ "." ]
+    configs -= [ "//build/config/win:console" ]
+    configs += [ "//build/config/win:windowed" ]
+    deps = [ ":setup_manifest", "//third_party/zlib:minizip" ]
+    libs = [ "d2d1.lib", "dwmapi.lib", "dwrite.lib", "ole32.lib", "propsys.lib", "shell32.lib", "advapi32.lib" ]
+  }
+}
 # Real browser bootstrap, with no browser-test runner or test-only dependencies.
 if (is_mac || is_linux || is_win) {
   executable("zitter") {
