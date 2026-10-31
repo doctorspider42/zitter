@@ -6266,14 +6266,22 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FirstRunImportOffer) {
   SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.
   window_ = std::make_unique<WorkspaceWindow>(directory);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
-  EXPECT_TRUE(window_->shell()->import_visible());
   ASSERT_EQ(1u, window_->workspaces().size());
   EXPECT_EQ("Moja przestrzeń", window_->workspaces()[0].name);
   EXPECT_EQ(1u, window_->profiles().size());
+#if BUILDFLAG(IS_WIN)
+  // Windows offers the import inside its first-run wizard; closing the wizard
+  // without choosing a browser ends the first run, as Skip does.
+  EXPECT_FALSE(window_->shell()->import_visible());
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->shell()->welcome_widget_for_testing() != nullptr; }));
+  window_->shell()->welcome_widget_for_testing()->CloseNow();
+#else
+  EXPECT_TRUE(window_->shell()->import_visible());
   auto* skip = window_->shell()->import_close();
   EXPECT_FALSE(FindButton(window_->shell()->import_widget()->GetContentsView(), u"Pomiń / Zamknij"));
   ASSERT_TRUE(skip);
   ClickControl(skip);
+#endif
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
   window_.reset();
   SetUiLanguageForTesting("pl");  // Assertions read the Polish UI.

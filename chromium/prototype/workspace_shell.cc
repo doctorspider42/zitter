@@ -499,6 +499,10 @@ class DesignMenuModel final : public ui::SimpleMenuModel {
     return std::ranges::contains(kDanger, GetCommandIdAt(index)) ? std::optional<ui::ColorId>(ui::kColorAlertHighSeverity) : std::nullopt;
   }
 };
+#if BUILDFLAG(IS_WIN)
+// The first-run wizard's view stops reporting (defined with it, below).
+void AbandonWelcome(views::View* contents);
+#endif
 void InstallMenuStyle() {
   static bool installed = false;
   if (installed) return;
@@ -4370,6 +4374,12 @@ void WorkspaceShell::Detach() {
   toast_timer_.Stop(); toast_tremor_timer_.Stop(); toast_undo_.Reset(); toast_ = nullptr; toast_widget_.reset(); toast_delegate_.reset();
   remove_dialog_.reset(); remove_dialog_delegate_.reset(); drop_view_ = nullptr; drop_widget_.reset(); drop_delegate_.reset();
   scrim_widget_.reset(); scrim_delegate_.reset();
+  quit_dialog_.reset(); quit_dialog_delegate_.reset();
+#if BUILDFLAG(IS_WIN)
+  // The wizard closing with the window reports nothing: the window is going.
+  if (welcome_delegate_) AbandonWelcome(welcome_delegate_->GetContentsView());
+  welcome_widget_.reset(); welcome_delegate_.reset();
+#endif
   general_widget_.reset(); general_delegate_.reset();
   peek_host_ = nullptr; peek_title_ = nullptr;peek_toolbar_=nullptr;
   peek_widget_.reset(); peek_delegate_.reset();
@@ -8923,6 +8933,7 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
     FillRound(canvas, main_->bounds(), 12, p.bg_base);
     StrokeRound(canvas, main_->bounds(), 12, p.line);
   }
+  void Abandon() { done_.Reset(); }
   // Closing the window keeps what the steps set so far.
   void Finish() {
     if (!done_) return;
@@ -9223,6 +9234,9 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
 };
 BEGIN_METADATA(WelcomeView)
 END_METADATA
+void AbandonWelcome(views::View* contents) {
+  if (auto* welcome = views::AsViewClass<WelcomeView>(contents)) welcome->Abandon();
+}
 }  // namespace
 
 void WorkspaceShell::ShowWelcome(WelcomeSetup setup, base::OnceCallback<void(WelcomeResult)> done) {
