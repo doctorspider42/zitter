@@ -5713,7 +5713,6 @@ constexpr gfx::PathElement kMenuSidebarPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,
 constexpr gfx::PathElement kMenuHistoryPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,CIRCLE,8,8,5.5f,MOVE_TO,8,5,V_LINE_TO,8,LINE_TO,10,9.5f};
 constexpr gfx::PathElement kMenuTimelinePath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,3,8,R_ARC_TO,5,5,0,1,0,1.5f,-3.5f,MOVE_TO,3,2.5f,V_LINE_TO,5.5f,H_LINE_TO,6,MOVE_TO,8,5.5f,V_LINE_TO,8,LINE_TO,9.5f,9.5f};
 constexpr gfx::PathElement kMenuDownloadsPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,8,2.5f,V_LINE_TO,10.5f,MOVE_TO,4.5f,7,LINE_TO,8,10.5f,LINE_TO,11.5f,7,MOVE_TO,3,13.5f,H_LINE_TO,13};
-constexpr gfx::PathElement kMenuPasswordsPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,CIRCLE,6,8,2.4f,MOVE_TO,8.4f,8,H_LINE_TO,13,MOVE_TO,11.5f,8,V_LINE_TO,10};
 constexpr gfx::PathElement kMenuSettingsPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,CIRCLE,8,8,2,MOVE_TO,8,2,V_LINE_TO,3.5f,MOVE_TO,8,12.5f,V_LINE_TO,14,
     MOVE_TO,2,8,H_LINE_TO,3.5f,MOVE_TO,12.5f,8,H_LINE_TO,14,MOVE_TO,3.8f,3.8f,LINE_TO,4.8f,4.8f,MOVE_TO,11.2f,11.2f,LINE_TO,12.2f,12.2f,
     MOVE_TO,3.8f,12.2f,LINE_TO,4.8f,11.2f,MOVE_TO,11.2f,4.8f,LINE_TO,12.2f,3.8f};
@@ -5724,6 +5723,11 @@ constexpr gfx::PathElement kMenuFindPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOV
     CIRCLE,9.5f,9.5f,3,MOVE_TO,11.7f,11.7f,LINE_TO,14,14};
 constexpr gfx::PathElement kMenuPrintPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,4.5f,6,V_LINE_TO,2.5f,H_LINE_TO,11.5f,V_LINE_TO,6,
     MOVE_TO,4.5f,11.5f,H_LINE_TO,2.5f,V_LINE_TO,6.5f,H_LINE_TO,13.5f,V_LINE_TO,11.5f,H_LINE_TO,11.5f,MOVE_TO,4.5f,9.5f,H_LINE_TO,11.5f,V_LINE_TO,13.5f,H_LINE_TO,4.5f,CLOSE};
+// An arrow into a tray: data coming in from another browser.
+constexpr gfx::PathElement kMenuImportPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,8,2.5f,V_LINE_TO,9.5f,MOVE_TO,5,6.5f,LINE_TO,8,9.5f,LINE_TO,11,6.5f,
+    MOVE_TO,2.5f,9.5f,V_LINE_TO,13.5f,H_LINE_TO,13.5f,V_LINE_TO,9.5f};
+constexpr gfx::VectorIconRep kMenuImportRep[]={{kMenuImportPath}};
+constexpr gfx::VectorIcon kMenuImportIcon(kMenuImportRep,1,"zitter_menu_import");
 constexpr gfx::VectorIconRep kMenuFindRep[]={{kMenuFindPath}};
 constexpr gfx::VectorIconRep kMenuPrintRep[]={{kMenuPrintPath}};
 constexpr gfx::VectorIcon kMenuFindIcon(kMenuFindRep,1,"zitter_menu_find");
@@ -5735,7 +5739,6 @@ constexpr gfx::VectorIconRep kMenuSidebarRep[]={{kMenuSidebarPath}};
 constexpr gfx::VectorIconRep kMenuHistoryRep[]={{kMenuHistoryPath}};
 constexpr gfx::VectorIconRep kMenuTimelineRep[]={{kMenuTimelinePath}};
 constexpr gfx::VectorIconRep kMenuDownloadsRep[]={{kMenuDownloadsPath}};
-constexpr gfx::VectorIconRep kMenuPasswordsRep[]={{kMenuPasswordsPath}};
 constexpr gfx::VectorIconRep kMenuSettingsRep[]={{kMenuSettingsPath}};
 constexpr gfx::VectorIconRep kMenuAboutRep[]={{kMenuAboutPath}};
 constexpr gfx::VectorIconRep kMenuQuitRep[]={{kMenuQuitPath}};
@@ -5746,7 +5749,6 @@ constexpr gfx::VectorIcon kMenuSidebarIcon(kMenuSidebarRep,1,"zitter_menu_sideba
 constexpr gfx::VectorIcon kMenuHistoryIcon(kMenuHistoryRep,1,"zitter_menu_history");
 constexpr gfx::VectorIcon kMenuTimelineIcon(kMenuTimelineRep,1,"zitter_menu_timeline");
 constexpr gfx::VectorIcon kMenuDownloadsIcon(kMenuDownloadsRep,1,"zitter_menu_downloads");
-constexpr gfx::VectorIcon kMenuPasswordsIcon(kMenuPasswordsRep,1,"zitter_menu_passwords");
 constexpr gfx::VectorIcon kMenuSettingsIcon(kMenuSettingsRep,1,"zitter_menu_settings");
 constexpr gfx::VectorIcon kMenuAboutIcon(kMenuAboutRep,1,"zitter_menu_about");
 constexpr gfx::VectorIcon kMenuQuitIcon(kMenuQuitRep,1,"zitter_menu_quit");
@@ -8339,7 +8341,7 @@ void WorkspaceShell::ShowAppMenu(views::View* anchor) {
   add("history", T(u"Historia…"), kMenuHistoryIcon);
   add("timeline", T(u"Time Machine…"), kMenuTimelineIcon);
   add("downloads", T(u"Pobrania…"), kMenuDownloadsIcon);
-  add("passwords", T(u"Hasła tego profilu…"), kMenuPasswordsIcon);
+  add("import", T(u"Importuj z przeglądarki…"), kMenuImportIcon);
   add("settings", T(u"Ustawienia…"), kMenuSettingsIcon);
   if (!state_.workspaces.empty()) {
     model->AddSeparator(ui::NORMAL_SEPARATOR);

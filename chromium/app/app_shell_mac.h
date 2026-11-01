@@ -9,7 +9,7 @@ enum class AppCommand {
   kNewTab = 1,
   kOpenAddress,
   kCommandPalette,
-  kPasswords,
+  kImport,
   kDownloads,
   kCloseTab,
   kReload,

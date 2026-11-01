@@ -9,12 +9,12 @@
 #include "components/content_settings/core/browser/content_settings_observer.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 
+#include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "url/gurl.h"
-#include "components/password_manager/core/browser/password_store/password_store_consumer.h"
 
 namespace password_manager { class PasswordFormManagerForUI; }
 namespace views { class DialogDelegate; class Widget; class View; }
@@ -26,13 +26,14 @@ class PanelScene;
 // history adapter for pages outside Chrome's BrowserWindow/TabStripModel.
 class PageServices final : public content::WebContentsObserver,
                            public content::WebContentsUserData<PageServices>,
-                           public password_manager::PasswordStoreConsumer,
                            public content_settings::Observer {
  public:
   static void Attach(content::WebContents* contents);
   ~PageServices() override;
   views::Widget* password_prompt() const;
+  // A pending manual save first; otherwise `manage` (Chrome's password manager).
   void ShowPasswords();
+  void SetManagePasswords(base::RepeatingClosure manage) { manage_passwords_ = std::move(manage); }
   bool password_scene_visible_for_testing() const;
   bool password_scene_contains_for_testing(std::string_view text) const;
 
@@ -52,13 +53,7 @@ class PageServices final : public content::WebContentsObserver,
   void OnContentSettingChanged(const ContentSettingsPattern& primary_pattern,
       const ContentSettingsPattern& secondary_pattern, ContentSettingsTypeSet types) override;
   base::ScopedObservation<HostContentSettingsMap, content_settings::Observer> sound_observation_{this};
-  void OnGetPasswordStoreResultsOrErrorFrom(password_manager::PasswordStoreInterface* store,
-      base::expected<std::vector<password_manager::StoredCredential>, password_manager::PasswordStoreBackendError> results) override;
-  bool manage_requested_ = false;
-  // The saved-logins dialog's CSV import: its result, shown when the dialog
-  // comes back.
-  void ImportPasswords();
-  std::u16string import_status_;
+  base::RepeatingClosure manage_passwords_;
   struct PendingPassword;
   std::shared_ptr<PendingPassword> pending_password_;
 

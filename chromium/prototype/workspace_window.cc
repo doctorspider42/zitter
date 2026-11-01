@@ -5,6 +5,7 @@
 #include "chromium/prototype/download_panel.h"
 #include "chromium/prototype/page_services.h"
 #include "chrome/browser/printing/print_view_manager.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/browser/printing/print_view_manager_common.h"
 #include "components/find_in_page/find_types.h"
 #include "chromium/prototype/page_dialogs.h"
@@ -777,6 +778,9 @@ std::u16string WorkspaceWindow::TabTitle(const Host& host, views::WebView* view)
 
 void WorkspaceWindow::PreparePage(content::WebContents* page, std::string source_hint) {
   PageServices::Attach(page);
+  PageServices::FromWebContents(page)->SetManagePasswords(base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window) {
+    if (window) window->ShowPasswords();
+  }, weak_factory_.GetWeakPtr()));
   AttachPagePrinting(page, base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window, content::WebContents* page) {
     // Only the page on screen opens the sheet.
     if (window && page == (window->peek_contents() ? window->peek_contents() : window->contents(window->active_id())))
@@ -1134,9 +1138,27 @@ void WorkspaceWindow::ShowDownloads() {
   if (!downloads_) downloads_ = std::make_unique<DownloadPanel>();
   downloads_->Show(Profile::FromBrowserContext(page->GetBrowserContext()), widget_.get());
 }
+// Chrome's password manager, as a tab of the active space (its profile's
+// passwords): an open one is selected rather than opened twice.
 void WorkspaceWindow::ShowPasswords() {
   shell_->CloseOverlays(true);
-  if (auto* page = peek_contents() ? peek_contents() : contents(active_id())) PageServices::FromWebContents(page)->ShowPasswords();
+  ClosePeek();
+  const GURL manager(chrome::kChromeUIPasswordManagerURL);
+  for (auto& host : hosts_) {
+    if (host.workspace_id != active_id()) continue;
+    for (size_t i = 0; i < host.tabs.size(); ++i) {
+      auto* page = host.tabs[i]->web_contents();
+      if (page && page->GetVisibleURL().host() == manager.host()) { SelectTab(i); return; }
+    }
+    host.tabs.push_back(CreatePage(host.profile));
+    SelectTab(host.tabs.size() - 1);
+    if (auto* page = contents(active_id())) {
+      content::NavigationController::LoadURLParams params(manager);
+      params.transition_type = ui::PAGE_TRANSITION_AUTO_BOOKMARK;
+      page->GetController().LoadURLWithParams(params);
+    }
+    return;
+  }
 }
 std::string WorkspaceWindow::WorkspaceForUrl(const GURL& url) const {
   if (!url.SchemeIsHTTPOrHTTPS()) return {};
@@ -1876,6 +1898,7 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
   }
   // The |z⟩ menu's commands without a shortcut.
   if (id == "passwords") { ShowPasswords(); return true; }
+  if (id == "import") { shell_->OpenImport(); return true; }
   if (id == "quit") { RequestClose(); return true; }
   // Development (--zitter-open-panel=extension-popup): the first pinned action.
   if (id == "extension_popup") {

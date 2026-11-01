@@ -184,7 +184,7 @@ void Runtime::RunCommand(AppCommand command) {
     case AppCommand::kOpenAddress: window_->FocusAddressBar(); break;
     case AppCommand::kCommandPalette: window_->OpenCommandPalette(); break;
     case AppCommand::kDownloads: window_->ShowDownloads(); break;
-    case AppCommand::kPasswords: window_->ShowPasswords(); break;
+    case AppCommand::kImport: window_->RunShortcut("import"); break;
     case AppCommand::kCloseTab: window_->CloseActiveTab(); break;
     case AppCommand::kReload: window_->RunPageCommand(prototype::PageCommand::kReload); break;
     case AppCommand::kToggleSidebar: shell->ToggleSidebar(); break;

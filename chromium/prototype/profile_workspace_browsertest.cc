@@ -3005,11 +3005,6 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, GeneralSettingsThemeAndPersist
   EXPECT_EQ(ui::ColorProviderKey::ColorMode::kDark, shell->peek_widget()->GetColorMode());
   EXPECT_EQ(true, content::EvalJs(window_->peek_contents(), "matchMedia('(prefers-color-scheme: dark)').matches"));
   window_->ClosePeek();
-  window_->ShowPasswords();
-  auto* services = PageServices::FromWebContents(window_->contents("work"));
-  ASSERT_TRUE(base::test::RunUntil([&] { return services->password_prompt() && services->password_prompt()->IsVisible(); }));
-  EXPECT_EQ(ui::ColorProviderKey::ColorMode::kDark, services->password_prompt()->GetColorMode());
-  services->password_prompt()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_saved() && window_->configuration_saved(); }));
   window_.reset(); window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready() && window_->shell()->appearance_ready(); }));
@@ -3379,49 +3374,22 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DownloadsDangerousHistoryCanno
   EXPECT_TRUE(panel->visible_guids().empty());
 }
 
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PasswordOverviewAccountsCocoaAndStaleLifetime) {
-  NavigateBoth();ASSERT_TRUE(window_->Select("work"));
-  auto* page=window_->contents("work");auto* services=PageServices::FromWebContents(page);ASSERT_TRUE(services);
-  auto store=ProfilePasswordStoreFactory::GetForProfile(work_,ServiceAccessType::EXPLICIT_ACCESS);ASSERT_TRUE(store);
-  for(auto username:{u"alpha",u"zulu"}){
-    password_manager::StoredCredential credential;credential.url=embedded_test_server()->GetURL("/login_probe.html");credential.signon_realm=url::Origin::Create(credential.url).Serialize()+"/";credential.username_value=username;credential.password_value=password_manager::PasswordString(u"scene-secret-never-render");
-    base::test::TestFuture<void> added;store->AddLogin(std::move(credential),added.GetCallback());ASSERT_TRUE(added.Wait());
-  }
-  const bool rust=window_->shell()->workspace_input()->rust_editor();
-  auto show=[&]{services->ShowPasswords();return base::test::RunUntil([&]{return services->password_prompt()&&services->password_prompt()->IsVisible();});};
-  ASSERT_TRUE(show());auto* widget=services->password_prompt();
-  views::View* picker=nullptr;std::u16string exposed;
-  auto visit=[&](auto&& self,views::View* view)->void{ui::AXNodeData node;view->GetViewAccessibility().GetAccessibleNodeData(&node);exposed+=node.GetString16Attribute(ax::mojom::StringAttribute::kName)+node.GetString16Attribute(ax::mojom::StringAttribute::kValue);if(node.GetString16Attribute(ax::mojom::StringAttribute::kName)==u"Zapisane konta")picker=view;for(const auto& child:view->children())self(self,child.get());};visit(visit,widget->GetContentsView());
-  ASSERT_TRUE(picker);EXPECT_EQ(std::u16string::npos,exposed.find(u"scene-secret-never-render"));
-  ui::AXNodeData account;picker->GetViewAccessibility().GetAccessibleNodeData(&account);EXPECT_NE(std::u16string::npos,account.GetString16Attribute(ax::mojom::StringAttribute::kValue).find(u"alpha"));
-  if(rust){EXPECT_TRUE(picker->children().empty());EXPECT_FALSE(views::AsViewClass<views::Button>(picker));EXPECT_FALSE(views::AsViewClass<views::Combobox>(picker));if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return services->password_scene_visible_for_testing()&&services->password_scene_contains_for_testing(base::UTF16ToUTF8(u"Profil: "+BrowsingProfileName(work_)));}));EXPECT_FALSE(services->password_scene_contains_for_testing("scene-secret-never-render"));}
-  EnableNativeUIControls();ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));picker->RequestFocus();
-  base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
-  // Account labels start with the origin, so type its first character. This
-  // exercises the platform prefix input client without opening a nested menu.
-  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_H,false,false,false,false));
-  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_ESCAPE,false,false,false,false));ASSERT_TRUE(base::test::RunUntil([&]{return !services->password_prompt();}));if(MetalPresents())EXPECT_FALSE(services->password_scene_visible_for_testing());
-  ASSERT_TRUE(show());views::ViewTracker old(services->password_prompt()->GetContentsView());services->password_prompt()->CloseNow();ASSERT_TRUE(base::test::RunUntil([&]{return !services->password_prompt()&&!old.view();}));
-  services->ShowPasswords();ASSERT_TRUE(window_->Select("personal"));base::RunLoop().RunUntilIdle();EXPECT_FALSE(services->password_prompt());
-  auto* personal=PageServices::FromWebContents(window_->contents("personal"));personal->ShowPasswords();ASSERT_TRUE(base::test::RunUntil([&]{return personal->password_prompt()!=nullptr;}));
-  std::u16string private_copy;auto inspect=[&](auto&& self,views::View* view)->void{ui::AXNodeData node;view->GetViewAccessibility().GetAccessibleNodeData(&node);private_copy+=node.GetString16Attribute(ax::mojom::StringAttribute::kName)+node.GetString16Attribute(ax::mojom::StringAttribute::kValue);for(const auto& child:view->children())self(self,child.get());};inspect(inspect,personal->password_prompt()->GetContentsView());EXPECT_NE(std::u16string::npos,private_copy.find(u"Brak zapisanych logowań"));EXPECT_EQ(std::u16string::npos,private_copy.find(u"alpha"));personal->password_prompt()->CloseNow();
-  ASSERT_TRUE(window_->Select("work"));ASSERT_TRUE(show());ASSERT_TRUE(content::NavigateToURL(page,embedded_test_server()->GetURL("/storage_probe.html?password-close")));EXPECT_FALSE(services->password_prompt());
-}
-
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PasswordOverviewVisibleAndDraggable) {
+// Passwords open Chrome's password manager as a tab of the active space, once.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PasswordsOpenChromesManagerInTheSpace) {
   NavigateBoth();
   ASSERT_TRUE(window_->Select("work"));
-  const auto area = display::Screen::Get()->GetDisplayNearestWindow(window_->widget()->GetNativeWindow()).work_area();
-  window_->widget()->SetBounds(gfx::Rect(area.right() - 400, area.y(), 400, 500));
-  auto* services = PageServices::FromWebContents(window_->contents("work"));
+  const size_t tabs = window_->tab_count("work");
   window_->ShowPasswords();
-  ASSERT_TRUE(base::test::RunUntil([&] { return services->password_prompt() && services->password_prompt()->IsVisible(); }));
-  auto* dialog = services->password_prompt();
-  const auto actual_area = display::Screen::Get()->GetDisplayNearestWindow(window_->widget()->GetNativeWindow()).work_area();
-  EXPECT_TRUE(actual_area.Contains(dialog->GetWindowBoundsInScreen())) << actual_area.ToString() << " / " << dialog->GetWindowBoundsInScreen().ToString();
-  EXPECT_TRUE(dialog->widget_delegate()->AsDialogDelegate()->draggable());
-  EXPECT_EQ(ui::mojom::ModalType::kNone, dialog->widget_delegate()->GetModalType());
-  dialog->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+  ASSERT_EQ(tabs + 1, window_->tab_count("work"));
+  auto* manager = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(manager));
+  EXPECT_EQ("password-manager", manager->GetLastCommittedURL().host());
+  EXPECT_FALSE(manager->GetTitle().empty());
+  EXPECT_EQ(work_, Profile::FromBrowserContext(manager->GetBrowserContext()));
+  window_->SelectTab(0);
+  ASSERT_TRUE(window_->RunShortcut("passwords"));
+  EXPECT_EQ(tabs + 1, window_->tab_count("work"));
+  EXPECT_EQ(manager, window_->contents("work"));
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeJavaScriptDialogs) {
@@ -3995,11 +3963,6 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ChromiumPasswordSaveAndFill) {
   ASSERT_TRUE(base::test::RunUntil([&] {
     return content::EvalJs(window_->contents("work"), "document.getElementById('password').value").ExtractString() == "synthetic-47";
   }));
-  // Native account overview exposes metadata, never the password value.
-  services->ShowPasswords();
-  ASSERT_TRUE(base::test::RunUntil([&] { return services->password_prompt() && services->password_prompt()->IsVisible(); }));
-  EXPECT_EQ(u"Zapisane logowania", services->password_prompt()->widget_delegate()->GetWindowTitle());
-  services->password_prompt()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
   submit(u"alice", u"updated-synthetic-89");
   ASSERT_TRUE(base::test::RunUntil([&] { return services->password_prompt() && services->password_prompt()->IsVisible(); }));
   EXPECT_EQ(u"Zaktualizować hasło?", services->password_prompt()->widget_delegate()->GetWindowTitle());

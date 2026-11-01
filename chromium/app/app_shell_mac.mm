@@ -118,7 +118,7 @@ NSMenu* BuildMainMenu() {
     Command(Text(u"Nowa karta"), AppCommand::kNewTab, @"t", kCmd),
     Command(Text(u"Otwórz adres…"), AppCommand::kOpenAddress, @"l", kCmd),
     Command(@"Command Center…", AppCommand::kCommandPalette, @"k", kCmd),
-    Command(Text(u"Hasła tego profilu…"), AppCommand::kPasswords, @"", 0),
+    Command(Text(u"Importuj z przeglądarki…"), AppCommand::kImport, @"", 0),
     NSMenuItem.separatorItem,
     Command(Text(u"Drukuj…"), AppCommand::kPrint, @"p", kCmd),
     NSMenuItem.separatorItem,

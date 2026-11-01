@@ -26,7 +26,6 @@
 #include "components/content_settings/browser/page_specific_content_settings.h"
 #include "chrome/browser/history/history_tab_helper.h"
 #include "chrome/browser/password_manager/chrome_password_manager_client.h"
-#include "chromium/prototype/password_csv_import.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "chrome/browser/password_manager/factories/profile_password_store_factory.h"
@@ -193,77 +192,7 @@ void PageServices::SetManualPassword(std::unique_ptr<FormManager> form, bool upd
 void PageServices::ShowPasswords() {
   if (manual_password_) OfferPassword(std::move(manual_password_), manual_update_);
   else if (password_prompt()) password_prompt()->Activate();
-  else if (!manage_requested_ && web_contents()) {
-    auto* profile = Profile::FromBrowserContext(web_contents()->GetBrowserContext());
-    auto store = ProfilePasswordStoreFactory::GetForProfile(profile, ServiceAccessType::EXPLICIT_ACCESS);
-    if (!store) return;
-    manage_requested_ = true;
-    store->GetAutofillableLogins(password_ui_factory_.GetWeakPtr());
-  }
-}
-void PageServices::OnGetPasswordStoreResultsOrErrorFrom(password_manager::PasswordStoreInterface* store,
-    base::expected<std::vector<password_manager::StoredCredential>, password_manager::PasswordStoreBackendError> results) {
-  if (!manage_requested_ || !web_contents() || web_contents()->GetVisibility() != content::Visibility::VISIBLE) return;
-  manage_requested_ = false;
-  auto* profile = Profile::FromBrowserContext(web_contents()->GetBrowserContext());
-  auto content=std::make_unique<views::View>();
-  password_scene_=CreatePanelScene(content.get());
-  auto dialog=CreateSceneDialogDelegate();
-  dialog->SetTitle(T(u"Zapisane logowania"));
-  dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk));
-  dialog->SetButtonLabel(ui::mojom::DialogButton::kOk, T(u"Zamknij"));
-#if BUILDFLAG(IS_MAC)
-  dialog->set_use_custom_frame(false);
-#endif
-  dialog->set_draggable(true);
-  dialog->SetCanResize(true);
-  SetSidebarPanelLayout(content.get(),true,gfx::Insets(16),12);
-  auto paragraph = [&](std::u16string text) {
-    content->AddChildView(password_scene_->MakeText(std::move(text),true,false,0));
-  };
-  paragraph(TF(u"Profil: {}", {BrowsingProfileName(profile)}));
-  if (!import_status_.empty()) paragraph(std::exchange(import_status_, std::u16string()));
-  if (!results.has_value()) {
-    paragraph(T(u"Magazyn haseł jest niedostępny. Spróbuj ponownie później."));
-  } else if (results->empty()) {
-    paragraph(T(u"Brak zapisanych logowań. Po zalogowaniu na stronie zaproponujemy zapis hasła."));
-  } else {
-    std::vector<std::u16string> labels;
-    for(const auto& credential:*results)
-      labels.push_back(base::UTF8ToUTF16(url::Origin::Create(credential.url).Serialize())+u" · "+credential.username_value);
-    content->AddChildView(password_scene_->MakeSelect(content.get(),std::move(labels),T(u"Zapisane konta")));
-    paragraph(T(u"Kliknij pole logowania na stronie, aby wybrać zapisane konto. Hasła nie są tu ujawniane."));
-  }
-  // Chrome's passwords come over as its CSV export (docs/windows-port.md).
-  auto* actions = content->AddChildView(password_scene_->MakeActions(8));
-  password_scene_->AddAction(actions, base::BindRepeating([](base::WeakPtr<PageServices> services) {
-        // After the dialog closes, never inside its button handler.
-        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(&PageServices::ImportPasswords, services));
-      }, weak_factory_.GetWeakPtr()),
-      T(u"Importuj hasła z CSV…"));
-  content->SetPreferredSize(gfx::Size(460, 220));
-  dialog->SetContentsView(std::move(content));
-  ShowPasswordWidget(std::move(dialog),false);
-  auto* widget=password_prompt();
-  auto* parent=views::Widget::GetWidgetForNativeWindow(web_contents()->GetTopLevelNativeWindow());
-  const auto area = display::Screen::Get()->GetDisplayNearestWindow(web_contents()->GetTopLevelNativeWindow()).work_area();
-  gfx::Rect bounds(0, 0, std::min(520, area.width()), std::min(340, area.height()));
-  const auto anchor = parent ? parent->GetWindowBoundsInScreen().CenterPoint() : area.CenterPoint();
-  bounds.set_origin(gfx::Point(anchor.x() - bounds.width()/2, anchor.y() - bounds.height()/2));
-  bounds.AdjustToFit(area);
-  widget->SetBoundsConstrained(bounds);
-  widget->Show();
-  password_scene_->Schedule();
-}
-void PageServices::ImportPasswords() {
-  if (!web_contents()) return;
-  DismissPassword();
-  ImportPasswordsFromCsv(web_contents(), base::BindOnce([](base::WeakPtr<PageServices> services, PasswordCsvOutcome outcome) {
-    if (!services || outcome.cancelled) return;
-    services->import_status_ = outcome.imported ? TF(u"Zaimportowano haseł: {}.", {base::NumberToString16(outcome.count)})
-                                                : T(u"Nie udało się zaimportować pliku CSV.");
-    services->ShowPasswords();
-  }, weak_factory_.GetWeakPtr()));
+  else if (manage_passwords_) manage_passwords_.Run();
 }
 bool PageServices::password_scene_visible_for_testing() const{return password_scene_&&password_scene_->visible();}
 bool PageServices::password_scene_contains_for_testing(std::string_view text) const{return password_scene_&&password_scene_->contains_text(text);}
@@ -282,7 +211,6 @@ void PageServices::ShowPasswordWidget(std::unique_ptr<views::DialogDelegate> dia
   if(show){widget->Show();if(password_scene_)password_scene_->Schedule();}
 }
 void PageServices::DismissPassword() {
-  manage_requested_ = false;
   password_ui_factory_.InvalidateWeakPtrs();
   if (pending_password_) pending_password_->Ignore();
   pending_password_.reset();
