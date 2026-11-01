@@ -14,6 +14,7 @@ rust_static_library("sidebar_scene") {
     "chromium/prototype/i18n_en_scene.rs",
     "chromium/prototype/i18n_en_shell.rs",
     "chromium/prototype/sidebar_editor.rs",
+    "chromium/prototype/timeline.rs",
   ]
   cxx_bindings = [ crate_root ]
   allow_unsafe = true
@@ -116,6 +117,9 @@ source_set("shell") {
     "chromium/prototype/browser_tools.h",
     "chromium/prototype/browser_tools.cc",
     "chromium/prototype/workspace_time_machine.cc",
+    "chromium/prototype/time_machine_view.cc",
+    "chromium/prototype/time_machine_view.h",
+    "chromium/prototype/timeline_store.h",
     "chromium/prototype/workspace_commands.cc",
     "chromium/prototype/workspace_preconnect.cc",
     "chromium/prototype/browser_preferences.h",
@@ -136,6 +140,8 @@ source_set("shell") {
     "chromium/prototype/extensions_bar.h",
     "chromium/prototype/download_panel.h",
     "chromium/prototype/download_panel.cc",
+    "chromium/prototype/fingerprint_protection.h",
+    "chromium/prototype/fingerprint_protection.cc",
     "chromium/prototype/page_services.h",
     "chromium/prototype/page_services.cc",
     "chromium/prototype/page_printing.h",
@@ -275,6 +281,7 @@ source_set("profile_workspace_browser_tests") {
     "chromium/prototype/workspace_preconnect_browsertest.cc",
     "chromium/prototype/page_file_access_browsertest.cc",
     "chromium/prototype/page_media_access_browsertest.cc",
+    "chromium/prototype/fingerprint_protection_browsertest.cc",
   ]
   include_dirs = [ "." ]
   deps = [

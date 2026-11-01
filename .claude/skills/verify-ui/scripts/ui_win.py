@@ -146,8 +146,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
     l = sub.add_parser("launch")
-    l.add_argument("--open-panel", choices=["space", "sidebar", "palette", "address", "settings", "profiles", "downloads",
-                                            "extensions", "extension-popup", "menu", "app-menu", "dialog", "toast",
+    l.add_argument("--open-panel", choices=["space", "sidebar", "palette", "address", "settings", "privacy", "profiles", "downloads",
+                                            "history", "time-machine", "extensions", "extension-popup", "fingerprint",
+                                            "menu", "app-menu", "dialog", "toast",
                                             "add", "space-end", "space-new", "remove", "drop"],
                    help="open this panel once the window is up (no mouse needed)")
     l.add_argument("--scale", type=float, help="force a device scale factor, as 1.25 or 1.5 (HiDPI)")

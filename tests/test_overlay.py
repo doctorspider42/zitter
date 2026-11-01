@@ -1,6 +1,7 @@
 import importlib.util
 import sys
 import editor_service_fixture
+import fingerprint_protection_fixture
 from pathlib import Path
 import tempfile
 import unittest
@@ -40,6 +41,15 @@ def extensions_logo_source(slot):
             f'{indent}</picture>\n</if>\n</cr-toolbar>\n')
 
 
+HISTORY_TOOLBAR_SOURCE = ('<cr-toolbar id="mainToolbar" disable-right-content-grow\n'
+                          '    narrow-threshold="1023" @search-changed="${this.onSearchChanged_}">\n'
+                          '</cr-toolbar>\n<cr-toolbar-selection-overlay>\n')
+
+
+HISTORY_STYLE_SOURCE = ('/* #css_wrapper_metadata_start\n * #type=style-lit\n * #css_wrapper_metadata_end */\n\n'
+                        ':host {\n  display: flex;\n}\n')
+
+
 def seed_extensions_logo(checkout):
     for slot, path in overlay.EXTENSIONS_LOGO_FILES.items():
         (checkout / path).parent.mkdir(parents=True, exist_ok=True)
@@ -57,6 +67,9 @@ def seed_extensions_logo(checkout):
     search_highlight.parent.mkdir(parents=True, exist_ok=True)
     search_highlight.write_text(overlay.SEARCH_HIGHLIGHT_OLD, newline="\n")
     icon.write_text('#else\nIDR_MAINFRAME       ICON                        "theme\\chromium\\win\\chromium.ico"\n#endif\n', newline="\n")
+    for part, path in overlay.HISTORY_LOGO_FILES.items():
+        (checkout / path).parent.mkdir(parents=True, exist_ok=True)
+        (checkout / path).write_text(HISTORY_TOOLBAR_SOURCE if part == "template" else HISTORY_STYLE_SOURCE, newline="\n")
 
 
 def seed_extension_tabs(checkout):
@@ -185,6 +198,23 @@ class OverlayTests(unittest.TestCase):
         self.assertEqual(patched, overlay.patch_window_icon(patched))
         with self.assertRaises(ValueError):
             overlay.patch_window_icon("unknown upstream layout")
+    def test_history_page_logo_is_zitter_mark(self):
+        import base64
+        mark = base64.b64encode((overlay.ROOT / "assets/icon/zitter.svg").read_bytes()).decode()
+        patched = overlay.patch_history_logo(HISTORY_TOOLBAR_SOURCE, "template")
+        logo = patched.index('<picture slot="product-logo">')
+        self.assertLess(patched.index('@search-changed'), logo)
+        self.assertLess(logo, patched.index('</cr-toolbar>'))
+        self.assertIn(mark, patched)
+        self.assertEqual(patched, overlay.patch_history_logo(patched, "template"))
+        style = overlay.patch_history_logo(HISTORY_STYLE_SOURCE, "style")
+        self.assertTrue(style.startswith(HISTORY_STYLE_SOURCE))
+        self.assertIn("picture[slot='product-logo'] img {\n  display: block;\n  height: 100%;", style)
+        self.assertEqual(style, overlay.patch_history_logo(style, "style"))
+        for part in overlay.HISTORY_LOGO_FILES:
+            with self.assertRaises(ValueError):
+                overlay.patch_history_logo("unknown upstream layout", part)
+
     def test_media_registration_keeps_dispatcher_and_is_guarded(self):
         for header, original in ((True, "  void ProcessMediaAccessRequest(content::WebContents* web_contents,\n"),
                                  (False, "void MediaCaptureDevicesDispatcher::ProcessMediaAccessRequest(\n")):
@@ -223,6 +253,7 @@ class OverlayTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             checkout = Path(directory)
             editor_service_fixture.seed(checkout)
+            fingerprint_protection_fixture.seed(checkout)
             seed_extension_tabs(checkout)
             seed_extensions_logo(checkout)
             build = checkout / "chrome/test/BUILD.gn"

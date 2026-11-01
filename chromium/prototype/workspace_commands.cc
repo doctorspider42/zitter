@@ -1,4 +1,5 @@
 #include "chromium/prototype/workspace_window.h"
+#include "chromium/prototype/timeline_store.h"
 #include "chromium/prototype/page_media_access.h"
 #include "chromium/prototype/i18n.h"
 #include "build/build_config.h"
@@ -54,13 +55,8 @@ std::vector<PaletteResult> WorkspaceWindow::CommandResults(std::u16string query)
     results.push_back(std::move(result));
   };
   auto has_closed = [&] {
-    const auto* space_data = time_machine_.FindDict(source);
-    const auto* closed = space_data ? space_data->FindList("closed") : nullptr;
-    return closed && std::any_of(closed->begin(), closed->end(), [&](const auto& value) {
-      const auto* entry = value.GetIfDict();
-      const auto* profile = entry ? entry->FindString("profile_id") : nullptr;
-      return profile && *profile == model_.active()->profile_id;
-    });
+    if (std::any_of(closed_tabs_.begin(), closed_tabs_.end(), [&](const auto& tab) { return tab.workspace_id == source; })) return true;
+    return timeline_enabled_ && timeline_->current->timeline_last_closed(source, {}).valid;
   };
   // Rust owns the catalogue, wording and matching; native code supplies facts.
   sidebar::CommandContext context{};
@@ -93,11 +89,11 @@ bool WorkspaceWindow::ExecuteCommand(const PaletteResult& result) {
   if (id == "profiles") { shell_->OpenProfiles(); return true; }
   if (id == "import") { shell_->OpenImport(); return true; }
   if (id == "downloads") { ShowDownloads(); return true; }
-  if (id == "history") { shell_->OpenTools(3); return true; }
+  if (id == "history") { ShowHistory(); return true; }
   if (id == "passwords") { ShowPasswords(); return true; }
   if (id == "save_snapshot") {
     if (!SaveSnapshot("Command Center")) return false;
-    shell_->OpenTools(0); return true;
+    shell_->OpenTimeMachine(); return true;
   }
   if (id == "select_space") return Select(result.target_workspace_id);
   if (id == "move_tab") return MoveActiveTab(result.target_workspace_id);
@@ -145,7 +141,7 @@ bool WorkspaceWindow::MoveActiveTab(std::string target_id) {
   }
   if (peek_view_ && GuardPages({peek_contents()}, base::BindOnce([](base::WeakPtr<WorkspaceWindow> w, std::string target) { if (w) w->MoveActiveTab(target); }, weak_factory_.GetWeakPtr(), target_id))) return true;
   ClosePeek();
-  SaveSnapshot(base::UTF16ToUTF8(T(u"Przed przeniesieniem karty")), true);
+  RecordTimeline(true, active_id());
   auto* moving = source->view.get();
   shell_->SetPanes({}, {});
   const auto pending = source->deferred_urls.find(moving);

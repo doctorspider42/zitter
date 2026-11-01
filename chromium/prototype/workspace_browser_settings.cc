@@ -1,9 +1,8 @@
-#include "chrome/browser/history/history_service_factory.h"
-#include "components/history/core/browser/history_service.h"
-#include "components/history/core/browser/history_types.h"
 #include "chromium/prototype/workspace_window.h"
+#include "chromium/prototype/timeline_store.h"
 
 #include <algorithm>
+#include <limits>
 
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
@@ -65,28 +64,6 @@ void WorkspaceWindow::OpenSystemSettings(bool certificates) {
     settings_utils::ShowNetworkProxySettings(page);
   }
 }
-void WorkspaceWindow::QueryBrowsingHistory(std::u16string query, size_t limit) {
-  history_view_tasks_.TryCancelAll();
-  const auto generation = ++history_view_generation_;
-  if (!model_.active() || !shell_->history_visible()) return;
-  const auto profile_id = model_.active()->profile_id;
-  auto* profile = ProfileFor(profile_id);
-  auto* service = profile ? HistoryServiceFactory::GetForProfile(profile, ServiceAccessType::EXPLICIT_ACCESS) : nullptr;
-  if (!service) { shell_->SetHistoryResults(query, profile_id, limit, {}, false, true); return; }
-  history::QueryOptions options;
-  options.max_count = static_cast<int>(std::min(limit, size_t{1000000}));
-  options.duplicate_policy = history::QueryOptions::KEEP_ALL_DUPLICATES;
-  options.policy_for_404_visits = history::VisitQuery404sPolicy::kInclude404s;
-  service->QueryHistory(query, options, base::BindOnce(
-      [](base::WeakPtr<WorkspaceWindow> window, size_t generation, std::u16string query,
-         std::string profile_id, size_t limit, history::QueryResults results) {
-        if (!window || generation != window->history_view_generation_) return;
-        std::vector<BrowsingHistoryEntry> entries;
-        for (const auto& row : results) if (row.url().is_valid() && row.url().SchemeIsHTTPOrHTTPS())
-          entries.push_back({row.url(), row.title(), row.visit_time()});
-        window->shell_->SetHistoryResults(query, profile_id, limit, std::move(entries), !results.reached_beginning(), false);
-      }, weak_factory_.GetWeakPtr(), generation, query, profile_id, limit), &history_view_tasks_);
-}
 void WorkspaceWindow::RequestClearBrowsingData(BrowsingDataSelection selection) {
   if (clear_data_dialog_) { clear_data_dialog_->Activate(); return; }
   if (!configuration_ready_ || profiles_busy_ || !model_.active() || data_remover_) {
@@ -119,7 +96,7 @@ void WorkspaceWindow::RequestClearBrowsingData(BrowsingDataSelection selection) 
       .OverrideDefaultButton(ui::mojom::DialogButton::kCancel)
       .Build();
   auto dialog = views::BubbleDialogModelHost::CreateModal(std::move(model), ui::mojom::ModalType::kWindow);
-  auto* parent = shell_->history_visible() ? shell_->tools_widget() : shell_->general_widget();
+  auto* parent = shell_->general_widget();
   auto* prompt = views::DialogDelegate::CreateDialogWidget(std::move(dialog), parent->GetNativeWindow(), parent->GetNativeView());
   prompt->SetColorModeOverride(parent->color_mode_override());
   PrepareSettingsDialog(prompt->GetRootView());
@@ -144,6 +121,9 @@ bool WorkspaceWindow::ClearBrowsingData(std::string profile_id, BrowsingDataSele
   if (selection.period == 0) begin = now - base::Hours(1);
   if (selection.period == 1) begin = now - base::Days(1);
   if (selection.period == 2) begin = now - base::Days(7);
+  // Time Machine is browsing history too: the same period leaves its timeline.
+  if (selection.history && timeline_->current->timeline_forget(profile_id, begin.is_null() ? std::numeric_limits<int64_t>::min() : begin.InMillisecondsSinceUnixEpoch(),
+      std::numeric_limits<int64_t>::max())) RewriteTimeline();
   data_removal_profile_name_ = base::UTF8ToUTF16(profile->GetPrefs()->GetString(prefs::kProfileName));
   for (const auto& info : profiles_) if (info.info.id == profile_id) data_removal_profile_name_ = base::UTF8ToUTF16(info.info.name);
   data_removal_lease_ = std::make_unique<ScopedProfileKeepAlive>(profile, ProfileKeepAliveOrigin::kBrowserWindow);
@@ -162,6 +142,5 @@ void WorkspaceWindow::OnBrowsingDataRemoverDone(uint64_t failed_data_types) {
   data_removal_lease_.reset();
   shell_->ReportClearData(failed_data_types ? WorkspaceShell::ClearDataEvent::kFailed : WorkspaceShell::ClearDataEvent::kCleared, data_removal_profile_name_);
   history_tasks_.TryCancelAll();
-  if (shell_->history_visible()) shell_->RefreshHistory();
 }
 }  // namespace zitter::prototype

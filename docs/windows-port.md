@@ -375,6 +375,17 @@ Notes:
 - Web notifications: a page's request goes through Zitter's site permission
   prompt, and once allowed `new Notification(…)` shows as a native Windows
   toast (Chromium's Windows notification platform, attributed to the site).
+- Passwords open Chrome's password manager (`chrome://password-manager`) as a
+  tab of the active space, as History opens `chrome://history`. The |z⟩ menu
+  has „Importuj z przeglądarki…” instead of the passwords entry.
+- Main's Time Machine timeline and fingerprint protection build and pass their
+  tests on Windows. Windows needed three changes:
+  - `tools/fingerprint_protection_patch.py` reads its targets as bytes and
+    closes its temporary file before replacing (text mode turned CRLF into LF;
+    Windows can't replace through an open handle).
+  - Its browser test disables the network sandbox, as the other fixtures do.
+  - The test enables pixel output: Windows browser tests otherwise read blank
+    canvases, so noise had nothing to change.
 - Find in page and printing (all systems; design: [Find & Print](https://claude.ai/artifact/TcySm8V2L3jZaWZzjXaivj)):
   - Ctrl+F opens a bar over the page's top right. It drives Chromium's
     `FindTabHelper`; the counter, Enter / Shift+Enter, match case and Esc are

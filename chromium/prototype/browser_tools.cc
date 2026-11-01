@@ -45,6 +45,7 @@ std::vector<Shortcut> ArcShortcuts() {
   add("new_tab", T(u"Nowa karta"), ui::VKEY_T, p);
   add("palette", T(u"Command Center"), ui::VKEY_K, p);
   add("close_tab", T(u"Zamknij kartę / Peek"), ui::VKEY_W, p);
+  add("close_other_tabs", T(u"Zamknij pozostałe karty"), ui::VKEY_K, p | ui::EF_SHIFT_DOWN);
   add("reopen", T(u"Przywróć zamkniętą kartę"), ui::VKEY_T, p | ui::EF_SHIFT_DOWN);
   add("sidebar", T(u"Pokaż / ukryj panel"), ui::VKEY_S, p);
   add("reload", T(u"Odśwież stronę"), ui::VKEY_R, p);

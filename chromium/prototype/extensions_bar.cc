@@ -21,9 +21,11 @@
 #include "chrome/browser/extensions/extension_view_host.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/views/extensions/extension_view_views.h"
+#include "chromium/prototype/fingerprint_protection.h"
 #include "chromium/prototype/i18n.h"
 #include "chromium/prototype/sidebar_scene.rs.h"
 #include "components/input/native_web_keyboard_event.h"
+#include "components/prefs/pref_service.h"
 #include "components/sessions/content/session_tab_helper.h"
 #include "content/public/browser/eye_dropper.h"
 #include "content/public/browser/keyboard_event_processing_result.h"
@@ -90,6 +92,10 @@ constexpr char kPinIcon[] = "M6 2.5h4l-.5 4 2 2h-7l2-2zM8 8.5V14";
 constexpr char kWarnIcon[] = "M8 2.5 14 13H2zM8 6.5v3M8 11.2v.1";
 constexpr char kGearIcon[] = "M8 2v1.5M8 12.5V14M2 8h1.5M12.5 8H14M3.8 3.8l1 1M11.2 11.2l1 1M3.8 12.2l1-1M11.2 4.8l1-1";
 constexpr char kStoreIcon[] = "M3 6h10l-1 7.5H4zM5.5 6V5a2.5 2.5 0 0 1 5 0v1";
+// Fingerprint protection: ridges, a turn arrow, a crossed-out shield.
+constexpr char kFingerprintIcon[] = "M4.2 4.2a5.5 5.5 0 0 1 7.6 0M3 11.5V9.5a5 5 0 0 1 10 0v1M5.5 13.5V9.5a2.5 2.5 0 0 1 5 0V12M8 9v5";
+constexpr char kTurnIcon[] = "M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3";
+constexpr char kShieldOffIcon[] = "M8 2.5 13 4.5V8a5 6 0 0 1-5 5.5A5 6 0 0 1 3 8V4.5zM2.5 2.5l11 11";
 
 // The subset of SVG path data the design icons use: M L H V A Z, absolute or
 // relative, with implicit repeats.
@@ -501,6 +507,74 @@ class Divider final : public views::View {
 BEGIN_METADATA(Divider)
 END_METADATA
 
+// Fingerprint protection in the bar, before the pinned actions: an IconButton
+// like theirs, shown while the profile's protection is on.
+class FingerprintButton final : public views::Button {
+  METADATA_HEADER(FingerprintButton, views::Button)
+ public:
+  FingerprintButton(PressedCallback callback, base::RepeatingCallback<sidebar::DesignPalette()> palette)
+      : views::Button(std::move(callback)), palette_(std::move(palette)) {
+    SetPreferredSize(gfx::Size(kButton, kButton));
+    GetViewAccessibility().SetName(T(u"Ochrona przed fingerprintingiem"));
+    SetTooltipText(T(u"Ochrona przed fingerprintingiem"));
+    GetViewAccessibility().SetHasPopup(ax::mojom::HasPopup::kDialog);
+  }
+  void SetOpen(bool open) { if (open_ != open) { open_ = open; SchedulePaint(); } }
+  void SetShake(int dx) { if (shake_ != dx) { shake_ = dx; SchedulePaint(); } }
+  void PaintButtonContents(gfx::Canvas* canvas) override {
+    const auto p = palette_.Run();
+    const gfx::RectF box(GetLocalBounds());
+    SkColor ink = p.ink_muted;
+    if (open_) { FillRound(canvas, box, 8, p.accent_soft); ink = p.accent_ink; }
+    else if (GetState() == STATE_HOVERED || GetState() == STATE_PRESSED) { FillRound(canvas, box, 8, p.bg_hover); ink = p.ink; }
+    StrokeIcon(canvas, kFingerprintIcon, gfx::RectF(box.CenterPoint().x() - 8 + shake_, box.CenterPoint().y() - 8, 16, 16), ink);
+  }
+ private:
+  base::RepeatingCallback<sidebar::DesignPalette()> palette_;
+  bool open_ = false;
+  int shake_ = 0;
+};
+BEGIN_METADATA(FingerprintButton)
+END_METADATA
+
+// The panel's first block: what this site sees. An `accent-soft` tile with the
+// fingerprint, the code in `url`, then what makes it change in `label`.
+class FingerprintCard final : public views::View {
+  METADATA_HEADER(FingerprintCard, views::View)
+ public:
+  explicit FingerprintCard(const sidebar::DesignPalette& palette) : palette_(palette) {
+    SetPreferredSize(gfx::Size(kMenuWidth - 8, 88));
+    GetViewAccessibility().SetRole(ax::mojom::Role::kStatus);
+  }
+  void SetCode(std::u16string code) {
+    code_ = std::move(code);
+    GetViewAccessibility().SetName(code_.empty() ? T(u"Ta strona nie dostaje odcisku")
+                                                 : TF(u"Odcisk dla tej strony: {}", {code_}));
+    SchedulePaint();
+  }
+  const std::u16string& code() const { return code_; }
+  void SetShake(int dx) { if (shake_ != dx) { shake_ = dx; SchedulePaint(); } }
+  void OnPaint(gfx::Canvas* canvas) override {
+    const gfx::RectF tile(8, 8, 32, 32);
+    FillRound(canvas, tile, 6, palette_.accent_soft);
+    StrokeIcon(canvas, kFingerprintIcon, gfx::RectF(16, 16, 16, 16), palette_.accent_ink);
+    const auto label = DesignFont(2, 12, 400);
+    const int x = 52, right = width() - 8;
+    canvas->DrawStringRectWithFlags(code_.empty() ? T(u"Ta strona nie dostaje odcisku") : T(u"Odcisk dla tej strony"),
+                                    label, palette_.ink_muted, gfx::Rect(x, 6, right - x, 16), 0);
+    canvas->DrawStringRectWithFlags(code_.empty() ? u"—" : code_, DesignFont(3, 13, 500), palette_.ink,
+                                    gfx::Rect(x + shake_, 23, right - x, 18), gfx::Canvas::NO_SUBPIXEL_RENDERING);
+    canvas->DrawStringRectWithFlags(T(u"Inny na każdej stronie i nowy po ponownym uruchomieniu Zittera."), label,
+                                    palette_.ink_muted, gfx::Rect(8, 48, width() - 16, 32), gfx::Canvas::MULTI_LINE);
+  }
+ private:
+  sidebar::DesignPalette palette_;
+  std::u16string code_;
+  int shake_ = 0;
+};
+BEGIN_METADATA(FingerprintCard)
+END_METADATA
+
 // A menu row: an extension (icon, name, site access, pin and more) or a
 // footer command (icon, label).
 class MenuRow final : public views::Button {
@@ -587,21 +661,20 @@ class MenuRow final : public views::Button {
 BEGIN_METADATA(MenuRow)
 END_METADATA
 
-// The eyebrow above the rows: "ROZSZERZENIA" with the page's host in `url`.
+// The eyebrow above the rows: "ROZSZERZENIA" (or the panel's own label).
 class MenuHeader final : public views::View {
   METADATA_HEADER(MenuHeader, views::View)
  public:
-  MenuHeader(std::u16string host, const sidebar::DesignPalette& palette) : host_(std::move(host)), palette_(palette) {
+  explicit MenuHeader(const sidebar::DesignPalette& palette, std::u16string eyebrow = {})
+      : eyebrow_(eyebrow.empty() ? T(u"Rozszerzenia") : std::move(eyebrow)), palette_(palette) {
     SetPreferredSize(gfx::Size(kMenuWidth - 8, 26));
   }
   void OnPaint(gfx::Canvas* canvas) override {
     const gfx::Rect box(8, 8, width() - 16, 14);
-    auto eyebrow = base::i18n::ToUpper(T(u"Rozszerzenia"));
-    canvas->DrawStringRectWithFlags(eyebrow, DesignFont(2, 10, 600), palette_.ink_muted, box, 0);
-    canvas->DrawStringRectWithFlags(host_, DesignFont(3, 11, 400), palette_.ink_muted, box, gfx::Canvas::TEXT_ALIGN_RIGHT);
+    canvas->DrawStringRectWithFlags(base::i18n::ToUpper(eyebrow_), DesignFont(2, 10, 600), palette_.ink_muted, box, 0);
   }
  private:
-  std::u16string host_;
+  std::u16string eyebrow_;
   sidebar::DesignPalette palette_;
 };
 BEGIN_METADATA(MenuHeader)
@@ -691,7 +764,7 @@ class ExtensionsBar::Menu final : public views::BubbleDialogDelegate {
     rows_.clear();
     auto* model = ToolbarActionsModel::Get(bar_->profile());
     const GURL url = bar_->page() ? bar_->page()->GetLastCommittedURL() : GURL();
-    body_->AddChildView(std::make_unique<MenuHeader>(base::UTF8ToUTF16(url.host()), palette_));
+    body_->AddChildView(std::make_unique<MenuHeader>(palette_));
     std::vector<const Extension*> extensions;
     for (const auto& id : model->action_ids())
       if (const auto* extension = bar_->ExtensionFor(id)) extensions.push_back(extension);
@@ -839,6 +912,69 @@ class ExtensionsBar::Popup final : public views::BubbleDialogDelegate,
   std::unique_ptr<ActivationWatcher> anchor_watcher_;
 };
 
+// Fingerprint protection under its button (design: Extensions menu): what this
+// site sees, then a new fingerprint, turning protection off and Preferences.
+// The bar owns this delegate and its widget.
+class ExtensionsBar::FingerprintPanel final : public views::BubbleDialogDelegate {
+ public:
+  FingerprintPanel(ExtensionsBar* bar, views::View* anchor)
+      : views::BubbleDialogDelegate(anchor, views::BubbleBorder::TOP_RIGHT), bar_(bar), palette_(bar->palette()) {
+    SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
+    SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
+    set_margins(gfx::Insets(4));
+    set_corner_radius(12);
+    set_fixed_width(kMenuWidth);
+    SetBackgroundColor(palette_.bg_raised);
+    SetShowCloseButton(false);
+    SetAccessibleWindowRole(ax::mojom::Role::kDialog);
+    SetTitle(T(u"Ochrona przed fingerprintingiem"));
+    SetShowTitle(false);
+    auto body = std::make_unique<views::View>();
+    body->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical));
+    body->AddChildView(std::make_unique<MenuHeader>(palette_, T(u"Odcisk przeglądarki")));
+    card_ = body->AddChildView(std::make_unique<FingerprintCard>(palette_));
+    body->AddChildView(std::make_unique<MenuSeparator>(palette_.line));
+    auto weak = bar_->weak_factory_.GetWeakPtr();
+    auto add_row = [&](std::u16string text, const char* glyph, void (ExtensionsBar::*command)()) {
+      auto* row = body->AddChildView(std::make_unique<MenuRow>(base::BindRepeating(
+          [](base::WeakPtr<ExtensionsBar> bar, void (ExtensionsBar::*command)()) { if (bar) (bar.get()->*command)(); },
+          weak, command), palette_, kFooterHeight));
+      row->SetGlyph(glyph);
+      row->Init();
+      row->SetText(std::move(text), {}, false, 16);
+      return row;
+    };
+    add_row(T(u"Zmień odcisk"), kTurnIcon, &ExtensionsBar::NewFingerprint);
+    add_row(T(u"Wyłącz ochronę"), kShieldOffIcon, &ExtensionsBar::TurnOffFingerprintProtection);
+    add_row(T(u"Ustawienia prywatności"), kGearIcon, &ExtensionsBar::OpenPrivacySettings)->SetRing(true);
+    SetContentsView(std::move(body));
+    Refresh();
+  }
+  void Refresh() {
+    const GURL url = bar_->page() ? bar_->page()->GetLastCommittedURL() : GURL();
+    card_->SetCode(bar_->profile() ? FingerprintProtection::SiteCode(bar_->profile(), url) : std::u16string());
+  }
+  // A new fingerprint lands: one tremor of the code and of the bar's button.
+  void Tremor() {
+    if (!gfx::Animation::ShouldRenderRichAnimation()) return;
+    step_ = 0;
+    timer_.Start(FROM_HERE, base::Milliseconds(45), base::BindRepeating([](FingerprintPanel* panel) {
+      static constexpr std::array<int, 4> kOffsets = {1, -1, 1, 0};
+      if (panel->step_ >= kOffsets.size()) { panel->timer_.Stop(); return; }
+      const int dx = kOffsets[panel->step_++];
+      panel->card_->SetShake(dx);
+      if (auto* button = views::AsViewClass<FingerprintButton>(panel->bar_->fingerprint_button_.get())) button->SetShake(dx);
+    }, base::Unretained(this)));
+  }
+  const std::u16string& code() const { return card_->code(); }
+ private:
+  raw_ptr<ExtensionsBar> bar_;
+  sidebar::DesignPalette palette_;
+  raw_ptr<FingerprintCard> card_ = nullptr;
+  base::RepeatingTimer timer_;
+  size_t step_ = 0;
+};
+
 ExtensionsBar::ExtensionsBar(Callbacks callbacks) : callbacks_(std::move(callbacks)) {
   auto* layout = SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 2));
@@ -851,6 +987,8 @@ ExtensionsBar::ExtensionsBar(Callbacks callbacks) : callbacks_(std::move(callbac
 ExtensionsBar::~ExtensionsBar() {
   // Bubbles report closing through weak pointers; this bar is going away.
   weak_factory_.InvalidateWeakPtrs();
+  fingerprint_widget_.reset();
+  fingerprint_panel_.reset();
   context_menu_.reset();
   popup_widget_.reset();
   popup_.reset();
@@ -873,11 +1011,13 @@ void ExtensionsBar::SetContext(Profile* profile, content::WebContents* page) {
     CloseMenus();
     model_observation_.Reset();
     profile_ = profile;
+    ObserveFingerprintProtection();
     if (auto* model = profile_ ? ToolbarActionsModel::Get(profile_) : nullptr) model_observation_.Observe(model);
     Rebuild();
     return;
   }
   RefreshButtons();
+  if (fingerprint_panel_) fingerprint_panel_->Refresh();
 }
 
 const Extension* ExtensionsBar::ExtensionFor(const std::string& id) const {
@@ -894,10 +1034,18 @@ void ExtensionsBar::Rebuild() {
   buttons_.clear();
   divider_ = nullptr;
   puzzle_ = nullptr;
+  fingerprint_button_ = nullptr;
   auto* model = profile_ ? ToolbarActionsModel::Get(profile_) : nullptr;
   SetVisible(model != nullptr);
+  const bool protection = model && profile_->GetPrefs()->GetBoolean(kFingerprintProtectionPref);
+  if (!protection && fingerprint_widget_ && !fingerprint_widget_->IsClosed()) fingerprint_widget_->Close();
   if (!model) { PreferredSizeChanged(); return; }
   auto palette = base::BindRepeating(&ExtensionsBar::palette, base::Unretained(this));
+  if (protection) {
+    fingerprint_button_ = AddChildView(std::make_unique<FingerprintButton>(
+        base::BindRepeating(&ExtensionsBar::ToggleFingerprintPanel, base::Unretained(this)), palette));
+    if (fingerprint_widget_) static_cast<FingerprintButton*>(fingerprint_button_.get())->SetOpen(true);
+  }
   size_t shown = 0;
   for (const auto& id : model->pinned_action_ids()) {
     if (shown == kMaxVisible) break;
@@ -908,7 +1056,7 @@ void ExtensionsBar::Rebuild() {
     if (id == popup_id_) buttons_.back()->SetPopupOpen(true);
     ++shown;
   }
-  if (!buttons_.empty()) divider_ = AddChildView(std::make_unique<Divider>(palette));
+  if (!buttons_.empty() || fingerprint_button_) divider_ = AddChildView(std::make_unique<Divider>(palette));
   puzzle_ = AddChildView(std::make_unique<PuzzleButton>(
       base::BindRepeating(&ExtensionsBar::ToggleMenu, base::Unretained(this)), palette));
   if (menu_widget_) static_cast<PuzzleButton*>(puzzle_.get())->SetOpen(true);
@@ -1082,8 +1230,67 @@ void ExtensionsBar::OnToolbarPinnedActionsChanged() { Rebuild(); }
 void ExtensionsBar::OnToolbarActionsModelShutdown() {
   model_observation_.Reset();
   profile_ = nullptr;
+  ObserveFingerprintProtection();
   page_ = nullptr;
   Rebuild();
+}
+
+void ExtensionsBar::ObserveFingerprintProtection() {
+  fingerprint_pref_.Reset();
+  fingerprint_key_ = {};
+  if (!profile_) return;
+  fingerprint_pref_.Init(profile_->GetPrefs());
+  fingerprint_pref_.Add(kFingerprintProtectionPref, base::BindRepeating(&ExtensionsBar::Rebuild, base::Unretained(this)));
+  fingerprint_key_ = FingerprintProtection::ObserveSessionKey(profile_, base::BindRepeating(
+      [](ExtensionsBar* bar) { if (bar->fingerprint_panel_) bar->fingerprint_panel_->Refresh(); }, base::Unretained(this)));
+}
+
+void ExtensionsBar::ToggleFingerprintPanel() {
+  if (fingerprint_widget_) { if (!fingerprint_widget_->IsClosed()) fingerprint_widget_->Close(); return; }
+  if (!profile_ || !fingerprint_button_ || !GetWidget()) return;
+  CloseMenus();
+  ClosePopup();
+  fingerprint_panel_ = std::make_unique<FingerprintPanel>(this, fingerprint_button_);
+  // Never delete a widget on its own closing stack.
+  fingerprint_widget_ = views::BubbleDialogDelegate::CreateBubble(fingerprint_panel_.get(), base::BindOnce(
+      [](base::WeakPtr<ExtensionsBar> bar, views::Widget::ClosedReason) {
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
+            base::BindOnce(&ExtensionsBar::DestroyFingerprintPanel, bar));
+      }, weak_factory_.GetWeakPtr()));
+  static_cast<FingerprintButton*>(fingerprint_button_.get())->SetOpen(true);
+  fingerprint_widget_->Show();
+}
+
+void ExtensionsBar::DestroyFingerprintPanel() {
+  fingerprint_widget_.reset();
+  fingerprint_panel_.reset();
+  if (fingerprint_button_) static_cast<FingerprintButton*>(fingerprint_button_.get())->SetOpen(false);
+}
+
+void ExtensionsBar::NewFingerprint() {
+  if (!profile_) return;
+  FingerprintProtection::NewSessionKey(profile_);
+  if (fingerprint_panel_) fingerprint_panel_->Tremor();
+}
+
+void ExtensionsBar::TurnOffFingerprintProtection() {
+  // The pref observer removes the button and closes this panel.
+  if (profile_) profile_->GetPrefs()->SetBoolean(kFingerprintProtectionPref, false);
+}
+
+void ExtensionsBar::OpenPrivacySettings() {
+  if (fingerprint_widget_ && !fingerprint_widget_->IsClosed()) fingerprint_widget_->Close();
+  if (callbacks_.open_privacy_settings) callbacks_.open_privacy_settings.Run();
+}
+
+std::u16string ExtensionsBar::fingerprint_code_for_testing() const {
+  return fingerprint_panel_ ? fingerprint_panel_->code() : std::u16string();
+}
+
+void ExtensionsBar::RunFingerprintCommandForTesting(int command) {
+  if (command == 0) NewFingerprint();
+  if (command == 1) TurnOffFingerprintProtection();
+  if (command == 2) OpenPrivacySettings();
 }
 
 void ExtensionsBar::OnThemeChanged() {

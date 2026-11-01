@@ -1,0 +1,50 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Fingerprint probe</title>
+<!-- Reads canvas, WebGL and audio output the way fingerprinting scripts do. -->
+<script>
+function fnv(bytes) {
+  let hash = 0x811c9dc5;
+  for (const byte of bytes) { hash ^= byte; hash = Math.imul(hash, 0x01000193) >>> 0; }
+  return hash.toString(16);
+}
+function drawText() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 240; canvas.height = 60;
+  const context = canvas.getContext('2d');
+  context.fillStyle = '#f60'; context.fillRect(100, 1, 62, 20);
+  context.fillStyle = '#069'; context.font = '11pt "Times New Roman"';
+  context.fillText('Cwm fjordbank gly \u{1F603}', 2, 15);
+  context.fillStyle = 'rgba(102, 204, 0, 0.2)'; context.font = '18pt Arial';
+  context.fillText('Cwm fjordbank gly \u{1F603}', 4, 45);
+  return canvas;
+}
+function webgl() {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 32;
+  const gl = canvas.getContext('webgl');
+  if (!gl) return null;
+  gl.clearColor(0.2, 0.4, 0.6, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+  const pixels = new Uint8Array(32 * 32 * 4);
+  gl.readPixels(0, 0, 32, 32, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+  return fnv(pixels);
+}
+async function audio() {
+  const context = new OfflineAudioContext(1, 5000, 44100);
+  const oscillator = context.createOscillator();
+  oscillator.type = 'triangle'; oscillator.frequency.value = 10000;
+  const compressor = context.createDynamicsCompressor();
+  oscillator.connect(compressor); compressor.connect(context.destination);
+  oscillator.start(0);
+  const samples = (await context.startRendering()).getChannelData(0);
+  let sum = 0;
+  for (let i = 4500; i < 5000; ++i) sum += Math.abs(samples[i]);
+  return String(sum);
+}
+async function probe() {
+  const canvas = drawText();
+  const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+  return {canvas: fnv(new TextEncoder().encode(canvas.toDataURL())), pixels: fnv(pixels),
+          webgl: webgl(), audio: await audio()};
+}
+</script>

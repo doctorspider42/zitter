@@ -1,8 +1,11 @@
 #include "chromium/prototype/browser_import_data.h"
 #include "chromium/prototype/workspace_window.h"
+#include "chromium/prototype/timeline_store.h"
+#include "base/time/default_clock.h"
 #include "chromium/prototype/i18n.h"
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "chromium/prototype/download_panel.h"
+#include "chromium/prototype/fingerprint_protection.h"
 #include "chromium/prototype/page_services.h"
 #include "chrome/browser/printing/print_view_manager.h"
 #include "chrome/common/webui_url_constants.h"
@@ -147,6 +150,7 @@ constexpr BooleanPreference kBooleanPreferences[] = {
     {"link_auditing", prefs::kEnableHyperlinkAuditing},
     {"save_passwords", password_manager::prefs::kCredentialsEnableService},
     {"auto_signin", password_manager::prefs::kCredentialsEnableAutosignin},
+    {"fingerprint_protection", kFingerprintProtectionPref},
 };
 struct ContentPreference {
   const char* key;
@@ -178,7 +182,7 @@ class WorkspaceWebView final : public views::WebView {
       content::KeyboardEventProcessingResult(
           content::WebContents*, const input::NativeWebKeyboardEvent&)>;
 
-  using OpenHandler = base::RepeatingCallback<content::WebContents*(content::WebContents*, const content::OpenURLParams&, bool)>;
+  using OpenHandler = base::RepeatingCallback<content::WebContents*(content::WebContents*, const content::OpenURLParams&)>;
   using MenuHandler = base::RepeatingCallback<void(content::WebContents*, const content::ContextMenuParams&)>;
   using AdoptHandler = base::RepeatingCallback<content::WebContents*(content::WebContents*, std::unique_ptr<content::WebContents>, bool)>;
   using CreatedHandler = base::RepeatingCallback<void(content::WebContents*, content::WebContents*)>;
@@ -198,25 +202,9 @@ class WorkspaceWebView final : public views::WebView {
     return handler_.Run(source, event);
   }
 
-  bool PreHandleMouseEvent(content::WebContents*, const blink::WebMouseEvent& event) override {
-    if (event.GetType() == blink::WebInputEvent::Type::kMouseDown) {
-#if BUILDFLAG(IS_MAC)
-      constexpr int primary = blink::WebInputEvent::kMetaKey;
-#else
-      constexpr int primary = blink::WebInputEvent::kControlKey;
-#endif
-      peek_click_ = event.button == blink::WebMouseEvent::Button::kLeft &&
-          (event.GetModifiers() & primary) && !(event.GetModifiers() & (blink::WebInputEvent::kShiftKey | blink::WebInputEvent::kAltKey));
-      peek_click_time_ = base::TimeTicks::Now();
-    }
-    return false;
-  }
   content::WebContents* OpenURLFromTab(content::WebContents* source, const content::OpenURLParams& params,
       base::OnceCallback<void(content::NavigationHandle&)> callback) override {
-    const bool peek = std::exchange(peek_click_, false) &&
-        base::TimeTicks::Now() - peek_click_time_ < base::Seconds(2) &&
-        params.disposition == WindowOpenDisposition::NEW_BACKGROUND_TAB;
-    return open_.Run(source, params, peek);
+    return open_.Run(source, params);
   }
   void RunFileChooser(content::RenderFrameHost* frame,
       scoped_refptr<content::FileSelectListener> listener,
@@ -276,8 +264,6 @@ class WorkspaceWebView final : public views::WebView {
   MenuHandler menu_;
   AdoptHandler adopt_;
   CreatedHandler created_;
-  bool peek_click_ = false;
-  base::TimeTicks peek_click_time_;
   void TitleWasSet(content::NavigationEntry*) override { changed_.Run(); }
   // URL and back/forward availability feed the sidebar's address pill.
   void NavigationStateChanged(content::WebContents* source,
@@ -542,6 +528,8 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   // The UI language is fixed for the run, before any text is built.
   ApplyUiLanguage(g_browser_process->GetApplicationLocale());
   configuration_path_ = data_directory_.AppendASCII("ZitterWorkspaces.json");
+  clock_ = base::DefaultClock::GetInstance();
+  timeline_ = std::make_unique<TimelineStore>();
   config_runner_ = base::ThreadPool::CreateSequencedTaskRunner(
       {base::MayBlock(), base::TaskPriority::USER_VISIBLE, base::TaskShutdownBehavior::BLOCK_SHUTDOWN});
   WorkspaceShell::Callbacks callbacks;
@@ -578,18 +566,17 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   callbacks.restore_pins = base::BindRepeating(&WorkspaceWindow::RestorePins, base::Unretained(this));
   callbacks.restore_workspace = base::BindRepeating(&WorkspaceWindow::RestoreRemovedWorkspace, base::Unretained(this));
   callbacks.create_folder = base::BindRepeating(&WorkspaceWindow::CreatePinnedFolder, base::Unretained(this));
-  callbacks.query_history = base::BindRepeating(&WorkspaceWindow::QueryBrowsingHistory, base::Unretained(this));
   callbacks.clear_browsing_data = base::BindRepeating(&WorkspaceWindow::RequestClearBrowsingData, base::Unretained(this));
   callbacks.system_settings = base::BindRepeating(&WorkspaceWindow::OpenSystemSettings, base::Unretained(this));
   callbacks.read_preferences = base::BindRepeating(&WorkspaceWindow::ReadPreferences, base::Unretained(this));
   callbacks.write_preference = base::BindRepeating(&WorkspaceWindow::WritePreference, base::Unretained(this));
   callbacks.operation_pending = base::BindRepeating(&WorkspaceWindow::lifecycle_pending, base::Unretained(this));
-  callbacks.time_machine = base::BindRepeating(&WorkspaceWindow::TimeMachine, base::Unretained(this));
-  callbacks.save_snapshot = base::BindRepeating(&WorkspaceWindow::SaveSnapshot, base::Unretained(this));
-  callbacks.restore_snapshot = base::BindRepeating(&WorkspaceWindow::RestoreSnapshot, base::Unretained(this));
-  callbacks.delete_snapshot = base::BindRepeating(&WorkspaceWindow::DeleteSnapshot, base::Unretained(this));
-  callbacks.reopen_closed = base::BindRepeating(&WorkspaceWindow::ReopenClosedTab, base::Unretained(this));
-  callbacks.sleep_workspace = base::BindRepeating(&WorkspaceWindow::SleepWorkspace, base::Unretained(this));
+  callbacks.timeline = base::BindRepeating([](WorkspaceWindow* window) { return &window->timeline(); }, base::Unretained(this));
+  callbacks.timeline_now = base::BindRepeating(&WorkspaceWindow::Now, base::Unretained(this));
+  callbacks.record_timeline = base::BindRepeating(&WorkspaceWindow::RecordActiveTimeline, base::Unretained(this));
+  callbacks.restore_timeline = base::BindRepeating(&WorkspaceWindow::RestoreTimeline, base::Unretained(this));
+  callbacks.timeline_settings = base::BindRepeating(&WorkspaceWindow::SetTimelineSettings, base::Unretained(this));
+  callbacks.clear_timeline = base::BindRepeating(&WorkspaceWindow::ClearTimeline, base::Unretained(this));
   callbacks.run_shortcut = base::BindRepeating(&WorkspaceWindow::RunShortcut, base::Unretained(this));
   callbacks.downloads = base::BindRepeating(&WorkspaceWindow::ShowDownloads, base::Unretained(this));
   callbacks.passwords = base::BindRepeating(&WorkspaceWindow::ShowPasswords, base::Unretained(this));
@@ -642,6 +629,9 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   extension_callbacks.workspace_color = base::BindRepeating([](WorkspaceWindow* window) {
     return window->shell_->active_workspace_color();
   }, base::Unretained(this));
+  extension_callbacks.open_privacy_settings = base::BindRepeating([](WorkspaceWindow* window) {
+    window->shell_->OpenPrivacySettings();
+  }, base::Unretained(this));
   extensions_bar_ = static_cast<ExtensionsBar*>(shell_->SetHeaderTrailing(
       std::make_unique<ExtensionsBar>(std::move(extension_callbacks))));
   delegate_ = std::make_unique<views::WidgetDelegate>();
@@ -681,16 +671,13 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
         std::string session;
         base::ReadFileToString(path.DirName().AppendASCII("ZitterSession.json"), &session);
         std::string timeline;
-        base::ReadFileToString(path.DirName().AppendASCII("ZitterTimeMachine.json"), &timeline);
+        base::ReadFileToStringWithMaxSize(path.DirName().AppendASCII("ZitterTimeline.jsonl"), &timeline, 64 * 1024 * 1024);
         return std::array<std::string, 3>{std::move(json), std::move(session), std::move(timeline)};
       }, configuration_path_),
       base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, std::array<std::string, 3> data) {
         if (!window) return;
         window->session_json_ = std::move(data[1]);
-        if (data[2].size() <= 32 * 1024 * 1024) {
-          auto timeline = base::JSONReader::ReadDict(data[2], base::JSON_PARSE_RFC);
-          if (timeline) window->time_machine_ = std::move(*timeline);
-        }
+        window->LoadTimeline(std::move(data[2]));
         window->RestoreConfiguration(std::move(data[0]));
       }, weak_factory_.GetWeakPtr()));
 }
@@ -708,10 +695,8 @@ WorkspaceWindow::~WorkspaceWindow() {
   data_removal_lease_.reset();
   if (download_directory_dialog_) download_directory_dialog_->ListenerDestroyed();
   SaveSession();
-  if (time_machine_timer_.IsRunning()) FlushTimeMachine();
   closing_ = true;
   history_tasks_.TryCancelAll();
-  history_view_tasks_.TryCancelAll();
   weak_factory_.InvalidateWeakPtrs();
   ClosePeek();
   extension_tabs_.reset();
@@ -786,6 +771,7 @@ void WorkspaceWindow::PreparePage(content::WebContents* page, std::string source
     if (window && page == (window->peek_contents() ? window->peek_contents() : window->contents(window->active_id())))
       window->StartPrint(page);
   }, weak_factory_.GetWeakPtr()));
+  FingerprintProtection::Attach(page);
   PageDialogs::Attach(page);
   PageMediaAccess::Attach(page);
   LinkNavigation::Attach(page, base::BindRepeating(
@@ -1138,27 +1124,35 @@ void WorkspaceWindow::ShowDownloads() {
   if (!downloads_) downloads_ = std::make_unique<DownloadPanel>();
   downloads_->Show(Profile::FromBrowserContext(page->GetBrowserContext()), widget_.get());
 }
-// Chrome's password manager, as a tab of the active space (its profile's
-// passwords): an open one is selected rather than opened twice.
+// History is Chromium's own page: the space on screen shows its existing
+// chrome://history tab, or opens one in its profile.
+void WorkspaceWindow::ShowHistory() {
+  if (!model_.active()) return;
+  shell_->CloseOverlays(true);
+  for (const auto& host : hosts_) {
+    if (host.workspace_id != active_id()) continue;
+    for (size_t i = 0; i < host.tabs.size(); ++i) {
+      const GURL url = TabUrl(host, host.tabs[i]);
+      if (url.SchemeIs("chrome") && url.host() == "history") { SelectTab(i); return; }
+    }
+  }
+  OpenProfileTab(ProfileFor(model_.active()->profile_id), GURL("chrome://history"), true);
+}
+// Chrome's password manager, like History: the space on screen shows its
+// existing tab, or opens one in its profile (its passwords).
 void WorkspaceWindow::ShowPasswords() {
+  if (!model_.active()) return;
   shell_->CloseOverlays(true);
   ClosePeek();
   const GURL manager(chrome::kChromeUIPasswordManagerURL);
-  for (auto& host : hosts_) {
+  for (const auto& host : hosts_) {
     if (host.workspace_id != active_id()) continue;
     for (size_t i = 0; i < host.tabs.size(); ++i) {
-      auto* page = host.tabs[i]->web_contents();
-      if (page && page->GetVisibleURL().host() == manager.host()) { SelectTab(i); return; }
+      const GURL url = TabUrl(host, host.tabs[i]);
+      if (url.SchemeIs("chrome") && url.host() == manager.host()) { SelectTab(i); return; }
     }
-    host.tabs.push_back(CreatePage(host.profile));
-    SelectTab(host.tabs.size() - 1);
-    if (auto* page = contents(active_id())) {
-      content::NavigationController::LoadURLParams params(manager);
-      params.transition_type = ui::PAGE_TRANSITION_AUTO_BOOKMARK;
-      page->GetController().LoadURLWithParams(params);
-    }
-    return;
   }
+  OpenProfileTab(ProfileFor(model_.active()->profile_id), manager, true);
 }
 std::string WorkspaceWindow::WorkspaceForUrl(const GURL& url) const {
   if (!url.SchemeIsHTTPOrHTTPS()) return {};
@@ -1316,26 +1310,34 @@ bool WorkspaceWindow::RouteNavigation(content::NavigationHandle& navigation, con
   return true;
 }
 content::WebContents* WorkspaceWindow::OpenPageLink(content::WebContents* source,
-    const content::OpenURLParams& params, bool peek) {
+    const content::OpenURLParams& params) {
   if (!params.url.SchemeIsHTTPOrHTTPS() || params.post_data) return nullptr;
   const auto workspace = WorkspaceForPage(source);
   if (workspace.empty()) return nullptr;
   const bool new_tab = params.disposition != WindowOpenDisposition::CURRENT_TAB;
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
-      base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, GURL url, std::string workspace, bool peek, bool new_tab, bool background) {
+      base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, GURL url, std::string workspace, bool new_tab, bool background) {
         if (!window) return;
-        if (peek) { window->OpenPeek(url, workspace); return; }
         const auto target = window->WorkspaceForUrl(url);
+        // Cmd+click: a new tab that loads behind the current one, announced by a toast.
         if (background && (target.empty() || target == workspace)) {
           for (auto& host : window->hosts_) if (host.workspace_id == workspace) {
             auto* view = window->CreatePage(host.profile);
             host.tabs.push_back(view);
             view->GetWebContents()->GetController().LoadURL(url, content::Referrer(), ui::PAGE_TRANSITION_LINK, std::string());
-            window->UpdateShell(); return;
+            window->UpdateShell();
+            std::string site(url.host());
+            if (base::StartsWith(site, "www.")) site = site.substr(4);
+            window->shell_->ShowToast(T(u"Otwarto w tle: "), base::UTF8ToUTF16(site), base::BindOnce([](base::WeakPtr<WorkspaceWindow> w, std::string id, base::WeakPtr<content::WebContents> page) {
+              if (!w || !page || !w->Select(id)) return;
+              for (const auto& host : w->hosts_) if (host.workspace_id == id)
+                for (size_t i = 0; i < host.tabs.size(); ++i) if (host.tabs[i]->web_contents() == page.get()) { w->SelectTab(i); return; }
+            }, window->weak_factory_.GetWeakPtr(), workspace, view->GetWebContents()->GetWeakPtr()), T(u"Pokaż"));
+            return;
           }
         }
         window->OpenLink(url, workspace, new_tab);
-      }, weak_factory_.GetWeakPtr(), params.url, workspace, peek, new_tab,
+      }, weak_factory_.GetWeakPtr(), params.url, workspace, new_tab,
           params.disposition == WindowOpenDisposition::NEW_BACKGROUND_TAB));
   return nullptr;
 }
@@ -1473,7 +1475,7 @@ void WorkspaceWindow::CloseWorkspaceTab(std::string_view workspace_id, size_t in
         for (size_t i = 0; i < host.tabs.size(); ++i) if (host.tabs[i]->web_contents() == page.get()) { w->CloseWorkspaceTab(id, i); return; }
     }, weak_factory_.GetWeakPtr(), std::string(workspace_id), page->GetWeakPtr()))) return;
     if (configuration_ready_ && !restoring_session_ && !closing_) {
-      if (host.workspace_id == active_id() && !closing_split_tabs_) SaveSnapshot(base::UTF16ToUTF8(T(u"Przed zamknięciem karty")), true);
+      if (!closing_split_tabs_) RecordTimeline(true, host.workspace_id);
       RecordClosedTab(host, index);
     }
     views::WebView* closing = host.tabs[index];
@@ -1648,7 +1650,7 @@ bool WorkspaceWindow::SplitTab(size_t index) {
   if (!configuration_ready_ || profiles_busy_) return false;
   for (auto& host : hosts_) {
     if (host.workspace_id != active_id() || index >= host.tabs.size()) continue;
-    SaveSnapshot(base::UTF16ToUTF8(T(u"Przed zmianą podziału")), true);
+    RecordTimeline(true, active_id());
     // A visible group gains a pane; otherwise the shown page anchors a new pair.
     if (!SplitShown(host)) { host.split = {host.view}; host.weights.clear(); host.vertical = false; }
     if (InSplit(host, host.tabs[index])) {
@@ -1684,7 +1686,7 @@ void WorkspaceWindow::Unsplit(size_t index) {
     if (host.workspace_id != active_id() || host.split.empty() || index >= host.tabs.size()) continue;
     auto* kept = host.tabs[index].get();
     if (!InSplit(host, kept)) return;
-    SaveSnapshot(base::UTF16ToUTF8(T(u"Przed zamknięciem podziału")), true);
+    RecordTimeline(true, active_id());
     host.split.clear(); host.weights.clear(); host.vertical = false;
     host.view = kept; host.active_tab = index;
     RefreshPanes(); UpdateShell();
@@ -1696,7 +1698,7 @@ void WorkspaceWindow::RemoveFromSplit(size_t index) {
   if (!configuration_ready_ || profiles_busy_) return;
   for (auto& host : hosts_) {
     if (host.workspace_id != active_id() || index >= host.tabs.size() || !InSplit(host, host.tabs[index])) continue;
-    SaveSnapshot(base::UTF16ToUTF8(T(u"Przed zmianą podziału")), true);
+    RecordTimeline(true, active_id());
     const bool shown = SplitShown(host);
     auto* leaving = host.tabs[index].get();
     auto* next = LeaveSplit(host, leaving);
@@ -1708,6 +1710,61 @@ void WorkspaceWindow::RemoveFromSplit(size_t index) {
     return;
   }
 }
+bool WorkspaceWindow::CloseOtherTabs() {
+  if (!configuration_ready_ || profiles_busy_) return false;
+  for (auto& host : hosts_) {
+    if (host.workspace_id != active_id() || host.sleeping || host.tabs.size() < 2) continue;
+    views::WebView* keep = host.tabs[host.active_tab];
+    // Tabs open from a pin stay, as in Arc; the pin keeps its page.
+    auto closes = [&](views::WebView* view) {
+      return view != keep && std::none_of(host.pin_tabs.begin(), host.pin_tabs.end(), [&](const auto& pin) { return pin.second == view; });
+    };
+    std::vector<views::WebView*> closing;
+    std::vector<ClosedTabSlot> undo;
+    for (size_t i = 0; i < host.tabs.size(); ++i) if (closes(host.tabs[i])) {
+      closing.push_back(host.tabs[i]);
+      undo.push_back({i, TabUrl(host, host.tabs[i]), TabTitle(host, host.tabs[i])});
+    }
+    if (closing.empty()) return false;
+    // Every page with a beforeunload handler is asked once, before any closes.
+    std::vector<content::WebContents*> pages;
+    for (auto* view : closing) if (auto* page = view->web_contents()) pages.push_back(page);
+    if (GuardPages(pages, base::BindOnce([](base::WeakPtr<WorkspaceWindow> w) { if (w) w->CloseOtherTabs(); }, weak_factory_.GetWeakPtr()))) return true;
+    // One timeline frame holds them all, so Time Machine or Cmd+Shift+T bring them back.
+    RecordTimeline(true, active_id());
+    base::AutoReset<bool> quiet(&closing_split_tabs_, true);
+    for (auto* view : closing) {
+      const auto found = std::find(host.tabs.begin(), host.tabs.end(), view);
+      if (found != host.tabs.end()) CloseWorkspaceTab(host.workspace_id, found - host.tabs.begin());
+    }
+    shell_->ShowToast(T(u"Zamknięto "), base::UTF8ToUTF16(std::string(sidebar::tab_count_copy(undo.size()))),
+        base::BindOnce([](base::WeakPtr<WorkspaceWindow> w, std::string id, std::vector<ClosedTabSlot> tabs) {
+          if (w) w->ReopenTabs(id, std::move(tabs));
+        }, weak_factory_.GetWeakPtr(), host.workspace_id, std::move(undo)));
+    return true;
+  }
+  return false;
+}
+bool WorkspaceWindow::ReopenTabs(std::string workspace_id, std::vector<ClosedTabSlot> tabs) {
+  if (!configuration_ready_ || profiles_busy_) return false;
+  for (auto& host : hosts_) {
+    if (host.workspace_id != workspace_id || host.sleeping) continue;
+    views::WebView* selected = host.view;
+    // Back in their places, unloaded until shown; the tab that stayed is untouched.
+    for (const auto& tab : tabs) {
+      auto* view = CreatePage(host.profile);
+      host.tabs.insert(host.tabs.begin() + std::min(tab.index, host.tabs.size()), view);
+      if (tab.url.SchemeIsHTTPOrHTTPS()) host.deferred_urls[view] = tab.url;
+      if (!tab.title.empty()) host.deferred_titles[view] = tab.title;
+      std::erase_if(closed_tabs_, [&](const ClosedTab& closed) { return closed.workspace_id == workspace_id && closed.url == tab.url; });
+    }
+    const auto found = std::find(host.tabs.begin(), host.tabs.end(), selected);
+    if (found != host.tabs.end()) host.active_tab = found - host.tabs.begin();
+    RefreshPanes(); UpdateShell(); SaveSession();
+    return true;
+  }
+  return false;
+}
 void WorkspaceWindow::CloseSplitTabs(size_t index) {
   if (!configuration_ready_ || profiles_busy_) return;
   for (auto& host : hosts_) {
@@ -1716,7 +1773,7 @@ void WorkspaceWindow::CloseSplitTabs(size_t index) {
     std::vector<content::WebContents*> pages;
     for (const auto& member : host.split) if (auto* page = member->web_contents()) pages.push_back(page);
     if (GuardPages(pages, base::BindOnce(&WorkspaceWindow::CloseSplitTabs, weak_factory_.GetWeakPtr(), index))) return;
-    SaveSnapshot(base::UTF16ToUTF8(T(u"Przed zamknięciem kart Split View")), true);
+    RecordTimeline(true, active_id());
     const std::vector<views::WebView*> members(host.split.begin(), host.split.end());
     const bool fresh = members.size() == host.tabs.size();
     if (fresh) host.tabs.push_back(CreatePage(host.profile));
@@ -1772,7 +1829,7 @@ void WorkspaceWindow::ToggleSplit() {
   for (auto& host : hosts_) {
     if (host.workspace_id != active_id()) continue;
     if (SplitShown(host)) {
-      SaveSnapshot(base::UTF16ToUTF8(T(u"Przed zamknięciem podziału")), true);
+      RecordTimeline(true, active_id());
       host.split.clear(); host.weights.clear(); host.vertical = false;
       RefreshPanes(); UpdateShell(); host.view->RequestFocus();
       return;
@@ -1908,7 +1965,8 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
     return true;
   }
   if (id == "extensions") { shell_->CloseOverlays(true); extensions_bar_->ToggleMenu(); return extensions_bar_->profile() != nullptr; }
-  if (id == "history") { shell_->OpenTools(3); return true; }
+  if (id == "fingerprint") { shell_->CloseOverlays(true); extensions_bar_->ToggleFingerprintPanel(); return extensions_bar_->fingerprint_panel_for_testing() != nullptr; }
+  if (id == "history") { ShowHistory(); return true; }
   if (id == "settings") { shell_->OpenGeneralSettings(); return true; }
   if (id == "address" || id == "new_tab" || id == "palette") {
     if (peek_view_ && GuardPages({peek_contents()}, base::BindOnce([](base::WeakPtr<WorkspaceWindow> w, std::string id) { if (w) w->RunShortcut(id); }, weak_factory_.GetWeakPtr(), id))) return true;
@@ -1918,6 +1976,7 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
     return true;
   }
   if (id == "close_tab") { CloseActiveTab(); return true; }
+  if (id == "close_other_tabs") return CloseOtherTabs();
   if (id == "reopen") return ReopenClosedTab();
   if (id == "sidebar") { shell_->ToggleSidebar(); return true; }
   if (id == "reload" || id == "back" || id == "forward") {
@@ -1928,7 +1987,8 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
   if (id == "left_pane" || id == "right_pane" || id == "third_pane" || id == "fourth_pane") {
     FocusPane(id == "left_pane" ? 0 : id == "right_pane" ? 1 : id == "third_pane" ? 2 : 3); return true;
   }
-  if (id == "timeline" || id == "snapshot") { shell_->OpenTools(0); return true; }
+  if (id == "timeline") { shell_->OpenTimeMachine(); return true; }
+  if (id == "snapshot") return SaveSnapshot(base::UTF16ToUTF8(T(u"Snapshot")));
   if (id == "sleep") return SleepWorkspace(active_id());
   if (id == "next_tab" || id == "previous_tab") {
     for (const auto& host : hosts_) if (host.workspace_id == active_id() && !host.tabs.empty()) {
@@ -3070,7 +3130,7 @@ void WorkspaceWindow::SaveSession() {
     auto entry = CaptureHost(host);
     session.Set(host.workspace_id, std::move(entry));
   }
-  if (base::Time::Now() - last_automatic_snapshot_ >= base::Minutes(5)) SaveSnapshot(base::UTF16ToUTF8(T(u"Punkt przywracania")), true);
+  RecordTimeline(false);
   ++pending_config_writes_;
   config_runner_->PostTaskAndReplyWithResult(FROM_HERE, base::BindOnce([](base::FilePath path, base::DictValue session) {
     std::string json;

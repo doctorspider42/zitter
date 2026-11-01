@@ -9,7 +9,9 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
+#include "base/callback_list.h"
 #include "base/timer/timer.h"
+#include "components/prefs/pref_change_registrar.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_model.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/metadata/metadata_header_macros.h"
@@ -38,6 +40,8 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
     base::RepeatingCallback<void(Profile*, const GURL&)> open_page;
     // The active space's color; it tints the bar's popovers.
     base::RepeatingCallback<SkColor()> workspace_color;
+    // Preferences, Privacy: where fingerprint protection is set.
+    base::RepeatingClosure open_privacy_settings;
   };
   // At most this many pinned actions show; the rest live in the menu.
   static constexpr size_t kMaxVisible = 6;
@@ -52,6 +56,9 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   void CloseMenus();
   // Runs an extension's action on the page: its popup, or action.onClicked.
   void RunAction(const std::string& id);
+  // The fingerprint protection panel, under its button (shown while the
+  // profile's protection is on).
+  void ToggleFingerprintPanel();
 
   Profile* profile() const { return profile_; }
   content::WebContents* page() const { return page_.get(); }
@@ -84,15 +91,23 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   views::Widget* popup_for_testing() const;
   content::WebContents* popup_contents_for_testing() const;
   bool tremor_for_testing() const { return tremor_count_ > 0; }
+  views::View* fingerprint_button_for_testing() const { return fingerprint_button_; }
+  views::Widget* fingerprint_panel_for_testing() const { return fingerprint_widget_.get(); }
+  std::u16string fingerprint_code_for_testing() const;
+  // Runs a panel command as its row would: 0 new fingerprint, 1 turn off,
+  // 2 privacy settings.
+  void RunFingerprintCommandForTesting(int command);
 
   class ActionButton;
   class Menu;
   class Popup;
+  class FingerprintPanel;
 
  private:
   friend class ActionButton;
   friend class Menu;
   friend class Popup;
+  friend class FingerprintPanel;
   friend class ExtensionsContextMenu;
   sidebar::DesignPalette palette() const;
   void DestroyMenu();
@@ -112,6 +127,11 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   int tab_id() const;
   SkColor workspace_color() const;
   void Tremor();
+  void ObserveFingerprintProtection();
+  void DestroyFingerprintPanel();
+  void NewFingerprint();
+  void TurnOffFingerprintProtection();
+  void OpenPrivacySettings();
 
   Callbacks callbacks_;
   raw_ptr<Profile> profile_ = nullptr;
@@ -120,6 +140,11 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   std::vector<raw_ptr<ActionButton>> buttons_;
   raw_ptr<views::View> divider_ = nullptr;
   raw_ptr<views::View> puzzle_ = nullptr;
+  raw_ptr<views::View> fingerprint_button_ = nullptr;
+  PrefChangeRegistrar fingerprint_pref_;
+  base::CallbackListSubscription fingerprint_key_;
+  std::unique_ptr<FingerprintPanel> fingerprint_panel_;
+  std::unique_ptr<views::Widget> fingerprint_widget_;
   // Bubble delegates and their CLIENT_OWNS_WIDGET widgets; the widget goes first.
   std::unique_ptr<Menu> menu_;
   std::unique_ptr<views::Widget> menu_widget_;
