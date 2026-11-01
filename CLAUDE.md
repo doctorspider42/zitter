@@ -44,3 +44,8 @@ no other session is building, and agree on the window with the sessions that use
 - Never click UAC prompts or install anything elevated yourself: the user does.
 - Write files with Python or the Write tool, not PowerShell `Set-Content`, which
   mangles Polish text.
+
+## Local releases
+
+Use `.claude/skills/zitter-local-release/SKILL.md` for local release builds and
+GitHub publication. The shared workflow is in `docs/local-releases.md`.

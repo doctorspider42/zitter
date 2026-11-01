@@ -12,6 +12,43 @@ spec.loader.exec_module(packager)
 
 
 class PackageTests(unittest.TestCase):
+    def test_every_hardlink_path_is_signed_independently(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory) / 'Zitter.app'
+            binary = app / 'Contents/MacOS/Chromium'
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b'\xcf\xfa\xed\xfe' + b'app')
+            (app / 'Contents/Info.plist').write_bytes(plistlib.dumps({'CFBundleExecutable': 'Chromium'}))
+            library = binary.parent / 'libexample.dylib'
+            library.write_bytes(b'\xcf\xfa\xed\xfe' + b'library')
+            alias = app / 'Contents/Frameworks/libexample.dylib'
+            alias.parent.mkdir()
+            packager.os.link(library, alias)
+            with mock.patch.object(packager.subprocess, 'run') as run:
+                packager.sign_bundle(app, 'test')
+            signed_paths = [c.args[0][-1] for c in run.call_args_list if '--sign' in c.args[0]]
+            self.assertEqual({str(library), str(alias), str(app)}, set(signed_paths))
+
+    def test_release_version_and_runtime_are_applied_before_signing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            framework = root / 'out/Chromium Framework.framework/Versions/1.0'
+            framework.mkdir(parents=True)
+            (framework / 'Chromium Framework').write_bytes(b'framework')
+            (root / 'out/zitter').write_bytes(b'app')
+            app = root / 'Zitter.app'
+            def verify_at_signing(destination, identity, hardened_runtime):
+                info = plistlib.loads((destination / 'Contents/Info.plist').read_bytes())
+                self.assertEqual('0.2.3', info['CFBundleVersion'])
+                self.assertEqual('0.2.3', info['CFBundleShortVersionString'])
+                self.assertTrue(hardened_runtime)
+            with mock.patch.object(packager, 'sign_bundle', side_effect=verify_at_signing) as sign:
+                packager.package(root / 'out', app, register=False, identity='test',
+                                 app_version='0.2.3', hardened_runtime=True)
+            sign.assert_called_once()
+            with self.assertRaisesRegex(ValueError, 'requires a signing identity'):
+                packager.package(root / 'out', root / 'Unsigned.app', hardened_runtime=True)
+
     def test_switching_outputs_removes_stale_component_libraries(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
