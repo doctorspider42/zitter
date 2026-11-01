@@ -55,7 +55,21 @@ def signing_identity(explicit=None):
     return identity
 
 
-def sign_bundle(app, identity):
+def runtime_signing_options(path, app):
+    """Use the pinned Chromium entitlement split, including Aperitif helpers."""
+    entitlements = ROOT / "chromium/signing"
+    if path == app:
+        return ["--options", "runtime,restrict,kill,library", "--entitlements",
+                str(entitlements / "browser.plist")]
+    if path.suffix == ".app" and path.name.endswith(("(Renderer).app", "(GPU).app",
+                                                     "(Aperitif Renderer).app", "(Aperitif GPU).app")):
+        # Match Chromium: JIT processes omit the explicit library-validation flag.
+        return ["--options", "runtime,restrict,kill", "--entitlements",
+                str(entitlements / "jit-helper.plist")]
+    return ["--options", "runtime,restrict,kill,library"]
+
+
+def sign_bundle(app, identity, hardened_runtime=False):
     """Sign nested code from the inside out, then verify the complete seal."""
     magic = {b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf",
              b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
@@ -80,15 +94,14 @@ def sign_bundle(app, identity):
             name = plistlib.load(stream)["CFBundleExecutable"]
         executable = bundle / name if bundle.suffix == ".framework" else bundle / "Contents/MacOS" / name
         executables.add(executable.resolve())
-    unique_files = {}
-    for path in files:
-        if path.resolve() not in executables:
-            stat = path.stat()
-            unique_files.setdefault((stat.st_dev, stat.st_ino), path)
-    files = list(unique_files.values())
+    # codesign can replace a file atomically, breaking its hard links. Sign every
+    # physical pathname: signing one inode alias does not sign the other copies.
+    files = [path for path in files if path.resolve() not in executables]
     # Do not use --deep for signing: each nested code object needs its own seal.
     def sign(path):
         command = ["/usr/bin/codesign", "--force", "--sign", identity, "--timestamp"]
+        if hardened_runtime:
+            command += runtime_signing_options(path, app)
         if path == app:
             command += ["--identifier", BUNDLE_ID]
         subprocess.run(command + [str(path)], check=True)
@@ -125,7 +138,12 @@ def brand_notification_helpers(framework, icon):
             plistlib.dump(info, stream)
 
 
-def package(out, destination, binary="zitter", register=True, identity=None, third_party_licenses=None):
+def package(out, destination, binary="zitter", register=True, identity=None, third_party_licenses=None,
+            app_version="0.1.0", hardened_runtime=False):
+    if not re.fullmatch(r"\d+\.\d+\.\d+", app_version):
+        raise ValueError("App version must contain three numeric components, e.g. 0.1.0")
+    if hardened_runtime and not identity:
+        raise ValueError("Hardened runtime packaging requires a signing identity")
     out = out.resolve()
     destination = destination.absolute()
     if not re.fullmatch(r"zitter(?:_[a-z0-9]+)*", binary):
@@ -243,8 +261,8 @@ def package(out, destination, binary="zitter", register=True, identity=None, thi
         "CFBundleName": "Zitter",
         "CFBundleDisplayName": "Zitter",
         "CFBundlePackageType": "APPL",
-        "CFBundleVersion": "0.1.0",
-        "CFBundleShortVersionString": "0.1.0",
+        "CFBundleVersion": app_version,
+        "CFBundleShortVersionString": app_version,
         "CrProductDirName": "Zitter",
         "LSMinimumSystemVersion": "13.0",
         "NSHighResolutionCapable": True,
@@ -267,7 +285,10 @@ def package(out, destination, binary="zitter", register=True, identity=None, thi
     (contents / "zitter-development-bundle").unlink(missing_ok=True)
     os.utime(destination)
     if identity:
-        sign_bundle(destination, identity)
+        if hardened_runtime:
+            sign_bundle(destination, identity, hardened_runtime=True)
+        else:
+            sign_bundle(destination, identity)
     if register and LSREGISTER.exists() and destination.is_relative_to(ROOT):
         subprocess.run([str(LSREGISTER), "-f", str(destination)], check=False)
     print(destination)
@@ -280,6 +301,8 @@ def main():
     parser.add_argument("--binary", default="zitter", help="Regular application target basename")
     parser.add_argument("--third-party-licenses", type=Path, help="Target-audited license collection to include before signing")
     parser.add_argument("--no-register", action="store_true", help="Skip LaunchServices registration for benchmark bundles")
+    parser.add_argument("--app-version", default="0.1.0", help="Numeric application version (default: 0.1.0)")
+    parser.add_argument("--hardened-runtime", action="store_true", help="Sign with Chromium runtime entitlements for notarization")
     signing = parser.add_mutually_exclusive_group()
     signing.add_argument("--sign-identity", help="Permanent certificate name or SHA-1; saved locally after success")
     signing.add_argument("--unsigned", action="store_true", help="Explicit opt-out for disposable test bundles")
@@ -295,7 +318,9 @@ def main():
         # Do not replace the installed bundle until signing and verification pass.
         with tempfile.TemporaryDirectory(prefix=".zitter-package-", dir=destination.parent) as stage:
             staged_app = Path(stage) / destination.name
-            package(args.out, staged_app, args.binary, register=False, identity=identity, third_party_licenses=args.third_party_licenses)
+            package(args.out, staged_app, args.binary, register=False, identity=identity,
+                    third_party_licenses=args.third_party_licenses, app_version=args.app_version,
+                    hardened_runtime=args.hardened_runtime)
             previous = Path(stage) / "previous.app"
             if destination.exists():
                 destination.rename(previous)

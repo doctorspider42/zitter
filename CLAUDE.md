@@ -31,3 +31,8 @@ differs, and only then hand over the final screenshot.
 Several sessions stage into `.chromium/src/zitter_ui_lab` and build in
 `.chromium/src/out/ZitterOptimized`. Before staging or running ninja there, make sure
 no other session is building, and agree on the window with the sessions that use it.
+
+## Local releases
+
+Use `.claude/skills/zitter-local-release/SKILL.md` for local release builds and
+GitHub publication. The shared workflow is in `docs/local-releases.md`.

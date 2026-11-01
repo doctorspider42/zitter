@@ -1,0 +1,300 @@
+# Local releases
+
+Use this workflow to build Zitter on a local machine and publish the resulting
+application to `doctorspider42/zitter`. A request for a local build alone does not
+authorize GitHub publication. A request to publish a release authorizes creating
+the release and uploading its files without another confirmation.
+
+## One version, one release
+
+**Build every operating system's assets for a version from the same source tag
+and attach them to the same GitHub release.** macOS can be published first and
+Windows added later. Never create an OS-specific release for the same version,
+move a published tag, or attach a different source revision under that version.
+If Windows requires source fixes, publish a new version for that changed source.
+
+Inspect the working tree, tags and remote releases before choosing a version:
+
+```sh
+git status --short
+git rev-parse HEAD
+git remote -v
+gh auth status
+gh release list --repo doctorspider42/zitter
+git ls-remote --tags origin
+```
+
+For an existing version, fetch and inspect the tag. Build it in a clean checkout
+or worktree rather than switching a working tree containing unrelated edits:
+
+```sh
+git fetch origin tag v0.1.0
+git rev-parse 'v0.1.0^{commit}'
+gh release view v0.1.0 --repo doctorspider42/zitter \
+  --json tagName,targetCommitish,isDraft,isPrerelease,assets,url
+```
+
+Examples use `v0.1.0`; substitute the requested version throughout. Compare the
+tag's actual commit with the build's recorded commit; `targetCommitish` alone is
+not proof because it can contain a branch name. Do not label uncommitted product
+changes as a build of a clean published tag. Documentation-only additions do not
+require rebuilding an already published binary.
+
+## macOS: build the optimized application
+
+The existing local Rust UI setup uses `.chromium/src/zitter_ui_lab`,
+`.chromium/src/out/ZitterOptimized`, and target `zitter_ui_lab`. Check for another
+active build before staging into these shared directories; do not interrupt it.
+
+```sh
+pgrep -fl 'ninja|build.sh'
+cat .chromium/src/out/ZitterOptimized/args.gn
+./build.sh
+```
+
+Read the actual GN arguments, not just the output directory's name. A release
+requires `is_debug = false`. The optimized setup used for v0.1.0 also has
+`is_component_build = false`, ThinLTO, and PGO. `chromium/release.args.gn` is an
+older component configuration, not the authoritative optimized configuration.
+If PGO is enabled, its pinned profile must be available. Do not silently fall
+back to a Debug build when a release configuration fails.
+
+`build.sh` stages prototype sources, builds with Chromium's own Ninja and packages
+`build/ZitterRustMetal.app`. It requires the existing overlay and local signing
+configuration; it is not a fresh-checkout bootstrap script. Check that the
+staged source and Chromium patches correspond to the intended revision. The
+helper does not restage all application/bootstrap files or install every upstream
+patch. Preserve intentional local setup and record any build-overlay differences
+instead of assuming that staging the prototype synchronizes the entire browser.
+
+Audit the actual target and collect its license notices:
+
+```sh
+python3 tools/audit_licenses.py \
+  --app build/ZitterRustMetal.app \
+  --out .chromium/src/out/ZitterOptimized \
+  --target //zitter_ui_lab:zitter_ui_lab \
+  --destination build/releases/v0.1.0/audit
+python3 tools/package_app.py \
+  --out .chromium/src/out/ZitterOptimized \
+  --binary zitter_ui_lab \
+  --app-version 0.1.0 --hardened-runtime \
+  --destination build/releases/v0.1.0/Zitter.app \
+  --no-register \
+  --third-party-licenses build/releases/v0.1.0/audit/THIRD_PARTY_LICENSES.txt
+```
+
+Signing uses `ZITTER_CODESIGN_IDENTITY` or `.zitter-signing.json` and the macOS
+Keychain. Do not commit credentials. Pass `--app-version` to set both bundle
+version fields. `--hardened-runtime` signs nested code from the inside out using
+the Chromium browser/renderer/GPU entitlement split in `chromium/signing/`.
+These entitlements match the pinned Chromium signing configuration; renderer
+and GPU helpers, including Aperitif variants, receive `allow-jit`.
+
+Inspect the audit's unmatched binaries, dependency paths and metadata diagnostics.
+The repository's `docs/licenses/supplements.json` covers known metadata gaps;
+do not describe scanner output as a complete compliance certificate. Include
+`LICENSE`, `NOTICE`, fonts and their licenses, and `THIRD_PARTY_LICENSES.txt` in
+the app. Check for absolute checkout dependencies and broken symlinks: the
+packager's development-bundle description does not promise a portable installer.
+
+Run the packaged application with an isolated profile. The existing short
+navigation probe exercises page loading, new tabs, Split View and clean exit:
+
+```sh
+python3 tools/benchmark_app.py \
+  --app build/releases/v0.1.0/Zitter.app \
+  --scenario navigation --iterations 1 --tabs 2 \
+  --label v0.1.0-release-smoke --results build/releases/v0.1.0/smoke
+```
+
+This probe expects the packager's ownership marker. After verification, replace
+`Contents/Resources/zitter-development-bundle` with release build metadata so
+the distributed app does not expose the local checkout path. Make all resource
+and version changes before signing the outer bundle again with the configured
+identity. Verify the final seal:
+
+```sh
+codesign --verify --deep --strict build/releases/v0.1.0/Zitter.app
+ditto -c -k --sequesterRsrc --keepParent \
+  build/releases/v0.1.0/Zitter.app \
+  build/releases/v0.1.0/Zitter-v0.1.0-macos-arm64.zip
+```
+
+Validate the archive and, when portability is uncertain, launch an extracted copy
+outside the checkout. Developer ID signing and Apple notarization are separate:
+report the actual notarization status and possible first-launch Gatekeeper block.
+Do not claim a notarized installer or working updater unless verified.
+
+For a notarized distribution, use the automated workflow below instead of
+publishing the intermediate ZIP. It removes the development marker itself.
+
+## Apple notarization
+
+The existing team is `7L5KF39DAR`; the local Developer ID Application identity
+is already configured. An App Store listing, new App ID, provisioning profile,
+or new Developer ID certificate is not needed for this workflow. Notarization
+uses the existing certificate and a separate credential for Apple's service.
+
+### One-time account setup (user action)
+
+1. Open [Apple Account](https://account.apple.com/) and sign in using the same
+   developer account. Apple Developer and Apple Account can require separate
+   sign-ins. Complete any two-factor authentication yourself.
+2. Open **Sign-In and Security**, then **App-Specific Passwords**.
+3. Generate an app-specific password named `Zitter notarization`. Complete any
+   password confirmation yourself. Keep the generated value private; do not put
+   it in chat, a shell command, repository file, environment file or logs.
+4. In a local Terminal, run the following command, substituting your Apple
+   Account email. Paste the generated app-specific password into its secure
+   prompt. This validates and saves it under the `zitter-notary` Keychain profile:
+
+   ```sh
+   xcrun notarytool store-credentials zitter-notary \
+     --apple-id YOUR_APPLE_ACCOUNT_EMAIL --team-id 7L5KF39DAR
+   ```
+
+5. Tell the agent that the Keychain profile is ready. The script needs only its
+   name, not the password. App Store Connect API credentials can also be stored
+   with `notarytool store-credentials` if the user already has an appropriate key;
+   do not create or broaden account access just to avoid the interactive setup.
+
+Apple requires two-factor authentication for app-specific passwords. Changing
+the primary Apple Account password revokes those passwords, so repeat setup
+when needed. Browser automation can inspect the existing team/certificate and
+navigate to the settings, but the user must generate and enter the new credential.
+
+### Prepare, test, submit and resume
+
+Prepare a private copy without contacting Apple:
+
+```sh
+python3 tools/notarize_app.py \
+  --app build/releases/v0.1.0/Zitter.app \
+  --destination build/notarization/v0.1.0 --prepare-only
+python3 tools/smoke_release_app.py \
+  --app build/notarization/v0.1.0/work/Zitter.app \
+  --results build/notarization/v0.1.0-smoke
+```
+
+`--results` must be a new directory. This smoke probe exercises navigation,
+new tabs, Split View and clean exit using normal Chromium helpers and an isolated
+profile. It does not modify signed app resources or require a development marker.
+
+The preparer preserves the source application and build outputs, removes local
+development markers, signs all nested code with Hardened Runtime and a timestamp,
+then writes `submission.zip` and `notarization-state.json`. The source must
+already include its license notices. Use `--sign-identity` only to deliberately
+select another configured certificate. No signing credentials are written to
+the state file.
+
+Every physical Mach-O path is signed and checked for Developer ID, secure
+timestamp and Hardened Runtime, including duplicate hard-linked library copies.
+`codesign` can replace one hard-link path without updating its aliases; inode
+deduplication during signing leaves those copies ad-hoc signed. A successful
+outer `codesign --verify --deep` alone does not catch this notarization failure.
+
+After the Keychain setup and smoke test, run the same command without
+`--prepare-only`:
+
+```sh
+python3 tools/notarize_app.py \
+  --app build/releases/v0.1.0/Zitter.app \
+  --destination build/notarization/v0.1.0 \
+  --keychain-profile zitter-notary
+```
+
+It validates the Keychain credential, submits the ZIP to Apple, records the
+submission ID, polls for acceptance, retrieves Apple's log, staples and validates
+the ticket on the `.app`, verifies signatures, checks Gatekeeper, and only then
+creates the final `*-notarized.zip` and its SHA-256 file. ZIP archives cannot
+themselves be stapled; they must be regenerated after stapling the app.
+
+The default polling timeout is 20 minutes. Exit code 2 means Apple is still
+processing; rerun the same command to resume the saved submission without another
+upload. Exit code 1 means failure: inspect the error and, for rejection,
+`notarization-log.json`. Do not retry rejected submissions without fixing their
+cause. Preserve the work directory while a submission is pending. A changed
+prepared app/archive is refused; use a new destination when intentionally
+preparing another candidate. If an upload is interrupted before its ID is saved,
+inspect `notarytool history` and reconcile the submission before rerunning.
+The script refuses to upload again after an interrupted upload; pass
+`--submission-id THE_MATCHING_ID` to recover it. Before stapling, it checks that
+the SHA-256 in Apple's accepted submission log matches the prepared archive.
+
+Use the final ZIP for release upload. Keep Apple's logs and state locally; a
+public build report may include the submission ID, final checksum, verified
+signing/notarization status and checks performed, with local paths omitted.
+Do not change app resources or signatures after notarization. The automated
+script does not upload or replace GitHub release assets.
+
+For an already published unnotarized build of the same product source, append
+the explicitly named `*-notarized.zip` and its separate checksum to that same
+release. Preserve the original tag and assets, and update the notes to identify
+the recommended download. Record signing/packaging changes in build metadata;
+product source changes still require a new version.
+
+References: [Apple notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow),
+[Apple app-specific passwords](https://support.apple.com/en-us/102654).
+
+## Windows: build the same tagged source
+
+Use a Windows machine with Chromium's Windows toolchain and the revision pinned
+in `chromium/revision.json`. Inspect the checkout's Windows build support and
+use its actual native target with `is_debug=false` and the intended architecture.
+The macOS `build.sh` and `tools/package_app.py` do not build or package Windows.
+Windows support is still in progress; there is no validated Windows packaging
+command in this workflow. Do not invent a successful build or upload a lone EXE
+without its required runtime resources. Resolve missing platform support as
+source work and use a new version if it changes the published source tag.
+
+Package and smoke-test the application on Windows with an isolated profile,
+including its required DLLs, Chromium resources and license notices. Name files
+with the version, platform and architecture, for example
+`Zitter-v0.1.0-windows-x64.zip`. Record the exact source commit, Chromium revision,
+GN arguments, signature status and checks performed.
+
+## Publish or append assets
+
+Create platform-specific checksum and build metadata files, for example
+`SHA256SUMS-macos-arm64.txt` and `Zitter-v0.1.0-macos-arm64-build.json`.
+Use SHA-256 (`shasum -a 256` on macOS or `Get-FileHash -Algorithm SHA256` in
+PowerShell). Include artifact basenames in checksum files. Platform-specific
+names let Windows add its checksums without replacing the macOS file.
+
+Write release notes to a file in English and use `--notes-file` to preserve
+newlines. Describe included platforms, installation, relevant changes and actual
+limitations. Keep artifacts and local logs under ignored `build/releases/`.
+
+If the release does not exist, create it against the exact built commit:
+
+```sh
+gh release create v0.1.0 \
+  build/releases/v0.1.0/Zitter-v0.1.0-macos-arm64.zip \
+  build/releases/v0.1.0/SHA256SUMS-macos-arm64.txt \
+  build/releases/v0.1.0/Zitter-v0.1.0-macos-arm64-build.json \
+  --repo doctorspider42/zitter --target FULL_SOURCE_COMMIT_SHA \
+  --title 'Zitter v0.1.0' --notes-file build/releases/v0.1.0/release-notes.md
+```
+
+If it already exists, **upload to that release**. For example, from Windows:
+
+```powershell
+gh release upload v0.1.0 build/releases/v0.1.0/Zitter-v0.1.0-windows-x64.zip build/releases/v0.1.0/SHA256SUMS-windows-x64.txt build/releases/v0.1.0/Zitter-v0.1.0-windows-x64-build.json --repo doctorspider42/zitter
+```
+
+Do not use `--clobber` or replace another platform's assets by default. Inspect
+an asset-name collision: an identical uploaded digest means the file is already
+present; a different digest requires resolving the discrepancy before replacing
+anything. Preserve existing notes and release flags; update platform availability
+in the notes when adding Windows. Do not recreate a published release.
+
+If GitHub rejects an upload, inspect the error and current assets before retrying.
+Check `gh api repos/doctorspider42/zitter/immutable-releases` when immutability is
+relevant. Published immutable releases cannot accept additional assets: explain
+the constraint without changing repository settings or moving tags. For future
+immutable versions, collect every platform's assets in a draft before publishing.
+
+Finally, inspect `gh release view` and verify the published tag commit, draft
+status, asset sizes and SHA-256 digests against the local files. Report the release
+URL, included platform, checks performed and any material packaging limitation.
