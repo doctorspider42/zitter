@@ -15,5 +15,7 @@ do not create another release or move the tag.
 For macOS notarization, follow the Apple notarization section in the shared
 workflow. Use `tools/notarize_app.py` and the `zitter-notary` Keychain profile;
 test the prepared Hardened Runtime app before submission. The user generates
-and enters new Apple credentials privately. Publish only the final stapled ZIP
-after Apple acceptance and Gatekeeper verification.
+and enters new Apple credentials privately. Use `tools/package_dmg.py` to wrap
+the stapled app in a signed, notarized DMG with an Applications shortcut. Publish
+the final DMG after image, mounted-app and quarantined-app checks pass; internal
+ZIPs are notarization inputs, not the default user download.

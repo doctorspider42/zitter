@@ -49,6 +49,18 @@ def archive(app, destination):
     run(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", str(app), str(destination)])
 
 
+def notary_read(command):
+    """Retry transient Apple network reads, never submissions or auth errors."""
+    for attempt in range(3):
+        try:
+            return run(command, capture=True)
+        except subprocess.CalledProcessError as error:
+            if attempt == 2 or not re.search(r"NSURLErrorDomain Code=-(?:1001|1003|1005|1009)\b", error.stderr or ""):
+                raise
+            print("Temporary Apple network error; retrying the same read", flush=True)
+            time.sleep(3 * (attempt + 1))
+
+
 def verify_nested_signatures(app):
     """A valid outer seal can still contain ad-hoc-signed nested libraries."""
     magic = {b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf",
@@ -116,21 +128,17 @@ def prepare(source, destination, identity):
     return state
 
 
-def notarize(destination, state, profile, timeout, poll_interval):
-    state_path = destination / "notarization-state.json"
-    app = destination / "work/Zitter.app"
-    upload = destination / "submission.zip"
-    run(["codesign", "--verify", "--deep", "--strict", str(app)])
-    verify_nested_signatures(app)
-    if cdhash(app) != state["cdhash"] or sha256(upload) != state["upload_sha256"]:
-        raise ValueError("Prepared app or submission archive changed; use a new destination")
+def wait_for_acceptance(destination, state, profile, upload, state_path, timeout, poll_interval):
+    """Submit a ZIP or DMG once, resume its ID and verify Apple's archive hash."""
+    if sha256(upload) != state["upload_sha256"]:
+        raise ValueError("Prepared submission changed; use a new destination")
     auth = ["--keychain-profile", profile, "--output-format", "json"]
     if not state.get("submission_id"):
         if state["status"] == "Submitting":
             raise ValueError("Previous upload was interrupted before saving its ID. Inspect notarytool history, "
                              "then rerun with --submission-id for the matching upload")
         # Credential validation precedes uploading any application bytes.
-        run(["xcrun", "notarytool", "history", *auth], capture=True)
+        notary_read(["xcrun", "notarytool", "history", *auth])
         state["status"] = "Submitting"
         save(state_path, state)
         result = run(["xcrun", "notarytool", "submit", str(upload), *auth], capture=True)
@@ -140,7 +148,7 @@ def notarize(destination, state, profile, timeout, poll_interval):
         print(f"Apple submission: {state['submission_id']}", flush=True)
     deadline = time.monotonic() + timeout
     while True:
-        result = run(["xcrun", "notarytool", "info", state["submission_id"], *auth], capture=True)
+        result = notary_read(["xcrun", "notarytool", "info", state["submission_id"], *auth])
         response = json.loads(result.stdout)
         state["status"] = response["status"]
         save(state_path, state)
@@ -148,18 +156,31 @@ def notarize(destination, state, profile, timeout, poll_interval):
         if state["status"] == "Accepted":
             break
         if state["status"] in ("Invalid", "Rejected"):
-            run(["xcrun", "notarytool", "log", state["submission_id"],
+            notary_read(["xcrun", "notarytool", "log", state["submission_id"],
                  str(destination / "notarization-log.json"), "--keychain-profile", profile])
             raise ValueError("Apple rejected the submission; inspect notarization-log.json before retrying")
         if time.monotonic() >= deadline:
             print("Still pending at Apple. Run the same command to resume; no new upload is needed.")
             return False
         time.sleep(min(poll_interval, max(0, deadline - time.monotonic())))
-    run(["xcrun", "notarytool", "log", state["submission_id"],
+    notary_read(["xcrun", "notarytool", "log", state["submission_id"],
          str(destination / "notarization-log.json"), "--keychain-profile", profile])
     log = json.loads((destination / "notarization-log.json").read_text())
     if log.get("sha256", "").lower() != state["upload_sha256"]:
         raise ValueError("Apple's accepted submission does not match this archive's SHA-256")
+    return True
+
+
+def notarize(destination, state, profile, timeout, poll_interval):
+    state_path = destination / "notarization-state.json"
+    app = destination / "work/Zitter.app"
+    upload = destination / "submission.zip"
+    run(["codesign", "--verify", "--deep", "--strict", str(app)])
+    verify_nested_signatures(app)
+    if cdhash(app) != state["cdhash"] or sha256(upload) != state["upload_sha256"]:
+        raise ValueError("Prepared app or submission archive changed; use a new destination")
+    if not wait_for_acceptance(destination, state, profile, upload, state_path, timeout, poll_interval):
+        return False
     run(["xcrun", "stapler", "staple", str(app)])
     run(["xcrun", "stapler", "validate", str(app)])
     run(["codesign", "--verify", "--deep", "--strict", str(app)])

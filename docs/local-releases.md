@@ -5,6 +5,12 @@ application to `doctorspider42/zitter`. A request for a local build alone does n
 authorize GitHub publication. A request to publish a release authorizes creating
 the release and uploading its files without another confirmation.
 
+The default macOS download is a signed and notarized **DMG**, containing the
+signed/notarized `Zitter.app` and an `Applications` shortcut. Users open the DMG,
+drag the app into Applications, eject the image and launch the installed app.
+The `.app` is the actual application bundle; the `.dmg` is its distribution disk
+image. No privileged installer package is needed for this drag-and-drop install.
+
 ## One version, one release
 
 **Build every operating system's assets for a version from the same source tag
@@ -116,9 +122,6 @@ identity. Verify the final seal:
 
 ```sh
 codesign --verify --deep --strict build/releases/v0.1.0/Zitter.app
-ditto -c -k --sequesterRsrc --keepParent \
-  build/releases/v0.1.0/Zitter.app \
-  build/releases/v0.1.0/Zitter-v0.1.0-macos-arm64.zip
 ```
 
 Validate the archive and, when portability is uncertain, launch an extracted copy
@@ -126,8 +129,9 @@ outside the checkout. Developer ID signing and Apple notarization are separate:
 report the actual notarization status and possible first-launch Gatekeeper block.
 Do not claim a notarized installer or working updater unless verified.
 
-For a notarized distribution, use the automated workflow below instead of
-publishing the intermediate ZIP. It removes the development marker itself.
+For distribution, use the automated app notarization and DMG workflow below.
+It removes the development marker itself. ZIPs produced during app notarization
+are intermediate artifacts and are not uploaded as the default user download.
 
 ## Apple notarization
 
@@ -222,17 +226,59 @@ The script refuses to upload again after an interrupted upload; pass
 `--submission-id THE_MATCHING_ID` to recover it. Before stapling, it checks that
 the SHA-256 in Apple's accepted submission log matches the prepared archive.
 
-Use the final ZIP for release upload. Keep Apple's logs and state locally; a
+Keep Apple's logs and state locally; a
 public build report may include the submission ID, final checksum, verified
 signing/notarization status and checks performed, with local paths omitted.
 Do not change app resources or signatures after notarization. The automated
 script does not upload or replace GitHub release assets.
 
-For an already published unnotarized build of the same product source, append
-the explicitly named `*-notarized.zip` and its separate checksum to that same
-release. Preserve the original tag and assets, and update the notes to identify
-the recommended download. Record signing/packaging changes in build metadata;
-product source changes still require a new version.
+### Create the downloadable DMG
+
+After app notarization completes, package the stapled app:
+
+```sh
+python3 tools/package_dmg.py \
+  --app build/notarization/v0.1.0/work/Zitter.app \
+  --destination build/releases/v0.1.0-dmg \
+  --keychain-profile zitter-notary
+```
+
+This command validates the source app and its ticket, copies it without changing
+the signature, adds an `Applications` shortcut and installation instructions,
+creates a compressed read-only disk image, signs it with Developer ID, and
+submits the DMG itself to Apple. It uses the same submission/resume logic as app
+notarization. `--prepare-only` stops before submission; `--submission-id` recovers
+an interrupted upload after reconciliation with Apple's history.
+Transient DNS/connection failures on Apple status reads are retried up to three
+times. Persistent failures stop with the submission ID preserved; rerun to resume.
+Uploads and authentication failures are never retried automatically.
+
+After acceptance, the script staples the DMG and checks its checksum, signature,
+ticket and Gatekeeper assessment. It mounts the final image read-only, verifies
+that its app signature and ticket match the original, then copies that app to a
+temporary directory, applies browser-download quarantine and runs
+`syspolicy_check distribution`. This adds quarantine protection; never remove
+quarantine attributes or tell users to bypass Gatekeeper as a packaging fix.
+Mounted test volumes are detached automatically.
+
+Publish only these final outputs by default:
+
+- `Zitter-v0.1.0-macos-arm64.dmg`
+- `SHA256SUMS-macos-arm64-dmg.txt`
+- `Zitter-v0.1.0-macos-arm64-dmg-build.json`
+
+For an existing version, append the DMG to that same release and make its direct
+download link prominent in the release notes. Clearly label earlier ZIPs as
+legacy; an unnotarized ZIP must never be the recommended download. Do not delete
+published assets without authorization. Product source changes still require a
+new version; changing distribution packaging alone does not move the source tag.
+
+If a user sees “Apple cannot check it for malicious software”, inspect the exact
+downloaded copy with `codesign -dvv` and `stapler validate`, and compare its code
+hash with the published build. A valid local development build is not proof that
+the downloaded copy is notarized. In v0.1.0, the first ZIP remained available
+alongside the later notarized ZIP; the unnotarized copy in Downloads had the
+earlier signature and no stapled ticket. Avoid that ambiguity in future releases.
 
 References: [Apple notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow),
 [Apple app-specific passwords](https://support.apple.com/en-us/102654).
@@ -243,10 +289,22 @@ Use a Windows machine with Chromium's Windows toolchain and the revision pinned
 in `chromium/revision.json`. Inspect the checkout's Windows build support and
 use its actual native target with `is_debug=false` and the intended architecture.
 The macOS `build.sh` and `tools/package_app.py` do not build or package Windows.
-Windows support is still in progress; there is no validated Windows packaging
-command in this workflow. Do not invent a successful build or upload a lone EXE
-without its required runtime resources. Resolve missing platform support as
-source work and use a new version if it changes the published source tag.
+Read `docs/windows-port.md` for the current toolchain, build and validation
+instructions. The current main branch provides component, static Release and
+ThinLTO/PGO configurations, plus `tools/package_win.py` for a portable ZIP and a
+standalone setup EXE. Prefer the standalone installer as the user download;
+include the audited license collection. For an already built official target:
+
+```powershell
+python tools/package_win.py --out .chromium/src/out/ZitterWinOfficial --setup .chromium/src/out/ZitterWinOfficial/zitter_setup.exe --destination build/official --third-party-licenses build/license-audit/windows/THIRD_PARTY_LICENSES.txt
+```
+
+Inspect the actual outputs and Authenticode status; the documented installer
+currently ships unsigned. Never upload a lone browser EXE without its runtime
+resources. Earlier tags, including the original v0.1.0 source, predate this port:
+Windows changes on current main require a new product version rather than being
+attached as if built from the older tag. The version embedded in the executable
+alone does not establish that its source matches the release.
 
 Package and smoke-test the application on Windows with an isolated profile,
 including its required DLLs, Chromium resources and license notices. Name files
@@ -270,9 +328,9 @@ If the release does not exist, create it against the exact built commit:
 
 ```sh
 gh release create v0.1.0 \
-  build/releases/v0.1.0/Zitter-v0.1.0-macos-arm64.zip \
-  build/releases/v0.1.0/SHA256SUMS-macos-arm64.txt \
-  build/releases/v0.1.0/Zitter-v0.1.0-macos-arm64-build.json \
+  build/releases/v0.1.0-dmg/Zitter-v0.1.0-macos-arm64.dmg \
+  build/releases/v0.1.0-dmg/SHA256SUMS-macos-arm64-dmg.txt \
+  build/releases/v0.1.0-dmg/Zitter-v0.1.0-macos-arm64-dmg-build.json \
   --repo doctorspider42/zitter --target FULL_SOURCE_COMMIT_SHA \
   --title 'Zitter v0.1.0' --notes-file build/releases/v0.1.0/release-notes.md
 ```

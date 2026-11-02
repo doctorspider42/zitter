@@ -124,6 +124,23 @@ class NotarizationTests(unittest.TestCase):
 
 
 class NestedSignatureTests(unittest.TestCase):
+    def test_transient_network_read_is_retried_without_resubmission(self):
+        command = ['xcrun', 'notarytool', 'info', 'existing-id']
+        failure = subprocess.CalledProcessError(1, command, stderr='NSURLErrorDomain Code=-1003')
+        success = subprocess.CompletedProcess(command, 0, '{}')
+        with mock.patch.object(notarizer, 'run', side_effect=[failure, success]) as run, mock.patch.object(notarizer.time, 'sleep'):
+            self.assertIs(success, notarizer.notary_read(command))
+        self.assertEqual(2, run.call_count)
+        self.assertTrue(all(call.args[0] == command for call in run.call_args_list))
+
+    def test_authentication_error_is_not_retried(self):
+        command = ['xcrun', 'notarytool', 'info', 'existing-id']
+        failure = subprocess.CalledProcessError(1, command, stderr='HTTP status code 401')
+        with mock.patch.object(notarizer, 'run', side_effect=failure) as run:
+            with self.assertRaises(subprocess.CalledProcessError):
+                notarizer.notary_read(command)
+        self.assertEqual(1, run.call_count)
+
     def test_adhoc_nested_library_is_rejected_even_when_outer_seal_verifies(self):
         with tempfile.TemporaryDirectory() as directory:
             app = Path(directory) / 'Zitter.app'
