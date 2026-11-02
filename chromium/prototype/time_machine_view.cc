@@ -752,7 +752,12 @@ void TimeMachineView::Layout(PassKey) {
   // The clock grows with the window, up to the design's 200 px.
   const int region_top = 64, region_bottom = axis_->y() - 24;
   digit_size_ = std::clamp(region_bottom - region_top - 400, 80, 200);
-  const int block = 24 + digit_size_ + 36 + 230 + 34 + 62;
+  // A short window (a 1080p screen at 200%) tightens the gaps around the deck
+  // before anything reaches the axis.
+  int clock_gap = 36, restore_gap = 34;
+  if (const int spare = region_bottom - region_top - (24 + digit_size_ + 230 + 62); spare < clock_gap + restore_gap)
+    clock_gap = restore_gap = std::max(8, spare / 2);
+  const int block = 24 + digit_size_ + clock_gap + 230 + restore_gap + 62;
   const int top = region_top + std::max(0, (region_bottom - region_top - block) / 2);
   const int reel_w = std::lround(digit_size_ * 0.58f), colon_w = std::lround(digit_size_ * 0.26f);
   const int clock_w = 4 * reel_w + colon_w;
@@ -762,15 +767,15 @@ void TimeMachineView::Layout(PassKey) {
     if (i == 2) { colon_ = gfx::Rect(x, clock_.y(), colon_w, digit_size_); x += colon_w; }
     reels_[i]->SetBounds(x, clock_.y(), reel_w, digit_size_); x += reel_w;
   }
-  const gfx::Rect deck_bounds(0, clock_.bottom() + 36, w, 230);
+  const gfx::Rect deck_bounds(0, clock_.bottom() + clock_gap, w, 230);
   const bool deck_moved = deck_bounds != deck_bounds_;
   deck_bounds_ = deck_bounds;
   deck_->SetBoundsRect(gfx::Rect(0, deck_bounds_.y(), w, TimeMachineCard::kHeight + 24));
   const auto button = restore_->GetPreferredSize();
-  restore_->SetBounds((w - button.width()) / 2, deck_bounds_.bottom() + 34, button.width(), button.height());
+  restore_->SetBounds((w - button.width()) / 2, deck_bounds_.bottom() + restore_gap, button.width(), button.height());
   const auto enable = enable_->GetPreferredSize();
   enable_->SetBounds((w - enable.width()) / 2, deck_bounds_.y() + 120, enable.width(), enable.height());
-  caption_ = gfx::Rect(0, restore_->bounds().bottom() + 10, w, 16);
+  caption_ = gfx::Rect(0, std::min(restore_->bounds().bottom() + 10, axis_->y() - 20), w, 16);
   // Only a new deck position re-places the cards; label changes keep them turning.
   if (deck_moved) PlaceCards();
 }
