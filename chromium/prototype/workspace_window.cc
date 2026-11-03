@@ -2698,6 +2698,7 @@ void WorkspaceWindow::ShowWelcome() {
         setup.sources = std::move(found);
         setup.space_name = starter ? base::UTF8ToUTF16(starter->name) : std::u16string();
         setup.space_color = window->shell_->workspace_color(window->starter_workspace_id_);
+        setup.import_browser = base::BindRepeating(&WorkspaceWindow::StartWelcomeImport, window);
         setup.import_passwords = base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window, base::OnceCallback<void(std::u16string)> report) {
           auto* page = window ? window->contents(window->active_id()) : nullptr;
           if (!page) return;
@@ -2712,19 +2713,27 @@ void WorkspaceWindow::ShowWelcome() {
 }
 
 void WorkspaceWindow::WelcomeFinished(WorkspaceShell::WelcomeResult result) {
+  // An import owns the first-run placeholder until it has committed or failed.
+  if (welcome_import_done_ || onboarding_complete_) return;
   const std::string starter = starter_workspace_id_;
   if (const auto* space = model_.Find(starter)) {
     const std::string name = base::UTF16ToUTF8(result.space_name);
     if (!name.empty() && name != space->name) UpdateWorkspace(starter, name, space->profile_id);
     if (result.space_color) shell_->SetWorkspaceColor(starter, *result.space_color);
   }
-  if (result.import) {
-    // The import panel takes over, with the chosen browser read in; the first
-    // run ends there, as without the wizard.
-    shell_->OpenImport(result.import);
+  DismissImport();
+}
+
+void WorkspaceWindow::StartWelcomeImport(ImportBrowser browser, base::OnceCallback<void(bool, std::u16string)> done) {
+  if (!configuration_ready_ || configuration_invalid_ || profiles_busy_ || welcome_import_done_) {
+    std::move(done).Run(false, T(u"Nie można teraz rozpocząć importu. Spróbuj ponownie."));
     return;
   }
-  DismissImport();
+  welcome_import_done_ = std::move(done);
+  BrowserImportOptions options;
+  options.browser = browser;
+  options.history = true;
+  PreviewBrowserImport(options);
 }
 #endif
 
@@ -2949,6 +2958,13 @@ void WorkspaceWindow::PreviewBrowserImport(BrowserImportOptions options, base::F
         report.folders=result.folder_count;report.tabs=result.tab_count;report.skipped=result.skipped_count;
         window->pending_import_ = std::move(result);
         window->shell_->SetImportStatus(report, window->pending_import_->error.empty());
+        if (window->welcome_import_done_) {
+          if (!window->pending_import_->error.empty()) {
+            std::move(window->welcome_import_done_).Run(false, base::UTF8ToUTF16(window->pending_import_->error));
+          } else if (!window->ApplyArcImport()) {
+            std::move(window->welcome_import_done_).Run(false, T(u"Nie można teraz rozpocząć importu. Spróbuj ponownie."));
+          }
+        }
       }, weak_factory_.GetWeakPtr(), generation));
 }
 
@@ -2972,6 +2988,8 @@ bool WorkspaceWindow::ApplyArcImport() {
             window->UpdateShell();
             WorkspaceShell::ImportStatusReport failed;failed.error=data->error;
             window->shell_->SetImportStatus(failed, true);
+            if (window->welcome_import_done_)
+              std::move(window->welcome_import_done_).Run(false, base::UTF8ToUTF16(data->error));
             return;
           }
           window->import_browsing_data_ = std::move(data);
@@ -3107,6 +3125,14 @@ void WorkspaceWindow::FinishArcImport(const WorkspaceShell::ImportStatusReport& 
   UpdateShell();
   shell_->WarmWorkspaceSidebars(pins_);
   shell_->SetImportStatus(status, false);
+  if (welcome_import_done_) {
+    std::u16string message = status.ok
+        ? TF(u"Import zakończony. Dodano {} profili i {} przestrzeni. Możesz wybrać je na liście przestrzeni.",
+             {base::NumberToString16(status.added_profiles), base::NumberToString16(status.added_spaces)})
+        : T(u"Import się nie powiódł. Dotychczasowe przestrzenie pozostały bez zmian. Spróbuj ponownie.");
+    if (status.data_failed) message += u" " + T(u"Część danych nie została zapisana. Ponów import.");
+    std::move(welcome_import_done_).Run(status.ok, std::move(message));
+  }
 }
 
 void WorkspaceWindow::DismissImport() {

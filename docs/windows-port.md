@@ -365,13 +365,17 @@ Notes:
   and a fresh start runs it once the window is ready. Windows refuses custom
   categories while „Show recently opened items in Jump Lists” is off
   (`Start_TrackDocs`), so the spaces then join the tasks above a separator.
-- First run (`ShowWelcome`, design: Pierwsze uruchomienie): welcome, the
-  default browser (Windows' Default apps page; Windows lets only the user
-  choose, and the step notices when Zitter is the default), the browsers found
-  on this computer with CSV passwords, and the first space's name and color.
-  A chosen browser opens the import panel with it picked. Checked end to end on
-  a fresh profile: rename and color saved, Chrome's two profiles imported as
-  spaces, onboarding complete.
+- First run (`ShowWelcome`): welcome, default browser, then import or a new
+  first space. The default-browser button opens Zitter's Default apps page for
+  either a per-user or machine installation, with instructions for Windows 10
+  and 11. Returning to the wizard checks both HTTP and HTTPS associations.
+  Import runs inside the wizard and reports success or a retryable error there.
+  Selecting import hides the first-space name/color step because the imported
+  data supplies the spaces. Skipping import keeps that step.
+- The installer offers “Launch Zitter after installation”, enabled by default
+  for interactive installs and updates. `--no-launch` disables it; `--quiet`
+  always suppresses launch. After an elevated install, the desktop shell launches
+  the browser as the signed-in user.
 - Web notifications: a page's request goes through Zitter's site permission
   prompt, and once allowed `new Notification(…)` shows as a native Windows
   toast (Chromium's Windows notification platform, attributed to the site).

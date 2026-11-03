@@ -3,6 +3,12 @@
 // One entry per distinct Polish string, written exactly as in the source
 // (same escapes); `{}` placeholders keep their order.
 pub static EN: &[(&str, &str)] = &[
+    ("Krok {} z {}", "Step {} of {}"),
+    ("Otwieraj linki w Zitter i wracaj do swojej ostatniej przestrzeni.", "Open links in Zitter and return to your last space."),
+    ("1. Otwórz ustawienia Zitter przyciskiem poniżej.\n2. Kliknij „Ustaw domyślną”.\n3. Wróć tutaj — sprawdzimy, czy gotowe.", "1. Open Zitter’s settings with the button below.\n2. Click “Set default”.\n3. Come back here — we’ll check that you’re all set."),
+    ("Jeśli zobaczysz listę aplikacji, wybierz Zitter. W Windows 10 wybierz Zitter w sekcji „Przeglądarka sieci Web”.", "If you see a list of apps, choose Zitter. On Windows 10, choose Zitter under “Web browser”."),
+    ("Przestrzenie utworzymy z importowanych danych. Nie musisz nazywać pierwszej przestrzeni.", "Your imported data will create your spaces. There’s no need to name a first space."),
+    ("Nie można teraz rozpocząć importu. Spróbuj ponownie.", "Couldn’t start the import right now. Try again."),
     ("Maksymalizuj", "Maximize"),
     ("Trwa pobieranie: {}. Zamknięcie Zitter je przerwie.", "Downloading {}. Exiting Zitter cancels it."),
     ("Zamknąć Zitter w trakcie pobierania?", "Exit Zitter while downloading?"),
@@ -28,8 +34,6 @@ pub static EN: &[(&str, &str)] = &[
     ("Import danych", "Import data"),
     ("Importuj: {}", "Import: {}"),
     ("Kolor · zabarwi całe okno", "Color · tints the whole window"),
-    ("Krok {} z 4", "Step {} of 4"),
-    ("Linki z poczty, Teams i innych aplikacji otworzą się w Zitter, w ostatnio używanej przestrzeni.", "Links from mail, Teams and other apps will open in Zitter, in the space you used last."),
     ("Nie znalazłem innych przeglądarek na tym komputerze.", "No other browsers on this computer."),
     ("Otwórz Zitter", "Open Zitter"),
     ("Pierwsze kroki", "First steps"),
@@ -39,8 +43,6 @@ pub static EN: &[(&str, &str)] = &[
     ("Przestrzenie przełączasz klawiszami Alt+1, Alt+2 albo Ctrl+Alt+→.", "Switch spaces with Alt+1, Alt+2 or Ctrl+Alt+→."),
     ("Twoja pierwsza przestrzeń", "Your first space"),
     ("Ustaw Zitter jako domyślną", "Make Zitter the default"),
-    ("Windows nie pozwala aplikacjom zmienić tego samodzielnie.", "Windows doesn't let apps change this themselves."),
-    ("Windows otworzy Ustawienia › Aplikacje › Aplikacje domyślne. Wybierz tam Zitter i wróć tutaj.", "Windows opens Settings › Apps › Default apps. Choose Zitter there and come back."),
     ("Witaj", "Welcome"),
     ("Witaj w Zitter", "Welcome to Zitter"),
     ("Wskaż plik…", "Choose file…"),
@@ -51,7 +53,6 @@ pub static EN: &[(&str, &str)] = &[
     ("Zalogowania w serwisach", "Site sign-ins"),
     ("Zitter jest już domyślną przeglądarką.", "Zitter is already your default browser."),
     ("Znalazłem przeglądarki na tym komputerze. Ich dane zostaną bez zmian.", "These browsers are on this computer. Their data stays as it is."),
-    ("Zrobisz to później w Ustawieniach Windows.", "You can do it later in Windows Settings."),
     ("w serwisach zalogujesz się ponownie", "you sign in to sites again"),
     ("z pliku CSV wyeksportowanego w przeglądarce", "from a CSV the browser exported"),
     ("Importuj hasła z CSV…", "Import passwords from CSV…"),

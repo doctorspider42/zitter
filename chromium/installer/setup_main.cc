@@ -5,7 +5,7 @@
 //
 //   zitter_setup.exe                     install, or update or remove what it finds
 //   zitter_setup.exe --uninstall [--system]          Apps & features' remove
-//   zitter_setup.exe --install-now --dir D [--system] [--no-desktop]
+//   zitter_setup.exe --install-now --dir D [--system] [--no-desktop] [--no-launch]
 //                                        the elevated half of an install for everyone
 //   --quiet with either: no questions, no Zitter launched afterwards, and the
 //   exit code says whether it worked (for scripts and package managers)
@@ -16,6 +16,9 @@
 #include <dwrite_3.h>
 #include <shellapi.h>
 #include <shobjidl.h>
+#include <exdisp.h>
+#include <shldisp.h>
+#include <shlguid.h>
 #include <wrl/client.h>
 
 #include <algorithm>
@@ -49,7 +52,7 @@ constexpr D2D1_COLOR_F kVoid = Rgb(0x100b2c), kBase = Rgb(0x1b1440), kRaised = R
                        kAccent = Rgb(0x9a92ff), kOnAccent = Rgb(0x0c0b11), kZing = Rgb(0xd7ff3f),
                        kOk = Rgb(0x6fd6cb), kDanger = Rgb(0xff7a55), kCloseRed = Rgb(0xc42b1c),
                        kWhite = Rgb(0xffffff), kTile = Rgb(0x14121e);
-constexpr float kWidth = 640, kHeight = 440, kHead = 38;
+constexpr float kWidth = 640, kHeight = 472, kHead = 38;
 constexpr UINT kProgressMessage = WM_APP + 1, kDoneMessage = WM_APP + 2, kActivateMessage = WM_APP + 3;
 constexpr UINT_PTR kAnimationTimer = 1;
 
@@ -76,7 +79,7 @@ const Style kKet{kDisplay, 22, DWRITE_FONT_WEIGHT_NORMAL, true, 22};
 enum class Page { kFresh, kExisting, kRemove, kWorking };
 enum Control {
   kNone, kClose, kForMe, kForAll, kChange, kShortcut, kCancel, kInstall,
-  kRemoveZitter, kElsewhere, kUpdate, kWipe, kBack, kConfirmRemove,
+  kRemoveZitter, kElsewhere, kUpdate, kWipe, kBack, kConfirmRemove, kLaunch,
 };
 enum class Look { kPrimary, kQuiet, kOutline, kDanger, kDangerStrong };
 
@@ -102,6 +105,7 @@ const wchar_t* AutomationId(int id) {
     case kForAll: return L"for-all";
     case kChange: return L"change-folder";
     case kShortcut: return L"desktop-shortcut";
+    case kLaunch: return L"launch-browser";
     case kCancel: return L"cancel";
     case kInstall: return L"install";
     case kRemoveZitter: return L"remove";
@@ -177,6 +181,7 @@ class Window : public AccessibilityHost {
       placement_.directory = *std::next(dir);
     desktop_shortcut_ = !has(L"--no-desktop");
     quiet_ = has(L"--quiet");
+    launch_browser_ = !quiet_ && !has(L"--no-launch");
     existing_ = FindExisting();
     if (has(L"--uninstall")) {
       if (existing_) placement_ = existing_->placement;
@@ -566,6 +571,9 @@ class Window : public AccessibilityHost {
     y += 32 + 16;
     Print(text_.desktop_shortcut, kBody, {b.left, y + 1, b.right - 40, y + 20}, kInk);
     Toggle({b.right - 34, y, b.right, y + 20}, desktop_shortcut_, kShortcut, text_.desktop_shortcut);
+    y += 30;
+    Print(text_.launch_browser, kBody, {b.left, y + 1, b.right - 40, y + 20}, kInk);
+    Toggle({b.right - 34, y, b.right, y + 20}, launch_browser_, kLaunch, text_.launch_browser);
     const float footer = b.bottom - 32;
     Print(text_.platform, kPlatform, {b.left, footer + 8, b.left + 200, footer + 24}, kMuted);
     ButtonsRightToLeft(b.right, footer, {{text_.cancel, Look::kQuiet, kCancel}, {text_.install, Look::kPrimary, kInstall}});
@@ -591,6 +599,9 @@ class Window : public AccessibilityHost {
     const std::wstring keeps = Substitute(text_.update_keeps, PayloadVersion());
     const float note = Print(keeps, kBody, {b.left, y, b.right, b.bottom}, kMuted);
     Say({b.left, y, b.right, y + note}, keeps);
+    y += note + 16;
+    Print(text_.launch_browser, kBody, {b.left, y + 1, b.right - 40, y + 20}, kInk);
+    Toggle({b.right - 34, y, b.right, y + 20}, launch_browser_, kLaunch, text_.launch_browser);
     const float footer = b.bottom - 32;
     Button({b.left - 12, footer, b.left - 12 + ButtonWidth(text_.remove_zitter, Look::kDanger), footer + 32},
            text_.remove_zitter, Look::kDanger, kRemoveZitter);
@@ -694,6 +705,7 @@ class Window : public AccessibilityHost {
         break;
       case kChange: PickFolder(); break;
       case kShortcut: desktop_shortcut_ = !desktop_shortcut_; break;
+      case kLaunch: launch_browser_ = !launch_browser_; break;
       case kWipe: remove_data_ = !remove_data_; break;
       case kElsewhere: page_ = Page::kFresh; placement_ = {false, DefaultDirectory(false)}; break;
       case kBack: page_ = Page::kExisting; break;
@@ -703,8 +715,9 @@ class Window : public AccessibilityHost {
       case kConfirmRemove: StartUninstall(); break;
       case kNone: break;
     }
-    focus_ = id == kForMe || id == kForAll || id == kShortcut || id == kWipe ? id : kNone;
+    focus_ = id == kForMe || id == kForAll || id == kShortcut || id == kWipe || id == kLaunch ? id : kNone;
     if (id == kShortcut) NotifyToggled(hwnd_, id, desktop_shortcut_);
+    if (id == kLaunch) NotifyToggled(hwnd_, id, launch_browser_);
     if (id == kWipe) NotifyToggled(hwnd_, id, remove_data_);
     if (id == kForMe || id == kForAll) NotifyToggled(hwnd_, id, true);
     NotifyFocusChanged(hwnd_, focus_);
@@ -728,7 +741,8 @@ class Window : public AccessibilityHost {
       item.bounds = {pixels(element.rect.left, origin.x), pixels(element.rect.top, origin.y),
                      pixels(element.rect.right, origin.x), pixels(element.rect.bottom, origin.y)};
       item.on = (element.id == kForMe && !placement_.system) || (element.id == kForAll && placement_.system) ||
-                (element.id == kShortcut && desktop_shortcut_) || (element.id == kWipe && remove_data_);
+                (element.id == kShortcut && desktop_shortcut_) || (element.id == kWipe && remove_data_) ||
+                (element.id == kLaunch && launch_browser_);
       items.push_back(std::move(item));
     }
     return items;
@@ -784,6 +798,8 @@ class Window : public AccessibilityHost {
     if (placement_.system && !IsElevated()) {
       std::wstring arguments = L"--install-now --system --dir \"" + placement_.directory + L"\"";
       if (!desktop_shortcut_) arguments += L" --no-desktop";
+      if (!launch_browser_) arguments += L" --no-launch";
+      if (quiet_) arguments += L" --quiet";
       if (Relaunch(arguments)) DestroyWindow(hwnd_);
       return;
     }
@@ -825,6 +841,43 @@ class Window : public AccessibilityHost {
     });
   }
 
+  bool LaunchBrowser() {
+    const std::wstring exe = placement_.directory + L"\\zitter.exe";
+    if (!IsElevated())
+      return reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr, L"open", exe.c_str(), nullptr,
+                                                    placement_.directory.c_str(), SW_SHOWNORMAL)) > 32;
+    // Ask the desktop shell to launch as the signed-in user after an all-users
+    // install, including when UAC used a different administrator account.
+    ComPtr<IShellWindows> windows;
+    if (FAILED(CoCreateInstance(CLSID_ShellWindows, nullptr, CLSCTX_LOCAL_SERVER, IID_PPV_ARGS(&windows)))) return false;
+    VARIANT location{}, root{};
+    long desktop = 0;
+    ComPtr<IDispatch> dispatch;
+    if (FAILED(windows->FindWindowSW(&location, &root, SWC_DESKTOP, &desktop, SWFO_NEEDDISPATCH, &dispatch))) return false;
+    ComPtr<IServiceProvider> provider;
+    ComPtr<IShellBrowser> browser;
+    ComPtr<IShellView> view;
+    ComPtr<IShellFolderViewDual> folder;
+    ComPtr<IDispatch> application;
+    ComPtr<IShellDispatch2> shell;
+    if (FAILED(dispatch.As(&provider)) ||
+        FAILED(provider->QueryService(SID_STopLevelBrowser, IID_PPV_ARGS(&browser))) ||
+        FAILED(browser->QueryActiveShellView(&view)) ||
+        FAILED(view->GetItemObject(SVGIO_BACKGROUND, IID_PPV_ARGS(&folder))) ||
+        FAILED(folder->get_Application(&application)) || FAILED(application.As(&shell))) return false;
+    BSTR file = SysAllocString(exe.c_str());
+    if (!file) return false;
+    VARIANT args{}, directory{}, operation{}, show{};
+    directory.vt = VT_BSTR;
+    directory.bstrVal = SysAllocString(placement_.directory.c_str());
+    show.vt = VT_I4;
+    show.lVal = SW_SHOWNORMAL;
+    const HRESULT result = shell->ShellExecute(file, args, directory, operation, show);
+    VariantClear(&directory);
+    SysFreeString(file);
+    return SUCCEEDED(result);
+  }
+
   void Finished() {
     KillTimer(hwnd_, kAnimationTimer);
     worker_.join();
@@ -842,10 +895,8 @@ class Window : public AccessibilityHost {
     }
     if (removing_) {
       DeleteSelfLater(placement_.directory);
-    } else if (!IsElevated() && !quiet_) {
-      // Zitter opens once installed; an elevated copy would run it as administrator.
-      const std::wstring exe = placement_.directory + L"\\zitter.exe";
-      ShellExecuteW(nullptr, L"open", exe.c_str(), nullptr, placement_.directory.c_str(), SW_SHOWNORMAL);
+    } else if (launch_browser_ && !quiet_ && !LaunchBrowser()) {
+      MessageBoxW(hwnd_, text_.launch_failed, L"Zitter", MB_OK | MB_ICONINFORMATION);
     }
     page_ = Page::kFresh;  // Lets WM_CLOSE through.
     DestroyWindow(hwnd_);
@@ -869,6 +920,7 @@ class Window : public AccessibilityHost {
   Placement placement_;
   std::optional<Existing> existing_;
   bool desktop_shortcut_ = true, remove_data_ = false, removing_ = false;
+  bool launch_browser_ = true;
   bool install_now_ = false, uninstall_only_ = false, quiet_ = false;
   int exit_code_ = 0;
   double progress_ = 0;

@@ -479,9 +479,9 @@ class WorkspaceShell final : public ui::EventHandler,
     SkColor space_color = 0;
     // Passwords from a CSV export; reports the line to show under the source.
     base::RepeatingCallback<void(base::OnceCallback<void(std::u16string)>)> import_passwords;
+    base::RepeatingCallback<void(ImportBrowser, base::OnceCallback<void(bool, std::u16string)>)> import_browser;
   };
   struct WelcomeResult {
-    std::optional<ImportBrowser> import;  // Opens the import panel with it.
     std::u16string space_name;
     std::optional<SkColor> space_color;
   };

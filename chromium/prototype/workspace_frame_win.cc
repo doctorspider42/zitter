@@ -210,14 +210,24 @@ void SetWorkspaceMaximizeButton(views::Widget* widget, views::Button* button) {
 }
 
 bool IsZitterDefaultBrowser() {
-  base::win::RegKey choice(HKEY_CURRENT_USER,
-      L"Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https\\UserChoice", KEY_READ);
-  std::wstring prog_id;
-  return choice.Valid() && choice.ReadValue(L"ProgId", &prog_id) == ERROR_SUCCESS && prog_id == L"ZitterHTML";
+  for (const auto* scheme : {L"http", L"https"}) {
+    const std::wstring path = std::wstring(L"Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\") + scheme + L"\\UserChoice";
+    base::win::RegKey choice(HKEY_CURRENT_USER, path.c_str(), KEY_READ);
+    std::wstring prog_id;
+    if (!choice.Valid() || choice.ReadValue(L"ProgId", &prog_id) != ERROR_SUCCESS || _wcsicmp(prog_id.c_str(), L"ZitterHTML") != 0)
+      return false;
+  }
+  return true;
 }
 
 void OpenDefaultAppsSettings() {
-  ::ShellExecuteW(nullptr, L"open", L"ms-settings:defaultapps?registeredAppUser=Zitter", nullptr, nullptr, SW_SHOWNORMAL);
+  base::win::RegKey registration(HKEY_CURRENT_USER, L"Software\\RegisteredApplications", KEY_READ);
+  std::wstring capabilities;
+  const bool per_user = registration.Valid() && registration.ReadValue(L"Zitter", &capabilities) == ERROR_SUCCESS;
+  const auto* uri = per_user ? L"ms-settings:defaultapps?registeredAppUser=Zitter"
+                             : L"ms-settings:defaultapps?registeredAppMachine=Zitter";
+  if (reinterpret_cast<INT_PTR>(::ShellExecuteW(nullptr, L"open", uri, nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
+    ::ShellExecuteW(nullptr, L"open", L"ms-settings:defaultapps", nullptr, nullptr, SW_SHOWNORMAL);
 }
 
 void SetWorkspaceCommandHandler(views::Widget* widget, base::RepeatingCallback<void(std::string)> handler) {

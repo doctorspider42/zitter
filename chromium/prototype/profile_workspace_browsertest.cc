@@ -6167,6 +6167,83 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FirstRunImportReplacesStarterA
   EXPECT_FALSE(window_->shell()->import_visible());
 }
 
+#if BUILDFLAG(IS_WIN)
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WelcomeImportsArcOnceAndRetriesInPlace) {
+  base::ScopedAllowBlockingForTesting files;
+  base::ScopedTempDir source;
+  ASSERT_TRUE(source.CreateUniqueTempDir());
+  base::ScopedPathOverride app_data(kImportAppData, source.GetPath());
+  ASSERT_TRUE(base::CreateDirectory(ArcData(source.GetPath())));
+  ASSERT_TRUE(base::WriteFile(ArcData(source.GetPath()).AppendASCII("StorableSidebar.json"), "{}"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
+  window_.reset();
+  const auto directory = g_browser_process->profile_manager()->user_data_dir();
+  ASSERT_TRUE(base::DeleteFile(directory.AppendASCII("ZitterWorkspaces.json")));
+  SetUiLanguageForTesting("pl");
+  window_ = std::make_unique<WorkspaceWindow>(directory);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->shell()->welcome_widget_for_testing() != nullptr; }));
+  auto* shell = window_->shell();
+  auto* welcome = shell->welcome_widget_for_testing()->GetContentsView();
+  auto render = [&](const char* name) {
+    const auto directory = base::CommandLine::ForCurrentProcess()->GetSwitchValuePath("zitter-test-welcome-render-dir");
+    if (directory.empty()) return;
+    ASSERT_TRUE(base::CreateDirectory(directory));
+    const auto bounds = welcome->bounds();
+    welcome->SetBoundsRect(gfx::Rect(welcome->size()));
+    const auto png = gfx::PNGCodec::EncodeBGRASkBitmap(views::test::PaintViewToBitmap(welcome), false);
+    welcome->SetBoundsRect(bounds);
+    ASSERT_TRUE(png);
+    ASSERT_TRUE(base::WriteFile(directory.AppendASCII(name), *png));
+  };
+  auto find_step = [&](auto&& self, views::View* root, std::u16string_view name) -> views::View* {
+    ui::AXNodeData data;
+    root->GetViewAccessibility().GetAccessibleNodeData(&data);
+    if (data.role == ax::mojom::Role::kTab && data.GetString16Attribute(ax::mojom::StringAttribute::kName) == name) return root;
+    for (const auto& child : root->children())
+      if (auto* found = self(self, child.get(), name)) return found;
+    return nullptr;
+  };
+  auto* import_step = find_step(find_step, welcome, u"Import danych");
+  ASSERT_TRUE(import_step);
+  ClickControl(find_step(find_step, welcome, u"Domyślna przeglądarka"));
+  render("default-browser.png");
+  ClickControl(import_step);
+  render("import.png");
+  auto* first_space = find_step(find_step, welcome, u"Pierwsza przestrzeń");
+  ASSERT_TRUE(first_space);
+  EXPECT_FALSE(first_space->GetVisible());
+  auto* apply = FindButton(welcome, u"Importuj");
+  ASSERT_TRUE(apply);
+  ClickControl(apply);
+  // Missing source data leaves the same wizard available for retry.
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    auto* retry = FindButton(welcome, u"Importuj");
+    return retry && retry->GetEnabledInViewsSubtree();
+  }));
+  EXPECT_EQ(1u, window_->workspaces().size());
+  EXPECT_FALSE(shell->import_visible());
+  base::FilePath root;
+  ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &root));
+  ASSERT_TRUE(base::DeletePathRecursively(ArcData(source.GetPath())));
+  ASSERT_TRUE(base::CopyDirectory(root.AppendASCII("zitter/testdata/arc"), ArcData(source.GetPath()), true));
+  ClickControl(FindButton(welcome, u"Importuj"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return FindButton(welcome, u"Otwórz Zitter") != nullptr; }));
+  EXPECT_EQ(3u, window_->workspaces().size());
+  for (const auto& space : window_->workspaces()) EXPECT_TRUE(space.id.starts_with("arc-space-"));
+  EXPECT_FALSE(shell->import_visible());
+  EXPECT_FALSE(FindButton(welcome, u"Importuj"));
+  render("import-finished.png");
+  ClickControl(FindButton(welcome, u"Otwórz Zitter"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !shell->welcome_widget_for_testing() && window_->configuration_saved(); }));
+  window_.reset();
+  window_ = std::make_unique<WorkspaceWindow>(directory);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+  EXPECT_EQ(3u, window_->workspaces().size());
+  EXPECT_FALSE(window_->shell()->import_visible());
+  EXPECT_FALSE(window_->shell()->welcome_widget_for_testing());
+}
+#endif
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FirstRunImportOffer) {
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
   window_.reset();

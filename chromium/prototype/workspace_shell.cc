@@ -8628,52 +8628,6 @@ class WelcomeButton final : public views::Button {
 BEGIN_METADATA(WelcomeButton)
 END_METADATA
 
-// A choice card (design: the default browser step): title and detail, ringed
-// in the accent when chosen.
-class WelcomeOption final : public views::Button {
-  METADATA_HEADER(WelcomeOption, views::Button)
- public:
-  WelcomeOption(PressedCallback callback, std::u16string title, std::u16string detail)
-      : views::Button(std::move(callback)), title_(std::move(title)), detail_(std::move(detail)) {
-    GetViewAccessibility().SetRole(ax::mojom::Role::kRadioButton);
-    GetViewAccessibility().SetName(title_);
-    GetViewAccessibility().SetDescription(detail_);
-    SetFocusBehavior(FocusBehavior::ALWAYS);
-    SetAnimateOnStateChange(false);
-  }
-  void SetChosen(bool chosen) {
-    chosen_ = chosen;
-    GetViewAccessibility().SetCheckedState(chosen ? ax::mojom::CheckedState::kTrue : ax::mojom::CheckedState::kFalse);
-    SchedulePaint();
-  }
-  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override { return gfx::Size(560, 72); }
-  void PaintButtonContents(gfx::Canvas* canvas) override {
-    const auto p = Palette(this);
-    const gfx::Rect r = GetLocalBounds();
-    if (chosen_) {
-      FillRound(canvas, r, 12, p.bg_raised);
-      cc::PaintFlags ring;
-      ring.setAntiAlias(true);
-      ring.setStyle(cc::PaintFlags::kStroke_Style);
-      ring.setStrokeWidth(2);
-      ring.setColor(p.accent);
-      canvas->DrawRoundRect(gfx::RectF(1, 1, width() - 2, height() - 2), 11, ring);
-    } else {
-      if (GetState() == STATE_HOVERED) FillRound(canvas, r, 12, p.bg_hover);
-      StrokeRound(canvas, r, 12, p.line_strong);
-    }
-    canvas->DrawStringRect(title_, DesignFont(2, 13, 600, false), p.ink, gfx::Rect(18, 16, width() - 36, 18));
-    canvas->DrawStringRect(detail_, DesignFont(2, 13, 400, false), p.ink_muted, gfx::Rect(18, 38, width() - 36, 18));
-    if (HasFocus()) StrokeRound(canvas, r, 12, p.focus);
-  }
-
- private:
-  const std::u16string title_, detail_;
-  bool chosen_ = false;
-};
-BEGIN_METADATA(WelcomeOption)
-END_METADATA
-
 // `.zt-toggle`: 34 × 20, a 12 px knob.
 class WelcomeSwitch final : public views::Button {
   METADATA_HEADER(WelcomeSwitch, views::Button)
@@ -8795,7 +8749,7 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
  public:
   WelcomeView(WorkspaceShell::WelcomeSetup setup, base::OnceCallback<void(WorkspaceShell::WelcomeResult)> done)
       : setup_(std::move(setup)), done_(std::move(done)), color_(setup_.space_color) {
-    // One browser at a time: the import panel reads one in.
+    // Import one source at a time, without opening a second configuration panel.
     import_on_.assign(setup_.sources.size(), false);
     if (!import_on_.empty()) import_on_[0] = true;
     Build();
@@ -8823,8 +8777,6 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
   void Finish() {
     if (!done_) return;
     WorkspaceShell::WelcomeResult result;
-    for (size_t i = 0; i < import_on_.size(); ++i)
-      if (import_on_[i] && import_chosen_) { result.import = setup_.sources[i]; break; }
     if (name_field_) result.space_name = std::u16string(base::TrimWhitespace(name_field_->GetText(), base::TRIM_ALL));
     if (color_ != setup_.space_color) result.space_color = color_;
     std::move(done_).Run(std::move(result));
@@ -8885,12 +8837,13 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
   }
 
   void ShowStep(size_t step) {
+    if (import_busy_) return;
+    if (imported_ || (step == 3 && SelectedSource())) step = 2;
     step_ = step;
     // The page's own views go with it; the step list and footer stay.
     if (name_field_) setup_name_ = name_field_->GetText();
     name_field_ = nullptr;
     swatches_.clear();
-    options_ = {};
     switches_.clear();
     std::erase_if(ink_labels_, [&](views::Label* l) { return page_->Contains(l) || footer_->Contains(l); });
     std::erase_if(muted_labels_, [&](views::Label* l) { return page_->Contains(l) || footer_->Contains(l); });
@@ -8915,28 +8868,33 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
       }
       case 1: {
         Headline(page_, T(u"Domyślna przeglądarka"), 48);
-        Body(page_, T(u"Linki z poczty, Teams i innych aplikacji otworzą się w Zitter, w ostatnio używanej przestrzeni."));
+        Body(page_, T(u"Otwieraj linki w Zitter i wracaj do swojej ostatniej przestrzeni."), 15);
         if (IsZitterDefaultBrowser()) {
           auto* done = Body(page_, T(u"Zitter jest już domyślną przeglądarką."));
           std::erase(ink_labels_, done);
           ok_labels_.push_back(done);
         } else {
-          options_[0] = page_->AddChildView(std::make_unique<WelcomeOption>(
-              base::BindRepeating(&WelcomeView::ChooseDefault, base::Unretained(this), true), T(u"Ustaw Zitter jako domyślną"),
-              T(u"Windows otworzy Ustawienia › Aplikacje › Aplikacje domyślne. Wybierz tam Zitter i wróć tutaj.")));
-          options_[1] = page_->AddChildView(std::make_unique<WelcomeOption>(
-              base::BindRepeating(&WelcomeView::ChooseDefault, base::Unretained(this), false), T(u"Nie teraz"),
-              T(u"Zrobisz to później w Ustawieniach Windows.")));
-          ChooseDefault(set_default_);
-          Text(page_, T(u"Windows nie pozwala aplikacjom zmienić tego samodzielnie."), DesignFont(2, 12, 500, false), false);
+          Body(page_, T(u"1. Otwórz ustawienia Zitter przyciskiem poniżej.\n2. Kliknij „Ustaw domyślną”.\n3. Wróć tutaj — sprawdzimy, czy gotowe."));
+          page_->AddChildView(std::make_unique<WelcomeButton>(
+              base::BindRepeating(&OpenDefaultAppsSettings), T(u"Ustaw Zitter jako domyślną"), WelcomeButton::Look::kPrimary));
+          Body(page_, T(u"Jeśli zobaczysz listę aplikacji, wybierz Zitter. W Windows 10 wybierz Zitter w sekcji „Przeglądarka sieci Web”."), 12, true);
         }
         break;
       }
       case 2: {
         Headline(page_, T(u"Przenieś swoje dane"), 48);
-        Body(page_, setup_.sources.empty() ? T(u"Nie znalazłem innych przeglądarek na tym komputerze.")
-                                           : T(u"Znalazłem przeglądarki na tym komputerze. Ich dane zostaną bez zmian."));
-        for (size_t i = 0; i < setup_.sources.size(); ++i) AddSource(i);
+        if (!imported_) {
+          Body(page_, setup_.sources.empty() ? T(u"Nie znalazłem innych przeglądarek na tym komputerze.")
+                                             : T(u"Znalazłem przeglądarki na tym komputerze. Ich dane zostaną bez zmian."));
+          auto* scroll = page_->AddChildView(std::make_unique<views::ScrollView>());
+          scroll->ClipHeightTo(0, 210);
+          scroll->SetBackgroundColor(Palette(this, color_).bg_base);
+          auto* sources = scroll->SetContents(std::make_unique<views::View>());
+          sources->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 8));
+          for (size_t i = 0; i < setup_.sources.size(); ++i) AddSource(sources, i);
+          if (SelectedSource()) Body(page_, T(u"Przestrzenie utworzymy z importowanych danych. Nie musisz nazywać pierwszej przestrzeni."), 12, true);
+        }
+        if (!import_status_.empty()) Body(page_, import_status_);
         break;
       }
       case 3: {
@@ -8966,18 +8924,21 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
     auto* row = footer_->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal, gfx::Insets::TLBR(16, 0, 0, 0), 8));
     row->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
     footer_->SetBorder(views::CreateSolidSidedBorder(gfx::Insets::TLBR(1, 0, 0, 0), Palette(this, color_).line));
-    auto* count = Text(footer_, TF(u"Krok {} z 4", {base::NumberToString16(step + 1)}), DesignFont(2, 12, 500, false), false);
+    const bool importing = SelectedSource().has_value() || imported_;
+    steps_[3]->SetVisible(!importing);
+    auto* count = Text(footer_, TF(u"Krok {} z {}", {base::NumberToString16(step + 1), base::NumberToString16(importing ? 3 : 4)}), DesignFont(2, 12, 500, false), false);
     row->SetFlexForView(count, 1);
-    if (step > 0)
+    if (step > 0 && !imported_)
       footer_->AddChildView(std::make_unique<WelcomeButton>(base::BindRepeating(&WelcomeView::ShowStep, base::Unretained(this), step - 1),
                                                             T(u"Wstecz"), WelcomeButton::Look::kQuiet));
-    if (step == 2 && !setup_.sources.empty())
+    if (step == 2 && !setup_.sources.empty() && !imported_)
       footer_->AddChildView(std::make_unique<WelcomeButton>(base::BindRepeating(&WelcomeView::Next, base::Unretained(this), false),
                                                             T(u"Pomiń"), WelcomeButton::Look::kQuiet));
-    const std::u16string next = step == 0 ? T(u"Zaczynamy") : step == 2 && !setup_.sources.empty() ? T(u"Importuj")
-                                : step == 3 ? T(u"Otwórz Zitter") : T(u"Kontynuuj");
+    const std::u16string next = step == 0 ? T(u"Zaczynamy") : imported_ ? T(u"Otwórz Zitter") : step == 2 && SelectedSource() ? T(u"Importuj")
+                                : step == 3 ? T(u"Otwórz Zitter") : step == 1 && !IsZitterDefaultBrowser() ? T(u"Nie teraz") : T(u"Kontynuuj");
     auto* primary = footer_->AddChildView(std::make_unique<WelcomeButton>(base::BindRepeating(&WelcomeView::Next, base::Unretained(this), true),
-                                                                          next, step == 0 ? WelcomeButton::Look::kZing : WelcomeButton::Look::kPrimary));
+        next, step == 0 ? WelcomeButton::Look::kZing
+                       : step == 1 && !IsZitterDefaultBrowser() ? WelcomeButton::Look::kQuiet : WelcomeButton::Look::kPrimary));
     // Steps: done ones checked, the current one in the accent.
     Recolor();
     InvalidateLayout();
@@ -8994,9 +8955,9 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
     }
     return presets;
   }
-  void AddSource(size_t index) {
+  void AddSource(views::View* parent, size_t index) {
     const auto p = Palette(this, color_);
-    auto* card = page_->AddChildView(std::make_unique<views::View>());
+    auto* card = parent->AddChildView(std::make_unique<views::View>());
     card->SetBackground(views::CreateRoundedRectBackground(p.bg_raised, 12));
     card->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets::VH(12, 16), 8));
     auto* head = card->AddChildView(std::make_unique<views::View>());
@@ -9059,10 +9020,10 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
     }
     for (auto* view : {static_cast<views::View*>(this), main_.get()}) view->SchedulePaint();
   }
-  void ChooseDefault(bool yes) {
-    set_default_ = yes;
-    if (options_[0]) options_[0]->SetChosen(yes);
-    if (options_[1]) options_[1]->SetChosen(!yes);
+  std::optional<ImportBrowser> SelectedSource() const {
+    for (size_t i = 0; i < import_on_.size(); ++i)
+      if (import_on_[i]) return setup_.sources[i];
+    return std::nullopt;
   }
   void ToggleSource(size_t index) {
     const bool on = !import_on_[index];
@@ -9083,10 +9044,34 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
     }, weak_factory_.GetWeakPtr()));
   }
   void Next(bool primary) {
-    if (step_ == 1 && primary && set_default_ && !IsZitterDefaultBrowser()) {
-      OpenDefaultAppsSettings();
+    if (import_busy_) return;
+    if (step_ == 2 && !imported_) {
+      if (const auto source = SelectedSource(); primary && source) {
+        import_status_ = T(u"Importowanie wybranych danych…");
+        ShowStep(2);
+        import_busy_ = true;
+        nav_->SetEnabled(false);
+        page_->SetEnabled(false);
+        footer_->SetEnabled(false);
+        setup_.import_browser.Run(*source, base::BindOnce([](base::WeakPtr<WelcomeView> view, bool ok, std::u16string status) {
+          if (!view) return;
+          view->import_busy_ = false;
+          view->imported_ = ok;
+          view->import_status_ = std::move(status);
+          view->nav_->SetEnabled(true);
+          view->page_->SetEnabled(true);
+          view->footer_->SetEnabled(true);
+          view->ShowStep(2);
+        }, weak_factory_.GetWeakPtr()));
+        return;
+      }
+      std::fill(import_on_.begin(), import_on_.end(), false);
     }
-    if (step_ == 2) import_chosen_ = primary;
+    if (imported_) {
+      Finish();
+      if (GetWidget()) GetWidget()->Close();
+      return;
+    }
     if (step_ < 3) { ShowStep(step_ + 1); return; }
     Finish();
     if (GetWidget()) GetWidget()->Close();
@@ -9095,8 +9080,9 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
   WorkspaceShell::WelcomeSetup setup_;
   base::OnceCallback<void(WorkspaceShell::WelcomeResult)> done_;
   size_t step_ = 0;
-  bool set_default_ = true;
-  bool import_chosen_ = false;
+  bool import_busy_ = false;
+  bool imported_ = false;
+  std::u16string import_status_;
   std::vector<bool> import_on_;
   SkColor color_;
   std::u16string setup_name_;
@@ -9110,7 +9096,6 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
   raw_ptr<views::Textfield> name_field_ = nullptr;
   std::array<raw_ptr<WelcomeStep>, 4> steps_ = {};
   bool shown_ = false;
-  std::array<raw_ptr<WelcomeOption>, 2> options_ = {};
   std::vector<raw_ptr<WelcomeSwatch>> swatches_;
   std::vector<raw_ptr<WelcomeSwitch>> switches_;
   std::vector<raw_ptr<views::Label>> ink_labels_, muted_labels_, accent_labels_, ok_labels_;

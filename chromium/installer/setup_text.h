@@ -20,6 +20,8 @@ struct Text {
   const wchar_t* folder;
   const wchar_t* change;
   const wchar_t* desktop_shortcut;
+  const wchar_t* launch_browser;
+  const wchar_t* launch_failed;
   const wchar_t* platform;
   const wchar_t* cancel;
   const wchar_t* install;
@@ -59,6 +61,8 @@ inline const Text& Strings() {
       L"Folder",
       L"Zmień…",
       L"Skrót na pulpicie",
+      L"Uruchom Zitter po instalacji",
+      L"Zitter jest zainstalowany. Nie udało się go uruchomić — otwórz go z menu Start.",
       L"x64 · Windows 10+",
       L"Anuluj",
       L"Zainstaluj",
@@ -96,6 +100,8 @@ inline const Text& Strings() {
       L"Folder",
       L"Change…",
       L"Desktop shortcut",
+      L"Launch Zitter after installation",
+      L"Zitter is installed. It could not be launched — open it from the Start menu.",
       L"x64 · Windows 10+",
       L"Cancel",
       L"Install",
