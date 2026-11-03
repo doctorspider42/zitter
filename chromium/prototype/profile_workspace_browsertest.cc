@@ -113,9 +113,7 @@
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/password_manager/factories/profile_password_store_factory.h"
 #include "chrome/browser/password_manager/chrome_password_manager_client.h"
-#include "components/password_manager/core/browser/password_manager_interface.h"
-#include "components/password_manager/core/browser/password_form_cache.h"
-#include "components/password_manager/core/browser/password_form_manager.h"
+#include "components/password_manager/core/browser/mock_password_form_manager_for_ui.h"
 #include "components/password_manager/core/browser/password_store/password_store_consumer.h"
 #include "components/password_manager/core/browser/password_store/password_store_interface.h"
 #include "components/history/core/browser/history_service.h"
@@ -4049,70 +4047,55 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ChromiumHistoryAndCommandPalet
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DisablingPasswordSavingDismissesAndSuppressesOffers) {
-  EnableNativeUIControls();
   const auto url = embedded_test_server()->GetURL("/login_probe.html");
   auto* page = window_->contents("work");
+  ASSERT_TRUE(content::NavigateToURL(page, url));
   auto* services = PageServices::FromWebContents(page);
+  auto* client = ChromePasswordManagerClient::FromWebContents(page);
   ASSERT_TRUE(services);
-  auto submit = [&] {
-    ASSERT_TRUE(content::NavigateToURL(page, url));
-    auto* client = ChromePasswordManagerClient::FromWebContents(page);
-    ASSERT_TRUE(client);
-    // Navigation finishing does not mean the async password parser/store has
-    // finished. Wait for the actual form before sending synthetic keystrokes.
-    ASSERT_TRUE(base::test::RunUntil([&] {
-      auto* cache = client->GetPasswordManager()->GetPasswordFormCache();
-      return cache && std::ranges::any_of(cache->GetFormManagers(), [&](const auto& form) {
-        return form->GetURL() == url && form->IsFetchCompleted();
-      });
-    }));
-    ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
-    page->Focus();
-    ASSERT_TRUE(base::test::RunUntil([&] { return page->GetRenderWidgetHostView()->HasFocus(); }));
-    content::SimulateEndOfPaintHoldingOnPrimaryMainFrame(page);
-    content::InputEventAckWaiter gesture(page->GetPrimaryMainFrame()->GetRenderWidgetHost(),
-        blink::WebInputEvent::Type::kMouseUp);
-    content::SimulateMouseClickAt(page, 0, blink::WebMouseEvent::Button::kLeft, gfx::Point(12, 12));
-    gesture.Wait();
-    ASSERT_TRUE(content::ExecJs(page,
-        "document.getElementById('username').value = ''; document.getElementById('username').focus()"));
-    for (char16_t letter : std::u16string(u"alice")) TypePageCharacter(page, letter);
-    ASSERT_TRUE(content::ExecJs(page,
-        "document.getElementById('password').value = ''; document.getElementById('password').focus()"));
-    for (char16_t letter : std::u16string(u"synthetic-47")) TypePageCharacter(page, letter);
-    ASSERT_EQ("alice", content::EvalJs(page, "document.getElementById('username').value"));
-    ASSERT_EQ("synthetic-47", content::EvalJs(page, "document.getElementById('password').value"));
-    content::TestNavigationObserver submitted(page);
-    ASSERT_TRUE(content::ExecJs(page,
-        "document.getElementById('login').requestSubmit()"));
-    submitted.Wait();
-    ASSERT_TRUE(submitted.last_navigation_succeeded());
+  ASSERT_TRUE(client);
+  password_manager::PasswordForm credentials;
+  credentials.url = url;
+  credentials.username_value = u"alice";
+  auto form = [&] {
+    auto value = std::make_unique<testing::NiceMock<password_manager::MockPasswordFormManagerForUI>>();
+    ON_CALL(*value, GetURL()).WillByDefault(testing::ReturnRef(url));
+    ON_CALL(*value, GetPendingCredentials()).WillByDefault(testing::ReturnRef(credentials));
+    EXPECT_CALL(*value, Save()).Times(0);
+    return value;
   };
+  // Drive the real client/UI boundary, including callbacks arriving after the
+  // setting changed. The separate save-and-fill test covers actual submission.
   ASSERT_TRUE(window_->WritePreference("save_passwords", 1));
-  ASSERT_NO_FATAL_FAILURE(submit());
-  ASSERT_TRUE(base::test::RunUntil([&] { return services->password_prompt(); }));
-  // A setting change must revoke an already pending save, without navigation.
+  ASSERT_TRUE(client->PromptUserToSaveOrUpdatePassword(form(), false));
+  ASSERT_TRUE(services->password_prompt());
   ASSERT_TRUE(window_->WritePreference("save_passwords", 0));
   EXPECT_FALSE(services->password_prompt());
   EXPECT_FALSE(work_->GetPrefs()->GetBoolean(password_manager::prefs::kCredentialsEnableService));
   EXPECT_TRUE(personal_->GetPrefs()->GetBoolean(password_manager::prefs::kCredentialsEnableService));
-  ASSERT_NO_FATAL_FAILURE(submit());
-  // Allow the asynchronous password parser and save callback to finish.
-  base::test::TestFuture<void> settled;
-  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
-      FROM_HERE, settled.GetCallback(), base::Seconds(1));
-  ASSERT_TRUE(settled.Wait());
+  EXPECT_FALSE(client->PromptUserToSaveOrUpdatePassword(form(), false));
+  EXPECT_FALSE(client->PromptUserToSaveOrUpdatePassword(form(), true));
   EXPECT_FALSE(services->password_prompt());
-  auto store = ProfilePasswordStoreFactory::GetForProfile(work_, ServiceAccessType::EXPLICIT_ACCESS);
-  ASSERT_TRUE(store);
-  PasswordReader reader;
-  store->GetAllLogins(reader.weak_factory.GetWeakPtr());
-  auto rows = reader.ready.Take();
-  ASSERT_TRUE(rows.has_value());
-  EXPECT_TRUE(rows->empty());
+
+  auto managed = std::make_shared<int>(0);
+  services->SetManagePasswords(base::BindRepeating([](std::shared_ptr<int> count) { ++*count; }, managed));
+  // A fallback received while disabled must not survive re-enabling.
+  client->ShowManualFallbackForSaving(form(), false, false);
   ASSERT_TRUE(window_->WritePreference("save_passwords", 1));
-  ASSERT_NO_FATAL_FAILURE(submit());
-  ASSERT_TRUE(base::test::RunUntil([&] { return services->password_prompt(); }));
+  services->ShowPasswords();
+  EXPECT_EQ(1, *managed);
+  EXPECT_FALSE(services->password_prompt());
+  // Turning the setting off also revokes a previously cached manual fallback.
+  client->ShowManualFallbackForSaving(form(), false, false);
+  ASSERT_TRUE(window_->WritePreference("save_passwords", 0));
+  ASSERT_TRUE(window_->WritePreference("save_passwords", 1));
+  services->ShowPasswords();
+  EXPECT_EQ(2, *managed);
+  EXPECT_FALSE(services->password_prompt());
+  ASSERT_TRUE(client->PromptUserToSaveOrUpdatePassword(form(), false));
+  EXPECT_TRUE(services->password_prompt());
+  ASSERT_TRUE(window_->WritePreference("save_passwords", 0));
+  EXPECT_FALSE(services->password_prompt());
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ChromiumPasswordSaveAndFill) {

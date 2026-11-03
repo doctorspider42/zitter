@@ -295,6 +295,7 @@ source_set("profile_workspace_browser_tests") {
     "//extensions/browser:crx_installer",
     "//ui/shell_dialogs:test_support",
     "//components/prefs:test_support",
+    "//components/password_manager/core/browser:test_support",
     "//chrome/browser:chrome_content_browser_client",
     "//chrome/test:test_support",
     "//chrome/test:test_support_ui",
