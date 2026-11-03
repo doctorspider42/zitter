@@ -112,6 +112,10 @@
 #include "base/synchronization/lock.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/password_manager/factories/profile_password_store_factory.h"
+#include "chrome/browser/password_manager/chrome_password_manager_client.h"
+#include "components/password_manager/core/browser/password_manager_interface.h"
+#include "components/password_manager/core/browser/password_form_cache.h"
+#include "components/password_manager/core/browser/password_form_manager.h"
 #include "components/password_manager/core/browser/password_store/password_store_consumer.h"
 #include "components/password_manager/core/browser/password_store/password_store_interface.h"
 #include "components/history/core/browser/history_service.h"
@@ -4051,15 +4055,34 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DisablingPasswordSavingDismiss
   ASSERT_TRUE(services);
   auto submit = [&] {
     ASSERT_TRUE(content::NavigateToURL(page, url));
+    auto* client = ChromePasswordManagerClient::FromWebContents(page);
+    ASSERT_TRUE(client);
+    // Navigation finishing does not mean the async password parser/store has
+    // finished. Wait for the actual form before sending synthetic keystrokes.
+    ASSERT_TRUE(base::test::RunUntil([&] {
+      auto* cache = client->GetPasswordManager()->GetPasswordFormCache();
+      return cache && std::ranges::any_of(cache->GetFormManagers(), [&](const auto& form) {
+        return form->GetURL() == url && form->IsFetchCompleted();
+      });
+    }));
+    content::SimulateEndOfPaintHoldingOnPrimaryMainFrame(page);
+    content::InputEventAckWaiter gesture(page->GetPrimaryMainFrame()->GetRenderWidgetHost(),
+        blink::WebInputEvent::Type::kMouseUp);
+    content::SimulateMouseClickAt(page, 0, blink::WebMouseEvent::Button::kLeft, gfx::Point(12, 12));
+    gesture.Wait();
     ASSERT_TRUE(content::ExecJs(page,
-        "document.getElementById('username').focus()"));
+        "document.getElementById('username').value = ''; document.getElementById('username').focus()"));
     for (char16_t letter : std::u16string(u"alice")) TypePageCharacter(page, letter);
     ASSERT_TRUE(content::ExecJs(page,
-        "document.getElementById('password').focus()"));
+        "document.getElementById('password').value = ''; document.getElementById('password').focus()"));
     for (char16_t letter : std::u16string(u"synthetic-47")) TypePageCharacter(page, letter);
+    ASSERT_EQ("alice", content::EvalJs(page, "document.getElementById('username').value"));
+    ASSERT_EQ("synthetic-47", content::EvalJs(page, "document.getElementById('password').value"));
+    content::TestNavigationObserver submitted(page);
     ASSERT_TRUE(content::ExecJs(page,
         "document.getElementById('login').requestSubmit()"));
-    ASSERT_TRUE(content::WaitForLoadStop(page));
+    submitted.Wait();
+    ASSERT_TRUE(submitted.last_navigation_succeeded());
   };
   ASSERT_TRUE(window_->WritePreference("save_passwords", 1));
   submit();
