@@ -22,6 +22,7 @@
 #include "third_party/blink/public/mojom/manifest/display_mode.mojom.h"
 #include "chromium/prototype/browser_preferences.h"
 #include "chromium/prototype/link_navigation.h"
+#include "chromium/prototype/image_link_preview.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/unguessable_token.h"
 #include "content/public/browser/navigation_handle.h"
@@ -190,17 +191,37 @@ class WorkspaceWebView final : public views::WebView {
   using MenuHandler = base::RepeatingCallback<void(content::WebContents*, const content::ContextMenuParams&)>;
   using AdoptHandler = base::RepeatingCallback<content::WebContents*(content::WebContents*, std::unique_ptr<content::WebContents>, bool)>;
   using CreatedHandler = base::RepeatingCallback<void(content::WebContents*, content::WebContents*)>;
+  using PeekHandler = base::RepeatingCallback<bool(content::WebContents*, const GURL&)>;
   WorkspaceWebView(Profile* profile, KeyHandler handler, OpenHandler open, MenuHandler menu,
                    AdoptHandler adopt, CreatedHandler created, base::RepeatingClosure changed,
                     base::RepeatingCallback<void(views::WebView*)> interacted,
-                    base::RepeatingCallback<void(content::WebContents*, bool)> fullscreen)
+                    base::RepeatingCallback<void(content::WebContents*, bool)> fullscreen,
+                    base::RepeatingCallback<bool()> image_previews, PeekHandler peek)
       : views::WebView(profile), handler_(std::move(handler)), open_(std::move(open)), menu_(std::move(menu)),
-        adopt_(std::move(adopt)), created_(std::move(created)), changed_(std::move(changed)), interacted_(std::move(interacted)), fullscreen_(std::move(fullscreen)) {}
+        adopt_(std::move(adopt)), created_(std::move(created)), changed_(std::move(changed)), interacted_(std::move(interacted)), fullscreen_(std::move(fullscreen)),
+        image_previews_(std::move(image_previews)), peek_(std::move(peek)) {}
   ~WorkspaceWebView() override { if (is_fullscreen_) fullscreen_.Run(web_contents(), false); }
   std::array<uint64_t,2> sidebar_identity() const {return {sidebar_identity_.GetHighForSerialization(),sidebar_identity_.GetLowForSerialization()};}
+  void ResetImagePreview() { if (image_preview_) image_preview_->Reset(); }
+  bool image_preview_visible() const { return image_preview_ && image_preview_->visible_for_testing(); }
 
  private:
   const base::UnguessableToken sidebar_identity_=base::UnguessableToken::Create();
+  void UpdateTargetURL(content::WebContents* source, const GURL& url) override {
+    hovered_link_ = url;
+    if (!image_preview_ || image_preview_->web_contents() != source)
+      image_preview_ = std::make_unique<ImageLinkPreview>(source, this, image_previews_);
+    image_preview_->Hover(url);
+  }
+  void VisibilityChanged(views::View* starting_from, bool visible) override {
+    if (!visible) ResetImagePreview();
+    views::WebView::VisibilityChanged(starting_from, visible);
+  }
+  void RemovedFromWidget() override {
+    // A Peek WebView moves to the main window when promoted.
+    image_preview_.reset();
+    views::WebView::RemovedFromWidget();
+  }
   bool CanEnterFullscreenModeForTab(content::RenderFrameHost*) override {
     return IsDrawn() && GetWidget() && GetWidget()->IsVisible();
   }
@@ -226,6 +247,7 @@ class WorkspaceWebView final : public views::WebView {
   content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
       content::WebContents* source,
       const input::NativeWebKeyboardEvent& event) override {
+    ResetImagePreview();
     return handler_.Run(source, event);
   }
 
@@ -271,7 +293,17 @@ class WorkspaceWebView final : public views::WebView {
     return true;
   }
   content::WebContents* AddNewContents(content::WebContents* source, std::unique_ptr<content::WebContents> page,
-      const GURL&, WindowOpenDisposition disposition, const blink::mojom::WindowFeatures&, bool user_gesture, bool* blocked) override {
+      const GURL& target_url, WindowOpenDisposition disposition, const blink::mojom::WindowFeatures&, bool user_gesture, bool* blocked) override {
+    // target=_blank links can arrive as newly created contents. Require the
+    // actual Shift-left-click on the hovered link so forms and script popups
+    // keep their existing request semantics.
+    if (user_gesture && disposition == WindowOpenDisposition::NEW_WINDOW &&
+        target_url == hovered_link_ && !shift_link_click_.is_null() &&
+        base::TimeTicks::Now() - shift_link_click_ < base::Seconds(1) && peek_.Run(source, target_url)) {
+      shift_link_click_ = base::TimeTicks();
+      if (blocked) *blocked = true;
+      return nullptr;
+    }
     if (!user_gesture) {
       auto* settings = HostContentSettingsMapFactory::GetForProfile(
           Profile::FromBrowserContext(source->GetBrowserContext()));
@@ -301,12 +333,24 @@ class WorkspaceWebView final : public views::WebView {
   void DidGetUserInteraction(const blink::WebInputEvent& event) override {
     // Renderer/native attachment can report focus during session restoration.
     // Only actual user interaction changes which pane owns browser commands.
+    ResetImagePreview();
+    shift_link_click_ = base::TimeTicks();
+    if (event.GetType() == blink::WebInputEvent::Type::kMouseDown &&
+        (event.GetModifiers() & (blink::WebInputEvent::kShiftKey | blink::WebInputEvent::kControlKey |
+                                blink::WebInputEvent::kMetaKey | blink::WebInputEvent::kAltKey)) == blink::WebInputEvent::kShiftKey &&
+        static_cast<const blink::WebMouseEvent&>(event).button == blink::WebMouseEvent::Button::kLeft)
+      shift_link_click_ = base::TimeTicks::Now();
     interacted_.Run(this);
   }
   base::RepeatingClosure changed_;
   base::RepeatingCallback<void(views::WebView*)> interacted_;
   base::RepeatingCallback<void(content::WebContents*, bool)> fullscreen_;
   bool is_fullscreen_ = false;
+  base::RepeatingCallback<bool()> image_previews_;
+  PeekHandler peek_;
+  std::unique_ptr<ImageLinkPreview> image_preview_;
+  GURL hovered_link_;
+  base::TimeTicks shift_link_click_;
 };
 
 BEGIN_METADATA(WorkspaceWebView)
@@ -762,7 +806,20 @@ views::WebView* WorkspaceWindow::CreatePage(Profile* profile, views::View* paren
       }, weak_factory_.GetWeakPtr()),
       base::BindRepeating(&WorkspaceWindow::ScheduleShellUpdate, base::Unretained(this)),
       base::BindRepeating(&WorkspaceWindow::PageFocused, base::Unretained(this)),
-      base::BindRepeating(&WorkspaceWindow::SetPageFullscreen, weak_factory_.GetWeakPtr())));
+      base::BindRepeating(&WorkspaceWindow::SetPageFullscreen, weak_factory_.GetWeakPtr()),
+      base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window) {
+        return window && window->image_link_previews_ && !window->closing_ && !window->profiles_busy_;
+      }, weak_factory_.GetWeakPtr()),
+      base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window, content::WebContents* source, const GURL& url) {
+        if (!window || !window->shift_click_peek_ || !url.SchemeIsHTTPOrHTTPS()) return false;
+        const auto workspace = window->WorkspaceForPage(source);
+        if (workspace.empty()) return false;
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
+            base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, GURL url, std::string workspace) {
+              if (window) window->OpenPeek(url, workspace);
+            }, window, url, workspace));
+        return true;
+      }, weak_factory_.GetWeakPtr())));
   view->set_allow_accelerators(true);
   view->SetVisible(false);
   if (owned) view->SetOwnedWebContents(std::move(owned));
@@ -1078,6 +1135,8 @@ BrowserPreferences WorkspaceWindow::ReadPreferences() const {
   if (!workspace || !configuration_ready_ || profiles_busy_) return result;
   auto* profile = ProfileFor(workspace->profile_id);
   if (!profile) return result;
+  result["image_link_previews"] = {image_link_previews_, !configuration_invalid_};
+  result["shift_click_peek"] = {shift_click_peek_, !configuration_invalid_};
   auto* service = profile->GetPrefs();
   auto read = [&](const char* key, const char* pref, int value) {
     const auto* entry = service->FindPreference(pref);
@@ -1143,6 +1202,17 @@ bool WorkspaceWindow::WritePreference(std::string key, int value) {
   auto current = ReadPreferences();
   auto it = current.find(key);
   if (it == current.end() || !it->second.editable) return false;
+  if (key == "image_link_previews" || key == "shift_click_peek") {
+    if (value != 0 && value != 1) return false;
+    if (key == "image_link_previews") {
+      image_link_previews_ = value != 0;
+      for (const auto& host : hosts_) for (const auto& view : host.tabs)
+        static_cast<WorkspaceWebView*>(view.get())->ResetImagePreview();
+      if (peek_view_) static_cast<WorkspaceWebView*>(peek_view_.get())->ResetImagePreview();
+    } else shift_click_peek_ = value != 0;
+    SaveConfiguration();
+    return true;
+  }
   auto* profile = ProfileFor(model_.active()->profile_id);
   auto* service = profile->GetPrefs();
   if (auto result = WriteChromiumPreference(profile, g_browser_process->local_state(), key, value)) return *result;
@@ -1328,6 +1398,13 @@ bool WorkspaceWindow::OpenLink(const GURL& url, std::string source_workspace, bo
 content::WebContents* WorkspaceWindow::peek_contents() const {
   return peek_view_ ? peek_view_->GetWebContents() : nullptr;
 }
+bool WorkspaceWindow::image_preview_visible_for_testing(content::WebContents* page) const {
+  if (peek_view_ && peek_view_->web_contents() == page)
+    return static_cast<WorkspaceWebView*>(peek_view_.get())->image_preview_visible();
+  for (const auto& host : hosts_) for (const auto& view : host.tabs)
+    if (view->web_contents() == page) return static_cast<WorkspaceWebView*>(view.get())->image_preview_visible();
+  return false;
+}
 bool WorkspaceWindow::OpenPeek(const GURL& url, std::string source_workspace) {
   preconnect_timer_.Stop();
   if (peek_view_ && GuardPages({peek_contents()}, base::BindOnce([](base::WeakPtr<WorkspaceWindow> w, GURL url, std::string source) {
@@ -1405,6 +1482,14 @@ content::WebContents* WorkspaceWindow::OpenPageLink(content::WebContents* source
   if (!params.url.SchemeIsHTTPOrHTTPS() || params.post_data) return nullptr;
   const auto workspace = WorkspaceForPage(source);
   if (workspace.empty()) return nullptr;
+  if (shift_click_peek_ && params.user_gesture && params.disposition == WindowOpenDisposition::NEW_WINDOW &&
+      ui::PageTransitionCoreTypeIs(params.transition, ui::PAGE_TRANSITION_LINK)) {
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
+        base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, GURL url, std::string workspace) {
+          if (window) window->OpenPeek(url, workspace);
+        }, weak_factory_.GetWeakPtr(), params.url, workspace));
+    return nullptr;
+  }
   const bool new_tab = params.disposition != WindowOpenDisposition::CURRENT_TAB;
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
       base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, GURL url, std::string workspace, bool new_tab, bool background) {
@@ -2277,6 +2362,8 @@ bool WorkspaceWindow::RestoreRemovedWorkspace(std::string id) {
 void WorkspaceWindow::SaveConfiguration(base::OnceCallback<void(bool)> done) {
   if (!configuration_ready_ || configuration_invalid_) { if (done) std::move(done).Run(false); return; }
   base::DictValue dict;
+  dict.Set("image_link_previews", image_link_previews_);
+  dict.Set("shift_click_peek", shift_click_peek_);
   const auto* replaced_starter = import_replaces_starter_ ? model_.Find(starter_workspace_id_) : nullptr;
   base::ListValue profile_list;
   for (const auto& entry : profiles_) {
@@ -2589,6 +2676,8 @@ void WorkspaceWindow::RestoreConfiguration(std::string json) {
       }
     }
     pins_ = std::move(restored_pins);
+    image_link_previews_ = dict->FindBool("image_link_previews").value_or(false);
+    shift_click_peek_ = dict->FindBool("shift_click_peek").value_or(true);
     onboarding_complete_ = dict->FindBool("onboarding_complete").value_or(true);
     if (const auto* starter = dict->FindString("starter_workspace"))
       if (!onboarding_complete_ && model_.Find(*starter)) starter_workspace_id_ = *starter;

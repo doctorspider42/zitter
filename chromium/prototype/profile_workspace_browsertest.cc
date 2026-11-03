@@ -17,6 +17,7 @@
 #endif
 #include "chromium/prototype/i18n.h"
 #include "chromium/prototype/sidebar_metal.h"
+#include "chromium/prototype/sidebar_scene.rs.h"
 #include "ui/views/view_targeter_delegate.h"
 #include "ui/views/controls/focus_ring.h"
 #include "ui/views/focus/focus_manager.h"
@@ -41,6 +42,8 @@
 #include "ui/views/drag_controller.h"
 #include "ui/compositor/layer_tree_owner.h"
 #include "ui/compositor/compositor.h"
+#include "ui/compositor/canvas_painter.h"
+#include "ui/views/paint_info.h"
 #include "crypto/aes_cbc.h"
 #include "crypto/hash.h"
 #include "net/cookies/cookie_options.h"
@@ -49,6 +52,7 @@
 #include "services/network/public/mojom/cookie_manager.mojom.h"
 #include "content/public/browser/storage_partition.h"
 #include "chromium/prototype/workspace_window.h"
+#include "chromium/prototype/image_link_preview.h"
 #include "chromium/prototype/time_machine_view.h"
 #include "chromium/prototype/extensions_bar.h"
 #include "components/sessions/content/session_tab_helper.h"
@@ -2969,7 +2973,56 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarRemainsOpenWhileSpacesS
   EXPECT_TRUE(shell->sidebar_visible());
 }
 
-// Compile only: Peek rendering, focus and command routing await the bulk UI checkpoint.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PeekSurfaceTracksThemeAndCompositorPaintsIcons) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  ASSERT_TRUE(window_->OpenPeek(embedded_test_server()->GetURL("/storage_probe.html")));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->peek_contents()));
+  auto* toolbar = shell->peek_toolbar_for_testing();
+  auto* surface = toolbar->parent();
+  const auto capture = base::CommandLine::ForCurrentProcess()->GetSwitchValuePath("zitter-peek-capture-dir");
+  for (const auto mode : {ThemeMode::kDark, ThemeMode::kLight, ThemeMode::kDark}) {
+    shell->SetThemeMode(mode);
+    shell->peek_widget()->LayoutRootViewIfNecessary();
+    const auto palette = sidebar::design_palette(mode == ThemeMode::kDark, shell->workspace_color(window_->active_id()));
+    ASSERT_TRUE(surface->background());
+    EXPECT_EQ(ui::ColorVariant(palette.bg_raised), surface->background()->color());
+    if (MetalPresents()) continue;
+    // Paint the actual compositor toolbar over its card, then inspect pixels:
+    // arrows must contain strokes and empty space rather than a solid square.
+    const auto original_bounds = toolbar->bounds();
+    toolbar->SetBoundsRect(gfx::Rect(toolbar->size()));
+    SkBitmap bitmap;
+    {
+      // The toolbar paints its scene directly; supply the parent's card color
+      // instead of PaintViewToBitmap's opaque red placeholder.
+      ui::CanvasPainter painter(&bitmap, toolbar->size(), 1.f, palette.bg_raised, false);
+      toolbar->Paint(views::PaintInfo::CreateRootPaintInfo(painter.context(), toolbar->size()));
+    }
+    toolbar->SetBoundsRect(original_bounds);
+    for (const size_t index : {0u, 1u, 4u}) {
+      const auto center = shell->peek_action_for_testing(index)->bounds().CenterPoint();
+      size_t ink = 0;
+      for (int y = center.y() - 8; y < center.y() + 8; ++y)
+        for (int x = center.x() - 8; x < center.x() + 8; ++x)
+          if (bitmap.getColor(x, y) != palette.bg_raised) ++ink;
+      EXPECT_GT(ink, 10u);
+      EXPECT_LT(ink, 180u);
+    }
+    if (!capture.empty()) {
+      base::ScopedAllowBlockingForTesting allow;
+      ASSERT_TRUE(base::CreateDirectory(capture));
+      const auto png = gfx::PNGCodec::EncodeBGRASkBitmap(bitmap, false);
+      ASSERT_TRUE(png);
+      ASSERT_TRUE(base::WriteFile(capture.AppendASCII(mode == ThemeMode::kDark ? "peek-dark.png" : "peek-light.png"), *png));
+    }
+  }
+  shell->SetThemeMode(ThemeMode::kSystem);
+  const auto system = sidebar::design_palette(shell->peek_widget()->GetColorMode() == ui::ColorProviderKey::ColorMode::kDark,
+                                              shell->workspace_color(window_->active_id()));
+  EXPECT_EQ(ui::ColorVariant(system.bg_raised), surface->background()->color());
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PeekToolbarNodesTitleMetricsAndNativeLayoutOracle) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));const auto url=embedded_test_server()->GetURL("/storage_probe.html?peek-toolbar-layout");ASSERT_TRUE(window_->OpenPeek(url));ASSERT_TRUE(content::WaitForLoadStop(window_->peek_contents()));shell->peek_widget()->LayoutRootViewIfNecessary();const bool rust=shell->workspace_input()->rust_editor();auto* toolbar=shell->peek_toolbar_for_testing();auto* title=shell->peek_title_for_testing();ASSERT_TRUE(toolbar);ASSERT_TRUE(title);ASSERT_EQ(6u,toolbar->children().size());EXPECT_EQ(!rust,views::AsViewClass<views::Label>(title)!=nullptr);
   const std::array<std::u16string,5> names={u"Wstecz",u"Dalej",u"Otwórz jako kartę",u"Split View",u"Zamknij podgląd (Escape)"};std::vector<uint64_t> ids;
@@ -3021,6 +3074,98 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CmdClickOpensBackgroundTabWith
   ASSERT_NE(source, window_->contents("work"));
   ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
   EXPECT_EQ(target, window_->contents("work")->GetLastCommittedURL());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ShiftClickOpensPeekAndPromotesExistingPage) {
+  const auto source_url = embedded_test_server()->GetURL("/links_probe.html");
+  const auto target = embedded_test_server()->GetURL("/storage_probe.html?peek");
+  auto* source = window_->contents("work");
+  ASSERT_TRUE(content::NavigateToURL(source, source_url));
+  ASSERT_TRUE(content::ExecJs(source, "document.getElementById('marker').value = 'kept'"));
+  content::SimulateEndOfPaintHoldingOnPrimaryMainFrame(source);
+  EXPECT_EQ(1, window_->ReadPreferences().at("shift_click_peek").value);
+  const auto tabs = window_->tab_count("work");
+  content::SimulateMouseClickAt(source, blink::WebInputEvent::kShiftKey, blink::WebMouseEvent::Button::kLeft,
+      gfx::ToRoundedPoint(content::GetCenterCoordinatesOfElementWithId(source, "peek")));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->peek_contents() != nullptr; }));
+  auto* peek = window_->peek_contents();
+  ASSERT_TRUE(content::WaitForLoadStop(peek));
+  EXPECT_EQ(target, peek->GetLastCommittedURL());
+  EXPECT_EQ(tabs, window_->tab_count("work"));
+  EXPECT_EQ(source_url, source->GetLastCommittedURL());
+  EXPECT_EQ("kept", content::EvalJs(source, "document.getElementById('marker').value"));
+  ASSERT_TRUE(content::ExecJs(peek, "document.getElementById('marker').value = 'peek state'"));
+  ASSERT_TRUE(window_->PromotePeek(false));
+  EXPECT_EQ(peek, window_->contents("work"));
+  EXPECT_EQ(tabs + 1, window_->tab_count("work"));
+  EXPECT_EQ("peek state", content::EvalJs(peek, "document.getElementById('marker').value"));
+  ASSERT_TRUE(content::NavigateToURL(peek, source_url));
+  content::SimulateEndOfPaintHoldingOnPrimaryMainFrame(peek);
+  const auto blank = gfx::ToRoundedPoint(content::GetCenterCoordinatesOfElementWithId(peek, "blank"));
+  content::SimulateMouseEvent(peek, blink::WebInputEvent::Type::kMouseMove, blank);
+  content::SimulateMouseClickAt(peek, blink::WebInputEvent::kShiftKey, blink::WebMouseEvent::Button::kLeft, blank);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->peek_contents() != nullptr; }));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->peek_contents()));
+  EXPECT_EQ(embedded_test_server()->GetURL("/storage_probe.html?blank"), window_->peek_contents()->GetLastCommittedURL());
+  EXPECT_EQ(tabs + 1, window_->tab_count("work"));
+  window_->ClosePeek();
+  ASSERT_TRUE(window_->WritePreference("shift_click_peek", 0));
+  content::SimulateMouseClickAt(peek, blink::WebInputEvent::kShiftKey, blink::WebMouseEvent::Button::kLeft,
+      gfx::ToRoundedPoint(content::GetCenterCoordinatesOfElementWithId(peek, "peek")));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->tab_count("work") == tabs + 2; }));
+  EXPECT_EQ(nullptr, window_->peek_contents());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ImageLinkPreviewOptInAndCancellation) {
+  EXPECT_TRUE(ImageLinkPreview::IsImageURL(GURL("https://example.test/photo.JPG?size=100#image")));
+  EXPECT_FALSE(ImageLinkPreview::IsImageURL(GURL("https://example.test/page?image=x.png")));
+  EXPECT_FALSE(ImageLinkPreview::IsImageURL(GURL("https://user:password@example.test/x.png")));
+  EXPECT_FALSE(ImageLinkPreview::IsImageURL(GURL("file:///tmp/x.png")));
+  EXPECT_FALSE(ImageLinkPreview::IsImageURL(GURL("javascript:alert('x.png')")));
+  auto* page = window_->contents("work");
+  ASSERT_TRUE(content::NavigateToURL(page, embedded_test_server()->GetURL("/links_probe.html")));
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  content::SimulateEndOfPaintHoldingOnPrimaryMainFrame(page);
+  const auto image = embedded_test_server()->GetURL("/preview_image.svg?hover=1");
+  EXPECT_EQ(0, window_->ReadPreferences().at("image_link_previews").value);
+  page->GetDelegate()->UpdateTargetURL(page, image);
+  EXPECT_FALSE(window_->image_preview_visible_for_testing(page));
+  ASSERT_TRUE(window_->WritePreference("image_link_previews", 1));
+  ASSERT_TRUE(content::ExecJs(page, "document.getElementById('image').scrollIntoView({block: 'center'})"));
+  content::SimulateMouseEvent(page, blink::WebInputEvent::Type::kMouseMove,
+      gfx::ToRoundedPoint(content::GetCenterCoordinatesOfElementWithId(page, "image")));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->image_preview_visible_for_testing(page); }));
+  EXPECT_EQ(page, window_->contents("work"));
+  EXPECT_TRUE(window_->widget()->IsActive());
+  page->GetDelegate()->UpdateTargetURL(page, GURL());
+  EXPECT_FALSE(window_->image_preview_visible_for_testing(page));
+  // Leaving and re-entering cancels the old download generation, even for the same URL.
+  page->GetDelegate()->UpdateTargetURL(page, image);
+  page->GetDelegate()->UpdateTargetURL(page, GURL());
+  page->GetDelegate()->UpdateTargetURL(page, image);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->image_preview_visible_for_testing(page); }));
+  ASSERT_TRUE(window_->WritePreference("image_link_previews", 0));
+  EXPECT_FALSE(window_->image_preview_visible_for_testing(page));
+  EXPECT_FALSE(window_->WritePreference("image_link_previews", 2));
+  ASSERT_TRUE(window_->WritePreference("image_link_previews", 1));
+  page->GetDelegate()->UpdateTargetURL(page, image);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->image_preview_visible_for_testing(page); }));
+  ASSERT_TRUE(window_->Select("personal"));
+  EXPECT_FALSE(window_->image_preview_visible_for_testing(page));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, LinkPreviewPreferencesSurviveWindowRecreation) {
+  ASSERT_TRUE(window_->WritePreference("image_link_previews", 1));
+  ASSERT_TRUE(window_->WritePreference("shift_click_peek", 0));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
+  window_.reset();
+  window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+  EXPECT_EQ(1, window_->ReadPreferences().at("image_link_previews").value);
+  EXPECT_EQ(0, window_->ReadPreferences().at("shift_click_peek").value);
+  ASSERT_TRUE(window_->Select("personal"));
+  EXPECT_EQ(1, window_->ReadPreferences().at("image_link_previews").value);
+  EXPECT_EQ(0, window_->ReadPreferences().at("shift_click_peek").value);
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PeekLifecycleAndPromotion) {
