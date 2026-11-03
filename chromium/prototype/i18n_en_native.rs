@@ -229,4 +229,5 @@ pub static EN: &[(&str, &str)] = &[
     ("historię kart", "tab history"),
     ("Snapshot", "Snapshot"),
     ("Aktualizacja po zamknięciu: ", "Update on exit: "),
+    ("OK", "OK"),
 ];
