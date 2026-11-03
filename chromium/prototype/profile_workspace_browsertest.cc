@@ -55,6 +55,7 @@
 #include "chromium/prototype/image_link_preview.h"
 #include "chromium/prototype/time_machine_view.h"
 #include "chromium/prototype/extensions_bar.h"
+#include "components/download/public/common/download_item_impl.h"
 #include "components/sessions/content/session_tab_helper.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
 #include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
@@ -1644,7 +1645,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitPaneBarClickFocusesItsPan
 // The footer's „+” (design: Sidebar footer) offers a new tab, folder or space.
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FooterAddMenuOpensTabFolderAndSpace) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->SetPinned(true);shell->ShowSidebar();
-  shell->sidebar_widget()->LayoutRootViewIfNecessary();ASSERT_TRUE(shell->footer_action_for_testing(0));EXPECT_FALSE(shell->footer_action_for_testing(1));
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();ASSERT_TRUE(shell->footer_action_for_testing(0));
+  // Downloads opens the footer at rest, as „+” closes it.
+  ASSERT_TRUE(shell->footer_action_for_testing(1));EXPECT_TRUE(shell->footer_action_for_testing(1)->GetVisible());EXPECT_EQ(u"Pobrane",shell->footer_action_for_testing(1)->GetTooltipText());EXPECT_FALSE(shell->footer_action_for_testing(2));
   shell->ShowAddMenu();ASSERT_TRUE(base::test::RunUntil([&]{return shell->add_menu_running_for_testing();}));
   auto* menu=shell->add_menu_for_testing();ASSERT_TRUE(menu);ASSERT_EQ(3u,menu->GetItemCount());
   EXPECT_EQ(u"Nowa karta",menu->GetLabelAt(0));EXPECT_EQ(u"Nowy folder",menu->GetLabelAt(1));EXPECT_EQ(u"Nowa przestrzeń…",menu->GetLabelAt(2));
@@ -3413,16 +3416,167 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DownloadsTransferControlsAndPr
   EXPECT_EQ(2u, panel->visible_guids().size());
 }
 
+// Design: Downloads — the footer's leading icon turns into a ring while files
+// arrive and opens the list above it; with the sidebar slid away the start
+// lands in a pill instead.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DownloadsRingAndStartCueFollowTheSidebar) {
+  base::ScopedAllowBlockingForTesting test_files;
+  base::test::ScopedRunLoopTimeout timeout(FROM_HERE, base::Seconds(30));
+  NavigateBoth();ASSERT_TRUE(window_->Select("work"));
+  base::ScopedTempDir directory;ASSERT_TRUE(directory.CreateUniqueTempDir());
+  DownloadPrefs::FromBrowserContext(work_)->SetDownloadPath(directory.GetPath());work_->GetPrefs()->SetBoolean(prefs::kPromptForDownload, false);
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
+  auto* manager=work_->GetDownloadManager();ASSERT_TRUE(base::test::RunUntil([&]{return manager->IsManagerInitialized();}));
+  net::EmbeddedTestServer server;net::test_server::ControllableHttpResponse first(&server,"/ring.bin"),second(&server,"/pill.bin");ASSERT_TRUE(server.Start());
+  auto start=[&](std::string path){manager->DownloadUrl(content::DownloadRequestUtils::CreateDownloadForWebContentsMainFrame(window_->contents("work"),server.GetURL(path),TRAFFIC_ANNOTATION_FOR_TESTS));};
+  auto* ring=shell->footer_action_for_testing(1);ASSERT_TRUE(ring);EXPECT_TRUE(ring->GetVisible());EXPECT_EQ(u"Pobrane",ring->GetTooltipText());
+  // Docked sidebar: the arrow lands on the ring, which stays while bytes arrive.
+  shell->SetPinned(true);shell->ShowSidebar();shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  start("/ring.bin");first.WaitForRequest();
+  first.Send("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=ring.bin\r\nContent-Length: 8192\r\n\r\n");first.Send(std::string(4096,'x'));
+  ASSERT_TRUE(base::test::RunUntil([&]{return ring->GetTooltipText().find(u"ring.bin")!=std::u16string::npos;}));
+  ASSERT_TRUE(base::test::RunUntil([&]{return !shell->download_cue_widget_for_testing()->IsVisible();}));
+  EXPECT_FALSE(shell->download_cue_is_pill_for_testing());
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  const auto add=shell->footer_action_for_testing(0)->GetBoundsInScreen(),bounds=ring->GetBoundsInScreen();
+  const auto footer=ring->parent()->GetBoundsInScreen();
+  EXPECT_EQ(bounds.size(),gfx::Size(28,28));EXPECT_EQ(bounds.x(),footer.x());EXPECT_EQ(add.right(),footer.right());EXPECT_EQ(bounds.y(),add.y());
+  // A click on the ring opens the list above it.
+  {const auto point=ring->GetLocalBounds().CenterPoint();ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);
+   ASSERT_TRUE(ring->OnMousePressed(press));ring->OnMouseReleased(release);}
+  ASSERT_TRUE(base::test::RunUntil([&]{return window_->downloads()->widget()&&window_->downloads()->widget()->IsVisible();}));auto* panel=window_->downloads();ASSERT_TRUE(panel&&panel->widget()&&panel->widget()->IsVisible());
+  const auto list=panel->widget()->GetWindowBoundsInScreen();const auto area=display::Screen::Get()->GetDisplayNearestWindow(window_->widget()->GetNativeWindow()).work_area();
+  if(area.Contains(gfx::Rect(bounds.x()-16,bounds.y()-8-list.height(),list.width(),list.height()))){EXPECT_EQ(list.bottom(),bounds.y()-8);EXPECT_EQ(list.x(),bounds.x()-16);}
+  panel->widget()->CloseNow();
+  first.Send(std::string(4096,'x'));first.Done();
+  // Finished: ✓ for a moment, then the icon rests.
+  ASSERT_TRUE(base::test::RunUntil([&]{return ring->GetTooltipText()==u"Pobrane: gotowe";}));
+  ASSERT_TRUE(base::test::RunUntil([&]{return ring->GetTooltipText()==u"Pobrane";}));
+  // Sidebar slid away: the start lands in the page's lower left corner as a pill.
+  shell->SetPinned(false);shell->sidebar_widget()->Hide();ASSERT_FALSE(shell->sidebar_visible());
+  start("/pill.bin");second.WaitForRequest();
+  second.Send("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=pill.bin\r\nContent-Length: 2048\r\n\r\n");second.Send(std::string(1024,'x'));
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->download_cue_is_pill_for_testing();}));
+  const auto page=window_->widget()->GetClientAreaBoundsInScreen();const auto pill=shell->download_cue_widget_for_testing()->GetWindowBoundsInScreen();
+  EXPECT_EQ(pill.x(),page.x()+16);EXPECT_EQ(pill.bottom(),page.bottom()-16);EXPECT_EQ(pill.height(),40);
+  EXPECT_EQ(shell->downloads_anchor_in_screen(),pill);
+  second.Send(std::string(1024,'x'));second.Done();
+  ASSERT_TRUE(base::test::RunUntil([&]{return ring->GetTooltipText()==u"Pobrane";}));
+}
+// Design: Okno Pobrane — search, state and type filters, choosing files,
+// removing them from the list with an undo toast, deleting one from the disk
+// after a warning, and clearing finished files.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DownloadsWindowFiltersRemoveUndoDeleteAndClear) {
+  base::ScopedAllowBlockingForTesting test_files;
+  base::test::ScopedRunLoopTimeout timeout(FROM_HERE, base::Seconds(30));
+  NavigateBoth();ASSERT_TRUE(window_->Select("work"));
+  base::ScopedTempDir directory;ASSERT_TRUE(directory.CreateUniqueTempDir());
+  DownloadPrefs::FromBrowserContext(work_)->SetDownloadPath(directory.GetPath());work_->GetPrefs()->SetBoolean(prefs::kPromptForDownload,false);
+  auto* manager=work_->GetDownloadManager();ASSERT_TRUE(base::test::RunUntil([&]{return manager->IsManagerInitialized();}));
+  net::EmbeddedTestServer server;net::test_server::ControllableHttpResponse pdf(&server,"/faktura-2026-10.pdf"),zip(&server,"/zdjecia-wesele.zip");ASSERT_TRUE(server.Start());
+  auto fetch=[&](net::test_server::ControllableHttpResponse& response,std::string path){
+    manager->DownloadUrl(content::DownloadRequestUtils::CreateDownloadForWebContentsMainFrame(window_->contents("work"),server.GetURL(path),TRAFFIC_ANNOTATION_FOR_TESTS));
+    response.WaitForRequest();response.Send("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment\r\nContent-Length: 16\r\n\r\n"+std::string(16,'x'));response.Done();};
+  fetch(pdf,"/faktura-2026-10.pdf");fetch(zip,"/zdjecia-wesele.zip");
+  window_->ShowDownloads();auto* panel=window_->downloads();ASSERT_TRUE(panel&&panel->widget());
+  auto finished=[&]{content::DownloadManager::DownloadVector items;manager->GetAllDownloads(&items);return items.size()==2&&std::ranges::all_of(items,[](const auto& item){return item->GetState()==download::DownloadItem::COMPLETE;});};
+  ASSERT_TRUE(base::test::RunUntil(finished));
+  std::string pdf_guid,zip_guid;base::FilePath pdf_path;
+  {content::DownloadManager::DownloadVector items;manager->GetAllDownloads(&items);for(const auto& item:items){if(item->GetTargetFilePath().Extension()==FILE_PATH_LITERAL(".pdf")){pdf_guid=item->GetGuid();pdf_path=item->GetTargetFilePath();}else zip_guid=item->GetGuid();}}
+  ASSERT_FALSE(pdf_guid.empty());ASSERT_FALSE(zip_guid.empty());ASSERT_TRUE(base::PathExists(pdf_path));
+  using F=DownloadPanel::StateFilter;
+  ASSERT_TRUE(base::test::RunUntil([&]{return panel->visible_guids().size()==2u;}));
+  EXPECT_EQ(2,panel->count_for_testing(F::kAll));EXPECT_EQ(2,panel->count_for_testing(F::kDone));EXPECT_EQ(0,panel->count_for_testing(F::kActive));
+  EXPECT_NE(std::u16string::npos,panel->folder_for_testing().find(directory.GetPath().BaseName().LossyDisplayName()));
+  // Search: name words, case and diacritics aside.
+  panel->search_for_testing()->SetText(u"FAKTURA");panel->SetQuery(u"FAKTURA");EXPECT_EQ(std::vector<std::string>{pdf_guid},panel->visible_guids());EXPECT_EQ(1,panel->count_for_testing(F::kDone));
+  panel->SetQuery(u"");
+  // Type: documents only; state: in progress shows nothing.
+  panel->SetCategory(2);EXPECT_EQ(std::vector<std::string>{pdf_guid},panel->visible_guids());panel->SetCategory(0);
+  panel->SetStateFilter(F::kActive);EXPECT_TRUE(panel->visible_guids().empty());panel->SetStateFilter(F::kAll);
+  // Choose the archive and remove it from the list: the toast undoes it.
+  panel->SetChoosing(true);panel->Choose(zip_guid,true);EXPECT_EQ(1u,panel->chosen().size());panel->RemoveChosen();
+  EXPECT_FALSE(panel->choosing());EXPECT_EQ(std::vector<std::string>{pdf_guid},panel->visible_guids());
+  auto* shell=window_->shell();EXPECT_NE(std::u16string::npos,shell->toast_text_for_testing().find(u"Usunięto z listy"));
+  shell->UndoToast();ASSERT_TRUE(base::test::RunUntil([&]{return panel->visible_guids().size()==2u;}));
+  // Deleting from the disk asks first; cancelling keeps the file.
+  ASSERT_TRUE(panel->Act(pdf_guid,DownloadPanel::Action::kDelete));
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->danger_dialog_for_testing()&&shell->danger_dialog_for_testing()->IsVisible();}));
+  shell->danger_dialog_for_testing()->widget_delegate()->AsDialogDelegate()->CancelDialog();
+  ASSERT_TRUE(base::test::RunUntil([&]{return !shell->danger_dialog_for_testing();}));EXPECT_TRUE(base::PathExists(pdf_path));
+  ASSERT_TRUE(panel->Act(pdf_guid,DownloadPanel::Action::kDelete));
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->danger_dialog_for_testing()&&shell->danger_dialog_for_testing()->IsVisible();}));
+  shell->danger_dialog_for_testing()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+  ASSERT_TRUE(base::test::RunUntil([&]{return !base::PathExists(pdf_path)&&panel->visible_guids()==std::vector<std::string>{zip_guid};}));
+  // „Wyczyść”: finished files leave the list; the file itself stays.
+  panel->ClearList(DownloadPanel::Clear::kDone);EXPECT_TRUE(panel->visible_guids().empty());
+  ASSERT_TRUE(base::test::RunUntil([&]{content::DownloadManager::DownloadVector items;manager->GetAllDownloads(&items);return items.empty();}));
+}
+
+// A transfer cut off by the network resumes from „Wznów” where it stopped
+// (a Range request), and its row says only „Przerwano” meanwhile.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DownloadsInterruptedResumesFromThePanel) {
+  base::ScopedAllowBlockingForTesting test_files;
+  base::test::ScopedRunLoopTimeout timeout(FROM_HERE, base::Seconds(30));
+  NavigateBoth();ASSERT_TRUE(window_->Select("work"));
+  base::ScopedTempDir directory;ASSERT_TRUE(directory.CreateUniqueTempDir());
+  DownloadPrefs::FromBrowserContext(work_)->SetDownloadPath(directory.GetPath());work_->GetPrefs()->SetBoolean(prefs::kPromptForDownload,false);
+  auto* manager=work_->GetDownloadManager();ASSERT_TRUE(base::test::RunUntil([&]{return manager->IsManagerInitialized();}));
+  net::EmbeddedTestServer server;net::test_server::ControllableHttpResponse first(&server,"/resume.bin"),again(&server,"/resume.bin");ASSERT_TRUE(server.Start());
+  manager->DownloadUrl(content::DownloadRequestUtils::CreateDownloadForWebContentsMainFrame(window_->contents("work"),server.GetURL("/resume.bin"),TRAFFIC_ANNOTATION_FOR_TESTS));
+  first.WaitForRequest();
+  first.Send("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment\r\nContent-Length: 8192\r\nAccept-Ranges: bytes\r\nETag: \"v1\"\r\nLast-Modified: Tue, 03 Nov 2026 10:00:00 GMT\r\n\r\n"+std::string(4096,'a'));
+  download::DownloadItem* item=nullptr;
+  ASSERT_TRUE(base::test::RunUntil([&]{content::DownloadManager::DownloadVector items;manager->GetAllDownloads(&items);if(items.empty())return false;item=items[0];return item->GetReceivedBytes()>=4096&&!item->GetTargetFilePath().empty();}));
+  static_cast<download::DownloadItemImpl*>(item)->SimulateErrorForTesting(download::DOWNLOAD_INTERRUPT_REASON_NETWORK_FAILED);
+  ASSERT_TRUE(base::test::RunUntil([&]{return item->GetState()==download::DownloadItem::INTERRUPTED;}));ASSERT_TRUE(item->CanResume());
+  window_->ShowDownloads();auto* panel=window_->downloads();ASSERT_TRUE(panel&&panel->widget());
+  ASSERT_TRUE(base::test::RunUntil([&]{return FindButton(panel->widget()->GetContentsView(),u"Wznów");}));
+  if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return panel->scene_contains_text_for_testing("⚠ Przerwano");}));
+  ClickControl(FindButton(panel->widget()->GetContentsView(),u"Wznów"));
+  again.WaitForRequest();
+  EXPECT_EQ("bytes=4096-",again.http_request()->headers.at("Range"));
+  again.Send("HTTP/1.1 206 Partial Content\r\nContent-Type: application/octet-stream\r\nContent-Range: bytes 4096-8191/8192\r\nContent-Length: 4096\r\nAccept-Ranges: bytes\r\nETag: \"v1\"\r\nLast-Modified: Tue, 03 Nov 2026 10:00:00 GMT\r\n\r\n"+std::string(4096,'b'));again.Done();
+  ASSERT_TRUE(base::test::RunUntil([&]{return item->GetState()==download::DownloadItem::COMPLETE;}));
+  std::string body;ASSERT_TRUE(base::ReadFileToString(item->GetTargetFilePath(),&body));EXPECT_EQ(std::string(4096,'a')+std::string(4096,'b'),body);
+}
+
+// Removing a file still arriving from the list ends its transfer and deletes
+// the partial file once the undo toast has gone.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DownloadsRemovingATransferDeletesItsPartialFile) {
+  base::ScopedAllowBlockingForTesting test_files;
+  base::test::ScopedRunLoopTimeout timeout(FROM_HERE, base::Seconds(30));
+  NavigateBoth();ASSERT_TRUE(window_->Select("work"));
+  base::ScopedTempDir directory;ASSERT_TRUE(directory.CreateUniqueTempDir());
+  DownloadPrefs::FromBrowserContext(work_)->SetDownloadPath(directory.GetPath());work_->GetPrefs()->SetBoolean(prefs::kPromptForDownload,false);
+  auto* manager=work_->GetDownloadManager();ASSERT_TRUE(base::test::RunUntil([&]{return manager->IsManagerInitialized();}));
+  net::EmbeddedTestServer server;net::test_server::ControllableHttpResponse response(&server,"/partial.bin");ASSERT_TRUE(server.Start());
+  manager->DownloadUrl(content::DownloadRequestUtils::CreateDownloadForWebContentsMainFrame(window_->contents("work"),server.GetURL("/partial.bin"),TRAFFIC_ANNOTATION_FOR_TESTS));
+  response.WaitForRequest();
+  response.Send("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment\r\nContent-Length: 65536\r\n\r\n"+std::string(4096,'x'));
+  download::DownloadItem* item=nullptr;
+  ASSERT_TRUE(base::test::RunUntil([&]{content::DownloadManager::DownloadVector items;manager->GetAllDownloads(&items);if(items.empty())return false;item=items[0];return item->GetReceivedBytes()>=4096&&!item->GetFullPath().empty()&&base::PathExists(item->GetFullPath());}));
+  const auto partial=item->GetFullPath();const auto guid=item->GetGuid();
+  window_->ShowDownloads();auto* panel=window_->downloads();ASSERT_TRUE(panel&&panel->widget());
+  ASSERT_TRUE(base::test::RunUntil([&]{return panel->visible_guids()==std::vector<std::string>{guid};}));
+  ASSERT_TRUE(panel->Act(guid,DownloadPanel::Action::kRemove));EXPECT_TRUE(panel->visible_guids().empty());
+  ASSERT_TRUE(base::test::RunUntil([&]{content::DownloadManager::DownloadVector items;manager->GetAllDownloads(&items);return items.empty();}));
+  ASSERT_TRUE(base::test::RunUntil([&]{return !base::PathExists(partial);}));
+  EXPECT_TRUE(base::IsDirectoryEmpty(directory.GetPath()));
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DownloadsSceneMetricsUnknownProgressAndCocoaPause) {
   NavigateBoth();ASSERT_TRUE(window_->Select("work"));base::ScopedTempDir directory;ASSERT_TRUE(directory.CreateUniqueTempDir());DownloadPrefs::FromBrowserContext(work_)->SetDownloadPath(directory.GetPath());work_->GetPrefs()->SetBoolean(prefs::kPromptForDownload,false);
   net::EmbeddedTestServer server;net::test_server::ControllableHttpResponse response(&server,"/unknown.txt");ASSERT_TRUE(server.Start());window_->ShowDownloads();auto* panel=window_->downloads();ASSERT_TRUE(panel&&panel->widget());const bool rust=window_->shell()->workspace_input()->rust_editor();auto* manager=work_->GetDownloadManager();manager->DownloadUrl(content::DownloadRequestUtils::CreateDownloadForWebContentsMainFrame(window_->contents("work"),server.GetURL("/unknown.txt"),TRAFFIC_ANNOTATION_FOR_TESTS));response.WaitForRequest();response.Send("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; filename=unknown.txt\r\n\r\n");response.Send(std::string(8192,'x'));
-  download::DownloadItem* item=nullptr;ASSERT_TRUE(base::test::RunUntil([&]{content::DownloadManager::DownloadVector items;manager->GetAllDownloads(&items);if(items.empty())return false;item=items[0];return item->GetReceivedBytes()>0&&!item->GetTargetFilePath().empty()&&FindButton(panel->widget()->GetContentsView(),u"Wstrzymaj");}));ASSERT_EQ(-1,item->PercentComplete());auto* list=panel->list_for_testing();ASSERT_TRUE(list);ASSERT_EQ(1u,list->children().size());auto* row=list->children()[0].get();
-  // Design: Downloads — tile, a column (name, state and facts, bar), icon actions.
+  download::DownloadItem* item=nullptr;ASSERT_TRUE(base::test::RunUntil([&]{content::DownloadManager::DownloadVector items;manager->GetAllDownloads(&items);if(items.empty())return false;item=items[0];return item->GetReceivedBytes()>0&&!item->GetTargetFilePath().empty()&&FindButton(panel->widget()->GetContentsView(),u"Wstrzymaj");}));ASSERT_EQ(-1,item->PercentComplete());auto* list=panel->list_for_testing();ASSERT_TRUE(list);ASSERT_EQ(2u,list->children().size());auto* row=list->children()[1].get();
+  // Design: Okno Pobrane — the day's label, then the row: tile, a column (name,
+  // state and facts, bar), icon actions and the file's „⋯” menu.
+  {ui::AXNodeData day;list->children()[0]->GetViewAccessibility().GetAccessibleNodeData(&day);EXPECT_EQ(u"Dziś",day.GetString16Attribute(ax::mojom::StringAttribute::kName));}
   ASSERT_EQ(3u,row->children().size());auto* column=row->children()[1].get();ASSERT_EQ(3u,column->children().size());auto* facts=column->children()[1].get();
   for(auto* copy:{column->children()[0].get(),facts->children()[0].get(),facts->children()[1].get()}){ui::AXNodeData node;copy->GetViewAccessibility().GetAccessibleNodeData(&node);EXPECT_EQ(ax::mojom::Role::kStaticText,node.role);if(rust){EXPECT_TRUE(copy->children().empty());EXPECT_FALSE(views::AsViewClass<views::Label>(copy));}}
   panel->widget()->LayoutRootViewIfNecessary();auto* filename=column->children()[0].get();EXPECT_EQ(item->GetTargetFilePath().LossyDisplayName(),filename->GetTooltipText());EXPECT_EQ(filename,filename->GetTooltipHandlerForPoint(gfx::Point(1,1)));
   auto* progress=column->children()[2].get();EXPECT_EQ(3,progress->GetPreferredSize().height());ui::AXNodeData progress_ax;progress->GetViewAccessibility().GetAccessibleNodeData(&progress_ax);EXPECT_EQ(ax::mojom::Role::kProgressIndicator,progress_ax.role);EXPECT_FALSE(progress_ax.HasStringAttribute(ax::mojom::StringAttribute::kValue));if(rust){EXPECT_TRUE(progress->children().empty());EXPECT_FALSE(views::AsViewClass<views::ProgressBar>(progress));}
-  auto* actions=row->children()[2].get();ASSERT_EQ(3u,actions->children().size());
+  auto* actions=row->children()[2].get();ASSERT_EQ(5u,actions->children().size());
   for(const auto& child:actions->children()){ui::AXNodeData node;child->GetViewAccessibility().GetAccessibleNodeData(&node);EXPECT_EQ(ax::mojom::Role::kButton,node.role);EXPECT_FALSE(node.GetString16Attribute(ax::mojom::StringAttribute::kName).empty());EXPECT_FALSE(views::AsViewClass<views::MdTextButton>(child.get()));}
   if(rust){if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return panel->scene_visible_for_testing()&&panel->scene_order_correct_for_testing()&&panel->scene_animating_for_testing()&&panel->scene_contains_text_for_testing("unknown.txt");}));panel->widget()->Hide();if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return !panel->scene_visible_for_testing()&&!panel->scene_animating_for_testing();}));panel->widget()->Show();}
   EnableNativeUIControls();auto activate=[&](std::u16string text){auto* widget=panel->widget();auto* button=FindButton(widget->GetContentsView(),text);ASSERT_TRUE(button);ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(widget->GetNativeWindow()));button->RequestFocus();base::test::TestFuture<void> presented;auto* compositor=widget->GetCompositor();ASSERT_TRUE(compositor);widget->GetRootView()->SchedulePaint();compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_SPACE,false,false,false,false));};activate(u"Wstrzymaj");ASSERT_TRUE(base::test::RunUntil([&]{return item->IsPaused();}));ASSERT_TRUE(base::test::RunUntil([&]{return FindButton(panel->widget()->GetContentsView(),u"Wznów");}));activate(u"Wznów");ASSERT_TRUE(base::test::RunUntil([&]{return !item->IsPaused();}));EXPECT_TRUE(panel->Act(item->GetGuid(),DownloadPanel::Action::kCancel));ASSERT_TRUE(base::test::RunUntil([&]{return item->GetState()==download::DownloadItem::CANCELLED;}));response.Done();auto* widget=panel->widget();ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(widget->GetNativeWindow(),ui::VKEY_ESCAPE,false,false,false,false));ASSERT_TRUE(base::test::RunUntil([&]{return !panel->widget();}));if(MetalPresents())EXPECT_FALSE(panel->scene_visible_for_testing());EXPECT_FALSE(panel->scene_animating_for_testing());

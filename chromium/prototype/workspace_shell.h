@@ -255,6 +255,11 @@ class WorkspaceShell final : public ui::EventHandler,
   // Closing the window would cancel |count| downloads; |answer| gets whether
   // to quit anyway. Outside macOS, where AppController asks.
   void ConfirmQuitWithDownloads(int count, base::OnceCallback<void(bool)> answer);
+  // A destructive confirmation over `parent` (design: Dialog): `detail` muted,
+  // `warning` in `danger`, `action` the danger button; waiting is the default.
+  void ConfirmDanger(views::Widget* parent, std::u16string title, std::u16string detail, std::u16string warning,
+                     std::u16string action, base::OnceCallback<void(bool)> answer);
+  views::Widget* danger_dialog_for_testing() const { return danger_dialog_.get(); }
   // The |z⟩ menu's „O Zitter”: Zitter's and Chromium's versions.
   void ShowAbout();
   void ShowUpdateReady(std::string version);
@@ -451,7 +456,7 @@ class WorkspaceShell final : public ui::EventHandler,
   uint64_t scene_parent_id_for_testing(views::View* view) const;
   views::View* header_action_for_testing(size_t index) const;
   views::View* sidebar_action_for_testing(size_t index) const{return index==0?url_pill_.get():index==1?new_tab_button_.get():nullptr;}
-  views::View* footer_action_for_testing(size_t index) const{return index==0?add_button_.get():nullptr;}
+  views::View* footer_action_for_testing(size_t index) const{return index==0?add_button_.get():index==1?downloads_button_.get():nullptr;}
   ui::SimpleMenuModel* add_menu_for_testing() const{return add_menu_.get();}
   std::unique_ptr<views::View> CreateWorkspaceActionForTesting(base::RepeatingClosure callback) const;
   views::View* sidebar_grip_for_testing() const;
@@ -553,6 +558,20 @@ class WorkspaceShell final : public ui::EventHandler,
   void HideToast();
   // The address pill trembles once (a copied address).
   void TremorAddress();
+  // Downloads (design: Downloads). The footer's Downloads icon turns into a ring
+  // showing how much of the files in progress has arrived (`fraction` < 0: an
+  // unknown size) and how many there are. `newest` names the latest.
+  void SetDownloadProgress(int active, double fraction, std::u16string newest);
+  // A transfer began: an arrow flies from the pointer (or the page) to the ring.
+  // With the sidebar slid away it lands in a pill in the page's lower left
+  // corner instead, which stays a moment and opens the list when clicked.
+  void DownloadStarted(std::u16string name);
+  // A transfer finished: the ring trembles once and shows ✓ for a moment.
+  void DownloadFinished();
+  // Where the downloads list opens from: the ring or the pill (empty: neither).
+  gfx::Rect downloads_anchor_in_screen() const;
+  views::Widget* download_cue_widget_for_testing() const { return download_cue_widget_.get(); }
+  bool download_cue_is_pill_for_testing() const;
   void UndoToast();
   views::Widget* toast_widget() const { return toast_widget_.get(); }
   std::u16string toast_text_for_testing() const;
@@ -975,6 +994,8 @@ class WorkspaceShell final : public ui::EventHandler,
   // The quit-while-downloading prompt or the About dialog, one at a time.
   std::unique_ptr<views::DialogDelegate> quit_dialog_delegate_;
   std::unique_ptr<views::Widget> quit_dialog_;
+  std::unique_ptr<views::DialogDelegate> danger_dialog_delegate_;
+  std::unique_ptr<views::Widget> danger_dialog_;
   std::unique_ptr<views::WidgetDelegate> welcome_delegate_;
   std::unique_ptr<views::Widget> welcome_widget_;
   std::unique_ptr<views::WidgetDelegate> find_delegate_;
@@ -1020,6 +1041,32 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<PanelViewport> workspace_scroll_=nullptr;
   raw_ptr<views::View> workspace_dots_ = nullptr;
   raw_ptr<views::View> add_button_ = nullptr;  // The footer's „+”: tab, folder or space.
+  raw_ptr<views::View> downloads_button_ = nullptr;  // The footer's Downloads ring.
+  int downloads_active_ = 0;
+  double downloads_fraction_ = 0;
+  std::u16string downloads_newest_;
+  bool downloads_done_ = false;  // ✓ after a finish, until the timer clears it.
+  base::OneShotTimer downloads_done_timer_;
+  base::RepeatingTimer downloads_tremor_timer_;
+  int downloads_tremor_step_ = 0;
+  base::RepeatingTimer downloads_spin_timer_;  // An unknown size spins the arc.
+  int downloads_spin_ = 0;
+  // The start cue: a flying arrow, then (sidebar away) a pill in the corner.
+  std::unique_ptr<views::WidgetDelegate> download_cue_delegate_;
+  std::unique_ptr<views::Widget> download_cue_widget_;
+  raw_ptr<views::View> download_cue_ = nullptr;  // DownloadCueView
+  base::RepeatingTimer download_cue_timer_;
+  base::OneShotTimer download_cue_hide_timer_;
+  base::TimeTicks download_cue_start_;
+  gfx::Point download_cue_from_;
+  bool download_cue_to_pill_ = false;
+  void UpdateDownloadsButton();
+  void StepDownloadCue();
+  void LandDownloadCue();
+  void HideDownloadCue();
+  void TremorDownloads();
+  gfx::Rect DownloadPillBounds() const;
+  gfx::Point DownloadCueTarget() const;
   std::unique_ptr<ui::SimpleMenuModel> add_menu_;
   std::unique_ptr<views::MenuRunner> add_menu_runner_;
   std::map<std::string, raw_ptr<views::View>> workspace_buttons_;

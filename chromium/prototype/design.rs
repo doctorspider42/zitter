@@ -698,6 +698,10 @@ pub mod recipe {
         Danger,
         /// Destructive confirmation inside a dialog.
         DangerStrong,
+        /// A filter chip (`label` text in a 26 px pill): a `line` edge at rest.
+        Chip,
+        /// The chosen filter chip: `accent-ink` on `accent-soft`.
+        ChipOn,
     }
 
     #[derive(Clone, Copy, Debug, PartialEq)]
@@ -746,6 +750,15 @@ pub mod recipe {
             ButtonKind::DangerStrong => {
                 (b.ink, b.edge, b.edge_width) = (p.danger, p.danger, 1.5);
                 if hover { b.fill = p.bg_hover }
+            }
+            ButtonKind::Chip | ButtonKind::ChipOn => {
+                (b.height, b.padding_x, b.text) = (26.0, 10.0, text::LABEL);
+                if kind == ButtonKind::ChipOn {
+                    (b.fill, b.ink) = (p.accent_soft, p.accent_ink);
+                } else {
+                    (b.ink, b.edge, b.edge_width) = (if hover { p.ink } else { p.ink_muted }, p.line, 1.0);
+                    if hover { b.fill = p.bg_hover }
+                }
             }
         }
         if state == Interaction::Disabled {

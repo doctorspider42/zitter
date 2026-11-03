@@ -120,6 +120,7 @@
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/controls/textfield/textfield_controller.h"
 #include "third_party/skia/include/core/SkPath.h"
+#include "third_party/skia/include/core/SkPathBuilder.h"
 #include "ui/gfx/geometry/skia_conversions.h"
 #include "chromium/prototype/arc_importer.h"
 #include "ui/views/border.h"
@@ -315,6 +316,11 @@ SkColor Tone(const views::View* view, SkColor role) {
 }
 SkColor Hairline(const views::View* view) { return Palette(view).line; }
 DEFINE_UI_CLASS_PROPERTY_KEY(int, kReloadAngle, 0)
+// The Downloads ring: -1 at rest, permille done, or 2000 + degrees while an
+// unknown size spins.
+DEFINE_UI_CLASS_PROPERTY_KEY(int, kDownloadProgress, -1)
+DEFINE_UI_CLASS_PROPERTY_KEY(bool, kDownloadDone, false)
+DEFINE_UI_CLASS_PROPERTY_KEY(int, kDownloadTremor, 0)
 SkColor HoverWash(const views::View* view) { return Palette(view).bg_hover; }
 SkColor Mix(SkColor a, SkColor b, int percent_a) {
   auto channel = [&](U8CPU x, U8CPU y) { return (x * percent_a + y * (100 - percent_a)) / 100; };
@@ -586,7 +592,7 @@ std::u16string HostLabel(const GURL& url) {
   return base::UTF8ToUTF16(host);
 }
 
-enum class ControlGlyph { kVector, kSidebar, kDot, kSwatch, kMore };
+enum class ControlGlyph { kVector, kSidebar, kDot, kSwatch, kMore, kDownloads };
 void PaintGlyphControl(views::View* view,ControlGlyph glyph,const gfx::VectorIcon* icon,SkColor color,bool on,const std::u16string& label,views::Button::ButtonState state,gfx::Canvas* canvas){
     const auto bounds = view->GetLocalBounds();
     if (glyph != ControlGlyph::kDot && glyph != ControlGlyph::kSwatch && view->GetEnabled() &&
@@ -636,6 +642,8 @@ void PaintGlyphControl(views::View* view,ControlGlyph glyph,const gfx::VectorIco
       }
       case ControlGlyph::kMore:
         for (int dx : {-5, 0, 5}) FillRound(canvas, gfx::Rect(center.x() + dx - 1, center.y() - 1, 3, 3), 2, ink);
+        break;
+      case ControlGlyph::kDownloads:  // The Rust recipe paints it (RustActionView::OnPaint).
         break;
       case ControlGlyph::kSwatch: {
         const gfx::Rect ring(center.x() - 10, center.y() - 10, 20, 20);
@@ -727,11 +735,23 @@ sidebar::Item GlyphSceneData(views::View* view,ControlGlyph glyph,const gfx::Vec
   sidebar::Item item{}; item.kind=7;
   item.x=rect.x(); item.y=rect.y(); item.width=rect.width(); item.height=rect.height();
   item.clip={clip.x(),clip.y(),clip.width(),clip.height()};
-  item.glyph=glyph==GlyphButton::Glyph::kSidebar ? 0 : glyph==GlyphButton::Glyph::kDot ? 1 : glyph==GlyphButton::Glyph::kMore ? 6
+  item.glyph=glyph==GlyphButton::Glyph::kDownloads ? 11 : glyph==GlyphButton::Glyph::kSidebar ? 0 : glyph==GlyphButton::Glyph::kDot ? 1 : glyph==GlyphButton::Glyph::kMore ? 6
       : icon==&vector_icons::kArrowBackIcon ? 3 : icon==&vector_icons::kArrowForwardIcon ? 4
       : icon==&vector_icons::kReloadCustomIcon ? 5 : (icon==&vector_icons::kCloseSmallIcon || icon==&vector_icons::kCloseIcon) ? 7 : icon==&vector_icons::kSearchIcon ? 8
        : icon==&vector_icons::kAdd2Icon ? 9 : icon==&vector_icons::kLinkIcon ? 10 : 2;
   if (item.glyph == 5) item.detail_font_size = view->GetProperty(kReloadAngle);
+  if (item.glyph == 11) {
+    // At rest the plain icon; then progress in `accent` on a `line` track, ✓ in
+    // `ok`, the count in the ring.
+    const auto p=Palette(view);const int code=view->GetProperty(kDownloadProgress);
+    item.detail_font_size=code<0?-1.0f:code>=2000?2.0f+(code-2000):code/1000.0f;
+    item.active=view->GetProperty(kDownloadDone);item.edge=p.line;
+    item.badge=item.active?p.ok:p.accent;
+    const float dx=view->GetProperty(kDownloadTremor);item.x+=dx;item.clip.x+=dx;
+    item.title=std::string();item.monogram=on?std::string():base::UTF16ToUTF8(label);
+    item.ink=Tone(view,hovered?kInk:kMuted);item.fill=hovered?HoverWash(view):SK_ColorTRANSPARENT;
+    return item;
+  }
   item.active=on; item.focused=focused; item.focus=Palette(view).focus;
   item.hovered=hovered;
   item.ink=Tone(view,!view->GetEnabledInViewsSubtree() ? kDisabled : item.glyph==1 ? item.active || item.hovered ? kInk : kMuted : item.hovered ? kInk : kSubtle);
@@ -877,7 +897,7 @@ class RustActionView : public views::View {
   void PaintChildren(const views::PaintInfo& info) override{if(!visible_||!visible_.Run())views::View::PaintChildren(info);}
   void OnPaint(gfx::Canvas* canvas) override{if(visible_&&visible_.Run())return;SyncEnabled();const auto v=state_->action_snapshot();const auto paint=v.visual==sidebar::RowVisual::Disabled?views::Button::STATE_DISABLED:v.visual==sidebar::RowVisual::Pressed?views::Button::STATE_PRESSED:v.visual==sidebar::RowVisual::Hovered?views::Button::STATE_HOVERED:views::Button::STATE_NORMAL;
     // Workspace dots paint the Rust recipe (own accent, active pill); vector icons stay native.
-    if(glyph_==ControlGlyph::kDot){const auto bounds=gfx::RectF(GetLocalBounds());PaintSceneRecipe(canvas,SceneItem(bounds,bounds),Font(3),true);return;}
+    if(glyph_==ControlGlyph::kDot||glyph_==ControlGlyph::kDownloads){const auto bounds=gfx::RectF(GetLocalBounds());PaintSceneRecipe(canvas,SceneItem(bounds,bounds),Font(3),true);return;}
     PaintGlyphControl(this,glyph_,icon_,color_,v.on,label_,paint,canvas);}
  protected:
   sidebar::ActionControl& NodeControl(){return *state_;}
@@ -1123,6 +1143,9 @@ class SceneTextButton final : public RustActionView {
   void SetPrimary(){kind_=0;PreferredSizeChanged();SchedulePaint();}
   // Creating something new (a space, a profile): the one lime `zing` button.
   void SetZing(bool zing){if(zing)kind_=1;else kind_.reset();PreferredSizeChanged();SchedulePaint();}
+  void SetKind(uint32_t kind){if(kind_==kind)return;kind_=kind;PreferredSizeChanged();SchedulePaint();}
+  // Filter chips (kinds 6 and 7) are set in `label`.
+  bool chip() const{return kind_&&(*kind_==6||*kind_==7);}
   gfx::Size GetMinimumSize() const override{if(!native_minimum_)return RustActionView::GetMinimumSize();const auto font=TextFont();return gfx::Size(views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_DIALOG_BUTTON_MINIMUM_WIDTH),std::max(0,views::LayoutProvider::GetControlHeightForFont(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY,font)-std::max(font.GetHeight(),views::TypographyProvider::Get().GetLineHeight(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY))));}
   void SetText(std::u16string text){if(text==text_)return;OnMouseCaptureLost();text_=std::move(text);GetViewAccessibility().SetName(text_);SetTooltipText(text_);PreferredSizeChanged();SchedulePaint();}
   // Buttons are set in `body-strong`.
@@ -1139,12 +1162,13 @@ class SceneTextButton final : public RustActionView {
   sidebar::Item Scene(gfx::RectF bounds,gfx::RectF clip) const {
     const auto state=Snapshot();const auto b=Style();
     sidebar::Item item{};item.kind=19;item.x=bounds.x();item.y=bounds.y();item.width=bounds.width();item.height=bounds.height();item.title=base::UTF16ToUTF8(text_);item.font_size=13;item.active=true;item.text_style=4;
+    if(chip()){item.font_size=12;item.text_style=6;item.active=false;}
     item.title_width=b.padding_x;item.focused=state.focused;item.focus=Palette(this).focus;item.hovered=false;
     item.ink=accent_ink_?Palette(this).accent_ink:b.ink;item.fill=b.fill;item.badge=b.edge;item.font_height=b.radius;item.detail_font_size=b.edge_width;
     item.clip={clip.x(),clip.y(),clip.width(),clip.height()};return item;
   }
  private:
-  sidebar::ActionButtonLayout Metrics(int width,int height) const {const auto b=Style();return sidebar::action_button_layout(width,height,gfx::GetStringWidth(text_,TextFont())+2,static_cast<int>(b.height),static_cast<int>(b.padding_x),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_DIALOG_BUTTON_MINIMUM_WIDTH));}
+  sidebar::ActionButtonLayout Metrics(int width,int height) const {const auto b=Style();return sidebar::action_button_layout(width,height,gfx::GetStringWidth(text_,chip()?DesignFont(2,12,500,false):TextFont())+2,static_cast<int>(b.height),static_cast<int>(b.padding_x),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_DIALOG_BUTTON_MINIMUM_WIDTH));}
   std::u16string text_;ui::ButtonStyle style_;bool native_minimum_=false;bool accent_ink_=false;std::optional<uint32_t> kind_;
 };
 BEGIN_METADATA(SceneTextButton)
@@ -1236,6 +1260,57 @@ class ScrimView final : public views::View {
   base::RepeatingClosure pressed_;
 };
 BEGIN_METADATA(ScrimView)
+END_METADATA
+
+// The start of a download (design: Downloads). In flight, a 28 px `accent` disc
+// with the arrow in `on-accent`; landed with the sidebar away, a `bg-raised`
+// pill: the ring, the file name in `body` and the share done in `url`.
+class DownloadCueView final : public views::View {
+  METADATA_HEADER(DownloadCueView,views::View)
+ public:
+  explicit DownloadCueView(base::RepeatingClosure pressed):pressed_(std::move(pressed)){
+    SetFocusBehavior(FocusBehavior::NEVER);GetViewAccessibility().SetRole(ax::mojom::Role::kStatus);}
+  void SetPill(bool pill){if(pill_==pill)return;pill_=pill;GetViewAccessibility().SetRole(pill?ax::mojom::Role::kButton:ax::mojom::Role::kStatus);PreferredSizeChanged();SchedulePaint();}
+  bool pill() const{return pill_;}
+  void SetFacts(std::u16string name,double fraction){
+    if(name.empty())name=T(u"Pobieranie pliku");
+    if(name_==name&&fraction_==fraction)return;name_=std::move(name);fraction_=fraction;
+    GetViewAccessibility().SetName(TF(u"Pobieranie: {}",{name_}));PreferredSizeChanged();SchedulePaint();}
+  static gfx::FontList NameFont(){return DesignFont(2,13,400,false);}
+  static gfx::FontList ShareFont(){return DesignFont(3,12,400,false);}
+  std::u16string Share() const{return fraction_<0?std::u16string(u"…"):base::NumberToString16(static_cast<int>(fraction_*100))+u"%";}
+  // `space-3` in, the 20 px ring, `space-2`, the name (at most 180 px), `space-3`, the share, `space-4` out.
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{
+    if(!pill_)return gfx::Size(28,28);
+    const int name=std::min(180,gfx::GetStringWidth(name_,NameFont()));
+    return gfx::Size(12+20+8+name+12+gfx::GetStringWidth(Share(),ShareFont())+16,40);}
+  void OnPaint(gfx::Canvas* canvas) override{
+    const auto p=Palette(this);const auto bounds=GetLocalBounds();
+    cc::PaintFlags stroke;stroke.setAntiAlias(true);stroke.setStyle(cc::PaintFlags::kStroke_Style);stroke.setStrokeCap(cc::PaintFlags::kRound_Cap);stroke.setStrokeJoin(cc::PaintFlags::kRound_Join);
+    auto arrow=[&](gfx::PointF c,SkColor color){stroke.setStrokeWidth(1.6f);stroke.setColor(color);
+      SkPathBuilder path;path.moveTo(c.x(),c.y()-4.5f);path.lineTo(c.x(),c.y()+3);path.moveTo(c.x()-3.2f,c.y()-0.2f);path.lineTo(c.x(),c.y()+3);path.lineTo(c.x()+3.2f,c.y()-0.2f);
+      canvas->DrawPath(path.detach(),stroke);};
+    if(!pill_){FillRound(canvas,bounds,bounds.height()/2,p.accent);arrow(gfx::RectF(bounds).CenterPoint(),p.on_accent);return;}
+    canvas->DrawColor(SK_ColorTRANSPARENT,SkBlendMode::kSrc);
+    FillRound(canvas,bounds,bounds.height()/2,p.bg_raised);StrokeRound(canvas,bounds,bounds.height()/2,p.line);
+    const gfx::PointF ring(12+10,bounds.height()/2.0f);
+    stroke.setStrokeWidth(2);stroke.setColor(p.line);canvas->DrawCircle(ring,9,stroke);
+    if(fraction_!=0){stroke.setColor(p.accent);SkPathBuilder arc;const float sweep=fraction_<0?90:360*std::clamp(fraction_,0.0,1.0);
+      arc.addArc(SkRect::MakeXYWH(ring.x()-9,ring.y()-9,18,18),fraction_<0?spin_:-90,sweep);canvas->DrawPath(arc.detach(),stroke);}
+    arrow(ring,p.ink_muted);
+    const int share_width=gfx::GetStringWidth(Share(),ShareFont());const int name_x=12+20+8;
+    canvas->DrawStringRectWithFlags(Share(),ShareFont(),p.ink_muted,gfx::Rect(bounds.width()-16-share_width,0,share_width,bounds.height()),gfx::Canvas::TEXT_ALIGN_RIGHT);
+    canvas->DrawStringRectWithFlags(name_,NameFont(),p.ink,gfx::Rect(name_x,0,std::max(0,bounds.width()-16-share_width-12-name_x),bounds.height()),gfx::Canvas::TEXT_ALIGN_LEFT);}
+  void Spin(){spin_=(spin_+12)%360;if(pill_&&fraction_<0)SchedulePaint();}
+  bool OnMousePressed(const ui::MouseEvent& event) override{return pill_&&event.IsLeftMouseButton();}
+  void OnMouseReleased(const ui::MouseEvent& event) override{if(pill_&&event.IsLeftMouseButton()&&HitTestPoint(event.location()))pressed_.Run();}
+  void OnMouseEntered(const ui::MouseEvent&) override{hovered_=true;}
+  void OnMouseExited(const ui::MouseEvent&) override{hovered_=false;}
+  bool hovered() const{return hovered_;}
+ private:
+  base::RepeatingClosure pressed_;bool pill_=false;bool hovered_=false;std::u16string name_;double fraction_=0;int spin_=0;
+};
+BEGIN_METADATA(DownloadCueView)
 END_METADATA
 void CancelSceneActions(views::View* root){if(!root)return;if(auto* group=views::AsViewClass<SceneActionGroup>(root)){group->CancelInput();return;}if(auto* controls=views::AsViewClass<ScenePreferenceControls>(root)){controls->CancelInput();return;}for(const auto& child:root->children())CancelSceneActions(child.get());}
 // The client surface must follow theme notifications itself: a bubble widget's
@@ -2472,11 +2547,31 @@ class SceneFileTile final : public views::View {
  public:
   SceneFileTile(){SetCanProcessEventsWithinSubtree(false);GetViewAccessibility().SetIsIgnored(true);}
   void SetExtension(std::u16string extension){extension=base::i18n::ToUpper(extension.substr(0,4));if(extension_==extension)return;extension_=std::move(extension);SchedulePaint();}
+  // Choosing files: an 18 px checkbox, `accent` with ✓ when checked (design:
+  // Okno Pobrane, Zaznaczanie). Space or a click flips it.
+  void SetChoice(bool choosing,bool checked,base::RepeatingClosure pressed){
+    pressed_=std::move(pressed);if(choosing_==choosing&&checked_==checked)return;choosing_=choosing;checked_=checked;
+    SetCanProcessEventsWithinSubtree(choosing);SetFocusBehavior(choosing?FocusBehavior::ALWAYS:FocusBehavior::NEVER);
+    auto& ax=GetViewAccessibility();ax.SetIsIgnored(!choosing);
+    if(choosing){ax.SetRole(ax::mojom::Role::kCheckBox);ax.SetName(T(u"Zaznacz plik"));ax.SetCheckedState(checked?ax::mojom::CheckedState::kTrue:ax::mojom::CheckedState::kFalse);}
+    SchedulePaint();}
+  bool OnMousePressed(const ui::MouseEvent& event) override{return choosing_&&event.IsLeftMouseButton();}
+  void OnMouseReleased(const ui::MouseEvent& event) override{if(choosing_&&HitTestPoint(event.location())&&pressed_)pressed_.Run();}
+  bool OnKeyPressed(const ui::KeyEvent& event) override{if(!choosing_||event.key_code()!=ui::VKEY_SPACE)return false;if(pressed_)pressed_.Run();return true;}
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(32,32);}
-  void OnPaint(gfx::Canvas* canvas) override{const auto p=Palette(this);FillRound(canvas,GetLocalBounds(),4/* radius-xs */,p.bg_hover);
+  void OnPaint(gfx::Canvas* canvas) override{const auto p=Palette(this);
+    if(choosing_){const gfx::Rect box(7,7,18,18);
+      if(checked_){FillRound(canvas,box,4,p.accent);cc::PaintFlags check;check.setAntiAlias(true);check.setStyle(cc::PaintFlags::kStroke_Style);check.setStrokeWidth(2);check.setStrokeCap(cc::PaintFlags::kRound_Cap);check.setStrokeJoin(cc::PaintFlags::kRound_Join);check.setColor(p.on_accent);
+        SkPathBuilder path;path.moveTo(11,16.5f);path.lineTo(14.5f,20);path.lineTo(21,12.5f);canvas->DrawPath(path.detach(),check);}
+      else{cc::PaintFlags edge;edge.setAntiAlias(true);edge.setStyle(cc::PaintFlags::kStroke_Style);edge.setStrokeWidth(1.5f);edge.setColor(p.line_strong);canvas->DrawRoundRect(gfx::RectF(7.75f,7.75f,16.5f,16.5f),3.25f,edge);}
+      if(HasFocus()){cc::PaintFlags ring;ring.setAntiAlias(true);ring.setStyle(cc::PaintFlags::kStroke_Style);ring.setStrokeWidth(2);ring.setColor(p.focus);canvas->DrawRoundRect(gfx::RectF(4,4,24,24),6,ring);}
+      return;}
+    FillRound(canvas,GetLocalBounds(),4/* radius-xs */,p.bg_hover);
     canvas->DrawStringRectWithFlags(extension_,DesignFont(3,9,600,false),p.ink_muted,GetLocalBounds(),gfx::Canvas::TEXT_ALIGN_CENTER);}
+  void OnFocus() override{views::View::OnFocus();SchedulePaint();}
+  void OnBlur() override{views::View::OnBlur();SchedulePaint();}
  private:
-  std::u16string extension_;
+  std::u16string extension_;bool choosing_=false,checked_=false;base::RepeatingClosure pressed_;
 };
 BEGIN_METADATA(SceneFileTile)
 END_METADATA
@@ -2502,6 +2597,14 @@ class PanelSceneImpl final : public PanelScene {
     return parent->AddChildView(CreateSceneAction(base::BindRepeating(callback),std::move(name),ControlGlyph::kVector,icon,{},base::BindRepeating(&PanelSceneImpl::Schedule,weak_factory_.GetWeakPtr())));}
   void SetIconAction(views::View* button,std::u16string name,const gfx::VectorIcon* icon) override{if(auto* action=views::AsViewClass<RustActionView>(button))action->SetIcon(icon);button->SetTooltipText(name);button->GetViewAccessibility().SetName(name);}
   void SetProgressPaused(views::View* progress,bool paused) override{static_cast<SceneProgress*>(progress)->SetPaused(paused);}
+  void SetActionKind(views::View* button,uint32_t kind) override{static_cast<SceneTextButton*>(button)->SetKind(kind);}
+  EditorControl* AddSearch(views::View* parent,std::u16string placeholder,std::u16string name) override{
+    auto* field=AddEditor(parent);field->SetPlaceholderText(std::move(placeholder));field->GetViewAccessibility().SetName(std::move(name));
+    field->SetPresentation(DesignFont(2,13,400,false).GetFontSize(),12,true,Palette(root_).bg_base);field->view()->SetPreferredSize(gfx::Size(240,32));return field;}
+  void RefreshSearch(EditorControl* field) override{if(field)field->SetPresentation(DesignFont(2,13,400,false).GetFontSize(),12,true,Palette(root_).bg_base);}
+  views::View* AddMoreAction(views::View* parent,base::RepeatingClosure callback,std::u16string name) override{
+    return parent->AddChildView(CreateSceneAction(base::BindRepeating(callback),std::move(name),ControlGlyph::kMore,nullptr,{},base::BindRepeating(&PanelSceneImpl::Schedule,weak_factory_.GetWeakPtr())));}
+  void SetFileTileChoice(views::View* tile,bool choosing,bool checked,base::RepeatingClosure pressed) override{static_cast<SceneFileTile*>(tile)->SetChoice(choosing,checked,std::move(pressed));}
   bool animating() const override{return renderer_.animating();}
   void Schedule() override{renderer_.Schedule();}
   base::RepeatingClosure ViewportChangedCallback() override{return base::BindRepeating(&PanelSceneImpl::ViewportChanged,weak_factory_.GetWeakPtr());}
@@ -3925,6 +4028,11 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   workspace_scroll_->SetPanelContents(std::move(dots));
   workspace_dots_->SetLayoutManager(CreateSidebarDotsLayout(4));
   Spacer(footer, 1);
+  // Design: Downloads — the footer opens with the Downloads icon, mirroring
+  // „+”; while files arrive it turns into their ring. It opens the list above it.
+  downloads_button_=footer->AddChildView(CreateSceneAction(
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell&&shell->callbacks_.downloads)shell->callbacks_.downloads.Run();},weak),
+      T(u"Pobrane"),GlyphButton::Glyph::kDownloads,nullptr,footer_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),true,{chrome_node_graph_,4,{},"sidebar.downloads"}));
   // Design: the footer ends with „+”, a menu for a new tab, folder or space.
   add_button_=footer->AddChildView(CreateSceneAction(
       base::BindRepeating(&WorkspaceShell::ShowAddMenu,weak),
@@ -4268,6 +4376,9 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   {auto toast=std::make_unique<ToastView>(base::BindRepeating(&WorkspaceShell::UndoToast,weak),base::BindRepeating(&WorkspaceShell::HideToast,weak),
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,bool hovered){if(!shell)return;if(hovered)shell->toast_timer_.Stop();else if(shell->toast_widget_->IsVisible())shell->toast_timer_.Start(FROM_HERE,base::Seconds(6),base::BindOnce(&WorkspaceShell::HideToast,shell));},weak));
    toast_=toast.get();make_panel(std::move(toast), toast_delegate_, toast_widget_, T(u"Zitter — Komunikat"), false);}
+  {auto cue=std::make_unique<DownloadCueView>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(!shell)return;if(shell->callbacks_.downloads)shell->callbacks_.downloads.Run();shell->HideDownloadCue();},weak));
+   download_cue_=cue.get();make_panel(std::move(cue), download_cue_delegate_, download_cue_widget_, T(u"Zitter — Pobieranie"), false);
+   download_cue_widget_->SetVisibilityAnimationTransition(views::Widget::ANIMATE_NONE);}
   CreateSplitDrop();
   make_panel(std::make_unique<ScrimView>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->CloseOverlays(true);},weak)),
              scrim_delegate_, scrim_widget_, u"Zitter", false);
@@ -4422,7 +4533,7 @@ void WorkspaceShell::Detach() {
   nav_buttons_.fill(nullptr);
   copy_url_button_ = nullptr;
   workspace_buttons_.clear();
-  workspace_dots_ = nullptr; add_button_ = nullptr; sidebar_footer_=nullptr; workspace_scroll_=nullptr;
+  workspace_dots_ = nullptr; add_button_ = nullptr; downloads_button_ = nullptr; sidebar_footer_=nullptr; workspace_scroll_=nullptr;
   tab_lists_.clear();
   profile_picker_ = nullptr;
   workspace_saved_ = nullptr; workspace_profile_list_ = nullptr; workspace_profile_rows_.clear(); workspace_profile_row_ids_.clear();
@@ -4454,6 +4565,7 @@ void WorkspaceShell::Detach() {
   provider_name_ = nullptr; provider_keyword_ = nullptr; provider_url_ = nullptr;
   tools_widget_.reset(); tools_delegate_.reset();
   toast_timer_.Stop(); toast_tremor_timer_.Stop(); toast_undo_.Reset(); toast_ = nullptr; toast_widget_.reset(); toast_delegate_.reset();
+  download_cue_timer_.Stop(); download_cue_hide_timer_.Stop(); downloads_done_timer_.Stop(); downloads_tremor_timer_.Stop(); downloads_spin_timer_.Stop(); download_cue_ = nullptr; download_cue_widget_.reset(); download_cue_delegate_.reset();
   remove_dialog_.reset(); remove_dialog_delegate_.reset(); drop_view_ = nullptr; drop_widget_.reset(); drop_delegate_.reset();
   find_view_ = nullptr; find_request_.Reset(); find_closed_.Reset(); find_page_bounds_.Reset();
   if (find_widget_) find_widget_->RemoveObserver(this);
@@ -4462,7 +4574,7 @@ void WorkspaceShell::Detach() {
   if (print_widget_) print_widget_->RemoveObserver(this);
   print_widget_.reset(); print_delegate_.reset();
   scrim_widget_.reset(); scrim_delegate_.reset();
-  quit_dialog_.reset(); quit_dialog_delegate_.reset();
+  quit_dialog_.reset(); quit_dialog_delegate_.reset(); danger_dialog_.reset(); danger_dialog_delegate_.reset();
 #if BUILDFLAG(IS_WIN)
   // The wizard closing with the window reports nothing: the window is going.
   if (welcome_delegate_) AbandonWelcome(welcome_delegate_->GetContentsView());
@@ -5044,6 +5156,7 @@ void WorkspaceShell::ScheduleMetalSidebar() {
   // clipped action synchronously, including while a GPU update is already queued.
   if(tab_scroll_&&tab_scroll_->rust_owned()){
   if(auto* view=add_button_.get())if(auto* control=views::AsViewClass<RustActionView>(view))control->SyncViewportVisibility();
+  if(auto* view=downloads_button_.get())if(auto* control=views::AsViewClass<RustActionView>(view))control->SyncViewportVisibility();
   for(const auto& [id,view]:workspace_buttons_)if(auto* control=views::AsViewClass<RustActionView>(view.get()))control->SyncViewportVisibility();
   }
   ScheduleMetalHeader();
@@ -5184,6 +5297,9 @@ void WorkspaceShell::UpdateMetalSidebar() {
     auto rect=gfx::RectF(view->GetBoundsInScreen()); rect.Offset(-bounds.x(),-bounds.y()); return rect;
   };
   if (auto* button=add_button_.get()) {
+    const auto rect=local_rect(button); append_glyph(button,rect,rect);
+  }
+  if (auto* button=downloads_button_.get()) {
     const auto rect=local_rect(button); append_glyph(button,rect,rect);
   }
   auto* dot_viewport=workspace_dots_->parent();
@@ -7656,6 +7772,104 @@ void SetWidgetBounds(views::Widget* widget, const gfx::Rect& bounds) {
 }
 }  // namespace
 void WorkspaceShell::TremorAddress(){if(url_pill_)TremorRow(url_pill_);}
+
+// Downloads (design: Downloads): the footer ring and the start cue.
+void WorkspaceShell::SetDownloadProgress(int active,double fraction,std::u16string newest){
+  downloads_active_=std::max(0,active);downloads_fraction_=fraction;downloads_newest_=std::move(newest);
+  if(download_cue_)static_cast<DownloadCueView*>(download_cue_.get())->SetFacts(downloads_newest_,downloads_active_?downloads_fraction_:1.0);
+  UpdateDownloadsButton();
+}
+void WorkspaceShell::UpdateDownloadsButton(){
+  auto* button=downloads_button_.get();if(!button)return;
+  const bool busy=downloads_active_>0||downloads_done_;
+  // An unknown size spins a quarter arc (`dur-move` per 45°), stilled by reduced motion.
+  const bool spin=downloads_active_>0&&downloads_fraction_<0&&!downloads_done_&&!gfx::Animation::PrefersReducedMotion();
+  if(spin&&!downloads_spin_timer_.IsRunning())downloads_spin_timer_.Start(FROM_HERE,base::Milliseconds(33),base::BindRepeating([](WorkspaceShell* shell){
+    shell->downloads_spin_=(shell->downloads_spin_+8)%360;if(shell->download_cue_)static_cast<DownloadCueView*>(shell->download_cue_.get())->Spin();shell->UpdateDownloadsButton();},base::Unretained(this)));
+  else if(!spin)downloads_spin_timer_.Stop();
+  const int code=!busy?-1:downloads_done_?1000:downloads_fraction_<0?2000+downloads_spin_:static_cast<int>(std::clamp(downloads_fraction_,0.0,1.0)*1000);
+  button->SetProperty(kDownloadProgress,code);button->SetProperty(kDownloadDone,downloads_done_);
+  SetActionLabel(button,downloads_active_>1&&!downloads_done_?base::NumberToString16(downloads_active_):std::u16string());
+  const auto share=downloads_fraction_<0?std::u16string():base::NumberToString16(static_cast<int>(downloads_fraction_*100))+u"%";
+  button->SetTooltipText(!busy?T(u"Pobrane"):downloads_done_&&!downloads_active_?T(u"Pobrane: gotowe"):downloads_active_==1?TF(u"Pobieranie: {} {}",{downloads_newest_,share}):TF(u"Pobieranie {} plików · {}",{base::NumberToString16(downloads_active_),share}));
+  button->SchedulePaint();ScheduleMetalSidebar();
+}
+void WorkspaceShell::DownloadStarted(std::u16string name){
+  if(!download_cue_widget_||!widget_)return;
+  downloads_done_timer_.Stop();downloads_done_=false;downloads_active_=std::max(downloads_active_,1);
+  if(!name.empty())downloads_newest_=std::move(name);
+  UpdateDownloadsButton();
+  auto* cue=static_cast<DownloadCueView*>(download_cue_.get());
+  cue->SetFacts(downloads_newest_,downloads_fraction_);
+  download_cue_to_pill_=!(sidebar_visible()&&downloads_button_->IsDrawn());
+  const auto page=widget_->GetClientAreaBoundsInScreen();
+  const auto cursor=display::Screen::Get()->GetCursorScreenPoint();
+  download_cue_from_=page.Contains(cursor)?cursor:page.CenterPoint();
+  download_cue_hide_timer_.Stop();
+  if(gfx::Animation::PrefersReducedMotion()){LandDownloadCue();return;}
+  // The arrow flies along a bow to its target in 450 ms (`ease-out`).
+  cue->SetPill(false);download_cue_start_=base::TimeTicks::Now();
+  StepDownloadCue();download_cue_widget_->ShowInactive();
+  download_cue_timer_.Start(FROM_HERE,base::Milliseconds(16),base::BindRepeating(&WorkspaceShell::StepDownloadCue,base::Unretained(this)));
+}
+gfx::Rect WorkspaceShell::DownloadPillBounds() const{
+  const auto page=widget_->GetClientAreaBoundsInScreen();
+  const auto size=download_cue_->GetPreferredSize();
+  return gfx::Rect(page.x()+16,page.bottom()-16-size.height(),std::min(size.width(),std::max(120,page.width()-32)),size.height());
+}
+gfx::Point WorkspaceShell::DownloadCueTarget() const{
+  if(!download_cue_to_pill_&&downloads_button_&&downloads_button_->IsDrawn())return downloads_button_->GetBoundsInScreen().CenterPoint();
+  const auto page=widget_->GetClientAreaBoundsInScreen();return gfx::Point(page.x()+16+22,page.bottom()-16-20);
+}
+void WorkspaceShell::StepDownloadCue(){
+  if(!download_cue_widget_)return;
+  const double t=std::clamp((base::TimeTicks::Now()-download_cue_start_)/base::Milliseconds(450),0.0,1.0);
+  const double eased=1-std::pow(1-t,3);
+  const gfx::PointF from(download_cue_from_),to(DownloadCueTarget());
+  // A quadratic bow that lifts 80 px over the straight line.
+  const gfx::PointF control((from.x()+to.x())/2,std::min(from.y(),to.y())-80);
+  const double u=1-eased;
+  const gfx::PointF at(u*u*from.x()+2*u*eased*control.x()+eased*eased*to.x(),u*u*from.y()+2*u*eased*control.y()+eased*eased*to.y());
+  const int size=static_cast<int>(std::lround(32-12*eased));
+  SetWidgetBounds(download_cue_widget_.get(),gfx::Rect(static_cast<int>(at.x())-size/2,static_cast<int>(at.y())-size/2,size,size));
+  if(t>=1){download_cue_timer_.Stop();LandDownloadCue();}
+}
+void WorkspaceShell::LandDownloadCue(){
+  download_cue_timer_.Stop();
+  if(!download_cue_to_pill_){
+    if(download_cue_widget_)download_cue_widget_->Hide();
+  } else {
+    // The sidebar is away: the pill stays 4 s (longer while hovered), then goes.
+    auto* cue=static_cast<DownloadCueView*>(download_cue_.get());cue->SetPill(true);
+    SetWidgetBounds(download_cue_widget_.get(),DownloadPillBounds());download_cue_widget_->ShowInactive();
+    download_cue_hide_timer_.Start(FROM_HERE,base::Seconds(4),base::BindRepeating([](WorkspaceShell* shell){
+      if(static_cast<DownloadCueView*>(shell->download_cue_.get())->hovered()){shell->download_cue_hide_timer_.Start(FROM_HERE,base::Seconds(2),base::BindOnce(&WorkspaceShell::HideDownloadCue,base::Unretained(shell)));return;}
+      shell->HideDownloadCue();},base::Unretained(this)));
+  }
+  TremorDownloads();
+}
+// One tremor of the ring (`zt-tremor`: 1 px shakes in four steps over 180 ms).
+void WorkspaceShell::TremorDownloads(){
+  downloads_tremor_step_=0;if(gfx::Animation::PrefersReducedMotion())return;
+  downloads_tremor_timer_.Start(FROM_HERE,base::Milliseconds(45),base::BindRepeating([](WorkspaceShell* shell){
+    static constexpr std::array<int,4> kOffsets={-1,1,-1,0};
+    if(!shell->downloads_button_||shell->downloads_tremor_step_>=static_cast<int>(kOffsets.size())){shell->downloads_tremor_timer_.Stop();return;}
+    shell->downloads_button_->SetProperty(kDownloadTremor,kOffsets[shell->downloads_tremor_step_++]);shell->downloads_button_->SchedulePaint();shell->ScheduleMetalSidebar();},base::Unretained(this)));
+}
+void WorkspaceShell::HideDownloadCue(){download_cue_timer_.Stop();download_cue_hide_timer_.Stop();if(download_cue_widget_)download_cue_widget_->Hide();}
+bool WorkspaceShell::download_cue_is_pill_for_testing() const{return download_cue_widget_&&download_cue_widget_->IsVisible()&&static_cast<DownloadCueView*>(download_cue_.get())->pill();}
+void WorkspaceShell::DownloadFinished(){
+  // ✓ for 2.5 s, then the icon rests unless another file is still arriving.
+  downloads_done_=downloads_active_==0;
+  TremorDownloads();
+  if(downloads_done_)downloads_done_timer_.Start(FROM_HERE,base::Milliseconds(2500),base::BindOnce([](WorkspaceShell* shell){shell->downloads_done_=false;shell->UpdateDownloadsButton();},base::Unretained(this)));
+  UpdateDownloadsButton();
+}
+gfx::Rect WorkspaceShell::downloads_anchor_in_screen() const{
+  if(downloads_button_&&downloads_button_->IsDrawn()&&sidebar_visible())return downloads_button_->GetBoundsInScreen();
+  if(download_cue_widget_&&download_cue_widget_->IsVisible())return download_cue_widget_->GetWindowBoundsInScreen();
+  return gfx::Rect();
+}
 void WorkspaceShell::ShowToast(std::u16string lead,std::u16string noun,base::OnceClosure undo,std::u16string action){
   if(!toast_widget_)return;
   auto* toast=static_cast<ToastView*>(toast_.get());toast->SetMessage(std::move(lead),std::move(noun));toast->SetAction(action.empty()?T(u"Cofnij"):std::move(action));toast_undo_=std::move(undo);
@@ -7696,6 +7910,7 @@ void WorkspaceShell::PositionPanels() {
   if(scrim_widget_)SetWidgetBounds(scrim_widget_.get(),bounds);
   if(time_machine_widget_)SetWidgetBounds(time_machine_widget_.get(),bounds);
   if(toast_widget_&&toast_widget_->IsVisible())PositionToast();
+  if(download_cue_widget_&&download_cue_widget_->IsVisible()&&static_cast<DownloadCueView*>(download_cue_.get())->pill())SetWidgetBounds(download_cue_widget_.get(),DownloadPillBounds());
   if (find_visible()) PositionFind();
   PositionPrint();
   if (general_widget_) {
@@ -8772,6 +8987,36 @@ void WorkspaceShell::ConfirmQuitWithDownloads(int count, base::OnceCallback<void
   quit_dialog_.reset(prompt);
   prompt->MakeCloseSynchronous(base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, views::Widget::ClosedReason) {
     if (shell) { shell->quit_dialog_.reset(); shell->quit_dialog_delegate_.reset(); }
+  }, weak_factory_.GetWeakPtr()));
+  prompt->SetColorModeOverride(widget_->color_mode_override());
+  PreparePanelText(prompt->GetRootView());
+  prompt->Show();
+}
+void WorkspaceShell::ConfirmDanger(views::Widget* parent, std::u16string title, std::u16string detail, std::u16string warning,
+                                   std::u16string action, base::OnceCallback<void(bool)> answer) {
+  if (!parent) parent = widget_;
+  if (!parent || !parent->IsVisible()) { std::move(answer).Run(false); return; }
+  if (danger_dialog_) danger_dialog_->CloseNow();
+  auto body = std::make_unique<views::View>();
+  if (!detail.empty()) body->AddChildView(std::make_unique<SceneParagraph>(std::move(detail), 0, false, kMuted));
+  body->AddChildView(std::make_unique<SceneParagraph>(std::move(warning), 0, true, kError));
+  SetSidebarPanelLayout(body.get(), true, gfx::Insets(), Metrics().space_3);
+  auto dialog = std::make_unique<SceneModalDialog>(std::move(body), false);
+  dialog->SetTitle(std::move(title));
+  dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk) | static_cast<int>(ui::mojom::DialogButton::kCancel));
+  dialog->SetButtonLabel(ui::mojom::DialogButton::kOk, std::move(action));
+  dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel, T(u"Anuluj"));
+  dialog->SetDefaultButton(static_cast<int>(ui::mojom::DialogButton::kCancel));
+  auto [accept, cancel] = base::SplitOnceCallback(std::move(answer));
+  dialog->SetAcceptCallback(base::BindOnce([](base::OnceCallback<void(bool)> answer) {
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(std::move(answer), true));
+  }, std::move(accept)));
+  dialog->SetCancelCallback(base::BindOnce(std::move(cancel), false));
+  danger_dialog_delegate_ = std::move(dialog);
+  auto* prompt = views::DialogDelegate::CreateDialogWidget(danger_dialog_delegate_.get(), parent->GetNativeWindow(), parent->GetNativeView());
+  danger_dialog_.reset(prompt);
+  prompt->MakeCloseSynchronous(base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, views::Widget::ClosedReason) {
+    if (shell) { shell->danger_dialog_.reset(); shell->danger_dialog_delegate_.reset(); }
   }, weak_factory_.GetWeakPtr()));
   prompt->SetColorModeOverride(widget_->color_mode_override());
   PreparePanelText(prompt->GetRootView());
