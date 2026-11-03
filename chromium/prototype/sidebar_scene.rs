@@ -1118,6 +1118,8 @@ fn preference_catalogue(system_certificates:bool)->ffi::PreferenceCatalogue {
     rows.push(preference_spec(0,K::WorkspaceNames,"",t("Nazwa aktywnej przestrzeni"),t("Pokazuj nazwę obok kropki aktywnej przestrzeni na dole panelu kart."),vec![],"",A::None));
     rows.push(preference_spec(0,K::Language,"",t("Język interfejsu"),t("Zmiana zadziała po ponownym uruchomieniu Zitter."),vec![t("Systemowy").into(),"Polski".into(),"English".into()],"",A::None));
     rows.push(preference_spec(0,K::FoldersCollapsed,"",t("Zwinięte foldery przypiętych"),t("Foldery startują zwinięte. Karta otwarta z Command Center pokazuje się pod folderem bez rozwijania reszty."),vec![],"",A::None));
+    rows.push(preference_spec(0,K::Toggle,"image_link_previews",t("Magiczny podgląd obrazków"),t("Po najechaniu na link do obrazka pokaż jego podgląd. Może pobrać obraz bez kliknięcia. Domyślnie wyłączone. Dotyczy całej aplikacji."),vec![],"",A::None));
+    rows.push(preference_spec(0,K::Toggle,"shift_click_peek",t("Shift + klik otwiera Peek"),t("Otwieraj linki w małym oknie z możliwością przeniesienia do zwykłej karty. Escape zamyka Peek. Dotyczy całej aplikacji."),vec![],"",A::None));
     rows.push(preference_spec(1,K::Search,"",t("Domyślna wyszukiwarka"),t("Używana, gdy wpiszesz zapytanie w pasku adresu."),vec!["DuckDuckGo".into(),"Google".into(),"Bing".into()],"",A::None));
     rows.push(preference_spec(2,K::Toggle,"referrers",t("Przekazuj adres strony odsyłającej"),t("Nagłówek Referer pomaga witrynie rozpoznać, skąd pochodzi wejście. Wyłączenie może zmienić działanie niektórych serwisów."),vec![],"",A::None));
     rows.push(preference_spec(2,K::Toggle,"https_only",t("Zawsze używaj HTTPS"),t("Wymagaj bezpiecznego połączenia. Witryny bez HTTPS mogą wyświetlić ostrzeżenie."),vec![],"",A::None));
@@ -3942,15 +3944,15 @@ mod tests {
     }
     #[test] fn preference_catalogue_preserves_categories_counts_and_platform_gate() {
         use ffi::PreferenceRowKind as K;use ffi::PreferenceActionKind as A;
-        let c=preference_catalogue(true);assert_eq!(c.categories,["Wygląd","Wyszukiwanie","Prywatność","Uprawnienia stron","Treści i czytelność","Hasła i profile","Pobieranie","Języki i pisownia","Dane przeglądania","Zaawansowane"]);assert_eq!(c.descriptions.len(),10);assert_eq!(c.rows.len(),59);
-        let mut counts=[0;10];for row in &c.rows{counts[row.category]+=1;assert!(!row.title.is_empty()&&!row.detail.is_empty());}assert_eq!(counts,[11,4,8,7,12,5,2,3,1,6]);
-        assert_eq!(c.rows.iter().filter(|r|r.kind==K::Toggle||r.kind==K::Pinned||r.kind==K::Animations||r.kind==K::WorkspaceNames||r.kind==K::FoldersCollapsed||r.kind==K::TimeMachine).count(),28);assert_eq!(c.rows.iter().filter(|r|r.kind==K::Text).count(),6);
-        let no=preference_catalogue(false);assert_eq!(no.rows.len(),58);assert!(no.rows.iter().all(|r|r.action!=A::Certificates));assert!(c.rows.iter().filter(|r|r.action!=A::Certificates).map(|r|(&r.title,&r.detail,r.category)).eq(no.rows.iter().map(|r|(&r.title,&r.detail,r.category))));
+        let c=preference_catalogue(true);assert_eq!(c.categories,["Wygląd","Wyszukiwanie","Prywatność","Uprawnienia stron","Treści i czytelność","Hasła i profile","Pobieranie","Języki i pisownia","Dane przeglądania","Zaawansowane"]);assert_eq!(c.descriptions.len(),10);assert_eq!(c.rows.len(),61);
+        let mut counts=[0;10];for row in &c.rows{counts[row.category]+=1;assert!(!row.title.is_empty()&&!row.detail.is_empty());}assert_eq!(counts,[13,4,8,7,12,5,2,3,1,6]);
+        assert_eq!(c.rows.iter().filter(|r|r.kind==K::Toggle||r.kind==K::Pinned||r.kind==K::Animations||r.kind==K::WorkspaceNames||r.kind==K::FoldersCollapsed||r.kind==K::TimeMachine).count(),30);assert_eq!(c.rows.iter().filter(|r|r.kind==K::Text).count(),6);
+        let no=preference_catalogue(false);assert_eq!(no.rows.len(),60);assert!(no.rows.iter().all(|r|r.action!=A::Certificates));assert!(c.rows.iter().filter(|r|r.action!=A::Certificates).map(|r|(&r.title,&r.detail,r.category)).eq(no.rows.iter().map(|r|(&r.title,&r.detail,r.category))));
     }
     #[test] fn preference_catalogue_registered_store_keys_keep_their_control_kinds() {
         use ffi::PreferenceRowKind as K;let c=preference_catalogue(true);let mut keys=std::collections::BTreeSet::new();
         for row in &c.rows{if row.kind==K::Text||row.kind==K::Toggle||row.kind==K::Picker{assert!(!row.key.is_empty());assert!(keys.insert(row.key.clone()));}else{assert!(row.key.is_empty());}}
-        assert_eq!(c.rows.iter().filter(|r|r.kind==K::Toggle).map(|r|r.key.as_str()).collect::<Vec<_>>(),["referrers","https_only","third_party_cookies","do_not_track","fingerprint_protection","preconnect","link_auditing","camera","microphone","location","notifications","clipboard","javascript","images","popups","sound","save_passwords","auto_signin","download_prompt","spellcheck","online_spellcheck","caret_browsing","hardware_acceleration"]);
+        assert_eq!(c.rows.iter().filter(|r|r.kind==K::Toggle).map(|r|r.key.as_str()).collect::<Vec<_>>(),["image_link_previews","shift_click_peek","referrers","https_only","third_party_cookies","do_not_track","fingerprint_protection","preconnect","link_auditing","camera","microphone","location","notifications","clipboard","javascript","images","popups","sound","save_passwords","auto_signin","download_prompt","spellcheck","online_spellcheck","caret_browsing","hardware_acceleration"]);
         assert_eq!(c.rows.iter().filter(|r|r.kind==K::Text).map(|r|r.key.as_str()).collect::<Vec<_>>(),["font_standard","font_serif","font_sans","font_fixed","accept_languages","dns_templates"]);
         assert_eq!(c.rows.iter().filter(|r|r.kind==K::Picker).map(|r|r.key.as_str()).collect::<Vec<_>>(),["zoom","font_size","minimum_font_size","fixed_font_size","dns_mode"]);
         for key in ["hardware_acceleration","dns_mode","dns_templates"]{let row=c.rows.iter().find(|r|r.key==key).unwrap();assert!(row.detail.contains("całej aplikacji"));}

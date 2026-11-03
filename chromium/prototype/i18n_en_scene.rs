@@ -3,6 +3,10 @@
 // One entry per distinct Polish string, written exactly as in the source
 // (same escapes); `{}` placeholders keep their order.
 pub static EN: &[(&str, &str)] = &[
+    ("Magiczny podgląd obrazków", "Magic image previews"),
+    ("Po najechaniu na link do obrazka pokaż jego podgląd. Może pobrać obraz bez kliknięcia. Domyślnie wyłączone. Dotyczy całej aplikacji.", "Preview images when hovering over image links. May download an image without clicking. Off by default. Applies to the entire app."),
+    ("Shift + klik otwiera Peek", "Shift + click opens Peek"),
+    ("Otwieraj linki w małym oknie z możliwością przeniesienia do zwykłej karty. Escape zamyka Peek. Dotyczy całej aplikacji.", "Open links in a small window that can become a regular tab. Escape closes Peek. Applies to the entire app."),
     ("Kopiuj adres strony", "Copy page address"),
     ("Adres bieżącej karty do schowka", "The current tab’s address to the clipboard"),
     ("Gotowe", "Done"),

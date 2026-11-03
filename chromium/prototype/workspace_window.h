@@ -139,6 +139,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void ClosePeek();
   bool PromotePeek(bool split);
   content::WebContents* peek_contents() const;
+  bool image_preview_visible_for_testing(content::WebContents* page) const;
   bool SetLinkRule(const GURL& url, std::string workspace_id);
   std::string WorkspaceForUrl(const GURL& url) const;
   const std::vector<LinkRule>& link_rules() const { return link_rules_; }
@@ -371,6 +372,9 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   };
   std::optional<RemovedWorkspace> removed_workspace_;
   raw_ptr<views::WebView> peek_view_ = nullptr;
+  // App-wide interaction preferences, persisted with the workspace catalogue.
+  bool image_link_previews_ = false;
+  bool shift_click_peek_ = true;
   std::string peek_workspace_id_;
   struct ProfileEntry {
     ProfileInfo info;

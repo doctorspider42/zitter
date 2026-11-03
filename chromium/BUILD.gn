@@ -142,6 +142,8 @@ source_set("shell") {
     "chromium/prototype/download_panel.cc",
     "chromium/prototype/fingerprint_protection.h",
     "chromium/prototype/fingerprint_protection.cc",
+    "chromium/prototype/image_link_preview.h",
+    "chromium/prototype/image_link_preview.cc",
     "chromium/prototype/page_services.h",
     "chromium/prototype/page_services.cc",
     "chromium/prototype/page_printing.h",
@@ -283,7 +285,7 @@ source_set("profile_workspace_browser_tests") {
     "chromium/prototype/page_media_access_browsertest.cc",
     "chromium/prototype/fingerprint_protection_browsertest.cc",
   ]
-  include_dirs = [ "." ]
+  include_dirs = [ ".", target_gen_dir ]
   deps = [
     ":shell",
     "//base/test:test_support",

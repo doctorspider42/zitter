@@ -729,7 +729,7 @@ sidebar::Item GlyphSceneData(views::View* view,ControlGlyph glyph,const gfx::Vec
   item.clip={clip.x(),clip.y(),clip.width(),clip.height()};
   item.glyph=glyph==GlyphButton::Glyph::kSidebar ? 0 : glyph==GlyphButton::Glyph::kDot ? 1 : glyph==GlyphButton::Glyph::kMore ? 6
       : icon==&vector_icons::kArrowBackIcon ? 3 : icon==&vector_icons::kArrowForwardIcon ? 4
-      : icon==&vector_icons::kReloadCustomIcon ? 5 : icon==&vector_icons::kCloseSmallIcon ? 7 : icon==&vector_icons::kSearchIcon ? 8
+      : icon==&vector_icons::kReloadCustomIcon ? 5 : (icon==&vector_icons::kCloseSmallIcon || icon==&vector_icons::kCloseIcon) ? 7 : icon==&vector_icons::kSearchIcon ? 8
        : icon==&vector_icons::kAdd2Icon ? 9 : icon==&vector_icons::kLinkIcon ? 10 : 2;
   if (item.glyph == 5) item.detail_font_size = view->GetProperty(kReloadAngle);
   item.active=on; item.focused=focused; item.focus=Palette(view).focus;
@@ -765,6 +765,14 @@ void PaintSceneRecipe(gfx::Canvas* canvas,const sidebar::Item& item,const gfx::F
       if(styled_text&&!op.family)text_font=font.DeriveWithSizeDelta(std::max(1,static_cast<int>(op.font_size))-font.GetFontSize());
       if(styled_text)text=gfx::ElideText(text,text_font,op.width,op.middle?gfx::ELIDE_MIDDLE:gfx::ELIDE_TAIL);
       canvas->DrawStringRectWithFlags(text,text_font,op.color,gfx::Rect(op.x,op.y,op.width,op.height),op.center?gfx::Canvas::TEXT_ALIGN_CENTER:op.right_align?gfx::Canvas::TEXT_ALIGN_RIGHT:gfx::Canvas::TEXT_ALIGN_LEFT);
+    }
+    else if(op.shape>=2 && op.shape<=7) {
+      // Match the icon primitives understood by the Metal shader. Treating
+      // them as ordinary rectangles turns arrows and close icons into squares.
+      const std::array<const gfx::VectorIcon*,6> icons={&vector_icons::kArrowBackIcon,&vector_icons::kArrowForwardIcon,
+          &vector_icons::kReloadCustomIcon,&vector_icons::kCloseSmallIcon,
+          &vector_icons::kSettingsIcon,&vector_icons::kSearchIcon};
+      PaintIcon(canvas,*icons.at(op.shape-2),gfx::Rect(op.x,op.y,op.width,op.height),std::min(op.width,op.height),op.color);
     }
     else {cc::PaintFlags flags;flags.setAntiAlias(true);flags.setColor(op.color);if(op.stroke>0){flags.setStyle(cc::PaintFlags::kStroke_Style);flags.setStrokeWidth(op.stroke);}canvas->DrawRoundRect(gfx::RectF(op.x,op.y,op.width,op.height),op.radius,flags);}
   }
@@ -1230,6 +1238,18 @@ class ScrimView final : public views::View {
 BEGIN_METADATA(ScrimView)
 END_METADATA
 void CancelSceneActions(views::View* root){if(!root)return;if(auto* group=views::AsViewClass<SceneActionGroup>(root)){group->CancelInput();return;}if(auto* controls=views::AsViewClass<ScenePreferenceControls>(root)){controls->CancelInput();return;}for(const auto& child:root->children())CancelSceneActions(child.get());}
+// The client surface must follow theme notifications itself: a bubble widget's
+// GetContentsView() can refer to its non-client wrapper rather than this card.
+class PeekSurface final : public views::View {
+  METADATA_HEADER(PeekSurface,views::View)
+ public:
+  void AddedToWidget() override{views::View::AddedToWidget();Refresh();}
+  void OnThemeChanged() override{views::View::OnThemeChanged();Refresh();}
+ private:
+  void Refresh(){SetBackground(views::CreateRoundedRectBackground(Tone(this,kCard),12));SetBorder(views::CreateRoundedRectBorder(1,12,Hairline(this)));SchedulePaint();}
+};
+BEGIN_METADATA(PeekSurface)
+END_METADATA
 // Font shaping stays a platform service; no Label is constructed for the scene.
 class ScenePeekTitle final : public views::View {
   METADATA_HEADER(ScenePeekTitle,views::View)
@@ -4163,8 +4183,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   SetSidebarPanelLayout(main,true,gfx::Insets::VH(16,20),12,main_scroll);
   general_status_ = copy(main, T(u"Przełączniki zapisują się automatycznie. Pola tekstowe zatwierdź przyciskiem Zapisz lub Enter."), kMuted,-2,gfx::Font::Weight::NORMAL,true);
   FilterPreferences();
-  auto peek = std::make_unique<views::View>();
-  peek->SetBackground(views::CreateRoundedRectBackground(kCard,12));peek->SetBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)));
+  auto peek = std::make_unique<PeekSurface>();
   std::array<views::Button::PressedCallback,5> peek_actions;
   peek_actions[0]=base::BindRepeating(callbacks_.page_command,PageCommand::kBack);peek_actions[1]=base::BindRepeating(callbacks_.page_command,PageCommand::kForward);
   for(bool split:{false,true})peek_actions[split?3:2]=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,bool split){
@@ -5769,6 +5788,7 @@ constexpr gfx::VectorIconRep kAddSpaceRep[]={{kAddSpacePath}};
 constexpr gfx::VectorIcon kAddTabIcon(kAddTabRep,1,"zitter_add_tab");
 constexpr gfx::VectorIcon kAddFolderIcon(kAddFolderRep,1,"zitter_add_folder");
 constexpr gfx::VectorIcon kAddSpaceIcon(kAddSpaceRep,1,"zitter_add_space");
+#if !BUILDFLAG(IS_MAC)
 // The |z⟩ menu's row icons (design: Main, Menu Zitter), 16 px at `.zt-icon`'s 1.6 stroke.
 constexpr gfx::PathElement kMenuNewTabPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,8,3,V_LINE_TO,13,MOVE_TO,3,8,H_LINE_TO,13};
 constexpr gfx::PathElement kMenuAddressPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,CIRCLE,7,7,4,MOVE_TO,10,10,LINE_TO,13,13};
@@ -5856,6 +5876,7 @@ class DotImageSource final : public gfx::CanvasImageSource {
  private:
   const SkColor color_;
 };
+#endif  // !BUILDFLAG(IS_MAC)
 constexpr int kEmojiBase = 50;
 constexpr int kProfileCommandBase = 100;
 // Rust plans use the established application command IDs; fail compilation if
@@ -7041,7 +7062,7 @@ void WorkspaceShell::ApplyTheme(bool refresh_controls) {
 #endif
   }
   for (auto* surface : {settings_root_.get(), profiles_root_.get(), import_root_.get(),
-       peek_widget_ ? peek_widget_->GetContentsView() : nullptr, general_root_.get(), palette_root_.get(), tools_root_.get()}) {
+       peek_toolbar_ ? peek_toolbar_->parent() : nullptr, general_root_.get(), palette_root_.get(), tools_root_.get()}) {
     if (!surface) continue;
     const int radius = surface == palette_root_ ? 20 : 12;  // radius-lg / radius-md
     if(surface==palette_root_&&static_cast<PaletteView*>(surface)->scene()){surface->SetBackground(nullptr);surface->SetBorder(views::CreateEmptyBorder(1));}

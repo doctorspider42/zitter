@@ -40,6 +40,8 @@ An independent, open-source browser built on Chromium, with its own interface an
 
 Light, dark and system themes. Workspace accents. Native preferences, history and downloads.
 
+Shift-click a link to open **Peek**, then move it into a regular tab without reloading. In **Settings → Appearance**, you can disable this gesture or enable **Magic image previews**: hover over a direct image link (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.avif`, `.bmp`, `.ico` or `.svg`) for a small, passive preview. Image previews are off by default and may fetch the image before you click. Both settings apply across the app.
+
 > **Spaces organize. Profiles isolate.** Spaces using the same profile share cookies and logins. Time Machine restores tab layouts and URLs, not page contents or unsaved forms.
 
 ## Project status
