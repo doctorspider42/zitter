@@ -5,6 +5,8 @@
 #include "chromium/prototype/i18n.h"
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "chromium/prototype/download_panel.h"
+#include "content/public/browser/download_request_utils.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "chromium/prototype/fingerprint_protection.h"
 #include "chromium/prototype/page_services.h"
 #include "chrome/browser/printing/print_view_manager.h"
@@ -1266,6 +1268,33 @@ void WorkspaceWindow::EnsureDownloads() {
   downloads_->SetProgressCallback(base::BindRepeating([](WorkspaceWindow* window, int active, double fraction, std::u16string newest) {
     window->shell_->SetDownloadProgress(active, fraction, std::move(newest));
   }, base::Unretained(this)));
+  // Design: Okno Pobrane — removing from the list is undone from its toast;
+  // deleting from the disk asks first; a file gone from the disk downloads again.
+  downloads_->SetRemovedCallback(base::BindRepeating([](WorkspaceWindow* window, int count, base::OnceClosure undo) {
+    const int tens = count % 100, ones = count % 10;
+    const auto files = count == 1 ? T(u"plik") : (ones >= 2 && ones <= 4 && (tens < 12 || tens > 14)) ? T(u"pliki") : T(u"plików");
+    window->shell_->ShowToast(T(u"Usunięto z listy: "), base::NumberToString16(count) + u" " + files, std::move(undo));
+  }, base::Unretained(this)));
+  downloads_->SetConfirmCallback(base::BindRepeating([](WorkspaceWindow* window, views::Widget* parent, std::u16string title, std::u16string detail,
+                                                        std::u16string warning, std::u16string action, base::OnceCallback<void(bool)> answer) {
+    window->shell_->ConfirmDanger(parent, std::move(title), std::move(detail), std::move(warning), std::move(action), std::move(answer));
+  }, base::Unretained(this)));
+  downloads_->SetRedownloadCallback(base::BindRepeating([](WorkspaceWindow* window, GURL url) {
+    auto* page = window->contents(window->active_id());
+    if (!page || !url.SchemeIsHTTPOrHTTPS()) return;
+    static constexpr net::NetworkTrafficAnnotationTag kRedownload = net::DefineNetworkTrafficAnnotation("zitter_download_again", R"(
+      semantics {
+        sender: "Zitter Downloads"
+        description: "Downloads a file again from its original address."
+        trigger: "The user chooses Download again for a file in the Downloads window."
+        data: "The file's original URL and the profile's cookies."
+        destination: WEBSITE
+      }
+      policy { cookies_allowed: YES setting: "None." policy_exception_justification: "User-initiated download." })");
+    page->GetBrowserContext()->GetDownloadManager()->DownloadUrl(
+        content::DownloadRequestUtils::CreateDownloadForWebContentsMainFrame(page, url, kRedownload));
+  }, base::Unretained(this)));
+  downloads_->SetChangeFolderCallback(base::BindRepeating(&WorkspaceWindow::ChooseDownloadDirectory, base::Unretained(this)));
 }
 void WorkspaceWindow::DownloadCompleted(std::string guid, std::u16string name) {
   shell_->DownloadFinished();

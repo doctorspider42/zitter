@@ -255,6 +255,11 @@ class WorkspaceShell final : public ui::EventHandler,
   // Closing the window would cancel |count| downloads; |answer| gets whether
   // to quit anyway. Outside macOS, where AppController asks.
   void ConfirmQuitWithDownloads(int count, base::OnceCallback<void(bool)> answer);
+  // A destructive confirmation over `parent` (design: Dialog): `detail` muted,
+  // `warning` in `danger`, `action` the danger button; waiting is the default.
+  void ConfirmDanger(views::Widget* parent, std::u16string title, std::u16string detail, std::u16string warning,
+                     std::u16string action, base::OnceCallback<void(bool)> answer);
+  views::Widget* danger_dialog_for_testing() const { return danger_dialog_.get(); }
   // The |z⟩ menu's „O Zitter”: Zitter's and Chromium's versions.
   void ShowAbout();
   void ShowUpdateReady(std::string version);
@@ -989,6 +994,8 @@ class WorkspaceShell final : public ui::EventHandler,
   // The quit-while-downloading prompt or the About dialog, one at a time.
   std::unique_ptr<views::DialogDelegate> quit_dialog_delegate_;
   std::unique_ptr<views::Widget> quit_dialog_;
+  std::unique_ptr<views::DialogDelegate> danger_dialog_delegate_;
+  std::unique_ptr<views::Widget> danger_dialog_;
   std::unique_ptr<views::WidgetDelegate> welcome_delegate_;
   std::unique_ptr<views::Widget> welcome_widget_;
   std::unique_ptr<views::WidgetDelegate> find_delegate_;

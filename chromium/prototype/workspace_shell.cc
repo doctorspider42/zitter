@@ -1143,6 +1143,9 @@ class SceneTextButton final : public RustActionView {
   void SetPrimary(){kind_=0;PreferredSizeChanged();SchedulePaint();}
   // Creating something new (a space, a profile): the one lime `zing` button.
   void SetZing(bool zing){if(zing)kind_=1;else kind_.reset();PreferredSizeChanged();SchedulePaint();}
+  void SetKind(uint32_t kind){if(kind_==kind)return;kind_=kind;PreferredSizeChanged();SchedulePaint();}
+  // Filter chips (kinds 6 and 7) are set in `label`.
+  bool chip() const{return kind_&&(*kind_==6||*kind_==7);}
   gfx::Size GetMinimumSize() const override{if(!native_minimum_)return RustActionView::GetMinimumSize();const auto font=TextFont();return gfx::Size(views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_DIALOG_BUTTON_MINIMUM_WIDTH),std::max(0,views::LayoutProvider::GetControlHeightForFont(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY,font)-std::max(font.GetHeight(),views::TypographyProvider::Get().GetLineHeight(views::style::CONTEXT_BUTTON_MD,views::style::STYLE_PRIMARY))));}
   void SetText(std::u16string text){if(text==text_)return;OnMouseCaptureLost();text_=std::move(text);GetViewAccessibility().SetName(text_);SetTooltipText(text_);PreferredSizeChanged();SchedulePaint();}
   // Buttons are set in `body-strong`.
@@ -1159,12 +1162,13 @@ class SceneTextButton final : public RustActionView {
   sidebar::Item Scene(gfx::RectF bounds,gfx::RectF clip) const {
     const auto state=Snapshot();const auto b=Style();
     sidebar::Item item{};item.kind=19;item.x=bounds.x();item.y=bounds.y();item.width=bounds.width();item.height=bounds.height();item.title=base::UTF16ToUTF8(text_);item.font_size=13;item.active=true;item.text_style=4;
+    if(chip()){item.font_size=12;item.text_style=6;item.active=false;}
     item.title_width=b.padding_x;item.focused=state.focused;item.focus=Palette(this).focus;item.hovered=false;
     item.ink=accent_ink_?Palette(this).accent_ink:b.ink;item.fill=b.fill;item.badge=b.edge;item.font_height=b.radius;item.detail_font_size=b.edge_width;
     item.clip={clip.x(),clip.y(),clip.width(),clip.height()};return item;
   }
  private:
-  sidebar::ActionButtonLayout Metrics(int width,int height) const {const auto b=Style();return sidebar::action_button_layout(width,height,gfx::GetStringWidth(text_,TextFont())+2,static_cast<int>(b.height),static_cast<int>(b.padding_x),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_DIALOG_BUTTON_MINIMUM_WIDTH));}
+  sidebar::ActionButtonLayout Metrics(int width,int height) const {const auto b=Style();return sidebar::action_button_layout(width,height,gfx::GetStringWidth(text_,chip()?DesignFont(2,12,500,false):TextFont())+2,static_cast<int>(b.height),static_cast<int>(b.padding_x),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_DIALOG_BUTTON_MINIMUM_WIDTH));}
   std::u16string text_;ui::ButtonStyle style_;bool native_minimum_=false;bool accent_ink_=false;std::optional<uint32_t> kind_;
 };
 BEGIN_METADATA(SceneTextButton)
@@ -2543,11 +2547,31 @@ class SceneFileTile final : public views::View {
  public:
   SceneFileTile(){SetCanProcessEventsWithinSubtree(false);GetViewAccessibility().SetIsIgnored(true);}
   void SetExtension(std::u16string extension){extension=base::i18n::ToUpper(extension.substr(0,4));if(extension_==extension)return;extension_=std::move(extension);SchedulePaint();}
+  // Choosing files: an 18 px checkbox, `accent` with ✓ when checked (design:
+  // Okno Pobrane, Zaznaczanie). Space or a click flips it.
+  void SetChoice(bool choosing,bool checked,base::RepeatingClosure pressed){
+    pressed_=std::move(pressed);if(choosing_==choosing&&checked_==checked)return;choosing_=choosing;checked_=checked;
+    SetCanProcessEventsWithinSubtree(choosing);SetFocusBehavior(choosing?FocusBehavior::ALWAYS:FocusBehavior::NEVER);
+    auto& ax=GetViewAccessibility();ax.SetIsIgnored(!choosing);
+    if(choosing){ax.SetRole(ax::mojom::Role::kCheckBox);ax.SetName(T(u"Zaznacz plik"));ax.SetCheckedState(checked?ax::mojom::CheckedState::kTrue:ax::mojom::CheckedState::kFalse);}
+    SchedulePaint();}
+  bool OnMousePressed(const ui::MouseEvent& event) override{return choosing_&&event.IsLeftMouseButton();}
+  void OnMouseReleased(const ui::MouseEvent& event) override{if(choosing_&&HitTestPoint(event.location())&&pressed_)pressed_.Run();}
+  bool OnKeyPressed(const ui::KeyEvent& event) override{if(!choosing_||event.key_code()!=ui::VKEY_SPACE)return false;if(pressed_)pressed_.Run();return true;}
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(32,32);}
-  void OnPaint(gfx::Canvas* canvas) override{const auto p=Palette(this);FillRound(canvas,GetLocalBounds(),4/* radius-xs */,p.bg_hover);
+  void OnPaint(gfx::Canvas* canvas) override{const auto p=Palette(this);
+    if(choosing_){const gfx::Rect box(7,7,18,18);
+      if(checked_){FillRound(canvas,box,4,p.accent);cc::PaintFlags check;check.setAntiAlias(true);check.setStyle(cc::PaintFlags::kStroke_Style);check.setStrokeWidth(2);check.setStrokeCap(cc::PaintFlags::kRound_Cap);check.setStrokeJoin(cc::PaintFlags::kRound_Join);check.setColor(p.on_accent);
+        SkPathBuilder path;path.moveTo(11,16.5f);path.lineTo(14.5f,20);path.lineTo(21,12.5f);canvas->DrawPath(path.detach(),check);}
+      else{cc::PaintFlags edge;edge.setAntiAlias(true);edge.setStyle(cc::PaintFlags::kStroke_Style);edge.setStrokeWidth(1.5f);edge.setColor(p.line_strong);canvas->DrawRoundRect(gfx::RectF(7.75f,7.75f,16.5f,16.5f),3.25f,edge);}
+      if(HasFocus()){cc::PaintFlags ring;ring.setAntiAlias(true);ring.setStyle(cc::PaintFlags::kStroke_Style);ring.setStrokeWidth(2);ring.setColor(p.focus);canvas->DrawRoundRect(gfx::RectF(4,4,24,24),6,ring);}
+      return;}
+    FillRound(canvas,GetLocalBounds(),4/* radius-xs */,p.bg_hover);
     canvas->DrawStringRectWithFlags(extension_,DesignFont(3,9,600,false),p.ink_muted,GetLocalBounds(),gfx::Canvas::TEXT_ALIGN_CENTER);}
+  void OnFocus() override{views::View::OnFocus();SchedulePaint();}
+  void OnBlur() override{views::View::OnBlur();SchedulePaint();}
  private:
-  std::u16string extension_;
+  std::u16string extension_;bool choosing_=false,checked_=false;base::RepeatingClosure pressed_;
 };
 BEGIN_METADATA(SceneFileTile)
 END_METADATA
@@ -2573,6 +2597,14 @@ class PanelSceneImpl final : public PanelScene {
     return parent->AddChildView(CreateSceneAction(base::BindRepeating(callback),std::move(name),ControlGlyph::kVector,icon,{},base::BindRepeating(&PanelSceneImpl::Schedule,weak_factory_.GetWeakPtr())));}
   void SetIconAction(views::View* button,std::u16string name,const gfx::VectorIcon* icon) override{if(auto* action=views::AsViewClass<RustActionView>(button))action->SetIcon(icon);button->SetTooltipText(name);button->GetViewAccessibility().SetName(name);}
   void SetProgressPaused(views::View* progress,bool paused) override{static_cast<SceneProgress*>(progress)->SetPaused(paused);}
+  void SetActionKind(views::View* button,uint32_t kind) override{static_cast<SceneTextButton*>(button)->SetKind(kind);}
+  EditorControl* AddSearch(views::View* parent,std::u16string placeholder,std::u16string name) override{
+    auto* field=AddEditor(parent);field->SetPlaceholderText(std::move(placeholder));field->GetViewAccessibility().SetName(std::move(name));
+    field->SetPresentation(DesignFont(2,13,400,false).GetFontSize(),12,true,Palette(root_).bg_base);field->view()->SetPreferredSize(gfx::Size(240,32));return field;}
+  void RefreshSearch(EditorControl* field) override{if(field)field->SetPresentation(DesignFont(2,13,400,false).GetFontSize(),12,true,Palette(root_).bg_base);}
+  views::View* AddMoreAction(views::View* parent,base::RepeatingClosure callback,std::u16string name) override{
+    return parent->AddChildView(CreateSceneAction(base::BindRepeating(callback),std::move(name),ControlGlyph::kMore,nullptr,{},base::BindRepeating(&PanelSceneImpl::Schedule,weak_factory_.GetWeakPtr())));}
+  void SetFileTileChoice(views::View* tile,bool choosing,bool checked,base::RepeatingClosure pressed) override{static_cast<SceneFileTile*>(tile)->SetChoice(choosing,checked,std::move(pressed));}
   bool animating() const override{return renderer_.animating();}
   void Schedule() override{renderer_.Schedule();}
   base::RepeatingClosure ViewportChangedCallback() override{return base::BindRepeating(&PanelSceneImpl::ViewportChanged,weak_factory_.GetWeakPtr());}
@@ -4542,7 +4574,7 @@ void WorkspaceShell::Detach() {
   if (print_widget_) print_widget_->RemoveObserver(this);
   print_widget_.reset(); print_delegate_.reset();
   scrim_widget_.reset(); scrim_delegate_.reset();
-  quit_dialog_.reset(); quit_dialog_delegate_.reset();
+  quit_dialog_.reset(); quit_dialog_delegate_.reset(); danger_dialog_.reset(); danger_dialog_delegate_.reset();
 #if BUILDFLAG(IS_WIN)
   // The wizard closing with the window reports nothing: the window is going.
   if (welcome_delegate_) AbandonWelcome(welcome_delegate_->GetContentsView());
@@ -8955,6 +8987,36 @@ void WorkspaceShell::ConfirmQuitWithDownloads(int count, base::OnceCallback<void
   quit_dialog_.reset(prompt);
   prompt->MakeCloseSynchronous(base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, views::Widget::ClosedReason) {
     if (shell) { shell->quit_dialog_.reset(); shell->quit_dialog_delegate_.reset(); }
+  }, weak_factory_.GetWeakPtr()));
+  prompt->SetColorModeOverride(widget_->color_mode_override());
+  PreparePanelText(prompt->GetRootView());
+  prompt->Show();
+}
+void WorkspaceShell::ConfirmDanger(views::Widget* parent, std::u16string title, std::u16string detail, std::u16string warning,
+                                   std::u16string action, base::OnceCallback<void(bool)> answer) {
+  if (!parent) parent = widget_;
+  if (!parent || !parent->IsVisible()) { std::move(answer).Run(false); return; }
+  if (danger_dialog_) danger_dialog_->CloseNow();
+  auto body = std::make_unique<views::View>();
+  if (!detail.empty()) body->AddChildView(std::make_unique<SceneParagraph>(std::move(detail), 0, false, kMuted));
+  body->AddChildView(std::make_unique<SceneParagraph>(std::move(warning), 0, true, kError));
+  SetSidebarPanelLayout(body.get(), true, gfx::Insets(), Metrics().space_3);
+  auto dialog = std::make_unique<SceneModalDialog>(std::move(body), false);
+  dialog->SetTitle(std::move(title));
+  dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk) | static_cast<int>(ui::mojom::DialogButton::kCancel));
+  dialog->SetButtonLabel(ui::mojom::DialogButton::kOk, std::move(action));
+  dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel, T(u"Anuluj"));
+  dialog->SetDefaultButton(static_cast<int>(ui::mojom::DialogButton::kCancel));
+  auto [accept, cancel] = base::SplitOnceCallback(std::move(answer));
+  dialog->SetAcceptCallback(base::BindOnce([](base::OnceCallback<void(bool)> answer) {
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(std::move(answer), true));
+  }, std::move(accept)));
+  dialog->SetCancelCallback(base::BindOnce(std::move(cancel), false));
+  danger_dialog_delegate_ = std::move(dialog);
+  auto* prompt = views::DialogDelegate::CreateDialogWidget(danger_dialog_delegate_.get(), parent->GetNativeWindow(), parent->GetNativeView());
+  danger_dialog_.reset(prompt);
+  prompt->MakeCloseSynchronous(base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, views::Widget::ClosedReason) {
+    if (shell) { shell->danger_dialog_.reset(); shell->danger_dialog_delegate_.reset(); }
   }, weak_factory_.GetWeakPtr()));
   prompt->SetColorModeOverride(widget_->color_mode_override());
   PreparePanelText(prompt->GetRootView());

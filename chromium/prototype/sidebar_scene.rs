@@ -512,6 +512,12 @@ mod ffi {
         fn folder_context_menu(state: &FolderMenuState) -> Vec<FolderMenuEntry>;
         fn palette_plan(input: &PalettePlanInput) -> PalettePlan;
         fn download_row(facts: &DownloadFacts) -> DownloadRow;
+        // The Downloads window's filters: a file's kind by its extension (0 other,
+        // 1 documents, 2 images and video, 3 archives, 4 apps), whether a search
+        // matches its name or host, and the label of its day group.
+        fn download_category(extension: &str) -> u32;
+        fn download_matches(name: &str, host: &str, query: &str) -> bool;
+        fn download_day_label(days_ago: i32, day: u32, month: u32, year: i32, this_year: bool) -> String;
         fn command_catalogue(context: &CommandContext, query: &str) -> Vec<CommandEntry>;
         fn folder_menu_enabled(command: i32, state: &FolderMenuState) -> bool;
         fn folder_menu_action(command: i32, state: &FolderMenuState) -> FolderMenuAction;
@@ -1719,7 +1725,7 @@ fn download_row(f:&ffi::DownloadFacts)->ffi::DownloadRow{
         P::Cancelled=>row(3,format!("⚠ {}",t("Anulowano")),String::new()),
         P::Complete=>if f.removed{row(2,format!("⚠ {}",t("Plik przeniesiony lub usunięty")),String::new())}else{
             row(1,format!("✓ {}",t("Gotowe")),if f.host.is_empty(){f.received.clone()}else{format!("{} · {}",f.received,f.host)})},
-        P::Interrupted=>row(3,format!("⚠ {}",if f.can_resume{t("Przerwano — możesz wznowić")}else{t("Przerwano — pobierz ponownie ze strony")}),sizes()),
+        P::Interrupted=>row(3,format!("⚠ {}",t("Przerwano")),sizes()),
         _=>if f.paused{row(2,format!("‖ {}",t("Wstrzymano")),sizes())}else{
             let mut meta=sizes();
             if !f.speed.is_empty(){meta.push_str(&format!(" · {}/s",f.speed));}
@@ -1727,6 +1733,28 @@ fn download_row(f:&ffi::DownloadFacts)->ffi::DownloadRow{
             row(0,String::new(),meta)
         }
     }
+}
+
+fn download_category(extension:&str)->u32{
+    match extension.trim_start_matches('.').to_lowercase().as_str(){
+        "pdf"|"doc"|"docx"|"odt"|"rtf"|"txt"|"md"|"pages"|"xls"|"xlsx"|"ods"|"csv"|"numbers"|"ppt"|"pptx"|"odp"|"key"|"epub"=>1,
+        "png"|"jpg"|"jpeg"|"gif"|"webp"|"heic"|"heif"|"svg"|"bmp"|"tif"|"tiff"|"avif"|"raw"|"mp4"|"mov"|"m4v"|"mkv"|"webm"|"avi"=>2,
+        "zip"|"rar"|"7z"|"tar"|"gz"|"tgz"|"bz2"|"xz"|"zst"=>3,
+        "dmg"|"pkg"|"app"|"exe"|"msi"|"msix"|"deb"|"rpm"|"appimage"|"apk"=>4,
+        _=>0,
+    }
+}
+// Case and Polish diacritics are ignored; every word must match the name or host.
+fn download_matches(name:&str,host:&str,query:&str)->bool{
+    let haystack=command_fold(&format!("{name} {host}"));
+    command_fold(query).split_whitespace().all(|word|haystack.contains(word))
+}
+fn download_day_label(days_ago:i32,day:u32,month:u32,year:i32,this_year:bool)->String{
+    const MONTHS:[&str;12]=["stycznia","lutego","marca","kwietnia","maja","czerwca","lipca","sierpnia","września","października","listopada","grudnia"];
+    if days_ago<=0{return t("Dziś").into();}
+    if days_ago==1{return t("Wczoraj").into();}
+    let month=t(MONTHS[(month.clamp(1,12)-1) as usize]);
+    if this_year{format!("{day} {month}")}else{format!("{day} {month} {year}")}
 }
 
 // Command Center catalogue. Native code supplies page/workspace facts and binds
@@ -2999,7 +3027,7 @@ fn monogram_colors(seed: u32, ink: u32) -> (u32, u32) {
 fn design_button(dark:bool,workspace_color:u32,kind:u32,state:u32)->ffi::DesignButton{
     use design::recipe::{ButtonKind,Interaction};
     let p=design::palette_for_stored(if dark {design::Scheme::Noc} else {design::Scheme::Papier},workspace_color);
-    let kind=match kind{1=>ButtonKind::Zing,2=>ButtonKind::Outline,3=>ButtonKind::Quiet,4=>ButtonKind::Danger,5=>ButtonKind::DangerStrong,_=>ButtonKind::Primary};
+    let kind=match kind{1=>ButtonKind::Zing,2=>ButtonKind::Outline,3=>ButtonKind::Quiet,4=>ButtonKind::Danger,5=>ButtonKind::DangerStrong,6=>ButtonKind::Chip,7=>ButtonKind::ChipOn,_=>ButtonKind::Primary};
     let state=match state{1=>Interaction::Hover,2=>Interaction::Pressed,3=>Interaction::Disabled,_=>Interaction::Rest};
     let b=design::recipe::button(&p,kind,state);
     ffi::DesignButton{height:b.height,radius:b.radius,padding_x:b.padding_x,fill:b.fill,ink:b.ink,edge:b.edge,edge_width:b.edge_width}
@@ -3467,6 +3495,27 @@ mod tests {
     }
     #[test] fn ordinary_control_primitives_keep_existing_alignment_defaults(){
         for kind in [0,3,4,5,7,17,19,20,21,22,23,25,26,30]{let mut i=row(180.0);i.kind=kind;assert!(layout(&[i]).iter().all(|p|!p.right_align));}
+    }
+    #[test]
+    fn downloads_window_filters_kinds_search_and_days() {
+        assert_eq!((download_category("PDF"),download_category(".heic"),download_category("tar"),download_category("dmg"),download_category(""),download_category("bin")),(1,2,3,4,0,0));
+        assert!(download_matches("Faktura-2026-10.pdf","ksiegowosc.pl","faktura"));
+        assert!(download_matches("wzór faktury VAT.docx","fakturaxl.pl","wzor fakt"));
+        assert!(download_matches("raport.pdf","księgowość.pl","ksiegowosc"));
+        assert!(!download_matches("raport.pdf","example.com","faktura"));
+        assert!(download_matches("raport.pdf","example.com","  "));
+        assert_eq!(download_day_label(0,3,11,2026,true),"Dziś");assert_eq!(download_day_label(1,2,11,2026,true),"Wczoraj");
+        assert_eq!(download_day_label(6,28,10,2026,true),"28 października");assert_eq!(download_day_label(400,2,9,2025,false),"2 września 2025");
+    }
+    #[test]
+    fn download_chips_rest_hover_and_chosen() {
+        use design::recipe::{ButtonKind,Interaction};
+        let p=design::palette_for_stored(design::Scheme::Noc,0);
+        let rest=design::recipe::button(&p,ButtonKind::Chip,Interaction::Rest);
+        assert_eq!((rest.height,rest.padding_x,rest.fill,rest.ink,rest.edge,rest.edge_width),(26.0,10.0,0,p.ink_muted,p.line,1.0));
+        let hover=design::recipe::button(&p,ButtonKind::Chip,Interaction::Hover);assert_eq!((hover.fill,hover.ink),(p.bg_hover,p.ink));
+        let on=design::recipe::button(&p,ButtonKind::ChipOn,Interaction::Rest);assert_eq!((on.fill,on.ink,on.edge),(p.accent_soft,p.accent_ink,0));
+        assert_eq!(design_button(true,0,7,0).fill,on.fill);
     }
     #[test]
     fn download_progress_rounding_direction_and_clipping() {
@@ -5184,7 +5233,7 @@ mod tests {
         let mut f=download_facts(P::InProgress);f.total.clear();f.speed.clear();f.remaining_seconds=-1;assert_eq!(r(&f).2,"5 MB");
         assert_eq!(r(&download_facts(P::Complete)),(1,"✓ Gotowe".into(),"5 MB · example.com".into()));
         let mut f=download_facts(P::Complete);f.removed=true;assert_eq!(r(&f).0,2);
-        assert_eq!(r(&download_facts(P::Cancelled)).1,"⚠ Anulowano");let mut f=download_facts(P::Interrupted);assert_eq!(r(&f).0,3);assert!(r(&f).1.contains("możesz wznowić"));f.can_resume=false;assert!(r(&f).1.contains("pobierz ponownie"));
+        assert_eq!(r(&download_facts(P::Cancelled)).1,"⚠ Anulowano");let mut f=download_facts(P::Interrupted);assert_eq!(r(&f).0,3);assert_eq!(r(&f).1,"⚠ Przerwano");f.can_resume=false;assert_eq!(r(&f).1,"⚠ Przerwano");
         let mut f=download_facts(P::Complete);f.blocked=true;assert_eq!((r(&f).0,r(&f).1),(3,"⚠ Zablokowane".into()));
     }
     fn command_context()->ffi::CommandContext{ffi::CommandContext{page:true,http_page:true,split:false,can_back:true,can_forward:false,tab_count:2,reopen:true,workspaces:vec![ffi::CommandWorkspace{id:"home".into(),name:"Dom".into(),asleep:false,same_profile:true,capturing:false},ffi::CommandWorkspace{id:"club".into(),name:"Klub".into(),asleep:true,same_profile:false,capturing:false}]}}
