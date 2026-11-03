@@ -290,7 +290,9 @@ source_set("profile_workspace_browser_tests") {
     "//chrome/browser/preloading:prefs",
     "//chrome/browser/permissions:test_support",
     "//chrome/browser/extensions:test_support",
+    "//chrome/browser/ui/views/extensions:extension_install_dialog_view",
     "//extensions/browser:test_support",
+    "//extensions/browser:crx_installer",
     "//ui/shell_dialogs:test_support",
     "//components/prefs:test_support",
     "//chrome/browser:chrome_content_browser_client",
@@ -310,7 +312,7 @@ source_set("profile_workspace_browser_tests") {
   ]
   if (is_win) {
     # Native input for the keyboard tests (aura::test::EnableUIControlsAuraWin).
-    deps += [ "//ui/aura:test_support" ]
+    deps += [ "//ui/aura:test_support", "//ui/base/ime/win:win" ]
   }
 }
 
