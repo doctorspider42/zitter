@@ -27,6 +27,8 @@ struct Release {
 std::optional<Release> ParseRelease(std::string_view json,
                                     std::string_view current_version);
 bool VerifyInstaller(const base::FilePath& path, const Release& release);
+std::optional<Release> DownloadLatest(const base::FilePath& cache,
+                                    std::string current_version);
 }  // namespace updates
 
 // Runs only for this executable's registered installation, never portable/dev

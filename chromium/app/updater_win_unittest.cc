@@ -110,5 +110,19 @@ TEST(WindowsUpdater, DetectsCorruptionTruncationAndMissingInstaller) {
   ASSERT_TRUE(base::WriteFile(path, "MZhiextra"));
   EXPECT_FALSE(VerifyInstaller(path, *release));
 }
+// Opt-in release smoke: real WinHTTP, redirects, streaming, digest and cache.
+// Downloads the public installer (~200 MB); never launches or installs it.
+TEST(WindowsUpdater, DISABLED_PublishedInstallerDownloadsAndVerifies) {
+  base::ScopedTempDir directory;
+  ASSERT_TRUE(directory.CreateUniqueTempDir());
+  auto release = DownloadLatest(directory.GetPath(), "0.0.0");
+  ASSERT_TRUE(release);
+  const auto installer = directory.GetPath().AppendASCII("Zitter-" + release->version + "-setup.exe");
+  EXPECT_TRUE(VerifyInstaller(installer, *release));
+  // A second check reuses the verified installer rather than downloading it.
+  auto cached = DownloadLatest(directory.GetPath(), "0.0.0");
+  ASSERT_TRUE(cached);
+  EXPECT_EQ(release->sha256, cached->sha256);
+}
 }  // namespace
 }  // namespace zitter::updates

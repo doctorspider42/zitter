@@ -101,10 +101,10 @@ base::File OpenVerifiedInstaller(const base::FilePath& path, const updates::Rele
   return file;
 }
 
-std::optional<updates::Release> Download(const base::FilePath& cache) {
+std::optional<updates::Release> Download(const base::FilePath& cache, std::string_view current_version) {
   std::string json;
   if (!Fetch(kLatest, 2 * 1024 * 1024, &json)) return std::nullopt;
-  auto release = updates::ParseRelease(json, base::WideToUTF8(ZITTER_VERSION_SHORT));
+  auto release = updates::ParseRelease(json, current_version);
   if (!release || !base::CreateDirectory(cache)) return std::nullopt;
   const auto installer = InstallerPath(cache, *release);
   if (updates::VerifyInstaller(installer, *release)) return release;
@@ -126,6 +126,9 @@ std::optional<updates::Release> Download(const base::FilePath& cache) {
 }  // namespace
 
 namespace updates {
+std::optional<Release> DownloadLatest(const base::FilePath& cache, std::string current_version) {
+  return Download(cache, current_version);
+}
 std::optional<Release> ParseRelease(std::string_view json, std::string_view current_version) {
   auto value = base::JSONReader::ReadDict(json, base::JSON_PARSE_RFC);
   if (!value || value->FindBool("draft").value_or(true) ||
@@ -187,7 +190,7 @@ void WindowsUpdater::Check() {
   busy_ = true;
   base::ThreadPool::PostTaskAndReplyWithResult(FROM_HERE,
       {base::MayBlock(), base::TaskPriority::BEST_EFFORT, base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
-      base::BindOnce(&Download, cache_),
+      base::BindOnce(&updates::DownloadLatest, cache_, base::WideToUTF8(ZITTER_VERSION_SHORT)),
       base::BindOnce(&WindowsUpdater::Checked, weak_factory_.GetWeakPtr()));
 }
 void WindowsUpdater::Checked(std::optional<updates::Release> release) {

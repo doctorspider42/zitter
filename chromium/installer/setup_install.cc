@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <vector>
 
@@ -71,15 +72,17 @@ class InstallLock {
 
 std::optional<std::array<unsigned long, 3>> ParseVersion(const std::wstring& version) {
   std::array<unsigned long, 3> result;
-  const wchar_t* at = version.c_str();
+  std::wstring_view remaining(version);
   for (size_t i = 0; i < result.size(); ++i) {
-    if (*at < L'0' || *at > L'9') return std::nullopt;
+    const auto dot = remaining.find(L'.');
+    if ((i < 2) == (dot == std::wstring_view::npos)) return std::nullopt;
+    const std::wstring component(remaining.substr(0, dot));
+    if (component.empty() || component.front() < L'0' || component.front() > L'9') return std::nullopt;
     wchar_t* end = nullptr;
     errno = 0;
-    result[i] = std::wcstoul(at, &end, 10);
-    if (errno || (i < 2 ? *end != L'.' : *end != L'\0')) return std::nullopt;
-    at = end;
-    if (i < 2) ++at;
+    result[i] = std::wcstoul(component.c_str(), &end, 10);
+    if (errno || *end) return std::nullopt;
+    if (i < 2) remaining.remove_prefix(dot + 1);
   }
   return result;
 }

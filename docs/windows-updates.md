@@ -46,3 +46,9 @@ Run `updater_unittests` to cover release/version selection, rejected download
 origins, malformed or absent hashes, size limits, duplicate assets and corrupted
 or truncated installers. Smoke-test the packaged application and the setup wait
 and update paths before publication.
+
+The opt-in `WindowsUpdater.DISABLED_PublishedInstallerDownloadsAndVerifies`
+test exercises real HTTPS requests, redirects, streaming, hash validation and
+cache reuse against the latest published installer. Run it with that exact
+`--gtest_filter` and `--gtest_also_run_disabled_tests`; it downloads approximately
+200 MB into a temporary directory and never executes the installer.
