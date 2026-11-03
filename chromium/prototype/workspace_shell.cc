@@ -3483,6 +3483,48 @@ class AppMenuDelegate final : public ui::SimpleMenuModel::Delegate {
 
 // Frame: tinted ground, header row (traffic lights + page commands) and the
 // page as a rounded white card. Pinned, the sidebar column owns the header.
+// Browser chrome, outside the renderer: websites cannot hide the takeover indicator.
+// No hit targets: the user keeps control of the page and can interrupt with Escape.
+class AssistantActivityView final : public views::View {
+  METADATA_HEADER(AssistantActivityView, views::View)
+ public:
+  explicit AssistantActivityView(bool animate) : animate_(animate) {
+    SetCanProcessEventsWithinSubtree(false);
+    GetViewAccessibility().SetIsIgnored(true);
+    SetPaintToLayer(); layer()->SetFillsBoundsOpaquely(false);
+  }
+  void SetActive(bool active) {
+    SetVisible(active); timer_.Stop();
+    if (active && animate_) timer_.Start(FROM_HERE, base::Milliseconds(33),
+        base::BindRepeating([](AssistantActivityView* self) { self->SchedulePaint(); }, base::Unretained(this)));
+    SchedulePaint();
+  }
+  void OnPaint(gfx::Canvas* canvas) override {
+    const double phase = animate_ ? std::fmod(base::TimeTicks::Now().since_origin().InSecondsF(), 2.8) / 2.8 : 0.25;
+    const float pulse = 0.65f + 0.35f * std::sin(phase * 6.2831853);
+    canvas->FillRect(GetLocalBounds(), SkColorSetARGB(7, 139, 110, 255));
+    for (int glow : {18, 10, 3}) {
+      cc::PaintFlags flags; flags.setAntiAlias(true); flags.setStyle(cc::PaintFlags::kStroke_Style);
+      flags.setStrokeWidth(glow); flags.setColor(SkColorSetARGB(static_cast<int>((glow == 3 ? 210 : 22) * pulse), 150, 120, 255));
+      gfx::RectF edge(GetLocalBounds()); edge.Inset(glow / 2.f);
+      canvas->DrawRoundRect(edge, 12, flags);
+    }
+    const float x = static_cast<float>((width() + 160) * phase - 160);
+    FillRound(canvas, gfx::Rect(static_cast<int>(x), 1, 140, 3), 2, SkColorSetARGB(235, 115, 226, 240));
+    FillRound(canvas, gfx::Rect(width() - static_cast<int>(x) - 140, height() - 4, 140, 3), 2, SkColorSetARGB(200, 183, 145, 255));
+    const int pill_width = std::min(340, std::max(0, width() - 32));
+    const gfx::Rect pill((width() - pill_width) / 2, 12, pill_width, 32);
+    FillRound(canvas, pill, 16, SkColorSetARGB(242, 40, 31, 67));
+    canvas->DrawStringRectWithFlags(T(u"Asystent steruje stroną · Esc zatrzymuje"), DesignFont(2, 12, 600, false),
+        SkColorSetRGB(232, 221, 255), pill, gfx::Canvas::TEXT_ALIGN_CENTER);
+  }
+ private:
+  bool animate_;
+  base::RepeatingTimer timer_;
+};
+BEGIN_METADATA(AssistantActivityView)
+END_METADATA
+
 class ShellRoot final : public views::View {
   METADATA_HEADER(ShellRoot, views::View)
  public:
@@ -3490,6 +3532,7 @@ class ShellRoot final : public views::View {
   gfx::Size GetMinimumSize() const override { return gfx::Size(560, 560); }
   void Layout(PassKey) override {
     if (content_fullscreen) {
+      if (assistant) assistant->SetVisible(false);
       content->SetBoundsRect(GetLocalBounds());
       edge->SetVisible(false);
       LayoutSuperclass<views::View>(this);
@@ -3532,6 +3575,22 @@ class ShellRoot final : public views::View {
     edge->SetVisible(!pinned);
     const auto g=sidebar::shell_layout(width(),height(),sidebar_width,pinned);
     content->SetBounds(g.content.x,g.content.y,g.content.width,g.content.height);
+    if (assistant && assistant->GetVisible()) {
+      const int extent = std::min(420, std::max(300, width() - 80));
+      assistant->SetBounds(width() - extent - kGap, top, extent, std::max(0, height() - top - kGap));
+      if (assistant_pinned && content->width() > extent + 160)
+        content->SetSize(gfx::Size(content->width() - extent - kGap, content->height()));
+    }
+    if (assistant_activity) {
+      auto page_bounds = content->bounds();
+      if (assistant && assistant->GetVisible() && !assistant_pinned)
+        page_bounds.set_width(std::max(0, assistant->x() - kGap - page_bounds.x()));
+      assistant_activity->SetBoundsRect(page_bounds);
+    }
+    if (assistant_edge) {
+      assistant_edge->SetBounds(width() - kGap, top, kGap, std::max(0, height() - top));
+      assistant_edge->SetVisible(assistant && !assistant->GetVisible());
+    }
     edge->SetBounds(g.edge.x,g.edge.y,g.edge.width,g.edge.height);
     LayoutSuperclass<views::View>(this);
   }
@@ -3557,6 +3616,10 @@ class ShellRoot final : public views::View {
   raw_ptr<views::View> caption = nullptr;   // Windows caption buttons.
   raw_ptr<views::View> app_menu = nullptr;  // |z⟩, outside macOS.
   raw_ptr<views::View> content = nullptr;
+  raw_ptr<views::View> assistant = nullptr;
+  raw_ptr<views::View> assistant_edge = nullptr;
+  raw_ptr<AssistantActivityView> assistant_activity = nullptr;
+  bool assistant_pinned = false;
   raw_ptr<views::View> edge = nullptr;
   bool pinned = true;
   bool content_fullscreen = false;
@@ -3762,6 +3825,31 @@ std::unique_ptr<views::View> WorkspaceShell::Build() {
   return root;
 }
 
+void WorkspaceShell::SetAssistantView(views::View* view) {
+  auto* root = static_cast<ShellRoot*>(root_.get());
+  root->assistant = root->AddChildView(std::unique_ptr<views::View>(view));
+  root->assistant_edge = root->AddChildView(std::make_unique<EdgeView>(base::BindRepeating(
+      [](base::WeakPtr<WorkspaceShell> shell) { if (shell) shell->callbacks_.run_shortcut.Run("assistant"); }, weak_factory_.GetWeakPtr())));
+}
+void WorkspaceShell::SetAssistantActivity(bool active) {
+  if (!root_) return;
+  auto* root = static_cast<ShellRoot*>(root_.get());
+  if (!root->assistant_activity && active) {
+    root->assistant_activity = root->AddChildView(std::make_unique<AssistantActivityView>(workspace_animations_));
+    root->ReorderChildView(root->assistant_activity, root->GetIndexOf(root->content).value() + 1);
+  }
+  if (root->assistant_activity) root->assistant_activity->SetActive(active);
+  root->InvalidateLayout();
+}
+views::View* WorkspaceShell::assistant_activity_for_testing() const {
+  return root_ ? static_cast<ShellRoot*>(root_.get())->assistant_activity.get() : nullptr;
+}
+void WorkspaceShell::LayoutAssistant(bool pinned) {
+  auto* root = static_cast<ShellRoot*>(root_.get());
+  root->assistant_pinned = pinned;
+  root->InvalidateLayout();
+  if (widget_) widget_->LayoutRootViewIfNecessary();
+}
 void WorkspaceShell::SetPanes(std::vector<views::View*> panes, std::vector<double> weights, bool vertical) {
   static_cast<PaneHost*>(content_host_.get())->SetPanes(std::move(panes), std::move(weights), vertical);
   // Size hidden native pages before WasShown can request their first frame.
@@ -4456,6 +4544,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
               base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, std::string panel) {
                 if (!shell) return;
                 if (panel == "space") shell->OpenWorkspaceSettings();
+                else if (panel == "assistant" || panel == "assistant-activity") {shell->callbacks_.run_shortcut.Run("assistant");if(panel == "assistant-activity")shell->SetAssistantActivity(true);}
                 else if (panel == "sidebar") shell->ShowSidebar();
                 else if (panel == "palette") shell->OpenCommandPalette();
                 else if (panel == "address") shell->OpenAddress(false);

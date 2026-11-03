@@ -93,6 +93,7 @@ bool WorkspaceWindow::ExecuteCommand(const PaletteResult& result, bool record_us
   if (found == available.end()) return false;
   if (record_usage) shell_->RecordCommandUse(result.command_id, result.target_workspace_id);
   const auto& id = result.command_id;
+  if (id == "assistant") { ShowAssistant(); return true; }
   if (id == "shortcuts" || id == "engines") { shell_->OpenTools(id == "shortcuts" ? 1 : 2); return true; }
   if (id == "spaces") { shell_->OpenWorkspaceSettings(); return true; }
   if (id == "profiles") { shell_->OpenProfiles(); return true; }

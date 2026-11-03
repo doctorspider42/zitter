@@ -146,7 +146,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
     l = sub.add_parser("launch")
-    l.add_argument("--open-panel", choices=["space", "sidebar", "palette", "address", "settings", "privacy", "profiles", "downloads",
+    l.add_argument("--open-panel", choices=["assistant", "assistant-activity", "space", "sidebar", "palette", "address", "settings", "privacy", "profiles", "downloads",
                                             "history", "time-machine", "extensions", "extension-popup", "fingerprint",
                                             "menu", "app-menu", "dialog", "toast",
                                             "add", "space-end", "space-new", "remove", "drop"],

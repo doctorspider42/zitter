@@ -3,6 +3,8 @@
 #include "ui/views/background.h"
 #include "chromium/prototype/browser_import_data.h"
 #include "chromium/prototype/workspace_window.h"
+#include "chromium/prototype/assistant_panel.h"
+#include "ui/views/view_tracker.h"
 #include "chromium/prototype/timeline_store.h"
 #include "base/time/default_clock.h"
 #include "chromium/prototype/i18n.h"
@@ -799,6 +801,9 @@ WorkspaceWindow::Host::Host(Host&&) noexcept = default;
 WorkspaceWindow::Host& WorkspaceWindow::Host::operator=(Host&&) noexcept = default;
 
 WorkspaceWindow::~WorkspaceWindow() {
+  if (assistant_) assistant_->Stop();
+  assistant_ = nullptr;
+  assistant_targets_.clear();
   external_command_timer_.Stop();
   downloads_.reset();
   if (clear_data_dialog_) clear_data_dialog_->Close();
@@ -936,10 +941,12 @@ bool WorkspaceWindow::Select(std::string_view id) {
   if (peek_view_ && id != active_id() && GuardPages({peek_contents()},
       base::BindOnce([](base::WeakPtr<WorkspaceWindow> w, std::string id) { if (w) w->Select(id); }, weak_factory_.GetWeakPtr(), std::string(id)))) return false;
   const auto previous = active_id();
+  const auto previous_assistant_profile = AssistantProfileId();
   const bool sidebar_was_visible = shell_->sidebar_visible();
   const bool changed = previous != id;
   const bool selected = controller_.Activate(id);
   if (selected) {
+    if (assistant_ && previous_assistant_profile != AssistantProfileId()) assistant_->Stop();
     if (changed) ClosePeek();
     shell_->CloseOverlays(true);
     UpdateShell();
@@ -2179,6 +2186,7 @@ bool WorkspaceWindow::AcceleratorPressed(const ui::Accelerator& accelerator) {
   if (accelerator.key_state() != ui::Accelerator::KeyState::PRESSED) return false;
   if (shell_->CaptureShortcut(accelerator)) return true;
   if (accelerator.modifiers() == 0 && accelerator.key_code() == ui::VKEY_ESCAPE) {
+    if (assistant_ && assistant_->busy()) { assistant_->Stop(); return true; }
     if (fullscreen_page_) { fullscreen_page_->ExitFullscreen(true); return true; }
     if (!shell_->CloseOverlays()) {
       if (!peek_view_) return false;
@@ -2201,6 +2209,7 @@ bool WorkspaceWindow::AcceleratorPressed(const ui::Accelerator& accelerator) {
 }
 
 bool WorkspaceWindow::RunShortcut(std::string id) {
+  if (id == "assistant") { ShowAssistant(); return true; }
   if (id.empty()) return false;
   if (id == "exit_fullscreen") {
     if (fullscreen_page_) fullscreen_page_->ExitFullscreen(true);
@@ -2301,6 +2310,9 @@ content::KeyboardEventProcessingResult WorkspaceWindow::PreHandlePageKeyEvent(
   suppress_shortcut_char_ = false;
   if (event.skip_if_unhandled || (source != contents(active_id()) && source != peek_contents())) return Result::NOT_HANDLED;
   const bool escape_peek = key == ui::VKEY_ESCAPE && accelerator.modifiers() == 0 && source == peek_contents() && !fullscreen_page_;
+  if (key == ui::VKEY_ESCAPE && accelerator.modifiers() == 0 && assistant_ && assistant_->busy()) {
+    assistant_->Stop(); consumed_keys_.insert(key); suppress_shortcut_char_ = true; return Result::HANDLED;
+  }
   const bool escape_fullscreen = key == ui::VKEY_ESCAPE && accelerator.modifiers() == 0 && fullscreen_page_;
   auto action = shell_->ShortcutFor(accelerator);
 #if BUILDFLAG(IS_WIN)

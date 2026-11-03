@@ -3,6 +3,7 @@
 // One entry per distinct Polish string, written exactly as in the source
 // (same escapes); `{}` placeholders keep their order.
 pub static EN: &[(&str, &str)] = &[
+    ("Opcjonalny asystent przeglądarki i deep research", "Optional browser assistant and deep research"),
     ("Magiczny podgląd obrazków", "Magic image previews"),
     ("Po najechaniu na link do obrazka pokaż jego podgląd. Może pobrać obraz bez kliknięcia. Domyślnie wyłączone. Dotyczy całej aplikacji.", "Preview images when hovering over image links. May download an image without clicking. Off by default. Applies to the entire app."),
     ("Shift + klik otwiera Peek", "Shift + click opens Peek"),

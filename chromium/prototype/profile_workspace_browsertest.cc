@@ -1,3 +1,6 @@
+#include "chromium/prototype/assistant_panel.h"
+#include "base/environment.h"
+#include "base/scoped_environment_variable_override.h"
 #include "ui/views/controls/progress_bar.h"
 #include "ui/views/controls/separator.h"
 #include "ui/views/background.h"
@@ -400,6 +403,14 @@ class ZitterProfilesBrowserTest : public InProcessBrowserTest {
         response->AddCustomHeader("Location", self->embedded_test_server()->GetURL("client.test", "/storage_probe.html?redirect").spec());
         return response;
       }
+      if (request.relative_url == "/api/chat") {
+        auto response = std::make_unique<net::test_server::BasicHttpResponse>();
+        response->set_code(net::HTTP_OK); response->set_content_type("application/json");
+        if (request.content.find("untrusted_tool_results") == std::string::npos)
+          response->set_content(R"({"message":{"content":"{\"answer\":\"\",\"actions\":[{\"tool\":\"list_tabs\",\"args\":\"{}\"}]}"}})");
+        else response->set_content(R"({"message":{"content":"{\"answer\":\"Integration complete\",\"actions\":[]}"}})");
+        return response;
+      }
       if (request.relative_url != "/login-success") return nullptr;
       auto response = std::make_unique<net::test_server::BasicHttpResponse>();
       response->set_code(net::HTTP_OK);
@@ -511,6 +522,86 @@ class PasswordReader final : public password_manager::PasswordStoreConsumer {
   base::test::TestFuture<Result> ready;
   base::WeakPtrFactory<PasswordReader> weak_factory{this};
 };
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantPermissionsAndPageRedaction) {
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), embedded_test_server()->GetURL("/storage_probe.html")));
+  ASSERT_TRUE(content::ExecJs(window_->contents("work"), R"(
+    document.body.innerHTML = '<h1>Visible research</h1><input id="query" placeholder="Search">' +
+      '<input type="password" value="TOP_SECRET"><input autocomplete="cc-number" value="CARD_SECRET">' +
+      '<textarea id="note">TEXTAREA_SECRET</textarea>' +
+      '<div hidden>HIDDEN_SECRET</div><div contenteditable>EDIT_SECRET</div>' +
+      '<button id="submit" onclick="document.title=\'clicked\'">Submit</button>';
+  )"));
+  AssistantPermissions allowed{true, true, true, false, false};
+  EXPECT_FALSE(window_->AssistantContext({}).FindList("tabs"));
+  auto context = window_->AssistantContext(allowed);
+  ASSERT_TRUE(context.FindList("tabs"));
+  base::test::TestFuture<base::Value> denied;
+  window_->AssistantTool("read_page", base::DictValue().Set("tab", "@current"), {}, denied.GetCallback());
+  EXPECT_TRUE(denied.Get().GetDict().FindString("error"));
+  base::test::TestFuture<base::Value> protected_command;
+  window_->AssistantTool("browser_command", base::DictValue().Set("id", "passwords"), allowed, protected_command.GetCallback());
+  EXPECT_TRUE(protected_command.Get().GetDict().FindString("error"));
+  base::test::TestFuture<base::Value> read;
+  window_->AssistantTool("read_page", base::DictValue().Set("tab", "@current"), allowed, read.GetCallback());
+  const auto& result = read.Get().GetDict();
+  const auto* text = result.FindString("text"); ASSERT_TRUE(text);
+  EXPECT_NE(text->find("Visible research"), std::string::npos);
+  const auto serialized = base::WriteJson(result).value_or("");
+  for (auto secret : {"TOP_SECRET", "CARD_SECRET", "HIDDEN_SECRET", "EDIT_SECRET", "TEXTAREA_SECRET"}) EXPECT_EQ(serialized.find(secret), std::string::npos);
+  std::string button, input;
+  for (const auto& element : *result.FindList("elements")) {
+    const auto& entry = element.GetDict();
+    if (*entry.FindString("tag") == "BUTTON") button = *entry.FindString("id");
+    if (*entry.FindString("tag") == "INPUT") input = *entry.FindString("id");
+  }
+  ASSERT_FALSE(button.empty()); ASSERT_FALSE(input.empty());
+  base::test::TestFuture<base::Value> type;
+  window_->AssistantTool("type", base::DictValue().Set("tab", "@current").Set("element", input).Set("text", "browser automation"), allowed, type.GetCallback());
+  EXPECT_TRUE(type.Get().GetDict().FindBool("ok").value_or(false));
+  EXPECT_EQ(content::EvalJs(window_->contents("work"), "document.querySelector('#query').value"), "browser automation");
+  base::test::TestFuture<base::Value> click;
+  window_->AssistantTool("click", base::DictValue().Set("tab", "@current").Set("element", button).Set("confirmed", true), allowed, click.GetCallback());
+  EXPECT_TRUE(click.Get().GetDict().FindBool("confirmation_required").value_or(false));
+  EXPECT_NE(content::EvalJs(window_->contents("work"), "document.title"), "clicked");
+  base::test::TestFuture<base::Value> confirmed;
+  window_->AssistantTool("click", base::DictValue().Set("tab", "@current").Set("element", button), allowed, confirmed.GetCallback(), true);
+  EXPECT_TRUE(confirmed.Get().GetDict().FindBool("ok").value_or(false));
+  EXPECT_EQ(content::EvalJs(window_->contents("work"), "document.title"), "clicked");
+  const auto target = *context.FindList("tabs")->front().GetDict().FindString("id");
+  ASSERT_TRUE(window_->Select("personal"));
+  base::test::TestFuture<base::Value> cross_profile;
+  window_->AssistantTool("read_page", base::DictValue().Set("tab", target), allowed, cross_profile.GetCallback());
+  EXPECT_TRUE(cross_profile.Get().GetDict().FindString("error"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantRuntimeBrowserToolRoundTrip) {
+  base::ScopedEnvironmentVariableOverride endpoint("ZITTER_OLLAMA_URL", embedded_test_server()->base_url().spec());
+  window_->ShowAssistant();
+  window_->assistant()->ConfigureForTesting("ollama", "test-local", {true, false, false, false, false});
+  window_->assistant()->SendForTesting("List the open tabs");
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->assistant()->busy(); }));
+  EXPECT_TRUE(window_->assistant()->ContainsForTesting("Integration complete"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantPanelIsOptionalAndPinnable) {
+  EXPECT_FALSE(window_->assistant());
+  window_->ShowAssistant(); ASSERT_TRUE(window_->assistant());
+  EXPECT_TRUE(window_->assistant()->GetVisible());
+  window_->widget()->LayoutRootViewIfNecessary();
+  const auto overlay = window_->shell()->content_host()->bounds();
+  window_->assistant()->SetPinned(true); window_->widget()->LayoutRootViewIfNecessary();
+  EXPECT_LT(window_->shell()->content_host()->width(), overlay.width());
+  EXPECT_GE(window_->assistant()->width(), 300);
+  window_->assistant()->SetPinned(false); window_->widget()->LayoutRootViewIfNecessary();
+  EXPECT_EQ(window_->shell()->content_host()->width(), overlay.width());
+  window_->shell()->SetAssistantActivity(true); window_->widget()->LayoutRootViewIfNecessary();
+  ASSERT_TRUE(window_->shell()->assistant_activity_for_testing());
+  EXPECT_TRUE(window_->shell()->assistant_activity_for_testing()->GetVisible());
+  EXPECT_LT(window_->shell()->assistant_activity_for_testing()->width(), overlay.width());
+  window_->shell()->SetAssistantActivity(false);
+  EXPECT_FALSE(window_->shell()->assistant_activity_for_testing()->GetVisible());
 }
 
 // Opt in: timing runs must not silently turn functional verification into a

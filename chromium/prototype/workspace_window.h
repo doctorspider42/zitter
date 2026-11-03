@@ -43,6 +43,7 @@ class Textfield;
 class WebView;
 class Widget;
 class WidgetDelegate;
+class ViewTracker;
 }  // namespace views
 
 namespace zitter::sidebar { struct Timeline; }
@@ -50,6 +51,8 @@ namespace zitter::prototype {
 struct TimelineStore;
 
 class DownloadPanel;
+class AssistantPanel;
+struct AssistantPermissions;
 class ExtensionsBar;
 struct BrowsingImportData;
 
@@ -120,6 +123,13 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void ShowPasswords();
   void ShowDownloads();
   void ShowHistory();
+  void ShowAssistant();
+  Profile* AssistantProfile() const;
+  std::string AssistantProfileId() const;
+  base::DictValue AssistantContext(const AssistantPermissions& permissions);
+  void AssistantTool(std::string tool, base::DictValue args, AssistantPermissions permissions,
+                     base::OnceCallback<void(base::Value)> done, bool user_confirmed = false);
+  AssistantPanel* assistant() const { return assistant_; }
   DownloadPanel* downloads() const { return downloads_.get(); }
   void EnsureDownloads();
   void DownloadCompleted(std::string guid, std::u16string name);
@@ -363,6 +373,8 @@ class WorkspaceWindow final : public WorkspaceRuntime,
     std::optional<base::DictValue> sleeping;
   };
   WorkspaceModel model_;
+  raw_ptr<AssistantPanel> assistant_ = nullptr;
+  std::map<std::string, std::unique_ptr<views::ViewTracker>> assistant_targets_;
   WorkspaceController controller_;
   std::vector<Host> hosts_;
   std::vector<LinkRule> link_rules_;

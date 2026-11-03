@@ -208,6 +208,10 @@ class WorkspaceShell final : public ui::EventHandler,
   static views::WidgetDelegate::ClientViewFactory ClientViewFactory();
   std::unique_ptr<views::View> Build();
   views::View* content_host() const { return content_host_; }
+  void SetAssistantView(views::View* view);
+  void LayoutAssistant(bool pinned);
+  void SetAssistantActivity(bool active);
+  views::View* assistant_activity_for_testing() const;
   // A view at the right end of the header band, owned by the window's root
   // (design: Extensions). Its preferred width is honored up to the page commands.
   views::View* SetHeaderTrailing(std::unique_ptr<views::View> view);

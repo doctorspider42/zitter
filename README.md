@@ -37,6 +37,7 @@ An independent, open-source browser built on Chromium, with its own interface an
 | **Command Center** | Find tabs, pins, spaces, history and actions from the keyboard. Customize shortcuts and search engines. |
 | **Time Machine** | Save workspace layouts, recover closed tabs and restore snapshots. Sleep spaces until you need them. |
 | **Bring your Arc along** | On macOS, import Arc spaces, favorites, nested pins and emoji. Chrome, Edge and Brave imports are supported too. |
+| **Optional AI assistant** | A pinnable right panel with per-session models, explicit browser-data grants, tab mentions, browser actions and parallel web research. Supports Codex SDK, Claude CLI, OpenAI API and local Ollama. See [setup and privacy](docs/ai-assistant.md). |
 
 Ctrl+T and Ctrl+K share the Command Center. When text is entered, the first result
 always opens the typed address or searches in a new tab; existing tabs and pins
