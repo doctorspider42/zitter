@@ -4049,6 +4049,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ChromiumHistoryAndCommandPalet
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DisablingPasswordSavingDismissesAndSuppressesOffers) {
+  EnableNativeUIControls();
   const auto url = embedded_test_server()->GetURL("/login_probe.html");
   auto* page = window_->contents("work");
   auto* services = PageServices::FromWebContents(page);
@@ -4065,6 +4066,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DisablingPasswordSavingDismiss
         return form->GetURL() == url && form->IsFetchCompleted();
       });
     }));
+    ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+    page->Focus();
+    ASSERT_TRUE(base::test::RunUntil([&] { return page->GetRenderWidgetHostView()->HasFocus(); }));
     content::SimulateEndOfPaintHoldingOnPrimaryMainFrame(page);
     content::InputEventAckWaiter gesture(page->GetPrimaryMainFrame()->GetRenderWidgetHost(),
         blink::WebInputEvent::Type::kMouseUp);
@@ -4085,14 +4089,14 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DisablingPasswordSavingDismiss
     ASSERT_TRUE(submitted.last_navigation_succeeded());
   };
   ASSERT_TRUE(window_->WritePreference("save_passwords", 1));
-  submit();
+  ASSERT_NO_FATAL_FAILURE(submit());
   ASSERT_TRUE(base::test::RunUntil([&] { return services->password_prompt(); }));
   // A setting change must revoke an already pending save, without navigation.
   ASSERT_TRUE(window_->WritePreference("save_passwords", 0));
   EXPECT_FALSE(services->password_prompt());
   EXPECT_FALSE(work_->GetPrefs()->GetBoolean(password_manager::prefs::kCredentialsEnableService));
   EXPECT_TRUE(personal_->GetPrefs()->GetBoolean(password_manager::prefs::kCredentialsEnableService));
-  submit();
+  ASSERT_NO_FATAL_FAILURE(submit());
   // Allow the asynchronous password parser and save callback to finish.
   base::test::TestFuture<void> settled;
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
@@ -4107,7 +4111,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DisablingPasswordSavingDismiss
   ASSERT_TRUE(rows.has_value());
   EXPECT_TRUE(rows->empty());
   ASSERT_TRUE(window_->WritePreference("save_passwords", 1));
-  submit();
+  ASSERT_NO_FATAL_FAILURE(submit());
   ASSERT_TRUE(base::test::RunUntil([&] { return services->password_prompt(); }));
 }
 
