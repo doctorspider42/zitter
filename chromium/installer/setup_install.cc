@@ -379,7 +379,7 @@ bool IsElevated() {
   return elevated;
 }
 
-std::wstring Install(const Placement& placement, bool desktop_shortcut, const std::function<void(double)>& progress) {
+std::wstring Install(const Placement& placement, bool desktop_shortcut, const std::function<void(double)>& progress, bool preserve_shortcuts) {
   if (IsRunning(placement.directory)) return L"running";
   std::error_code error;
   fs::create_directories(placement.directory, error);
@@ -390,9 +390,11 @@ std::wstring Install(const Placement& placement, bool desktop_shortcut, const st
   const std::wstring exe = placement.directory + L"\\zitter.exe";
   // Without it, the network service runs outside its sandbox.
   GrantAppContainerAccess(placement.directory);
-  Shortcut(StartMenuLink(placement.system), exe, placement.directory);
-  if (desktop_shortcut) Shortcut(DesktopLink(placement.system), exe, placement.directory);
-  else DeleteFileW(DesktopLink(placement.system).c_str());
+  if (!preserve_shortcuts) {
+    Shortcut(StartMenuLink(placement.system), exe, placement.directory);
+    if (desktop_shortcut) Shortcut(DesktopLink(placement.system), exe, placement.directory);
+    else DeleteFileW(DesktopLink(placement.system).c_str());
+  }
   if (!RegisterBrowser(placement.system, exe)) return L"Register Zitter as a browser";
   if (!RegisterUninstall(placement, DirectorySize(placement.directory))) return L"Register in Apps & features";
   progress(1);

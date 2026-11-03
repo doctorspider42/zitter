@@ -26,10 +26,13 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cerrno>
+#include <cstdlib>
 #include <cwchar>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -153,7 +156,7 @@ class Window : public AccessibilityHost {
     BOOL dark = TRUE;
     DwmSetWindowAttribute(hwnd_, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof(dark));
     SetWindowPos(hwnd_, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER);
-    ShowWindow(hwnd_, show);
+    ShowWindow(hwnd_, quiet_ ? SW_HIDE : show);
     if (install_now_) StartInstall();
     else if (uninstall_only_ && quiet_) StartUninstall();
     MSG message;
@@ -180,6 +183,7 @@ class Window : public AccessibilityHost {
     if (auto dir = std::find(args.begin(), args.end(), L"--dir"); dir != args.end() && std::next(dir) != args.end())
       placement_.directory = *std::next(dir);
     desktop_shortcut_ = !has(L"--no-desktop");
+    preserve_shortcuts_ = has(L"--preserve-shortcuts");
     quiet_ = has(L"--quiet");
     launch_browser_ = !quiet_ && !has(L"--no-launch");
     existing_ = FindExisting();
@@ -800,6 +804,7 @@ class Window : public AccessibilityHost {
       if (!desktop_shortcut_) arguments += L" --no-desktop";
       if (!launch_browser_) arguments += L" --no-launch";
       if (quiet_) arguments += L" --quiet";
+      if (preserve_shortcuts_) arguments += L" --preserve-shortcuts";
       if (Relaunch(arguments)) DestroyWindow(hwnd_);
       return;
     }
@@ -825,13 +830,13 @@ class Window : public AccessibilityHost {
     SetTimer(hwnd_, kAnimationTimer, 52, nullptr);
     const HWND hwnd = hwnd_;
     const Placement placement = placement_;
-    const bool desktop = desktop_shortcut_, wipe = remove_data_;
-    worker_ = std::thread([this, hwnd, placement, desktop, wipe, remove] {
+    const bool desktop = desktop_shortcut_, wipe = remove_data_, preserve = preserve_shortcuts_;
+    worker_ = std::thread([this, hwnd, placement, desktop, wipe, remove, preserve] {
       CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
       auto report = [hwnd](double done) {
         PostMessageW(hwnd, kProgressMessage, static_cast<WPARAM>(std::lround(std::clamp(done, 0.0, 1.0) * 1000)), 0);
       };
-      std::wstring error = remove ? Uninstall(placement, wipe, report) : Install(placement, desktop, report);
+      std::wstring error = remove ? Uninstall(placement, wipe, report) : Install(placement, desktop, report, preserve);
       {
         std::lock_guard lock(result_lock_);
         result_ = std::move(error);
@@ -920,6 +925,7 @@ class Window : public AccessibilityHost {
   Placement placement_;
   std::optional<Existing> existing_;
   bool desktop_shortcut_ = true, remove_data_ = false, removing_ = false;
+  bool preserve_shortcuts_ = false;
   bool launch_browser_ = true;
   bool install_now_ = false, uninstall_only_ = false, quiet_ = false;
   int exit_code_ = 0;
@@ -932,6 +938,31 @@ class Window : public AccessibilityHost {
 }  // namespace zitter::setup
 
 int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, wchar_t*, int show) {
+  // The updater starts setup before its helper exits. Wait before inspecting
+  // running browsers or requesting elevation; never overwrite a live install.
+  int count = 0;
+  LPWSTR* args = CommandLineToArgvW(GetCommandLineW(), &count);
+  bool waited = true;
+#pragma clang unsafe_buffer_usage begin
+  for (int i = 1; args && i < count; ++i) {
+    if (std::wstring_view(args[i]) != L"--wait-for-process") continue;
+    if (++i >= count) { waited = false; break; }
+    wchar_t* end = nullptr;
+    errno = 0;
+    const unsigned long pid = std::wcstoul(args[i], &end, 10);
+    if (errno || args[i][0] < L'0' || args[i][0] > L'9' || !pid || *end || pid == GetCurrentProcessId()) { waited = false; break; }
+    HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, pid);
+    if (!process) {
+      if (GetLastError() != ERROR_INVALID_PARAMETER) waited = false;
+    } else {
+      waited = WaitForSingleObject(process, 120000) == WAIT_OBJECT_0;
+      CloseHandle(process);
+    }
+    if (!waited) break;
+  }
+#pragma clang unsafe_buffer_usage end
+  LocalFree(args);
+  if (!waited) return 1;
   CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
   zitter::setup::Window window(instance);
   const int result = window.Run(show);

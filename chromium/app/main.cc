@@ -29,6 +29,7 @@
 #elif BUILDFLAG(IS_LINUX)
 #include "chrome/app/chrome_main_linux.h"
 #elif BUILDFLAG(IS_WIN)
+#include "chromium/app/updater_win.h"
 #include <windows.h>
 
 #include <shobjidl.h>
@@ -81,6 +82,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, wchar_t*, int) {
   install_static::InitializeFromPrimaryModule();
   base::win::SetAbortBehaviorForCrashReporting();
   base::CommandLine::Init(0, nullptr);
+  if (const auto update = zitter::RunWindowsUpdateHelper()) return *update;
 #else
 int main(int argc, const char** argv) {
   // Unlike Chrome's small macOS launcher, this executable links Chromium

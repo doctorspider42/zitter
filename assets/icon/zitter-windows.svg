@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Windows Original XL: full-size tile and enlarged, continuous ket strokes.
+       The macOS source remains assets/icon/zitter.svg. -->
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#2C2652"/>
+      <stop offset="0.48" stop-color="#14121E"/>
+      <stop offset="1" stop-color="#08070C"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.28" cy="0.2" r="0.75">
+      <stop offset="0" stop-color="#8B83FF" stop-opacity="0.34"/>
+      <stop offset="1" stop-color="#8B83FF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.15"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="letter" gradientUnits="userSpaceOnUse" x1="0" y1="256" x2="0" y2="768">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.36" stop-color="#F6F3FF"/>
+      <stop offset="1" stop-color="#D0CCDF"/>
+    </linearGradient>
+    <linearGradient id="stem" gradientUnits="userSpaceOnUse" x1="0" y1="174.08" x2="0" y2="849.92">
+      <stop offset="0" stop-color="#B6B1C9"/>
+      <stop offset="1" stop-color="#92909F"/>
+    </linearGradient>
+    <linearGradient id="ket" gradientUnits="userSpaceOnUse" x1="0" y1="174.08" x2="0" y2="849.92">
+      <stop offset="0" stop-color="#AAA1FF"/>
+      <stop offset="0.45" stop-color="#8B83FF"/>
+      <stop offset="1" stop-color="#8175EC"/>
+    </linearGradient>
+    <clipPath id="tile"><rect width="1024" height="1024" rx="230.4"/></clipPath>
+  </defs>
+  <g clip-path="url(#tile)">
+    <rect width="1024" height="1024" fill="url(#background)"/>
+    <rect width="1024" height="1024" fill="url(#glow)"/>
+    <rect width="1024" height="491.52" rx="230.4" fill="url(#sheen)"/>
+    <rect x="3.072" y="3.072" width="1017.856" height="1017.856" rx="227.328"
+          fill="none" stroke="#FFFFFF" stroke-opacity="0.16" stroke-width="6.144"/>
+  </g>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M145.92 197.12 V826.88" stroke="url(#stem)" stroke-width="46.08"/>
+    <path d="M302.08 302.08 H650.24 L302.08 721.92 H650.24" stroke="url(#letter)" stroke-width="92.16"/>
+    <path d="M780.8 197.12 L888.32 512 L780.8 826.88" stroke="url(#ket)" stroke-width="46.08"/>
+  </g>
+</svg>

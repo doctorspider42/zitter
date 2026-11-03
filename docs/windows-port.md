@@ -266,7 +266,8 @@ Notes:
 - Registration as the default browser (ProgId, Capabilities).
 - License audit of the Windows binaries (`audit_licenses.py`).
 - Optimized x64 build with ThinLTO and PGO (`win64.pgo`).
-- Auto-update is out of scope for now.
+  - Installed Windows copies support automatic updates starting with 0.3.0;
+    see [windows-updates.md](windows-updates.md).
 
 Notes:
 

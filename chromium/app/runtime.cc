@@ -4,6 +4,7 @@
 #include "base/check.h"
 #include "base/command_line.h"
 #include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
@@ -23,6 +24,8 @@
 #include "chromium/prototype/workspace_window.h"
 #if BUILDFLAG(IS_WIN)
 #include "chromium/prototype/jump_list_win.h"
+#include "chromium/app/updater_win.h"
+#include "chromium/prototype/i18n.h"
 #endif
 #include "components/keep_alive_registry/keep_alive_types.h"
 #include "components/keep_alive_registry/scoped_keep_alive.h"
@@ -85,6 +88,16 @@ void Runtime::PreMainMessageLoopRun() {
 }
 
 void Runtime::WindowReady() {
+#if BUILDFLAG(IS_WIN)
+  updater_ = std::make_unique<WindowsUpdater>(g_browser_process->profile_manager()->user_data_dir(),
+      base::BindRepeating([](base::WeakPtr<Runtime> runtime, std::string version) {
+        if (!runtime || !runtime->window_ || runtime->closing_) return;
+        runtime->window_->shell()->ShowToast(prototype::T(u"Aktualizacja po zamknięciu: "),
+            base::UTF8ToUTF16(version), base::DoNothing(),
+            prototype::T(u"OK"));
+      }, weak_factory_.GetWeakPtr()));
+  updater_->Start();
+#endif
   for (const auto& arg : base::CommandLine::ForCurrentProcess()->GetArgs()) {
 #if BUILDFLAG(IS_WIN)
     GURL url(base::WideToUTF8(arg));
@@ -253,6 +266,10 @@ void Runtime::ReleaseProfiles() {
 }
 
 void Runtime::PostMainMessageLoopRun() {
+#if BUILDFLAG(IS_WIN)
+  if (updater_) updater_->InstallOnExit();
+  updater_.reset();
+#endif
   weak_factory_.InvalidateWeakPtrs();
   browsers_.Reset();
   stock_windows_.clear();

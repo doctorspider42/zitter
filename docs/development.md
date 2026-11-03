@@ -58,6 +58,13 @@ each visible half also has a
 header with its title, that menu (⋯) and a close button; the divider between the
 pages is draggable. Rebuild the icon with `python3 tools/build_icon.py`.
 
+Windows uses the separate Original XL source, `assets/icon/zitter-windows.svg`.
+Rebuild `chromium/app/zitter.ico` with
+`python tools/build_windows_icon.py --chromium "PATH_TO_CHROMIUM_OR_EDGE"`
+(requires Pillow). The ICO includes 16, 20, 24, 32, 40, 48, 64, 128 and 256 px
+images and is shared by the Windows application and installer resources.
+The macOS source, `assets/icon/zitter.svg`, and its PNG/ICNS outputs stay unchanged.
+
 The default data directory is `~/Library/Application Support/Zitter`:
 
 - `ZitterWork/` and `ZitterPersonal/`: original persistent Chromium profiles;

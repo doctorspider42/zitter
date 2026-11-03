@@ -353,6 +353,18 @@ if (!is_mac) {
 }
 
 if (is_win) {
+  source_set("updater") {
+    sources = [ "chromium/app/updater_win.cc", "chromium/app/updater_win.h" ]
+    include_dirs = [ "." ]
+    public_deps = [ "//base" ]
+    deps = [ "//crypto", "//url" ]
+    libs = [ "winhttp.lib", "advapi32.lib" ]
+  }
+  test("updater_unittests") {
+    sources = [ "chromium/app/updater_win_unittest.cc" ]
+    include_dirs = [ "." ]
+    deps = [ ":updater", "//base/test:run_all_unittests", "//base/test:test_support", "//crypto", "//testing/gtest" ]
+  }
   # The design fonts beside zitter.exe; main.cc adds them to the browser's
   # DirectWrite collection (macOS: the bundle's Fonts, tools/package_app.py).
   copy("design_fonts") {
@@ -475,6 +487,7 @@ if (is_mac || is_linux || is_win) {
       sources += [ "chromium/app/zitter_exe.rc" ]
       libs = [ "shell32.lib" ]
       deps += [
+        ":updater",
         "//build/win:default_exe_manifest",
         "//chrome/app/theme:chrome_unscaled_resources",
         "//chrome/browser/win/isolated_browser:isolated_browser_support",
