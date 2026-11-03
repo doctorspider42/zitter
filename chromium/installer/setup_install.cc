@@ -20,8 +20,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <cerrno>
-#include <cstdlib>
+#include <limits>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -76,12 +75,16 @@ std::optional<std::array<unsigned long, 3>> ParseVersion(const std::wstring& ver
   for (size_t i = 0; i < result.size(); ++i) {
     const auto dot = remaining.find(L'.');
     if ((i < 2) == (dot == std::wstring_view::npos)) return std::nullopt;
-    const std::wstring component(remaining.substr(0, dot));
-    if (component.empty() || component.front() < L'0' || component.front() > L'9') return std::nullopt;
-    wchar_t* end = nullptr;
-    errno = 0;
-    result[i] = std::wcstoul(component.c_str(), &end, 10);
-    if (errno || *end) return std::nullopt;
+    const auto component = remaining.substr(0, dot);
+    if (component.empty()) return std::nullopt;
+    unsigned long number = 0;
+    for (wchar_t digit : component) {
+      if (digit < L'0' || digit > L'9') return std::nullopt;
+      const auto value = static_cast<unsigned long>(digit - L'0');
+      if (number > (std::numeric_limits<unsigned long>::max() - value) / 10) return std::nullopt;
+      number = number * 10 + value;
+    }
+    result[i] = number;
     if (i < 2) remaining.remove_prefix(dot + 1);
   }
   return result;
