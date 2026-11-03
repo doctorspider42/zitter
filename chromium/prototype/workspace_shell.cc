@@ -7063,7 +7063,8 @@ void WorkspaceShell::RebuildSuggestions() {
     selected=suggestions_[palette->selected()];
   suggestions_.clear();
   suggestions_text_ = address_->GetText();
-  const auto text = base::UTF16ToUTF8(base::TrimWhitespace(address_->GetText(), base::TRIM_ALL));
+  const auto text = base::UTF16ToUTF8(base::TrimWhitespace(AddressQuery(), base::TRIM_ALL));
+  const bool completed = inline_url_.is_valid() && address_->GetText() == inline_text_;
   const bool commands_only = command_palette_ && text.starts_with(">");
   std::optional<size_t> primary;
   std::optional<Suggestion> primary_item;  // Found again below: rotation and commands move it.
@@ -7072,6 +7073,7 @@ void WorkspaceShell::RebuildSuggestions() {
     sidebar::PalettePlanInput input{};input.text=text;input.command_palette=command_palette_;input.results=search_results_.size();
     std::u16string provider_name;GURL url;
     if (!text.empty() && !commands_only) url = ResolveInput(text, &provider_name);
+    if (completed) { url = inline_url_; provider_name.clear(); }
     input.provider=base::UTF16ToUTF8(provider_name);input.resolved=url.is_valid()?url.spec():text;
     for (const auto& provider : tools_.providers) input.keywords.push_back(provider.keyword);
     std::vector<Suggestion> commands;
@@ -7089,7 +7091,7 @@ void WorkspaceShell::RebuildSuggestions() {
   {
   if (!text.empty() && !commands_only) {
     std::u16string provider_name;
-    const GURL url = ResolveInput(text, &provider_name);
+    const GURL url = completed ? inline_url_ : ResolveInput(text, &provider_name);
     const bool search = !provider_name.empty();
     const std::u16string search_title = TF(u"Szukaj w {}", {provider_name});
     suggestions_.push_back({search ? search_title : T(u"Otwórz"),
@@ -8530,6 +8532,8 @@ void WorkspaceShell::OpenPalette(bool commands) {
   static_cast<PaletteView*>(palette_root_.get())->Reset();
   search_results_.clear();
   search_query_.clear();
+  inline_prefix_.clear(); inline_text_.clear(); inline_url_ = GURL();
+  inline_suppressed_ = false; address_deleting_ = false;
   search_timer_.Stop();
   if (!pinned_) sidebar_widget_->Hide();
   address_error_->SetVisible(false);
@@ -11157,6 +11161,8 @@ void WorkspaceShell::RunSuggestion(size_t index) {
 void WorkspaceShell::AddressEdited() {
   VLOG(1) << "Palette edit visible=" << address_visible() << " length=" << address_->GetText().size();
   if(!address_visible()||address_->IsIMEComposing())return;
+  inline_prefix_.clear(); inline_text_.clear(); inline_url_ = GURL();
+  inline_suppressed_ = std::exchange(address_deleting_, false);
   address_error_->SetVisible(false);
   static_cast<PaletteView*>(palette_root_.get())->Reset();
   search_results_.clear();RebuildSuggestions();RequestSearch();
@@ -11164,14 +11170,14 @@ void WorkspaceShell::AddressEdited() {
 
 void WorkspaceShell::RequestSearch() {
   if (!callbacks_.search) return;
-  search_query_ = base::TrimWhitespace(address_->GetText(), base::TRIM_ALL);
+  search_query_ = base::TrimWhitespace(AddressQuery(), base::TRIM_ALL);
   SetPaletteLoading(!search_query_.empty());
   search_timer_.Start(FROM_HERE, base::Milliseconds(120), base::BindOnce(
       [](base::WeakPtr<WorkspaceShell> shell, std::u16string query) {
         if (shell) VLOG(1) << "Palette search visible=" << shell->address_visible()
             << " composing=" << shell->address_->IsIMEComposing()
-            << " matching=" << (base::TrimWhitespace(shell->address_->GetText(),base::TRIM_ALL)==query);
-        if (shell && shell->address_visible()&&!shell->address_->IsIMEComposing()&&base::TrimWhitespace(shell->address_->GetText(),base::TRIM_ALL)==query) shell->callbacks_.search.Run(query);
+            << " matching=" << (base::TrimWhitespace(shell->AddressQuery(),base::TRIM_ALL)==query);
+        if (shell && shell->address_visible()&&!shell->address_->IsIMEComposing()&&base::TrimWhitespace(shell->AddressQuery(),base::TRIM_ALL)==query) shell->callbacks_.search.Run(query);
       }, weak_factory_.GetWeakPtr(), search_query_));
 }
 void WorkspaceShell::SetPaletteLoading(bool loading) {
@@ -11184,12 +11190,51 @@ bool WorkspaceShell::palette_loading_for_testing() const {
 void WorkspaceShell::SetSearchResults(std::u16string query, std::string profile_id, std::vector<PaletteResult> results, bool complete) {
   VLOG(1) << "Palette results visible=" << address_visible() << " count=" << results.size()
       << " profile=" << (profile_id == state_.profile_id)
-      << " matching=" << (base::TrimWhitespace(address_->GetText(), base::TRIM_ALL) == query);
+      << " matching=" << (base::TrimWhitespace(AddressQuery(), base::TRIM_ALL) == query);
   if (!address_visible() || address_->IsIMEComposing() || profile_id != state_.profile_id ||
-      base::TrimWhitespace(address_->GetText(), base::TRIM_ALL) != query) return;
+      base::TrimWhitespace(AddressQuery(), base::TRIM_ALL) != query) return;
   if (complete) SetPaletteLoading(false);
   search_results_ = std::move(results);
+  UpdateInlineCompletion();
   RebuildSuggestions();
+}
+bool WorkspaceShell::HasInlineCompletion() const {
+  return !inline_text_.empty() && address_->GetText() == inline_text_ &&
+      address_->GetSelectedRange() == gfx::Range(inline_prefix_.size(), inline_text_.size());
+}
+std::u16string WorkspaceShell::AddressQuery() const {
+  return HasInlineCompletion() ? inline_prefix_ : std::u16string(address_->GetText());
+}
+void WorkspaceShell::UpdateInlineCompletion() {
+  // Complete only an uninterrupted URL prefix at the caret. Search phrases,
+  // commands, deletion and deliberate result selection keep their literal input.
+  if (HasInlineCompletion() || inline_suppressed_ || address_->IsIMEComposing() ||
+      static_cast<PaletteView*>(palette_root_.get())->moved()) return;
+  const std::u16string typed(address_->GetText());
+  if (typed.size() < 2 || typed.find_first_of(u" \t\r\n") != std::u16string::npos ||
+      typed.starts_with(u">") || address_->GetSelectedRange() != gfx::Range(typed.size())) return;
+  const auto prefix = base::i18n::ToLower(typed);
+  for (const auto& result : search_results_) {
+    if (!result.url.SchemeIsHTTPOrHTTPS() || result.url.has_username() || result.url.has_password()) continue;
+    // A bare site prefix goes to its home page, never an arbitrary history path.
+    const bool scheme = prefix.starts_with(u"http://") || prefix.starts_with(u"https://");
+    const auto after_scheme = scheme ? prefix.substr(prefix.find(u"://") + 3) : prefix;
+    const bool path = after_scheme.find_first_of(u"/?#") != std::u16string::npos;
+    const GURL target = path ? result.url : result.url.GetWithEmptyPath();
+    auto completion = base::UTF8ToUTF16(target.spec());
+    if (!scheme) {
+      completion.erase(0, completion.find(u"://") + 3);
+      if (!prefix.starts_with(u"www.") && completion.starts_with(u"www.")) completion.erase(0, 4);
+    }
+    if (!path && completion.ends_with(u"/")) completion.pop_back();
+    if (completion.size() <= typed.size() || !base::i18n::ToLower(completion).starts_with(prefix)) continue;
+    inline_prefix_ = typed;
+    inline_text_ = typed + completion.substr(typed.size());
+    inline_url_ = target;
+    address_->SetText(inline_text_);
+    address_->SelectRange(gfx::Range(typed.size(), inline_text_.size()));
+    return;
+  }
 }
 bool WorkspaceShell::HandleToolsEditorKey(EditorControl* sender,const ui::KeyEvent& event) {
   if(!tools_widget_||!tools_widget_->IsVisible()||!sender->view()->GetEnabledInViewsSubtree()||event.type()!=ui::EventType::kKeyPressed)return false;
@@ -11216,8 +11261,32 @@ bool WorkspaceShell::HandlePreferenceEditorKey(EditorControl* sender,const ui::K
 bool WorkspaceShell::HandleAddressKey(const ui::KeyEvent& event) {
   if(!address_visible()||event.type()!=ui::EventType::kKeyPressed||address_->IsIMEComposing())return false;
   if(event.key_code()==ui::VKEY_ESCAPE){CloseOverlays();RestorePageFocus();return true;}
+  const bool plain = !event.IsShiftDown() && !event.IsControlDown() && !event.IsAltDown() && !event.IsCommandDown();
+  if (event.key_code() == ui::VKEY_BACK || event.key_code() == ui::VKEY_DELETE) {
+    address_deleting_ = true;
+    if (plain && HasInlineCompletion()) {
+      address_->SetText(inline_prefix_);
+      address_->SelectRange(gfx::Range(address_->GetText().size()));
+      AddressEdited();
+      return true;
+    }
+  } else address_deleting_ = false;
+  if (plain && HasInlineCompletion() && (event.key_code() == ui::VKEY_RIGHT ||
+      event.key_code() == ui::VKEY_END || event.key_code() == ui::VKEY_TAB)) {
+    address_->SelectRange(gfx::Range(address_->GetText().size()));
+    inline_suppressed_ = true;
+    RebuildSuggestions(); RequestSearch();
+    return true;
+  }
   if (!suggestions_.empty() &&
       (event.key_code() == ui::VKEY_DOWN || event.key_code() == ui::VKEY_UP)) {
+    if (HasInlineCompletion()) {
+      address_->SetText(inline_prefix_);
+      address_->SelectRange(gfx::Range(address_->GetText().size()));
+      inline_prefix_.clear(); inline_text_.clear(); inline_url_ = GURL();
+      inline_suppressed_ = true;
+      RebuildSuggestions();
+    }
     static_cast<PaletteView*>(palette_root_.get())->Step(suggestions_.size(),event.key_code()==ui::VKEY_UP);
     RebuildSuggestions();
     return true;

@@ -907,6 +907,9 @@ class WorkspaceShell final : public ui::EventHandler,
   void SubmitProfile();
   void DeleteSelectedProfile();
   void RebuildSuggestions();
+  std::u16string AddressQuery() const;
+  bool HasInlineCompletion() const;
+  void UpdateInlineCompletion();
   void RequestSearch();
   void AddressEdited();
   void ApplyAppearance(bool refresh_theme = true);
@@ -1195,6 +1198,11 @@ class WorkspaceShell final : public ui::EventHandler,
   std::shared_ptr<SidebarNodeGraphState> palette_node_graph_;
   std::vector<PaletteResult> search_results_;
   std::u16string search_query_;
+  std::u16string inline_prefix_;
+  std::u16string inline_text_;
+  GURL inline_url_;
+  bool inline_suppressed_ = false;
+  bool address_deleting_ = false;
   base::OneShotTimer search_timer_;
   bool command_palette_ = false;
   std::u16string suggestions_text_;

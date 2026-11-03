@@ -4446,6 +4446,100 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, TypedAddressStaysPrimaryAsSugg
   EXPECT_EQ(count + 1, window_->tab_count("work"));
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, InlineSiteCompletionOpensANewTabWithoutSelectingAnExistingOne) {
+  auto* shell = window_->shell();
+  net::EmbeddedTestServer site;
+  site.RegisterRequestHandler(base::BindRepeating([](const net::test_server::HttpRequest&) -> std::unique_ptr<net::test_server::HttpResponse> {
+    auto response = std::make_unique<net::test_server::BasicHttpResponse>();
+    response->set_content_type("text/html");
+    response->set_content("<title>Site home</title>");
+    return response;
+  }));
+  ASSERT_TRUE(site.Start());
+  const auto visited = site.GetURL("/storage_probe.html?old-post");
+  ASSERT_TRUE(window_->NavigateFromBar(visited, false));
+  auto* original = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(original));
+  const auto count = window_->tab_count("work");
+  const auto target = visited.GetWithEmptyPath();
+  const auto full = base::UTF8ToUTF16(target.spec());
+  const auto typed = full.substr(0, full.size() - 2);
+  window_->OpenCommandPalette(); SetPaletteQuery(typed);
+  shell->SetSearchResults(typed, "work-profile", {{u"Existing page", u"Tab", visited, 0, "work"}});
+  auto* field = shell->address_input();
+  const auto completed = full.substr(0, full.size() - 1);
+  EXPECT_EQ(completed, field->GetText());
+  EXPECT_EQ(gfx::Range(typed.size(), completed.size()), field->GetSelectedRange());
+  ASSERT_FALSE(shell->suggestions().empty());
+  EXPECT_EQ(target, shell->suggestions().front().url);
+  EXPECT_FALSE(shell->suggestions().front().tab);
+  // Late history results still match the typed prefix and keep its completion stable.
+  shell->SetSearchResults(typed, "work-profile", {});
+  EXPECT_EQ(completed, field->GetText());
+  ui::KeyEvent enter(ui::EventType::kKeyPressed, ui::VKEY_RETURN, 0);
+  ASSERT_TRUE(shell->HandleAddressKey(enter));
+  EXPECT_NE(original, window_->contents("work"));
+  EXPECT_EQ(count + 1, window_->tab_count("work"));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  EXPECT_EQ(target, window_->contents("work")->GetLastCommittedURL());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, InlineSiteCompletionPreservesTypingAndCanBeDismissed) {
+  auto* shell = window_->shell();
+  auto* field = shell->address_input();
+  const PaletteResult instagram{u"Instagram post", u"History", GURL("https://www.instagram.com/p/old-post")};
+  window_->OpenCommandPalette(); SetPaletteQuery(u"inst");
+  shell->SetSearchResults(u"inst", "work-profile", {instagram});
+  EXPECT_EQ(u"instagram.com", field->GetText());
+  EXPECT_EQ(gfx::Range(4, 13), field->GetSelectedRange());
+  // More typing replaces only the suggested suffix, leaving the user's prefix.
+  field->input_client()->InsertText(u"ant.example", ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
+  EXPECT_EQ(u"instant.example", field->GetText());
+  shell->SetSearchResults(u"inst", "work-profile", {instagram});
+  EXPECT_EQ(u"instant.example", field->GetText());
+  SetPaletteQuery(u"inst"); shell->SetSearchResults(u"inst", "work-profile", {instagram});
+  ui::KeyEvent back(ui::EventType::kKeyPressed, ui::VKEY_BACK, 0);
+  ASSERT_TRUE(shell->HandleAddressKey(back));
+  EXPECT_EQ(u"inst", field->GetText());
+  EXPECT_EQ(gfx::Range(4), field->GetSelectedRange());
+  shell->SetSearchResults(u"inst", "work-profile", {instagram});
+  EXPECT_EQ(u"inst", field->GetText());
+  // A fresh edit enables completion again. Tab accepts it without navigating.
+  SetPaletteQuery(u"insta"); shell->SetSearchResults(u"insta", "work-profile", {instagram});
+  const auto count = window_->tab_count("work");
+  ui::KeyEvent tab(ui::EventType::kKeyPressed, ui::VKEY_TAB, 0);
+  ASSERT_TRUE(shell->HandleAddressKey(tab));
+  EXPECT_EQ(u"instagram.com", field->GetText());
+  EXPECT_EQ(gfx::Range(13), field->GetSelectedRange());
+  EXPECT_EQ(GURL("https://www.instagram.com/"), shell->suggestions().front().url);
+  EXPECT_EQ(count, window_->tab_count("work"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, InlineSiteCompletionRespectsQueriesCaretAndExplicitSelection) {
+  auto* shell = window_->shell();
+  auto* field = shell->address_input();
+  const PaletteResult instagram{u"Instagram", u"History", GURL("https://instagram.com/")};
+  window_->OpenCommandPalette();
+  for (const auto& query : {u"instagram tips", u"> inst", u"i", u"instagram.com", u"unrelated"}) {
+    SetPaletteQuery(query); shell->SetSearchResults(query, "work-profile", {instagram});
+    EXPECT_EQ(query, field->GetText());
+  }
+  SetPaletteQuery(u"inst"); field->SelectRange(gfx::Range(2));
+  shell->SetSearchResults(u"inst", "work-profile", {instagram});
+  EXPECT_EQ(u"inst", field->GetText());
+  SetPaletteQuery(u"inst");
+  shell->SetSearchResults(u"inst", "personal-profile", {instagram});
+  EXPECT_EQ(u"inst", field->GetText());
+  shell->SetSearchResults(u"inst", "work-profile", {instagram});
+  ui::KeyEvent down(ui::EventType::kKeyPressed, ui::VKEY_DOWN, 0);
+  ASSERT_TRUE(shell->HandleAddressKey(down));
+  EXPECT_EQ(u"inst", field->GetText());
+  EXPECT_EQ(1u, shell->palette_selection_for_testing());
+  shell->SetSearchResults(u"inst", "work-profile", {instagram});
+  EXPECT_EQ(1u, shell->palette_selection_for_testing());
+  EXPECT_EQ(u"inst", field->GetText());
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CommandUsageBalancesRecencyFrequencyAndSerialization) {
   BrowserTools tools;
   const auto now = base::Time::FromMillisecondsSinceUnixEpoch(INT64_C(1800000000000));
