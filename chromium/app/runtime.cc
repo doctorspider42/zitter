@@ -25,7 +25,6 @@
 #if BUILDFLAG(IS_WIN)
 #include "chromium/prototype/jump_list_win.h"
 #include "chromium/app/updater_win.h"
-#include "chromium/prototype/i18n.h"
 #endif
 #include "components/keep_alive_registry/keep_alive_types.h"
 #include "components/keep_alive_registry/scoped_keep_alive.h"
@@ -92,9 +91,7 @@ void Runtime::WindowReady() {
   updater_ = std::make_unique<WindowsUpdater>(g_browser_process->profile_manager()->user_data_dir(),
       base::BindRepeating([](base::WeakPtr<Runtime> runtime, std::string version) {
         if (!runtime || !runtime->window_ || runtime->closing_) return;
-        runtime->window_->shell()->ShowToast(prototype::T(u"Aktualizacja po zamknięciu: "),
-            base::UTF8ToUTF16(version), base::DoNothing(),
-            prototype::T(u"OK"));
+        runtime->window_->shell()->ShowUpdateReady(std::move(version));
       }, weak_factory_.GetWeakPtr()));
   updater_->Start();
 #endif

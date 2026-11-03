@@ -4321,6 +4321,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
                 else if (panel == "menu") {shell->context_tab_=shell->state_.active_tab;shell->context_pin_.clear();shell->ShowTabMenu(shell->widget_->GetWindowBoundsInScreen().origin()+gfx::Vector2d(80,140),ui::mojom::MenuSourceType::kMouse);}
                 else if (panel == "app-menu" && shell->root_) shell->ShowAppMenu(static_cast<ShellRoot*>(shell->root_.get())->app_menu);
                 else if (panel == "toast") shell->ShowToast(T(u"Usunięto folder "), u"Projekty", base::DoNothing());
+                else if (panel == "update") shell->ShowUpdateReady("0.3.1");
               }, shell->weak_factory_.GetWeakPtr(), panel),
               base::Seconds(1));
       }, weak));
@@ -9300,6 +9301,11 @@ void WorkspaceShell::ShowWelcome(WelcomeSetup setup, base::OnceCallback<void(Wel
   welcome_widget_->Show();
 }
 #endif
+void WorkspaceShell::ShowUpdateReady(std::string version) {
+  ShowToast(T(u"Aktualizacja po zamknięciu: "), base::UTF8ToUTF16(version),
+      base::DoNothing(), T(u"OK"));
+}
+
 void WorkspaceShell::ShowAbout() {
 #if !BUILDFLAG(IS_MAC)
   if (!widget_ || !widget_->IsVisible()) return;

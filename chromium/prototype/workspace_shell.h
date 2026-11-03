@@ -257,6 +257,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void ConfirmQuitWithDownloads(int count, base::OnceCallback<void(bool)> answer);
   // The |z⟩ menu's „O Zitter”: Zitter's and Chromium's versions.
   void ShowAbout();
+  void ShowUpdateReady(std::string version);
   // Find in page (design: Find & Print): the bar over the active page's top
   // right. `find` gets the text, the direction and case matching; `closed`
   // runs when the bar hides.
