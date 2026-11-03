@@ -165,6 +165,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_run_loop_timeout.h"
 #include "base/test/run_until.h"
+#include "base/test/bind.h"
 #include "base/test/simple_test_clock.h"
 #include "base/test/test_future.h"
 #include "base/time/time.h"
@@ -196,6 +197,8 @@
 #include "ui/views/style/platform_style.h"
 #include "ui/views/interaction/element_tracker_views.h"
 #include "ui/views/controls/menu/menu_controller.h"
+#include "ui/views/controls/menu/menu_item_view.h"
+#include "ui/views/controls/menu/submenu_view.h"
 #include "ui/base/interaction/element_tracker.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/test/views_drawing_test_utils.h"
@@ -9233,6 +9236,73 @@ views::Button* FindNamedButton(views::View* root, std::u16string_view name) {
   return nullptr;
 }
 }  // namespace
+
+#if BUILDFLAG(IS_WIN)
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionContextMenuStaysBelowIconInMovedWindow) {
+  base::ScopedTempDir dir;
+  {
+    base::ScopedAllowBlockingForTesting allow;
+    ASSERT_TRUE(dir.CreateUniqueTempDir());
+  }
+  const auto extension = LoadTestExtension(work_, WriteTestExtension(dir.GetPath(), "Anchor", SK_ColorBLUE, false));
+  ASSERT_TRUE(extension);
+  ToolbarActionsModel::Get(work_)->SetActionVisibility(extension->id(), true);
+  NavigateBoth();
+  ASSERT_TRUE(window_->Select("work"));
+  auto* bar = window_->extensions_bar();
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->action_button_for_testing(extension->id()) != nullptr; }));
+  auto* widget = bar->GetWidget();
+  const auto area = display::Screen::Get()->GetDisplayNearestWindow(widget->GetNativeWindow()).work_area();
+  const int width = std::min(720, area.width() - 160);
+  for (const int x : {area.x() + 40, area.right() - width - 40}) {
+    widget->SetBounds(gfx::Rect(x, area.y() + 60, width, std::min(700, area.height() - 120)));
+    widget->LayoutRootViewIfNecessary();
+    EXPECT_EQ(x, widget->GetWindowBoundsInScreen().x());
+    auto* button = bar->action_button_for_testing(extension->id());
+    ASSERT_TRUE(button);
+    const auto icon = button->GetBoundsInScreen();
+    ASSERT_FALSE(icon.IsEmpty());
+    for (auto source : {ui::mojom::MenuSourceType::kMouse, ui::mojom::MenuSourceType::kKeyboard}) {
+      bool checked = false;
+      // Also works if a platform menu runs a nested message loop.
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindLambdaForTesting([&] {
+        checked = true;
+        auto* controller = views::MenuController::GetActiveInstance();
+        EXPECT_TRUE(controller);
+        if (!controller) return;
+        auto* selected = controller->GetSelectedMenuItem();
+        EXPECT_TRUE(selected);
+        if (selected) {
+          auto* menu = selected->GetRootMenuItem()->GetSubmenu();
+          // The native menu window includes a shadow above its visible body.
+          const auto bounds = menu->GetBoundsInScreen();
+          EXPECT_GE(bounds.y(), icon.bottom());
+          EXPECT_LE(bounds.y(), icon.bottom() + 24);
+          EXPECT_LE(bounds.x(), icon.CenterPoint().x());
+          EXPECT_GE(bounds.right(), icon.CenterPoint().x());
+          EXPECT_TRUE(area.Contains(bounds));
+          const auto output = base::CommandLine::ForCurrentProcess()->GetSwitchValuePath("zitter-test-extension-menu-render-dir");
+          if (!output.empty()) {
+            base::ScopedAllowBlockingForTesting allow;
+            EXPECT_TRUE(base::CreateDirectory(output));
+            const auto png = gfx::PNGCodec::EncodeBGRASkBitmap(views::test::PaintViewToBitmap(menu->GetWidget()->GetRootView()), false);
+            EXPECT_TRUE(png);
+            if (png) EXPECT_TRUE(base::WriteFile(output.AppendASCII("extension-context-menu.png"), *png));
+            const auto frame = gfx::PNGCodec::EncodeBGRASkBitmap(views::test::PaintViewToBitmap(widget->GetRootView()), false);
+            EXPECT_TRUE(frame);
+            if (frame) EXPECT_TRUE(base::WriteFile(output.AppendASCII("extension-context-window.png"), *frame));
+            LOG(INFO) << "Extension context menu: icon=" << icon.ToString() << " menu=" << bounds.ToString()
+                      << " window=" << widget->GetWindowBoundsInScreen().ToString();
+          }
+        }
+        controller->Cancel(views::MenuController::ExitType::kAll);
+      }));
+      button->ShowContextMenu(icon.CenterPoint(), source);
+      ASSERT_TRUE(base::test::RunUntil([&] { return checked && !views::MenuController::GetActiveInstance(); }));
+    }
+  }
+}
+#endif
 
 // The menu's pin is a real control: pinning puts the action in the header of
 // this profile only, and the pinned pin unpins it again.

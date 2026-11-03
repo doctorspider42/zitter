@@ -117,7 +117,7 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   void Rebuild();
   void RefreshButtons();
   void ShowPopup(const extensions::Extension& extension, views::View* anchor);
-  void ShowActionMenu(const std::string& id, views::View* source, gfx::Point point);
+  void ShowActionMenu(const std::string& id, views::View* source, ui::mojom::MenuSourceType source_type);
   void SetPinned(const std::string& id, bool pinned);
   void AllowSite(const std::string& id);
   void OpenOptions(const std::string& id);
