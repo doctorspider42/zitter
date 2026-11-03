@@ -176,8 +176,9 @@ class RustFooterLayout final : public views::LayoutManager {
  public:
   void ViewAdded(views::View* host,views::View*) override {host->InvalidateLayout();}
   void ViewRemoved(views::View* host,views::View*) override {host->InvalidateLayout();}
+  // Children: the space rail viewport, a spacer, the Downloads ring and „+”.
   void Layout(views::View* host) override {
-    if (host->children().size()!=3) return;
+    if (host->children().size()!=4) return;
     const auto g=Measure(host,host->width());
     for (size_t i=0;i<g.children.size();++i) {const auto& r=g.children[i];host->children()[i]->SetBounds(r.x,r.y,r.width,r.height);}
   }
@@ -191,7 +192,7 @@ class RustFooterLayout final : public views::LayoutManager {
  private:
   sidebar::ColumnLayout Measure(const views::View* host,int width) const {
     int content=0;
-    if (host->children().size()==3) {
+    if (host->children().size()==4) {
       auto* scroll=PanelViewportForView(host->children()[0].get());
       if (scroll&&scroll->contents()) content=scroll->contents()->GetPreferredSize().width();
     }

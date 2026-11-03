@@ -319,10 +319,9 @@ class ExtensionsContextMenu final : public ui::SimpleMenuModel::Delegate {
     model_.AddItem(kUninstall, T(u"Usuń z Zittera…"));
     pinned_ = pinned;
   }
-  void Run(views::Widget* parent, gfx::Point point) {
+  void Run(views::Widget* parent, const gfx::Rect& anchor, ui::mojom::MenuSourceType source_type) {
     runner_ = std::make_unique<views::MenuRunner>(&model_, views::MenuRunner::CONTEXT_MENU);
-    runner_->RunMenuAt(parent, nullptr, gfx::Rect(point, gfx::Size()), views::MenuAnchorPosition::kTopLeft,
-                       ui::mojom::MenuSourceType::kMouse);
+    runner_->RunMenuAt(parent, nullptr, anchor, views::MenuAnchorPosition::kTopRight, source_type);
   }
   void ExecuteCommand(int command, int) override {
     // The bar may rebuild (and drop this menu) while a command runs.
@@ -424,9 +423,9 @@ class ExtensionsBar::ActionButton final : public views::Button,
   }
 
   // views::ContextMenuController:
-  void ShowContextMenuForViewImpl(views::View* source, const gfx::Point& point,
-                                  ui::mojom::MenuSourceType) override {
-    bar_->ShowActionMenu(id_, source, point);
+  void ShowContextMenuForViewImpl(views::View* source, const gfx::Point&,
+                                  ui::mojom::MenuSourceType source_type) override {
+    bar_->ShowActionMenu(id_, source, source_type);
   }
 
  private:
@@ -807,7 +806,7 @@ class ExtensionsBar::Menu final : public views::BubbleDialogDelegate {
             TF(u"Więcej: {}", {base::UTF8ToUTF16(extension->name())}), nullptr, palette_));
         more->SetCallback(base::BindRepeating(
             [](base::WeakPtr<ExtensionsBar> bar, std::string id, views::View* more) {
-              if (bar) bar->ShowActionMenu(id, more, more->GetLocalBounds().bottom_left());
+              if (bar) bar->ShowActionMenu(id, more, ui::mojom::MenuSourceType::kMouse);
             }, weak, id, more));
         row->AddTrailing(more, false);
       }
@@ -1162,13 +1161,14 @@ void ExtensionsBar::DestroyPopup() {
   for (auto& button : buttons_) button->SetPopupOpen(false);
 }
 
-void ExtensionsBar::ShowActionMenu(const std::string& id, views::View* source, gfx::Point point) {
+void ExtensionsBar::ShowActionMenu(const std::string& id, views::View* source, ui::mojom::MenuSourceType source_type) {
   if (!profile_ || !ExtensionFor(id)) return;
-  views::View::ConvertPointToScreen(source, &point);
   const auto* extension = ExtensionFor(id);
   context_menu_ = std::make_unique<ExtensionsContextMenu>(this, id, ToolbarActionsModel::Get(profile_)->IsActionPinned(id),
                                                           extensions::OptionsPageInfo::HasOptionsPage(extension));
-  context_menu_->Run(source->GetWidget(), point);
+  // Context-menu event points are already in screen coordinates. Anchor to
+  // the icon itself so mouse and keyboard invocation both open below it.
+  context_menu_->Run(source->GetWidget(), source->GetBoundsInScreen(), source_type);
 }
 
 void ExtensionsBar::SetPinned(const std::string& id, bool pinned) {

@@ -23,6 +23,7 @@ namespace zitter::prototype {
 // actions and progress share one transparent canvas; browser services stay native.
 bool SceneActionPressedForTesting(views::View* view);
 
+class EditorControl;
 class PanelScene {
  public:
   virtual ~PanelScene()=default;
@@ -44,6 +45,18 @@ class PanelScene {
   virtual views::View* AddIconAction(views::View* parent,base::RepeatingClosure callback,std::u16string name,const gfx::VectorIcon* icon)=0;
   virtual void SetIconAction(views::View* button,std::u16string name,const gfx::VectorIcon* icon)=0;
   virtual void SetProgressPaused(views::View* progress,bool paused)=0;
+  // The Downloads window (design: Okno Pobrane).
+  // A text action's look: 0 primary, 2 outline, 3 quiet, 4 danger text,
+  // 5 danger strong, 6 filter chip, 7 chosen filter chip.
+  virtual void SetActionKind(views::View* button,uint32_t kind)=0;
+  // A search field: `body` text in a `bg-base` pill with a `line` edge.
+  virtual EditorControl* AddSearch(views::View* parent,std::u16string placeholder,std::u16string name)=0;
+  // Repaints the field in the window's current scheme (after it has one).
+  virtual void RefreshSearch(EditorControl* field)=0;
+  // A 28 px „⋯” IconButton for a row's menu.
+  virtual views::View* AddMoreAction(views::View* parent,base::RepeatingClosure callback,std::u16string name)=0;
+  // While choosing files the tile is a checkbox: `pressed` flips it.
+  virtual void SetFileTileChoice(views::View* tile,bool choosing,bool checked,base::RepeatingClosure pressed)=0;
   virtual void Schedule()=0;
   virtual base::RepeatingClosure ViewportChangedCallback()=0;
   virtual bool visible() const=0;
