@@ -1,6 +1,8 @@
 import importlib.util
 from pathlib import Path
 import unittest
+import tempfile
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("package_win", ROOT / "tools/package_win.py")
@@ -27,6 +29,18 @@ class WindowsPackageTest(unittest.TestCase):
 
     def test_version_comes_from_the_exe_resource(self):
         self.assertRegex(package.version(), r"^\d+\.\d+\.\d+$")
+
+    def test_archive_contains_project_and_font_license_notices(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            (folder / "zitter.exe").write_bytes(b"MZ fixture")
+            archive = folder / "portable.zip"
+            package.write_zip(archive, folder, ["zitter.exe"], prefix="Zitter/",
+                              extras=package.package_notices())
+            with zipfile.ZipFile(archive) as result:
+                for name in ("LICENSE", "NOTICE", "Fonts/InstrumentSerif-OFL.txt",
+                             "Fonts/JetBrainsMono-OFL.txt", "Fonts/SchibstedGrotesk-OFL.txt"):
+                    self.assertGreater(len(result.read("Zitter/" + name)), 100)
 
 
 if __name__ == "__main__":

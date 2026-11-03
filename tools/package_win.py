@@ -78,6 +78,15 @@ def write_zip(destination, out, files, prefix="", extras=None):
             archive.write(source, prefix + name)
 
 
+def package_notices(third_party_licenses=None):
+    notices = {name: ROOT / name for name in ("LICENSE", "NOTICE")}
+    notices.update({f"Fonts/{path.name}": path
+                    for path in (ROOT / "assets/fonts").glob("*-OFL.txt")})
+    if third_party_licenses:
+        notices["THIRD_PARTY_LICENSES.txt"] = third_party_licenses
+    return notices
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, default=SRC / "out/ZitterWin")
@@ -88,7 +97,7 @@ def main():
     args = parser.parse_args()
     out = args.out.resolve()
     files = select_files(runtime_deps(out))
-    extras = {"THIRD_PARTY_LICENSES.txt": args.third_party_licenses} if args.third_party_licenses else {}
+    extras = package_notices(args.third_party_licenses)
     args.destination.mkdir(parents=True, exist_ok=True)
     stem = f"Zitter-{version()}-win-x64"
     portable = args.destination / f"{stem}-portable.zip"
