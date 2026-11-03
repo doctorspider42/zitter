@@ -8,6 +8,7 @@
 #include "base/scoped_observation.h"
 #include "components/content_settings/core/browser/content_settings_observer.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
+#include "components/prefs/pref_change_registrar.h"
 
 #include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
@@ -43,6 +44,8 @@ class PageServices final : public content::WebContentsObserver,
   bool OfferPassword(std::unique_ptr<password_manager::PasswordFormManagerForUI> form, bool update);
   void SetManualPassword(std::unique_ptr<password_manager::PasswordFormManagerForUI> form, bool update);
   void DismissPassword();
+  bool PasswordSavingEnabled() const;
+  void OnPasswordSavingChanged();
   void ShowPasswordWidget(std::unique_ptr<views::DialogDelegate> dialog,bool show=true);
   void DidFinishNavigation(content::NavigationHandle* navigation) override;
   void DidStartNavigation(content::NavigationHandle* navigation) override;
@@ -53,6 +56,7 @@ class PageServices final : public content::WebContentsObserver,
   void OnContentSettingChanged(const ContentSettingsPattern& primary_pattern,
       const ContentSettingsPattern& secondary_pattern, ContentSettingsTypeSet types) override;
   base::ScopedObservation<HostContentSettingsMap, content_settings::Observer> sound_observation_{this};
+  PrefChangeRegistrar password_preferences_;
   base::RepeatingClosure manage_passwords_;
   struct PendingPassword;
   std::shared_ptr<PendingPassword> pending_password_;

@@ -7,6 +7,7 @@
 
 namespace base {
 class CommandLine;
+class FilePath;
 }
 
 namespace zitter::prototype {
@@ -23,10 +24,13 @@ struct JumpListSpace {
 // Rewrites the list off the UI thread; call when the spaces change.
 void UpdateJumpList(std::vector<JumpListSpace> spaces);
 
-// In a second zitter.exe, before Chromium starts: hands --zitter-command to
-// the window of a running Zitter from the same executable and returns true;
+// In a second zitter.exe, before Chromium starts: hands --zitter-command or
+// HTTP(S) arguments to a running Zitter with the same executable and data directory;
+// returns true when accepted,
 // false when none runs, and the command waits for this process's window.
 bool ForwardCommandToRunningZitter(const base::CommandLine& command_line);
+// Profile-scoped native-window marker shared by launchers and receivers.
+std::wstring WorkspaceCommandProfileProperty(const base::FilePath& data_directory);
 }  // namespace zitter::prototype
 
 #endif

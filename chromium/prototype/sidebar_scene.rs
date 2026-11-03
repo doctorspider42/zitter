@@ -3226,6 +3226,26 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
                     emit(cx-7.0,cy+dy-0.5,14.0,1.0,0.5,i.ink,"",0.0,false);
                     emit(cx+knob-1.5,cy+dy-1.5,3.0,3.0,1.5,i.ink,"",0.0,false);
                 }
+            } else if i.glyph==5 && i.detail_font_size>0.0 {
+                let phase=i.detail_font_size.to_radians();
+                for n in 0..=64 {
+                    let a=phase+0.5+n as f32*5.2/64.0;
+                    emit(cx+6.0*a.cos()-0.8,cy+6.0*a.sin()-0.8,1.6,1.6,0.8,i.ink,"",0.0,false);
+                }
+                let a=phase+5.7;
+                for n in 0..=8 {
+                    let d=n as f32*0.5;
+                    emit(cx+6.0*a.cos()-d*(a-0.7).cos()-0.8,cy+6.0*a.sin()-d*(a-0.7).sin()-0.8,1.6,1.6,0.8,i.ink,"",0.0,false);
+                }
+            } else if i.glyph==10 {
+                // Two diagonal chain links; identical geometry on both renderers.
+                for offset in [-3.0f32,3.0] {
+                    for n in 0..64 {
+                        let a=n as f32*std::f32::consts::TAU/64.0;
+                        let x=4.5*a.cos();let y=2.5*a.sin();
+                        emit(cx+offset+(x-y)*0.707-0.65,cy-offset-(x+y)*0.707-0.65,1.3,1.3,0.65,i.ink,"",0.0,false);
+                    }
+                }
             } else if i.glyph==6 {
                 for dx in [-5.0,0.0,5.0] {emit(cx+dx-1.0,cy-1.0,3.0,3.0,1.5,i.ink,"",0.0,false);}
             } else if i.glyph==9 {
@@ -3674,11 +3694,18 @@ mod tests {
         let g=strip_layout(-1,32,2,&[child(32,32),child(32,32),child(32,32),child(32,32)]);
         assert_eq!(g.width,134);assert_eq!(g.children[3].x,102);
         for glyph in 3..=5 {
-            let mut item=row(32.0);item.kind=7;item.glyph=glyph;item.height=32.0;item.focused=true;
+            let mut item=row(32.0);item.kind=7;item.glyph=glyph;item.height=32.0;item.focused=true;item.detail_font_size=0.0;
             let ops=layout(&[item]);let icon=ops.iter().find(|p|p.shape>0).unwrap();
             assert_eq!(icon.shape,glyph-1);assert_eq!((icon.x,icon.y,icon.width,icon.height),(8.0,8.0,16.0,16.0));
             assert!(ops.iter().all(|p|p.text.is_empty()));
         }
+    }
+    #[test] fn animated_reload_rotates_while_preserving_the_control_backing() {
+        let item=|phase|{let mut i=row(32.0);i.kind=7;i.glyph=5;i.height=32.0;i.detail_font_size=phase;i};
+        let first=layout(&[item(90.0)]);let second=layout(&[item(180.0)]);
+        assert_eq!((first[0].x,first[0].y,first[0].width,first[0].height),(0.0,0.0,32.0,32.0));
+        assert_ne!((first[1].x,first[1].y),(second[1].x,second[1].y));
+        assert!(first.iter().all(|p|p.x>=0.0&&p.y>=0.0&&p.x+p.width<=32.0&&p.y+p.height<=32.0));
     }
     fn menu_state()->ffi::TabMenuState{ffi::TabMenuState{ready:true,busy:false,valid:true,tab:7,has_tab:true,split:true,members:vec![3,7],vertical:false,tab_count:3,http:true}}
     fn select_fixture()->Box<SelectState> {new_select_state(vec![ffi::SelectOption{key:"Arc".into(),label:"Arc".into(),search:"arc".into()},ffi::SelectOption{key:"Google Chrome".into(),label:"Google Chrome".into(),search:"google chrome".into()},ffi::SelectOption{key:"Microsoft Edge".into(),label:"Microsoft Edge".into(),search:"microsoft edge".into()},ffi::SelectOption{key:"Brave".into(),label:"Brave".into(),search:"brave".into()}])}

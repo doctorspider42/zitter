@@ -1,10 +1,11 @@
 # AddressPill
 
-Pigułka adresu na górze paska bocznego: pokazuje host pogrubiony w `ink`, resztę ścieżki w `ink-muted`, cała w kroju `url`.
+The address pill at the top of the sidebar shows the host in bold `ink` and the remaining path in `ink-muted`, both in the `url` typeface.
 
-**Daje konsument:** URL rozbity na host i ścieżkę, stan bezpieczeństwa (ikona kłódki w `ok`, `warn` przy mieszanej treści, `danger` przy błędzie certyfikatu — zawsze z ikoną), stan `editing`.
+**Consumer provides:** the URL split into host and path, the security state (a lock in `ok`, `warn` for mixed content, or `danger` for a certificate error, always with an icon), and the `editing` state.
 
-- Spoczynek: `bg-raised` + `shadow-card`, wysokość 36 px, `radius-pill`.
-- ⌘L przełącza w `editing`: obrys 2 px `--accent`, kursor `--accent`, pełny URL w `ink`, po prawej `↵`.
-- Po skopiowaniu adresu pigułka drży raz (`zt-tremor`, `dur-tremor`) — to jedyne potwierdzenie, bez tostu.
-- Nie pokazuj `https://` ani `www.`.
+- Resting: `bg-raised` + `shadow-card`, 36 px high, `radius-pill`.
+- Cmd+L / Ctrl+L switches to `editing`: a 2 px `--accent` outline, an `--accent` caret, the full URL in `ink`, and `↵` on the right.
+- A 28 px link button beside the pill copies the current page URL without opening the address palette. Its icon is 16 px, with a tooltip and an accessible name. It is disabled for pages without an HTTP(S) URL.
+- Copying the address makes the pill tremble once (`zt-tremor`, `dur-tremor`), with no toast.
+- Hide `https://` and `www.` in the resting address.

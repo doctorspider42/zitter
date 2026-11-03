@@ -410,6 +410,37 @@ Notes:
   - Checked on Windows: the preview, Save as PDF, `window.print()`, and a real
     job through Microsoft Print to PDF.
 
+## Media playback and browser controls
+
+Windows protocol launches forward HTTP(S) URLs directly to the running workspace
+window through the native command channel. Both the executable and user-data
+directory must match. This avoids depending on a temporary stock Chromium window
+to deliver the URL; requests arriving during profile loading wait until it is
+ready. The registered `--single-argument %1` command preserves the whole URL.
+
+The Windows development, release, and official GN configurations enable
+`proprietary_codecs` with `ffmpeg_branding = "Chrome"`. These settings provide
+H.264/AAC playback for common MP4 and MOV recordings and enable Chromium's
+platform HEVC support where the device supports decoding it. Existing output
+directories must receive the updated arguments and be rebuilt; installing the
+source overlay alone does not change the codecs in an existing executable.
+
+HTML fullscreen requests use the workspace widget's fullscreen mode. Browser
+chrome and split-pane headers disappear while the requesting page fills the
+window. Esc restores the previous window mode, sidebar preference, and pane
+layout. Peek temporarily hosts its page in the main window and restores the
+preview after fullscreen ends.
+
+F5 reloads the active page on Windows. The refresh icon rotates during loading,
+with a short minimum animation for fast reloads, respecting reduced motion.
+The sidebar address row also offers a link button to copy the current URL.
+The address palette accepts platform clipboard shortcuts; Tab fills the selected
+suggestion's URL without opening it, and Enter opens it.
+
+The auto-hidden sidebar slides over 180 ms. A 28-DIP margin beyond its right edge
+and a 250-ms leave delay keep its resize handle reachable. The sidebar remains
+open during resizing, dragging, and its menus or settings.
+
 ## Status
 
 | Phase | State |

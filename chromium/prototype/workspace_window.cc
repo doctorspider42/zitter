@@ -16,6 +16,10 @@
 #include "chromium/prototype/page_file_access.h"
 #include "content/public/browser/file_select_listener.h"
 #include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/fullscreen_types.h"
+#include "content/public/browser/render_view_host.h"
+#include "content/public/browser/render_widget_host.h"
+#include "third_party/blink/public/mojom/manifest/display_mode.mojom.h"
 #include "chromium/prototype/browser_preferences.h"
 #include "chromium/prototype/link_navigation.h"
 #include "base/task/single_thread_task_runner.h"
@@ -188,14 +192,37 @@ class WorkspaceWebView final : public views::WebView {
   using CreatedHandler = base::RepeatingCallback<void(content::WebContents*, content::WebContents*)>;
   WorkspaceWebView(Profile* profile, KeyHandler handler, OpenHandler open, MenuHandler menu,
                    AdoptHandler adopt, CreatedHandler created, base::RepeatingClosure changed,
-                   base::RepeatingCallback<void(views::WebView*)> interacted)
+                    base::RepeatingCallback<void(views::WebView*)> interacted,
+                    base::RepeatingCallback<void(content::WebContents*, bool)> fullscreen)
       : views::WebView(profile), handler_(std::move(handler)), open_(std::move(open)), menu_(std::move(menu)),
-        adopt_(std::move(adopt)), created_(std::move(created)), changed_(std::move(changed)), interacted_(std::move(interacted)) {}
-  ~WorkspaceWebView() override = default;
+        adopt_(std::move(adopt)), created_(std::move(created)), changed_(std::move(changed)), interacted_(std::move(interacted)), fullscreen_(std::move(fullscreen)) {}
+  ~WorkspaceWebView() override { if (is_fullscreen_) fullscreen_.Run(web_contents(), false); }
   std::array<uint64_t,2> sidebar_identity() const {return {sidebar_identity_.GetHighForSerialization(),sidebar_identity_.GetLowForSerialization()};}
 
  private:
   const base::UnguessableToken sidebar_identity_=base::UnguessableToken::Create();
+  bool CanEnterFullscreenModeForTab(content::RenderFrameHost*) override {
+    return IsDrawn() && GetWidget() && GetWidget()->IsVisible();
+  }
+  void EnterFullscreenModeForTab(content::RenderFrameHost* frame,
+      const blink::mojom::FullscreenOptions&) override {
+    if (!CanEnterFullscreenModeForTab(frame)) return;
+    is_fullscreen_ = true;
+    fullscreen_.Run(GetWebContents(), true);
+  }
+  void ExitFullscreenModeForTab(content::WebContents* page) override {
+    if (!is_fullscreen_) return;
+    is_fullscreen_ = false;
+    fullscreen_.Run(page, false);
+  }
+  bool IsFullscreenForTabOrPending(const content::WebContents*) override { return is_fullscreen_; }
+  blink::mojom::DisplayMode GetDisplayMode(const content::WebContents*) override {
+    return is_fullscreen_ ? blink::mojom::DisplayMode::kFullscreen : blink::mojom::DisplayMode::kBrowser;
+  }
+  content::FullscreenState GetFullscreenState(const content::WebContents*) const override {
+    return {.target_mode = is_fullscreen_ ? content::FullscreenMode::kContent : content::FullscreenMode::kWindowed};
+  }
+  void LoadingStateChanged(content::WebContents*, bool) override { changed_.Run(); }
   content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
       content::WebContents* source,
       const input::NativeWebKeyboardEvent& event) override {
@@ -278,6 +305,8 @@ class WorkspaceWebView final : public views::WebView {
   }
   base::RepeatingClosure changed_;
   base::RepeatingCallback<void(views::WebView*)> interacted_;
+  base::RepeatingCallback<void(content::WebContents*, bool)> fullscreen_;
+  bool is_fullscreen_ = false;
 };
 
 BEGIN_METADATA(WorkspaceWebView)
@@ -660,7 +689,7 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
 #if BUILDFLAG(IS_WIN)
   SetWorkspaceCommandHandler(widget_.get(), base::BindRepeating(
       [](base::WeakPtr<WorkspaceWindow> window, std::string command) { if (window) window->RunExternalCommand(std::move(command)); },
-      weak_factory_.GetWeakPtr()));
+      weak_factory_.GetWeakPtr()), data_directory_);
 #endif
   shell_->Attach(widget_.get(), this);
   widget_->Show();
@@ -688,6 +717,7 @@ WorkspaceWindow::Host::Host(Host&&) noexcept = default;
 WorkspaceWindow::Host& WorkspaceWindow::Host::operator=(Host&&) noexcept = default;
 
 WorkspaceWindow::~WorkspaceWindow() {
+  external_command_timer_.Stop();
   downloads_.reset();
   if (clear_data_dialog_) clear_data_dialog_->Close();
   if (data_remover_) data_remover_->RemoveObserver(this);
@@ -731,7 +761,8 @@ views::WebView* WorkspaceWindow::CreatePage(Profile* profile, views::View* paren
         if (window) window->PreparePage(page, window->WorkspaceForPage(source));
       }, weak_factory_.GetWeakPtr()),
       base::BindRepeating(&WorkspaceWindow::ScheduleShellUpdate, base::Unretained(this)),
-      base::BindRepeating(&WorkspaceWindow::PageFocused, base::Unretained(this))));
+      base::BindRepeating(&WorkspaceWindow::PageFocused, base::Unretained(this)),
+      base::BindRepeating(&WorkspaceWindow::SetPageFullscreen, weak_factory_.GetWeakPtr())));
   view->set_allow_accelerators(true);
   view->SetVisible(false);
   if (owned) view->SetOwnedWebContents(std::move(owned));
@@ -832,9 +863,52 @@ void WorkspaceWindow::ScheduleShellUpdate() {
       }, weak_factory_.GetWeakPtr()));
 }
 
+void WorkspaceWindow::SetPageFullscreen(content::WebContents* page, bool fullscreen) {
+  if (closing_ || !widget_ || !shell_) return;
+  if (fullscreen) {
+    if (fullscreen_page_ && fullscreen_page_.get() != page) fullscreen_page_->ExitFullscreen(true);
+    views::WebView* view = nullptr;
+    for (auto& host : hosts_) for (const auto& tab : host.tabs)
+      if (tab->web_contents() == page) view = tab;
+    if (peek_view_ && peek_contents() == page) {
+      view = peek_view_;
+      auto owned = view->parent()->RemoveChildViewT(view);
+      shell_->content_host()->AddChildView(std::move(owned));
+      shell_->HidePeek();
+    }
+    if (!view) return;
+    PageFocused(view);
+    fullscreen_page_ = page->GetWeakPtr();
+    was_window_fullscreen_ = widget_->IsFullscreen();
+    shell_->SetContentFullscreen(view);
+    view->holder()->SetNativeViewCornerRadii(gfx::RoundedCornersF());
+    widget_->SetFullscreen(true);
+  } else {
+    if (fullscreen_page_.get() != page) return;
+    fullscreen_page_.reset();
+    widget_->SetFullscreen(was_window_fullscreen_);
+    shell_->SetContentFullscreen(nullptr);
+    if (peek_view_ && peek_contents() == page && peek_view_->parent() == shell_->content_host()) {
+      auto owned = shell_->content_host()->RemoveChildViewT(peek_view_.get());
+      shell_->peek_host()->AddChildView(std::move(owned));
+      shell_->ShowPeek(base::UTF8ToUTF16(page->GetVisibleURL().host()));
+    }
+    for (const auto& host : hosts_) if (host.workspace_id == active_id()) {
+      ApplyPanes(host);
+      for (auto* pane : VisiblePanes(host))
+        if (pane->holder()->native_view()) pane->holder()->SetNativeViewCornerRadii(gfx::RoundedCornersF(10));
+    }
+  }
+  widget_->LayoutRootViewIfNecessary();
+  if (page && page->GetPrimaryMainFrame())
+    page->GetPrimaryMainFrame()->GetRenderViewHost()->GetWidget()->SynchronizeVisualProperties();
+}
+
 void WorkspaceWindow::UpdateShell() {
   shell_update_pending_ = false;
   if (closing_ || !widget_) return;
+  if (fullscreen_page_ && fullscreen_page_.get() != contents(active_id()) && fullscreen_page_.get() != peek_contents())
+    fullscreen_page_->ExitFullscreen(true);
   // The find bar belongs to one page: another tab or space ends it.
   if (find_page_ && find_page_ != (peek_contents() ? peek_contents() : contents(active_id()))) shell_->ResetFind();
   ScheduleSessionSave();
@@ -896,6 +970,7 @@ void WorkspaceWindow::UpdateShell() {
       state.active_pane = std::find(host.split.begin(), host.split.end(), host.view) - host.split.begin();
     state.can_go_back = controller.CanGoBack();
     state.can_go_forward = controller.CanGoForward();
+    state.loading = host.view->GetWebContents()->IsLoading();
     // The panel watches the active profile even while closed, so a finished
     // download shows its toast (design: Downloads).
     if (!downloads_) {
@@ -918,8 +993,9 @@ namespace {
 // The page is a rounded card inside the tinted frame. The native view attaches
 // only after the page is shown, so every refresh rounds each visible pane again.
 void RoundPage(views::WebView* view) {
-  if (view && view->holder()->native_view() && view->holder()->GetNativeViewCornerRadii() != gfx::RoundedCornersF(10))
-    view->holder()->SetNativeViewCornerRadii(gfx::RoundedCornersF(10));
+  if (!view || !view->holder()->native_view()) return;
+  const auto corners = gfx::RoundedCornersF(view->web_contents() && view->web_contents()->IsFullscreen() ? 0 : 10);
+  if (view->holder()->GetNativeViewCornerRadii() != corners) view->holder()->SetNativeViewCornerRadii(corners);
 }
 }  // namespace
 void WorkspaceWindow::ShowPage(views::WebView* view) {
@@ -1203,10 +1279,25 @@ content::WebContents* WorkspaceWindow::OpenProfileTab(Profile* profile, const GU
 bool WorkspaceWindow::OpenExternalUrl(const GURL& url) { return OpenLink(url, active_id(), true); }
 bool WorkspaceWindow::RunExternalCommand(std::string command) {
   if (!widget_) return false;
+  const GURL requested_url(command.starts_with("url:") ? command.substr(4) : "");
+  const bool url_command = requested_url.is_valid() && requested_url.SchemeIsHTTPOrHTTPS();
+  if (!url_command && !command.starts_with("space:") && command != "new_tab" && command != "palette") return false;
+  if (!configuration_ready_ || profiles_busy_) {
+    pending_external_commands_.push_back(std::move(command));
+    if (!external_command_timer_.IsRunning())
+      external_command_timer_.Start(FROM_HERE, base::Milliseconds(100), this, &WorkspaceWindow::DrainExternalCommands);
+    return true;
+  }
+  if (closing_) return false;
   widget_->Activate();
+  if (url_command) return OpenExternalUrl(requested_url);
   if (command.starts_with("space:")) return Select(command.substr(6));
   if (command == "new_tab" || command == "palette") return RunShortcut(std::move(command));
   return false;
+}
+void WorkspaceWindow::DrainExternalCommands() {
+  auto commands = std::exchange(pending_external_commands_, {});
+  for (auto& command : commands) RunExternalCommand(std::move(command));
 }
 bool WorkspaceWindow::OpenLink(const GURL& url, std::string source_workspace, bool new_tab, bool split) {
   preconnect_timer_.Stop();
@@ -1880,6 +1971,7 @@ void WorkspaceWindow::RunPageCommand(PageCommand command) {
       if (controller.CanGoForward()) controller.GoForward();
       break;
     case PageCommand::kReload:
+      shell_->AnimateReload();
       controller.Reload(content::ReloadType::NORMAL, true);
       break;
   }
@@ -1918,6 +2010,7 @@ bool WorkspaceWindow::AcceleratorPressed(const ui::Accelerator& accelerator) {
   if (accelerator.key_state() != ui::Accelerator::KeyState::PRESSED) return false;
   if (shell_->CaptureShortcut(accelerator)) return true;
   if (accelerator.modifiers() == 0 && accelerator.key_code() == ui::VKEY_ESCAPE) {
+    if (fullscreen_page_) { fullscreen_page_->ExitFullscreen(true); return true; }
     if (!shell_->CloseOverlays()) {
       if (!peek_view_) return false;
       ClosePeek();
@@ -1926,6 +2019,11 @@ bool WorkspaceWindow::AcceleratorPressed(const ui::Accelerator& accelerator) {
     if (auto* page = contents(active_id())) page->Focus();
     return true;
   }
+#if BUILDFLAG(IS_WIN)
+  if (accelerator.key_code() == ui::VKEY_F5 && accelerator.modifiers() == 0) {
+    RunPageCommand(PageCommand::kReload); return true;
+  }
+#endif
   const auto id = shell_->ShortcutFor(accelerator);
   if (id.empty()) return false;
   consumed_keys_.insert(accelerator.key_code()); suppress_shortcut_char_ = true;
@@ -1935,6 +2033,10 @@ bool WorkspaceWindow::AcceleratorPressed(const ui::Accelerator& accelerator) {
 
 bool WorkspaceWindow::RunShortcut(std::string id) {
   if (id.empty()) return false;
+  if (id == "exit_fullscreen") {
+    if (fullscreen_page_) fullscreen_page_->ExitFullscreen(true);
+    return true;
+  }
   if (id == "copy_url") {
     // The address pill trembles once: the copy's only confirmation (design: AddressPill).
     auto* page = peek_contents() ? peek_contents() : contents(active_id());
@@ -2029,8 +2131,13 @@ content::KeyboardEventProcessingResult WorkspaceWindow::PreHandlePageKeyEvent(
   consumed_keys_.erase(key);
   suppress_shortcut_char_ = false;
   if (event.skip_if_unhandled || (source != contents(active_id()) && source != peek_contents())) return Result::NOT_HANDLED;
-  const bool escape_peek = key == ui::VKEY_ESCAPE && accelerator.modifiers() == 0 && source == peek_contents();
-  const auto action = shell_->ShortcutFor(accelerator);
+  const bool escape_peek = key == ui::VKEY_ESCAPE && accelerator.modifiers() == 0 && source == peek_contents() && !fullscreen_page_;
+  const bool escape_fullscreen = key == ui::VKEY_ESCAPE && accelerator.modifiers() == 0 && fullscreen_page_;
+  auto action = shell_->ShortcutFor(accelerator);
+#if BUILDFLAG(IS_WIN)
+  if (key == ui::VKEY_F5 && accelerator.modifiers() == 0) action = "reload";
+#endif
+  if (escape_fullscreen) action = "exit_fullscreen";
   if (action.empty() && !escape_peek) return Result::NOT_HANDLED;
   consumed_keys_.insert(key); suppress_shortcut_char_ = true;
   // All actions are deferred: close/restore/sleep may destroy the source page.

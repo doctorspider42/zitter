@@ -110,6 +110,7 @@ struct ShellState {
   std::vector<size_t> split_tabs;  // Group members in pane order.
   bool can_go_back = false;
   bool can_go_forward = false;
+  bool loading = false;
 };
 
 class SidebarMetal;
@@ -242,6 +243,10 @@ class WorkspaceShell final : public ui::EventHandler,
   const std::vector<PaletteResult>& search_results() const { return search_results_; }
   const std::vector<PaletteResult>& suggestions() const { return suggestions_; }
   void ShowSidebar();
+  void SetContentFullscreen(views::View* page);
+  void AnimateReload();
+  bool reload_animating_for_testing() const { return reload_timer_.IsRunning(); }
+  views::View* copy_url_button_for_testing() const { return copy_url_button_; }
   void ToggleSidebar();
   // The header's sidebar button pins and unpins the panel.
   void TogglePinned();
@@ -1009,6 +1014,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> profile_name_ = nullptr;
   std::shared_ptr<SidebarNodeGraphState> chrome_node_graph_;
   std::array<raw_ptr<views::View>, 3> nav_buttons_ = {};
+  raw_ptr<views::View> copy_url_button_ = nullptr;
   raw_ptr<views::View> sidebar_footer_=nullptr;
   raw_ptr<PanelViewport> workspace_scroll_=nullptr;
   raw_ptr<views::View> workspace_dots_ = nullptr;
@@ -1138,6 +1144,22 @@ class WorkspaceShell final : public ui::EventHandler,
   int sidebar_width_ = 248;
   int sidebar_resize_start_ = 248;
   bool sidebar_resizing_ = false;
+  void HideSidebar();
+  void PollSidebar();
+  void AnimateSidebar(bool show);
+  void StepSidebarAnimation();
+  base::RepeatingTimer sidebar_hover_timer_;
+  base::RepeatingTimer sidebar_slide_timer_;
+  base::TimeTicks sidebar_left_at_;
+  base::TimeTicks sidebar_slide_started_;
+  double sidebar_slide_from_ = 0;
+  double sidebar_slide_value_ = 0;
+  bool sidebar_slide_show_ = false;
+  bool sidebar_hover_armed_ = false;
+  bool content_fullscreen_ = false;
+  base::RepeatingTimer reload_timer_;
+  base::TimeTicks reload_started_;
+  void StepReloadAnimation();
   bool sidebar_width_dirty_ = false;
   bool pinned_ = true;
   bool new_tab_ = false;

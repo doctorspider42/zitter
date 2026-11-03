@@ -15,14 +15,17 @@
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
+#include "base/hash/sha1.h"
 #include "base/no_destructor.h"
 #include "base/path_service.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "chrome/common/chrome_switches.h"
 #include "chromium/prototype/i18n.h"
 #include "chromium/prototype/workspace_frame_win.h"
+#include "url/gurl.h"
 
 namespace zitter::prototype {
 namespace {
@@ -132,12 +135,14 @@ std::wstring ImagePath(DWORD process_id) {
 
 struct Search {
   std::wstring exe;
+  std::wstring profile_property;
   HWND found = nullptr;
 };
 
 BOOL CALLBACK FindTarget(HWND hwnd, LPARAM data) {
   auto* search = reinterpret_cast<Search*>(data);
   if (!::GetPropW(hwnd, kWorkspaceCommandProperty)) return TRUE;
+  if (!::GetPropW(hwnd, search->profile_property.c_str())) return TRUE;
   DWORD process_id = 0;
   ::GetWindowThreadProcessId(hwnd, &process_id);
   if (::CompareStringOrdinal(ImagePath(process_id).c_str(), -1, search->exe.c_str(), -1, TRUE) != CSTR_EQUAL) return TRUE;
@@ -155,22 +160,38 @@ void UpdateJumpList(std::vector<JumpListSpace> spaces) {
 }
 
 bool ForwardCommandToRunningZitter(const base::CommandLine& command_line) {
-  const std::wstring command = command_line.GetSwitchValueNative(kZitterCommandSwitch);
-  if (command.empty()) return false;
+  std::vector<std::string> commands;
+  if (auto command = command_line.GetSwitchValueNative(kZitterCommandSwitch); !command.empty()) {
+    commands.push_back(base::WideToUTF8(command));
+  } else {
+    for (const auto& arg : command_line.GetArgs()) {
+      const GURL url(base::WideToUTF8(arg));
+      if (url.is_valid() && url.SchemeIsHTTPOrHTTPS()) commands.push_back("url:" + url.spec());
+    }
+  }
+  if (commands.empty()) return false;
+  for (const auto& command : commands) if (command.size() > kMaxWorkspaceCommandBytes) return false;
   base::FilePath exe;
   if (!base::PathService::Get(base::FILE_EXE, &exe)) return false;
-  Search search{exe.value()};
+  Search search{exe.value(), WorkspaceCommandProfileProperty(command_line.GetSwitchValuePath(switches::kUserDataDir))};
   ::EnumWindows(&FindTarget, reinterpret_cast<LPARAM>(&search));
   if (!search.found) return false;
   DWORD process_id = 0;
   ::GetWindowThreadProcessId(search.found, &process_id);
   // Let the running Zitter come to the front, as Chrome's process singleton does.
   ::AllowSetForegroundWindow(process_id);
-  const std::string utf8 = base::WideToUTF8(command);
-  COPYDATASTRUCT data{kWorkspaceCommandMessage, static_cast<DWORD>(utf8.size()), const_cast<char*>(utf8.data())};
-  DWORD_PTR result = 0;
-  return ::SendMessageTimeoutW(search.found, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&data), SMTO_ABORTIFHUNG, 5000,
-                               &result) &&
-         result;
+  for (const auto& command : commands) {
+    COPYDATASTRUCT data{kWorkspaceCommandMessage, static_cast<DWORD>(command.size()), const_cast<char*>(command.data())};
+    DWORD_PTR result = 0;
+    if (!::SendMessageTimeoutW(search.found, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&data), SMTO_ABORTIFHUNG, 5000, &result) || !result)
+      return false;
+  }
+  return true;
+}
+std::wstring WorkspaceCommandProfileProperty(const base::FilePath& data_directory) {
+  const auto normalized = data_directory.NormalizePathSeparators().StripTrailingSeparators();
+  std::wstring lower = normalized.value();
+  if (!lower.empty()) ::CharLowerBuffW(lower.data(), static_cast<DWORD>(lower.size()));
+  return L"ZitterWorkspaceProfile." + base::ASCIIToWide(base::HexEncode(base::SHA1HashString(base::WideToUTF8(lower))));
 }
 }  // namespace zitter::prototype

@@ -5,6 +5,7 @@
 #include "base/i18n/rtl.h"
 #include "build/build_config.h"
 #if BUILDFLAG(IS_WIN)
+#include "chromium/prototype/jump_list_win.h"
 #include "base/test/scoped_feature_list.h"
 #include "sandbox/policy/features.h"
 #if BUILDFLAG(IS_WIN)
@@ -18,6 +19,8 @@
 #include "chromium/prototype/sidebar_metal.h"
 #include "ui/views/view_targeter_delegate.h"
 #include "ui/views/controls/focus_ring.h"
+#include "ui/views/focus/focus_manager.h"
+#include "ui/gfx/animation/animation.h"
 #include "ui/views/layout/layout_provider.h"
 #include "ui/views/bubble/bubble_dialog_model_host.h"
 #include "ui/views/window/dialog_client_view.h"
@@ -3663,6 +3666,218 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CommandCenterSearchAndDispatch
 
 // „Kopiuj adres strony” puts the address on the clipboard (the pill trembles,
 // design: AddressPill); pages without a web address offer no copy.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AddressTabCompletesSelectionWithoutNavigating) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->OpenAddress(true);
+  SetPaletteQuery(u"completion-target");
+  PaletteResult result;
+  result.title = u"Completion target";
+  result.url = embedded_test_server()->GetURL("/storage_probe.html?completed");
+  shell->SetSearchResults(u"completion-target", "work-profile", {result});
+  const auto original = window_->contents("work")->GetLastCommittedURL();
+  const auto count = window_->tab_count("work");
+  ui::KeyEvent down(ui::EventType::kKeyPressed, ui::VKEY_DOWN, 0);
+  for (size_t i = 0; i < shell->suggestions().size(); ++i) {
+    if (shell->suggestions()[shell->palette_selection_for_testing()].url == result.url) break;
+    ASSERT_TRUE(shell->HandleAddressKey(down));
+  }
+  ASSERT_EQ(result.url, shell->suggestions()[shell->palette_selection_for_testing()].url);
+  ui::KeyEvent tab(ui::EventType::kKeyPressed, ui::VKEY_TAB, 0);
+  shell->address_input()->RequestFocus();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->address_input()->HasFocus(); }));
+  auto* focus = shell->address_input()->view()->GetFocusManager();
+  EXPECT_TRUE(focus->OnKeyEvent(tab));
+  EXPECT_EQ(shell->address_input()->view(), focus->GetFocusedView());
+  ASSERT_TRUE(shell->address_input()->view()->OnKeyPressed(tab));
+  EXPECT_EQ(base::UTF8ToUTF16(result.url.spec()), shell->address_input()->GetText());
+  EXPECT_EQ(gfx::Range(shell->address_input()->GetText().size()), shell->address_input()->GetSelectedRange());
+  EXPECT_TRUE(shell->address_visible());
+  EXPECT_EQ(count, window_->tab_count("work"));
+  EXPECT_EQ(original, window_->contents("work")->GetLastCommittedURL());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AddressClipboardUsesPlatformShortcuts) {
+  auto previous = ui::Clipboard::TakeForCurrentThread();
+  ui::TestClipboard::CreateForCurrentThread();
+  base::ScopedClosureRunner restore(base::BindOnce([](std::unique_ptr<ui::Clipboard> old) {
+    ui::Clipboard::DestroyClipboardForCurrentThread();
+    if (old) ui::Clipboard::SetClipboardForCurrentThread(std::move(old));
+  }, std::move(previous)));
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->OpenAddress(true);
+  auto* field = shell->address_input();
+  field->RequestFocus();
+  SetPaletteQuery(u"https://example.com/clipboard");
+#if BUILDFLAG(IS_MAC)
+  constexpr int primary = ui::EF_COMMAND_DOWN;
+#else
+  constexpr int primary = ui::EF_CONTROL_DOWN;
+#endif
+  auto key = [&](ui::KeyboardCode code) {
+    ui::KeyEvent event(ui::EventType::kKeyPressed, code, primary);
+    return field->view()->OnKeyPressed(event);
+  };
+  ASSERT_TRUE(key(ui::VKEY_A));
+  ASSERT_TRUE(key(ui::VKEY_C));
+  base::test::TestFuture<std::u16string> copied;
+  ui::Clipboard::GetForCurrentThread()->ReadText(ui::ClipboardBuffer::kCopyPaste, std::nullopt, copied.GetCallback());
+  EXPECT_EQ(u"https://example.com/clipboard", copied.Get());
+  ASSERT_TRUE(key(ui::VKEY_X));
+  EXPECT_TRUE(field->GetText().empty());
+  ASSERT_TRUE(key(ui::VKEY_V));
+  ASSERT_TRUE(base::test::RunUntil([&] { return field->GetText() == u"https://example.com/clipboard"; }));
+  EXPECT_TRUE(shell->address_visible());
+#if !BUILDFLAG(IS_MAC)
+  ui::KeyEvent altgr(ui::EventType::kKeyPressed, ui::VKEY_A, ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN);
+  EXPECT_FALSE(field->view()->OnKeyPressed(altgr));
+  EXPECT_EQ(u"https://example.com/clipboard", field->GetText());
+  field->input_client()->InsertChar(ui::KeyEvent::FromCharacter(u'ą', ui::VKEY_A, ui::DomCode::US_A, ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN));
+  EXPECT_EQ(u"https://example.com/clipboardą", field->GetText());
+#endif
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, VideoFullscreenFillsWindowAndEscapeRestoresChrome) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->SetPinned(true);
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html?fullscreen");
+  ASSERT_TRUE(window_->NavigateFromBar(url, false));
+  auto* page = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(page));
+  ASSERT_TRUE(content::ExecJs(page, "document.body.innerHTML = '<video id=video controls></video>'; video.requestFullscreen();"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->widget()->IsFullscreen(); }));
+  ASSERT_EQ(true, content::EvalJs(page, "!!document.fullscreenElement"));
+  EXPECT_FALSE(shell->sidebar_visible());
+  EXPECT_EQ(shell->content_host()->parent()->GetLocalBounds(), shell->content_host()->bounds());
+  EXPECT_TRUE(window_->widget()->GetFocusManager()->ProcessAccelerator(ui::Accelerator(ui::VKEY_ESCAPE, 0)));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->widget()->IsFullscreen(); }));
+  EXPECT_EQ(false, content::EvalJs(page, "!!document.fullscreenElement"));
+  EXPECT_TRUE(shell->sidebar_visible());
+  EXPECT_GT(shell->content_host()->y(), 0);
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PeekFullscreenRestoresPreviewWithoutAddingATab) {
+  ASSERT_TRUE(window_->OpenPeek(embedded_test_server()->GetURL("/storage_probe.html?peek-fullscreen")));
+  auto* page = window_->peek_contents();
+  ASSERT_TRUE(content::WaitForLoadStop(page));
+  const auto count = window_->tab_count("work");
+  ASSERT_TRUE(content::ExecJs(page, "document.documentElement.requestFullscreen()"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->widget()->IsFullscreen(); }));
+  EXPECT_FALSE(window_->shell()->peek_widget()->IsVisible());
+  EXPECT_TRUE(window_->widget()->GetFocusManager()->ProcessAccelerator(ui::Accelerator(ui::VKEY_ESCAPE, 0)));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->widget()->IsFullscreen(); }));
+  EXPECT_EQ(page, window_->peek_contents());
+  EXPECT_TRUE(window_->shell()->peek_widget()->IsVisible());
+  EXPECT_EQ(count, window_->tab_count("work"));
+  EXPECT_EQ(false, content::EvalJs(page, "!!document.fullscreenElement"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FullscreenTabChangePreservesSplitLayout) {
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html?split-a"), false));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html?split-b"), true));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  ASSERT_TRUE(window_->SplitTab(0));
+  auto* page = window_->contents("work");
+  const double ratio = window_->split_ratio();
+  ASSERT_TRUE(content::ExecJs(page, "document.documentElement.requestFullscreen()"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->widget()->IsFullscreen(); }));
+  window_->SelectTab(1);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->widget()->IsFullscreen(); }));
+  EXPECT_TRUE(window_->split());
+  EXPECT_EQ(ratio, window_->split_ratio());
+  EXPECT_EQ(false, content::EvalJs(page, "!!document.fullscreenElement"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, H264AacVideoDecodesFrames) {
+  base::FilePath source;
+  ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &source));
+  std::string movie;
+  ASSERT_TRUE(base::ReadFileToString(source.AppendASCII("media/test/data/bear.mp4"), &movie));
+  net::EmbeddedTestServer media_server;
+  media_server.RegisterRequestHandler(base::BindRepeating([](const std::string& movie,
+      const net::test_server::HttpRequest& request) -> std::unique_ptr<net::test_server::HttpResponse> {
+    if (request.relative_url != "/quicktime.mov") return nullptr;
+    auto response = std::make_unique<net::test_server::BasicHttpResponse>();
+    response->set_content_type("video/quicktime");
+    response->set_content(movie);
+    return response;
+  }, movie));
+  media_server.ServeFilesFromSourceDirectory("media/test/data");
+  ASSERT_TRUE(media_server.Start());
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html?video"), false));
+  auto* page = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(page));
+  EXPECT_NE("", content::EvalJs(page, R"(document.createElement('video').canPlayType('video/mp4; codecs="avc1.42E01E, mp4a.40.2"'))"));
+  for (const char* path : {"/bear.mp4", "/quicktime.mov"}) {
+    SCOPED_TRACE(path);
+    EXPECT_EQ(true, content::EvalJs(page, content::JsReplace(R"(
+    new Promise((resolve, reject) => {
+      const video = document.createElement('video');
+      video.muted = true;
+      video.style.cssText = 'position:fixed;top:0;left:0;width:320px;height:240px';
+      video.src = $1;
+      document.body.append(video);
+      let poll, timeout;
+      const finish = error => {
+        clearInterval(poll); clearTimeout(timeout); video.pause();
+        error ? reject(error) : resolve(true);
+      };
+      video.onerror = () => finish(new Error('Media error ' + video.error.code));
+      timeout = setTimeout(() => finish(new Error('No decoded video frame')), 10000);
+      poll = setInterval(() => {
+        if (video.readyState >= 2 && video.videoWidth > 0 && video.getVideoPlaybackQuality().totalVideoFrames > 0)
+          finish();
+      }, 25);
+      video.play().catch(finish);
+    })
+    )", media_server.GetURL(path))));
+  }
+}
+
+#if BUILDFLAG(IS_WIN)
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WindowsExternalLinksForwardToMatchingProfile) {
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html?external=a%20b%22c&next=%2B#fragment");
+  const auto count = window_->tab_count("work");
+  base::CommandLine command(base::CommandLine::NO_PROGRAM);
+  command.AppendSwitchPath(switches::kUserDataDir, g_browser_process->profile_manager()->user_data_dir());
+  command.AppendArg(url.spec());
+  ASSERT_TRUE(ForwardCommandToRunningZitter(command));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return window_->tab_count("work") == count + 1 && window_->contents("work")->GetVisibleURL() == url;
+  }));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  EXPECT_EQ(url, window_->contents("work")->GetLastCommittedURL());
+  command.RemoveSwitch(switches::kUserDataDir);
+  command.AppendSwitchPath(switches::kUserDataDir, g_browser_process->profile_manager()->user_data_dir().AppendASCII("different-root"));
+  EXPECT_FALSE(ForwardCommandToRunningZitter(command));
+  EXPECT_EQ(count + 1, window_->tab_count("work"));
+  EXPECT_FALSE(window_->RunExternalCommand("url:javascript:alert(1)"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, F5ReloadsPageAndAnimatesRefresh) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html?f5"), false));
+  auto* page = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(page));
+  ASSERT_TRUE(content::ExecJs(page, "window.reloadSentinel = true"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !shell->reload_animating_for_testing(); }));
+  content::TestNavigationObserver reload(page);
+  input::NativeWebKeyboardEvent event(blink::WebInputEvent::Type::kRawKeyDown, 0, base::TimeTicks::Now());
+  event.windows_key_code = ui::VKEY_F5;
+  event.dom_code = static_cast<int>(ui::DomCode::F5);
+  event.skip_if_unhandled = false;
+  page->GetPrimaryMainFrame()->GetRenderWidgetHost()->ForwardKeyboardEvent(event);
+  if (gfx::Animation::ShouldRenderRichAnimation())
+    ASSERT_TRUE(base::test::RunUntil([&] { return shell->reload_animating_for_testing(); }));
+  reload.Wait();
+  EXPECT_EQ("undefined", content::EvalJs(page, "typeof window.reloadSentinel"));
+}
+#endif
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CommandCenterCopiesThePageAddress) {
   ui::TestClipboard::CreateForCurrentThread();
   ASSERT_TRUE(window_->Select("work"));
@@ -3676,6 +3891,14 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CommandCenterCopiesThePageAddr
   base::test::TestFuture<std::u16string> text;
   ui::Clipboard::GetForCurrentThread()->ReadText(ui::ClipboardBuffer::kCopyPaste, std::nullopt, text.GetCallback());
   EXPECT_EQ(base::UTF8ToUTF16(url.spec()), text.Get());
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html?copy-button"), false));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  auto* button = window_->shell()->copy_url_button_for_testing();
+  ASSERT_TRUE(button);
+  ActivateSidebarRow(button);
+  base::test::TestFuture<std::u16string> button_text;
+  ui::Clipboard::GetForCurrentThread()->ReadText(ui::ClipboardBuffer::kCopyPaste, std::nullopt, button_text.GetCallback());
+  EXPECT_EQ(base::UTF8ToUTF16(window_->contents("work")->GetLastCommittedURL().spec()), button_text.Get());
   ui::Clipboard::DestroyClipboardForCurrentThread();
 }
 
@@ -3819,6 +4042,50 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ChromiumHistoryAndCommandPalet
   window_->ActivatePaletteResult(*target);
   EXPECT_EQ("work", window_->active_id());
   EXPECT_EQ(work_url, window_->contents("work")->GetVisibleURL());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DisablingPasswordSavingDismissesAndSuppressesOffers) {
+  const auto url = embedded_test_server()->GetURL("/login_probe.html");
+  auto* page = window_->contents("work");
+  auto* services = PageServices::FromWebContents(page);
+  ASSERT_TRUE(services);
+  auto submit = [&] {
+    ASSERT_TRUE(content::NavigateToURL(page, url));
+    ASSERT_TRUE(content::ExecJs(page,
+        "document.getElementById('username').focus()"));
+    for (char16_t letter : std::u16string(u"alice")) TypePageCharacter(page, letter);
+    ASSERT_TRUE(content::ExecJs(page,
+        "document.getElementById('password').focus()"));
+    for (char16_t letter : std::u16string(u"synthetic-47")) TypePageCharacter(page, letter);
+    ASSERT_TRUE(content::ExecJs(page,
+        "document.getElementById('login').requestSubmit()"));
+    ASSERT_TRUE(content::WaitForLoadStop(page));
+  };
+  ASSERT_TRUE(window_->WritePreference("save_passwords", 1));
+  submit();
+  ASSERT_TRUE(base::test::RunUntil([&] { return services->password_prompt(); }));
+  // A setting change must revoke an already pending save, without navigation.
+  ASSERT_TRUE(window_->WritePreference("save_passwords", 0));
+  EXPECT_FALSE(services->password_prompt());
+  EXPECT_FALSE(work_->GetPrefs()->GetBoolean(password_manager::prefs::kCredentialsEnableService));
+  EXPECT_TRUE(personal_->GetPrefs()->GetBoolean(password_manager::prefs::kCredentialsEnableService));
+  submit();
+  // Allow the asynchronous password parser and save callback to finish.
+  base::test::TestFuture<void> settled;
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+      FROM_HERE, settled.GetCallback(), base::Seconds(1));
+  ASSERT_TRUE(settled.Wait());
+  EXPECT_FALSE(services->password_prompt());
+  auto store = ProfilePasswordStoreFactory::GetForProfile(work_, ServiceAccessType::EXPLICIT_ACCESS);
+  ASSERT_TRUE(store);
+  PasswordReader reader;
+  store->GetAllLogins(reader.weak_factory.GetWeakPtr());
+  auto rows = reader.ready.Take();
+  ASSERT_TRUE(rows.has_value());
+  EXPECT_TRUE(rows->empty());
+  ASSERT_TRUE(window_->WritePreference("save_passwords", 1));
+  submit();
+  ASSERT_TRUE(base::test::RunUntil([&] { return services->password_prompt(); }));
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ChromiumPasswordSaveAndFill) {
@@ -7169,10 +7436,14 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, AddressAndWorkspaceHeading
   for (int width : {200, 480}) {
     shell->ResizeSidebar(width - shell->sidebar_width(), true);
     if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&] {
-      return shell->metal_sidebar_screen_bounds_for_testing().width() == pill->width();
+      return shell->metal_sidebar_screen_bounds_for_testing().width() == pill->parent()->width();
     }));
-    if(MetalPresents())EXPECT_EQ(pill->GetBoundsInScreen().origin(), shell->metal_sidebar_screen_bounds_for_testing().origin());
-    EXPECT_EQ(shell->tab_list_view()->parent()->width(), pill->width());
+    if(MetalPresents())EXPECT_EQ(pill->parent()->GetBoundsInScreen().origin(), shell->metal_sidebar_screen_bounds_for_testing().origin());
+    auto* copy = shell->copy_url_button_for_testing();
+    ASSERT_TRUE(copy);
+    EXPECT_EQ(pill->parent(), copy->parent());
+    EXPECT_EQ(pill->parent()->width(), pill->width() + copy->width() + 2);
+    EXPECT_EQ(pill->GetBoundsInScreen().CenterPoint().y(), copy->GetBoundsInScreen().CenterPoint().y());
   }
   for (auto theme : {ThemeMode::kDark, ThemeMode::kLight}) {
     const auto before = shell->metal_sidebar_frame_count();

@@ -14,3 +14,7 @@ v8_symbol_level = 0
 target_cpu = "x64"
 use_remoteexec = false
 use_siso = false
+
+# Decode common MP4/MOV media (H.264/AAC and platform HEVC).
+proprietary_codecs = true
+ffmpeg_branding = "Chrome"

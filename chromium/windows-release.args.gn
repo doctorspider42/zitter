@@ -12,3 +12,6 @@ target_cpu = "x64"
 chrome_pgo_phase = 0
 use_remoteexec = false
 use_siso = false
+# Decode common MP4/MOV media (H.264/AAC and platform HEVC).
+proprietary_codecs = true
+ffmpeg_branding = "Chrome"

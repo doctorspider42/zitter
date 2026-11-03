@@ -91,9 +91,6 @@ int main(int argc, const char** argv) {
   auto* command = base::CommandLine::ForCurrentProcess();
   if (!command->HasSwitch(switches::kProcessType)) {
 #if BUILDFLAG(IS_WIN)
-    // A jump list entry while Zitter runs: that window takes the command and
-    // this process ends before Chromium starts.
-    if (zitter::prototype::ForwardCommandToRunningZitter(*command)) return 0;
     // The design fonts (Fonts\ beside zitter.exe) join the browser's font
     // collection before gfx creates it; macOS activates them from the bundle.
     // Web pages never see them.
@@ -117,6 +114,11 @@ int main(int argc, const char** argv) {
     zitter::ConfigureNetworkPolicy(*command);
     if (!command->HasSwitch(switches::kUserDataDir))
       command->AppendSwitchPath(switches::kUserDataDir, DefaultDataDirectory());
+#if BUILDFLAG(IS_WIN)
+    // Hand external URLs and jump-list commands directly to the matching
+    // workspace window, before Chromium's stock-window startup can consume them.
+    if (zitter::prototype::ForwardCommandToRunningZitter(*command)) return 0;
+#endif
 #if !BUILDFLAG(IS_WIN)
     // Chrome initializes services/profiles, but only our Views window is opened.
     command->AppendSwitch(switches::kNoStartupWindow);

@@ -91,7 +91,7 @@ void Runtime::WindowReady() {
 #else
     GURL url(arg);
 #endif
-    if (url.SchemeIsHTTPOrHTTPS()) { window_->OpenExternalUrl(url); break; }
+    if (url.SchemeIsHTTPOrHTTPS()) window_->OpenExternalUrl(url);
   }
   window_->widget()->Activate();
 #if BUILDFLAG(IS_WIN)

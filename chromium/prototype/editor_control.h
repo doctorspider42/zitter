@@ -27,6 +27,7 @@ class EditorControl {
   virtual void SelectRange(const gfx::Range& range)=0;
   virtual ui::TextInputClient* input_client()=0;
   virtual void SetReadOnly(bool value)=0;
+  virtual void SetTabCompletionEnabled(bool enabled)=0;
   virtual void SetPresentation(int font_size,float inset,bool framed,std::optional<SkColor> fill)=0;
   // User commits (including same-text insertion): resets/preedit/cancel are silent.
   // The domain reads current text in its callback; no borrowed text survives it.

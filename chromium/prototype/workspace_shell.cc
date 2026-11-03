@@ -314,6 +314,7 @@ SkColor Tone(const views::View* view, SkColor role) {
   }
 }
 SkColor Hairline(const views::View* view) { return Palette(view).line; }
+DEFINE_UI_CLASS_PROPERTY_KEY(int, kReloadAngle, 0)
 SkColor HoverWash(const views::View* view) { return Palette(view).bg_hover; }
 SkColor Mix(SkColor a, SkColor b, int percent_a) {
   auto channel = [&](U8CPU x, U8CPU y) { return (x * percent_a + y * (100 - percent_a)) / 100; };
@@ -575,7 +576,7 @@ class SidebarDivider final : public views::View {
  public:
   SidebarDivider(){GetViewAccessibility().SetIsIgnored(true);}
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(0,17);}
-  void OnPaint(gfx::Canvas* canvas) override{canvas->FillRect(gfx::Rect(12,8,std::max(0,width()-24),1),Hairline(this));}
+  void OnPaint(gfx::Canvas* canvas) override{canvas->FillRect(gfx::Rect(12,8,std::max(0,width()-24),2),Palette(this).line_strong);}
 };
 BEGIN_METADATA(SidebarDivider)
 END_METADATA
@@ -602,9 +603,16 @@ void PaintGlyphControl(views::View* view,ControlGlyph glyph,const gfx::VectorIco
     }
     const auto center = bounds.CenterPoint();
     switch (glyph) {
-      case ControlGlyph::kVector:
+      case ControlGlyph::kVector: {
+        gfx::ScopedCanvas saved(canvas);
+        if (icon == &vector_icons::kReloadCustomIcon && view->GetProperty(kReloadAngle)) {
+          canvas->Translate(gfx::Vector2d(center.x(), center.y()));
+          canvas->sk_canvas()->rotate(view->GetProperty(kReloadAngle));
+          canvas->Translate(gfx::Vector2d(-center.x(), -center.y()));
+        }
         PaintIcon(canvas, *icon, bounds, 16, ink);
         break;
+      }
       case ControlGlyph::kSidebar: {
         const gfx::Rect frame(center.x() - 8, center.y() - 7, 16, 14);
         StrokeRound(canvas, frame, 3, ink);
@@ -722,7 +730,8 @@ sidebar::Item GlyphSceneData(views::View* view,ControlGlyph glyph,const gfx::Vec
   item.glyph=glyph==GlyphButton::Glyph::kSidebar ? 0 : glyph==GlyphButton::Glyph::kDot ? 1 : glyph==GlyphButton::Glyph::kMore ? 6
       : icon==&vector_icons::kArrowBackIcon ? 3 : icon==&vector_icons::kArrowForwardIcon ? 4
       : icon==&vector_icons::kReloadCustomIcon ? 5 : icon==&vector_icons::kCloseSmallIcon ? 7 : icon==&vector_icons::kSearchIcon ? 8
-      : icon==&vector_icons::kAdd2Icon ? 9 : 2;
+       : icon==&vector_icons::kAdd2Icon ? 9 : icon==&vector_icons::kLinkIcon ? 10 : 2;
+  if (item.glyph == 5) item.detail_font_size = view->GetProperty(kReloadAngle);
   item.active=on; item.focused=focused; item.focus=Palette(view).focus;
   item.hovered=hovered;
   item.ink=Tone(view,!view->GetEnabledInViewsSubtree() ? kDisabled : item.glyph==1 ? item.active || item.hovered ? kInk : kMuted : item.hovered ? kInk : kSubtle);
@@ -2055,7 +2064,7 @@ class PaletteText final : public views::View {
     sidebar::Item item{};item.kind=15;item.glyph=kind_;item.x=rect.x();item.y=rect.y();item.width=rect.width();item.height=rect.height();item.clip={clip.x(),clip.y(),clip.width(),clip.height()};
     item.title=base::UTF16ToUTF8(text_);item.title_width=text_width();item.font_size=font_.GetFontSize();item.font_height=font_.GetHeight();item.ink=Tone(this,kind_==2?kError:kMuted);item.badge=Hairline(this);return item;
   }
-  // The footer (kind 1): `bg-base` under a `line`, then three shortcuts, each a
+  // The footer (kind 1): `bg-base` under a `line`, then four shortcuts, each a
   // row of Kbd keys and a verb in `label`.
   std::vector<sidebar::Item> SceneItems(gfx::RectF rect,gfx::RectF clip) const {
     if(kind_!=1)return {SceneItem(rect,clip)};
@@ -2064,10 +2073,10 @@ class PaletteText final : public views::View {
     sidebar::Item line{};line.kind=14;line.x=rect.x();line.y=rect.y();line.width=rect.width();line.height=1;line.fill=p.line;line.clip=c;items.push_back(line);
     float x=rect.x()+18;const float cy=rect.y()+rect.height()/2;
 #if BUILDFLAG(IS_MAC)
-    const std::array<std::pair<std::vector<std::u16string>,std::u16string>,3> hints{{{{u"↑",u"↓"},T(u"wybierz")},{{u"↵"},T(u"otwórz")},{{u"esc"},T(u"zamknij")}}};
+    const std::array<std::pair<std::vector<std::u16string>,std::u16string>,4> hints{{{{u"↑",u"↓"},T(u"wybierz")},{{u"↵"},T(u"otwórz")},{{u"tab"},T(u"uzupełnij")},{{u"esc"},T(u"zamknij")}}};
 #else
     // Design: Teksty i skróty. Keys are words outside macOS.
-    const std::array<std::pair<std::vector<std::u16string>,std::u16string>,3> hints{{{{u"↑",u"↓"},T(u"wybierz")},{{u"Enter"},T(u"otwórz")},{{u"Esc"},T(u"zamknij")}}};
+    const std::array<std::pair<std::vector<std::u16string>,std::u16string>,4> hints{{{{u"↑",u"↓"},T(u"wybierz")},{{u"Enter"},T(u"otwórz")},{{u"Tab"},T(u"uzupełnij")},{{u"Esc"},T(u"zamknij")}}};
 #endif
     for(const auto& [keys,word]:hints){
       for(const auto& key:keys){sidebar::Item k{};k.kind=30;k.title=base::UTF16ToUTF8(key);k.width=std::max(18.f,gfx::GetStringWidth(key,DesignFont(3,11,500,false))+10.f);k.height=18;k.x=x;k.y=cy-9;k.fill=p.bg_hover;k.edge=p.line;k.ink=p.ink_muted;k.clip=c;items.push_back(k);x+=k.width+2;}
@@ -2761,6 +2770,7 @@ class SidebarView final : public views::View {
   void OnMouseExited(const ui::MouseEvent& event) override {
     leave_.Run(GetBoundsInScreen().Contains(display::Screen::Get()->GetCursorScreenPoint()),event.IsLeftMouseButton());
   }
+  void OnMouseEntered(const ui::MouseEvent& event) override { leave_.Run(true, event.IsLeftMouseButton()); }
   void Layout(PassKey) override {
     LayoutSuperclass<views::View>(this);
     if (grip) {
@@ -3077,6 +3087,12 @@ class PaneHost final : public views::View, public views::ResizeAreaDelegate {
   views::View* divider(size_t index=0) const{return index<dividers_.size()?dividers_[index].get():nullptr;}
   ResizeHandle* divider_handle(size_t index=0) const{return index<handles_.size()?handles_[index].get():nullptr;}
   size_t pane_count() const{return panes_.size();}
+  void SetFullscreen(views::View* page) {
+    fullscreen_ = page;
+    if (page) ReorderChildView(page, children().size() - 1);
+    else ReorderChildView(outline_, children().size() - 1);
+    InvalidateLayout();
+  }
   void SetPanes(std::vector<views::View*> panes, std::vector<double> weights, bool vertical) {
     if (panes.size() > kMaxSplitPanes) panes.resize(kMaxSplitPanes);
     if (panes.size() < 2) weights.clear();
@@ -3096,6 +3112,14 @@ class PaneHost final : public views::View, public views::ResizeAreaDelegate {
     painted_.Run();
   }
   void Layout(PassKey) override {
+    const bool split = !fullscreen_ && panes_.size() >= 2;
+    for (size_t i = 0; i < bars_.size(); ++i) bars_[i]->SetVisible(split && i < panes_.size());
+    for (size_t i = 0; i < dividers_.size(); ++i) dividers_[i]->SetVisible(split && i + 1 < panes_.size());
+    outline_->SetVisible(!fullscreen_);
+    if (fullscreen_) {
+      fullscreen_->SetBoundsRect(GetLocalBounds());
+      LayoutSuperclass<views::View>(this); painted_.Run(); return;
+    }
     const auto g=sidebar::pane_host_layout(width(),height(),WeightSlice(),vertical_);
     auto set=[](views::View* view,const sidebar::Rect& r){if(view)view->SetBounds(r.x,r.y,r.width,r.height);};
     for(size_t i=0;i<panes_.size()&&i<g.pages.size();++i)set(panes_[i],g.pages[i]);
@@ -3131,6 +3155,7 @@ class PaneHost final : public views::View, public views::ResizeAreaDelegate {
   std::array<raw_ptr<ResizeHandle>, kMaxSplitPanes - 1> handles_ = {};
   std::array<raw_ptr<PaneBar>, kMaxSplitPanes> bars_ = {};
   raw_ptr<views::View> outline_ = nullptr;
+  raw_ptr<views::View> fullscreen_ = nullptr;
   base::RepeatingCallback<void(size_t, double, bool)> changed_;
   double initial_ratio_ = 0.5;
   bool resizing_ = false;
@@ -3328,6 +3353,12 @@ class ShellRoot final : public views::View {
   ShellRoot() = default;
   gfx::Size GetMinimumSize() const override { return gfx::Size(560, 560); }
   void Layout(PassKey) override {
+    if (content_fullscreen) {
+      content->SetBoundsRect(GetLocalBounds());
+      edge->SetVisible(false);
+      LayoutSuperclass<views::View>(this);
+      return;
+    }
     const int column = pinned ? SidebarColumn(sidebar_width, width()) + kGap : 0;
     const int header_width = header->GetPreferredSize().width();
     // Traffic lights and page commands share one axis through the middle of
@@ -3393,6 +3424,7 @@ class ShellRoot final : public views::View {
   raw_ptr<views::View> content = nullptr;
   raw_ptr<views::View> edge = nullptr;
   bool pinned = true;
+  bool content_fullscreen = false;
   int sidebar_width = kSidebarWidth;
 };
 BEGIN_METADATA(ShellRoot)
@@ -3447,6 +3479,9 @@ void RegisterKeys(views::Widget* widget, ui::AcceleratorTarget* target,
   }
 #endif
   widget->GetFocusManager()->RegisterAccelerator(ui::Accelerator(ui::VKEY_ESCAPE, 0), ui::AcceleratorManager::kHighPriority, target);
+#if BUILDFLAG(IS_WIN)
+  widget->GetFocusManager()->RegisterAccelerator(ui::Accelerator(ui::VKEY_F5, 0), ui::AcceleratorManager::kHighPriority, target);
+#endif
 #if BUILDFLAG(IS_MAC)
   if (install_native) InstallWorkspaceKeyboardRouting(widget, panel);
 #endif
@@ -3611,7 +3646,14 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   // Sidebar: address pill, workspace, tabs; workspace switch and color below.
   auto sidebar = std::make_unique<SidebarView>(base::BindRepeating(
       [](base::WeakPtr<WorkspaceShell> shell,bool inside,bool dragging) {
-        if (!shell)return;
+        if (!shell || !shell->sidebar_visible()) return;
+        if (inside) {
+          shell->sidebar_hover_armed_ = true;
+          shell->sidebar_left_at_ = base::TimeTicks();
+          if (!shell->sidebar_slide_show_) shell->AnimateSidebar(true);
+          if (!shell->pinned_) shell->sidebar_hover_timer_.Start(FROM_HERE, base::Milliseconds(40), shell.get(), &WorkspaceShell::PollSidebar);
+          return;
+        }
         const bool blocked=shell->settings_visible() ||
             (shell->general_widget_ && shell->general_widget_->IsVisible()) ||
             (shell->tools_widget_ && shell->tools_widget_->IsVisible()) ||
@@ -3619,10 +3661,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
             (shell->workspace_menu_runner_ && shell->workspace_menu_runner_->IsRunning());
         bool hide=!shell->pinned_&&!blocked&&!inside&&!dragging;
         if(shell->metal_sidebar_)hide=sidebar::sidebar_auto_hide(shell->pinned_,blocked,inside,dragging);
-        if(hide) {
-          shell->sidebar_widget_->Hide();
-          shell->RestorePageFocus();
-        }
+        if (hide && shell->sidebar_left_at_.is_null()) shell->sidebar_left_at_ = base::TimeTicks::Now();
       }, weak));
   metal_sidebar_ = CreateSidebarMetal();
   sidebar->painted = base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar, weak);
@@ -3637,12 +3676,24 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_sidebar_grip_visible();},weak)));
   sidebar->grip_handle=sidebar_handle;
-  auto* pill = sidebar->AddChildView(CreateAddressRow(
+  auto* address_row = sidebar->AddChildView(std::make_unique<views::View>());
+  auto* address_layout = address_row->SetLayoutManager(std::make_unique<views::BoxLayout>(
+      views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 2));
+  address_layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
+  auto* pill = address_row->AddChildView(CreateAddressRow(
       base::BindRepeating(&WorkspaceShell::OpenAddress, weak, false),
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
         return shell && shell->metal_sidebar_visible();
       },weak),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak),{chrome_node_graph_,4,{},"sidebar.address"}));
   url_pill_ = pill;
+  address_layout->SetFlexForView(pill, 1);
+  copy_url_button_ = address_row->AddChildView(CreateSceneAction(
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+        if (shell && shell->callbacks_.run_shortcut) shell->callbacks_.run_shortcut.Run("copy_url");
+      }, weak), T(u"Kopiuj adres strony"), GlyphButton::Glyph::kVector, &vector_icons::kLinkIcon,
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) { return shell && shell->metal_sidebar_visible(); }, weak),
+      base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar, weak)));
+  copy_url_button_->SetPreferredSize(gfx::Size(28, 28));
   pill->set_context_menu_controller(this);
   Spacer(sidebar.get(), 12);
   workspace_name_ = sidebar->AddChildView(std::make_unique<WorkspaceHeading>(
@@ -3884,6 +3935,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   search_icon->SetFocusBehavior(views::View::FocusBehavior::NEVER);
   search_icon->SetCanProcessEventsWithinSubtree(false);
   address_ = AddEditor(input_row);
+  address_->SetTabCompletionEnabled(true);
   address_->GetViewAccessibility().SetName(T(u"Szukaj lub wpisz adres"));
   address_->SetPlaceholderText(T(u"Szukaj lub wpisz adres"));
   address_->SetPresentation(17,0,false,Tone(root_,kCard));
@@ -3912,7 +3964,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     suggestion_list_->SetLayoutManager(CreateSidebarColumnLayout(2));
     suggestion_list_->SetBorder(views::CreatePaddedBorder(views::CreateSolidSidedBorder(gfx::Insets::TLBR(1,0,0,0),Hairline(root_)),gfx::Insets(8)));
   }
-  palette_chrome_views_[2]=palette_text(palette.get(),T(u"↑↓ wybierz, ↵ otwórz, esc zamknij"),1,2);
+  palette_chrome_views_[2]=palette_text(palette.get(),T(u"↑↓ wybierz, ↵ otwórz, Tab uzupełnij, esc zamknij"),1,2);
 
   profile_form_=std::make_unique<ProfileFormState>();
   std::array<std::u16string,11> profile_copy;
@@ -4167,6 +4219,11 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     RegisterKeys(panel.get(), target, tools_, true);
   };
   make_panel(std::move(sidebar), sidebar_delegate_, sidebar_widget_, T(u"Zitter — Karty"), false);
+  sidebar_widget_->SetVisibilityAnimationTransition(views::Widget::ANIMATE_NONE);
+  sidebar_root_->SetPaintToLayer();
+  sidebar_root_->layer()->SetFillsBoundsOpaquely(false);
+  sidebar_widget_->GetRootView()->SetPaintToLayer();
+  sidebar_widget_->GetRootView()->layer()->SetMasksToBounds(true);
   make_panel(std::move(palette), address_delegate_, address_widget_, T(u"Zitter — Paleta poleceń"));
   PanelViewport* settings_viewport=nullptr;
   auto settings_scroll=CreatePanelViewport(&settings_viewport,base::BindRepeating(&WorkspaceShell::RefreshFormViewports,weak),{0,10000,false});
@@ -4270,6 +4327,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 }
 
 void WorkspaceShell::Detach() {
+  sidebar_hover_timer_.Stop(); sidebar_slide_timer_.Stop(); reload_timer_.Stop();
   preferences_chrome_.reset();tools_chrome_.reset();
   for(auto& surface:metal_palette_chrome_)surface.reset();palette_chrome_views_.fill(nullptr);
   metal_palette_.reset();metal_palette_pending_=false;
@@ -4342,6 +4400,7 @@ void WorkspaceShell::Detach() {
   settings_root_ = nullptr;
   chrome_node_graph_.reset();palette_node_graph_.reset();site_rule_node_graph_.reset();
   nav_buttons_.fill(nullptr);
+  copy_url_button_ = nullptr;
   workspace_buttons_.clear();
   workspace_dots_ = nullptr; add_button_ = nullptr; sidebar_footer_=nullptr; workspace_scroll_=nullptr;
   tab_lists_.clear();
@@ -4480,6 +4539,8 @@ void WorkspaceShell::Update(ShellState state) {
   }
   nav_buttons_[0]->SetEnabled(state_.can_go_back);
   nav_buttons_[1]->SetEnabled(state_.can_go_forward);
+  copy_url_button_->SetEnabled(state_.url.SchemeIsHTTPOrHTTPS());
+  if (state_.loading && !reload_timer_.IsRunning()) AnimateReload();
   if (selected) ApplyAppearance(false);
   RebuildTabs(previous_workspace, changed);
 }
@@ -4975,7 +5036,7 @@ void WorkspaceShell::UpdateMetalSidebar() {
   metal_sidebar_pending_ = false;
   if (!metal_sidebar_) return;
   const bool was_visible = metal_sidebar_->visible();
-  if (!sidebar_visible() || swipe_overlay_ || workspace_animation_running()) {
+  if (!sidebar_visible() || swipe_overlay_ || workspace_animation_running() || sidebar_slide_timer_.IsRunning()) {
     metal_sidebar_->Hide();HideMetalSidebarGrip();
     if (was_visible) { tab_list_->SchedulePaint(); new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint(); sidebar_footer_->SchedulePaint(); }
     return;
@@ -4986,7 +5047,7 @@ void WorkspaceShell::UpdateMetalSidebar() {
   auto* viewport = tab_list_->parent();
   const auto list_bounds = viewport->GetBoundsInScreen();
   const auto viewport_frame = views::View::ConvertRectToTarget(viewport, sidebar_root_, viewport->GetLocalBounds());
-  for (auto* control : {static_cast<views::View*>(url_pill_.get()),new_tab_button_.get()}) {
+  for (auto* control : {new_tab_button_.get()}) {
     const auto r = control->GetMirroredBounds();
     const auto a = sidebar::action_frame({r.x(), r.y(), r.width(), r.height()},
         {viewport_frame.x(), viewport_frame.y(), viewport_frame.width(), viewport_frame.height()});
@@ -4998,7 +5059,7 @@ void WorkspaceShell::UpdateMetalSidebar() {
   auto bounds = list_bounds;
   if (scroller.visible) bounds.Union(scroller.bounds);
   if (sidebar_footer_->IsDrawn()) bounds.Union(sidebar_footer_->GetBoundsInScreen());
-  if (url_pill_->IsDrawn()) bounds.Union(url_pill_->GetBoundsInScreen());
+  if (url_pill_->IsDrawn()) bounds.Union(url_pill_->parent()->GetBoundsInScreen());
   if (new_tab_button_->IsDrawn()) bounds.Union(new_tab_button_->GetBoundsInScreen());
   const gfx::Vector2dF list_origin(list_bounds.x() - bounds.x(), list_bounds.y() - bounds.y());
   std::vector<SidebarViewportNode> nodes;
@@ -5060,9 +5121,13 @@ void WorkspaceShell::UpdateMetalSidebar() {
       item.kind=2; item.fill=SkColorSetA(Tone(view,kCard),0x33);
       items.push_back(std::move(item));
     } else if (views::AsViewClass<SidebarDivider>(view)) {
-      item.kind=14; item.x+=12; item.width=std::max(0.f,item.width-24); item.y+=8; item.height=1; item.fill=Hairline(view);
+      item.kind=14; item.x+=12; item.width=std::max(0.f,item.width-24); item.y+=8; item.height=2; item.fill=Palette(view).line_strong;
       items.push_back(std::move(item));
     }
+  }
+  if (copy_url_button_ && copy_url_button_->IsDrawn()) {
+    auto rect = gfx::RectF(copy_url_button_->GetBoundsInScreen()); rect.Offset(-bounds.x(), -bounds.y());
+    items.push_back(static_cast<RustActionView*>(copy_url_button_.get())->SceneItem(rect, rect));
   }
   for (auto* control : {static_cast<views::View*>(url_pill_.get()),new_tab_button_.get()}) {
     if (!control->IsDrawn()) continue;
@@ -8128,18 +8193,119 @@ void WorkspaceShell::OpenCommandPalette() {
   RebuildSuggestions();
   RequestSearch();
 }
+void WorkspaceShell::AnimateReload() {
+  reload_started_ = base::TimeTicks::Now();
+  if (!gfx::Animation::ShouldRenderRichAnimation()) return;
+  StepReloadAnimation();
+  reload_timer_.Start(FROM_HERE, base::Milliseconds(16), this, &WorkspaceShell::StepReloadAnimation);
+}
+void WorkspaceShell::StepReloadAnimation() {
+  const auto elapsed = base::TimeTicks::Now() - reload_started_;
+  const bool done = !state_.loading && elapsed >= base::Milliseconds(600);
+  nav_buttons_[2]->SetProperty(kReloadAngle, done ? 0 : 1 + static_cast<int>(elapsed.InMillisecondsF() * 360 / 600) % 360);
+  nav_buttons_[2]->SchedulePaint();
+  ScheduleMetalHeader();
+  if (done) reload_timer_.Stop();
+}
 void WorkspaceShell::ShowSidebar() {
-  if (!widget_ || !widget_->IsVisible()) return;
+  if (!widget_ || !widget_->IsVisible() || content_fullscreen_) return;
+  sidebar_left_at_ = base::TimeTicks();
   address_widget_->Hide();
+  if (sidebar_visible() && sidebar_slide_show_) return;
+  const bool opening = !sidebar_visible();
   PositionPanels();
+  if (opening) {
+    auto safe = sidebar_widget_->GetWindowBoundsInScreen();
+    safe.Inset(gfx::Insets::TLBR(-8, -8, -8, -28));
+    sidebar_hover_armed_ = safe.Contains(display::Screen::Get()->GetCursorScreenPoint());
+  }
+  AnimateSidebar(true);
   sidebar_widget_->ShowInactive();
   sidebar_widget_->StackAboveWidget(widget_);
   ScheduleMetalSidebar();
+  if (!pinned_) sidebar_hover_timer_.Start(FROM_HERE, base::Milliseconds(40), this, &WorkspaceShell::PollSidebar);
+}
+void WorkspaceShell::HideSidebar() {
+  sidebar_hover_timer_.Stop();
+  sidebar_left_at_ = base::TimeTicks();
+  AnimateSidebar(false);
+}
+void WorkspaceShell::PollSidebar() {
+  if (!sidebar_visible() || pinned_ || content_fullscreen_) { sidebar_hover_timer_.Stop(); return; }
+  const bool blocked = sidebar_resizing_ || drag_row_.view() || settings_visible() || address_visible() ||
+      (general_widget_ && general_widget_->IsVisible()) || (tools_widget_ && tools_widget_->IsVisible()) ||
+      (time_machine_widget_ && time_machine_widget_->IsVisible()) ||
+      (workspace_menu_runner_ && workspace_menu_runner_->IsRunning()) ||
+      (link_menu_runner_ && link_menu_runner_->IsRunning()) ||
+      (add_menu_runner_ && add_menu_runner_->IsRunning());
+  auto safe = sidebar_widget_->GetWindowBoundsInScreen();
+  safe.Inset(gfx::Insets::TLBR(-8, -8, -8, -28));
+  const bool inside = safe.Contains(display::Screen::Get()->GetCursorScreenPoint());
+  if (inside) sidebar_hover_armed_ = true;
+  if (blocked || inside) {
+    sidebar_left_at_ = base::TimeTicks();
+    if (!sidebar_slide_show_) AnimateSidebar(true);
+    return;
+  }
+  if (!sidebar_hover_armed_) return;
+  const auto now = base::TimeTicks::Now();
+  if (sidebar_left_at_.is_null()) sidebar_left_at_ = now;
+  if (now - sidebar_left_at_ >= base::Milliseconds(250)) HideSidebar();
+}
+void WorkspaceShell::AnimateSidebar(bool show) {
+  sidebar_slide_show_ = show;
+  sidebar_slide_from_ = sidebar_visible() ? sidebar_slide_value_ : 0.0;
+  sidebar_slide_started_ = base::TimeTicks::Now();
+  if (pinned_ || !workspace_animations_ || gfx::Animation::PrefersReducedMotion()) {
+    sidebar_slide_value_ = show ? 1 : 0;
+    sidebar_slide_timer_.Stop();
+    sidebar_root_->SetTransform(gfx::Transform());
+    if (!show) sidebar_widget_->Hide();
+    return;
+  }
+  StepSidebarAnimation();
+  sidebar_slide_timer_.Start(FROM_HERE, base::Milliseconds(16), this, &WorkspaceShell::StepSidebarAnimation);
+}
+void WorkspaceShell::StepSidebarAnimation() {
+  const double t = std::clamp((base::TimeTicks::Now() - sidebar_slide_started_).InMillisecondsF() / 180.0, 0.0, 1.0);
+  const double eased = 1 - std::pow(1 - t, 3);
+  sidebar_slide_value_ = sidebar_slide_from_ + ((sidebar_slide_show_ ? 1.0 : 0.0) - sidebar_slide_from_) * eased;
+  gfx::Transform slide;
+  slide.Translate(-sidebar_root_->width() * (1 - sidebar_slide_value_), 0);
+  sidebar_root_->SetTransform(slide);
+  ScheduleMetalSidebar();
+  if (t < 1) return;
+  sidebar_slide_timer_.Stop();
+  if (!sidebar_slide_show_) {
+    sidebar_widget_->Hide();
+    sidebar_root_->SetTransform(gfx::Transform());
+    if (widget_->IsActive()) RestorePageFocus();
+  }
+}
+void WorkspaceShell::SetContentFullscreen(views::View* page) {
+  content_fullscreen_ = page != nullptr;
+  auto* root = static_cast<ShellRoot*>(root_.get());
+  root->content_fullscreen = content_fullscreen_;
+  for (auto* chrome : {root->header.get(), root->caption.get(), root->app_menu.get(), root->trailing.get()})
+    if (chrome) chrome->SetVisible(!content_fullscreen_);
+  static_cast<PaneHost*>(content_host_.get())->SetFullscreen(page);
+  if (page) {
+    CloseOverlays();
+    sidebar_hover_timer_.Stop(); sidebar_slide_timer_.Stop();
+    sidebar_widget_->Hide();
+    content_host_->SetBackground(views::CreateSolidBackground(SK_ColorBLACK));
+  } else {
+    content_host_->SetBackground(views::CreateRoundedRectBackground(kCard, 10));
+    if (pinned_) ShowSidebar();
+  }
+  root_->InvalidateLayout();
+  widget_->LayoutRootViewIfNecessary();
+  ScheduleMetalHeader(); ScheduleMetalSplit();
 }
 void WorkspaceShell::TogglePinned() {
   if (!pinned_) {SetPinned(true);return;}
   SetPinned(false);
-  if (sidebar_widget_) sidebar_widget_->Hide();
+  if (sidebar_widget_) HideSidebar();
 }
 void WorkspaceShell::ShowAddMenu() {
   if (!add_button_ || !sidebar_widget_ || !sidebar_widget_->IsVisible()) return;
@@ -8235,9 +8401,9 @@ void WorkspaceShell::ShowAppMenu(views::View* anchor) {
 #endif
 }
 bool WorkspaceShell::app_menu_running_for_testing() const { return app_menu_runner_ && app_menu_runner_->IsRunning(); }void WorkspaceShell::ToggleSidebar() {
-  if (sidebar_visible()) {
+  if (sidebar_visible() && sidebar_slide_show_) {
     if (pinned_) SetPinned(false);
-    sidebar_widget_->Hide();
+    HideSidebar();
   } else ShowSidebar();
 }
 bool WorkspaceShell::CloseOverlays(bool keep_sidebar) {
@@ -8287,6 +8453,7 @@ void WorkspaceShell::SetPinned(bool pinned) {
   RefreshGeneralControls();
   ApplyAppearance();
   if (pinned_) ShowSidebar();
+  else if (sidebar_visible()) sidebar_hover_timer_.Start(FROM_HERE, base::Milliseconds(40), this, &WorkspaceShell::PollSidebar);
   ++pending_writes_;
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
       base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, pinned_, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt),
@@ -10641,6 +10808,20 @@ bool WorkspaceShell::HandleAddressKey(const ui::KeyEvent& event) {
     RebuildSuggestions();
     return true;
   }
+  if (event.key_code() == ui::VKEY_TAB && !event.IsShiftDown() &&
+      !event.IsControlDown() && !event.IsAltDown() && !event.IsCommandDown()) {
+    if (address_->GetText() != suggestions_text_) RebuildSuggestions();
+    const size_t selected = static_cast<PaletteView*>(palette_root_.get())->selected();
+    if (selected < suggestions_.size()) {
+      const auto url = suggestions_[selected].url;
+      if (url.is_valid()) {
+        address_->SetText(base::UTF8ToUTF16(url.spec()));
+        address_->SelectRange(gfx::Range(address_->GetText().size()));
+        AddressEdited();
+      }
+    }
+    return true;
+  }
   if (event.key_code() != ui::VKEY_RETURN) return false;
   // SetText() does not notify the controller; resolve what is typed now.
   if (address_->GetText() != suggestions_text_) RebuildSuggestions();
@@ -10669,10 +10850,16 @@ void WorkspaceShell::OnWidgetActivationChanged(views::Widget* widget, bool activ
   if(widget==sidebar_widget_.get()) {
     bool hide=!pinned_&&!settings_visible();
     if(metal_sidebar_)hide=sidebar::sidebar_auto_hide(pinned_,settings_visible(),false,false);
-    if(hide)sidebar_widget_->Hide();
+    if(hide)HideSidebar();
   }
 }
 void WorkspaceShell::OnWidgetVisibilityChanged(views::Widget* widget, bool visible) {
+  if (widget == sidebar_widget_.get() && !visible) {
+    sidebar_hover_timer_.Stop(); sidebar_slide_timer_.Stop();
+    sidebar_slide_value_ = 0; sidebar_slide_show_ = false;
+    sidebar_hover_armed_ = false;
+    sidebar_root_->SetTransform(gfx::Transform());
+  }
   if (widget == find_widget_.get() && !visible && find_closed_) find_closed_.Run();
   if (widget == widget_ && !visible) { HideFind(); HidePrint(); }
   if(widget==address_widget_.get())ScheduleMetalPalette();

@@ -1,12 +1,13 @@
 # CommandPalette
 
-Command Center (⌘K): jedno pole i jedna lista akcji, kart, przypiętych, przestrzeni i historii.
+Command Center (Cmd+K / Ctrl+K): one input and one list of actions, tabs, pins, workspaces, and history.
 
-**Daje konsument:** zapytanie, wyniki pogrupowane (`zt-eyebrow` nad grupą), zaznaczony indeks, stan ładowania.
+**Consumer provides:** the query, grouped results (`zt-eyebrow` above each group), the selected index, and the loading state.
 
-- Panel 560 px, `bg-raised`, `radius-lg`, `shadow-float`, na przyciemnionym `bg-void`.
-- Pole zaczyna się kursywną kreską ket `|` w `--accent-ink`, tekst 17 px `ink`, podpowiedź w `ink-muted`.
-- Wiersz 36 px: ikona `ink-muted`, nazwa `ink`, URL w `url`/`ink-muted`, skrót w `Kbd`. Zaznaczony: `--accent-soft`, ikona i nazwa w `--accent-ink`.
-- Ładowanie: trzy drżące kropki `zt-loader` (zing, akcent, zing) zamiast spinnera.
-- Stopka na `bg-base` z trzema skrótami: wybierz, otwórz, zamknij.
-- Kolejność grup: Akcje, Karty, Przypięte, Przestrzenie, Historia. Maks. 8 widocznych wierszy.
+- A 560 px panel with `bg-raised`, `radius-lg`, and `shadow-float`, over a dimmed `bg-void`.
+- The input starts with an italic ket bar `|` in `--accent-ink`, with 17 px `ink` text and an `ink-muted` placeholder.
+- A 36 px row contains an `ink-muted` icon, an `ink` name, a URL in `url`/`ink-muted`, and a shortcut in `Kbd`. The selected row uses `--accent-soft`, with its icon and name in `--accent-ink`.
+- Loading uses three trembling `zt-loader` dots (zing, accent, zing).
+- The footer uses `bg-base` and four shortcuts: select with the arrow keys, open with Enter, complete the selected URL with Tab, and close with Esc.
+- Tab leaves the palette open and the caret at the end of the completed URL. It does not navigate or switch to the suggested tab. Platform clipboard shortcuts support copy, cut, paste, and select all.
+- Group order: Actions, Tabs, Pins, Workspaces, History. Show at most eight result rows at once.

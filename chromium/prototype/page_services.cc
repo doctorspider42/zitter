@@ -41,6 +41,7 @@
 #include "components/history/content/browser/history_context_helper.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/password_manager/core/browser/password_form_manager_for_ui.h"
+#include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/sessions/content/session_tab_helper.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
@@ -121,6 +122,9 @@ void PageServices::Attach(content::WebContents* contents) {
 }
 PageServices::PageServices(content::WebContents* contents)
     : content::WebContentsObserver(contents), content::WebContentsUserData<PageServices>(*contents) {
+  password_preferences_.Init(Profile::FromBrowserContext(contents->GetBrowserContext())->GetPrefs());
+  password_preferences_.Add(password_manager::prefs::kCredentialsEnableService,
+      base::BindRepeating(&PageServices::OnPasswordSavingChanged, weak_factory_.GetWeakPtr()));
   PrefsTabHelper::CreateForWebContents(contents);
   if (!content_settings::PageSpecificContentSettings::GetDelegateForWebContents(contents))
     content_settings::PageSpecificContentSettings::CreateForWebContents(contents,
@@ -159,8 +163,19 @@ PageServices::PageServices(content::WebContents* contents)
 PageServices::~PageServices() { DismissPassword(); }
 views::Widget* PageServices::password_prompt() const { return prompt_.get(); }
 
+bool PageServices::PasswordSavingEnabled() const {
+  if (!web_contents()) return false;
+  auto* profile = Profile::FromBrowserContext(web_contents()->GetBrowserContext());
+  return !profile->IsOffTheRecord() && profile->GetPrefs()->GetBoolean(
+      password_manager::prefs::kCredentialsEnableService);
+}
+void PageServices::OnPasswordSavingChanged() {
+  if (PasswordSavingEnabled()) return;
+  manual_password_.reset();
+  DismissPassword();
+}
 bool PageServices::OfferPassword(std::unique_ptr<FormManager> form, bool update) {
-  if (!form || !web_contents() || web_contents()->GetVisibility() != content::Visibility::VISIBLE ||
+  if (!form || !PasswordSavingEnabled() || web_contents()->GetVisibility() != content::Visibility::VISIBLE ||
       !web_contents()->GetLastCommittedURL().SchemeIsHTTPOrHTTPS() || form->IsBlocklisted()) return false;
   DismissPassword();
   auto* profile = Profile::FromBrowserContext(web_contents()->GetBrowserContext());
@@ -187,6 +202,7 @@ bool PageServices::OfferPassword(std::unique_ptr<FormManager> form, bool update)
   return true;
 }
 void PageServices::SetManualPassword(std::unique_ptr<FormManager> form, bool update) {
+  if (!PasswordSavingEnabled()) { manual_password_.reset(); return; }
   manual_password_ = std::move(form); manual_update_ = update;
 }
 void PageServices::ShowPasswords() {
@@ -260,6 +276,7 @@ void PageServices::DidFinishNavigation(content::NavigationHandle* navigation) {
   last_entry_id_ = entry->GetUniqueID(); last_url_ = web_contents()->GetLastCommittedURL();
 }
 void PageServices::WebContentsDestroyed() {
+  password_preferences_.RemoveAll();
   sound_observation_.Reset();
   EndVisit(); DismissPassword(); manual_password_.reset(); weak_factory_.InvalidateWeakPtrs();
 }

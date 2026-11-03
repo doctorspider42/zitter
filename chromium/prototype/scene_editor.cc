@@ -100,6 +100,7 @@ class SceneEditor final : public views::View, public EditorControl,
     inset_=std::isfinite(inset)?std::max(0.f,inset):0.f;framed_=framed;fill_=fill;Schedule();NotifyCaret();
   }
   void SetCallbacks(base::RepeatingClosure committed,base::RepeatingCallback<bool(const ui::KeyEvent&)> key) override {committed_=std::move(committed);key_=std::move(key);}
+  void SetTabCompletionEnabled(bool enabled) override { tab_completion_ = enabled; }
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(120,32);}
   ui::Cursor GetCursor(const ui::MouseEvent&) override{return ui::Cursor(ui::mojom::CursorType::kIBeam);}
   base::WeakPtr<ui::TextInputClient> AsWeakPtr() override{return weak_factory_.GetWeakPtr();}
@@ -122,7 +123,11 @@ class SceneEditor final : public views::View, public EditorControl,
     if(behavior==InsertTextCursorBehavior::kMoveCursorBeforeText)Apply(sidebar::editor_select(*state_,start,start,false));
   }
   void InsertChar(const ui::KeyEvent& event) override {
-    if(!Editable()||event.IsCommandDown()||event.IsControlDown())return;
+    bool control = event.IsControlDown();
+#if !BUILDFLAG(IS_MAC)
+    control = control && !event.IsAltDown();  // AltGr may arrive as Ctrl+Alt.
+#endif
+    if(!Editable()||event.IsCommandDown()||control)return;
     const auto c=event.GetCharacter();if(c<0x20||(c>=0x7f&&c<=0x9f))return;const std::u16string text(1,c);Apply(sidebar::editor_insert(*state_,Slice(text),true));
   }
   ui::TextInputType GetTextInputType() const override{return Editable()?ui::TEXT_INPUT_TYPE_TEXT:ui::TEXT_INPUT_TYPE_NONE;}
@@ -210,19 +215,46 @@ class SceneEditor final : public views::View, public EditorControl,
     }
   }
   void SetTextEditCommandForNextKeyEvent(ui::TextEditCommand command) override{pending_command_=command;}
+  bool SkipDefaultKeyEventProcessing(const ui::KeyEvent& event) override {
+    return tab_completion_ && Available() && event.key_code() == ui::VKEY_TAB &&
+        !event.IsShiftDown() && !event.IsControlDown() && !event.IsAltDown() && !event.IsCommandDown();
+  }
   bool OnKeyPressed(const ui::KeyEvent& event) override {
     auto command=std::exchange(pending_command_,ui::TextEditCommand::INVALID_COMMAND);if(!Available())return false;
     if(key_){auto key=key_;auto alive=weak_factory_.GetWeakPtr();if(key.Run(event))return true;if(!alive)return false;}
     if(IsIMEComposing())return false;
     if(command!=ui::TextEditCommand::INVALID_COMMAND)return Execute(command);
     using C=ui::TextEditCommand;const bool modify=event.IsShiftDown();
-    if(event.IsCommandDown()){switch(event.key_code()){case ui::VKEY_A:return Execute(C::SELECT_ALL);case ui::VKEY_C:return Execute(C::COPY);case ui::VKEY_X:return Execute(C::CUT);case ui::VKEY_V:return Execute(C::PASTE);case ui::VKEY_Z:return Execute(modify?C::REDO:C::UNDO);case ui::VKEY_LEFT:Boundary(false,modify);return true;case ui::VKEY_RIGHT:Boundary(true,modify);return true;case ui::VKEY_BACK:DeleteBoundary(false);return true;case ui::VKEY_DELETE:DeleteBoundary(true);return true;default:return false;}}
+    const bool primary =
+#if BUILDFLAG(IS_MAC)
+        event.IsCommandDown();
+#else
+        event.IsControlDown() && !event.IsAltDown();
+#endif
+    if(primary){switch(event.key_code()){case ui::VKEY_A:return Execute(C::SELECT_ALL);case ui::VKEY_C:return Execute(C::COPY);case ui::VKEY_X:return Execute(C::CUT);case ui::VKEY_V:return Execute(C::PASTE);case ui::VKEY_Z:return Execute(modify?C::REDO:C::UNDO);
+#if !BUILDFLAG(IS_MAC)
+      case ui::VKEY_Y:return Execute(C::REDO);
+      case ui::VKEY_INSERT:return Execute(C::COPY);
+      case ui::VKEY_LEFT:VisualWord(false,modify);return true;
+      case ui::VKEY_RIGHT:VisualWord(true,modify);return true;
+      case ui::VKEY_BACK:return Execute(C::DELETE_WORD_BACKWARD);
+      case ui::VKEY_DELETE:return Execute(C::DELETE_WORD_FORWARD);
+#else
+      case ui::VKEY_LEFT:Boundary(false,modify);return true;case ui::VKEY_RIGHT:Boundary(true,modify);return true;case ui::VKEY_BACK:DeleteBoundary(false);return true;case ui::VKEY_DELETE:DeleteBoundary(true);return true;
+#endif
+      default:return false;}}
+#if !BUILDFLAG(IS_MAC)
+    if(event.key_code()==ui::VKEY_INSERT&&modify)return Execute(C::PASTE);
+    if(event.key_code()==ui::VKEY_DELETE&&modify)return Execute(C::CUT);
+#endif
     if(event.key_code()==ui::VKEY_LEFT||event.key_code()==ui::VKEY_RIGHT){const bool right=event.key_code()==ui::VKEY_RIGHT;if(event.IsAltDown())Logical(right==(GetTextDirection()==base::i18n::RIGHT_TO_LEFT),true,modify);else Visual(right,modify);return true;}
     if(event.key_code()==ui::VKEY_PRIOR||event.key_code()==ui::VKEY_NEXT){RetainedBoundary(event.key_code()==ui::VKEY_NEXT,modify);return true;}
     if(event.key_code()==ui::VKEY_UP||event.key_code()==ui::VKEY_DOWN){RetainedBoundary(event.key_code()==ui::VKEY_DOWN,modify);return true;}
     if(event.key_code()==ui::VKEY_HOME||event.key_code()==ui::VKEY_END){Boundary(event.key_code()==ui::VKEY_END,modify);return true;}
     if(event.key_code()==ui::VKEY_BACK||event.key_code()==ui::VKEY_DELETE){if(!Editable())return false;EnsureLayout();Apply(sidebar::editor_erase(*state_,event.key_code()==ui::VKEY_BACK,event.IsAltDown()));return true;}
+#if BUILDFLAG(IS_MAC)
     if(event.IsControlDown()){switch(event.key_code()){case ui::VKEY_A:Boundary(false,modify);return true;case ui::VKEY_E:Boundary(true,modify);return true;case ui::VKEY_B:Visual(GetTextDirection()==base::i18n::RIGHT_TO_LEFT,modify);return true;case ui::VKEY_F:Visual(GetTextDirection()!=base::i18n::RIGHT_TO_LEFT,modify);return true;case ui::VKEY_H:return Execute(C::DELETE_BACKWARD);case ui::VKEY_D:return Execute(C::DELETE_FORWARD);case ui::VKEY_K:return Execute(C::DELETE_TO_END_OF_LINE);case ui::VKEY_U:return Execute(C::DELETE_TO_BEGINNING_OF_LINE);case ui::VKEY_Y:return Execute(C::YANK);case ui::VKEY_T:return Execute(C::TRANSPOSE);default:break;}}
+#endif
     return false;
   }
   bool OnMousePressed(const ui::MouseEvent& event) override {
@@ -395,6 +427,7 @@ class SceneEditor final : public views::View, public EditorControl,
     base::WeakPtr<SceneEditor> owner_;uint64_t context_,serial_;
   };
   int font_size_=13;float inset_=8;bool framed_=true;std::optional<SkColor> fill_;
+  bool tab_completion_ = false;
   mutable rust::Box<sidebar::EditorState> state_;std::u16string text_,placeholder_;mutable std::unique_ptr<EditorTextLayout> line_;mutable sidebar::EditorGeometry geometry_{};
   ui::ImeTextSpans clauses_;std::optional<base::i18n::TextDirection> direction_;std::optional<bool> align_right_;bool read_only_=false,pending_=false,blink_visible_=true,dragging_=false,drag_candidate_=false,drag_started_=false;uint64_t text_revision_=0,context_=0,edit_generation_=0,menu_generation_=0,drag_revision_=0;gfx::Range drag_selection_;
   base::RepeatingClosure committed_;base::RepeatingCallback<bool(const ui::KeyEvent&)> key_;

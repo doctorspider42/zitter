@@ -1,5 +1,6 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 #include "chromium/prototype/workspace_frame_win.h"
+#include "chromium/prototype/jump_list_win.h"
 
 #include <windows.h>
 
@@ -55,8 +56,11 @@ class WorkspaceTreeHost final : public views::DesktopWindowTreeHostWin {
   ~WorkspaceTreeHost() override { Hosts().erase(this); }
 
   void set_maximize_button(views::Button* button) { maximize_.SetView(button); }
-  void set_command_handler(base::RepeatingCallback<void(std::string)> handler) {
+  void set_command_handler(base::RepeatingCallback<void(std::string)> handler, const base::FilePath& data_directory) {
     command_handler_ = std::move(handler);
+    if (!profile_property_.empty()) ::RemovePropW(GetHWND(), profile_property_.c_str());
+    profile_property_ = WorkspaceCommandProfileProperty(data_directory);
+    if (command_handler_) ::SetPropW(GetHWND(), profile_property_.c_str(), reinterpret_cast<HANDLE>(1));
     if (command_handler_) ::SetPropW(GetHWND(), kWorkspaceCommandProperty, reinterpret_cast<HANDLE>(1));
     else ::RemovePropW(GetHWND(), kWorkspaceCommandProperty);
   }
@@ -85,7 +89,7 @@ class WorkspaceTreeHost final : public views::DesktopWindowTreeHostWin {
     if (HandleSnapLayouts(message, w_param, l_param, result)) return true;
     if (message == WM_COPYDATA && command_handler_) {
       const auto* data = reinterpret_cast<const COPYDATASTRUCT*>(l_param);
-      if (data && data->dwData == kWorkspaceCommandMessage && data->lpData && data->cbData <= 4096) {
+      if (data && data->dwData == kWorkspaceCommandMessage && data->lpData && data->cbData <= kMaxWorkspaceCommandBytes) {
         // Data the sender's copy owns only for this call.
         std::string command(static_cast<const char*>(data->lpData), data->cbData);
         base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(command_handler_, std::move(command)));
@@ -100,7 +104,7 @@ class WorkspaceTreeHost final : public views::DesktopWindowTreeHostWin {
   views::Button* maximize() { return views::AsViewClass<views::Button>(maximize_.view()); }
   bool OverMaximize(LPARAM l_param) {
     views::Button* button = maximize();
-    if (!button || !button->GetVisible() || !button->GetWidget()) return false;
+    if (!button || !button->IsDrawn() || !button->GetWidget() || button->GetWidget()->IsFullscreen()) return false;
     // Signed: a second monitor can sit left of or above the first.
     const gfx::PointF pixels(static_cast<short>(LOWORD(l_param)), static_cast<short>(HIWORD(l_param)));
     const gfx::Point screen = gfx::ToRoundedPoint(display::win::GetScreenWin()->ScreenToDIPPoint(pixels));
@@ -163,6 +167,7 @@ class WorkspaceTreeHost final : public views::DesktopWindowTreeHostWin {
   // Clears itself when the button goes away.
   views::ViewTracker maximize_;
   base::RepeatingCallback<void(std::string)> command_handler_;
+  std::wstring profile_property_;
   bool tracking_ = false;
 };
 // Clicks stay with the panel, activation with the window behind it.
@@ -230,11 +235,12 @@ void OpenDefaultAppsSettings() {
     ::ShellExecuteW(nullptr, L"open", L"ms-settings:defaultapps", nullptr, nullptr, SW_SHOWNORMAL);
 }
 
-void SetWorkspaceCommandHandler(views::Widget* widget, base::RepeatingCallback<void(std::string)> handler) {
+void SetWorkspaceCommandHandler(views::Widget* widget, base::RepeatingCallback<void(std::string)> handler,
+                               const base::FilePath& data_directory) {
   if (!widget || !widget->GetNativeWindow()) return;
   const aura::WindowTreeHost* host = widget->GetNativeWindow()->GetHost();
   for (WorkspaceTreeHost* workspace : Hosts())
-    if (static_cast<const aura::WindowTreeHost*>(workspace) == host) workspace->set_command_handler(handler);
+    if (static_cast<const aura::WindowTreeHost*>(workspace) == host) workspace->set_command_handler(handler, data_directory);
 }
 
 int WorkspaceResizeBorderThickness(const views::Widget* widget) {

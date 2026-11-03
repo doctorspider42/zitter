@@ -252,8 +252,14 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void ShowPageMenu(content::WebContents* source, const content::ContextMenuParams& params);
   std::string WorkspaceForPage(content::WebContents* page) const;
   void UpdateShell();
+  void SetPageFullscreen(content::WebContents* page, bool fullscreen);
+  base::WeakPtr<content::WebContents> fullscreen_page_;
+  bool was_window_fullscreen_ = false;
   void ScheduleShellUpdate();
   bool shell_update_pending_ = false;
+  void DrainExternalCommands();
+  std::vector<std::string> pending_external_commands_;
+  base::OneShotTimer external_command_timer_;
   void SaveConfiguration(base::OnceCallback<void(bool)> done = {});
   void SaveSelection();
   bool UpdateWorkspace(std::string id, std::string name, std::string profile_id);

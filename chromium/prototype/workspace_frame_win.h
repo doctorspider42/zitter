@@ -9,6 +9,7 @@
 
 #include "ui/views/controls/button/button.h"
 #include "ui/views/widget/widget.h"
+namespace base { class FilePath; }
 
 namespace zitter::prototype {
 // The system frame keeps its shadow, resize borders, snapping and Aero
@@ -33,12 +34,14 @@ void SetWorkspaceMaximizeButton(views::Widget* widget, views::Button* button);
 // carries this property, and the command arrives as WM_COPYDATA with this tag.
 inline constexpr wchar_t kWorkspaceCommandProperty[] = L"ZitterWorkspaceCommands";
 inline constexpr unsigned long kWorkspaceCommandMessage = 0x5A43;  // "ZC"
+inline constexpr unsigned long kMaxWorkspaceCommandBytes = 64 * 1024;
 // Whether the user chose Zitter for https (the installer's ZitterHTML).
 bool IsZitterDefaultBrowser();
 // Windows only lets the user choose the default browser: its Default apps
 // page, Zitter's own entry where Windows 11 supports it.
 void OpenDefaultAppsSettings();
-void SetWorkspaceCommandHandler(views::Widget* widget, base::RepeatingCallback<void(std::string)> handler);
+void SetWorkspaceCommandHandler(views::Widget* widget, base::RepeatingCallback<void(std::string)> handler,
+                               const base::FilePath& data_directory);
 }  // namespace zitter::prototype
 
 #endif
