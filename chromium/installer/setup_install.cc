@@ -14,7 +14,6 @@
 #include <sddl.h>
 #include <shellapi.h>
 #include <shlobj.h>
-#include <tlhelp32.h>
 #include <wrl/client.h>
 
 #include <algorithm>
@@ -28,6 +27,7 @@
 #include <vector>
 
 #include "chromium/app/zitter_version.h"
+#include "chromium/installer/setup_runtime.h"
 // unzip.h first: iowin32.h needs its I/O types.
 #include "third_party/zlib/contrib/minizip/unzip.h"
 #include "third_party/zlib/contrib/minizip/iowin32.h"
@@ -232,11 +232,14 @@ std::wstring Extract(const std::wstring& directory, const std::function<void(dou
     }
     fs::create_directories(target.parent_path(), ignored);
     if (unzOpenCurrentFile(zip) != UNZ_OK) { error = L"Read the archive"; break; }
-    HANDLE file = CreateFileW(target.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    // Extract completely before replacing a live file. Font mappings can
+    // outlive the browser, and truncated output must never replace a good file.
+    const std::wstring temporary = target.wstring() + L".new-" + std::to_wstring(GetCurrentProcessId());
+    HANDLE file = CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) error = LastError(target.c_str());
     for (int read = 0; error.empty() && (read = unzReadCurrentFile(zip, buffer.data(), static_cast<unsigned>(buffer.size()))) != 0;) {
       DWORD written = 0;
-      if (read < 0 || !WriteFile(file, buffer.data(), static_cast<DWORD>(read), &written, nullptr)) {
+      if (read < 0 || !WriteFile(file, buffer.data(), static_cast<DWORD>(read), &written, nullptr) || written != static_cast<DWORD>(read)) {
         error = L"Write " + target.wstring();
         break;
       }
@@ -244,7 +247,15 @@ std::wstring Extract(const std::wstring& directory, const std::function<void(dou
       if (total) progress(static_cast<double>(done) / static_cast<double>(total));
     }
     if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
-    unzCloseCurrentFile(zip);
+    if (unzCloseCurrentFile(zip) != UNZ_OK && error.empty()) error = L"Verify " + target.wstring();
+    if (error.empty()) {
+      const DWORD failure = CommitInstalledFile(temporary, target.wstring());
+      if (failure != ERROR_SUCCESS) {
+        SetLastError(failure);
+        error = LastError(target.c_str());
+      }
+    }
+    if (file != INVALID_HANDLE_VALUE && !error.empty()) DeleteFileW(temporary.c_str());
   }
   unzClose(zip);
   return error;
@@ -393,31 +404,6 @@ std::optional<Existing> FindExisting() {
 
 std::wstring PayloadVersion() { return ZITTER_VERSION_SHORT; }
 
-bool IsRunning(const std::wstring& directory) {
-  HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-  if (snapshot == INVALID_HANDLE_VALUE) return false;
-  const std::wstring prefix = fs::path(directory).lexically_normal().wstring() + L"\\";
-  PROCESSENTRY32W entry{};
-  entry.dwSize = sizeof(entry);
-  bool running = false;
-  for (BOOL more = Process32FirstW(snapshot, &entry); more && !running; more = Process32NextW(snapshot, &entry)) {
-    if (CompareStringOrdinal(entry.szExeFile, -1, L"zitter.exe", -1, TRUE) != CSTR_EQUAL) continue;
-    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ProcessID);
-    if (!process) continue;
-    std::wstring image(MAX_PATH * 2, L'\0');
-    DWORD size = static_cast<DWORD>(image.size());
-    if (QueryFullProcessImageNameW(process, 0, image.data(), &size)) {
-      image.resize(size);
-      running = image.size() > prefix.size() &&
-                CompareStringOrdinal(image.c_str(), static_cast<int>(prefix.size()), prefix.c_str(),
-                                     static_cast<int>(prefix.size()), TRUE) == CSTR_EQUAL;
-    }
-    CloseHandle(process);
-  }
-  CloseHandle(snapshot);
-  return running;
-}
-
 bool IsElevated() {
   HANDLE token = nullptr;
   TOKEN_ELEVATION elevation{};
@@ -429,7 +415,7 @@ bool IsElevated() {
   return elevated;
 }
 
-std::wstring Install(const Placement& placement, bool desktop_shortcut, const std::function<void(double)>& progress, bool preserve_shortcuts, bool update_only) {
+std::wstring Install(const Placement& placement, bool desktop_shortcut, const std::function<void(double)>& progress, bool preserve_shortcuts, bool update_only, bool close_running_browser) {
   InstallLock lock(placement.directory);
   if (!lock.acquired()) return L"Another Zitter installer is running";
   if (update_only) {
@@ -438,6 +424,9 @@ std::wstring Install(const Placement& placement, bool desktop_shortcut, const st
     const auto incoming = ParseVersion(PayloadVersion());
     if (fs::path(location).lexically_normal() != fs::path(placement.directory).lexically_normal() ||
         !installed || !incoming || *incoming <= *installed) return L"The installed version is already current or its registration changed";
+  }
+  if (close_running_browser) {
+    if (!CloseBrowser(placement.directory)) return L"running";
   }
   if (IsRunning(placement.directory)) return L"running";
   std::error_code error;

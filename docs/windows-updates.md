@@ -52,3 +52,27 @@ test exercises real HTTPS requests, redirects, streaming, hash validation and
 cache reuse against the latest published installer. Run it with that exact
 `--gtest_filter` and `--gtest_also_run_disabled_tests`; it downloads approximately
 200 MB into a temporary directory and never executes the installer.
+
+## Manual installation while Zitter is running
+
+Interactive setup asks windows belonging to the selected installation to close
+normally and waits up to 30 seconds for its processes to exit before replacing
+files. This lets the browser save its session and display any unsaved-form
+confirmation. If closing is cancelled or the browser does not exit, setup stops
+without replacing files and asks the user to close Zitter and retry. Other
+installation directories are left running. Unattended (`--quiet`) updates never
+close a browser that has been reopened while the update was being prepared.
+
+Each archive entry is extracted to a temporary file and checked before replacing
+the installed file. If Windows still locks an unchanged font, setup verifies
+that its complete contents match and leaves it in place. A different locked
+file fails the installation instead of being silently skipped.
+
+After an all-users installation, setup asks the desktop Explorer process to
+launch Zitter as the signed-in desktop user, rather than as the administrator
+who approved the UAC prompt.
+
+Build and run `//zitter:setup_runtime_tests` on Windows to exercise graceful
+shutdown, a blocked close, installation-directory isolation, and an actual
+Explorer COM launch. The test uses temporary copies of its own executable and
+does not close installed browsers or modify browser profiles.

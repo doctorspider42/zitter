@@ -388,6 +388,13 @@ if (is_win) {
     sources = [ "chromium/installer/setup.manifest" ]
   }
 
+  executable("setup_runtime_tests") {
+    testonly = true
+    sources = [ "chromium/installer/setup_runtime.cc", "chromium/installer/setup_runtime_test.cc" ]
+    include_dirs = [ "." ]
+    libs = [ "ole32.lib", "oleaut32.lib", "shell32.lib", "user32.lib" ]
+  }
+
   # Zitter's installer and uninstaller (design: Instalator): a standalone
   # Direct2D window with the design's fonts and no Chromium code.
   # tools/package_win.py appends the app to it.
@@ -399,6 +406,8 @@ if (is_win) {
       "chromium/installer/setup_install.cc",
       "chromium/installer/setup_install.h",
       "chromium/installer/setup_main.cc",
+      "chromium/installer/setup_runtime.cc",
+      "chromium/installer/setup_runtime.h",
       "chromium/installer/setup_resource.h",
       "chromium/installer/setup_text.h",
     ]

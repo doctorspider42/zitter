@@ -16,9 +16,6 @@
 #include <dwrite_3.h>
 #include <shellapi.h>
 #include <shobjidl.h>
-#include <exdisp.h>
-#include <shldisp.h>
-#include <shlguid.h>
 #include <wrl/client.h>
 
 #include <algorithm>
@@ -470,7 +467,7 @@ class Window : public AccessibilityHost {
     return right + 8;
   }
 
-  // zt-toggle: a 34 × 20 pill, its knob 12 px.
+  // zt-toggle: a 34 Ă— 20 pill, its knob 12 px.
   void Toggle(D2D1_RECT_F r, bool on, Control id, const std::wstring& name, const std::wstring& help = {}) {
     Register(r, id, Role::kSwitch, name, help);
     if (on) Fill(r, kAccent, 10);
@@ -593,7 +590,7 @@ class Window : public AccessibilityHost {
     Ring(card, kLine, 12);
     const D2D1_RECT_F tile{card.left + 16, y + 14, card.left + 56, y + 54};
     Fill(tile, kTile, 10);
-    Print(L"|z⟩", kKet, {tile.left, tile.top + 9, tile.right, tile.bottom}, kAccent, DWRITE_TEXT_ALIGNMENT_CENTER);
+    Print(L"|zâź©", kKet, {tile.left, tile.top + 9, tile.right, tile.bottom}, kAccent, DWRITE_TEXT_ALIGNMENT_CENTER);
     const float status = TextWidth(text_.installed, kLabel);
     Print(L"Zitter " + existing_->version, kStrong, {tile.right + 14, y + 15, card.right - status - 32, y + 33}, kInk);
     Print(DisplayPath(existing_->placement.directory), kPath, {tile.right + 14, y + 35, card.right - status - 32, y + 51},
@@ -617,7 +614,7 @@ class Window : public AccessibilityHost {
     const float headline = Print(text_.remove_question, kHeadline, b, kInk);
     Say({b.left, b.top, b.right, b.top + headline}, text_.remove_question);
     float y = b.top + headline + 16;
-    // „Usunę aplikację z <folder> razem ze skrótami.”, the folder in mono ink.
+    // â€žUsunÄ™ aplikacjÄ™ z <folder> razem ze skrĂłtami.â€ť, the folder in mono ink.
     const std::wstring path = DisplayPath(placement_.directory);
     const std::wstring sentence = Substitute(text_.remove_from, path);
     auto layout = Layout(sentence, kBody, b.right - b.left);
@@ -785,20 +782,16 @@ class Window : public AccessibilityHost {
 
   // A quiet run ends instead of asking.
   void Refuse(const std::wstring& message, UINT icon) {
+    exit_code_ = 1;
     if (!quiet_) {
       MessageBoxW(hwnd_, message.c_str(), L"Zitter", MB_OK | icon);
       return;
     }
-    exit_code_ = 1;
     page_ = Page::kFresh;  // Lets WM_CLOSE through.
     DestroyWindow(hwnd_);
   }
 
   void StartInstall() {
-    if (IsRunning(placement_.directory)) {
-      Refuse(text_.close_zitter_first, MB_ICONINFORMATION);
-      return;
-    }
     // Everyone's installation runs elevated, in a second copy of this window.
     if (placement_.system && !IsElevated()) {
       std::wstring arguments = L"--install-now --system --dir \"" + placement_.directory + L"\"";
@@ -833,12 +826,13 @@ class Window : public AccessibilityHost {
     const HWND hwnd = hwnd_;
     const Placement placement = placement_;
     const bool desktop = desktop_shortcut_, wipe = remove_data_, preserve = preserve_shortcuts_, update = update_only_;
-    worker_ = std::thread([this, hwnd, placement, desktop, wipe, remove, preserve, update] {
+    const bool close_running = !quiet_;
+    worker_ = std::thread([this, hwnd, placement, desktop, wipe, remove, preserve, update, close_running] {
       CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
       auto report = [hwnd](double done) {
         PostMessageW(hwnd, kProgressMessage, static_cast<WPARAM>(std::lround(std::clamp(done, 0.0, 1.0) * 1000)), 0);
       };
-      std::wstring error = remove ? Uninstall(placement, wipe, report) : Install(placement, desktop, report, preserve, update);
+      std::wstring error = remove ? Uninstall(placement, wipe, report) : Install(placement, desktop, report, preserve, update, close_running);
       {
         std::lock_guard lock(result_lock_);
         result_ = std::move(error);
@@ -853,36 +847,7 @@ class Window : public AccessibilityHost {
     if (!IsElevated())
       return reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr, L"open", exe.c_str(), nullptr,
                                                     placement_.directory.c_str(), SW_SHOWNORMAL)) > 32;
-    // Ask the desktop shell to launch as the signed-in user after an all-users
-    // install, including when UAC used a different administrator account.
-    ComPtr<IShellWindows> windows;
-    if (FAILED(CoCreateInstance(CLSID_ShellWindows, nullptr, CLSCTX_LOCAL_SERVER, IID_PPV_ARGS(&windows)))) return false;
-    VARIANT location{}, root{};
-    long desktop = 0;
-    ComPtr<IDispatch> dispatch;
-    if (FAILED(windows->FindWindowSW(&location, &root, SWC_DESKTOP, &desktop, SWFO_NEEDDISPATCH, &dispatch))) return false;
-    ComPtr<IServiceProvider> provider;
-    ComPtr<IShellBrowser> browser;
-    ComPtr<IShellView> view;
-    ComPtr<IShellFolderViewDual> folder;
-    ComPtr<IDispatch> application;
-    ComPtr<IShellDispatch2> shell;
-    if (FAILED(dispatch.As(&provider)) ||
-        FAILED(provider->QueryService(SID_STopLevelBrowser, IID_PPV_ARGS(&browser))) ||
-        FAILED(browser->QueryActiveShellView(&view)) ||
-        FAILED(view->GetItemObject(SVGIO_BACKGROUND, IID_PPV_ARGS(&folder))) ||
-        FAILED(folder->get_Application(&application)) || FAILED(application.As(&shell))) return false;
-    BSTR file = SysAllocString(exe.c_str());
-    if (!file) return false;
-    VARIANT args{}, directory{}, operation{}, show{};
-    directory.vt = VT_BSTR;
-    directory.bstrVal = SysAllocString(placement_.directory.c_str());
-    show.vt = VT_I4;
-    show.lVal = SW_SHOWNORMAL;
-    const HRESULT result = shell->ShellExecute(file, args, directory, operation, show);
-    VariantClear(&directory);
-    SysFreeString(file);
-    return SUCCEEDED(result);
+    return SUCCEEDED(LaunchFromExplorer(exe, placement_.directory));
   }
 
   void Finished() {
@@ -905,6 +870,7 @@ class Window : public AccessibilityHost {
     } else if (launch_browser_ && !quiet_ && !LaunchBrowser()) {
       MessageBoxW(hwnd_, text_.launch_failed, L"Zitter", MB_OK | MB_ICONINFORMATION);
     }
+    exit_code_ = 0;
     page_ = Page::kFresh;  // Lets WM_CLOSE through.
     DestroyWindow(hwnd_);
   }

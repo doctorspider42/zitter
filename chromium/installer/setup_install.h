@@ -2,6 +2,8 @@
 #ifndef ZITTER_CHROMIUM_INSTALLER_SETUP_INSTALL_H_
 #define ZITTER_CHROMIUM_INSTALLER_SETUP_INSTALL_H_
 
+#include "chromium/installer/setup_runtime.h"
+
 #include <functional>
 #include <optional>
 #include <string>
@@ -25,15 +27,14 @@ std::wstring DefaultDirectory(bool system);
 std::optional<Existing> FindExisting();
 // The version of the zitter.exe this installer carries ("0.1.0").
 std::wstring PayloadVersion();
-// Whether a zitter.exe from |directory| is running.
-bool IsRunning(const std::wstring& directory);
 bool IsElevated();
 
 // |progress| gets 0..1; both return an empty string or the reason they failed.
 std::wstring Install(const Placement& placement, bool desktop_shortcut,
                      const std::function<void(double)>& progress,
                      bool preserve_shortcuts = false,
-                     bool update_only = false);
+                     bool update_only = false,
+                     bool close_running_browser = true);
 std::wstring Uninstall(const Placement& placement, bool remove_data,
                        const std::function<void(double)>& progress);
 
