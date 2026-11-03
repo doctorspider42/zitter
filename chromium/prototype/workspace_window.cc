@@ -1030,10 +1030,7 @@ void WorkspaceWindow::UpdateShell() {
     state.loading = host.view->GetWebContents()->IsLoading();
     // The panel watches the active profile even while closed, so a finished
     // download shows its toast (design: Downloads).
-    if (!downloads_) {
-      downloads_ = std::make_unique<DownloadPanel>();
-      downloads_->SetCompletedCallback(base::BindRepeating(&WorkspaceWindow::DownloadCompleted, base::Unretained(this)));
-    }
+    EnsureDownloads();
     downloads_->SetProfile(host.profile);
     extensions_bar_->SetContext(host.profile, host.view->GetWebContents());
     extension_tabs_->Sync();
@@ -1258,7 +1255,20 @@ bool WorkspaceWindow::WritePreference(std::string key, int value) {
   return false;
 }
 
+// The panel feeds the footer ring and the start cue (design: Downloads).
+void WorkspaceWindow::EnsureDownloads() {
+  if (downloads_) return;
+  downloads_ = std::make_unique<DownloadPanel>();
+  downloads_->SetCompletedCallback(base::BindRepeating(&WorkspaceWindow::DownloadCompleted, base::Unretained(this)));
+  downloads_->SetStartedCallback(base::BindRepeating([](WorkspaceWindow* window, std::u16string name) {
+    window->shell_->DownloadStarted(std::move(name));
+  }, base::Unretained(this)));
+  downloads_->SetProgressCallback(base::BindRepeating([](WorkspaceWindow* window, int active, double fraction, std::u16string newest) {
+    window->shell_->SetDownloadProgress(active, fraction, std::move(newest));
+  }, base::Unretained(this)));
+}
 void WorkspaceWindow::DownloadCompleted(std::string guid, std::u16string name) {
+  shell_->DownloadFinished();
   shell_->ShowToast(T(u"Pobrano "), name, base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, std::string guid) {
     if (window && window->downloads_) window->downloads_->Act(guid, DownloadPanel::Action::kReveal);
   }, weak_factory_.GetWeakPtr(), std::move(guid)), T(u"Pokaż"));
@@ -1266,9 +1276,11 @@ void WorkspaceWindow::DownloadCompleted(std::string guid, std::u16string name) {
 void WorkspaceWindow::ShowDownloads() {
   auto* page = peek_contents() ? peek_contents() : contents(active_id());
   if (!page) return;
+  // The ring or pill it was opened from, before overlays (the sidebar) close.
+  const auto anchor = shell_->downloads_anchor_in_screen();
   shell_->CloseOverlays(true);
-  if (!downloads_) downloads_ = std::make_unique<DownloadPanel>();
-  downloads_->Show(Profile::FromBrowserContext(page->GetBrowserContext()), widget_.get());
+  EnsureDownloads();
+  downloads_->Show(Profile::FromBrowserContext(page->GetBrowserContext()), widget_.get(), anchor);
 }
 // History is Chromium's own page: the space on screen shows its existing
 // chrome://history tab, or opens one in its profile.

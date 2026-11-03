@@ -2481,8 +2481,8 @@ impl ActionGraph {
         let previous_by_id=self.nodes.iter().filter(|(key,_)|key.0==3).map(|(key,node)|(node.borrow().id,key.3.as_str())).collect::<BTreeMap<_,_>>();
         let previous=self.order.iter().filter_map(|id|previous_by_id.get(id).copied()).collect::<Vec<_>>();
         let geometry_changed=previous.into_iter().ne(items.iter().map(|i|i.key.as_str()))||items.iter().any(|item|self.nodes.get(&(3,0,0,item.key.clone())).is_some_and(|node|{let n=node.borrow();matches!(n.model.as_deref(),Some(NodeModel::Workspace(p)) if p.label!=item.label)}));
-        let mut keys=Vec::with_capacity(9+items.len());
-        for name in ["sidebar.add","header.sidebar","header.back","header.forward","header.reload","sidebar.address","sidebar.new-tab"]{keys.push(ffi::ActionNodeKey{kind:4,high:0,low:0,name:name.into()});}
+        let mut keys=Vec::with_capacity(10+items.len());
+        for name in ["sidebar.add","sidebar.downloads","header.sidebar","header.back","header.forward","header.reload","sidebar.address","sidebar.new-tab"]{keys.push(ffi::ActionNodeKey{kind:4,high:0,low:0,name:name.into()});}
         keys.push(ffi::ActionNodeKey{kind:11,high:0,low:0,name:group.3.clone()});
         for item in &items{keys.push(ffi::ActionNodeKey{kind:3,high:0,low:0,name:item.key.clone()});}
         let plan=self.reconcile(keys);if !plan.admitted{return plan;}
@@ -2846,18 +2846,20 @@ fn row_layout(width: i32, height: i32, title_width: i32,
 }
 
 fn footer_layout(width: i32, content_width: i32) -> ffi::ColumnLayout {
-    // The space rail is centred in the footer, short of the 28 px „+”
-    // IconButton that ends it, centred in the 32 px row.
+    // Two 28 px IconButtons close the 32 px row: Downloads on the leading edge,
+    // „+” on the trailing one. The space rail is centred between them.
     const BUTTON: i32 = 28; const GAP: i32 = 4;
-    let width=width.max(0); let middle=(width-BUTTON-GAP).max(0);
+    let width=width.max(0); let lead=BUTTON+GAP;
+    let middle=(width-2*lead).max(0);
     let overflow=content_width>middle;
     let height=if overflow {47} else {32};
     let strip_width=if overflow {middle} else {content_width.max(0)};
-    let strip_x=((width-strip_width)/2).min(middle-strip_width).max(0);
+    let strip_x=((width-strip_width)/2).min(width-lead-strip_width).max(lead.min(width));
     let button_y=(32-BUTTON)/2;
     ffi::ColumnLayout {width,height,children:vec![
         ffi::Rect{x:strip_x,y:0,width:strip_width,height},
-        ffi::Rect{x:middle,y:0,width:1,height:1},
+        ffi::Rect{x:(width-lead).max(0),y:0,width:1,height:1},
+        ffi::Rect{x:0,y:button_y,width:BUTTON.min(width),height:BUTTON},
         ffi::Rect{x:(width-BUTTON).max(0),y:button_y,width:BUTTON.min(width),height:BUTTON},
     ]}
 }
@@ -3250,6 +3252,36 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
                 }
             } else if i.glyph==6 {
                 for dx in [-5.0,0.0,5.0] {emit(cx+dx-1.0,cy-1.0,3.0,3.0,1.5,i.ink,"",0.0,false);}
+            } else if i.glyph==11 && i.detail_font_size<0.0 && !i.active {
+                // Downloads at rest (`detail_font_size` < 0): an arrow over a tray.
+                for (x0,y0,x1,y1) in [(cx,cy-5.5,cx,cy+2.5),(cx-3.5,cy-1.0,cx,cy+2.5),(cx+3.5,cy-1.0,cx,cy+2.5),(cx-5.0,cy+5.5,cx+5.0,cy+5.5)] {
+                    for n in 0..=12 {let t=n as f32/12.0;emit(x0+(x1-x0)*t-0.8,y0+(y1-y0)*t-0.8,1.6,1.6,0.8,i.ink,"",0.0,false);}
+                }
+            } else if i.glyph==11 {
+                // Downloads in progress (design: Downloads): a 2 px `line` track with the progress
+                // arc in `badge` from twelve o'clock and the arrow inside. Progress in
+                // `detail_font_size`: 0–1 a share, 2 + degrees a spinning quarter for an
+                // unknown size; `active` is the finished ✓. With two files or more
+                // `monogram` counts them in place of the arrow.
+                let r=9.0f32;
+                emit(cx-r,cy-r,2.0*r,2.0*r,r,i.edge,"",0.0,false);
+                let (from,sweep)=if i.active {(0.0,360.0)} else if i.detail_font_size>=2.0 {(i.detail_font_size-2.0,90.0)} else {(0.0,360.0*i.detail_font_size.clamp(0.0,1.0))};
+                let steps=(sweep/4.0).round() as i32;
+                for n in 0..=steps.max(0) {
+                    if sweep<=0.0 {break;}
+                    let a=(from+n as f32*sweep/steps.max(1) as f32-90.0).to_radians();
+                    emit(cx+r*a.cos()-1.0,cy+r*a.sin()-1.0,2.0,2.0,1.0,i.badge,"",0.0,false);
+                }
+                let mut chain=|x0:f32,y0:f32,x1:f32,y1:f32,ink:u32| {
+                    for n in 0..=10 {let t=n as f32/10.0;emit(x0+(x1-x0)*t-0.8,y0+(y1-y0)*t-0.8,1.6,1.6,0.8,ink,"",0.0,false);}
+                };
+                if i.active {
+                    chain(cx-3.5,cy+0.2,cx-1.0,cy+2.7,i.badge);chain(cx-1.0,cy+2.7,cx+3.5,cy-2.8,i.badge);
+                } else if i.monogram.is_empty() {
+                    chain(cx,cy-4.5,cx,cy+3.0,i.ink);chain(cx-3.2,cy-0.2,cx,cy+3.0,i.ink);chain(cx+3.2,cy-0.2,cx,cy+3.0,i.ink);
+                } else {
+                    emit(cx-7.0,cy-7.0,14.0,14.0,0.0,i.ink,&i.monogram,10.0,true);
+                }
             } else if i.glyph==9 {
                 // „+”: two 1.5 px strokes, 12 px long.
                 emit(cx-6.0,cy-0.75,12.0,1.5,0.75,i.ink,"",0.0,false);emit(cx-0.75,cy-6.0,1.5,12.0,0.75,i.ink,"",0.0,false);
@@ -3264,6 +3296,7 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
             if i.glyph==7 && p.width==16.0 && p.height==16.0 {p.shape=5;}
             if i.glyph==8 && p.width==16.0 && p.height==16.0 {p.shape=7;}
             if i.glyph==0 && p.width==16.0 && p.height==14.0 {p.stroke=1.0;}
+            if i.glyph==11 && p.width==18.0 && p.height==18.0 && p.text.is_empty() {p.stroke=2.0;}
         }
         return;
     }
@@ -3673,14 +3706,37 @@ mod tests {
         assert!(caret.x<title.x);let mut tab=row(200.0);tab.title="Bezoom".into();let plain=layout(std::slice::from_ref(&tab));
         let same=plain.iter().find(|p|p.text=="Bezoom").unwrap();assert_eq!((title.family,title.font_size,title.font_weight),(same.family,same.font_size,same.font_weight));
     }
+    #[test] fn downloads_ring_draws_track_progress_arrow_check_and_count() {
+        let ring=|progress:f32,done:bool,count:&str|{let mut i=row(28.0);i.kind=7;i.glyph=11;i.height=28.0;i.edge=0xff322f58;i.badge=0xff9a92ff;i.ink=0xffaaa5bb;i.fill=0;i.detail_font_size=progress;i.active=done;i.monogram=count.into();layout(std::slice::from_ref(&i))};
+        let half=ring(0.5,false,"");
+        let track=half.iter().find(|p|p.width==18.0&&p.color==0xff322f58).unwrap();assert_eq!(track.stroke,2.0);
+        let arc=|ops:&Vec<ffi::Primitive>|ops.iter().filter(|p|p.color==0xff9a92ff&&p.width==2.0).count();
+        assert_eq!(arc(&half),46);assert_eq!(arc(&ring(0.0,false,"")),0);assert_eq!(arc(&ring(1.0,false,"")),91);
+        // The first dot of the arc sits at twelve o'clock.
+        let first=half.iter().find(|p|p.color==0xff9a92ff&&p.width==2.0).unwrap();assert_eq!((first.x+1.0,first.y+1.0),(14.0,5.0));
+        assert!(half.iter().any(|p|p.color==0xffaaa5bb&&p.width==1.6));
+        // An unknown size spins a quarter; done is a full ring and a ✓ in `badge`, no arrow.
+        assert_eq!(arc(&ring(2.0+45.0,false,"")),24);
+        let done=ring(0.3,true,"");assert_eq!(arc(&done),91);assert!(!done.iter().any(|p|p.color==0xffaaa5bb));assert!(done.iter().any(|p|p.color==0xff9a92ff&&p.width==1.6));
+        // At rest: the plain icon in `ink`, no track and no arc.
+        let idle=ring(-1.0,false,"");assert!(!idle.iter().any(|p|p.width==18.0));assert_eq!(arc(&idle),0);
+        assert!(idle.iter().all(|p|p.color==0xffaaa5bb&&p.width==1.6));assert!(idle.iter().any(|p|(p.y+0.8-19.5).abs()<0.01));
+        // Two files or more: their count, centred in the ring, replaces the arrow.
+        let counted=ring(0.5,false,"3");let label=counted.iter().find(|p|p.text=="3").unwrap();assert!(label.center&&label.bold&&label.color==0xffaaa5bb);
+        assert_eq!((label.x+label.width/2.0,label.y+label.height/2.0),(14.0,14.0));assert!(!counted.iter().any(|p|p.width==1.6));
+    }
     #[test] fn footer_reserves_a_horizontal_scroll_gutter_only_for_overflow() {
         let normal=footer_layout(240,60); assert_eq!(normal.height,32);
         assert_eq!((normal.children[0].x,normal.children[0].width),(90,60));
-        assert_eq!(footer_layout(240,200).children[0].x,8);
-        assert_eq!((normal.children[2].x,normal.children[2].width),(212,28));
+        // Downloads leads the row and „+” ends it; a wide rail stays between them.
+        assert_eq!((normal.children[2].x,normal.children[2].width,normal.children[2].y),(0,28,2));
+        assert_eq!((normal.children[3].x,normal.children[3].width),(212,28));
+        let wide=footer_layout(240,170); assert_eq!(wide.height,32);assert_eq!((wide.children[0].x,wide.children[0].width),(35,170));
+        assert_eq!(footer_layout(240,200).children[0].x,32);
         let overflow=footer_layout(200,300); assert_eq!(overflow.height,47);
-        assert_eq!(overflow.children[0].width,168); assert_eq!(overflow.children[0].height,47);
-        assert_eq!((overflow.children[2].x,overflow.children[2].width),(172,28)); assert_eq!(overflow.children[2].y,2);
+        assert_eq!((overflow.children[0].x,overflow.children[0].width,overflow.children[0].height),(32,136,47));
+        assert_eq!((overflow.children[3].x,overflow.children[3].width),(172,28)); assert_eq!(overflow.children[3].y,2);
+        assert_eq!(overflow.children[2].x,0);
         let dots=strip_layout(-1,32,0,&[child(24,28),child(30,28),child(24,28)]);
         assert_eq!((dots.width,dots.children[1].x,dots.children[1].y),(78,24,2));
     }

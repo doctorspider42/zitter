@@ -10,6 +10,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/timer/timer.h"
+#include "ui/gfx/geometry/rect.h"
 #include "content/public/browser/download_manager.h"
 #include "components/download/public/common/download_item.h"
 
@@ -26,11 +27,17 @@ class DownloadPanel final : public content::DownloadManager::Observer,
   DownloadPanel();
   ~DownloadPanel() override;
   void SetProfile(Profile* profile);
-  void Show(Profile* profile, views::Widget* parent);
+  // `anchor` (screen) is the ring or pill the list opens above; empty centres it.
+  void Show(Profile* profile, views::Widget* parent, gfx::Rect anchor = {});
   views::Widget* widget() const { return widget_.get(); }
   bool Act(std::string guid, Action action);
   // Runs when a transfer this panel saw in progress finishes safely.
   void SetCompletedCallback(base::RepeatingCallback<void(std::string guid, std::u16string name)> completed) { completed_ = std::move(completed); }
+  // Runs when a new transfer starts in the watched profile, with its file name.
+  void SetStartedCallback(base::RepeatingCallback<void(std::u16string name)> started) { started_ = std::move(started); }
+  // Runs as transfers move: how many are in progress, the share of their bytes
+  // that arrived (< 0 while a size is unknown) and the newest one's name.
+  void SetProgressCallback(base::RepeatingCallback<void(int active, double fraction, std::u16string newest)> progress) { progress_ = std::move(progress); }
   std::vector<std::string> visible_guids() const;
   bool scene_visible_for_testing() const;
   bool scene_contains_text_for_testing(std::string_view text) const;
@@ -47,6 +54,7 @@ class DownloadPanel final : public content::DownloadManager::Observer,
   void SetText(views::View* view,std::u16string text);
   void Observe(download::DownloadItem* item);
   void ScheduleRefresh();
+  void ReportProgress();
   void Refresh();
   void OnDownloadCreated(content::DownloadManager*, download::DownloadItem*) override;
   void OnManagerInitialized() override;
@@ -59,6 +67,9 @@ class DownloadPanel final : public content::DownloadManager::Observer,
   std::map<std::string, raw_ptr<download::DownloadItem>> items_;
   std::set<std::string> in_progress_;  // Seen transferring: their completion is news.
   base::RepeatingCallback<void(std::string, std::u16string)> completed_;
+  base::RepeatingCallback<void(std::u16string)> started_;
+  base::RepeatingCallback<void(int, double, std::u16string)> progress_;
+  bool initialized_ = false;  // History loaded: later creations are new transfers.
   std::unique_ptr<views::DialogDelegate> delegate_;
   std::unique_ptr<views::Widget> widget_;
   std::unique_ptr<PanelScene> scene_;

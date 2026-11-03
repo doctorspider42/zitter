@@ -70,7 +70,7 @@ DownloadPanel::~DownloadPanel() { Disconnect(); }
 void DownloadPanel::Disconnect() {
   CloseUI();
   for (auto& [guid, item] : items_) item->RemoveObserver(this);
-  items_.clear(); in_progress_.clear();
+  items_.clear(); in_progress_.clear(); initialized_ = false;
   if (manager_) manager_->RemoveObserver(this);
   manager_ = nullptr; profile_ = nullptr;
 }
@@ -97,12 +97,23 @@ void DownloadPanel::SetProfile(Profile* profile) {
   content::DownloadManager::DownloadVector items;
   manager_->GetAllDownloads(&items);
   for (auto item : items) Observe(item.get());
+  initialized_ = manager_->IsManagerInitialized();
+  ReportProgress();
 }
-void DownloadPanel::Show(Profile* profile, views::Widget* parent) {
+void DownloadPanel::Show(Profile* profile, views::Widget* parent, gfx::Rect anchor) {
   SetProfile(profile);
   if (!profile_ || !parent) return;
   if(widget_&&widget_->IsClosed())CloseUI();
-  if (widget_) { widget_->Show(); widget_->Activate(); Refresh(); return; }
+  // Above the ring: its left edge 16 px before the ring, 8 px over it.
+  auto place = [&](views::Widget* widget) {
+    const auto area = display::Screen::Get()->GetDisplayNearestWindow(parent->GetNativeWindow()).work_area();
+    gfx::Rect bounds(0, 0, std::min(anchor.IsEmpty() ? 600 : 420, area.width()), std::min(anchor.IsEmpty() ? 600 : 460, area.height()));
+    if (anchor.IsEmpty()) bounds.set_origin(gfx::Point(parent->GetWindowBoundsInScreen().CenterPoint().x() - bounds.width()/2,
+                                                      parent->GetWindowBoundsInScreen().CenterPoint().y() - bounds.height()/2));
+    else bounds.set_origin(gfx::Point(anchor.x() - 16, anchor.y() - 8 - bounds.height()));
+    bounds.AdjustToFit(area); widget->SetBounds(bounds);
+  };
+  if (widget_) { place(widget_.get()); widget_->Show(); widget_->Activate(); Refresh(); return; }
   auto delegate = std::make_unique<views::DialogDelegate>();
   delegate->SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
   delegate->SetTitle(TF(u"Pobrania · {}", {BrowsingProfileName(profile)}));
@@ -132,13 +143,22 @@ void DownloadPanel::Show(Profile* profile, views::Widget* parent) {
 #if BUILDFLAG(IS_MAC)
   InstallWorkspaceKeyboardRouting(widget,true);
 #endif
-  const auto area = display::Screen::Get()->GetDisplayNearestWindow(parent->GetNativeWindow()).work_area();
-  gfx::Rect bounds(0, 0, std::min(600, area.width()), std::min(600, area.height()));
-  bounds.set_origin(gfx::Point(parent->GetWindowBoundsInScreen().CenterPoint().x() - bounds.width()/2,
-                              parent->GetWindowBoundsInScreen().CenterPoint().y() - bounds.height()/2));
-  bounds.AdjustToFit(area); widget->SetBoundsConstrained(bounds);
+  place(widget);
   Refresh(); widget->Show();scene_->Schedule();
   timer_.Start(FROM_HERE, base::Seconds(1), base::BindRepeating(&DownloadPanel::Refresh, weak_factory_.GetWeakPtr()));
+}
+void DownloadPanel::ReportProgress() {
+  if (!progress_) return;
+  int active = 0; int64_t received = 0, total = 0; bool unknown = false;
+  Item* newest = nullptr;
+  for (const auto& [guid, item] : items_) {
+    if (item->GetState() != Item::IN_PROGRESS || item->IsTransient()) continue;
+    ++active; received += std::max<int64_t>(0, item->GetReceivedBytes());
+    if (item->GetTotalBytes() > 0) total += item->GetTotalBytes(); else unknown = true;
+    if (!newest || item->GetStartTime() > newest->GetStartTime()) newest = item;
+  }
+  const double fraction = active == 0 ? 1.0 : unknown || total <= 0 ? -1.0 : std::min(1.0, static_cast<double>(received) / total);
+  progress_.Run(active, fraction, newest ? newest->GetFileNameToReportUser().LossyDisplayName() : std::u16string());
 }
 void DownloadPanel::Observe(Item* item) {
   if (!items_.emplace(item->GetGuid(), item).second) return;
@@ -258,16 +278,23 @@ void DownloadPanel::ScheduleRefresh() {
   refresh_pending_ = true;
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(&DownloadPanel::Refresh, weak_factory_.GetWeakPtr()));
 }
-void DownloadPanel::OnDownloadCreated(content::DownloadManager*, Item* item) { Observe(item); ScheduleRefresh(); }
-void DownloadPanel::OnManagerInitialized() { ScheduleRefresh(); }
+void DownloadPanel::OnDownloadCreated(content::DownloadManager*, Item* item) {
+  Observe(item);
+  if (initialized_ && started_ && item->GetState() == Item::IN_PROGRESS && !item->IsTransient())
+    started_.Run(item->GetFileNameToReportUser().LossyDisplayName());
+  ReportProgress(); ScheduleRefresh();
+}
+void DownloadPanel::OnManagerInitialized() { initialized_ = true; ReportProgress(); ScheduleRefresh(); }
 void DownloadPanel::ManagerGoingDown(content::DownloadManager*) { Disconnect(); }
 void DownloadPanel::OnDownloadUpdated(Item* item) {
   const auto guid = item->GetGuid();
+  bool finished = false;
   if (item->GetState() == Item::IN_PROGRESS) in_progress_.insert(guid);
-  else if (in_progress_.erase(guid) && item->GetState() == Item::COMPLETE && !Unsafe(item) && completed_)
-    completed_.Run(guid, item->GetFileNameToReportUser().LossyDisplayName());
+  else finished = in_progress_.erase(guid) && item->GetState() == Item::COMPLETE && !Unsafe(item);
+  ReportProgress();
+  if (finished && completed_) completed_.Run(guid, item->GetFileNameToReportUser().LossyDisplayName());
   ScheduleRefresh();
 }
-void DownloadPanel::OnDownloadRemoved(Item* item) { item->RemoveObserver(this); items_.erase(item->GetGuid()); ScheduleRefresh(); }
+void DownloadPanel::OnDownloadRemoved(Item* item) { item->RemoveObserver(this); items_.erase(item->GetGuid()); in_progress_.erase(item->GetGuid()); ReportProgress(); ScheduleRefresh(); }
 void DownloadPanel::OnDownloadDestroyed(Item* item) { OnDownloadRemoved(item); }
 }  // namespace zitter::prototype

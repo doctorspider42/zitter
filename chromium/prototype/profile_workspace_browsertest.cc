@@ -1644,7 +1644,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitPaneBarClickFocusesItsPan
 // The footer's „+” (design: Sidebar footer) offers a new tab, folder or space.
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FooterAddMenuOpensTabFolderAndSpace) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->SetPinned(true);shell->ShowSidebar();
-  shell->sidebar_widget()->LayoutRootViewIfNecessary();ASSERT_TRUE(shell->footer_action_for_testing(0));EXPECT_FALSE(shell->footer_action_for_testing(1));
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();ASSERT_TRUE(shell->footer_action_for_testing(0));
+  // Downloads opens the footer at rest, as „+” closes it.
+  ASSERT_TRUE(shell->footer_action_for_testing(1));EXPECT_TRUE(shell->footer_action_for_testing(1)->GetVisible());EXPECT_EQ(u"Pobrane",shell->footer_action_for_testing(1)->GetTooltipText());EXPECT_FALSE(shell->footer_action_for_testing(2));
   shell->ShowAddMenu();ASSERT_TRUE(base::test::RunUntil([&]{return shell->add_menu_running_for_testing();}));
   auto* menu=shell->add_menu_for_testing();ASSERT_TRUE(menu);ASSERT_EQ(3u,menu->GetItemCount());
   EXPECT_EQ(u"Nowa karta",menu->GetLabelAt(0));EXPECT_EQ(u"Nowy folder",menu->GetLabelAt(1));EXPECT_EQ(u"Nowa przestrzeń…",menu->GetLabelAt(2));
@@ -3413,6 +3415,53 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DownloadsTransferControlsAndPr
   EXPECT_EQ(2u, panel->visible_guids().size());
 }
 
+// Design: Downloads — the footer's leading icon turns into a ring while files
+// arrive and opens the list above it; with the sidebar slid away the start
+// lands in a pill instead.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DownloadsRingAndStartCueFollowTheSidebar) {
+  base::ScopedAllowBlockingForTesting test_files;
+  base::test::ScopedRunLoopTimeout timeout(FROM_HERE, base::Seconds(30));
+  NavigateBoth();ASSERT_TRUE(window_->Select("work"));
+  base::ScopedTempDir directory;ASSERT_TRUE(directory.CreateUniqueTempDir());
+  DownloadPrefs::FromBrowserContext(work_)->SetDownloadPath(directory.GetPath());work_->GetPrefs()->SetBoolean(prefs::kPromptForDownload, false);
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
+  auto* manager=work_->GetDownloadManager();ASSERT_TRUE(base::test::RunUntil([&]{return manager->IsManagerInitialized();}));
+  net::EmbeddedTestServer server;net::test_server::ControllableHttpResponse first(&server,"/ring.bin"),second(&server,"/pill.bin");ASSERT_TRUE(server.Start());
+  auto start=[&](std::string path){manager->DownloadUrl(content::DownloadRequestUtils::CreateDownloadForWebContentsMainFrame(window_->contents("work"),server.GetURL(path),TRAFFIC_ANNOTATION_FOR_TESTS));};
+  auto* ring=shell->footer_action_for_testing(1);ASSERT_TRUE(ring);EXPECT_TRUE(ring->GetVisible());EXPECT_EQ(u"Pobrane",ring->GetTooltipText());
+  // Docked sidebar: the arrow lands on the ring, which stays while bytes arrive.
+  shell->SetPinned(true);shell->ShowSidebar();shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  start("/ring.bin");first.WaitForRequest();
+  first.Send("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=ring.bin\r\nContent-Length: 8192\r\n\r\n");first.Send(std::string(4096,'x'));
+  ASSERT_TRUE(base::test::RunUntil([&]{return ring->GetTooltipText().find(u"ring.bin")!=std::u16string::npos;}));
+  ASSERT_TRUE(base::test::RunUntil([&]{return !shell->download_cue_widget_for_testing()->IsVisible();}));
+  EXPECT_FALSE(shell->download_cue_is_pill_for_testing());
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  const auto add=shell->footer_action_for_testing(0)->GetBoundsInScreen(),bounds=ring->GetBoundsInScreen();
+  const auto footer=ring->parent()->GetBoundsInScreen();
+  EXPECT_EQ(bounds.size(),gfx::Size(28,28));EXPECT_EQ(bounds.x(),footer.x());EXPECT_EQ(add.right(),footer.right());EXPECT_EQ(bounds.y(),add.y());
+  // A click on the ring opens the list above it.
+  {const auto point=ring->GetLocalBounds().CenterPoint();ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);
+   ASSERT_TRUE(ring->OnMousePressed(press));ring->OnMouseReleased(release);}
+  ASSERT_TRUE(base::test::RunUntil([&]{return window_->downloads()->widget()&&window_->downloads()->widget()->IsVisible();}));auto* panel=window_->downloads();ASSERT_TRUE(panel&&panel->widget()&&panel->widget()->IsVisible());
+  const auto list=panel->widget()->GetWindowBoundsInScreen();const auto area=display::Screen::Get()->GetDisplayNearestWindow(window_->widget()->GetNativeWindow()).work_area();
+  if(area.Contains(gfx::Rect(bounds.x()-16,bounds.y()-8-list.height(),list.width(),list.height()))){EXPECT_EQ(list.bottom(),bounds.y()-8);EXPECT_EQ(list.x(),bounds.x()-16);}
+  panel->widget()->CloseNow();
+  first.Send(std::string(4096,'x'));first.Done();
+  // Finished: ✓ for a moment, then the icon rests.
+  ASSERT_TRUE(base::test::RunUntil([&]{return ring->GetTooltipText()==u"Pobrane: gotowe";}));
+  ASSERT_TRUE(base::test::RunUntil([&]{return ring->GetTooltipText()==u"Pobrane";}));
+  // Sidebar slid away: the start lands in the page's lower left corner as a pill.
+  shell->SetPinned(false);shell->sidebar_widget()->Hide();ASSERT_FALSE(shell->sidebar_visible());
+  start("/pill.bin");second.WaitForRequest();
+  second.Send("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=pill.bin\r\nContent-Length: 2048\r\n\r\n");second.Send(std::string(1024,'x'));
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->download_cue_is_pill_for_testing();}));
+  const auto page=window_->widget()->GetClientAreaBoundsInScreen();const auto pill=shell->download_cue_widget_for_testing()->GetWindowBoundsInScreen();
+  EXPECT_EQ(pill.x(),page.x()+16);EXPECT_EQ(pill.bottom(),page.bottom()-16);EXPECT_EQ(pill.height(),40);
+  EXPECT_EQ(shell->downloads_anchor_in_screen(),pill);
+  second.Send(std::string(1024,'x'));second.Done();
+  ASSERT_TRUE(base::test::RunUntil([&]{return ring->GetTooltipText()==u"Pobrane";}));
+}
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DownloadsSceneMetricsUnknownProgressAndCocoaPause) {
   NavigateBoth();ASSERT_TRUE(window_->Select("work"));base::ScopedTempDir directory;ASSERT_TRUE(directory.CreateUniqueTempDir());DownloadPrefs::FromBrowserContext(work_)->SetDownloadPath(directory.GetPath());work_->GetPrefs()->SetBoolean(prefs::kPromptForDownload,false);
   net::EmbeddedTestServer server;net::test_server::ControllableHttpResponse response(&server,"/unknown.txt");ASSERT_TRUE(server.Start());window_->ShowDownloads();auto* panel=window_->downloads();ASSERT_TRUE(panel&&panel->widget());const bool rust=window_->shell()->workspace_input()->rust_editor();auto* manager=work_->GetDownloadManager();manager->DownloadUrl(content::DownloadRequestUtils::CreateDownloadForWebContentsMainFrame(window_->contents("work"),server.GetURL("/unknown.txt"),TRAFFIC_ANNOTATION_FOR_TESTS));response.WaitForRequest();response.Send("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; filename=unknown.txt\r\n\r\n");response.Send(std::string(8192,'x'));
