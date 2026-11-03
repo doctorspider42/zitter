@@ -250,6 +250,7 @@ std::optional<int> RunWindowsUpdateHelper() {
   command.AppendArg("--install-now");
   command.AppendArg("--quiet");
   command.AppendArg("--preserve-shortcuts");
+  command.AppendArg("--update-only");
   command.AppendArg("--dir");
   command.AppendArgPath(installation->first);
   command.AppendArg("--wait-for-process");

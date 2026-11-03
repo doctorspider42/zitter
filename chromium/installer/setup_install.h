@@ -32,7 +32,8 @@ bool IsElevated();
 // |progress| gets 0..1; both return an empty string or the reason they failed.
 std::wstring Install(const Placement& placement, bool desktop_shortcut,
                      const std::function<void(double)>& progress,
-                     bool preserve_shortcuts = false);
+                     bool preserve_shortcuts = false,
+                     bool update_only = false);
 std::wstring Uninstall(const Placement& placement, bool remove_data,
                        const std::function<void(double)>& progress);
 

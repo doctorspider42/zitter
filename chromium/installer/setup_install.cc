@@ -20,6 +20,8 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cerrno>
+#include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <system_error>
@@ -66,6 +68,21 @@ class InstallLock {
   HANDLE handle_ = nullptr;
   bool acquired_ = false;
 };
+
+std::optional<std::array<unsigned long, 3>> ParseVersion(const std::wstring& version) {
+  std::array<unsigned long, 3> result;
+  const wchar_t* at = version.c_str();
+  for (size_t i = 0; i < result.size(); ++i) {
+    if (*at < L'0' || *at > L'9') return std::nullopt;
+    wchar_t* end = nullptr;
+    errno = 0;
+    result[i] = std::wcstoul(at, &end, 10);
+    if (errno || (i < 2 ? *end != L'.' : *end != L'\0')) return std::nullopt;
+    at = end;
+    if (i < 2) ++at;
+  }
+  return result;
+}
 // The capabilities Chrome's installer grants its files, which the network
 // service's AppContainer (LPAC) and other AppContainers read them with
 // (chrome/installer/setup/configure_app_container_sandbox.cc).
@@ -406,9 +423,16 @@ bool IsElevated() {
   return elevated;
 }
 
-std::wstring Install(const Placement& placement, bool desktop_shortcut, const std::function<void(double)>& progress, bool preserve_shortcuts) {
+std::wstring Install(const Placement& placement, bool desktop_shortcut, const std::function<void(double)>& progress, bool preserve_shortcuts, bool update_only) {
   InstallLock lock(placement.directory);
   if (!lock.acquired()) return L"Another Zitter installer is running";
+  if (update_only) {
+    const auto location = GetString(Root(placement.system), kUninstallKey, L"InstallLocation");
+    const auto installed = ParseVersion(GetString(Root(placement.system), kUninstallKey, L"DisplayVersion"));
+    const auto incoming = ParseVersion(PayloadVersion());
+    if (fs::path(location).lexically_normal() != fs::path(placement.directory).lexically_normal() ||
+        !installed || !incoming || *incoming <= *installed) return L"The installed version is already current or its registration changed";
+  }
   if (IsRunning(placement.directory)) return L"running";
   std::error_code error;
   fs::create_directories(placement.directory, error);

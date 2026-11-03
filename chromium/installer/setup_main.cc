@@ -184,6 +184,7 @@ class Window : public AccessibilityHost {
       placement_.directory = *std::next(dir);
     desktop_shortcut_ = !has(L"--no-desktop");
     preserve_shortcuts_ = has(L"--preserve-shortcuts");
+    update_only_ = has(L"--update-only");
     quiet_ = has(L"--quiet");
     launch_browser_ = !quiet_ && !has(L"--no-launch");
     existing_ = FindExisting();
@@ -805,6 +806,7 @@ class Window : public AccessibilityHost {
       if (!launch_browser_) arguments += L" --no-launch";
       if (quiet_) arguments += L" --quiet";
       if (preserve_shortcuts_) arguments += L" --preserve-shortcuts";
+      if (update_only_) arguments += L" --update-only";
       if (Relaunch(arguments)) DestroyWindow(hwnd_);
       return;
     }
@@ -830,13 +832,13 @@ class Window : public AccessibilityHost {
     SetTimer(hwnd_, kAnimationTimer, 52, nullptr);
     const HWND hwnd = hwnd_;
     const Placement placement = placement_;
-    const bool desktop = desktop_shortcut_, wipe = remove_data_, preserve = preserve_shortcuts_;
-    worker_ = std::thread([this, hwnd, placement, desktop, wipe, remove, preserve] {
+    const bool desktop = desktop_shortcut_, wipe = remove_data_, preserve = preserve_shortcuts_, update = update_only_;
+    worker_ = std::thread([this, hwnd, placement, desktop, wipe, remove, preserve, update] {
       CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
       auto report = [hwnd](double done) {
         PostMessageW(hwnd, kProgressMessage, static_cast<WPARAM>(std::lround(std::clamp(done, 0.0, 1.0) * 1000)), 0);
       };
-      std::wstring error = remove ? Uninstall(placement, wipe, report) : Install(placement, desktop, report, preserve);
+      std::wstring error = remove ? Uninstall(placement, wipe, report) : Install(placement, desktop, report, preserve, update);
       {
         std::lock_guard lock(result_lock_);
         result_ = std::move(error);
@@ -926,6 +928,7 @@ class Window : public AccessibilityHost {
   std::optional<Existing> existing_;
   bool desktop_shortcut_ = true, remove_data_ = false, removing_ = false;
   bool preserve_shortcuts_ = false;
+  bool update_only_ = false;
   bool launch_browser_ = true;
   bool install_now_ = false, uninstall_only_ = false, quiet_ = false;
   int exit_code_ = 0;
