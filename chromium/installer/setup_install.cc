@@ -39,6 +39,33 @@ constexpr wchar_t kUninstallKey[] = L"Software\\Microsoft\\Windows\\CurrentVersi
 constexpr wchar_t kClientKey[] = L"Software\\Clients\\StartMenuInternet\\Zitter";
 constexpr wchar_t kProgId[] = L"ZitterHTML";
 constexpr wchar_t kAppUserModelId[] = L"Zitter.Browser";  // As chromium/app/main.cc.
+
+// Serialize updates/removals of one directory, including setup processes from
+// different browser profiles. An abandoned mutex is safe to reacquire.
+class InstallLock {
+ public:
+  explicit InstallLock(const std::wstring& directory) {
+    auto normalized = fs::path(directory).lexically_normal().wstring();
+    CharLowerBuffW(normalized.data(), static_cast<DWORD>(normalized.size()));
+    while (!normalized.empty() && (normalized.back() == L'\\' || normalized.back() == L'/')) normalized.pop_back();
+    uint64_t hash = 14695981039346656037ull;
+    for (wchar_t letter : normalized) { hash ^= static_cast<uint64_t>(letter); hash *= 1099511628211ull; }
+    const auto name = L"Global\\Zitter.Install." + std::to_wstring(hash);
+    handle_ = CreateMutexW(nullptr, FALSE, name.c_str());
+    if (handle_) {
+      const DWORD result = WaitForSingleObject(handle_, 0);
+      acquired_ = result == WAIT_OBJECT_0 || result == WAIT_ABANDONED;
+    }
+  }
+  ~InstallLock() {
+    if (acquired_) ReleaseMutex(handle_);
+    if (handle_) CloseHandle(handle_);
+  }
+  bool acquired() const { return acquired_; }
+ private:
+  HANDLE handle_ = nullptr;
+  bool acquired_ = false;
+};
 // The capabilities Chrome's installer grants its files, which the network
 // service's AppContainer (LPAC) and other AppContainers read them with
 // (chrome/installer/setup/configure_app_container_sandbox.cc).
@@ -380,6 +407,8 @@ bool IsElevated() {
 }
 
 std::wstring Install(const Placement& placement, bool desktop_shortcut, const std::function<void(double)>& progress, bool preserve_shortcuts) {
+  InstallLock lock(placement.directory);
+  if (!lock.acquired()) return L"Another Zitter installer is running";
   if (IsRunning(placement.directory)) return L"running";
   std::error_code error;
   fs::create_directories(placement.directory, error);
@@ -402,6 +431,8 @@ std::wstring Install(const Placement& placement, bool desktop_shortcut, const st
 }
 
 std::wstring Uninstall(const Placement& placement, bool remove_data, const std::function<void(double)>& progress) {
+  InstallLock lock(placement.directory);
+  if (!lock.acquired()) return L"Another Zitter installer is running";
   if (IsRunning(placement.directory)) return L"running";
   DeleteFileW(StartMenuLink(placement.system).c_str());
   DeleteFileW(DesktopLink(placement.system).c_str());

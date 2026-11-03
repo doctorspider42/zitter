@@ -203,6 +203,7 @@ void WindowsUpdater::InstallOnExit() {
   base::CommandLine command(base::CommandLine::ForCurrentProcess()->GetProgram());
   command.AppendSwitchPath("zitter-update-installer", InstallerPath(cache_, *pending_));
   command.AppendSwitchASCII("zitter-update-sha256", pending_->sha256);
+  command.AppendSwitchASCII("zitter-update-version", pending_->version);
   command.AppendSwitchASCII("zitter-update-size", base::NumberToString(pending_->size));
   command.AppendSwitchASCII("zitter-update-parent", base::NumberToString(base::GetCurrentProcId()));
   base::LaunchOptions options;
@@ -216,7 +217,11 @@ std::optional<int> RunWindowsUpdateHelper() {
   const auto installation = Installation();
   if (!installation) return 1;
   updates::Release release;
+  release.version = args->GetSwitchValueASCII("zitter-update-version");
   release.sha256 = args->GetSwitchValueASCII("zitter-update-sha256");
+  const base::Version candidate(release.version);
+  if (!candidate.IsValid() || candidate.components().size() != 3 ||
+      candidate.GetString() != release.version) return 1;
   uint32_t parent = 0;
   if (!base::StringToInt64(args->GetSwitchValueASCII("zitter-update-size"), &release.size) ||
       release.size <= 0 || release.size > kMaxInstaller || release.sha256.size() != 64 ||
@@ -230,6 +235,13 @@ std::optional<int> RunWindowsUpdateHelper() {
   } else if (GetLastError() != ERROR_INVALID_PARAMETER) {
     return 1;
   }
+  // Another process may have installed this version while we were waiting.
+  base::win::RegKey key(installation->second ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER,
+                       kInstallKey, KEY_READ);
+  std::wstring installed_version;
+  if (key.ReadValue(L"DisplayVersion", &installed_version) != ERROR_SUCCESS) return 1;
+  const base::Version installed(base::WideToUTF8(installed_version));
+  if (!installed.IsValid() || candidate.CompareTo(installed) <= 0) return 1;
   const auto installer = args->GetSwitchValuePath("zitter-update-installer");
   // Deny writes/deletion until CreateProcess has loaded the verified image.
   auto verified = OpenVerifiedInstaller(installer, release);
