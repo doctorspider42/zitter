@@ -16,14 +16,20 @@ and SHA-256 must match before they become installable. Partial downloads are
 never executed. Network errors leave the running browser untouched.
 
 The installer is cached in the current user-data directory's `Updates` folder.
-A short notification announces that it will be installed on exit. Closing
-Zitter normally starts a separate helper, which waits for the browser to exit,
-checks the cached installer again, and runs setup against the same registered
-installation. Setup waits for the helper to exit and refuses to overwrite a
-running browser. An update preserves existing shortcuts and browsing data.
-It does not restart the browser automatically. If the browser is killed or
-another instance prevents installation, the next successful check can reuse the
-verified cached installer and retry on a later normal exit.
+A notification offers an Install action. A persistent indicator on the Zitter
+menu and a versioned Install entry remain available after the notification
+expires. Ordinary shutdown does not install a downloaded update.
+
+Clicking Install requests normal browser shutdown, including download and
+unsaved-form checks. After shutdown completes, a separate helper waits for the
+browser to exit, checks the cached installer again, and runs setup against the
+same registered installation. Setup waits for the helper to exit and refuses to
+overwrite a running browser. An update preserves existing shortcuts and browsing
+data. It does not restart the browser automatically. If shutdown is cancelled,
+the update stays available; it is installed when the requested shutdown finally
+completes. If the browser is killed or another instance prevents installation,
+the next successful check can reuse the verified cached installer and offer it
+again.
 
 An installation for the current user updates without elevation. An all-users
 installation requires the normal Windows UAC prompt; declining it leaves the

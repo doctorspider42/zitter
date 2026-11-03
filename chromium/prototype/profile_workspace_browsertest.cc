@@ -4022,6 +4022,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, F5ReloadsPageAndAnimatesRefres
     ASSERT_TRUE(base::test::RunUntil([&] { return shell->reload_animating_for_testing(); }));
   reload.Wait();
   EXPECT_EQ("undefined", content::EvalJs(page, "typeof window.reloadSentinel"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !shell->reload_animating_for_testing(); }));
 }
 #endif
 
@@ -4152,6 +4153,12 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ChromiumHistoryAndCommandPalet
       return result.url == work_url && result.detail.starts_with(u"Historia");
     });
   }));
+  const auto& suggestions = window_->shell()->suggestions();
+  const auto history_result = std::find_if(suggestions.begin(), suggestions.end(), [&](const auto& item) { return item.url == work_url; });
+  ASSERT_NE(history_result, suggestions.end());
+  ui::KeyEvent down(ui::EventType::kKeyPressed, ui::VKEY_DOWN, 0);
+  for (auto i = suggestions.begin(); i != history_result; ++i)
+    ASSERT_TRUE(window_->shell()->address_input()->view()->OnKeyPressed(down));
   ui::KeyEvent enter(ui::EventType::kKeyPressed, ui::VKEY_RETURN, 0);
   window_->shell()->address_input()->view()->OnKeyPressed(enter);
   ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
@@ -4191,6 +4198,169 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ChromiumHistoryAndCommandPalet
   EXPECT_EQ(work_url, window_->contents("work")->GetVisibleURL());
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, UpdateNotificationRequiresInstallClick) {
+  int installs = 0;
+  auto* shell = window_->shell();
+  auto install = base::BindRepeating([](int* count) { ++*count; }, &installs);
+  shell->ShowUpdateReady("99.0.0", install);
+  EXPECT_EQ(0, installs);
+  EXPECT_NE(std::u16string::npos, shell->toast_text_for_testing().find(u"99.0.0"));
+  shell->HideToast();
+  EXPECT_EQ(0, installs);
+  shell->ShowUpdateReady("99.0.0", install);
+  shell->UndoToast();
+  EXPECT_EQ(1, installs);
+  shell->UndoToast();
+  EXPECT_EQ(1, installs);
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PaletteShortcutsReopenAfterBackdropClick) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html?palette-reopen");
+  ASSERT_TRUE(window_->NavigateFromBar(url, false));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  window_->widget()->Show();
+  shell->CloseOverlays(true);
+  window_->widget()->Activate();
+  window_->contents("work")->Focus();
+#if BUILDFLAG(IS_MAC)
+  constexpr int modifiers = ui::EF_COMMAND_DOWN;
+#else
+  constexpr int modifiers = ui::EF_CONTROL_DOWN;
+#endif
+  for (const auto key : {ui::VKEY_T, ui::VKEY_T, ui::VKEY_L, ui::VKEY_L, ui::VKEY_T}) {
+    SCOPED_TRACE(static_cast<int>(key));
+    ASSERT_TRUE(static_cast<ui::AcceleratorTarget*>(window_.get())->AcceleratorPressed(ui::Accelerator(key, modifiers)));
+    ASSERT_TRUE(base::test::RunUntil([&] { return shell->address_visible(); }));
+    EXPECT_TRUE(shell->scrim_widget_for_testing()->IsVisible());
+    EXPECT_TRUE(shell->address_input()->HasFocus());
+    EXPECT_EQ(key == ui::VKEY_L ? base::UTF8ToUTF16(url.spec()) : u"", shell->address_input()->GetText());
+    // Dispatch both halves to the real backdrop view. It must keep the
+    // capture target visible until mouse-up, then restore page focus.
+    auto* backdrop = shell->scrim_widget_for_testing()->widget_delegate()->GetContentsView();
+    const gfx::Point point(backdrop->width() / 2, backdrop->height() - 24);
+    ui::MouseEvent press(ui::EventType::kMousePressed, point, point, base::TimeTicks::Now(), ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON);
+    ui::MouseEvent release(ui::EventType::kMouseReleased, point, point, base::TimeTicks::Now(), ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON);
+    ASSERT_TRUE(backdrop->OnMousePressed(press));
+    EXPECT_TRUE(shell->address_visible());
+    EXPECT_TRUE(shell->scrim_widget_for_testing()->IsVisible());
+    backdrop->OnMouseReleased(release);
+    ASSERT_TRUE(base::test::RunUntil([&] { return !shell->address_visible(); }));
+    EXPECT_FALSE(shell->scrim_widget_for_testing()->IsVisible());
+    EXPECT_TRUE(window_->widget()->IsActive());
+  }
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, TypedAddressStaysPrimaryAsSuggestionsArrive) {
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html?typed-address");
+  ASSERT_TRUE(window_->NavigateFromBar(url, false));
+  auto* original = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(original));
+  auto* shell = window_->shell();
+  const auto query = base::UTF8ToUTF16(url.spec());
+  const auto count = window_->tab_count("work");
+  window_->OpenCommandPalette(); SetPaletteQuery(query);
+  shell->SetSearchResults(query, "work-profile", {
+      {u"Existing", u"Tab", url, 0, "work"},
+      {u"Pinned", u"Pin", url, std::nullopt, "work", "test-pin"}});
+  ASSERT_FALSE(shell->suggestions().empty());
+  EXPECT_EQ(url, shell->suggestions().front().url);
+  EXPECT_FALSE(shell->suggestions().front().tab);
+  EXPECT_TRUE(shell->suggestions().front().pin_id.empty());
+  EXPECT_TRUE(shell->suggestions().front().command_id.empty());
+  ui::KeyEvent enter(ui::EventType::kKeyPressed, ui::VKEY_RETURN, 0);
+  ASSERT_TRUE(shell->address_input()->view()->OnKeyPressed(enter));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  EXPECT_NE(original, window_->contents("work"));
+  EXPECT_EQ(count + 1, window_->tab_count("work"));
+  // A deliberate arrow selection survives later asynchronous result reordering.
+  window_->OpenCommandPalette(); SetPaletteQuery(query);
+  shell->SetSearchResults(query, "work-profile", {{u"Existing", u"Tab", url, 0, "work"}});
+  ui::KeyEvent down(ui::EventType::kKeyPressed, ui::VKEY_DOWN, 0);
+  ASSERT_TRUE(shell->address_input()->view()->OnKeyPressed(down));
+  shell->SetSearchResults(query, "work-profile", {
+      {u"Newer", u"Tab", url, count, "work"},
+      {u"Existing", u"Tab", url, 0, "work"}});
+  ASSERT_TRUE(shell->address_input()->view()->OnKeyPressed(enter));
+  EXPECT_EQ(original, window_->contents("work"));
+  EXPECT_EQ(count + 1, window_->tab_count("work"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CommandUsageBalancesRecencyFrequencyAndSerialization) {
+  BrowserTools tools;
+  const auto now = base::Time::FromMillisecondsSinceUnixEpoch(INT64_C(1800000000000));
+  for (int i = 0; i < 4; ++i) tools.RecordCommandUse("settings", "", now - base::Days(7));
+  tools.RecordCommandUse("history", "", now);
+  tools.RecordCommandUse("sidebar", "", now - base::Days(35));
+  tools.RecordCommandUse("select_space", "home", now);
+  EXPECT_GT(tools.CommandScore("settings", "", now), tools.CommandScore("history", "", now));
+  EXPECT_EQ(0, tools.CommandScore("sidebar", "", now));
+  EXPECT_EQ(0, tools.CommandScore("select_space", "work", now));
+  const auto restored = BrowserTools::FromValue(tools.ToValue());
+  EXPECT_DOUBLE_EQ(tools.CommandScore("settings", "", now), restored.CommandScore("settings", "", now));
+  EXPECT_DOUBLE_EQ(1, restored.CommandScore("select_space", "home", now));
+  EXPECT_EQ(0, restored.CommandScore("settings", "", now + base::Days(70)));
+  base::DictValue malformed; base::ListValue usage; base::DictValue bad;
+  bad.Set("id", "settings"); bad.Set("target", ""); bad.Set("weight", -1.0); bad.Set("last_used_ms", now.InMillisecondsFSinceUnixEpoch());
+  usage.Append(std::move(bad)); malformed.Set("command_usage", std::move(usage));
+  EXPECT_TRUE(BrowserTools::FromValue(malformed).command_usage.empty());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PaletteCommandUseReordersAndPersists) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->tools_ready(); }));
+  for (int i = 0; i < 2; ++i) {
+    auto commands = window_->CommandResults(u"> sidebar");
+    ASSERT_EQ(1u, commands.size());
+    ASSERT_TRUE(window_->ExecuteCommand(commands.front()));
+  }
+  const auto engines = window_->CommandResults(u"> engines");
+  ASSERT_EQ(1u, engines.size());
+  ASSERT_TRUE(window_->ExecuteCommand(engines.front()));
+  shell->CloseOverlays();
+  const auto commands = window_->CommandResults(u">");
+  ASSERT_GE(commands.size(), 2u);
+  EXPECT_EQ("sidebar", commands[0].command_id);
+  EXPECT_EQ("engines", commands[1].command_id);
+  const auto compact = window_->CommandResults(u"");
+  ASSERT_FALSE(compact.empty()); EXPECT_EQ("sidebar", compact[0].command_id);
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_saved(); }));
+  std::string data;
+  {
+    base::ScopedAllowBlockingForTesting allow;
+    ASSERT_TRUE(base::ReadFileToString(g_browser_process->profile_manager()->user_data_dir().AppendASCII("ZitterTools.json"), &data));
+  }
+  auto saved = base::JSONReader::ReadDict(data, base::JSON_PARSE_RFC);
+  ASSERT_TRUE(saved);
+  auto restored = BrowserTools::FromValue(*saved);
+  EXPECT_GT(restored.CommandScore("sidebar", "", base::Time::Now()), 1.5);
+  EXPECT_GT(restored.CommandScore("engines", "", base::Time::Now()), 0.9);
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, UnifiedPalettePrioritizesTabsAndPins) {
+  auto* shell = window_->shell();
+  const auto tab_url = embedded_test_server()->GetURL("/storage_probe.html?palette-tab");
+  const auto pin_url = embedded_test_server()->GetURL("/storage_probe.html?palette-pin");
+  const auto history_url = embedded_test_server()->GetURL("/storage_probe.html?palette-history");
+  for (const auto* shortcut : {"new_tab", "palette"}) {
+    ASSERT_TRUE(window_->RunShortcut(shortcut));
+    EXPECT_TRUE(shell->address_input()->GetText().empty());
+    // Feed deliberately reversed results to exercise final presentation order.
+    shell->SetSearchResults(u"", "work-profile", {
+      {u"History", u"History", history_url, std::nullopt},
+      {u"Pin", u"Pin", pin_url, std::nullopt, "work", "test-pin"},
+      {u"Tab", u"Tab", tab_url, 0, "work"}
+    });
+    const auto& results = shell->suggestions();
+    ASSERT_GE(results.size(), 3u);
+    EXPECT_EQ(tab_url, results[0].url);
+    EXPECT_TRUE(results[0].command_id.empty());
+    EXPECT_EQ(pin_url, results[1].url);
+    shell->CloseOverlays();
+  }
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DisablingPasswordSavingDismissesAndSuppressesOffers) {
   const auto url = embedded_test_server()->GetURL("/login_probe.html");
   auto* page = window_->contents("work");
@@ -4214,6 +4384,10 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DisablingPasswordSavingDismiss
   ASSERT_TRUE(window_->WritePreference("save_passwords", 1));
   ASSERT_TRUE(client->PromptUserToSaveOrUpdatePassword(form(), false));
   ASSERT_TRUE(services->password_prompt());
+  EXPECT_EQ(ui::mojom::ModalType::kNone, services->password_prompt()->widget_delegate()->GetModalType());
+  EXPECT_FALSE(services->password_prompt()->IsActive());
+  const auto window_bounds = window_->widget()->GetWindowBoundsInScreen();
+  EXPECT_LT(services->password_prompt()->GetWindowBoundsInScreen().y(), window_bounds.y() + 100);
   ASSERT_TRUE(window_->WritePreference("save_passwords", 0));
   EXPECT_FALSE(services->password_prompt());
   EXPECT_FALSE(work_->GetPrefs()->GetBoolean(password_manager::prefs::kCredentialsEnableService));
@@ -5849,6 +6023,131 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitViewGroupsMoreThanTwoTabs
   EXPECT_EQ(1u, window_->tab_count("work"));
   EXPECT_FALSE(window_->split());
   EXPECT_NE(pages[2], window_->contents("work"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PinnedFolderKeepsActiveAndTemporarilyRevealedPinsVisible) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->SetWorkspaceAnimations(false);
+  ASSERT_TRUE(window_->CreatePinnedFolder("work", "", "Active pin folder"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  const auto folder = window_->pinned_items("work").back().id;
+  std::vector<std::string> pins;
+  for (const auto* path : {"/storage_probe.html?fold-a", "/storage_probe.html?fold-b"}) {
+    ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL(path), true));
+    ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+    ASSERT_TRUE(window_->PinTab(window_->tab_count("work") - 1, folder, ""));
+    ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+    pins.push_back(window_->pinned_items("work").back().id);
+  }
+  window_->SelectTab(0); shell->CloseOverlays(true); shell->SetPinned(true); shell->ShowSidebar();
+  shell->SetPinnedFoldersCollapsedForTesting(true);
+  auto drawn = [&](const std::string& id) {
+    shell->sidebar_widget()->LayoutRootViewIfNecessary();
+    auto* row = shell->pin_button(id); return row && row->IsDrawn();
+  };
+  EXPECT_FALSE(drawn(pins[0])); EXPECT_FALSE(drawn(pins[1]));
+  window_->OpenPinnedItem(pins[1]);
+  ASSERT_TRUE(base::test::RunUntil([&] { return drawn(pins[1]) && !drawn(pins[0]); }));
+  ActivateSidebarRow(shell->pin_button(folder));
+  ASSERT_TRUE(base::test::RunUntil([&] { return drawn(pins[0]) && drawn(pins[1]); }));
+  ActivateSidebarRow(shell->pin_button(folder));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !drawn(pins[0]) && drawn(pins[1]); }));
+  // A temporary switch keeps the revealed shortcut, as requested.
+  window_->SelectTab(0);
+  EXPECT_TRUE(drawn(pins[1])); EXPECT_FALSE(drawn(pins[0]));
+  window_->OpenPinnedItem(pins[1]); EXPECT_TRUE(drawn(pins[1]));
+  window_->SelectTab(0);
+  // A deliberate open/close while elsewhere can still hide that shortcut.
+  ActivateSidebarRow(shell->pin_button(folder));
+  ASSERT_TRUE(base::test::RunUntil([&] { return drawn(pins[0]) && drawn(pins[1]); }));
+  ActivateSidebarRow(shell->pin_button(folder));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !drawn(pins[0]) && !drawn(pins[1]); }));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PinnedMenuEditsResetsAndUnpinsWithoutReplacingThePage) {
+  const auto original_url = embedded_test_server()->GetURL("/storage_probe.html?pin-original");
+  const auto away_url = embedded_test_server()->GetURL("/storage_probe.html?pin-away");
+  const auto new_url = embedded_test_server()->GetURL("/storage_probe.html?pin-edited");
+  ASSERT_TRUE(window_->NavigateFromBar(original_url, false));
+  auto* page = window_->contents("work"); ASSERT_TRUE(content::WaitForLoadStop(page));
+  ASSERT_TRUE(window_->PinTab(0, "", ""));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  const auto pin = window_->pinned_items("work").back().id;
+  const auto count = window_->tab_count("work");
+  ASSERT_TRUE(window_->NavigateFromBar(away_url, false)); ASSERT_TRUE(content::WaitForLoadStop(page));
+  auto* shell = window_->shell();
+  shell->BuildTabMenu(std::nullopt, pin);
+  auto* menu = shell->tab_context_menu_for_testing();
+  for (int id : {26, 27, 28}) { ASSERT_TRUE(menu->GetIndexOfCommandId(id)); EXPECT_TRUE(menu->IsEnabledAt(*menu->GetIndexOfCommandId(id))); }
+  menu->ActivatedAt(*menu->GetIndexOfCommandId(27), 0);
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->pin_url_dialog(); }));
+  auto* input = shell->pin_url_editor_for_testing(); ASSERT_TRUE(input);
+  EXPECT_EQ(base::UTF8ToUTF16(original_url.spec()), input->GetText());
+  input->SetText(u"javascript:alert(1)");
+  shell->pin_url_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+  EXPECT_TRUE(shell->pin_url_dialog());
+  EXPECT_EQ(original_url, window_->pinned_items("work").back().url);
+  input->SetText(base::UTF8ToUTF16(new_url.spec()));
+  shell->pin_url_dialog()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+  ASSERT_TRUE(base::test::RunUntil([&] { return !shell->pin_url_dialog() && !window_->profiles_busy(); }));
+  EXPECT_EQ(new_url, window_->pinned_items("work").back().url);
+  EXPECT_EQ(away_url, page->GetLastCommittedURL());
+  EXPECT_EQ(page, window_->contents("work"));
+  {
+    base::ScopedAllowBlockingForTesting allow;
+    std::string data; ASSERT_TRUE(base::ReadFileToString(g_browser_process->profile_manager()->user_data_dir().AppendASCII("ZitterWorkspaces.json"), &data));
+    EXPECT_NE(std::string::npos, data.find(new_url.spec()));
+  }
+  shell->BuildTabMenu(std::nullopt, pin); menu = shell->tab_context_menu_for_testing();
+  menu->ActivatedAt(*menu->GetIndexOfCommandId(28), 0);
+  ASSERT_TRUE(base::test::RunUntil([&] { return page->GetVisibleURL() == new_url; }));
+  ASSERT_TRUE(content::WaitForLoadStop(page));
+  EXPECT_EQ(new_url, page->GetLastCommittedURL()); EXPECT_EQ(count, window_->tab_count("work"));
+  shell->BuildTabMenu(std::nullopt, pin); menu = shell->tab_context_menu_for_testing();
+  menu->ActivatedAt(*menu->GetIndexOfCommandId(26), 0);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy() && window_->pinned_items("work").empty(); }));
+  EXPECT_EQ(page, window_->contents("work")); EXPECT_EQ(count, window_->tab_count("work"));
+  EXPECT_FALSE(menu->IsEnabledAt(*menu->GetIndexOfCommandId(27)));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ClosedPinMenuUnpinsLazilyAndResetOpensItsSavedUrl) {
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html?closed-pin");
+  ASSERT_TRUE(window_->RestorePins("work", {{"closed", "", "Closed pin", url, false}}));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  auto* shell = window_->shell(); const auto count = window_->tab_count("work");
+  shell->BuildTabMenu(std::nullopt, "closed"); auto* menu = shell->tab_context_menu_for_testing();
+  menu->ActivatedAt(*menu->GetIndexOfCommandId(26), 0);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy() && window_->pinned_items("work").empty(); }));
+  EXPECT_EQ(count + 1, window_->tab_count("work"));
+  window_->SelectTab(count); ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  EXPECT_EQ(url, window_->contents("work")->GetLastCommittedURL());
+  ASSERT_TRUE(window_->RestorePins("work", {{"another", "", "Another pin", url, false}}));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  shell->BuildTabMenu(std::nullopt, "another"); menu = shell->tab_context_menu_for_testing();
+  menu->ActivatedAt(*menu->GetIndexOfCommandId(28), 0);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->tab_count("work") == count + 2 && window_->contents("work")->GetVisibleURL() == url; }));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  EXPECT_EQ(1u, window_->pinned_items("work").size());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DomainRoutingMenuNamesWorkspaceAndUsesNormalText) {
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html?route-menu-copy");
+  ASSERT_TRUE(window_->NavigateFromBar(url, false));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  auto* shell = window_->shell(); shell->BuildTabMenu(0);
+  auto* menu = shell->tab_context_menu_for_testing();
+  EXPECT_FALSE(menu->GetIndexOfCommandId(24));
+  auto index = menu->GetIndexOfCommandId(23); ASSERT_TRUE(index);
+  EXPECT_NE(std::u16string::npos, menu->GetLabelAt(*index).find(u"Praca"));
+  EXPECT_NE(std::u16string::npos, menu->GetLabelAt(*index).find(base::UTF8ToUTF16(url.host())));
+  ASSERT_TRUE(window_->SetLinkRule(url, "work"));
+  shell->BuildTabMenu(0); menu = shell->tab_context_menu_for_testing();
+  index = menu->GetIndexOfCommandId(24); ASSERT_TRUE(index);
+  EXPECT_FALSE(menu->GetForegroundColorId(*index));
+  EXPECT_NE(std::u16string::npos, menu->GetLabelAt(*index).find(base::UTF8ToUTF16(url.host())));
+  menu->ActivatedAt(*index, 0);
+  ASSERT_TRUE(base::test::RunUntil([&] { shell->BuildTabMenu(0); return !shell->tab_context_menu_for_testing()->GetIndexOfCommandId(24); }));
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarMovesTabsAndPinsAcrossSections) {
@@ -8168,7 +8467,8 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CommandCenterShowsTheLoaderUnt
 }
 
 // Folders start collapsed; a pin opened from outside the sidebar (Command
-// Center) peeks out under its folder alone, and toggling the folder ends that.
+// Center) peeks out under its folder alone. Folding preserves the active pin,
+// and temporarily selecting a normal tab keeps that revealed shortcut.
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CollapsedFoldersRevealOnlyThePinOpenedElsewhere) {
   ASSERT_NO_FATAL_FAILURE(NavigateBoth());ASSERT_TRUE(window_->Select("work"));
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
@@ -8184,7 +8484,12 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CollapsedFoldersRevealOnlyTheP
   ASSERT_TRUE(row(folder));EXPECT_TRUE(drawn(folder));EXPECT_FALSE(drawn(pins[0]));EXPECT_FALSE(drawn(pins[1]));
   window_->OpenPinnedItem(pins[1]);ASSERT_TRUE(base::test::RunUntil([&]{return drawn(pins[1]);}));EXPECT_FALSE(drawn(pins[0]));
   ActivateSidebarRow(row(folder));EXPECT_TRUE(drawn(pins[0]));EXPECT_TRUE(drawn(pins[1]));
-  ActivateSidebarRow(row(folder));EXPECT_TRUE(base::test::RunUntil([&]{return !drawn(pins[0])&&!drawn(pins[1]);}));
+  ActivateSidebarRow(row(folder));ASSERT_TRUE(base::test::RunUntil([&]{return !drawn(pins[0])&&drawn(pins[1]);}));
+  window_->SelectTab(0);
+  EXPECT_TRUE(drawn(pins[1])); EXPECT_FALSE(drawn(pins[0]));
+  // Explicitly folding the folder while a normal tab is active ends the peek.
+  ActivateSidebarRow(row(folder));ASSERT_TRUE(base::test::RunUntil([&]{return drawn(pins[0])&&drawn(pins[1]);}));
+  ActivateSidebarRow(row(folder));ASSERT_TRUE(base::test::RunUntil([&]{return !drawn(pins[0])&&!drawn(pins[1]);}));
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarTreeStateSurvivesRebuildsAndSpaces) {
@@ -9321,6 +9626,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionActionsOpenPopupsAndD
   ASSERT_TRUE(base::test::RunUntil([&] { return bar->popup_for_testing() && bar->popup_for_testing()->IsVisible(); }));
   auto* contents = bar->popup_contents_for_testing();
   ASSERT_TRUE(contents);
+  ASSERT_TRUE(content::WaitForLoadStop(contents));
   EXPECT_EQ(popup->GetResourceURL("popup.html"), contents->GetLastCommittedURL());
   EXPECT_TRUE(Shown(bar, popup->id())->popup_open);
   // Anchored under its icon, right edges together.
@@ -9341,6 +9647,40 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionActionsOpenPopupsAndD
 
 // Extension pages (options, chrome://extensions, links from popups) open as
 // tabs of a space that uses the extension's profile.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionPopupVisibleBeforeSlowResourcesFinish) {
+  base::ScopedTempDir dir;
+  net::EmbeddedTestServer server;
+  net::test_server::ControllableHttpResponse slow_image(&server, "/slow-image");
+  ASSERT_TRUE(server.Start());
+  base::FilePath source;
+  {
+    base::ScopedAllowBlockingForTesting allow;
+    ASSERT_TRUE(dir.CreateUniqueTempDir());
+    source = WriteTestExtension(dir.GetPath(), "SlowPopup", SK_ColorBLUE, true);
+    ASSERT_TRUE(base::WriteFile(source.AppendASCII("popup.html"),
+        "<!doctype html><body style='width:320px;height:200px'>Vault<img src='" +
+        server.GetURL("/slow-image").spec() + "'></body>"));
+  }
+  const auto extension = LoadTestExtension(work_, source);
+  ASSERT_TRUE(extension);
+  ToolbarActionsModel::Get(work_)->SetActionVisibility(extension->id(), true);
+  auto* bar = window_->extensions_bar();
+  bar->RunAction(extension->id());
+  slow_image.WaitForRequest();
+  ASSERT_TRUE(bar->popup_for_testing());
+  EXPECT_TRUE(bar->popup_for_testing()->IsVisible());
+  EXPECT_TRUE(bar->popup_contents_for_testing()->IsLoading());
+  EXPECT_TRUE(base::test::RunUntil([&] {
+    const auto bounds = bar->popup_for_testing()->GetWindowBoundsInScreen();
+    return bar->popup_contents_for_testing()->GetVisibility() == content::Visibility::VISIBLE &&
+           bounds.width() >= 320 && bounds.height() >= 200;
+  }));
+  EXPECT_NE("complete", content::EvalJs(bar->popup_contents_for_testing(), "document.readyState"));
+  slow_image.Send("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
+  slow_image.Done();
+  ASSERT_TRUE(content::WaitForLoadStop(bar->popup_contents_for_testing()));
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionPagesOpenInTheirProfile) {
   base::ScopedTempDir dir;
   {

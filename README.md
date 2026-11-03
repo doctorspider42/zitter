@@ -38,6 +38,20 @@ An independent, open-source browser built on Chromium, with its own interface an
 | **Time Machine** | Save workspace layouts, recover closed tabs and restore snapshots. Sleep spaces until you need them. |
 | **Bring your Arc along** | On macOS, import Arc spaces, favorites, nested pins and emoji. Chrome, Edge and Brave imports are supported too. |
 
+Ctrl+T and Ctrl+K share the Command Center. When text is entered, the first result
+always opens the typed address or searches in a new tab; existing tabs and pins
+require an explicit arrow or mouse selection. Use `>` for commands. Matching
+commands learn from your selections using frequency and a seven-day half-life,
+so recent habits gradually replace older ones. Command IDs and workspace targets
+are stored locally in `ZitterTools.json`; typed queries and page URLs are not
+part of this command history.
+
+A pinned tab's context menu can unpin it, edit its saved starting URL, or return
+to that URL with **Back to Pinned URL**. Editing the saved URL keeps the current
+page open. An active pin remains visible beneath a collapsed folder; its revealed
+shortcut also remains available when you temporarily select an ordinary tab.
+Domain routing menu items name the domain and destination workspace explicitly.
+
 Light, dark and system themes. Workspace accents. Native preferences, history and downloads.
 
 Shift-click a link to open **Peek**, then move it into a regular tab without reloading. In **Settings → Appearance**, you can disable this gesture or enable **Magic image previews**: hover over a direct image link (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.avif`, `.bmp`, `.ico` or `.svg`) for a small, passive preview. Image previews are off by default and may fetch the image before you click. Both settings apply across the app.

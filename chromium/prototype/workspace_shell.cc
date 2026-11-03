@@ -1,3 +1,4 @@
+#include "base/logging.h"
 #include "base/i18n/number_formatting.h"
 #include "ui/views/style/platform_style.h"
 #include "ui/views/vector_icons.h"
@@ -505,12 +506,12 @@ constexpr int32_t kZitterMenuRun = views::MenuRunner::NO_FLAGS;
 // The panel's `radius-md`, passed to every context-menu run.
 gfx::RoundedCornersF ZitterMenuCorners() { return gfx::RoundedCornersF(12); }
 // Destructive commands read in `danger` (ContextMenu): close tab (10), close the
-// split (12), remove a domain rule (24), remove a space (30), delete a folder (38).
+// split (12), remove a space (30), delete a folder (38).
 class DesignMenuModel final : public ui::SimpleMenuModel {
  public:
   using ui::SimpleMenuModel::SimpleMenuModel;
   std::optional<ui::ColorId> GetForegroundColorId(size_t index) override {
-    static constexpr std::array<int, 5> kDanger = {10, 12, 24, 30, 38};
+    static constexpr std::array<int, 4> kDanger = {10, 12, 30, 38};
     return std::ranges::contains(kDanger, GetCommandIdAt(index)) ? std::optional<ui::ColorId>(ui::kColorAlertHighSeverity) : std::nullopt;
   }
 };
@@ -1231,7 +1232,9 @@ class ScrimView final : public views::View {
  public:
   explicit ScrimView(base::RepeatingClosure pressed):pressed_(std::move(pressed)){}
   void OnPaint(gfx::Canvas* canvas) override{canvas->DrawColor(Palette(this).scrim);}
-  bool OnMousePressed(const ui::MouseEvent&) override{pressed_.Run();return true;}
+  // Keep the capture target alive through the matching mouse release.
+  bool OnMousePressed(const ui::MouseEvent&) override{return true;}
+  void OnMouseReleased(const ui::MouseEvent&) override{pressed_.Run();}
  private:
   base::RepeatingClosure pressed_;
 };
@@ -3330,6 +3333,15 @@ class AppMenuButton final : public views::Button {
     polyline({{3.5f, 3}, {3.5f, 13}}, SkColorSetA(ink, SkColorGetA(ink) * 6 / 10));
     polyline({{6.5f, 5.5f}, {10, 5.5f}, {6.5f, 10.5f}, {10, 10.5f}}, ink);
     polyline({{12, 3}, {14.5f, 8}, {12, 13}}, p.accent_ink);
+    if (update_available_) {
+      fill.setColor(p.accent_ink);
+      canvas->DrawCircle(gfx::PointF(width() - 5.f, 5.f), 3.f, fill);
+    }
+  }
+  void SetUpdateAvailable(bool available) {
+    update_available_ = available;
+    GetViewAccessibility().SetName(available ? T(u"Menu Zitter — dostępna aktualizacja") : T(u"Menu Zitter"));
+    SchedulePaint();
   }
   void SetOpen(bool open) {
     open_ = open;
@@ -3338,6 +3350,7 @@ class AppMenuButton final : public views::Button {
   }
  private:
   bool open_ = false;
+  bool update_available_ = false;
 };BEGIN_METADATA(AppMenuButton)
 END_METADATA
 
@@ -3389,6 +3402,11 @@ class ShellRoot final : public views::View {
     if (const auto lights = AlignWorkspaceWindowButtons(GetWidget(), kAxis); !lights.IsEmpty())
       header_x = lights.right() + kHeaderLightsGap;
 #endif
+    if (app_menu) {
+      const int menu_width = app_menu->GetPreferredSize().width();
+      app_menu->SetBounds(header_x, kAxis - kHeaderButtonSize / 2, menu_width, kHeaderButtonSize);
+      header_x += menu_width + 2;
+    }
     header->SetBounds(header_x, kAxis - kHeaderButtonSize / 2, header_width, kHeaderButtonSize);
     // Design: Extensions. The right end of the band, on the same axis, `space-2`
     // from the window edge (from the caption buttons on Windows); it never runs
@@ -3398,12 +3416,6 @@ class ShellRoot final : public views::View {
       const int caption_width = caption->GetPreferredSize().width();
       caption->SetBounds(width() - caption_width, 0, caption_width, kShellHeaderHeight);
       trailing_end = caption->x() - kGap;
-    }
-    // Design: Menu Zitter. The |z⟩ button closes the extensions toolbar.
-    if (app_menu) {
-      const int menu_width = app_menu->GetPreferredSize().width();
-      app_menu->SetBounds(trailing_end - menu_width, kAxis - kHeaderButtonSize / 2, menu_width, kHeaderButtonSize);
-      trailing_end = app_menu->x() - 2;
     }
     if (trailing && trailing->GetVisible()) {
       const int trailing_width = std::min(trailing->GetPreferredSize().width(),
@@ -4269,8 +4281,17 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,bool hovered){if(!shell)return;if(hovered)shell->toast_timer_.Stop();else if(shell->toast_widget_->IsVisible())shell->toast_timer_.Start(FROM_HERE,base::Seconds(6),base::BindOnce(&WorkspaceShell::HideToast,shell));},weak));
    toast_=toast.get();make_panel(std::move(toast), toast_delegate_, toast_widget_, T(u"Zitter — Komunikat"), false);}
   CreateSplitDrop();
-  make_panel(std::make_unique<ScrimView>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->CloseOverlays(true);},weak)),
-             scrim_delegate_, scrim_widget_, u"Zitter", false);
+  make_panel(std::make_unique<ScrimView>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+    if (!shell) return;
+    shell->CloseOverlays(true);
+    shell->RestorePageFocus();
+  }, weak)), scrim_delegate_, scrim_widget_, u"Zitter", false);
+  // Native popup fades can briefly expose an unpainted backdrop or leave a
+  // fading, dismissed surface above a newly reopened palette.
+  address_widget_->SetVisibilityAnimationTransition(views::Widget::ANIMATE_NONE);
+  scrim_widget_->SetVisibilityAnimationTransition(views::Widget::ANIMATE_NONE);
+  scrim_widget_->GetRootView()->SetPaintToLayer();
+  scrim_widget_->GetRootView()->layer()->SetFillsBoundsOpaquely(false);
   PositionPanels();
   ApplyAppearance();
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE, base::BindOnce([](base::FilePath path) {
@@ -4281,7 +4302,13 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     if (!shell) return;
     if (!shell->keys_dirty_) shell->tools_.shortcuts = std::move(loaded.shortcuts);
     if (!shell->engines_dirty_) { shell->tools_.providers = std::move(loaded.providers); shell->tools_.default_keyword = std::move(loaded.default_keyword); }
+    for (const auto& [key, time] : shell->pending_command_uses_)
+      loaded.RecordCommandUse(key.first, key.second, time);
+    shell->tools_.command_usage = std::move(loaded.command_usage);
     shell->tools_ready_ = true; shell->RefreshKeyRegistrations();
+    if (!shell->pending_command_uses_.empty()) {
+      shell->pending_command_uses_.clear(); shell->command_usage_dirty_ = true; shell->SaveTools();
+    }
     if (shell->tools_widget_->IsVisible()) shell->RefreshTools();
   }, weak));
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE, base::BindOnce(ReadAppearance, settings_path_),
@@ -4362,6 +4389,7 @@ void WorkspaceShell::Detach() {
   if (sidebar_root_) sidebar_root_->RemovePreTargetHandler(this);
   import_preview_timer_.Stop();
   if (folder_dialog_) folder_dialog_->CloseNow();
+  pin_url_editor_ = nullptr; pin_url_dialog_.reset(); pin_url_dialog_delegate_.reset();
   rust_folder_dialog_.reset();rust_folder_dialog_delegate_.reset();
 
   link_menu_runner_.reset(); link_menu_.reset(); route_menu_.reset(); add_menu_runner_.reset(); add_menu_.reset();
@@ -4582,17 +4610,19 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
   if (state_.workspace_id.empty()) return;
   // A pin opened elsewhere (Command Center, keyboard) shows under its collapsed
   // folders on its own; the folders stay collapsed.
+  std::set<std::string> active_path;
+  for (std::string id = state_.active_pin; !id.empty();) {
+    const auto pin = std::ranges::find(state_.pins, id, &PinnedItem::id);
+    if (pin == state_.pins.end() || pin->parent_id.empty()) break;
+    if (sidebar_tree_.Collapsed(state_.workspace_id, pin->parent_id)) active_path.insert(id);
+    id = pin->parent_id;
+  }
   bool revealed = false;
-  if (state_.active_pin != revealed_for_pin_) {
-    revealed_for_pin_ = state_.active_pin;
-    for (std::string id = state_.active_pin; !id.empty();) {
-      const auto pin = std::ranges::find(state_.pins, id, &PinnedItem::id);
-      if (pin == state_.pins.end() || pin->parent_id.empty()) break;
-      if (sidebar_tree_.Collapsed(state_.workspace_id, pin->parent_id) &&
-          !sidebar_tree_.Revealed(state_.workspace_id, id)) {
-        sidebar_tree_.SetRevealed(state_.workspace_id, id, true); revealed = true;
-      }
-      id = pin->parent_id;
+  // Revealed pins remain available after a temporary switch to a normal tab.
+  // Manually toggling their folder clears that peek unless the pin is active.
+  for (const auto& id : active_path) {
+    if (!sidebar_tree_.Revealed(state_.workspace_id, id)) {
+      sidebar_tree_.SetRevealed(state_.workspace_id, id, true); revealed = true;
     }
   }
   // Keep one native tree per workspace. Switching never recreates its rows.
@@ -5590,12 +5620,34 @@ void WorkspaceShell::OnMouseEvent(ui::MouseEvent* input) {
   if (HandleWorkspaceScroll(x, y, false, false, false, event->time_stamp(), true)) event->StopPropagation();
 }
 
-// Toggling a folder ends the peek of items revealed in it: expanded shows every
-// row, collapsed hides them all. Nested folder groups keep their own state.
-void WorkspaceShell::EndFolderPeek(const std::string& workspace,const std::string& folder,views::View* group,bool collapsed){
-  for(const auto& pin:state_.pins)if(pin.parent_id==folder)sidebar_tree_.SetRevealed(workspace,pin.id,false);
-  for(const auto& child:group->children())if(child->GetProperty(kPinRowHolder))child->SetVisible(true);
-  group->SetVisible(!collapsed);
+// Re-plan after the row callback returns; the active pin remains revealed and
+// unrelated pins follow their folders' collapsed state.
+void WorkspaceShell::RefreshFolderPeek(std::string workspace, const std::string& folder, views::View* group, bool collapsed) {
+  std::string active_child;
+  for (std::string id = state_.active_pin; !id.empty();) {
+    const auto item = std::ranges::find(state_.pins, id, &PinnedItem::id);
+    if (item == state_.pins.end() || item->parent_id.empty()) break;
+    if (item->parent_id == folder) { active_child = id; break; }
+    id = item->parent_id;
+  }
+  for (const auto& pin : state_.pins) if (pin.parent_id == folder)
+    sidebar_tree_.SetRevealed(workspace, pin.id, collapsed && pin.id == active_child);
+  for (const auto& child : group->children()) if (child->GetProperty(kPinRowHolder)) {
+    bool shown = !collapsed;
+    if (auto cache = tab_lists_.find(workspace); collapsed && cache != tab_lists_.end()) {
+      auto active = cache->second.pin_buttons.find(active_child);
+      shown = active != cache->second.pin_buttons.end() && child->Contains(active->second.get());
+    }
+    child->SetVisible(shown);
+  }
+  group->SetVisible(!collapsed || !active_child.empty());
+  if (auto cache = tab_lists_.find(workspace); cache != tab_lists_.end()) cache->second.pins.clear();
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(
+      [](base::WeakPtr<WorkspaceShell> shell, std::string workspace) {
+        if (shell && shell->state_.workspace_id == workspace) {
+          shell->RebuildTabs(workspace, false); shell->ScheduleMetalSidebar();
+        }
+      }, weak_factory_.GetWeakPtr(), std::move(workspace)));
 }
 void WorkspaceShell::AppendPinnedItems(views::View* root, const std::vector<PinnedItem>& pins,
     TabListCache& cache,const std::string& workspace,std::map<std::string,std::unique_ptr<views::View>>* retained,
@@ -5647,10 +5699,10 @@ void WorkspaceShell::AppendPinnedItems(views::View* root, const std::vector<Pinn
         const auto target=scope->graph->pin_target(key,id);if(!target.valid)return;const auto pin=std::find_if(shell->state_.pins.begin(),shell->state_.pins.end(),[&](const PinnedItem& item){return item.id==key&&item.folder==target.folder;});if(pin==shell->state_.pins.end())return;
         if(!target.folder){shell->callbacks_.open_pin.Run(key);return;}
         auto* holder=row->parent();auto* container=holder?holder->parent():nullptr;if(!container)return;const auto index=container->GetIndexOf(holder);if(!index||*index+1>=container->children().size())return;auto* group=views::AsViewClass<ScenePinGroup>(container->children()[*index+1].get());if(!group||!group->Matches(scope,target.group)||group->GetWidget()!=shell->sidebar_widget_.get()||!cache->second.root->Contains(group))return;
-        const bool collapsed=shell->sidebar_tree_.Toggle(workspace,key);if(!row->ProjectPinCollapsed(*scope,collapsed)){shell->sidebar_tree_.SetCollapsed(workspace,key,target.collapsed);return;}shell->EndFolderPeek(workspace,key,group,collapsed);shell->ScheduleMetalSidebar();
+        const bool collapsed=shell->sidebar_tree_.Toggle(workspace,key);if(!row->ProjectPinCollapsed(*scope,collapsed)){shell->sidebar_tree_.SetCollapsed(workspace,key,target.collapsed);return;}shell->RefreshFolderPeek(workspace,key,group,collapsed);shell->ScheduleMetalSidebar();
       },weak_factory_.GetWeakPtr(),control->GetWeakPtr(),std::weak_ptr<SidebarNodeGraphState>(cache.node_graph),workspace,pin->id,binding.id));
     }else
-    if(pin->folder){SetRowCallback(button,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,views::View* group,views::View* button,std::string workspace,std::string id,std::u16string title){if(!shell)return;const bool collapsed=shell->sidebar_tree_.Toggle(workspace,id);shell->EndFolderPeek(workspace,id,group,collapsed);SetRowTitle(button,(collapsed?u"▸ ":u"▾ ")+title);shell->ScheduleMetalSidebar();},weak_factory_.GetWeakPtr(),base::Unretained(folder_group),base::Unretained(button),workspace,pin->id,base::UTF8ToUTF16(pin->title)));}
+    if(pin->folder){SetRowCallback(button,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,views::View* group,views::View* button,std::string workspace,std::string id,std::u16string title){if(!shell)return;const bool collapsed=shell->sidebar_tree_.Toggle(workspace,id);shell->RefreshFolderPeek(workspace,id,group,collapsed);SetRowTitle(button,(collapsed?u"▸ ":u"▾ ")+title);shell->ScheduleMetalSidebar();},weak_factory_.GetWeakPtr(),base::Unretained(folder_group),base::Unretained(button),workspace,pin->id,base::UTF8ToUTF16(pin->title)));}
     else SetRowCallback(button,base::BindRepeating(callbacks_.open_pin,pin->id));
     cache.pin_buttons[pin->id] = button;
     button->set_context_menu_controller(this);
@@ -5760,6 +5812,9 @@ constexpr int kLinkSplit = 22;
 constexpr int kRuleHere = 23;
 constexpr int kRemoveRule = 24;
 constexpr int kRouteSubmenu = 25;
+constexpr int kUnpinTab = 26;
+constexpr int kEditPinnedUrl = 27;
+constexpr int kResetPinnedUrl = 28;
 constexpr int kRouteBase = 1000;
 constexpr int kNewFolder = 36;
 constexpr int kRenameFolder = 37;
@@ -5792,7 +5847,6 @@ constexpr gfx::VectorIcon kAddSpaceIcon(kAddSpaceRep,1,"zitter_add_space");
 // The |z⟩ menu's row icons (design: Main, Menu Zitter), 16 px at `.zt-icon`'s 1.6 stroke.
 constexpr gfx::PathElement kMenuNewTabPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,8,3,V_LINE_TO,13,MOVE_TO,3,8,H_LINE_TO,13};
 constexpr gfx::PathElement kMenuAddressPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,CIRCLE,7,7,4,MOVE_TO,10,10,LINE_TO,13,13};
-constexpr gfx::PathElement kMenuPalettePath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,5.5f,3.5f,LINE_TO,3,8,LINE_TO,5.5f,12.5f,MOVE_TO,10.5f,3.5f,LINE_TO,13,8,LINE_TO,10.5f,12.5f};
 constexpr gfx::PathElement kMenuSidebarPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,ROUND_RECT,2.5f,3,11,10,2,MOVE_TO,6.5f,3,V_LINE_TO,13};
 constexpr gfx::PathElement kMenuHistoryPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,CIRCLE,8,8,5.5f,MOVE_TO,8,5,V_LINE_TO,8,LINE_TO,10,9.5f};
 constexpr gfx::PathElement kMenuTimelinePath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,3,8,R_ARC_TO,5,5,0,1,0,1.5f,-3.5f,MOVE_TO,3,2.5f,V_LINE_TO,5.5f,H_LINE_TO,6,MOVE_TO,8,5.5f,V_LINE_TO,8,LINE_TO,9.5f,9.5f};
@@ -5818,7 +5872,6 @@ constexpr gfx::VectorIcon kMenuFindIcon(kMenuFindRep,1,"zitter_menu_find");
 constexpr gfx::VectorIcon kMenuPrintIcon(kMenuPrintRep,1,"zitter_menu_print");
 constexpr gfx::VectorIconRep kMenuNewTabRep[]={{kMenuNewTabPath}};
 constexpr gfx::VectorIconRep kMenuAddressRep[]={{kMenuAddressPath}};
-constexpr gfx::VectorIconRep kMenuPaletteRep[]={{kMenuPalettePath}};
 constexpr gfx::VectorIconRep kMenuSidebarRep[]={{kMenuSidebarPath}};
 constexpr gfx::VectorIconRep kMenuHistoryRep[]={{kMenuHistoryPath}};
 constexpr gfx::VectorIconRep kMenuTimelineRep[]={{kMenuTimelinePath}};
@@ -5828,7 +5881,6 @@ constexpr gfx::VectorIconRep kMenuAboutRep[]={{kMenuAboutPath}};
 constexpr gfx::VectorIconRep kMenuQuitRep[]={{kMenuQuitPath}};
 constexpr gfx::VectorIcon kMenuNewTabIcon(kMenuNewTabRep,1,"zitter_menu_new_tab");
 constexpr gfx::VectorIcon kMenuAddressIcon(kMenuAddressRep,1,"zitter_menu_address");
-constexpr gfx::VectorIcon kMenuPaletteIcon(kMenuPaletteRep,1,"zitter_menu_palette");
 constexpr gfx::VectorIcon kMenuSidebarIcon(kMenuSidebarRep,1,"zitter_menu_sidebar");
 constexpr gfx::VectorIcon kMenuHistoryIcon(kMenuHistoryRep,1,"zitter_menu_history");
 constexpr gfx::VectorIcon kMenuTimelineIcon(kMenuTimelineRep,1,"zitter_menu_timeline");
@@ -5897,10 +5949,13 @@ sidebar::LinkMenuState LinkMenuStateFor(const ShellState& state,const GURL& url,
     out.routes.push_back({workspace.id,base::UTF16ToUTF8(base::UTF8ToUTF16(workspace.name)+u" · "+profile)});}
   return out;
 }
-sidebar::TabMenuState RowMenuState(const ShellState& state,std::optional<size_t> tab,bool valid,bool http) {
+sidebar::TabMenuState RowMenuState(const ShellState& state,std::optional<size_t> tab,bool valid,const GURL& url,std::string_view pin = {}) {
   sidebar::TabMenuState out{};out.ready=state.configuration_ready;out.busy=state.profiles_busy;out.valid=valid;out.tab=tab.value_or(0);out.has_tab=tab.has_value();
   out.split=state.split;for(size_t member:state.split_tabs)out.members.push_back(member);
-  out.vertical=state.split_vertical;out.tab_count=state.tabs.size();out.http=http;return out;
+  out.vertical=state.split_vertical;out.tab_count=state.tabs.size();out.http=url.SchemeIsHTTPOrHTTPS();
+  out.host=std::string(url.host());out.workspace=base::UTF16ToUTF8(state.workspace_name);out.pinned=!pin.empty();
+  for(const auto& row:state.tabs)if(tab==row.index&&!row.pin_id.empty())out.pinned=true;
+  out.has_rule=std::any_of(state.link_rules.begin(),state.link_rules.end(),[&](const auto& rule){return rule.host==url.host();});return out;
 }
 }
 
@@ -5931,35 +5986,18 @@ void WorkspaceShell::BuildLinkMenu(GURL url, std::string source_workspace) {
   context_url_ = std::move(url); link_source_workspace_ = std::move(source_workspace);
   route_workspaces_ = state_.workspaces;
   route_menu_ = std::make_unique<DesignMenuModel>(this);
-  if (metal_sidebar_) {
-    link_menu_ = std::make_unique<DesignMenuModel>(this);
-    for (const auto& entry : sidebar::link_context_menu(LinkMenuStateFor(state_, context_url_, link_source_workspace_, route_workspaces_))) {
-      const auto label = base::UTF8ToUTF16(std::string(entry.label));
-      switch (entry.kind) {
-        case 1: link_menu_->AddSeparator(ui::NORMAL_SEPARATOR); break;
-        case 2: link_menu_->AddSubMenu(entry.command, label, route_menu_.get()); break;
-        case 3: route_menu_->AddRadioItem(entry.command, label, 2); break;
-        default: link_menu_->AddItem(entry.command, label);
-      }
-    }
-    return;
-  }
-  for (size_t i = 0; i < route_workspaces_.size(); ++i) {
-    std::u16string profile;
-    for (const auto& candidate : state_.profiles)
-      if (candidate.id == route_workspaces_[i].profile_id) profile = base::UTF8ToUTF16(candidate.name);
-    route_menu_->AddRadioItem(kRouteBase + i,
-        base::UTF8ToUTF16(route_workspaces_[i].name) + u" · " + profile, 2);
-  }
   link_menu_ = std::make_unique<DesignMenuModel>(this);
-  link_menu_->AddItem(kLinkPeek, T(u"Otwórz w Peek"));
-  link_menu_->AddItem(kLinkNewTab, T(u"Otwórz w nowej karcie"));
-  link_menu_->AddItem(kLinkSplit, T(u"Otwórz obok w Split View"));
-  link_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
-  link_menu_->AddItem(kRuleHere, T(u"Zawsze otwieraj tę domenę tutaj"));
-  link_menu_->AddSubMenu(kRouteSubmenu, TF(u"Otwieraj {} w…", {base::UTF8ToUTF16(context_url_.host())}), route_menu_.get());
-  link_menu_->AddItem(kRemoveRule, T(u"Usuń regułę dla tej domeny"));
+  for (const auto& entry : sidebar::link_context_menu(LinkMenuStateFor(state_, context_url_, link_source_workspace_, route_workspaces_))) {
+    const auto label = base::UTF8ToUTF16(std::string(entry.label));
+    switch (entry.kind) {
+      case 1: link_menu_->AddSeparator(ui::NORMAL_SEPARATOR); break;
+      case 2: link_menu_->AddSubMenu(entry.command, label, route_menu_.get()); break;
+      case 3: route_menu_->AddRadioItem(entry.command, label, 2); break;
+      default: link_menu_->AddItem(entry.command, label);
+    }
+  }
 }
+
 void WorkspaceShell::ShowLinkMenu(GURL url, std::string source_workspace, gfx::Point point) {
   BuildLinkMenu(std::move(url), std::move(source_workspace));
   link_menu_runner_ = std::make_unique<views::MenuRunner>(link_menu_.get(), kZitterMenuRun);
@@ -6061,6 +6099,55 @@ std::u16string WorkspaceShell::folder_form_error_for_testing() const {
 }
 void WorkspaceShell::RequestNewFolder(std::string workspace, std::string parent) {
   RequestFolderName(std::move(workspace), std::move(parent), {});
+}
+void WorkspaceShell::RequestEditPinnedUrl(std::string workspace, std::string pin) {
+  if (pin_url_dialog_) { pin_url_dialog_->Activate(); return; }
+  if (workspace != state_.workspace_id || !state_.configuration_ready || state_.profiles_busy) return;
+  const auto item = std::find_if(state_.pins.begin(), state_.pins.end(), [&](const auto& item) { return item.id == pin && !item.folder; });
+  if (item == state_.pins.end()) return;
+  auto body = std::make_unique<views::View>();
+  SetSidebarPanelLayout(body.get(), true, gfx::Insets(), 12);
+  body->AddChildView(std::make_unique<SceneParagraph>(T(u"Użyj opcji „Wróć do przypiętego adresu”, aby otworzyć ten adres."), 0, false, kMuted));
+  auto* input = AddEditor(body.get());
+  input->GetViewAccessibility().SetName(T(u"Adres strony"));
+  input->view()->SetPreferredSize(gfx::Size(352, 36));
+  input->SetText(base::UTF8ToUTF16(item->url.spec()));
+  input->SetPresentation(Font(0).GetFontSize(), 8, true, Tone(root_, kChip));
+  pin_url_editor_ = input;
+  auto* error = body->AddChildView(std::make_unique<SceneParagraph>(u"", 0, false, kError));
+  error->GetViewAccessibility().SetRole(ax::mojom::Role::kAlert); error->SetVisible(false);
+  auto dialog = std::make_unique<SceneModalDialog>(std::move(body), true);
+  dialog->SetTitle(T(u"Adres przypiętej karty"));
+  dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk) | static_cast<int>(ui::mojom::DialogButton::kCancel));
+  dialog->SetButtonLabel(ui::mojom::DialogButton::kOk, T(u"Zapisz adres"));
+  dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel, T(u"Anuluj"));
+  dialog->SetInitiallyFocusedView(input->view());
+  dialog->SetAcceptCallbackWithClose(base::BindRepeating(
+      [](base::WeakPtr<WorkspaceShell> shell, EditorControl* input, SceneParagraph* error, std::string workspace, std::string pin) {
+        if (!shell) return true;
+        if (input->IsIMEComposing()) return false;
+        if (shell->state_.workspace_id != workspace || std::none_of(shell->state_.pins.begin(), shell->state_.pins.end(), [&](const auto& item) { return item.id == pin && !item.folder; })) return true;
+        const auto text = base::UTF16ToUTF8(base::TrimWhitespace(input->GetText(), base::TRIM_ALL));
+        const GURL url = url_formatter::FixupURL(text);
+        const bool valid = !text.empty() && url.is_valid() && url.SchemeIsHTTPOrHTTPS();
+        if (valid && shell->callbacks_.update_pinned_url.Run(workspace, pin, url)) return true;
+        error->SetText(valid ? T(u"Nie udało się zapisać adresu.") : T(u"Podaj poprawny adres HTTP lub HTTPS."));
+        error->SetVisible(true);
+        static_cast<views::BubbleDialogDelegate*>(shell->pin_url_dialog_delegate_.get())->SizeToContents();
+        return false;
+      }, weak_factory_.GetWeakPtr(), input, error, std::move(workspace), std::move(pin)));
+  pin_url_dialog_delegate_ = std::move(dialog);
+  auto* prompt = views::DialogDelegate::CreateDialogWidget(pin_url_dialog_delegate_.get(), widget_->GetNativeWindow(), widget_->GetNativeView());
+  pin_url_dialog_.reset(prompt);
+  prompt->MakeCloseSynchronous(base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, views::Widget::ClosedReason) {
+    if (shell) { shell->pin_url_editor_ = nullptr; shell->pin_url_dialog_.reset(); shell->pin_url_dialog_delegate_.reset(); }
+  }, weak_factory_.GetWeakPtr()));
+  prompt->SetColorModeOverride(widget_->color_mode_override());
+#if BUILDFLAG(IS_MAC)
+  InstallWorkspaceKeyboardRouting(prompt, true);
+#endif
+  PreparePanelText(prompt->GetRootView());
+  prompt->Show(); input->SelectRange(gfx::Range(0, input->GetText().size()));
 }
 void WorkspaceShell::RequestRenameFolder(std::string workspace, std::string folder) {
   RequestFolderName(std::move(workspace), {}, std::move(folder));
@@ -6267,7 +6354,7 @@ void WorkspaceShell::BuildTabMenu(std::optional<size_t> target_tab,std::string t
     folder_parent_id_.clear();context_workspace_id_=state_.workspace_id;
     if(metal_sidebar_) {
       const auto target=ResolveSidebarTarget(context_workspace_id_,context_tab_identity_,context_pin_);
-      const auto plan=sidebar::tab_context_menu(RowMenuState(state_,target.tab,target.valid,url.SchemeIsHTTPOrHTTPS()));
+      const auto plan=sidebar::tab_context_menu(RowMenuState(state_,target.tab,target.valid,url,context_pin_));
       for(const auto& entry:plan){if(entry.command==0)workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);else workspace_menu_->AddItem(entry.command,base::UTF8ToUTF16(std::string(entry.label)));}
       return;
     }
@@ -6275,6 +6362,12 @@ void WorkspaceShell::BuildTabMenu(std::optional<size_t> target_tab,std::string t
     folder_parent_id_.clear();
     context_workspace_id_ = state_.workspace_id;
     workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
+    if (!ContextPinId().empty()) {
+      workspace_menu_->AddItem(kUnpinTab, T(u"Odepnij kartę"));
+      workspace_menu_->AddItem(kEditPinnedUrl, T(u"Edytuj przypięty adres…"));
+      workspace_menu_->AddItem(kResetPinnedUrl, T(u"Wróć do przypiętego adresu"));
+      workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
+    }
     workspace_menu_->AddItem(kLinkPeek, T(u"Otwórz w Peek"));
     const bool paired = context_tab_ && state_.split &&
         std::find(state_.split_tabs.begin(), state_.split_tabs.end(), *context_tab_) != state_.split_tabs.end();
@@ -6295,8 +6388,9 @@ void WorkspaceShell::BuildTabMenu(std::optional<size_t> target_tab,std::string t
     }
     if (url.SchemeIsHTTPOrHTTPS()) {
       workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
-      workspace_menu_->AddItem(kRuleHere, T(u"Zawsze otwieraj tę domenę tutaj"));
-      workspace_menu_->AddItem(kRemoveRule, T(u"Usuń regułę dla tej domeny"));
+      workspace_menu_->AddItem(kRuleHere, TF(u"Otwieraj {} zawsze w przestrzeni „{}”", {base::UTF8ToUTF16(url.host()), state_.workspace_name}));
+      if (std::any_of(state_.link_rules.begin(), state_.link_rules.end(), [&](const auto& rule) { return rule.host == url.host(); }))
+        workspace_menu_->AddItem(kRemoveRule, TF(u"Wyłącz automatyczny wybór przestrzeni dla {}", {base::UTF8ToUTF16(url.host())}));
     }
 }
 void WorkspaceShell::ShowTabMenu(gfx::Point point,ui::mojom::MenuSourceType source_type) {
@@ -6331,7 +6425,16 @@ bool WorkspaceShell::IsCommandIdChecked(int command_id) const {
     if (workspace.id == context_workspace_id_) return workspace.profile_id == menu_profiles_[command_id - kProfileCommandBase].id;
   return false;
 }
+std::string WorkspaceShell::ContextPinId() const {
+  const auto target=ResolveSidebarTarget(context_workspace_id_,context_tab_identity_,context_pin_);
+  if (!target.valid) return {};
+  std::string pin = target.pin;
+  if (target.tab) for (const auto& row : state_.tabs) if (row.index == *target.tab) pin = row.pin_id;
+  return std::any_of(state_.pins.begin(), state_.pins.end(), [&](const auto& item) { return item.id == pin && !item.folder; }) ? pin : std::string();
+}
 bool WorkspaceShell::IsCommandIdEnabled(int command_id) const {
+  if (command_id >= kUnpinTab && command_id <= kResetPinnedUrl)
+    return state_.configuration_ready && !state_.profiles_busy && !ContextPinId().empty();
   if(metal_sidebar_&&command_id>=kOpenSplit&&command_id<=kCloseSplitTabs)return RustTabCommandEnabled(command_id);
   if(metal_sidebar_&&sidebar::workspace_menu_command(command_id,menu_profiles_.size()))return sidebar::workspace_menu_enabled(command_id,RustWorkspaceMenuState());
   if(metal_sidebar_&&command_id>=kNewFolder&&command_id<=kDeleteFolder)return sidebar::folder_menu_enabled(command_id,RustFolderMenuState());
@@ -6640,12 +6743,12 @@ void WorkspaceShell::HandleSidebarDrop(std::string workspace,std::optional<size_
 }
 bool WorkspaceShell::RustTabCommandEnabled(int command) const {
   const auto target=ResolveSidebarTarget(context_workspace_id_,context_tab_identity_,context_pin_);
-  return sidebar::tab_menu_enabled(command,RowMenuState(state_,target.tab,target.valid,context_url_.SchemeIsHTTPOrHTTPS()));
+  return sidebar::tab_menu_enabled(command,RowMenuState(state_,target.tab,target.valid,context_url_,context_pin_));
 }
 void WorkspaceShell::QueueTabCommand(int command) {
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,int command,std::string workspace,std::array<uint64_t,2> identity,std::string pin){
     if(!shell)return;const auto target=shell->ResolveSidebarTarget(workspace,identity,pin);
-    const auto action=sidebar::tab_menu_action(command,RowMenuState(shell->state_,target.tab,target.valid,shell->context_url_.SchemeIsHTTPOrHTTPS()));
+    const auto action=sidebar::tab_menu_action(command,RowMenuState(shell->state_,target.tab,target.valid,shell->context_url_,pin));
     switch(action) {
       case sidebar::SidebarAction::OpenSplit:if(target.tab)shell->callbacks_.split_tab.Run(*target.tab);else shell->callbacks_.split_pin.Run(target.pin);break;
       case sidebar::SidebarAction::CloseSplit:shell->callbacks_.leave_split.Run(*target.tab);break;
@@ -6688,6 +6791,21 @@ bool WorkspaceShell::GetAcceleratorForCommandId(int command_id, ui::Accelerator*
   return false;
 }
 void WorkspaceShell::ExecuteCommand(int command_id, int) {
+  if (command_id >= kUnpinTab && command_id <= kResetPinnedUrl) {
+    if (!IsCommandIdEnabled(command_id)) return;
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(
+        [](base::WeakPtr<WorkspaceShell> shell, int command, std::string workspace, std::string pin) {
+          if (!shell || shell->state_.workspace_id != workspace || !shell->state_.configuration_ready || shell->state_.profiles_busy ||
+              std::none_of(shell->state_.pins.begin(), shell->state_.pins.end(), [&](const auto& item) { return item.id == pin && !item.folder; })) return;
+          if (command == kEditPinnedUrl) shell->RequestEditPinnedUrl(std::move(workspace), std::move(pin));
+          else if (command == kResetPinnedUrl) shell->callbacks_.reset_pinned_url.Run(std::move(pin));
+          else {
+            size_t before = 0; for (const auto& row : shell->state_.tabs) before = std::max(before, row.index + 1);
+            shell->callbacks_.unpin.Run(std::move(pin), before);
+          }
+        }, weak_factory_.GetWeakPtr(), command_id, state_.workspace_id, ContextPinId()));
+    return;
+  }
   if (command_id >= kAddTab && command_id <= kAddSpace) {
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, int command) {
       if (!shell) return;
@@ -6864,15 +6982,10 @@ void WorkspaceShell::RebuildSuggestions() {
     primary_item = suggestions_.back();
   }
   if (!commands_only) suggestions_.insert(suggestions_.end(), search_results_.begin(), search_results_.end());
-  const auto keyword_end = text.find_first_of(" \t");
-  const bool keyword_search = keyword_end != std::string::npos && std::any_of(tools_.providers.begin(), tools_.providers.end(),
-      [&](const auto& provider) { return provider.keyword == base::ToLowerASCII(text.substr(0, keyword_end)); });
-  if (command_palette_ && !commands_only && !keyword_search && !text.empty() && !search_results_.empty())
-    std::rotate(suggestions_.begin(), suggestions_.begin() + 1, suggestions_.end());
   if (command_palette_ && callbacks_.commands) {
     auto commands = callbacks_.commands.Run(base::UTF8ToUTF16(text));
-    // Explicit provider prefixes always retain their search action first.
-    const auto position = keyword_search && !suggestions_.empty() ? suggestions_.begin() + 1 : suggestions_.begin();
+    // Typing always keeps the explicit address/search action selected first.
+    const auto position = primary_item ? suggestions_.begin() + 1 : suggestions_.begin();
     suggestions_.insert(position, commands.begin(), commands.end());
   }
   if (primary_item) primary = std::find(suggestions_.begin(), suggestions_.end(), *primary_item) - suggestions_.begin();
@@ -6882,11 +6995,11 @@ void WorkspaceShell::RebuildSuggestions() {
   // keeps its place and has no group.
   std::vector<std::u16string> headers(suggestions_.size());
   {
-    auto rank=[](const Suggestion& s){return !s.command_id.empty()?0:s.tab?1:!s.pin_id.empty()?2:s.workspace_only?3:4;};
+    auto rank=[](const Suggestion& s){return !s.command_id.empty()?3:s.tab?0:!s.pin_id.empty()?1:s.workspace_only?2:4;};
     std::vector<size_t> slots;std::vector<Suggestion> grouped;
     for(size_t i=0;i<suggestions_.size();++i)if(i!=primary){slots.push_back(i);grouped.push_back(suggestions_[i]);}
     std::stable_sort(grouped.begin(),grouped.end(),[&](const auto& a,const auto& b){return rank(a)<rank(b);});
-    const std::array<std::u16string,5> names={T(u"Akcje"),T(u"Karty"),T(u"Przypięte"),T(u"Przestrzenie"),T(u"Historia")};
+    const std::array<std::u16string,5> names={T(u"Karty"),T(u"Przypięte"),T(u"Przestrzenie"),T(u"Akcje"),T(u"Historia")};
     int previous=-1;
     for(size_t k=0;k<slots.size();++k){suggestions_[slots[k]]=grouped[k];const int r=rank(grouped[k]);if(r!=previous)headers[slots[k]]=base::i18n::ToUpper(names[r]);previous=r;}
   }
@@ -7046,7 +7159,7 @@ void WorkspaceShell::ApplyTheme(bool refresh_controls) {
   if (theme_mode_ != ThemeMode::kSystem) mode = theme_mode_ == ThemeMode::kDark
       ? ui::ColorProviderKey::ColorMode::kDark : ui::ColorProviderKey::ColorMode::kLight;
   for (auto* panel : {widget_.get(), sidebar_widget_.get(), address_widget_.get(), settings_widget_.get(),
-       profiles_widget_.get(), import_widget_.get(), peek_widget_.get(), general_widget_.get(), tools_widget_.get(), time_machine_widget_.get()}) {
+       profiles_widget_.get(), import_widget_.get(), peek_widget_.get(), general_widget_.get(), tools_widget_.get(), time_machine_widget_.get(), pin_url_dialog_.get()}) {
     if (!panel) continue;
     if (panel->color_mode_override() != mode) {
       panel->SetColorModeOverride(mode);
@@ -7576,7 +7689,7 @@ void WorkspaceShell::SetPinnedFoldersCollapsed(bool collapsed) {
 }
 void WorkspaceShell::ApplyPinnedFoldersCollapsed(bool collapsed) {
   folders_collapsed_ = collapsed; general_dirty_.insert("folders_collapsed");
-  sidebar_tree_.SetDefaultCollapsed(collapsed); revealed_for_pin_.clear();
+  sidebar_tree_.SetDefaultCollapsed(collapsed);
   // Every cached pin tree re-plans with the new default on its next build.
   for (auto& [id, cache] : tab_lists_) cache.pins.clear();
   if (tab_list_) { RebuildTabs("", false); ScheduleMetalSidebar(); }
@@ -7866,21 +7979,32 @@ GURL WorkspaceShell::ResolveInput(std::string text, std::u16string* provider_nam
   }
   return resolved;
 }
+void WorkspaceShell::RecordCommandUse(std::string id, std::string target) {
+  const auto now = base::Time::Now();
+  tools_.RecordCommandUse(id, target, now);
+  if (!tools_ready_) {
+    pending_command_uses_.push_back({{std::move(id), std::move(target)}, now});
+    return;
+  }
+  command_usage_dirty_ = true;
+  SaveTools();
+}
 void WorkspaceShell::SaveTools() {
   // One sequenced file contains both sections; startup dirty guards prevent a
   // delayed read from rolling back edits made immediately after launch.
   std::string json; if (!base::JSONWriter::Write(tools_.ToValue(), &json)) return;
   ++pending_writes_;
-  io_runner_->PostTaskAndReplyWithResult(FROM_HERE, base::BindOnce([](base::FilePath path, std::string data, bool keys, bool engines) {
+  io_runner_->PostTaskAndReplyWithResult(FROM_HERE, base::BindOnce([](base::FilePath path, std::string data, bool keys, bool engines, bool usage) {
     std::string existing; base::ReadFileToString(path, &existing);
     auto original = base::JSONReader::ReadDict(existing, base::JSON_PARSE_RFC);
     auto patch = base::JSONReader::ReadDict(data, base::JSON_PARSE_RFC);
     base::DictValue merged = original ? std::move(*original) : base::DictValue();
+    if (usage) merged.Set("command_usage", patch->FindList("command_usage")->Clone());
     if (keys) merged.Set("shortcuts", patch->FindList("shortcuts")->Clone());
     if (engines) { merged.Set("providers", patch->FindList("providers")->Clone()); merged.Set("default", *patch->FindString("default")); }
     std::string output;
     return base::JSONWriter::Write(merged, &output) && base::ImportantFileWriter::WriteFileAtomically(path, output);
-  }, settings_path_.DirName().AppendASCII("ZitterTools.json"), std::move(json), keys_dirty_, engines_dirty_), base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
+  }, settings_path_.DirName().AppendASCII("ZitterTools.json"), std::move(json), keys_dirty_, engines_dirty_, command_usage_dirty_), base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
     if (!shell) return;
     --shell->pending_writes_; if (!ok && shell->tools_status_) SetPanelText(shell->tools_status_,shell->ToolsStatusText(0));
   }, weak_factory_.GetWeakPtr()));
@@ -8177,41 +8301,40 @@ void WorkspaceShell::SetOperationStatus(std::u16string text) {
   if (profiles_widget_ && profiles_widget_->IsVisible()) SetProfileStatus(text);
 }
 void WorkspaceShell::OpenAddress(bool new_tab) {
-  command_palette_ = false;
-  address_->SetPlaceholderText(T(u"Szukaj lub wpisz adres"));
-  address_->GetViewAccessibility().SetName(T(u"Szukaj lub wpisz adres"));
-  new_tab_ = new_tab;
+  OpenPalette(new_tab);
+}
+void WorkspaceShell::OpenCommandPalette() {
+  OpenPalette(true);
+}
+void WorkspaceShell::OpenPalette(bool commands) {
+  VLOG(1) << "Palette open commands=" << commands;
+  command_palette_ = commands;
+  new_tab_ = commands;
+  address_->SetPlaceholderText(commands ? T(u"Szukaj lub wpisz > i polecenie") : T(u"Szukaj lub wpisz adres"));
+  address_->GetViewAccessibility().SetName(commands ? T(u"Command Center — karty, historia i polecenia") : T(u"Szukaj lub wpisz adres"));
   static_cast<PaletteView*>(palette_root_.get())->Reset();
   search_results_.clear();
   search_query_.clear();
   search_timer_.Stop();
   if (!pinned_) sidebar_widget_->Hide();
   address_error_->SetVisible(false);
-  const bool blank = new_tab || state_.url.path() == "/start.html";
+  const bool blank = commands || state_.url.path() == "/start.html";
   address_->SetText(blank ? u"" : base::UTF8ToUTF16(state_.url.spec()));
+  if (url_pill_) SetRowEditing(url_pill_, !commands);
+  // Prepare the final contents and geometry before either surface is shown.
+  // Both address editing and the Command Center use the same dimmed backdrop.
   RebuildSuggestions();
-  if (url_pill_) SetRowEditing(url_pill_, true);
+  if (scrim_widget_) {
+    scrim_widget_->ShowInactive();
+    if (sidebar_visible()) scrim_widget_->StackAboveWidget(sidebar_widget_.get());
+  }
   address_widget_->Show();
+  if (scrim_widget_) address_widget_->StackAboveWidget(scrim_widget_.get());
   address_widget_->Activate();
   address_widget_->ClearNativeFocus();
   address_->RequestFocus();
   address_->SelectRange(gfx::Range(0,address_->GetText().size()));
-  RequestSearch();
-}
-void WorkspaceShell::OpenCommandPalette() {
-  OpenAddress(false);
-  if (url_pill_) SetRowEditing(url_pill_, false);  // The Command Center is not an address edit.
-  // The Command Center sits on the dimmed window (design: CommandPalette).
-  if (scrim_widget_) {
-    PositionPanels(); scrim_widget_->ShowInactive();
-    if (sidebar_visible()) scrim_widget_->StackAboveWidget(sidebar_widget_.get());
-    address_widget_->StackAboveWidget(scrim_widget_.get());
-  }
-  command_palette_ = true;
-  address_->SetPlaceholderText(T(u"Szukaj lub wpisz > i polecenie"));
-  address_->GetViewAccessibility().SetName(T(u"Command Center — karty, historia i polecenia"));
-  address_->SetText(u"");
-  search_results_.clear();
+  // Reconcile the scene's input state with the now-visible native host.
   RebuildSuggestions();
   RequestSearch();
 }
@@ -8349,7 +8472,8 @@ void WorkspaceShell::ShowAppMenu(views::View* anchor) {
   auto delegate = std::make_unique<AppMenuDelegate>(
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, std::string action) {
         if (!shell) return;
-        if (action == "about") shell->ShowAbout();
+        if (action == "install_update") { if (shell->install_update_) shell->install_update_.Run(); }
+        else if (action == "about") shell->ShowAbout();
         else if (shell->callbacks_.run_shortcut) shell->callbacks_.run_shortcut.Run(std::move(action));
       }, weak_factory_.GetWeakPtr()));
   auto& commands = delegate->commands();
@@ -8372,9 +8496,12 @@ void WorkspaceShell::ShowAppMenu(views::View* anchor) {
     commands.push_back({action});
     chord(action);
   };
-  add("new_tab", T(u"Nowa karta"), kMenuNewTabIcon);
+  if (!update_version_.empty()) {
+    add("install_update", TF(u"Zainstaluj aktualizację {}…", {base::UTF8ToUTF16(update_version_)}), kMenuDownloadsIcon);
+    model->AddSeparator(ui::NORMAL_SEPARATOR);
+  }
+  add("new_tab", T(u"Command Center…"), kMenuNewTabIcon);
   add("address", T(u"Otwórz adres…"), kMenuAddressIcon);
-  add("palette", T(u"Command Center…"), kMenuPaletteIcon);
   model->AddSeparator(ui::NORMAL_SEPARATOR);
   // Design: Find & Print, the |z⟩ menu.
   add("find", T(u"Znajdź na stronie…"), kMenuFindIcon);
@@ -8418,7 +8545,7 @@ void WorkspaceShell::ShowAppMenu(views::View* anchor) {
         if (shell && shell->root_)
           if (auto* menu = views::AsViewClass<AppMenuButton>(static_cast<ShellRoot*>(shell->root_.get())->app_menu)) menu->SetOpen(false);
       }, weak_factory_.GetWeakPtr()));
-  app_menu_runner_->RunMenuAt(widget_.get(), nullptr, anchor->GetBoundsInScreen(), views::MenuAnchorPosition::kTopRight,
+  app_menu_runner_->RunMenuAt(widget_.get(), nullptr, anchor->GetBoundsInScreen(), views::MenuAnchorPosition::kTopLeft,
       ui::mojom::MenuSourceType::kMouse, gfx::NativeView(), ZitterMenuCorners());
 #endif
 }
@@ -9322,9 +9449,17 @@ void WorkspaceShell::ShowWelcome(WelcomeSetup setup, base::OnceCallback<void(Wel
   welcome_widget_->Show();
 }
 #endif
-void WorkspaceShell::ShowUpdateReady(std::string version) {
-  ShowToast(T(u"Aktualizacja po zamknięciu: "), base::UTF8ToUTF16(version),
-      base::DoNothing(), T(u"OK"));
+void WorkspaceShell::ShowUpdateReady(std::string version, base::RepeatingClosure install) {
+  update_version_ = std::move(version);
+  install_update_ = std::move(install);
+#if !BUILDFLAG(IS_MAC)
+  if (root_) if (auto* button = views::AsViewClass<AppMenuButton>(static_cast<ShellRoot*>(root_.get())->app_menu))
+    button->SetUpdateAvailable(true);
+#endif
+  ShowToast(T(u"Dostępna aktualizacja: "), base::UTF8ToUTF16(update_version_),
+      base::BindOnce([](base::WeakPtr<WorkspaceShell> shell) {
+        if (shell && shell->install_update_) shell->install_update_.Run();
+      }, weak_factory_.GetWeakPtr()), T(u"Zainstaluj"));
 }
 
 void WorkspaceShell::ShowAbout() {
@@ -10775,6 +10910,7 @@ void WorkspaceShell::RunSuggestion(size_t index) {
   }
 }
 void WorkspaceShell::AddressEdited() {
+  VLOG(1) << "Palette edit visible=" << address_visible() << " length=" << address_->GetText().size();
   if(!address_visible()||address_->IsIMEComposing())return;
   address_error_->SetVisible(false);
   static_cast<PaletteView*>(palette_root_.get())->Reset();
@@ -10787,6 +10923,9 @@ void WorkspaceShell::RequestSearch() {
   SetPaletteLoading(!search_query_.empty());
   search_timer_.Start(FROM_HERE, base::Milliseconds(120), base::BindOnce(
       [](base::WeakPtr<WorkspaceShell> shell, std::u16string query) {
+        if (shell) VLOG(1) << "Palette search visible=" << shell->address_visible()
+            << " composing=" << shell->address_->IsIMEComposing()
+            << " matching=" << (base::TrimWhitespace(shell->address_->GetText(),base::TRIM_ALL)==query);
         if (shell && shell->address_visible()&&!shell->address_->IsIMEComposing()&&base::TrimWhitespace(shell->address_->GetText(),base::TRIM_ALL)==query) shell->callbacks_.search.Run(query);
       }, weak_factory_.GetWeakPtr(), search_query_));
 }
@@ -10798,6 +10937,9 @@ bool WorkspaceShell::palette_loading_for_testing() const {
   return icon && icon->loading();
 }
 void WorkspaceShell::SetSearchResults(std::u16string query, std::string profile_id, std::vector<PaletteResult> results, bool complete) {
+  VLOG(1) << "Palette results visible=" << address_visible() << " count=" << results.size()
+      << " profile=" << (profile_id == state_.profile_id)
+      << " matching=" << (base::TrimWhitespace(address_->GetText(), base::TRIM_ALL) == query);
   if (!address_visible() || address_->IsIMEComposing() || profile_id != state_.profile_id ||
       base::TrimWhitespace(address_->GetText(), base::TRIM_ALL) != query) return;
   if (complete) SetPaletteLoading(false);
@@ -10871,8 +11013,17 @@ void WorkspaceShell::OnWidgetBoundsChanged(views::Widget* widget, const gfx::Rec
   if (widget == widget_) {PositionPanels();ScheduleMetalHeader();ScheduleMetalSplit();}
 }
 void WorkspaceShell::OnWidgetActivationChanged(views::Widget* widget, bool active) {
+  if (widget == address_widget_.get()) VLOG(1) << "Palette activation=" << active;
   if (active) return;
-  if (widget == address_widget_.get()) address_widget_->Hide();
+  if (widget == address_widget_.get()) {
+    // Native activation notifications can trail a close/reopen or stacking
+    // change. Decide after that transition, using the current focus state.
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
+        base::BindOnce([](base::WeakPtr<WorkspaceShell> shell) {
+          if (shell && shell->address_visible() && !shell->address_widget_->IsActive())
+            shell->address_widget_->Hide();
+        }, weak_factory_.GetWeakPtr()));
+  }
   if (widget == settings_widget_.get()) settings_widget_->Hide();
   if(widget==sidebar_widget_.get()) {
     bool hide=!pinned_&&!settings_visible();
@@ -10881,6 +11032,7 @@ void WorkspaceShell::OnWidgetActivationChanged(views::Widget* widget, bool activ
   }
 }
 void WorkspaceShell::OnWidgetVisibilityChanged(views::Widget* widget, bool visible) {
+  if (widget == address_widget_.get()) VLOG(1) << "Palette visibility=" << visible;
   if (widget == sidebar_widget_.get() && !visible) {
     sidebar_hover_timer_.Stop(); sidebar_slide_timer_.Stop();
     sidebar_slide_value_ = 0; sidebar_slide_show_ = false;

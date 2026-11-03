@@ -115,7 +115,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void SearchPalette(std::u16string query);
   void ActivatePaletteResult(PaletteResult result);
   std::vector<PaletteResult> CommandResults(std::u16string query) const;
-  bool ExecuteCommand(const PaletteResult& result);
+  bool ExecuteCommand(const PaletteResult& result, bool record_usage = true);
   bool MoveActiveTab(std::string target_id);
   void ShowPasswords();
   void ShowDownloads();
@@ -191,6 +191,8 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   bool MoveTab(size_t index, size_t before);
   bool PinTab(size_t index, std::string parent, std::string before);
   bool UnpinItem(std::string id, size_t before);
+  bool UpdatePinnedUrl(std::string workspace, std::string id, GURL url);
+  bool ResetPinnedUrl(std::string id);
   bool MovePin(std::string id, std::string parent, std::string before);
   void RunPageCommand(PageCommand command);
   // Time Machine (timeline.rs, ZitterTimeline.jsonl): every workspace's tabs over

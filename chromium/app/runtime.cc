@@ -91,7 +91,12 @@ void Runtime::WindowReady() {
   updater_ = std::make_unique<WindowsUpdater>(g_browser_process->profile_manager()->user_data_dir(),
       base::BindRepeating([](base::WeakPtr<Runtime> runtime, std::string version) {
         if (!runtime || !runtime->window_ || runtime->closing_) return;
-        runtime->window_->shell()->ShowUpdateReady(std::move(version));
+        runtime->window_->shell()->ShowUpdateReady(std::move(version), base::BindRepeating(
+            [](base::WeakPtr<Runtime> runtime) {
+              if (!runtime || runtime->closing_ || !runtime->updater_) return;
+              runtime->updater_->RequestInstall();
+              runtime->RequestClose();
+            }, runtime->weak_factory_.GetWeakPtr()));
       }, weak_factory_.GetWeakPtr()));
   updater_->Start();
 #endif

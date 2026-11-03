@@ -198,10 +198,13 @@ void WindowsUpdater::Checked(std::optional<updates::Release> release) {
   pending_ = std::move(release);
   if (pending_) ready_.Run(pending_->version);
 }
+void WindowsUpdater::RequestInstall() {
+  install_requested_ = pending_.has_value();
+}
 void WindowsUpdater::InstallOnExit() {
   timer_.Stop();
   weak_factory_.InvalidateWeakPtrs();
-  if (!pending_ || directory_.empty()) return;
+  if (!install_requested_ || !pending_ || directory_.empty()) return;
   // Hashing hundreds of MB must not block the browser's UI/shutdown thread.
   base::CommandLine command(base::CommandLine::ForCurrentProcess()->GetProgram());
   command.AppendSwitchPath("zitter-update-installer", InstallerPath(cache_, *pending_));

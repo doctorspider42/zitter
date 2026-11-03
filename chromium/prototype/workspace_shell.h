@@ -197,6 +197,8 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingCallback<bool(size_t, size_t)> move_tab;
     base::RepeatingCallback<bool(size_t, std::string, std::string)> pin_tab;
     base::RepeatingCallback<bool(std::string, size_t)> unpin;
+    base::RepeatingCallback<bool(std::string, std::string, GURL)> update_pinned_url;
+    base::RepeatingCallback<bool(std::string)> reset_pinned_url;
     base::RepeatingCallback<bool(std::string, std::string, std::string)> move_pin;
   };
 
@@ -257,7 +259,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void ConfirmQuitWithDownloads(int count, base::OnceCallback<void(bool)> answer);
   // The |z⟩ menu's „O Zitter”: Zitter's and Chromium's versions.
   void ShowAbout();
-  void ShowUpdateReady(std::string version);
+  void ShowUpdateReady(std::string version, base::RepeatingClosure install = {});
   // Find in page (design: Find & Print): the bar over the active page's top
   // right. `find` gets the text, the direction and case matching; `closed`
   // runs when the bar hides.
@@ -323,6 +325,7 @@ class WorkspaceShell final : public ui::EventHandler,
   bool SetDefaultSearchProvider(std::string keyword);
   GURL ResolveInput(std::string text, std::u16string* provider_name = nullptr) const;
   const BrowserTools& browser_tools() const { return tools_; }
+  void RecordCommandUse(std::string id, std::string target);
   bool tools_ready() const { return tools_ready_; }
   views::Widget* tools_widget() const { return tools_widget_.get(); }
   PanelViewport* tools_viewport_for_testing() const{return tools_scroll_;}
@@ -575,6 +578,7 @@ class WorkspaceShell final : public ui::EventHandler,
   bool appearance_saved() const { return pending_writes_ == 0; }
   bool browsing_data_busy_for_testing() const { return browsing_data_busy_; }
   views::Widget* address_widget() const { return address_widget_.get(); }
+  views::Widget* scrim_widget_for_testing() const { return scrim_widget_.get(); }
   views::View* tab_button(size_t index) const;
   views::View* pin_button(std::string_view id) const;
   uint64_t sidebar_node_id_for_testing(views::View* row) const;
@@ -602,6 +606,9 @@ class WorkspaceShell final : public ui::EventHandler,
   ui::SimpleMenuModel* tab_context_menu_for_testing() const {return workspace_menu_.get();}
   void RequestNewFolder(std::string workspace, std::string parent = {});
   void RequestRenameFolder(std::string workspace, std::string folder);
+  void RequestEditPinnedUrl(std::string workspace, std::string pin);
+  views::Widget* pin_url_dialog() const { return pin_url_dialog_.get(); }
+  EditorControl* pin_url_editor_for_testing() const { return pin_url_editor_; }
   void RequestDeleteFolder(std::string workspace, std::string folder);
   void ShowFolderSaveError();
   views::View* folder_form_for_testing() const;
@@ -683,6 +690,8 @@ class WorkspaceShell final : public ui::EventHandler,
   void ToolsAction(int action,std::optional<std::string> choice_key=std::nullopt);
   BrowserTools tools_;
   bool tools_ready_ = false;
+  bool command_usage_dirty_ = false;
+  std::vector<std::pair<std::pair<std::string, std::string>, base::Time>> pending_command_uses_;
   bool keys_dirty_ = false, engines_dirty_ = false;
   raw_ptr<ui::AcceleratorTarget> accelerator_target_ = nullptr;
   raw_ptr<views::View> tools_root_ = nullptr;
@@ -765,7 +774,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void SetPaletteLoading(bool loading);
   void ShowWorkspaceRemovedToast(std::string id, std::u16string name);
   std::optional<std::pair<std::string, std::u16string>> pending_removal_;  // Waiting on a page's unload answer.
-  void EndFolderPeek(const std::string& workspace,const std::string& folder,views::View* group,bool collapsed);
+  void RefreshFolderPeek(std::string workspace, const std::string& folder, views::View* group, bool collapsed);
   void AppendPinnedItems(views::View* root, const std::vector<PinnedItem>& pins,
                          TabListCache& cache, const std::string& workspace,
                          std::map<std::string,std::unique_ptr<views::View>>* retained=nullptr,
@@ -817,10 +826,15 @@ class WorkspaceShell final : public ui::EventHandler,
   bool sidebar_drop_target_for_testing() const { return sidebar_reorder_.has_value(); }
   views::View* sidebar_drag_overlay_for_testing() const { return drag_overlay_; }
  private:
+  void OpenPalette(bool commands);
   void QueueTabCommand(int command);
   bool RustTabCommandEnabled(int command) const;
   // Menu for context_tab_/context_pin_, at a screen point.
   void ShowTabMenu(gfx::Point point, ui::mojom::MenuSourceType source_type);
+  std::string ContextPinId() const;
+  std::unique_ptr<views::DialogDelegate> pin_url_dialog_delegate_;
+  std::unique_ptr<views::Widget> pin_url_dialog_;
+  raw_ptr<EditorControl> pin_url_editor_ = nullptr;
   std::optional<size_t> context_tab_;
   std::array<uint64_t,2> context_tab_identity_{};
   std::string context_pin_;
@@ -1055,6 +1069,8 @@ class WorkspaceShell final : public ui::EventHandler,
   base::TimeTicks last_native_scroll_time_;
   size_t pinned_list_build_count_ = 0;
   size_t sidebar_context_visit_count_ = 0;
+  std::string update_version_;
+  base::RepeatingClosure install_update_;
   size_t pin_visibility_update_count_ = 0;
   raw_ptr<views::View> profile_picker_ = nullptr;
   raw_ptr<EditorControl> workspace_input_ = nullptr;
@@ -1090,7 +1106,6 @@ class WorkspaceShell final : public ui::EventHandler,
   bool import_busy_ = false;
   bool import_applying_ = false;
   SidebarTree sidebar_tree_;
-  std::string revealed_for_pin_;  // The active pin last revealed under collapsed folders.
   raw_ptr<views::View> profiles_root_ = nullptr;
   raw_ptr<views::View> profile_list_ = nullptr;
   std::vector<raw_ptr<views::View>> profile_rows_;

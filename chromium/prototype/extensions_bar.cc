@@ -841,7 +841,7 @@ class ExtensionsBar::Menu final : public views::BubbleDialogDelegate {
 };
 
 // An extension's popup under its icon: the extension page in a `bg-raised`
-// card, `radius-md`, `shadow-float`. It shows once the page has loaded and
+// card, `radius-md`, `shadow-float`. It shows immediately while loading and
 // closes on window.close(), on Escape, and when the window is used again. The
 // bar owns this delegate and its widget.
 class ExtensionsBar::Popup final : public views::BubbleDialogDelegate,
@@ -870,8 +870,7 @@ class ExtensionsBar::Popup final : public views::BubbleDialogDelegate,
     host_->SetCloseHandler(base::BindOnce(&Popup::HostClosed, base::Unretained(this)));
     anchor_watcher_ = std::make_unique<ActivationWatcher>(anchor->GetWidget(),
         base::BindRepeating(&Popup::AnchorActivated, base::Unretained(this)));
-    if (host_->has_loaded_once()) loaded_ = true;
-    else Observe(host_->host_contents());
+    Observe(host_->host_contents());
   }
   ~Popup() override {
     Observe(nullptr);
@@ -880,17 +879,22 @@ class ExtensionsBar::Popup final : public views::BubbleDialogDelegate,
   content::WebContents* contents() const { return host_ ? host_->host_contents() : nullptr; }
   // Called once the bubble widget exists.
   void Attached() {
+    // Attaching a native holder hides Chromium popup WebViews until onload.
+    // Reveal after attachment so the renderer can paint and auto-size while
+    // remote resources are pending.
+    view_->SetVisible(true);
     // Escape belongs to the extension page (ExtensionViewHost closes on it).
     if (auto* client = GetDialogClientView()) client->RemoveAccelerator(ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE));
     if (auto* frame = GetBubbleFrameView()) view_->holder()->SetNativeViewCornerRadii(frame->GetRoundedCorners());
-    if (loaded_) Reveal();
+    // Render the popup immediately. Waiting for window.onload also waits for
+    // remote resources and makes password-manager actions appear unresponsive.
+    Reveal();
   }
   gfx::Size GetMinBounds() override { return kPopupMin; }
   gfx::Size GetMaxBounds() override { return kPopupMax; }
   void DocumentOnLoadCompletedInPrimaryMainFrame() override {
-    loaded_ = true;
     Observe(nullptr);
-    if (GetWidget()) Reveal();
+    if (GetWidget() && !GetWidget()->IsClosed()) SizeToContents();
   }
   void Close() { if (GetWidget() && !GetWidget()->IsClosed()) GetWidget()->Close(); }
 
@@ -908,7 +912,6 @@ class ExtensionsBar::Popup final : public views::BubbleDialogDelegate,
   raw_ptr<ExtensionsBar> bar_;
   std::unique_ptr<extensions::ExtensionViewHost> host_;
   raw_ptr<ExtensionViewViews> view_ = nullptr;
-  bool loaded_ = false;
   std::unique_ptr<ActivationWatcher> anchor_watcher_;
 };
 

@@ -190,12 +190,17 @@ bool PageServices::OfferPassword(std::unique_ptr<FormManager> form, bool update)
   const auto copy=sidebar::password_prompt_copy(update,base::UTF16ToUTF8(origin),base::UTF16ToUTF8(username),base::UTF16ToUTF8(BrowsingProfileName(profile)));
   for(const auto& line:copy.lines)
     body->AddChildView(password_scene_->MakeText(base::UTF8ToUTF16(std::string(line)),true,false,0));
-  auto dialog=CreateSceneModalDialog(std::move(body),false);
+  auto dialog=CreateSceneModalDialog(std::move(body),false,false);
   dialog->SetTitle(base::UTF8ToUTF16(std::string(copy.title)));
   dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk)|static_cast<int>(ui::mojom::DialogButton::kCancel));
   dialog->SetButtonLabel(ui::mojom::DialogButton::kOk,base::UTF8ToUTF16(std::string(copy.accept)));
   dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel,base::UTF8ToUTF16(std::string(copy.cancel)));
-  dialog->SetAcceptCallback(base::BindOnce([](std::weak_ptr<PendingPassword> weak){if(auto value=weak.lock())value->Save();},pending));
+  dialog->SetAcceptCallback(base::BindOnce([](base::WeakPtr<PageServices> services, std::weak_ptr<PendingPassword> weak) {
+    if (auto value = weak.lock()) {
+      if (services && services->PasswordSavingEnabled()) value->Save();
+      else value->Ignore();
+    }
+  }, weak_factory_.GetWeakPtr(), pending));
   dialog->SetCancelCallback(base::BindOnce([](std::weak_ptr<PendingPassword> weak){if(auto value=weak.lock())value->Decline();},pending));
   dialog->SetCloseCallback(base::BindOnce([](std::weak_ptr<PendingPassword> weak){if(auto value=weak.lock())value->Ignore();},pending));
   ShowPasswordWidget(std::move(dialog));
@@ -224,7 +229,13 @@ void PageServices::ShowPasswordWidget(std::unique_ptr<views::DialogDelegate> dia
 #if BUILDFLAG(IS_MAC)
   InstallWorkspaceKeyboardRouting(widget,true);
 #endif
-  if(show){widget->Show();if(password_scene_)password_scene_->Schedule();}
+  if (parent) {
+    const auto window = parent->GetWindowBoundsInScreen();
+    auto bounds = widget->GetWindowBoundsInScreen();
+    bounds.set_origin(gfx::Point(std::max(window.x() + 12, window.right() - bounds.width() - 16), window.y() + 48));
+    widget->SetBounds(bounds);
+  }
+  if(show){widget->ShowInactive();if(password_scene_)password_scene_->Schedule();}
 }
 void PageServices::DismissPassword() {
   password_ui_factory_.InvalidateWeakPtrs();

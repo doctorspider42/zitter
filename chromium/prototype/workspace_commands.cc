@@ -69,13 +69,21 @@ std::vector<PaletteResult> WorkspaceWindow::CommandResults(std::u16string query)
     context.workspaces.push_back({workspace.id, workspace.name, workspace_sleeping(workspace.id), workspace.profile_id == model_.active()->profile_id,
         std::any_of(pages.begin(), pages.end(), [](auto* page) { return PageMediaAccess::IsCapturing(page) || page->IsBeingCaptured(); })});
   }
-  std::u16string raw = only ? u">" + query : query;
+  // Fetch all matching entries before applying learned order and the initial cap.
+  std::u16string raw = u">" + query;
   for (const auto& entry : sidebar::command_catalogue(context, base::UTF16ToUTF8(raw)))
     bind(std::string(entry.id), base::UTF8ToUTF16(std::string(entry.title)), base::UTF8ToUTF16(std::string(entry.detail)), std::string(entry.target));
+  const auto now = base::Time::Now();
+  const auto& tools = shell_->browser_tools();
+  std::stable_sort(results.begin(), results.end(), [&](const auto& a, const auto& b) {
+    return tools.CommandScore(a.command_id, a.target_workspace_id, now) >
+           tools.CommandScore(b.command_id, b.target_workspace_id, now);
+  });
+  if (!only && query.empty() && results.size() > 6) results.resize(6);
   return results;
 }
 
-bool WorkspaceWindow::ExecuteCommand(const PaletteResult& result) {
+bool WorkspaceWindow::ExecuteCommand(const PaletteResult& result, bool record_usage) {
   if (result.workspace_id != active_id() || result.command_id.empty()) return false;
   const auto available = CommandResults(u">");
   const auto found = std::find_if(available.begin(), available.end(), [&](const auto& current) {
@@ -83,6 +91,7 @@ bool WorkspaceWindow::ExecuteCommand(const PaletteResult& result) {
         current.tab == result.tab && current.url == result.url && current.command_page_id == result.command_page_id;
   });
   if (found == available.end()) return false;
+  if (record_usage) shell_->RecordCommandUse(result.command_id, result.target_workspace_id);
   const auto& id = result.command_id;
   if (id == "shortcuts" || id == "engines") { shell_->OpenTools(id == "shortcuts" ? 1 : 2); return true; }
   if (id == "spaces") { shell_->OpenWorkspaceSettings(); return true; }
@@ -100,7 +109,7 @@ bool WorkspaceWindow::ExecuteCommand(const PaletteResult& result) {
   if (id == "copy_tab") {
     // Explicit target, bypass domain routing: the command names the destination profile.
     if (DeferForProfile(result.target_workspace_id, base::BindOnce(
-        [](base::WeakPtr<WorkspaceWindow> w, PaletteResult result) { if (w) w->ExecuteCommand(result); },
+        [](base::WeakPtr<WorkspaceWindow> w, PaletteResult result) { if (w) w->ExecuteCommand(result, false); },
         weak_factory_.GetWeakPtr(), result))) return true;
     if (!Select(result.target_workspace_id)) return false;
     for (auto& host : hosts_) if (host.workspace_id == active_id()) {
@@ -118,7 +127,7 @@ bool WorkspaceWindow::ExecuteCommand(const PaletteResult& result) {
       if (std::any_of(space_pages.begin(), space_pages.end(), [](auto* page) { return PageMediaAccess::IsCapturing(page) || page->IsBeingCaptured(); })) continue;
       pages.insert(pages.end(), space_pages.begin(), space_pages.end());
     }
-    if (GuardPages(std::move(pages), base::BindOnce([](base::WeakPtr<WorkspaceWindow> w, PaletteResult result) { if (w) w->ExecuteCommand(result); }, weak_factory_.GetWeakPtr(), result))) return true;
+    if (GuardPages(std::move(pages), base::BindOnce([](base::WeakPtr<WorkspaceWindow> w, PaletteResult result) { if (w) w->ExecuteCommand(result, false); }, weak_factory_.GetWeakPtr(), result))) return true;
     const auto workspaces = model_.workspaces(); bool changed = false;
     for (const auto& workspace : workspaces) if (workspace.id != active_id() && !workspace_sleeping(workspace.id))
       changed |= SleepWorkspace(workspace.id);

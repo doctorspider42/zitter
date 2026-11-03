@@ -32,13 +32,14 @@ std::optional<Release> DownloadLatest(const base::FilePath& cache,
 }  // namespace updates
 
 // Runs only for this executable's registered installation, never portable/dev
-// builds. Downloads in the background, then delegates to setup on normal exit.
+// builds. Downloads in the background; installs on exit after an explicit click.
 class WindowsUpdater {
  public:
   using Ready = base::RepeatingCallback<void(std::string)>;
   WindowsUpdater(const base::FilePath& user_data, Ready ready);
   ~WindowsUpdater();
   void Start();
+  void RequestInstall();
   void InstallOnExit();
 
  private:
@@ -47,6 +48,7 @@ class WindowsUpdater {
   base::FilePath directory_;
   base::FilePath cache_;
   bool busy_ = false;
+  bool install_requested_ = false;
   Ready ready_;
   std::optional<updates::Release> pending_;
   base::RepeatingTimer timer_;

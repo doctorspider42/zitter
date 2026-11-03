@@ -1,3 +1,6 @@
+#include "content/public/browser/render_widget_host_view.h"
+#include "ui/color/color_provider_key.h"
+#include "ui/views/background.h"
 #include "chromium/prototype/browser_import_data.h"
 #include "chromium/prototype/workspace_window.h"
 #include "chromium/prototype/timeline_store.h"
@@ -204,8 +207,38 @@ class WorkspaceWebView final : public views::WebView {
   std::array<uint64_t,2> sidebar_identity() const {return {sidebar_identity_.GetHighForSerialization(),sidebar_identity_.GetLowForSerialization()};}
   void ResetImagePreview() { if (image_preview_) image_preview_->Reset(); }
   bool image_preview_visible() const { return image_preview_ && image_preview_->visible_for_testing(); }
+  void SetWorkspaceBackground(SkColor color) {
+    workspace_color_ = color;
+    UpdateBlankBackground();
+  }
 
  private:
+  SkColor workspace_color_ = SK_ColorTRANSPARENT;
+  std::optional<SkColor> blank_background_;
+  void UpdateBlankBackground() {
+    auto* page = web_contents();
+    if (!page || !GetWidget()) return;
+    const auto& url = page->GetVisibleURL();
+    const bool blank = url.is_empty() || url.IsAboutBlank();
+    const auto color = sidebar::design_palette(
+        GetWidget()->GetColorMode() == ui::ColorProviderKey::ColorMode::kDark,
+        workspace_color_).bg_base;
+    const std::optional<SkColor> background = blank ? std::optional<SkColor>(color) : std::nullopt;
+    if (background != blank_background_) {
+      page->SetPageBaseBackgroundColor(background);
+      SetBackground(background ? views::CreateSolidBackground(*background) : nullptr);
+      if (auto* native = page->GetRenderWidgetHostView())
+        native->SetBackgroundColor(background.value_or(SK_ColorWHITE));
+      blank_background_ = background;
+    } else if (blank) {
+      // A newly attached renderer must use the same color as its empty host.
+      if (auto* native = page->GetRenderWidgetHostView()) native->SetBackgroundColor(color);
+    }
+  }
+  void OnThemeChanged() override {
+    views::WebView::OnThemeChanged();
+    UpdateBlankBackground();
+  }
   const base::UnguessableToken sidebar_identity_=base::UnguessableToken::Create();
   void UpdateTargetURL(content::WebContents* source, const GURL& url) override {
     hovered_link_ = url;
@@ -328,6 +361,7 @@ class WorkspaceWebView final : public views::WebView {
   void NavigationStateChanged(content::WebContents* source,
                               content::InvalidateTypes flags) override {
     views::WebView::NavigationStateChanged(source, flags);
+    UpdateBlankBackground();
     changed_.Run();
   }
   void DidGetUserInteraction(const blink::WebInputEvent& event) override {
@@ -669,6 +703,8 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   callbacks.move_tab = base::BindRepeating(&WorkspaceWindow::MoveTab, base::Unretained(this));
   callbacks.pin_tab = base::BindRepeating(&WorkspaceWindow::PinTab, base::Unretained(this));
   callbacks.unpin = base::BindRepeating(&WorkspaceWindow::UnpinItem, base::Unretained(this));
+  callbacks.update_pinned_url = base::BindRepeating(&WorkspaceWindow::UpdatePinnedUrl, base::Unretained(this));
+  callbacks.reset_pinned_url = base::BindRepeating(&WorkspaceWindow::ResetPinnedUrl, base::Unretained(this));
   callbacks.move_pin = base::BindRepeating(&WorkspaceWindow::MovePin, base::Unretained(this));
   callbacks.swap_split = base::BindRepeating(&WorkspaceWindow::SwapSplit, base::Unretained(this));
   callbacks.split_vertical = base::BindRepeating(&WorkspaceWindow::SetSplitVertical, base::Unretained(this));
@@ -825,6 +861,7 @@ views::WebView* WorkspaceWindow::CreatePage(Profile* profile, views::View* paren
   if (owned) view->SetOwnedWebContents(std::move(owned));
   if (create_contents || view->web_contents()) {
     PreparePage(view->GetWebContents());
+    view->SetWorkspaceBackground(shell_->active_workspace_color());
     view->web_contents()->WasHidden();
   }
   return view;
@@ -834,6 +871,7 @@ content::WebContents* WorkspaceWindow::EnsurePage(views::WebView* view) {
   if (!view->web_contents()) {
     auto* page = view->GetWebContents();
     PreparePage(page);
+    static_cast<WorkspaceWebView*>(view)->SetWorkspaceBackground(shell_->active_workspace_color());
     page->WasHidden();
   }
   return view->web_contents();
@@ -1027,7 +1065,7 @@ void WorkspaceWindow::UpdateShell() {
       state.active_pane = std::find(host.split.begin(), host.split.end(), host.view) - host.split.begin();
     state.can_go_back = controller.CanGoBack();
     state.can_go_forward = controller.CanGoForward();
-    state.loading = host.view->GetWebContents()->IsLoading();
+    state.loading = host.view->GetWebContents()->ShouldShowLoadingUI();
     // The panel watches the active profile even while closed, so a finished
     // download shows its toast (design: Downloads).
     if (!downloads_) {
@@ -1043,6 +1081,8 @@ void WorkspaceWindow::UpdateShell() {
       ExtensionTabEvents::DispatchActivated(shown);
     }
     shell_->Update(std::move(state));
+    for (const auto& view : host.tabs)
+      static_cast<WorkspaceWebView*>(view.get())->SetWorkspaceBackground(shell_->active_workspace_color());
   }
 }
 
@@ -2158,8 +2198,8 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
   if (id == "address" || id == "new_tab" || id == "palette") {
     if (peek_view_ && GuardPages({peek_contents()}, base::BindOnce([](base::WeakPtr<WorkspaceWindow> w, std::string id) { if (w) w->RunShortcut(id); }, weak_factory_.GetWeakPtr(), id))) return true;
     ClosePeek(); UpdateShell();
-    if (id == "palette") shell_->OpenCommandPalette();
-    else shell_->OpenAddress(id == "new_tab");
+    if (id == "address") shell_->OpenAddress(false);
+    else shell_->OpenCommandPalette();
     return true;
   }
   if (id == "close_tab") { CloseActiveTab(); return true; }
@@ -2996,6 +3036,42 @@ bool WorkspaceWindow::PinTab(size_t index, std::string parent, std::string befor
     if (InsertPin(host.workspace_id, std::move(item), std::move(before))) return true;
     host.pin_tabs.erase(id);
     return false;
+  }
+  return false;
+}
+bool WorkspaceWindow::UpdatePinnedUrl(std::string workspace, std::string id, GURL url) {
+  if (!configuration_ready_ || configuration_invalid_ || profiles_busy_ || !model_.Find(workspace) ||
+      !url.is_valid() || !url.SchemeIsHTTPOrHTTPS()) return false;
+  auto& items = pins_[workspace];
+  auto pin = std::find_if(items.begin(), items.end(), [&](const auto& item) { return item.id == id && !item.folder; });
+  if (pin == items.end()) return false;
+  if (pin->url == url) return true;
+  auto previous = items;
+  pin->url = std::move(url);
+  SaveFolderEdit(std::move(workspace), std::move(previous));
+  return true;
+}
+bool WorkspaceWindow::ResetPinnedUrl(std::string id) {
+  if (!configuration_ready_ || configuration_invalid_ || profiles_busy_) return false;
+  const auto& items = pinned_items(active_id());
+  auto pin = std::find_if(items.begin(), items.end(), [&](const auto& item) { return item.id == id && !item.folder; });
+  if (pin == items.end() || !pin->url.SchemeIsHTTPOrHTTPS()) return false;
+  if (peek_view_ && GuardPages({peek_contents()}, base::BindOnce(
+      [](base::WeakPtr<WorkspaceWindow> window, std::string workspace, std::string id) {
+        if (window && window->active_id() == workspace) window->ResetPinnedUrl(std::move(id));
+      }, weak_factory_.GetWeakPtr(), active_id(), id))) return true;
+  ClosePeek();
+  const GURL url = pin->url;
+  for (auto& host : hosts_) if (host.workspace_id == active_id()) {
+    views::WebView* view;
+    if (auto found = host.pin_tabs.find(id); found != host.pin_tabs.end()) view = found->second;
+    else { view = CreatePage(host.profile); host.tabs.push_back(view); host.pin_tabs[id] = view; }
+    if (host.deferred_urls.contains(view)) host.deferred_urls[view] = url;
+    SelectTab(std::find(host.tabs.begin(), host.tabs.end(), view) - host.tabs.begin());
+    auto* page = EnsurePage(view);
+    if (page->GetVisibleURL() != url)
+      page->GetController().LoadURL(url, content::Referrer(), ui::PAGE_TRANSITION_AUTO_BOOKMARK, std::string());
+    return true;
   }
   return false;
 }

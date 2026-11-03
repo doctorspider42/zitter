@@ -142,7 +142,7 @@ mod ffi {
         ready: bool, busy: bool, valid: bool, tab: usize, has_tab: bool,
         // members: the Split View group in pane order (tab indices).
         split: bool, members: Vec<usize>,
-        vertical: bool, tab_count: usize, http: bool,
+        vertical: bool, tab_count: usize, http: bool, pinned: bool, host: String, workspace: String, has_rule: bool,
     }
     struct TabMenuEntry { command: u32, label: String }
     struct LinkRoute { id: String, label: String }
@@ -1651,7 +1651,7 @@ fn tab_menu_position(s:&ffi::TabMenuState)->Option<usize>{if !s.valid||!s.has_ta
 fn tab_menu_enabled(command:u32,s:&ffi::TabMenuState)->bool {
     if !s.valid||!s.ready||s.busy{return false;}
     let position=tab_menu_position(s);let paired=position.is_some();
-    match command {5=>!paired,6|9|11|12=>paired,7=>position.is_some_and(|p|p>0),8=>position.is_some_and(|p|p+1<s.members.len()),10=>s.has_tab&&s.tab_count>1,_=>false}
+    match command {5=>!paired,6|9|11|12=>paired,7=>position.is_some_and(|p|p>0),8=>position.is_some_and(|p|p+1<s.members.len()),10=>s.has_tab&&s.tab_count>1,26..=28=>s.pinned,_=>false}
 }
 fn tab_menu_action(command:u32,s:&ffi::TabMenuState)->ffi::SidebarAction {
     use ffi::SidebarAction as A;if !tab_menu_enabled(command,s){return A::None;}
@@ -1662,14 +1662,16 @@ fn tab_context_menu(s:&ffi::TabMenuState)->Vec<ffi::TabMenuEntry> {
     // a separator.
     let mut entries=Vec::new();let mut add=|command,label:&str|entries.push(ffi::TabMenuEntry{command,label:label.into()});
     let split=tab_menu_position(s).is_some();
-    add(36,t("Nowy folder…"));add(20,t("Otwórz w Peek"));
+    add(36,t("Nowy folder…"));
+    if s.pinned{add(0,"");add(26,t("Odepnij kartę"));add(27,t("Edytuj przypięty adres…"));add(28,t("Wróć do przypiętego adresu"));add(0,"");}
+    add(20,t("Otwórz w Peek"));
     if split{
         add(0,"");add(7,if s.vertical{t("Przesuń w górę")}else{t("Przesuń w lewo")});add(8,if s.vertical{t("Przesuń w dół")}else{t("Przesuń w prawo")});
         add(9,if s.vertical{t("Podział poziomy (obok siebie)")}else{t("Podział pionowy (jedna nad drugą)")});add(11,t("Rozdziel"));
         // With two panes, taking one out is the same as separating them.
         if s.members.len()>2{add(6,t("Wyjmij kartę ze splitu"));}
     } else {add(5,t("Otwórz obok w Split View"));}
-    if s.http{add(0,"");add(23,t("Zawsze otwieraj tę domenę tutaj"));add(24,t("Usuń regułę dla tej domeny"));}
+    if s.http{add(0,"");add(23,&tf("Otwieraj {} zawsze w przestrzeni „{}”",&[&s.host,&s.workspace]));if s.has_rule{add(24,&tf("Wyłącz automatyczny wybór przestrzeni dla {}",&[&s.host]));}}
     if split{add(0,"");add(10,t("Zamknij kartę"));add(12,t("Zamknij wszystkie karty w splicie"));}
     entries
 }
@@ -1680,9 +1682,10 @@ fn link_route(command:i32,s:&ffi::LinkMenuState)->Option<&ffi::LinkRoute>{if com
 fn link_context_menu(s:&ffi::LinkMenuState)->Vec<ffi::LinkMenuEntry>{
     let mut entries=Vec::new();let mut add=|command,label:String,kind|entries.push(ffi::LinkMenuEntry{command,label,kind});
     add(LINK_PEEK,t("Otwórz w Peek").into(),0);add(LINK_NEW_TAB,t("Otwórz w nowej karcie").into(),0);add(LINK_SPLIT,t("Otwórz obok w Split View").into(),0);add(0,String::new(),1);
-    add(LINK_RULE_HERE,t("Zawsze otwieraj tę domenę tutaj").into(),0);add(LINK_ROUTES,tf("Otwieraj {} w…",&[&s.host]),2);
+    let source=s.routes.iter().find(|r|r.id==s.source).map_or(s.source.as_str(),|r|r.label.as_str());
+    add(LINK_RULE_HERE,tf("Otwieraj {} zawsze w przestrzeni „{}”",&[&s.host,source]),0);add(LINK_ROUTES,tf("Otwieraj {} w…",&[&s.host]),2);
     for (index,route) in s.routes.iter().enumerate(){add(LINK_ROUTE_BASE+index as i32,route.label.clone(),3);}
-    add(LINK_REMOVE_RULE,t("Usuń regułę dla tej domeny").into(),0);entries
+    if s.has_rule{add(LINK_REMOVE_RULE,tf("Wyłącz automatyczny wybór przestrzeni dla {}",&[&s.host]),0);}entries
 }
 fn link_menu_enabled(command:i32,s:&ffi::LinkMenuState)->bool{
     if !s.ready{return false;}
@@ -1704,8 +1707,7 @@ fn palette_plan(p:&ffi::PalettePlanInput)->ffi::PalettePlan{
     let mut slots=Vec::new();let primary=!text.is_empty()&&!commands_only;
     if primary{slots.push(ffi::PaletteSlot{source:S::Primary,index:0});}
     if !commands_only{slots.extend((0..p.results).map(|index|ffi::PaletteSlot{source:S::Result,index}));}
-    if p.command_palette&&!commands_only&&!keyword_search&&!text.is_empty()&&p.results>0{slots.rotate_left(1);}
-    if p.command_palette{let position=if keyword_search&&!slots.is_empty(){1}else{0};let commands=(0..p.commands).map(|index|ffi::PaletteSlot{source:S::Command,index}).collect::<Vec<_>>();slots.splice(position..position,commands);}
+    if p.command_palette{let position=if primary{1}else{0};let commands=(0..p.commands).map(|index|ffi::PaletteSlot{source:S::Command,index}).collect::<Vec<_>>();slots.splice(position..position,commands);}
     let search=!p.provider.is_empty();
     ffi::PalettePlan{commands_only,keyword_search,primary_title:if !primary{String::new()}else if search{tf("Szukaj w {}",&[&p.provider])}else{t("Otwórz").into()},primary_detail:if !primary{String::new()}else if search{p.text.clone()}else{p.resolved.clone()},primary_icon:if primary&&!search{1}else{0},slots}
 }
@@ -3709,7 +3711,7 @@ mod tests {
         assert_ne!((first[1].x,first[1].y),(second[1].x,second[1].y));
         assert!(first.iter().all(|p|p.x>=0.0&&p.y>=0.0&&p.x+p.width<=32.0&&p.y+p.height<=32.0));
     }
-    fn menu_state()->ffi::TabMenuState{ffi::TabMenuState{ready:true,busy:false,valid:true,tab:7,has_tab:true,split:true,members:vec![3,7],vertical:false,tab_count:3,http:true}}
+    fn menu_state()->ffi::TabMenuState{ffi::TabMenuState{ready:true,busy:false,valid:true,tab:7,has_tab:true,split:true,members:vec![3,7],vertical:false,tab_count:3,http:true,pinned:false,host:"example.com".into(),workspace:"Work".into(),has_rule:true}}
     fn select_fixture()->Box<SelectState> {new_select_state(vec![ffi::SelectOption{key:"Arc".into(),label:"Arc".into(),search:"arc".into()},ffi::SelectOption{key:"Google Chrome".into(),label:"Google Chrome".into(),search:"google chrome".into()},ffi::SelectOption{key:"Microsoft Edge".into(),label:"Microsoft Edge".into(),search:"microsoft edge".into()},ffi::SelectOption{key:"Brave".into(),label:"Brave".into(),search:"brave".into()}])}
     fn keyed_options(values:&[(&str,&str)])->Vec<ffi::SelectOption>{values.iter().map(|(key,label)|ffi::SelectOption{key:(*key).into(),label:(*label).into(),search:label.to_lowercase()}).collect()}
     #[test] fn select_none_cancels_old_popup_and_allows_first_item_prefix() {
@@ -5112,9 +5114,9 @@ mod tests {
     #[test] fn palette_plan_orders_primary_results_and_commands_like_native() {
         let p=palette_plan(&palette_input("kot",false,"Google",2,0));assert_eq!(palette_order(&p),vec![(0,0),(1,0),(1,1)]);assert_eq!((p.primary_title.as_str(),p.primary_detail.as_str(),p.primary_icon),("Szukaj w Google","kot",0));
         let p=palette_plan(&palette_input("example.com",false,"",0,0));assert_eq!((p.primary_title.as_str(),p.primary_detail.as_str(),p.primary_icon),("Otwórz","https://resolved.test/",1));
-        let p=palette_plan(&palette_input("kot",true,"Google",2,2));assert_eq!(palette_order(&p),vec![(2,0),(2,1),(1,0),(1,1),(0,0)]);assert!(!p.keyword_search);
+        let p=palette_plan(&palette_input("kot",true,"Google",2,2));assert_eq!(palette_order(&p),vec![(0,0),(2,0),(2,1),(1,0),(1,1)]);assert!(!p.keyword_search);
         let p=palette_plan(&palette_input("G kot",true,"Google",1,2));assert!(p.keyword_search);assert_eq!(palette_order(&p),vec![(0,0),(2,0),(2,1),(1,0)]);
-        let p=palette_plan(&palette_input("gx kot",true,"Google",1,0));assert!(!p.keyword_search);assert_eq!(palette_order(&p),vec![(1,0),(0,0)]);
+        let p=palette_plan(&palette_input("gx kot",true,"Google",1,0));assert!(!p.keyword_search);assert_eq!(palette_order(&p),vec![(0,0),(1,0)]);
         let p=palette_plan(&palette_input(">split",true,"",3,1));assert!(p.commands_only);assert_eq!(palette_order(&p),vec![(2,0)]);assert!(p.primary_title.is_empty());
         let p=palette_plan(&palette_input("",true,"",3,1));assert_eq!(palette_order(&p),vec![(2,0),(1,0),(1,1),(1,2)]);
         let p=palette_plan(&palette_input(">x",false,"",1,5));assert!(!p.commands_only);assert_eq!(palette_order(&p),vec![(0,0),(1,0)]);
@@ -5154,6 +5156,16 @@ mod tests {
         // Three or more panes can also lose a single member.
         s.members=vec![3,7,9];let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,20,0,7,8,9,11,6,0,23,24,0,10,12]);
         s.has_tab=false;s.http=false;let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,20,5]);
+    }
+    #[test] fn pinned_tab_menu_offers_edit_reset_and_unpin_without_destructive_routing() {
+        let mut s=menu_state();s.pinned=true;s.split=false;s.has_tab=false;s.has_rule=false;
+        let menu=tab_context_menu(&s);
+        for id in 26..=28{assert!(menu.iter().any(|e|e.command==id));assert!(tab_menu_enabled(id,&s));}
+        assert!(!menu.iter().any(|e|e.command==24));
+        assert!(menu.iter().any(|e|e.command==23&&e.label.contains("example.com")&&e.label.contains("Work")));
+        s.pinned=false;for id in 26..=28{assert!(!tab_menu_enabled(id,&s));}
+        let mut links=link_state();links.has_rule=false;assert!(!link_context_menu(&links).iter().any(|e|e.command==24));
+        assert!(link_context_menu(&links).iter().any(|e|e.command==23&&e.label.contains("Praca")));
     }
     #[test] fn tab_menu_moves_middle_panes_both_ways_and_separates_groups() {
         use ffi::SidebarAction as A;let mut s=menu_state();s.members=vec![3,7,9];
