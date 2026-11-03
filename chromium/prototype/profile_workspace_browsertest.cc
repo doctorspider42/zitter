@@ -2048,6 +2048,8 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CloseOtherTabsKeepsSelectionAn
   EXPECT_EQ(b, window_->contents("work")->GetLastCommittedURL());
   // The toast's undo puts both back in their places; the kept tab stays live.
   ASSERT_TRUE(shell->toast_widget()->IsVisible());
+  EXPECT_EQ(T(u"Zamknięto ") + base::UTF8ToUTF16(std::string(sidebar::tab_count_copy(2))),
+            shell->toast_text_for_testing());
   auto* kept = window_->contents("work");
   shell->UndoToast();
   ASSERT_EQ(3u, window_->tab_count("work"));

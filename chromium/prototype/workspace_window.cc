@@ -1994,7 +1994,10 @@ bool WorkspaceWindow::CloseOtherTabs() {
       const auto found = std::find(host.tabs.begin(), host.tabs.end(), view);
       if (found != host.tabs.end()) CloseWorkspaceTab(host.workspace_id, found - host.tabs.begin());
     }
-    shell_->ShowToast(T(u"Zamknięto "), base::UTF8ToUTF16(std::string(sidebar::tab_count_copy(undo.size()))),
+    // Read the count before moving the entries into Undo; argument evaluation
+    // order must not decide whether the toast sees an empty vector.
+    const auto count_copy = base::UTF8ToUTF16(std::string(sidebar::tab_count_copy(undo.size())));
+    shell_->ShowToast(T(u"Zamknięto "), count_copy,
         base::BindOnce([](base::WeakPtr<WorkspaceWindow> w, std::string id, std::vector<ClosedTabSlot> tabs) {
           if (w) w->ReopenTabs(id, std::move(tabs));
         }, weak_factory_.GetWeakPtr(), host.workspace_id, std::move(undo)));
