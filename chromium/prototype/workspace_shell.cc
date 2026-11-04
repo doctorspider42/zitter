@@ -54,6 +54,8 @@
 #include "ui/accessibility/ax_action_data.h"
 #include "ui/gfx/text_utils.h"
 #include "ui/gfx/text_elider.h"
+#include "ui/views/controls/highlight_path_generator.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "ui/base/models/simple_combobox_model.h"
 #include "ui/views/controls/combobox/combobox.h"
 #include "ui/views/controls/prefix_selector.h"
@@ -107,6 +109,7 @@
 #include "ui/gfx/render_text.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/paint_vector_icon.h"
+#include "ui/base/text/bytes_formatting.h"
 #include "ui/gfx/scoped_canvas.h"
 #include "ui/views/bubble/bubble_frame_view.h"
 #include "ui/color/color_recipe.h"
@@ -1542,6 +1545,8 @@ class SceneSelect final : public RustActionView {
   std::u16string LabelAt(size_t index) const{return index<labels_.size()?labels_[index]:std::u16string();}
   void SetSelectedIndex(std::optional<size_t> index){if(index&&*index>=Count())return;OnMouseCaptureLost();CancelMenu();if(index)NodeControl().node_select_select_index(*index);else NodeControl().node_select_clear_selection();RefreshAX();Schedule();}
   void SetChangedCallback(base::RepeatingClosure changed){changed_=std::move(changed);}
+  // A site permission's chip (design W1): 0 neutral, 1 allowed (`accent`), 2 blocked (`danger`).
+  void SetTone(int tone){if(tone_==tone)return;tone_=tone;Schedule();SchedulePaint();}
   void CancelInteraction(){OnMouseCaptureLost();CancelMenu();Schedule();}
   void SetOptions(const std::vector<std::pair<std::string,std::u16string>>& choices){
     bool same=choices.size()==labels_.size();
@@ -1598,10 +1603,16 @@ class SceneSelect final : public RustActionView {
     const auto weak=weak_factory_.GetWeakPtr();menu_=std::make_unique<SceneSelectMenu>(std::move(items),std::string(NodeControl().node_select_selected_key()),token,base::BindRepeating([](base::WeakPtr<SceneSelect> owner,uint64_t epoch,const std::string& key){return owner&&owner->CanChoose(epoch,key);},weak),base::BindRepeating(&SceneSelect::Choose,weak));
     runner_=std::make_unique<views::MenuRunner>(menu_.get(),views::MenuRunner::COMBOBOX,base::BindRepeating(&SceneSelect::Closed,weak,token));RefreshAX();Schedule();if(runner_&&NodeControl().node_select_expanded())runner_->RunMenuAt(GetWidget(),nullptr,GetBoundsInScreen(),views::MenuAnchorPosition::kTopLeft,source);
   }
-  sidebar::Item Scene(float dx,float dy,gfx::RectF clip) const {sidebar::Item item{};item.kind=21;item.x=dx;item.y=dy;item.width=width();item.height=height();if(const auto selected=Selected())item.title=base::UTF16ToUTF8(labels_[*selected]);const auto* colors=GetColorProvider();const auto input=Snapshot();const bool enabled=input.enabled;item.font_size=TextFont().GetFontSize();item.active=TextFont().GetFontWeight()>=gfx::Font::Weight::MEDIUM;item.tile=base::i18n::IsRTL();item.focused=input.focused;item.hovered=enabled&&(input.visual==sidebar::RowVisual::Hovered||NodeControl().node_select_expanded());item.ink=colors->GetColor(views::TypographyProvider::Get().GetColorId(views::style::CONTEXT_LABEL,enabled?views::style::STYLE_PRIMARY:views::style::STYLE_DISABLED));item.fill=colors->GetColor(enabled?ui::kColorComboboxBackground:ui::kColorComboboxBackgroundDisabled);item.badge=colors->GetColor(input.focused?ui::kColorFocusableBorderFocused:enabled?ui::kColorButtonBorder:ui::kColorButtonBorderDisabled);item.detail_ink=colors->GetColor(ui::kColorSysStateHoverOnSubtle);item.clip={clip.x(),clip.y(),clip.width(),clip.height()};return item;}
+  sidebar::Item Scene(float dx,float dy,gfx::RectF clip) const {sidebar::Item item{};item.kind=21;item.x=dx;item.y=dy;item.width=width();item.height=height();if(const auto selected=Selected())item.title=base::UTF16ToUTF8(labels_[*selected]);const auto* colors=GetColorProvider();const auto input=Snapshot();const bool enabled=input.enabled;item.font_size=TextFont().GetFontSize();item.active=TextFont().GetFontWeight()>=gfx::Font::Weight::MEDIUM;item.tile=base::i18n::IsRTL();item.focused=input.focused;item.hovered=enabled&&(input.visual==sidebar::RowVisual::Hovered||NodeControl().node_select_expanded());item.ink=colors->GetColor(views::TypographyProvider::Get().GetColorId(views::style::CONTEXT_LABEL,enabled?views::style::STYLE_PRIMARY:views::style::STYLE_DISABLED));item.fill=colors->GetColor(enabled?ui::kColorComboboxBackground:ui::kColorComboboxBackgroundDisabled);item.badge=colors->GetColor(input.focused?ui::kColorFocusableBorderFocused:enabled?ui::kColorButtonBorder:ui::kColorButtonBorderDisabled);item.detail_ink=colors->GetColor(ui::kColorSysStateHoverOnSubtle);
+    if(tone_>=0){const auto p=Palette(this);item.glyph=1;item.font_size=12;item.active=true;
+      if(tone_==1){item.fill=p.accent_soft;item.badge=p.accent_soft;item.ink=p.accent_ink;}
+      else if(tone_==2){item.fill=SK_ColorTRANSPARENT;item.badge=Mix(p.danger,p.bg_raised,30);item.ink=p.danger;}
+      else{item.fill=SK_ColorTRANSPARENT;item.badge=p.line;item.ink=p.ink_muted;}
+      if(input.focused)item.badge=colors->GetColor(ui::kColorFocusableBorderFocused);}
+    item.clip={clip.x(),clip.y(),clip.width(),clip.height()};return item;}
   void Schedule(){SyncViewportVisibility();if((runner_||NodeControl().node_select_expanded())&&(!SceneIsVisible(this)||GetVisibleBounds().IsEmpty()))CancelMenu();if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneSelect::UpdateMetal,weak_factory_.GetWeakPtr()));}
   void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());std::vector<sidebar::Item> items;items.push_back(Scene(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size()))));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
-  std::vector<std::u16string> labels_;base::RepeatingClosure changed_;SceneSelectInput input_;std::unique_ptr<SceneSelectMenu> menu_;std::unique_ptr<views::MenuRunner> runner_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneSelect::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneSelect> weak_factory_{this};
+  std::vector<std::u16string> labels_;base::RepeatingClosure changed_;int tone_=-1;SceneSelectInput input_;std::unique_ptr<SceneSelectMenu> menu_;std::unique_ptr<views::MenuRunner> runner_;bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneSelect::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneSelect> weak_factory_{this};
 };
 BEGIN_METADATA(SceneSelect)
 END_METADATA
@@ -1771,6 +1782,8 @@ struct RowRecipe {
     bool kbd = false;  // The detail is a shortcut, drawn as Kbd keys after the title.
     std::u16string header;  // A palette group's eyebrow, drawn above its first row.
     bool editing = false;   // AddressPill while its address is being edited (⌘L).
+    bool site_controls = false;  // AddressPill on a web page: its icon opens the site panel.
+    bool site_open = false;      // …while that panel is open.
     bool audible = false;   // A tab playing sound: a speaker in `accent-ink`.
     int height = 34;
     views::Button::PressedCallback close;
@@ -1842,6 +1855,8 @@ sidebar::Item AddressRowItem(views::View* row,const RowRecipe::Spec& spec,gfx::R
   item.badge=spec.secure?p.ok:p.ink_muted; item.active=spec.secure; item.hovered=hovered;
   item.fill=p.bg_raised; item.edge=p.line; item.focused=focused; item.focus=p.focus;
   if(spec.editing){item.glyph=1;item.edge=p.accent;}
+  // Design: Prośba o dostęp — the site's controls (sliders) lead a web page's pill.
+  else if(spec.site_controls){item.glyph=spec.site_open?3:2;item.badge=spec.site_open?p.accent_ink:p.ink_muted;}
   return item;
 }
 // A command row (icon, title) whose shortcut detail is a row of Kbd keys, one per
@@ -1943,6 +1958,8 @@ class RustRowView final : public views::View {
   void Tremor(){if(gfx::Animation::PrefersReducedMotion())return;tremor_step_=0;tremor_timer_.Start(FROM_HERE,base::Milliseconds(45),base::BindRepeating(&RustRowView::TremorStep,base::Unretained(this)));}
   void SetAudible(bool audible){if(spec_.audible==audible)return;spec_.audible=audible;SchedulePaint();if(changed_)changed_.Run();}
   void SetEditing(bool editing){if(spec_.editing==editing)return;spec_.editing=editing;SchedulePaint();if(changed_)changed_.Run();}
+  void SetSiteControls(bool site,bool open){if(spec_.site_controls==site&&spec_.site_open==open)return;spec_.site_controls=site;spec_.site_open=open;SchedulePaint();if(changed_)changed_.Run();}
+  bool site_controls() const{return spec_.site_controls;}
   void SetActive(bool active){if(!state_->action_on(active))return;if(!state_->sidebar_visual().valid)spec_.active=active;measured_.reset();UpdateClose();SchedulePaint();}
   void SetTitle(std::u16string title){if(HasSidebarProperties()){if(state_->sidebar_set_title(SceneUtf16(title))){SyncSidebarAX();SchedulePaint();}return;}if(spec_.title==title)return;spec_.title=std::move(title);measured_.reset();SetTooltipText(spec_.title);GetViewAccessibility().SetName(spec_.title);SchedulePaint();}
   void SetDetail(std::u16string detail){if(spec_.detail==detail)return;spec_.detail=std::move(detail);InvalidateLayout();SchedulePaint();}
@@ -2061,6 +2078,8 @@ void TremorRow(views::View* view){if(auto* row=views::AsViewClass<RustRowView>(v
 void SetRowAudible(views::View* view,bool value){if(auto* row=views::AsViewClass<RustRowView>(view))row->SetAudible(value);}
 void SetCreateAction(views::View* view,bool creating){if(auto* button=views::AsViewClass<SceneTextButton>(view))button->SetZing(creating);}
 void SetRowEditing(views::View* view,bool value){if(auto* row=views::AsViewClass<RustRowView>(view))row->SetEditing(value);}
+void SetRowSiteControls(views::View* view,bool site,bool open){if(auto* row=views::AsViewClass<RustRowView>(view))row->SetSiteControls(site,open);}
+bool RowSiteControls(views::View* view){auto* row=views::AsViewClass<RustRowView>(view);return row&&row->site_controls();}
 void SetRowTitle(views::View* view,std::u16string value){VisitRow(view,[&value](auto* row){row->SetTitle(std::move(value));});}
 void SetRowDetail(views::View* view,std::u16string value){VisitRow(view,[&value](auto* row){row->SetDetail(std::move(value));});}
 void SetRowMonogram(views::View* view,std::u16string value,SkColor color){VisitRow(view,[&value,color](auto* row){row->SetMonogram(std::move(value),color);});}
@@ -2579,6 +2598,24 @@ class SceneFileTile final : public views::View {
 BEGIN_METADATA(SceneFileTile)
 END_METADATA
 
+// An icon on its `accent-soft` tile (radius-md), as permission cards lead with
+// it; a site's initial on that tile; or (`bare`) a 16 px glyph in `ink-muted`.
+class SceneIconTile final : public views::View {
+  METADATA_HEADER(SceneIconTile,views::View)
+ public:
+  SceneIconTile(const gfx::VectorIcon* icon,int size,bool bare=false,std::u16string initial={}):icon_(icon),size_(size),bare_(bare),initial_(std::move(initial)){GetViewAccessibility().SetIsIgnored(true);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(size_,size_);}
+  void OnPaint(gfx::Canvas* canvas) override{
+    const auto p=Palette(this);if(!bare_)FillRound(canvas,GetLocalBounds(),8,p.accent_soft);
+    if(!initial_.empty()){canvas->DrawStringRectWithFlags(initial_,DesignFont(2,13,600,false),p.accent_ink,GetLocalBounds(),gfx::Canvas::TEXT_ALIGN_CENTER);return;}
+    if(!icon_)return;const int glyph=16;gfx::ScopedCanvas scoped(canvas);
+    canvas->Translate(gfx::Vector2d((width()-glyph)/2,(height()-glyph)/2));gfx::PaintVectorIcon(canvas,*icon_,glyph,bare_?p.ink_muted:p.accent_ink);
+  }
+ private:
+  raw_ptr<const gfx::VectorIcon> icon_;int size_;bool bare_;std::u16string initial_;
+};
+BEGIN_METADATA(SceneIconTile)
+END_METADATA
 class PanelSceneImpl final : public PanelScene {
  public:
   explicit PanelSceneImpl(views::View* root):root_(root),renderer_(root){}
@@ -2608,6 +2645,10 @@ class PanelSceneImpl final : public PanelScene {
   views::View* AddMoreAction(views::View* parent,base::RepeatingClosure callback,std::u16string name) override{
     return parent->AddChildView(CreateSceneAction(base::BindRepeating(callback),std::move(name),ControlGlyph::kMore,nullptr,{},base::BindRepeating(&PanelSceneImpl::Schedule,weak_factory_.GetWeakPtr())));}
   void SetFileTileChoice(views::View* tile,bool choosing,bool checked,base::RepeatingClosure pressed) override{static_cast<SceneFileTile*>(tile)->SetChoice(choosing,checked,std::move(pressed));}
+  std::unique_ptr<views::View> MakeIconTile(const gfx::VectorIcon* icon) override{return std::make_unique<SceneIconTile>(icon,28);}
+  void SetSelectChanged(views::View* select,base::RepeatingClosure changed) override{SetPickerCallback(select,std::move(changed));}
+  std::optional<size_t> SelectIndex(views::View* select) const override{return PickerIndex(select);}
+  void SetSelectIndex(views::View* select,size_t index) override{SetPickerIndex(select,index);}
   bool animating() const override{return renderer_.animating();}
   void Schedule() override{renderer_.Schedule();}
   base::RepeatingClosure ViewportChangedCallback() override{return base::BindRepeating(&PanelSceneImpl::ViewportChanged,weak_factory_.GetWeakPtr());}
@@ -3793,6 +3834,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
             (shell->general_widget_ && shell->general_widget_->IsVisible()) ||
             (shell->tools_widget_ && shell->tools_widget_->IsVisible()) ||
             (shell->time_machine_widget_ && shell->time_machine_widget_->IsVisible()) ||
+            (shell->site_panel_ && shell->site_panel_->IsVisible()) ||
             (shell->workspace_menu_runner_ && shell->workspace_menu_runner_->IsRunning());
         bool hide=!shell->pinned_&&!blocked&&!inside&&!dragging;
         if(shell->metal_sidebar_)hide=sidebar::sidebar_auto_hide(shell->pinned_,blocked,inside,dragging);
@@ -3816,7 +3858,13 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 2));
   address_layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
   auto* pill = address_row->AddChildView(CreateAddressRow(
-      base::BindRepeating(&WorkspaceShell::OpenAddress, weak, false),
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, const ui::Event& event) {
+        if (!shell) return;
+        // The pill's leading icon (34 px) opens the site panel on a web page.
+        if (event.IsLocatedEvent() && shell->url_pill_ && RowSiteControls(shell->url_pill_) &&
+            event.AsLocatedEvent()->location().x() < 34) { shell->ToggleSitePanel(); return; }
+        shell->OpenAddress(false);
+      }, weak),
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
         return shell && shell->metal_sidebar_visible();
       },weak),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak),{chrome_node_graph_,4,{},"sidebar.address"}));
@@ -3829,6 +3877,24 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) { return shell && shell->metal_sidebar_visible(); }, weak),
       base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar, weak)));
   copy_url_button_->SetPreferredSize(gfx::Size(28, 28));
+  // The folded password offer: its key reopens the card under the pill.
+  password_key_ = address_row->AddChildView(CreateSceneAction(
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) { if (shell && shell->password_reopen_) shell->password_reopen_.Run(); }, weak),
+      T(u"Zapisz hasło"), GlyphButton::Glyph::kVector, &vector_icons::kPasskeyIcon,
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) { return shell && shell->metal_sidebar_visible(); }, weak),
+      base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar, weak)));
+  password_key_->SetPreferredSize(gfx::Size(28, 28));
+  password_key_->SetVisible(false);
+  address_row->ReorderChildView(password_key_, address_row->GetIndexOf(copy_url_button_).value());
+  // A site's pending permission request: open in `accent`, folded muted and struck through.
+  permission_chip_ = address_row->AddChildView(CreateSceneAction(
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) { if (shell && shell->permission_reopen_) shell->permission_reopen_.Run(); }, weak),
+      T(u"Prośba o dostęp"), GlyphButton::Glyph::kVector, &vector_icons::kNotificationsIcon,
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) { return shell && shell->metal_sidebar_visible(); }, weak),
+      base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar, weak)));
+  permission_chip_->SetPreferredSize(gfx::Size(28, 28));
+  permission_chip_->SetVisible(false);
+  address_row->ReorderChildView(permission_chip_, address_row->GetIndexOf(password_key_).value());
   pill->set_context_menu_controller(this);
   Spacer(sidebar.get(), 12);
   workspace_name_ = sidebar->AddChildView(std::make_unique<WorkspaceHeading>(
@@ -4465,7 +4531,15 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
                 else if (panel == "profiles") shell->OpenProfiles();
                 // A sample undo toast; its „Cofnij” does nothing.
                 else if (panel == "downloads") shell->callbacks_.run_shortcut.Run("downloads");
+        else if (panel == "passwords") shell->callbacks_.run_shortcut.Run("passwords");
                 else if (panel == "history") shell->callbacks_.run_shortcut.Run("history");
+                else if (panel == "site"||panel == "site-data"||panel == "permission") {
+                  // Open the page's origin first, then show its panel (or ask) once it loads.
+                  const std::string id=panel=="permission"?"permission_demo":"site_demo";
+                  shell->ShowSidebar();shell->callbacks_.run_shortcut.Run(id);
+                  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,std::string id,bool data){
+                    if(!shell)return;shell->ShowSidebar();shell->callbacks_.run_shortcut.Run(id);if(data)shell->ShowSiteData(true);
+                  },shell,id,panel=="site-data"),base::Milliseconds(2000));}
                 else if (panel == "time-machine") shell->OpenTimeMachine();
                 else if (panel == "extensions") shell->callbacks_.run_shortcut.Run("extensions");
                 else if (panel == "extension-popup") shell->callbacks_.run_shortcut.Run("extension_popup");
@@ -4559,7 +4633,7 @@ void WorkspaceShell::Detach() {
   settings_root_ = nullptr;
   chrome_node_graph_.reset();palette_node_graph_.reset();site_rule_node_graph_.reset();
   nav_buttons_.fill(nullptr);
-  copy_url_button_ = nullptr;
+  copy_url_button_ = nullptr; password_key_ = nullptr; permission_chip_ = nullptr;
   workspace_buttons_.clear();
   workspace_dots_ = nullptr; add_button_ = nullptr; downloads_button_ = nullptr; sidebar_footer_=nullptr; workspace_scroll_=nullptr;
   tab_lists_.clear();
@@ -4602,7 +4676,9 @@ void WorkspaceShell::Detach() {
   if (print_widget_) print_widget_->RemoveObserver(this);
   print_widget_.reset(); print_delegate_.reset();
   scrim_widget_.reset(); scrim_delegate_.reset();
-  quit_dialog_.reset(); quit_dialog_delegate_.reset(); danger_dialog_.reset(); danger_dialog_delegate_.reset();
+  quit_dialog_.reset(); quit_dialog_delegate_.reset(); danger_dialog_.reset(); danger_dialog_delegate_.reset(); clear_dialog_.reset(); clear_dialog_delegate_.reset();
+  site_menu_runner_.reset(); site_menu_.reset(); site_rows_.clear(); site_data_row_ = nullptr; site_header_ = nullptr; site_body_ = nullptr;
+  site_panel_.reset(); site_panel_delegate_.reset();
 #if BUILDFLAG(IS_WIN)
   // The wizard closing with the window reports nothing: the window is going.
   if (welcome_delegate_) AbandonWelcome(welcome_delegate_->GetContentsView());
@@ -4686,6 +4762,7 @@ void WorkspaceShell::Update(ShellState state) {
   SetRowAddress(url_pill_.get(),
       blank ? T(u"Szukaj lub wpisz adres") : HostLabel(state_.url),
       blank ? u"" : base::UTF8ToUTF16(path), blank, !blank && state_.url.SchemeIs("https"));
+  SetRowSiteControls(url_pill_.get(), !blank && state_.url.SchemeIsHTTPOrHTTPS(), site_panel_ && site_panel_->IsVisible());
   for (size_t pane = 0; pane < kMaxSplitPanes; ++pane) {
     std::u16string title;
     std::array<uint64_t,2> identity{};
@@ -5287,6 +5364,14 @@ void WorkspaceShell::UpdateMetalSidebar() {
       item.kind=14; item.x+=12; item.width=std::max(0.f,item.width-24); item.y+=8; item.height=2; item.fill=Palette(view).line_strong;
       items.push_back(std::move(item));
     }
+  }
+  if (permission_chip_ && permission_chip_->IsDrawn()) {
+    auto rect = gfx::RectF(permission_chip_->GetBoundsInScreen()); rect.Offset(-bounds.x(), -bounds.y());
+    items.push_back(static_cast<RustActionView*>(permission_chip_.get())->SceneItem(rect, rect));
+  }
+  if (password_key_ && password_key_->IsDrawn()) {
+    auto rect = gfx::RectF(password_key_->GetBoundsInScreen()); rect.Offset(-bounds.x(), -bounds.y());
+    items.push_back(static_cast<RustActionView*>(password_key_.get())->SceneItem(rect, rect));
   }
   if (copy_url_button_ && copy_url_button_->IsDrawn()) {
     auto rect = gfx::RectF(copy_url_button_->GetBoundsInScreen()); rect.Offset(-bounds.x(), -bounds.y());
@@ -7980,6 +8065,432 @@ void WorkspaceShell::DownloadFinished(){
   if(downloads_done_)downloads_done_timer_.Start(FROM_HERE,base::Milliseconds(2500),base::BindOnce([](WorkspaceShell* shell){shell->downloads_done_=false;shell->UpdateDownloadsButton();},base::Unretained(this)));
   UpdateDownloadsButton();
 }
+gfx::Rect WorkspaceShell::password_anchor_in_screen() const{
+  return url_pill_&&url_pill_->IsDrawn()&&sidebar_visible()?url_pill_->GetBoundsInScreen():gfx::Rect();
+}
+void WorkspaceShell::SetPasswordOffer(bool pending,bool folded,std::u16string site,base::RepeatingClosure reopen){
+  password_reopen_=std::move(reopen);if(!password_key_)return;
+  const bool shown=pending&&folded;
+  password_key_->SetTooltipText(TF(u"Zapisz hasło do {}",{site}));password_key_->GetViewAccessibility().SetName(TF(u"Zapisz hasło do {}",{site}));
+  SetActionColor(password_key_,shown?Palette(password_key_).accent_ink:kSubtle);
+  if(password_key_->GetVisible()!=shown){password_key_->SetVisible(shown);password_key_->parent()->InvalidateLayout();if(shown)TremorRow(url_pill_);}
+  ScheduleMetalSidebar();
+}
+void WorkspaceShell::SetPermissionOffer(bool pending,bool folded,int kind,std::u16string site,base::RepeatingClosure reopen){
+  permission_reopen_=std::move(reopen);if(!permission_chip_)return;
+  static constexpr std::array<const char16_t*,10> kWishes={u"Ta strona prosiła o dostęp.",u"Ta strona chciała wysyłać powiadomienia.",u"Ta strona chciała znać Twoją lokalizację.",
+      u"Ta strona chce użyć kamery.",u"Ta strona chce użyć mikrofonu.",u"Ta strona chce użyć kamery i mikrofonu.",
+      u"Ta strona chciała łączyć się z urządzeniami w Twojej sieci.",u"Ta strona chciała czytać schowek.",u"Ta strona chciała pobrać wiele plików.",u"Ta strona chciała sterować urządzeniami MIDI."};
+  kind=std::clamp(kind,0,9);
+  const std::array<std::array<const gfx::VectorIcon*,10>,2> icons={{{&vector_icons::kTuneIcon,&vector_icons::kNotificationsIcon,&vector_icons::kLocationOnIcon,&vector_icons::kVideocamIcon,&vector_icons::kMicIcon,&vector_icons::kVideocamIcon,&vector_icons::kRouterIcon,&vector_icons::kContentPasteIcon,&vector_icons::kDownloadIcon,&vector_icons::kPianoIcon},
+      {&vector_icons::kTuneIcon,&vector_icons::kNotificationsOffIcon,&vector_icons::kLocationOffIcon,&vector_icons::kVideocamOffIcon,&vector_icons::kMicOffIcon,&vector_icons::kVideocamOffIcon,&vector_icons::kRouterOffIcon,&vector_icons::kContentPasteOffIcon,&vector_icons::kFileDownloadOffIcon,&vector_icons::kPianoOffIcon}}};
+  if(auto* action=views::AsViewClass<RustActionView>(permission_chip_.get()))action->SetIcon(icons[folded?1:0][static_cast<size_t>(kind)]);
+  // Design R3: an ignored request stays blocked until the person says otherwise.
+  const auto tip=folded?T(kWishes[static_cast<size_t>(kind)])+u" "+T(u"Zablokowane po cichu — kliknij, żeby zmienić."):TF(u"Prośba o dostęp: {}",{site});
+  permission_chip_->SetTooltipText(tip);permission_chip_->GetViewAccessibility().SetName(tip);
+  SetActionColor(permission_chip_,folded?Palette(permission_chip_).ink_muted:Palette(permission_chip_).accent_ink);
+  if(permission_chip_->GetVisible()!=pending){permission_chip_->SetVisible(pending);permission_chip_->parent()->InvalidateLayout();}
+  if(pending&&folded)TremorRow(url_pill_);
+  ScheduleMetalSidebar();
+}
+// Design: Zitter panel witryny — A (the calm panel), B (a permission's menu),
+// C (the site's data, cookie by cookie).
+WorkspaceShell::SiteHandlers::SiteHandlers() = default;
+WorkspaceShell::SiteHandlers::SiteHandlers(SiteHandlers&&) = default;
+WorkspaceShell::SiteHandlers& WorkspaceShell::SiteHandlers::operator=(SiteHandlers&&) = default;
+WorkspaceShell::SiteHandlers::~SiteHandlers() = default;
+namespace {
+constexpr int kSitePanelWidth = 320;
+struct SitePermissionLook { std::string_view key; RAW_PTR_EXCLUSION const char16_t* name; RAW_PTR_EXCLUSION const gfx::VectorIcon* icon; };
+// Chromium's names for permissions, as people know them. One Zitter has no
+// name for still shows (by Chromium's name), so it can always be changed back.
+const SitePermissionLook* SiteLook(const std::string& key){
+  static const base::NoDestructor<std::vector<SitePermissionLook>> looks({
+      {"notifications",u"Powiadomienia",&vector_icons::kNotificationsIcon},
+      {"geolocation",u"Lokalizacja",&vector_icons::kLocationOnIcon},
+      {"media-stream-camera",u"Kamera",&vector_icons::kVideocamIcon},
+      {"media-stream-mic",u"Mikrofon",&vector_icons::kMicIcon},
+      {"camera-pan-tilt-zoom",u"Sterowanie kamerą",&vector_icons::kVideocamIcon},
+      {"sound",u"Dźwięk",&vector_icons::kVolumeUpIcon},
+      {"autoplay",u"Autoodtwarzanie",&vector_icons::kVolumeUpIcon},
+      {"popups",u"Wyskakujące okna",&vector_icons::kOpenInNewFlippableIcon},
+      {"javascript",u"JavaScript",&vector_icons::kCodeIcon},
+      {"images",u"Obrazy",&vector_icons::kPhotoIcon},
+      {"clipboard",u"Schowek",&vector_icons::kContentPasteIcon},
+      {"automatic-downloads",u"Pobieranie wielu plików",&vector_icons::kDownloadIcon},
+      {"local-network-access",u"Sieć lokalna",&vector_icons::kRouterIcon},
+      {"local-network",u"Sieć lokalna",&vector_icons::kRouterIcon},
+      {"loopback-network",u"Usługi na tym komputerze",&vector_icons::kRouterIcon},
+      {"midi-sysex",u"Urządzenia MIDI",&vector_icons::kPianoIcon},
+      {"usb-guard",u"Urządzenia USB",&vector_icons::kUsbIcon},
+      {"serial-guard",u"Porty szeregowe",&vector_icons::kDevicesIcon},
+      {"hid-guard",u"Urządzenia HID",&vector_icons::kDevicesIcon},
+      {"bluetooth-guard",u"Urządzenia Bluetooth",&vector_icons::kBluetoothIcon},
+      {"bluetooth-scanning",u"Wyszukiwanie Bluetooth",&vector_icons::kBluetoothIcon},
+      {"nfc-devices",u"Urządzenia NFC",&vector_icons::kDevicesIcon},
+      {"sensors",u"Czujniki ruchu",&vector_icons::kSensorsIcon},
+      {"window-placement",u"Zarządzanie oknami",&vector_icons::kDesktopWindowsIcon},
+      {"local-fonts",u"Czcionki na komputerze",&vector_icons::kFontDownloadIcon},
+      {"idle-detection",u"Wykrywanie bezczynności",&vector_icons::kDevicesIcon},
+      {"protocol-handler",u"Otwieranie linków",&vector_icons::kOpenInNewFlippableIcon},
+      {"storage-access",u"Dostęp do danych w ramkach",&vector_icons::kDatabaseIcon},
+      {"background-sync",u"Synchronizacja w tle",&vector_icons::kDatabaseIcon},
+      {"vr",u"Wirtualna rzeczywistość",&vector_icons::kDevicesIcon},
+      {"ar",u"Rozszerzona rzeczywistość",&vector_icons::kDevicesIcon},
+      {"keyboard-lock",u"Przejmowanie klawiatury",&vector_icons::kDevicesIcon},
+      {"pointer-lock",u"Przejmowanie kursora",&vector_icons::kDevicesIcon},
+      {"automatic-fullscreen",u"Pełny ekran bez pytania",&vector_icons::kDesktopWindowsIcon},
+      {"web-printing",u"Drukowanie",&vector_icons::kDevicesIcon},
+      {"payment-handler",u"Obsługa płatności",&vector_icons::kDevicesIcon},
+  });
+  for(const auto& look:*looks)if(look.key==key)return &look;
+  return nullptr;
+}
+std::u16string SitePermissionName(const std::string& key){const auto* look=SiteLook(key);return look?T(look->name):base::UTF8ToUTF16(key);}
+const gfx::VectorIcon& SitePermissionIcon(const std::string& key){const auto* look=SiteLook(key);return look?*look->icon:vector_icons::kTuneIcon;}
+// 1 wizyta, 2–4 wizyty, 5 wizyt (12–14 wizyt).
+std::u16string VisitsText(int count){
+  const int tens=count%100,ones=count%10;
+  const auto* form=count==1?u"{} wizyta":(ones>=2&&ones<=4&&(tens<12||tens>14))?u"{} wizyty":u"{} wizyt";
+  return TF(form,{base::NumberToString16(count)});
+}
+std::u16string SizeText(int64_t bytes){return bytes<0?std::u16string(u"…"):ui::FormatBytes(base::ByteSize(static_cast<uint64_t>(bytes)));}
+// A size worth showing: nothing while it is zero (fresh cookies are not on disk yet).
+std::u16string SizeIfAny(int64_t bytes){return bytes==0?std::u16string():SizeText(bytes);}
+// The data row's word: the size, else how many cookies, else that there is none.
+std::u16string DataSummary(const SiteDataFacts& facts){
+  if(facts.bytes>0)return SizeText(facts.bytes);
+  if(facts.cookies>0)return TF(u"{} cookie",{base::NumberToString16(facts.cookies)});
+  return facts.bytes<0||facts.cookies<0?std::u16string(u"…"):T(u"Brak");
+}
+gfx::FontList SiteFont(int size,int weight,bool mono=false){return DesignFont(mono?3:2,size,weight,false);}
+void DrawSiteText(gfx::Canvas* canvas,const std::u16string& text,const gfx::FontList& font,SkColor color,gfx::Rect rect,int align=gfx::Canvas::TEXT_ALIGN_LEFT){
+  if(rect.width()<=0)return;canvas->DrawStringRectWithFlags(gfx::ElideText(text,font,rect.width(),gfx::ELIDE_TAIL),font,color,rect,align);
+}
+void DrawSiteIcon(gfx::Canvas* canvas,const gfx::VectorIcon& icon,int x,int y,int size,SkColor color){
+  gfx::ScopedCanvas scoped(canvas);canvas->Translate(gfx::Vector2d(x,y));gfx::PaintVectorIcon(canvas,icon,size,color);
+}
+// A small chevron: 0 down, 1 right, 2 left.
+void DrawChevron(gfx::Canvas* canvas,gfx::PointF center,int direction,SkColor color){
+  SkPathBuilder path;
+  if(direction==0){path.moveTo(center.x()-3.5f,center.y()-1.75f);path.lineTo(center.x(),center.y()+1.75f);path.lineTo(center.x()+3.5f,center.y()-1.75f);}
+  else{const float d=direction==1?1.f:-1.f;path.moveTo(center.x()-1.75f*d,center.y()-3.5f);path.lineTo(center.x()+1.75f*d,center.y());path.lineTo(center.x()-1.75f*d,center.y()+3.5f);}
+  cc::PaintFlags flags;flags.setAntiAlias(true);flags.setStyle(cc::PaintFlags::kStroke_Style);flags.setStrokeWidth(1.6f);flags.setStrokeCap(cc::PaintFlags::kRound_Cap);flags.setStrokeJoin(cc::PaintFlags::kRound_Join);flags.setColor(color);
+  canvas->DrawPath(path.detach(),flags);
+}
+// A panel row (design A): icon, name, and its state at the end in its colour.
+class SiteRowButton final : public views::Button {
+  METADATA_HEADER(SiteRowButton,views::Button)
+ public:
+  enum class Tone { kAccent, kDanger, kMuted, kMono };
+  SiteRowButton(PressedCallback callback,const gfx::VectorIcon* icon,std::u16string name,std::u16string value,Tone tone,int chevron)
+      :views::Button(std::move(callback)),icon_(icon),name_(std::move(name)),value_(std::move(value)),tone_(tone),chevron_(chevron){
+    SetInstallFocusRingOnFocus(true);GetViewAccessibility().SetName(name_+u": "+value_);SetAnimateOnStateChange(false);
+    views::InstallRoundRectHighlightPathGenerator(this,gfx::Insets(),8);}
+  void SetValue(std::u16string value){value_=std::move(value);GetViewAccessibility().SetName(name_+u": "+value_);SchedulePaint();}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(kSitePanelWidth-20,36);}
+  void PaintButtonContents(gfx::Canvas* canvas) override{
+    const auto p=Palette(this);
+    if(GetState()==STATE_HOVERED||GetState()==STATE_PRESSED)FillRound(canvas,GetLocalBounds(),8,p.bg_hover);
+    if(icon_)DrawSiteIcon(canvas,*icon_,6,(height()-16)/2,16,p.ink_muted);
+    const SkColor color=tone_==Tone::kAccent?p.accent_ink:tone_==Tone::kDanger?p.danger:p.ink_muted;
+    const auto value_font=tone_==Tone::kMono?SiteFont(12,400,true):SiteFont(12,500);
+    const int chevron=chevron_>=0?14:0;
+    const int value_width=std::min(width()/2,gfx::GetStringWidth(value_,value_font)+2);
+    const int right=width()-6-chevron;
+    DrawSiteText(canvas,value_,value_font,color,gfx::Rect(right-value_width,0,value_width,height()),gfx::Canvas::TEXT_ALIGN_RIGHT);
+    if(chevron_>=0)DrawChevron(canvas,gfx::PointF(width()-6-5,height()/2.f),chevron_,color);
+    DrawSiteText(canvas,name_,SiteFont(13,400),p.ink,gfx::Rect(32,0,std::max(0,right-value_width-8-32),height()));
+  }
+ private:
+  raw_ptr<const gfx::VectorIcon> icon_;std::u16string name_,value_;Tone tone_;int chevron_;
+};
+BEGIN_METADATA(SiteRowButton)
+END_METADATA
+// The panel's head back button, and a cookie's ×.
+class SiteBack final : public views::Button {
+  METADATA_HEADER(SiteBack,views::Button)
+ public:
+  explicit SiteBack(PressedCallback callback):views::Button(std::move(callback)){SetInstallFocusRingOnFocus(true);GetViewAccessibility().SetName(T(u"Wróć"));views::InstallRoundRectHighlightPathGenerator(this,gfx::Insets(),8);}
+  void PaintButtonContents(gfx::Canvas* canvas) override{const auto p=Palette(this);if(GetState()==STATE_HOVERED||GetState()==STATE_PRESSED)FillRound(canvas,GetLocalBounds(),8,p.bg_hover);DrawChevron(canvas,gfx::PointF(width()/2.f,height()/2.f),2,p.ink_muted);}
+};
+BEGIN_METADATA(SiteBack)
+END_METADATA
+class SiteRemove final : public views::Button {
+  METADATA_HEADER(SiteRemove,views::Button)
+ public:
+  SiteRemove(PressedCallback callback,std::u16string name):views::Button(std::move(callback)){SetInstallFocusRingOnFocus(true);GetViewAccessibility().SetName(name);SetTooltipText(name);views::InstallRoundRectHighlightPathGenerator(this,gfx::Insets(),6);}
+  void PaintButtonContents(gfx::Canvas* canvas) override{
+    const auto p=Palette(this);if(GetState()==STATE_HOVERED||GetState()==STATE_PRESSED)FillRound(canvas,GetLocalBounds(),6,p.bg_hover);
+    cc::PaintFlags flags;flags.setAntiAlias(true);flags.setStrokeWidth(1.6f);flags.setStrokeCap(cc::PaintFlags::kRound_Cap);flags.setColor(GetState()==STATE_HOVERED?p.danger:p.ink_muted);
+    const auto c=gfx::PointF(width()/2.f,height()/2.f);canvas->DrawLine(c+gfx::Vector2dF(-4,-4),c+gfx::Vector2dF(4,4),flags);canvas->DrawLine(c+gfx::Vector2dF(4,-4),c+gfx::Vector2dF(-4,4),flags);
+  }
+};
+BEGIN_METADATA(SiteRemove)
+END_METADATA
+// The panel's head: the site's initial on its tile, the host, one line under it.
+// On the data page a back button leads it instead of the tile.
+class SiteHeader final : public views::View {
+  METADATA_HEADER(SiteHeader,views::View)
+ public:
+  SiteHeader(std::u16string title,std::u16string line,bool warn,views::Button::PressedCallback back)
+      :title_(std::move(title)),line_(std::move(line)),warn_(warn){
+    GetViewAccessibility().SetRole(ax::mojom::Role::kHeading);GetViewAccessibility().SetName(title_);
+    if(back){back_=AddChildView(std::make_unique<SiteBack>(std::move(back)));back_->SetBounds(0,6,28,28);}
+  }
+  void SetLine(std::u16string line){line_=std::move(line);SchedulePaint();}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(kSitePanelWidth-20,back_?40:46);}
+  void OnPaint(gfx::Canvas* canvas) override{
+    const auto p=Palette(this);int x=34;
+    if(!back_){const gfx::Rect tile(6,4,28,28);FillRound(canvas,tile,8,p.accent_soft);
+      canvas->DrawStringRectWithFlags(title_.empty()?std::u16string(u"·"):base::i18n::ToUpper(title_.substr(0,1)),SiteFont(13,600),p.accent_ink,tile,gfx::Canvas::TEXT_ALIGN_CENTER);x=44;}
+    const int top=back_?3:2;
+    DrawSiteText(canvas,title_,SiteFont(13,600),p.ink,gfx::Rect(x,top,width()-x-6,18));
+    DrawSiteText(canvas,line_,SiteFont(12,400),warn_?p.danger:p.ink_muted,gfx::Rect(x,top+18,width()-x-6,16));
+  }
+ private:
+  std::u16string title_,line_;bool warn_;raw_ptr<views::View> back_=nullptr;
+};
+BEGIN_METADATA(SiteHeader)
+END_METADATA
+// A kind of data (design C): its name, a muted note and its size at the end.
+class SiteKindRow final : public views::View {
+  METADATA_HEADER(SiteKindRow,views::View)
+ public:
+  SiteKindRow(std::u16string name,std::u16string note,std::u16string size,bool open):name_(std::move(name)),note_(std::move(note)),size_(std::move(size)),open_(open){
+    GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);GetViewAccessibility().SetName(name_+u" "+note_+u" "+size_);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(kSitePanelWidth-20,32);}
+  void OnPaint(gfx::Canvas* canvas) override{
+    const auto p=Palette(this);if(open_)DrawChevron(canvas,gfx::PointF(11,height()/2.f),0,p.ink_muted);
+    const auto mono=SiteFont(12,400,true);const int size_width=gfx::GetStringWidth(size_,mono)+2;
+    DrawSiteText(canvas,size_,mono,p.ink_muted,gfx::Rect(width()-6-size_width,0,size_width,height()),gfx::Canvas::TEXT_ALIGN_RIGHT);
+    const auto name_font=SiteFont(13,500);const int name_width=gfx::GetStringWidth(name_,name_font);const int x=open_?22:6;
+    DrawSiteText(canvas,name_,name_font,p.ink,gfx::Rect(x,0,name_width+1,height()));
+    if(!note_.empty())DrawSiteText(canvas,u"· "+note_,SiteFont(13,400),p.ink_muted,gfx::Rect(x+name_width+5,0,std::max(0,width()-6-size_width-12-(x+name_width+5)),height()));
+  }
+ private:
+  std::u16string name_,note_,size_;bool open_;
+};
+BEGIN_METADATA(SiteKindRow)
+END_METADATA
+// One cookie (design C): its name in mono, where it lives and until when, and ×.
+class SiteCookieRow final : public views::View {
+  METADATA_HEADER(SiteCookieRow,views::View)
+ public:
+  SiteCookieRow(std::u16string name,std::u16string meta,views::Button::PressedCallback remove):name_(std::move(name)),meta_(std::move(meta)){
+    GetViewAccessibility().SetRole(ax::mojom::Role::kGroup);GetViewAccessibility().SetName(name_+u", "+meta_);
+    remove_=AddChildView(std::make_unique<SiteRemove>(std::move(remove),TF(u"Usuń cookie {}",{name_})));SetNotifyEnterExitOnChild(true);
+  }
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(kSitePanelWidth-20,40);}
+  void Layout(PassKey) override{remove_->SetBounds(width()-6-24,(height()-24)/2,24,24);}
+  void OnMouseEntered(const ui::MouseEvent&) override{hovered_=true;SchedulePaint();}
+  void OnMouseExited(const ui::MouseEvent&) override{hovered_=false;SchedulePaint();}
+  void OnPaint(gfx::Canvas* canvas) override{
+    const auto p=Palette(this);if(hovered_)FillRound(canvas,GetLocalBounds(),8,p.bg_hover);
+    const int x=22,w=width()-x-36;
+    DrawSiteText(canvas,name_,SiteFont(12,500,true),p.ink,gfx::Rect(x,4,w,16));
+    DrawSiteText(canvas,meta_,SiteFont(11,400),p.ink_muted,gfx::Rect(x,21,w,14));
+  }
+ private:
+  std::u16string name_,meta_;raw_ptr<views::View> remove_;bool hovered_=false;
+};
+BEGIN_METADATA(SiteCookieRow)
+END_METADATA
+// A line of muted copy, wrapped.
+class SiteNote final : public views::View {
+  METADATA_HEADER(SiteNote,views::View)
+ public:
+  // `width`: a fixed width beside other views in a row; 0 fills the panel.
+  explicit SiteNote(std::u16string text,int width=0):text_(std::move(text)),fixed_(width){GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);GetViewAccessibility().SetName(text_);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& bounds) const override{
+    const int width=fixed_>0?fixed_:bounds.width().is_bounded()?bounds.width().value():kSitePanelWidth-20;int w=std::max(1,width-12),h=0;
+    gfx::Canvas::SizeStringInt(text_,SiteFont(12,400),&w,&h,16,gfx::Canvas::MULTI_LINE);return gfx::Size(width,h+8);}
+  void OnPaint(gfx::Canvas* canvas) override{canvas->DrawStringRectWithFlags(text_,SiteFont(12,400),Palette(this).ink_muted,gfx::Rect(6,4,width()-12,height()-8),gfx::Canvas::MULTI_LINE);}
+ private:
+  std::u16string text_;int fixed_;
+};
+BEGIN_METADATA(SiteNote)
+END_METADATA
+// A `line` hairline between the panel's sections.
+class SceneHairline final : public views::View {
+  METADATA_HEADER(SceneHairline,views::View)
+ public:
+  SceneHairline(){GetViewAccessibility().SetIsIgnored(true);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(0,13);}
+  void OnPaint(gfx::Canvas* canvas) override{canvas->FillRect(gfx::Rect(6,6,width()-12,1),Palette(this).line);}
+};
+BEGIN_METADATA(SceneHairline)
+END_METADATA
+// Design B: Zezwalaj · Pytaj za każdym razem · Blokuj, then forgetting the site.
+class SitePermissionMenu final : public ui::SimpleMenuModel,public ui::SimpleMenuModel::Delegate {
+ public:
+  enum : int { kAllow=1, kBlock=2, kAsk=3, kForget=10 };
+  SitePermissionMenu(const SitePermissionState& state,base::RepeatingCallback<void(int)> chosen):ui::SimpleMenuModel(this),current_(state.setting),chosen_(std::move(chosen)){
+    AddRadioItem(kAllow,T(u"Zezwalaj"),1);
+    if(state.can_ask)AddRadioItem(kAsk,T(u"Pytaj za każdym razem"),1);
+    AddRadioItem(kBlock,T(u"Blokuj"),1);
+    if(state.today)if(const auto index=GetIndexOfCommandId(current_))SetMinorText(*index,T(u"od dziś"));
+    AddSeparator(ui::NORMAL_SEPARATOR);
+    AddItem(kForget,T(u"Zapomnij ustawienia tej witryny"));
+    editable_=state.editable;
+  }
+  bool IsCommandIdChecked(int command) const override{return command==current_;}
+  bool IsCommandIdEnabled(int command) const override{return editable_||command==current_;}
+  void ExecuteCommand(int command,int) override{chosen_.Run(command);}
+ private:
+  int current_;bool editable_=true;base::RepeatingCallback<void(int)> chosen_;
+};
+// The site's visits as its panel says them: since when, or none yet.
+std::u16string SiteSince(const SiteDataFacts& facts){
+  if(facts.first_visit.is_null())return std::u16string();
+  if(facts.first_visit>=base::Time::Now().LocalMidnight())return T(u"pierwsza wizyta dziś");
+  base::Time::Exploded then,now;facts.first_visit.LocalExplode(&then);base::Time::Now().LocalExplode(&now);
+  // "od marca": the month as Polish says it after "od".
+  static constexpr std::array<const char16_t*,12> kMonths={u"stycznia",u"lutego",u"marca",u"kwietnia",u"maja",u"czerwca",u"lipca",u"sierpnia",u"września",u"października",u"listopada",u"grudnia"};
+  auto month=T(kMonths[static_cast<size_t>(std::clamp(then.month,1,12)-1)]);
+  if(then.year!=now.year)month+=u" "+base::NumberToString16(then.year);
+  return TF(u"odwiedzana od {}",{month});
+}
+}  // namespace
+void WorkspaceShell::ToggleSitePanel(){
+  if(site_panel_&&site_panel_->IsVisible()){CloseSitePanel();return;}
+  if(callbacks_.site_panel)callbacks_.site_panel.Run();
+}
+void WorkspaceShell::CloseSitePanel(){
+  if(!site_panel_)return;
+  site_menu_runner_.reset();site_menu_.reset();site_rows_.clear();site_data_row_=nullptr;site_header_=nullptr;site_body_=nullptr;
+  auto widget=std::move(site_panel_);widget.reset();site_panel_delegate_.reset();
+  if(url_pill_)SetRowSiteControls(url_pill_,RowSiteControls(url_pill_),false);
+  ScheduleMetalSidebar();
+}
+void WorkspaceShell::ShowSitePanel(SiteSummary summary,SiteHandlers handlers){
+  if(!url_pill_||!sidebar_visible())return;
+  CloseSitePanel();
+  site_summary_=std::move(summary);site_handlers_=std::move(handlers);site_facts_={};site_page_=0;++site_generation_;
+  auto weak=weak_factory_.GetWeakPtr();
+  auto body=std::make_unique<views::View>();site_body_=body.get();
+  auto dialog=std::make_unique<SceneModalDialog>(std::move(body),false,false);
+  dialog->SetTitle(TF(u"Ustawienia witryny {}",{site_summary_.host}));dialog->SetShowTitle(false);dialog->SetShowCloseButton(false);
+  dialog->set_fixed_width(kSitePanelWidth);dialog->set_margins(gfx::Insets::VH(10,0));dialog->set_corner_radius(12);
+  dialog->set_close_on_deactivate(true);dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
+  // Design A: 10 px in from the panel's edge, the rows' own 6 px inside that.
+  SetSidebarPanelLayout(dialog->GetContentsView(),true,gfx::Insets::VH(0,10),0);
+  site_panel_delegate_=std::move(dialog);
+  BuildSitePage();
+  auto* widget=views::DialogDelegate::CreateDialogWidget(site_panel_delegate_.get(),widget_->GetNativeWindow(),widget_->GetNativeView());
+  site_panel_.reset(widget);
+  // Closed by deactivation or Esc: tear down later, and only this very panel.
+  widget->MakeCloseSynchronous(base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,uint64_t generation,views::Widget::ClosedReason){
+    if(shell)base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,uint64_t generation){
+      if(shell&&shell->site_generation_==generation)shell->CloseSitePanel();},shell,generation));},weak,site_generation_));
+  widget->SetColorModeOverride(widget_->color_mode_override());
+  PreparePanelText(widget->GetRootView());
+  widget->Show();PlaceSitePanel();
+  SetRowSiteControls(url_pill_,true,true);ScheduleMetalSidebar();
+  if(site_handlers_.measure)site_handlers_.measure.Run(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,uint64_t generation,const SiteDataFacts& facts){
+    if(shell&&shell->site_generation_==generation)shell->ApplySiteFacts(facts);},weak,site_generation_));
+}
+// An anchorless bubble hangs centred below its anchor point: put that point
+// under the pill, half the panel in from its left edge.
+void WorkspaceShell::PlaceSitePanel(){
+  if(!site_panel_||!url_pill_)return;
+  auto* bubble=site_panel_delegate_->AsBubbleDialogDelegate();if(!bubble)return;
+  bubble->SizeToContents();const auto anchor=url_pill_->GetBoundsInScreen();
+  bubble->SetAnchorRect(gfx::Rect(anchor.x()+site_panel_->GetWindowBoundsInScreen().width()/2,anchor.bottom()+6,0,0));
+}
+void WorkspaceShell::BuildSitePage(){
+  if(!site_body_)return;
+  auto weak=weak_factory_.GetWeakPtr();
+  site_menu_runner_.reset();site_menu_.reset();site_rows_.clear();site_data_row_=nullptr;site_header_=nullptr;
+  site_body_->RemoveAllChildViews();
+  const auto& host=site_summary_.host;const auto& facts=site_facts_;
+  if(site_page_==0){
+    // Design A: the site, its own permissions in a word each, and its data.
+    auto line=site_summary_.secure?T(u"Szyfrowane"):T(u"Nieszyfrowane");
+    if(const auto since=SiteSince(facts);!since.empty())line+=u" · "+since;
+    site_header_=site_body_->AddChildView(std::make_unique<SiteHeader>(host,line,!site_summary_.secure,views::Button::PressedCallback()));
+    for(size_t i=0;i<site_summary_.permissions.size();++i){
+      const auto& state=site_summary_.permissions[i];
+      const auto value=state.setting==1?T(u"Dozwolone"):state.setting==2?T(u"Zablokowane"):T(u"Pyta");
+      const auto tone=state.setting==1?SiteRowButton::Tone::kAccent:state.setting==2?SiteRowButton::Tone::kDanger:SiteRowButton::Tone::kMuted;
+      site_rows_.push_back(site_body_->AddChildView(std::make_unique<SiteRowButton>(base::BindRepeating(&WorkspaceShell::OpenSitePermissionMenu,weak,i),
+          &SitePermissionIcon(state.key),SitePermissionName(state.key),value,tone,0)));
+    }
+    if(site_summary_.permissions.empty())site_body_->AddChildView(std::make_unique<SiteNote>(T(u"Nic jeszcze nie zezwolono ani nie zablokowano. Strona zapyta, gdy będzie czegoś potrzebować.")));
+    site_body_->AddChildView(std::make_unique<SceneHairline>());
+    site_data_row_=site_body_->AddChildView(std::make_unique<SiteRowButton>(base::BindRepeating(&WorkspaceShell::ShowSiteData,weak,true),
+        &vector_icons::kDatabaseIcon,T(u"Dane witryny"),DataSummary(facts),SiteRowButton::Tone::kMono,1));
+  }else{
+    // Design C: the data, kind by kind, each cookie by name.
+    std::u16string line=facts.domain.empty()?host:facts.domain;if(facts.bytes>0)line+=u" · "+SizeText(facts.bytes);
+    site_header_=site_body_->AddChildView(std::make_unique<SiteHeader>(T(u"Dane witryny"),line,false,base::BindRepeating(&WorkspaceShell::ShowSiteData,weak,false)));
+    site_body_->AddChildView(std::make_unique<SiteKindRow>(T(u"Pliki cookie"),facts.cookies>=0?base::NumberToString16(facts.cookies):std::u16string(),SizeIfAny(facts.cookie_bytes),facts.cookies>0));
+    constexpr size_t kShown=6;
+    for(size_t i=0;i<facts.cookie_list.size()&&i<kShown;++i){
+      const auto& cookie=facts.cookie_list[i];
+      const auto until=cookie.expires.is_null()?T(u"do zamknięcia przeglądarki"):TF(u"wygasa {}",{base::TimeFormatShortDate(cookie.expires)});
+      site_body_->AddChildView(std::make_unique<SiteCookieRow>(base::UTF8ToUTF16(cookie.name),base::UTF8ToUTF16(cookie.domain)+u" · "+until,
+          base::BindRepeating(&WorkspaceShell::RemoveSiteCookie,weak,cookie)));
+    }
+    if(facts.cookie_list.size()>kShown)site_body_->AddChildView(std::make_unique<SiteNote>(TF(u"i jeszcze {}",{base::NumberToString16(facts.cookie_list.size()-kShown)})))->SetBorder(views::CreateEmptyBorder(gfx::Insets::TLBR(0,16,0,0)));
+    site_body_->AddChildView(std::make_unique<SiteKindRow>(T(u"Pamięć strony"),T(u"localStorage, IndexedDB"),SizeIfAny(facts.storage_bytes),false));
+    site_body_->AddChildView(std::make_unique<SiteKindRow>(T(u"Pamięć podręczna"),std::u16string(),std::u16string(),false));
+    site_body_->AddChildView(std::make_unique<SiteKindRow>(T(u"Historia"),std::u16string(),facts.visits<0?std::u16string(u"…"):VisitsText(facts.visits),false));
+    site_body_->AddChildView(std::make_unique<SceneHairline>());
+    auto* footer=site_body_->AddChildView(std::make_unique<views::View>());
+    auto clear_pill=std::make_unique<SceneDangerPill>(base::BindRepeating(&WorkspaceShell::ClearSiteNow,weak),T(u"Wyczyść wszystko"),TF(u"Wyczyść wszystkie dane {}",{host}));
+    const int pill_width=clear_pill->GetPreferredSize().width();
+    auto* note=footer->AddChildView(std::make_unique<SiteNote>(TF(u"Wylogujesz się z {}. Hasło zostaje.",{host}),kSitePanelWidth-20-6-8-pill_width));
+    auto* clear=footer->AddChildView(std::move(clear_pill));
+    clear->SetPreferredSize(gfx::Size(pill_width,28));
+    SetSidebarPanelLayout(footer,false,gfx::Insets::TLBR(2,0,2,6),8,note,true);
+  }
+  SetSidebarPanelLayout(site_body_,true,gfx::Insets(),2);
+  PreparePanelText(site_body_);
+  if(site_panel_){site_body_->InvalidateLayout();PlaceSitePanel();}
+}
+void WorkspaceShell::ShowSiteData(bool data){
+  if(!site_panel_)return;site_page_=data?1:0;
+  // Rebuilt after the press that asked for it has finished.
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->BuildSitePage();},weak_factory_.GetWeakPtr()));
+}
+void WorkspaceShell::ApplySiteFacts(const SiteDataFacts& facts){
+  site_facts_=facts;
+  if(site_page_==1){BuildSitePage();return;}
+  if(site_data_row_)static_cast<SiteRowButton*>(site_data_row_.get())->SetValue(DataSummary(facts));
+  if(site_header_){auto line=site_summary_.secure?T(u"Szyfrowane"):T(u"Nieszyfrowane");if(const auto since=SiteSince(facts);!since.empty())line+=u" · "+since;static_cast<SiteHeader*>(site_header_.get())->SetLine(line);}
+}
+void WorkspaceShell::OpenSitePermissionMenu(size_t row){
+  if(row>=site_rows_.size()||row>=site_summary_.permissions.size()||!site_panel_)return;
+  site_menu_runner_.reset();
+  site_menu_=std::make_unique<SitePermissionMenu>(site_summary_.permissions[row],base::BindRepeating(&WorkspaceShell::ChooseSitePermission,weak_factory_.GetWeakPtr(),row));
+  site_menu_runner_=std::make_unique<views::MenuRunner>(site_menu_.get(),views::MenuRunner::HAS_MNEMONICS);
+  site_menu_runner_->RunMenuAt(site_panel_.get(),nullptr,site_rows_[row]->GetBoundsInScreen(),views::MenuAnchorPosition::kTopRight,ui::mojom::MenuSourceType::kMouse);
+}
+void WorkspaceShell::ChooseSitePermission(size_t row,int choice){
+  if(row>=site_summary_.permissions.size())return;
+  if(choice==SitePermissionMenu::kForget){if(site_handlers_.reset_permissions)site_handlers_.reset_permissions.Run();}
+  else if(site_handlers_.set_permission)site_handlers_.set_permission.Run(site_summary_.permissions[row].key,choice);
+  // The panel stays, with what the site now has.
+  if(site_handlers_.read)site_summary_=site_handlers_.read.Run();
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->BuildSitePage();},weak_factory_.GetWeakPtr()));
+}
+void WorkspaceShell::RemoveSiteCookie(SiteCookie cookie){
+  if(!site_handlers_.delete_cookie)return;
+  // The row goes at once; the size follows when Chromium has counted again.
+  std::erase_if(site_facts_.cookie_list,[&](const SiteCookie& c){return c.name==cookie.name&&c.domain==cookie.domain&&c.path==cookie.path;});
+  site_facts_.cookies=static_cast<int>(site_facts_.cookie_list.size());
+  site_handlers_.delete_cookie.Run(std::move(cookie));
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->BuildSitePage();},weak_factory_.GetWeakPtr()));
+}
+// "Wyczyść wszystko": cookies, the site's storage and cache, and its history; the page reloads.
+void WorkspaceShell::ClearSiteNow(){
+  if(!site_handlers_.clear)return;
+  SiteClearChoice choice;choice.cookies=true;choice.cache=true;choice.history=true;choice.permissions=false;
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(site_handlers_.clear,choice));
+  CloseSitePanel();
+}
+void WorkspaceShell::SetSitePermissionForTesting(size_t row,int choice){ChooseSitePermission(row,choice);}
 gfx::Rect WorkspaceShell::downloads_anchor_in_screen() const{
   if(downloads_button_&&downloads_button_->IsDrawn()&&sidebar_visible())return downloads_button_->GetBoundsInScreen();
   if(download_cue_widget_&&download_cue_widget_->IsVisible())return download_cue_widget_->GetWindowBoundsInScreen();
@@ -8783,6 +9294,7 @@ bool WorkspaceShell::CloseOverlays(bool keep_sidebar) {
       find_visible() || print_visible();
   HideFind();
   HidePrint();
+  CloseSitePanel();
   if (tools_widget_) tools_widget_->Hide();
   if (time_machine_widget_) time_machine_widget_->Hide();
   SetShortcutRecording(false);
@@ -9123,6 +9635,100 @@ void WorkspaceShell::ConfirmQuitWithDownloads(int count, base::OnceCallback<void
   PreparePanelText(prompt->GetRootView());
   prompt->Show();
 }
+void WorkspaceShell::ShowClearDataDialog(views::Widget* parent, std::u16string profile) {
+  if (!parent) parent = widget_;
+  if (!parent || !parent->IsVisible()) return;
+  if (clear_dialog_) { clear_dialog_->Activate(); return; }
+  auto weak = weak_factory_.GetWeakPtr();
+  auto body = std::make_unique<views::View>();
+  // The period, then the basic/advanced switch.
+  auto* top = body->AddChildView(std::make_unique<views::View>());
+  PanelText(top, T(u"Zakres"), kBodyText, kMuted);
+  clear_period_ = top->AddChildView(MakeParentSceneControl<SceneSelect>(top, std::vector<std::u16string>{T(u"Ostatnia godzina"), T(u"Ostatnie 24 godziny"),
+      T(u"Ostatnie 7 dni"), T(u"Ostatnie 4 tygodnie"), T(u"Od początku")}, T(u"Zakres czasu"), base::RepeatingClosure()));
+  SetPickerIndex(clear_period_, 2);
+  auto* spacer = top->AddChildView(std::make_unique<views::View>());
+  auto* tabs = top->AddChildView(std::make_unique<SceneActionGroup>(false, 4));
+  clear_tabs_[0] = tabs->AddAction(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) { if (shell) shell->SetClearDataAdvanced(false); }, weak), T(u"Podstawowe"), ui::ButtonStyle::kText);
+  clear_tabs_[1] = tabs->AddAction(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) { if (shell) shell->SetClearDataAdvanced(true); }, weak), T(u"Zaawansowane"), ui::ButtonStyle::kText);
+  SetSidebarPanelLayout(top, false, gfx::Insets(), Metrics().space_3, spacer, true);
+  auto changed = base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) { if (shell) shell->RefreshClearData(); }, weak);
+  auto* basic = body->AddChildView(std::make_unique<SceneCheckboxGroup>(Metrics().space_2));
+  clear_checks_[0] = basic->AddChoice(changed, T(u"Historia przeglądania — też podpowiedzi w adresie"));
+  clear_checks_[1] = basic->AddChoice(changed, T(u"Pliki cookie i dane witryn — wylogujesz się z większości witryn"));
+  clear_checks_[2] = basic->AddChoice(changed, T(u"Obrazy i pliki w pamięci podręcznej"));
+  clear_advanced_ = body->AddChildView(std::make_unique<views::View>());
+  auto* advanced = clear_advanced_->AddChildView(std::make_unique<SceneCheckboxGroup>(Metrics().space_2));
+  clear_checks_[3] = advanced->AddChoice(changed, T(u"Historia pobierania — pliki zostają na dysku"));
+  clear_checks_[4] = advanced->AddChoice(changed, T(u"Hasła i klucze dostępu"));
+  clear_checks_[5] = advanced->AddChoice(changed, T(u"Dane formularzy — adresy i autouzupełnianie"));
+  clear_checks_[6] = advanced->AddChoice(changed, T(u"Ustawienia witryn — uprawnienia i reguły"));
+  clear_checks_[7] = advanced->AddChoice(changed, T(u"Time Machine — snapshoty i zamknięte karty"));
+  clear_warning_ = clear_advanced_->AddChildView(std::make_unique<SceneParagraph>(T(u"⚠ Hasła znikną z tego profilu na zawsze."), 0, true, kError));
+  SetSidebarPanelLayout(clear_advanced_, true, gfx::Insets(), Metrics().space_2);
+  body->AddChildView(std::make_unique<SceneParagraph>(TF(u"Dotyczy profilu {}. Przypięte karty i przestrzenie zostają.", {profile}), -1, false, kMuted));
+  SetSidebarPanelLayout(body.get(), true, gfx::Insets(), Metrics().space_4);
+  for (size_t i = 0; i < 3; ++i) SetCheckValue(clear_checks_[i], true);
+  auto dialog = std::make_unique<SceneModalDialog>(std::move(body), true);
+  dialog->SetTitle(T(u"Wyczyść dane przeglądania"));
+  dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk) | static_cast<int>(ui::mojom::DialogButton::kCancel));
+  dialog->SetButtonLabel(ui::mojom::DialogButton::kOk, T(u"Wyczyść dane"));
+  dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel, T(u"Anuluj"));
+  dialog->SetDefaultButton(static_cast<int>(ui::mojom::DialogButton::kCancel));
+  dialog->SetAcceptCallback(base::BindOnce([](base::WeakPtr<WorkspaceShell> shell) {
+    if (!shell || !shell->callbacks_.clear_browsing_data_now) return;
+    const auto selection = shell->ClearDataSelection();
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(shell->callbacks_.clear_browsing_data_now, selection));
+  }, weak));
+  clear_dialog_delegate_ = std::move(dialog);
+  auto* prompt = views::DialogDelegate::CreateDialogWidget(clear_dialog_delegate_.get(), parent->GetNativeWindow(), parent->GetNativeView());
+  clear_dialog_.reset(prompt);
+  prompt->MakeCloseSynchronous(base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, views::Widget::ClosedReason) {
+    if (!shell) return;
+    shell->clear_period_ = nullptr; shell->clear_advanced_ = nullptr; shell->clear_warning_ = nullptr; shell->clear_checks_ = {}; shell->clear_tabs_ = {};
+    shell->clear_dialog_.reset(); shell->clear_dialog_delegate_.reset();
+  }, weak));
+  prompt->SetColorModeOverride(widget_->color_mode_override());
+  SetClearDataAdvanced(false);
+  PreparePanelText(prompt->GetRootView());
+  prompt->Show();
+}
+void WorkspaceShell::SetClearDataAdvanced(bool advanced) {
+  if (!clear_advanced_) return;
+  clear_advanced_->SetVisible(advanced);
+  for (size_t i = 0; i < clear_tabs_.size(); ++i) {
+    auto* tab = views::AsViewClass<SceneTextButton>(clear_tabs_[i].get());
+    tab->SetKind(advanced == (i == 1) ? 7 : 6); tab->GetViewAccessibility().SetIsSelected(advanced == (i == 1));
+  }
+  RefreshClearData();
+  // The dialog grows or shrinks with the advanced kinds.
+  if (clear_dialog_) if (auto* bubble = clear_dialog_delegate_->AsBubbleDialogDelegate()) bubble->SizeToContents();
+}
+// Clearing passwords turns the action and the warning to danger.
+void WorkspaceShell::RefreshClearData() {
+  if (!clear_dialog_delegate_ || !clear_warning_) return;
+  const bool passwords = clear_advanced_->GetVisible() && CheckValue(clear_checks_[4]);
+  clear_warning_->SetVisible(passwords);
+  clear_dialog_delegate_->SetButtonLabel(ui::mojom::DialogButton::kOk, passwords ? T(u"Wyczyść, z hasłami") : T(u"Wyczyść dane"));
+  const auto selection = ClearDataSelection();
+  clear_dialog_delegate_->SetButtonEnabled(ui::mojom::DialogButton::kOk, selection.history || selection.cookies || selection.cache || selection.downloads ||
+      selection.passwords || selection.form_data || selection.site_settings || selection.time_machine.value_or(false));
+  clear_dialog_delegate_->DialogModelChanged();
+}
+BrowsingDataSelection WorkspaceShell::ClearDataSelection() const {
+  BrowsingDataSelection selection;
+  if (!clear_period_) return selection;
+  // The picker's order: hour, day, week, four weeks, all; the selection's: hour, day, week, all, four weeks.
+  static constexpr std::array<int, 5> kPeriods = {0, 1, 2, 4, 3};
+  selection.period = kPeriods[std::min<size_t>(PickerIndex(clear_period_).value_or(2), 4)];
+  const bool advanced = clear_advanced_->GetVisible();
+  selection.history = CheckValue(clear_checks_[0]); selection.cookies = CheckValue(clear_checks_[1]); selection.cache = CheckValue(clear_checks_[2]);
+  selection.downloads = advanced && CheckValue(clear_checks_[3]); selection.passwords = advanced && CheckValue(clear_checks_[4]);
+  selection.form_data = advanced && CheckValue(clear_checks_[5]); selection.site_settings = advanced && CheckValue(clear_checks_[6]);
+  selection.time_machine = advanced && CheckValue(clear_checks_[7]);
+  return selection;
+}
+void WorkspaceShell::SetClearDataChoiceForTesting(size_t kind, bool checked) { if (kind < clear_checks_.size() && clear_checks_[kind]) { SetCheckValue(clear_checks_[kind], checked); RefreshClearData(); } }
 void WorkspaceShell::ConfirmDanger(views::Widget* parent, std::u16string title, std::u16string detail, std::u16string warning,
                                    std::u16string action, base::OnceCallback<void(bool)> answer) {
   if (!parent) parent = widget_;

@@ -70,7 +70,7 @@ void WorkspaceWindow::RequestClearBrowsingData(BrowsingDataSelection selection) 
     shell_->ReportClearData(WorkspaceShell::ClearDataEvent::kBusy, {});
     return;
   }
-  if ((!selection.history && !selection.cookies && !selection.cache) || selection.period < 0 || selection.period > 3) {
+  if ((!selection.history && !selection.cookies && !selection.cache) || selection.period < 0 || selection.period > 4) {
     shell_->ReportClearData(WorkspaceShell::ClearDataEvent::kNothingSelected, {});
     return;
   }
@@ -104,8 +104,10 @@ void WorkspaceWindow::RequestClearBrowsingData(BrowsingDataSelection selection) 
   prompt->Show();
 }
 bool WorkspaceWindow::ClearBrowsingData(std::string profile_id, BrowsingDataSelection selection) {
-  if (!configuration_ready_ || profiles_busy_ || data_remover_ || selection.period < 0 || selection.period > 3 ||
-      (!selection.history && !selection.cookies && !selection.cache)) return false;
+  const bool time_machine = selection.time_machine.value_or(selection.history);
+  if (!configuration_ready_ || profiles_busy_ || data_remover_ || selection.period < 0 || selection.period > 4 ||
+      (!selection.history && !selection.cookies && !selection.cache && !selection.downloads && !selection.passwords &&
+       !selection.form_data && !selection.site_settings && !time_machine)) return false;
   auto* profile = ProfileFor(profile_id);
   if (!profile) return false;
   if (selection.history && !profile->GetPrefs()->GetBoolean(prefs::kAllowDeletingBrowserHistory)) {
@@ -116,13 +118,18 @@ bool WorkspaceWindow::ClearBrowsingData(std::string profile_id, BrowsingDataSele
   if (selection.history) mask |= chrome_browsing_data_remover::DATA_TYPE_HISTORY;
   if (selection.cookies) mask |= chrome_browsing_data_remover::DATA_TYPE_SITE_DATA;
   if (selection.cache) mask |= content::BrowsingDataRemover::DATA_TYPE_CACHE;
+  if (selection.downloads) mask |= content::BrowsingDataRemover::DATA_TYPE_DOWNLOADS;
+  if (selection.passwords) mask |= chrome_browsing_data_remover::DATA_TYPE_PASSWORDS;
+  if (selection.form_data) mask |= chrome_browsing_data_remover::DATA_TYPE_FORM_DATA;
+  if (selection.site_settings) mask |= chrome_browsing_data_remover::DATA_TYPE_CONTENT_SETTINGS;
   base::Time begin;
   const auto now = base::Time::Now();
   if (selection.period == 0) begin = now - base::Hours(1);
   if (selection.period == 1) begin = now - base::Days(1);
   if (selection.period == 2) begin = now - base::Days(7);
+  if (selection.period == 4) begin = now - base::Days(28);
   // Time Machine is browsing history too: the same period leaves its timeline.
-  if (selection.history && timeline_->current->timeline_forget(profile_id, begin.is_null() ? std::numeric_limits<int64_t>::min() : begin.InMillisecondsSinceUnixEpoch(),
+  if (time_machine && timeline_->current->timeline_forget(profile_id, begin.is_null() ? std::numeric_limits<int64_t>::min() : begin.InMillisecondsSinceUnixEpoch(),
       std::numeric_limits<int64_t>::max())) RewriteTimeline();
   data_removal_profile_name_ = base::UTF8ToUTF16(profile->GetPrefs()->GetString(prefs::kProfileName));
   for (const auto& info : profiles_) if (info.info.id == profile_id) data_removal_profile_name_ = base::UTF8ToUTF16(info.info.name);

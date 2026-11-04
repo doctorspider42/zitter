@@ -282,23 +282,20 @@ IN_PROC_BROWSER_TEST_F(ZitterMediaBrowserTest, ScenePermissionCocoaDefaultAndFor
   Start();ASSERT_TRUE(base::test::RunUntil([&]{return access()->permission_prompt()!=nullptr;}));
   auto* widget=access()->permission_prompt();auto* delegate=widget->widget_delegate()->AsDialogDelegate();
   const auto origin=url::Origin::Create(page()->GetLastCommittedURL()).Serialize();
-  EXPECT_EQ(ui::mojom::ModalType::kWindow,delegate->GetModalType());EXPECT_EQ(static_cast<int>(ui::mojom::DialogButton::kCancel),delegate->GetDefaultDialogButton());
-  auto* allow=DialogActionButton(widget,true);auto* deny=DialogActionButton(widget,false);ASSERT_TRUE(allow);ASSERT_TRUE(deny);
-  EXPECT_EQ(u"Zezwól tym razem",delegate->GetDialogButtonLabel(ui::mojom::DialogButton::kOk));
+  // Design: Prośba o dostęp — a card that leaves the page its focus and input.
+  EXPECT_EQ(ui::mojom::ModalType::kNone,delegate->GetModalType());EXPECT_FALSE(widget->IsActive());EXPECT_EQ(0,delegate->buttons());
+  EXPECT_TRUE(access()->prompt_offer().pending);EXPECT_FALSE(access()->prompt_offer().folded);EXPECT_EQ(3,access()->prompt_offer().kind);
   {
-    EXPECT_TRUE(allow->children().empty());EXPECT_TRUE(deny->children().empty());EXPECT_FALSE(views::AsViewClass<views::MdTextButton>(allow));
-    if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return access()->permission_scene_contains_for_testing("Prosi o dostęp: "+origin);}));
+    if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return access()->permission_scene_contains_for_testing("Użyć kamery?")&&access()->permission_scene_contains_for_testing("Tym razem")&&access()->permission_scene_contains_for_testing("Zawsze tutaj");}));
     auto check=[&](auto&& self,views::View* view)->void{ui::AXNodeData node;view->GetViewAccessibility().GetAccessibleNodeData(&node);if(node.role==ax::mojom::Role::kStaticText)EXPECT_FALSE(views::AsViewClass<views::Label>(view));for(const auto& child:view->children())self(self,child.get());};check(check,delegate->GetContentsView());
   }
-  // macOS deliberately does not bind Return to a default Cancel. It must
-  // neither grant the request nor close the prompt as a side effect.
-#if BUILDFLAG(IS_MAC)
-  stage="Return leaves default Cancel unbound";ASSERT_NO_FATAL_FAILURE(Press(widget,false,ui::VKEY_RETURN));base::RunLoop().RunUntilIdle();EXPECT_EQ(widget,access()->permission_prompt());EXPECT_FALSE(PageMediaAccess::IsCapturing(page()));
-#endif
-  // Elsewhere Return presses the default button, Cancel, as Escape does next.
-  ASSERT_NO_FATAL_FAILURE(Press(widget,false,ui::VKEY_ESCAPE));ASSERT_TRUE(base::test::RunUntil([&]{return ResultIs("NotAllowedError");}));EXPECT_FALSE(access()->permission_prompt());if(MetalPresents())EXPECT_FALSE(access()->permission_scene_contains_for_testing("Prosi o dostęp: "+origin));
+  // The camera card waits for an answer; folding hides it and keeps the request.
+  stage="fold and reopen";access()->FoldPromptForTesting();EXPECT_FALSE(widget->IsVisible());EXPECT_TRUE(access()->prompt_offer().folded);EXPECT_FALSE(PageMediaAccess::IsCapturing(page()));
+  access()->ReopenPrompt();EXPECT_TRUE(widget->IsVisible());EXPECT_FALSE(access()->prompt_offer().folded);
+  // Closing the card dismisses the request.
+  stage="close dismisses";widget->Close();ASSERT_TRUE(base::test::RunUntil([&]{return ResultIs("NotAllowedError");}));EXPECT_FALSE(access()->permission_prompt());EXPECT_FALSE(access()->prompt_offer().pending);if(MetalPresents())EXPECT_FALSE(access()->permission_scene_contains_for_testing("Użyć kamery?"));
   stage="allow and wait for page track listeners";SetCamera(work_,CONTENT_SETTING_ASK);Load("?scene-allow");Start();ASSERT_TRUE(base::test::RunUntil([&]{return access()->permission_prompt()!=nullptr;}));
-  ASSERT_NO_FATAL_FAILURE(Press(access()->permission_prompt(),true));ASSERT_TRUE(base::test::RunUntil([&]{return ResultIs("running")&&PageMediaAccess::IsCapturing(page())&&access()->capture_prompt();}));
+  access()->DecidePromptForTesting(0);ASSERT_TRUE(base::test::RunUntil([&]{return ResultIs("running")&&PageMediaAccess::IsCapturing(page())&&access()->capture_prompt();}));
   widget=access()->capture_prompt();delegate=widget->widget_delegate()->AsDialogDelegate();EXPECT_EQ(ui::mojom::ModalType::kNone,delegate->GetModalType());EXPECT_TRUE(delegate->ShouldShowCloseButton());
   auto* stop=DialogActionButton(widget,false);ASSERT_TRUE(stop);EXPECT_FALSE(DialogActionButton(widget,true));
   {EXPECT_TRUE(stop->children().empty());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return access()->capture_scene_contains_for_testing(origin);}));EXPECT_FALSE(views::AsViewClass<views::MdTextButton>(stop));}
@@ -333,10 +330,8 @@ IN_PROC_BROWSER_TEST_F(ZitterMediaBrowserTest, PermissionConsentProfileIsolation
   Load();
   Start();
   ASSERT_TRUE(base::test::RunUntil([&] { return access()->permission_prompt(); }));
-  auto* dialog = access()->permission_prompt()->widget_delegate()->AsDialogDelegate();
-  EXPECT_EQ(dialog->GetDefaultDialogButton(), static_cast<int>(ui::mojom::DialogButton::kCancel));
   EXPECT_FALSE(PageMediaAccess::IsCapturing(page()));
-  dialog->CancelDialog();
+  access()->DecidePromptForTesting(2);
   ASSERT_TRUE(base::test::RunUntil([&] { return ResultIs("NotAllowedError"); }));
   LOG(ERROR) << "ZITTER_MEDIA_TEST: personal denial complete";
 
@@ -346,7 +341,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMediaBrowserTest, PermissionConsentProfileIsolation
   Start("{video:true,audio:true}");
   stage = "combined permission prompt";
   ASSERT_TRUE(base::test::RunUntil([&] { return access()->permission_prompt(); }));
-  access()->permission_prompt()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+  access()->DecidePromptForTesting(0);
   stage = "fake capture starts";
   std::string previous_state;
   size_t accepted_prompts = 1;
@@ -366,7 +361,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMediaBrowserTest, PermissionConsentProfileIsolation
       EXPECT_LT(accepted_prompts, 2u);
       if (media_only && accepted_prompts < 2) {
         ++accepted_prompts;
-        prompt->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+        access()->DecidePromptForTesting(0);
       }
     }
     const auto result = content::EvalJs(page(), "captureResult").ExtractString();
@@ -454,8 +449,11 @@ IN_PROC_BROWSER_TEST_F(ZitterMediaBrowserTest, CrossOriginFrameCaptureShowsReque
   ASSERT_TRUE(content::ExecJs(child, "startCapture({video:true}); void 0;"));
   ASSERT_TRUE(base::test::RunUntil([&] { return access()->permission_prompt(); }));
   const auto requester = base::UTF8ToUTF16(url::Origin::Create(child_url).Serialize());
-  EXPECT_NE(DialogText(access()->permission_prompt()->GetRootView()).find(requester), std::u16string::npos);
-  access()->permission_prompt()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+  // The card names the requesting frame without its scheme, and its page.
+  const auto shown = base::UTF8ToUTF16(std::string(child_url.host()) + ":" + std::string(child_url.port()));
+  EXPECT_NE(DialogText(access()->permission_prompt()->GetRootView()).find(shown), std::u16string::npos);
+  EXPECT_EQ(access()->prompt_offer().site, shown);
+  access()->DecidePromptForTesting(0);
   ASSERT_TRUE(base::test::RunUntil([&] {
     return content::EvalJs(child, "captureResult").ExtractString() == "running";
   }));

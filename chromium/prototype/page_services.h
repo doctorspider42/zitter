@@ -1,6 +1,8 @@
 #ifndef ZITTER_CHROMIUM_PROTOTYPE_PAGE_SERVICES_H_
 #define ZITTER_CHROMIUM_PROTOTYPE_PAGE_SERVICES_H_
 
+#include "base/timer/timer.h"
+#include "ui/gfx/geometry/rect.h"
 #include <memory>
 #include <optional>
 #include <string>
@@ -35,6 +37,15 @@ class PageServices final : public content::WebContentsObserver,
   // A pending manual save first; otherwise `manage` (Chrome's password manager).
   void ShowPasswords();
   void SetManagePasswords(base::RepeatingClosure manage) { manage_passwords_ = std::move(manage); }
+  // Design: Monit o zapisanie hasła — the offer never blocks the page. It opens
+  // under `anchor` (the address pill; empty: the page's lower left corner)
+  // without taking focus, and after 8 s folds into the pill's key, which
+  // `pending` reports (pending, folded) and ReopenPassword() unfolds.
+  void SetPasswordAnchor(base::RepeatingCallback<gfx::Rect()> anchor) { password_anchor_ = std::move(anchor); }
+  void SetPasswordPendingCallback(base::RepeatingCallback<void(bool pending, bool folded)> pending) { password_pending_ = std::move(pending); }
+  void ReopenPassword();
+  bool password_folded_for_testing() const { return password_folded_; }
+  void FoldPasswordForTesting() { FoldPassword(); }
   bool password_scene_visible_for_testing() const;
   bool password_scene_contains_for_testing(std::string_view text) const;
 
@@ -47,6 +58,9 @@ class PageServices final : public content::WebContentsObserver,
   bool PasswordSavingEnabled() const;
   void OnPasswordSavingChanged();
   void ShowPasswordWidget(std::unique_ptr<views::DialogDelegate> dialog,bool show=true);
+  void PlacePassword();
+  void FoldPassword();
+  void ReportPassword();
   void DidFinishNavigation(content::NavigationHandle* navigation) override;
   void DidStartNavigation(content::NavigationHandle* navigation) override;
   void OnVisibilityChanged(content::Visibility visibility) override;
@@ -58,6 +72,10 @@ class PageServices final : public content::WebContentsObserver,
   base::ScopedObservation<HostContentSettingsMap, content_settings::Observer> sound_observation_{this};
   PrefChangeRegistrar password_preferences_;
   base::RepeatingClosure manage_passwords_;
+  base::RepeatingCallback<gfx::Rect()> password_anchor_;
+  base::RepeatingCallback<void(bool, bool)> password_pending_;
+  bool password_folded_ = false;
+  base::OneShotTimer password_fold_timer_;
   struct PendingPassword;
   std::shared_ptr<PendingPassword> pending_password_;
 
