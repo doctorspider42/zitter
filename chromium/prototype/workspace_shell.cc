@@ -44,6 +44,7 @@
 #include "base/task/thread_pool.h"
 #include "build/build_config.h"
 #include "cc/paint/paint_flags.h"
+#include "cc/paint/paint_shader.h"
 #include "cc/paint/display_item_list.h"
 #include "cc/paint/paint_record.h"
 #include "ui/compositor/paint_recorder.h"
@@ -2581,7 +2582,7 @@ END_METADATA
 
 class PanelSceneImpl final : public PanelScene {
  public:
-  explicit PanelSceneImpl(views::View* root):root_(root),renderer_(root){}
+  PanelSceneImpl(views::View* root,bool native_painting):root_(root){if(!native_painting)renderer_=std::make_unique<PreferenceChromeRenderer>(root);}
   std::unique_ptr<views::View> MakeText(std::u16string text,bool multiline,bool center,int fixed_width) override{
     return std::make_unique<PreferenceCopy>(std::move(text),kInk,0,gfx::Font::Weight::NORMAL,multiline,base::BindRepeating(&PanelSceneImpl::Schedule,weak_factory_.GetWeakPtr()),base::BindRepeating([](base::WeakPtr<PanelSceneImpl> self){return self&&self->visible();},weak_factory_.GetWeakPtr()),true,center,fixed_width);
   }
@@ -2608,17 +2609,17 @@ class PanelSceneImpl final : public PanelScene {
   views::View* AddMoreAction(views::View* parent,base::RepeatingClosure callback,std::u16string name) override{
     return parent->AddChildView(CreateSceneAction(base::BindRepeating(callback),std::move(name),ControlGlyph::kMore,nullptr,{},base::BindRepeating(&PanelSceneImpl::Schedule,weak_factory_.GetWeakPtr())));}
   void SetFileTileChoice(views::View* tile,bool choosing,bool checked,base::RepeatingClosure pressed) override{static_cast<SceneFileTile*>(tile)->SetChoice(choosing,checked,std::move(pressed));}
-  bool animating() const override{return renderer_.animating();}
-  void Schedule() override{renderer_.Schedule();}
+  bool animating() const override{return renderer_&&renderer_->animating();}
+  void Schedule() override{if(renderer_)renderer_->Schedule();}
   base::RepeatingClosure ViewportChangedCallback() override{return base::BindRepeating(&PanelSceneImpl::ViewportChanged,weak_factory_.GetWeakPtr());}
-  bool visible() const override{return renderer_.visible();}
-  bool contains_text(std::string_view text) const override{return renderer_.contains_text(text);}
-  bool excludes(views::View* view) const override{return renderer_.excludes(view);}
-  bool order_correct() const override{return renderer_.order_correct();}
+  bool visible() const override{return renderer_&&renderer_->visible();}
+  bool contains_text(std::string_view text) const override{return renderer_&&renderer_->contains_text(text);}
+  bool excludes(views::View* view) const override{return renderer_&&renderer_->excludes(view);}
+  bool order_correct() const override{return !renderer_||renderer_->order_correct();}
  private:
-  void ViewportChanged(){RefreshChoiceViewports(root_);renderer_.Schedule();}
+  void ViewportChanged(){RefreshChoiceViewports(root_);if(renderer_)renderer_->Schedule();}
   raw_ptr<views::View> root_;
-  PreferenceChromeRenderer renderer_;
+  std::unique_ptr<PreferenceChromeRenderer> renderer_;
   base::WeakPtrFactory<PanelSceneImpl> weak_factory_{this};
 };
 
@@ -3500,24 +3501,43 @@ class AssistantActivityView final : public views::View {
     SchedulePaint();
   }
   void OnPaint(gfx::Canvas* canvas) override {
-    const double phase = animate_ ? std::fmod(base::TimeTicks::Now().since_origin().InSecondsF(), 2.8) / 2.8 : 0.25;
-    const float pulse = 0.65f + 0.35f * std::sin(phase * 6.2831853);
-    canvas->FillRect(GetLocalBounds(), SkColorSetARGB(7, 139, 110, 255));
-    for (int glow : {18, 10, 3}) {
-      cc::PaintFlags flags; flags.setAntiAlias(true); flags.setStyle(cc::PaintFlags::kStroke_Style);
-      flags.setStrokeWidth(glow); flags.setColor(SkColorSetARGB(static_cast<int>((glow == 3 ? 210 : 22) * pulse), 150, 120, 255));
-      gfx::RectF edge(GetLocalBounds()); edge.Inset(glow / 2.f);
-      canvas->DrawRoundRect(edge, 12, flags);
+    if(width()<24||height()<24)return;
+    const double phase=animate_?std::fmod(base::TimeTicks::Now().since_origin().InSecondsF(),5.4)/5.4:0.25;
+    const float cx=width()/2.f,cy=height()/2.f;
+    const auto rotation=SkMatrix::RotateDeg(phase*360.f,SkPoint::Make(cx,cy));
+    const std::array<SkColor4f,7> spectrum={
+      SkColor4f::FromColor(0x18a78bfa),SkColor4f::FromColor(0x25a78bfa),
+      SkColor4f::FromColor(0xc8b59aff),SkColor4f::FromColor(0xffeee8ff),
+      SkColor4f::FromColor(0xc895e5df),SkColor4f::FromColor(0x227a9dff),SkColor4f::FromColor(0x18a78bfa)};
+    const std::array<SkScalar,7> stops={0,.38f,.48f,.51f,.56f,.70f,1};
+    const auto shader=cc::PaintShader::MakeSweepGradient(cx,cy,spectrum.data(),stops.data(),spectrum.size(),SkTileMode::kClamp,0,360,{},0,&rotation);
+    // Four nested strokes produce a soft inward aurora with a sharp light core.
+    // Geometry stays inside browser chrome, never over the page's input layer.
+    for(int pass=0;pass<4;++pass){
+      constexpr std::array<float,4> widths={38,20,8,1.5f};
+      constexpr std::array<float,4> opacity={.10f,.17f,.35f,.95f};
+      cc::PaintFlags glow;glow.setAntiAlias(true);glow.setStyle(cc::PaintFlags::kStroke_Style);
+      glow.setStrokeWidth(widths[pass]);glow.setShader(shader);glow.setAlphaf(opacity[pass]);
+      gfx::RectF frame(GetLocalBounds());frame.Inset(widths[pass]/2.f+.5f);
+      canvas->DrawRoundRect(frame,std::max(4.f,18.f-widths[pass]/3.f),glow);
     }
-    const float x = static_cast<float>((width() + 160) * phase - 160);
-    FillRound(canvas, gfx::Rect(static_cast<int>(x), 1, 140, 3), 2, SkColorSetARGB(235, 115, 226, 240));
-    FillRound(canvas, gfx::Rect(width() - static_cast<int>(x) - 140, height() - 4, 140, 3), 2, SkColorSetARGB(200, 183, 145, 255));
-    const int pill_width = std::min(340, std::max(0, width() - 32));
-    const gfx::Rect pill((width() - pill_width) / 2, 12, pill_width, 32);
-    FillRound(canvas, pill, 16, SkColorSetARGB(242, 40, 31, 67));
-    canvas->DrawStringRectWithFlags(T(u"Asystent steruje stroną · Esc zatrzymuje"), DesignFont(2, 12, 600, false),
-        SkColorSetRGB(232, 221, 255), pill, gfx::Canvas::TEXT_ALIGN_CENTER);
+    const int pill_width=std::min(224,std::max(0,width()-24));
+    const gfx::Rect pill((width()-pill_width)/2,height()-46,pill_width,30);
+    FillRound(canvas,pill+gfx::Vector2d(0,2),15,SkColorSetARGB(35,0,0,0));
+    FillRound(canvas,pill,15,SkColorSetARGB(235,24,25,33));
+    StrokeRound(canvas,pill,15,SkColorSetARGB(48,201,190,246));
+    for(int i=0;i<3;++i){
+      const float pulse=animate_?.5f+.5f*std::sin((phase*3-i*.12)*6.2831853):.7f;
+      cc::PaintFlags dot;dot.setAntiAlias(true);dot.setColor(SkColorSetARGB(static_cast<int>(100+155*pulse),183,165,255));
+      canvas->DrawCircle(gfx::Point(pill.x()+16+i*7,pill.CenterPoint().y()),2,dot);
+    }
+    canvas->DrawStringRectWithFlags(T(u"Asystent działa"),DesignFont(2,12,500,false),SkColorSetRGB(236,234,246),
+      gfx::Rect(pill.x()+44,pill.y(),std::max(0,pill_width-84),30),gfx::Canvas::TEXT_ALIGN_LEFT);
+    const gfx::Rect key(pill.right()-35,pill.y()+6,27,18);
+    FillRound(canvas,key,5,SkColorSetARGB(24,255,255,255));
+    canvas->DrawStringRectWithFlags(u"esc",DesignFont(3,10,400,false),SkColorSetRGB(180,177,193),key,gfx::Canvas::TEXT_ALIGN_CENTER);
   }
+
  private:
   bool animate_;
   base::RepeatingTimer timer_;
@@ -3737,8 +3757,8 @@ std::unique_ptr<views::View> CreatePageDialogActions(views::Widget* widget){
 std::unique_ptr<views::DialogDelegate> CreateSceneModalDialog(std::unique_ptr<views::View> body,bool control,bool modal){
   return std::make_unique<SceneModalDialog>(std::move(body),control,modal);
 }
-std::unique_ptr<PanelScene> CreatePanelScene(views::View* root){
-  return std::make_unique<PanelSceneImpl>(root);
+std::unique_ptr<PanelScene> CreatePanelScene(views::View* root,bool native_painting){
+  return std::make_unique<PanelSceneImpl>(root,native_painting);
 }
 std::unique_ptr<PageDialogScene> CreatePageDialogScene(views::View* root){return CreatePanelScene(root);}
 class PreferenceChromeState final : public PreferenceChromeRenderer {public:using PreferenceChromeRenderer::PreferenceChromeRenderer;};

@@ -1,10 +1,17 @@
 # Optional AI assistant
 
-Open **Command Center â†’ AI Assistant** (`Ctrl+K`, then type `>assistant`).
-The assistant opens on the right. **Pin / unpin** reserves page space or uses an
-overlay. Closing the panel stops its current task. Once enabled for this window,
-the right edge opens it again. No assistant process or provider request starts
-until **Send**. **Clear conversations** clears local conversations and caches immediately; **Copy conversation** copies the current transcript as text. Closing Zitter also discards conversations and in-memory caches.
+Open **Command Center → AI Assistant** (`Ctrl+K`, then type `>assistant`).
+The assistant opens on the right with a quiet welcome screen, draft suggestions
+and a composer anchored at the bottom. The pin icon reserves page space or uses
+an overlay. Closing the panel stops its current task. Once enabled for this
+window, the right edge opens it again. No assistant process or provider request
+starts until **Send**. Suggestions only fill a draft; they do not send it or grant
+browser access.
+
+The model chip opens backend/model settings and the session picker. The history
+icon opens the same session controls; the shield chip opens access grants.
+**New session** is the plus icon. Copy and clear actions live in the session
+controls. Closing Zitter discards conversations and in-memory caches.
 
 Choose a backend and enter its model ID before the first message in each session.
 **New session** creates an independent conversation. The session picker returns
@@ -80,8 +87,9 @@ Text entry is limited to non-sensitive
 Navigation and click completion indicate dispatch, not page-load completion.
 The assistant must read again after a page changes.
 
-An animated violet frame, cyan moving highlights and a status pill identify page
-control. This indicator is browser chrome, outside the page renderer, and cannot
+An animated spectral edge with a violet, ice and mint light trail identifies page
+control. A compact bottom capsule shows activity and the Escape hint. The center
+of the page remains untinted. This indicator is browser chrome, outside the page renderer, and cannot
 be removed by website styles. It does not intercept page input. **Stop** or
 **Esc** interrupts the task and discards queued browser actions. The indicator
 ends on completion, failure, cancellation or a profile change. Disabling
@@ -96,7 +104,7 @@ Research uses a separate network client without browser cookies or authenticatio
 It accepts public HTTPS destinations only, checks DNS at connection time, checks
 redirects, blocks private/local networks and bounds response sizes and timeouts.
 
-Enable **Deep research** before sending a question to plan complementary angles,
+Select **Deep research** with the composer mode chip before sending a question to plan complementary angles,
 investigate primary sources, reviews, criticism and discussions in parallel, then
 synthesize a cited report. Workers cannot use browser history or browser actions.
 The default model-call concurrency is twelve; the engine supports a bounded range

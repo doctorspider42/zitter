@@ -40,7 +40,10 @@ class AssistantPanel final : public views::View {
   void ConfigureForTesting(std::string provider, std::string model, AssistantPermissions permissions);
   bool ContainsForTesting(std::string_view text) const;
  private:
-  struct Session { std::string id, provider, model, profile, transcript; AssistantPermissions permissions; };
+  struct Message { int kind = 0; std::string text; };
+  struct Session { std::string id, provider, model, profile, transcript; AssistantPermissions permissions; std::vector<Message> messages; };
+  void RenderConversation();
+  void ToggleDetails(bool privacy);
   void NewSession();
   void SwitchSession();
   void Send();
@@ -57,6 +60,8 @@ class AssistantPanel final : public views::View {
   std::unique_ptr<PanelScene> scene_;
   raw_ptr<PanelViewport> viewport_ = nullptr;
   raw_ptr<views::View> output_ = nullptr;
+  raw_ptr<views::View> conversation_ = nullptr, configuration_ = nullptr;
+  raw_ptr<views::View> mode_chip_ = nullptr, model_chip_ = nullptr, access_chip_ = nullptr;
   raw_ptr<EditorControl> prompt_ = nullptr, model_ = nullptr;
   raw_ptr<views::Combobox> provider_ = nullptr, sessions_control_ = nullptr;
   raw_ptr<views::Combobox> mentions_ = nullptr;

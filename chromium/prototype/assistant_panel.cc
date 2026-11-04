@@ -1,5 +1,6 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 #include "chromium/prototype/assistant_panel.h"
+#include "chromium/prototype/assistant_visuals.h"
 #if BUILDFLAG(IS_WIN)
 #include <windows.h>
 #endif
@@ -36,6 +37,7 @@
 #include "ui/views/controls/button/checkbox.h"
 #include "ui/views/controls/combobox/combobox.h"
 #include "ui/views/accessibility/view_accessibility.h"
+#include "ui/views/widget/widget.h"
 
 namespace zitter::prototype {
 namespace {
@@ -53,104 +55,105 @@ base::DictValue AssistantPermissions::ToValue() const {
 
 AssistantPanel::AssistantPanel(WorkspaceWindow* window) : window_(window) {
   GetViewAccessibility().SetName(T(u"Asystent AI"));
-  SetBackground(views::CreateRoundedRectBackground(ui::kColorDialogBackground, 12));
+  SetBackground(CreateAssistantBackground());
   SetPaintToLayer(); layer()->SetFillsBoundsOpaquely(false);
-  scene_ = CreatePanelScene(this);
-  auto text = [&](std::u16string value) { return AddChildView(scene_->MakeText(std::move(value), true, false, 0)); };
-  auto* heading = text(T(u"Asystent AI"));
-  scene_->SetTextStyle(heading, 2, PanelScene::Tone::kInk);
-  auto* header = AddChildView(scene_->MakeActions(6));
-  scene_->AddAction(header, base::BindRepeating(&AssistantPanel::NewSession, base::Unretained(this)), T(u"Nowa sesja"));
-  scene_->AddAction(header, base::BindRepeating([](AssistantPanel* self) {
-    self->permissions_view_->SetVisible(!self->permissions_view_->GetVisible()); self->InvalidateLayout();
-  }, base::Unretained(this)), T(u"Dostęp"));
-  pin_action_ = scene_->AddAction(header, base::BindRepeating([](AssistantPanel* self) { self->SetPinned(!self->pinned()); }, base::Unretained(this)), T(u"Przypnij"));
-  scene_->AddAction(header, base::BindRepeating([](AssistantPanel* self) {
-    self->Stop(); self->SetVisible(false); self->window_->shell()->LayoutAssistant(false);
-  }, base::Unretained(this)), T(u"Zamknij"));
-  sessions_control_ = AddChildView(std::make_unique<views::Combobox>(Combo({T(u"Sesja 1")})));
+  scene_ = CreatePanelScene(this,true);
+  auto* header=AddChildView(std::make_unique<views::View>());
+  auto* identity=header->AddChildView(CreateAssistantIdentity());
+  header->AddChildView(CreateAssistantIcon(base::BindRepeating(&AssistantPanel::NewSession,base::Unretained(this)),AssistantGlyph::kPlus,T(u"Nowa sesja")));
+  header->AddChildView(CreateAssistantIcon(base::BindRepeating(&AssistantPanel::ToggleDetails,base::Unretained(this),false),AssistantGlyph::kHistory,T(u"Sesje i model")));
+  pin_action_=header->AddChildView(CreateAssistantIcon(base::BindRepeating([](AssistantPanel* self){self->SetPinned(!self->pinned());},base::Unretained(this)),AssistantGlyph::kPin,T(u"Przypnij")));
+  header->AddChildView(CreateAssistantIcon(base::BindRepeating([](AssistantPanel* self){self->Stop();self->SetVisible(false);self->window_->shell()->LayoutAssistant(false);},base::Unretained(this)),AssistantGlyph::kClose,T(u"Zamknij")));
+  SetSidebarPanelLayout(header,false,gfx::Insets(),4,identity,true);
+
+  configuration_=AddChildView(CreateAssistantSurface());
+  SetSidebarPanelLayout(configuration_,true,gfx::Insets(12),8);
+  auto* caption=configuration_->AddChildView(scene_->MakeText(T(u"Twoja sesja"),false,false,0));
+  scene_->SetTextStyle(caption,6,PanelScene::Tone::kMuted);
+  sessions_control_=configuration_->AddChildView(std::make_unique<views::Combobox>(Combo({T(u"Sesja 1")})));
   sessions_control_->GetViewAccessibility().SetName(T(u"Sesja asystenta"));
-  sessions_control_->SetCallback(base::BindRepeating(&AssistantPanel::SwitchSession, base::Unretained(this)));
-  provider_ = AddChildView(std::make_unique<views::Combobox>(Combo({u"OpenAI API", u"Codex SDK", u"Claude CLI", u"Ollama"})));
+  sessions_control_->SetCallback(base::BindRepeating(&AssistantPanel::SwitchSession,base::Unretained(this)));
+  provider_=configuration_->AddChildView(std::make_unique<views::Combobox>(Combo({u"OpenAI API",u"Codex SDK",u"Claude CLI",u"Ollama"})));
   provider_->GetViewAccessibility().SetName(T(u"Backend AI"));
-  provider_->SetCallback(base::BindRepeating([](AssistantPanel* self) {
-    self->model_->SetText(base::UTF8ToUTF16(kModels[self->provider_->GetSelectedIndex().value_or(0)]));
-  }, base::Unretained(this)));
-  model_ = AddEditor(this); model_->SetText(base::UTF8ToUTF16(kModels[0]));
-  model_->SetPlaceholderText(T(u"ID modelu")); model_->GetViewAccessibility().SetName(T(u"ID modelu dla tej sesji"));
-  PanelViewport* permissions_viewport = nullptr;
-  permissions_view_ = AddChildView(CreatePanelViewport(&permissions_viewport, scene_->ViewportChangedCallback()));
-  permissions_viewport->SetHeightRange(180, 180);
-  auto permissions_body = std::make_unique<views::View>();
-  permissions_body->SetLayoutManager(CreateSidebarColumnLayout(6));
-  auto* permission_host = permissions_body.get();
-  auto check = [&](std::u16string label, bool checked) {
-    auto* box = permission_host->AddChildView(std::make_unique<views::Checkbox>(std::move(label))); box->SetChecked(checked); return box;
-  };
-  tabs_ = check(T(u"Otwarte i przypięte karty tego profilu"), false);
-  pages_ = check(T(u"Czytanie treści i elementów strony"), false);
-  actions_ = check(T(u"Klikanie, pisanie i zarządzanie kartami"), false);
-  history_ = check(T(u"Przeszukiwanie historii tego profilu"), false);
-  web_ = check(T(u"Wyszukiwanie i czytanie publicznych stron"), true);
-  confirm_clicks_ = check(T(u"Potwierdzaj każde kliknięcie na stronie"), true);
-  permission_host->AddChildView(scene_->MakeText(T(u"Pola wrażliwe i ciasteczka są wykluczone. Treść strony może zawierać dane osobowe. Nic nie wysyłamy przed kliknięciem Wyślij."), true, false, 0));
-  permissions_viewport->SetPanelContents(std::move(permissions_body)); permissions_view_->SetVisible(false);
-  research_ = AddChildView(std::make_unique<views::Checkbox>(T(u"Deep research · równoległe źródła")));
-  PanelViewport* transcript_viewport = nullptr;
-  auto* viewport = AddChildView(CreatePanelViewport(&transcript_viewport, scene_->ViewportChangedCallback()));
-  viewport_ = transcript_viewport;
-  auto content = std::make_unique<views::View>();
-  content->SetLayoutManager(CreateSidebarColumnLayout(8));
-  output_ = content->AddChildView(scene_->MakeText(T(u"Zapytaj o Zitter lub internet. Włącz dostęp do kart, aby użyć @current albo wskazać kartę przez @. Rozmowy zostają w pamięci."), true, false, 0));
-  viewport_->SetPanelContents(std::move(content));
-  mentions_ = AddChildView(std::make_unique<views::Combobox>(Combo({T(u"Wybierz otwartą lub przypiętą kartę")})));
-  mentions_->GetViewAccessibility().SetName(T(u"Wskaż otwartą lub przypiętą kartę")); mentions_->SetVisible(false);
-  mentions_->SetCallback(base::BindRepeating([](AssistantPanel* self) {
-    const auto index = self->mentions_->GetSelectedIndex().value_or(0);
-    if (index < self->references_.size()) {
-      auto text = std::u16string(self->prompt_->GetText());
-      if (text.ends_with(u"@")) text.pop_back();
-      self->prompt_->SetText(text + u" " + base::UTF8ToUTF16(self->references_[index]));
-      self->mentions_->SetVisible(false); self->prompt_->RequestFocus();
-    }
-  }, base::Unretained(this)));
-  prompt_ = AddEditor(this); prompt_->SetPlaceholderText(T(u"Zapytaj o cokolwiek · @current"));
-  prompt_->GetViewAccessibility().SetName(T(u"Wiadomość do asystenta"));
-  prompt_->SetCallbacks(base::BindRepeating([](AssistantPanel* self) {
-    if (self->prompt_->GetText().ends_with(u"@")) self->PickReference();
-  }, base::Unretained(this)), base::BindRepeating([](AssistantPanel* self, const ui::KeyEvent& key) {
-    if (key.type() == ui::EventType::kKeyPressed && key.key_code() == ui::VKEY_ESCAPE && self->busy_) { self->Stop(); return true; }
-    if (key.type() == ui::EventType::kKeyPressed && key.key_code() == ui::VKEY_RETURN && !key.IsShiftDown()) { self->Send(); return true; }
-    return false;
-  }, base::Unretained(this)));
-  auto* footer = AddChildView(scene_->MakeActions(6));
-  send_ = scene_->AddAction(footer, base::BindRepeating(&AssistantPanel::Send, base::Unretained(this)), T(u"Wyślij"));
-  stop_ = scene_->AddAction(footer, base::BindRepeating(&AssistantPanel::Stop, base::Unretained(this)), T(u"Stop"));
-  scene_->AddAction(footer, base::BindRepeating(&AssistantPanel::PickReference, base::Unretained(this)), T(u"@ Karty"));
-  confirm_ = scene_->AddAction(footer, base::BindRepeating([](AssistantPanel* self) {
-    if (!self->confirmation_ || !self->busy_) return;
-    if (self->sessions_[self->selected_].profile != self->window_->AssistantProfileId()) { self->Stop(); return; }
-    auto action = std::move(*self->confirmation_); self->confirmation_.reset(); self->confirm_->SetVisible(false);
-    auto* args = action.FindDict("args"); args->Set("confirmed", true);
-    self->window_->AssistantTool(*action.FindString("tool"), args->Clone(), self->sessions_[self->selected_].permissions,
-        base::BindOnce(&AssistantPanel::ToolFinished, self->weak_factory_.GetWeakPtr()), true);
-  }, base::Unretained(this)), T(u"Zezwól raz"));
-  confirm_->SetVisible(false);
-  auto* utilities = AddChildView(scene_->MakeActions(6));
-  scene_->AddAction(utilities, base::BindRepeating([](AssistantPanel* self) {
-    ui::ScopedClipboardWriter(ui::ClipboardBuffer::kCopyPaste).WriteText(base::UTF8ToUTF16(self->sessions_[self->selected_].transcript));
-  }, base::Unretained(this)), T(u"Kopiuj rozmowę"));
-  scene_->AddAction(utilities, base::BindRepeating([](AssistantPanel* self) {
-    self->Stop();
-    if (self->process_.IsValid()) { self->process_.Terminate(0, false); self->process_.Close(); }
+  provider_->SetCallback(base::BindRepeating([](AssistantPanel* self){self->model_->SetText(base::UTF8ToUTF16(kModels[self->provider_->GetSelectedIndex().value_or(0)]));self->UpdateControls();},base::Unretained(this)));
+  model_=AddEditor(configuration_);model_->SetText(base::UTF8ToUTF16(kModels[0]));
+  model_->SetPlaceholderText(T(u"ID modelu"));model_->GetViewAccessibility().SetName(T(u"ID modelu dla tej sesji"));
+  model_->SetCallbacks(base::BindRepeating(&AssistantPanel::UpdateControls,base::Unretained(this)),{});
+  auto* utilities=configuration_->AddChildView(scene_->MakeActions(8));
+  auto* copy=scene_->AddAction(utilities,base::BindRepeating([](AssistantPanel* self){ui::ScopedClipboardWriter(ui::ClipboardBuffer::kCopyPaste).WriteText(base::UTF8ToUTF16(self->sessions_[self->selected_].transcript));},base::Unretained(this)),T(u"Kopiuj rozmowę"));
+  auto* clear=scene_->AddAction(utilities,base::BindRepeating([](AssistantPanel* self){
+    self->Stop();if(self->process_.IsValid()){self->process_.Terminate(0,false);self->process_.Close();}
 #if BUILDFLAG(IS_WIN)
     self->process_job_.Close();
 #endif
-    self->sessions_.clear(); self->NewSession();
-  }, base::Unretained(this)), T(u"Wyczyść rozmowy"));
-  SetSidebarPanelLayout(this, true, gfx::Insets(16), 8, viewport);
-  NewSession();
-  SetVisible(false);
+    self->sessions_.clear();self->NewSession();
+  },base::Unretained(this)),T(u"Wyczyść rozmowy"));
+  scene_->SetActionKind(copy,3);scene_->SetActionKind(clear,3);
+  configuration_->SetVisible(false);
+
+  PanelViewport* permissions_viewport=nullptr;
+  permissions_view_=AddChildView(CreatePanelViewport(&permissions_viewport,scene_->ViewportChangedCallback()));
+  permissions_viewport->SetHeightRange(180,180);
+  auto permission_body=CreateAssistantSurface();
+  SetSidebarPanelLayout(permission_body.get(),true,gfx::Insets(12),8);
+  auto check=[&](std::u16string label,bool checked){auto* box=permission_body->AddChildView(std::make_unique<views::Checkbox>(std::move(label),base::BindRepeating(&AssistantPanel::UpdateControls,base::Unretained(this))));box->SetChecked(checked);return box;};
+  tabs_=check(T(u"Otwarte i przypięte karty tego profilu"),false);
+  pages_=check(T(u"Czytanie treści i elementów strony"),false);
+  actions_=check(T(u"Klikanie, pisanie i zarządzanie kartami"),false);
+  history_=check(T(u"Przeszukiwanie historii tego profilu"),false);
+  web_=check(T(u"Wyszukiwanie i czytanie publicznych stron"),true);
+  confirm_clicks_=check(T(u"Potwierdzaj każde kliknięcie na stronie"),true);
+  auto* privacy=permission_body->AddChildView(scene_->MakeText(T(u"Pola wrażliwe i ciasteczka są wykluczone. Treść strony może zawierać dane osobowe. Nic nie wysyłamy przed kliknięciem Wyślij."),true,false,0));
+  scene_->SetTextStyle(privacy,6,PanelScene::Tone::kMuted);
+  permissions_viewport->SetPanelContents(std::move(permission_body));permissions_view_->SetVisible(false);
+  research_=AddChildView(std::make_unique<views::Checkbox>(T(u"Deep research · równoległe źródła")));research_->SetVisible(false);
+
+  PanelViewport* transcript_viewport=nullptr;
+  auto* viewport=AddChildView(CreatePanelViewport(&transcript_viewport,scene_->ViewportChangedCallback()));viewport_=transcript_viewport;
+  auto content=std::make_unique<views::View>();conversation_=content.get();
+  content->SetLayoutManager(CreateSidebarColumnLayout(8));viewport_->SetPanelContents(std::move(content));
+
+  auto* choices=AddChildView(std::make_unique<views::View>());
+  model_chip_=choices->AddChildView(CreateAssistantChip(base::BindRepeating(&AssistantPanel::ToggleDetails,base::Unretained(this),false),AssistantGlyph::kSpark,base::UTF8ToUTF16(kModels[0])));
+  access_chip_=choices->AddChildView(CreateAssistantChip(base::BindRepeating(&AssistantPanel::ToggleDetails,base::Unretained(this),true),AssistantGlyph::kShield,T(u"Dostęp")));
+  SetSidebarPanelLayout(choices,false,gfx::Insets(),4,model_chip_,true);
+
+  mentions_=AddChildView(std::make_unique<views::Combobox>(Combo({T(u"Wybierz otwartą lub przypiętą kartę")})));
+  mentions_->GetViewAccessibility().SetName(T(u"Wskaż otwartą lub przypiętą kartę"));mentions_->SetVisible(false);
+  mentions_->SetCallback(base::BindRepeating([](AssistantPanel* self){const auto index=self->mentions_->GetSelectedIndex().value_or(0);if(index<self->references_.size()){
+    auto text=std::u16string(self->prompt_->GetText());if(text.ends_with(u"@"))text.pop_back();self->prompt_->SetText(text+u" "+base::UTF8ToUTF16(self->references_[index]));
+    self->mentions_->SetVisible(false);self->prompt_->RequestFocus();
+  }},base::Unretained(this)));
+
+  confirm_=AddChildView(scene_->MakeActions(6));
+  scene_->AddAction(confirm_,base::BindRepeating([](AssistantPanel* self){
+    if(!self->confirmation_||!self->busy_)return;
+    if(self->sessions_[self->selected_].profile!=self->window_->AssistantProfileId()){self->Stop();return;}
+    auto action=std::move(*self->confirmation_);self->confirmation_.reset();self->confirm_->SetVisible(false);
+    auto* args=action.FindDict("args");args->Set("confirmed",true);
+    self->window_->AssistantTool(*action.FindString("tool"),args->Clone(),self->sessions_[self->selected_].permissions,
+      base::BindOnce(&AssistantPanel::ToolFinished,self->weak_factory_.GetWeakPtr()),true);
+  },base::Unretained(this)),T(u"Zezwól raz"));confirm_->SetVisible(false);
+
+  auto* composer=AddChildView(CreateAssistantSurface(1));
+  SetSidebarPanelLayout(composer,true,gfx::Insets(12),12);
+  prompt_=AddEditor(composer);prompt_->SetPlaceholderText(T(u"Zapytaj Zittera…"));
+  prompt_->SetPresentation(14,3,false,SK_ColorTRANSPARENT);
+  prompt_->GetViewAccessibility().SetName(T(u"Wiadomość do asystenta"));
+  prompt_->SetCallbacks(base::BindRepeating([](AssistantPanel* self){if(self->prompt_->GetText().ends_with(u"@"))self->PickReference();},base::Unretained(this)),
+    base::BindRepeating([](AssistantPanel* self,const ui::KeyEvent& key){
+      if(key.type()==ui::EventType::kKeyPressed&&key.key_code()==ui::VKEY_ESCAPE&&self->busy_){self->Stop();return true;}
+      if(key.type()==ui::EventType::kKeyPressed&&key.key_code()==ui::VKEY_RETURN&&!key.IsShiftDown()){self->Send();return true;}return false;
+    },base::Unretained(this)));
+  auto* tools=composer->AddChildView(std::make_unique<views::View>());
+  tools->AddChildView(CreateAssistantIcon(base::BindRepeating(&AssistantPanel::PickReference,base::Unretained(this)),AssistantGlyph::kAt,T(u"@ Karty")));
+  mode_chip_=tools->AddChildView(CreateAssistantChip(base::BindRepeating([](AssistantPanel* self){self->research_->SetChecked(!self->research_->GetChecked());self->UpdateControls();},base::Unretained(this)),AssistantGlyph::kSearch,T(u"Rozmowa")));
+  auto* spacer=tools->AddChildView(std::make_unique<views::View>());
+  send_=tools->AddChildView(CreateAssistantIcon(base::BindRepeating(&AssistantPanel::Send,base::Unretained(this)),AssistantGlyph::kArrow,T(u"Wyślij"),true));
+  stop_=tools->AddChildView(CreateAssistantIcon(base::BindRepeating(&AssistantPanel::Stop,base::Unretained(this)),AssistantGlyph::kStop,T(u"Stop"),true));
+  SetSidebarPanelLayout(tools,false,gfx::Insets(),4,spacer,true);
+  SetSidebarPanelLayout(this,true,gfx::Insets(16),10,viewport);
+  NewSession();SetVisible(false);
 }
 
 AssistantPanel::~AssistantPanel() {
@@ -174,7 +177,7 @@ void AssistantPanel::PickReference() {
   mentions_->RequestFocus(); InvalidateLayout();
 }
 void AssistantPanel::SetPinned(bool pinned) {
-  pinned_ = pinned; scene_->SetActionText(pin_action_, pinned ? T(u"Odepnij") : T(u"Przypnij"));
+  pinned_ = pinned; UpdateAssistantButton(pin_action_, pinned ? T(u"Odepnij") : T(u"Przypnij"),pinned);
   window_->shell()->LayoutAssistant(pinned_);
 }
 void AssistantPanel::NewSession() {
@@ -187,7 +190,8 @@ void AssistantPanel::NewSession() {
   sessions_control_->SetOwnedModel(Combo(std::move(labels))); sessions_control_->SetSelectedIndex(selected_);
   tabs_->SetChecked(false); pages_->SetChecked(false); actions_->SetChecked(false); history_->SetChecked(false); web_->SetChecked(true);
   confirm_clicks_->SetChecked(true);
-  scene_->SetText(output_, T(u"Nowa sesja. Wybierz backend, model i zakres dostępu.")); UpdateControls();
+  configuration_->SetVisible(false);permissions_view_->SetVisible(false);mentions_->SetVisible(false);
+  RenderConversation();UpdateControls();
 }
 void AssistantPanel::SwitchSession() {
   Stop(); selected_ = sessions_control_->GetSelectedIndex().value_or(0);
@@ -199,13 +203,60 @@ void AssistantPanel::SwitchSession() {
   tabs_->SetChecked(session.permissions.tabs); pages_->SetChecked(session.permissions.pages); actions_->SetChecked(session.permissions.actions);
   history_->SetChecked(session.permissions.history); web_->SetChecked(session.permissions.web);
   confirm_clicks_->SetChecked(session.permissions.confirm_clicks);
-  scene_->SetText(output_, base::UTF8ToUTF16(session.transcript)); UpdateControls();
+  RenderConversation();UpdateControls();
+}
+void AssistantPanel::ToggleDetails(bool privacy) {
+  auto* target=privacy?permissions_view_.get():configuration_.get();
+  const bool visible=!target->GetVisible();permissions_view_->SetVisible(false);configuration_->SetVisible(false);
+  target->SetVisible(visible);InvalidateLayout();scene_->Schedule();
+}
+void AssistantPanel::RenderConversation() {
+  output_=nullptr;
+  conversation_->RemoveAllChildViews();
+  const auto& messages=sessions_[selected_].messages;
+  if(messages.empty()) {
+    conversation_->AddChildView(CreateAssistantWelcome());
+    auto suggestion=[&](AssistantGlyph glyph,std::u16string title,std::u16string detail,std::u16string prompt,bool research){
+      conversation_->AddChildView(CreateAssistantSuggestion(base::BindRepeating([](AssistantPanel* self,std::u16string prompt,bool research){
+        self->prompt_->SetText(prompt);self->research_->SetChecked(research);self->UpdateControls();self->prompt_->RequestFocus();
+      },base::Unretained(this),std::move(prompt),research),glyph,std::move(title),std::move(detail)));
+    };
+    suggestion(AssistantGlyph::kPage,T(u"Zrozum tę stronę"),T(u"Najważniejsze informacje, bez szukania"),T(u"Podsumuj najważniejsze informacje z @current."),false);
+    suggestion(AssistantGlyph::kSearch,T(u"Znajdź coś w internecie"),T(u"Odpowiedzi z konkretnych źródeł"),T(u"Pomóż mi znaleźć informacje o "),false);
+    suggestion(AssistantGlyph::kSpark,T(u"Zbadaj temat głębiej"),T(u"Wiele perspektyw. Jeden dobry raport."),T(u"Zbadaj dokładnie i porównaj "),true);
+  } else for(const auto& message:messages) {
+    if(message.kind==2) {
+      auto* status=conversation_->AddChildView(scene_->MakeText(base::UTF8ToUTF16(message.text),true,false,0));
+      scene_->SetTextStyle(status,6,PanelScene::Tone::kMuted);continue;
+    }
+    auto* card=conversation_->AddChildView(CreateAssistantSurface(message.kind==1?2:3));
+    SetSidebarPanelLayout(card,true,gfx::Insets(12),6);
+    auto* role=card->AddChildView(scene_->MakeText(message.kind==1?T(u"Ty"):T(u"Asystent"),false,false,0));
+    scene_->SetTextStyle(role,6,PanelScene::Tone::kMuted);
+    auto* body=card->AddChildView(scene_->MakeText(base::UTF8ToUTF16(message.text),true,false,0));scene_->SetTextStyle(body,5,PanelScene::Tone::kInk);
+  }
+  if(busy_&&!messages.empty()) {
+    auto* status=conversation_->AddChildView(scene_->MakeText(research_->GetChecked()?T(u"Sprawdzam źródła…"):T(u"Pracuję nad tym…"),false,false,0));output_=status;
+    scene_->SetTextStyle(status,6,PanelScene::Tone::kMuted);
+  }
+  InvalidateLayout();scene_->Schedule();
 }
 void AssistantPanel::Append(std::string text) {
   auto& transcript = sessions_[selected_].transcript;
   if (transcript.size() + text.size() > 250000) transcript.erase(0, std::min(transcript.size(), text.size() + 10000));
   transcript += "\n\n" + text;
-  scene_->SetText(output_, base::UTF8ToUTF16(transcript)); InvalidateLayout(); scene_->Schedule();
+  Message message;
+  if(text.starts_with("You: ")){message.kind=1;message.text=text.substr(5);}
+  else if(text.starts_with("Assistant: ")){message.kind=0;message.text=text.substr(11);}
+  else if(text.starts_with("Tool: ")) {
+    message.kind=2;
+    const auto tool=text.substr(6);
+    message.text=base::UTF16ToUTF8(tool=="read_page"?T(u"Czytam stronę…"):tool=="list_tabs"?T(u"Sprawdzam otwarte karty…"):tool=="type"?T(u"Wpisuję tekst…"):T(u"Pracuję w przeglądarce…"));
+  } else {message.kind=3;message.text=text;}
+  auto& messages=sessions_[selected_].messages;messages.push_back(std::move(message));
+  if(messages.size()>160)messages.erase(messages.begin(),messages.begin()+40);
+  RenderConversation();
+  if(GetWidget())GetWidget()->LayoutRootViewIfNecessary();
   viewport_->ScrollTo(viewport_->maximum());
 }
 void AssistantPanel::UpdateControls() {
@@ -214,6 +265,14 @@ void AssistantPanel::UpdateControls() {
   for (auto* box : {tabs_.get(), pages_.get(), actions_.get(), history_.get(), web_.get(), confirm_clicks_.get()}) box->SetEnabled(editable);
   send_->SetEnabled(!busy_); stop_->SetEnabled(busy_); prompt_->view()->SetEnabled(!busy_);
   research_->SetEnabled(!busy_); sessions_control_->SetEnabled(!busy_);
+  mode_chip_->SetEnabled(!busy_);send_->SetVisible(!busy_);stop_->SetVisible(busy_);
+  UpdateAssistantButton(mode_chip_,research_->GetChecked()?T(u"Deep research"):T(u"Rozmowa"),research_->GetChecked());
+  UpdateAssistantButton(model_chip_,std::u16string(model_->GetText()));
+  model_chip_->SetTooltipText(T(u"Sesje i model"));
+  model_chip_->GetViewAccessibility().SetName(T(u"Sesje i model")+u": "+std::u16string(model_->GetText()));
+  const int shared=static_cast<int>(tabs_->GetChecked())+pages_->GetChecked()+actions_->GetChecked()+history_->GetChecked();
+  UpdateAssistantButton(access_chip_,shared?TF(u"Dostęp · {}",{base::NumberToString16(shared)}):T(u"Dostęp"),shared>0);
+  if(static_cast<bool>(output_)!=(busy_&&!sessions_[selected_].messages.empty()))RenderConversation();
 }
 void AssistantPanel::Stop() {
   startup_timer_.Stop(); loader_.reset(); weak_factory_.InvalidateWeakPtrs();
@@ -241,6 +300,7 @@ void AssistantPanel::Send() {
     session.permissions = {tabs_->GetChecked(), pages_->GetChecked(), actions_->GetChecked(), history_->GetChecked(), web_->GetChecked(), confirm_clicks_->GetChecked()};
   }
   busy_ = true; UpdateControls();
+  configuration_->SetVisible(false);permissions_view_->SetVisible(false);mentions_->SetVisible(false);
   if (!process_.IsValid()) StartRuntime();
   else PollRuntime(0);
 }

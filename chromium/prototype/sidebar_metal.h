@@ -65,7 +65,8 @@ class PanelScene {
   virtual bool order_correct() const=0;
   virtual bool animating() const=0;
 };
-std::unique_ptr<PanelScene> CreatePanelScene(views::View* root);
+// Native painting keeps custom child surfaces and their text in one compositor layer.
+std::unique_ptr<PanelScene> CreatePanelScene(views::View* root,bool native_painting = false);
 struct SidebarViewportNode { size_t parent; gfx::Rect bounds; bool visible; };
 struct SidebarProjectedNode { size_t index; gfx::RectF bounds, clip; };
 struct SidebarViewportProjection { gfx::PointF offset; std::vector<SidebarProjectedNode> nodes; };
