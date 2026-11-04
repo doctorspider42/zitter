@@ -43,6 +43,12 @@
   const state = globalThis.__zitterAssistant;
   const e = state?.url === location.href ? state.map.get(args.element) : null;
   if (!e?.isConnected || !visible(e) || sensitive(e)) return { error: 'Element expired, hidden or protected. Read the page again.' };
+  if (args.tool === 'rect') {
+    // Natively requested for the consent bubble only; brings the element into view.
+    e.scrollIntoView({ block: 'center', inline: 'nearest' });
+    const r = e.getBoundingClientRect();
+    return { x: r.x, y: r.y, width: r.width, height: r.height };
+  }
   if (args.tool === 'click') {
     if (!args.confirmed)
       return { confirmation_required: true, label: (label(e) || 'Click').slice(0, 120) };

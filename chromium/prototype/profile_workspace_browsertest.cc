@@ -1,4 +1,5 @@
 #include "chromium/prototype/assistant_panel.h"
+#include "chromium/prototype/assistant_visuals.h"
 #include "base/environment.h"
 #include "base/scoped_environment_variable_override.h"
 #include "ui/views/controls/progress_bar.h"
@@ -602,6 +603,225 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantPanelIsOptionalAndPin
   EXPECT_LT(window_->shell()->assistant_activity_for_testing()->width(), overlay.width());
   window_->shell()->SetAssistantActivity(false);
   EXPECT_FALSE(window_->shell()->assistant_activity_for_testing()->GetVisible());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantMenusAnchorAndAccessCanBeRevoked) {
+  using Menu=AssistantPanel::Menu;
+  window_->ShowAssistant();
+  auto* panel=window_->assistant();
+  window_->widget()->LayoutRootViewIfNecessary();
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"),embedded_test_server()->GetURL("/storage_probe.html")));
+  panel->ConfigureForTesting("ollama","test-local",{true,true,true,false,true});
+  window_->widget()->LayoutRootViewIfNecessary();
+  const auto composer=panel->composer_bounds_for_testing();
+  const std::array<std::pair<Menu,const char*>,4> menus={{{Menu::kModel,"model"},{Menu::kSessions,"sessions"},{Menu::kAccess,"access"},{Menu::kMention,"mention"}}};
+  for(const auto& [menu,name]:menus){
+    if(menu==Menu::kMention)panel->TypeForTesting(u"Porównaj z @");else panel->ToggleMenuForTesting(menu);
+    window_->widget()->LayoutRootViewIfNecessary();
+    ASSERT_EQ(panel->open_menu_for_testing(),menu);
+    const auto bounds=panel->menu_bounds_for_testing();
+    EXPECT_GT(bounds.height(),0);
+    // Composer menus sit 8 DIP above it; header menus drop below the header
+    // and may overlay the conversation, never leaving the panel.
+    if(menu==Menu::kModel||menu==Menu::kMention)EXPECT_EQ(bounds.bottom(),composer.y()-8);
+    else{EXPECT_LT(bounds.y(),composer.y());EXPECT_LE(bounds.bottom(),panel->height()-16);}
+    EXPECT_EQ(panel->composer_bounds_for_testing(),composer);
+    const auto output=base::CommandLine::ForCurrentProcess()->GetSwitchValuePath("zitter-test-assistant-render-dir");
+    if(!output.empty()){
+      base::ScopedAllowBlockingForTesting allow;
+      ASSERT_TRUE(base::CreateDirectory(output));
+      for(auto mode:{ThemeMode::kDark,ThemeMode::kLight}){
+        window_->shell()->SetThemeMode(mode);window_->widget()->LayoutRootViewIfNecessary();
+        // The menu paints on its own layer: render it by itself.
+        auto* menu_view=panel->menu_for_testing();ASSERT_TRUE(menu_view);
+        const auto saved=menu_view->bounds();menu_view->SetBoundsRect(gfx::Rect(menu_view->size()));
+        const auto png=gfx::PNGCodec::EncodeBGRASkBitmap(views::test::PaintViewToBitmap(menu_view),false);
+        menu_view->SetBoundsRect(saved);ASSERT_TRUE(png);
+        ASSERT_TRUE(base::WriteFile(output.AppendASCII(std::string("assistant-")+name+(mode==ThemeMode::kDark?"-dark.png":"-light.png")),*png));
+      }
+    }
+    if(menu==Menu::kMention){EXPECT_TRUE(panel->KeyForTesting(ui::VKEY_ESCAPE));panel->TypeForTesting(u"");}
+    else panel->ToggleMenuForTesting(menu);
+    EXPECT_EQ(panel->open_menu_for_testing(),Menu::kNone);
+  }
+  // Narrowing access in Settings applies at once and stops the running task.
+  auto settings=window_->assistant_settings();
+  settings.defaults={true,true,true,true,true,false};
+  window_->SetAssistantSettings(settings);
+  panel->ConfigureForTesting("ollama","test-local",{true,true,true,true,true,false});
+  panel->SendForTesting("Read the current page");
+  ASSERT_TRUE(panel->busy());
+  settings.defaults.pages=false;
+  window_->SetAssistantSettings(settings);
+  EXPECT_FALSE(panel->busy());
+  EXPECT_FALSE(panel->permissions_for_testing().pages);
+  EXPECT_TRUE(panel->permissions_for_testing().actions);
+  panel->SendForTesting("List tabs");
+  ASSERT_TRUE(panel->busy());
+  panel->RevokeAccess();
+  EXPECT_FALSE(panel->busy());
+  const auto permissions=panel->permissions_for_testing();
+  EXPECT_FALSE(permissions.tabs || permissions.pages || permissions.actions || permissions.history || permissions.web);
+  EXPECT_TRUE(permissions.confirm_clicks);
+  window_->widget()->SetBounds(gfx::Rect(0,0,850,700));
+  window_->widget()->LayoutRootViewIfNecessary();
+  const int overlay_width=window_->shell()->content_host()->width();
+  panel->SetPinned(true);
+  window_->widget()->LayoutRootViewIfNecessary();
+  EXPECT_LT(window_->shell()->content_host()->width(),overlay_width);
+  EXPECT_LE(window_->shell()->content_host()->bounds().right(),panel->x());
+  // Renders of the background section and the page-control overlays.
+  const auto output=base::CommandLine::ForCurrentProcess()->GetSwitchValuePath("zitter-test-assistant-render-dir");
+  if(output.empty())return;
+  base::ScopedAllowBlockingForTesting allow;
+  panel->SetPinned(false);window_->widget()->SetBounds(gfx::Rect(0,0,1280,800));
+  panel->SeedBackgroundForTesting();
+  auto* shell=window_->shell();
+  shell->SetAssistantActivity(true);
+  shell->SetAssistantCapsule(CreateAssistantCapsule(T(u"Czeka na Twoją zgodę"),base::DoNothing(),false));
+  shell->SetAssistantConsent(CreateAssistantConsentBubble(u"Kliknąć „Dodaj do koszyka”?",u"Porównuję ceny laptopów",base::DoNothing(),base::DoNothing(),base::DoNothing()),std::nullopt);
+  for(auto mode:{ThemeMode::kDark,ThemeMode::kLight}){
+    shell->SetThemeMode(mode);window_->widget()->LayoutRootViewIfNecessary();
+    const std::string suffix=mode==ThemeMode::kDark?"-dark.png":"-light.png";
+    auto save=[&](views::View* view,std::string name){
+      const auto saved=view->bounds();view->SetBoundsRect(gfx::Rect(view->size()));
+      const auto png=gfx::PNGCodec::EncodeBGRASkBitmap(views::test::PaintViewToBitmap(view),false);
+      view->SetBoundsRect(saved);ASSERT_TRUE(png);ASSERT_TRUE(base::WriteFile(output.AppendASCII(name+suffix),*png));
+    };
+    save(panel,"assistant-background");
+    save(shell->assistant_capsule_for_testing(),"assistant-capsule");
+    save(shell->assistant_consent_for_testing(),"assistant-consent");
+  }
+  shell->SetAssistantCapsule(nullptr);shell->SetAssistantConsent(nullptr,std::nullopt);shell->SetAssistantActivity(false);
+  panel->StopAll();
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantSwitchRemovesPanelAndCommand) {
+  window_->ShowAssistant(); ASSERT_TRUE(window_->assistant()->GetVisible());
+  auto settings=window_->assistant_settings();
+  settings.enabled=false; window_->SetAssistantSettings(settings);
+  window_->widget()->LayoutRootViewIfNecessary();
+  EXPECT_FALSE(window_->assistant()->GetVisible());
+  EXPECT_FALSE(window_->shell()->assistant_edge_visible_for_testing());
+  window_->ShowAssistant(); EXPECT_FALSE(window_->assistant()->GetVisible());
+  base::test::TestFuture<base::Value> refused;
+  window_->AssistantTool("list_tabs",{},{true,false,false,false,false},refused.GetCallback());
+  EXPECT_TRUE(refused.Get().GetDict().FindString("error"));
+  const auto commands=window_->CommandResults(u"> asystent");
+  EXPECT_TRUE(std::none_of(commands.begin(),commands.end(),[](const auto& c){return c.command_id=="assistant";}));
+  const auto disabled=std::find_if(commands.begin(),commands.end(),[](const auto& c){return c.command_id=="assistant_settings";});
+  ASSERT_NE(disabled,commands.end());
+  EXPECT_TRUE(window_->ExecuteCommand(*disabled));
+  // Settings rows: generic switches follow the master switch.
+  auto values=window_->ReadPreferences();
+  EXPECT_FALSE(values.at("assistant_pages").editable);
+  EXPECT_TRUE(window_->WritePreference("assistant_enabled",1));
+  values=window_->ReadPreferences();
+  EXPECT_TRUE(values.at("assistant_pages").editable);
+  EXPECT_FALSE(values.at("assistant_background").editable);  // Needs the click permission.
+  EXPECT_TRUE(window_->WritePreference("assistant_actions",1));
+  EXPECT_TRUE(window_->ReadPreferences().at("assistant_background").editable);
+  window_->WriteAssistantSettings(base::DictValue().Set("command","add").Set("provider","ollama").Set("id","llama3.3:70b"));
+  const auto& models=window_->assistant_settings().models;
+  EXPECT_TRUE(std::any_of(models.begin(),models.end(),[](const auto& m){return m.provider=="ollama"&&m.id=="llama3.3:70b";}));
+  window_->WriteAssistantSettings(base::DictValue().Set("command","default").Set("provider","ollama").Set("id","llama3.3:70b"));
+  EXPECT_EQ(window_->assistant_settings().default_model,"ollama/llama3.3:70b");
+  window_->ShowAssistant(); EXPECT_TRUE(window_->assistant()->GetVisible());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantMentionsInsertRemovableChips) {
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), embedded_test_server()->GetURL("/storage_probe.html")));
+  window_->ShowAssistant(); auto* panel=window_->assistant();
+  panel->ConfigureForTesting("ollama","test-local",{true,false,false,false,true});
+  panel->TypeForTesting(u"Porównaj z @");
+  ASSERT_EQ(panel->open_menu_for_testing(),AssistantPanel::Menu::kMention);
+  EXPECT_TRUE(panel->KeyForTesting(ui::VKEY_RETURN));
+  ASSERT_EQ(panel->chips_for_testing().size(),1u);
+  EXPECT_EQ(panel->chips_for_testing()[0].ref,"@current");
+  EXPECT_EQ(panel->open_menu_for_testing(),AssistantPanel::Menu::kNone);
+  // Tools come from the same suggestions: "@deep" filters to Deep research.
+  panel->TypeForTesting(u"Zbadaj @deep");
+  EXPECT_TRUE(panel->KeyForTesting(ui::VKEY_TAB));
+  ASSERT_EQ(panel->chips_for_testing().size(),2u);
+  EXPECT_EQ(panel->chips_for_testing()[1].kind,"research");
+  // Escape closes the suggestions without inserting anything.
+  panel->TypeForTesting(u"@nic-takiego");
+  EXPECT_TRUE(panel->KeyForTesting(ui::VKEY_ESCAPE));
+  EXPECT_EQ(panel->chips_for_testing().size(),2u);
+  // Backspace in an empty field removes the last chip.
+  panel->TypeForTesting(u"");
+  EXPECT_TRUE(panel->KeyForTesting(ui::VKEY_BACK));
+  ASSERT_EQ(panel->chips_for_testing().size(),1u);
+  EXPECT_EQ(panel->chips_for_testing()[0].kind,"tab");
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantBackgroundPageSharesProfileAndCanBeTakenOver) {
+  const auto url=embedded_test_server()->GetURL("/storage_probe.html");
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"),url));
+  ASSERT_TRUE(content::ExecJs(window_->contents("work"),"document.cookie='zitter_bg=shared; path=/'"));
+  const size_t tabs=window_->tab_count("work");
+  ASSERT_TRUE(window_->AssistantStartBackground("bg",{},url));
+  auto* page=window_->assistant_background_for_testing("bg"); ASSERT_TRUE(page);
+  EXPECT_EQ(window_->tab_count("work"),tabs);
+  ASSERT_TRUE(content::WaitForLoadStop(page));
+  // Same profile, same cookies: the background page is logged in like the user.
+  EXPECT_EQ(page->GetBrowserContext(),window_->contents("work")->GetBrowserContext());
+  EXPECT_EQ(content::EvalJs(page,"document.cookie.includes('zitter_bg=shared')"),true);
+  ASSERT_TRUE(content::ExecJs(page,"document.body.innerHTML='<h1>Background work</h1><button onclick=\"document.title=\\'clicked\\'\">Pay</button>'"));
+  AssistantPermissions allowed{true,true,true,false,false};
+  base::test::TestFuture<base::Value> read;
+  window_->AssistantTool("read_page",base::DictValue().Set("tab","@current"),allowed,read.GetCallback(),false,"bg");
+  const auto* text=read.Get().GetDict().FindString("text"); ASSERT_TRUE(text);
+  EXPECT_NE(text->find("Background work"),std::string::npos);
+  std::string button;
+  for(const auto& element:*read.Get().GetDict().FindList("elements"))if(*element.GetDict().FindString("tag")=="BUTTON")button=*element.GetDict().FindString("id");
+  ASSERT_FALSE(button.empty());
+  // Clicks still need native consent; the user's visible tabs stay read-only.
+  base::test::TestFuture<base::Value> asked;
+  window_->AssistantTool("click",base::DictValue().Set("tab","@current").Set("element",button).Set("confirmed",true),allowed,asked.GetCallback(),false,"bg");
+  EXPECT_TRUE(asked.Get().GetDict().FindBool("confirmation_required").value_or(false));
+  const auto visible=*window_->AssistantContext(allowed).FindList("tabs")->front().GetDict().FindString("mention");
+  base::test::TestFuture<base::Value> refused;
+  window_->AssistantTool("scroll",base::DictValue().Set("tab",visible).Set("dy",100),allowed,refused.GetCallback(),false,"bg");
+  EXPECT_TRUE(refused.Get().GetDict().FindString("error"));
+  base::test::TestFuture<base::Value> clicked;
+  window_->AssistantTool("click",base::DictValue().Set("tab","@current").Set("element",button),allowed,clicked.GetCallback(),true,"bg");
+  EXPECT_TRUE(clicked.Get().GetDict().FindBool("ok").value_or(false));
+  EXPECT_EQ(content::EvalJs(page,"document.title"),"clicked");
+  // Taking over makes it an ordinary, selected tab.
+  ASSERT_TRUE(window_->AssistantTakeOver("bg"));
+  EXPECT_EQ(window_->tab_count("work"),tabs+1);
+  EXPECT_EQ(window_->contents("work"),page);
+  EXPECT_FALSE(window_->assistant_background_for_testing("bg"));
+  // A visible tab can move into the background, with its page state.
+  ASSERT_TRUE(window_->AssistantStartBackground("moved","@current",GURL()));
+  EXPECT_EQ(window_->assistant_background_for_testing("moved"),page);
+  EXPECT_EQ(window_->tab_count("work"),tabs);
+  EXPECT_NE(window_->contents("work"),page);
+  window_->AssistantDiscardBackground("moved");
+  EXPECT_FALSE(window_->assistant_background_for_testing("moved"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantAutoHideAndResize) {
+  window_->ShowAssistant();auto* panel=window_->assistant();
+  panel->Collapse();EXPECT_FALSE(panel->GetVisible());
+  panel->Show();panel->SetPinned(true);panel->Collapse();EXPECT_TRUE(panel->GetVisible());
+  panel->SetPinned(false);window_->widget()->LayoutRootViewIfNecessary();
+  auto* grip=panel->resize_handle_for_testing();ASSERT_TRUE(grip);
+  const int initial_width=panel->width();
+  ui::MouseEvent press(ui::EventType::kMousePressed,gfx::Point(4,40),gfx::Point(4,40),base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);
+  ASSERT_TRUE(grip->OnMousePressed(press));
+  ui::MouseEvent drag(ui::EventType::kMouseDragged,gfx::Point(-76,40),gfx::Point(-76,40),base::TimeTicks::Now(),ui::EF_LEFT_MOUSE_BUTTON,0);
+  ASSERT_TRUE(grip->OnMouseDragged(drag));
+  EXPECT_GT(panel->width(),initial_width);
+  ui::MouseEvent release(ui::EventType::kMouseReleased,gfx::Point(4,40),gfx::Point(4,40),base::TimeTicks::Now(),0,ui::EF_LEFT_MOUSE_BUTTON);
+  grip->OnMouseReleased(release);
+  const int resized_width=panel->width();
+  panel->Collapse();EXPECT_FALSE(panel->GetVisible());panel->Show();EXPECT_EQ(panel->width(),resized_width);
+  panel->ConfigureForTesting("ollama","test-local",{true,true,true,false,false});
+  panel->SendForTesting("Read page");ASSERT_TRUE(panel->busy());
+  panel->Collapse();EXPECT_TRUE(panel->GetVisible());
+  panel->RevokeAccess();panel->Collapse();EXPECT_FALSE(panel->GetVisible());
 }
 
 // Opt in: timing runs must not silently turn functional verification into a

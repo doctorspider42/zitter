@@ -11,6 +11,7 @@
 #include "chromium/prototype/page_dialogs.h"
 #include "base/i18n/time_formatting.h"
 #include "chromium/prototype/workspace_shell.h"
+#include "chromium/prototype/assistant_panel.h"
 #include "chromium/prototype/time_machine_view.h"
 #include "chromium/prototype/i18n.h"
 
@@ -2776,9 +2777,12 @@ class EdgeView final : public views::View {
   explicit EdgeView(base::RepeatingClosure show) : show_(std::move(show)) {}
   void OnMouseEntered(const ui::MouseEvent&) override { show_.Run(); }
   void OnPaint(gfx::Canvas* canvas) override {
-    FillRound(canvas, gfx::Rect(2, std::max(0, height() / 2 - 18), 3, 36), 2, color);
+    // Amber and taller while a background task waits for consent.
+    if (attention) FillRound(canvas, gfx::Rect(1, std::max(0, height() / 2 - 28), 5, 56), 3, SkColorSetRGB(0xff, 0xbe, 0x55));
+    else FillRound(canvas, gfx::Rect(2, std::max(0, height() / 2 - 18), 3, 36), 2, color);
   }
   SkColor color = kDefaultWorkspaceColor;
+  bool attention = false;
  private:
   base::RepeatingClosure show_;
 };
@@ -3494,6 +3498,7 @@ class AssistantActivityView final : public views::View {
     GetViewAccessibility().SetIsIgnored(true);
     SetPaintToLayer(); layer()->SetFillsBoundsOpaquely(false);
   }
+  void SetPill(bool pill) { if (pill_ != pill) { pill_ = pill; SchedulePaint(); } }
   void SetActive(bool active) {
     SetVisible(active); timer_.Stop();
     if (active && animate_) timer_.Start(FROM_HERE, base::Milliseconds(33),
@@ -3521,6 +3526,7 @@ class AssistantActivityView final : public views::View {
       gfx::RectF frame(GetLocalBounds());frame.Inset(widths[pass]/2.f+.5f);
       canvas->DrawRoundRect(frame,std::max(4.f,18.f-widths[pass]/3.f),glow);
     }
+    if(!pill_)return;
     const int pill_width=std::min(224,std::max(0,width()-24));
     const gfx::Rect pill((width()-pill_width)/2,height()-46,pill_width,30);
     FillRound(canvas,pill+gfx::Vector2d(0,2),15,SkColorSetARGB(35,0,0,0));
@@ -3540,6 +3546,7 @@ class AssistantActivityView final : public views::View {
 
  private:
   bool animate_;
+  bool pill_ = true;
   base::RepeatingTimer timer_;
 };
 BEGIN_METADATA(AssistantActivityView)
@@ -3558,7 +3565,6 @@ class ShellRoot final : public views::View {
       LayoutSuperclass<views::View>(this);
       return;
     }
-    const int column = pinned ? SidebarColumn(sidebar_width, width()) + kGap : 0;
     const int header_width = header->GetPreferredSize().width();
     // Traffic lights and page commands share one axis through the middle of
     // the header band; the commands start a fixed gap after the lights.
@@ -3589,27 +3595,51 @@ class ShellRoot final : public views::View {
       trailing->SetBounds(trailing_end - trailing_width, kAxis - kHeaderButtonSize / 2, trailing_width, kHeaderButtonSize);
     }
     const int top = kShellHeaderHeight;
-    content->SetBounds(column + kGap, top, std::max(0, width() - column - 2 * kGap),
-                       std::max(0, height() - top - kGap));
     edge->SetBounds(0, kShellHeaderHeight, kGap, std::max(0, height() - kShellHeaderHeight));
     edge->SetVisible(!pinned);
     const auto g=sidebar::shell_layout(width(),height(),sidebar_width,pinned);
-    content->SetBounds(g.content.x,g.content.y,g.content.width,g.content.height);
+    // The page gets its final size once per layout: a pinned assistant's space
+    // is taken before the page is sized, so the page never resizes twice.
+    gfx::Rect page(g.content.x,g.content.y,g.content.width,g.content.height);
+    if (assistant && !assistant_allowed) assistant->SetVisible(false);
     if (assistant && assistant->GetVisible()) {
-      const int extent = std::min(420, std::max(300, width() - 80));
+      const int extent = std::min(assistant->GetPreferredSize().width(), std::max(300, assistant_pinned ? page.width() - 168 : width() - 80));
       assistant->SetBounds(width() - extent - kGap, top, extent, std::max(0, height() - top - kGap));
-      if (assistant_pinned && content->width() > extent + 160)
-        content->SetSize(gfx::Size(content->width() - extent - kGap, content->height()));
+      // A pinned assistant always reserves page space, including narrow windows.
+      if (assistant_pinned) page.set_width(std::max(0, assistant->x() - kGap - page.x()));
     }
-    if (assistant_activity) {
-      auto page_bounds = content->bounds();
-      if (assistant && assistant->GetVisible() && !assistant_pinned)
-        page_bounds.set_width(std::max(0, assistant->x() - kGap - page_bounds.x()));
-      assistant_activity->SetBoundsRect(page_bounds);
+    content->SetBoundsRect(page);
+    auto page_bounds = content->bounds();
+    if (assistant && assistant->GetVisible() && !assistant_pinned)
+      page_bounds.set_width(std::max(0, assistant->x() - kGap - page_bounds.x()));
+    if (assistant_activity) assistant_activity->SetBoundsRect(page_bounds);
+    int capsule_top = page_bounds.bottom() - 16;
+    if (assistant_capsule) {
+      const auto size = assistant_capsule->GetPreferredSize();
+      const int w = std::min(size.width(), std::max(0, page_bounds.width() - 24));
+      assistant_capsule->SetBounds(page_bounds.x() + (page_bounds.width() - w) / 2, page_bounds.bottom() - 16 - size.height(), w, size.height());
+      capsule_top = assistant_capsule->y();
+    }
+    if (assistant_consent) {
+      // Beside the element: above it when there is room, else below; without
+      // an element, above the capsule. Always inside the page area.
+      const auto size = assistant_consent->GetPreferredSize();
+      gfx::Rect bubble(size);
+      if (consent_anchor) {
+        auto anchor = *consent_anchor;
+        gfx::Point origin = anchor.origin(); views::View::ConvertPointFromScreen(this, &origin); anchor.set_origin(origin);
+        const bool above = anchor.y() - size.height() - 10 >= page_bounds.y() + 8;
+        bubble.set_origin({anchor.x() - 8, above ? anchor.y() - size.height() - 10 : anchor.bottom() + 10});
+      } else {
+        bubble.set_origin({page_bounds.x() + (page_bounds.width() - size.width()) / 2, capsule_top - size.height() - 12});
+      }
+      bubble.set_x(std::clamp(bubble.x(), page_bounds.x() + 8, std::max(page_bounds.x() + 8, page_bounds.right() - size.width() - 8)));
+      bubble.set_y(std::clamp(bubble.y(), page_bounds.y() + 8, std::max(page_bounds.y() + 8, page_bounds.bottom() - size.height() - 8)));
+      assistant_consent->SetBoundsRect(bubble);
     }
     if (assistant_edge) {
       assistant_edge->SetBounds(width() - kGap, top, kGap, std::max(0, height() - top));
-      assistant_edge->SetVisible(assistant && !assistant->GetVisible());
+      assistant_edge->SetVisible(assistant_allowed && assistant && !assistant->GetVisible());
     }
     edge->SetBounds(g.edge.x,g.edge.y,g.edge.width,g.edge.height);
     LayoutSuperclass<views::View>(this);
@@ -3639,7 +3669,10 @@ class ShellRoot final : public views::View {
   raw_ptr<views::View> assistant = nullptr;
   raw_ptr<views::View> assistant_edge = nullptr;
   raw_ptr<AssistantActivityView> assistant_activity = nullptr;
+  raw_ptr<views::View> assistant_capsule = nullptr, assistant_consent = nullptr;
+  std::optional<gfx::Rect> consent_anchor;
   bool assistant_pinned = false;
+  bool assistant_allowed = true;
   raw_ptr<views::View> edge = nullptr;
   bool pinned = true;
   bool content_fullscreen = false;
@@ -3757,6 +3790,10 @@ std::unique_ptr<views::View> CreatePageDialogActions(views::Widget* widget){
 std::unique_ptr<views::DialogDelegate> CreateSceneModalDialog(std::unique_ptr<views::View> body,bool control,bool modal){
   return std::make_unique<SceneModalDialog>(std::move(body),control,modal);
 }
+std::optional<size_t> SceneSelectIndex(views::View* view){return PickerIndex(view);}
+void SetSceneSelectIndex(views::View* view,size_t index){SetPickerIndex(view,index);}
+void SetSceneSelectLabels(views::View* view,const std::vector<std::u16string>& labels){ReplacePickerLabels(view,labels);}
+void SetSceneSelectCallback(views::View* view,base::RepeatingClosure callback){SetPickerCallback(view,std::move(callback));}
 std::unique_ptr<PanelScene> CreatePanelScene(views::View* root,bool native_painting){
   return std::make_unique<PanelSceneImpl>(root,native_painting);
 }
@@ -3849,7 +3886,7 @@ void WorkspaceShell::SetAssistantView(views::View* view) {
   auto* root = static_cast<ShellRoot*>(root_.get());
   root->assistant = root->AddChildView(std::unique_ptr<views::View>(view));
   root->assistant_edge = root->AddChildView(std::make_unique<EdgeView>(base::BindRepeating(
-      [](base::WeakPtr<WorkspaceShell> shell) { if (shell) shell->callbacks_.run_shortcut.Run("assistant"); }, weak_factory_.GetWeakPtr())));
+      [](base::WeakPtr<WorkspaceShell> shell) { if (shell) shell->callbacks_.run_shortcut.Run("assistant_hover"); }, weak_factory_.GetWeakPtr())));
 }
 void WorkspaceShell::SetAssistantActivity(bool active) {
   if (!root_) return;
@@ -3858,11 +3895,52 @@ void WorkspaceShell::SetAssistantActivity(bool active) {
     root->assistant_activity = root->AddChildView(std::make_unique<AssistantActivityView>(workspace_animations_));
     root->ReorderChildView(root->assistant_activity, root->GetIndexOf(root->content).value() + 1);
   }
-  if (root->assistant_activity) root->assistant_activity->SetActive(active);
+  if (root->assistant_activity) { root->assistant_activity->SetActive(active); root->assistant_activity->SetPill(!root->assistant_capsule); }
   root->InvalidateLayout();
 }
 views::View* WorkspaceShell::assistant_activity_for_testing() const {
   return root_ ? static_cast<ShellRoot*>(root_.get())->assistant_activity.get() : nullptr;
+}
+void WorkspaceShell::SetAssistantAllowed(bool allowed) {
+  if (!root_) return;
+  auto* root = static_cast<ShellRoot*>(root_.get());
+  root->assistant_allowed = allowed;
+  if (!allowed) { SetAssistantCapsule(nullptr); SetAssistantConsent(nullptr, std::nullopt); SetAssistantActivity(false); }
+  root->InvalidateLayout();
+}
+void WorkspaceShell::SetAssistantAttention(bool attention) {
+  if (!root_) return;
+  if (auto* edge = static_cast<EdgeView*>(static_cast<ShellRoot*>(root_.get())->assistant_edge.get()); edge && edge->attention != attention) {
+    edge->attention = attention; edge->SchedulePaint();
+  }
+}
+void WorkspaceShell::SetAssistantCapsule(std::unique_ptr<views::View> capsule) {
+  if (!root_) return;
+  auto* root = static_cast<ShellRoot*>(root_.get());
+  if (root->assistant_capsule) root->RemoveChildViewT(std::exchange(root->assistant_capsule, nullptr).get());
+  if (capsule) root->assistant_capsule = root->AddChildView(std::move(capsule));
+  if (root->assistant_activity) root->assistant_activity->SetPill(!root->assistant_capsule);
+  root->InvalidateLayout();
+}
+void WorkspaceShell::SetAssistantConsent(std::unique_ptr<views::View> bubble, std::optional<gfx::Rect> anchor) {
+  if (!root_) return;
+  auto* root = static_cast<ShellRoot*>(root_.get());
+  if (root->assistant_consent) root->RemoveChildViewT(std::exchange(root->assistant_consent, nullptr).get());
+  root->consent_anchor = anchor;
+  if (bubble) root->assistant_consent = root->AddChildView(std::move(bubble));
+  root->InvalidateLayout();
+  if (widget_) widget_->LayoutRootViewIfNecessary();
+}
+views::View* WorkspaceShell::assistant_capsule_for_testing() const {
+  return root_ ? static_cast<ShellRoot*>(root_.get())->assistant_capsule.get() : nullptr;
+}
+views::View* WorkspaceShell::assistant_consent_for_testing() const {
+  return root_ ? static_cast<ShellRoot*>(root_.get())->assistant_consent.get() : nullptr;
+}
+bool WorkspaceShell::assistant_edge_visible_for_testing() const {
+  if (!root_) return false;
+  auto* edge = static_cast<ShellRoot*>(root_.get())->assistant_edge.get();
+  return edge && edge->GetVisible();
 }
 void WorkspaceShell::LayoutAssistant(bool pinned) {
   auto* root = static_cast<ShellRoot*>(root_.get());
@@ -4569,6 +4647,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
                 else if (panel == "palette") shell->OpenCommandPalette();
                 else if (panel == "address") shell->OpenAddress(false);
                 else if (panel == "settings") shell->OpenGeneralSettings();
+                else if (panel == "assistant-settings") shell->OpenAssistantSettings();
                 else if (panel == "fingerprint") shell->callbacks_.run_shortcut.Run("fingerprint");
                 else if (panel == "privacy") {shell->OpenPrivacySettings();shell->general_widget_->LayoutRootViewIfNecessary();for(auto& row:shell->preference_sections_[2].rows)if(row.keywords.find(u"fingerprint")!=std::u16string::npos)row.view->ScrollViewToVisible();}
                 else if (panel == "profiles") shell->OpenProfiles();
@@ -7585,8 +7664,31 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
   auto text=[](const rust::String& value){return base::UTF8ToUTF16(std::string(value));};
   auto strings=[&](const auto& input){std::vector<std::u16string> output;for(const auto& value:input)output.push_back(text(value));return output;};
   auto copy=[&](views::View* parent,std::u16string value,SkColor tone,int delta,gfx::Font::Weight weight,bool multiline){return AddPreferenceCopy(parent,std::move(value),tone,delta,static_cast<int>(weight),multiline);};
-  auto make_row=[&](const sidebar::PreferenceSpec& spec){
+  // Assistant permissions and safeguards share a card each, under one heading.
+  auto group_of=[](const std::string& key)->int{
+    for(const char* k:{"assistant_tabs","assistant_pages","assistant_actions","assistant_history","assistant_web"})if(key==k)return 0;
+    for(const char* k:{"assistant_confirm_clicks","assistant_background","assistant_confirm_background"})if(key==k)return 1;
+    return -1;
+  };
+  std::array<views::View*,2> group_cards{};
+  auto make_row=[&](const sidebar::PreferenceSpec& spec)->views::View*{
     CHECK_LT(spec.category,preference_sections_.size());
+    if(const int group=group_of(std::string(spec.key));group>=0){
+      auto*& card=group_cards[group];
+      if(!card){
+        card=preference_sections_[spec.category].view->AddChildView(std::make_unique<PreferenceSurface>(false,base::BindRepeating(&WorkspaceShell::SchedulePreferenceChrome,weak),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->PreferenceChromeVisible();},weak)));
+        SetSidebarPanelLayout(card,true,gfx::Insets(16),16);
+        auto* heading=card->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(heading,true,gfx::Insets(),5);
+        copy(heading,group?T(u"Zabezpieczenia"):T(u"Uprawnienia nowych sesji"),kInk,1,gfx::Font::Weight::SEMIBOLD,true);
+        copy(heading,group?T(u"Nie dają asystentowi dostępu. Dokładają blokadę do tego, co już może."):T(u"Każda nowa sesja startuje z tymi uprawnieniami. Ograniczenie działa od razu, także w trwającej sesji; szerszy dostęp obowiązuje od nowej sesji."),kMuted,-1,gfx::Font::Weight::NORMAL,true);
+        preference_groups_.push_back({card,{}});
+      }
+      auto* row=card->AddChildView(std::make_unique<views::View>());
+      auto* labels=row->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(labels,true,gfx::Insets(),3);
+      copy(labels,text(spec.title),kInk,0,gfx::Font::Weight::MEDIUM,true);copy(labels,text(spec.detail),kMuted,-1,gfx::Font::Weight::NORMAL,true);SetSidebarPanelLayout(row,false,gfx::Insets(),20,labels,true);
+      for(auto& entry:preference_groups_)if(entry.card==card)entry.rows.push_back(row);
+      preference_sections_[spec.category].rows.push_back({row,base::i18n::ToLower(text(catalogue.categories[spec.category])+u" "+text(spec.title)+u" "+text(spec.detail))});return row;
+    }
     auto* row=preference_sections_[spec.category].view->AddChildView(std::make_unique<PreferenceSurface>(false,base::BindRepeating(&WorkspaceShell::SchedulePreferenceChrome,weak),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->PreferenceChromeVisible();},weak)));
     auto* labels=row->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(labels,true,gfx::Insets(),5);
     copy(labels,text(spec.title),kInk,0,gfx::Font::Weight::MEDIUM,true);copy(labels,text(spec.detail),kMuted,-1,gfx::Font::Weight::NORMAL,true);SetSidebarPanelLayout(row,false,gfx::Insets(16),20,labels,true);
@@ -7647,6 +7749,28 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
         site_type_=ChoicePicker(fields,text(site.type_ax),strings(site.types));site_policy_=ChoicePicker(fields,text(site.policy_ax),strings(sidebar::preference_site_policies(0)));
         SetPickerCallback(site_type_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(!shell)return;std::vector<std::u16string> choices;for(const auto& choice:sidebar::preference_site_policies(PickerIndex(shell->site_type_).value_or(0)))choices.push_back(base::UTF8ToUTF16(std::string(choice)));ReplacePickerLabels(shell->site_policy_,choices);},weak));
         BindFormCommand(PreferenceAction(row,{},text(site.save)),sidebar::FormCommand::PreferenceSite);break;
+      }
+      case Kind::AssistantBackends:
+        assistant_backends_list_=row->children().front()->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(assistant_backends_list_,true,gfx::Insets::TLBR(6,0,0,0),10);break;
+      case Kind::AssistantModels:{
+        auto* fields=row->children().front().get();
+        assistant_models_list_=fields->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(assistant_models_list_,true,gfx::Insets::TLBR(6,0,0,0),8);
+        auto* add=fields->AddChildView(std::make_unique<views::View>());
+        std::vector<std::u16string> labels;for(const auto* provider:kAssistantProviders)labels.push_back(AssistantProviderLabel(provider));
+        assistant_add_backend_=ChoicePicker(add,T(u"Backend nowego modelu"),labels);
+        assistant_add_model_=AddEditor(add);assistant_add_model_->SetPlaceholderText(T(u"ID modelu, np. haiku"));assistant_add_model_->GetViewAccessibility().SetName(T(u"ID nowego modelu"));assistant_add_model_->view()->SetPreferredSize(gfx::Size(200,36));
+        auto submit=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){
+          if(!shell||!shell->callbacks_.write_assistant)return;
+          const auto id=base::UTF16ToUTF8(base::TrimWhitespace(shell->assistant_add_model_->GetText(),base::TRIM_ALL));if(id.empty())return;
+          const size_t backend=std::min<size_t>(PickerIndex(shell->assistant_add_backend_).value_or(0),kAssistantProviders.size()-1);
+          shell->assistant_add_model_->SetText(u"");
+          shell->callbacks_.write_assistant.Run(base::DictValue().Set("command","add").Set("provider",kAssistantProviders[backend]).Set("id",id));
+        },weak);
+        assistant_add_model_->SetCallbacks({},base::BindRepeating([](base::RepeatingClosure submit,const ui::KeyEvent& event){
+          if(event.type()!=ui::EventType::kKeyPressed||event.key_code()!=ui::VKEY_RETURN)return false;submit.Run();return true;},submit));
+        assistant_add_button_=PreferenceAction(add,base::BindRepeating([](base::RepeatingClosure submit,const ui::Event&){submit.Run();},submit),T(u"Dodaj model"));
+        SetSidebarPanelLayout(add,false,gfx::Insets::TLBR(4,0,0,0),8,assistant_add_model_->view(),true);
+        break;
       }
       case Kind::SiteRules:
         site_rules_card_=row;site_rules_list_=row->children().front()->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(site_rules_list_,true,gfx::Insets(),8);break;
@@ -7726,6 +7850,88 @@ void WorkspaceShell::RefreshGeneralControls() {
     control->SetEnabled(it != values.end() && it->second.editable);
     if (it != values.end()) SyncPickerIndex(control,it->second.value < 0 ? std::nullopt : std::optional<size_t>(it->second.value));
   }
+  BuildAssistantPreferences();
+}
+void WorkspaceShell::RefreshAssistantPreferences() {
+  // Rows rebuild after the click that changed them has finished.
+  if(assistant_refresh_pending_)return;assistant_refresh_pending_=true;
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell){
+    if(!shell)return;shell->assistant_refresh_pending_=false;shell->RefreshGeneralControls();
+  },weak_factory_.GetWeakPtr()));
+}
+void WorkspaceShell::BuildAssistantPreferences() {
+  if(!assistant_backends_list_||!assistant_models_list_||!callbacks_.read_assistant)return;
+  auto data=callbacks_.read_assistant.Run();
+  const auto snapshot=base::WriteJson(data).value_or("");
+  if(snapshot==assistant_preferences_snapshot_)return;
+  assistant_preferences_snapshot_=snapshot;
+  auto weak=weak_factory_.GetWeakPtr();
+  const bool enabled=data.FindBool("enabled").value_or(false);
+  auto text=[](const base::DictValue& d,const char* key){const auto* v=d.FindString(key);return v?base::UTF8ToUTF16(*v):std::u16string();};
+  auto write=[](base::WeakPtr<WorkspaceShell> shell,base::DictValue command){if(shell&&shell->callbacks_.write_assistant)shell->callbacks_.write_assistant.Run(std::move(command));};
+  assistant_backends_list_->RemoveAllChildViews();
+  const auto* backends=data.FindList("backends");const auto* status=data.FindList("status");
+  for(size_t i=0;backends&&i<backends->size();++i){
+    const auto& backend=(*backends)[i].GetDict();
+    auto* line=assistant_backends_list_->AddChildView(std::make_unique<views::View>());
+    auto* labels=line->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(labels,true,gfx::Insets(),2);
+    AddPreferenceCopy(labels,text(backend,"label"),kInk,0,static_cast<int>(gfx::Font::Weight::MEDIUM),false);
+    std::u16string detail=T(u"Sprawdzam…");
+    if(status&&i<status->size()){const auto& s=(*status)[i].GetDict();detail=text(s,"state")+u" · "+text(s,"detail");}
+    AddPreferenceCopy(labels,detail,kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
+    auto* toggle=PreferenceToggle(line,TF(u"Pokazuj {} w panelu",{text(backend,"label")}));
+    SetToggleOn(toggle,backend.FindBool("enabled").value_or(true));toggle->SetEnabled(enabled);
+    SetActionCallback(toggle,base::BindRepeating([](decltype(write) write,base::WeakPtr<WorkspaceShell> shell,std::string provider,views::View* toggle){
+      write(shell,base::DictValue().Set("command","backend").Set("provider",provider).Set("enabled",ToggleOn(toggle)));
+    },write,weak,*backend.FindString("provider"),base::Unretained(toggle)));
+    SetSidebarPanelLayout(line,false,gfx::Insets(),16,labels,true);
+  }
+  assistant_models_list_->RemoveAllChildViews();
+  const auto* default_model=data.FindString("default_model");
+  const auto* models=data.FindList("models");
+  {
+    // One choice of the default model, above the list.
+    auto* line=assistant_models_list_->AddChildView(std::make_unique<views::View>());
+    auto* label=AddPreferenceCopy(line,T(u"Model domyślny"),kInk,0,static_cast<int>(gfx::Font::Weight::MEDIUM),false);
+    std::vector<std::u16string> labels;std::vector<std::pair<std::string,std::string>> keys;size_t selected=0;
+    for(size_t i=0;models&&i<models->size();++i){
+      const auto& model=(*models)[i].GetDict();const std::string provider=*model.FindString("provider"),id=*model.FindString("id");
+      if(default_model&&*default_model==provider+"/"+id)selected=keys.size();
+      labels.push_back(base::UTF8ToUTF16(id)+u" · "+text(model,"label"));keys.emplace_back(provider,id);
+    }
+    auto* picker=ChoicePicker(line,T(u"Model domyślny"),labels);
+    SyncPickerIndex(picker,labels.empty()?std::nullopt:std::optional<size_t>(selected));picker->SetEnabled(enabled);
+    SetPickerCallback(picker,base::BindRepeating([](decltype(write) write,base::WeakPtr<WorkspaceShell> shell,std::vector<std::pair<std::string,std::string>> keys,views::View* picker){
+      const auto index=PickerIndex(picker);if(!index||*index>=keys.size())return;
+      write(shell,base::DictValue().Set("command","default").Set("provider",keys[*index].first).Set("id",keys[*index].second));
+    },write,weak,std::move(keys),base::Unretained(picker)));
+    SetSidebarPanelLayout(line,false,gfx::Insets::TLBR(0,0,4,0),12,label,true);
+  }
+  for(size_t i=0;models&&i<models->size();++i){
+    const auto& model=(*models)[i].GetDict();
+    const std::string provider=*model.FindString("provider"),id=*model.FindString("id");
+    const bool is_default=default_model&&*default_model==provider+"/"+id;
+    auto* line=assistant_models_list_->AddChildView(std::make_unique<views::View>());
+    auto* labels=line->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(labels,true,gfx::Insets(),2);
+    AddPreferenceCopy(labels,base::UTF8ToUTF16(id)+(is_default?u" · "+T(u"domyślny"):u""),kInk,0,static_cast<int>(gfx::Font::Weight::MEDIUM),false);
+    AddPreferenceCopy(labels,text(model,"label"),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),false);
+    auto command=[&](const char* name){return base::DictValue().Set("command",name).Set("provider",provider).Set("id",id);};
+    auto* toggle=PreferenceToggle(line,TF(u"Pokazuj {} w panelu",{base::UTF8ToUTF16(id)}));
+    SetToggleOn(toggle,model.FindBool("visible").value_or(true));toggle->SetEnabled(enabled&&!is_default);
+    SetActionCallback(toggle,base::BindRepeating([](decltype(write) write,base::WeakPtr<WorkspaceShell> shell,const base::DictValue& c,views::View* toggle){
+      write(shell,c.Clone().Set("visible",ToggleOn(toggle)));
+    },write,weak,command("visible"),base::Unretained(toggle)));
+    auto* remove=PreferenceAction(line,base::BindRepeating([](decltype(write) write,base::WeakPtr<WorkspaceShell> shell,const base::DictValue& c,const ui::Event&){write(shell,c.Clone());},write,weak,command("remove")),T(u"Usuń"));
+    remove->GetViewAccessibility().SetName(TF(u"Usuń model {}",{base::UTF8ToUTF16(id)}));remove->SetEnabled(enabled&&models->size()>1);
+    SetSidebarPanelLayout(line,false,gfx::Insets(),12,labels,true);
+  }
+  assistant_add_backend_->SetEnabled(enabled);assistant_add_model_->view()->SetEnabled(enabled);assistant_add_button_->SetEnabled(enabled);
+  RefreshChoiceViewports(assistant_backends_list_->parent());RefreshChoiceViewports(assistant_models_list_->parent());
+  if(general_widget_)general_widget_->GetContentsView()->InvalidateLayout();
+}
+void WorkspaceShell::OpenAssistantSettings() {
+  OpenGeneralSettings();
+  if (general_widget_ && general_widget_->IsVisible()) SelectPreferenceCategory(10);
 }
 void WorkspaceShell::OpenPrivacySettings() {
   OpenGeneralSettings();
@@ -7748,6 +7954,7 @@ void WorkspaceShell::FilterPreferences() {
   rust::Vec<uint16_t> normalized;for(auto unit:query)normalized.push_back(unit);
   auto visible=preferences_form_->form->preference_filter(std::move(normalized),rust::Slice<const sidebar::PreferenceRow>(rows.data(),rows.size()));
   size_t cursor=0;for(size_t i=0;i<preference_sections_.size();++i){auto& section=preference_sections_[i];for(auto& row:section.rows)row.view->SetVisible(visible.rows[cursor++]);section.view->SetVisible(visible.sections[i]);SetPreferenceNavigationSelected(section.navigation,visible.navigation[i]);}
+  for(auto& group:preference_groups_)group.card->SetVisible(std::any_of(group.rows.begin(),group.rows.end(),[](const auto& row){return row->GetVisible();}));
   preferences_empty_->SetVisible(!visible.any);preferences_body_->InvalidateLayout();general_scroll_->ScrollTo(0);
 }
 void WorkspaceShell::SetBrowsingDataBusy(bool busy) {

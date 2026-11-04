@@ -3,22 +3,68 @@
 Open **Command Center → AI Assistant** (`Ctrl+K`, then type `>assistant`).
 The assistant opens on the right with a quiet welcome screen, draft suggestions
 and a composer anchored at the bottom. The pin icon reserves page space or uses
-an overlay. Closing the panel stops its current task. Once enabled for this
-window, the right edge opens it again. No assistant process or provider request
-starts until **Send**. Suggestions only fill a draft; they do not send it or grant
-browser access.
+an overlay. An unpinned panel hides 650 ms after the pointer leaves it; pinned
+panels stay visible. Open settings, an active resize, a focused nonempty draft
+and a running task keep it visible. Drag the grip on its left edge to resize it
+between 360 and 760 DIP; narrow windows constrain the effective width. The chosen
+width survives hiding and pin changes within the window.
+Closing the panel stops its current task; background tasks keep running. Once
+enabled for this window, the right edge opens it again. No assistant process or
+provider request starts until **Send**. Suggestions only fill a draft; they do not
+send it or grant browser access.
 
-The model chip opens backend/model settings and the session picker. The history
-icon opens the same session controls; the shield chip opens access grants.
-**New session** is the plus icon. Copy and clear actions live in the session
-controls. Closing Zitter discards conversations and in-memory caches.
+## Settings
 
-Choose a backend and enter its model ID before the first message in each session.
-**New session** creates an independent conversation. The session picker returns
-to previous conversations. Backend, model and access grants stay fixed within a
-session so old context cannot silently move to another provider or permission
-scope. Sessions belong to the profile in which they were created; changing
-profiles stops the current task. Create a new session for another profile.
+**Settings → AI Assistant** owns everything except the model choice:
+
+- **Turn on the assistant.** When it is off, the panel does not open at the window
+  edge, Command Center shows only “AI Assistant is turned off” (which opens this
+  page), no assistant process starts and background pages close. The other values
+  are kept.
+- **Backends.** Each backend shows its setup status (an API key in the
+  environment, the bundled Codex SDK, `claude` on PATH, the Ollama address) and a
+  switch that hides it from the panel. API keys are never typed into Zitter.
+- **Models in the panel.** Visible models make up the panel's model menu. The
+  default one starts every new session. Models can be added by backend and ID,
+  hidden or removed.
+- **Permissions for new sessions:** open and pinned tabs, page content and
+  controls, clicking and tab management, history, public web research.
+- **Safeguards:** confirm clicks on the visible tab, allow background work, and
+  confirm clicks in the background (a separate switch, with a warning when off).
+- **Parallel Deep research calls:** 2, 4, 8 or 12.
+
+Sessions copy the permission defaults when they start. Narrowing a permission or
+tightening a safeguard applies at once, also to running sessions: it stops every
+task and discards backend conversation contexts while keeping the visible
+transcripts. Wider access applies from a new session, so old context never
+silently moves to a broader scope. Data already sent to a provider cannot be
+recalled.
+
+## The panel
+
+The only choice in the panel is the model: the chip next to **Send** opens a
+searchable menu grouped by backend. The model stays fixed within a session; picking
+another one after the first message starts a new session and keeps the current one
+in the session list.
+
+The header holds **Sessions** (history icon: recent conversations, **New session**,
+**Copy conversation**, **Clear all conversations**), **This session's access**
+(shield: switches for this session's permissions and click confirmation, **Revoke
+all access** and a link to Settings; before the first message any switch can
+change, afterwards only narrowing works and it stops the task), **New session**,
+pin and close. A click outside an open menu closes it. Revoking stops every task and terminates the
+assistant runtime. Closing Zitter discards conversations and in-memory caches.
+Sessions belong to the profile in which they were created; changing profiles stops
+their tasks.
+
+Type `@` to insert a page or a tool. Suggestions list open tabs (the current one
+first), pinned pages and the tools **Deep research** and **Background**, filtered
+by what follows the `@`. Arrow keys move, Enter or Tab inserts, Escape closes. The
+footer says what inserting the highlighted item shares. An inserted item becomes a
+chip above the field; its × removes it, and Backspace in an empty field removes the
+last one. The **Deep research** and **Background** buttons under the field insert
+and remove the same chips. Pages reach the model as `@current`, `@tab:<id>` and
+`@pin:<id>` references.
 
 ## Runtime setup
 
@@ -75,13 +121,29 @@ a secret. The assistant currently reads the main frame's rendered DOM; it does
 not inspect cross-origin frames, shadow roots, canvas contents or downloaded files.
 
 The assistant discovers permitted tabs automatically. References are optional.
-Type `@` or use **@ Tabs** to pick the current page, another open tab or a pinned page.
-References use `@current`, `@tab:<opaque-id>` and `@pin:<id>`. Opening a dormant
-pin requires browser-action permission, followed by listing its live tab.
+Opening a dormant pin requires browser-action permission, followed by listing its
+live tab.
 
-By default programmatic clicks require **Allow once** in the assistant panel.
-Disable **Confirm each page click** before the first message to let that session
-click autonomously. The model cannot change this choice or supply native consent.
+By default each click on the visible page needs consent: a small prompt appears
+beside the element (**Allow** with Enter, **Skip** with Escape, or **Until the task
+ends**). Skipping tells the model the user declined that click. The model cannot
+change this choice or supply native consent.
+
+## Background work
+
+With **Background** (the chip, `@`, or Alt+Enter to send), the assistant works in an
+invisible tab of the same profile, so it has the same cookies and logins without
+clicking in the user's view. In that mode `@current`, `navigate` and `open_tab` use
+the hidden page, and the user's visible tabs stay read-only. While the assistant
+controls the visible page, the status capsule offers **Finish in the background**:
+the tab itself, with its page state, moves out of view and the previous tab returns.
+
+Background tasks appear in the panel under **Background**, each with its status,
+**Take over the tab** (which stops the task and shows the page as a normal tab) and
+stop or close. When **Confirm clicks in the background** is on, a click waits in the
+panel as a card with the element's label, **Allow**, **Skip** and **Take over the
+tab**; the right-edge opener turns amber while a card waits. Background work needs
+the click permission and **Allow background work** in Settings.
 Text entry is limited to non-sensitive
 `input`/`textarea` controls; uploads and credential entry remain user actions.
 Navigation and click completion indicate dispatch, not page-load completion.
@@ -98,7 +160,7 @@ workspace animations uses a static indicator without the animation timer.
 ## Search and deep research
 
 All backends share `web_search` and `web_read`. Search uses DuckDuckGo's public
-HTML endpoint by default; set `BRAVE_SEARCH_API_KEY` to use Brave Search instead.
+HTML endpoint, which needs no API key or account.
 Search availability, bot challenges and incomplete page content can limit results.
 Research uses a separate network client without browser cookies or authentication.
 It accepts public HTTPS destinations only, checks DNS at connection time, checks
@@ -122,8 +184,11 @@ history or browser operations. Caches are never written to the browsing profile.
 
 Run `node --test chromium/assistant/*.test.mjs` for provider response,
 orchestration, access, network and RPC contracts. The targeted Chromium tests are
-`ZitterProfilesBrowserTest.AssistantPermissionsAndPageRedaction` and
-`ZitterProfilesBrowserTest.AssistantPanelIsOptionalAndPinnable`.
+`ZitterProfilesBrowserTest.AssistantPermissionsAndPageRedaction`,
+`ZitterProfilesBrowserTest.AssistantPanelIsOptionalAndPinnable`,
+`ZitterProfilesBrowserTest.AssistantSwitchRemovesPanelAndCommand`,
+`ZitterProfilesBrowserTest.AssistantMentionsInsertRemovableChips` and
+`ZitterProfilesBrowserTest.AssistantBackgroundPageSharesProfileAndCanBeTakenOver`.
 `ZitterProfilesBrowserTest.AssistantRuntimeBrowserToolRoundTrip` exercises the
 actual Node loopback service, Ollama HTTP transport and native tab tool against
 a local model fixture; it requires Node on PATH.

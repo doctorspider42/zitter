@@ -3,6 +3,7 @@
 #define ZITTER_CHROMIUM_PROTOTYPE_SIDEBAR_METAL_H_
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -22,6 +23,10 @@ namespace zitter::prototype {
 // Shared control scene with native event/focus/AX adapters. All managed text,
 // actions and progress share one transparent canvas; browser services stay native.
 bool SceneActionPressedForTesting(views::View* view);
+std::optional<size_t> SceneSelectIndex(views::View* view);
+void SetSceneSelectIndex(views::View* view, size_t index);
+void SetSceneSelectLabels(views::View* view, const std::vector<std::u16string>& labels);
+void SetSceneSelectCallback(views::View* view, base::RepeatingClosure callback);
 
 class EditorControl;
 class PanelScene {

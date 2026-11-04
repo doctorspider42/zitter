@@ -83,6 +83,22 @@ test('deep research plans angles, denies native tools to workers and synthesizes
   assert.equal(reads, 2); assert.equal(synthesis, true); assert.match(result.answer, /Report/); assert.deepEqual(result.actions, []);
 });
 
+test('background turns tell the model and research honors the session concurrency setting', async () => {
+  let first, active = 0, maximum = 0;
+  const engine = new Engine({ providerFactory: () => ({ async complete(system, messages) {
+    const text = messages.at(-1).content;
+    first ??= messages[0].content;
+    if (text.startsWith('Plan deep research')) return { answer: '', actions: ['a', 'b', 'c', 'd'].map(query => action('web_search', { query })) };
+    if (text.includes('untrusted_research_reports')) return done('Report');
+    return done('Angle');
+  } }), web: { async search() {
+    active++; maximum = Math.max(maximum, active); await new Promise(r => setTimeout(r, 5)); active--; return [];
+  }, async read() { return {}; } } });
+  await engine.turn(request({ research: true, background: true, concurrency: 2 }), new AbortController().signal);
+  assert.equal(JSON.parse(first).background, true);
+  assert.equal(maximum, 2);
+});
+
 test('research blocks private, credentialed, non-HTTPS and mapped IPv6 URLs', async () => {
   for (const a of ['127.0.0.1', '10.0.0.1', '172.31.0.2', '192.168.1.1', '169.254.169.254', '100.64.0.1', '::1', '::ffff:127.0.0.1', 'fc00::1', '2002:7f00:1::'])
     assert.equal(publicAddress(a), false, a);

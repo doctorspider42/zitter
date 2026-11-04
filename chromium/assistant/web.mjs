@@ -53,8 +53,8 @@ export function extractLinks(html, base) {
 }
 
 export class Web {
-  constructor({ fetcher = fetch, ttl = 300000, limit = 128 } = {}) {
-    this.fetcher = fetcher; this.ttl = ttl; this.limit = limit; this.cache = new Map();
+  constructor({ ttl = 300000, limit = 128 } = {}) {
+    this.ttl = ttl; this.limit = limit; this.cache = new Map();
   }
   async cached(key, work, signal) {
     const old = this.cache.get(key);
@@ -106,15 +106,7 @@ export class Web {
   async search(query, signal) {
     if (typeof query !== 'string' || !query.trim() || query.length > 600) throw new Error('Invalid search query');
     return this.cached(`search:${query}`, async () => {
-      // Brave is optional; DuckDuckGo's public HTML endpoint works without a key.
-      if (process.env.BRAVE_SEARCH_API_KEY) {
-        const response = await this.fetcher(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=10`, {
-          headers: { 'X-Subscription-Token': process.env.BRAVE_SEARCH_API_KEY }, signal,
-        });
-        if (!response.ok) throw new Error(`Search failed (${response.status})`);
-        const data = await response.json();
-        return (data.web?.results ?? []).slice(0, 10).map(r => ({ title: r.title, url: r.url, snippet: plain(r.description ?? '') }));
-      }
+      // DuckDuckGo's public HTML endpoint works without a key or account.
       const result = await this.read(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, signal);
       // Fetch the HTML separately only through the same guarded reader, which retains links below.
       const results = result.links.filter(link => {

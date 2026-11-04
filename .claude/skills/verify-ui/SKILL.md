@@ -101,7 +101,9 @@ The loop is the same; the tools differ. `ui.py` runs `ui_win.py` on Windows.
    python .claude/skills/verify-ui/scripts/ui.py launch --open-panel app-menu
    python .claude/skills/verify-ui/scripts/ui.py shot build/screens/app-menu.png --as-is
    ```
-   `launch` starts `zitter.exe` with the seeded profile `build/win-ui-profile`. The
+   `launch` starts `zitter.exe` with the seeded profile `build/win-ui-profile`.
+   `ZITTER_UI_OUT=out/ZitterAssistant` picks another build directory than
+   `out/ZitterWin`; `--open-panel assistant-settings` opens Settings → AI Assistant. The
    sidebar, palette and panels are translucent windows that PrintWindow can't
    capture, so `shot` brings Zitter forward and copies that window's area of the
    screen. Ask the user before taking over their screen, and don't capture while

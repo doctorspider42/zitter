@@ -681,6 +681,8 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   callbacks.system_settings = base::BindRepeating(&WorkspaceWindow::OpenSystemSettings, base::Unretained(this));
   callbacks.read_preferences = base::BindRepeating(&WorkspaceWindow::ReadPreferences, base::Unretained(this));
   callbacks.write_preference = base::BindRepeating(&WorkspaceWindow::WritePreference, base::Unretained(this));
+  callbacks.read_assistant = base::BindRepeating(&WorkspaceWindow::AssistantSettingsForShell, base::Unretained(this));
+  callbacks.write_assistant = base::BindRepeating(&WorkspaceWindow::WriteAssistantSettings, base::Unretained(this));
   callbacks.operation_pending = base::BindRepeating(&WorkspaceWindow::lifecycle_pending, base::Unretained(this));
   callbacks.timeline = base::BindRepeating([](WorkspaceWindow* window) { return &window->timeline(); }, base::Unretained(this));
   callbacks.timeline_now = base::BindRepeating(&WorkspaceWindow::Now, base::Unretained(this));
@@ -946,7 +948,7 @@ bool WorkspaceWindow::Select(std::string_view id) {
   const bool changed = previous != id;
   const bool selected = controller_.Activate(id);
   if (selected) {
-    if (assistant_ && previous_assistant_profile != AssistantProfileId()) assistant_->Stop();
+    if (assistant_ && previous_assistant_profile != AssistantProfileId()) assistant_->StopAll();
     if (changed) ClosePeek();
     shell_->CloseOverlays(true);
     UpdateShell();
@@ -1183,6 +1185,23 @@ BrowserPreferences WorkspaceWindow::ReadPreferences() const {
   if (!profile) return result;
   result["image_link_previews"] = {image_link_previews_, !configuration_invalid_};
   result["shift_click_peek"] = {shift_click_peek_, !configuration_invalid_};
+  {
+    // Assistant rows depend on the master switch and on the click permission.
+    const auto& a = assistant_settings_;
+    const bool on = !configuration_invalid_ && a.enabled;
+    result["assistant_enabled"] = {a.enabled, !configuration_invalid_};
+    result["assistant_tabs"] = {a.defaults.tabs, on};
+    result["assistant_pages"] = {a.defaults.pages, on};
+    result["assistant_actions"] = {a.defaults.actions, on};
+    result["assistant_history"] = {a.defaults.history, on};
+    result["assistant_web"] = {a.defaults.web, on};
+    result["assistant_confirm_clicks"] = {a.defaults.confirm_clicks, on && a.defaults.actions};
+    result["assistant_background"] = {a.background, on && a.defaults.actions};
+    result["assistant_confirm_background"] = {a.confirm_background, on && a.defaults.actions && a.background};
+    constexpr auto kConcurrency = std::to_array({2, 4, 8, 12});
+    const auto found = std::ranges::find(kConcurrency, a.concurrency);
+    result["assistant_concurrency"] = {found == kConcurrency.end() ? 3 : static_cast<int>(found - kConcurrency.begin()), on};
+  }
   auto* service = profile->GetPrefs();
   auto read = [&](const char* key, const char* pref, int value) {
     const auto* entry = service->FindPreference(pref);
@@ -1248,6 +1267,29 @@ bool WorkspaceWindow::WritePreference(std::string key, int value) {
   auto current = ReadPreferences();
   auto it = current.find(key);
   if (it == current.end() || !it->second.editable) return false;
+  if (key.starts_with("assistant_")) {
+    auto settings = assistant_settings_;
+    if (key == "assistant_concurrency") {
+      constexpr auto kConcurrency = std::to_array({2, 4, 8, 12});
+      if (value < 0 || value >= static_cast<int>(kConcurrency.size())) return false;
+      settings.concurrency = kConcurrency[static_cast<size_t>(value)];
+    } else {
+      if (value != 0 && value != 1) return false;
+      const bool on = value != 0;
+      if (key == "assistant_enabled") settings.enabled = on;
+      else if (key == "assistant_tabs") settings.defaults.tabs = on;
+      else if (key == "assistant_pages") settings.defaults.pages = on;
+      else if (key == "assistant_actions") settings.defaults.actions = on;
+      else if (key == "assistant_history") settings.defaults.history = on;
+      else if (key == "assistant_web") settings.defaults.web = on;
+      else if (key == "assistant_confirm_clicks") settings.defaults.confirm_clicks = on;
+      else if (key == "assistant_background") settings.background = on;
+      else if (key == "assistant_confirm_background") settings.confirm_background = on;
+      else return false;
+    }
+    SetAssistantSettings(std::move(settings));
+    return true;
+  }
   if (key == "image_link_previews" || key == "shift_click_peek") {
     if (value != 0 && value != 1) return false;
     if (key == "image_link_previews") {
@@ -2186,7 +2228,7 @@ bool WorkspaceWindow::AcceleratorPressed(const ui::Accelerator& accelerator) {
   if (accelerator.key_state() != ui::Accelerator::KeyState::PRESSED) return false;
   if (shell_->CaptureShortcut(accelerator)) return true;
   if (accelerator.modifiers() == 0 && accelerator.key_code() == ui::VKEY_ESCAPE) {
-    if (assistant_ && assistant_->busy()) { assistant_->Stop(); return true; }
+    if (assistant_ && assistant_->HandleEscape()) return true;
     if (fullscreen_page_) { fullscreen_page_->ExitFullscreen(true); return true; }
     if (!shell_->CloseOverlays()) {
       if (!peek_view_) return false;
@@ -2210,6 +2252,7 @@ bool WorkspaceWindow::AcceleratorPressed(const ui::Accelerator& accelerator) {
 
 bool WorkspaceWindow::RunShortcut(std::string id) {
   if (id == "assistant") { ShowAssistant(); return true; }
+  if (id == "assistant_hover") { ShowAssistant(true); return true; }
   if (id.empty()) return false;
   if (id == "exit_fullscreen") {
     if (fullscreen_page_) fullscreen_page_->ExitFullscreen(true);
@@ -2310,8 +2353,8 @@ content::KeyboardEventProcessingResult WorkspaceWindow::PreHandlePageKeyEvent(
   suppress_shortcut_char_ = false;
   if (event.skip_if_unhandled || (source != contents(active_id()) && source != peek_contents())) return Result::NOT_HANDLED;
   const bool escape_peek = key == ui::VKEY_ESCAPE && accelerator.modifiers() == 0 && source == peek_contents() && !fullscreen_page_;
-  if (key == ui::VKEY_ESCAPE && accelerator.modifiers() == 0 && assistant_ && assistant_->busy()) {
-    assistant_->Stop(); consumed_keys_.insert(key); suppress_shortcut_char_ = true; return Result::HANDLED;
+  if (key == ui::VKEY_ESCAPE && accelerator.modifiers() == 0 && assistant_ && assistant_->HandleEscape()) {
+    consumed_keys_.insert(key); suppress_shortcut_char_ = true; return Result::HANDLED;
   }
   const bool escape_fullscreen = key == ui::VKEY_ESCAPE && accelerator.modifiers() == 0 && fullscreen_page_;
   auto action = shell_->ShortcutFor(accelerator);
@@ -2460,6 +2503,7 @@ void WorkspaceWindow::SaveConfiguration(base::OnceCallback<void(bool)> done) {
   base::DictValue dict;
   dict.Set("image_link_previews", image_link_previews_);
   dict.Set("shift_click_peek", shift_click_peek_);
+  dict.Set("assistant", assistant_settings_.ToValue());
   const auto* replaced_starter = import_replaces_starter_ ? model_.Find(starter_workspace_id_) : nullptr;
   base::ListValue profile_list;
   for (const auto& entry : profiles_) {
@@ -2774,6 +2818,8 @@ void WorkspaceWindow::RestoreConfiguration(std::string json) {
     pins_ = std::move(restored_pins);
     image_link_previews_ = dict->FindBool("image_link_previews").value_or(false);
     shift_click_peek_ = dict->FindBool("shift_click_peek").value_or(true);
+    assistant_settings_ = AssistantSettings::FromValue(dict->FindDict("assistant"));
+    shell_->SetAssistantAllowed(assistant_settings_.enabled);
     onboarding_complete_ = dict->FindBool("onboarding_complete").value_or(true);
     if (const auto* starter = dict->FindString("starter_workspace"))
       if (!onboarding_complete_ && model_.Find(*starter)) starter_workspace_id_ = *starter;
