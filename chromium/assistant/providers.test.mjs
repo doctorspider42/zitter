@@ -127,3 +127,59 @@ test('screenshots reach every provider as images, never as transcript text', asy
     } });
   assert.equal((await claude.complete('Policy', messages, signal)).answer, 'Ready');
 });
+
+test('Claude streams the answer as the model writes it', async () => {
+  const { partialAnswer } = await import('./providers.mjs');
+  assert.equal(partialAnswer('{"answer": "Ko'), 'Ko');
+  assert.equal(partialAnswer('{"answer":"a\nb \\"c\\" \u0105'), 'a\nb "c" ą');
+  assert.equal(partialAnswer('{"answer":"x' + '\\'), 'x');
+  assert.equal(partialAnswer('{"actions":[]'), '');
+  const seen = [];
+  const provider = new Provider({ provider: 'claude', model: 'sonnet' }, { environment: {},
+    runCLI: async (command, args, input, passedSignal, cwd, onData) => {
+      assert.ok(args.includes('--include-partial-messages'));
+      assert.equal(args[args.indexOf('--output-format') + 1], 'stream-json');
+      const event = partial_json => JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json } } });
+      const lines = [event('{"answer": "Czy'), event('tam?", "actions": []}'), JSON.stringify({ type: 'result', structured_output: response })];
+      onData(lines[0] + '\n' + lines[1].slice(0, 20)); onData(lines[1].slice(20) + '\n' + lines[2] + '\n');
+      return lines.join('\n') + '\n';
+    } });
+  assert.equal((await provider.complete('Policy', [], signal, text => seen.push(text))).answer, 'Ready');
+  assert.deepEqual(seen, ['Czy', 'Czytam?']);
+});
+
+test('OpenAI, Ollama and Codex stream the answer too', async () => {
+  const body = parts => new ReadableStream({ start(c) { for (const p of parts) c.enqueue(new TextEncoder().encode(p)); c.close(); } });
+  const full = JSON.stringify(response);
+  const half = full.slice(0, full.indexOf('Ready') + 3);
+  const seen = [];
+  const openai = new Provider({ provider: 'openai', model: 'm' }, { environment: { OPENAI_API_KEY: 'test-only' },
+    fetcher: async (url, init) => {
+      assert.equal(JSON.parse(init.body).stream, true);
+      const event = value => `data: ${JSON.stringify(value)}\n\n`;
+      return { ok: true, body: body([event({ type: 'response.output_text.delta', delta: half }),
+        event({ type: 'response.output_text.delta', delta: full.slice(half.length) }).slice(0, 10),
+        event({ type: 'response.output_text.delta', delta: full.slice(half.length) }).slice(10)]) };
+    } });
+  assert.equal((await openai.complete('Policy', [], signal, text => seen.push(text))).answer, 'Ready');
+  const ollama = new Provider({ provider: 'ollama', model: 'm' }, { environment: {},
+    fetcher: async (url, init) => {
+      assert.equal(JSON.parse(init.body).stream, true);
+      return { ok: true, body: body([JSON.stringify({ message: { content: half } }) + '\n',
+        JSON.stringify({ message: { content: full.slice(half.length) }, done: true }) + '\n']) };
+    } });
+  assert.equal((await ollama.complete('Policy', [], signal, text => seen.push(text))).answer, 'Ready');
+  class StreamingCodex {
+    startThread() {
+      return { runStreamed: async () => ({ events: (async function* () {
+        yield { type: 'item.updated', item: { type: 'agent_message', text: half } };
+        yield { type: 'item.completed', item: { type: 'agent_message', text: full } };
+        yield { type: 'turn.completed', usage: null };
+      })() }) };
+    }
+  }
+  const codex = new Provider({ provider: 'codex', model: 'm' }, { environment: { CODEX_HOME: 'nonexistent-test-home' },
+    sdkLoader: async () => ({ Codex: StreamingCodex }) });
+  assert.equal((await codex.complete('Policy', [], signal, text => seen.push(text))).answer, 'Ready');
+  assert.deepEqual(seen, ['Rea', 'Ready', 'Rea', 'Ready', 'Rea', 'Ready']);
+});

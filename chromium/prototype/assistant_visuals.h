@@ -28,6 +28,9 @@ std::unique_ptr<views::View> CreateAssistantWelcome();
 // `code` and links, bullet and numbered lists, quotes, code blocks, tables and
 // rules. Links call `open`; nothing else in the text can act.
 std::unique_ptr<views::View> CreateAssistantMarkdown(std::u16string text, base::RepeatingCallback<void(const GURL&)> open);
+// A step of the conversation: 0 running (a spinner, the text breathing),
+// 1 done (a check), 2 failed (a warning), 3 waiting for the user (a pulsing dot).
+std::unique_ptr<views::View> CreateAssistantActivity(std::u16string text, int state);
 // The user's own message: selectable plain text.
 std::unique_ptr<views::View> CreateAssistantPlainText(std::u16string text);
 // The composer field: multiline, unframed, growing up to six lines, then scrolling.

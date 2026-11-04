@@ -81,6 +81,23 @@
     return best;
   };
   if (args.tool === 'editor_point') return editorPoint() ?? {};
+  if (args.tool === 'focus_editor') {
+    // Natively requested when a click did not give an editor the keyboard: an
+    // editable frame document (Google Docs reads keys there), else the largest editor.
+    let best = null, area = -1;
+    for (const root of roots()) {
+      if (root.nodeType === 9 && root !== document && (root.designMode === 'on' || root.body?.isContentEditable)) { best = root.body; break; }
+      for (const e of root.querySelectorAll('[contenteditable=""],[contenteditable="true"],[role="textbox"]')) {
+        if (e.closest('[data-private],[data-sensitive]') || !e.isContentEditable) continue;
+        const r = e.getBoundingClientRect(), size = r.width * r.height + (e.ownerDocument !== document ? 1e9 : 0);
+        if (size > area) { area = size; best = e; }
+      }
+    }
+    if (!best) return { ok: false };
+    best.ownerDocument.defaultView.frameElement?.focus();
+    best.focus();
+    return { ok: true };
+  }
   const interactive = 'a[href],button,input,textarea,select,summary,label[for],[contenteditable=""],[contenteditable="true"],' +
     '[role="button"],[role="link"],[role="menuitem"],[role="menuitemcheckbox"],[role="menuitemradio"],[role="tab"],' +
     '[role="checkbox"],[role="radio"],[role="switch"],[role="option"],[role="combobox"],[role="treeitem"],[role="textbox"],' +

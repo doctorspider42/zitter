@@ -3507,22 +3507,25 @@ class AssistantActivityView final : public views::View {
   }
   void OnPaint(gfx::Canvas* canvas) override {
     if(width()<24||height()<24)return;
-    const double phase=animate_?std::fmod(base::TimeTicks::Now().since_origin().InSecondsF(),5.4)/5.4:0.25;
+    const double seconds=base::TimeTicks::Now().since_origin().InSecondsF();
+    const double phase=animate_?std::fmod(seconds,4.2)/4.2:0.25;
+    // A slow breath over the whole frame, on top of the turning light.
+    const float breath=animate_?.82f+.18f*static_cast<float>(std::sin(seconds*2.4)):1.f;
     const float cx=width()/2.f,cy=height()/2.f;
     const auto rotation=SkMatrix::RotateDeg(phase*360.f,SkPoint::Make(cx,cy));
     const std::array<SkColor4f,7> spectrum={
-      SkColor4f::FromColor(0x18a78bfa),SkColor4f::FromColor(0x25a78bfa),
-      SkColor4f::FromColor(0xc8b59aff),SkColor4f::FromColor(0xffeee8ff),
-      SkColor4f::FromColor(0xc895e5df),SkColor4f::FromColor(0x227a9dff),SkColor4f::FromColor(0x18a78bfa)};
+      SkColor4f::FromColor(0xffa78bfa),SkColor4f::FromColor(0xff7c5cff),
+      SkColor4f::FromColor(0xffc4a8ff),SkColor4f::FromColor(0xffffffff),
+      SkColor4f::FromColor(0xff5ff0dc),SkColor4f::FromColor(0xff6d8bff),SkColor4f::FromColor(0xffa78bfa)};
     const std::array<SkScalar,7> stops={0,.38f,.48f,.51f,.56f,.70f,1};
     const auto shader=cc::PaintShader::MakeSweepGradient(cx,cy,spectrum.data(),stops.data(),spectrum.size(),SkTileMode::kClamp,0,360,{},0,&rotation);
     // Four nested strokes produce a soft inward aurora with a sharp light core.
     // Geometry stays inside browser chrome, never over the page's input layer.
     for(int pass=0;pass<4;++pass){
-      constexpr std::array<float,4> widths={38,20,8,1.5f};
-      constexpr std::array<float,4> opacity={.10f,.17f,.35f,.95f};
+      constexpr std::array<float,4> widths={38,20,8,2.5f};
+      constexpr std::array<float,4> opacity={.30f,.48f,.85f,1.f};
       cc::PaintFlags glow;glow.setAntiAlias(true);glow.setStyle(cc::PaintFlags::kStroke_Style);
-      glow.setStrokeWidth(widths[pass]);glow.setShader(shader);glow.setAlphaf(opacity[pass]);
+      glow.setStrokeWidth(widths[pass]);glow.setShader(shader);glow.setAlphaf(opacity[pass]*breath);
       gfx::RectF frame(GetLocalBounds());frame.Inset(widths[pass]/2.f+.5f);
       canvas->DrawRoundRect(frame,std::max(4.f,18.f-widths[pass]/3.f),glow);
     }
@@ -3892,7 +3895,8 @@ void WorkspaceShell::SetAssistantActivity(bool active) {
   if (!root_) return;
   auto* root = static_cast<ShellRoot*>(root_.get());
   if (!root->assistant_activity && active) {
-    root->assistant_activity = root->AddChildView(std::make_unique<AssistantActivityView>(workspace_animations_));
+    // Page control is a state the user must notice: it moves unless the system asks for reduced motion.
+    root->assistant_activity = root->AddChildView(std::make_unique<AssistantActivityView>(!gfx::Animation::PrefersReducedMotion()));
     root->ReorderChildView(root->assistant_activity, root->GetIndexOf(root->content).value() + 1);
   }
   if (root->assistant_activity) { root->assistant_activity->SetActive(active); root->assistant_activity->SetPill(!root->assistant_capsule); }

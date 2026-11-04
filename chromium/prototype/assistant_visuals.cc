@@ -27,6 +27,8 @@
 #include "ui/views/view_utils.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/resize_area.h"
+#include "third_party/skia/include/core/SkPathBuilder.h"
+#include "ui/gfx/animation/animation.h"
 #include "ui/gfx/render_text.h"
 #include "ui/gfx/geometry/point_conversions.h"
 #include "ui/display/screen.h"
@@ -343,6 +345,51 @@ class MenuRow final : public views::Button {
   AssistantRow row_;bool active_=false;
 };
 BEGIN_METADATA(MenuRow)
+END_METADATA
+class Activity final : public views::View {
+  METADATA_HEADER(Activity,views::View)
+ public:
+  Activity(std::u16string text,int state):text_(std::move(text)),state_(state){
+    GetViewAccessibility().SetRole(state_==0||state_==3?ax::mojom::Role::kStatus:ax::mojom::Role::kStaticText);GetViewAccessibility().SetName(text_);
+  }
+  int HeightFor(int w) const {int tw=std::max(1,w-22),th=0;gfx::Canvas::SizeStringInt(text_,Type(12),&tw,&th,16,gfx::Canvas::MULTI_LINE);return std::max(18,th+2);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& b) const override {const int w=b.width().is_bounded()?b.width().value():280;return {w,HeightFor(w)};}
+  void AddedToWidget() override {
+    // Motion follows the system's reduced-motion setting, not workspace animations.
+    if((state_==0||state_==3)&&!gfx::Animation::PrefersReducedMotion())
+      timer_.Start(FROM_HERE,base::Milliseconds(33),base::BindRepeating(&Activity::SchedulePaint,base::Unretained(this)));
+  }
+  void RemovedFromWidget() override {timer_.Stop();}
+  void OnPaint(gfx::Canvas* canvas) override {
+    const auto c=Theme(this);
+    const double t=timer_.IsRunning()?base::TimeTicks::Now().since_origin().InSecondsF():0.25;
+    const gfx::PointF center(8,9);
+    SkColor ink=c.muted;
+    if(state_==0){
+      // A three-quarter arc turning once a second, over a faint track.
+      cc::PaintFlags track;track.setAntiAlias(true);track.setStyle(cc::PaintFlags::kStroke_Style);track.setStrokeWidth(2);
+      track.setColor(SkColorSetA(c.accent,50));canvas->DrawCircle(center,6,track);
+      SkPathBuilder arc;arc.addArc(SkRect::MakeXYWH(2,3,12,12),std::fmod(t*360.0,360.0),250);
+      cc::PaintFlags head=track;head.setColor(c.accent);head.setStrokeCap(cc::PaintFlags::kRound_Cap);canvas->DrawPath(arc.detach(),head);
+      const float breathe=.72f+.28f*std::sin(t*4.2);ink=SkColorSetA(c.ink,static_cast<U8CPU>(255*breathe));
+    }else if(state_==1){
+      canvas->Save();canvas->Translate(gfx::Vector2d(1,2));canvas->Scale(.875f,.875f);Glyph(canvas,AssistantGlyph::kCheck,0,0,SkColorSetA(c.ok,200));canvas->Restore();
+    }else if(state_==2){
+      cc::PaintFlags dot;dot.setAntiAlias(true);dot.setColor(c.danger);canvas->DrawCircle(center,6.5f,dot);
+      canvas->DrawStringRectWithFlags(u"!",Type(10,700),c.on_accent==SK_ColorWHITE?c.bg:SK_ColorWHITE,gfx::Rect(2,2,12,14),gfx::Canvas::TEXT_ALIGN_CENTER);
+      ink=c.danger;
+    }else{
+      const float pulse=.5f+.5f*std::sin(t*5);
+      cc::PaintFlags halo;halo.setAntiAlias(true);halo.setColor(SkColorSetA(c.warn,static_cast<U8CPU>(60*pulse)));canvas->DrawCircle(center,7,halo);
+      cc::PaintFlags dot;dot.setAntiAlias(true);dot.setColor(c.warn);canvas->DrawCircle(center,3.5f,dot);
+      ink=c.ink;
+    }
+    canvas->DrawStringRectWithFlags(text_,Type(12,state_==0||state_==3?500:400),ink,gfx::Rect(22,1,std::max(0,width()-22),height()-1),gfx::Canvas::MULTI_LINE|gfx::Canvas::TEXT_ALIGN_LEFT);
+  }
+ private:
+  std::u16string text_;int state_;base::RepeatingTimer timer_;
+};
+BEGIN_METADATA(Activity)
 END_METADATA
 class Note final : public views::View {
   METADATA_HEADER(Note,views::View)
@@ -826,6 +873,7 @@ std::unique_ptr<views::View> CreateAssistantPlainText(std::u16string text){
 std::unique_ptr<views::View> CreateAssistantEyebrow(std::u16string text,std::u16string trailing){return std::make_unique<Eyebrow>(std::move(text),std::move(trailing));}
 std::unique_ptr<views::View> CreateAssistantMenuRow(base::RepeatingClosure action,AssistantRow row){return std::make_unique<MenuRow>(std::move(action),std::move(row));}
 void SetAssistantMenuRowActive(views::View* row,bool active){if(auto* r=views::AsViewClass<MenuRow>(row))r->SetActive(active);}
+std::unique_ptr<views::View> CreateAssistantActivity(std::u16string text,int state){return std::make_unique<Activity>(std::move(text),state);}
 std::unique_ptr<views::View> CreateAssistantNote(std::u16string text,std::optional<AssistantGlyph> glyph,bool tinted){return std::make_unique<Note>(std::move(text),glyph,tinted);}
 std::unique_ptr<views::View> CreateAssistantFooter(std::u16string text,std::u16string keys){return std::make_unique<Footer>(std::move(text),std::move(keys));}
 void SetAssistantFooterText(views::View* footer,std::u16string text){if(auto* f=views::AsViewClass<Footer>(footer))f->SetText(std::move(text));}

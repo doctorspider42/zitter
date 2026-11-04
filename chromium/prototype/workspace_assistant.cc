@@ -207,7 +207,7 @@ struct KeyboardInput {
   ui::KeyboardCode code = ui::VKEY_UNKNOWN;
   int flags = 0;
   char16_t character = 0;
-  bool confirmed = false, clicked = false;
+  bool confirmed = false, clicked = false, focused = false;
 };
 void TypeAtFocus(base::WeakPtr<content::WebContents> page, KeyboardInput request, base::OnceCallback<void(base::Value)> done);
 // Where would typing land? Without an editable focus, insert_text first gives the
@@ -226,6 +226,20 @@ void CheckFocus(base::WeakPtr<content::WebContents> page, KeyboardInput request,
         if (info->FindBool("secret").value_or(true)) { std::move(done).Run(Error("The focused field is protected")); return; }
         const bool editable = info->FindBool("editable").value_or(false), rich = info->FindBool("rich").value_or(false);
         if (request.tool == "insert_text" && !editable) {
+          if (request.clicked && !request.focused) {
+            // Editors such as Google Docs read keys from a hidden editable frame:
+            // when the click did not reach it, focus it directly.
+            request.focused = true;
+            PageOp(page.get(), base::DictValue().Set("tool", "focus_editor"), base::BindOnce(
+                [](base::WeakPtr<content::WebContents> page, KeyboardInput request, base::OnceCallback<void(base::Value)> done, base::Value value) {
+                  if (!page || !value.is_dict() || !value.GetDict().FindBool("ok").value_or(false)) {
+                    std::move(done).Run(Error("No editor took the keyboard; click into the document area first")); return;
+                  }
+                  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE,
+                      base::BindOnce(&CheckFocus, page, std::move(request), std::move(done)), base::Milliseconds(100));
+                }, page, std::move(request), std::move(done)));
+            return;
+          }
           if (request.clicked) { std::move(done).Run(Error("No editor took the keyboard; click into the document area first")); return; }
           PageOp(page.get(), base::DictValue().Set("tool", "editor_point"), base::BindOnce(
               [](base::WeakPtr<content::WebContents> page, KeyboardInput request, base::OnceCallback<void(base::Value)> done, base::Value point) {

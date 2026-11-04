@@ -121,7 +121,9 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   void DeleteSessionForTesting(size_t index) { DeleteSession(sessions_[index]->key); }
   void SaveNowForTesting() { SaveSessions(); }
  private:
-  struct Message { int kind = 0; std::string text; std::vector<AssistantChip> chips; };
+  // kind: 0 answer, 1 the user's message, 2 a step (state 1) or an issue (state 2),
+  // 3 a note, 4 a hidden trace of a tool call (saved, for inspection).
+  struct Message { int kind = 0; std::string text; std::vector<AssistantChip> chips; int state = 0; };
   struct Session {
     Session();
     ~Session();
@@ -142,6 +144,9 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
     bool confirm_key = false;  // The pending consent is a key press, not a click.
     std::string target;  // The tab its page actions use.
     base::Time updated;
+    // Waiting for the model, with its answer so far; a browser tool is running.
+    bool thinking = false, tool_running = false;
+    std::string partial;
   };
   // Has the user written anything here yet?
   static bool Started(const Session& session);
@@ -180,6 +185,9 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   void ScheduleSave();
   void SaveSessions();
   void SessionsLoaded(std::optional<base::DictValue> saved);
+  // The answer being written, polled from the runtime while the model works.
+  void PollProgress();
+  void ShowPartial();
   void Send(bool background);
   void StartTurn(Session& session);
   void PollRuntime(std::string key, uint64_t epoch, int attempts);
@@ -233,6 +241,9 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   base::OneShotTimer save_timer_;
   // A second press of "delete all" within the open history confirms it.
   bool confirm_clear_ = false;
+  base::RepeatingTimer progress_timer_;
+  std::unique_ptr<network::SimpleURLLoader> progress_loader_;
+  raw_ptr<views::View> live_answer_ = nullptr;
   bool pinned_ = false;
   int port_ = 0;
   std::string token_;

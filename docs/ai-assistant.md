@@ -226,8 +226,23 @@ control. A compact bottom capsule shows activity and the Escape hint. The center
 of the page remains untinted. This indicator is browser chrome, outside the page renderer, and cannot
 be removed by website styles. It does not intercept page input. **Stop** or
 **Esc** interrupts the task and discards queued browser actions. The indicator
-ends on completion, failure, cancellation or a profile change. Disabling
-workspace animations uses a static indicator without the animation timer.
+ends on completion, failure, cancellation or a profile change. The frame and the
+conversation's spinners move unless the system asks for reduced motion; the
+workspace animations setting does not affect them.
+
+While the model works, the conversation shows what is happening: the step in
+progress turns (a spinner, its label breathing), finished steps get a check,
+failed ones a warning, and a pending consent a pulsing dot. The answer streams in
+as the model writes it, for every backend: Claude through the CLI's partial
+messages, OpenAI through Server-Sent Events, Ollama through its NDJSON stream and
+Codex through the SDK's item updates. The panel polls the runtime's `/progress`
+for it four times a second. While a consent prompt is waiting, an unpinned panel
+stays open, so reaching the prompt does not slide the panel away.
+
+Each tool call is also saved with the conversation as a hidden trace entry: the
+tool, its arguments and the gist of its result (errors, outcome fields and sizes,
+never screenshots or whole pages). It is not shown in the panel; it is there to
+inspect a session afterwards in `ZitterAssistantSessions.json`.
 
 ## Search and deep research
 

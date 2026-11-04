@@ -27,6 +27,9 @@ export function server(token, engine = new Engine()) {
       }
       const value = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       if (typeof value.id !== 'string' || value.id.length > 100) throw new Error('Invalid session');
+      if (req.url === '/progress') {
+        res.end(JSON.stringify({ partial: engine.sessions.get(value.id)?.partial ?? '' })); return;
+      }
       if (req.url === '/cancel' || req.url === '/delete') {
         running.get(value.id)?.abort(); running.delete(value.id);
         if (req.url === '/delete') engine.sessions.delete(value.id);

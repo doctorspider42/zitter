@@ -446,6 +446,8 @@ pub static EN: &[(&str, &str)] = &[
     ("Czekam na stronę…", "Waiting for the page…"),
     ("Odpowiadam na okno strony…", "Answering the page's dialog…"),
     ("Historia rozmów", "Conversation history"),
+    ("Myślę…", "Thinking…"),
+    ("Asystent · {} pisze…", "Assistant · {} is writing…"),
     ("Szukaj w rozmowach", "Search conversations"),
     ("Wcześniej", "Earlier"),
     ("Usuń rozmowę", "Delete conversation"),

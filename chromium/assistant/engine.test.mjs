@@ -167,3 +167,17 @@ test('a saved conversation continues with its earlier messages, and old runtimes
   for (let i = 0; i < 40; i++) await engine.turn(request({ id: `s${i}` }), signal);
   assert.equal(engine.sessions.size, 32);
 });
+
+test('the answer being written is visible through progress until the turn returns', async () => {
+  let release, seen;
+  const engine = new Engine({ providerFactory: () => ({ async complete(system, messages, signal, onPartial) {
+    onPartial('Pisz'); await new Promise(r => { release = r; }); return done('Piszę dalej');
+  } }) });
+  const turn = engine.turn(request({ id: 'live' }), new AbortController().signal);
+  await new Promise(r => setImmediate(r));
+  seen = engine.sessions.get('live').partial;
+  release();
+  assert.equal(seen, 'Pisz');
+  assert.equal((await turn).answer, 'Piszę dalej');
+  assert.equal(engine.sessions.get('live').partial, '');
+});

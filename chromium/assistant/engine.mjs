@@ -101,7 +101,7 @@ export class Engine {
     this.concurrency = Math.max(1, Math.min(12, concurrency)); this.sessions = new Map();
     this.modelCache = new Map(); this.active = 0; this.waiting = [];
   }
-  async complete(session, messages, signal) {
+  async complete(session, messages, signal, onPartial) {
     signal.throwIfAborted();
     const key = createHash('sha256').update(JSON.stringify([session.config, SYSTEM, messages])).digest('hex');
     const cached = this.modelCache.get(key);
@@ -112,7 +112,7 @@ export class Engine {
         const abort = () => { const index = this.waiting.indexOf(ready); if (index >= 0) this.waiting.splice(index, 1); reject(signal.reason); };
         this.waiting.push(ready); signal.addEventListener('abort', abort, { once: true });
       }); else this.active++;
-      try { signal.throwIfAborted(); return await session.provider.complete(SYSTEM, messages, signal); }
+      try { signal.throwIfAborted(); return await session.provider.complete(SYSTEM, messages, signal, onPartial); }
       finally { this.active--; this.waiting.shift()?.(); }
     })();
     this.modelCache.set(key, { value, until: Date.now() + 300000 });
@@ -141,7 +141,11 @@ export class Engine {
   async step(session, signal) {
     for (let turn = 0; turn < 200; turn++) {
       if (++session.steps > 400) throw new AssistantError('Tool budget reached. Send a follow-up to continue.');
-      const result = await this.complete(session, session.messages, signal);
+      // The answer as it is being written, for the browser to show (see /progress).
+      session.partial = '';
+      let result;
+      try { result = await this.complete(session, session.messages, signal, text => { session.partial = text; }); }
+      finally { session.partial = ''; }
       session.messages.push({ role: 'assistant', content: JSON.stringify(result) });
       const browser = [], localResults = [];
       for (const action of result.actions) {
