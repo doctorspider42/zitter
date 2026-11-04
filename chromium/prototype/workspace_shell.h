@@ -174,6 +174,8 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingCallback<void(BrowsingDataSelection)> clear_browsing_data;
     // Clears at once: the Clear browsing data dialog has asked already.
     base::RepeatingCallback<void(BrowsingDataSelection)> clear_browsing_data_now;
+    // The site panel (design: Zitter dostępy stron): the window answers with ShowSitePanel().
+    base::RepeatingClosure site_panel;
     base::RepeatingCallback<void(bool)> system_settings;
     base::RepeatingClosure close_peek;
     base::RepeatingCallback<bool(bool)> promote_peek;
@@ -588,6 +590,33 @@ class WorkspaceShell final : public ui::EventHandler,
   gfx::Rect password_anchor_in_screen() const;
   void SetPasswordOffer(bool pending, bool folded, std::u16string site, base::RepeatingClosure reopen);
   views::View* password_key_for_testing() const { return password_key_; }
+  // Design: Prośba o dostęp — the pill's icon for a pending (or folded) request.
+  void SetPermissionOffer(bool pending, bool folded, int kind, std::u16string site, base::RepeatingClosure reopen);
+  // Design W1/W2: the page's permissions and data under its address pill.
+  struct SiteHandlers {
+    SiteHandlers();
+    SiteHandlers(SiteHandlers&&);
+    SiteHandlers& operator=(SiteHandlers&&);
+    ~SiteHandlers();
+    base::RepeatingCallback<bool(std::string, int)> set_permission;
+    base::RepeatingClosure reset_permissions;
+    base::RepeatingCallback<SiteSummary()> read;
+    base::RepeatingCallback<void(base::RepeatingCallback<void(const SiteDataFacts&)>)> measure;
+    base::RepeatingCallback<void(SiteClearChoice)> clear;
+    base::RepeatingCallback<void(SiteCookie)> delete_cookie;
+  };
+  void ToggleSitePanel();
+  void ShowSitePanel(SiteSummary summary, SiteHandlers handlers);
+  void CloseSitePanel();
+  // The panel's data page (design C), or back to its permissions.
+  void ShowSiteData(bool data);
+  void ClearSiteNow();
+  views::Widget* site_panel_for_testing() const { return site_panel_.get(); }
+  int site_page_for_testing() const { return site_page_; }
+  size_t site_rows_for_testing() const { return site_rows_.size(); }
+  // `choice` as the row's menu gives it: 1 allow, 2 block, 3 ask, 10 forget the site.
+  void SetSitePermissionForTesting(size_t row, int choice);
+  views::View* permission_chip_for_testing() const { return permission_chip_; }
   views::Widget* download_cue_widget_for_testing() const { return download_cue_widget_.get(); }
   bool download_cue_is_pill_for_testing() const;
   void UndoToast();
@@ -1078,6 +1107,27 @@ class WorkspaceShell final : public ui::EventHandler,
   std::array<raw_ptr<views::View>, 3> nav_buttons_ = {};
   raw_ptr<views::View> copy_url_button_ = nullptr;
   raw_ptr<views::View> password_key_ = nullptr;  // The folded save offer.
+  raw_ptr<views::View> permission_chip_ = nullptr;  // A site's permission request.
+  void BuildSitePage();
+  void PlaceSitePanel();
+  void ApplySiteFacts(const SiteDataFacts& facts);
+  void OpenSitePermissionMenu(size_t row);
+  void ChooseSitePermission(size_t row, int choice);
+  void RemoveSiteCookie(SiteCookie cookie);
+  std::unique_ptr<views::DialogDelegate> site_panel_delegate_;
+  std::unique_ptr<views::Widget> site_panel_;
+  raw_ptr<views::View> site_body_ = nullptr;
+  raw_ptr<views::View> site_header_ = nullptr;
+  raw_ptr<views::View> site_data_row_ = nullptr;
+  std::vector<raw_ptr<views::View>> site_rows_;
+  std::unique_ptr<ui::SimpleMenuModel> site_menu_;
+  std::unique_ptr<views::MenuRunner> site_menu_runner_;
+  SiteHandlers site_handlers_;
+  SiteSummary site_summary_;
+  SiteDataFacts site_facts_;
+  int site_page_ = 0;
+  uint64_t site_generation_ = 0;  // Facts from an older panel are dropped.
+  base::RepeatingClosure permission_reopen_;
   base::RepeatingClosure password_reopen_;
   raw_ptr<views::View> sidebar_footer_=nullptr;
   raw_ptr<PanelViewport> workspace_scroll_=nullptr;

@@ -49,6 +49,43 @@ struct BrowsingDataSelection {
   std::optional<bool> time_machine;
 };
 
+// The site panel (design: Zitter dostępy stron, W1/W2).
+struct SitePermissionState {
+  std::string key;      // Chromium's name for it ("notifications", "local-network-access").
+  int setting = 0;      // 1 allow, 2 block, 3 ask.
+  bool can_ask = true;  // Sound, images and JavaScript only allow or block.
+  bool today = false;   // Changed since midnight.
+  bool editable = true; // False under policy or an extension.
+};
+struct SiteSummary {
+  GURL url;
+  std::u16string host;
+  bool secure = false;
+  std::vector<SitePermissionState> permissions;
+};
+struct SiteCookie {
+  std::string name;
+  std::string domain;
+  std::string path;
+  base::Time expires;  // Null: until the browser closes.
+};
+struct SiteDataFacts {
+  std::u16string domain;      // The registrable domain the data belongs to.
+  int64_t bytes = -1;         // Cookies and site storage; -1 while unknown.
+  int64_t cookie_bytes = -1;
+  int64_t storage_bytes = -1; // localStorage, IndexedDB, Cache Storage…
+  int cookies = -1;
+  std::vector<SiteCookie> cookie_list;
+  int visits = -1;
+  base::Time first_visit;
+};
+struct SiteClearChoice {
+  bool cookies = true;
+  bool cache = true;
+  bool history = false;
+  bool permissions = false;
+};
+
 struct PaletteResult {
   std::u16string title;
   std::u16string detail;

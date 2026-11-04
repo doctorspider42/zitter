@@ -9,6 +9,7 @@
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "chromium/prototype/download_panel.h"
 #include "chromium/prototype/history_panel.h"
+#include "chromium/prototype/site_data.h"
 #include "chromium/prototype/passwords_panel.h"
 #include "content/public/browser/download_request_utils.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
@@ -94,6 +95,7 @@
 #include "content/public/browser/invalidate_type.h"
 #include "content/public/browser/keyboard_event_processing_result.h"
 #include "content/public/browser/reload_type.h"
+#include "content/public/common/isolated_world_ids.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
@@ -681,6 +683,7 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   callbacks.clear_browsing_data_now = base::BindRepeating([](WorkspaceWindow* window, BrowsingDataSelection selection) {
     if (window->model_.active()) window->ClearBrowsingData(window->model_.active()->profile_id, selection);
   }, base::Unretained(this));
+  callbacks.site_panel = base::BindRepeating(&WorkspaceWindow::ShowSitePanel, base::Unretained(this));
   callbacks.system_settings = base::BindRepeating(&WorkspaceWindow::OpenSystemSettings, base::Unretained(this));
   callbacks.read_preferences = base::BindRepeating(&WorkspaceWindow::ReadPreferences, base::Unretained(this));
   callbacks.write_preference = base::BindRepeating(&WorkspaceWindow::WritePreference, base::Unretained(this));
@@ -919,6 +922,17 @@ void WorkspaceWindow::PreparePage(content::WebContents* page, std::string source
   FingerprintProtection::Attach(page);
   PageDialogs::Attach(page);
   PageMediaAccess::Attach(page);
+  // Design: Prośba o dostęp — under the address pill, folding into its icon.
+  PageMediaAccess::FromWebContents(page)->SetPromptAnchor(base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window) {
+    return window ? window->shell_->password_anchor_in_screen() : gfx::Rect();
+  }, weak_factory_.GetWeakPtr()));
+  PageMediaAccess::FromWebContents(page)->SetPromptCallback(base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window, content::WebContents* page, const PermissionOffer& offer) {
+    if (!window) return;
+    if (!offer.pending) { window->shell_->SetPermissionOffer(false, false, 0, u"", {}); return; }
+    window->shell_->SetPermissionOffer(true, offer.folded, offer.kind, offer.site, base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window, content::WebContents* page) {
+      if (window && PageMediaAccess::FromWebContents(page)) PageMediaAccess::FromWebContents(page)->ReopenPrompt();
+    }, window, page));
+  }, weak_factory_.GetWeakPtr(), page));
   LinkNavigation::Attach(page, base::BindRepeating(
       [](base::WeakPtr<WorkspaceWindow> window, std::string source_hint, content::NavigationHandle& navigation) {
         return window && window->RouteNavigation(navigation, source_hint);
@@ -1370,6 +1384,42 @@ void WorkspaceWindow::ShowDownloads() {
 }
 // Design: Historia — Zitter's own window over the active profile's history,
 // with the tabs closed in this run beside it.
+// Design: Zitter dostępy stron — the page on screen, its permissions and data.
+void WorkspaceWindow::ShowSitePanel() {
+  auto* page = peek_contents() ? peek_contents() : contents(active_id());
+  if (!page || !page->GetLastCommittedURL().SchemeIsHTTPOrHTTPS()) return;
+  auto* profile = Profile::FromBrowserContext(page->GetBrowserContext());
+  const GURL url = page->GetLastCommittedURL();
+  auto weak_page = page->GetWeakPtr();
+  auto alive = [](base::WeakPtr<content::WebContents> page, const GURL& url) {
+    return page && page->GetLastCommittedURL().host() == url.host();
+  };
+  WorkspaceShell::SiteHandlers handlers;
+  handlers.read = base::BindRepeating([](base::WeakPtr<content::WebContents> page, GURL url) {
+    return page ? ReadSitePermissions(Profile::FromBrowserContext(page->GetBrowserContext()), url) : SiteSummary();
+  }, weak_page, url);
+  handlers.set_permission = base::BindRepeating([](decltype(alive) alive, base::WeakPtr<content::WebContents> page, GURL url, std::string key, int setting) {
+    return alive(page, url) && WriteSitePermission(Profile::FromBrowserContext(page->GetBrowserContext()), url, key, setting);
+  }, alive, weak_page, url);
+  handlers.reset_permissions = base::BindRepeating([](decltype(alive) alive, base::WeakPtr<content::WebContents> page, GURL url) {
+    if (alive(page, url)) ResetSitePermissions(Profile::FromBrowserContext(page->GetBrowserContext()), url);
+  }, alive, weak_page, url);
+  handlers.measure = base::BindRepeating([](base::WeakPtr<content::WebContents> page, GURL url, base::RepeatingCallback<void(const SiteDataFacts&)> done) {
+    if (page) MeasureSiteData(Profile::FromBrowserContext(page->GetBrowserContext()), url, std::move(done));
+  }, weak_page, url);
+  // Cleared, then reloaded so the page starts without what was removed.
+  handlers.clear = base::BindRepeating([](decltype(alive) alive, base::WeakPtr<content::WebContents> page, GURL url, SiteClearChoice choice) {
+    if (!alive(page, url)) return;
+    ClearSiteData(Profile::FromBrowserContext(page->GetBrowserContext()), url, choice, base::BindOnce([](base::WeakPtr<content::WebContents> page) {
+      if (page) page->GetController().Reload(content::ReloadType::NORMAL, true);
+    }, page));
+  }, alive, weak_page, url);
+  handlers.delete_cookie = base::BindRepeating([](decltype(alive) alive, base::WeakPtr<content::WebContents> page, GURL url, SiteCookie cookie) {
+    if (alive(page, url)) DeleteSiteCookie(Profile::FromBrowserContext(page->GetBrowserContext()), std::move(cookie), base::DoNothing());
+  }, alive, weak_page, url);
+  shell_->ShowSitePanel(ReadSitePermissions(profile, url), std::move(handlers));
+}
+
 void WorkspaceWindow::ShowHistory() {
   if (!model_.active()) return;
   auto* profile = ProfileFor(model_.active()->profile_id);
@@ -2278,6 +2328,29 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
   if (id == "passwords") { ShowPasswords(); return true; }
   if (id == "import") { shell_->OpenImport(); return true; }
   if (id == "quit") { RequestClose(); return true; }
+  // Development (--zitter-open-panel=site / permission): the page's origin with
+  // two sample rules, then its panel; or a notification request from it.
+  if (id == "site_demo" || id == "permission_demo") {
+    auto* page = contents(active_id());
+    if (!page) return false;
+    // A real site, so the panel has cookies and history to show.
+    const GURL origin("https://example.com/");
+    if (page->GetLastCommittedURL() != origin || page->GetController().GetLastCommittedEntry()->GetPageType() == content::PAGE_TYPE_ERROR) { Navigate(origin); return true; }
+    auto* profile = Profile::FromBrowserContext(page->GetBrowserContext());
+    if (id == "permission_demo") {
+      ResetSitePermissions(profile, origin);
+      page->GetPrimaryMainFrame()->ExecuteJavaScriptWithUserGestureForTests(u"Notification.requestPermission()", base::NullCallback(), content::ISOLATED_WORLD_ID_GLOBAL);
+      return true;
+    }
+    WriteSitePermission(profile, origin, "notifications", 1);
+    WriteSitePermission(profile, origin, "geolocation", 2);
+    WriteSitePermission(profile, origin, "local-network-access", 1);
+    WriteSitePermission(profile, origin, "sound", 1);
+    // A cookie for the data page.
+    page->GetPrimaryMainFrame()->ExecuteJavaScriptForTests(u"document.cookie='session=demo; max-age=3600'; document.cookie='prefs=dark; max-age=8640000'", base::NullCallback(), content::ISOLATED_WORLD_ID_GLOBAL);
+    ShowSitePanel();
+    return true;
+  }
   // Development (--zitter-open-panel=extension-popup): the first pinned action.
   if (id == "extension_popup") {
     const auto actions = extensions_bar_->visible_actions_for_testing();

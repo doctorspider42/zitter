@@ -133,6 +133,12 @@
 #include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
+#include "chromium/prototype/page_media_access.h"
+#include "chromium/prototype/site_data.h"
+#include "net/cookies/canonical_cookie.h"
+#include "net/cookies/cookie_util.h"
+#include "services/network/public/mojom/cookie_manager.mojom.h"
+#include "content/public/browser/storage_partition.h"
 #include "chrome/browser/ui/zoom/chrome_zoom_level_prefs.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "ui/views/controls/button/toggle_button.h"
@@ -10527,6 +10533,105 @@ IN_PROC_BROWSER_TEST_F(ZitterPrintBrowserTest, PagePrintOpensTheSheet) {
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE, idle.QuitClosure(), base::Seconds(1));
   idle.Run();
   EXPECT_FALSE(shell->print_visible());
+}
+
+// Design: Prośba o dostęp — a notification request is a quiet card under the
+// address pill that folds into a struck-through bell and comes back from it.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NotificationRequestCardFoldsIntoPill) {
+  base::test::ScopedRunLoopTimeout timeout(FROM_HERE, base::Seconds(30));
+  auto* page = window_->contents("work");
+  const auto url = embedded_test_server()->GetURL("localhost", "/login_probe.html");
+  ASSERT_TRUE(content::NavigateToURL(page, url));
+  auto* access = PageMediaAccess::FromWebContents(page);
+  ASSERT_TRUE(access);
+  ASSERT_TRUE(content::ExecJs(page, "window.answer = 'waiting'; Notification.requestPermission().then(a => window.answer = a); void 0;"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return access->permission_prompt() && access->permission_prompt()->IsVisible(); }));
+  auto* card = access->permission_prompt();
+  auto* shell = window_->shell();
+  EXPECT_EQ(ui::mojom::ModalType::kNone, card->widget_delegate()->GetModalType());
+  EXPECT_FALSE(card->IsActive());
+  EXPECT_EQ(1, access->prompt_offer().kind);
+  EXPECT_EQ(base::UTF8ToUTF16("localhost:" + std::string(url.port())), access->prompt_offer().site);
+  ASSERT_TRUE(shell->permission_chip_for_testing());
+  EXPECT_TRUE(shell->permission_chip_for_testing()->GetVisible());
+  // Ignored, it folds: the page keeps going and the pill explains what happened.
+  access->FoldPromptForTesting();
+  EXPECT_FALSE(card->IsVisible());
+  EXPECT_TRUE(access->prompt_offer().folded);
+  EXPECT_NE(shell->permission_chip_for_testing()->GetRenderedTooltipText(gfx::Point()).find(u"Zablokowane po cichu"), std::u16string::npos);
+  EXPECT_EQ("waiting", content::EvalJs(page, "window.answer"));
+  access->ReopenPrompt();
+  EXPECT_TRUE(card->IsVisible());
+  access->DecidePromptForTesting(1);
+  ASSERT_TRUE(base::test::RunUntil([&] { return content::EvalJs(page, "window.answer").ExtractString() == "granted"; }));
+  EXPECT_FALSE(access->permission_prompt());
+  EXPECT_FALSE(shell->permission_chip_for_testing()->GetVisible());
+  EXPECT_EQ(CONTENT_SETTING_ALLOW, HostContentSettingsMapFactory::GetForProfile(work_)->GetContentSetting(url, url, ContentSettingsType::NOTIFICATIONS));
+}
+
+// Design: Zitter panel witryny — every permission the site has a rule for, each
+// changed from its row's menu; the data page lists cookies and clears the site.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SitePanelChangesPermissionsAndClearsSite) {
+  base::test::ScopedRunLoopTimeout timeout(FROM_HERE, base::Seconds(30));
+  auto* page = window_->contents("work");
+  const auto url = embedded_test_server()->GetURL("localhost", "/login_probe.html");
+  ASSERT_TRUE(content::NavigateToURL(page, url));
+  auto* settings = HostContentSettingsMapFactory::GetForProfile(work_);
+  settings->SetContentSettingDefaultScope(url, url, ContentSettingsType::NOTIFICATIONS, CONTENT_SETTING_ALLOW);
+  // A kind Zitter's old list missed: it shows, so it can be taken back.
+  settings->SetContentSettingDefaultScope(url, url, ContentSettingsType::LOCAL_NETWORK_ACCESS, CONTENT_SETTING_ALLOW);
+  {
+    const auto summary = ReadSitePermissions(work_, url);
+    ASSERT_EQ(2u, summary.permissions.size());
+    EXPECT_TRUE(std::ranges::any_of(summary.permissions, [](const auto& p) { return p.key == "local-network-access" && p.setting == 1; }));
+  }
+  auto* shell = window_->shell();
+  shell->ShowSidebar();
+  window_->ShowSitePanel();
+  ASSERT_TRUE(shell->site_panel_for_testing());
+  EXPECT_TRUE(shell->site_panel_for_testing()->IsVisible());
+  ASSERT_EQ(2u, shell->site_rows_for_testing());
+  const auto notifications_row = [&] {
+    const auto summary = ReadSitePermissions(work_, url);
+    for (size_t i = 0; i < summary.permissions.size(); ++i) if (summary.permissions[i].key == "notifications") return i;
+    return summary.permissions.size();
+  };
+  // The row's menu: Blokuj, then Pytaj (the default, so the rule goes).
+  shell->SetSitePermissionForTesting(notifications_row(), 2);
+  EXPECT_EQ(CONTENT_SETTING_BLOCK, settings->GetContentSetting(url, url, ContentSettingsType::NOTIFICATIONS));
+  shell->SetSitePermissionForTesting(notifications_row(), 3);
+  EXPECT_EQ(CONTENT_SETTING_ASK, settings->GetContentSetting(url, url, ContentSettingsType::NOTIFICATIONS));
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->site_rows_for_testing() == 1u; }));
+  // "Zapomnij ustawienia tej witryny" drops what is left.
+  shell->SetSitePermissionForTesting(0, 10);
+  EXPECT_TRUE(ReadSitePermissions(work_, url).permissions.empty());
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->site_rows_for_testing() == 0u; }));
+  // The data page lists the cookie; clearing reloads and keeps another site's.
+  ASSERT_TRUE(content::ExecJs(page, "document.cookie = 'zitter=1; max-age=3600'"));
+  const auto other = embedded_test_server()->GetURL("127.0.0.1", "/login_probe.html");
+  auto* store = work_->GetDefaultStoragePartition()->GetCookieManagerForBrowserProcess();
+  base::test::TestFuture<net::CookieAccessResult> set;
+  store->SetCanonicalCookie(*net::CanonicalCookie::CreateForTesting(other, "keep=1", base::Time::Now(), net::CookieSourceType::kHTTP), other, net::CookieOptions::MakeAllInclusive(), set.GetCallback());
+  ASSERT_TRUE(set.Get().status.IsInclude());
+  base::test::TestFuture<const SiteDataFacts&> measured;
+  MeasureSiteData(work_, url, base::BindLambdaForTesting([&](const SiteDataFacts& facts) {
+    if (facts.cookies >= 0 && facts.bytes >= 0 && facts.visits >= 0 && !measured.IsReady()) measured.SetValue(facts);
+  }));
+  ASSERT_EQ(1u, measured.Get().cookie_list.size());
+  EXPECT_EQ("zitter", measured.Get().cookie_list[0].name);
+  window_->ShowSitePanel();
+  shell->ShowSiteData(true);
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->site_page_for_testing() == 1; }));
+  content::TestNavigationObserver reload(page);
+  shell->ClearSiteNow();
+  reload.Wait();
+  EXPECT_FALSE(shell->site_panel_for_testing());
+  EXPECT_EQ("", content::EvalJs(page, "document.cookie"));
+  base::test::TestFuture<const net::CookieList&> kept;
+  store->GetCookieList(other, net::CookieOptions::MakeAllInclusive(), net::CookiePartitionKeyCollection(), base::BindOnce([](base::OnceCallback<void(const net::CookieList&)> done, const net::CookieAccessResultList& list, const net::CookieAccessResultList&) {
+    std::move(done).Run(net::cookie_util::StripAccessResults(list));
+  }, kept.GetCallback()));
+  ASSERT_EQ(1u, kept.Get().size());
 }
 
 } // namespace zitter::prototype

@@ -250,7 +250,9 @@ void PageServices::PlacePassword(){
   auto bounds=password_widget_->GetWindowBoundsInScreen();
   if(!anchor.IsEmpty())bounds.set_origin(gfx::Point(anchor.x(),anchor.bottom()+6));
   else if(parent){const auto page=parent->GetClientAreaBoundsInScreen();bounds.set_origin(gfx::Point(page.x()+16,page.bottom()-16-bounds.height()));}
-  password_widget_->SetBounds(bounds);
+  // An anchorless bubble hangs centred below its anchor point.
+  if(auto* bubble=password_delegate_?password_delegate_->AsBubbleDialogDelegate():nullptr)bubble->SetAnchorRect(gfx::Rect(bounds.x()+bounds.width()/2,bounds.y(),0,0));
+  else password_widget_->SetBounds(bounds);
 }
 // Folding keeps the offer: the address pill's key brings it back.
 void PageServices::FoldPassword(){

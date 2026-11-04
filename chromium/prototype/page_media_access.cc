@@ -9,6 +9,7 @@
 #endif
 #include "ui/views/layout/layout_provider.h"
 
+#include <array>
 #include <utility>
 #include <algorithm>
 #include <set>
@@ -43,6 +44,12 @@
 #include "ui/views/window/dialog_delegate.h"
 #include "ui/views/controls/label.h"
 #include "url/origin.h"
+#include "base/timer/timer.h"
+#include "chrome/browser/media/prefs/capture_device_ranking.h"
+#include "components/media_effects/media_device_info.h"
+#include "components/url_formatter/elide_url.h"
+#include "components/vector_icons/vector_icons.h"
+#include "chromium/prototype/sidebar_metal.h"
 
 namespace zitter::prototype {
 // Decisions stay synchronous in Chromium. Only adapter destruction is deferred
@@ -234,18 +241,67 @@ class MediaPermissionPrompt final : public permissions::PermissionPrompt {
     auto body=std::make_unique<views::View>();
     auto scene=CreatePanelScene(body.get());
     std::unique_ptr<views::DialogDelegate> dialog;
+    contents_=contents->GetWeakPtr();
     if(scene){
-      owned_=std::make_unique<MediaSceneDialog>();owned_->scene=std::move(scene);
-      SetSidebarPanelLayout(body.get(),true,gfx::Insets(),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_UNRELATED_CONTROL_VERTICAL));
-      auto paragraph=[&](std::u16string text){body->AddChildView(owned_->scene->MakeText(std::move(text),true,false,0));};
-      paragraph(TF(u"Prosi o dostęp: {}",{requesters}));paragraph(capabilities);paragraph(TF(u"Profil: {}",{BrowsingProfileName(profile)}));
-      if(!requesting_origins.contains(permission_origin))paragraph(TF(u"Uprawnienie dla: {}",{base::UTF8ToUTF16(permission_origin)}));
-      if(!requesting_origins.contains(embedding_origin)&&embedding_origin!=permission_origin)paragraph(TF(u"W stronie: {}",{base::UTF8ToUTF16(embedding_origin)}));
-      dialog=CreateSceneModalDialog(std::move(body),false);dialog->SetTitle(T(u"Uprawnienia strony"));
-      dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk)|static_cast<int>(ui::mojom::DialogButton::kCancel));
-      dialog->SetButtonLabel(ui::mojom::DialogButton::kOk,temporary?T(u"Zezwól tym razem"):T(u"Zezwól"));dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel,T(u"Zablokuj"));
-      dialog->SetAcceptCallback(base::BindOnce(&State::Decide,state_,temporary?Decision::kAllowOnce:Decision::kAllowPersistent));
-      dialog->SetCancelCallback(base::BindOnce(&State::Decide,state_,Decision::kDeny));
+      // Design: Prośba o dostęp — a quiet card under the address pill. The page
+      // keeps focus and input; Esc or the pill's icon closes or reopens it.
+      owned_=std::make_unique<MediaSceneDialog>();owned_->scene=std::move(scene);auto* panel=owned_->scene.get();
+      bool camera=false,mic=false;
+      for(const auto& request:delegate->Requests()){
+        const auto type=request->request_type();
+        camera|=type==permissions::RequestType::kCameraStream;mic|=type==permissions::RequestType::kMicStream;
+      }
+      offer_.kind=camera&&mic?5:camera?3:mic?4:0;
+      // A single request of a kind people know gets its own question.
+      if(!camera&&!mic&&delegate->Requests().size()==1)switch(delegate->Requests().front()->request_type()){
+        case permissions::RequestType::kNotifications:offer_.kind=1;break;
+        case permissions::RequestType::kGeolocation:offer_.kind=2;break;
+        case permissions::RequestType::kLocalNetwork:case permissions::RequestType::kLoopbackNetwork:offer_.kind=6;break;
+        case permissions::RequestType::kClipboard:offer_.kind=7;break;
+        case permissions::RequestType::kMultipleDownloads:offer_.kind=8;break;
+        case permissions::RequestType::kMidiSysex:offer_.kind=9;break;
+        default:break;
+      }
+      // The frame that asks; an embedded one also names its page below.
+      offer_.site=url_formatter::FormatOriginForSecurityDisplay(url::Origin::Create(GURL(requesting_origins.size()==1?*requesting_origins.begin():permission_origin)),url_formatter::SchemeDisplay::OMIT_HTTP_AND_HTTPS);
+      static constexpr std::array<const char16_t*,10> kQuestions={u"Zezwolić tej witrynie?",u"Wysyłać powiadomienia?",u"Udostępnić lokalizację?",u"Użyć kamery?",u"Użyć mikrofonu?",u"Użyć kamery i mikrofonu?",
+          u"Łączyć się z urządzeniami w Twojej sieci?",u"Czytać i zmieniać schowek?",u"Pobrać wiele plików naraz?",u"Sterować urządzeniami MIDI?"};
+      // What the less familiar kinds mean, in a line.
+      static constexpr std::array<const char16_t*,10> kMeanings={nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,
+          u"Drukarka, router, dysk sieciowy. Zwykła strona tego nie potrzebuje.",u"Strona zobaczy to, co skopiujesz.",u"Strona chce zapisać kilka plików jeden po drugim.",u"Instrumenty i kontrolery, także ich ustawienia."};
+      SetSidebarPanelLayout(body.get(),true,gfx::Insets(),10);
+      auto* head=body->AddChildView(std::make_unique<views::View>());
+      head->AddChildView(panel->MakeIconTile(&PermissionIcon(offer_.kind,false)));
+      auto* lines=head->AddChildView(std::make_unique<views::View>());
+      auto* question=lines->AddChildView(panel->MakeText(T(kQuestions[static_cast<size_t>(offer_.kind)]),true,false,0));panel->SetTextStyle(question,4,PanelScene::Tone::kInk);
+      auto* site=lines->AddChildView(panel->MakeText(offer_.site,true,false,0));panel->SetTextStyle(site,8,PanelScene::Tone::kMuted);
+      // Other kinds name what is asked for; an embedded requester names its page.
+      if(const auto* meaning=kMeanings[static_cast<size_t>(offer_.kind)]){auto* line=lines->AddChildView(panel->MakeText(T(meaning),true,false,0));panel->SetTextStyle(line,6,PanelScene::Tone::kMuted);}
+      if(offer_.kind==0)for(const auto& request:delegate->Requests()){auto* line=lines->AddChildView(panel->MakeText(request->GetMessageTextFragment(),true,false,0));panel->SetTextStyle(line,5,PanelScene::Tone::kInk);}
+      if(!requesting_origins.contains(embedding_origin)){
+        auto* line=lines->AddChildView(panel->MakeText(TF(u"w stronie {}",{url_formatter::FormatOriginForSecurityDisplay(url::Origin::Create(delegate->GetEmbeddingOrigin()),url_formatter::SchemeDisplay::OMIT_HTTP_AND_HTTPS)}),true,false,0));
+        panel->SetTextStyle(line,6,PanelScene::Tone::kMuted);}
+      SetSidebarPanelLayout(lines,true,gfx::Insets(),2);
+      SetSidebarPanelLayout(head,false,gfx::Insets(),10,lines,true);
+      if(camera)AddDevices(body.get(),panel,true,profile);
+      if(mic)AddDevices(body.get(),panel,false,profile);
+      // Nie zezwalaj (quiet) · Tym razem (outline) · Zawsze tutaj / Zezwól (primary).
+      auto* row=body->AddChildView(std::make_unique<views::View>());
+      auto* filler=row->AddChildView(std::make_unique<views::View>());
+      auto actions=panel->MakeActions(6);auto* group=row->AddChildView(std::move(actions));
+      auto decide=[&](std::u16string text,Decision decision,uint32_t kind){
+        auto* button=panel->AddAction(group,base::BindRepeating([](std::shared_ptr<State> state,Decision decision){state->Decide(decision);},state_,decision),std::move(text));
+        panel->SetActionKind(button,kind);};
+      decide(T(u"Nie zezwalaj"),Decision::kDeny,3);
+      if(temporary){decide(T(u"Tym razem"),Decision::kAllowOnce,2);decide(T(u"Zawsze tutaj"),Decision::kAllowPersistent,0);}
+      else decide(T(u"Zezwól"),Decision::kAllowPersistent,0);
+      SetSidebarPanelLayout(row,false,gfx::Insets(),0,filler,true);
+      dialog=CreateSceneModalDialog(std::move(body),false,false);
+      dialog->SetTitle(T(kQuestions[static_cast<size_t>(offer_.kind)]));dialog->SetShowTitle(false);dialog->SetShowCloseButton(false);
+      if(auto* bubble=dialog->AsBubbleDialogDelegate()){bubble->set_fixed_width(300);bubble->set_margins(gfx::Insets::VH(12,0));}
+      // Design R1: the card's content sits 12 px in from its edge.
+      SetSidebarPanelLayout(dialog->GetContentsView(),true,gfx::Insets::VH(0,12),0);
+      dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
       dialog->SetCloseCallback(base::BindOnce(&State::Decide,state_,Decision::kDismiss));
     }else{
     auto builder = ui::DialogModel::Builder();
@@ -269,7 +325,7 @@ class MediaPermissionPrompt final : public permissions::PermissionPrompt {
     dialog = views::BubbleDialogModelHost::CreateModal(std::move(model),
         ui::mojom::ModalType::kWindow);
     }
-    dialog->SetDefaultButton(static_cast<int>(ui::mojom::DialogButton::kCancel));
+    if(!owned_)dialog->SetDefaultButton(static_cast<int>(ui::mojom::DialogButton::kCancel));
     auto* parent = views::Widget::GetWidgetForNativeWindow(contents->GetTopLevelNativeWindow());
     views::Widget* widget=nullptr;
     if(owned_){
@@ -283,16 +339,71 @@ class MediaPermissionPrompt final : public permissions::PermissionPrompt {
     InstallWorkspaceKeyboardRouting(widget,true);
 #endif
     widget_ = widget->GetWeakPtr();
-    widget->Show();if(owned_)owned_->scene->Schedule();
+    if(owned_){
+      if(auto* access=PageMediaAccess::FromWebContents(contents))access->SetPromptHooks(
+          base::BindRepeating(&MediaPermissionPrompt::Reopen,weak_factory_.GetWeakPtr()),
+          base::BindRepeating(&MediaPermissionPrompt::Fold,weak_factory_.GetWeakPtr()),
+          base::BindRepeating([](std::shared_ptr<State> state,int decision){state->Decide(decision==0?Decision::kAllowOnce:decision==1?Decision::kAllowPersistent:Decision::kDeny);},state_));
+      offer_.pending=true;Reopen();
+    }else widget->Show();
   }
   ~MediaPermissionPrompt() override {
+    fold_timer_.Stop();
+    if(owned_&&contents_)if(auto* access=PageMediaAccess::FromWebContents(contents_.get())){access->SetPromptHooks({},{},{});access->ReportPrompt({});}
     weak_factory_.InvalidateWeakPtrs();state_->decided=true;
     if(owned_){widget_.reset();MediaSceneDialog::Dispose(std::move(owned_));}
     else if(widget_)widget_->Close();
   }
   base::RepeatingCallback<bool(std::string_view)> SceneQuery(){return base::BindRepeating([](base::WeakPtr<MediaPermissionPrompt> self,std::string_view text){return self&&self->owned_&&self->owned_->scene&&self->owned_->scene->contains_text(text);},weak_factory_.GetWeakPtr());}
   base::WeakPtr<views::Widget> widget() { return widget_; }
-  bool UpdateAnchor() override { return true; }
+  // Under the address pill when the sidebar shows it; else the page's upper left.
+  void Place(){
+    if(!widget_||!contents_)return;auto* access=PageMediaAccess::FromWebContents(contents_.get());
+    const auto anchor=access?access->PromptAnchor():gfx::Rect();auto bounds=widget_->GetWindowBoundsInScreen();
+    if(!anchor.IsEmpty())bounds.set_origin(gfx::Point(anchor.x(),anchor.bottom()+6));
+    else if(auto* parent=views::Widget::GetWidgetForNativeWindow(contents_->GetTopLevelNativeWindow())){const auto page=parent->GetClientAreaBoundsInScreen();bounds.set_origin(gfx::Point(page.x()+16,page.y()+16));}
+    // An anchorless bubble hangs centred below its anchor point.
+    if(auto* bubble=widget_->widget_delegate()->AsBubbleDialogDelegate())bubble->SetAnchorRect(gfx::Rect(bounds.x()+bounds.width()/2,bounds.y(),0,0));
+    else widget_->SetBounds(bounds);
+  }
+  void Reopen(){
+    if(!widget_||!owned_)return;Place();widget_->ShowInactive();owned_->scene->Schedule();folded_=false;
+    // Camera and microphone hold the page up: that card waits for an answer.
+    if(offer_.kind<3||offer_.kind>5)fold_timer_.Start(FROM_HERE,base::Seconds(8),base::BindOnce(&MediaPermissionPrompt::Fold,weak_factory_.GetWeakPtr()));
+    Report();
+  }
+  void Fold(){if(!widget_||!owned_)return;fold_timer_.Stop();widget_->Hide();folded_=true;Report();}
+  void Report(){offer_.folded=folded_;if(contents_)if(auto* access=PageMediaAccess::FromWebContents(contents_.get()))access->ReportPrompt(offer_);}
+  void AddDevices(views::View* body,PanelScene* panel,bool video,Profile* profile){
+    auto* prefs=profile->GetPrefs();std::vector<std::u16string> labels;
+    auto* info=media_effects::MediaDeviceInfo::GetInstance();
+    if(video){
+      if(const auto& devices=info->GetVideoDeviceInfos()){video_devices_=*devices;media_prefs::PreferenceRankVideoDeviceInfos(*prefs,video_devices_);}
+      for(const auto& device:video_devices_)labels.push_back(base::UTF8ToUTF16(device.descriptor.GetNameAndModel()));
+    }else{
+      if(const auto& devices=info->GetAudioDeviceInfos()){
+        audio_devices_=*devices;const auto real=media_effects::GetRealDefaultDeviceId(audio_devices_);
+        // The "default" alias duplicates the real default device.
+        if(real)std::erase_if(audio_devices_,[](const auto& device){return media::AudioDeviceDescription::IsDefaultDevice(device.unique_id);});
+        media::AudioDeviceDescription::LocalizeDeviceDescriptions(&audio_devices_);media_prefs::PreferenceRankAudioDeviceInfos(*prefs,audio_devices_);}
+      for(const auto& device:audio_devices_)labels.push_back(base::UTF8ToUTF16(device.device_name));
+    }
+    if(labels.size()<2)return;  // Nothing to choose between.
+    auto select=panel->MakeSelect(body,std::move(labels),video?T(u"Kamera"):T(u"Mikrofon"));auto* view=body->AddChildView(std::move(select));
+    panel->SetSelectIndex(view,0);
+    panel->SetSelectChanged(view,base::BindRepeating([](base::WeakPtr<MediaPermissionPrompt> self,views::View* view,bool video,PrefService* prefs){
+      if(!self||!self->owned_)return;const auto index=self->owned_->scene->SelectIndex(view);if(!index)return;
+      if(video&&*index<self->video_devices_.size())media_prefs::UpdateVideoDevicePreferenceRanking(*prefs,self->video_devices_.begin()+*index,self->video_devices_);
+      if(!video&&*index<self->audio_devices_.size())media_prefs::UpdateAudioDevicePreferenceRanking(*prefs,self->audio_devices_.begin()+*index,self->audio_devices_);
+    },weak_factory_.GetWeakPtr(),view,video,prefs));
+  }
+  static const gfx::VectorIcon& PermissionIcon(int kind,bool off){
+    switch(kind){case 1:return off?vector_icons::kNotificationsOffIcon:vector_icons::kNotificationsIcon;case 2:return off?vector_icons::kLocationOffIcon:vector_icons::kLocationOnIcon;
+      case 3:case 5:return off?vector_icons::kVideocamOffIcon:vector_icons::kVideocamIcon;case 4:return off?vector_icons::kMicOffIcon:vector_icons::kMicIcon;
+      case 6:return off?vector_icons::kRouterOffIcon:vector_icons::kRouterIcon;case 7:return off?vector_icons::kContentPasteOffIcon:vector_icons::kContentPasteIcon;
+      case 8:return off?vector_icons::kFileDownloadOffIcon:vector_icons::kDownloadIcon;case 9:return off?vector_icons::kPianoOffIcon:vector_icons::kPianoIcon;default:return vector_icons::kTuneIcon;}
+  }
+  bool UpdateAnchor() override { if(owned_&&widget_&&widget_->IsVisible())Place(); return true; }
   TabSwitchingBehavior GetTabSwitchingBehavior() override {
     return kDestroyPromptButKeepRequestPending;
   }
@@ -326,6 +437,12 @@ class MediaPermissionPrompt final : public permissions::PermissionPrompt {
   std::shared_ptr<State> state_;
   std::unique_ptr<MediaSceneDialog> owned_;
   base::WeakPtr<views::Widget> widget_;
+  base::WeakPtr<content::WebContents> contents_;
+  PermissionOffer offer_;
+  bool folded_ = false;
+  base::OneShotTimer fold_timer_;
+  std::vector<media::VideoCaptureDeviceInfo> video_devices_;
+  std::vector<media::AudioDeviceDescription> audio_devices_;
   base::WeakPtrFactory<MediaPermissionPrompt> weak_factory_{this};
 };
 
@@ -579,6 +696,7 @@ void PageMediaAccess::CloseCaptureIndicator() {
   if(capture_scene_)MediaSceneDialog::Dispose(std::move(capture_scene_));
   else if(widget)widget->Close();
 }
+void PageMediaAccess::ReportPrompt(const PermissionOffer& offer){prompt_offer_=offer;if(prompt_report_)prompt_report_.Run(offer);}
 bool PageMediaAccess::permission_scene_contains_for_testing(std::string_view text) const{return permission_scene_query_&&permission_scene_query_.Run(text);}
 bool PageMediaAccess::capture_scene_contains_for_testing(std::string_view text) const{return capture_scene_&&capture_scene_->scene&&capture_scene_->scene->contains_text(text);}
 void PageMediaAccess::WebContentsDestroyed() {

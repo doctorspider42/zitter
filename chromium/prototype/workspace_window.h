@@ -122,6 +122,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void ShowPasswords();
   void ShowDownloads();
   void ShowHistory();
+  void ShowSitePanel();
   DownloadPanel* downloads() const { return downloads_.get(); }
   void EnsureDownloads();
   void DownloadCompleted(std::string guid, std::u16string name);

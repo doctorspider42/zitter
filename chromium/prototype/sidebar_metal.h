@@ -57,6 +57,12 @@ class PanelScene {
   virtual views::View* AddMoreAction(views::View* parent,base::RepeatingClosure callback,std::u16string name)=0;
   // While choosing files the tile is a checkbox: `pressed` flips it.
   virtual void SetFileTileChoice(views::View* tile,bool choosing,bool checked,base::RepeatingClosure pressed)=0;
+  // Site permission cards (design: Zitter dostępy stron).
+  // A 28 px `accent-soft` tile with `icon` in `accent` (radius-md).
+  virtual std::unique_ptr<views::View> MakeIconTile(const gfx::VectorIcon* icon)=0;
+  virtual void SetSelectChanged(views::View* select,base::RepeatingClosure changed)=0;
+  virtual std::optional<size_t> SelectIndex(views::View* select) const=0;
+  virtual void SetSelectIndex(views::View* select,size_t index)=0;
   virtual void Schedule()=0;
   virtual base::RepeatingClosure ViewportChangedCallback()=0;
   virtual bool visible() const=0;
