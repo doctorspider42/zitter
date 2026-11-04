@@ -36,10 +36,17 @@ struct SitePreferenceRule {
   bool editable = false;
 };
 struct BrowsingDataSelection {
-  int period = 0;  // Hour, day, week, all time.
+  int period = 0;  // Hour, day, week, all time, four weeks.
   bool history = false;
   bool cookies = false;
   bool cache = true;
+  // The Clear browsing data dialog's advanced kinds (design: Wyczyść dane).
+  bool downloads = false;
+  bool passwords = false;
+  bool form_data = false;
+  bool site_settings = false;
+  // Time Machine's timeline; unset follows `history` (the settings row).
+  std::optional<bool> time_machine;
 };
 
 struct PaletteResult {

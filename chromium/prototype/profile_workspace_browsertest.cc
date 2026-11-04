@@ -93,6 +93,8 @@
 #include "ui/views/test/combobox_test_api.h"
 #include "chromium/prototype/page_services.h"
 #include "chromium/prototype/download_panel.h"
+#include "chromium/prototype/history_panel.h"
+#include "chromium/prototype/passwords_panel.h"
 #include "chrome/browser/download/download_prefs.h"
 #include "content/public/browser/download_manager_delegate.h"
 #include "content/public/browser/download_request_utils.h"
@@ -2430,43 +2432,71 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SitePreferenceExceptionsAndIso
   EXPECT_FALSE(window_->contents("work")->IsAudioMuted());
 }
 
-// History is Chromium's own page, opened as a tab of the space on screen and
-// shown again instead of duplicated; the Zitter mark replaces Chromium's logo.
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, HistoryShortcutOpensChromiumHistoryPage) {
+// Design: Historia — Zitter's own window over the space's profile: visits
+// by day, search, deleting a visit, and the tabs closed in this run.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, HistoryShortcutOpensZitterHistory) {
+  base::test::ScopedRunLoopTimeout timeout(FROM_HERE, base::Seconds(30));
+  ASSERT_NO_FATAL_FAILURE(NavigateBoth());
   ASSERT_TRUE(window_->Select("work"));
+  const GURL visited = window_->contents("work")->GetLastCommittedURL();
+  ASSERT_TRUE(visited.SchemeIsHTTPOrHTTPS());
   const auto tabs = window_->tab_count("work");
   ASSERT_TRUE(window_->RunShortcut("history"));
-  ASSERT_EQ(tabs + 1, window_->tab_count("work"));
-  auto* page = window_->contents("work");
-  ASSERT_TRUE(content::WaitForLoadStop(page));
-  EXPECT_EQ(GURL("chrome://history/"), page->GetLastCommittedURL());
-  EXPECT_EQ(work_, Profile::FromBrowserContext(page->GetBrowserContext()));
-  ASSERT_TRUE(base::test::RunUntil([&] {
-    return content::EvalJs(page, R"(
-        (() => {
-          const toolbar = document.querySelector('history-app')?.shadowRoot
-              ?.querySelector('history-toolbar')?.shadowRoot?.querySelector('cr-toolbar');
-          const logo = toolbar?.querySelector('picture[slot="product-logo"] img');
-          return !!logo && logo.src.startsWith('data:image/svg+xml;base64,') &&
-              logo.parentElement.assignedSlot?.name === 'product-logo' && logo.complete && logo.naturalWidth > 0 &&
-              // Like Chromium's logo, it is 24 px and hidden while the toolbar is narrow.
-              logo.getBoundingClientRect().width === (toolbar.hasAttribute('narrow') ? 0 : 24);
-        })())").ExtractBool();
-  }));
-  window_->SelectTab(0);
-  ASSERT_NE(page, window_->contents("work"));
-  ASSERT_TRUE(window_->RunShortcut("history"));
+  EXPECT_EQ(tabs, window_->tab_count("work"));
+  auto* panel = window_->history_panel();
+  ASSERT_TRUE(panel && panel->widget() && panel->widget()->IsVisible());
+  ASSERT_TRUE(base::test::RunUntil([&] { const auto urls = panel->listed_for_testing(); return !panel->querying_for_testing() && std::ranges::find(urls, visited) != urls.end(); }));
+  // Search narrows it; a query nothing matches empties it.
+  panel->SetQuery(u"zzz-no-such-page");
+  ASSERT_TRUE(base::test::RunUntil([&] { return !panel->querying_for_testing() && panel->listed_for_testing().empty(); }));
+  panel->SetQuery(u"");
+  ASSERT_TRUE(base::test::RunUntil([&] { return !panel->querying_for_testing() && !panel->listed_for_testing().empty(); }));
+  // Deleting a visit removes that page's visits on its day.
+  const auto urls = panel->listed_for_testing();
+  const size_t index = std::ranges::find(urls, visited) - urls.begin();
+  ASSERT_LT(index, urls.size());
+  panel->DeleteForTesting(index);
+  ASSERT_TRUE(base::test::RunUntil([&] { const auto now = panel->listed_for_testing(); return !panel->querying_for_testing() && std::ranges::find(now, visited) == now.end(); }));
+  // A closed tab comes back from „Ostatnio zamknięte” in its space.
+  ASSERT_TRUE(window_->OpenProfileTab(work_, visited, true)); ASSERT_EQ(tabs + 1, window_->tab_count("work"));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  window_->CloseTab(tabs); ASSERT_EQ(tabs, window_->tab_count("work"));
+  ASSERT_TRUE(window_->ReopenClosedTabAt(0));
   EXPECT_EQ(tabs + 1, window_->tab_count("work"));
-  EXPECT_EQ(page, window_->contents("work"));
+  EXPECT_FALSE(window_->ReopenClosedTabAt(0));
+  // The other space's profile gets its own history.
   ASSERT_TRUE(window_->Select("personal"));
-  const auto personal_tabs = window_->tab_count("personal");
   ASSERT_TRUE(window_->RunShortcut("history"));
-  ASSERT_EQ(personal_tabs + 1, window_->tab_count("personal"));
-  EXPECT_EQ(personal_, Profile::FromBrowserContext(window_->contents("personal")->GetBrowserContext()));
+  EXPECT_TRUE(panel->widget() && panel->widget()->IsVisible());
 }
 
-
-
+// Design: Wyczyść dane przeglądania — basic kinds by default, advanced ones
+// behind „Zaawansowane”; passwords turn the action to danger; clearing
+// history empties the History window.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ClearDataDialogBasicAdvancedAndPasswordsDanger) {
+  base::test::ScopedRunLoopTimeout timeout(FROM_HERE, base::Seconds(30));
+  ASSERT_NO_FATAL_FAILURE(NavigateBoth());
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(window_->RunShortcut("history"));
+  auto* panel = window_->history_panel();ASSERT_TRUE(panel && panel->widget());
+  ASSERT_TRUE(base::test::RunUntil([&] { return !panel->querying_for_testing() && !panel->listed_for_testing().empty(); }));
+  auto* shell = window_->shell();
+  shell->ShowClearDataDialog(panel->widget(), u"Praca");
+  auto* dialog = shell->clear_data_dialog_for_testing();ASSERT_TRUE(dialog && dialog->IsVisible());
+  auto* delegate = dialog->widget_delegate()->AsDialogDelegate();
+  EXPECT_EQ(u"Wyczyść dane", delegate->GetDialogButtonLabel(ui::mojom::DialogButton::kOk));
+  shell->SetClearDataAdvancedForTesting(true);shell->SetClearDataChoiceForTesting(4, true);
+  EXPECT_EQ(u"Wyczyść, z hasłami", delegate->GetDialogButtonLabel(ui::mojom::DialogButton::kOk));
+  shell->SetClearDataChoiceForTesting(4, false);shell->SetClearDataAdvancedForTesting(false);
+  EXPECT_EQ(u"Wyczyść dane", delegate->GetDialogButtonLabel(ui::mojom::DialogButton::kOk));
+  // Nothing chosen: nothing to clear.
+  for (size_t kind = 0; kind < 3; ++kind) shell->SetClearDataChoiceForTesting(kind, false);
+  EXPECT_FALSE(delegate->IsDialogButtonEnabled(ui::mojom::DialogButton::kOk));
+  shell->SetClearDataChoiceForTesting(0, true);
+  delegate->AcceptDialog();
+  ASSERT_TRUE(base::test::RunUntil([&] { return !shell->clear_data_dialog_for_testing(); }));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !panel->querying_for_testing() && panel->listed_for_testing().empty(); }));
+}
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ClearBrowsingDataConfirmationAndScope) {
   ASSERT_NO_FATAL_FAILURE(NavigateBoth());
@@ -2589,12 +2619,12 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceCatalogueToolsRoutes
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
   const std::vector<std::pair<std::u16string,int>> routes={{u"Time Machine przestrzeni",0},{u"Skróty klawiszowe",1},{u"Wyszukiwarki i prefiksy",2}};
   for(const auto& [title,page]:routes){SCOPED_TRACE(page);shell->OpenGeneralSettings();auto* query=shell->preferences_search();query->SelectRange(gfx::Range(0,query->GetText().size()));query->input_client()->InsertText(title,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();auto* button=FindButton(shell->general_widget()->GetContentsView(),title);ASSERT_TRUE(button&&button->IsDrawn());ClickControl(button);ASSERT_TRUE(base::test::RunUntil([&]{return page==0?shell->time_machine_visible():shell->tools_widget()->IsVisible();}));EXPECT_FALSE(shell->general_widget()->IsVisible());if(page==0){EXPECT_FALSE(shell->tools_widget()->IsVisible());shell->CloseOverlays();EXPECT_FALSE(shell->time_machine_visible());continue;}EXPECT_EQ(page==1,shell->shortcut_input()!=nullptr);EXPECT_EQ(page==2,shell->provider_input(0)!=nullptr);}
-  // Its History row opens Chromium's History page in the space on screen.
+  // Its History row opens Zitter's History window.
   ASSERT_TRUE(window_->Select("work"));const auto tabs=window_->tab_count("work");
   shell->OpenGeneralSettings();auto* query=shell->preferences_search();query->SelectRange(gfx::Range(0,query->GetText().size()));query->input_client()->InsertText(u"Historia przeglądania",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();
   auto* history=FindButton(shell->general_widget()->GetContentsView(),u"Historia przeglądania");ASSERT_TRUE(history&&history->IsDrawn());ClickControl(history);
-  ASSERT_TRUE(base::test::RunUntil([&]{return window_->tab_count("work")==tabs+1;}));EXPECT_FALSE(shell->general_widget()->IsVisible());EXPECT_FALSE(shell->tools_widget()->IsVisible());
-  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));EXPECT_EQ(GURL("chrome://history/"),window_->contents("work")->GetLastCommittedURL());
+  ASSERT_TRUE(base::test::RunUntil([&]{return window_->history_panel()&&window_->history_panel()->widget()&&window_->history_panel()->widget()->IsVisible();}));
+  EXPECT_EQ(tabs,window_->tab_count("work"));EXPECT_FALSE(shell->general_widget()->IsVisible());EXPECT_FALSE(shell->tools_widget()->IsVisible());
 }
 
 // Add deterministic overflow without inflating the native window minimum.
@@ -3606,22 +3636,43 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DownloadsDangerousHistoryCanno
   EXPECT_TRUE(panel->visible_guids().empty());
 }
 
-// Passwords open Chrome's password manager as a tab of the active space, once.
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PasswordsOpenChromesManagerInTheSpace) {
+// Design: Menedżer haseł — Zitter's own window over the space's profile:
+// adding a password, its page (shown after the system asks), editing, the
+// checkup's weak and reused passwords, and deleting after a warning.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PasswordsOpenZitterManager) {
+  base::test::ScopedRunLoopTimeout timeout(FROM_HERE, base::Seconds(30));
   NavigateBoth();
   ASSERT_TRUE(window_->Select("work"));
   const size_t tabs = window_->tab_count("work");
   window_->ShowPasswords();
-  ASSERT_EQ(tabs + 1, window_->tab_count("work"));
-  auto* manager = window_->contents("work");
-  ASSERT_TRUE(content::WaitForLoadStop(manager));
-  EXPECT_EQ("password-manager", manager->GetLastCommittedURL().host());
-  EXPECT_FALSE(manager->GetTitle().empty());
-  EXPECT_EQ(work_, Profile::FromBrowserContext(manager->GetBrowserContext()));
-  window_->SelectTab(0);
+  EXPECT_EQ(tabs, window_->tab_count("work"));
+  auto* panel = window_->passwords_panel();
+  ASSERT_TRUE(panel && panel->widget() && panel->widget()->IsVisible());
+  ASSERT_TRUE(base::test::RunUntil([&] { return panel->loaded_for_testing(); }));
+  panel->SkipAuthenticationForTesting();
+  using P = PasswordsPanel::Page;
+  EXPECT_FALSE(panel->AddPassword(u"not a site", u"jan", u"x"));
+  ASSERT_TRUE(panel->AddPassword(u"github.com", u"jan", u"123456"));
+  ASSERT_TRUE(panel->AddPassword(u"https://www.example.org/login", u"ola", u"123456"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return panel->listed_for_testing() == std::vector<std::u16string>{u"example.org", u"github.com"}; }));
+  // Both are weak and share one password.
+  EXPECT_EQ(2, panel->issues_for_testing(2)); EXPECT_EQ(2, panel->issues_for_testing(1)); EXPECT_EQ(0, panel->issues_for_testing(0));
+  panel->SetQuery(u"GIT"); EXPECT_EQ(std::vector<std::u16string>{u"github.com"}, panel->listed_for_testing()); panel->SetQuery(u"");
+  // Its page: the password shows only when asked for.
+  panel->OpenDetail(1); EXPECT_EQ(P::kDetail, panel->page()); EXPECT_FALSE(panel->revealed_for_testing());
+  panel->RevealPassword(false); EXPECT_TRUE(panel->revealed_for_testing());
+  ASSERT_TRUE(panel->ChangePassword(u"Kwiat-Tramwaj-17-Lato!"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return panel->issues_for_testing(1) == 0 && panel->issues_for_testing(2) == 1; }));
+  // Deleting asks first.
+  panel->SetPage(P::kList); panel->OpenDetail(0); panel->DeleteDetail();
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->danger_dialog_for_testing() && shell->danger_dialog_for_testing()->IsVisible(); }));
+  shell->danger_dialog_for_testing()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+  ASSERT_TRUE(base::test::RunUntil([&] { return panel->listed_for_testing() == std::vector<std::u16string>{u"github.com"}; }));
+  EXPECT_EQ(P::kList, panel->page());
+  // The shortcut brings the same window back.
   ASSERT_TRUE(window_->RunShortcut("passwords"));
-  EXPECT_EQ(tabs + 1, window_->tab_count("work"));
-  EXPECT_EQ(manager, window_->contents("work"));
+  EXPECT_EQ(panel, window_->passwords_panel()); EXPECT_TRUE(panel->widget()->IsVisible());
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeJavaScriptDialogs) {
@@ -4710,6 +4761,14 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ChromiumPasswordSaveAndFill) {
   ASSERT_TRUE(services);
   submit();
   ASSERT_TRUE(base::test::RunUntil([&] { return services->password_prompt() && services->password_prompt()->IsVisible(); }));
+  // Design: Monit o zapisanie hasła — the offer never blocks the page or takes
+  // its focus, and folds into the address pill's key until reopened.
+  {auto* shell=window_->shell();auto* prompt=services->password_prompt();
+   EXPECT_EQ(ui::mojom::ModalType::kNone,prompt->widget_delegate()->GetModalType());EXPECT_FALSE(prompt->IsActive());
+   ASSERT_TRUE(shell->password_key_for_testing());EXPECT_FALSE(shell->password_key_for_testing()->GetVisible());
+   services->FoldPasswordForTesting();EXPECT_FALSE(prompt->IsVisible());EXPECT_TRUE(services->password_folded_for_testing());
+   EXPECT_TRUE(shell->password_key_for_testing()->GetVisible());
+   services->ReopenPassword();EXPECT_TRUE(prompt->IsVisible());EXPECT_FALSE(shell->password_key_for_testing()->GetVisible());}
   if(window_->shell()->workspace_input()->rust_editor()){
     if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return services->password_scene_visible_for_testing()&&services->password_scene_contains_for_testing("Użytkownik: alice");}));
     EXPECT_FALSE(services->password_scene_contains_for_testing("synthetic-47"));auto* button=DialogActionButton(services->password_prompt(),true);ASSERT_TRUE(button);EXPECT_TRUE(button->children().empty());EXPECT_FALSE(views::AsViewClass<views::MdTextButton>(button));

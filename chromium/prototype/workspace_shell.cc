@@ -3829,6 +3829,15 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) { return shell && shell->metal_sidebar_visible(); }, weak),
       base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar, weak)));
   copy_url_button_->SetPreferredSize(gfx::Size(28, 28));
+  // The folded password offer: its key reopens the card under the pill.
+  password_key_ = address_row->AddChildView(CreateSceneAction(
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) { if (shell && shell->password_reopen_) shell->password_reopen_.Run(); }, weak),
+      T(u"Zapisz hasło"), GlyphButton::Glyph::kVector, &vector_icons::kPasskeyIcon,
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) { return shell && shell->metal_sidebar_visible(); }, weak),
+      base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar, weak)));
+  password_key_->SetPreferredSize(gfx::Size(28, 28));
+  password_key_->SetVisible(false);
+  address_row->ReorderChildView(password_key_, address_row->GetIndexOf(copy_url_button_).value());
   pill->set_context_menu_controller(this);
   Spacer(sidebar.get(), 12);
   workspace_name_ = sidebar->AddChildView(std::make_unique<WorkspaceHeading>(
@@ -4465,6 +4474,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
                 else if (panel == "profiles") shell->OpenProfiles();
                 // A sample undo toast; its „Cofnij” does nothing.
                 else if (panel == "downloads") shell->callbacks_.run_shortcut.Run("downloads");
+        else if (panel == "passwords") shell->callbacks_.run_shortcut.Run("passwords");
                 else if (panel == "history") shell->callbacks_.run_shortcut.Run("history");
                 else if (panel == "time-machine") shell->OpenTimeMachine();
                 else if (panel == "extensions") shell->callbacks_.run_shortcut.Run("extensions");
@@ -4559,7 +4569,7 @@ void WorkspaceShell::Detach() {
   settings_root_ = nullptr;
   chrome_node_graph_.reset();palette_node_graph_.reset();site_rule_node_graph_.reset();
   nav_buttons_.fill(nullptr);
-  copy_url_button_ = nullptr;
+  copy_url_button_ = nullptr; password_key_ = nullptr;
   workspace_buttons_.clear();
   workspace_dots_ = nullptr; add_button_ = nullptr; downloads_button_ = nullptr; sidebar_footer_=nullptr; workspace_scroll_=nullptr;
   tab_lists_.clear();
@@ -4602,7 +4612,7 @@ void WorkspaceShell::Detach() {
   if (print_widget_) print_widget_->RemoveObserver(this);
   print_widget_.reset(); print_delegate_.reset();
   scrim_widget_.reset(); scrim_delegate_.reset();
-  quit_dialog_.reset(); quit_dialog_delegate_.reset(); danger_dialog_.reset(); danger_dialog_delegate_.reset();
+  quit_dialog_.reset(); quit_dialog_delegate_.reset(); danger_dialog_.reset(); danger_dialog_delegate_.reset(); clear_dialog_.reset(); clear_dialog_delegate_.reset();
 #if BUILDFLAG(IS_WIN)
   // The wizard closing with the window reports nothing: the window is going.
   if (welcome_delegate_) AbandonWelcome(welcome_delegate_->GetContentsView());
@@ -5287,6 +5297,10 @@ void WorkspaceShell::UpdateMetalSidebar() {
       item.kind=14; item.x+=12; item.width=std::max(0.f,item.width-24); item.y+=8; item.height=2; item.fill=Palette(view).line_strong;
       items.push_back(std::move(item));
     }
+  }
+  if (password_key_ && password_key_->IsDrawn()) {
+    auto rect = gfx::RectF(password_key_->GetBoundsInScreen()); rect.Offset(-bounds.x(), -bounds.y());
+    items.push_back(static_cast<RustActionView*>(password_key_.get())->SceneItem(rect, rect));
   }
   if (copy_url_button_ && copy_url_button_->IsDrawn()) {
     auto rect = gfx::RectF(copy_url_button_->GetBoundsInScreen()); rect.Offset(-bounds.x(), -bounds.y());
@@ -7980,6 +7994,17 @@ void WorkspaceShell::DownloadFinished(){
   if(downloads_done_)downloads_done_timer_.Start(FROM_HERE,base::Milliseconds(2500),base::BindOnce([](WorkspaceShell* shell){shell->downloads_done_=false;shell->UpdateDownloadsButton();},base::Unretained(this)));
   UpdateDownloadsButton();
 }
+gfx::Rect WorkspaceShell::password_anchor_in_screen() const{
+  return url_pill_&&url_pill_->IsDrawn()&&sidebar_visible()?url_pill_->GetBoundsInScreen():gfx::Rect();
+}
+void WorkspaceShell::SetPasswordOffer(bool pending,bool folded,std::u16string site,base::RepeatingClosure reopen){
+  password_reopen_=std::move(reopen);if(!password_key_)return;
+  const bool shown=pending&&folded;
+  password_key_->SetTooltipText(TF(u"Zapisz hasło do {}",{site}));password_key_->GetViewAccessibility().SetName(TF(u"Zapisz hasło do {}",{site}));
+  SetActionColor(password_key_,shown?Palette(password_key_).accent_ink:kSubtle);
+  if(password_key_->GetVisible()!=shown){password_key_->SetVisible(shown);password_key_->parent()->InvalidateLayout();if(shown)TremorRow(url_pill_);}
+  ScheduleMetalSidebar();
+}
 gfx::Rect WorkspaceShell::downloads_anchor_in_screen() const{
   if(downloads_button_&&downloads_button_->IsDrawn()&&sidebar_visible())return downloads_button_->GetBoundsInScreen();
   if(download_cue_widget_&&download_cue_widget_->IsVisible())return download_cue_widget_->GetWindowBoundsInScreen();
@@ -9123,6 +9148,100 @@ void WorkspaceShell::ConfirmQuitWithDownloads(int count, base::OnceCallback<void
   PreparePanelText(prompt->GetRootView());
   prompt->Show();
 }
+void WorkspaceShell::ShowClearDataDialog(views::Widget* parent, std::u16string profile) {
+  if (!parent) parent = widget_;
+  if (!parent || !parent->IsVisible()) return;
+  if (clear_dialog_) { clear_dialog_->Activate(); return; }
+  auto weak = weak_factory_.GetWeakPtr();
+  auto body = std::make_unique<views::View>();
+  // The period, then the basic/advanced switch.
+  auto* top = body->AddChildView(std::make_unique<views::View>());
+  PanelText(top, T(u"Zakres"), kBodyText, kMuted);
+  clear_period_ = top->AddChildView(MakeParentSceneControl<SceneSelect>(top, std::vector<std::u16string>{T(u"Ostatnia godzina"), T(u"Ostatnie 24 godziny"),
+      T(u"Ostatnie 7 dni"), T(u"Ostatnie 4 tygodnie"), T(u"Od początku")}, T(u"Zakres czasu"), base::RepeatingClosure()));
+  SetPickerIndex(clear_period_, 2);
+  auto* spacer = top->AddChildView(std::make_unique<views::View>());
+  auto* tabs = top->AddChildView(std::make_unique<SceneActionGroup>(false, 4));
+  clear_tabs_[0] = tabs->AddAction(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) { if (shell) shell->SetClearDataAdvanced(false); }, weak), T(u"Podstawowe"), ui::ButtonStyle::kText);
+  clear_tabs_[1] = tabs->AddAction(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) { if (shell) shell->SetClearDataAdvanced(true); }, weak), T(u"Zaawansowane"), ui::ButtonStyle::kText);
+  SetSidebarPanelLayout(top, false, gfx::Insets(), Metrics().space_3, spacer, true);
+  auto changed = base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) { if (shell) shell->RefreshClearData(); }, weak);
+  auto* basic = body->AddChildView(std::make_unique<SceneCheckboxGroup>(Metrics().space_2));
+  clear_checks_[0] = basic->AddChoice(changed, T(u"Historia przeglądania — też podpowiedzi w adresie"));
+  clear_checks_[1] = basic->AddChoice(changed, T(u"Pliki cookie i dane witryn — wylogujesz się z większości witryn"));
+  clear_checks_[2] = basic->AddChoice(changed, T(u"Obrazy i pliki w pamięci podręcznej"));
+  clear_advanced_ = body->AddChildView(std::make_unique<views::View>());
+  auto* advanced = clear_advanced_->AddChildView(std::make_unique<SceneCheckboxGroup>(Metrics().space_2));
+  clear_checks_[3] = advanced->AddChoice(changed, T(u"Historia pobierania — pliki zostają na dysku"));
+  clear_checks_[4] = advanced->AddChoice(changed, T(u"Hasła i klucze dostępu"));
+  clear_checks_[5] = advanced->AddChoice(changed, T(u"Dane formularzy — adresy i autouzupełnianie"));
+  clear_checks_[6] = advanced->AddChoice(changed, T(u"Ustawienia witryn — uprawnienia i reguły"));
+  clear_checks_[7] = advanced->AddChoice(changed, T(u"Time Machine — snapshoty i zamknięte karty"));
+  clear_warning_ = clear_advanced_->AddChildView(std::make_unique<SceneParagraph>(T(u"⚠ Hasła znikną z tego profilu na zawsze."), 0, true, kError));
+  SetSidebarPanelLayout(clear_advanced_, true, gfx::Insets(), Metrics().space_2);
+  body->AddChildView(std::make_unique<SceneParagraph>(TF(u"Dotyczy profilu {}. Przypięte karty i przestrzenie zostają.", {profile}), -1, false, kMuted));
+  SetSidebarPanelLayout(body.get(), true, gfx::Insets(), Metrics().space_4);
+  for (size_t i = 0; i < 3; ++i) SetCheckValue(clear_checks_[i], true);
+  auto dialog = std::make_unique<SceneModalDialog>(std::move(body), true);
+  dialog->SetTitle(T(u"Wyczyść dane przeglądania"));
+  dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk) | static_cast<int>(ui::mojom::DialogButton::kCancel));
+  dialog->SetButtonLabel(ui::mojom::DialogButton::kOk, T(u"Wyczyść dane"));
+  dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel, T(u"Anuluj"));
+  dialog->SetDefaultButton(static_cast<int>(ui::mojom::DialogButton::kCancel));
+  dialog->SetAcceptCallback(base::BindOnce([](base::WeakPtr<WorkspaceShell> shell) {
+    if (!shell || !shell->callbacks_.clear_browsing_data_now) return;
+    const auto selection = shell->ClearDataSelection();
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(shell->callbacks_.clear_browsing_data_now, selection));
+  }, weak));
+  clear_dialog_delegate_ = std::move(dialog);
+  auto* prompt = views::DialogDelegate::CreateDialogWidget(clear_dialog_delegate_.get(), parent->GetNativeWindow(), parent->GetNativeView());
+  clear_dialog_.reset(prompt);
+  prompt->MakeCloseSynchronous(base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, views::Widget::ClosedReason) {
+    if (!shell) return;
+    shell->clear_period_ = nullptr; shell->clear_advanced_ = nullptr; shell->clear_warning_ = nullptr; shell->clear_checks_ = {}; shell->clear_tabs_ = {};
+    shell->clear_dialog_.reset(); shell->clear_dialog_delegate_.reset();
+  }, weak));
+  prompt->SetColorModeOverride(widget_->color_mode_override());
+  SetClearDataAdvanced(false);
+  PreparePanelText(prompt->GetRootView());
+  prompt->Show();
+}
+void WorkspaceShell::SetClearDataAdvanced(bool advanced) {
+  if (!clear_advanced_) return;
+  clear_advanced_->SetVisible(advanced);
+  for (size_t i = 0; i < clear_tabs_.size(); ++i) {
+    auto* tab = views::AsViewClass<SceneTextButton>(clear_tabs_[i].get());
+    tab->SetKind(advanced == (i == 1) ? 7 : 6); tab->GetViewAccessibility().SetIsSelected(advanced == (i == 1));
+  }
+  RefreshClearData();
+  // The dialog grows or shrinks with the advanced kinds.
+  if (clear_dialog_) if (auto* bubble = clear_dialog_delegate_->AsBubbleDialogDelegate()) bubble->SizeToContents();
+}
+// Clearing passwords turns the action and the warning to danger.
+void WorkspaceShell::RefreshClearData() {
+  if (!clear_dialog_delegate_ || !clear_warning_) return;
+  const bool passwords = clear_advanced_->GetVisible() && CheckValue(clear_checks_[4]);
+  clear_warning_->SetVisible(passwords);
+  clear_dialog_delegate_->SetButtonLabel(ui::mojom::DialogButton::kOk, passwords ? T(u"Wyczyść, z hasłami") : T(u"Wyczyść dane"));
+  const auto selection = ClearDataSelection();
+  clear_dialog_delegate_->SetButtonEnabled(ui::mojom::DialogButton::kOk, selection.history || selection.cookies || selection.cache || selection.downloads ||
+      selection.passwords || selection.form_data || selection.site_settings || selection.time_machine.value_or(false));
+  clear_dialog_delegate_->DialogModelChanged();
+}
+BrowsingDataSelection WorkspaceShell::ClearDataSelection() const {
+  BrowsingDataSelection selection;
+  if (!clear_period_) return selection;
+  // The picker's order: hour, day, week, four weeks, all; the selection's: hour, day, week, all, four weeks.
+  static constexpr std::array<int, 5> kPeriods = {0, 1, 2, 4, 3};
+  selection.period = kPeriods[std::min<size_t>(PickerIndex(clear_period_).value_or(2), 4)];
+  const bool advanced = clear_advanced_->GetVisible();
+  selection.history = CheckValue(clear_checks_[0]); selection.cookies = CheckValue(clear_checks_[1]); selection.cache = CheckValue(clear_checks_[2]);
+  selection.downloads = advanced && CheckValue(clear_checks_[3]); selection.passwords = advanced && CheckValue(clear_checks_[4]);
+  selection.form_data = advanced && CheckValue(clear_checks_[5]); selection.site_settings = advanced && CheckValue(clear_checks_[6]);
+  selection.time_machine = advanced && CheckValue(clear_checks_[7]);
+  return selection;
+}
+void WorkspaceShell::SetClearDataChoiceForTesting(size_t kind, bool checked) { if (kind < clear_checks_.size() && clear_checks_[kind]) { SetCheckValue(clear_checks_[kind], checked); RefreshClearData(); } }
 void WorkspaceShell::ConfirmDanger(views::Widget* parent, std::u16string title, std::u16string detail, std::u16string warning,
                                    std::u16string action, base::OnceCallback<void(bool)> answer) {
   if (!parent) parent = widget_;

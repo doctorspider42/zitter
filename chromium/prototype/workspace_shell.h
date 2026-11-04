@@ -172,6 +172,8 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingCallback<bool(std::string, std::string, int)> write_site_preference;
     base::RepeatingCallback<bool(SitePreferenceRule)> remove_site_preference;
     base::RepeatingCallback<void(BrowsingDataSelection)> clear_browsing_data;
+    // Clears at once: the Clear browsing data dialog has asked already.
+    base::RepeatingCallback<void(BrowsingDataSelection)> clear_browsing_data_now;
     base::RepeatingCallback<void(bool)> system_settings;
     base::RepeatingClosure close_peek;
     base::RepeatingCallback<bool(bool)> promote_peek;
@@ -262,6 +264,14 @@ class WorkspaceShell final : public ui::EventHandler,
   void ConfirmDanger(views::Widget* parent, std::u16string title, std::u16string detail, std::u16string warning,
                      std::u16string action, base::OnceCallback<void(bool)> answer);
   views::Widget* danger_dialog_for_testing() const { return danger_dialog_.get(); }
+  // Design: Wyczyść dane przeglądania — a period, the basic kinds and, under
+  // „Zaawansowane”, downloads, passwords (in danger), forms, site settings and
+  // Time Machine. `profile` names whose data it is.
+  void ShowClearDataDialog(views::Widget* parent, std::u16string profile);
+  views::Widget* clear_data_dialog_for_testing() const { return clear_dialog_.get(); }
+  // 0 history, 1 cookies, 2 cache, 3 downloads, 4 passwords, 5 forms, 6 site settings, 7 Time Machine.
+  void SetClearDataChoiceForTesting(size_t kind, bool checked);
+  void SetClearDataAdvancedForTesting(bool advanced) { SetClearDataAdvanced(advanced); }
   // The |z⟩ menu's „O Zitter”: Zitter's and Chromium's versions.
   void ShowAbout();
   void ShowUpdateReady(std::string version, base::RepeatingClosure install = {});
@@ -573,6 +583,11 @@ class WorkspaceShell final : public ui::EventHandler,
   void DownloadFinished();
   // Where the downloads list opens from: the ring or the pill (empty: neither).
   gfx::Rect downloads_anchor_in_screen() const;
+  // Design: Monit o zapisanie hasła — the address pill the save offer opens
+  // under (empty while the sidebar is away), and its key once the offer folds.
+  gfx::Rect password_anchor_in_screen() const;
+  void SetPasswordOffer(bool pending, bool folded, std::u16string site, base::RepeatingClosure reopen);
+  views::View* password_key_for_testing() const { return password_key_; }
   views::Widget* download_cue_widget_for_testing() const { return download_cue_widget_.get(); }
   bool download_cue_is_pill_for_testing() const;
   void UndoToast();
@@ -1012,6 +1027,14 @@ class WorkspaceShell final : public ui::EventHandler,
   std::unique_ptr<views::DialogDelegate> quit_dialog_delegate_;
   std::unique_ptr<views::Widget> quit_dialog_;
   std::unique_ptr<views::DialogDelegate> danger_dialog_delegate_;
+  std::unique_ptr<views::DialogDelegate> clear_dialog_delegate_;
+  std::unique_ptr<views::Widget> clear_dialog_;
+  raw_ptr<views::View> clear_period_ = nullptr, clear_advanced_ = nullptr, clear_warning_ = nullptr;
+  std::array<raw_ptr<views::View>, 8> clear_checks_ = {};
+  std::array<raw_ptr<views::View>, 2> clear_tabs_ = {};
+  void SetClearDataAdvanced(bool advanced);
+  void RefreshClearData();
+  BrowsingDataSelection ClearDataSelection() const;
   std::unique_ptr<views::Widget> danger_dialog_;
   std::unique_ptr<views::WidgetDelegate> welcome_delegate_;
   std::unique_ptr<views::Widget> welcome_widget_;
@@ -1054,6 +1077,8 @@ class WorkspaceShell final : public ui::EventHandler,
   std::shared_ptr<SidebarNodeGraphState> chrome_node_graph_;
   std::array<raw_ptr<views::View>, 3> nav_buttons_ = {};
   raw_ptr<views::View> copy_url_button_ = nullptr;
+  raw_ptr<views::View> password_key_ = nullptr;  // The folded save offer.
+  base::RepeatingClosure password_reopen_;
   raw_ptr<views::View> sidebar_footer_=nullptr;
   raw_ptr<PanelViewport> workspace_scroll_=nullptr;
   raw_ptr<views::View> workspace_dots_ = nullptr;

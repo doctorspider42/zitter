@@ -49,6 +49,7 @@
 #include "content/public/browser/web_contents.h"
 #include "ui/base/mojom/ui_base_types.mojom.h"
 #include "ui/views/widget/widget.h"
+#include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/accessibility/view_accessibility.h"
@@ -111,6 +112,7 @@ struct PageServices::PendingPassword {
     form.reset();
   }
   void Ignore() { if (form) { form->OnNoInteraction(update); form.reset(); } }
+  void Never() { if (form) { form->Blocklist(); form.reset(); } }
   std::unique_ptr<FormManager> form;
   bool update;
 };
@@ -190,7 +192,14 @@ bool PageServices::OfferPassword(std::unique_ptr<FormManager> form, bool update)
   const auto copy=sidebar::password_prompt_copy(update,base::UTF16ToUTF8(origin),base::UTF16ToUTF8(username),base::UTF16ToUTF8(BrowsingProfileName(profile)));
   for(const auto& line:copy.lines)
     body->AddChildView(password_scene_->MakeText(base::UTF8ToUTF16(std::string(line)),true,false,0));
+  // Not modal: the page keeps focus and input; the card stays out of the way.
+  auto never=password_scene_->MakeActions(0);
+  auto* never_button=password_scene_->AddAction(never.get(),base::BindRepeating([](base::WeakPtr<PageServices> services,std::weak_ptr<PendingPassword> weak){
+    if(auto value=weak.lock())value->Never();if(services)services->DismissPassword();},password_ui_factory_.GetWeakPtr(),pending),T(u"Nigdy tutaj"));
+  password_scene_->SetActionKind(never_button,3);
   auto dialog=CreateSceneModalDialog(std::move(body),false,false);
+  dialog->SetExtraView(std::move(never));
+  if(auto* bubble=dialog->AsBubbleDialogDelegate())bubble->set_fixed_width(300);
   dialog->SetTitle(base::UTF8ToUTF16(std::string(copy.title)));
   dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk)|static_cast<int>(ui::mojom::DialogButton::kCancel));
   dialog->SetButtonLabel(ui::mojom::DialogButton::kOk,base::UTF8ToUTF16(std::string(copy.accept)));
@@ -212,6 +221,7 @@ void PageServices::SetManualPassword(std::unique_ptr<FormManager> form, bool upd
 }
 void PageServices::ShowPasswords() {
   if (manual_password_) OfferPassword(std::move(manual_password_), manual_update_);
+  else if (password_prompt() && password_folded_) ReopenPassword();
   else if (password_prompt()) password_prompt()->Activate();
   else if (manage_passwords_) manage_passwords_.Run();
 }
@@ -229,15 +239,33 @@ void PageServices::ShowPasswordWidget(std::unique_ptr<views::DialogDelegate> dia
 #if BUILDFLAG(IS_MAC)
   InstallWorkspaceKeyboardRouting(widget,true);
 #endif
-  if (parent) {
-    const auto window = parent->GetWindowBoundsInScreen();
-    auto bounds = widget->GetWindowBoundsInScreen();
-    bounds.set_origin(gfx::Point(std::max(window.x() + 12, window.right() - bounds.width() - 16), window.y() + 48));
-    widget->SetBounds(bounds);
-  }
-  if(show){widget->ShowInactive();if(password_scene_)password_scene_->Schedule();}
+  if(show){PlacePassword();widget->ShowInactive();if(password_scene_)password_scene_->Schedule();
+    password_folded_=false;password_fold_timer_.Start(FROM_HERE,base::Seconds(8),base::BindOnce(&PageServices::FoldPassword,password_ui_factory_.GetWeakPtr()));ReportPassword();}
 }
+// Under the address pill when the sidebar shows it; else the page's lower left corner.
+void PageServices::PlacePassword(){
+  if(!password_widget_||!web_contents())return;
+  auto* parent=views::Widget::GetWidgetForNativeWindow(web_contents()->GetTopLevelNativeWindow());
+  const auto anchor=password_anchor_?password_anchor_.Run():gfx::Rect();
+  auto bounds=password_widget_->GetWindowBoundsInScreen();
+  if(!anchor.IsEmpty())bounds.set_origin(gfx::Point(anchor.x(),anchor.bottom()+6));
+  else if(parent){const auto page=parent->GetClientAreaBoundsInScreen();bounds.set_origin(gfx::Point(page.x()+16,page.bottom()-16-bounds.height()));}
+  password_widget_->SetBounds(bounds);
+}
+// Folding keeps the offer: the address pill's key brings it back.
+void PageServices::FoldPassword(){
+  if(!password_widget_||!pending_password_)return;
+  password_fold_timer_.Stop();password_widget_->Hide();password_folded_=true;ReportPassword();
+}
+void PageServices::ReopenPassword(){
+  if(!password_widget_||!pending_password_)return;
+  PlacePassword();password_widget_->ShowInactive();password_folded_=false;
+  password_fold_timer_.Start(FROM_HERE,base::Seconds(8),base::BindOnce(&PageServices::FoldPassword,password_ui_factory_.GetWeakPtr()));ReportPassword();
+}
+void PageServices::ReportPassword(){if(password_pending_)password_pending_.Run(password_widget_&&pending_password_,password_folded_);}
 void PageServices::DismissPassword() {
+  password_fold_timer_.Stop();
+  const bool reported = password_widget_ != nullptr;
   password_ui_factory_.InvalidateWeakPtrs();
   if (pending_password_) pending_password_->Ignore();
   pending_password_.reset();
@@ -245,6 +273,8 @@ void PageServices::DismissPassword() {
   password_scene_.reset();
   password_widget_.reset();
   password_delegate_.reset();
+  password_folded_ = false;
+  if (reported && password_pending_) password_pending_.Run(false, false);
 }
 void PageServices::DidStartNavigation(content::NavigationHandle* navigation) {
   if (navigation->IsInPrimaryMainFrame() && !navigation->IsSameDocument()) { DismissPassword(); manual_password_.reset(); }

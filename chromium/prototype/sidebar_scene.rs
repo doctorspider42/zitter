@@ -1221,8 +1221,11 @@ fn palette_result_detail(kind:ffi::PaletteResultKind,label:&str)->String{
     use ffi::PaletteResultKind as K;
     match kind{K::Tab=>tf("Karta · {}",&[label]),K::Pin=>tf("Przypięta · {}",&[label]),K::Workspace=>t("Przełącz workspace").into(),K::History=>tf("Historia · {}",&[label]),_=>String::new()}
 }
-fn password_prompt_copy(update:bool,origin:&str,username:&str,profile:&str)->ffi::PasswordPromptCopy{
-    ffi::PasswordPromptCopy{title:if update{t("Zaktualizować hasło?")}else{t("Zapisać hasło?")}.into(),lines:vec![origin.into(),tf("Użytkownik: {}",&[username]),tf("Profil: {}",&[profile]),t("Hasło będzie chronione w magazynie tego profilu.").into()],accept:if update{t("Zaktualizuj")}else{t("Zapisz hasło")}.into(),cancel:t("Nie teraz").into()}
+// The quiet save offer (design: Monit o zapisanie hasła): the site without its
+// scheme and the login; the profile shows in the window already.
+fn password_prompt_copy(update:bool,origin:&str,username:&str,_profile:&str)->ffi::PasswordPromptCopy{
+    let site=origin.split_once("://").map_or(origin,|(_,rest)|rest).trim_end_matches('/');
+    ffi::PasswordPromptCopy{title:if update{t("Zaktualizować hasło?")}else{t("Zapisać hasło?")}.into(),lines:vec![site.into(),tf("Użytkownik: {}",&[username])],accept:if update{t("Zaktualizuj")}else{t("Zapisz")}.into(),cancel:t("Nie teraz").into()}
 }
 // Browsing-data removal: confirmation copy and outcome wording/tone.
 fn clear_periods()->[&'static str;4]{[t("Ostatnia godzina"),t("Ostatnie 24 godziny"),t("Ostatnie 7 dni"),t("Cały okres")]}
@@ -3972,8 +3975,8 @@ mod tests {
     }
     #[test] fn palette_result_details_and_password_prompt_copy() {
         use ffi::PaletteResultKind as K;assert_eq!(palette_result_detail(K::Tab,"Praca"),"Karta · Praca");assert_eq!(palette_result_detail(K::Pin,"Dom / Projekt"),"Przypięta · Dom / Projekt");assert_eq!(palette_result_detail(K::Workspace,"x"),"Przełącz workspace");assert_eq!(palette_result_detail(K::History,"a.test"),"Historia · a.test");assert!(palette_result_detail(K{repr:9},"x").is_empty());
-        let c=password_prompt_copy(true,"https://a.test","jan","Praca");assert_eq!((c.title.as_str(),c.accept.as_str(),c.cancel.as_str()),("Zaktualizować hasło?","Zaktualizuj","Nie teraz"));assert_eq!(c.lines,vec!["https://a.test","Użytkownik: jan","Profil: Praca","Hasło będzie chronione w magazynie tego profilu."]);
-        let c=password_prompt_copy(false,"o","","p");assert_eq!((c.title.as_str(),c.accept.as_str()),("Zapisać hasło?","Zapisz hasło"));assert_eq!(c.lines[1],"Użytkownik: ");
+        let c=password_prompt_copy(true,"https://a.test","jan","Praca");assert_eq!((c.title.as_str(),c.accept.as_str(),c.cancel.as_str()),("Zaktualizować hasło?","Zaktualizuj","Nie teraz"));assert_eq!(c.lines,vec!["a.test","Użytkownik: jan"]);
+        let c=password_prompt_copy(false,"o","","p");assert_eq!((c.title.as_str(),c.accept.as_str()),("Zapisać hasło?","Zapisz"));assert_eq!(c.lines[1],"Użytkownik: ");
     }
     #[test] fn profile_status_events_have_distinct_copy_and_unknown_is_empty() {
         use ffi::ProfileStatusEvent as E;let all=[E::DuplicateName,E::Creating,E::CreateFailed,E::Created,E::CreateNotSaved,E::Renamed,E::RenameFailed,E::Deleting,E::Deleted,E::DeleteNotSaved,E::LoadFailed];let copies=all.iter().map(|e|profile_status_copy(*e)).collect::<std::collections::BTreeSet<_>>();assert_eq!(copies.len(),all.len());assert!(copies.iter().all(|c|!c.is_empty()));
