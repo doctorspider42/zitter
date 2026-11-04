@@ -47,15 +47,35 @@ searchable menu grouped by backend. The model stays fixed within a session; pick
 another one after the first message starts a new session and keeps the current one
 in the session list.
 
-The header holds **Sessions** (history icon: recent conversations, **New session**,
-**Copy conversation**, **Clear all conversations**), **This session's access**
+The header holds **Conversation history** (history icon), **This session's access**
 (shield: switches for this session's permissions and click confirmation, **Revoke
 all access** and a link to Settings; before the first message any switch can
 change, afterwards only narrowing works and it stops the task), **New session**,
 pin and close. A click outside an open menu closes it. Revoking stops every task and terminates the
-assistant runtime. Closing Zitter discards conversations and in-memory caches.
-Sessions belong to the profile in which they were created; changing profiles stops
-their tasks.
+assistant runtime. Sessions belong to the profile in which they were created;
+changing profiles stops their tasks.
+
+**New session** reuses an untouched conversation (nothing sent yet) instead of
+adding another one, and leaving an untouched conversation drops it.
+
+Conversations are saved: a second after each change they are written to
+`ZitterAssistantSessions.json` in Zitter's data directory, beside
+`ZitterWorkspaces.json`, and they come back after a restart. Only conversations
+with a sent message are saved, up to 200; past that, the least recently used idle
+one is forgotten. A restored conversation keeps its model; its access never exceeds
+the current defaults in Settings. The runtime does not keep tool results across a
+restart: the next turn passes the last 30 prompts and answers to the model as
+earlier context.
+
+The history view covers the panel below the header. It lists the current
+profile's conversations, newest first, grouped into Today, Yesterday, Last 7 days
+and Earlier. Each row shows the title, a line of the last answer (or, while
+searching, the text around the match), and the time or date. Search covers titles
+and messages. Hovering a row shows a trash to delete that conversation (Delete
+does the same on a focused row). **New session** sits above the list; the foot has
+**Delete all conversations**, which needs a second click and removes only the
+current profile's conversations. Messages are copied with the copy icon on each
+message.
 
 The message field is multiline: Enter sends, Shift+Enter starts a new line, and the
 field grows to six lines before it scrolls. Replies render Markdown (headings,

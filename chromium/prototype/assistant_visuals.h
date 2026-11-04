@@ -54,6 +54,9 @@ struct AssistantRow {
   bool danger = false;
   bool muted_mark = false;   // A switched-off state: the mark in muted ink.
   std::optional<bool> toggle;  // A trailing switch in this state; the row is the switch.
+  // A trash at the row's end while it is hovered or active; Delete runs it too.
+  base::RepeatingClosure remove;
+  std::u16string remove_name;
 };
 // A popover row: hover/active fill, a mark, one or two lines.
 std::unique_ptr<views::View> CreateAssistantMenuRow(base::RepeatingClosure action, AssistantRow row);

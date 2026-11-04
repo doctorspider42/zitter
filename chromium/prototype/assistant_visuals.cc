@@ -28,6 +28,8 @@
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/resize_area.h"
 #include "ui/gfx/render_text.h"
+#include "ui/gfx/geometry/point_conversions.h"
+#include "ui/display/screen.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/styled_label.h"
 #include "ui/views/controls/textarea/textarea.h"
@@ -267,11 +269,25 @@ class MenuRow final : public views::Button {
   MenuRow(base::RepeatingClosure action,AssistantRow row):Button(base::BindRepeating(std::move(action))),row_(std::move(row)){
     SetFocusBehavior(row_.disabled?FocusBehavior::NEVER:FocusBehavior::ALWAYS);SetInstallFocusRingOnFocus(true);SetEnabled(!row_.disabled);
     GetViewAccessibility().SetName(row_.title);if(!row_.detail.empty())GetViewAccessibility().SetDescription(row_.detail);
+    // The trash has no view of its own: its name goes with the row, and Delete runs it.
+    if(row_.remove)GetViewAccessibility().SetDescription(row_.detail.empty()?row_.remove_name:row_.detail+u" · "+row_.remove_name+u" (Delete)");
     if(row_.checked)GetViewAccessibility().SetCheckedState(ax::mojom::CheckedState::kTrue);
     if(row_.toggle){GetViewAccessibility().SetRole(ax::mojom::Role::kSwitch);GetViewAccessibility().SetCheckedState(*row_.toggle?ax::mojom::CheckedState::kTrue:ax::mojom::CheckedState::kFalse);}
   }
   void SetActive(bool active){if(active_!=active){active_=active;SchedulePaint();}}
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {return {240,row_.detail.empty()?32:42};}
+  // The trash, at the row's end: present only for rows that can be removed.
+  gfx::Rect RemoveBounds() const {return row_.remove?gfx::Rect(width()-32,(height()-24)/2,24,24):gfx::Rect();}
+  bool ShowsRemove() const {return row_.remove&&(active_||GetState()==STATE_HOVERED||GetState()==STATE_PRESSED||HasFocus());}
+  void NotifyClick(const ui::Event& event) override {
+    if(row_.remove&&event.IsLocatedEvent()&&RemoveBounds().Contains(gfx::ToFlooredPoint(event.AsLocatedEvent()->location_f()))){row_.remove.Run();return;}
+    Button::NotifyClick(event);
+  }
+  bool OnKeyPressed(const ui::KeyEvent& event) override {
+    if(row_.remove&&event.key_code()==ui::VKEY_DELETE){row_.remove.Run();return true;}
+    return Button::OnKeyPressed(event);
+  }
+  void StateChanged(ButtonState old_state) override {Button::StateChanged(old_state);SchedulePaint();}
   void PaintButtonContents(gfx::Canvas* canvas) override {
     const auto c=Theme(this);const bool hover=GetState()==STATE_HOVERED||GetState()==STATE_PRESSED;
     if(active_||hover||row_.checked)Round(canvas,gfx::RectF(GetLocalBounds()),8,row_.checked&&!active_&&!hover?SkColorSetA(c.accent,c.dark?34:24):SkColorSetA(c.ink,c.dark?18:12));
@@ -282,6 +298,12 @@ class MenuRow final : public views::Button {
       PaintMark(canvas,mark_colors,row_.mark,8,(height()-size)/2,size);
     }
     int right=width()-8;
+    if(ShowsRemove()){
+      const auto trash=RemoveBounds();
+      if(GetState()==STATE_HOVERED&&trash.Contains(GetMouseLocationInView()))Round(canvas,gfx::RectF(trash),6,SkColorSetA(c.danger,c.dark?40:28));
+      Glyph(canvas,AssistantGlyph::kTrash,trash.x()+4,trash.y()+4,trash.Contains(GetMouseLocationInView())?c.danger:c.muted);
+      right=trash.x()-6;
+    }
     if(row_.checked){Glyph(canvas,AssistantGlyph::kCheck,right-16,(height()-16)/2,c.accent);right-=22;}
     if(row_.toggle){
       // 32×18 switch: accent track when on, an outlined track when off.
@@ -292,8 +314,8 @@ class MenuRow final : public views::Button {
       canvas->DrawCircle(gfx::PointF(on?track.right()-9:track.x()+9,track.CenterPoint().y()),6,knob);
       right-=40;
     }
-    if(active_&&!row_.disabled&&!row_.checked){PaintKey(canvas,c,u"↵",right,height()/2);right-=28;}
-    if(!row_.badge.empty()){
+    if(active_&&!row_.disabled&&!row_.checked&&!row_.remove){PaintKey(canvas,c,u"↵",right,height()/2);right-=28;}
+    if(!row_.badge.empty()&&!ShowsRemove()){
       const int w=gfx::GetStringWidth(row_.badge,Type(10,500))+12;const gfx::Rect b(right-w,height()/2-9,w,18);
       Round(canvas,gfx::RectF(b),4,c.line,1);canvas->DrawStringRectWithFlags(row_.badge,Type(10,500),c.muted,b,gfx::Canvas::TEXT_ALIGN_CENTER);right-=w+6;
     }
@@ -313,7 +335,12 @@ class MenuRow final : public views::Button {
     }
     if(!row_.detail.empty())canvas->DrawStringRectWithFlags(row_.detail,row_.mono_detail?Mono(11):Type(11),row_.disabled?SkColorSetA(c.muted,150):c.muted,gfx::Rect(x,22,avail,16),gfx::Canvas::TEXT_ALIGN_LEFT);
   }
- private:AssistantRow row_;bool active_=false;
+ private:
+  gfx::Point GetMouseLocationInView() const {
+    if(!GetWidget())return {-1,-1};
+    auto p=display::Screen::Get()->GetCursorScreenPoint();views::View::ConvertPointFromScreen(this,&p);return p;
+  }
+  AssistantRow row_;bool active_=false;
 };
 BEGIN_METADATA(MenuRow)
 END_METADATA

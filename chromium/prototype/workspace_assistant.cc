@@ -32,6 +32,8 @@
 #include "content/public/browser/render_widget_host_view.h"
 #include "ui/events/event.h"
 #include "third_party/blink/public/common/page/page_zoom.h"
+#include "base/files/important_file_writer.h"
+#include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -715,6 +717,21 @@ base::DictValue WorkspaceWindow::AssistantContext(const AssistantPermissions& pe
       spaces.Append(base::DictValue().Set("id", workspace.id).Set("name", workspace.name).Set("current", workspace.id == active_id()));
   context.Set("tabs", std::move(tabs)); context.Set("pins", std::move(pins)); context.Set("spaces", std::move(spaces));
   return context;
+}
+void WorkspaceWindow::LoadAssistantSessions(base::OnceCallback<void(std::optional<base::DictValue>)> done) {
+  // The writer's sequence: a load never reads a half-written file.
+  config_runner_->PostTaskAndReplyWithResult(FROM_HERE, base::BindOnce([](base::FilePath path) -> std::optional<base::DictValue> {
+    std::string json;
+    if (!base::ReadFileToStringWithMaxSize(path, &json, 64 * 1024 * 1024)) return std::nullopt;
+    return base::JSONReader::ReadDict(json, base::JSON_PARSE_RFC);
+  }, assistant_sessions_path()), std::move(done));
+}
+void WorkspaceWindow::SaveAssistantSessions(base::DictValue sessions) {
+  std::string json;
+  if (!base::JSONWriter::Write(sessions, &json)) return;
+  config_runner_->PostTask(FROM_HERE, base::BindOnce([](base::FilePath path, std::string json) {
+    base::ImportantFileWriter::WriteFileAtomically(path, json);
+  }, assistant_sessions_path(), std::move(json)));
 }
 std::string WorkspaceWindow::AssistantTargetFor(views::View* view) {
   for (const auto& [key, target] : assistant_targets_) if (target->view() == view) return key;

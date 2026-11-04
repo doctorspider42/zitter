@@ -15,6 +15,7 @@
 #include "base/environment.h"
 #include "base/files/file_util.h"
 #include "base/hash/hash.h"
+#include "base/i18n/time_formatting.h"
 #include "base/i18n/case_conversion.h"
 #include "base/i18n/rtl.h"
 #include "base/functional/bind.h"
@@ -24,6 +25,8 @@
 #include "base/process/launch.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_split.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
@@ -210,9 +213,11 @@ AssistantPanel::AssistantPanel(WorkspaceWindow* window) : window_(window) {
   resize_handle_=AddChildView(CreateAssistantResizeGrip(this));
   resize_handle_->SetProperty(views::kViewIgnoredByLayoutKey,true);
   NewSession();SetVisible(false);
+  window_->LoadAssistantSessions(base::BindOnce(&AssistantPanel::SessionsLoaded,weak));
 }
 
 AssistantPanel::~AssistantPanel() {
+  if (save_timer_.IsRunning()) SaveSessions();
   menu_monitor_.reset();
   // Overlays left in the shell call back only through weak pointers.
   for (auto& session : sessions_) session->loader.reset();
@@ -276,14 +281,28 @@ void AssistantPanel::OpenSettings() {
 }
 
 // Sessions ---------------------------------------------------------------
+bool AssistantPanel::Started(const Session& session) {
+  return session.busy || std::ranges::any_of(session.messages, [](const Message& m) { return m.kind == 1; });
+}
 void AssistantPanel::NewSession() {
   CloseMenu();
+  // An untouched conversation is reused instead of piling up empty ones.
+  const auto profile = window_->AssistantProfileId();
+  for (size_t i = sessions_.size(); i-- > 0;) {
+    if (Started(*sessions_[i]) || sessions_[i]->profile != profile || window_->AssistantHasBackground(sessions_[i]->key)) continue;
+    if (i != selected_) { if (busy()) Stop(); selected_ = i; }
+    chips_.clear(); RenderChips(); RenderConversation(); UpdateControls(); UpdatePageControl();
+    if (prompt_) prompt_->RequestFocus();
+    return;
+  }
   // A conversation in the foreground stops; background tasks keep running.
   if (!sessions_.empty() && busy()) Stop();
-  if (sessions_.size() >= 32) {
-    // Forget the oldest idle conversation without a background page.
-    auto idle = std::ranges::find_if(sessions_, [&](const auto& s) { return !s->busy && !window_->AssistantHasBackground(s->key); });
-    if (idle == sessions_.end()) { Append(selected(), "Session limit reached. Close and reopen Zitter to clear conversations."); return; }
+  if (sessions_.size() >= 200) {
+    // Forget the least recently used idle conversation without a background page.
+    auto idle = sessions_.end();
+    for (auto it = sessions_.begin(); it != sessions_.end(); ++it)
+      if (!(*it)->busy && !window_->AssistantHasBackground((*it)->key) && (idle == sessions_.end() || (*it)->updated < (*idle)->updated)) idle = it;
+    if (idle == sessions_.end()) { Append(selected(), "Session limit reached. Delete old conversations in the history."); return; }
     const size_t removed = idle - sessions_.begin();
     sessions_.erase(idle);
     if (selected_ >= removed && selected_ > 0) --selected_;
@@ -295,6 +314,7 @@ void AssistantPanel::NewSession() {
   session->profile = window_->AssistantProfileId();
   session->permissions = settings.defaults;
   session->confirm_background = settings.confirm_background;
+  session->updated = base::Time::Now();
   const auto models = settings.PanelModels();
   for (const auto& model : models) if (model.provider + "/" + model.id == settings.default_model) { session->provider = model.provider; session->model = model.id; }
   if (session->provider.empty() && !models.empty()) { session->provider = models.front().provider; session->model = models.front().id; }
@@ -307,8 +327,118 @@ void AssistantPanel::SelectSession(size_t index) {
   CloseMenu();
   if (index >= sessions_.size() || index == selected_) return;
   if (busy()) Stop();
+  // Leaving an untouched conversation drops it.
+  const auto left = sessions_[selected_]->key;
   selected_ = index;
+  if (auto it = std::ranges::find_if(sessions_, [&](const auto& s) { return s->key == left; });
+      it != sessions_.end() && !Started(**it) && !window_->AssistantHasBackground(left)) {
+    const size_t removed = it - sessions_.begin();
+    sessions_.erase(it);
+    if (selected_ > removed) --selected_;
+  }
+  chips_.clear(); RenderChips();
   RenderConversation(); UpdateControls(); UpdatePageControl();
+  if (GetWidget()) GetWidget()->LayoutRootViewIfNecessary();
+  viewport_->ScrollTo(viewport_->maximum());
+}
+void AssistantPanel::DeleteSession(std::string key) {
+  auto it = std::ranges::find_if(sessions_, [&](const auto& s) { return s->key == key; });
+  if (it == sessions_.end()) return;
+  StopSession(**it);
+  window_->AssistantDiscardBackground(key);
+  const size_t index = it - sessions_.begin();
+  const bool was_selected = index == selected_;
+  sessions_.erase(it);
+  if (selected_ > index) --selected_;
+  if (sessions_.empty()) { selected_ = 0; const auto keep = menu_; NewSession(); menu_ = keep; }
+  else if (was_selected) {
+    // The newest conversation of this profile takes its place, or a new one.
+    selected_ = std::min(selected_, sessions_.size() - 1);
+    const auto profile = window_->AssistantProfileId();
+    std::optional<size_t> newest;
+    for (size_t i = 0; i < sessions_.size(); ++i)
+      if (sessions_[i]->profile == profile && (!newest || sessions_[i]->updated > sessions_[*newest]->updated)) newest = i;
+    if (newest) selected_ = *newest; else { const auto keep = menu_; NewSession(); menu_ = keep; }
+  }
+  chips_.clear(); RenderChips(); RenderConversation(); UpdateControls(); UpdatePageControl(); RenderBackground();
+  ScheduleSave();
+  if (menu_ != Menu::kNone) BuildMenu();
+}
+void AssistantPanel::ScheduleSave() {
+  // Nothing is written before the saved conversations are back: that would lose them.
+  if (!loaded_) return;
+  save_timer_.Start(FROM_HERE, base::Seconds(1), base::BindOnce(&AssistantPanel::SaveSessions, base::Unretained(this)));
+}
+void AssistantPanel::SaveSessions() {
+  if (!loaded_) return;
+  save_timer_.Stop();
+  base::ListValue list;
+  for (const auto& s : sessions_) {
+    if (!Started(*s)) continue;
+    base::ListValue messages;
+    for (const auto& m : s->messages) {
+      base::ListValue chips;
+      for (const auto& chip : m.chips)
+        chips.Append(base::DictValue().Set("kind", chip.kind).Set("ref", chip.ref).Set("title", chip.title).Set("color", static_cast<double>(chip.color)));
+      messages.Append(base::DictValue().Set("kind", m.kind).Set("text", m.text).Set("chips", std::move(chips)));
+    }
+    list.Append(base::DictValue().Set("key", s->key).Set("title", s->title).Set("provider", s->provider).Set("model", s->model)
+        .Set("profile", s->profile).Set("permissions", s->permissions.ToValue()).Set("confirm_background", s->confirm_background)
+        .Set("updated", s->updated.InMillisecondsFSinceUnixEpoch()).Set("messages", std::move(messages)));
+  }
+  window_->SaveAssistantSessions(base::DictValue().Set("version", 1).Set("sessions", std::move(list)));
+}
+void AssistantPanel::SessionsLoaded(std::optional<base::DictValue> saved) {
+  loaded_ = true;
+  std::vector<std::unique_ptr<Session>> restored;
+  const auto* list = saved ? saved->FindList("sessions") : nullptr;
+  const auto& d = window_->assistant_settings().defaults;
+  if (list) for (const auto& item : *list) {
+    const auto* entry = item.GetIfDict();
+    if (!entry || restored.size() >= 200) continue;
+    const auto* key = entry->FindString("key");
+    if (!key || std::ranges::any_of(sessions_, [&](const auto& s) { return s->key == *key; })) continue;
+    auto s = std::make_unique<Session>();
+    s->key = *key;
+    // The runtime forgot it; the next turn passes the earlier messages along.
+    s->id = base::Uuid::GenerateRandomV4().AsLowercaseString();
+    auto text = [&](const char* name) { const auto* v = entry->FindString(name); return v ? *v : std::string(); };
+    s->title = base::UTF8ToUTF16(text("title")); s->provider = text("provider"); s->model = text("model"); s->profile = text("profile");
+    s->confirm_background = entry->FindBool("confirm_background").value_or(true);
+    s->updated = base::Time::FromMillisecondsSinceUnixEpoch(entry->FindDouble("updated").value_or(0));
+    if (const auto* p = entry->FindDict("permissions")) {
+      // Saved access never exceeds today's defaults.
+      s->permissions.tabs = p->FindBool("tabs").value_or(false) && d.tabs;
+      s->permissions.pages = p->FindBool("pages").value_or(false) && d.pages;
+      s->permissions.actions = p->FindBool("actions").value_or(false) && d.actions;
+      s->permissions.history = p->FindBool("history").value_or(false) && d.history;
+      s->permissions.web = p->FindBool("web").value_or(false) && d.web;
+      s->permissions.confirm_clicks = p->FindBool("confirm_clicks").value_or(true) || d.confirm_clicks;
+    }
+    if (const auto* messages = entry->FindList("messages")) for (const auto& value : *messages) {
+      const auto* m = value.GetIfDict();
+      if (!m || !m->FindString("text")) continue;
+      Message message; message.kind = std::clamp(m->FindInt("kind").value_or(3), 0, 3); message.text = *m->FindString("text");
+      if (const auto* chips = m->FindList("chips")) for (const auto& c : *chips) {
+        const auto* chip = c.GetIfDict();
+        if (!chip || !chip->FindString("kind")) continue;
+        const auto* ref = chip->FindString("ref"); const auto* title = chip->FindString("title");
+        message.chips.push_back({*chip->FindString("kind"), ref ? *ref : std::string(), base::UTF8ToUTF16(title ? *title : std::string()),
+                                 static_cast<uint32_t>(chip->FindDouble("color").value_or(0))});
+      }
+      s->transcript += std::string("\n\n") + (message.kind == 0 ? "Assistant: " : message.kind == 1 ? "You: " : "") + message.text;
+      s->messages.push_back(std::move(message));
+    }
+    if (Started(*s)) restored.push_back(std::move(s));
+  }
+  // Saved conversations go before the ones opened since; the selection stays.
+  if (!restored.empty()) {
+    const size_t count = restored.size();
+    sessions_.insert(sessions_.begin(), std::make_move_iterator(restored.begin()), std::make_move_iterator(restored.end()));
+    selected_ += count;
+  }
+  if (std::ranges::any_of(sessions_, [](const auto& s) { return Started(*s); })) ScheduleSave();
+  if (menu_ == Menu::kSessions) BuildMenu();
 }
 void AssistantPanel::PickModel(std::string provider, std::string model) {
   CloseMenu();
@@ -385,9 +515,9 @@ void AssistantPanel::SettingsChanged() {
 // Menus ------------------------------------------------------------------
 void AssistantPanel::ToggleMenu(Menu menu) {
   if (menu_ == menu) { CloseMenu(); return; }
-  menu_ = menu; model_query_.clear();
+  menu_ = menu; model_query_.clear(); confirm_clear_ = false;
   BuildMenu();
-  if (menu == Menu::kModel && model_search_) model_search_->RequestFocus();
+  if ((menu == Menu::kModel || menu == Menu::kSessions) && model_search_) model_search_->RequestFocus();
 }
 void AssistantPanel::CloseMenu() {
   if (menu_ == Menu::kMention && mention_at_) mention_dismissed_ = mention_at_;
@@ -441,32 +571,106 @@ views::View* AssistantPanel::ScrollList(views::View* body, int max_height) {
 }
 void AssistantPanel::BuildSessionsMenu(views::View* body) {
   auto weak = weak_factory_.GetWeakPtr();
-  body->AddChildView(CreateAssistantEyebrow(T(u"Sesje"), base::NumberToString16(sessions_.size())));
-  auto* recent = ScrollList(body, 260);
-  for (size_t i = sessions_.size(); i-- > 0;) {
-    const auto& s = *sessions_[i];
-    AssistantRow row;
-    row.title = s.title.empty() ? T(u"Nowa sesja") : s.title;
-    const auto state = s.busy ? (s.background ? T(u"w tle") : T(u"pracuje")) : s.messages.empty() ? T(u"pusta") : TF(u"{} wiad.", {base::NumberToString16(s.messages.size())});
-    row.detail = base::UTF8ToUTF16(s.model.empty() ? "—" : s.model) + u" · " + state;
-    row.checked = i == selected_;
-    if (s.background) row.mark = {AssistantGlyph::kLayers, {}, SK_ColorTRANSPARENT};
-    recent->AddChildView(CreateAssistantMenuRow(Later(base::BindRepeating(&AssistantPanel::SelectSession, weak, i)), std::move(row)));
-  }
+  const auto profile = window_->AssistantProfileId();
+  // This profile's conversations with something written, newest first.
+  std::vector<size_t> order;
+  for (size_t i = 0; i < sessions_.size(); ++i) if (sessions_[i]->profile == profile && Started(*sessions_[i])) order.push_back(i);
+  std::ranges::sort(order, [&](size_t a, size_t b) { return sessions_[a]->updated > sessions_[b]->updated; });
+  body->AddChildView(CreateAssistantEyebrow(T(u"Historia rozmów"), base::NumberToString16(order.size())));
+  model_search_ = scene_->AddSearch(body, T(u"Szukaj w rozmowach"), T(u"Szukaj w rozmowach"));
+  model_search_->SetText(model_query_);
+  model_search_->SetCallbacks(base::BindRepeating([](AssistantPanel* self) {
+    const std::u16string query(self->model_search_->GetText());
+    if (query == self->model_query_) return;
+    self->model_query_ = query;
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce([](base::WeakPtr<AssistantPanel> self) {
+      if (!self || self->menu_ != Menu::kSessions) return;
+      self->BuildMenu();
+      if (self->model_search_) { self->model_search_->RequestFocus(); self->model_search_->SelectRange(gfx::Range(self->model_query_.size())); }
+    }, self->weak_factory_.GetWeakPtr()));
+  }, base::Unretained(this)), base::BindRepeating([](AssistantPanel* self, const ui::KeyEvent& key) {
+    if (key.type() != ui::EventType::kKeyPressed || key.key_code() != ui::VKEY_ESCAPE) return false;
+    self->CloseMenu(); self->prompt_->RequestFocus(); return true;
+  }, base::Unretained(this)));
   AssistantRow add; add.title = T(u"Nowa sesja"); add.mark = {AssistantGlyph::kPlus, {}, SK_ColorTRANSPARENT};
   body->AddChildView(CreateAssistantMenuRow(Later(base::BindRepeating(&AssistantPanel::NewSession, weak)), std::move(add)));
-  AssistantRow copy; copy.title = T(u"Kopiuj rozmowę"); copy.mark = {AssistantGlyph::kCopy, {}, SK_ColorTRANSPARENT};
-  copy.disabled = selected().transcript.empty();
+  const auto query = Fold(model_query_);
+  // The list takes the height the foot leaves; the foot stays at the bottom.
+  auto* list = ScrollList(body, 10000);
+  // A line to recognise the conversation by: where the query matched, or the last reply.
+  auto excerpt = [](std::string_view text) {
+    std::u16string line;
+    for (const auto& part : base::SplitStringPiece(text, "\n", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
+      std::string clean(base::TrimString(part, "#*>-` ", base::TRIM_LEADING));
+      base::RemoveChars(clean, "*`", &clean);
+      if (!clean.empty()) { line = base::UTF8ToUTF16(clean); break; }
+    }
+    return line.size() > 90 ? line.substr(0, 89) + u"…" : line;
+  };
+  const auto now = base::Time::Now();
+  const auto today = now.LocalMidnight();
+  int group = -1;
+  size_t shown = 0;
+  for (const size_t i : order) {
+    const auto& s = *sessions_[i];
+    std::u16string detail;
+    gfx::Range match;
+    if (!query.empty()) {
+      const auto at = Fold(s.title).find(query);
+      if (at != std::u16string::npos) match = gfx::Range(at, at + query.size());
+      for (const auto& m : s.messages) {
+        if (m.kind > 1 || !match.is_empty()) continue;
+        const auto text = base::UTF8ToUTF16(m.text);
+        const auto found = Fold(text).find(query);
+        if (found == std::u16string::npos) continue;
+        const size_t from = found > 30 ? found - 30 : 0;
+        detail = (from ? u"…" : u"") + excerpt(base::UTF16ToUTF8(text.substr(from)));
+        break;
+      }
+      if (match.is_empty() && detail.empty()) continue;
+    }
+    if (detail.empty()) for (auto m = s.messages.rbegin(); m != s.messages.rend(); ++m) if (m->kind == 0) { detail = excerpt(m->text); break; }
+    if (detail.empty()) detail = base::UTF8ToUTF16(s.model);
+    // Today, yesterday, this week, earlier.
+    const int age = s.updated >= today ? 0 : s.updated >= today - base::Days(1) ? 1 : s.updated >= today - base::Days(7) ? 2 : 3;
+    if (age != group) {
+      group = age;
+      list->AddChildView(CreateAssistantEyebrow(age == 0 ? T(u"Dziś") : age == 1 ? T(u"Wczoraj") : age == 2 ? T(u"Ostatnie 7 dni") : T(u"Wcześniej")))->SetProperty(views::kMarginsKey, gfx::Insets::TLBR(shown ? 6 : 0, 0, 0, 0));
+    }
+    AssistantRow row;
+    row.title = s.title.empty() ? T(u"Nowa sesja") : s.title;
+    row.match = match;
+    row.detail = detail;
+    row.checked = i == selected_;
+    row.badge = s.busy ? (s.background ? T(u"w tle") : T(u"pracuje"))
+              : age == 0 ? base::TimeFormatTimeOfDay(s.updated) : [&] {
+                  base::Time::Exploded day; s.updated.LocalExplode(&day);
+                  return base::UTF8ToUTF16(base::StringPrintf("%d.%02d", day.day_of_month, day.month)); }();
+    row.mark = {s.background ? AssistantGlyph::kLayers : AssistantGlyph::kSpark, {}, SK_ColorTRANSPARENT};
+    row.muted_mark = !s.background;
+    row.remove = Later(base::BindRepeating(&AssistantPanel::DeleteSession, weak, s.key));
+    row.remove_name = T(u"Usuń rozmowę");
+    list->AddChildView(CreateAssistantMenuRow(Later(base::BindRepeating(&AssistantPanel::SelectSession, weak, i)), std::move(row)));
+    ++shown;
+  }
+  if (!shown) list->AddChildView(CreateAssistantNote(order.empty() ? T(u"Tu pojawią się Twoje rozmowy.") : T(u"Żadna rozmowa nie pasuje.")))
+      ->SetProperty(views::kMarginsKey, gfx::Insets::VH(8, 8));
+  AssistantRow clear;
+  clear.title = confirm_clear_ ? TF(u"Kliknij jeszcze raz, aby usunąć {}", {base::NumberToString16(order.size())}) : T(u"Usuń wszystkie rozmowy");
+  clear.mark = {AssistantGlyph::kTrash, {}, SK_ColorTRANSPARENT}; clear.danger = true; clear.disabled = order.empty();
   body->AddChildView(CreateAssistantMenuRow(Later(base::BindRepeating([](base::WeakPtr<AssistantPanel> self) {
     if (!self) return;
-    ui::ScopedClipboardWriter(ui::ClipboardBuffer::kCopyPaste).WriteText(base::UTF8ToUTF16(self->selected().transcript)); self->CloseMenu(); }, weak)), std::move(copy)));
-  AssistantRow clear; clear.title = T(u"Wyczyść wszystkie rozmowy"); clear.mark = {AssistantGlyph::kTrash, {}, SK_ColorTRANSPARENT}; clear.danger = true;
-  body->AddChildView(CreateAssistantMenuRow(Later(base::BindRepeating([](base::WeakPtr<AssistantPanel> self) {
-    if (!self) return;
-    self->StopAll();
-    for (const auto& s : self->sessions_) self->window_->AssistantDiscardBackground(s->key);
-    self->ResetRuntime(); self->sessions_.clear(); self->NewSession(); self->RenderBackground(); }, weak)), std::move(clear)));
-  body->AddChildView(CreateAssistantNote(T(u"Rozmowy znikają po zamknięciu Zittera.")))->SetProperty(views::kMarginsKey, gfx::Insets::TLBR(4, 8, 4, 8));
+    if (!self->confirm_clear_) { self->confirm_clear_ = true; self->BuildMenu(); return; }
+    self->confirm_clear_ = false;
+    // This profile's conversations; other profiles keep theirs.
+    const auto profile = self->window_->AssistantProfileId();
+    std::vector<std::string> keys;
+    for (const auto& s : self->sessions_) if (s->profile == profile) keys.push_back(s->key);
+    for (const auto& key : keys) self->DeleteSession(key);
+    self->ResetRuntime(); self->RenderBackground(); }, weak)), std::move(clear)));
+  body->AddChildView(CreateAssistantNote(T(u"Rozmowy są zapisane na tym komputerze. Usuń te, których nie potrzebujesz.")))
+      ->SetProperty(views::kMarginsKey, gfx::Insets::TLBR(4, 8, 4, 8));
+  SetSidebarPanelLayout(body, true, gfx::Insets(6), 2, menu_scroll_);
 }
 void AssistantPanel::BuildAccessMenu(views::View* body) {
   auto weak = weak_factory_.GetWeakPtr();
@@ -814,6 +1018,12 @@ void AssistantPanel::SeedBackgroundForTesting() {
   add(u"Zamawiam ładowarkę", true);
   RenderBackground();
 }
+void AssistantPanel::SeedExchangeForTesting(std::string prompt, std::string answer) {
+  auto& session = selected();
+  if (session.title.empty()) session.title = base::UTF8ToUTF16(prompt.substr(0, 48));
+  Append(session, "You: " + prompt);
+  Append(session, "Assistant: " + answer);
+}
 void AssistantPanel::TakeOverForTesting() {
   for (auto& s : sessions_) if (s->background) { TakeOver(s->key); return; }
 }
@@ -829,6 +1039,8 @@ void AssistantPanel::Append(Session& session, std::string text, std::vector<Assi
   else {message.kind=3;message.text=text;}
   auto& messages=session.messages;messages.push_back(std::move(message));
   if(messages.size()>160)messages.erase(messages.begin(),messages.begin()+40);
+  session.updated=base::Time::Now();
+  ScheduleSave();
   if (&session != &selected()) return;
   RenderConversation();
   if(GetWidget())GetWidget()->LayoutRootViewIfNecessary();
@@ -871,6 +1083,13 @@ void AssistantPanel::Send(bool background) {
            .Set("utc_offset_minutes", TimelineUtcOffsetMinutes(base::Time::Now())))
       .Set("config", base::DictValue().Set("provider", session.provider).Set("model", session.model))
       .Set("permissions", session.permissions.ToValue()).Set("context", window_->AssistantContext(session.permissions));
+  base::ListValue history;
+  for (size_t i = 0; i + 1 < session.messages.size(); ++i) {
+    const auto& m = session.messages[i];
+    if (m.kind == 0 || m.kind == 1) history.Append(base::DictValue().Set("role", m.kind == 1 ? "user" : "assistant").Set("text", m.text.substr(0, 8000)));
+  }
+  while (history.size() > 30) history.erase(history.begin());
+  session.request->Set("history", std::move(history));
   StartTurn(session);
 }
 void AssistantPanel::StartTurn(Session& session) {
@@ -1250,7 +1469,11 @@ void AssistantPanel::Layout(PassKey) {
   if (!menu_view_) return;
   const int inner = std::max(0, width() - 32);
   int w = inner, x = 16, top = 0, bottom = 0;
-  if (menu_ == Menu::kSessions || menu_ == Menu::kAccess) { w = std::min(320, inner); x = width() - 16 - w; top = header_->bounds().bottom() + 6; }
+  if (menu_ == Menu::kSessions) {
+    menu_view_->SetBounds(16, header_->bounds().bottom() + 6, inner, std::max(0, height() - header_->bounds().bottom() - 22));
+    return;
+  }
+  if (menu_ == Menu::kAccess) { w = std::min(320, inner); x = width() - 16 - w; top = header_->bounds().bottom() + 6; }
   else if (menu_ == Menu::kModel) { w = std::min(300, inner); x = width() - 16 - w; bottom = composer_->y() - 8; }
   else { w = composer_->width(); x = composer_->x(); bottom = composer_->y() - 8; }
   const int limit = bottom ? std::max(0, bottom - header_->bounds().bottom() - 6) : std::max(0, height() - top - 16);

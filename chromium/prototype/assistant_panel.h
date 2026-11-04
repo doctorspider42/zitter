@@ -113,6 +113,13 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   void TakeOverForTesting();
   // Adds a running background task and one waiting for consent, for renders.
   void SeedBackgroundForTesting();
+  // Adds a finished exchange to the selected session, as a real turn would.
+  void SeedExchangeForTesting(std::string prompt, std::string answer);
+  size_t sessions_for_testing() const { return sessions_.size(); }
+  bool sessions_loaded_for_testing() const { return loaded_; }
+  void NewSessionForTesting() { NewSession(); }
+  void DeleteSessionForTesting(size_t index) { DeleteSession(sessions_[index]->key); }
+  void SaveNowForTesting() { SaveSessions(); }
  private:
   struct Message { int kind = 0; std::string text; std::vector<AssistantChip> chips; };
   struct Session {
@@ -134,7 +141,10 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
     std::u16string confirm_label, status;
     bool confirm_key = false;  // The pending consent is a key press, not a click.
     std::string target;  // The tab its page actions use.
+    base::Time updated;
   };
+  // Has the user written anything here yet?
+  static bool Started(const Session& session);
   void Layout(PassKey) override;
   Session& selected() { return *sessions_[selected_]; }
   const Session& selected() const { return *sessions_[selected_]; }
@@ -165,6 +175,11 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   void PickModel(std::string provider, std::string model);
   void NewSession();
   void SelectSession(size_t index);
+  void DeleteSession(std::string key);
+  // Conversations are saved shortly after they change, and read back once.
+  void ScheduleSave();
+  void SaveSessions();
+  void SessionsLoaded(std::optional<base::DictValue> saved);
   void Send(bool background);
   void StartTurn(Session& session);
   void PollRuntime(std::string key, uint64_t epoch, int attempts);
@@ -214,6 +229,10 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   void WatchPointer();
   std::vector<std::unique_ptr<Session>> sessions_;
   size_t selected_ = 0;
+  bool loaded_ = false;
+  base::OneShotTimer save_timer_;
+  // A second press of "delete all" within the open history confirms it.
+  bool confirm_clear_ = false;
   bool pinned_ = false;
   int port_ = 0;
   std::string token_;

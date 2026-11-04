@@ -155,3 +155,15 @@ test('screenshots become images, and only the newest stay in the transcript', as
   assert.deepEqual(calls[2].at(-1).images, ['c2Vjb25k']);
   assert.equal(calls[2].filter(m => m.images).length, 1);
 });
+
+test('a saved conversation continues with its earlier messages, and old runtimes make room', async () => {
+  const calls = [];
+  const engine = new Engine({ providerFactory: () => ({ async complete(system, messages) { calls.push(structuredClone(messages)); return done('Again'); } }) });
+  const signal = new AbortController().signal;
+  await engine.turn(request({ id: 'restored', history: [{ role: 'user', text: 'Which books?' }, { role: 'assistant', text: 'Solaris and Eden.' }] }), signal);
+  assert.match(calls[0][0].content, /Which books/);
+  assert.equal(JSON.parse(calls[0][1].content).answer, 'Solaris and Eden.');
+  assert.match(calls[0][2].content, /Help me/);
+  for (let i = 0; i < 40; i++) await engine.turn(request({ id: `s${i}` }), signal);
+  assert.equal(engine.sessions.size, 32);
+});

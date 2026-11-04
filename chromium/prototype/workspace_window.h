@@ -148,6 +148,10 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void AssistantDiscardBackground(const std::string& key);
   // The element's bounds in screen coordinates, for a consent bubble beside it.
   views::WebView* AssistantTabView(std::string id);
+  // Saved assistant conversations, beside the workspace configuration.
+  void LoadAssistantSessions(base::OnceCallback<void(std::optional<base::DictValue>)> done);
+  void SaveAssistantSessions(base::DictValue sessions);
+  base::FilePath assistant_sessions_path() const { return data_directory_.AppendASCII("ZitterAssistantSessions.json"); }
   // The assistant's stable id for a tab (@tab:<id>), made on first use.
   std::string AssistantTargetFor(views::View* view);
   void AssistantElementBounds(std::string tab, std::string element, base::OnceCallback<void(std::optional<gfx::Rect>)> done);

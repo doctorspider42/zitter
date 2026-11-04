@@ -889,6 +889,45 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantSwitchRemovesPanelAnd
   window_->ShowAssistant(); EXPECT_TRUE(window_->assistant()->GetVisible());
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantSessionsAreSavedAndEmptyOnesReused) {
+  const auto path=window_->assistant_sessions_path();
+  auto read_file=[&]{base::ScopedAllowBlockingForTesting allow;std::string json;base::ReadFileToString(path,&json);return json;};
+  // A conversation saved by an earlier run comes back.
+  window_->SaveAssistantSessions(base::DictValue().Set("version",1).Set("sessions",base::ListValue().Append(base::DictValue()
+      .Set("key","earlier").Set("title","Książki z października").Set("provider","claude").Set("model","sonnet")
+      .Set("profile",window_->AssistantProfileId()).Set("updated",base::Time::Now().InMillisecondsFSinceUnixEpoch())
+      .Set("messages",base::ListValue().Append(base::DictValue().Set("kind",1).Set("text","Co czytałem?"))
+                                       .Append(base::DictValue().Set("kind",0).Set("text","Solaris i Eden."))))));
+  ASSERT_TRUE(base::test::RunUntil([&]{return read_file().find("Solaris")!=std::string::npos;}));
+  window_->ShowAssistant();
+  auto* panel=window_->assistant();
+  ASSERT_TRUE(base::test::RunUntil([&]{return panel->sessions_loaded_for_testing();}));
+  EXPECT_EQ(panel->sessions_for_testing(),2u);
+  EXPECT_TRUE(panel->ContainsForTesting("Solaris i Eden."));
+  // The new-session button reuses an untouched conversation.
+  panel->NewSessionForTesting();panel->NewSessionForTesting();
+  EXPECT_EQ(panel->sessions_for_testing(),2u);
+  panel->SeedExchangeForTesting("Jakie filmy?","Stalker.");
+  panel->NewSessionForTesting();
+  EXPECT_EQ(panel->sessions_for_testing(),3u);
+  panel->NewSessionForTesting();
+  EXPECT_EQ(panel->sessions_for_testing(),3u);
+  // Only conversations with something written are saved.
+  panel->SaveNowForTesting();
+  ASSERT_TRUE(base::test::RunUntil([&]{return read_file().find("Stalker.")!=std::string::npos;}));
+  auto saved=base::JSONReader::ReadDict(read_file(),base::JSON_PARSE_RFC);ASSERT_TRUE(saved);
+  EXPECT_EQ(saved->FindList("sessions")->size(),2u);
+  // The history view opens over the panel; deleting a conversation removes it from disk.
+  panel->ToggleMenuForTesting(AssistantPanel::Menu::kSessions);
+  window_->widget()->LayoutRootViewIfNecessary();
+  EXPECT_GT(panel->menu_bounds_for_testing().height(),panel->height()/2);
+  panel->DeleteSessionForTesting(0);
+  panel->SaveNowForTesting();
+  // One read must see both: a read during the atomic replace can come back empty.
+  ASSERT_TRUE(base::test::RunUntil([&]{const auto json=read_file();return json.find("Solaris")==std::string::npos&&json.find("Stalker.")!=std::string::npos;}));
+  EXPECT_FALSE(panel->ContainsForTesting("Solaris i Eden."));
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantMentionsInsertRemovableChips) {
   ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), embedded_test_server()->GetURL("/storage_probe.html")));
   window_->ShowAssistant(); auto* panel=window_->assistant();
