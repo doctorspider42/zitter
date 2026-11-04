@@ -243,6 +243,7 @@ source_set("shell") {
     "//ui/compositor",
     "//ui/native_theme",
     "//ui/gfx/animation",
+    "//ui/gfx/codec",
     "//ui/display",
     "//ui/base",
     "//ui/content_accelerators",

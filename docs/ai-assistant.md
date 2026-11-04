@@ -4,8 +4,8 @@ Open **Command Center → AI Assistant** (`Ctrl+K`, then type `>assistant`).
 The assistant opens on the right with a quiet welcome screen, draft suggestions
 and a composer anchored at the bottom. The pin icon reserves page space or uses
 an overlay. An unpinned panel hides 650 ms after the pointer leaves it; pinned
-panels stay visible. Open settings, an active resize, a focused nonempty draft
-and a running task keep it visible. Drag the grip on its left edge to resize it
+panels stay visible. Open menus, an active resize and a focused nonempty draft
+keep it visible; a running task keeps working while the panel is hidden. Drag the grip on its left edge to resize it
 between 360 and 760 DIP; narrow windows constrain the effective width. The chosen
 width survives hiding and pin changes within the window.
 Closing the panel stops its current task; background tasks keep running. Once
@@ -57,6 +57,12 @@ assistant runtime. Closing Zitter discards conversations and in-memory caches.
 Sessions belong to the profile in which they were created; changing profiles stops
 their tasks.
 
+The message field is multiline: Enter sends, Shift+Enter starts a new line, and the
+field grows to six lines before it scrolls. Replies render Markdown (headings,
+bold, italics, inline code, links, lists, quotes, code blocks, tables and rules);
+links open in a new tab. Every message has a copy button that copies its text as
+written, Markdown included.
+
 Type `@` to insert a page or a tool. Suggestions list open tabs (the current one
 first), pinned pages and the tools **Deep research** and **Background**, filtered
 by what follows the `@`. Arrow keys move, Enter or Tab inserts, Escape closes. The
@@ -102,7 +108,8 @@ Open **Access** to select independently:
 
 - Open tabs and pinned pages in the current profile.
 - Page text and interactive controls.
-- Browser actions: navigation, tabs, pinning, browser commands, clicking, typing and scrolling.
+- Browser actions: navigation, tabs, spaces, pinning, browser commands, mouse, keyboard,
+  forms, page dialogs and scrolling.
 - Searching the current profile's browsing history.
 - Public web search and page reading.
 
@@ -113,18 +120,61 @@ Permission checks happen in native code, separately from model instructions.
 Off-the-record profiles and browser-internal pages are excluded. Tab references
 are lifetime tracked, checked against the current profile and rejected after a
 tab closes. Query strings, fragments and URL credentials are removed from shared
-tab/history metadata. Tools never expose cookies, browser password stores,
-screenshots or input values. Password, payment, authentication, hidden,
-autofill-sensitive, editable and explicitly private DOM fields are excluded.
-This is data minimization, not a guarantee that arbitrary prose cannot contain
-a secret. The assistant currently reads the main frame's rendered DOM; it does
-not inspect cross-origin frames, shadow roots, canvas contents or downloaded files.
+tab/history metadata. Tools never expose cookies or browser password stores.
+Password, one-time code, payment, hidden and explicitly private DOM fields are
+excluded from reading and refuse input. Rich editors (`contenteditable`) are
+ordinary content: the assistant reads and edits them. This is data minimization,
+not a guarantee that arbitrary prose cannot contain a secret.
+
+`read_page` reads the rendered DOM of the page, its open shadow roots and
+same-origin frames. It lists up to 300 interactive elements, on-screen ones first:
+links, buttons, form fields, `contenteditable` editors, ARIA roles such as menu
+items, tabs, checkboxes and options, and elements with `onclick` or a tab stop.
+Each one has its role, state, position and, for a `<select>`, its options.
+Cross-origin frames, canvas contents and downloaded files are not read as text;
+`screenshot` shows the page to the model as an image instead (JPEG, at most
+1280 px wide, with `css_per_pixel` to turn image pixels into page coordinates).
+Only the two newest screenshots stay in the conversation.
 
 The assistant discovers permitted tabs automatically. References are optional.
 Opening a dormant pin requires browser-action permission, followed by listing its
 live tab.
 
-By default each click on the visible page needs consent: a small prompt appears
+Page tools act like a user, with real input events:
+
+- `click` sends a real mouse click to a visible spot of the element (a covered
+  element gets a scripted click). `mouse` hovers, clicks, double-clicks,
+  right-clicks or drags, at an element or at x/y.
+- `type` replaces the text of a field or of a rich editor element; `select` picks
+  an option of a `<select>`; `scroll` scrolls the page or a scrollable element.
+- For rich editors such as Google Docs, `insert_text` types at the page's keyboard
+  focus; when nothing editable has focus it first gives the page's main editor a
+  real click, so it works while the user's keyboard is in the assistant panel.
+- `press_key` presses a key with optional Ctrl, Shift, Alt and Meta: letters,
+  digits, F1–F12 and the named keys, so shortcuts such as Ctrl+C, Ctrl+V or
+  Ctrl+Enter work. Shortcuts that close or switch tabs and windows (Ctrl+W, Ctrl+T,
+  Ctrl+N, Ctrl+Q, Ctrl+Tab, Ctrl+Page Up/Down, Alt+F4, Ctrl+Shift+Delete) are
+  reserved for the user.
+- `navigate`, `open_tab`, `click`, `mouse` and `wait` return once the page has
+  loaded (up to 15 s), with its URL, title and any dialog it opened. `open_tab`
+  also returns the new tab's id.
+- A page's alert, confirm, prompt or leave dialog blocks other page tools until
+  `dialog` answers it.
+- `visit` loads any HTTP(S) page, or up to six at once, in the assistant's own
+  invisible reader tabs (`@reader`, `@reader:2` … `@reader:6`), signed in like the
+  user's tabs.
+- `move_tab`, `create_space` and `create_folder` organize tabs and spaces of the
+  current profile; `list_tabs` also lists the spaces. `downloads` lists recent
+  downloads (with the history permission).
+
+All of these need the browser actions permission, except reading tools.
+
+Consent is native and the model cannot supply it. With **Confirm clicks** on, these
+wait for the user: clicks and mouse actions other than hover, Enter outside a
+multi-line editor (it can submit a form), Enter with a modifier (it sends messages
+in mail and chat apps), and accepting a confirm, prompt or leave dialog.
+
+By default each such action on the visible page needs consent: a small prompt appears
 beside the element (**Allow** with Enter, **Skip** with Escape, or **Until the task
 ends**). Skipping tells the model the user declined that click. The model cannot
 change this choice or supply native consent.
@@ -134,9 +184,11 @@ change this choice or supply native consent.
 With **Background** (the chip, `@`, or Alt+Enter to send), the assistant works in an
 invisible tab of the same profile, so it has the same cookies and logins without
 clicking in the user's view. In that mode `@current`, `navigate` and `open_tab` use
-the hidden page, and the user's visible tabs stay read-only. While the assistant
-controls the visible page, the status capsule offers **Finish in the background**:
-the tab itself, with its page state, moves out of view and the previous tab returns.
+the hidden page, and the user's visible tabs stay read-only. While a task runs in
+the foreground, the Background button under the field and **Finish in the
+background** in the status capsule move it out of view: the tab it works in moves,
+with its page state, and the previous tab returns (the space's only tab is copied
+instead). A task that has not touched a page yet gets a fresh invisible tab.
 
 Background tasks appear in the panel under **Background**, each with its status,
 **Take over the tab** (which stops the task and shows the page as a normal tab) and
@@ -144,10 +196,10 @@ stop or close. When **Confirm clicks in the background** is on, a click waits in
 panel as a card with the element's label, **Allow**, **Skip** and **Take over the
 tab**; the right-edge opener turns amber while a card waits. Background work needs
 the click permission and **Allow background work** in Settings.
-Text entry is limited to non-sensitive
-`input`/`textarea` controls; uploads and credential entry remain user actions.
-Navigation and click completion indicate dispatch, not page-load completion.
-The assistant must read again after a page changes.
+Background pages suppress page dialogs (a confirm returns Cancel). File uploads,
+credentials and payment details remain user actions. The assistant must read
+again after a page changes. A turn can take up to 400 tool steps; after that the
+user sends a follow-up to continue.
 
 An animated spectral edge with a violet, ice and mint light trail identifies page
 control. A compact bottom capsule shows activity and the Escape hint. The center
@@ -185,6 +237,7 @@ history or browser operations. Caches are never written to the browsing profile.
 Run `node --test chromium/assistant/*.test.mjs` for provider response,
 orchestration, access, network and RPC contracts. The targeted Chromium tests are
 `ZitterProfilesBrowserTest.AssistantPermissionsAndPageRedaction`,
+`ZitterProfilesBrowserTest.AssistantKeyboardTypesAtFocusButNotIntoSecrets`,
 `ZitterProfilesBrowserTest.AssistantPanelIsOptionalAndPinnable`,
 `ZitterProfilesBrowserTest.AssistantSwitchRemovesPanelAndCommand`,
 `ZitterProfilesBrowserTest.AssistantMentionsInsertRemovableChips` and

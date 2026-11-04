@@ -7,7 +7,9 @@
 #include "base/functional/callback.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/range/range.h"
-namespace views { class View; class Background; }
+#include "url/gurl.h"
+namespace ui { class KeyEvent; }
+namespace views { class View; class Background; class Textarea; }
 namespace views { class ResizeAreaDelegate; }
 namespace zitter::prototype {
 enum class AssistantGlyph { kSpark, kPlus, kHistory, kPin, kClose, kArrow, kStop, kAt, kSearch, kShield, kPage, kChevron, kRevoke,
@@ -22,6 +24,15 @@ void UpdateAssistantButton(views::View* button, std::u16string text, bool select
 // kind 0 card, 1 composer, 2 accent tint, 3 message, 4 popover (raised, with shadow).
 std::unique_ptr<views::View> CreateAssistantSurface(int kind = 0);
 std::unique_ptr<views::View> CreateAssistantWelcome();
+// An assistant reply as Markdown: headings, paragraphs with **bold**, *italic*,
+// `code` and links, bullet and numbered lists, quotes, code blocks, tables and
+// rules. Links call `open`; nothing else in the text can act.
+std::unique_ptr<views::View> CreateAssistantMarkdown(std::u16string text, base::RepeatingCallback<void(const GURL&)> open);
+// The user's own message: selectable plain text.
+std::unique_ptr<views::View> CreateAssistantPlainText(std::u16string text);
+// The composer field: multiline, unframed, growing up to six lines, then scrolling.
+// `key` sees each key press first (Enter to send); returning true consumes it.
+std::unique_ptr<views::Textarea> CreateAssistantPromptArea(base::RepeatingCallback<bool(const ui::KeyEvent&)> key);
 std::unique_ptr<views::View> CreateAssistantSuggestion(base::RepeatingClosure action, AssistantGlyph glyph, std::u16string title, std::u16string detail);
 
 // The leading mark of a row or chip: a tool glyph, or a page's letter tile.

@@ -148,6 +148,8 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void AssistantDiscardBackground(const std::string& key);
   // The element's bounds in screen coordinates, for a consent bubble beside it.
   views::WebView* AssistantTabView(std::string id);
+  // The assistant's stable id for a tab (@tab:<id>), made on first use.
+  std::string AssistantTargetFor(views::View* view);
   void AssistantElementBounds(std::string tab, std::string element, base::OnceCallback<void(std::optional<gfx::Rect>)> done);
   content::WebContents* assistant_background_for_testing(const std::string& key) const;
   AssistantPanel* assistant() const { return assistant_; }

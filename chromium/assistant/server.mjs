@@ -17,13 +17,15 @@ export function server(token, engine = new Engine()) {
     }
     if (req.method === 'GET' && req.url === '/health') { res.end('{"ready":true}'); return; }
     if (req.method !== 'POST') { res.writeHead(405); res.end('{}'); return; }
-    let body = '';
+    // Screenshots make tool results large: up to 16 MB.
+    const chunks = [];
+    let size = 0;
     try {
       for await (const chunk of req) {
-        body += chunk;
-        if (Buffer.byteLength(body) > 1024 * 1024) throw new Error('Request too large');
+        size += chunk.length; chunks.push(chunk);
+        if (size > 16 * 1024 * 1024) throw new Error('Request too large');
       }
-      const value = JSON.parse(body);
+      const value = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       if (typeof value.id !== 'string' || value.id.length > 100) throw new Error('Invalid session');
       if (req.url === '/cancel' || req.url === '/delete') {
         running.get(value.id)?.abort(); running.delete(value.id);

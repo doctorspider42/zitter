@@ -139,3 +139,19 @@ test('loopback RPC rejects origins and invalid tokens, never echoes arbitrary pr
   const error = await (await fetch(url + '/turn', { method: 'POST', headers: { Authorization: 'Bearer secret' }, body: JSON.stringify({ id: 'a' }) })).json();
   assert.doesNotMatch(error.error, /password|abc/);
 });
+
+test('screenshots become images, and only the newest stay in the transcript', async () => {
+  const calls = [];
+  const engine = new Engine({ providerFactory: () => ({ async complete(system, messages) {
+    calls.push(structuredClone(messages));
+    return calls.length < 3 ? { answer: '', actions: [action('screenshot', { tab: '@current' })] } : done('Seen');
+  } }) });
+  const signal = new AbortController().signal;
+  await engine.turn(request({ id: 'shots' }), signal);
+  await engine.resume('shots', [{ tool: 'screenshot', result: { image: 'Zmlyc3Q=', width: 10, height: 10 } }], signal);
+  assert.deepEqual(calls[1].at(-1).images, ['Zmlyc3Q=']);
+  assert.doesNotMatch(calls[1].at(-1).content, /Zmlyc3Q=/);
+  await engine.resume('shots', [{ tool: 'screenshot', result: { image: 'c2Vjb25k' } }], signal);
+  assert.deepEqual(calls[2].at(-1).images, ['c2Vjb25k']);
+  assert.equal(calls[2].filter(m => m.images).length, 1);
+});

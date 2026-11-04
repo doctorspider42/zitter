@@ -1,6 +1,6 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm, copyFile, chmod } from 'node:fs/promises';
+import { mkdtemp, rm, copyFile, chmod, writeFile } from 'node:fs/promises';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 import { AssistantError } from './errors.mjs';
@@ -75,7 +75,9 @@ export class Provider {
       const data = await json('https://api.openai.com/v1/responses', {
         method: 'POST', headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ model, store: false, instructions: system,
-          input: messages.map(m => ({ role: m.role, content: m.content })),
+          input: messages.map(m => ({ role: m.role, content: m.images?.length
+            ? [{ type: 'input_text', text: m.content }, ...m.images.map(image => ({ type: 'input_image', image_url: `data:image/jpeg;base64,${image}` }))]
+            : m.content })),
           text: { format: { type: 'json_schema', name: 'zitter_turn', strict: true, schema } },
           prompt_cache_key: 'zitter-assistant-v1',
         }),
@@ -89,22 +91,29 @@ export class Provider {
       const data = await json(new URL('/api/chat', endpoint), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model, stream: false, keep_alive: '10m', format: schema,
-          messages: [{ role: 'system', content: system }, ...messages] }),
+          messages: [{ role: 'system', content: system },
+            ...messages.map(m => m.images?.length ? { role: m.role, content: m.content, images: m.images } : { role: m.role, content: m.content })] }),
       }, signal, this.fetcher);
       return decode(data.message?.content);
     }
     // Isolated, empty working directories keep CLI agents away from browser profiles.
     const cwd = await mkdtemp(join(tmpdir(), 'zitter-assistant-'));
     try {
-      const input = JSON.stringify({ messages });
+      // Screenshots travel beside the transcript, as the CLI's own image input.
+      const images = messages.flatMap(m => m.images ?? []);
+      const input = JSON.stringify({ messages: messages.map(({ role, content }) => ({ role, content })) });
       if (provider === 'claude') {
         const output = await this.runCLI(env.ZITTER_CLAUDE_PATH ?? 'claude', [
-          '-p', '--model', model, '--output-format', 'json', '--json-schema', JSON.stringify(schema),
+          '-p', '--model', model, ...(images.length ? ['--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose'] : ['--output-format', 'json']),
+          '--json-schema', JSON.stringify(schema),
           '--system-prompt', system, '--tools', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
           '--no-session-persistence',
           '--setting-sources', '', '--disable-slash-commands',
-        ], input, signal, cwd);
-        const result = JSON.parse(output);
+        ], images.length ? JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: input },
+            ...images.map(data => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } }))] } }) + '\n' : input, signal, cwd);
+        const result = images.length
+          ? output.split('\n').map(line => { try { return JSON.parse(line); } catch { return null; } }).find(line => line?.type === 'result') ?? { is_error: true }
+          : JSON.parse(output);
         if (result.is_error) throw new AssistantError('Claude could not complete the request.');
         return decode(result.structured_output ?? result.result);
       }
@@ -125,7 +134,14 @@ export class Provider {
         sandboxMode: 'read-only', approvalPolicy: 'never', networkAccessEnabled: false,
         webSearchMode: 'disabled',
       });
-      const result = await thread.run(`${system}\n\n${input}`, { outputSchema: schema, signal });
+      const files = [];
+      for (const [index, image] of images.entries()) {
+        const path = join(cwd, `screenshot-${index}.jpg`);
+        await writeFile(path, Buffer.from(image, 'base64'));
+        files.push({ type: 'local_image', path });
+      }
+      const result = await thread.run(files.length ? [{ type: 'text', text: `${system}\n\n${input}` }, ...files] : `${system}\n\n${input}`,
+        { outputSchema: schema, signal });
       return decode(result.finalResponse);
     } finally { await rm(cwd, { recursive: true, force: true }); }
   }

@@ -5,6 +5,7 @@
 #include "chromium/prototype/sidebar_scene.rs.h"
 #include "chromium/prototype/i18n.h"
 #include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/scoped_observation.h"
 #include "cc/paint/paint_flags.h"
 #include "third_party/skia/include/core/SkPathBuilder.h"
@@ -18,12 +19,20 @@
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/views/background.h"
+#include "ui/views/border.h"
+#include "base/strings/string_util.h"
 #include "base/i18n/case_conversion.h"
 #include "base/strings/string_split.h"
 #include "base/timer/timer.h"
 #include "ui/views/view_utils.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/resize_area.h"
+#include "ui/gfx/render_text.h"
+#include "ui/views/controls/label.h"
+#include "ui/views/controls/styled_label.h"
+#include "ui/views/controls/textarea/textarea.h"
+#include "ui/views/layout/box_layout.h"
+#include "ui/views/layout/fill_layout.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/focus/focus_manager.h"
 
@@ -554,6 +563,238 @@ class ConsentBubble final : public views::View {
 };
 BEGIN_METADATA(ConsentBubble)
 END_METADATA
+}
+class PromptArea final : public views::Textarea {
+  METADATA_HEADER(PromptArea,views::Textarea)
+ public:
+  explicit PromptArea(base::RepeatingCallback<bool(const ui::KeyEvent&)> key):key_(std::move(key)){SetBorder(nullptr);SetBackgroundEnabled(false);SetFontList(Type(14));}
+  // Textarea turns Return into a new line before its controller sees it.
+  bool PreHandleKeyPressed(const ui::KeyEvent& event) override {return (key_&&key_.Run(event))||views::Textarea::PreHandleKeyPressed(event);}
+  int LineHeight() const {return GetFontList().GetHeight()+2;}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& bounds) const override {
+    // Wrapped lines of the current text at this width, between one and six.
+    const int width=bounds.width().is_bounded()?bounds.width().value():280;
+    int w=std::max(1,width-4),h=0;
+    std::u16string text(GetText());if(text.empty()||text.ends_with(u"\n"))text+=u" ";
+    gfx::Canvas::SizeStringInt(text,GetFontList(),&w,&h,LineHeight(),gfx::Canvas::MULTI_LINE);
+    const int lines=std::clamp((h+LineHeight()-1)/LineHeight(),1,6);
+    return {width,lines*LineHeight()+4};
+  }
+  void OnThemeChanged() override {
+    views::Textarea::OnThemeChanged();
+    // Text and placeholder take the theme's field colors.
+  }
+ private:
+  base::RepeatingCallback<bool(const ui::KeyEvent&)> key_;
+};
+BEGIN_METADATA(PromptArea)
+END_METADATA
+std::unique_ptr<views::Textarea> CreateAssistantPromptArea(base::RepeatingCallback<bool(const ui::KeyEvent&)> key){return std::make_unique<PromptArea>(std::move(key));}
+
+namespace {
+struct Run { std::u16string text; bool bold = false, italic = false, code = false; GURL url; };
+// Inline Markdown: `code`, **bold**, *italic* / _italic_, [text](url) and bare http(s) links.
+std::vector<Run> Inline(const std::u16string& s) {
+  std::vector<Run> runs; Run plain;
+  auto flush = [&] { if (!plain.text.empty()) runs.push_back(plain); plain = Run(); };
+  bool bold = false, italic = false;
+  for (size_t i = 0; i < s.size();) {
+    if (s[i] == u'`') {
+      const auto end = s.find(u'`', i + 1);
+      if (end != std::u16string::npos) { flush(); runs.push_back({s.substr(i + 1, end - i - 1), false, false, true, GURL()}); i = end + 1; continue; }
+    }
+    if (s.compare(i, 2, u"**") == 0 || s.compare(i, 2, u"__") == 0) { flush(); bold = !bold; plain.bold = bold; plain.italic = italic; i += 2; continue; }
+    if ((s[i] == u'*' || s[i] == u'_') && (s[i] == u'*' || i == 0 || !base::IsAsciiAlpha(s[i - 1]))) {
+      flush(); italic = !italic; plain.bold = bold; plain.italic = italic; ++i; continue;
+    }
+    if (s[i] == u'[') {
+      const auto close = s.find(u"](", i);
+      const auto end = close == std::u16string::npos ? close : s.find(u')', close);
+      if (end != std::u16string::npos) {
+        const GURL url(s.substr(close + 2, end - close - 2));
+        if (url.SchemeIsHTTPOrHTTPS()) { flush(); runs.push_back({s.substr(i + 1, close - i - 1), bold, italic, false, url}); plain.bold = bold; plain.italic = italic; i = end + 1; continue; }
+      }
+    }
+    if (s.compare(i, 7, u"http://") == 0 || s.compare(i, 8, u"https://") == 0) {
+      size_t end = i; while (end < s.size() && !base::IsUnicodeWhitespace(s[end]) && s[end] != u')' && s[end] != u']') ++end;
+      while (end > i && (s[end - 1] == u'.' || s[end - 1] == u',' || s[end - 1] == u';' || s[end - 1] == u':')) --end;
+      const GURL url(s.substr(i, end - i));
+      if (url.is_valid()) { flush(); runs.push_back({s.substr(i, end - i), bold, italic, false, url}); plain.bold = bold; plain.italic = italic; i = end; continue; }
+    }
+    plain.text += s[i]; plain.bold = bold; plain.italic = italic; ++i;
+  }
+  flush();
+  return runs;
+}
+std::u16string Trim(const std::u16string& s) { return std::u16string(base::TrimWhitespace(s, base::TRIM_ALL)); }
+// Read-only, selectable text with inline styles (bold, italic, code, links):
+// a multiline field the user can select in and copy from. Links open on a
+// click that selects nothing.
+class SelectableText final : public views::Textarea {
+  METADATA_HEADER(SelectableText,views::Textarea)
+ public:
+  struct Span { gfx::Range range; bool bold = false, italic = false, code = false; GURL url; };
+  SelectableText(std::u16string text,std::vector<Span> spans,gfx::FontList font,SkColor ink,SkColor code,SkColor link,
+                 base::RepeatingCallback<void(const GURL&)> open)
+      :spans_(std::move(spans)),ink_(ink),code_(code),link_(link),open_(std::move(open)){
+    SetBorder(nullptr);SetBackgroundEnabled(false);SetReadOnly(true);SetFontList(font);SetText(text);
+    GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);GetViewAccessibility().SetName(text);
+  }
+  void OnThemeChanged() override {views::Textarea::OnThemeChanged();Style();}
+  void OnBoundsChanged(const gfx::Rect& previous) override {views::Textarea::OnBoundsChanged(previous);Style();}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& bounds) const override {
+    const int width=bounds.width().is_bounded()?bounds.width().value():320;
+    auto* render=GetRenderText();const auto saved=render->display_rect();
+    render->SetDisplayRect(gfx::Rect(0,0,std::max(1,width-4),saved.height()));
+    const int height=render->GetStringSize().height();
+    render->SetDisplayRect(saved);
+    return {width,height+4};
+  }
+  // The conversation scrolls, not the paragraph.
+  bool OnMouseWheel(const ui::MouseWheelEvent&) override {return false;}
+  void OnMouseReleased(const ui::MouseEvent& event) override {
+    views::Textarea::OnMouseReleased(event);
+    if(!GetSelectedRange().is_empty()||!event.IsOnlyLeftMouseButton())return;
+    const size_t at=GetRenderText()->FindCursorPosition(event.location()).caret_pos();
+    for(const auto& span:spans_)if(span.url.is_valid()&&span.range.Contains(gfx::Range(at,at))&&at<span.range.end()){open_.Run(span.url);return;}
+  }
+ private:
+  void Style(){
+    auto* render=GetRenderText();render->SetColor(ink_);
+    for(const auto& span:spans_){
+      if(span.range.is_empty())continue;
+      if(span.bold)render->ApplyWeight(gfx::Font::Weight::SEMIBOLD,span.range);
+      if(span.italic)render->ApplyStyle(gfx::TEXT_STYLE_ITALIC,true,span.range);
+      if(span.code)render->ApplyColor(code_,span.range);
+      if(span.url.is_valid()){render->ApplyColor(link_,span.range);render->ApplyStyle(gfx::TEXT_STYLE_UNDERLINE,true,span.range);}
+    }
+    SchedulePaint();
+  }
+  std::vector<Span> spans_;SkColor ink_,code_,link_;base::RepeatingCallback<void(const GURL&)> open_;
+};
+BEGIN_METADATA(SelectableText)
+END_METADATA
+// A table row: equal columns, so cells line up from row to row.
+class TableRow final : public views::View {
+  METADATA_HEADER(TableRow,views::View)
+ public:
+  int ColumnWidth(int width) const {const int n=std::max<int>(1,static_cast<int>(children().size()));return std::max(0,(width-10*(n-1))/n);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& bounds) const override {
+    const int width=bounds.width().is_bounded()?bounds.width().value():320;int height=0;
+    for(const auto& child:children())height=std::max(height,child->GetHeightForWidth(ColumnWidth(width)));
+    return {width,height};
+  }
+  void Layout(PassKey) override {int x=0;const int column=ColumnWidth(width());for(const auto& child:children()){child->SetBounds(x,0,column,height());x+=column+10;}}
+};
+BEGIN_METADATA(TableRow)
+END_METADATA
+class Markdown final : public views::View {
+  METADATA_HEADER(Markdown,views::View)
+ public:
+  Markdown(std::u16string text,base::RepeatingCallback<void(const GURL&)> open):text_(std::move(text)),open_(std::move(open)){
+    auto* layout=SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical,gfx::Insets(),8));
+    layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kStretch);
+  }
+  // Colors follow the theme, so blocks are built when it is known.
+  void OnThemeChanged() override {views::View::OnThemeChanged();Build();}
+ private:
+  std::unique_ptr<views::View> Paragraph(const std::u16string& source,int size,int weight,SkColor ink,bool italic=false){
+    const auto c=Theme(this);
+    std::u16string text;std::vector<SelectableText::Span> spans;
+    for(auto& run:Inline(source)){
+      const size_t start=text.size();text+=run.text;
+      spans.push_back({gfx::Range(start,text.size()),run.bold,run.italic||italic,run.code,run.url});
+    }
+    auto font=Type(size,weight);if(italic)font=font.DeriveWithStyle(gfx::Font::ITALIC);
+    return std::make_unique<SelectableText>(text,std::move(spans),font,ink,c.dark?0xffd9d3ff:0xff4b3bb0,c.accent,open_);
+  }
+  void Build(){
+    RemoveAllChildViews();
+    const auto c=Theme(this);
+    std::vector<std::u16string> lines;
+    for(size_t start=0;start<=text_.size();){const auto end=text_.find(u'\n',start);lines.push_back(text_.substr(start,end==std::u16string::npos?std::u16string::npos:end-start));if(end==std::u16string::npos)break;start=end+1;}
+    std::u16string paragraph;
+    auto flush=[&]{if(!Trim(paragraph).empty())AddChildView(Paragraph(Trim(paragraph),13,400,c.ink));paragraph.clear();};
+    for(size_t i=0;i<lines.size();++i){
+      const auto line=lines[i];const auto trimmed=Trim(line);
+      if(trimmed.empty()){flush();continue;}
+      if(trimmed.starts_with(u"```")){
+        flush();std::u16string code;
+        for(++i;i<lines.size()&&!Trim(lines[i]).starts_with(u"```");++i)code+=(code.empty()?u"":u"\n")+lines[i];
+        auto* block=AddChildView(std::make_unique<views::View>());
+        block->SetBackground(views::CreateRoundedRectBackground(SkColorSetA(c.ink,c.dark?16:10),8));
+        block->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical,gfx::Insets::VH(8,10)));
+        auto* label=block->AddChildView(std::make_unique<views::Label>(code));
+        label->SetFontList(Mono(12));label->SetMultiLine(true);label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
+        label->SetEnabledColor(c.ink);label->SetBackgroundColor(SK_ColorTRANSPARENT);label->SetSelectable(true);
+        continue;
+      }
+      if(trimmed.starts_with(u"#")){
+        flush();size_t level=0;while(level<trimmed.size()&&trimmed[level]==u'#')++level;
+        if(level<=6&&level<trimmed.size()&&trimmed[level]==u' '){AddChildView(Paragraph(Trim(trimmed.substr(level)),level==1?17:level==2?15:13,600,c.ink));continue;}
+      }
+      if(trimmed==u"---"||trimmed==u"***"||trimmed==u"___"){
+        flush();auto* rule=AddChildView(std::make_unique<views::View>());rule->SetPreferredSize(gfx::Size(1,1));rule->SetBackground(views::CreateSolidBackground(c.line));continue;
+      }
+      if(trimmed.starts_with(u"|")){
+        flush();
+        auto* table=AddChildView(std::make_unique<views::View>());
+        table->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical,gfx::Insets(),4))->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kStretch);
+        bool header=true;
+        for(;i<lines.size()&&Trim(lines[i]).starts_with(u"|");++i){
+          auto row=Trim(lines[i]);
+          if(row.find_first_not_of(u"|-: ")==std::u16string::npos){header=false;continue;}
+          auto* line_view=table->AddChildView(std::make_unique<TableRow>());
+          if(row.starts_with(u"|"))row=row.substr(1);if(row.ends_with(u"|"))row.pop_back();
+          for(const auto& cell:base::SplitString(row,u"|",base::TRIM_WHITESPACE,base::SPLIT_WANT_ALL))
+            line_view->AddChildView(Paragraph(cell,12,header?600:400,c.ink));
+          header=false;
+        }
+        --i;continue;
+      }
+      std::u16string marker,rest;
+      if((trimmed.starts_with(u"- ")||trimmed.starts_with(u"* ")||trimmed.starts_with(u"+ "))){marker=u"•";rest=trimmed.substr(2);}
+      else{size_t d=0;while(d<trimmed.size()&&base::IsAsciiDigit(trimmed[d]))++d;if(d&&d<3&&d+1<trimmed.size()&&(trimmed[d]==u'.'||trimmed[d]==u')')&&trimmed[d+1]==u' '){marker=trimmed.substr(0,d+1);rest=trimmed.substr(d+2);}}
+      if(!marker.empty()){
+        flush();
+        const size_t indent=line.find_first_not_of(u' ');
+        auto* item=AddChildView(std::make_unique<views::View>());
+        auto* box=item->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal,gfx::Insets::TLBR(0,indent>=2?16:0,0,0),6));
+        box->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kStart);
+        auto* bullet=item->AddChildView(std::make_unique<views::Label>(marker));
+        bullet->SetFontList(Type(13,marker==u"•"?600:500));bullet->SetEnabledColor(c.muted);bullet->SetBackgroundColor(SK_ColorTRANSPARENT);
+        bullet->SetPreferredSize(gfx::Size(marker==u"•"?10:20,19));bullet->SetHorizontalAlignment(gfx::ALIGN_LEFT);
+        box->SetFlexForView(item->AddChildView(Paragraph(rest,13,400,c.ink)),1);
+        continue;
+      }
+      if(trimmed.starts_with(u">")){
+        flush();auto* quote=AddChildView(Paragraph(Trim(trimmed.substr(1)),13,400,c.muted,true));quote->SetBorder(views::CreateEmptyBorder(gfx::Insets::TLBR(0,12,0,0)));continue;
+      }
+      paragraph+=(paragraph.empty()?u"":u" ")+trimmed;
+    }
+    flush();
+    PreferredSizeChanged();
+  }
+  std::u16string text_;base::RepeatingCallback<void(const GURL&)> open_;
+};
+BEGIN_METADATA(Markdown)
+END_METADATA
+}
+std::unique_ptr<views::View> CreateAssistantMarkdown(std::u16string text,base::RepeatingCallback<void(const GURL&)> open){return std::make_unique<Markdown>(std::move(text),std::move(open));}
+std::unique_ptr<views::View> CreateAssistantPlainText(std::u16string text){
+  // Plain, selectable copy (the user's own messages): Markdown off.
+  class Plain final : public views::View {
+   public:
+    explicit Plain(std::u16string text):text_(std::move(text)){SetLayoutManager(std::make_unique<views::FillLayout>());}
+    void OnThemeChanged() override {
+      views::View::OnThemeChanged();RemoveAllChildViews();const auto c=Theme(this);
+      AddChildView(std::make_unique<SelectableText>(text_,std::vector<SelectableText::Span>(),Type(13),c.ink,c.ink,c.accent,base::DoNothing()));
+      PreferredSizeChanged();
+    }
+   private:
+    std::u16string text_;
+  };
+  return std::make_unique<Plain>(std::move(text));
 }
 std::unique_ptr<views::View> CreateAssistantEyebrow(std::u16string text,std::u16string trailing){return std::make_unique<Eyebrow>(std::move(text),std::move(trailing));}
 std::unique_ptr<views::View> CreateAssistantMenuRow(base::RepeatingClosure action,AssistantRow row){return std::make_unique<MenuRow>(std::move(action),std::move(row));}

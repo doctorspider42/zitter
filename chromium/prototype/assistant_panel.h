@@ -20,8 +20,9 @@
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/views/view.h"
 #include "ui/views/controls/resize_area_delegate.h"
+#include "ui/views/controls/textfield/textfield_controller.h"
 namespace network { class SimpleURLLoader; }
-namespace views { class EventMonitor; class ScrollView; }
+namespace views { class EventMonitor; class ScrollView; class Textarea; }
 namespace zitter::prototype {
 class WorkspaceWindow;
 class EditorControl;
@@ -66,7 +67,7 @@ struct AssistantChip {
   uint32_t color = 0;
   bool operator==(const AssistantChip&) const = default;
 };
-class AssistantPanel final : public views::View, public views::ResizeAreaDelegate {
+class AssistantPanel final : public views::View, public views::ResizeAreaDelegate, public views::TextfieldController {
  public:
   enum class Menu { kNone, kSessions, kAccess, kModel, kMention };
   explicit AssistantPanel(WorkspaceWindow* window);
@@ -85,6 +86,8 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   void OnResize(int resize_amount, bool done_resizing) override;
   void OnMouseEntered(const ui::MouseEvent& event) override;
   void OnMouseExited(const ui::MouseEvent& event) override;
+  // The composer field: Enter sends, Shift+Enter starts a new line.
+  void ContentsChanged(views::Textfield* sender, const std::u16string& new_contents) override;
   // A press outside the open menu closes it.
   void MenuPressed();
   gfx::Size CalculatePreferredSize(const views::SizeBounds& bounds) const override;
@@ -129,6 +132,7 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
     size_t index = 0;
     std::optional<base::DictValue> confirmation;
     std::u16string confirm_label, status;
+    bool confirm_key = false;  // The pending consent is a key press, not a click.
     std::string target;  // The tab its page actions use.
   };
   void Layout(PassKey) override;
@@ -183,7 +187,8 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   raw_ptr<views::View> subtitle_ = nullptr, sessions_action_ = nullptr, access_action_ = nullptr, pin_action_ = nullptr;
   raw_ptr<views::View> composer_ = nullptr, chips_view_ = nullptr, tools_ = nullptr;
   raw_ptr<views::View> research_chip_ = nullptr, background_chip_ = nullptr, model_chip_ = nullptr, send_ = nullptr, stop_ = nullptr;
-  raw_ptr<EditorControl> prompt_ = nullptr, model_search_ = nullptr;
+  raw_ptr<views::Textarea> prompt_ = nullptr;
+  raw_ptr<EditorControl> model_search_ = nullptr;
   raw_ptr<views::View> menu_view_ = nullptr, menu_footer_ = nullptr;
   raw_ptr<views::ScrollView> menu_scroll_ = nullptr;
   std::unique_ptr<AssistantMenuPresses> menu_observer_;

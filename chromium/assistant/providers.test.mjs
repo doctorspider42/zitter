@@ -100,3 +100,30 @@ test('Codex SDK isolates its home and disables native shell/network tools', asyn
   assert.equal((await provider.complete('Policy', [], signal)).answer, 'Ready');
   await assert.rejects(access(directory));
 });
+
+test('screenshots reach every provider as images, never as transcript text', async () => {
+  const messages = [{ role: 'user', content: '{"untrusted_tool_results":[]}', images: ['aW1hZ2U='] }];
+  const openai = new Provider({ provider: 'openai', model: 'm' }, { environment: { OPENAI_API_KEY: 'test-only' },
+    fetcher: async (url, init) => {
+      const content = JSON.parse(init.body).input[0].content;
+      assert.equal(content[0].type, 'input_text');
+      assert.equal(content[1].image_url, 'data:image/jpeg;base64,aW1hZ2U=');
+      return { ok: true, json: async () => ({ output: [{ content: [{ type: 'output_text', text: JSON.stringify(response) }] }] }) };
+    } });
+  assert.equal((await openai.complete('Policy', messages, signal)).answer, 'Ready');
+  const ollama = new Provider({ provider: 'ollama', model: 'm' }, { environment: {},
+    fetcher: async (url, init) => {
+      assert.deepEqual(JSON.parse(init.body).messages[1].images, ['aW1hZ2U=']);
+      return { ok: true, json: async () => ({ message: { content: JSON.stringify(response) } }) };
+    } });
+  assert.equal((await ollama.complete('Policy', messages, signal)).answer, 'Ready');
+  const claude = new Provider({ provider: 'claude', model: 'sonnet' }, { environment: {},
+    runCLI: async (command, args, input) => {
+      assert.equal(args[args.indexOf('--input-format') + 1], 'stream-json');
+      const line = JSON.parse(input);
+      assert.doesNotMatch(line.message.content[0].text, /aW1hZ2U=/);
+      assert.deepEqual(line.message.content[1].source, { type: 'base64', media_type: 'image/jpeg', data: 'aW1hZ2U=' });
+      return `{"type":"system"}\n${JSON.stringify({ type: 'result', structured_output: response })}\n`;
+    } });
+  assert.equal((await claude.complete('Policy', messages, signal)).answer, 'Ready');
+});

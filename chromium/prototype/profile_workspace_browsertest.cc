@@ -530,8 +530,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantPermissionsAndPageRed
   ASSERT_TRUE(content::ExecJs(window_->contents("work"), R"(
     document.body.innerHTML = '<h1>Visible research</h1><input id="query" placeholder="Search">' +
       '<input type="password" value="TOP_SECRET"><input autocomplete="cc-number" value="CARD_SECRET">' +
-      '<textarea id="note">TEXTAREA_SECRET</textarea>' +
-      '<div hidden>HIDDEN_SECRET</div><div contenteditable>EDIT_SECRET</div>' +
+      '<input name="otp_code" value="OTP_SECRET"><div data-private>PRIVATE_SECRET</div>' +
+      '<textarea id="note">TEXTAREA_DRAFT</textarea>' +
+      '<div hidden>HIDDEN_SECRET</div><div contenteditable>EDITOR_DRAFT</div>' +
       '<button id="submit" onclick="document.title=\'clicked\'">Submit</button>';
   )"));
   AssistantPermissions allowed{true, true, true, false, false};
@@ -550,7 +551,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantPermissionsAndPageRed
   const auto* text = result.FindString("text"); ASSERT_TRUE(text);
   EXPECT_NE(text->find("Visible research"), std::string::npos);
   const auto serialized = base::WriteJson(result).value_or("");
-  for (auto secret : {"TOP_SECRET", "CARD_SECRET", "HIDDEN_SECRET", "EDIT_SECRET", "TEXTAREA_SECRET"}) EXPECT_EQ(serialized.find(secret), std::string::npos);
+  for (auto secret : {"TOP_SECRET", "CARD_SECRET", "OTP_SECRET", "PRIVATE_SECRET", "HIDDEN_SECRET"}) EXPECT_EQ(serialized.find(secret), std::string::npos);
+  // Drafts in editors and text fields are ordinary content the assistant edits.
+  for (auto draft : {"EDITOR_DRAFT", "TEXTAREA_DRAFT"}) EXPECT_NE(serialized.find(draft), std::string::npos);
   std::string button, input;
   for (const auto& element : *result.FindList("elements")) {
     const auto& entry = element.GetDict();
@@ -575,6 +578,153 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantPermissionsAndPageRed
   base::test::TestFuture<base::Value> cross_profile;
   window_->AssistantTool("read_page", base::DictValue().Set("tab", target), allowed, cross_profile.GetCallback());
   EXPECT_TRUE(cross_profile.Get().GetDict().FindString("error"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantKeyboardTypesAtFocusButNotIntoSecrets) {
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), embedded_test_server()->GetURL("/storage_probe.html")));
+  auto* page=window_->contents("work");
+  ASSERT_TRUE(content::ExecJs(page, R"(
+    document.body.innerHTML = '<div id="doc" contenteditable style="width:600px;height:300px"></div><textarea id="note"></textarea>' +
+      '<input id="name"><input id="secret" type="password"><form><input id="search"></form>';
+    document.querySelector('form').onsubmit = e => { e.preventDefault(); document.title = 'sent'; };
+  )"));
+  AssistantPermissions allowed{true,true,true,false,false};
+  auto run=[&](std::string tool,base::DictValue args,bool confirmed=false){
+    base::test::TestFuture<base::Value> result;
+    args.Set("tab","@current");window_->AssistantTool(tool,std::move(args),allowed,result.GetCallback(),confirmed);
+    return result.Take();
+  };
+  // A rich editor takes text, new lines and keys at its focus, like a user typing.
+  ASSERT_TRUE(content::ExecJs(page,"document.querySelector('#doc').focus()"));
+  EXPECT_TRUE(run("insert_text",base::DictValue().Set("text","Książki\nSolaris")).GetDict().FindBool("ok").value_or(false));
+  ASSERT_TRUE(base::test::RunUntil([&]{return content::EvalJs(page,"document.querySelector('#doc').innerText").ExtractString().find("Solaris")!=std::string::npos;}));
+  EXPECT_NE(content::EvalJs(page,"document.querySelector('#doc').innerText").ExtractString().find("Książki"),std::string::npos);
+  EXPECT_TRUE(run("press_key",base::DictValue().Set("key","Enter")).GetDict().FindBool("ok").value_or(false));
+  ASSERT_TRUE(content::ExecJs(page,"document.querySelector('#note').focus()"));
+  EXPECT_TRUE(run("insert_text",base::DictValue().Set("text","notatka")).GetDict().FindBool("ok").value_or(false));
+  ASSERT_TRUE(base::test::RunUntil([&]{return content::EvalJs(page,"document.querySelector('#note').value").ExtractString()=="notatka";}));
+  // Protected fields refuse; nothing editable refuses text; unknown keys never reach the page.
+  ASSERT_TRUE(content::ExecJs(page,"document.querySelector('#secret').focus()"));
+  EXPECT_TRUE(run("insert_text",base::DictValue().Set("text","hunter2")).GetDict().FindString("error"));
+  EXPECT_EQ(content::EvalJs(page,"document.querySelector('#secret').value"),"");
+  EXPECT_TRUE(run("press_key",base::DictValue().Set("key","ctrl+w")).GetDict().FindString("error"));
+  EXPECT_TRUE(run("press_key",base::DictValue().Set("key","hyper+x")).GetDict().FindString("error"));
+  // Without an editable focus, typing first clicks the page's main editor, as in Google Docs.
+  ASSERT_TRUE(content::ExecJs(page,"document.activeElement.blur()"));
+  const auto clicked=run("insert_text",base::DictValue().Set("text","Lem"));
+  EXPECT_TRUE(clicked.GetDict().FindBool("clicked_editor").value_or(false));
+  ASSERT_TRUE(base::test::RunUntil([&]{return content::EvalJs(page,"document.querySelector('#doc').innerText").ExtractString().find("Lem")!=std::string::npos;}));
+  // Enter in a single-line field may submit: it waits for native consent.
+  ASSERT_TRUE(content::ExecJs(page,"document.querySelector('#search').focus()"));
+  EXPECT_TRUE(run("press_key",base::DictValue().Set("key","Enter")).GetDict().FindBool("confirmation_required").value_or(false));
+  EXPECT_NE(content::EvalJs(page,"document.title"),"sent");
+  EXPECT_TRUE(run("press_key",base::DictValue().Set("key","Enter"),true).GetDict().FindBool("ok").value_or(false));
+  ASSERT_TRUE(base::test::RunUntil([&]{return content::EvalJs(page,"document.title").ExtractString()=="sent";}));
+  // A page without an editor refuses text instead of typing somewhere random.
+  ASSERT_TRUE(content::ExecJs(page,"document.body.innerHTML='<p>Only text</p>';document.activeElement.blur()"));
+  EXPECT_TRUE(run("insert_text",base::DictValue().Set("text","x")).GetDict().FindString("error"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantVisitReadsAnyPageInAnInvisibleTab) {
+  const auto url=embedded_test_server()->GetURL("/storage_probe.html");
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"),url));
+  ASSERT_TRUE(content::ExecJs(window_->contents("work"),"document.cookie='zitter_reader=signed_in; path=/'"));
+  const size_t tabs=window_->tab_count("work");
+  AssistantPermissions allowed{true,true,true,false,false};
+  base::test::TestFuture<base::Value> denied;
+  window_->AssistantTool("visit",base::DictValue().Set("url",url.spec()),{true,true,false,false,false},denied.GetCallback());
+  EXPECT_TRUE(denied.Get().GetDict().FindString("error"));
+  base::test::TestFuture<base::Value> visited;
+  window_->AssistantTool("visit",base::DictValue().Set("url",url.spec()),allowed,visited.GetCallback());
+  const auto& result=visited.Get().GetDict();
+  ASSERT_FALSE(result.FindString("error"));
+  EXPECT_EQ(*result.FindString("tab"),"@reader");
+  EXPECT_TRUE(result.FindList("elements"));
+  // The user's tabs stay as they were; the reader is signed in like them.
+  EXPECT_EQ(window_->tab_count("work"),tabs);
+  auto* reader=window_->assistant_background_for_testing("__reader__");ASSERT_TRUE(reader);
+  EXPECT_EQ(content::EvalJs(reader,"document.cookie.includes('zitter_reader=signed_in')"),true);
+  ASSERT_TRUE(content::ExecJs(reader,"document.body.innerHTML='<p>Shelf: Solaris</p>'"));
+  base::test::TestFuture<base::Value> again;
+  window_->AssistantTool("read_page",base::DictValue().Set("tab","@reader"),allowed,again.GetCallback());
+  ASSERT_TRUE(again.Get().GetDict().FindString("text"));
+  EXPECT_NE(again.Get().GetDict().FindString("text")->find("Solaris"),std::string::npos);
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantActsLikeAUserWithConsent) {
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), embedded_test_server()->GetURL("/storage_probe.html")));
+  auto* page=window_->contents("work");
+  ASSERT_TRUE(content::ExecJs(page, R"(
+    document.body.innerHTML = '<div id="menu" role="menuitem" style="width:160px;height:40px">Archive</div>' +
+      '<select id="size"><option value="s">Small</option><option value="l">Large</option></select>' +
+      '<div id="note" contenteditable style="width:300px;height:60px">old</div>' +
+      '<button id="ask" style="width:120px;height:40px">Ask</button><span id="hover" style="display:inline-block;width:80px;height:30px">Tip</span>';
+    menu.onclick = e => menu.dataset.trusted = String(e.isTrusted);
+    ask.onclick = () => { document.title = confirm('Delete it?') ? 'yes' : 'no'; };
+    hover.onmouseenter = () => hover.dataset.seen = '1';
+  )"));
+  AssistantPermissions allowed{true,true,true,false,false};
+  auto run=[&](std::string tool,base::DictValue args,bool confirmed=false){
+    base::test::TestFuture<base::Value> result;
+    if(!args.FindString("tab"))args.Set("tab","@current");
+    window_->AssistantTool(tool,std::move(args),allowed,result.GetCallback(),confirmed);
+    return result.Take();
+  };
+  // Div-based controls and rich editors are listed, with their state.
+  const auto read=run("read_page",{});
+  std::map<std::string,std::string> ids;
+  for(const auto& item:*read.GetDict().FindList("elements")){
+    const auto& element=item.GetDict();
+    ids[*element.FindString("label")]=*element.FindString("id");
+    if(*element.FindString("tag")=="SELECT")EXPECT_EQ(element.FindList("options")->size(),2u);
+  }
+  ASSERT_TRUE(ids.contains("Archive")&&ids.contains("old")&&ids.contains("Ask"));
+  // A click is a real mouse click, after consent.
+  EXPECT_TRUE(run("click",base::DictValue().Set("element",ids["Archive"])).GetDict().FindBool("confirmation_required").value_or(false));
+  EXPECT_TRUE(run("click",base::DictValue().Set("element",ids["Archive"]),true).GetDict().FindBool("ok").value_or(false));
+  ASSERT_TRUE(base::test::RunUntil([&]{return content::EvalJs(page,"menu.dataset.trusted||''").ExtractString()=="true";}));
+  // Lists, rich editors and hover.
+  std::string size_id;
+  for(const auto& item:*read.GetDict().FindList("elements"))if(*item.GetDict().FindString("tag")=="SELECT")size_id=*item.GetDict().FindString("id");
+  EXPECT_TRUE(run("select",base::DictValue().Set("element",size_id).Set("value","Large")).GetDict().FindBool("ok").value_or(false));
+  EXPECT_EQ(content::EvalJs(page,"size.value"),"l");
+  EXPECT_TRUE(run("type",base::DictValue().Set("element",ids["old"]).Set("text","nowy tekst")).GetDict().FindBool("ok").value_or(false));
+  ASSERT_TRUE(base::test::RunUntil([&]{return content::EvalJs(page,"note.innerText").ExtractString()=="nowy tekst";}));
+  const int hover_x=content::EvalJs(page,"Math.round(hover.getBoundingClientRect().x+10)").ExtractInt();
+  const int hover_y=content::EvalJs(page,"Math.round(hover.getBoundingClientRect().y+10)").ExtractInt();
+  EXPECT_TRUE(run("mouse",base::DictValue().Set("action","hover").Set("x",hover_x).Set("y",hover_y)).GetDict().FindBool("ok").value_or(false));
+  ASSERT_TRUE(base::test::RunUntil([&]{return content::EvalJs(page,"hover.dataset.seen||''").ExtractString()=="1";}));
+  // A dialog blocks the page until the assistant answers it; accepting needs consent.
+  const auto asked=run("click",base::DictValue().Set("element",ids["Ask"]),true);
+  ASSERT_TRUE(asked.GetDict().FindDict("dialog"));
+  EXPECT_EQ(*asked.GetDict().FindDict("dialog")->FindString("kind"),"confirm");
+  EXPECT_TRUE(run("read_page",{}).GetDict().FindDict("dialog"));
+  EXPECT_TRUE(run("dialog",base::DictValue().Set("accept",true)).GetDict().FindBool("confirmation_required").value_or(false));
+  EXPECT_TRUE(run("dialog",base::DictValue().Set("accept",true),true).GetDict().FindBool("ok").value_or(false));
+  ASSERT_TRUE(base::test::RunUntil([&]{return content::EvalJs(page,"document.title").ExtractString()=="yes";}));
+  // Shortcuts work; Enter with a modifier sends, so it asks first.
+  ASSERT_TRUE(content::ExecJs(page,"note.focus()"));
+  EXPECT_TRUE(run("press_key",base::DictValue().Set("key","ctrl+a")).GetDict().FindBool("ok").value_or(false));
+  EXPECT_TRUE(run("press_key",base::DictValue().Set("key","ctrl+enter")).GetDict().FindBool("confirmation_required").value_or(false));
+  // The model can look at the page.
+  const auto shot=run("screenshot",{});
+  ASSERT_TRUE(shot.GetDict().FindString("image"))<<shot.DebugString();
+  EXPECT_GT(shot.GetDict().FindString("image")->size(),1000u);
+  EXPECT_GT(shot.GetDict().FindDouble("css_per_pixel").value_or(0),0);
+  // A new tab comes back with its id; several pages can be visited at once.
+  const auto opened=run("open_tab",base::DictValue().Set("url",embedded_test_server()->GetURL("/storage_probe.html?second").spec()));
+  ASSERT_TRUE(opened.GetDict().FindString("tab"))<<opened.DebugString();
+  EXPECT_TRUE(run("read_page",base::DictValue().Set("tab",*opened.GetDict().FindString("tab"))).GetDict().FindString("text"));
+  const auto visited=run("visit",base::DictValue().Set("urls",base::ListValue().Append(embedded_test_server()->GetURL("/storage_probe.html?a").spec())
+      .Append(embedded_test_server()->GetURL("/storage_probe.html?b").spec())));
+  ASSERT_TRUE(visited.GetDict().FindList("pages"))<<visited.DebugString();
+  EXPECT_EQ(*(*visited.GetDict().FindList("pages"))[1].GetDict().FindString("tab"),"@reader:2");
+  EXPECT_TRUE(window_->assistant_background_for_testing("__reader__2"));
+  EXPECT_TRUE(run("read_page",base::DictValue().Set("tab","@reader:2")).GetDict().FindString("text"));
+  // Spaces are listed and the assistant can make one.
+  EXPECT_TRUE(run("list_tabs",{}).GetDict().FindList("spaces"));
+  const auto space=run("create_space",base::DictValue().Set("name","Research"));
+  EXPECT_TRUE(space.GetDict().FindBool("ok").value_or(false))<<space.DebugString();
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantRuntimeBrowserToolRoundTrip) {
@@ -694,6 +844,16 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantMenusAnchorAndAccessC
   }
   shell->SetAssistantCapsule(nullptr);shell->SetAssistantConsent(nullptr,std::nullopt);shell->SetAssistantActivity(false);
   panel->StopAll();
+  // A reply in Markdown, rendered on its own.
+  auto* markdown=panel->AddChildView(CreateAssistantMarkdown(u"## Książki od sierpnia 2026\nOto lista z **dokumentu** i [źródłem](https://example.com).\n\n1. *Solaris*, Stanisław Lem\n2. `Diuna`, Frank Herbert\n- punkt\n  - zagnieżdżony\n\n> Cytat z notatki\n\n| Tytuł | Ocena |\n|---|---|\n| Solaris | 5 |\n\n```\nconst ok = true;\n```",base::DoNothing()));
+  markdown->SetProperty(views::kViewIgnoredByLayoutKey,true);
+  for(auto mode:{ThemeMode::kDark,ThemeMode::kLight}){
+    shell->SetThemeMode(mode);
+    markdown->SetBounds(0,0,360,markdown->GetHeightForWidth(360));
+    const auto png=gfx::PNGCodec::EncodeBGRASkBitmap(views::test::PaintViewToBitmap(markdown),false);ASSERT_TRUE(png);
+    ASSERT_TRUE(base::WriteFile(output.AppendASCII(std::string("assistant-markdown")+(mode==ThemeMode::kDark?"-dark.png":"-light.png")),*png));
+  }
+  panel->RemoveChildViewT(markdown);
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantSwitchRemovesPanelAndCommand) {
@@ -819,9 +979,10 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantAutoHideAndResize) {
   const int resized_width=panel->width();
   panel->Collapse();EXPECT_FALSE(panel->GetVisible());panel->Show();EXPECT_EQ(panel->width(),resized_width);
   panel->ConfigureForTesting("ollama","test-local",{true,true,true,false,false});
+  // A running task keeps working while the unpinned panel hides.
   panel->SendForTesting("Read page");ASSERT_TRUE(panel->busy());
-  panel->Collapse();EXPECT_TRUE(panel->GetVisible());
-  panel->RevokeAccess();panel->Collapse();EXPECT_FALSE(panel->GetVisible());
+  panel->Collapse();EXPECT_FALSE(panel->GetVisible());EXPECT_TRUE(panel->busy());
+  panel->Show();panel->RevokeAccess();EXPECT_FALSE(panel->busy());
 }
 
 // Opt in: timing runs must not silently turn functional verification into a
