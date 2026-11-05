@@ -8000,7 +8000,7 @@ void WorkspaceShell::BuildAdBlockingPreferences() {
     auto* line=ad_blocking_list_->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(line,true,gfx::Insets(),2);
     AddPreferenceCopy(line,text(list,"name"),kInk,0,static_cast<int>(gfx::Font::Weight::MEDIUM),false);
     const int rules=list.FindInt("rules").value_or(0);
-    AddPreferenceCopy(line,rules?TF(u"Reguły: {} · pobrano {}",{base::NumberToString16(rules),text(list,"updated")}):T(u"Jeszcze nie pobrano"),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
+    AddPreferenceCopy(line,rules?TF(u"Reguły: {} · pobrano {}",{base::FormatNumber(rules),text(list,"updated")}):T(u"Jeszcze nie pobrano"),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
   }
   AddPreferenceCopy(ad_blocking_list_,T(u"EasyList i EasyPrivacy: © autorzy EasyList, licencja GPLv3 lub CC BY-SA 3.0, pobierane z easylist.to. Silnik: adblock-rust od Brave, licencja MPL-2.0."),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
   {

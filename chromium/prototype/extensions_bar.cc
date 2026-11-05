@@ -652,7 +652,7 @@ class ShieldCard final : public views::View {
     const int x = 52, right = width() - 8;
     canvas->DrawStringRectWithFlags(count_ < 0 ? T(u"Blokowanie wyłączone na tej stronie") : T(u"Zablokowano na tej stronie"),
                                     label, palette_.ink_muted, gfx::Rect(x, 6, right - x, 16), 0);
-    canvas->DrawStringRectWithFlags(count_ < 0 ? u"—" : base::NumberToString16(count_), DesignFont(3, 13, 500), palette_.ink,
+    canvas->DrawStringRectWithFlags(count_ < 0 ? u"—" : base::NumberToString16(count_), DesignFont(2, 13, 600), palette_.ink,
                                     gfx::Rect(x, 23, right - x, 18), gfx::Canvas::NO_SUBPIXEL_RENDERING);
     canvas->DrawStringRectWithFlags(site_.empty() ? T(u"Reklamy i elementy śledzące z list EasyList i EasyPrivacy.")
                                                   : TF(u"{} · listy EasyList i EasyPrivacy oraz Twoje reguły.", {site_}),
@@ -1102,7 +1102,9 @@ class ExtensionsBar::ShieldPanel final : public views::BubbleDialogDelegate {
     site_row_ = add_row(kShieldOffIcon, &ExtensionsBar::ToggleSiteBlocking);
     if (bar_->callbacks_.assistant_available && bar_->callbacks_.assistant_available.Run() && bar_->callbacks_.block_with_assistant)
       add_row(kSparkIcon, &ExtensionsBar::BlockWithAssistant)->SetText(T(u"Zablokuj więcej z asystentem"), {}, false, 16);
-    add_row(kGearIcon, &ExtensionsBar::OpenAdBlockingSettings)->SetText(T(u"Ustawienia blokowania"), {}, false, 16);
+    auto* settings = add_row(kGearIcon, &ExtensionsBar::OpenAdBlockingSettings);
+    settings->SetText(T(u"Ustawienia blokowania"), {}, false, 16);
+    settings->SetRing(true);
     SetContentsView(std::move(body));
     Refresh();
   }

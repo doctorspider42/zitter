@@ -15,6 +15,7 @@ pub static EN: &[(&str, &str)] = &[
     ("Pracuję nad tym…", "Working on it…"),
     ("Sprawdzam źródła…", "Exploring the sources…"),
     ("Asystent", "Assistant"),
+    ("Asystent: {}, {}", "Assistant: {}, {}"),
     ("Ty", "You"),
     ("Zbadaj dokładnie i porównaj ", "Research thoroughly and compare "),
     ("Wiele perspektyw. Jeden dobry raport.", "More perspectives. One clear report."),

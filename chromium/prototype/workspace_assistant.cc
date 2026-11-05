@@ -466,7 +466,7 @@ void AdblockAddRules(content::WebContents* page, base::DictValue args, bool conf
   base::Time::Exploded now;
   base::Time::Now().LocalExplode(&now);
   const auto today = base::StringPrintf("%04d-%02d-%02d", now.year, now.month, now.day_of_month);
-  if (!ContentBlocking::AddRules(profile, rules, "Asystent: " + site + ", " + today, &error)) {
+  if (!ContentBlocking::AddRules(profile, rules, base::UTF16ToUTF8(TF(u"Asystent: {}, {}", {base::UTF8ToUTF16(site), base::UTF8ToUTF16(today)})), &error)) {
     std::move(done).Run(Error("Rules were not saved: " + error)); return;
   }
   const size_t saved = rules.size();

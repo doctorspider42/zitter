@@ -206,7 +206,8 @@ and action permissions). It:
    consent**, the same consent bubble as an assistant click: "Ukryć 4 elementy
    na example.com?" with **Zezwól** / **Pomiń**;
 4. on yes: appends the rules to the profile's own list (deduplicated, with a
-   `! Asystent: example.com, 2026-11-05` comment), rebuilds the engine, applies
+   `! Asystent: example.com, 2026-11-05` comment in the UI language, "Assistant:"
+   in English), rebuilds the engine, applies
    the new cosmetic rules at once and returns
    `{saved, hidden_now, network_rules}`; on no: removes the preview and returns
    `skipped`.
