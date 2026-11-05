@@ -174,7 +174,12 @@
     const site = location.hostname.split('.').slice(-2).join('.');
     const thirdParty = url => { try { const h = new URL(url, location.href).hostname; return !!h && h !== site && !h.endsWith('.' + site); } catch { return false; } };
     const blocking = globalThis.__zitterBlocking;
-    const zitterHides = e => !!blocking && Object.values(blocking.selectors).some(list => list.some(s => { try { return e.matches(s); } catch { return false; } }));
+    const zitterHides = e => !!blocking && (blocking.marked?.has(e) ||
+      Object.values(blocking.selectors).some(list => list.some(s => { try { return e.matches(s); } catch { return false; } })));
+    // Ads carry a visible label, often required by law; it survives the
+    // generated class names that change with every deploy.
+    const labels = /^(reklama|reklamy|autopromocja|promocja|materiał (sponsorowany|promocyjny|partnera|reklamowy)|mat\. ?(sponsorowany|promocyjny|partnera)|artykuł sponsorowany|treść sponsorowana|sponsorowane|sponsorowany|partner|współpraca reklamowa|we współpracy z .{2,30}|advertisement|advertising|advert|ads?|sponsored|sponsored content|promoted|paid content|paid partnership|partner content|anzeige|werbung|publicité|pubblicità|publicidad)\s*[:·|]?$/i;
+    const escape = text => text.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
     const stable = e => {
       const tag = e.tagName.toLowerCase();
       if (e.id && !randomish(e.id)) return `${tag}#${css(e.id)}`;
@@ -199,11 +204,11 @@
       }
       return path.join(' > ');
     };
-    const count = selector => { try { return document.querySelectorAll(selector).length; } catch { return 0; } };
+    const count = selector => { try { return blocking?.query ? blocking.query(selector).length : document.querySelectorAll(selector).length; } catch { return 0; } };
     const sizes = ['300x250', '728x90', '160x600', '320x50', '300x600', '970x250', '970x90', '336x280', '468x60', '320x100'];
     const candidates = [], seen = new Set();
-    const consider = (e, reason) => {
-      if (candidates.length >= 60 || seen.has(e)) return;
+    const consider = (e, reason, extra = {}) => {
+      if (candidates.length >= 80 || seen.has(e)) return;
       for (const s of seen) if (s.contains(e)) return;
       seen.add(e);
       const r = e.getBoundingClientRect(), hiddenByZitter = zitterHides(e);
@@ -215,11 +220,46 @@
       item.matches = count(item.selector);
       const source = e.src || e.querySelector?.('iframe[src],img[src]')?.src;
       if (source) item.source = String(source).split('?')[0].slice(0, 200);
+      Object.assign(item, extra);
+      if (item.rule_hint) item.rule_hint_matches = count(item.rule_hint.slice(item.rule_hint.indexOf('##') + 2));
       candidates.push(item);
     };
+    // From a label up to the box it labels: the first ancestor big enough to
+    // be an ad that holds more than the label (media, a link, or height). It
+    // never climbs into page furniture: navigation, forms, or much more text
+    // than an ad carries (an ad slot that has not loaded is small).
+    const hints = new Set();
+    const labelled = (label, text, viaPseudo) => {
+      const tag = label.tagName.toLowerCase(), r0 = label.getBoundingClientRect();
+      let box = label, steps = 0;
+      for (let n = label.parentElement; n && n !== document.body && n !== document.documentElement && steps < 8; n = n.parentElement) {
+        const r = n.getBoundingClientRect();
+        if (r.width * r.height > innerWidth * innerHeight * 0.7) break;
+        if (n.matches('main,article:has(article),header,nav,form') || n.querySelector('nav,form,input,h1,[role=navigation],[role=search]')) break;
+        if ((n.textContent ?? '').replace(/\s+/g, ' ').length > text.length + 300) break;
+        box = n; steps++;
+        if (r.width >= 100 && r.height >= 50 && (n.querySelector('img,iframe,picture,video,canvas,svg,a[href]') || r.height >= Math.max(3 * r0.height, 60))) break;
+      }
+      const anchor = viaPseudo ? `${tag}:matches-css-${viaPseudo}(content: /${escape(text)}/i)` : `${tag}:has-text(/^\\s*${escape(text)}\\s*$/i)`;
+      // One candidate per rule: its match count says how many boxes it covers.
+      const hint = `${site}##${anchor}${steps ? `:upward(${steps})` : ''}`;
+      if (hints.has(hint)) return;
+      hints.add(hint);
+      consider(box, `labelled "${text}"`, { label: text, rule_hint: hint });
+    };
+    const started = performance.now();
+    const walker = document.createTreeWalker(document.body ?? document.documentElement, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(), texts = 0; node && texts < 60000 && performance.now() - started < 800; node = walker.nextNode(), texts++) {
+      const text = node.nodeValue.trim();
+      if (text.length < 2 || text.length > 40 || !labels.test(text)) continue;
+      const label = node.parentElement;
+      if (!label || label.closest('[data-private],[data-sensitive]') || label.closest('nav,header > nav,footer')) continue;
+      if (label.textContent.trim() !== text) continue;
+      labelled(label, text.replace(/\s*[:·|]$/, ''), null);
+    }
     let scanned = 0;
     for (const e of document.body?.querySelectorAll('*') ?? []) {
-      if (++scanned > 8000) break;
+      if (++scanned > 30000 || (scanned % 500 === 0 && performance.now() - started > 2500)) break;
       if (e.closest('[data-private],[data-sensitive]')) continue;
       const tag = e.tagName;
       if (tag === 'IFRAME' && e.src && thirdParty(e.src)) { consider(e, 'third-party iframe'); continue; }
@@ -228,10 +268,25 @@
                      ...e.getAttributeNames().filter(n => n.startsWith('data-'))].join(' ');
       if (words.test(names)) { consider(e, 'ad-like name'); continue; }
       const r = e.getBoundingClientRect();
-      if (sizes.includes(`${Math.round(r.width)}x${Math.round(r.height)}`) && e.querySelector('iframe,img,a[href]')) { consider(e, 'standard ad size'); continue; }
+      const standard = sizes.includes(`${Math.round(r.width)}x${Math.round(r.height)}`);
+      if (standard && e.querySelector('iframe,img,a[href]')) { consider(e, 'standard ad size'); continue; }
+      // HTML5 creatives draw into a canvas or play a video of an ad size.
+      if (standard && (tag === 'CANVAS' || tag === 'VIDEO')) { consider(e, `${tag.toLowerCase()} of an ad size`); continue; }
       const s = getComputedStyle(e);
-      if ((s.position === 'fixed' || s.position === 'sticky') && Number(s.zIndex) > 100 && r.width * r.height > innerWidth * innerHeight * 0.2)
-        consider(e, 'overlay over the page');
+      if ((s.position === 'fixed' || s.position === 'sticky') && Number(s.zIndex) > 100 && r.width * r.height > innerWidth * innerHeight * 0.2) {
+        consider(e, 'overlay over the page'); continue;
+      }
+      // Portals link to their sister sites everywhere: only ad sizes and billboards.
+      if (tag === 'A' && e.href && thirdParty(e.href) && (standard || (r.width >= 700 && r.height >= 90)) && e.querySelector('img,picture,video,canvas')) {
+        consider(e, 'big image linking to another site'); continue;
+      }
+      // Labels drawn by CSS (`content: "REKLAMA"`) have no text node.
+      if (r.height > 0 && r.height < 60 && !e.firstElementChild) for (const side of ['before', 'after']) {
+        const content = getComputedStyle(e, '::' + side).content;
+        if (!content || content === 'none' || content === 'normal') continue;
+        const text = content.replace(/^["']|["']$/g, '').trim();
+        if (labels.test(text)) { labelled(e, text, side); break; }
+      }
     }
     const requests = [], hosts = {};
     for (const entry of performance.getEntriesByType('resource')) {
@@ -242,7 +297,9 @@
       if (requests.length < 150) requests.push({ url: entry.name.split('?')[0].slice(0, 200), type: entry.initiatorType });
     }
     return { url: location.href.split('?')[0], title: document.title, candidates, third_party_hosts: hosts, requests,
-             note: 'Candidates are guesses: keep only what the user would call an ad, never the content they came for.' };
+             scanned_elements: scanned,
+             note: 'Candidates are guesses: keep only what the user would call an ad, never the content they came for. ' +
+                   'A candidate with a label comes with rule_hint, a procedural rule anchored on that label, and how many elements it matches.' };
   }
   if (args.tool === 'focus_info') {
     // Natively requested before keyboard input: where would typing land?

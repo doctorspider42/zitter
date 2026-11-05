@@ -766,7 +766,13 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
     return window->assistant_settings_.enabled;
   }, base::Unretained(this));
   extension_callbacks.block_with_assistant = base::BindRepeating([](WorkspaceWindow* window) {
-    window->AskAssistant(T(u"Zablokuj reklamy na tej stronie, których nie blokują listy filtrów."));
+    // Rules that stopped working come first: the assistant replaces them.
+    auto* bar = window->extensions_bar_.get();
+    const auto stale = bar && bar->page() ? ContentBlocking::StaleRules(bar->profile(), bar->page()->GetLastCommittedURL())
+                                          : std::vector<std::string>();
+    if (stale.empty()) { window->AskAssistant(T(u"Zablokuj reklamy na tej stronie, których nie blokują listy filtrów.")); return; }
+    window->AskAssistant(TF(u"Moje reguły blokowania na tej stronie od kilku wizyt nic nie ukrywają, reklamy pewnie się zmieniły. Znajdź te reklamy ponownie i zapisz nowe reguły, zastępując nimi stare (replaces): {}",
+                            {base::UTF8ToUTF16(base::JoinString(stale, "\n"))}));
   }, base::Unretained(this));
   ad_blocking_changed_ = ContentBlocking::Get().Observe(base::BindRepeating([](WorkspaceWindow* window) {
     if (window->shell_) window->shell_->RefreshAdBlockingPreferences();

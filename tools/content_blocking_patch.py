@@ -18,6 +18,7 @@ MARKER = '.zitter-owned'
 ENABLED = 'zitter.ad_blocking'
 ALLOWED_SITES = 'zitter.ad_blocking_allowed_sites'
 RULES = 'zitter.ad_blocking_rules'
+RULE_MISSES = 'zitter.ad_blocking_rule_misses'
 EDITS = [
     ('chrome/browser/prefs/browser_prefs.cc',
      '  AccessibilityUIMessageHandler::RegisterProfilePrefs(registry);\n',
@@ -25,6 +26,10 @@ EDITS = [
      f'  registry->RegisterBooleanPref("{ENABLED}", true);\n'
      f'  registry->RegisterListPref("{ALLOWED_SITES}");\n'
      f'  registry->RegisterListPref("{RULES}");\n'),
+    # Its own edit, so checkouts patched before it gain only this line.
+    ('chrome/browser/prefs/browser_prefs.cc',
+     f'  registry->RegisterListPref("{RULES}");\n',
+     f'  registry->RegisterDictionaryPref("{RULE_MISSES}");\n'),
 ]
 # (path, old, new): Chromium marks aho-corasick "safe" (unsafe code forbidden),
 # yet its sources use `unsafe impl`, so nothing that needs it builds. regex
@@ -75,8 +80,9 @@ def prepare(checkout):
                 plan[path] = (path.read_bytes(), None)
     for path, anchor, addition in EDITS:
         target = _inside(root, root / path)
-        old = target.read_bytes()
-        plan[target] = (old, _insert(old.decode('utf-8'), anchor, addition, path).encode('utf-8'))
+        # Several edits of one file build on each other.
+        old, current = plan.get(target, (target.read_bytes(),) * 2)
+        plan[target] = (old, _insert(current.decode('utf-8'), anchor, addition, path).encode('utf-8'))
     for path, before, after in REPLACEMENTS:
         target = _inside(root, root / path)
         old = target.read_bytes()

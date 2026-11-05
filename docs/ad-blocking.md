@@ -115,9 +115,28 @@ HTTP(S) frame:
    back to the engine, which returns the generic selectors (`##.ad-banner`) that
    match them, unless the site has a `generichide` exception.
 
-Rules use plain CSS. `:has()` works because Chromium supports it natively.
-Procedural filters (`:has-text()`, `:upward()`) and scriptlets (`+js()`) are
-ignored: their resources are uBO's GPL code.
+Plain CSS selectors go into the style sheet (`:has()` works natively). Rules
+with uBlock Origin's procedural operators or actions run in the same script,
+which implements them itself from uBO's public syntax documentation (no uBO
+code):
+
+- operators: `:has-text()`, `:upward(n|selector)`, `:matches-attr()`,
+  `:matches-css()`, `:matches-css-before()`, `:matches-css-after()`,
+  `:min-text-length()`, `:matches-path()`, `:xpath()`, and `:has()` / `:not()`
+  (with their ABP aliases) when they wrap a procedural operator;
+- actions, last in the rule: `:remove()`, `:style()` (nothing that loads, so no
+  `url()`), `:remove-attr()`, `:remove-class()`;
+- elements they hide get a random per-page attribute that one style rule
+  hides; ones no rule matches any more get it removed;
+- a `MutationObserver` re-runs them as the page changes, at most every 150 ms
+  and less often when a pass is slow; `<html>` and `<body>` are only ever
+  restyled, never hidden or removed.
+
+adblock-rust is built without its `css-validation` feature, so it keeps a
+procedural selector as one string in `hide_selectors`, and rules with an action
+come back as JSON in `procedural_actions`; the bridge passes both on. This also
+makes the lists' own `#?#` and action rules work. Scriptlets (`+js()`) are
+still refused: their resources are uBO's GPL code.
 
 ### Per-site switch and the toolbar shield
 
@@ -183,42 +202,70 @@ tools serve it:
 **`adblock_inspect {tab}`** (needs the page permission). The page script
 (`page.js`, tool `adblock_inspect`) returns:
 
-- `candidates`: up to 60 elements that look like ads. Iframes from other sites,
-  elements whose id/class/aria-label/data attributes say ad, sponsor, promo,
-  banner, `taboola`, `outbrain` and similar, fixed overlays covering the page,
-  and elements already hidden by Zitter's rules. Each has a ready unique
-  selector, a stable selector (classes/IDs without random-looking tokens), tag,
-  size, position, text sample and `hidden_by_zitter`.
+- `candidates`: up to 80 elements that look like ads:
+  - boxes under an **ad label**: a text node or a CSS `content` label that reads
+    "REKLAMA", "Autopromocja", "Materiał sponsorowany", "Mat. promocyjny",
+    "Sponsored", "Advertisement", "Anzeige" and similar, outside navigation and
+    footers. From the label it climbs to the first ancestor big enough to be an
+    ad that holds media, a link or real height, never into navigation, forms
+    or much more text than an ad carries, and adds `rule_hint`, a
+    procedural rule anchored on that label
+    (`site##span:has-text(/^\s*REKLAMA\s*$/i):upward(2)`), with how many
+    elements it matches; a rule found again adds no second candidate. Portals such as wp.pl generate their class names on
+    every deploy, but must keep the label: Polish law requires ads to be
+    marked;
+  - iframes from other sites, big images that link to another site, and
+    `<canvas>` or `<video>` elements of a standard ad size (HTML5 creatives);
+  - elements whose id/class/aria-label/data attributes say ad, sponsor, promo,
+    banner, `taboola`, `outbrain` and similar, standard ad sizes, and fixed
+    overlays covering the page;
+  - elements already hidden by Zitter's rules.
+
+  Each has a ready unique selector, a stable selector (classes/IDs without
+  random-looking tokens), tag, size, position, text sample and
+  `hidden_by_zitter`. The walk covers up to 30 000 elements in about 2.5 s.
 - `requests`: third-party resource URLs from the Resource Timing API (up to 150,
   query strings cut), with initiator type and whether Zitter blocked them.
 - `site`, `blocked_on_page` and `blocking: on/off`.
 
 The model may add `screenshot` to see the page as the user does.
 
-**`adblock_add_rules {tab, rules: string[], reason?: string}`** (needs the page
-and action permissions). It:
+**`adblock_add_rules {tab, rules: string[], replaces?: string[], reason?: string}`**
+(needs the page and action permissions). It:
 
 1. validates every rule with the engine's parser and refuses the whole call
-   if any is invalid, with each error, so the model can correct and retry;
+   if any is invalid, with each error, so the model can correct and retry.
+   Unbalanced brackets, scriptlets and the operators Zitter does not run
+   (`:watch-attr()`, `:others()`, `:shadow()`…) are invalid here;
 2. only allows rules scoped to the page's site: cosmetic rules must name the site
    (`example.com##…`), network rules need `$domain=example.com`, or a `||host^`
    pattern for a third-party host on that page. Broad rules such as `##div` are
    refused, so a model cannot hide the web;
-3. **preview**: highlights every element the cosmetic rules would hide (a
+3. runs every hiding rule in the page: a rule the page script cannot compile
+   (a bad regex or selector) or one that matches nothing on the page now is
+   refused the same way. A rule that hides nothing now is a guess;
+4. **preview**: highlights every element the cosmetic rules would hide (a
    dashed accent outline and a tint, via `content_blocking.js`) and asks for **native
    consent**, the same consent bubble as an assistant click: "Ukryć 4 elementy
    na example.com?" with **Zezwól** / **Pomiń**;
-4. on yes: appends the rules to the profile's own list (deduplicated, with a
+5. on yes: appends the rules to the profile's own list (deduplicated, with a
    `! Asystent: example.com, 2026-11-05` comment in the UI language, "Assistant:"
    in English), rebuilds the engine, applies
-   the new cosmetic rules at once and returns
-   `{saved, hidden_now, network_rules}`; on no: removes the preview and returns
-   `skipped`.
+   the new cosmetic rules at once, removes the rules named in `replaces` (only
+   this site's saved rules, exactly as saved) and returns
+   `{saved, hidden_now, network_rules, replaced}`; on no: removes the preview
+   and returns `skipped`. With `replaces` the consent question also says how
+   many old rules go.
 
-The tool's description tells the model never to pin an element by its position
-(`:nth-of-type` chains): on a front page that slot holds an article on the next
-visit. An ad without a stable class, id or attribute is left, and the model says
-so.
+The tool's description lists the procedural operators and actions, and tells
+the model to anchor rules on what an ad must show when its class names look
+generated: its label, a link or image host, an attribute, a fixed size. It
+starts from `rule_hint`. Sponsored items mixed into real content may be hidden
+when they carry their own label. Anti-adblock walls are removed with
+`:remove()`, and scrolling comes back with `body:style(overflow: auto)` or
+`:remove-class()` on `<html>`/`<body>`. The model must never pin an element by
+its position (`:nth-of-type` chains): on a front page that slot holds an article
+on the next visit.
 
 With the Claude CLI backend, a screenshot switches the request to `stream-json`
 input, where the model tends to call browser tools natively; the CLI refuses
@@ -239,6 +286,23 @@ The shield's **Zablokuj więcej z asystentem** sends "Zablokuj reklamy na tej
 stronie, których nie blokują listy filtrów." to the selected assistant session
 (`AssistantPanel::Ask`). The session's permissions decide what the model may
 do; without page and action permissions it says what is missing.
+
+### Rules that stop working
+
+Sites change their markup, so a rule that worked can quietly stop matching.
+Twelve seconds after each load of a page (late and lazy ads have loaded by
+then) the tab asks the page script how many elements each of the profile's own
+hiding rules for that site has acted on since the load (`count`: the most a
+procedural rule matched at once, or what a plain rule matches now). The counts
+go to `zitter.ad_blocking_rule_misses` (rule → loads in a row with no match):
+a hit clears the entry, a miss adds one. After `kStaleLoads` (3) misses in a row
+the rule is stale. Network rules are not counted.
+
+For a page with stale rules, the shield's assistant row reads **Napraw
+niedziałające reguły z asystentem** ("Fix broken rules with the assistant"). It
+sends the assistant those rules and asks it to find the ads again and save new
+rules with `replaces` set to the old ones. Adding or removing a rule clears its
+counter.
 
 The system prompt in `engine.mjs` describes the tools and the order: inspect, look
 (screenshot if unsure), propose only rules for what the user sees as ads, never
@@ -272,6 +336,15 @@ reguły**.
     confirmation off; confirmed, it saves and hides at once, and a fresh load
     hides it through the engine; removing the rule in Settings brings it back;
     a typed rule is validated.
+  - `ProceduralRulesAnchorOnTheAdLabel`: `adblock_inspect` finds an ad with a
+    generated class by its "REKLAMA" label and suggests
+    `span:has-text(…):upward(1)`; a rule that matches nothing and one with a bad
+    regex come back as invalid, before any preview; the label rule hides the
+    ad at once and, through the engine, on a fresh load, together with a
+    `:style()` action rule; an ad added later with the same label is hidden as
+    it appears; three missed loads make a rule stale and one hit clears it;
+    `replaces` swaps the stale rule for a new one and refuses rules that were
+    never saved.
 
 ## Known limits
 
@@ -283,8 +356,14 @@ reguły**.
   unfiltered.
 - Generic hiding sees classes and IDs at commit, DOMContentLoaded, load and 3 s
   later; elements added after that only get the site's and complex generic rules.
-- Procedural cosmetic filters, scriptlets and `$redirect` resources are not
-  supported (uBO's resources are GPL).
+- Scriptlets and `$redirect` resources are not supported (uBO's resources are
+  GPL). Procedural operators that need them or their engine
+  (`:watch-attr()`, `:others()`, `:shadow()`, `:matches-prop()`) are refused.
+- Procedural rules are re-run on DOM changes, not on scroll or style changes
+  alone.
+- Ads drawn into a `<canvas>` and anti-adblock scripts that do more than show a
+  wall are not handled yet; see
+  [ad-blocking-canvas-and-anti-adblock.md](ad-blocking-canvas-and-anti-adblock.md).
 
 ## Status
 
@@ -292,4 +371,5 @@ Implemented as planned above, in `chromium/prototype/adblock.rs` (engine bridge)
 `content_blocking.{h,cc,js}` (lists, engines, request proxy, cosmetic hiding,
 tab counts), `extensions_bar.cc` (shield), `sidebar_scene.rs` and
 `workspace_shell.cc` (Settings), `workspace_assistant.cc`, `page.js` and
-`engine.mjs` (assistant tools).
+`engine.mjs` (assistant tools). Procedural rules, label anchors and stale-rule
+repair were added afterwards in the same files.

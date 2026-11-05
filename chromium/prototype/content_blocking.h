@@ -32,6 +32,8 @@ namespace zitter::prototype {
 inline constexpr char kAdBlockingPref[] = "zitter.ad_blocking";
 inline constexpr char kAdBlockingAllowedSitesPref[] = "zitter.ad_blocking_allowed_sites";
 inline constexpr char kAdBlockingRulesPref[] = "zitter.ad_blocking_rules";
+// Own hiding rules that hid nothing on their site's recent loads: rule -> loads.
+inline constexpr char kAdBlockingRuleMissesPref[] = "zitter.ad_blocking_rule_misses";
 
 // Built-in ad blocking (docs/ad-blocking.md): the downloaded filter lists, one
 // adblock-rust engine per profile (lists plus that profile's own rules), the
@@ -81,13 +83,23 @@ class ContentBlocking final {
   // `error` when a rule is invalid. The engine rebuilds in the background.
   static bool AddRules(Profile* profile, const std::vector<std::string>& rules, const std::string& comment, std::string* error);
   static void RemoveRule(Profile* profile, const std::string& rule);
+  // The selector of a hiding rule (`site##sel`, `site#?#sel`), else empty.
+  static std::string HidingSelector(const std::string& rule);
+  // The profile's own hiding rules for the site of `page`.
+  static std::vector<std::string> SiteHidingRules(Profile* profile, const GURL& page);
+  // Records one settled load of a page: how many elements each of its own
+  // hiding rules acted on. A rule at zero on kStaleLoads loads in a row is stale.
+  static void RecordRuleHits(Profile* profile, const std::vector<std::pair<std::string, int>>& hits);
+  static std::vector<std::string> StaleRules(Profile* profile, const GURL& page);
+  static constexpr int kStaleLoads = 3;
 
   // The request check: kBlock when the profile's engine blocks `url` loaded by
   // `page` as `type` (adblock-rust request types: script, image, sub_frame…).
   Verdict Check(Profile* profile, const GURL& url, const GURL& page, const std::string& type);
   // Cosmetic selectors for a frame on `url`: its site's, the generic ones that
   // need no class/ID lookup, and whether generic class/ID rules apply.
-  struct Cosmetic { std::vector<std::string> hide, exceptions; bool generichide = true; };
+  // `procedural`: rules with an action, as adblock-rust's JSON for the page script.
+  struct Cosmetic { std::vector<std::string> hide, procedural, exceptions; bool generichide = true; };
   Cosmetic CosmeticFor(Profile* profile, const GURL& url);
   std::vector<std::string> GenericSelectors(Profile* profile, const std::vector<std::string>& classes,
                                             const std::vector<std::string>& ids, const std::vector<std::string>& exceptions);
@@ -145,8 +157,9 @@ class ContentBlockingTabHelper final : public content::WebContentsObserver,
   void Reapply();
   // Hides `selectors` at once on the main frame, before the engine has them.
   void HideNow(const std::vector<std::string>& selectors, base::OnceCallback<void(int)> done);
-  // Outlines what `selectors` match on the main frame; empty clears it.
-  void Preview(const std::vector<std::string>& selectors, base::OnceCallback<void(int)> done);
+  // Outlines what `selectors` match on the main frame; empty clears it. `done`
+  // gets {count, rules: [{selector, matches, error?}]}, empty without a page.
+  void Preview(const std::vector<std::string>& selectors, base::OnceCallback<void(base::DictValue)> done);
 
  private:
   friend class content::WebContentsUserData<ContentBlockingTabHelper>;
@@ -161,6 +174,8 @@ class ContentBlockingTabHelper final : public content::WebContentsObserver,
   void Scan(content::RenderFrameHost* frame, bool reset = false);
   void Run(content::RenderFrameHost* frame, base::DictValue args, base::OnceCallback<void(base::Value)> done);
   void SetHidden(int hidden);
+  // Counts what the site's own hiding rules act on once the page has settled.
+  void CheckRuleHealth();
   Profile* profile();
 
   int blocked_requests_ = 0;
@@ -169,6 +184,7 @@ class ContentBlockingTabHelper final : public content::WebContentsObserver,
   base::RepeatingClosureList count_changed_;
   base::CallbackListSubscription rules_changed_;
   base::OneShotTimer rescan_;
+  base::OneShotTimer health_;
   base::WeakPtrFactory<ContentBlockingTabHelper> weak_factory_{this};
   WEB_CONTENTS_USER_DATA_KEY_DECL();
 };

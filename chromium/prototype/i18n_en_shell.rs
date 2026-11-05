@@ -504,6 +504,7 @@ pub static EN: &[(&str, &str)] = &[
     ("Zablokowano na tej stronie", "Blocked on this page"),
     ("Zablokowano na tej stronie: {}", "Blocked on this page: {}"),
     ("Zablokuj więcej z asystentem", "Block more with the assistant"),
+    ("Napraw niedziałające reguły z asystentem", "Fix broken rules with the assistant"),
     ("{} · listy EasyList i EasyPrivacy oraz Twoje reguły.", "{} · EasyList, EasyPrivacy and your rules."),
     ("Aktualizuj teraz", "Update now"),
     ("Brak. Dodaj regułę poniżej albo poproś asystenta o zablokowanie reklam na stronie.", "None. Add a rule below, or ask the assistant to block the ads on a page."),
@@ -521,4 +522,5 @@ pub static EN: &[(&str, &str)] = &[
     ("Witryny bez blokowania", "Sites without blocking"),
     ("Włącz blokowanie na {}", "Turn on blocking on {}"),
     ("Zablokuj reklamy na tej stronie, których nie blokują listy filtrów.", "Block the ads on this page that the filter lists miss."),
+    ("Moje reguły blokowania na tej stronie od kilku wizyt nic nie ukrywają, reklamy pewnie się zmieniły. Znajdź te reklamy ponownie i zapisz nowe reguły, zastępując nimi stare (replaces): {}", "My ad blocking rules for this page have hidden nothing for several visits; the ads probably changed. Find those ads again and save new rules that replace the old ones (replaces): {}"),
 ];

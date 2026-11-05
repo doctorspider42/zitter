@@ -379,6 +379,10 @@ bool ContentBlocking::AddRules(Profile* profile, const std::vector<std::string>&
     added.push_back(std::move(rule));
   }
   if (added.empty()) return true;
+  {
+    ScopedDictPrefUpdate misses(profile->GetOriginalProfile()->GetPrefs(), kAdBlockingRuleMissesPref);
+    for (const auto& rule : added) misses->Remove(rule);
+  }
   ScopedListPrefUpdate update(profile->GetOriginalProfile()->GetPrefs(), kAdBlockingRulesPref);
   if (!comment.empty()) update->Append("! " + comment);
   for (auto& rule : added) update->Append(std::move(rule));
@@ -386,6 +390,7 @@ bool ContentBlocking::AddRules(Profile* profile, const std::vector<std::string>&
 }
 void ContentBlocking::RemoveRule(Profile* profile, const std::string& rule) {
   if (!profile) return;
+  ScopedDictPrefUpdate(profile->GetOriginalProfile()->GetPrefs(), kAdBlockingRuleMissesPref)->Remove(rule);
   ScopedListPrefUpdate update(profile->GetOriginalProfile()->GetPrefs(), kAdBlockingRulesPref);
   auto& list = update.Get();
   for (size_t i = 0; i < list.size(); ++i) {
@@ -399,6 +404,37 @@ void ContentBlocking::RemoveRule(Profile* profile, const std::string& rule) {
   }
 }
 
+std::string ContentBlocking::HidingSelector(const std::string& rule) {
+  for (const char* separator : {"##", "#?#"}) {
+    const auto at = rule.find(separator);
+    if (at != std::string::npos && !rule.starts_with("!")) return rule.substr(at + std::char_traits<char>::length(separator));
+  }
+  return std::string();
+}
+std::vector<std::string> ContentBlocking::SiteHidingRules(Profile* profile, const GURL& page) {
+  std::vector<std::string> rules;
+  const std::string site = RegistrableDomain(page);
+  if (site.empty()) return rules;
+  for (const auto& rule : Rules(profile)) if (!HidingSelector(rule).empty() && RuleInScope(rule, site)) rules.push_back(rule);
+  return rules;
+}
+void ContentBlocking::RecordRuleHits(Profile* profile, const std::vector<std::pair<std::string, int>>& hits) {
+  if (!profile || hits.empty()) return;
+  ScopedDictPrefUpdate misses(profile->GetOriginalProfile()->GetPrefs(), kAdBlockingRuleMissesPref);
+  for (const auto& [rule, count] : hits) {
+    if (count > 0) misses->Remove(rule);
+    else misses->Set(rule, std::min(misses->FindInt(rule).value_or(0) + 1, 99));
+  }
+}
+std::vector<std::string> ContentBlocking::StaleRules(Profile* profile, const GURL& page) {
+  std::vector<std::string> stale;
+  if (!profile) return stale;
+  const auto& misses = profile->GetOriginalProfile()->GetPrefs()->GetDict(kAdBlockingRuleMissesPref);
+  for (const auto& rule : SiteHidingRules(profile, page))
+    if (misses.FindInt(rule).value_or(0) >= kStaleLoads) stale.push_back(rule);
+  return stale;
+}
+
 ContentBlocking::Verdict ContentBlocking::Check(Profile* profile, const GURL& url, const GURL& page, const std::string& type) {
   auto* state = StateFor(profile, true);
   if (!state || !state->enabled || state->Allowed(page)) return Verdict::kOff;
@@ -409,7 +445,7 @@ ContentBlocking::Cosmetic ContentBlocking::CosmeticFor(Profile* profile, const G
   auto* state = StateFor(profile, true);
   if (!state || !state->engine || !url.SchemeIsHTTPOrHTTPS()) return {};
   const auto resources = (*state->engine)->cosmetic_resources(url.spec());
-  return {Strings(resources.hide_selectors), Strings(resources.exceptions), resources.generichide};
+  return {Strings(resources.hide_selectors), Strings(resources.procedural), Strings(resources.exceptions), resources.generichide};
 }
 std::vector<std::string> ContentBlocking::GenericSelectors(Profile* profile, const std::vector<std::string>& classes,
                                                            const std::vector<std::string>& ids, const std::vector<std::string>& exceptions) {
@@ -519,6 +555,7 @@ void ContentBlockingTabHelper::ReadyToCommitNavigation(content::NavigationHandle
   // first subresource can be blocked.
   if (!navigation->IsInPrimaryMainFrame() || navigation->IsSameDocument()) return;
   rescan_.Stop();
+  health_.Stop();
   blocked_requests_ = 0;
   hidden_elements_ = 0;
   blocked_urls_.clear();
@@ -536,6 +573,28 @@ void ContentBlockingTabHelper::DidFinishLoad(content::RenderFrameHost* frame, co
   rescan_.Start(FROM_HERE, base::Seconds(3), base::BindOnce([](base::WeakPtr<ContentBlockingTabHelper> self) {
     if (self) self->Scan(self->GetWebContents().GetPrimaryMainFrame());
   }, weak_factory_.GetWeakPtr()));
+  // Late and lazy ads have had their chance by then.
+  health_.Start(FROM_HERE, base::Seconds(12), base::BindOnce(&ContentBlockingTabHelper::CheckRuleHealth, weak_factory_.GetWeakPtr()));
+}
+void ContentBlockingTabHelper::CheckRuleHealth() {
+  auto* frame = GetWebContents().GetPrimaryMainFrame();
+  const GURL page = frame->GetLastCommittedURL();
+  if (!ContentBlocking::EnabledFor(profile(), page)) return;
+  auto rules = ContentBlocking::SiteHidingRules(profile(), page);
+  if (rules.empty()) return;
+  base::ListValue selectors;
+  for (const auto& rule : rules) selectors.Append(ContentBlocking::HidingSelector(rule));
+  Run(frame, base::DictValue().Set("op", "count").Set("selectors", std::move(selectors)), base::BindOnce(
+      [](base::WeakPtr<ContentBlockingTabHelper> self, std::vector<std::string> rules, base::Value result) {
+        const auto* counts = result.is_dict() ? result.GetDict().FindDict("counts") : nullptr;
+        if (!self || !counts) return;
+        std::vector<std::pair<std::string, int>> hits;
+        for (auto& rule : rules) {
+          const auto count = counts->FindInt(ContentBlocking::HidingSelector(rule));
+          if (count) hits.emplace_back(std::move(rule), *count);
+        }
+        ContentBlocking::RecordRuleHits(self->profile(), hits);
+      }, weak_factory_.GetWeakPtr(), std::move(rules)));
 }
 void ContentBlockingTabHelper::Run(content::RenderFrameHost* frame, base::DictValue args, base::OnceCallback<void(base::Value)> done) {
   if (!frame || !frame->IsRenderFrameLive() || !frame->GetLastCommittedURL().SchemeIsHTTPOrHTTPS()) {
@@ -550,9 +609,10 @@ void ContentBlockingTabHelper::Style(content::RenderFrameHost* frame) {
   const GURL page = frame->GetOutermostMainFrame()->GetLastCommittedURL();
   const bool on = ContentBlocking::EnabledFor(profile(), page);
   const auto cosmetic = on ? ContentBlocking::Get().CosmeticFor(profile(), frame->GetLastCommittedURL()) : ContentBlocking::Cosmetic();
-  base::ListValue selectors;
+  base::ListValue selectors, actions;
   for (const auto& selector : cosmetic.hide) selectors.Append(selector);
-  Run(frame, base::DictValue().Set("op", "style").Set("key", "site").Set("selectors", std::move(selectors)),
+  for (const auto& action : cosmetic.procedural) actions.Append(action);
+  Run(frame, base::DictValue().Set("op", "style").Set("key", "site").Set("selectors", std::move(selectors)).Set("actions", std::move(actions)),
       base::BindOnce([](base::WeakPtr<ContentBlockingTabHelper> self, bool main, base::Value result) {
         if (self && main && result.is_dict()) self->SetHidden(result.GetDict().FindInt("hidden").value_or(0));
       }, weak_factory_.GetWeakPtr(), frame->IsInPrimaryMainFrame()));
@@ -604,12 +664,12 @@ void ContentBlockingTabHelper::HideNow(const std::vector<std::string>& selectors
         std::move(done).Run(hidden);
       }, weak_factory_.GetWeakPtr(), std::move(done)));
 }
-void ContentBlockingTabHelper::Preview(const std::vector<std::string>& selectors, base::OnceCallback<void(int)> done) {
+void ContentBlockingTabHelper::Preview(const std::vector<std::string>& selectors, base::OnceCallback<void(base::DictValue)> done) {
   base::ListValue list;
   for (const auto& selector : selectors) list.Append(selector);
   Run(GetWebContents().GetPrimaryMainFrame(), base::DictValue().Set("op", "preview").Set("selectors", std::move(list)),
-      base::BindOnce([](base::OnceCallback<void(int)> done, base::Value result) {
-        std::move(done).Run(result.is_dict() ? result.GetDict().FindInt("count").value_or(0) : 0);
+      base::BindOnce([](base::OnceCallback<void(base::DictValue)> done, base::Value result) {
+        std::move(done).Run(result.is_dict() ? std::move(result).TakeDict() : base::DictValue());
       }, std::move(done)));
 }
 

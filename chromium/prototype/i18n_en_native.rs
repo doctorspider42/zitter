@@ -535,4 +535,5 @@ pub static EN: &[(&str, &str)] = &[
     ("Tej reguły nie da się użyć: {}", "This rule cannot be used: {}"),
     ("Ukryć na {} zaznaczone elementy ({})?", "Hide the outlined elements on {} ({})?"),
     ("Zablokować reklamy na {}? Ukryte elementy: {}, reguły sieciowe: {}.", "Block ads on {}? Hidden elements: {}, network rules: {}."),
+    ("Zablokować reklamy na {}? Ukryte elementy: {}, reguły sieciowe: {}, zastąpione stare reguły: {}.", "Block ads on {}? Hidden elements: {}, network rules: {}, old rules replaced: {}."),
 ];

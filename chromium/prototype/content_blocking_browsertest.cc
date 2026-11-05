@@ -5,6 +5,7 @@
 #include "chromium/prototype/workspace_shell.h"
 #include "chromium/prototype/workspace_window.h"
 
+#include <algorithm>
 #include <memory>
 #include <string>
 
@@ -237,6 +238,64 @@ IN_PROC_BROWSER_TEST_F(ZitterContentBlockingBrowserTest, AssistantAddedRuleHides
   EXPECT_NE("", window_->WriteAdBlocking(base::DictValue().Set("command", "rule_add").Set("rule", "||ads.test^$nosuchoption")));
   EXPECT_EQ("", window_->WriteAdBlocking(base::DictValue().Set("command", "rule_add").Set("rule", "block.test##.promo-rail")));
   EXPECT_EQ((std::vector<std::string>{"block.test##.promo-rail"}), ContentBlocking::Rules(work_));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterContentBlockingBrowserTest, ProceduralRulesAnchorOnTheAdLabel) {
+  LoadProbe();
+  // The inspection finds the ad by its label and offers a rule anchored on it.
+  const auto inspect = Tool("adblock_inspect", {});
+  std::string hint;
+  for (const auto& item : *inspect.GetDict().FindList("candidates"))
+    if (const auto* label = item.GetDict().FindString("label"); label && *label == "REKLAMA") hint = *item.GetDict().FindString("rule_hint");
+  EXPECT_EQ("block.test##span:has-text(/^\\s*REKLAMA\\s*$/i):upward(1)", hint) << inspect;
+  // The page runs each rule before consent: what it cannot parse, or what
+  // matches nothing, goes back to the model with nothing saved.
+  const auto broken = Tool("adblock_add_rules", base::DictValue().Set("rules", base::ListValue()
+      .Append("block.test##div.not-on-this-page").Append("block.test##span:has-text(/a{2,1}/)")));
+  ASSERT_TRUE(broken.GetDict().FindList("invalid")) << broken;
+  EXPECT_EQ(2u, broken.GetDict().FindList("invalid")->size()) << broken;
+  EXPECT_EQ(false, content::EvalJs(page(), "document.querySelector('[data-zitter-preview]') !== null"));
+  EXPECT_NE("", ContentBlocking::RuleError("block.test##div:has-text(open"));
+  EXPECT_NE("", ContentBlocking::RuleError("block.test##+js(nowebrtc)"));
+  // With consent the label's box goes at once; the story stays.
+  const auto saved = Tool("adblock_add_rules", base::DictValue().Set("rules", base::ListValue().Append(hint)), true);
+  EXPECT_TRUE(saved.GetDict().FindBool("ok").value_or(false)) << saved;
+  EXPECT_EQ("none", Display("labelled"));
+  EXPECT_NE("none", Display("story"));
+  // From the engine on a fresh load, with an action rule beside it.
+  EXPECT_EQ("", window_->WriteAdBlocking(base::DictValue().Set("command", "rule_add").Set("rule", "block.test##p#text:style(color: rgb(1, 2, 3))")));
+  ASSERT_TRUE(base::test::RunUntil([&] { return ContentBlocking::Get().ReadyForTesting(work_); }));
+  LoadProbe();
+  ASSERT_TRUE(base::test::RunUntil([&] { return Display("labelled") == "none"; }));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return content::EvalJs(page(), "getComputedStyle(document.getElementById('text')).color").ExtractString() == "rgb(1, 2, 3)";
+  }));
+  // A late ad with the same label is hidden as it appears.
+  ASSERT_TRUE(content::ExecJs(page(), "const late = document.createElement('div'); late.id = 'late';"
+                                      "late.innerHTML = '<span>REKLAMA</span><a href=\"#\">x</a>'; document.body.append(late);"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return Display("late") == "none"; }));
+  // A rule that hid nothing on kStaleLoads loads in a row is stale; one hit clears it.
+  const GURL url = embedded_test_server()->GetURL("block.test", "/adblock_probe.html");
+  const std::string old_rule = "block.test##p#text:style(color: rgb(1, 2, 3))";
+  EXPECT_TRUE(ContentBlocking::StaleRules(work_, url).empty());
+  for (int load = 0; load < ContentBlocking::kStaleLoads; ++load) ContentBlocking::RecordRuleHits(work_, {{old_rule, 0}});
+  EXPECT_EQ((std::vector<std::string>{old_rule}), ContentBlocking::StaleRules(work_, url));
+  ContentBlocking::RecordRuleHits(work_, {{old_rule, 1}});
+  EXPECT_TRUE(ContentBlocking::StaleRules(work_, url).empty());
+  // Stale again, as before a repair.
+  for (int load = 0; load < ContentBlocking::kStaleLoads; ++load) ContentBlocking::RecordRuleHits(work_, {{old_rule, 0}});
+  // The assistant replaces it: the new rule is saved, the old one goes.
+  const std::string new_rule = "block.test##p#text:style(color: rgb(4, 5, 6))";
+  const auto refused = Tool("adblock_add_rules", base::DictValue().Set("rules", base::ListValue().Append(new_rule))
+      .Set("replaces", base::ListValue().Append("block.test##.never-saved")), true);
+  ASSERT_TRUE(refused.GetDict().FindList("invalid")) << refused;
+  const auto replaced = Tool("adblock_add_rules", base::DictValue().Set("rules", base::ListValue().Append(new_rule))
+      .Set("replaces", base::ListValue().Append(old_rule)), true);
+  EXPECT_EQ(1, replaced.GetDict().FindInt("replaced").value_or(0)) << replaced;
+  const auto rules = ContentBlocking::Rules(work_);
+  EXPECT_FALSE(std::ranges::contains(rules, old_rule));
+  EXPECT_TRUE(std::ranges::contains(rules, new_rule));
+  EXPECT_TRUE(ContentBlocking::StaleRules(work_, url).empty());
 }
 
 }  // namespace zitter::prototype

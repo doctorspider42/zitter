@@ -1109,7 +1109,7 @@ class ExtensionsBar::ShieldPanel final : public views::BubbleDialogDelegate {
     };
     site_row_ = add_row(kShieldOffIcon, &ExtensionsBar::ToggleSiteBlocking);
     if (bar_->callbacks_.assistant_available && bar_->callbacks_.assistant_available.Run() && bar_->callbacks_.block_with_assistant)
-      add_row(kSparkIcon, &ExtensionsBar::BlockWithAssistant)->SetText(T(u"Zablokuj więcej z asystentem"), {}, false, 16);
+      assistant_row_ = add_row(kSparkIcon, &ExtensionsBar::BlockWithAssistant);
     auto* settings = add_row(kGearIcon, &ExtensionsBar::OpenAdBlockingSettings);
     settings->SetText(T(u"Ustawienia blokowania"), {}, false, 16);
     settings->SetRing(true);
@@ -1124,6 +1124,11 @@ class ExtensionsBar::ShieldPanel final : public views::BubbleDialogDelegate {
     site_row_->SetText(count < 0 ? T(u"Włącz blokowanie na tej stronie") : T(u"Wyłącz blokowanie na tej stronie"), {}, false, 16);
     site_row_->SetEnabled(url.SchemeIsHTTPOrHTTPS());
     site_row_->SchedulePaint();
+    if (assistant_row_) {
+      const bool stale = count >= 0 && !ContentBlocking::StaleRules(bar_->profile(), url).empty();
+      assistant_row_->SetText(stale ? T(u"Napraw niedziałające reguły z asystentem") : T(u"Zablokuj więcej z asystentem"), {}, false, 16);
+      assistant_row_->SchedulePaint();
+    }
     // Another site's detail may take another number of lines.
     if (GetWidget() && !GetWidget()->IsClosed()) SizeToContents();
   }
@@ -1132,6 +1137,7 @@ class ExtensionsBar::ShieldPanel final : public views::BubbleDialogDelegate {
   sidebar::DesignPalette palette_;
   raw_ptr<ShieldCard> card_ = nullptr;
   raw_ptr<MenuRow> site_row_ = nullptr;
+  raw_ptr<MenuRow> assistant_row_ = nullptr;
 };
 
 ExtensionsBar::ExtensionsBar(Callbacks callbacks) : callbacks_(std::move(callbacks)) {

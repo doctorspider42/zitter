@@ -10,7 +10,10 @@ with mock.patch.object(sys, 'path', [str(Path(__file__).resolve().parents[1] / '
 
 def seed(checkout):
     # Other fixtures may have written the file already: add the anchor once.
-    for path, anchor, _ in patch.EDITS:
+    for index, (path, anchor, _) in enumerate(patch.EDITS):
+        # An anchor an earlier edit writes is not upstream's.
+        if any(path == earlier and anchor in added for earlier, _, added in patch.EDITS[:index]):
+            continue
         target = checkout / path
         target.parent.mkdir(parents=True, exist_ok=True)
         text = target.read_text() if target.exists() else '// upstream\n'

@@ -10,9 +10,13 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 
 #[cxx::bridge(namespace = "zitter::adblock")]
 mod ffi {
-    // Hide and keep-visible selectors for one page.
+    // Hide and keep-visible selectors for one page. `procedural` holds rules
+    // with an action (`:remove()`, `:style()`...) as adblock-rust's JSON; hide
+    // selectors may carry procedural operators (`:has-text()`), which the page
+    // script runs (content_blocking.js).
     struct CosmeticResources {
         hide_selectors: Vec<String>,
+        procedural: Vec<String>,
         exceptions: Vec<String>,
         generichide: bool,
     }
@@ -101,9 +105,11 @@ impl Engine {
         let resources = self.engine.url_cosmetic_resources(url);
         let mut hide: Vec<String> = resources.hide_selectors.into_iter().collect();
         hide.sort();
+        let mut procedural: Vec<String> = resources.procedural_actions.into_iter().collect();
+        procedural.sort();
         let mut exceptions: Vec<String> = resources.exceptions.into_iter().collect();
         exceptions.sort();
-        ffi::CosmeticResources { hide_selectors: hide, exceptions, generichide: resources.generichide }
+        ffi::CosmeticResources { hide_selectors: hide, procedural, exceptions, generichide: resources.generichide }
     }
     fn hidden_class_id_selectors(&self, classes: &Vec<String>, ids: &Vec<String>, exceptions: &Vec<String>) -> Vec<String> {
         let exceptions: HashSet<String> = exceptions.iter().cloned().collect();
@@ -127,15 +133,51 @@ fn check_rule(rule: &str) -> ffi::RuleCheck {
     match parse_filter(rule, false, ParseOptions::default()) {
         Ok(ParsedLine::Network(_)) => ffi::RuleCheck { kind: 1, error: String::new() },
         Ok(ParsedLine::Cosmetic(filter)) => {
-            // Scriptlets and procedural filters need uBO's resources, which Zitter
-            // does not ship (GPL): they would parse and silently do nothing.
-            if filter.plain_css_selector().is_none() || rule.contains("#+js(") || rule.contains("#?#") {
-                return ffi::RuleCheck { kind: 0, error: "only plain CSS hiding rules are supported".into() };
+            // Scriptlets need uBO's resources, which Zitter does not ship (GPL):
+            // they would parse and silently do nothing. Procedural operators and
+            // actions run in Zitter's own page script, which checks them in full.
+            if filter.mask.contains(adblock::filters::cosmetic::CosmeticFilterMask::SCRIPT_INJECT) || rule.contains("#+js(") {
+                return ffi::RuleCheck { kind: 0, error: "scriptlets (+js) are not supported".into() };
+            }
+            if let Some(error) = selector_problem(&rule[rule.find('#').unwrap_or(0)..]) {
+                return ffi::RuleCheck { kind: 0, error };
             }
             ffi::RuleCheck { kind: 2, error: String::new() }
         }
         Err(error) => ffi::RuleCheck { kind: 0, error: error.to_string() },
     }
+}
+
+// Operators content_blocking.js does not run; every other one it checks itself.
+const UNSUPPORTED: &[&str] = &["watch-attr", "others", "shadow", "matches-prop", "matches-media", "nth-ancestor", "properties", "-abp-properties", "spath"];
+
+// What is wrong with the part of a cosmetic rule after its first `#`: unbalanced
+// brackets or quotes, or an operator Zitter does not run.
+fn selector_problem(after_hash: &str) -> Option<String> {
+    let (mut round, mut square, mut quote) = (0i32, 0i32, None::<char>);
+    let mut chars = after_hash.char_indices().peekable();
+    while let Some((at, c)) = chars.next() {
+        if c == '\\' { chars.next(); continue; }
+        if let Some(q) = quote { if c == q { quote = None; } continue; }
+        match c {
+            // Quotes count only in attribute values: `:has-text(Don't)` is fine.
+            '"' | '\'' if square > 0 => quote = Some(c),
+            '(' => round += 1,
+            ')' => round -= 1,
+            '[' => square += 1,
+            ']' => square -= 1,
+            ':' => {
+                let name: String = after_hash[at + 1..].chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+                if UNSUPPORTED.contains(&name.as_str()) && after_hash[at + 1 + name.len()..].starts_with('(') {
+                    return Some(format!(":{name}() is not supported"));
+                }
+            }
+            _ => {}
+        }
+        if round < 0 || square < 0 { return Some("unbalanced brackets".into()); }
+    }
+    if round != 0 || square != 0 || quote.is_some() { return Some("unbalanced brackets or quotes".into()); }
+    None
 }
 
 fn within(host: &str, site: &str) -> bool {
@@ -231,6 +273,17 @@ mod tests {
     }
 
     #[test]
+    fn passes_procedural_and_action_rules_to_the_page() {
+        let e = engine("news.test##span:has-text(/^REKLAMA$/):upward(2)\nnews.test##.wall:remove()\nnews.test#?#div:-abp-has(.ad)");
+        let page = e.cosmetic_resources("https://news.test/");
+        // Without css-validation a procedural selector stays one string.
+        assert!(page.hide_selectors.contains(&"span:has-text(/^REKLAMA$/):upward(2)".to_string()), "{:?}", page.hide_selectors);
+        assert!(page.hide_selectors.contains(&"div:-abp-has(.ad)".to_string()), "{:?}", page.hide_selectors);
+        assert_eq!(page.procedural.len(), 1);
+        assert!(page.procedural[0].contains(r#""type":"remove""#) && page.procedural[0].contains(".wall"), "{}", page.procedural[0]);
+    }
+
+    #[test]
     fn generichide_turns_generic_rules_off() {
         let e = engine("##.ad-banner\n@@||news.test^$generichide");
         assert!(e.cosmetic_resources("https://news.test/").generichide);
@@ -243,7 +296,12 @@ mod tests {
         assert_eq!(check_rule("example.com##.ad").kind, 2);
         assert_eq!(check_rule("! a comment").kind, 3);
         assert_eq!(check_rule("example.com##+js(nowebrtc)").kind, 0);
-        assert_eq!(check_rule("example.com#?#div:has-text(Ad)").kind, 0);
+        assert_eq!(check_rule("example.com#?#div:has-text(Ad)").kind, 2);
+        assert_eq!(check_rule("example.com##span:has-text(/^REKLAMA$/):upward(2)").kind, 2);
+        assert_eq!(check_rule("example.com##body:style(overflow: auto)").kind, 2);
+        assert_eq!(check_rule("example.com##.wall:remove()").kind, 2);
+        assert_eq!(check_rule("example.com##div:has-text(Ad").kind, 0);
+        assert_eq!(check_rule("example.com##div:watch-attr(class)").kind, 0);
         assert_eq!(check_rule("||a.test^\n||b.test^").kind, 0);
         let bad = check_rule("||ads.example^$unknownoption");
         assert_eq!(bad.kind, 0);
